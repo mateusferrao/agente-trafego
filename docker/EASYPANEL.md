@@ -15,18 +15,83 @@ Monorepo sobe no EasyPanel. Postgres + Redis como serviços gerenciados do paine
 
 > `web` **não** é serviço próprio no MVP — o build Angular (`pnpm --filter web build`) é servido pela api. Vira serviço estático dedicado só quando o tráfego justificar.
 
-## Passos (Fatia 0 = api + worker + postgres + redis; **sem `web`** — web entra na 1a)
+## Passo a passo (Fatia 0 = api + worker + postgres + redis)
 
-1. Criar projeto no EasyPanel apontando pro repo Git.
-2. Provisionar **Postgres** e **Redis** (templates). Copiar as connection strings pras envs.
-3. **Build compartilhado:** `pnpm install` (instalação **completa** — o `start` roda via `tsx`, que é devDependency; não usar `--prod`. `esbuild` compila via `pnpm.onlyBuiltDependencies` no `package.json` raiz).
-4. Criar serviço **api** — start: `pnpm --filter @trafego/api start` (`tsx src/http/server.ts`), porta `API_PORT`. Setar todas as envs (`.env.example`).
-5. Criar serviço **worker** — start: `pnpm --filter @trafego/worker start` (`tsx src/main.ts`). Mesmas envs.
-6. **Migrations + seed** (job único, uma vez): `pnpm db:migrate && pnpm db:seed` (cria as 27 tabelas + a org beta). Rodar antes de subir api/worker.
-7. Domínios + SSL pelo painel. (Webhook Evolution `https://<api>/webhooks/evolution` = fatia 5b; inbound não é usado na Fatia 0.)
-8. **Fumaça:** os 2 curls admin (ver `docs/FATIA-0.md`) contra a URL pública → mensagem chega no WhatsApp de teste. Deploy verde = done.
+Pré: repo no GitHub (`mateusferrao/agente-trafego`, branch `main`) + instância Evolution rodando. Ordem: **Postgres → Redis → api → worker → migrate/seed → fumaça**. Runtime roda via `tsx` (sem build-para-`dist`); nada em produção depende de devDeps.
 
-> `web` (Angular), auth de sessão e build-para-`node dist` = fatias seguintes. Na Fatia 0 roda direto em `tsx`.
+### 1. Projeto
+**New Project** → nome (ex: `trafego`). Todos os serviços entram nele e falam pela rede privada interna do projeto.
+
+### 2. Postgres
+**New Service → Postgres** → nome `postgres`. Deixar defaults (database = nome do projeto, user `postgres`, senha auto-gerada). Create e aguardar subir. Abrir a aba **Credentials** → copiar o **Internal Connection URL** (formato `postgres://postgres:<senha>@<host-interno>:5432/<db>?sslmode=disable`). Esse valor vira `DATABASE_URL`.
+
+### 3. Redis
+**New Service → Redis** → nome `redis`. Senha auto. Create. Aba **Credentials** → copiar o Internal URL (`redis://default:<senha>@<host-interno>:6379`). Vira `REDIS_URL`.
+
+### 4. Serviço `api` (+ web estático a partir da 1a)
+**New Service → App** → nome `api`.
+- **Source:** GitHub → repo `mateusferrao/agente-trafego`, Branch `main`, **Build Path** `/`. Habilitar **Auto Deploy** (deploy a cada push).
+- **Build:** builder **Nixpacks** —
+  - **Install Command:** `pnpm install --frozen-lockfile`
+  - **Build Command:** *(deixar vazio — não há build; o runtime é `tsx` lendo o TS direto)*
+  - **Start Command:** `pnpm --filter @trafego/api start`
+  - Node ≥22 vem do `engines`; pnpm do `packageManager` (corepack); `esbuild` compila via `pnpm.onlyBuiltDependencies`.
+- **Environment** (aba Environment, sintaxe `.env`) — `DATABASE_URL`/`REDIS_URL` = os Internal URLs dos passos 2/3; o resto = valores reais:
+```
+NODE_ENV=production
+LOG_LEVEL=info
+API_PORT=3333
+WEB_ORIGIN=https://<seu-dominio>
+SESSION_SECRET=<32+ chars>
+DATABASE_URL=<internal url do postgres>
+REDIS_URL=<internal url do redis>
+CREDENTIAL_MASTER_KEY=<32 bytes em base64>
+CREDENTIAL_KEY_VERSION=1
+OPENROUTER_API_KEY=<...>
+OPENROUTER_MODEL=google/gemini-2.5-flash
+OPENROUTER_VISION_MODEL=google/gemini-2.5-flash
+LLM_COST_CAP_USD_PER_PERIOD=0
+META_APP_ID=<...>
+META_APP_SECRET=<...>
+META_GRAPH_VERSION=v26.0
+EVOLUTION_BASE_URL=<url da sua Evolution>
+EVOLUTION_API_KEY=<...>
+EVOLUTION_WEBHOOK_SECRET=<...>
+EVOLUTION_INSTANCE=<nome da instância>
+INSIGHTS_RETENTION_DAYS=90
+ANALYSIS_MAX_CREATIVES_VISION=8
+BETA_ADMIN_SECRET=<32+ chars>
+FATIA0_RECIPIENT_PHONE=<DDI+numero, ex 5511999999999>
+```
+(Gerar a chave: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`.)
+- **Domains:** Add Domain → host (seu domínio/subdomínio), path `/`, **Target Port `3333`** (= `API_PORT`), marcar como primary. SSL automático pelo painel.
+- **Deploy**.
+
+### 5. Serviço `worker`
+**New Service → App** → nome `worker`. Igual à api, com 2 diferenças:
+- **Start Command:** `pnpm --filter @trafego/worker start`
+- **Sem Domain** (worker não escuta HTTP).
+- **Environment:** as **mesmas** envs da api (colar o mesmo bloco; `API_PORT`/`WEB_ORIGIN` são inócuas aqui). Deploy.
+
+### 6. Migrations + seed (uma vez)
+No serviço **api** → menu **Console/Shell** → rodar:
+```
+pnpm db:deploy
+```
+Aplica o SQL de `packages/db/drizzle/` (migrator do `drizzle-orm`) + semeia a org beta. **Idempotente** — repetir é seguro. Só precisa de `drizzle-orm` + `tsx` (ambos runtime), então funciona mesmo com devDeps podadas.
+
+### 7. Fumaça (prova do fio)
+Com **token System User válido**, do seu terminal (detalhe em [`../docs/FATIA-0.md`](../docs/FATIA-0.md)):
+```
+curl -X POST https://<api>/admin/accounts \
+  -H "x-admin-secret: <BETA_ADMIN_SECRET>" -H "content-type: application/json" \
+  -d '{"metaBusinessId":"<bm>","adAccountId":"<id>","token":"<system_user_token>"}'
+
+curl -X POST https://<api>/admin/accounts/<id>/run -H "x-admin-secret: <BETA_ADMIN_SECRET>"
+```
+→ a mensagem de gasto chega no WhatsApp de teste. **Deploy verde = done.**
+
+> Webhook Evolution (`https://<api>/webhooks/evolution`) = fatia 5b (inbound não é usado na Fatia 0). web (Angular servido pela api) entra na 1a.
 
 ## SPOF / backup
 
