@@ -227,7 +227,9 @@ Schema em `packages/db/src/schema`. Grupos:
 
 ## 14. Deploy (EasyPanel)
 
-Serviços: **web** (Angular estático + nginx/Caddy), **api** (Node), **worker** (Node, mesmo repo/entrypoint diferente), **postgres**, **redis**. Evolution = instância existente. Domínios + SSL pelo EasyPanel. Backups Postgres agendados (mitiga SPOF do box único). Envs via secrets do painel.
+**Topologia MVP (decidida):** **api** e **worker** = serviços **separados** (mesmo repo/entrypoint diferente) — worker NÃO no processo da api: análise pesada (LLM/visão/async Meta) trava o event loop e acopla crash; separar é quase grátis (mesmo build, start diferente). **web servido pela própria api** no MVP (Fastify `@fastify/static` + fallback SPA): 1 serviço a menos, **mesma origem = zero CORS**, SSL/domínio único. Serviços: **api (+web estático)**, **worker**, **postgres**, **redis**. Evolution = instância existente. Domínios + SSL pelo EasyPanel. Backups Postgres agendados (mitiga SPOF do box único). Envs via secrets do painel.
+
+**Fast-follow:** web em serviço estático dedicado (nginx/Caddy) quando o tráfego justificar — troca reversível, não toca no core.
 
 ---
 

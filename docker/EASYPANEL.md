@@ -1,16 +1,19 @@
 # Deploy — Hostinger + EasyPanel
 
-Monorepo sobe como serviços separados no EasyPanel. Postgres + Redis como serviços gerenciados do painel. Evolution = instância existente (consumida via HTTP + webhook).
+Monorepo sobe no EasyPanel. Postgres + Redis como serviços gerenciados do painel. Evolution = instância existente (consumida via HTTP + webhook).
+
+**Topologia MVP (CLAUDE.md §14):** **api** e **worker** = serviços **separados** (worker não no processo da api — análise pesada trava o event loop + acopla crash). **web servido pela própria api** (`@fastify/static` + fallback SPA a partir da 1a): mesma origem, zero CORS, 1 serviço a menos. Serviço estático dedicado (nginx/Caddy) = fast-follow.
 
 ## Serviços
 
 | Serviço | Build | Porta | Notas |
 |---|---|---|---|
-| `web` | Angular build → estático + nginx/Caddy | 80/443 | `pnpm --filter web build` → serve `dist/` |
-| `api` | Node | `API_PORT` (3333) | REST + webhook Evolution + auth |
-| `worker` | Node | — | mesmo repo, entrypoint `apps/worker/src/main.ts` |
+| `api` (+ web estático) | Node (tsx) | `API_PORT` (3333) | REST + webhook Evolution + auth; serve o `dist/` do Angular (a partir da 1a) |
+| `worker` | Node (tsx) | — | mesmo repo, entrypoint `apps/worker/src/main.ts` |
 | `postgres` | template EasyPanel | 5432 | volume persistente + backup agendado |
 | `redis` | template EasyPanel | 6379 | BullMQ |
+
+> `web` **não** é serviço próprio no MVP — o build Angular (`pnpm --filter web build`) é servido pela api. Vira serviço estático dedicado só quando o tráfego justificar.
 
 ## Passos (Fatia 0 = api + worker + postgres + redis; **sem `web`** — web entra na 1a)
 
