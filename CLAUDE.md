@@ -198,6 +198,15 @@ Schema em `packages/db/src/schema`. Grupos:
 - **Extensível / genérico:** nova plataforma/canal/provider = novo adapter atrás da porta, sem tocar no core.
 - **Reuso-primeiro:** antes de escrever novo, procurar em `packages/{shared,core,db}` + adapters existentes. Duplicou 3x → extrai.
 
+### Princípios de UX (invariantes — design completo em `docs/DESIGN.md`)
+- **Erros sempre tratados e amigáveis:** nunca vazar exceção/stack/código técnico pro usuário; toda falha vira mensagem clara.
+- **Erro = o que aconteceu + o que fazer:** 1 frase, sem "Error:", sem culpa técnica.
+- **Não-técnico:** sem jargão; traduzir termos (CPA, adset, token) quando aparecerem.
+- **Sempre mostrar o que está acontecendo:** estados loading/progresso/vazio/sucesso claros; usuário nunca no escuro.
+- **Sempre o próximo passo:** empty states e confirmações apontam a ação.
+- **Voz:** sentence case; status = **tom+texto** (nunca só cor); "arquivo enviado" (não "enviado com sucesso!").
+- Linguagem visual + IA + telas = **`docs/DESIGN.md`** (Operational Glass Desk, Rare Accent, No Generic AI).
+
 ### Padrões
 - **TDD (superpowers):** core funcional testado primeiro (sem mock); adapters com externos mockados; grafos com fixtures gravadas.
 - **Erros:** exceções na **casca** (IO/adapters/HTTP, mapeadas p/ resposta) + resultados **tipados no core** (sucesso/erro explícito). Não usar exceção como control-flow no core.

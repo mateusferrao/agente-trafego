@@ -2,7 +2,7 @@
 
 SaaS de **agentes de IA que tocam tráfego pago** (MVP: Meta Ads), atuando **via WhatsApp**. Agentes personalizáveis analisam a conta, geram recomendações e — conforme config — aplicam mudanças com guardrails.
 
-> **Fonte da verdade das decisões:** [`CLAUDE.md`](./CLAUDE.md). Histórico de arquitetura: [`docs/plan.md`](./docs/plan.md).
+> **Fontes da verdade:** decisões [`CLAUDE.md`](./CLAUDE.md) · design/UX [`docs/DESIGN.md`](./docs/DESIGN.md) · construção [`docs/ROADMAP.md`](./docs/ROADMAP.md) · histórico [`docs/plan.md`](./docs/plan.md).
 
 ## Stack
 
@@ -21,7 +21,7 @@ SaaS de **agentes de IA que tocam tráfego pago** (MVP: Meta Ads), atuando **via
 
 ## Dev local
 
-> ⚠️ **OneDrive:** este repo está numa pasta sincronizada pelo OneDrive. `node_modules` (milhares de arquivos) + OneDrive causa sync storm e problemas de long-path no Windows. **Recomendado:** mover o repo pra fora do OneDrive (ex: `C:\dev\agente-trafego`) OU excluir `node_modules`/`dist`/`.angular` do sync do OneDrive.
+> **Local canônico:** `C:\dev\agente-trafego` (fora do OneDrive, por causa de `node_modules`/worktrees). Não desenvolver na cópia antiga do OneDrive.
 
 ```bash
 pnpm install

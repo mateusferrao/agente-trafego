@@ -19,6 +19,14 @@ Checklist de aderência (além do `/code-review`). Violação = candidato a **bl
 - [ ] **Desacoplamento:** feature não acopla em detalhe de outra; comunicação por contrato.
 - [ ] **Sem string mágica:** rotas, chaves, labels repetidos → const/i18n.
 
+## UX / copy (aderência — `docs/DESIGN.md`) — violação = candidato a **bloqueia**
+
+- [ ] **Exceção crua vazando** pro usuário (stack/código/`Error:`) → bloqueia. Erro = amigável + o que fazer.
+- [ ] **Estado ausente:** faltou loading/vazio/sucesso? Empty state sem CTA de próximo passo? → sinalizar.
+- [ ] **Jargão** sem tradução (CPA/adset/token) → sinalizar.
+- [ ] **Status só por cor** (sem texto no badge) → bloqueia (acessibilidade).
+- [ ] **Rare Accent** (emerald só p/ decisão/seleção) e **No Generic AI** (sem gradiente roxo-azul/glow/blob) respeitados.
+
 ## Acessibilidade (básico)
 
 - [ ] Ícone-só com `aria-label`; foco visível; contraste vem dos tokens.

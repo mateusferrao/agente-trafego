@@ -1,6 +1,6 @@
 # ROADMAP — Construção do Agente de Tráfego
 
-Plano de construção em fatias. Decisões de arquitetura/produto = [`../CLAUDE.md`](../CLAUDE.md). Histórico completo = [`plan.md`](plan.md).
+Plano de construção em fatias. Decisões de arquitetura/produto = [`../CLAUDE.md`](../CLAUDE.md). Design/UX (IA, telas, componentes) = [`DESIGN.md`](DESIGN.md). Histórico completo = [`plan.md`](plan.md).
 
 ## Estratégia
 

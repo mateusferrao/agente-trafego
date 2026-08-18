@@ -265,16 +265,93 @@ trafego-agent/
 
 ---
 
-## Fatiamento em milestones testáveis (TDD — superpowers)
+## Roadmap macro — fatias (walking-skeleton-first)
 
-1. **Fundações:** monorepo pnpm, Angular shell + design system vendorizado (roda `tokens:check`), api/worker skeleton, Drizzle schema base, auth sessão, org/user/membership, deploy EasyPanel end-to-end.
-2. **Meta read-path:** conectar ad account (walkthrough System User token) + validação/erro 190; `AdsPlatformPort` Meta (entidades + insights async + criativos) com cache/backoff.
-3. **Canal WhatsApp:** conectar instância Evolution por org (QR/status), webhook inbound, send outbound, verificação de contato, roteamento.
-4. **Agente (read-only primeiro):** LangGraph `meta-account-analysis` só análise, OpenRouter + visão de criativo, playbook rules engine, `recommendations`, cron por conta + on-demand, **metering usage/cost**. → **entrega valor cedo** (recomendação no WhatsApp, sem escrever na Meta).
-5. **Ação + HITL + guardrails:** tools de escrita (pause/budget/status), guardrail engine, approval via WhatsApp (interrupt/resume), snapshot + rollback, kill-switch, config de autonomia.
-6. **UI de config + timeline:** telas de config do agente (persona, cadência, guardrails, playbook, tools), timeline de análises/ações por conta, gate beta allowlist.
+Estratégia: **esqueleto ambulante primeiro**, depois aprofunda. **Deploy no EasyPanel desde a Fatia 0.** Cada (sub)fatia é independentemente demonstrável/testável e **vira depois um `planning-trafego-feature` próprio** antes de implementar.
 
-Cada milestone é independentemente demonstrável. Ordem prioriza provar o **valor da análise** (M4) antes do risco da **ação** (M5).
+**Sequência (13 sub-fatias):** `0` → `1a` `1b` → `2a` `2b` → **`3a`** `3b` → `4` → `5a` `5b` `5c` → `6a` `6b`.
+- **`3a` = validação da hipótese** (recomendação boa no WhatsApp, sem escrita).
+- **Após `3b` = largada do beta read-only** (usuários reais, sem risco de budget) — roda em paralelo às fatias 4→6.
+- Escrita na Meta só a partir de **`5a`**, atrás de guardrail; aprovação humana em **`5b`**; chat aberto ReAct em **`5c`** (reavaliar valor×custo antes).
+
+### Fatia 0 — Espinha ambulante (+ deploy)
+- **Objetivo:** provar **integração + deploy** (não qualidade de IA).
+- **Escopo:** 1 beta org **hardcoded** (seed + `BETA_ORG_ID`); POST cru p/ colar token (curl, sem UI); `AdsPlatformPort.getInsights` só spend account-level **síncrono** (sem governor — dívida aceita, endurece na Fatia 2); worker job **manual/on-demand** (POST dispara) → resumo **templated (sem LLM)** → `MessagingChannelPort.sendMessage` (instância+telefone via env); migration mínima (org + ad_account).
+- **Deploy:** **api + worker + postgres + redis** no EasyPanel (sem web — UI entra na Fatia 1).
+- **Dependências:** nenhuma. Usa 1 método real por adapter (ads-meta, channel-evolution); resto stub.
+- **Testável:** e2e manual (colo token → chega WhatsApp) + integração com Meta client e Evolution send mockados. Deploy verde = parte do done.
+
+### Fatia 1a — Plataforma (auth/tenancy + shell)
+- **Self-signup** (email+senha, argon2) + login + sessão iron-session; org/user/membership + **`beta_access` gate** (signup livre, mas agente só roda com beta ativo); **org-scoping** helper; env schema no boot; **contrato zod→OpenAPI→kubb** ligado; migrations disciplinadas; **credential vault** (AES-GCM) — migra token da Fatia 0; middleware erro/audit/metering; pino; **app-shell web** + login/signup. **Web sobe no EasyPanel** (5º serviço).
+- **Valida:** signup → login → org criada; shell navega; token do skeleton agora cripto no vault.
+
+### Fatia 1b — Onboarding real (conectar conta)
+- Tela **form mínimo**: colar token → **validar** (trata erro 190) → **listar contas** (`GET /me/adaccounts`) → **escolher** → `ad_account` persistida (cripto). Substitui o POST cru da Fatia 0. Passo-a-passo do System User = doc + concierge no beta.
+- **Depende:** 1a (auth/org/vault). **Valida:** usuário conecta conta pela UI, conta aparece na lista.
+
+### Fatia 2a — Meta read + governor (IO)
+- `AdsPlatformPort` completo: entidades + **insights async** (report jobs) + criativos (image/thumbnail); **governor mínimo-correto** (lê `X-Business-Use-Case-Usage`, backoff no reset, jitter, degradação graciosa — bucket-por-conta/batch tuning = depois); `insights_snapshots` (retenção ~90d) + **sync incremental**.
+- **Depende:** 1b. **Valida:** coleta de conta real → snapshots gravados; governor respeitando rate-limit.
+
+### Fatia 2b — AccountBrief (core puro)
+- Curadoria **pura**: totals(+delta) + **rank/select top-N** + agregados da cauda + **tendência simples**. (Anomalia z-score + seleção de visão rica = quando a análise pedir.)
+- **Depende:** 2a (snapshots/insights). **Valida:** funções puras testadas sem rede → AccountBrief compacto a partir de fixtures.
+
+### Fatia 3a — Loop de análise ⇒ **VALIDAÇÃO DA HIPÓTESE**
+- Grafo A `account-analysis` **read-only**: `load_context → fetch_data (reusa 2a) → run_playbook (core) → llm_analyze (OpenRouter, **texto**, sem visão) → build_recommendations → notify (WhatsApp)`. Implementa o adapter **OpenRouter** (`LLMProviderPort`). **On-demand por botão no web** (sem inbound). `recommendations` persistidas.
+- **Depende:** 2b (AccountBrief). **Valida (marco):** botão → recomendações **boas** no WhatsApp, **sem risco de escrita**.
+
+### Fatia 3b — Cadência + visão + medição
+- **Cron por conta** (BullMQ scheduler + jitter); **visão de criativo** (multimodal) no `llm_analyze`; `recommendation_feedback` (👍/👎 + status + outcome); **metering usage/cost + cap por org**.
+- **Depende:** 3a. **Valida:** cron dispara sozinho; análise inclui criativo; feedback capturado; custo medido/limitado.
+
+### Fatia 4 — Config do agente (personalização) — feature cross-stack única
+- **Superfície única semeada por arquétipo** + edição inline + avançado progressivo; **playbook em linguagem natural** (templates com lacunas → `PlaybookRule`); `guardrail_configs`; `autonomy_policy`; cadência configurável; **zero-config**. Arquétipos em **tabela `agent_archetypes`** (Conservador/Otimizador seed). Backend: `agents` config API (+ schemas zod→kubb). Frontend: tela de config. *(Catálogo de tools `agent_tool_definitions`/`bindings` = Fatia 5, com as tools de escrita.)*
+- **Depende:** 3 (agents com defaults). **Antes da 5** (configurar a rede antes de soltar escrita). **Valida:** escolher arquétipo, ajustar meta/regras/autonomia → run seguinte usa a config.
+
+### Fatia 5a — Mecânica de escrita + guardrails
+- **Guardrail engine** (blast radius/budget cap/kill-switch/dry-run, defaults conservadores) + `decide_actions` (autonomia por origem) — **core puro**. Tools de escrita (pause/budget/status) via `mutate` (**idempotência + `before_state` + rollback**). **Catálogo de tools** (`agent_tool_definitions`/`bindings`, vindo da 4).
+- **Depende:** 4, 3, 2a. **Valida:** auto-aplicar dentro de **guardrail apertado** numa **conta de teste** (autonomia=act_full) → escrita + rollback + guardrail bloqueando, **sem gate humano ainda**.
+
+### Fatia 5b — HITL (aprovação conversacional)
+- **Inbound plumbing** (webhook → resolve contato → roteia); **aprovação conversacional** (persistir ações pendentes → mensagem natural → resposta livre mapeada → **eco+confirma antes de escrever**) + **interrupt/resume durável** (checkpoint Postgres); **expiração 24h** → avisa.
+- **Depende:** 5a. **Valida:** agente propõe → aprovo no WhatsApp (conversa) → aplica → confirma; expira em 24h.
+
+### Fatia 5c — Grafo B ReAct pleno (chat aberto) = **end-state**
+- Chat conversacional ad-hoc (perguntas sobre a conta/análise, "analisa agora" via WhatsApp, pedidos ad-hoc) com allowlist de tools + guardrails + eco+confirma. Fluxo tipo Claude-com-tools, scoped à conta. **Peça mais cara** — reavaliar valor×custo antes de iniciar.
+- **"Mexer em qualquer coisa" = as tools do catálogo.** MVP = **tools núcleo de escrita** (pausar/reativar, ajustar budget, mudar status) via `mutate` idempotente + guardrail. Ampliar leque (targeting/bid/schedule…) = **adicionar tool no catálogo-DB**, sem re-arquitetar. **Criar campanha/criativo do zero = fora** (produto "lançar do zero" = separado).
+- **Depende:** 5b. **Valida:** conversa livre entende e age (com confirmação) dentro dos guardrails.
+
+### Fatia 6a — Timeline / auditoria (UI)
+- **Timeline** de análises/ações/aprovações por conta (web) + trilha de auditoria visível. Feature user-facing de confiança.
+- **Valida:** ver histórico de runs/ações/aprovações na dashboard.
+
+### Fatia 6b — Endurecimento / ops
+- Consolidar o que faltar: ban-safety throttle no outbound, fluxo token-inválido (code 190), degradação graciosa polida, **backups Postgres** no EasyPanel. Allowlist beta = **toggle via script/DB** (UI admin = fast-follow).
+- **Valida:** operar um beta real ponta-a-ponta com resiliência.
+
+---
+
+### 🚩 Linha de largada do beta = **após 3b** (read-only)
+Abrir beta com **usuários reais recebendo recomendações no WhatsApp (sem escrita)** logo após 3b, **em paralelo** à construção de 4/5. Feedback real cedo, risco zero de budget. Fatias 4→5→6 continuam com beta rodando.
+
+**Dependência:** sequência majoritariamente linear (0→6). Paralelizável quando um `planning` específico confirmar: ex. config (4) começa assim que o backend de `agents` (3) existe; parte da curadoria (2) sobrepõe fundações (1); 6a/6b em paralelo às fatias de escrita.
+
+## Paralelização — dois tracks (git worktrees)
+
+**Pré-requisitos:** `git init` (repo ainda não é git) + **mover o repo p/ fora do OneDrive** (ex: `C:/dev/agente-trafego`) — worktree multiplica `node_modules` e OneDrive causa sync storm/long-path. (pnpm usa store global content-addressable → worktrees compartilham o store, aliviando o custo.)
+
+**Modelo:** dois tracks fixos em worktrees/branches separados, sincronizando no **contrato kubb**:
+- **Track A — Backend/Infra:** `apps/api`, `apps/worker`, `packages/*` (core, db, adapters, shared), deploy.
+- **Track B — Frontend:** `apps/web` (consome o **client kubb gerado**).
+
+**Regras de ouro (evitam conflito):**
+1. **Solo primeiro:** `0` e `1a` numa sessão só — montam a espinha + contratos que os dois tracks consomem. Só forkar depois.
+2. **Contract-first por fatia:** antes de forkar as 2 sessões numa fatia, **travar o schema zod** (fonte do contrato) na base compartilhada. Track B gera o client e trabalha; Track A implementa o backend. Sem isso, o frontend regenera em cima de contrato mudando.
+3. **Serializar a espinha compartilhada:** `packages/shared` (tipos/ports/schemas), `packages/db/schema` + **migrations**, composition roots, `.env.example` têm **um dono por vez** (idealmente Track A, num commit-base antes do fork).
+4. **Merge por branch/PR** ao fim de cada fatia; rodar `reviewing-trafego-changes` antes de integrar.
+
+**Pares naturais por fase:** `1b` (onboarding, A+B) ∥ `2a` (adapter ads-meta, A) · Fatia `4` API (A) ∥ tela (B) · `5a`/`5b` (A) ∥ `6a` timeline (B) · `6a` ∥ `6b`.
 
 ---
 
@@ -299,6 +376,105 @@ Cada milestone é independentemente demonstrável. Ordem prioriza provar o **val
 - **Manual e2e:** conta Meta de teste + WhatsApp de teste → rodar análise → receber recomendação no WhatsApp → aprovar → confirmar mudança no Ads Manager → testar rollback → conferir `usage_events`.
 - **Observabilidade:** traces LLM (Langfuse opcional), `agent_runs`/`tool_calls` como trilha de auditoria.
 - **Design:** `tokens:check` verde no `web`.
+
+---
+
+## Skills do projeto — planejar / implementar / revisar
+
+### Context
+Criar 3 skills project-scoped que codificam o workflow de engenharia deste repo (backend VSA/Node + frontend Angular), seguindo best-practices de autoria de skills (Anthropic + superpowers:writing-skills) e os princípios já definidos. Objetivo: qualquer sessão futura planeja, implementa e revisa mudanças de forma consistente com o CLAUDE.md, sem reinventar. **Skills FINAS**: orquestram o fluxo, **referenciam o CLAUDE.md como fonte da verdade** (não duplicam regras) e **compõem superpowers**. Cobrem backend+frontend via **progressive disclosure** (`backend.md`/`frontend.md`).
+
+### Local & nomes
+Repo `.claude/skills/` (versionadas com o código). Nomes gerúndio EN; description em 3ª pessoa, "Use when...", triggers PT+EN **disjuntos**, **sem resumo de workflow** (senão Claude segue a description e pula o corpo).
+- `planning-trafego-feature/` — **só SKILL.md** (holístico, raciocina cross-stack)
+- `implementing-trafego-feature/` — SKILL.md + backend.md + frontend.md
+- `reviewing-trafego-changes/` — SKILL.md + backend.md + frontend.md
+
+### Substância (evitar thin-wrapper)
+Invariantes/regras ficam no **CLAUDE.md (always-on)**; as skills carregam o **net-new**: sequência de workflow + **checklists acionáveis por stack** + orquestração de superpowers + máquina de veredito. Não repetem o "quê/porquê" — carregam o "como/quando".
+
+### Regras de autoria (aplicadas às 3)
+- Corpo PT-BR, keywords EN na description; body < 500 linhas; paths com `/`.
+- Referenciar superpowers **por nome** (sem `@`, que força-carrega). Referenciar CLAUDE.md **por nome de seção** (âncora), nunca por número (evita "string mágica" quebrável).
+- `backend.md`/`frontend.md` a **um nível** de profundidade do SKILL.md.
+- **Handoff = sugestão com checkpoint** (plan→implement→review): cada skill termina sugerindo a próxima, mas **não auto-invoca**; plano aprovado antes de implementar (respeita o HARD-GATE do brainstorming). Cada uma usável isolada.
+
+### 1. `planning-trafego-feature` (holístico, só SKILL.md)
+- **Description (trigger):** planejar/planning **antes de codar** — nova feature, slice, tela, endpoint, entidade, porta no Agente de Tráfego; "planejar feature", "nova tela", "novo endpoint".
+- **Workflow:** compõe `superpowers:brainstorming` (intenção, sem assumir, perguntas críticas 1-a-1) → `superpowers:writing-plans`. Raciocina **cross-stack** (feature toca backend+frontend junto). Gates project-specific (ref CLAUDE.md por nome de seção): mapear camada(s) tocada(s) (slice VSA? nova porta na borda? função pura no core? feature Angular?); **reuso-primeiro** (buscar em `packages/{shared,core,db}` + adapters antes de propor novo); definir costura de extensibilidade.
+- **Termina** sugerindo (com checkpoint) `implementing-trafego-feature`.
+
+### 2. `implementing-trafego-feature`
+- **Description (trigger):** implementar/implementing feature, slice, endpoint, componente (após plano); "implementar", "codar feature".
+- **Workflow:** compõe `superpowers:test-driven-development` (RED-GREEN-REFACTOR) + `superpowers:subagent-driven-development` (subagente por slice independente). Injeta (ref CLAUDE.md §13 + princípios): core puro testado primeiro; portas só nas bordas; estrutura de slice VSA; exceções na casca / tipos no core; idempotência; org-scoping; **eco+confirma** em fluxo de escrita; ESM `.js`; zod nas bordas. Frontend: Angular standalone/signals, **tokens sem cor hardcoded**, roda `tokens:check`.
+- **Termina** apontando p/ `reviewing-trafego-changes`.
+
+### 3. `reviewing-trafego-changes`
+- **Description (trigger):** revisar/reviewing diff/PR/mudança antes de mergear; "revisar", "code review".
+- **Workflow:** compõe o `/code-review` existente (bugs/segurança/eficiência) e **adiciona dimensão de aderência aos princípios**. Execução: **subagentes paralelos por dimensão** (backend correctness, frontend, segurança, aderência), **escalando o esforço ao tamanho do diff** (diff pequeno = menos fan-out, como o /code-review low/medium/high). Saída: findings estruturados (severidade, arquivo:linha, dimensão) + **veredito bloqueia/passa**.
+- **Checks de aderência (ref CLAUDE.md + §13):** fronteiras VSA (sem vazamento cross-slice; portas só nas bordas), pureza do core (zero IO em `packages/core`), idempotência, org-scoping (sem vazamento cross-tenant), eco+confirma antes de escrever, guardrail independente da aprovação, metering nos writes, **sem hardcode/string mágica**, design tokens (`tokens:check`, sem cor hardcoded), reuso (lógica duplicada?), funções enxutas/legíveis, desacoplamento.
+
+### Edição no CLAUDE.md
+Adicionar à **§13 (Convenções)** os princípios de engenharia como fonte da verdade referenciada pelas skills: **sem string mágica/hardcoded · modularidade · separação de interesses · funções enxutas e legíveis · desacoplamento · extensível/genérico · reuso-primeiro**.
+
+### Arquivos a criar/editar (7 arquivos + 1 edição)
+- `.claude/skills/planning-trafego-feature/SKILL.md` (só isso — holístico).
+- `.claude/skills/implementing-trafego-feature/{SKILL.md, backend.md, frontend.md}`.
+- `.claude/skills/reviewing-trafego-changes/{SKILL.md, backend.md, frontend.md}`.
+- Editar `CLAUDE.md` seção **Convenções** (princípios de engenharia).
+
+### Verificação
+(Usuário optou por **sem teste formal** — contra a Iron Law do writing-skills, registrado.) Sanidade manual: invocar cada skill numa tarefa representativa (planejar→implementar→revisar um slice pequeno) e confirmar que (a) referencia CLAUDE.md, (b) compõe as superpowers certas, (c) carrega backend.md/frontend.md conforme o stack, (d) faz o handoff / emite veredito. Ajustar description se o trigger não disparar.
+
+---
+
+## Design & Layout do sistema (base pra todo o futuro)
+
+### Context
+Definir a IA, o layout e a linguagem visual do produto, **baseado nos padrões reais da plataforma Automato** (`automato-web`), pra reuso máximo e coerência. Vira **`docs/DESIGN.md`** (fonte da verdade de design), referenciado cruzado. North-star herdado: **"Operational Glass Desk"** (Stripe clareza + Attio workflow/records + Raycast glass/noise) — **Rare Accent** (emerald só p/ decisão/seleção), **No Generic AI**, product-scale type, **status = tom+texto** (nunca só cor), composição *object header → área de trabalho → rail de contexto → trace de atividade*, grain/noise em superfícies quietas, light+dark, WCAG AA.
+
+### IA / Navegação (account-centric)
+- **Shell:** reusar o `app-shell` do Automato **verbatim** (grid sidebar+painel, nav agrupada, org switcher, command palette, theme toggle, surface-noise).
+- **Objeto central = Conta** (ad account); **agente é entidade aninhada na conta** (1:1 hoje via unique FK; soltar unique = N agentes/conta sem re-arquitetura).
+- **Módulos de topo:** **Contas** (landing) · **Aprovações** (inbox cross-account) · **Integrações** (canal WhatsApp da org + conectar Meta + saúde) · **Configurações**. (Sem Dashboard no MVP.)
+
+### Telas
+- **Contas (landing):** `ui-page-header` ("Contas", count, [Conectar conta] primary) → `ui-filter-bar` (status/busca) → `ui-resource-grid` de **cards ricos** (nome + status agente + status token + KPIs spend/CPA/ROAS 7d + nº pendências + "analisado há X") → `ui-empty-state` ("Conecte sua primeira conta").
+- **Conta (detalhe):** header (backLink, nome, badges, ações) + **router-tabs**:
+  - **Visão geral:** `ui-stat` KPIs + estado (agente ativo/pausado, token, próxima análise, pendências).
+  - **Agente:** **superfície única seccionada** (padrão builder Automato: eyebrow+h2+help+form-grid por seção) semeada por arquétipo → Identidade / Meta (target CPA-ROAS) / Autonomia (slider) / Segurança (guardrails) / Regras (playbook em linguagem natural) / Cadência / `<details>` avançado. **Save bar dirty** ("não salvo/salvo"). Zero-config.
+  - **Timeline:** feed unificado de atividade (net-new — ver abaixo).
+  - **Conexões:** status Meta token (válido/inválido + recolar via connect-dialog) + **contato WhatsApp destinatário** da conta + **modo de operação** (padrão aba Deployments Automato: status active/paused + autonomia).
+- **Aprovações (inbox):** `ui-record-list` cross-account de pendências; cada = conta + ação(ões) proposta(s) + racional + **[Aprovar]/[Recusar] acionável** (mostra eco concreto + confirma → backend guardrail + interrupt/resume). Filtro por conta/status. Espelha o WhatsApp.
+- **Integrações:** padrão Automato — "Conectadas" (card do canal WhatsApp da org com health + contas Meta conectadas) + "Disponíveis" (Meta Ads, WhatsApp) via **connect-dialog + connector-strategy** (reusa connector `meta-ads`; **novo connector `evolution-whatsapp`** p/ QR/status). "Meus Canais" = instância Evolution.
+- **Configurações:** org, usuários (self-signup + membros), beta/assinatura, perfil, tema (reusa padrão settings Automato).
+
+### Onboarding (first-run)
+Contas vazio → CTA → **connect-dialog** (colar token → validar/erro 190 → listar contas → escolher) → prompt conectar **WhatsApp** (Integrações, QR) → agente **auto-semeado** pelo arquétipo default (zero-config).
+
+### Timeline — componente net-new (`ui-timeline`)
+Não existe no Automato (greenfield). Feed vertical **agrupado por dia**; cada evento = ícone (por tipo) + título + detalhe + **status badge (tom+texto)** + timestamp. Tipos: `analysis_started/completed`, `recommendation_created`, `approval_requested/approved/rejected/expired`, `action_applied/rolled_back`, `error`. Segue o ritmo do `ui-record-list` + guidance "compact activity trace" do DESIGN.md.
+
+### Princípios de UX (novos — par dos de engenharia)
+- **Erros sempre tratados e amigáveis:** nunca vazar exceção/stack/código técnico; toda falha vira mensagem clara.
+- **Erro = o que aconteceu + o que fazer** (1 frase, sem "Error:", sem culpa técnica).
+- **Foco no não-técnico:** sem jargão; traduzir termos (CPA, adset, token) quando aparecerem.
+- **Sempre mostrar o que está acontecendo:** loading/progresso/vazio/sucesso claros; usuário nunca no escuro.
+- **Sempre o próximo passo:** empty states e confirmações apontam a ação.
+- Sentence case; "arquivo enviado" (não "enviado com sucesso!"); status = tom+texto.
+
+### Mapa de reuso (Automato → nosso)
+Vendorizar: `app-shell`, `ui-page-header`, `ui-section-header`, router-tabs, `ui-filter-bar`(+chips), `ui-resource-grid`/`card`, `ui-record-list`, `ui-data-table`, `ui-empty-state`, `ui-stat`/`ui-meter`, `ui-detail-drawer`, `ui-form-field`/`ui-select-field`/`ui-switch`/`ui-range`, **connect-dialog + connector-strategy**, padrão da **aba Deployments** (→ aba Conexões). **Net-new:** `ui-timeline`.
+
+### Edições associadas (execução, fora do plan mode)
+- **Criar `docs/DESIGN.md`** (todo o acima).
+- **CLAUDE.md:** nova seção **Princípios de UX** + ref a `docs/DESIGN.md`.
+- **`implementing-trafego-feature/frontend.md`:** checklist UX-copy (erro tratado/amigável, estados loading/vazio/sucesso, próximo passo, sem jargão) + ponteiros de arquétipos de página + mapa de reuso + ref `docs/DESIGN.md`.
+- **`reviewing-trafego-changes/frontend.md`:** checks de aderência UX (bloqueia exceção crua vazando, copy sem próximo passo, estado ausente, status só-cor, Rare Accent, No Generic AI) + ref `docs/DESIGN.md`.
+- **Referência cruzada** a `docs/DESIGN.md` em README, CLAUDE.md e `docs/ROADMAP.md` onde relevante.
+
+### Verificação
+Sanidade: telas seguem os arquétipos (page-header→filter→grid/list; detalhe=header+router-tabs); `tokens:check` verde; erros testados mostram mensagem amigável+próximo passo; Timeline renderiza os tipos de evento com tom+texto; connect-dialog reusado conecta Meta (colar token) e WhatsApp (QR).
 
 ---
 

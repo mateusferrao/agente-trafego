@@ -19,6 +19,13 @@ Checklist acionável. Design system + regras no `CLAUDE.md` e em `apps/web/DESIG
 - **Client tipado:** consumir a API pelo client kubb; regenerar com `pnpm api:generate` quando o contrato muda. Sem `fetch` manual duplicando tipos.
 - **i18n/tom:** PT-BR.
 
+## UX (copy + estados) — ver `../../../docs/DESIGN.md`
+
+- **Erro tratado + amigável:** nunca mostrar exceção/stack/código. Mensagem = **o que aconteceu + o que fazer** ("Não consegui conectar. Verifique o token e cole de novo").
+- **Estados sempre visíveis:** loading/progresso, vazio (com CTA de próximo passo), sucesso. Usuário nunca no escuro.
+- **Sem jargão** (ou traduzir CPA/adset/token). Sentence case; status = **tom+texto** (badge), nunca só cor.
+- **Arquétipos de página** (design system Automato): lista = `page-header → filter-bar → resource-grid/record-list → empty-state`; detalhe = `header + router-tabs + outlet`. Reusar do `shared/ui` (ver `docs/DESIGN.md` → Mapa de reuso).
+
 ## Verificação (obrigatória)
 
 Rode o gate de tokens — bloqueia hex/rgb/hsl, cores Tailwind cruas, sombras/raios/fontes soltas fora do `styles.css`:
