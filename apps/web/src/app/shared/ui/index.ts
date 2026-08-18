@@ -16,3 +16,5 @@ export { UiPanelCard, UiPanelGrid, UiPanelText, UiPanelTitle } from './ui-panel'
 export { UiPulseDotComponent as UiPulseDot } from './ui-pulse-dot';
 export { UiModuleSidebarComponent as UiModuleSidebar } from './ui-module-sidebar';
 export type { UiModuleSidebarItem } from './ui-module-sidebar';
+export { UiDialog, UiDialogOverlay, UiDialogTitle, UiDialogDescription } from './ui-dialog';
+export { UiOptionRow, UiOptionRowCheck, UiOptionRowIcon, UiOptionRowCopy } from './ui-option-row';

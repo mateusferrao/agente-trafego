@@ -49,6 +49,8 @@ export async function buildApp(): Promise<FastifyInstance> {
         "*.tokenCripto",
         "*.password",
         "req.body.password",
+        "req.body.token",
+        "req.body.accessToken",
       ],
     },
   });

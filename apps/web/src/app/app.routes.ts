@@ -5,7 +5,8 @@ import { authGuard, guestOnlyGuard } from '@core/auth';
 // inicial enxuto. O AppShell (path '') vem PRIMEIRO para que '/' resolva no shell,
 // que redireciona para '/accounts' (landing); '/login' e '/signup' não casam filho
 // do shell e caem no auth-layout (path '') logo abaixo. Guards: authGuard (anônimo →
-// /login) no shell/onboarding; guestOnlyGuard (logado → shell) nas rotas públicas.
+// /login) no shell; guestOnlyGuard (logado → shell) nas rotas públicas.
+// Onboarding (conectar conta) = connect-dialog disparado do /accounts, não uma rota.
 // Ver docs/DESIGN.md (IA).
 export const routes: Routes = [
   {
@@ -39,13 +40,6 @@ export const routes: Routes = [
           import('./features/settings/settings-page').then((m) => m.SettingsPage),
       },
     ],
-  },
-  {
-    path: 'onboarding',
-    canActivate: [authGuard],
-    title: 'Onboarding — Agente de Tráfego',
-    loadComponent: () =>
-      import('./features/onboarding/onboarding-page').then((m) => m.OnboardingPage),
   },
   {
     path: '',

@@ -83,7 +83,7 @@ export interface MetaClientOptions {
   /** override da versão (default = META_GRAPH_VERSION). */
   readonly graphVersion?: string;
   readonly baseUrl?: string; // default https://graph.facebook.com
-  readonly appSecret?: string; // opcional: appsecret_proof
+  readonly appSecret?: string; // opcional: appsecret_proof (fast-follow)
 }
 
 export class MetaGraphClient {
@@ -124,9 +124,15 @@ export class MetaGraphClient {
       method: req.method,
       headers: { Authorization: `Bearer ${req.accessToken}` },
     });
+    return this.toGraphResponse<T>(res);
+  }
 
-    // lê como texto primeiro: erro não-JSON (502/503 HTML, throttling) não deve
-    // estourar JSON.parse e sim virar MetaApiError com o httpStatus.
+  /**
+   * Trata a resposta HTTP: lê como texto primeiro (erro não-JSON — 502/503 HTML,
+   * throttling — não pode estourar JSON.parse e sim virar `MetaApiError` com o
+   * httpStatus) e mapeia erro Graph → `MetaApiError`.
+   */
+  private async toGraphResponse<T>(res: Response): Promise<GraphResponse<T>> {
     const text = await res.text();
     if (!res.ok) {
       let error: MetaErrorBody | undefined;

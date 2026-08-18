@@ -203,6 +203,109 @@
           "totalCostUsd",
           "byType"
         ]
+      },
+      "ConnectTokenInput": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "minLength": 20
+          }
+        },
+        "required": [
+          "token"
+        ]
+      },
+      "ConnectAccountsOutput": {
+        "type": "object",
+        "properties": {
+          "accounts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "currency": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "name"
+              ]
+            }
+          }
+        },
+        "required": [
+          "accounts"
+        ]
+      },
+      "SelectAccountInput": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "minLength": 20
+          },
+          "adAccountId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "token",
+          "adAccountId"
+        ]
+      },
+      "AdAccountOutput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "adAccountId": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "currency": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tokenStatus": {
+            "type": "string",
+            "enum": [
+              "valid",
+              "invalid",
+              "unchecked"
+            ]
+          },
+          "lastValidatedAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "adAccountId",
+          "name",
+          "currency",
+          "tokenStatus",
+          "lastValidatedAt"
+        ]
       }
     },
     "parameters": {}
@@ -370,6 +473,90 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OrgOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/connect": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectTokenInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "contas acessíveis pelo token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectAccountsOutput"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "token inválido ou sem permissões"
+          }
+        }
+      }
+    },
+    "/api/accounts/select": {
+      "post": {
+        "tags": [
+          "accounts"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SelectAccountInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "conta conectada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdAccountOutput"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "conta inacessível com esse token"
+          }
+        }
+      }
+    },
+    "/api/accounts": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "responses": {
+          "200": {
+            "description": "contas conectadas da org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AdAccountOutput"
+                  }
                 }
               }
             }

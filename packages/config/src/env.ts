@@ -60,9 +60,12 @@ export const envSchema = z.object({
 
   // ─── Meta (Graph API) ──────────────────────────────────────────────────
   // A versão do Graph NÃO é env (é const acoplada ao adapter: `META_GRAPH_VERSION`
-  // em @trafego/ads-meta). Aqui só App ID + secret.
-  META_APP_ID: z.string().min(1, "META_APP_ID é obrigatório"),
-  META_APP_SECRET: z.string().min(1, "META_APP_SECRET é obrigatório"),
+  // em @trafego/ads-meta). App ID + secret são **opcionais por enquanto**: o
+  // onboarding (1b) chama a Graph token-only (cola token → GET /me/adaccounts).
+  // Voltam a ser necessários no fast-follow de checagem de escopos (/debug_token)
+  // + appsecret_proof.
+  META_APP_ID: z.string().optional(),
+  META_APP_SECRET: z.string().optional(),
 
   // ─── WhatsApp (Evolution) ──────────────────────────────────────────────
   // Nível OPERADOR (compartilhado): 1 servidor Evolution hospeda as instâncias

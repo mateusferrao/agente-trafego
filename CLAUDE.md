@@ -74,6 +74,8 @@
 
 Ver `docs/plan.md` para o histórico completo de trade-offs discutidos.
 
+**Assincronismo por necessidade (não event-driven por padrão):** o sistema é request/response + **fila de jobs** (BullMQ, desde a espinha) + **cron por tenant** (cadência, 3b) + **webhook inbound + resume durável** (HITL, 5a/5b). Cada mecanismo entra quando uma necessidade concreta aparece (trabalho longo, agenda, push externo, aprovação de 24h), sempre **atrás de uma porta**. **Não há event bus interno / event sourcing / pub-sub entre slices** — e não se introduz até uma dor de escala real justificar; se justificar, entra atrás de porta (`SchedulerPort`/nova), sem tocar no core.
+
 ---
 
 ## 5. Portas & adapters (o core só conhece interfaces)
@@ -156,6 +158,7 @@ Schema em `packages/db/src/schema`. Grupos:
 - Auth MVP = **System User token** colado (não expira). Sem OAuth, sem App Review (Standard Access em conta própria do cliente).
 - Onboarding: **walkthrough guiado + concierge fallback**. Cola token → validamos → **listamos ad accounts** (`GET /me/adaccounts`) → cliente escolhe.
 - Escopos: `ads_read` (insights/criativos), `ads_management` (mutação), `business_management` (resolver assets).
+- **Onboarding é token-only:** valida + lista com o token colado (`GET /me/adaccounts`) — **sem `META_APP_ID`/`META_APP_SECRET`** no fluxo (a fuga é de OAuth/App Review, não de ter app; o System User token já é atrelado ao nosso app). **Fast-follow:** checagem proativa de escopos (`/debug_token`) + `appsecret_proof` — reintroduzem o app id/secret; até lá, falta de escopo aparece de forma reativa (403 na 1ª ação que precisar).
 - Criativos p/ visão: `image_url`/`thumbnail_url` confiável; vídeo `source` incerto → usar thumbnail.
 - **Nosso App Meta** (dev mode) precisa ser selecionável no BM do cliente.
 

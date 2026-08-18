@@ -15,6 +15,12 @@ import { z } from "zod";
 import { loginInput, meOutput, signupInput } from "../modules/auth/schema.js";
 import { createOrgInput, orgOutput, renameOrgInput } from "../modules/orgs/schema.js";
 import { accessStatusOutput, usageSummaryOutput } from "../modules/billing/schema.js";
+import {
+  adAccountOutput,
+  connectAccountsOutput,
+  connectTokenInput,
+  selectAccountInput,
+} from "../modules/accounts/schema.js";
 
 extendZodWithOpenApi(z);
 
@@ -33,6 +39,10 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const OrgOutput = registry.register("OrgOutput", orgOutput);
   const AccessStatusOutput = registry.register("AccessStatusOutput", accessStatusOutput);
   const UsageSummaryOutput = registry.register("UsageSummaryOutput", usageSummaryOutput);
+  const ConnectTokenInput = registry.register("ConnectTokenInput", connectTokenInput);
+  const ConnectAccountsOutput = registry.register("ConnectAccountsOutput", connectAccountsOutput);
+  const SelectAccountInput = registry.register("SelectAccountInput", selectAccountInput);
+  const AdAccountOutput = registry.register("AdAccountOutput", adAccountOutput);
 
   const jsonBody = (schema: z.ZodTypeAny) => ({
     body: { content: { "application/json": { schema } } },
@@ -93,6 +103,32 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     tags: ["orgs"],
     request: jsonBody(RenameOrgInput),
     responses: { 200: jsonRes("org renomeada", OrgOutput) },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/accounts/connect",
+    tags: ["accounts"],
+    request: jsonBody(ConnectTokenInput),
+    responses: {
+      200: jsonRes("contas acessíveis pelo token", ConnectAccountsOutput),
+      400: { description: "token inválido ou sem permissões" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/accounts/select",
+    tags: ["accounts"],
+    request: jsonBody(SelectAccountInput),
+    responses: {
+      201: jsonRes("conta conectada", AdAccountOutput),
+      400: { description: "conta inacessível com esse token" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts",
+    tags: ["accounts"],
+    responses: { 200: jsonRes("contas conectadas da org", z.array(AdAccountOutput)) },
   });
   registry.registerPath({
     method: "get",

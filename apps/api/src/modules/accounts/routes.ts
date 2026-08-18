@@ -18,12 +18,10 @@ export const accountsRoutes: FastifyPluginAsync = async (app) => {
     return { accounts };
   });
 
-  // Escolhe a ad account e persiste o token cifrado.
+  // Escolhe a ad account e persiste o token cifrado (o token é reenviado do cliente).
   app.post("/accounts/select", guard, async (request, reply) => {
     const input = selectAccountInput.parse(request.body);
-    // TODO: recuperar token pendente da etapa /connect (sessão/cache), não recolar.
-    const token = (request.body as { token?: string }).token ?? "";
-    const account = await service.selectAccount(orgIdOf(request), token, input);
+    const account = await service.selectAccount(orgIdOf(request), input);
     return reply.status(201).send(account);
   });
 

@@ -16,6 +16,7 @@ import { argon2Hasher } from "./modules/auth/password.js";
 import { createOrgsService } from "./modules/orgs/service.js";
 import { createDrizzleOrgsRepo } from "./modules/orgs/repo.js";
 import { createAccountsService } from "./modules/accounts/service.js";
+import { createDrizzleAccountsRepo } from "./modules/accounts/repo.js";
 import { createChannelsService } from "./modules/channels/service.js";
 import { createAgentsService } from "./modules/agents/service.js";
 import { createApprovalsService } from "./modules/approvals/service.js";
@@ -25,6 +26,7 @@ import { createWebhooksService } from "./modules/webhooks/service.js";
 import { createAdminService } from "./modules/admin/service.js";
 import { Aes256CredentialVault } from "@trafego/credential-vault";
 import { BullmqScheduler } from "@trafego/scheduler-bullmq";
+import { MetaAdsAdapter, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta";
 import { Redis } from "ioredis";
 
 // ─── Adapters de saída (portas) ──────────────────────────────────────────
@@ -97,8 +99,14 @@ export function buildContainer(): Container {
   const redis = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
   const scheduler = new BullmqScheduler(redis);
 
+  // Meta plugada na Fatia 1b (onboarding: validar token + listar/derivar contas).
+  // Token-only (sem app id/secret): a checagem de escopos + appsecret_proof é fast-follow.
+  const adsPlatform: AdsPlatformPort = new MetaAdsAdapter({
+    client: new MetaGraphClient(),
+    governor: new MetaGovernor({ redis }),
+  });
+
   // Portas ainda não plugadas (fatias seguintes) — placeholders que lançam ao usar.
-  const adsPlatform = todoPort<AdsPlatformPort>("AdsPlatformPort"); // new MetaAdsAdapter()
   const messaging = todoPort<MessagingChannelPort>("MessagingChannelPort"); // new EvolutionChannelAdapter()
   const llm = todoPort<LLMProviderPort>("LLMProviderPort"); // new OpenRouterProvider({ apiKey: env.OPENROUTER_API_KEY })
   const metering = todoPort<MeteringPort>("MeteringPort"); // Postgres
@@ -119,7 +127,7 @@ export function buildContainer(): Container {
   const services: Services = {
     auth: createAuthService({ repo: createDrizzleAuthRepo(db), hasher: argon2Hasher }),
     orgs: createOrgsService({ repo: createDrizzleOrgsRepo(db) }),
-    accounts: createAccountsService({ db, adsPlatform, vault }),
+    accounts: createAccountsService({ repo: createDrizzleAccountsRepo(db), adsPlatform, vault }),
     channels: createChannelsService({ db, messaging }),
     agents: createAgentsService({ db }),
     approvals: createApprovalsService({ db, approvals }),

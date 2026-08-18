@@ -1,5 +1,28 @@
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { ZodError } from "zod";
+import { AdsPlatformError, type AdsPlatformErrorKind } from "@trafego/shared/ports";
+
+/**
+ * Mapa erro-de-plataforma → HTTP amigável. A casca NÃO conhece o provider (Meta):
+ * o adapter traduz seu erro específico p/ `AdsPlatformError` e aqui vira mensagem.
+ */
+const ADS_ERROR_HTTP: Record<AdsPlatformErrorKind, { status: number; code: string; message: string }> = {
+  invalid_credential: {
+    status: 400,
+    code: "ads_invalid_credential",
+    message: "Não consegui validar esse token. Verifique e cole de novo.",
+  },
+  not_accessible: {
+    status: 400,
+    code: "ads_not_accessible",
+    message: "Não consegui acessar essa conta com esse token. Verifique e tente de novo.",
+  },
+  upstream: {
+    status: 502,
+    code: "ads_unavailable",
+    message: "A plataforma de anúncios está indisponível agora. Tente de novo em instantes.",
+  },
+};
 
 /**
  * Erro de aplicação da casca. O core devolve `Result` tipado; a casca traduz
@@ -41,6 +64,11 @@ export function registerErrorHandler(app: FastifyInstance): void {
         .status(error.statusCode)
         .send({ code: error.code, message: error.message, details: error.details });
     }
+    if (error instanceof AdsPlatformError) {
+      const mapped = ADS_ERROR_HTTP[error.kind];
+      if (error.kind === "upstream") request.log.error({ err: error }, "plataforma de ads indisponível");
+      return reply.status(mapped.status).send({ code: mapped.code, message: mapped.message });
+    }
     // Erros da casca com status próprio de cliente (Fastify: 4xx como 415/405/400)
     // → respeita o status + mensagem, nunca vira 500 genérico.
     const status = (error as { statusCode?: number }).statusCode;
@@ -49,7 +77,6 @@ export function registerErrorHandler(app: FastifyInstance): void {
         .status(status)
         .send({ code: (error as { code?: string }).code ?? "request_error", message: error.message });
     }
-    // TODO: mapear erros conhecidos de adapters (ex: Meta code 190) para códigos estáveis.
     request.log.error({ err: error }, "erro não tratado na casca");
     return reply.status(500).send({ code: "internal_error", message: "Erro interno" });
   });

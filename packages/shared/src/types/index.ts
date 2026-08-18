@@ -61,6 +61,18 @@ export interface Creative {
   readonly videoId?: string;
 }
 
+/**
+ * Conta de anúncio acessível por um token, no onboarding (colar token → listar →
+ * escolher). `id` é o ad account id **sem** o prefixo `act_` (como persistimos em
+ * `ad_accounts.ad_account_id`); o adapter adiciona o prefixo ao falar com a Graph.
+ */
+export interface AccessibleAccount {
+  readonly id: string;
+  readonly name: string;
+  readonly currency?: string;
+  readonly businessId?: string;
+}
+
 // ─── Ações do agente ─────────────────────────────────────────────────────
 export type ActionType =
   | "pause_entity"

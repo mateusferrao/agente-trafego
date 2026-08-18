@@ -1,4 +1,5 @@
 import type {
+  AccessibleAccount,
   Action,
   AdEntity,
   Creative,
@@ -28,6 +29,24 @@ export interface MutationResult {
 }
 
 /**
+ * Falha genérica da borda de ads — o adapter traduz o erro específico do provider
+ * (ex: `MetaApiError`) para esta forma, e a casca mapeia p/ HTTP amigável **sem**
+ * conhecer o provider. `invalid_credential` = token inválido; `not_accessible` =
+ * o token não tem posse do recurso; `upstream` = provider indisponível.
+ */
+export type AdsPlatformErrorKind = "invalid_credential" | "not_accessible" | "upstream";
+
+export class AdsPlatformError extends Error {
+  constructor(
+    readonly kind: AdsPlatformErrorKind,
+    message: string,
+  ) {
+    super(message);
+    this.name = "AdsPlatformError";
+  }
+}
+
+/**
  * Borda de plataforma de ads. Adapter MVP = Meta (Graph v26).
  * Amanhã Google/TikTok = novo adapter, zero mudança no core.
  * O adapter é responsável por rate-limit/governor, async insight jobs e batch.
@@ -38,6 +57,14 @@ export interface AdsPlatformPort {
   getCreatives(account: AdAccountRef, adIds: readonly string[]): Promise<Creative[]>;
   /** Aplica uma mutação idempotente; retorna before/after p/ rollback. */
   mutate(account: AdAccountRef, action: Action): Promise<MutationResult>;
-  /** Lista contas acessíveis pelo token (onboarding: cola token → escolhe). */
-  listAccessibleAccounts(accessToken: string): Promise<{ id: string; name: string }[]>;
+  /**
+   * Lista contas acessíveis pelo token (onboarding: cola token → escolhe).
+   * Também **valida** o token — credencial inválida lança `AdsPlatformError`.
+   */
+  listAccessibleAccounts(accessToken: string): Promise<AccessibleAccount[]>;
+  /**
+   * Busca uma única conta pelo id (onboarding: confirmar a escolha). Lança se o
+   * token não tem posse da conta — valida acesso sem re-baixar a lista inteira.
+   */
+  getAdAccount(accessToken: string, adAccountId: string): Promise<AccessibleAccount>;
 }

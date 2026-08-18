@@ -36,6 +36,9 @@ importers:
       '@node-rs/argon2':
         specifier: ^2.1.0
         version: 2.1.0
+      '@trafego/ads-meta':
+        specifier: workspace:*
+        version: link:../../packages/ads-meta
       '@trafego/config':
         specifier: workspace:*
         version: link:../../packages/config
