@@ -1,4 +1,5 @@
-import type { CreateOrgInput, OrgOutput } from "./schema.js";
+import { forbidden } from "../../middleware/error-handler.js";
+import type { CreateOrgInput, OrgOutput, RenameOrgInput } from "./schema.js";
 import type { MembershipRole, OrgsRepo } from "./repo.js";
 
 export interface OrgsDeps {
@@ -19,6 +20,14 @@ export function createOrgsService(deps: OrgsDeps) {
     /** Papel do user na org (null = não-membro). Base do org-scoping/isolamento. */
     membershipRole(userId: string, orgId: string): Promise<MembershipRole | null> {
       return deps.repo.findMembershipRole(userId, orgId);
+    },
+
+    /** Renomeia a org ativa. Só o owner pode; membro é barrado (403). */
+    async rename(userId: string, orgId: string, input: RenameOrgInput): Promise<OrgOutput> {
+      const role = await deps.repo.findMembershipRole(userId, orgId);
+      if (role !== "owner") throw forbidden("Só o dono pode renomear a organização");
+      const org = await deps.repo.rename(orgId, input.name);
+      return { ...org, role };
     },
   };
 }

@@ -17,6 +17,8 @@ export interface OrgsRepo {
   createWithOwner(userId: string, name: string): Promise<OrgOutput>;
   /** Papel do user na org, ou `null` se não for membro (check de isolamento). */
   findMembershipRole(userId: string, orgId: string): Promise<MembershipRole | null>;
+  /** Renomeia a org (só o nome de exibição; slug intacto). Papel é composto no service. */
+  rename(orgId: string, name: string): Promise<{ id: string; name: string }>;
 }
 
 export function createDrizzleOrgsRepo(db: Database): OrgsRepo {
@@ -48,6 +50,16 @@ export function createDrizzleOrgsRepo(db: Database): OrgsRepo {
         .where(and(eq(memberships.userId, userId), eq(memberships.orgId, orgId)))
         .limit(1);
       return row?.role ?? null;
+    },
+
+    async rename(orgId, name) {
+      const [org] = await db
+        .update(orgs)
+        .set({ name })
+        .where(eq(orgs.id, orgId))
+        .returning({ id: orgs.id, name: orgs.name });
+      if (!org) throw new Error("org não encontrada");
+      return org;
     },
   };
 }

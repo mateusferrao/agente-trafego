@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import { FormControl, ReactiveFormsModule } from '@angular/forms';
+import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { toast } from 'ngx-sonner';
 import { UiBadge, UiButton, UiFormField, UiInput, UiPageHeader } from '@ui';
@@ -44,8 +44,8 @@ const ACCESS_BADGE: Record<AccessStatus, AccessBadge> = {
 };
 
 /**
- * Configurações da conta e da organização. Fatia 1a: Perfil (dados do usuário),
- * Organização (nome + renomear — stub), Tema (claro/escuro/sistema) e Acesso
+ * Configurações da conta e da organização: Perfil (dados do usuário),
+ * Organização (renomear — só owner), Tema (claro/escuro/sistema) e Acesso
  * (status do beta como tom + texto). Inclui a ação de sair.
  */
 @Component({
@@ -80,11 +80,13 @@ const ACCESS_BADGE: Record<AccessStatus, AccessBadge> = {
           <h2 class="font-brand text-base font-semibold text-ink">Organização</h2>
           <p class="text-sm text-muted">Nome exibido no topo do painel.</p>
         </div>
-        <form class="flex items-end gap-3" (ngSubmit)="saveOrgName()">
+        <form class="flex items-end gap-3" [formGroup]="orgForm" (ngSubmit)="saveOrgName()">
           <app-ui-form-field label="Nome da organização" class="flex-1">
-            <input appInput type="text" [formControl]="orgNameControl" autocomplete="organization" />
+            <input appInput type="text" formControlName="name" autocomplete="organization" />
           </app-ui-form-field>
-          <button appButton variant="secondary" type="submit">Salvar</button>
+          <button appButton variant="secondary" type="submit" [disabled]="savingOrg()">
+            {{ savingOrg() ? 'Salvando…' : 'Salvar' }}
+          </button>
         </form>
       </section>
 
@@ -143,12 +145,16 @@ export class SettingsPage {
 
   protected readonly themeChoices = THEME_CHOICES;
   protected readonly loggingOut = signal(false);
+  protected readonly savingOrg = signal(false);
 
   protected readonly userName = (): string => this.authStore.me()?.name ?? '—';
   protected readonly userEmail = (): string => this.authStore.me()?.email ?? '—';
 
-  protected readonly orgNameControl = new FormControl(this.authStore.orgName() ?? '', {
-    nonNullable: true,
+  protected readonly orgForm = new FormGroup({
+    name: new FormControl(this.authStore.orgName() ?? '', {
+      nonNullable: true,
+      validators: [Validators.required, Validators.minLength(2)],
+    }),
   });
 
   private readonly accessStatus = signal<AccessStatus | null>(this.authStore.accessStatus());
@@ -168,9 +174,36 @@ export class SettingsPage {
   }
 
   protected saveOrgName(): void {
-    // Renomear organização ainda não tem endpoint na Fatia 1a — placeholder honesto.
-    toast.info('Em breve', {
-      description: 'Renomear a organização estará disponível em uma próxima atualização.',
+    if (this.savingOrg()) {
+      return;
+    }
+    const control = this.orgForm.controls.name;
+    const name = control.value.trim();
+    if (this.orgForm.invalid || name.length < 2) {
+      this.orgForm.markAllAsTouched();
+      toast.warning('Nome muito curto', {
+        description: 'Use pelo menos 2 caracteres para o nome da organização.',
+      });
+      return;
+    }
+    if (name === (this.authStore.orgName() ?? '')) {
+      return; // nada mudou — não chama a API à toa.
+    }
+
+    this.savingOrg.set(true);
+    this.orgApi.renameOrg({ name }).subscribe({
+      next: (org) => {
+        this.authStore.setOrgName(org.name);
+        control.setValue(org.name);
+        this.savingOrg.set(false);
+        toast.success('Nome da organização atualizado');
+      },
+      error: () => {
+        this.savingOrg.set(false);
+        toast.error('Não consegui salvar o nome', {
+          description: 'Verifique sua conexão e tente de novo.',
+        });
+      },
     });
   }
 

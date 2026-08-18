@@ -13,7 +13,7 @@ import {
 } from "@asteasolutions/zod-to-openapi";
 import { z } from "zod";
 import { loginInput, meOutput, signupInput } from "../modules/auth/schema.js";
-import { createOrgInput, orgOutput } from "../modules/orgs/schema.js";
+import { createOrgInput, orgOutput, renameOrgInput } from "../modules/orgs/schema.js";
 import { accessStatusOutput, usageSummaryOutput } from "../modules/billing/schema.js";
 
 extendZodWithOpenApi(z);
@@ -29,6 +29,7 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const LoginInput = registry.register("LoginInput", loginInput);
   const MeOutput = registry.register("MeOutput", meOutput);
   const CreateOrgInput = registry.register("CreateOrgInput", createOrgInput);
+  const RenameOrgInput = registry.register("RenameOrgInput", renameOrgInput);
   const OrgOutput = registry.register("OrgOutput", orgOutput);
   const AccessStatusOutput = registry.register("AccessStatusOutput", accessStatusOutput);
   const UsageSummaryOutput = registry.register("UsageSummaryOutput", usageSummaryOutput);
@@ -85,6 +86,13 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     tags: ["orgs"],
     request: jsonBody(CreateOrgInput),
     responses: { 201: jsonRes("org criada", OrgOutput) },
+  });
+  registry.registerPath({
+    method: "patch",
+    path: "/api/orgs/current",
+    tags: ["orgs"],
+    request: jsonBody(RenameOrgInput),
+    responses: { 200: jsonRes("org renomeada", OrgOutput) },
   });
   registry.registerPath({
     method: "get",

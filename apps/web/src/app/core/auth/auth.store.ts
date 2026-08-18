@@ -79,6 +79,14 @@ export class AuthStore {
     );
   }
 
+  /** Reflete um novo nome de org na sessão local (após renomear em Configurações). */
+  setOrgName(orgName: string): void {
+    const me = this.meSignal();
+    if (me) {
+      this.meSignal.set({ ...me, orgName });
+    }
+  }
+
   private applySession(me: MeOutput | null): void {
     this.meSignal.set(me);
     this.checkedSignal.set(true);

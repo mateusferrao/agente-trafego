@@ -127,6 +127,18 @@
           "name"
         ]
       },
+      "RenameOrgInput": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 2
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
       "OrgOutput": {
         "type": "object",
         "properties": {
@@ -326,6 +338,34 @@
         "responses": {
           "201": {
             "description": "org criada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/orgs/current": {
+      "patch": {
+        "tags": [
+          "orgs"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameOrgInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "org renomeada",
             "content": {
               "application/json": {
                 "schema": {

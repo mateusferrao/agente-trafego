@@ -1,8 +1,9 @@
 import type { FastifyPluginAsync } from "fastify";
 import { requireAuth } from "../../middleware/auth.js";
-import { createOrgInput } from "./schema.js";
+import { requireOrgScope, orgIdOf } from "../../middleware/org-scope.js";
+import { createOrgInput, renameOrgInput } from "./schema.js";
 
-/** Slice de orgs: listar orgs do user e criar nova (vira owner). */
+/** Slice de orgs: listar orgs do user, criar nova (vira owner) e renomear a ativa. */
 export const orgsRoutes: FastifyPluginAsync = async (app) => {
   const service = app.container.services.orgs;
 
@@ -14,5 +15,11 @@ export const orgsRoutes: FastifyPluginAsync = async (app) => {
     const input = createOrgInput.parse(request.body);
     const org = await service.create(request.userId!, input);
     return reply.status(201).send(org);
+  });
+
+  // Renomeia a org ATIVA da sessão (org-scope valida membership; service exige owner).
+  app.patch("/orgs/current", { preHandler: [requireAuth, requireOrgScope] }, async (request) => {
+    const input = renameOrgInput.parse(request.body);
+    return service.rename(request.userId!, orgIdOf(request), input);
   });
 };

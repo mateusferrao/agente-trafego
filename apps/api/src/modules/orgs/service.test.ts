@@ -7,6 +7,7 @@ function makeRepo(overrides: Partial<OrgsRepo> = {}): OrgsRepo {
     listForUser: vi.fn(async () => [{ id: "o1", name: "Org", role: "owner" as const }]),
     createWithOwner: vi.fn(async () => ({ id: "o2", name: "Nova", role: "owner" as const })),
     findMembershipRole: vi.fn(async () => "owner" as const),
+    rename: vi.fn(async () => ({ id: "o1", name: "Renomeada" })),
     ...overrides,
   };
 }
@@ -31,5 +32,20 @@ describe("orgsService", () => {
     const repo = makeRepo({ findMembershipRole: vi.fn(async () => null) });
     const service = createOrgsService({ repo });
     expect(await service.membershipRole("u1", "o9")).toBeNull();
+  });
+
+  it("rename delega ao repo e compõe o papel quando o user é owner", async () => {
+    const repo = makeRepo();
+    const service = createOrgsService({ repo });
+    const org = await service.rename("u1", "o1", { name: "Renomeada" });
+    expect(org).toEqual({ id: "o1", name: "Renomeada", role: "owner" });
+    expect(repo.rename).toHaveBeenCalledWith("o1", "Renomeada");
+  });
+
+  it("rename barra quem não é owner (member)", async () => {
+    const repo = makeRepo({ findMembershipRole: vi.fn(async () => "member" as const) });
+    const service = createOrgsService({ repo });
+    await expect(service.rename("u1", "o1", { name: "X" })).rejects.toThrow();
+    expect(repo.rename).not.toHaveBeenCalled();
   });
 });
