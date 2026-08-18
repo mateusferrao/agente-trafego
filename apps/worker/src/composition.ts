@@ -83,7 +83,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
 
   const vault = new Aes256CredentialVault(env.CREDENTIAL_MASTER_KEY, env.CREDENTIAL_KEY_VERSION);
   const ads = new MetaAdsAdapter({
-    client: new MetaGraphClient({ graphVersion: env.META_GRAPH_VERSION, appSecret: env.META_APP_SECRET }),
+    client: new MetaGraphClient({ appSecret: env.META_APP_SECRET }),
     governor: new MetaGovernor({ redis }),
   });
   const messaging = new EvolutionAdapter({

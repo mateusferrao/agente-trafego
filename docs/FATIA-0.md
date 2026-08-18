@@ -28,7 +28,7 @@ pnpm dev                                                # api (:3333) + worker (
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 ```
 
-Preencha ao menos: `CREDENTIAL_MASTER_KEY`, `SESSION_SECRET` (32+ chars), `BETA_ADMIN_SECRET`, `META_APP_SECRET`, `META_GRAPH_VERSION=v26.0`, `EVOLUTION_BASE_URL`, `EVOLUTION_API_KEY`, `EVOLUTION_INSTANCE`, `FATIA0_RECIPIENT_PHONE` (só dígitos com DDI, ex: `5511999999999`). `DATABASE_URL`/`REDIS_URL` já apontam pro compose local.
+Preencha ao menos: `CREDENTIAL_MASTER_KEY`, `SESSION_SECRET` (32+ chars), `BETA_ADMIN_SECRET`, `META_APP_ID`, `META_APP_SECRET`, `EVOLUTION_BASE_URL`, `EVOLUTION_API_KEY`, `EVOLUTION_INSTANCE`, `FATIA0_RECIPIENT_PHONE` (só dígitos com DDI, ex: `5511999999999`). `DATABASE_URL`/`REDIS_URL` já apontam pro compose local. (A versão do Graph é const no adapter, não env.)
 
 ## Os 2 curls (admin)
 

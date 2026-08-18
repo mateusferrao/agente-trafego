@@ -73,9 +73,15 @@ export interface BatchSubRequest {
   readonly body?: Readonly<Record<string, unknown>>;
 }
 
+/**
+ * Versão pinada da Graph API — **acoplada ao código deste adapter** (escrito p/
+ * v26). Não é env: mudar a versão exige revisar o adapter, não só o ambiente.
+ */
+export const META_GRAPH_VERSION = "v26.0";
+
 export interface MetaClientOptions {
-  /** ex: "v26.0" — lido de META_GRAPH_VERSION. */
-  readonly graphVersion: string;
+  /** override da versão (default = META_GRAPH_VERSION). */
+  readonly graphVersion?: string;
   readonly baseUrl?: string; // default https://graph.facebook.com
   readonly appSecret?: string; // opcional: appsecret_proof
 }
@@ -85,8 +91,8 @@ export class MetaGraphClient {
   private readonly baseUrl: string;
   private readonly appSecret: string | undefined;
 
-  constructor(options: MetaClientOptions) {
-    this.graphVersion = options.graphVersion;
+  constructor(options: MetaClientOptions = {}) {
+    this.graphVersion = options.graphVersion ?? META_GRAPH_VERSION;
     this.baseUrl = options.baseUrl ?? "https://graph.facebook.com";
     this.appSecret = options.appSecret;
   }

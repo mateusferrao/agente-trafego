@@ -46,22 +46,23 @@ export const envSchema = z.object({
   CREDENTIAL_KEY_VERSION: z.coerce.number().int().positive().default(1),
 
   // ─── LLM (OpenRouter) ──────────────────────────────────────────────────
+  // Secret = env. OPENROUTER_MODEL/VISION_MODEL e LLM_COST_CAP são **defaults
+  // globais** de produto — o alvo é config na DB (modelo por agente em
+  // `agents.model_config`; cap por org em `guardrail_configs.llm_cost_cap`).
+  // Ficam aqui como fallback até 3a/4 ligarem a config por-agente/org. Não-usados na Fatia 0.
   OPENROUTER_API_KEY: z.string().min(1, "OPENROUTER_API_KEY é obrigatória"),
   OPENROUTER_MODEL: z.string().min(1).default("google/gemini-2.5-flash"),
   OPENROUTER_VISION_MODEL: z
     .string()
     .min(1)
     .default("google/gemini-2.5-flash"),
-  // cap de custo LLM por org por período (USD); 0 = sem cap.
   LLM_COST_CAP_USD_PER_PERIOD: z.coerce.number().min(0).default(0),
 
   // ─── Meta (Graph API) ──────────────────────────────────────────────────
+  // A versão do Graph NÃO é env (é const acoplada ao adapter: `META_GRAPH_VERSION`
+  // em @trafego/ads-meta). Aqui só App ID + secret.
   META_APP_ID: z.string().min(1, "META_APP_ID é obrigatório"),
   META_APP_SECRET: z.string().min(1, "META_APP_SECRET é obrigatório"),
-  META_GRAPH_VERSION: z
-    .string()
-    .regex(/^v\d+\.\d+$/, "META_GRAPH_VERSION deve ser no formato vXX.Y")
-    .default("v26.0"),
 
   // ─── WhatsApp (Evolution) ──────────────────────────────────────────────
   EVOLUTION_BASE_URL: z.string().url(),
@@ -82,7 +83,10 @@ export const envSchema = z.object({
     .regex(/^\d{8,15}$/, "FATIA0_RECIPIENT_PHONE deve ser só dígitos com DDI (ex: 5511999999999)"),
 
   // ─── Análise / Governor ────────────────────────────────────────────────
+  // INSIGHTS_RETENTION_DAYS = knob de ops (janela de retenção), env ok.
   INSIGHTS_RETENTION_DAYS: z.coerce.number().int().positive().default(90),
+  // ANALYSIS_MAX_CREATIVES_VISION = default global; alvo = config por agente (DB).
+  // Fallback até 4 ligar a config por-agente. Não-usado na Fatia 0.
   ANALYSIS_MAX_CREATIVES_VISION: z.coerce
     .number()
     .int()
