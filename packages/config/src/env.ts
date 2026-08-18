@@ -29,6 +29,9 @@ export const envSchema = z.object({
   // ─── Redis (BullMQ / governor) ─────────────────────────────────────────
   REDIS_URL: z.string().url(),
 
+  // aplica migrations no boot da api (idempotente). false = migrar fora (CI/release).
+  AUTO_MIGRATE: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
+
   // ─── Credential Vault (AES-256-GCM) ────────────────────────────────────
   // chave mestra base64 de 32 bytes (secret do EasyPanel em produção).
   CREDENTIAL_MASTER_KEY: z

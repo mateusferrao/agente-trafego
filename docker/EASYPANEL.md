@@ -73,12 +73,10 @@ FATIA0_RECIPIENT_PHONE=<DDI+numero, ex 5511999999999>
 - **Sem Domain** (worker não escuta HTTP).
 - **Environment:** as **mesmas** envs da api (colar o mesmo bloco; `API_PORT`/`WEB_ORIGIN` são inócuas aqui). Deploy.
 
-### 6. Migrations + seed (uma vez)
-No serviço **api** → menu **Console/Shell** → rodar:
-```
-pnpm db:deploy
-```
-Aplica o SQL de `packages/db/drizzle/` (migrator do `drizzle-orm`) + semeia a org beta. **Idempotente** — repetir é seguro. Só precisa de `drizzle-orm` + `tsx` (ambos runtime), então funciona mesmo com devDeps podadas.
+### 6. Migrations (automáticas) + seed (uma vez)
+**Migrations rodam sozinhas** no boot da api (`AUTO_MIGRATE=true`): a cada deploy, antes de escutar, a api aplica o SQL pendente de `packages/db/drizzle/` (migrator do `drizzle-orm`, idempotente). Não precisa de passo manual. Só a **api** migra; o worker assume o schema pronto. (Pra migrar fora do boot — CI/release — setar `AUTO_MIGRATE=false` e rodar `pnpm db:deploy` no Shell.)
+
+**Seed** (org beta — scaffolding da Fatia 0, roda **uma vez só**, não por deploy): no Shell da api → `pnpm db:seed`. Idempotente. Some quando a 1a trouxer signup real.
 
 ### 7. Fumaça (prova do fio)
 Com **token System User válido**, do seu terminal (detalhe em [`../docs/FATIA-0.md`](../docs/FATIA-0.md)):

@@ -2,6 +2,7 @@ import { pathToFileURL } from "node:url";
 import cookie from "@fastify/cookie";
 import session from "@fastify/session";
 import Fastify, { type FastifyInstance } from "fastify";
+import { runMigrations } from "@trafego/db";
 
 import { env } from "../env.js";
 import { buildContainer } from "../composition.js";
@@ -88,6 +89,12 @@ export async function buildApp(): Promise<FastifyInstance> {
 async function start(): Promise<void> {
   const app = await buildApp();
   try {
+    // auto-migrate no boot (idempotente) — só a api migra; worker assume o schema.
+    if (env.AUTO_MIGRATE) {
+      app.log.info("aplicando migrations");
+      await runMigrations(env.DATABASE_URL);
+      app.log.info("migrations aplicadas");
+    }
     await app.listen({ port: env.API_PORT, host: "0.0.0.0" });
   } catch (err) {
     app.log.error({ err }, "falha ao subir a API");
