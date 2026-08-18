@@ -56,9 +56,9 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Composition root manual — portas + services montados uma vez.
   app.decorate("container", buildContainer());
 
-  // Sessão híbrida (§12): cookies via @fastify/cookie. O token opaco vai num
-  // cookie httpOnly (casado com `sessions` no DB); o contexto (org ativa) vai
-  // num cookie selado por iron-session. Ver `http/cookies.ts` + slice de auth.
+  // Sessão (§12): cookie httpOnly com token opaco (casado com `sessions` no DB,
+  // revogável). A org ativa mora na sessão no DB, não em cookie. Ver
+  // `http/cookies.ts` + slice de auth.
   await app.register(cookie);
 
   // Rate-limit (Redis compartilhado) — opt-in por rota (`global: false`),

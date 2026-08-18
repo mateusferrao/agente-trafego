@@ -42,7 +42,6 @@ NODE_ENV=production
 LOG_LEVEL=info
 API_PORT=3333
 WEB_ORIGIN=https://<seu-dominio>
-SESSION_SECRET=<32+ chars>
 DATABASE_URL=<internal url do postgres>
 REDIS_URL=<internal url do redis>
 CREDENTIAL_MASTER_KEY=<32 bytes em base64>
@@ -96,4 +95,4 @@ Box único = ponto único de falha. Mitigar: backup agendado do Postgres + snaps
 
 ## Segredos
 
-`CREDENTIAL_MASTER_KEY` (32 bytes base64), `SESSION_SECRET`, `OPENROUTER_API_KEY`, `META_APP_SECRET`, `EVOLUTION_API_KEY`, `EVOLUTION_WEBHOOK_SECRET`, `BETA_ADMIN_SECRET` (guard dos endpoints admin) — **secrets do painel**, nunca no repo. Fatia 0 também precisa de `EVOLUTION_INSTANCE` e `FATIA0_RECIPIENT_PHONE` (config, não secret).
+`CREDENTIAL_MASTER_KEY` (32 bytes base64), `OPENROUTER_API_KEY`, `META_APP_SECRET`, `EVOLUTION_API_KEY`, `EVOLUTION_WEBHOOK_SECRET`, `BETA_ADMIN_SECRET` (guard dos endpoints admin) — **secrets do painel**, nunca no repo. Fatia 0 também precisa de `EVOLUTION_INSTANCE` e `FATIA0_RECIPIENT_PHONE` (config, não secret).

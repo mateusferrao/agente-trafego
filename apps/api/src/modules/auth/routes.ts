@@ -1,12 +1,7 @@
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import { env } from "../../env.js";
 import { requireAuth } from "../../middleware/auth.js";
-import {
-  SESSION_CONTEXT_COOKIE,
-  SESSION_TOKEN_COOKIE,
-  sealContext,
-  sessionCookieOptions,
-} from "../../http/cookies.js";
+import { SESSION_TOKEN_COOKIE, sessionCookieOptions } from "../../http/cookies.js";
 import { loginInput, signupInput } from "./schema.js";
 import type { SessionContext, SessionIssued } from "./service.js";
 
@@ -18,12 +13,13 @@ function contextOf(request: FastifyRequest): SessionContext {
   return { ipAddress: request.ip, userAgent: request.headers["user-agent"] };
 }
 
-/** Grava os dois cookies da sessão híbrida: token opaco + contexto selado. */
-async function setSessionCookies(reply: FastifyReply, issued: SessionIssued): Promise<void> {
-  const opts = sessionCookieOptions(env.NODE_ENV === "production");
-  reply.setCookie(SESSION_TOKEN_COOKIE, issued.rawToken, opts);
-  const sealed = await sealContext({ activeOrgId: issued.me.orgId }, env.SESSION_SECRET);
-  reply.setCookie(SESSION_CONTEXT_COOKIE, sealed, opts);
+/** Grava o cookie de sessão (token opaco; a org ativa mora na sessão no DB). */
+function setSessionCookie(reply: FastifyReply, issued: SessionIssued): void {
+  reply.setCookie(
+    SESSION_TOKEN_COOKIE,
+    issued.rawToken,
+    sessionCookieOptions(env.NODE_ENV === "production"),
+  );
 }
 
 /** Slice de auth: signup/login/logout (públicos) + `me` (protegida). */
@@ -33,23 +29,21 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
   app.post("/auth/signup", { config: { rateLimit: AUTH_RATE_LIMIT } }, async (request, reply) => {
     const input = signupInput.parse(request.body);
     const issued = await service.signup(input, contextOf(request));
-    await setSessionCookies(reply, issued);
+    setSessionCookie(reply, issued);
     return reply.status(201).send(issued.me);
   });
 
   app.post("/auth/login", { config: { rateLimit: AUTH_RATE_LIMIT } }, async (request, reply) => {
     const input = loginInput.parse(request.body);
     const issued = await service.login(input, contextOf(request));
-    await setSessionCookies(reply, issued);
+    setSessionCookie(reply, issued);
     return reply.send(issued.me);
   });
 
   app.post("/auth/logout", async (request, reply) => {
     const token = request.cookies?.[SESSION_TOKEN_COOKIE];
     if (token) await service.logout(token);
-    const opts = sessionCookieOptions(env.NODE_ENV === "production");
-    reply.clearCookie(SESSION_TOKEN_COOKIE, opts);
-    reply.clearCookie(SESSION_CONTEXT_COOKIE, opts);
+    reply.clearCookie(SESSION_TOKEN_COOKIE, sessionCookieOptions(env.NODE_ENV === "production"));
     return reply.send({ ok: true });
   });
 

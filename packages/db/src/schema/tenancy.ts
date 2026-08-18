@@ -36,11 +36,11 @@ export const memberships = pgTable(
 );
 
 /**
- * Sessão híbrida (§12): o cookie leva um token opaco; o DB guarda só o
+ * Sessão server-side (§12): o cookie leva um token opaco; o DB guarda só o
  * **hash sha256** (`tokenHash`) — nunca o token em claro. Revogável
  * (`revokedAt`), com expiração deslizante (`lastUsedAt`) e trilha de origem
- * (`ipAddress`/`userAgent`). Complementada por um cookie selado (iron-session)
- * que carrega o contexto mutável da sessão (org ativa).
+ * (`ipAddress`/`userAgent`). A org ativa da sessão (`orgId`) mora aqui, não em
+ * cookie — troca de org = UPDATE nesta linha (org-switcher, fast-follow).
  */
 export const sessions = pgTable(
   "sessions",

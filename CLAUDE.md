@@ -69,7 +69,7 @@
 | LLM | **OpenRouter** | 1 gateway multimodal; captura custo/token nativa (essencial p/ billing por markup) |
 | DB | **Postgres puro + Drizzle** | Portável via `pg_dump`; não acopla em recurso proprietário |
 | Contrato API | **zod → OpenAPI → kubb (TYPES-ONLY)** consumido via `BaseApiService` (Angular HttpClient, `withCredentials`) | Tipos ponta-a-ponta sem drift; o client gerado seria dead-code (o stack usa HttpClient + interceptors) |
-| Auth | Sessão **híbrida** (tabela `sessions` token-opaco→hash + cookie selado iron-session) + **@node-rs/argon2** | Padrão Automato; revogável no DB; zero dependência externa; roda self-host |
+| Auth | Sessão **server-side** (tabela `sessions` token-opaco→hash, org ativa em `sessions.orgId`) + **@node-rs/argon2** | Revogável no DB; zero dependência externa; roda self-host |
 | Hosting | **Hostinger + EasyPanel** | Self-host; casa com "banco próprio"; Evolution já roda lá |
 
 Ver `docs/plan.md` para o histórico completo de trade-offs discutidos.
@@ -188,7 +188,7 @@ Schema em `packages/db/src/schema`. Grupos:
 - **Credencial (token System User = joia da coroa):** envelope **AES-256-GCM**, `CREDENTIAL_MASTER_KEY` (secret EasyPanel), `keyVersion` p/ rotação. Nunca logar token.
 - **Org scoping:** toda query filtrada por `org_id` (helper de contexto scoped p/ evitar vazamento cross-tenant).
 - **RBAC:** owner/member org-wide no MVP, **extensível a granular** (ACL por conta = fast-follow).
-- **Sessão híbrida:** tabela `sessions` server-side (cookie leva **token opaco**; DB guarda só o `tokenHash` sha256 — revogável, expiração **deslizante**, trilha `ip/ua`) **+** cookie **selado por iron-session** com o contexto mutável (org ativa), password = `SESSION_SECRET`. Cookies `httpOnly` + `SameSite=lax` + `secure` em prod. Senha do usuário: **`@node-rs/argon2`** (prebuilt, sem node-gyp). Login/signup com rate-limit (`@fastify/rate-limit`, Redis).
+- **Sessão server-side:** tabela `sessions` (cookie leva **token opaco**; DB guarda só o `tokenHash` sha256 — revogável, expiração **deslizante** throttlada, trilha `ip/ua`). A **org ativa mora em `sessions.orgId`** (não em cookie) — troca de org = UPDATE na linha (org-switcher = fast-follow). Cookie `httpOnly` + `SameSite=lax` + `secure` em prod. Senha do usuário: **`@node-rs/argon2`** (prebuilt, sem node-gyp). Login/signup com rate-limit (`@fastify/rate-limit`, Redis) + `trustProxy` (IP real atrás do EasyPanel).
 - **Webhook Evolution:** valida `EVOLUTION_WEBHOOK_SECRET`.
 - **LGPD:** telefones + dados de anúncio; token cripto; base no Postgres self-host.
 

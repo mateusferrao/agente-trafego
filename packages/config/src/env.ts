@@ -17,11 +17,11 @@ export const envSchema = z.object({
     .default("info"),
 
   // ─── HTTP / Auth ───────────────────────────────────────────────────────
+  // Sessão = token opaco no cookie + hash no Postgres (nenhum segredo de app
+  // p/ assinar/selar cookie). Se um dia entrar cookie assinado/CSRF token,
+  // reintroduzir um SESSION_SECRET aqui.
   API_PORT: z.coerce.number().int().positive().default(3333),
   WEB_ORIGIN: z.string().url().default("http://localhost:4200"),
-  SESSION_SECRET: z
-    .string()
-    .min(32, "SESSION_SECRET deve ter ao menos 32 bytes"),
 
   // ─── Postgres (Drizzle) ────────────────────────────────────────────────
   DATABASE_URL: z.string().url(),
