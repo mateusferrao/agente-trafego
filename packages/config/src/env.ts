@@ -93,6 +93,13 @@ export const envSchema = z.object({
   // ─── Análise / Governor ────────────────────────────────────────────────
   // INSIGHTS_RETENTION_DAYS = knob de ops (janela de retenção), env ok.
   INSIGHTS_RETENTION_DAYS: z.coerce.number().int().positive().default(90),
+  // Quantos dias RECENTES o sync re-baixa a cada run p/ pegar conversões que a
+  // Meta atribui a dias passados com atraso (frescura do snapshot). ≠ janela de
+  // atribuição da Meta (essa é por-adset, no adapter). ~ maior janela de atribuição.
+  INSIGHTS_REFETCH_WINDOW_DAYS: z.coerce.number().int().positive().default(7),
+  // TTL do cache (Redis) da lista de conversões personalizadas por conta. Um id
+  // fora do cache dispara refresh (self-healing), então o TTL pode ser folgado.
+  CUSTOM_CONVERSIONS_CACHE_TTL_SEC: z.coerce.number().int().positive().default(21600),
   // ANALYSIS_MAX_CREATIVES_VISION = default global; alvo = config por agente (DB).
   // Fallback até 4 ligar a config por-agente. Não-usado na Fatia 0.
   ANALYSIS_MAX_CREATIVES_VISION: z.coerce

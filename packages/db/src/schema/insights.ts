@@ -1,5 +1,5 @@
 import { date, index, jsonb, pgTable, text, uniqueIndex, uuid } from "drizzle-orm/pg-core";
-import type { InsightMetrics } from "@trafego/shared";
+import type { StoredInsightMetrics } from "@trafego/shared";
 import { entityLevel, pk, timestamps } from "./_shared.js";
 import { adAccounts } from "./integrations.js";
 import { orgs } from "./tenancy.js";
@@ -21,7 +21,7 @@ export const insightsSnapshots = pgTable(
     entityLevel: entityLevel("entity_level").notNull(),
     entityId: text("entity_id").notNull(),
     date: date("date").notNull(),
-    metricsJson: jsonb("metrics_json").$type<InsightMetrics>().notNull(),
+    metricsJson: jsonb("metrics_json").$type<StoredInsightMetrics>().notNull(),
     ...timestamps,
   },
   (t) => [

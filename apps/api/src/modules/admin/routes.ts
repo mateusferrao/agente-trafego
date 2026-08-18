@@ -11,6 +11,12 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
   const service = app.container.services.admin;
   const guard = { preHandler: [makeRequireAdminSecret(env.BETA_ADMIN_SECRET)] };
 
+  // Os triggers (/run, /sync) são POST **sem corpo**; alguns clientes (ex: PowerShell
+  // Invoke-RestMethod) mandam um content-type sem parser → 415 (FST_ERR_CTP_INVALID_MEDIA_TYPE).
+  // Parser catch-all escopado a este plugin trata corpo ausente/desconhecido como vazio;
+  // `application/json` segue no parser nativo (o /accounts continua validando o body).
+  app.addContentTypeParser("*", { parseAs: "buffer" }, (_req, _body, done) => done(null, undefined));
+
   app.post("/admin/accounts", guard, async (request, reply) => {
     const input = connectAccountInput.parse(request.body);
     const result = await service.connectAccount(input);
@@ -20,6 +26,12 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
   app.post("/admin/accounts/:id/run", guard, async (request, reply) => {
     const { id } = runParams.parse(request.params);
     await service.triggerRun(id);
+    return reply.status(202).send({ status: "enqueued", accountId: id });
+  });
+
+  app.post("/admin/accounts/:id/sync", guard, async (request, reply) => {
+    const { id } = runParams.parse(request.params);
+    await service.triggerSync(id);
     return reply.status(202).send({ status: "enqueued", accountId: id });
   });
 };

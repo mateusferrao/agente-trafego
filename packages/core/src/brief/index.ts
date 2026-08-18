@@ -3,12 +3,16 @@ import type {
   AgentGoals,
   Anomaly,
   CandidateAction,
+  ConversionBreakdown,
   Creative,
+  EntityLevel,
+  EntityObjective,
   EntitySummary,
   InsightMetrics,
   InsightRow,
   TrendPoint,
 } from "@trafego/shared";
+import { resolveConversion, type ResolvedConversion } from "../conversion/index.js";
 
 /**
  * Curadoria determinística PURA entre a Meta e o LLM (§7). O LLM nunca vê o
@@ -20,8 +24,115 @@ import type {
  * pesadas marcadas com TODO).
  */
 
+// ─── normalize ────────────────────────────────────────────────────────────
+/** Entidade agregada sobre a janela (soma das linhas diárias) — forma canônica. */
+export interface NormalizedEntity {
+  readonly entityId: string;
+  readonly level: EntityLevel;
+  readonly spend: number;
+  readonly impressions: number;
+  readonly clicks: number;
+  readonly conversions: ConversionBreakdown;
+}
+
+/**
+ * Agrega as linhas diárias por (nível, entidade), somando escalares e o breakdown
+ * de conversões (por goal + id da personalizada). Forma canônica p/ computeDerived.
+ */
+export function normalize(rows: readonly InsightRow[]): NormalizedEntity[] {
+  interface Acc {
+    entityId: string;
+    level: EntityLevel;
+    spend: number;
+    impressions: number;
+    clicks: number;
+    conv: Map<string, { goal: ConversionBreakdown[number]["goal"]; customConversionId?: string; count: number; value: number }>;
+  }
+  const byKey = new Map<string, Acc>();
+
+  for (const row of rows) {
+    const key = `${row.level}:${row.entityId}`;
+    const acc =
+      byKey.get(key) ??
+      { entityId: row.entityId, level: row.level, spend: 0, impressions: 0, clicks: 0, conv: new Map() };
+    acc.spend += row.metrics.spend ?? 0;
+    acc.impressions += row.metrics.impressions ?? 0;
+    acc.clicks += row.metrics.clicks ?? 0;
+    for (const c of row.conversions ?? []) {
+      const ck = `${c.goal}:${c.customConversionId ?? ""}`;
+      const e =
+        acc.conv.get(ck) ??
+        { goal: c.goal, ...(c.customConversionId ? { customConversionId: c.customConversionId } : {}), count: 0, value: 0 };
+      e.count += c.count;
+      e.value += c.value ?? 0;
+      acc.conv.set(ck, e);
+    }
+    byKey.set(key, acc);
+  }
+
+  return [...byKey.values()].map((a) => ({
+    entityId: a.entityId,
+    level: a.level,
+    spend: a.spend,
+    impressions: a.impressions,
+    clicks: a.clicks,
+    conversions: [...a.conv.values()].map((v) => ({
+      goal: v.goal,
+      ...(v.customConversionId ? { customConversionId: v.customConversionId } : {}),
+      count: v.count,
+      ...(v.value ? { value: v.value } : {}),
+    })),
+  }));
+}
+
+// ─── computeDerived ───────────────────────────────────────────────────────
+/**
+ * Deriva métricas de uma entidade agregada. CPA/ROAS usam a conversão **primária**
+ * (o objetivo próprio da entidade; override do agente vence — `resolveConversion`),
+ * casando por goal + id no breakdown. Sem conversão → julga por CPC/CPM (sem CPA).
+ * Guarda divisão por zero.
+ */
+export function computeDerived(
+  entity: NormalizedEntity,
+  objective?: EntityObjective,
+  override?: ResolvedConversion,
+): InsightMetrics {
+  const { spend, impressions, clicks } = entity;
+  const ctr = impressions > 0 ? round((clicks / impressions) * 100, 4) : 0;
+  const cpc = clicks > 0 ? round(spend / clicks, 4) : 0;
+  const cpm = impressions > 0 ? round((spend / impressions) * 1000, 4) : 0;
+
+  let conversions: number | undefined;
+  let cpa: number | undefined;
+  let roas: number | undefined;
+
+  const resolved = resolveConversion(objective, override);
+  if (resolved) {
+    const match = entity.conversions.find(
+      (c) =>
+        c.goal === resolved.goal &&
+        (resolved.customConversionId ? c.customConversionId === resolved.customConversionId : true),
+    );
+    conversions = match?.count ?? 0;
+    if (match && match.count > 0) cpa = round(spend / match.count, 4);
+    if (match && spend > 0 && match.value !== undefined) roas = round(match.value / spend, 4);
+  }
+
+  return {
+    spend,
+    impressions,
+    clicks,
+    ctr,
+    cpc,
+    cpm,
+    ...(conversions !== undefined ? { conversions } : {}),
+    ...(cpa !== undefined ? { cpa } : {}),
+    ...(roas !== undefined ? { roas } : {}),
+  };
+}
+
 // ─── computeTrends ────────────────────────────────────────────────────────
-/** Agrega linhas diárias em pontos de tendência (uma entrada por data). */
+/** Agrega linhas diárias em pontos de tendência (uma entrada por data, com derivadas). */
 export function computeTrends(rows: InsightRow[]): TrendPoint[] {
   const byDate = new Map<string, { spend: number; impressions: number; clicks: number }>();
 
@@ -38,11 +149,13 @@ export function computeTrends(rows: InsightRow[]): TrendPoint[] {
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([date, m]) => ({
       date,
-      // TODO: computar derivadas (ctr, cpc, cpm, roas) por dia quando necessário
       metrics: {
         spend: m.spend,
         impressions: m.impressions,
         clicks: m.clicks,
+        ctr: m.impressions > 0 ? round((m.clicks / m.impressions) * 100, 4) : 0,
+        cpc: m.clicks > 0 ? round(m.spend / m.clicks, 4) : 0,
+        cpm: m.impressions > 0 ? round((m.spend / m.impressions) * 1000, 4) : 0,
       } as Partial<InsightMetrics>,
     }));
 }
@@ -106,6 +219,38 @@ export function rankAndSelect(entities: EntitySummary[], topN: number): EntitySu
   return [...flagged, ...topBySpend];
 }
 
+// ─── summarizeRest ────────────────────────────────────────────────────────
+/**
+ * Resume a cauda longa (entidades NÃO selecionadas) em agregados — o LLM vê o topo
+ * curado + este resumo, nunca o firehose. `avgCpa` só quando há CPA na cauda.
+ */
+export function summarizeRest(
+  all: readonly EntitySummary[],
+  selected: readonly EntitySummary[],
+): AccountBrief["aggregatesRest"] {
+  const selectedIds = new Set(selected.map((e) => e.id));
+  const rest = all.filter((e) => !selectedIds.has(e.id));
+  const spend = rest.reduce((s, e) => s + (e.metrics.spend ?? 0), 0);
+  const cpas = rest
+    .map((e) => e.metrics.cpa)
+    .filter((x): x is number => typeof x === "number");
+  return {
+    count: rest.length,
+    spend: round(spend, 2),
+    ...(cpas.length > 0 ? { avgCpa: round(average(cpas), 2) } : {}),
+  };
+}
+
+// ─── selectCreatives ──────────────────────────────────────────────────────
+/**
+ * Seleção de criativos p/ visão. Só faz sentido quando a análise de visão existe
+ * (Fatia 3b, com `ANALYSIS_MAX_CREATIVES_VISION`); até lá, vazio. `getCreatives`
+ * (capacidade) já existe no adapter (2a), mas não entra no brief ainda.
+ */
+export function selectCreatives(): Creative[] {
+  return [];
+}
+
 // ─── assembleBrief ────────────────────────────────────────────────────────
 export interface AssembleBriefInput {
   readonly account: AccountBrief["account"];
@@ -128,8 +273,7 @@ export interface AssembleBriefInput {
  * selectCreatives com cap de visão) acontece nos passos anteriores.
  */
 export function assembleBrief(input: AssembleBriefInput): AccountBrief {
-  // TODO: aplicar ANALYSIS_MAX_CREATIVES_VISION (cap de custo de visão) —
-  // selecionar só flagados com imagem confiável antes de montar.
+  // creatives = seleção de visão (3b). Aqui é só composição das partes já curadas.
   return {
     account: input.account,
     goals: input.goals,

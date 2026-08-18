@@ -129,6 +129,8 @@ Schema em `packages/db/src/schema`. Grupos:
 
 **Curadoria — `AccountBrief` (pilar):** camada **determinística pura** (`packages/core/src/brief`) entre Meta e LLM. O LLM nunca vê o firehose. Pipeline: `normalize → computeDerived → computeTrends → detectAnomalies → rankAndSelect(top-N + flagados) → summarizeRest → selectCreatives(só flagados) → assembleBrief`. Resolve degradação da análise **e** custo de visão (`ANALYSIS_MAX_CREATIVES_VISION`).
 
+**Conversão (CPA/ROAS) = objetivo próprio da entidade, genérico:** CPA/ROAS derivam da conversão que **a entidade otimiza** (o objetivo já configurado na plataforma), com override por agente (config, Fatia 4). O vocabulário/mapeamento específico da plataforma (Meta `action_type`/`optimization_goal`/conversões personalizadas) vive **só no adapter**; o core e o `shared` falam uma taxonomia neutra (`ConversionGoal`) — adicionar Google/TikTok = novo adapter mapeando pro mesmo enum, **sem tocar no core**.
+
 **Governor de rate-limit:** token-bucket por `ad_account` (Redis, lê `X-Business-Use-Case-Usage`), Batch API (≤50/HTTP), async report jobs, `insights_snapshots` (não re-baixa histórico), sync incremental, jitter/stagger nos crons, **degradação graciosa** (roda com cache/parcial + nota "análise parcial").
 
 **Functional core:** `playbook`, `guardrails`, `decision` (seleção de ação) e `brief` são **funções puras** em `packages/core` — testadas sem mock. Nós do grafo são finos (só IO + chamam o core).
@@ -241,7 +243,7 @@ Schema em `packages/db/src/schema`. Grupos:
 
 Construção em **13 sub-fatias** (walking-skeleton-first) + estratégia de **paralelização em worktrees** → ver **[`docs/ROADMAP.md`](docs/ROADMAP.md)**. Marcos: `3a` valida a hipótese; beta read-only abre após `3b`; escrita só a partir de `5a`. **Criação de campanhas = Fatia 7 (pós-MVP)** — o gestor completo no WhatsApp (ver `docs/ROADMAP.md`).
 
-Fast-follows: ver §2 (OUT).
+Fast-follows / decisões adiadas: consolidadas em **[`docs/ROADMAP.md`](docs/ROADMAP.md) → "Pós-MVP — fast-follows e decisões adiadas"** (a §2 OUT é o recorte de produto; o ROADMAP é a lista viva).
 
 ---
 

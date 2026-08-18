@@ -1,0 +1,153 @@
+import type { ConversionGoal, EntityObjective } from "@trafego/shared";
+
+/**
+ * Mapeamento **específico da Meta** → taxonomia genérica de conversão. TODO o
+ * vocabulário Meta (action_type, custom_event_type, optimization_goal, objetivo de
+ * campanha) vive AQUI, isolado no adapter — o core e o resto do sistema só falam
+ * `ConversionGoal`. Adicionar Google/TikTok = outro mapa como este, sem tocar no core.
+ *
+ * ⚠️ As 3 grafias da Meta para o mesmo conceito NÃO são string-idênticas (pixel
+ * `InitiateCheckout` ≠ enum `INITIATED_CHECKOUT` ≠ action `fb_pixel_initiate_checkout`),
+ * por isso tabelas explícitas em vez de transformar string.
+ */
+
+const OFFSITE_PIXEL_PREFIX = "offsite_conversion.fb_pixel_";
+const OFFSITE_CUSTOM_PREFIX = "offsite_conversion.custom.";
+const ONSITE_PREFIX = "onsite_conversion.";
+
+// action_type (sufixo do evento padrão de pixel) → goal genérico.
+const PIXEL_EVENT_TO_GOAL: Readonly<Record<string, ConversionGoal>> = {
+  purchase: "purchase",
+  lead: "lead",
+  complete_registration: "registration",
+  initiate_checkout: "initiate_checkout",
+  add_to_cart: "add_to_cart",
+  view_content: "view_content",
+  add_payment_info: "add_payment_info",
+  search: "search",
+  contact: "contact",
+  subscribe: "subscribe",
+  start_trial: "start_trial",
+  submit_application: "submit_application",
+};
+
+// action_type on-Facebook → goal genérico.
+const ONSITE_EVENT_TO_GOAL: Readonly<Record<string, ConversionGoal>> = {
+  messaging_conversation_started_7d: "messaging_started",
+  lead_grouped: "lead",
+  purchase: "purchase",
+};
+
+// promoted_object.custom_event_type (enum) → goal genérico.
+const CUSTOM_EVENT_TYPE_TO_GOAL: Readonly<Record<string, ConversionGoal>> = {
+  PURCHASE: "purchase",
+  LEAD: "lead",
+  COMPLETE_REGISTRATION: "registration",
+  INITIATED_CHECKOUT: "initiate_checkout",
+  ADD_TO_CART: "add_to_cart",
+  CONTENT_VIEW: "view_content",
+  ADD_PAYMENT_INFO: "add_payment_info",
+  SEARCH: "search",
+  CONTACT: "contact",
+  SUBSCRIBE: "subscribe",
+  START_TRIAL: "start_trial",
+  SUBMIT_APPLICATION: "submit_application",
+  MESSAGING_CONVERSATION_STARTED_7D: "messaging_started",
+};
+
+// optimization_goal (adset) que define o objetivo direto, sem promoted_object.
+const OPTIMIZATION_GOAL_DIRECT: Readonly<Record<string, ConversionGoal>> = {
+  LEAD_GENERATION: "lead",
+  QUALITY_LEAD: "lead",
+  CONVERSATIONS: "messaging_started",
+  APP_INSTALLS: "app_install",
+};
+
+// optimization_goal que usa o promoted_object p/ saber a conversão exata.
+const OPTIMIZATION_GOAL_USES_PROMOTED = new Set(["OFFSITE_CONVERSIONS", "VALUE"]);
+
+// objetivo de campanha (coarse) → goal, fallback p/ o nível campanha.
+const CAMPAIGN_OBJECTIVE_TO_GOAL: Readonly<Record<string, ConversionGoal>> = {
+  OUTCOME_SALES: "purchase",
+  OUTCOME_LEADS: "lead",
+  OUTCOME_APP_PROMOTION: "app_install",
+};
+
+/** O que uma linha de `actions` representa como conversão (ou null se não for conversão). */
+export interface ActionConversion {
+  readonly goal: ConversionGoal;
+  readonly customConversionId?: string;
+}
+
+/**
+ * Traduz um `action_type` cru → conversão genérica, ou `null` quando NÃO é uma
+ * conversão contável. Regra (whitelist): entram no breakdown apenas
+ *  - `offsite_conversion.custom.<id>` → conversão personalizada (casada por id);
+ *  - eventos de pixel padrão / on-Facebook que o mapa reconhece.
+ * Tudo o mais (engajamento como post_engagement/link_click/video_view; sub-métricas
+ * de funil como onsite_conversion.post_net_like / messaging_user_depth_N /
+ * messaging_first_reply; `fb_pixel_custom` genérico) → `null`: NÃO é conversão
+ * tipada — fica só no `rawActions` (auditável / re-derivável). Não baldeamos
+ * desconhecido em `custom` porque as famílias `onsite_/fb_pixel_` contêm muita
+ * coisa que não é conversão, e isso poluiria o CPA/ROAS.
+ */
+export function parseActionType(actionType: string): ActionConversion | null {
+  if (actionType.startsWith(OFFSITE_CUSTOM_PREFIX)) {
+    return { goal: "custom", customConversionId: actionType.slice(OFFSITE_CUSTOM_PREFIX.length) };
+  }
+  if (actionType.startsWith(OFFSITE_PIXEL_PREFIX)) {
+    const goal = PIXEL_EVENT_TO_GOAL[actionType.slice(OFFSITE_PIXEL_PREFIX.length)];
+    return goal ? { goal } : null;
+  }
+  if (actionType.startsWith(ONSITE_PREFIX)) {
+    const goal = ONSITE_EVENT_TO_GOAL[actionType.slice(ONSITE_PREFIX.length)];
+    return goal ? { goal } : null;
+  }
+  return null;
+}
+
+/** Campos crus do promoted_object relevantes p/ derivar a conversão. */
+export interface RawPromotedObject {
+  readonly pixel_id?: string;
+  readonly custom_event_type?: string;
+  readonly custom_conversion_id?: string;
+  readonly page_id?: string;
+}
+
+/**
+ * Deriva o objetivo do adset (o que ele otimiza) combinando `optimization_goal` +
+ * `promoted_object`. `custom_conversion_id` vence (resolve nome/goal depois); senão
+ * o evento padrão; senão o goal direto do optimization_goal; senão indefinido
+ * (ex: LINK_CLICKS → sem conversão, julga por CPC).
+ */
+export function objectiveFromAdSet(input: {
+  readonly optimizationGoal?: string;
+  readonly promotedObject?: RawPromotedObject;
+}): EntityObjective | undefined {
+  const { optimizationGoal, promotedObject } = input;
+
+  if (promotedObject?.custom_conversion_id) {
+    return { goal: "custom", customConversionId: promotedObject.custom_conversion_id };
+  }
+  if (!optimizationGoal) return undefined;
+
+  if (OPTIMIZATION_GOAL_USES_PROMOTED.has(optimizationGoal)) {
+    const eventType = promotedObject?.custom_event_type;
+    const goal = eventType ? CUSTOM_EVENT_TYPE_TO_GOAL[eventType] : undefined;
+    return goal ? { goal } : undefined;
+  }
+  const direct = OPTIMIZATION_GOAL_DIRECT[optimizationGoal];
+  return direct ? { goal: direct } : undefined;
+}
+
+/** Objetivo coarse a partir do objetivo de campanha (fallback do nível campanha). */
+export function objectiveFromCampaign(campaignObjective?: string): EntityObjective | undefined {
+  if (!campaignObjective) return undefined;
+  const goal = CAMPAIGN_OBJECTIVE_TO_GOAL[campaignObjective];
+  return goal ? { goal } : undefined;
+}
+
+/** custom_event_type → goal (usado pelo resolver p/ classificar conversões personalizadas). */
+export function goalFromCustomEventType(customEventType?: string): ConversionGoal {
+  return (customEventType && CUSTOM_EVENT_TYPE_TO_GOAL[customEventType]) || "custom";
+}

@@ -5,6 +5,7 @@
 import { Redis } from "ioredis";
 import { buildComposition, loadConfig } from "./composition.js";
 import { startFatia0Worker } from "./workers/fatia0-run.js";
+import { startInsightsSyncWorker } from "./workers/insights-sync.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -17,12 +18,13 @@ async function main(): Promise<void> {
   // Fatia 0: só o worker mínimo (analysis-run). Grafo (agent-runs) + inbound
   // (webhook-inbound) + schedulers cron entram nas fatias 3a/5b/3b.
   const fatia0 = startFatia0Worker(deps, connection);
-  logger.info("worker up: analysis-run (fatia 0)");
+  const insightsSync = startInsightsSyncWorker(deps, connection);
+  logger.info("worker up: analysis-run (fatia 0) + insights-sync (fatia 2a)");
 
   // shutdown gracioso (drena jobs em andamento antes de sair)
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, "worker shutting down");
-    await Promise.allSettled([fatia0.close()]);
+    await Promise.allSettled([fatia0.close(), insightsSync.close()]);
     await Promise.allSettled([connection.quit(), deps.redis.quit()]);
     process.exit(0);
   };

@@ -16,10 +16,12 @@ import { createDb } from "@trafego/db";
 import { loadEnv } from "@trafego/config";
 import { Aes256CredentialVault } from "@trafego/credential-vault";
 import { BullmqScheduler } from "@trafego/scheduler-bullmq";
-import { MetaAdsAdapter, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta";
+import { CustomConversionsResolver, MetaAdsAdapter, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta";
 import { EvolutionAdapter, EvolutionClient } from "@trafego/channel-evolution";
 import { Redis } from "ioredis";
 import { pino, type Logger } from "pino";
+import { createDrizzleInsightsSnapshotsRepo } from "./modules/insights/repo.js";
+import { createInsightsSyncService, type InsightsSyncService } from "./modules/insights/sync-service.js";
 
 /**
  * Container de dependências resolvidas. Passado por injeção para grafos,
@@ -39,6 +41,8 @@ export interface WorkerDeps {
     readonly metering: MeteringPort;
     readonly approval: ApprovalPort;
   };
+  /** Sync de insights (2a): coleta a série temporal Meta → insights_snapshots. */
+  readonly insightsSync: InsightsSyncService;
   /** Checkpointer do LangGraph (Postgres) — HITL durável via interrupt/resume. */
   readonly checkpointer: unknown; // TODO: tipar como BaseCheckpointSaver quando o adapter existir
   /** Scaffolding da Fatia 0: instância + destinatário fixos do WhatsApp. */
@@ -82,9 +86,21 @@ export async function buildComposition(): Promise<WorkerDeps> {
   const redis = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
 
   const vault = new Aes256CredentialVault(env.CREDENTIAL_MASTER_KEY, env.CREDENTIAL_KEY_VERSION);
+  const client = new MetaGraphClient();
   const ads = new MetaAdsAdapter({
-    client: new MetaGraphClient(),
+    client,
     governor: new MetaGovernor({ redis }),
+    customConversions: new CustomConversionsResolver({
+      client,
+      redis,
+      ttlSec: env.CUSTOM_CONVERSIONS_CACHE_TTL_SEC,
+    }),
+  });
+  const insightsSync = createInsightsSyncService({
+    ads,
+    repo: createDrizzleInsightsSnapshotsRepo(db),
+    refetchWindowDays: env.INSIGHTS_REFETCH_WINDOW_DAYS,
+    retentionDays: env.INSIGHTS_RETENTION_DAYS,
   });
   const messaging = new EvolutionAdapter({
     client: new EvolutionClient({ baseUrl: env.EVOLUTION_BASE_URL, apiKey: env.EVOLUTION_API_KEY }),
@@ -105,6 +121,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
       metering: todoPort<WorkerDeps["ports"]["metering"]>("MeteringPort"),
       approval: todoPort<WorkerDeps["ports"]["approval"]>("ApprovalPort"),
     },
+    insightsSync,
     // checkpointer LangGraph = fatia 3a (grafo real). Handler mínimo não usa grafo.
     checkpointer: undefined,
     fatia0: {

@@ -1,105 +1,182 @@
-import { createHmac } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { InsightsQuery } from "@trafego/shared/ports";
-import { MetaGraphClient, MetaApiError } from "./client.js";
+import { MetaGraphClient } from "./client.js";
 import { MetaInsightsService } from "./insights.js";
+import type { MetaGovernor } from "./governor.js";
 
-const GRAPH_VERSION = "v26.0";
-const APP_SECRET = "app-secret-xyz";
 const TOKEN = "SYSTEM-USER-TOKEN";
 
-function makeQuery(): InsightsQuery {
+// Governor stub: sempre concede, backoff 0, observe no-op.
+const governor = {
+  acquire: async () => ({ granted: true, retryAfterMs: 0, degrade: false }),
+  observeUsage: async () => {},
+  backoffDelayMs: () => 0,
+} as unknown as MetaGovernor;
+
+function makeService(overrides: Partial<{ maxAttempts: number; intervalMs: number }> = {}) {
+  const client = new MetaGraphClient({ graphVersion: "v26.0" });
+  return new MetaInsightsService(client, governor, { intervalMs: 0, maxAttempts: 2, ...overrides });
+}
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+}
+
+interface Call {
+  readonly method: string;
+  readonly url: URL;
+}
+
+/** Stub de fetch roteado por (método, rota) — submit/poll/fetch do report job. */
+function installFetch(handler: (method: string, url: URL, calls: Call[]) => Response) {
+  const calls: Call[] = [];
+  const spy = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(String(input));
+    const method = init?.method ?? "GET";
+    calls.push({ method, url });
+    return handler(method, url, calls);
+  });
+  vi.stubGlobal("fetch", spy);
+  return { calls };
+}
+
+const RUN_ID = "R1";
+
+function makeQuery(over: Partial<InsightsQuery> = {}): InsightsQuery {
   return {
     account: { adAccountId: "123456", accessToken: TOKEN },
     level: "account",
     window: "last_7d",
-    fields: ["spend"],
+    fields: ["spend", "actions"],
+    ...over,
   };
 }
 
-/** Stub de fetch que devolve `body` com status configurável e captura a chamada. */
-function stubFetch(body: unknown, _ok = true, status = 200) {
-  const spy = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
-    new Response(JSON.stringify(body), {
-      status,
-      headers: { "content-type": "application/json" },
-    }),
-  );
-  vi.stubGlobal("fetch", spy);
-  return spy;
-}
+afterEach(() => vi.unstubAllGlobals());
 
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
+// rotas do report job
+const isSubmit = (m: string, u: URL) => m === "POST" && u.pathname.endsWith("/insights");
+const isPoll = (m: string, u: URL) => m === "GET" && u.pathname.endsWith(`/${RUN_ID}`);
+const isFetch = (m: string, u: URL) => m === "GET" && u.pathname.endsWith(`/${RUN_ID}/insights`);
 
-describe("MetaGraphClient.buildUrl", () => {
-  it("monta a URL versionada", () => {
-    const client = new MetaGraphClient({ graphVersion: GRAPH_VERSION });
-    expect(client.buildUrl("act_123/insights")).toBe(
-      "https://graph.facebook.com/v26.0/act_123/insights",
-    );
-  });
-});
+describe("MetaInsightsService — async report jobs", () => {
+  it("happy path (preset): POST submit → poll Completed → fetch; fixa atribuição", async () => {
+    let submitUrl: URL | undefined;
+    installFetch((m, u) => {
+      if (isSubmit(m, u)) {
+        submitUrl = u;
+        return json({ report_run_id: RUN_ID });
+      }
+      if (isPoll(m, u)) return json({ async_status: "Job Completed", async_percent_completion: 100 });
+      if (isFetch(m, u)) return json({ data: [{ account_id: "123456", spend: "42.50" }] });
+      return json({});
+    });
 
-describe("MetaInsightsService.getInsights (síncrono, Fatia 0)", () => {
-  it("chama act_<id>/insights com fields=spend, date_preset=last_7d, level=account + Bearer + appsecret_proof", async () => {
-    const spy = stubFetch({ data: [{ spend: "42.50" }] });
-    const client = new MetaGraphClient({ graphVersion: GRAPH_VERSION, appSecret: APP_SECRET });
-    const service = new MetaInsightsService(client);
+    const rows = await makeService().getInsights(makeQuery());
 
-    await service.getInsights(makeQuery());
-
-    const [url, init] = spy.mock.calls[0]!;
-    const u = new URL(String(url));
-    expect(u.pathname).toBe("/v26.0/act_123456/insights");
-    expect(u.searchParams.get("fields")).toBe("spend");
-    expect(u.searchParams.get("date_preset")).toBe("last_7d");
-    expect(u.searchParams.get("level")).toBe("account");
-    expect(init?.headers).toMatchObject({ Authorization: `Bearer ${TOKEN}` });
-    const expectedProof = createHmac("sha256", APP_SECRET).update(TOKEN).digest("hex");
-    expect(u.searchParams.get("appsecret_proof")).toBe(expectedProof);
-  });
-
-  it("NÃO anexa appsecret_proof quando não há appSecret", async () => {
-    const spy = stubFetch({ data: [{ spend: "1" }] });
-    const service = new MetaInsightsService(new MetaGraphClient({ graphVersion: GRAPH_VERSION }));
-
-    await service.getInsights(makeQuery());
-
-    const u = new URL(String(spy.mock.calls[0]![0]));
-    expect(u.searchParams.get("appsecret_proof")).toBeNull();
-  });
-
-  it("mapeia a linha p/ InsightRow (spend como número, nível account)", async () => {
-    stubFetch({ data: [{ spend: "42.50" }] });
-    const service = new MetaInsightsService(new MetaGraphClient({ graphVersion: GRAPH_VERSION }));
-
-    const rows = await service.getInsights(makeQuery());
-
+    expect(submitUrl!.pathname).toBe("/v26.0/act_123456/insights");
+    expect(submitUrl!.searchParams.get("level")).toBe("account");
+    expect(submitUrl!.searchParams.get("time_increment")).toBe("1");
+    expect(submitUrl!.searchParams.get("use_unified_attribution_setting")).toBe("true");
+    expect(submitUrl!.searchParams.get("date_preset")).toBe("last_7d");
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ entityId: "act_123456", level: "account" });
     expect(rows[0]!.metrics.spend).toBe(42.5);
   });
 
-  it("conta sem gasto no período → data vazia → lista vazia", async () => {
-    stubFetch({ data: [] });
-    const service = new MetaInsightsService(new MetaGraphClient({ graphVersion: GRAPH_VERSION }));
-    expect(await service.getInsights(makeQuery())).toEqual([]);
+  it("janela range → time_range JSON; entityId por nível + date + conversões normalizadas", async () => {
+    let submitUrl: URL | undefined;
+    installFetch((m, u) => {
+      if (isSubmit(m, u)) {
+        submitUrl = u;
+        return json({ report_run_id: RUN_ID });
+      }
+      if (isPoll(m, u)) return json({ async_status: "Job Completed", async_percent_completion: 100 });
+      if (isFetch(m, u))
+        return json({
+          data: [
+            {
+              ad_id: "AD9",
+              date_start: "2026-08-03",
+              spend: "150",
+              actions: [
+                { action_type: "link_click", value: "180" },
+                { action_type: "offsite_conversion.fb_pixel_purchase", value: "5" },
+                { action_type: "offsite_conversion.custom.777", value: "12" },
+              ],
+              action_values: [{ action_type: "offsite_conversion.fb_pixel_purchase", value: "900" }],
+            },
+          ],
+        });
+      return json({});
+    });
+
+    const rows = await makeService().getInsights(
+      makeQuery({ level: "ad", window: "2026-08-01..2026-08-07" }),
+    );
+
+    expect(submitUrl!.searchParams.get("time_range")).toBe('{"since":"2026-08-01","until":"2026-08-07"}');
+    const row = rows[0]!;
+    expect(row).toMatchObject({ entityId: "AD9", level: "ad", date: "2026-08-03" });
+    // link_click não é conversão (só no rawActions); purchase + custom normalizados
+    expect(row.conversions).toEqual([
+      { goal: "purchase", count: 5, value: 900 },
+      { goal: "custom", customConversionId: "777", count: 12 },
+    ]);
+    expect(row.rawActions).toMatchObject({ link_click: 180, "offsite_conversion.custom.777": 12 });
   });
 
-  it("erro da Meta (token inválido, code 190) → lança MetaApiError com o code", async () => {
-    stubFetch(
-      { error: { message: "Invalid OAuth access token", code: 190, type: "OAuthException" } },
-      false,
-      400,
-    );
-    const service = new MetaInsightsService(new MetaGraphClient({ graphVersion: GRAPH_VERSION }));
-
-    await expect(service.getInsights(makeQuery())).rejects.toMatchObject({
-      name: "MetaApiError",
-      code: 190,
+  it("Job Failed → re-submete fresh e conclui", async () => {
+    let pollN = 0;
+    const { calls } = installFetch((m, u) => {
+      if (isSubmit(m, u)) return json({ report_run_id: RUN_ID });
+      if (isPoll(m, u)) {
+        pollN += 1;
+        return pollN === 1
+          ? json({ async_status: "Job Failed", async_percent_completion: 0 })
+          : json({ async_status: "Job Completed", async_percent_completion: 100 });
+      }
+      if (isFetch(m, u)) return json({ data: [{ account_id: "123456", spend: "1" }] });
+      return json({});
     });
-    await expect(service.getInsights(makeQuery())).rejects.toBeInstanceOf(MetaApiError);
+
+    const rows = await makeService().getInsights(makeQuery());
+
+    expect(rows).toHaveLength(1);
+    expect(calls.filter((c) => isSubmit(c.method, c.url))).toHaveLength(2); // re-submeteu
+  });
+
+  it("1487534 (grande demais) → divide a janela e concatena", async () => {
+    let submitN = 0;
+    const { calls } = installFetch((m, u) => {
+      if (isSubmit(m, u)) {
+        submitN += 1;
+        if (submitN === 1) {
+          return json({ error: { code: 100, error_subcode: 1487534, message: "too big" } }, 400);
+        }
+        return json({ report_run_id: RUN_ID });
+      }
+      if (isPoll(m, u)) return json({ async_status: "Job Completed", async_percent_completion: 100 });
+      if (isFetch(m, u)) return json({ data: [{ account_id: "123456", spend: "1" }] });
+      return json({});
+    });
+
+    const rows = await makeService().getInsights(
+      makeQuery({ window: "2026-08-01..2026-08-08" }),
+    );
+
+    // 1 submit falho (full) + 2 metades
+    expect(calls.filter((c) => isSubmit(c.method, c.url))).toHaveLength(3);
+    expect(rows).toHaveLength(2); // uma linha por metade
+  });
+
+  it("timeout no poll → lança (após esgotar re-submissões)", async () => {
+    installFetch((m, u) => {
+      if (isSubmit(m, u)) return json({ report_run_id: RUN_ID });
+      if (isPoll(m, u)) return json({ async_status: "Job Running", async_percent_completion: 50 });
+      return json({});
+    });
+
+    await expect(makeService({ maxAttempts: 1 }).getInsights(makeQuery())).rejects.toThrow();
   });
 });

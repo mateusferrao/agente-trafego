@@ -26,6 +26,8 @@ export interface AdEntity {
   readonly parentId?: string;
   readonly dailyBudget?: number;
   readonly lifetimeBudget?: number;
+  /** Objetivo próprio da entidade (o que ela otimiza) — base do CPA/ROAS + intenção p/ análise. */
+  readonly objective?: EntityObjective;
 }
 
 export interface InsightMetrics {
@@ -47,6 +49,20 @@ export interface InsightRow {
   readonly level: EntityLevel;
   readonly date?: string; // YYYY-MM-DD (ausente = agregado da janela)
   readonly metrics: InsightMetrics;
+  /** Conversões normalizadas (genérico, agnóstico de plataforma) — preenchido pelo adapter. */
+  readonly conversions?: ConversionBreakdown;
+  /** Breakdown cru opaco (action_type→valor) p/ auditoria/re-derivação. Shape agnóstico. */
+  readonly rawActions?: Readonly<Record<string, number>>;
+}
+
+/**
+ * Forma persistida em `insights_snapshots.metrics_json` (jsonb): escalares +
+ * conversões normalizadas + breakdown cru (fidelidade p/ re-derivar sem re-sync).
+ */
+export interface StoredInsightMetrics {
+  readonly metrics: InsightMetrics;
+  readonly conversions?: ConversionBreakdown;
+  readonly rawActions?: Readonly<Record<string, number>>;
 }
 
 export interface Creative {
@@ -59,6 +75,53 @@ export interface Creative {
   readonly imageUrl?: string;
   readonly thumbnailUrl?: string;
   readonly videoId?: string;
+}
+
+// ─── Conversão (genérico, agnóstico de plataforma) ───────────────────────
+// O vocabulário/mapeamento específico de cada plataforma (Meta action_type,
+// optimization_goal, etc.) vive SÓ no adapter. O core e o restante do sistema
+// falam esta taxonomia neutra — adicionar Google/TikTok = novo adapter mapeando
+// pro mesmo enum, sem tocar no core.
+export type ConversionGoal =
+  | "purchase"
+  | "lead"
+  | "registration"
+  | "initiate_checkout"
+  | "add_to_cart"
+  | "view_content"
+  | "add_payment_info"
+  | "search"
+  | "contact"
+  | "subscribe"
+  | "start_trial"
+  | "submit_application"
+  | "messaging_started"
+  | "app_install"
+  | "custom";
+
+/** Uma linha do breakdown de conversões (count + valor monetário p/ ROAS). */
+export interface ConversionCount {
+  readonly goal: ConversionGoal;
+  /** Preenchido quando `goal === "custom"` — distingue conversões personalizadas entre si. */
+  readonly customConversionId?: string;
+  readonly count: number;
+  readonly value?: number;
+}
+
+export type ConversionBreakdown = readonly ConversionCount[];
+
+/**
+ * O objetivo próprio de uma entidade (o que ela otimiza na plataforma). Define o
+ * numerador de CPA/ROAS **e** carrega a intenção que conduz a análise do agente.
+ */
+export interface EntityObjective {
+  readonly goal: ConversionGoal;
+  /** Id da conversão personalizada (quando `goal === "custom"`). */
+  readonly customConversionId?: string;
+  /** Rótulo legível (ex: nome da conversão personalizada) — p/ o brief/LLM. */
+  readonly label?: string;
+  /** Janela de atribuição usada, registrada p/ comparabilidade (ex: "7d_click"). */
+  readonly attributionWindow?: string;
 }
 
 /**
@@ -123,6 +186,8 @@ export interface EntitySummary {
   readonly metrics: InsightMetrics;
   readonly deltaVsBaseline: Partial<InsightMetrics>;
   readonly flags: readonly string[];
+  /** Objetivo da entidade — intenção que conduz a análise (o que "bom" significa aqui). */
+  readonly objective?: EntityObjective;
 }
 
 export interface Anomaly {

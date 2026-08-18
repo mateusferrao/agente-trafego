@@ -36,7 +36,7 @@ describe("MetaGraphClient.parseUsageHeader", () => {
       act_1: [{ call_count: 10, total_cputime: 20, total_time: 30, estimated_time_to_regain_access: 5 }],
     });
     expect(c.parseUsageHeader(header)).toEqual({
-      act_1: { callCountPct: 10, totalCputimePct: 20, totalTimePct: 30, estimatedTimeToRegainAccessSec: 5 },
+      act_1: { callCountPct: 10, totalCputimePct: 20, totalTimePct: 30, estimatedTimeToRegainAccessMin: 5 },
     });
   });
 });

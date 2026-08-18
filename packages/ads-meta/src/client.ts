@@ -49,7 +49,8 @@ export interface BusinessUseCaseUsage {
   readonly callCountPct: number; // 0..100
   readonly totalCputimePct: number; // 0..100
   readonly totalTimePct: number; // 0..100
-  readonly estimatedTimeToRegainAccessSec?: number;
+  /** Tempo estimado até destravar — a Meta reporta em MINUTOS (não segundos). */
+  readonly estimatedTimeToRegainAccessMin?: number;
 }
 
 export interface GraphResponse<T> {
@@ -78,6 +79,13 @@ export interface BatchSubRequest {
  * v26). Não é env: mudar a versão exige revisar o adapter, não só o ambiente.
  */
 export const META_GRAPH_VERSION = "v26.0";
+
+/**
+ * Codes de rate-limit/transiente da Meta que chegam como HTTP 4xx mas são
+ * retryáveis (não são "conta inacessível"): app/user/BUC throttling + "please
+ * retry". Usados pelo adapter (mapa p/ `upstream`) e pelo insights service (retry).
+ */
+export const META_TRANSIENT_CODES = new Set([1, 2, 4, 17, 32, 613, 80000, 80001, 80002, 80003, 80004]);
 
 export interface MetaClientOptions {
   /** override da versão (default = META_GRAPH_VERSION). */
@@ -175,7 +183,7 @@ export class MetaGraphClient {
           totalCputimePct: e["total_cputime"] ?? 0,
           totalTimePct: e["total_time"] ?? 0,
           ...(e["estimated_time_to_regain_access"] !== undefined
-            ? { estimatedTimeToRegainAccessSec: e["estimated_time_to_regain_access"] }
+            ? { estimatedTimeToRegainAccessMin: e["estimated_time_to_regain_access"] }
             : {}),
         };
       }

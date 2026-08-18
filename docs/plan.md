@@ -66,9 +66,9 @@ MVP começa **só com Meta Ads** e **um canal WhatsApp (Evolution)**. Foco: prov
 
 ## Curadoria (AccountBrief) + Governor de rate-limit — pilar
 
-Camada **determinística pura** entre Meta e LLM. LLM nunca vê o firehose, vê um `AccountBrief` compacto (token-bounded): `account, goals, totals(+delta), trends, segments(top-N+flagados), anomalies(z-score), creatives(só flagados, com imagem p/ visão), playbookCandidates, memory(objetivos/tentado/recusado), aggregatesRest`. Pipeline: `normalize → computeDerived → computeTrends → detectAnomalies → rankAndSelect → summarizeRest → selectCreatives → assembleBrief`. Resolve degradação da análise **e** custo de visão.
+Camada **determinística pura** entre Meta e LLM. LLM nunca vê o firehose, vê um `AccountBrief` compacto (token-bounded): `account, goals, totals(+delta), trends, segments(top-N+flagados), anomalies(z-score), creatives(só flagados, com imagem p/ visão), playbookCandidates, memory(objetivos/tentado/recusado), aggregatesRest`. Pipeline: `normalize → computeDerived → computeTrends → detectAnomalies → rankAndSelect → summarizeRest → selectCreatives → assembleBrief`. Resolve degradação da análise **e** custo de visão. **CPA/ROAS = conversão do objetivo próprio de cada entidade** (o que ela otimiza na Meta), em vocabulário **genérico** (`ConversionGoal`) — o mapeamento específico da plataforma vive **só no adapter**; override por agente = Fatia 4.
 
-**Governor:** token-bucket por `ad_account` (Redis, lê `X-Business-Use-Case-Usage`), Batch API (≤50/HTTP), async report jobs, snapshot histórico em Postgres (`insights_snapshots`), sync incremental (só ativas/mudadas), jitter/stagger nos crons, degradação graciosa (roda com cache/parcial, nota "análise parcial").
+**Governor:** token-bucket por `ad_account` (Redis, lê `X-Business-Use-Case-Usage`), Batch API (≤50/HTTP), async report jobs, snapshot histórico em Postgres (`insights_snapshots`), sync incremental (só ativas/mudadas), jitter/stagger nos crons, degradação graciosa (roda com cache/parcial, nota "análise parcial"). *(MVP 2a = subset **mínimo-correto**: observa uso + backoff full-jitter + cooldown + degradação; token-bucket Lua + Batch API = follow-up quando o volume exigir.)*
 
 ## Personalização (config)
 
@@ -290,11 +290,11 @@ Estratégia: **esqueleto ambulante primeiro**, depois aprofunda. **Deploy no Eas
 - **Depende:** 1a (auth/org/vault). **Valida:** usuário conecta conta pela UI, conta aparece na lista.
 
 ### Fatia 2a — Meta read + governor (IO)
-- `AdsPlatformPort` completo: entidades + **insights async** (report jobs) + criativos (image/thumbnail); **governor mínimo-correto** (lê `X-Business-Use-Case-Usage`, backoff no reset, jitter, degradação graciosa — bucket-por-conta/batch tuning = depois); `insights_snapshots` (retenção ~90d) + **sync incremental**.
+- `AdsPlatformPort` completo: entidades + **insights async** (report jobs) + criativos (image/thumbnail); **governor mínimo-correto** (lê `X-Business-Use-Case-Usage`, backoff no reset, jitter, degradação graciosa — bucket-por-conta/batch tuning = depois); `insights_snapshots` + **sync incremental** (watermark derivado do snapshot + rejanela de re-fetch `INSIGHTS_REFETCH_WINDOW_DAYS`; **retenção/prune = 6b**). Normaliza `actions` → breakdown de conversão **genérico** (padrão + personalizadas resolvidas por nome, cache Redis); fixa a janela de atribuição da Meta (`use_unified_attribution_setting`) — distinta da janela de re-fetch.
 - **Depende:** 1b. **Valida:** coleta de conta real → snapshots gravados; governor respeitando rate-limit.
 
 ### Fatia 2b — AccountBrief (core puro)
-- Curadoria **pura**: totals(+delta) + **rank/select top-N** + agregados da cauda + **tendência simples**. (Anomalia z-score + seleção de visão rica = quando a análise pedir.)
+- Curadoria **pura**: totals(+delta) + **rank/select top-N** + agregados da cauda + **tendência simples**. (Anomalia z-score + seleção de visão rica = quando a análise pedir.) `computeDerived` calcula **CPA/ROAS pela conversão primária de cada entidade** (objetivo próprio; override do agente vence); nível-conta com objetivos mistos → sem CPA único enganoso. `selectCreatives` = vazio até a visão (3b).
 - **Depende:** 2a (snapshots/insights). **Valida:** funções puras testadas sem rede → AccountBrief compacto a partir de fixtures.
 
 ### Fatia 3a — Loop de análise ⇒ **VALIDAÇÃO DA HIPÓTESE**
