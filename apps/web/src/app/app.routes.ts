@@ -2,10 +2,11 @@ import { Routes } from '@angular/router';
 import { authGuard, guestOnlyGuard } from '@core/auth';
 
 // Árvore de rotas top-level. Tudo lazy (standalone loadComponent) para o bundle
-// inicial enxuto. O AppShell (path '') vem PRIMEIRO para que '/' resolva no shell
-// (Contas); '/login' e '/signup' não casam filho do shell e caem no auth-layout
-// (path '') logo abaixo. Guards: authGuard (anônimo → /login) no shell/onboarding;
-// guestOnlyGuard (logado → shell) nas rotas públicas. Ver docs/DESIGN.md (IA).
+// inicial enxuto. O AppShell (path '') vem PRIMEIRO para que '/' resolva no shell,
+// que redireciona para '/accounts' (landing); '/login' e '/signup' não casam filho
+// do shell e caem no auth-layout (path '') logo abaixo. Guards: authGuard (anônimo →
+// /login) no shell/onboarding; guestOnlyGuard (logado → shell) nas rotas públicas.
+// Ver docs/DESIGN.md (IA).
 export const routes: Routes = [
   {
     path: '',
@@ -13,9 +14,9 @@ export const routes: Routes = [
     canActivateChild: [authGuard],
     loadComponent: () => import('./layouts/app-shell/app-shell').then((m) => m.AppShell),
     children: [
+      { path: '', pathMatch: 'full', redirectTo: 'accounts' },
       {
-        path: '',
-        pathMatch: 'full',
+        path: 'accounts',
         title: 'Contas — Agente de Tráfego',
         loadComponent: () => import('./features/accounts/accounts-page').then((m) => m.AccountsPage),
       },

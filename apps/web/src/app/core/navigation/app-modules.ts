@@ -2,7 +2,7 @@
 // Mantém a nav desacoplada das rotas (as rotas apontam para componentes; aqui
 // descrevemos o que aparece na sidebar e em que ordem). Ver docs/DESIGN.md (IA).
 //
-// IA da Fatia 1a: Contas (landing, '/'), Aprovações, Integrações, Configurações.
+// IA da Fatia 1a: Contas (landing, '/accounts'), Aprovações, Integrações, Configurações.
 // Aprovações e Integrações são placeholders "em breve" nesta fatia.
 
 export interface AppModule {
@@ -34,9 +34,9 @@ export const APP_MODULE_GROUPS: readonly AppModuleGroup[] = [
       {
         id: 'accounts',
         label: 'Contas',
-        route: '/',
+        route: '/accounts',
         icon: 'heroRectangleGroup',
-        exact: true,
+        exact: false,
         description: 'Contas de anúncio conectadas e seus agentes.',
       },
       {
