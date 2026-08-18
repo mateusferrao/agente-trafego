@@ -319,7 +319,7 @@ Estratégia: **esqueleto ambulante primeiro**, depois aprofunda. **Deploy no Eas
 
 ### Fatia 5c — Grafo B ReAct pleno (chat aberto) = **end-state**
 - Chat conversacional ad-hoc (perguntas sobre a conta/análise, "analisa agora" via WhatsApp, pedidos ad-hoc) com allowlist de tools + guardrails + eco+confirma. Fluxo tipo Claude-com-tools, scoped à conta. **Peça mais cara** — reavaliar valor×custo antes de iniciar.
-- **"Mexer em qualquer coisa" = as tools do catálogo.** MVP = **tools núcleo de escrita** (pausar/reativar, ajustar budget, mudar status) via `mutate` idempotente + guardrail. Ampliar leque (targeting/bid/schedule…) = **adicionar tool no catálogo-DB**, sem re-arquitetar. **Criar campanha/criativo do zero = fora** (produto "lançar do zero" = separado).
+- **"Mexer em qualquer coisa" = as tools do catálogo.** MVP = **tools núcleo de escrita** (pausar/reativar, ajustar budget, mudar status) via `mutate` idempotente + guardrail. Ampliar leque (targeting/bid/schedule…) = **adicionar tool no catálogo-DB**, sem re-arquitetar. **Criar campanha = Fatia 7 (roadmap pós-MVP)** — gestor completo no WhatsApp (asset via WhatsApp/upload/reuse, copy por LLM, Creative Library + StoragePort; criativo por IA = fase mais tardia). Ver `docs/ROADMAP.md`.
 - **Depende:** 5b. **Valida:** conversa livre entende e age (com confirmação) dentro dos guardrails.
 
 ### Fatia 6a — Timeline / auditoria (UI)

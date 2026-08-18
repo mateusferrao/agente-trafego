@@ -84,9 +84,22 @@ Tipos de evento: `analysis_started` · `analysis_completed` · `recommendation_c
 
 **Net-new (construir):** `ui-timeline` + connector `evolution-whatsapp`.
 
+## Criação de campanhas (roadmap pós-MVP) — telas e fluxos
+
+Vis: gestor completo no WhatsApp (otimiza **+ cria**). Ver `ROADMAP.md` → Fatia 7.
+
+- **Aba "Criativos" na Conta** (nova): `ui-resource-grid` de assets da Creative Library — preview + origem (`reuse`/`upload`) + status Meta (image_hash/video_id). Upload no painel + reuse de vencedores. (Assets são por ad account.)
+- **Intake de mídia no WhatsApp:** usuário manda a imagem **no chat** → agente confirma e vira asset na library ("Recebi seu criativo. Guardei em X.").
+- **Card de aprovação de rascunho de campanha** (mais rico que 1 ação): estrutura (objetivo/budget/targeting/placement) + **preview do criativo** + **copy** + **budget novo** destacado → `[Aprovar]`/`[Editar]`/`[Recusar]`. No inbox Aprovações **e** espelhado no WhatsApp (eco concreto). **Aprovação obrigatória por default** (gasto novo).
+- **Gatilhos:** "cria uma campanha…" no chat (Grafo B) + **proposta proativa** do agente (pelo que observou) — aparece na Timeline e no inbox.
+- **Timeline** ganha eventos: `campaign_draft_proposed`, `campaign_created`.
+- **Onboarding p/ criação:** capturar a **Page** do cliente (necessária p/ o anúncio).
+- **Net-new de design:** tela Creative Library + card de rascunho de campanha (draft card). Geração de criativo por IA = fase mais tardia.
+
 ## Mapeamento telas × fatias (ROADMAP)
 
 - Shell + login/signup + Contas landing (skeleton) → `1a`.
 - Onboarding connect-dialog (Meta) → `1b`; WhatsApp (Integrações QR) → `5b`/`6b`.
 - Conta detalhe / Agente (config) → `4`. Visão geral (KPIs) → `3`/`4`.
 - Aprovações inbox → `5b`. Timeline → `6a`. Conexões (token status + modo) → `1b`/`5b`.
+- **Criação (Fatia 7, pós-MVP):** Criativos (library) · card de rascunho de campanha · intake mídia WhatsApp · Page.

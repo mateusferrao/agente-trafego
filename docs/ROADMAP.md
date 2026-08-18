@@ -34,7 +34,7 @@ Plano de construção em fatias. Decisões de arquitetura/produto = [`../CLAUDE.
 | **6a** | Timeline / auditoria (UI) | Histórico de runs/ações/aprovações na dashboard | prévias |
 | **6b** | Endurecimento / ops | Throttle, token-190, degradação, backups; allowlist via script/DB | prévias |
 
-**Marcos:** `3a` valida a hipótese; **beta read-only abre após `3b`** e roda em paralelo; escrita só a partir de `5a`, sempre atrás de guardrail; "mexer em qualquer coisa" (`5c`) = tools do catálogo (núcleo no MVP: pausar/budget/status; amplia por extensão; criar do zero = fora).
+**Marcos:** `3a` valida a hipótese; **beta read-only abre após `3b`** e roda em paralelo; escrita só a partir de `5a`, sempre atrás de guardrail; "mexer em qualquer coisa" (`5c`) = tools do catálogo (núcleo no MVP: pausar/budget/status; amplia por extensão; **criar campanha = Fatia 7** (pós-MVP, ver abaixo)).
 
 ## Paralelização — dois tracks (git worktrees)
 
@@ -57,3 +57,14 @@ Plano de construção em fatias. Decisões de arquitetura/produto = [`../CLAUDE.
 1. `planning-trafego-feature` (plano específico da fatia) → aprovação.
 2. `implementing-trafego-feature` (TDD; subagente por slice; Track A/B se paralelo).
 3. `reviewing-trafego-changes` (veredito bloqueia/passa) → merge.
+
+## Fatia 7 — Criação de campanhas (roadmap pós-MVP)
+
+**Visão "gestor completo no WhatsApp":** o agente também **cria** campanhas — a pedido ou proativo. Só depois do MVP de otimização validar. Arquitetura já antecipa (catálogo de tools + `AdsPlatformPort` + porta nova de storage). **Depende:** MVP validado (pós-beta) + `5a`/`5b` (write path + HITL) + catálogo de tools.
+
+- **7a — Biblioteca de criativos + intake:** `StoragePort` (S3-compat) + Creative Library (upload web + **mídia inbound no WhatsApp** + reuse de vencedores da conta) + upload pra Meta (`image_hash`/`video_id`) + capturar **Page** do cliente (`listPages`, escopo `pages_show_list`).
+- **7b — Rascunho de campanha + criação:** tools `createCampaign/AdSet/Ad`; agente monta **draft** (objetivo + budget + targeting + placement + criativo + **copy gerada pelo LLM**, configurável); **aprovação obrigatória do draft** (default — cria gasto novo; eco completo) + **guardrail de budget novo**; criação idempotente.
+- **7c — Criação proativa + conversacional:** agente **propõe** nova campanha pelo que observou (ex: criativo saturado → testar novo ângulo); "cria uma campanha…" no chat (Grafo B). Gate **personalizável** (default = aprovação).
+- **Fora até da 7 inicial:** **geração de criativo por IA** (imagem/vídeo) = fase mais tardia. Copy por LLM já entra.
+
+**Design das telas/fluxos** (Creative Library, card de aprovação de rascunho, intake de mídia WhatsApp) = ver `DESIGN.md`.

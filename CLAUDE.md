@@ -14,7 +14,7 @@
 
 **Comprador:** ambos — o próprio player (org de 1-poucas contas) e gestores de tráfego que atendem players (org multi-conta).
 
-**Fora do ICP:** PME que **não anuncia** (exigiria criar campanha do zero = outro produto).
+**Fora do ICP (MVP):** PME que **não anuncia** — o MVP otimiza contas **ativas** (precisa de dado). Servir quem não anuncia depende de **criação de campanha**, que é capacidade de roadmap pós-MVP (ver §2 VISÃO).
 
 ---
 
@@ -33,6 +33,8 @@
 - Gate de acesso = **allowlist manual de beta**.
 
 **OUT (fast-follow):** OAuth oficial Meta + App Review; WhatsApp Cloud API / pool de números; Stripe (mensalidade + custo por uso); Google/TikTok Ads; modo lançamento×manutenção como preset; ACL por conta (RBAC granular); multi-agente por conta; pacote `@automato/design-system` compartilhado.
+
+**VISÃO (foco final, roadmap pós-MVP):** um **gestor de tráfego completo no WhatsApp** — o agente não só otimiza, mas **cria campanhas** (a pedido do usuário OU proativo, pelo que observou). MVP valida a otimização primeiro; **criação = fase de roadmap** (ver §15 e `docs/ROADMAP.md`). A arquitetura já antecipa (catálogo de tools + `AdsPlatformPort` extensíveis). Geração de criativo por IA = fase ainda mais tardia.
 
 ---
 
@@ -80,13 +82,16 @@ Portas ficam em `packages/shared/src/ports`. Regra: adicionar plataforma/canal/p
 
 | Porta | Contrato (resumo) | Adapter MVP |
 |---|---|---|
-| `AdsPlatformPort` | `listEntities`, `getInsights` (async), `getCreatives`, `mutate` | `@trafego/ads-meta` (Graph v26) |
+| `AdsPlatformPort` | `listEntities`, `getInsights` (async), `getCreatives`, `mutate` — *(roadmap: `createCampaign/AdSet/Ad`, `uploadCreativeAsset`→image_hash/video_id, `listPages`)* | `@trafego/ads-meta` (Graph v26) |
 | `MessagingChannelPort` | `sendMessage`, `onInbound`, `instanceLifecycle` | `@trafego/channel-evolution` |
 | `LLMProviderPort` | `complete` (texto+multimodal) → `{ output, usage, cost }` | `@trafego/llm-openrouter` |
 | `CredentialVaultPort` | `encrypt`/`decrypt` (AES-256-GCM, keyVersion) | local |
 | `SchedulerPort` | cron/jobs por tenant | BullMQ |
 | `MeteringPort` | registra `usage_events` (genérico `type`+`payload`) | Postgres |
 | `ApprovalPort` | `create`/`resolve` (HITL) | Postgres |
+| `StoragePort` *(roadmap)* | `put`/`get`/`signedUrl` de assets de criativo | S3-compat |
+
+*(Roadmap — criação de campanhas)* nova porta `StoragePort` (assets) + `AdsPlatformPort` ganha família `create*` + `uploadCreativeAsset`; tudo atrás das portas, sem tocar no core.
 
 Composition root **manual** (`apps/api/src/composition.ts`, `apps/worker/src/composition.ts`) — sem DI container.
 
@@ -104,6 +109,7 @@ Schema em `packages/db/src/schema`. Grupos:
 - **Conversa:** `conversations`, `messages(direction, body, meta)`.
 - **Metering:** `usage_events(type, payload_json, provider, model, input_tokens, output_tokens, cost)`.
 - **Audit:** `audit_log(actor, action, target, before, after)`.
+- **Criação de campanhas (roadmap):** `creative_assets` (biblioteca: origin `reuse|upload`, storage_ref, meta_image_hash/video_id, status), `campaign_drafts` (estrutura proposta: objetivo/budget/targeting/placement + criativos + copy + status `proposed|approved|created`), `ad_pages` (Page do cliente p/ `object_story_spec`). Aprovação de draft = `approvals` com payload de rascunho.
 
 **Reprodutibilidade:** `agent_runs.config_snapshot` congela a config no momento do run.
 
@@ -227,7 +233,7 @@ Serviços: **web** (Angular estático + nginx/Caddy), **api** (Node), **worker**
 
 ## 15. Roadmap / fast-follows
 
-Construção em **13 sub-fatias** (walking-skeleton-first) + estratégia de **paralelização em worktrees** → ver **[`docs/ROADMAP.md`](docs/ROADMAP.md)**. Marcos: `3a` valida a hipótese; beta read-only abre após `3b`; escrita só a partir de `5a`.
+Construção em **13 sub-fatias** (walking-skeleton-first) + estratégia de **paralelização em worktrees** → ver **[`docs/ROADMAP.md`](docs/ROADMAP.md)**. Marcos: `3a` valida a hipótese; beta read-only abre após `3b`; escrita só a partir de `5a`. **Criação de campanhas = Fatia 7 (pós-MVP)** — o gestor completo no WhatsApp (ver `docs/ROADMAP.md`).
 
 Fast-follows: ver §2 (OUT).
 
