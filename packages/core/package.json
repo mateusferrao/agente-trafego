@@ -1,0 +1,24 @@
+{
+  "name": "@trafego/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./playbook": "./src/playbook/index.ts",
+    "./guardrails": "./src/guardrails/index.ts",
+    "./decision": "./src/decision/index.ts",
+    "./brief": "./src/brief/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "@trafego/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.0"
+  }
+}

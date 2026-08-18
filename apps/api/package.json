@@ -1,0 +1,30 @@
+{
+  "name": "@trafego/api",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/composition.ts"
+  },
+  "scripts": {
+    "dev": "tsx watch src/http/server.ts",
+    "build": "tsc",
+    "start": "node dist/http/server.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "eslint src",
+    "openapi": "tsx src/openapi/generate.ts"
+  },
+  "dependencies": {
+    "@fastify/cookie": "^11.0.0",
+    "@fastify/session": "^11.0.0",
+    "@trafego/db": "workspace:*",
+    "@trafego/shared": "workspace:*",
+    "fastify": "^5.2.0",
+    "pino": "^9.5.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0"
+  }
+}

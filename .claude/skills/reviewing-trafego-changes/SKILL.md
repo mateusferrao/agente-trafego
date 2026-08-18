@@ -1,0 +1,39 @@
+---
+name: reviewing-trafego-changes
+description: >-
+  Use when reviewing a diff, branch, or pull request in the Agente de Tráfego
+  monorepo before merging — triggers on "revisar", "revisar mudança", "revisar
+  PR", "code review", "antes de mergear", "review this diff", "review before
+  merge". Not for planning (use planning-trafego-feature) or writing code (use
+  implementing-trafego-feature).
+---
+
+# Revisar mudanças — Agente de Tráfego
+
+Revisa um diff antes do merge combinando qualidade geral **+** aderência aos princípios do projeto, e emite veredito.
+
+## Fluxo
+
+1. **Base — reusa o existente:** rode o `/code-review` (bugs, segurança, eficiência, simplificação). Não reimplemente o que ele já cobre.
+2. **Dimensão extra — aderência aos princípios deste projeto** (o net-new): cheque os itens abaixo por stack.
+3. **Agregue** os achados do /code-review + aderência num relatório único com veredito.
+
+## Execução (escala ao tamanho do diff)
+
+- Diff pequeno (1-2 arquivos, 1 stack): revise inline, sem subagentes.
+- Diff médio/grande ou toca backend **e** frontend: **subagentes paralelos por dimensão** — backend correctness, frontend, segurança, aderência-aos-princípios. Um por dimensão relevante; não fan-out fixo.
+
+## Aderência — por stack
+
+Carregue só o relevante ao diff:
+- Backend tocado → [backend.md](backend.md)
+- Frontend tocado → [frontend.md](frontend.md)
+
+Fonte da verdade dos princípios = `CLAUDE.md` → *Convenções › Princípios de engenharia* e *Regras de negócio* (referencie por nome de seção).
+
+## Saída
+
+Findings estruturados, mais severo primeiro:
+- **severidade** (bloqueia / atenção / nit) · **arquivo:linha** · **dimensão** · problema → correção.
+
+**Veredito:** `BLOQUEIA` se houver ≥1 achado bloqueante; senão `PASSA`. Bloqueia sempre que: quebra invariante do CLAUDE.md (core impuro, porta ausente, vazamento cross-tenant, escrita sem eco+confirma, string mágica/cor hardcoded), bug de correção, ou risco de segurança.

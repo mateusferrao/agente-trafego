@@ -1,0 +1,32 @@
+{
+  "name": "@trafego/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/main.ts",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "@langchain/core": "^0.3.0",
+    "@langchain/langgraph": "^0.2.0",
+    "@langchain/langgraph-checkpoint-postgres": "^0.0.3",
+    "@langchain/openai": "^0.3.0",
+    "@trafego/ads-meta": "workspace:*",
+    "@trafego/channel-evolution": "workspace:*",
+    "@trafego/core": "workspace:*",
+    "@trafego/db": "workspace:*",
+    "@trafego/llm-openrouter": "workspace:*",
+    "@trafego/shared": "workspace:*",
+    "bullmq": "^5.34.0",
+    "ioredis": "^5.4.0",
+    "pino": "^9.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0"
+  }
+}

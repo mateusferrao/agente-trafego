@@ -1,0 +1,11 @@
+# Angular build
+/dist
+/tmp
+/out-tsc
+/.angular
+
+# Cliente gerado por kubb (artefato de build — ver core/api/README.md)
+/src/app/core/api/generated
+
+# deps
+/node_modules
