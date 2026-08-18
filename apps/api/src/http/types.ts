@@ -1,9 +1,8 @@
 import "fastify";
-import "@fastify/session";
 import type { OrgId } from "@trafego/shared/types";
 import type { Container } from "../composition.js";
 
-// Augmentação do Fastify: sessão custom + container + contexto scoped por org.
+// Augmentação do Fastify: container + contexto scoped (user/org) da sessão híbrida.
 declare module "fastify" {
   interface FastifyInstance {
     /** Container montado na composition root, disponível nas rotas. */
@@ -12,14 +11,7 @@ declare module "fastify" {
   interface FastifyRequest {
     /** org_id resolvido pelo middleware de scoping (garante isolamento tenant). */
     orgId?: OrgId;
-    /** user autenticado resolvido por requireAuth. */
+    /** user autenticado resolvido por requireAuth (cookie → sessão no DB). */
     userId?: string;
-  }
-}
-
-declare module "@fastify/session" {
-  interface FastifySessionObject {
-    userId?: string;
-    orgId?: string;
   }
 }

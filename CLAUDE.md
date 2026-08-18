@@ -68,8 +68,8 @@
 | Orquestração | **LangGraph.js** | Checkpoints + interrupt/resume para HITL durável de graça |
 | LLM | **OpenRouter** | 1 gateway multimodal; captura custo/token nativa (essencial p/ billing por markup) |
 | DB | **Postgres puro + Drizzle** | Portável via `pg_dump`; não acopla em recurso proprietário |
-| Contrato API | **zod → OpenAPI → kubb** | Tipos ponta-a-ponta sem drift (padrão Automato) |
-| Auth | Sessão custom (**iron-session + argon2**) atrás de `AuthPort` | Padrão Automato; zero dependência externa; roda self-host |
+| Contrato API | **zod → OpenAPI → kubb (TYPES-ONLY)** consumido via `BaseApiService` (Angular HttpClient, `withCredentials`) | Tipos ponta-a-ponta sem drift; o client gerado seria dead-code (o stack usa HttpClient + interceptors) |
+| Auth | Sessão **híbrida** (tabela `sessions` token-opaco→hash + cookie selado iron-session) + **@node-rs/argon2** | Padrão Automato; revogável no DB; zero dependência externa; roda self-host |
 | Hosting | **Hostinger + EasyPanel** | Self-host; casa com "banco próprio"; Evolution já roda lá |
 
 Ver `docs/plan.md` para o histórico completo de trade-offs discutidos.
@@ -101,7 +101,7 @@ Composition root **manual** (`apps/api/src/composition.ts`, `apps/worker/src/com
 
 Schema em `packages/db/src/schema`. Grupos:
 
-- **Tenancy/auth:** `orgs`, `users`, `memberships(role: owner|member)`, `sessions`, `beta_access(status)`.
+- **Tenancy/auth:** `orgs`, `users`, `memberships(role: owner|member)`, `sessions(tokenHash, ip/ua, lastUsedAt, expiresAt, revokedAt)`, `access_grants(email, status: pending|active|revoked)` — gate de acesso keyed por email; nome durável pós-beta.
 - **Integrações:** `ad_accounts(meta_business_id, ad_account_id, token_cripto, token_status, last_validated_at)`, `channel_instances(evolution_instance, phone, status, webhook_secret)`, `contacts(phone, verified, user_id, role)`.
 - **Agente:** `agents(ad_account_id, archetype, persona, system_prompt, goals, cadence, autonomy_policy, tone, model_config, status)`, `agent_tool_definitions` (catálogo-DB: key, riskLevel, isIdempotent, schema, requiredPermission, requiredEntitlement), `agent_tool_bindings(agent_id, tool_key, mode)`, `guardrail_configs(max_budget_change_pct, max_entities_per_day, allowed_actions, dry_run, kill_switch, llm_cost_cap)`, `playbook_rules(scope, when_json, then_json, enabled, priority)`, `agent_memory(type, content, confidence, lifecycle)`.
 - **Dados Meta:** `insights_snapshots(ad_account_id, entity_level, entity_id, date, metrics_json)` — série temporal (retenção ~90d por env).
@@ -188,7 +188,7 @@ Schema em `packages/db/src/schema`. Grupos:
 - **Credencial (token System User = joia da coroa):** envelope **AES-256-GCM**, `CREDENTIAL_MASTER_KEY` (secret EasyPanel), `keyVersion` p/ rotação. Nunca logar token.
 - **Org scoping:** toda query filtrada por `org_id` (helper de contexto scoped p/ evitar vazamento cross-tenant).
 - **RBAC:** owner/member org-wide no MVP, **extensível a granular** (ACL por conta = fast-follow).
-- **Sessão:** iron-session + argon2 + cookie `SameSite`.
+- **Sessão híbrida:** tabela `sessions` server-side (cookie leva **token opaco**; DB guarda só o `tokenHash` sha256 — revogável, expiração **deslizante**, trilha `ip/ua`) **+** cookie **selado por iron-session** com o contexto mutável (org ativa), password = `SESSION_SECRET`. Cookies `httpOnly` + `SameSite=lax` + `secure` em prod. Senha do usuário: **`@node-rs/argon2`** (prebuilt, sem node-gyp). Login/signup com rate-limit (`@fastify/rate-limit`, Redis).
 - **Webhook Evolution:** valida `EVOLUTION_WEBHOOK_SECRET`.
 - **LGPD:** telefones + dados de anúncio; token cripto; base no Postgres self-host.
 
@@ -201,6 +201,7 @@ Schema em `packages/db/src/schema`. Grupos:
 - **Modularidade + separação de interesses:** cada unidade um propósito; slice coeso; IO na casca, decisão no core.
 - **Funções enxutas e legíveis:** função pequena, um nível de abstração, nome que explica. Função grande = sinal de que faz demais.
 - **Desacoplamento:** depender de interface (porta), não de implementação. Core não importa infra.
+- **Nomenclatura no nível certo de abstração** (faz parte do desacoplamento): nome descreve o **quê/porquê** do conceito, nunca o **como/quando** temporário — não vaza fase (ex: `beta`), provider (ex: `meta`/`evolution` num conceito genérico), nem detalhe de implementação. Teste: trocar a impl ou sair da fase **não** deve obrigar a renomear o conceito. Ex: `access_grants.status` (durável) e não `beta_access` (some no fim do beta).
 - **Extensível / genérico:** nova plataforma/canal/provider = novo adapter atrás da porta, sem tocar no core.
 - **Reuso-primeiro:** antes de escrever novo, procurar em `packages/{shared,core,db}` + adapters existentes. Duplicou 3x → extrai.
 
@@ -250,7 +251,7 @@ pnpm test               # vitest em todos os packages
 pnpm typecheck          # tsc --noEmit por package
 pnpm db:generate        # gera migration Drizzle a partir do schema
 pnpm db:migrate         # aplica migrations
-pnpm api:generate       # zod → OpenAPI → client Angular (kubb)
+pnpm api:generate       # zod → OpenAPI → tipos Angular (kubb types-only)
 ```
 
 > Estrutura do monorepo em `docs/plan.md`. Este CLAUDE.md é a fonte da verdade das decisões — atualize-o quando uma decisão mudar.

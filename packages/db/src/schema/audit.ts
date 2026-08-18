@@ -16,6 +16,9 @@ export const auditLog = pgTable(
     action: text("action").notNull(),
     // alvo: "ad_account:123", "agent:abc", ...
     target: text("target"),
+    // contexto genérico do write (método, status, ip, ...) p/ writes de API.
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    // estado antes/depois (writes ricos, ex: mutação Meta com rollback — 5a).
     before: jsonb("before").$type<Record<string, unknown>>(),
     after: jsonb("after").$type<Record<string, unknown>>(),
     ...timestamps,

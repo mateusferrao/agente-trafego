@@ -1,15 +1,20 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
+import type { OrgId } from "@trafego/shared/types";
+import { SESSION_TOKEN_COOKIE } from "../http/cookies.js";
 import { unauthorized } from "./error-handler.js";
 
 /**
- * preHandler que exige sessão autenticada (iron-session/@fastify/session).
- * Popula `request.userId`. Use em toda rota que não seja pública.
+ * preHandler que exige sessão autenticada (sessão híbrida): lê o token opaco do
+ * cookie → resolve contra o DB (não-revogada + não-expirada) → popula
+ * `request.userId`/`request.orgId`. Rota sem este guard = pública.
  */
 export async function requireAuth(request: FastifyRequest, _reply: FastifyReply): Promise<void> {
-  const userId = request.session?.userId;
-  if (!userId) {
-    throw unauthorized();
-  }
-  request.userId = userId;
-  // TODO: opcional — carregar membership/role do user para checagens de RBAC.
+  const token = request.cookies?.[SESSION_TOKEN_COOKIE];
+  if (!token) throw unauthorized();
+
+  const session = await request.server.container.services.auth.resolveSession(token);
+  if (!session) throw unauthorized();
+
+  request.userId = session.userId;
+  if (session.orgId) request.orgId = session.orgId as OrgId;
 }

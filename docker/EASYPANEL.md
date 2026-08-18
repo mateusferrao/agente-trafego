@@ -33,8 +33,8 @@ Pré: repo no GitHub (`mateusferrao/agente-trafego`, branch `main`) + instância
 - **Source:** GitHub → repo `mateusferrao/agente-trafego`, Branch `main`, **Build Path** `/`. Habilitar **Auto Deploy** (deploy a cada push).
 - **Build:** builder **Nixpacks** —
   - **Install Command:** `pnpm install --frozen-lockfile`
-  - **Build Command:** *(deixar vazio — não há build; o runtime é `tsx` lendo o TS direto)*
-  - **Start Command:** `pnpm --filter @trafego/api start`
+  - **Build Command:** `pnpm --filter web build` — **builda o Angular** (a api serve o `apps/web/dist/web/browser` via `@fastify/static`). O backend em si roda via `tsx` (sem build), mas o front precisa do build no build phase (onde as devDeps do Angular existem).
+  - **Start Command:** `pnpm --filter @trafego/api start` — no boot: `AUTO_MIGRATE` aplica migrations, depois serve `/api` + o SPA (fallback pra `index.html`).
   - Node ≥22 vem do `engines`; pnpm do `packageManager` (corepack); `esbuild` compila via `pnpm.onlyBuiltDependencies`.
 - **Environment** (aba Environment, sintaxe `.env`) — `DATABASE_URL`/`REDIS_URL` = os Internal URLs dos passos 2/3; o resto = valores reais:
 ```

@@ -1,5 +1,5 @@
 import { index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
-import { betaAccessStatus, membershipRole, pk, timestamps } from "./_shared.js";
+import { accessStatus, membershipRole, pk, timestamps } from "./_shared.js";
 
 /** Org = tenant. Raiz de todo scoping por `org_id`. */
 export const orgs = pgTable("orgs", {
@@ -35,7 +35,13 @@ export const memberships = pgTable(
   (t) => [index("memberships_org_idx").on(t.orgId), index("memberships_user_idx").on(t.userId)],
 );
 
-/** Sessão custom (iron-session). Guarda referência p/ revogação. */
+/**
+ * Sessão híbrida (§12): o cookie leva um token opaco; o DB guarda só o
+ * **hash sha256** (`tokenHash`) — nunca o token em claro. Revogável
+ * (`revokedAt`), com expiração deslizante (`lastUsedAt`) e trilha de origem
+ * (`ipAddress`/`userAgent`). Complementada por um cookie selado (iron-session)
+ * que carrega o contexto mutável da sessão (org ativa).
+ */
 export const sessions = pgTable(
   "sessions",
   {
@@ -45,6 +51,13 @@ export const sessions = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     // org ativa da sessão (multi-org)
     orgId: uuid("org_id").references(() => orgs.id, { onDelete: "cascade" }),
+    // sha256 do token opaco do cookie (único; nunca guardamos o token cru).
+    tokenHash: text("token_hash").notNull().unique(),
+    // trilha de origem (auditoria/anti-abuso), opcional.
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+    // expiração deslizante: atualizado a cada uso autenticado.
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
     ...timestamps,
@@ -52,13 +65,18 @@ export const sessions = pgTable(
   (t) => [index("sessions_user_idx").on(t.userId)],
 );
 
-/** Gate de acesso = allowlist manual de beta. */
-export const betaAccess = pgTable("beta_access", {
+/**
+ * Gate de acesso ao produto (keyed por email → allowlist antes do signup). No
+ * beta é liberado manualmente; pós-beta o mesmo `status` passa a ser dirigido
+ * pelo billing — por isso o nome é neutro (`access_grants`, não `beta_access`).
+ */
+export const accessGrants = pgTable("access_grants", {
   id: pk(),
   email: text("email").notNull().unique(),
-  status: betaAccessStatus("status").notNull().default("requested"),
+  status: accessStatus("status").notNull().default("pending"),
   note: text("note"),
   invitedByUserId: uuid("invited_by_user_id").references(() => users.id, { onDelete: "set null" }),
-  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  // quando o acesso passou a `active`.
+  activatedAt: timestamp("activated_at", { withTimezone: true }),
   ...timestamps,
 });

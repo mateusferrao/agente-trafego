@@ -65,13 +65,18 @@ export const envSchema = z.object({
   META_APP_SECRET: z.string().min(1, "META_APP_SECRET é obrigatório"),
 
   // ─── WhatsApp (Evolution) ──────────────────────────────────────────────
+  // Nível OPERADOR (compartilhado): 1 servidor Evolution hospeda as instâncias
+  // de todos os clientes. Base URL + API key global (admin) = env.
   EVOLUTION_BASE_URL: z.string().url(),
   EVOLUTION_API_KEY: z.string().min(1, "EVOLUTION_API_KEY é obrigatória"),
-  // secret validado no webhook inbound.
+  // ⚠️ POR-ORG (scaffolding Fatia 0): instância + webhook secret são de tenant —
+  // o alvo é `channel_instances(evolution_instance, webhook_secret)` no DB (1 por
+  // org). Webhook secret PRECISA ser por-instância (identifica o org pelo nome da
+  // instância no payload inbound + rotação independente). Migram na fatia de
+  // onboarding WhatsApp (Integrações/QR — 5b). Aqui só até lá.
   EVOLUTION_WEBHOOK_SECRET: z
     .string()
     .min(1, "EVOLUTION_WEBHOOK_SECRET é obrigatório"),
-  // instância Evolution única da org. Fatia 0: via env; depois vem de channel_instances.
   EVOLUTION_INSTANCE: z.string().min(1, "EVOLUTION_INSTANCE é obrigatória"),
 
   // ─── Fatia 0 (scaffolding — removido quando houver UI/auth/contatos) ────

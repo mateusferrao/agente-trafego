@@ -1,13 +1,15 @@
 import { pathToFileURL } from "node:url";
 import cookie from "@fastify/cookie";
-import session from "@fastify/session";
+import rateLimit from "@fastify/rate-limit";
 import Fastify, { type FastifyInstance } from "fastify";
 import { runMigrations } from "@trafego/db";
 
 import { env } from "../env.js";
+import { buildDocument } from "../openapi/generate.js";
 import { buildContainer } from "../composition.js";
 import { registerAudit } from "../middleware/audit.js";
 import { registerErrorHandler } from "../middleware/error-handler.js";
+import { registerStatic } from "./static.js";
 
 // Slices (VSA): cada módulo é um plugin Fastify montado pela composição.
 import { authRoutes } from "../modules/auth/routes.js";
@@ -30,28 +32,41 @@ import "./types.js";
  */
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
+    // Atrás do proxy do EasyPanel/nginx (§14): confia no X-Forwarded-For para
+    // `request.ip` refletir o cliente real — senão o rate-limit de login vira um
+    // bucket global (lockout de todos) e o IP em sessão/audit fica o do proxy.
+    trustProxy: true,
     logger: {
       level: env.NODE_ENV === "production" ? "info" : "debug",
-      // rede de segurança: nunca vazar o token em log (joia da coroa — §12).
-      redact: ["token", "accessToken", "*.token", "*.accessToken", "*.tokenCripto"],
+      // rede de segurança: nunca vazar segredo em log (§12). Token = joia da coroa;
+      // senha nunca deve aparecer (defense-in-depth caso alguém logue o body).
+      redact: [
+        "token",
+        "accessToken",
+        "password",
+        "*.token",
+        "*.accessToken",
+        "*.tokenCripto",
+        "*.password",
+        "req.body.password",
+      ],
     },
   });
 
   // Composition root manual — portas + services montados uma vez.
   app.decorate("container", buildContainer());
 
-  // Sessão custom (§4/§12): cookie SameSite + store de sessão.
-  // TODO: CLAUDE.md decide iron-session + argon2; @fastify/session é o placeholder.
+  // Sessão híbrida (§12): cookies via @fastify/cookie. O token opaco vai num
+  // cookie httpOnly (casado com `sessions` no DB); o contexto (org ativa) vai
+  // num cookie selado por iron-session. Ver `http/cookies.ts` + slice de auth.
   await app.register(cookie);
-  await app.register(session, {
-    secret: env.SESSION_SECRET,
-    cookieName: "trafego_sid",
-    cookie: {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: env.NODE_ENV === "production",
-      maxAge: 1000 * 60 * 60 * 24 * 7,
-    },
+
+  // Rate-limit (Redis compartilhado) — opt-in por rota (`global: false`),
+  // aplicado em endpoints sensíveis (login/signup) contra brute-force.
+  await app.register(rateLimit, {
+    global: false,
+    redis: app.container.redis,
+    nameSpace: "trafego-rl:",
   });
 
   // Cross-cutting: erros na casca → resposta; audit+metering em writes.
@@ -60,6 +75,9 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Health check (sem prefixo, sem auth).
   app.get("/health", async () => ({ status: "ok", ts: new Date().toISOString() }));
+
+  // Contrato OpenAPI ao vivo (gerado dos schemas zod) — input do kubb no web.
+  app.get("/openapi.json", async () => buildDocument());
 
   // Webhooks fora do /api (público, valida secret próprio).
   await app.register(webhooksRoutes);
@@ -81,6 +99,10 @@ export async function buildApp(): Promise<FastifyInstance> {
     },
     { prefix: "/api" },
   );
+
+  // Front Angular (build) + fallback SPA. Registrado por último: os /api, /admin,
+  // /webhooks, /health, /openapi.json acima têm precedência sobre o fallback.
+  await registerStatic(app);
 
   return app;
 }

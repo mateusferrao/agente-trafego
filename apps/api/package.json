@@ -16,8 +16,11 @@
     "openapi": "tsx src/openapi/generate.ts"
   },
   "dependencies": {
+    "@asteasolutions/zod-to-openapi": "^7.3.0",
     "@fastify/cookie": "^11.0.0",
-    "@fastify/session": "^11.0.0",
+    "@fastify/rate-limit": "^11.2.0",
+    "@fastify/static": "^8.0.0",
+    "@node-rs/argon2": "^2.1.0",
     "@trafego/config": "workspace:*",
     "@trafego/credential-vault": "workspace:*",
     "@trafego/db": "workspace:*",
@@ -26,6 +29,7 @@
     "drizzle-orm": "^0.38.0",
     "fastify": "^5.2.0",
     "ioredis": "^5.4.0",
+    "iron-session": "^8.0.4",
     "pino": "^9.5.0",
     "zod": "^3.24.0"
   },

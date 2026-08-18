@@ -18,10 +18,14 @@ Revisa um diff antes do merge combinando qualidade geral **+** aderência aos pr
 2. **Dimensão extra — aderência aos princípios deste projeto** (o net-new): cheque os itens abaixo por stack.
 3. **Agregue** os achados do /code-review + aderência num relatório único com veredito.
 
-## Execução (escala ao tamanho do diff)
+## Execução (escala ao tamanho do diff — fan-out enxuto e temático)
 
-- Diff pequeno (1-2 arquivos, 1 stack): revise inline, sem subagentes.
-- Diff médio/grande ou toca backend **e** frontend: **subagentes paralelos por dimensão** — backend correctness, frontend, segurança, aderência-aos-princípios. Um por dimensão relevante; não fan-out fixo.
+- **Diff pequeno** (1-2 arquivos, 1 stack): revise **inline**, sem subagentes.
+- **Diff médio/grande:** subagentes paralelos, **no máximo 4**:
+  - **Fixo — 1 subagente por stack tocado:** **1 backend** e/ou **1 frontend**. Cada um cobre correção + aderência + segurança do seu stack (carrega `backend.md`/`frontend.md`). Diff só-backend = só o back; só-frontend = só o front.
+  - **Adicionais — no máx 2 subagentes temáticos**, **derivados do risco do próprio diff** (não uma lista fixa). Escolha os temas pelo que a mudança realmente expõe. Exemplos: auth/tenancy → isolamento de tenant, sessão (revogação/expiry), hash de senha, cookies; escrita Meta → idempotência, guardrail, eco+confirma; adapter externo → contrato, rate-limit, mapeamento de erro; credencial → nunca logar/expor token.
+  - **Total ≤ 4.** Sem tema relevante além do stack → só os fixos. Não inflar o fan-out.
+- Cada subagente lê o código real e devolve findings estruturados; verifique (adversarial) achados de alto risco antes de reportar.
 
 ## Aderência — por stack
 

@@ -1,16 +1,21 @@
 // Árvore de navegação tipada — fonte única da estrutura do app shell.
 // Mantém a nav desacoplada das rotas (as rotas apontam para componentes; aqui
-// descrevemos o que aparece na sidebar e em que ordem). Ver DESIGN.md §5.
+// descrevemos o que aparece na sidebar e em que ordem). Ver docs/DESIGN.md (IA).
+//
+// IA da Fatia 1a: Contas (landing, '/'), Aprovações, Integrações, Configurações.
+// Aprovações e Integrações são placeholders "em breve" nesta fatia.
 
 export interface AppModule {
-  /** Identificador estável (analytics / active-state). */
+  /** Identificador estável (active-state / testes). */
   readonly id: string;
   /** Rótulo curto exibido na sidebar (14px medium — DESIGN.md §3 Label). */
   readonly label: string;
   /** Rota absoluta (routerLink). */
   readonly route: string;
-  /** Nome do ícone (chave do set de ícones vendorizado do design system). */
+  /** Nome do ícone (chave do set @ng-icons/heroicons registrado no shell). */
   readonly icon: string;
+  /** Casamento exato de rota ativa (necessário para a raiz '/'). */
+  readonly exact: boolean;
   /** Descrição curta para tooltip / empty states. */
   readonly description: string;
 }
@@ -21,19 +26,26 @@ export interface AppModuleGroup {
   readonly modules: readonly AppModule[];
 }
 
-// Grupos da navegação principal. A ordem reflete o fluxo operacional diário:
-// primeiro o que aconteceu (timeline), depois os objetos que o usuário configura.
 export const APP_MODULE_GROUPS: readonly AppModuleGroup[] = [
   {
     id: 'operate',
     label: 'Operar',
     modules: [
       {
-        id: 'timeline',
-        label: 'Timeline',
-        route: '/timeline',
-        icon: 'activity',
-        description: 'Análises, recomendações e ações aplicadas por conta.',
+        id: 'accounts',
+        label: 'Contas',
+        route: '/',
+        icon: 'heroRectangleGroup',
+        exact: true,
+        description: 'Contas de anúncio conectadas e seus agentes.',
+      },
+      {
+        id: 'approvals',
+        label: 'Aprovações',
+        route: '/approvals',
+        icon: 'heroCheckCircle',
+        exact: false,
+        description: 'Ações que aguardam seu OK antes de aplicar.',
       },
     ],
   },
@@ -42,31 +54,20 @@ export const APP_MODULE_GROUPS: readonly AppModuleGroup[] = [
     label: 'Configurar',
     modules: [
       {
-        id: 'agents',
-        label: 'Agentes',
-        route: '/agents',
-        icon: 'bot',
-        description: 'Superfície única de config do agente, semeada por arquétipo.',
+        id: 'integrations',
+        label: 'Integrações',
+        route: '/integrations',
+        icon: 'heroSquares2x2',
+        exact: false,
+        description: 'Conexões com Meta e canal WhatsApp.',
       },
-      {
-        id: 'accounts',
-        label: 'Contas Meta',
-        route: '/accounts',
-        icon: 'meta',
-        description: 'Contas de anúncio conectadas via System User token.',
-      },
-    ],
-  },
-  {
-    id: 'system',
-    label: 'Sistema',
-    modules: [
       {
         id: 'settings',
         label: 'Configurações',
         route: '/settings',
-        icon: 'settings',
-        description: 'Organização, canal WhatsApp, membros e preferências.',
+        icon: 'heroCog6Tooth',
+        exact: false,
+        description: 'Perfil, organização, tema e acesso.',
       },
     ],
   },

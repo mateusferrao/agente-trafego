@@ -1,11 +1,11 @@
 {
-  "id": "6a00ca04-b698-4a58-8b5e-4d920689ecbf",
+  "id": "1b003440-b75d-4492-aebe-37eb6b2d0f89",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
-    "public.beta_access": {
-      "name": "beta_access",
+    "public.access_grants": {
+      "name": "access_grants",
       "schema": "",
       "columns": {
         "id": {
@@ -23,11 +23,11 @@
         },
         "status": {
           "name": "status",
-          "type": "beta_access_status",
+          "type": "access_status",
           "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
-          "default": "'requested'"
+          "default": "'pending'"
         },
         "note": {
           "name": "note",
@@ -41,8 +41,8 @@
           "primaryKey": false,
           "notNull": false
         },
-        "approved_at": {
-          "name": "approved_at",
+        "activated_at": {
+          "name": "activated_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -64,9 +64,9 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "beta_access_invited_by_user_id_users_id_fk": {
-          "name": "beta_access_invited_by_user_id_users_id_fk",
-          "tableFrom": "beta_access",
+        "access_grants_invited_by_user_id_users_id_fk": {
+          "name": "access_grants_invited_by_user_id_users_id_fk",
+          "tableFrom": "access_grants",
           "tableTo": "users",
           "columnsFrom": [
             "invited_by_user_id"
@@ -80,8 +80,8 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "beta_access_email_unique": {
-          "name": "beta_access_email_unique",
+        "access_grants_email_unique": {
+          "name": "access_grants_email_unique",
           "nullsNotDistinct": false,
           "columns": [
             "email"
@@ -281,6 +281,30 @@
           "primaryKey": false,
           "notNull": false
         },
+        "token_hash": {
+          "name": "token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ip_address": {
+          "name": "ip_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "user_agent": {
+          "name": "user_agent",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_used_at": {
+          "name": "last_used_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
         "expires_at": {
           "name": "expires_at",
           "type": "timestamp with time zone",
@@ -354,7 +378,15 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "sessions_token_hash_unique": {
+          "name": "sessions_token_hash_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "token_hash"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -2758,6 +2790,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "metadata": {
+          "name": "metadata",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
         "before": {
           "name": "before",
           "type": "jsonb",
@@ -2838,6 +2876,15 @@
     }
   },
   "enums": {
+    "public.access_status": {
+      "name": "access_status",
+      "schema": "public",
+      "values": [
+        "pending",
+        "active",
+        "revoked"
+      ]
+    },
     "public.action_source": {
       "name": "action_source",
       "schema": "public",
@@ -2883,15 +2930,6 @@
         "suggest",
         "act_safe",
         "act_full"
-      ]
-    },
-    "public.beta_access_status": {
-      "name": "beta_access_status",
-      "schema": "public",
-      "values": [
-        "requested",
-        "approved",
-        "revoked"
       ]
     },
     "public.channel_status": {

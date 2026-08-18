@@ -1,9 +1,10 @@
 import { z } from "zod";
 
-export const betaAccessOutput = z.object({
-  status: z.enum(["pending", "granted", "denied"]),
+// Status de acesso ao produto (mesmo enum durável de `access_grants.status`).
+export const accessStatusOutput = z.object({
+  status: z.enum(["pending", "active", "revoked"]),
 });
-export type BetaAccessOutput = z.infer<typeof betaAccessOutput>;
+export type AccessStatusOutput = z.infer<typeof accessStatusOutput>;
 
 export const usageSummaryOutput = z.object({
   orgId: z.string(),

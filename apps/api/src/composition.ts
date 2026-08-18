@@ -11,7 +11,10 @@ import type {
 
 import { env } from "./env.js";
 import { createAuthService } from "./modules/auth/service.js";
+import { createDrizzleAuthRepo } from "./modules/auth/repo.js";
+import { argon2Hasher } from "./modules/auth/password.js";
 import { createOrgsService } from "./modules/orgs/service.js";
+import { createDrizzleOrgsRepo } from "./modules/orgs/repo.js";
 import { createAccountsService } from "./modules/accounts/service.js";
 import { createChannelsService } from "./modules/channels/service.js";
 import { createAgentsService } from "./modules/agents/service.js";
@@ -63,6 +66,8 @@ export interface Services {
 export interface Container {
   readonly adapters: Adapters;
   readonly services: Services;
+  /** Cliente Redis compartilhado (scheduler + rate-limit da casca). */
+  readonly redis: Redis;
 }
 
 /**
@@ -112,8 +117,8 @@ export function buildContainer(): Container {
 
   // Services — cada slice recebe só as portas de que precisa.
   const services: Services = {
-    auth: createAuthService({ db }),
-    orgs: createOrgsService({ db }),
+    auth: createAuthService({ repo: createDrizzleAuthRepo(db), hasher: argon2Hasher }),
+    orgs: createOrgsService({ repo: createDrizzleOrgsRepo(db) }),
     accounts: createAccountsService({ db, adsPlatform, vault }),
     channels: createChannelsService({ db, messaging }),
     agents: createAgentsService({ db }),
@@ -124,5 +129,5 @@ export function buildContainer(): Container {
     admin: createAdminService({ db, vault, scheduler }),
   };
 
-  return { adapters, services };
+  return { adapters, services, redis };
 }

@@ -18,7 +18,7 @@ interface StepDef {
   selector: 'app-onboarding-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <section class="mx-auto flex min-h-screen max-w-2xl flex-col gap-8 px-6 py-16">
+    <section class="mx-auto flex min-h-dvh max-w-2xl flex-col gap-8 px-6 py-16">
       <header class="flex flex-col gap-2">
         <h1 class="font-brand text-3xl font-bold text-ink">Vamos conectar sua operação</h1>
         <p class="max-w-prose text-sm leading-relaxed text-muted">

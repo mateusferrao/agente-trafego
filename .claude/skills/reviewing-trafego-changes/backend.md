@@ -21,6 +21,7 @@ Checklist de aderência (além do que o `/code-review` cobre). Cada item violado
 
 - [ ] **Sem string mágica/hardcoded:** URLs, números, chaves em const/env nomeados.
 - [ ] **Funções enxutas:** função grande/multi-responsabilidade → sinalizar refatoração.
+- [ ] **Abstração/desacoplamento + nomenclatura durável** (CLAUDE.md → *Desacoplamento* / *Nomenclatura no nível certo de abstração*): a unidade depende de interface, não de impl; e **nomes** (tabela/coluna/tipo/campo/rota/função) não vazam fase (`beta`), provider num conceito genérico, nem detalhe de impl — trocar impl/sair da fase não deve exigir renomear o conceito. Nome acoplado → sinalizar.
 - [ ] **Reuso:** lógica duplicada que já existe em `packages/{shared,core,db}`/adapters → sinalizar reuso.
 - [ ] **ESM:** imports relativos com `.js`; cross-package `@trafego/*`.
 

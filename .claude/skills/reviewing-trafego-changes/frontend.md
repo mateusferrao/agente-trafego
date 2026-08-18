@@ -16,7 +16,7 @@ Checklist de aderência (além do `/code-review`). Violação = candidato a **bl
 ## Princípios de engenharia (CLAUDE.md → Convenções)
 
 - [ ] **Funções/métodos enxutos e legíveis**, nomes claros, PT-BR.
-- [ ] **Desacoplamento:** feature não acopla em detalhe de outra; comunicação por contrato.
+- [ ] **Desacoplamento + nomenclatura durável:** feature não acopla em detalhe de outra (comunicação por contrato); **nomes** (componente/serviço/rota/campo) não vazam fase/provider/detalhe de impl — trocar impl/sair da fase não exige renomear o conceito. Ver CLAUDE.md → *Nomenclatura no nível certo de abstração*.
 - [ ] **Sem string mágica:** rotas, chaves, labels repetidos → const/i18n.
 
 ## UX / copy (aderência — `docs/DESIGN.md`) — violação = candidato a **bloqueia**

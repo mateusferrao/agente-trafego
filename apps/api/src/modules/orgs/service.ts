@@ -1,22 +1,24 @@
-import type { Database } from "@trafego/db";
 import type { CreateOrgInput, OrgOutput } from "./schema.js";
+import type { MembershipRole, OrgsRepo } from "./repo.js";
 
 export interface OrgsDeps {
-  readonly db: Database;
+  readonly repo: OrgsRepo;
 }
 
-/** Slice de orgs (tenants). Cria org + membership owner; lista orgs do user. */
+/** Slice de orgs (tenants). Lista orgs do user; cria org + membership owner. */
 export function createOrgsService(deps: OrgsDeps) {
   return {
-    async listForUser(_userId: string): Promise<OrgOutput[]> {
-      // TODO: join memberships → orgs filtrando por user.
-      void deps.db;
-      return [];
+    listForUser(userId: string): Promise<OrgOutput[]> {
+      return deps.repo.listForUser(userId);
     },
 
-    async create(_userId: string, _input: CreateOrgInput): Promise<OrgOutput> {
-      // TODO: inserir org + membership(role=owner) em transação.
-      throw new Error("TODO: implementar create org");
+    create(userId: string, input: CreateOrgInput): Promise<OrgOutput> {
+      return deps.repo.createWithOwner(userId, input.name);
+    },
+
+    /** Papel do user na org (null = não-membro). Base do org-scoping/isolamento. */
+    membershipRole(userId: string, orgId: string): Promise<MembershipRole | null> {
+      return deps.repo.findMembershipRole(userId, orgId);
     },
   };
 }

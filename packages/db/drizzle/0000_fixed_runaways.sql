@@ -1,9 +1,9 @@
+CREATE TYPE "public"."access_status" AS ENUM('pending', 'active', 'revoked');--> statement-breakpoint
 CREATE TYPE "public"."action_source" AS ENUM('playbook', 'llm');--> statement-breakpoint
 CREATE TYPE "public"."action_type" AS ENUM('pause_entity', 'resume_entity', 'adjust_budget', 'set_status');--> statement-breakpoint
 CREATE TYPE "public"."agent_status" AS ENUM('active', 'paused', 'draft');--> statement-breakpoint
 CREATE TYPE "public"."approval_status" AS ENUM('pending', 'approved', 'rejected', 'expired');--> statement-breakpoint
 CREATE TYPE "public"."autonomy_level" AS ENUM('notify', 'suggest', 'act_safe', 'act_full');--> statement-breakpoint
-CREATE TYPE "public"."beta_access_status" AS ENUM('requested', 'approved', 'revoked');--> statement-breakpoint
 CREATE TYPE "public"."channel_status" AS ENUM('disconnected', 'connecting', 'connected');--> statement-breakpoint
 CREATE TYPE "public"."contact_role" AS ENUM('owner', 'member');--> statement-breakpoint
 CREATE TYPE "public"."entity_level" AS ENUM('account', 'campaign', 'adset', 'ad');--> statement-breakpoint
@@ -20,16 +20,16 @@ CREATE TYPE "public"."run_status" AS ENUM('pending', 'running', 'waiting_approva
 CREATE TYPE "public"."run_trigger" AS ENUM('cron', 'on_demand', 'conversation');--> statement-breakpoint
 CREATE TYPE "public"."token_status" AS ENUM('valid', 'invalid', 'unchecked');--> statement-breakpoint
 CREATE TYPE "public"."tool_binding_mode" AS ENUM('enabled', 'disabled', 'shadow');--> statement-breakpoint
-CREATE TABLE "beta_access" (
+CREATE TABLE "access_grants" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"email" text NOT NULL,
-	"status" "beta_access_status" DEFAULT 'requested' NOT NULL,
+	"status" "access_status" DEFAULT 'pending' NOT NULL,
 	"note" text,
 	"invited_by_user_id" uuid,
-	"approved_at" timestamp with time zone,
+	"activated_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "beta_access_email_unique" UNIQUE("email")
+	CONSTRAINT "access_grants_email_unique" UNIQUE("email")
 );
 --> statement-breakpoint
 CREATE TABLE "memberships" (
@@ -54,10 +54,15 @@ CREATE TABLE "sessions" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
 	"org_id" uuid,
+	"token_hash" text NOT NULL,
+	"ip_address" text,
+	"user_agent" text,
+	"last_used_at" timestamp with time zone,
 	"expires_at" timestamp with time zone NOT NULL,
 	"revoked_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "sessions_token_hash_unique" UNIQUE("token_hash")
 );
 --> statement-breakpoint
 CREATE TABLE "users" (
@@ -320,13 +325,14 @@ CREATE TABLE "audit_log" (
 	"actor_user_id" uuid,
 	"action" text NOT NULL,
 	"target" text,
+	"metadata" jsonb,
 	"before" jsonb,
 	"after" jsonb,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-ALTER TABLE "beta_access" ADD CONSTRAINT "beta_access_invited_by_user_id_users_id_fk" FOREIGN KEY ("invited_by_user_id") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "access_grants" ADD CONSTRAINT "access_grants_invited_by_user_id_users_id_fk" FOREIGN KEY ("invited_by_user_id") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "memberships" ADD CONSTRAINT "memberships_org_id_orgs_id_fk" FOREIGN KEY ("org_id") REFERENCES "public"."orgs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "memberships" ADD CONSTRAINT "memberships_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "sessions" ADD CONSTRAINT "sessions_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint

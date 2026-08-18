@@ -19,11 +19,9 @@ export const pk = () => uuid("id").primaryKey().defaultRandom();
 
 // ─── Enums de domínio (reusados em vários grupos) ────────────────────────
 export const membershipRole = pgEnum("membership_role", ["owner", "member"]);
-export const betaAccessStatus = pgEnum("beta_access_status", [
-  "requested",
-  "approved",
-  "revoked",
-]);
+// Status de acesso ao produto (gate). Nomes duráveis pós-beta: `active` = pode
+// usar; `pending` = aguardando liberação; `revoked` = acesso removido.
+export const accessStatus = pgEnum("access_status", ["pending", "active", "revoked"]);
 export const tokenStatus = pgEnum("token_status", ["valid", "invalid", "unchecked"]);
 export const channelStatus = pgEnum("channel_status", [
   "disconnected",
