@@ -15,8 +15,8 @@ import type {
  * As candidatas ainda passam por guardrail + decisão de autonomia depois.
  */
 export function evaluatePlaybook(
-  rules: PlaybookRule[],
-  insights: InsightRow[],
+  rules: readonly PlaybookRule[],
+  insights: readonly InsightRow[],
 ): CandidateAction[] {
   const actions: CandidateAction[] = [];
 

@@ -2,6 +2,8 @@
 // O estado é serializável (persiste no checkpointer Postgres p/ interrupt/resume).
 
 import { Annotation } from "@langchain/langgraph";
+import type { DecisionResult, GuardrailResult } from "@trafego/core";
+import type { MutationResult } from "@trafego/shared/ports";
 import type {
   AccountBrief,
   Action,
@@ -11,21 +13,8 @@ import type {
   Finding,
   GuardrailConfig,
   InsightRow,
-  MutationResult,
   PlaybookRule,
 } from "@trafego/shared/types";
-
-/** Resultado da decisão de autonomia (por origem) sobre as ações candidatas. */
-export interface DecisionOutcome {
-  readonly autoApply: readonly Action[];
-  readonly needsApproval: readonly Action[];
-}
-
-/** Resultado do guardrail: o que passou e o que foi barrado (com motivo). */
-export interface GuardrailOutcome {
-  readonly allowed: readonly Action[];
-  readonly blocked: readonly { readonly action: Action; readonly reason: string }[];
-}
 
 export const AccountAnalysisState = Annotation.Root({
   // ── identificação / snapshot congelado do run ──────────────────────────
@@ -50,8 +39,8 @@ export const AccountAnalysisState = Annotation.Root({
   playbookCandidates: Annotation<readonly CandidateAction[]>,
   llmCandidates: Annotation<readonly CandidateAction[]>,
   mergedCandidates: Annotation<readonly CandidateAction[]>,
-  guardrail: Annotation<GuardrailOutcome | null>,
-  decision: Annotation<DecisionOutcome | null>,
+  guardrail: Annotation<GuardrailResult | null>,
+  decision: Annotation<DecisionResult | null>,
 
   // ── HITL ───────────────────────────────────────────────────────────────
   approvalId: Annotation<string | null>,

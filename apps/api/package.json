@@ -7,9 +7,9 @@
     ".": "./src/composition.ts"
   },
   "scripts": {
-    "dev": "tsx watch src/http/server.ts",
+    "dev": "tsx watch --env-file=../../.env src/http/server.ts",
     "build": "tsc",
-    "start": "node dist/http/server.js",
+    "start": "tsx src/http/server.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "lint": "eslint src",
@@ -18,9 +18,14 @@
   "dependencies": {
     "@fastify/cookie": "^11.0.0",
     "@fastify/session": "^11.0.0",
+    "@trafego/config": "workspace:*",
+    "@trafego/credential-vault": "workspace:*",
     "@trafego/db": "workspace:*",
+    "@trafego/scheduler-bullmq": "workspace:*",
     "@trafego/shared": "workspace:*",
+    "drizzle-orm": "^0.38.0",
     "fastify": "^5.2.0",
+    "ioredis": "^5.4.0",
     "pino": "^9.5.0",
     "zod": "^3.24.0"
   },

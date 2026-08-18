@@ -27,9 +27,11 @@ SaaS de **agentes de IA que tocam tráfego pago** (MVP: Meta Ads), atuando **via
 pnpm install
 docker compose -f docker/docker-compose.yml up -d   # postgres + redis
 cp .env.example .env                                 # preencher segredos
-pnpm db:generate && pnpm db:migrate
+pnpm db:generate && pnpm db:migrate && pnpm db:seed  # tabelas + org beta
 pnpm dev                                             # api + worker + web
 ```
+
+> Rodar/testar a **Fatia 0** (colar token → WhatsApp) ponta-a-ponta: ver **[`docs/FATIA-0.md`](./docs/FATIA-0.md)**.
 
 ## Comandos
 

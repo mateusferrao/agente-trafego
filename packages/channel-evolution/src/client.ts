@@ -9,6 +9,16 @@
  * não deste cliente (§9).
  */
 
+/** Erro tipado da Evolution API (lançado na casca). */
+export class EvolutionApiError extends Error {
+  readonly httpStatus: number;
+  constructor(message: string, httpStatus: number) {
+    super(message);
+    this.name = "EvolutionApiError";
+    this.httpStatus = httpStatus;
+  }
+}
+
 export interface EvolutionClientOptions {
   readonly baseUrl: string; // EVOLUTION_BASE_URL
   readonly apiKey: string; // EVOLUTION_API_KEY
@@ -31,8 +41,17 @@ export class EvolutionClient {
   }
 
   /** Executa uma request contra a Evolution API (anexa header apikey). */
-  request<T>(req: EvolutionRequest): Promise<T> {
-    // TODO: fetch `${baseUrl}/${path}` com header apikey + JSON body; mapear erro p/ exceção.
-    throw new Error("not implemented");
+  async request<T>(req: EvolutionRequest): Promise<T> {
+    const path = req.path.replace(/^\/+/, "");
+    const res = await fetch(`${this.baseUrl}/${path}`, {
+      method: req.method,
+      headers: { apikey: this.apiKey, "content-type": "application/json" },
+      ...(req.body ? { body: JSON.stringify(req.body) } : {}),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new EvolutionApiError(`Evolution API ${res.status}: ${text}`, res.status);
+    }
+    return (text ? (JSON.parse(text) as T) : (undefined as T));
   }
 }

@@ -18,7 +18,7 @@ export interface GuardrailResult {
  * Função PURA.
  */
 export function applyGuardrails(
-  actions: CandidateAction[],
+  actions: readonly CandidateAction[],
   cfg: GuardrailConfig,
 ): GuardrailResult {
   const allowed: Action[] = [];

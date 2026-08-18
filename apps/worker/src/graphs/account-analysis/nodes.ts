@@ -8,7 +8,7 @@ import { interrupt } from "@langchain/langgraph";
 //   evaluatePlaybook(rules, insights) => CandidateAction[]
 //   applyGuardrails(actions, config) => GuardrailOutcome
 //   decideActions(actions, policy) => DecisionOutcome
-import { applyGuardrails, assembleBrief, decideActions, evaluatePlaybook } from "@trafego/core";
+import { applyGuardrails, decideActions, evaluatePlaybook } from "@trafego/core";
 import type { WorkerDeps } from "../../composition.js";
 import type { AccountAnalysisStateType, AccountAnalysisUpdate } from "./state.js";
 
@@ -48,11 +48,11 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps) {
    */
   async function llmAnalyze(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
     logger.debug({ runId: state.runId }, "llm_analyze");
-    // TODO: brief = assembleBrief({ insights, entities, creatives, memory, goals }).
-    const brief = state.brief ?? assembleBrief({ insights: state.insights, goals: state.goals });
+    // TODO (3a): brief = assembleBrief({ ... }) — montar o input real de curadoria
+    //            (normalize → rank/select → creatives) antes de chamar o LLM.
     // TODO: deps.ports.llm.completeStructured<{ findings; actions }>(...) com brief + imagens.
     // TODO: registrar usage/custo via MeteringPort (cap de custo llm — guardrail_configs).
-    return { brief, findings: [], llmCandidates: [] };
+    return { brief: state.brief, findings: [], llmCandidates: [] };
   }
 
   /** Constrói recommendations (persistidas p/ feedback + outcome tracking). */
@@ -79,7 +79,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps) {
   async function guardrailCheck(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
     logger.debug({ runId: state.runId }, "guardrail_check");
     const candidates = state.decision
-      ? [...state.decision.autoApply, ...state.decision.needsApproval]
+      ? [...state.decision.autoApply, ...state.decision.needApproval]
       : state.mergedCandidates;
     const guardrail = applyGuardrails(candidates, state.guardrailConfig);
     return { guardrail };
@@ -100,7 +100,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps) {
       type: "approval_required",
       runId: state.runId,
       // TODO: enviar as ações que precisam de OK.
-      actions: state.decision?.needsApproval ?? [],
+      actions: state.decision?.needApproval ?? [],
     });
     // Ao resumir, `decision` traz as ações aprovadas (mapeadas pelo Grafo B).
     return { approvedActions: (decision as { approvedActions?: never[] })?.approvedActions ?? [] };
@@ -145,9 +145,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps) {
 
 /**
  * Aresta condicional após o guardrail: precisa de OK humano?
- * Se há ações em `needsApproval` (e guardrail liberou) → ramo de aprovação.
+ * Se há ações em `needApproval` (e guardrail liberou) → ramo de aprovação.
  */
 export function routeApproval(state: AccountAnalysisStateType): "approval" | "apply" {
-  const needs = state.decision?.needsApproval.length ?? 0;
+  const needs = state.decision?.needApproval.length ?? 0;
   return needs > 0 ? "approval" : "apply";
 }

@@ -4,18 +4,18 @@
 // SchedulerPort.upsertSchedule (key estável).
 
 import type { SchedulerPort } from "@trafego/shared/ports";
+import { ANALYSIS_QUEUE } from "@trafego/shared";
 import type { WorkerDeps } from "../composition.js";
 
 export interface AccountSchedule {
   readonly orgId: string;
   readonly agentId: string;
   readonly adAccountId: string;
-  /** cron da cadência do agente (ex: "0 */6 * * *"). */
+  /** cron da cadência do agente (ex: `0 0/6 * * *` = de 6 em 6 horas). */
   readonly cron: string;
   readonly enabled: boolean;
 }
 
-const QUEUE = "agent-runs";
 /** jitter máximo p/ stagger entre contas (ms). */
 const MAX_JITTER_MS = 5 * 60 * 1000;
 
@@ -40,7 +40,7 @@ export function makeAccountCron(deps: WorkerDeps) {
       cron: s.cron,
       jitterMs: MAX_JITTER_MS,
       payload: {
-        queue: QUEUE,
+        queue: ANALYSIS_QUEUE,
         trigger: "cron",
         orgId: s.orgId,
         agentId: s.agentId,

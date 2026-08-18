@@ -17,7 +17,10 @@ export interface DecisionResult {
  *
  * Função PURA.
  */
-export function decideActions(actions: Action[], autonomy: AutonomyPolicy): DecisionResult {
+export function decideActions(
+  actions: readonly Action[],
+  autonomy: AutonomyPolicy,
+): DecisionResult {
   const autoApply: Action[] = [];
   const needApproval: Action[] = [];
 

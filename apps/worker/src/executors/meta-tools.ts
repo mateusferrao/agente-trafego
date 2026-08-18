@@ -4,8 +4,8 @@
 //  - registra o tool_call (args/result/before/risk) na auditoria
 // A regra de negócio (eco+confirma, guardrail, autonomia) já rodou ANTES daqui.
 
-import type { Action, MutationResult } from "@trafego/shared/types";
-import type { AdAccountRef } from "@trafego/shared/ports";
+import type { Action } from "@trafego/shared/types";
+import type { AdAccountRef, MutationResult } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../composition.js";
 
 export interface ExecuteActionInput {

@@ -19,6 +19,10 @@ import { createApprovalsService } from "./modules/approvals/service.js";
 import { createRunsService } from "./modules/runs/service.js";
 import { createBillingService } from "./modules/billing/service.js";
 import { createWebhooksService } from "./modules/webhooks/service.js";
+import { createAdminService } from "./modules/admin/service.js";
+import { Aes256CredentialVault } from "@trafego/credential-vault";
+import { BullmqScheduler } from "@trafego/scheduler-bullmq";
+import { Redis } from "ioredis";
 
 // ─── Adapters de saída (portas) ──────────────────────────────────────────
 // Adapters concretos vivem em pacotes próprios. Trocar provider/canal =
@@ -52,6 +56,7 @@ export interface Services {
   readonly runs: ReturnType<typeof createRunsService>;
   readonly billing: ReturnType<typeof createBillingService>;
   readonly webhooks: ReturnType<typeof createWebhooksService>;
+  readonly admin: ReturnType<typeof createAdminService>;
 }
 
 /** Container montado manualmente (sem DI). */
@@ -82,12 +87,15 @@ function todoPort<T>(name: string): T {
 export function buildContainer(): Container {
   const db = createDb(env.DATABASE_URL);
 
-  // Portas de saída — TODO trocar placeholders pelos adapters concretos.
-  const vault = todoPort<CredentialVaultPort>("CredentialVaultPort"); // local AES-256-GCM
+  // Portas plugadas na Fatia 0: vault (cripto do token) + scheduler (enfileira).
+  const vault = new Aes256CredentialVault(env.CREDENTIAL_MASTER_KEY, env.CREDENTIAL_KEY_VERSION);
+  const redis = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
+  const scheduler = new BullmqScheduler(redis);
+
+  // Portas ainda não plugadas (fatias seguintes) — placeholders que lançam ao usar.
   const adsPlatform = todoPort<AdsPlatformPort>("AdsPlatformPort"); // new MetaAdsAdapter()
   const messaging = todoPort<MessagingChannelPort>("MessagingChannelPort"); // new EvolutionChannelAdapter()
   const llm = todoPort<LLMProviderPort>("LLMProviderPort"); // new OpenRouterProvider({ apiKey: env.OPENROUTER_API_KEY })
-  const scheduler = todoPort<SchedulerPort>("SchedulerPort"); // BullMQ (worker)
   const metering = todoPort<MeteringPort>("MeteringPort"); // Postgres
   const approvals = todoPort<ApprovalPort>("ApprovalPort"); // Postgres
 
@@ -113,6 +121,7 @@ export function buildContainer(): Container {
     runs: createRunsService({ db }),
     billing: createBillingService({ db, metering }),
     webhooks: createWebhooksService({ db, messaging, scheduler }),
+    admin: createAdminService({ db, vault, scheduler }),
   };
 
   return { adapters, services };

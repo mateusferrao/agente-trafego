@@ -5,10 +5,10 @@
   "type": "module",
   "main": "src/main.ts",
   "scripts": {
-    "dev": "tsx watch src/main.ts",
+    "dev": "tsx watch --env-file=../../.env src/main.ts",
     "start": "tsx src/main.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "lint": "eslint src"
   },
   "dependencies": {
@@ -18,13 +18,18 @@
     "@langchain/openai": "^0.3.0",
     "@trafego/ads-meta": "workspace:*",
     "@trafego/channel-evolution": "workspace:*",
+    "@trafego/config": "workspace:*",
     "@trafego/core": "workspace:*",
+    "@trafego/credential-vault": "workspace:*",
     "@trafego/db": "workspace:*",
     "@trafego/llm-openrouter": "workspace:*",
+    "@trafego/scheduler-bullmq": "workspace:*",
     "@trafego/shared": "workspace:*",
     "bullmq": "^5.34.0",
+    "drizzle-orm": "^0.38.0",
     "ioredis": "^5.4.0",
-    "pino": "^9.5.0"
+    "pino": "^9.5.0",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0"

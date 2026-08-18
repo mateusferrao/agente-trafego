@@ -18,6 +18,7 @@ import { approvalsRoutes } from "../modules/approvals/routes.js";
 import { runsRoutes } from "../modules/runs/routes.js";
 import { billingRoutes } from "../modules/billing/routes.js";
 import { webhooksRoutes } from "../modules/webhooks/routes.js";
+import { adminRoutes } from "../modules/admin/routes.js";
 
 // Efeito colateral: augmentações de tipo (session, request.orgId, container).
 import "./types.js";
@@ -28,7 +29,11 @@ import "./types.js";
  */
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
-    logger: { level: env.NODE_ENV === "production" ? "info" : "debug" },
+    logger: {
+      level: env.NODE_ENV === "production" ? "info" : "debug",
+      // rede de segurança: nunca vazar o token em log (joia da coroa — §12).
+      redact: ["token", "accessToken", "*.token", "*.accessToken", "*.tokenCripto"],
+    },
   });
 
   // Composition root manual — portas + services montados uma vez.
@@ -57,6 +62,9 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Webhooks fora do /api (público, valida secret próprio).
   await app.register(webhooksRoutes);
+
+  // Admin (Fatia 0): fora do /api, guardado por header x-admin-secret.
+  await app.register(adminRoutes);
 
   // Slices de negócio sob /api.
   await app.register(

@@ -33,7 +33,13 @@ export const envSchema = z.object({
   // chave mestra base64 de 32 bytes (secret do EasyPanel em produção).
   CREDENTIAL_MASTER_KEY: z
     .string()
-    .min(1, "CREDENTIAL_MASTER_KEY é obrigatória"),
+    .refine((v) => {
+      try {
+        return Buffer.from(v, "base64").length === 32;
+      } catch {
+        return false;
+      }
+    }, "CREDENTIAL_MASTER_KEY deve ter 32 bytes em base64"),
   CREDENTIAL_KEY_VERSION: z.coerce.number().int().positive().default(1),
 
   // ─── LLM (OpenRouter) ──────────────────────────────────────────────────
@@ -61,6 +67,16 @@ export const envSchema = z.object({
   EVOLUTION_WEBHOOK_SECRET: z
     .string()
     .min(1, "EVOLUTION_WEBHOOK_SECRET é obrigatório"),
+  // instância Evolution única da org. Fatia 0: via env; depois vem de channel_instances.
+  EVOLUTION_INSTANCE: z.string().min(1, "EVOLUTION_INSTANCE é obrigatória"),
+
+  // ─── Fatia 0 (scaffolding — removido quando houver UI/auth/contatos) ────
+  // guard dos endpoints admin até a auth real (Fatia 1a). Segredo forte (32+).
+  BETA_ADMIN_SECRET: z.string().min(32, "BETA_ADMIN_SECRET deve ter ao menos 32 chars"),
+  // destinatário fixo do WhatsApp na espinha: só dígitos com DDI (ex: 5511999999999).
+  FATIA0_RECIPIENT_PHONE: z
+    .string()
+    .regex(/^\d{8,15}$/, "FATIA0_RECIPIENT_PHONE deve ser só dígitos com DDI (ex: 5511999999999)"),
 
   // ─── Análise / Governor ────────────────────────────────────────────────
   INSIGHTS_RETENTION_DAYS: z.coerce.number().int().positive().default(90),

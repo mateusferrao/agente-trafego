@@ -1,6 +1,53 @@
-import type { InsightRow } from "@trafego/shared/types";
+import type { EntityLevel, InsightRow } from "@trafego/shared/types";
 import type { InsightsQuery } from "@trafego/shared/ports";
 import type { MetaGraphClient } from "./client.js";
+
+/** Prefixo obrigatório do ad account no path da Graph API. */
+const AD_ACCOUNT_PREFIX = "act_";
+
+/** Linha crua de insights da Meta (valores vêm como string). */
+interface MetaInsightRow {
+  readonly spend?: string;
+  readonly impressions?: string;
+  readonly clicks?: string;
+  readonly ctr?: string;
+  readonly cpc?: string;
+  readonly cpm?: string;
+  readonly [key: string]: unknown;
+}
+
+function normalizeAdAccountId(id: string): string {
+  return id.startsWith(AD_ACCOUNT_PREFIX) ? id : `${AD_ACCOUNT_PREFIX}${id}`;
+}
+
+function toNumber(value: unknown): number {
+  const n = typeof value === "string" ? Number(value) : typeof value === "number" ? value : NaN;
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Mapeia a linha crua p/ InsightRow. Fatia 0 busca só `spend`; as demais métricas
+ * (obrigatórias no tipo) ficam 0 até a coleta completa (fatia 2a). Sem `date` =
+ * agregado da janela (não é série diária).
+ *
+ * ⚠️ Fatia 2a: para níveis campaign/adset/ad, derivar `entityId` do id da própria
+ * linha (`campaign_id`/`adset_id`/`ad_id`/`id`), não do accountId. Fatia 0 só usa
+ * `level:account`, então stampar o accountId aqui é correto por ora.
+ */
+function mapRow(entityId: string, level: EntityLevel, row: MetaInsightRow): InsightRow {
+  return {
+    entityId,
+    level,
+    metrics: {
+      spend: toNumber(row.spend),
+      impressions: toNumber(row.impressions),
+      clicks: toNumber(row.clicks),
+      ctr: toNumber(row.ctr),
+      cpc: toNumber(row.cpc),
+      cpm: toNumber(row.cpm),
+    },
+  };
+}
 
 /**
  * Insights via **async report jobs** da Meta (§7):
@@ -37,10 +84,23 @@ export class MetaInsightsService {
     this.client = client;
   }
 
-  /** Executa o fluxo completo: submit → poll → fetch → mapeia p/ InsightRow. */
+  /**
+   * Fatia 0: GET **síncrono** de insights (query pequena → sem report job async).
+   * `window` é tratado como `date_preset` (ex: last_7d); time_range/async = fatia 2a.
+   */
   async getInsights(query: InsightsQuery): Promise<InsightRow[]> {
-    // TODO: orquestrar submitReport → pollReport → fetchReportRows → mapRows.
-    throw new Error("not implemented");
+    const accountId = normalizeAdAccountId(query.account.adAccountId);
+    const res = await this.client.request<{ data?: MetaInsightRow[] }>({
+      method: "GET",
+      path: `${accountId}/insights`,
+      accessToken: query.account.accessToken,
+      params: {
+        level: query.level,
+        fields: query.fields.join(","),
+        date_preset: query.window,
+      },
+    });
+    return (res.data.data ?? []).map((row) => mapRow(accountId, query.level, row));
   }
 
   /** Submete o job assíncrono e retorna o report_run_id. */

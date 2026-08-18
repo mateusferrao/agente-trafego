@@ -2,35 +2,28 @@
 // Boot: composition root → sincroniza schedulers por conta → sobe workers BullMQ
 // (agent-runs + webhook-inbound) → shutdown gracioso.
 
-import IORedis from "ioredis";
+import { Redis } from "ioredis";
 import { buildComposition, loadConfig } from "./composition.js";
-import { makeAccountCron } from "./schedulers/account-cron.js";
-import { startAgentRunsWorker } from "./workers/agent-runs.js";
-import { startWebhookInboundWorker } from "./workers/webhook-inbound.js";
+import { startFatia0Worker } from "./workers/fatia0-run.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
-  const deps = await buildComposition(config);
+  const deps = await buildComposition();
   const { logger } = deps;
 
   // conexão Redis dedicada aos workers (BullMQ exige maxRetriesPerRequest=null)
-  const connection = new IORedis(config.redisUrl, { maxRetriesPerRequest: null });
+  const connection = new Redis(config.redisUrl, { maxRetriesPerRequest: null });
 
-  // 1) sincroniza os schedulers recorrentes por conta (cadência + jitter)
-  const cron = makeAccountCron(deps);
-  await cron.syncAllFromDb();
+  // Fatia 0: só o worker mínimo (analysis-run). Grafo (agent-runs) + inbound
+  // (webhook-inbound) + schedulers cron entram nas fatias 3a/5b/3b.
+  const fatia0 = startFatia0Worker(deps, connection);
+  logger.info("worker up: analysis-run (fatia 0)");
 
-  // 2) sobe os workers (jobs de análise + inbound do WhatsApp)
-  const agentRuns = startAgentRunsWorker(deps, connection);
-  const webhookInbound = startWebhookInboundWorker(deps, connection);
-
-  logger.info("worker up: agent-runs + webhook-inbound");
-
-  // 3) shutdown gracioso (drena jobs em andamento antes de sair)
+  // shutdown gracioso (drena jobs em andamento antes de sair)
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, "worker shutting down");
-    await Promise.allSettled([agentRuns.close(), webhookInbound.close()]);
-    await connection.quit();
+    await Promise.allSettled([fatia0.close()]);
+    await Promise.allSettled([connection.quit(), deps.redis.quit()]);
     process.exit(0);
   };
   process.on("SIGTERM", () => void shutdown("SIGTERM"));

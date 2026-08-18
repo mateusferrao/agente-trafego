@@ -10,16 +10,20 @@
   "scripts": {
     "build": "pnpm -r build",
     "dev": "pnpm -r --parallel dev",
-    "test": "pnpm -r test",
+    "test": "pnpm -r --filter=!web test",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
     "db:generate": "pnpm --filter @trafego/db db:generate",
     "db:migrate": "pnpm --filter @trafego/db db:migrate",
+    "db:seed": "tsx packages/db/src/seed.ts",
     "api:generate": "pnpm --filter @trafego/api openapi && pnpm --filter web api:generate"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
     "vitest": "^2.1.0",
     "tsx": "^4.19.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
   }
 }

@@ -39,6 +39,14 @@ export function registerErrorHandler(app: FastifyInstance): void {
         .status(error.statusCode)
         .send({ code: error.code, message: error.message, details: error.details });
     }
+    // Erros da casca com status próprio de cliente (Fastify: 4xx como 415/405/400)
+    // → respeita o status + mensagem, nunca vira 500 genérico.
+    const status = (error as { statusCode?: number }).statusCode;
+    if (typeof status === "number" && status >= 400 && status < 500) {
+      return reply
+        .status(status)
+        .send({ code: (error as { code?: string }).code ?? "request_error", message: error.message });
+    }
     // TODO: mapear erros conhecidos de adapters (ex: Meta code 190) para códigos estáveis.
     request.log.error({ err: error }, "erro não tratado na casca");
     return reply.status(500).send({ code: "internal_error", message: "Erro interno" });
