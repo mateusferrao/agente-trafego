@@ -32,7 +32,7 @@
 - **Feedback + outcome tracking** nas recomendações (instrumento de validação).
 - Gate de acesso = **allowlist manual de beta**.
 
-**OUT (fast-follow):** OAuth oficial Meta + App Review; WhatsApp Cloud API / pool de números; Stripe (mensalidade + custo por uso); Google/TikTok Ads; modo lançamento×manutenção como preset; ACL por conta (RBAC granular); multi-agente por conta; pacote `@automato/design-system` compartilhado.
+**OUT (fast-follow):** OAuth oficial Meta + App Review; WhatsApp Cloud API / pool de números; Stripe (mensalidade + custo por uso); Google/TikTok Ads; modo lançamento×manutenção como preset; ACL por conta (RBAC granular); multi-agente por conta; **sinais externos do cliente (API/webhook) que enriquecem a análise** (ex: agendamentos do CRM — ver §15 / `docs/ROADMAP.md` Fatia 9); pacote `@automato/design-system` compartilhado.
 
 **VISÃO (foco final, roadmap pós-MVP):** um **gestor de tráfego completo no WhatsApp** — o agente não só otimiza, mas **cria campanhas** (a pedido do usuário OU proativo, pelo que observou). MVP valida a otimização primeiro; **criação = fase de roadmap** (ver §15 e `docs/ROADMAP.md`). A arquitetura já antecipa (catálogo de tools + `AdsPlatformPort` extensíveis). Geração de criativo por IA = fase ainda mais tardia.
 
@@ -92,8 +92,11 @@ Portas ficam em `packages/shared/src/ports`. Regra: adicionar plataforma/canal/p
 | `MeteringPort` | registra `usage_events` (genérico `type`+`payload`) | Postgres |
 | `ApprovalPort` | `create`/`resolve` (HITL) | Postgres |
 | `StoragePort` *(roadmap)* | `put`/`get`/`signedUrl` de assets de criativo | S3-compat |
+| `ExternalSignalsPort` *(roadmap)* | ingestão de sinais do cliente (API/webhook, idempotente) que enriquecem a análise | Postgres (`external_signals` genérico) |
 
 *(Roadmap — criação de campanhas)* nova porta `StoragePort` (assets) + `AdsPlatformPort` ganha família `create*` + `uploadCreativeAsset`; tudo atrás das portas, sem tocar no core.
+
+*(Roadmap — sinais externos, Fatia 9)* nova porta `ExternalSignalsPort` (ingestão por API/webhook) + `external_signals`/`signal_definitions` genéricos; o dado do cliente vira contexto curado no `AccountBrief` (pode virar `ConversionGoal` de origem externa). Ver `docs/ROADMAP.md`.
 
 Composition root **manual** (`apps/api/src/composition.ts`, `apps/worker/src/composition.ts`) — sem DI container.
 

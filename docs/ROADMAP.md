@@ -110,6 +110,9 @@ decaimento de token em runtime → `6b`; reuso do sync-service pelo `fetchData` 
 - Pacote `@automato/design-system` compartilhado.
 - Web em serviço estático dedicado (nginx/Caddy) quando o tráfego justificar.
 
+**Dados / análise (sinais externos)**
+- **Sinais externos do cliente (API/webhook)** — o cliente define um dado próprio (ex: agendamentos vindos do CRM) que enriquece a análise; ingestão atrás de `ExternalSignalsPort`, curado no brief. Detalhado abaixo (**Fatia 9**).
+
 **Flagship pós-MVP:** criação de campanhas no WhatsApp — detalhada abaixo (Fatia 7).
 
 ## Fatia 7 — Criação de campanhas (roadmap pós-MVP)
@@ -128,8 +131,19 @@ decaimento de token em runtime → `6b`; reuso do sync-service pelo `fetchData` 
 **Visão:** elevar a qualidade e a escala da análise com **mais papéis de agente** e **map-reduce por entidade** — sem reescrever o grafo. **Depende:** MVP validado (hipótese confirmada na 3a) + `5a` (write path, p/ o validador de segurança de ação). A costura já existe desde a 3a-2: o par **Analista→Revisor** é modelado como uma **lista de passes** (`reviewPasses`, default 1) — crescer = **registrar mais passes/papéis**, não reescrever nós.
 
 - **8a — Painéis de revisores/perspectivas:** vários revisores com lentes distintas (correção, evidência, tom, risco) em vez de 1; síntese entre eles. Cada lente = mais um passe na lista.
-- **8b — Map-reduce por entidade:** análise por campanha/entidade em paralelo (bounded) → redução num diagnóstico único da conta. Remove o teto do top-N para contas grandes; guard dinâmico de tamanho de brief + downsample de trends entram aqui.
-- **8c — Redator de mensagem (WhatsApp):** papel dedicado que transforma o resultado curado em mensagem curta/1-decisão-por-bloco (voz do arquétipo). Complementa o transporte da 3b.
+- **8b — Map-reduce por entidade:** ✅ **antecipado na 3b-2** (análise por-anúncio → síntese da conta, com política de execução por-agente e cache de visão). Resta pós-MVP: paralelismo bounded do mapa (hoje sequencial) + guard dinâmico de tamanho de brief + downsample de trends para contas muito grandes.
+- **8c — Redator de mensagem (WhatsApp):** ✅ **antecipado na 3b-1** (papel `write_message` dedicado, voz do arquétipo, fallback determinístico).
 - **8d — Validador de segurança de ação:** papel que revisa cada ação **antes de aplicar** (redundância sobre os guardrails determinísticos da 5a) — rede extra no caminho de escrita.
 
-**Fora até a 8:** downsample dinâmico de trends + guard dinâmico de tamanho de brief (na 3a-2 o top-N já limita o contexto).
+**Fora até a 8:** paralelismo bounded do map-reduce + downsample dinâmico de trends + guard dinâmico de tamanho de brief (na 3b o mapa é sequencial e o top-N limita o contexto da síntese).
+
+## Fatia 9 — Sinais externos do cliente (API/webhook) (roadmap pós-MVP)
+
+**Visão:** deixar o cliente **alimentar a análise com dados próprios** que a Meta não conhece — o sinal que de fato importa pro negócio dele. Ex: o CRM dispara, por API, a **quantidade de agendamentos** por campanha; o agente passa a raciocinar sobre *custo por agendamento real*, não só sobre a conversão que a plataforma otimiza. Genérico por construção: o cliente **define e personaliza** o sinal (nome, unidade, a que entidade se liga, semântica) — nada hardcoded a "agendamento". **Depende:** MVP validado + `4` (UI de config, p/ definir os sinais). Fora do MVP porque otimiza contas **com dado da plataforma** primeiro; o sinal externo enriquece, não substitui.
+
+- **9a — Definição do sinal + ingestão desacoplada:** `signal_definitions` (org-scoped: `key`, label amigável, unidade, escopo/nível de entidade `account|campaign|adset|ad`, agregação, mapeamento pra taxonomia neutra) + **borda de ingestão atrás de porta** (`ExternalSignalsPort`): endpoint de **API + webhook** autenticado por-org (token/API-key rotacionável, **idempotente por chave**), gravando em `external_signals` genérico (`type`+`payload`, estilo `usage_events`) — org-scoped, entity-ref, valor, timestamp. Trocar a origem (CRM/Zapier/planilha) = nova integração sobre a mesma porta, core intocado.
+- **9b — Curadoria no brief + uso pelo agente:** camada **determinística pura** (estende o `AccountBrief`, como o funil de messaging) que normaliza e anexa os sinais externos como **contexto** por entidade — o LLM nunca vê o firehose. O sinal pode virar um `ConversionGoal` **de origem externa** (reusa a taxonomia neutra: custo/retorno por agendamento derivam como CPA/ROAS de qualquer conversão) **ou** ficar como métrica secundária. **Por-agente** (config, Fatia 4): quais sinais pesam e como.
+- **9c — Correlação + confiabilidade:** casar o sinal externo com a janela/entidade certa (atribuição simples por período), lidar com atraso/lacuna do envio (degradação graciosa — sem dado recente = não usa, com nota), e sinalizar frescor na UI.
+- **Fora até a 9:** atribuição multi-touch / modelagem estatística do sinal (aqui = correlação simples, honesta sobre a incerteza).
+
+**Portas novas:** `ExternalSignalsPort` (ingestão) — na tabela de portas do `CLAUDE.md §5` como *(roadmap)*.
