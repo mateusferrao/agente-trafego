@@ -7,3 +7,5 @@ export * from "./conversion/index.js";
 export * from "./recommendation/index.js";
 export * from "./token-usage/index.js";
 export * from "./archetypes/index.js";
+export * from "./funnel/index.js";
+export * from "./analysis-guards/index.js";

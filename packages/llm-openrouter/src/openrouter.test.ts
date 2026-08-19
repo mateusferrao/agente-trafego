@@ -54,6 +54,9 @@ describe("OpenRouterAdapter.completeStructured", () => {
       const body = JSON.parse(init.body as string);
       expect(body.response_format.type).toBe("json_schema");
       expect(body.response_format.json_schema.strict).toBe(true);
+      // opt-in explícito no accounting de custo (§11) — garante `usage.cost` mesmo
+      // em gateway compatível que ainda exija o flag.
+      expect(body.usage).toEqual({ include: true });
       return jsonResponse(chatBody(JSON.stringify({ summary: "ok", findings: [], recommendations: [] })));
     }) as unknown as typeof fetch;
 

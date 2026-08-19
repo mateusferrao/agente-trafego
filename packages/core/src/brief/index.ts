@@ -9,11 +9,14 @@ import type {
   EntityLevel,
   EntityObjective,
   EntitySummary,
+  FunnelBreakdown,
+  FunnelSummary,
   InsightMetrics,
   InsightRow,
   TrendPoint,
 } from "@trafego/shared";
 import { resolveConversion, type ResolvedConversion } from "../conversion/index.js";
+import { computeFunnelSummary, mergeFunnel } from "../funnel/index.js";
 
 /**
  * Curadoria determinística PURA entre a Meta e o LLM (§7). O LLM nunca vê o
@@ -47,7 +50,10 @@ export function normalize(rows: readonly InsightRow[]): NormalizedEntity[] {
     spend: number;
     impressions: number;
     clicks: number;
-    conv: Map<string, { goal: ConversionBreakdown[number]["goal"]; customConversionId?: string; count: number; value: number }>;
+    conv: Map<
+      string,
+      { goal: ConversionBreakdown[number]["goal"]; customConversionId?: string; count: number; value: number; hasValue: boolean }
+    >;
   }
   const byKey = new Map<string, Acc>();
 
@@ -63,9 +69,14 @@ export function normalize(rows: readonly InsightRow[]): NormalizedEntity[] {
       const ck = `${c.goal}:${c.customConversionId ?? ""}`;
       const e =
         acc.conv.get(ck) ??
-        { goal: c.goal, ...(c.customConversionId ? { customConversionId: c.customConversionId } : {}), count: 0, value: 0 };
+        { goal: c.goal, ...(c.customConversionId ? { customConversionId: c.customConversionId } : {}), count: 0, value: 0, hasValue: false };
       e.count += c.count;
-      e.value += c.value ?? 0;
+      // distingue "valor 0 reportado" (receita zero → roas 0) de "conversão sem
+      // dimensão de valor" (ex: messaging → sem roas). Só marca hasValue se veio valor.
+      if (c.value !== undefined) {
+        e.value += c.value;
+        e.hasValue = true;
+      }
       acc.conv.set(ck, e);
     }
     byKey.set(key, acc);
@@ -81,7 +92,9 @@ export function normalize(rows: readonly InsightRow[]): NormalizedEntity[] {
       goal: v.goal,
       ...(v.customConversionId ? { customConversionId: v.customConversionId } : {}),
       count: v.count,
-      ...(v.value ? { value: v.value } : {}),
+      // preserva value=0 quando um valor FOI reportado (gasto com receita zero é sinal:
+      // "gastando, sem retorno" → roas 0); omite quando a conversão não tem valor.
+      ...(v.hasValue ? { value: v.value } : {}),
     })),
   }));
 }
@@ -133,6 +146,17 @@ export function computeDerived(
 }
 
 // ─── computeTrends ────────────────────────────────────────────────────────
+/**
+ * Escolhe as linhas da série temporal: nível conta (uma linha/data, sem soma
+ * entre níveis) e, se a conta não reportar por dia, cai p/ campanha. Evita a
+ * dupla-contagem que infla o ponto quando todos os níveis compartilham a data.
+ */
+export function trendRows(rows: readonly InsightRow[]): InsightRow[] {
+  const account = rows.filter((r) => r.level === "account");
+  if (account.length > 0) return [...account];
+  return rows.filter((r) => r.level === "campaign");
+}
+
 /** Agrega linhas diárias em pontos de tendência (uma entrada por data, com derivadas). */
 export function computeTrends(rows: InsightRow[]): TrendPoint[] {
   const byDate = new Map<string, { spend: number; impressions: number; clicks: number }>();
@@ -202,22 +226,41 @@ export function detectAnomalies(
 }
 
 // ─── rankAndSelect ────────────────────────────────────────────────────────
+/** Peso do delta vs baseline no escore composto (spend é o termo dominante). */
+const DELTA_WEIGHT = 0.5;
+
+/** Magnitude do movimento vs baseline (soma dos |delta| das métricas). */
+function deltaMagnitude(e: EntitySummary): number {
+  return Object.values(e.deltaVsBaseline).reduce<number>(
+    (s, v) => s + (typeof v === "number" ? Math.abs(v) : 0),
+    0,
+  );
+}
+
+/** Escore composto normalizado: spendShare + peso·deltaShare. */
+function compositeScore(e: EntitySummary, maxSpend: number, maxDelta: number): number {
+  return (e.metrics.spend ?? 0) / maxSpend + DELTA_WEIGHT * (deltaMagnitude(e) / maxDelta);
+}
+
 /**
- * Seleciona top-N por spend + todas as entidades flagadas (união, sem
- * duplicar). Garante que anomalias entrem no brief mesmo com spend baixo.
+ * Seleciona **todas as flagadas** (união, mesmo com spend baixo — anomalia/meta
+ * sempre entra) + top-N das demais por **escore composto** (spend dominante +
+ * delta vs baseline). Antes era só spend; agora quem se moveu também sobe.
  */
 export function rankAndSelect(entities: EntitySummary[], topN: number): EntitySummary[] {
   const flagged = entities.filter((e) => e.flags.length > 0);
   const flaggedIds = new Set(flagged.map((e) => e.id));
+  const rest = entities.filter((e) => !flaggedIds.has(e.id));
 
-  const topBySpend = entities
-    .filter((e) => !flaggedIds.has(e.id))
+  const maxSpend = Math.max(1, ...entities.map((e) => e.metrics.spend ?? 0));
+  const maxDelta = Math.max(1, ...entities.map(deltaMagnitude));
+
+  const topByScore = rest
     .slice()
-    .sort((a, b) => (b.metrics.spend ?? 0) - (a.metrics.spend ?? 0))
+    .sort((a, b) => compositeScore(b, maxSpend, maxDelta) - compositeScore(a, maxSpend, maxDelta))
     .slice(0, Math.max(0, topN));
 
-  // TODO: escore composto (spend + delta vs baseline + severidade da flag)
-  return [...flagged, ...topBySpend];
+  return [...flagged, ...topByScore];
 }
 
 // ─── summarizeRest ────────────────────────────────────────────────────────
@@ -262,6 +305,7 @@ export interface AssembleBriefInput {
   readonly adsets: readonly EntitySummary[];
   readonly ads: readonly EntitySummary[];
   readonly anomalies: readonly Anomaly[];
+  readonly funnel?: FunnelSummary;
   readonly creatives: readonly Creative[];
   readonly playbookCandidates: readonly CandidateAction[];
   readonly memory: AccountBrief["memory"];
@@ -286,6 +330,7 @@ export function assembleBrief(input: AssembleBriefInput): AccountBrief {
       ads: input.ads,
     },
     anomalies: input.anomalies,
+    ...(input.funnel ? { funnel: input.funnel } : {}),
     creatives: input.creatives,
     playbookCandidates: input.playbookCandidates,
     memory: input.memory,
@@ -331,16 +376,22 @@ export function buildAccountBrief(input: BuildAccountBriefInput): BuildAccountBr
   const baselineByKey = new Map(
     normalize(input.baselineRows).map((n) => [`${n.level}:${n.entityId}`, n]),
   );
+  const funnelByKey = buildFunnelByKey(input.rows);
 
   const totals = computeAccountTotals(normalized, baselineByKey);
   if (totals.spend === 0 && totals.impressions === 0) return { status: "empty" };
 
   const selectedByLevel = new Map<EntityLevel, EntitySummary[]>();
   const allByLevel = new Map<EntityLevel, EntitySummary[]>();
+  const anomalies: Anomaly[] = [];
   for (const level of SEGMENT_LEVELS) {
-    const summaries = normalized
+    const base = normalized
       .filter((n) => n.level === level)
-      .map((n) => toEntitySummary(n, entityById, baselineByKey, input.goals));
+      .map((n) => toEntitySummary(n, entityById, baselineByKey, funnelByKey, input.goals));
+    // Anomalias (z-score) dentro do nível → viram flag (rankAndSelect sempre inclui flagado).
+    const levelAnomalies = detectAnomaliesFromSummaries(base);
+    anomalies.push(...levelAnomalies);
+    const summaries = applyAnomalyFlags(base, levelAnomalies);
     allByLevel.set(level, summaries);
     selectedByLevel.set(level, rankAndSelect(summaries, input.topN));
   }
@@ -351,15 +402,24 @@ export function buildAccountBrief(input: BuildAccountBriefInput): BuildAccountBr
     selectedByLevel.get("campaign") ?? [],
   );
 
+  // Funil da conta (nível account; qualidade do lead — secundário).
+  const accountFunnel = computeFunnelSummary(
+    mergeFunnel(input.rows.filter((r) => r.level === "account").map((r) => r.funnel ?? [])),
+  );
+
   const brief = assembleBrief({
     account: { ...input.account, window: input.window, baselineWindow: input.baselineWindow },
     goals: input.goals,
     totals,
-    trends: computeTrends([...input.rows]),
+    // série temporal só do nível conta (fallback campanha) — somar todos os níveis
+    // (account+campaign+adset+ad compartilham a data) infla o ponto ~4× e diverge
+    // dos `totals`, que isolam o nível conta. O brief é o gabarito do LLM → tem de bater.
+    trends: computeTrends(trendRows(input.rows)),
     campaigns: selectedByLevel.get("campaign") ?? [],
     adsets: selectedByLevel.get("adset") ?? [],
     ads: selectedByLevel.get("ad") ?? [],
-    anomalies: [], // z-score no brief = 3a-2
+    anomalies,
+    ...(accountFunnel ? { funnel: accountFunnel } : {}),
     creatives: selectCreatives(), // visão = 3b
     playbookCandidates: input.playbookCandidates,
     memory: input.memory ?? EMPTY_MEMORY,
@@ -367,6 +427,44 @@ export function buildAccountBrief(input: BuildAccountBriefInput): BuildAccountBr
   });
 
   return { status: "ok", brief };
+}
+
+/** Agrega o funil neutro por `nível:entidade` a partir das linhas (soma dias). */
+function buildFunnelByKey(rows: readonly InsightRow[]): Map<string, FunnelBreakdown> {
+  const byKey = new Map<string, FunnelBreakdown[]>();
+  for (const row of rows) {
+    if (!row.funnel || row.funnel.length === 0) continue;
+    const key = `${row.level}:${row.entityId}`;
+    (byKey.get(key) ?? byKey.set(key, []).get(key)!).push(row.funnel);
+  }
+  return new Map([...byKey].map(([key, list]) => [key, mergeFunnel(list)]));
+}
+
+/** Roda z-score sobre as métricas agregadas por entidade (não linhas diárias). */
+function detectAnomaliesFromSummaries(summaries: readonly EntitySummary[]): Anomaly[] {
+  const pseudoRows: InsightRow[] = summaries.map((e) => ({
+    entityId: e.id,
+    level: e.level,
+    metrics: e.metrics,
+  }));
+  return detectAnomalies(pseudoRows);
+}
+
+/** Adiciona a flag `anomalia:<metric>` às entidades com outlier detectado. */
+function applyAnomalyFlags(
+  summaries: readonly EntitySummary[],
+  anomalies: readonly Anomaly[],
+): EntitySummary[] {
+  const flagsById = new Map<string, string[]>();
+  for (const a of anomalies) {
+    const list = flagsById.get(a.entityId) ?? [];
+    list.push(`anomalia:${a.metric}`);
+    flagsById.set(a.entityId, list);
+  }
+  return summaries.map((e) => {
+    const extra = flagsById.get(e.id);
+    return extra ? { ...e, flags: [...e.flags, ...extra] } : e;
+  });
 }
 
 /** Totais da conta (nível `account`; sem CPA único enganoso p/ objetivos mistos). */
@@ -391,12 +489,14 @@ function toEntitySummary(
   n: NormalizedEntity,
   entityById: ReadonlyMap<string, AdEntity>,
   baselineByKey: ReadonlyMap<string, NormalizedEntity>,
+  funnelByKey: ReadonlyMap<string, FunnelBreakdown>,
   goals: AgentGoals,
 ): EntitySummary {
   const entity = entityById.get(n.entityId);
   const metrics = computeDerived(n, entity?.objective);
   const base = baselineByKey.get(`${n.level}:${n.entityId}`);
   const baseMetrics = base ? computeDerived(base, entity?.objective) : undefined;
+  const funnel = computeFunnelSummary(funnelByKey.get(`${n.level}:${n.entityId}`) ?? []);
   return {
     id: n.entityId,
     level: n.level,
@@ -406,6 +506,7 @@ function toEntitySummary(
     deltaVsBaseline: baseMetrics ? deltaBetween(metrics, baseMetrics) : {},
     flags: metaFlags(metrics, goals),
     ...(entity?.objective ? { objective: entity.objective } : {}),
+    ...(funnel ? { funnel } : {}),
   };
 }
 

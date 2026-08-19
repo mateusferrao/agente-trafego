@@ -75,6 +75,16 @@ export const recommendationActionType = z.enum([
   "keep",
 ]);
 
+/** Diagnóstico único da conta (adaptado do automato). `biggestLeak` aparado ao
+ *  que medimos (sem `lucro`, que exige margem). Enum aberto p/ novos estágios. */
+export const scorecardGrade = z.enum(["A", "B", "C", "D"]);
+export const biggestLeak = z.enum(["consciencia", "engajamento", "conversao", "receita"]);
+export const scorecardSchema = z.object({
+  grade: scorecardGrade,
+  headline: z.string(),
+  biggestLeak,
+});
+
 export const analysisFindingSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -94,11 +104,15 @@ export const analysisRecommendationSchema = z.object({
 });
 
 export const analysisOutputSchema = z.object({
+  scorecard: scorecardSchema,
   summary: z.string(),
   findings: z.array(analysisFindingSchema),
   recommendations: z.array(analysisRecommendationSchema),
 });
 
+export type ScorecardGrade = z.infer<typeof scorecardGrade>;
+export type BiggestLeak = z.infer<typeof biggestLeak>;
+export type Scorecard = z.infer<typeof scorecardSchema>;
 export type RecommendationActionType = z.infer<typeof recommendationActionType>;
 export type AnalysisFinding = z.infer<typeof analysisFindingSchema>;
 export type AnalysisRecommendation = z.infer<typeof analysisRecommendationSchema>;

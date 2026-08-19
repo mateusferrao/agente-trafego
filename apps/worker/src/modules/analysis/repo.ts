@@ -4,14 +4,24 @@
 
 import { and, eq, sql } from "drizzle-orm";
 import type { Database } from "@trafego/db/client";
-import { adAccounts, agentRuns, agents, playbookRules, recommendations } from "@trafego/db";
+import { adAccounts, agentRunSteps, agentRuns, agents, playbookRules, recommendations } from "@trafego/db";
 import type { Action, AgentGoals, EncryptedPayload, PlaybookRule, RiskLevel } from "@trafego/shared";
 
 export interface AgentContext {
   readonly goals: AgentGoals;
   readonly archetype: string;
   readonly systemPrompt: string | null;
+  readonly modelConfig: Readonly<Record<string, unknown>>;
   readonly playbook: PlaybookRule[];
+}
+
+/** Passo do grafo (trilha p/ a Timeline 6a). */
+export interface StepInput {
+  readonly runId: string;
+  readonly name: string;
+  readonly status: "succeeded" | "failed";
+  readonly output?: Record<string, unknown>;
+  readonly error?: string;
 }
 
 export interface AccountCredentials {
@@ -36,6 +46,7 @@ export interface CloseRunInput {
   readonly partial: boolean;
   readonly tokenUsage: Record<string, unknown> | null;
   readonly costSnapshot: number | null;
+  readonly metricsSnapshot?: Record<string, unknown> | null;
 }
 
 export interface AnalysisRepo {
@@ -44,6 +55,7 @@ export interface AnalysisRepo {
   openRun(orgId: string, runId: string, configSnapshot: Record<string, unknown>): Promise<void>;
   markTokenInvalid(orgId: string, adAccountUuid: string): Promise<void>;
   saveRecommendations(rows: readonly RecommendationRow[]): Promise<void>;
+  recordStep(input: StepInput): Promise<void>;
   closeRun(orgId: string, runId: string, input: CloseRunInput): Promise<void>;
 }
 
@@ -55,6 +67,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
           goals: agents.goals,
           archetype: agents.archetype,
           systemPrompt: agents.systemPrompt,
+          modelConfig: agents.modelConfig,
         })
         .from(agents)
         .where(and(eq(agents.id, agentId), eq(agents.orgId, orgId)))
@@ -79,7 +92,13 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
         when: r.whenJson,
         then: r.thenJson,
       }));
-      return { goals: agent.goals, archetype: agent.archetype, systemPrompt: agent.systemPrompt, playbook };
+      return {
+        goals: agent.goals,
+        archetype: agent.archetype,
+        systemPrompt: agent.systemPrompt,
+        modelConfig: agent.modelConfig ?? {},
+        playbook,
+      };
     },
 
     async loadAccount(orgId, adAccountUuid) {
@@ -118,6 +137,11 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
 
     async saveRecommendations(rows) {
       if (rows.length === 0) return;
+      // NOTA: insert não-idempotente. Na 3a cada trigger cria um runId novo e o job
+      // não re-tenta (attempts=1; AnalysisError fecha o run failed sem rethrow), então
+      // não duplica. Recuperação de job travado (re-entrega do MESMO runId) duplicaria
+      // linhas — Fatia 5a fecha com delete-by-runId antes do insert (recommendations
+      // viram base de ações), quando idempotência de escrita passa a ser obrigatória (§8).
       await db.insert(recommendations).values(
         rows.map((r) => ({
           orgId: r.orgId,
@@ -130,6 +154,16 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
       );
     },
 
+    async recordStep(input) {
+      await db.insert(agentRunSteps).values({
+        runId: input.runId,
+        name: input.name,
+        status: input.status,
+        ...(input.output ? { output: input.output } : {}),
+        ...(input.error ? { error: input.error } : {}),
+      });
+    },
+
     async closeRun(orgId, runId, input) {
       await db
         .update(agentRuns)
@@ -139,6 +173,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
           partial: input.partial,
           tokenUsage: input.tokenUsage ?? null,
           costSnapshot: input.costSnapshot === null ? null : String(input.costSnapshot),
+          ...(input.metricsSnapshot !== undefined ? { metricsSnapshot: input.metricsSnapshot } : {}),
           finishedAt: sql`now()`,
           updatedAt: sql`now()`,
         })

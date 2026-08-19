@@ -61,6 +61,11 @@ export const envSchema = z.object({
   LLM_COST_CAP_USD_PER_PERIOD: z.coerce.number().min(0).default(0),
   // Retentativas in-process por chamada de LLM (429/5xx/rede/passthrough do provider).
   LLM_MAX_RETRIES: z.coerce.number().int().nonnegative().default(3),
+  // Revisor (Analista→Revisor) ligado por padrão; default global — override por-agente
+  // em `agents.model_config.reviewEnabled` (Fatia 4 edita).
+  ANALYSIS_REVIEW_ENABLED: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
+  // Teto de tokens de SAÍDA por chamada de LLM (controla custo/trunca). Override por-agente.
+  ANALYSIS_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(4000),
   // URL base do OpenRouter (default oficial; trocável p/ gateway/proxy).
   OPENROUTER_BASE_URL: z.string().url().default("https://openrouter.ai/api/v1"),
 

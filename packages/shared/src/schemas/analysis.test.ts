@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ANALYSIS_OUTPUT_JSON_SCHEMA, analysisOutputSchema } from "./index.js";
 
 const valid = {
+  scorecard: { grade: "B", headline: "Boa entrega, conversão abaixo do potencial.", biggestLeak: "conversao" },
   summary: "Conta gastou R$300 nos últimos 7 dias.",
   findings: [
     { id: "f1", title: "CPA alto", detail: "Campanha B a R$100/venda", severity: "warning", metricRefs: [{ label: "CPA", value: 100 }] },

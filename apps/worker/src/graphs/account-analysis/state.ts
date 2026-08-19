@@ -17,6 +17,7 @@ import type {
   PlaybookRule,
 } from "@trafego/shared/types";
 import type { AnalysisOutput } from "@trafego/shared/schemas";
+import type { ResolvedAnalysisConfig } from "../../modules/analysis/config.js";
 
 /** Janela temporal resolvida (rótulo p/ o brief + datas p/ o fetch). */
 export interface AnalysisWindow {
@@ -49,6 +50,7 @@ export const AccountAnalysisState = Annotation.Root({
   // ── contexto carregado (loadContext) ───────────────────────────────────
   account: Annotation<AnalysisAccount | null>,
   systemPrompt: Annotation<string>,
+  analysisConfig: Annotation<ResolvedAnalysisConfig | null>,
   window: Annotation<AnalysisWindow | null>,
   baseline: Annotation<AnalysisWindow | null>,
 

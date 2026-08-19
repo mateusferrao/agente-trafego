@@ -45,6 +45,8 @@ export const agentRuns = pgTable(
     summary: text("summary"),
     // análise parcial (degradação graciosa do governor — §7) → nota na UI.
     partial: boolean("partial").notNull().default(false),
+    // KPIs da conta + funil + scorecard congelados no run — a faixa do site lê daqui.
+    metricsSnapshot: jsonb("metrics_snapshot").$type<Record<string, unknown>>(),
     traceId: text("trace_id"),
     startedAt: timestamp("started_at", { withTimezone: true }),
     finishedAt: timestamp("finished_at", { withTimezone: true }),

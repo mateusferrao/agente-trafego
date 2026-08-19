@@ -1,8 +1,9 @@
 // Grafo `account-analysis` (LangGraph Graph API / StateGraph).
 //
 // 3a = rota READ-ONLY (sem escrita na Meta, sem HITL, sem checkpointer):
-//   load_context → fetch_data → run_playbook → llm_analyze
+//   load_context → fetch_data → run_playbook → llm_analyze → review_analysis
 //   → build_recommendations → record
+// (review_analysis = revisor + guards determinísticos; 3a-2)
 //
 // A metade de escrita (decide_actions → guardrail_check → [approval] →
 // apply_actions → notify) entra a partir de 3b/5a/5b — os nós já existem
@@ -21,13 +22,15 @@ export function buildAccountAnalysisGraph(deps: WorkerDeps) {
     .addNode("fetch_data", n.fetchData)
     .addNode("run_playbook", n.runPlaybook)
     .addNode("llm_analyze", n.llmAnalyze)
+    .addNode("review_analysis", n.reviewAnalysis)
     .addNode("build_recommendations", n.buildRecommendations)
     .addNode("record", n.record)
     .addEdge(START, "load_context")
     .addEdge("load_context", "fetch_data")
     .addEdge("fetch_data", "run_playbook")
     .addEdge("run_playbook", "llm_analyze")
-    .addEdge("llm_analyze", "build_recommendations")
+    .addEdge("llm_analyze", "review_analysis")
+    .addEdge("review_analysis", "build_recommendations")
     .addEdge("build_recommendations", "record")
     .addEdge("record", END);
 

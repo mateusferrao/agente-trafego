@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { actionType, entityLevel, riskLevel } from "@trafego/shared/schemas";
+import { actionType, entityLevel, riskLevel, scorecardSchema } from "@trafego/shared/schemas";
 
 export const runStatus = z.enum([
   "pending",
@@ -55,6 +55,41 @@ export const recommendationOutput = z.object({
 });
 export type RecommendationOutput = z.infer<typeof recommendationOutput>;
 
+// ─── 3a-2: métricas congeladas do run (KPIs + funil + scorecard) p/ o site ──
+export const funnelStage = z.enum([
+  "conversation_started",
+  "first_reply",
+  "depth_2",
+  "depth_3",
+  "depth_5",
+  "replied",
+]);
+
+/** KPIs da conta no run (só o que houve; conversão/receita podem faltar). */
+export const runKpis = z.object({
+  spend: z.number(),
+  impressions: z.number(),
+  clicks: z.number(),
+  ctr: z.number(),
+  cpa: z.number().optional(),
+  roas: z.number().optional(),
+});
+
+/** Funil de messaging agregado (contagens + taxas) — só quando há dado. */
+export const runFunnel = z.object({
+  counts: z.record(funnelStage, z.number()),
+  replyRate: z.number().optional(),
+  depthRate: z.number().optional(),
+});
+
+/** Snapshot de métricas do run (KPIs sempre; funil/scorecard quando houver). */
+export const runMetrics = z.object({
+  kpis: runKpis,
+  funnel: runFunnel.optional(),
+  scorecard: scorecardSchema.optional(),
+});
+export type RunMetrics = z.infer<typeof runMetrics>;
+
 export const runOutput = z.object({
   id: z.string(),
   status: runStatus,
@@ -63,6 +98,8 @@ export const runOutput = z.object({
   costUsd: z.number().nullable(),
   startedAt: z.string().nullable(),
   finishedAt: z.string().nullable(),
+  /** KPIs + funil + scorecard congelados (null em conta parada / run sem métricas). */
+  metrics: runMetrics.nullable(),
 });
 export type RunOutput = z.infer<typeof runOutput>;
 

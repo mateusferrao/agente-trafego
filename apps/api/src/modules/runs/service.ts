@@ -9,13 +9,14 @@ import {
 import type { Action, OrgId, RunId } from "@trafego/shared/types";
 import type { SchedulerPort } from "@trafego/shared/ports";
 import { badRequest, conflict } from "../../middleware/error-handler.js";
-import type {
-  LatestRunOutput,
-  RecommendationOutput,
-  RunOutput,
-  RunSummary,
-  RunTimeline,
-  TriggerRunOutput,
+import {
+  runMetrics,
+  type LatestRunOutput,
+  type RecommendationOutput,
+  type RunOutput,
+  type RunSummary,
+  type RunTimeline,
+  type TriggerRunOutput,
 } from "./schema.js";
 
 /** Garante o agente da conta (injetado do slice de agentes — evita duplicar lógica). */
@@ -103,7 +104,13 @@ export function createRunsService(deps: RunsDeps) {
     }
   }
 
-  /** Impede runs simultâneos na mesma conta (custo Meta/LLM + confusão). */
+  /**
+   * Impede runs simultâneos na mesma conta (custo Meta/LLM + confusão).
+   * NOTA: check-then-insert sem transação → há janela TOCTOU (2 POSTs concorrentes
+   * podem ambos passar). Aceitável na 3a (on-demand; o front também desabilita o
+   * botão). Fatia 5a fecha a janela com índice único parcial em
+   * `agent_runs(agent_id) WHERE status IN (in-flight)` ou advisory lock.
+   */
   async function assertNoRunInFlight(orgId: OrgId, agentId: string): Promise<void> {
     const [running] = await deps.db
       .select({ id: agentRuns.id })
@@ -136,6 +143,8 @@ type AgentRunRow = typeof agentRuns.$inferSelect;
 type RecommendationRow = typeof recommendations.$inferSelect;
 
 function toRunOutput(run: AgentRunRow): RunOutput {
+  // metrics_snapshot é jsonb livre → valida contra o contrato (descarta se fora do shape).
+  const parsedMetrics = runMetrics.safeParse(run.metricsSnapshot);
   return {
     id: run.id,
     status: run.status,
@@ -144,6 +153,7 @@ function toRunOutput(run: AgentRunRow): RunOutput {
     costUsd: run.costSnapshot === null ? null : Number(run.costSnapshot),
     startedAt: run.startedAt ? run.startedAt.toISOString() : null,
     finishedAt: run.finishedAt ? run.finishedAt.toISOString() : null,
+    metrics: parsedMetrics.success ? parsedMetrics.data : null,
   };
 }
 

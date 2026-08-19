@@ -16,6 +16,17 @@ export interface ArchetypeDefaults {
   readonly systemPrompt: string;
   readonly goals: AgentGoals;
   readonly autonomyPolicy: AutonomyPolicy;
+  /**
+   * Metodologia estruturada (adaptada do "Qualificador consultivo" do automato).
+   * DADO (não prompt hardcoded) — a Fatia 4 expõe a edição; o prompt é composto
+   * a partir daqui. Extensível: nova regra = 1 entrada.
+   */
+  readonly methodology: {
+    readonly tonePosture: string;
+    readonly evidenceRules: readonly string[];
+    readonly actionRules: readonly string[];
+    readonly antiPatterns: readonly string[];
+  };
 }
 
 export const DEFAULT_ARCHETYPE_KEY = "conservador";
@@ -38,6 +49,24 @@ const CONSERVADOR: ArchetypeDefaults = {
   ].join("\n"),
   goals: {},
   autonomyPolicy: { bySource: { playbook: "suggest", llm: "suggest" } },
+  methodology: {
+    tonePosture: "Consultivo, direto e sem jargão; explica o porquê em linguagem de dono do negócio.",
+    evidenceRules: [
+      "Use só números do briefing; cite o valor real ao lado de cada afirmação.",
+      "Compare com a meta e com o período anterior quando existir.",
+      "Não infira causa (criativo cansado, público saturado) sem um sinal no dado.",
+    ],
+    actionRules: [
+      "Sugira a ação de menor risco que resolve o problema (pausar > cortar budget > investigar).",
+      "Só proponha mexer em budget/status quando o dado sustenta; na dúvida, investigar.",
+      "Uma recomendação por problema; não empilhe mudanças arriscadas.",
+    ],
+    antiPatterns: [
+      "Conselho genérico sem número.",
+      "Escalar o que ainda não provou CPA/qualidade.",
+      "Tratar volume de conversas como sucesso ignorando a taxa de resposta/profundidade.",
+    ],
+  },
 };
 
 export const ARCHETYPE_DEFAULTS: Readonly<Record<string, ArchetypeDefaults>> = {
@@ -47,4 +76,19 @@ export const ARCHETYPE_DEFAULTS: Readonly<Record<string, ArchetypeDefaults>> = {
 /** Defaults do arquétipo pedido, caindo no `conservador` se a chave for desconhecida. */
 export function archetypeDefaults(key: string = DEFAULT_ARCHETYPE_KEY): ArchetypeDefaults {
   return ARCHETYPE_DEFAULTS[key] ?? CONSERVADOR;
+}
+
+/** Compõe o system prompt do analista a partir da metodologia (dado → texto). PURO. */
+export function composeMethodologyPrompt(d: ArchetypeDefaults): string {
+  const bullets = (label: string, items: readonly string[]): string =>
+    items.length > 0 ? `${label}:\n${items.map((i) => `- ${i}`).join("\n")}` : "";
+  return [
+    d.systemPrompt,
+    `Postura: ${d.methodology.tonePosture}`,
+    bullets("Regras de evidência", d.methodology.evidenceRules),
+    bullets("Regras para ações", d.methodology.actionRules),
+    bullets("Evite", d.methodology.antiPatterns),
+  ]
+    .filter((s) => s.length > 0)
+    .join("\n\n");
 }

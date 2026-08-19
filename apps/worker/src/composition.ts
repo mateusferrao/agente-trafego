@@ -44,12 +44,14 @@ export interface WorkerDeps {
   };
   /** Sync de insights (2a): coleta a série temporal Meta → insights_snapshots. */
   readonly insightsSync: InsightsSyncService;
-  /** Config da análise (3a) — defaults globais de produto (env; por-agente = Fatia 4). */
+  /** Config da análise (3a) — defaults globais de produto (env; override por-agente). */
   readonly analysis: {
     readonly model: string;
     readonly windowDays: number;
     readonly baselineDays: number;
     readonly topN: number;
+    readonly reviewEnabled: boolean;
+    readonly maxOutputTokens: number;
   };
   /** Checkpointer do LangGraph (Postgres) — HITL durável (5b). undefined na 3a (read-only). */
   readonly checkpointer: unknown;
@@ -139,6 +141,8 @@ export async function buildComposition(): Promise<WorkerDeps> {
       windowDays: env.ANALYSIS_WINDOW_DAYS,
       baselineDays: env.ANALYSIS_BASELINE_DAYS,
       topN: env.ANALYSIS_TOP_N,
+      reviewEnabled: env.ANALYSIS_REVIEW_ENABLED,
+      maxOutputTokens: env.ANALYSIS_MAX_OUTPUT_TOKENS,
     },
     // checkpointer LangGraph = 5b (HITL durável). 3a é read-only linear → sem checkpointer.
     checkpointer: undefined,

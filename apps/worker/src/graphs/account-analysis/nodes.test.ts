@@ -24,8 +24,9 @@ const ENTITIES: AdEntity[] = [
 ];
 
 const ANALYSIS_OUTPUT = {
+  scorecard: { grade: "C", headline: "CPA acima da meta na campanha principal.", biggestLeak: "conversao" },
   summary: "Conta gastou R$300; CPA acima da meta na Campanha 1.",
-  findings: [{ id: "f1", title: "CPA alto", detail: "R$100/venda", severity: "warning", metricRefs: [] }],
+  findings: [{ id: "f1", title: "CPA alto", detail: "R$100/venda", severity: "warning", metricRefs: [{ label: "CPA", value: 100 }] }],
   recommendations: [
     { id: "r1", title: "Pausar Campanha 1", rationale: "CPA 2x a meta", priority: "high", actionType: "pause", targetEntity: { level: "campaign", externalId: "c1" }, budgetChangePct: null },
     { id: "r2", title: "Revisar criativo", rationale: "Fadiga", priority: "medium", actionType: "review_creative", targetEntity: null, budgetChangePct: null },
@@ -46,11 +47,12 @@ function makeHarness(opts: { rows?: InsightRow[]; tokenInvalid?: boolean } = {})
   const rows = opts.rows ?? [row("act_1", "account", 300, 5), row("c1", "campaign", 300, 3)];
 
   const repo: AnalysisRepo = {
-    loadAgentContext: vi.fn(async () => ({ goals: { targetCPA: 50 }, archetype: "conservador", systemPrompt: null, playbook: [] })),
+    loadAgentContext: vi.fn(async () => ({ goals: { targetCPA: 50 }, archetype: "conservador", systemPrompt: null, modelConfig: {}, playbook: [] })),
     loadAccount: vi.fn(async () => ({ metaAdAccountId: "act_1", name: "Conta", currency: "BRL", tokenCripto: TOKEN })),
     openRun: vi.fn(async () => {}),
     markTokenInvalid: vi.fn(async () => {}),
     saveRecommendations: vi.fn(async (r: readonly RecommendationRow[]) => { saved.push(...r); }),
+    recordStep: vi.fn(async () => {}),
     closeRun: vi.fn(async (_o, _r, input) => { closed.push({ status: input.status, summary: input.summary, costSnapshot: input.costSnapshot }); }),
   };
   const snapshots: InsightsSnapshotsRepo = {
@@ -74,7 +76,7 @@ function makeHarness(opts: { rows?: InsightRow[]; tokenInvalid?: boolean } = {})
       approval: {} as never,
     },
     insightsSync: { sync: vi.fn(async () => ({ partial: false, tokenInvalid: opts.tokenInvalid ?? false, snapshotsWritten: rows.length })) } as never,
-    analysis: { model: "m", windowDays: 7, baselineDays: 7, topN: 5 },
+    analysis: { model: "m", windowDays: 7, baselineDays: 7, topN: 5, reviewEnabled: true, maxOutputTokens: 4000 },
     checkpointer: undefined,
   } as unknown as WorkerDeps;
 
@@ -101,6 +103,7 @@ async function runChain(h: Harness): Promise<AccountAnalysisStateType> {
   apply(await n.fetchData(state));
   apply(await n.runPlaybook(state));
   apply(await n.llmAnalyze(state));
+  apply(await n.reviewAnalysis(state));
   apply(await n.buildRecommendations(state));
   apply(await n.record(state));
   return state;
@@ -111,7 +114,8 @@ describe("account-analysis read-only nodes", () => {
     const h = makeHarness();
     await runChain(h);
 
-    expect(h.llm).toHaveBeenCalledOnce();
+    // analista + revisor (2 passes) → 2 chamadas de LLM
+    expect(h.llm).toHaveBeenCalledTimes(2);
     // 3 recomendações persistidas
     expect(h.saved).toHaveLength(3);
     // r1 (pause, id válido) → proposedAction tipado
@@ -127,7 +131,8 @@ describe("account-analysis read-only nodes", () => {
     expect(r3?.proposedAction).toBeNull();
     // run fechado com sucesso + custo
     expect(h.closed).toHaveLength(1);
-    expect(h.closed[0]).toMatchObject({ status: "succeeded", costSnapshot: 0.001 });
+    // usage somado nas 2 chamadas (analista + revisor) → custo dobrado
+    expect(h.closed[0]).toMatchObject({ status: "succeeded", costSnapshot: 0.002 });
   });
 
   it("conta parada: pula o LLM e conclui com nota 'sem atividade'", async () => {

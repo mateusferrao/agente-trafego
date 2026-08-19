@@ -2,8 +2,10 @@
  * Cliente HTTP do OpenRouter (endpoint compatível OpenAI: POST /chat/completions).
  *
  * - Auth: header `Authorization: Bearer OPENROUTER_API_KEY`.
- * - O `usage` (com **custo real** em USD) vem sempre na resposta — base do
- *   metering/markup (§11), sem parâmetro extra.
+ * - O `usage` (com **custo real** em USD) é a base do metering/markup (§11). Hoje
+ *   o OpenRouter já o inclui por padrão (`usage.include` virou no-op), mas mandamos
+ *   `usage: { include: true }` mesmo assim (belt-and-suspenders) — `OPENROUTER_BASE_URL`
+ *   é configurável e um gateway compatível mais antigo ainda pode exigir o flag.
  * - Retry in-process com backoff+jitter em 429/5xx/rede/passthrough do provider.
  * - `fetch` é injetável (testes mockam; prod usa o global).
  */
@@ -95,7 +97,9 @@ export class OpenRouterClient {
     };
     if (this.referer) headers["HTTP-Referer"] = this.referer;
     if (this.title) headers["X-Title"] = this.title;
-    const body = JSON.stringify(request);
+    // pede o accounting de custo explicitamente (no-op no OpenRouter atual; exigido
+    // por gateways compatíveis mais antigos) — garante `usage.cost` p/ o metering (§11).
+    const body = JSON.stringify({ ...request, usage: { include: true } });
 
     let lastError: unknown;
     for (let attempt = 0; attempt <= this.maxRetries; attempt += 1) {

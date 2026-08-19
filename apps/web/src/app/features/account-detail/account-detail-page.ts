@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { HttpErrorResponse } from '@angular/common/http';
 import { provideIcons } from '@ng-icons/core';
@@ -9,7 +9,16 @@ import { AnalysisApiService } from '@core/api/analysis-api.service';
 import type { AdAccountOutput, LatestRunOutput } from '@core/api/generated';
 
 type Recommendation = LatestRunOutput['recommendations'][number];
+type RunMetrics = NonNullable<NonNullable<LatestRunOutput['run']>['metrics']>;
+type Scorecard = NonNullable<RunMetrics['scorecard']>;
 type RiskTone = 'neutral' | 'warning' | 'danger';
+type GradeTone = 'success' | 'info' | 'warning' | 'danger';
+
+/** item da faixa de KPIs / taxas (rótulo humano + valor já formatado). */
+interface Stat {
+  readonly label: string;
+  readonly value: string;
+}
 
 const RISK_TONE: Record<Recommendation['riskLevel'], RiskTone> = {
   low: 'neutral',
@@ -39,6 +48,27 @@ const IN_FLIGHT = new Set(['pending', 'running', 'waiting_approval']);
 const POLL_INTERVAL_MS = 2500;
 /** aplicação de ações chega na fase de escrita (Fatia 5) — texto único (decisão 13). */
 const APPLICABILITY_NOTE = 'Sugestão — a aplicação automática chega em breve.';
+
+/** Nota da conta (scorecard) → tom+texto (nunca só cor — docs/DESIGN.md). */
+const GRADE_TONE: Record<Scorecard['grade'], GradeTone> = {
+  A: 'success',
+  B: 'info',
+  C: 'warning',
+  D: 'danger',
+};
+const GRADE_LABEL: Record<Scorecard['grade'], string> = {
+  A: 'ótimo',
+  B: 'bom',
+  C: 'atenção',
+  D: 'crítico',
+};
+/** "Maior vazamento" em linguagem de gente (sem jargão). */
+const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
+  consciencia: 'alcançar as pessoas certas',
+  engajamento: 'engajamento com os anúncios',
+  conversao: 'transformar cliques em vendas',
+  receita: 'retorno sobre o investimento',
+};
 
 /**
  * Detalhe da conta (3a): "Analisar agora" → mostra as recomendações no site
@@ -103,6 +133,9 @@ const APPLICABILITY_NOTE = 'Sugestão — a aplicação automática chega em bre
           @if (goalsSaved()) {
             <span class="text-xs text-success-strong">Meta salva.</span>
           }
+          @if (goalsError()) {
+            <span class="text-xs text-danger-strong">{{ goalsError() }}</span>
+          }
         </div>
       </section>
 
@@ -146,6 +179,31 @@ const APPLICABILITY_NOTE = 'Sugestão — a aplicação automática chega em bre
             <p class="text-xs text-warning-strong">
               Análise parcial — alguns dados não puderam ser carregados desta vez.
             </p>
+          }
+
+          <!-- Scorecard: nota da conta (tom+texto) + maior vazamento + headline -->
+          @if (scorecard(); as sc) {
+            <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
+              <div class="flex items-center gap-3">
+                <span appBadge [tone]="gradeTone(sc.grade)" size="sm">
+                  Nota {{ sc.grade }} · {{ gradeLabel(sc.grade) }}
+                </span>
+                <span class="text-xs text-muted">Maior oportunidade: {{ leakLabel(sc.biggestLeak) }}</span>
+              </div>
+              <p class="text-sm text-ink">{{ sc.headline }}</p>
+            </section>
+          }
+
+          <!-- Faixa de KPIs (gasto/CPA/ROAS) + taxas de funil quando houver -->
+          @if (stats().length > 0) {
+            <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+              @for (stat of stats(); track stat.label) {
+                <div class="flex flex-col gap-1 rounded-lg border border-line bg-panel p-4">
+                  <span class="text-xs text-muted">{{ stat.label }}</span>
+                  <span class="font-brand text-lg font-semibold text-ink">{{ stat.value }}</span>
+                </div>
+              }
+            </div>
           }
 
           @if (recommendations().length === 0) {
@@ -198,6 +256,24 @@ export class AccountDetailPage {
   protected readonly targetROAS = signal<number | null>(null);
   protected readonly savingGoals = signal(false);
   protected readonly goalsSaved = signal(false);
+  protected readonly goalsError = signal<string | null>(null);
+
+  /** Diagnóstico único da conta (só quando o run trouxe scorecard). */
+  protected readonly scorecard = computed<Scorecard | null>(() => this.run()?.metrics?.scorecard ?? null);
+
+  /** Faixa de KPIs + taxas de funil, já formatada (só o que houver). */
+  protected readonly stats = computed<Stat[]>(() => {
+    const metrics = this.run()?.metrics;
+    if (!metrics) return [];
+    const currency = this.account()?.currency ?? DEFAULT_CURRENCY;
+    const { kpis, funnel } = metrics;
+    const items: Stat[] = [{ label: 'Gasto', value: formatCurrency(kpis.spend, currency) }];
+    if (kpis.cpa !== undefined) items.push({ label: 'Custo por venda', value: formatCurrency(kpis.cpa, currency) });
+    if (kpis.roas !== undefined) items.push({ label: 'Retorno (ROAS)', value: `${kpis.roas.toFixed(2)}x` });
+    if (funnel?.replyRate !== undefined) items.push({ label: 'Taxa de resposta', value: formatPercent(funnel.replyRate) });
+    if (funnel?.depthRate !== undefined) items.push({ label: 'Conversas que avançam', value: formatPercent(funnel.depthRate) });
+    return items;
+  });
 
   constructor() {
     this.destroyRef.onDestroy(() => {
@@ -229,16 +305,34 @@ export class AccountDetailPage {
     return `${verb} ${level}`;
   }
 
+  protected gradeTone(grade: Scorecard['grade']): GradeTone {
+    return GRADE_TONE[grade];
+  }
+  protected gradeLabel(grade: Scorecard['grade']): string {
+    return GRADE_LABEL[grade];
+  }
+  protected leakLabel(leak: Scorecard['biggestLeak']): string {
+    return LEAK_LABEL[leak];
+  }
+
   protected onCpa(event: Event): void {
     this.targetCPA.set(parseNumber(event));
+    this.clearGoalsFeedback();
   }
   protected onRoas(event: Event): void {
     this.targetROAS.set(parseNumber(event));
+    this.clearGoalsFeedback();
+  }
+
+  /** confirmação/erro descrevem o último save — some ao editar o campo. */
+  private clearGoalsFeedback(): void {
+    this.goalsSaved.set(false);
+    this.goalsError.set(null);
   }
 
   protected saveGoals(): void {
     this.savingGoals.set(true);
-    this.goalsSaved.set(false);
+    this.clearGoalsFeedback();
     const goals = {
       ...(this.targetCPA() !== null ? { targetCPA: this.targetCPA()! } : {}),
       ...(this.targetROAS() !== null ? { targetROAS: this.targetROAS()! } : {}),
@@ -248,7 +342,10 @@ export class AccountDetailPage {
         this.savingGoals.set(false);
         this.goalsSaved.set(true);
       },
-      error: () => this.savingGoals.set(false),
+      error: (err: unknown) => {
+        this.savingGoals.set(false);
+        this.goalsError.set(friendlyGoalsError(err));
+      },
     });
   }
 
@@ -274,6 +371,9 @@ export class AccountDetailPage {
         this.targetCPA.set(agent.goals.targetCPA ?? null);
         this.targetROAS.set(agent.goals.targetROAS ?? null);
       },
+      // meta é opcional; se não carregar, os campos ficam em branco (o usuário
+      // ainda pode definir e salvar). Falha silenciosa consciente, sem travar a tela.
+      error: () => {},
     });
     this.analysisApi.latestRun(this.accountId).subscribe({
       next: (latest) => {
@@ -310,6 +410,22 @@ export class AccountDetailPage {
   }
 }
 
+const DEFAULT_CURRENCY = 'BRL';
+const CURRENCY_LOCALE = 'pt-BR';
+
+function formatCurrency(value: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat(CURRENCY_LOCALE, { style: 'currency', currency }).format(value);
+  } catch {
+    // moeda desconhecida → não quebra a tela; mostra o número puro.
+    return value.toFixed(2);
+  }
+}
+
+function formatPercent(ratio: number): string {
+  return `${Math.round(ratio * 100)}%`;
+}
+
 function parseNumber(event: Event): number | null {
   const value = (event.target as HTMLInputElement).value;
   if (value.trim() === '') return null;
@@ -318,9 +434,18 @@ function parseNumber(event: Event): number | null {
 }
 
 function friendlyError(err: unknown): string {
+  return backendMessage(err) ?? 'Não consegui iniciar a análise agora. Tente de novo em instantes.';
+}
+
+function friendlyGoalsError(err: unknown): string {
+  return backendMessage(err) ?? 'Não consegui salvar a meta agora. Tente de novo em instantes.';
+}
+
+/** Mensagem amigável vinda da API (controlada) — nunca vaza stack/código técnico. */
+function backendMessage(err: unknown): string | null {
   if (err instanceof HttpErrorResponse) {
     const message = (err.error as { message?: string } | null)?.message;
     if (message) return message;
   }
-  return 'Não consegui iniciar a análise agora. Tente de novo em instantes.';
+  return null;
 }

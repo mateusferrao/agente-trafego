@@ -6,3 +6,4 @@ export * from "./mutations.js";
 export * from "./governor.js";
 export * from "./custom-conversions.js";
 export * from "./meta-conversion-map.js";
+export * from "./meta-funnel-map.js";

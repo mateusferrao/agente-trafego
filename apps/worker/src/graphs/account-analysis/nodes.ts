@@ -14,11 +14,15 @@ import {
   archetypeDefaults,
   budgetDirection,
   buildAccountBrief,
+  composeMethodologyPrompt,
   costSnapshotFromUsage,
   decideActions,
+  dropUnsupportedFindings,
   evaluatePlaybook,
+  flagUnsupportedFindings,
   riskLevelForActionType,
 } from "@trafego/core";
+import { funnelFromRawActions } from "@trafego/ads-meta";
 import {
   analysisOutputSchema,
   ANALYSIS_OUTPUT_JSON_SCHEMA,
@@ -26,9 +30,9 @@ import {
   type AnalysisOutput,
   type AnalysisRecommendation,
 } from "@trafego/shared/schemas";
-import type { Action, AdEntity, EntityLevel, Finding } from "@trafego/shared";
+import type { Action, AdEntity, EntityLevel, Finding, InsightRow } from "@trafego/shared";
 import type { AdsPlatformPort } from "@trafego/shared/ports";
-import { AdsPlatformError } from "@trafego/shared/ports";
+import { AdsPlatformError, LLMProviderError } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../../composition.js";
 import {
   createDrizzleInsightsSnapshotsRepo,
@@ -36,7 +40,8 @@ import {
 } from "../../modules/insights/repo.js";
 import { createAnalysisRepo, type AnalysisRepo, type RecommendationRow } from "../../modules/analysis/repo.js";
 import { AnalysisError } from "../../modules/analysis/errors.js";
-import { buildAnalysisMessages } from "../../modules/analysis/prompt.js";
+import { resolveAnalysisConfig } from "../../modules/analysis/config.js";
+import { buildAnalysisMessages, buildReviewMessages } from "../../modules/analysis/prompt.js";
 import { resolveWindows } from "../../modules/analysis/window.js";
 import type { AccountAnalysisStateType, AccountAnalysisUpdate } from "./state.js";
 
@@ -68,27 +73,28 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const ctx = await repo.loadAgentContext(state.orgId, state.agentId);
     if (!ctx) throw new AnalysisError("agent_missing", "agente não encontrado");
 
-    const systemPrompt = ctx.systemPrompt ?? archetypeDefaults(ctx.archetype).systemPrompt;
-    const { window, baseline } = resolveWindows(
-      today(),
-      deps.analysis.windowDays,
-      deps.analysis.baselineDays,
-    );
-    const windowLabel = `últimos ${deps.analysis.windowDays} dias`;
-    const baselineLabel = `${deps.analysis.baselineDays} dias anteriores`;
+    // config resolvida por-agente (model_config) com fallback nos defaults globais.
+    const cfg = resolveAnalysisConfig(ctx.modelConfig, deps.analysis);
+    // system prompt = override do agente OU metodologia do arquétipo (dado → texto).
+    const systemPrompt = ctx.systemPrompt ?? composeMethodologyPrompt(archetypeDefaults(ctx.archetype));
+    const { window, baseline } = resolveWindows(today(), cfg.windowDays, cfg.baselineDays);
+    const windowLabel = `últimos ${cfg.windowDays} dias`;
+    const baselineLabel = `${cfg.baselineDays} dias anteriores`;
 
     await repo.openRun(state.orgId, state.runId, {
       goals: ctx.goals,
-      model: deps.analysis.model,
+      model: cfg.model,
+      reviewEnabled: cfg.reviewEnabled,
       window,
       baseline,
-      topN: deps.analysis.topN,
+      topN: cfg.topN,
     });
 
     return {
       goals: ctx.goals,
       playbookRules: ctx.playbook,
       systemPrompt,
+      analysisConfig: cfg,
       window: { label: windowLabel, ...window },
       baseline: { label: baselineLabel, ...baseline },
       usage: null,
@@ -120,12 +126,14 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     }
 
     const { entities, entitiesPartial } = await fetchEntities(deps.ports.ads, ref, logger);
-    const insights = await snapshots.listWindow(
+    const rawInsights = await snapshots.listWindow(
       state.orgId,
       state.adAccountId,
       state.window.since,
       state.window.until,
     );
+    // deriva o funil neutro do rawActions já persistido (vocabulário Meta só no adapter).
+    const insights = rawInsights.map(withFunnel);
     const baselineInsights = await snapshots.listWindow(
       state.orgId,
       state.adAccountId,
@@ -160,6 +168,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       throw new AnalysisError("analysis_failed", "contexto incompleto");
     }
 
+    const cfg = state.analysisConfig ?? deps.analysis;
     const built = buildAccountBrief({
       account: {
         id: state.account.metaAdAccountId,
@@ -173,7 +182,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       rows: state.insights,
       baselineRows: state.baselineInsights,
       playbookCandidates: state.playbookCandidates,
-      topN: deps.analysis.topN,
+      topN: cfg.topN,
     });
 
     // conta parada (ICP entre lançamentos) → não gasta LLM, run conclui com nota.
@@ -181,31 +190,75 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       return { brief: null, analysisOutput: null, findings: [], summary: NO_ACTIVITY_SUMMARY };
     }
 
-    const messages = buildAnalysisMessages(state.systemPrompt, built.brief);
     const completion = await deps.ports.llm.completeStructured<AnalysisOutput>({
-      model: deps.analysis.model,
-      messages,
+      model: cfg.model,
+      messages: buildAnalysisMessages(state.systemPrompt, built.brief),
       responseSchema: ANALYSIS_OUTPUT_JSON_SCHEMA,
       responseSchemaName: ANALYSIS_OUTPUT_SCHEMA_NAME,
       temperature: ANALYSIS_TEMPERATURE,
+      maxTokens: cfg.maxOutputTokens,
     });
 
     const parsed = analysisOutputSchema.safeParse(completion.output);
     if (!parsed.success) throw new AnalysisError("analysis_failed", "output do LLM fora do schema");
 
-    const findings: Finding[] = parsed.data.findings.map((f) => ({
+    return {
+      brief: built.brief,
+      analysisOutput: parsed.data,
+      usage: addTokenUsage(state.usage ?? undefined, completion.usage),
+    };
+  }
+
+  /**
+   * Revisor (rede de segurança) + guards determinísticos. Fluxo:
+   * pré-check (flag) → reviewPasses (LLM, refina; nunca inventa) → drop final.
+   * Revisor falhou → cai pra saída do analista + marca parcial (§7). Extensível:
+   * `reviewPasses` cresce p/ os painéis da Fatia 8.
+   */
+  async function reviewAnalysis(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
+    logger.debug({ runId: state.runId }, "review_analysis");
+    if (!state.analysisOutput || !state.brief) return {}; // conta parada → nada a revisar
+    const cfg = state.analysisConfig ?? deps.analysis;
+
+    const draft = state.analysisOutput;
+    let reviewed: AnalysisOutput = draft;
+    let usage = state.usage;
+    let partial = state.partial ?? false;
+
+    if (cfg.reviewEnabled) {
+      const issues = flagUnsupportedFindings(draft, state.brief);
+      try {
+        const completion = await deps.ports.llm.completeStructured<AnalysisOutput>({
+          model: cfg.model,
+          messages: buildReviewMessages(state.brief, draft, issues),
+          responseSchema: ANALYSIS_OUTPUT_JSON_SCHEMA,
+          responseSchemaName: ANALYSIS_OUTPUT_SCHEMA_NAME,
+          temperature: ANALYSIS_TEMPERATURE,
+          maxTokens: cfg.maxOutputTokens,
+        });
+        const parsed = analysisOutputSchema.safeParse(completion.output);
+        if (parsed.success) {
+          reviewed = parsed.data;
+          usage = addTokenUsage(usage ?? undefined, completion.usage);
+        } else {
+          partial = true; // revisor devolveu fora do schema → usa o analista
+          logger.warn({ runId: state.runId }, "review:output fora do schema; usando analista");
+        }
+      } catch (err) {
+        if (!(err instanceof LLMProviderError)) throw err; // erro inesperado sobe
+        partial = true; // revisor falhou → degradação graciosa (usa o analista)
+        logger.warn({ runId: state.runId, err }, "review:falhou; usando análise sem revisão");
+      }
+    }
+
+    // drop determinístico final (hard): remove finding sem métrica / número fora do brief.
+    const final = dropUnsupportedFindings(reviewed, state.brief);
+    const findings: Finding[] = final.findings.map((f) => ({
       title: f.title,
       detail: f.detail,
       severity: f.severity,
     }));
-
-    return {
-      brief: built.brief,
-      analysisOutput: parsed.data,
-      findings,
-      summary: parsed.data.summary,
-      usage: addTokenUsage(state.usage ?? undefined, completion.usage),
-    };
+    return { analysisOutput: final, findings, summary: final.summary, usage, partial };
   }
 
   /** Persiste recommendations (feedback/outcome tracking + base p/ 5a). */
@@ -222,7 +275,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     return {};
   }
 
-  /** Fecha o run (status=done, summary, partial, custo/usage). */
+  /** Fecha o run (status, summary, partial, custo/usage, metrics_snapshot p/ o site). */
   async function record(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
     logger.debug({ runId: state.runId }, "record");
     const usage = state.usage;
@@ -232,6 +285,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       partial: state.partial ?? false,
       tokenUsage: usage ? { ...usage } : null,
       costSnapshot: usage ? costSnapshotFromUsage(usage) : null,
+      metricsSnapshot: buildMetricsSnapshot(state),
     });
     return {};
   }
@@ -277,18 +331,61 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     return {};
   }
 
+  /** HOF: grava um `agent_run_step` (succeeded/failed + erro) ao redor do nó. DRY. */
+  function step(
+    name: string,
+    fn: (s: AccountAnalysisStateType) => Promise<AccountAnalysisUpdate>,
+  ): (s: AccountAnalysisStateType) => Promise<AccountAnalysisUpdate> {
+    return async (state) => {
+      try {
+        const patch = await fn(state);
+        await repo.recordStep({ runId: state.runId, name, status: "succeeded" });
+        return patch;
+      } catch (err) {
+        await repo.recordStep({ runId: state.runId, name, status: "failed", error: String(err) });
+        throw err;
+      }
+    };
+  }
+
   return {
-    loadContext,
-    fetchData,
-    runPlaybook: runPlaybookNode,
-    llmAnalyze,
-    buildRecommendations,
-    record,
+    loadContext: step("load_context", loadContext),
+    fetchData: step("fetch_data", fetchData),
+    runPlaybook: step("run_playbook", runPlaybookNode),
+    llmAnalyze: step("llm_analyze", llmAnalyze),
+    reviewAnalysis: step("review_analysis", reviewAnalysis),
+    buildRecommendations: step("build_recommendations", buildRecommendations),
+    record: step("record", record),
+    // write-half (scaffold — 3b/4/5a/5b): sem step por ora.
     decideActions: decideActionsNode,
     guardrailCheck,
     createApprovalAndInterrupt,
     applyActions,
     notify,
+  };
+}
+
+/** Enriquece a linha com o funil neutro derivado do rawActions (adapter mapper). */
+function withFunnel(row: InsightRow): InsightRow {
+  const funnel = funnelFromRawActions(row.rawActions);
+  return funnel.length > 0 ? { ...row, funnel } : row;
+}
+
+/** KPIs + funil + scorecard congelados p/ o site (null em conta parada). */
+function buildMetricsSnapshot(state: AccountAnalysisStateType): Record<string, unknown> | null {
+  if (!state.brief) return null;
+  const t = state.brief.totals;
+  return {
+    kpis: {
+      spend: t.spend,
+      impressions: t.impressions,
+      clicks: t.clicks,
+      ctr: t.ctr,
+      ...(t.cpa !== undefined ? { cpa: t.cpa } : {}),
+      ...(t.roas !== undefined ? { roas: t.roas } : {}),
+    },
+    ...(state.brief.funnel ? { funnel: state.brief.funnel } : {}),
+    ...(state.analysisOutput?.scorecard ? { scorecard: state.analysisOutput.scorecard } : {}),
   };
 }
 
