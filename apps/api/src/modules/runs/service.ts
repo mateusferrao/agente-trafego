@@ -1,13 +1,21 @@
-import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
-import { agentRuns, agents, recommendations, type Database } from "@trafego/db";
-import { READ_ONLY_APPLICABILITY } from "@trafego/core";
+import { and, desc, eq, inArray } from "drizzle-orm";
+import {
+  agentRuns,
+  agents,
+  guardrailConfigs,
+  isUniqueViolation,
+  recommendationFeedback,
+  recommendations,
+  type Database,
+} from "@trafego/db";
+import { isOverCostCap, READ_ONLY_APPLICABILITY, resolveCostCapUsd, usagePeriod } from "@trafego/core";
 import {
   AGENT_RUNS_QUEUE,
   AGENT_RUN_JOB,
   type AgentRunExecutePayload,
 } from "@trafego/shared";
 import type { Action, OrgId, RunId } from "@trafego/shared/types";
-import type { SchedulerPort } from "@trafego/shared/ports";
+import type { MeteringPort, SchedulerPort } from "@trafego/shared/ports";
 import { badRequest, conflict } from "../../middleware/error-handler.js";
 import {
   runMetrics,
@@ -26,8 +34,12 @@ export interface RunsDeps {
   readonly db: Database;
   readonly scheduler: SchedulerPort;
   readonly ensureAgent: EnsureAgent;
+  /** ledger de custo (usage_events) — fonte do gasto do período (inclui visão). */
+  readonly metering: MeteringPort;
   /** cap de custo LLM por org/período (0 = sem cap) — checado pré-run. */
   readonly costCapUsd: number;
+  /** relógio injetável (casca) — período do cap. */
+  readonly now?: () => Date;
 }
 
 const IN_FLIGHT_STATUSES = ["pending", "running", "waiting_approval"] as const;
@@ -41,13 +53,23 @@ export function createRunsService(deps: RunsDeps) {
   async function trigger(orgId: OrgId, accountId: string): Promise<TriggerRunOutput> {
     const { agentId } = await deps.ensureAgent(orgId, accountId);
 
-    await assertUnderCostCap(orgId);
+    await assertUnderCostCap(orgId, agentId);
     await assertNoRunInFlight(orgId, agentId);
 
-    const [run] = await deps.db
-      .insert(agentRuns)
-      .values({ orgId, agentId, trigger: "on_demand", status: "pending" })
-      .returning({ id: agentRuns.id });
+    let run: { id: string } | undefined;
+    try {
+      [run] = await deps.db
+        .insert(agentRuns)
+        .values({ orgId, agentId, trigger: "on_demand", status: "pending" })
+        .returning({ id: agentRuns.id });
+    } catch (error) {
+      // corrida com o cron ou outra aba: o índice único parcial (in-flight por
+      // agente) rejeita o 2º run → conflito amigável (fecha o TOCTOU — decisão 15).
+      if (isUniqueViolation(error)) {
+        throw conflict("Já existe uma análise em andamento para esta conta. Aguarde ela terminar.");
+      }
+      throw error;
+    }
     if (!run) throw badRequest("Não consegui iniciar a análise. Tente de novo.");
 
     const payload: AgentRunExecutePayload = {
@@ -84,20 +106,49 @@ export function createRunsService(deps: RunsDeps) {
       .from(recommendations)
       .where(and(eq(recommendations.runId, run.id), eq(recommendations.orgId, orgId)));
 
-    return { run: toRunOutput(run), recommendations: recs.map(toRecommendationOutput) };
+    // votos (👍/👎) das recomendações deste run — o card do site reflete o estado.
+    const recIds = recs.map((r) => r.id);
+    const votes = new Map<string, "up" | "down">();
+    if (recIds.length > 0) {
+      const rows = await deps.db
+        .select({ recommendationId: recommendationFeedback.recommendationId, vote: recommendationFeedback.vote })
+        .from(recommendationFeedback)
+        .where(inArray(recommendationFeedback.recommendationId, recIds))
+        .orderBy(desc(recommendationFeedback.createdAt));
+      for (const row of rows) {
+        if (row.vote && !votes.has(row.recommendationId)) votes.set(row.recommendationId, row.vote);
+      }
+    }
+
+    return {
+      run: toRunOutput(run),
+      recommendations: recs.map((r) => toRecommendationOutput(r, votes.get(r.id) ?? null)),
+    };
   }
 
-  /** Bloqueia se o custo LLM do período (mês corrente) já atingiu o cap. */
-  async function assertUnderCostCap(orgId: OrgId): Promise<void> {
-    if (deps.costCapUsd <= 0) return; // sem cap
-    const now = new Date();
-    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const [row] = await deps.db
-      .select({ total: sql<string>`coalesce(sum(${agentRuns.costSnapshot}), 0)` })
-      .from(agentRuns)
-      .where(and(eq(agentRuns.orgId, orgId), gte(agentRuns.createdAt, monthStart)));
-    const spent = Number(row?.total ?? 0);
-    if (spent >= deps.costCapUsd) {
+  /**
+   * Bloqueia se o custo LLM do período (mês corrente) já atingiu o cap. O cap é
+   * por-org (`guardrail_configs.llm_cost_cap`, fallback env); decisão pura no core.
+   * O gasto vem do ledger de metering (`usage_events`) — inclui TODA chamada
+   * (unit/vision/synthesis/review/message), não só o snapshot do run. Falha na
+   * leitura do ledger = fail-open (não trava a análise — "custo ausente ≠ zero").
+   */
+  async function assertUnderCostCap(orgId: OrgId, agentId: string): Promise<void> {
+    const [guard] = await deps.db
+      .select({ cap: guardrailConfigs.llmCostCap })
+      .from(guardrailConfigs)
+      .where(and(eq(guardrailConfigs.agentId, agentId), eq(guardrailConfigs.orgId, orgId)))
+      .limit(1);
+    const cap = resolveCostCapUsd(guard?.cap === null || guard?.cap === undefined ? null : Number(guard.cap), deps.costCapUsd);
+    if (cap <= 0) return;
+
+    let spent: number | null;
+    try {
+      spent = await deps.metering.llmCostInPeriod(orgId, usagePeriod((deps.now ?? (() => new Date()))()));
+    } catch {
+      return; // ledger indisponível → fail-open (não bloqueia a análise)
+    }
+    if (isOverCostCap(spent, cap)) {
       throw badRequest(
         "Você atingiu o limite de custo de análise deste período. Ele renova no próximo mês.",
       );
@@ -105,11 +156,9 @@ export function createRunsService(deps: RunsDeps) {
   }
 
   /**
-   * Impede runs simultâneos na mesma conta (custo Meta/LLM + confusão).
-   * NOTA: check-then-insert sem transação → há janela TOCTOU (2 POSTs concorrentes
-   * podem ambos passar). Aceitável na 3a (on-demand; o front também desabilita o
-   * botão). Fatia 5a fecha a janela com índice único parcial em
-   * `agent_runs(agent_id) WHERE status IN (in-flight)` ou advisory lock.
+   * Impede runs simultâneos na mesma conta (pré-check amigável). A garantia real é
+   * o índice único parcial em `agent_runs` (in-flight por agente) — o insert do
+   * trigger captura a violação e vira conflito (fecha o TOCTOU cron×manual).
    */
   async function assertNoRunInFlight(orgId: OrgId, agentId: string): Promise<void> {
     const [running] = await deps.db
@@ -157,7 +206,7 @@ function toRunOutput(run: AgentRunRow): RunOutput {
   };
 }
 
-function toRecommendationOutput(rec: RecommendationRow): RecommendationOutput {
+function toRecommendationOutput(rec: RecommendationRow, vote: "up" | "down" | null): RecommendationOutput {
   const action = rec.proposedAction as Action | null;
   return {
     id: rec.id,
@@ -168,5 +217,6 @@ function toRecommendationOutput(rec: RecommendationRow): RecommendationOutput {
     proposedAction: action
       ? { type: action.type, target: { level: action.target.level, id: action.target.id }, params: action.params }
       : null,
+    vote,
   };
 }

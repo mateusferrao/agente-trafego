@@ -16,8 +16,10 @@ import { authRoutes } from "../modules/auth/routes.js";
 import { orgsRoutes } from "../modules/orgs/routes.js";
 import { accountsRoutes } from "../modules/accounts/routes.js";
 import { channelsRoutes } from "../modules/channels/routes.js";
+import { contactsRoutes } from "../modules/contacts/routes.js";
 import { agentsRoutes } from "../modules/agents/routes.js";
 import { approvalsRoutes } from "../modules/approvals/routes.js";
+import { recommendationsRoutes } from "../modules/recommendations/routes.js";
 import { runsRoutes } from "../modules/runs/routes.js";
 import { billingRoutes } from "../modules/billing/routes.js";
 import { webhooksRoutes } from "../modules/webhooks/routes.js";
@@ -94,8 +96,10 @@ export async function buildApp(): Promise<FastifyInstance> {
       await api.register(orgsRoutes);
       await api.register(accountsRoutes);
       await api.register(channelsRoutes);
+      await api.register(contactsRoutes);
       await api.register(agentsRoutes);
       await api.register(approvalsRoutes);
+      await api.register(recommendationsRoutes);
       await api.register(runsRoutes);
       await api.register(billingRoutes);
     },

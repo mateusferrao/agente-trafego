@@ -14,24 +14,44 @@ import {
   archetypeDefaults,
   budgetDirection,
   buildAccountBrief,
+  buildMessageFallback,
   composeMethodologyPrompt,
   costSnapshotFromUsage,
+  creativePosterFrame,
   decideActions,
   dropUnsupportedFindings,
   evaluatePlaybook,
   flagUnsupportedFindings,
+  mergeUnitAnalyses,
   riskLevelForActionType,
+  selectCreatives,
+  selectUnitsToAnalyze,
+  type LastUnit,
 } from "@trafego/core";
 import { funnelFromRawActions } from "@trafego/ads-meta";
 import {
   analysisOutputSchema,
   ANALYSIS_OUTPUT_JSON_SCHEMA,
   ANALYSIS_OUTPUT_SCHEMA_NAME,
+  unitAnalysisSchema,
+  UNIT_ANALYSIS_JSON_SCHEMA,
+  UNIT_ANALYSIS_SCHEMA_NAME,
   type AnalysisOutput,
   type AnalysisRecommendation,
+  type UnitAnalysis,
 } from "@trafego/shared/schemas";
-import type { Action, AdEntity, EntityLevel, Finding, InsightRow } from "@trafego/shared";
-import type { AdsPlatformPort } from "@trafego/shared/ports";
+import type {
+  Action,
+  AdEntity,
+  Creative,
+  CreativeVisionResult,
+  EntityLevel,
+  EntitySummary,
+  Finding,
+  InsightMetrics,
+  InsightRow,
+} from "@trafego/shared";
+import type { AdsPlatformPort, CreativeVisionPort } from "@trafego/shared/ports";
 import { AdsPlatformError, LLMProviderError } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../../composition.js";
 import {
@@ -39,11 +59,30 @@ import {
   type InsightsSnapshotsRepo,
 } from "../../modules/insights/repo.js";
 import { createAnalysisRepo, type AnalysisRepo, type RecommendationRow } from "../../modules/analysis/repo.js";
+import {
+  createEntityAnalysesRepo,
+  type EntityAnalysesRepo,
+  type LastEntityAnalysis,
+} from "../../modules/analysis/entity-analyses.repo.js";
+import { createNotifyRepo, type NotifyRepo } from "../../modules/notify/repo.js";
+import { createVisionResolver, creativeContentHash } from "../../modules/vision/resolver.js";
 import { AnalysisError } from "../../modules/analysis/errors.js";
 import { resolveAnalysisConfig } from "../../modules/analysis/config.js";
-import { buildAnalysisMessages, buildReviewMessages } from "../../modules/analysis/prompt.js";
+import {
+  buildReviewMessages,
+  buildSynthesisMessages,
+  buildUnitMessages,
+} from "../../modules/analysis/prompt.js";
+import {
+  buildMessageMessages,
+  MESSAGE_OUTPUT_JSON_SCHEMA,
+  MESSAGE_OUTPUT_SCHEMA_NAME,
+} from "../../modules/notify/prompt.js";
 import { resolveWindows } from "../../modules/analysis/window.js";
 import type { AccountAnalysisStateType, AccountAnalysisUpdate } from "./state.js";
+
+/** Nº de dias sem análise que dispara um run DEEP (reanalisa tudo). */
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const SEGMENT_LEVELS: readonly EntityLevel[] = ["campaign", "adset", "ad"];
 const ANALYSIS_TEMPERATURE = 0.2;
@@ -59,6 +98,10 @@ function today(): string {
 export interface AnalysisNodeRepos {
   readonly repo: AnalysisRepo;
   readonly snapshots: InsightsSnapshotsRepo;
+  readonly notify: NotifyRepo;
+  readonly entityAnalyses: EntityAnalysesRepo;
+  /** resolver de visão — injetável p/ teste; default cria por-run (com meta). */
+  readonly vision?: CreativeVisionPort;
 }
 
 /** Fábrica de nós com deps injetadas (composition root passa `deps`). */
@@ -66,6 +109,8 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
   const { logger } = deps;
   const repo = repos?.repo ?? createAnalysisRepo(deps.db);
   const snapshots = repos?.snapshots ?? createDrizzleInsightsSnapshotsRepo(deps.db);
+  const notifyRepo = repos?.notify ?? createNotifyRepo(deps.db);
+  const entityAnalysesRepo = repos?.entityAnalyses ?? createEntityAnalysesRepo(deps.db);
 
   /** Carrega agent/config/janela e abre o run (status=running, snapshot congelado). */
   async function loadContext(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
@@ -93,6 +138,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     return {
       goals: ctx.goals,
       playbookRules: ctx.playbook,
+      rejectedMemory: ctx.rejectedMemory,
       systemPrompt,
       analysisConfig: cfg,
       window: { label: windowLabel, ...window },
@@ -141,6 +187,19 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       state.baseline.until,
     );
 
+    // criativos dos anúncios (p/ visão no map — 3b-2). Degrada em `partial` se falhar.
+    const adIds = entities.filter((e) => e.level === "ad").map((e) => e.id);
+    let creatives: Creative[] = [];
+    let creativesPartial = false;
+    if (adIds.length > 0) {
+      try {
+        creatives = await deps.ports.ads.getCreatives(ref, adIds);
+      } catch (error) {
+        creativesPartial = true;
+        logger.warn({ err: error }, "fetch_data:getCreatives degradou (segue sem visão)");
+      }
+    }
+
     return {
       account: {
         metaAdAccountId: account.metaAdAccountId,
@@ -150,7 +209,8 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       entities,
       insights,
       baselineInsights,
-      partial: sync.partial || entitiesPartial,
+      creatives,
+      partial: sync.partial || entitiesPartial || creativesPartial,
     };
   }
 
@@ -161,20 +221,21 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     return { playbookCandidates };
   }
 
-  /** Curadoria (AccountBrief) + análise LLM (texto). LLM só vê o brief. */
-  async function llmAnalyze(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
-    logger.debug({ runId: state.runId }, "llm_analyze");
+  /**
+   * MAPA (map-reduce — 3b-2): curadoria (AccountBrief) + análise POR-ANÚNCIO.
+   * A política (`selectUnitsToAnalyze`) decide quais reanalisar (deep/incremental/
+   * budget); o resto herda `entity_analyses`. Cada unidade é analisada com contexto
+   * pequeno (alta precisão) + a visão do criativo (cacheada). Unidade que falha é
+   * pulada (partial), não aborta o run.
+   */
+  async function mapUnits(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
+    logger.debug({ runId: state.runId }, "map_units");
     if (!state.account || !state.window || !state.baseline) {
       throw new AnalysisError("analysis_failed", "contexto incompleto");
     }
-
     const cfg = state.analysisConfig ?? deps.analysis;
     const built = buildAccountBrief({
-      account: {
-        id: state.account.metaAdAccountId,
-        name: state.account.name,
-        currency: state.account.currency,
-      },
+      account: { id: state.account.metaAdAccountId, name: state.account.name, currency: state.account.currency },
       window: state.window.label,
       baselineWindow: state.baseline.label,
       goals: state.goals,
@@ -183,30 +244,133 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       baselineRows: state.baselineInsights,
       playbookCandidates: state.playbookCandidates,
       topN: cfg.topN,
+      memory: { objectives: [], pastActions: [], rejected: [...(state.rejectedMemory ?? [])] },
     });
-
-    // conta parada (ICP entre lançamentos) → não gasta LLM, run conclui com nota.
     if (built.status === "empty") {
-      return { brief: null, analysisOutput: null, findings: [], summary: NO_ACTIVITY_SUMMARY };
+      return { brief: null, analysisOutput: null, findings: [], summary: NO_ACTIVITY_SUMMARY, unitAnalyses: [], freshUnits: [] };
     }
 
-    const completion = await deps.ports.llm.completeStructured<AnalysisOutput>({
-      model: cfg.model,
-      messages: buildAnalysisMessages(state.systemPrompt, built.brief),
-      responseSchema: ANALYSIS_OUTPUT_JSON_SCHEMA,
-      responseSchemaName: ANALYSIS_OUTPUT_SCHEMA_NAME,
-      temperature: ANALYSIS_TEMPERATURE,
-      maxTokens: cfg.maxOutputTokens,
+    const last = await entityAnalysesRepo.loadByAgent(state.agentId);
+    const lastUnits = new Map<string, LastUnit>(
+      [...last].map(([id, r]) => [id, { metrics: r.metrics, flags: r.flags }]),
+    );
+    const isDeepRun = decideDeepRun(state.trigger, built.adUnits, last, cfg.deepIntervalDays);
+    const selection = selectUnitsToAnalyze(built.adUnits, lastUnits, {
+      policy: cfg.executionPolicy,
+      materialChangePct: cfg.materialChangePct,
+      isDeepRun,
+      ...(cfg.executionPolicy === "budget_scaled" ? { maxUnitsThisRun: Math.max(cfg.topN, 1) } : {}),
     });
+    if (selection.dropped.length > 0) {
+      logger.warn({ runId: state.runId, dropped: selection.dropped.length }, "map_units:unidades sem análise (budget)");
+    }
 
-    const parsed = analysisOutputSchema.safeParse(completion.output);
-    if (!parsed.success) throw new AnalysisError("analysis_failed", "output do LLM fora do schema");
+    // visão dos criativos das unidades a analisar (cacheada por conteúdo).
+    const creativesByAdId = groupBy(state.creatives ?? [], (c) => c.adId);
+    const chosenCreatives = selectCreatives(
+      selection.toAnalyze.map((u) => u.id),
+      creativesByAdId,
+      cfg.maxCreativesVision,
+    );
+    const vision = repos?.vision ?? createVisionResolver({
+      db: deps.db,
+      llm: deps.ports.llm,
+      model: cfg.visionModel,
+      analyzerVersion: deps.visionAnalyzerVersion,
+      logger,
+      meta: { orgId: state.orgId, runId: state.runId },
+    });
+    const visionByAdId = new Map<string, CreativeVisionResult[]>();
+    for (const c of chosenCreatives) {
+      const poster = creativePosterFrame(c);
+      if (!poster) continue;
+      const copy = creativeCopy(c);
+      const result = await vision.resolve({
+        creativeId: c.id,
+        imageUrl: poster,
+        contentHash: creativeContentHash(poster, copy),
+        ...(copy ? { copy } : {}),
+      });
+      if (result) push(visionByAdId, c.adId, result);
+    }
 
-    return {
-      brief: built.brief,
-      analysisOutput: parsed.data,
-      usage: addTokenUsage(state.usage ?? undefined, completion.usage),
-    };
+    // MAP: uma análise por anúncio escolhido (modelo barato + visão).
+    const unitAnalyses: UnitAnalysis[] = [];
+    const freshUnits: AccountAnalysisStateType["freshUnits"][number][] = [];
+    let usage = state.usage;
+    let partial = state.partial ?? false;
+    for (const unit of selection.toAnalyze) {
+      try {
+        const completion = await deps.ports.llm.completeStructured<UnitAnalysis>({
+          model: cfg.unitModel,
+          messages: buildUnitMessages(state.systemPrompt, unit, visionByAdId.get(unit.id) ?? [], {
+            currency: state.account.currency,
+            window: state.window.label,
+          }),
+          responseSchema: UNIT_ANALYSIS_JSON_SCHEMA,
+          responseSchemaName: UNIT_ANALYSIS_SCHEMA_NAME,
+          temperature: ANALYSIS_TEMPERATURE,
+          maxTokens: cfg.maxOutputTokens,
+          meta: { orgId: state.orgId, runId: state.runId, type: "unit" },
+        });
+        const parsed = unitAnalysisSchema.safeParse(completion.output);
+        usage = addTokenUsage(usage ?? undefined, completion.usage);
+        if (!parsed.success) {
+          partial = true;
+          continue;
+        }
+        unitAnalyses.push(parsed.data);
+        freshUnits.push({ entityId: unit.id, unit: parsed.data, metrics: unit.metrics, flags: [...unit.flags] });
+      } catch (err) {
+        if (!(err instanceof LLMProviderError)) throw err;
+        partial = true; // unidade falhou → pula (degradação por-unidade)
+        logger.warn({ runId: state.runId, unit: unit.id, err }, "map_units:unidade falhou");
+      }
+    }
+    // herança: unidades sem mudança material reusam a última análise.
+    for (const unit of selection.toInherit) {
+      const inherited = last.get(unit.id);
+      if (inherited) unitAnalyses.push(inherited.unit);
+    }
+
+    return { brief: built.brief, unitAnalyses, freshUnits, usage, partial };
+  }
+
+  /**
+   * REDUÇÃO (síntese): consolida as análises por-anúncio + o contexto da conta num
+   * diagnóstico único (modelo forte). Fallback determinístico se o LLM falhar.
+   */
+  async function synthesize(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
+    logger.debug({ runId: state.runId }, "synthesize");
+    if (!state.brief) return {}; // conta parada → nada a sintetizar
+    const cfg = state.analysisConfig ?? deps.analysis;
+    const units = state.unitAnalyses ?? [];
+
+    let output: AnalysisOutput | null = null;
+    let usage = state.usage;
+    let partial = state.partial ?? false;
+    try {
+      const completion = await deps.ports.llm.completeStructured<AnalysisOutput>({
+        model: cfg.model,
+        messages: buildSynthesisMessages(state.systemPrompt, state.brief, units),
+        responseSchema: ANALYSIS_OUTPUT_JSON_SCHEMA,
+        responseSchemaName: ANALYSIS_OUTPUT_SCHEMA_NAME,
+        temperature: ANALYSIS_TEMPERATURE,
+        maxTokens: cfg.maxOutputTokens,
+        meta: { orgId: state.orgId, runId: state.runId, type: "synthesis" },
+      });
+      usage = addTokenUsage(usage ?? undefined, completion.usage);
+      const parsed = analysisOutputSchema.safeParse(completion.output);
+      if (parsed.success) output = parsed.data;
+      else partial = true;
+    } catch (err) {
+      if (!(err instanceof LLMProviderError)) throw err;
+      partial = true;
+      logger.warn({ runId: state.runId, err }, "synthesize:falhou; consolidação determinística");
+    }
+    // fallback determinístico (merge das unidades) — nunca deixa o run sem saída.
+    if (!output) output = mergeUnitAnalyses(units);
+    return { analysisOutput: output, usage, partial };
   }
 
   /**
@@ -287,6 +451,8 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       costSnapshot: usage ? costSnapshotFromUsage(usage) : null,
       metricsSnapshot: buildMetricsSnapshot(state),
     });
+    // persiste as análises por-unidade REANALISADAS (base do incremental/herança).
+    await entityAnalysesRepo.saveMany(state.agentId, state.runId, state.freshUnits ?? []);
     return {};
   }
 
@@ -326,8 +492,82 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     return { results: [] };
   }
 
+  /**
+   * Redator (papel dedicado) — redige a mensagem do WhatsApp a partir do resultado
+   * curado. Só p/ cron (push) e quando há algo acionável; senão silêncio (decisão 4).
+   * LLM barato + persona; fallback determinístico do core em erro/JSON.
+   */
+  async function writeMessage(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
+    logger.debug({ runId: state.runId }, "write_message");
+    if (state.trigger !== "cron") return { outboundMessage: null }; // on-demand mostra no site
+    const out = state.analysisOutput;
+    if (!out || out.recommendations.length === 0 || !state.account) return { outboundMessage: null };
+
+    const cfg = state.analysisConfig ?? deps.analysis;
+    let text: string | null = null;
+    let usage = state.usage;
+    try {
+      const completion = await deps.ports.llm.completeStructured<{ text: string }>({
+        model: cfg.messageModel,
+        messages: buildMessageMessages(state.systemPrompt, state.account.name, out),
+        responseSchema: MESSAGE_OUTPUT_JSON_SCHEMA,
+        responseSchemaName: MESSAGE_OUTPUT_SCHEMA_NAME,
+        temperature: ANALYSIS_TEMPERATURE,
+        maxTokens: cfg.maxOutputTokens,
+        meta: { orgId: state.orgId, runId: state.runId, type: "message" },
+      });
+      const t = completion.output?.text;
+      if (typeof t === "string" && t.trim().length > 0) {
+        text = t.trim();
+        usage = addTokenUsage(usage ?? undefined, completion.usage);
+      }
+    } catch (err) {
+      if (!(err instanceof LLMProviderError)) throw err;
+      logger.warn({ runId: state.runId, err }, "write_message:redator falhou; usando fallback");
+    }
+
+    if (!text) {
+      text = buildMessageFallback({
+        accountName: state.account.name,
+        ...(out.scorecard?.headline ? { headline: out.scorecard.headline } : {}),
+        summary: out.summary,
+        recommendations: out.recommendations.map((r) => ({ title: r.title })),
+      });
+    }
+    return { outboundMessage: text, usage };
+  }
+
+  /**
+   * Push no WhatsApp (outbound-only, cron). Idempotente por run; só p/ contato
+   * verificado + instância conectada. Degrada se a instância caiu (não quebra o run,
+   * que já foi fechado no record — o site mostra o resultado de qualquer forma).
+   */
   async function notify(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
     logger.debug({ runId: state.runId }, "notify");
+    const body = state.outboundMessage;
+    if (!body) return {}; // nada acionável / não-cron → silêncio
+    if (await notifyRepo.alreadyNotified(state.runId)) return {}; // idempotência de envio
+
+    const target = await notifyRepo.loadTarget(state.orgId);
+    if (!target) {
+      logger.warn({ orgId: state.orgId, runId: state.runId }, "notify:sem canal/contato — sem push");
+      return {};
+    }
+
+    const link = `${deps.webOrigin}/accounts/${state.adAccountId}`;
+    const text = `${body}\n\nVer no site: ${link}`;
+    try {
+      await deps.ports.messaging.sendMessage({ instanceId: target.instanceId }, { to: target.phone, text });
+      await notifyRepo.recordOutbound({
+        orgId: state.orgId,
+        agentId: state.agentId,
+        contactId: target.contactId,
+        runId: state.runId,
+        body: text,
+      });
+    } catch (err) {
+      logger.warn({ runId: state.runId, err }, "notify:envio falhou — run concluído, sem push");
+    }
     return {};
   }
 
@@ -352,17 +592,65 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     loadContext: step("load_context", loadContext),
     fetchData: step("fetch_data", fetchData),
     runPlaybook: step("run_playbook", runPlaybookNode),
-    llmAnalyze: step("llm_analyze", llmAnalyze),
+    mapUnits: step("map_units", mapUnits),
+    synthesize: step("synthesize", synthesize),
     reviewAnalysis: step("review_analysis", reviewAnalysis),
     buildRecommendations: step("build_recommendations", buildRecommendations),
+    writeMessage: step("write_message", writeMessage),
     record: step("record", record),
-    // write-half (scaffold — 3b/4/5a/5b): sem step por ora.
+    notify: step("notify", notify),
+    // write-half (scaffold — 4/5a/5b): sem step por ora.
     decideActions: decideActionsNode,
     guardrailCheck,
     createApprovalAndInterrupt,
     applyActions,
-    notify,
   };
+}
+
+/**
+ * DEEP run? (reanalisa tudo, ignora incremental). Decidido na casca (relógio):
+ *  - on_demand (usuário pediu) → sempre deep;
+ *  - sem histórico (1º run) → deep;
+ *  - a análise mais antiga entre as unidades atuais passou do intervalo → deep.
+ * `analyzedAt` só avança em reanálise real (não no inherit) → o deep dispara sozinho.
+ */
+function decideDeepRun(
+  trigger: AccountAnalysisStateType["trigger"],
+  adUnits: readonly EntitySummary[],
+  last: ReadonlyMap<string, LastEntityAnalysis>,
+  deepIntervalDays: number,
+): boolean {
+  if (trigger === "on_demand") return true;
+  if (last.size === 0) return true;
+  const thresholdMs = deepIntervalDays * DAY_MS;
+  const now = Date.now();
+  for (const u of adUnits) {
+    const l = last.get(u.id);
+    if (l && now - l.analyzedAt.getTime() > thresholdMs) return true;
+  }
+  return false;
+}
+
+/** Agrupa itens por chave derivada (Map<chave, itens[]>). */
+function groupBy<T, K>(items: readonly T[], keyFn: (item: T) => K): Map<K, T[]> {
+  const map = new Map<K, T[]>();
+  for (const it of items) push(map, keyFn(it), it);
+  return map;
+}
+
+/** Anexa `value` ao array em `map[key]` (cria o array se ausente). */
+function push<K, V>(map: Map<K, V[]>, key: K, value: V): void {
+  const arr = map.get(key);
+  if (arr) arr.push(value);
+  else map.set(key, [value]);
+}
+
+/** Copy do criativo (título/corpo/CTA) — texto p/ a visão; undefined se vazio. */
+function creativeCopy(c: Creative): string | undefined {
+  const parts = [c.title, c.body, c.callToAction].filter(
+    (p): p is string => typeof p === "string" && p.trim().length > 0,
+  );
+  return parts.length > 0 ? parts.join("\n") : undefined;
 }
 
 /** Enriquece a linha com o funil neutro derivado do rawActions (adapter mapper). */

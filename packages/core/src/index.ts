@@ -9,3 +9,6 @@ export * from "./token-usage/index.js";
 export * from "./archetypes/index.js";
 export * from "./funnel/index.js";
 export * from "./analysis-guards/index.js";
+export * from "./cost-cap/index.js";
+export * from "./message/index.js";
+export * from "./map-reduce/index.js";

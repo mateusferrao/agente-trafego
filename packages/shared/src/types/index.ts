@@ -311,6 +311,19 @@ export interface AutonomyPolicy {
   readonly bySource: Readonly<Record<ActionSource, AutonomyLevel>>;
 }
 
+// ─── Visão de criativo (3b-2) ──────────────────────────────────────────────
+/** Análise multimodal de um criativo (resultado curado, cacheável por conteúdo). */
+export interface CreativeVisionResult {
+  /** o que o criativo comunica (1-2 frases). */
+  readonly summary: string;
+  /** gancho/promessa principal, se identificável. */
+  readonly hook?: string;
+  readonly strengths: readonly string[];
+  readonly weaknesses: readonly string[];
+  /** qualidade geral 0-10 (heurística do modelo). */
+  readonly score?: number;
+}
+
 // ─── Metering ────────────────────────────────────────────────────────────
 export interface UsageEvent {
   readonly orgId: OrgId;

@@ -31,16 +31,41 @@ export class BullmqScheduler implements SchedulerPort {
     );
   }
 
-  async upsertSchedule(_spec: ScheduleSpec): Promise<void> {
-    throw new Error("BullmqScheduler.upsertSchedule: cron recorrente = fatia 3b");
+  /**
+   * Cria/atualiza um Job Scheduler recorrente (idempotente por `key`). O jitter
+   * vira um `offset` ESTÁVEL derivado da key (stagger por conta, não aleatório a
+   * cada fire) — espalha a carga entre contas sem re-embaralhar no re-upsert.
+   */
+  async upsertSchedule(spec: ScheduleSpec): Promise<void> {
+    const offset = spec.jitterMs ? stableOffset(spec.key, spec.jitterMs) : undefined;
+    const repeat = spec.cron
+      ? { pattern: spec.cron, ...(spec.tz ? { tz: spec.tz } : {}), ...(offset ? { offset } : {}) }
+      : { every: spec.everyMs ?? 0, ...(offset ? { offset } : {}) };
+    await this.queue(spec.queue).upsertJobScheduler(spec.key, repeat, {
+      name: spec.key,
+      data: spec.payload,
+    });
   }
 
-  async removeSchedule(_key: string): Promise<void> {
-    throw new Error("BullmqScheduler.removeSchedule: fatia 3b");
+  /** Remove o scheduler recorrente (best-effort em todas as filas conhecidas). */
+  async removeSchedule(key: string): Promise<void> {
+    await Promise.all(
+      [...this.queues.values()].map((q) => q.removeJobScheduler(key).catch(() => false)),
+    );
   }
 
   /** Fecha as queues (shutdown gracioso). */
   async close(): Promise<void> {
     await Promise.all([...this.queues.values()].map((q) => q.close()));
   }
+}
+
+/** Offset determinístico em [0, max) a partir da key (stagger estável por conta). */
+export function stableOffset(key: string, max: number): number {
+  if (max <= 0) return 0;
+  let hash = 0;
+  for (let i = 0; i < key.length; i += 1) {
+    hash = (hash * 31 + key.charCodeAt(i)) | 0;
+  }
+  return Math.abs(hash) % max;
 }

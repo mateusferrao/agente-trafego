@@ -1,14 +1,17 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
   index,
+  integer,
   jsonb,
   numeric,
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import type { Action } from "@trafego/shared";
+import type { Action, CreativeVisionResult } from "@trafego/shared";
 import {
   approvalStatus,
   feedbackVote,
@@ -52,7 +55,15 @@ export const agentRuns = pgTable(
     finishedAt: timestamp("finished_at", { withTimezone: true }),
     ...timestamps,
   },
-  (t) => [index("agent_runs_agent_idx").on(t.agentId), index("agent_runs_org_idx").on(t.orgId)],
+  (t) => [
+    index("agent_runs_agent_idx").on(t.agentId),
+    index("agent_runs_org_idx").on(t.orgId),
+    // No máx. 1 run em andamento por agente (fecha o TOCTOU cron×manual — decisão 15):
+    // índice único PARCIAL nos status in-flight. A violação vira conflito amigável na casca.
+    uniqueIndex("agent_runs_one_in_flight_uq")
+      .on(t.agentId)
+      .where(sql`status in ('pending', 'running', 'waiting_approval')`),
+  ],
 );
 
 /** Passo do grafo dentro de um run (nó LangGraph). */
@@ -134,6 +145,49 @@ export const recommendations = pgTable(
     ...timestamps,
   },
   (t) => [index("recommendations_run_idx").on(t.runId)],
+);
+
+/**
+ * Última análise por unidade (anúncio) — base do map-reduce incremental (3b-2):
+ * unidades sem mudança material herdam daqui em vez de re-chamar o LLM. 1 linha
+ * por (agente, entidade), upsertada a cada análise.
+ */
+export const entityAnalyses = pgTable(
+  "entity_analyses",
+  {
+    id: pk(),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    entityId: text("entity_id").notNull(),
+    runId: uuid("run_id").references(() => agentRuns.id, { onDelete: "set null" }),
+    // UnitAnalysis (findings/recommendations/flags/summary) da última análise.
+    unitJson: jsonb("unit_json").$type<Record<string, unknown>>().notNull(),
+    // métricas usadas p/ detectar "mudança material" no próximo run.
+    metricsJson: jsonb("metrics_json").$type<Record<string, unknown>>().notNull().default({}),
+    flags: jsonb("flags").$type<string[]>().notNull().default([]),
+    analyzedAt: timestamp("analyzed_at", { withTimezone: true }).notNull().defaultNow(),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex("entity_analyses_agent_entity_uq").on(t.agentId, t.entityId)],
+);
+
+/**
+ * Cache de análise de criativo (visão) por CONTEÚDO — "analisar todos os criativos"
+ * sem repetir custo a cada run. Chave = (contentHash, analyzerVersion); sem dado de
+ * tenant (a análise é função pura da imagem + prompt + versão). Bumpar a versão
+ * (env `CREATIVE_VISION_ANALYZER_VERSION`) invalida tudo.
+ */
+export const creativeVisionAnalyses = pgTable(
+  "creative_vision_analyses",
+  {
+    id: pk(),
+    contentHash: text("content_hash").notNull(),
+    analyzerVersion: integer("analyzer_version").notNull(),
+    result: jsonb("result").$type<CreativeVisionResult>().notNull(),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex("creative_vision_hash_version_uq").on(t.contentHash, t.analyzerVersion)],
 );
 
 /** Feedback + outcome tracking (instrumento de validação). */

@@ -52,6 +52,8 @@ export const recommendationOutput = z.object({
   /** aplicabilidade da sugestão — em 3a nada é aplicável (aplicação = Fatia 5). */
   applicability: z.enum(["applicable", "not_yet_applicable"]),
   proposedAction: proposedActionOutput.nullable(),
+  /** voto do dono (👍/👎), quando houver — o card do site reflete o estado. */
+  vote: z.enum(["up", "down"]).nullable(),
 });
 export type RecommendationOutput = z.infer<typeof recommendationOutput>;
 

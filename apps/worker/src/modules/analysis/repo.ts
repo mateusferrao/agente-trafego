@@ -4,7 +4,7 @@
 
 import { and, eq, sql } from "drizzle-orm";
 import type { Database } from "@trafego/db/client";
-import { adAccounts, agentRunSteps, agentRuns, agents, playbookRules, recommendations } from "@trafego/db";
+import { adAccounts, agentMemory, agentRunSteps, agentRuns, agents, playbookRules, recommendations } from "@trafego/db";
 import type { Action, AgentGoals, EncryptedPayload, PlaybookRule, RiskLevel } from "@trafego/shared";
 
 export interface AgentContext {
@@ -13,6 +13,8 @@ export interface AgentContext {
   readonly systemPrompt: string | null;
   readonly modelConfig: Readonly<Record<string, unknown>>;
   readonly playbook: PlaybookRule[];
+  /** memória "rejeitado" ativa (loop de feedback barato — não repetir o que o dono vetou). */
+  readonly rejectedMemory: string[];
 }
 
 /** Passo do grafo (trilha p/ a Timeline 6a). */
@@ -92,12 +94,25 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
         when: r.whenJson,
         then: r.thenJson,
       }));
+      // memória "rejeitado" ativa → alimenta o brief (não repetir o que o dono vetou).
+      const memory = await db
+        .select({ content: agentMemory.content })
+        .from(agentMemory)
+        .where(
+          and(
+            eq(agentMemory.agentId, agentId),
+            eq(agentMemory.orgId, orgId),
+            eq(agentMemory.type, "rejected"),
+            eq(agentMemory.lifecycle, "active"),
+          ),
+        );
       return {
         goals: agent.goals,
         archetype: agent.archetype,
         systemPrompt: agent.systemPrompt,
         modelConfig: agent.modelConfig ?? {},
         playbook,
+        rejectedMemory: memory.map((m) => m.content),
       };
     },
 

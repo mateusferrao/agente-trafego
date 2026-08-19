@@ -4,6 +4,7 @@ import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   heroArrowRightOnRectangle,
   heroBuildingOffice2,
+  heroChatBubbleLeftRight,
   heroCheckCircle,
   heroCog6Tooth,
   heroComputerDesktop,
@@ -46,6 +47,7 @@ const THEME_OPTIONS: readonly ThemeOption[] = [
       heroRectangleGroup,
       heroCheckCircle,
       heroSquares2x2,
+      heroChatBubbleLeftRight,
       heroCog6Tooth,
       heroArrowRightOnRectangle,
       heroBuildingOffice2,

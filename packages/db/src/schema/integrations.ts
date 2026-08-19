@@ -1,4 +1,4 @@
-import { boolean, index, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { boolean, index, integer, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import type { EncryptedPayload } from "@trafego/shared";
 import { channelStatus, contactRole, pk, timestamps, tokenStatus } from "./_shared.js";
 import { orgs, users } from "./tenancy.js";
@@ -62,7 +62,18 @@ export const contacts = pgTable(
     phone: text("phone").notNull(),
     verified: boolean("verified").notNull().default(false),
     role: contactRole("role").notNull().default("member"),
+    // opt-in por código (outbound): guardamos só o HASH do código (nunca em claro) + expiração.
+    // Prova de posse do número sem depender de inbound (§9; inbound estrito = 5b).
+    verificationCodeHash: text("verification_code_hash"),
+    verificationExpiresAt: timestamp("verification_expires_at", { withTimezone: true }),
+    // tentativas de confirmação do código atual — passou do teto, o código é
+    // invalidado (anti brute-force; complementa o rate-limit da casca).
+    verificationAttempts: integer("verification_attempts").notNull().default(0),
     ...timestamps,
   },
-  (t) => [index("contacts_org_idx").on(t.orgId)],
+  (t) => [
+    index("contacts_org_idx").on(t.orgId),
+    // 1 registro por (org, telefone) — reenvio de código = upsert, sem duplicar contato.
+    unique("contacts_org_phone_uq").on(t.orgId, t.phone),
+  ],
 );

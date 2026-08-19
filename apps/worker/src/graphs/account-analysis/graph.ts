@@ -1,9 +1,11 @@
 // Grafo `account-analysis` (LangGraph Graph API / StateGraph).
 //
-// 3a = rota READ-ONLY (sem escrita na Meta, sem HITL, sem checkpointer):
-//   load_context → fetch_data → run_playbook → llm_analyze → review_analysis
-//   → build_recommendations → record
-// (review_analysis = revisor + guards determinísticos; 3a-2)
+// Rota READ-ONLY (sem escrita na Meta, sem HITL, sem checkpointer):
+//   load_context → fetch_data → run_playbook → map_units → synthesize
+//   → review_analysis → build_recommendations → write_message → record → notify
+// (map_units/synthesize = map-reduce por-anúncio + consolidação, 3b-2;
+//  review_analysis = revisor + guards determinísticos, 3a-2;
+//  write_message/notify = redator + push WhatsApp, 3b-1c)
 //
 // A metade de escrita (decide_actions → guardrail_check → [approval] →
 // apply_actions → notify) entra a partir de 3b/5a/5b — os nós já existem
@@ -21,18 +23,24 @@ export function buildAccountAnalysisGraph(deps: WorkerDeps) {
     .addNode("load_context", n.loadContext)
     .addNode("fetch_data", n.fetchData)
     .addNode("run_playbook", n.runPlaybook)
-    .addNode("llm_analyze", n.llmAnalyze)
+    .addNode("map_units", n.mapUnits)
+    .addNode("synthesize", n.synthesize)
     .addNode("review_analysis", n.reviewAnalysis)
     .addNode("build_recommendations", n.buildRecommendations)
+    .addNode("write_message", n.writeMessage)
     .addNode("record", n.record)
+    .addNode("notify", n.notify)
     .addEdge(START, "load_context")
     .addEdge("load_context", "fetch_data")
     .addEdge("fetch_data", "run_playbook")
-    .addEdge("run_playbook", "llm_analyze")
-    .addEdge("llm_analyze", "review_analysis")
+    .addEdge("run_playbook", "map_units")
+    .addEdge("map_units", "synthesize")
+    .addEdge("synthesize", "review_analysis")
     .addEdge("review_analysis", "build_recommendations")
-    .addEdge("build_recommendations", "record")
-    .addEdge("record", END);
+    .addEdge("build_recommendations", "write_message")
+    .addEdge("write_message", "record")
+    .addEdge("record", "notify")
+    .addEdge("notify", END);
 
   return workflow.compile();
 }

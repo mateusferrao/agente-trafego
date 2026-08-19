@@ -19,6 +19,7 @@ import { BullmqScheduler } from "@trafego/scheduler-bullmq";
 import { CustomConversionsResolver, MetaAdsAdapter, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta";
 import { EvolutionAdapter, EvolutionClient } from "@trafego/channel-evolution";
 import { OpenRouterAdapter, OpenRouterClient } from "@trafego/llm-openrouter";
+import { createPostgresMetering, withLlmMetering } from "@trafego/metering-postgres";
 import { Redis } from "ioredis";
 import { pino, type Logger } from "pino";
 import { createDrizzleInsightsSnapshotsRepo } from "./modules/insights/repo.js";
@@ -44,15 +45,25 @@ export interface WorkerDeps {
   };
   /** Sync de insights (2a): coleta a série temporal Meta → insights_snapshots. */
   readonly insightsSync: InsightsSyncService;
-  /** Config da análise (3a) — defaults globais de produto (env; override por-agente). */
-  readonly analysis: {
-    readonly model: string;
-    readonly windowDays: number;
-    readonly baselineDays: number;
-    readonly topN: number;
-    readonly reviewEnabled: boolean;
-    readonly maxOutputTokens: number;
+  /** Config da análise (3a/3b) — defaults globais de produto (env; override por-agente). */
+  readonly analysis: import("./modules/analysis/config.js").AnalysisDefaults;
+  /** Origem do site p/ deep-link nas mensagens de WhatsApp. */
+  readonly webOrigin: string;
+  /** Versão do analisador de visão (chave do cache de criativos — bump invalida). */
+  readonly visionAnalyzerVersion: number;
+  /** Config da cadência/cron (3b) — defaults globais (env; cadência por-agente na Fatia 4). */
+  readonly cron: {
+    readonly defaultCron: string;
+    readonly tz: string;
+    readonly jitterMs: number;
   };
+  /** Config do reaper de runs presos (3b) — libera o índice in-flight após crash. */
+  readonly reaper: {
+    readonly staleMinutes: number;
+    readonly cron: string;
+  };
+  /** Cap default global de custo LLM por org/período (env). Cap por-org = guardrail_configs. */
+  readonly costCapUsd: number;
   /** Checkpointer do LangGraph (Postgres) — HITL durável (5b). undefined na 3a (read-only). */
   readonly checkpointer: unknown;
 }
@@ -111,15 +122,21 @@ export async function buildComposition(): Promise<WorkerDeps> {
     client: new EvolutionClient({ baseUrl: env.EVOLUTION_BASE_URL, apiKey: env.EVOLUTION_API_KEY }),
   });
   const scheduler = new BullmqScheduler(redis);
-  const llm = new OpenRouterAdapter({
-    client: new OpenRouterClient({
-      apiKey: env.OPENROUTER_API_KEY,
-      baseUrl: env.OPENROUTER_BASE_URL,
-      maxRetries: env.LLM_MAX_RETRIES,
-      referer: env.WEB_ORIGIN,
-      title: "Agente de Tráfego",
+  // Metering (3b): grava usage_events (custo real por chamada). O LLM é envolvido
+  // pelo decorator de metering (cross-cutting num lugar só — §13; atribui por meta).
+  const metering = createPostgresMetering(db);
+  const llm = withLlmMetering(
+    new OpenRouterAdapter({
+      client: new OpenRouterClient({
+        apiKey: env.OPENROUTER_API_KEY,
+        baseUrl: env.OPENROUTER_BASE_URL,
+        maxRetries: env.LLM_MAX_RETRIES,
+        referer: env.WEB_ORIGIN,
+        title: "Agente de Tráfego",
+      }),
     }),
-  });
+    { metering, provider: "openrouter", onError: (err) => logger.warn({ err }, "metering:falhou") },
+  );
 
   return {
     db,
@@ -130,20 +147,38 @@ export async function buildComposition(): Promise<WorkerDeps> {
       messaging,
       vault,
       scheduler,
-      llm, // plugada na 3a (análise read-only)
-      // metering/approval = fatias seguintes (3b/5b).
-      metering: todoPort<WorkerDeps["ports"]["metering"]>("MeteringPort"),
+      llm, // plugada na 3a (análise) + metering na 3b (decorator)
+      metering, // plugada na 3b (Postgres usage_events)
       approval: todoPort<WorkerDeps["ports"]["approval"]>("ApprovalPort"),
     },
     insightsSync,
     analysis: {
       model: env.OPENROUTER_MODEL,
+      unitModel: env.OPENROUTER_UNIT_MODEL,
+      messageModel: env.OPENROUTER_MESSAGE_MODEL,
+      visionModel: env.OPENROUTER_VISION_MODEL,
       windowDays: env.ANALYSIS_WINDOW_DAYS,
       baselineDays: env.ANALYSIS_BASELINE_DAYS,
       topN: env.ANALYSIS_TOP_N,
       reviewEnabled: env.ANALYSIS_REVIEW_ENABLED,
       maxOutputTokens: env.ANALYSIS_MAX_OUTPUT_TOKENS,
+      maxCreativesVision: env.ANALYSIS_MAX_CREATIVES_VISION,
+      executionPolicy: env.ANALYSIS_EXECUTION_POLICY,
+      deepIntervalDays: env.ANALYSIS_DEEP_INTERVAL_DAYS,
+      materialChangePct: env.ANALYSIS_MATERIAL_CHANGE_PCT,
     },
+    webOrigin: env.WEB_ORIGIN,
+    visionAnalyzerVersion: env.CREATIVE_VISION_ANALYZER_VERSION,
+    cron: {
+      defaultCron: env.ANALYSIS_CRON_DEFAULT,
+      tz: env.ANALYSIS_TZ,
+      jitterMs: env.ANALYSIS_CRON_JITTER_MS,
+    },
+    reaper: {
+      staleMinutes: env.ANALYSIS_RUN_STALE_MINUTES,
+      cron: env.ANALYSIS_REAPER_CRON,
+    },
+    costCapUsd: env.LLM_COST_CAP_USD_PER_PERIOD,
     // checkpointer LangGraph = 5b (HITL durável). 3a é read-only linear → sem checkpointer.
     checkpointer: undefined,
   };

@@ -31,6 +31,7 @@ describe("runs.trigger", () => {
     const service = createRunsService({
       db: makeFakeDb([]), // nada em andamento
       scheduler,
+      metering: { llmCostInPeriod: async () => 0, record: vi.fn(), summarize: vi.fn() } as never,
       ensureAgent: async () => ({ agentId: "ag-1" }),
       costCapUsd: 0,
     });
@@ -49,6 +50,7 @@ describe("runs.trigger", () => {
     const service = createRunsService({
       db: makeFakeDb([{ id: "run-x" }]), // run em andamento
       scheduler,
+      metering: { llmCostInPeriod: async () => 0, record: vi.fn(), summarize: vi.fn() } as never,
       ensureAgent: async () => ({ agentId: "ag-1" }),
       costCapUsd: 0,
     });

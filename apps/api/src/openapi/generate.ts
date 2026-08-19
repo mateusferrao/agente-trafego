@@ -21,8 +21,16 @@ import {
   connectTokenInput,
   selectAccountInput,
 } from "../modules/accounts/schema.js";
-import { agentGoalsInput, agentSummary } from "../modules/agents/schema.js";
+import { agentGoalsInput, agentSummary, setPausedInput } from "../modules/agents/schema.js";
 import { latestRunOutput, triggerRunOutput } from "../modules/runs/schema.js";
+import { channelStateOutput } from "../modules/channels/schema.js";
+import { feedbackInput, feedbackOutput } from "../modules/recommendations/schema.js";
+import {
+  startVerificationInput,
+  startVerificationOutput,
+  confirmVerificationInput,
+  confirmVerificationOutput,
+} from "../modules/contacts/schema.js";
 
 extendZodWithOpenApi(z);
 
@@ -47,8 +55,16 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const AdAccountOutput = registry.register("AdAccountOutput", adAccountOutput);
   const AgentSummary = registry.register("AgentSummary", agentSummary);
   const AgentGoalsInput = registry.register("AgentGoalsInput", agentGoalsInput);
+  const SetPausedInput = registry.register("SetPausedInput", setPausedInput);
   const TriggerRunOutput = registry.register("TriggerRunOutput", triggerRunOutput);
   const LatestRunOutput = registry.register("LatestRunOutput", latestRunOutput);
+  const ChannelStateOutput = registry.register("ChannelStateOutput", channelStateOutput);
+  const StartVerificationInput = registry.register("StartVerificationInput", startVerificationInput);
+  const StartVerificationOutput = registry.register("StartVerificationOutput", startVerificationOutput);
+  const ConfirmVerificationInput = registry.register("ConfirmVerificationInput", confirmVerificationInput);
+  const ConfirmVerificationOutput = registry.register("ConfirmVerificationOutput", confirmVerificationOutput);
+  const FeedbackInput = registry.register("FeedbackInput", feedbackInput);
+  const FeedbackOutput = registry.register("FeedbackOutput", feedbackOutput);
 
   const accountParams = z.object({ id: z.string() });
 
@@ -153,6 +169,45 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     responses: { 200: jsonRes("meta atualizada", AgentSummary) },
   });
   registry.registerPath({
+    method: "put",
+    path: "/api/accounts/{id}/agent/paused",
+    tags: ["agents"],
+    request: { params: accountParams, ...jsonBody(SetPausedInput) },
+    responses: { 200: jsonRes("análises automáticas pausadas/retomadas", AgentSummary) },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/channels/connect",
+    tags: ["channels"],
+    responses: { 200: jsonRes("instância conectando (QR) ou conectada", ChannelStateOutput) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/channels/status",
+    tags: ["channels"],
+    responses: { 200: jsonRes("estado do canal WhatsApp da org", ChannelStateOutput) },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/contacts/verify/start",
+    tags: ["contacts"],
+    request: jsonBody(StartVerificationInput),
+    responses: {
+      202: jsonRes("código enviado pelo WhatsApp", StartVerificationOutput),
+      400: { description: "WhatsApp não conectado" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/contacts/verify/confirm",
+    tags: ["contacts"],
+    request: jsonBody(ConfirmVerificationInput),
+    responses: {
+      200: jsonRes("contato verificado", ConfirmVerificationOutput),
+      400: { description: "código inválido ou expirado" },
+    },
+  });
+  registry.registerPath({
     method: "post",
     path: "/api/accounts/{id}/runs",
     tags: ["runs"],
@@ -168,6 +223,13 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     tags: ["runs"],
     request: { params: accountParams },
     responses: { 200: jsonRes("último run + recomendações", LatestRunOutput) },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/recommendations/{id}/feedback",
+    tags: ["recommendations"],
+    request: { params: z.object({ id: z.string() }), ...jsonBody(FeedbackInput) },
+    responses: { 200: jsonRes("feedback registrado", FeedbackOutput) },
   });
   registry.registerPath({
     method: "get",

@@ -110,6 +110,15 @@ export const analysisOutputSchema = z.object({
   recommendations: z.array(analysisRecommendationSchema),
 });
 
+/** Análise de UMA unidade (anúncio) no map-reduce (3b-2) — sem scorecard (é da conta). */
+export const unitAnalysisSchema = z.object({
+  summary: z.string(),
+  findings: z.array(analysisFindingSchema),
+  recommendations: z.array(analysisRecommendationSchema),
+  flags: z.array(z.string()),
+});
+export type UnitAnalysis = z.infer<typeof unitAnalysisSchema>;
+
 export type ScorecardGrade = z.infer<typeof scorecardGrade>;
 export type BiggestLeak = z.infer<typeof biggestLeak>;
 export type Scorecard = z.infer<typeof scorecardSchema>;
@@ -126,3 +135,10 @@ export const ANALYSIS_OUTPUT_JSON_SCHEMA: Readonly<Record<string, unknown>> = zo
 
 /** Nome do schema (identifica o structured output p/ o provider). */
 export const ANALYSIS_OUTPUT_SCHEMA_NAME = "account_analysis";
+
+/** JSON Schema (strict) da análise por-unidade (map). */
+export const UNIT_ANALYSIS_JSON_SCHEMA: Readonly<Record<string, unknown>> = zodToJsonSchema(
+  unitAnalysisSchema,
+  { target: "openApi3", $refStrategy: "none" },
+) as Record<string, unknown>;
+export const UNIT_ANALYSIS_SCHEMA_NAME = "unit_analysis";

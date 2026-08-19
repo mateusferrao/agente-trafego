@@ -139,6 +139,22 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
         </div>
       </section>
 
+      <!-- Freio self-service: pausar as análises automáticas (§8 kill-switch) -->
+      <section class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-panel p-5">
+        <div class="flex flex-col gap-1">
+          <h2 class="font-brand text-sm font-semibold text-ink">Análises automáticas</h2>
+          <p class="text-xs text-muted">
+            {{ paused() ? 'Pausadas — o agente não analisa sozinho nem te avisa no WhatsApp.' : 'Ativas — o agente analisa no ritmo configurado e te avisa no WhatsApp.' }}
+          </p>
+          @if (pauseError()) {
+            <p class="text-xs text-danger-strong">{{ pauseError() }}</p>
+          }
+        </div>
+        <button appButton variant="secondary" type="button" [disabled]="pausing()" (click)="togglePaused()">
+          {{ pausing() ? 'Salvando…' : paused() ? 'Retomar' : 'Pausar' }}
+        </button>
+      </section>
+
       <!-- Erro do disparo (ex: já em andamento / limite de custo) -->
       @if (triggerError()) {
         <p class="rounded-lg border border-line bg-panel p-4 text-sm text-danger-strong">
@@ -226,6 +242,40 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                       <span class="text-xs text-muted">{{ applicabilityNote }}</span>
                     </div>
                   }
+                  <!-- Feedback 👍/👎: ensina o agente (👎 vira memória "não repita isso") -->
+                  <div class="flex items-center gap-2 pt-1">
+                    <span class="text-xs text-muted">Essa sugestão faz sentido?</span>
+                    <button
+                      type="button"
+                      class="rounded-md border border-line px-2 py-1 text-xs"
+                      [class.bg-success-soft]="rec.vote === 'up'"
+                      [class.text-success-strong]="rec.vote === 'up'"
+                      [class.text-muted]="rec.vote !== 'up'"
+                      [attr.aria-pressed]="rec.vote === 'up'"
+                      [disabled]="votingId() === rec.id"
+                      (click)="vote(rec, 'up')"
+                    >
+                      {{ rec.vote === 'up' ? '👍 Marcada como útil' : '👍 Útil' }}
+                    </button>
+                    <button
+                      type="button"
+                      class="rounded-md border border-line px-2 py-1 text-xs"
+                      [class.bg-danger-soft]="rec.vote === 'down'"
+                      [class.text-danger-strong]="rec.vote === 'down'"
+                      [class.text-muted]="rec.vote !== 'down'"
+                      [attr.aria-pressed]="rec.vote === 'down'"
+                      [disabled]="votingId() === rec.id"
+                      (click)="vote(rec, 'down')"
+                    >
+                      👎 Não
+                    </button>
+                    @if (rec.vote === 'down') {
+                      <span class="text-xs text-muted">Anotado — o agente evita repetir isso.</span>
+                    }
+                    @if (voteErrorId() === rec.id) {
+                      <span class="text-xs text-danger-strong">Não consegui salvar seu feedback. Tente de novo.</span>
+                    }
+                  </div>
                 </article>
               }
             </div>
@@ -257,6 +307,11 @@ export class AccountDetailPage {
   protected readonly savingGoals = signal(false);
   protected readonly goalsSaved = signal(false);
   protected readonly goalsError = signal<string | null>(null);
+  protected readonly paused = signal(false);
+  protected readonly pausing = signal(false);
+  protected readonly pauseError = signal<string | null>(null);
+  protected readonly votingId = signal<string | null>(null);
+  protected readonly voteErrorId = signal<string | null>(null);
 
   /** Diagnóstico único da conta (só quando o run trouxe scorecard). */
   protected readonly scorecard = computed<Scorecard | null>(() => this.run()?.metrics?.scorecard ?? null);
@@ -349,6 +404,43 @@ export class AccountDetailPage {
     });
   }
 
+  protected vote(rec: Recommendation, vote: 'up' | 'down'): void {
+    if (rec.vote === vote) return; // já votado assim
+    this.votingId.set(rec.id);
+    this.voteErrorId.set(null);
+    this.analysisApi.sendFeedback(rec.id, vote).subscribe({
+      next: () => {
+        // reflete o voto localmente (o backend já registrou + memória em 👎).
+        this.recommendations.update((list) =>
+          list.map((r) => (r.id === rec.id ? { ...r, vote } : r)),
+        );
+        this.votingId.set(null);
+      },
+      // não engole o erro: sinaliza no card (o clique não pode "sumir" em silêncio).
+      error: () => {
+        this.votingId.set(null);
+        this.voteErrorId.set(rec.id);
+      },
+    });
+  }
+
+  protected togglePaused(): void {
+    const next = !this.paused();
+    this.pausing.set(true);
+    this.pauseError.set(null);
+    this.analysisApi.setPaused(this.accountId, next).subscribe({
+      next: (agent) => {
+        this.paused.set(agent.paused);
+        this.pausing.set(false);
+      },
+      // kill-switch (§8): falha silenciosa faria o usuário achar que pausou sem ter pausado.
+      error: () => {
+        this.pausing.set(false);
+        this.pauseError.set('Não consegui alterar as análises automáticas agora. Tente de novo.');
+      },
+    });
+  }
+
   protected analyze(): void {
     this.triggerError.set(null);
     this.analyzing.set(true);
@@ -370,6 +462,7 @@ export class AccountDetailPage {
       next: (agent) => {
         this.targetCPA.set(agent.goals.targetCPA ?? null);
         this.targetROAS.set(agent.goals.targetROAS ?? null);
+        this.paused.set(agent.paused);
       },
       // meta é opcional; se não carregar, os campos ficam em branco (o usuário
       // ainda pode definir e salvar). Falha silenciosa consciente, sem travar a tela.

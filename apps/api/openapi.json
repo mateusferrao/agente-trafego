@@ -328,12 +328,16 @@
                 "exclusiveMinimum": 0
               }
             }
+          },
+          "paused": {
+            "type": "boolean"
           }
         },
         "required": [
           "agentId",
           "archetype",
-          "goals"
+          "goals",
+          "paused"
         ]
       },
       "AgentGoalsInput": {
@@ -348,6 +352,17 @@
             "exclusiveMinimum": 0
           }
         }
+      },
+      "SetPausedInput": {
+        "type": "object",
+        "properties": {
+          "paused": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "paused"
+        ]
       },
       "TriggerRunOutput": {
         "type": "object",
@@ -620,6 +635,16 @@
                     "target",
                     "params"
                   ]
+                },
+                "vote": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "up",
+                    "down"
+                  ]
                 }
               },
               "required": [
@@ -628,7 +653,8 @@
                 "rationale",
                 "riskLevel",
                 "applicability",
-                "proposedAction"
+                "proposedAction",
+                "vote"
               ]
             }
           }
@@ -636,6 +662,112 @@
         "required": [
           "run",
           "recommendations"
+        ]
+      },
+      "ChannelStateOutput": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "disconnected",
+              "connecting",
+              "connected"
+            ]
+          },
+          "qrCode": {
+            "type": "string"
+          },
+          "phone": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "StartVerificationInput": {
+        "type": "object",
+        "properties": {
+          "phone": {
+            "type": "string",
+            "pattern": "^\\+[1-9]\\d{6,14}$"
+          },
+          "userId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "phone"
+        ]
+      },
+      "StartVerificationOutput": {
+        "type": "object",
+        "properties": {
+          "sent": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sent"
+        ]
+      },
+      "ConfirmVerificationInput": {
+        "type": "object",
+        "properties": {
+          "phone": {
+            "type": "string",
+            "pattern": "^\\+[1-9]\\d{6,14}$"
+          },
+          "code": {
+            "type": "string",
+            "pattern": "^\\d{6}$"
+          }
+        },
+        "required": [
+          "phone",
+          "code"
+        ]
+      },
+      "ConfirmVerificationOutput": {
+        "type": "object",
+        "properties": {
+          "verified": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "verified"
+        ]
+      },
+      "FeedbackInput": {
+        "type": "object",
+        "properties": {
+          "vote": {
+            "type": "string",
+            "enum": [
+              "up",
+              "down"
+            ]
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "vote"
+        ]
+      },
+      "FeedbackOutput": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
         ]
       }
     },
@@ -962,6 +1094,144 @@
         }
       }
     },
+    "/api/accounts/{id}/agent/paused": {
+      "put": {
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetPausedInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "análises automáticas pausadas/retomadas",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/channels/connect": {
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "responses": {
+          "200": {
+            "description": "instância conectando (QR) ou conectada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelStateOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/channels/status": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "responses": {
+          "200": {
+            "description": "estado do canal WhatsApp da org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelStateOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/contacts/verify/start": {
+      "post": {
+        "tags": [
+          "contacts"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartVerificationInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "código enviado pelo WhatsApp",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartVerificationOutput"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "WhatsApp não conectado"
+          }
+        }
+      }
+    },
+    "/api/contacts/verify/confirm": {
+      "post": {
+        "tags": [
+          "contacts"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmVerificationInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "contato verificado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfirmVerificationOutput"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "código inválido ou expirado"
+          }
+        }
+      }
+    },
     "/api/accounts/{id}/runs": {
       "post": {
         "tags": [
@@ -1016,6 +1286,44 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/LatestRunOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/recommendations/{id}/feedback": {
+      "post": {
+        "tags": [
+          "recommendations"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "feedback registrado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackOutput"
                 }
               }
             }

@@ -5,7 +5,11 @@
 import { Redis } from "ioredis";
 import { buildComposition, loadConfig } from "./composition.js";
 import { startAgentRunsWorker } from "./workers/agent-runs.js";
+import { startAgentCronDispatchWorker } from "./workers/agent-cron-dispatch.js";
+import { startAgentReaperWorker } from "./workers/agent-reaper.js";
 import { startInsightsSyncWorker } from "./workers/insights-sync.js";
+import { makeAccountCron } from "./schedulers/account-cron.js";
+import { createRunReaper } from "./modules/dispatch/run-reaper.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -16,14 +20,27 @@ async function main(): Promise<void> {
   const connection = new Redis(config.redisUrl, { maxRetriesPerRequest: null });
 
   // 3a: loop de análise read-only (agent-runs) + sync de insights (2a).
+  // 3b: dispatch do cron (cria run por conta no horário) + cadência por conta.
   const agentRuns = startAgentRunsWorker(deps, connection);
+  const cronDispatch = startAgentCronDispatchWorker(deps, connection);
+  const reaper = startAgentReaperWorker(deps, connection);
   const insightsSync = startInsightsSyncWorker(deps, connection);
-  logger.info("worker up: agent-runs (fatia 3a) + insights-sync (fatia 2a)");
+
+  // Sincroniza os schedulers recorrentes a partir dos agentes ativos (idempotente)
+  // + agenda o reaper (singleton) e faz uma varredura de boot (limpa presos de um
+  // crash anterior antes de esperar o 1º tick).
+  const cron = makeAccountCron(deps);
+  await cron.syncAllFromDb().catch((err: unknown) => logger.error({ err }, "cron:sync_all falhou"));
+  await cron.ensureReaperSchedule().catch((err: unknown) => logger.error({ err }, "reaper:schedule falhou"));
+  await createRunReaper({ db: deps.db, logger, staleMinutes: deps.reaper.staleMinutes })
+    .reapStale()
+    .catch((err: unknown) => logger.error({ err }, "reaper:boot sweep falhou"));
+  logger.info("worker up: agent-runs (3a) + cron-dispatch + reaper (3b) + insights-sync (2a)");
 
   // shutdown gracioso (drena jobs em andamento antes de sair)
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, "worker shutting down");
-    await Promise.allSettled([agentRuns.close(), insightsSync.close()]);
+    await Promise.allSettled([agentRuns.close(), cronDispatch.close(), reaper.close(), insightsSync.close()]);
     await Promise.allSettled([connection.quit(), deps.redis.quit()]);
     process.exit(0);
   };

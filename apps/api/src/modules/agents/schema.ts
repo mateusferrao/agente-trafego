@@ -13,5 +13,10 @@ export const agentSummary = z.object({
   agentId: z.string(),
   archetype: z.string(),
   goals: agentGoalsInput,
+  /** análises automáticas pausadas pelo dono (freio self-service). */
+  paused: z.boolean(),
 });
 export type AgentSummary = z.infer<typeof agentSummary>;
+
+export const setPausedInput = z.object({ paused: z.boolean() });
+export type SetPausedInput = z.infer<typeof setPausedInput>;

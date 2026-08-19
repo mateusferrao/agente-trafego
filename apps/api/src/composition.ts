@@ -18,8 +18,10 @@ import { createDrizzleOrgsRepo } from "./modules/orgs/repo.js";
 import { createAccountsService } from "./modules/accounts/service.js";
 import { createDrizzleAccountsRepo } from "./modules/accounts/repo.js";
 import { createChannelsService } from "./modules/channels/service.js";
+import { createContactsService } from "./modules/contacts/service.js";
 import { createAgentsService } from "./modules/agents/service.js";
 import { createApprovalsService } from "./modules/approvals/service.js";
+import { createRecommendationsService } from "./modules/recommendations/service.js";
 import { createRunsService } from "./modules/runs/service.js";
 import { createBillingService } from "./modules/billing/service.js";
 import { createWebhooksService } from "./modules/webhooks/service.js";
@@ -27,6 +29,8 @@ import { createAdminService } from "./modules/admin/service.js";
 import { Aes256CredentialVault } from "@trafego/credential-vault";
 import { BullmqScheduler } from "@trafego/scheduler-bullmq";
 import { MetaAdsAdapter, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta";
+import { EvolutionAdapter, EvolutionClient } from "@trafego/channel-evolution";
+import { createPostgresMetering } from "@trafego/metering-postgres";
 import { Redis } from "ioredis";
 
 // ─── Adapters de saída (portas) ──────────────────────────────────────────
@@ -56,8 +60,10 @@ export interface Services {
   readonly orgs: ReturnType<typeof createOrgsService>;
   readonly accounts: ReturnType<typeof createAccountsService>;
   readonly channels: ReturnType<typeof createChannelsService>;
+  readonly contacts: ReturnType<typeof createContactsService>;
   readonly agents: ReturnType<typeof createAgentsService>;
   readonly approvals: ReturnType<typeof createApprovalsService>;
+  readonly recommendations: ReturnType<typeof createRecommendationsService>;
   readonly runs: ReturnType<typeof createRunsService>;
   readonly billing: ReturnType<typeof createBillingService>;
   readonly webhooks: ReturnType<typeof createWebhooksService>;
@@ -106,10 +112,16 @@ export function buildContainer(): Container {
     governor: new MetaGovernor({ redis }),
   });
 
+  // WhatsApp (Evolution) plugado na 3b: onboarding por QR + push proativo + código de opt-in.
+  const messaging: MessagingChannelPort = new EvolutionAdapter({
+    client: new EvolutionClient({ baseUrl: env.EVOLUTION_BASE_URL, apiKey: env.EVOLUTION_API_KEY }),
+  });
+
+  // Metering (3b): Postgres usage_events — o billing/usage lê daqui.
+  const metering = createPostgresMetering(db);
+
   // Portas ainda não plugadas (fatias seguintes) — placeholders que lançam ao usar.
-  const messaging = todoPort<MessagingChannelPort>("MessagingChannelPort"); // new EvolutionChannelAdapter()
-  const llm = todoPort<LLMProviderPort>("LLMProviderPort"); // new OpenRouterProvider({ apiKey: env.OPENROUTER_API_KEY })
-  const metering = todoPort<MeteringPort>("MeteringPort"); // Postgres
+  const llm = todoPort<LLMProviderPort>("LLMProviderPort"); // worker roda o LLM; a API não
   const approvals = todoPort<ApprovalPort>("ApprovalPort"); // Postgres
 
   const adapters: Adapters = {
@@ -131,11 +143,14 @@ export function buildContainer(): Container {
     orgs: createOrgsService({ repo: createDrizzleOrgsRepo(db) }),
     accounts: createAccountsService({ repo: createDrizzleAccountsRepo(db), adsPlatform, vault }),
     channels: createChannelsService({ db, messaging }),
+    contacts: createContactsService({ db, messaging }),
     agents,
     approvals: createApprovalsService({ db, approvals }),
+    recommendations: createRecommendationsService({ db }),
     runs: createRunsService({
       db,
       scheduler,
+      metering,
       ensureAgent: (orgId, accountId) => agents.getOrCreateForAccount(orgId, accountId),
       costCapUsd: env.LLM_COST_CAP_USD_PER_PERIOD,
     }),

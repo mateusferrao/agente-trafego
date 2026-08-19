@@ -4,7 +4,10 @@ import { BaseApiService } from './base-api.service';
 import type {
   AgentGoalsInput,
   AgentSummary,
+  FeedbackInput,
+  FeedbackOutput,
   LatestRunOutput,
+  SetPausedInput,
   TriggerRunOutput,
 } from './generated';
 
@@ -24,6 +27,13 @@ export class AnalysisApiService extends BaseApiService {
     return this.put<AgentSummary, AgentGoalsInput>(['/accounts', accountId, 'agent', 'goals'], goals);
   }
 
+  /** `PUT /api/accounts/:id/agent/paused` — pausa/retoma as análises automáticas. */
+  setPaused(accountId: string, paused: boolean): Observable<AgentSummary> {
+    return this.put<AgentSummary, SetPausedInput>(['/accounts', accountId, 'agent', 'paused'], {
+      paused,
+    });
+  }
+
   /** `POST /api/accounts/:id/runs` — dispara "Analisar agora". */
   triggerRun(accountId: string): Observable<TriggerRunOutput> {
     return this.post<TriggerRunOutput, Record<string, never>>(['/accounts', accountId, 'runs'], {});
@@ -32,5 +42,13 @@ export class AnalysisApiService extends BaseApiService {
   /** `GET /api/accounts/:id/runs/latest` — último run + recomendações. */
   latestRun(accountId: string): Observable<LatestRunOutput> {
     return this.get<LatestRunOutput>(['/accounts', accountId, 'runs', 'latest']);
+  }
+
+  /** `POST /api/recommendations/:id/feedback` — 👍/👎 (👎 vira memória do agente). */
+  sendFeedback(recommendationId: string, vote: FeedbackInput['vote']): Observable<FeedbackOutput> {
+    return this.post<FeedbackOutput, FeedbackInput>(
+      ['/recommendations', recommendationId, 'feedback'],
+      { vote },
+    );
   }
 }
