@@ -55,8 +55,17 @@ export class OpenRouterAdapter implements LLMProviderPort {
       },
     };
     const response = await this.client.chatCompletion(chatRequest);
+    const finishReason = response.choices[0]?.finish_reason;
+    // Truncou no maxTokens (comum com modelos de reasoning, que gastam o orçamento
+    // "pensando" antes do JSON) → erro claro e acionável, não "JSON inválido" genérico.
+    if (finishReason === "length") {
+      throw new LLMProviderError(
+        "parse_error",
+        "resposta truncada no limite de tokens (finish_reason=length) — aumente ANALYSIS_MAX_OUTPUT_TOKENS ou use um modelo instruct (não-reasoning) para este passo",
+      );
+    }
     const content = this.firstContent(response.choices);
-    return { output: parseJson<T>(content), usage: this.mapUsage(response.usage) };
+    return { output: parseJson<T>(content, finishReason), usage: this.mapUsage(response.usage) };
   }
 
   /** Monta o corpo comum do chat request a partir do LLMRequest do domínio. */
@@ -103,8 +112,12 @@ export class OpenRouterAdapter implements LLMProviderPort {
   }
 }
 
-/** Parse tolerante do JSON do structured output (extrai o objeto se vier cercado). */
-function parseJson<T>(content: string): T {
+/**
+ * Parse tolerante do JSON do structured output (extrai o objeto se vier cercado).
+ * No erro, carrega diagnóstico: `finish_reason` (`length` = truncado no maxTokens)
+ * + tamanho + trecho do conteúdo — pra distinguir truncamento de formato inválido.
+ */
+function parseJson<T>(content: string, finishReason?: string): T {
   const trimmed = content.trim();
   try {
     return JSON.parse(trimmed) as T;
@@ -118,6 +131,10 @@ function parseJson<T>(content: string): T {
         // cai no throw abaixo
       }
     }
-    throw new LLMProviderError("parse_error", "structured output não é JSON válido");
+    const snippet = trimmed.slice(0, 300).replace(/\s+/g, " ");
+    throw new LLMProviderError(
+      "parse_error",
+      `structured output não é JSON válido (finish_reason=${finishReason ?? "?"}, len=${content.length}): ${snippet}`,
+    );
   }
 }
