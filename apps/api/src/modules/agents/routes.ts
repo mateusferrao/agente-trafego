@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { requireAuth } from "../../middleware/auth.js";
 import { requireOrgScope, orgIdOf } from "../../middleware/org-scope.js";
-import { agentGoalsInput } from "./schema.js";
+import { agentGoalsInput, setPausedInput } from "./schema.js";
 
 /**
  * Slice de agentes (3a): agente por conta (zero-config) + edição da meta.
@@ -20,5 +20,11 @@ export const agentsRoutes: FastifyPluginAsync = async (app) => {
     const { id } = request.params as { id: string };
     const goals = agentGoalsInput.parse(request.body);
     return service.updateGoals(orgIdOf(request), id, goals);
+  });
+
+  app.put("/accounts/:id/agent/paused", guard, async (request) => {
+    const { id } = request.params as { id: string };
+    const { paused } = setPausedInput.parse(request.body);
+    return service.setPaused(orgIdOf(request), id, paused);
   });
 };

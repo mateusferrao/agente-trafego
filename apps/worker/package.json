@@ -23,6 +23,7 @@
     "@trafego/credential-vault": "workspace:*",
     "@trafego/db": "workspace:*",
     "@trafego/llm-openrouter": "workspace:*",
+    "@trafego/metering-postgres": "workspace:*",
     "@trafego/scheduler-bullmq": "workspace:*",
     "@trafego/shared": "workspace:*",
     "bullmq": "^5.34.0",

@@ -58,6 +58,12 @@ export const envSchema = z.object({
     .string()
     .min(1)
     .default("google/gemini-2.5-flash"),
+  // Map-reduce (3b-2): modelo barato por-anúncio (mapa) + modelo barato do redator do
+  // WhatsApp. Síntese/reviewer usam OPENROUTER_MODEL (forte). Override por-agente (Fatia 4).
+  OPENROUTER_UNIT_MODEL: z.string().min(1).default("google/gemini-2.5-flash"),
+  OPENROUTER_MESSAGE_MODEL: z.string().min(1).default("google/gemini-2.5-flash"),
+  // Versão do analisador de visão — bumpar invalida o cache de análises de criativo.
+  CREATIVE_VISION_ANALYZER_VERSION: z.coerce.number().int().positive().default(1),
   LLM_COST_CAP_USD_PER_PERIOD: z.coerce.number().min(0).default(0),
   // Retentativas in-process por chamada de LLM (429/5xx/rede/passthrough do provider).
   LLM_MAX_RETRIES: z.coerce.number().int().nonnegative().default(3),
@@ -91,7 +97,10 @@ export const envSchema = z.object({
   EVOLUTION_WEBHOOK_SECRET: z
     .string()
     .min(1, "EVOLUTION_WEBHOOK_SECRET é obrigatório"),
-  EVOLUTION_INSTANCE: z.string().min(1, "EVOLUTION_INSTANCE é obrigatória"),
+  // Single-tenant da Fatia 0 — aposentado na 3b (instância = 1 por org em
+  // `channel_instances`, criada no onboarding por QR). Mantido opcional p/ não
+  // quebrar .env existentes; não é mais lido pelo código.
+  EVOLUTION_INSTANCE: z.string().optional(),
 
   // ─── Fatia 0 (scaffolding — removido quando houver UI/auth/contatos) ────
   // guard dos endpoints admin até a auth real (Fatia 1a). Segredo forte (32+).
@@ -124,6 +133,23 @@ export const envSchema = z.object({
   ANALYSIS_BASELINE_DAYS: z.coerce.number().int().positive().default(7),
   // Quantas entidades por nível o brief seleciona (top-N por spend + flagadas).
   ANALYSIS_TOP_N: z.coerce.number().int().positive().default(5),
+
+  // ─── Cadência (cron por conta — 3b) ────────────────────────────────────
+  // Default global da cadência (a UI de edição por-conta = Fatia 4). Cron 5-campos.
+  ANALYSIS_CRON_DEFAULT: z.string().min(1).default("0 8 * * *"), // 08:00 diário
+  // Timezone p/ avaliar o cron (ICP BR). Config por-conta = fast-follow.
+  ANALYSIS_TZ: z.string().min(1).default("America/Sao_Paulo"),
+  // Stagger máx. (ms) entre contas p/ não bater o rate-limit da Meta ao mesmo tempo.
+  ANALYSIS_CRON_JITTER_MS: z.coerce.number().int().nonnegative().default(300000), // 5 min
+  // Política de execução default (3b-2): deep completo + incremental nos demais dias.
+  // Override por-agente em `agents.model_config.executionPolicy` (Fatia 4 edita).
+  ANALYSIS_EXECUTION_POLICY: z
+    .enum(["deep_periodic_incremental", "full_every_run", "budget_scaled"])
+    .default("deep_periodic_incremental"),
+  // Intervalo (dias) entre análises DEEP completas na política incremental.
+  ANALYSIS_DEEP_INTERVAL_DAYS: z.coerce.number().int().positive().default(7),
+  // Limiar de "mudança material" (variação relativa de métrica) p/ reanalisar a unidade.
+  ANALYSIS_MATERIAL_CHANGE_PCT: z.coerce.number().min(0).default(15),
 
   // ─── Observabilidade (opcional) ────────────────────────────────────────
   LANGFUSE_PUBLIC_KEY: z.string().optional(),

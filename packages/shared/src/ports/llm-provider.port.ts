@@ -19,6 +19,18 @@ export interface LLMUsage {
   readonly costUsd?: number;
 }
 
+/**
+ * Contexto de metering da chamada (cross-cutting): o decorator de metering usa
+ * p/ atribuir o `usage_event` à org/run/tipo, sem estado mutável compartilhado
+ * entre runs concorrentes. O adapter do provider ignora este campo.
+ */
+export interface LLMCallMeta {
+  readonly orgId?: string;
+  readonly runId?: string;
+  /** dimensão do evento de uso (ex: "unit" | "synthesis" | "review" | "message"). */
+  readonly type?: string;
+}
+
 export interface LLMRequest {
   readonly model: string;
   readonly messages: readonly LLMMessage[];
@@ -28,6 +40,8 @@ export interface LLMRequest {
   readonly responseSchemaName?: string;
   readonly temperature?: number;
   readonly maxTokens?: number;
+  /** metering (opcional) — atribui o custo desta chamada à org/run/tipo. */
+  readonly meta?: LLMCallMeta;
 }
 
 export interface LLMCompletion<T = string> {

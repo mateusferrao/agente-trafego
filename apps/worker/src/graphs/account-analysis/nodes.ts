@@ -39,9 +39,16 @@ import {
   type InsightsSnapshotsRepo,
 } from "../../modules/insights/repo.js";
 import { createAnalysisRepo, type AnalysisRepo, type RecommendationRow } from "../../modules/analysis/repo.js";
+import { createNotifyRepo, type NotifyRepo } from "../../modules/notify/repo.js";
 import { AnalysisError } from "../../modules/analysis/errors.js";
 import { resolveAnalysisConfig } from "../../modules/analysis/config.js";
 import { buildAnalysisMessages, buildReviewMessages } from "../../modules/analysis/prompt.js";
+import {
+  buildMessageMessages,
+  MESSAGE_OUTPUT_JSON_SCHEMA,
+  MESSAGE_OUTPUT_SCHEMA_NAME,
+} from "../../modules/notify/prompt.js";
+import { buildMessageFallback } from "@trafego/core";
 import { resolveWindows } from "../../modules/analysis/window.js";
 import type { AccountAnalysisStateType, AccountAnalysisUpdate } from "./state.js";
 
@@ -59,6 +66,7 @@ function today(): string {
 export interface AnalysisNodeRepos {
   readonly repo: AnalysisRepo;
   readonly snapshots: InsightsSnapshotsRepo;
+  readonly notify: NotifyRepo;
 }
 
 /** Fábrica de nós com deps injetadas (composition root passa `deps`). */
@@ -66,6 +74,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
   const { logger } = deps;
   const repo = repos?.repo ?? createAnalysisRepo(deps.db);
   const snapshots = repos?.snapshots ?? createDrizzleInsightsSnapshotsRepo(deps.db);
+  const notifyRepo = repos?.notify ?? createNotifyRepo(deps.db);
 
   /** Carrega agent/config/janela e abre o run (status=running, snapshot congelado). */
   async function loadContext(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
@@ -326,8 +335,82 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     return { results: [] };
   }
 
+  /**
+   * Redator (papel dedicado) — redige a mensagem do WhatsApp a partir do resultado
+   * curado. Só p/ cron (push) e quando há algo acionável; senão silêncio (decisão 4).
+   * LLM barato + persona; fallback determinístico do core em erro/JSON.
+   */
+  async function writeMessage(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
+    logger.debug({ runId: state.runId }, "write_message");
+    if (state.trigger !== "cron") return { outboundMessage: null }; // on-demand mostra no site
+    const out = state.analysisOutput;
+    if (!out || out.recommendations.length === 0 || !state.account) return { outboundMessage: null };
+
+    const cfg = state.analysisConfig ?? deps.analysis;
+    let text: string | null = null;
+    let usage = state.usage;
+    try {
+      const completion = await deps.ports.llm.completeStructured<{ text: string }>({
+        model: cfg.messageModel,
+        messages: buildMessageMessages(state.systemPrompt, state.account.name, out),
+        responseSchema: MESSAGE_OUTPUT_JSON_SCHEMA,
+        responseSchemaName: MESSAGE_OUTPUT_SCHEMA_NAME,
+        temperature: ANALYSIS_TEMPERATURE,
+        maxTokens: cfg.maxOutputTokens,
+        meta: { orgId: state.orgId, runId: state.runId, type: "message" },
+      });
+      const t = completion.output?.text;
+      if (typeof t === "string" && t.trim().length > 0) {
+        text = t.trim();
+        usage = addTokenUsage(usage ?? undefined, completion.usage);
+      }
+    } catch (err) {
+      if (!(err instanceof LLMProviderError)) throw err;
+      logger.warn({ runId: state.runId, err }, "write_message:redator falhou; usando fallback");
+    }
+
+    if (!text) {
+      text = buildMessageFallback({
+        accountName: state.account.name,
+        ...(out.scorecard?.headline ? { headline: out.scorecard.headline } : {}),
+        summary: out.summary,
+        recommendations: out.recommendations.map((r) => ({ title: r.title })),
+      });
+    }
+    return { outboundMessage: text, usage };
+  }
+
+  /**
+   * Push no WhatsApp (outbound-only, cron). Idempotente por run; só p/ contato
+   * verificado + instância conectada. Degrada se a instância caiu (não quebra o run,
+   * que já foi fechado no record — o site mostra o resultado de qualquer forma).
+   */
   async function notify(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
     logger.debug({ runId: state.runId }, "notify");
+    const body = state.outboundMessage;
+    if (!body) return {}; // nada acionável / não-cron → silêncio
+    if (await notifyRepo.alreadyNotified(state.runId)) return {}; // idempotência de envio
+
+    const target = await notifyRepo.loadTarget(state.orgId);
+    if (!target) {
+      logger.warn({ orgId: state.orgId, runId: state.runId }, "notify:sem canal/contato — sem push");
+      return {};
+    }
+
+    const link = `${deps.webOrigin}/accounts/${state.adAccountId}`;
+    const text = `${body}\n\nVer no site: ${link}`;
+    try {
+      await deps.ports.messaging.sendMessage({ instanceId: target.instanceId }, { to: target.phone, text });
+      await notifyRepo.recordOutbound({
+        orgId: state.orgId,
+        agentId: state.agentId,
+        contactId: target.contactId,
+        runId: state.runId,
+        body: text,
+      });
+    } catch (err) {
+      logger.warn({ runId: state.runId, err }, "notify:envio falhou — run concluído, sem push");
+    }
     return {};
   }
 
@@ -355,13 +438,14 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     llmAnalyze: step("llm_analyze", llmAnalyze),
     reviewAnalysis: step("review_analysis", reviewAnalysis),
     buildRecommendations: step("build_recommendations", buildRecommendations),
+    writeMessage: step("write_message", writeMessage),
     record: step("record", record),
-    // write-half (scaffold — 3b/4/5a/5b): sem step por ora.
+    notify: step("notify", notify),
+    // write-half (scaffold — 4/5a/5b): sem step por ora.
     decideActions: decideActionsNode,
     guardrailCheck,
     createApprovalAndInterrupt,
     applyActions,
-    notify,
   };
 }
 

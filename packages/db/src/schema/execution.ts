@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
   index,
@@ -6,6 +7,7 @@ import {
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 import type { Action } from "@trafego/shared";
@@ -52,7 +54,15 @@ export const agentRuns = pgTable(
     finishedAt: timestamp("finished_at", { withTimezone: true }),
     ...timestamps,
   },
-  (t) => [index("agent_runs_agent_idx").on(t.agentId), index("agent_runs_org_idx").on(t.orgId)],
+  (t) => [
+    index("agent_runs_agent_idx").on(t.agentId),
+    index("agent_runs_org_idx").on(t.orgId),
+    // No máx. 1 run em andamento por agente (fecha o TOCTOU cron×manual — decisão 15):
+    // índice único PARCIAL nos status in-flight. A violação vira conflito amigável na casca.
+    uniqueIndex("agent_runs_one_in_flight_uq")
+      .on(t.agentId)
+      .where(sql`status in ('pending', 'running', 'waiting_approval')`),
+  ],
 );
 
 /** Passo do grafo dentro de um run (nó LangGraph). */

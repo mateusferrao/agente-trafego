@@ -24,15 +24,19 @@ export function buildAccountAnalysisGraph(deps: WorkerDeps) {
     .addNode("llm_analyze", n.llmAnalyze)
     .addNode("review_analysis", n.reviewAnalysis)
     .addNode("build_recommendations", n.buildRecommendations)
+    .addNode("write_message", n.writeMessage)
     .addNode("record", n.record)
+    .addNode("notify", n.notify)
     .addEdge(START, "load_context")
     .addEdge("load_context", "fetch_data")
     .addEdge("fetch_data", "run_playbook")
     .addEdge("run_playbook", "llm_analyze")
     .addEdge("llm_analyze", "review_analysis")
     .addEdge("review_analysis", "build_recommendations")
-    .addEdge("build_recommendations", "record")
-    .addEdge("record", END);
+    .addEdge("build_recommendations", "write_message")
+    .addEdge("write_message", "record")
+    .addEdge("record", "notify")
+    .addEdge("notify", END);
 
   return workflow.compile();
 }

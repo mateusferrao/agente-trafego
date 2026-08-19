@@ -63,6 +63,8 @@ export const AccountAnalysisState = Annotation.Root({
   analysisOutput: Annotation<AnalysisOutput | null>,
   summary: Annotation<string>,
   usage: Annotation<AccumulatedTokenUsage | null>,
+  // mensagem de WhatsApp redigida (3b); null = nada acionável / não é cron → silêncio.
+  outboundMessage: Annotation<string | null>,
 
   // ── ações (híbrido playbook + llm) ─────────────────────────────────────
   playbookCandidates: Annotation<readonly CandidateAction[]>,

@@ -1,6 +1,6 @@
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
-import { agentRuns, agents, recommendations, type Database } from "@trafego/db";
-import { READ_ONLY_APPLICABILITY } from "@trafego/core";
+import { agentRuns, agents, guardrailConfigs, recommendations, type Database } from "@trafego/db";
+import { isOverCostCap, READ_ONLY_APPLICABILITY, resolveCostCapUsd } from "@trafego/core";
 import {
   AGENT_RUNS_QUEUE,
   AGENT_RUN_JOB,
@@ -41,13 +41,23 @@ export function createRunsService(deps: RunsDeps) {
   async function trigger(orgId: OrgId, accountId: string): Promise<TriggerRunOutput> {
     const { agentId } = await deps.ensureAgent(orgId, accountId);
 
-    await assertUnderCostCap(orgId);
+    await assertUnderCostCap(orgId, agentId);
     await assertNoRunInFlight(orgId, agentId);
 
-    const [run] = await deps.db
-      .insert(agentRuns)
-      .values({ orgId, agentId, trigger: "on_demand", status: "pending" })
-      .returning({ id: agentRuns.id });
+    let run: { id: string } | undefined;
+    try {
+      [run] = await deps.db
+        .insert(agentRuns)
+        .values({ orgId, agentId, trigger: "on_demand", status: "pending" })
+        .returning({ id: agentRuns.id });
+    } catch (error) {
+      // corrida com o cron ou outra aba: o índice único parcial (in-flight por
+      // agente) rejeita o 2º run → conflito amigável (fecha o TOCTOU — decisão 15).
+      if (isUniqueViolation(error)) {
+        throw conflict("Já existe uma análise em andamento para esta conta. Aguarde ela terminar.");
+      }
+      throw error;
+    }
     if (!run) throw badRequest("Não consegui iniciar a análise. Tente de novo.");
 
     const payload: AgentRunExecutePayload = {
@@ -87,17 +97,27 @@ export function createRunsService(deps: RunsDeps) {
     return { run: toRunOutput(run), recommendations: recs.map(toRecommendationOutput) };
   }
 
-  /** Bloqueia se o custo LLM do período (mês corrente) já atingiu o cap. */
-  async function assertUnderCostCap(orgId: OrgId): Promise<void> {
-    if (deps.costCapUsd <= 0) return; // sem cap
+  /**
+   * Bloqueia se o custo LLM do período (mês corrente) já atingiu o cap. O cap é
+   * por-org (`guardrail_configs.llm_cost_cap`, fallback env); decisão pura no core.
+   */
+  async function assertUnderCostCap(orgId: OrgId, agentId: string): Promise<void> {
+    const [guard] = await deps.db
+      .select({ cap: guardrailConfigs.llmCostCap })
+      .from(guardrailConfigs)
+      .where(and(eq(guardrailConfigs.agentId, agentId), eq(guardrailConfigs.orgId, orgId)))
+      .limit(1);
+    const cap = resolveCostCapUsd(guard?.cap === null || guard?.cap === undefined ? null : Number(guard.cap), deps.costCapUsd);
+    if (cap <= 0) return;
+
     const now = new Date();
     const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
     const [row] = await deps.db
-      .select({ total: sql<string>`coalesce(sum(${agentRuns.costSnapshot}), 0)` })
+      .select({ total: sql<string | null>`sum(${agentRuns.costSnapshot})` })
       .from(agentRuns)
       .where(and(eq(agentRuns.orgId, orgId), gte(agentRuns.createdAt, monthStart)));
-    const spent = Number(row?.total ?? 0);
-    if (spent >= deps.costCapUsd) {
+    const spent = row?.total === null || row?.total === undefined ? null : Number(row.total);
+    if (isOverCostCap(spent, cap)) {
       throw badRequest(
         "Você atingiu o limite de custo de análise deste período. Ele renova no próximo mês.",
       );
@@ -105,11 +125,9 @@ export function createRunsService(deps: RunsDeps) {
   }
 
   /**
-   * Impede runs simultâneos na mesma conta (custo Meta/LLM + confusão).
-   * NOTA: check-then-insert sem transação → há janela TOCTOU (2 POSTs concorrentes
-   * podem ambos passar). Aceitável na 3a (on-demand; o front também desabilita o
-   * botão). Fatia 5a fecha a janela com índice único parcial em
-   * `agent_runs(agent_id) WHERE status IN (in-flight)` ou advisory lock.
+   * Impede runs simultâneos na mesma conta (pré-check amigável). A garantia real é
+   * o índice único parcial em `agent_runs` (in-flight por agente) — o insert do
+   * trigger captura a violação e vira conflito (fecha o TOCTOU cron×manual).
    */
   async function assertNoRunInFlight(orgId: OrgId, agentId: string): Promise<void> {
     const [running] = await deps.db
@@ -137,6 +155,16 @@ export function createRunsService(deps: RunsDeps) {
   }
 
   return { trigger, latest, list, timeline };
+}
+
+/** Detecta violação de unique constraint do Postgres (código 23505). */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "23505"
+  );
 }
 
 type AgentRunRow = typeof agentRuns.$inferSelect;

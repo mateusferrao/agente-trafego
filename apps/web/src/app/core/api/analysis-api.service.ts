@@ -5,6 +5,7 @@ import type {
   AgentGoalsInput,
   AgentSummary,
   LatestRunOutput,
+  SetPausedInput,
   TriggerRunOutput,
 } from './generated';
 
@@ -22,6 +23,13 @@ export class AnalysisApiService extends BaseApiService {
   /** `PUT /api/accounts/:id/agent/goals` — atualiza a meta (CPA/ROAS). */
   updateGoals(accountId: string, goals: AgentGoalsInput): Observable<AgentSummary> {
     return this.put<AgentSummary, AgentGoalsInput>(['/accounts', accountId, 'agent', 'goals'], goals);
+  }
+
+  /** `PUT /api/accounts/:id/agent/paused` — pausa/retoma as análises automáticas. */
+  setPaused(accountId: string, paused: boolean): Observable<AgentSummary> {
+    return this.put<AgentSummary, SetPausedInput>(['/accounts', accountId, 'agent', 'paused'], {
+      paused,
+    });
   }
 
   /** `POST /api/accounts/:id/runs` — dispara "Analisar agora". */

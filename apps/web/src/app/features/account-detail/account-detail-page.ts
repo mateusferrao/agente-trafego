@@ -139,6 +139,19 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
         </div>
       </section>
 
+      <!-- Freio self-service: pausar as análises automáticas (§8 kill-switch) -->
+      <section class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-panel p-5">
+        <div class="flex flex-col gap-1">
+          <h2 class="font-brand text-sm font-semibold text-ink">Análises automáticas</h2>
+          <p class="text-xs text-muted">
+            {{ paused() ? 'Pausadas — o agente não analisa sozinho nem te avisa no WhatsApp.' : 'Ativas — o agente analisa no ritmo configurado e te avisa no WhatsApp.' }}
+          </p>
+        </div>
+        <button appButton variant="secondary" type="button" [disabled]="pausing()" (click)="togglePaused()">
+          {{ pausing() ? 'Salvando…' : paused() ? 'Retomar' : 'Pausar' }}
+        </button>
+      </section>
+
       <!-- Erro do disparo (ex: já em andamento / limite de custo) -->
       @if (triggerError()) {
         <p class="rounded-lg border border-line bg-panel p-4 text-sm text-danger-strong">
@@ -257,6 +270,8 @@ export class AccountDetailPage {
   protected readonly savingGoals = signal(false);
   protected readonly goalsSaved = signal(false);
   protected readonly goalsError = signal<string | null>(null);
+  protected readonly paused = signal(false);
+  protected readonly pausing = signal(false);
 
   /** Diagnóstico único da conta (só quando o run trouxe scorecard). */
   protected readonly scorecard = computed<Scorecard | null>(() => this.run()?.metrics?.scorecard ?? null);
@@ -349,6 +364,18 @@ export class AccountDetailPage {
     });
   }
 
+  protected togglePaused(): void {
+    const next = !this.paused();
+    this.pausing.set(true);
+    this.analysisApi.setPaused(this.accountId, next).subscribe({
+      next: (agent) => {
+        this.paused.set(agent.paused);
+        this.pausing.set(false);
+      },
+      error: () => this.pausing.set(false),
+    });
+  }
+
   protected analyze(): void {
     this.triggerError.set(null);
     this.analyzing.set(true);
@@ -370,6 +397,7 @@ export class AccountDetailPage {
       next: (agent) => {
         this.targetCPA.set(agent.goals.targetCPA ?? null);
         this.targetROAS.set(agent.goals.targetROAS ?? null);
+        this.paused.set(agent.paused);
       },
       // meta é opcional; se não carregar, os campos ficam em branco (o usuário
       // ainda pode definir e salvar). Falha silenciosa consciente, sem travar a tela.

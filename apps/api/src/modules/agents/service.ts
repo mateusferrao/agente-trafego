@@ -28,12 +28,17 @@ export function createAgentsService(deps: AgentsDeps) {
     if (!account) throw notFound("Conta não encontrada.");
 
     const [existing] = await deps.db
-      .select({ id: agents.id, archetype: agents.archetype, goals: agents.goals })
+      .select({ id: agents.id, archetype: agents.archetype, goals: agents.goals, status: agents.status })
       .from(agents)
       .where(and(eq(agents.adAccountId, accountId), eq(agents.orgId, orgId)))
       .limit(1);
     if (existing) {
-      return { agentId: existing.id, archetype: existing.archetype, goals: existing.goals };
+      return {
+        agentId: existing.id,
+        archetype: existing.archetype,
+        goals: existing.goals,
+        paused: existing.status === "paused",
+      };
     }
 
     const defaults = archetypeDefaults(DEFAULT_ARCHETYPE_KEY);
@@ -48,10 +53,12 @@ export function createAgentsService(deps: AgentsDeps) {
         tone: defaults.tone,
         goals: defaults.goals,
         autonomyPolicy: defaults.autonomyPolicy,
+        // ativo ao ser criado → o cron passa a cuidar da conta (pausável pelo dono).
+        status: "active",
       })
       .returning({ id: agents.id });
     if (!row) throw notFound("Falha ao criar o agente.");
-    return { agentId: row.id, archetype: defaults.key, goals: defaults.goals };
+    return { agentId: row.id, archetype: defaults.key, goals: defaults.goals, paused: false };
   }
 
   /** Atualiza a meta do agente (cria se necessário) — org-scoped. */
@@ -73,5 +80,15 @@ export function createAgentsService(deps: AgentsDeps) {
     return { ...summary, goals: nextGoals };
   }
 
-  return { getOrCreateForAccount, updateGoals };
+  /** Pausa/retoma as análises automáticas (freio self-service do beta — §8 kill-switch). */
+  async function setPaused(orgId: OrgId, accountId: string, paused: boolean): Promise<AgentSummary> {
+    const summary = await getOrCreateForAccount(orgId, accountId);
+    await deps.db
+      .update(agents)
+      .set({ status: paused ? "paused" : "active", updatedAt: sql`now()` })
+      .where(and(eq(agents.id, summary.agentId), eq(agents.orgId, orgId)));
+    return { ...summary, paused };
+  }
+
+  return { getOrCreateForAccount, updateGoals, setPaused };
 }

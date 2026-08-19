@@ -2,16 +2,38 @@ import type {
   ChannelInstanceRef,
   InboundMessage,
   InstanceState,
+  InstanceStatus,
   MessagingChannelPort,
   OutboundMessage,
 } from "@trafego/shared/ports";
-import { EvolutionClient } from "./client.js";
+import { EvolutionApiError, EvolutionClient } from "./client.js";
 import { EvolutionSender } from "./send.js";
 import { parseInbound } from "./webhook.js";
 
 export interface EvolutionAdapterDeps {
   readonly client: EvolutionClient;
   readonly sender?: EvolutionSender;
+}
+
+/** Integração Baileys (WhatsApp não-oficial) — parâmetro de criação da instância. */
+const CREATE_INTEGRATION = "WHATSAPP-BAILEYS";
+const HTTP_NOT_FOUND = 404;
+
+/** Forma (parcial) das respostas da Evolution que consumimos. Vocabulário do provider fica aqui. */
+interface EvolutionStateResponse {
+  readonly instance?: { readonly state?: string };
+}
+interface EvolutionConnectResponse {
+  readonly base64?: string; // QR em data-URL base64 (quando desconectado)
+  readonly code?: string;
+  readonly instance?: { readonly state?: string };
+}
+
+/** Mapeia o `state` da Evolution (`open|connecting|close`) → status neutro da porta. */
+function mapState(state: string | undefined): InstanceStatus {
+  if (state === "open") return "connected";
+  if (state === "connecting") return "connecting";
+  return "disconnected";
 }
 
 /**
@@ -28,7 +50,6 @@ export class EvolutionAdapter implements MessagingChannelPort {
   }
 
   async sendMessage(instance: ChannelInstanceRef, msg: OutboundMessage): Promise<void> {
-    // TODO: delega ao sender (message/sendText).
     return this.sender.sendText(instance, msg);
   }
 
@@ -37,13 +58,43 @@ export class EvolutionAdapter implements MessagingChannelPort {
     return parseInbound(payload);
   }
 
+  /** Inicia a conexão: cria a instância se não existir, retorna o QR (ou conectado). */
   async connect(instance: ChannelInstanceRef): Promise<InstanceState> {
-    // TODO: GET instance/connect/{instanceId} → { qrCode(base64), status }.
-    throw new Error("not implemented");
+    const id = encodeURIComponent(instance.instanceId);
+    await this.ensureInstance(instance.instanceId);
+    const res = await this.client.request<EvolutionConnectResponse>({
+      method: "GET",
+      path: `instance/connect/${id}`,
+    });
+    // já pareado → conectado; senão, entrega o QR p/ o usuário escanear.
+    if (res.instance?.state === "open") return { status: "connected" };
+    return res.base64
+      ? { status: "connecting", qrCode: res.base64 }
+      : { status: mapState(res.instance?.state) };
   }
 
   async getState(instance: ChannelInstanceRef): Promise<InstanceState> {
-    // TODO: GET instance/connectionState/{instanceId} → mapear p/ InstanceStatus.
-    throw new Error("not implemented");
+    const res = await this.client.request<EvolutionStateResponse>({
+      method: "GET",
+      path: `instance/connectionState/${encodeURIComponent(instance.instanceId)}`,
+    });
+    return { status: mapState(res.instance?.state) };
+  }
+
+  /** Cria a instância na Evolution se ainda não existir (idempotente por nome). */
+  private async ensureInstance(instanceId: string): Promise<void> {
+    try {
+      await this.client.request<EvolutionStateResponse>({
+        method: "GET",
+        path: `instance/connectionState/${encodeURIComponent(instanceId)}`,
+      });
+    } catch (error) {
+      if (!(error instanceof EvolutionApiError) || error.httpStatus !== HTTP_NOT_FOUND) throw error;
+      await this.client.request({
+        method: "POST",
+        path: "instance/create",
+        body: { instanceName: instanceId, integration: CREATE_INTEGRATION, qrcode: true },
+      });
+    }
   }
 }

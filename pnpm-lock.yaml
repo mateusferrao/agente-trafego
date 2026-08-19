@@ -39,6 +39,9 @@ importers:
       '@trafego/ads-meta':
         specifier: workspace:*
         version: link:../../packages/ads-meta
+      '@trafego/channel-evolution':
+        specifier: workspace:*
+        version: link:../../packages/channel-evolution
       '@trafego/config':
         specifier: workspace:*
         version: link:../../packages/config
@@ -51,6 +54,9 @@ importers:
       '@trafego/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@trafego/metering-postgres':
+        specifier: workspace:*
+        version: link:../../packages/metering-postgres
       '@trafego/scheduler-bullmq':
         specifier: workspace:*
         version: link:../../packages/scheduler-bullmq
@@ -194,6 +200,9 @@ importers:
       '@trafego/llm-openrouter':
         specifier: workspace:*
         version: link:../../packages/llm-openrouter
+      '@trafego/metering-postgres':
+        specifier: workspace:*
+        version: link:../../packages/metering-postgres
       '@trafego/scheduler-bullmq':
         specifier: workspace:*
         version: link:../../packages/scheduler-bullmq
@@ -288,6 +297,18 @@ importers:
       '@trafego/shared':
         specifier: workspace:*
         version: link:../shared
+
+  packages/metering-postgres:
+    dependencies:
+      '@trafego/db':
+        specifier: workspace:*
+        version: link:../db
+      '@trafego/shared':
+        specifier: workspace:*
+        version: link:../shared
+      drizzle-orm:
+        specifier: ^0.38.0
+        version: 0.38.4(@types/pg@8.23.1)(pg@8.23.0)(react@19.2.8)
 
   packages/scheduler-bullmq:
     dependencies:

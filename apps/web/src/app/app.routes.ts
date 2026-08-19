@@ -40,6 +40,11 @@ export const routes: Routes = [
           import('./features/integrations/integrations-page').then((m) => m.IntegrationsPage),
       },
       {
+        path: 'whatsapp',
+        title: 'WhatsApp — Agente de Tráfego',
+        loadComponent: () => import('./features/whatsapp/whatsapp-page').then((m) => m.WhatsappPage),
+      },
+      {
         path: 'settings',
         title: 'Configurações — Agente de Tráfego',
         loadComponent: () =>

@@ -76,7 +76,22 @@ function makeHarness(opts: { rows?: InsightRow[]; tokenInvalid?: boolean } = {})
       approval: {} as never,
     },
     insightsSync: { sync: vi.fn(async () => ({ partial: false, tokenInvalid: opts.tokenInvalid ?? false, snapshotsWritten: rows.length })) } as never,
-    analysis: { model: "m", windowDays: 7, baselineDays: 7, topN: 5, reviewEnabled: true, maxOutputTokens: 4000 },
+    analysis: {
+      model: "m",
+      unitModel: "m",
+      messageModel: "m",
+      visionModel: "m",
+      windowDays: 7,
+      baselineDays: 7,
+      topN: 5,
+      reviewEnabled: true,
+      maxOutputTokens: 4000,
+      maxCreativesVision: 8,
+      executionPolicy: "deep_periodic_incremental",
+      deepIntervalDays: 7,
+      materialChangePct: 15,
+    },
+    webOrigin: "https://app.example.com",
     checkpointer: undefined,
   } as unknown as WorkerDeps;
 
@@ -105,7 +120,9 @@ async function runChain(h: Harness): Promise<AccountAnalysisStateType> {
   apply(await n.llmAnalyze(state));
   apply(await n.reviewAnalysis(state));
   apply(await n.buildRecommendations(state));
+  apply(await n.writeMessage(state));
   apply(await n.record(state));
+  apply(await n.notify(state));
   return state;
 }
 

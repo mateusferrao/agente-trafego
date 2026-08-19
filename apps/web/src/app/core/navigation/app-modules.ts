@@ -62,6 +62,14 @@ export const APP_MODULE_GROUPS: readonly AppModuleGroup[] = [
         description: 'Conexões com Meta e canal WhatsApp.',
       },
       {
+        id: 'whatsapp',
+        label: 'WhatsApp',
+        route: '/whatsapp',
+        icon: 'heroChatBubbleLeftRight',
+        exact: false,
+        description: 'Conectar o número e receber as análises por mensagem.',
+      },
+      {
         id: 'settings',
         label: 'Configurações',
         route: '/settings',
