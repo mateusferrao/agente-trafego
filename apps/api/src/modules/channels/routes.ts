@@ -14,4 +14,9 @@ export const channelsRoutes: FastifyPluginAsync = async (app) => {
   app.get("/channels/status", guard, async (request) => {
     return service.status(orgIdOf(request));
   });
+
+  // Desconecta (logout) o número da org — mantém a instância p/ re-parear.
+  app.post("/channels/disconnect", guard, async (request) => {
+    return service.disconnect(orgIdOf(request));
+  });
 };

@@ -52,4 +52,6 @@ export interface MessagingChannelPort {
   parseInbound(payload: unknown): InboundMessage | null;
   connect(instance: ChannelInstanceRef): Promise<InstanceState>;
   getState(instance: ChannelInstanceRef): Promise<InstanceState>;
+  /** Desfaz o pareamento do número (logout), mantendo a instância p/ re-parear. */
+  disconnect(instance: ChannelInstanceRef): Promise<void>;
 }

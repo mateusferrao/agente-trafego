@@ -21,6 +21,11 @@ export class ChannelApiService extends BaseApiService {
     return this.post<ChannelStateOutput, Record<string, never>>(['/channels', 'connect'], {});
   }
 
+  /** `POST /api/channels/disconnect` — logout do número (mantém a instância). */
+  disconnect(): Observable<ChannelStateOutput> {
+    return this.post<ChannelStateOutput, Record<string, never>>(['/channels', 'disconnect'], {});
+  }
+
   /**
    * `GET /api/channels/status` — estado atual do canal (para polling do QR).
    * `silent` suprime o toast global de erro: o polling reage a blip transitório

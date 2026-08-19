@@ -215,6 +215,12 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   });
   registry.registerPath({
     method: "post",
+    path: "/api/channels/disconnect",
+    tags: ["channels"],
+    responses: { 200: jsonRes("canal desconectado (logout do número)", ChannelStateOutput) },
+  });
+  registry.registerPath({
+    method: "post",
     path: "/api/contacts/verify/start",
     tags: ["contacts"],
     request: jsonBody(StartVerificationInput),

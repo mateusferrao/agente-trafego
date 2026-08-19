@@ -1513,6 +1513,25 @@
         }
       }
     },
+    "/api/channels/disconnect": {
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "responses": {
+          "200": {
+            "description": "canal desconectado (logout do número)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelStateOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/contacts/verify/start": {
       "post": {
         "tags": [

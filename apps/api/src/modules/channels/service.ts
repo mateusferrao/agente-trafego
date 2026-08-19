@@ -76,6 +76,20 @@ export function createChannelsService(deps: ChannelsDeps) {
       await persistState(orgId, state);
       return state;
     },
+
+    /** Desfaz o pareamento do número da org (logout). Instância fica p/ re-parear. */
+    async disconnect(orgId: OrgId): Promise<InstanceState> {
+      const [row] = await deps.db
+        .select({ evolutionInstance: channelInstances.evolutionInstance })
+        .from(channelInstances)
+        .where(eq(channelInstances.orgId, orgId))
+        .limit(1);
+      if (!row) return { status: "disconnected" };
+      await deps.messaging.disconnect({ instanceId: row.evolutionInstance });
+      const state: InstanceState = { status: "disconnected" };
+      await persistState(orgId, state);
+      return state;
+    },
   };
 }
 

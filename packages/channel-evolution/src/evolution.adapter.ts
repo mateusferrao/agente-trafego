@@ -38,6 +38,22 @@ function mapState(state: string | undefined): InstanceStatus {
 }
 
 /**
+ * Extrai o número dono da instância do payload do `fetchInstances` (varia entre
+ * versões da Evolution) — defensivo: tenta `ownerJid`/`owner` no objeto ou em
+ * `instance{}`, tira o sufixo `@s.whatsapp.net`, valida DDI+dígitos. Falha → undefined.
+ */
+function extractOwnerPhone(res: unknown): string | undefined {
+  const first = Array.isArray(res) ? res[0] : res;
+  if (typeof first !== "object" || first === null) return undefined;
+  const record = first as Record<string, unknown>;
+  const nested = typeof record["instance"] === "object" ? (record["instance"] as Record<string, unknown>) : {};
+  const raw = record["ownerJid"] ?? record["owner"] ?? nested["ownerJid"] ?? nested["owner"];
+  if (typeof raw !== "string") return undefined;
+  const digits = raw.split("@")[0]?.replace(/\D/g, "") ?? "";
+  return digits.length >= 8 && digits.length <= 15 ? `+${digits}` : undefined;
+}
+
+/**
  * Traduz qualquer falha ao falar com a Evolution (HTTP ou rede/`fetch failed`)
  * para o erro neutro da porta — a casca vira mensagem amigável sem conhecer o
  * provider. Preserva `MessagingChannelError` já tipado.
@@ -83,8 +99,8 @@ export class EvolutionAdapter implements MessagingChannelPort {
         method: "GET",
         path: `instance/connect/${id}`,
       });
-      // já pareado → conectado; senão, entrega o QR p/ o usuário escanear.
-      if (res.instance?.state === "open") return { status: "connected" };
+      // já pareado → conectado (com o número pareado); senão, entrega o QR.
+      if (res.instance?.state === "open") return this.connectedState(instance.instanceId);
       return res.base64
         ? { status: "connecting", qrCode: res.base64 }
         : { status: mapState(res.instance?.state) };
@@ -99,8 +115,41 @@ export class EvolutionAdapter implements MessagingChannelPort {
         method: "GET",
         path: `instance/connectionState/${encodeURIComponent(instance.instanceId)}`,
       });
-      return { status: mapState(res.instance?.state) };
+      const status = mapState(res.instance?.state);
+      return status === "connected" ? this.connectedState(instance.instanceId) : { status };
     } catch (error) {
+      throw toChannelError(error);
+    }
+  }
+
+  /** Estado conectado enriquecido com o número pareado (best-effort — não bloqueia). */
+  private async connectedState(instanceId: string): Promise<InstanceState> {
+    const phone = await this.fetchOwnerPhone(instanceId);
+    return phone ? { status: "connected", phone } : { status: "connected" };
+  }
+
+  /** Número dono da instância (quem parear no QR), via fetchInstances. Falha → undefined. */
+  private async fetchOwnerPhone(instanceId: string): Promise<string | undefined> {
+    try {
+      const res = await this.client.request<unknown>({
+        method: "GET",
+        path: `instance/fetchInstances?instanceName=${encodeURIComponent(instanceId)}`,
+      });
+      return extractOwnerPhone(res);
+    } catch {
+      return undefined; // enriquecimento é opcional; não derruba o status
+    }
+  }
+
+  /** Logout do número (mantém a instância p/ re-parear). 404 = já desconectado (no-op). */
+  async disconnect(instance: ChannelInstanceRef): Promise<void> {
+    try {
+      await this.client.request({
+        method: "DELETE",
+        path: `instance/logout/${encodeURIComponent(instance.instanceId)}`,
+      });
+    } catch (error) {
+      if (error instanceof EvolutionApiError && error.httpStatus === HTTP_NOT_FOUND) return;
       throw toChannelError(error);
     }
   }
