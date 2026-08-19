@@ -1,5 +1,5 @@
 import { createHash, randomInt, timingSafeEqual } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { contacts, type Database } from "@trafego/db";
 import type { OrgId } from "@trafego/shared/types";
 import type { MessagingChannelPort } from "@trafego/shared/ports";
@@ -88,7 +88,7 @@ export function createContactsService(deps: ContactsDeps) {
 
     await deps.messaging.sendMessage(instance, {
       to: input.phone,
-      text: `Seu código de verificação do Agente de Tráfego é ${code}. Ele expira em 10 minutos.`,
+      text: `Seu código de verificação do Agente de Tráfego é ${code}. Ele expira em ${CODE_TTL_MS / 60000} minutos.`,
     });
     return { sent: true, expiresAt: expiresAt.toISOString() };
   }
@@ -157,6 +157,12 @@ export function createContactsService(deps: ContactsDeps) {
         updatedAt: sql`now()`,
       })
       .where(and(eq(contacts.id, contact.id), eq(contacts.orgId, orgId)));
+    // 1 destinatário por org (MVP): desverifica os outros → getRecipient/remove/notify
+    // ficam determinísticos (todos leem "verified=true" limit 1).
+    await deps.db
+      .update(contacts)
+      .set({ verified: false, updatedAt: sql`now()` })
+      .where(and(eq(contacts.orgId, orgId), eq(contacts.verified, true), ne(contacts.id, contact.id)));
     return { verified: true };
   }
 

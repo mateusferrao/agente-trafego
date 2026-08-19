@@ -56,9 +56,15 @@ export class ChannelApiService extends BaseApiService {
     );
   }
 
-  /** `GET /api/contacts/recipient` — destinatário atual (verificado) da org. */
-  getRecipient(): Observable<RecipientOutput> {
-    return this.get<RecipientOutput>(['/contacts', 'recipient']);
+  /**
+   * `GET /api/contacts/recipient` — destinatário atual (verificado) da org.
+   * `silent` suprime o toast global (carga em background ao abrir a tela).
+   */
+  getRecipient(silent = false): Observable<RecipientOutput> {
+    return this.get<RecipientOutput>(
+      ['/contacts', 'recipient'],
+      silent ? { context: silentApiContext() } : {},
+    );
   }
 
   /** `POST /api/contacts/recipient/remove` — remove o destinatário (trocar número). */

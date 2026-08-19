@@ -134,7 +134,7 @@ function onlyDigits(value: string): string {
               appButton
               variant="secondary"
               type="button"
-              [disabled]="!connected() || !phoneValid() || sendingCode()"
+              [disabled]="!connected() || !phoneValid() || recipientIsPaired() || sendingCode()"
               (click)="sendCode()"
             >
               {{ sendingCode() ? 'Enviando…' : codeSent() ? 'Reenviar código' : 'Enviar código' }}
@@ -157,7 +157,7 @@ function onlyDigits(value: string): string {
               </p>
             } @else {
               <p class="text-xs text-muted">
-                Código enviado para {{ phone() }} — válido por {{ remainingLabel() }}. Digite-o abaixo.
+                Código enviado para {{ sentPhone() }} — válido por {{ remainingLabel() }}. Digite-o abaixo.
               </p>
             }
             <div class="flex flex-wrap items-end gap-3">
@@ -205,6 +205,8 @@ export class WhatsappConnect {
   protected readonly pairedPhone = signal<string | null>(null);
 
   protected readonly phone = signal('');
+  /** Número para o qual o código foi de fato enviado (imune a edições no input). */
+  protected readonly sentPhone = signal('');
   protected readonly code = signal('');
   protected readonly sendingCode = signal(false);
   protected readonly codeSent = signal(false);
@@ -247,8 +249,9 @@ export class WhatsappConnect {
       },
       error: () => this.loading.set(false),
     });
-    // reflete o destinatário já verificado (persiste ao reabrir a tela).
-    this.api.getRecipient().subscribe({
+    // reflete o destinatário já verificado (persiste ao reabrir a tela). silent:
+    // é carga de fundo — falha não deve estourar toast ao abrir a tela.
+    this.api.getRecipient(true).subscribe({
       next: (r) => {
         if (r.recipient?.verified) {
           this.verified.set(true);
@@ -262,6 +265,10 @@ export class WhatsappConnect {
   private startCountdown(expiresAtIso: string): void {
     this.stopCountdown();
     const expiresMs = Date.parse(expiresAtIso);
+    if (Number.isNaN(expiresMs)) {
+      this.remainingSec.set(0); // ISO inválido → trata como expirado (força reenviar)
+      return;
+    }
     const tick = (): void => {
       this.remainingSec.set(Math.max(0, Math.round((expiresMs - Date.now()) / 1000)));
       if (this.remainingSec() <= 0) this.stopCountdown();
@@ -303,6 +310,10 @@ export class WhatsappConnect {
         this.disconnecting.set(false);
         this.confirmDisconnect.set(false);
         this.connectStarted = false; // volta ao fluxo inicial (parear de novo)
+        // limpa a verificação em andamento (o passo 2 fica dimmed sem canal).
+        this.stopCountdown();
+        this.codeSent.set(false);
+        this.code.set('');
         this.applyState(s); // status disconnected → some o "conectado", mostra "Conectar"
         toast.success('WhatsApp desconectado');
       },
@@ -325,6 +336,7 @@ export class WhatsappConnect {
     this.api.startVerification({ phone: this.phone() }).subscribe({
       next: (r) => {
         this.sendingCode.set(false);
+        this.sentPhone.set(this.phone()); // congela o número que recebeu o código
         this.codeSent.set(true);
         this.startCountdown(r.expiresAt); // valida a partir do expiresAt do backend
         toast.success('Código enviado para o seu WhatsApp');
@@ -336,7 +348,8 @@ export class WhatsappConnect {
 
   protected confirm(): void {
     this.confirming.set(true);
-    this.api.confirmVerification({ phone: this.phone(), code: this.code() }).subscribe({
+    // confirma contra o número que recebeu o código (não o que está no input agora).
+    this.api.confirmVerification({ phone: this.sentPhone(), code: this.code() }).subscribe({
       next: (r) => {
         this.confirming.set(false);
         this.verified.set(r.verified);
