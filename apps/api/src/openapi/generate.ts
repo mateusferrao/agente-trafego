@@ -24,6 +24,7 @@ import {
 import { agentGoalsInput, agentSummary, setPausedInput } from "../modules/agents/schema.js";
 import { latestRunOutput, triggerRunOutput } from "../modules/runs/schema.js";
 import { channelStateOutput } from "../modules/channels/schema.js";
+import { feedbackInput, feedbackOutput } from "../modules/recommendations/schema.js";
 import {
   startVerificationInput,
   startVerificationOutput,
@@ -62,6 +63,8 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const StartVerificationOutput = registry.register("StartVerificationOutput", startVerificationOutput);
   const ConfirmVerificationInput = registry.register("ConfirmVerificationInput", confirmVerificationInput);
   const ConfirmVerificationOutput = registry.register("ConfirmVerificationOutput", confirmVerificationOutput);
+  const FeedbackInput = registry.register("FeedbackInput", feedbackInput);
+  const FeedbackOutput = registry.register("FeedbackOutput", feedbackOutput);
 
   const accountParams = z.object({ id: z.string() });
 
@@ -220,6 +223,13 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     tags: ["runs"],
     request: { params: accountParams },
     responses: { 200: jsonRes("último run + recomendações", LatestRunOutput) },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/recommendations/{id}/feedback",
+    tags: ["recommendations"],
+    request: { params: z.object({ id: z.string() }), ...jsonBody(FeedbackInput) },
+    responses: { 200: jsonRes("feedback registrado", FeedbackOutput) },
   });
   registry.registerPath({
     method: "get",

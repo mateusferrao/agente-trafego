@@ -285,15 +285,6 @@ export function summarizeRest(
   };
 }
 
-// ─── selectCreatives ──────────────────────────────────────────────────────
-/**
- * Seleção de criativos p/ visão. Só faz sentido quando a análise de visão existe
- * (Fatia 3b, com `ANALYSIS_MAX_CREATIVES_VISION`); até lá, vazio. `getCreatives`
- * (capacidade) já existe no adapter (2a), mas não entra no brief ainda.
- */
-export function selectCreatives(): Creative[] {
-  return [];
-}
 
 // ─── assembleBrief ────────────────────────────────────────────────────────
 export interface AssembleBriefInput {
@@ -358,7 +349,12 @@ export interface BuildAccountBriefInput {
 
 export type BuildAccountBriefResult =
   | { readonly status: "empty" }
-  | { readonly status: "ok"; readonly brief: AccountBrief };
+  | {
+      readonly status: "ok";
+      readonly brief: AccountBrief;
+      /** TODAS as unidades de anúncio (não só o top-N do brief) — base do map-reduce (3b-2). */
+      readonly adUnits: readonly EntitySummary[];
+    };
 
 const SEGMENT_LEVELS = ["campaign", "adset", "ad"] as const;
 const DELTA_METRICS = ["spend", "cpa", "roas", "ctr", "cpc"] as const;
@@ -420,13 +416,13 @@ export function buildAccountBrief(input: BuildAccountBriefInput): BuildAccountBr
     ads: selectedByLevel.get("ad") ?? [],
     anomalies,
     ...(accountFunnel ? { funnel: accountFunnel } : {}),
-    creatives: selectCreatives(), // visão = 3b
+    creatives: [], // visão entra por-unidade no map-reduce (3b-2), não no brief da conta
     playbookCandidates: input.playbookCandidates,
     memory: input.memory ?? EMPTY_MEMORY,
     aggregatesRest,
   });
 
-  return { status: "ok", brief };
+  return { status: "ok", brief, adUnits: allByLevel.get("ad") ?? [] };
 }
 
 /** Agrega o funil neutro por `nível:entidade` a partir das linhas (soma dias). */

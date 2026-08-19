@@ -2,8 +2,8 @@
 // output (json_schema), o formato JSON vai como TEXTO no prompt. Padrões adotados
 // do automato-api: GROUNDING_RULE + FINDINGS_METRIC_INSTRUCTION.
 
-import type { AccountBrief } from "@trafego/shared";
-import type { AnalysisOutput } from "@trafego/shared/schemas";
+import type { AccountBrief, CreativeVisionResult, EntitySummary } from "@trafego/shared";
+import type { AnalysisOutput, UnitAnalysis } from "@trafego/shared/schemas";
 import type { LLMMessage } from "@trafego/shared/ports";
 import type { FindingIssue } from "@trafego/core";
 
@@ -53,6 +53,74 @@ export function buildAnalysisMessages(systemPrompt: string, brief: AccountBrief)
     OUTPUT_SHAPE,
     "",
     "targetEntity: use apenas ids que aparecem em `segments` do briefing; senão null.",
+  ].join("\n");
+  return [
+    { role: "system", content: system },
+    { role: "user", content: user },
+  ];
+}
+
+/** Shape do JSON por-unidade (map) — sem scorecard (é da conta, na síntese). */
+const UNIT_OUTPUT_SHAPE = `{
+  "summary": "string (1-2 frases sobre este anúncio, cite números)",
+  "findings": [ { "id": "string", "title": "string", "detail": "string", "severity": "info|warning|critical", "metricRefs": [{ "label": "string", "value": number|string }] } ],
+  "recommendations": [ { "id": "string", "title": "string", "rationale": "string", "priority": "high|medium|low", "actionType": "pause|resume|increase_budget|decrease_budget|review_creative|review_audience|investigate|keep", "targetEntity": { "level": "ad", "externalId": "string" } | null, "budgetChangePct": number | null } ],
+  "flags": ["string"]
+}`;
+
+/**
+ * Mensagens do MAPA (análise de UM anúncio). Contexto pequeno = alta precisão.
+ * Inclui a visão do criativo (quando houver) como texto (já resolvida/cacheada).
+ */
+export function buildUnitMessages(
+  systemPrompt: string,
+  unit: EntitySummary,
+  vision: readonly CreativeVisionResult[],
+  accountContext: { readonly currency: string; readonly window: string },
+): LLMMessage[] {
+  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
+  const user = [
+    jsonBlock("Anúncio a analisar (dados curados — analise SÓ com base neles)", unit),
+    vision.length > 0 ? jsonBlock("Análise do(s) criativo(s) deste anúncio (visão)", vision) : "",
+    jsonBlock("Contexto da conta", accountContext),
+    "",
+    "targetEntity: use o id deste anúncio quando a ação for sobre ele; senão null.",
+    "Responda SOMENTE com JSON válido (sem markdown), no formato:",
+    UNIT_OUTPUT_SHAPE,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return [
+    { role: "system", content: system },
+    { role: "user", content: user },
+  ];
+}
+
+/**
+ * Mensagens da SÍNTESE (reduce): consolida as análises por-anúncio + o contexto
+ * da conta num diagnóstico único (scorecard + recomendações cross-entidade).
+ */
+export function buildSynthesisMessages(
+  systemPrompt: string,
+  brief: AccountBrief,
+  units: readonly UnitAnalysis[],
+): LLMMessage[] {
+  const system = [
+    systemPrompt,
+    "Você recebe análises por-anúncio + o contexto da conta. Consolide numa visão ÚNICA da conta: " +
+      "priorize o que mais importa, agrupe temas repetidos e proponha as recomendações de maior impacto.",
+    GROUNDING_RULE,
+    FUNNEL_NOTE,
+    FINDINGS_METRIC_INSTRUCTION,
+  ].join("\n\n");
+  const user = [
+    jsonBlock("Contexto da conta (totais, funil, tendências, anomalias)", brief),
+    jsonBlock("Análises por-anúncio (mapa)", units),
+    "",
+    "Responda SOMENTE com JSON válido (sem markdown), no formato:",
+    OUTPUT_SHAPE,
+    "",
+    "targetEntity: use apenas ids que aparecem em `segments` do contexto; senão null.",
   ].join("\n");
   return [
     { role: "system", content: system },

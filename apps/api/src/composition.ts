@@ -21,6 +21,7 @@ import { createChannelsService } from "./modules/channels/service.js";
 import { createContactsService } from "./modules/contacts/service.js";
 import { createAgentsService } from "./modules/agents/service.js";
 import { createApprovalsService } from "./modules/approvals/service.js";
+import { createRecommendationsService } from "./modules/recommendations/service.js";
 import { createRunsService } from "./modules/runs/service.js";
 import { createBillingService } from "./modules/billing/service.js";
 import { createWebhooksService } from "./modules/webhooks/service.js";
@@ -62,6 +63,7 @@ export interface Services {
   readonly contacts: ReturnType<typeof createContactsService>;
   readonly agents: ReturnType<typeof createAgentsService>;
   readonly approvals: ReturnType<typeof createApprovalsService>;
+  readonly recommendations: ReturnType<typeof createRecommendationsService>;
   readonly runs: ReturnType<typeof createRunsService>;
   readonly billing: ReturnType<typeof createBillingService>;
   readonly webhooks: ReturnType<typeof createWebhooksService>;
@@ -144,6 +146,7 @@ export function buildContainer(): Container {
     contacts: createContactsService({ db, messaging }),
     agents,
     approvals: createApprovalsService({ db, approvals }),
+    recommendations: createRecommendationsService({ db }),
     runs: createRunsService({
       db,
       scheduler,

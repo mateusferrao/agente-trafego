@@ -11,13 +11,15 @@ import type {
   AgentGoals,
   AutonomyPolicy,
   CandidateAction,
+  Creative,
   Finding,
   GuardrailConfig,
   InsightRow,
   PlaybookRule,
 } from "@trafego/shared/types";
-import type { AnalysisOutput } from "@trafego/shared/schemas";
+import type { AnalysisOutput, UnitAnalysis } from "@trafego/shared/schemas";
 import type { ResolvedAnalysisConfig } from "../../modules/analysis/config.js";
+import type { SaveEntityAnalysis } from "../../modules/analysis/entity-analyses.repo.js";
 
 /** Janela temporal resolvida (rótulo p/ o brief + datas p/ o fetch). */
 export interface AnalysisWindow {
@@ -44,6 +46,8 @@ export const AccountAnalysisState = Annotation.Root({
   // config congelada no início do run (reprodutibilidade — CLAUDE §6)
   goals: Annotation<AgentGoals>,
   playbookRules: Annotation<readonly PlaybookRule[]>,
+  // memória "rejeitado" (loop de feedback) — injetada no brief p/ não repetir vetos.
+  rejectedMemory: Annotation<readonly string[]>,
   guardrailConfig: Annotation<GuardrailConfig>,
   autonomyPolicy: Annotation<AutonomyPolicy>,
 
@@ -58,8 +62,12 @@ export const AccountAnalysisState = Annotation.Root({
   entities: Annotation<readonly AdEntity[]>,
   insights: Annotation<readonly InsightRow[]>,
   baselineInsights: Annotation<readonly InsightRow[]>,
+  creatives: Annotation<readonly Creative[]>,
   brief: Annotation<AccountBrief | null>,
   findings: Annotation<readonly Finding[]>,
+  // map-reduce (3b-2): análises por-anúncio (novas + herdadas) + as a persistir.
+  unitAnalyses: Annotation<readonly UnitAnalysis[]>,
+  freshUnits: Annotation<readonly SaveEntityAnalysis[]>,
   analysisOutput: Annotation<AnalysisOutput | null>,
   summary: Annotation<string>,
   usage: Annotation<AccumulatedTokenUsage | null>,

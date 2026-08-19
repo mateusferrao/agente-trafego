@@ -239,6 +239,35 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                       <span class="text-xs text-muted">{{ applicabilityNote }}</span>
                     </div>
                   }
+                  <!-- Feedback 👍/👎: ensina o agente (👎 vira memória "não repita isso") -->
+                  <div class="flex items-center gap-2 pt-1">
+                    <span class="text-xs text-muted">Essa sugestão faz sentido?</span>
+                    <button
+                      type="button"
+                      class="rounded-md border border-line px-2 py-1 text-xs"
+                      [class.bg-success-soft]="rec.vote === 'up'"
+                      [class.text-success-strong]="rec.vote === 'up'"
+                      [class.text-muted]="rec.vote !== 'up'"
+                      [disabled]="votingId() === rec.id"
+                      (click)="vote(rec, 'up')"
+                    >
+                      👍 Útil
+                    </button>
+                    <button
+                      type="button"
+                      class="rounded-md border border-line px-2 py-1 text-xs"
+                      [class.bg-danger-soft]="rec.vote === 'down'"
+                      [class.text-danger-strong]="rec.vote === 'down'"
+                      [class.text-muted]="rec.vote !== 'down'"
+                      [disabled]="votingId() === rec.id"
+                      (click)="vote(rec, 'down')"
+                    >
+                      👎 Não
+                    </button>
+                    @if (rec.vote === 'down') {
+                      <span class="text-xs text-muted">Anotado — o agente evita repetir isso.</span>
+                    }
+                  </div>
                 </article>
               }
             </div>
@@ -272,6 +301,7 @@ export class AccountDetailPage {
   protected readonly goalsError = signal<string | null>(null);
   protected readonly paused = signal(false);
   protected readonly pausing = signal(false);
+  protected readonly votingId = signal<string | null>(null);
 
   /** Diagnóstico único da conta (só quando o run trouxe scorecard). */
   protected readonly scorecard = computed<Scorecard | null>(() => this.run()?.metrics?.scorecard ?? null);
@@ -361,6 +391,21 @@ export class AccountDetailPage {
         this.savingGoals.set(false);
         this.goalsError.set(friendlyGoalsError(err));
       },
+    });
+  }
+
+  protected vote(rec: Recommendation, vote: 'up' | 'down'): void {
+    if (rec.vote === vote) return; // já votado assim
+    this.votingId.set(rec.id);
+    this.analysisApi.sendFeedback(rec.id, vote).subscribe({
+      next: () => {
+        // reflete o voto localmente (o backend já registrou + memória em 👎).
+        this.recommendations.update((list) =>
+          list.map((r) => (r.id === rec.id ? { ...r, vote } : r)),
+        );
+        this.votingId.set(null);
+      },
+      error: () => this.votingId.set(null),
     });
   }
 

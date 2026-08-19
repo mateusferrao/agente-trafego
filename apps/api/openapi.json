@@ -635,6 +635,16 @@
                     "target",
                     "params"
                   ]
+                },
+                "vote": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "up",
+                    "down"
+                  ]
                 }
               },
               "required": [
@@ -643,7 +653,8 @@
                 "rationale",
                 "riskLevel",
                 "applicability",
-                "proposedAction"
+                "proposedAction",
+                "vote"
               ]
             }
           }
@@ -727,6 +738,36 @@
         },
         "required": [
           "verified"
+        ]
+      },
+      "FeedbackInput": {
+        "type": "object",
+        "properties": {
+          "vote": {
+            "type": "string",
+            "enum": [
+              "up",
+              "down"
+            ]
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "vote"
+        ]
+      },
+      "FeedbackOutput": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
         ]
       }
     },
@@ -1245,6 +1286,44 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/LatestRunOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/recommendations/{id}/feedback": {
+      "post": {
+        "tags": [
+          "recommendations"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "feedback registrado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackOutput"
                 }
               }
             }

@@ -1,5 +1,5 @@
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
-import { agentRuns, agents, guardrailConfigs, recommendations, type Database } from "@trafego/db";
+import { agentRuns, agents, guardrailConfigs, recommendationFeedback, recommendations, type Database } from "@trafego/db";
 import { isOverCostCap, READ_ONLY_APPLICABILITY, resolveCostCapUsd } from "@trafego/core";
 import {
   AGENT_RUNS_QUEUE,
@@ -94,7 +94,24 @@ export function createRunsService(deps: RunsDeps) {
       .from(recommendations)
       .where(and(eq(recommendations.runId, run.id), eq(recommendations.orgId, orgId)));
 
-    return { run: toRunOutput(run), recommendations: recs.map(toRecommendationOutput) };
+    // votos (👍/👎) das recomendações deste run — o card do site reflete o estado.
+    const recIds = recs.map((r) => r.id);
+    const votes = new Map<string, "up" | "down">();
+    if (recIds.length > 0) {
+      const rows = await deps.db
+        .select({ recommendationId: recommendationFeedback.recommendationId, vote: recommendationFeedback.vote })
+        .from(recommendationFeedback)
+        .where(inArray(recommendationFeedback.recommendationId, recIds))
+        .orderBy(desc(recommendationFeedback.createdAt));
+      for (const row of rows) {
+        if (row.vote && !votes.has(row.recommendationId)) votes.set(row.recommendationId, row.vote);
+      }
+    }
+
+    return {
+      run: toRunOutput(run),
+      recommendations: recs.map((r) => toRecommendationOutput(r, votes.get(r.id) ?? null)),
+    };
   }
 
   /**
@@ -185,7 +202,7 @@ function toRunOutput(run: AgentRunRow): RunOutput {
   };
 }
 
-function toRecommendationOutput(rec: RecommendationRow): RecommendationOutput {
+function toRecommendationOutput(rec: RecommendationRow, vote: "up" | "down" | null): RecommendationOutput {
   const action = rec.proposedAction as Action | null;
   return {
     id: rec.id,
@@ -196,5 +213,6 @@ function toRecommendationOutput(rec: RecommendationRow): RecommendationOutput {
     proposedAction: action
       ? { type: action.type, target: { level: action.target.level, id: action.target.id }, params: action.params }
       : null,
+    vote,
   };
 }

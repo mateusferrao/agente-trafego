@@ -5,7 +5,6 @@ import {
   computeDerived,
   computeTrends,
   normalize,
-  selectCreatives,
   summarizeRest,
 } from "./index.js";
 
@@ -95,7 +94,7 @@ describe("assembleBrief", () => {
       adsets: [],
       ads: [],
       anomalies: [],
-      creatives: selectCreatives(),
+      creatives: [],
       playbookCandidates: [],
       memory: { objectives: [], pastActions: [], rejected: [] },
       aggregatesRest: { count: 0, spend: 0 },

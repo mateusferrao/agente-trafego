@@ -49,6 +49,8 @@ export interface WorkerDeps {
   readonly analysis: import("./modules/analysis/config.js").AnalysisDefaults;
   /** Origem do site p/ deep-link nas mensagens de WhatsApp. */
   readonly webOrigin: string;
+  /** Versão do analisador de visão (chave do cache de criativos — bump invalida). */
+  readonly visionAnalyzerVersion: number;
   /** Config da cadência/cron (3b) — defaults globais (env; cadência por-agente na Fatia 4). */
   readonly cron: {
     readonly defaultCron: string;
@@ -161,6 +163,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
       materialChangePct: env.ANALYSIS_MATERIAL_CHANGE_PCT,
     },
     webOrigin: env.WEB_ORIGIN,
+    visionAnalyzerVersion: env.CREATIVE_VISION_ANALYZER_VERSION,
     cron: {
       defaultCron: env.ANALYSIS_CRON_DEFAULT,
       tz: env.ANALYSIS_TZ,
