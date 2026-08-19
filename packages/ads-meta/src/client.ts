@@ -74,6 +74,25 @@ export interface BatchSubRequest {
   readonly body?: Readonly<Record<string, unknown>>;
 }
 
+/** Item da resposta do Batch API (na ordem das sub-requests). `body` = string JSON. */
+export interface BatchSubResponse {
+  readonly code: number;
+  readonly body: string;
+}
+
+/** Máximo de sub-requests por chamada Batch (limite da Meta). */
+const BATCH_MAX = 50;
+
+function chunkBatch<T>(items: readonly T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+function toStringRecord(record: Readonly<Record<string, unknown>>): Record<string, string> {
+  return Object.fromEntries(Object.entries(record).map(([k, v]) => [k, String(v)]));
+}
+
 /**
  * Versão pinada da Graph API — **acoplada ao código deste adapter** (escrito p/
  * v26). Não é env: mudar a versão exige revisar o adapter, não só o ambiente.
@@ -160,10 +179,41 @@ export class MetaGraphClient {
     return { data: body, usage: this.parseUsageHeader(res.headers.get("x-business-use-case-usage")) };
   }
 
-  /** Batch API: agrupa até 50 sub-requests em 1 chamada HTTP. */
-  batch(accessToken: string, requests: readonly BatchSubRequest[]): Promise<GraphResponse<unknown[]>> {
-    // TODO: POST / com batch=JSON, particionar em lotes ≤50, agregar respostas.
-    throw new Error("not implemented");
+  /**
+   * Batch API (v26): agrupa até 50 sub-requests em 1 POST no root. Substitui o
+   * `?ids=` (deprecado em v26+). A resposta é um array **na ordem das sub-requests**;
+   * cada item = `{ code, body }` (`body` é uma string JSON) ou `null` (sub timeout).
+   * Particiona em lotes de ≤50 e agrega preservando a ordem.
+   */
+  async batch(
+    accessToken: string,
+    requests: readonly BatchSubRequest[],
+  ): Promise<GraphResponse<Array<BatchSubResponse | null>>> {
+    const results: Array<BatchSubResponse | null> = [];
+    let usage: Record<string, BusinessUseCaseUsage> | undefined;
+    for (const group of chunkBatch(requests, BATCH_MAX)) {
+      const batchParam = group.map((r) => ({
+        method: r.method,
+        relative_url: r.relativeUrl,
+        ...(r.body ? { body: new URLSearchParams(toStringRecord(r.body)).toString() } : {}),
+      }));
+      const form = new URLSearchParams({ batch: JSON.stringify(batchParam) });
+      if (this.appSecret) {
+        form.set("appsecret_proof", createHmac("sha256", this.appSecret).update(accessToken).digest("hex"));
+      }
+      const res = await fetch(this.buildUrl(""), {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "content-type": "application/x-www-form-urlencoded",
+        },
+        body: form.toString(),
+      });
+      const parsed = await this.toGraphResponse<Array<BatchSubResponse | null>>(res);
+      results.push(...parsed.data);
+      if (parsed.usage) usage = { ...usage, ...parsed.usage };
+    }
+    return { data: results, ...(usage ? { usage } : {}) };
   }
 
   /**
