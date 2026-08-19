@@ -122,8 +122,10 @@ Schema em `packages/db/src/schema`. Grupos:
 **Runtime:** LangGraph **Graph API (`StateGraph`)** com checkpointer Postgres. LangChain (`@langchain/core` + `@langchain/openai` via OpenRouter) fornece modelos/tools por baixo. Graph API (não Functional) por controle explícito de nós/edges e aderência ao padrão Automato.
 
 **Dois grafos (LangGraph):**
-- **`account-analysis` (pipeline determinístico)** — cron/on-demand: `load_context → fetch_data → run_playbook → llm_analyze(+visão) → build_recommendations → decide_actions → guardrail_check → [precisa OK? create_approval + interrupt()] → apply_actions(snapshot) → notify → record`. LLM só em `llm_analyze` e `notify`.
+- **`account-analysis` (pipeline determinístico)** — cron/on-demand: `load_context → fetch_data → run_playbook → llm_analyze(+visão) → review_analysis → build_recommendations → decide_actions → guardrail_check → [precisa OK? create_approval + interrupt()] → apply_actions(snapshot) → notify → record`. LLM só em `llm_analyze`, `review_analysis` e `notify`.
 - **`whatsapp-conversation` (ReAct + tools + guardrails)** — chat aberto: perguntas, pedidos ad-hoc, "analisa agora", e resolução de aprovações.
+
+**Qualidade da análise = Analista→Revisor + guards determinísticos (3a-2):** o `llm_analyze` (analista) é seguido de `review_analysis` — **pré-check determinístico** (findings sem `metricRefs` / número citado ausente do brief) → **`reviewPasses`** (lista de revisores; default 1; refina/corta, **nunca inventa**) → **drop determinístico final** + `actionType→riskLevel`. Revisor falhou → cai pra saída do analista + nota parcial (§7 degradação graciosa). A **lista de passes** é a costura p/ **Fatia 8** (painéis de revisores, map-reduce por entidade, redator, validador de ação) — crescer = registrar mais passes, sem reescrever o grafo. Config do pipeline (`model`/`reviewEnabled`/`topN`/`maxOutputTokens`) é **por-agente** (`agents.model_config`, fallback env); a UI de edição = Fatia 4.
 
 **Origem das ações = híbrido, autonomia por origem:** `playbook` (regras puras) gera ações-base + `LLM` propõe ações adicionais (structured output, mesmo tipo `Action`). Merge → dedupe → **guardrail** → autonomia decidida **por origem** (ex: auto-aplica playbook, pede OK no LLM — configurável). Guardrail é rede sobre os dois.
 
@@ -241,7 +243,7 @@ Schema em `packages/db/src/schema`. Grupos:
 
 ## 15. Roadmap / fast-follows
 
-Construção em **13 sub-fatias** (walking-skeleton-first) + estratégia de **paralelização em worktrees** → ver **[`docs/ROADMAP.md`](docs/ROADMAP.md)**. Marcos: `3a` valida a hipótese; beta read-only abre após `3b`; escrita só a partir de `5a`. **Criação de campanhas = Fatia 7 (pós-MVP)** — o gestor completo no WhatsApp (ver `docs/ROADMAP.md`).
+Construção em **13 sub-fatias** (walking-skeleton-first) + estratégia de **paralelização em worktrees** → ver **[`docs/ROADMAP.md`](docs/ROADMAP.md)**. Marcos: `3a` valida a hipótese; beta read-only abre após `3b`; escrita só a partir de `5a`. **Criação de campanhas = Fatia 7 (pós-MVP)** — o gestor completo no WhatsApp; **orquestração multi-agente / qualidade = Fatia 8 (pós-MVP)** — painéis de revisores, map-reduce por entidade, redator, validador de ação (a costura `reviewPasses` já nasce na 3a-2) — ver `docs/ROADMAP.md`.
 
 Fast-follows / decisões adiadas: consolidadas em **[`docs/ROADMAP.md`](docs/ROADMAP.md) → "Pós-MVP — fast-follows e decisões adiadas"** (a §2 OUT é o recorte de produto; o ROADMAP é a lista viva).
 

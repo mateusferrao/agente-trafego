@@ -53,6 +53,8 @@ export interface InsightRow {
   readonly conversions?: ConversionBreakdown;
   /** Breakdown cru opaco (action_type→valor) p/ auditoria/re-derivação. Shape agnóstico. */
   readonly rawActions?: Readonly<Record<string, number>>;
+  /** Funil neutro derivado do `rawActions` pela casca (adapter mapper) — não persistido. */
+  readonly funnel?: FunnelBreakdown;
 }
 
 /**
@@ -109,6 +111,33 @@ export interface ConversionCount {
 }
 
 export type ConversionBreakdown = readonly ConversionCount[];
+
+// ─── Funil (secundário, genérico) ────────────────────────────────────────
+// Sinais de qualidade do lead (ICP messaging), distintos de conversão. Taxonomia
+// NEUTRA — o mapeamento da plataforma (Meta action_type) vive só no adapter.
+// Aberta: novo estágio = 1 entrada; nova plataforma = novo adapter pro mesmo enum.
+export type FunnelStage =
+  | "conversation_started"
+  | "first_reply"
+  | "depth_2"
+  | "depth_3"
+  | "depth_5"
+  | "replied";
+
+export interface FunnelCount {
+  readonly stage: FunnelStage;
+  readonly count: number;
+}
+export type FunnelBreakdown = readonly FunnelCount[];
+
+/** Resumo curado do funil (contagens + taxas derivadas) — o que o brief expõe. */
+export interface FunnelSummary {
+  readonly counts: Partial<Record<FunnelStage, number>>;
+  /** first_reply / conversation_started (qualidade da 1ª resposta). */
+  readonly replyRate?: number;
+  /** profundidade (depth_3 ou o mais fundo disponível) / conversation_started. */
+  readonly depthRate?: number;
+}
 
 /**
  * O objetivo próprio de uma entidade (o que ela otimiza na plataforma). Define o
@@ -172,6 +201,15 @@ export interface Finding {
   readonly severity: "info" | "warning" | "critical";
 }
 
+/**
+ * Estado de **aplicabilidade** de uma recomendação — se a ação proposta pode ser
+ * aplicada pelo sistema agora. Conceito desacoplado: toda sugestão sem aplicação
+ * possível compartilha o mesmo estado/comportamento (sem CTA de aplicar).
+ *  - `applicable`        → o caminho de escrita existe (Fatia 5+); UI mostra o CTA.
+ *  - `not_yet_applicable`→ read-only (3a/3b): só sugere; UI direciona ("em breve").
+ */
+export type RecommendationApplicability = "applicable" | "not_yet_applicable";
+
 // ─── AccountBrief (único input do LLM) ───────────────────────────────────
 export interface TrendPoint {
   readonly date: string;
@@ -188,6 +226,8 @@ export interface EntitySummary {
   readonly flags: readonly string[];
   /** Objetivo da entidade — intenção que conduz a análise (o que "bom" significa aqui). */
   readonly objective?: EntityObjective;
+  /** Funil de messaging da entidade (só quando há dado) — qualidade do lead. */
+  readonly funnel?: FunnelSummary;
 }
 
 export interface Anomaly {
@@ -219,6 +259,8 @@ export interface AccountBrief {
     readonly ads: readonly EntitySummary[];
   };
   readonly anomalies: readonly Anomaly[];
+  /** Funil de messaging agregado da conta (secundário; qualidade do lead do ICP). */
+  readonly funnel?: FunnelSummary;
   readonly creatives: readonly Creative[]; // só flagados (com imagem p/ visão)
   readonly playbookCandidates: readonly CandidateAction[];
   readonly memory: {

@@ -21,6 +21,8 @@ import {
   connectTokenInput,
   selectAccountInput,
 } from "../modules/accounts/schema.js";
+import { agentGoalsInput, agentSummary } from "../modules/agents/schema.js";
+import { latestRunOutput, triggerRunOutput } from "../modules/runs/schema.js";
 
 extendZodWithOpenApi(z);
 
@@ -43,6 +45,12 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const ConnectAccountsOutput = registry.register("ConnectAccountsOutput", connectAccountsOutput);
   const SelectAccountInput = registry.register("SelectAccountInput", selectAccountInput);
   const AdAccountOutput = registry.register("AdAccountOutput", adAccountOutput);
+  const AgentSummary = registry.register("AgentSummary", agentSummary);
+  const AgentGoalsInput = registry.register("AgentGoalsInput", agentGoalsInput);
+  const TriggerRunOutput = registry.register("TriggerRunOutput", triggerRunOutput);
+  const LatestRunOutput = registry.register("LatestRunOutput", latestRunOutput);
+
+  const accountParams = z.object({ id: z.string() });
 
   const jsonBody = (schema: z.ZodTypeAny) => ({
     body: { content: { "application/json": { schema } } },
@@ -129,6 +137,37 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     path: "/api/accounts",
     tags: ["accounts"],
     responses: { 200: jsonRes("contas conectadas da org", z.array(AdAccountOutput)) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts/{id}/agent",
+    tags: ["agents"],
+    request: { params: accountParams },
+    responses: { 200: jsonRes("agente da conta (cria se não existir)", AgentSummary) },
+  });
+  registry.registerPath({
+    method: "put",
+    path: "/api/accounts/{id}/agent/goals",
+    tags: ["agents"],
+    request: { params: accountParams, ...jsonBody(AgentGoalsInput) },
+    responses: { 200: jsonRes("meta atualizada", AgentSummary) },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/accounts/{id}/runs",
+    tags: ["runs"],
+    request: { params: accountParams },
+    responses: {
+      202: jsonRes("análise enfileirada", TriggerRunOutput),
+      409: { description: "já há uma análise em andamento" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts/{id}/runs/latest",
+    tags: ["runs"],
+    request: { params: accountParams },
+    responses: { 200: jsonRes("último run + recomendações", LatestRunOutput) },
   });
   registry.registerPath({
     method: "get",

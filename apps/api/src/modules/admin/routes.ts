@@ -23,12 +23,6 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     return reply.status(201).send(result);
   });
 
-  app.post("/admin/accounts/:id/run", guard, async (request, reply) => {
-    const { id } = runParams.parse(request.params);
-    await service.triggerRun(id);
-    return reply.status(202).send({ status: "enqueued", accountId: id });
-  });
-
   app.post("/admin/accounts/:id/sync", guard, async (request, reply) => {
     const { id } = runParams.parse(request.params);
     await service.triggerSync(id);

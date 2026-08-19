@@ -33,8 +33,10 @@ Plano de construção em fatias. Decisões de arquitetura/produto = [`../CLAUDE.
 | **5c** | Chat ReAct pleno (end-state) | Conversa livre age via tools (núcleo) dentro dos guardrails | 5b |
 | **6a** | Timeline / auditoria (UI) | Histórico de runs/ações/aprovações na dashboard | prévias |
 | **6b** | Endurecimento / ops | Throttle, token-190, degradação, backups; allowlist via script/DB | prévias |
+| **7** | Criação de campanhas (pós-MVP) | Gestor completo no WhatsApp: cria campanhas a pedido/proativo | MVP validado, 5a/5b |
+| **8** | Orquestração multi-agente / qualidade (pós-MVP) | Painéis de revisores, map-reduce por entidade, redator, validador de ação | MVP validado, 5a |
 
-**Marcos:** `3a` valida a hipótese; **beta read-only abre após `3b`** e roda em paralelo; escrita só a partir de `5a`, sempre atrás de guardrail; "mexer em qualquer coisa" (`5c`) = tools do catálogo (núcleo no MVP: pausar/budget/status; amplia por extensão; **criar campanha = Fatia 7** (pós-MVP, ver abaixo)).
+**Marcos:** `3a` valida a hipótese; **beta read-only abre após `3b`** e roda em paralelo; escrita só a partir de `5a`, sempre atrás de guardrail; "mexer em qualquer coisa" (`5c`) = tools do catálogo (núcleo no MVP: pausar/budget/status; amplia por extensão; **criar campanha = Fatia 7** (pós-MVP, ver abaixo)); **mais papéis de agente / map-reduce = Fatia 8** (pós-MVP; a costura `reviewPasses` já nasce na 3a-2).
 
 ## Paralelização — dois tracks (git worktrees)
 
@@ -120,3 +122,14 @@ decaimento de token em runtime → `6b`; reuso do sync-service pelo `fetchData` 
 - **Fora até da 7 inicial:** **geração de criativo por IA** (imagem/vídeo) = fase mais tardia. Copy por LLM já entra.
 
 **Design das telas/fluxos** (Creative Library, card de aprovação de rascunho, intake de mídia WhatsApp) = ver `DESIGN.md`.
+
+## Fatia 8 — Orquestração multi-agente / qualidade (roadmap pós-MVP)
+
+**Visão:** elevar a qualidade e a escala da análise com **mais papéis de agente** e **map-reduce por entidade** — sem reescrever o grafo. **Depende:** MVP validado (hipótese confirmada na 3a) + `5a` (write path, p/ o validador de segurança de ação). A costura já existe desde a 3a-2: o par **Analista→Revisor** é modelado como uma **lista de passes** (`reviewPasses`, default 1) — crescer = **registrar mais passes/papéis**, não reescrever nós.
+
+- **8a — Painéis de revisores/perspectivas:** vários revisores com lentes distintas (correção, evidência, tom, risco) em vez de 1; síntese entre eles. Cada lente = mais um passe na lista.
+- **8b — Map-reduce por entidade:** análise por campanha/entidade em paralelo (bounded) → redução num diagnóstico único da conta. Remove o teto do top-N para contas grandes; guard dinâmico de tamanho de brief + downsample de trends entram aqui.
+- **8c — Redator de mensagem (WhatsApp):** papel dedicado que transforma o resultado curado em mensagem curta/1-decisão-por-bloco (voz do arquétipo). Complementa o transporte da 3b.
+- **8d — Validador de segurança de ação:** papel que revisa cada ação **antes de aplicar** (redundância sobre os guardrails determinísticos da 5a) — rede extra no caminho de escrita.
+
+**Fora até a 8:** downsample dinâmico de trends + guard dinâmico de tamanho de brief (na 3a-2 o top-N já limita o contexto).

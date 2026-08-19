@@ -51,12 +51,23 @@ export const envSchema = z.object({
   // `agents.model_config`; cap por org em `guardrail_configs.llm_cost_cap`).
   // Ficam aqui como fallback até 3a/4 ligarem a config por-agente/org. Não-usados na Fatia 0.
   OPENROUTER_API_KEY: z.string().min(1, "OPENROUTER_API_KEY é obrigatória"),
-  OPENROUTER_MODEL: z.string().min(1).default("google/gemini-2.5-flash"),
+  // Default = modelo FORTE p/ validar o teto de qualidade da análise (3a). Trocável
+  // em 1 linha por env; a otimização de custo/modelo (e config por-agente) vem depois.
+  OPENROUTER_MODEL: z.string().min(1).default("google/gemini-2.5-pro"),
   OPENROUTER_VISION_MODEL: z
     .string()
     .min(1)
     .default("google/gemini-2.5-flash"),
   LLM_COST_CAP_USD_PER_PERIOD: z.coerce.number().min(0).default(0),
+  // Retentativas in-process por chamada de LLM (429/5xx/rede/passthrough do provider).
+  LLM_MAX_RETRIES: z.coerce.number().int().nonnegative().default(3),
+  // Revisor (Analista→Revisor) ligado por padrão; default global — override por-agente
+  // em `agents.model_config.reviewEnabled` (Fatia 4 edita).
+  ANALYSIS_REVIEW_ENABLED: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
+  // Teto de tokens de SAÍDA por chamada de LLM (controla custo/trunca). Override por-agente.
+  ANALYSIS_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(4000),
+  // URL base do OpenRouter (default oficial; trocável p/ gateway/proxy).
+  OPENROUTER_BASE_URL: z.string().url().default("https://openrouter.ai/api/v1"),
 
   // ─── Meta (Graph API) ──────────────────────────────────────────────────
   // A versão do Graph NÃO é env (é const acoplada ao adapter: `META_GRAPH_VERSION`
@@ -107,6 +118,12 @@ export const envSchema = z.object({
     .int()
     .nonnegative()
     .default(8),
+  // Janela da análise on-demand (3a): últimos N dias vs os N anteriores (baseline).
+  // Default global; alvo = config por-agente (Fatia 4). ICP faz lançamentos → 7d.
+  ANALYSIS_WINDOW_DAYS: z.coerce.number().int().positive().default(7),
+  ANALYSIS_BASELINE_DAYS: z.coerce.number().int().positive().default(7),
+  // Quantas entidades por nível o brief seleciona (top-N por spend + flagadas).
+  ANALYSIS_TOP_N: z.coerce.number().int().positive().default(5),
 
   // ─── Observabilidade (opcional) ────────────────────────────────────────
   LANGFUSE_PUBLIC_KEY: z.string().optional(),

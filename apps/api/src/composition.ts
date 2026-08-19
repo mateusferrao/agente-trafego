@@ -124,14 +124,21 @@ export function buildContainer(): Container {
   };
 
   // Services — cada slice recebe só as portas de que precisa.
+  // agents antes de runs: runs reusa `ensureAgent` (criação lazy) do slice de agentes.
+  const agents = createAgentsService({ db });
   const services: Services = {
     auth: createAuthService({ repo: createDrizzleAuthRepo(db), hasher: argon2Hasher }),
     orgs: createOrgsService({ repo: createDrizzleOrgsRepo(db) }),
     accounts: createAccountsService({ repo: createDrizzleAccountsRepo(db), adsPlatform, vault }),
     channels: createChannelsService({ db, messaging }),
-    agents: createAgentsService({ db }),
+    agents,
     approvals: createApprovalsService({ db, approvals }),
-    runs: createRunsService({ db }),
+    runs: createRunsService({
+      db,
+      scheduler,
+      ensureAgent: (orgId, accountId) => agents.getOrCreateForAccount(orgId, accountId),
+      costCapUsd: env.LLM_COST_CAP_USD_PER_PERIOD,
+    }),
     billing: createBillingService({ db, metering }),
     webhooks: createWebhooksService({ db, messaging, scheduler }),
     admin: createAdminService({ db, vault, scheduler }),

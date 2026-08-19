@@ -1,28 +1,24 @@
 import type { FastifyPluginAsync } from "fastify";
-import type { AgentId } from "@trafego/shared/types";
 import { requireAuth } from "../../middleware/auth.js";
 import { requireOrgScope, orgIdOf } from "../../middleware/org-scope.js";
-import { createAgentInput, updateAgentInput } from "./schema.js";
+import { agentGoalsInput } from "./schema.js";
 
-/** Slice de agentes: criar (por arquétipo), ler e editar config. */
+/**
+ * Slice de agentes (3a): agente por conta (zero-config) + edição da meta.
+ * Account-centric: o web conhece a conta, não o agentId.
+ */
 export const agentsRoutes: FastifyPluginAsync = async (app) => {
   const service = app.container.services.agents;
   const guard = { preHandler: [requireAuth, requireOrgScope] };
 
-  app.get("/agents/:id", guard, async (request) => {
+  app.get("/accounts/:id/agent", guard, async (request) => {
     const { id } = request.params as { id: string };
-    return service.get(orgIdOf(request), id as AgentId);
+    return service.getOrCreateForAccount(orgIdOf(request), id);
   });
 
-  app.post("/agents", guard, async (request, reply) => {
-    const input = createAgentInput.parse(request.body);
-    const agent = await service.create(orgIdOf(request), input);
-    return reply.status(201).send(agent);
-  });
-
-  app.patch("/agents/:id", guard, async (request) => {
+  app.put("/accounts/:id/agent/goals", guard, async (request) => {
     const { id } = request.params as { id: string };
-    const input = updateAgentInput.parse(request.body);
-    return service.update(orgIdOf(request), id as AgentId, input);
+    const goals = agentGoalsInput.parse(request.body);
+    return service.updateGoals(orgIdOf(request), id, goals);
   });
 };

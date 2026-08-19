@@ -4,7 +4,7 @@
 // SchedulerPort.upsertSchedule (key estável).
 
 import type { SchedulerPort } from "@trafego/shared/ports";
-import { ANALYSIS_QUEUE } from "@trafego/shared";
+import { AGENT_RUNS_QUEUE } from "@trafego/shared";
 import type { WorkerDeps } from "../composition.js";
 
 export interface AccountSchedule {
@@ -35,12 +35,17 @@ export function makeAccountCron(deps: WorkerDeps) {
       return;
     }
     logger.debug({ adAccountId: s.adAccountId, cron: s.cron }, "cron:upsert");
+    // TODO(3b): este payload NÃO é o `AgentRunExecutePayload` — falta `mode:"execute"`
+    // e `runId`. O caminho cron não pode carregar um runId fixo num schedule recorrente:
+    // ao disparar, precisa CRIAR o run (linha em agent_runs) e só então executar. Enquanto
+    // não for ligado (main.ts não sincroniza schedulers na 3a), o worker trataria este job
+    // como resume não suportado e faria no-op. Fatia 3b desenha o dispatch (cria run→execute).
     await scheduler.upsertSchedule({
       key: scheduleKey(s.adAccountId),
       cron: s.cron,
       jitterMs: MAX_JITTER_MS,
       payload: {
-        queue: ANALYSIS_QUEUE,
+        queue: AGENT_RUNS_QUEUE,
         trigger: "cron",
         orgId: s.orgId,
         agentId: s.agentId,

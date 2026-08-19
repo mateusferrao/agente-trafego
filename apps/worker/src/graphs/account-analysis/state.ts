@@ -2,11 +2,12 @@
 // O estado é serializável (persiste no checkpointer Postgres p/ interrupt/resume).
 
 import { Annotation } from "@langchain/langgraph";
-import type { DecisionResult, GuardrailResult } from "@trafego/core";
+import type { AccumulatedTokenUsage, DecisionResult, GuardrailResult } from "@trafego/core";
 import type { MutationResult } from "@trafego/shared/ports";
 import type {
   AccountBrief,
   Action,
+  AdEntity,
   AgentGoals,
   AutonomyPolicy,
   CandidateAction,
@@ -15,6 +16,22 @@ import type {
   InsightRow,
   PlaybookRule,
 } from "@trafego/shared/types";
+import type { AnalysisOutput } from "@trafego/shared/schemas";
+import type { ResolvedAnalysisConfig } from "../../modules/analysis/config.js";
+
+/** Janela temporal resolvida (rótulo p/ o brief + datas p/ o fetch). */
+export interface AnalysisWindow {
+  readonly label: string;
+  readonly since: string; // YYYY-MM-DD
+  readonly until: string; // YYYY-MM-DD
+}
+
+/** Metadados não-secretos da conta (token nunca entra no estado). */
+export interface AnalysisAccount {
+  readonly metaAdAccountId: string;
+  readonly name: string;
+  readonly currency: string;
+}
 
 export const AccountAnalysisState = Annotation.Root({
   // ── identificação / snapshot congelado do run ──────────────────────────
@@ -30,10 +47,22 @@ export const AccountAnalysisState = Annotation.Root({
   guardrailConfig: Annotation<GuardrailConfig>,
   autonomyPolicy: Annotation<AutonomyPolicy>,
 
+  // ── contexto carregado (loadContext) ───────────────────────────────────
+  account: Annotation<AnalysisAccount | null>,
+  systemPrompt: Annotation<string>,
+  analysisConfig: Annotation<ResolvedAnalysisConfig | null>,
+  window: Annotation<AnalysisWindow | null>,
+  baseline: Annotation<AnalysisWindow | null>,
+
   // ── dados coletados / derivados ────────────────────────────────────────
+  entities: Annotation<readonly AdEntity[]>,
   insights: Annotation<readonly InsightRow[]>,
+  baselineInsights: Annotation<readonly InsightRow[]>,
   brief: Annotation<AccountBrief | null>,
   findings: Annotation<readonly Finding[]>,
+  analysisOutput: Annotation<AnalysisOutput | null>,
+  summary: Annotation<string>,
+  usage: Annotation<AccumulatedTokenUsage | null>,
 
   // ── ações (híbrido playbook + llm) ─────────────────────────────────────
   playbookCandidates: Annotation<readonly CandidateAction[]>,
