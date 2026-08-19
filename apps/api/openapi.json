@@ -581,8 +581,43 @@
               "targetROAS": {
                 "type": "number",
                 "exclusiveMinimum": 0
+              },
+              "conversionGoal": {
+                "type": "string",
+                "enum": [
+                  "purchase",
+                  "lead",
+                  "registration",
+                  "initiate_checkout",
+                  "add_to_cart",
+                  "view_content",
+                  "add_payment_info",
+                  "search",
+                  "contact",
+                  "subscribe",
+                  "start_trial",
+                  "submit_application",
+                  "messaging_started",
+                  "app_install",
+                  "custom"
+                ]
+              },
+              "customConversionId": {
+                "type": "string"
               }
             }
+          },
+          "businessContext": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "guidance": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "paused": {
             "type": "boolean"
@@ -592,6 +627,8 @@
           "agentId",
           "archetype",
           "goals",
+          "businessContext",
+          "guidance",
           "paused"
         ]
       },
@@ -605,8 +642,112 @@
           "targetROAS": {
             "type": "number",
             "exclusiveMinimum": 0
+          },
+          "conversionGoal": {
+            "type": "string",
+            "enum": [
+              "purchase",
+              "lead",
+              "registration",
+              "initiate_checkout",
+              "add_to_cart",
+              "view_content",
+              "add_payment_info",
+              "search",
+              "contact",
+              "subscribe",
+              "start_trial",
+              "submit_application",
+              "messaging_started",
+              "app_install",
+              "custom"
+            ]
+          },
+          "customConversionId": {
+            "type": "string"
           }
         }
+      },
+      "AgentConfigInput": {
+        "type": "object",
+        "properties": {
+          "goals": {
+            "type": "object",
+            "properties": {
+              "targetCPA": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "targetROAS": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "conversionGoal": {
+                "type": "string",
+                "enum": [
+                  "purchase",
+                  "lead",
+                  "registration",
+                  "initiate_checkout",
+                  "add_to_cart",
+                  "view_content",
+                  "add_payment_info",
+                  "search",
+                  "contact",
+                  "subscribe",
+                  "start_trial",
+                  "submit_application",
+                  "messaging_started",
+                  "app_install",
+                  "custom"
+                ]
+              },
+              "customConversionId": {
+                "type": "string"
+              }
+            }
+          },
+          "businessContext": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "guidance": {
+            "type": "string",
+            "maxLength": 2000
+          }
+        }
+      },
+      "AvailableConversionsOutput": {
+        "type": "object",
+        "properties": {
+          "conversions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "goal": {
+                  "type": "string"
+                },
+                "customConversionId": {
+                  "type": "string"
+                },
+                "count": {
+                  "type": "number"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "goal",
+                "count"
+              ]
+            }
+          }
+        },
+        "required": [
+          "conversions"
+        ]
       },
       "SetPausedInput": {
         "type": "object",
@@ -1558,7 +1699,7 @@
         }
       }
     },
-    "/api/accounts/{id}/agent/goals": {
+    "/api/accounts/{id}/agent/config": {
       "put": {
         "tags": [
           "agents"
@@ -1577,18 +1718,47 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AgentGoalsInput"
+                "$ref": "#/components/schemas/AgentConfigInput"
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "meta atualizada",
+            "description": "config do agente atualizada",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AgentSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/available-conversions": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "conversões reportadas pela conta (select da config)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AvailableConversionsOutput"
                 }
               }
             }

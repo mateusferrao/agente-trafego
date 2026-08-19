@@ -57,7 +57,9 @@ const THEME_OPTIONS: readonly ThemeOption[] = [
     }),
   ],
   template: `
-    <div class="grid min-h-dvh grid-cols-1 bg-app text-ink md:grid-cols-[260px_1fr]">
+    <!-- Desktop: altura fixa + overflow-hidden → o <main> vira o container de scroll
+         (habilita 'sticky' de barras de ação). Mobile: rola a janela (comportamento padrão). -->
+    <div class="grid min-h-dvh grid-cols-1 bg-app text-ink md:h-dvh md:grid-cols-[260px_1fr] md:overflow-hidden">
       <aside
         class="flex flex-col gap-5 border-b border-line bg-panel px-4 py-5 md:border-r md:border-b-0"
       >

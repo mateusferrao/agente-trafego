@@ -25,8 +25,10 @@ import {
   syncOutput,
 } from "../modules/connections/schema.js";
 import {
+  agentConfigInput,
   agentGoalsInput,
   agentSummary,
+  availableConversionsOutput,
   muteCampaignInput,
   mutedCampaignsOutput,
   setPausedInput,
@@ -69,6 +71,8 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const SyncOutput = registry.register("SyncOutput", syncOutput);
   const AgentSummary = registry.register("AgentSummary", agentSummary);
   const AgentGoalsInput = registry.register("AgentGoalsInput", agentGoalsInput);
+  const AgentConfigInput = registry.register("AgentConfigInput", agentConfigInput);
+  const AvailableConversionsOutput = registry.register("AvailableConversionsOutput", availableConversionsOutput);
   const SetPausedInput = registry.register("SetPausedInput", setPausedInput);
   const TriggerRunOutput = registry.register("TriggerRunOutput", triggerRunOutput);
   const LatestRunOutput = registry.register("LatestRunOutput", latestRunOutput);
@@ -202,10 +206,17 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   });
   registry.registerPath({
     method: "put",
-    path: "/api/accounts/{id}/agent/goals",
+    path: "/api/accounts/{id}/agent/config",
     tags: ["agents"],
-    request: { params: accountParams, ...jsonBody(AgentGoalsInput) },
-    responses: { 200: jsonRes("meta atualizada", AgentSummary) },
+    request: { params: accountParams, ...jsonBody(AgentConfigInput) },
+    responses: { 200: jsonRes("config do agente atualizada", AgentSummary) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts/{id}/available-conversions",
+    tags: ["agents"],
+    request: { params: accountParams },
+    responses: { 200: jsonRes("conversões reportadas pela conta (select da config)", AvailableConversionsOutput) },
   });
   registry.registerPath({
     method: "put",

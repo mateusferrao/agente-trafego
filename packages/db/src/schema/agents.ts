@@ -7,6 +7,7 @@ import {
   pgTable,
   real,
   text,
+  timestamp,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
@@ -42,6 +43,10 @@ export const agents = pgTable(
     archetype: text("archetype").notNull().default("conservador"),
     persona: text("persona"),
     systemPrompt: text("system_prompt"),
+    // Personalização por texto (Fatia 4) — camada ADITIVA sobre o arquétipo:
+    // fatos do negócio (contexto) e orientações de comportamento (guidance).
+    businessContext: text("business_context"),
+    guidance: text("guidance"),
     goals: jsonb("goals").$type<AgentGoals>().notNull().default({}),
     // expressão cron por conta (cadência)
     cadence: text("cadence"),
@@ -50,6 +55,10 @@ export const agents = pgTable(
     // config do modelo (provider/model/params) via OpenRouter
     modelConfig: jsonb("model_config").$type<Record<string, unknown>>().notNull().default({}),
     status: agentStatus("status").notNull().default("draft"),
+    // Marcador de "config relevante à análise mudou" (Fatia 4): bumpado ao salvar
+    // conversão/contexto/orientações/meta → força 1 deep run no próximo run (o
+    // incremental herdaria texto velho, pois só olha métricas/flags).
+    configChangedAt: timestamp("config_changed_at", { withTimezone: true }),
     ...timestamps,
   },
   (t) => [

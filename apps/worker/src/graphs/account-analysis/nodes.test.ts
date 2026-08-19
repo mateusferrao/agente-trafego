@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AdEntity, EncryptedPayload, InsightRow } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
-import type { AnalysisRepo, RecommendationRow } from "../../modules/analysis/repo.js";
+import type { AnalysisRepo, ConversionLabelRow, RecommendationRow } from "../../modules/analysis/repo.js";
 import type { InsightsSnapshotsRepo } from "../../modules/insights/repo.js";
-import type { EntityAnalysesRepo } from "../../modules/analysis/entity-analyses.repo.js";
+import type { EntityAnalysesRepo, LastEntityAnalysis } from "../../modules/analysis/entity-analyses.repo.js";
+import type { NotifyRepo } from "../../modules/notify/repo.js";
 import { AnalysisError } from "../../modules/analysis/errors.js";
 import { makeAccountAnalysisNodes } from "./nodes.js";
 import type { AccountAnalysisStateType, AccountAnalysisUpdate } from "./state.js";
@@ -42,23 +43,36 @@ const ANALYSIS_OUTPUT = {
 interface Harness {
   deps: WorkerDeps;
   saved: RecommendationRow[];
+  savedLabels: ConversionLabelRow[];
   closed: { status: string; summary: string | null; costSnapshot: number | null }[];
   llm: ReturnType<typeof vi.fn>;
 }
 
-function makeHarness(opts: { rows?: InsightRow[]; tokenInvalid?: boolean; entities?: AdEntity[] } = {}): Harness {
+interface HarnessOpts {
+  rows?: InsightRow[];
+  tokenInvalid?: boolean;
+  entities?: AdEntity[];
+  goals?: Record<string, unknown>;
+  configChangedAt?: Date | null;
+  last?: Map<string, LastEntityAnalysis>;
+}
+
+function makeHarness(opts: HarnessOpts = {}): Harness {
   const saved: RecommendationRow[] = [];
+  const savedLabels: ConversionLabelRow[] = [];
   const closed: Harness["closed"] = [];
   const rows = opts.rows ?? [row("act_1", "account", 300, 5), row("c1", "campaign", 300, 3)];
   const entities = opts.entities ?? ENTITIES;
   const byLevel = (level: string) => entities.filter((e) => e.level === level);
 
   const repo: AnalysisRepo = {
-    loadAgentContext: vi.fn(async () => ({ goals: { targetCPA: 50 }, archetype: "conservador", systemPrompt: null, modelConfig: {}, playbook: [], rejectedMemory: [], mutedCampaignIds: [] })),
+    loadAgentContext: vi.fn(async () => ({ goals: opts.goals ?? { targetCPA: 50 }, archetype: "conservador", systemPrompt: null, businessContext: null, guidance: null, configChangedAt: opts.configChangedAt ?? null, modelConfig: {}, playbook: [], rejectedMemory: [], mutedCampaignIds: [] })),
     loadAccount: vi.fn(async () => ({ metaAdAccountId: "act_1", name: "Conta", currency: "BRL", tokenCripto: TOKEN })),
     openRun: vi.fn(async () => {}),
     markTokenInvalid: vi.fn(async () => {}),
     saveRecommendations: vi.fn(async (r: readonly RecommendationRow[]) => { saved.push(...r); }),
+    saveConversionLabels: vi.fn(async (_o, _a, _p, labels: readonly ConversionLabelRow[]) => { savedLabels.push(...labels); }),
+    consumeConfigChanged: vi.fn(async () => {}),
     recordStep: vi.fn(async () => {}),
     closeRun: vi.fn(async (_o, _r, input) => { closed.push({ status: input.status, summary: input.summary, costSnapshot: input.costSnapshot }); }),
   };
@@ -68,8 +82,14 @@ function makeHarness(opts: { rows?: InsightRow[]; tokenInvalid?: boolean; entiti
     listWindow: vi.fn(async () => rows),
   };
   const entityAnalyses: EntityAnalysesRepo = {
-    loadByAgent: vi.fn(async () => new Map()),
+    loadByAgent: vi.fn(async () => opts.last ?? new Map<string, LastEntityAnalysis>()),
     saveMany: vi.fn(async () => {}),
+  };
+  // no cron o chain chega ao notify (usa db real) — fake short-circuita o envio.
+  const notify: NotifyRepo = {
+    alreadyNotified: vi.fn(async () => true),
+    loadTarget: vi.fn(async () => null),
+    recordOutbound: vi.fn(async () => {}),
   };
   const llm = vi.fn(async () => ({ output: ANALYSIS_OUTPUT, usage: { inputTokens: 100, outputTokens: 20, costUsd: 0.001 } }));
 
@@ -113,14 +133,19 @@ function makeHarness(opts: { rows?: InsightRow[]; tokenInvalid?: boolean; entiti
     checkpointer: undefined,
   } as unknown as WorkerDeps;
 
-  const nodesWithFakes = { repo, snapshots, entityAnalyses };
+  const nodesWithFakes = { repo, snapshots, entityAnalyses, notify };
   // guarda os fakes p/ o teste montar os nós
   (deps as unknown as { _repos: typeof nodesWithFakes })._repos = nodesWithFakes;
-  return { deps, saved, closed, llm };
+  return { deps, saved, savedLabels, closed, llm };
+}
+
+/** Nº de chamadas de LLM do MAPA (por-campanha) — identificadas por meta.type "unit". */
+function unitCalls(llm: ReturnType<typeof vi.fn>): number {
+  return llm.mock.calls.filter((c) => (c[0] as { meta?: { type?: string } })?.meta?.type === "unit").length;
 }
 
 /** Roda a cadeia read-only, mesclando os patches (simula o StateGraph). */
-async function runChain(h: Harness): Promise<AccountAnalysisStateType> {
+async function runChain(h: Harness, trigger: "cron" | "on_demand" = "on_demand"): Promise<AccountAnalysisStateType> {
   const repos = (h.deps as unknown as { _repos: Parameters<typeof makeAccountAnalysisNodes>[1] })._repos;
   const n = makeAccountAnalysisNodes(h.deps, repos);
   let state = {
@@ -128,7 +153,7 @@ async function runChain(h: Harness): Promise<AccountAnalysisStateType> {
     orgId: "org-1",
     agentId: "agent-1",
     adAccountId: "acc-uuid",
-    trigger: "on_demand",
+    trigger,
   } as unknown as AccountAnalysisStateType;
   const apply = (patch: AccountAnalysisUpdate) => { state = { ...state, ...patch } as AccountAnalysisStateType; };
 
@@ -206,6 +231,48 @@ describe("account-analysis read-only nodes", () => {
     expect(h.saved).toHaveLength(0);
     expect(state.summary).toMatch(/sem gasto|não teve/i);
     expect(h.closed[0]?.status).toBe("succeeded");
+  });
+
+  it("persiste os rótulos de conversão resolvidos (id→nome) p/ a config ler do banco", async () => {
+    const entities: AdEntity[] = [
+      { id: "c1", level: "campaign", name: "Campanha 1", status: "active", objective: { goal: "custom", customConversionId: "123", label: "Comprou Curso Premium" } },
+    ];
+    const h = makeHarness({ entities });
+    await runChain(h);
+    expect(h.savedLabels).toContainEqual({ goal: "custom", customConversionId: "123", label: "Comprou Curso Premium" });
+  });
+
+  it("cron: campanha sem mudança material HERDA a análise (não re-chama o LLM no mapa)", async () => {
+    const last = new Map<string, LastEntityAnalysis>([
+      ["c1", {
+        unit: ANALYSIS_OUTPUT as unknown as LastEntityAnalysis["unit"],
+        metrics: { spend: 300, cpa: 100, roas: 1, ctr: 5 },
+        flags: ["cpa_acima_da_meta"],
+        analyzedAt: new Date(), // recente → não dispara o deep por intervalo
+      }],
+    ]);
+    const h = makeHarness({ last }); // sem configChangedAt
+    await runChain(h, "cron");
+    // c1 herda → o mapa (meta.type "unit") NÃO chama o LLM.
+    expect(unitCalls(h.llm)).toBe(0);
+  });
+
+  it("cron: config mudou depois da última análise → força deep (re-analisa mesmo sem mudança de métrica)", async () => {
+    const last = new Map<string, LastEntityAnalysis>([
+      ["c1", {
+        unit: ANALYSIS_OUTPUT as unknown as LastEntityAnalysis["unit"],
+        metrics: { spend: 300, cpa: 100, roas: 1, ctr: 5 },
+        flags: ["cpa_acima_da_meta"],
+        analyzedAt: new Date(Date.now() - 60_000), // 1 min atrás
+      }],
+    ]);
+    const h = makeHarness({ last, configChangedAt: new Date() }); // config mudou depois
+    const repos = (h.deps as unknown as { _repos: { repo: AnalysisRepo } })._repos;
+    await runChain(h, "cron");
+    // deep forçado → c1 re-analisado no mapa (meta.type "unit") mesmo sem mudança de métrica.
+    expect(unitCalls(h.llm)).toBe(1);
+    // marcador consumido (one-shot) → próximo run volta ao incremental.
+    expect(repos.repo.consumeConfigChanged).toHaveBeenCalledTimes(1);
   });
 
   it("token inválido no fetch → AnalysisError + marca token inválido", async () => {

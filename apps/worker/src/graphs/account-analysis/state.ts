@@ -54,6 +54,8 @@ export const AccountAnalysisState = Annotation.Root({
   // ── contexto carregado (loadContext) ───────────────────────────────────
   account: Annotation<AnalysisAccount | null>,
   systemPrompt: Annotation<string>,
+  // epoch ms de quando a config relevante à análise mudou (força 1 deep — Fatia 4); null se nunca.
+  configChangedAt: Annotation<number | null>,
   analysisConfig: Annotation<ResolvedAnalysisConfig | null>,
   window: Annotation<AnalysisWindow | null>,
   baseline: Annotation<AnalysisWindow | null>,

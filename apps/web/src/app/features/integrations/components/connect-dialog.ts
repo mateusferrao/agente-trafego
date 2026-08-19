@@ -11,7 +11,7 @@ import {
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormControl, FormRecord, ReactiveFormsModule, Validators } from '@angular/forms';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { heroCheckCircle, heroExclamationTriangle, heroXMark } from '@ng-icons/heroicons/outline';
+import { heroCheck, heroCheckCircle, heroExclamationTriangle, heroXMark } from '@ng-icons/heroicons/outline';
 import {
   UiButton,
   UiDialog,
@@ -67,7 +67,7 @@ const STEP_DOTS = [0, 1, 2, 3] as const;
     UiLabel,
     UiSpinner,
   ],
-  providers: [provideIcons({ heroCheckCircle, heroExclamationTriangle, heroXMark })],
+  providers: [provideIcons({ heroCheck, heroCheckCircle, heroExclamationTriangle, heroXMark })],
   template: `
     <div appDialogOverlay>
       <section appDialog class="connect-dialog" aria-labelledby="connect-dialog-title" [ngpDialogModal]="true">
@@ -174,12 +174,16 @@ const STEP_DOTS = [0, 1, 2, 3] as const;
                         }
                       </span>
                       <span
-                        class="size-4 shrink-0 rounded border transition"
+                        class="grid size-5 shrink-0 place-items-center rounded-md border transition"
                         [class.border-accent]="isSelected(target.id)"
                         [class.bg-accent]="isSelected(target.id)"
                         [class.border-line]="!isSelected(target.id)"
                         aria-hidden="true"
-                      ></span>
+                      >
+                        @if (isSelected(target.id)) {
+                          <ng-icon name="heroCheck" size="14" class="text-panel" />
+                        }
+                      </span>
                     </button>
                   }
                 </div>

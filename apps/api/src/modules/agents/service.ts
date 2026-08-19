@@ -1,9 +1,13 @@
-import { and, eq, sql } from "drizzle-orm";
-import { adAccounts, agents, agentMutedEntities, type Database } from "@trafego/db";
+import { and, eq, gte, lte, sql } from "drizzle-orm";
+import { adAccounts, agents, agentMutedEntities, conversionLabels, insightsSnapshots, type Database } from "@trafego/db";
 import { archetypeDefaults, DEFAULT_ARCHETYPE_KEY } from "@trafego/core";
-import type { AgentGoals, OrgId } from "@trafego/shared/types";
-import { notFound } from "../../middleware/error-handler.js";
-import type { AgentGoalsInput, AgentSummary } from "./schema.js";
+import type { AgentGoals, OrgId, StoredInsightMetrics } from "@trafego/shared/types";
+import { badRequest, notFound } from "../../middleware/error-handler.js";
+import type { AgentConfigInput, AgentGoalsInput, AgentSummary, AvailableConversionsOutput } from "./schema.js";
+
+/** Janela recente p/ listar as conversões que a conta reportou (dias). */
+const AVAILABLE_CONVERSIONS_WINDOW_DAYS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export interface AgentsDeps {
   readonly db: Database;
@@ -28,7 +32,14 @@ export function createAgentsService(deps: AgentsDeps) {
     if (!account) throw notFound("Conta não encontrada.");
 
     const [existing] = await deps.db
-      .select({ id: agents.id, archetype: agents.archetype, goals: agents.goals, status: agents.status })
+      .select({
+        id: agents.id,
+        archetype: agents.archetype,
+        goals: agents.goals,
+        businessContext: agents.businessContext,
+        guidance: agents.guidance,
+        status: agents.status,
+      })
       .from(agents)
       .where(and(eq(agents.adAccountId, accountId), eq(agents.orgId, orgId)))
       .limit(1);
@@ -37,6 +48,8 @@ export function createAgentsService(deps: AgentsDeps) {
         agentId: existing.id,
         archetype: existing.archetype,
         goals: existing.goals,
+        businessContext: existing.businessContext,
+        guidance: existing.guidance,
         paused: existing.status === "paused",
       };
     }
@@ -58,26 +71,117 @@ export function createAgentsService(deps: AgentsDeps) {
       })
       .returning({ id: agents.id });
     if (!row) throw notFound("Falha ao criar o agente.");
-    return { agentId: row.id, archetype: defaults.key, goals: defaults.goals, paused: false };
+    return {
+      agentId: row.id,
+      archetype: defaults.key,
+      goals: defaults.goals,
+      businessContext: null,
+      guidance: null,
+      paused: false,
+    };
   }
 
-  /** Atualiza a meta do agente (cria se necessário) — org-scoped. */
-  async function updateGoals(
+  /**
+   * Salva a config do agente (Fatia 4 corte 1): meta+conversão de negócio +
+   * personalização por texto. Bumpa `config_changed_at` → o próximo run faz 1 deep
+   * (a herança incremental do cron não olha config; sem isso, texto novo não refletiria).
+   */
+  async function updateConfig(
     orgId: OrgId,
     accountId: string,
-    goals: AgentGoalsInput,
+    input: AgentConfigInput,
   ): Promise<AgentSummary> {
     const summary = await getOrCreateForAccount(orgId, accountId);
-    // exactOptionalPropertyTypes: só inclui a chave quando definida (sem `undefined`).
-    const nextGoals: AgentGoals = {
-      ...(goals.targetCPA !== undefined ? { targetCPA: goals.targetCPA } : {}),
-      ...(goals.targetROAS !== undefined ? { targetROAS: goals.targetROAS } : {}),
-    };
+    // cleanGoals normaliza os dois casos (input do form ou goals atuais) p/ AgentGoals.
+    const nextGoals = cleanGoals(input.goals ?? summary.goals);
+    // conversão personalizada exige o id (senão o brief casaria uma custom arbitrária).
+    if (nextGoals.conversionGoal === "custom" && !nextGoals.customConversionId) {
+      throw badRequest("Escolha qual conversão personalizada usar como resultado do negócio.");
+    }
+    const nextBusinessContext =
+      input.businessContext !== undefined ? trimOrNull(input.businessContext) : summary.businessContext;
+    const nextGuidance =
+      input.guidance !== undefined ? trimOrNull(input.guidance) : summary.guidance;
+
+    // só força 1 deep (bumpa config_changed_at) quando um campo relevante à análise
+    // mudou de fato — evita deep desnecessário em save idêntico (idempotência).
+    const runRelevantChanged =
+      JSON.stringify(nextGoals) !== JSON.stringify(cleanGoals(summary.goals)) ||
+      nextBusinessContext !== (summary.businessContext ?? null) ||
+      nextGuidance !== (summary.guidance ?? null);
+
     await deps.db
       .update(agents)
-      .set({ goals: nextGoals, updatedAt: sql`now()` })
+      .set({
+        goals: nextGoals,
+        businessContext: nextBusinessContext,
+        guidance: nextGuidance,
+        ...(runRelevantChanged ? { configChangedAt: sql`now()` } : {}),
+        updatedAt: sql`now()`,
+      })
       .where(and(eq(agents.id, summary.agentId), eq(agents.orgId, orgId)));
-    return { ...summary, goals: nextGoals };
+    return { ...summary, goals: nextGoals, businessContext: nextBusinessContext, guidance: nextGuidance };
+  }
+
+  /**
+   * Conversões que a conta reportou na janela recente (nível `account` p/ não
+   * duplicar entre níveis) + o rótulo legível de `conversion_labels` (nome real da
+   * personalizada, quando o worker já resolveu num run). DB-only — sem chamada Meta.
+   * Base do select anotado da config; vazio até a conta ter um run (sem snapshot).
+   */
+  async function availableConversions(
+    orgId: OrgId,
+    accountId: string,
+  ): Promise<AvailableConversionsOutput> {
+    const until = new Date();
+    const since = new Date(until.getTime() - AVAILABLE_CONVERSIONS_WINDOW_DAYS * DAY_MS);
+    const rows = await deps.db
+      .select({ metricsJson: insightsSnapshots.metricsJson })
+      .from(insightsSnapshots)
+      .where(
+        and(
+          eq(insightsSnapshots.orgId, orgId),
+          eq(insightsSnapshots.adAccountId, accountId),
+          eq(insightsSnapshots.entityLevel, "account"),
+          gte(insightsSnapshots.date, ymd(since)),
+          lte(insightsSnapshots.date, ymd(until)),
+        ),
+      );
+
+    // agrega contagem por (goal, id personalizada) somando os dias da janela.
+    const byKey = new Map<string, { goal: string; customConversionId: string; count: number }>();
+    for (const r of rows) {
+      for (const c of (r.metricsJson as StoredInsightMetrics).conversions ?? []) {
+        const customConversionId = c.customConversionId ?? "";
+        const key = `${c.goal}:${customConversionId}`;
+        const e = byKey.get(key) ?? { goal: c.goal, customConversionId, count: 0 };
+        e.count += c.count;
+        byKey.set(key, e);
+      }
+    }
+
+    const labelRows = await deps.db
+      .select({
+        goal: conversionLabels.goal,
+        customConversionId: conversionLabels.customConversionId,
+        label: conversionLabels.label,
+      })
+      .from(conversionLabels)
+      .where(and(eq(conversionLabels.orgId, orgId), eq(conversionLabels.adAccountId, accountId)));
+    const labelByKey = new Map(labelRows.map((l) => [`${l.goal}:${l.customConversionId}`, l.label]));
+
+    const conversions = [...byKey.values()]
+      .sort((a, b) => b.count - a.count)
+      .map((e) => {
+        const label = labelByKey.get(`${e.goal}:${e.customConversionId}`);
+        return {
+          goal: e.goal,
+          ...(e.customConversionId ? { customConversionId: e.customConversionId } : {}),
+          count: e.count,
+          ...(label ? { label } : {}),
+        };
+      });
+    return { conversions };
   }
 
   /** Pausa/retoma as análises automáticas (freio self-service do beta — §8 kill-switch). */
@@ -137,5 +241,34 @@ export function createAgentsService(deps: AgentsDeps) {
     return mutedCampaignsForAgent(orgId, summary.agentId);
   }
 
-  return { getOrCreateForAccount, updateGoals, setPaused, listMutedCampaigns, muteCampaign, unmuteCampaign };
+  return {
+    getOrCreateForAccount,
+    updateConfig,
+    availableConversions,
+    setPaused,
+    listMutedCampaigns,
+    muteCampaign,
+    unmuteCampaign,
+  };
+}
+
+/** Só as chaves definidas (exactOptionalPropertyTypes — sem gravar `undefined`). */
+function cleanGoals(g: AgentGoalsInput): AgentGoals {
+  return {
+    ...(g.targetCPA !== undefined ? { targetCPA: g.targetCPA } : {}),
+    ...(g.targetROAS !== undefined ? { targetROAS: g.targetROAS } : {}),
+    ...(g.conversionGoal !== undefined ? { conversionGoal: g.conversionGoal } : {}),
+    ...(g.customConversionId !== undefined ? { customConversionId: g.customConversionId } : {}),
+  };
+}
+
+/** Texto aparado, ou null quando vazio (mantém o DB limpo; "" limpa o campo). */
+function trimOrNull(s: string): string | null {
+  const t = s.trim();
+  return t.length > 0 ? t : null;
+}
+
+/** Data → YYYY-MM-DD (coluna `date` do snapshot). */
+function ymd(d: Date): string {
+  return d.toISOString().slice(0, 10);
 }

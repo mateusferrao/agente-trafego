@@ -156,6 +156,72 @@ describe("buildAccountBrief", () => {
     expect(c1?.metrics.roas).toBe(0);
   });
 
+  describe("conversão de negócio (override / basis / proxy)", () => {
+    // Conta que otimiza CONVERSAS (messaging); agente com meta de VENDA (purchase).
+    const msgEntities: AdEntity[] = [
+      { id: "m1", level: "campaign", name: "Campanha Conversa", status: "active", objective: { goal: "messaging_started" } },
+    ];
+    function msgRow(entityId: string, level: InsightRow["level"], spend: number, conversas: number): InsightRow {
+      return {
+        entityId,
+        level,
+        date: "2026-08-10",
+        metrics: { spend, impressions: 5000, clicks: 100, ctr: 0, cpc: 0, cpm: 0 },
+        conversions: [{ goal: "messaging_started", count: conversas }],
+      };
+    }
+    function mismatchInput(overrides: Partial<BuildAccountBriefInput> = {}): BuildAccountBriefInput {
+      return {
+        account: { id: "act_1", name: "Conta", currency: "BRL" },
+        window: "últimos 7 dias",
+        baselineWindow: "7 dias anteriores",
+        goals: { targetCPA: 150, conversionGoal: "purchase" }, // meta de VENDA
+        entities: msgEntities,
+        rows: [msgRow("act_1", "account", 219, 100), msgRow("m1", "campaign", 219, 100)], // conversa = R$2,19
+        baselineRows: [],
+        playbookCandidates: [],
+        topN: 10,
+        notableAdsPerCampaign: 5,
+        ...overrides,
+      };
+    }
+
+    it("meta de venda × campanha de conversa (venda não rastreada) → basis proxy, sem CPA de venda nem meta batida", () => {
+      const result = buildAccountBrief(mismatchInput());
+      if (result.status !== "ok") return;
+      const m1 = result.brief.segments.campaigns.find((c) => c.id === "m1");
+      expect(m1?.conversionBasis).toBe("proxy");
+      expect(m1?.metrics.cpa).toBeUndefined(); // venda não mensurável aqui
+      expect(m1?.proxy?.goal).toBe("messaging_started");
+      expect(m1?.proxy?.cpa).toBeCloseTo(2.19, 2); // custo por conversa (proxy rotulado)
+      expect(m1?.flags).not.toContain("cpa_acima_da_meta");
+    });
+
+    it("meta de venda mensurável (conta rastreia purchase) → basis target + CPA de venda + CPA da conta", () => {
+      const result = buildAccountBrief(baseInput({ goals: { targetCPA: 50, conversionGoal: "purchase" } }));
+      if (result.status !== "ok") return;
+      const c1 = result.brief.segments.campaigns.find((c) => c.id === "c1");
+      expect(c1?.conversionBasis).toBe("target");
+      expect(c1?.metrics.cpa).toBe(25);
+      expect(result.brief.totals.cpa).toBe(60); // 300 gasto / 5 vendas — CPA da conta
+    });
+
+    it("sem conversão de negócio (zero-config) → totais sem CPA único (comportamento de hoje)", () => {
+      const result = buildAccountBrief(baseInput()); // goals sem conversionGoal
+      if (result.status !== "ok") return;
+      expect(result.brief.totals.cpa).toBeUndefined();
+    });
+
+    it("entidade sem objetivo e sem override → basis none", () => {
+      const noObj: AdEntity[] = [{ id: "m1", level: "campaign", name: "X", status: "active" }];
+      const result = buildAccountBrief(mismatchInput({ entities: noObj, goals: {} }));
+      if (result.status !== "ok") return;
+      const m1 = result.brief.segments.campaigns.find((c) => c.id === "m1");
+      expect(m1?.conversionBasis).toBe("none");
+      expect(m1?.metrics.cpa).toBeUndefined();
+    });
+  });
+
   it("detecta anomalia (z-score) e a vira flag (entra no brief mesmo com spend baixo)", () => {
     // 5 campanhas normais (CPA ~25) + 1 outlier (CPA 1000) → z-score > 2 (n=6).
     const normals = [1, 2, 3, 4, 5].map((i) =>

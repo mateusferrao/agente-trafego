@@ -40,12 +40,22 @@ const FUNNEL_NOTE =
   "profundidade, com taxas. Trate como QUALIDADE do lead (não só volume): taxa de resposta/" +
   "profundidade baixa é problema mesmo com muitas conversas.";
 
+/** Honestidade do descasamento meta-de-negócio × objetivo da entidade (Fatia 4). */
+const MISMATCH_NOTE =
+  "Cada entidade traz 'conversionBasis': 'target' = o CPA/ROAS mostrado É a conversão de " +
+  "negócio do agente (pode comparar com a meta); 'proxy' = a conversão de negócio (ex: venda) " +
+  "NÃO é mensurável nessa entidade porque ela otimiza outra coisa — o campo 'proxy' traz o custo " +
+  "do objetivo próprio da entidade (ex: custo por conversa) apenas como REFERÊNCIA, NUNCA como " +
+  "venda: não declare meta batida, deixe explícito que a venda não é rastreada ali e use o funil " +
+  "como sinal de qualidade; 'none' = sem conversão, julgue por CPC/CPM. Nunca trate custo de " +
+  "proxy barato como sucesso de negócio.";
+
 const jsonBlock = (label: string, value: unknown): string =>
   `${label}:\n\`\`\`json\n${JSON.stringify(value)}\n\`\`\``;
 
 /** Mensagens do ANALISTA (system = metodologia; user = brief + shape). */
 export function buildAnalysisMessages(systemPrompt: string, brief: AccountBrief): LLMMessage[] {
-  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
+  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, MISMATCH_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
   const user = [
     jsonBlock("Briefing curado da conta (analise SOMENTE com base nele)", brief),
     "",
@@ -78,9 +88,9 @@ export function buildCampaignMessages(
   systemPrompt: string,
   unit: CampaignUnit,
   visionByAdId: ReadonlyMap<string, readonly CreativeVisionResult[]>,
-  accountContext: { readonly currency: string; readonly window: string },
+  accountContext: { readonly currency: string; readonly window: string; readonly businessGoal?: string },
 ): LLMMessage[] {
-  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
+  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, MISMATCH_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
   const vision = unit.adsets
     .flatMap((g) => g.notableAds.map((a) => a.id))
     .map((adId) => ({ adId, vision: visionByAdId.get(adId) ?? [] }))
@@ -120,6 +130,7 @@ export function buildSynthesisMessages(
       "priorize o que mais importa, agrupe temas repetidos e proponha as recomendações de maior impacto.",
     GROUNDING_RULE,
     FUNNEL_NOTE,
+    MISMATCH_NOTE,
     FINDINGS_METRIC_INSTRUCTION,
   ].join("\n\n");
   const user = [

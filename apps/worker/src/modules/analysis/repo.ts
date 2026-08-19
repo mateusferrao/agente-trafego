@@ -2,22 +2,35 @@
 // (VSA — sem porta p/ o próprio banco). Os nós do grafo ficam finos: só chamam
 // estas funções + o core puro.
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, lte, sql } from "drizzle-orm";
 import type { Database } from "@trafego/db/client";
-import { adAccounts, agentMemory, agentMutedEntities, agentRunSteps, agentRuns, agents, platformConnections, playbookRules, recommendations } from "@trafego/db";
-import type { Action, AgentGoals, EncryptedPayload, PlaybookRule, RiskLevel } from "@trafego/shared";
+import { adAccounts, agentMemory, agentMutedEntities, agentRunSteps, agentRuns, agents, conversionLabels, platformConnections, playbookRules, recommendations } from "@trafego/db";
+import type { Action, AgentGoals, ConversionGoal, EncryptedPayload, PlaybookRule, RiskLevel } from "@trafego/shared";
 import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
 
 export interface AgentContext {
   readonly goals: AgentGoals;
   readonly archetype: string;
   readonly systemPrompt: string | null;
+  /** Contexto do negócio (fatos) — camada aditiva no prompt (Fatia 4). */
+  readonly businessContext: string | null;
+  /** Orientações de comportamento — camada aditiva no prompt (Fatia 4). */
+  readonly guidance: string | null;
+  /** Quando a config relevante à análise mudou — força 1 deep run (Fatia 4). */
+  readonly configChangedAt: Date | null;
   readonly modelConfig: Readonly<Record<string, unknown>>;
   readonly playbook: PlaybookRule[];
   /** memória "rejeitado" ativa (loop de feedback barato — não repetir o que o dono vetou). */
   readonly rejectedMemory: string[];
   /** ids externos de campanhas silenciadas pelo usuário — excluídas da análise (S5). */
   readonly mutedCampaignIds: string[];
+}
+
+/** Rótulo legível de uma conversão (id personalizada "" quando padrão) — Fatia 4. */
+export interface ConversionLabelRow {
+  readonly goal: ConversionGoal;
+  readonly customConversionId: string;
+  readonly label: string;
 }
 
 /** Passo do grafo (trilha p/ a Timeline 6a). */
@@ -60,6 +73,19 @@ export interface AnalysisRepo {
   openRun(orgId: string, runId: string, configSnapshot: Record<string, unknown>): Promise<void>;
   markTokenInvalid(orgId: string, adAccountUuid: string): Promise<void>;
   saveRecommendations(rows: readonly RecommendationRow[]): Promise<void>;
+  /** Upsert dos rótulos de conversão resolvidos no run (id→nome), p/ a config ler do banco. */
+  saveConversionLabels(
+    orgId: string,
+    adAccountUuid: string,
+    platform: string,
+    labels: readonly ConversionLabelRow[],
+  ): Promise<void>;
+  /**
+   * Consome o marcador `config_changed_at` (one-shot): zera se ainda for ≤ o valor
+   * observado no início do run — assim UM deep basta, independente de quantas
+   * unidades foram reanalisadas; um save NOVO durante o run (timestamp maior) sobrevive.
+   */
+  consumeConfigChanged(orgId: string, agentId: string, observed: Date): Promise<void>;
   recordStep(input: StepInput): Promise<void>;
   closeRun(orgId: string, runId: string, input: CloseRunInput): Promise<void>;
 }
@@ -72,6 +98,9 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
           goals: agents.goals,
           archetype: agents.archetype,
           systemPrompt: agents.systemPrompt,
+          businessContext: agents.businessContext,
+          guidance: agents.guidance,
+          configChangedAt: agents.configChangedAt,
           modelConfig: agents.modelConfig,
         })
         .from(agents)
@@ -124,6 +153,9 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
         goals: agent.goals,
         archetype: agent.archetype,
         systemPrompt: agent.systemPrompt,
+        businessContext: agent.businessContext,
+        guidance: agent.guidance,
+        configChangedAt: agent.configChangedAt,
         modelConfig: agent.modelConfig ?? {},
         playbook,
         rejectedMemory: memory.map((m) => m.content),
@@ -191,6 +223,41 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
           riskLevel: r.riskLevel,
         })),
       );
+    },
+
+    async saveConversionLabels(orgId, adAccountUuid, platform, labels) {
+      if (labels.length === 0) return;
+      // upsert por (conta, goal, customConversionId) — nome mais recente vence
+      // (o cliente pode renomear a conversão na plataforma).
+      await db
+        .insert(conversionLabels)
+        .values(
+          labels.map((l) => ({
+            orgId,
+            adAccountId: adAccountUuid,
+            platform,
+            goal: l.goal,
+            customConversionId: l.customConversionId,
+            label: l.label,
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [conversionLabels.adAccountId, conversionLabels.goal, conversionLabels.customConversionId],
+          set: { label: sql`excluded.label`, platform: sql`excluded.platform`, updatedAt: sql`now()` },
+        });
+    },
+
+    async consumeConfigChanged(orgId, agentId, observed) {
+      await db
+        .update(agents)
+        .set({ configChangedAt: null, updatedAt: sql`now()` })
+        .where(
+          and(
+            eq(agents.id, agentId),
+            eq(agents.orgId, orgId),
+            lte(agents.configChangedAt, observed),
+          ),
+        );
     },
 
     async recordStep(input) {

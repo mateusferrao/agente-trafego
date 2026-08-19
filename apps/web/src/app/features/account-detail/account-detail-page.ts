@@ -282,61 +282,21 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
         </section>
       }
 
-      <!-- Configuração do agente: secundária ao resultado, recolhível -->
-      <details class="rounded-lg border border-line bg-panel">
-        <summary class="cursor-pointer px-5 py-4 font-brand text-sm font-semibold text-ink">
-          Configuração do agente
-        </summary>
-        <div class="flex flex-col gap-6 border-t border-line px-5 py-5">
-          <!-- Meta do agente (mínima na 3a) -->
-          <div class="flex flex-col gap-3">
-            <h3 class="font-brand text-sm font-semibold text-ink">Meta da conta</h3>
-            <p class="text-xs text-muted">
-              Definir a meta faz o agente comparar o desempenho e priorizar melhor. É opcional.
-            </p>
-            <div class="flex flex-wrap items-end gap-4">
-              <label class="flex flex-col gap-1 text-xs text-muted">
-                Custo por venda alvo (R$)
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  class="w-40 rounded-md border border-line bg-app px-3 py-2 text-sm text-ink"
-                  [value]="targetCPA() ?? ''"
-                  (input)="onCpa($event)"
-                />
-              </label>
-              <label class="flex flex-col gap-1 text-xs text-muted">
-                Retorno sobre investimento alvo (ROAS)
-                <input
-                  type="number"
-                  min="0"
-                  step="0.1"
-                  class="w-40 rounded-md border border-line bg-app px-3 py-2 text-sm text-ink"
-                  [value]="targetROAS() ?? ''"
-                  (input)="onRoas($event)"
-                />
-              </label>
-              <button appButton variant="secondary" type="button" [disabled]="savingGoals()" (click)="saveGoals()">
-                {{ savingGoals() ? 'Salvando…' : 'Salvar meta' }}
-              </button>
-            </div>
-          </div>
-
-          <!-- Freio self-service: pausar as análises automáticas (§8 kill-switch) -->
-          <div class="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-5">
-            <div class="flex flex-col gap-1">
-              <h3 class="font-brand text-sm font-semibold text-ink">Análises automáticas</h3>
-              <p class="text-xs text-muted">
-                {{ paused() ? 'Pausadas — o agente não analisa sozinho nem te avisa no WhatsApp.' : 'Ativas — o agente analisa no ritmo configurado e te avisa no WhatsApp.' }}
-              </p>
-            </div>
-            <button appButton variant="secondary" type="button" [disabled]="pausing()" (click)="togglePaused()">
-              {{ pausing() ? 'Salvando…' : paused() ? 'Retomar' : 'Pausar' }}
-            </button>
-          </div>
+      <!-- Controles do agente: flutua no rodapé (config completa em tela própria + freio) -->
+      <div class="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-panel p-5 shadow-card">
+        <div class="flex flex-col gap-1">
+          <h2 class="font-brand text-sm font-semibold text-ink">Agente</h2>
+          <p class="text-xs text-muted">
+            {{ paused() ? 'Análises automáticas pausadas — o agente não analisa sozinho nem te avisa no WhatsApp.' : 'Análises automáticas ativas — o agente analisa no ritmo configurado e te avisa no WhatsApp.' }}
+          </p>
         </div>
-      </details>
+        <div class="flex items-center gap-3">
+          <a appButton variant="secondary" [routerLink]="['/accounts', accountId, 'agente']">Configurar agente</a>
+          <button appButton variant="secondary" type="button" [disabled]="pausing()" (click)="togglePaused()">
+            {{ pausing() ? 'Salvando…' : paused() ? 'Retomar' : 'Pausar' }}
+          </button>
+        </div>
+      </div>
     </div>
   `,
 })
@@ -346,7 +306,7 @@ export class AccountDetailPage {
   private readonly analysisApi = inject(AnalysisApiService);
   private readonly destroyRef = inject(DestroyRef);
 
-  private readonly accountId = this.route.snapshot.paramMap.get('id') ?? '';
+  protected readonly accountId = this.route.snapshot.paramMap.get('id') ?? '';
   private destroyed = false;
 
   protected readonly applicabilityNote = APPLICABILITY_NOTE;
@@ -356,9 +316,6 @@ export class AccountDetailPage {
   protected readonly loading = signal(true);
   protected readonly analyzing = signal(false);
 
-  protected readonly targetCPA = signal<number | null>(null);
-  protected readonly targetROAS = signal<number | null>(null);
-  protected readonly savingGoals = signal(false);
   protected readonly paused = signal(false);
   protected readonly pausing = signal(false);
   protected readonly votingId = signal<string | null>(null);
@@ -480,29 +437,6 @@ export class AccountDetailPage {
     return LEAK_LABEL[leak];
   }
 
-  protected onCpa(event: Event): void {
-    this.targetCPA.set(parseNumber(event));
-  }
-  protected onRoas(event: Event): void {
-    this.targetROAS.set(parseNumber(event));
-  }
-
-  protected saveGoals(): void {
-    this.savingGoals.set(true);
-    const goals = {
-      ...(this.targetCPA() !== null ? { targetCPA: this.targetCPA()! } : {}),
-      ...(this.targetROAS() !== null ? { targetROAS: this.targetROAS()! } : {}),
-    };
-    this.analysisApi.updateGoals(this.accountId, goals).subscribe({
-      next: () => {
-        this.savingGoals.set(false);
-        toast.success('Meta salva');
-      },
-      // erro amigável já vem do interceptor global (api-request.interceptor).
-      error: () => this.savingGoals.set(false),
-    });
-  }
-
   protected vote(rec: Recommendation, vote: 'up' | 'down'): void {
     if (rec.vote === vote) return; // já votado assim
     this.votingId.set(rec.id);
@@ -548,13 +482,8 @@ export class AccountDetailPage {
       error: () => this.account.set(null),
     });
     this.analysisApi.getAgent(this.accountId).subscribe({
-      next: (agent) => {
-        this.targetCPA.set(agent.goals.targetCPA ?? null);
-        this.targetROAS.set(agent.goals.targetROAS ?? null);
-        this.paused.set(agent.paused);
-      },
-      // meta é opcional; se não carregar, os campos ficam em branco (o usuário
-      // ainda pode definir e salvar). Falha silenciosa consciente, sem travar a tela.
+      next: (agent) => this.paused.set(agent.paused),
+      // estado de pausa é secundário; se não carregar, assume ativo (default). Sem travar a tela.
       error: () => {},
     });
     this.analysisApi.latestRun(this.accountId).subscribe({
@@ -617,11 +546,4 @@ function formatCurrency(value: number, currency: string): string {
 
 function formatPercent(ratio: number): string {
   return `${Math.round(ratio * 100)}%`;
-}
-
-function parseNumber(event: Event): number | null {
-  const value = (event.target as HTMLInputElement).value;
-  if (value.trim() === '') return null;
-  const n = Number(value);
-  return Number.isFinite(n) && n > 0 ? n : null;
 }

@@ -92,3 +92,29 @@ export function composeMethodologyPrompt(d: ArchetypeDefaults): string {
     .filter((s) => s.length > 0)
     .join("\n\n");
 }
+
+/** Personalização por texto do dono do agente (Fatia 4) — camada ADITIVA sobre a base. */
+export interface AgentPromptExtras {
+  /** Fatos do negócio (público, oferta, momento de lançamento, ticket). */
+  readonly businessContext?: string;
+  /** Orientações de comportamento (prioridades, o que evitar). */
+  readonly guidance?: string;
+}
+
+const BUSINESS_CONTEXT_LABEL = "Contexto do negócio informado pelo dono (trate como verdade factual)";
+const GUIDANCE_LABEL = "Orientações do dono (siga como prioridade, sem violar as regras acima)";
+
+/**
+ * Anexa os blocos de personalização do dono ao prompt-base (metodologia do
+ * arquétipo ou override) de forma **aditiva**: a base é sempre preservada, cada
+ * bloco entra só quando há texto (trim não-vazio), ordem estável (contexto →
+ * orientações). A distinção fato × instrução vive nos rótulos. PURO.
+ */
+export function composeAgentPrompt(base: string, extras: AgentPromptExtras = {}): string {
+  const blocks: string[] = [base];
+  const ctx = extras.businessContext?.trim();
+  const guide = extras.guidance?.trim();
+  if (ctx) blocks.push(`${BUSINESS_CONTEXT_LABEL}:\n${ctx}`);
+  if (guide) blocks.push(`${GUIDANCE_LABEL}:\n${guide}`);
+  return blocks.join("\n\n");
+}

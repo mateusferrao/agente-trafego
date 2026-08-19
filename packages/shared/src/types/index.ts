@@ -89,22 +89,26 @@ export interface Creative {
 // optimization_goal, etc.) vive SÓ no adapter. O core e o restante do sistema
 // falam esta taxonomia neutra — adicionar Google/TikTok = novo adapter mapeando
 // pro mesmo enum, sem tocar no core.
-export type ConversionGoal =
-  | "purchase"
-  | "lead"
-  | "registration"
-  | "initiate_checkout"
-  | "add_to_cart"
-  | "view_content"
-  | "add_payment_info"
-  | "search"
-  | "contact"
-  | "subscribe"
-  | "start_trial"
-  | "submit_application"
-  | "messaging_started"
-  | "app_install"
-  | "custom";
+// Tupla const = fonte única da taxonomia neutra (deriva o tipo E o zod em schemas).
+export const CONVERSION_GOALS = [
+  "purchase",
+  "lead",
+  "registration",
+  "initiate_checkout",
+  "add_to_cart",
+  "view_content",
+  "add_payment_info",
+  "search",
+  "contact",
+  "subscribe",
+  "start_trial",
+  "submit_application",
+  "messaging_started",
+  "app_install",
+  "custom",
+] as const;
+
+export type ConversionGoal = (typeof CONVERSION_GOALS)[number];
 
 /** Uma linha do breakdown de conversões (count + valor monetário p/ ROAS). */
 export interface ConversionCount {
@@ -221,6 +225,24 @@ export interface TrendPoint {
   readonly metrics: Partial<InsightMetrics>;
 }
 
+/**
+ * Base de medição do CPA/ROAS desta entidade vs a conversão de NEGÓCIO do agente:
+ *  - `target` → a CPA/ROAS medida É a conversão que julgamos (meta aplicável).
+ *  - `proxy`  → a conversão de negócio não é mensurável aqui (a entidade otimiza
+ *               outra coisa); mostramos a métrica do objetivo da entidade como
+ *               PROXY rotulado — nunca declaramos meta batida contra ela.
+ *  - `none`   → sem conversão nenhuma → julga por CPC/CPM.
+ */
+export type ConversionBasis = "target" | "proxy" | "none";
+
+/** Métrica-proxy (objetivo próprio da entidade) exibida quando o basis é `proxy`. */
+export interface ConversionProxy {
+  readonly goal: ConversionGoal;
+  readonly customConversionId?: string;
+  readonly cpa?: number;
+  readonly roas?: number;
+}
+
 export interface EntitySummary {
   readonly id: string;
   readonly level: EntityLevel;
@@ -231,6 +253,10 @@ export interface EntitySummary {
   readonly flags: readonly string[];
   /** Objetivo da entidade — intenção que conduz a análise (o que "bom" significa aqui). */
   readonly objective?: EntityObjective;
+  /** Base de medição vs a conversão de negócio do agente (§Fatia 4). */
+  readonly conversionBasis?: ConversionBasis;
+  /** Métrica-proxy do objetivo da entidade — presente só quando `conversionBasis === "proxy"`. */
+  readonly proxy?: ConversionProxy;
   /** Funil de messaging da entidade (só quando há dado) — qualidade do lead. */
   readonly funnel?: FunnelSummary;
 }
@@ -271,6 +297,14 @@ export interface CampaignUnit {
 export interface AgentGoals {
   readonly targetCPA?: number;
   readonly targetROAS?: number;
+  /**
+   * Conversão de NEGÓCIO do agente (Fatia 4) — o que conta como resultado pro dono
+   * (ex: `purchase`). Vence o objetivo próprio da entidade no cálculo de CPA/ROAS
+   * (`resolveConversion`). Ausente → usa o objetivo da entidade (zero-config).
+   */
+  readonly conversionGoal?: ConversionGoal;
+  /** Id da conversão personalizada, quando `conversionGoal === "custom"`. */
+  readonly customConversionId?: string;
 }
 
 export interface AccountBrief {

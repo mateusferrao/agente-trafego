@@ -3,8 +3,9 @@ import type { Observable } from 'rxjs';
 import { BaseApiService } from './base-api.service';
 import { silentApiContext } from './api-request.interceptor';
 import type {
-  AgentGoalsInput,
+  AgentConfigInput,
   AgentSummary,
+  AvailableConversionsOutput,
   CampaignAnalysesOutput,
   FeedbackInput,
   FeedbackOutput,
@@ -26,9 +27,19 @@ export class AnalysisApiService extends BaseApiService {
     return this.get<AgentSummary>(['/accounts', accountId, 'agent']);
   }
 
-  /** `PUT /api/accounts/:id/agent/goals` — atualiza a meta (CPA/ROAS). */
-  updateGoals(accountId: string, goals: AgentGoalsInput): Observable<AgentSummary> {
-    return this.put<AgentSummary, AgentGoalsInput>(['/accounts', accountId, 'agent', 'goals'], goals);
+  /** `PUT /api/accounts/:id/agent/config` — salva meta+conversão + personalização por texto. */
+  saveConfig(accountId: string, input: AgentConfigInput): Observable<AgentSummary> {
+    return this.put<AgentSummary, AgentConfigInput>(['/accounts', accountId, 'agent', 'config'], input);
+  }
+
+  /**
+   * `GET /api/accounts/:id/available-conversions` — conversões que a conta reportou
+   * (base do select anotado). Silencioso: falha degrada sem toast (lista vazia).
+   */
+  availableConversions(accountId: string): Observable<AvailableConversionsOutput> {
+    return this.get<AvailableConversionsOutput>(['/accounts', accountId, 'available-conversions'], {
+      context: silentApiContext(),
+    });
   }
 
   /** `PUT /api/accounts/:id/agent/paused` — pausa/retoma as análises automáticas. */

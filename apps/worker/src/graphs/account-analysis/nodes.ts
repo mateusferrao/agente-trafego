@@ -15,6 +15,7 @@ import {
   budgetDirection,
   buildAccountBrief,
   buildMessageFallback,
+  composeAgentPrompt,
   composeMethodologyPrompt,
   costSnapshotFromUsage,
   creativePosterFrame,
@@ -58,7 +59,12 @@ import {
   createDrizzleInsightsSnapshotsRepo,
   type InsightsSnapshotsRepo,
 } from "../../modules/insights/repo.js";
-import { createAnalysisRepo, type AnalysisRepo, type RecommendationRow } from "../../modules/analysis/repo.js";
+import {
+  createAnalysisRepo,
+  type AnalysisRepo,
+  type ConversionLabelRow,
+  type RecommendationRow,
+} from "../../modules/analysis/repo.js";
 import {
   createEntityAnalysesRepo,
   type EntityAnalysesRepo,
@@ -121,8 +127,13 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
 
     // config resolvida por-agente (model_config) com fallback nos defaults globais.
     const cfg = resolveAnalysisConfig(ctx.modelConfig, deps.analysis);
-    // system prompt = override do agente OU metodologia do arquétipo (dado → texto).
-    const systemPrompt = ctx.systemPrompt ?? composeMethodologyPrompt(archetypeDefaults(ctx.archetype));
+    // system prompt = base (override do agente OU metodologia do arquétipo) + camada
+    // ADITIVA de personalização (contexto do negócio + orientações) — Fatia 4.
+    const basePrompt = ctx.systemPrompt ?? composeMethodologyPrompt(archetypeDefaults(ctx.archetype));
+    const systemPrompt = composeAgentPrompt(basePrompt, {
+      ...(ctx.businessContext ? { businessContext: ctx.businessContext } : {}),
+      ...(ctx.guidance ? { guidance: ctx.guidance } : {}),
+    });
     const { window, baseline } = resolveWindows(today(), cfg.windowDays, cfg.baselineDays);
     const windowLabel = `últimos ${cfg.windowDays} dias`;
     const baselineLabel = `${cfg.baselineDays} dias anteriores`;
@@ -142,6 +153,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       rejectedMemory: ctx.rejectedMemory,
       mutedCampaignIds: ctx.mutedCampaignIds,
       systemPrompt,
+      configChangedAt: ctx.configChangedAt ? ctx.configChangedAt.getTime() : null,
       analysisConfig: cfg,
       window: { label: windowLabel, ...window },
       baseline: { label: baselineLabel, ...baseline },
@@ -174,6 +186,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     }
 
     const { entities, entitiesPartial } = await fetchEntities(deps.ports.ads, ref, logger);
+    // persiste os rótulos de conversão resolvidos (id→nome) p/ a config ler do banco
+    // sem falar com a plataforma (Fatia 4). Genérico: platform como coluna.
+    await repo.saveConversionLabels(state.orgId, state.adAccountId, ADS_PLATFORM, collectConversionLabels(entities));
     const rawInsights = await snapshots.listWindow(
       state.orgId,
       state.adAccountId,
@@ -260,7 +275,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       [...last].map(([id, r]) => [id, { metrics: r.metrics, flags: r.flags }]),
     );
     const campaignSummaries = built.campaignUnits.map((u) => u.campaign);
-    const isDeepRun = decideDeepRun(state.trigger, campaignSummaries, last, cfg.deepIntervalDays);
+    const isDeepRun = decideDeepRun(state.trigger, campaignSummaries, last, cfg.deepIntervalDays, state.configChangedAt);
     const selection = selectCampaignsToAnalyze(built.campaignUnits, lastUnits, {
       policy: cfg.executionPolicy,
       materialChangePct: cfg.materialChangePct,
@@ -290,6 +305,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     // captura os valores já garantidos (guard no topo) — o narrowing não cruza o closure.
     const accountCurrency = state.account.currency;
     const windowLabel = state.window.label;
+    const businessGoal = state.goals.conversionGoal;
     const outcomes = await mapWithConcurrency(selection.toAnalyze, cfg.mapConcurrency, async (unit) => {
       // visão dos criativos dos anúncios notáveis DESTA campanha (teto por campanha).
       const notableAdIds = unit.adsets.flatMap((g) => g.notableAds.map((a) => a.id));
@@ -314,6 +330,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           messages: buildCampaignMessages(state.systemPrompt, unit, visionByAdId, {
             currency: accountCurrency,
             window: windowLabel,
+            ...(businessGoal ? { businessGoal } : {}),
           }),
           responseSchema: UNIT_ANALYSIS_JSON_SCHEMA,
           responseSchemaName: UNIT_ANALYSIS_SCHEMA_NAME,
@@ -479,6 +496,12 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     });
     // persiste as análises por-unidade REANALISADAS (base do incremental/herança).
     await entityAnalysesRepo.saveMany(state.agentId, state.runId, state.freshUnits ?? []);
+    // consome o marcador de config (one-shot): este run já aplicou a nova config
+    // num deep; sem isso, contas com mais campanhas que o top-N ficariam em deep
+    // permanente (o analyzedAt só avança nas reanalisadas).
+    if (state.configChangedAt != null) {
+      await repo.consumeConfigChanged(state.orgId, state.agentId, new Date(state.configChangedAt));
+    }
     return {};
   }
 
@@ -637,6 +660,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
  * DEEP run? (reanalisa tudo, ignora incremental). Decidido na casca (relógio):
  *  - on_demand (usuário pediu) → sempre deep;
  *  - sem histórico (1º run) → deep;
+ *  - config relevante à análise mudou depois de alguma análise vigente → deep (a
+ *    herança incremental só olha métricas/flags, não a config; sem isso, editar
+ *    conversão/contexto/orientações só refletiria quando uma métrica mexesse);
  *  - a análise mais antiga entre as unidades atuais passou do intervalo → deep.
  * `analyzedAt` só avança em reanálise real (não no inherit) → o deep dispara sozinho.
  */
@@ -645,9 +671,16 @@ function decideDeepRun(
   adUnits: readonly EntitySummary[],
   last: ReadonlyMap<string, LastEntityAnalysis>,
   deepIntervalDays: number,
+  configChangedAt: number | null,
 ): boolean {
   if (trigger === "on_demand") return true;
   if (last.size === 0) return true;
+  if (configChangedAt !== null) {
+    for (const u of adUnits) {
+      const l = last.get(u.id);
+      if (l && l.analyzedAt.getTime() < configChangedAt) return true; // análise anterior à mudança de config
+    }
+  }
   const thresholdMs = deepIntervalDays * DAY_MS;
   const now = Date.now();
   for (const u of adUnits) {
@@ -655,6 +688,26 @@ function decideDeepRun(
     if (l && now - l.analyzedAt.getTime() > thresholdMs) return true;
   }
   return false;
+}
+
+/** Plataforma de ads deste grafo (Meta no MVP) — rótulo genérico p/ conversion_labels. */
+const ADS_PLATFORM = "meta";
+
+/**
+ * Coleta os rótulos legíveis de conversão das entidades (id→nome resolvido pelo
+ * adapter em `objective.label`, ex: conversões personalizadas). Dedupe por
+ * (goal, id). Só entidades COM label entram (padrão sem label = rótulo no web).
+ */
+function collectConversionLabels(entities: readonly AdEntity[]): ConversionLabelRow[] {
+  const byKey = new Map<string, ConversionLabelRow>();
+  for (const e of entities) {
+    const o = e.objective;
+    if (!o?.label) continue;
+    const customConversionId = o.customConversionId ?? "";
+    const key = `${o.goal}:${customConversionId}`;
+    if (!byKey.has(key)) byKey.set(key, { goal: o.goal, customConversionId, label: o.label });
+  }
+  return [...byKey.values()];
 }
 
 /** Agrupa itens por chave derivada (Map<chave, itens[]>). */

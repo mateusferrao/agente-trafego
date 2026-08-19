@@ -1,5 +1,5 @@
 import { date, index, jsonb, pgTable, text, uniqueIndex, uuid } from "drizzle-orm/pg-core";
-import type { StoredInsightMetrics } from "@trafego/shared";
+import type { ConversionGoal, StoredInsightMetrics } from "@trafego/shared";
 import { entityLevel, pk, timestamps } from "./_shared.js";
 import { adAccounts } from "./integrations.js";
 import { orgs } from "./tenancy.js";
@@ -32,5 +32,34 @@ export const insightsSnapshots = pgTable(
       t.entityId,
       t.date,
     ),
+  ],
+);
+
+/**
+ * Rótulos legíveis de conversão por conta (id → nome). Genérico multi-plataforma
+ * (`platform` como coluna): o worker resolve os nomes durante o run (ex: conversões
+ * personalizadas da Meta) e faz upsert aqui; a API/config lê SÓ o banco — sem
+ * chamada à plataforma numa tela de config. Convenção: sem id personalizado →
+ * `custom_conversion_id = ''` (mantém a unique/upsert simples com goal padrão).
+ */
+export const conversionLabels = pgTable(
+  "conversion_labels",
+  {
+    id: pk(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    adAccountId: uuid("ad_account_id")
+      .notNull()
+      .references(() => adAccounts.id, { onDelete: "cascade" }),
+    platform: text("platform").notNull(),
+    goal: text("goal").$type<ConversionGoal>().notNull(),
+    customConversionId: text("custom_conversion_id").notNull().default(""),
+    label: text("label").notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    index("conversion_labels_account_idx").on(t.adAccountId),
+    uniqueIndex("conversion_labels_unique_idx").on(t.adAccountId, t.goal, t.customConversionId),
   ],
 );

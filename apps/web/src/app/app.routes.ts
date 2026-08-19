@@ -28,6 +28,12 @@ export const routes: Routes = [
           import('./features/account-detail/account-detail-page').then((m) => m.AccountDetailPage),
       },
       {
+        path: 'accounts/:id/agente',
+        title: 'Configurar agente — Agente de Tráfego',
+        loadComponent: () =>
+          import('./features/agent-config/agent-config-page').then((m) => m.AgentConfigPage),
+      },
+      {
         path: 'approvals',
         title: 'Aprovações — Agente de Tráfego',
         loadComponent: () =>

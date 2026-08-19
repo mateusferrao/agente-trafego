@@ -5,7 +5,9 @@ import type {
   Anomaly,
   CampaignUnit,
   CandidateAction,
+  ConversionBasis,
   ConversionBreakdown,
+  ConversionProxy,
   Creative,
   EntityLevel,
   EntityObjective,
@@ -384,7 +386,7 @@ export function buildAccountBrief(input: BuildAccountBriefInput): BuildAccountBr
   );
   const funnelByKey = buildFunnelByKey(input.rows);
 
-  const totals = computeAccountTotals(normalized, baselineByKey);
+  const totals = computeAccountTotals(normalized, baselineByKey, input.goals);
   if (totals.spend === 0 && totals.impressions === 0) return { status: "empty" };
 
   const selectedByLevel = new Map<EntityLevel, EntitySummary[]>();
@@ -482,24 +484,31 @@ function applyAnomalyFlags(
   });
 }
 
-/** Totais da conta (nível `account`; sem CPA único enganoso p/ objetivos mistos). */
+/**
+ * Totais da conta (nível `account`). Sem conversão de negócio → sem CPA único
+ * (evita média enganosa entre objetivos mistos). COM conversão de negócio
+ * (`goals.conversionGoal`) e eventos dela na conta → custo-por-venda da conta
+ * (o KPI que o dono tem na cabeça); senão CPA fica ausente (nunca proxy no total).
+ */
 function computeAccountTotals(
   normalized: readonly NormalizedEntity[],
   baselineByKey: ReadonlyMap<string, NormalizedEntity>,
+  goals: AgentGoals,
 ): AccountBrief["totals"] {
+  const override = businessOverride(goals);
   const account = normalized.find((n) => n.level === "account");
   const current = account
-    ? computeDerived(account)
+    ? computeDerived(account, undefined, override)
     : { spend: 0, impressions: 0, clicks: 0, ctr: 0, cpc: 0, cpm: 0 };
   const base = account ? baselineByKey.get(`account:${account.entityId}`) : undefined;
-  const delta = base ? deltaBetween(current, computeDerived(base)) : {};
+  const delta = base ? deltaBetween(current, computeDerived(base, undefined, override)) : {};
   // totals = InsightMetrics & { delta }; o index signature de InsightMetrics
   // (`[k]: number|undefined`) exige o cast p/ o campo objeto `delta` (mesmo
   // padrão do brief.test.ts).
   return { ...current, delta } as AccountBrief["totals"];
 }
 
-/** Monta o `EntitySummary` de uma entidade (metrics + delta + flags de meta). */
+/** Monta o `EntitySummary` de uma entidade (metrics + delta + basis/proxy + flags). */
 function toEntitySummary(
   n: NormalizedEntity,
   entityById: ReadonlyMap<string, AdEntity>,
@@ -508,10 +517,14 @@ function toEntitySummary(
   goals: AgentGoals,
 ): EntitySummary {
   const entity = entityById.get(n.entityId);
-  const metrics = computeDerived(n, entity?.objective);
+  const objective = entity?.objective;
+  const override = businessOverride(goals);
+  // CPA/ROAS medidos contra a conversão de NEGÓCIO (override vence o objetivo).
+  const metrics = computeDerived(n, objective, override);
   const base = baselineByKey.get(`${n.level}:${n.entityId}`);
-  const baseMetrics = base ? computeDerived(base, entity?.objective) : undefined;
+  const baseMetrics = base ? computeDerived(base, objective, override) : undefined;
   const funnel = computeFunnelSummary(funnelByKey.get(`${n.level}:${n.entityId}`) ?? []);
+  const { basis, proxy } = resolveBasis(n, objective, override, metrics);
   return {
     id: n.entityId,
     level: n.level,
@@ -519,15 +532,60 @@ function toEntitySummary(
     status: entity?.status ?? "active",
     metrics,
     deltaVsBaseline: baseMetrics ? deltaBetween(metrics, baseMetrics) : {},
-    flags: metaFlags(metrics, goals),
-    ...(entity?.objective ? { objective: entity.objective } : {}),
+    flags: metaFlags(metrics, goals, basis),
+    conversionBasis: basis,
+    ...(objective ? { objective } : {}),
+    ...(proxy ? { proxy } : {}),
     ...(funnel ? { funnel } : {}),
   };
 }
 
-/** Flags mínimas (3a-1): desempenho vs meta do agente. */
-function metaFlags(metrics: InsightMetrics, goals: AgentGoals): string[] {
+/** A conversão de NEGÓCIO do agente como override (§Fatia 4). Ausente = zero-config. */
+function businessOverride(goals: AgentGoals): ResolvedConversion | undefined {
+  if (!goals.conversionGoal) return undefined;
+  return {
+    goal: goals.conversionGoal,
+    ...(goals.customConversionId ? { customConversionId: goals.customConversionId } : {}),
+  };
+}
+
+/**
+ * Classifica a base de medição da entidade vs a conversão de negócio:
+ *  - CPA mensurável (override casou, ou sem override) → `target`.
+ *  - override definido mas não mensurável aqui, com objetivo próprio mensurável →
+ *    `proxy` (expõe a métrica do objetivo da entidade, rotulável, nunca "meta batida").
+ *  - senão → `none` (julga por CPC/CPM).
+ */
+function resolveBasis(
+  n: NormalizedEntity,
+  objective: EntityObjective | undefined,
+  override: ResolvedConversion | undefined,
+  metrics: InsightMetrics,
+): { basis: ConversionBasis; proxy?: ConversionProxy } {
+  if (metrics.cpa !== undefined) return { basis: "target" };
+  if (override && objective) {
+    const proxyMetrics = computeDerived(n, objective); // objetivo próprio da entidade
+    if (proxyMetrics.cpa !== undefined) {
+      const proxy: ConversionProxy = {
+        goal: objective.goal,
+        ...(objective.customConversionId ? { customConversionId: objective.customConversionId } : {}),
+        cpa: proxyMetrics.cpa,
+        ...(proxyMetrics.roas !== undefined ? { roas: proxyMetrics.roas } : {}),
+      };
+      return { basis: "proxy", proxy };
+    }
+  }
+  return { basis: "none" };
+}
+
+/**
+ * Flags mínimas (3a-1): desempenho vs meta do agente. Só compara meta quando o
+ * basis é `target` — em `proxy`/`none` a CPA medida NÃO é a conversão de negócio,
+ * então declarar meta (batida ou furada) seria comparar maçãs com laranjas.
+ */
+function metaFlags(metrics: InsightMetrics, goals: AgentGoals, basis: ConversionBasis): string[] {
   const flags: string[] = [];
+  if (basis !== "target") return flags;
   if (goals.targetCPA !== undefined && metrics.cpa !== undefined && metrics.cpa > goals.targetCPA) {
     flags.push("cpa_acima_da_meta");
   }

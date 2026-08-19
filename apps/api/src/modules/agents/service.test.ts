@@ -83,16 +83,43 @@ describe("agents.getOrCreateForAccount", () => {
   });
 });
 
-describe("agents.updateGoals", () => {
-  it("grava a meta sem chaves undefined (exactOptional)", async () => {
+describe("agents.updateConfig", () => {
+  it("salva meta+conversão+textos, apara/limpa e bumpa configChangedAt (força deep)", async () => {
     const { db, captured } = makeFakeDb([[{ id: "acc-1" }], [{ id: "ag-1", archetype: "conservador", goals: {} }]]);
     const service = createAgentsService({ db });
 
-    const result = await service.updateGoals(ORG, "acc-1", { targetCPA: 50 });
+    const result = await service.updateConfig(ORG, "acc-1", {
+      goals: { targetCPA: 150, conversionGoal: "purchase" },
+      businessContext: "  Lançamento até 30/08  ",
+      guidance: "",
+    });
 
-    expect(result.goals).toEqual({ targetCPA: 50 });
-    expect(captured.updateSet?.goals).toEqual({ targetCPA: 50 });
-    expect(Object.keys(captured.updateSet?.goals as object)).not.toContain("targetROAS");
+    expect(result.goals).toEqual({ targetCPA: 150, conversionGoal: "purchase" });
+    expect(result.businessContext).toBe("Lançamento até 30/08"); // aparado
+    expect(result.guidance).toBeNull(); // "" → null
+    expect(captured.updateSet?.goals).toEqual({ targetCPA: 150, conversionGoal: "purchase" });
+    expect(captured.updateSet?.businessContext).toBe("Lançamento até 30/08");
+    expect(captured.updateSet?.guidance).toBeNull();
+    expect(captured.updateSet?.configChangedAt).toBeDefined(); // marca p/ o deep no próximo run
+  });
+});
+
+describe("agents.availableConversions", () => {
+  it("agrega conversões da janela (nível conta) + junta o rótulo real, ordenado por contagem", async () => {
+    const snapshots = [
+      { metricsJson: { metrics: {}, conversions: [{ goal: "purchase", count: 5 }, { goal: "custom", customConversionId: "123", count: 2 }] } },
+      { metricsJson: { metrics: {}, conversions: [{ goal: "purchase", count: 3 }] } },
+    ];
+    const labels = [{ goal: "custom", customConversionId: "123", label: "Comprou Curso" }];
+    const { db } = makeFakeDb([snapshots, labels]);
+    const service = createAgentsService({ db });
+
+    const result = await service.availableConversions(ORG, "acc-1");
+
+    expect(result.conversions).toEqual([
+      { goal: "purchase", count: 8 },
+      { goal: "custom", customConversionId: "123", count: 2, label: "Comprou Curso" },
+    ]);
   });
 });
 

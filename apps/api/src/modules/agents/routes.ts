@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { requireAuth } from "../../middleware/auth.js";
 import { requireOrgScope, orgIdOf } from "../../middleware/org-scope.js";
-import { agentGoalsInput, muteCampaignInput, setPausedInput } from "./schema.js";
+import { agentConfigInput, muteCampaignInput, setPausedInput } from "./schema.js";
 
 /**
  * Slice de agentes (3a): agente por conta (zero-config) + edição da meta.
@@ -16,10 +16,17 @@ export const agentsRoutes: FastifyPluginAsync = async (app) => {
     return service.getOrCreateForAccount(orgIdOf(request), id);
   });
 
-  app.put("/accounts/:id/agent/goals", guard, async (request) => {
+  // Config do agente (Fatia 4 corte 1): meta+conversão de negócio + personalização por texto.
+  app.put("/accounts/:id/agent/config", guard, async (request) => {
     const { id } = request.params as { id: string };
-    const goals = agentGoalsInput.parse(request.body);
-    return service.updateGoals(orgIdOf(request), id, goals);
+    const input = agentConfigInput.parse(request.body);
+    return service.updateConfig(orgIdOf(request), id, input);
+  });
+
+  // Conversões que a conta reportou (base do select anotado da config). DB-only.
+  app.get("/accounts/:id/available-conversions", guard, async (request) => {
+    const { id } = request.params as { id: string };
+    return service.availableConversions(orgIdOf(request), id);
   });
 
   app.put("/accounts/:id/agent/paused", guard, async (request) => {
