@@ -48,7 +48,14 @@ export function createDrizzleAccountsRepo(db: Database): AccountsRepo {
           connValidatedAt: platformConnections.lastValidatedAt,
         })
         .from(adAccounts)
-        .leftJoin(platformConnections, eq(adAccounts.connectionId, platformConnections.id))
+        // join reafirma a org na conexão (defense-in-depth no status do token).
+        .leftJoin(
+          platformConnections,
+          and(
+            eq(adAccounts.connectionId, platformConnections.id),
+            eq(platformConnections.orgId, adAccounts.orgId),
+          ),
+        )
         .where(and(eq(adAccounts.orgId, orgId), eq(adAccounts.status, "active")));
       return rows.map((r) => ({
         id: r.id,

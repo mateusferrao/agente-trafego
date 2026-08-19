@@ -62,7 +62,11 @@ export class EvolutionAdapter implements MessagingChannelPort {
   }
 
   async sendMessage(instance: ChannelInstanceRef, msg: OutboundMessage): Promise<void> {
-    return this.sender.sendText(instance, msg);
+    try {
+      return await this.sender.sendText(instance, msg);
+    } catch (error) {
+      throw toChannelError(error);
+    }
   }
 
   parseInbound(payload: unknown): InboundMessage | null {

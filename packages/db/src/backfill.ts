@@ -10,7 +10,7 @@
  * Idempotente: só toca contas com `connection_id` nulo — rodar de novo é no-op.
  * Não destrói nada: `ad_accounts.token_cripto` permanece (drop é follow-up).
  */
-import { eq, isNull } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { adAccounts, platformConnections } from "./schema/index.js";
 import { createDb, type Database } from "./client.js";
 
@@ -47,8 +47,10 @@ export async function backfillConnections(db: Database): Promise<{ migrated: num
       if (!connection) throw new Error("backfill: falha ao criar platform_connection");
       await tx
         .update(adAccounts)
+        // reafirma isNull(connectionId): fecha a janela de dois migrates concorrentes
+        // criarem conexões duplicadas (a idempotência não fica só no SELECT inicial).
         .set({ connectionId: connection.id })
-        .where(eq(adAccounts.id, account.id));
+        .where(and(eq(adAccounts.id, account.id), isNull(adAccounts.connectionId)));
     });
     migrated += 1;
   }

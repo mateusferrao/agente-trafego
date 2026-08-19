@@ -6,6 +6,7 @@ import { and, eq, sql } from "drizzle-orm";
 import type { Database } from "@trafego/db/client";
 import { adAccounts, agentMemory, agentRunSteps, agentRuns, agents, platformConnections, playbookRules, recommendations } from "@trafego/db";
 import type { Action, AgentGoals, EncryptedPayload, PlaybookRule, RiskLevel } from "@trafego/shared";
+import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
 
 export interface AgentContext {
   readonly goals: AgentGoals;
@@ -128,7 +129,14 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
           connToken: platformConnections.tokenCripto,
         })
         .from(adAccounts)
-        .leftJoin(platformConnections, eq(adAccounts.connectionId, platformConnections.id))
+        // join reafirma a org na conexão (defense-in-depth no caminho do token).
+        .leftJoin(
+          platformConnections,
+          and(
+            eq(adAccounts.connectionId, platformConnections.id),
+            eq(platformConnections.orgId, adAccounts.orgId),
+          ),
+        )
         .where(and(eq(adAccounts.id, adAccountUuid), eq(adAccounts.orgId, orgId)))
         .limit(1);
       if (!row) return null;
@@ -148,29 +156,8 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
     },
 
     async markTokenInvalid(orgId, adAccountUuid) {
-      // Marca inválido na CONEXÃO dona (recolar 1x recupera todas as contas dela);
-      // conta legada sem conexão cai no status da própria conta.
-      const [account] = await db
-        .select({ connectionId: adAccounts.connectionId })
-        .from(adAccounts)
-        .where(and(eq(adAccounts.id, adAccountUuid), eq(adAccounts.orgId, orgId)))
-        .limit(1);
-      if (account?.connectionId) {
-        await db
-          .update(platformConnections)
-          .set({ tokenStatus: "invalid", updatedAt: sql`now()` })
-          .where(
-            and(
-              eq(platformConnections.id, account.connectionId),
-              eq(platformConnections.orgId, orgId),
-            ),
-          );
-        return;
-      }
-      await db
-        .update(adAccounts)
-        .set({ tokenStatus: "invalid", updatedAt: sql`now()` })
-        .where(and(eq(adAccounts.id, adAccountUuid), eq(adAccounts.orgId, orgId)));
+      // lógica em helper compartilhado (mesma usada pelo insights-sync).
+      await markConnectionTokenInvalid(db, orgId, adAccountUuid);
     },
 
     async saveRecommendations(rows) {
