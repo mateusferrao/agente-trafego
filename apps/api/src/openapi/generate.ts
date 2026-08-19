@@ -33,6 +33,8 @@ import {
   startVerificationOutput,
   confirmVerificationInput,
   confirmVerificationOutput,
+  recipientOutput,
+  removeRecipientOutput,
 } from "../modules/contacts/schema.js";
 
 extendZodWithOpenApi(z);
@@ -69,6 +71,8 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const StartVerificationOutput = registry.register("StartVerificationOutput", startVerificationOutput);
   const ConfirmVerificationInput = registry.register("ConfirmVerificationInput", confirmVerificationInput);
   const ConfirmVerificationOutput = registry.register("ConfirmVerificationOutput", confirmVerificationOutput);
+  const RecipientOutput = registry.register("RecipientOutput", recipientOutput);
+  const RemoveRecipientOutput = registry.register("RemoveRecipientOutput", removeRecipientOutput);
   const FeedbackInput = registry.register("FeedbackInput", feedbackInput);
   const FeedbackOutput = registry.register("FeedbackOutput", feedbackOutput);
 
@@ -238,6 +242,18 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
       200: jsonRes("contato verificado", ConfirmVerificationOutput),
       400: { description: "código inválido ou expirado" },
     },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/contacts/recipient",
+    tags: ["contacts"],
+    responses: { 200: jsonRes("destinatário atual (verificado) da org", RecipientOutput) },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/contacts/recipient/remove",
+    tags: ["contacts"],
+    responses: { 200: jsonRes("destinatário removido", RemoveRecipientOutput) },
   });
   registry.registerPath({
     method: "post",

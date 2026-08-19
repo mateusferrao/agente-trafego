@@ -961,10 +961,14 @@
         "properties": {
           "sent": {
             "type": "boolean"
+          },
+          "expiresAt": {
+            "type": "string"
           }
         },
         "required": [
-          "sent"
+          "sent",
+          "expiresAt"
         ]
       },
       "ConfirmVerificationInput": {
@@ -993,6 +997,43 @@
         },
         "required": [
           "verified"
+        ]
+      },
+      "RecipientOutput": {
+        "type": "object",
+        "properties": {
+          "recipient": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "phone": {
+                "type": "string"
+              },
+              "verified": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "phone",
+              "verified"
+            ]
+          }
+        },
+        "required": [
+          "recipient"
+        ]
+      },
+      "RemoveRecipientOutput": {
+        "type": "object",
+        "properties": {
+          "removed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "removed"
         ]
       },
       "FeedbackInput": {
@@ -1590,6 +1631,44 @@
           },
           "400": {
             "description": "código inválido ou expirado"
+          }
+        }
+      }
+    },
+    "/api/contacts/recipient": {
+      "get": {
+        "tags": [
+          "contacts"
+        ],
+        "responses": {
+          "200": {
+            "description": "destinatário atual (verificado) da org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecipientOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/contacts/recipient/remove": {
+      "post": {
+        "tags": [
+          "contacts"
+        ],
+        "responses": {
+          "200": {
+            "description": "destinatário removido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoveRecipientOutput"
+                }
+              }
+            }
           }
         }
       }

@@ -9,8 +9,21 @@ export const startVerificationInput = z.object({
 });
 export type StartVerificationInput = z.infer<typeof startVerificationInput>;
 
-export const startVerificationOutput = z.object({ sent: z.boolean() });
+export const startVerificationOutput = z.object({
+  sent: z.boolean(),
+  /** ISO — quando o código expira (fonte única no backend; a tela conta a partir daqui). */
+  expiresAt: z.string(),
+});
 export type StartVerificationOutput = z.infer<typeof startVerificationOutput>;
+
+/** Destinatário atual (verificado) da org — `recipient` null se ainda não há. */
+export const recipientOutput = z.object({
+  recipient: z.object({ phone: z.string(), verified: z.boolean() }).nullable(),
+});
+export type RecipientOutput = z.infer<typeof recipientOutput>;
+
+export const removeRecipientOutput = z.object({ removed: z.boolean() });
+export type RemoveRecipientOutput = z.infer<typeof removeRecipientOutput>;
 
 // Confirmação: o dono digita o código recebido no WhatsApp.
 export const confirmVerificationInput = z.object({

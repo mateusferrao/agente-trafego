@@ -6,6 +6,8 @@ import type {
   ChannelStateOutput,
   ConfirmVerificationInput,
   ConfirmVerificationOutput,
+  RecipientOutput,
+  RemoveRecipientOutput,
   StartVerificationInput,
   StartVerificationOutput,
 } from './generated';
@@ -51,6 +53,19 @@ export class ChannelApiService extends BaseApiService {
     return this.post<ConfirmVerificationOutput, ConfirmVerificationInput>(
       ['/contacts', 'verify', 'confirm'],
       input,
+    );
+  }
+
+  /** `GET /api/contacts/recipient` — destinatário atual (verificado) da org. */
+  getRecipient(): Observable<RecipientOutput> {
+    return this.get<RecipientOutput>(['/contacts', 'recipient']);
+  }
+
+  /** `POST /api/contacts/recipient/remove` — remove o destinatário (trocar número). */
+  removeRecipient(): Observable<RemoveRecipientOutput> {
+    return this.post<RemoveRecipientOutput, Record<string, never>>(
+      ['/contacts', 'recipient', 'remove'],
+      {},
     );
   }
 }

@@ -104,13 +104,20 @@ function onlyDigits(value: string): string {
         <div class="flex flex-col gap-1">
           <h2 class="font-brand text-sm font-semibold text-ink">2. Confirmar para onde receber</h2>
           <p class="text-xs text-muted">
-            Informe o número onde <strong>você</strong> quer receber as análises. O agente envia um
-            código do número pareado acima para ele — pode ser o mesmo número, se você opera do seu
-            próprio WhatsApp.
+            Informe o seu WhatsApp pessoal — é para onde o agente vai te enviar as análises. Ele manda
+            um código do número pareado acima para confirmar. Use um número <strong>diferente</strong>
+            do número do agente (ele não envia mensagem para si mesmo).
           </p>
         </div>
         @if (verified()) {
-          <p class="text-sm text-success-strong">Número confirmado. Você vai receber as análises por aqui.</p>
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <p class="text-sm text-success-strong">
+              Número confirmado: {{ phone() }}. Você recebe as análises por aqui.
+            </p>
+            <button appButton variant="ghost" size="sm" type="button" [disabled]="changingRecipient()" (click)="trocarNumero()">
+              {{ changingRecipient() ? 'Removendo…' : 'Trocar número' }}
+            </button>
+          </div>
         } @else {
           <div class="flex flex-wrap items-end gap-3">
             <label class="flex flex-col gap-1 text-xs text-muted">
@@ -130,7 +137,7 @@ function onlyDigits(value: string): string {
               [disabled]="!connected() || !phoneValid() || sendingCode()"
               (click)="sendCode()"
             >
-              {{ sendingCode() ? 'Enviando…' : 'Enviar código' }}
+              {{ sendingCode() ? 'Enviando…' : codeSent() ? 'Reenviar código' : 'Enviar código' }}
             </button>
           </div>
           @if (phone() && !phoneValid()) {
@@ -144,7 +151,15 @@ function onlyDigits(value: string): string {
             </p>
           }
           @if (codeSent()) {
-            <p class="text-xs text-muted">Enviamos um código para {{ phone() }}. Digite-o abaixo.</p>
+            @if (codeExpired()) {
+              <p class="text-xs text-warning-strong">
+                O código expirou. Clique em "Reenviar código" para receber um novo.
+              </p>
+            } @else {
+              <p class="text-xs text-muted">
+                Código enviado para {{ phone() }} — válido por {{ remainingLabel() }}. Digite-o abaixo.
+              </p>
+            }
             <div class="flex flex-wrap items-end gap-3">
               <label class="flex flex-col gap-1 text-xs text-muted">
                 Código (6 dígitos)
@@ -156,7 +171,13 @@ function onlyDigits(value: string): string {
                   (input)="onCode($event)"
                 />
               </label>
-              <button appButton variant="primary" type="button" [disabled]="!codeValid() || confirming()" (click)="confirm()">
+              <button
+                appButton
+                variant="primary"
+                type="button"
+                [disabled]="!codeValid() || confirming() || codeExpired()"
+                (click)="confirm()"
+              >
                 {{ confirming() ? 'Confirmando…' : 'Confirmar' }}
               </button>
             </div>
@@ -191,10 +212,23 @@ export class WhatsappConnect {
   protected readonly verified = signal(false);
   protected readonly disconnecting = signal(false);
   protected readonly confirmDisconnect = signal(false);
+  protected readonly changingRecipient = signal(false);
+  /** Segundos restantes de validade do código (contagem a partir do expiresAt do backend). */
+  protected readonly remainingSec = signal(0);
+  private countdown: ReturnType<typeof setInterval> | null = null;
 
   /** E.164 (mesmo formato exigido no backend) — valida antes de enviar (evita 400). */
   protected readonly phoneValid = computed(() => E164_RE.test(this.phone()));
   protected readonly codeValid = computed(() => CODE_RE.test(this.code()));
+  /** Código enviado mas já expirou → precisa reenviar. */
+  protected readonly codeExpired = computed(() => this.codeSent() && this.remainingSec() <= 0);
+  /** Validade restante formatada (M:SS) p/ a tela. */
+  protected readonly remainingLabel = computed(() => {
+    const total = this.remainingSec();
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  });
   /** Destinatário = número do próprio agente? (WhatsApp não entrega msg pra si mesmo.) */
   protected readonly recipientIsPaired = computed(() => {
     const paired = this.pairedPhone();
@@ -204,6 +238,7 @@ export class WhatsappConnect {
   constructor() {
     this.destroyRef.onDestroy(() => {
       this.destroyed = true;
+      this.stopCountdown();
     });
     this.api.status(true).subscribe({
       next: (s) => {
@@ -212,6 +247,33 @@ export class WhatsappConnect {
       },
       error: () => this.loading.set(false),
     });
+    // reflete o destinatário já verificado (persiste ao reabrir a tela).
+    this.api.getRecipient().subscribe({
+      next: (r) => {
+        if (r.recipient?.verified) {
+          this.verified.set(true);
+          this.phone.set(r.recipient.phone);
+        }
+      },
+      error: () => {},
+    });
+  }
+
+  private startCountdown(expiresAtIso: string): void {
+    this.stopCountdown();
+    const expiresMs = Date.parse(expiresAtIso);
+    const tick = (): void => {
+      this.remainingSec.set(Math.max(0, Math.round((expiresMs - Date.now()) / 1000)));
+      if (this.remainingSec() <= 0) this.stopCountdown();
+    };
+    tick();
+    this.countdown = setInterval(tick, 1000);
+  }
+  private stopCountdown(): void {
+    if (this.countdown) {
+      clearInterval(this.countdown);
+      this.countdown = null;
+    }
   }
 
   protected qrSrc(): string {
@@ -259,10 +321,12 @@ export class WhatsappConnect {
 
   protected sendCode(): void {
     this.sendingCode.set(true);
+    this.code.set('');
     this.api.startVerification({ phone: this.phone() }).subscribe({
-      next: () => {
+      next: (r) => {
         this.sendingCode.set(false);
         this.codeSent.set(true);
+        this.startCountdown(r.expiresAt); // valida a partir do expiresAt do backend
         toast.success('Código enviado para o seu WhatsApp');
       },
       // erro amigável já vem do interceptor global.
@@ -277,11 +341,32 @@ export class WhatsappConnect {
         this.confirming.set(false);
         this.verified.set(r.verified);
         // resposta 200 com código errado não é erro HTTP → toast explícito.
-        if (r.verified) toast.success('Número confirmado');
-        else toast.error('Código inválido. Peça um novo e tente de novo.');
+        if (r.verified) {
+          this.stopCountdown();
+          toast.success('Número confirmado');
+        } else {
+          toast.error('Código inválido. Peça um novo e tente de novo.');
+        }
       },
       // erro amigável já vem do interceptor global.
       error: () => this.confirming.set(false),
+    });
+  }
+
+  /** Remove o destinatário verificado e volta ao passo de informar o número. */
+  protected trocarNumero(): void {
+    this.changingRecipient.set(true);
+    this.api.removeRecipient().subscribe({
+      next: () => {
+        this.changingRecipient.set(false);
+        this.verified.set(false);
+        this.codeSent.set(false);
+        this.code.set('');
+        this.phone.set('');
+        this.stopCountdown();
+        toast.success('Número removido — informe outro para receber');
+      },
+      error: () => this.changingRecipient.set(false),
     });
   }
 

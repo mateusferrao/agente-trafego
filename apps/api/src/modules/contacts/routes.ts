@@ -28,4 +28,15 @@ export const contactsRoutes: FastifyPluginAsync = async (app) => {
     const input = confirmVerificationInput.parse(request.body);
     return service.confirmVerification(orgIdOf(request), input);
   });
+
+  // Destinatário atual (verificado) — a tela reflete/permite trocar.
+  app.get("/contacts/recipient", { preHandler: [requireAuth, requireOrgScope] }, async (request) => {
+    const recipient = await service.getRecipient(orgIdOf(request));
+    return { recipient };
+  });
+
+  // Remove o destinatário verificado (trocar número / desvincular).
+  app.post("/contacts/recipient/remove", guard, async (request) => {
+    return service.removeRecipient(orgIdOf(request));
+  });
 };

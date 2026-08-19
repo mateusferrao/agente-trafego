@@ -55,7 +55,7 @@ export function createContactsService(deps: ContactsDeps) {
   async function startVerification(
     orgId: OrgId,
     input: StartVerificationInput,
-  ): Promise<{ sent: true }> {
+  ): Promise<{ sent: true; expiresAt: string }> {
     const instance = await resolveConnectedInstance(deps.db, orgId);
     if (!instance) {
       throw badRequest("Conecte o WhatsApp da sua conta antes de verificar um número.");
@@ -90,7 +90,26 @@ export function createContactsService(deps: ContactsDeps) {
       to: input.phone,
       text: `Seu código de verificação do Agente de Tráfego é ${code}. Ele expira em 10 minutos.`,
     });
-    return { sent: true };
+    return { sent: true, expiresAt: expiresAt.toISOString() };
+  }
+
+  /** Contato destinatário atual da org (verificado), p/ a tela refletir o estado. */
+  async function getRecipient(orgId: OrgId): Promise<{ phone: string; verified: boolean } | null> {
+    const [contact] = await deps.db
+      .select({ phone: contacts.phone, verified: contacts.verified })
+      .from(contacts)
+      .where(and(eq(contacts.orgId, orgId), eq(contacts.verified, true)))
+      .limit(1);
+    return contact ?? null;
+  }
+
+  /** Remove o destinatário verificado da org (trocar/desvincular o número). */
+  async function removeRecipient(orgId: OrgId): Promise<{ removed: boolean }> {
+    const removed = await deps.db
+      .delete(contacts)
+      .where(and(eq(contacts.orgId, orgId), eq(contacts.verified, true)))
+      .returning({ id: contacts.id });
+    return { removed: removed.length > 0 };
   }
 
   /** Confirma o código digitado no site → marca o contato como verificado. */
@@ -141,5 +160,5 @@ export function createContactsService(deps: ContactsDeps) {
     return { verified: true };
   }
 
-  return { startVerification, confirmVerification };
+  return { startVerification, confirmVerification, getRecipient, removeRecipient };
 }
