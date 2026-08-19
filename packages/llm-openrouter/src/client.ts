@@ -51,6 +51,8 @@ export interface OpenRouterChatRequest {
   readonly temperature?: number;
   readonly max_tokens?: number;
   readonly response_format?: Readonly<Record<string, unknown>>;
+  /** Controle de reasoning do OpenRouter (`{ effort | max_tokens | exclude | enabled }`). */
+  readonly reasoning?: Readonly<Record<string, unknown>>;
 }
 
 export interface OpenRouterChatResponse {

@@ -71,7 +71,11 @@ export const envSchema = z.object({
   // em `agents.model_config.reviewEnabled` (Fatia 4 edita).
   ANALYSIS_REVIEW_ENABLED: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
   // Teto de tokens de SAÍDA por chamada de LLM (controla custo/trunca). Override por-agente.
-  ANALYSIS_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(4000),
+  // Folga p/ reasoning + JSON caberem juntos (modelos que "pensam" gastam saída antes da resposta).
+  ANALYSIS_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(8000),
+  // Esforço de reasoning nos passos de LLM (unit/síntese/revisão). `off` desliga.
+  // Override por-agente em `agents.model_config.reasoningEffort` (Fatia 4).
+  ANALYSIS_REASONING_EFFORT: z.enum(["off", "low", "medium", "high"]).default("medium"),
   // URL base do OpenRouter (default oficial; trocável p/ gateway/proxy).
   OPENROUTER_BASE_URL: z.string().url().default("https://openrouter.ai/api/v1"),
 

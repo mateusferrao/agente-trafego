@@ -31,6 +31,19 @@ export interface LLMCallMeta {
   readonly type?: string;
 }
 
+/**
+ * Controle de reasoning (modelos que "pensam" antes de responder). `effort` regula
+ * o esforço; `maxTokens` limita o orçamento de reasoning (deixando espaço p/ a
+ * resposta dentro do maxTokens total); `exclude` pede pra não retornar o reasoning.
+ * `"off"` desliga. O adapter traduz p/ o formato do provider (ignorado por modelos
+ * sem reasoning).
+ */
+export interface LLMReasoning {
+  readonly effort?: "off" | "low" | "medium" | "high";
+  readonly maxTokens?: number;
+  readonly exclude?: boolean;
+}
+
 export interface LLMRequest {
   readonly model: string;
   readonly messages: readonly LLMMessage[];
@@ -40,6 +53,8 @@ export interface LLMRequest {
   readonly responseSchemaName?: string;
   readonly temperature?: number;
   readonly maxTokens?: number;
+  /** reasoning (modelos que pensam antes de responder) — ver LLMReasoning. */
+  readonly reasoning?: LLMReasoning;
   /** metering (opcional) — atribui o custo desta chamada à org/run/tipo. */
   readonly meta?: LLMCallMeta;
 }

@@ -162,6 +162,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
       topN: env.ANALYSIS_TOP_N,
       reviewEnabled: env.ANALYSIS_REVIEW_ENABLED,
       maxOutputTokens: env.ANALYSIS_MAX_OUTPUT_TOKENS,
+      reasoningEffort: env.ANALYSIS_REASONING_EFFORT,
       maxCreativesVision: env.ANALYSIS_MAX_CREATIVES_VISION,
       executionPolicy: env.ANALYSIS_EXECUTION_POLICY,
       deepIntervalDays: env.ANALYSIS_DEEP_INTERVAL_DAYS,

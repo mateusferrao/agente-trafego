@@ -5,6 +5,10 @@
 /** Estratégias de execução (quais unidades reanalisar por run) — enum neutro, aberto. */
 export type ExecutionPolicy = "deep_periodic_incremental" | "full_every_run" | "budget_scaled";
 
+/** Esforço de reasoning dos passos de LLM (`off` desliga). */
+export type ReasoningEffort = "off" | "low" | "medium" | "high";
+const REASONING_EFFORTS: readonly ReasoningEffort[] = ["off", "low", "medium", "high"];
+
 const EXECUTION_POLICIES: readonly ExecutionPolicy[] = [
   "deep_periodic_incremental",
   "full_every_run",
@@ -23,6 +27,8 @@ export interface AnalysisDefaults {
   readonly reviewEnabled: boolean;
   readonly topN: number;
   readonly maxOutputTokens: number;
+  /** esforço de reasoning nos passos de LLM (unit/síntese/revisão). */
+  readonly reasoningEffort: ReasoningEffort;
   readonly maxCreativesVision: number;
   readonly windowDays: number;
   readonly baselineDays: number;
@@ -47,6 +53,10 @@ export function resolveAnalysisConfig(
     typeof v === "string" && (EXECUTION_POLICIES as readonly string[]).includes(v)
       ? (v as ExecutionPolicy)
       : undefined;
+  const effort = (v: unknown): ReasoningEffort | undefined =>
+    typeof v === "string" && (REASONING_EFFORTS as readonly string[]).includes(v)
+      ? (v as ReasoningEffort)
+      : undefined;
 
   return {
     model: str(mc.model) ?? defaults.model,
@@ -56,6 +66,7 @@ export function resolveAnalysisConfig(
     reviewEnabled: typeof mc.reviewEnabled === "boolean" ? mc.reviewEnabled : defaults.reviewEnabled,
     topN: posInt(mc.topN) ?? defaults.topN,
     maxOutputTokens: posInt(mc.maxOutputTokens) ?? defaults.maxOutputTokens,
+    reasoningEffort: effort(mc.reasoningEffort) ?? defaults.reasoningEffort,
     maxCreativesVision: nonNeg(mc.maxCreativesVision) ?? defaults.maxCreativesVision,
     windowDays: defaults.windowDays,
     baselineDays: defaults.baselineDays,

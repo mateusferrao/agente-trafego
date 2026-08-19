@@ -3,6 +3,7 @@ import type {
   LLMContentPart,
   LLMMessage,
   LLMProviderPort,
+  LLMReasoning,
   LLMRequest,
   LLMUsage,
 } from "@trafego/shared/ports";
@@ -75,6 +76,7 @@ export class OpenRouterAdapter implements LLMProviderPort {
       messages: this.mapMessages(request.messages),
       ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
       ...(request.maxTokens !== undefined ? { max_tokens: request.maxTokens } : {}),
+      ...(request.reasoning ? { reasoning: mapReasoning(request.reasoning) } : {}),
     };
   }
 
@@ -110,6 +112,19 @@ export class OpenRouterAdapter implements LLMProviderPort {
       ...(typeof usage?.cost === "number" ? { costUsd: usage.cost } : {}),
     };
   }
+}
+
+/**
+ * Traduz o controle de reasoning do domínio → parâmetro `reasoning` do OpenRouter.
+ * `effort:"off"` desliga (`enabled:false`); senão passa effort/max_tokens/exclude.
+ */
+function mapReasoning(r: LLMReasoning): Record<string, unknown> {
+  if (r.effort === "off") return { enabled: false };
+  return {
+    ...(r.effort ? { effort: r.effort } : {}),
+    ...(r.maxTokens !== undefined ? { max_tokens: r.maxTokens } : {}),
+    ...(r.exclude ? { exclude: true } : {}),
+  };
 }
 
 /**

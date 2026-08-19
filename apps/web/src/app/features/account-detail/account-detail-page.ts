@@ -113,9 +113,10 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
           Carregando…
         </div>
       } @else if (analyzing()) {
-        <div class="flex items-center justify-center gap-3 rounded-lg border border-line bg-panel p-10 text-sm text-muted">
+        <div class="flex flex-col items-center justify-center gap-2 rounded-lg border border-line bg-panel p-10 text-center text-sm text-muted">
           <app-ui-spinner [size]="20" [stroke]="2" aria-hidden="true" />
-          Analisando sua conta… leva cerca de 1 minuto.
+          <span>Analisando sua conta… isso pode levar alguns minutos.</span>
+          <span class="text-xs">Pode fechar esta tela — o resultado fica salvo aqui e o agente te avisa no WhatsApp quando terminar.</span>
         </div>
       } @else if (run() === null) {
         <app-ui-empty-state

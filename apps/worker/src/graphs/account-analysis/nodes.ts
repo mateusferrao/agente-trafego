@@ -311,6 +311,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           responseSchemaName: UNIT_ANALYSIS_SCHEMA_NAME,
           temperature: ANALYSIS_TEMPERATURE,
           maxTokens: cfg.maxOutputTokens,
+          reasoning: { effort: cfg.reasoningEffort },
           meta: { orgId: state.orgId, runId: state.runId, type: "unit" },
         });
         const parsed = unitAnalysisSchema.safeParse(completion.output);
@@ -357,6 +358,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
         responseSchemaName: ANALYSIS_OUTPUT_SCHEMA_NAME,
         temperature: ANALYSIS_TEMPERATURE,
         maxTokens: cfg.maxOutputTokens,
+        reasoning: { effort: cfg.reasoningEffort },
         meta: { orgId: state.orgId, runId: state.runId, type: "synthesis" },
       });
       usage = addTokenUsage(usage ?? undefined, completion.usage);
@@ -399,6 +401,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           responseSchemaName: ANALYSIS_OUTPUT_SCHEMA_NAME,
           temperature: ANALYSIS_TEMPERATURE,
           maxTokens: cfg.maxOutputTokens,
+          reasoning: { effort: cfg.reasoningEffort },
         });
         const parsed = analysisOutputSchema.safeParse(completion.output);
         if (parsed.success) {

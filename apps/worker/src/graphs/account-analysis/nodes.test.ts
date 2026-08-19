@@ -100,6 +100,7 @@ function makeHarness(opts: { rows?: InsightRow[]; tokenInvalid?: boolean; entiti
       topN: 5,
       reviewEnabled: true,
       maxOutputTokens: 4000,
+      reasoningEffort: "medium",
       maxCreativesVision: 8,
       executionPolicy: "deep_periodic_incremental",
       deepIntervalDays: 7,
