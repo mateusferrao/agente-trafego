@@ -19,3 +19,13 @@ export function isOverCostCap(spentUsd: number | null | undefined, capUsd: numbe
   if (spentUsd === null || spentUsd === undefined) return false;
   return spentUsd >= capUsd;
 }
+
+/**
+ * Período de metering ("YYYY-MM", UTC) que o `MeteringPort` usa como janela do cap.
+ * Puro (relógio injetado pela casca) — um lugar só p/ o formato do período.
+ */
+export function usagePeriod(now: Date): string {
+  const y = now.getUTCFullYear();
+  const m = String(now.getUTCMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+}

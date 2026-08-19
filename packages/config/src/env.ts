@@ -150,6 +150,11 @@ export const envSchema = z.object({
   ANALYSIS_DEEP_INTERVAL_DAYS: z.coerce.number().int().positive().default(7),
   // Limiar de "mudança material" (variação relativa de métrica) p/ reanalisar a unidade.
   ANALYSIS_MATERIAL_CHANGE_PCT: z.coerce.number().min(0).default(15),
+  // Reaper (3b): idade (min) além da qual um run pending/running é dado como preso
+  // (crash duro) e marcado failed — libera o índice in-flight p/ o agente voltar.
+  ANALYSIS_RUN_STALE_MINUTES: z.coerce.number().int().positive().default(30),
+  // Cadência do reaper (cron 5-campos) — varre runs presos periodicamente.
+  ANALYSIS_REAPER_CRON: z.string().min(1).default("*/15 * * * *"), // a cada 15 min
 
   // ─── Observabilidade (opcional) ────────────────────────────────────────
   LANGFUSE_PUBLIC_KEY: z.string().optional(),

@@ -15,6 +15,18 @@ export const AGENT_RUN_JOB = "agent-run";
 export const AGENT_CRON_QUEUE = "agent-cron-dispatch";
 export const AGENT_CRON_JOB = "agent-cron";
 
+/**
+ * Fila do REAPER (3b): um Job Scheduler recorrente enfileira aqui; o worker marca
+ * como `failed` os runs presos in-flight (crash duro entre criar o run e fechá-lo)
+ * — sem isso o índice único parcial travaria o agente p/ sempre. Chave estável.
+ */
+export const AGENT_REAPER_QUEUE = "agent-run-reaper";
+export const AGENT_REAPER_JOB = "agent-run-reaper";
+export const AGENT_REAPER_SCHEDULE_KEY = "reaper:runs";
+
+/** Tick do reaper — sem payload (varre todos os orgs). */
+export type AgentReaperTickPayload = Record<string, never>;
+
 export type AgentRunTrigger = "cron" | "on_demand";
 
 /** Payload do dispatch de cron: sem `runId` (o dispatch é quem cria o run). */

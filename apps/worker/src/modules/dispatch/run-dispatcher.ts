@@ -3,24 +3,27 @@
 // DECISÃO do cap é pura (@trafego/core). Idempotência do 1-run-por-conta é do
 // índice único parcial em `agent_runs` (fecha o TOCTOU cron×manual — decisão 15).
 
-import { and, eq, gte, sql } from "drizzle-orm";
-import { agentRuns, agents, guardrailConfigs, type Database } from "@trafego/db";
-import { isOverCostCap, resolveCostCapUsd } from "@trafego/core";
+import { and, eq } from "drizzle-orm";
+import { agentRuns, agents, guardrailConfigs, isUniqueViolation, type Database } from "@trafego/db";
+import { isOverCostCap, resolveCostCapUsd, usagePeriod } from "@trafego/core";
 import {
   AGENT_RUNS_QUEUE,
   AGENT_RUN_JOB,
   type AgentRunExecutePayload,
 } from "@trafego/shared";
-import type { SchedulerPort } from "@trafego/shared/ports";
+import type { MeteringPort, SchedulerPort } from "@trafego/shared/ports";
+import type { OrgId } from "@trafego/shared/types";
 import type { Logger } from "pino";
 
 export interface RunDispatcherDeps {
   readonly db: Database;
   readonly scheduler: SchedulerPort;
   readonly logger: Logger;
+  /** ledger de custo (usage_events) — gasto do período (inclui visão). */
+  readonly metering: MeteringPort;
   /** cap default global (env); o cap por-org vence quando definido. */
   readonly envCostCapUsd: number;
-  /** relógio injetável (casca) — início do período p/ o somatório de custo. */
+  /** relógio injetável (casca) — período p/ o gasto de custo. */
   readonly now?: () => Date;
 }
 
@@ -32,23 +35,16 @@ export interface CronDispatchInput {
 
 export type DispatchOutcome = "enqueued" | "skipped_paused" | "skipped_cost_cap" | "skipped_in_flight";
 
-/** Código Postgres de violação de unique constraint. */
-const PG_UNIQUE_VIOLATION = "23505";
-
-function monthStart(now: Date): Date {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-}
-
 export function createRunDispatcher(deps: RunDispatcherDeps) {
   const clock = deps.now ?? (() => new Date());
 
-  /** Gasto LLM da org no período (soma de cost_snapshot) — null se nada reportado. */
+  /** Gasto LLM da org no período (ledger de usage_events; inclui visão) — null se a leitura falhar. */
   async function spentThisPeriod(orgId: string): Promise<number | null> {
-    const [row] = await deps.db
-      .select({ total: sql<string | null>`sum(${agentRuns.costSnapshot})` })
-      .from(agentRuns)
-      .where(and(eq(agentRuns.orgId, orgId), gte(agentRuns.createdAt, monthStart(clock()))));
-    return row?.total === null || row?.total === undefined ? null : Number(row.total);
+    try {
+      return await deps.metering.llmCostInPeriod(orgId as OrgId, usagePeriod(clock()));
+    } catch {
+      return null; // ledger indisponível → fail-open (não trava o cron)
+    }
   }
 
   /** Cap por-org (guardrail_configs) do agente, se houver. */
@@ -115,9 +111,4 @@ export function createRunDispatcher(deps: RunDispatcherDeps) {
   }
 
   return { dispatch };
-}
-
-/** Detecta violação de unique constraint do Postgres (código 23505). */
-function isUniqueViolation(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && (error as { code?: string }).code === PG_UNIQUE_VIOLATION;
 }

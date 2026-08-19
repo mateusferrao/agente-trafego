@@ -57,6 +57,11 @@ export interface WorkerDeps {
     readonly tz: string;
     readonly jitterMs: number;
   };
+  /** Config do reaper de runs presos (3b) — libera o índice in-flight após crash. */
+  readonly reaper: {
+    readonly staleMinutes: number;
+    readonly cron: string;
+  };
   /** Cap default global de custo LLM por org/período (env). Cap por-org = guardrail_configs. */
   readonly costCapUsd: number;
   /** Checkpointer do LangGraph (Postgres) — HITL durável (5b). undefined na 3a (read-only). */
@@ -168,6 +173,10 @@ export async function buildComposition(): Promise<WorkerDeps> {
       defaultCron: env.ANALYSIS_CRON_DEFAULT,
       tz: env.ANALYSIS_TZ,
       jitterMs: env.ANALYSIS_CRON_JITTER_MS,
+    },
+    reaper: {
+      staleMinutes: env.ANALYSIS_RUN_STALE_MINUTES,
+      cron: env.ANALYSIS_REAPER_CRON,
     },
     costCapUsd: env.LLM_COST_CAP_USD_PER_PERIOD,
     // checkpointer LangGraph = 5b (HITL durável). 3a é read-only linear → sem checkpointer.

@@ -146,6 +146,9 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
           <p class="text-xs text-muted">
             {{ paused() ? 'Pausadas — o agente não analisa sozinho nem te avisa no WhatsApp.' : 'Ativas — o agente analisa no ritmo configurado e te avisa no WhatsApp.' }}
           </p>
+          @if (pauseError()) {
+            <p class="text-xs text-danger-strong">{{ pauseError() }}</p>
+          }
         </div>
         <button appButton variant="secondary" type="button" [disabled]="pausing()" (click)="togglePaused()">
           {{ pausing() ? 'Salvando…' : paused() ? 'Retomar' : 'Pausar' }}
@@ -248,10 +251,11 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                       [class.bg-success-soft]="rec.vote === 'up'"
                       [class.text-success-strong]="rec.vote === 'up'"
                       [class.text-muted]="rec.vote !== 'up'"
+                      [attr.aria-pressed]="rec.vote === 'up'"
                       [disabled]="votingId() === rec.id"
                       (click)="vote(rec, 'up')"
                     >
-                      👍 Útil
+                      {{ rec.vote === 'up' ? '👍 Marcada como útil' : '👍 Útil' }}
                     </button>
                     <button
                       type="button"
@@ -259,6 +263,7 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                       [class.bg-danger-soft]="rec.vote === 'down'"
                       [class.text-danger-strong]="rec.vote === 'down'"
                       [class.text-muted]="rec.vote !== 'down'"
+                      [attr.aria-pressed]="rec.vote === 'down'"
                       [disabled]="votingId() === rec.id"
                       (click)="vote(rec, 'down')"
                     >
@@ -266,6 +271,9 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                     </button>
                     @if (rec.vote === 'down') {
                       <span class="text-xs text-muted">Anotado — o agente evita repetir isso.</span>
+                    }
+                    @if (voteErrorId() === rec.id) {
+                      <span class="text-xs text-danger-strong">Não consegui salvar seu feedback. Tente de novo.</span>
                     }
                   </div>
                 </article>
@@ -301,7 +309,9 @@ export class AccountDetailPage {
   protected readonly goalsError = signal<string | null>(null);
   protected readonly paused = signal(false);
   protected readonly pausing = signal(false);
+  protected readonly pauseError = signal<string | null>(null);
   protected readonly votingId = signal<string | null>(null);
+  protected readonly voteErrorId = signal<string | null>(null);
 
   /** Diagnóstico único da conta (só quando o run trouxe scorecard). */
   protected readonly scorecard = computed<Scorecard | null>(() => this.run()?.metrics?.scorecard ?? null);
@@ -397,6 +407,7 @@ export class AccountDetailPage {
   protected vote(rec: Recommendation, vote: 'up' | 'down'): void {
     if (rec.vote === vote) return; // já votado assim
     this.votingId.set(rec.id);
+    this.voteErrorId.set(null);
     this.analysisApi.sendFeedback(rec.id, vote).subscribe({
       next: () => {
         // reflete o voto localmente (o backend já registrou + memória em 👎).
@@ -405,19 +416,28 @@ export class AccountDetailPage {
         );
         this.votingId.set(null);
       },
-      error: () => this.votingId.set(null),
+      // não engole o erro: sinaliza no card (o clique não pode "sumir" em silêncio).
+      error: () => {
+        this.votingId.set(null);
+        this.voteErrorId.set(rec.id);
+      },
     });
   }
 
   protected togglePaused(): void {
     const next = !this.paused();
     this.pausing.set(true);
+    this.pauseError.set(null);
     this.analysisApi.setPaused(this.accountId, next).subscribe({
       next: (agent) => {
         this.paused.set(agent.paused);
         this.pausing.set(false);
       },
-      error: () => this.pausing.set(false),
+      // kill-switch (§8): falha silenciosa faria o usuário achar que pausou sem ter pausado.
+      error: () => {
+        this.pausing.set(false);
+        this.pauseError.set('Não consegui alterar as análises automáticas agora. Tente de novo.');
+      },
     });
   }
 

@@ -65,6 +65,17 @@ describe("selectUnitsToAnalyze", () => {
     expect(sel.toInherit.map((u) => u.id)).toEqual(["a"]); // tem histórico
     expect(sel.dropped.map((u) => u.id)).toEqual(["c"]); // sem histórico + fora do teto
   });
+
+  it("budget_scaled respeita o teto MESMO em deep/on-demand (não estoura o orçamento)", () => {
+    const sel = selectUnitsToAnalyze(units, new Map(), {
+      policy: "budget_scaled",
+      materialChangePct: 15,
+      isDeepRun: true, // deep não fura o teto do budget_scaled
+      maxUnitsThisRun: 1,
+    });
+    expect(sel.toAnalyze.map((u) => u.id)).toEqual(["b"]); // só o de maior gasto
+    expect(sel.toAnalyze).toHaveLength(1);
+  });
 });
 
 describe("selectCreatives", () => {

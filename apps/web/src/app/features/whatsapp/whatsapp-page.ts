@@ -5,6 +5,8 @@ import { ChannelApiService } from '@core/api/channel-api.service';
 import type { ChannelStateOutput } from '@core/api/generated';
 
 const POLL_INTERVAL_MS = 2500;
+/** Tenta reagendar o polling após erros transitórios de rede antes de desistir. */
+const POLL_MAX_ERRORS = 5;
 const DATA_URL_PREFIX = 'data:image/png;base64,';
 
 /**
@@ -30,7 +32,12 @@ const DATA_URL_PREFIX = 'data:image/png;base64,';
       <!-- Passo 1: conectar a instância por QR -->
       <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
         <h2 class="font-brand text-sm font-semibold text-ink">1. Parear o número</h2>
-        @if (connected()) {
+        @if (loading()) {
+          <div class="flex items-center gap-2 text-xs text-muted">
+            <app-ui-spinner [size]="16" [stroke]="2" aria-hidden="true" />
+            Verificando a conexão…
+          </div>
+        } @else if (connected()) {
           <p class="text-sm text-success-strong">WhatsApp conectado.</p>
         } @else if (qrCode()) {
           <p class="text-sm text-muted">
@@ -39,7 +46,7 @@ const DATA_URL_PREFIX = 'data:image/png;base64,';
           <img [src]="qrSrc()" alt="QR code para parear o WhatsApp" class="h-56 w-56 rounded-md border border-line bg-app" />
           <div class="flex items-center gap-2 text-xs text-muted">
             <app-ui-spinner [size]="16" [stroke]="2" aria-hidden="true" />
-            Aguardando a leitura do QR…
+            {{ pollStalled() ? 'Conexão instável — tentando de novo…' : 'Aguardando a leitura do QR…' }}
           </div>
         } @else {
           <p class="text-sm text-muted">Gere o QR para parear o número da sua organização.</p>
@@ -102,11 +109,17 @@ export class WhatsappPage {
   private readonly api = inject(ChannelApiService);
   private readonly destroyRef = inject(DestroyRef);
   private destroyed = false;
+  /** o usuário já disparou connect() → ignora o status inicial (evita corrida). */
+  private connectStarted = false;
+  /** erros de polling consecutivos (reagenda até o teto antes de parar). */
+  private pollErrors = 0;
 
+  protected readonly loading = signal(true);
   protected readonly connecting = signal(false);
   protected readonly connected = signal(false);
   protected readonly qrCode = signal<string | null>(null);
   protected readonly connectError = signal<string | null>(null);
+  protected readonly pollStalled = signal(false);
 
   protected readonly phone = signal('');
   protected readonly code = signal('');
@@ -121,8 +134,11 @@ export class WhatsappPage {
       this.destroyed = true;
     });
     this.api.status().subscribe({
-      next: (s) => this.applyState(s),
-      error: () => {},
+      next: (s) => {
+        if (!this.connectStarted) this.applyState(s); // não sobrescreve um QR recém-obtido
+        this.loading.set(false);
+      },
+      error: () => this.loading.set(false),
     });
   }
 
@@ -132,6 +148,8 @@ export class WhatsappPage {
   }
 
   protected connect(): void {
+    this.connectStarted = true;
+    this.loading.set(false);
     this.connectError.set(null);
     this.connecting.set(true);
     this.api.connect().subscribe({
@@ -194,10 +212,23 @@ export class WhatsappPage {
     if (this.destroyed || this.connected()) return;
     this.api.status().subscribe({
       next: (s) => {
+        this.pollErrors = 0;
+        this.pollStalled.set(false);
         this.applyState(s);
         if (!this.connected()) setTimeout(() => this.poll(), POLL_INTERVAL_MS);
       },
-      error: () => {},
+      error: () => {
+        // blip transitório (rede/5xx) não pode matar o polling em silêncio: reagenda
+        // até o teto, sinalizando "instável"; só então para (o usuário pode reconectar).
+        this.pollErrors += 1;
+        if (this.pollErrors <= POLL_MAX_ERRORS) {
+          this.pollStalled.set(true);
+          setTimeout(() => this.poll(), POLL_INTERVAL_MS);
+        } else {
+          this.pollStalled.set(false);
+          this.connectError.set('Perdi a conexão ao verificar o pareamento. Gere o QR de novo.');
+        }
+      },
     });
   }
 }

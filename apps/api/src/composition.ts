@@ -150,6 +150,7 @@ export function buildContainer(): Container {
     runs: createRunsService({
       db,
       scheduler,
+      metering,
       ensureAgent: (orgId, accountId) => agents.getOrCreateForAccount(orgId, accountId),
       costCapUsd: env.LLM_COST_CAP_USD_PER_PERIOD,
     }),

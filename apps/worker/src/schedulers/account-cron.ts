@@ -5,7 +5,12 @@
 
 import { eq } from "drizzle-orm";
 import { agents } from "@trafego/db";
-import { AGENT_CRON_QUEUE, type AgentCronDispatchPayload } from "@trafego/shared";
+import {
+  AGENT_CRON_QUEUE,
+  AGENT_REAPER_QUEUE,
+  AGENT_REAPER_SCHEDULE_KEY,
+  type AgentCronDispatchPayload,
+} from "@trafego/shared";
 import type { SchedulerPort } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../composition.js";
 
@@ -54,6 +59,17 @@ export function makeAccountCron(deps: WorkerDeps) {
     await scheduler.removeSchedule(scheduleKey(adAccountId));
   }
 
+  /** Garante o scheduler recorrente do reaper (singleton, key fixa — idempotente). */
+  async function ensureReaperSchedule(): Promise<void> {
+    await scheduler.upsertSchedule({
+      key: AGENT_REAPER_SCHEDULE_KEY,
+      queue: AGENT_REAPER_QUEUE,
+      cron: deps.reaper.cron,
+      tz: deps.cron.tz,
+      payload: {},
+    });
+  }
+
   /** Re-sincroniza os schedulers a partir dos agentes ATIVOS no boot. */
   async function syncAllFromDb(): Promise<void> {
     logger.info("cron:sync_all");
@@ -78,7 +94,7 @@ export function makeAccountCron(deps: WorkerDeps) {
     logger.info({ count: rows.length }, "cron:sync_all done");
   }
 
-  return { upsertAccountSchedule, removeAccountSchedule, syncAllFromDb };
+  return { upsertAccountSchedule, removeAccountSchedule, ensureReaperSchedule, syncAllFromDb };
 }
 
 export type AccountCron = ReturnType<typeof makeAccountCron>;

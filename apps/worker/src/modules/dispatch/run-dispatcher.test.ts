@@ -22,6 +22,11 @@ function fakeDb(results: unknown[]) {
 const logger = { warn: vi.fn(), debug: vi.fn(), info: vi.fn(), error: vi.fn() } as never;
 const INPUT = { orgId: "org-1", agentId: "ag-1", adAccountId: "acc-1" };
 
+/** Metering fake: o gasto do período vem do ledger (não mais de cost_snapshot). */
+function makeMetering(spent: number) {
+  return { llmCostInPeriod: vi.fn(async () => spent), record: vi.fn(), summarize: vi.fn() } as never;
+}
+
 function makeScheduler() {
   return {
     enqueue: vi.fn(
@@ -40,6 +45,7 @@ describe("createRunDispatcher.dispatch", () => {
       db: fakeDb([[{ status: "paused" }]]),
       scheduler: scheduler as never,
       logger,
+      metering: makeMetering(0),
       envCostCapUsd: 0,
     });
     expect(await dispatcher.dispatch(INPUT)).toBe("skipped_paused");
@@ -49,9 +55,10 @@ describe("createRunDispatcher.dispatch", () => {
   it("cap de custo atingido → skipped_cost_cap, sem enfileirar", async () => {
     const scheduler = makeScheduler();
     const dispatcher = createRunDispatcher({
-      db: fakeDb([[{ status: "active" }], [{ cap: "10" }], [{ total: "20" }]]),
+      db: fakeDb([[{ status: "active" }], [{ cap: "10" }]]),
       scheduler: scheduler as never,
       logger,
+      metering: makeMetering(20), // ledger: gasto 20 ≥ cap 10
       envCostCapUsd: 0,
     });
     expect(await dispatcher.dispatch(INPUT)).toBe("skipped_cost_cap");
@@ -61,9 +68,10 @@ describe("createRunDispatcher.dispatch", () => {
   it("caminho feliz → cria run e enfileira execute", async () => {
     const scheduler = makeScheduler();
     const dispatcher = createRunDispatcher({
-      db: fakeDb([[{ status: "active" }], [{ cap: null }], [{ total: null }], [{ id: "run-9" }]]),
+      db: fakeDb([[{ status: "active" }], [{ cap: null }], [{ id: "run-9" }]]),
       scheduler: scheduler as never,
       logger,
+      metering: makeMetering(0),
       envCostCapUsd: 0,
     });
     expect(await dispatcher.dispatch(INPUT)).toBe("enqueued");

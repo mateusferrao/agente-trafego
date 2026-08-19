@@ -1,3 +1,4 @@
+import { isUniqueViolation } from "@trafego/db";
 import { conflict, unauthorized } from "../../middleware/error-handler.js";
 import type { PasswordHasher } from "./password.js";
 import type { AuthRepo, PrincipalRow } from "./repo.js";
@@ -33,11 +34,6 @@ export interface SessionContext {
 export interface SessionIssued {
   readonly rawToken: string;
   readonly me: MeOutput;
-}
-
-/** Erro de violação de UNIQUE do Postgres (ex: corrida de signup no mesmo email). */
-function isUniqueViolation(err: unknown): boolean {
-  return typeof err === "object" && err !== null && (err as { code?: string }).code === "23505";
 }
 
 function toMe(p: PrincipalRow): MeOutput {

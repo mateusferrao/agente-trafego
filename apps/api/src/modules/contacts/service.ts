@@ -15,6 +15,8 @@ export interface ContactsDeps {
 const CODE_TTL_MS = 10 * 60 * 1000; // 10 min
 const CODE_MIN = 100000;
 const CODE_MAX = 999999; // 6 dígitos
+/** Teto de tentativas por código: passou disso, o código é invalidado (anti brute-force). */
+const MAX_CONFIRM_ATTEMPTS = 5;
 
 function hashCode(code: string): string {
   return createHash("sha256").update(code).digest("base64");
@@ -70,6 +72,7 @@ export function createContactsService(deps: ContactsDeps) {
         verified: false,
         verificationCodeHash: hashCode(code),
         verificationExpiresAt: expiresAt,
+        verificationAttempts: 0,
         ...(input.userId ? { userId: input.userId } : {}),
       })
       .onConflictDoUpdate({
@@ -77,6 +80,7 @@ export function createContactsService(deps: ContactsDeps) {
         set: {
           verificationCodeHash: hashCode(code),
           verificationExpiresAt: expiresAt,
+          verificationAttempts: 0, // novo código → zera o contador de tentativas
           verified: false,
           updatedAt: sql`now()`,
         },
@@ -99,13 +103,30 @@ export function createContactsService(deps: ContactsDeps) {
         id: contacts.id,
         codeHash: contacts.verificationCodeHash,
         expiresAt: contacts.verificationExpiresAt,
+        attempts: contacts.verificationAttempts,
       })
       .from(contacts)
       .where(and(eq(contacts.orgId, orgId), eq(contacts.phone, input.phone)))
       .limit(1);
 
     const invalid = "Código inválido ou expirado. Peça um novo código e tente de novo.";
-    if (!contact || !isCodeValid(contact, input.code, Date.now())) throw badRequest(invalid);
+    if (!contact || !isCodeValid(contact, input.code, Date.now())) {
+      // tentativa contra um código vivo → conta; passou do teto, invalida o código
+      // (anti brute-force, defesa em profundidade além do rate-limit da casca).
+      if (contact?.codeHash) {
+        const attempts = (contact.attempts ?? 0) + 1;
+        const exhausted = attempts >= MAX_CONFIRM_ATTEMPTS;
+        await deps.db
+          .update(contacts)
+          .set({
+            verificationAttempts: attempts,
+            ...(exhausted ? { verificationCodeHash: null, verificationExpiresAt: null } : {}),
+            updatedAt: sql`now()`,
+          })
+          .where(and(eq(contacts.id, contact.id), eq(contacts.orgId, orgId)));
+      }
+      throw badRequest(invalid);
+    }
 
     await deps.db
       .update(contacts)
@@ -113,6 +134,7 @@ export function createContactsService(deps: ContactsDeps) {
         verified: true,
         verificationCodeHash: null,
         verificationExpiresAt: null,
+        verificationAttempts: 0,
         updatedAt: sql`now()`,
       })
       .where(and(eq(contacts.id, contact.id), eq(contacts.orgId, orgId)));

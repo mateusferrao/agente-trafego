@@ -16,6 +16,7 @@ export function startAgentCronDispatchWorker(
     db: deps.db,
     scheduler: deps.ports.scheduler,
     logger: deps.logger,
+    metering: deps.ports.metering,
     envCostCapUsd: deps.costCapUsd,
   });
   const { logger } = deps;

@@ -69,10 +69,8 @@ export function selectUnitsToAnalyze(
   lastByEntityId: ReadonlyMap<string, LastUnit>,
   cfg: SelectUnitsConfig,
 ): UnitSelection {
-  if (cfg.policy === "full_every_run" || cfg.isDeepRun) {
-    return { toAnalyze: units, toInherit: [], dropped: [] };
-  }
-
+  // budget_scaled é uma política de TETO: respeita `maxUnitsThisRun` sempre —
+  // inclusive em deep/on-demand (senão o pico de custo furava o orçamento).
   if (cfg.policy === "budget_scaled") {
     const bySpend = [...units].sort((a, b) => (b.metrics.spend ?? 0) - (a.metrics.spend ?? 0));
     const cap = cfg.maxUnitsThisRun ?? bySpend.length;
@@ -81,6 +79,10 @@ export function selectUnitsToAnalyze(
     const toInherit = rest.filter((u) => lastByEntityId.has(u.id));
     const dropped = rest.filter((u) => !lastByEntityId.has(u.id));
     return { toAnalyze, toInherit, dropped };
+  }
+
+  if (cfg.policy === "full_every_run" || cfg.isDeepRun) {
+    return { toAnalyze: units, toInherit: [], dropped: [] };
   }
 
   // deep_periodic_incremental (dia comum): só as que mudaram materialmente / novas.

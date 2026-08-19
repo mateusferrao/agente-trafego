@@ -1,13 +1,21 @@
-import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
-import { agentRuns, agents, guardrailConfigs, recommendationFeedback, recommendations, type Database } from "@trafego/db";
-import { isOverCostCap, READ_ONLY_APPLICABILITY, resolveCostCapUsd } from "@trafego/core";
+import { and, desc, eq, inArray } from "drizzle-orm";
+import {
+  agentRuns,
+  agents,
+  guardrailConfigs,
+  isUniqueViolation,
+  recommendationFeedback,
+  recommendations,
+  type Database,
+} from "@trafego/db";
+import { isOverCostCap, READ_ONLY_APPLICABILITY, resolveCostCapUsd, usagePeriod } from "@trafego/core";
 import {
   AGENT_RUNS_QUEUE,
   AGENT_RUN_JOB,
   type AgentRunExecutePayload,
 } from "@trafego/shared";
 import type { Action, OrgId, RunId } from "@trafego/shared/types";
-import type { SchedulerPort } from "@trafego/shared/ports";
+import type { MeteringPort, SchedulerPort } from "@trafego/shared/ports";
 import { badRequest, conflict } from "../../middleware/error-handler.js";
 import {
   runMetrics,
@@ -26,8 +34,12 @@ export interface RunsDeps {
   readonly db: Database;
   readonly scheduler: SchedulerPort;
   readonly ensureAgent: EnsureAgent;
+  /** ledger de custo (usage_events) — fonte do gasto do período (inclui visão). */
+  readonly metering: MeteringPort;
   /** cap de custo LLM por org/período (0 = sem cap) — checado pré-run. */
   readonly costCapUsd: number;
+  /** relógio injetável (casca) — período do cap. */
+  readonly now?: () => Date;
 }
 
 const IN_FLIGHT_STATUSES = ["pending", "running", "waiting_approval"] as const;
@@ -117,6 +129,9 @@ export function createRunsService(deps: RunsDeps) {
   /**
    * Bloqueia se o custo LLM do período (mês corrente) já atingiu o cap. O cap é
    * por-org (`guardrail_configs.llm_cost_cap`, fallback env); decisão pura no core.
+   * O gasto vem do ledger de metering (`usage_events`) — inclui TODA chamada
+   * (unit/vision/synthesis/review/message), não só o snapshot do run. Falha na
+   * leitura do ledger = fail-open (não trava a análise — "custo ausente ≠ zero").
    */
   async function assertUnderCostCap(orgId: OrgId, agentId: string): Promise<void> {
     const [guard] = await deps.db
@@ -127,13 +142,12 @@ export function createRunsService(deps: RunsDeps) {
     const cap = resolveCostCapUsd(guard?.cap === null || guard?.cap === undefined ? null : Number(guard.cap), deps.costCapUsd);
     if (cap <= 0) return;
 
-    const now = new Date();
-    const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-    const [row] = await deps.db
-      .select({ total: sql<string | null>`sum(${agentRuns.costSnapshot})` })
-      .from(agentRuns)
-      .where(and(eq(agentRuns.orgId, orgId), gte(agentRuns.createdAt, monthStart)));
-    const spent = row?.total === null || row?.total === undefined ? null : Number(row.total);
+    let spent: number | null;
+    try {
+      spent = await deps.metering.llmCostInPeriod(orgId, usagePeriod((deps.now ?? (() => new Date()))()));
+    } catch {
+      return; // ledger indisponível → fail-open (não bloqueia a análise)
+    }
     if (isOverCostCap(spent, cap)) {
       throw badRequest(
         "Você atingiu o limite de custo de análise deste período. Ele renova no próximo mês.",
@@ -172,16 +186,6 @@ export function createRunsService(deps: RunsDeps) {
   }
 
   return { trigger, latest, list, timeline };
-}
-
-/** Detecta violação de unique constraint do Postgres (código 23505). */
-function isUniqueViolation(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: string }).code === "23505"
-  );
 }
 
 type AgentRunRow = typeof agentRuns.$inferSelect;

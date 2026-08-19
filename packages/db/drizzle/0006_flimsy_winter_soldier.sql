@@ -1,0 +1,1 @@
+ALTER TABLE "contacts" ADD COLUMN "verification_attempts" integer DEFAULT 0 NOT NULL;
