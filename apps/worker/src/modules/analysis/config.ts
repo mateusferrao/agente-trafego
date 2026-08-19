@@ -30,6 +30,12 @@ export interface AnalysisDefaults {
   /** esforço de reasoning nos passos de LLM (unit/síntese/revisão). */
   readonly reasoningEffort: ReasoningEffort;
   readonly maxCreativesVision: number;
+  /** anúncios detalhados por campanha na árvore curada (resto vira cauda agregada). */
+  readonly notableAdsPerCampaign: number;
+  /** teto de criativos com visão POR campanha (prioriza maior gasto/flag). */
+  readonly maxCreativesVisionPerCampaign: number;
+  /** quantas campanhas o mapa analisa em paralelo (pool bounded). */
+  readonly mapConcurrency: number;
   readonly windowDays: number;
   readonly baselineDays: number;
   readonly executionPolicy: ExecutionPolicy;
@@ -68,6 +74,10 @@ export function resolveAnalysisConfig(
     maxOutputTokens: posInt(mc.maxOutputTokens) ?? defaults.maxOutputTokens,
     reasoningEffort: effort(mc.reasoningEffort) ?? defaults.reasoningEffort,
     maxCreativesVision: nonNeg(mc.maxCreativesVision) ?? defaults.maxCreativesVision,
+    notableAdsPerCampaign: posInt(mc.notableAdsPerCampaign) ?? defaults.notableAdsPerCampaign,
+    maxCreativesVisionPerCampaign:
+      nonNeg(mc.maxCreativesVisionPerCampaign) ?? defaults.maxCreativesVisionPerCampaign,
+    mapConcurrency: posInt(mc.mapConcurrency) ?? defaults.mapConcurrency,
     windowDays: defaults.windowDays,
     baselineDays: defaults.baselineDays,
     executionPolicy: policy(mc.executionPolicy) ?? defaults.executionPolicy,

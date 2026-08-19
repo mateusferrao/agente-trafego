@@ -97,9 +97,16 @@ decaimento de token em runtime → `6b`; reuso do sync-service pelo `fetchData` 
 
 **Governor / escala (Fatia 2)**
 - Token-bucket Lua (EVALSHA) no `acquire` (controle proativo) + Batch API (≤50/HTTP) — quando o volume exigir (hoje = mínimo-correto reativo).
+- **Backoff + retry no rate-limit da Meta (code 17 "User request limit reached")** no `MetaGraphClient` — hoje o erro só degrada o nível pra `partial` (visto em validação: rodar várias análises seguidas numa conta grande estoura o orçamento de request e `listEntities(adset/ad)` cai). Retry com espera respeitando `X-Business-Use-Case-Usage` antes de degradar. Casa com o token-bucket acima.
+- **Aliviar o `fetch_data`** (o mais pesado por run numa conta grande: lista os 3 níveis, `ad` = centenas paginado, todo run) — listar só entidades **ativas** e/ou cachear o catálogo de entidades entre runs (invalidar por sync). Reduz a pressão de rate-limit na raiz.
 - Tuning do `CUSTOM_CONVERSIONS_CACHE_TTL_SEC` conforme a cadência de cron real.
 
 **Dados / análise (Fatia 2)**
+- **Mapa por campanha (feito)** — `map_units` roda 1 call/campanha ativa (`CampaignUnit` = árvore curada); seleção `selectCampaignsToAnalyze` (top-N `ANALYSIS_TOP_N` + flagadas + incremental); silenciar via `agent_muted_entities`; recorte por campanha no detalhe da conta. Fast-follows:
+  - **Cap de nº de campanhas profundas** vira problema só com muitas ativas — hoje `ANALYSIS_TOP_N` (=10) cobre + flagadas sempre entram; revisar se surgir conta com dezenas de ativas simultâneas.
+  - **Limpeza das linhas legado nível-anúncio em `entity_analyses`** — pós-migração, ids de anúncio ficam órfãos (nunca mais casados; `entity_level='ad'`); um prune pontual por agente no 1º run novo evita lixo acumulado.
+  - **Silenciar adset/ad** — `agent_muted_entities` já é genérico (level+id); expor na UI quando fizer sentido.
+  - **Router-tabs do detalhe da conta** (Visão geral | Agente | Timeline | Conexões, `docs/DESIGN.md`) — hoje o recorte por campanha + config recolhível vivem na página plana; abas quando a Timeline (6a) e Conexões pedirem.
 - Tabela `ad_entities` (histórico de nome/status/budget) — quando a UI (3/4) pedir timeline; hoje entidades são transientes.
 - Backfill histórico sob demanda (range explícito, isento da retenção) — analisar lançamento antigo.
 - Score composto no `rankAndSelect` (gasto + delta vs baseline + severidade da flag).
@@ -108,10 +115,11 @@ decaimento de token em runtime → `6b`; reuso do sync-service pelo `fetchData` 
 - Expandir o `meta-conversion-map` conforme novas contas reais surgirem (o whitelist só conta conversões reconhecidas; `rawActions` guarda o cru como rede de segurança p/ re-derivar).
 
 **Produto / config**
+- **Objetivo de negócio do agente × objetivo de otimização da plataforma (Fatia 4 — config/personalização do agente).** Bug observado em validação: o agente configurado com **custo por venda (targetCPA=R$150)** analisou uma conta cujas campanhas otimizam **`messaging_started`** (conversas) e concluiu *"custo por conversa excelente (R$2,19 vs meta R$150)"* — comparou a meta de VENDA com o custo de CONVERSA (maçãs×laranjas), e tratou volume barato de conversa como sucesso apesar de só 16% ganharem profundidade. Raiz: hoje CPA/ROAS derivam do **objetivo próprio da entidade** (o que a campanha otimiza na Meta), mas a **meta do agente** (venda) pode divergir disso; falta (a) **override de conversão por agente** (já previsto p/ 4 — o agente fixa "minha conversão de negócio é venda/`purchase`"), (b) quando a entidade otimiza X mas a meta é Y, **não comparar meta contra a conversão errada** — o brief/prompt deve deixar explícito o descasamento (funil: conversa barata ≠ venda) em vez de declarar "excelente", e (c) o funil de messaging entra como **qualidade** (profundidade), não como a conversão de negócio. Casa com o override de conversão por agente + a nota de funil já existentes no design (CLAUDE §7).
 - Modo **lançamento × manutenção** como preset de arquétipo.
 - ACL por conta (RBAC granular) — hoje owner/member org-wide.
 - Multi-agente por `ad_account` (hoje 1:1).
-- Multi-conta na seleção do onboarding (multi-select) + possível `meta_connections` normalizado.
+- **Multi-conta na seleção do onboarding (multi-select) — feito** (checkbox no connect-dialog + `selectAccounts` já aceitava array). Resta possível `meta_connections` normalizado se o volume pedir.
 
 **Infra / DX**
 - Pacote `@automato/design-system` compartilhado.

@@ -3,21 +3,47 @@ import type { Database } from "@trafego/db";
 import type { OrgId } from "@trafego/shared/types";
 import { createAgentsService } from "./service.js";
 
-/** DB falso: selects retornam por .limit() em ordem; captura insert/update. */
+/**
+ * DB falso: cada `where()` consome UM resultado de `selectResults` (em ordem) e é
+ * tanto awaitable (queries sem `.limit`) quanto `.limit()`-able. Captura insert/
+ * update/delete p/ asserção.
+ */
 function makeFakeDb(selectResults: unknown[][], insertReturning: unknown[] = [{ id: "agent-new" }]) {
-  const captured: { insertValues?: Record<string, unknown>; updateSet?: Record<string, unknown> } = {};
+  const captured: {
+    insertValues?: Record<string, unknown>;
+    updateSet?: Record<string, unknown>;
+    deleted?: boolean;
+    conflictDoNothing?: boolean;
+  } = {};
+  const whereResult = () => {
+    const rows = selectResults.shift() ?? [];
+    return {
+      limit: async () => rows,
+      then: (resolve: (v: unknown) => void) => resolve(rows),
+    };
+  };
   const db = {
-    select: () => ({ from: () => ({ where: () => ({ limit: async () => selectResults.shift() ?? [] }) }) }),
+    select: () => ({ from: () => ({ where: () => whereResult() }) }),
     insert: () => ({
       values: (v: Record<string, unknown>) => {
         captured.insertValues = v;
-        return { returning: async () => insertReturning };
+        return {
+          returning: async () => insertReturning,
+          onConflictDoNothing: async () => {
+            captured.conflictDoNothing = true;
+          },
+        };
       },
     }),
     update: () => ({
       set: (v: Record<string, unknown>) => {
         captured.updateSet = v;
         return { where: async () => undefined };
+      },
+    }),
+    delete: () => ({
+      where: async () => {
+        captured.deleted = true;
       },
     }),
   };
@@ -67,5 +93,42 @@ describe("agents.updateGoals", () => {
     expect(result.goals).toEqual({ targetCPA: 50 });
     expect(captured.updateSet?.goals).toEqual({ targetCPA: 50 });
     expect(Object.keys(captured.updateSet?.goals as object)).not.toContain("targetROAS");
+  });
+});
+
+describe("agents.muteCampaign / unmuteCampaign", () => {
+  it("silencia campanha: insere (level campaign, org+agente escopados) idempotente e devolve a lista", async () => {
+    // selects em ordem: conta, agente (getOrCreate) + lista de silenciadas.
+    const { db, captured } = makeFakeDb([
+      [{ id: "acc-1" }],
+      [{ id: "ag-1", archetype: "conservador", goals: {} }],
+      [{ externalId: "C1" }],
+    ]);
+    const service = createAgentsService({ db });
+
+    const result = await service.muteCampaign(ORG, "acc-1", "C1");
+
+    expect(result).toEqual(["C1"]);
+    expect(captured.insertValues).toMatchObject({
+      orgId: ORG,
+      agentId: "ag-1",
+      entityLevel: "campaign",
+      externalId: "C1",
+    });
+    expect(captured.conflictDoNothing).toBe(true);
+  });
+
+  it("reativa campanha: deleta a linha e devolve a lista atualizada (vazia)", async () => {
+    const { db, captured } = makeFakeDb([
+      [{ id: "acc-1" }],
+      [{ id: "ag-1", archetype: "conservador", goals: {} }],
+      [],
+    ]);
+    const service = createAgentsService({ db });
+
+    const result = await service.unmuteCampaign(ORG, "acc-1", "C1");
+
+    expect(result).toEqual([]);
+    expect(captured.deleted).toBe(true);
   });
 });

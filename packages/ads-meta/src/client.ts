@@ -106,6 +106,14 @@ export const META_GRAPH_VERSION = "v26.0";
  */
 export const META_TRANSIENT_CODES = new Set([1, 2, 4, 17, 32, 613, 80000, 80001, 80002, 80003, 80004]);
 
+/**
+ * Subconjunto de rate-limit (throttling por chamadas demais): app (4), user (17),
+ * page (32), custom (613) e Business-Use-Case (80000-80004). Distinto dos transientes
+ * genéricos (1 "unknown", 2 "service temporarily unavailable") → vira `rate_limited`
+ * (recuperável esperando), não `upstream`. Mensagem amigável específica na casca.
+ */
+export const META_RATE_LIMIT_CODES = new Set([4, 17, 32, 613, 80000, 80001, 80002, 80003, 80004]);
+
 export interface MetaClientOptions {
   /** override da versão (default = META_GRAPH_VERSION). */
   readonly graphVersion?: string;

@@ -55,6 +55,10 @@ export abstract class BaseApiService {
     return this.request<TResult>('PUT', path, body, options);
   }
 
+  protected delete<TResult>(path: ApiPath, options: ApiRequestOptions = {}): Observable<TResult> {
+    return this.request<TResult>('DELETE', path, undefined, options);
+  }
+
   private request<TResult>(
     method: string,
     path: ApiPath,

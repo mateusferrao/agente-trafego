@@ -3,6 +3,7 @@ import type {
   AdEntity,
   AgentGoals,
   Anomaly,
+  CampaignUnit,
   CandidateAction,
   ConversionBreakdown,
   Creative,
@@ -17,6 +18,9 @@ import type {
 } from "@trafego/shared";
 import { resolveConversion, type ResolvedConversion } from "../conversion/index.js";
 import { computeFunnelSummary, mergeFunnel } from "../funnel/index.js";
+import { buildCampaignUnits } from "./campaign-units.js";
+
+export { buildCampaignUnits, type BuildCampaignUnitsInput } from "./campaign-units.js";
 
 /**
  * Curadoria determinística PURA entre a Meta e o LLM (§7). O LLM nunca vê o
@@ -345,6 +349,10 @@ export interface BuildAccountBriefInput {
   readonly playbookCandidates: readonly CandidateAction[];
   readonly memory?: AccountBrief["memory"];
   readonly topN: number;
+  /** Teto de anúncios detalhados por campanha na árvore curada (S2). */
+  readonly notableAdsPerCampaign: number;
+  /** Campanhas silenciadas pelo usuário (S5) — excluídas da análise por campanha. */
+  readonly mutedCampaignIds?: ReadonlySet<string>;
 }
 
 export type BuildAccountBriefResult =
@@ -354,6 +362,8 @@ export type BuildAccountBriefResult =
       readonly brief: AccountBrief;
       /** TODAS as unidades de anúncio (não só o top-N do brief) — base do map-reduce (3b-2). */
       readonly adUnits: readonly EntitySummary[];
+      /** Árvore curada por campanha ATIVA — base do map-reduce por-campanha (S2). */
+      readonly campaignUnits: readonly CampaignUnit[];
     };
 
 const SEGMENT_LEVELS = ["campaign", "adset", "ad"] as const;
@@ -422,7 +432,16 @@ export function buildAccountBrief(input: BuildAccountBriefInput): BuildAccountBr
     aggregatesRest,
   });
 
-  return { status: "ok", brief, adUnits: allByLevel.get("ad") ?? [] };
+  const campaignUnits = buildCampaignUnits({
+    campaigns: allByLevel.get("campaign") ?? [],
+    adsets: allByLevel.get("adset") ?? [],
+    ads: allByLevel.get("ad") ?? [],
+    entityById,
+    notableAdsPerCampaign: input.notableAdsPerCampaign,
+    ...(input.mutedCampaignIds ? { mutedCampaignIds: input.mutedCampaignIds } : {}),
+  });
+
+  return { status: "ok", brief, adUnits: allByLevel.get("ad") ?? [], campaignUnits };
 }
 
 /** Agrega o funil neutro por `nível:entidade` a partir das linhas (soma dias). */

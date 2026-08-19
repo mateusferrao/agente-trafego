@@ -152,20 +152,20 @@ const STEP_DOTS = [0, 1, 2, 3] as const;
                   </p>
                 </div>
               } @else {
-                <p appUiHint class="intro-hint">Escolha a conta que o agente vai acompanhar.</p>
-                <div class="flex flex-col gap-2" role="radiogroup" aria-label="Contas de anúncio">
-                  @for (target of targets(); track target.id; let i = $index) {
+                <p appUiHint class="intro-hint">Escolha uma ou mais contas para o agente acompanhar.</p>
+                <div class="flex flex-col gap-2" role="group" aria-label="Contas de anúncio">
+                  @for (target of targets(); track target.id) {
                     <button
                       type="button"
-                      role="radio"
-                      [attr.aria-checked]="selectedTargetId() === target.id"
-                      [attr.tabindex]="optionTabindex(target.id, i)"
-                      (click)="selectedTargetId.set(target.id)"
-                      (keydown)="onOptionKeydown($event, i)"
+                      role="checkbox"
+                      [attr.aria-checked]="isSelected(target.id)"
+                      (click)="toggleTarget(target.id)"
+                      (keydown.enter)="toggleTarget(target.id); $event.preventDefault()"
+                      (keydown.space)="toggleTarget(target.id); $event.preventDefault()"
                       class="flex items-center justify-between gap-3 rounded-md border px-4 py-3 text-left transition hover:border-accent/40"
-                      [class.border-accent]="selectedTargetId() === target.id"
-                      [class.bg-accent-soft]="selectedTargetId() === target.id"
-                      [class.border-line]="selectedTargetId() !== target.id"
+                      [class.border-accent]="isSelected(target.id)"
+                      [class.bg-accent-soft]="isSelected(target.id)"
+                      [class.border-line]="!isSelected(target.id)"
                     >
                       <span class="flex min-w-0 flex-col gap-0.5">
                         <span class="truncate text-sm font-semibold text-ink">{{ target.label }}</span>
@@ -174,10 +174,10 @@ const STEP_DOTS = [0, 1, 2, 3] as const;
                         }
                       </span>
                       <span
-                        class="size-4 shrink-0 rounded-full border transition"
-                        [class.border-accent]="selectedTargetId() === target.id"
-                        [class.bg-accent]="selectedTargetId() === target.id"
-                        [class.border-line]="selectedTargetId() !== target.id"
+                        class="size-4 shrink-0 rounded border transition"
+                        [class.border-accent]="isSelected(target.id)"
+                        [class.bg-accent]="isSelected(target.id)"
+                        [class.border-line]="!isSelected(target.id)"
                         aria-hidden="true"
                       ></span>
                     </button>
@@ -229,7 +229,7 @@ const STEP_DOTS = [0, 1, 2, 3] as const;
                 variant="primary"
                 type="button"
                 (click)="confirmSelection()"
-                [disabled]="!selectedTargetId()"
+                [disabled]="!hasSelection()"
               >
                 Conectar
               </button>
@@ -259,7 +259,9 @@ export class ConnectDialogComponent {
   protected readonly step = signal<Step>('intro');
   protected readonly errorMessage = signal<string>('');
   protected readonly targets = signal<readonly SelectableTarget[]>([]);
-  protected readonly selectedTargetId = signal<string | null>(null);
+  /** Ids das contas escolhidas (multi-seleção). */
+  protected readonly selectedTargetIds = signal<ReadonlySet<string>>(new Set());
+  protected readonly hasSelection = computed(() => this.selectedTargetIds().size > 0);
   protected readonly stepDots = STEP_DOTS;
 
   /** Valores do form guardados p/ reenviar no passo de seleção (token em memória). */
@@ -276,27 +278,16 @@ export class ConnectDialogComponent {
   );
   protected readonly assurances = computed(() => this.strategy()?.assurances ?? []);
 
-  /** Roving tabindex (padrão WAI-ARIA radio): 1 tab-stop no selecionado, ou no 1º. */
-  protected optionTabindex(targetId: string, index: number): number {
-    const selected = this.selectedTargetId();
-    if (selected) return targetId === selected ? 0 : -1;
-    return index === 0 ? 0 : -1;
+  protected isSelected(targetId: string): boolean {
+    return this.selectedTargetIds().has(targetId);
   }
 
-  /** Setas movem a seleção dentro do radiogroup e levam o foco junto (com wrap). */
-  protected onOptionKeydown(event: KeyboardEvent, index: number): void {
-    const forward = event.key === 'ArrowDown' || event.key === 'ArrowRight';
-    const backward = event.key === 'ArrowUp' || event.key === 'ArrowLeft';
-    if (!forward && !backward) return;
-    const count = this.targets().length;
-    if (count === 0) return;
-    event.preventDefault();
-    const next = (index + (forward ? 1 : -1) + count) % count;
-    const target = this.targets()[next];
-    if (!target) return;
-    this.selectedTargetId.set(target.id);
-    const group = event.currentTarget instanceof HTMLElement ? event.currentTarget.parentElement : null;
-    group?.querySelectorAll<HTMLButtonElement>('button[role="radio"]')[next]?.focus();
+  /** Alterna a conta na multi-seleção (checkbox). */
+  protected toggleTarget(targetId: string): void {
+    const next = new Set(this.selectedTargetIds());
+    if (next.has(targetId)) next.delete(targetId);
+    else next.add(targetId);
+    this.selectedTargetIds.set(next);
   }
 
   protected start(): void {
@@ -337,13 +328,13 @@ export class ConnectDialogComponent {
 
   protected confirmSelection(): void {
     const strategy = this.strategy();
-    const targetId = this.selectedTargetId();
-    if (!strategy?.selectTarget || !targetId) {
+    const targetIds = [...this.selectedTargetIds()];
+    if (!strategy?.selectTarget || targetIds.length === 0) {
       return;
     }
     this.step.set('connecting');
     strategy
-      .selectTarget({ entry: this.entry(), values: this.submittedValues, targetId })
+      .selectTarget({ entry: this.entry(), values: this.submittedValues, targetIds })
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({ next: (r) => this.applyResult(r), error: () => this.fail() });
   }
@@ -389,7 +380,7 @@ export class ConnectDialogComponent {
         return;
       case 'select':
         this.targets.set(result.targets);
-        this.selectedTargetId.set(null);
+        this.selectedTargetIds.set(new Set());
         this.step.set('select');
         return;
       case 'cancelled':

@@ -1,5 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
-import { adAccounts, agents, type Database } from "@trafego/db";
+import { adAccounts, agents, agentMutedEntities, type Database } from "@trafego/db";
 import { archetypeDefaults, DEFAULT_ARCHETYPE_KEY } from "@trafego/core";
 import type { AgentGoals, OrgId } from "@trafego/shared/types";
 import { notFound } from "../../middleware/error-handler.js";
@@ -90,5 +90,52 @@ export function createAgentsService(deps: AgentsDeps) {
     return { ...summary, paused };
   }
 
-  return { getOrCreateForAccount, updateGoals, setPaused };
+  /** Ids das campanhas silenciadas de um agente já resolvido (org-scoped). */
+  async function mutedCampaignsForAgent(orgId: OrgId, agentId: string): Promise<string[]> {
+    const rows = await deps.db
+      .select({ externalId: agentMutedEntities.externalId })
+      .from(agentMutedEntities)
+      .where(
+        and(
+          eq(agentMutedEntities.agentId, agentId),
+          eq(agentMutedEntities.orgId, orgId),
+          eq(agentMutedEntities.entityLevel, "campaign"),
+        ),
+      );
+    return rows.map((r) => r.externalId);
+  }
+
+  /** Lista os ids de campanhas silenciadas da conta (org-scoped). */
+  async function listMutedCampaigns(orgId: OrgId, accountId: string): Promise<string[]> {
+    const summary = await getOrCreateForAccount(orgId, accountId);
+    return mutedCampaignsForAgent(orgId, summary.agentId);
+  }
+
+  /** Silencia uma campanha (idempotente — não duplica). Devolve a lista atualizada. */
+  async function muteCampaign(orgId: OrgId, accountId: string, externalId: string): Promise<string[]> {
+    const summary = await getOrCreateForAccount(orgId, accountId);
+    await deps.db
+      .insert(agentMutedEntities)
+      .values({ orgId, agentId: summary.agentId, entityLevel: "campaign", externalId })
+      .onConflictDoNothing();
+    return mutedCampaignsForAgent(orgId, summary.agentId);
+  }
+
+  /** Reativa uma campanha silenciada (remove a linha). Devolve a lista atualizada. */
+  async function unmuteCampaign(orgId: OrgId, accountId: string, externalId: string): Promise<string[]> {
+    const summary = await getOrCreateForAccount(orgId, accountId);
+    await deps.db
+      .delete(agentMutedEntities)
+      .where(
+        and(
+          eq(agentMutedEntities.agentId, summary.agentId),
+          eq(agentMutedEntities.orgId, orgId),
+          eq(agentMutedEntities.entityLevel, "campaign"),
+          eq(agentMutedEntities.externalId, externalId),
+        ),
+      );
+    return mutedCampaignsForAgent(orgId, summary.agentId);
+  }
+
+  return { getOrCreateForAccount, updateGoals, setPaused, listMutedCampaigns, muteCampaign, unmuteCampaign };
 }

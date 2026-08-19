@@ -17,6 +17,11 @@ const ADS_ERROR_HTTP: Record<AdsPlatformErrorKind, { status: number; code: strin
     code: "ads_not_accessible",
     message: "Não consegui acessar essa conta com esse token. Verifique e tente de novo.",
   },
+  rate_limited: {
+    status: 429,
+    code: "ads_rate_limited",
+    message: "A Meta recebeu chamadas demais agora. Espere alguns minutos e tente de novo.",
+  },
   upstream: {
     status: 502,
     code: "ads_unavailable",

@@ -29,9 +29,9 @@ export interface CredentialSubmitContext extends ConnectContext {
   readonly values: Readonly<Record<string, string>>;
 }
 
-/** Contexto do passo de seleção: os valores já submetidos + o alvo escolhido. */
+/** Contexto do passo de seleção: os valores já submetidos + os alvos escolhidos (1+). */
 export interface ConnectSelectContext extends CredentialSubmitContext {
-  readonly targetId: string;
+  readonly targetIds: readonly string[];
 }
 
 /**

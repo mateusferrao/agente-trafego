@@ -76,7 +76,7 @@ export class MetaAdsConnector implements ConnectorStrategy {
     if (!connectionId) {
       return of<ConnectResult>({ kind: 'error', message: 'Sessão de conexão expirou. Comece de novo.', recoverable: true });
     }
-    return this.api.select(connectionId, { adAccountIds: [ctx.targetId] }).pipe(
+    return this.api.select(connectionId, { adAccountIds: [...ctx.targetIds] }).pipe(
       map((): ConnectResult => {
         this.pendingConnectionId = null; // conexão concluída — não segurar o id.
         return { kind: 'success', integrationId: connectionId };

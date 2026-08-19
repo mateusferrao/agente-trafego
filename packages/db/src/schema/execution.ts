@@ -14,6 +14,7 @@ import {
 import type { Action, CreativeVisionResult } from "@trafego/shared";
 import {
   approvalStatus,
+  entityLevel,
   feedbackVote,
   outcomeStatus,
   pk,
@@ -148,9 +149,10 @@ export const recommendations = pgTable(
 );
 
 /**
- * Última análise por unidade (anúncio) — base do map-reduce incremental (3b-2):
- * unidades sem mudança material herdam daqui em vez de re-chamar o LLM. 1 linha
- * por (agente, entidade), upsertada a cada análise.
+ * Última análise por unidade — base do map-reduce incremental: unidades sem mudança
+ * material herdam daqui em vez de re-chamar o LLM. 1 linha por (agente, entidade),
+ * upsertada a cada análise. `entityLevel`/`entityName` congelam o nível/rótulo p/ o
+ * recorte por campanha no site (legado nível-anúncio = default `ad`).
  */
 export const entityAnalyses = pgTable(
   "entity_analyses",
@@ -160,6 +162,10 @@ export const entityAnalyses = pgTable(
       .notNull()
       .references(() => agents.id, { onDelete: "cascade" }),
     entityId: text("entity_id").notNull(),
+    // nível da unidade analisada (campaign no modelo por-campanha; ad no legado).
+    entityLevel: entityLevel("entity_level").notNull().default("ad"),
+    // nome legível da entidade no momento da análise (p/ o cartão no site).
+    entityName: text("entity_name"),
     runId: uuid("run_id").references(() => agentRuns.id, { onDelete: "set null" }),
     // UnitAnalysis (findings/recommendations/flags/summary) da última análise.
     unitJson: jsonb("unit_json").$type<Record<string, unknown>>().notNull(),

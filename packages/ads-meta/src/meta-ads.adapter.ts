@@ -14,7 +14,7 @@ import type {
   MutationResult,
 } from "@trafego/shared/ports";
 import { AdsPlatformError } from "@trafego/shared/ports";
-import { META_TRANSIENT_CODES, MetaApiError, MetaGraphClient } from "./client.js";
+import { META_RATE_LIMIT_CODES, META_TRANSIENT_CODES, MetaApiError, MetaGraphClient } from "./client.js";
 import { MetaInsightsService } from "./insights.js";
 import { MetaCreativesService } from "./creatives.js";
 import { MetaMutationsService } from "./mutations.js";
@@ -98,6 +98,12 @@ function parentIdOf(level: ListableLevel, node: RawEntityNode): string | undefin
   return undefined;
 }
 
+/** Link direto p/ a campanha ancestral (ad e adset) — evita two-hop ao montar a árvore. */
+function campaignIdOf(level: ListableLevel, node: RawEntityNode): string | undefined {
+  if (level === "adset" || level === "ad") return node.campaign_id;
+  return undefined;
+}
+
 /** Nó cru de ad account da Graph API. */
 interface MetaAdAccountNode {
   readonly id?: string;
@@ -135,6 +141,10 @@ function toAdsError(error: unknown): AdsPlatformError {
   if (error instanceof AdsPlatformError) return error; // já traduzido — não re-embrulha
   if (error instanceof MetaApiError) {
     if (error.code === 190) return new AdsPlatformError("invalid_credential", error.message);
+    // rate-limit (throttling) → recuperável esperando; mensagem própria na casca.
+    if (error.code !== undefined && META_RATE_LIMIT_CODES.has(error.code)) {
+      return new AdsPlatformError("rate_limited", error.message);
+    }
     if (error.httpStatus >= 500) return new AdsPlatformError("upstream", error.message);
     if (error.code !== undefined && META_TRANSIENT_CODES.has(error.code)) {
       return new AdsPlatformError("upstream", error.message);
@@ -231,6 +241,8 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     resolved: ReadonlyMap<string, CustomConversionInfo>,
   ): AdEntity {
     const parentId = parentIdOf(level, node);
+    const campaignId = campaignIdOf(level, node);
+    const adsetId = level === "ad" ? node.adset_id : undefined;
     const dailyBudget = toMajorBudget(node.daily_budget);
     const lifetimeBudget = toMajorBudget(node.lifetime_budget);
     const objective = this.deriveObjective(level, node, resolved);
@@ -240,6 +252,8 @@ export class MetaAdsAdapter implements AdsPlatformPort {
       name: node.name ?? node.id ?? "",
       status: mapStatus(node.effective_status, node.status),
       ...(parentId ? { parentId } : {}),
+      ...(campaignId ? { campaignId } : {}),
+      ...(adsetId ? { adsetId } : {}),
       ...(dailyBudget !== undefined ? { dailyBudget } : {}),
       ...(lifetimeBudget !== undefined ? { lifetimeBudget } : {}),
       ...(objective ? { objective } : {}),

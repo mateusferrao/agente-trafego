@@ -20,6 +20,13 @@ export const runsRoutes: FastifyPluginAsync = async (app) => {
     return service.latest(orgIdOf(request), id);
   });
 
+  // recorte por campanha do resultado atual (cartões por campanha no site).
+  app.get("/accounts/:id/campaign-analyses", guard, async (request) => {
+    const { id } = request.params as { id: string };
+    const campaigns = await service.campaignAnalyses(orgIdOf(request), id);
+    return { campaigns };
+  });
+
   // histórico/timeline (6a — mantido para compat do contrato)
   app.get("/runs", guard, async (request) => service.list(orgIdOf(request)));
   app.get("/runs/:id", guard, async (request) => {

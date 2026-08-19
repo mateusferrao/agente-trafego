@@ -86,11 +86,11 @@ describe("MetaAdsAdapter.getAdAccount", () => {
     await expect(makeAdapter().getAdAccount("tok", "999")).rejects.toBeInstanceOf(AdsPlatformError);
   });
 
-  it("rate-limit da Meta (HTTP 400) → upstream, não not_accessible", async () => {
+  it("rate-limit da Meta (code 17, HTTP 400) → rate_limited, não not_accessible", async () => {
     stubFetchSequence([{ body: { error: { message: "rate limit", code: 17 } }, status: 400 }]);
     await expect(makeAdapter().getAdAccount("tok", "1")).rejects.toMatchObject({
       name: "AdsPlatformError",
-      kind: "upstream",
+      kind: "rate_limited",
     });
   });
 });

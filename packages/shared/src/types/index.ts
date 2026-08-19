@@ -24,6 +24,11 @@ export interface AdEntity {
   readonly name: string;
   readonly status: EntityStatus;
   readonly parentId?: string;
+  /** Id da campanha ancestral (ad e adset) — link direto p/ montar a árvore campanha→adset→ad
+   *  sem two-hop. `parentId` continua sendo o pai imediato (adset p/ ad, campanha p/ adset). */
+  readonly campaignId?: string;
+  /** Id do adset ancestral (só p/ ad) — pai imediato explícito, complementa `campaignId`. */
+  readonly adsetId?: string;
   readonly dailyBudget?: number;
   readonly lifetimeBudget?: number;
   /** Objetivo próprio da entidade (o que ela otimiza) — base do CPA/ROAS + intenção p/ análise. */
@@ -235,6 +240,32 @@ export interface Anomaly {
   readonly metric: string;
   readonly zScore: number;
   readonly note: string;
+}
+
+// ─── CampaignUnit (unidade do map-reduce por campanha) ───────────────────────
+// A campanha entregue ao LLM como árvore CURADA: adsets ativos + anúncios notáveis
+// (top-N por gasto/flag) + cauda agregada por adset. Sobe a altitude do mapa de
+// por-anúncio p/ por-campanha (menos calls, altitude acionável), sem cegar o LLM.
+
+/** Cauda agregada de anúncios NÃO-notáveis de um adset (resumo, não firehose). */
+export interface CampaignAdsetTail {
+  readonly count: number;
+  readonly spend: number;
+  /** nenhum anúncio da cauda está flagado (fora da meta/anomalia) — resumo honesto. */
+  readonly allWithinTarget: boolean;
+}
+
+/** Um adset dentro da campanha: seus anúncios notáveis (detalhe) + a cauda resumida. */
+export interface CampaignAdsetGroup {
+  readonly adset: EntitySummary;
+  readonly notableAds: readonly EntitySummary[];
+  readonly tail: CampaignAdsetTail;
+}
+
+/** Árvore curada de UMA campanha ativa — a unidade de análise do mapa por-campanha. */
+export interface CampaignUnit {
+  readonly campaign: EntitySummary;
+  readonly adsets: readonly CampaignAdsetGroup[];
 }
 
 export interface AgentGoals {

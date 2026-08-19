@@ -24,8 +24,14 @@ import {
   selectAccountsInput,
   syncOutput,
 } from "../modules/connections/schema.js";
-import { agentGoalsInput, agentSummary, setPausedInput } from "../modules/agents/schema.js";
-import { latestRunOutput, triggerRunOutput } from "../modules/runs/schema.js";
+import {
+  agentGoalsInput,
+  agentSummary,
+  muteCampaignInput,
+  mutedCampaignsOutput,
+  setPausedInput,
+} from "../modules/agents/schema.js";
+import { campaignAnalysesOutput, latestRunOutput, triggerRunOutput } from "../modules/runs/schema.js";
 import { channelStateOutput } from "../modules/channels/schema.js";
 import { feedbackInput, feedbackOutput } from "../modules/recommendations/schema.js";
 import {
@@ -66,6 +72,9 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const SetPausedInput = registry.register("SetPausedInput", setPausedInput);
   const TriggerRunOutput = registry.register("TriggerRunOutput", triggerRunOutput);
   const LatestRunOutput = registry.register("LatestRunOutput", latestRunOutput);
+  const CampaignAnalysesOutput = registry.register("CampaignAnalysesOutput", campaignAnalysesOutput);
+  const MuteCampaignInput = registry.register("MuteCampaignInput", muteCampaignInput);
+  const MutedCampaignsOutput = registry.register("MutedCampaignsOutput", mutedCampaignsOutput);
   const ChannelStateOutput = registry.register("ChannelStateOutput", channelStateOutput);
   const StartVerificationInput = registry.register("StartVerificationInput", startVerificationInput);
   const StartVerificationOutput = registry.register("StartVerificationOutput", startVerificationOutput);
@@ -271,6 +280,34 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     tags: ["runs"],
     request: { params: accountParams },
     responses: { 200: jsonRes("último run + recomendações", LatestRunOutput) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts/{id}/campaign-analyses",
+    tags: ["runs"],
+    request: { params: accountParams },
+    responses: { 200: jsonRes("recorte por campanha do resultado atual", CampaignAnalysesOutput) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts/{id}/muted-campaigns",
+    tags: ["agents"],
+    request: { params: accountParams },
+    responses: { 200: jsonRes("campanhas silenciadas da conta", MutedCampaignsOutput) },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/accounts/{id}/muted-campaigns",
+    tags: ["agents"],
+    request: { params: accountParams, ...jsonBody(MuteCampaignInput) },
+    responses: { 200: jsonRes("campanha silenciada", MutedCampaignsOutput) },
+  });
+  registry.registerPath({
+    method: "delete",
+    path: "/api/accounts/{id}/muted-campaigns/{externalId}",
+    tags: ["agents"],
+    request: { params: z.object({ id: z.string(), externalId: z.string() }) },
+    responses: { 200: jsonRes("campanha reativada", MutedCampaignsOutput) },
   });
   registry.registerPath({
     method: "post",

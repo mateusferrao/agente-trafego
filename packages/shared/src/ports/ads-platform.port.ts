@@ -34,7 +34,11 @@ export interface MutationResult {
  * conhecer o provider. `invalid_credential` = token inválido; `not_accessible` =
  * o token não tem posse do recurso; `upstream` = provider indisponível.
  */
-export type AdsPlatformErrorKind = "invalid_credential" | "not_accessible" | "upstream";
+export type AdsPlatformErrorKind =
+  | "invalid_credential"
+  | "not_accessible"
+  | "rate_limited"
+  | "upstream";
 
 export class AdsPlatformError extends Error {
   constructor(

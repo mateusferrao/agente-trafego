@@ -6,9 +6,10 @@ import { heroSparkles } from '@ng-icons/heroicons/outline';
 import { UiBadge, UiButton, UiEmptyState, UiPageHeader, UiSpinner } from '@ui';
 import { AccountsApiService } from '@core/api/accounts-api.service';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
-import type { AdAccountOutput, LatestRunOutput } from '@core/api/generated';
+import type { AdAccountOutput, CampaignAnalysesOutput, LatestRunOutput } from '@core/api/generated';
 
 type Recommendation = LatestRunOutput['recommendations'][number];
+type Campaign = CampaignAnalysesOutput['campaigns'][number];
 type RunMetrics = NonNullable<NonNullable<LatestRunOutput['run']>['metrics']>;
 type Scorecard = NonNullable<RunMetrics['scorecard']>;
 type RiskTone = 'neutral' | 'warning' | 'danger';
@@ -141,7 +142,7 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
           @if (hasResults()) {
           @if (run()?.partial) {
             <p class="text-xs text-warning-strong">
-              Análise parcial — alguns dados não puderam ser carregados desta vez.
+              Análise parcial — a Meta limitou as chamadas ou alguns dados não vieram desta vez. Tente de novo em alguns minutos.
             </p>
           }
 
@@ -166,6 +167,56 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                   <span class="text-xs text-muted">{{ stat.label }}</span>
                   <span class="font-brand text-lg font-semibold text-ink">{{ stat.value }}</span>
                 </div>
+              }
+            </div>
+          }
+
+          <!-- Recorte por campanha: o gestor pensa por campanha (não por conta-blob) -->
+          @if (campaigns().length > 0) {
+            <div class="flex flex-col gap-1">
+              <h2 class="font-brand text-sm font-semibold text-ink">Campanhas</h2>
+              <p class="text-xs text-muted">
+                Análise de cada campanha ativa. Silencie as que o agente não deve acompanhar.
+              </p>
+            </div>
+            <div class="flex flex-col gap-3">
+              @for (c of campaigns(); track c.externalId) {
+                <article
+                  class="flex flex-col gap-2 rounded-lg border border-line bg-panel p-5"
+                  [class.opacity-60]="c.muted"
+                >
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="flex flex-col gap-1">
+                      <h3 class="font-brand text-base font-semibold text-ink">{{ campaignName(c) }}</h3>
+                      <div class="flex flex-wrap items-center gap-2">
+                        <span appBadge [tone]="campaignTone(c)" size="sm">{{ campaignStatusLabel(c) }}</span>
+                        <span class="text-xs text-muted">Gasto {{ campaignSpend(c) }}</span>
+                        @if (c.metrics.cpa !== undefined) {
+                          <span class="text-xs text-muted">· Custo por venda {{ campaignCpa(c) }}</span>
+                        }
+                        @if (c.muted) {
+                          <span appBadge size="sm">silenciada</span>
+                        }
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      class="shrink-0 rounded-md border border-line px-2 py-1 text-xs text-muted hover:text-ink"
+                      [disabled]="mutingId() === c.externalId"
+                      (click)="toggleMuted(c)"
+                    >
+                      {{ mutingId() === c.externalId ? 'Salvando…' : c.muted ? 'Reativar' : 'Silenciar' }}
+                    </button>
+                  </div>
+                  @if (c.summary) {
+                    <p class="text-sm text-muted">{{ c.summary }}</p>
+                  }
+                  @if (c.topFinding) {
+                    <div class="rounded-md bg-soft p-3">
+                      <span class="text-sm text-ink">{{ c.topFinding.title }}</span>
+                    </div>
+                  }
+                </article>
               }
             </div>
           }
@@ -311,6 +362,8 @@ export class AccountDetailPage {
   protected readonly paused = signal(false);
   protected readonly pausing = signal(false);
   protected readonly votingId = signal<string | null>(null);
+  protected readonly campaigns = signal<Campaign[]>([]);
+  protected readonly mutingId = signal<string | null>(null);
 
   /** Diagnóstico único da conta (só quando o run trouxe scorecard). */
   protected readonly scorecard = computed<Scorecard | null>(() => this.run()?.metrics?.scorecard ?? null);
@@ -321,7 +374,11 @@ export class AccountDetailPage {
    * recomendação" viram ruído, então ficam suprimidos.
    */
   protected readonly hasResults = computed<boolean>(
-    () => this.scorecard() !== null || this.stats().length > 0 || this.recommendations().length > 0,
+    () =>
+      this.scorecard() !== null ||
+      this.stats().length > 0 ||
+      this.recommendations().length > 0 ||
+      this.campaigns().length > 0,
   );
 
   /** Faixa de KPIs + taxas de funil, já formatada (só o que houver). */
@@ -366,6 +423,51 @@ export class AccountDetailPage {
     const verb = ACTION_LABEL[action.type] ?? 'Revisar';
     const level = LEVEL_LABEL[action.target.level] ?? action.target.level;
     return `${verb} ${level}`;
+  }
+
+  protected campaignName(c: Campaign): string {
+    return c.name ?? c.externalId;
+  }
+  /**
+   * Precisa de atenção? flag de meta/anomalia OU um achado grave da análise —
+   * senão o badge "dentro da meta" contradiz um gargalo crítico exibido logo abaixo.
+   */
+  private campaignNeedsAttention(c: Campaign): boolean {
+    const sev = c.topFinding?.severity;
+    return c.flags.length > 0 || sev === 'warning' || sev === 'critical';
+  }
+  /** Tom+texto (nunca só cor): atenção × dentro da meta. */
+  protected campaignTone(c: Campaign): RiskTone {
+    return this.campaignNeedsAttention(c) ? 'warning' : 'neutral';
+  }
+  protected campaignStatusLabel(c: Campaign): string {
+    return this.campaignNeedsAttention(c) ? 'atenção' : 'dentro da meta';
+  }
+  protected campaignSpend(c: Campaign): string {
+    return formatCurrency(c.metrics.spend, this.account()?.currency ?? DEFAULT_CURRENCY);
+  }
+  protected campaignCpa(c: Campaign): string {
+    return formatCurrency(c.metrics.cpa ?? 0, this.account()?.currency ?? DEFAULT_CURRENCY);
+  }
+
+  /** Silencia/reativa uma campanha (opt-out da análise). Reflete a lista do backend. */
+  protected toggleMuted(c: Campaign): void {
+    this.mutingId.set(c.externalId);
+    const req = c.muted
+      ? this.analysisApi.unmuteCampaign(this.accountId, c.externalId)
+      : this.analysisApi.muteCampaign(this.accountId, c.externalId);
+    req.subscribe({
+      next: (out) => {
+        const mutedSet = new Set(out.campaignIds);
+        this.campaigns.update((list) =>
+          list.map((x) => ({ ...x, muted: mutedSet.has(x.externalId) })),
+        );
+        this.mutingId.set(null);
+        toast.success(c.muted ? 'Campanha reativada' : 'Campanha silenciada');
+      },
+      // erro amigável já vem do interceptor global.
+      error: () => this.mutingId.set(null),
+    });
   }
 
   protected gradeTone(grade: Scorecard['grade']): GradeTone {
@@ -463,9 +565,19 @@ export class AccountDetailPage {
         if (latest.run && IN_FLIGHT.has(latest.run.status)) {
           this.analyzing.set(true);
           this.poll();
+        } else if (latest.run) {
+          this.loadCampaigns();
         }
       },
       error: () => this.loading.set(false),
+    });
+  }
+
+  /** Recorte por campanha do resultado atual (cartões). Falha silenciosa (secundário). */
+  private loadCampaigns(): void {
+    this.analysisApi.campaignAnalyses(this.accountId).subscribe({
+      next: (out) => this.campaigns.set(out.campaigns),
+      error: () => this.campaigns.set([]),
     });
   }
 
@@ -478,6 +590,7 @@ export class AccountDetailPage {
           setTimeout(() => this.poll(), POLL_INTERVAL_MS);
         } else {
           this.analyzing.set(false);
+          if (latest.run) this.loadCampaigns();
         }
       },
       error: () => this.analyzing.set(false),

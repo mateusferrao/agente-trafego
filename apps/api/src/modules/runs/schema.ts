@@ -110,3 +110,36 @@ export const latestRunOutput = z.object({
   recommendations: z.array(recommendationOutput),
 });
 export type LatestRunOutput = z.infer<typeof latestRunOutput>;
+
+// ─── recorte por campanha (análise por-campanha) ─────────────────────────
+/** Métricas curadas de uma campanha no cartão (só o que importa pro gestor). */
+export const campaignAnalysisMetrics = z.object({
+  spend: z.number(),
+  ctr: z.number().optional(),
+  cpa: z.number().optional(),
+  roas: z.number().optional(),
+});
+
+/** Achado principal da campanha (título + severidade) — o maior gargalo. */
+export const campaignTopFinding = z.object({
+  title: z.string(),
+  severity: z.enum(["info", "warning", "critical"]),
+});
+
+/** Uma campanha analisada: métrica + resumo + gargalo + flags + estado silenciado. */
+export const campaignAnalysisOutput = z.object({
+  externalId: z.string(),
+  name: z.string().nullable(),
+  metrics: campaignAnalysisMetrics,
+  summary: z.string().nullable(),
+  topFinding: campaignTopFinding.nullable(),
+  flags: z.array(z.string()),
+  /** campanha silenciada pelo dono (opt-out da análise). */
+  muted: z.boolean(),
+});
+export type CampaignAnalysisOutput = z.infer<typeof campaignAnalysisOutput>;
+
+export const campaignAnalysesOutput = z.object({
+  campaigns: z.array(campaignAnalysisOutput),
+});
+export type CampaignAnalysesOutput = z.infer<typeof campaignAnalysesOutput>;

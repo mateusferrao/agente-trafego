@@ -7,6 +7,7 @@ import {
   pgTable,
   real,
   text,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 import type {
@@ -106,6 +107,33 @@ export const playbookRules = pgTable(
     ...timestamps,
   },
   (t) => [index("playbook_rules_agent_idx").on(t.agentId)],
+);
+
+/**
+ * Entidades silenciadas pelo usuário (opt-out) — excluídas da análise do agente.
+ * Genérico (level + externalId): hoje só campanha; extensível a adset/ad sem migração
+ * de forma (§13). Soft por natureza (linha some ao reativar). Org-scoped via agente.
+ */
+export const agentMutedEntities = pgTable(
+  "agent_muted_entities",
+  {
+    id: pk(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    // nível da entidade silenciada (campaign|adset|ad) — nunca "account".
+    entityLevel: entityLevel("entity_level").notNull(),
+    // id externo da entidade na plataforma (ex: id da campanha Meta).
+    externalId: text("external_id").notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    index("agent_muted_entities_agent_idx").on(t.agentId),
+    uniqueIndex("agent_muted_entities_uq").on(t.agentId, t.entityLevel, t.externalId),
+  ],
 );
 
 /** Memória do agente (objetivos, ações passadas, rejeições, fatos). */

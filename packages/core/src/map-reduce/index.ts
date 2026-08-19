@@ -134,7 +134,7 @@ export function mergeUnitAnalyses(units: readonly UnitAnalysis[]): AnalysisOutpu
       headline: findings[0]?.title ?? "Análise consolidada das campanhas.",
       biggestLeak: "conversao",
     },
-    summary: `Análise consolidada de ${units.length} anúncio(s): ${findings.length} achado(s), ${recommendations.length} recomendação(ões).`,
+    summary: `Análise consolidada de ${units.length} campanha(s): ${findings.length} achado(s), ${recommendations.length} recomendação(ões).`,
     findings,
     recommendations,
   };
@@ -158,3 +158,9 @@ function gradeFromFindings(findings: readonly { readonly severity: string }[]): 
   if (findings.length > 0) return "B";
   return "A";
 }
+
+export {
+  selectCampaignsToAnalyze,
+  type CampaignSelection,
+  type SelectCampaignsConfig,
+} from "./campaign-selection.js";

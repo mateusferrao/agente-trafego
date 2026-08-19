@@ -1,12 +1,16 @@
 import { Injectable } from '@angular/core';
 import type { Observable } from 'rxjs';
 import { BaseApiService } from './base-api.service';
+import { silentApiContext } from './api-request.interceptor';
 import type {
   AgentGoalsInput,
   AgentSummary,
+  CampaignAnalysesOutput,
   FeedbackInput,
   FeedbackOutput,
   LatestRunOutput,
+  MuteCampaignInput,
+  MutedCampaignsOutput,
   SetPausedInput,
   TriggerRunOutput,
 } from './generated';
@@ -42,6 +46,29 @@ export class AnalysisApiService extends BaseApiService {
   /** `GET /api/accounts/:id/runs/latest` — último run + recomendações. */
   latestRun(accountId: string): Observable<LatestRunOutput> {
     return this.get<LatestRunOutput>(['/accounts', accountId, 'runs', 'latest']);
+  }
+
+  /**
+   * `GET /api/accounts/:id/campaign-analyses` — recorte por campanha do resultado.
+   * Silencioso (recorte secundário): falha degrada sem toast (a página zera a lista).
+   */
+  campaignAnalyses(accountId: string): Observable<CampaignAnalysesOutput> {
+    return this.get<CampaignAnalysesOutput>(['/accounts', accountId, 'campaign-analyses'], {
+      context: silentApiContext(),
+    });
+  }
+
+  /** `POST /api/accounts/:id/muted-campaigns` — silencia uma campanha. */
+  muteCampaign(accountId: string, externalId: string): Observable<MutedCampaignsOutput> {
+    return this.post<MutedCampaignsOutput, MuteCampaignInput>(
+      ['/accounts', accountId, 'muted-campaigns'],
+      { externalId },
+    );
+  }
+
+  /** `DELETE /api/accounts/:id/muted-campaigns/:externalId` — reativa a campanha. */
+  unmuteCampaign(accountId: string, externalId: string): Observable<MutedCampaignsOutput> {
+    return this.delete<MutedCampaignsOutput>(['/accounts', accountId, 'muted-campaigns', externalId]);
   }
 
   /** `POST /api/recommendations/:id/feedback` — 👍/👎 (👎 vira memória do agente). */

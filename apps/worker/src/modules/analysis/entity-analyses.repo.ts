@@ -5,7 +5,7 @@
 
 import { eq, sql } from "drizzle-orm";
 import { entityAnalyses, type Database } from "@trafego/db";
-import type { InsightMetrics } from "@trafego/shared";
+import type { EntityLevel, InsightMetrics } from "@trafego/shared";
 import type { UnitAnalysis } from "@trafego/shared";
 
 export interface LastEntityAnalysis {
@@ -17,6 +17,8 @@ export interface LastEntityAnalysis {
 
 export interface SaveEntityAnalysis {
   readonly entityId: string;
+  readonly entityLevel: EntityLevel;
+  readonly entityName: string;
   readonly unit: UnitAnalysis;
   readonly metrics: Partial<InsightMetrics>;
   readonly flags: string[];
@@ -61,6 +63,8 @@ export function createEntityAnalysesRepo(db: Database): EntityAnalysesRepo {
           entries.map((e) => ({
             agentId,
             entityId: e.entityId,
+            entityLevel: e.entityLevel,
+            entityName: e.entityName,
             runId,
             unitJson: e.unit as unknown as Record<string, unknown>,
             metricsJson: e.metrics as Record<string, unknown>,
@@ -71,6 +75,8 @@ export function createEntityAnalysesRepo(db: Database): EntityAnalysesRepo {
         .onConflictDoUpdate({
           target: [entityAnalyses.agentId, entityAnalyses.entityId],
           set: {
+            entityLevel: sql`excluded.entity_level`,
+            entityName: sql`excluded.entity_name`,
             runId: sql`excluded.run_id`,
             unitJson: sql`excluded.unit_json`,
             metricsJson: sql`excluded.metrics_json`,

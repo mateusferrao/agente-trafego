@@ -919,6 +919,124 @@
           "recommendations"
         ]
       },
+      "CampaignAnalysesOutput": {
+        "type": "object",
+        "properties": {
+          "campaigns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "externalId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "metrics": {
+                  "type": "object",
+                  "properties": {
+                    "spend": {
+                      "type": "number"
+                    },
+                    "ctr": {
+                      "type": "number"
+                    },
+                    "cpa": {
+                      "type": "number"
+                    },
+                    "roas": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "spend"
+                  ]
+                },
+                "summary": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "topFinding": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "severity": {
+                      "type": "string",
+                      "enum": [
+                        "info",
+                        "warning",
+                        "critical"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "severity"
+                  ]
+                },
+                "flags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "muted": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "externalId",
+                "name",
+                "metrics",
+                "summary",
+                "topFinding",
+                "flags",
+                "muted"
+              ]
+            }
+          }
+        },
+        "required": [
+          "campaigns"
+        ]
+      },
+      "MuteCampaignInput": {
+        "type": "object",
+        "properties": {
+          "externalId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "externalId"
+        ]
+      },
+      "MutedCampaignsOutput": {
+        "type": "object",
+        "properties": {
+          "campaignIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "campaignIds"
+        ]
+      },
       "ChannelStateOutput": {
         "type": "object",
         "properties": {
@@ -1727,6 +1845,137 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/LatestRunOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/campaign-analyses": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "recorte por campanha do resultado atual",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CampaignAnalysesOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/muted-campaigns": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "campanhas silenciadas da conta",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MutedCampaignsOutput"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MuteCampaignInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "campanha silenciada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MutedCampaignsOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/muted-campaigns/{externalId}": {
+      "delete": {
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "externalId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "campanha reativada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MutedCampaignsOutput"
                 }
               }
             }

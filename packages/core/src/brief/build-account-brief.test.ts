@@ -46,6 +46,7 @@ function baseInput(overrides: Partial<BuildAccountBriefInput> = {}): BuildAccoun
     ],
     playbookCandidates: [],
     topN: 10,
+    notableAdsPerCampaign: 5,
     ...overrides,
   };
 }

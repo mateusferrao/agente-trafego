@@ -72,14 +72,15 @@ describe("MetaAdsAdapter.listEntities", () => {
       level: "adset",
       status: "paused",
       parentId: "C1",
+      campaignId: "C1",
       objective: { goal: "custom", customConversionId: "999", label: "Compra curso" },
     });
   });
 
   it("ad → sem objetivo próprio (herda do adset no assemble), parentId = adset", async () => {
-    stub({ data: [{ id: "AD1", name: "Ad", effective_status: "ACTIVE", adset_id: "AS1" }] });
+    stub({ data: [{ id: "AD1", name: "Ad", effective_status: "ACTIVE", adset_id: "AS1", campaign_id: "C1" }] });
     const [e] = await makeAdapter().listEntities(account, "ad");
-    expect(e).toMatchObject({ id: "AD1", level: "ad", parentId: "AS1" });
+    expect(e).toMatchObject({ id: "AD1", level: "ad", parentId: "AS1", adsetId: "AS1", campaignId: "C1" });
     expect(e!.objective).toBeUndefined();
   });
 });

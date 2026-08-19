@@ -57,6 +57,8 @@ export const AccountAnalysisState = Annotation.Root({
   analysisConfig: Annotation<ResolvedAnalysisConfig | null>,
   window: Annotation<AnalysisWindow | null>,
   baseline: Annotation<AnalysisWindow | null>,
+  // campanhas silenciadas pelo usuário (S5) — excluídas da análise por campanha.
+  mutedCampaignIds: Annotation<readonly string[]>,
 
   // ── dados coletados / derivados ────────────────────────────────────────
   entities: Annotation<readonly AdEntity[]>,

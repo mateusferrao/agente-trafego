@@ -4,7 +4,7 @@
 
 import { and, eq, sql } from "drizzle-orm";
 import type { Database } from "@trafego/db/client";
-import { adAccounts, agentMemory, agentRunSteps, agentRuns, agents, platformConnections, playbookRules, recommendations } from "@trafego/db";
+import { adAccounts, agentMemory, agentMutedEntities, agentRunSteps, agentRuns, agents, platformConnections, playbookRules, recommendations } from "@trafego/db";
 import type { Action, AgentGoals, EncryptedPayload, PlaybookRule, RiskLevel } from "@trafego/shared";
 import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
 
@@ -16,6 +16,8 @@ export interface AgentContext {
   readonly playbook: PlaybookRule[];
   /** memória "rejeitado" ativa (loop de feedback barato — não repetir o que o dono vetou). */
   readonly rejectedMemory: string[];
+  /** ids externos de campanhas silenciadas pelo usuário — excluídas da análise (S5). */
+  readonly mutedCampaignIds: string[];
 }
 
 /** Passo do grafo (trilha p/ a Timeline 6a). */
@@ -107,6 +109,17 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
             eq(agentMemory.lifecycle, "active"),
           ),
         );
+      // campanhas silenciadas pelo usuário (opt-out) → excluídas da análise (S5).
+      const muted = await db
+        .select({ externalId: agentMutedEntities.externalId })
+        .from(agentMutedEntities)
+        .where(
+          and(
+            eq(agentMutedEntities.agentId, agentId),
+            eq(agentMutedEntities.orgId, orgId),
+            eq(agentMutedEntities.entityLevel, "campaign"),
+          ),
+        );
       return {
         goals: agent.goals,
         archetype: agent.archetype,
@@ -114,6 +127,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
         modelConfig: agent.modelConfig ?? {},
         playbook,
         rejectedMemory: memory.map((m) => m.content),
+        mutedCampaignIds: muted.map((m) => m.externalId),
       };
     },
 

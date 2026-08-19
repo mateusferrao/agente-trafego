@@ -123,6 +123,16 @@ export const envSchema = z.object({
     .int()
     .nonnegative()
     .default(8),
+  // Anúncios detalhados por campanha na árvore curada (mapa por-campanha). Resto vira
+  // cauda agregada. Default global; override por-agente em `agents.model_config`.
+  ANALYSIS_NOTABLE_ADS_PER_CAMPAIGN: z.coerce.number().int().positive().default(5),
+  // Teto de criativos com visão POR campanha (prioriza maior gasto/flag). Distinto do
+  // teto global ANALYSIS_MAX_CREATIVES_VISION — aqui o custo de visão escala por campanha.
+  ANALYSIS_MAX_CREATIVES_VISION_PER_CAMPAIGN: z.coerce.number().int().nonnegative().default(3),
+  // Concorrência do mapa por-campanha (quantas campanhas analisadas em paralelo). O
+  // map-reduce é o gargalo do run (1+ calls de LLM por campanha, sequenciais hoje).
+  // Modesto p/ não bater o rate-limit do OpenRouter (o adapter já tem retry/backoff).
+  ANALYSIS_MAP_CONCURRENCY: z.coerce.number().int().positive().default(4),
   // Janela da análise on-demand (3a): últimos N dias vs os N anteriores (baseline).
   // Default global; alvo = config por-agente (Fatia 4). ICP faz lançamentos → 7d.
   ANALYSIS_WINDOW_DAYS: z.coerce.number().int().positive().default(7),

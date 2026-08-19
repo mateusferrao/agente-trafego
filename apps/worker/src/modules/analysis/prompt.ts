@@ -2,7 +2,7 @@
 // output (json_schema), o formato JSON vai como TEXTO no prompt. Padrões adotados
 // do automato-api: GROUNDING_RULE + FINDINGS_METRIC_INSTRUCTION.
 
-import type { AccountBrief, CreativeVisionResult, EntitySummary } from "@trafego/shared";
+import type { AccountBrief, CampaignUnit, CreativeVisionResult } from "@trafego/shared";
 import type { AnalysisOutput, UnitAnalysis } from "@trafego/shared/schemas";
 import type { LLMMessage } from "@trafego/shared/ports";
 import type { FindingIssue } from "@trafego/core";
@@ -60,33 +60,42 @@ export function buildAnalysisMessages(systemPrompt: string, brief: AccountBrief)
   ];
 }
 
-/** Shape do JSON por-unidade (map) — sem scorecard (é da conta, na síntese). */
-const UNIT_OUTPUT_SHAPE = `{
-  "summary": "string (1-2 frases sobre este anúncio, cite números)",
+/** Shape do JSON por-campanha (map) — sem scorecard (é da conta, na síntese). */
+const CAMPAIGN_OUTPUT_SHAPE = `{
+  "summary": "string (1-2 frases sobre esta campanha, cite números)",
   "findings": [ { "id": "string", "title": "string", "detail": "string", "severity": "info|warning|critical", "metricRefs": [{ "label": "string", "value": number|string }] } ],
-  "recommendations": [ { "id": "string", "title": "string", "rationale": "string", "priority": "high|medium|low", "actionType": "pause|resume|increase_budget|decrease_budget|review_creative|review_audience|investigate|keep", "targetEntity": { "level": "ad", "externalId": "string" } | null, "budgetChangePct": number | null } ],
+  "recommendations": [ { "id": "string", "title": "string", "rationale": "string", "priority": "high|medium|low", "actionType": "pause|resume|increase_budget|decrease_budget|review_creative|review_audience|investigate|keep", "targetEntity": { "level": "campaign|adset|ad", "externalId": "string" } | null, "budgetChangePct": number | null } ],
   "flags": ["string"]
 }`;
 
 /**
- * Mensagens do MAPA (análise de UM anúncio). Contexto pequeno = alta precisão.
- * Inclui a visão do criativo (quando houver) como texto (já resolvida/cacheada).
+ * Mensagens do MAPA (análise de UMA campanha). A campanha vem como árvore curada
+ * (adsets ativos + anúncios notáveis + cauda agregada por adset); a visão dos
+ * criativos dos anúncios notáveis (quando houver) entra como texto, indexada por adId.
+ * O LLM pode agir na entidade certa (campanha/adset/anúncio) — o id vem na árvore.
  */
-export function buildUnitMessages(
+export function buildCampaignMessages(
   systemPrompt: string,
-  unit: EntitySummary,
-  vision: readonly CreativeVisionResult[],
+  unit: CampaignUnit,
+  visionByAdId: ReadonlyMap<string, readonly CreativeVisionResult[]>,
   accountContext: { readonly currency: string; readonly window: string },
 ): LLMMessage[] {
   const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
+  const vision = unit.adsets
+    .flatMap((g) => g.notableAds.map((a) => a.id))
+    .map((adId) => ({ adId, vision: visionByAdId.get(adId) ?? [] }))
+    .filter((v) => v.vision.length > 0);
   const user = [
-    jsonBlock("Anúncio a analisar (dados curados — analise SÓ com base neles)", unit),
-    vision.length > 0 ? jsonBlock("Análise do(s) criativo(s) deste anúncio (visão)", vision) : "",
+    jsonBlock(
+      "Campanha a analisar (árvore curada: adsets + anúncios notáveis + cauda agregada — analise SÓ com base nela)",
+      unit,
+    ),
+    vision.length > 0 ? jsonBlock("Análise dos criativos dos anúncios notáveis (visão, por adId)", vision) : "",
     jsonBlock("Contexto da conta", accountContext),
     "",
-    "targetEntity: use o id deste anúncio quando a ação for sobre ele; senão null.",
+    "targetEntity: aponte a entidade certa (campaign, adset ou ad) usando o id que aparece na árvore; senão null.",
     "Responda SOMENTE com JSON válido (sem markdown), no formato:",
-    UNIT_OUTPUT_SHAPE,
+    CAMPAIGN_OUTPUT_SHAPE,
   ]
     .filter(Boolean)
     .join("\n");
@@ -107,7 +116,7 @@ export function buildSynthesisMessages(
 ): LLMMessage[] {
   const system = [
     systemPrompt,
-    "Você recebe análises por-anúncio + o contexto da conta. Consolide numa visão ÚNICA da conta: " +
+    "Você recebe análises por-campanha + o contexto da conta. Consolide numa visão ÚNICA da conta: " +
       "priorize o que mais importa, agrupe temas repetidos e proponha as recomendações de maior impacto.",
     GROUNDING_RULE,
     FUNNEL_NOTE,
@@ -115,7 +124,7 @@ export function buildSynthesisMessages(
   ].join("\n\n");
   const user = [
     jsonBlock("Contexto da conta (totais, funil, tendências, anomalias)", brief),
-    jsonBlock("Análises por-anúncio (mapa)", units),
+    jsonBlock("Análises por-campanha (mapa)", units),
     "",
     "Responda SOMENTE com JSON válido (sem markdown), no formato:",
     OUTPUT_SHAPE,

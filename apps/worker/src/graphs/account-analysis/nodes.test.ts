@@ -54,7 +54,7 @@ function makeHarness(opts: { rows?: InsightRow[]; tokenInvalid?: boolean; entiti
   const byLevel = (level: string) => entities.filter((e) => e.level === level);
 
   const repo: AnalysisRepo = {
-    loadAgentContext: vi.fn(async () => ({ goals: { targetCPA: 50 }, archetype: "conservador", systemPrompt: null, modelConfig: {}, playbook: [], rejectedMemory: [] })),
+    loadAgentContext: vi.fn(async () => ({ goals: { targetCPA: 50 }, archetype: "conservador", systemPrompt: null, modelConfig: {}, playbook: [], rejectedMemory: [], mutedCampaignIds: [] })),
     loadAccount: vi.fn(async () => ({ metaAdAccountId: "act_1", name: "Conta", currency: "BRL", tokenCripto: TOKEN })),
     openRun: vi.fn(async () => {}),
     markTokenInvalid: vi.fn(async () => {}),
@@ -102,6 +102,9 @@ function makeHarness(opts: { rows?: InsightRow[]; tokenInvalid?: boolean; entiti
       maxOutputTokens: 4000,
       reasoningEffort: "medium",
       maxCreativesVision: 8,
+      notableAdsPerCampaign: 5,
+      maxCreativesVisionPerCampaign: 3,
+      mapConcurrency: 4,
       executionPolicy: "deep_periodic_incremental",
       deepIntervalDays: 7,
       materialChangePct: 15,
@@ -147,8 +150,8 @@ describe("account-analysis read-only nodes", () => {
     const h = makeHarness();
     await runChain(h);
 
-    // analista + revisor (2 passes) → 2 chamadas de LLM
-    expect(h.llm).toHaveBeenCalledTimes(2);
+    // 1 mapa (campanha c1 ativa) + síntese + revisor → 3 chamadas de LLM
+    expect(h.llm).toHaveBeenCalledTimes(3);
     // 3 recomendações persistidas
     expect(h.saved).toHaveLength(3);
     // r1 (pause, id válido) → proposedAction tipado
@@ -164,31 +167,33 @@ describe("account-analysis read-only nodes", () => {
     expect(r3?.proposedAction).toBeNull();
     // run fechado com sucesso + custo
     expect(h.closed).toHaveLength(1);
-    // usage somado nas 2 chamadas (analista + revisor) → custo dobrado
-    expect(h.closed[0]).toMatchObject({ status: "succeeded", costSnapshot: 0.002 });
+    // usage somado nas 3 chamadas (mapa + síntese + revisor)
+    expect(h.closed[0]).toMatchObject({ status: "succeeded", costSnapshot: 0.003 });
   });
 
-  it("map-reduce: analisa por-anúncio, sintetiza, revisa e persiste as unidades", async () => {
+  it("map-reduce: analisa por-campanha (árvore adset+ad), sintetiza, revisa e persiste a unidade", async () => {
     const entities: AdEntity[] = [
       { id: "c1", level: "campaign", name: "Campanha 1", status: "active", objective: { goal: "purchase" } },
-      { id: "a1", level: "ad", name: "Anúncio 1", status: "active", objective: { goal: "purchase" } },
+      { id: "as1", level: "adset", name: "Conjunto 1", status: "active", campaignId: "c1" },
+      { id: "a1", level: "ad", name: "Anúncio 1", status: "active", campaignId: "c1", adsetId: "as1" },
     ];
     const rows = [
       row("act_1", "account", 300, 5),
       row("c1", "campaign", 300, 3),
+      row("as1", "adset", 300, 3),
       row("a1", "ad", 300, 3),
     ];
     const h = makeHarness({ entities, rows });
     const repos = (h.deps as unknown as { _repos: { entityAnalyses: EntityAnalysesRepo } })._repos;
     await runChain(h);
 
-    // 1 mapa (anúncio a1) + 1 síntese + 1 revisor = 3 chamadas de LLM
+    // 1 mapa (campanha c1) + 1 síntese + 1 revisor = 3 chamadas de LLM
     expect(h.llm).toHaveBeenCalledTimes(3);
-    // a análise por-unidade reanalisada é persistida (base do incremental)
+    // a análise por-campanha reanalisada é persistida (base do incremental), chaveada por id de campanha
     expect(repos.entityAnalyses.saveMany).toHaveBeenCalledTimes(1);
     const savedUnits = (repos.entityAnalyses.saveMany as ReturnType<typeof vi.fn>).mock.calls[0]?.[2] as { entityId: string }[];
     expect(savedUnits).toHaveLength(1);
-    expect(savedUnits[0]?.entityId).toBe("a1");
+    expect(savedUnits[0]?.entityId).toBe("c1");
     // recomendações da síntese persistidas
     expect(h.saved.length).toBeGreaterThan(0);
     expect(h.closed[0]?.status).toBe("succeeded");

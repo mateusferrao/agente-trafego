@@ -24,8 +24,8 @@ import {
   flagUnsupportedFindings,
   mergeUnitAnalyses,
   riskLevelForActionType,
+  selectCampaignsToAnalyze,
   selectCreatives,
-  selectUnitsToAnalyze,
   type LastUnit,
 } from "@trafego/core";
 import { funnelFromRawActions } from "@trafego/ads-meta";
@@ -67,11 +67,12 @@ import {
 import { createNotifyRepo, type NotifyRepo } from "../../modules/notify/repo.js";
 import { createVisionResolver, creativeContentHash } from "../../modules/vision/resolver.js";
 import { AnalysisError } from "../../modules/analysis/errors.js";
+import { mapWithConcurrency } from "../../lib/concurrency.js";
 import { resolveAnalysisConfig } from "../../modules/analysis/config.js";
 import {
+  buildCampaignMessages,
   buildReviewMessages,
   buildSynthesisMessages,
-  buildUnitMessages,
 } from "../../modules/analysis/prompt.js";
 import {
   buildMessageMessages,
@@ -139,6 +140,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       goals: ctx.goals,
       playbookRules: ctx.playbook,
       rejectedMemory: ctx.rejectedMemory,
+      mutedCampaignIds: ctx.mutedCampaignIds,
       systemPrompt,
       analysisConfig: cfg,
       window: { label: windowLabel, ...window },
@@ -222,11 +224,12 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
   }
 
   /**
-   * MAPA (map-reduce — 3b-2): curadoria (AccountBrief) + análise POR-ANÚNCIO.
-   * A política (`selectUnitsToAnalyze`) decide quais reanalisar (deep/incremental/
-   * budget); o resto herda `entity_analyses`. Cada unidade é analisada com contexto
-   * pequeno (alta precisão) + a visão do criativo (cacheada). Unidade que falha é
-   * pulada (partial), não aborta o run.
+   * MAPA (map-reduce): curadoria (AccountBrief) + análise POR-CAMPANHA ativa.
+   * `selectCampaignsToAnalyze` corta pro top-N (flagadas sempre) e aplica a política
+   * (deep/incremental); o resto herda `entity_analyses` ou fica resumido no brief.
+   * Cada campanha é analisada como árvore curada (adsets + anúncios notáveis) + a
+   * visão dos criativos notáveis (teto POR campanha). Campanha que falha é pulada
+   * (partial), não aborta o run.
    */
   async function mapUnits(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
     logger.debug({ runId: state.runId }, "map_units");
@@ -244,6 +247,8 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       baselineRows: state.baselineInsights,
       playbookCandidates: state.playbookCandidates,
       topN: cfg.topN,
+      notableAdsPerCampaign: cfg.notableAdsPerCampaign,
+      ...(state.mutedCampaignIds ? { mutedCampaignIds: new Set(state.mutedCampaignIds) } : {}),
       memory: { objectives: [], pastActions: [], rejected: [...(state.rejectedMemory ?? [])] },
     });
     if (built.status === "empty") {
@@ -254,24 +259,21 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const lastUnits = new Map<string, LastUnit>(
       [...last].map(([id, r]) => [id, { metrics: r.metrics, flags: r.flags }]),
     );
-    const isDeepRun = decideDeepRun(state.trigger, built.adUnits, last, cfg.deepIntervalDays);
-    const selection = selectUnitsToAnalyze(built.adUnits, lastUnits, {
+    const campaignSummaries = built.campaignUnits.map((u) => u.campaign);
+    const isDeepRun = decideDeepRun(state.trigger, campaignSummaries, last, cfg.deepIntervalDays);
+    const selection = selectCampaignsToAnalyze(built.campaignUnits, lastUnits, {
       policy: cfg.executionPolicy,
       materialChangePct: cfg.materialChangePct,
       isDeepRun,
+      topN: cfg.topN,
       ...(cfg.executionPolicy === "budget_scaled" ? { maxUnitsThisRun: Math.max(cfg.topN, 1) } : {}),
     });
-    if (selection.dropped.length > 0) {
-      logger.warn({ runId: state.runId, dropped: selection.dropped.length }, "map_units:unidades sem análise (budget)");
-    }
-
-    // visão dos criativos das unidades a analisar (cacheada por conteúdo).
-    const creativesByAdId = groupBy(state.creatives ?? [], (c) => c.adId);
-    const chosenCreatives = selectCreatives(
-      selection.toAnalyze.map((u) => u.id),
-      creativesByAdId,
-      cfg.maxCreativesVision,
+    logger.debug(
+      { runId: state.runId, analyze: selection.toAnalyze.length, inherit: selection.toInherit.length, summarized: selection.summarized.length },
+      "map_units:seleção por campanha",
     );
+
+    const creativesByAdId = groupBy(state.creatives ?? [], (c) => c.adId);
     const vision = repos?.vision ?? createVisionResolver({
       db: deps.db,
       llm: deps.ports.llm,
@@ -280,32 +282,38 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       logger,
       meta: { orgId: state.orgId, runId: state.runId },
     });
-    const visionByAdId = new Map<string, CreativeVisionResult[]>();
-    for (const c of chosenCreatives) {
-      const poster = creativePosterFrame(c);
-      if (!poster) continue;
-      const copy = creativeCopy(c);
-      const result = await vision.resolve({
-        creativeId: c.id,
-        imageUrl: poster,
-        contentHash: creativeContentHash(poster, copy),
-        ...(copy ? { copy } : {}),
-      });
-      if (result) push(visionByAdId, c.adId, result);
-    }
 
-    // MAP: uma análise por anúncio escolhido (modelo barato + visão).
-    const unitAnalyses: UnitAnalysis[] = [];
-    const freshUnits: AccountAnalysisStateType["freshUnits"][number][] = [];
-    let usage = state.usage;
-    let partial = state.partial ?? false;
-    for (const unit of selection.toAnalyze) {
+    // MAP paralelo: até `mapConcurrency` campanhas ao mesmo tempo (o gargalo do run).
+    // Cada task é independente e RETORNA seu resultado; a redução (usage/partial/
+    // listas) acontece depois do pool — sem race nos acumuladores.
+    type FreshUnit = AccountAnalysisStateType["freshUnits"][number];
+    // captura os valores já garantidos (guard no topo) — o narrowing não cruza o closure.
+    const accountCurrency = state.account.currency;
+    const windowLabel = state.window.label;
+    const outcomes = await mapWithConcurrency(selection.toAnalyze, cfg.mapConcurrency, async (unit) => {
+      // visão dos criativos dos anúncios notáveis DESTA campanha (teto por campanha).
+      const notableAdIds = unit.adsets.flatMap((g) => g.notableAds.map((a) => a.id));
+      const chosenCreatives = selectCreatives(notableAdIds, creativesByAdId, cfg.maxCreativesVisionPerCampaign);
+      const visionByAdId = new Map<string, CreativeVisionResult[]>();
+      for (const c of chosenCreatives) {
+        const poster = creativePosterFrame(c);
+        if (!poster) continue;
+        const copy = creativeCopy(c);
+        const result = await vision.resolve({
+          creativeId: c.id,
+          imageUrl: poster,
+          contentHash: creativeContentHash(poster, copy),
+          ...(copy ? { copy } : {}),
+        });
+        if (result) push(visionByAdId, c.adId, result);
+      }
+
       try {
         const completion = await deps.ports.llm.completeStructured<UnitAnalysis>({
           model: cfg.unitModel,
-          messages: buildUnitMessages(state.systemPrompt, unit, visionByAdId.get(unit.id) ?? [], {
-            currency: state.account.currency,
-            window: state.window.label,
+          messages: buildCampaignMessages(state.systemPrompt, unit, visionByAdId, {
+            currency: accountCurrency,
+            window: windowLabel,
           }),
           responseSchema: UNIT_ANALYSIS_JSON_SCHEMA,
           responseSchemaName: UNIT_ANALYSIS_SCHEMA_NAME,
@@ -315,22 +323,37 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           meta: { orgId: state.orgId, runId: state.runId, type: "unit" },
         });
         const parsed = unitAnalysisSchema.safeParse(completion.output);
-        usage = addTokenUsage(usage ?? undefined, completion.usage);
-        if (!parsed.success) {
-          partial = true;
-          continue;
-        }
-        unitAnalyses.push(parsed.data);
-        freshUnits.push({ entityId: unit.id, unit: parsed.data, metrics: unit.metrics, flags: [...unit.flags] });
+        if (!parsed.success) return { unit: null, fresh: null, usage: completion.usage, partial: true };
+        const fresh: FreshUnit = {
+          entityId: unit.campaign.id,
+          entityLevel: "campaign",
+          entityName: unit.campaign.name,
+          unit: parsed.data,
+          metrics: unit.campaign.metrics,
+          flags: [...unit.campaign.flags],
+        };
+        return { unit: parsed.data, fresh, usage: completion.usage, partial: false };
       } catch (err) {
         if (!(err instanceof LLMProviderError)) throw err;
-        partial = true; // unidade falhou → pula (degradação por-unidade)
-        logger.warn({ runId: state.runId, unit: unit.id, err }, "map_units:unidade falhou");
+        logger.warn({ runId: state.runId, campaign: unit.campaign.id, err }, "map_units:campanha falhou");
+        return { unit: null, fresh: null, usage: null, partial: true };
       }
+    });
+
+    // REDUÇÃO (sequencial, sem race): soma usage, agrega parcial, coleta unidades.
+    const unitAnalyses: UnitAnalysis[] = [];
+    const freshUnits: FreshUnit[] = [];
+    let usage = state.usage;
+    let partial = state.partial ?? false;
+    for (const o of outcomes) {
+      if (o.usage) usage = addTokenUsage(usage ?? undefined, o.usage);
+      if (o.partial) partial = true;
+      if (o.unit) unitAnalyses.push(o.unit);
+      if (o.fresh) freshUnits.push(o.fresh);
     }
-    // herança: unidades sem mudança material reusam a última análise.
+    // herança: campanhas sem mudança material reusam a última análise.
     for (const unit of selection.toInherit) {
-      const inherited = last.get(unit.id);
+      const inherited = last.get(unit.campaign.id);
       if (inherited) unitAnalyses.push(inherited.unit);
     }
 

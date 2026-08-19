@@ -1,13 +1,16 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import {
+  agentMutedEntities,
   agentRuns,
   agents,
+  entityAnalyses,
   guardrailConfigs,
   isUniqueViolation,
   recommendationFeedback,
   recommendations,
   type Database,
 } from "@trafego/db";
+import type { InsightMetrics, UnitAnalysis } from "@trafego/shared";
 import { isOverCostCap, READ_ONLY_APPLICABILITY, resolveCostCapUsd, usagePeriod } from "@trafego/core";
 import {
   AGENT_RUNS_QUEUE,
@@ -19,6 +22,7 @@ import type { MeteringPort, SchedulerPort } from "@trafego/shared/ports";
 import { badRequest, conflict } from "../../middleware/error-handler.js";
 import {
   runMetrics,
+  type CampaignAnalysisOutput,
   type LatestRunOutput,
   type RecommendationOutput,
   type RunOutput,
@@ -177,6 +181,49 @@ export function createRunsService(deps: RunsDeps) {
     }
   }
 
+  /**
+   * Recorte por campanha: a ÚLTIMA análise conhecida de cada campanha (nível
+   * `campaign` em `entity_analyses`, 1 linha por campanha, upsertada), com métrica
+   * curada + resumo + maior gargalo + flags + estado silenciado. Campanhas herdadas
+   * (incremental) mantêm sua última análise — por isso "última conhecida", não "só
+   * as do run mais recente". Base dos cartões por campanha no site.
+   */
+  async function campaignAnalyses(orgId: OrgId, accountId: string): Promise<CampaignAnalysisOutput[]> {
+    const [agent] = await deps.db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.adAccountId, accountId), eq(agents.orgId, orgId)))
+      .limit(1);
+    if (!agent) return [];
+
+    const rows = await deps.db
+      .select({
+        entityId: entityAnalyses.entityId,
+        name: entityAnalyses.entityName,
+        unitJson: entityAnalyses.unitJson,
+        metricsJson: entityAnalyses.metricsJson,
+        flags: entityAnalyses.flags,
+        analyzedAt: entityAnalyses.analyzedAt,
+      })
+      .from(entityAnalyses)
+      .where(and(eq(entityAnalyses.agentId, agent.id), eq(entityAnalyses.entityLevel, "campaign")))
+      .orderBy(desc(entityAnalyses.analyzedAt));
+
+    const mutedRows = await deps.db
+      .select({ externalId: agentMutedEntities.externalId })
+      .from(agentMutedEntities)
+      .where(
+        and(
+          eq(agentMutedEntities.agentId, agent.id),
+          eq(agentMutedEntities.orgId, orgId),
+          eq(agentMutedEntities.entityLevel, "campaign"),
+        ),
+      );
+    const muted = new Set(mutedRows.map((m) => m.externalId));
+
+    return rows.map((r) => toCampaignAnalysisOutput(r, muted.has(r.entityId)));
+  }
+
   // ── leitura de histórico (6a — mantido stub por ora) ───────────────────
   async function list(_orgId: OrgId): Promise<RunSummary[]> {
     return [];
@@ -185,7 +232,37 @@ export function createRunsService(deps: RunsDeps) {
     throw badRequest("Timeline ainda não disponível.");
   }
 
-  return { trigger, latest, list, timeline };
+  return { trigger, latest, campaignAnalyses, list, timeline };
+}
+
+/** Linha de `entity_analyses` (campanha) → output do cartão (métrica + gargalo curados). */
+function toCampaignAnalysisOutput(
+  row: {
+    entityId: string;
+    name: string | null;
+    unitJson: Record<string, unknown>;
+    metricsJson: Record<string, unknown>;
+    flags: string[];
+  },
+  muted: boolean,
+): CampaignAnalysisOutput {
+  const unit = row.unitJson as unknown as Partial<UnitAnalysis>;
+  const m = row.metricsJson as Partial<InsightMetrics>;
+  const top = unit.findings?.[0];
+  return {
+    externalId: row.entityId,
+    name: row.name ?? null,
+    metrics: {
+      spend: typeof m.spend === "number" ? m.spend : 0,
+      ...(typeof m.ctr === "number" ? { ctr: m.ctr } : {}),
+      ...(typeof m.cpa === "number" ? { cpa: m.cpa } : {}),
+      ...(typeof m.roas === "number" ? { roas: m.roas } : {}),
+    },
+    summary: unit.summary ?? null,
+    topFinding: top ? { title: top.title, severity: top.severity } : null,
+    flags: row.flags ?? [],
+    muted,
+  };
 }
 
 type AgentRunRow = typeof agentRuns.$inferSelect;
