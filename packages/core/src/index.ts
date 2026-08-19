@@ -4,3 +4,6 @@ export * from "./decision/index.js";
 export * from "./brief/index.js";
 export * from "./sync/index.js";
 export * from "./conversion/index.js";
+export * from "./recommendation/index.js";
+export * from "./token-usage/index.js";
+export * from "./archetypes/index.js";

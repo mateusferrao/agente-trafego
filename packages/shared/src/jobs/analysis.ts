@@ -1,16 +1,26 @@
 /**
- * Contrato do job de análise, compartilhado entre o produtor (API) e o consumidor
- * (worker) — evita string mágica e drift de payload entre os processos.
+ * Contrato do job de análise (Grafo A), compartilhado entre o produtor (API) e o
+ * consumidor (worker) — evita string mágica e drift de payload entre processos.
+ * A fila é a mesma ("agent-runs"); o worker distingue por `mode` (execute|resume).
  */
-export const ANALYSIS_QUEUE = "agent-runs";
-export const ANALYSIS_RUN_JOB = "analysis-run";
+export const AGENT_RUNS_QUEUE = "agent-runs";
+export const AGENT_RUN_JOB = "agent-run";
 
-export type AnalysisTrigger = "manual" | "cron" | "on_demand";
+export type AgentRunTrigger = "cron" | "on_demand";
 
-export type AnalysisRunPayload = {
-  /** id da linha em `ad_accounts` (o worker carrega + descriptografa o token). */
-  readonly accountId: string;
-  /** org dona da conta — o worker re-escopa a query (defesa cross-tenant, §12). */
+/**
+ * Novo run de análise (cron ou on-demand). O run já nasce criado (pending) na API.
+ * `type` (não `interface`) p/ ganhar o index signature implícito → aceito como
+ * `JobSpec.payload` (Record<string, unknown>) sem cast.
+ */
+export type AgentRunExecutePayload = {
+  readonly mode: "execute";
+  readonly trigger: AgentRunTrigger;
+  /** id de `agent_runs` (criado pela API; o worker abre→fecha). */
+  readonly runId: string;
+  /** org dona — o worker re-escopa toda query (defesa cross-tenant, §12). */
   readonly orgId: string;
-  readonly trigger: AnalysisTrigger;
+  readonly agentId: string;
+  /** id de `ad_accounts` (o worker carrega + descriptografa o token). */
+  readonly adAccountId: string;
 };

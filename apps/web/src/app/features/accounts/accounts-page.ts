@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { RouterLink } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   heroBuildingOffice2,
@@ -51,7 +52,7 @@ const TOKEN_INDICATOR: Record<AdAccountOutputTokenStatusEnumKey, TokenIndicator>
 @Component({
   selector: 'app-accounts-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [NgIcon, UiButton, UiEmptyState, UiPageHeader, UiSpinner, ConnectDialogComponent],
+  imports: [NgIcon, RouterLink, UiButton, UiEmptyState, UiPageHeader, UiSpinner, ConnectDialogComponent],
   providers: [
     provideIcons({ heroBuildingOffice2, heroCheckCircle, heroClock, heroExclamationTriangle }),
   ],
@@ -84,7 +85,10 @@ const TOKEN_INDICATOR: Record<AdAccountOutputTokenStatusEnumKey, TokenIndicator>
       } @else {
         <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           @for (account of accounts() ?? []; track account.id) {
-            <article class="flex items-start justify-between gap-3 rounded-lg border border-line bg-panel p-5">
+            <a
+              [routerLink]="['/accounts', account.id]"
+              class="flex items-start justify-between gap-3 rounded-lg border border-line bg-panel p-5 transition-colors hover:bg-soft"
+            >
               <div class="flex min-w-0 flex-col gap-0.5">
                 <h2 class="truncate font-brand text-base font-semibold text-ink">
                   {{ account.name ?? account.adAccountId }}
@@ -101,7 +105,7 @@ const TOKEN_INDICATOR: Record<AdAccountOutputTokenStatusEnumKey, TokenIndicator>
               >
                 <ng-icon [name]="tokenIndicator(account.tokenStatus).icon" size="20" aria-hidden="true" />
               </span>
-            </article>
+            </a>
           }
         </div>
       }

@@ -1,4 +1,5 @@
 import {
+  boolean,
   index,
   jsonb,
   numeric,
@@ -40,6 +41,10 @@ export const agentRuns = pgTable(
     configSnapshot: jsonb("config_snapshot").$type<Record<string, unknown>>().notNull().default({}),
     tokenUsage: jsonb("token_usage").$type<Record<string, unknown>>(),
     costSnapshot: numeric("cost_snapshot", { precision: 12, scale: 4 }),
+    // resumo em linguagem natural da análise (LLM) — exibido no site/WhatsApp.
+    summary: text("summary"),
+    // análise parcial (degradação graciosa do governor — §7) → nota na UI.
+    partial: boolean("partial").notNull().default(false),
     traceId: text("trace_id"),
     startedAt: timestamp("started_at", { withTimezone: true }),
     finishedAt: timestamp("finished_at", { withTimezone: true }),

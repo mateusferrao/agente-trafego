@@ -22,6 +22,12 @@ export const routes: Routes = [
         loadComponent: () => import('./features/accounts/accounts-page').then((m) => m.AccountsPage),
       },
       {
+        path: 'accounts/:id',
+        title: 'Conta — Agente de Tráfego',
+        loadComponent: () =>
+          import('./features/account-detail/account-detail-page').then((m) => m.AccountDetailPage),
+      },
+      {
         path: 'approvals',
         title: 'Aprovações — Agente de Tráfego',
         loadComponent: () =>

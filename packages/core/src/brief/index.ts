@@ -1,5 +1,6 @@
 import type {
   AccountBrief,
+  AdEntity,
   AgentGoals,
   Anomaly,
   CandidateAction,
@@ -290,6 +291,145 @@ export function assembleBrief(input: AssembleBriefInput): AccountBrief {
     memory: input.memory,
     aggregatesRest: input.aggregatesRest,
   };
+}
+
+// ─── buildAccountBrief (orquestrador PURO) ────────────────────────────────
+/**
+ * Entrada do orquestrador — a casca (nó `fetchData`) já buscou entidades + linhas
+ * (janela e baseline). O core NÃO faz IO: recebe tudo pronto e devolve o brief.
+ */
+export interface BuildAccountBriefInput {
+  readonly account: { readonly id: string; readonly name: string; readonly currency: string };
+  readonly window: string;
+  readonly baselineWindow: string;
+  readonly goals: AgentGoals;
+  readonly entities: readonly AdEntity[];
+  readonly rows: readonly InsightRow[];
+  readonly baselineRows: readonly InsightRow[];
+  readonly playbookCandidates: readonly CandidateAction[];
+  readonly memory?: AccountBrief["memory"];
+  readonly topN: number;
+}
+
+export type BuildAccountBriefResult =
+  | { readonly status: "empty" }
+  | { readonly status: "ok"; readonly brief: AccountBrief };
+
+const SEGMENT_LEVELS = ["campaign", "adset", "ad"] as const;
+const DELTA_METRICS = ["spend", "cpa", "roas", "ctr", "cpc"] as const;
+const EMPTY_MEMORY: AccountBrief["memory"] = { objectives: [], pastActions: [], rejected: [] };
+
+/**
+ * Orquestra a curadoria pura: normalize → derived → EntitySummary (por nível) →
+ * rankAndSelect (top-N + flagados) → summarizeRest → assembleBrief. Conta sem
+ * atividade (sem gasto e sem impressões) → `status: "empty"` (a casca pula o LLM).
+ * 3a-1 = mínimo: flags de meta (CPA/ROAS). Anomalia/escore composto/funil = 3a-2.
+ */
+export function buildAccountBrief(input: BuildAccountBriefInput): BuildAccountBriefResult {
+  const entityById = new Map(input.entities.map((e) => [e.id, e]));
+  const normalized = normalize(input.rows);
+  const baselineByKey = new Map(
+    normalize(input.baselineRows).map((n) => [`${n.level}:${n.entityId}`, n]),
+  );
+
+  const totals = computeAccountTotals(normalized, baselineByKey);
+  if (totals.spend === 0 && totals.impressions === 0) return { status: "empty" };
+
+  const selectedByLevel = new Map<EntityLevel, EntitySummary[]>();
+  const allByLevel = new Map<EntityLevel, EntitySummary[]>();
+  for (const level of SEGMENT_LEVELS) {
+    const summaries = normalized
+      .filter((n) => n.level === level)
+      .map((n) => toEntitySummary(n, entityById, baselineByKey, input.goals));
+    allByLevel.set(level, summaries);
+    selectedByLevel.set(level, rankAndSelect(summaries, input.topN));
+  }
+
+  // Cauda = campanhas não selecionadas (nível primário; evita dupla-contagem entre níveis).
+  const aggregatesRest = summarizeRest(
+    allByLevel.get("campaign") ?? [],
+    selectedByLevel.get("campaign") ?? [],
+  );
+
+  const brief = assembleBrief({
+    account: { ...input.account, window: input.window, baselineWindow: input.baselineWindow },
+    goals: input.goals,
+    totals,
+    trends: computeTrends([...input.rows]),
+    campaigns: selectedByLevel.get("campaign") ?? [],
+    adsets: selectedByLevel.get("adset") ?? [],
+    ads: selectedByLevel.get("ad") ?? [],
+    anomalies: [], // z-score no brief = 3a-2
+    creatives: selectCreatives(), // visão = 3b
+    playbookCandidates: input.playbookCandidates,
+    memory: input.memory ?? EMPTY_MEMORY,
+    aggregatesRest,
+  });
+
+  return { status: "ok", brief };
+}
+
+/** Totais da conta (nível `account`; sem CPA único enganoso p/ objetivos mistos). */
+function computeAccountTotals(
+  normalized: readonly NormalizedEntity[],
+  baselineByKey: ReadonlyMap<string, NormalizedEntity>,
+): AccountBrief["totals"] {
+  const account = normalized.find((n) => n.level === "account");
+  const current = account
+    ? computeDerived(account)
+    : { spend: 0, impressions: 0, clicks: 0, ctr: 0, cpc: 0, cpm: 0 };
+  const base = account ? baselineByKey.get(`account:${account.entityId}`) : undefined;
+  const delta = base ? deltaBetween(current, computeDerived(base)) : {};
+  // totals = InsightMetrics & { delta }; o index signature de InsightMetrics
+  // (`[k]: number|undefined`) exige o cast p/ o campo objeto `delta` (mesmo
+  // padrão do brief.test.ts).
+  return { ...current, delta } as AccountBrief["totals"];
+}
+
+/** Monta o `EntitySummary` de uma entidade (metrics + delta + flags de meta). */
+function toEntitySummary(
+  n: NormalizedEntity,
+  entityById: ReadonlyMap<string, AdEntity>,
+  baselineByKey: ReadonlyMap<string, NormalizedEntity>,
+  goals: AgentGoals,
+): EntitySummary {
+  const entity = entityById.get(n.entityId);
+  const metrics = computeDerived(n, entity?.objective);
+  const base = baselineByKey.get(`${n.level}:${n.entityId}`);
+  const baseMetrics = base ? computeDerived(base, entity?.objective) : undefined;
+  return {
+    id: n.entityId,
+    level: n.level,
+    name: entity?.name ?? n.entityId,
+    status: entity?.status ?? "active",
+    metrics,
+    deltaVsBaseline: baseMetrics ? deltaBetween(metrics, baseMetrics) : {},
+    flags: metaFlags(metrics, goals),
+    ...(entity?.objective ? { objective: entity.objective } : {}),
+  };
+}
+
+/** Flags mínimas (3a-1): desempenho vs meta do agente. */
+function metaFlags(metrics: InsightMetrics, goals: AgentGoals): string[] {
+  const flags: string[] = [];
+  if (goals.targetCPA !== undefined && metrics.cpa !== undefined && metrics.cpa > goals.targetCPA) {
+    flags.push("cpa_acima_da_meta");
+  }
+  if (goals.targetROAS !== undefined && metrics.roas !== undefined && metrics.roas < goals.targetROAS) {
+    flags.push("roas_abaixo_da_meta");
+  }
+  return flags;
+}
+
+/** Delta (atual − baseline) só nas métricas comparáveis presentes nos dois lados. */
+function deltaBetween(current: InsightMetrics, baseline: InsightMetrics): Partial<InsightMetrics> {
+  const delta: Record<string, number> = {};
+  for (const k of DELTA_METRICS) {
+    const a = current[k];
+    const b = baseline[k];
+    if (typeof a === "number" && typeof b === "number") delta[k] = round(a - b, 4);
+  }
+  return delta;
 }
 
 // ─── helpers estatísticos ─────────────────────────────────────────────────

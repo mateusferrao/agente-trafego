@@ -4,7 +4,7 @@
 // SchedulerPort.upsertSchedule (key estável).
 
 import type { SchedulerPort } from "@trafego/shared/ports";
-import { ANALYSIS_QUEUE } from "@trafego/shared";
+import { AGENT_RUNS_QUEUE } from "@trafego/shared";
 import type { WorkerDeps } from "../composition.js";
 
 export interface AccountSchedule {
@@ -40,7 +40,7 @@ export function makeAccountCron(deps: WorkerDeps) {
       cron: s.cron,
       jitterMs: MAX_JITTER_MS,
       payload: {
-        queue: ANALYSIS_QUEUE,
+        queue: AGENT_RUNS_QUEUE,
         trigger: "cron",
         orgId: s.orgId,
         agentId: s.agentId,

@@ -172,6 +172,15 @@ export interface Finding {
   readonly severity: "info" | "warning" | "critical";
 }
 
+/**
+ * Estado de **aplicabilidade** de uma recomendação — se a ação proposta pode ser
+ * aplicada pelo sistema agora. Conceito desacoplado: toda sugestão sem aplicação
+ * possível compartilha o mesmo estado/comportamento (sem CTA de aplicar).
+ *  - `applicable`        → o caminho de escrita existe (Fatia 5+); UI mostra o CTA.
+ *  - `not_yet_applicable`→ read-only (3a/3b): só sugere; UI direciona ("em breve").
+ */
+export type RecommendationApplicability = "applicable" | "not_yet_applicable";
+
 // ─── AccountBrief (único input do LLM) ───────────────────────────────────
 export interface TrendPoint {
   readonly date: string;

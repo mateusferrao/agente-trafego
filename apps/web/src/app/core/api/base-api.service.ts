@@ -47,6 +47,14 @@ export abstract class BaseApiService {
     return this.request<TResult>('PATCH', path, body, options);
   }
 
+  protected put<TResult, TBody = unknown>(
+    path: ApiPath,
+    body: TBody,
+    options: ApiRequestOptions = {},
+  ): Observable<TResult> {
+    return this.request<TResult>('PUT', path, body, options);
+  }
+
   private request<TResult>(
     method: string,
     path: ApiPath,

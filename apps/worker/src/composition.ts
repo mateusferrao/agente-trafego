@@ -18,6 +18,7 @@ import { Aes256CredentialVault } from "@trafego/credential-vault";
 import { BullmqScheduler } from "@trafego/scheduler-bullmq";
 import { CustomConversionsResolver, MetaAdsAdapter, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta";
 import { EvolutionAdapter, EvolutionClient } from "@trafego/channel-evolution";
+import { OpenRouterAdapter, OpenRouterClient } from "@trafego/llm-openrouter";
 import { Redis } from "ioredis";
 import { pino, type Logger } from "pino";
 import { createDrizzleInsightsSnapshotsRepo } from "./modules/insights/repo.js";
@@ -43,13 +44,15 @@ export interface WorkerDeps {
   };
   /** Sync de insights (2a): coleta a série temporal Meta → insights_snapshots. */
   readonly insightsSync: InsightsSyncService;
-  /** Checkpointer do LangGraph (Postgres) — HITL durável via interrupt/resume. */
-  readonly checkpointer: unknown; // TODO: tipar como BaseCheckpointSaver quando o adapter existir
-  /** Scaffolding da Fatia 0: instância + destinatário fixos do WhatsApp. */
-  readonly fatia0: {
-    readonly evolutionInstance: string;
-    readonly recipientPhone: string;
+  /** Config da análise (3a) — defaults globais de produto (env; por-agente = Fatia 4). */
+  readonly analysis: {
+    readonly model: string;
+    readonly windowDays: number;
+    readonly baselineDays: number;
+    readonly topN: number;
   };
+  /** Checkpointer do LangGraph (Postgres) — HITL durável (5b). undefined na 3a (read-only). */
+  readonly checkpointer: unknown;
 }
 
 /** Placeholder tipado p/ portas ainda não plugadas (lançam ao usar). */
@@ -106,6 +109,15 @@ export async function buildComposition(): Promise<WorkerDeps> {
     client: new EvolutionClient({ baseUrl: env.EVOLUTION_BASE_URL, apiKey: env.EVOLUTION_API_KEY }),
   });
   const scheduler = new BullmqScheduler(redis);
+  const llm = new OpenRouterAdapter({
+    client: new OpenRouterClient({
+      apiKey: env.OPENROUTER_API_KEY,
+      baseUrl: env.OPENROUTER_BASE_URL,
+      maxRetries: env.LLM_MAX_RETRIES,
+      referer: env.WEB_ORIGIN,
+      title: "Agente de Tráfego",
+    }),
+  });
 
   return {
     db,
@@ -116,18 +128,20 @@ export async function buildComposition(): Promise<WorkerDeps> {
       messaging,
       vault,
       scheduler,
-      // ainda não plugadas na Fatia 0 (LLM=3a, metering/approval=fatias seguintes).
-      llm: todoPort<WorkerDeps["ports"]["llm"]>("LLMProviderPort"),
+      llm, // plugada na 3a (análise read-only)
+      // metering/approval = fatias seguintes (3b/5b).
       metering: todoPort<WorkerDeps["ports"]["metering"]>("MeteringPort"),
       approval: todoPort<WorkerDeps["ports"]["approval"]>("ApprovalPort"),
     },
     insightsSync,
-    // checkpointer LangGraph = fatia 3a (grafo real). Handler mínimo não usa grafo.
-    checkpointer: undefined,
-    fatia0: {
-      evolutionInstance: env.EVOLUTION_INSTANCE,
-      recipientPhone: env.FATIA0_RECIPIENT_PHONE,
+    analysis: {
+      model: env.OPENROUTER_MODEL,
+      windowDays: env.ANALYSIS_WINDOW_DAYS,
+      baselineDays: env.ANALYSIS_BASELINE_DAYS,
+      topN: env.ANALYSIS_TOP_N,
     },
+    // checkpointer LangGraph = 5b (HITL durável). 3a é read-only linear → sem checkpointer.
+    checkpointer: undefined,
   };
 }
 

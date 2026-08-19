@@ -11,8 +11,12 @@ export interface LLMUsage {
   readonly inputTokens: number;
   readonly outputTokens: number;
   readonly cachedTokens?: number;
-  /** custo real reportado pelo provider (OpenRouter). */
-  readonly costUsd: number;
+  /**
+   * Custo real reportado pelo provider (OpenRouter). **Opcional** de propósito:
+   * custo ausente ≠ custo zero — se o provider não reportou, o campo fica ausente
+   * (nunca 0, que diria ao billing que a chamada foi grátis).
+   */
+  readonly costUsd?: number;
 }
 
 export interface LLMRequest {
@@ -20,6 +24,8 @@ export interface LLMRequest {
   readonly messages: readonly LLMMessage[];
   /** structured output: JSON Schema esperado. */
   readonly responseSchema?: Readonly<Record<string, unknown>>;
+  /** nome do schema (identifica o structured output p/ o provider). */
+  readonly responseSchemaName?: string;
   readonly temperature?: number;
   readonly maxTokens?: number;
 }
@@ -27,6 +33,24 @@ export interface LLMRequest {
 export interface LLMCompletion<T = string> {
   readonly output: T;
   readonly usage: LLMUsage;
+}
+
+/**
+ * Falha genérica da borda de LLM — o adapter traduz o erro do provider para esta
+ * forma, e a casca decide o que fazer sem conhecer o provider. `rate_limited`/
+ * `upstream` são transitórios (o adapter já re-tenta); `invalid_request` é
+ * permanente (400/401/403); `parse_error` = output não-parseável no structured.
+ */
+export type LLMProviderErrorKind = "rate_limited" | "invalid_request" | "upstream" | "parse_error";
+
+export class LLMProviderError extends Error {
+  constructor(
+    readonly kind: LLMProviderErrorKind,
+    message: string,
+  ) {
+    super(message);
+    this.name = "LLMProviderError";
+  }
 }
 
 /**

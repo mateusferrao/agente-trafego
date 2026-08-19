@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Database } from "@trafego/db";
-import { ANALYSIS_QUEUE, ANALYSIS_RUN_JOB, INSIGHTS_SYNC_JOB, SYNC_QUEUE } from "@trafego/shared";
+import { INSIGHTS_SYNC_JOB, SYNC_QUEUE } from "@trafego/shared";
 import type { EncryptedPayload } from "@trafego/shared/types";
 import { createAdminService } from "./service.js";
 
@@ -56,31 +56,6 @@ describe("createAdminService.connectAccount", () => {
     const { db } = makeFakeDb([[]]);
     const service = createAdminService({ db, vault: makeVault(), scheduler: makeScheduler() });
     await expect(service.connectAccount(INPUT)).rejects.toMatchObject({ statusCode: 400 });
-  });
-});
-
-describe("createAdminService.triggerRun", () => {
-  it("enfileira analysis-run com o payload da conta", async () => {
-    const { db } = makeFakeDb([[{ id: "org-1" }], [{ id: "acct-1" }]]);
-    const scheduler = makeScheduler();
-    const service = createAdminService({ db, vault: makeVault(), scheduler });
-
-    await service.triggerRun("acct-1");
-
-    expect(scheduler.enqueue).toHaveBeenCalledWith({
-      queue: ANALYSIS_QUEUE,
-      name: ANALYSIS_RUN_JOB,
-      payload: { accountId: "acct-1", orgId: "org-1", trigger: "manual" },
-    });
-  });
-
-  it("404 quando a conta não é da org", async () => {
-    const { db } = makeFakeDb([[{ id: "org-1" }], []]);
-    const scheduler = makeScheduler();
-    const service = createAdminService({ db, vault: makeVault(), scheduler });
-
-    await expect(service.triggerRun("nope")).rejects.toMatchObject({ statusCode: 404 });
-    expect(scheduler.enqueue).not.toHaveBeenCalled();
   });
 });
 

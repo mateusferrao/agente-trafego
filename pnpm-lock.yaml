@@ -42,6 +42,9 @@ importers:
       '@trafego/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@trafego/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@trafego/credential-vault':
         specifier: workspace:*
         version: link:../../packages/credential-vault
@@ -300,6 +303,9 @@ importers:
       zod:
         specifier: ^3.24.0
         version: 3.25.76
+      zod-to-json-schema:
+        specifier: ^3.24.0
+        version: 3.25.2(zod@3.25.76)
 
 packages:
 

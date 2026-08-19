@@ -306,6 +306,228 @@
           "tokenStatus",
           "lastValidatedAt"
         ]
+      },
+      "AgentSummary": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string"
+          },
+          "archetype": {
+            "type": "string"
+          },
+          "goals": {
+            "type": "object",
+            "properties": {
+              "targetCPA": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "targetROAS": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            }
+          }
+        },
+        "required": [
+          "agentId",
+          "archetype",
+          "goals"
+        ]
+      },
+      "AgentGoalsInput": {
+        "type": "object",
+        "properties": {
+          "targetCPA": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "targetROAS": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        }
+      },
+      "TriggerRunOutput": {
+        "type": "object",
+        "properties": {
+          "runId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "succeeded",
+              "failed",
+              "waiting_approval",
+              "partial"
+            ]
+          }
+        },
+        "required": [
+          "runId",
+          "status"
+        ]
+      },
+      "LatestRunOutput": {
+        "type": "object",
+        "properties": {
+          "run": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "running",
+                  "succeeded",
+                  "failed",
+                  "waiting_approval",
+                  "partial"
+                ]
+              },
+              "summary": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "partial": {
+                "type": "boolean"
+              },
+              "costUsd": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "startedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "finishedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "status",
+              "summary",
+              "partial",
+              "costUsd",
+              "startedAt",
+              "finishedAt"
+            ]
+          },
+          "recommendations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "rationale": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "riskLevel": {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high"
+                  ]
+                },
+                "applicability": {
+                  "type": "string",
+                  "enum": [
+                    "applicable",
+                    "not_yet_applicable"
+                  ]
+                },
+                "proposedAction": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "pause_entity",
+                        "resume_entity",
+                        "adjust_budget",
+                        "set_status"
+                      ]
+                    },
+                    "target": {
+                      "type": "object",
+                      "properties": {
+                        "level": {
+                          "type": "string",
+                          "enum": [
+                            "account",
+                            "campaign",
+                            "adset",
+                            "ad"
+                          ]
+                        },
+                        "id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "level",
+                        "id"
+                      ]
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "target",
+                    "params"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "rationale",
+                "riskLevel",
+                "applicability",
+                "proposedAction"
+              ]
+            }
+          }
+        },
+        "required": [
+          "run",
+          "recommendations"
+        ]
       }
     },
     "parameters": {}
@@ -557,6 +779,134 @@
                   "items": {
                     "$ref": "#/components/schemas/AdAccountOutput"
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/agent": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "agente da conta (cria se não existir)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/agent/goals": {
+      "put": {
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentGoalsInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "meta atualizada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/runs": {
+      "post": {
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "análise enfileirada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriggerRunOutput"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "já há uma análise em andamento"
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/runs/latest": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "último run + recomendações",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LatestRunOutput"
                 }
               }
             }

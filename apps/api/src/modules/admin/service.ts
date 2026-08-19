@@ -2,11 +2,8 @@ import { and, eq, sql } from "drizzle-orm";
 import { adAccounts, BETA_ORG_SLUG, orgs, type Database } from "@trafego/db";
 import type { CredentialVaultPort, SchedulerPort } from "@trafego/shared/ports";
 import {
-  ANALYSIS_QUEUE,
-  ANALYSIS_RUN_JOB,
   INSIGHTS_SYNC_JOB,
   SYNC_QUEUE,
-  type AnalysisRunPayload,
   type InsightsSyncPayload,
 } from "@trafego/shared";
 import { badRequest, notFound } from "../../middleware/error-handler.js";
@@ -63,20 +60,6 @@ export function createAdminService(deps: AdminDeps) {
         .returning({ id: adAccounts.id });
       if (!row) throw badRequest("Falha ao persistir a conta.");
       return { id: row.id };
-    },
-
-    /** Enfileira o job de análise para a conta (org-scoped). */
-    async triggerRun(accountId: string): Promise<void> {
-      const orgId = await betaOrgId();
-      const [account] = await deps.db
-        .select({ id: adAccounts.id })
-        .from(adAccounts)
-        .where(and(eq(adAccounts.id, accountId), eq(adAccounts.orgId, orgId)))
-        .limit(1);
-      if (!account) throw notFound("Conta não encontrada.");
-
-      const payload: AnalysisRunPayload = { accountId, orgId, trigger: "manual" };
-      await deps.scheduler.enqueue({ queue: ANALYSIS_QUEUE, name: ANALYSIS_RUN_JOB, payload });
     },
 
     /** Enfileira o sync de insights da conta (org-scoped) — coleta a série temporal (2a). */
