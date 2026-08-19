@@ -33,7 +33,13 @@ import {
   mutedCampaignsOutput,
   setPausedInput,
 } from "../modules/agents/schema.js";
-import { campaignAnalysesOutput, latestRunOutput, triggerRunOutput } from "../modules/runs/schema.js";
+import {
+  campaignAnalysesOutput,
+  latestRunOutput,
+  runDetailOutput,
+  runListOutput,
+  triggerRunOutput,
+} from "../modules/runs/schema.js";
 import { channelStateOutput } from "../modules/channels/schema.js";
 import { feedbackInput, feedbackOutput } from "../modules/recommendations/schema.js";
 import {
@@ -77,6 +83,8 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const TriggerRunOutput = registry.register("TriggerRunOutput", triggerRunOutput);
   const LatestRunOutput = registry.register("LatestRunOutput", latestRunOutput);
   const CampaignAnalysesOutput = registry.register("CampaignAnalysesOutput", campaignAnalysesOutput);
+  const RunListOutput = registry.register("RunListOutput", runListOutput);
+  const RunDetailOutput = registry.register("RunDetailOutput", runDetailOutput);
   const MuteCampaignInput = registry.register("MuteCampaignInput", muteCampaignInput);
   const MutedCampaignsOutput = registry.register("MutedCampaignsOutput", mutedCampaignsOutput);
   const ChannelStateOutput = registry.register("ChannelStateOutput", channelStateOutput);
@@ -298,6 +306,32 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     tags: ["runs"],
     request: { params: accountParams },
     responses: { 200: jsonRes("recorte por campanha do resultado atual", CampaignAnalysesOutput) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts/{id}/runs",
+    tags: ["runs"],
+    request: {
+      params: accountParams,
+      query: z.object({
+        grades: z.string().optional(),
+        since: z.string().optional(),
+        until: z.string().optional(),
+        limit: z.string().optional(),
+        offset: z.string().optional(),
+      }),
+    },
+    responses: { 200: jsonRes("histórico de análises (lista paginada)", RunListOutput) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts/{id}/runs/{runId}",
+    tags: ["runs"],
+    request: { params: z.object({ id: z.string(), runId: z.string() }) },
+    responses: {
+      200: jsonRes("detalhe de um run (histórico)", RunDetailOutput),
+      404: { description: "análise não encontrada" },
+    },
   });
   registry.registerPath({
     method: "get",

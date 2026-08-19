@@ -16,6 +16,7 @@ import type {
   GuardrailConfig,
   InsightRow,
   PlaybookRule,
+  RunCampaignCard,
 } from "@trafego/shared/types";
 import type { AnalysisOutput, UnitAnalysis } from "@trafego/shared/schemas";
 import type { ResolvedAnalysisConfig } from "../../modules/analysis/config.js";
@@ -72,6 +73,8 @@ export const AccountAnalysisState = Annotation.Root({
   // map-reduce (3b-2): análises por-anúncio (novas + herdadas) + as a persistir.
   unitAnalyses: Annotation<readonly UnitAnalysis[]>,
   freshUnits: Annotation<readonly SaveEntityAnalysis[]>,
+  // cartões por-campanha (fresh + herdadas) congelados p/ o histórico (snapshot no run).
+  campaignCards: Annotation<readonly RunCampaignCard[]>,
   analysisOutput: Annotation<AnalysisOutput | null>,
   summary: Annotation<string>,
   usage: Annotation<AccumulatedTokenUsage | null>,

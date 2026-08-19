@@ -84,22 +84,31 @@ describe("agents.getOrCreateForAccount", () => {
 });
 
 describe("agents.updateConfig", () => {
-  it("salva meta+conversão+textos, apara/limpa e bumpa configChangedAt (força deep)", async () => {
-    const { db, captured } = makeFakeDb([[{ id: "acc-1" }], [{ id: "ag-1", archetype: "conservador", goals: {} }]]);
+  it("salva meta+conversão+textos+janela, apara/limpa e bumpa configChangedAt (força deep)", async () => {
+    // selects em ordem: conta, agente (getOrCreate), model_config (merge da janela).
+    const { db, captured } = makeFakeDb([
+      [{ id: "acc-1" }],
+      [{ id: "ag-1", archetype: "conservador", goals: {} }],
+      [{ modelConfig: { model: "x" } }],
+    ]);
     const service = createAgentsService({ db });
 
     const result = await service.updateConfig(ORG, "acc-1", {
       goals: { targetCPA: 150, conversionGoal: "purchase" },
       businessContext: "  Lançamento até 30/08  ",
       guidance: "",
+      analysisWindowDays: 30,
     });
 
     expect(result.goals).toEqual({ targetCPA: 150, conversionGoal: "purchase" });
     expect(result.businessContext).toBe("Lançamento até 30/08"); // aparado
     expect(result.guidance).toBeNull(); // "" → null
+    expect(result.analysisWindowDays).toBe(30);
     expect(captured.updateSet?.goals).toEqual({ targetCPA: 150, conversionGoal: "purchase" });
     expect(captured.updateSet?.businessContext).toBe("Lançamento até 30/08");
     expect(captured.updateSet?.guidance).toBeNull();
+    // merge no model_config preserva as outras chaves e grava a janela.
+    expect(captured.updateSet?.modelConfig).toEqual({ model: "x", windowDays: 30 });
     expect(captured.updateSet?.configChangedAt).toBeDefined(); // marca p/ o deep no próximo run
   });
 });

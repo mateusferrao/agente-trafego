@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import {
   agentMutedEntities,
   agentRuns,
@@ -17,19 +17,34 @@ import {
   AGENT_RUN_JOB,
   type AgentRunExecutePayload,
 } from "@trafego/shared";
-import type { Action, OrgId, RunId } from "@trafego/shared/types";
+import type { Action, OrgId, RunCampaignCard } from "@trafego/shared/types";
 import type { MeteringPort, SchedulerPort } from "@trafego/shared/ports";
-import { badRequest, conflict } from "../../middleware/error-handler.js";
+import { badRequest, conflict, notFound } from "../../middleware/error-handler.js";
 import {
   runMetrics,
   type CampaignAnalysisOutput,
   type LatestRunOutput,
   type RecommendationOutput,
+  type RunDetailOutput,
+  type RunListItem,
+  type RunListOutput,
   type RunOutput,
-  type RunSummary,
-  type RunTimeline,
   type TriggerRunOutput,
 } from "./schema.js";
+
+/** Filtros + paginação da lista de análises anteriores (6a). */
+export interface ListRunsOptions {
+  readonly grades?: readonly string[];
+  readonly since?: string; // ISO
+  readonly until?: string; // ISO
+  readonly limit?: number;
+  readonly offset?: number;
+}
+
+const RUNS_PAGE_DEFAULT = 20;
+const RUNS_PAGE_MAX = 50;
+/** Runs finalizados que entram no histórico (exclui in-flight). */
+const FINISHED_STATUSES = ["succeeded", "failed"] as const;
 
 /** Garante o agente da conta (injetado do slice de agentes — evita duplicar lógica). */
 export type EnsureAgent = (orgId: OrgId, accountId: string) => Promise<{ agentId: string }>;
@@ -105,12 +120,18 @@ export function createRunsService(deps: RunsDeps) {
       .limit(1);
     if (!run) return { run: null, recommendations: [] };
 
+    return {
+      run: toRunOutput(run),
+      recommendations: await recommendationsForRun(orgId, run.id),
+    };
+  }
+
+  /** Recomendações de um run + o voto (👍/👎) mais recente de cada — reuso latest/detalhe. */
+  async function recommendationsForRun(orgId: OrgId, runId: string): Promise<RecommendationOutput[]> {
     const recs = await deps.db
       .select()
       .from(recommendations)
-      .where(and(eq(recommendations.runId, run.id), eq(recommendations.orgId, orgId)));
-
-    // votos (👍/👎) das recomendações deste run — o card do site reflete o estado.
+      .where(and(eq(recommendations.runId, runId), eq(recommendations.orgId, orgId)));
     const recIds = recs.map((r) => r.id);
     const votes = new Map<string, "up" | "down">();
     if (recIds.length > 0) {
@@ -123,11 +144,7 @@ export function createRunsService(deps: RunsDeps) {
         if (row.vote && !votes.has(row.recommendationId)) votes.set(row.recommendationId, row.vote);
       }
     }
-
-    return {
-      run: toRunOutput(run),
-      recommendations: recs.map((r) => toRecommendationOutput(r, votes.get(r.id) ?? null)),
-    };
+    return recs.map((r) => toRecommendationOutput(r, votes.get(r.id) ?? null));
   }
 
   /**
@@ -224,15 +241,129 @@ export function createRunsService(deps: RunsDeps) {
     return rows.map((r) => toCampaignAnalysisOutput(r, muted.has(r.entityId)));
   }
 
-  // ── leitura de histórico (6a — mantido stub por ora) ───────────────────
-  async function list(_orgId: OrgId): Promise<RunSummary[]> {
-    return [];
-  }
-  async function timeline(_orgId: OrgId, _runId: RunId): Promise<RunTimeline> {
-    throw badRequest("Timeline ainda não disponível.");
+  /**
+   * Histórico de análises da conta (6a): runs finalizados, mais recentes primeiro,
+   * com filtros por nota + período e paginação. Org-scoped. `grade`/`headline` saem
+   * do `metrics_snapshot.scorecard`.
+   */
+  async function listRuns(
+    orgId: OrgId,
+    accountId: string,
+    opts: ListRunsOptions,
+  ): Promise<RunListOutput> {
+    const [agent] = await deps.db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.adAccountId, accountId), eq(agents.orgId, orgId)))
+      .limit(1);
+    if (!agent) return { items: [], hasMore: false };
+
+    const limit = Math.min(RUNS_PAGE_MAX, Math.max(1, opts.limit ?? RUNS_PAGE_DEFAULT));
+    const offset = Math.max(0, opts.offset ?? 0);
+    const conds = [
+      eq(agentRuns.agentId, agent.id),
+      eq(agentRuns.orgId, orgId),
+      inArray(agentRuns.status, [...FINISHED_STATUSES]),
+    ];
+    if (opts.grades && opts.grades.length > 0) {
+      conds.push(inArray(sql`(${agentRuns.metricsSnapshot} #>> '{scorecard,grade}')`, [...opts.grades]));
+    }
+    if (opts.since) conds.push(gte(agentRuns.createdAt, new Date(opts.since)));
+    if (opts.until) conds.push(lte(agentRuns.createdAt, new Date(opts.until)));
+
+    const rows = await deps.db
+      .select({
+        id: agentRuns.id,
+        createdAt: agentRuns.createdAt,
+        trigger: agentRuns.trigger,
+        status: agentRuns.status,
+        partial: agentRuns.partial,
+        costSnapshot: agentRuns.costSnapshot,
+        metricsSnapshot: agentRuns.metricsSnapshot,
+        summary: agentRuns.summary,
+      })
+      .from(agentRuns)
+      .where(and(...conds))
+      .orderBy(desc(agentRuns.createdAt))
+      .limit(limit + 1)
+      .offset(offset);
+
+    const hasMore = rows.length > limit;
+    const page = rows.slice(0, limit);
+    const counts = new Map<string, number>();
+    const ids = page.map((r) => r.id);
+    if (ids.length > 0) {
+      const cr = await deps.db
+        .select({ runId: recommendations.runId, n: sql<number>`count(*)::int` })
+        .from(recommendations)
+        .where(and(eq(recommendations.orgId, orgId), inArray(recommendations.runId, ids)))
+        .groupBy(recommendations.runId);
+      for (const c of cr) counts.set(c.runId, c.n);
+    }
+    return { items: page.map((r) => toRunListItem(r, counts.get(r.id) ?? 0)), hasMore };
   }
 
-  return { trigger, latest, campaignAnalyses, list, timeline };
+  /**
+   * Detalhe de UM run (histórico): run + recomendações + recorte por campanha
+   * CONGELADO no snapshot do run (`metrics_snapshot.campaigns`) + estado silenciado
+   * atual. `isLatest` avisa o site quando não é a análise mais recente. Org-scoped.
+   */
+  async function runDetail(orgId: OrgId, accountId: string, runId: string): Promise<RunDetailOutput> {
+    const [agent] = await deps.db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.adAccountId, accountId), eq(agents.orgId, orgId)))
+      .limit(1);
+    if (!agent) throw notFound("Conta não encontrada.");
+
+    const [run] = await deps.db
+      .select()
+      .from(agentRuns)
+      .where(and(eq(agentRuns.id, runId), eq(agentRuns.agentId, agent.id), eq(agentRuns.orgId, orgId)))
+      .limit(1);
+    if (!run) throw notFound("Análise não encontrada.");
+
+    const recs = await recommendationsForRun(orgId, runId);
+    const mutedRows = await deps.db
+      .select({ externalId: agentMutedEntities.externalId })
+      .from(agentMutedEntities)
+      .where(
+        and(
+          eq(agentMutedEntities.agentId, agent.id),
+          eq(agentMutedEntities.orgId, orgId),
+          eq(agentMutedEntities.entityLevel, "campaign"),
+        ),
+      );
+    const muted = new Set(mutedRows.map((m) => m.externalId));
+    const campaigns = extractCampaignCards(run.metricsSnapshot).map((c) => ({
+      externalId: c.externalId,
+      name: c.name,
+      metrics: c.metrics,
+      summary: c.summary,
+      topFinding: c.topFinding,
+      flags: [...c.flags],
+      muted: muted.has(c.externalId),
+    }));
+
+    // "mais recente" = último run FINALIZADO (ignora in-flight; casa com o que o
+    // usuário considera a última análise concluída).
+    const [latestRow] = await deps.db
+      .select({ id: agentRuns.id })
+      .from(agentRuns)
+      .where(
+        and(
+          eq(agentRuns.agentId, agent.id),
+          eq(agentRuns.orgId, orgId),
+          inArray(agentRuns.status, [...FINISHED_STATUSES]),
+        ),
+      )
+      .orderBy(desc(agentRuns.createdAt))
+      .limit(1);
+
+    return { run: toRunOutput(run), recommendations: recs, campaigns, isLatest: latestRow?.id === runId };
+  }
+
+  return { trigger, latest, campaignAnalyses, listRuns, runDetail };
 }
 
 /** Linha de `entity_analyses` (campanha) → output do cartão (métrica + gargalo curados). */
@@ -267,6 +398,41 @@ function toCampaignAnalysisOutput(
 
 type AgentRunRow = typeof agentRuns.$inferSelect;
 type RecommendationRow = typeof recommendations.$inferSelect;
+
+/** Linha de `agent_runs` → item da lista de histórico (nota/headline do scorecard). */
+function toRunListItem(
+  run: {
+    id: string;
+    createdAt: Date;
+    trigger: AgentRunRow["trigger"];
+    status: AgentRunRow["status"];
+    partial: boolean;
+    costSnapshot: string | null;
+    metricsSnapshot: Record<string, unknown> | null;
+    summary: string | null;
+  },
+  recommendationCount: number,
+): RunListItem {
+  const parsed = runMetrics.safeParse(run.metricsSnapshot);
+  const scorecard = parsed.success ? parsed.data.scorecard : undefined;
+  return {
+    id: run.id,
+    createdAt: run.createdAt.toISOString(),
+    trigger: run.trigger,
+    status: run.status,
+    partial: run.partial,
+    grade: scorecard?.grade ?? null,
+    headline: scorecard?.headline ?? run.summary ?? null,
+    recommendationCount,
+    costUsd: run.costSnapshot === null ? null : Number(run.costSnapshot),
+  };
+}
+
+/** Cartões por-campanha do snapshot do run (defensivo: array ou vazio). */
+function extractCampaignCards(metricsSnapshot: Record<string, unknown> | null): RunCampaignCard[] {
+  const c = metricsSnapshot?.campaigns;
+  return Array.isArray(c) ? (c as RunCampaignCard[]) : [];
+}
 
 function toRunOutput(run: AgentRunRow): RunOutput {
   // metrics_snapshot é jsonb livre → valida contra o contrato (descarta se fora do shape).

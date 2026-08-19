@@ -7,6 +7,14 @@ import { conversionGoalSchema } from "@trafego/shared/schemas";
 /** Teto de caracteres dos campos de texto livre (guarda prompt inchado). */
 const TEXT_FIELD_MAX = 2000;
 
+/**
+ * Janela de análise (Fatia 4): quantos dias o agente analisa; o baseline (comparação)
+ * espelha o mesmo período imediatamente anterior. Teto 30d (janela+baseline=60d < retenção).
+ */
+export const ANALYSIS_WINDOW_MIN_DAYS = 1;
+export const ANALYSIS_WINDOW_MAX_DAYS = 30;
+export const ANALYSIS_WINDOW_DEFAULT_DAYS = 7;
+
 export const agentGoalsInput = z.object({
   targetCPA: z.number().positive().optional(),
   targetROAS: z.number().positive().optional(),
@@ -17,13 +25,20 @@ export const agentGoalsInput = z.object({
 });
 export type AgentGoalsInput = z.infer<typeof agentGoalsInput>;
 
-/** Config editável do agente neste corte: meta+conversão + personalização por texto. */
+/** Config editável do agente neste corte: meta+conversão + personalização + janela. */
 export const agentConfigInput = z.object({
   goals: agentGoalsInput.optional(),
   /** fatos do negócio (contexto) — camada aditiva no prompt. */
   businessContext: z.string().max(TEXT_FIELD_MAX).optional(),
   /** orientações de comportamento — camada aditiva no prompt. */
   guidance: z.string().max(TEXT_FIELD_MAX).optional(),
+  /** período de análise em dias (baseline espelha) — 1..30. */
+  analysisWindowDays: z
+    .number()
+    .int()
+    .min(ANALYSIS_WINDOW_MIN_DAYS)
+    .max(ANALYSIS_WINDOW_MAX_DAYS)
+    .optional(),
 });
 export type AgentConfigInput = z.infer<typeof agentConfigInput>;
 
@@ -34,6 +49,8 @@ export const agentSummary = z.object({
   /** personalização por texto (Fatia 4) — null quando não configurada. */
   businessContext: z.string().nullable(),
   guidance: z.string().nullable(),
+  /** período de análise em dias (default quando não configurado). */
+  analysisWindowDays: z.number(),
   /** análises automáticas pausadas pelo dono (freio self-service). */
   paused: z.boolean(),
 });

@@ -12,9 +12,20 @@ import type {
   LatestRunOutput,
   MuteCampaignInput,
   MutedCampaignsOutput,
+  RunDetailOutput,
+  RunListOutput,
   SetPausedInput,
   TriggerRunOutput,
 } from './generated';
+
+/** Filtros do histórico de análises (todos opcionais). */
+export interface ListRunsOptions {
+  readonly grades?: readonly string[];
+  readonly since?: string;
+  readonly until?: string;
+  readonly limit?: number;
+  readonly offset?: number;
+}
 
 /**
  * Endpoints da análise on-demand (3a): agente/meta por conta + disparar run +
@@ -80,6 +91,29 @@ export class AnalysisApiService extends BaseApiService {
   /** `DELETE /api/accounts/:id/muted-campaigns/:externalId` — reativa a campanha. */
   unmuteCampaign(accountId: string, externalId: string): Observable<MutedCampaignsOutput> {
     return this.delete<MutedCampaignsOutput>(['/accounts', accountId, 'muted-campaigns', externalId]);
+  }
+
+  /**
+   * `GET /api/accounts/:id/runs` — histórico de análises (lista paginada + filtros).
+   * Silencioso (secundário): falha degrada sem toast (a página zera a lista).
+   */
+  listRuns(accountId: string, opts: ListRunsOptions = {}): Observable<RunListOutput> {
+    const grades = opts.grades && opts.grades.length > 0 ? opts.grades.join(',') : undefined;
+    return this.get<RunListOutput>(['/accounts', accountId, 'runs'], {
+      context: silentApiContext(),
+      params: {
+        grades,
+        since: opts.since,
+        until: opts.until,
+        limit: opts.limit,
+        offset: opts.offset,
+      },
+    });
+  }
+
+  /** `GET /api/accounts/:id/runs/:runId` — detalhe de um run (run + recomendações + campanhas). */
+  runDetail(accountId: string, runId: string): Observable<RunDetailOutput> {
+    return this.get<RunDetailOutput>(['/accounts', accountId, 'runs', runId]);
   }
 
   /** `POST /api/recommendations/:id/feedback` — 👍/👎 (👎 vira memória do agente). */

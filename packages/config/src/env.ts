@@ -101,10 +101,6 @@ export const envSchema = z.object({
   EVOLUTION_WEBHOOK_SECRET: z
     .string()
     .min(1, "EVOLUTION_WEBHOOK_SECRET é obrigatório"),
-  // Single-tenant da Fatia 0 — aposentado na 3b (instância = 1 por org em
-  // `channel_instances`, criada no onboarding por QR). Mantido opcional p/ não
-  // quebrar .env existentes; não é mais lido pelo código.
-  EVOLUTION_INSTANCE: z.string().optional(),
 
   // ─── Análise / Governor ────────────────────────────────────────────────
   // INSIGHTS_RETENTION_DAYS = knob de ops (janela de retenção), env ok.

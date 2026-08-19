@@ -44,6 +44,7 @@ import {
 import type {
   Action,
   AdEntity,
+  CampaignUnit,
   Creative,
   CreativeVisionResult,
   EntityLevel,
@@ -51,6 +52,7 @@ import type {
   Finding,
   InsightMetrics,
   InsightRow,
+  RunCampaignCard,
 } from "@trafego/shared";
 import type { AdsPlatformPort, CreativeVisionPort } from "@trafego/shared/ports";
 import { AdsPlatformError, LLMProviderError } from "@trafego/shared/ports";
@@ -267,7 +269,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       memory: { objectives: [], pastActions: [], rejected: [...(state.rejectedMemory ?? [])] },
     });
     if (built.status === "empty") {
-      return { brief: null, analysisOutput: null, findings: [], summary: NO_ACTIVITY_SUMMARY, unitAnalyses: [], freshUnits: [] };
+      return { brief: null, analysisOutput: null, findings: [], summary: NO_ACTIVITY_SUMMARY, unitAnalyses: [], freshUnits: [], campaignCards: [] };
     }
 
     const last = await entityAnalysesRepo.loadByAgent(state.agentId);
@@ -374,7 +376,12 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       if (inherited) unitAnalyses.push(inherited.unit);
     }
 
-    return { brief: built.brief, unitAnalyses, freshUnits, usage, partial };
+    // cartões por-campanha congelados p/ o histórico (fresh + herdadas). O snapshot
+    // é do run; o entity_analyses (upsertado) só guarda a última — daí congelar aqui.
+    const freshUnitById = new Map<string, UnitAnalysis>(freshUnits.map((f) => [f.entityId, f.unit]));
+    const campaignCards = buildCampaignCards(built.campaignUnits, freshUnitById, last);
+
+    return { brief: built.brief, unitAnalyses, freshUnits, campaignCards, usage, partial };
   }
 
   /**
@@ -738,10 +745,11 @@ function withFunnel(row: InsightRow): InsightRow {
   return funnel.length > 0 ? { ...row, funnel } : row;
 }
 
-/** KPIs + funil + scorecard congelados p/ o site (null em conta parada). */
+/** KPIs + funil + scorecard + cartões por-campanha congelados p/ o site/histórico. */
 function buildMetricsSnapshot(state: AccountAnalysisStateType): Record<string, unknown> | null {
   if (!state.brief) return null;
   const t = state.brief.totals;
+  const cards = state.campaignCards ?? [];
   return {
     kpis: {
       spend: t.spend,
@@ -753,7 +761,42 @@ function buildMetricsSnapshot(state: AccountAnalysisStateType): Record<string, u
     },
     ...(state.brief.funnel ? { funnel: state.brief.funnel } : {}),
     ...(state.analysisOutput?.scorecard ? { scorecard: state.analysisOutput.scorecard } : {}),
+    // recorte por campanha congelado no run (base do histórico por-run).
+    ...(cards.length > 0 ? { campaigns: cards } : {}),
   };
+}
+
+/**
+ * Cartões por-campanha do run (todas as ativas COM análise — fresh ou herdada;
+ * summarized sem análise ficam de fora, igual ao recorte do site). Congela o
+ * recorte por campanha p/ o histórico, já que `entity_analyses` só guarda a última.
+ */
+function buildCampaignCards(
+  units: readonly CampaignUnit[],
+  freshById: ReadonlyMap<string, UnitAnalysis>,
+  last: ReadonlyMap<string, LastEntityAnalysis>,
+): RunCampaignCard[] {
+  const cards: RunCampaignCard[] = [];
+  for (const u of units) {
+    const analysis = freshById.get(u.campaign.id) ?? last.get(u.campaign.id)?.unit;
+    if (!analysis) continue;
+    const m = u.campaign.metrics;
+    const top = analysis.findings?.[0];
+    cards.push({
+      externalId: u.campaign.id,
+      name: u.campaign.name,
+      metrics: {
+        spend: m.spend ?? 0,
+        ...(typeof m.ctr === "number" ? { ctr: m.ctr } : {}),
+        ...(typeof m.cpa === "number" ? { cpa: m.cpa } : {}),
+        ...(typeof m.roas === "number" ? { roas: m.roas } : {}),
+      },
+      summary: analysis.summary ?? null,
+      topFinding: top ? { title: top.title, severity: top.severity } : null,
+      flags: [...u.campaign.flags],
+    });
+  }
+  return cards;
 }
 
 /** Busca entidades por nível (degrada em `partial` se um nível falhar). */

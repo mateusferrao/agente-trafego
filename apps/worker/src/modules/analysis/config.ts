@@ -15,6 +15,14 @@ const EXECUTION_POLICIES: readonly ExecutionPolicy[] = [
   "budget_scaled",
 ];
 
+/**
+ * Limites da janela de análise por-agente (Fatia 4). Teto 30d: com o baseline
+ * espelhando a janela, janela+baseline = 60d < retenção (~90d) e sem estourar o
+ * custo/contexto (trends = 1 ponto/dia; downsample p/ 90d = roadmap).
+ */
+export const ANALYSIS_WINDOW_MIN_DAYS = 1;
+export const ANALYSIS_WINDOW_MAX_DAYS = 30;
+
 export interface AnalysisDefaults {
   /** modelo FORTE — síntese da conta + reviewer (raciocínio cross-entidade). */
   readonly model: string;
@@ -63,6 +71,13 @@ export function resolveAnalysisConfig(
     typeof v === "string" && (REASONING_EFFORTS as readonly string[]).includes(v)
       ? (v as ReasoningEffort)
       : undefined;
+  // janela por-agente (um controle): quando definida, o baseline ESPELHA a janela.
+  const overrideWindow = ((): number | undefined => {
+    const n = posInt(mc.windowDays);
+    return n === undefined
+      ? undefined
+      : Math.min(ANALYSIS_WINDOW_MAX_DAYS, Math.max(ANALYSIS_WINDOW_MIN_DAYS, n));
+  })();
 
   return {
     model: str(mc.model) ?? defaults.model,
@@ -78,8 +93,8 @@ export function resolveAnalysisConfig(
     maxCreativesVisionPerCampaign:
       nonNeg(mc.maxCreativesVisionPerCampaign) ?? defaults.maxCreativesVisionPerCampaign,
     mapConcurrency: posInt(mc.mapConcurrency) ?? defaults.mapConcurrency,
-    windowDays: defaults.windowDays,
-    baselineDays: defaults.baselineDays,
+    windowDays: overrideWindow ?? defaults.windowDays,
+    baselineDays: overrideWindow ?? defaults.baselineDays, // espelha a janela quando há override
     executionPolicy: policy(mc.executionPolicy) ?? defaults.executionPolicy,
     deepIntervalDays: posInt(mc.deepIntervalDays) ?? defaults.deepIntervalDays,
     materialChangePct: nonNeg(mc.materialChangePct) ?? defaults.materialChangePct,

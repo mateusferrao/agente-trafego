@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { actionType, entityLevel, riskLevel, scorecardSchema } from "@trafego/shared/schemas";
+import { actionType, entityLevel, riskLevel, scorecardGrade, scorecardSchema } from "@trafego/shared/schemas";
 
 export const runStatus = z.enum([
   "pending",
@@ -10,25 +10,7 @@ export const runStatus = z.enum([
   "partial",
 ]);
 
-export const runSummary = z.object({
-  id: z.string(),
-  trigger: z.enum(["cron", "on_demand", "conversation"]),
-  status: runStatus,
-  startedAt: z.string(),
-  costUsd: z.number().nullable(),
-});
-export type RunSummary = z.infer<typeof runSummary>;
-
-export const runStep = z.object({
-  name: z.string(),
-  status: z.enum(["pending", "running", "done", "error"]),
-  at: z.string(),
-});
-
-export const runTimeline = runSummary.extend({
-  steps: z.array(runStep),
-});
-export type RunTimeline = z.infer<typeof runTimeline>;
+export const runTrigger = z.enum(["cron", "on_demand", "conversation"]);
 
 // ─── 3a: disparo on-demand + resultado (run + recomendações) ─────────────
 export const triggerRunOutput = z.object({
@@ -143,3 +125,37 @@ export const campaignAnalysesOutput = z.object({
   campaigns: z.array(campaignAnalysisOutput),
 });
 export type CampaignAnalysesOutput = z.infer<typeof campaignAnalysesOutput>;
+
+// ─── 6a: histórico de análises (lista + detalhe por run) ─────────────────
+/** Item da lista de análises anteriores (o essencial p/ a linha + filtros). */
+export const runListItem = z.object({
+  id: z.string(),
+  createdAt: z.string(),
+  trigger: runTrigger,
+  status: runStatus,
+  partial: z.boolean(),
+  /** nota do scorecard (null quando o run não produziu — ex: conta parada/falha). */
+  grade: scorecardGrade.nullable(),
+  /** headline do scorecard OU o resumo curto (null quando não há). */
+  headline: z.string().nullable(),
+  recommendationCount: z.number(),
+  costUsd: z.number().nullable(),
+});
+export type RunListItem = z.infer<typeof runListItem>;
+
+export const runListOutput = z.object({
+  items: z.array(runListItem),
+  /** há mais páginas além desta (paginação por limit/offset). */
+  hasMore: z.boolean(),
+});
+export type RunListOutput = z.infer<typeof runListOutput>;
+
+/** Detalhe de UM run (histórico): run + recomendações + recorte por campanha do snapshot. */
+export const runDetailOutput = z.object({
+  run: runOutput.nullable(),
+  recommendations: z.array(recommendationOutput),
+  campaigns: z.array(campaignAnalysisOutput),
+  /** é o run mais recente da conta? (o site avisa quando NÃO é). */
+  isLatest: z.boolean(),
+});
+export type RunDetailOutput = z.infer<typeof runDetailOutput>;

@@ -294,6 +294,25 @@ export interface CampaignUnit {
   readonly adsets: readonly CampaignAdsetGroup[];
 }
 
+/**
+ * Cartão por-campanha CONGELADO no run (snapshot em `agent_runs.metrics_snapshot`),
+ * p/ o histórico exibir o recorte por campanha de análises antigas (o `entity_analyses`
+ * é upsertado = só a última). `muted` NÃO entra (é estado dinâmico, resolvido na leitura).
+ */
+export interface RunCampaignCard {
+  readonly externalId: string;
+  readonly name: string | null;
+  readonly metrics: {
+    readonly spend: number;
+    readonly ctr?: number;
+    readonly cpa?: number;
+    readonly roas?: number;
+  };
+  readonly summary: string | null;
+  readonly topFinding: { readonly title: string; readonly severity: "info" | "warning" | "critical" } | null;
+  readonly flags: readonly string[];
+}
+
 export interface AgentGoals {
   readonly targetCPA?: number;
   readonly targetROAS?: number;

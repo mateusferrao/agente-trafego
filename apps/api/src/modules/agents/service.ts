@@ -3,7 +3,15 @@ import { adAccounts, agents, agentMutedEntities, conversionLabels, insightsSnaps
 import { archetypeDefaults, DEFAULT_ARCHETYPE_KEY } from "@trafego/core";
 import type { AgentGoals, OrgId, StoredInsightMetrics } from "@trafego/shared/types";
 import { badRequest, notFound } from "../../middleware/error-handler.js";
-import type { AgentConfigInput, AgentGoalsInput, AgentSummary, AvailableConversionsOutput } from "./schema.js";
+import {
+  ANALYSIS_WINDOW_DEFAULT_DAYS,
+  ANALYSIS_WINDOW_MAX_DAYS,
+  ANALYSIS_WINDOW_MIN_DAYS,
+  type AgentConfigInput,
+  type AgentGoalsInput,
+  type AgentSummary,
+  type AvailableConversionsOutput,
+} from "./schema.js";
 
 /** Janela recente p/ listar as conversões que a conta reportou (dias). */
 const AVAILABLE_CONVERSIONS_WINDOW_DAYS = 30;
@@ -38,6 +46,7 @@ export function createAgentsService(deps: AgentsDeps) {
         goals: agents.goals,
         businessContext: agents.businessContext,
         guidance: agents.guidance,
+        modelConfig: agents.modelConfig,
         status: agents.status,
       })
       .from(agents)
@@ -50,6 +59,7 @@ export function createAgentsService(deps: AgentsDeps) {
         goals: existing.goals,
         businessContext: existing.businessContext,
         guidance: existing.guidance,
+        analysisWindowDays: windowFromModelConfig(existing.modelConfig),
         paused: existing.status === "paused",
       };
     }
@@ -77,6 +87,7 @@ export function createAgentsService(deps: AgentsDeps) {
       goals: defaults.goals,
       businessContext: null,
       guidance: null,
+      analysisWindowDays: ANALYSIS_WINDOW_DEFAULT_DAYS,
       paused: false,
     };
   }
@@ -103,12 +114,23 @@ export function createAgentsService(deps: AgentsDeps) {
     const nextGuidance =
       input.guidance !== undefined ? trimOrNull(input.guidance) : summary.guidance;
 
+    // janela de análise vive no model_config (jsonb) — merge p/ preservar as outras chaves.
+    const [row] = await deps.db
+      .select({ modelConfig: agents.modelConfig })
+      .from(agents)
+      .where(and(eq(agents.id, summary.agentId), eq(agents.orgId, orgId)))
+      .limit(1);
+    const currentModelConfig = row?.modelConfig ?? {};
+    const nextWindow = input.analysisWindowDays ?? summary.analysisWindowDays;
+    const nextModelConfig = { ...currentModelConfig, windowDays: nextWindow };
+
     // só força 1 deep (bumpa config_changed_at) quando um campo relevante à análise
     // mudou de fato — evita deep desnecessário em save idêntico (idempotência).
     const runRelevantChanged =
       JSON.stringify(nextGoals) !== JSON.stringify(cleanGoals(summary.goals)) ||
       nextBusinessContext !== (summary.businessContext ?? null) ||
-      nextGuidance !== (summary.guidance ?? null);
+      nextGuidance !== (summary.guidance ?? null) ||
+      nextWindow !== summary.analysisWindowDays;
 
     await deps.db
       .update(agents)
@@ -116,11 +138,18 @@ export function createAgentsService(deps: AgentsDeps) {
         goals: nextGoals,
         businessContext: nextBusinessContext,
         guidance: nextGuidance,
+        modelConfig: nextModelConfig,
         ...(runRelevantChanged ? { configChangedAt: sql`now()` } : {}),
         updatedAt: sql`now()`,
       })
       .where(and(eq(agents.id, summary.agentId), eq(agents.orgId, orgId)));
-    return { ...summary, goals: nextGoals, businessContext: nextBusinessContext, guidance: nextGuidance };
+    return {
+      ...summary,
+      goals: nextGoals,
+      businessContext: nextBusinessContext,
+      guidance: nextGuidance,
+      analysisWindowDays: nextWindow,
+    };
   }
 
   /**
@@ -271,4 +300,11 @@ function trimOrNull(s: string): string | null {
 /** Data → YYYY-MM-DD (coluna `date` do snapshot). */
 function ymd(d: Date): string {
   return d.toISOString().slice(0, 10);
+}
+
+/** Janela salva no model_config (ou o default), capada aos limites — p/ exibir na config. */
+function windowFromModelConfig(mc: Readonly<Record<string, unknown>> | null | undefined): number {
+  const raw = mc?.windowDays;
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return ANALYSIS_WINDOW_DEFAULT_DAYS;
+  return Math.min(ANALYSIS_WINDOW_MAX_DAYS, Math.max(ANALYSIS_WINDOW_MIN_DAYS, Math.floor(raw)));
 }

@@ -1,85 +1,62 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
+import { Subscription } from 'rxjs';
 import { toast } from 'ngx-sonner';
 import { provideIcons } from '@ng-icons/core';
 import { heroSparkles } from '@ng-icons/heroicons/outline';
 import { UiBadge, UiButton, UiEmptyState, UiPageHeader, UiSpinner } from '@ui';
 import { AccountsApiService } from '@core/api/accounts-api.service';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
-import type { AdAccountOutput, CampaignAnalysesOutput, LatestRunOutput } from '@core/api/generated';
+import type { AdAccountOutput, CampaignAnalysesOutput, LatestRunOutput, RunListOutput } from '@core/api/generated';
+import { AnalysisDetail, GRADE_LABEL, GRADE_TONE, type GradeTone } from '../analysis-detail/analysis-detail';
 
 type Recommendation = LatestRunOutput['recommendations'][number];
 type Campaign = CampaignAnalysesOutput['campaigns'][number];
-type RunMetrics = NonNullable<NonNullable<LatestRunOutput['run']>['metrics']>;
-type Scorecard = NonNullable<RunMetrics['scorecard']>;
-type RiskTone = 'neutral' | 'warning' | 'danger';
-type GradeTone = 'success' | 'info' | 'warning' | 'danger';
-
-/** item da faixa de KPIs / taxas (rótulo humano + valor já formatado). */
-interface Stat {
-  readonly label: string;
-  readonly value: string;
-}
-
-const RISK_TONE: Record<Recommendation['riskLevel'], RiskTone> = {
-  low: 'neutral',
-  medium: 'warning',
-  high: 'danger',
-};
-const RISK_LABEL: Record<Recommendation['riskLevel'], string> = {
-  low: 'risco baixo',
-  medium: 'risco médio',
-  high: 'risco alto',
-};
-const ACTION_LABEL: Record<string, string> = {
-  pause_entity: 'Pausar',
-  resume_entity: 'Reativar',
-  adjust_budget: 'Ajustar orçamento',
-  set_status: 'Mudar status',
-};
-const LEVEL_LABEL: Record<string, string> = {
-  account: 'conta',
-  campaign: 'campanha',
-  adset: 'conjunto',
-  ad: 'anúncio',
-};
+type RunListItem = RunListOutput['items'][number];
+type Grade = NonNullable<RunListItem['grade']>;
 
 /** enquanto o run está nestes estados, seguimos consultando (polling). */
 const IN_FLIGHT = new Set(['pending', 'running', 'waiting_approval']);
 const POLL_INTERVAL_MS = 2500;
-/** aplicação de ações chega na fase de escrita (Fatia 5) — texto único (decisão 13). */
-const APPLICABILITY_NOTE = 'Sugestão — a aplicação automática chega em breve.';
 
-/** Nota da conta (scorecard) → tom+texto (nunca só cor — docs/DESIGN.md). */
-const GRADE_TONE: Record<Scorecard['grade'], GradeTone> = {
-  A: 'success',
-  B: 'info',
-  C: 'warning',
-  D: 'danger',
+/** Notas disponíveis no filtro do histórico (multi-select). */
+const GRADE_OPTIONS: readonly Grade[] = ['A', 'B', 'C', 'D'];
+
+/** Uma opção do filtro de período (dias; null = tudo). */
+interface PeriodOption {
+  readonly days: number | null;
+  readonly label: string;
+}
+const PERIOD_OPTIONS: readonly PeriodOption[] = [
+  { days: 7, label: '7 dias' },
+  { days: 30, label: '30 dias' },
+  { days: 90, label: '90 dias' },
+  { days: null, label: 'tudo' },
+];
+const DEFAULT_PERIOD_DAYS: number | null = 30;
+const HISTORY_PAGE_SIZE = 20;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Gatilho do run → rótulo em linguagem de gente. */
+const TRIGGER_LABEL: Record<string, string> = {
+  cron: 'automática',
+  on_demand: 'manual',
+  conversation: 'conversa',
 };
-const GRADE_LABEL: Record<Scorecard['grade'], string> = {
-  A: 'ótimo',
-  B: 'bom',
-  C: 'atenção',
-  D: 'crítico',
-};
-/** "Maior vazamento" em linguagem de gente (sem jargão). */
-const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
-  consciencia: 'alcançar as pessoas certas',
-  engajamento: 'engajamento com os anúncios',
-  conversao: 'transformar cliques em vendas',
-  receita: 'retorno sobre o investimento',
-};
+
+const DEFAULT_CURRENCY = 'BRL';
+const DATETIME_LOCALE = 'pt-BR';
 
 /**
  * Detalhe da conta (3a): "Analisar agora" → mostra as recomendações no site
- * (o WhatsApp entra na 3b). Meta mínima (CPA/ROAS) editável — o resto da config
- * é a Fatia 4. Segue docs/DESIGN.md (status=tom+texto, erro amigável+próximo passo).
+ * (o WhatsApp entra na 3b). O resultado atual é renderizado por `app-analysis-detail`
+ * (reusado no detalhe de um run do histórico). Abaixo, o histórico de análises
+ * anteriores (filtros por nota + período). Segue docs/DESIGN.md.
  */
 @Component({
   selector: 'app-account-detail-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, UiBadge, UiButton, UiEmptyState, UiPageHeader, UiSpinner],
+  imports: [RouterLink, UiBadge, UiButton, UiEmptyState, UiPageHeader, UiSpinner, AnalysisDetail],
   providers: [provideIcons({ heroSparkles })],
   template: `
     <div class="flex flex-col gap-8">
@@ -133,154 +110,111 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
           <button appButton variant="secondary" type="button" (click)="analyze()">Tentar de novo</button>
         </div>
       } @else {
-        <section class="flex flex-col gap-4">
-          @if (run()?.summary) {
-            <p class="rounded-lg border border-line bg-panel p-5 text-sm text-ink">{{ run()?.summary }}</p>
-          }
-          <!-- Sem resultados (ex: conta sem gasto): o resumo acima já basta; a
-               ressalva "parcial" e o "nenhuma recomendação" viram ruído aqui. -->
-          @if (hasResults()) {
-          @if (run()?.partial) {
-            <p class="text-xs text-warning-strong">
-              Análise parcial — a Meta limitou as chamadas ou alguns dados não vieram desta vez. Tente de novo em alguns minutos.
-            </p>
-          }
-
-          <!-- Scorecard: nota da conta (tom+texto) + maior vazamento + headline -->
-          @if (scorecard(); as sc) {
-            <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
-              <div class="flex items-center gap-3">
-                <span appBadge [tone]="gradeTone(sc.grade)" size="sm">
-                  Nota {{ sc.grade }} · {{ gradeLabel(sc.grade) }}
-                </span>
-                <span class="text-xs text-muted">Maior oportunidade: {{ leakLabel(sc.biggestLeak) }}</span>
-              </div>
-              <p class="text-sm text-ink">{{ sc.headline }}</p>
-            </section>
-          }
-
-          <!-- Faixa de KPIs (gasto/CPA/ROAS) + taxas de funil quando houver -->
-          @if (stats().length > 0) {
-            <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-              @for (stat of stats(); track stat.label) {
-                <div class="flex flex-col gap-1 rounded-lg border border-line bg-panel p-4">
-                  <span class="text-xs text-muted">{{ stat.label }}</span>
-                  <span class="font-brand text-lg font-semibold text-ink">{{ stat.value }}</span>
-                </div>
-              }
-            </div>
-          }
-
-          <!-- Recorte por campanha: o gestor pensa por campanha (não por conta-blob) -->
-          @if (campaigns().length > 0) {
-            <div class="flex flex-col gap-1">
-              <h2 class="font-brand text-sm font-semibold text-ink">Campanhas</h2>
-              <p class="text-xs text-muted">
-                Análise de cada campanha ativa. Silencie as que o agente não deve acompanhar.
-              </p>
-            </div>
-            <div class="flex flex-col gap-3">
-              @for (c of campaigns(); track c.externalId) {
-                <article
-                  class="flex flex-col gap-2 rounded-lg border border-line bg-panel p-5"
-                  [class.opacity-60]="c.muted"
-                >
-                  <div class="flex items-start justify-between gap-3">
-                    <div class="flex flex-col gap-1">
-                      <h3 class="font-brand text-base font-semibold text-ink">{{ campaignName(c) }}</h3>
-                      <div class="flex flex-wrap items-center gap-2">
-                        <span appBadge [tone]="campaignTone(c)" size="sm">{{ campaignStatusLabel(c) }}</span>
-                        <span class="text-xs text-muted">Gasto {{ campaignSpend(c) }}</span>
-                        @if (c.metrics.cpa !== undefined) {
-                          <span class="text-xs text-muted">· Custo por venda {{ campaignCpa(c) }}</span>
-                        }
-                        @if (c.muted) {
-                          <span appBadge size="sm">silenciada</span>
-                        }
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      class="shrink-0 rounded-md border border-line px-2 py-1 text-xs text-muted hover:text-ink"
-                      [disabled]="mutingId() === c.externalId"
-                      (click)="toggleMuted(c)"
-                    >
-                      {{ mutingId() === c.externalId ? 'Salvando…' : c.muted ? 'Reativar' : 'Silenciar' }}
-                    </button>
-                  </div>
-                  @if (c.summary) {
-                    <p class="text-sm text-muted">{{ c.summary }}</p>
-                  }
-                  @if (c.topFinding) {
-                    <div class="rounded-md bg-soft p-3">
-                      <span class="text-sm text-ink">{{ c.topFinding.title }}</span>
-                    </div>
-                  }
-                </article>
-              }
-            </div>
-          }
-
-          @if (recommendations().length === 0) {
-            <p class="text-sm text-muted">Nenhuma recomendação desta vez.</p>
-          } @else {
-            <div class="flex flex-col gap-1">
-              <h2 class="font-brand text-sm font-semibold text-ink">Recomendações</h2>
-              <p class="text-xs text-muted">{{ applicabilityNote }}</p>
-            </div>
-            <div class="flex flex-col gap-3">
-              @for (rec of recommendations(); track rec.id) {
-                <article class="flex flex-col gap-2 rounded-lg border border-line bg-panel p-5">
-                  <div class="flex items-start justify-between gap-3">
-                    <h3 class="font-brand text-base font-semibold text-ink">{{ rec.title }}</h3>
-                    <span appBadge [tone]="riskTone(rec.riskLevel)">{{ riskLabel(rec.riskLevel) }}</span>
-                  </div>
-                  @if (rec.rationale) {
-                    <p class="text-sm text-muted">{{ rec.rationale }}</p>
-                  }
-                  @if (rec.proposedAction) {
-                    <div class="rounded-md bg-soft p-3">
-                      <span class="text-sm text-ink">Ação sugerida: {{ actionText(rec) }}</span>
-                    </div>
-                  }
-                  <!-- Feedback 👍/👎: ensina o agente (👎 vira memória "não repita isso") -->
-                  <div class="flex items-center gap-2 pt-1">
-                    <span class="text-xs text-muted">Essa sugestão faz sentido?</span>
-                    <button
-                      type="button"
-                      class="rounded-md border border-line px-2 py-1 text-xs"
-                      [class.bg-success-soft]="rec.vote === 'up'"
-                      [class.text-success-strong]="rec.vote === 'up'"
-                      [class.text-muted]="rec.vote !== 'up'"
-                      [attr.aria-pressed]="rec.vote === 'up'"
-                      [disabled]="votingId() === rec.id"
-                      (click)="vote(rec, 'up')"
-                    >
-                      {{ rec.vote === 'up' ? '👍 Marcada como útil' : '👍 Útil' }}
-                    </button>
-                    <button
-                      type="button"
-                      class="rounded-md border border-line px-2 py-1 text-xs"
-                      [class.bg-danger-soft]="rec.vote === 'down'"
-                      [class.text-danger-strong]="rec.vote === 'down'"
-                      [class.text-muted]="rec.vote !== 'down'"
-                      [attr.aria-pressed]="rec.vote === 'down'"
-                      [disabled]="votingId() === rec.id"
-                      (click)="vote(rec, 'down')"
-                    >
-                      👎 Não
-                    </button>
-                    @if (rec.vote === 'down') {
-                      <span class="text-xs text-muted">Anotado — o agente evita repetir isso.</span>
-                    }
-                  </div>
-                </article>
-              }
-            </div>
-          }
-          }
-        </section>
+        <app-analysis-detail
+          [run]="run()"
+          [campaigns]="campaigns()"
+          [recommendations]="recommendations()"
+          [currency]="account()?.currency ?? defaultCurrency"
+          [votingId]="votingId()"
+          [mutingId]="mutingId()"
+          (vote)="vote($event)"
+          (toggleMute)="toggleMuted($event)"
+        />
       }
+
+      <!-- Histórico: análises anteriores desta conta (filtros por nota + período) -->
+      <section class="flex flex-col gap-4">
+        <div class="flex flex-col gap-1">
+          <h2 class="font-brand text-sm font-semibold text-ink">Análises anteriores</h2>
+          <p class="text-xs text-muted">Reveja o que o agente encontrou em análises passadas.</p>
+        </div>
+
+        <div class="flex flex-col gap-3">
+          <div class="flex flex-wrap items-center gap-2" role="group" aria-label="Filtrar por nota">
+            <span class="text-xs text-muted">Nota</span>
+            @for (g of gradeOptions; track g) {
+              <button
+                type="button"
+                [attr.aria-pressed]="gradeFilters().includes(g)"
+                (click)="toggleGrade(g)"
+                class="rounded-md border px-3 py-1 text-xs font-medium transition hover:border-accent/40"
+                [class.border-accent]="gradeFilters().includes(g)"
+                [class.bg-accent-soft]="gradeFilters().includes(g)"
+                [class.text-ink]="gradeFilters().includes(g)"
+                [class.border-line]="!gradeFilters().includes(g)"
+                [class.text-muted]="!gradeFilters().includes(g)"
+              >
+                {{ g }}
+              </button>
+            }
+          </div>
+          <div class="flex flex-wrap items-center gap-2" role="radiogroup" aria-label="Filtrar por período">
+            <span class="text-xs text-muted">Período</span>
+            @for (p of periodOptions; track p.label) {
+              <button
+                type="button"
+                role="radio"
+                [attr.aria-checked]="periodDays() === p.days"
+                (click)="setPeriod(p.days)"
+                class="rounded-md border px-3 py-1 text-xs font-medium transition hover:border-accent/40"
+                [class.border-accent]="periodDays() === p.days"
+                [class.bg-accent-soft]="periodDays() === p.days"
+                [class.text-ink]="periodDays() === p.days"
+                [class.border-line]="periodDays() !== p.days"
+                [class.text-muted]="periodDays() !== p.days"
+              >
+                {{ p.label }}
+              </button>
+            }
+          </div>
+        </div>
+
+        @if (loadingHistory() && history().length === 0) {
+          <div class="flex items-center gap-3 rounded-lg border border-line bg-panel p-4 text-sm text-muted">
+            <app-ui-spinner [size]="16" [stroke]="2" aria-hidden="true" />
+            Carregando…
+          </div>
+        } @else if (history().length === 0) {
+          <p class="rounded-lg border border-line bg-panel p-4 text-sm text-muted">Nenhuma análise anterior ainda.</p>
+        } @else {
+          <div class="flex flex-col gap-2">
+            @for (item of history(); track item.id) {
+              <a
+                [routerLink]="['/accounts', accountId, 'runs', item.id]"
+                class="flex flex-col gap-2 rounded-lg border border-line bg-panel p-4 transition hover:border-accent/40"
+              >
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <span class="text-xs text-muted">{{ formatDateTime(item.createdAt) }}</span>
+                  <div class="flex flex-wrap items-center gap-2">
+                    @if (item.grade) {
+                      <span appBadge [tone]="historyGradeTone(item.grade)" size="sm">
+                        Nota {{ item.grade }} · {{ historyGradeLabel(item.grade) }}
+                      </span>
+                    } @else {
+                      <span appBadge size="sm">sem nota</span>
+                    }
+                    @if (item.partial) {
+                      <span appBadge tone="warning" size="sm">parcial</span>
+                    }
+                    <span class="text-xs text-muted">{{ triggerLabel(item.trigger) }}</span>
+                  </div>
+                </div>
+                @if (item.headline) {
+                  <p class="truncate text-sm text-ink">{{ item.headline }}</p>
+                }
+                <span class="text-xs text-muted">
+                  {{ item.recommendationCount }} {{ item.recommendationCount === 1 ? 'recomendação' : 'recomendações' }}
+                </span>
+              </a>
+            }
+          </div>
+          @if (historyHasMore()) {
+            <button appButton variant="secondary" type="button" [disabled]="loadingHistory()" (click)="loadMoreHistory()">
+              {{ loadingHistory() ? 'Carregando…' : 'Carregar mais' }}
+            </button>
+          }
+        }
+      </section>
 
       <!-- Controles do agente: flutua no rodapé (config completa em tela própria + freio) -->
       <div class="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-panel p-5 shadow-card">
@@ -309,7 +243,10 @@ export class AccountDetailPage {
   protected readonly accountId = this.route.snapshot.paramMap.get('id') ?? '';
   private destroyed = false;
 
-  protected readonly applicabilityNote = APPLICABILITY_NOTE;
+  protected readonly defaultCurrency = DEFAULT_CURRENCY;
+  protected readonly gradeOptions = GRADE_OPTIONS;
+  protected readonly periodOptions = PERIOD_OPTIONS;
+
   protected readonly account = signal<AdAccountOutput | null>(null);
   protected readonly run = signal<LatestRunOutput['run']>(null);
   protected readonly recommendations = signal<Recommendation[]>([]);
@@ -322,41 +259,21 @@ export class AccountDetailPage {
   protected readonly campaigns = signal<Campaign[]>([]);
   protected readonly mutingId = signal<string | null>(null);
 
-  /** Diagnóstico único da conta (só quando o run trouxe scorecard). */
-  protected readonly scorecard = computed<Scorecard | null>(() => this.run()?.metrics?.scorecard ?? null);
-
-  /**
-   * Run trouxe algo acionável? (scorecard, KPIs ou recomendações). Se não — ex:
-   * conta sem gasto — o resumo já basta; a ressalva "parcial" e o "nenhuma
-   * recomendação" viram ruído, então ficam suprimidos.
-   */
-  protected readonly hasResults = computed<boolean>(
-    () =>
-      this.scorecard() !== null ||
-      this.stats().length > 0 ||
-      this.recommendations().length > 0 ||
-      this.campaigns().length > 0,
-  );
-
-  /** Faixa de KPIs + taxas de funil, já formatada (só o que houver). */
-  protected readonly stats = computed<Stat[]>(() => {
-    const metrics = this.run()?.metrics;
-    if (!metrics) return [];
-    const currency = this.account()?.currency ?? DEFAULT_CURRENCY;
-    const { kpis, funnel } = metrics;
-    const items: Stat[] = [{ label: 'Gasto', value: formatCurrency(kpis.spend, currency) }];
-    if (kpis.cpa !== undefined) items.push({ label: 'Custo por venda', value: formatCurrency(kpis.cpa, currency) });
-    if (kpis.roas !== undefined) items.push({ label: 'Retorno (ROAS)', value: `${kpis.roas.toFixed(2)}x` });
-    if (funnel?.replyRate !== undefined) items.push({ label: 'Taxa de resposta', value: formatPercent(funnel.replyRate) });
-    if (funnel?.depthRate !== undefined) items.push({ label: 'Conversas que avançam', value: formatPercent(funnel.depthRate) });
-    return items;
-  });
+  // histórico de análises anteriores
+  protected readonly history = signal<RunListItem[]>([]);
+  protected readonly historyHasMore = signal(false);
+  protected readonly loadingHistory = signal(false);
+  protected readonly gradeFilters = signal<Grade[]>([]);
+  protected readonly periodDays = signal<number | null>(DEFAULT_PERIOD_DAYS);
+  private historyOffset = 0;
+  private historySub?: Subscription;
 
   constructor() {
     this.destroyRef.onDestroy(() => {
       this.destroyed = true;
     });
     this.loadAll();
+    this.loadHistory();
   }
 
   protected accountName(): string {
@@ -366,45 +283,6 @@ export class AccountDetailPage {
     const acc = this.account();
     if (!acc) return 'Análise da conta';
     return `Conta ${acc.adAccountId}${acc.currency ? ` · ${acc.currency}` : ''}`;
-  }
-
-  protected riskTone(risk: Recommendation['riskLevel']): RiskTone {
-    return RISK_TONE[risk];
-  }
-  protected riskLabel(risk: Recommendation['riskLevel']): string {
-    return RISK_LABEL[risk];
-  }
-  protected actionText(rec: Recommendation): string {
-    const action = rec.proposedAction;
-    if (!action) return '';
-    const verb = ACTION_LABEL[action.type] ?? 'Revisar';
-    const level = LEVEL_LABEL[action.target.level] ?? action.target.level;
-    return `${verb} ${level}`;
-  }
-
-  protected campaignName(c: Campaign): string {
-    return c.name ?? c.externalId;
-  }
-  /**
-   * Precisa de atenção? flag de meta/anomalia OU um achado grave da análise —
-   * senão o badge "dentro da meta" contradiz um gargalo crítico exibido logo abaixo.
-   */
-  private campaignNeedsAttention(c: Campaign): boolean {
-    const sev = c.topFinding?.severity;
-    return c.flags.length > 0 || sev === 'warning' || sev === 'critical';
-  }
-  /** Tom+texto (nunca só cor): atenção × dentro da meta. */
-  protected campaignTone(c: Campaign): RiskTone {
-    return this.campaignNeedsAttention(c) ? 'warning' : 'neutral';
-  }
-  protected campaignStatusLabel(c: Campaign): string {
-    return this.campaignNeedsAttention(c) ? 'atenção' : 'dentro da meta';
-  }
-  protected campaignSpend(c: Campaign): string {
-    return formatCurrency(c.metrics.spend, this.account()?.currency ?? DEFAULT_CURRENCY);
-  }
-  protected campaignCpa(c: Campaign): string {
-    return formatCurrency(c.metrics.cpa ?? 0, this.account()?.currency ?? DEFAULT_CURRENCY);
   }
 
   /** Silencia/reativa uma campanha (opt-out da análise). Reflete a lista do backend. */
@@ -427,24 +305,15 @@ export class AccountDetailPage {
     });
   }
 
-  protected gradeTone(grade: Scorecard['grade']): GradeTone {
-    return GRADE_TONE[grade];
-  }
-  protected gradeLabel(grade: Scorecard['grade']): string {
-    return GRADE_LABEL[grade];
-  }
-  protected leakLabel(leak: Scorecard['biggestLeak']): string {
-    return LEAK_LABEL[leak];
-  }
-
-  protected vote(rec: Recommendation, vote: 'up' | 'down'): void {
-    if (rec.vote === vote) return; // já votado assim
-    this.votingId.set(rec.id);
-    this.analysisApi.sendFeedback(rec.id, vote).subscribe({
+  protected vote(event: { id: string; vote: 'up' | 'down' }): void {
+    const rec = this.recommendations().find((r) => r.id === event.id);
+    if (rec?.vote === event.vote) return; // já votado assim
+    this.votingId.set(event.id);
+    this.analysisApi.sendFeedback(event.id, event.vote).subscribe({
       next: () => {
         // reflete o voto localmente (o backend já registrou + memória em 👎).
         this.recommendations.update((list) =>
-          list.map((r) => (r.id === rec.id ? { ...r, vote } : r)),
+          list.map((r) => (r.id === event.id ? { ...r, vote: event.vote } : r)),
         );
         this.votingId.set(null);
       },
@@ -474,6 +343,70 @@ export class AccountDetailPage {
       // erro amigável já vem do interceptor global.
       error: () => this.analyzing.set(false),
     });
+  }
+
+  // ── histórico ─────────────────────────────────────────────────────────────
+
+  protected toggleGrade(g: Grade): void {
+    this.gradeFilters.update((cur) => (cur.includes(g) ? cur.filter((x) => x !== g) : [...cur, g]));
+    this.loadHistory();
+  }
+
+  protected setPeriod(days: number | null): void {
+    if (this.periodDays() === days) return;
+    this.periodDays.set(days);
+    this.loadHistory();
+  }
+
+  protected loadMoreHistory(): void {
+    if (this.loadingHistory()) return; // evita clique duplo enquanto carrega
+    this.historyOffset += HISTORY_PAGE_SIZE;
+    this.loadHistory(true);
+  }
+
+  protected triggerLabel(trigger: RunListItem['trigger']): string {
+    return TRIGGER_LABEL[trigger] ?? trigger;
+  }
+  protected historyGradeTone(grade: Grade): GradeTone {
+    return GRADE_TONE[grade];
+  }
+  protected historyGradeLabel(grade: Grade): string {
+    return GRADE_LABEL[grade];
+  }
+  protected formatDateTime(iso: string): string {
+    return formatDateTime(iso);
+  }
+
+  /** Carrega o histórico (aplica filtros). `append` acrescenta a próxima página. */
+  private loadHistory(append = false): void {
+    if (!append) this.historyOffset = 0;
+    // corrida: cancela a request anterior em voo → a última (filtro atual) sempre vence.
+    this.historySub?.unsubscribe();
+    this.loadingHistory.set(true);
+    const period = this.periodDays();
+    const since = period === null ? undefined : new Date(Date.now() - period * DAY_MS).toISOString();
+    const grades = this.gradeFilters();
+    this.historySub = this.analysisApi
+      .listRuns(this.accountId, {
+        grades: grades.length > 0 ? grades : undefined,
+        since,
+        limit: HISTORY_PAGE_SIZE,
+        offset: this.historyOffset,
+      })
+      .subscribe({
+        next: (out) => {
+          this.history.update((list) => (append ? [...list, ...out.items] : out.items));
+          this.historyHasMore.set(out.hasMore);
+          this.loadingHistory.set(false);
+        },
+        // silencioso (secundário): degrada sem toast.
+        error: () => {
+          // reverte o offset avançado no "carregar mais" p/ não pular uma página.
+          if (append) this.historyOffset -= HISTORY_PAGE_SIZE;
+          else this.history.set([]);
+          this.loadingHistory.set(false);
+        },
+      });
   }
 
   private loadAll(): void {
@@ -519,7 +452,10 @@ export class AccountDetailPage {
           setTimeout(() => this.poll(), POLL_INTERVAL_MS);
         } else {
           this.analyzing.set(false);
-          if (latest.run) this.loadCampaigns();
+          if (latest.run) {
+            this.loadCampaigns();
+            this.loadHistory(); // um run recém-concluído entra no histórico.
+          }
         }
       },
       error: () => this.analyzing.set(false),
@@ -532,18 +468,12 @@ export class AccountDetailPage {
   }
 }
 
-const DEFAULT_CURRENCY = 'BRL';
-const CURRENCY_LOCALE = 'pt-BR';
-
-function formatCurrency(value: number, currency: string): string {
+function formatDateTime(iso: string): string {
   try {
-    return new Intl.NumberFormat(CURRENCY_LOCALE, { style: 'currency', currency }).format(value);
+    return new Intl.DateTimeFormat(DATETIME_LOCALE, { dateStyle: 'short', timeStyle: 'short' }).format(
+      new Date(iso),
+    );
   } catch {
-    // moeda desconhecida → não quebra a tela; mostra o número puro.
-    return value.toFixed(2);
+    return iso;
   }
-}
-
-function formatPercent(ratio: number): string {
-  return `${Math.round(ratio * 100)}%`;
 }

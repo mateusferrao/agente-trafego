@@ -34,6 +34,12 @@ export const routes: Routes = [
           import('./features/agent-config/agent-config-page').then((m) => m.AgentConfigPage),
       },
       {
+        path: 'accounts/:id/runs/:runId',
+        title: 'Análise — Agente de Tráfego',
+        loadComponent: () =>
+          import('./features/run-detail/run-detail-page').then((m) => m.RunDetailPage),
+      },
+      {
         path: 'approvals',
         title: 'Aprovações — Agente de Tráfego',
         loadComponent: () =>

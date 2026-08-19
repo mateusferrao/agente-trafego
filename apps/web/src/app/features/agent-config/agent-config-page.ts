@@ -43,6 +43,7 @@ interface FormState {
   readonly conversionKey: string; // "" = sem conversão de negócio (usa o objetivo da entidade)
   readonly businessContext: string;
   readonly guidance: string;
+  readonly windowDays: number;
 }
 
 /**
@@ -182,6 +183,36 @@ interface FormState {
           </div>
         </section>
 
+        <!-- Período de análise (janela; baseline espelha) -->
+        <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
+          <div class="flex flex-col gap-1">
+            <span class="text-xs font-medium uppercase tracking-wide text-muted">Período</span>
+            <h2 class="font-brand text-base font-semibold text-ink">Período de análise</h2>
+            <p class="text-xs text-muted">
+              Quantos dias o agente analisa de cada vez. A comparação usa o mesmo período imediatamente
+              anterior. Períodos maiores são mais estáveis; menores reagem mais rápido.
+            </p>
+          </div>
+          <div class="flex flex-wrap gap-2" role="radiogroup" aria-label="Período de análise">
+            @for (d of windowPresets; track d) {
+              <button
+                type="button"
+                role="radio"
+                [attr.aria-checked]="analysisWindowDays() === d"
+                (click)="setWindow(d)"
+                class="rounded-md border px-4 py-2 text-sm font-medium transition hover:border-accent/40"
+                [class.border-accent]="analysisWindowDays() === d"
+                [class.bg-accent-soft]="analysisWindowDays() === d"
+                [class.text-ink]="analysisWindowDays() === d"
+                [class.border-line]="analysisWindowDays() !== d"
+                [class.text-muted]="analysisWindowDays() !== d"
+              >
+                {{ d }} dias
+              </button>
+            }
+          </div>
+        </section>
+
         <!-- Contexto do negócio (fatos) -->
         <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
           <div class="flex flex-col gap-1">
@@ -261,6 +292,8 @@ export class AgentConfigPage {
   protected readonly targetCPA = signal<number | null>(null);
   protected readonly targetROAS = signal<number | null>(null);
   protected readonly conversionKey = signal(''); // `${goal}:${cid}` ("" = sem conversão de negócio)
+  protected readonly analysisWindowDays = signal<number>(DEFAULT_WINDOW_DAYS);
+  protected readonly windowPresets = WINDOW_PRESETS;
 
   private readonly available = signal<Conversion[]>([]);
   protected readonly conversionQuery = signal('');
@@ -298,6 +331,10 @@ export class AgentConfigPage {
 
   protected setConversion(key: string): void {
     this.conversionKey.set(key);
+  }
+
+  protected setWindow(days: number): void {
+    this.analysisWindowDays.set(days);
   }
 
   protected onConversionQuery(e: Event): void {
@@ -341,6 +378,7 @@ export class AgentConfigPage {
       conversionKey: this.conversionKey(),
       businessContext: this.businessContext(),
       guidance: this.guidance(),
+      windowDays: this.analysisWindowDays(),
     };
   }
 
@@ -355,7 +393,12 @@ export class AgentConfigPage {
       ...(goal ? { conversionGoal } : {}),
       ...(goal === 'custom' && customConversionId ? { customConversionId } : {}),
     };
-    return { goals, businessContext: this.businessContext(), guidance: this.guidance() };
+    return {
+      goals,
+      businessContext: this.businessContext(),
+      guidance: this.guidance(),
+      analysisWindowDays: this.analysisWindowDays(),
+    };
   }
 
   private load(): void {
@@ -382,6 +425,7 @@ export class AgentConfigPage {
             ? keyOf(agent.goals.conversionGoal, agent.goals.customConversionId ?? '')
             : '',
         );
+        this.analysisWindowDays.set(agent.analysisWindowDays ?? DEFAULT_WINDOW_DAYS);
         this.initial.set(this.current()); // baseline p/ o dirty
         this.loading.set(false);
       },
@@ -395,12 +439,17 @@ export class AgentConfigPage {
 /** A partir desta quantidade de conversões, a lista ganha scroll próprio. */
 const CONVERSION_SCROLL_THRESHOLD = 4;
 
+/** Presets do período de análise (dias) + default — espelham o backend (1..30). */
+const WINDOW_PRESETS = [7, 14, 30] as const;
+const DEFAULT_WINDOW_DAYS = 7;
+
 const EMPTY_FORM: FormState = {
   targetCPA: null,
   targetROAS: null,
   conversionKey: '',
   businessContext: '',
   guidance: '',
+  windowDays: DEFAULT_WINDOW_DAYS,
 };
 
 function sameForm(a: FormState, b: FormState): boolean {
@@ -409,7 +458,8 @@ function sameForm(a: FormState, b: FormState): boolean {
     a.targetROAS === b.targetROAS &&
     a.conversionKey === b.conversionKey &&
     a.businessContext.trim() === b.businessContext.trim() &&
-    a.guidance.trim() === b.guidance.trim()
+    a.guidance.trim() === b.guidance.trim() &&
+    a.windowDays === b.windowDays
   );
 }
 

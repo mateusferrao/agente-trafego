@@ -619,6 +619,9 @@
               "null"
             ]
           },
+          "analysisWindowDays": {
+            "type": "number"
+          },
           "paused": {
             "type": "boolean"
           }
@@ -629,6 +632,7 @@
           "goals",
           "businessContext",
           "guidance",
+          "analysisWindowDays",
           "paused"
         ]
       },
@@ -714,6 +718,11 @@
           "guidance": {
             "type": "string",
             "maxLength": 2000
+          },
+          "analysisWindowDays": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30
           }
         }
       },
@@ -1150,6 +1159,458 @@
         },
         "required": [
           "campaigns"
+        ]
+      },
+      "RunListOutput": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "trigger": {
+                  "type": "string",
+                  "enum": [
+                    "cron",
+                    "on_demand",
+                    "conversation"
+                  ]
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "pending",
+                    "running",
+                    "succeeded",
+                    "failed",
+                    "waiting_approval",
+                    "partial"
+                  ]
+                },
+                "partial": {
+                  "type": "boolean"
+                },
+                "grade": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "A",
+                    "B",
+                    "C",
+                    "D"
+                  ]
+                },
+                "headline": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "recommendationCount": {
+                  "type": "number"
+                },
+                "costUsd": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "createdAt",
+                "trigger",
+                "status",
+                "partial",
+                "grade",
+                "headline",
+                "recommendationCount",
+                "costUsd"
+              ]
+            }
+          },
+          "hasMore": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "hasMore"
+        ]
+      },
+      "RunDetailOutput": {
+        "type": "object",
+        "properties": {
+          "run": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "pending",
+                  "running",
+                  "succeeded",
+                  "failed",
+                  "waiting_approval",
+                  "partial"
+                ]
+              },
+              "summary": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "partial": {
+                "type": "boolean"
+              },
+              "costUsd": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "startedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "finishedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "metrics": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "kpis": {
+                    "type": "object",
+                    "properties": {
+                      "spend": {
+                        "type": "number"
+                      },
+                      "impressions": {
+                        "type": "number"
+                      },
+                      "clicks": {
+                        "type": "number"
+                      },
+                      "ctr": {
+                        "type": "number"
+                      },
+                      "cpa": {
+                        "type": "number"
+                      },
+                      "roas": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "spend",
+                      "impressions",
+                      "clicks",
+                      "ctr"
+                    ]
+                  },
+                  "funnel": {
+                    "type": "object",
+                    "properties": {
+                      "counts": {
+                        "type": "object",
+                        "properties": {
+                          "conversation_started": {
+                            "type": "number"
+                          },
+                          "first_reply": {
+                            "type": "number"
+                          },
+                          "depth_2": {
+                            "type": "number"
+                          },
+                          "depth_3": {
+                            "type": "number"
+                          },
+                          "depth_5": {
+                            "type": "number"
+                          },
+                          "replied": {
+                            "type": "number"
+                          }
+                        }
+                      },
+                      "replyRate": {
+                        "type": "number"
+                      },
+                      "depthRate": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "counts"
+                    ]
+                  },
+                  "scorecard": {
+                    "type": "object",
+                    "properties": {
+                      "grade": {
+                        "type": "string",
+                        "enum": [
+                          "A",
+                          "B",
+                          "C",
+                          "D"
+                        ]
+                      },
+                      "headline": {
+                        "type": "string"
+                      },
+                      "biggestLeak": {
+                        "type": "string",
+                        "enum": [
+                          "consciencia",
+                          "engajamento",
+                          "conversao",
+                          "receita"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "grade",
+                      "headline",
+                      "biggestLeak"
+                    ]
+                  }
+                },
+                "required": [
+                  "kpis"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "status",
+              "summary",
+              "partial",
+              "costUsd",
+              "startedAt",
+              "finishedAt",
+              "metrics"
+            ]
+          },
+          "recommendations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "rationale": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "riskLevel": {
+                  "type": "string",
+                  "enum": [
+                    "low",
+                    "medium",
+                    "high"
+                  ]
+                },
+                "applicability": {
+                  "type": "string",
+                  "enum": [
+                    "applicable",
+                    "not_yet_applicable"
+                  ]
+                },
+                "proposedAction": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "pause_entity",
+                        "resume_entity",
+                        "adjust_budget",
+                        "set_status"
+                      ]
+                    },
+                    "target": {
+                      "type": "object",
+                      "properties": {
+                        "level": {
+                          "type": "string",
+                          "enum": [
+                            "account",
+                            "campaign",
+                            "adset",
+                            "ad"
+                          ]
+                        },
+                        "id": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "level",
+                        "id"
+                      ]
+                    },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "target",
+                    "params"
+                  ]
+                },
+                "vote": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "up",
+                    "down"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "rationale",
+                "riskLevel",
+                "applicability",
+                "proposedAction",
+                "vote"
+              ]
+            }
+          },
+          "campaigns": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "externalId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "metrics": {
+                  "type": "object",
+                  "properties": {
+                    "spend": {
+                      "type": "number"
+                    },
+                    "ctr": {
+                      "type": "number"
+                    },
+                    "cpa": {
+                      "type": "number"
+                    },
+                    "roas": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "spend"
+                  ]
+                },
+                "summary": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "topFinding": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "severity": {
+                      "type": "string",
+                      "enum": [
+                        "info",
+                        "warning",
+                        "critical"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "severity"
+                  ]
+                },
+                "flags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "muted": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "externalId",
+                "name",
+                "metrics",
+                "summary",
+                "topFinding",
+                "flags",
+                "muted"
+              ]
+            }
+          },
+          "isLatest": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "run",
+          "recommendations",
+          "campaigns",
+          "isLatest"
         ]
       },
       "MuteCampaignInput": {
@@ -1991,6 +2452,73 @@
             "description": "já há uma análise em andamento"
           }
         }
+      },
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "grades",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "since",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "until",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "offset",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "histórico de análises (lista paginada)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunListOutput"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/accounts/{id}/runs/latest": {
@@ -2047,6 +2575,46 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/runs/{runId}": {
+      "get": {
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "runId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "detalhe de um run (histórico)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RunDetailOutput"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "análise não encontrada"
           }
         }
       }
