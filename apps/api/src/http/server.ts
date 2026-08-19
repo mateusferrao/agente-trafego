@@ -2,7 +2,7 @@ import { pathToFileURL } from "node:url";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
 import Fastify, { type FastifyInstance } from "fastify";
-import { runMigrations } from "@trafego/db";
+import { runMigrations, runBackfillConnections } from "@trafego/db";
 
 import { env } from "../env.js";
 import { buildDocument } from "../openapi/generate.js";
@@ -15,6 +15,7 @@ import { registerStatic } from "./static.js";
 import { authRoutes } from "../modules/auth/routes.js";
 import { orgsRoutes } from "../modules/orgs/routes.js";
 import { accountsRoutes } from "../modules/accounts/routes.js";
+import { connectionsRoutes } from "../modules/connections/routes.js";
 import { channelsRoutes } from "../modules/channels/routes.js";
 import { contactsRoutes } from "../modules/contacts/routes.js";
 import { agentsRoutes } from "../modules/agents/routes.js";
@@ -23,7 +24,6 @@ import { recommendationsRoutes } from "../modules/recommendations/routes.js";
 import { runsRoutes } from "../modules/runs/routes.js";
 import { billingRoutes } from "../modules/billing/routes.js";
 import { webhooksRoutes } from "../modules/webhooks/routes.js";
-import { adminRoutes } from "../modules/admin/routes.js";
 
 // Efeito colateral: augmentações de tipo (session, request.orgId, container).
 import "./types.js";
@@ -86,15 +86,13 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Webhooks fora do /api (público, valida secret próprio).
   await app.register(webhooksRoutes);
 
-  // Admin (Fatia 0): fora do /api, guardado por header x-admin-secret.
-  await app.register(adminRoutes);
-
   // Slices de negócio sob /api.
   await app.register(
     async (api) => {
       await api.register(authRoutes);
       await api.register(orgsRoutes);
       await api.register(accountsRoutes);
+      await api.register(connectionsRoutes);
       await api.register(channelsRoutes);
       await api.register(contactsRoutes);
       await api.register(agentsRoutes);
@@ -106,7 +104,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     { prefix: "/api" },
   );
 
-  // Front Angular (build) + fallback SPA. Registrado por último: os /api, /admin,
+  // Front Angular (build) + fallback SPA. Registrado por último: os /api,
   // /webhooks, /health, /openapi.json acima têm precedência sobre o fallback.
   await registerStatic(app);
 
@@ -121,7 +119,9 @@ async function start(): Promise<void> {
     if (env.AUTO_MIGRATE) {
       app.log.info("aplicando migrations");
       await runMigrations(env.DATABASE_URL);
-      app.log.info("migrations aplicadas");
+      // backfill idempotente: normaliza token de ad_accounts p/ platform_connections.
+      const { migrated } = await runBackfillConnections(env.DATABASE_URL);
+      app.log.info({ migrated }, "migrations aplicadas");
     }
     await app.listen({ port: env.API_PORT, host: "0.0.0.0" });
   } catch (err) {

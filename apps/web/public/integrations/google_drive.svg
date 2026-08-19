@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="Google Drive">
+  <path fill="#0F9D58" d="M18 7h12l13 23H31L18 7Z"/>
+  <path fill="#4285F4" d="M5 30h13l-6 11H0l5-11Z" transform="translate(5)"/>
+  <path fill="#F4B400" d="M18 7 5 30h13L31 7H18Z"/>
+  <path fill="#4285F4" d="M18 30h25l-6 11H12l6-11Z"/>
+</svg>

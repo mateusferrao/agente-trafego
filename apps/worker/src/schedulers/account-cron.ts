@@ -3,8 +3,8 @@
 // não bater o rate-limit da Meta juntas — §7). Idempotente via upsertSchedule (key
 // estável). Ao disparar, cai na AGENT_CRON_QUEUE → o dispatcher cria o run.
 
-import { eq } from "drizzle-orm";
-import { agents } from "@trafego/db";
+import { and, eq } from "drizzle-orm";
+import { adAccounts, agents } from "@trafego/db";
 import {
   AGENT_CRON_QUEUE,
   AGENT_REAPER_QUEUE,
@@ -73,6 +73,8 @@ export function makeAccountCron(deps: WorkerDeps) {
   /** Re-sincroniza os schedulers a partir dos agentes ATIVOS no boot. */
   async function syncAllFromDb(): Promise<void> {
     logger.info("cron:sync_all");
+    // só agenda agentes ativos de contas sob gestão (status `active` — conta
+    // unavailable/removed não deve rodar cron, mesmo com agente ativo).
     const rows = await deps.db
       .select({
         orgId: agents.orgId,
@@ -81,7 +83,8 @@ export function makeAccountCron(deps: WorkerDeps) {
         cadence: agents.cadence,
       })
       .from(agents)
-      .where(eq(agents.status, "active"));
+      .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
+      .where(and(eq(agents.status, "active"), eq(adAccounts.status, "active")));
     for (const r of rows) {
       await upsertAccountSchedule({
         orgId: r.orgId,

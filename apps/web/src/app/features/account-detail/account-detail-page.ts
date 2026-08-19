@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
-import { HttpErrorResponse } from '@angular/common/http';
+import { toast } from 'ngx-sonner';
 import { provideIcons } from '@ng-icons/core';
 import { heroSparkles } from '@ng-icons/heroicons/outline';
 import { UiBadge, UiButton, UiEmptyState, UiPageHeader, UiSpinner } from '@ui';
@@ -98,71 +98,15 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
         </app-ui-page-header>
       </div>
 
-      <!-- Meta do agente (mínima na 3a) -->
-      <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
-        <h2 class="font-brand text-sm font-semibold text-ink">Meta da conta</h2>
-        <p class="text-xs text-muted">
-          Definir a meta faz o agente comparar o desempenho e priorizar melhor. É opcional.
-        </p>
-        <div class="flex flex-wrap items-end gap-4">
-          <label class="flex flex-col gap-1 text-xs text-muted">
-            Custo por venda alvo (R$)
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              class="w-40 rounded-md border border-line bg-app px-3 py-2 text-sm text-ink"
-              [value]="targetCPA() ?? ''"
-              (input)="onCpa($event)"
-            />
-          </label>
-          <label class="flex flex-col gap-1 text-xs text-muted">
-            Retorno sobre investimento alvo (ROAS)
-            <input
-              type="number"
-              min="0"
-              step="0.1"
-              class="w-40 rounded-md border border-line bg-app px-3 py-2 text-sm text-ink"
-              [value]="targetROAS() ?? ''"
-              (input)="onRoas($event)"
-            />
-          </label>
-          <button appButton variant="secondary" type="button" [disabled]="savingGoals()" (click)="saveGoals()">
-            {{ savingGoals() ? 'Salvando…' : 'Salvar meta' }}
-          </button>
-          @if (goalsSaved()) {
-            <span class="text-xs text-success-strong">Meta salva.</span>
-          }
-          @if (goalsError()) {
-            <span class="text-xs text-danger-strong">{{ goalsError() }}</span>
-          }
+      <!-- Token da conexão expirou → análises pausadas; reconectar é em Integrações. -->
+      @if (account()?.tokenStatus === 'invalid') {
+        <div class="rounded-lg border border-line bg-panel p-4 text-sm text-danger-strong">
+          O token da integração com a Meta expirou, então as análises desta conta estão paradas.
+          <a routerLink="/integrations" class="underline">Reconecte em Integrações</a> para retomar.
         </div>
-      </section>
-
-      <!-- Freio self-service: pausar as análises automáticas (§8 kill-switch) -->
-      <section class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-panel p-5">
-        <div class="flex flex-col gap-1">
-          <h2 class="font-brand text-sm font-semibold text-ink">Análises automáticas</h2>
-          <p class="text-xs text-muted">
-            {{ paused() ? 'Pausadas — o agente não analisa sozinho nem te avisa no WhatsApp.' : 'Ativas — o agente analisa no ritmo configurado e te avisa no WhatsApp.' }}
-          </p>
-          @if (pauseError()) {
-            <p class="text-xs text-danger-strong">{{ pauseError() }}</p>
-          }
-        </div>
-        <button appButton variant="secondary" type="button" [disabled]="pausing()" (click)="togglePaused()">
-          {{ pausing() ? 'Salvando…' : paused() ? 'Retomar' : 'Pausar' }}
-        </button>
-      </section>
-
-      <!-- Erro do disparo (ex: já em andamento / limite de custo) -->
-      @if (triggerError()) {
-        <p class="rounded-lg border border-line bg-panel p-4 text-sm text-danger-strong">
-          {{ triggerError() }}
-        </p>
       }
 
-      <!-- Resultado -->
+      <!-- Resultado da análise em primeiro (é o que o usuário mais quer ver) -->
       @if (loading()) {
         <div class="flex items-center justify-center gap-3 rounded-lg border border-line bg-panel p-10 text-sm text-muted">
           <app-ui-spinner [size]="20" [stroke]="2" aria-hidden="true" />
@@ -191,6 +135,9 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
           @if (run()?.summary) {
             <p class="rounded-lg border border-line bg-panel p-5 text-sm text-ink">{{ run()?.summary }}</p>
           }
+          <!-- Sem resultados (ex: conta sem gasto): o resumo acima já basta; a
+               ressalva "parcial" e o "nenhuma recomendação" viram ruído aqui. -->
+          @if (hasResults()) {
           @if (run()?.partial) {
             <p class="text-xs text-warning-strong">
               Análise parcial — alguns dados não puderam ser carregados desta vez.
@@ -225,7 +172,10 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
           @if (recommendations().length === 0) {
             <p class="text-sm text-muted">Nenhuma recomendação desta vez.</p>
           } @else {
-            <h2 class="font-brand text-sm font-semibold text-ink">Recomendações</h2>
+            <div class="flex flex-col gap-1">
+              <h2 class="font-brand text-sm font-semibold text-ink">Recomendações</h2>
+              <p class="text-xs text-muted">{{ applicabilityNote }}</p>
+            </div>
             <div class="flex flex-col gap-3">
               @for (rec of recommendations(); track rec.id) {
                 <article class="flex flex-col gap-2 rounded-lg border border-line bg-panel p-5">
@@ -237,9 +187,8 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                     <p class="text-sm text-muted">{{ rec.rationale }}</p>
                   }
                   @if (rec.proposedAction) {
-                    <div class="flex flex-col gap-1 rounded-md bg-soft p-3">
+                    <div class="rounded-md bg-soft p-3">
                       <span class="text-sm text-ink">Ação sugerida: {{ actionText(rec) }}</span>
-                      <span class="text-xs text-muted">{{ applicabilityNote }}</span>
                     </div>
                   }
                   <!-- Feedback 👍/👎: ensina o agente (👎 vira memória "não repita isso") -->
@@ -272,16 +221,70 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                     @if (rec.vote === 'down') {
                       <span class="text-xs text-muted">Anotado — o agente evita repetir isso.</span>
                     }
-                    @if (voteErrorId() === rec.id) {
-                      <span class="text-xs text-danger-strong">Não consegui salvar seu feedback. Tente de novo.</span>
-                    }
                   </div>
                 </article>
               }
             </div>
           }
+          }
         </section>
       }
+
+      <!-- Configuração do agente: secundária ao resultado, recolhível -->
+      <details class="rounded-lg border border-line bg-panel">
+        <summary class="cursor-pointer px-5 py-4 font-brand text-sm font-semibold text-ink">
+          Configuração do agente
+        </summary>
+        <div class="flex flex-col gap-6 border-t border-line px-5 py-5">
+          <!-- Meta do agente (mínima na 3a) -->
+          <div class="flex flex-col gap-3">
+            <h3 class="font-brand text-sm font-semibold text-ink">Meta da conta</h3>
+            <p class="text-xs text-muted">
+              Definir a meta faz o agente comparar o desempenho e priorizar melhor. É opcional.
+            </p>
+            <div class="flex flex-wrap items-end gap-4">
+              <label class="flex flex-col gap-1 text-xs text-muted">
+                Custo por venda alvo (R$)
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  class="w-40 rounded-md border border-line bg-app px-3 py-2 text-sm text-ink"
+                  [value]="targetCPA() ?? ''"
+                  (input)="onCpa($event)"
+                />
+              </label>
+              <label class="flex flex-col gap-1 text-xs text-muted">
+                Retorno sobre investimento alvo (ROAS)
+                <input
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  class="w-40 rounded-md border border-line bg-app px-3 py-2 text-sm text-ink"
+                  [value]="targetROAS() ?? ''"
+                  (input)="onRoas($event)"
+                />
+              </label>
+              <button appButton variant="secondary" type="button" [disabled]="savingGoals()" (click)="saveGoals()">
+                {{ savingGoals() ? 'Salvando…' : 'Salvar meta' }}
+              </button>
+            </div>
+          </div>
+
+          <!-- Freio self-service: pausar as análises automáticas (§8 kill-switch) -->
+          <div class="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-5">
+            <div class="flex flex-col gap-1">
+              <h3 class="font-brand text-sm font-semibold text-ink">Análises automáticas</h3>
+              <p class="text-xs text-muted">
+                {{ paused() ? 'Pausadas — o agente não analisa sozinho nem te avisa no WhatsApp.' : 'Ativas — o agente analisa no ritmo configurado e te avisa no WhatsApp.' }}
+              </p>
+            </div>
+            <button appButton variant="secondary" type="button" [disabled]="pausing()" (click)="togglePaused()">
+              {{ pausing() ? 'Salvando…' : paused() ? 'Retomar' : 'Pausar' }}
+            </button>
+          </div>
+        </div>
+      </details>
     </div>
   `,
 })
@@ -300,21 +303,25 @@ export class AccountDetailPage {
   protected readonly recommendations = signal<Recommendation[]>([]);
   protected readonly loading = signal(true);
   protected readonly analyzing = signal(false);
-  protected readonly triggerError = signal<string | null>(null);
 
   protected readonly targetCPA = signal<number | null>(null);
   protected readonly targetROAS = signal<number | null>(null);
   protected readonly savingGoals = signal(false);
-  protected readonly goalsSaved = signal(false);
-  protected readonly goalsError = signal<string | null>(null);
   protected readonly paused = signal(false);
   protected readonly pausing = signal(false);
-  protected readonly pauseError = signal<string | null>(null);
   protected readonly votingId = signal<string | null>(null);
-  protected readonly voteErrorId = signal<string | null>(null);
 
   /** Diagnóstico único da conta (só quando o run trouxe scorecard). */
   protected readonly scorecard = computed<Scorecard | null>(() => this.run()?.metrics?.scorecard ?? null);
+
+  /**
+   * Run trouxe algo acionável? (scorecard, KPIs ou recomendações). Se não — ex:
+   * conta sem gasto — o resumo já basta; a ressalva "parcial" e o "nenhuma
+   * recomendação" viram ruído, então ficam suprimidos.
+   */
+  protected readonly hasResults = computed<boolean>(
+    () => this.scorecard() !== null || this.stats().length > 0 || this.recommendations().length > 0,
+  );
 
   /** Faixa de KPIs + taxas de funil, já formatada (só o que houver). */
   protected readonly stats = computed<Stat[]>(() => {
@@ -372,22 +379,13 @@ export class AccountDetailPage {
 
   protected onCpa(event: Event): void {
     this.targetCPA.set(parseNumber(event));
-    this.clearGoalsFeedback();
   }
   protected onRoas(event: Event): void {
     this.targetROAS.set(parseNumber(event));
-    this.clearGoalsFeedback();
-  }
-
-  /** confirmação/erro descrevem o último save — some ao editar o campo. */
-  private clearGoalsFeedback(): void {
-    this.goalsSaved.set(false);
-    this.goalsError.set(null);
   }
 
   protected saveGoals(): void {
     this.savingGoals.set(true);
-    this.clearGoalsFeedback();
     const goals = {
       ...(this.targetCPA() !== null ? { targetCPA: this.targetCPA()! } : {}),
       ...(this.targetROAS() !== null ? { targetROAS: this.targetROAS()! } : {}),
@@ -395,19 +393,16 @@ export class AccountDetailPage {
     this.analysisApi.updateGoals(this.accountId, goals).subscribe({
       next: () => {
         this.savingGoals.set(false);
-        this.goalsSaved.set(true);
+        toast.success('Meta salva');
       },
-      error: (err: unknown) => {
-        this.savingGoals.set(false);
-        this.goalsError.set(friendlyGoalsError(err));
-      },
+      // erro amigável já vem do interceptor global (api-request.interceptor).
+      error: () => this.savingGoals.set(false),
     });
   }
 
   protected vote(rec: Recommendation, vote: 'up' | 'down'): void {
     if (rec.vote === vote) return; // já votado assim
     this.votingId.set(rec.id);
-    this.voteErrorId.set(null);
     this.analysisApi.sendFeedback(rec.id, vote).subscribe({
       next: () => {
         // reflete o voto localmente (o backend já registrou + memória em 👎).
@@ -416,40 +411,31 @@ export class AccountDetailPage {
         );
         this.votingId.set(null);
       },
-      // não engole o erro: sinaliza no card (o clique não pode "sumir" em silêncio).
-      error: () => {
-        this.votingId.set(null);
-        this.voteErrorId.set(rec.id);
-      },
+      // erro amigável já vem do interceptor global; o botão volta a habilitar.
+      error: () => this.votingId.set(null),
     });
   }
 
   protected togglePaused(): void {
     const next = !this.paused();
     this.pausing.set(true);
-    this.pauseError.set(null);
     this.analysisApi.setPaused(this.accountId, next).subscribe({
       next: (agent) => {
         this.paused.set(agent.paused);
         this.pausing.set(false);
+        toast.success(agent.paused ? 'Análises pausadas' : 'Análises retomadas');
       },
-      // kill-switch (§8): falha silenciosa faria o usuário achar que pausou sem ter pausado.
-      error: () => {
-        this.pausing.set(false);
-        this.pauseError.set('Não consegui alterar as análises automáticas agora. Tente de novo.');
-      },
+      // erro amigável já vem do interceptor global (§8 kill-switch: nunca silencioso).
+      error: () => this.pausing.set(false),
     });
   }
 
   protected analyze(): void {
-    this.triggerError.set(null);
     this.analyzing.set(true);
     this.analysisApi.triggerRun(this.accountId).subscribe({
       next: () => this.poll(),
-      error: (err: unknown) => {
-        this.analyzing.set(false);
-        this.triggerError.set(friendlyError(err));
-      },
+      // erro amigável já vem do interceptor global.
+      error: () => this.analyzing.set(false),
     });
   }
 
@@ -524,21 +510,4 @@ function parseNumber(event: Event): number | null {
   if (value.trim() === '') return null;
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? n : null;
-}
-
-function friendlyError(err: unknown): string {
-  return backendMessage(err) ?? 'Não consegui iniciar a análise agora. Tente de novo em instantes.';
-}
-
-function friendlyGoalsError(err: unknown): string {
-  return backendMessage(err) ?? 'Não consegui salvar a meta agora. Tente de novo em instantes.';
-}
-
-/** Mensagem amigável vinda da API (controlada) — nunca vaza stack/código técnico. */
-function backendMessage(err: unknown): string | null {
-  if (err instanceof HttpErrorResponse) {
-    const message = (err.error as { message?: string } | null)?.message;
-    if (message) return message;
-  }
-  return null;
 }

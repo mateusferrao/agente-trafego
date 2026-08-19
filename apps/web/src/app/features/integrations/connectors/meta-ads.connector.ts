@@ -1,7 +1,7 @@
 import { HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { catchError, map, of, type Observable } from 'rxjs';
-import { AccountsApiService } from '@core/api/accounts-api.service';
+import { ConnectionsApiService } from '@core/api/connections-api.service';
 import { CONNECTOR_KEY } from '../catalog/provider-catalog';
 import type { ConnectResult } from '../domain/connect-result';
 import type {
@@ -16,9 +16,10 @@ const TOKEN_FIELD = 'token';
 
 /**
  * Connector Meta Ads via **paste-token** (System User token — sem OAuth/App Review,
- * §9). Fluxo: colar token → `submitCredentials` valida e lista as contas (`select`)
- * → `selectTarget` persiste a conta escolhida. O token é reenviado do cliente no
- * passo de seleção (stateless — o dialog o mantém em memória).
+ * §9). Fluxo: colar token → `submitCredentials` cria a **conexão** (dona do token
+ * cifrado no backend) e lista as contas (`select`) → `selectTarget` seleciona a
+ * conta escolhida naquela conexão (via `connectionId` guardado entre os passos — o
+ * token NÃO trafega de novo; fica no backend).
  */
 @Injectable({ providedIn: 'root' })
 export class MetaAdsConnector implements ConnectorStrategy {
@@ -45,29 +46,41 @@ export class MetaAdsConnector implements ConnectorStrategy {
     submitLabel: 'Validar',
   };
 
-  private readonly api = inject(AccountsApiService);
+  private readonly api = inject(ConnectionsApiService);
+  /**
+   * Conexão criada no `submitCredentials`, consumida no `selectTarget`. Estado ok:
+   * o dialog é modal (um fluxo por vez) e a conexão é a mesma entre os dois passos.
+   */
+  private pendingConnectionId: string | null = null;
 
   submitCredentials(ctx: CredentialSubmitContext): Observable<ConnectResult> {
     const token = ctx.values[TOKEN_FIELD] ?? '';
     return this.api.connect({ token }).pipe(
-      map(
-        (res): ConnectResult => ({
+      map((res): ConnectResult => {
+        this.pendingConnectionId = res.connection.id;
+        return {
           kind: 'select',
-          targets: res.accounts.map((a) => ({
+          targets: res.available.map((a) => ({
             id: a.id,
             label: a.name,
             ...(a.currency ? { sublabel: a.currency } : {}),
           })),
-        }),
-      ),
+        };
+      }),
       catchError((error: unknown) => of(toConnectError(error))),
     );
   }
 
   selectTarget(ctx: ConnectSelectContext): Observable<ConnectResult> {
-    const token = ctx.values[TOKEN_FIELD] ?? '';
-    return this.api.select({ token, adAccountId: ctx.targetId }).pipe(
-      map((account): ConnectResult => ({ kind: 'success', integrationId: account.id })),
+    const connectionId = this.pendingConnectionId;
+    if (!connectionId) {
+      return of<ConnectResult>({ kind: 'error', message: 'Sessão de conexão expirou. Comece de novo.', recoverable: true });
+    }
+    return this.api.select(connectionId, { adAccountIds: [ctx.targetId] }).pipe(
+      map((): ConnectResult => {
+        this.pendingConnectionId = null; // conexão concluída — não segurar o id.
+        return { kind: 'success', integrationId: connectionId };
+      }),
       catchError((error: unknown) => of(toConnectError(error))),
     );
   }

@@ -23,6 +23,13 @@ export const membershipRole = pgEnum("membership_role", ["owner", "member"]);
 // usar; `pending` = aguardando liberação; `revoked` = acesso removido.
 export const accessStatus = pgEnum("access_status", ["pending", "active", "revoked"]);
 export const tokenStatus = pgEnum("token_status", ["valid", "invalid", "unchecked"]);
+// Plataforma de anúncios de uma conexão externa (genérico — não vaza provider no
+// conceito; novo provider = novo valor + adapter, sem tocar no core). §13.
+export const platformType = pgEnum("platform_type", ["meta"]);
+// Ciclo de vida da conta sob gestão. `active` = operando; `unavailable` = sumiu
+// da plataforma (soft, preserva agente/histórico); `removed` = tirada pelo dono
+// (soft). Nunca deletamos (cascata apagaria agente + histórico — §8/§13).
+export const accountLifecycle = pgEnum("account_lifecycle", ["active", "unavailable", "removed"]);
 export const channelStatus = pgEnum("channel_status", [
   "disconnected",
   "connecting",

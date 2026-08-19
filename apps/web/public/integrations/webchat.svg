@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="Webchat">
+  <path fill="#2563EB" d="M12 9h24a6 6 0 0 1 6 6v13a6 6 0 0 1-6 6H25l-9 7v-7h-4a6 6 0 0 1-6-6V15a6 6 0 0 1 6-6Z"/>
+  <circle cx="18" cy="22" r="2.4" fill="#EFF6FF"/>
+  <circle cx="24" cy="22" r="2.4" fill="#EFF6FF"/>
+  <circle cx="30" cy="22" r="2.4" fill="#EFF6FF"/>
+</svg>

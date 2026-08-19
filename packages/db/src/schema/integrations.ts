@@ -1,11 +1,49 @@
 import { boolean, index, integer, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import type { EncryptedPayload } from "@trafego/shared";
-import { channelStatus, contactRole, pk, timestamps, tokenStatus } from "./_shared.js";
+import {
+  accountLifecycle,
+  channelStatus,
+  contactRole,
+  pk,
+  platformType,
+  timestamps,
+  tokenStatus,
+} from "./_shared.js";
 import { orgs, users } from "./tenancy.js";
 
 /**
- * Conta de anúncios Meta conectada. `token_cripto` = joia da coroa:
- * envelope AES-256-GCM (EncryptedPayload) — nunca em claro, nunca logado.
+ * Conexão com um sistema externo de anúncios (Meta hoje; genérico p/ Google/TikTok).
+ * É a dona do `token_cripto` (joia da coroa: envelope AES-256-GCM — nunca em claro,
+ * nunca logado). Uma conexão expõe N contas de anúncio (`ad_accounts.connection_id`):
+ * recolar o token 1x aqui recupera todas as contas dela.
+ */
+export const platformConnections = pgTable(
+  "platform_connections",
+  {
+    id: pk(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    platform: platformType("platform").notNull().default("meta"),
+    // Business Manager (Meta) por trás da conexão. Nullable: conta pessoal sem BM.
+    externalBusinessId: text("external_business_id"),
+    // Rótulo amigável exibido em Integrações (ex: nome do BM). Opcional.
+    label: text("label"),
+    tokenCripto: jsonb("token_cripto").$type<EncryptedPayload>().notNull(),
+    tokenStatus: tokenStatus("token_status").notNull().default("unchecked"),
+    lastValidatedAt: timestamp("last_validated_at", { withTimezone: true }),
+    // Última descoberta de contas (`sincronizar`) — informativo na UI.
+    lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (t) => [index("platform_connections_org_idx").on(t.orgId)],
+);
+
+/**
+ * Conta de anúncios sob gestão. Pertence a uma `platform_connections` (que guarda
+ * o token). `status` = ciclo de vida (soft — nunca deletar; cascata apagaria agente
+ * + histórico, §8/§13). `token_cripto` legado (fonte migra p/ a conexão — drop é
+ * follow-up após o backfill).
  */
 export const adAccounts = pgTable(
   "ad_accounts",
@@ -14,12 +52,18 @@ export const adAccounts = pgTable(
     orgId: uuid("org_id")
       .notNull()
       .references(() => orgs.id, { onDelete: "cascade" }),
+    // Conexão dona do token. Nullable durante o backfill; onDelete restrict —
+    // apagar uma conexão nunca deve cascatear delete de conta/agente/histórico.
+    connectionId: uuid("connection_id").references(() => platformConnections.id, {
+      onDelete: "restrict",
+    }),
     // Business Manager dono da conta. Nullable: conta pessoal (sem BM) não tem um —
     // guardar null é honesto (vs "" que mascara a ausência). Onboarding deriva da Meta.
     metaBusinessId: text("meta_business_id"),
     adAccountId: text("ad_account_id").notNull(),
     name: text("name"),
     currency: text("currency"),
+    status: accountLifecycle("status").notNull().default("active"),
     tokenCripto: jsonb("token_cripto").$type<EncryptedPayload>().notNull(),
     tokenStatus: tokenStatus("token_status").notNull().default("unchecked"),
     lastValidatedAt: timestamp("last_validated_at", { withTimezone: true }),
@@ -27,6 +71,7 @@ export const adAccounts = pgTable(
   },
   (t) => [
     index("ad_accounts_org_idx").on(t.orgId),
+    index("ad_accounts_connection_idx").on(t.connectionId),
     // 1 conta Meta por org (idempotência de "recolar" = upsert atômico, sem duplicar).
     unique("ad_accounts_org_account_uq").on(t.orgId, t.adAccountId),
   ],

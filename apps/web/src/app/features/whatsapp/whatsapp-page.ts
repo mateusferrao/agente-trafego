@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from '@angular/core';
-import { HttpErrorResponse } from '@angular/common/http';
-import { UiButton, UiPageHeader, UiSpinner } from '@ui';
+import { toast } from 'ngx-sonner';
+import { UiButton, UiSpinner } from '@ui';
 import { ChannelApiService } from '@core/api/channel-api.service';
 import type { ChannelStateOutput } from '@core/api/generated';
 
@@ -15,20 +15,11 @@ const DATA_URL_PREFIX = 'data:image/png;base64,';
  * tom+texto, erro amigável + próximo passo, sem jargão).
  */
 @Component({
-  selector: 'app-whatsapp-page',
+  selector: 'app-whatsapp-connect',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiButton, UiPageHeader, UiSpinner],
+  imports: [UiButton, UiSpinner],
   template: `
-    <div class="flex flex-col gap-8">
-      <app-ui-page-header
-        title="Conectar WhatsApp"
-        subtitle="O agente usa o seu WhatsApp para te avisar quando encontrar algo importante."
-      />
-
-      @if (connectError()) {
-        <p class="rounded-lg border border-line bg-panel p-4 text-sm text-danger-strong">{{ connectError() }}</p>
-      }
-
+    <div class="flex flex-col gap-4">
       <!-- Passo 1: conectar a instância por QR -->
       <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
         <h2 class="font-brand text-sm font-semibold text-ink">1. Parear o número</h2>
@@ -44,9 +35,15 @@ const DATA_URL_PREFIX = 'data:image/png;base64,';
             Abra o WhatsApp no celular → Aparelhos conectados → Conectar aparelho, e aponte para o QR.
           </p>
           <img [src]="qrSrc()" alt="QR code para parear o WhatsApp" class="h-56 w-56 rounded-md border border-line bg-app" />
-          <div class="flex items-center gap-2 text-xs text-muted">
-            <app-ui-spinner [size]="16" [stroke]="2" aria-hidden="true" />
-            {{ pollStalled() ? 'Conexão instável — tentando de novo…' : 'Aguardando a leitura do QR…' }}
+          <div class="flex flex-wrap items-center gap-3 text-xs text-muted">
+            <span class="flex items-center gap-2">
+              <app-ui-spinner [size]="16" [stroke]="2" aria-hidden="true" />
+              {{ pollStalled() ? 'Conexão instável — tentando de novo…' : 'Aguardando a leitura do QR…' }}
+            </span>
+            <!-- QR da Evolution expira em ~1 min; permite gerar um novo sem sair. -->
+            <button appButton variant="ghost" size="sm" type="button" [disabled]="connecting()" (click)="connect()">
+              {{ connecting() ? 'Gerando…' : 'Gerar novo QR' }}
+            </button>
           </div>
         } @else {
           <p class="text-sm text-muted">Gere o QR para parear o número da sua organização.</p>
@@ -97,15 +94,12 @@ const DATA_URL_PREFIX = 'data:image/png;base64,';
               </button>
             </div>
           }
-          @if (verifyError()) {
-            <p class="text-xs text-danger-strong">{{ verifyError() }}</p>
-          }
         }
       </section>
     </div>
   `,
 })
-export class WhatsappPage {
+export class WhatsappConnect {
   private readonly api = inject(ChannelApiService);
   private readonly destroyRef = inject(DestroyRef);
   private destroyed = false;
@@ -118,7 +112,6 @@ export class WhatsappPage {
   protected readonly connecting = signal(false);
   protected readonly connected = signal(false);
   protected readonly qrCode = signal<string | null>(null);
-  protected readonly connectError = signal<string | null>(null);
   protected readonly pollStalled = signal(false);
 
   protected readonly phone = signal('');
@@ -127,13 +120,12 @@ export class WhatsappPage {
   protected readonly codeSent = signal(false);
   protected readonly confirming = signal(false);
   protected readonly verified = signal(false);
-  protected readonly verifyError = signal<string | null>(null);
 
   constructor() {
     this.destroyRef.onDestroy(() => {
       this.destroyed = true;
     });
-    this.api.status().subscribe({
+    this.api.status(true).subscribe({
       next: (s) => {
         if (!this.connectStarted) this.applyState(s); // não sobrescreve um QR recém-obtido
         this.loading.set(false);
@@ -150,7 +142,6 @@ export class WhatsappPage {
   protected connect(): void {
     this.connectStarted = true;
     this.loading.set(false);
-    this.connectError.set(null);
     this.connecting.set(true);
     this.api.connect().subscribe({
       next: (s) => {
@@ -158,10 +149,8 @@ export class WhatsappPage {
         this.applyState(s);
         if (!this.connected()) this.poll();
       },
-      error: (err: unknown) => {
-        this.connecting.set(false);
-        this.connectError.set(friendly(err, 'Não consegui gerar o QR agora. Tente de novo.'));
-      },
+      // erro amigável já vem do interceptor global (api-request.interceptor).
+      error: () => this.connecting.set(false),
     });
   }
 
@@ -173,49 +162,54 @@ export class WhatsappPage {
   }
 
   protected sendCode(): void {
-    this.verifyError.set(null);
     this.sendingCode.set(true);
     this.api.startVerification({ phone: this.phone() }).subscribe({
       next: () => {
         this.sendingCode.set(false);
         this.codeSent.set(true);
+        toast.success('Código enviado para o seu WhatsApp');
       },
-      error: (err: unknown) => {
-        this.sendingCode.set(false);
-        this.verifyError.set(friendly(err, 'Não consegui enviar o código agora.'));
-      },
+      // erro amigável já vem do interceptor global.
+      error: () => this.sendingCode.set(false),
     });
   }
 
   protected confirm(): void {
-    this.verifyError.set(null);
     this.confirming.set(true);
     this.api.confirmVerification({ phone: this.phone(), code: this.code() }).subscribe({
       next: (r) => {
         this.confirming.set(false);
         this.verified.set(r.verified);
-        if (!r.verified) this.verifyError.set('Código inválido. Peça um novo e tente de novo.');
+        // resposta 200 com código errado não é erro HTTP → toast explícito.
+        if (r.verified) toast.success('Número confirmado');
+        else toast.error('Código inválido. Peça um novo e tente de novo.');
       },
-      error: (err: unknown) => {
-        this.confirming.set(false);
-        this.verifyError.set(friendly(err, 'Código inválido ou expirado. Peça um novo código.'));
-      },
+      // erro amigável já vem do interceptor global.
+      error: () => this.confirming.set(false),
     });
   }
 
   private applyState(s: ChannelStateOutput): void {
-    this.connected.set(s.status === 'connected');
-    this.qrCode.set(s.status === 'connecting' ? (s.qrCode ?? null) : null);
+    const isConnected = s.status === 'connected';
+    this.connected.set(isConnected);
+    // O QR só vem no `connect` — o polling (connectionState) NÃO o devolve. Então:
+    // conectou → limpa; veio QR novo → atualiza; senão MANTÉM o atual (não apagar
+    // num poll sem QR, senão o QR "some" e a tela volta pro botão — bug).
+    if (isConnected) this.qrCode.set(null);
+    else if (s.qrCode) this.qrCode.set(s.qrCode);
   }
 
   private poll(): void {
     if (this.destroyed || this.connected()) return;
-    this.api.status().subscribe({
+    // silent: o polling não pode spammar toast a cada blip — reage pela UI
+    // (estado "instável") e emite um toast único ao esgotar as tentativas.
+    this.api.status(true).subscribe({
       next: (s) => {
         this.pollErrors = 0;
         this.pollStalled.set(false);
         this.applyState(s);
-        if (!this.connected()) setTimeout(() => this.poll(), POLL_INTERVAL_MS);
+        if (this.connected()) toast.success('WhatsApp conectado');
+        else setTimeout(() => this.poll(), POLL_INTERVAL_MS);
       },
       error: () => {
         // blip transitório (rede/5xx) não pode matar o polling em silêncio: reagenda
@@ -226,17 +220,9 @@ export class WhatsappPage {
           setTimeout(() => this.poll(), POLL_INTERVAL_MS);
         } else {
           this.pollStalled.set(false);
-          this.connectError.set('Perdi a conexão ao verificar o pareamento. Gere o QR de novo.');
+          toast.error('Perdi a conexão ao verificar o pareamento. Gere o QR de novo.');
         }
       },
     });
   }
-}
-
-function friendly(err: unknown, fallback: string): string {
-  if (err instanceof HttpErrorResponse) {
-    const message = (err.error as { message?: string } | null)?.message;
-    if (message) return message;
-  }
-  return fallback;
 }

@@ -1,10 +1,11 @@
-import type {
-  ChannelInstanceRef,
-  InboundMessage,
-  InstanceState,
-  InstanceStatus,
-  MessagingChannelPort,
-  OutboundMessage,
+import {
+  MessagingChannelError,
+  type ChannelInstanceRef,
+  type InboundMessage,
+  type InstanceState,
+  type InstanceStatus,
+  type MessagingChannelPort,
+  type OutboundMessage,
 } from "@trafego/shared/ports";
 import { EvolutionApiError, EvolutionClient } from "./client.js";
 import { EvolutionSender } from "./send.js";
@@ -37,6 +38,17 @@ function mapState(state: string | undefined): InstanceStatus {
 }
 
 /**
+ * Traduz qualquer falha ao falar com a Evolution (HTTP ou rede/`fetch failed`)
+ * para o erro neutro da porta — a casca vira mensagem amigável sem conhecer o
+ * provider. Preserva `MessagingChannelError` já tipado.
+ */
+function toChannelError(error: unknown): MessagingChannelError {
+  if (error instanceof MessagingChannelError) return error;
+  const detail = error instanceof EvolutionApiError ? `Evolution ${error.httpStatus}` : "sem conexão";
+  return new MessagingChannelError("unavailable", `canal WhatsApp indisponível (${detail})`);
+}
+
+/**
  * Adapter Evolution (não-oficial) da `MessagingChannelPort`.
  * Trocar por WhatsApp Cloud API / pool de números = novo adapter, sem tocar no core.
  */
@@ -60,25 +72,33 @@ export class EvolutionAdapter implements MessagingChannelPort {
 
   /** Inicia a conexão: cria a instância se não existir, retorna o QR (ou conectado). */
   async connect(instance: ChannelInstanceRef): Promise<InstanceState> {
-    const id = encodeURIComponent(instance.instanceId);
-    await this.ensureInstance(instance.instanceId);
-    const res = await this.client.request<EvolutionConnectResponse>({
-      method: "GET",
-      path: `instance/connect/${id}`,
-    });
-    // já pareado → conectado; senão, entrega o QR p/ o usuário escanear.
-    if (res.instance?.state === "open") return { status: "connected" };
-    return res.base64
-      ? { status: "connecting", qrCode: res.base64 }
-      : { status: mapState(res.instance?.state) };
+    try {
+      const id = encodeURIComponent(instance.instanceId);
+      await this.ensureInstance(instance.instanceId);
+      const res = await this.client.request<EvolutionConnectResponse>({
+        method: "GET",
+        path: `instance/connect/${id}`,
+      });
+      // já pareado → conectado; senão, entrega o QR p/ o usuário escanear.
+      if (res.instance?.state === "open") return { status: "connected" };
+      return res.base64
+        ? { status: "connecting", qrCode: res.base64 }
+        : { status: mapState(res.instance?.state) };
+    } catch (error) {
+      throw toChannelError(error);
+    }
   }
 
   async getState(instance: ChannelInstanceRef): Promise<InstanceState> {
-    const res = await this.client.request<EvolutionStateResponse>({
-      method: "GET",
-      path: `instance/connectionState/${encodeURIComponent(instance.instanceId)}`,
-    });
-    return { status: mapState(res.instance?.state) };
+    try {
+      const res = await this.client.request<EvolutionStateResponse>({
+        method: "GET",
+        path: `instance/connectionState/${encodeURIComponent(instance.instanceId)}`,
+      });
+      return { status: mapState(res.instance?.state) };
+    } catch (error) {
+      throw toChannelError(error);
+    }
   }
 
   /** Cria a instância na Evolution se ainda não existir (idempotente por nome). */

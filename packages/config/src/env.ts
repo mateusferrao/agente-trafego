@@ -102,14 +102,6 @@ export const envSchema = z.object({
   // quebrar .env existentes; não é mais lido pelo código.
   EVOLUTION_INSTANCE: z.string().optional(),
 
-  // ─── Fatia 0 (scaffolding — removido quando houver UI/auth/contatos) ────
-  // guard dos endpoints admin até a auth real (Fatia 1a). Segredo forte (32+).
-  BETA_ADMIN_SECRET: z.string().min(32, "BETA_ADMIN_SECRET deve ter ao menos 32 chars"),
-  // destinatário fixo do WhatsApp na espinha: só dígitos com DDI (ex: 5511999999999).
-  FATIA0_RECIPIENT_PHONE: z
-    .string()
-    .regex(/^\d{8,15}$/, "FATIA0_RECIPIENT_PHONE deve ser só dígitos com DDI (ex: 5511999999999)"),
-
   // ─── Análise / Governor ────────────────────────────────────────────────
   // INSIGHTS_RETENTION_DAYS = knob de ops (janela de retenção), env ok.
   INSIGHTS_RETENTION_DAYS: z.coerce.number().int().positive().default(90),

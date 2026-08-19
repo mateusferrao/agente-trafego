@@ -4,7 +4,7 @@
 
 import { and, eq, sql } from "drizzle-orm";
 import type { Database } from "@trafego/db/client";
-import { adAccounts, agentMemory, agentRunSteps, agentRuns, agents, playbookRules, recommendations } from "@trafego/db";
+import { adAccounts, agentMemory, agentRunSteps, agentRuns, agents, platformConnections, playbookRules, recommendations } from "@trafego/db";
 import type { Action, AgentGoals, EncryptedPayload, PlaybookRule, RiskLevel } from "@trafego/shared";
 
 export interface AgentContext {
@@ -117,14 +117,18 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
     },
 
     async loadAccount(orgId, adAccountUuid) {
+      // Token vem da CONEXÃO dona (fonte da verdade); cai no legado da conta se
+      // ainda não houver conexão (contas pré-migração — o backfill preenche).
       const [row] = await db
         .select({
           metaAdAccountId: adAccounts.adAccountId,
           name: adAccounts.name,
           currency: adAccounts.currency,
-          tokenCripto: adAccounts.tokenCripto,
+          accountToken: adAccounts.tokenCripto,
+          connToken: platformConnections.tokenCripto,
         })
         .from(adAccounts)
+        .leftJoin(platformConnections, eq(adAccounts.connectionId, platformConnections.id))
         .where(and(eq(adAccounts.id, adAccountUuid), eq(adAccounts.orgId, orgId)))
         .limit(1);
       if (!row) return null;
@@ -132,7 +136,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
         metaAdAccountId: row.metaAdAccountId,
         name: row.name ?? row.metaAdAccountId,
         currency: row.currency ?? "BRL",
-        tokenCripto: row.tokenCripto,
+        tokenCripto: row.connToken ?? row.accountToken,
       };
     },
 
@@ -144,6 +148,25 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
     },
 
     async markTokenInvalid(orgId, adAccountUuid) {
+      // Marca inválido na CONEXÃO dona (recolar 1x recupera todas as contas dela);
+      // conta legada sem conexão cai no status da própria conta.
+      const [account] = await db
+        .select({ connectionId: adAccounts.connectionId })
+        .from(adAccounts)
+        .where(and(eq(adAccounts.id, adAccountUuid), eq(adAccounts.orgId, orgId)))
+        .limit(1);
+      if (account?.connectionId) {
+        await db
+          .update(platformConnections)
+          .set({ tokenStatus: "invalid", updatedAt: sql`now()` })
+          .where(
+            and(
+              eq(platformConnections.id, account.connectionId),
+              eq(platformConnections.orgId, orgId),
+            ),
+          );
+        return;
+      }
       await db
         .update(adAccounts)
         .set({ tokenStatus: "invalid", updatedAt: sql`now()` })

@@ -84,6 +84,12 @@ function friendlyError(error: HttpErrorResponse): FriendlyNotification {
     };
   }
 
+  // 503 costuma trazer uma causa amigável e específica (ex: canal indisponível);
+  // se o backend mandou uma mensagem não-técnica, ela é mais útil que a genérica.
+  if (error.status === 503 && detail) {
+    return { title: 'Serviço indisponível', description: detail };
+  }
+
   if (error.status >= 500) {
     return {
       title: 'Algo deu errado do nosso lado',

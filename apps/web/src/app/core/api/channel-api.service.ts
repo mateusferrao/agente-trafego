@@ -1,6 +1,7 @@
 import { Injectable } from '@angular/core';
 import type { Observable } from 'rxjs';
 import { BaseApiService } from './base-api.service';
+import { silentApiContext } from './api-request.interceptor';
 import type {
   ChannelStateOutput,
   ConfirmVerificationInput,
@@ -20,9 +21,16 @@ export class ChannelApiService extends BaseApiService {
     return this.post<ChannelStateOutput, Record<string, never>>(['/channels', 'connect'], {});
   }
 
-  /** `GET /api/channels/status` — estado atual do canal (para polling do QR). */
-  status(): Observable<ChannelStateOutput> {
-    return this.get<ChannelStateOutput>(['/channels', 'status']);
+  /**
+   * `GET /api/channels/status` — estado atual do canal (para polling do QR).
+   * `silent` suprime o toast global de erro: o polling reage a blip transitório
+   * pela própria UI (estado "instável" + toast único ao esgotar), sem spammar.
+   */
+  status(silent = false): Observable<ChannelStateOutput> {
+    return this.get<ChannelStateOutput>(
+      ['/channels', 'status'],
+      silent ? { context: silentApiContext() } : {},
+    );
   }
 
   /** `POST /api/contacts/verify/start` — envia o código pelo WhatsApp. */

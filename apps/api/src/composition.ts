@@ -17,6 +17,8 @@ import { createOrgsService } from "./modules/orgs/service.js";
 import { createDrizzleOrgsRepo } from "./modules/orgs/repo.js";
 import { createAccountsService } from "./modules/accounts/service.js";
 import { createDrizzleAccountsRepo } from "./modules/accounts/repo.js";
+import { createConnectionsService } from "./modules/connections/service.js";
+import { createDrizzleConnectionsRepo } from "./modules/connections/repo.js";
 import { createChannelsService } from "./modules/channels/service.js";
 import { createContactsService } from "./modules/contacts/service.js";
 import { createAgentsService } from "./modules/agents/service.js";
@@ -25,7 +27,6 @@ import { createRecommendationsService } from "./modules/recommendations/service.
 import { createRunsService } from "./modules/runs/service.js";
 import { createBillingService } from "./modules/billing/service.js";
 import { createWebhooksService } from "./modules/webhooks/service.js";
-import { createAdminService } from "./modules/admin/service.js";
 import { Aes256CredentialVault } from "@trafego/credential-vault";
 import { BullmqScheduler } from "@trafego/scheduler-bullmq";
 import { MetaAdsAdapter, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta";
@@ -59,6 +60,7 @@ export interface Services {
   readonly auth: ReturnType<typeof createAuthService>;
   readonly orgs: ReturnType<typeof createOrgsService>;
   readonly accounts: ReturnType<typeof createAccountsService>;
+  readonly connections: ReturnType<typeof createConnectionsService>;
   readonly channels: ReturnType<typeof createChannelsService>;
   readonly contacts: ReturnType<typeof createContactsService>;
   readonly agents: ReturnType<typeof createAgentsService>;
@@ -67,7 +69,6 @@ export interface Services {
   readonly runs: ReturnType<typeof createRunsService>;
   readonly billing: ReturnType<typeof createBillingService>;
   readonly webhooks: ReturnType<typeof createWebhooksService>;
-  readonly admin: ReturnType<typeof createAdminService>;
 }
 
 /** Container montado manualmente (sem DI). */
@@ -141,7 +142,12 @@ export function buildContainer(): Container {
   const services: Services = {
     auth: createAuthService({ repo: createDrizzleAuthRepo(db), hasher: argon2Hasher }),
     orgs: createOrgsService({ repo: createDrizzleOrgsRepo(db) }),
-    accounts: createAccountsService({ repo: createDrizzleAccountsRepo(db), adsPlatform, vault }),
+    accounts: createAccountsService({ repo: createDrizzleAccountsRepo(db) }),
+    connections: createConnectionsService({
+      repo: createDrizzleConnectionsRepo(db),
+      adsPlatform,
+      vault,
+    }),
     channels: createChannelsService({ db, messaging }),
     contacts: createContactsService({ db, messaging }),
     agents,
@@ -156,7 +162,6 @@ export function buildContainer(): Container {
     }),
     billing: createBillingService({ db, metering }),
     webhooks: createWebhooksService({ db, messaging, scheduler }),
-    admin: createAdminService({ db, vault, scheduler }),
   };
 
   return { adapters, services, redis };

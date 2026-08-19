@@ -4,7 +4,7 @@
 // índice único parcial em `agent_runs` (fecha o TOCTOU cron×manual — decisão 15).
 
 import { and, eq } from "drizzle-orm";
-import { agentRuns, agents, guardrailConfigs, isUniqueViolation, type Database } from "@trafego/db";
+import { adAccounts, agentRuns, agents, guardrailConfigs, isUniqueViolation, type Database } from "@trafego/db";
 import { isOverCostCap, resolveCostCapUsd, usagePeriod } from "@trafego/core";
 import {
   AGENT_RUNS_QUEUE,
@@ -33,7 +33,12 @@ export interface CronDispatchInput {
   readonly adAccountId: string;
 }
 
-export type DispatchOutcome = "enqueued" | "skipped_paused" | "skipped_cost_cap" | "skipped_in_flight";
+export type DispatchOutcome =
+  | "enqueued"
+  | "skipped_paused"
+  | "skipped_inactive_account"
+  | "skipped_cost_cap"
+  | "skipped_in_flight";
 
 export function createRunDispatcher(deps: RunDispatcherDeps) {
   const clock = deps.now ?? (() => new Date());
@@ -61,12 +66,15 @@ export function createRunDispatcher(deps: RunDispatcherDeps) {
     const { orgId, agentId, adAccountId } = input;
 
     // 1) agente pausado (freio self-service — decisão 16) → pula silenciosamente.
-    const [agent] = await deps.db
-      .select({ status: agents.status })
+    // Também pula se a conta não está sob gestão (unavailable/removed — soft).
+    const [row] = await deps.db
+      .select({ agentStatus: agents.status, accountStatus: adAccounts.status })
       .from(agents)
+      .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
       .where(and(eq(agents.id, agentId), eq(agents.orgId, orgId)))
       .limit(1);
-    if (!agent || agent.status === "paused") return "skipped_paused";
+    if (!row || row.agentStatus === "paused") return "skipped_paused";
+    if (row.accountStatus !== "active") return "skipped_inactive_account";
 
     // 2) cap de custo por org/período (decisão pura; fail-open se custo ausente).
     const cap = resolveCostCapUsd(await orgCostCap(orgId, agentId), deps.envCostCapUsd);

@@ -1,6 +1,6 @@
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { ZodError } from "zod";
-import { AdsPlatformError, type AdsPlatformErrorKind } from "@trafego/shared/ports";
+import { AdsPlatformError, MessagingChannelError, type AdsPlatformErrorKind } from "@trafego/shared/ports";
 
 /**
  * Mapa erro-de-plataforma → HTTP amigável. A casca NÃO conhece o provider (Meta):
@@ -68,6 +68,14 @@ export function registerErrorHandler(app: FastifyInstance): void {
       const mapped = ADS_ERROR_HTTP[error.kind];
       if (error.kind === "upstream") request.log.error({ err: error }, "plataforma de ads indisponível");
       return reply.status(mapped.status).send({ code: mapped.code, message: mapped.message });
+    }
+    if (error instanceof MessagingChannelError) {
+      // canal (WhatsApp) fora do ar — mensagem amigável, sem vazar o provider.
+      request.log.error({ err: error }, "canal de mensageria indisponível");
+      return reply.status(503).send({
+        code: "channel_unavailable",
+        message: "Não consegui falar com o WhatsApp agora. Tente de novo em instantes.",
+      });
     }
     // Erros da casca com status próprio de cliente (Fastify: 4xx como 415/405/400)
     // → respeita o status + mensagem, nunca vira 500 genérico.

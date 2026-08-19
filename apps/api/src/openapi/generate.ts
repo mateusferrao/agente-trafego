@@ -15,12 +15,15 @@ import { z } from "zod";
 import { loginInput, meOutput, signupInput } from "../modules/auth/schema.js";
 import { createOrgInput, orgOutput, renameOrgInput } from "../modules/orgs/schema.js";
 import { accessStatusOutput, usageSummaryOutput } from "../modules/billing/schema.js";
+import { adAccountOutput } from "../modules/accounts/schema.js";
 import {
-  adAccountOutput,
-  connectAccountsOutput,
-  connectTokenInput,
-  selectAccountInput,
-} from "../modules/accounts/schema.js";
+  connectionAccountsOutput,
+  connectionOutput,
+  createConnectionInput,
+  createConnectionOutput,
+  selectAccountsInput,
+  syncOutput,
+} from "../modules/connections/schema.js";
 import { agentGoalsInput, agentSummary, setPausedInput } from "../modules/agents/schema.js";
 import { latestRunOutput, triggerRunOutput } from "../modules/runs/schema.js";
 import { channelStateOutput } from "../modules/channels/schema.js";
@@ -49,10 +52,13 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const OrgOutput = registry.register("OrgOutput", orgOutput);
   const AccessStatusOutput = registry.register("AccessStatusOutput", accessStatusOutput);
   const UsageSummaryOutput = registry.register("UsageSummaryOutput", usageSummaryOutput);
-  const ConnectTokenInput = registry.register("ConnectTokenInput", connectTokenInput);
-  const ConnectAccountsOutput = registry.register("ConnectAccountsOutput", connectAccountsOutput);
-  const SelectAccountInput = registry.register("SelectAccountInput", selectAccountInput);
   const AdAccountOutput = registry.register("AdAccountOutput", adAccountOutput);
+  const CreateConnectionInput = registry.register("CreateConnectionInput", createConnectionInput);
+  const ConnectionOutput = registry.register("ConnectionOutput", connectionOutput);
+  const CreateConnectionOutput = registry.register("CreateConnectionOutput", createConnectionOutput);
+  const ConnectionAccountsOutput = registry.register("ConnectionAccountsOutput", connectionAccountsOutput);
+  const SelectAccountsInput = registry.register("SelectAccountsInput", selectAccountsInput);
+  const SyncOutput = registry.register("SyncOutput", syncOutput);
   const AgentSummary = registry.register("AgentSummary", agentSummary);
   const AgentGoalsInput = registry.register("AgentGoalsInput", agentGoalsInput);
   const SetPausedInput = registry.register("SetPausedInput", setPausedInput);
@@ -129,30 +135,50 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     responses: { 200: jsonRes("org renomeada", OrgOutput) },
   });
   registry.registerPath({
-    method: "post",
-    path: "/api/accounts/connect",
+    method: "get",
+    path: "/api/accounts",
     tags: ["accounts"],
-    request: jsonBody(ConnectTokenInput),
+    responses: { 200: jsonRes("contas sob gestão da org", z.array(AdAccountOutput)) },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/connections",
+    tags: ["connections"],
+    request: jsonBody(CreateConnectionInput),
     responses: {
-      200: jsonRes("contas acessíveis pelo token", ConnectAccountsOutput),
+      201: jsonRes("conexão criada + contas acessíveis", CreateConnectionOutput),
       400: { description: "token inválido ou sem permissões" },
     },
   });
   registry.registerPath({
-    method: "post",
-    path: "/api/accounts/select",
-    tags: ["accounts"],
-    request: jsonBody(SelectAccountInput),
-    responses: {
-      201: jsonRes("conta conectada", AdAccountOutput),
-      400: { description: "conta inacessível com esse token" },
-    },
+    method: "get",
+    path: "/api/connections",
+    tags: ["connections"],
+    responses: { 200: jsonRes("conexões da org", z.array(ConnectionOutput)) },
   });
   registry.registerPath({
     method: "get",
-    path: "/api/accounts",
-    tags: ["accounts"],
-    responses: { 200: jsonRes("contas conectadas da org", z.array(AdAccountOutput)) },
+    path: "/api/connections/{id}/accounts",
+    tags: ["connections"],
+    request: { params: accountParams },
+    responses: { 200: jsonRes("contas acessíveis + geridas da conexão", ConnectionAccountsOutput) },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/connections/{id}/accounts/select",
+    tags: ["connections"],
+    request: { params: accountParams, ...jsonBody(SelectAccountsInput) },
+    responses: { 200: jsonRes("seleção aplicada", ConnectionAccountsOutput) },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/connections/{id}/sync",
+    tags: ["connections"],
+    request: { params: accountParams },
+    responses: {
+      200: jsonRes("contas reconciliadas", SyncOutput),
+      400: { description: "token inválido ou sem permissões" },
+    },
   });
   registry.registerPath({
     method: "get",

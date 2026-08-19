@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
-import { RouterLink } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   heroBuildingOffice2,
@@ -10,11 +10,6 @@ import {
 import { UiButton, UiEmptyState, UiPageHeader, UiSpinner } from '@ui';
 import { AccountsApiService } from '@core/api/accounts-api.service';
 import type { AdAccountOutput, AdAccountOutputTokenStatusEnumKey } from '@core/api/generated';
-import {
-  ConnectDialogComponent,
-  META_PROVIDER_ENTRY,
-  type ConnectDialogDoneEvent,
-} from '@app/features/integrations';
 
 interface TokenIndicator {
   readonly icon: string;
@@ -25,7 +20,7 @@ interface TokenIndicator {
 }
 
 // Status do token por ÍCONE colorido (forma + cor + rótulo — nunca só cor; DESIGN.md
-// color-blind-safe). Substitui a pílula longa com texto por um indicador compacto.
+// color-blind-safe). O token é da conexão; reconectar acontece em Integrações.
 const TOKEN_INDICATOR: Record<AdAccountOutputTokenStatusEnumKey, TokenIndicator> = {
   valid: {
     icon: 'heroCheckCircle',
@@ -35,7 +30,7 @@ const TOKEN_INDICATOR: Record<AdAccountOutputTokenStatusEnumKey, TokenIndicator>
   invalid: {
     icon: 'heroExclamationTriangle',
     class: 'inline-flex shrink-0 text-danger-strong',
-    label: 'Token inválido — reconecte a conta',
+    label: 'Token expirado — reconecte em Integrações',
   },
   unchecked: {
     icon: 'heroClock',
@@ -45,22 +40,24 @@ const TOKEN_INDICATOR: Record<AdAccountOutputTokenStatusEnumKey, TokenIndicator>
 };
 
 /**
- * Contas = landing (/accounts). Lista as contas Meta conectadas e dispara o
- * connect-dialog (onboarding real, Fatia 1b). Estados: carregando / erro / vazio
- * (CTA) / com contas (cards reduzidos: nome + id + status do token).
+ * Contas = landing (/accounts). **Reflete** as contas sob gestão (ativas) — a
+ * conexão e a escolha de quais contas entram acontecem em Integrações. Estados:
+ * carregando / erro / vazio (CTA → Integrações) / com contas (nome + id + token).
  */
 @Component({
   selector: 'app-accounts-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [NgIcon, RouterLink, UiButton, UiEmptyState, UiPageHeader, UiSpinner, ConnectDialogComponent],
+  imports: [NgIcon, RouterLink, UiButton, UiEmptyState, UiPageHeader, UiSpinner],
   providers: [
     provideIcons({ heroBuildingOffice2, heroCheckCircle, heroClock, heroExclamationTriangle }),
   ],
   template: `
     <div class="flex flex-col gap-8">
-      <app-ui-page-header title="Contas" subtitle="Contas de anúncio Meta conectadas e seus agentes.">
+      <app-ui-page-header title="Contas" subtitle="Contas de anúncio sob gestão e seus agentes.">
         @if ((accounts()?.length ?? 0) > 0) {
-          <button appButton variant="primary" type="button" actions (click)="openConnect()">{{ connectLabel }}</button>
+          <button appButton variant="primary" type="button" actions (click)="goToIntegrations()">
+            Conectar em Integrações
+          </button>
         }
       </app-ui-page-header>
 
@@ -77,10 +74,12 @@ const TOKEN_INDICATOR: Record<AdAccountOutputTokenStatusEnumKey, TokenIndicator>
       } @else if ((accounts()?.length ?? 0) === 0) {
         <app-ui-empty-state
           icon="heroBuildingOffice2"
-          title="Conecte sua primeira conta"
-          description="Cole seu token de acesso da Meta, escolha a conta de anúncio e o agente já começa a acompanhar as campanhas."
+          title="Nenhuma conta sob gestão ainda"
+          description="Conecte sua conta Meta em Integrações e escolha quais contas o agente vai acompanhar."
         >
-          <button appButton variant="primary" type="button" actions (click)="openConnect()">{{ connectLabel }}</button>
+          <button appButton variant="primary" type="button" actions (click)="goToIntegrations()">
+            Ir para Integrações
+          </button>
         </app-ui-empty-state>
       } @else {
         <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -110,24 +109,14 @@ const TOKEN_INDICATOR: Record<AdAccountOutputTokenStatusEnumKey, TokenIndicator>
         </div>
       }
     </div>
-
-    @if (connectOpen()) {
-      <app-connect-dialog
-        [entry]="metaEntry"
-        (done)="onDone($event)"
-        (closed)="connectOpen.set(false)"
-      />
-    }
   `,
 })
 export class AccountsPage {
   private readonly accountsApi = inject(AccountsApiService);
+  private readonly router = inject(Router);
 
-  protected readonly connectLabel = 'Conectar conta';
-  protected readonly metaEntry = META_PROVIDER_ENTRY;
   protected readonly accounts = signal<AdAccountOutput[] | null>(null);
   protected readonly loadFailed = signal(false);
-  protected readonly connectOpen = signal(false);
 
   constructor() {
     this.reload();
@@ -137,15 +126,8 @@ export class AccountsPage {
     return TOKEN_INDICATOR[status];
   }
 
-  protected openConnect(): void {
-    this.connectOpen.set(true);
-  }
-
-  protected onDone(event: ConnectDialogDoneEvent): void {
-    // Conta conectada → recarrega a lista pra ela aparecer na grade.
-    if (event.result.kind === 'success') {
-      this.reload();
-    }
+  protected goToIntegrations(): void {
+    void this.router.navigate(['/integrations']);
   }
 
   protected reload(): void {

@@ -14,7 +14,9 @@ function fakeDb(results: unknown[]) {
     then: (res: (v: unknown) => unknown) => arr().then(res),
   };
   return {
-    select: () => ({ from: () => ({ where: () => whereObj }) }),
+    select: () => ({
+      from: () => ({ innerJoin: () => ({ where: () => whereObj }), where: () => whereObj }),
+    }),
     insert: () => ({ values: () => ({ returning: () => arr() }) }),
   } as never;
 }
@@ -42,7 +44,7 @@ describe("createRunDispatcher.dispatch", () => {
   it("agente pausado → skipped_paused, sem enfileirar", async () => {
     const scheduler = makeScheduler();
     const dispatcher = createRunDispatcher({
-      db: fakeDb([[{ status: "paused" }]]),
+      db: fakeDb([[{ agentStatus: "paused", accountStatus: "active" }]]),
       scheduler: scheduler as never,
       logger,
       metering: makeMetering(0),
@@ -52,10 +54,23 @@ describe("createRunDispatcher.dispatch", () => {
     expect(scheduler.enqueue).not.toHaveBeenCalled();
   });
 
+  it("conta fora de gestão (unavailable/removed) → skipped_inactive_account", async () => {
+    const scheduler = makeScheduler();
+    const dispatcher = createRunDispatcher({
+      db: fakeDb([[{ agentStatus: "active", accountStatus: "unavailable" }]]),
+      scheduler: scheduler as never,
+      logger,
+      metering: makeMetering(0),
+      envCostCapUsd: 0,
+    });
+    expect(await dispatcher.dispatch(INPUT)).toBe("skipped_inactive_account");
+    expect(scheduler.enqueue).not.toHaveBeenCalled();
+  });
+
   it("cap de custo atingido → skipped_cost_cap, sem enfileirar", async () => {
     const scheduler = makeScheduler();
     const dispatcher = createRunDispatcher({
-      db: fakeDb([[{ status: "active" }], [{ cap: "10" }]]),
+      db: fakeDb([[{ agentStatus: "active", accountStatus: "active" }], [{ cap: "10" }]]),
       scheduler: scheduler as never,
       logger,
       metering: makeMetering(20), // ledger: gasto 20 ≥ cap 10
@@ -68,7 +83,7 @@ describe("createRunDispatcher.dispatch", () => {
   it("caminho feliz → cria run e enfileira execute", async () => {
     const scheduler = makeScheduler();
     const dispatcher = createRunDispatcher({
-      db: fakeDb([[{ status: "active" }], [{ cap: null }], [{ id: "run-9" }]]),
+      db: fakeDb([[{ agentStatus: "active", accountStatus: "active" }], [{ cap: null }], [{ id: "run-9" }]]),
       scheduler: scheduler as never,
       logger,
       metering: makeMetering(0),

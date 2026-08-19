@@ -3,7 +3,7 @@ import { isApiPath } from "./static.js";
 
 describe("isApiPath (fallback SPA vs api)", () => {
   it("casa prefixos de api (exato, com barra e com query)", () => {
-    for (const u of ["/api", "/api/orgs", "/api?x=1", "/admin/connect", "/health", "/openapi.json", "/webhooks/x"]) {
+    for (const u of ["/api", "/api/orgs", "/api?x=1", "/health", "/openapi.json", "/webhooks/x"]) {
       expect(isApiPath(u)).toBe(true);
     }
   });

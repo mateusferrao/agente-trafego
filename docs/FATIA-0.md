@@ -1,5 +1,7 @@
 # Fatia 0 — Espinha Ambulante (walking skeleton)
 
+> **⚠️ Histórico — superado.** O slice `admin` (endpoints `/admin/*` guardados por `x-admin-secret`/`BETA_ADMIN_SECRET`) e a env `FATIA0_RECIPIENT_PHONE` foram **removidos**. O onboarding real agora é via **Integrações** (conectar sistema externo → escolher contas — slice `connections`) + WhatsApp por QR. Este doc fica como registro do primeiro fio ponta-a-ponta; os comandos `curl /admin/...` abaixo não existem mais.
+
 Primeiro fio fino real ponta-a-ponta: **colar token (cripto) → buscar `spend` na Meta → enviar 1 mensagem no WhatsApp**. Prova integração (Meta + Evolution + Postgres + fila api→worker) + deploy. Sem LLM, sem escrita na Meta — mensagem templated. Decisões = [`../CLAUDE.md`](../CLAUDE.md) · construção = [`ROADMAP.md`](ROADMAP.md).
 
 ## O que a Fatia 0 entrega

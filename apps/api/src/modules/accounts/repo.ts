@@ -1,9 +1,10 @@
-import { eq } from "drizzle-orm";
-import { adAccounts, type Database } from "@trafego/db";
-import type { EncryptedPayload } from "@trafego/shared";
+import { and, eq } from "drizzle-orm";
+import { adAccounts, platformConnections, type Database } from "@trafego/db";
 
 /** Status do token da conta (espelha o enum `token_status` do schema). */
 export type AccountTokenStatus = "valid" | "invalid" | "unchecked";
+/** Ciclo de vida da conta sob gestão (espelha `account_lifecycle`). */
+export type AccountLifecycle = "active" | "unavailable" | "removed";
 
 /** Projeção da conta usada pelo slice (sem o token cifrado — nunca sai do backend). */
 export interface AdAccountRow {
@@ -11,75 +12,53 @@ export interface AdAccountRow {
   readonly adAccountId: string;
   readonly name: string | null;
   readonly currency: string | null;
+  readonly status: AccountLifecycle;
+  /** Token status efetivo: o da conexão (fonte da verdade) ou o legado da conta. */
   readonly tokenStatus: AccountTokenStatus;
   readonly lastValidatedAt: Date | null;
 }
 
-/** Dados p/ conectar/recolar uma conta (token já cifrado pela casca). */
-export interface UpsertAccountInput {
-  readonly metaBusinessId: string | null;
-  readonly adAccountId: string;
-  readonly name: string | null;
-  readonly currency: string | null;
-  readonly tokenCripto: EncryptedPayload;
-}
-
-const ROW_COLUMNS = {
-  id: adAccounts.id,
-  adAccountId: adAccounts.adAccountId,
-  name: adAccounts.name,
-  currency: adAccounts.currency,
-  tokenStatus: adAccounts.tokenStatus,
-  lastValidatedAt: adAccounts.lastValidatedAt,
-} as const;
-
 /**
- * Persistência do slice de contas (tudo org-scoped — §12). Concentra as queries
- * de `ad_accounts`; o service depende só desta interface (não do Drizzle).
+ * Persistência do slice de contas (tudo org-scoped — §12). Só leitura das contas
+ * geridas; a escrita (conectar/selecionar) mora no slice `connections`.
  */
 export interface AccountsRepo {
   listByOrg(orgId: string): Promise<AdAccountRow[]>;
-  /** Insere ou, se a conta já existe na org, atualiza o token (= "recolar"). Atômico. */
-  upsert(orgId: string, input: UpsertAccountInput): Promise<AdAccountRow>;
 }
 
 export function createDrizzleAccountsRepo(db: Database): AccountsRepo {
   return {
+    /**
+     * Contas sob gestão (status `active`) da org. Token status efetivo = o da
+     * conexão dona do token (fonte da verdade); cai no legado da conta se ainda
+     * não houver conexão (contas pré-migração). Contas `unavailable`/`removed`
+     * não aparecem em Contas (superfície de trabalho).
+     */
     async listByOrg(orgId) {
-      return db.select(ROW_COLUMNS).from(adAccounts).where(eq(adAccounts.orgId, orgId));
-    },
-
-    async upsert(orgId, input) {
-      // Upsert atômico via unique(org_id, ad_account_id): "recolar" nunca duplica,
-      // mesmo com /select concorrente (duplo-clique) — o DB é a rede de segurança.
-      const now = new Date();
-      const [row] = await db
-        .insert(adAccounts)
-        .values({
-          orgId,
-          adAccountId: input.adAccountId,
-          metaBusinessId: input.metaBusinessId,
-          name: input.name,
-          currency: input.currency,
-          tokenCripto: input.tokenCripto,
-          tokenStatus: "valid",
-          lastValidatedAt: now,
+      const rows = await db
+        .select({
+          id: adAccounts.id,
+          adAccountId: adAccounts.adAccountId,
+          name: adAccounts.name,
+          currency: adAccounts.currency,
+          status: adAccounts.status,
+          accountTokenStatus: adAccounts.tokenStatus,
+          accountValidatedAt: adAccounts.lastValidatedAt,
+          connTokenStatus: platformConnections.tokenStatus,
+          connValidatedAt: platformConnections.lastValidatedAt,
         })
-        .onConflictDoUpdate({
-          target: [adAccounts.orgId, adAccounts.adAccountId],
-          set: {
-            metaBusinessId: input.metaBusinessId,
-            name: input.name,
-            currency: input.currency,
-            tokenCripto: input.tokenCripto,
-            tokenStatus: "valid",
-            lastValidatedAt: now,
-            updatedAt: now,
-          },
-        })
-        .returning(ROW_COLUMNS);
-      if (!row) throw new Error("falha ao gravar ad_account");
-      return row;
+        .from(adAccounts)
+        .leftJoin(platformConnections, eq(adAccounts.connectionId, platformConnections.id))
+        .where(and(eq(adAccounts.orgId, orgId), eq(adAccounts.status, "active")));
+      return rows.map((r) => ({
+        id: r.id,
+        adAccountId: r.adAccountId,
+        name: r.name,
+        currency: r.currency,
+        status: r.status,
+        tokenStatus: r.connTokenStatus ?? r.accountTokenStatus,
+        lastValidatedAt: r.connValidatedAt ?? r.accountValidatedAt,
+      }));
     },
   };
 }

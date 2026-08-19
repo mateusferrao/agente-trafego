@@ -39,11 +39,9 @@ export const routes: Routes = [
         loadComponent: () =>
           import('./features/integrations/integrations-page').then((m) => m.IntegrationsPage),
       },
-      {
-        path: 'whatsapp',
-        title: 'WhatsApp — Agente de Tráfego',
-        loadComponent: () => import('./features/whatsapp/whatsapp-page').then((m) => m.WhatsappPage),
-      },
+      // WhatsApp deixou de ser aba (virou integração em Integrações — docs/DESIGN.md).
+      // Redirect preserva links antigos.
+      { path: 'whatsapp', pathMatch: 'full', redirectTo: 'integrations' },
       {
         path: 'settings',
         title: 'Configurações — Agente de Tráfego',
