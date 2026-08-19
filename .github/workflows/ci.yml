@@ -25,6 +25,11 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # O client tipado (kubb) é gerado a partir do contrato zod→OpenAPI e NÃO é
+      # versionado — precisa ser gerado antes do typecheck do web.
+      - name: Generate API contract
+        run: pnpm api:generate
+
       - name: Typecheck
         run: pnpm typecheck
 
