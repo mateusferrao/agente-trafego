@@ -112,6 +112,9 @@ export const envSchema = z.object({
   // TTL do cache (Redis) da lista de conversões personalizadas por conta. Um id
   // fora do cache dispara refresh (self-healing), então o TTL pode ser folgado.
   CUSTOM_CONVERSIONS_CACHE_TTL_SEC: z.coerce.number().int().positive().default(21600),
+  // TTL do cache (Redis) do CATÁLOGO de entidades por conta (§7 — corta o listEntities
+  // full a cada run, maior fonte de rate-limit). Invalidado na escrita real. `0` desliga.
+  META_ENTITY_CACHE_TTL_SEC: z.coerce.number().int().min(0).default(3600),
   // ANALYSIS_MAX_CREATIVES_VISION = default global; alvo = config por agente (DB).
   // Fallback até 4 ligar a config por-agente. Não-usado na Fatia 0.
   ANALYSIS_MAX_CREATIVES_VISION: z.coerce

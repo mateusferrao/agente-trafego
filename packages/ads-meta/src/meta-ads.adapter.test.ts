@@ -4,6 +4,7 @@ import { MetaAdsAdapter } from "./meta-ads.adapter.js";
 import { MetaGraphClient } from "./client.js";
 import { AdsPlatformError } from "@trafego/shared/ports";
 import { MetaGovernor } from "./governor.js";
+import { MetaEntityCache } from "./entity-cache.js";
 
 // O governor não é usado nos fluxos de onboarding (sem governor.acquire) — stub vazio.
 const governor = {} as unknown as MetaGovernor;
@@ -13,13 +14,21 @@ function makeAdapter(): MetaAdsAdapter {
   return new MetaAdsAdapter({ client, governor });
 }
 
-// Redis in-memory mínimo (set EX, pttl) p/ os fluxos que passam pelo governor.
+// Redis in-memory mínimo (set EX, get, del, pttl) p/ governor + cache de catálogo.
 class FakeRedis {
   private store = new Map<string, { value: string; expiresAt: number | null }>();
   async set(key: string, value: string, mode?: string, ttlSec?: number): Promise<"OK"> {
     const expiresAt = mode === "EX" && ttlSec ? Date.now() + ttlSec * 1000 : null;
     this.store.set(key, { value, expiresAt });
     return "OK";
+  }
+  async get(key: string): Promise<string | null> {
+    return this.store.get(key)?.value ?? null;
+  }
+  async del(...keys: string[]): Promise<number> {
+    let n = 0;
+    for (const k of keys) if (this.store.delete(k)) n++;
+    return n;
   }
   async pttl(key: string): Promise<number> {
     const e = this.store.get(key);
@@ -163,5 +172,62 @@ describe("MetaAdsAdapter.listEntities (governor)", () => {
     ]);
     await adapter.listEntities(ref, "campaign");
     expect(spy).toHaveBeenCalledWith("act_1", expect.objectContaining({ callCountPct: 30 }));
+  });
+});
+
+describe("MetaAdsAdapter.listEntities (cache de catálogo)", () => {
+  const ref = { adAccountId: "1", accessToken: "tok" };
+
+  function makeAdapterWithCache() {
+    const client = new MetaGraphClient({ graphVersion: "v26.0" });
+    const redis = new FakeRedis() as unknown as Redis;
+    const gov = new MetaGovernor({ redis, rng: () => 0 });
+    const entityCache = new MetaEntityCache({ redis, ttlSec: 600 });
+    return { adapter: new MetaAdsAdapter({ client, governor: gov, entityCache }), entityCache };
+  }
+
+  it("2ª chamada usa o cache (não bate na Meta)", async () => {
+    const { calls } = stubFetchSequence([
+      { body: { data: [{ id: "c1", name: "Camp", status: "ACTIVE", objective: "OUTCOME_SALES" }] } },
+    ]);
+    const { adapter } = makeAdapterWithCache();
+    const a = await adapter.listEntities(ref, "campaign"); // miss → lista + cacheia
+    const b = await adapter.listEntities(ref, "campaign"); // hit → sem fetch
+    expect(a).toEqual(b);
+    expect(calls().length).toBe(1); // só a 1ª bateu na Meta
+  });
+
+  it("escrita real invalida o catálogo (re-lista na próxima)", async () => {
+    stubFetchSequence([
+      { body: { data: [{ id: "c1", name: "Camp", status: "ACTIVE" }] } }, // list 1
+      { body: { status: "ACTIVE" } }, // readEntityState do mutate
+      { body: { success: true } }, // POST pause
+      { body: { data: [{ id: "c1", name: "Camp", status: "PAUSED" }] } }, // list 2 (pós-invalidação)
+    ]);
+    const { adapter } = makeAdapterWithCache();
+    await adapter.listEntities(ref, "campaign"); // cacheia
+    await adapter.mutate(ref, {
+      id: "a1", type: "pause_entity", target: { level: "campaign", id: "c1" },
+      params: {}, source: "playbook", riskLevel: "low", reason: "t",
+    });
+    const after = await adapter.listEntities(ref, "campaign"); // cache invalidado → re-lista
+    expect(after[0]?.status).toBe("paused");
+  });
+
+  it("dry-run NÃO invalida (nada mudou)", async () => {
+    const { calls } = stubFetchSequence([
+      { body: { data: [{ id: "c1", name: "Camp", status: "ACTIVE" }] } }, // list
+      { body: { status: "ACTIVE", daily_budget: "10000" } }, // readEntityState (dry-run)
+    ]);
+    const { adapter } = makeAdapterWithCache();
+    await adapter.listEntities(ref, "campaign");
+    await adapter.mutate(
+      ref,
+      { id: "a1", type: "adjust_budget", target: { level: "campaign", id: "c1" }, params: { mode: "decrease", pct: 10 }, source: "playbook", riskLevel: "low", reason: "t" },
+      { dryRun: true },
+    );
+    await adapter.listEntities(ref, "campaign"); // ainda cacheado (dry-run não invalidou)
+    // chamadas: list(1) + readEntityState(1) = 2; a 2ª listEntities veio do cache.
+    expect(calls().length).toBe(2);
   });
 });

@@ -16,7 +16,7 @@ import { createDb } from "@trafego/db";
 import { loadEnv } from "@trafego/config";
 import { Aes256CredentialVault } from "@trafego/credential-vault";
 import { BullmqScheduler } from "@trafego/scheduler-bullmq";
-import { CustomConversionsResolver, MetaAdsAdapter, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta";
+import { CustomConversionsResolver, MetaAdsAdapter, MetaEntityCache, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta";
 import { EvolutionAdapter, EvolutionClient } from "@trafego/channel-evolution";
 import { OpenRouterAdapter, OpenRouterClient } from "@trafego/llm-openrouter";
 import { createPostgresMetering, withLlmMetering } from "@trafego/metering-postgres";
@@ -111,6 +111,8 @@ export async function buildComposition(): Promise<WorkerDeps> {
       redis,
       ttlSec: env.CUSTOM_CONVERSIONS_CACHE_TTL_SEC,
     }),
+    // cache do catálogo de entidades entre runs (corta o listEntities full = rate-limit).
+    entityCache: new MetaEntityCache({ redis, ttlSec: env.META_ENTITY_CACHE_TTL_SEC }),
   });
   const insightsSync = createInsightsSyncService({
     ads,

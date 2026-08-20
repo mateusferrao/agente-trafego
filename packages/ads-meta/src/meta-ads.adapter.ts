@@ -24,6 +24,7 @@ import { MetaInsightsService } from "./insights.js";
 import { MetaCreativesService } from "./creatives.js";
 import { MetaMutationsService } from "./mutations.js";
 import { MetaGovernor } from "./governor.js";
+import { MetaEntityCache } from "./entity-cache.js";
 import { objectiveFromAdSet, objectiveFromCampaign, type RawPromotedObject } from "./meta-conversion-map.js";
 import type { CustomConversionsResolver, CustomConversionInfo } from "./custom-conversions.js";
 
@@ -157,6 +158,8 @@ export interface MetaAdsAdapterDeps {
   readonly mutations?: MetaMutationsService;
   /** Resolve nomes de conversão personalizada p/ rotular objetivos (opcional; degrada). */
   readonly customConversions?: CustomConversionsResolver;
+  /** Cache do catálogo de entidades entre runs (opcional; ausente = sempre lista fresco). */
+  readonly entityCache?: MetaEntityCache;
 }
 
 /**
@@ -171,6 +174,7 @@ export class MetaAdsAdapter implements AdsPlatformPort {
   private readonly creatives: MetaCreativesService;
   private readonly mutations: MetaMutationsService;
   private readonly customConversions: CustomConversionsResolver | undefined;
+  private readonly entityCache: MetaEntityCache | undefined;
 
   constructor(deps: MetaAdsAdapterDeps) {
     this.client = deps.client;
@@ -179,15 +183,21 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     this.creatives = deps.creatives ?? new MetaCreativesService(deps.client, deps.governor);
     this.mutations = deps.mutations ?? new MetaMutationsService(deps.client);
     this.customConversions = deps.customConversions;
+    this.entityCache = deps.entityCache;
   }
 
   async listEntities(account: AdAccountRef, level: EntityLevel): Promise<AdEntity[]> {
     if (level === "account") return []; // conta não é um edge listável (metadados via getAdAccount)
     try {
       const accountId = normalizeAdAccountId(account.adAccountId);
+      // reusa o catálogo entre runs (a maior fonte de rate-limit); miss → lista fresco.
+      const cached = await this.entityCache?.get(accountId, level);
+      if (cached) return cached;
       const nodes = await this.fetchEntities(accountId, level, account.accessToken);
       const resolved = await this.resolveCustomLabels(account, level, nodes);
-      return nodes.map((node) => this.mapEntity(level, node, resolved));
+      const entities = nodes.map((node) => this.mapEntity(level, node, resolved));
+      await this.entityCache?.set(accountId, level, entities);
+      return entities;
     } catch (error) {
       throw toAdsError(error);
     }
@@ -304,7 +314,10 @@ export class MetaAdsAdapter implements AdsPlatformPort {
       const accountId = normalizeAdAccountId(account.adAccountId);
       const acquired = await this.governor.acquire(accountId);
       if (!acquired.granted) throw cooldownError();
-      return await this.mutations.mutate(account, action, opts);
+      const result = await this.mutations.mutate(account, action, opts);
+      // escrita REAL mudou o estado → catálogo cacheado ficou stale (dry-run não muda nada).
+      if (!opts?.dryRun) await this.entityCache?.invalidate(accountId);
+      return result;
     } catch (error) {
       throw toAdsError(error);
     }
@@ -319,7 +332,9 @@ export class MetaAdsAdapter implements AdsPlatformPort {
       const accountId = normalizeAdAccountId(account.adAccountId);
       const acquired = await this.governor.acquire(accountId);
       if (!acquired.granted) throw cooldownError();
-      return await this.mutations.restoreEntityState(account, entityId, before);
+      const result = await this.mutations.restoreEntityState(account, entityId, before);
+      await this.entityCache?.invalidate(accountId); // undo mudou o estado → catálogo stale
+      return result;
     } catch (error) {
       throw toAdsError(error);
     }
