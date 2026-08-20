@@ -43,7 +43,7 @@ async function main(): Promise<void> {
   await createRunReaper({ db: deps.db, logger, staleMinutes: deps.reaper.staleMinutes })
     .reapStale()
     .catch((err: unknown) => logger.error({ err }, "reaper:boot sweep falhou"));
-  logger.info("worker up: agent-runs (3a) + cron-dispatch + reaper (3b) + insights-sync (2a)");
+  logger.info("worker up: agent-runs + cron-dispatch + reaper + insights-sync + schedule-resync + action-undo");
 
   // shutdown gracioso (drena jobs em andamento antes de sair)
   const shutdown = async (signal: string): Promise<void> => {

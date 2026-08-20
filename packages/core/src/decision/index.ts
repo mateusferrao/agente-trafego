@@ -1,4 +1,5 @@
 import type { Action, AutonomyLevel, AutonomyPolicy } from "@trafego/shared";
+import { ACTION_PARAM_MODE, BUDGET_MODE_DECREASE } from "@trafego/shared";
 import { type DroppedAction, entityKeyOf } from "../guardrails/index.js";
 
 export interface DecisionResult {
@@ -46,7 +47,7 @@ function dominanceOf(a: Action): number {
     case "pause_entity":
       return 4;
     case "adjust_budget":
-      return a.params["mode"] === "decrease" ? 3 : 1;
+      return a.params[ACTION_PARAM_MODE] === BUDGET_MODE_DECREASE ? 3 : 1;
     case "set_status":
       return 2;
     case "resume_entity":

@@ -15,8 +15,11 @@ import { archetypeDefaults, composeMethodologyPrompt, unseedIdentity, DEFAULT_AR
 import {
   ACTION_UNDO_QUEUE,
   ACTION_UNDO_JOB,
+  GUARDRAIL_DEFAULTS,
   SCHEDULE_RESYNC_QUEUE,
   SCHEDULE_RESYNC_JOB,
+  toGuardrailConfig,
+  UNDO_TOOL_KEY,
 } from "@trafego/shared";
 import type { Action, AgentGoals, OrgId, StoredInsightMetrics } from "@trafego/shared/types";
 import type { SchedulerPort } from "@trafego/shared/ports";
@@ -52,32 +55,16 @@ export interface AgentsDeps {
  * criação lazy pelo arquétipo `conservador`) e edita a META (target CPA/ROAS).
  * A superfície completa de config = Fatia 4.
  */
-/** Defaults de guardrail (espelham as colunas do schema) — usado antes do 1º save. */
-const GUARDRAIL_DEFAULTS: AgentSummary["guardrails"] = {
-  maxBudgetChangePct: 20,
-  maxEntitiesPerDay: 3,
-  allowedActions: ["pause_entity"],
-  dryRun: true,
-  killSwitch: false,
-};
-
 export function createAgentsService(deps: AgentsDeps) {
-  /** Lê a linha `guardrail_configs` → shape do contrato (ausente → defaults). */
+  /** Lê a linha `guardrail_configs` → shape do contrato (ausente → defaults). Fonte única. */
   async function loadGuardrails(orgId: OrgId, agentId: string): Promise<AgentSummary["guardrails"]> {
     const [g] = await deps.db
       .select()
       .from(guardrailConfigs)
       .where(and(eq(guardrailConfigs.agentId, agentId), eq(guardrailConfigs.orgId, orgId)))
       .limit(1);
-    if (!g) return GUARDRAIL_DEFAULTS;
-    return {
-      maxBudgetChangePct: g.maxBudgetChangePct,
-      maxEntitiesPerDay: g.maxEntitiesPerDay,
-      allowedActions: g.allowedActions,
-      dryRun: g.dryRun,
-      killSwitch: g.killSwitch,
-      ...(g.llmCostCap != null ? { llmCostCapUsd: Number(g.llmCostCap) } : {}),
-    };
+    // GuardrailConfig (core) usa allowedActions readonly; o contrato zod é mutável — mesmo shape.
+    return toGuardrailConfig(g) as AgentSummary["guardrails"];
   }
 
   /**
@@ -149,7 +136,10 @@ export function createAgentsService(deps: AgentsDeps) {
     if (!row) throw notFound("Falha ao criar o agente.");
     // Semeia a linha de guardrails (rede independente) com os defaults de coluna —
     // o worker lê no run (só morde na escrita, 5a). Sem isso o read cairia no fallback.
-    await deps.db.insert(guardrailConfigs).values({ orgId, agentId: row.id }).onConflictDoNothing();
+    await deps.db
+      .insert(guardrailConfigs)
+      .values({ orgId, agentId: row.id })
+      .onConflictDoNothing({ target: guardrailConfigs.agentId });
     return {
       agentId: row.id,
       archetype: defaults.key,
@@ -164,7 +154,7 @@ export function createAgentsService(deps: AgentsDeps) {
       analysisWindowDays: ANALYSIS_WINDOW_DEFAULT_DAYS,
       paused: false,
       autonomyPolicy: defaults.autonomyPolicy,
-      guardrails: GUARDRAIL_DEFAULTS,
+      guardrails: GUARDRAIL_DEFAULTS as AgentSummary["guardrails"],
     };
   }
 
@@ -243,8 +233,8 @@ export function createAgentsService(deps: AgentsDeps) {
       })
       .where(and(eq(agents.id, summary.agentId), eq(agents.orgId, orgId)));
 
-    // guardrails: linha própria (guardrail_configs). Upsert manual (sem unique em
-    // agent_id): pré-4b agents podem não ter linha → insere; senão atualiza.
+    // guardrails: linha própria (guardrail_configs). Upsert atômico pelo unique(agent_id)
+    // — cobre pré-4b agents (sem linha) sem TOCTOU nem risco de duplicar.
     if (input.guardrails !== undefined) {
       const gRow = {
         maxBudgetChangePct: nextGuardrails.maxBudgetChangePct,
@@ -254,16 +244,10 @@ export function createAgentsService(deps: AgentsDeps) {
         killSwitch: nextGuardrails.killSwitch,
         llmCostCap: nextGuardrails.llmCostCapUsd != null ? String(nextGuardrails.llmCostCapUsd) : null,
       };
-      const [g] = await deps.db
-        .select({ id: guardrailConfigs.id })
-        .from(guardrailConfigs)
-        .where(and(eq(guardrailConfigs.agentId, summary.agentId), eq(guardrailConfigs.orgId, orgId)))
-        .limit(1);
-      if (g) {
-        await deps.db.update(guardrailConfigs).set({ ...gRow, updatedAt: sql`now()` }).where(eq(guardrailConfigs.id, g.id));
-      } else {
-        await deps.db.insert(guardrailConfigs).values({ orgId, agentId: summary.agentId, ...gRow });
-      }
+      await deps.db
+        .insert(guardrailConfigs)
+        .values({ orgId, agentId: summary.agentId, ...gRow })
+        .onConflictDoUpdate({ target: guardrailConfigs.agentId, set: { ...gRow, updatedAt: sql`now()` } });
     }
 
     // cadência mudou → re-sincroniza o schedule (worker é o dono; API só enfileira).
@@ -617,9 +601,6 @@ export function createAgentsService(deps: AgentsDeps) {
     requestUndo,
   };
 }
-
-/** toolKey do registro de undo (espelha o executor). */
-const UNDO_TOOL_KEY = "undo";
 
 /** Janela por-regra ainda não aplicada pelo engine (fast-follow): usa a do agente. */
 const PLAYBOOK_WINDOW_PLACEHOLDER = "7d" as const;

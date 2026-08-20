@@ -94,7 +94,9 @@ export const guardrailConfigs = pgTable(
     llmCostCap: numeric("llm_cost_cap", { precision: 12, scale: 4 }),
     ...timestamps,
   },
-  (t) => [index("guardrail_configs_agent_idx").on(t.agentId)],
+  // 1 linha de guardrail por agente (rede única): sem isso duplicatas fariam a leitura
+  // `.limit(1)` escolher linha stale (poderia ignorar kill-switch/dry-run — §12).
+  (t) => [uniqueIndex("guardrail_configs_agent_uq").on(t.agentId)],
 );
 
 /** Regra determinística `condição → ação` (config do usuário). */

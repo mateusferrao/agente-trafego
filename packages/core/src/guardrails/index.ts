@@ -1,4 +1,5 @@
 import type { Action, ActionTarget, CandidateAction, GuardrailConfig } from "@trafego/shared";
+import { ACTION_PARAM_PCT } from "@trafego/shared";
 
 export interface DroppedAction {
   readonly action: Action;
@@ -95,15 +96,15 @@ export function applyGuardrails(
   return { allowed, dropped };
 }
 
-/** Limita a magnitude de mudança de budget ao teto configurado. */
+/** Limita a magnitude de mudança de budget ao teto configurado. `pct` = magnitude (≥0). */
 function clampBudgetChange(action: Action, maxPct: number): Action {
   if (action.type !== "adjust_budget") return action;
-  const pct = action.params["pct"];
-  if (typeof pct !== "number" || Math.abs(pct) <= maxPct) return action;
-
-  const sign = pct < 0 ? -1 : 1;
+  const pct = action.params[ACTION_PARAM_PCT];
+  if (typeof pct !== "number") return action;
+  const magnitude = Math.abs(pct);
+  if (magnitude <= maxPct) return action;
   return {
     ...action,
-    params: { ...action.params, pct: sign * maxPct, clampedFrom: pct },
+    params: { ...action.params, [ACTION_PARAM_PCT]: maxPct, clampedFrom: pct },
   };
 }

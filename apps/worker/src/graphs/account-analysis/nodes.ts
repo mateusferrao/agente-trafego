@@ -23,6 +23,7 @@ import {
   dropUnsupportedFindings,
   evaluatePlaybook,
   flagUnsupportedFindings,
+  entityKeyOf,
   mergeUnitAnalyses,
   resolveActionConflicts,
   riskForAction,
@@ -30,6 +31,7 @@ import {
   selectCreatives,
   type LastUnit,
 } from "@trafego/core";
+import { ACTION_PARAM_MODE, ACTION_PARAM_PCT } from "@trafego/shared";
 import { funnelFromRawActions } from "@trafego/ads-meta";
 import {
   analysisOutputSchema,
@@ -576,6 +578,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const dryRun = state.guardrailConfig.dryRun;
 
     const results: MutationResult[] = [];
+    let hadFailure = false;
     for (const action of toApply) {
       try {
         const done = await executor.execute({
@@ -583,11 +586,12 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           orgId: state.orgId,
           account: ref,
           action,
-          idempotencyKey: `${state.runId}:${action.id}`,
+          idempotencyKey: idempotencyKeyFor(state.runId, action),
           dryRun,
         });
         results.push(done.result);
       } catch (err) {
+        hadFailure = true;
         // para no rate_limited (não insiste contra o governor); demais = best-effort.
         if (err instanceof AdsPlatformError && err.kind === "rate_limited") {
           logger.warn({ runId: state.runId, err }, "apply:rate-limit — interrompe o lote");
@@ -596,7 +600,8 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
         logger.warn({ runId: state.runId, action: action.type, err }, "apply:ação falhou (best-effort)");
       }
     }
-    return { results };
+    // falha/rate-limit no lote → marca parcial (o site/nota mostram que não fez tudo).
+    return hadFailure ? { results, partial: true } : { results };
   }
 
   /**
@@ -642,7 +647,8 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       });
     }
     // nota honesta do que o agente FEZ neste run (aplicou/simulou) — determinística.
-    const applied = appliedSummary(state.results ?? [], state.guardrailConfig.dryRun);
+    const attempted = state.guardrail?.allowed.length ?? 0;
+    const applied = appliedSummary(state.results?.length ?? 0, attempted, state.guardrailConfig.dryRun);
     if (applied) text = `${text}\n\n${applied}`;
     return { outboundMessage: text, usage };
   }
@@ -887,8 +893,10 @@ function toRecommendationRow(
   const actionType = applicableActionType(rec.actionType);
   const hasValidTarget = rec.targetEntity !== null && knownIds.has(rec.targetEntity.externalId);
   const params = budgetParams(rec);
+  // budget sem pct válido → NÃO vira ação (evitaria daily_budget=NaN na Meta); fica consultiva.
+  const budgetOk = actionType !== "adjust_budget" || ACTION_PARAM_PCT in params;
   const proposedAction: Action | null =
-    actionType && rec.targetEntity && hasValidTarget
+    actionType && rec.targetEntity && hasValidTarget && budgetOk
       ? {
           id: rec.id,
           type: actionType,
@@ -909,13 +917,23 @@ function toRecommendationRow(
   };
 }
 
+/**
+ * Chave idempotente ESTÁVEL (não usa o id gerado pela LLM, que pode colidir/mudar
+ * entre reprocessos). Único por (run, tipo, entidade) — e o conflito já garante ≤1
+ * ação por entidade no run.
+ */
+function idempotencyKeyFor(runId: string, action: Action): string {
+  return `${runId}:${action.type}:${entityKeyOf(action.target)}`;
+}
+
 /** Nota determinística do que o run aplicou/simulou (anexada à msg de cron). */
-function appliedSummary(results: readonly MutationResult[], dryRun: boolean): string | null {
-  if (results.length === 0) return null;
-  const n = results.length;
-  return dryRun
-    ? `🧪 Simulei ${n} ação(ões) (dry-run) — libere a escrita pra aplicar de verdade.`
-    : `✅ Apliquei ${n} ação(ões) automaticamente.`;
+function appliedSummary(applied: number, attempted: number, dryRun: boolean): string | null {
+  if (attempted === 0) return null;
+  const failed = attempted - applied;
+  const head = dryRun
+    ? `🧪 Simulei ${applied} ação(ões) (dry-run) — libere a escrita pra aplicar de verdade.`
+    : `✅ Apliquei ${applied} ação(ões) automaticamente.`;
+  return failed > 0 ? `${head} ${failed} não deu(ram) certo agora — veja no site.` : head;
 }
 
 /**
@@ -925,22 +943,16 @@ function appliedSummary(results: readonly MutationResult[], dryRun: boolean): st
 function buildBudgetByEntity(entities: readonly AdEntity[]): Map<string, boolean> {
   const map = new Map<string, boolean>();
   for (const e of entities) {
-    map.set(`${e.level}:${e.id}`, e.dailyBudget !== undefined || e.lifetimeBudget !== undefined);
+    map.set(entityKeyOf({ level: e.level, id: e.id }), e.dailyBudget !== undefined || e.lifetimeBudget !== undefined);
   }
   return map;
 }
 
-/** Params da ação de budget (direção + %), quando for o caso. */
+/** Params da ação de budget (direção + magnitude), quando for o caso. `pct` sempre ≥0. */
 function budgetParams(rec: AnalysisRecommendation): Record<string, unknown> {
   const dir = budgetDirection(rec.actionType);
-  if (dir && typeof rec.budgetChangePct === "number") return { mode: dir, pct: rec.budgetChangePct };
+  if (dir && typeof rec.budgetChangePct === "number" && Number.isFinite(rec.budgetChangePct)) {
+    return { [ACTION_PARAM_MODE]: dir, [ACTION_PARAM_PCT]: Math.abs(rec.budgetChangePct) };
+  }
   return {};
-}
-
-/**
- * Aresta condicional após o guardrail (write-half, 5a+): precisa de OK humano?
- */
-export function routeApproval(state: AccountAnalysisStateType): "approval" | "apply" {
-  const needs = state.decision?.needApproval.length ?? 0;
-  return needs > 0 ? "approval" : "apply";
 }

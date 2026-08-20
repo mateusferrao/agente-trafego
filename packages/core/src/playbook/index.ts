@@ -6,6 +6,7 @@ import type {
   PlaybookCondition,
   PlaybookRule,
 } from "@trafego/shared";
+import { ACTION_PARAM_MODE, ACTION_PARAM_PCT, BUDGET_MODE_DECREASE, BUDGET_MODE_INCREASE } from "@trafego/shared";
 import { riskForAction } from "../risk/index.js";
 
 /**
@@ -56,7 +57,8 @@ export function evaluatePlaybook(
       const resolution = resolutionByKey?.get(`${row.level}:${row.entityId}`);
       if (!conditionHolds(rule.when, row, resolution)) continue;
 
-      const { type, ...params } = rule.then;
+      const { type } = rule.then;
+      const params = actionParamsFromThen(rule.then);
       actions.push({
         id: `${rule.id}:${row.entityId}`,
         type,
@@ -123,6 +125,25 @@ function compare(a: number, op: PlaybookCondition["op"], b: number): boolean {
     default:
       return false;
   }
+}
+
+/**
+ * `rule.then` (DTO com `budgetChangePct` assinado) → `Action.params` uniforme.
+ * `adjust_budget` vira `{ mode, pct=magnitude }` (mesmo shape do caminho do LLM) —
+ * sem isso o executor/guardrail leriam `pct` errado. PURO.
+ */
+function actionParamsFromThen(then: PlaybookRule["then"]): Record<string, unknown> {
+  const rec = then as unknown as Record<string, unknown>;
+  if (then.type === "adjust_budget") {
+    const raw = Number(rec["budgetChangePct"]);
+    const magnitude = Number.isFinite(raw) ? Math.abs(raw) : 0;
+    return {
+      [ACTION_PARAM_MODE]: raw < 0 ? BUDGET_MODE_DECREASE : BUDGET_MODE_INCREASE,
+      [ACTION_PARAM_PCT]: magnitude,
+    };
+  }
+  const { type: _type, ...rest } = rec;
+  return rest;
 }
 
 function describeReason(cond: PlaybookCondition, ruleId: string): string {

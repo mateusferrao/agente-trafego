@@ -7,17 +7,16 @@
 
 import { eq } from "drizzle-orm";
 import { agentToolCalls, auditLog } from "@trafego/db";
-import type { Action } from "@trafego/shared/types";
+import type { Action, ActionTarget } from "@trafego/shared/types";
 import type { AdAccountRef, MutationResult } from "@trafego/shared/ports";
-import type { OrgId, RunId } from "@trafego/shared";
+import { UNDO_TOOL_KEY, type OrgId, type RunId } from "@trafego/shared";
+import { entityKeyOf } from "@trafego/core";
 import type { WorkerDeps } from "../composition.js";
 
 /** Ator da auditoria de escrita autônoma. */
 const ACTOR_AGENT = "agent";
 /** Dimensão genérica de metering p/ ação aplicada (base do billing por markup). */
 const USAGE_TYPE_ACTION_APPLIED = "action_applied";
-/** toolKey do registro de undo (reaplica o before_state). */
-const UNDO_TOOL_KEY = "undo";
 
 /** `agent_tool_call` carregado p/ o undo (org-scoped na casca que o carregou). */
 export interface RevertToolCall {
@@ -57,7 +56,7 @@ export interface ExecutedAction {
 }
 
 function targetKey(action: Action): string {
-  return `${action.target.level}:${action.target.id}`;
+  return entityKeyOf(action.target);
 }
 
 export function makeMetaToolExecutor(deps: WorkerDeps) {
@@ -103,12 +102,15 @@ export function makeMetaToolExecutor(deps: WorkerDeps) {
       after: result.after as Record<string, unknown>,
     });
 
-    await ports.metering.record({
-      orgId: orgId as OrgId,
-      runId: runId as RunId,
-      type: USAGE_TYPE_ACTION_APPLIED,
-      payload: { actionType: action.type, target: targetKey(action), dryRun, risk: action.riskLevel },
-    });
+    // metering só de ações REAIS (dry-run não é faturável — não infla o markup).
+    if (!dryRun) {
+      await ports.metering.record({
+        orgId: orgId as OrgId,
+        runId: runId as RunId,
+        type: USAGE_TYPE_ACTION_APPLIED,
+        payload: { actionType: action.type, target: targetKey(action), risk: action.riskLevel },
+      });
+    }
 
     logger.info({ runId, action: action.type, dryRun }, "meta-tool:applied");
     return { result, dryRun, replayed: false };
@@ -117,7 +119,7 @@ export function makeMetaToolExecutor(deps: WorkerDeps) {
   /** Undo: reaplica o `before_state` de um tool_call REAL. Idempotente (`${id}:undo`). */
   async function revert(input: RevertInput): Promise<RevertResult> {
     const { orgId, account, toolCall } = input;
-    const args = toolCall.args as { target?: { level: string; id: string }; dryRun?: boolean };
+    const args = toolCall.args as { target?: ActionTarget; dryRun?: boolean };
     if (args?.dryRun) return { reverted: false, reason: "ação simulada — nada a reverter" };
     if (!toolCall.beforeState || !args?.target) return { reverted: false, reason: "sem estado anterior" };
 
@@ -131,7 +133,7 @@ export function makeMetaToolExecutor(deps: WorkerDeps) {
 
     const target = args.target;
     const restore = await ports.ads.restoreEntityState(account, target.id, toolCall.beforeState);
-    const targetLabel = `${target.level}:${target.id}`;
+    const targetLabel = entityKeyOf(target);
 
     await db
       .insert(agentToolCalls)
@@ -149,7 +151,7 @@ export function makeMetaToolExecutor(deps: WorkerDeps) {
     await db.insert(auditLog).values({
       orgId,
       actor: ACTOR_AGENT,
-      action: "meta.undo",
+      action: `meta.${UNDO_TOOL_KEY}`,
       target: targetLabel,
       metadata: { revertOf: toolCall.id },
       before: restore.before as Record<string, unknown>,

@@ -23,9 +23,16 @@ async function seed(): Promise<void> {
 
   const [org] = await db.select().from(orgs).where(eq(orgs.slug, BETA_ORG_SLUG)).limit(1);
 
-  // catálogo de tools de escrita (global, idempotente por key).
+  // catálogo de tools de escrita (global). Upsert por key → re-seed reflete mudanças
+  // de description/riskLevel no tool-catalog.
   for (const tool of AGENT_TOOL_CATALOG) {
-    await db.insert(agentToolDefinitions).values(tool).onConflictDoNothing({ target: agentToolDefinitions.key });
+    await db
+      .insert(agentToolDefinitions)
+      .values(tool)
+      .onConflictDoUpdate({
+        target: agentToolDefinitions.key,
+        set: { description: tool.description, riskLevel: tool.riskLevel, isIdempotent: tool.isIdempotent, requiredPermission: tool.requiredPermission },
+      });
   }
 
   // eslint-disable-next-line no-console -- script de linha de comando

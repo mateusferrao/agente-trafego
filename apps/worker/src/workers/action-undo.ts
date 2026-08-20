@@ -5,7 +5,7 @@
 import { Worker } from "bullmq";
 import { and, eq } from "drizzle-orm";
 import type { Redis } from "ioredis";
-import { agentRuns, agentToolCalls } from "@trafego/db";
+import { agentRuns, agents, agentToolCalls } from "@trafego/db";
 import { ACTION_UNDO_QUEUE, type ActionUndoPayload } from "@trafego/shared";
 import type { WorkerDeps } from "../composition.js";
 import { createAnalysisRepo } from "../modules/analysis/repo.js";
@@ -19,18 +19,22 @@ export function startActionUndoWorker(deps: WorkerDeps, connection: Redis): Work
   return new Worker<ActionUndoPayload>(
     ACTION_UNDO_QUEUE,
     async (job) => {
-      const { orgId, adAccountId, toolCallId } = job.data;
+      const { orgId, toolCallId } = job.data;
 
-      // carrega o tool_call org-scoped (join no run que é org-scoped).
+      // carrega o tool_call org-scoped (join no run) + deriva a CONTA do próprio
+      // tool_call (via agente) — não confia no adAccountId do payload (posse↔conta
+      // fechada no ponto de escrita, não só na API que enfileira).
       const [tc] = await db
         .select({
           id: agentToolCalls.id,
           runId: agentToolCalls.runId,
           beforeState: agentToolCalls.beforeState,
           args: agentToolCalls.args,
+          adAccountId: agents.adAccountId,
         })
         .from(agentToolCalls)
         .innerJoin(agentRuns, eq(agentToolCalls.runId, agentRuns.id))
+        .innerJoin(agents, eq(agentRuns.agentId, agents.id))
         .where(and(eq(agentToolCalls.id, toolCallId), eq(agentRuns.orgId, orgId)))
         .limit(1);
       if (!tc) {
@@ -38,9 +42,9 @@ export function startActionUndoWorker(deps: WorkerDeps, connection: Redis): Work
         return;
       }
 
-      const account = await repo.loadAccount(orgId, adAccountId);
+      const account = await repo.loadAccount(orgId, tc.adAccountId);
       if (!account) {
-        logger.warn({ orgId, adAccountId }, "undo:conta não encontrada");
+        logger.warn({ orgId, adAccountId: tc.adAccountId }, "undo:conta não encontrada");
         return;
       }
       const accessToken = ports.vault.decrypt(account.tokenCripto);

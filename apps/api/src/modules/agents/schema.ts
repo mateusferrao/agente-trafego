@@ -170,6 +170,8 @@ export type MutedCampaignsOutput = z.infer<typeof mutedCampaignsOutput>;
 /** Uma ação APLICADA (ou simulada) no último run — base do "reverter". */
 export const appliedActionOutput = z.object({
   toolCallId: z.string(),
+  // `type` = toolKey cru (um ActionType hoje). `z.string()` de propósito: forward-compat
+  // com futuras tools do catálogo, sem quebrar a listagem se um toolKey novo aparecer.
   type: z.string(),
   targetLevel: z.string(),
   targetId: z.string(),

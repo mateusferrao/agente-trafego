@@ -75,11 +75,11 @@ describe("makeMetaToolExecutor.execute", () => {
     expect(record).toHaveBeenCalledWith(expect.objectContaining({ type: "action_applied", runId: "run1" }));
   });
 
-  it("dry_run: propaga o flag pro mutate e pro metering", async () => {
+  it("dry_run: simula (mutate com dryRun) e NÃO fatura (sem metering)", async () => {
     const { deps, mutate, record } = makeDeps();
     await makeMetaToolExecutor(deps).execute({ ...baseInput, dryRun: true });
     expect(mutate).toHaveBeenCalledWith(baseInput.account, action, { dryRun: true });
-    expect(record).toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ dryRun: true }) }));
+    expect(record).not.toHaveBeenCalled(); // dry-run não é ação faturável
   });
 
   it("idempotente: já registrado → replay, sem re-mutar", async () => {

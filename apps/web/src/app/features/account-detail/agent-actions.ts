@@ -108,14 +108,14 @@ export class AgentActions implements OnInit {
   }
 
   protected revert(a: Applied): void {
-    if (!confirm(UNDO_WARNING)) return;
+    if (!window.confirm(UNDO_WARNING)) return;
     this.reverting.update((s) => new Set(s).add(a.toolCallId));
     this.api.undoAction(this.accountId(), a.toolCallId).subscribe({
       next: () => {
         // undo é assíncrono (fila) — marca revertido otimista + avisa.
         this.applied.update((list) => list.map((x) => (x.toolCallId === a.toolCallId ? { ...x, reverted: true } : x)));
         this.clearReverting(a.toolCallId);
-        toast.success('revertendo — a ação volta ao estado anterior');
+        toast.success('Revertendo — a ação volta ao estado anterior');
       },
       error: () => this.clearReverting(a.toolCallId),
     });

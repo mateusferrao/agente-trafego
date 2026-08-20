@@ -32,20 +32,21 @@ const LEVELS: readonly { value: Level; label: string }[] = [
             configura e guarda; agir de verdade vem depois.
           </p>
         </div>
-        <button appButton size="sm" [disabled]="saving() || !dirty()" (click)="save()">
+        <button appButton size="sm" [disabled]="saving() || !dirty() || !loaded()" (click)="save()">
           {{ saving() ? 'Salvando…' : 'Salvar' }}
         </button>
       </div>
 
       @for (src of SOURCES; track src.key) {
         <div class="flex flex-col gap-2">
-          <span class="text-sm font-medium text-ink">{{ src.label }}</span>
+          <span [id]="'autonomy-' + src.key" class="text-sm font-medium text-ink">{{ src.label }}</span>
           <span class="text-xs text-muted">{{ src.hint }}</span>
           <div
             appToggleGroup
             ngpToggleGroupType="single"
             layout="segmented"
             [columns]="4"
+            [attr.aria-labelledby]="'autonomy-' + src.key"
             [ngpToggleGroupValue]="[level(src.key)]"
             (ngpToggleGroupValueChange)="setLevel(src.key, $event)"
           >
@@ -83,13 +84,20 @@ export class AgentAutonomy implements OnInit {
   }
 
   protected readonly saving = signal(false);
+  protected readonly loaded = signal(false);
   private readonly sig = computed(() => `${this.playbook()}|${this.llm()}`);
   protected readonly dirty = computed(() => this.sig() !== this.baseline());
 
+  constructor() {
+    // baseline = estado inicial → dirty começa false (Save só habilita após mudança).
+    this.baseline.set(this.sig());
+  }
+
   ngOnInit(): void {
-    this.api.getAgent(this.accountId()).subscribe({
+    // secundária (a página-mãe já busca o agente): silenciosa p/ não duplicar toast.
+    this.api.getAgent(this.accountId(), { silent: true }).subscribe({
       next: (a) => this.seed(a),
-      error: () => {},
+      error: () => {}, // load falhou → loaded fica false → Save desabilitado (não sobrescreve)
     });
   }
 
@@ -97,6 +105,7 @@ export class AgentAutonomy implements OnInit {
     this.playbook.set(a.autonomyPolicy.bySource.playbook as Level);
     this.llm.set(a.autonomyPolicy.bySource.llm as Level);
     this.baseline.set(`${a.autonomyPolicy.bySource.playbook}|${a.autonomyPolicy.bySource.llm}`);
+    this.loaded.set(true);
   }
 
   protected save(): void {
@@ -108,7 +117,7 @@ export class AgentAutonomy implements OnInit {
         next: (a) => {
           this.seed(a);
           this.saving.set(false);
-          toast.success('autonomia salva');
+          toast.success('Autonomia salva');
         },
         error: () => this.saving.set(false),
       });

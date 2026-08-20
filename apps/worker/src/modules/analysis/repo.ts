@@ -5,8 +5,9 @@
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import type { Database } from "@trafego/db/client";
 import { adAccounts, agentMemory, agentMutedEntities, agentRunSteps, agentRuns, agentToolCalls, agents, conversionLabels, guardrailConfigs, platformConnections, playbookRules, recommendations } from "@trafego/db";
-import type { Action, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, PlaybookRule, RiskLevel } from "@trafego/shared";
-import { unseedIdentity } from "@trafego/core";
+import type { Action, ActionTarget, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, PlaybookRule, RiskLevel } from "@trafego/shared";
+import { GUARDRAIL_DEFAULTS, toGuardrailConfig, UNDO_TOOL_KEY } from "@trafego/shared";
+import { entityKeyOf, unseedIdentity } from "@trafego/core";
 import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
 
 export interface AgentContext {
@@ -98,35 +99,6 @@ export interface AnalysisRepo {
   loadDailyToolContext(agentId: string): Promise<DailyToolContext>;
   recordStep(input: StepInput): Promise<void>;
   closeRun(orgId: string, runId: string, input: CloseRunInput): Promise<void>;
-}
-
-/** Defaults conservadores dos guardrails (espelham os defaults de coluna do schema). */
-const GUARDRAIL_DEFAULTS: GuardrailConfig = {
-  maxBudgetChangePct: 20,
-  maxEntitiesPerDay: 3,
-  allowedActions: ["pause_entity"],
-  dryRun: true,
-  killSwitch: false,
-};
-
-/** Linha `guardrail_configs` → `GuardrailConfig` (domínio). Ausente → defaults. */
-function toGuardrailConfig(row: {
-  maxBudgetChangePct: number;
-  maxEntitiesPerDay: number;
-  allowedActions: GuardrailConfig["allowedActions"];
-  dryRun: boolean;
-  killSwitch: boolean;
-  llmCostCap: string | null;
-} | undefined): GuardrailConfig {
-  if (!row) return GUARDRAIL_DEFAULTS;
-  return {
-    maxBudgetChangePct: row.maxBudgetChangePct,
-    maxEntitiesPerDay: row.maxEntitiesPerDay,
-    allowedActions: row.allowedActions,
-    dryRun: row.dryRun,
-    killSwitch: row.killSwitch,
-    ...(row.llmCostCap !== null ? { llmCostCapUsd: Number(row.llmCostCap) } : {}),
-  };
 }
 
 export function createAnalysisRepo(db: Database): AnalysisRepo {
@@ -382,9 +354,11 @@ export async function loadDailyToolContext(
   const touchedToday = new Set<string>();
   const budgetChangedToday = new Set<string>();
   for (const r of rows) {
-    const args = r.args as { target?: { level: string; id: string }; dryRun?: boolean };
-    if (args?.dryRun || !args?.target) continue; // simulado não conta
-    const key = `${args.target.level}:${args.target.id}`;
+    // simulado não conta; undo (reverter) tb não consome vaga do cap diário.
+    if (r.toolKey === UNDO_TOOL_KEY) continue;
+    const args = r.args as { target?: ActionTarget; dryRun?: boolean };
+    if (args?.dryRun || !args?.target) continue;
+    const key = entityKeyOf(args.target);
     touchedToday.add(key);
     if (r.toolKey === BUDGET_TOOL_KEY) budgetChangedToday.add(key);
   }

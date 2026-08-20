@@ -39,9 +39,14 @@ export interface ListRunsOptions {
  */
 @Injectable({ providedIn: 'root' })
 export class AnalysisApiService extends BaseApiService {
-  /** `GET /api/accounts/:id/agent` — agente da conta (cria default se não existir). */
-  getAgent(accountId: string): Observable<AgentSummary> {
-    return this.get<AgentSummary>(['/accounts', accountId, 'agent']);
+  /** `GET /api/accounts/:id/agent` — agente da conta (cria default se não existir).
+   *  `silent` p/ chamadas secundárias (seções que já têm o dado na página-mãe) não
+   *  duplicarem toast de erro. */
+  getAgent(accountId: string, opts?: { silent?: boolean }): Observable<AgentSummary> {
+    return this.get<AgentSummary>(
+      ['/accounts', accountId, 'agent'],
+      opts?.silent ? { context: silentApiContext() } : undefined,
+    );
   }
 
   /** `PUT /api/accounts/:id/agent/config` — salva meta+conversão + personalização por texto. */

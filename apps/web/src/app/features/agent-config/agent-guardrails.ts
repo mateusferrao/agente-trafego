@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, type OnInit, inject, input, signal, computed } from '@angular/core';
+import { ChangeDetectionStrategy, Component, type OnInit, type WritableSignal, inject, input, signal, computed } from '@angular/core';
 import { toast } from 'ngx-sonner';
 import { UiButton, UiInput, UiSwitch, UiSwitchThumb, UiCheckbox } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
@@ -28,7 +28,7 @@ const ACTIONS: readonly ActionType[] = ['pause_entity', 'resume_entity', 'adjust
             A rede que segura o agente mesmo agindo sozinho. Independente da autonomia.
           </p>
         </div>
-        <button appButton size="sm" [disabled]="saving() || !dirty()" (click)="save()">
+        <button appButton size="sm" [disabled]="saving() || !dirty() || !loaded()" (click)="save()">
           {{ saving() ? 'Salvando…' : 'Salvar' }}
         </button>
       </div>
@@ -57,19 +57,19 @@ const ACTIONS: readonly ActionType[] = ['pause_entity', 'resume_entity', 'adjust
         <label class="flex flex-col gap-1">
           <span class="text-sm font-medium text-ink">Mudança máx. de orçamento</span>
           <span class="flex items-center gap-1">
-            <input appInput type="number" inputmode="numeric" class="w-20" [value]="maxPct()" (input)="onNum(maxPct, $event)" />
+            <input appInput type="number" inputmode="numeric" min="0" max="100" class="w-20" [value]="maxPct()" (input)="onNum(maxPct, $event)" />
             <span class="text-xs text-muted">% por vez</span>
           </span>
         </label>
         <label class="flex flex-col gap-1">
           <span class="text-sm font-medium text-ink">Máx. de entidades por dia</span>
-          <input appInput type="number" inputmode="numeric" class="w-20" [value]="maxEntities()" (input)="onNum(maxEntities, $event)" />
+          <input appInput type="number" inputmode="numeric" min="0" class="w-20" [value]="maxEntities()" (input)="onNum(maxEntities, $event)" />
         </label>
         <label class="flex flex-col gap-1">
           <span class="text-sm font-medium text-ink">Teto de custo de IA</span>
           <span class="flex items-center gap-1">
             <span class="text-xs text-muted">US$</span>
-            <input appInput type="number" inputmode="decimal" class="w-24" placeholder="sem teto" [value]="llmCap()" (input)="onNum(llmCap, $event)" />
+            <input appInput type="number" inputmode="decimal" min="0" class="w-24" placeholder="sem teto" [value]="llmCap()" (input)="onNum(llmCap, $event)" />
           </span>
         </label>
       </div>
@@ -109,13 +109,19 @@ export class AgentGuardrails implements OnInit {
   private readonly allowed = signal<ReadonlySet<ActionType>>(new Set(['pause_entity']));
 
   protected readonly saving = signal(false);
+  protected readonly loaded = signal(false);
   private readonly baseline = signal('');
   private readonly sig = computed(
     () => `${this.dryRun()}|${this.killSwitch()}|${this.maxPct()}|${this.maxEntities()}|${this.llmCap()}|${[...this.allowed()].sort().join(',')}`,
   );
   protected readonly dirty = computed(() => this.sig() !== this.baseline());
 
-  protected onNum(sig: ReturnType<typeof signal<string>>, e: Event): void {
+  constructor() {
+    // baseline = estado inicial → dirty começa false (Save só habilita após mudança).
+    this.baseline.set(this.sig());
+  }
+
+  protected onNum(sig: WritableSignal<string>, e: Event): void {
     sig.set((e.target as HTMLInputElement).value);
   }
   protected isAllowed(a: ActionType): boolean {
@@ -129,7 +135,8 @@ export class AgentGuardrails implements OnInit {
   }
 
   ngOnInit(): void {
-    this.api.getAgent(this.accountId()).subscribe({ next: (a) => this.seed(a), error: () => {} });
+    // secundária (a página-mãe já busca o agente): silenciosa p/ não duplicar toast.
+    this.api.getAgent(this.accountId(), { silent: true }).subscribe({ next: (a) => this.seed(a), error: () => {} });
   }
 
   private seed(a: AgentSummary): void {
@@ -141,6 +148,7 @@ export class AgentGuardrails implements OnInit {
     this.llmCap.set(g.llmCostCapUsd != null ? String(g.llmCostCapUsd) : '');
     this.allowed.set(new Set(g.allowedActions as ActionType[]));
     this.baseline.set(this.sig());
+    this.loaded.set(true);
   }
 
   private parseInt0(s: string, fallback: number): number {
@@ -161,14 +169,14 @@ export class AgentGuardrails implements OnInit {
           allowedActions: [...this.allowed()],
           dryRun: this.dryRun(),
           killSwitch: this.killSwitch(),
-          ...(cap.length > 0 && Number.isFinite(capNum) ? { llmCostCapUsd: capNum } : {}),
+          ...(cap.length > 0 && Number.isFinite(capNum) ? { llmCostCapUsd: Math.max(0, capNum) } : {}),
         },
       })
       .subscribe({
         next: (a) => {
           this.seed(a);
           this.saving.set(false);
-          toast.success('limites salvos');
+          toast.success('Limites salvos');
         },
         error: () => this.saving.set(false),
       });
