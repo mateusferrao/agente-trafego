@@ -1,6 +1,7 @@
 export * from "./playbook/index.js";
 export * from "./guardrails/index.js";
 export * from "./decision/index.js";
+export * from "./risk/index.js";
 export * from "./brief/index.js";
 export * from "./sync/index.js";
 export * from "./conversion/index.js";

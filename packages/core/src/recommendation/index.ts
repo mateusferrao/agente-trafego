@@ -4,21 +4,15 @@ import type {
   RecommendationApplicability,
   RiskLevel,
 } from "@trafego/shared";
+import { riskForAction } from "../risk/index.js";
 
 /**
- * Risco determinístico por tipo de ação — base do `riskLevel` de recommendations
- * (e das actions no caminho de escrita). Função PURA. Mudou o leque de ações?
- * o `Record` exaustivo força atualizar o mapa (sem default silencioso).
+ * Risco por tipo de ação (nível-tipo, sem params) — delega à fonte única
+ * `riskForAction`. Sem direção de budget → `adjust_budget` cai no `medium`
+ * conservador; o caminho de escrita passa os params p/ refinar (decrease = low).
  */
-const RISK_BY_ACTION_TYPE: Readonly<Record<ActionType, RiskLevel>> = {
-  pause_entity: "low", // pausar interrompe gasto, reversível
-  resume_entity: "medium", // religar volta a gastar
-  adjust_budget: "medium", // altera gasto (o guardrail limita o %)
-  set_status: "medium",
-};
-
 export function riskLevelForActionType(type: ActionType): RiskLevel {
-  return RISK_BY_ACTION_TYPE[type];
+  return riskForAction(type);
 }
 
 /**

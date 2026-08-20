@@ -25,7 +25,7 @@ import {
   evaluatePlaybook,
   flagUnsupportedFindings,
   mergeUnitAnalyses,
-  riskLevelForActionType,
+  riskForAction,
   selectCampaignsToAnalyze,
   selectCreatives,
   type LastUnit,
@@ -842,15 +842,16 @@ function toRecommendationRow(
 ): RecommendationRow {
   const actionType = applicableActionType(rec.actionType);
   const hasValidTarget = rec.targetEntity !== null && knownIds.has(rec.targetEntity.externalId);
+  const params = budgetParams(rec);
   const proposedAction: Action | null =
     actionType && rec.targetEntity && hasValidTarget
       ? {
           id: rec.id,
           type: actionType,
           target: { level: rec.targetEntity.level, id: rec.targetEntity.externalId },
-          params: budgetParams(rec),
+          params,
           source: "llm",
-          riskLevel: riskLevelForActionType(actionType),
+          riskLevel: riskForAction(actionType, params),
           reason: rec.rationale,
         }
       : null;
@@ -860,7 +861,7 @@ function toRecommendationRow(
     title: rec.title,
     rationale: rec.rationale,
     proposedAction,
-    riskLevel: actionType ? riskLevelForActionType(actionType) : "low",
+    riskLevel: actionType ? riskForAction(actionType, params) : "low",
   };
 }
 

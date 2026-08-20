@@ -1,13 +1,12 @@
 import type {
-  ActionType,
   CandidateAction,
   ConversionBasis,
   InsightMetrics,
   InsightRow,
   PlaybookCondition,
   PlaybookRule,
-  RiskLevel,
 } from "@trafego/shared";
+import { riskForAction } from "../risk/index.js";
 
 /**
  * Resolução da conversão de NEGÓCIO do agente por entidade (basis + métricas de
@@ -64,7 +63,7 @@ export function evaluatePlaybook(
         target: { level: row.level, id: row.entityId },
         params,
         source: "playbook",
-        riskLevel: riskForAction(type),
+        riskLevel: riskForAction(type, params),
         reason: describeReason(rule.when, rule.id),
         ruleId: rule.id,
       });
@@ -123,21 +122,6 @@ function compare(a: number, op: PlaybookCondition["op"], b: number): boolean {
       return a === b;
     default:
       return false;
-  }
-}
-
-/** Risco base por tipo de ação (defaults conservadores). */
-function riskForAction(type: ActionType): RiskLevel {
-  switch (type) {
-    case "pause_entity":
-    case "resume_entity":
-      return "low";
-    case "set_status":
-      return "medium";
-    case "adjust_budget":
-      return "medium";
-    default:
-      return "medium";
   }
 }
 
