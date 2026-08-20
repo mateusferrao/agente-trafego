@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { cadenceSpecSchema, conversionGoalSchema } from "@trafego/shared/schemas";
+import {
+  actionType,
+  autonomyPolicySchema,
+  cadenceSpecSchema,
+  conversionGoalSchema,
+  guardrailConfigSchema,
+} from "@trafego/shared/schemas";
 import { ANALYSIS_WINDOW_MIN_DAYS, ANALYSIS_WINDOW_MAX_DAYS } from "@trafego/shared";
 
 // Fatia 4: meta + conversão + personalização + janela (corte 1) · identidade/voz +
@@ -44,6 +50,10 @@ export const agentConfigInput = z.object({
     .min(ANALYSIS_WINDOW_MIN_DAYS)
     .max(ANALYSIS_WINDOW_MAX_DAYS)
     .optional(),
+  /** autonomia por origem (playbook×llm) — só morde na escrita (5a). */
+  autonomyPolicy: autonomyPolicySchema.optional(),
+  /** guardrails (rede independente) — blast radius, cap, kill-switch, dry-run (5a). */
+  guardrails: guardrailConfigSchema.optional(),
 });
 export type AgentConfigInput = z.infer<typeof agentConfigInput>;
 
@@ -67,6 +77,10 @@ export const agentSummary = z.object({
   analysisWindowDays: z.number(),
   /** análises automáticas pausadas pelo dono (freio self-service). */
   paused: z.boolean(),
+  /** autonomia por origem (5a) — semeada pelo arquétipo. */
+  autonomyPolicy: autonomyPolicySchema,
+  /** guardrails (5a) — semeados na criação do agente. */
+  guardrails: guardrailConfigSchema,
 });
 export type AgentSummary = z.infer<typeof agentSummary>;
 
@@ -151,3 +165,29 @@ export type MuteCampaignInput = z.infer<typeof muteCampaignInput>;
 /** Lista de ids de campanhas silenciadas de uma conta. */
 export const mutedCampaignsOutput = z.object({ campaignIds: z.array(z.string()) });
 export type MutedCampaignsOutput = z.infer<typeof mutedCampaignsOutput>;
+
+// ─── Ações aplicadas/sugeridas do último run (mini-surface + undo, 5a) ────
+/** Uma ação APLICADA (ou simulada) no último run — base do "reverter". */
+export const appliedActionOutput = z.object({
+  toolCallId: z.string(),
+  type: z.string(),
+  targetLevel: z.string(),
+  targetId: z.string(),
+  /** dry-run (ensaio) — não escreveu de verdade. */
+  simulated: z.boolean(),
+  /** já foi revertida (existe o undo). */
+  reverted: z.boolean(),
+});
+/** Uma ação SUGERIDA (precisa de OK — não executou no auto-apply). */
+export const suggestedActionOutput = z.object({
+  type: actionType,
+  targetLevel: z.string(),
+  targetId: z.string(),
+  reason: z.string(),
+});
+export const lastRunActionsOutput = z.object({
+  runId: z.string().nullable(),
+  applied: z.array(appliedActionOutput),
+  suggested: z.array(suggestedActionOutput),
+});
+export type LastRunActionsOutput = z.infer<typeof lastRunActionsOutput>;

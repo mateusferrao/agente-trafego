@@ -29,6 +29,7 @@ import {
   agentGoalsInput,
   agentSummary,
   availableConversionsOutput,
+  lastRunActionsOutput,
   muteCampaignInput,
   mutedCampaignsOutput,
   okOutput,
@@ -96,6 +97,7 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const PlaybookRuleInput = registry.register("PlaybookRuleInput", playbookRuleInput);
   const PlaybookRuleOutput = registry.register("PlaybookRuleOutput", playbookRuleOutput);
   const PlaybookRulesOutput = registry.register("PlaybookRulesOutput", playbookRulesOutput);
+  const LastRunActionsOutput = registry.register("LastRunActionsOutput", lastRunActionsOutput);
   const OkOutput = registry.register("OkOutput", okOutput);
   const ReseedArchetypeInput = registry.register("ReseedArchetypeInput", reseedArchetypeInput);
   const ChannelStateOutput = registry.register("ChannelStateOutput", channelStateOutput);
@@ -417,6 +419,23 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     responses: {
       200: jsonRes("regra removida", OkOutput),
       404: { description: "regra não encontrada" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts/{id}/agent/actions/last-run",
+    tags: ["agents"],
+    request: { params: accountParams },
+    responses: { 200: jsonRes("ações aplicadas + sugeridas do último run", LastRunActionsOutput) },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/accounts/{id}/agent/actions/{toolCallId}/undo",
+    tags: ["agents"],
+    request: { params: z.object({ id: z.string(), toolCallId: z.string() }) },
+    responses: {
+      200: jsonRes("undo enfileirado", OkOutput),
+      404: { description: "ação não encontrada" },
     },
   });
   registry.registerPath({

@@ -92,4 +92,16 @@ export const agentsRoutes: FastifyPluginAsync = async (app) => {
     await service.deletePlaybookRule(orgIdOf(request), id, ruleId);
     return { ok: true };
   });
+
+  // ─── Ações aplicadas/sugeridas do último run + undo (mini-surface, 5a) ──
+  app.get("/accounts/:id/agent/actions/last-run", guard, async (request) => {
+    const { id } = request.params as { id: string };
+    return service.listLastRunActions(orgIdOf(request), id);
+  });
+
+  app.post("/accounts/:id/agent/actions/:toolCallId/undo", guard, async (request) => {
+    const { id, toolCallId } = request.params as { id: string; toolCallId: string };
+    await service.requestUndo(orgIdOf(request), id, toolCallId);
+    return { ok: true };
+  });
 };

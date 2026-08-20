@@ -763,6 +763,84 @@
           },
           "paused": {
             "type": "boolean"
+          },
+          "autonomyPolicy": {
+            "type": "object",
+            "properties": {
+              "bySource": {
+                "type": "object",
+                "properties": {
+                  "playbook": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  },
+                  "llm": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  }
+                },
+                "required": [
+                  "playbook",
+                  "llm"
+                ]
+              }
+            },
+            "required": [
+              "bySource"
+            ]
+          },
+          "guardrails": {
+            "type": "object",
+            "properties": {
+              "maxBudgetChangePct": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "maxEntitiesPerDay": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "allowedActions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "pause_entity",
+                    "resume_entity",
+                    "adjust_budget",
+                    "set_status"
+                  ]
+                }
+              },
+              "dryRun": {
+                "type": "boolean"
+              },
+              "killSwitch": {
+                "type": "boolean"
+              },
+              "llmCostCapUsd": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "maxBudgetChangePct",
+              "maxEntitiesPerDay",
+              "allowedActions",
+              "dryRun",
+              "killSwitch"
+            ]
           }
         },
         "required": [
@@ -777,7 +855,9 @@
           "cadence",
           "methodologyPreview",
           "analysisWindowDays",
-          "paused"
+          "paused",
+          "autonomyPolicy",
+          "guardrails"
         ]
       },
       "AgentGoalsInput": {
@@ -981,6 +1061,84 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 30
+          },
+          "autonomyPolicy": {
+            "type": "object",
+            "properties": {
+              "bySource": {
+                "type": "object",
+                "properties": {
+                  "playbook": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  },
+                  "llm": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  }
+                },
+                "required": [
+                  "playbook",
+                  "llm"
+                ]
+              }
+            },
+            "required": [
+              "bySource"
+            ]
+          },
+          "guardrails": {
+            "type": "object",
+            "properties": {
+              "maxBudgetChangePct": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "maxEntitiesPerDay": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "allowedActions": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "pause_entity",
+                    "resume_entity",
+                    "adjust_budget",
+                    "set_status"
+                  ]
+                }
+              },
+              "dryRun": {
+                "type": "boolean"
+              },
+              "killSwitch": {
+                "type": "boolean"
+              },
+              "llmCostCapUsd": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "maxBudgetChangePct",
+              "maxEntitiesPerDay",
+              "allowedActions",
+              "dryRun",
+              "killSwitch"
+            ]
           }
         }
       },
@@ -2263,6 +2421,88 @@
         },
         "required": [
           "rules"
+        ]
+      },
+      "LastRunActionsOutput": {
+        "type": "object",
+        "properties": {
+          "runId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "applied": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "toolCallId": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string"
+                },
+                "targetLevel": {
+                  "type": "string"
+                },
+                "targetId": {
+                  "type": "string"
+                },
+                "simulated": {
+                  "type": "boolean"
+                },
+                "reverted": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "toolCallId",
+                "type",
+                "targetLevel",
+                "targetId",
+                "simulated",
+                "reverted"
+              ]
+            }
+          },
+          "suggested": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "pause_entity",
+                    "resume_entity",
+                    "adjust_budget",
+                    "set_status"
+                  ]
+                },
+                "targetLevel": {
+                  "type": "string"
+                },
+                "targetId": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "targetLevel",
+                "targetId",
+                "reason"
+              ]
+            }
+          }
+        },
+        "required": [
+          "runId",
+          "applied",
+          "suggested"
         ]
       },
       "OkOutput": {
@@ -3601,6 +3841,75 @@
           },
           "404": {
             "description": "regra não encontrada"
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/agent/actions/last-run": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ações aplicadas + sugeridas do último run",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LastRunActionsOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/agent/actions/{toolCallId}/undo": {
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "toolCallId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "undo enfileirado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkOutput"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "ação não encontrada"
           }
         }
       }

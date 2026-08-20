@@ -3,6 +3,8 @@ import {
   adAccounts,
   agents,
   agentMutedEntities,
+  agentRuns,
+  agentToolCalls,
   conversionLabels,
   guardrailConfigs,
   insightsSnapshots,
@@ -10,8 +12,13 @@ import {
   type Database,
 } from "@trafego/db";
 import { archetypeDefaults, composeMethodologyPrompt, unseedIdentity, DEFAULT_ARCHETYPE_KEY } from "@trafego/core";
-import { SCHEDULE_RESYNC_QUEUE, SCHEDULE_RESYNC_JOB } from "@trafego/shared";
-import type { AgentGoals, OrgId, StoredInsightMetrics } from "@trafego/shared/types";
+import {
+  ACTION_UNDO_QUEUE,
+  ACTION_UNDO_JOB,
+  SCHEDULE_RESYNC_QUEUE,
+  SCHEDULE_RESYNC_JOB,
+} from "@trafego/shared";
+import type { Action, AgentGoals, OrgId, StoredInsightMetrics } from "@trafego/shared/types";
 import type { SchedulerPort } from "@trafego/shared/ports";
 import {
   ANALYSIS_WINDOW_DEFAULT_DAYS,
@@ -24,6 +31,7 @@ import {
   type AgentGoalsInput,
   type AgentSummary,
   type AvailableConversionsOutput,
+  type LastRunActionsOutput,
   type PlaybookRuleInput,
   type PlaybookRuleOutput,
 } from "./schema.js";
@@ -44,7 +52,34 @@ export interface AgentsDeps {
  * criação lazy pelo arquétipo `conservador`) e edita a META (target CPA/ROAS).
  * A superfície completa de config = Fatia 4.
  */
+/** Defaults de guardrail (espelham as colunas do schema) — usado antes do 1º save. */
+const GUARDRAIL_DEFAULTS: AgentSummary["guardrails"] = {
+  maxBudgetChangePct: 20,
+  maxEntitiesPerDay: 3,
+  allowedActions: ["pause_entity"],
+  dryRun: true,
+  killSwitch: false,
+};
+
 export function createAgentsService(deps: AgentsDeps) {
+  /** Lê a linha `guardrail_configs` → shape do contrato (ausente → defaults). */
+  async function loadGuardrails(orgId: OrgId, agentId: string): Promise<AgentSummary["guardrails"]> {
+    const [g] = await deps.db
+      .select()
+      .from(guardrailConfigs)
+      .where(and(eq(guardrailConfigs.agentId, agentId), eq(guardrailConfigs.orgId, orgId)))
+      .limit(1);
+    if (!g) return GUARDRAIL_DEFAULTS;
+    return {
+      maxBudgetChangePct: g.maxBudgetChangePct,
+      maxEntitiesPerDay: g.maxEntitiesPerDay,
+      allowedActions: g.allowedActions,
+      dryRun: g.dryRun,
+      killSwitch: g.killSwitch,
+      ...(g.llmCostCap != null ? { llmCostCapUsd: Number(g.llmCostCap) } : {}),
+    };
+  }
+
   /**
    * Garante 1 agente p/ a conta (org-scoped). Não existe → cria com os defaults
    * do arquétipo default (fonte única em @trafego/core). Idempotente.
@@ -69,6 +104,7 @@ export function createAgentsService(deps: AgentsDeps) {
         systemPrompt: agents.systemPrompt,
         cadence: agents.cadence,
         modelConfig: agents.modelConfig,
+        autonomyPolicy: agents.autonomyPolicy,
         status: agents.status,
       })
       .from(agents)
@@ -90,6 +126,8 @@ export function createAgentsService(deps: AgentsDeps) {
         methodologyPreview: methodologyFor(existing.archetype),
         analysisWindowDays: windowFromModelConfig(existing.modelConfig),
         paused: existing.status === "paused",
+        autonomyPolicy: existing.autonomyPolicy,
+        guardrails: await loadGuardrails(orgId, existing.id),
       };
     }
 
@@ -125,6 +163,8 @@ export function createAgentsService(deps: AgentsDeps) {
       methodologyPreview: methodologyFor(defaults.key),
       analysisWindowDays: ANALYSIS_WINDOW_DEFAULT_DAYS,
       paused: false,
+      autonomyPolicy: defaults.autonomyPolicy,
+      guardrails: GUARDRAIL_DEFAULTS,
     };
   }
 
@@ -169,6 +209,10 @@ export function createAgentsService(deps: AgentsDeps) {
     const currentModelConfig = row?.modelConfig ?? {};
     const nextWindow = input.analysisWindowDays ?? summary.analysisWindowDays;
     const nextModelConfig = { ...currentModelConfig, windowDays: nextWindow };
+    // autonomia/guardrails (5a): só mordem na ESCRITA — não bumpam config_changed_at
+    // (não alteram o brief/análise). Persistidos direto.
+    const nextAutonomy = input.autonomyPolicy ?? summary.autonomyPolicy;
+    const nextGuardrails = input.guardrails ?? summary.guardrails;
 
     // só força 1 deep (bumpa config_changed_at) quando um campo relevante à ANÁLISE
     // mudou (goals/textos/identidade/janela) — evita deep em save idêntico (idempotência).
@@ -193,10 +237,34 @@ export function createAgentsService(deps: AgentsDeps) {
         systemPrompt: nextSystemPrompt,
         cadence: nextCadence,
         modelConfig: nextModelConfig,
+        autonomyPolicy: nextAutonomy,
         ...(runRelevantChanged ? { configChangedAt: sql`now()` } : {}),
         updatedAt: sql`now()`,
       })
       .where(and(eq(agents.id, summary.agentId), eq(agents.orgId, orgId)));
+
+    // guardrails: linha própria (guardrail_configs). Upsert manual (sem unique em
+    // agent_id): pré-4b agents podem não ter linha → insere; senão atualiza.
+    if (input.guardrails !== undefined) {
+      const gRow = {
+        maxBudgetChangePct: nextGuardrails.maxBudgetChangePct,
+        maxEntitiesPerDay: nextGuardrails.maxEntitiesPerDay,
+        allowedActions: nextGuardrails.allowedActions,
+        dryRun: nextGuardrails.dryRun,
+        killSwitch: nextGuardrails.killSwitch,
+        llmCostCap: nextGuardrails.llmCostCapUsd != null ? String(nextGuardrails.llmCostCapUsd) : null,
+      };
+      const [g] = await deps.db
+        .select({ id: guardrailConfigs.id })
+        .from(guardrailConfigs)
+        .where(and(eq(guardrailConfigs.agentId, summary.agentId), eq(guardrailConfigs.orgId, orgId)))
+        .limit(1);
+      if (g) {
+        await deps.db.update(guardrailConfigs).set({ ...gRow, updatedAt: sql`now()` }).where(eq(guardrailConfigs.id, g.id));
+      } else {
+        await deps.db.insert(guardrailConfigs).values({ orgId, agentId: summary.agentId, ...gRow });
+      }
+    }
 
     // cadência mudou → re-sincroniza o schedule (worker é o dono; API só enfileira).
     // Sem idempotencyKey: cada job lê o DB mais recente e o schedule é idempotente
@@ -219,6 +287,8 @@ export function createAgentsService(deps: AgentsDeps) {
       systemPrompt: nextSystemPrompt,
       cadence: nextCadence,
       analysisWindowDays: nextWindow,
+      autonomyPolicy: nextAutonomy,
+      guardrails: nextGuardrails,
     };
   }
 
@@ -254,6 +324,7 @@ export function createAgentsService(deps: AgentsDeps) {
       persona: null,
       tone: null,
       systemPrompt: null,
+      autonomyPolicy: defaults.autonomyPolicy,
       methodologyPreview: methodologyFor(defaults.key),
     };
   }
@@ -469,6 +540,66 @@ export function createAgentsService(deps: AgentsDeps) {
     await bumpConfigChanged(orgId, summary.agentId);
   }
 
+  // ─── Ações do último run + undo (mini-surface, 5a) ──────────────────────
+  /** Ações aplicadas (via agent_tool_calls) + sugeridas (metrics_snapshot) do último run. */
+  async function listLastRunActions(orgId: OrgId, accountId: string): Promise<LastRunActionsOutput> {
+    const summary = await getOrCreateForAccount(orgId, accountId);
+    const [run] = await deps.db
+      .select({ id: agentRuns.id, metricsSnapshot: agentRuns.metricsSnapshot })
+      .from(agentRuns)
+      .where(and(eq(agentRuns.agentId, summary.agentId), eq(agentRuns.orgId, orgId)))
+      .orderBy(desc(agentRuns.createdAt))
+      .limit(1);
+    if (!run) return { runId: null, applied: [], suggested: [] };
+
+    const calls = await deps.db
+      .select({ id: agentToolCalls.id, toolKey: agentToolCalls.toolKey, args: agentToolCalls.args, idempotencyKey: agentToolCalls.idempotencyKey })
+      .from(agentToolCalls)
+      .where(eq(agentToolCalls.runId, run.id));
+    const undoneKeys = new Set(calls.map((c) => c.idempotencyKey));
+    const applied = calls
+      .filter((c) => c.toolKey !== UNDO_TOOL_KEY)
+      .map((c) => {
+        const args = c.args as { target?: { level: string; id: string }; dryRun?: boolean };
+        return {
+          toolCallId: c.id,
+          type: c.toolKey,
+          targetLevel: args.target?.level ?? "",
+          targetId: args.target?.id ?? "",
+          simulated: args.dryRun === true,
+          reverted: undoneKeys.has(`${c.id}:${UNDO_TOOL_KEY}`),
+        };
+      });
+
+    const snapshot = run.metricsSnapshot as { suggestedActions?: Action[] } | null;
+    const suggested = (snapshot?.suggestedActions ?? []).map((a) => ({
+      type: a.type,
+      targetLevel: a.target.level,
+      targetId: a.target.id,
+      reason: a.reason,
+    }));
+    return { runId: run.id, applied, suggested };
+  }
+
+  /** Pede o undo de uma ação (valida posse + estado; o WORKER reverte de fato). */
+  async function requestUndo(orgId: OrgId, accountId: string, toolCallId: string): Promise<void> {
+    const summary = await getOrCreateForAccount(orgId, accountId);
+    const [tc] = await deps.db
+      .select({ id: agentToolCalls.id, toolKey: agentToolCalls.toolKey, args: agentToolCalls.args })
+      .from(agentToolCalls)
+      .innerJoin(agentRuns, eq(agentToolCalls.runId, agentRuns.id))
+      .where(and(eq(agentToolCalls.id, toolCallId), eq(agentRuns.orgId, orgId), eq(agentRuns.agentId, summary.agentId)))
+      .limit(1);
+    if (!tc) throw notFound("Ação não encontrada.");
+    if (tc.toolKey === UNDO_TOOL_KEY) throw badRequest("Essa ação já é um desfazer.");
+    if ((tc.args as { dryRun?: boolean }).dryRun === true) throw badRequest("Ação simulada não tem o que reverter.");
+    await deps.scheduler.enqueue({
+      queue: ACTION_UNDO_QUEUE,
+      name: ACTION_UNDO_JOB,
+      payload: { orgId, adAccountId: accountId, toolCallId },
+    });
+  }
+
   return {
     getOrCreateForAccount,
     updateConfig,
@@ -482,8 +613,13 @@ export function createAgentsService(deps: AgentsDeps) {
     createPlaybookRule,
     updatePlaybookRule,
     deletePlaybookRule,
+    listLastRunActions,
+    requestUndo,
   };
 }
+
+/** toolKey do registro de undo (espelha o executor). */
+const UNDO_TOOL_KEY = "undo";
 
 /** Janela por-regra ainda não aplicada pelo engine (fast-follow): usa a do agente. */
 const PLAYBOOK_WINDOW_PLACEHOLDER = "7d" as const;
