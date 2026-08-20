@@ -28,6 +28,14 @@ export const AGENT_REAPER_SCHEDULE_KEY = "reaper:runs";
 export type AgentReaperTickPayload = Record<string, never>;
 
 /**
+ * Fila de EXPIRAÇÃO de aprovações (5b): um Job Scheduler recorrente enfileira aqui; o
+ * worker marca como `expired` as pendentes vencidas (24h sem resposta). Chave estável.
+ */
+export const APPROVAL_EXPIRY_QUEUE = "approval-expiry";
+export const APPROVAL_EXPIRY_SCHEDULE_KEY = "expiry:approvals";
+export type ApprovalExpiryTickPayload = Record<string, never>;
+
+/**
  * Fila de RE-SYNC do schedule (Fatia 4 corte 2): a API só persiste a cadência e
  * enfileira aqui; o WORKER (dono único do scheduler) recarrega o `CadenceSpec` da
  * conta + o fuso da org, deriva o cron e faz upsert/remove. Mantém a API fora do
@@ -51,6 +59,21 @@ export type ActionUndoPayload = {
   readonly orgId: string;
   readonly adAccountId: string;
   readonly toolCallId: string;
+  /** ignora o re-check de drift ("reverter mesmo assim") — 5b. */
+  readonly force?: boolean;
+};
+
+/**
+ * Fila de APLICAÇÃO de aprovação (5b): a API valida a posse + enfileira; o WORKER
+ * carrega a `approval`, RE-CHECA o estado fresco na Meta + guardrail e aplica via o
+ * executor. Escrita no worker (governor + auditoria), nunca na casca HTTP. Deriva a
+ * conta do próprio approval (não confia em payload extra).
+ */
+export const APPROVAL_APPLY_QUEUE = "approval-apply";
+export const APPROVAL_APPLY_JOB = "approval-apply";
+export type ApprovalApplyPayload = {
+  readonly orgId: string;
+  readonly approvalId: string;
 };
 
 export type AgentRunTrigger = "cron" | "on_demand";

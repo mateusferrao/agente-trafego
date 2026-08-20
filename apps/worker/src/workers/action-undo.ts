@@ -19,7 +19,7 @@ export function startActionUndoWorker(deps: WorkerDeps, connection: Redis): Work
   return new Worker<ActionUndoPayload>(
     ACTION_UNDO_QUEUE,
     async (job) => {
-      const { orgId, toolCallId } = job.data;
+      const { orgId, toolCallId, force } = job.data;
 
       // carrega o tool_call org-scoped (join no run) + deriva a CONTA do próprio
       // tool_call (via agente) — não confia no adAccountId do payload (posse↔conta
@@ -30,6 +30,7 @@ export function startActionUndoWorker(deps: WorkerDeps, connection: Redis): Work
           runId: agentToolCalls.runId,
           beforeState: agentToolCalls.beforeState,
           args: agentToolCalls.args,
+          result: agentToolCalls.result,
           adAccountId: agents.adAccountId,
         })
         .from(agentToolCalls)
@@ -50,8 +51,11 @@ export function startActionUndoWorker(deps: WorkerDeps, connection: Redis): Work
       const accessToken = ports.vault.decrypt(account.tokenCripto);
       const ref = { adAccountId: account.metaAdAccountId, accessToken };
 
-      const res = await executor.revert({ orgId, account: ref, toolCall: tc });
-      logger.info({ toolCallId, reverted: res.reverted, reason: res.reason }, "undo:processado");
+      const res = await executor.revert({ orgId, account: ref, toolCall: tc, force: force ?? false });
+      logger.info(
+        { toolCallId, reverted: res.reverted, blockedByDrift: res.blockedByDrift, reason: res.reason },
+        "undo:processado",
+      );
     },
     { connection },
   );

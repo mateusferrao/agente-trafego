@@ -181,18 +181,48 @@ export const appliedActionOutput = z.object({
   simulated: z.boolean(),
   /** já foi revertida (existe o undo). */
   reverted: z.boolean(),
+  /** pode reverter agora (real, não revertida, dentro do TTL). */
+  undoable: z.boolean(),
+  /** o re-check de drift barrou o revert — precisa confirmar ("mesmo assim"). */
+  revertBlocked: z.boolean(),
+  /** motivo do bloqueio de drift (quando `revertBlocked`). */
+  revertBlockedReason: z.string().nullable(),
 });
-/** Uma ação SUGERIDA (precisa de OK — não executou no auto-apply). */
+/** Body do undo — `force` = reverter mesmo com drift ("mesmo assim"). */
+export const undoActionInput = z.object({
+  force: z.boolean().default(false),
+});
+export type UndoActionInput = z.infer<typeof undoActionInput>;
+/**
+ * Uma ação SUGERIDA (precisa de OK — não executou no auto-apply). Fonte da verdade =
+ * tabela `approvals` (5b): por isso carrega `approvalId` (p/ aprovar/rejeitar) e o
+ * prazo `expiresAt` (expira em 24h). São TODAS as pendentes do agente (cross-run).
+ */
 export const suggestedActionOutput = z.object({
+  approvalId: z.string(),
   type: actionType,
   targetLevel: z.string(),
   targetId: z.string(),
   targetName: z.string().nullable(),
+  reason: z.string(),
+  /** ISO — prazo de resposta (expira e some da lista). */
+  expiresAt: z.string().nullable(),
+  /** true = proposta por uma análise ANTERIOR à que está sendo vista (cross-run). */
+  fromPreviousRun: z.boolean(),
+});
+/** Uma ação BARRADA pelo guardrail (não executou nem virou sugestão) + o motivo. */
+export const droppedActionOutput = z.object({
+  type: actionType,
+  targetLevel: z.string(),
+  targetId: z.string(),
+  targetName: z.string().nullable(),
+  /** motivo legível do guardrail (ex: "entidade já está neste estado"). */
   reason: z.string(),
 });
 export const lastRunActionsOutput = z.object({
   runId: z.string().nullable(),
   applied: z.array(appliedActionOutput),
   suggested: z.array(suggestedActionOutput),
+  dropped: z.array(droppedActionOutput),
 });
 export type LastRunActionsOutput = z.infer<typeof lastRunActionsOutput>;

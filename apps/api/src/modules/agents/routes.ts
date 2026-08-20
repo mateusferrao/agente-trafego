@@ -7,6 +7,7 @@ import {
   playbookRuleInput,
   reseedArchetypeInput,
   setPausedInput,
+  undoActionInput,
 } from "./schema.js";
 
 /**
@@ -101,7 +102,8 @@ export const agentsRoutes: FastifyPluginAsync = async (app) => {
 
   app.post("/accounts/:id/agent/actions/:toolCallId/undo", guard, async (request) => {
     const { id, toolCallId } = request.params as { id: string; toolCallId: string };
-    await service.requestUndo(orgIdOf(request), id, toolCallId);
+    const { force } = undoActionInput.parse(request.body ?? {});
+    await service.requestUndo(orgIdOf(request), id, toolCallId, force);
     return { ok: true };
   });
 };

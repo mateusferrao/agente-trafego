@@ -20,10 +20,11 @@ import {
   SCHEDULE_RESYNC_QUEUE,
   SCHEDULE_RESYNC_JOB,
   toGuardrailConfig,
+  UNDO_BLOCKED_TOOL_KEY,
   UNDO_TOOL_KEY,
 } from "@trafego/shared";
-import type { Action, AgentGoals, OrgId, StoredInsightMetrics } from "@trafego/shared/types";
-import type { SchedulerPort } from "@trafego/shared/ports";
+import type { Action, AgentGoals, AgentId, OrgId, StoredInsightMetrics } from "@trafego/shared/types";
+import type { ApprovalPort, SchedulerPort } from "@trafego/shared/ports";
 import {
   ANALYSIS_WINDOW_DEFAULT_DAYS,
   ANALYSIS_WINDOW_MAX_DAYS,
@@ -49,6 +50,10 @@ export interface AgentsDeps {
   readonly db: Database;
   /** enfileira o resync do schedule (worker = dono do scheduler) ao salvar a cadência. */
   readonly scheduler: SchedulerPort;
+  /** pendentes de OK (mini-surface) — fonte da verdade das sugeridas (5b). */
+  readonly approvals: ApprovalPort;
+  /** janela (dias) em que "reverter" segue disponível (5b) — env. */
+  readonly revertTtlDays: number;
 }
 
 /**
@@ -535,16 +540,37 @@ export function createAgentsService(deps: AgentsDeps) {
       .where(and(eq(agentRuns.agentId, summary.agentId), eq(agentRuns.orgId, orgId)))
       .orderBy(desc(agentRuns.createdAt))
       .limit(1);
-    if (!run) return { runId: null, applied: [], suggested: [] };
+    if (!run) return { runId: null, applied: [], suggested: [], dropped: [] };
 
     const calls = await deps.db
-      .select({ id: agentToolCalls.id, toolKey: agentToolCalls.toolKey, args: agentToolCalls.args, idempotencyKey: agentToolCalls.idempotencyKey })
+      .select({
+        id: agentToolCalls.id,
+        toolKey: agentToolCalls.toolKey,
+        args: agentToolCalls.args,
+        result: agentToolCalls.result,
+        idempotencyKey: agentToolCalls.idempotencyKey,
+        createdAt: agentToolCalls.createdAt,
+      })
       .from(agentToolCalls)
       .where(eq(agentToolCalls.runId, run.id));
     const undoneKeys = new Set(calls.map((c) => c.idempotencyKey));
+    // motivo do bloqueio de revert por drift, por ação de origem (revertOf → reason).
+    const blockedReasonByOrigin = new Map<string, string>();
+    for (const c of calls) {
+      if (c.toolKey !== UNDO_BLOCKED_TOOL_KEY) continue;
+      const originId = (c.args as { revertOf?: string }).revertOf;
+      const reason = (c.result as { reason?: string } | null)?.reason;
+      if (originId) blockedReasonByOrigin.set(originId, reason ?? "a entidade mudou desde então");
+    }
+    const revertTtlMs = deps.revertTtlDays * DAY_MS;
 
-    const snapshot = run.metricsSnapshot as { suggestedActions?: Action[] } | null;
-    const suggestedActions = snapshot?.suggestedActions ?? [];
+    const snapshot = run.metricsSnapshot as {
+      droppedActions?: { action: Action; reason: string }[];
+    } | null;
+    const droppedActions = snapshot?.droppedActions ?? [];
+    // Sugeridas = pendentes de OK (fonte da verdade: `approvals`), TODAS do agente
+    // (cross-run), não só as do último run. `barradas` (dropped) seguem do snapshot.
+    const pendingApprovals = await deps.approvals.listPendingByAgent(summary.agentId as AgentId);
     // fallback p/ tool_calls antigos (gravados antes do target carregar `name`) — os
     // novos já vêm com o nome embutido (decide_actions enriquece via `state.entities`,
     // cobre inclusive entidade pausada que nunca passa pelo mapa/LLM).
@@ -553,33 +579,55 @@ export function createAgentsService(deps: AgentsDeps) {
       const target = (c.args as { target?: { id?: string; name?: string } }).target;
       if (target?.id && !target.name) entityIds.add(target.id);
     }
-    for (const a of suggestedActions) if (!a.target.name) entityIds.add(a.target.id);
+    for (const a of pendingApprovals) if (!a.action.target.name) entityIds.add(a.action.target.id);
+    for (const d of droppedActions) if (!d.action.target.name) entityIds.add(d.action.target.id);
     const nameByEntityId = await loadEntityNames(summary.agentId, entityIds);
 
     const applied = calls
-      .filter((c) => c.toolKey !== UNDO_TOOL_KEY)
+      .filter((c) => c.toolKey !== UNDO_TOOL_KEY && c.toolKey !== UNDO_BLOCKED_TOOL_KEY)
       .map((c) => {
         const args = c.args as { target?: { level: string; id: string; name?: string }; dryRun?: boolean };
         const targetId = args.target?.id ?? "";
+        const simulated = args.dryRun === true;
+        const reverted = undoneKeys.has(`${c.id}:${UNDO_TOOL_KEY}`);
+        // pode reverter enquanto: real, não revertida, e dentro do TTL (5b).
+        const fresh = Date.now() - c.createdAt.getTime() <= revertTtlMs;
         return {
           toolCallId: c.id,
           type: c.toolKey,
           targetLevel: args.target?.level ?? "",
           targetId,
           targetName: args.target?.name ?? nameByEntityId.get(targetId) ?? null,
-          simulated: args.dryRun === true,
-          reverted: undoneKeys.has(`${c.id}:${UNDO_TOOL_KEY}`),
+          simulated,
+          reverted,
+          undoable: !simulated && !reverted && fresh,
+          revertBlocked: !reverted && blockedReasonByOrigin.has(c.id),
+          revertBlockedReason: blockedReasonByOrigin.get(c.id) ?? null,
         };
       });
 
-    const suggested = suggestedActions.map((a) => ({
-      type: a.type,
-      targetLevel: a.target.level,
-      targetId: a.target.id,
-      targetName: a.target.name ?? nameByEntityId.get(a.target.id) ?? null,
-      reason: a.reason,
+    const suggested = pendingApprovals.map((a) => ({
+      approvalId: a.id,
+      type: a.action.type,
+      targetLevel: a.action.target.level,
+      targetId: a.action.target.id,
+      targetName: a.action.target.name ?? nameByEntityId.get(a.action.target.id) ?? null,
+      reason: a.action.reason,
+      expiresAt: a.expiresAt ? a.expiresAt.toISOString() : null,
+      // "Sugeridas" é cross-run (a caixa de decisões em aberto do agente); marca quando
+      // a pendente veio de uma análise DIFERENTE da que esta página está mostrando —
+      // evita a leitura de que ela é fruto do run atual.
+      fromPreviousRun: a.runId !== run.id,
     }));
-    return { runId: run.id, applied, suggested };
+
+    const dropped = droppedActions.map((d) => ({
+      type: d.action.type,
+      targetLevel: d.action.target.level,
+      targetId: d.action.target.id,
+      targetName: d.action.target.name ?? nameByEntityId.get(d.action.target.id) ?? null,
+      reason: d.reason,
+    }));
+    return { runId: run.id, applied, suggested, dropped };
   }
 
   /** Rótulo legível por entidade (última análise conhecida) — vazio não bate na tabela. */
@@ -594,22 +642,38 @@ export function createAgentsService(deps: AgentsDeps) {
     return map;
   }
 
-  /** Pede o undo de uma ação (valida posse + estado; o WORKER reverte de fato). */
-  async function requestUndo(orgId: OrgId, accountId: string, toolCallId: string): Promise<void> {
+  /**
+   * Pede o undo de uma ação (valida posse + estado + TTL; o WORKER reverte de fato).
+   * `force` = "reverter mesmo assim" (ignora o re-check de drift no worker).
+   */
+  async function requestUndo(
+    orgId: OrgId,
+    accountId: string,
+    toolCallId: string,
+    force = false,
+  ): Promise<void> {
     const summary = await getOrCreateForAccount(orgId, accountId);
     const [tc] = await deps.db
-      .select({ id: agentToolCalls.id, toolKey: agentToolCalls.toolKey, args: agentToolCalls.args })
+      .select({
+        id: agentToolCalls.id,
+        toolKey: agentToolCalls.toolKey,
+        args: agentToolCalls.args,
+        createdAt: agentToolCalls.createdAt,
+      })
       .from(agentToolCalls)
       .innerJoin(agentRuns, eq(agentToolCalls.runId, agentRuns.id))
       .where(and(eq(agentToolCalls.id, toolCallId), eq(agentRuns.orgId, orgId), eq(agentRuns.agentId, summary.agentId)))
       .limit(1);
     if (!tc) throw notFound("Ação não encontrada.");
-    if (tc.toolKey === UNDO_TOOL_KEY) throw badRequest("Essa ação já é um desfazer.");
+    if (tc.toolKey === UNDO_TOOL_KEY || tc.toolKey === UNDO_BLOCKED_TOOL_KEY)
+      throw badRequest("Essa ação já é um desfazer.");
     if ((tc.args as { dryRun?: boolean }).dryRun === true) throw badRequest("Ação simulada não tem o que reverter.");
+    if (Date.now() - tc.createdAt.getTime() > deps.revertTtlDays * DAY_MS)
+      throw badRequest("O prazo para reverter esta ação expirou.");
     await deps.scheduler.enqueue({
       queue: ACTION_UNDO_QUEUE,
       name: ACTION_UNDO_JOB,
-      payload: { orgId, adAccountId: accountId, toolCallId },
+      payload: { orgId, adAccountId: accountId, toolCallId, force },
     });
   }
 

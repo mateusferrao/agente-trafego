@@ -9,7 +9,7 @@ import { eq } from "drizzle-orm";
 import { agentToolCalls, auditLog } from "@trafego/db";
 import type { Action, ActionTarget } from "@trafego/shared/types";
 import type { AdAccountRef, MutationResult } from "@trafego/shared/ports";
-import { UNDO_TOOL_KEY, type OrgId, type RunId } from "@trafego/shared";
+import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY, type OrgId, type RunId } from "@trafego/shared";
 import { entityKeyOf } from "@trafego/core";
 import type { WorkerDeps } from "../composition.js";
 
@@ -24,17 +24,33 @@ export interface RevertToolCall {
   readonly runId: string;
   readonly beforeState: Record<string, unknown> | null;
   readonly args: Record<string, unknown>;
+  /** result da ação original ({ before, after }) — base do re-check de drift. */
+  readonly result: Record<string, unknown> | null;
 }
 
 export interface RevertInput {
   readonly orgId: string;
   readonly account: AdAccountRef;
   readonly toolCall: RevertToolCall;
+  /** ignora o drift (usuário confirmou "reverter mesmo assim"). */
+  readonly force?: boolean;
 }
 
 export interface RevertResult {
   readonly reverted: boolean;
   readonly reason?: string;
+  /** re-check barrou por drift (entidade mudou desde a ação) — pede confirmação. */
+  readonly blockedByDrift?: boolean;
+}
+
+/** Campos de estado relevantes ao drift (status + budgets; ignora derivados). */
+function driftFields(state: Record<string, unknown> | null | undefined): string {
+  const s = state ?? {};
+  return JSON.stringify({
+    status: s["status"],
+    daily_budget: s["daily_budget"],
+    lifetime_budget: s["lifetime_budget"],
+  });
 }
 
 export interface ExecuteActionInput {
@@ -118,7 +134,7 @@ export function makeMetaToolExecutor(deps: WorkerDeps) {
 
   /** Undo: reaplica o `before_state` de um tool_call REAL. Idempotente (`${id}:undo`). */
   async function revert(input: RevertInput): Promise<RevertResult> {
-    const { orgId, account, toolCall } = input;
+    const { orgId, account, toolCall, force } = input;
     const args = toolCall.args as { target?: ActionTarget; dryRun?: boolean };
     if (args?.dryRun) return { reverted: false, reason: "ação simulada — nada a reverter" };
     if (!toolCall.beforeState || !args?.target) return { reverted: false, reason: "sem estado anterior" };
@@ -132,6 +148,33 @@ export function makeMetaToolExecutor(deps: WorkerDeps) {
     if (existing) return { reverted: true, reason: "já revertido" };
 
     const target = args.target;
+
+    // re-check de DRIFT (5b): compara o estado FRESCO com o que a ação deixou (`after`).
+    // Divergiu (alguém mexeu depois) e sem `force` → NÃO reverte (evita sobrescrever a
+    // mudança posterior); registra o bloqueio p/ a UI pedir confirmação ("mesmo assim").
+    if (!force) {
+      const after = (toolCall.result as { after?: Record<string, unknown> } | null)?.after;
+      if (after) {
+        const current = await ports.ads.readEntityState(account, target.id);
+        if (driftFields(current) !== driftFields(after)) {
+          const reason = "a entidade mudou desde a ação — reverter sobrescreveria a mudança";
+          await db
+            .insert(agentToolCalls)
+            .values({
+              runId: toolCall.runId,
+              toolKey: UNDO_BLOCKED_TOOL_KEY,
+              idempotencyKey: `${toolCall.id}:${UNDO_BLOCKED_TOOL_KEY}`,
+              risk: "low",
+              args: { revertOf: toolCall.id, target },
+              result: { reason, current },
+            })
+            .onConflictDoNothing();
+          logger.info({ toolCallId: toolCall.id }, "undo:barrado por drift");
+          return { reverted: false, blockedByDrift: true, reason };
+        }
+      }
+    }
+
     const restore = await ports.ads.restoreEntityState(account, target.id, toolCall.beforeState);
     const targetLabel = entityKeyOf(target);
 

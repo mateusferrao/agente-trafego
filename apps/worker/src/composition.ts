@@ -19,6 +19,7 @@ import { BullmqScheduler } from "@trafego/scheduler-bullmq";
 import { CustomConversionsResolver, MetaAdsAdapter, MetaEntityCache, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta";
 import { EvolutionAdapter, EvolutionClient } from "@trafego/channel-evolution";
 import { OpenRouterAdapter, OpenRouterClient } from "@trafego/llm-openrouter";
+import { createPostgresApprovals } from "@trafego/approval-postgres";
 import { createPostgresMetering, withLlmMetering } from "@trafego/metering-postgres";
 import { Redis } from "ioredis";
 import { pino, type Logger } from "pino";
@@ -62,22 +63,12 @@ export interface WorkerDeps {
     readonly staleMinutes: number;
     readonly cron: string;
   };
+  /** Cadência da expiração de aprovações (5b) — varre pendentes vencidas (24h). */
+  readonly approvalExpiryCron: string;
   /** Cap default global de custo LLM por org/período (env). Cap por-org = guardrail_configs. */
   readonly costCapUsd: number;
   /** Checkpointer do LangGraph (Postgres) — HITL durável (5b). undefined na 3a (read-only). */
   readonly checkpointer: unknown;
-}
-
-/** Placeholder tipado p/ portas ainda não plugadas (lançam ao usar). */
-function todoPort<T>(name: string): T {
-  return new Proxy(
-    {},
-    {
-      get() {
-        throw new Error(`Port não plugada ainda: ${name} (worker composition TODO)`);
-      },
-    },
-  ) as T;
 }
 
 export interface CompositionConfig {
@@ -151,7 +142,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
       scheduler,
       llm, // plugada na 3a (análise) + metering na 3b (decorator)
       metering, // plugada na 3b (Postgres usage_events)
-      approval: todoPort<WorkerDeps["ports"]["approval"]>("ApprovalPort"),
+      approval: createPostgresApprovals(db),
     },
     insightsSync,
     analysis: {
@@ -184,6 +175,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
       staleMinutes: env.ANALYSIS_RUN_STALE_MINUTES,
       cron: env.ANALYSIS_REAPER_CRON,
     },
+    approvalExpiryCron: env.APPROVAL_EXPIRY_CRON,
     costCapUsd: env.LLM_COST_CAP_USD_PER_PERIOD,
     // checkpointer LangGraph = 5b (HITL durável). 3a é read-only linear → sem checkpointer.
     checkpointer: undefined,

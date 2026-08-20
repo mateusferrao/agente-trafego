@@ -39,6 +39,9 @@ importers:
       '@trafego/ads-meta':
         specifier: workspace:*
         version: link:../../packages/ads-meta
+      '@trafego/approval-postgres':
+        specifier: workspace:*
+        version: link:../../packages/approval-postgres
       '@trafego/channel-evolution':
         specifier: workspace:*
         version: link:../../packages/channel-evolution
@@ -185,6 +188,9 @@ importers:
       '@trafego/ads-meta':
         specifier: workspace:*
         version: link:../../packages/ads-meta
+      '@trafego/approval-postgres':
+        specifier: workspace:*
+        version: link:../../packages/approval-postgres
       '@trafego/channel-evolution':
         specifier: workspace:*
         version: link:../../packages/channel-evolution
@@ -240,6 +246,18 @@ importers:
       ioredis:
         specifier: ^5.4.0
         version: 5.11.1
+
+  packages/approval-postgres:
+    dependencies:
+      '@trafego/db':
+        specifier: workspace:*
+        version: link:../db
+      '@trafego/shared':
+        specifier: workspace:*
+        version: link:../shared
+      drizzle-orm:
+        specifier: ^0.38.0
+        version: 0.38.4(@types/pg@8.23.1)(pg@8.23.0)(react@19.2.8)
 
   packages/channel-evolution:
     dependencies:

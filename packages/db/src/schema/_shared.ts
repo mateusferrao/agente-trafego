@@ -79,6 +79,8 @@ export const approvalStatus = pgEnum("approval_status", [
   "approved",
   "rejected",
   "expired",
+  // barrada no re-check fresco do apply (estado mudou / regra bloqueou) — 5b.
+  "blocked",
 ]);
 export const recommendationStatus = pgEnum("recommendation_status", [
   "open",

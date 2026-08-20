@@ -79,6 +79,8 @@ export interface AdsPlatformPort {
     entityId: string,
     before: Readonly<Record<string, unknown>>,
   ): Promise<RestoreResult>;
+  /** Lê o estado atual (status + budgets) de uma entidade — re-check fresco (drift). */
+  readEntityState(account: AdAccountRef, entityId: string): Promise<Record<string, unknown>>;
   /**
    * Lista contas acessíveis pelo token (onboarding: cola token → escolhe).
    * Também **valida** o token — credencial inválida lança `AdsPlatformError`.

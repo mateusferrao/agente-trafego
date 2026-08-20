@@ -114,7 +114,7 @@ export const envSchema = z.object({
   CUSTOM_CONVERSIONS_CACHE_TTL_SEC: z.coerce.number().int().positive().default(21600),
   // TTL do cache (Redis) do CATÁLOGO de entidades por conta (§7 — corta o listEntities
   // full a cada run, maior fonte de rate-limit). Invalidado na escrita real. `0` desliga.
-  META_ENTITY_CACHE_TTL_SEC: z.coerce.number().int().min(0).default(3600),
+  META_ENTITY_CACHE_TTL_SEC: z.coerce.number().int().min(0).default(1800),
   // ANALYSIS_MAX_CREATIVES_VISION = default global; alvo = config por agente (DB).
   // Fallback até 4 ligar a config por-agente. Não-usado na Fatia 0.
   ANALYSIS_MAX_CREATIVES_VISION: z.coerce
@@ -160,6 +160,10 @@ export const envSchema = z.object({
   ANALYSIS_RUN_STALE_MINUTES: z.coerce.number().int().positive().default(30),
   // Cadência do reaper (cron 5-campos) — varre runs presos periodicamente.
   ANALYSIS_REAPER_CRON: z.string().min(1).default("*/15 * * * *"), // a cada 15 min
+  // Cadência da expiração de aprovações (5b) — varre pendentes vencidas (24h).
+  APPROVAL_EXPIRY_CRON: z.string().min(1).default("*/15 * * * *"), // a cada 15 min
+  // Janela (dias) em que "reverter" uma ação segue disponível — depois some/API recusa.
+  REVERT_TTL_DAYS: z.coerce.number().int().positive().default(7),
 
   // ─── Observabilidade (opcional) ────────────────────────────────────────
   LANGFUSE_PUBLIC_KEY: z.string().optional(),

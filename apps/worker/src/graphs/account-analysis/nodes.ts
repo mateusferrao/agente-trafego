@@ -29,10 +29,11 @@ import {
   riskForAction,
   selectCampaignsToAnalyze,
   selectCreatives,
+  targetStatusOf,
   type LastUnit,
 } from "@trafego/core";
-import { ACTION_PARAM_MODE, ACTION_PARAM_PCT } from "@trafego/shared";
-import { funnelFromRawActions } from "@trafego/ads-meta";
+import { ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS } from "@trafego/shared";
+import { funnelFromRawActions, mapStatus } from "@trafego/ads-meta";
 import {
   analysisOutputSchema,
   ANALYSIS_OUTPUT_JSON_SCHEMA,
@@ -46,16 +47,21 @@ import {
 } from "@trafego/shared/schemas";
 import type {
   Action,
+  ActionTarget,
   AdEntity,
   CampaignUnit,
+  AgentId,
   Creative,
   CreativeVisionResult,
   EntityLevel,
+  EntityStatus,
   EntitySummary,
   Finding,
   InsightMetrics,
   InsightRow,
+  OrgId,
   RunCampaignCard,
+  RunId,
 } from "@trafego/shared";
 import type { AdsPlatformPort, CreativeVisionPort, MutationResult } from "@trafego/shared/ports";
 import { AdsPlatformError, LLMProviderError } from "@trafego/shared/ports";
@@ -543,28 +549,78 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     // rótulo legível vem do catálogo cru (`state.entities`, todos os status) — cobre
     // entidades pausadas que nunca passam pelo mapa/LLM (não têm `entity_analyses`).
     const nameById = new Map((state.entities ?? []).map((e) => [e.id, e.name]));
-    const merged = [...(state.playbookCandidates ?? []), ...(state.llmCandidates ?? [])].map((a) => ({
-      ...a,
-      target: { ...a.target, name: nameById.get(a.target.id) },
-    }));
+    const merged = [...(state.playbookCandidates ?? []), ...(state.llmCandidates ?? [])].map((a) => {
+      const name = nameById.get(a.target.id);
+      // `name` opcional (exactOptionalPropertyTypes): só inclui quando conhecido.
+      return name !== undefined ? { ...a, target: { ...a.target, name } } : a;
+    });
     const { kept, dropped } = resolveActionConflicts(merged);
     if (dropped.length > 0) logger.debug({ runId: state.runId, dropped: dropped.length }, "decide:conflitos resolvidos");
     const decision = decideActions(kept, state.autonomyPolicy);
     return { mergedCandidates: kept, decision };
   }
 
-  /** Guardrail sobre o que VAI aplicar (autoApply), com contexto cross-run + budget-level. */
+  /**
+   * Guardrail (rede cross-run + budget-level + no-op) sobre AMBOS os caminhos:
+   * `autoApply` (vira escrita em apply_actions) e `needApproval` (vira `approvals`).
+   * Rodar nas sugeridas fecha o gap: ação não-permitida/no-op nunca chega a pedir OK.
+   * As `dropped` dos dois viram "barradas" (visíveis). (Fast-follow: relaxar os
+   * throttles de ritmo — cap/anti-compounding — no caminho de sugestão.)
+   */
   async function guardrailCheck(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
     logger.debug({ runId: state.runId }, "guardrail_check");
     const daily = await repo.loadDailyToolContext(state.agentId);
     const budgetByEntity = buildBudgetByEntity(state.entities);
-    const guardrail = applyGuardrails(state.decision?.autoApply ?? [], state.guardrailConfig, {
-      touchedToday: daily.touchedToday,
-      budgetChangedToday: daily.budgetChangedToday,
-      budgetByEntity,
-    });
-    if (guardrail.dropped.length > 0) logger.info({ runId: state.runId, dropped: guardrail.dropped.length }, "guardrail:ações barradas");
-    return { guardrail };
+    let statusByEntity = buildStatusByEntity(state.entities);
+
+    // Releitura pontual (5b): `state.entities` vem do catálogo CACHEADO (MetaEntityCache,
+    // TTL — só invalida na escrita REAL pelo nosso sistema). Uma mudança feita direto no
+    // Ads Manager não invalida o cache, então o no-op pode confiar num status velho —
+    // nas DUAS direções (barrar à toa OU deixar passar uma sugestão já desnecessária,
+    // ex: "retomar" o que já está ativo). Relê TODAS as entidades-alvo de candidatas de
+    // status (normalmente 0-3/run) — não reintroduz a pressão de rate-limit que o cache
+    // existe pra evitar.
+    const allCandidates = [...(state.decision?.autoApply ?? []), ...(state.decision?.needApproval ?? [])];
+    const targets = statusChangeTargets(allCandidates);
+    if (targets.size > 0) {
+      statusByEntity = await refreshStatusByEntity(
+        { repo, ads: deps.ports.ads, vault: deps.ports.vault, logger },
+        state,
+        targets,
+        statusByEntity,
+      );
+    }
+
+    const ctx = { touchedToday: daily.touchedToday, budgetChangedToday: daily.budgetChangedToday, budgetByEntity, statusByEntity };
+    const auto = applyGuardrails(state.decision?.autoApply ?? [], state.guardrailConfig, ctx);
+    const pending = applyGuardrails(state.decision?.needApproval ?? [], state.guardrailConfig, ctx);
+    const dropped = [...auto.dropped, ...pending.dropped];
+    if (dropped.length > 0) logger.info({ runId: state.runId, dropped: dropped.length }, "guardrail:ações barradas");
+    return { guardrail: auto, approvalCandidates: pending.allowed, droppedActions: dropped };
+  }
+
+  /**
+   * Persiste as sugeridas (que passaram no guardrail) como `approvals` pendentes —
+   * fonte da verdade acionável (mini-surface + /approvals). Upsert por (agente+entidade
+   * +tipo): reincidência renova; não-tocadas expiram em 24h (job). O run NÃO trava
+   * (fecha normal); o re-check fresco no apply é a rede final. Sem checkpointer (5b site).
+   */
+  async function createApprovals(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
+    logger.debug({ runId: state.runId }, "create_approvals");
+    const candidates = state.approvalCandidates ?? [];
+    if (candidates.length === 0) return {};
+    const expiresAt = new Date(Date.now() + APPROVAL_TTL_HOURS * 3_600_000);
+    for (const action of candidates) {
+      await deps.ports.approval.upsertPending({
+        orgId: state.orgId as OrgId,
+        agentId: state.agentId as AgentId,
+        runId: state.runId as RunId,
+        action,
+        expiresAt,
+      });
+    }
+    logger.info({ runId: state.runId, pending: candidates.length }, "create_approvals:pendentes");
+    return {};
   }
 
   /**
@@ -656,6 +712,12 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const attempted = state.guardrail?.allowed.length ?? 0;
     const applied = appliedSummary(state.results?.length ?? 0, attempted, state.guardrailConfig.dryRun);
     if (applied) text = `${text}\n\n${applied}`;
+    // bridge do HITL via site (5b corte 1): avisa que há pendentes + linka o site (o
+    // link vem no nó notify). Aprovação pelo WhatsApp = corte 2.
+    const pending = state.approvalCandidates?.length ?? 0;
+    if (pending > 0) {
+      text = `${text}\n\n🔔 ${pending} ação(ões) aguardando seu OK — revise no site.`;
+    }
     return { outboundMessage: text, usage };
   }
 
@@ -725,6 +787,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     decideActions: step("decide_actions", decideActionsNode),
     guardrailCheck: step("guardrail_check", guardrailCheck),
     applyActions: step("apply_actions", applyActions),
+    createApprovals: step("create_approvals", createApprovals),
   };
 }
 
@@ -833,6 +896,8 @@ function buildMetricsSnapshot(state: AccountAnalysisStateType): Record<string, u
     ...(state.decision && state.decision.needApproval.length > 0
       ? { suggestedActions: state.decision.needApproval }
       : {}),
+    // ações barradas pelo guardrail (motivo) — a mini-surface mostra como "barradas".
+    ...((state.droppedActions ?? []).length > 0 ? { droppedActions: state.droppedActions } : {}),
   };
 }
 
@@ -953,6 +1018,61 @@ function buildBudgetByEntity(entities: readonly AdEntity[]): Map<string, boolean
     map.set(entityKeyOf({ level: e.level, id: e.id }), e.dailyBudget !== undefined || e.lifetimeBudget !== undefined);
   }
   return map;
+}
+
+/**
+ * Mapa `${level}:${id}` → status atual da entidade (do catálogo cru já buscado).
+ * Alimenta o no-op do guardrail (não pedir/mexer numa entidade já no estado-alvo).
+ */
+function buildStatusByEntity(entities: readonly AdEntity[]): Map<string, EntityStatus> {
+  const map = new Map<string, EntityStatus>();
+  for (const e of entities) map.set(entityKeyOf({ level: e.level, id: e.id }), e.status);
+  return map;
+}
+
+/**
+ * Entidades-ALVO de QUALQUER candidata de mudança de estado (pause/resume/set_status —
+ * playbook ou LLM). TODAS entram na releitura pontual, não só as que o cache "bate"
+ * com o alvo: o cache pode estar stale nas DUAS direções — dizendo "já terminou" quando
+ * não terminou (falso no-op, barraria à toa) OU dizendo "ainda não terminou" quando já
+ * terminou (no-op PERDIDO — vira sugestão desnecessária, ex: "retomar" o que já está
+ * ativo). Só olhar a direção "cache bate com o alvo" cobria a 1ª e não a 2ª. Tipicamente
+ * 0-3 entidades por run (não reintroduz a pressão de rate-limit que o cache evita).
+ */
+function statusChangeTargets(candidates: readonly Action[]): Map<string, ActionTarget> {
+  const targets = new Map<string, ActionTarget>();
+  for (const action of candidates) {
+    if (targetStatusOf(action) === null) continue; // não é ação de status → nada a reler
+    targets.set(entityKeyOf(action.target), action.target);
+  }
+  return targets;
+}
+
+/** Relê fresco (Meta) só as entidades-alvo e corrige o mapa cacheado. Melhor esforço:
+ *  falha na leitura ou na conta → mantém o valor cacheado (não trava o run). */
+async function refreshStatusByEntity(
+  ioDeps: { repo: AnalysisRepo; ads: AdsPlatformPort; vault: WorkerDeps["ports"]["vault"]; logger: WorkerDeps["logger"] },
+  state: AccountAnalysisStateType,
+  targets: ReadonlyMap<string, ActionTarget>,
+  cached: ReadonlyMap<string, EntityStatus>,
+): Promise<Map<string, EntityStatus>> {
+  const corrected = new Map(cached);
+  const account = await ioDeps.repo.loadAccount(state.orgId, state.adAccountId);
+  if (!account) return corrected;
+  const accessToken = ioDeps.vault.decrypt(account.tokenCripto);
+  const ref = { adAccountId: account.metaAdAccountId, accessToken };
+  for (const [key, target] of targets) {
+    try {
+      const fresh = await ioDeps.ads.readEntityState(ref, target.id);
+      corrected.set(
+        key,
+        mapStatus(fresh["effective_status"] as string | undefined, fresh["status"] as string | undefined),
+      );
+    } catch (err) {
+      ioDeps.logger.warn({ runId: state.runId, entityId: target.id, err }, "guardrail:releitura de status falhou (mantém cache)");
+    }
+  }
+  return corrected;
 }
 
 /** Params da ação de budget (direção + magnitude), quando for o caso. `pct` sempre ≥0. */

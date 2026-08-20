@@ -10,6 +10,8 @@ import { startAgentReaperWorker } from "./workers/agent-reaper.js";
 import { startInsightsSyncWorker } from "./workers/insights-sync.js";
 import { startScheduleResyncWorker } from "./workers/schedule-resync.js";
 import { startActionUndoWorker } from "./workers/action-undo.js";
+import { startApprovalApplyWorker } from "./workers/approval-apply.js";
+import { startApprovalExpiryWorker } from "./workers/approval-expiry.js";
 import { makeAccountCron } from "./schedulers/account-cron.js";
 import { createRunReaper } from "./modules/dispatch/run-reaper.js";
 
@@ -35,15 +37,23 @@ async function main(): Promise<void> {
   // undo de ação (5a): consome os jobs que a API enfileira ao pedir "reverter".
   const actionUndo = startActionUndoWorker(deps, connection);
 
+  // aplicação de aprovação (5b): a API enfileira ao aprovar; aqui re-checa fresco + aplica.
+  const approvalApply = startApprovalApplyWorker(deps, connection);
+  // expiração de aprovações (5b): tick recorrente marca as pendentes vencidas (24h).
+  const approvalExpiry = startApprovalExpiryWorker(deps, connection);
+
   // Sincroniza os schedulers recorrentes a partir dos agentes ativos (idempotente)
   // + agenda o reaper (singleton) e faz uma varredura de boot (limpa presos de um
   // crash anterior antes de esperar o 1º tick).
   await cron.syncAllFromDb().catch((err: unknown) => logger.error({ err }, "cron:sync_all falhou"));
   await cron.ensureReaperSchedule().catch((err: unknown) => logger.error({ err }, "reaper:schedule falhou"));
+  await cron
+    .ensureApprovalExpirySchedule()
+    .catch((err: unknown) => logger.error({ err }, "approval-expiry:schedule falhou"));
   await createRunReaper({ db: deps.db, logger, staleMinutes: deps.reaper.staleMinutes })
     .reapStale()
     .catch((err: unknown) => logger.error({ err }, "reaper:boot sweep falhou"));
-  logger.info("worker up: agent-runs + cron-dispatch + reaper + insights-sync + schedule-resync + action-undo");
+  logger.info("worker up: agent-runs + cron-dispatch + reaper + insights-sync + schedule-resync + action-undo + approval-apply + approval-expiry");
 
   // shutdown gracioso (drena jobs em andamento antes de sair)
   const shutdown = async (signal: string): Promise<void> => {
@@ -55,6 +65,8 @@ async function main(): Promise<void> {
       insightsSync.close(),
       scheduleResync.close(),
       actionUndo.close(),
+      approvalApply.close(),
+      approvalExpiry.close(),
     ]);
     await Promise.allSettled([connection.quit(), deps.redis.quit()]);
     process.exit(0);

@@ -10,6 +10,8 @@ import {
   AGENT_CRON_QUEUE,
   AGENT_REAPER_QUEUE,
   AGENT_REAPER_SCHEDULE_KEY,
+  APPROVAL_EXPIRY_QUEUE,
+  APPROVAL_EXPIRY_SCHEDULE_KEY,
   type AgentCronDispatchPayload,
   type CadenceSpec,
 } from "@trafego/shared";
@@ -69,6 +71,17 @@ export function makeAccountCron(deps: WorkerDeps) {
       key: AGENT_REAPER_SCHEDULE_KEY,
       queue: AGENT_REAPER_QUEUE,
       cron: deps.reaper.cron,
+      tz: deps.cron.tz,
+      payload: {},
+    });
+  }
+
+  /** Garante o scheduler recorrente da expiração de aprovações (singleton — 5b). */
+  async function ensureApprovalExpirySchedule(): Promise<void> {
+    await scheduler.upsertSchedule({
+      key: APPROVAL_EXPIRY_SCHEDULE_KEY,
+      queue: APPROVAL_EXPIRY_QUEUE,
+      cron: deps.approvalExpiryCron,
       tz: deps.cron.tz,
       payload: {},
     });
@@ -147,6 +160,7 @@ export function makeAccountCron(deps: WorkerDeps) {
     upsertAccountSchedule,
     removeAccountSchedule,
     ensureReaperSchedule,
+    ensureApprovalExpirySchedule,
     syncAllFromDb,
     resyncAccountSchedule,
   };

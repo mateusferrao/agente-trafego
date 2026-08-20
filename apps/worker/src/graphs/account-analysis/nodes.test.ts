@@ -47,6 +47,7 @@ interface Harness {
   savedLabels: ConversionLabelRow[];
   closed: { status: string; summary: string | null; costSnapshot: number | null }[];
   llm: ReturnType<typeof vi.fn>;
+  readEntityState: ReturnType<typeof vi.fn>;
 }
 
 interface HarnessOpts {
@@ -59,6 +60,8 @@ interface HarnessOpts {
   autonomy?: { bySource: { playbook: "notify" | "suggest" | "act_safe" | "act_full"; llm: "notify" | "suggest" | "act_safe" | "act_full" } };
   guardrail?: { maxBudgetChangePct: number; maxEntitiesPerDay: number; allowedActions: ("pause_entity" | "resume_entity" | "adjust_budget" | "set_status")[]; dryRun: boolean; killSwitch: boolean };
   executor?: { execute: ReturnType<typeof vi.fn> };
+  /** estado FRESCO (Meta) devolvido pela releitura pontual do no-op (5b). */
+  freshEntityState?: Record<string, unknown>;
 }
 
 function makeHarness(opts: HarnessOpts = {}): Harness {
@@ -97,6 +100,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
     recordOutbound: vi.fn(async () => {}),
   };
   const llm = vi.fn(async () => ({ output: ANALYSIS_OUTPUT, usage: { inputTokens: 100, outputTokens: 20, costUsd: 0.001 } }));
+  const readEntityState = vi.fn(async () => opts.freshEntityState ?? { status: "ACTIVE", effective_status: "ACTIVE" });
 
   const deps = {
     db: {} as never,
@@ -106,6 +110,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
       ads: {
         listEntities: vi.fn(async (_ref, level) => byLevel(level)),
         getCreatives: vi.fn(async () => []),
+        readEntityState,
       } as never,
       messaging: {} as never,
       llm: { completeStructured: llm, complete: vi.fn() } as never,
@@ -141,7 +146,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
   const nodesWithFakes = { repo, snapshots, entityAnalyses, notify, ...(opts.executor ? { executor: opts.executor } : {}) };
   // guarda os fakes p/ o teste montar os nós
   (deps as unknown as { _repos: typeof nodesWithFakes })._repos = nodesWithFakes;
-  return { deps, saved, savedLabels, closed, llm };
+  return { deps, saved, savedLabels, closed, llm, readEntityState };
 }
 
 /** Nº de chamadas de LLM do MAPA (por-campanha) — identificadas por meta.type "unit". */
@@ -326,6 +331,47 @@ describe("account-analysis read-only nodes", () => {
     expect(unitCalls(h.llm)).toBe(1);
     // marcador consumido (one-shot) → próximo run volta ao incremental.
     expect(repos.repo.consumeConfigChanged).toHaveBeenCalledTimes(1);
+  });
+
+  describe("guardrail: releitura pontual do no-op (5b — cache stale)", () => {
+    const PAUSED_C1: AdEntity[] = [
+      { id: "c1", level: "campaign", name: "Campanha 1", status: "paused", objective: { goal: "purchase" } },
+    ];
+
+    it("cache diz pausada mas a Meta está ATIVA (drift) → releitura corrige e a ação NÃO é barrada", async () => {
+      const h = makeHarness({ entities: PAUSED_C1, freshEntityState: { status: "ACTIVE", effective_status: "ACTIVE" } });
+      const state = await runChain(h);
+      expect(h.readEntityState).toHaveBeenCalledWith(expect.anything(), "c1");
+      expect(state.droppedActions?.some((d) => d.action.target.id === "c1")).toBe(false);
+      expect(state.approvalCandidates?.some((a) => a.target.id === "c1")).toBe(true);
+    });
+
+    it("cache diz pausada e a Meta CONFIRMA pausada → mantém barrada (no-op de verdade)", async () => {
+      const h = makeHarness({ entities: PAUSED_C1, freshEntityState: { status: "PAUSED", effective_status: "PAUSED" } });
+      const state = await runChain(h);
+      expect(h.readEntityState).toHaveBeenCalledWith(expect.anything(), "c1");
+      expect(state.droppedActions?.some((d) => d.action.target.id === "c1" && d.reason === "entidade já está neste estado")).toBe(true);
+      expect(state.approvalCandidates?.some((a) => a.target.id === "c1")).toBe(false);
+    });
+
+    it("cache diz ATIVA mas a Meta já está pausada (no-op na direção OPOSTA) → releitura pega e barra", async () => {
+      // cache = "active" (não bate com o alvo "paused" de pause_entity) — a versão antiga
+      // (assimétrica) da releitura NUNCA checaria esta entidade, deixando passar uma
+      // sugestão de "pausar" algo que já está pausado.
+      const h = makeHarness({ freshEntityState: { status: "PAUSED", effective_status: "PAUSED" } });
+      const state = await runChain(h);
+      expect(h.readEntityState).toHaveBeenCalledWith(expect.anything(), "c1");
+      expect(state.droppedActions?.some((d) => d.action.target.id === "c1" && d.reason === "entidade já está neste estado")).toBe(true);
+      expect(state.approvalCandidates?.some((a) => a.target.id === "c1")).toBe(false);
+    });
+
+    it("sem candidata de status (só a entidade sem ação de status) → NÃO relê (custo zero)", async () => {
+      // "c1" some do catálogo → o alvo da recomendação de pausar vira inválido (nenhuma
+      // ação de status é gerada) — não há o que reler.
+      const h = makeHarness({ entities: [{ id: "c2", level: "campaign", name: "Outra", status: "active", objective: { goal: "purchase" } }] });
+      await runChain(h);
+      expect(h.readEntityState).not.toHaveBeenCalled();
+    });
   });
 
   it("token inválido no fetch → AnalysisError + marca token inválido", async () => {

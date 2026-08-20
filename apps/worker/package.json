@@ -17,6 +17,7 @@
     "@langchain/langgraph-checkpoint-postgres": "^0.0.3",
     "@langchain/openai": "^0.3.0",
     "@trafego/ads-meta": "workspace:*",
+    "@trafego/approval-postgres": "workspace:*",
     "@trafego/channel-evolution": "workspace:*",
     "@trafego/config": "workspace:*",
     "@trafego/core": "workspace:*",

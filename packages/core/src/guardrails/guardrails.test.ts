@@ -81,4 +81,47 @@ describe("applyGuardrails", () => {
       expect(res.allowed).toHaveLength(1);
     });
   });
+
+  describe("no-op (statusByEntity)", () => {
+    const allCfg: GuardrailConfig = {
+      ...baseCfg,
+      allowedActions: ["pause_entity", "resume_entity", "set_status", "adjust_budget"],
+    };
+
+    it("dropa pause_entity quando a entidade já está pausada", () => {
+      const res = applyGuardrails([action("a", { type: "pause_entity" })], allCfg, {
+        statusByEntity: new Map([["ad:a", "paused"]]),
+      });
+      expect(res.allowed).toHaveLength(0);
+      expect(res.dropped[0]?.reason).toContain("já está");
+    });
+
+    it("dropa resume_entity quando a entidade já está ativa", () => {
+      const res = applyGuardrails([action("a", { type: "resume_entity" })], allCfg, {
+        statusByEntity: new Map([["ad:a", "active"]]),
+      });
+      expect(res.allowed).toHaveLength(0);
+    });
+
+    it("dropa set_status quando já está no status-alvo", () => {
+      const res = applyGuardrails(
+        [action("a", { type: "set_status", params: { status: "paused" } })],
+        allCfg,
+        { statusByEntity: new Map([["ad:a", "paused"]]) },
+      );
+      expect(res.allowed).toHaveLength(0);
+    });
+
+    it("permite quando o estado atual diverge do alvo", () => {
+      const res = applyGuardrails([action("a", { type: "pause_entity" })], allCfg, {
+        statusByEntity: new Map([["ad:a", "active"]]),
+      });
+      expect(res.allowed).toHaveLength(1);
+    });
+
+    it("sem statusByEntity = comportamento legado (não dropa por no-op)", () => {
+      const res = applyGuardrails([action("a", { type: "pause_entity" })], allCfg);
+      expect(res.allowed).toHaveLength(1);
+    });
+  });
 });

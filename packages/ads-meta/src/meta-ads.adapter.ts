@@ -86,7 +86,12 @@ interface MetaEntitiesPage {
   readonly paging?: { readonly next?: string; readonly cursors?: { readonly after?: string } };
 }
 
-function mapStatus(effective?: string, raw?: string): EntityStatus {
+/**
+ * `effective_status`/`status` da Meta → `EntityStatus` neutro do domínio. Exportado
+ * (não só interno) — o worker reusa p/ interpretar o resultado cru de `readEntityState`
+ * (releitura pontual do no-op guardrail, 5b — evita duplicar o mapeamento).
+ */
+export function mapStatus(effective?: string, raw?: string): EntityStatus {
   return (effective && STATUS_MAP[effective]) || (raw && STATUS_MAP[raw]) || "paused";
 }
 
@@ -335,6 +340,17 @@ export class MetaAdsAdapter implements AdsPlatformPort {
       const result = await this.mutations.restoreEntityState(account, entityId, before);
       await this.entityCache?.invalidate(accountId); // undo mudou o estado → catálogo stale
       return result;
+    } catch (error) {
+      throw toAdsError(error);
+    }
+  }
+
+  /** Lê o estado atual (status + budgets) de uma entidade — re-check fresco (drift). */
+  async readEntityState(account: AdAccountRef, entityId: string): Promise<Record<string, unknown>> {
+    try {
+      const acquired = await this.governor.acquire(normalizeAdAccountId(account.adAccountId));
+      if (!acquired.granted) throw cooldownError();
+      return await this.mutations.readEntityState(account, entityId);
     } catch (error) {
       throw toAdsError(error);
     }

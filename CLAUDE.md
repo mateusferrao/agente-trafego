@@ -90,7 +90,7 @@ Portas ficam em `packages/shared/src/ports`. Regra: adicionar plataforma/canal/p
 | `CredentialVaultPort` | `encrypt`/`decrypt` (AES-256-GCM, keyVersion) | local |
 | `SchedulerPort` | cron/jobs por tenant | BullMQ |
 | `MeteringPort` | registra `usage_events` (genérico `type`+`payload`) | Postgres |
-| `ApprovalPort` | `create`/`resolve` (HITL) | Postgres |
+| `ApprovalPort` | `upsertPending`/`resolve`/`listPending*`/`getById`/`expireOverdue` (HITL granular, 1 linha/ação) | `@trafego/approval-postgres` |
 | `StoragePort` *(roadmap)* | `put`/`get`/`signedUrl` de assets de criativo | S3-compat |
 | `ExternalSignalsPort` *(roadmap)* | ingestão de sinais do cliente (API/webhook, idempotente) que enriquecem a análise | Postgres (`external_signals` genérico) |
 
@@ -125,8 +125,8 @@ Schema em `packages/db/src/schema`. Grupos:
 **Runtime:** LangGraph **Graph API (`StateGraph`)** com checkpointer Postgres. LangChain (`@langchain/core` + `@langchain/openai` via OpenRouter) fornece modelos/tools por baixo. Graph API (não Functional) por controle explícito de nós/edges e aderência ao padrão Automato.
 
 **Dois grafos (LangGraph):**
-- **`account-analysis` (pipeline determinístico)** — cron/on-demand: `load_context → fetch_data → run_playbook → llm_analyze(+visão) → review_analysis → build_recommendations → decide_actions → guardrail_check → [precisa OK? create_approval + interrupt()] → apply_actions(snapshot) → notify → record`. LLM só em `llm_analyze`, `review_analysis` e `notify`.
-- **`whatsapp-conversation` (ReAct + tools + guardrails)** — chat aberto: perguntas, pedidos ad-hoc, "analisa agora", e resolução de aprovações.
+- **`account-analysis` (pipeline determinístico)** — cron/on-demand: `load_context → fetch_data → run_playbook → llm_analyze(+visão) → review_analysis → build_recommendations → decide_actions → guardrail_check → apply_actions(snapshot) → create_approvals → notify → record`. LLM só em `llm_analyze`, `review_analysis` e `notify`. **Grafo linear, sem checkpointer:** `needApproval` não pausa o run — vira linha `approvals` pendente (`create_approvals`); ao aprovar no site, um **apply-service** (worker) relê o estado FRESCO + re-roda o guardrail + escreve (5b corte 1). O checkpointer/`interrupt` fica pro `whatsapp-conversation` (5c).
+- **`whatsapp-conversation` (ReAct + tools + guardrails)** — chat aberto: perguntas, pedidos ad-hoc, "analisa agora", e resolução de aprovações (aprovação conversacional = 5b corte 2).
 
 **Qualidade da análise = Analista→Revisor + guards determinísticos (3a-2):** o `llm_analyze` (analista) é seguido de `review_analysis` — **pré-check determinístico** (findings sem `metricRefs` / número citado ausente do brief) → **`reviewPasses`** (lista de revisores; default 1; refina/corta, **nunca inventa**) → **drop determinístico final** + `actionType→riskLevel`. Revisor falhou → cai pra saída do analista + nota parcial (§7 degradação graciosa). A **lista de passes** é a costura p/ **Fatia 8** (painéis de revisores, map-reduce por entidade, redator, validador de ação) — crescer = registrar mais passes, sem reescrever o grafo. Config do pipeline (`model`/`reviewEnabled`/`topN`/`maxOutputTokens`) é **por-agente** (`agents.model_config`, fallback env); a UI de edição = Fatia 4.
 
@@ -150,7 +150,8 @@ Schema em `packages/db/src/schema`. Grupos:
 - **Guardrails (sempre, mesmo autônomo):** blast radius (% máx budget/mudança, nº máx entidades/dia), budget cap, kill-switch, dry-run. **Defaults conservadores** — no caminho autônomo NÃO há eco+confirma, então guardrail é a única rede.
 - **Aprovação conversacional:** sem códigos. Agente lista o que achou em linguagem natural; resposta livre → Grafo B mapeia fala→ações. **Antes de QUALQUER escrita: eco concreto do que vai fazer + espera confirmação.** Ambiguidade = pergunta; nunca aplica em interpretação incerta.
 - **Escrita pedida no chat:** sempre confirma + guardrail (ignora nível de autonomia — chat é ambíguo demais p/ auto-aplicar).
-- **Expiração de aprovação:** 24h sem resposta → expira, avisa "expirou, peça de novo" (repropor no próximo run = fast-follow).
+- **Aprovação via site (5b corte 1):** aprovar/rejeitar por ação (mini-surface + `/approvals` cross-conta); a fonte da verdade das pendentes é a tabela `approvals` (granular, upsert por agente+entidade+tipo). Aprovar = re-check fresco no apply (barrado → `blocked` + motivo). WhatsApp conversacional = corte 2.
+- **Expiração de aprovação:** 24h sem resposta → expira (job recorrente `approval-expiry`), some da lista (repropor no próximo run = fast-follow).
 - **Idempotência:** `agent_tool_calls.idempotency_key` — nunca aplica a mesma mutação 2x.
 - **Rollback:** `before_state` em cada tool_call de escrita.
 - **Ban-safety WhatsApp:** número da org, opt-in (contato verificado manda 1ª msg), throttle no proativo, **inbound de desconhecido = ignora em silêncio**.

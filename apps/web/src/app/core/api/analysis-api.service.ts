@@ -180,11 +180,11 @@ export class AnalysisApiService extends BaseApiService {
     });
   }
 
-  /** `POST /api/accounts/:id/agent/actions/:toolCallId/undo` — pede o undo de uma ação. */
-  undoAction(accountId: string, toolCallId: string): Observable<OkOutput> {
-    return this.post<OkOutput, Record<string, never>>(
+  /** `POST /api/accounts/:id/agent/actions/:toolCallId/undo` — pede o undo (force = mesmo com drift). */
+  undoAction(accountId: string, toolCallId: string, force = false): Observable<OkOutput> {
+    return this.post<OkOutput, { force: boolean }>(
       ['/accounts', accountId, 'agent', 'actions', toolCallId, 'undo'],
-      {},
+      { force },
     );
   }
 }

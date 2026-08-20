@@ -29,9 +29,10 @@ Plano de construção em fatias. Decisões de arquitetura/produto = [`../CLAUDE.
 | **3b** | Cadência + visão + medição | Cron/conta; visão de criativo; feedback 👍/👎; metering+cap. 🚩 **beta read-only** | 3a |
 | **4** | Config do agente | Superfície única por arquétipo; playbook natural; guardrail/autonomy config | 3 |
 | **5a** | Escrita + guardrails ✅ (auto-apply only) | Adapter de escrita (4 mutações idempotentes+dry-run), executor+audit+metering, decide/guardrail cross-run+conflito, undo last-run, UI autonomia/guardrails, mini-surface. HITL = 5b | 4,3,2a |
-| **5b** | HITL aprovação | Inbound; aprovação conversacional eco+confirma; interrupt/resume durável; expira 24h; guardrail de no-op (entidade já no estado-alvo) | 5a |
+| **5b-1** ✅ | HITL via **site** | Aprovar/rejeitar por ação (mini-surface + `/approvals` cross-conta); `approvals` granular (fonte da verdade); apply-service com **re-check fresco** (sem checkpointer); guardrail de no-op + `allowedActions` nas sugeridas + barradas visíveis; expira 24h; **revert endurecido** (drift + TTL) | 5a |
+| **5b-2** | HITL via **WhatsApp** | Inbound (`parseInbound` + roteamento); aprovação conversacional eco+confirma; resolução em lote | 5b-1 |
 | **5c** | Chat ReAct pleno (end-state) | Conversa livre age via tools (núcleo) dentro dos guardrails | 5b |
-| **6a** | Timeline / auditoria (UI) | Histórico de runs/ações/aprovações na dashboard | prévias |
+| **6a** | Timeline / auditoria (UI) | Histórico de runs/ações/aprovações **+ barradas cross-conta** na dashboard (hoje barradas só na mini-surface do último run) | prévias |
 | **6b** | Endurecimento / ops | Throttle, token-190, degradação, backups; allowlist via script/DB | prévias |
 | **7** | Criação de campanhas (pós-MVP) | Gestor completo no WhatsApp: cria campanhas a pedido/proativo | MVP validado, 5a/5b |
 | **8** | Orquestração multi-agente / qualidade (pós-MVP) | Painéis de revisores, map-reduce por entidade, redator, validador de ação | MVP validado, 5a |
@@ -175,15 +176,49 @@ Write path autônomo atrás de guardrails, **sem HITL** (aprovação conversacio
 - **UI**: seções **Autonomia** (toggle-group 4 níveis × 2 origens) + **Guardrails** (switches/números/checkboxes) componentizadas; **mini-surface** de aplicadas (com reverter) + sugeridas no detalhe da conta.
 
 **Fast-follows deste corte:**
-- **HITL (5b)**: aprovação conversacional no WhatsApp + `interrupt`/resume durável (checkpointer Postgres) + `approvals` + expira 24h. Os nós já param em needApproval; falta o loop de aprovação.
-- **Guardrail de no-op (5b)**: `evaluatePlaybook` roda sobre `insights` sem noção de status atual da entidade — uma regra tipo "pausar quando gasto > X" continua propondo `pause_entity` pra sempre, mesmo numa campanha já pausada (o catálogo/`listEntities` e o `insights_snapshots` não filtram por status; só o `map_units`/LLM já filtra `status === "active"` via `buildCampaignUnits`). `mutate()` já no-opa a escrita de verdade (idempotente), mas o `tool_call` ainda é gravado e aparece na mini-surface como "aplicado" com **Reverter** — undo então restaura pro mesmo estado, parecendo quebrado. Fix: `applyGuardrails` ganha `ctx.statusByEntity` (montado de `state.entities`, que já traz `.status` — sem fetch novo) e derruba `pause_entity`/`resume_entity`/`set_status` quando a entidade já está no estado-alvo (mesmo padrão do pré-check de `budgetByEntity`); cobre playbook **e** LLM no mesmo ponto.
-- **`allowedActions` não vale pra sugeridas (5b)**: `applyGuardrails` (com o filtro de `allowedActions`) só roda em cima de `state.decision.autoApply` (`guardrail_check`, [nodes.ts:555](../apps/worker/src/graphs/account-analysis/nodes.ts)) — `needApproval` nunca passa por ali. Descoberto ao vivo: agente com autonomia `suggest` (tudo vira sugestão) + `allowed_actions=['pause_entity']` mesmo assim sugeriu `adjust_budget` na mini-surface. Fix: aplicar o mesmo guardrail (ao menos `allowedActions`, ideal os demais pré-checks determinísticos) também sobre `needApproval` antes de virar `suggestedActions` — hoje uma ação nunca permitida ainda assim aparece como "precisa do seu OK".
-- **Botão "aplicar direto" nas sugeridas (5b)**: cortado por ora — aplicar uma `needApproval` como está salva seria perigoso (bypassaria `allowedActions`/demais guardrails, que podem ter mudado desde que a sugestão foi gerada). Só faz sentido junto do loop de aprovação da 5b: reconferir guardrails no momento do "aplicar" (seja o botão web, seja o eco+confirma do WhatsApp), não só exibir a sugestão salva.
-- **Ações barradas pelo guardrail são invisíveis pro usuário (5b)**: `guardrail.dropped` (`applyGuardrails`) só vira `logger.info`/`logger.debug` no worker ([nodes.ts:551](../apps/worker/src/graphs/account-analysis/nodes.ts), [nodes.ts:566](../apps/worker/src/graphs/account-analysis/nodes.ts)) — nunca é persistido nem exposto na API. Descoberto ao vivo: regra de "ajustar orçamento" com escopo campanha numa campanha **ABO** (orçamento vive nos adsets, não na campanha) foi corretamente barrada pelo pré-check de nível de budget ("budget não está neste nível"), mas o usuário só via a análise rodar sem nenhum efeito — sem pista de que algo tinha sido bloqueado nem por quê. Fix: persistir `guardrail.dropped` (motivo + ação) no run (ex: `metrics_snapshot.droppedActions`, mesmo padrão de `suggestedActions`) e mostrar na mini-surface — mesmo tratamento visual dado às sugeridas, só que rotulado como "barrada" com o motivo.
+- ✅ **Entregues no 5b-1** (ver `## Fatia 5b — corte 1` abaixo): HITL via site (aprovar/rejeitar por ação); guardrail de no-op (`ctx.statusByEntity`); `allowedActions` valendo nas sugeridas (guardrail sobre `needApproval`); ações barradas visíveis (`metrics_snapshot.droppedActions` → mini-surface); expira 24h; revert endurecido (drift + TTL). **Sem checkpointer** (approval + re-check fresco; checkpointer → 5c).
+- **HITL via WhatsApp = 5b-2**: inbound (`parseInbound` + roteamento) + aprovação conversacional eco+confirma + resolução em lote.
 - **Teto ABSOLUTO de budget** no guardrail (hoje só clamp de %) — nova coluna + UI.
 - **Enforcement de `agent_tool_bindings`** (enable/disable/shadow por-agente) = 5c (hoje o auto-apply usa `Action.riskLevel`, não os bindings; catálogo já semeado).
 - **Undo por WhatsApp + histórico completo de ações** (a mini-surface é só do último run) = 5c / 6a (Timeline).
 - **`config_changed_at` "janela por-regra"** e demais fast-follows de config seguem valendo.
+
+## Fatia 5b — corte 1: aprovação via SITE (entregue)
+
+HITL sem WhatsApp: o usuário aprova/rejeita cada escrita pelo site. **Mecanismo = approval
++ re-check fresco (sem checkpointer LangGraph)** — o grafo A segue linear, cria `approvals`
+pendentes e fecha o run; ao aprovar, um apply-service (worker) relê o estado fresco, re-roda
+o guardrail e escreve. O checkpointer fica reservado ao **5c** (chat ReAct). Entregue em 5
+sub-fatias testáveis:
+- **5b-1.1** — guardrail de **no-op** (`ctx.statusByEntity`) + ações **barradas** visíveis
+  (`metrics_snapshot.droppedActions` → mini-surface "Barradas").
+- **5b-1.2** — `approvals` **granular** (1 linha/ação, upsert por agente+entidade+tipo, enum
+  `blocked`); `ApprovalPort` + adapter `@trafego/approval-postgres`; nó `create_approvals` no
+  grafo + guardrail sobre `needApproval`; mini-surface e `/approvals` (cross-conta) listando
+  as pendentes com **prazo** (`expiresAt`).
+- **5b-1.3** — **aprovar/rejeitar** por ação (mini-surface + `/approvals`) + **apply-service**
+  (`approval-apply` worker) com re-check fresco; barrado no re-check → `blocked` + motivo;
+  idempotente por `${approvalId}:apply`.
+- **5b-1.4** — expiração 24h (`approval-expiry` worker recorrente, `APPROVAL_EXPIRY_CRON`);
+  bridge do cron (a msg de WhatsApp menciona "N ações aguardando seu OK" + link do site).
+- **5b-1.5** — **revert endurecido**: re-check de drift no undo (avisa/`force`) + TTL por
+  tempo (`REVERT_TTL_DAYS`).
+
+**Resolução em lote** (`{approvedIds, rejectedIds}`) e **repropor expiradas** = 5b-2/fast-follow.
+
+**Fix ao vivo (pós-entrega):** o no-op da 5b-1.1 lê `state.entities` — o catálogo **cacheado**
+(`MetaEntityCache`, TTL). O cache só invalida na escrita REAL pelo nosso sistema; uma mudança
+feita direto no Ads Manager (ex: reativar uma campanha) não invalida nada, então o no-op podia
+confiar num status velho e barrar (silenciosamente) uma ação hoje válida — descoberto ao vivo
+numa campanha reativada manualmente que continuava sendo barrada como "já pausada". Fix:
+**releitura pontual** — `guardrail_check` identifica só as entidades cujo status cacheado
+bateria com um no-op (`entitiesAtRiskOfStaleNoOp`) e faz 1 `readEntityState` fresco SÓ pra
+essas (normalmente 0-1/run; não reintroduz a pressão de rate-limit que o cache existe pra
+evitar) antes de rodar `applyGuardrails` (que continua puro — a releitura é IO na casca,
+`refreshStatusByEntity`). `mapStatus` (Meta `effective_status`/`status` → `EntityStatus`)
+passou a ser exportado por `@trafego/ads-meta` p/ o worker reusar (evita duplicar o
+mapeamento). TTL padrão também reduzido de 3600s → 1800s (`META_ENTITY_CACHE_TTL_SEC`),
+estreitando a janela de staleness em geral.
 
 ## Fatia 7 — Criação de campanhas (roadmap pós-MVP)
 

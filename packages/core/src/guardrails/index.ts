@@ -1,5 +1,11 @@
-import type { Action, ActionTarget, CandidateAction, GuardrailConfig } from "@trafego/shared";
-import { ACTION_PARAM_PCT } from "@trafego/shared";
+import type {
+  Action,
+  ActionTarget,
+  CandidateAction,
+  EntityStatus,
+  GuardrailConfig,
+} from "@trafego/shared";
+import { ACTION_PARAM_PCT, ACTION_PARAM_STATUS } from "@trafego/shared";
 
 export interface DroppedAction {
   readonly action: Action;
@@ -22,6 +28,29 @@ export interface GuardrailContext {
   readonly budgetChangedToday?: ReadonlySet<string>;
   /** `${level}:${id}` → o nível-alvo tem budget? (pré-check de `adjust_budget`). */
   readonly budgetByEntity?: ReadonlyMap<string, boolean>;
+  /** `${level}:${id}` → status atual da entidade (no-op de pause/resume/set_status). */
+  readonly statusByEntity?: ReadonlyMap<string, EntityStatus>;
+}
+
+/**
+ * Status-alvo neutro de uma ação de mudança de estado (para o no-op). `null` = a ação
+ * não mexe em status. `set_status` normaliza `params.status` pro vocabulário do domínio.
+ */
+export function targetStatusOf(action: Action): EntityStatus | null {
+  switch (action.type) {
+    case "pause_entity":
+      return "paused";
+    case "resume_entity":
+      return "active";
+    case "set_status": {
+      const raw = String(action.params[ACTION_PARAM_STATUS] ?? "").toLowerCase();
+      return raw === "active" || raw === "paused" || raw === "deleted" || raw === "archived"
+        ? (raw as EntityStatus)
+        : null;
+    }
+    default:
+      return null;
+  }
 }
 
 /** Chave estável de entidade (nível + id). */
@@ -59,6 +88,14 @@ export function applyGuardrails(
     // 1) tipo de ação permitido?
     if (!cfg.allowedActions.includes(action.type)) {
       dropped.push({ action, reason: `ação ${action.type} não permitida` });
+      continue;
+    }
+
+    // 1b) no-op: entidade já está no estado-alvo (evita pedir OK / mexer à toa numa
+    //     entidade já pausada/ativa — cobre playbook e LLM). Só quando temos o status.
+    const targetStatus = targetStatusOf(action);
+    if (targetStatus !== null && ctx.statusByEntity?.get(entityKey) === targetStatus) {
+      dropped.push({ action, reason: "entidade já está neste estado" });
       continue;
     }
 

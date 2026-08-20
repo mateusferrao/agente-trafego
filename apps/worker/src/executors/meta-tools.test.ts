@@ -43,17 +43,19 @@ function fakeDb(existing: unknown[] = []) {
   return { db, inserts };
 }
 
-function makeDeps(existing: unknown[] = []) {
+function makeDeps(existing: unknown[] = [], current: Record<string, unknown> = { status: "PAUSED" }) {
   const { db, inserts } = fakeDb(existing);
   const mutate = vi.fn(async () => mutation);
   const restoreEntityState = vi.fn(async () => ({ before: { status: "PAUSED" }, after: { status: "ACTIVE" } }));
+  // estado FRESCO p/ o re-check de drift (default = igual ao `after` → sem drift).
+  const readEntityState = vi.fn(async () => current);
   const record = vi.fn(async () => {});
   const deps = {
     db,
     logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn() },
-    ports: { ads: { mutate, restoreEntityState }, metering: { record } },
+    ports: { ads: { mutate, restoreEntityState, readEntityState }, metering: { record } },
   } as unknown as WorkerDeps;
-  return { deps, inserts, mutate, restoreEntityState, record };
+  return { deps, inserts, mutate, restoreEntityState, readEntityState, record };
 }
 
 const baseInput: ExecuteActionInput = {
@@ -96,6 +98,8 @@ const toolCall = {
   runId: "run1",
   beforeState: { status: "ACTIVE" } as Record<string, unknown>,
   args: { target: { level: "campaign", id: "C1" }, dryRun: false } as Record<string, unknown>,
+  // a ação pausou (after=PAUSED) — base do re-check de drift.
+  result: { before: { status: "ACTIVE" }, after: { status: "PAUSED" } } as Record<string, unknown>,
 };
 const revertInput = { orgId: "org1", account: baseInput.account, toolCall };
 
@@ -123,5 +127,21 @@ describe("makeMetaToolExecutor.revert", () => {
     const res = await makeMetaToolExecutor(deps).revert(revertInput);
     expect(res.reverted).toBe(true);
     expect(restoreEntityState).not.toHaveBeenCalled();
+  });
+
+  it("drift (estado mudou desde a ação) → barra e não reverte", async () => {
+    // fresco = ACTIVE, mas a ação deixou PAUSED → alguém retomou depois → drift.
+    const { deps, restoreEntityState } = makeDeps([], { status: "ACTIVE" });
+    const res = await makeMetaToolExecutor(deps).revert(revertInput);
+    expect(res.reverted).toBe(false);
+    expect(res.blockedByDrift).toBe(true);
+    expect(restoreEntityState).not.toHaveBeenCalled();
+  });
+
+  it("drift + force → reverte mesmo assim", async () => {
+    const { deps, restoreEntityState } = makeDeps([], { status: "ACTIVE" });
+    const res = await makeMetaToolExecutor(deps).revert({ ...revertInput, force: true });
+    expect(res.reverted).toBe(true);
+    expect(restoreEntityState).toHaveBeenCalled();
   });
 });

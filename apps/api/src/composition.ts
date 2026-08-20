@@ -31,6 +31,7 @@ import { Aes256CredentialVault } from "@trafego/credential-vault";
 import { BullmqScheduler } from "@trafego/scheduler-bullmq";
 import { MetaAdsAdapter, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta";
 import { EvolutionAdapter, EvolutionClient } from "@trafego/channel-evolution";
+import { createPostgresApprovals } from "@trafego/approval-postgres";
 import { createPostgresMetering } from "@trafego/metering-postgres";
 import { Redis } from "ioredis";
 
@@ -121,9 +122,11 @@ export function buildContainer(): Container {
   // Metering (3b): Postgres usage_events — o billing/usage lê daqui.
   const metering = createPostgresMetering(db);
 
+  // Approvals (5b): Postgres — a API lista/resolve; o worker cria + aplica.
+  const approvals = createPostgresApprovals(db);
+
   // Portas ainda não plugadas (fatias seguintes) — placeholders que lançam ao usar.
   const llm = todoPort<LLMProviderPort>("LLMProviderPort"); // worker roda o LLM; a API não
-  const approvals = todoPort<ApprovalPort>("ApprovalPort"); // Postgres
 
   const adapters: Adapters = {
     db,
@@ -138,7 +141,7 @@ export function buildContainer(): Container {
 
   // Services — cada slice recebe só as portas de que precisa.
   // agents antes de runs: runs reusa `ensureAgent` (criação lazy) do slice de agentes.
-  const agents = createAgentsService({ db, scheduler });
+  const agents = createAgentsService({ db, scheduler, approvals, revertTtlDays: env.REVERT_TTL_DAYS });
   const services: Services = {
     auth: createAuthService({ repo: createDrizzleAuthRepo(db), hasher: argon2Hasher }),
     orgs: createOrgsService({ repo: createDrizzleOrgsRepo(db) }),
@@ -151,7 +154,7 @@ export function buildContainer(): Container {
     channels: createChannelsService({ db, messaging }),
     contacts: createContactsService({ db, messaging }),
     agents,
-    approvals: createApprovalsService({ db, approvals }),
+    approvals: createApprovalsService({ db, approvals, scheduler }),
     recommendations: createRecommendationsService({ db }),
     runs: createRunsService({
       db,

@@ -38,6 +38,7 @@ import {
   playbookRulesOutput,
   reseedArchetypeInput,
   setPausedInput,
+  undoActionInput,
 } from "../modules/agents/schema.js";
 import {
   campaignAnalysesOutput,
@@ -56,6 +57,11 @@ import {
   recipientOutput,
   removeRecipientOutput,
 } from "../modules/contacts/schema.js";
+import {
+  approvalOutput,
+  resolveApprovalInput,
+  resolveApprovalOutput,
+} from "../modules/approvals/schema.js";
 
 extendZodWithOpenApi(z);
 
@@ -100,6 +106,7 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const LastRunActionsOutput = registry.register("LastRunActionsOutput", lastRunActionsOutput);
   const OkOutput = registry.register("OkOutput", okOutput);
   const ReseedArchetypeInput = registry.register("ReseedArchetypeInput", reseedArchetypeInput);
+  const UndoActionInput = registry.register("UndoActionInput", undoActionInput);
   const ChannelStateOutput = registry.register("ChannelStateOutput", channelStateOutput);
   const StartVerificationInput = registry.register("StartVerificationInput", startVerificationInput);
   const StartVerificationOutput = registry.register("StartVerificationOutput", startVerificationOutput);
@@ -109,6 +116,9 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const RemoveRecipientOutput = registry.register("RemoveRecipientOutput", removeRecipientOutput);
   const FeedbackInput = registry.register("FeedbackInput", feedbackInput);
   const FeedbackOutput = registry.register("FeedbackOutput", feedbackOutput);
+  const ApprovalOutput = registry.register("ApprovalOutput", approvalOutput);
+  const ResolveApprovalInput = registry.register("ResolveApprovalInput", resolveApprovalInput);
+  const ResolveApprovalOutput = registry.register("ResolveApprovalOutput", resolveApprovalOutput);
 
   const accountParams = z.object({ id: z.string() });
 
@@ -432,9 +442,13 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     method: "post",
     path: "/api/accounts/{id}/agent/actions/{toolCallId}/undo",
     tags: ["agents"],
-    request: { params: z.object({ id: z.string(), toolCallId: z.string() }) },
+    request: {
+      params: z.object({ id: z.string(), toolCallId: z.string() }),
+      ...jsonBody(UndoActionInput),
+    },
     responses: {
       200: jsonRes("undo enfileirado", OkOutput),
+      400: { description: "prazo expirado / nada a reverter" },
       404: { description: "ação não encontrada" },
     },
   });
@@ -444,6 +458,22 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     tags: ["recommendations"],
     request: { params: z.object({ id: z.string() }), ...jsonBody(FeedbackInput) },
     responses: { 200: jsonRes("feedback registrado", FeedbackOutput) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/approvals",
+    tags: ["approvals"],
+    responses: { 200: jsonRes("aprovações pendentes da org (cross-conta)", z.array(ApprovalOutput)) },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/approvals/{id}/resolve",
+    tags: ["approvals"],
+    request: { params: z.object({ id: z.string() }), ...jsonBody(ResolveApprovalInput) },
+    responses: {
+      200: jsonRes("aprovação resolvida (aprovada = enfileirada; rejeitada = direto)", ResolveApprovalOutput),
+      404: { description: "aprovação não encontrada" },
+    },
   });
   registry.registerPath({
     method: "get",

@@ -2,7 +2,7 @@
 // O estado é serializável (persiste no checkpointer Postgres p/ interrupt/resume).
 
 import { Annotation } from "@langchain/langgraph";
-import type { AccumulatedTokenUsage, DecisionResult, GuardrailResult } from "@trafego/core";
+import type { AccumulatedTokenUsage, DecisionResult, DroppedAction, GuardrailResult } from "@trafego/core";
 import type { MutationResult } from "@trafego/shared/ports";
 import type {
   AccountBrief,
@@ -87,6 +87,11 @@ export const AccountAnalysisState = Annotation.Root({
   mergedCandidates: Annotation<readonly CandidateAction[]>,
   guardrail: Annotation<GuardrailResult | null>,
   decision: Annotation<DecisionResult | null>,
+  // ações barradas pelo guardrail (autoApply + needApproval) — expostas no snapshot
+  // como "barradas" (motivo). Só log antes; agora visível pro usuário (5b).
+  droppedActions: Annotation<readonly DroppedAction[]>,
+  // needApproval que PASSARAM no guardrail → viram linhas `approvals` (create_approvals).
+  approvalCandidates: Annotation<readonly Action[]>,
 
   // ── HITL ───────────────────────────────────────────────────────────────
   approvalId: Annotation<string | null>,

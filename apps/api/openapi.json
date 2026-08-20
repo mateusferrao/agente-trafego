@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Agente de Tráfego API",
+    "title": "AutoTraffic API",
     "version": "0.1.0"
   },
   "servers": [
@@ -2460,6 +2460,18 @@
                 },
                 "reverted": {
                   "type": "boolean"
+                },
+                "undoable": {
+                  "type": "boolean"
+                },
+                "revertBlocked": {
+                  "type": "boolean"
+                },
+                "revertBlockedReason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               },
               "required": [
@@ -2469,11 +2481,68 @@
                 "targetId",
                 "targetName",
                 "simulated",
-                "reverted"
+                "reverted",
+                "undoable",
+                "revertBlocked",
+                "revertBlockedReason"
               ]
             }
           },
           "suggested": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "approvalId": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "pause_entity",
+                    "resume_entity",
+                    "adjust_budget",
+                    "set_status"
+                  ]
+                },
+                "targetLevel": {
+                  "type": "string"
+                },
+                "targetId": {
+                  "type": "string"
+                },
+                "targetName": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "expiresAt": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "fromPreviousRun": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "approvalId",
+                "type",
+                "targetLevel",
+                "targetId",
+                "targetName",
+                "reason",
+                "expiresAt",
+                "fromPreviousRun"
+              ]
+            }
+          },
+          "dropped": {
             "type": "array",
             "items": {
               "type": "object",
@@ -2516,7 +2585,8 @@
         "required": [
           "runId",
           "applied",
-          "suggested"
+          "suggested",
+          "dropped"
         ]
       },
       "OkOutput": {
@@ -2541,6 +2611,15 @@
         "required": [
           "archetype"
         ]
+      },
+      "UndoActionInput": {
+        "type": "object",
+        "properties": {
+          "force": {
+            "type": "boolean",
+            "default": false
+          }
+        }
       },
       "ChannelStateOutput": {
         "type": "object",
@@ -2687,6 +2766,109 @@
         },
         "required": [
           "ok"
+        ]
+      },
+      "ApprovalOutput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "accountId": {
+            "type": "string"
+          },
+          "accountName": {
+            "type": "string"
+          },
+          "entityLevel": {
+            "type": "string"
+          },
+          "entityId": {
+            "type": "string"
+          },
+          "entityName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "pause_entity",
+              "resume_entity",
+              "adjust_budget",
+              "set_status"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "rejected",
+              "expired",
+              "blocked"
+            ]
+          },
+          "expiresAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "accountId",
+          "accountName",
+          "entityLevel",
+          "entityId",
+          "entityName",
+          "type",
+          "reason",
+          "status",
+          "expiresAt"
+        ]
+      },
+      "ResolveApprovalInput": {
+        "type": "object",
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "reject"
+            ]
+          }
+        },
+        "required": [
+          "decision"
+        ]
+      },
+      "ResolveApprovalOutput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "rejected",
+              "expired",
+              "blocked"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "status"
         ]
       }
     },
@@ -3911,6 +4093,15 @@
             "in": "path"
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UndoActionInput"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "undo enfileirado",
@@ -3921,6 +4112,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "prazo expirado / nada a reverter"
           },
           "404": {
             "description": "ação não encontrada"
@@ -3962,6 +4156,69 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/approvals": {
+      "get": {
+        "tags": [
+          "approvals"
+        ],
+        "responses": {
+          "200": {
+            "description": "aprovações pendentes da org (cross-conta)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ApprovalOutput"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/approvals/{id}/resolve": {
+      "post": {
+        "tags": [
+          "approvals"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResolveApprovalInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "aprovação resolvida (aprovada = enfileirada; rejeitada = direto)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveApprovalOutput"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "aprovação não encontrada"
           }
         }
       }

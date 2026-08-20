@@ -13,6 +13,7 @@ import {
 } from "drizzle-orm/pg-core";
 import type { Action, CreativeVisionResult } from "@trafego/shared";
 import {
+  actionType,
   approvalStatus,
   entityLevel,
   feedbackVote,
@@ -108,7 +109,13 @@ export const agentToolCalls = pgTable(
   (t) => [index("agent_tool_calls_run_idx").on(t.runId)],
 );
 
-/** Pedido de OK humano (HITL) p/ uma ou mais ações. Expira em 24h. */
+/**
+ * Pedido de OK humano (HITL), **granular: 1 linha por ação** (5b). O upsert por
+ * `(agent_id, entity_level, entity_id, action_type)` entre as `pending` mantém a
+ * proposta atual (índice único parcial arbitra). O "lote do run" sai por `run_id`.
+ * Expira em 24h. `contact_id`/`run_id` nullable (aprovação via site = sessão, sem
+ * contato; run pode ser podado).
+ */
 export const approvals = pgTable(
   "approvals",
   {
@@ -116,15 +123,33 @@ export const approvals = pgTable(
     orgId: uuid("org_id")
       .notNull()
       .references(() => orgs.id, { onDelete: "cascade" }),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
     runId: uuid("run_id").references(() => agentRuns.id, { onDelete: "cascade" }),
     contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
     status: approvalStatus("status").notNull().default("pending"),
-    payloadActions: jsonb("payload_actions").$type<Action[]>().notNull().default([]),
+    // chave granular (a ação proposta vive inteira em `action`; estas colunas chaveiam
+    // o upsert + índices, sem espalhar params).
+    entityLevel: entityLevel("entity_level").notNull(),
+    entityId: text("entity_id").notNull(),
+    actionType: actionType("action_type").notNull(),
+    action: jsonb("action").$type<Action>().notNull(),
+    // motivo quando resolvida sem aplicar (rejeitada pelo usuário ou `blocked` no re-check).
+    resolvedReason: text("resolved_reason"),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     ...timestamps,
   },
-  (t) => [index("approvals_org_idx").on(t.orgId), index("approvals_run_idx").on(t.runId)],
+  (t) => [
+    index("approvals_org_idx").on(t.orgId),
+    index("approvals_run_idx").on(t.runId),
+    index("approvals_agent_status_idx").on(t.agentId, t.status),
+    // no máx. 1 pendente por (agente, entidade, tipo de ação) → upsert atômico.
+    uniqueIndex("approvals_pending_uq")
+      .on(t.agentId, t.entityLevel, t.entityId, t.actionType)
+      .where(sql`status = 'pending'`),
+  ],
 );
 
 /** Achado/sugestão do run (com feedback + outcome). */

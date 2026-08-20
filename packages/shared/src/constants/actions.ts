@@ -5,8 +5,12 @@
  */
 export const ACTION_PARAM_MODE = "mode";
 export const ACTION_PARAM_PCT = "pct";
+/** Chave do status-alvo em `set_status.params` — valor no vocabulário neutro (EntityStatus). */
+export const ACTION_PARAM_STATUS = "status";
 export const BUDGET_MODE_DECREASE = "decrease";
 export const BUDGET_MODE_INCREASE = "increase";
 
 /** toolKey do registro de undo (reaplica o before_state). Fonte única (executor + API). */
 export const UNDO_TOOL_KEY = "undo";
+/** toolKey do registro de undo BARRADO por drift (re-check do revert, 5b). Não escreve. */
+export const UNDO_BLOCKED_TOOL_KEY = "undo_blocked";
