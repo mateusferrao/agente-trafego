@@ -16,6 +16,7 @@
     "db:generate": "pnpm --filter @trafego/db db:generate",
     "db:migrate": "pnpm --filter @trafego/db db:migrate",
     "db:seed": "tsx --env-file=.env packages/db/src/seed.ts",
+    "db:q": "tsx --env-file=.env packages/db/src/query.ts",
     "db:deploy": "tsx packages/db/src/migrate.ts && pnpm db:seed",
     "api:generate": "pnpm --filter @trafego/api openapi && pnpm --filter web api:generate"
   },

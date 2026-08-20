@@ -3,16 +3,11 @@
 Percurso direto de ~15 min: **dry-run → escrita real → undo**, + 6 checks rápidos de guardrail/segurança.
 Comandos copy-paste (**PowerShell** — ambiente Windows). Use **1 campanha de teste** (budget baixo).
 
-Atalho de query (rode 1x no início da sessão, na raiz do repo):
+Rodar SQL: **`pnpm db:q "<SQL>"`** (runner via `pg`, carrega o `.env` sozinho — **não precisa de psql**).
 ```powershell
-# carrega o DATABASE_URL do .env pra sessão e cria a função q
-$env:DATABASE_URL = ((Get-Content .env | Where-Object { $_ -match '^DATABASE_URL=' }) -replace '^DATABASE_URL=','').Trim().Trim('"')
-function q($sql) { psql $env:DATABASE_URL -x -c $sql }
-
-q "select id,status,partial from agent_runs order by created_at desc limit 1;"
+pnpm db:q "select id,status,partial from agent_runs order by created_at desc limit 1;"
 ```
-> Precisa do **psql** no PATH. Sem psql? Use qualquer client (DBeaver/TablePlus/pgAdmin) com o `DATABASE_URL`
-> do `.env`, ou `redis-cli` só onde indicado. As queries abaixo são as mesmas.
+> Prefere GUI? DBeaver/pgAdmin/TablePlus com o `DATABASE_URL` do `.env` — as queries abaixo são as mesmas.
 
 ---
 
@@ -44,26 +39,26 @@ Config do agente: Autonomia "Análise/Regras" = **age no seguro**; Guardrails: *
 - ✅ Campanha **continua ativa** no Ads Manager.
 - ✅ Mini-surface: ação com selo **"simulado (dry-run)"** (sem botão reverter).
 - Verificar:
-```bash
-q "select tool_key, args->>'dryRun' dry from agent_tool_calls where run_id=(select id from agent_runs order by created_at desc limit 1);"   # dry = true
-q "select count(*) from usage_events where type='action_applied' and created_at > now()-interval '5 min';"                                   # 0 (dry-run não fatura)
+```powershell
+pnpm db:q "select tool_key, args->>'dryRun' dry from agent_tool_calls where run_id=(select id from agent_runs order by created_at desc limit 1);"   # dry = true
+pnpm db:q "select count(*) from usage_events where type='action_applied' and created_at > now()-interval '5 min';"                                   # 0 (dry-run não fatura)
 ```
 
 ### 2b. Escrita real
 Guardrails: **dry-run DESLIGADO**. Salvar. Campanha **ativa**. **Analisar agora**.
 - ✅ Campanha vira **PAUSED** no Ads Manager.
 - Verificar (a query de "ações da última run" acima): `dry=false`, `b=ACTIVE`, `a=PAUSED`.
-```bash
-q "select action,target,before->>'status' b,after->>'status' a from audit_log where action like 'meta.%' order by created_at desc limit 1;"
-q "select idempotency_key from agent_tool_calls order by created_at desc limit 1;"   # formato runId:pause_entity:campaign:<id>
+```powershell
+pnpm db:q "select action,target,before->>'status' b,after->>'status' a from audit_log where action like 'meta.%' order by created_at desc limit 1;"
+pnpm db:q "select idempotency_key from agent_tool_calls order by created_at desc limit 1;"   # formato runId:pause_entity:campaign:<id>
 ```
 
 ### 2c. Undo
 Na mini-surface, clicar **Reverter** → confirmar o aviso.
 - ✅ Toast "Revertendo…"; em segundos a campanha volta a **ACTIVE**.
 - Verificar:
-```bash
-q "select tool_key, idempotency_key from agent_tool_calls order by created_at desc limit 1;"   # tool_key=undo, key ...:undo
+```powershell
+pnpm db:q "select tool_key, idempotency_key from agent_tool_calls order by created_at desc limit 1;"   # tool_key=undo, key ...:undo
 ```
 
 ---
@@ -71,7 +66,7 @@ q "select tool_key, idempotency_key from agent_tool_calls order by created_at de
 ## 3. Checks rápidos (marque o que der)
 
 - [ ] **Só sugere (não escreve):** Autonomia = **sugere + OK** → Analisar agora → nada muda na Meta; mini-surface mostra em **"Sugeridas — precisam do seu OK"**.
-  `q "select metrics_snapshot->'suggestedActions' from agent_runs order by created_at desc limit 1;"` → não-vazio.
+  `pnpm db:q "select metrics_snapshot->'suggestedActions' from agent_runs order by created_at desc limit 1;"` → não-vazio.
 - [ ] **Kill-switch:** ligar trava total + autonomia "age sozinho" → Analisar agora → **nada** aplicado.
 - [ ] **Tipo não permitido:** tirar "ajustar orçamento" das ações permitidas + uma regra de budget → a ação de budget é **dropada** (log `guardrail:ações barradas`).
 - [ ] **Cortar budget (act_safe):** regra "ajustar orçamento −20%" + permitir adjust_budget + dry-run OFF → budget cai 20% (`10000→8000`). Aumentar (+%) **não** auto-aplica no act_safe (vira sugerida).
@@ -88,4 +83,4 @@ Autonomia = **sugere + OK** (default) → Analisar agora → análise + recomend
 ## Se algo falhar
 - `partial=true` inesperado → ver log do worker (rate-limit/erro Meta) + `redis-cli PTTL meta:gov:cooldown:act_<id>`.
 - Ação não aplicou → conferra os **3 gates**: autonomia (act_safe/full) **e** ação em `allowed_actions` **e** dry-run OFF **e** kill-switch off.
-- Guardrail duplicado: `q "select agent_id,count(*) from guardrail_configs group by 1 having count(*)>1;"` deve vir **vazio**.
+- Guardrail duplicado: `pnpm db:q "select agent_id,count(*) from guardrail_configs group by 1 having count(*)>1;"` deve vir **vazio**.
