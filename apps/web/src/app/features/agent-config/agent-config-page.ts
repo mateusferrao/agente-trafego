@@ -1,12 +1,36 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { toast } from 'ngx-sonner';
-import { UiButton, UiPageHeader, UiSpinner } from '@ui';
+import { UiButton, UiPageHeader, UiSelectBox, UiSpinner, type UiSelectOptionItem } from '@ui';
 import { AccountsApiService } from '@core/api/accounts-api.service';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
-import type { AgentConfigInput, AvailableConversionsOutput } from '@core/api/generated';
+import type { AgentConfigInput, AgentSummary, AvailableConversionsOutput } from '@core/api/generated';
+import { AgentPlaybook } from './agent-playbook';
 
 type Conversion = AvailableConversionsOutput['conversions'][number];
+/** `CadenceSpec` (fonte única do cron) — forma vinda do contrato gerado. */
+type Cadence = NonNullable<AgentSummary['cadence']>;
+/** Modo do editor de cadência (default = usa o ritmo global; raw = cron avançado). */
+type CadenceKind = 'default' | 'daily' | 'twice_daily' | 'weekly' | 'raw';
+
+/** Opções de hora (00:00…23:00) e dia da semana (cron dow) p/ os selects. */
+const HOUR_OPTIONS: readonly UiSelectOptionItem[] = Array.from({ length: 24 }, (_, h) => ({
+  value: String(h),
+  label: `${String(h).padStart(2, '0')}:00`,
+}));
+const WEEKDAY_OPTIONS: readonly UiSelectOptionItem[] = [
+  { value: '1', label: 'segunda' },
+  { value: '2', label: 'terça' },
+  { value: '3', label: 'quarta' },
+  { value: '4', label: 'quinta' },
+  { value: '5', label: 'sexta' },
+  { value: '6', label: 'sábado' },
+  { value: '0', label: 'domingo' },
+];
+/** Arquétipos disponíveis (hoje só o conservador; extensível). */
+const ARCHETYPE_OPTIONS: readonly UiSelectOptionItem[] = [
+  { value: 'conservador', label: 'Conservador (sugere com cautela)' },
+];
 
 /** Rótulos amigáveis PT-BR da taxonomia neutra (custom cai no nome real do backend). */
 const CONVERSION_LABEL: Record<string, string> = {
@@ -43,6 +67,10 @@ interface FormState {
   readonly conversionKey: string; // "" = sem conversão de negócio (usa o objetivo da entidade)
   readonly businessContext: string;
   readonly guidance: string;
+  readonly persona: string;
+  readonly tone: string;
+  readonly systemPrompt: string;
+  readonly cadence: string; // JSON do CadenceSpec | "" (default) — comparado como string
   readonly windowDays: number;
 }
 
@@ -55,7 +83,7 @@ interface FormState {
 @Component({
   selector: 'app-agent-config-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, UiButton, UiPageHeader, UiSpinner],
+  imports: [RouterLink, UiButton, UiPageHeader, UiSpinner, UiSelectBox, AgentPlaybook],
   template: `
     <div class="flex flex-col gap-8">
       <div class="flex flex-col gap-1">
@@ -251,13 +279,127 @@ interface FormState {
           ></textarea>
         </section>
 
-        @if (justSaved() && !dirty()) {
-          <p class="rounded-lg border border-line bg-soft p-4 text-sm text-ink">
-            Configuração salva. Para ver o efeito agora,
-            <a [routerLink]="['/accounts', accountId]" class="underline">rode "Analisar agora"</a>
-            — senão a próxima análise automática já usa a nova configuração.
-          </p>
-        }
+        <!-- Regras (playbook) — componente próprio, salva por regra (fora da save-bar) -->
+        <app-agent-playbook [accountId]="accountId" />
+
+        <!-- Cadência (ritmo da análise automática) -->
+        <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
+          <div class="flex flex-col gap-1">
+            <span class="text-xs font-medium uppercase tracking-wide text-muted">Cadência</span>
+            <h2 class="font-brand text-base font-semibold text-ink">Com que frequência analisar</h2>
+            <p class="text-xs text-muted">
+              De quanto em quanto tempo o agente analisa a conta sozinho. No lançamento, mais vezes ao dia;
+              na manutenção, semanal já mantém a conta viva.
+            </p>
+          </div>
+          <div class="flex flex-wrap gap-2" role="radiogroup" aria-label="Cadência">
+            @for (k of cadenceKinds; track k.value) {
+              <button
+                type="button"
+                role="radio"
+                [attr.aria-checked]="cadenceKind() === k.value"
+                (click)="setCadenceKind(k.value)"
+                class="rounded-md border px-4 py-2 text-sm font-medium transition hover:border-accent/40"
+                [class.border-accent]="cadenceKind() === k.value"
+                [class.bg-accent-soft]="cadenceKind() === k.value"
+                [class.text-ink]="cadenceKind() === k.value"
+                [class.border-line]="cadenceKind() !== k.value"
+                [class.text-muted]="cadenceKind() !== k.value"
+              >
+                {{ k.label }}
+              </button>
+            }
+          </div>
+
+          @if (cadenceKind() === 'daily') {
+            <div class="flex items-center gap-2 text-sm text-ink">às
+              <div class="w-28"><app-ui-select [options]="hourOptions" [value]="cadHourStr()" (valueChange)="onHour($event)" /></div>
+            </div>
+          }
+          @if (cadenceKind() === 'twice_daily') {
+            <div class="flex flex-wrap items-center gap-2 text-sm text-ink">às
+              <div class="w-28"><app-ui-select [options]="hourOptions" [value]="cadHourStr()" (valueChange)="onHour($event)" /></div>
+              e
+              <div class="w-28"><app-ui-select [options]="hourOptions" [value]="cadHour2Str()" (valueChange)="onHour2($event)" /></div>
+            </div>
+          }
+          @if (cadenceKind() === 'weekly') {
+            <div class="flex flex-wrap items-center gap-2 text-sm text-ink">toda
+              <div class="w-36"><app-ui-select [options]="weekdayOptions" [value]="cadWeekdayStr()" (valueChange)="onWeekday($event)" /></div>
+              às
+              <div class="w-28"><app-ui-select [options]="hourOptions" [value]="cadHourStr()" (valueChange)="onHour($event)" /></div>
+            </div>
+          }
+          <details class="text-xs text-muted">
+            <summary class="cursor-pointer select-none">Avançado (expressão cron)</summary>
+            <div class="mt-2 flex flex-col gap-1">
+              <input
+                type="text"
+                class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink"
+                placeholder="ex: 0 8,20 * * 1-5"
+                [value]="cadCron()"
+                (input)="onCron($event)"
+                (focus)="setCadenceKind('raw')"
+              />
+              <span>Cron de 5 campos. Evite intervalos menores que 1h (custo e limites da plataforma).</span>
+            </div>
+          </details>
+          <p class="text-xs text-muted">Fuso: definido em <a routerLink="/settings" class="underline">Configurações</a> da organização.</p>
+        </section>
+
+        <!-- Arquétipo (preset base) — logo abaixo da cadência -->
+        <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
+          <div class="flex flex-col gap-1">
+            <span class="text-xs font-medium uppercase tracking-wide text-muted">Arquétipo</span>
+            <h2 class="font-brand text-base font-semibold text-ink">Base do comportamento</h2>
+            <p class="text-xs text-muted">
+              O preset que define persona, tom e método. Trocar reaplica os padrões dele (sua meta, contexto e
+              orientações são preservados).
+            </p>
+          </div>
+          <div class="w-full max-w-sm">
+            <app-ui-select [options]="archetypeOptions" [value]="archetype()" (valueChange)="onArchetypeChange($event)" />
+          </div>
+        </section>
+
+        <!-- Identidade e voz (avançado) -->
+        <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
+          <div class="flex flex-col gap-1">
+            <span class="text-xs font-medium uppercase tracking-wide text-muted">Identidade</span>
+            <h2 class="font-brand text-base font-semibold text-ink">Como o agente se apresenta</h2>
+            <p class="text-xs text-muted">Persona e tom da comunicação. Opcional — o arquétipo já traz um padrão.</p>
+          </div>
+          <div class="flex flex-col gap-3">
+            <label class="flex flex-col gap-1 text-xs text-muted">Persona (papel em 1 linha)
+              <input type="text" maxlength="280" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="Ex: gestor de tráfego sênior, cauteloso" [value]="persona()" (input)="onPersona($event)" />
+            </label>
+            <label class="flex flex-col gap-1 text-xs text-muted">Tom
+              <input type="text" maxlength="280" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="Ex: consultivo, claro e sem jargão" [value]="tone()" (input)="onTone($event)" />
+            </label>
+          </div>
+
+          <details class="text-xs text-muted">
+            <summary class="cursor-pointer select-none">Avançado — substituir a metodologia (para técnicos)</summary>
+            <div class="mt-2 flex flex-col gap-2">
+              <p>
+                Isto substitui as instruções internas de análise do arquétipo pelas suas. Deixe vazio para usar
+                o padrão. Seu contexto do negócio e orientações continuam valendo por cima.
+              </p>
+              <textarea
+                rows="6"
+                maxlength="8000"
+                class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink"
+                placeholder="Vazio = usa a metodologia do arquétipo."
+                [value]="systemPrompt()"
+                (input)="onSystemPrompt($event)"
+              ></textarea>
+              <details>
+                <summary class="cursor-pointer select-none">Ver a metodologia atual do arquétipo</summary>
+                <pre class="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-md border border-line bg-app p-3 text-xs text-muted">{{ methodologyPreview() }}</pre>
+              </details>
+            </div>
+          </details>
+        </section>
 
         <!-- Save bar (dirty) — flutua no rodapé pra não obrigar a rolar até o fim -->
         <div class="sticky bottom-0 z-10 flex items-center justify-between gap-3 rounded-lg border border-line bg-panel p-4 shadow-card">
@@ -283,7 +425,6 @@ export class AgentConfigPage {
 
   protected readonly loading = signal(true);
   protected readonly saving = signal(false);
-  protected readonly justSaved = signal(false);
   protected readonly accountName = signal('Conta');
 
   // form
@@ -294,6 +435,51 @@ export class AgentConfigPage {
   protected readonly conversionKey = signal(''); // `${goal}:${cid}` ("" = sem conversão de negócio)
   protected readonly analysisWindowDays = signal<number>(DEFAULT_WINDOW_DAYS);
   protected readonly windowPresets = WINDOW_PRESETS;
+
+  // identidade/voz (c2)
+  protected readonly persona = signal('');
+  protected readonly tone = signal('');
+  protected readonly systemPrompt = signal('');
+  protected readonly methodologyPreview = signal('');
+  protected readonly archetype = signal('conservador');
+  protected readonly archetypeOptions = ARCHETYPE_OPTIONS;
+
+  // cadência (c2) — sub-estado do editor; compõe o CadenceSpec.
+  protected readonly cadenceKind = signal<CadenceKind>('default');
+  protected readonly cadHour = signal(8);
+  protected readonly cadHour2 = signal(20);
+  protected readonly cadWeekday = signal(1);
+  protected readonly cadCron = signal('');
+  protected readonly hourOptions = HOUR_OPTIONS;
+  protected readonly weekdayOptions = WEEKDAY_OPTIONS;
+  // valores string dos selects (o UiSelect fala string; convertemos na borda).
+  protected readonly cadHourStr = computed(() => String(this.cadHour()));
+  protected readonly cadHour2Str = computed(() => String(this.cadHour2()));
+  protected readonly cadWeekdayStr = computed(() => String(this.cadWeekday()));
+  protected readonly cadenceKinds: readonly { value: CadenceKind; label: string }[] = [
+    { value: 'default', label: 'Padrão do sistema' },
+    { value: 'daily', label: 'Diária' },
+    { value: 'twice_daily', label: '2× ao dia' },
+    { value: 'weekly', label: 'Semanal' },
+  ];
+
+  /** Compõe o `CadenceSpec` a partir do sub-estado (null = usa o ritmo global). */
+  protected readonly cadenceSpec = computed<Cadence | null>(() => {
+    switch (this.cadenceKind()) {
+      case 'daily':
+        return { kind: 'daily', hour: this.cadHour() };
+      case 'twice_daily':
+        return { kind: 'twice_daily', hours: [this.cadHour(), this.cadHour2()] };
+      case 'weekly':
+        return { kind: 'weekly', weekday: this.cadWeekday(), hour: this.cadHour() };
+      case 'raw': {
+        const cron = this.cadCron().trim();
+        return cron ? { kind: 'raw', cron } : null;
+      }
+      default:
+        return null;
+    }
+  });
 
   private readonly available = signal<Conversion[]>([]);
   protected readonly conversionQuery = signal('');
@@ -347,6 +533,47 @@ export class AgentConfigPage {
   protected onGuidance(e: Event): void {
     this.guidance.set((e.target as HTMLTextAreaElement).value);
   }
+  protected onPersona(e: Event): void {
+    this.persona.set((e.target as HTMLInputElement).value);
+  }
+  protected onTone(e: Event): void {
+    this.tone.set((e.target as HTMLInputElement).value);
+  }
+  protected onSystemPrompt(e: Event): void {
+    this.systemPrompt.set((e.target as HTMLTextAreaElement).value);
+  }
+
+  protected setCadenceKind(kind: CadenceKind): void {
+    this.cadenceKind.set(kind);
+  }
+  protected onHour(v: string): void {
+    this.cadHour.set(Number(v));
+  }
+  protected onHour2(v: string): void {
+    this.cadHour2.set(Number(v));
+  }
+  protected onWeekday(v: string): void {
+    this.cadWeekday.set(Number(v));
+  }
+  protected onCron(e: Event): void {
+    this.cadCron.set((e.target as HTMLInputElement).value);
+  }
+
+  /** Troca de arquétipo: confirma (reaplica padrões) e re-semeia via backend. */
+  protected onArchetypeChange(next: string): void {
+    if (next === this.archetype()) return;
+    const ok = window.confirm(
+      'Trocar o arquétipo reaplica persona, tom e método padrão dele. Sua meta, contexto e orientações são preservados. Continuar?',
+    );
+    if (!ok) return;
+    this.analysisApi.reseedArchetype(this.accountId, next).subscribe({
+      next: (agent) => {
+        this.applyAgent(agent);
+        toast.success('Arquétipo aplicado');
+      },
+      error: () => {},
+    });
+  }
   protected onCpa(e: Event): void {
     this.targetCPA.set(parsePositive(e));
   }
@@ -363,7 +590,6 @@ export class AgentConfigPage {
       next: () => {
         this.initial.set(this.current()); // limpa o dirty
         this.saving.set(false);
-        this.justSaved.set(true);
         toast.success('Configuração salva');
       },
       // erro amigável já vem do interceptor global.
@@ -378,6 +604,10 @@ export class AgentConfigPage {
       conversionKey: this.conversionKey(),
       businessContext: this.businessContext(),
       guidance: this.guidance(),
+      persona: this.persona(),
+      tone: this.tone(),
+      systemPrompt: this.systemPrompt(),
+      cadence: JSON.stringify(this.cadenceSpec()),
       windowDays: this.analysisWindowDays(),
     };
   }
@@ -397,8 +627,50 @@ export class AgentConfigPage {
       goals,
       businessContext: this.businessContext(),
       guidance: this.guidance(),
+      persona: this.persona(),
+      tone: this.tone(),
+      systemPrompt: this.systemPrompt(),
+      cadence: this.cadenceSpec(),
       analysisWindowDays: this.analysisWindowDays(),
     };
+  }
+
+  /** Aplica a config do agente aos signals (usado no load e após re-seed). */
+  private applyAgent(agent: AgentSummary): void {
+    this.businessContext.set(agent.businessContext ?? '');
+    this.guidance.set(agent.guidance ?? '');
+    this.persona.set(agent.persona ?? '');
+    this.tone.set(agent.tone ?? '');
+    this.systemPrompt.set(agent.systemPrompt ?? '');
+    this.methodologyPreview.set(agent.methodologyPreview ?? '');
+    this.archetype.set(agent.archetype);
+    this.targetCPA.set(agent.goals.targetCPA ?? null);
+    this.targetROAS.set(agent.goals.targetROAS ?? null);
+    this.conversionKey.set(
+      agent.goals.conversionGoal
+        ? keyOf(agent.goals.conversionGoal, agent.goals.customConversionId ?? '')
+        : '',
+    );
+    this.analysisWindowDays.set(agent.analysisWindowDays ?? DEFAULT_WINDOW_DAYS);
+    this.applyCadence(agent.cadence ?? null);
+    this.initial.set(this.current()); // baseline p/ o dirty
+  }
+
+  /** Decompõe o `CadenceSpec` salvo no sub-estado do editor. */
+  private applyCadence(cadence: Cadence | null): void {
+    if (!cadence) {
+      this.cadenceKind.set('default');
+      return;
+    }
+    this.cadenceKind.set(cadence.kind);
+    if (cadence.kind === 'daily') this.cadHour.set(cadence.hour);
+    else if (cadence.kind === 'twice_daily') {
+      this.cadHour.set(cadence.hours[0]);
+      this.cadHour2.set(cadence.hours[1]);
+    } else if (cadence.kind === 'weekly') {
+      this.cadWeekday.set(cadence.weekday);
+      this.cadHour.set(cadence.hour);
+    } else if (cadence.kind === 'raw') this.cadCron.set(cadence.cron);
   }
 
   private load(): void {
@@ -416,17 +688,7 @@ export class AgentConfigPage {
     });
     this.analysisApi.getAgent(this.accountId).subscribe({
       next: (agent) => {
-        this.businessContext.set(agent.businessContext ?? '');
-        this.guidance.set(agent.guidance ?? '');
-        this.targetCPA.set(agent.goals.targetCPA ?? null);
-        this.targetROAS.set(agent.goals.targetROAS ?? null);
-        this.conversionKey.set(
-          agent.goals.conversionGoal
-            ? keyOf(agent.goals.conversionGoal, agent.goals.customConversionId ?? '')
-            : '',
-        );
-        this.analysisWindowDays.set(agent.analysisWindowDays ?? DEFAULT_WINDOW_DAYS);
-        this.initial.set(this.current()); // baseline p/ o dirty
+        this.applyAgent(agent);
         this.loading.set(false);
       },
       error: () => {
@@ -449,6 +711,10 @@ const EMPTY_FORM: FormState = {
   conversionKey: '',
   businessContext: '',
   guidance: '',
+  persona: '',
+  tone: '',
+  systemPrompt: '',
+  cadence: 'null',
   windowDays: DEFAULT_WINDOW_DAYS,
 };
 
@@ -459,6 +725,10 @@ function sameForm(a: FormState, b: FormState): boolean {
     a.conversionKey === b.conversionKey &&
     a.businessContext.trim() === b.businessContext.trim() &&
     a.guidance.trim() === b.guidance.trim() &&
+    a.persona.trim() === b.persona.trim() &&
+    a.tone.trim() === b.tone.trim() &&
+    a.systemPrompt.trim() === b.systemPrompt.trim() &&
+    a.cadence === b.cadence &&
     a.windowDays === b.windowDays
   );
 }

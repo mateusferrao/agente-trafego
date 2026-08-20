@@ -138,7 +138,7 @@ export function buildContainer(): Container {
 
   // Services — cada slice recebe só as portas de que precisa.
   // agents antes de runs: runs reusa `ensureAgent` (criação lazy) do slice de agentes.
-  const agents = createAgentsService({ db });
+  const agents = createAgentsService({ db, scheduler });
   const services: Services = {
     auth: createAuthService({ repo: createDrizzleAuthRepo(db), hasher: argon2Hasher }),
     orgs: createOrgsService({ repo: createDrizzleOrgsRepo(db) }),

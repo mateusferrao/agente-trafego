@@ -27,6 +27,19 @@ export const AGENT_REAPER_SCHEDULE_KEY = "reaper:runs";
 /** Tick do reaper — sem payload (varre todos os orgs). */
 export type AgentReaperTickPayload = Record<string, never>;
 
+/**
+ * Fila de RE-SYNC do schedule (Fatia 4 corte 2): a API só persiste a cadência e
+ * enfileira aqui; o WORKER (dono único do scheduler) recarrega o `CadenceSpec` da
+ * conta + o fuso da org, deriva o cron e faz upsert/remove. Mantém a API fora do
+ * domínio de agenda (sem builder de ScheduleSpec na casca HTTP).
+ */
+export const SCHEDULE_RESYNC_QUEUE = "schedule-resync";
+export const SCHEDULE_RESYNC_JOB = "schedule-resync";
+export type ScheduleResyncPayload = {
+  readonly orgId: string;
+  readonly adAccountId: string;
+};
+
 export type AgentRunTrigger = "cron" | "on_demand";
 
 /** Payload do dispatch de cron: sem `runId` (o dispatch é quem cria o run). */

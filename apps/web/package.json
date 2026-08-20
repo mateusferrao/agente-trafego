@@ -38,8 +38,9 @@
     "@kubb/core": "^4.37.5",
     "@kubb/plugin-oas": "^4.37.5",
     "@kubb/plugin-ts": "^4.37.5",
-    "tailwindcss": "^4.0.0",
     "@tailwindcss/postcss": "^4.0.0",
+    "prettier": "^3.9.6",
+    "tailwindcss": "^4.0.0",
     "typescript": "^5.7.0"
   }
 }

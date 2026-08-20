@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import type { Observable } from 'rxjs';
 import { BaseApiService } from './base-api.service';
-import type { AccessStatusOutput, OrgOutput, RenameOrgInput } from './generated';
+import type { AccessStatusOutput, OrgOutput, RenameOrgInput, SetTimezoneInput } from './generated';
 
 /** Endpoints de organização + billing (`/api/orgs`, `/api/billing/access-status`). */
 @Injectable({ providedIn: 'root' })
@@ -14,6 +14,16 @@ export class OrgApiService extends BaseApiService {
   /** `PATCH /api/orgs/current` — renomeia a org ativa (só owner). */
   renameOrg(body: RenameOrgInput): Observable<OrgOutput> {
     return this.patch<OrgOutput, RenameOrgInput>('/orgs/current', body);
+  }
+
+  /** `GET /api/orgs/current` — org ativa (nome + fuso). */
+  currentOrg(): Observable<OrgOutput> {
+    return this.get<OrgOutput>('/orgs/current');
+  }
+
+  /** `PATCH /api/orgs/current/timezone` — muda o fuso da org (só owner). */
+  setTimezone(timezone: string): Observable<OrgOutput> {
+    return this.patch<OrgOutput, SetTimezoneInput>('/orgs/current/timezone', { timezone });
   }
 
   /** `GET /api/billing/access-status` — status do acesso beta da org atual. */

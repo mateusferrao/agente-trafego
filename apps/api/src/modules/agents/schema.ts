@@ -1,19 +1,16 @@
 import { z } from "zod";
-import { conversionGoalSchema } from "@trafego/shared/schemas";
+import { cadenceSpecSchema, conversionGoalSchema } from "@trafego/shared/schemas";
+import { ANALYSIS_WINDOW_MIN_DAYS, ANALYSIS_WINDOW_MAX_DAYS } from "@trafego/shared";
 
-// Fatia 4 (corte 1): meta + conversão de negócio + personalização por texto.
-// (autonomia/guardrails/playbook = próximo corte.)
+// Fatia 4: meta + conversão + personalização + janela (corte 1) · identidade/voz +
+// cadência + playbook (corte 2). Limites da janela = fonte única em @trafego/shared.
 
 /** Teto de caracteres dos campos de texto livre (guarda prompt inchado). */
 const TEXT_FIELD_MAX = 2000;
-
-/**
- * Janela de análise (Fatia 4): quantos dias o agente analisa; o baseline (comparação)
- * espelha o mesmo período imediatamente anterior. Teto 30d (janela+baseline=60d < retenção).
- */
-export const ANALYSIS_WINDOW_MIN_DAYS = 1;
-export const ANALYSIS_WINDOW_MAX_DAYS = 30;
-export const ANALYSIS_WINDOW_DEFAULT_DAYS = 7;
+/** Teto do override de system_prompt (mais folgado — é o prompt inteiro do analista). */
+const PROMPT_FIELD_MAX = 8000;
+/** Teto de persona/tone (rótulos curtos de identidade). */
+const IDENTITY_FIELD_MAX = 280;
 
 export const agentGoalsInput = z.object({
   targetCPA: z.number().positive().optional(),
@@ -25,13 +22,21 @@ export const agentGoalsInput = z.object({
 });
 export type AgentGoalsInput = z.infer<typeof agentGoalsInput>;
 
-/** Config editável do agente neste corte: meta+conversão + personalização + janela. */
+/** Config editável do agente: meta+conversão + personalização + janela (c1) +
+ *  identidade/voz + cadência (c2). Todos opcionais (patch parcial). */
 export const agentConfigInput = z.object({
   goals: agentGoalsInput.optional(),
   /** fatos do negócio (contexto) — camada aditiva no prompt. */
   businessContext: z.string().max(TEXT_FIELD_MAX).optional(),
   /** orientações de comportamento — camada aditiva no prompt. */
   guidance: z.string().max(TEXT_FIELD_MAX).optional(),
+  /** identidade/voz (c2): persona + tom + override do prompt-base ("" = usa arquétipo). */
+  persona: z.string().max(IDENTITY_FIELD_MAX).optional(),
+  tone: z.string().max(IDENTITY_FIELD_MAX).optional(),
+  systemPrompt: z.string().max(PROMPT_FIELD_MAX).optional(),
+  /** cadência da análise automática (c2) — `CadenceSpec` (fonte única do cron).
+   *  null = usar o default global (limpa a cadência própria). */
+  cadence: cadenceSpecSchema.nullable().optional(),
   /** período de análise em dias (baseline espelha) — 1..30. */
   analysisWindowDays: z
     .number()
@@ -49,12 +54,25 @@ export const agentSummary = z.object({
   /** personalização por texto (Fatia 4) — null quando não configurada. */
   businessContext: z.string().nullable(),
   guidance: z.string().nullable(),
+  /** identidade/voz (c2) — null quando não configurada (usa o arquétipo). */
+  persona: z.string().nullable(),
+  tone: z.string().nullable(),
+  systemPrompt: z.string().nullable(),
+  /** cadência configurada — null = usa o default global. */
+  cadence: cadenceSpecSchema.nullable(),
+  /** metodologia composta do arquétipo (read-only, p/ o "ver metodologia" quando o
+   *  override está vazio). Deriva do arquétipo — não é editável. */
+  methodologyPreview: z.string(),
   /** período de análise em dias (default quando não configurado). */
   analysisWindowDays: z.number(),
   /** análises automáticas pausadas pelo dono (freio self-service). */
   paused: z.boolean(),
 });
 export type AgentSummary = z.infer<typeof agentSummary>;
+
+/** Re-seed do arquétipo (c2): reseta SÓ o comportamento, preserva meta+textos. */
+export const reseedArchetypeInput = z.object({ archetype: z.string().min(1) });
+export type ReseedArchetypeInput = z.infer<typeof reseedArchetypeInput>;
 
 /** Uma conversão que a conta reportou (base do select anotado da config). */
 export const availableConversion = z.object({
@@ -72,6 +90,58 @@ export type AvailableConversionsOutput = z.infer<typeof availableConversionsOutp
 
 export const setPausedInput = z.object({ paused: z.boolean() });
 export type SetPausedInput = z.infer<typeof setPausedInput>;
+
+// ─── Playbook (Fatia 4 corte 2) ──────────────────────────────────────────
+// Regra = SE [métrica op valor] (com gasto mínimo opcional) ENTÃO [ação], num nível.
+// A JANELA por-regra NÃO é exposta (MVP: usa o "Período de análise" do agente); o
+// engine ainda ignora `window` (fast-follow). CPA/ROAS seguem o basis no core.
+/** Vocabulário de métricas da condição — todas existem em `InsightMetrics`. */
+export const PLAYBOOK_METRICS = ["cpa", "roas", "spend", "cpc", "cpm", "ctr", "frequency"] as const;
+export const playbookMetric = z.enum(PLAYBOOK_METRICS);
+export const playbookOp = z.enum([">", "<", ">=", "<=", "=="]);
+/** Nível-alvo da regra (nunca `account`). */
+export const playbookScope = z.enum(["campaign", "adset", "ad"]);
+
+/** Ação (então) — núcleo MVP: pausar / ajustar budget ±% / mudar status. */
+export const playbookThen = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("pause_entity") }),
+  z.object({ type: z.literal("adjust_budget"), budgetChangePct: z.number() }),
+  z.object({ type: z.literal("set_status"), status: z.enum(["active", "paused"]) }),
+]);
+export type PlaybookThen = z.infer<typeof playbookThen>;
+
+export const playbookRuleInput = z.object({
+  scope: playbookScope,
+  metric: playbookMetric,
+  op: playbookOp,
+  value: z.number(),
+  /** só considera entidades com gasto ≥ este valor (evita CPA instável em pouco dado). */
+  minSpend: z.number().min(0).optional(),
+  then: playbookThen,
+  enabled: z.boolean().optional(),
+  priority: z.number().int().optional(),
+});
+export type PlaybookRuleInput = z.infer<typeof playbookRuleInput>;
+
+export const playbookRuleOutput = z.object({
+  id: z.string(),
+  scope: playbookScope,
+  metric: playbookMetric,
+  op: playbookOp,
+  value: z.number(),
+  minSpend: z.number().nullable(),
+  then: playbookThen,
+  enabled: z.boolean(),
+  priority: z.number().int(),
+});
+export type PlaybookRuleOutput = z.infer<typeof playbookRuleOutput>;
+
+export const playbookRulesOutput = z.object({ rules: z.array(playbookRuleOutput) });
+export type PlaybookRulesOutput = z.infer<typeof playbookRulesOutput>;
+
+/** Resposta genérica de sucesso sem corpo (ex: delete). */
+export const okOutput = z.object({ ok: z.boolean() });
+export type OkOutput = z.infer<typeof okOutput>;
 
 // Silenciar campanha (opt-out): exclui a campanha da análise do agente. `externalId`
 // = id da campanha na plataforma (ex: id da campanha Meta).

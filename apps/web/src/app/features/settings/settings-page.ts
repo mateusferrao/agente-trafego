@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { toast } from 'ngx-sonner';
-import { UiBadge, UiButton, UiFormField, UiInput, UiPageHeader } from '@ui';
+import { UiBadge, UiButton, UiFormField, UiInput, UiPageHeader, UiSelectBox } from '@ui';
 import { AuthStore } from '@core/auth';
 import { OrgApiService } from '@core/api/org-api.service';
 import type { AccessStatusOutputStatusEnumKey as AccessStatus } from '@core/api/generated';
@@ -28,6 +28,23 @@ const THEME_CHOICES: readonly ThemeChoice[] = [
   { value: 'system', label: 'Sistema' },
 ];
 
+/** Fusos oferecidos (BR-first + alguns globais). IANA tz. Usado na cadência das análises. */
+const TIMEZONES: readonly { value: string; label: string }[] = [
+  { value: 'America/Sao_Paulo', label: 'São Paulo / Brasília (BRT)' },
+  { value: 'America/Manaus', label: 'Manaus (AMT)' },
+  { value: 'America/Belem', label: 'Belém' },
+  { value: 'America/Fortaleza', label: 'Fortaleza' },
+  { value: 'America/Recife', label: 'Recife' },
+  { value: 'America/Bahia', label: 'Salvador' },
+  { value: 'America/Cuiaba', label: 'Cuiabá' },
+  { value: 'America/Campo_Grande', label: 'Campo Grande' },
+  { value: 'America/Rio_Branco', label: 'Rio Branco (ACT)' },
+  { value: 'America/Noronha', label: 'Fernando de Noronha' },
+  { value: 'UTC', label: 'UTC' },
+  { value: 'America/New_York', label: 'Nova York (ET)' },
+  { value: 'Europe/Lisbon', label: 'Lisboa' },
+];
+
 // Status = tom + texto, nunca cor sozinha (DESIGN.md §6).
 const ACCESS_BADGE: Record<AccessStatus, AccessBadge> = {
   active: { tone: 'success', text: 'Ativo', hint: 'Seu acesso ao beta está liberado.' },
@@ -51,7 +68,7 @@ const ACCESS_BADGE: Record<AccessStatus, AccessBadge> = {
 @Component({
   selector: 'app-settings-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [ReactiveFormsModule, UiBadge, UiButton, UiFormField, UiInput, UiPageHeader],
+  imports: [ReactiveFormsModule, UiBadge, UiButton, UiFormField, UiInput, UiPageHeader, UiSelectBox],
   template: `
     <div class="flex max-w-2xl flex-col gap-8">
       <app-ui-page-header title="Configurações" subtitle="Perfil, organização, tema e acesso." />
@@ -88,6 +105,22 @@ const ACCESS_BADGE: Record<AccessStatus, AccessBadge> = {
             {{ savingOrg() ? 'Salvando…' : 'Salvar' }}
           </button>
         </form>
+      </section>
+
+      <!-- Fuso horário (org) — usado na cadência das análises automáticas -->
+      <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
+        <div class="flex flex-col gap-0.5">
+          <h2 class="font-brand text-base font-semibold text-ink">Fuso horário</h2>
+          <p class="text-sm text-muted">Usado para agendar as análises automáticas dos seus agentes.</p>
+        </div>
+        <div class="w-full max-w-sm">
+          <app-ui-select
+            [options]="timezones"
+            [value]="timezone()"
+            [disabled]="savingTz()"
+            (valueChange)="onTimezone($event)"
+          />
+        </div>
       </section>
 
       <!-- Tema -->
@@ -144,8 +177,11 @@ export class SettingsPage {
   protected readonly theme = inject(ThemeStore);
 
   protected readonly themeChoices = THEME_CHOICES;
+  protected readonly timezones = TIMEZONES;
   protected readonly loggingOut = signal(false);
   protected readonly savingOrg = signal(false);
+  protected readonly savingTz = signal(false);
+  protected readonly timezone = signal(TIMEZONES[0]!.value); // base até currentOrg carregar
 
   protected readonly userName = (): string => this.authStore.me()?.name ?? '—';
   protected readonly userEmail = (): string => this.authStore.me()?.email ?? '—';
@@ -170,6 +206,30 @@ export class SettingsPage {
     this.orgApi.accessStatus().subscribe({
       next: (result) => this.accessStatus.set(result.status),
       error: () => undefined,
+    });
+    // Fuso atual da org (base do select).
+    this.orgApi.currentOrg().subscribe({
+      next: (org) => this.timezone.set(org.timezone),
+      error: () => undefined,
+    });
+  }
+
+  protected onTimezone(tz: string): void {
+    if (tz === this.timezone() || this.savingTz()) return;
+    const previous = this.timezone();
+    this.timezone.set(tz);
+    this.savingTz.set(true);
+    this.orgApi.setTimezone(tz).subscribe({
+      next: (org) => {
+        this.timezone.set(org.timezone);
+        this.savingTz.set(false);
+        toast.success('Fuso horário atualizado');
+      },
+      error: () => {
+        this.timezone.set(previous); // reverte a seleção otimista
+        this.savingTz.set(false);
+        toast.error('Não consegui salvar o fuso', { description: 'Verifique sua conexão e tente de novo.' });
+      },
     });
   }
 

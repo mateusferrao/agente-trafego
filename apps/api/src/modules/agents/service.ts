@@ -1,17 +1,33 @@
-import { and, eq, gte, lte, sql } from "drizzle-orm";
-import { adAccounts, agents, agentMutedEntities, conversionLabels, insightsSnapshots, type Database } from "@trafego/db";
-import { archetypeDefaults, DEFAULT_ARCHETYPE_KEY } from "@trafego/core";
+import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import {
+  adAccounts,
+  agents,
+  agentMutedEntities,
+  conversionLabels,
+  guardrailConfigs,
+  insightsSnapshots,
+  playbookRules,
+  type Database,
+} from "@trafego/db";
+import { archetypeDefaults, composeMethodologyPrompt, unseedIdentity, DEFAULT_ARCHETYPE_KEY } from "@trafego/core";
+import { SCHEDULE_RESYNC_QUEUE, SCHEDULE_RESYNC_JOB } from "@trafego/shared";
 import type { AgentGoals, OrgId, StoredInsightMetrics } from "@trafego/shared/types";
-import { badRequest, notFound } from "../../middleware/error-handler.js";
+import type { SchedulerPort } from "@trafego/shared/ports";
 import {
   ANALYSIS_WINDOW_DEFAULT_DAYS,
   ANALYSIS_WINDOW_MAX_DAYS,
   ANALYSIS_WINDOW_MIN_DAYS,
+} from "@trafego/shared";
+import { badRequest, notFound } from "../../middleware/error-handler.js";
+import {
   type AgentConfigInput,
   type AgentGoalsInput,
   type AgentSummary,
   type AvailableConversionsOutput,
+  type PlaybookRuleInput,
+  type PlaybookRuleOutput,
 } from "./schema.js";
+import type { PlaybookCondition } from "@trafego/shared/types";
 
 /** Janela recente p/ listar as conversões que a conta reportou (dias). */
 const AVAILABLE_CONVERSIONS_WINDOW_DAYS = 30;
@@ -19,6 +35,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 export interface AgentsDeps {
   readonly db: Database;
+  /** enfileira o resync do schedule (worker = dono do scheduler) ao salvar a cadência. */
+  readonly scheduler: SchedulerPort;
 }
 
 /**
@@ -46,6 +64,10 @@ export function createAgentsService(deps: AgentsDeps) {
         goals: agents.goals,
         businessContext: agents.businessContext,
         guidance: agents.guidance,
+        persona: agents.persona,
+        tone: agents.tone,
+        systemPrompt: agents.systemPrompt,
+        cadence: agents.cadence,
         modelConfig: agents.modelConfig,
         status: agents.status,
       })
@@ -59,6 +81,13 @@ export function createAgentsService(deps: AgentsDeps) {
         goals: existing.goals,
         businessContext: existing.businessContext,
         guidance: existing.guidance,
+        // valor semeado == default do arquétipo → "não configurado" (null), p/ a UI
+        // mostrar vazio (usa o arquétipo) e não travar a metodologia.
+        persona: unseedIdentity("persona", existing.persona, existing.archetype),
+        tone: unseedIdentity("tone", existing.tone, existing.archetype),
+        systemPrompt: unseedIdentity("systemPrompt", existing.systemPrompt, existing.archetype),
+        cadence: existing.cadence ?? null,
+        methodologyPreview: methodologyFor(existing.archetype),
         analysisWindowDays: windowFromModelConfig(existing.modelConfig),
         paused: existing.status === "paused",
       };
@@ -71,9 +100,8 @@ export function createAgentsService(deps: AgentsDeps) {
         orgId,
         adAccountId: accountId,
         archetype: defaults.key,
-        persona: defaults.persona,
-        systemPrompt: defaults.systemPrompt,
-        tone: defaults.tone,
+        // NÃO semeamos persona/tone/systemPrompt: null = "usa o arquétipo" (semântica
+        // vazia). Semear travaria a metodologia e mostraria o campo pré-preenchido.
         goals: defaults.goals,
         autonomyPolicy: defaults.autonomyPolicy,
         // ativo ao ser criado → o cron passa a cuidar da conta (pausável pelo dono).
@@ -81,12 +109,20 @@ export function createAgentsService(deps: AgentsDeps) {
       })
       .returning({ id: agents.id });
     if (!row) throw notFound("Falha ao criar o agente.");
+    // Semeia a linha de guardrails (rede independente) com os defaults de coluna —
+    // o worker lê no run (só morde na escrita, 5a). Sem isso o read cairia no fallback.
+    await deps.db.insert(guardrailConfigs).values({ orgId, agentId: row.id }).onConflictDoNothing();
     return {
       agentId: row.id,
       archetype: defaults.key,
       goals: defaults.goals,
       businessContext: null,
       guidance: null,
+      persona: null,
+      tone: null,
+      systemPrompt: null,
+      cadence: null,
+      methodologyPreview: methodologyFor(defaults.key),
       analysisWindowDays: ANALYSIS_WINDOW_DEFAULT_DAYS,
       paused: false,
     };
@@ -113,6 +149,16 @@ export function createAgentsService(deps: AgentsDeps) {
       input.businessContext !== undefined ? trimOrNull(input.businessContext) : summary.businessContext;
     const nextGuidance =
       input.guidance !== undefined ? trimOrNull(input.guidance) : summary.guidance;
+    // identidade/voz (c2): "" limpa (persona/tone vazios) e systemPrompt "" = usa arquétipo.
+    const nextPersona = input.persona !== undefined ? trimOrNull(input.persona) : summary.persona;
+    const nextTone = input.tone !== undefined ? trimOrNull(input.tone) : summary.tone;
+    const nextSystemPrompt =
+      input.systemPrompt !== undefined ? trimOrNull(input.systemPrompt) : summary.systemPrompt;
+    // cadência (c2): quando enviada, define; senão preserva. null nunca vem do input aqui.
+    const nextCadence = input.cadence !== undefined ? input.cadence : summary.cadence;
+    const cadenceChanged =
+      input.cadence !== undefined &&
+      JSON.stringify(input.cadence) !== JSON.stringify(summary.cadence ?? null);
 
     // janela de análise vive no model_config (jsonb) — merge p/ preservar as outras chaves.
     const [row] = await deps.db
@@ -124,12 +170,16 @@ export function createAgentsService(deps: AgentsDeps) {
     const nextWindow = input.analysisWindowDays ?? summary.analysisWindowDays;
     const nextModelConfig = { ...currentModelConfig, windowDays: nextWindow };
 
-    // só força 1 deep (bumpa config_changed_at) quando um campo relevante à análise
-    // mudou de fato — evita deep desnecessário em save idêntico (idempotência).
+    // só força 1 deep (bumpa config_changed_at) quando um campo relevante à ANÁLISE
+    // mudou (goals/textos/identidade/janela) — evita deep em save idêntico (idempotência).
+    // Cadência NÃO entra: muda só a agenda, não a análise.
     const runRelevantChanged =
       JSON.stringify(nextGoals) !== JSON.stringify(cleanGoals(summary.goals)) ||
       nextBusinessContext !== (summary.businessContext ?? null) ||
       nextGuidance !== (summary.guidance ?? null) ||
+      nextPersona !== (summary.persona ?? null) ||
+      nextTone !== (summary.tone ?? null) ||
+      nextSystemPrompt !== (summary.systemPrompt ?? null) ||
       nextWindow !== summary.analysisWindowDays;
 
     await deps.db
@@ -138,17 +188,73 @@ export function createAgentsService(deps: AgentsDeps) {
         goals: nextGoals,
         businessContext: nextBusinessContext,
         guidance: nextGuidance,
+        persona: nextPersona,
+        tone: nextTone,
+        systemPrompt: nextSystemPrompt,
+        cadence: nextCadence,
         modelConfig: nextModelConfig,
         ...(runRelevantChanged ? { configChangedAt: sql`now()` } : {}),
         updatedAt: sql`now()`,
       })
       .where(and(eq(agents.id, summary.agentId), eq(agents.orgId, orgId)));
+
+    // cadência mudou → re-sincroniza o schedule (worker é o dono; API só enfileira).
+    // Sem idempotencyKey: cada job lê o DB mais recente e o schedule é idempotente
+    // por key; um jobId fixo poderia descartar um resync enfileirado enquanto o
+    // anterior está ativo, deixando o schedule defasado vs o DB.
+    if (cadenceChanged) {
+      await deps.scheduler.enqueue({
+        queue: SCHEDULE_RESYNC_QUEUE,
+        name: SCHEDULE_RESYNC_JOB,
+        payload: { orgId, adAccountId: accountId },
+      });
+    }
     return {
       ...summary,
       goals: nextGoals,
       businessContext: nextBusinessContext,
       guidance: nextGuidance,
+      persona: nextPersona,
+      tone: nextTone,
+      systemPrompt: nextSystemPrompt,
+      cadence: nextCadence,
       analysisWindowDays: nextWindow,
+    };
+  }
+
+  /**
+   * Re-semeia o arquétipo (c2): reseta SÓ o comportamento (persona/tone/systemPrompt/
+   * autonomyPolicy) para os defaults do arquétipo e PRESERVA meta+contexto+orientações+
+   * cadência (dados do usuário). Bumpa config_changed_at (o prompt muda → força 1 deep).
+   * Guardrails ficam nos defaults de coluna (sem UI própria até a 5a → reset = no-op).
+   */
+  async function reseedArchetype(
+    orgId: OrgId,
+    accountId: string,
+    archetype: string,
+  ): Promise<AgentSummary> {
+    const summary = await getOrCreateForAccount(orgId, accountId);
+    const defaults = archetypeDefaults(archetype);
+    await deps.db
+      .update(agents)
+      .set({
+        archetype: defaults.key,
+        // reset = "usa o arquétipo" (null); não gravamos os textos do arquétipo.
+        persona: null,
+        tone: null,
+        systemPrompt: null,
+        autonomyPolicy: defaults.autonomyPolicy,
+        configChangedAt: sql`now()`,
+        updatedAt: sql`now()`,
+      })
+      .where(and(eq(agents.id, summary.agentId), eq(agents.orgId, orgId)));
+    return {
+      ...summary,
+      archetype: defaults.key,
+      persona: null,
+      tone: null,
+      systemPrompt: null,
+      methodologyPreview: methodologyFor(defaults.key),
     };
   }
 
@@ -270,15 +376,156 @@ export function createAgentsService(deps: AgentsDeps) {
     return mutedCampaignsForAgent(orgId, summary.agentId);
   }
 
+  // ─── Playbook CRUD (Fatia 4 corte 2) ────────────────────────────────────
+  // Regras alimentam a análise HOJE (viram recomendação); auto-aplicam na 5a. Toda
+  // mutação bumpa config_changed_at (playbook é relevante à análise → força 1 deep).
+
+  /** Marca a config como mudada (força 1 deep run) — playbook afeta a análise. */
+  async function bumpConfigChanged(orgId: OrgId, agentId: string): Promise<void> {
+    await deps.db
+      .update(agents)
+      .set({ configChangedAt: sql`now()`, updatedAt: sql`now()` })
+      .where(and(eq(agents.id, agentId), eq(agents.orgId, orgId)));
+  }
+
+  async function listPlaybookRules(orgId: OrgId, accountId: string): Promise<PlaybookRuleOutput[]> {
+    const summary = await getOrCreateForAccount(orgId, accountId);
+    const rows = await deps.db
+      .select()
+      .from(playbookRules)
+      .where(and(eq(playbookRules.agentId, summary.agentId), eq(playbookRules.orgId, orgId)))
+      .orderBy(desc(playbookRules.priority));
+    return rows.map(toRuleOutput);
+  }
+
+  async function createPlaybookRule(
+    orgId: OrgId,
+    accountId: string,
+    input: PlaybookRuleInput,
+  ): Promise<PlaybookRuleOutput> {
+    const summary = await getOrCreateForAccount(orgId, accountId);
+    const [row] = await deps.db
+      .insert(playbookRules)
+      .values({
+        orgId,
+        agentId: summary.agentId,
+        scope: input.scope,
+        whenJson: toWhenJson(input),
+        thenJson: input.then,
+        thenActionType: input.then.type,
+        enabled: input.enabled ?? true,
+        priority: input.priority ?? 0,
+      })
+      .returning();
+    if (!row) throw notFound("Falha ao criar a regra.");
+    await bumpConfigChanged(orgId, summary.agentId);
+    return toRuleOutput(row);
+  }
+
+  async function updatePlaybookRule(
+    orgId: OrgId,
+    accountId: string,
+    ruleId: string,
+    input: PlaybookRuleInput,
+  ): Promise<PlaybookRuleOutput> {
+    const summary = await getOrCreateForAccount(orgId, accountId);
+    const [row] = await deps.db
+      .update(playbookRules)
+      .set({
+        scope: input.scope,
+        whenJson: toWhenJson(input),
+        thenJson: input.then,
+        thenActionType: input.then.type,
+        enabled: input.enabled ?? true,
+        priority: input.priority ?? 0,
+        updatedAt: sql`now()`,
+      })
+      .where(
+        and(
+          eq(playbookRules.id, ruleId),
+          eq(playbookRules.agentId, summary.agentId),
+          eq(playbookRules.orgId, orgId),
+        ),
+      )
+      .returning();
+    if (!row) throw notFound("Regra não encontrada.");
+    await bumpConfigChanged(orgId, summary.agentId);
+    return toRuleOutput(row);
+  }
+
+  async function deletePlaybookRule(orgId: OrgId, accountId: string, ruleId: string): Promise<void> {
+    const summary = await getOrCreateForAccount(orgId, accountId);
+    const deleted = await deps.db
+      .delete(playbookRules)
+      .where(
+        and(
+          eq(playbookRules.id, ruleId),
+          eq(playbookRules.agentId, summary.agentId),
+          eq(playbookRules.orgId, orgId),
+        ),
+      )
+      .returning({ id: playbookRules.id });
+    if (deleted.length === 0) throw notFound("Regra não encontrada.");
+    await bumpConfigChanged(orgId, summary.agentId);
+  }
+
   return {
     getOrCreateForAccount,
     updateConfig,
+    reseedArchetype,
     availableConversions,
     setPaused,
     listMutedCampaigns,
     muteCampaign,
     unmuteCampaign,
+    listPlaybookRules,
+    createPlaybookRule,
+    updatePlaybookRule,
+    deletePlaybookRule,
   };
+}
+
+/** Janela por-regra ainda não aplicada pelo engine (fast-follow): usa a do agente. */
+const PLAYBOOK_WINDOW_PLACEHOLDER = "7d" as const;
+
+/** DTO da API → `PlaybookCondition` (whenJson). `window` = placeholder (ver acima). */
+function toWhenJson(input: PlaybookRuleInput): PlaybookCondition {
+  return {
+    metric: input.metric,
+    op: input.op,
+    value: input.value,
+    window: PLAYBOOK_WINDOW_PLACEHOLDER,
+    ...(input.minSpend !== undefined ? { minSpend: input.minSpend } : {}),
+  };
+}
+
+/** Linha do banco → DTO de saída (achata `whenJson` p/ a superfície da UI). */
+function toRuleOutput(row: {
+  id: string;
+  scope: string;
+  whenJson: PlaybookCondition;
+  thenJson: { type: string } & Record<string, unknown>;
+  enabled: boolean;
+  priority: number;
+}): PlaybookRuleOutput {
+  return {
+    id: row.id,
+    // `scope` no banco é entityLevel (inclui "account"), mas regras só gravam
+    // campaign|adset|ad (validado no input) — cast seguro.
+    scope: row.scope as PlaybookRuleOutput["scope"],
+    metric: row.whenJson.metric as PlaybookRuleOutput["metric"],
+    op: row.whenJson.op,
+    value: row.whenJson.value,
+    minSpend: row.whenJson.minSpend ?? null,
+    then: row.thenJson as PlaybookRuleOutput["then"],
+    enabled: row.enabled,
+    priority: row.priority,
+  };
+}
+
+/** Metodologia composta do arquétipo (read-only p/ o "ver metodologia" da UI). */
+function methodologyFor(archetype: string): string {
+  return composeMethodologyPrompt(archetypeDefaults(archetype));
 }
 
 /** Só as chaves definidas (exactOptionalPropertyTypes — sem gravar `undefined`). */

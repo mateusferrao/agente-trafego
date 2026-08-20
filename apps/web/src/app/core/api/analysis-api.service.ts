@@ -12,6 +12,11 @@ import type {
   LatestRunOutput,
   MuteCampaignInput,
   MutedCampaignsOutput,
+  OkOutput,
+  PlaybookRuleInput,
+  PlaybookRuleOutput,
+  PlaybookRulesOutput,
+  ReseedArchetypeInput,
   RunDetailOutput,
   RunListOutput,
   SetPausedInput,
@@ -51,6 +56,44 @@ export class AnalysisApiService extends BaseApiService {
     return this.get<AvailableConversionsOutput>(['/accounts', accountId, 'available-conversions'], {
       context: silentApiContext(),
     });
+  }
+
+  /** `PUT /api/accounts/:id/agent/archetype` — re-semeia o arquétipo (reseta comportamento). */
+  reseedArchetype(accountId: string, archetype: string): Observable<AgentSummary> {
+    return this.put<AgentSummary, ReseedArchetypeInput>(
+      ['/accounts', accountId, 'agent', 'archetype'],
+      { archetype },
+    );
+  }
+
+  /** `GET /api/accounts/:id/agent/playbook-rules` — regras de playbook do agente. */
+  listPlaybookRules(accountId: string): Observable<PlaybookRulesOutput> {
+    return this.get<PlaybookRulesOutput>(['/accounts', accountId, 'agent', 'playbook-rules']);
+  }
+
+  /** `POST /api/accounts/:id/agent/playbook-rules` — cria uma regra. */
+  createPlaybookRule(accountId: string, input: PlaybookRuleInput): Observable<PlaybookRuleOutput> {
+    return this.post<PlaybookRuleOutput, PlaybookRuleInput>(
+      ['/accounts', accountId, 'agent', 'playbook-rules'],
+      input,
+    );
+  }
+
+  /** `PUT /api/accounts/:id/agent/playbook-rules/:ruleId` — atualiza uma regra. */
+  updatePlaybookRule(
+    accountId: string,
+    ruleId: string,
+    input: PlaybookRuleInput,
+  ): Observable<PlaybookRuleOutput> {
+    return this.put<PlaybookRuleOutput, PlaybookRuleInput>(
+      ['/accounts', accountId, 'agent', 'playbook-rules', ruleId],
+      input,
+    );
+  }
+
+  /** `DELETE /api/accounts/:id/agent/playbook-rules/:ruleId` — remove uma regra. */
+  deletePlaybookRule(accountId: string, ruleId: string): Observable<OkOutput> {
+    return this.delete<OkOutput>(['/accounts', accountId, 'agent', 'playbook-rules', ruleId]);
   }
 
   /** `PUT /api/accounts/:id/agent/paused` — pausa/retoma as análises automáticas. */

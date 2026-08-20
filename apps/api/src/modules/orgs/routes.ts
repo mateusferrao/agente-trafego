@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { requireAuth } from "../../middleware/auth.js";
 import { requireOrgScope, orgIdOf } from "../../middleware/org-scope.js";
-import { createOrgInput, renameOrgInput } from "./schema.js";
+import { createOrgInput, renameOrgInput, setTimezoneInput } from "./schema.js";
 
 /** Slice de orgs: listar orgs do user, criar nova (vira owner) e renomear a ativa. */
 export const orgsRoutes: FastifyPluginAsync = async (app) => {
@@ -21,5 +21,16 @@ export const orgsRoutes: FastifyPluginAsync = async (app) => {
   app.patch("/orgs/current", { preHandler: [requireAuth, requireOrgScope] }, async (request) => {
     const input = renameOrgInput.parse(request.body);
     return service.rename(request.userId!, orgIdOf(request), input);
+  });
+
+  // Org ativa (nome + fuso) — base da tela de Configurações.
+  app.get("/orgs/current", { preHandler: [requireAuth, requireOrgScope] }, async (request) => {
+    return service.getCurrent(request.userId!, orgIdOf(request));
+  });
+
+  // Fuso da org ATIVA (Fatia 4) — só o owner. Usado p/ avaliar a cadência.
+  app.patch("/orgs/current/timezone", { preHandler: [requireAuth, requireOrgScope] }, async (request) => {
+    const input = setTimezoneInput.parse(request.body);
+    return service.setTimezone(request.userId!, orgIdOf(request), input);
   });
 };

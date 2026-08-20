@@ -156,6 +156,12 @@ Sub-slices:
 - **Fonte única** dos limites/defaults da janela (hoje duplicados em 4 lugares — nit do review do corte 1) pode ser consolidada aqui.
 - **Depende:** 4b-1/4b-2 plenos com **5a** (write path + guardrail engine); casa com o **controle conversacional total** (pós-MVP) — cada bloco vira uma tool equivalente.
 
+**Entregue (corte 2):** playbook NL (CRUD + basis-honesto no core), identidade/voz (persona/tone/override + "ver metodologia"), cadência (`CadenceSpec` fonte única + `cadenceToCron` + job de resync, worker = dono do scheduler), seletor de arquétipo (re-seed preservando meta+textos), fuso org-level (Configurações), consolidação das constantes de janela, e o wiring do worker lendo autonomy/guardrail. Fast-follows deste corte:
+- **Autonomia (4b-1) + guardrails (4b-2) — UI movida p/ a Fatia 5a** (só mordem na escrita; a leitura no worker já foi ligada aqui). A 5a entrega a superfície de edição + o write path juntos.
+- **Janela por-regra do playbook** (3d/7d/14d) — o engine ainda ignora `cond.window` (usa a janela do agente); implementar fatiando os `insights_snapshots` diários por janela.
+- **model_config na UI** (topN/reasoning/**escolha de modelo por-agente**) = **evolução do produto** — footgun p/ o não-técnico; expor primeiro em contexto admin/interno (o backend já resolve por `agents.model_config`).
+- **Componentização das seções + Reactive Forms** na superfície Agente (hoje signals + nativos, consistente com o corte 1) + vendorizar `UiConfirmDialog` (o re-seed usa `window.confirm`).
+
 ## Fatia 7 — Criação de campanhas (roadmap pós-MVP)
 
 **Visão "gestor completo no WhatsApp":** o agente também **cria** campanhas — a pedido ou proativo. Só depois do MVP de otimização validar. Arquitetura já antecipa (catálogo de tools + `AdsPlatformPort` + porta nova de storage). **Depende:** MVP validado (pós-beta) + `5a`/`5b` (write path + HITL) + catálogo de tools.

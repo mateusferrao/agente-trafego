@@ -14,6 +14,7 @@ import {
   archetypeDefaults,
   budgetDirection,
   buildAccountBrief,
+  buildEntityConversionMap,
   buildMessageFallback,
   composeAgentPrompt,
   composeMethodologyPrompt,
@@ -129,9 +130,17 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
 
     // config resolvida por-agente (model_config) com fallback nos defaults globais.
     const cfg = resolveAnalysisConfig(ctx.modelConfig, deps.analysis);
-    // system prompt = base (override do agente OU metodologia do arquétipo) + camada
-    // ADITIVA de personalização (contexto do negócio + orientações) — Fatia 4.
-    const basePrompt = ctx.systemPrompt ?? composeMethodologyPrompt(archetypeDefaults(ctx.archetype));
+    // system prompt = base (override do agente OU metodologia do arquétipo) +
+    // identidade/voz (persona/tom) + camada ADITIVA de personalização (contexto +
+    // orientações) — Fatia 4. persona/tom entram como diretiva de voz, sobre a base.
+    const methodologyBase = ctx.systemPrompt ?? composeMethodologyPrompt(archetypeDefaults(ctx.archetype));
+    const identity = [
+      ctx.persona ? `Persona: ${ctx.persona}` : "",
+      ctx.tone ? `Tom da comunicação: ${ctx.tone}` : "",
+    ]
+      .filter((s) => s.length > 0)
+      .join("\n");
+    const basePrompt = identity ? `${methodologyBase}\n\n${identity}` : methodologyBase;
     const systemPrompt = composeAgentPrompt(basePrompt, {
       ...(ctx.businessContext ? { businessContext: ctx.businessContext } : {}),
       ...(ctx.guidance ? { guidance: ctx.guidance } : {}),
@@ -152,6 +161,8 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     return {
       goals: ctx.goals,
       playbookRules: ctx.playbook,
+      autonomyPolicy: ctx.autonomyPolicy,
+      guardrailConfig: ctx.guardrailConfig,
       rejectedMemory: ctx.rejectedMemory,
       mutedCampaignIds: ctx.mutedCampaignIds,
       systemPrompt,
@@ -236,7 +247,10 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
   /** Regras determinísticas → ações-base (funções puras do core). */
   async function runPlaybookNode(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
     logger.debug({ runId: state.runId }, "run_playbook");
-    const playbookCandidates = evaluatePlaybook(state.playbookRules, state.insights);
+    // resolução da conversão de negócio por entidade → CPA/ROAS das regras seguem o
+    // basis (só disparam onde a conversão é mensurável). Mesma fonte do brief (§7).
+    const resolution = buildEntityConversionMap(state.insights, state.entities, state.goals);
+    const playbookCandidates = evaluatePlaybook(state.playbookRules, state.insights, resolution);
     return { playbookCandidates };
   }
 

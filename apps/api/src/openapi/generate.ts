@@ -13,7 +13,7 @@ import {
 } from "@asteasolutions/zod-to-openapi";
 import { z } from "zod";
 import { loginInput, meOutput, signupInput } from "../modules/auth/schema.js";
-import { createOrgInput, orgOutput, renameOrgInput } from "../modules/orgs/schema.js";
+import { createOrgInput, orgOutput, renameOrgInput, setTimezoneInput } from "../modules/orgs/schema.js";
 import { accessStatusOutput, usageSummaryOutput } from "../modules/billing/schema.js";
 import { adAccountOutput } from "../modules/accounts/schema.js";
 import {
@@ -31,6 +31,11 @@ import {
   availableConversionsOutput,
   muteCampaignInput,
   mutedCampaignsOutput,
+  okOutput,
+  playbookRuleInput,
+  playbookRuleOutput,
+  playbookRulesOutput,
+  reseedArchetypeInput,
   setPausedInput,
 } from "../modules/agents/schema.js";
 import {
@@ -65,6 +70,7 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const MeOutput = registry.register("MeOutput", meOutput);
   const CreateOrgInput = registry.register("CreateOrgInput", createOrgInput);
   const RenameOrgInput = registry.register("RenameOrgInput", renameOrgInput);
+  const SetTimezoneInput = registry.register("SetTimezoneInput", setTimezoneInput);
   const OrgOutput = registry.register("OrgOutput", orgOutput);
   const AccessStatusOutput = registry.register("AccessStatusOutput", accessStatusOutput);
   const UsageSummaryOutput = registry.register("UsageSummaryOutput", usageSummaryOutput);
@@ -87,6 +93,11 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const RunDetailOutput = registry.register("RunDetailOutput", runDetailOutput);
   const MuteCampaignInput = registry.register("MuteCampaignInput", muteCampaignInput);
   const MutedCampaignsOutput = registry.register("MutedCampaignsOutput", mutedCampaignsOutput);
+  const PlaybookRuleInput = registry.register("PlaybookRuleInput", playbookRuleInput);
+  const PlaybookRuleOutput = registry.register("PlaybookRuleOutput", playbookRuleOutput);
+  const PlaybookRulesOutput = registry.register("PlaybookRulesOutput", playbookRulesOutput);
+  const OkOutput = registry.register("OkOutput", okOutput);
+  const ReseedArchetypeInput = registry.register("ReseedArchetypeInput", reseedArchetypeInput);
   const ChannelStateOutput = registry.register("ChannelStateOutput", channelStateOutput);
   const StartVerificationInput = registry.register("StartVerificationInput", startVerificationInput);
   const StartVerificationOutput = registry.register("StartVerificationOutput", startVerificationOutput);
@@ -161,6 +172,19 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   });
   registry.registerPath({
     method: "get",
+    path: "/api/orgs/current",
+    tags: ["orgs"],
+    responses: { 200: jsonRes("org ativa (nome + fuso)", OrgOutput) },
+  });
+  registry.registerPath({
+    method: "patch",
+    path: "/api/orgs/current/timezone",
+    tags: ["orgs"],
+    request: jsonBody(SetTimezoneInput),
+    responses: { 200: jsonRes("fuso da org atualizado", OrgOutput) },
+  });
+  registry.registerPath({
+    method: "get",
     path: "/api/accounts",
     tags: ["accounts"],
     responses: { 200: jsonRes("contas sob gestão da org", z.array(AdAccountOutput)) },
@@ -218,6 +242,13 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     tags: ["agents"],
     request: { params: accountParams, ...jsonBody(AgentConfigInput) },
     responses: { 200: jsonRes("config do agente atualizada", AgentSummary) },
+  });
+  registry.registerPath({
+    method: "put",
+    path: "/api/accounts/{id}/agent/archetype",
+    tags: ["agents"],
+    request: { params: accountParams, ...jsonBody(ReseedArchetypeInput) },
+    responses: { 200: jsonRes("arquétipo re-semeado (comportamento resetado)", AgentSummary) },
   });
   registry.registerPath({
     method: "get",
@@ -353,6 +384,40 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     tags: ["agents"],
     request: { params: z.object({ id: z.string(), externalId: z.string() }) },
     responses: { 200: jsonRes("campanha reativada", MutedCampaignsOutput) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts/{id}/agent/playbook-rules",
+    tags: ["agents"],
+    request: { params: accountParams },
+    responses: { 200: jsonRes("regras de playbook do agente", PlaybookRulesOutput) },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/accounts/{id}/agent/playbook-rules",
+    tags: ["agents"],
+    request: { params: accountParams, ...jsonBody(PlaybookRuleInput) },
+    responses: { 200: jsonRes("regra criada", PlaybookRuleOutput) },
+  });
+  registry.registerPath({
+    method: "put",
+    path: "/api/accounts/{id}/agent/playbook-rules/{ruleId}",
+    tags: ["agents"],
+    request: { params: z.object({ id: z.string(), ruleId: z.string() }), ...jsonBody(PlaybookRuleInput) },
+    responses: {
+      200: jsonRes("regra atualizada", PlaybookRuleOutput),
+      404: { description: "regra não encontrada" },
+    },
+  });
+  registry.registerPath({
+    method: "delete",
+    path: "/api/accounts/{id}/agent/playbook-rules/{ruleId}",
+    tags: ["agents"],
+    request: { params: z.object({ id: z.string(), ruleId: z.string() }) },
+    responses: {
+      200: jsonRes("regra removida", OkOutput),
+      404: { description: "regra não encontrada" },
+    },
   });
   registry.registerPath({
     method: "post",

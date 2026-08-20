@@ -4,14 +4,18 @@
 
 import { and, eq, lte, sql } from "drizzle-orm";
 import type { Database } from "@trafego/db/client";
-import { adAccounts, agentMemory, agentMutedEntities, agentRunSteps, agentRuns, agents, conversionLabels, platformConnections, playbookRules, recommendations } from "@trafego/db";
-import type { Action, AgentGoals, ConversionGoal, EncryptedPayload, PlaybookRule, RiskLevel } from "@trafego/shared";
+import { adAccounts, agentMemory, agentMutedEntities, agentRunSteps, agentRuns, agents, conversionLabels, guardrailConfigs, platformConnections, playbookRules, recommendations } from "@trafego/db";
+import type { Action, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, PlaybookRule, RiskLevel } from "@trafego/shared";
+import { unseedIdentity } from "@trafego/core";
 import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
 
 export interface AgentContext {
   readonly goals: AgentGoals;
   readonly archetype: string;
   readonly systemPrompt: string | null;
+  /** Identidade/voz (Fatia 4) — compõem o prompt-base (persona + tom). */
+  readonly persona: string | null;
+  readonly tone: string | null;
   /** Contexto do negócio (fatos) — camada aditiva no prompt (Fatia 4). */
   readonly businessContext: string | null;
   /** Orientações de comportamento — camada aditiva no prompt (Fatia 4). */
@@ -19,6 +23,10 @@ export interface AgentContext {
   /** Quando a config relevante à análise mudou — força 1 deep run (Fatia 4). */
   readonly configChangedAt: Date | null;
   readonly modelConfig: Readonly<Record<string, unknown>>;
+  /** Autonomia por origem (playbook×llm) — decisão de auto-aplicar × pedir OK (5a). */
+  readonly autonomyPolicy: AutonomyPolicy;
+  /** Guardrails (rede independente) — blast radius, cap, kill-switch, dry-run (5a). */
+  readonly guardrailConfig: GuardrailConfig;
   readonly playbook: PlaybookRule[];
   /** memória "rejeitado" ativa (loop de feedback barato — não repetir o que o dono vetou). */
   readonly rejectedMemory: string[];
@@ -90,6 +98,35 @@ export interface AnalysisRepo {
   closeRun(orgId: string, runId: string, input: CloseRunInput): Promise<void>;
 }
 
+/** Defaults conservadores dos guardrails (espelham os defaults de coluna do schema). */
+const GUARDRAIL_DEFAULTS: GuardrailConfig = {
+  maxBudgetChangePct: 20,
+  maxEntitiesPerDay: 3,
+  allowedActions: ["pause_entity"],
+  dryRun: true,
+  killSwitch: false,
+};
+
+/** Linha `guardrail_configs` → `GuardrailConfig` (domínio). Ausente → defaults. */
+function toGuardrailConfig(row: {
+  maxBudgetChangePct: number;
+  maxEntitiesPerDay: number;
+  allowedActions: GuardrailConfig["allowedActions"];
+  dryRun: boolean;
+  killSwitch: boolean;
+  llmCostCap: string | null;
+} | undefined): GuardrailConfig {
+  if (!row) return GUARDRAIL_DEFAULTS;
+  return {
+    maxBudgetChangePct: row.maxBudgetChangePct,
+    maxEntitiesPerDay: row.maxEntitiesPerDay,
+    allowedActions: row.allowedActions,
+    dryRun: row.dryRun,
+    killSwitch: row.killSwitch,
+    ...(row.llmCostCap !== null ? { llmCostCapUsd: Number(row.llmCostCap) } : {}),
+  };
+}
+
 export function createAnalysisRepo(db: Database): AnalysisRepo {
   return {
     async loadAgentContext(orgId, agentId) {
@@ -98,15 +135,28 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
           goals: agents.goals,
           archetype: agents.archetype,
           systemPrompt: agents.systemPrompt,
+          persona: agents.persona,
+          tone: agents.tone,
           businessContext: agents.businessContext,
           guidance: agents.guidance,
           configChangedAt: agents.configChangedAt,
           modelConfig: agents.modelConfig,
+          autonomyPolicy: agents.autonomyPolicy,
         })
         .from(agents)
         .where(and(eq(agents.id, agentId), eq(agents.orgId, orgId)))
         .limit(1);
       if (!agent) return null;
+
+      // Guardrails (rede independente) — linha própria; fallback conservador se ainda
+      // não semeada (agentes pré-Fatia-4). Só morde na escrita (5a); lida agora p/ o
+      // state carregar valor real e de-riscar a 5a.
+      const [guardrailRow] = await db
+        .select()
+        .from(guardrailConfigs)
+        .where(and(eq(guardrailConfigs.agentId, agentId), eq(guardrailConfigs.orgId, orgId)))
+        .limit(1);
+      const guardrailConfig = toGuardrailConfig(guardrailRow);
 
       const rules = await db
         .select()
@@ -152,11 +202,17 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
       return {
         goals: agent.goals,
         archetype: agent.archetype,
-        systemPrompt: agent.systemPrompt,
+        // valor semeado igual ao default do arquétipo = "não configurado" (null) →
+        // usa a metodologia composta completa (não o systemPrompt cru semeado).
+        systemPrompt: unseedIdentity("systemPrompt", agent.systemPrompt, agent.archetype),
+        persona: unseedIdentity("persona", agent.persona, agent.archetype),
+        tone: unseedIdentity("tone", agent.tone, agent.archetype),
         businessContext: agent.businessContext,
         guidance: agent.guidance,
         configChangedAt: agent.configChangedAt,
         modelConfig: agent.modelConfig ?? {},
+        autonomyPolicy: agent.autonomyPolicy,
+        guardrailConfig,
         playbook,
         rejectedMemory: memory.map((m) => m.content),
         mutedCampaignIds: muted.map((m) => m.externalId),

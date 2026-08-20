@@ -57,6 +57,22 @@ export const autonomyPolicySchema = z.object({
   bySource: z.object({ playbook: autonomyLevel, llm: autonomyLevel }),
 });
 
+// ─── Cadência (Fatia 4 corte 2) ──────────────────────────────────────────
+// `CadenceSpec` = FONTE ÚNICA do ritmo da análise automática; o cron 5-campos é
+// SEMPRE derivado por `cadenceToCron` (core). Presets hora-granulares (minuto=0)
+// p/ o cron ser sempre expressável; `raw` é o escape do avançado. Shape extensível
+// (novas variantes = mais membros no union, sem tocar no que existe).
+const cadenceHour = z.number().int().min(0).max(23);
+/** Dia da semana no padrão cron dow: 0=domingo … 6=sábado. */
+const cadenceWeekday = z.number().int().min(0).max(6);
+export const cadenceSpecSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("daily"), hour: cadenceHour }),
+  z.object({ kind: z.literal("twice_daily"), hours: z.tuple([cadenceHour, cadenceHour]) }),
+  z.object({ kind: z.literal("weekly"), weekday: cadenceWeekday, hour: cadenceHour }),
+  z.object({ kind: z.literal("raw"), cron: z.string().min(1) }),
+]);
+export type CadenceSpec = z.infer<typeof cadenceSpecSchema>;
+
 // ─── Saída estruturada da análise (LLM) ──────────────────────────────────
 // Contrato do que o LLM devolve em `llm_analyze` (structured output). Sem
 // `.optional()` — usamos `.nullable()`/arrays vazios p/ o strict json_schema do

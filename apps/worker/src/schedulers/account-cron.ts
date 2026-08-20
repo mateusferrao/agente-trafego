@@ -4,12 +4,14 @@
 // estável). Ao disparar, cai na AGENT_CRON_QUEUE → o dispatcher cria o run.
 
 import { and, eq } from "drizzle-orm";
-import { adAccounts, agents } from "@trafego/db";
+import { adAccounts, agents, orgs } from "@trafego/db";
+import { cadenceToCron } from "@trafego/core";
 import {
   AGENT_CRON_QUEUE,
   AGENT_REAPER_QUEUE,
   AGENT_REAPER_SCHEDULE_KEY,
   type AgentCronDispatchPayload,
+  type CadenceSpec,
 } from "@trafego/shared";
 import type { SchedulerPort } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../composition.js";
@@ -18,8 +20,10 @@ export interface AccountSchedule {
   readonly orgId: string;
   readonly agentId: string;
   readonly adAccountId: string;
-  /** cron da cadência do agente (5 campos). */
+  /** cron da cadência do agente (5 campos), já derivado do `CadenceSpec`. */
   readonly cron: string;
+  /** fuso da org p/ avaliar o cron (fallback = tz global do env). */
+  readonly tz?: string;
   readonly enabled: boolean;
 }
 
@@ -48,7 +52,7 @@ export function makeAccountCron(deps: WorkerDeps) {
       key: scheduleKey(s.adAccountId),
       queue: AGENT_CRON_QUEUE,
       cron: s.cron,
-      tz: deps.cron.tz,
+      tz: s.tz ?? deps.cron.tz,
       jitterMs: deps.cron.jitterMs,
       payload,
     });
@@ -70,6 +74,11 @@ export function makeAccountCron(deps: WorkerDeps) {
     });
   }
 
+  /** cron derivado do `CadenceSpec` (fonte única) ou o default global (env). */
+  function cronFor(cadence: CadenceSpec | null): string {
+    return cadence ? cadenceToCron(cadence) : deps.cron.defaultCron;
+  }
+
   /** Re-sincroniza os schedulers a partir dos agentes ATIVOS no boot. */
   async function syncAllFromDb(): Promise<void> {
     logger.info("cron:sync_all");
@@ -81,23 +90,66 @@ export function makeAccountCron(deps: WorkerDeps) {
         agentId: agents.id,
         adAccountId: agents.adAccountId,
         cadence: agents.cadence,
+        tz: orgs.timezone,
       })
       .from(agents)
       .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
+      .innerJoin(orgs, eq(agents.orgId, orgs.id))
       .where(and(eq(agents.status, "active"), eq(adAccounts.status, "active")));
     for (const r of rows) {
       await upsertAccountSchedule({
         orgId: r.orgId,
         agentId: r.agentId,
         adAccountId: r.adAccountId,
-        cron: r.cadence ?? deps.cron.defaultCron,
+        cron: cronFor(r.cadence),
+        tz: r.tz,
         enabled: true,
       });
     }
     logger.info({ count: rows.length }, "cron:sync_all done");
   }
 
-  return { upsertAccountSchedule, removeAccountSchedule, ensureReaperSchedule, syncAllFromDb };
+  /**
+   * Re-sincroniza o schedule de UMA conta (Fatia 4): a API enfileira ao salvar a
+   * cadência; o worker recarrega spec+fuso e faz upsert (ativo) ou remove. Dono
+   * único do scheduler = worker.
+   */
+  async function resyncAccountSchedule(orgId: string, adAccountId: string): Promise<void> {
+    const [r] = await deps.db
+      .select({
+        agentId: agents.id,
+        cadence: agents.cadence,
+        agentStatus: agents.status,
+        accountStatus: adAccounts.status,
+        tz: orgs.timezone,
+      })
+      .from(agents)
+      .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
+      .innerJoin(orgs, eq(agents.orgId, orgs.id))
+      .where(and(eq(agents.adAccountId, adAccountId), eq(agents.orgId, orgId)))
+      .limit(1);
+    const active = r && r.agentStatus === "active" && r.accountStatus === "active";
+    if (!r || !active) {
+      await removeAccountSchedule(adAccountId);
+      return;
+    }
+    await upsertAccountSchedule({
+      orgId,
+      agentId: r.agentId,
+      adAccountId,
+      cron: cronFor(r.cadence),
+      tz: r.tz,
+      enabled: true,
+    });
+  }
+
+  return {
+    upsertAccountSchedule,
+    removeAccountSchedule,
+    ensureReaperSchedule,
+    syncAllFromDb,
+    resyncAccountSchedule,
+  };
 }
 
 export type AccountCron = ReturnType<typeof makeAccountCron>;

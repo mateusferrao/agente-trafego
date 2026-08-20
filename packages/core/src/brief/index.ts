@@ -18,7 +18,7 @@ import type {
   InsightRow,
   TrendPoint,
 } from "@trafego/shared";
-import { resolveConversion, type ResolvedConversion } from "../conversion/index.js";
+import { classifyBasis, resolveConversion, type ResolvedConversion } from "../conversion/index.js";
 import { computeFunnelSummary, mergeFunnel } from "../funnel/index.js";
 import { buildCampaignUnits } from "./campaign-units.js";
 
@@ -562,20 +562,43 @@ function resolveBasis(
   override: ResolvedConversion | undefined,
   metrics: InsightMetrics,
 ): { basis: ConversionBasis; proxy?: ConversionProxy } {
-  if (metrics.cpa !== undefined) return { basis: "target" };
-  if (override && objective) {
-    const proxyMetrics = computeDerived(n, objective); // objetivo próprio da entidade
-    if (proxyMetrics.cpa !== undefined) {
-      const proxy: ConversionProxy = {
-        goal: objective.goal,
-        ...(objective.customConversionId ? { customConversionId: objective.customConversionId } : {}),
-        cpa: proxyMetrics.cpa,
-        ...(proxyMetrics.roas !== undefined ? { roas: proxyMetrics.roas } : {}),
-      };
-      return { basis: "proxy", proxy };
-    }
+  // objetivo próprio da entidade (sem override) — só p/ o proxy; computado sob demanda.
+  const proxyMetrics = override && objective ? computeDerived(n, objective) : undefined;
+  return classifyBasis({
+    businessMetrics: metrics,
+    hasOverride: override !== undefined,
+    ...(objective ? { objective } : {}),
+    ...(proxyMetrics ? { proxyMetrics } : {}),
+  });
+}
+
+/**
+ * Mapa de resolução da conversão de NEGÓCIO por entidade (`${level}:${id}` →
+ * {basis, métricas de negócio}), p/ o playbook seguir o basis (§7 — só dispara CPA/
+ * ROAS onde a conversão de negócio é mensurável). Reusa a MESMA classificação do
+ * brief (`classifyBasis`) — fonte única, zero divergência.
+ */
+export function buildEntityConversionMap(
+  rows: readonly InsightRow[],
+  entities: readonly AdEntity[],
+  goals: AgentGoals,
+): Map<string, { basis: ConversionBasis; metrics: InsightMetrics }> {
+  const entityById = new Map(entities.map((e) => [e.id, e]));
+  const override = businessOverride(goals);
+  const out = new Map<string, { basis: ConversionBasis; metrics: InsightMetrics }>();
+  for (const n of normalize(rows)) {
+    const objective = entityById.get(n.entityId)?.objective;
+    const metrics = computeDerived(n, objective, override);
+    const proxyMetrics = override && objective ? computeDerived(n, objective) : undefined;
+    const { basis } = classifyBasis({
+      businessMetrics: metrics,
+      hasOverride: override !== undefined,
+      ...(objective ? { objective } : {}),
+      ...(proxyMetrics ? { proxyMetrics } : {}),
+    });
+    out.set(`${n.level}:${n.entityId}`, { basis, metrics });
   }
-  return { basis: "none" };
+  return out;
 }
 
 /**

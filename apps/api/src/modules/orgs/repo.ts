@@ -18,14 +18,18 @@ export interface OrgsRepo {
   /** Papel do user na org, ou `null` se não for membro (check de isolamento). */
   findMembershipRole(userId: string, orgId: string): Promise<MembershipRole | null>;
   /** Renomeia a org (só o nome de exibição; slug intacto). Papel é composto no service. */
-  rename(orgId: string, name: string): Promise<{ id: string; name: string }>;
+  rename(orgId: string, name: string): Promise<{ id: string; name: string; timezone: string }>;
+  /** Atualiza o fuso da org (papel composto no service). */
+  setTimezone(orgId: string, timezone: string): Promise<{ id: string; name: string; timezone: string }>;
+  /** Org por id (nome+fuso) — base do GET /orgs/current. */
+  findById(orgId: string): Promise<{ id: string; name: string; timezone: string } | null>;
 }
 
 export function createDrizzleOrgsRepo(db: Database): OrgsRepo {
   return {
     async listForUser(userId) {
       return db
-        .select({ id: orgs.id, name: orgs.name, role: memberships.role })
+        .select({ id: orgs.id, name: orgs.name, role: memberships.role, timezone: orgs.timezone })
         .from(memberships)
         .innerJoin(orgs, eq(memberships.orgId, orgs.id))
         .where(eq(memberships.userId, userId));
@@ -36,10 +40,10 @@ export function createDrizzleOrgsRepo(db: Database): OrgsRepo {
         const [org] = await tx
           .insert(orgs)
           .values({ name, slug: orgSlug(name) })
-          .returning({ id: orgs.id, name: orgs.name });
+          .returning({ id: orgs.id, name: orgs.name, timezone: orgs.timezone });
         if (!org) throw new Error("falha ao inserir org");
         await tx.insert(memberships).values({ orgId: org.id, userId, role: "owner" });
-        return { id: org.id, name: org.name, role: "owner" };
+        return { id: org.id, name: org.name, role: "owner", timezone: org.timezone };
       });
     },
 
@@ -57,9 +61,28 @@ export function createDrizzleOrgsRepo(db: Database): OrgsRepo {
         .update(orgs)
         .set({ name })
         .where(eq(orgs.id, orgId))
-        .returning({ id: orgs.id, name: orgs.name });
+        .returning({ id: orgs.id, name: orgs.name, timezone: orgs.timezone });
       if (!org) throw new Error("org não encontrada");
       return org;
+    },
+
+    async setTimezone(orgId, timezone) {
+      const [org] = await db
+        .update(orgs)
+        .set({ timezone })
+        .where(eq(orgs.id, orgId))
+        .returning({ id: orgs.id, name: orgs.name, timezone: orgs.timezone });
+      if (!org) throw new Error("org não encontrada");
+      return org;
+    },
+
+    async findById(orgId) {
+      const [org] = await db
+        .select({ id: orgs.id, name: orgs.name, timezone: orgs.timezone })
+        .from(orgs)
+        .where(eq(orgs.id, orgId))
+        .limit(1);
+      return org ?? null;
     },
   };
 }

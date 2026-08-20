@@ -139,6 +139,18 @@
           "name"
         ]
       },
+      "SetTimezoneInput": {
+        "type": "object",
+        "properties": {
+          "timezone": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "timezone"
+        ]
+      },
       "OrgOutput": {
         "type": "object",
         "properties": {
@@ -154,12 +166,16 @@
               "owner",
               "member"
             ]
+          },
+          "timezone": {
+            "type": "string"
           }
         },
         "required": [
           "id",
           "name",
-          "role"
+          "role",
+          "timezone"
         ]
       },
       "AccessStatusOutput": {
@@ -619,6 +635,129 @@
               "null"
             ]
           },
+          "persona": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tone": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "systemPrompt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cadence": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "daily"
+                    ]
+                  },
+                  "hour": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 23
+                  }
+                },
+                "required": [
+                  "kind",
+                  "hour"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "twice_daily"
+                    ]
+                  },
+                  "hours": {
+                    "type": "array",
+                    "prefixItems": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 23
+                      },
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 23
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "hours"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "weekly"
+                    ]
+                  },
+                  "weekday": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 6
+                  },
+                  "hour": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 23
+                  }
+                },
+                "required": [
+                  "kind",
+                  "weekday",
+                  "hour"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "raw"
+                    ]
+                  },
+                  "cron": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "kind",
+                  "cron"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "methodologyPreview": {
+            "type": "string"
+          },
           "analysisWindowDays": {
             "type": "number"
           },
@@ -632,6 +771,11 @@
           "goals",
           "businessContext",
           "guidance",
+          "persona",
+          "tone",
+          "systemPrompt",
+          "cadence",
+          "methodologyPreview",
           "analysisWindowDays",
           "paused"
         ]
@@ -718,6 +862,120 @@
           "guidance": {
             "type": "string",
             "maxLength": 2000
+          },
+          "persona": {
+            "type": "string",
+            "maxLength": 280
+          },
+          "tone": {
+            "type": "string",
+            "maxLength": 280
+          },
+          "systemPrompt": {
+            "type": "string",
+            "maxLength": 8000
+          },
+          "cadence": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "daily"
+                    ]
+                  },
+                  "hour": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 23
+                  }
+                },
+                "required": [
+                  "kind",
+                  "hour"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "twice_daily"
+                    ]
+                  },
+                  "hours": {
+                    "type": "array",
+                    "prefixItems": [
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 23
+                      },
+                      {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 23
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "hours"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "weekly"
+                    ]
+                  },
+                  "weekday": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 6
+                  },
+                  "hour": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 23
+                  }
+                },
+                "required": [
+                  "kind",
+                  "weekday",
+                  "hour"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "raw"
+                    ]
+                  },
+                  "cron": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "kind",
+                  "cron"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "analysisWindowDays": {
             "type": "integer",
@@ -1639,6 +1897,397 @@
           "campaignIds"
         ]
       },
+      "PlaybookRuleInput": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "campaign",
+              "adset",
+              "ad"
+            ]
+          },
+          "metric": {
+            "type": "string",
+            "enum": [
+              "cpa",
+              "roas",
+              "spend",
+              "cpc",
+              "cpm",
+              "ctr",
+              "frequency"
+            ]
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              ">",
+              "<",
+              ">=",
+              "<=",
+              "=="
+            ]
+          },
+          "value": {
+            "type": "number"
+          },
+          "minSpend": {
+            "type": "number",
+            "minimum": 0
+          },
+          "then": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "pause_entity"
+                    ]
+                  }
+                },
+                "required": [
+                  "type"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "adjust_budget"
+                    ]
+                  },
+                  "budgetChangePct": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "type",
+                  "budgetChangePct"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "set_status"
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "paused"
+                    ]
+                  }
+                },
+                "required": [
+                  "type",
+                  "status"
+                ]
+              }
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "priority": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scope",
+          "metric",
+          "op",
+          "value",
+          "then"
+        ]
+      },
+      "PlaybookRuleOutput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "campaign",
+              "adset",
+              "ad"
+            ]
+          },
+          "metric": {
+            "type": "string",
+            "enum": [
+              "cpa",
+              "roas",
+              "spend",
+              "cpc",
+              "cpm",
+              "ctr",
+              "frequency"
+            ]
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              ">",
+              "<",
+              ">=",
+              "<=",
+              "=="
+            ]
+          },
+          "value": {
+            "type": "number"
+          },
+          "minSpend": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "then": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "pause_entity"
+                    ]
+                  }
+                },
+                "required": [
+                  "type"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "adjust_budget"
+                    ]
+                  },
+                  "budgetChangePct": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "type",
+                  "budgetChangePct"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "set_status"
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "paused"
+                    ]
+                  }
+                },
+                "required": [
+                  "type",
+                  "status"
+                ]
+              }
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "priority": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "scope",
+          "metric",
+          "op",
+          "value",
+          "minSpend",
+          "then",
+          "enabled",
+          "priority"
+        ]
+      },
+      "PlaybookRulesOutput": {
+        "type": "object",
+        "properties": {
+          "rules": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "scope": {
+                  "type": "string",
+                  "enum": [
+                    "campaign",
+                    "adset",
+                    "ad"
+                  ]
+                },
+                "metric": {
+                  "type": "string",
+                  "enum": [
+                    "cpa",
+                    "roas",
+                    "spend",
+                    "cpc",
+                    "cpm",
+                    "ctr",
+                    "frequency"
+                  ]
+                },
+                "op": {
+                  "type": "string",
+                  "enum": [
+                    ">",
+                    "<",
+                    ">=",
+                    "<=",
+                    "=="
+                  ]
+                },
+                "value": {
+                  "type": "number"
+                },
+                "minSpend": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "then": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "pause_entity"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "type"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "adjust_budget"
+                          ]
+                        },
+                        "budgetChangePct": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "budgetChangePct"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "set_status"
+                          ]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "paused"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "status"
+                      ]
+                    }
+                  ]
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "priority": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "scope",
+                "metric",
+                "op",
+                "value",
+                "minSpend",
+                "then",
+                "enabled",
+                "priority"
+              ]
+            }
+          }
+        },
+        "required": [
+          "rules"
+        ]
+      },
+      "OkOutput": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ]
+      },
+      "ReseedArchetypeInput": {
+        "type": "object",
+        "properties": {
+          "archetype": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "archetype"
+        ]
+      },
       "ChannelStateOutput": {
         "type": "object",
         "properties": {
@@ -1957,6 +2606,51 @@
             }
           }
         }
+      },
+      "get": {
+        "tags": [
+          "orgs"
+        ],
+        "responses": {
+          "200": {
+            "description": "org ativa (nome + fuso)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/orgs/current/timezone": {
+      "patch": {
+        "tags": [
+          "orgs"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetTimezoneInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "fuso da org atualizado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrgOutput"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/accounts": {
@@ -2187,6 +2881,44 @@
         "responses": {
           "200": {
             "description": "config do agente atualizada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSummary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/agent/archetype": {
+      "put": {
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReseedArchetypeInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "arquétipo re-semeado (comportamento resetado)",
             "content": {
               "application/json": {
                 "schema": {
@@ -2717,6 +3449,158 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/agent/playbook-rules": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "regras de playbook do agente",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaybookRulesOutput"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaybookRuleInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "regra criada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaybookRuleOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/agent/playbook-rules/{ruleId}": {
+      "put": {
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "ruleId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PlaybookRuleInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "regra atualizada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaybookRuleOutput"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "regra não encontrada"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "ruleId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "regra removida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkOutput"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "regra não encontrada"
           }
         }
       }

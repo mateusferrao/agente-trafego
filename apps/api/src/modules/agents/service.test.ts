@@ -1,7 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Database } from "@trafego/db";
 import type { OrgId } from "@trafego/shared/types";
+import type { SchedulerPort } from "@trafego/shared/ports";
 import { createAgentsService } from "./service.js";
+
+/** Scheduler noop (resync = fila; irrelevante p/ os testes de serviço). */
+const scheduler: SchedulerPort = {
+  upsertSchedule: async () => {},
+  removeSchedule: async () => {},
+  enqueue: async () => {},
+};
 
 /**
  * DB falso: cada `where()` consome UM resultado de `selectResults` (em ordem) e é
@@ -26,7 +34,8 @@ function makeFakeDb(selectResults: unknown[][], insertReturning: unknown[] = [{ 
     select: () => ({ from: () => ({ where: () => whereResult() }) }),
     insert: () => ({
       values: (v: Record<string, unknown>) => {
-        captured.insertValues = v;
+        // primeiro insert vence (na criação há 2: agente + guardrail — asserção mira o 1º).
+        if (captured.insertValues === undefined) captured.insertValues = v;
         return {
           returning: async () => insertReturning,
           onConflictDoNothing: async () => {
@@ -55,7 +64,7 @@ const ORG = "org-1" as OrgId;
 describe("agents.getOrCreateForAccount", () => {
   it("cria o agente default (arquétipo conservador) quando não existe", async () => {
     const { db, captured } = makeFakeDb([[{ id: "acc-1" }], []], [{ id: "agent-new" }]);
-    const service = createAgentsService({ db });
+    const service = createAgentsService({ db, scheduler });
 
     const result = await service.getOrCreateForAccount(ORG, "acc-1");
 
@@ -67,7 +76,7 @@ describe("agents.getOrCreateForAccount", () => {
 
   it("retorna o agente existente sem criar outro", async () => {
     const { db, captured } = makeFakeDb([[{ id: "acc-1" }], [{ id: "ag-1", archetype: "conservador", goals: { targetCPA: 40 } }]]);
-    const service = createAgentsService({ db });
+    const service = createAgentsService({ db, scheduler });
 
     const result = await service.getOrCreateForAccount(ORG, "acc-1");
 
@@ -78,7 +87,7 @@ describe("agents.getOrCreateForAccount", () => {
 
   it("404 quando a conta não é da org", async () => {
     const { db } = makeFakeDb([[]]);
-    const service = createAgentsService({ db });
+    const service = createAgentsService({ db, scheduler });
     await expect(service.getOrCreateForAccount(ORG, "nope")).rejects.toMatchObject({ statusCode: 404 });
   });
 });
@@ -91,7 +100,7 @@ describe("agents.updateConfig", () => {
       [{ id: "ag-1", archetype: "conservador", goals: {} }],
       [{ modelConfig: { model: "x" } }],
     ]);
-    const service = createAgentsService({ db });
+    const service = createAgentsService({ db, scheduler });
 
     const result = await service.updateConfig(ORG, "acc-1", {
       goals: { targetCPA: 150, conversionGoal: "purchase" },
@@ -121,7 +130,7 @@ describe("agents.availableConversions", () => {
     ];
     const labels = [{ goal: "custom", customConversionId: "123", label: "Comprou Curso" }];
     const { db } = makeFakeDb([snapshots, labels]);
-    const service = createAgentsService({ db });
+    const service = createAgentsService({ db, scheduler });
 
     const result = await service.availableConversions(ORG, "acc-1");
 
@@ -129,6 +138,43 @@ describe("agents.availableConversions", () => {
       { goal: "purchase", count: 8 },
       { goal: "custom", customConversionId: "123", count: 2, label: "Comprou Curso" },
     ]);
+  });
+});
+
+describe("agents.createPlaybookRule", () => {
+  it("mapeia o input → whenJson (window placeholder + minSpend) / thenActionType e bumpa configChangedAt", async () => {
+    // selects: conta + agente (getOrCreate). insert devolve a linha criada.
+    const createdRow = {
+      id: "rule-1",
+      scope: "ad",
+      whenJson: { metric: "cpa", op: ">", value: 150, window: "7d", minSpend: 50 },
+      thenJson: { type: "pause_entity" },
+      enabled: true,
+      priority: 0,
+    };
+    const { db, captured } = makeFakeDb(
+      [[{ id: "acc-1" }], [{ id: "ag-1", archetype: "conservador", goals: {} }]],
+      [createdRow],
+    );
+    const service = createAgentsService({ db, scheduler });
+
+    const result = await service.createPlaybookRule(ORG, "acc-1", {
+      scope: "ad",
+      metric: "cpa",
+      op: ">",
+      value: 150,
+      minSpend: 50,
+      then: { type: "pause_entity" },
+    });
+
+    // whenJson montado com a janela placeholder (engine usa a do agente) + minSpend.
+    expect(captured.insertValues?.whenJson).toEqual({ metric: "cpa", op: ">", value: 150, window: "7d", minSpend: 50 });
+    expect(captured.insertValues?.thenActionType).toBe("pause_entity");
+    expect(captured.insertValues?.enabled).toBe(true); // default
+    // config bumpada (playbook afeta a análise → força 1 deep).
+    expect(captured.updateSet?.configChangedAt).toBeDefined();
+    // saída achatada p/ a UI.
+    expect(result).toMatchObject({ id: "rule-1", metric: "cpa", minSpend: 50, then: { type: "pause_entity" } });
   });
 });
 
@@ -140,7 +186,7 @@ describe("agents.muteCampaign / unmuteCampaign", () => {
       [{ id: "ag-1", archetype: "conservador", goals: {} }],
       [{ externalId: "C1" }],
     ]);
-    const service = createAgentsService({ db });
+    const service = createAgentsService({ db, scheduler });
 
     const result = await service.muteCampaign(ORG, "acc-1", "C1");
 
@@ -160,7 +206,7 @@ describe("agents.muteCampaign / unmuteCampaign", () => {
       [{ id: "ag-1", archetype: "conservador", goals: {} }],
       [],
     ]);
-    const service = createAgentsService({ db });
+    const service = createAgentsService({ db, scheduler });
 
     const result = await service.unmuteCampaign(ORG, "acc-1", "C1");
 

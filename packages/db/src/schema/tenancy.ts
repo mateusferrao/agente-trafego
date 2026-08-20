@@ -1,4 +1,5 @@
 import { index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { DEFAULT_TIMEZONE } from "@trafego/shared";
 import { accessStatus, membershipRole, pk, timestamps } from "./_shared.js";
 
 /** Org = tenant. Raiz de todo scoping por `org_id`. */
@@ -6,6 +7,9 @@ export const orgs = pgTable("orgs", {
   id: pk(),
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
+  // Fuso horário da org (Fatia 4) — usado p/ avaliar a cadência (cron) das análises.
+  // Default BR (ICP, fonte única em @trafego/shared); editável em Configurações.
+  timezone: text("timezone").notNull().default(DEFAULT_TIMEZONE),
   ...timestamps,
 });
 

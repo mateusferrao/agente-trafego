@@ -15,6 +15,7 @@ import type {
   ActionType,
   AgentGoals,
   AutonomyPolicy,
+  CadenceSpec,
   PlaybookCondition,
 } from "@trafego/shared";
 import {
@@ -48,8 +49,11 @@ export const agents = pgTable(
     businessContext: text("business_context"),
     guidance: text("guidance"),
     goals: jsonb("goals").$type<AgentGoals>().notNull().default({}),
-    // expressão cron por conta (cadência)
-    cadence: text("cadence"),
+    // Cadência da análise (Fatia 4 corte 2) = FONTE ÚNICA `CadenceSpec` (jsonb); o
+    // cron 5-campos é sempre DERIVADO por `cadenceToCron` no scheduler. Null = usa o
+    // default global (env). Migrada de `text` (cron cru); a migration adiciona o
+    // `USING` (Drizzle não o gera p/ text→jsonb) convertendo cron legado em {kind:raw}.
+    cadence: jsonb("cadence").$type<CadenceSpec>(),
     autonomyPolicy: jsonb("autonomy_policy").$type<AutonomyPolicy>().notNull(),
     tone: text("tone"),
     // config do modelo (provider/model/params) via OpenRouter

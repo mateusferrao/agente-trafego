@@ -11,9 +11,15 @@ export const renameOrgInput = z.object({
 });
 export type RenameOrgInput = z.infer<typeof renameOrgInput>;
 
+// Fuso da org (Fatia 4) — usado p/ avaliar a cadência das análises. IANA tz string.
+export const setTimezoneInput = z.object({ timezone: z.string().min(1) });
+export type SetTimezoneInput = z.infer<typeof setTimezoneInput>;
+
 export const orgOutput = z.object({
   id: z.string(),
   name: z.string(),
   role: z.enum(["owner", "member"]),
+  /** fuso horário (IANA) da org — default BR até o dono mudar. */
+  timezone: z.string(),
 });
 export type OrgOutput = z.infer<typeof orgOutput>;

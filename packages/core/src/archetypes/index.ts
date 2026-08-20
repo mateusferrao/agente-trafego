@@ -78,6 +78,20 @@ export function archetypeDefaults(key: string = DEFAULT_ARCHETYPE_KEY): Archetyp
   return ARCHETYPE_DEFAULTS[key] ?? CONSERVADOR;
 }
 
+/**
+ * Trata um campo de identidade SEMEADO pelo arquétipo como "não configurado" (null)
+ * quando ainda igual ao default — assim "vazio = usa o arquétipo" vale mesmo p/ agentes
+ * criados antes (semeados). Valor editado (≠ default) é preservado. PURO.
+ */
+export function unseedIdentity(
+  field: "persona" | "tone" | "systemPrompt",
+  value: string | null,
+  archetypeKey: string,
+): string | null {
+  if (value === null) return null;
+  return value === archetypeDefaults(archetypeKey)[field] ? null : value;
+}
+
 /** Compõe o system prompt do analista a partir da metodologia (dado → texto). PURO. */
 export function composeMethodologyPrompt(d: ArchetypeDefaults): string {
   const bullets = (label: string, items: readonly string[]): string =>

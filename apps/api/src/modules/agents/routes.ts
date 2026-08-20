@@ -1,7 +1,13 @@
 import type { FastifyPluginAsync } from "fastify";
 import { requireAuth } from "../../middleware/auth.js";
 import { requireOrgScope, orgIdOf } from "../../middleware/org-scope.js";
-import { agentConfigInput, muteCampaignInput, setPausedInput } from "./schema.js";
+import {
+  agentConfigInput,
+  muteCampaignInput,
+  playbookRuleInput,
+  reseedArchetypeInput,
+  setPausedInput,
+} from "./schema.js";
 
 /**
  * Slice de agentes (3a): agente por conta (zero-config) + edição da meta.
@@ -21,6 +27,13 @@ export const agentsRoutes: FastifyPluginAsync = async (app) => {
     const { id } = request.params as { id: string };
     const input = agentConfigInput.parse(request.body);
     return service.updateConfig(orgIdOf(request), id, input);
+  });
+
+  // Re-semear o arquétipo (c2): reseta o comportamento, preserva meta+textos+cadência.
+  app.put("/accounts/:id/agent/archetype", guard, async (request) => {
+    const { id } = request.params as { id: string };
+    const { archetype } = reseedArchetypeInput.parse(request.body);
+    return service.reseedArchetype(orgIdOf(request), id, archetype);
   });
 
   // Conversões que a conta reportou (base do select anotado da config). DB-only.
@@ -53,5 +66,30 @@ export const agentsRoutes: FastifyPluginAsync = async (app) => {
     const { id, externalId } = request.params as { id: string; externalId: string };
     const campaignIds = await service.unmuteCampaign(orgIdOf(request), id, externalId);
     return { campaignIds };
+  });
+
+  // ─── Playbook (Fatia 4 corte 2): CRUD de regras. É lista → endpoints próprios. ──
+  app.get("/accounts/:id/agent/playbook-rules", guard, async (request) => {
+    const { id } = request.params as { id: string };
+    const rules = await service.listPlaybookRules(orgIdOf(request), id);
+    return { rules };
+  });
+
+  app.post("/accounts/:id/agent/playbook-rules", guard, async (request) => {
+    const { id } = request.params as { id: string };
+    const input = playbookRuleInput.parse(request.body);
+    return service.createPlaybookRule(orgIdOf(request), id, input);
+  });
+
+  app.put("/accounts/:id/agent/playbook-rules/:ruleId", guard, async (request) => {
+    const { id, ruleId } = request.params as { id: string; ruleId: string };
+    const input = playbookRuleInput.parse(request.body);
+    return service.updatePlaybookRule(orgIdOf(request), id, ruleId, input);
+  });
+
+  app.delete("/accounts/:id/agent/playbook-rules/:ruleId", guard, async (request) => {
+    const { id, ruleId } = request.params as { id: string; ruleId: string };
+    await service.deletePlaybookRule(orgIdOf(request), id, ruleId);
+    return { ok: true };
   });
 };

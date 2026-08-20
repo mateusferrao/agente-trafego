@@ -18,3 +18,5 @@ export { UiModuleSidebarComponent as UiModuleSidebar } from './ui-module-sidebar
 export type { UiModuleSidebarItem } from './ui-module-sidebar';
 export { UiDialog, UiDialogOverlay, UiDialogTitle, UiDialogDescription } from './ui-dialog';
 export { UiOptionRow, UiOptionRowCheck, UiOptionRowIcon, UiOptionRowCopy } from './ui-option-row';
+export { UiSelectBox } from './ui-select';
+export type { UiSelectOptionItem } from './ui-select';

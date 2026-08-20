@@ -8,6 +8,7 @@ import { startAgentRunsWorker } from "./workers/agent-runs.js";
 import { startAgentCronDispatchWorker } from "./workers/agent-cron-dispatch.js";
 import { startAgentReaperWorker } from "./workers/agent-reaper.js";
 import { startInsightsSyncWorker } from "./workers/insights-sync.js";
+import { startScheduleResyncWorker } from "./workers/schedule-resync.js";
 import { makeAccountCron } from "./schedulers/account-cron.js";
 import { createRunReaper } from "./modules/dispatch/run-reaper.js";
 
@@ -21,15 +22,18 @@ async function main(): Promise<void> {
 
   // 3a: loop de análise read-only (agent-runs) + sync de insights (2a).
   // 3b: dispatch do cron (cria run por conta no horário) + cadência por conta.
+  const cron = makeAccountCron(deps);
   const agentRuns = startAgentRunsWorker(deps, connection);
   const cronDispatch = startAgentCronDispatchWorker(deps, connection);
   const reaper = startAgentReaperWorker(deps, connection);
   const insightsSync = startInsightsSyncWorker(deps, connection);
+  // resync de schedule por conta (Fatia 4): consome os jobs que a API enfileira ao
+  // salvar a cadência — worker é o dono único do scheduler.
+  const scheduleResync = startScheduleResyncWorker(deps, connection, cron);
 
   // Sincroniza os schedulers recorrentes a partir dos agentes ativos (idempotente)
   // + agenda o reaper (singleton) e faz uma varredura de boot (limpa presos de um
   // crash anterior antes de esperar o 1º tick).
-  const cron = makeAccountCron(deps);
   await cron.syncAllFromDb().catch((err: unknown) => logger.error({ err }, "cron:sync_all falhou"));
   await cron.ensureReaperSchedule().catch((err: unknown) => logger.error({ err }, "reaper:schedule falhou"));
   await createRunReaper({ db: deps.db, logger, staleMinutes: deps.reaper.staleMinutes })
@@ -40,7 +44,13 @@ async function main(): Promise<void> {
   // shutdown gracioso (drena jobs em andamento antes de sair)
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, "worker shutting down");
-    await Promise.allSettled([agentRuns.close(), cronDispatch.close(), reaper.close(), insightsSync.close()]);
+    await Promise.allSettled([
+      agentRuns.close(),
+      cronDispatch.close(),
+      reaper.close(),
+      insightsSync.close(),
+      scheduleResync.close(),
+    ]);
     await Promise.allSettled([connection.quit(), deps.redis.quit()]);
     process.exit(0);
   };

@@ -1,6 +1,7 @@
 // Config resolvida do pipeline de análise (§ princípio-guia: por-agente já no dado).
 // Precedência: agents.model_config (jsonb) → fallback nos defaults globais (env).
 // PURO — a Fatia 4 só pluga a UI de edição do model_config; nada muda aqui.
+import { ANALYSIS_WINDOW_MIN_DAYS, ANALYSIS_WINDOW_MAX_DAYS } from "@trafego/shared";
 
 /** Estratégias de execução (quais unidades reanalisar por run) — enum neutro, aberto. */
 export type ExecutionPolicy = "deep_periodic_incremental" | "full_every_run" | "budget_scaled";
@@ -16,12 +17,10 @@ const EXECUTION_POLICIES: readonly ExecutionPolicy[] = [
 ];
 
 /**
- * Limites da janela de análise por-agente (Fatia 4). Teto 30d: com o baseline
- * espelhando a janela, janela+baseline = 60d < retenção (~90d) e sem estourar o
- * custo/contexto (trends = 1 ponto/dia; downsample p/ 90d = roadmap).
+ * Limites da janela de análise por-agente (Fatia 4) — fonte única em @trafego/shared.
+ * Reexportados aqui p/ o clamp local (`overrideWindow`) e consumidores do worker.
  */
-export const ANALYSIS_WINDOW_MIN_DAYS = 1;
-export const ANALYSIS_WINDOW_MAX_DAYS = 30;
+export { ANALYSIS_WINDOW_MIN_DAYS, ANALYSIS_WINDOW_MAX_DAYS };
 
 export interface AnalysisDefaults {
   /** modelo FORTE — síntese da conta + reviewer (raciocínio cross-entidade). */

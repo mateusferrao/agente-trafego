@@ -1,4 +1,10 @@
-import type { ConversionGoal, EntityObjective } from "@trafego/shared";
+import type {
+  ConversionBasis,
+  ConversionGoal,
+  ConversionProxy,
+  EntityObjective,
+  InsightMetrics,
+} from "@trafego/shared";
 
 // Resolução PURA de "qual conversão conta" para CPA/ROAS de uma entidade.
 // Único ponto onde vive a precedência: override do agente (personalização,
@@ -27,4 +33,37 @@ export function resolveConversion(
     };
   }
   return null;
+}
+
+/**
+ * Classifica a base de medição de uma entidade vs a conversão de NEGÓCIO do agente
+ * (§7 — honestidade do descasamento). PURA e sem dependência do brief (evita ciclo):
+ * recebe as métricas já derivadas.
+ *  - `target`: a CPA de negócio É mensurável aqui (compara com a meta).
+ *  - `proxy`: negócio não mensurável, mas o objetivo próprio da entidade é →
+ *    expõe o custo do objetivo (rotulável), NUNCA declara meta batida.
+ *  - `none`: sem conversão mensurável → julga por CPC/CPM.
+ *
+ * Fonte única desta classificação (reusada por `brief` e `playbook`).
+ */
+export function classifyBasis(params: {
+  /** métricas com a conversão de negócio aplicada (override vence). */
+  readonly businessMetrics: InsightMetrics;
+  readonly hasOverride: boolean;
+  readonly objective?: EntityObjective;
+  /** métricas do objetivo próprio da entidade (sem override) — só p/ o proxy. */
+  readonly proxyMetrics?: InsightMetrics;
+}): { basis: ConversionBasis; proxy?: ConversionProxy } {
+  const { businessMetrics, hasOverride, objective, proxyMetrics } = params;
+  if (businessMetrics.cpa !== undefined) return { basis: "target" };
+  if (hasOverride && objective && proxyMetrics?.cpa !== undefined) {
+    const proxy: ConversionProxy = {
+      goal: objective.goal,
+      ...(objective.customConversionId ? { customConversionId: objective.customConversionId } : {}),
+      cpa: proxyMetrics.cpa,
+      ...(proxyMetrics.roas !== undefined ? { roas: proxyMetrics.roas } : {}),
+    };
+    return { basis: "proxy", proxy };
+  }
+  return { basis: "none" };
 }
