@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AdEntity, EncryptedPayload, InsightRow } from "@trafego/shared";
+import type { Action, AdEntity, EncryptedPayload, InsightRow } from "@trafego/shared";
+import type { ExecuteActionInput } from "../../executors/meta-tools.js";
 import type { WorkerDeps } from "../../composition.js";
 import type { AnalysisRepo, ConversionLabelRow, RecommendationRow } from "../../modules/analysis/repo.js";
 import type { InsightsSnapshotsRepo } from "../../modules/insights/repo.js";
@@ -55,6 +56,9 @@ interface HarnessOpts {
   goals?: Record<string, unknown>;
   configChangedAt?: Date | null;
   last?: Map<string, LastEntityAnalysis>;
+  autonomy?: { bySource: { playbook: "notify" | "suggest" | "act_safe" | "act_full"; llm: "notify" | "suggest" | "act_safe" | "act_full" } };
+  guardrail?: { maxBudgetChangePct: number; maxEntitiesPerDay: number; allowedActions: ("pause_entity" | "resume_entity" | "adjust_budget" | "set_status")[]; dryRun: boolean; killSwitch: boolean };
+  executor?: { execute: ReturnType<typeof vi.fn> };
 }
 
 function makeHarness(opts: HarnessOpts = {}): Harness {
@@ -66,13 +70,14 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
   const byLevel = (level: string) => entities.filter((e) => e.level === level);
 
   const repo: AnalysisRepo = {
-    loadAgentContext: vi.fn(async () => ({ goals: opts.goals ?? { targetCPA: 50 }, archetype: "conservador", systemPrompt: null, persona: null, tone: null, businessContext: null, guidance: null, configChangedAt: opts.configChangedAt ?? null, modelConfig: {}, autonomyPolicy: { bySource: { playbook: "suggest" as const, llm: "suggest" as const } }, guardrailConfig: { maxBudgetChangePct: 20, maxEntitiesPerDay: 3, allowedActions: ["pause_entity" as const], dryRun: true, killSwitch: false }, playbook: [], rejectedMemory: [], mutedCampaignIds: [] })),
+    loadAgentContext: vi.fn(async () => ({ goals: opts.goals ?? { targetCPA: 50 }, archetype: "conservador", systemPrompt: null, persona: null, tone: null, businessContext: null, guidance: null, configChangedAt: opts.configChangedAt ?? null, modelConfig: {}, autonomyPolicy: opts.autonomy ?? { bySource: { playbook: "suggest" as const, llm: "suggest" as const } }, guardrailConfig: opts.guardrail ?? { maxBudgetChangePct: 20, maxEntitiesPerDay: 3, allowedActions: ["pause_entity" as const], dryRun: true, killSwitch: false }, playbook: [], rejectedMemory: [], mutedCampaignIds: [] })),
     loadAccount: vi.fn(async () => ({ metaAdAccountId: "act_1", name: "Conta", currency: "BRL", tokenCripto: TOKEN })),
     openRun: vi.fn(async () => {}),
     markTokenInvalid: vi.fn(async () => {}),
     saveRecommendations: vi.fn(async (r: readonly RecommendationRow[]) => { saved.push(...r); }),
     saveConversionLabels: vi.fn(async (_o, _a, _p, labels: readonly ConversionLabelRow[]) => { savedLabels.push(...labels); }),
     consumeConfigChanged: vi.fn(async () => {}),
+    loadDailyToolContext: vi.fn(async () => ({ touchedToday: new Set<string>(), budgetChangedToday: new Set<string>() })),
     recordStep: vi.fn(async () => {}),
     closeRun: vi.fn(async (_o, _r, input) => { closed.push({ status: input.status, summary: input.summary, costSnapshot: input.costSnapshot }); }),
   };
@@ -133,7 +138,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
     checkpointer: undefined,
   } as unknown as WorkerDeps;
 
-  const nodesWithFakes = { repo, snapshots, entityAnalyses, notify };
+  const nodesWithFakes = { repo, snapshots, entityAnalyses, notify, ...(opts.executor ? { executor: opts.executor } : {}) };
   // guarda os fakes p/ o teste montar os nós
   (deps as unknown as { _repos: typeof nodesWithFakes })._repos = nodesWithFakes;
   return { deps, saved, savedLabels, closed, llm };
@@ -164,6 +169,9 @@ async function runChain(h: Harness, trigger: "cron" | "on_demand" = "on_demand")
   apply(await n.synthesize(state));
   apply(await n.reviewAnalysis(state));
   apply(await n.buildRecommendations(state));
+  apply(await n.decideActions(state));
+  apply(await n.guardrailCheck(state));
+  apply(await n.applyActions(state));
   apply(await n.writeMessage(state));
   apply(await n.record(state));
   apply(await n.notify(state));
@@ -194,6 +202,51 @@ describe("account-analysis read-only nodes", () => {
     expect(h.closed).toHaveLength(1);
     // usage somado nas 3 chamadas (mapa + síntese + revisor)
     expect(h.closed[0]).toMatchObject({ status: "succeeded", costSnapshot: 0.003 });
+  });
+
+  it("auto-apply: act_full + guardrail libera → executor aplica a ação do LLM", async () => {
+    const execute = vi.fn(async (i: { action: Action }) => ({ result: { action: i.action, before: {}, after: {} }, dryRun: false, replayed: false }));
+    const h = makeHarness({
+      autonomy: { bySource: { playbook: "suggest", llm: "act_full" } },
+      guardrail: { maxBudgetChangePct: 20, maxEntitiesPerDay: 3, allowedActions: ["pause_entity"], dryRun: false, killSwitch: false },
+      executor: { execute },
+    });
+    const state = await runChain(h);
+    // r1 (pausar c1, alvo válido) auto-aplicada; r3 (id fantasma) nunca virou ação.
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect((execute.mock.calls[0]![0] as ExecuteActionInput).action.target.id).toBe("c1");
+    expect((execute.mock.calls[0]![0] as ExecuteActionInput).dryRun).toBe(false);
+    expect(state.results).toHaveLength(1);
+  });
+
+  it("dry_run: simula (executor recebe dryRun=true)", async () => {
+    const execute = vi.fn(async (i: { action: Action }) => ({ result: { action: i.action, before: {}, after: {} }, dryRun: true, replayed: false }));
+    const h = makeHarness({
+      autonomy: { bySource: { playbook: "suggest", llm: "act_full" } },
+      guardrail: { maxBudgetChangePct: 20, maxEntitiesPerDay: 3, allowedActions: ["pause_entity"], dryRun: true, killSwitch: false },
+      executor: { execute },
+    });
+    await runChain(h);
+    expect((execute.mock.calls[0]![0] as ExecuteActionInput).dryRun).toBe(true);
+  });
+
+  it("tipo fora de allowed_actions → guardrail dropa, executor não é chamado", async () => {
+    const execute = vi.fn();
+    const h = makeHarness({
+      autonomy: { bySource: { playbook: "suggest", llm: "act_full" } },
+      guardrail: { maxBudgetChangePct: 20, maxEntitiesPerDay: 3, allowedActions: [], dryRun: false, killSwitch: false },
+      executor: { execute },
+    });
+    await runChain(h);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("suggest (default) → nada auto-aplica; sugestão vai pro snapshot", async () => {
+    const execute = vi.fn();
+    const h = makeHarness({ executor: { execute } });
+    const state = await runChain(h);
+    expect(execute).not.toHaveBeenCalled();
+    expect(state.decision?.needApproval.length).toBeGreaterThan(0);
   });
 
   it("map-reduce: analisa por-campanha (árvore adset+ad), sintetiza, revisa e persiste a unidade", async () => {

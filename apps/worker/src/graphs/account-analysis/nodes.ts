@@ -6,7 +6,6 @@
 // build_recommendations → record. A metade de escrita (decide/guardrail/approval/
 // apply/notify) fica scaffolded p/ 3b/4/5a/5b.
 
-import { interrupt } from "@langchain/langgraph";
 import {
   addTokenUsage,
   applicableActionType,
@@ -25,6 +24,7 @@ import {
   evaluatePlaybook,
   flagUnsupportedFindings,
   mergeUnitAnalyses,
+  resolveActionConflicts,
   riskForAction,
   selectCampaignsToAnalyze,
   selectCreatives,
@@ -55,7 +55,7 @@ import type {
   InsightRow,
   RunCampaignCard,
 } from "@trafego/shared";
-import type { AdsPlatformPort, CreativeVisionPort } from "@trafego/shared/ports";
+import type { AdsPlatformPort, CreativeVisionPort, MutationResult } from "@trafego/shared/ports";
 import { AdsPlatformError, LLMProviderError } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../../composition.js";
 import {
@@ -75,6 +75,7 @@ import {
 } from "../../modules/analysis/entity-analyses.repo.js";
 import { createNotifyRepo, type NotifyRepo } from "../../modules/notify/repo.js";
 import { createVisionResolver, creativeContentHash } from "../../modules/vision/resolver.js";
+import { makeMetaToolExecutor, type MetaToolExecutor } from "../../executors/meta-tools.js";
 import { AnalysisError } from "../../modules/analysis/errors.js";
 import { mapWithConcurrency } from "../../lib/concurrency.js";
 import { resolveAnalysisConfig } from "../../modules/analysis/config.js";
@@ -112,6 +113,8 @@ export interface AnalysisNodeRepos {
   readonly entityAnalyses: EntityAnalysesRepo;
   /** resolver de visão — injetável p/ teste; default cria por-run (com meta). */
   readonly vision?: CreativeVisionPort;
+  /** executor de escrita — injetável p/ teste; default = Meta via ports. */
+  readonly executor?: MetaToolExecutor;
 }
 
 /** Fábrica de nós com deps injetadas (composition root passa `deps`). */
@@ -121,6 +124,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
   const snapshots = repos?.snapshots ?? createDrizzleInsightsSnapshotsRepo(deps.db);
   const notifyRepo = repos?.notify ?? createNotifyRepo(deps.db);
   const entityAnalysesRepo = repos?.entityAnalyses ?? createEntityAnalysesRepo(deps.db);
+  const executor = repos?.executor ?? makeMetaToolExecutor(deps);
 
   /** Carrega agent/config/janela e abre o run (status=running, snapshot congelado). */
   async function loadContext(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
@@ -500,7 +504,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       toRecommendationRow(rec, state.orgId, state.runId, knownIds),
     );
     await repo.saveRecommendations(rows);
-    return {};
+    // ações propostas pelo LLM (com alvo válido) → candidatas do caminho de escrita.
+    const llmCandidates = rows.map((r) => r.proposedAction).filter((a): a is Action => a !== null);
+    return { llmCandidates };
   }
 
   /** Fecha o run (status, summary, partial, custo/usage, metrics_snapshot p/ o site). */
@@ -526,40 +532,71 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     return {};
   }
 
-  // ── metade de escrita (scaffold — 3b/4/5a/5b) ──────────────────────────
+  // ── metade de escrita (5a — auto-apply only; HITL/interrupt = 5b) ──────
+  /** Dedupe + conflito (pausar domina) → decisão de autonomia por origem. */
   async function decideActionsNode(
     state: AccountAnalysisStateType,
   ): Promise<AccountAnalysisUpdate> {
     logger.debug({ runId: state.runId }, "decide_actions");
-    const mergedCandidates = [...state.playbookCandidates, ...state.llmCandidates];
-    const decision = decideActions(mergedCandidates, state.autonomyPolicy);
-    return { mergedCandidates, decision };
+    const merged = [...(state.playbookCandidates ?? []), ...(state.llmCandidates ?? [])];
+    const { kept, dropped } = resolveActionConflicts(merged);
+    if (dropped.length > 0) logger.debug({ runId: state.runId, dropped: dropped.length }, "decide:conflitos resolvidos");
+    const decision = decideActions(kept, state.autonomyPolicy);
+    return { mergedCandidates: kept, decision };
   }
 
+  /** Guardrail sobre o que VAI aplicar (autoApply), com contexto cross-run + budget-level. */
   async function guardrailCheck(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
     logger.debug({ runId: state.runId }, "guardrail_check");
-    const candidates = state.decision
-      ? [...state.decision.autoApply, ...state.decision.needApproval]
-      : state.mergedCandidates;
-    const guardrail = applyGuardrails(candidates, state.guardrailConfig);
+    const daily = await repo.loadDailyToolContext(state.agentId);
+    const budgetByEntity = buildBudgetByEntity(state.entities);
+    const guardrail = applyGuardrails(state.decision?.autoApply ?? [], state.guardrailConfig, {
+      touchedToday: daily.touchedToday,
+      budgetChangedToday: daily.budgetChangedToday,
+      budgetByEntity,
+    });
+    if (guardrail.dropped.length > 0) logger.info({ runId: state.runId, dropped: guardrail.dropped.length }, "guardrail:ações barradas");
     return { guardrail };
   }
 
-  async function createApprovalAndInterrupt(
-    state: AccountAnalysisStateType,
-  ): Promise<AccountAnalysisUpdate> {
-    logger.debug({ runId: state.runId }, "create_approval + interrupt");
-    const decision = interrupt({
-      type: "approval_required",
-      runId: state.runId,
-      actions: state.decision?.needApproval ?? [],
-    });
-    return { approvedActions: (decision as { approvedActions?: never[] })?.approvedActions ?? [] };
-  }
-
+  /**
+   * Aplica (ou SIMULA, se dry_run) as ações liberadas pelo guardrail, via executor
+   * (idempotente + auditado). Best-effort por ação; PARA no rate_limited (não martela
+   * o governor). needApproval NÃO executa (fica como sugestão — 5b resolve).
+   */
   async function applyActions(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
     logger.debug({ runId: state.runId }, "apply_actions");
-    return { results: [] };
+    const toApply = state.guardrail?.allowed ?? [];
+    if (toApply.length === 0) return { results: [] };
+
+    const account = await repo.loadAccount(state.orgId, state.adAccountId);
+    if (!account) return { results: [] };
+    const accessToken = deps.ports.vault.decrypt(account.tokenCripto);
+    const ref = { adAccountId: account.metaAdAccountId, accessToken };
+    const dryRun = state.guardrailConfig.dryRun;
+
+    const results: MutationResult[] = [];
+    for (const action of toApply) {
+      try {
+        const done = await executor.execute({
+          runId: state.runId,
+          orgId: state.orgId,
+          account: ref,
+          action,
+          idempotencyKey: `${state.runId}:${action.id}`,
+          dryRun,
+        });
+        results.push(done.result);
+      } catch (err) {
+        // para no rate_limited (não insiste contra o governor); demais = best-effort.
+        if (err instanceof AdsPlatformError && err.kind === "rate_limited") {
+          logger.warn({ runId: state.runId, err }, "apply:rate-limit — interrompe o lote");
+          break;
+        }
+        logger.warn({ runId: state.runId, action: action.type, err }, "apply:ação falhou (best-effort)");
+      }
+    }
+    return { results };
   }
 
   /**
@@ -604,6 +641,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
         recommendations: out.recommendations.map((r) => ({ title: r.title })),
       });
     }
+    // nota honesta do que o agente FEZ neste run (aplicou/simulou) — determinística.
+    const applied = appliedSummary(state.results ?? [], state.guardrailConfig.dryRun);
+    if (applied) text = `${text}\n\n${applied}`;
     return { outboundMessage: text, usage };
   }
 
@@ -669,11 +709,10 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     writeMessage: step("write_message", writeMessage),
     record: step("record", record),
     notify: step("notify", notify),
-    // write-half (scaffold — 4/5a/5b): sem step por ora.
-    decideActions: decideActionsNode,
-    guardrailCheck,
-    createApprovalAndInterrupt,
-    applyActions,
+    // metade de escrita (5a) — auditada como os demais nós.
+    decideActions: step("decide_actions", decideActionsNode),
+    guardrailCheck: step("guardrail_check", guardrailCheck),
+    applyActions: step("apply_actions", applyActions),
   };
 }
 
@@ -777,6 +816,11 @@ function buildMetricsSnapshot(state: AccountAnalysisStateType): Record<string, u
     ...(state.analysisOutput?.scorecard ? { scorecard: state.analysisOutput.scorecard } : {}),
     // recorte por campanha congelado no run (base do histórico por-run).
     ...(cards.length > 0 ? { campaigns: cards } : {}),
+    // ações que precisam de OK (5a auto-apply only) — a mini-surface lista como
+    // "sugeridas". As APLICADAS ficam em agent_tool_calls (authoritative).
+    ...(state.decision && state.decision.needApproval.length > 0
+      ? { suggestedActions: state.decision.needApproval }
+      : {}),
   };
 }
 
@@ -863,6 +907,27 @@ function toRecommendationRow(
     proposedAction,
     riskLevel: actionType ? riskForAction(actionType, params) : "low",
   };
+}
+
+/** Nota determinística do que o run aplicou/simulou (anexada à msg de cron). */
+function appliedSummary(results: readonly MutationResult[], dryRun: boolean): string | null {
+  if (results.length === 0) return null;
+  const n = results.length;
+  return dryRun
+    ? `🧪 Simulei ${n} ação(ões) (dry-run) — libere a escrita pra aplicar de verdade.`
+    : `✅ Apliquei ${n} ação(ões) automaticamente.`;
+}
+
+/**
+ * Mapa `${level}:${id}` → o nível-alvo tem budget? (das entidades já buscadas).
+ * Alimenta o pré-check de `adjust_budget` no guardrail (não bate na Meta à toa).
+ */
+function buildBudgetByEntity(entities: readonly AdEntity[]): Map<string, boolean> {
+  const map = new Map<string, boolean>();
+  for (const e of entities) {
+    map.set(`${e.level}:${e.id}`, e.dailyBudget !== undefined || e.lifetimeBudget !== undefined);
+  }
+  return map;
 }
 
 /** Params da ação de budget (direção + %), quando for o caso. */

@@ -94,6 +94,8 @@ export interface AnalysisRepo {
    * unidades foram reanalisadas; um save NOVO durante o run (timestamp maior) sobrevive.
    */
   consumeConfigChanged(orgId: string, agentId: string, observed: Date): Promise<void>;
+  /** Contexto cross-run do guardrail (24h): entidades tocadas + budget mudado hoje. */
+  loadDailyToolContext(agentId: string): Promise<DailyToolContext>;
   recordStep(input: StepInput): Promise<void>;
   closeRun(orgId: string, runId: string, input: CloseRunInput): Promise<void>;
 }
@@ -324,6 +326,10 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
         ...(input.output ? { output: input.output } : {}),
         ...(input.error ? { error: input.error } : {}),
       });
+    },
+
+    async loadDailyToolContext(agentId) {
+      return loadDailyToolContext(db, agentId);
     },
 
     async closeRun(orgId, runId, input) {

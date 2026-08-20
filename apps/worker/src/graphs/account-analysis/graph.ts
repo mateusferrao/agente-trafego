@@ -1,15 +1,13 @@
 // Grafo `account-analysis` (LangGraph Graph API / StateGraph).
 //
-// Rota READ-ONLY (sem escrita na Meta, sem HITL, sem checkpointer):
+// Rota completa (5a — AUTO-APPLY ONLY; HITL/interrupt/checkpointer = 5b):
 //   load_context → fetch_data → run_playbook → map_units → synthesize
-//   → review_analysis → build_recommendations → write_message → record → notify
-// (map_units/synthesize = map-reduce por-anúncio + consolidação, 3b-2;
-//  review_analysis = revisor + guards determinísticos, 3a-2;
-//  write_message/notify = redator + push WhatsApp, 3b-1c)
-//
-// A metade de escrita (decide_actions → guardrail_check → [approval] →
-// apply_actions → notify) entra a partir de 3b/5a/5b — os nós já existem
-// (scaffold em nodes.ts) e o checkpointer Postgres é plugado então.
+//   → review_analysis → build_recommendations
+//   → decide_actions → guardrail_check → apply_actions
+//   → write_message → record → notify
+// (decide_actions = dedupe/conflito + autonomia por origem; guardrail_check =
+//  rede cross-run + budget-level; apply_actions = escreve/simula via executor.
+//  needApproval NÃO executa — vira "sugerida" na mini-surface até a 5b.)
 
 import { END, START, StateGraph } from "@langchain/langgraph";
 import type { WorkerDeps } from "../../composition.js";
@@ -27,6 +25,9 @@ export function buildAccountAnalysisGraph(deps: WorkerDeps) {
     .addNode("synthesize", n.synthesize)
     .addNode("review_analysis", n.reviewAnalysis)
     .addNode("build_recommendations", n.buildRecommendations)
+    .addNode("decide_actions", n.decideActions)
+    .addNode("guardrail_check", n.guardrailCheck)
+    .addNode("apply_actions", n.applyActions)
     .addNode("write_message", n.writeMessage)
     .addNode("record", n.record)
     .addNode("notify", n.notify)
@@ -37,7 +38,10 @@ export function buildAccountAnalysisGraph(deps: WorkerDeps) {
     .addEdge("map_units", "synthesize")
     .addEdge("synthesize", "review_analysis")
     .addEdge("review_analysis", "build_recommendations")
-    .addEdge("build_recommendations", "write_message")
+    .addEdge("build_recommendations", "decide_actions")
+    .addEdge("decide_actions", "guardrail_check")
+    .addEdge("guardrail_check", "apply_actions")
+    .addEdge("apply_actions", "write_message")
     .addEdge("write_message", "record")
     .addEdge("record", "notify")
     .addEdge("notify", END);
