@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Redis } from "ioredis";
 import { MetaAdsAdapter } from "./meta-ads.adapter.js";
 import { MetaGraphClient } from "./client.js";
 import { AdsPlatformError } from "@trafego/shared/ports";
-import type { MetaGovernor } from "./governor.js";
+import { MetaGovernor } from "./governor.js";
 
 // O governor não é usado nos fluxos de onboarding (sem governor.acquire) — stub vazio.
 const governor = {} as unknown as MetaGovernor;
@@ -12,9 +13,34 @@ function makeAdapter(): MetaAdsAdapter {
   return new MetaAdsAdapter({ client, governor });
 }
 
+// Redis in-memory mínimo (set EX, pttl) p/ os fluxos que passam pelo governor.
+class FakeRedis {
+  private store = new Map<string, { value: string; expiresAt: number | null }>();
+  async set(key: string, value: string, mode?: string, ttlSec?: number): Promise<"OK"> {
+    const expiresAt = mode === "EX" && ttlSec ? Date.now() + ttlSec * 1000 : null;
+    this.store.set(key, { value, expiresAt });
+    return "OK";
+  }
+  async pttl(key: string): Promise<number> {
+    const e = this.store.get(key);
+    if (!e) return -2;
+    if (e.expiresAt === null) return -1;
+    const ms = e.expiresAt - Date.now();
+    return ms > 0 ? ms : -2;
+  }
+}
+
+// Adapter com governor real (rng 0 → backoff 0ms, sem flakiness) p/ testar rate-limit.
+function makeAdapterWithGov(): { adapter: MetaAdsAdapter; gov: MetaGovernor } {
+  const client = new MetaGraphClient({ graphVersion: "v26.0" });
+  const gov = new MetaGovernor({ redis: new FakeRedis() as unknown as Redis, rng: () => 0 });
+  return { adapter: new MetaAdsAdapter({ client, governor: gov }), gov };
+}
+
 interface StubbedResponse {
   readonly body: unknown;
   readonly status?: number;
+  readonly headers?: Record<string, string>;
 }
 
 function stubFetchSequence(responses: readonly StubbedResponse[]) {
@@ -26,7 +52,7 @@ function stubFetchSequence(responses: readonly StubbedResponse[]) {
     i += 1;
     return new Response(JSON.stringify(r.body), {
       status: r.status ?? 200,
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...(r.headers ?? {}) },
     });
   });
   vi.stubGlobal("fetch", spy);
@@ -92,5 +118,50 @@ describe("MetaAdsAdapter.getAdAccount", () => {
       name: "AdsPlatformError",
       kind: "rate_limited",
     });
+  });
+});
+
+describe("MetaAdsAdapter.listEntities (governor)", () => {
+  const ref = { adAccountId: "1", accessToken: "tok" };
+  const usageHeader = JSON.stringify({ act_1: [{ call_count: 30, total_cputime: 10, total_time: 10 }] });
+
+  it("rate-limit transitório (code 17) → retry inline → completa", async () => {
+    const { calls } = stubFetchSequence([
+      { body: { error: { message: "throttled", code: 17 } }, status: 400 },
+      { body: { data: [{ id: "c1", name: "Camp", status: "ACTIVE", objective: "OUTCOME_SALES" }] } },
+    ]);
+    const { adapter } = makeAdapterWithGov();
+    const entities = await adapter.listEntities(ref, "campaign");
+    expect(entities.map((e) => e.id)).toEqual(["c1"]);
+    expect(calls().length).toBe(2); // 1ª falhou (rate-limit), retry completou
+  });
+
+  it("cooldown ativo → degrada (rate_limited) sem bater na Meta", async () => {
+    const { adapter, gov } = makeAdapterWithGov();
+    await gov.observeUsage("act_1", {
+      callCountPct: 100,
+      totalCputimePct: 50,
+      totalTimePct: 50,
+      estimatedTimeToRegainAccessMin: 5,
+    });
+    const { calls } = stubFetchSequence([{ body: { data: [] } }]);
+    await expect(adapter.listEntities(ref, "campaign")).rejects.toMatchObject({
+      name: "AdsPlatformError",
+      kind: "rate_limited",
+    });
+    expect(calls().length).toBe(0); // cooldown → nem chega a chamar fetch
+  });
+
+  it("sucesso alimenta o governor (observeUsage do header BUC)", async () => {
+    const { adapter, gov } = makeAdapterWithGov();
+    const spy = vi.spyOn(gov, "observeUsage");
+    stubFetchSequence([
+      {
+        body: { data: [{ id: "c1", name: "Camp", status: "ACTIVE", objective: "OUTCOME_SALES" }] },
+        headers: { "x-business-use-case-usage": usageHeader },
+      },
+    ]);
+    await adapter.listEntities(ref, "campaign");
+    expect(spy).toHaveBeenCalledWith("act_1", expect.objectContaining({ callCountPct: 30 }));
   });
 });

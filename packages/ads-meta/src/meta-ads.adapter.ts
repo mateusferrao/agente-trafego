@@ -15,6 +15,7 @@ import type {
 } from "@trafego/shared/ports";
 import { AdsPlatformError } from "@trafego/shared/ports";
 import { META_RATE_LIMIT_CODES, META_TRANSIENT_CODES, MetaApiError, MetaGraphClient } from "./client.js";
+import { callWithGovernor } from "./call-with-governor.js";
 import { MetaInsightsService } from "./insights.js";
 import { MetaCreativesService } from "./creatives.js";
 import { MetaMutationsService } from "./mutations.js";
@@ -206,14 +207,19 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     const out: RawEntityNode[] = [];
     let after: string | undefined;
     for (let page = 0; page < MAX_ENTITY_PAGES; page++) {
-      const res = await this.client.request<MetaEntitiesPage>({
-        method: "GET",
-        path: `${accountId}/${ENTITY_EDGE[level]}`,
-        accessToken,
-        params: { fields: ENTITY_FIELDS[level], limit: ENTITY_PAGE_LIMIT, ...(after ? { after } : {}) },
-      });
-      out.push(...(res.data.data ?? []));
-      after = res.data.paging?.next ? res.data.paging.cursors?.after : undefined;
+      const data = await callWithGovernor<MetaEntitiesPage>(
+        accountId,
+        () =>
+          this.client.request<MetaEntitiesPage>({
+            method: "GET",
+            path: `${accountId}/${ENTITY_EDGE[level]}`,
+            accessToken,
+            params: { fields: ENTITY_FIELDS[level], limit: ENTITY_PAGE_LIMIT, ...(after ? { after } : {}) },
+          }),
+        { governor: this.governor },
+      );
+      out.push(...(data.data ?? []));
+      after = data.paging?.next ? data.paging.cursors?.after : undefined;
       if (!after) break;
     }
     return out;
