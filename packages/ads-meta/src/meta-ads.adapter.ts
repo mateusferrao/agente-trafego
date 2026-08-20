@@ -13,6 +13,7 @@ import type {
   InsightsQuery,
   MutateOptions,
   MutationResult,
+  RestoreResult,
 } from "@trafego/shared/ports";
 import { AdsPlatformError } from "@trafego/shared/ports";
 import { META_RATE_LIMIT_CODES, META_TRANSIENT_CODES, MetaApiError, MetaGraphClient } from "./client.js";
@@ -304,6 +305,21 @@ export class MetaAdsAdapter implements AdsPlatformPort {
       const acquired = await this.governor.acquire(accountId);
       if (!acquired.granted) throw cooldownError();
       return await this.mutations.mutate(account, action, opts);
+    } catch (error) {
+      throw toAdsError(error);
+    }
+  }
+
+  async restoreEntityState(
+    account: AdAccountRef,
+    entityId: string,
+    before: Readonly<Record<string, unknown>>,
+  ): Promise<RestoreResult> {
+    try {
+      const accountId = normalizeAdAccountId(account.adAccountId);
+      const acquired = await this.governor.acquire(accountId);
+      if (!acquired.granted) throw cooldownError();
+      return await this.mutations.restoreEntityState(account, entityId, before);
     } catch (error) {
       throw toAdsError(error);
     }

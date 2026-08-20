@@ -1,5 +1,5 @@
 import type { Action } from "@trafego/shared/types";
-import type { AdAccountRef, MutateOptions, MutationResult } from "@trafego/shared/ports";
+import type { AdAccountRef, MutateOptions, MutationResult, RestoreResult } from "@trafego/shared/ports";
 import type { MetaGraphClient } from "./client.js";
 
 /**
@@ -46,6 +46,18 @@ export class MetaMutationsService {
     return { action, before, after };
   }
 
+  /** Undo: reaplica o estado anterior (status + budget ABSOLUTOS) da entidade. */
+  async restoreEntityState(
+    account: AdAccountRef,
+    entityId: string,
+    before: Readonly<Record<string, unknown>>,
+  ): Promise<RestoreResult> {
+    const current = await this.readEntityState(account, entityId);
+    const fields = restoreFields(before);
+    if (Object.keys(fields).length > 0) await this.writeFields(account, entityId, fields);
+    return { before: current, after: { ...current, ...fields } };
+  }
+
   /** Lê o estado atual da entidade (status + budgets) p/ before-image. */
   async readEntityState(account: AdAccountRef, entityId: string): Promise<EntityState> {
     const res = await this.client.request<EntityState>({
@@ -85,6 +97,15 @@ function computeChange(action: Action, before: EntityState): Change {
 
 function statusChange(before: EntityState, target: string): Change {
   return { params: { status: target }, alreadyThere: before["status"] === target };
+}
+
+/** Campos absolutos a reescrever no undo (status + o budget que existir no before). */
+function restoreFields(before: Readonly<Record<string, unknown>>): Record<string, string> {
+  const fields: Record<string, string> = {};
+  if (before["status"] != null) fields["status"] = String(before["status"]);
+  if (before["daily_budget"] != null) fields["daily_budget"] = String(before["daily_budget"]);
+  if (before["lifetime_budget"] != null) fields["lifetime_budget"] = String(before["lifetime_budget"]);
+  return fields;
 }
 
 function budgetChange(action: Action, before: EntityState): Change {

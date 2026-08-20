@@ -92,6 +92,15 @@ describe("MetaMutationsService", () => {
     expect(posts()[0]!.url).toContain("status=PAUSED");
   });
 
+  it("restoreEntityState (undo): reaplica status + budget absolutos do before", async () => {
+    const { posts } = stubGraph({ status: "ACTIVE", daily_budget: "8000" }); // estado atual
+    const res = await svc().restoreEntityState(account, "C1", { status: "PAUSED", daily_budget: "10000" });
+    expect(posts()[0]!.url).toContain("status=PAUSED");
+    expect(posts()[0]!.url).toContain("daily_budget=10000");
+    expect(res.before["daily_budget"]).toBe("8000");
+    expect(res.after["daily_budget"]).toBe("10000");
+  });
+
   it("dry_run: computa before/after mas NÃO escreve (ensaio)", async () => {
     const { posts } = stubGraph({ status: "ACTIVE", daily_budget: "10000" });
     const res = await svc().mutate(

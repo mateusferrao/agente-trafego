@@ -9,6 +9,7 @@ import { startAgentCronDispatchWorker } from "./workers/agent-cron-dispatch.js";
 import { startAgentReaperWorker } from "./workers/agent-reaper.js";
 import { startInsightsSyncWorker } from "./workers/insights-sync.js";
 import { startScheduleResyncWorker } from "./workers/schedule-resync.js";
+import { startActionUndoWorker } from "./workers/action-undo.js";
 import { makeAccountCron } from "./schedulers/account-cron.js";
 import { createRunReaper } from "./modules/dispatch/run-reaper.js";
 
@@ -31,6 +32,9 @@ async function main(): Promise<void> {
   // salvar a cadência — worker é o dono único do scheduler.
   const scheduleResync = startScheduleResyncWorker(deps, connection, cron);
 
+  // undo de ação (5a): consome os jobs que a API enfileira ao pedir "reverter".
+  const actionUndo = startActionUndoWorker(deps, connection);
+
   // Sincroniza os schedulers recorrentes a partir dos agentes ativos (idempotente)
   // + agenda o reaper (singleton) e faz uma varredura de boot (limpa presos de um
   // crash anterior antes de esperar o 1º tick).
@@ -50,6 +54,7 @@ async function main(): Promise<void> {
       reaper.close(),
       insightsSync.close(),
       scheduleResync.close(),
+      actionUndo.close(),
     ]);
     await Promise.allSettled([connection.quit(), deps.redis.quit()]);
     process.exit(0);

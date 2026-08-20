@@ -16,6 +16,27 @@ import type { WorkerDeps } from "../composition.js";
 const ACTOR_AGENT = "agent";
 /** Dimensão genérica de metering p/ ação aplicada (base do billing por markup). */
 const USAGE_TYPE_ACTION_APPLIED = "action_applied";
+/** toolKey do registro de undo (reaplica o before_state). */
+const UNDO_TOOL_KEY = "undo";
+
+/** `agent_tool_call` carregado p/ o undo (org-scoped na casca que o carregou). */
+export interface RevertToolCall {
+  readonly id: string;
+  readonly runId: string;
+  readonly beforeState: Record<string, unknown> | null;
+  readonly args: Record<string, unknown>;
+}
+
+export interface RevertInput {
+  readonly orgId: string;
+  readonly account: AdAccountRef;
+  readonly toolCall: RevertToolCall;
+}
+
+export interface RevertResult {
+  readonly reverted: boolean;
+  readonly reason?: string;
+}
 
 export interface ExecuteActionInput {
   readonly runId: string;
@@ -93,7 +114,60 @@ export function makeMetaToolExecutor(deps: WorkerDeps) {
     return { result, dryRun, replayed: false };
   }
 
-  return { execute };
+  /** Undo: reaplica o `before_state` de um tool_call REAL. Idempotente (`${id}:undo`). */
+  async function revert(input: RevertInput): Promise<RevertResult> {
+    const { orgId, account, toolCall } = input;
+    const args = toolCall.args as { target?: { level: string; id: string }; dryRun?: boolean };
+    if (args?.dryRun) return { reverted: false, reason: "ação simulada — nada a reverter" };
+    if (!toolCall.beforeState || !args?.target) return { reverted: false, reason: "sem estado anterior" };
+
+    const undoKey = `${toolCall.id}:${UNDO_TOOL_KEY}`;
+    const [existing] = await db
+      .select({ id: agentToolCalls.id })
+      .from(agentToolCalls)
+      .where(eq(agentToolCalls.idempotencyKey, undoKey))
+      .limit(1);
+    if (existing) return { reverted: true, reason: "já revertido" };
+
+    const target = args.target;
+    const restore = await ports.ads.restoreEntityState(account, target.id, toolCall.beforeState);
+    const targetLabel = `${target.level}:${target.id}`;
+
+    await db
+      .insert(agentToolCalls)
+      .values({
+        runId: toolCall.runId,
+        toolKey: UNDO_TOOL_KEY,
+        idempotencyKey: undoKey,
+        risk: "low",
+        args: { revertOf: toolCall.id, target },
+        result: { ...restore },
+        beforeState: restore.before as Record<string, unknown>,
+      })
+      .onConflictDoNothing();
+
+    await db.insert(auditLog).values({
+      orgId,
+      actor: ACTOR_AGENT,
+      action: "meta.undo",
+      target: targetLabel,
+      metadata: { revertOf: toolCall.id },
+      before: restore.before as Record<string, unknown>,
+      after: restore.after as Record<string, unknown>,
+    });
+
+    await ports.metering.record({
+      orgId: orgId as OrgId,
+      runId: toolCall.runId as RunId,
+      type: USAGE_TYPE_ACTION_APPLIED,
+      payload: { actionType: UNDO_TOOL_KEY, target: targetLabel, revertOf: toolCall.id },
+    });
+
+    logger.info({ toolCallId: toolCall.id }, "meta-tool:reverted");
+    return { reverted: true };
+  }
+
+  return { execute, revert };
 }
 
 export type MetaToolExecutor = ReturnType<typeof makeMetaToolExecutor>;

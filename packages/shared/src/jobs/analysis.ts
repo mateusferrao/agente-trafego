@@ -40,6 +40,19 @@ export type ScheduleResyncPayload = {
   readonly adAccountId: string;
 };
 
+/**
+ * Fila de UNDO de ação (5a): a API valida a posse + enfileira; o WORKER (dono do
+ * governor/escrita) carrega o `agent_tool_calls`, reaplica o `before_state` na Meta
+ * e registra o undo. Escrita fica no worker (governor + auditoria), não na casca HTTP.
+ */
+export const ACTION_UNDO_QUEUE = "action-undo";
+export const ACTION_UNDO_JOB = "action-undo";
+export type ActionUndoPayload = {
+  readonly orgId: string;
+  readonly adAccountId: string;
+  readonly toolCallId: string;
+};
+
 export type AgentRunTrigger = "cron" | "on_demand";
 
 /** Payload do dispatch de cron: sem `runId` (o dispatch é quem cria o run). */

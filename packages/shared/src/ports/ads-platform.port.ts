@@ -33,6 +33,12 @@ export interface MutateOptions {
   readonly dryRun?: boolean;
 }
 
+/** Resultado de um restore (undo): estado atual antes de reverter → estado restaurado. */
+export interface RestoreResult {
+  readonly before: Readonly<Record<string, unknown>>;
+  readonly after: Readonly<Record<string, unknown>>;
+}
+
 /**
  * Falha genérica da borda de ads — o adapter traduz o erro específico do provider
  * (ex: `MetaApiError`) para esta forma, e a casca mapeia p/ HTTP amigável **sem**
@@ -67,6 +73,12 @@ export interface AdsPlatformPort {
   /** Aplica uma mutação idempotente; retorna before/after p/ rollback. `dryRun`
    *  (opcional) só simula (lê + computa o after, não escreve). */
   mutate(account: AdAccountRef, action: Action, opts?: MutateOptions): Promise<MutationResult>;
+  /** Undo: reaplica o `before` (status + budget ABSOLUTOS) numa entidade. Reversível. */
+  restoreEntityState(
+    account: AdAccountRef,
+    entityId: string,
+    before: Readonly<Record<string, unknown>>,
+  ): Promise<RestoreResult>;
   /**
    * Lista contas acessíveis pelo token (onboarding: cola token → escolhe).
    * Também **valida** o token — credencial inválida lança `AdsPlatformError`.

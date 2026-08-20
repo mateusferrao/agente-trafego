@@ -46,13 +46,14 @@ function fakeDb(existing: unknown[] = []) {
 function makeDeps(existing: unknown[] = []) {
   const { db, inserts } = fakeDb(existing);
   const mutate = vi.fn(async () => mutation);
+  const restoreEntityState = vi.fn(async () => ({ before: { status: "PAUSED" }, after: { status: "ACTIVE" } }));
   const record = vi.fn(async () => {});
   const deps = {
     db,
     logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn() },
-    ports: { ads: { mutate }, metering: { record } },
+    ports: { ads: { mutate, restoreEntityState }, metering: { record } },
   } as unknown as WorkerDeps;
-  return { deps, inserts, mutate, record };
+  return { deps, inserts, mutate, restoreEntityState, record };
 }
 
 const baseInput: ExecuteActionInput = {
@@ -87,5 +88,40 @@ describe("makeMetaToolExecutor.execute", () => {
     const res = await makeMetaToolExecutor(deps).execute(baseInput);
     expect(res.replayed).toBe(true);
     expect(mutate).not.toHaveBeenCalled();
+  });
+});
+
+const toolCall = {
+  id: "tc1",
+  runId: "run1",
+  beforeState: { status: "ACTIVE" } as Record<string, unknown>,
+  args: { target: { level: "campaign", id: "C1" }, dryRun: false } as Record<string, unknown>,
+};
+const revertInput = { orgId: "org1", account: baseInput.account, toolCall };
+
+describe("makeMetaToolExecutor.revert", () => {
+  it("reaplica o before_state + grava undo/audit", async () => {
+    const { deps, inserts, restoreEntityState } = makeDeps();
+    const res = await makeMetaToolExecutor(deps).revert(revertInput);
+    expect(res.reverted).toBe(true);
+    expect(restoreEntityState).toHaveBeenCalledWith(baseInput.account, "C1", { status: "ACTIVE" });
+    expect(inserts).toHaveLength(2); // undo tool_call + audit_log
+  });
+
+  it("ação simulada → não reverte", async () => {
+    const { deps, restoreEntityState } = makeDeps();
+    const res = await makeMetaToolExecutor(deps).revert({
+      ...revertInput,
+      toolCall: { ...toolCall, args: { target: { level: "campaign", id: "C1" }, dryRun: true } },
+    });
+    expect(res.reverted).toBe(false);
+    expect(restoreEntityState).not.toHaveBeenCalled();
+  });
+
+  it("já revertido → idempotente (não re-reverte)", async () => {
+    const { deps, restoreEntityState } = makeDeps([{ id: "existing-undo" }]);
+    const res = await makeMetaToolExecutor(deps).revert(revertInput);
+    expect(res.reverted).toBe(true);
+    expect(restoreEntityState).not.toHaveBeenCalled();
   });
 });
