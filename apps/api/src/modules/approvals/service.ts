@@ -1,17 +1,25 @@
-import { and, eq, inArray } from "drizzle-orm";
-import { adAccounts, agents, type Database } from "@trafego/db";
+import { and, eq, gte, inArray } from "drizzle-orm";
+import { adAccounts, agentRuns, agentToolCalls, agents, type Database } from "@trafego/db";
 import type { ApprovalId, OrgId } from "@trafego/shared/types";
 import type { ApprovalPort } from "@trafego/shared/ports";
 import type { SchedulerPort } from "@trafego/shared/ports";
 import { APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE } from "@trafego/shared";
 import { badRequest, notFound } from "../../middleware/error-handler.js";
-import type { ApprovalOutput, ResolveApprovalInput, ResolveApprovalOutput } from "./schema.js";
+import { computeAppliedActions, DAY_MS } from "../../lib/applied-actions.js";
+import type {
+  ApprovalOutput,
+  ResolveApprovalInput,
+  ResolveApprovalOutput,
+  RevertibleActionOutput,
+} from "./schema.js";
 
 export interface ApprovalsDeps {
   readonly db: Database;
   readonly approvals: ApprovalPort;
   /** enfileira a aplicação (worker re-checa fresco + escreve). A API nunca escreve na Meta. */
   readonly scheduler: SchedulerPort;
+  /** janela (dias) em que "reverter" segue disponível (5b) — mesmo TTL da mini-surface. */
+  readonly revertTtlDays: number;
 }
 
 /**
@@ -79,6 +87,55 @@ export function createApprovalsService(deps: ApprovalsDeps) {
         payload: { orgId, approvalId },
       });
       return { id: approval.id, status: "pending" };
+    },
+
+    /**
+     * Ações ainda ACIONÁVEIS quanto a reverter, cross-conta (dentro do TTL): as que
+     * podem reverter agora + as barradas por drift aguardando "reverter mesmo assim".
+     * Já revertidas/simuladas/fora do TTL não aparecem aqui (nada a fazer com elas) —
+     * o histórico completo é a Timeline (6a). Sem fallback de nome por lookup (só o
+     * `target.name` já embutido no tool_call) — cobre o caso comum; tool_calls muito
+     * antigos sem nome caem pro id cru, como em qualquer lugar que já faz esse fallback.
+     */
+    async listRevertible(orgId: OrgId): Promise<RevertibleActionOutput[]> {
+      const since = new Date(Date.now() - deps.revertTtlDays * DAY_MS);
+      const rows = await deps.db
+        .select({
+          id: agentToolCalls.id,
+          runId: agentToolCalls.runId,
+          toolKey: agentToolCalls.toolKey,
+          args: agentToolCalls.args,
+          result: agentToolCalls.result,
+          idempotencyKey: agentToolCalls.idempotencyKey,
+          createdAt: agentToolCalls.createdAt,
+          accountId: adAccounts.id,
+          accountName: adAccounts.name,
+        })
+        .from(agentToolCalls)
+        .innerJoin(agentRuns, eq(agentToolCalls.runId, agentRuns.id))
+        .innerJoin(agents, eq(agentRuns.agentId, agents.id))
+        .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
+        .where(and(eq(agentRuns.orgId, orgId), gte(agentToolCalls.createdAt, since)));
+
+      const accountByToolCallId = new Map(rows.map((r) => [r.id, { accountId: r.accountId, accountName: r.accountName ?? r.accountId }]));
+      const actions = computeAppliedActions(rows, deps.revertTtlDays, new Map());
+      return actions
+        .filter((a) => a.undoable || a.revertBlocked)
+        .map((a) => {
+          const acc = accountByToolCallId.get(a.toolCallId);
+          return {
+            toolCallId: a.toolCallId,
+            accountId: acc?.accountId ?? "",
+            accountName: acc?.accountName ?? "conta",
+            type: a.type,
+            targetLevel: a.targetLevel,
+            targetId: a.targetId,
+            targetName: a.targetName,
+            undoable: a.undoable,
+            revertBlocked: a.revertBlocked,
+            revertBlockedReason: a.revertBlockedReason,
+          };
+        });
     },
   };
 }

@@ -32,3 +32,23 @@ export const resolveApprovalOutput = z.object({
   status: approvalStatusOutput,
 });
 export type ResolveApprovalOutput = z.infer<typeof resolveApprovalOutput>;
+
+/**
+ * Uma ação aplicada ainda ACIONÁVEL quanto a reverter, cross-conta (dentro do TTL —
+ * `undoable` ou `revertBlocked`, nunca as duas false). O revert em si usa a rota
+ * por-conta (`POST /accounts/:accountId/agent/actions/:toolCallId/undo`).
+ */
+export const revertibleActionOutput = z.object({
+  toolCallId: z.string(),
+  accountId: z.string(),
+  accountName: z.string(),
+  // `type` = toolKey cru — z.string() de propósito (mesmo motivo do appliedActionOutput).
+  type: z.string(),
+  targetLevel: z.string(),
+  targetId: z.string(),
+  targetName: z.string().nullable(),
+  undoable: z.boolean(),
+  revertBlocked: z.boolean(),
+  revertBlockedReason: z.string().nullable(),
+});
+export type RevertibleActionOutput = z.infer<typeof revertibleActionOutput>;

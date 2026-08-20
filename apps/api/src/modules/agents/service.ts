@@ -41,10 +41,10 @@ import {
   type PlaybookRuleOutput,
 } from "./schema.js";
 import type { PlaybookCondition } from "@trafego/shared/types";
+import { computeAppliedActions, DAY_MS, entityIdsMissingNames } from "../../lib/applied-actions.js";
 
 /** Janela recente p/ listar as conversões que a conta reportou (dias). */
 const AVAILABLE_CONVERSIONS_WINDOW_DAYS = 30;
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 export interface AgentsDeps {
   readonly db: Database;
@@ -530,8 +530,13 @@ export function createAgentsService(deps: AgentsDeps) {
     await bumpConfigChanged(orgId, summary.agentId);
   }
 
-  // ─── Ações do último run + undo (mini-surface, 5a) ──────────────────────
-  /** Ações aplicadas (via agent_tool_calls) + sugeridas (metrics_snapshot) do último run. */
+  // ─── Ações recentes + undo (mini-surface, 5a/5b) ────────────────────────
+  /**
+   * Ações APLICADAS recentes (via agent_tool_calls, janela do TTL de revert —
+   * cross-run: uma aprovação pode ter sido decidida por um run mais antigo que o
+   * mais recente) + SUGERIDAS (approvals pendentes, cross-run) + BARRADAS (do
+   * último run, snapshot congelado).
+   */
   async function listLastRunActions(orgId: OrgId, accountId: string): Promise<LastRunActionsOutput> {
     const summary = await getOrCreateForAccount(orgId, accountId);
     const [run] = await deps.db
@@ -542,9 +547,14 @@ export function createAgentsService(deps: AgentsDeps) {
       .limit(1);
     if (!run) return { runId: null, applied: [], suggested: [], dropped: [] };
 
+    // Aplicadas: cross-run, janela do TTL de revert (mesmo prazo em que "Reverter"
+    // fica disponível) — não só o run mais recente, senão uma aprovação decidida
+    // agora mas PROPOSTA por um run mais antigo nunca apareceria aqui.
+    const since = new Date(Date.now() - deps.revertTtlDays * DAY_MS);
     const calls = await deps.db
       .select({
         id: agentToolCalls.id,
+        runId: agentToolCalls.runId,
         toolKey: agentToolCalls.toolKey,
         args: agentToolCalls.args,
         result: agentToolCalls.result,
@@ -552,17 +562,8 @@ export function createAgentsService(deps: AgentsDeps) {
         createdAt: agentToolCalls.createdAt,
       })
       .from(agentToolCalls)
-      .where(eq(agentToolCalls.runId, run.id));
-    const undoneKeys = new Set(calls.map((c) => c.idempotencyKey));
-    // motivo do bloqueio de revert por drift, por ação de origem (revertOf → reason).
-    const blockedReasonByOrigin = new Map<string, string>();
-    for (const c of calls) {
-      if (c.toolKey !== UNDO_BLOCKED_TOOL_KEY) continue;
-      const originId = (c.args as { revertOf?: string }).revertOf;
-      const reason = (c.result as { reason?: string } | null)?.reason;
-      if (originId) blockedReasonByOrigin.set(originId, reason ?? "a entidade mudou desde então");
-    }
-    const revertTtlMs = deps.revertTtlDays * DAY_MS;
+      .innerJoin(agentRuns, eq(agentToolCalls.runId, agentRuns.id))
+      .where(and(eq(agentRuns.agentId, summary.agentId), eq(agentRuns.orgId, orgId), gte(agentToolCalls.createdAt, since)));
 
     const snapshot = run.metricsSnapshot as {
       droppedActions?: { action: Action; reason: string }[];
@@ -574,37 +575,17 @@ export function createAgentsService(deps: AgentsDeps) {
     // fallback p/ tool_calls antigos (gravados antes do target carregar `name`) — os
     // novos já vêm com o nome embutido (decide_actions enriquece via `state.entities`,
     // cobre inclusive entidade pausada que nunca passa pelo mapa/LLM).
-    const entityIds = new Set<string>();
-    for (const c of calls) {
-      const target = (c.args as { target?: { id?: string; name?: string } }).target;
-      if (target?.id && !target.name) entityIds.add(target.id);
-    }
+    const entityIds = entityIdsMissingNames(calls);
     for (const a of pendingApprovals) if (!a.action.target.name) entityIds.add(a.action.target.id);
     for (const d of droppedActions) if (!d.action.target.name) entityIds.add(d.action.target.id);
     const nameByEntityId = await loadEntityNames(summary.agentId, entityIds);
 
-    const applied = calls
-      .filter((c) => c.toolKey !== UNDO_TOOL_KEY && c.toolKey !== UNDO_BLOCKED_TOOL_KEY)
-      .map((c) => {
-        const args = c.args as { target?: { level: string; id: string; name?: string }; dryRun?: boolean };
-        const targetId = args.target?.id ?? "";
-        const simulated = args.dryRun === true;
-        const reverted = undoneKeys.has(`${c.id}:${UNDO_TOOL_KEY}`);
-        // pode reverter enquanto: real, não revertida, e dentro do TTL (5b).
-        const fresh = Date.now() - c.createdAt.getTime() <= revertTtlMs;
-        return {
-          toolCallId: c.id,
-          type: c.toolKey,
-          targetLevel: args.target?.level ?? "",
-          targetId,
-          targetName: args.target?.name ?? nameByEntityId.get(targetId) ?? null,
-          simulated,
-          reverted,
-          undoable: !simulated && !reverted && fresh,
-          revertBlocked: !reverted && blockedReasonByOrigin.has(c.id),
-          revertBlockedReason: blockedReasonByOrigin.get(c.id) ?? null,
-        };
-      });
+    const applied = computeAppliedActions(calls, deps.revertTtlDays, nameByEntityId).map((a) => ({
+      ...a,
+      // "O que o agente fez" é cross-run (ver acima); marca quando a ação foi
+      // aplicada por uma análise DIFERENTE da que esta página está mostrando.
+      fromPreviousRun: a.runId !== run.id,
+    }));
 
     const suggested = pendingApprovals.map((a) => ({
       approvalId: a.id,

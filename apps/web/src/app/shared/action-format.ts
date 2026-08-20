@@ -14,6 +14,10 @@ export const ENTITY_LEVEL_LABEL: Record<string, string> = {
   ad: 'anúncio',
 };
 
+/** Aviso do diálogo de confirmação de revert (mini-surface + `/approvals`). */
+export const UNDO_WARNING =
+  'Reverter volta a entidade ao estado de antes desta ação. Se ela mudou desde então, isso sobrescreve a mudança.';
+
 /** Rótulo legível do tipo de ação (o toolKey vem cru do backend). */
 export function actionTypeLabel(type: string): string {
   return ACTION_TYPE_LABEL[type] ?? type;

@@ -1,7 +1,12 @@
 import { Injectable } from '@angular/core';
 import type { Observable } from 'rxjs';
 import { BaseApiService } from './base-api.service';
-import type { ApprovalOutput, ResolveApprovalInput, ResolveApprovalOutput } from './generated';
+import type {
+  ApprovalOutput,
+  ResolveApprovalInput,
+  ResolveApprovalOutput,
+  RevertibleActionOutput,
+} from './generated';
 
 /**
  * Aprovações (HITL via site, 5b): caixa de entrada cross-conta + resolver por ação.
@@ -20,5 +25,10 @@ export class ApprovalsApiService extends BaseApiService {
       ['/approvals', id, 'resolve'],
       { decision },
     );
+  }
+
+  /** `GET /api/approvals/revertible` — ações aplicadas ainda acionáveis (cross-conta). */
+  listRevertible(): Observable<RevertibleActionOutput[]> {
+    return this.get<RevertibleActionOutput[]>(['/approvals', 'revertible']);
   }
 }

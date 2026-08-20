@@ -13,6 +13,10 @@ export const approvalsRoutes: FastifyPluginAsync = async (app) => {
     return service.listPending(orgIdOf(request));
   });
 
+  app.get("/approvals/revertible", guard, async (request) => {
+    return service.listRevertible(orgIdOf(request));
+  });
+
   app.post("/approvals/:id/resolve", guard, async (request) => {
     const { id } = request.params as { id: string };
     const input = resolveApprovalInput.parse(request.body);

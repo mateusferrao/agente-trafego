@@ -166,8 +166,12 @@ export type MuteCampaignInput = z.infer<typeof muteCampaignInput>;
 export const mutedCampaignsOutput = z.object({ campaignIds: z.array(z.string()) });
 export type MutedCampaignsOutput = z.infer<typeof mutedCampaignsOutput>;
 
-// ─── Ações aplicadas/sugeridas do último run (mini-surface + undo, 5a) ────
-/** Uma ação APLICADA (ou simulada) no último run — base do "reverter". */
+// ─── Ações aplicadas/sugeridas (mini-surface + undo, 5a/5b) ───────────────
+/**
+ * Uma ação APLICADA (ou simulada) — base do "reverter". Cross-run: dentro da
+ * janela do TTL de revert, não só o run mais recente (uma aprovação pode ter sido
+ * proposta por um run mais antigo que o decidido agora).
+ */
 export const appliedActionOutput = z.object({
   toolCallId: z.string(),
   // `type` = toolKey cru (um ActionType hoje). `z.string()` de propósito: forward-compat
@@ -187,6 +191,8 @@ export const appliedActionOutput = z.object({
   revertBlocked: z.boolean(),
   /** motivo do bloqueio de drift (quando `revertBlocked`). */
   revertBlockedReason: z.string().nullable(),
+  /** true = aplicada por uma análise ANTERIOR à que está sendo vista (cross-run). */
+  fromPreviousRun: z.boolean(),
 });
 /** Body do undo — `force` = reverter mesmo com drift ("mesmo assim"). */
 export const undoActionInput = z.object({

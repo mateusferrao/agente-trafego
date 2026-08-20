@@ -4,19 +4,17 @@ import { UiBadge, UiButton, UiConfirmDialogService } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import { ApprovalsApiService } from '@core/api/approvals-api.service';
 import type { LastRunActionsOutput } from '@core/api/generated';
-import { actionTypeLabel, deadlineText, entityTargetLabel } from '@app/shared/action-format';
+import { UNDO_WARNING, actionTypeLabel, deadlineText, entityTargetLabel } from '@app/shared/action-format';
 
 type Applied = LastRunActionsOutput['applied'][number];
 type Suggested = LastRunActionsOutput['suggested'][number];
 type Dropped = LastRunActionsOutput['dropped'][number];
 
-const UNDO_WARNING =
-  'Reverter volta a entidade ao estado de antes desta ação. Se ela mudou desde então, isso sobrescreve a mudança.';
-
 /**
- * Mini-surface (5a): ações que o agente APLICOU (com reverter) + as que SUGERIU e
- * precisam do seu OK, no último run desta conta. Self-contained (carrega o próprio
- * dado, silencioso). O histórico completo é a Timeline (6a).
+ * Mini-surface (5a/5b): ações que o agente APLICOU (com reverter, dentro do TTL —
+ * cross-run) + as que SUGERIU e precisam do seu OK (cross-run) desta conta.
+ * Self-contained (carrega o próprio dado, silencioso). O histórico completo é a
+ * Timeline (6a).
  */
 @Component({
   selector: 'app-agent-actions',
@@ -27,7 +25,7 @@ const UNDO_WARNING =
       <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
         @if (applied().length > 0) {
           <div class="flex flex-col gap-2">
-            <h2 class="font-brand text-sm font-semibold text-ink">O que o agente fez neste run</h2>
+            <h2 class="font-brand text-sm font-semibold text-ink">O que o agente fez</h2>
             <ul class="flex flex-col gap-2">
               @for (a of applied(); track a.toolCallId) {
                 <li class="flex items-start justify-between gap-3 rounded-md border border-line bg-soft px-3 py-2">
@@ -39,6 +37,9 @@ const UNDO_WARNING =
                         <span appBadge tone="neutral">simulado (dry-run)</span>
                       } @else if (a.reverted) {
                         <span appBadge tone="neutral">revertido</span>
+                      }
+                      @if (a.fromPreviousRun) {
+                        <span appBadge tone="neutral" size="xs">de uma análise anterior</span>
                       }
                     </span>
                     @if (a.revertBlocked && a.revertBlockedReason) {

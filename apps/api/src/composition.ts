@@ -154,7 +154,7 @@ export function buildContainer(): Container {
     channels: createChannelsService({ db, messaging }),
     contacts: createContactsService({ db, messaging }),
     agents,
-    approvals: createApprovalsService({ db, approvals, scheduler }),
+    approvals: createApprovalsService({ db, approvals, scheduler, revertTtlDays: env.REVERT_TTL_DAYS }),
     recommendations: createRecommendationsService({ db }),
     runs: createRunsService({
       db,

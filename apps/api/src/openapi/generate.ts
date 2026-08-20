@@ -61,6 +61,7 @@ import {
   approvalOutput,
   resolveApprovalInput,
   resolveApprovalOutput,
+  revertibleActionOutput,
 } from "../modules/approvals/schema.js";
 
 extendZodWithOpenApi(z);
@@ -119,6 +120,7 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const ApprovalOutput = registry.register("ApprovalOutput", approvalOutput);
   const ResolveApprovalInput = registry.register("ResolveApprovalInput", resolveApprovalInput);
   const ResolveApprovalOutput = registry.register("ResolveApprovalOutput", resolveApprovalOutput);
+  const RevertibleActionOutput = registry.register("RevertibleActionOutput", revertibleActionOutput);
 
   const accountParams = z.object({ id: z.string() });
 
@@ -464,6 +466,14 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     path: "/api/approvals",
     tags: ["approvals"],
     responses: { 200: jsonRes("aprovações pendentes da org (cross-conta)", z.array(ApprovalOutput)) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/approvals/revertible",
+    tags: ["approvals"],
+    responses: {
+      200: jsonRes("ações aplicadas ainda acionáveis quanto a reverter, cross-conta", z.array(RevertibleActionOutput)),
+    },
   });
   registry.registerPath({
     method: "post",

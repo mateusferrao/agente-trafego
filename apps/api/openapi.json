@@ -2472,6 +2472,9 @@
                     "string",
                     "null"
                   ]
+                },
+                "fromPreviousRun": {
+                  "type": "boolean"
                 }
               },
               "required": [
@@ -2484,7 +2487,8 @@
                 "reverted",
                 "undoable",
                 "revertBlocked",
-                "revertBlockedReason"
+                "revertBlockedReason",
+                "fromPreviousRun"
               ]
             }
           },
@@ -2869,6 +2873,59 @@
         "required": [
           "id",
           "status"
+        ]
+      },
+      "RevertibleActionOutput": {
+        "type": "object",
+        "properties": {
+          "toolCallId": {
+            "type": "string"
+          },
+          "accountId": {
+            "type": "string"
+          },
+          "accountName": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "targetLevel": {
+            "type": "string"
+          },
+          "targetId": {
+            "type": "string"
+          },
+          "targetName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "undoable": {
+            "type": "boolean"
+          },
+          "revertBlocked": {
+            "type": "boolean"
+          },
+          "revertBlockedReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "toolCallId",
+          "accountId",
+          "accountName",
+          "type",
+          "targetLevel",
+          "targetId",
+          "targetName",
+          "undoable",
+          "revertBlocked",
+          "revertBlockedReason"
         ]
       }
     },
@@ -4174,6 +4231,28 @@
                   "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/ApprovalOutput"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/approvals/revertible": {
+      "get": {
+        "tags": [
+          "approvals"
+        ],
+        "responses": {
+          "200": {
+            "description": "ações aplicadas ainda acionáveis quanto a reverter, cross-conta",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RevertibleActionOutput"
                   }
                 }
               }
