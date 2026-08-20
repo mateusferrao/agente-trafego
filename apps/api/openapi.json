@@ -2449,6 +2449,12 @@
                 "targetId": {
                   "type": "string"
                 },
+                "targetName": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "simulated": {
                   "type": "boolean"
                 },
@@ -2461,6 +2467,7 @@
                 "type",
                 "targetLevel",
                 "targetId",
+                "targetName",
                 "simulated",
                 "reverted"
               ]
@@ -2486,6 +2493,12 @@
                 "targetId": {
                   "type": "string"
                 },
+                "targetName": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "reason": {
                   "type": "string"
                 }
@@ -2494,6 +2507,7 @@
                 "type",
                 "targetLevel",
                 "targetId",
+                "targetName",
                 "reason"
               ]
             }

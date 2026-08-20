@@ -13,7 +13,7 @@ import {
   heroSquares2x2,
   heroSun,
 } from '@ng-icons/heroicons/outline';
-import { UiBadge } from '@ui';
+import { UiBadge, UiConfirmDialogOutlet } from '@ui';
 import { OrgApiService } from '@core/api/org-api.service';
 import type { OrgOutput } from '@core/api';
 import { AuthStore } from '@core/auth';
@@ -41,7 +41,7 @@ const THEME_OPTIONS: readonly ThemeOption[] = [
 @Component({
   selector: 'app-shell',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, NgIcon, UiBadge],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, NgIcon, UiBadge, UiConfirmDialogOutlet],
   providers: [
     provideIcons({
       heroRectangleGroup,
@@ -65,7 +65,7 @@ const THEME_OPTIONS: readonly ThemeOption[] = [
       >
         <div class="brand-lockup px-1">
           <span class="brand-mark" aria-hidden="true"></span>
-          <span class="brand-wordmark">Agente de Tráfego</span>
+          <span class="brand-wordmark">AutoTraffic</span>
         </div>
 
         <!-- Troca de organização (única no MVP; wired a GET /api/orgs) -->
@@ -153,6 +153,8 @@ const THEME_OPTIONS: readonly ThemeOption[] = [
         <router-outlet />
       </main>
     </div>
+
+    <app-confirm-dialog-outlet />
   `,
 })
 export class AppShell {

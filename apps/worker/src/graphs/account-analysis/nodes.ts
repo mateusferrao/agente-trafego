@@ -540,7 +540,13 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     state: AccountAnalysisStateType,
   ): Promise<AccountAnalysisUpdate> {
     logger.debug({ runId: state.runId }, "decide_actions");
-    const merged = [...(state.playbookCandidates ?? []), ...(state.llmCandidates ?? [])];
+    // rótulo legível vem do catálogo cru (`state.entities`, todos os status) — cobre
+    // entidades pausadas que nunca passam pelo mapa/LLM (não têm `entity_analyses`).
+    const nameById = new Map((state.entities ?? []).map((e) => [e.id, e.name]));
+    const merged = [...(state.playbookCandidates ?? []), ...(state.llmCandidates ?? [])].map((a) => ({
+      ...a,
+      target: { ...a.target, name: nameById.get(a.target.id) },
+    }));
     const { kept, dropped } = resolveActionConflicts(merged);
     if (dropped.length > 0) logger.debug({ runId: state.runId, dropped: dropped.length }, "decide:conflitos resolvidos");
     const decision = decideActions(kept, state.autonomyPolicy);

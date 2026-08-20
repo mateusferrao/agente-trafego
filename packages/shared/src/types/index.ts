@@ -187,6 +187,8 @@ export type RiskLevel = "low" | "medium" | "high";
 export interface ActionTarget {
   readonly level: EntityLevel;
   readonly id: string;
+  /** rótulo legível no momento da ação (display-only; playbook/LLM não preenchem — a casca enriquece antes de persistir). */
+  readonly name?: string;
 }
 
 export interface Action {

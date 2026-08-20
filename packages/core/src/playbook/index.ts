@@ -66,7 +66,7 @@ export function evaluatePlaybook(
         params,
         source: "playbook",
         riskLevel: riskForAction(type, params),
-        reason: describeReason(rule.when, rule.id),
+        reason: describeReason(rule.when),
         ruleId: rule.id,
       });
     }
@@ -146,6 +146,30 @@ function actionParamsFromThen(then: PlaybookRule["then"]): Record<string, unknow
   return rest;
 }
 
-function describeReason(cond: PlaybookCondition, ruleId: string): string {
-  return `Regra ${ruleId}: ${String(cond.metric)} ${cond.op} ${cond.value} (${cond.window})`;
+/** Rótulo legível por métrica — mesma nomenclatura do editor de regras (web). */
+const METRIC_LABEL: Record<string, string> = {
+  spend: "gasto",
+  impressions: "impressões",
+  clicks: "cliques",
+  ctr: "CTR",
+  cpc: "CPC",
+  cpm: "CPM",
+  frequency: "frequência",
+  conversions: "conversões",
+  cpa: "CPA",
+  roas: "ROAS",
+};
+
+const OP_LABEL: Record<PlaybookCondition["op"], string> = {
+  ">": "maior que",
+  "<": "menor que",
+  ">=": "maior ou igual a",
+  "<=": "menor ou igual a",
+  "==": "igual a",
+};
+
+/** Descrição legível da condição — sem id cru (o `ruleId` já vai à parte em `CandidateAction.ruleId`). */
+function describeReason(cond: PlaybookCondition): string {
+  const metric = METRIC_LABEL[cond.metric] ?? String(cond.metric);
+  return `${metric} ${OP_LABEL[cond.op]} ${cond.value} (últimos ${cond.window.replace("d", " dias")})`;
 }

@@ -462,7 +462,7 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const generator = new OpenApiGeneratorV31(registry.definitions);
   return generator.generateDocument({
     openapi: "3.1.0",
-    info: { title: "Agente de Tráfego API", version: "0.1.0" },
+    info: { title: "AutoTraffic API", version: "0.1.0" },
     servers: [{ url: "/" }],
   });
 }

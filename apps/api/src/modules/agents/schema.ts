@@ -175,6 +175,8 @@ export const appliedActionOutput = z.object({
   type: z.string(),
   targetLevel: z.string(),
   targetId: z.string(),
+  /** rótulo legível (última análise conhecida) — ausente = UI cai pro id cru. */
+  targetName: z.string().nullable(),
   /** dry-run (ensaio) — não escreveu de verdade. */
   simulated: z.boolean(),
   /** já foi revertida (existe o undo). */
@@ -185,6 +187,7 @@ export const suggestedActionOutput = z.object({
   type: actionType,
   targetLevel: z.string(),
   targetId: z.string(),
+  targetName: z.string().nullable(),
   reason: z.string(),
 });
 export const lastRunActionsOutput = z.object({

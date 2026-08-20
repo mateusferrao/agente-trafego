@@ -88,7 +88,7 @@ export function createContactsService(deps: ContactsDeps) {
 
     await deps.messaging.sendMessage(instance, {
       to: input.phone,
-      text: `Seu código de verificação do Agente de Tráfego é ${code}. Ele expira em ${CODE_TTL_MS / 60000} minutos.`,
+      text: `Seu código de verificação do AutoTraffic é ${code}. Ele expira em ${CODE_TTL_MS / 60000} minutos.`,
     });
     return { sent: true, expiresAt: expiresAt.toISOString() };
   }

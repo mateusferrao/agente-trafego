@@ -134,7 +134,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
         baseUrl: env.OPENROUTER_BASE_URL,
         maxRetries: env.LLM_MAX_RETRIES,
         referer: env.WEB_ORIGIN,
-        title: "Agente de Tráfego",
+        title: "AutoTraffic",
       }),
     }),
     { metering, provider: "openrouter", onError: (err) => logger.warn({ err }, "metering:falhou") },

@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import {
   adAccounts,
   agents,
@@ -6,6 +6,7 @@ import {
   agentRuns,
   agentToolCalls,
   conversionLabels,
+  entityAnalyses,
   guardrailConfigs,
   insightsSnapshots,
   playbookRules,
@@ -541,28 +542,56 @@ export function createAgentsService(deps: AgentsDeps) {
       .from(agentToolCalls)
       .where(eq(agentToolCalls.runId, run.id));
     const undoneKeys = new Set(calls.map((c) => c.idempotencyKey));
+
+    const snapshot = run.metricsSnapshot as { suggestedActions?: Action[] } | null;
+    const suggestedActions = snapshot?.suggestedActions ?? [];
+    // fallback p/ tool_calls antigos (gravados antes do target carregar `name`) — os
+    // novos já vêm com o nome embutido (decide_actions enriquece via `state.entities`,
+    // cobre inclusive entidade pausada que nunca passa pelo mapa/LLM).
+    const entityIds = new Set<string>();
+    for (const c of calls) {
+      const target = (c.args as { target?: { id?: string; name?: string } }).target;
+      if (target?.id && !target.name) entityIds.add(target.id);
+    }
+    for (const a of suggestedActions) if (!a.target.name) entityIds.add(a.target.id);
+    const nameByEntityId = await loadEntityNames(summary.agentId, entityIds);
+
     const applied = calls
       .filter((c) => c.toolKey !== UNDO_TOOL_KEY)
       .map((c) => {
-        const args = c.args as { target?: { level: string; id: string }; dryRun?: boolean };
+        const args = c.args as { target?: { level: string; id: string; name?: string }; dryRun?: boolean };
+        const targetId = args.target?.id ?? "";
         return {
           toolCallId: c.id,
           type: c.toolKey,
           targetLevel: args.target?.level ?? "",
-          targetId: args.target?.id ?? "",
+          targetId,
+          targetName: args.target?.name ?? nameByEntityId.get(targetId) ?? null,
           simulated: args.dryRun === true,
           reverted: undoneKeys.has(`${c.id}:${UNDO_TOOL_KEY}`),
         };
       });
 
-    const snapshot = run.metricsSnapshot as { suggestedActions?: Action[] } | null;
-    const suggested = (snapshot?.suggestedActions ?? []).map((a) => ({
+    const suggested = suggestedActions.map((a) => ({
       type: a.type,
       targetLevel: a.target.level,
       targetId: a.target.id,
+      targetName: a.target.name ?? nameByEntityId.get(a.target.id) ?? null,
       reason: a.reason,
     }));
     return { runId: run.id, applied, suggested };
+  }
+
+  /** Rótulo legível por entidade (última análise conhecida) — vazio não bate na tabela. */
+  async function loadEntityNames(agentId: string, entityIds: ReadonlySet<string>): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    if (entityIds.size === 0) return map;
+    const rows = await deps.db
+      .select({ entityId: entityAnalyses.entityId, entityName: entityAnalyses.entityName })
+      .from(entityAnalyses)
+      .where(and(eq(entityAnalyses.agentId, agentId), inArray(entityAnalyses.entityId, [...entityIds])));
+    for (const r of rows) if (r.entityName) map.set(r.entityId, r.entityName);
+    return map;
   }
 
   /** Pede o undo de uma ação (valida posse + estado; o WORKER reverte de fato). */

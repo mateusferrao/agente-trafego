@@ -18,36 +18,36 @@ export const routes: Routes = [
       { path: '', pathMatch: 'full', redirectTo: 'accounts' },
       {
         path: 'accounts',
-        title: 'Contas — Agente de Tráfego',
+        title: 'Contas — AutoTraffic',
         loadComponent: () => import('./features/accounts/accounts-page').then((m) => m.AccountsPage),
       },
       {
         path: 'accounts/:id',
-        title: 'Conta — Agente de Tráfego',
+        title: 'Conta — AutoTraffic',
         loadComponent: () =>
           import('./features/account-detail/account-detail-page').then((m) => m.AccountDetailPage),
       },
       {
         path: 'accounts/:id/agente',
-        title: 'Configurar agente — Agente de Tráfego',
+        title: 'Configurar agente — AutoTraffic',
         loadComponent: () =>
           import('./features/agent-config/agent-config-page').then((m) => m.AgentConfigPage),
       },
       {
         path: 'accounts/:id/runs/:runId',
-        title: 'Análise — Agente de Tráfego',
+        title: 'Análise — AutoTraffic',
         loadComponent: () =>
           import('./features/run-detail/run-detail-page').then((m) => m.RunDetailPage),
       },
       {
         path: 'approvals',
-        title: 'Aprovações — Agente de Tráfego',
+        title: 'Aprovações — AutoTraffic',
         loadComponent: () =>
           import('./features/approvals/approvals-page').then((m) => m.ApprovalsPage),
       },
       {
         path: 'integrations',
-        title: 'Integrações — Agente de Tráfego',
+        title: 'Integrações — AutoTraffic',
         loadComponent: () =>
           import('./features/integrations/integrations-page').then((m) => m.IntegrationsPage),
       },
@@ -56,7 +56,7 @@ export const routes: Routes = [
       { path: 'whatsapp', pathMatch: 'full', redirectTo: 'integrations' },
       {
         path: 'settings',
-        title: 'Configurações — Agente de Tráfego',
+        title: 'Configurações — AutoTraffic',
         loadComponent: () =>
           import('./features/settings/settings-page').then((m) => m.SettingsPage),
       },
@@ -70,13 +70,13 @@ export const routes: Routes = [
     children: [
       {
         path: 'login',
-        title: 'Entrar — Agente de Tráfego',
+        title: 'Entrar — AutoTraffic',
         data: { mode: 'login' },
         loadComponent: () => import('./features/login/login-page').then((m) => m.LoginPage),
       },
       {
         path: 'signup',
-        title: 'Criar conta — Agente de Tráfego',
+        title: 'Criar conta — AutoTraffic',
         data: { mode: 'signup' },
         loadComponent: () => import('./features/login/login-page').then((m) => m.LoginPage),
       },

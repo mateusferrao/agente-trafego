@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, type OnInit, inject, input, signal } from '@angular/core';
 import { toast } from 'ngx-sonner';
-import { UiBadge, UiButton } from '@ui';
+import { UiBadge, UiButton, UiConfirmDialogService } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import type { LastRunActionsOutput } from '@core/api/generated';
 
@@ -19,12 +19,13 @@ const LEVEL_LABEL: Record<string, string> = { campaign: 'campanha', adset: 'conj
 function label(type: string): string {
   return TYPE_LABEL[type] ?? type;
 }
-function target(a: { targetLevel: string; targetId: string }): string {
-  return `${LEVEL_LABEL[a.targetLevel] ?? a.targetLevel} ${a.targetId}`;
+function target(a: { targetLevel: string; targetId: string; targetName?: string | null }): string {
+  const level = LEVEL_LABEL[a.targetLevel] ?? a.targetLevel;
+  return a.targetName ? `${level} ${a.targetName}` : `${level} ${a.targetId}`;
 }
 
 const UNDO_WARNING =
-  'Reverter volta a entidade ao estado de antes desta ação. Se ela mudou desde então, isso sobrescreve a mudança. Continuar?';
+  'Reverter volta a entidade ao estado de antes desta ação. Se ela mudou desde então, isso sobrescreve a mudança.';
 
 /**
  * Mini-surface (5a): ações que o agente APLICOU (com reverter) + as que SUGERIU e
@@ -83,6 +84,7 @@ const UNDO_WARNING =
 })
 export class AgentActions implements OnInit {
   private readonly api = inject(AnalysisApiService);
+  private readonly confirmDialog = inject(UiConfirmDialogService);
 
   readonly accountId = input.required<string>();
 
@@ -107,8 +109,14 @@ export class AgentActions implements OnInit {
     });
   }
 
-  protected revert(a: Applied): void {
-    if (!window.confirm(UNDO_WARNING)) return;
+  protected async revert(a: Applied): Promise<void> {
+    const confirmed = await this.confirmDialog.confirm({
+      title: 'Reverter ação?',
+      description: UNDO_WARNING,
+      confirmLabel: 'Reverter',
+      tone: 'warning',
+    });
+    if (!confirmed) return;
     this.reverting.update((s) => new Set(s).add(a.toolCallId));
     this.api.undoAction(this.accountId(), a.toolCallId).subscribe({
       next: () => {
