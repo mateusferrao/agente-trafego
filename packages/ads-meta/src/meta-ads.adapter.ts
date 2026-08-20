@@ -16,6 +16,7 @@ import type {
 import { AdsPlatformError } from "@trafego/shared/ports";
 import { META_RATE_LIMIT_CODES, META_TRANSIENT_CODES, MetaApiError, MetaGraphClient } from "./client.js";
 import { callWithGovernor } from "./call-with-governor.js";
+import { cooldownError } from "./rate-limit.js";
 import { normalizeAdAccountId, stripActPrefix } from "./ids.js";
 import { MetaInsightsService } from "./insights.js";
 import { MetaCreativesService } from "./creatives.js";
@@ -296,8 +297,15 @@ export class MetaAdsAdapter implements AdsPlatformPort {
   }
 
   async mutate(account: AdAccountRef, action: Action): Promise<MutationResult> {
-    // TODO: governor.acquire → delega ao mutations service (idempotente, before/after).
-    return this.mutations.mutate(account, action);
+    try {
+      // gate de cooldown nos writes (parcial-rápido): cooldown ativo → não escreve.
+      const accountId = normalizeAdAccountId(account.adAccountId);
+      const acquired = await this.governor.acquire(accountId);
+      if (!acquired.granted) throw cooldownError();
+      return await this.mutations.mutate(account, action);
+    } catch (error) {
+      throw toAdsError(error);
+    }
   }
 
   async listAccessibleAccounts(accessToken: string): Promise<AccessibleAccount[]> {

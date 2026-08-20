@@ -5,10 +5,28 @@ import type { MetaGraphClient } from "./client.js";
 /**
  * Mutações na Meta: pause/resume/adjust_budget/set_status.
  *
- * Idempotência (§8): o adapter lê o estado atual (`before`) antes de escrever e
- * evita reaplicar quando o alvo já está no estado desejado. A casca ainda guarda
- * `idempotency_key` em `agent_tool_calls`; aqui garantimos before/after p/ rollback.
+ * Idempotência (§8): lê o estado atual (`before`) antes de escrever e evita reaplicar
+ * quando o alvo já está no estado desejado (before==after, sem POST). A casca ainda
+ * guarda `idempotency_key` em `agent_tool_calls`; aqui garantimos before/after p/ rollback.
+ * O budget é tratado em **unidade mínima** (centavos), como a Graph reporta/aceita.
  */
+
+const STATUS_ACTIVE = "ACTIVE";
+const STATUS_PAUSED = "PAUSED";
+/** Piso de segurança de budget (unidade mínima) — Meta rejeita valores muito baixos. */
+const MIN_BUDGET_MINOR = 100;
+
+type EntityState = Record<string, unknown>;
+
+/** Campos lidos p/ before-image (status + budgets). */
+const STATE_FIELDS = "status,effective_status,daily_budget,lifetime_budget";
+
+/** Mudança computada: campos a escrever + se o alvo já está no estado desejado. */
+interface Change {
+  readonly params: Readonly<Record<string, string>>;
+  readonly alreadyThere: boolean;
+}
+
 export class MetaMutationsService {
   private readonly client: MetaGraphClient;
 
@@ -16,43 +34,65 @@ export class MetaMutationsService {
     this.client = client;
   }
 
-  /** Aplica a ação e retorna before/after (rollback). Roteia por action.type. */
-  mutate(account: AdAccountRef, action: Action): Promise<MutationResult> {
-    // TODO: switch(action.type) → pauseEntity/resumeEntity/adjustBudget/setStatus.
-    throw new Error("not implemented");
+  /** Aplica a ação e retorna before/after (rollback). Idempotente por leitura. */
+  async mutate(account: AdAccountRef, action: Action): Promise<MutationResult> {
+    const before = await this.readEntityState(account, action.target.id);
+    const change = computeChange(action, before);
+    if (change.alreadyThere) return { action, before, after: before };
+    await this.writeFields(account, action.target.id, change.params);
+    // after = intenção aplicada sobre o before (evita 2º GET; o undo restaura o before).
+    const after: EntityState = { ...before, ...change.params };
+    return { action, before, after };
   }
 
   /** Lê o estado atual da entidade (status + budgets) p/ before-image. */
-  readEntityState(
+  async readEntityState(account: AdAccountRef, entityId: string): Promise<EntityState> {
+    const res = await this.client.request<EntityState>({
+      method: "GET",
+      path: entityId,
+      accessToken: account.accessToken,
+      params: { fields: STATE_FIELDS },
+    });
+    return res.data;
+  }
+
+  /** POST dos campos na entidade (status e/ou budget). */
+  private async writeFields(
     account: AdAccountRef,
-    level: Action["target"]["level"],
     entityId: string,
-  ): Promise<Readonly<Record<string, unknown>>> {
-    // TODO: GET {entity_id}?fields=status,effective_status,daily_budget,lifetime_budget.
-    throw new Error("not implemented");
+    params: Readonly<Record<string, string>>,
+  ): Promise<void> {
+    await this.client.request({ method: "POST", path: entityId, accessToken: account.accessToken, params });
   }
+}
 
-  /** POST status=PAUSED na entidade. */
-  pauseEntity(account: AdAccountRef, action: Action): Promise<MutationResult> {
-    // TODO: idempotente — se já PAUSED, retorna before==after sem escrever.
-    throw new Error("not implemented");
+/** Computa os campos a escrever + idempotência, por tipo de ação. PURO. */
+function computeChange(action: Action, before: EntityState): Change {
+  switch (action.type) {
+    case "pause_entity":
+      return statusChange(before, STATUS_PAUSED);
+    case "resume_entity":
+      return statusChange(before, STATUS_ACTIVE);
+    case "set_status":
+      return statusChange(before, String(action.params["status"]).toUpperCase());
+    case "adjust_budget":
+      return budgetChange(action, before);
+    default:
+      throw new Error(`mutação não suportada: ${action.type}`);
   }
+}
 
-  /** POST status=ACTIVE na entidade. */
-  resumeEntity(account: AdAccountRef, action: Action): Promise<MutationResult> {
-    // TODO: idempotente — se já ACTIVE, no-op.
-    throw new Error("not implemented");
-  }
+function statusChange(before: EntityState, target: string): Change {
+  return { params: { status: target }, alreadyThere: before["status"] === target };
+}
 
-  /** Ajusta budget (increase/decrease/set por pct ou valor absoluto). */
-  adjustBudget(account: AdAccountRef, action: Action): Promise<MutationResult> {
-    // TODO: ler budget atual, computar novo (params.mode/pct), POST daily/lifetime_budget.
-    throw new Error("not implemented");
-  }
+function budgetChange(action: Action, before: EntityState): Change {
+  const field = before["daily_budget"] != null ? "daily_budget" : before["lifetime_budget"] != null ? "lifetime_budget" : null;
+  if (!field) throw new Error("adjust_budget: entidade sem budget no nível (pré-check do guardrail deveria ter barrado)");
 
-  /** Define um status arbitrário (set_status). */
-  setStatus(account: AdAccountRef, action: Action): Promise<MutationResult> {
-    // TODO: mapear params.status → campo status da Graph.
-    throw new Error("not implemented");
-  }
+  const currentMinor = Number(before[field]);
+  const pct = Number(action.params["pct"]);
+  const signed = action.params["mode"] === "decrease" ? -pct : pct;
+  const nextMinor = Math.max(MIN_BUDGET_MINOR, Math.round(currentMinor * (1 + signed / 100)));
+  return { params: { [field]: String(nextMinor) }, alreadyThere: nextMinor === currentMinor };
 }
