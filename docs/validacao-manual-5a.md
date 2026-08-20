@@ -80,6 +80,14 @@ Autonomia = **sugere + OK** (default) → Analisar agora → análise + recomend
 
 ---
 
+## Rate-limit da Meta durante a validação
+Rodar muitas análises seguidas numa conta real esgota o **orçamento de request** da Meta (`code 17`).
+O governor degrada gracioso (run vira `partial`) — não é bug. Mitigação já no código:
+- **Cache do catálogo de entidades** (`MetaEntityCache`, Redis, TTL `META_ENTITY_CACHE_TTL_SEC`=1h): o `listEntities` (a chamada pesada) é reusado entre runs. Cliques seguidos **não** re-baixam o catálogo → não estouram.
+- **Invalida** só na **escrita real** (pausar/budget/undo) e no TTL. dry-run não invalida.
+- Preciso de dado sempre fresco pra um teste? `META_ENTITY_CACHE_TTL_SEC=0` (desliga o cache) — mas aí volta a pressionar o rate-limit.
+- Se **estourar mesmo assim:** pare os cliques, espere o cooldown (`redis-cli PTTL meta:gov:cooldown:act_<id>` → ms; `-2` = liberou), rode 1× só.
+
 ## Se algo falhar
 - `partial=true` inesperado → ver log do worker (rate-limit/erro Meta) + `redis-cli PTTL meta:gov:cooldown:act_<id>`.
 - Ação não aplicou → conferra os **3 gates**: autonomia (act_safe/full) **e** ação em `allowed_actions` **e** dry-run OFF **e** kill-switch off.
