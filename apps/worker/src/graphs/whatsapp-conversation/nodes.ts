@@ -5,6 +5,7 @@
 import { ChatOpenAI } from "@langchain/openai";
 import { AIMessage, SystemMessage } from "@langchain/core/messages";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
+import type { OrgId } from "@trafego/shared/types";
 import type { WorkerDeps } from "../../composition.js";
 import { loadConversationConfig } from "./system-prompt.js";
 import { windowMessages } from "./window.js";
@@ -69,7 +70,7 @@ export function makeConversationNodes(
     // metering (§11): as chamadas do chat também entram no ledger de custo.
     try {
       await deps.ports.metering.record({
-        orgId: ctx.orgId as never,
+        orgId: ctx.orgId as OrgId,
         type: "conversation",
         provider: "openrouter",
         model,

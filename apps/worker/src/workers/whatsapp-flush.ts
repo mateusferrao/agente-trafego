@@ -16,13 +16,18 @@ export function startWhatsappFlushWorker(deps: WorkerDeps, connection: Redis): W
     WHATSAPP_FLUSH_QUEUE,
     async (job) => {
       const { orgId, contactId, conversationId } = job.data;
-      const fragments = await drainInbound(redis, conversationId);
-      if (fragments.length === 0) {
-        logger.debug({ conversationId }, "flush:vazio (já drenado)");
-        return;
+      // Laço: drena + roda o turno até o buffer esvaziar. Mensagens que chegam
+      // DURANTE o turno (quando o re-agendamento por jobId é engolido) são pegas
+      // na próxima iteração — nenhum fragmento fica represado sem resposta.
+      for (;;) {
+        const fragments = await drainInbound(redis, conversationId);
+        if (fragments.length === 0) {
+          logger.debug({ conversationId }, "flush:vazio (drenado)");
+          return;
+        }
+        // coalesce as mensagens picadas num único turno (na ordem de chegada).
+        await runConversationTurn(deps, { orgId, contactId, conversationId, text: fragments.join("\n") });
       }
-      // coalesce as mensagens picadas num único turno (na ordem de chegada).
-      await runConversationTurn(deps, { orgId, contactId, conversationId, text: fragments.join("\n") });
     },
     { connection },
   );

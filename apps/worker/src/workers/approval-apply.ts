@@ -104,14 +104,23 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
       const action = check.allowed[0]!;
       const accessToken = ports.vault.decrypt(account.tokenCripto);
       const ref = { adAccountId: account.metaAdAccountId, accessToken };
-      const done = await executor.execute({
-        runId: approval.runId,
-        orgId,
-        account: ref,
-        action,
-        idempotencyKey: `${approval.id}:apply`,
-        dryRun: cfg.dryRun,
-      });
+      let done: Awaited<ReturnType<typeof executor.execute>>;
+      try {
+        done = await executor.execute({
+          runId: approval.runId,
+          orgId,
+          account: ref,
+          action,
+          idempotencyKey: `${approval.id}:apply`,
+          dryRun: cfg.dryRun,
+        });
+      } catch (err) {
+        // falha da Meta (rede/rate-limit/etc): mantém a aprovação PENDENTE (dá p/ reaprovar)
+        // e avisa o usuário — a promessa de "te aviso o resultado" não pode sumir (§UX).
+        logger.error({ approvalId, err }, "approval-apply:execute falhou");
+        await pushOutcome(`Não consegui aplicar agora${suffix} — a Meta não respondeu. Tenta de novo em instantes.`);
+        return;
+      }
 
       // escrita real que não mexeu em nada = alvo já no estado desejado → barrada honesta.
       if (!done.dryRun && isNoWrite(done.result)) {

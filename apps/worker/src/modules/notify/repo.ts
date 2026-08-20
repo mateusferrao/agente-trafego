@@ -28,18 +28,9 @@ export interface ContactTarget {
 
 export type MessageDirection = "inbound" | "outbound";
 
-export interface RecordOutboundInput {
-  readonly orgId: string;
-  readonly agentId: string;
-  readonly contactId: string;
-  readonly runId: string;
-  readonly body: string;
-}
-
 export interface NotifyRepo {
   loadTarget(orgId: string): Promise<NotifyTarget | null>;
   alreadyNotified(runId: string): Promise<boolean>;
-  recordOutbound(input: RecordOutboundInput): Promise<void>;
   /** Contato verificado da org dona da instância, pelo telefone (inbound). */
   resolveInboundContact(instanceId: string, phone: string): Promise<InboundContact | null>;
   /** Já processamos esta mensagem do provider? (idempotência do inbound.) */
@@ -85,37 +76,6 @@ export function createNotifyRepo(db: Database): NotifyRepo {
       return Boolean(row);
     },
 
-    /** Garante a conversa (org/agente/contato) e grava a mensagem outbound. */
-    async recordOutbound({ orgId, agentId, contactId, runId, body }) {
-      const [existing] = await db
-        .select({ id: conversations.id })
-        .from(conversations)
-        .where(
-          and(
-            eq(conversations.orgId, orgId),
-            eq(conversations.agentId, agentId),
-            eq(conversations.contactId, contactId),
-          ),
-        )
-        .limit(1);
-      let conversationId = existing?.id;
-      if (!conversationId) {
-        const [created] = await db
-          .insert(conversations)
-          .values({ orgId, agentId, contactId })
-          .returning({ id: conversations.id });
-        conversationId = created?.id;
-      }
-      if (!conversationId) return;
-
-      await db.insert(messages).values({
-        conversationId,
-        direction: "outbound",
-        body,
-        meta: { runId },
-      });
-    },
-
     /** Org dona da instância + contato verificado por telefone. Desconhecido → null. */
     async resolveInboundContact(instanceId, phone) {
       const [instance] = await db
@@ -145,10 +105,15 @@ export function createNotifyRepo(db: Database): NotifyRepo {
 
     /** Conversa (org/contato) — sem agente atrelado no inbound conversacional. */
     async ensureConversation(orgId, contactId) {
+      // orderBy(createdAt) estabiliza o thread_id do checkpointer entre turnos mesmo se
+      // uma corrida de 1ª interação criar duplicata (sempre resolve p/ a mais antiga).
+      // Hardening (fast-follow): uniqueIndex(org_id, contact_id) + onConflict — precisa
+      // dedup das linhas legado por (org, agente, contato) antes.
       const [existing] = await db
         .select({ id: conversations.id })
         .from(conversations)
         .where(and(eq(conversations.orgId, orgId), eq(conversations.contactId, contactId)))
+        .orderBy(conversations.createdAt)
         .limit(1);
       if (existing) return existing.id;
       const [created] = await db
