@@ -181,7 +181,9 @@ export class MetaInsightsService {
     const accountId = normalizeAdAccountId(query.account.adAccountId);
     const acquired = await this.governor.acquire(accountId);
     if (!acquired.granted) {
-      // cooldown ativo → sinaliza transiente (o adapter mapeia p/ upstream = degradação)
+      // cooldown ativo (minutos) → parcial-rápido: degrada na hora em vez de segurar o
+      // run (mesma política do `shouldDegrade`/`callWithGovernor` das leituras). Mapeia
+      // p/ `rate_limited` na casca → o worker marca análise parcial.
       throw new MetaApiError("rate-limit: cooldown ativo", 80000, undefined, 429);
     }
     return this.runReport(query, 0);

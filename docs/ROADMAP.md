@@ -97,8 +97,8 @@ decaimento de token em runtime → `6b`; reuso do sync-service pelo `fetchData` 
 
 **Governor / escala (Fatia 2)**
 - Token-bucket Lua (EVALSHA) no `acquire` (controle proativo) + Batch API (≤50/HTTP) — quando o volume exigir (hoje = mínimo-correto reativo).
-- **Backoff + retry no rate-limit da Meta (code 17 "User request limit reached")** no `MetaGraphClient` — hoje o erro só degrada o nível pra `partial` (visto em validação: rodar várias análises seguidas numa conta grande estoura o orçamento de request e `listEntities(adset/ad)` cai). Retry com espera respeitando `X-Business-Use-Case-Usage` antes de degradar. Casa com o token-bucket acima.
-- **Aliviar o `fetch_data`** (o mais pesado por run numa conta grande: lista os 3 níveis, `ad` = centenas paginado, todo run) — listar só entidades **ativas** e/ou cachear o catálogo de entidades entre runs (invalidar por sync). Reduz a pressão de rate-limit na raiz.
+- **Backoff + retry no rate-limit da Meta — read-path FEITO.** `callWithGovernor` (ads-meta) envolve `listEntities`/`getCreatives` com `acquire`+`observeUsage`+backoff (`shouldDegrade`/`MAX_INLINE_WAIT_MS`): rate-limit transitório retria inline curto; cooldown longo (minutos) degrada gracioso (parcial-rápido — nunca segura o run); toda leitura alimenta o governor (antes só o path de insights). Resta: **token-bucket Lua proativo** (acima) + estender o wrapper ao `mutate` (write path = 5a; o TODO em `meta-ads.adapter.mutate` já aponta pra cá).
+- **Aliviar o `fetch_data`** (o mais pesado por run numa conta grande: lista os 3 níveis, `ad` = centenas paginado, todo run) — listar só entidades **ativas** e/ou cachear o catálogo de entidades entre runs (invalidar por sync). Reduz a pressão de rate-limit na raiz. *(Adiado conscientemente: só-ativas some com a visibilidade de pausados — atrito com o resume do 5a; o backoff acima ataca a pressão sem mudar o que a análise enxerga.)*
 - Tuning do `CUSTOM_CONVERSIONS_CACHE_TTL_SEC` conforme a cadência de cron real.
 
 **Dados / análise (Fatia 2)**
