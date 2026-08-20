@@ -27,6 +27,21 @@ const MAX_USAGE_PCT = 100;
 const USAGE_KEY_TTL_SEC = 600;
 // Chave lida pela camada de scheduler no worker (jitter/stagger).
 const USAGE_KEY_PREFIX = "meta:usage";
+/**
+ * Teto de espera "inline" dentro de um run. Acima disso, esperar é pior que degradar:
+ * a Meta sinaliza cooldown em minutos → não seguramos o worker; degradamos gracioso
+ * (análise parcial). Só esperas curtas (transientes) valem retry dentro do run.
+ */
+export const MAX_INLINE_WAIT_MS = 5_000;
+
+/**
+ * Decide, diante de um rate-limit, se o run deve **degradar** (virar parcial) em vez de
+ * esperar+retry inline. PURO (sem IO). `retryAfterMs` indefinido = 1º hit sem cooldown
+ * estabelecido → vale retry curto; espera acima do teto = cooldown longo → degrada.
+ */
+export function shouldDegrade(retryAfterMs?: number): boolean {
+  return retryAfterMs !== undefined && retryAfterMs > MAX_INLINE_WAIT_MS;
+}
 
 export interface GovernorOptions {
   readonly redis: Redis;

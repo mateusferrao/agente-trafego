@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Redis } from "ioredis";
-import { MetaGovernor } from "./governor.js";
+import { MAX_INLINE_WAIT_MS, MetaGovernor, shouldDegrade } from "./governor.js";
 
 // Redis in-memory mínimo (só o que o governor usa: set EX, pttl).
 class FakeRedis {
@@ -83,6 +83,22 @@ describe("MetaGovernor.observeUsage + acquire", () => {
     const gov = makeGovernor();
     const res = await gov.acquire("act_never_seen");
     expect(res.granted).toBe(true);
+  });
+});
+
+describe("shouldDegrade", () => {
+  it("sem estimativa (undefined) → não degrada (1º hit transitório vale retry curto)", () => {
+    expect(shouldDegrade(undefined)).toBe(false);
+  });
+
+  it("cooldown longo (acima do teto inline) → degrada (não segura o run por minutos)", () => {
+    expect(shouldDegrade(MAX_INLINE_WAIT_MS + 1)).toBe(true);
+    expect(shouldDegrade(5 * 60_000)).toBe(true); // 5 min
+  });
+
+  it("espera curta (dentro do teto) → não degrada (dá p/ retry inline)", () => {
+    expect(shouldDegrade(MAX_INLINE_WAIT_MS)).toBe(false);
+    expect(shouldDegrade(0)).toBe(false);
   });
 });
 
