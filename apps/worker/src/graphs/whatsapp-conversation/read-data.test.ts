@@ -230,8 +230,10 @@ describe("listPendingData", () => {
     const res = await listPendingData(fakeApprovals([approval()]), ORG);
     expect(res).toEqual([
       {
+        id: "ap-1",
         entityLevel: "campaign",
         entityId: "c-99",
+        entityName: null,
         actionType: "pause_entity",
         reason: "gastou sem venda",
         expiresAt: "2026-08-21T00:00:00.000Z",

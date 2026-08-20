@@ -15,7 +15,7 @@ import { WHATSAPP_INBOUND_QUEUE, type WhatsappInboundPayload } from "@trafego/sh
 import type { Redis } from "ioredis";
 import type { WorkerDeps } from "../composition.js";
 import { buildWhatsappConversationGraph } from "../graphs/whatsapp-conversation/graph.js";
-import { CONCIERGE_TOOL_NAMES, READ_TOOL_NAMES, type ConversationToolContext } from "../graphs/whatsapp-conversation/tools.js";
+import { AGENT_TOOL_NAMES, CONCIERGE_TOOL_NAMES, type ConversationToolContext } from "../graphs/whatsapp-conversation/tools.js";
 import { createNotifyRepo } from "../modules/notify/repo.js";
 import { createSendToContact } from "../modules/notify/send-to-contact.js";
 
@@ -87,7 +87,7 @@ export function startWebhookInboundWorker(deps: WorkerDeps, connection: Redis): 
         contactId: contact.contactId,
         conversationId,
       };
-      const allow = sole ? READ_TOOL_NAMES : CONCIERGE_TOOL_NAMES;
+      const allow = sole ? AGENT_TOOL_NAMES : CONCIERGE_TOOL_NAMES;
 
       // 7) roda o Grafo B (ReAct + checkpointer por thread) e responde.
       let reply = FALLBACK_REPLY;

@@ -5,6 +5,7 @@
 
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
+import { APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE, type ApprovalId } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
 import { createRunDispatcher } from "../../modules/dispatch/run-dispatcher.js";
 import { makeReadTools, type ReadToolContext } from "./read-data.js";
@@ -60,21 +61,84 @@ export function makeConversationTools(
     },
   );
 
-  return [...readTools, triggerAnalysis].filter((t) => allow.has(t.name));
+  // ── ESCRITA (resolução de pendente) — o push do cron/nudge foi o eco; referência
+  //    inequívoca aplica direto, o LLM só chama com id claro (§8: ambíguo → pergunta).
+  //    O apply-service re-checa fresco + guardrail antes de escrever (rede final).
+  const approve = tool(
+    async (input: { approvalIds: string[] }) => {
+      let ok = 0;
+      let skipped = 0;
+      for (const id of input.approvalIds) {
+        const appr = await deps.ports.approval.getById(id as ApprovalId);
+        if (!appr || appr.orgId !== ctx.orgId || appr.status !== "pending") {
+          skipped += 1;
+          continue;
+        }
+        await deps.ports.scheduler.enqueue({
+          queue: APPROVAL_APPLY_QUEUE,
+          name: APPROVAL_APPLY_JOB,
+          payload: { orgId: ctx.orgId, approvalId: id, notifyContactId: ctx.contactId },
+        });
+        ok += 1;
+      }
+      const tail = skipped > 0 ? ` (${skipped} já não estava(m) pendente(s).)` : "";
+      return ok > 0
+        ? `Tô aplicando ${ok} ação(ões) — te aviso o resultado de cada uma.${tail}`
+        : `Nada pra aplicar${tail}`;
+    },
+    {
+      name: "approve",
+      description:
+        "APROVA ações pendentes (por id, vindos de list_pending). Só chame com referência clara do usuário; se ambíguo, pergunte antes. O resultado de cada uma chega em seguida.",
+      schema: z.object({ approvalIds: z.array(z.string()).min(1) }),
+    },
+  );
+
+  const reject = tool(
+    async (input: { approvalIds: string[] }) => {
+      let ok = 0;
+      let skipped = 0;
+      for (const id of input.approvalIds) {
+        const appr = await deps.ports.approval.getById(id as ApprovalId);
+        if (!appr || appr.orgId !== ctx.orgId || appr.status !== "pending") {
+          skipped += 1;
+          continue;
+        }
+        await deps.ports.approval.resolve(id as ApprovalId, { status: "rejected" });
+        ok += 1;
+      }
+      const tail = skipped > 0 ? ` (${skipped} já não estava(m) pendente(s).)` : "";
+      return `Rejeitei ${ok} ação(ões).${tail}`;
+    },
+    {
+      name: "reject",
+      description:
+        "REJEITA ações pendentes (por id, vindos de list_pending). Nada é aplicado na Meta. Só chame com referência clara.",
+      schema: z.object({ approvalIds: z.array(z.string()).min(1) }),
+    },
+  );
+
+  return [...readTools, triggerAnalysis, approve, reject].filter((t) => allow.has(t.name));
 }
 
-/** Nomes das tools de LEITURA/comando disponíveis na 5b-2.2 (não-escrita). */
-export const READ_TOOL_NAMES: ReadonlySet<string> = new Set([
+/** Allowlist com 1 agente em contexto: leitura + análise + resolução de pendentes. */
+export const AGENT_TOOL_NAMES: ReadonlySet<string> = new Set([
   "get_account_status",
   "get_metrics",
   "get_campaign_analysis",
   "list_recommendations",
   "list_pending",
   "trigger_analysis",
+  "approve",
+  "reject",
 ]);
 
-/** Tools org-level (concierge multi-conta — não precisam de conta em contexto). */
-export const CONCIERGE_TOOL_NAMES: ReadonlySet<string> = new Set(["list_pending"]);
+/** Concierge (org multi-conta): só org-level — ver e resolver pendentes cross-conta. */
+export const CONCIERGE_TOOL_NAMES: ReadonlySet<string> = new Set(["list_pending", "approve", "reject"]);
 
-/** Tools que efetuam ESCRITA (exigem eco+confirma). Preenchido na 5b-2.3. */
+/**
+ * Tools que exigem ECO+CONFIRMA antes de executar (gate). `approve`/`reject` NÃO
+ * entram: o nudge/análise já foi o eco e a referência inequívoca aplica direto
+ * (§8 — ambiguidade o LLM resolve perguntando). Escrita LIVRE do zero = 5c.
+ */
 export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set<string>();

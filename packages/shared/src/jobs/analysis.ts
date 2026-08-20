@@ -74,6 +74,8 @@ export const APPROVAL_APPLY_JOB = "approval-apply";
 export type ApprovalApplyPayload = {
   readonly orgId: string;
   readonly approvalId: string;
+  /** contato p/ empurrar o desfecho no WhatsApp (5b-2 — aprovação conversacional). */
+  readonly notifyContactId?: string;
 };
 
 export type AgentRunTrigger = "cron" | "on_demand" | "conversation";

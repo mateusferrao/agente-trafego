@@ -85,8 +85,11 @@ interface RecommendationItem {
 }
 
 interface PendingItem {
+  /** id da aprovação — o agente referencia por ele ao aprovar/rejeitar (5b-2.3). */
+  readonly id: string;
   readonly entityLevel: string;
   readonly entityId: string;
+  readonly entityName: string | null;
   readonly actionType: string;
   readonly reason: string;
   readonly expiresAt: string;
@@ -239,8 +242,10 @@ export async function listPendingData(
   const pending = await approvalPort.listPendingByOrg(orgId as OrgId);
   if (pending.length === 0) return { hasData: false, note: "nenhuma ação aguardando aprovação" };
   return pending.map((a) => ({
+    id: a.id,
     entityLevel: a.entityLevel,
     entityId: a.entityId,
+    entityName: a.action.target?.name ?? null,
     actionType: a.actionType,
     reason: a.action.reason,
     expiresAt: a.expiresAt.toISOString(),
