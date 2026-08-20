@@ -1,10 +1,27 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Redis } from "ioredis";
 import { MetaGraphClient } from "./client.js";
 import { MetaAdsAdapter } from "./meta-ads.adapter.js";
-import type { MetaGovernor } from "./governor.js";
+import { MetaGovernor } from "./governor.js";
 import type { CustomConversionsResolver } from "./custom-conversions.js";
 
-const governor = {} as unknown as MetaGovernor;
+// Redis in-memory mínimo (listEntities agora passa pelo governor via callWithGovernor).
+class FakeRedis {
+  private store = new Map<string, { value: string; expiresAt: number | null }>();
+  async set(key: string, value: string, mode?: string, ttlSec?: number): Promise<"OK"> {
+    this.store.set(key, { value, expiresAt: mode === "EX" && ttlSec ? Date.now() + ttlSec * 1000 : null });
+    return "OK";
+  }
+  async pttl(key: string): Promise<number> {
+    const e = this.store.get(key);
+    if (!e) return -2;
+    if (e.expiresAt === null) return -1;
+    const ms = e.expiresAt - Date.now();
+    return ms > 0 ? ms : -2;
+  }
+}
+
+const governor = new MetaGovernor({ redis: new FakeRedis() as unknown as Redis, rng: () => 0 });
 const account = { adAccountId: "123", accessToken: "tok" };
 
 function stub(body: unknown) {

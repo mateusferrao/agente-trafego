@@ -16,6 +16,7 @@ import type {
 import { AdsPlatformError } from "@trafego/shared/ports";
 import { META_RATE_LIMIT_CODES, META_TRANSIENT_CODES, MetaApiError, MetaGraphClient } from "./client.js";
 import { callWithGovernor } from "./call-with-governor.js";
+import { normalizeAdAccountId, stripActPrefix } from "./ids.js";
 import { MetaInsightsService } from "./insights.js";
 import { MetaCreativesService } from "./creatives.js";
 import { MetaMutationsService } from "./mutations.js";
@@ -23,8 +24,6 @@ import { MetaGovernor } from "./governor.js";
 import { objectiveFromAdSet, objectiveFromCampaign, type RawPromotedObject } from "./meta-conversion-map.js";
 import type { CustomConversionsResolver, CustomConversionInfo } from "./custom-conversions.js";
 
-/** Prefixo obrigatório do ad account no path da Graph API. */
-const AD_ACCOUNT_PREFIX = "act_";
 /** Campos de conta pedidos à Graph (id sem prefixo via `account_id`). */
 const AD_ACCOUNT_FIELDS = "account_id,name,currency,business{id}";
 /** Página grande p/ minimizar round-trips no onboarding. */
@@ -119,14 +118,6 @@ interface MetaAccountsPage {
   readonly paging?: { readonly next?: string; readonly cursors?: { readonly after?: string } };
 }
 
-function stripActPrefix(id: string): string {
-  return id.startsWith(AD_ACCOUNT_PREFIX) ? id.slice(AD_ACCOUNT_PREFIX.length) : id;
-}
-
-function normalizeAdAccountId(id: string): string {
-  return id.startsWith(AD_ACCOUNT_PREFIX) ? id : `${AD_ACCOUNT_PREFIX}${id}`;
-}
-
 function mapAccount(node: MetaAdAccountNode): AccessibleAccount {
   const id = node.account_id ?? (node.id ? stripActPrefix(node.id) : "");
   return {
@@ -182,7 +173,7 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     this.client = deps.client;
     this.governor = deps.governor;
     this.insights = deps.insights ?? new MetaInsightsService(deps.client, deps.governor);
-    this.creatives = deps.creatives ?? new MetaCreativesService(deps.client);
+    this.creatives = deps.creatives ?? new MetaCreativesService(deps.client, deps.governor);
     this.mutations = deps.mutations ?? new MetaMutationsService(deps.client);
     this.customConversions = deps.customConversions;
   }
@@ -293,8 +284,11 @@ export class MetaAdsAdapter implements AdsPlatformPort {
   }
 
   async getCreatives(account: AdAccountRef, adIds: readonly string[]): Promise<Creative[]> {
-    // TODO: governor.acquire → delega ao creatives service (image_url/thumbnail_url).
-    return this.creatives.getCreatives(account, adIds);
+    try {
+      return await this.creatives.getCreatives(account, adIds);
+    } catch (error) {
+      throw toAdsError(error);
+    }
   }
 
   async mutate(account: AdAccountRef, action: Action): Promise<MutationResult> {

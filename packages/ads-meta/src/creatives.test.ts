@@ -1,6 +1,24 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Redis } from "ioredis";
 import { MetaGraphClient } from "./client.js";
 import { CREATIVE_FIELDS, MetaCreativesService } from "./creatives.js";
+import { MetaGovernor } from "./governor.js";
+
+// Redis in-memory mínimo (set EX, pttl) p/ o governor no wrapper de rate-limit.
+class FakeRedis {
+  private store = new Map<string, { value: string; expiresAt: number | null }>();
+  async set(key: string, value: string, mode?: string, ttlSec?: number): Promise<"OK"> {
+    this.store.set(key, { value, expiresAt: mode === "EX" && ttlSec ? Date.now() + ttlSec * 1000 : null });
+    return "OK";
+  }
+  async pttl(key: string): Promise<number> {
+    const e = this.store.get(key);
+    if (!e) return -2;
+    if (e.expiresAt === null) return -1;
+    const ms = e.expiresAt - Date.now();
+    return ms > 0 ? ms : -2;
+  }
+}
 
 const account = { adAccountId: "123", accessToken: "tok" };
 
@@ -19,7 +37,8 @@ function stubBatch(nodes: ReadonlyArray<Record<string, unknown> | null>) {
 afterEach(() => vi.unstubAllGlobals());
 
 function makeService(): MetaCreativesService {
-  return new MetaCreativesService(new MetaGraphClient({ graphVersion: "v26.0" }));
+  const gov = new MetaGovernor({ redis: new FakeRedis() as unknown as Redis, rng: () => 0 });
+  return new MetaCreativesService(new MetaGraphClient({ graphVersion: "v26.0" }), gov);
 }
 
 describe("MetaCreativesService.getCreatives", () => {
@@ -76,5 +95,19 @@ describe("MetaCreativesService.getCreatives", () => {
     const creatives = await makeService().getCreatives(account, ["AD1", "AD2"]);
     expect(creatives).toHaveLength(1);
     expect(creatives[0]).toMatchObject({ adId: "AD1", imageUrl: "http://img" });
+  });
+
+  it("cooldown ativo → degrada (rate-limit) sem bater na Meta", async () => {
+    const gov = new MetaGovernor({ redis: new FakeRedis() as unknown as Redis, rng: () => 0 });
+    await gov.observeUsage("act_123", {
+      callCountPct: 100,
+      totalCputimePct: 50,
+      totalTimePct: 50,
+      estimatedTimeToRegainAccessMin: 5,
+    });
+    const svc = new MetaCreativesService(new MetaGraphClient({ graphVersion: "v26.0" }), gov);
+    const spy = stubBatch([{ id: "AD1", creative: { image_url: "http://img" } }]);
+    await expect(svc.getCreatives(account, ["AD1"])).rejects.toMatchObject({ name: "MetaApiError" });
+    expect(spy).not.toHaveBeenCalled();
   });
 });

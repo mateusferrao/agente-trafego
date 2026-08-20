@@ -5,6 +5,7 @@ import {
   type GraphResponse,
 } from "./client.js";
 import { MetaGovernor, shouldDegrade } from "./governor.js";
+import { stripActPrefix } from "./ids.js";
 
 /**
  * Wrapper de rate-limit p/ chamadas de LEITURA da Meta (listEntities/getCreatives).
@@ -44,7 +45,7 @@ function pickUsage(
   accountId: string,
 ): BusinessUseCaseUsage | undefined {
   if (!usage) return undefined;
-  return usage[accountId] ?? usage[accountId.replace("act_", "")] ?? Object.values(usage)[0];
+  return usage[accountId] ?? usage[stripActPrefix(accountId)] ?? Object.values(usage)[0];
 }
 
 export async function callWithGovernor<T>(

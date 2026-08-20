@@ -14,9 +14,9 @@ import {
   type MetaGraphClient,
 } from "./client.js";
 import type { MetaGovernor } from "./governor.js";
+import { normalizeAdAccountId, stripActPrefix } from "./ids.js";
 import { parseActionType } from "./meta-conversion-map.js";
 
-const AD_ACCOUNT_PREFIX = "act_";
 // Poll do relatório assíncrono.
 const DEFAULT_POLL_MAX_ATTEMPTS = 30;
 const DEFAULT_POLL_INTERVAL_MS = 2000;
@@ -60,10 +60,6 @@ interface MetaInsightRow {
 interface ReportResultPage {
   readonly data?: MetaInsightRow[];
   readonly paging?: { readonly next?: string; readonly cursors?: { readonly after?: string } };
-}
-
-function normalizeAdAccountId(id: string): string {
-  return id.startsWith(AD_ACCOUNT_PREFIX) ? id : `${AD_ACCOUNT_PREFIX}${id}`;
 }
 
 function toNumber(value: unknown): number {
@@ -311,7 +307,7 @@ function pickUsage(
   accountId: string,
 ): BusinessUseCaseUsage | undefined {
   if (!usage) return undefined;
-  return usage[accountId] ?? usage[accountId.replace(AD_ACCOUNT_PREFIX, "")] ?? Object.values(usage)[0];
+  return usage[accountId] ?? usage[stripActPrefix(accountId)] ?? Object.values(usage)[0];
 }
 
 function parseRange(window: string): { since: string; until: string } | null {

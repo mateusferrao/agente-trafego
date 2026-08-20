@@ -1,6 +1,9 @@
 import type { Creative } from "@trafego/shared/types";
 import type { AdAccountRef } from "@trafego/shared/ports";
-import type { BatchSubRequest, MetaGraphClient } from "./client.js";
+import type { BatchSubRequest, BatchSubResponse, MetaGraphClient } from "./client.js";
+import { callWithGovernor } from "./call-with-governor.js";
+import type { MetaGovernor } from "./governor.js";
+import { normalizeAdAccountId } from "./ids.js";
 
 /**
  * Resolução de criativos p/ visão (§9): usar `image_url`/`thumbnail_url` (confiáveis).
@@ -35,9 +38,11 @@ interface RawAdWithCreative {
 
 export class MetaCreativesService {
   private readonly client: MetaGraphClient;
+  private readonly governor: MetaGovernor;
 
-  constructor(client: MetaGraphClient) {
+  constructor(client: MetaGraphClient, governor: MetaGovernor) {
     this.client = client;
+    this.governor = governor;
   }
 
   /** Resolve os criativos dos ads via Batch API (1 sub-GET por ad, ≤50 por HTTP). */
@@ -47,10 +52,15 @@ export class MetaCreativesService {
       method: "GET",
       relativeUrl: `${id}?fields=${encodeURIComponent(CREATIVE_FIELDS)}`,
     }));
-    const res = await this.client.batch(account.accessToken, requests);
+    const accountId = normalizeAdAccountId(account.adAccountId);
+    const subs = await callWithGovernor<Array<BatchSubResponse | null>>(
+      accountId,
+      () => this.client.batch(account.accessToken, requests),
+      { governor: this.governor },
+    );
     const out: Creative[] = [];
     // resposta na ordem das sub-requests → casa por índice com adIds.
-    res.data.forEach((sub, i) => {
+    subs.forEach((sub, i) => {
       const adId = adIds[i];
       if (!adId || !sub || sub.code !== 200) return;
       let node: RawAdWithCreative;
