@@ -28,7 +28,7 @@ Plano de construção em fatias. Decisões de arquitetura/produto = [`../CLAUDE.
 | **3a** | 🎯 Loop de análise | brief→playbook+LLM(texto)→recommendations→WhatsApp; on-demand por botão web | 2b |
 | **3b** | Cadência + visão + medição | Cron/conta; visão de criativo; feedback 👍/👎; metering+cap. 🚩 **beta read-only** | 3a |
 | **4** | Config do agente | Superfície única por arquétipo; playbook natural; guardrail/autonomy config | 3 |
-| **5a** | Escrita + guardrails | Guardrail engine + decide (core); tools escrita idempotentes+rollback; catálogo tools | 4,3,2a |
+| **5a** | Escrita + guardrails ✅ (auto-apply only) | Adapter de escrita (4 mutações idempotentes+dry-run), executor+audit+metering, decide/guardrail cross-run+conflito, undo last-run, UI autonomia/guardrails, mini-surface. HITL = 5b | 4,3,2a |
 | **5b** | HITL aprovação | Inbound; aprovação conversacional eco+confirma; interrupt/resume durável; expira 24h | 5a |
 | **5c** | Chat ReAct pleno (end-state) | Conversa livre age via tools (núcleo) dentro dos guardrails | 5b |
 | **6a** | Timeline / auditoria (UI) | Histórico de runs/ações/aprovações na dashboard | prévias |
@@ -161,6 +161,23 @@ Sub-slices:
 - **Janela por-regra do playbook** (3d/7d/14d) — o engine ainda ignora `cond.window` (usa a janela do agente); implementar fatiando os `insights_snapshots` diários por janela.
 - **model_config na UI** (topN/reasoning/**escolha de modelo por-agente**) = **evolução do produto** — footgun p/ o não-técnico; expor primeiro em contexto admin/interno (o backend já resolve por `agents.model_config`).
 - **Componentização das seções + Reactive Forms** na superfície Agente (hoje signals + nativos, consistente com o corte 1) + vendorizar `UiConfirmDialog` (o re-seed usa `window.confirm`).
+
+## Fatia 5a — Escrita na Meta (entregue, auto-apply only)
+
+Write path autônomo atrás de guardrails, **sem HITL** (aprovação conversacional = 5b). O que entrou:
+- **Adapter de escrita** (`MetaMutationsService`): pause/resume/set_status/adjust_budget (±% daily|lifetime, minor units, piso), idempotente por leitura (no-op se já no alvo), gateado por governor. **dry-run** simula (lê+computa after sem escrever). **restoreEntityState** (undo, valores absolutos).
+- **Core**: `riskForAction` params-aware (fonte única — cortar budget = low, auto-aplicável no act_safe); `applyGuardrails` ganha contexto **cross-run** (cap de entidades/dia + anti-compounding de budget) + **pré-check de nível de budget**; `resolveActionConflicts` (pausar domina, dedupe playbook>llm).
+- **Executor** (`meta-tools`): idempotência (`${runId}:${action.id}`, replay), grava `agent_tool_calls` + `audit_log(before/after)` + `usage_events(action_applied)`; catálogo de tools semeado.
+- **Grafo**: `decide_actions → guardrail_check → apply_actions` (best-effort, para no rate_limited); needApproval **não executa** (vira "sugerida" no `metrics_snapshot`).
+- **Undo**: fila `action-undo` + `executor.revert` (reaplica before_state absoluto, idempotente `${id}:undo`, ignora simulados).
+- **UI**: seções **Autonomia** (toggle-group 4 níveis × 2 origens) + **Guardrails** (switches/números/checkboxes) componentizadas; **mini-surface** de aplicadas (com reverter) + sugeridas no detalhe da conta.
+
+**Fast-follows deste corte:**
+- **HITL (5b)**: aprovação conversacional no WhatsApp + `interrupt`/resume durável (checkpointer Postgres) + `approvals` + expira 24h. Os nós já param em needApproval; falta o loop de aprovação.
+- **Teto ABSOLUTO de budget** no guardrail (hoje só clamp de %) — nova coluna + UI.
+- **Enforcement de `agent_tool_bindings`** (enable/disable/shadow por-agente) = 5c (hoje o auto-apply usa `Action.riskLevel`, não os bindings; catálogo já semeado).
+- **Undo por WhatsApp + histórico completo de ações** (a mini-surface é só do último run) = 5c / 6a (Timeline).
+- **`config_changed_at` "janela por-regra"** e demais fast-follows de config seguem valendo.
 
 ## Fatia 7 — Criação de campanhas (roadmap pós-MVP)
 
