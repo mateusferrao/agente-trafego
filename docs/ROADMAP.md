@@ -30,8 +30,8 @@ Plano de construção em fatias. Decisões de arquitetura/produto = [`../CLAUDE.
 | **4** | Config do agente | Superfície única por arquétipo; playbook natural; guardrail/autonomy config | 3 |
 | **5a** | Escrita + guardrails ✅ (auto-apply only) | Adapter de escrita (4 mutações idempotentes+dry-run), executor+audit+metering, decide/guardrail cross-run+conflito, undo last-run, UI autonomia/guardrails, mini-surface. HITL = 5b | 4,3,2a |
 | **5b-1** ✅ | HITL via **site** | Aprovar/rejeitar por ação (mini-surface + `/approvals` cross-conta); `approvals` granular (fonte da verdade); apply-service com **re-check fresco** (sem checkpointer); guardrail de no-op + `allowedActions` nas sugeridas + barradas visíveis; expira 24h; **revert endurecido** (drift + TTL) | 5a |
-| **5b-2** | HITL via **WhatsApp** | Inbound (`parseInbound` + roteamento); aprovação conversacional eco+confirma; resolução em lote | 5b-1 |
-| **5c** | Chat ReAct pleno (end-state) | Conversa livre age via tools (núcleo) dentro dos guardrails | 5b |
+| **5b-2** ✅ | HITL + operação via **WhatsApp** | Inbound real (webhook/set + `parseInbound` + debounce); Grafo B ReAct (leitura sobre nosso DB + "analisa agora" com push); aprovação conversacional (approve/reject, desfecho de volta); checkpointer Postgres | 5b-1 |
+| **5c** | Chat ReAct pleno (end-state) | **Escrita LIVRE por chat** (propor do zero, eco+confirma + guardrail) + `agent_tool_bindings` + leitura mais rica dentro dos guardrails | 5b |
 | **6a** | Timeline / auditoria (UI) | Histórico de runs/ações/aprovações **+ barradas cross-conta** na dashboard (hoje barradas só na mini-surface do último run) | prévias |
 | **6b** | Endurecimento / ops | Throttle, token-190, degradação, backups; allowlist via script/DB | prévias |
 | **7** | Criação de campanhas (pós-MVP) | Gestor completo no WhatsApp: cria campanhas a pedido/proativo | MVP validado, 5a/5b |
@@ -177,7 +177,7 @@ Write path autônomo atrás de guardrails, **sem HITL** (aprovação conversacio
 
 **Fast-follows deste corte:**
 - ✅ **Entregues no 5b-1** (ver `## Fatia 5b — corte 1` abaixo): HITL via site (aprovar/rejeitar por ação); guardrail de no-op (`ctx.statusByEntity`); `allowedActions` valendo nas sugeridas (guardrail sobre `needApproval`); ações barradas visíveis (`metrics_snapshot.droppedActions` → mini-surface); expira 24h; revert endurecido (drift + TTL). **Sem checkpointer** (approval + re-check fresco; checkpointer → 5c).
-- **HITL via WhatsApp = 5b-2**: inbound (`parseInbound` + roteamento) + aprovação conversacional eco+confirma + resolução em lote.
+- ✅ **HITL + operação via WhatsApp = 5b-2** (entregue — ver `## Fatia 5b — corte 2` abaixo): inbound real + Grafo B (leitura + "analisa agora") + aprovação conversacional.
 - **Teto ABSOLUTO de budget** no guardrail (hoje só clamp de %) — nova coluna + UI.
 - **Enforcement de `agent_tool_bindings`** (enable/disable/shadow por-agente) = 5c (hoje o auto-apply usa `Action.riskLevel`, não os bindings; catálogo já semeado).
 - **Undo por WhatsApp + histórico completo de ações** (a mini-surface é só do último run) = 5c / 6a (Timeline).
@@ -204,7 +204,38 @@ sub-fatias testáveis:
 - **5b-1.5** — **revert endurecido**: re-check de drift no undo (avisa/`force`) + TTL por
   tempo (`REVERT_TTL_DAYS`).
 
-**Resolução em lote** (`{approvedIds, rejectedIds}`) e **repropor expiradas** = 5b-2/fast-follow.
+**Repropor expiradas** = fast-follow.
+
+## Fatia 5b — corte 2: HITL + operação via WhatsApp (entregue)
+
+Operar o agente pelo WhatsApp — conversa livre (linguagem natural), capacidades de LEITURA +
+"analisa agora" + resolver aprovações. **Escrita LIVRE do zero = 5c.** Entregue em 4 sub-fatias:
+- **5b-2.1** — cano do inbound ponta a ponta: `parseInbound`/`jidToE164`/`parseConnectionUpdate`
+  puros; `ensureWebhook` idempotente no `connect` (eventos + header do secret **por-instância**);
+  casca valida o secret da instância e enfileira o payload **cru**; worker resolve contato
+  verificado (desconhecido → silêncio), grava inbound (idempotente por `messageId`) e trata
+  `CONNECTION_UPDATE` (status ao vivo). `sendToContact` unificado (resolve instância + splitter[chat]
+  + envia + grava).
+- **5b-2.2** — Grafo B leitura (ReAct): `ChatOpenAI`/OpenRouter + `bindTools` + voz do agente em
+  contexto (`composeAgentPrompt`; concierge se N contas) + regras fixas de formato + anti-alucinação/
+  as-of; **janela por turno** (nunca quebra par tool_call/result) + teto de tokens; custo **metrado**
+  (`usage_events` type `conversation`). Read-tools sobre nosso DB curado (status/métricas/campanha/
+  recomendações/pendentes). **"analisa agora"** dispara run `trigger=conversation` (reusa o
+  run-dispatcher com guards) e o resultado **volta na conversa**. Checkpointer **PostgresSaver** (thread
+  por conversa).
+- **5b-2.3** — aprovação conversacional: tools `approve`/`reject` (por id de `list_pending`);
+  referência inequívoca aplica direto (o nudge foi o eco), ambíguo → pergunta (§8); `approve`
+  enfileira o **apply-service** (re-check fresco + guardrail já existentes) carimbando o contato; o
+  apply-service **empurra o desfecho** (aplicado ✅ / barrado / dry-run) na conversa.
+- **5b-2.4** — endurecimento: **debounce** (fila `whatsapp-flush` + buffer Redis; coalesce mensagens
+  picadas num turno; jobId=conversationId serializa) + bridge do cron ("responda por aqui pra
+  aprovar") + docs.
+
+**Sem migration** (enum `run_trigger` já tinha `conversation`; `approvals.contact_id`, `messages.meta`
+e `channel_instances.webhook_secret` já existiam). **Adiado ao 5c:** escrita livre do zero,
+enforcement de `agent_tool_bindings`, leitura mais rica, sumarização rolante do histórico, resolução
+em lote por contrato, `focusedAccountId` por-thread (voz/tool por conta em orgs multi-conta). **Meta
+MCP embrulhado** = Fatia 7.
 
 **Fix ao vivo (pós-entrega):** o no-op da 5b-1.1 lê `state.entities` — o catálogo **cacheado**
 (`MetaEntityCache`, TTL). O cache só invalida na escrita REAL pelo nosso sistema; uma mudança

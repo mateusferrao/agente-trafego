@@ -12,3 +12,17 @@ export type WhatsappInboundPayload = {
   readonly instanceId: string;
   readonly raw: Readonly<Record<string, unknown>>;
 };
+
+/**
+ * Fila de FLUSH do debounce (5b-2.4): o inbound bufferiza as mensagens picadas e
+ * agenda um flush atrasado (jobId = conversationId, re-agendado a cada fragmento).
+ * Ao disparar, o flush coalesce o buffer num único turno do Grafo B. Serializa por
+ * conversa (1 job por thread) — sem corrida no checkpointer.
+ */
+export const WHATSAPP_FLUSH_QUEUE = "whatsapp-flush";
+export const WHATSAPP_FLUSH_JOB = "flush-conversation";
+export type WhatsappFlushPayload = {
+  readonly orgId: string;
+  readonly contactId: string;
+  readonly conversationId: string;
+};

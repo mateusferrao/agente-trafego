@@ -727,7 +727,8 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     // link vem no nó notify). Aprovação pelo WhatsApp = corte 2.
     const pending = state.approvalCandidates?.length ?? 0;
     if (pending > 0) {
-      text = `${text}\n\n🔔 ${pending} ação(ões) aguardando seu OK — revise no site.`;
+      // bridge do HITL (5b-2): dá pra aprovar respondendo por aqui OU pelo site.
+      text = `${text}\n\n🔔 ${pending} ação(ões) aguardando seu OK. Responda por aqui pra aprovar/rejeitar, ou veja no site.`;
     }
     return { outboundMessage: text, usage };
   }

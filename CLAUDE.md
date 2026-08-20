@@ -126,7 +126,7 @@ Schema em `packages/db/src/schema`. Grupos:
 
 **Dois grafos (LangGraph):**
 - **`account-analysis` (pipeline determinístico)** — cron/on-demand: `load_context → fetch_data → run_playbook → llm_analyze(+visão) → review_analysis → build_recommendations → decide_actions → guardrail_check → apply_actions(snapshot) → create_approvals → notify → record`. LLM só em `llm_analyze`, `review_analysis` e `notify`. **Grafo linear, sem checkpointer:** `needApproval` não pausa o run — vira linha `approvals` pendente (`create_approvals`); ao aprovar no site, um **apply-service** (worker) relê o estado FRESCO + re-roda o guardrail + escreve (5b corte 1). O checkpointer/`interrupt` fica pro `whatsapp-conversation` (5c).
-- **`whatsapp-conversation` (ReAct + tools + guardrails)** — chat aberto: perguntas, pedidos ad-hoc, "analisa agora", e resolução de aprovações (aprovação conversacional = 5b corte 2).
+- **`whatsapp-conversation` (ReAct + tools, 5b corte 2)** — chat pelo WhatsApp com **checkpointer Postgres** (thread por conversa). Entregue: **leitura** (tools sobre nosso DB curado — status/métricas/campanha/recomendações/pendentes), **"analisa agora"** (dispara run `trigger=conversation` + push do resultado de volta) e **aprovação conversacional** (approve/reject por id; referência inequívoca aplica direto — o nudge foi o eco; ambíguo → pergunta §8; apply-service re-checa fresco e empurra o desfecho). Inbound com **debounce** (coalesce picadas) e **voz = agente em contexto** (concierge neutro se a org tem N contas). **Escrita LIVRE do zero** ("pausa a campanha X" sem pendente) = **5c**.
 
 **Qualidade da análise = Analista→Revisor + guards determinísticos (3a-2):** o `llm_analyze` (analista) é seguido de `review_analysis` — **pré-check determinístico** (findings sem `metricRefs` / número citado ausente do brief) → **`reviewPasses`** (lista de revisores; default 1; refina/corta, **nunca inventa**) → **drop determinístico final** + `actionType→riskLevel`. Revisor falhou → cai pra saída do analista + nota parcial (§7 degradação graciosa). A **lista de passes** é a costura p/ **Fatia 8** (painéis de revisores, map-reduce por entidade, redator, validador de ação) — crescer = registrar mais passes, sem reescrever o grafo. Config do pipeline (`model`/`reviewEnabled`/`topN`/`maxOutputTokens`) é **por-agente** (`agents.model_config`, fallback env); a UI de edição = Fatia 4.
 
@@ -150,7 +150,8 @@ Schema em `packages/db/src/schema`. Grupos:
 - **Guardrails (sempre, mesmo autônomo):** blast radius (% máx budget/mudança, nº máx entidades/dia), budget cap, kill-switch, dry-run. **Defaults conservadores** — no caminho autônomo NÃO há eco+confirma, então guardrail é a única rede.
 - **Aprovação conversacional:** sem códigos. Agente lista o que achou em linguagem natural; resposta livre → Grafo B mapeia fala→ações. **Antes de QUALQUER escrita: eco concreto do que vai fazer + espera confirmação.** Ambiguidade = pergunta; nunca aplica em interpretação incerta.
 - **Escrita pedida no chat:** sempre confirma + guardrail (ignora nível de autonomia — chat é ambíguo demais p/ auto-aplicar).
-- **Aprovação via site (5b corte 1):** aprovar/rejeitar por ação (mini-surface + `/approvals` cross-conta); a fonte da verdade das pendentes é a tabela `approvals` (granular, upsert por agente+entidade+tipo). Aprovar = re-check fresco no apply (barrado → `blocked` + motivo). WhatsApp conversacional = corte 2.
+- **Aprovação via site (5b corte 1):** aprovar/rejeitar por ação (mini-surface + `/approvals` cross-conta); a fonte da verdade das pendentes é a tabela `approvals` (granular, upsert por agente+entidade+tipo). Aprovar = re-check fresco no apply (barrado → `blocked` + motivo).
+- **Aprovação via WhatsApp (5b corte 2):** o contato verificado aprova/rejeita conversando (approve/reject por id de `list_pending`); referência inequívoca aplica direto (o nudge/análise foi o eco), ambíguo → o agente pergunta (§8); o apply-service re-checa fresco e **empurra o desfecho** na conversa. Mesmo apply-service da via site.
 - **Expiração de aprovação:** 24h sem resposta → expira (job recorrente `approval-expiry`), some da lista (repropor no próximo run = fast-follow).
 - **Idempotência:** `agent_tool_calls.idempotency_key` — nunca aplica a mesma mutação 2x.
 - **Rollback:** `before_state` em cada tool_call de escrita.
@@ -174,7 +175,7 @@ Schema em `packages/db/src/schema`. Grupos:
 
 **WhatsApp (Evolution — não-oficial):**
 - **1 instância por org**, conectada via QR pela org.
-- Outbound proativo livre (sem janela 24h). Inbound via webhook (valida `EVOLUTION_WEBHOOK_SECRET`).
+- Outbound proativo livre (sem janela 24h). **Inbound (5b-2):** o `connect` registra o webhook na Evolution (`webhook/set`, eventos `MESSAGES_UPSERT`/`CONNECTION_UPDATE`, header do secret **por-instância** `channel_instances.webhook_secret`); a casca valida o secret da instância e enfileira o payload **cru**; o worker normaliza (`parseInbound`), resolve o contato **verificado** (desconhecido → silêncio), dedupa por `messageId`, faz **debounce** (coalesce picadas) e roda o Grafo B. `CONNECTION_UPDATE` → status do canal ao vivo.
 - **Fragilidade #1 aceita:** ToS-violating, risco de ban. Abstraído em `MessagingChannelPort` → trocar por Cloud API/pool depois sem reescrever.
 
 ---
@@ -203,7 +204,7 @@ Schema em `packages/db/src/schema`. Grupos:
 - **Org scoping:** toda query filtrada por `org_id` (helper de contexto scoped p/ evitar vazamento cross-tenant).
 - **RBAC:** owner/member org-wide no MVP, **extensível a granular** (ACL por conta = fast-follow).
 - **Sessão server-side:** tabela `sessions` (cookie leva **token opaco**; DB guarda só o `tokenHash` sha256 — revogável, expiração **deslizante** throttlada, trilha `ip/ua`). A **org ativa mora em `sessions.orgId`** (não em cookie) — troca de org = UPDATE na linha (org-switcher = fast-follow). Cookie `httpOnly` + `SameSite=lax` + `secure` em prod. Senha do usuário: **`@node-rs/argon2`** (prebuilt, sem node-gyp). Login/signup com rate-limit (`@fastify/rate-limit`, Redis) + `trustProxy` (IP real atrás do EasyPanel).
-- **Webhook Evolution:** valida `EVOLUTION_WEBHOOK_SECRET`.
+- **Webhook Evolution:** valida o secret **por-instância** (`channel_instances.webhook_secret`, rotacionável; identifica a org pelo nome da instância no path).
 - **LGPD:** telefones + dados de anúncio; token cripto; base no Postgres self-host.
 
 ---

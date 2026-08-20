@@ -13,6 +13,7 @@ import { startActionUndoWorker } from "./workers/action-undo.js";
 import { startApprovalApplyWorker } from "./workers/approval-apply.js";
 import { startApprovalExpiryWorker } from "./workers/approval-expiry.js";
 import { startWebhookInboundWorker } from "./workers/webhook-inbound.js";
+import { startWhatsappFlushWorker } from "./workers/whatsapp-flush.js";
 import { makeAccountCron } from "./schedulers/account-cron.js";
 import { createRunReaper } from "./modules/dispatch/run-reaper.js";
 
@@ -46,6 +47,8 @@ async function main(): Promise<void> {
   // inbound do WhatsApp (5b-2): a API valida o secret da instância e enfileira o
   // payload cru; aqui normaliza, resolve contato verificado e responde.
   const webhookInbound = startWebhookInboundWorker(deps, connection);
+  // flush do debounce (5b-2.4): coalesce mensagens picadas → 1 turno do Grafo B.
+  const whatsappFlush = startWhatsappFlushWorker(deps, connection);
 
   // Sincroniza os schedulers recorrentes a partir dos agentes ativos (idempotente)
   // + agenda o reaper (singleton) e faz uma varredura de boot (limpa presos de um
@@ -73,6 +76,7 @@ async function main(): Promise<void> {
       approvalApply.close(),
       approvalExpiry.close(),
       webhookInbound.close(),
+      whatsappFlush.close(),
     ]);
     await Promise.allSettled([connection.quit(), deps.redis.quit()]);
     process.exit(0);
