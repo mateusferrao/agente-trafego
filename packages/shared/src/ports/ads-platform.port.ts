@@ -28,6 +28,11 @@ export interface MutationResult {
   readonly after: Readonly<Record<string, unknown>>;
 }
 
+export interface MutateOptions {
+  /** dry-run (ensaio): lê o before + computa o after SEM escrever na plataforma. */
+  readonly dryRun?: boolean;
+}
+
 /**
  * Falha genérica da borda de ads — o adapter traduz o erro específico do provider
  * (ex: `MetaApiError`) para esta forma, e a casca mapeia p/ HTTP amigável **sem**
@@ -59,8 +64,9 @@ export interface AdsPlatformPort {
   listEntities(account: AdAccountRef, level: EntityLevel): Promise<AdEntity[]>;
   getInsights(query: InsightsQuery): Promise<InsightRow[]>;
   getCreatives(account: AdAccountRef, adIds: readonly string[]): Promise<Creative[]>;
-  /** Aplica uma mutação idempotente; retorna before/after p/ rollback. */
-  mutate(account: AdAccountRef, action: Action): Promise<MutationResult>;
+  /** Aplica uma mutação idempotente; retorna before/after p/ rollback. `dryRun`
+   *  (opcional) só simula (lê + computa o after, não escreve). */
+  mutate(account: AdAccountRef, action: Action, opts?: MutateOptions): Promise<MutationResult>;
   /**
    * Lista contas acessíveis pelo token (onboarding: cola token → escolhe).
    * Também **valida** o token — credencial inválida lança `AdsPlatformError`.

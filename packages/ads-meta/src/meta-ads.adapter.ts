@@ -11,6 +11,7 @@ import type {
   AdAccountRef,
   AdsPlatformPort,
   InsightsQuery,
+  MutateOptions,
   MutationResult,
 } from "@trafego/shared/ports";
 import { AdsPlatformError } from "@trafego/shared/ports";
@@ -296,13 +297,13 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     }
   }
 
-  async mutate(account: AdAccountRef, action: Action): Promise<MutationResult> {
+  async mutate(account: AdAccountRef, action: Action, opts?: MutateOptions): Promise<MutationResult> {
     try {
       // gate de cooldown nos writes (parcial-rápido): cooldown ativo → não escreve.
       const accountId = normalizeAdAccountId(account.adAccountId);
       const acquired = await this.governor.acquire(accountId);
       if (!acquired.granted) throw cooldownError();
-      return await this.mutations.mutate(account, action);
+      return await this.mutations.mutate(account, action, opts);
     } catch (error) {
       throw toAdsError(error);
     }

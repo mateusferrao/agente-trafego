@@ -1,5 +1,5 @@
 import type { Action } from "@trafego/shared/types";
-import type { AdAccountRef, MutationResult } from "@trafego/shared/ports";
+import type { AdAccountRef, MutateOptions, MutationResult } from "@trafego/shared/ports";
 import type { MetaGraphClient } from "./client.js";
 
 /**
@@ -34,14 +34,15 @@ export class MetaMutationsService {
     this.client = client;
   }
 
-  /** Aplica a ação e retorna before/after (rollback). Idempotente por leitura. */
-  async mutate(account: AdAccountRef, action: Action): Promise<MutationResult> {
+  /** Aplica a ação e retorna before/after (rollback). Idempotente por leitura.
+   *  `dryRun` → lê + computa o after, mas NÃO escreve (ensaio). */
+  async mutate(account: AdAccountRef, action: Action, opts?: MutateOptions): Promise<MutationResult> {
     const before = await this.readEntityState(account, action.target.id);
     const change = computeChange(action, before);
-    if (change.alreadyThere) return { action, before, after: before };
-    await this.writeFields(account, action.target.id, change.params);
     // after = intenção aplicada sobre o before (evita 2º GET; o undo restaura o before).
-    const after: EntityState = { ...before, ...change.params };
+    const after: EntityState = change.alreadyThere ? before : { ...before, ...change.params };
+    if (opts?.dryRun || change.alreadyThere) return { action, before, after };
+    await this.writeFields(account, action.target.id, change.params);
     return { action, before, after };
   }
 

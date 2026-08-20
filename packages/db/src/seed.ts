@@ -5,7 +5,8 @@
  */
 import { BETA_ORG_NAME, BETA_ORG_SLUG } from "./constants.js";
 import { createDb } from "./client.js";
-import { orgs } from "./schema/index.js";
+import { agentToolDefinitions, orgs } from "./schema/index.js";
+import { AGENT_TOOL_CATALOG } from "./tool-catalog.js";
 import { eq } from "drizzle-orm";
 
 async function seed(): Promise<void> {
@@ -21,8 +22,14 @@ async function seed(): Promise<void> {
     .onConflictDoNothing({ target: orgs.slug });
 
   const [org] = await db.select().from(orgs).where(eq(orgs.slug, BETA_ORG_SLUG)).limit(1);
+
+  // catálogo de tools de escrita (global, idempotente por key).
+  for (const tool of AGENT_TOOL_CATALOG) {
+    await db.insert(agentToolDefinitions).values(tool).onConflictDoNothing({ target: agentToolDefinitions.key });
+  }
+
   // eslint-disable-next-line no-console -- script de linha de comando
-  console.log(`seed ok: org beta = ${org?.id ?? "(não encontrada)"}`);
+  console.log(`seed ok: org beta = ${org?.id ?? "(não encontrada)"} · ${AGENT_TOOL_CATALOG.length} tools`);
 }
 
 seed()

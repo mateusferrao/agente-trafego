@@ -2,9 +2,9 @@
 // (VSA — sem porta p/ o próprio banco). Os nós do grafo ficam finos: só chamam
 // estas funções + o core puro.
 
-import { and, eq, lte, sql } from "drizzle-orm";
+import { and, eq, gte, lte, sql } from "drizzle-orm";
 import type { Database } from "@trafego/db/client";
-import { adAccounts, agentMemory, agentMutedEntities, agentRunSteps, agentRuns, agents, conversionLabels, guardrailConfigs, platformConnections, playbookRules, recommendations } from "@trafego/db";
+import { adAccounts, agentMemory, agentMutedEntities, agentRunSteps, agentRuns, agentToolCalls, agents, conversionLabels, guardrailConfigs, platformConnections, playbookRules, recommendations } from "@trafego/db";
 import type { Action, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, PlaybookRule, RiskLevel } from "@trafego/shared";
 import { unseedIdentity } from "@trafego/core";
 import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
@@ -342,4 +342,45 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
         .where(and(eq(agentRuns.id, runId), eq(agentRuns.orgId, orgId)));
     },
   };
+}
+
+/** Contexto cross-run do guardrail: o que este agente já aplicou nas últimas 24h. */
+export interface DailyToolContext {
+  /** `${level}:${id}` tocados por ações REAIS (não simuladas) hoje. */
+  readonly touchedToday: Set<string>;
+  /** `${level}:${id}` cujo budget mudou hoje (anti-compounding). */
+  readonly budgetChangedToday: Set<string>;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const BUDGET_TOOL_KEY = "adjust_budget";
+
+/**
+ * Lê os `agent_tool_calls` REAIS (não `dryRun`) deste agente nas últimas 24h e monta
+ * o contexto cross-run do guardrail (cap de entidades/dia + anti-compounding de budget).
+ * Janela rolante de 24h (mais segura que "meia-noite" e sem depender de fuso). Org-scoped
+ * via join no run (que é org-scoped).
+ */
+export async function loadDailyToolContext(
+  db: Database,
+  agentId: string,
+  now: Date = new Date(),
+): Promise<DailyToolContext> {
+  const since = new Date(now.getTime() - DAY_MS);
+  const rows = await db
+    .select({ toolKey: agentToolCalls.toolKey, args: agentToolCalls.args })
+    .from(agentToolCalls)
+    .innerJoin(agentRuns, eq(agentToolCalls.runId, agentRuns.id))
+    .where(and(eq(agentRuns.agentId, agentId), gte(agentToolCalls.createdAt, since)));
+
+  const touchedToday = new Set<string>();
+  const budgetChangedToday = new Set<string>();
+  for (const r of rows) {
+    const args = r.args as { target?: { level: string; id: string }; dryRun?: boolean };
+    if (args?.dryRun || !args?.target) continue; // simulado não conta
+    const key = `${args.target.level}:${args.target.id}`;
+    touchedToday.add(key);
+    if (r.toolKey === BUDGET_TOOL_KEY) budgetChangedToday.add(key);
+  }
+  return { touchedToday, budgetChangedToday };
 }
