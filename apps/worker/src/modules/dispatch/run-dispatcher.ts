@@ -10,6 +10,8 @@ import {
   AGENT_RUNS_QUEUE,
   AGENT_RUN_JOB,
   type AgentRunExecutePayload,
+  type AgentRunTrigger,
+  type RunNotifyTarget,
 } from "@trafego/shared";
 import type { MeteringPort, SchedulerPort } from "@trafego/shared/ports";
 import type { OrgId } from "@trafego/shared/types";
@@ -31,6 +33,10 @@ export interface CronDispatchInput {
   readonly orgId: string;
   readonly agentId: string;
   readonly adAccountId: string;
+  /** origem do run (default "cron"). "conversation" = disparado pelo WhatsApp. */
+  readonly trigger?: AgentRunTrigger;
+  /** alvo de push do resultado (5b-2) — só p/ trigger "conversation". */
+  readonly notify?: RunNotifyTarget;
 }
 
 export type DispatchOutcome =
@@ -64,6 +70,7 @@ export function createRunDispatcher(deps: RunDispatcherDeps) {
 
   async function dispatch(input: CronDispatchInput): Promise<DispatchOutcome> {
     const { orgId, agentId, adAccountId } = input;
+    const trigger = input.trigger ?? "cron";
 
     // 1) agente pausado (freio self-service — decisão 16) → pula silenciosamente.
     // Também pula se a conta não está sob gestão (unavailable/removed — soft).
@@ -88,7 +95,7 @@ export function createRunDispatcher(deps: RunDispatcherDeps) {
     try {
       const [run] = await deps.db
         .insert(agentRuns)
-        .values({ orgId, agentId, trigger: "cron", status: "pending" })
+        .values({ orgId, agentId, trigger, status: "pending" })
         .returning({ id: agentRuns.id });
       if (!run) return "skipped_in_flight";
       runId = run.id;
@@ -103,11 +110,12 @@ export function createRunDispatcher(deps: RunDispatcherDeps) {
     // 4) enfileira o execute (idempotente por runId).
     const payload: AgentRunExecutePayload = {
       mode: "execute",
-      trigger: "cron",
+      trigger,
       runId,
       orgId,
       agentId,
       adAccountId,
+      ...(input.notify ? { notify: input.notify } : {}),
     };
     await deps.scheduler.enqueue({
       queue: AGENT_RUNS_QUEUE,

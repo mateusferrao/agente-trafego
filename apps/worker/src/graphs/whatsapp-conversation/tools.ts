@@ -1,25 +1,22 @@
-// Catálogo de tools do agente conversacional (allowlist por agente).
-// Toda tool de ESCRITA passa por: guardrail + eco concreto + confirmação humana
-// antes de executar (nunca auto-aplica no chat — CLAUDE §8). Tools de LEITURA
-// (status, análise) executam direto.
-//
-// A allowlist real vem de agent_tool_bindings (catálogo-DB agent_tool_definitions):
-// só as tools ligadas ao agente e permitidas pelo entitlement entram aqui.
+// Catálogo de tools do agente conversacional (allowlist por turno).
+// 5b-2.2: LEITURA (sobre nosso DB curado — read-data.ts) + `trigger_analysis`
+// (dispara análise on-demand com push de volta na conversa). Nenhuma tool chama a
+// Meta. Tools de ESCRITA (aprovar/rejeitar) entram na 5b-2.3.
 
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import type { WorkerDeps } from "../../composition.js";
+import { createRunDispatcher } from "../../modules/dispatch/run-dispatcher.js";
+import { makeReadTools, type ReadToolContext } from "./read-data.js";
 
-export interface ConversationToolContext {
-  readonly orgId: string;
-  readonly agentId: string;
-  readonly adAccountId: string;
-  readonly contactId: string;
+export interface ConversationToolContext extends ReadToolContext {
+  /** thread da conversa (checkpointer) — alvo do push do "analisa agora". */
+  readonly conversationId: string;
 }
 
 /**
- * Monta as tools disponíveis para um turno, filtradas pela allowlist do agente.
- * `allow` = tool_keys ligadas (agent_tool_bindings).
+ * Monta as tools do turno, filtradas pela allowlist. `allow` = nomes ligados
+ * (5b-2.2 = read + trigger; concierge multi-conta = só as org-level).
  */
 export function makeConversationTools(
   deps: WorkerDeps,
@@ -27,81 +24,57 @@ export function makeConversationTools(
   allow: ReadonlySet<string>,
 ) {
   const { logger } = deps;
+  const readTools = makeReadTools(deps, ctx);
 
-  // ── LEITURA: seguro executar direto ──────────────────────────────────
-  const getAccountStatus = tool(
-    async () => {
-      logger.debug({ agentId: ctx.agentId }, "tool:get_account_status");
-      // TODO: ler último agent_run + insights_snapshots resumidos (read-only).
-      return "TODO: status da conta";
-    },
-    {
-      name: "get_account_status",
-      description: "Retorna status atual da conta: último run, gasto, alertas.",
-      schema: z.object({}),
-    },
-  );
+  const dispatcher = createRunDispatcher({
+    db: deps.db,
+    scheduler: deps.ports.scheduler,
+    logger,
+    metering: deps.ports.metering,
+    envCostCapUsd: deps.costCapUsd,
+  });
 
+  // "analisa agora": dispara run on-demand (origem conversa) + push do resultado de volta.
   const triggerAnalysis = tool(
     async () => {
-      logger.debug({ agentId: ctx.agentId }, "tool:trigger_analysis");
-      // TODO: deps.ports.scheduler.enqueue({ queue:'agent-runs', name:'analysis', payload:{ trigger:'on_demand', ... } }).
-      return "TODO: análise on-demand enfileirada";
+      const outcome = await dispatcher.dispatch({
+        orgId: ctx.orgId,
+        agentId: ctx.agentId,
+        adAccountId: ctx.adAccountId,
+        trigger: "conversation",
+        notify: { contactId: ctx.contactId, conversationId: ctx.conversationId },
+      });
+      logger.debug({ agentId: ctx.agentId, outcome }, "tool:trigger_analysis");
+      // devolve ao modelo o desfecho p/ ele responder com honestidade (§UX).
+      if (outcome === "enqueued") return "Análise iniciada — leva ~1 min; devolvo o resultado aqui.";
+      if (outcome === "skipped_in_flight") return "Já tem uma análise rodando — te aviso quando terminar.";
+      if (outcome === "skipped_cost_cap") return "Limite de custo de análise deste período atingido; renova no próximo mês.";
+      if (outcome === "skipped_paused") return "O agente desta conta está pausado; retome nas configurações do site.";
+      return "Não consegui iniciar a análise agora.";
     },
     {
       name: "trigger_analysis",
-      description: "Dispara uma análise on-demand da conta ('analisa agora').",
+      description:
+        "Dispara uma análise on-demand da conta ('analisa agora'). O resultado chega em seguida na conversa.",
       schema: z.object({}),
     },
   );
 
-  // ── ESCRITA: exige eco+confirma. A tool NÃO executa a mutação; ela apenas
-  //    PROPÕE (gera o eco). A confirmação humana no próximo turno libera a
-  //    execução real via executors/meta-tools. ────────────────────────────
-  const proposePause = tool(
-    async (input: { entityLevel: string; entityId: string }) => {
-      logger.debug({ agentId: ctx.agentId, input }, "tool:propose_pause");
-      // TODO: montar eco concreto ("vou pausar o ad X que gastou R$Y sem venda") +
-      //       validar guardrail antes de propor. Retorna eco p/ confirmação.
-      return `ECHO_CONFIRM: pausar ${input.entityLevel} ${input.entityId}. Confirma?`;
-    },
-    {
-      name: "propose_pause",
-      description:
-        "PROPÕE pausar uma entidade (não executa). Sempre gera eco concreto p/ confirmação humana.",
-      schema: z.object({
-        entityLevel: z.enum(["campaign", "adset", "ad"]),
-        entityId: z.string(),
-      }),
-    },
-  );
-
-  const proposeAdjustBudget = tool(
-    async (input: { entityLevel: string; entityId: string; mode: string; pct: number }) => {
-      logger.debug({ agentId: ctx.agentId, input }, "tool:propose_adjust_budget");
-      // TODO: eco concreto + guardrail (maxBudgetChangePct). Não executa aqui.
-      return `ECHO_CONFIRM: ${input.mode} budget de ${input.entityId} em ${input.pct}%. Confirma?`;
-    },
-    {
-      name: "propose_adjust_budget",
-      description:
-        "PROPÕE ajustar budget (não executa). Sempre gera eco concreto p/ confirmação humana.",
-      schema: z.object({
-        entityLevel: z.enum(["campaign", "adset", "ad"]),
-        entityId: z.string(),
-        mode: z.enum(["increase", "decrease", "set"]),
-        pct: z.number(),
-      }),
-    },
-  );
-
-  const all = [getAccountStatus, triggerAnalysis, proposePause, proposeAdjustBudget];
-  // aplica allowlist (agent_tool_bindings)
-  return all.filter((t) => allow.has(t.name));
+  return [...readTools, triggerAnalysis].filter((t) => allow.has(t.name));
 }
 
-/** Nomes de tools que efetuam ESCRITA (exigem eco+confirma antes de executar). */
-export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set([
-  "propose_pause",
-  "propose_adjust_budget",
+/** Nomes das tools de LEITURA/comando disponíveis na 5b-2.2 (não-escrita). */
+export const READ_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "get_account_status",
+  "get_metrics",
+  "get_campaign_analysis",
+  "list_recommendations",
+  "list_pending",
+  "trigger_analysis",
 ]);
+
+/** Tools org-level (concierge multi-conta — não precisam de conta em contexto). */
+export const CONCIERGE_TOOL_NAMES: ReadonlySet<string> = new Set(["list_pending"]);
+
+/** Tools que efetuam ESCRITA (exigem eco+confirma). Preenchido na 5b-2.3. */
+export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set<string>();

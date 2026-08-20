@@ -14,7 +14,7 @@ function fakeDb(rows: unknown[]) {
 }
 
 function makeService(rows: unknown[]) {
-  const enqueue = vi.fn(async () => {});
+  const enqueue = vi.fn(async (_spec: { queue: string; name: string; payload: unknown }) => {});
   const service = createWebhooksService({ db: fakeDb(rows), scheduler: { enqueue } as never });
   return { service, enqueue };
 }

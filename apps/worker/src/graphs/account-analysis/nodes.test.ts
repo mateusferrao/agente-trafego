@@ -146,7 +146,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
       materialChangePct: 15,
     },
     webOrigin: "https://app.example.com",
-    checkpointer: undefined,
+    checkpointer: undefined as never, // grafo A é linear (sem checkpointer)
   } as unknown as WorkerDeps;
 
   const nodesWithFakes = { repo, snapshots, entityAnalyses, notify, ...(opts.executor ? { executor: opts.executor } : {}) };

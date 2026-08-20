@@ -3,6 +3,7 @@
 
 import { Annotation } from "@langchain/langgraph";
 import type { AccumulatedTokenUsage, DecisionResult, DroppedAction, GuardrailResult } from "@trafego/core";
+import type { AgentRunTrigger, RunNotifyTarget } from "@trafego/shared";
 import type { MutationResult } from "@trafego/shared/ports";
 import type {
   AccountBrief,
@@ -42,7 +43,10 @@ export const AccountAnalysisState = Annotation.Root({
   orgId: Annotation<string>,
   agentId: Annotation<string>,
   adAccountId: Annotation<string>,
-  trigger: Annotation<"cron" | "on_demand">,
+  trigger: Annotation<AgentRunTrigger>,
+  // alvo de push (5b-2): quando o run é disparado pelo WhatsApp, o resultado volta
+  // na conversa (writeMessage/notify honram isto além do cron). null = sem push.
+  notify: Annotation<RunNotifyTarget | null>,
 
   // config congelada no início do run (reprodutibilidade — CLAUDE §6)
   goals: Annotation<AgentGoals>,

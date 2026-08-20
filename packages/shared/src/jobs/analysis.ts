@@ -76,7 +76,13 @@ export type ApprovalApplyPayload = {
   readonly approvalId: string;
 };
 
-export type AgentRunTrigger = "cron" | "on_demand";
+export type AgentRunTrigger = "cron" | "on_demand" | "conversation";
+
+/** Alvo de push do resultado (5b-2): run disparado pelo WhatsApp devolve na conversa. */
+export type RunNotifyTarget = {
+  readonly contactId: string;
+  readonly conversationId: string;
+};
 
 /** Payload do dispatch de cron: sem `runId` (o dispatch é quem cria o run). */
 export type AgentCronDispatchPayload = {
@@ -100,4 +106,6 @@ export type AgentRunExecutePayload = {
   readonly agentId: string;
   /** id de `ad_accounts` (o worker carrega + descriptografa o token). */
   readonly adAccountId: string;
+  /** alvo de push (5b-2): quando disparado pelo WhatsApp, o resultado volta na conversa. */
+  readonly notify?: RunNotifyTarget;
 };

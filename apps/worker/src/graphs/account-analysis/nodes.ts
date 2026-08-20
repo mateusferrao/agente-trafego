@@ -82,6 +82,7 @@ import {
   type LastEntityAnalysis,
 } from "../../modules/analysis/entity-analyses.repo.js";
 import { createNotifyRepo, type NotifyRepo } from "../../modules/notify/repo.js";
+import { createSendToContact } from "../../modules/notify/send-to-contact.js";
 import { createVisionResolver, creativeContentHash } from "../../modules/vision/resolver.js";
 import { makeMetaToolExecutor, type MetaToolExecutor } from "../../executors/meta-tools.js";
 import { AnalysisError } from "../../modules/analysis/errors.js";
@@ -133,6 +134,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
   const notifyRepo = repos?.notify ?? createNotifyRepo(deps.db);
   const entityAnalysesRepo = repos?.entityAnalyses ?? createEntityAnalysesRepo(deps.db);
   const executor = repos?.executor ?? makeMetaToolExecutor(deps);
+  const sendToContact = createSendToContact({ messaging: deps.ports.messaging, repo: notifyRepo });
 
   /** Carrega agent/config/janela e abre o run (status=running, snapshot congelado). */
   async function loadContext(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
@@ -673,40 +675,49 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
    */
   async function writeMessage(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
     logger.debug({ runId: state.runId }, "write_message");
-    if (state.trigger !== "cron") return { outboundMessage: null }; // on-demand mostra no site
+    const isWhatsapp = state.notify != null; // run disparado pelo WhatsApp → responde na conversa
+    if (state.trigger !== "cron" && !isWhatsapp) return { outboundMessage: null }; // on-demand no site
     const out = state.analysisOutput;
-    if (!out || out.recommendations.length === 0 || !state.account) return { outboundMessage: null };
+    if (!out || !state.account) return { outboundMessage: null };
+    const hasRecs = out.recommendations.length > 0;
+    // cron sem recomendação = silêncio; WhatsApp SEMPRE responde (o usuário pediu "analisa agora").
+    if (!hasRecs && !isWhatsapp) return { outboundMessage: null };
 
     const cfg = state.analysisConfig ?? deps.analysis;
     let text: string | null = null;
     let usage = state.usage;
-    try {
-      const completion = await deps.ports.llm.completeStructured<{ text: string }>({
-        model: cfg.messageModel,
-        messages: buildMessageMessages(state.systemPrompt, state.account.name, out),
-        responseSchema: MESSAGE_OUTPUT_JSON_SCHEMA,
-        responseSchemaName: MESSAGE_OUTPUT_SCHEMA_NAME,
-        temperature: ANALYSIS_TEMPERATURE,
-        maxTokens: cfg.maxOutputTokens,
-        meta: { orgId: state.orgId, runId: state.runId, type: "message" },
-      });
-      const t = completion.output?.text;
-      if (typeof t === "string" && t.trim().length > 0) {
-        text = t.trim();
-        usage = addTokenUsage(usage ?? undefined, completion.usage);
+    if (hasRecs) {
+      try {
+        const completion = await deps.ports.llm.completeStructured<{ text: string }>({
+          model: cfg.messageModel,
+          messages: buildMessageMessages(state.systemPrompt, state.account.name, out),
+          responseSchema: MESSAGE_OUTPUT_JSON_SCHEMA,
+          responseSchemaName: MESSAGE_OUTPUT_SCHEMA_NAME,
+          temperature: ANALYSIS_TEMPERATURE,
+          maxTokens: cfg.maxOutputTokens,
+          meta: { orgId: state.orgId, runId: state.runId, type: "message" },
+        });
+        const t = completion.output?.text;
+        if (typeof t === "string" && t.trim().length > 0) {
+          text = t.trim();
+          usage = addTokenUsage(usage ?? undefined, completion.usage);
+        }
+      } catch (err) {
+        if (!(err instanceof LLMProviderError)) throw err;
+        logger.warn({ runId: state.runId, err }, "write_message:redator falhou; usando fallback");
       }
-    } catch (err) {
-      if (!(err instanceof LLMProviderError)) throw err;
-      logger.warn({ runId: state.runId, err }, "write_message:redator falhou; usando fallback");
-    }
-
-    if (!text) {
-      text = buildMessageFallback({
-        accountName: state.account.name,
-        ...(out.scorecard?.headline ? { headline: out.scorecard.headline } : {}),
-        summary: out.summary,
-        recommendations: out.recommendations.map((r) => ({ title: r.title })),
-      });
+      if (!text) {
+        text = buildMessageFallback({
+          accountName: state.account.name,
+          ...(out.scorecard?.headline ? { headline: out.scorecard.headline } : {}),
+          summary: out.summary,
+          recommendations: out.recommendations.map((r) => ({ title: r.title })),
+        });
+      }
+    } else {
+      // WhatsApp pediu análise e não há recomendação → resposta honesta e curta (nunca silêncio).
+      const headline = out.scorecard?.headline ?? out.summary;
+      text = `Analisei a conta ${state.account.name}. ${headline} Nada crítico pra mexer agora — sigo de olho.`;
     }
     // nota honesta do que o agente FEZ neste run (aplicou/simulou) — determinística.
     const attempted = state.guardrail?.allowed.length ?? 0;
@@ -722,36 +733,35 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
   }
 
   /**
-   * Push no WhatsApp (outbound-only, cron). Idempotente por run; só p/ contato
-   * verificado + instância conectada. Degrada se a instância caiu (não quebra o run,
-   * que já foi fechado no record — o site mostra o resultado de qualquer forma).
+   * Push no WhatsApp. Cron → destinatário verificado da org (1 msg, enxuto).
+   * WhatsApp-origin ("analisa agora") → o contato que pediu, na conversa (quebra em
+   * blocos). Idempotente por run; degrada se a instância caiu (o run já foi fechado).
    */
   async function notify(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
     logger.debug({ runId: state.runId }, "notify");
     const body = state.outboundMessage;
-    if (!body) return {}; // nada acionável / não-cron → silêncio
+    if (!body) return {}; // nada acionável / não-cron sem push → silêncio
     if (await notifyRepo.alreadyNotified(state.runId)) return {}; // idempotência de envio
 
-    const target = await notifyRepo.loadTarget(state.orgId);
-    if (!target) {
+    // alvo: WhatsApp-origin → quem pediu; cron → destinatário verificado da org.
+    let contactId = state.notify?.contactId ?? null;
+    if (!contactId) {
+      const target = await notifyRepo.loadTarget(state.orgId);
+      contactId = target?.contactId ?? null;
+    }
+    if (!contactId) {
       logger.warn({ orgId: state.orgId, runId: state.runId }, "notify:sem canal/contato — sem push");
       return {};
     }
 
     const link = `${deps.webOrigin}/accounts/${state.adAccountId}`;
     const text = `${body}\n\nVer no site: ${link}`;
-    try {
-      await deps.ports.messaging.sendMessage({ instanceId: target.instanceId }, { to: target.phone, text });
-      await notifyRepo.recordOutbound({
-        orgId: state.orgId,
-        agentId: state.agentId,
-        contactId: target.contactId,
-        runId: state.runId,
-        body: text,
-      });
-    } catch (err) {
-      logger.warn({ runId: state.runId, err }, "notify:envio falhou — run concluído, sem push");
-    }
+    // chat (push do WhatsApp) quebra em blocos; cron enxuto (1 msg) — ban-safety §9.
+    const sent = await sendToContact(contactId, text, {
+      split: state.notify != null,
+      meta: { runId: state.runId },
+    });
+    if (!sent) logger.warn({ runId: state.runId }, "notify:envio falhou/sem instância — sem push");
     return {};
   }
 

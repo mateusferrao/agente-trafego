@@ -21,6 +21,8 @@ import { EvolutionAdapter, EvolutionClient } from "@trafego/channel-evolution";
 import { OpenRouterAdapter, OpenRouterClient } from "@trafego/llm-openrouter";
 import { createPostgresApprovals } from "@trafego/approval-postgres";
 import { createPostgresMetering, withLlmMetering } from "@trafego/metering-postgres";
+import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
+import type { BaseCheckpointSaver } from "@langchain/langgraph";
 import { Redis } from "ioredis";
 import { pino, type Logger } from "pino";
 import { createDrizzleInsightsSnapshotsRepo } from "./modules/insights/repo.js";
@@ -67,8 +69,17 @@ export interface WorkerDeps {
   readonly approvalExpiryCron: string;
   /** Cap default global de custo LLM por org/período (env). Cap por-org = guardrail_configs. */
   readonly costCapUsd: number;
-  /** Checkpointer do LangGraph (Postgres) — HITL durável (5b). undefined na 3a (read-only). */
-  readonly checkpointer: unknown;
+  /** Config do chat do WhatsApp (Grafo B ReAct, 5b-2). Modelo = fallback (agente vence). */
+  readonly conversation: {
+    readonly model: string;
+    readonly apiKey: string;
+    readonly baseUrl: string;
+    readonly historyTurns: number;
+    readonly maxTokens: number;
+    readonly debounceSeconds: number;
+  };
+  /** Checkpointer do LangGraph (Postgres) — memória durável do chat (Grafo B, 5b-2). */
+  readonly checkpointer: BaseCheckpointSaver;
 }
 
 export interface CompositionConfig {
@@ -131,6 +142,11 @@ export async function buildComposition(): Promise<WorkerDeps> {
     { metering, provider: "openrouter", onError: (err) => logger.warn({ err }, "metering:falhou") },
   );
 
+  // checkpointer do chat (Grafo B, 5b-2): memória durável por conversa (thread).
+  // setup() cria as tabelas de checkpoint (idempotente) no boot.
+  const checkpointer = PostgresSaver.fromConnString(env.DATABASE_URL);
+  await checkpointer.setup();
+
   return {
     db,
     logger,
@@ -177,8 +193,17 @@ export async function buildComposition(): Promise<WorkerDeps> {
     },
     approvalExpiryCron: env.APPROVAL_EXPIRY_CRON,
     costCapUsd: env.LLM_COST_CAP_USD_PER_PERIOD,
-    // checkpointer LangGraph = 5b (HITL durável). 3a é read-only linear → sem checkpointer.
-    checkpointer: undefined,
+    conversation: {
+      model: env.CONVERSATION_MODEL,
+      apiKey: env.OPENROUTER_API_KEY,
+      baseUrl: env.OPENROUTER_BASE_URL,
+      historyTurns: env.CONVERSATION_HISTORY_TURNS,
+      maxTokens: env.CONVERSATION_MAX_TOKENS,
+      debounceSeconds: env.CONVERSATION_DEBOUNCE_SECONDS,
+    },
+    // checkpointer LangGraph (Postgres): memória durável da conversa do WhatsApp
+    // (Grafo B ReAct, thread por conversa). setup() cria as tabelas (idempotente).
+    checkpointer,
   };
 }
 

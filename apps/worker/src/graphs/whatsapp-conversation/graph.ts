@@ -13,11 +13,11 @@ export function buildWhatsappConversationGraph(
   ctx: ConversationToolContext,
   allow: ReadonlySet<string>,
 ) {
-  const n = makeConversationNodes(deps);
+  const n = makeConversationNodes(deps, ctx, allow);
 
   const workflow = new StateGraph(WhatsappConversationState)
     .addNode("agent", n.agent)
-    .addNode("tools", n.toolsNode(ctx, allow))
+    .addNode("tools", n.toolsNode())
     .addNode("confirm", n.confirmWriteGate)
     .addEdge(START, "agent")
     // leitura → tools; escrita → gate de confirmação; nada → responde
@@ -30,9 +30,8 @@ export function buildWhatsappConversationGraph(
     // após o gate, volta ao agente (que ecoa e aguarda "sim" no próximo turno)
     .addEdge("confirm", "agent");
 
-  // TODO: tipar deps.checkpointer como BaseCheckpointSaver (PostgresSaver);
-  // thread_id = conversation/contact p/ manter contexto entre mensagens.
-  return workflow.compile({ checkpointer: deps.checkpointer as never });
+  // checkpointer Postgres: thread_id = conversationId → contexto entre mensagens.
+  return workflow.compile({ checkpointer: deps.checkpointer });
 }
 
 export type WhatsappConversationGraph = ReturnType<typeof buildWhatsappConversationGraph>;

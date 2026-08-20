@@ -169,6 +169,18 @@ export const envSchema = z.object({
   // Janela (dias) em que "reverter" uma ação segue disponível — depois some/API recusa.
   REVERT_TTL_DAYS: z.coerce.number().int().positive().default(7),
 
+  // ─── Conversa (WhatsApp — Grafo B ReAct, 5b-2) ─────────────────────────
+  // Modelo do chat: fallback quando o agente não tem `model_config.messageModel`.
+  // Chat = alto volume + tarefa simples → default barato com bom tool-calling.
+  CONVERSATION_MODEL: z.string().min(1).default("google/gemini-2.5-flash"),
+  // Janela de contexto por TURNO enviada ao LLM (turno = fala do usuário + resposta
+  // completa até a próxima fala; nunca quebra par tool_call/tool_result).
+  CONVERSATION_HISTORY_TURNS: z.coerce.number().int().positive().default(8),
+  // Teto de tokens (aprox., por chars) da janela — 2ª rede sobre turnos "gordos".
+  CONVERSATION_MAX_TOKENS: z.coerce.number().int().positive().default(6000),
+  // Debounce do inbound: coalesce mensagens picadas do mesmo contato num turno só.
+  CONVERSATION_DEBOUNCE_SECONDS: z.coerce.number().int().nonnegative().default(5),
+
   // ─── Observabilidade (opcional) ────────────────────────────────────────
   LANGFUSE_PUBLIC_KEY: z.string().optional(),
   LANGFUSE_SECRET_KEY: z.string().optional(),
