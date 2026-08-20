@@ -9,6 +9,7 @@ import { AccountsApiService } from '@core/api/accounts-api.service';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import type { AdAccountOutput, CampaignAnalysesOutput, LatestRunOutput, RunListOutput } from '@core/api/generated';
 import { AnalysisDetail, GRADE_LABEL, GRADE_TONE, type GradeTone } from '../analysis-detail/analysis-detail';
+import { AgentActions } from './agent-actions';
 
 type Recommendation = LatestRunOutput['recommendations'][number];
 type Campaign = CampaignAnalysesOutput['campaigns'][number];
@@ -56,7 +57,7 @@ const DATETIME_LOCALE = 'pt-BR';
 @Component({
   selector: 'app-account-detail-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, UiBadge, UiButton, UiEmptyState, UiPageHeader, UiSpinner, AnalysisDetail],
+  imports: [RouterLink, UiBadge, UiButton, UiEmptyState, UiPageHeader, UiSpinner, AnalysisDetail, AgentActions],
   providers: [provideIcons({ heroSparkles })],
   template: `
     <div class="flex flex-col gap-8">
@@ -120,6 +121,8 @@ const DATETIME_LOCALE = 'pt-BR';
           (vote)="vote($event)"
           (toggleMute)="toggleMuted($event)"
         />
+
+        <app-agent-actions [accountId]="accountId" />
       }
 
       <!-- Histórico: análises anteriores desta conta (filtros por nota + período) -->
