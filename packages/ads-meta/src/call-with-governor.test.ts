@@ -81,6 +81,28 @@ describe("callWithGovernor", () => {
     expect(sleepFn).toHaveBeenCalledTimes(2);
   });
 
+  it("429 com header BUC → governor aprende (observeUsage no path de erro)", async () => {
+    const gov = makeGovernor();
+    const spy = vi.spyOn(gov, "observeUsage");
+    const sleepFn = vi.fn(async () => {});
+    let calls = 0;
+    await callWithGovernor(
+      ACCT,
+      async () => {
+        calls++;
+        if (calls === 1) {
+          throw new MetaApiError("throttled", 17, undefined, 400, {
+            [ACCT]: { callCountPct: 100, totalCputimePct: 50, totalTimePct: 50, estimatedTimeToRegainAccessMin: 3 },
+          });
+        }
+        return ok({ ok: true });
+      },
+      { governor: gov, sleepFn },
+    );
+    // observou o uso do 429 (seta cooldown p/ as próximas), antes do backoff.
+    expect(spy).toHaveBeenCalledWith(ACCT, expect.objectContaining({ estimatedTimeToRegainAccessMin: 3 }));
+  });
+
   it("cooldown ativo (longo) → degrada na hora, sem chamar fn", async () => {
     const gov = makeGovernor();
     await gov.observeUsage(ACCT, {

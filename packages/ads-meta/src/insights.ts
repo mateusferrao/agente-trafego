@@ -14,7 +14,8 @@ import {
   type MetaGraphClient,
 } from "./client.js";
 import type { MetaGovernor } from "./governor.js";
-import { normalizeAdAccountId, stripActPrefix } from "./ids.js";
+import { normalizeAdAccountId } from "./ids.js";
+import { cooldownError, pickUsage, sleep } from "./rate-limit.js";
 import { parseActionType } from "./meta-conversion-map.js";
 
 // Poll do relatório assíncrono.
@@ -65,10 +66,6 @@ interface ReportResultPage {
 function toNumber(value: unknown): number {
   const n = typeof value === "string" ? Number(value) : typeof value === "number" ? value : NaN;
   return Number.isFinite(n) ? n : 0;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** id da entidade a partir do id do próprio nível da linha (não do accountId). */
@@ -184,7 +181,7 @@ export class MetaInsightsService {
       // cooldown ativo (minutos) → parcial-rápido: degrada na hora em vez de segurar o
       // run (mesma política do `shouldDegrade`/`callWithGovernor` das leituras). Mapeia
       // p/ `rate_limited` na casca → o worker marca análise parcial.
-      throw new MetaApiError("rate-limit: cooldown ativo", 80000, undefined, 429);
+      throw cooldownError();
     }
     return this.runReport(query, 0);
   }
@@ -302,14 +299,6 @@ export class MetaInsightsService {
     if (usage) await this.governor.observeUsage(accountId, usage);
     return res;
   }
-}
-
-function pickUsage(
-  usage: Readonly<Record<string, BusinessUseCaseUsage>> | undefined,
-  accountId: string,
-): BusinessUseCaseUsage | undefined {
-  if (!usage) return undefined;
-  return usage[accountId] ?? usage[stripActPrefix(accountId)] ?? Object.values(usage)[0];
 }
 
 function parseRange(window: string): { since: string; until: string } | null {

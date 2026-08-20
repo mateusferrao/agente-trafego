@@ -197,6 +197,10 @@ export class MetaAdsAdapter implements AdsPlatformPort {
   ): Promise<RawEntityNode[]> {
     const out: RawEntityNode[] = [];
     let after: string | undefined;
+    // Cada página passa pelo governor. Se um cooldown pintar no meio da paginação, o
+    // throw sobe e ESTE nível vira parcial (o worker marca `partial`) — as páginas já
+    // buscadas são descartadas de propósito: uma lista truncada silenciosa enganaria a
+    // análise ("essas são todas as campanhas"); parcial honesto > verdade pela metade.
     for (let page = 0; page < MAX_ENTITY_PAGES; page++) {
       const data = await callWithGovernor<MetaEntitiesPage>(
         accountId,

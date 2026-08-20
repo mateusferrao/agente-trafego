@@ -29,18 +29,23 @@ export class MetaApiError extends Error {
   readonly code: number | undefined;
   readonly subcode: number | undefined;
   readonly httpStatus: number;
+  /** Uso reportado no header BUC junto do erro (429 carrega throttle) — p/ o governor
+   *  aprender mesmo no path de falha. */
+  readonly usage: Readonly<Record<string, BusinessUseCaseUsage>> | undefined;
 
   constructor(
     message: string,
     code: number | undefined,
     subcode: number | undefined,
     httpStatus: number,
+    usage?: Readonly<Record<string, BusinessUseCaseUsage>>,
   ) {
     super(message);
     this.name = "MetaApiError";
     this.code = code;
     this.subcode = subcode;
     this.httpStatus = httpStatus;
+    this.usage = usage;
   }
 }
 
@@ -181,6 +186,7 @@ export class MetaGraphClient {
         error?.code,
         error?.error_subcode,
         res.status,
+        this.parseUsageHeader(res.headers.get("x-business-use-case-usage")),
       );
     }
     const body = (text ? JSON.parse(text) : {}) as T;
