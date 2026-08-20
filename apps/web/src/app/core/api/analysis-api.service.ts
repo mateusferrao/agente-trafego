@@ -9,6 +9,7 @@ import type {
   CampaignAnalysesOutput,
   FeedbackInput,
   FeedbackOutput,
+  LastRunActionsOutput,
   LatestRunOutput,
   MuteCampaignInput,
   MutedCampaignsOutput,
@@ -164,6 +165,21 @@ export class AnalysisApiService extends BaseApiService {
     return this.post<FeedbackOutput, FeedbackInput>(
       ['/recommendations', recommendationId, 'feedback'],
       { vote },
+    );
+  }
+
+  /** `GET /api/accounts/:id/agent/actions/last-run` — ações aplicadas + sugeridas do último run. */
+  lastRunActions(accountId: string): Observable<LastRunActionsOutput> {
+    return this.get<LastRunActionsOutput>(['/accounts', accountId, 'agent', 'actions', 'last-run'], {
+      context: silentApiContext(),
+    });
+  }
+
+  /** `POST /api/accounts/:id/agent/actions/:toolCallId/undo` — pede o undo de uma ação. */
+  undoAction(accountId: string, toolCallId: string): Observable<OkOutput> {
+    return this.post<OkOutput, Record<string, never>>(
+      ['/accounts', accountId, 'agent', 'actions', toolCallId, 'undo'],
+      {},
     );
   }
 }

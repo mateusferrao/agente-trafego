@@ -6,6 +6,8 @@ import { AccountsApiService } from '@core/api/accounts-api.service';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import type { AgentConfigInput, AgentSummary, AvailableConversionsOutput } from '@core/api/generated';
 import { AgentPlaybook } from './agent-playbook';
+import { AgentAutonomy } from './agent-autonomy';
+import { AgentGuardrails } from './agent-guardrails';
 
 type Conversion = AvailableConversionsOutput['conversions'][number];
 /** `CadenceSpec` (fonte única do cron) — forma vinda do contrato gerado. */
@@ -83,7 +85,7 @@ interface FormState {
 @Component({
   selector: 'app-agent-config-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, UiButton, UiPageHeader, UiSpinner, UiSelectBox, AgentPlaybook],
+  imports: [RouterLink, UiButton, UiPageHeader, UiSpinner, UiSelectBox, AgentPlaybook, AgentAutonomy, AgentGuardrails],
   template: `
     <div class="flex flex-col gap-8">
       <div class="flex flex-col gap-1">
@@ -281,6 +283,10 @@ interface FormState {
 
         <!-- Regras (playbook) — componente próprio, salva por regra (fora da save-bar) -->
         <app-agent-playbook [accountId]="accountId" />
+
+        <app-agent-autonomy [accountId]="accountId" />
+
+        <app-agent-guardrails [accountId]="accountId" />
 
         <!-- Cadência (ritmo da análise automática) -->
         <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
