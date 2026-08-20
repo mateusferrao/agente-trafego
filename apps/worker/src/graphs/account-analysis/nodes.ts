@@ -877,7 +877,8 @@ async function fetchEntities(
     } catch (error) {
       if (error instanceof AdsPlatformError && error.kind === "invalid_credential") throw error;
       entitiesPartial = true;
-      logger.warn({ level, err: error }, "fetch_entities:nível degradou");
+      // `entityLevel` (não `level`, que colide com o campo reservado do pino).
+      logger.warn({ entityLevel: level, err: error }, "fetch_entities:nível degradou");
     }
   }
   return { entities, entitiesPartial };
