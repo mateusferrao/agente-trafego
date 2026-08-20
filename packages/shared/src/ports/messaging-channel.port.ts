@@ -1,5 +1,7 @@
 export interface ChannelInstanceRef {
   readonly instanceId: string;
+  /** Secret por-instância p/ o header do webhook (usado só no registro em `connect`). */
+  readonly webhookSecret?: string;
 }
 
 export interface OutboundMessage {
@@ -11,6 +13,8 @@ export interface InboundMessage {
   readonly instanceId: string;
   readonly from: string; // telefone E.164
   readonly text: string;
+  /** id da mensagem no provider (Evolution `data.key.id`) — idempotência do inbound. */
+  readonly messageId: string;
   readonly raw: Readonly<Record<string, unknown>>;
 }
 
@@ -50,6 +54,8 @@ export interface MessagingChannelPort {
   sendMessage(instance: ChannelInstanceRef, msg: OutboundMessage): Promise<void>;
   /** Normaliza o payload cru do webhook em InboundMessage (ou null se ignorar). */
   parseInbound(payload: unknown): InboundMessage | null;
+  /** Extrai o status de um evento de conexão do webhook (ou null se não for). */
+  parseConnectionUpdate(payload: unknown): InstanceStatus | null;
   connect(instance: ChannelInstanceRef): Promise<InstanceState>;
   getState(instance: ChannelInstanceRef): Promise<InstanceState>;
   /** Desfaz o pareamento do número (logout), mantendo a instância p/ re-parear. */

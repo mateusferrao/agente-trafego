@@ -22,6 +22,10 @@ export const envSchema = z.object({
   // reintroduzir um SESSION_SECRET aqui.
   API_PORT: z.coerce.number().int().positive().default(3333),
   WEB_ORIGIN: z.string().url().default("http://localhost:4200"),
+  // Origin PÚBLICO da API — p/ montar a URL do webhook Evolution no `connect`
+  // (`${API_ORIGIN}/webhooks/evolution/{instance}`). Em prod = domínio público
+  // (a Evolution hospedada precisa alcançar a API). Local = tunnel/localhost.
+  API_ORIGIN: z.string().url().default("http://localhost:3333"),
 
   // ─── Postgres (Drizzle) ────────────────────────────────────────────────
   DATABASE_URL: z.string().url(),

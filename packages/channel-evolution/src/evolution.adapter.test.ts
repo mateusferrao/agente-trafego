@@ -27,6 +27,17 @@ function makeAdapter(): EvolutionAdapter {
   return new EvolutionAdapter({ client: new EvolutionClient({ baseUrl: BASE_URL, apiKey: API_KEY }) });
 }
 
+const API_ORIGIN = "https://api.example.com";
+function makeAdapterWithOrigin(): EvolutionAdapter {
+  return new EvolutionAdapter({
+    client: new EvolutionClient({ baseUrl: BASE_URL, apiKey: API_KEY }),
+    apiOrigin: API_ORIGIN,
+  });
+}
+function webhookSetCall(spy: ReturnType<typeof stubRoutes>) {
+  return spy.mock.calls.find(([url]) => String(url).includes("webhook/set"));
+}
+
 describe("EvolutionAdapter.getState", () => {
   it("mapeia state 'open' → connected", async () => {
     stubRoutes({ "instance/connectionState/": { status: 200, body: { instance: { state: "open" } } } });
@@ -71,5 +82,47 @@ describe("EvolutionAdapter.connect", () => {
     const createdCall = spy.mock.calls.find(([url]) => String(url).includes("instance/create"));
     expect(createdCall).toBeDefined();
     expect(JSON.parse(String(createdCall![1]?.body))).toMatchObject({ instanceName: INSTANCE.instanceId });
+  });
+});
+
+describe("EvolutionAdapter.connect — ensureWebhook", () => {
+  const ROUTES = {
+    "instance/connectionState/": { status: 200, body: { instance: { state: "open" } } },
+    "instance/connect/": { status: 200, body: { instance: { state: "open" } } },
+    "webhook/set/": { status: 200, body: { webhook: { enabled: true } } },
+  };
+
+  it("registra o webhook (url + header do secret + eventos) quando há apiOrigin + secret", async () => {
+    const spy = stubRoutes(ROUTES);
+    await makeAdapterWithOrigin().connect({ instanceId: INSTANCE.instanceId, webhookSecret: "sec-123" });
+
+    const call = webhookSetCall(spy);
+    expect(call).toBeDefined();
+    expect(String(call![0])).toBe(`${BASE_URL}/webhook/set/${INSTANCE.instanceId}`);
+    const body = JSON.parse(String(call![1]?.body)).webhook;
+    expect(body.url).toBe(`${API_ORIGIN}/webhooks/evolution/${INSTANCE.instanceId}`);
+    expect(body.headers).toMatchObject({ "x-webhook-secret": "sec-123" });
+    expect(body.events).toEqual(expect.arrayContaining(["MESSAGES_UPSERT", "CONNECTION_UPDATE"]));
+  });
+
+  it("sem apiOrigin → NÃO registra webhook", async () => {
+    const spy = stubRoutes(ROUTES);
+    await makeAdapter().connect({ instanceId: INSTANCE.instanceId, webhookSecret: "sec-123" });
+    expect(webhookSetCall(spy)).toBeUndefined();
+  });
+
+  it("sem secret → NÃO registra webhook", async () => {
+    const spy = stubRoutes(ROUTES);
+    await makeAdapterWithOrigin().connect(INSTANCE);
+    expect(webhookSetCall(spy)).toBeUndefined();
+  });
+
+  it("falha no webhook/set NÃO quebra o connect (best-effort)", async () => {
+    stubRoutes({ ...ROUTES, "webhook/set/": { status: 500, body: { error: "boom" } } });
+    const state = await makeAdapterWithOrigin().connect({
+      instanceId: INSTANCE.instanceId,
+      webhookSecret: "sec-123",
+    });
+    expect(state).toEqual({ status: "connected" });
   });
 });

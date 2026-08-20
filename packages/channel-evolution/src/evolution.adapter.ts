@@ -9,16 +9,23 @@ import {
 } from "@trafego/shared/ports";
 import { EvolutionApiError, EvolutionClient } from "./client.js";
 import { EvolutionSender } from "./send.js";
-import { parseInbound } from "./webhook.js";
+import { parseConnectionUpdate, parseInbound } from "./webhook.js";
 
 export interface EvolutionAdapterDeps {
   readonly client: EvolutionClient;
   readonly sender?: EvolutionSender;
+  /** Origin público da API p/ montar a URL do webhook (ex: https://api.exemplo.com).
+   *  Ausente → `connect` não registra webhook (útil no worker, que só envia). */
+  readonly apiOrigin?: string;
 }
 
 /** Integração Baileys (WhatsApp não-oficial) — parâmetro de criação da instância. */
 const CREATE_INTEGRATION = "WHATSAPP-BAILEYS";
 const HTTP_NOT_FOUND = 404;
+/** Eventos que assinamos no webhook (vocabulário Evolution vive no adapter — §7). */
+const WEBHOOK_EVENTS = ["MESSAGES_UPSERT", "CONNECTION_UPDATE"];
+/** Header por-instância validado pela casca no inbound (§9). */
+const WEBHOOK_SECRET_HEADER = "x-webhook-secret";
 
 /** Forma (parcial) das respostas da Evolution que consumimos. Vocabulário do provider fica aqui. */
 interface EvolutionStateResponse {
@@ -71,10 +78,12 @@ function toChannelError(error: unknown): MessagingChannelError {
 export class EvolutionAdapter implements MessagingChannelPort {
   private readonly client: EvolutionClient;
   private readonly sender: EvolutionSender;
+  private readonly apiOrigin: string | undefined;
 
   constructor(deps: EvolutionAdapterDeps) {
     this.client = deps.client;
     this.sender = deps.sender ?? new EvolutionSender(deps.client);
+    this.apiOrigin = deps.apiOrigin;
   }
 
   async sendMessage(instance: ChannelInstanceRef, msg: OutboundMessage): Promise<void> {
@@ -90,6 +99,10 @@ export class EvolutionAdapter implements MessagingChannelPort {
     return parseInbound(payload);
   }
 
+  parseConnectionUpdate(payload: unknown): InstanceStatus | null {
+    return parseConnectionUpdate(payload);
+  }
+
   /** Inicia a conexão: cria a instância se não existir, retorna o QR (ou conectado). */
   async connect(instance: ChannelInstanceRef): Promise<InstanceState> {
     try {
@@ -99,6 +112,8 @@ export class EvolutionAdapter implements MessagingChannelPort {
         method: "GET",
         path: `instance/connect/${id}`,
       });
+      // registra o webhook (idempotente, best-effort — pareamento não pode falhar por isso).
+      await this.ensureWebhook(instance);
       // já pareado → conectado (com o número pareado); senão, entrega o QR.
       if (res.instance?.state === "open") return this.connectedState(instance.instanceId);
       return res.base64
@@ -151,6 +166,33 @@ export class EvolutionAdapter implements MessagingChannelPort {
     } catch (error) {
       if (error instanceof EvolutionApiError && error.httpStatus === HTTP_NOT_FOUND) return;
       throw toChannelError(error);
+    }
+  }
+
+  /**
+   * Registra o webhook da instância (idempotente — sobrescreve a config). Best-effort:
+   * o pareamento não pode falhar por causa disto; sem `apiOrigin`/secret, não registra.
+   */
+  private async ensureWebhook(instance: ChannelInstanceRef): Promise<void> {
+    if (!this.apiOrigin || !instance.webhookSecret) return;
+    const url = `${this.apiOrigin}/webhooks/evolution/${encodeURIComponent(instance.instanceId)}`;
+    try {
+      await this.client.request({
+        method: "POST",
+        path: `webhook/set/${encodeURIComponent(instance.instanceId)}`,
+        body: {
+          webhook: {
+            enabled: true,
+            url,
+            byEvents: false,
+            base64: false,
+            headers: { [WEBHOOK_SECRET_HEADER]: instance.webhookSecret },
+            events: WEBHOOK_EVENTS,
+          },
+        },
+      });
+    } catch {
+      // registro falhou → inbound não chega até re-conectar; não derruba o pareamento.
     }
   }
 

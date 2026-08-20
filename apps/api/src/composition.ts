@@ -117,6 +117,7 @@ export function buildContainer(): Container {
   // WhatsApp (Evolution) plugado na 3b: onboarding por QR + push proativo + código de opt-in.
   const messaging: MessagingChannelPort = new EvolutionAdapter({
     client: new EvolutionClient({ baseUrl: env.EVOLUTION_BASE_URL, apiKey: env.EVOLUTION_API_KEY }),
+    apiOrigin: env.API_ORIGIN, // registra o webhook no connect (§9)
   });
 
   // Metering (3b): Postgres usage_events — o billing/usage lê daqui.
@@ -164,7 +165,7 @@ export function buildContainer(): Container {
       costCapUsd: env.LLM_COST_CAP_USD_PER_PERIOD,
     }),
     billing: createBillingService({ db, metering }),
-    webhooks: createWebhooksService({ db, messaging, scheduler }),
+    webhooks: createWebhooksService({ db, scheduler }),
   };
 
   return { adapters, services, redis };

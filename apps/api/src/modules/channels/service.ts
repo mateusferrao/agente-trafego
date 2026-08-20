@@ -22,24 +22,28 @@ function instanceName(orgId: OrgId): string {
  * (verificação de contato) vive no slice `contacts`.
  */
 export function createChannelsService(deps: ChannelsDeps) {
-  /** Garante a linha `channel_instances` da org (idempotente por org). */
-  async function ensureInstance(orgId: OrgId): Promise<{ evolutionInstance: string }> {
+  /** Garante a linha `channel_instances` da org (idempotente por org). Devolve o
+   *  secret por-instância p/ o registro do webhook (validado pela casca no inbound). */
+  async function ensureInstance(orgId: OrgId): Promise<{ evolutionInstance: string; webhookSecret: string }> {
     const [existing] = await deps.db
-      .select({ evolutionInstance: channelInstances.evolutionInstance })
+      .select({
+        evolutionInstance: channelInstances.evolutionInstance,
+        webhookSecret: channelInstances.webhookSecret,
+      })
       .from(channelInstances)
       .where(eq(channelInstances.orgId, orgId))
       .limit(1);
     if (existing) return existing;
 
+    const secret = randomBytes(WEBHOOK_SECRET_BYTES).toString("base64url");
     const [row] = await deps.db
       .insert(channelInstances)
-      .values({
-        orgId,
-        evolutionInstance: instanceName(orgId),
-        webhookSecret: randomBytes(WEBHOOK_SECRET_BYTES).toString("base64url"),
-      })
-      .returning({ evolutionInstance: channelInstances.evolutionInstance });
-    return row ?? { evolutionInstance: instanceName(orgId) };
+      .values({ orgId, evolutionInstance: instanceName(orgId), webhookSecret: secret })
+      .returning({
+        evolutionInstance: channelInstances.evolutionInstance,
+        webhookSecret: channelInstances.webhookSecret,
+      });
+    return row ?? { evolutionInstance: instanceName(orgId), webhookSecret: secret };
   }
 
   /** Persiste o estado observado (status/phone) na linha da org. */
@@ -57,8 +61,9 @@ export function createChannelsService(deps: ChannelsDeps) {
   return {
     /** Cria/conecta a instância Evolution da org e devolve o QR p/ parear. */
     async connect(orgId: OrgId): Promise<InstanceState> {
-      const { evolutionInstance } = await ensureInstance(orgId);
-      const ref: ChannelInstanceRef = { instanceId: evolutionInstance };
+      const { evolutionInstance, webhookSecret } = await ensureInstance(orgId);
+      // secret por-instância vai no ref → o adapter registra o webhook no connect.
+      const ref: ChannelInstanceRef = { instanceId: evolutionInstance, webhookSecret };
       const state = await deps.messaging.connect(ref);
       await persistState(orgId, state);
       return state;

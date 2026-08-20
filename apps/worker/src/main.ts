@@ -12,6 +12,7 @@ import { startScheduleResyncWorker } from "./workers/schedule-resync.js";
 import { startActionUndoWorker } from "./workers/action-undo.js";
 import { startApprovalApplyWorker } from "./workers/approval-apply.js";
 import { startApprovalExpiryWorker } from "./workers/approval-expiry.js";
+import { startWebhookInboundWorker } from "./workers/webhook-inbound.js";
 import { makeAccountCron } from "./schedulers/account-cron.js";
 import { createRunReaper } from "./modules/dispatch/run-reaper.js";
 
@@ -42,6 +43,10 @@ async function main(): Promise<void> {
   // expiração de aprovações (5b): tick recorrente marca as pendentes vencidas (24h).
   const approvalExpiry = startApprovalExpiryWorker(deps, connection);
 
+  // inbound do WhatsApp (5b-2): a API valida o secret da instância e enfileira o
+  // payload cru; aqui normaliza, resolve contato verificado e responde.
+  const webhookInbound = startWebhookInboundWorker(deps, connection);
+
   // Sincroniza os schedulers recorrentes a partir dos agentes ativos (idempotente)
   // + agenda o reaper (singleton) e faz uma varredura de boot (limpa presos de um
   // crash anterior antes de esperar o 1º tick).
@@ -53,7 +58,7 @@ async function main(): Promise<void> {
   await createRunReaper({ db: deps.db, logger, staleMinutes: deps.reaper.staleMinutes })
     .reapStale()
     .catch((err: unknown) => logger.error({ err }, "reaper:boot sweep falhou"));
-  logger.info("worker up: agent-runs + cron-dispatch + reaper + insights-sync + schedule-resync + action-undo + approval-apply + approval-expiry");
+  logger.info("worker up: agent-runs + cron-dispatch + reaper + insights-sync + schedule-resync + action-undo + approval-apply + approval-expiry + whatsapp-inbound");
 
   // shutdown gracioso (drena jobs em andamento antes de sair)
   const shutdown = async (signal: string): Promise<void> => {
@@ -67,6 +72,7 @@ async function main(): Promise<void> {
       actionUndo.close(),
       approvalApply.close(),
       approvalExpiry.close(),
+      webhookInbound.close(),
     ]);
     await Promise.allSettled([connection.quit(), deps.redis.quit()]);
     process.exit(0);

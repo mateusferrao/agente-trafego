@@ -1,48 +1,68 @@
-// Worker BullMQ da fila `webhook-inbound`: processa mensagens WhatsApp recebidas
-// (a api valida EVOLUTION_WEBHOOK_SECRET e enfileira o payload cru aqui).
-// Roteamento do inbound (CLAUDE §8 — ban-safety):
-//   1. contato tem aprovação pendente → resolve aprovação (mapeia fala→ações)
-//   2. senão → dispara/continua conversa (Grafo B)
-//   3. comando "analisa agora" → run on-demand (control-tools)
-//   4. remetente DESCONHECIDO (não é contato verificado) → IGNORA em silêncio
+// Worker BullMQ da fila `whatsapp-inbound`: processa eventos do WhatsApp recebidos
+// (a api valida o secret da instância e enfileira o payload CRU aqui).
+// Roteamento (CLAUDE §8 — ban-safety):
+//   1. CONNECTION_UPDATE → atualiza o status do canal (status ao vivo)
+//   2. MESSAGES_UPSERT → resolve contato verificado → grava inbound → responde
+//   3. remetente DESCONHECIDO (não é contato verificado) → IGNORA em silêncio
+// Grafo B (ReAct + leitura/aprovação) entra na 5b-2.2 — por ora responde um ack.
 
 import { Worker } from "bullmq";
 import type { Redis } from "ioredis";
+import { WHATSAPP_INBOUND_QUEUE, type WhatsappInboundPayload } from "@trafego/shared";
 import type { WorkerDeps } from "../composition.js";
-import { makeControlToolExecutor } from "../executors/control-tools.js";
+import { createNotifyRepo } from "../modules/notify/repo.js";
+import { createSendToContact } from "../modules/notify/send-to-contact.js";
 
-export const WEBHOOK_INBOUND_QUEUE = "webhook-inbound";
-
-/** Payload cru do webhook Evolution (normalizado pelo MessagingChannelPort). */
-export interface WebhookInboundJob {
-  readonly instanceId: string;
-  readonly raw: Readonly<Record<string, unknown>>;
-}
+/** Ack provisório (5b-2.1) — substituído pelo Grafo B (leitura/aprovação) na 5b-2.2. */
+const ACK_TEXT =
+  "Oi! 👋 Sou o agente da sua conta de anúncios. Em breve vou poder conversar por aqui — " +
+  "te dar o status, rodar uma análise e resolver aprovações.";
 
 export function startWebhookInboundWorker(deps: WorkerDeps, connection: Redis): Worker {
   const { ports, logger } = deps;
-  const control = makeControlToolExecutor(deps);
+  const repo = createNotifyRepo(deps.db);
+  const sendToContact = createSendToContact({ messaging: ports.messaging, repo });
 
-  return new Worker<WebhookInboundJob>(
-    WEBHOOK_INBOUND_QUEUE,
+  return new Worker<WhatsappInboundPayload>(
+    WHATSAPP_INBOUND_QUEUE,
     async (job) => {
-      // normaliza; parseInbound devolve null quando deve ignorar
-      const inbound = ports.messaging.parseInbound(job.data.raw);
+      const { instanceId, raw } = job.data;
+
+      // 1) mudança de conexão → status ao vivo (sem contato/mensagem).
+      const status = ports.messaging.parseConnectionUpdate(raw);
+      if (status) {
+        await repo.updateInstanceStatus(instanceId, status);
+        logger.debug({ instanceId, status }, "inbound:connection_update");
+        return;
+      }
+
+      // 2) mensagem: normaliza; null = ignorar (fromMe/ACK/grupo/não-texto).
+      const inbound = ports.messaging.parseInbound(raw);
       if (!inbound) {
         logger.debug({ jobId: job.id }, "inbound:ignored (unparseable)");
         return;
       }
 
-      // TODO: resolver contato verificado por (instanceId, from). Desconhecido → ignora em silêncio.
-      // const contact = await lookupVerifiedContact(inbound.instanceId, inbound.from);
-      // if (!contact) { logger.debug("inbound:ignored (unknown sender)"); return; }
+      // 3) só contato VERIFICADO da org dona da instância — desconhecido = silêncio (§8).
+      const contact = await repo.resolveInboundContact(instanceId, inbound.from);
+      if (!contact) {
+        logger.debug({ instanceId }, "inbound:ignored (unknown sender)");
+        return;
+      }
 
-      // TODO: 1) approval = await ports.approval.getPendingByContact(contact.id)
-      //          → se existe: enfileirar job resume em agent-runs (mapeando fala→ações no Grafo B).
-      // TODO: 2) comando explícito "analisa agora" → control.triggerAnalysis(...).
-      // TODO: 3) caso geral → invocar Grafo B (whatsapp-conversation) com thread_id = conversationId.
-      void control;
-      logger.info({ from: inbound.from }, "inbound:route");
+      // 4) idempotência do provider (webhook pode reentregar).
+      if (await repo.alreadyProcessed(inbound.messageId)) {
+        logger.debug({ messageId: inbound.messageId }, "inbound:duplicate");
+        return;
+      }
+
+      // 5) grava a mensagem inbound na conversa.
+      const conversationId = await repo.ensureConversation(contact.orgId, contact.contactId);
+      await repo.recordMessage(conversationId, "inbound", inbound.text, { messageId: inbound.messageId });
+
+      // 6) responde (ack provisório → Grafo B na 5b-2.2).
+      await sendToContact(contact.contactId, ACK_TEXT, { split: true });
+      logger.info({ orgId: contact.orgId }, "inbound:acked");
     },
     { connection },
   );
