@@ -20,3 +20,6 @@ export { UiDialog, UiDialogOverlay, UiDialogTitle, UiDialogDescription } from '.
 export { UiOptionRow, UiOptionRowCheck, UiOptionRowIcon, UiOptionRowCopy } from './ui-option-row';
 export { UiSelectBox } from './ui-select';
 export type { UiSelectOptionItem } from './ui-select';
+export { UiSwitch, UiSwitchThumb } from './ui-switch';
+export { UiToggleGroup, UiToggleGroupItem, UiToggleIndicator } from './ui-toggle-group';
+export { UiCheckbox } from './ui-checkbox';
