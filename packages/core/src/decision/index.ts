@@ -1,8 +1,66 @@
 import type { Action, AutonomyLevel, AutonomyPolicy } from "@trafego/shared";
+import { type DroppedAction, entityKeyOf } from "../guardrails/index.js";
 
 export interface DecisionResult {
   readonly autoApply: Action[];
   readonly needApproval: Action[];
+}
+
+export interface ConflictResult {
+  readonly kept: Action[];
+  readonly dropped: DroppedAction[];
+}
+
+/**
+ * Resolve conflitos + dedupe ANTES da decisão de autonomia: no máximo **uma ação por
+ * entidade** (`${level}:${id}`), a de maior dominância. "Pausar/parar domina": nunca
+ * aumenta gasto numa entidade que outra regra quer frear. Empate → playbook
+ * (determinístico) vence LLM, depois a ordem original. Mantém a ordem das mantidas.
+ * Função PURA.
+ */
+export function resolveActionConflicts(actions: readonly Action[]): ConflictResult {
+  const byEntity = new Map<string, Action[]>();
+  for (const action of actions) {
+    const key = entityKeyOf(action.target);
+    (byEntity.get(key) ?? byEntity.set(key, []).get(key)!).push(action);
+  }
+
+  const winners = new Set<Action>();
+  const dropped: DroppedAction[] = [];
+  for (const group of byEntity.values()) {
+    const winner = group.reduce((best, cur) => (beats(cur, best) ? cur : best));
+    winners.add(winner);
+    for (const a of group) {
+      if (a !== winner) dropped.push({ action: a, reason: `conflito na entidade: '${winner.type}' tem prioridade` });
+    }
+  }
+
+  // preserva a ordem original das mantidas
+  const kept = actions.filter((a) => winners.has(a));
+  return { kept, dropped };
+}
+
+/** Dominância na resolução de conflito: pausar > cortar > status > aumentar > religar. */
+function dominanceOf(a: Action): number {
+  switch (a.type) {
+    case "pause_entity":
+      return 4;
+    case "adjust_budget":
+      return a.params["mode"] === "decrease" ? 3 : 1;
+    case "set_status":
+      return 2;
+    case "resume_entity":
+      return 0;
+    default:
+      return 0;
+  }
+}
+
+/** `cur` vence `best`? maior dominância; empate → playbook vence LLM (senão mantém best). */
+function beats(cur: Action, best: Action): boolean {
+  const d = dominanceOf(cur) - dominanceOf(best);
+  if (d !== 0) return d > 0;
+  return cur.source === "playbook" && best.source !== "playbook";
 }
 
 /**

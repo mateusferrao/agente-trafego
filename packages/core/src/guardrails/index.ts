@@ -1,4 +1,4 @@
-import type { Action, CandidateAction, GuardrailConfig } from "@trafego/shared";
+import type { Action, ActionTarget, CandidateAction, GuardrailConfig } from "@trafego/shared";
 
 export interface DroppedAction {
   readonly action: Action;
@@ -11,15 +11,35 @@ export interface GuardrailResult {
 }
 
 /**
+ * Contexto CROSS-RUN passado pela casca (worker) — mantém o guardrail PURO enquanto
+ * a rede vale entre runs do dia. Tudo keyed por `${level}:${id}`.
+ */
+export interface GuardrailContext {
+  /** entidades já tocadas hoje (runs anteriores) — contam no cap de entidades/dia. */
+  readonly touchedToday?: ReadonlySet<string>;
+  /** entidades cujo budget já mudou hoje — bloqueia recompor no mesmo dia. */
+  readonly budgetChangedToday?: ReadonlySet<string>;
+  /** `${level}:${id}` → o nível-alvo tem budget? (pré-check de `adjust_budget`). */
+  readonly budgetByEntity?: ReadonlyMap<string, boolean>;
+}
+
+/** Chave estável de entidade (nível + id). */
+export function entityKeyOf(target: ActionTarget): string {
+  return `${target.level}:${target.id}`;
+}
+
+/**
  * Rede de segurança sobre as candidatas (playbook + LLM). Sempre roda, mesmo
  * no caminho autônomo — é a ÚNICA rede quando não há eco+confirma.
  *
- * Ordem: killSwitch → allowedActions → clamp de budget → cap de entidades/dia.
- * Função PURA.
+ * Ordem: killSwitch → allowedActions → pré-check de nível de budget → anti-compounding
+ * de budget (cross-run) → clamp de % → cap de entidades/dia (cross-run). Função PURA —
+ * o contexto cross-run vem da casca (dado passado in).
  */
 export function applyGuardrails(
   actions: readonly CandidateAction[],
   cfg: GuardrailConfig,
+  ctx: GuardrailContext = {},
 ): GuardrailResult {
   const allowed: Action[] = [];
   const dropped: DroppedAction[] = [];
@@ -29,20 +49,35 @@ export function applyGuardrails(
     return { allowed: [], dropped: actions.map((a) => ({ action: a, reason: "kill switch ativo" })) };
   }
 
-  const seenEntities = new Set<string>();
+  // cap de entidades/dia conta o que já foi tocado hoje (cross-run).
+  const seenEntities = new Set<string>(ctx.touchedToday ?? []);
 
   for (const action of actions) {
+    const entityKey = entityKeyOf(action.target);
+
     // 1) tipo de ação permitido?
     if (!cfg.allowedActions.includes(action.type)) {
       dropped.push({ action, reason: `ação ${action.type} não permitida` });
       continue;
     }
 
-    // 2) clamp de % de mudança de budget (não descarta, limita)
+    // 2) pré-check de budget: só ajusta onde o nível-alvo tem budget (evita bater na
+    //    Meta à toa quando a regra dispara num nível sem daily/lifetime — ex: CBO).
+    if (action.type === "adjust_budget" && ctx.budgetByEntity?.get(entityKey) === false) {
+      dropped.push({ action, reason: "budget não está neste nível" });
+      continue;
+    }
+
+    // 3) anti-compounding: não muda o budget da mesma entidade 2× no dia (cross-run).
+    if (action.type === "adjust_budget" && ctx.budgetChangedToday?.has(entityKey)) {
+      dropped.push({ action, reason: "budget já ajustado hoje" });
+      continue;
+    }
+
+    // 4) clamp de % de mudança de budget (não descarta, limita)
     const clamped = clampBudgetChange(action, cfg.maxBudgetChangePct);
 
-    // 3) cap de entidades/dia — conta entidades distintas afetadas
-    const entityKey = `${clamped.target.level}:${clamped.target.id}`;
+    // 5) cap de entidades/dia — conta entidades distintas afetadas
     if (!seenEntities.has(entityKey)) {
       if (seenEntities.size >= cfg.maxEntitiesPerDay) {
         dropped.push({ action: clamped, reason: "limite de entidades/dia atingido" });
