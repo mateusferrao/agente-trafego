@@ -33,6 +33,10 @@ const PASSWORD_MIN_LENGTH = 8;
             <input appInput type="password" formControlName="password" autocomplete="new-password" placeholder="••••••••" />
           </app-ui-form-field>
 
+          <app-ui-form-field label="Confirmar nova senha" [error]="confirmError()">
+            <input appInput type="password" formControlName="confirm" autocomplete="new-password" placeholder="••••••••" />
+          </app-ui-form-field>
+
           @if (formError()) {
             <p class="rounded-md border border-line bg-danger-soft/50 px-3 py-2 text-sm text-danger-strong">
               {{ formError() }}
@@ -65,6 +69,7 @@ export class ResetPasswordPage {
       nonNullable: true,
       validators: [Validators.required, Validators.minLength(PASSWORD_MIN_LENGTH)],
     }),
+    confirm: new FormControl('', { nonNullable: true, validators: [Validators.required] }),
   });
 
   protected passwordError(): string | null {
@@ -73,11 +78,23 @@ export class ResetPasswordPage {
     return 'A senha precisa de pelo menos 8 caracteres.';
   }
 
+  /** Erro de confirmação: só quando o campo foi tocado e diverge da senha. */
+  protected confirmError(): string | null {
+    const c = this.form.controls.confirm;
+    if (!(c.touched || c.dirty)) return null;
+    if (c.hasError('required')) return 'Confirme a nova senha.';
+    return c.value === this.form.controls.password.value ? null : 'As senhas não conferem.';
+  }
+
   protected submit(): void {
     this.formError.set(null);
     if (this.form.invalid) {
       this.form.markAllAsTouched();
       return;
+    }
+    if (this.form.controls.password.value !== this.form.controls.confirm.value) {
+      this.form.controls.confirm.markAsTouched();
+      return; // confirmError() exibe "As senhas não conferem."
     }
     this.isSubmitting.set(true);
     this.authStore.resetPassword({ token: this.token(), password: this.form.controls.password.value }).subscribe({
