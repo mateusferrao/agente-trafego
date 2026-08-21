@@ -2,7 +2,7 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import { env } from "../../env.js";
 import { requireAuth } from "../../middleware/auth.js";
 import { SESSION_TOKEN_COOKIE, sessionCookieOptions } from "../../http/cookies.js";
-import { loginInput, signupInput } from "./schema.js";
+import { emailCodeRequestInput, emailCodeVerifyInput, loginInput, signupInput } from "./schema.js";
 import type { SessionContext, SessionIssued } from "./service.js";
 
 /** Teto de tentativas em endpoints sensíveis (anti brute-force). Aplicado por-rota. */
@@ -26,12 +26,36 @@ function setSessionCookie(reply: FastifyReply, issued: SessionIssued): void {
 export const authRoutes: FastifyPluginAsync = async (app) => {
   const service = app.container.services.auth;
 
+  // Signup (6b) NÃO autentica: cria a conta não-verificada + manda o código.
+  // Sem cookie — a sessão nasce em /auth/email-code/verify.
   app.post("/auth/signup", { config: { rateLimit: AUTH_RATE_LIMIT } }, async (request, reply) => {
     const input = signupInput.parse(request.body);
-    const issued = await service.signup(input, contextOf(request));
-    setSessionCookie(reply, issued);
-    return reply.status(201).send(issued.me);
+    const out = await service.signup(input);
+    return reply.status(201).send(out);
   });
+
+  // Reenvia/pede código de verificação. Sempre 204 (anti-enumeração).
+  app.post(
+    "/auth/email-code/request",
+    { config: { rateLimit: AUTH_RATE_LIMIT } },
+    async (request, reply) => {
+      const input = emailCodeRequestInput.parse(request.body);
+      await service.requestEmailCode(input);
+      return reply.status(204).send();
+    },
+  );
+
+  // Verifica o código → confirma o email + cria a sessão (seta o cookie).
+  app.post(
+    "/auth/email-code/verify",
+    { config: { rateLimit: AUTH_RATE_LIMIT } },
+    async (request, reply) => {
+      const input = emailCodeVerifyInput.parse(request.body);
+      const issued = await service.verifyEmailCode(input, contextOf(request));
+      setSessionCookie(reply, issued);
+      return reply.send(issued.me);
+    },
+  );
 
   app.post("/auth/login", { config: { rateLimit: AUTH_RATE_LIMIT } }, async (request, reply) => {
     const input = loginInput.parse(request.body);

@@ -24,6 +24,22 @@ export const loginInput = z.object({
 });
 export type LoginInput = z.infer<typeof loginInput>;
 
+// Signup (6b) não autentica mais: cria a conta não-verificada e manda o código.
+// O front leva pra tela de código (não há sessão até verificar).
+export const signupOutput = z.object({ pendingVerification: z.boolean() });
+export type SignupOutput = z.infer<typeof signupOutput>;
+
+// Reenvio/pedido de código de verificação (sempre 204 — anti-enumeração).
+export const emailCodeRequestInput = z.object({ email: emailInput });
+export type EmailCodeRequestInput = z.infer<typeof emailCodeRequestInput>;
+
+// Verificação do código: confirma o email E cria a sessão num passo.
+export const emailCodeVerifyInput = z.object({
+  email: emailInput,
+  code: z.string().trim().length(6),
+});
+export type EmailCodeVerifyInput = z.infer<typeof emailCodeVerifyInput>;
+
 // Sessão corrente (retorno de login/signup e de GET /me). Refinado na 1a.2.
 export const meOutput = z.object({
   userId: z.string(),

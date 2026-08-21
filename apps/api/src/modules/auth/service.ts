@@ -1,5 +1,7 @@
 import { isUniqueViolation } from "@trafego/db";
-import { conflict, unauthorized } from "../../middleware/error-handler.js";
+import { checkPasswordStrength, type PasswordWeakReason } from "@trafego/core";
+import type { MailQueuePort } from "@trafego/shared/ports";
+import { badRequest, emailNotVerified, unauthorized } from "../../middleware/error-handler.js";
 import type { PasswordHasher } from "./password.js";
 import type { AuthRepo, PrincipalRow } from "./repo.js";
 import {
@@ -8,11 +10,33 @@ import {
   hashSessionToken,
   SESSION_SLIDE_THROTTLE_MS,
 } from "./session-token.js";
-import type { LoginInput, MeOutput, SignupInput } from "./schema.js";
+import { generateEmailCode, hashEmailCode } from "./one-time-token.js";
+import { buildVerificationEmail, buildAccountExistsEmail } from "./auth-email.js";
+import type {
+  EmailCodeRequestInput,
+  EmailCodeVerifyInput,
+  LoginInput,
+  MeOutput,
+  SignupInput,
+  SignupOutput,
+} from "./schema.js";
+
+/** Config de email do auth (TTLs + remetente + URL do app p/ links). */
+export interface AuthEmailConfig {
+  readonly from: string;
+  readonly appUrl: string;
+  readonly codeTtlMinutes: number;
+  readonly resetTtlMinutes: number;
+}
 
 export interface AuthDeps {
   readonly repo: AuthRepo;
   readonly hasher: PasswordHasher;
+  /** Enfileira email transacional (verificação/reset) — nunca envia inline. */
+  readonly mailQueue: MailQueuePort;
+  readonly email: AuthEmailConfig;
+  /** Relógio injetável (testabilidade). Default = `Date`. */
+  readonly now?: () => Date;
 }
 
 /** Principal autenticado que a casca grava na sessão/scoping. */
@@ -28,8 +52,8 @@ export interface SessionContext {
 }
 
 /**
- * Resultado de signup/login: o token opaco (vai p/ o cookie, a casca sela o
- * contexto) + o `MeOutput` (corpo da resposta). O service não conhece cookies.
+ * Resultado de login/verificação: o token opaco (vai p/ o cookie) + o `MeOutput`.
+ * O service não conhece cookies.
  */
 export interface SessionIssued {
   readonly rawToken: string;
@@ -48,12 +72,25 @@ function toMe(p: PrincipalRow): MeOutput {
   };
 }
 
+/** Mensagem amigável (§13) p/ o código de fraqueza de senha do core. */
+function passwordMessage(reason: PasswordWeakReason): string {
+  switch (reason) {
+    case "too_short":
+      return "A senha precisa de ao menos 8 caracteres.";
+    case "no_letter":
+      return "A senha precisa de ao menos uma letra.";
+    case "no_number":
+      return "A senha precisa de ao menos um número.";
+  }
+}
+
 /**
- * Lógica de autenticação (sessão híbrida + argon2 — §12). Verifica credencial,
- * cria a sessão server-side (token opaco → hash no DB) e devolve o principal.
- * IO/senha vivem em ports (`AuthRepo`/`PasswordHasher`); aqui só orquestração.
+ * Lógica de autenticação (sessão híbrida + argon2 + verificação de email — §12).
+ * IO/senha/email vivem em ports; aqui só orquestração.
  */
 export function createAuthService(deps: AuthDeps) {
+  const clock = deps.now ?? (() => new Date());
+
   /** Hash argon2 fixo p/ equalizar timing quando o email não existe (anti-enumeração). */
   let dummyHash: Promise<string> | undefined;
   const getDummyHash = (): Promise<string> => (dummyHash ??= deps.hasher.hash(generateSessionToken()));
@@ -65,7 +102,7 @@ export function createAuthService(deps: AuthDeps) {
     ctx: SessionContext,
   ): Promise<string> {
     const rawToken = generateSessionToken();
-    const now = new Date();
+    const now = clock();
     await deps.repo.createSession({
       userId,
       orgId,
@@ -78,40 +115,84 @@ export function createAuthService(deps: AuthDeps) {
     return rawToken;
   }
 
+  /** Emite um código de verificação e enfileira o email. */
+  async function sendVerificationCode(userId: string | null, email: string): Promise<void> {
+    const code = generateEmailCode();
+    const now = clock();
+    await deps.repo.issueOneTimeToken({
+      userId,
+      email,
+      purpose: "email_verification",
+      tokenHash: hashEmailCode(email, code),
+      expiresAt: new Date(now.getTime() + deps.email.codeTtlMinutes * 60_000),
+    });
+    await deps.mailQueue.enqueue(buildVerificationEmail({ to: email, from: deps.email.from, code }));
+  }
+
   return {
-    async signup(input: SignupInput, ctx: SessionContext): Promise<SessionIssued> {
+    /**
+     * Signup (6b): cria a conta NÃO-verificada + manda o código. NÃO autentica.
+     * Email já existente → resposta idêntica (anti-enum) + notifica o dono real.
+     */
+    async signup(input: SignupInput): Promise<SignupOutput> {
       const existing = await deps.repo.findUserByEmail(input.email);
-      if (existing) throw conflict("E-mail já cadastrado");
+      if (existing) {
+        await deps.mailQueue.enqueue(
+          buildAccountExistsEmail({ to: input.email, from: deps.email.from, appUrl: deps.email.appUrl }),
+        );
+        return { pendingVerification: true };
+      }
+
+      const strength = checkPasswordStrength(input.password);
+      if (!strength.ok) throw badRequest(passwordMessage(strength.reason));
 
       const passwordHash = await deps.hasher.hash(input.password);
-      let created;
       try {
-        created = await deps.repo.createUserWithOrg({
+        const created = await deps.repo.createUserWithOrg({
           email: input.email,
           name: input.name,
           passwordHash,
           orgName: input.orgName,
         });
+        await sendVerificationCode(created.userId, input.email);
       } catch (err) {
-        // Corrida: dois signups concorrentes passam o pre-check e um bate no
-        // UNIQUE de users.email → 409 (não 500). O pre-check acima é o fast-path.
-        if (isUniqueViolation(err)) throw conflict("E-mail já cadastrado");
+        // Corrida: dois signups concorrentes passam o pre-check e um bate no UNIQUE.
+        // Anti-enum: responde idêntico + notifica o dono (não cria nada novo).
+        if (isUniqueViolation(err)) {
+          await deps.mailQueue.enqueue(
+            buildAccountExistsEmail({ to: input.email, from: deps.email.from, appUrl: deps.email.appUrl }),
+          );
+          return { pendingVerification: true };
+        }
         throw err;
       }
+      return { pendingVerification: true };
+    },
 
-      const rawToken = await issueSession(created.userId, created.orgId, ctx);
-      return {
-        rawToken,
-        me: {
-          userId: created.userId,
-          email: input.email,
-          name: input.name,
-          orgId: created.orgId,
-          orgName: created.orgName,
-          role: created.role,
-          accessStatus: created.accessStatus,
-        },
-      };
+    /** Reenvio de código (sempre resolve — anti-enum; só age se houver user não-verificado). */
+    async requestEmailCode(input: EmailCodeRequestInput): Promise<void> {
+      const user = await deps.repo.findUserByEmail(input.email);
+      if (user && !user.emailVerifiedAt) await sendVerificationCode(user.id, user.email);
+    },
+
+    /** Verifica o código: confirma o email E cria a sessão num passo. */
+    async verifyEmailCode(input: EmailCodeVerifyInput, ctx: SessionContext): Promise<SessionIssued> {
+      const invalid = badRequest("Código inválido ou expirado.");
+      const token = await deps.repo.findUsableToken(
+        "email_verification",
+        hashEmailCode(input.email, input.code),
+        clock(),
+      );
+      if (!token?.userId) throw invalid;
+      const consumed = await deps.repo.consumeOneTimeToken(token.id);
+      if (!consumed) throw invalid; // perdeu a corrida (já consumido)
+
+      await deps.repo.markEmailVerified(token.userId);
+      const principal = await deps.repo.loadPrincipal(token.userId);
+      if (!principal) throw invalid;
+
+      const rawToken = await issueSession(principal.userId, principal.orgId, ctx);
+      return { rawToken, me: toMe(principal) };
     },
 
     async login(input: LoginInput, ctx: SessionContext): Promise<SessionIssued> {
@@ -119,6 +200,12 @@ export function createAuthService(deps: AuthDeps) {
       // Sempre roda um verify (hash real ou dummy) p/ não vazar existência por timing.
       const ok = await deps.hasher.verify(user?.passwordHash ?? (await getDummyHash()), input.password);
       if (!user || !ok) throw unauthorized("Credenciais inválidas");
+
+      // Email não verificado: reenvia o código e sinaliza (front → tela de código).
+      if (!user.emailVerifiedAt) {
+        await sendVerificationCode(user.id, user.email);
+        throw emailNotVerified();
+      }
 
       const principal = await deps.repo.loadPrincipal(user.id);
       if (!principal) throw unauthorized("Credenciais inválidas");
@@ -140,11 +227,9 @@ export function createAuthService(deps: AuthDeps) {
     /** Valida o token do cookie → sessão ativa (desliza a expiração). Usado por `requireAuth`. */
     async resolveSession(rawToken: string): Promise<AuthenticatedUser | null> {
       const tokenHash = hashSessionToken(rawToken);
-      const now = new Date();
+      const now = clock();
       const active = await deps.repo.findActiveSessionByHash(tokenHash, now);
       if (!active) return null;
-      // Slide throttlado: só reescreve se o último uso foi há mais que o limite
-      // (evita um UPDATE por request autenticado).
       const staleFor = now.getTime() - (active.lastUsedAt?.getTime() ?? 0);
       if (staleFor > SESSION_SLIDE_THROTTLE_MS) {
         await deps.repo.slideSession(tokenHash, now, computeSessionExpiry(now));

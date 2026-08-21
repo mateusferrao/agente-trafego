@@ -12,7 +12,14 @@ import {
   OpenApiGeneratorV31,
 } from "@asteasolutions/zod-to-openapi";
 import { z } from "zod";
-import { loginInput, meOutput, signupInput } from "../modules/auth/schema.js";
+import {
+  emailCodeRequestInput,
+  emailCodeVerifyInput,
+  loginInput,
+  meOutput,
+  signupInput,
+  signupOutput,
+} from "../modules/auth/schema.js";
 import { createOrgInput, orgOutput, renameOrgInput, setTimezoneInput } from "../modules/orgs/schema.js";
 import { accessStatusOutput, usageSummaryOutput } from "../modules/billing/schema.js";
 import { adAccountOutput } from "../modules/accounts/schema.js";
@@ -76,6 +83,9 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const registry = new OpenAPIRegistry();
 
   const SignupInput = registry.register("SignupInput", signupInput);
+  const SignupOutput = registry.register("SignupOutput", signupOutput);
+  const EmailCodeRequestInput = registry.register("EmailCodeRequestInput", emailCodeRequestInput);
+  const EmailCodeVerifyInput = registry.register("EmailCodeVerifyInput", emailCodeVerifyInput);
   const LoginInput = registry.register("LoginInput", loginInput);
   const MeOutput = registry.register("MeOutput", meOutput);
   const CreateOrgInput = registry.register("CreateOrgInput", createOrgInput);
@@ -144,7 +154,27 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     path: "/api/auth/signup",
     tags: ["auth"],
     request: jsonBody(SignupInput),
-    responses: { 201: jsonRes("sessão criada", MeOutput) },
+    responses: {
+      201: jsonRes("conta criada — verificação de email pendente", SignupOutput),
+      400: { description: "senha fraca / payload inválido" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/auth/email-code/request",
+    tags: ["auth"],
+    request: jsonBody(EmailCodeRequestInput),
+    responses: { 204: { description: "código reenviado (sempre 204 — anti-enumeração)" } },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/auth/email-code/verify",
+    tags: ["auth"],
+    request: jsonBody(EmailCodeVerifyInput),
+    responses: {
+      200: jsonRes("email verificado — sessão criada", MeOutput),
+      400: { description: "código inválido ou expirado" },
+    },
   });
   registry.registerPath({
     method: "post",
@@ -154,6 +184,7 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     responses: {
       200: jsonRes("sessão", MeOutput),
       401: { description: "credenciais inválidas" },
+      403: { description: "email não verificado (código reenviado)" },
     },
   });
   registry.registerPath({

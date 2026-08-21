@@ -158,7 +158,17 @@ export function buildContainer(): Container {
   // agents antes de runs: runs reusa `ensureAgent` (criação lazy) do slice de agentes.
   const agents = createAgentsService({ db, scheduler, approvals, revertTtlDays: env.REVERT_TTL_DAYS });
   const services: Services = {
-    auth: createAuthService({ repo: createDrizzleAuthRepo(db), hasher: argon2Hasher }),
+    auth: createAuthService({
+      repo: createDrizzleAuthRepo(db),
+      hasher: argon2Hasher,
+      mailQueue,
+      email: {
+        from: env.AUTH_EMAIL_FROM,
+        appUrl: env.FRONTEND_URL,
+        codeTtlMinutes: env.AUTH_EMAIL_TOKEN_TTL_MINUTES,
+        resetTtlMinutes: env.AUTH_PASSWORD_RESET_TOKEN_TTL_MINUTES,
+      },
+    }),
     orgs: createOrgsService({ repo: createDrizzleOrgsRepo(db) }),
     accounts: createAccountsService({ repo: createDrizzleAccountsRepo(db) }),
     connections: createConnectionsService({

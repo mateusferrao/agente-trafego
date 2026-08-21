@@ -2,6 +2,7 @@ import { and, eq, gt, isNull } from "drizzle-orm";
 import {
   accessGrants,
   memberships,
+  oneTimeTokens,
   orgs,
   sessions,
   users,
@@ -9,12 +10,33 @@ import {
 } from "@trafego/db";
 import { orgSlug } from "../orgs/slug.js";
 
+/** Propósito de um token de uso único (6b) — casa o enum `token_purpose` do DB. */
+export type TokenPurpose = "email_verification" | "password_reset";
+
 /** Linha de usuário para autenticação (inclui o hash — nunca exposto ao cliente). */
 export interface UserRow {
   readonly id: string;
   readonly email: string;
   readonly name: string | null;
   readonly passwordHash: string;
+  /** null = email não verificado (6b) → login bloqueado com 403 + reenvia código. */
+  readonly emailVerifiedAt: Date | null;
+}
+
+export interface IssueOneTimeTokenParams {
+  readonly userId: string | null;
+  readonly email: string;
+  readonly purpose: TokenPurpose;
+  readonly tokenHash: string;
+  readonly expiresAt: Date;
+  readonly metadata?: Readonly<Record<string, unknown>> | undefined;
+}
+
+/** Token utilizável resolvido (não consumido, não expirado). */
+export interface UsableToken {
+  readonly id: string;
+  readonly userId: string | null;
+  readonly email: string;
 }
 
 /** Principal completo (user + org ativa + papel + status de beta) p/ o `MeOutput`. */
@@ -71,6 +93,14 @@ export interface AuthRepo {
   createUserWithOrg(params: CreateUserWithOrgParams): Promise<CreateUserWithOrgResult>;
   loadPrincipal(userId: string): Promise<PrincipalRow | null>;
   createSession(params: CreateSessionParams): Promise<void>;
+  /** Grava um token de uso único (verificação de email / reset). Só o hash. */
+  issueOneTimeToken(params: IssueOneTimeTokenParams): Promise<void>;
+  /** Acha um token utilizável (mesmo propósito + hash, não consumido, não expirado). */
+  findUsableToken(purpose: TokenPurpose, tokenHash: string, now: Date): Promise<UsableToken | null>;
+  /** Consome (uso único) via UPDATE condicional a `consumed_at IS NULL`. true se ganhou a corrida. */
+  consumeOneTimeToken(id: string): Promise<boolean>;
+  /** Marca o email como verificado (idempotente — só se ainda null). */
+  markEmailVerified(userId: string): Promise<void>;
   findActiveSessionByHash(tokenHash: string, now: Date): Promise<ActiveSession | null>;
   /** Expiração deslizante: marca uso e empurra `expiresAt` a cada request autenticado. */
   slideSession(tokenHash: string, lastUsedAt: Date, expiresAt: Date): Promise<void>;
@@ -87,6 +117,7 @@ export function createDrizzleAuthRepo(db: Database): AuthRepo {
           email: users.email,
           name: users.name,
           passwordHash: users.passwordHash,
+          emailVerifiedAt: users.emailVerifiedAt,
         })
         .from(users)
         .where(eq(users.email, email))
@@ -214,6 +245,50 @@ export function createDrizzleAuthRepo(db: Database): AuthRepo {
         .update(sessions)
         .set({ revokedAt: new Date() })
         .where(and(eq(sessions.tokenHash, tokenHash), isNull(sessions.revokedAt)));
+    },
+
+    async issueOneTimeToken(params) {
+      await db.insert(oneTimeTokens).values({
+        userId: params.userId,
+        email: params.email,
+        purpose: params.purpose,
+        tokenHash: params.tokenHash,
+        expiresAt: params.expiresAt,
+        metadata: params.metadata,
+      });
+    },
+
+    async findUsableToken(purpose, tokenHash, now) {
+      const [row] = await db
+        .select({ id: oneTimeTokens.id, userId: oneTimeTokens.userId, email: oneTimeTokens.email })
+        .from(oneTimeTokens)
+        .where(
+          and(
+            eq(oneTimeTokens.purpose, purpose),
+            eq(oneTimeTokens.tokenHash, tokenHash),
+            isNull(oneTimeTokens.consumedAt),
+            gt(oneTimeTokens.expiresAt, now),
+          ),
+        )
+        .limit(1);
+      return row ?? null;
+    },
+
+    async consumeOneTimeToken(id) {
+      // uso único sem check-then-write: UPDATE condicional a consumed_at IS NULL.
+      const rows = await db
+        .update(oneTimeTokens)
+        .set({ consumedAt: new Date() })
+        .where(and(eq(oneTimeTokens.id, id), isNull(oneTimeTokens.consumedAt)))
+        .returning({ id: oneTimeTokens.id });
+      return rows.length > 0;
+    },
+
+    async markEmailVerified(userId) {
+      await db
+        .update(users)
+        .set({ emailVerifiedAt: new Date() })
+        .where(and(eq(users.id, userId), isNull(users.emailVerifiedAt)));
     },
   };
 }

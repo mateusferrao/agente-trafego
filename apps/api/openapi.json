@@ -38,6 +38,47 @@
           "orgName"
         ]
       },
+      "SignupOutput": {
+        "type": "object",
+        "properties": {
+          "pendingVerification": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "pendingVerification"
+        ]
+      },
+      "EmailCodeRequestInput": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          }
+        },
+        "required": [
+          "email"
+        ]
+      },
+      "EmailCodeVerifyInput": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "code": {
+            "type": "string",
+            "minLength": 6,
+            "maxLength": 6
+          }
+        },
+        "required": [
+          "email",
+          "code"
+        ]
+      },
       "LoginInput": {
         "type": "object",
         "properties": {
@@ -3841,7 +3882,59 @@
         },
         "responses": {
           "201": {
-            "description": "sessão criada",
+            "description": "conta criada — verificação de email pendente",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignupOutput"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "senha fraca / payload inválido"
+          }
+        }
+      }
+    },
+    "/api/auth/email-code/request": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailCodeRequestInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "código reenviado (sempre 204 — anti-enumeração)"
+          }
+        }
+      }
+    },
+    "/api/auth/email-code/verify": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailCodeVerifyInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "email verificado — sessão criada",
             "content": {
               "application/json": {
                 "schema": {
@@ -3849,6 +3942,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "código inválido ou expirado"
           }
         }
       }
@@ -3880,6 +3976,9 @@
           },
           "401": {
             "description": "credenciais inválidas"
+          },
+          "403": {
+            "description": "email não verificado (código reenviado)"
           }
         }
       }
