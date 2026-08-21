@@ -1,4 +1,4 @@
-# Agente de Tráfego
+# AutoTraffic
 
 SaaS de **agentes de IA que tocam tráfego pago** (MVP: Meta Ads), atuando **via WhatsApp**. Agentes personalizáveis analisam a conta, geram recomendações e — conforme config — aplicam mudanças com guardrails.
 

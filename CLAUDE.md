@@ -1,4 +1,4 @@
-# CLAUDE.md — Agente de Tráfego (SaaS)
+# CLAUDE.md — AutoTraffic (SaaS)
 
 > Guia único de decisões de arquitetura, produto e regras de negócio. Toda decisão aqui foi batida criticamente. Antes de implementar qualquer coisa, leia a seção relevante. **Princípio-mestre:** desacoplado, genérico, extensível e configurável — trocar provider/canal/plataforma = adicionar um adapter, sem tocar no core.
 

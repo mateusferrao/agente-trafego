@@ -2,14 +2,14 @@
 name: planning-trafego-feature
 description: >-
   Use when planning a new feature, slice, screen, endpoint, entity, or port in
-  the Agente de Tráfego monorepo BEFORE writing any code — triggers on "planejar
+  the AutoTraffic monorepo BEFORE writing any code — triggers on "planejar
   feature", "planejar antes de codar", "nova tela", "novo endpoint", "novo
   slice", "novo agente", "plan a feature", "design before implementing". Not for
   writing code (use implementing-trafego-feature) or reviewing a diff (use
   reviewing-trafego-changes).
 ---
 
-# Planejar feature — Agente de Tráfego
+# Planejar feature — AutoTraffic
 
 Planeja uma mudança **antes de codar**, raciocinando **cross-stack** (backend Node/VSA + frontend Angular juntos), ancorado nas decisões do `CLAUDE.md`. Não escreve código.
 

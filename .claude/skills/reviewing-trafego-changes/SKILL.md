@@ -1,14 +1,14 @@
 ---
 name: reviewing-trafego-changes
 description: >-
-  Use when reviewing a diff, branch, or pull request in the Agente de Tráfego
+  Use when reviewing a diff, branch, or pull request in the AutoTraffic
   monorepo before merging — triggers on "revisar", "revisar mudança", "revisar
   PR", "code review", "antes de mergear", "review this diff", "review before
   merge". Not for planning (use planning-trafego-feature) or writing code (use
   implementing-trafego-feature).
 ---
 
-# Revisar mudanças — Agente de Tráfego
+# Revisar mudanças — AutoTraffic
 
 Revisa um diff antes do merge combinando qualidade geral **+** aderência aos princípios do projeto, e emite veredito.
 

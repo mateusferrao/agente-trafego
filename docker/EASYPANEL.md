@@ -33,7 +33,7 @@ Pré: repo no GitHub (`mateusferrao/agente-trafego`, branch `main`) + instância
 - **Source:** GitHub → repo `mateusferrao/agente-trafego`, Branch `main`, **Build Path** `/`. Habilitar **Auto Deploy** (deploy a cada push).
 - **Build:** builder **Nixpacks** —
   - **Install Command:** `pnpm install --frozen-lockfile`
-  - **Build Command:** `pnpm --filter web build` — **builda o Angular** (a api serve o `apps/web/dist/web/browser` via `@fastify/static`). O backend em si roda via `tsx` (sem build), mas o front precisa do build no build phase (onde as devDeps do Angular existem).
+  - **Build Command:** `pnpm api:generate && pnpm --filter web build` — **builda o Angular** (a api serve o `apps/web/dist/web/browser` via `@fastify/static`). O backend em si roda via `tsx` (sem build), mas o front precisa do build no build phase (onde as devDeps do Angular existem). `api:generate` é **obrigatório antes do `ng build`**: `apps/api/openapi.json` e `apps/web/src/app/core/api/generated` são artefatos **gitignorados** (contrato zod→OpenAPI→kubb, CLAUDE.md §4) — não existem num checkout limpo do GitHub, e `pnpm --filter web build` sozinho falha com `Cannot find module './generated'`.
   - **Start Command:** `pnpm --filter @trafego/api start` — no boot: `AUTO_MIGRATE` aplica migrations, depois serve `/api` + o SPA (fallback pra `index.html`).
   - Node ≥22 vem do `engines`; pnpm do `packageManager` (corepack); `esbuild` compila via `pnpm.onlyBuiltDependencies`.
 - **Environment** (aba Environment, sintaxe `.env`) — `DATABASE_URL`/`REDIS_URL` = os Internal URLs dos passos 2/3; o resto = valores reais:
@@ -42,8 +42,11 @@ NODE_ENV=production
 LOG_LEVEL=info
 API_PORT=3333
 WEB_ORIGIN=https://<seu-dominio>
+API_ORIGIN=https://<seu-dominio>
+FRONTEND_URL=https://<seu-dominio>
 DATABASE_URL=<internal url do postgres>
 REDIS_URL=<internal url do redis>
+AUTO_MIGRATE=true
 CREDENTIAL_MASTER_KEY=<32 bytes em base64>
 CREDENTIAL_KEY_VERSION=1
 OPENROUTER_API_KEY=<...>
@@ -61,19 +64,22 @@ ANALYSIS_MAX_CREATIVES_VISION=8
 ```
 > Bloco completo/atualizado de envs = [`../.env.example`](../.env.example) (fonte da verdade, validada no boot pelo schema zod). Colar as chaves reais como **secrets do painel**.
 (Gerar a chave: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`.)
-- **Domains:** Add Domain → host (seu domínio/subdomínio), path `/`, **Target Port `3333`** (= `API_PORT`), marcar como primary. SSL automático pelo painel.
+> **`FRONTEND_URL` é obrigatório em produção** (default do schema zod é `http://localhost:4200` — só bom pra dev local). É a partir dele que `access:grant`/reset de senha montam o link do email; deixar sem setar faz o usuário beta receber um link pra `localhost` que não abre em lugar nenhum. Precisa estar setado tanto na api (quem dispara `access:grant`) quanto no worker (quem envia o email via SES).
+- **Domains:** Add Domain → host (seu domínio/subdomínio), path `/`, **Target Port `3333`** (= `API_PORT`), marcar como primary. SSL automático pelo painel. ⚠️ O EasyPanel às vezes pré-popula o target port como `80` — se ficar assim, o app sobe saudável (sem erro no log) mas o domínio mostra "Service is not reachable", porque nada escuta em `80` dentro do container (o Fastify só escuta em `API_PORT`). Confirme que o target bate com `API_PORT`.
 - **Deploy**.
 
 ### 5. Serviço `worker`
 **New Service → App** → nome `worker`. Igual à api, com 2 diferenças:
 - **Start Command:** `pnpm --filter @trafego/worker start`
-- **Sem Domain** (worker não escuta HTTP).
-- **Environment:** as **mesmas** envs da api (colar o mesmo bloco; `API_PORT`/`WEB_ORIGIN` são inócuas aqui). Deploy.
+- **Sem Domain** (worker não escuta HTTP — não crie/deixe uma aba Domains preenchida pra ele, não tem efeito).
+- **Environment:** as **mesmas** envs da api (colar o mesmo bloco; `API_PORT`/`WEB_ORIGIN` são inócuas aqui, mas `FRONTEND_URL` **é** usada por aqui se o worker for quem envia o email). Deploy.
 
 ### 6. Migrations (automáticas) + seed (uma vez)
 **Migrations rodam sozinhas** no boot da api (`AUTO_MIGRATE=true`): a cada deploy, antes de escutar, a api aplica o SQL pendente de `packages/db/drizzle/` (migrator do `drizzle-orm`, idempotente). Não precisa de passo manual. Só a **api** migra; o worker assume o schema pronto. (Pra migrar fora do boot — CI/release — setar `AUTO_MIGRATE=false` e rodar `pnpm db:deploy` no Shell.)
 
 **Seed** (org beta — scaffolding da Fatia 0, roda **uma vez só**, não por deploy): no Shell da api → `pnpm db:seed`. Idempotente. Some quando a 1a trouxer signup real.
+
+> **Erro comum:** `type "action_source" already exists` (ou qualquer `CREATE TYPE`/`CREATE TABLE` batendo em objeto já existente) no boot da api, seguido no worker de erros como `column orgs.timezone does not exist` — schema **parcial e sem journal**. O migrator do `drizzle-orm` só decide o que falta aplicar comparando com a tabela `drizzle.__drizzle_migrations`; se o Postgres já tem objetos criados por fora dela (ex: alguém rodou `drizzle-kit push` ou SQL manual contra esse mesmo banco antes), ele tenta reaplicar tudo desde a `0000` e trava no primeiro `CREATE TYPE`. Se o banco ainda não tem dado real (setup inicial), a saída é resetar: no Shell/psql do serviço `postgres`, `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` (e `DROP SCHEMA IF EXISTS drizzle CASCADE;` se existir) — depois reiniciar `api`+`worker` (o `AUTO_MIGRATE` reconstrói do zero) e rodar `pnpm db:seed` de novo.
 
 ### 7. Fumaça (prova do fio)
 `GET https://<api>/health` responde `{status:"ok"}` (liveness) e `GET https://<api>/ready` responde

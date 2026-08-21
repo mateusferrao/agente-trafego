@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" aria-hidden="true">
+  <path
+    d="M20,0 A20,20 0 0 1 40,20 A20,20 0 0 1 20,40 H13.33 A13.33,13.33 0 0 1 0,26.67 V20 A20,20 0 0 1 20,0 Z"
+    fill="#e04b35"
+    transform="rotate(-8 32 32) translate(12 12)"
+  />
+  <path
+    d="M5,0 H20 V9 A5,5 0 0 1 15,14 H0 V5 A5,5 0 0 1 5,0 Z"
+    fill="#047857"
+    transform="rotate(-20 28 15) translate(18 8)"
+  />
+</svg>

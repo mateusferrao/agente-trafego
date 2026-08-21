@@ -1,4 +1,4 @@
-# DESIGN — Agente de Tráfego (IA, layout, linguagem visual)
+# DESIGN — AutoTraffic (IA, layout, linguagem visual)
 
 Fonte da verdade de **design/UX**. Baseado nos padrões reais da plataforma **Automato** (`automato-web`) — reuso máximo, coerência total. Decisões de produto/arquitetura = [`../CLAUDE.md`](../CLAUDE.md). Construção = [`ROADMAP.md`](ROADMAP.md).
 

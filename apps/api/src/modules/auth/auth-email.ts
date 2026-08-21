@@ -1,6 +1,6 @@
 import type { EmailMessage } from "@trafego/shared/ports";
 
-const APP_NAME = "Agente de Tráfego";
+const APP_NAME = "AutoTraffic";
 
 /** Escapa HTML (defesa contra injeção no corpo do email). Puro. */
 export function escapeHtml(value: string): string {
