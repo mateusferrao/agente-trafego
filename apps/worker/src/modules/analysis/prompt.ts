@@ -50,12 +50,34 @@ const MISMATCH_NOTE =
   "como sinal de qualidade; 'none' = sem conversão, julgue por CPC/CPM. Nunca trate custo de " +
   "proxy barato como sucesso de negócio.";
 
+/** Tiers + sinais + elegibilidade (Fatia 6c) — como o LLM deve ler e agir. */
+const QUALITY_NOTE =
+  "Cada entidade pode trazer 'tier' (winner/performer/underperformer/zombie), 'healthSignals' " +
+  "(creative_fatigue = fadiga de criativo; audience_saturation = público saturado; low_volume = " +
+  "pouco dado) e 'eligibility' (hasSignificance, inLearning). Aja assim: proteja os WINNERS (não " +
+  "mexa no que vai bem), priorize PAUSAR os ZOMBIES (gasto sem conversão = desperdício), conserte os " +
+  "UNDERPERFORMERS. NUNCA recomende ESCALAR (aumentar orçamento / reativar) uma entidade sem " +
+  "hasSignificance ou em inLearning — nesse caso recomende investigar ou aguardar mais dados.";
+
+/** Diagnóstico por padrão de métrica (causa provável, não só sintoma) — squad. */
+const DIAGNOSIS_NOTE =
+  "Ao explicar um problema, aponte a CAUSA provável pelo padrão das métricas: CTR baixo → gancho/" +
+  "criativo fraco ou segmentação errada; CTR ok mas pouca conversa/conversão → página/oferta ou " +
+  "qualificação do lead; conversão ok mas CPA alto → lance/orçamento ou concorrência; alcance baixo " +
+  "→ público estreito ou orçamento baixo; frequência alta + CTR caindo → fadiga de criativo (renove).";
+
+/** Referência de plataforma (cold-start) — direcional, nunca a meta. */
+const BENCHMARK_NOTE =
+  "Se uma entidade trouxer 'benchmarkRef' (cold-start: conta sem meta e sem histórico), trate-o só " +
+  "como REFERÊNCIA DE MERCADO direcional — nunca como a meta do dono e nunca declare sucesso por ele. " +
+  "Sempre convide o dono a definir a meta (CPA/ROAS/custo por conversa) pra uma leitura precisa.";
+
 const jsonBlock = (label: string, value: unknown): string =>
   `${label}:\n\`\`\`json\n${JSON.stringify(value)}\n\`\`\``;
 
 /** Mensagens do ANALISTA (system = metodologia; user = brief + shape). */
 export function buildAnalysisMessages(systemPrompt: string, brief: AccountBrief): LLMMessage[] {
-  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, MISMATCH_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
+  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, MISMATCH_NOTE, QUALITY_NOTE, DIAGNOSIS_NOTE, BENCHMARK_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
   const user = [
     jsonBlock("Briefing curado da conta (analise SOMENTE com base nele)", brief),
     "",
@@ -90,7 +112,7 @@ export function buildCampaignMessages(
   visionByAdId: ReadonlyMap<string, readonly CreativeVisionResult[]>,
   accountContext: { readonly currency: string; readonly window: string; readonly businessGoal?: string },
 ): LLMMessage[] {
-  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, MISMATCH_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
+  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, MISMATCH_NOTE, QUALITY_NOTE, DIAGNOSIS_NOTE, BENCHMARK_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
   const vision = unit.adsets
     .flatMap((g) => g.notableAds.map((a) => a.id))
     .map((adId) => ({ adId, vision: visionByAdId.get(adId) ?? [] }))
@@ -131,6 +153,9 @@ export function buildSynthesisMessages(
     GROUNDING_RULE,
     FUNNEL_NOTE,
     MISMATCH_NOTE,
+    QUALITY_NOTE,
+    DIAGNOSIS_NOTE,
+    BENCHMARK_NOTE,
     FINDINGS_METRIC_INSTRUCTION,
   ].join("\n\n");
   const user = [

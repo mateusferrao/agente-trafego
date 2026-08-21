@@ -1,5 +1,5 @@
-import type { AccountBrief, EntitySummary, FunnelSummary, InsightMetrics } from "@trafego/shared";
-import type { AnalysisFinding, AnalysisOutput } from "@trafego/shared";
+import type { AccountBrief, DecisionEligibility, EntitySummary, FunnelSummary, InsightMetrics } from "@trafego/shared";
+import type { AnalysisFinding, AnalysisOutput, RecommendationActionType } from "@trafego/shared";
 
 /**
  * Guards determinísticos sobre a saída do LLM (§ princípio-guia: rede que não
@@ -85,6 +85,50 @@ export function dropUnsupportedFindings(output: AnalysisOutput, brief: AccountBr
   const known = collectBriefNumbers(brief);
   const findings = output.findings.filter((f) => findingIssue(f, known) === null);
   return { ...output, findings };
+}
+
+// ─── Guard de significância (Fatia 6c) ────────────────────────────────────
+// Veto determinístico do squad ("never scale without significance / in learning
+// phase"): NÃO manda escalar/reativar sem base estatística. Ações defensivas
+// (pausar/reduzir) nunca são barradas — reduzir risco é sempre seguro.
+
+/** Ações que ADICIONAM investimento/exposição — só com base estatística. */
+const SCALE_ACTIONS: ReadonlySet<RecommendationActionType> = new Set(["increase_budget", "resume"]);
+
+/** Constrói o mapa `externalId → eligibility` a partir dos segmentos do brief. */
+export function eligibilityByEntity(brief: AccountBrief): Map<string, DecisionEligibility> {
+  const map = new Map<string, DecisionEligibility>();
+  for (const level of [brief.segments.campaigns, brief.segments.adsets, brief.segments.ads]) {
+    for (const e of level) if (e.eligibility) map.set(e.id, e.eligibility);
+  }
+  return map;
+}
+
+/**
+ * Rebaixa recomendações de ESCALAR (aumentar budget / reativar) → `investigate`
+ * quando a entidade-alvo não tem significância OU está em learning. Puro: não
+ * remove (o dono ainda vê o sinal), só troca a ordem de ação + anota o porquê.
+ */
+export function guardScaleWithoutSignificance(
+  output: AnalysisOutput,
+  eligibility: ReadonlyMap<string, DecisionEligibility>,
+): AnalysisOutput {
+  const recommendations = output.recommendations.map((r) => {
+    if (!SCALE_ACTIONS.has(r.actionType)) return r;
+    const id = r.targetEntity?.externalId;
+    const elig = id ? eligibility.get(id) : undefined;
+    if (!elig || (elig.hasSignificance && !elig.inLearning)) return r;
+    const why = elig.inLearning
+      ? "em aprendizado (editada há pouco)"
+      : `sem base estatística ainda (${elig.conversions} conversões)`;
+    return {
+      ...r,
+      actionType: "investigate" as RecommendationActionType,
+      rationale: `${r.rationale}\n[guard] escalar → investigar: ${why}.`,
+      budgetChangePct: null,
+    };
+  });
+  return { ...output, recommendations };
 }
 
 function addNumber(set: Set<number>, value: number): void {

@@ -21,6 +21,8 @@ import {
   creativePosterFrame,
   decideActions,
   dropUnsupportedFindings,
+  eligibilityByEntity,
+  guardScaleWithoutSignificance,
   evaluatePlaybook,
   flagUnsupportedFindings,
   entityKeyOf,
@@ -478,6 +480,8 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           temperature: ANALYSIS_TEMPERATURE,
           maxTokens: cfg.maxOutputTokens,
           reasoning: { effort: cfg.reasoningEffort },
+          // D1 (6c): emite usage_event `review` (antes a chamada não passava meta).
+          meta: { orgId: state.orgId, runId: state.runId, type: "review" },
         });
         const parsed = analysisOutputSchema.safeParse(completion.output);
         if (parsed.success) {
@@ -495,7 +499,10 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     }
 
     // drop determinístico final (hard): remove finding sem métrica / número fora do brief.
-    const final = dropUnsupportedFindings(reviewed, state.brief);
+    const dropped = dropUnsupportedFindings(reviewed, state.brief);
+    // guard de significância (6c): rebaixa escalar sem base → investigar (rede final,
+    // roda ANTES de decide_actions → vale também pro caminho autônomo 5a).
+    const final = guardScaleWithoutSignificance(dropped, eligibilityByEntity(state.brief));
     const findings: Finding[] = final.findings.map((f) => ({
       title: f.title,
       detail: f.detail,
