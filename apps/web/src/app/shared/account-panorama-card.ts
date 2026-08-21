@@ -8,7 +8,7 @@ import { NgIcon, provideIcons } from "@ng-icons/core";
 import { heroArrowPath } from "@ng-icons/heroicons/outline";
 import { UiBadge, UiButton } from "@ui";
 import type { PanoramaListOutput } from "@core/api/generated";
-import { asOfLabel, gradeTone, money, timeLabel } from "./format";
+import { asOfLabel, dateTimeLabel, gradeTone, money } from "./format";
 
 export type PanoramaCardVm = PanoramaListOutput["accounts"][number];
 
@@ -36,7 +36,7 @@ export type PanoramaCardVm = PanoramaListOutput["accounts"][number];
           <div class="flex flex-col items-end gap-0.5">
             <span appBadge [tone]="gradeTone(c.grade)" size="sm">Nota {{ c.grade }}</span>
             @if (c.gradeAsOf) {
-              <span class="text-[10px] text-muted">análise {{ timeLabel(c.gradeAsOf) }}</span>
+              <span class="text-[10px] text-muted">análise {{ dateTimeLabel(c.gradeAsOf) }}</span>
             }
           </div>
         }
@@ -79,5 +79,5 @@ export class AccountPanoramaCard {
   protected readonly money = money;
   protected readonly asOfLabel = asOfLabel;
   protected readonly gradeTone = gradeTone;
-  protected readonly timeLabel = timeLabel;
+  protected readonly dateTimeLabel = dateTimeLabel;
 }

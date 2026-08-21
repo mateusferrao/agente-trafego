@@ -20,14 +20,36 @@ export function timeLabel(iso: string): string {
 }
 
 /**
+ * Rótulo data+hora ciente de "hoje": mesmo dia → só "HH:MM"; outro dia → "dd/mm HH:MM"
+ * (+ ano se diferente). Evita "14:46" parecer hoje quando foi dias atrás.
+ */
+export function dateTimeLabel(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const time = TIME_FMT.format(d);
+  const sameDay =
+    d.getFullYear() === now.getFullYear() &&
+    d.getMonth() === now.getMonth() &&
+    d.getDate() === now.getDate();
+  if (sameDay) return time;
+  const dm = new Intl.DateTimeFormat(
+    "pt-BR",
+    d.getFullYear() === now.getFullYear()
+      ? { day: "2-digit", month: "2-digit" }
+      : { day: "2-digit", month: "2-digit", year: "2-digit" },
+  ).format(d);
+  return `${dm} ${time}`;
+}
+
+/**
  * Rótulo as-of (quando os números foram buscados da Meta pela última vez):
  * "atualizado às HH:MM" | "desatualizado · última atualização HH:MM" | "ainda não sincronizado".
  * O HH:MM é sempre o horário da última busca (não o momento em que ficou velho).
  */
 export function asOfLabel(asOf: string | null, stale: boolean): string {
   if (!asOf) return "ainda não sincronizado";
-  const t = timeLabel(asOf);
-  return stale ? `desatualizado · última atualização ${t}` : `atualizado às ${t}`;
+  const t = dateTimeLabel(asOf); // hoje = "HH:MM"; outro dia = "dd/mm HH:MM"
+  return stale ? `desatualizado · última atualização ${t}` : `atualizado ${t}`;
 }
 
 /** Data ISO "YYYY-MM-DD" → "dd/mm" (PT-BR, sem shift de fuso). */
