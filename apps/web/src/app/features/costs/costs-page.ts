@@ -228,12 +228,22 @@ function presetRange(key: string): { since: string; until: string } {
               @if (d.byAccount.length === 0) {
                 <p class="text-sm text-muted">Sem custo atribuível a contas neste período.</p>
               } @else {
-                <ul class="flex flex-col gap-2.5">
-                  @for (a of d.byAccount; track a.accountId) {
-                    <li class="flex flex-col gap-1">
+                <ul class="flex flex-col gap-1">
+                  @for (a of d.byAccount; track a.accountId; let i = $index) {
+                    <li
+                      class="flex flex-col gap-1 rounded-md p-1.5 transition"
+                      [class.bg-soft]="hoveredAcct() === i"
+                      (mouseenter)="hoveredAcct.set(i)"
+                      (mouseleave)="hoveredAcct.set(null)"
+                    >
                       <div class="flex items-baseline justify-between gap-3 text-sm">
                         <span class="truncate text-ink">{{ a.accountName ?? a.accountId }}</span>
-                        <span class="shrink-0 font-medium text-ink">{{ money(a.costUsd) }}</span>
+                        <span class="shrink-0 font-medium text-ink">
+                          {{ money(a.costUsd) }}
+                          @if (hoveredAcct() === i) {
+                            <span class="text-muted">· {{ acctSharePct(a.costUsd) }}%</span>
+                          }
+                        </span>
                       </div>
                       <div class="h-1.5 w-full overflow-hidden rounded-full bg-soft">
                         <div class="h-full rounded-full bg-accent" [style.width.%]="acctPct(a.costUsd)"></div>
@@ -253,7 +263,7 @@ function presetRange(key: string): { since: string; until: string } {
               <div class="flex items-center gap-5">
                 <svg viewBox="0 0 42 42" class="h-28 w-28 shrink-0" role="img" aria-label="Custo por tipo">
                   <g transform="rotate(-90 21 21)">
-                    @for (s of typeSlices(); track s.label) {
+                    @for (s of typeSlices(); track s.label; let i = $index) {
                       <circle
                         cx="21"
                         cy="21"
@@ -261,16 +271,25 @@ function presetRange(key: string): { since: string; until: string } {
                         fill="transparent"
                         stroke-width="8"
                         pathLength="100"
+                        class="cursor-pointer transition-opacity"
+                        [attr.opacity]="dimSlice(i) ? 0.35 : 1"
                         [attr.stroke]="s.color"
                         [attr.stroke-dasharray]="s.len + ' ' + (100 - s.len)"
                         [attr.stroke-dashoffset]="-s.offset"
+                        (mouseenter)="hoveredType.set(i)"
+                        (mouseleave)="hoveredType.set(null)"
                       />
                     }
                   </g>
                 </svg>
-                <ul class="flex min-w-0 flex-1 flex-col gap-1.5">
-                  @for (s of typeSlices(); track s.label) {
-                    <li class="flex items-center gap-2 text-xs">
+                <ul class="flex min-w-0 flex-1 flex-col gap-0.5">
+                  @for (s of typeSlices(); track s.label; let i = $index) {
+                    <li
+                      class="flex items-center gap-2 rounded p-1 text-xs transition"
+                      [class.bg-soft]="hoveredType() === i"
+                      (mouseenter)="hoveredType.set(i)"
+                      (mouseleave)="hoveredType.set(null)"
+                    >
                       <span class="size-2.5 shrink-0 rounded-full" [style.background]="s.color"></span>
                       <span class="truncate text-ink">{{ s.label }}</span>
                       <span class="ml-auto shrink-0 text-muted">{{ s.pct }}% · {{ money(s.cost) }}</span>
@@ -394,11 +413,25 @@ export class CostsPage {
   }
 
   // ─── por conta (barras) ───────────────────────────────────────────────
+  protected readonly hoveredAcct = signal<number | null>(null);
   private acctMax(): number {
     return Math.max(...(this.data()?.byAccount ?? []).map((a) => a.costUsd), 0.000001);
   }
   protected acctPct(cost: number): number {
     return Math.max(2, (cost / this.acctMax()) * 100); // piso 2% p/ barra visível
+  }
+  /** % da conta sobre o total atribuído a contas (revelado no hover). */
+  protected acctSharePct(cost: number): number {
+    const total = (this.data()?.byAccount ?? []).reduce((s, a) => s + a.costUsd, 0) || 1;
+    return Math.round((cost / total) * 100);
+  }
+
+  // ─── por tipo (donut) hover ───────────────────────────────────────────
+  protected readonly hoveredType = signal<number | null>(null);
+  /** Esmaece as fatias não-focadas quando há hover (destaca a focada). */
+  protected dimSlice(i: number): boolean {
+    const h = this.hoveredType();
+    return h !== null && h !== i;
   }
 
   // ─── por tipo (donut + legenda) ───────────────────────────────────────
