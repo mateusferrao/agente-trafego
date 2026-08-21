@@ -54,6 +54,21 @@ describe("createVisionResolver", () => {
     expect(inserts).toHaveLength(1);
   });
 
+  it("mapeia body + proofStrength; descarta proofStrength inválido", async () => {
+    const raw = { ...RESULT, body: "antes e depois + autoridade médica", proofStrength: "strong" };
+    const { db } = fakeDb(false);
+    const llm = { complete: vi.fn(), completeStructured: vi.fn(async () => ({ output: raw, usage: {} })) } as unknown as LLMProviderPort;
+    const resolver = createVisionResolver({ db: db as never, llm, model: "m", analyzerVersion: 3, logger });
+    const out = await resolver.resolve(input());
+    expect(out).toMatchObject({ body: "antes e depois + autoridade médica", proofStrength: "strong" });
+
+    const { db: db2 } = fakeDb(false);
+    const llm2 = { complete: vi.fn(), completeStructured: vi.fn(async () => ({ output: { ...RESULT, proofStrength: "gigante" }, usage: {} })) } as unknown as LLMProviderPort;
+    const resolver2 = createVisionResolver({ db: db2 as never, llm: llm2, model: "m", analyzerVersion: 3, logger });
+    const out2 = await resolver2.resolve(input());
+    expect(out2!.proofStrength).toBeUndefined();
+  });
+
   it("erro do LLM (borda) degrada a null (não quebra a análise)", async () => {
     const { db } = fakeDb(false);
     const llm = {

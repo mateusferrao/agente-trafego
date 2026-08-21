@@ -558,11 +558,18 @@ export interface CreativeVisionResult {
   readonly format?: string;
   /** chamada pra ação percebida — decomposição (6c). */
   readonly cta?: string;
+  /** corpo/argumento central da mensagem (§Bloco 2) — o "meio" entre gancho e CTA. */
+  readonly body?: string;
+  /** força de prova percebida (§Bloco 2): antes/depois, autoridade médica, depoimento. */
+  readonly proofStrength?: CreativeProofStrength;
   readonly strengths: readonly string[];
   readonly weaknesses: readonly string[];
   /** qualidade geral 0-10 (heurística do modelo). */
   readonly score?: number;
 }
+
+/** Força de prova de um criativo (§Bloco 2) — descritivo; não altera tier/score. */
+export type CreativeProofStrength = "weak" | "medium" | "strong";
 
 // ─── Metering ────────────────────────────────────────────────────────────
 export interface UsageEvent {
