@@ -26,9 +26,22 @@ export function authSessionInterceptor(
       if (shouldRedirect(req, error, router)) {
         void authStore.logout().subscribe({ error: () => undefined });
         void router.navigate(['/login'], { queryParams: { returnTo: router.url } });
+      } else if (isAccessPending(req, error)) {
+        // gate de beta (6b): acesso não liberado → muro (sem deslogar).
+        void router.navigateByUrl('/acesso-pendente');
       }
       return throwError(() => error);
     }),
+  );
+}
+
+/** 403 com code `access_pending` numa chamada de API (gate de beta). */
+function isAccessPending(req: HttpRequest<unknown>, error: unknown): boolean {
+  return (
+    error instanceof HttpErrorResponse &&
+    error.status === 403 &&
+    req.url.startsWith(environment.apiBaseUrl) &&
+    (error.error as { code?: string } | null)?.code === 'access_pending'
   );
 }
 
@@ -43,5 +56,12 @@ function shouldRedirect(req: HttpRequest<unknown>, error: unknown, router: Route
 }
 
 function isOnAuthRoute(url: string): boolean {
-  return url.startsWith('/login') || url.startsWith('/signup');
+  return (
+    url.startsWith('/login') ||
+    url.startsWith('/signup') ||
+    url.startsWith('/verify-email') ||
+    url.startsWith('/forgot-password') ||
+    url.startsWith('/reset-password') ||
+    url.startsWith('/acesso-pendente')
+  );
 }

@@ -1,5 +1,5 @@
 import { Routes } from '@angular/router';
-import { authGuard, guestOnlyGuard } from '@core/auth';
+import { activeAccessGuard, authGuard, guestOnlyGuard, pendingAccessGuard } from '@core/auth';
 
 // Árvore de rotas top-level. Tudo lazy (standalone loadComponent) para o bundle
 // inicial enxuto. O AppShell (path '') vem PRIMEIRO para que '/' resolva no shell,
@@ -12,7 +12,9 @@ export const routes: Routes = [
   {
     path: '',
     canActivate: [authGuard],
-    canActivateChild: [authGuard],
+    // authGuard = autenticado; activeAccessGuard = acesso liberado (gate de beta, 6b) →
+    // usuário verificado mas pendente cai no muro /acesso-pendente.
+    canActivateChild: [authGuard, activeAccessGuard],
     loadComponent: () => import('./layouts/app-shell/app-shell').then((m) => m.AppShell),
     children: [
       { path: '', pathMatch: 'full', redirectTo: 'dashboard' },
@@ -103,7 +105,34 @@ export const routes: Routes = [
         data: { mode: 'signup' },
         loadComponent: () => import('./features/login/login-page').then((m) => m.LoginPage),
       },
+      {
+        path: 'verify-email',
+        title: 'Confirmar email — AutoTraffic',
+        loadComponent: () =>
+          import('./features/verify-email/verify-email-page').then((m) => m.VerifyEmailPage),
+      },
+      {
+        path: 'forgot-password',
+        title: 'Redefinir senha — AutoTraffic',
+        loadComponent: () =>
+          import('./features/forgot-password/forgot-password-page').then((m) => m.ForgotPasswordPage),
+      },
+      {
+        path: 'reset-password',
+        title: 'Nova senha — AutoTraffic',
+        loadComponent: () =>
+          import('./features/reset-password/reset-password-page').then((m) => m.ResetPasswordPage),
+      },
     ],
+  },
+  {
+    // Muro do gate de beta (6b): logado + verificado, mas acesso ainda não liberado.
+    // Fora do shell (senão activeAccessGuard entraria em loop) e fora do guestOnly.
+    path: 'acesso-pendente',
+    title: 'Acesso em análise — AutoTraffic',
+    canActivate: [authGuard, pendingAccessGuard],
+    loadComponent: () =>
+      import('./features/pending-access/pending-access-page').then((m) => m.PendingAccessPage),
   },
   { path: '**', redirectTo: '' },
 ];

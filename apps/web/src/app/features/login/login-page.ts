@@ -100,6 +100,14 @@ const ORG_NAME_MIN_LENGTH = 2;
         </button>
       </form>
 
+      @if (!isSignup()) {
+        <p class="mt-3 text-center text-sm">
+          <a routerLink="/forgot-password" class="font-medium text-accent-strong hover:underline">
+            Esqueci minha senha
+          </a>
+        </p>
+      }
+
       <p class="mt-6 text-center text-sm text-muted">
         {{ switchPrompt() }}
         <a [routerLink]="switchRoute()" class="font-semibold text-accent-strong hover:underline">
@@ -210,29 +218,61 @@ export class LoginPage {
 
     this.isSubmitting.set(true);
     const value = this.form.getRawValue();
+    const email = value.email.trim();
 
-    const request$ = this.isSignup()
-      ? this.authStore.signup({
+    if (this.isSignup()) {
+      this.authStore
+        .signup({
           name: value.name.trim(),
-          email: value.email.trim(),
+          email,
           password: value.password,
           orgName: value.orgName.trim(),
         } satisfies SignupInput)
-      : this.authStore.login({
-          email: value.email.trim(),
-          password: value.password,
-        } satisfies LoginInput);
+        .subscribe({
+          // Signup (6b) não autentica: manda pra tela de código de verificação.
+          next: () => {
+            this.isSubmitting.set(false);
+            void this.router.navigate(['/verify-email'], {
+              queryParams: { email, reason: 'signup' },
+            });
+          },
+          error: (error: unknown) => {
+            this.isSubmitting.set(false);
+            this.formError.set(this.friendlyMessage(error));
+          },
+        });
+      return;
+    }
 
-    request$.subscribe({
+    this.authStore.login({ email, password: value.password } satisfies LoginInput).subscribe({
       next: () => {
         this.isSubmitting.set(false);
         void this.router.navigateByUrl(this.resolveReturnPath());
       },
       error: (error: unknown) => {
         this.isSubmitting.set(false);
+        // Email não verificado → tela de código (o backend já reenviou).
+        if (this.errorCode(error) === 'auth_email_not_verified') {
+          void this.router.navigate(['/verify-email'], { queryParams: { email, reason: 'verify' } });
+          return;
+        }
+        // Acesso ainda não liberado (gate de beta) → muro.
+        if (this.errorCode(error) === 'access_pending') {
+          void this.router.navigateByUrl('/acesso-pendente');
+          return;
+        }
         this.formError.set(this.friendlyMessage(error));
       },
     });
+  }
+
+  /** Código de erro tipado do backend (AppError.code), se houver. */
+  private errorCode(error: unknown): string | null {
+    if (error instanceof HttpErrorResponse) {
+      const body = error.error as { code?: string } | null;
+      return body?.code ?? null;
+    }
+    return null;
   }
 
   private resolveReturnPath(): string {

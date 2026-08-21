@@ -1,7 +1,16 @@
 import { computed, inject, Injectable, signal } from '@angular/core';
 import { catchError, finalize, map, of, tap } from 'rxjs';
 import type { Observable } from 'rxjs';
-import type { LoginInput, MeOutput, SignupInput } from '../api';
+import type {
+  EmailCodeRequestInput,
+  EmailCodeVerifyInput,
+  ForgotPasswordInput,
+  LoginInput,
+  MeOutput,
+  ResetPasswordInput,
+  SignupInput,
+  SignupOutput,
+} from '../api';
 import { AuthApiService } from './auth-api.service';
 
 /**
@@ -60,12 +69,31 @@ export class AuthStore {
     );
   }
 
-  signup(body: SignupInput): Observable<MeOutput> {
+  /** Signup (6b): NÃO cria sessão — retorna pendingVerification (front vai à tela de código). */
+  signup(body: SignupInput): Observable<SignupOutput> {
     this.loadingSignal.set(true);
-    return this.authApi.signup(body).pipe(
+    return this.authApi.signup(body).pipe(finalize(() => this.loadingSignal.set(false)));
+  }
+
+  /** Verifica o código de email → cria a sessão (aplica no estado local). */
+  verifyEmailCode(body: EmailCodeVerifyInput): Observable<MeOutput> {
+    this.loadingSignal.set(true);
+    return this.authApi.verifyEmailCode(body).pipe(
       tap((me) => this.applySession(me)),
       finalize(() => this.loadingSignal.set(false)),
     );
+  }
+
+  requestEmailCode(body: EmailCodeRequestInput): Observable<void> {
+    return this.authApi.requestEmailCode(body);
+  }
+
+  forgotPassword(body: ForgotPasswordInput): Observable<void> {
+    return this.authApi.forgotPassword(body);
+  }
+
+  resetPassword(body: ResetPasswordInput): Observable<void> {
+    return this.authApi.resetPassword(body);
   }
 
   logout(): Observable<void> {

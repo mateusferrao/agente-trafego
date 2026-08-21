@@ -14,6 +14,33 @@ export const authGuard: CanActivateFn = (_route, state) => {
   );
 };
 
+/**
+ * Gate de beta (6b): usuário autenticado mas sem acesso `active` → muro
+ * `/acesso-pendente`. Aplicado ao shell (canActivateChild). Assume sessão já
+ * resolvida (roda após authGuard); lê o accessStatus do `/me`.
+ */
+export const activeAccessGuard: CanActivateFn = () => {
+  const authStore = inject(AuthStore);
+  const router = inject(Router);
+
+  return authStore.ensureSession().pipe(
+    map(() => (authStore.accessStatus() === 'active' ? true : router.parseUrl('/acesso-pendente'))),
+  );
+};
+
+/** Muro de acesso pendente: só faz sentido logado + não-ativo. Ativo → shell. */
+export const pendingAccessGuard: CanActivateFn = () => {
+  const authStore = inject(AuthStore);
+  const router = inject(Router);
+
+  return authStore.ensureSession().pipe(
+    map((isAuthenticated) => {
+      if (!isAuthenticated) return router.parseUrl('/login');
+      return authStore.accessStatus() === 'active' ? router.parseUrl('/') : true;
+    }),
+  );
+};
+
 /** Rota só-para-visitante (login/signup): usuário logado → shell (ou `returnTo`). */
 export const guestOnlyGuard: CanActivateFn = (route) => {
   const authStore = inject(AuthStore);
