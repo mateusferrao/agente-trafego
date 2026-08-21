@@ -14,6 +14,7 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { agentRuns, agentToolCalls, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
+import { createAnalysisRepo } from "../../modules/analysis/repo.js";
 import type { ApprovalPort } from "@trafego/shared/ports";
 import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY } from "@trafego/shared";
 import type { EntityLevel, InsightMetrics, OrgId, UnitAnalysis } from "@trafego/shared";
@@ -39,6 +40,8 @@ const ASOF_NONE = "sem dados";
 /** Janela e teto do "desfaz isso" (ações recentes revertíveis). */
 const RECENT_ACTIONS_DAYS = 7;
 const RECENT_ACTIONS_LIMIT = 10;
+/** Janela default da tendência de gasto por entidade. */
+const ENTITY_TREND_DAYS = 14;
 
 // ─── Formas de saída (curadas p/ o modelo) ──────────────────────────────────
 interface NoData {
@@ -311,6 +314,117 @@ export async function findRecentActionsData(
   return items;
 }
 
+/**
+ * Gasto da conta em DUAS janelas contíguas de N dias (atual vs anterior) + variação %.
+ * Base do "como foi essa semana vs a passada". Só gasto (sem CPA/ROAS derivado).
+ */
+export async function comparePeriodsData(
+  db: Database,
+  adAccountId: string,
+  orgId: string,
+  periodDays: number,
+  now: () => Date = () => new Date(),
+): Promise<{ periodDays: number; current: number; previous: number; deltaPct: number | null; hasData: boolean }> {
+  const curSince = formatDate(daysAgo(now(), periodDays));
+  const prevSince = formatDate(daysAgo(now(), periodDays * 2));
+  const rows = await db
+    .select({ date: insightsSnapshots.date, metricsJson: insightsSnapshots.metricsJson, level: insightsSnapshots.entityLevel })
+    .from(insightsSnapshots)
+    .where(
+      and(
+        eq(insightsSnapshots.orgId, orgId),
+        eq(insightsSnapshots.adAccountId, adAccountId),
+        gte(insightsSnapshots.date, prevSince),
+      ),
+    );
+  const level = rows.some((r) => r.level === ACCOUNT_LEVEL) ? ACCOUNT_LEVEL : CAMPAIGN_LEVEL;
+  let current = 0;
+  let previous = 0;
+  for (const r of rows) {
+    if (r.level !== level) continue;
+    if (r.date >= curSince) current += spendOf(r.metricsJson);
+    else previous += spendOf(r.metricsJson);
+  }
+  const deltaPct = previous > 0 ? Math.round(((current - previous) / previous) * 100) : null;
+  return { periodDays, current, previous, deltaPct, hasData: rows.length > 0 };
+}
+
+/** Tendência diária de gasto de UMA campanha (por nome) — "como o gasto da X evoluiu". */
+export async function getEntityDetailData(
+  db: Database,
+  agentId: string,
+  adAccountId: string,
+  orgId: string,
+  name: string,
+  periodDays = ENTITY_TREND_DAYS,
+): Promise<
+  | { name: string | null; id: string; trend: { date: string; spend: number }[]; totalSpend: number; flags: readonly string[] }
+  | NoData
+  | AmbiguousCampaign
+> {
+  const analysis = await getCampaignAnalysisData(db, agentId, name);
+  if ("hasData" in analysis) return analysis; // NoData | AmbiguousCampaign
+  const since = formatDate(daysAgo(new Date(), periodDays));
+  const rows = await db
+    .select({ date: insightsSnapshots.date, metricsJson: insightsSnapshots.metricsJson })
+    .from(insightsSnapshots)
+    .where(
+      and(
+        eq(insightsSnapshots.orgId, orgId),
+        eq(insightsSnapshots.adAccountId, adAccountId),
+        eq(insightsSnapshots.entityLevel, CAMPAIGN_LEVEL),
+        eq(insightsSnapshots.entityId, analysis.id),
+        gte(insightsSnapshots.date, since),
+      ),
+    )
+    .orderBy(insightsSnapshots.date);
+  const trend = rows.map((r) => ({ date: r.date, spend: spendOf(r.metricsJson) }));
+  const totalSpend = trend.reduce((s, t) => s + t.spend, 0);
+  return { name: analysis.name, id: analysis.id, trend, totalSpend, flags: analysis.flags };
+}
+
+/** Config atual do agente (só leitura) — "como você tá configurado?". Mudar = pelo site. */
+export async function getAgentConfigData(
+  db: Database,
+  orgId: string,
+  agentId: string,
+): Promise<{ goals: unknown; autonomy: unknown; guardrails: unknown; archetype: string } | NoData> {
+  const ctx = await createAnalysisRepo(db).loadAgentContext(orgId, agentId);
+  if (!ctx) return { hasData: false, note: "não achei a configuração deste agente" };
+  const g = ctx.guardrailConfig;
+  return {
+    archetype: ctx.archetype,
+    goals: ctx.goals,
+    autonomy: ctx.autonomyPolicy,
+    guardrails: {
+      allowedActions: g.allowedActions,
+      maxBudgetChangePct: g.maxBudgetChangePct,
+      maxEntitiesPerDay: g.maxEntitiesPerDay,
+      dryRun: g.dryRun,
+      killSwitch: g.killSwitch,
+    },
+  };
+}
+
+/** Explica uma recomendação da última análise (por trecho do título) — motivo + risco. */
+export async function explainRecommendationData(
+  db: Database,
+  agentId: string,
+  orgId: string,
+  title: string,
+): Promise<{ title: string; rationale: string | null; riskLevel: string } | NoData> {
+  const run = await latestFinishedRun(db, agentId, orgId);
+  if (!run) return { hasData: false, note: "sem análise concluída ainda" };
+  const recs = await db
+    .select({ title: recommendations.title, rationale: recommendations.rationale, riskLevel: recommendations.riskLevel })
+    .from(recommendations)
+    .where(and(eq(recommendations.runId, run.id), eq(recommendations.orgId, orgId)));
+  const needle = title.trim().toLowerCase();
+  const match = recs.find((r) => r.title.toLowerCase().includes(needle)) ?? (recs.length === 1 ? recs[0] : undefined);
+  if (!match) return { hasData: false, note: `não achei uma recomendação com "${title}"` };
+  return { title: match.title, rationale: match.rationale ?? null, riskLevel: match.riskLevel };
+}
+
 // ─── Helpers internos ────────────────────────────────────────────────────────
 
 /** Último run finalizado (succeeded/failed) do agente, org-scoped. */
@@ -458,5 +572,64 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     },
   );
 
-  return [getAccountStatus, getMetrics, getCampaignAnalysis, findRecentActions, listRecommendations, listPending];
+  const comparePeriods = tool(
+    async ({ periodDays }: { periodDays: number }) => {
+      logger.debug({ adAccountId: ctx.adAccountId, periodDays }, "tool:compare_periods");
+      return asString(await comparePeriodsData(db, ctx.adAccountId, ctx.orgId, periodDays));
+    },
+    {
+      name: "compare_periods",
+      description: "Compara o gasto da conta em duas janelas contíguas (esta vs a anterior de N dias) + variação %.",
+      schema: z.object({ periodDays: z.number().int().positive().default(DEFAULT_METRICS_PERIOD_DAYS) }),
+    },
+  );
+
+  const getEntityDetail = tool(
+    async ({ name }: { name: string }) => {
+      logger.debug({ agentId: ctx.agentId, name }, "tool:get_entity_detail");
+      return asString(await getEntityDetailData(db, ctx.agentId, ctx.adAccountId, ctx.orgId, name));
+    },
+    {
+      name: "get_entity_detail",
+      description: "Detalha uma campanha pelo nome: tendência diária de gasto + flags. Use para 'como o gasto da X evoluiu'.",
+      schema: z.object({ name: z.string() }),
+    },
+  );
+
+  const getAgentConfig = tool(
+    async () => {
+      logger.debug({ agentId: ctx.agentId }, "tool:get_agent_config");
+      return asString(await getAgentConfigData(db, ctx.orgId, ctx.agentId));
+    },
+    {
+      name: "get_agent_config",
+      description: "Como o agente está configurado hoje (objetivo/meta, autonomia, guardrails). Só leitura — mudar é pelo site.",
+      schema: z.object({}),
+    },
+  );
+
+  const explainRecommendation = tool(
+    async ({ title }: { title: string }) => {
+      logger.debug({ agentId: ctx.agentId, title }, "tool:explain_recommendation");
+      return asString(await explainRecommendationData(db, ctx.agentId, ctx.orgId, title));
+    },
+    {
+      name: "explain_recommendation",
+      description: "Explica uma recomendação da última análise (por trecho do título): motivo e nível de risco.",
+      schema: z.object({ title: z.string() }),
+    },
+  );
+
+  return [
+    getAccountStatus,
+    getMetrics,
+    getCampaignAnalysis,
+    getEntityDetail,
+    comparePeriods,
+    findRecentActions,
+    listRecommendations,
+    listPending,
+    getAgentConfig,
+    explainRecommendation,
+  ];
 }

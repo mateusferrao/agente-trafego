@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { agentRuns, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
 import type { Approval, ApprovalPort } from "@trafego/shared/ports";
 import {
+  comparePeriodsData,
   getAccountStatusData,
   getCampaignAnalysisData,
   getMetricsData,
@@ -244,5 +245,26 @@ describe("listPendingData", () => {
   it("sem pendentes → hasData:false", async () => {
     const res = await listPendingData(fakeApprovals([]), ORG);
     expect(res).toMatchObject({ hasData: false });
+  });
+});
+
+describe("comparePeriodsData", () => {
+  it("separa gasto da janela atual vs anterior e calcula a variação %", async () => {
+    const db = fakeDb(
+      new Map<unknown, unknown[]>([
+        [
+          insightsSnapshots,
+          [
+            { date: "2026-08-20", level: "account", metricsJson: { metrics: { spend: 100 } } },
+            { date: "2026-08-10", level: "account", metricsJson: { metrics: { spend: 50 } } },
+          ],
+        ],
+      ]),
+    );
+    const now = () => new Date("2026-08-21T00:00:00.000Z");
+    const res = await comparePeriodsData(db, ACCOUNT, ORG, 7, now);
+    expect(res.current).toBe(100);
+    expect(res.previous).toBe(50);
+    expect(res.deltaPct).toBe(100);
   });
 });
