@@ -112,7 +112,7 @@ Schema em `packages/db/src/schema`. Grupos:
 - **Dados Meta:** `insights_snapshots(ad_account_id, entity_level, entity_id, date, metrics_json)` — série temporal (retenção ~90d por env).
 - **Execução:** `agent_runs(trigger, status, config_snapshot, token_usage, cost_snapshot, trace_id)`, `agent_run_steps`, `agent_tool_calls(idempotency_key, risk, args, result, before_state)`, `approvals(status, payload_actions, run_id, contact_id, expires_at)`, `recommendations(title, rationale, proposed_action, status)`, `recommendation_feedback(vote, status, outcome)`.
 - **Conversa:** `conversations`, `messages(direction, body, meta)`.
-- **Metering:** `usage_events(type, payload_json, provider, model, input_tokens, output_tokens, cost)`.
+- **Metering:** `usage_events(type, payload_json, provider, model, input_tokens, output_tokens, cost, ad_account_id)` — `ad_account_id` (6c) atribui custo direto à conta (chat = conta em foco; runs via backfill/join).
 - **Audit:** `audit_log(actor, action, target, before, after)`.
 - **Criação de campanhas (roadmap):** `creative_assets` (biblioteca: origin `reuse|upload`, storage_ref, meta_image_hash/video_id, status), `campaign_drafts` (estrutura proposta: objetivo/budget/targeting/placement + criativos + copy + status `proposed|approved|created`), `ad_pages` (Page do cliente p/ `object_story_spec`). Aprovação de draft = `approvals` com payload de rascunho.
 
@@ -129,6 +129,8 @@ Schema em `packages/db/src/schema`. Grupos:
 - **`whatsapp-conversation` (ReAct + tools, 5b corte 2)** — chat pelo WhatsApp com **checkpointer Postgres** (thread por conversa). Entregue: **leitura** (tools sobre nosso DB curado — status/métricas/campanha/recomendações/pendentes), **"analisa agora"** (dispara run `trigger=conversation` + push do resultado de volta) e **aprovação conversacional** (approve/reject por id; referência inequívoca aplica direto — o nudge foi o eco; ambíguo → pergunta §8; apply-service re-checa fresco e empurra o desfecho). Inbound com **debounce** (coalesce picadas) e **voz = agente em contexto** (concierge neutro se a org tem N contas). **Escrita LIVRE do zero** ("pausa a campanha X" sem pendente) = **5c**.
 
 **Qualidade da análise = Analista→Revisor + guards determinísticos (3a-2):** o `llm_analyze` (analista) é seguido de `review_analysis` — **pré-check determinístico** (findings sem `metricRefs` / número citado ausente do brief) → **`reviewPasses`** (lista de revisores; default 1; refina/corta, **nunca inventa**) → **drop determinístico final** + `actionType→riskLevel`. Revisor falhou → cai pra saída do analista + nota parcial (§7 degradação graciosa). A **lista de passes** é a costura p/ **Fatia 8** (painéis de revisores, map-reduce por entidade, redator, validador de ação) — crescer = registrar mais passes, sem reescrever o grafo. Config do pipeline (`model`/`reviewEnabled`/`topN`/`maxOutputTokens`) é **por-agente** (`agents.model_config`, fallback env); a UI de edição = Fatia 4.
+
+**Camada de qualidade determinística (6c, `packages/core`):** sobre o dado curado, pura e testável — **benchmarks** de cold-start (referência de plataforma só quando sem meta E sem histórico, rotulada, nunca declara sucesso), **tiers** relativos (winner/performer/underperformer/**zombie**), **sinais de saúde** (fadiga/saturação/baixo-volume) e **elegibilidade** (significância = conversões de negócio OU cliques + baseline; learning = entidade nova). Alimenta prompt (árvore de diagnóstico por padrão de métrica) + UI (tag de tier em PT) + o **guard de significância** (`guardScaleWithoutSignificance` no `review_analysis`, **antes** de `decide_actions` → vale no caminho autônomo): rebaixa escalar/reativar sem base → `investigate`. Comparador nº1 é sempre a **meta do dono**; nº2/3 histórico/relativo da conta; benchmark é nº4.
 
 **Origem das ações = híbrido, autonomia por origem:** `playbook` (regras puras) gera ações-base + `LLM` propõe ações adicionais (structured output, mesmo tipo `Action`). Merge → dedupe → **guardrail** → autonomia decidida **por origem** (ex: auto-aplica playbook, pede OK no LLM — configurável). Guardrail é rede sobre os dois.
 
@@ -170,7 +172,7 @@ Schema em `packages/db/src/schema`. Grupos:
 - Onboarding: **walkthrough guiado + concierge fallback**. Cola token → validamos → **listamos ad accounts** (`GET /me/adaccounts`) → cliente escolhe.
 - Escopos: `ads_read` (insights/criativos), `ads_management` (mutação), `business_management` (resolver assets).
 - **Onboarding é token-only:** valida + lista com o token colado (`GET /me/adaccounts`) — **sem `META_APP_ID`/`META_APP_SECRET`** no fluxo (a fuga é de OAuth/App Review, não de ter app; o System User token já é atrelado ao nosso app). **Fast-follow:** checagem proativa de escopos (`/debug_token`) + `appsecret_proof` — reintroduzem o app id/secret; até lá, falta de escopo aparece de forma reativa (403 na 1ª ação que precisar).
-- Criativos p/ visão: `image_url`/`thumbnail_url` confiável; vídeo `source` incerto → usar thumbnail.
+- Criativos p/ visão: imagem = `image_url`; **vídeo = frames HD** via `/{video_id}?fields=thumbnails` (1080p, N frames espaçados — não o selo 64px do `thumbnail_url`); `source` do vídeo indisponível com o token (→ transcrição = fast-follow Fatia 7). Cache de visão chaveado por **id estável do criativo** (não a URL do fbcdn, que rotaciona).
 - **Nosso App Meta** (dev mode) precisa ser selecionável no BM do cliente.
 
 **WhatsApp (Evolution — não-oficial):**
@@ -185,7 +187,7 @@ Schema em `packages/db/src/schema`. Grupos:
 - **Superfície única semeada por arquétipo** (NÃO wizard paralelo — evita "duas formas de fazer a mesma coisa"). Arquétipo preenche defaults bons → edita inline em linguagem de gente → **"opções avançadas" em divulgação progressiva** (mesma página, mesmo schema). Vive em rota dedicada `/accounts/:id/agente` (superfície "Agente" seccionada; vira aba-filha quando o detalhe ganhar router-tabs).
 - **Personalização por texto (Fatia 4 corte 1):** dois campos **aditivos** sobre o arquétipo (nunca o substituem) — **contexto do negócio** (fatos → bloco factual no prompt) e **orientações ao agente** (comportamento → bloco de prioridades), compostos via `composeAgentPrompt`. Fronteira: orientação influencia **análise/recomendação**, **nunca** o gating determinístico de guardrail/autonomia (relevante quando a escrita chegar, 5a). Documentos como contexto = fast-follow.
 - **Playbook** editável como **linhas de linguagem natural com lacunas** ("pausar ad que custa mais de R$ __ por venda") → vira `PlaybookRule`. Técnico usa condições compostas no avançado.
-- **Presets MVP:** Conservador (só sugere) + Otimizador de Performance. Refinados depois (não é foco agora).
+- **Presets (6c):** Conservador (só sugere) + Otimizador de Performance (age no seguro no playbook) + Guardião de Lançamento (sugere+OK, cadência 2×/dia). Cada um com `label`/`description`/`whenToUse` (catálogo `archetypeCatalog`, servido à UI). Limiares de qualidade (significância/fadiga/learning/frames/cold-start) editáveis em "Opções avançadas" (override de `agents.model_config`).
 - Config amigável para **não-técnico** é requisito: sempre haver caminho zero-config.
 
 ---

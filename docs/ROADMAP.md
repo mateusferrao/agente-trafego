@@ -34,7 +34,8 @@ Plano de construção em fatias. Decisões de arquitetura/produto = [`../CLAUDE.
 | **5c** ✅ | Chat ReAct pleno (end-state) | **Escrita LIVRE por chat** (propor do zero, eco+confirma + guardrail, inline) + budget set-absoluto + revert por chat + leitura mais rica + foco multi-conta. Enforcement via `allowedActions` (não `agent_tool_bindings`) | 5b |
 | **6a** ✅ | Observabilidade + Painel gerencial + Frescura | Timeline por conta (auditoria, inclui ações por chat) + **Painel** home cross-conta (pendências/atenção/atividade/panorama) + **frescura** (sync-only sob demanda + sweep periódico + lazy on-view + as-of, split ao-vivo×datado) + migração do detalhe p/ router-tabs (Visão geral·Agente·Timeline) | prévias |
 | **6b** ✅ | Prontidão pra beta real (recortada) | Gate de beta (enforcement API+cron + CLI + backfill) + auth self-service com email (verificação + reset, SES) + billing owner (COGS por conta) + ops (shutdown/readiness/higiene). Throttle/token-190-proativo/backups-por-script = fast-follow | prévias |
-| **7** | Criação de campanhas (pós-MVP) | Gestor completo no WhatsApp: cria campanhas a pedido/proativo | MVP validado, 5a/5b |
+| **6c** | Qualidade do agente + verificações (Bloco 1) | Core determinístico (benchmarks de cold-start, tiers Winner/Zombie, sinais de fadiga/saturação/baixo-volume, elegibilidade) + prompts (árvore de diagnóstico) + guard de significância (rebaixa escalar sem base) + visão HD/multi-frame/decomposição (cache por id estável) + arquétipos Otimizador/Guardião + UI avançada (knobs+tooltips) + custo por conta (chat atribuído). Visão verificada; custo do chat calculado | prévias |
+| **7** | Criação de campanhas + auto-config por chat (pós-MVP, Bloco 2) | Gestor completo no WhatsApp: cria campanhas a pedido/proativo; auto-configurar o agente conversando (metas/playbook/guardrails/cadência) | MVP validado, 5a/5b, 6c |
 | **8** | Orquestração multi-agente / qualidade (pós-MVP) | Painéis de revisores, map-reduce por entidade, redator, validador de ação | MVP validado, 5a |
 
 **Marcos:** `3a` valida a hipótese; **beta read-only abre após `3b`** e roda em paralelo; escrita só a partir de `5a`, sempre atrás de guardrail; "mexer em qualquer coisa" (`5c`) = tools do catálogo (núcleo no MVP: pausar/budget/status; amplia por extensão; **criar campanha = Fatia 7** (pós-MVP, ver abaixo)); **mais papéis de agente / map-reduce = Fatia 8** (pós-MVP; a costura `reviewPasses` já nasce na 3a-2).
@@ -79,6 +80,14 @@ decaimento de token em runtime → `6b`; reuso do sync-service pelo `fetchData` 
 > prioridade do ICP** (mede *qualidade* do lead, não só quantidade: 100 conversas com 4
 > indo fundo × 30 conversas com 15 indo fundo). Dado já coletado → dá p/ derivar sem
 > re-sync.
+
+**Fast-follows da 6c (qualidade + verificações) — registrados:**
+
+- **Transcrição de áudio de criativo** — decompor o vídeo pela FALA (script/gancho), sinal mais rico p/ VSL de clínica. **Bloqueado hoje:** a Meta não expõe o `source` do vídeo com System User token (confirmado). Destrava com a **biblioteca de criativos da Fatia 7** (cliente sobe o vídeo → aí há áudio p/ STT).
+- **"Never miss timing" por gatilho de evento** (monitoramento intra-cadência) — o Guardião de Lançamento hoje é cadência curta (2×/dia) + limiares apertados + alerta proativo, **sem** gatilho em tempo real. Gatilho por evento (ex: pico de CPA dispara run) = **Fatia 8 / monitoramento**.
+- **Editor das FAIXAS de cold-start na UI** — as faixas de custo-por-resultado (saúde × conversa/lead/venda) hoje são editáveis por env/`model_config`; a UI de edição da matriz (por gestor técnico) fica p/ depois. Os knobs escalares (significância/fadiga/learning/frames/top-N/revisão) **já** entram na UI avançada na 6c.
+- **Rollup de custo por conversa** — o custo do chat já é atribuído à conta + carrega `conversationId` no payload; falta a agregação/relatório **por conversa** (metering).
+- **Bloco 2 (Fatia 7):** criação de campanhas + **auto-configurar o agente por chat** (mudar metas/playbook/guardrails/cadência conversando) — estende o Grafo B do 5c.
 
 **Plataforma / integrações**
 - **Integrações como entidade real (`platform_connections`)** — feito: conexão dona do token, `ad_accounts` referenciam, lifecycle soft (`active|unavailable|removed`), reconciliador puro (`reconcileSync`/`reconcileSelect`), conectar+multi-selecionar+sincronizar em Integrações; Contas só reflete; WhatsApp virou integração (sem aba). Fast-follows abaixo.
