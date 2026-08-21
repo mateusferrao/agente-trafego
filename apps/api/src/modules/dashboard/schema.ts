@@ -22,6 +22,8 @@ export const liveMetricsOutput = z.object({
   currency: z.string().nullable(),
   /** ISO da última vez que sincronizamos (max updated_at); null = nunca. */
   asOf: z.string().nullable(),
+  /** dado passou do limite de frescura (server-side; evita threshold duplicado no web). */
+  stale: z.boolean(),
   window: z.object({ since: z.string(), until: z.string() }),
   /** null = conta sem atividade na janela. */
   totals: liveKpis.nullable(),
@@ -48,6 +50,8 @@ export const panoramaCard = z.object({
   /** KPIs AO VIVO (insights_snapshots) — null se sem atividade. */
   live: liveKpis.nullable(),
   asOf: z.string().nullable(),
+  /** dado ao vivo passou do limite de frescura (server-side). */
+  stale: z.boolean(),
   pendingCount: z.number(),
   reasons: z.array(attentionReason),
 });

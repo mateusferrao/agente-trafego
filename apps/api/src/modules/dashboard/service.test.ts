@@ -48,7 +48,7 @@ describe("createDashboardService.liveMetrics", () => {
       [acctSnap("2026-08-19", 100, 5), acctSnap("2026-08-20", 100, 5)], // snapshots (janela)
       [{ latest: syncedAt }], // max(updated_at)
     ]);
-    const service = createDashboardService({ db, scheduler: {} as never, windowDays: 7, baselineDays: 7, now: NOW });
+    const service = createDashboardService({ db, scheduler: {} as never, windowDays: 7, baselineDays: 7, freshThresholdMin: 120, now: NOW });
 
     const out = await service.liveMetrics("org-1" as never, "acc-1");
     expect(out.currency).toBe("BRL");
@@ -61,7 +61,7 @@ describe("createDashboardService.liveMetrics", () => {
 
   it("conta inexistente → 404", async () => {
     const db = fakeDb([[]]); // account vazio
-    const service = createDashboardService({ db, scheduler: {} as never, windowDays: 7, baselineDays: 7, now: NOW });
+    const service = createDashboardService({ db, scheduler: {} as never, windowDays: 7, baselineDays: 7, freshThresholdMin: 120, now: NOW });
     await expect(service.liveMetrics("org-1" as never, "nope")).rejects.toMatchObject({ statusCode: 404 });
   });
 });
@@ -81,7 +81,7 @@ describe("createDashboardService.dashboard", () => {
       // 5) atividade recente (ação por chat → runId null)
       [{ id: "tc1", toolKey: "pause_entity", args: { target: { name: "Campanha X" } }, runId: null, at: new Date("2026-08-20T10:00:00Z"), accountId: "a1", accountName: "Loja A" }],
     ]);
-    const service = createDashboardService({ db, scheduler: {} as never, windowDays: 7, baselineDays: 7, now: NOW });
+    const service = createDashboardService({ db, scheduler: {} as never, windowDays: 7, baselineDays: 7, freshThresholdMin: 120, now: NOW });
 
     const out = await service.dashboard("org-1" as never);
     expect(out.pendingCount).toBe(2);
@@ -97,7 +97,7 @@ describe("createDashboardService.dashboard", () => {
 
   it("org sem contas → painel vazio (sem quebrar)", async () => {
     const db = fakeDb([[]]);
-    const service = createDashboardService({ db, scheduler: {} as never, windowDays: 7, baselineDays: 7, now: NOW });
+    const service = createDashboardService({ db, scheduler: {} as never, windowDays: 7, baselineDays: 7, freshThresholdMin: 120, now: NOW });
     const out = await service.dashboard("org-1" as never);
     expect(out).toEqual({ pendingCount: 0, attention: [], recentActivity: [], panorama: [] });
   });
@@ -112,12 +112,13 @@ describe("createDashboardService.requestRefresh", () => {
       scheduler: { enqueue } as never,
       windowDays: 7,
       baselineDays: 7,
+      freshThresholdMin: 120,
       now: NOW,
     });
     const out = await service.requestRefresh("org-1" as never, "acc-1");
     expect(out).toEqual({ enqueued: true });
     expect(enqueue).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "insights-sync-run", idempotencyKey: "sync:acc-1" }),
+      expect.objectContaining({ name: "insights-sync-run", idempotencyKey: "sync:acc-1:now" }),
     );
   });
 
@@ -129,6 +130,7 @@ describe("createDashboardService.requestRefresh", () => {
       scheduler: { enqueue } as never,
       windowDays: 7,
       baselineDays: 7,
+      freshThresholdMin: 120,
       now: NOW,
     });
     await expect(service.requestRefresh("org-1" as never, "nope")).rejects.toMatchObject({ statusCode: 404 });

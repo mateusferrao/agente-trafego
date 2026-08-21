@@ -134,7 +134,9 @@ export class UiTimeline {
   protected readonly groups = computed<DayGroup[]>(() => {
     const byDay = new Map<string, TimelineEventVm[]>();
     for (const e of this.events()) {
-      const day = e.at.slice(0, 10);
+      // chave do dia em horário LOCAL (ICP BR) — não UTC, senão eventos à noite caem
+      // no dia errado / "Hoje" desalinha.
+      const day = localDay(new Date(e.at));
       const list = byDay.get(day) ?? byDay.set(day, []).get(day)!;
       list.push(e);
     }
@@ -159,8 +161,13 @@ export class UiTimeline {
   }
 
   private dayLabel(day: string): string {
-    const today = new Date().toISOString().slice(0, 10);
-    if (day === today) return "Hoje";
+    if (day === localDay(new Date())) return "Hoje";
     return DAY_FMT.format(new Date(`${day}T00:00:00`));
   }
+}
+
+/** `YYYY-MM-DD` no fuso LOCAL (não UTC). */
+function localDay(d: Date): string {
+  const p = (n: number): string => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }

@@ -37,6 +37,8 @@ export interface DashboardDeps {
   readonly scheduler: SchedulerPort;
   readonly windowDays: number;
   readonly baselineDays: number;
+  /** limite de frescura (min) — fonte única do `stale` (o web não hardcoda). */
+  readonly freshThresholdMin: number;
   /** relógio injetável (casca) — `today` da janela. */
   readonly now: () => Date;
 }
@@ -45,6 +47,9 @@ const KPI_KEYS = ["spend", "impressions", "clicks", "ctr", "cpc", "cpm", "cpa", 
 
 export function createDashboardService(deps: DashboardDeps) {
   const todayIso = (): string => deps.now().toISOString().slice(0, 10);
+  /** dado velho? (fonte única do threshold — o web usa este booleano, não hardcoda). */
+  const isStale = (latest: Date | null): boolean =>
+    !latest || deps.now().getTime() - latest.getTime() > deps.freshThresholdMin * 60_000;
 
   /** Reconstrói o InsightRow (metrics + conversões) do jsonb — igual ao worker. */
   function toRow(r: {
@@ -114,6 +119,7 @@ export function createDashboardService(deps: DashboardDeps) {
       return {
         currency: account.currency,
         asOf: latest ? latest.toISOString() : null,
+        stale: isStale(latest),
         window,
         totals: totals ? pickKpis(totals) : null,
       };
@@ -206,6 +212,7 @@ export function createDashboardService(deps: DashboardDeps) {
           gradeAsOf: finishedAt ? finishedAt.toISOString() : null,
           live: l?.totals ?? null,
           asOf: l?.asOf ?? null,
+          stale: l?.stale ?? true,
           pendingCount,
           reasons,
         };
@@ -227,7 +234,7 @@ export function createDashboardService(deps: DashboardDeps) {
       orgId: OrgId,
       accountIds: readonly string[],
       accounts: readonly { accountId: string; goals: AgentGoals | null }[],
-    ): Promise<Map<string, { totals: LiveKpis | null; asOf: string | null }>> {
+    ): Promise<Map<string, { totals: LiveKpis | null; asOf: string | null; stale: boolean }>> {
       const { window, baseline } = resolveWindows(todayIso(), deps.windowDays, deps.baselineDays);
       const snaps = await deps.db
         .select({
@@ -262,12 +269,12 @@ export function createDashboardService(deps: DashboardDeps) {
         (s.date && s.date >= window.since ? bucket.rows : bucket.baselineRows).push(row);
       }
 
-      const out = new Map<string, { totals: LiveKpis | null; asOf: string | null }>();
+      const out = new Map<string, { totals: LiveKpis | null; asOf: string | null; stale: boolean }>();
       for (const id of accountIds) {
         const b = byAccount.get(id)!;
         const totals = computeLiveTotals({ rows: b.rows, baselineRows: b.baselineRows, goals: goalsByAccount.get(id) ?? {} });
         const latest = asOfByAccount.get(id) ?? null;
-        out.set(id, { totals: totals ? pickKpis(totals) : null, asOf: latest ? latest.toISOString() : null });
+        out.set(id, { totals: totals ? pickKpis(totals) : null, asOf: latest ? latest.toISOString() : null, stale: isStale(latest) });
       }
       return out;
   }

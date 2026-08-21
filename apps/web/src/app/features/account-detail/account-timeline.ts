@@ -4,10 +4,11 @@
 
 import { ChangeDetectionStrategy, Component, inject, signal } from "@angular/core";
 import { ActivatedRoute } from "@angular/router";
-import { UiButton, UiSpinner, UiTimeline, type TimelineEventVm, type TimelineTone } from "@ui";
+import { UiButton, UiSpinner, UiTimeline, type TimelineEventVm } from "@ui";
 import { DashboardApiService } from "@core/api/dashboard-api.service";
 import type { TimelineOutput } from "@core/api/generated";
 import { actionTypeLabel } from "../../shared/action-format";
+import { gradeTone } from "../../shared/format";
 
 type ApiEvent = TimelineOutput["items"][number];
 
@@ -51,13 +52,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
             </button>
           }
         </div>
-        <div class="flex flex-wrap items-center gap-2" role="radiogroup" aria-label="Filtrar por período">
+        <div class="flex flex-wrap items-center gap-2" role="group" aria-label="Filtrar por período">
           <span class="text-xs text-muted">Período</span>
           @for (p of periods; track p.label) {
             <button
               type="button"
-              role="radio"
-              [attr.aria-checked]="periodDays() === p.days"
+              [attr.aria-pressed]="periodDays() === p.days"
               (click)="setPeriod(p.days)"
               class="rounded-md border px-3 py-1 text-xs font-medium transition hover:border-accent/40"
               [class.border-accent]="periodDays() === p.days"
@@ -76,6 +76,11 @@ const DAY_MS = 24 * 60 * 60 * 1000;
         <div class="flex items-center gap-3 rounded-lg border border-line bg-panel p-4 text-sm text-muted">
           <app-ui-spinner [size]="16" [stroke]="2" aria-hidden="true" />
           Carregando…
+        </div>
+      } @else if (failed()) {
+        <div class="flex flex-col items-start gap-3 rounded-lg border border-line bg-panel p-4">
+          <p class="text-sm text-ink">Não consegui carregar a linha do tempo agora.</p>
+          <button appButton variant="secondary" type="button" (click)="load()">Tentar de novo</button>
         </div>
       } @else if (events().length === 0) {
         <p class="rounded-lg border border-line bg-panel p-4 text-sm text-muted">
@@ -102,6 +107,7 @@ export class AccountTimeline {
   protected readonly periodDays = signal<number | null>(30);
   protected readonly events = signal<TimelineEventVm[]>([]);
   protected readonly loading = signal(true);
+  protected readonly failed = signal(false);
   protected readonly hasMore = signal(false);
   private offset = 0;
 
@@ -124,8 +130,11 @@ export class AccountTimeline {
     this.load(true);
   }
 
-  private load(append = false): void {
-    if (!append) this.offset = 0;
+  protected load(append = false): void {
+    if (!append) {
+      this.offset = 0;
+      this.failed.set(false);
+    }
     this.loading.set(true);
     const types = this.selected().flatMap((k) => GROUPS.find((g) => g.key === k)?.types ?? []);
     const period = this.periodDays();
@@ -140,20 +149,16 @@ export class AccountTimeline {
           this.loading.set(false);
         },
         error: () => {
+          // append: mantém o que já tem; carga inicial: mostra estado de erro (retry).
           if (append) this.offset -= PAGE;
-          else this.events.set([]);
+          else {
+            this.events.set([]);
+            this.failed.set(true);
+          }
           this.loading.set(false);
         },
       });
   }
-}
-
-/** grade → tom do badge. */
-function gradeTone(grade: string | null): TimelineTone {
-  if (grade === "A" || grade === "B") return "success";
-  if (grade === "C") return "warning";
-  if (grade === "D") return "danger";
-  return "neutral";
 }
 
 /** Evento tipado da API → view-model do ui-timeline. */

@@ -26,9 +26,14 @@ export type InsightsSyncPayload = {
   readonly trigger: SyncTrigger;
 };
 
-/** jobId do sync-only por conta → coalesce duplo-clique/lazy+sweep no mesmo instante. */
-export function insightsSyncJobId(accountId: string): string {
-  return `sync:${accountId}`;
+/**
+ * jobId do sync-only por conta. O sweep periódico (`cron`) usa a chave base e enfileira
+ * com delay (stagger); um trigger IMEDIATO (`manual`/`on_demand` = botão/lazy) usa uma
+ * chave distinta (`:now`) p/ NÃO coalescer no job atrasado do sweep (senão o "atualizar
+ * agora" herdaria o delay e só rodaria minutos depois). Cada classe dedupe em si.
+ */
+export function insightsSyncJobId(accountId: string, trigger: SyncTrigger): string {
+  return trigger === "cron" ? `sync:${accountId}` : `sync:${accountId}:now`;
 }
 
 /**
@@ -41,7 +46,7 @@ export function buildInsightsSyncJob(payload: InsightsSyncPayload) {
     queue: SYNC_QUEUE,
     name: INSIGHTS_SYNC_JOB,
     payload,
-    idempotencyKey: insightsSyncJobId(payload.accountId),
+    idempotencyKey: insightsSyncJobId(payload.accountId, payload.trigger),
     removeOnComplete: true,
     removeOnFail: true,
   } as const;

@@ -173,6 +173,7 @@ export function buildContainer(): Container {
       scheduler,
       windowDays: env.ANALYSIS_WINDOW_DAYS,
       baselineDays: env.ANALYSIS_BASELINE_DAYS,
+      freshThresholdMin: env.INSIGHTS_FRESH_THRESHOLD_MIN,
       now: () => new Date(),
     }),
     timeline: createTimelineService({ db }),

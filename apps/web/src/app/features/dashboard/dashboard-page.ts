@@ -11,13 +11,12 @@ import { UiBadge, UiButton, UiEmptyState, UiPageHeader, UiSpinner, type Timeline
 import { DashboardApiService } from "@core/api/dashboard-api.service";
 import type { DashboardOutput } from "@core/api/generated";
 import { actionTypeLabel } from "../../shared/action-format";
+import { asOfLabel, gradeTone, money, timeLabel } from "../../shared/format";
 
 type Card = DashboardOutput["panorama"][number];
 type Activity = DashboardOutput["recentActivity"][number];
 type Reason = Card["reasons"][number];
 
-const DEFAULT_CURRENCY = "BRL";
-const STALE_MIN = 120;
 const LAZY_MAX = 8; // teto de refresh lazy no load (evita burst)
 const RELOAD_MS = 5000;
 
@@ -113,7 +112,12 @@ const REASON_TONE: Record<Reason, TimelineTone> = {
                       {{ c.accountName }}
                     </a>
                     @if (c.grade) {
-                      <span appBadge [tone]="gradeTone(c.grade)" size="sm">Nota {{ c.grade }}</span>
+                      <div class="flex flex-col items-end gap-0.5">
+                        <span appBadge [tone]="gradeTone(c.grade)" size="sm">Nota {{ c.grade }}</span>
+                        @if (c.gradeAsOf) {
+                          <span class="text-[10px] text-muted">análise {{ timeLabel(c.gradeAsOf) }}</span>
+                        }
+                      </div>
                     }
                   </div>
                   @if (c.live; as t) {
@@ -130,8 +134,8 @@ const REASON_TONE: Record<Reason, TimelineTone> = {
                     <span class="text-xs text-warning-strong">Agente pausado — números não atualizam sozinhos.</span>
                   }
                   <div class="mt-1 flex items-center justify-between gap-2">
-                    <span class="text-xs" [class.text-muted]="!isStale(c.asOf)" [class.text-warning-strong]="isStale(c.asOf)">
-                      {{ asOfLabel(c.asOf) }}
+                    <span class="text-xs" [class.text-muted]="!c.stale" [class.text-warning-strong]="c.stale">
+                      {{ asOfLabel(c.asOf, c.stale) }}
                     </span>
                     <button
                       appButton
@@ -206,7 +210,7 @@ export class DashboardPage {
 
   /** Lazy on-view: dispara sync-only (governado) das contas velhas, com teto; 1 reload. */
   private lazyRefreshStale(d: DashboardOutput): void {
-    const stale = d.panorama.filter((c) => !c.agentPaused && this.isStale(c.asOf)).slice(0, LAZY_MAX);
+    const stale = d.panorama.filter((c) => !c.agentPaused && c.stale).slice(0, LAZY_MAX);
     if (stale.length === 0) return;
     for (const c of stale) this.api.refreshData(c.accountId).subscribe({ error: () => {} });
     setTimeout(() => {
@@ -240,44 +244,21 @@ export class DashboardPage {
     });
   }
 
+  // formatação compartilhada exposta ao template.
+  protected readonly money = money;
+  protected readonly asOfLabel = asOfLabel;
+  protected readonly gradeTone = gradeTone;
+  protected readonly timeLabel = timeLabel;
+
   protected reasonLabel(r: Reason): string {
     return REASON_LABEL[r];
   }
   protected reasonTone(r: Reason): TimelineTone {
     return REASON_TONE[r];
   }
-  protected gradeTone(grade: string | null): TimelineTone {
-    if (grade === "A" || grade === "B") return "success";
-    if (grade === "C") return "warning";
-    if (grade === "D") return "danger";
-    return "neutral";
-  }
 
   protected activityLabel(a: Activity): string {
     const action = a.type === "action_rolled_back" ? "reverteu" : actionTypeLabel(a.toolKey);
     return a.entityName ? `${action} · ${a.entityName}` : action;
-  }
-
-  protected isStale(asOf: string | null): boolean {
-    if (!asOf) return true;
-    return Date.now() - new Date(asOf).getTime() > STALE_MIN * 60_000;
-  }
-
-  protected asOfLabel(asOf: string | null): string {
-    if (!asOf) return "sem dados ainda";
-    const t = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(new Date(asOf));
-    return this.isStale(asOf) ? `desatualizado (${t})` : `atualizado ${t}`;
-  }
-
-  protected timeLabel(iso: string): string {
-    return new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
-  }
-
-  protected money(value: number, currency: string | null): string {
-    try {
-      return new Intl.NumberFormat("pt-BR", { style: "currency", currency: currency ?? DEFAULT_CURRENCY }).format(value);
-    } catch {
-      return String(value);
-    }
   }
 }

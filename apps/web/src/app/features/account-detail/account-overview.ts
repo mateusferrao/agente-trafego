@@ -4,19 +4,17 @@
 // AccountContextStore (provido pelo shell) p/ run/recomendações/voto/silenciar.
 
 import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from "@angular/core";
-import { provideIcons } from "@ng-icons/core";
-import { NgIcon } from "@ng-icons/core";
+import { NgIcon, provideIcons } from "@ng-icons/core";
 import { heroArrowPath, heroSparkles } from "@ng-icons/heroicons/outline";
 import { UiButton, UiEmptyState, UiSpinner } from "@ui";
 import { DashboardApiService } from "@core/api/dashboard-api.service";
 import type { LiveMetricsOutput } from "@core/api/generated";
+import { asOfLabel, money } from "../../shared/format";
 import { AnalysisDetail } from "../analysis-detail/analysis-detail";
 import { AgentActions } from "./agent-actions";
 import { AccountContextStore } from "./account-context.store";
 
 const DEFAULT_CURRENCY = "BRL";
-/** Dado "desatualizado" acima disto (min) → lazy refresh + tom de alerta no as-of. */
-const STALE_MIN = 120;
 const POLL_MS = 3000;
 const MAX_POLLS = 6;
 
@@ -48,8 +46,8 @@ const MAX_POLLS = 6;
               </div>
             }
             <div class="ml-auto flex items-center gap-3">
-              <span class="text-xs" [class.text-muted]="!stale()" [class.text-warning-strong]="stale()">
-                {{ asOfLabel(m.asOf) }}
+              <span class="text-xs" [class.text-muted]="!m.stale" [class.text-warning-strong]="m.stale">
+                {{ asOfLabel(m.asOf, m.stale) }}
               </span>
               <button appButton variant="secondary" type="button" [disabled]="refreshing()" (click)="refresh()">
                 <ng-icon name="heroArrowPath" size="14" aria-hidden="true" [class.animate-spin]="refreshing()" />
@@ -105,6 +103,9 @@ export class AccountOverview {
   protected readonly store = inject(AccountContextStore);
   private readonly api = inject(DashboardApiService);
   protected readonly defaultCurrency = DEFAULT_CURRENCY;
+  // funções de formatação compartilhadas expostas ao template.
+  protected readonly money = money;
+  protected readonly asOfLabel = asOfLabel;
 
   protected readonly live = signal<LiveMetricsOutput | null>(null);
   protected readonly refreshing = signal(false);
@@ -120,7 +121,7 @@ export class AccountOverview {
     this.api.liveMetrics(this.store.accountId).subscribe({
       next: (m) => {
         this.live.set(m);
-        if (lazy && this.isStale(m.asOf)) this.refresh();
+        if (lazy && m.stale) this.refresh();
       },
       error: () => {},
     });
@@ -158,26 +159,4 @@ export class AccountOverview {
     }, POLL_MS);
   }
 
-  protected stale(): boolean {
-    return this.isStale(this.live()?.asOf ?? null);
-  }
-
-  private isStale(asOf: string | null): boolean {
-    if (!asOf) return true;
-    return Date.now() - new Date(asOf).getTime() > STALE_MIN * 60_000;
-  }
-
-  protected money(value: number, currency: string | null): string {
-    try {
-      return new Intl.NumberFormat("pt-BR", { style: "currency", currency: currency ?? DEFAULT_CURRENCY }).format(value);
-    } catch {
-      return String(value);
-    }
-  }
-
-  protected asOfLabel(asOf: string | null): string {
-    if (!asOf) return "sem dados ainda";
-    const t = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" }).format(new Date(asOf));
-    return this.isStale(asOf) ? `desatualizado (${t})` : `atualizado ${t}`;
-  }
 }

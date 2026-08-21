@@ -5,7 +5,7 @@ import {
   provideBrowserGlobalErrorListeners,
   provideZonelessChangeDetection,
 } from '@angular/core';
-import { provideRouter, withComponentInputBinding } from '@angular/router';
+import { provideRouter, withComponentInputBinding, withRouterConfig } from '@angular/router';
 import { provideHttpClient, withFetch, withInterceptors } from '@angular/common/http';
 import { routes } from './app.routes';
 import { apiRequestInterceptor } from '@core/api';
@@ -20,7 +20,14 @@ export const appConfig: ApplicationConfig = {
   providers: [
     provideBrowserGlobalErrorListeners(),
     provideZonelessChangeDetection(),
-    provideRouter(routes, withComponentInputBinding()),
+    // paramsInheritanceStrategy 'always': as abas-filhas (agente/timeline) herdam o
+    // `:id` da rota-pai `accounts/:id` (que usa loadComponent). Sem isso, o default
+    // 'emptyOnly' não propaga o param p/ filhos de path não-vazio → accountId vazio.
+    provideRouter(
+      routes,
+      withComponentInputBinding(),
+      withRouterConfig({ paramsInheritanceStrategy: 'always' }),
+    ),
     provideHttpClient(
       withFetch(),
       withInterceptors([apiRequestInterceptor, authSessionInterceptor]),

@@ -1678,6 +1678,9 @@
               "null"
             ]
           },
+          "stale": {
+            "type": "boolean"
+          },
           "window": {
             "type": "object",
             "properties": {
@@ -1742,6 +1745,7 @@
         "required": [
           "currency",
           "asOf",
+          "stale",
           "window",
           "totals"
         ]
@@ -1849,6 +1853,9 @@
                     "null"
                   ]
                 },
+                "stale": {
+                  "type": "boolean"
+                },
                 "pendingCount": {
                   "type": "number"
                 },
@@ -1875,6 +1882,7 @@
                 "gradeAsOf",
                 "live",
                 "asOf",
+                "stale",
                 "pendingCount",
                 "reasons"
               ]
@@ -2015,6 +2023,9 @@
                     "null"
                   ]
                 },
+                "stale": {
+                  "type": "boolean"
+                },
                 "pendingCount": {
                   "type": "number"
                 },
@@ -2041,6 +2052,7 @@
                 "gradeAsOf",
                 "live",
                 "asOf",
+                "stale",
                 "pendingCount",
                 "reasons"
               ]

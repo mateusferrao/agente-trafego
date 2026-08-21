@@ -356,6 +356,12 @@ snapshots. **4 gatilhos, 1 caminho de sync, 1 porta de staleness** (análise inl
   + atividade compacta no Painel) + **paginação real por UNION** (v1 = cap por fonte + merge em memória).
 - **Botão global "atualizar tudo"** no Painel (v1 = refresh só por-conta).
 - **Trimar o header próprio da config** dentro da aba Agente (hoje ainda renderiza o seu).
+- **Conta ativa sem atividade re-enfileira sync todo threshold** — sync que grava 0 linhas não bumpa
+  `updated_at` → `shouldSync` fica sempre `true` (deduped/governado, mas gasta 1 chamada Meta/threshold em
+  conta morta). Marcar "última tentativa" p/ evitar.
+- **Piso no stagger do sweep quando `ANALYSIS_CRON_JITTER_MS=0`** (hoje `step=0` = todas de uma vez; o
+  governor mitiga, mas vale um piso) + `BadgeTone` exportado (hoje o tom do badge empresta `TimelineTone`)
+  + not-found consistente na Timeline (retorna vazio vs 404 nas outras).
 
 ## Fatia 7 — Criação de campanhas (roadmap pós-MVP)
 
