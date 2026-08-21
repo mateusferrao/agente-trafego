@@ -404,6 +404,11 @@ email_verified_at) · `0018` (índice created_at). **Backfill = script one-time*
   Langfuse (tracing LLM).
 - **eslint + `lint` no CI** — hoje `eslint` não está instalado (todo pacote tem `lint: eslint src` mas sem
   a dep); `pnpm lint` quebra → instalar eslint + flat config + corrigir violações + ligar no CI.
+- **Endurecer OTP de verificação** (nits do reviewer 6b): cap de tentativas por código/conta (hoje só
+  rate-limit por-IP 10/min + TTL 15min); tratar colisão de `token_hash` de OTP (prob ~1e-6 → hoje pode dar
+  500 no reenvio) com `onConflictDoNothing`/regenerar; `CREATE INDEX CONCURRENTLY` em `usage_events` quando
+  a tabela crescer; fechar pool `pg` nos scripts CLI; `access:grant` re-rodado re-enfileira email (tornar
+  o email não-fatal).
 - Login passwordless; perfil editável + trocar senha logado + "revogar todas as sessões" explícito;
   org-switcher; convite/adicionar membro (N:N — `membership_invitations`); split entitlement-org × acesso-usuário.
 - Billing pro cliente (uso sem COGS) + markup/BRL/Stripe + custo por série temporal + visão super-admin;
