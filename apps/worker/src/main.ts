@@ -8,6 +8,7 @@ import { startAgentRunsWorker } from "./workers/agent-runs.js";
 import { startAgentCronDispatchWorker } from "./workers/agent-cron-dispatch.js";
 import { startAgentReaperWorker } from "./workers/agent-reaper.js";
 import { startInsightsSyncWorker } from "./workers/insights-sync.js";
+import { startInsightsSweepWorker } from "./workers/insights-sweep.js";
 import { startScheduleResyncWorker } from "./workers/schedule-resync.js";
 import { startActionUndoWorker } from "./workers/action-undo.js";
 import { startApprovalApplyWorker } from "./workers/approval-apply.js";
@@ -33,6 +34,8 @@ async function main(): Promise<void> {
   const cronDispatch = startAgentCronDispatchWorker(deps, connection);
   const reaper = startAgentReaperWorker(deps, connection);
   const insightsSync = startInsightsSyncWorker(deps, connection);
+  // sweep de frescura (6a): mantém insights_snapshots fresco entre análises (sync-only).
+  const insightsSweep = startInsightsSweepWorker(deps, connection);
   // resync de schedule por conta (Fatia 4): consome os jobs que a API enfileira ao
   // salvar a cadência — worker é o dono único do scheduler.
   const scheduleResync = startScheduleResyncWorker(deps, connection, cron);
@@ -59,10 +62,13 @@ async function main(): Promise<void> {
   await cron
     .ensureApprovalExpirySchedule()
     .catch((err: unknown) => logger.error({ err }, "approval-expiry:schedule falhou"));
+  await cron
+    .ensureInsightsSweepSchedule()
+    .catch((err: unknown) => logger.error({ err }, "insights-sweep:schedule falhou"));
   await createRunReaper({ db: deps.db, logger, staleMinutes: deps.reaper.staleMinutes })
     .reapStale()
     .catch((err: unknown) => logger.error({ err }, "reaper:boot sweep falhou"));
-  logger.info("worker up: agent-runs + cron-dispatch + reaper + insights-sync + schedule-resync + action-undo + approval-apply + approval-expiry + whatsapp-inbound");
+  logger.info("worker up: agent-runs + cron-dispatch + reaper + insights-sync + insights-sweep + schedule-resync + action-undo + approval-apply + approval-expiry + whatsapp-inbound");
 
   // shutdown gracioso (drena jobs em andamento antes de sair)
   const shutdown = async (signal: string): Promise<void> => {
@@ -72,6 +78,7 @@ async function main(): Promise<void> {
       cronDispatch.close(),
       reaper.close(),
       insightsSync.close(),
+      insightsSweep.close(),
       scheduleResync.close(),
       actionUndo.close(),
       approvalApply.close(),

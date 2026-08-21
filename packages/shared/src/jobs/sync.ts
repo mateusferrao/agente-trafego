@@ -8,6 +8,16 @@ export const INSIGHTS_SYNC_JOB = "insights-sync-run";
 
 export type SyncTrigger = "manual" | "cron" | "on_demand";
 
+/**
+ * Fila + schedule do SWEEP de frescura (6a): um Job Scheduler recorrente (singleton,
+ * intervalo = `INSIGHTS_FRESH_THRESHOLD_MIN`) enfileira aqui; o worker varre as contas
+ * ativas, aplica `shouldSync` e enfileira sync-only só p/ as velhas (stagger). Chave
+ * estável (idempotente).
+ */
+export const INSIGHTS_SWEEP_QUEUE = "insights-sweep";
+export const INSIGHTS_SWEEP_SCHEDULE_KEY = "sweep:insights";
+export type InsightsSweepTickPayload = Record<string, never>;
+
 export type InsightsSyncPayload = {
   /** id da linha em `ad_accounts` (o worker carrega + descriptografa o token). */
   readonly accountId: string;

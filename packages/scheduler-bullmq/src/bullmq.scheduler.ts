@@ -28,6 +28,7 @@ export class BullmqScheduler implements SchedulerPort {
     if (job.idempotencyKey) opts.jobId = job.idempotencyKey;
     if (job.removeOnComplete !== undefined) opts.removeOnComplete = job.removeOnComplete;
     if (job.removeOnFail !== undefined) opts.removeOnFail = job.removeOnFail;
+    if (job.delayMs !== undefined) opts.delay = job.delayMs;
     // sem opções → passa undefined (mantém o contrato: não força objeto vazio).
     await this.queue(job.queue).add(job.name, job.payload, Object.keys(opts).length ? opts : undefined);
   }

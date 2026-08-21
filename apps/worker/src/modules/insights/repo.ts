@@ -1,7 +1,7 @@
 // Repositório de insights_snapshots (casca, org-scoped). Escrita idempotente por
 // (ad_account_id, entity_id, date). Sem prune aqui — retenção/prune = Fatia 6b.
 
-import { and, eq, gte, lte, max, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, lte, max, sql } from "drizzle-orm";
 import type { Database } from "@trafego/db/client";
 import { insightsSnapshots } from "@trafego/db";
 import type { EntityLevel, InsightRow, StoredInsightMetrics } from "@trafego/shared";
@@ -23,6 +23,12 @@ export interface InsightsSnapshotsRepo {
   upsertMany(rows: readonly SnapshotRow[]): Promise<void>;
   /** Lê a janela p/ montar o brief (reconstrói InsightRow do jsonb). */
   listWindow(orgId: string, adAccountId: string, since: string, until: string): Promise<InsightRow[]>;
+  /**
+   * Última vez que sincronizamos (max `updated_at`) por conta = base do as-of e da
+   * porta de frescura. Batch (sem N+1) — 1 query p/ N contas. Contas sem snapshot não
+   * aparecem no mapa (→ `shouldSync` trata como null = precisa sync).
+   */
+  latestSyncedAtByAccounts(accountIds: readonly string[]): Promise<Map<string, Date>>;
 }
 
 export function createDrizzleInsightsSnapshotsRepo(db: Database): InsightsSnapshotsRepo {
@@ -59,6 +65,18 @@ export function createDrizzleInsightsSnapshotsRepo(db: Database): InsightsSnapsh
           target: [insightsSnapshots.adAccountId, insightsSnapshots.entityId, insightsSnapshots.date],
           set: { metricsJson: sql`excluded.metrics_json`, updatedAt: sql`now()` },
         });
+    },
+
+    async latestSyncedAtByAccounts(accountIds) {
+      if (accountIds.length === 0) return new Map();
+      const rows = await db
+        .select({ accountId: insightsSnapshots.adAccountId, latest: max(insightsSnapshots.updatedAt) })
+        .from(insightsSnapshots)
+        .where(inArray(insightsSnapshots.adAccountId, [...accountIds]))
+        .groupBy(insightsSnapshots.adAccountId);
+      const map = new Map<string, Date>();
+      for (const r of rows) if (r.latest) map.set(r.accountId, r.latest);
+      return map;
     },
 
     async listWindow(orgId, adAccountId, since, until) {

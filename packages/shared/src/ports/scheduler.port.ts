@@ -23,6 +23,8 @@ export interface JobSpec {
    *  mesma chave). Use com `idempotencyKey` p/ serialize + auto-limpeza. */
   readonly removeOnComplete?: boolean | number;
   readonly removeOnFail?: boolean | number;
+  /** atrasa o início do job (ms) — stagger p/ espalhar carga (ex: sweep de frescura). */
+  readonly delayMs?: number;
 }
 
 /**

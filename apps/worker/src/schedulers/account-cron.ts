@@ -12,6 +12,8 @@ import {
   AGENT_REAPER_SCHEDULE_KEY,
   APPROVAL_EXPIRY_QUEUE,
   APPROVAL_EXPIRY_SCHEDULE_KEY,
+  INSIGHTS_SWEEP_QUEUE,
+  INSIGHTS_SWEEP_SCHEDULE_KEY,
   type AgentCronDispatchPayload,
   type CadenceSpec,
 } from "@trafego/shared";
@@ -72,6 +74,20 @@ export function makeAccountCron(deps: WorkerDeps) {
       queue: AGENT_REAPER_QUEUE,
       cron: deps.reaper.cron,
       tz: deps.cron.tz,
+      payload: {},
+    });
+  }
+
+  /**
+   * Garante o sweep de frescura (singleton — 6a): tick recorrente a cada
+   * `INSIGHTS_FRESH_THRESHOLD_MIN` que varre contas ativas e enfileira sync-only só
+   * p/ as velhas. Intervalo = o mesmo threshold (staleness-gate dedupe o resto).
+   */
+  async function ensureInsightsSweepSchedule(): Promise<void> {
+    await scheduler.upsertSchedule({
+      key: INSIGHTS_SWEEP_SCHEDULE_KEY,
+      queue: INSIGHTS_SWEEP_QUEUE,
+      everyMs: deps.insights.freshThresholdMin * 60_000,
       payload: {},
     });
   }
@@ -161,6 +177,7 @@ export function makeAccountCron(deps: WorkerDeps) {
     removeAccountSchedule,
     ensureReaperSchedule,
     ensureApprovalExpirySchedule,
+    ensureInsightsSweepSchedule,
     syncAllFromDb,
     resyncAccountSchedule,
   };

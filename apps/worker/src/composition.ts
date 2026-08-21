@@ -50,6 +50,10 @@ export interface WorkerDeps {
   readonly insightsSync: InsightsSyncService;
   /** Config da análise (3a/3b) — defaults globais de produto (env; override por-agente). */
   readonly analysis: import("./modules/analysis/config.js").AnalysisDefaults;
+  /** Frescura (6a): limite de staleness (min) do sync-only + intervalo do sweep. */
+  readonly insights: {
+    readonly freshThresholdMin: number;
+  };
   /** Origem do site p/ deep-link nas mensagens de WhatsApp. */
   readonly webOrigin: string;
   /** Versão do analisador de visão (chave do cache de criativos — bump invalida). */
@@ -180,6 +184,9 @@ export async function buildComposition(): Promise<WorkerDeps> {
       executionPolicy: env.ANALYSIS_EXECUTION_POLICY,
       deepIntervalDays: env.ANALYSIS_DEEP_INTERVAL_DAYS,
       materialChangePct: env.ANALYSIS_MATERIAL_CHANGE_PCT,
+    },
+    insights: {
+      freshThresholdMin: env.INSIGHTS_FRESH_THRESHOLD_MIN,
     },
     webOrigin: env.WEB_ORIGIN,
     visionAnalyzerVersion: env.CREATIVE_VISION_ANALYZER_VERSION,

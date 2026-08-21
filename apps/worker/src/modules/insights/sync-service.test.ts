@@ -28,6 +28,7 @@ function makeRepo() {
       upserts.push(...rows);
     },
     listWindow: async () => [],
+    latestSyncedAtByAccounts: async () => new Map(),
   };
   return { repo, upserts };
 }
