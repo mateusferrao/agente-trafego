@@ -3,6 +3,12 @@ import { requireAuth } from "../../middleware/auth.js";
 import { requireActiveAccess } from "../../middleware/access-gate.js";
 import { requireOrgScope, orgIdOf } from "../../middleware/org-scope.js";
 
+/** Período "YYYY-MM" válido (01-12); malformado/ausente → mês corrente (evita Invalid Date). */
+const PERIOD_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
+function resolvePeriod(raw: string | undefined): string {
+  return raw && PERIOD_RE.test(raw) ? raw : new Date().toISOString().slice(0, 7);
+}
+
 /** Slice de billing: status de acesso ao produto e resumo de uso do período. */
 export const billingRoutes: FastifyPluginAsync = async (app) => {
   const service = app.container.services.billing;
@@ -17,14 +23,12 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
 
   app.get("/billing/usage", guard, async (request) => {
     const { period } = request.query as { period?: string };
-    const yyyymm = period ?? new Date().toISOString().slice(0, 7);
-    return service.usage(orgIdOf(request), yyyymm);
+    return service.usage(orgIdOf(request), resolvePeriod(period));
   });
 
   // Painel de custos (owner): economia unitária por conta + total + gasto vs cap.
   app.get("/billing/costs", gated, async (request) => {
     const { period } = request.query as { period?: string };
-    const yyyymm = period ?? new Date().toISOString().slice(0, 7);
-    return service.costs(orgIdOf(request), yyyymm);
+    return service.costs(orgIdOf(request), resolvePeriod(period));
   });
 };

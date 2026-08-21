@@ -36,8 +36,9 @@ mostra o código/link no log do **worker**; `=ses` envia de verdade (SES sa-east
 3. **Listar/revogar:** `pnpm access:list` (tabela) · `pnpm access:revoke <email>` → volta ao muro.
 4. **Cron gate:** com a org revogada, o dispatch do cron pula (`skipped_access` no log do worker) —
    não roda análise nem gasta LLM.
-5. **Backfill (one-time, pré-go-live):** `pnpm backfill:access -- --confirm` → grandfather de
-   users/grants pré-6b (verifica emails existentes + ativa grants pendentes). Rodar **1 vez**.
+5. **Backfill (one-time, pré-go-live):** `pnpm backfill:access -- --before=<ISO do deploy>` →
+   grandfather de users/grants **anteriores ao cutoff** (verifica emails + ativa grants pendentes).
+   O cutoff torna re-run inócuo (não libera signups do beta).
 
 ## 4. Billing owner (6b-6/6b-8)
 1. Como **owner**, item **Custos** aparece na sidebar (Configurar). Como member, não aparece.

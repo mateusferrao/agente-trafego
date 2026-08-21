@@ -41,6 +41,16 @@ export const pendingAccessGuard: CanActivateFn = () => {
   );
 };
 
+/** Rota só-para-owner (ex: Custos/COGS): member → volta pra home (nav já esconde o item). */
+export const ownerGuard: CanActivateFn = () => {
+  const authStore = inject(AuthStore);
+  const router = inject(Router);
+
+  return authStore.ensureSession().pipe(
+    map(() => (authStore.role() === 'owner' ? true : router.parseUrl('/'))),
+  );
+};
+
 /** Rota só-para-visitante (login/signup): usuário logado → shell (ou `returnTo`). */
 export const guestOnlyGuard: CanActivateFn = (route) => {
   const authStore = inject(AuthStore);

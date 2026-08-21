@@ -33,6 +33,12 @@ const ORG_NAME_MIN_LENGTH = 2;
         <p class="text-sm text-muted">{{ subheading() }}</p>
       </header>
 
+      @if (reset() === '1' && !isSignup()) {
+        <p class="mb-4 rounded-md border border-line bg-success-soft/50 px-3 py-2 text-sm text-success-strong">
+          Senha alterada. Entre com a nova senha.
+        </p>
+      }
+
       <form class="flex flex-col gap-4" [formGroup]="form" (ngSubmit)="submit()">
         @if (isSignup()) {
           <app-ui-form-field label="Seu nome" [error]="fieldError('name')">
@@ -125,6 +131,8 @@ export class LoginPage {
   readonly mode = input<AuthMode>('login');
   /** Caminho interno para retornar após entrar (bindado de query param). */
   readonly returnTo = input<string>();
+  /** '1' quando vindo do reset de senha concluído (query param) → banner de sucesso. */
+  readonly reset = input<string>();
 
   protected readonly isSignup = computed(() => this.mode() === 'signup');
   protected readonly isSubmitting = signal(false);

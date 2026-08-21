@@ -109,6 +109,18 @@ describe("authService.signup (6b: não autentica, manda código)", () => {
     ).rejects.toMatchObject({ statusCode: 400 });
     expect(repo.createUserWithOrg).not.toHaveBeenCalled();
   });
+
+  it("email EXISTENTE + senha fraca → 400 (não vaza existência: idêntico a novo+fraca)", async () => {
+    // força validada ANTES do lookup → mesma resposta 400 exista a conta ou não
+    // (senão o par existente+fraca seria um oráculo de enumeração).
+    const repo = makeRepo({ findUserByEmail: vi.fn(async () => VERIFIED) });
+    const { service, mailQueue } = makeService(repo);
+    await expect(
+      service.signup({ name: "A", email: "a@b.com", password: "semnumero", orgName: "Org" }),
+    ).rejects.toMatchObject({ statusCode: 400 });
+    expect(repo.createUserWithOrg).not.toHaveBeenCalled();
+    expect(mailQueue.enqueue).not.toHaveBeenCalled();
+  });
 });
 
 describe("authService.login (6b: bloqueia não-verificado)", () => {

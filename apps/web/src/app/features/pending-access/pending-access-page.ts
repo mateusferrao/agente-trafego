@@ -15,7 +15,7 @@ import { AuthStore } from '@core/auth';
   imports: [NgIcon, UiButton],
   providers: [provideIcons({ heroClock })],
   template: `
-    <main class="flex min-h-dvh items-center justify-center bg-canvas p-6">
+    <main class="flex min-h-dvh items-center justify-center bg-app p-6">
       <section class="flex max-w-md flex-col items-center gap-4 rounded-lg border border-line bg-panel p-8 text-center shadow-card">
         <span class="flex h-12 w-12 items-center justify-center rounded-full bg-accent-soft text-accent-strong">
           <ng-icon name="heroClock" size="24" aria-hidden="true" />

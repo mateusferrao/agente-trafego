@@ -105,8 +105,10 @@ aparecem. **Backup que nunca foi restaurado não conta.**
 ## Go-live (beta) — checklist pré-abrir
 
 1. **Backup** do Postgres agendado (offsite) + **1 restore de teste** validado (acima).
-2. **Migrations** aplicadas (auto no boot da api) + **backfill one-time**: `pnpm backfill:access -- --confirm`
-   (grandfather de users/grants pré-6b — senão o gate tranca o dono).
+2. **Migrations** aplicadas (auto no boot da api) + **backfill one-time**:
+   `pnpm backfill:access -- --before=<ISO do deploy>` (ex: `--before=2026-08-21T00:00:00Z`) —
+   grandfather de users/grants **anteriores ao cutoff** (senão o gate tranca o dono). O cutoff
+   torna a re-execução inócua (não libera signups do beta em análise).
 3. **Email**: `AUTH_EMAIL_DELIVERY_DRIVER=ses` + `AWS_*` (IAM `trafego-ses-mailer`, sa-east-1) no worker;
    smoke de envio ok (código chega de `no-reply@msg.automato.pro`).
 4. **Liberar allowlist**: `pnpm access:grant <email>` para cada beta user aprovado.

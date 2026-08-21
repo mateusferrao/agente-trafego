@@ -75,14 +75,23 @@ export function createRunDispatcher(deps: RunDispatcherDeps) {
    * que gateia o usuário requisitante). Org sem owner liberado não roda análise.
    */
   async function ownerAccessActive(orgId: string): Promise<boolean> {
+    // Existência de owner ATIVO (não "o 1º owner por acaso"): com múltiplos owners,
+    // filtrar status na query evita não-determinismo (sem orderBy + limit 1 pegaria
+    // um owner arbitrário). Semântica: roda se ALGUM owner da org está liberado.
     const [row] = await deps.db
-      .select({ status: accessGrants.status })
+      .select({ id: accessGrants.id })
       .from(memberships)
       .innerJoin(users, eq(memberships.userId, users.id))
       .innerJoin(accessGrants, eq(accessGrants.email, users.email))
-      .where(and(eq(memberships.orgId, orgId), eq(memberships.role, "owner")))
+      .where(
+        and(
+          eq(memberships.orgId, orgId),
+          eq(memberships.role, "owner"),
+          eq(accessGrants.status, "active"),
+        ),
+      )
       .limit(1);
-    return row?.status === "active";
+    return row !== undefined;
   }
 
   /** Cap por-org (guardrail_configs) do agente, se houver. */

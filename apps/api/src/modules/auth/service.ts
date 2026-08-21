@@ -137,6 +137,15 @@ export function createAuthService(deps: AuthDeps) {
      * Email já existente → resposta idêntica (anti-enum) + notifica o dono real.
      */
     async signup(input: SignupInput): Promise<SignupOutput> {
+      // 1) validação de INPUT primeiro: senha fraca → 400 IDÊNTICO p/ email novo ou
+      //    existente (senão o par existente+fraca vira oráculo de enumeração).
+      const strength = checkPasswordStrength(input.password);
+      if (!strength.ok) throw badRequest(passwordMessage(strength.reason));
+
+      // 2) SEMPRE hasheia antes de ramificar: iguala o custo (~argon2) dos dois ramos
+      //    → sem timing oracle de existência (o ramo "existe" pagava 0, o "novo" ~100ms).
+      const passwordHash = await deps.hasher.hash(input.password);
+
       const existing = await deps.repo.findUserByEmail(input.email);
       if (existing) {
         await deps.mailQueue.enqueue(
@@ -145,10 +154,6 @@ export function createAuthService(deps: AuthDeps) {
         return { pendingVerification: true };
       }
 
-      const strength = checkPasswordStrength(input.password);
-      if (!strength.ok) throw badRequest(passwordMessage(strength.reason));
-
-      const passwordHash = await deps.hasher.hash(input.password);
       try {
         const created = await deps.repo.createUserWithOrg({
           email: input.email,

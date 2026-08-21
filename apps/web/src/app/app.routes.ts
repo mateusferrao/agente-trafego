@@ -1,5 +1,11 @@
 import { Routes } from '@angular/router';
-import { activeAccessGuard, authGuard, guestOnlyGuard, pendingAccessGuard } from '@core/auth';
+import {
+  activeAccessGuard,
+  authGuard,
+  guestOnlyGuard,
+  ownerGuard,
+  pendingAccessGuard,
+} from '@core/auth';
 
 // Árvore de rotas top-level. Tudo lazy (standalone loadComponent) para o bundle
 // inicial enxuto. O AppShell (path '') vem PRIMEIRO para que '/' resolva no shell,
@@ -82,6 +88,7 @@ export const routes: Routes = [
       {
         path: 'custos',
         title: 'Custos — AutoTraffic',
+        canActivate: [ownerGuard],
         loadComponent: () => import('./features/costs/costs-page').then((m) => m.CostsPage),
       },
       {

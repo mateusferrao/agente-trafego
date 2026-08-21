@@ -73,8 +73,8 @@ describe("createRunDispatcher.dispatch", () => {
   it("org sem acesso liberado (beta gate) → skipped_access, sem enfileirar", async () => {
     const scheduler = makeScheduler();
     const dispatcher = createRunDispatcher({
-      // status ok → owner grant pending → gate barra.
-      db: fakeDb([[{ agentStatus: "active", accountStatus: "active" }], [{ status: "pending" }]]),
+      // status ok → sem owner ATIVO (query filtra status="active" → 0 linhas) → gate barra.
+      db: fakeDb([[{ agentStatus: "active", accountStatus: "active" }], []]),
       scheduler: scheduler as never,
       logger,
       metering: makeMetering(0),

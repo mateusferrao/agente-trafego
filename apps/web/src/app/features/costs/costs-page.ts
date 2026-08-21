@@ -11,6 +11,18 @@ function usd(value: number): string {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'USD' }).format(value);
 }
 
+/** Rótulos legíveis dos tipos internos de usage_events (§UX: sem jargão cru). */
+const TYPE_LABELS: Readonly<Record<string, string>> = {
+  unit: 'Análise por anúncio',
+  synthesis: 'Síntese da conta',
+  vision: 'Visão de criativo',
+  review: 'Revisão',
+  message: 'Mensagem (WhatsApp)',
+  conversation: 'Chat',
+  action_applied: 'Ação aplicada',
+  llm: 'LLM (outros)',
+};
+
 /**
  * Custos (6b) — visão do OWNER: custo operacional (COGS do provider) por conta e
  * período + gasto vs cap. NÃO é o preço do cliente (markup = fast-follow).
@@ -27,12 +39,13 @@ function usd(value: number): string {
       >
         <select
           actions
+          aria-label="Período"
           class="rounded-md border border-line bg-panel px-3 py-1.5 text-sm text-ink"
           [ngModel]="period()"
           (ngModelChange)="setPeriod($event)"
         >
           @for (p of periods; track p) {
-            <option [value]="p">{{ p }}</option>
+            <option [value]="p">{{ periodLabel(p) }}</option>
           }
         </select>
       </app-ui-page-header>
@@ -95,7 +108,7 @@ function usd(value: number): string {
           <ul class="flex flex-col gap-2">
             @for (t of typeRows(d); track t.type) {
               <li class="flex items-center justify-between gap-3 rounded-lg border border-line bg-panel p-3 text-sm">
-                <span class="text-ink">{{ t.type }}</span>
+                <span class="text-ink">{{ typeLabel(t.type) }}</span>
                 <span class="shrink-0 font-medium text-ink">{{ money(t.cost) }}</span>
               </li>
             }
@@ -147,6 +160,19 @@ export class CostsPage {
 
   protected overCap(d: CostsOutput): boolean {
     return d.capUsd > 0 && d.totalCostUsd > d.capUsd;
+  }
+
+  protected typeLabel(type: string): string {
+    return TYPE_LABELS[type] ?? type;
+  }
+
+  /** "YYYY-MM" → "agosto de 2026" (pt-BR). */
+  protected periodLabel(period: string): string {
+    const [y, m] = period.split('-').map(Number);
+    if (!y || !m) return period;
+    return new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(
+      new Date(Date.UTC(y, m - 1, 1)),
+    );
   }
 
   protected typeRows(d: CostsOutput): readonly { type: string; cost: number }[] {
