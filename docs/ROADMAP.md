@@ -31,7 +31,7 @@ Plano de construção em fatias. Decisões de arquitetura/produto = [`../CLAUDE.
 | **5a** | Escrita + guardrails ✅ (auto-apply only) | Adapter de escrita (4 mutações idempotentes+dry-run), executor+audit+metering, decide/guardrail cross-run+conflito, undo last-run, UI autonomia/guardrails, mini-surface. HITL = 5b | 4,3,2a |
 | **5b-1** ✅ | HITL via **site** | Aprovar/rejeitar por ação (mini-surface + `/approvals` cross-conta); `approvals` granular (fonte da verdade); apply-service com **re-check fresco** (sem checkpointer); guardrail de no-op + `allowedActions` nas sugeridas + barradas visíveis; expira 24h; **revert endurecido** (drift + TTL) | 5a |
 | **5b-2** ✅ | HITL + operação via **WhatsApp** | Inbound real (webhook/set + `parseInbound` + debounce); Grafo B ReAct (leitura sobre nosso DB + "analisa agora" com push); aprovação conversacional (approve/reject, desfecho de volta); checkpointer Postgres | 5b-1 |
-| **5c** | Chat ReAct pleno (end-state) | **Escrita LIVRE por chat** (propor do zero, eco+confirma + guardrail) + `agent_tool_bindings` + leitura mais rica dentro dos guardrails | 5b |
+| **5c** ✅ | Chat ReAct pleno (end-state) | **Escrita LIVRE por chat** (propor do zero, eco+confirma + guardrail, inline) + budget set-absoluto + revert por chat + leitura mais rica + foco multi-conta. Enforcement via `allowedActions` (não `agent_tool_bindings`) | 5b |
 | **6a** | Timeline / auditoria (UI) | Histórico de runs/ações/aprovações **+ barradas cross-conta** na dashboard (hoje barradas só na mini-surface do último run) | prévias |
 | **6b** | Endurecimento / ops | Throttle, token-190, degradação, backups; allowlist via script/DB | prévias |
 | **7** | Criação de campanhas (pós-MVP) | Gestor completo no WhatsApp: cria campanhas a pedido/proativo | MVP validado, 5a/5b |
@@ -135,6 +135,23 @@ decaimento de token em runtime → `6b`; reuso do sync-service pelo `fetchData` 
 **Controle conversacional total pelo WhatsApp (pós-MVP)**
 - **O agente se auto-configura e ajusta qualquer coisa na plataforma só conversando.** Estende o Grafo B (chat ReAct, `5c`) + o catálogo de tools: além de otimizar a conta, o usuário pede em linguagem natural e o agente **executa na plataforma** — ex: "muda sua meta pra custo por venda de R$120", "passa a autonomia pra agir no seguro", "silencia a campanha X", "aprova aquela ação pendente", "ativa o modo lançamento". Cada capacidade de config/ação vira uma **tool** (mesma taxonomia da escrita: `riskLevel`, idempotência, **eco+confirma antes de aplicar**, guardrail independente); mudar a config do próprio agente é uma tool como as outras. Depende de: `5a`/`5b` (write path + HITL) + catálogo de tools + as superfícies de config já existirem como operações servíveis (a superfície "Agente" da Fatia 4 já expõe os campos; aqui eles ganham uma tool equivalente). Fronteira de segurança: nada de auto-aplicar em interpretação incerta (§8 — chat sempre confirma), e ações sensíveis (billing, remover conexão) ficam fora até terem gate próprio.
 
+**Fast-follows da 5c (escrita/leitura por chat)**
+- **`agent_tool_bindings` completo** — adiado; redundante com `allowedActions` p/ liga/desliga (que já
+  vale no chat). Só se justifica por **shadow por-tool** (hoje `dry_run` é agente-wide) + entitlements/
+  billing (o catálogo `agent_tool_definitions` já está semeado).
+- **Shadow só-do-chat** (`agents.chat_shadow`) — isolar chat (simula) × pipeline (real); hoje `dry_run`
+  afeta os dois caminhos.
+- **Set-absoluto de budget na UI de config** — hoje o `mode:'set'` existe só via chat (5c-2).
+- **Observabilidade de ações de chat no site** — ações por chat não têm run → invisíveis na web até a
+  **6a** (que lê `audit_log`/`agent_tool_calls` por `agent_id`); antecipar uma surface dedicada, ou
+  priorizar a 6a logo após a 5c.
+- **Sumarização rolante do histórico da conversa** (a janela por-turno cresce sem bound em thread longo).
+- **Resolução de aprovações em lote por contrato** (hoje 1 a 1).
+- **Escrita proativa por chat** — o agente sugerir uma mudança sozinho (hoje só reativo, sob pedido
+  explícito). Casa com o "controle conversacional total" acima.
+- **Revert de ação feita fora do sistema** (Ads Manager) — sem `before_state` nosso; hoje o agente recusa
+  com honestidade.
+
 **Flagship pós-MVP:** criação de campanhas no WhatsApp — detalhada abaixo (Fatia 7).
 
 ## Fatia 4 — corte 2 (MVP): config do agente (autonomia · guardrails · playbook · identidade · cadência)
@@ -232,13 +249,12 @@ Operar o agente pelo WhatsApp — conversa livre (linguagem natural), capacidade
   aprovar") + docs.
 
 **Sem migration** (enum `run_trigger` já tinha `conversation`; `approvals.contact_id`, `messages.meta`
-e `channel_instances.webhook_secret` já existiam). **Adiado ao 5c:** escrita livre do zero,
-**tool `revert`/desfazer por WhatsApp** (hoje só via site — validação manual do 5b-2 confirmou o
-agente recusa com honestidade, "não tenho essa função"; entra no catálogo do Grafo B junto de
-`approve`/`reject`, mesmo mecanismo de `requestUndo` — ver `agents/service.ts`), enforcement de
-`agent_tool_bindings`, leitura mais rica, sumarização rolante do histórico, resolução em lote por
-contrato, `focusedAccountId` por-thread (voz/tool por conta em orgs multi-conta). **Meta MCP
-embrulhado** = Fatia 7.
+e `channel_instances.webhook_secret` já existiam). **Entregue na 5c** (antes "adiado ao 5c"): escrita
+livre do zero, **tool `revert`/desfazer por WhatsApp**, leitura mais rica, `focusedAccountId` por-thread.
+**Corrigido:** o **enforcement usa `allowedActions`** (não `agent_tool_bindings` — este virou fast-follow,
+ver abaixo); o **checkpointer Postgres já estava ativo desde a 5b-2** (a nota do corte 1 que o dava como
+"reservado ao 5c" está desatualizada). **Ainda adiado:** sumarização rolante do histórico, resolução em
+lote por contrato. **Meta MCP embrulhado** = Fatia 7.
 
 **Fix ao vivo (pós-entrega):** o no-op da 5b-1.1 lê `state.entities` — o catálogo **cacheado**
 (`MetaEntityCache`, TTL). O cache só invalida na escrita REAL pelo nosso sistema; uma mudança
@@ -253,6 +269,41 @@ evitar) antes de rodar `applyGuardrails` (que continua puro — a releitura é I
 passou a ser exportado por `@trafego/ads-meta` p/ o worker reusar (evita duplicar o
 mapeamento). TTL padrão também reduzido de 3600s → 1800s (`META_ENTITY_CACHE_TTL_SEC`),
 estreitando a janela de staleness em geral.
+
+## Fatia 5c — Escrita livre por chat + leitura rica + foco (entregue)
+
+O agente vira gestor conversacional: o usuário pede em linguagem natural e o agente **propõe →
+ecoa concreto → confirma → aplica**, sob os guardrails existentes. Entregue em 7 sub-slices:
+- **5c-1 — Núcleo de apply/revert compartilhado (refactor puro).** `applyCheckedAction`/
+  `applyConfirmedAction` + `revertActionById` (`apps/worker/src/modules/apply`), reusados pelos
+  workers `approval-apply`/`action-undo` (sem mudança de comportamento) e pela escrita por chat.
+- **5c-2 — Budget set-absoluto.** `adjust_budget mode:'set'` (valor exato) no adapter; o guardrail
+  clampa o set ao teto de blast-radius via `GuardrailContext.budgetAmountByEntity` (dropa se o budget
+  atual não for verificável).
+- **5c-3 — Loop de escrita livre.** Write-tools no Grafo B (pause/resume/set_status/adjust_budget) →
+  nó `confirm` roda guardrail + dry-run **sem persistir** e monta o **eco determinístico** →
+  `echoRelay` (LLM sem tools) dá voz leve → `confirm_write` → nó `applyWrite` re-checa fresco e aplica
+  **inline na mesma msg** (lote + falha parcial + shadow via `dry_run`). **Enforcement por
+  `allowedActions`** (allowlist filtrada em `turn.ts` → recusa honesta na hora). `agent_tool_calls`
+  ganha `agent_id` + `run_id` nullable (escrita por chat não nasce de análise; `loadDailyToolContext`
+  usa `coalesce(agentId, run.agentId)` sem backfill). Eco puro em `@trafego/core`.
+- **5c-4 — Desfazer por chat.** `find_recent_actions` (ações reais recentes não-revertidas) +
+  `revert_action` por id, com o mesmo eco+confirma (`pendingRevert`) → revert inline (drift + TTL da
+  5b). Honesto: só desfaz ações nossas.
+- **5c-5 — Leitura rica.** `compare_periods`, `get_entity_detail` (tendência), `get_agent_config`
+  (só leitura), `explain_recommendation`.
+- **5c-6 — Foco multi-conta.** `conversations.focused_account_id` + `set_focus`: em org com >1 conta,
+  o usuário foca ("foca na Clínica X") e leitura/escrita passam a operar nela; `turn.ts` resolve o
+  agente em contexto (única conta ativa OU conta focada); o eco nomeia a conta; cross-conta → pergunta.
+- **5c-7 — Prompt + endurecimento + validação.** System-prompt reescrito (escreve/desfaz/foca; não
+  cria campanhas = Fatia 7; regra de não-volunteer; revert honesto); TTL do `pendingWrite` (~30 min);
+  `docs/validacao-manual-5c.md`.
+
+**Migrations:** `0015` (agent_tool_calls: run_id nullable + agent_id) e `0016`
+(conversations.focused_account_id). **Segurança:** todo write por chat passa por eco+confirma (§8) +
+guardrail (rede independente) + org-scoping (inclusive `set_focus`); a ação confirmada é a **congelada**
+no gate (o "sim" não re-especifica nada — sem drift). Ações por chat gravam em
+`agent_tool_calls`/`audit_log`/`usage_events` (trilha completa), **não** em `approvals`.
 
 ## Fatia 7 — Criação de campanhas (roadmap pós-MVP)
 
