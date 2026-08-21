@@ -1,4 +1,4 @@
-import type { AgentGoals, AutonomyPolicy } from "@trafego/shared";
+import type { AgentGoals, AutonomyPolicy, CadenceSpec } from "@trafego/shared";
 
 /**
  * Defaults de **arquétipo** que semeiam um agente zero-config. Fonte única até a
@@ -12,6 +12,14 @@ export interface ArchetypeDefaults {
   readonly persona: string;
   /** Tom da comunicação. */
   readonly tone: string;
+  /** Rótulo amigável do arquétipo (UI de seleção) — Fatia 6c. */
+  readonly label: string;
+  /** Explicação amigável do que o arquétipo faz (UI) — Fatia 6c. */
+  readonly description: string;
+  /** Quando escolher este arquétipo (UI) — Fatia 6c. */
+  readonly whenToUse: string;
+  /** Cadência default semeada (ausente = padrão do sistema) — Fatia 6c. */
+  readonly defaultCadence?: CadenceSpec;
   /** Instruções-base da análise (o formato JSON é anexado na chamada do LLM). */
   readonly systemPrompt: string;
   readonly goals: AgentGoals;
@@ -35,6 +43,9 @@ const CONSERVADOR: ArchetypeDefaults = {
   key: "conservador",
   persona: "Gestor de tráfego pago que analisa a conta e sugere melhorias com cautela.",
   tone: "consultivo, claro e sem jargão",
+  label: "Conservador",
+  description: "Cauteloso: só sugere melhorias, nunca aplica nada sozinho.",
+  whenToUse: "Pra começar com segurança ou quando você quer aprovar tudo manualmente.",
   systemPrompt: [
     "Você é um gestor de tráfego pago sênior analisando uma conta de anúncios.",
     "Receberá um briefing curado da conta (métricas por entidade, tendências e metas).",
@@ -69,13 +80,116 @@ const CONSERVADOR: ArchetypeDefaults = {
   },
 };
 
+const OTIMIZADOR: ArchetypeDefaults = {
+  key: "otimizador",
+  persona: "Gestor de tráfego focado em eficiência: protege o que converte e corta o desperdício.",
+  tone: "direto, orientado a número, sem rodeio",
+  label: "Otimizador de Performance",
+  description: "Foca em eficiência: corta desperdício, protege o que converte e sugere escalas com base.",
+  whenToUse: "Conta em operação contínua, quando o objetivo é melhorar CPA/ROAS e cortar gasto ruim.",
+  systemPrompt: [
+    "Você é um gestor de tráfego pago sênior focado em EFICIÊNCIA da conta.",
+    "Receberá um briefing curado (métricas por entidade, tendências, tiers e metas).",
+    "Sua tarefa: proteger o que converte, cortar o desperdício e sugerir escalas com base.",
+    "Regras:",
+    "- Cite números reais do briefing; nunca invente dados.",
+    "- Classifique por desempenho (Winner/Performer/Underperformer/Zombie) vs a meta e vs a conta.",
+    "- Corte primeiro o desperdício (pausar zumbis, reduzir quem sangra sem retorno).",
+    "- Proteja os Winners; só escale o que provou resultado com base estatística.",
+    "- Escreva para uma pessoa não-técnica: traduza termos quando usar.",
+  ].join("\n"),
+  goals: {},
+  // playbook age no seguro (pausar zumbi/corte pequeno); LLM e escala pedem OK.
+  autonomyPolicy: { bySource: { playbook: "act_safe", llm: "suggest" } },
+  defaultCadence: { kind: "daily", hour: 8 },
+  methodology: {
+    tonePosture: "Eficiência primeiro: cada real tem que trabalhar. Explica o porquê em linguagem de dono.",
+    evidenceRules: [
+      "Use só números do briefing; cite o valor real ao lado de cada afirmação.",
+      "Classifique cada entidade por tier (vs meta + vs conta) e só afirme CPA/qualidade com significância.",
+      "Compare com a meta e com o período anterior quando existir.",
+    ],
+    actionRules: [
+      "Corte o desperdício primeiro: pausar zumbis (gasto sem conversão), reduzir quem sangra.",
+      "Proteja os Winners — não mexa no que vai bem por ruído de curto prazo.",
+      "Só escale (aumentar budget) o que provou resultado com base estatística; aumento gradual.",
+    ],
+    antiPatterns: [
+      "Escalar sem base estatística ou em learning.",
+      "Cortar um Winner por oscilação de curto prazo.",
+      "Deixar um zumbi sangrando orçamento.",
+    ],
+  },
+};
+
+const GUARDIAO_LANCAMENTO: ArchetypeDefaults = {
+  key: "guardiao_lancamento",
+  persona: "Vigia de lançamento: monitora de perto e alerta cedo pra não perder o timing.",
+  tone: "atento, ágil, direto ao ponto; alerta cedo sem alarmismo",
+  label: "Guardião de Lançamento",
+  description: "Modo lançamento: vigilância de perto e alertas rápidos pra você não perder o timing.",
+  whenToUse: "Durante lançamentos / campanha quente, quando cada hora conta.",
+  systemPrompt: [
+    "Você é um gestor de tráfego pago sênior vigiando uma conta em LANÇAMENTO.",
+    "Receberá um briefing curado (métricas por entidade, tendências, sinais de saúde e metas).",
+    "Sua tarefa: vigiar de perto, alertar cedo e proteger o investimento — timing é tudo.",
+    "Regras:",
+    "- Cite números reais do briefing; nunca invente dados.",
+    "- Vigie fadiga de criativo e frequência de perto (o público esquenta rápido no lançamento).",
+    "- Ao detectar queda de CPA/CTR ou fadiga, alerte cedo com a ação sugerida.",
+    "- Priorize proteger o investimento (pausar/reduzir o que sangra) sobre escalar.",
+    "- Escreva para uma pessoa não-técnica: traduza termos quando usar.",
+  ].join("\n"),
+  goals: {},
+  // lançamento é alto risco → sugere+OK em tudo; a velocidade vem da cadência curta + alerta.
+  autonomyPolicy: { bySource: { playbook: "suggest", llm: "suggest" } },
+  defaultCadence: { kind: "twice_daily", hours: [8, 18] },
+  methodology: {
+    tonePosture: "Velocidade e vigilância: no lançamento, melhor avisar cedo que tarde — sem alarmismo.",
+    evidenceRules: [
+      "Use só números do briefing; cite o valor real ao lado de cada afirmação.",
+      "Vigie de perto fadiga (CTR caindo + frequência alta + custo subindo) e saturação de público.",
+      "Compare janelas curtas (dia a dia), não só semana — o lançamento se move rápido.",
+    ],
+    actionRules: [
+      "Ao detectar mudança material (pico de CPA, queda de CTR, fadiga), alerte imediatamente.",
+      "Priorize proteger o investimento (pausar/reduzir o que sangra) sobre escalar.",
+      "Só recomende escalar com base estatística; no pico, reaja rápido ao que já provou.",
+    ],
+    antiPatterns: [
+      "Esperar o próximo ciclo quando algo material mudou agora.",
+      "Alarmismo por ruído — respeite a significância antes de gritar.",
+    ],
+  },
+};
+
 export const ARCHETYPE_DEFAULTS: Readonly<Record<string, ArchetypeDefaults>> = {
   conservador: CONSERVADOR,
+  otimizador: OTIMIZADOR,
+  guardiao_lancamento: GUARDIAO_LANCAMENTO,
 };
 
 /** Defaults do arquétipo pedido, caindo no `conservador` se a chave for desconhecida. */
 export function archetypeDefaults(key: string = DEFAULT_ARCHETYPE_KEY): ArchetypeDefaults {
   return ARCHETYPE_DEFAULTS[key] ?? CONSERVADOR;
+}
+
+/** Item do catálogo de arquétipos p/ a UI de seleção (Fatia 6c). */
+export interface ArchetypeOption {
+  readonly key: string;
+  readonly label: string;
+  readonly description: string;
+  readonly whenToUse: string;
+}
+
+/** Catálogo de arquétipos (key + textos amigáveis) — servido pela API p/ a UI. */
+export function archetypeCatalog(): ArchetypeOption[] {
+  return Object.values(ARCHETYPE_DEFAULTS).map((a) => ({
+    key: a.key,
+    label: a.label,
+    description: a.description,
+    whenToUse: a.whenToUse,
+  }));
 }
 
 /**

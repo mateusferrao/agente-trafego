@@ -295,6 +295,10 @@ export function createAgentsService(deps: AgentsDeps) {
   ): Promise<AgentSummary> {
     const summary = await getOrCreateForAccount(orgId, accountId);
     const defaults = archetypeDefaults(archetype);
+    // Cadência: preserva a do usuário; só semeia a default do arquétipo (Fatia 6c) quando
+    // ainda está no padrão do sistema (null) — ex: Guardião → 2×/dia.
+    const nextCadence = summary.cadence ?? defaults.defaultCadence ?? null;
+    const cadenceChanged = JSON.stringify(nextCadence) !== JSON.stringify(summary.cadence ?? null);
     await deps.db
       .update(agents)
       .set({
@@ -304,10 +308,19 @@ export function createAgentsService(deps: AgentsDeps) {
         tone: null,
         systemPrompt: null,
         autonomyPolicy: defaults.autonomyPolicy,
+        cadence: nextCadence,
         configChangedAt: sql`now()`,
         updatedAt: sql`now()`,
       })
       .where(and(eq(agents.id, summary.agentId), eq(agents.orgId, orgId)));
+    // cadência semeada mudou → re-sincroniza o schedule (mesmo caminho do updateConfig).
+    if (cadenceChanged) {
+      await deps.scheduler.enqueue({
+        queue: SCHEDULE_RESYNC_QUEUE,
+        name: SCHEDULE_RESYNC_JOB,
+        payload: { orgId, adAccountId: accountId },
+      });
+    }
     return {
       ...summary,
       archetype: defaults.key,
@@ -315,6 +328,7 @@ export function createAgentsService(deps: AgentsDeps) {
       tone: null,
       systemPrompt: null,
       autonomyPolicy: defaults.autonomyPolicy,
+      cadence: nextCadence,
       methodologyPreview: methodologyFor(defaults.key),
     };
   }

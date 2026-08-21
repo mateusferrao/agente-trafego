@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ARCHETYPE_DEFAULTS,
   DEFAULT_ARCHETYPE_KEY,
+  archetypeCatalog,
   archetypeDefaults,
   composeAgentPrompt,
 } from "./index.js";
@@ -27,6 +28,30 @@ describe("archetypeDefaults", () => {
     const a = archetypeDefaults();
     expect(a.systemPrompt.length).toBeGreaterThan(0);
     expect(a.goals).toEqual({});
+  });
+
+  it("otimizador age no seguro no playbook; LLM pede OK (Fatia 6c)", () => {
+    const a = archetypeDefaults("otimizador");
+    expect(a.autonomyPolicy.bySource.playbook).toBe("act_safe");
+    expect(a.autonomyPolicy.bySource.llm).toBe("suggest");
+    expect(a.defaultCadence).toEqual({ kind: "daily", hour: 8 });
+  });
+
+  it("guardião de lançamento: sugere+OK, cadência 2×/dia", () => {
+    const a = archetypeDefaults("guardiao_lancamento");
+    expect(a.autonomyPolicy.bySource.playbook).toBe("suggest");
+    expect(a.autonomyPolicy.bySource.llm).toBe("suggest");
+    expect(a.defaultCadence).toEqual({ kind: "twice_daily", hours: [8, 18] });
+  });
+
+  it("catálogo expõe os 3 arquétipos com textos amigáveis", () => {
+    const cat = archetypeCatalog();
+    expect(cat.map((c) => c.key)).toEqual(["conservador", "otimizador", "guardiao_lancamento"]);
+    for (const c of cat) {
+      expect(c.label.length).toBeGreaterThan(0);
+      expect(c.description.length).toBeGreaterThan(0);
+      expect(c.whenToUse.length).toBeGreaterThan(0);
+    }
   });
 });
 
