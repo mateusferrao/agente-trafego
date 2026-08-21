@@ -57,15 +57,15 @@ export const envSchema = z.object({
   OPENROUTER_API_KEY: z.string().min(1, "OPENROUTER_API_KEY é obrigatória"),
   // Default = modelo FORTE p/ validar o teto de qualidade da análise (3a). Trocável
   // em 1 linha por env; a otimização de custo/modelo (e config por-agente) vem depois.
-  OPENROUTER_MODEL: z.string().min(1).default("google/gemini-2.5-pro"),
+  OPENROUTER_MODEL: z.string().min(1).default("x-ai/grok-4.5"),
   OPENROUTER_VISION_MODEL: z
     .string()
     .min(1)
-    .default("google/gemini-2.5-flash"),
-  // Map-reduce (3b-2): modelo barato por-anúncio (mapa) + modelo barato do redator do
+    .default("google/gemini-3.1-flash-lite"),
+  // Map-reduce (3b-2): modelo barato por-campanha (mapa) + modelo barato do redator do
   // WhatsApp. Síntese/reviewer usam OPENROUTER_MODEL (forte). Override por-agente (Fatia 4).
-  OPENROUTER_UNIT_MODEL: z.string().min(1).default("google/gemini-2.5-flash"),
-  OPENROUTER_MESSAGE_MODEL: z.string().min(1).default("google/gemini-2.5-flash"),
+  OPENROUTER_UNIT_MODEL: z.string().min(1).default("deepseek/deepseek-v4-flash-0731"),
+  OPENROUTER_MESSAGE_MODEL: z.string().min(1).default("google/gemini-3.1-flash-lite"),
   // Versão do analisador de visão — bumpar invalida o cache de análises de criativo.
   // Bump p/ 2 na Fatia 6c: multi-frame HD + decomposição (hook/angle/format/cta) →
   // invalida o cache antigo (chaveado por URL) uma vez.
@@ -193,7 +193,7 @@ export const envSchema = z.object({
   // ─── Conversa (WhatsApp — Grafo B ReAct, 5b-2) ─────────────────────────
   // Modelo do chat: fallback quando o agente não tem `model_config.messageModel`.
   // Chat = alto volume + tarefa simples → default barato com bom tool-calling.
-  CONVERSATION_MODEL: z.string().min(1).default("google/gemini-2.5-flash"),
+  CONVERSATION_MODEL: z.string().min(1).default("google/gemini-3.7-flash"),
   // Janela de contexto por TURNO enviada ao LLM (turno = fala do usuário + resposta
   // completa até a próxima fala; nunca quebra par tool_call/tool_result).
   CONVERSATION_HISTORY_TURNS: z.coerce.number().int().positive().default(8),
