@@ -293,7 +293,10 @@ export function makeConversationNodes(
       }
       const echo = buildRevertEcho(items);
       return {
-        messages: answerToolCalls(allCalls, echo),
+        // eco DETERMINÍSTICO direto (sem voz-leve por LLM — um modelo pequeno parafraseia e
+        // pode omitir dados/segurança do eco; validação ao vivo confirmou o risco). O eco é a
+        // verdade fixa; o ToolMessage só satisfaz o par tool_call/result.
+        messages: [...answerToolCalls(allCalls, "proposto — aguardando confirmação"), new AIMessage(echo)],
         pendingRevert: { echo, expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString(), toolCallIds: ids },
         pendingWrite: null, // uma pendência por vez (write × revert não coexistem)
       };
@@ -346,7 +349,10 @@ export function makeConversationNodes(
     if (blocked.length > 0) parts.push(`Não consigo:\n${blocked.map((b, i) => `${i + 1}. ${b}`).join("\n")}`);
     const echo = parts.join("\n\n") || "Não consegui preparar essa ação.";
 
-    const update: WhatsappConversationUpdate = { messages: answerToolCalls(allCalls, echo), pendingRevert: null };
+    const update: WhatsappConversationUpdate = {
+      messages: [...answerToolCalls(allCalls, "proposto — aguardando confirmação"), new AIMessage(echo)],
+      pendingRevert: null,
+    };
     if (frozen.length > 0) {
       update.pendingWrite = {
         echo,
@@ -355,27 +361,6 @@ export function makeConversationNodes(
       };
     }
     return update;
-  }
-
-  /** Voz leve (LLM SEM tools) sobre o eco determinístico — não pode disparar ação (sem loop). */
-  async function echoRelay(state: WhatsappConversationStateType): Promise<WhatsappConversationUpdate> {
-    const { systemPrompt, model } = await loadConversationConfig(
-      deps.db,
-      ctx.orgId,
-      ctx.agentId.length > 0 ? ctx.agentId : null,
-      deps.conversation.model,
-    );
-    // o eco congelado no state é a fonte exata (o ToolMessage do lote só leva "(ver acima)").
-    const echoText = activePendingWrite(state.pendingWrite)?.echo ?? activePendingRevert(state.pendingRevert)?.echo ?? "";
-    if (!echoText) return {};
-    const sys = new SystemMessage(
-      `${systemPrompt}\n\nRepasse ao usuário, em português e voz leve, EXATAMENTE este pedido de confirmação — não invente, não altere nomes, números ou valores, e termine perguntando se confirma:`,
-    );
-    const response = (await makeChat(model, false).invoke([sys, new HumanMessage(echoText)])) as AIMessage;
-    await recordConversationUsage(deps, ctx, model, response);
-    const text = typeof response.content === "string" ? response.content.trim() : "";
-    // fallback determinístico: se o LLM devolver vazio, manda o eco cru (nunca fica mudo).
-    return { messages: [text.length > 0 ? response : new AIMessage(echoText)] };
   }
 
   /** Turno 2: aplica (confirm_write) ou descarta (cancel_write) a pendência congelada. */
@@ -448,7 +433,7 @@ export function makeConversationNodes(
     return { messages: [...answerToolCalls(calls, "aplicado"), new AIMessage(lines.join("\n"))], pendingWrite: null };
   }
 
-  return { agent, toolsNode, confirmWriteGate, echoRelay, applyWrite };
+  return { agent, toolsNode, confirmWriteGate, applyWrite };
 }
 
 /**

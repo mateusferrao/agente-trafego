@@ -19,7 +19,6 @@ export function buildWhatsappConversationGraph(
     .addNode("agent", n.agent)
     .addNode("tools", n.toolsNode())
     .addNode("confirm", n.confirmWriteGate)
-    .addNode("echoRelay", n.echoRelay)
     .addNode("apply", n.applyWrite)
     .addEdge(START, "agent")
     // leitura → tools; escrita livre → gate de eco; confirm/cancel → apply; nada → responde
@@ -30,9 +29,9 @@ export function buildWhatsappConversationGraph(
       __end__: END,
     })
     .addEdge("tools", "agent")
-    // gate → voz leve sobre o eco (LLM sem tools) → aguarda "sim" no próximo turno
-    .addEdge("confirm", "echoRelay")
-    .addEdge("echoRelay", END)
+    // gate → eco determinístico direto (aguarda "sim" no próximo turno). Sem voz-leve por
+    // LLM: um modelo pequeno parafraseia e pode omitir dados/segurança do eco (validado ao vivo).
+    .addEdge("confirm", END)
     // aplicação da pendência confirmada → responde o desfecho e encerra
     .addEdge("apply", END);
 

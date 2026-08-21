@@ -145,6 +145,13 @@ decaimento de token em runtime → `6b`; reuso do sync-service pelo `fetchData` 
 - **Observabilidade de ações de chat no site** — ações por chat não têm run → invisíveis na web até a
   **6a** (que lê `audit_log`/`agent_tool_calls` por `agent_id`); antecipar uma surface dedicada, ou
   priorizar a 6a logo após a 5c.
+- **Agir sobre entidade viva FORA de análise (chat)** — hoje o agente só age sobre o que está em
+  `entity_analyses` (resolve nome→id via `get_campaign_analysis`/`get_entity_detail`/`find_recent_actions`,
+  todos lendo o DB curado); campanha nunca analisada (ex: recém-criada) não é resolvível → o agente não
+  age (precisa "analisa agora" antes). Fast-follow: **read-tool que lista entidades direto da Meta e
+  resolve nome→id ao vivo** (reusa `listEntities` + `MetaEntityCache`, sem reintroduzir pressão de
+  rate-limit), inclusive **nível adset/anúncio** (hoje o chat age só em campanha — nenhum read-tool
+  expõe adset/ad por nome). Passo real rumo ao "gestor completo" (§ controle conversacional total).
 - **Sumarização rolante do histórico da conversa** (a janela por-turno cresce sem bound em thread longo).
 - **Resolução de aprovações em lote por contrato** (hoje 1 a 1).
 - **Escrita proativa por chat** — o agente sugerir uma mudança sozinho (hoje só reativo, sob pedido
