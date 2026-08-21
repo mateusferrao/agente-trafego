@@ -106,11 +106,16 @@ const REASON_TONE: Record<Reason, TimelineTone> = {
 
           <!-- Panorama por conta — resumo top-N por gasto; lista completa em Contas. -->
           <section class="flex flex-col gap-3">
-            <div class="flex items-center justify-between gap-2">
-              <h2 class="font-brand text-sm font-semibold text-ink">Suas contas</h2>
+            <div class="flex items-end justify-between gap-2">
+              <div class="flex flex-col gap-0.5">
+                <h2 class="font-brand text-sm font-semibold text-ink">Suas contas</h2>
+                @if (d.panorama.length > topN) {
+                  <span class="text-xs text-muted">as {{ topN }} de maior gasto · {{ d.panorama.length }} no total</span>
+                }
+              </div>
               @if (d.panorama.length > topN) {
-                <a routerLink="/accounts" class="text-xs font-medium text-accent-strong hover:text-ink">
-                  ver todas as {{ d.panorama.length }} →
+                <a routerLink="/accounts" class="shrink-0 text-xs font-medium text-accent-strong hover:text-ink">
+                  ver todas →
                 </a>
               }
             </div>

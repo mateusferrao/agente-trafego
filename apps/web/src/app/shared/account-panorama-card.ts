@@ -19,9 +19,14 @@ export type PanoramaCardVm = PanoramaListOutput["accounts"][number];
   providers: [provideIcons({ heroArrowPath })],
   template: `
     @let c = card();
-    <div class="flex flex-col gap-2 rounded-lg border border-line bg-panel p-4">
+    <!-- Card inteiro clicável: o link do nome estica sobre o card (::after); o botão
+         Atualizar fica acima (z-10) p/ não disparar a navegação. -->
+    <div class="relative flex flex-col gap-2 rounded-lg border border-line bg-panel p-4 transition hover:border-accent/40">
       <div class="flex items-start justify-between gap-2">
-        <a [routerLink]="['/accounts', c.accountId]" class="text-sm font-semibold text-ink hover:text-accent-strong">
+        <a
+          [routerLink]="['/accounts', c.accountId]"
+          class="text-sm font-semibold text-ink after:absolute after:inset-0 after:content-[''] hover:text-accent-strong"
+        >
           {{ c.accountName }}
         </a>
         @if (c.grade) {
@@ -52,7 +57,7 @@ export type PanoramaCardVm = PanoramaListOutput["accounts"][number];
         <span class="text-xs" [class.text-muted]="!c.stale" [class.text-warning-strong]="c.stale">
           {{ asOfLabel(c.asOf, c.stale) }}
         </span>
-        <button appButton variant="secondary" type="button" [disabled]="refreshing()" (click)="refresh.emit(c.accountId)">
+        <button appButton variant="secondary" type="button" class="relative z-10" [disabled]="refreshing()" (click)="refresh.emit(c.accountId)">
           <ng-icon name="heroArrowPath" size="14" aria-hidden="true" [class.animate-spin]="refreshing()" />
           Atualizar
         </button>
