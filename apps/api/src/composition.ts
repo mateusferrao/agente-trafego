@@ -197,7 +197,7 @@ export function buildContainer(): Container {
       now: () => new Date(),
     }),
     timeline: createTimelineService({ db }),
-    billing: createBillingService({ db, metering }),
+    billing: createBillingService({ db, metering, costCapUsd: env.LLM_COST_CAP_USD_PER_PERIOD }),
     webhooks: createWebhooksService({ db, scheduler }),
   };
 

@@ -23,7 +23,7 @@ import {
   signupOutput,
 } from "../modules/auth/schema.js";
 import { createOrgInput, orgOutput, renameOrgInput, setTimezoneInput } from "../modules/orgs/schema.js";
-import { accessStatusOutput, usageSummaryOutput } from "../modules/billing/schema.js";
+import { accessStatusOutput, costsOutput, usageSummaryOutput } from "../modules/billing/schema.js";
 import { adAccountOutput } from "../modules/accounts/schema.js";
 import {
   connectionAccountsOutput,
@@ -98,6 +98,7 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const OrgOutput = registry.register("OrgOutput", orgOutput);
   const AccessStatusOutput = registry.register("AccessStatusOutput", accessStatusOutput);
   const UsageSummaryOutput = registry.register("UsageSummaryOutput", usageSummaryOutput);
+  const CostsOutput = registry.register("CostsOutput", costsOutput);
   const AdAccountOutput = registry.register("AdAccountOutput", adAccountOutput);
   const CreateConnectionInput = registry.register("CreateConnectionInput", createConnectionInput);
   const ConnectionOutput = registry.register("ConnectionOutput", connectionOutput);
@@ -603,6 +604,13 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     tags: ["billing"],
     request: { query: z.object({ period: z.string().optional() }) },
     responses: { 200: jsonRes("resumo de uso do período", UsageSummaryOutput) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/billing/costs",
+    tags: ["billing"],
+    request: { query: z.object({ period: z.string().optional() }) },
+    responses: { 200: jsonRes("custos do owner (por conta + total + cap)", CostsOutput) },
   });
 
   const generator = new OpenApiGeneratorV31(registry.definitions);

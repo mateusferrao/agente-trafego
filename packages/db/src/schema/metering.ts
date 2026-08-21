@@ -28,5 +28,7 @@ export const usageEvents = pgTable(
   (t) => [
     index("usage_events_org_idx").on(t.orgId),
     index("usage_events_type_idx").on(t.type),
+    // agregações de billing por período fazem range em created_at (6b).
+    index("usage_events_created_idx").on(t.createdAt),
   ],
 );

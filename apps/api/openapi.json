@@ -290,6 +290,62 @@
           "byType"
         ]
       },
+      "CostsOutput": {
+        "type": "object",
+        "properties": {
+          "period": {
+            "type": "string"
+          },
+          "totalCostUsd": {
+            "type": "number"
+          },
+          "byType": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "number"
+            }
+          },
+          "byAccount": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "accountId": {
+                  "type": "string"
+                },
+                "accountName": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "costUsd": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "accountId",
+                "accountName",
+                "costUsd"
+              ]
+            }
+          },
+          "unattributedCostUsd": {
+            "type": "number"
+          },
+          "capUsd": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "period",
+          "totalCostUsd",
+          "byType",
+          "byAccount",
+          "unattributedCostUsd",
+          "capUsd"
+        ]
+      },
       "AdAccountOutput": {
         "type": "object",
         "properties": {
@@ -5572,6 +5628,35 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UsageSummaryOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/billing/costs": {
+      "get": {
+        "tags": [
+          "billing"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "period",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "custos do owner (por conta + total + cap)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CostsOutput"
                 }
               }
             }

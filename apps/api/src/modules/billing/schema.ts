@@ -13,3 +13,23 @@ export const usageSummaryOutput = z.object({
   byType: z.record(z.number()),
 });
 export type UsageSummaryOutput = z.infer<typeof usageSummaryOutput>;
+
+// Custo (COGS) do owner por conta — economia unitária (6b).
+export const costByAccount = z.object({
+  accountId: z.string(),
+  accountName: z.string().nullable(),
+  costUsd: z.number(),
+});
+
+// Painel de custos do owner: total + por tipo + por conta + não-atribuído + cap.
+export const costsOutput = z.object({
+  period: z.string(),
+  totalCostUsd: z.number(),
+  byType: z.record(z.number()),
+  byAccount: z.array(costByAccount),
+  // custo sem run associado (chat/conversa — run_id null) → não mapeia a conta.
+  unattributedCostUsd: z.number(),
+  // cap de custo LLM de referência (env global; per-agente = fast-follow). 0 = sem cap.
+  capUsd: z.number(),
+});
+export type CostsOutput = z.infer<typeof costsOutput>;
