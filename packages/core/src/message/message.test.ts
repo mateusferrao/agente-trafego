@@ -19,6 +19,31 @@ describe("buildMessageFallback", () => {
     expect(msg).not.toContain("• Quarta"); // cap = 3
   });
 
+  it("money shot: abre pelo desperdício em reais quando material", () => {
+    const msg = buildMessageFallback({
+      accountName: "Clínica Z",
+      headline: "Entrega ok.",
+      summary: "s",
+      recommendations: [{ title: "Pausar zumbi" }],
+      money: { wastedSpend: 1600, wastedPct: 16 },
+    });
+    const lines = msg.split("\n");
+    expect(lines[0]).toContain("Clínica Z");
+    expect(lines[1]).toContain("R$1600");
+    expect(lines[1]).toContain("16%");
+  });
+
+  it("desperdício zero → não abre com money shot", () => {
+    const msg = buildMessageFallback({
+      accountName: "Loja W",
+      headline: "Tudo certo.",
+      summary: "s",
+      recommendations: [],
+      money: { wastedSpend: 0, wastedPct: 0 },
+    });
+    expect(msg).not.toContain("R$");
+  });
+
   it("sem headline → cai p/ a primeira frase do resumo", () => {
     const msg = buildMessageFallback({
       accountName: "Loja Y",

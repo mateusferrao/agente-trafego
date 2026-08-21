@@ -719,7 +719,10 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       try {
         const completion = await deps.ports.llm.completeStructured<{ text: string }>({
           model: cfg.messageModel,
-          messages: buildMessageMessages(state.systemPrompt, state.account.name, out),
+          messages: buildMessageMessages(state.systemPrompt, state.account.name, out, {
+            ...(state.brief?.waste ? { waste: state.brief.waste } : {}),
+            ...(state.brief?.trackingHealth?.suspect ? { trackingSuspect: true } : {}),
+          }),
           responseSchema: MESSAGE_OUTPUT_JSON_SCHEMA,
           responseSchemaName: MESSAGE_OUTPUT_SCHEMA_NAME,
           temperature: ANALYSIS_TEMPERATURE,
@@ -741,6 +744,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           ...(out.scorecard?.headline ? { headline: out.scorecard.headline } : {}),
           summary: out.summary,
           recommendations: out.recommendations.map((r) => ({ title: r.title })),
+          ...(state.brief?.waste && state.brief.waste.wastedSpend > 0
+            ? { money: { wastedSpend: state.brief.waste.wastedSpend, wastedPct: state.brief.waste.wastedPct } }
+            : {}),
         });
       }
     } else {

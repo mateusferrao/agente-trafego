@@ -10,6 +10,8 @@ export interface MessageOverview {
   readonly summary: string;
   /** recomendações priorizadas (título curto). */
   readonly recommendations: readonly { readonly title: string }[];
+  /** desperdício (§Bloco 2) — abre a mensagem pelo "money shot" quando material. */
+  readonly money?: { readonly wastedSpend: number; readonly wastedPct: number };
 }
 
 /** Nº máx. de recomendações listadas na mensagem (WhatsApp-first). */
@@ -22,6 +24,10 @@ const DEFAULT_MAX_RECS = 3;
 export function buildMessageFallback(overview: MessageOverview, maxRecs = DEFAULT_MAX_RECS): string {
   const lines: string[] = [];
   lines.push(`📊 ${overview.accountName}`);
+  // money shot primeiro (§Bloco 2): o dono quer ver o dinheiro antes do diagnóstico.
+  if (overview.money && overview.money.wastedSpend > 0) {
+    lines.push(`💸 R$${overview.money.wastedSpend} (${overview.money.wastedPct}%) em campanhas paradas — pausar libera esse valor.`);
+  }
   const lead = overview.headline?.trim() || firstSentence(overview.summary);
   if (lead) lines.push(lead);
 

@@ -3,6 +3,7 @@
 // (só números da síntese), voz do arquétipo, WhatsApp-first. Saída {text} mínima.
 
 import type { AnalysisOutput } from "@trafego/shared/schemas";
+import type { WasteReport } from "@trafego/shared";
 import type { LLMMessage } from "@trafego/shared/ports";
 import { GROUNDING_RULE } from "../analysis/prompt.js";
 
@@ -23,19 +24,37 @@ const VOICE_RULES = [
   "Curta e escaneável: 1 decisão por linha. Comece pelo diagnóstico (1 frase), depois as sugestões.",
   "Não inclua IDs internos, JSON, nem markdown pesado. Sem saudação longa. Use no máx. 3 sugestões.",
   "Não invente números nem ações: use SOMENTE o que está no resultado fornecido.",
+  "Se houver 'waste' (wastedSpend > 0 ou 'misallocated'), ABRA pela mensagem em reais (o dono quer ver o dinheiro primeiro): quanto está parado e onde está mal alocado.",
+  "Se 'trackingSuspect' for true, ressalve que a medição de vendas pode estar incompleta antes de sugerir cortes por CPA de venda.",
 ].join(" ");
+
+/** Resumo compacto do desperdício p/ o redator (não despeja o Pareto inteiro). */
+function curateWaste(waste: WasteReport | undefined): Record<string, unknown> | undefined {
+  if (!waste) return undefined;
+  const misallocated = (waste.pareto?.misallocated ?? []).slice(0, 2).map((m) => ({
+    name: m.name,
+    spendPct: m.spendPct,
+    ...(m.resultPct !== undefined ? { resultPct: m.resultPct } : {}),
+  }));
+  if (waste.wastedSpend <= 0 && misallocated.length === 0) return undefined;
+  return { wastedSpend: waste.wastedSpend, wastedPct: waste.wastedPct, misallocated };
+}
 
 /** Monta as mensagens do redator. `systemPrompt` = persona/metodologia do arquétipo. */
 export function buildMessageMessages(
   systemPrompt: string,
   accountName: string,
   output: AnalysisOutput,
+  extras?: { readonly waste?: WasteReport; readonly trackingSuspect?: boolean },
 ): LLMMessage[] {
   const system = [systemPrompt, VOICE_RULES, GROUNDING_RULE].join("\n\n");
+  const waste = curateWaste(extras?.waste);
   const curated = {
     accountName,
     scorecard: output.scorecard,
     summary: output.summary,
+    ...(waste ? { waste } : {}),
+    ...(extras?.trackingSuspect ? { trackingSuspect: true } : {}),
     recommendations: output.recommendations.slice(0, MAX_RECS).map((r) => ({
       title: r.title,
       rationale: r.rationale,
