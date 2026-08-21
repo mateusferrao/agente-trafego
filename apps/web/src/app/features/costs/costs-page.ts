@@ -176,16 +176,42 @@ function presetRange(key: string): { since: string; until: string } {
               <span class="text-xs text-muted">pico {{ money(serieMax()) }}</span>
             </div>
             @if (serie().length >= 2) {
-              <svg viewBox="0 0 100 40" preserveAspectRatio="none" class="h-40 w-full" role="img" aria-label="Custo por dia no período">
-                <polygon [attr.points]="areaPoints()" [attr.fill]="accentVar" fill-opacity="0.15" />
-                <polyline
-                  [attr.points]="linePoints()"
-                  fill="none"
-                  [attr.stroke]="accentVar"
-                  stroke-width="1.5"
-                  vector-effect="non-scaling-stroke"
-                />
-              </svg>
+              <!-- área + camada de hover (crosshair + tooltip por dia). -->
+              <div class="relative h-40 w-full">
+                <svg viewBox="0 0 100 40" preserveAspectRatio="none" class="h-full w-full" role="img" aria-label="Custo por dia no período">
+                  <polygon [attr.points]="areaPoints()" [attr.fill]="accentVar" fill-opacity="0.15" />
+                  <polyline
+                    [attr.points]="linePoints()"
+                    fill="none"
+                    [attr.stroke]="accentVar"
+                    stroke-width="1.5"
+                    vector-effect="non-scaling-stroke"
+                  />
+                </svg>
+                @if (hovered(); as h) {
+                  <!-- linha guia + ponto + tooltip (posicionados por %, sem cor inline). -->
+                  <div class="pointer-events-none absolute top-0 bottom-0 w-px bg-line" [style.left.%]="h.xPct"></div>
+                  <div
+                    class="pointer-events-none absolute size-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent"
+                    [style.left.%]="h.xPct"
+                    [style.top.%]="h.yPct"
+                  ></div>
+                  <div
+                    class="pointer-events-none absolute -translate-x-1/2 -translate-y-full rounded-md border border-line bg-panel px-2 py-1 text-[11px] whitespace-nowrap shadow-card"
+                    [style.left.%]="h.xPct"
+                    [style.top.%]="h.yPct"
+                  >
+                    <span class="text-muted">{{ h.date }}</span>
+                    <span class="ml-1.5 font-medium text-ink">{{ money(h.cost) }}</span>
+                  </div>
+                }
+                <!-- overlay transparente que captura o mouse (offsetX → dia). -->
+                <div
+                  class="absolute inset-0 cursor-crosshair"
+                  (mousemove)="onHover($event)"
+                  (mouseleave)="hoveredIndex.set(null)"
+                ></div>
+              </div>
               <div class="flex justify-between text-[11px] text-muted">
                 <span>{{ dayLabel(d.since) }}</span>
                 <span>{{ dayLabel(d.until) }}</span>
@@ -347,6 +373,24 @@ export class CostsPage {
     const pts = this.points();
     if (pts.length < 2) return '';
     return `0,40 ${this.linePoints()} 100,40`;
+  }
+
+  // hover na série: mapeia offsetX → dia; tooltip/crosshair posicionados por %.
+  protected readonly hoveredIndex = signal<number | null>(null);
+  protected onHover(e: MouseEvent): void {
+    const el = e.currentTarget as HTMLElement;
+    const n = this.data()?.byDay.length ?? 0;
+    if (n < 2 || el.clientWidth === 0) return;
+    const ratio = Math.min(1, Math.max(0, e.offsetX / el.clientWidth));
+    this.hoveredIndex.set(Math.round(ratio * (n - 1)));
+  }
+  protected hovered(): { xPct: number; yPct: number; date: string; cost: number } | null {
+    const idx = this.hoveredIndex();
+    if (idx === null) return null;
+    const p = this.points()[idx];
+    const day = (this.data()?.byDay ?? [])[idx];
+    if (!p || !day) return null;
+    return { xPct: p.x, yPct: (p.y / 40) * 100, date: this.dayLabel(day.date), cost: day.costUsd };
   }
 
   // ─── por conta (barras) ───────────────────────────────────────────────
