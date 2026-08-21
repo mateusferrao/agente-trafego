@@ -6,12 +6,13 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from "@angular/core";
 import { RouterLink } from "@angular/router";
 import { NgIcon, provideIcons } from "@ng-icons/core";
-import { heroArrowPath, heroCheckCircle, heroSparkles } from "@ng-icons/heroicons/outline";
+import { heroCheckCircle, heroSparkles } from "@ng-icons/heroicons/outline";
 import { UiBadge, UiButton, UiEmptyState, UiPageHeader, UiSpinner, type TimelineTone } from "@ui";
 import { DashboardApiService } from "@core/api/dashboard-api.service";
 import type { DashboardOutput } from "@core/api/generated";
 import { actionTypeLabel } from "../../shared/action-format";
-import { asOfLabel, gradeTone, money, timeLabel } from "../../shared/format";
+import { timeLabel } from "../../shared/format";
+import { AccountPanoramaCard } from "../../shared/account-panorama-card";
 
 type Card = DashboardOutput["panorama"][number];
 type Activity = DashboardOutput["recentActivity"][number];
@@ -19,6 +20,8 @@ type Reason = Card["reasons"][number];
 
 const LAZY_MAX = 8; // teto de refresh lazy no load (evita burst)
 const RELOAD_MS = 5000;
+/** Painel resume o panorama nas top-N por gasto; lista completa vive em Contas. */
+const PANORAMA_TOP_N = 6;
 
 const REASON_LABEL: Record<Reason, string> = {
   token_invalid: "token inválido",
@@ -36,8 +39,8 @@ const REASON_TONE: Record<Reason, TimelineTone> = {
 @Component({
   selector: "app-dashboard-page",
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, NgIcon, UiBadge, UiButton, UiEmptyState, UiPageHeader, UiSpinner],
-  providers: [provideIcons({ heroArrowPath, heroCheckCircle, heroSparkles })],
+  imports: [RouterLink, NgIcon, UiBadge, UiButton, UiEmptyState, UiPageHeader, UiSpinner, AccountPanoramaCard],
+  providers: [provideIcons({ heroCheckCircle, heroSparkles })],
   template: `
     <div class="flex flex-col gap-6">
       <app-ui-page-header title="Painel" subtitle="Onde agir agora, em todas as suas contas" />
@@ -101,54 +104,23 @@ const REASON_TONE: Record<Reason, TimelineTone> = {
             </section>
           }
 
-          <!-- Panorama por conta -->
+          <!-- Panorama por conta — resumo top-N por gasto; lista completa em Contas. -->
           <section class="flex flex-col gap-3">
-            <h2 class="font-brand text-sm font-semibold text-ink">Suas contas</h2>
+            <div class="flex items-center justify-between gap-2">
+              <h2 class="font-brand text-sm font-semibold text-ink">Suas contas</h2>
+              @if (d.panorama.length > topN) {
+                <a routerLink="/accounts" class="text-xs font-medium text-accent-strong hover:text-ink">
+                  ver todas as {{ d.panorama.length }} →
+                </a>
+              }
+            </div>
             <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              @for (c of d.panorama; track c.accountId) {
-                <div class="flex flex-col gap-2 rounded-lg border border-line bg-panel p-4">
-                  <div class="flex items-start justify-between gap-2">
-                    <a [routerLink]="['/accounts', c.accountId]" class="text-sm font-semibold text-ink hover:text-accent-strong">
-                      {{ c.accountName }}
-                    </a>
-                    @if (c.grade) {
-                      <div class="flex flex-col items-end gap-0.5">
-                        <span appBadge [tone]="gradeTone(c.grade)" size="sm">Nota {{ c.grade }}</span>
-                        @if (c.gradeAsOf) {
-                          <span class="text-[10px] text-muted">análise {{ timeLabel(c.gradeAsOf) }}</span>
-                        }
-                      </div>
-                    }
-                  </div>
-                  @if (c.live; as t) {
-                    <div class="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-                      <span class="text-base font-semibold text-ink">{{ money(t.spend, c.currency) }}</span>
-                      @if (t.cpa !== undefined) {
-                        <span class="text-xs text-muted">CPA {{ money(t.cpa, c.currency) }}</span>
-                      }
-                    </div>
-                  } @else {
-                    <span class="text-xs text-muted">sem dados na janela</span>
-                  }
-                  @if (c.agentPaused) {
-                    <span class="text-xs text-warning-strong">Agente pausado — números não atualizam sozinhos.</span>
-                  }
-                  <div class="mt-1 flex items-center justify-between gap-2">
-                    <span class="text-xs" [class.text-muted]="!c.stale" [class.text-warning-strong]="c.stale">
-                      {{ asOfLabel(c.asOf, c.stale) }}
-                    </span>
-                    <button
-                      appButton
-                      variant="secondary"
-                      type="button"
-                      [disabled]="refreshing().has(c.accountId)"
-                      (click)="refreshAccount(c.accountId)"
-                    >
-                      <ng-icon name="heroArrowPath" size="14" aria-hidden="true" [class.animate-spin]="refreshing().has(c.accountId)" />
-                      Atualizar
-                    </button>
-                  </div>
-                </div>
+              @for (c of d.panorama.slice(0, topN); track c.accountId) {
+                <app-account-panorama-card
+                  [card]="c"
+                  [refreshing]="refreshing().has(c.accountId)"
+                  (refresh)="refreshAccount($event)"
+                />
               }
             </div>
           </section>
@@ -244,11 +216,8 @@ export class DashboardPage {
     });
   }
 
-  // formatação compartilhada exposta ao template.
-  protected readonly money = money;
-  protected readonly asOfLabel = asOfLabel;
-  protected readonly gradeTone = gradeTone;
-  protected readonly timeLabel = timeLabel;
+  protected readonly topN = PANORAMA_TOP_N;
+  protected readonly timeLabel = timeLabel; // usado no feed de atividade
 
   protected reasonLabel(r: Reason): string {
     return REASON_LABEL[r];

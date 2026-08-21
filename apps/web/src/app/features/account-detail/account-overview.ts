@@ -9,7 +9,7 @@ import { heroArrowPath, heroSparkles } from "@ng-icons/heroicons/outline";
 import { UiButton, UiEmptyState, UiSpinner } from "@ui";
 import { DashboardApiService } from "@core/api/dashboard-api.service";
 import type { LiveMetricsOutput } from "@core/api/generated";
-import { asOfLabel, money } from "../../shared/format";
+import { asOfLabel, money, windowLabel } from "../../shared/format";
 import { AnalysisDetail } from "../analysis-detail/analysis-detail";
 import { AgentActions } from "./agent-actions";
 import { AccountContextStore } from "./account-context.store";
@@ -30,7 +30,7 @@ const MAX_POLLS = 6;
         @if (m.totals; as t) {
           <div class="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-line bg-panel p-4">
             <div class="flex flex-col">
-              <span class="text-xs text-muted">Gasto ({{ m.window.since }}–{{ m.window.until }})</span>
+              <span class="text-xs text-muted">Gasto ({{ windowLabel(m.window.since, m.window.until) }})</span>
               <span class="text-lg font-semibold text-ink">{{ money(t.spend, m.currency) }}</span>
             </div>
             @if (t.cpa !== undefined) {
@@ -106,6 +106,7 @@ export class AccountOverview {
   // funções de formatação compartilhadas expostas ao template.
   protected readonly money = money;
   protected readonly asOfLabel = asOfLabel;
+  protected readonly windowLabel = windowLabel;
 
   protected readonly live = signal<LiveMetricsOutput | null>(null);
   protected readonly refreshing = signal(false);

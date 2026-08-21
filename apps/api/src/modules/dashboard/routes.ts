@@ -12,6 +12,11 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
     return service.dashboard(orgIdOf(request));
   });
 
+  // Lista rica de contas (roster informativo — tela Contas): panorama completo.
+  app.get("/accounts/panorama", guard, async (request) => {
+    return { accounts: await service.panorama(orgIdOf(request)) };
+  });
+
   // KPIs ao vivo de uma conta (computados do insights_snapshots) + as-of.
   app.get("/accounts/:id/live-metrics", guard, async (request) => {
     const { id } = request.params as { id: string };

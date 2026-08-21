@@ -70,6 +70,10 @@ export const activityEvent = z.object({
 });
 export type ActivityEvent = z.infer<typeof activityEvent>;
 
+/** Lista rica de contas (panorama completo) — tela Contas (roster informativo). */
+export const panoramaListOutput = z.object({ accounts: z.array(panoramaCard) });
+export type PanoramaListOutput = z.infer<typeof panoramaListOutput>;
+
 /** Painel gerencial cross-conta (6a): 4 widgets. */
 export const dashboardOutput = z.object({
   /** total de ações aguardando OK (cross-conta). */

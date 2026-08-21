@@ -47,7 +47,7 @@ import {
   runListOutput,
   triggerRunOutput,
 } from "../modules/runs/schema.js";
-import { dashboardOutput, liveMetricsOutput, refreshDataOutput } from "../modules/dashboard/schema.js";
+import { dashboardOutput, liveMetricsOutput, panoramaListOutput, refreshDataOutput } from "../modules/dashboard/schema.js";
 import { timelineOutput } from "../modules/timeline/schema.js";
 import { channelStateOutput } from "../modules/channels/schema.js";
 import { feedbackInput, feedbackOutput } from "../modules/recommendations/schema.js";
@@ -103,6 +103,7 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const LiveMetricsOutput = registry.register("LiveMetricsOutput", liveMetricsOutput);
   const RefreshDataOutput = registry.register("RefreshDataOutput", refreshDataOutput);
   const DashboardOutput = registry.register("DashboardOutput", dashboardOutput);
+  const PanoramaListOutput = registry.register("PanoramaListOutput", panoramaListOutput);
   const TimelineOutput = registry.register("TimelineOutput", timelineOutput);
   const RunDetailOutput = registry.register("RunDetailOutput", runDetailOutput);
   const MuteCampaignInput = registry.register("MuteCampaignInput", muteCampaignInput);
@@ -389,6 +390,12 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     path: "/api/dashboard",
     tags: ["dashboard"],
     responses: { 200: jsonRes("painel gerencial cross-conta (4 widgets)", DashboardOutput) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts/panorama",
+    tags: ["dashboard"],
+    responses: { 200: jsonRes("lista rica de contas (panorama completo)", PanoramaListOutput) },
   });
   registry.registerPath({
     method: "get",

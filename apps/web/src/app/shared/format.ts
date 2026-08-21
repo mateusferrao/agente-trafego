@@ -26,6 +26,17 @@ export function asOfLabel(asOf: string | null, stale: boolean): string {
   return stale ? `desatualizado (${t})` : `atualizado ${t}`;
 }
 
+/** Data ISO "YYYY-MM-DD" → "dd/mm" (PT-BR, sem shift de fuso). */
+function dayMonth(iso: string): string {
+  const [, m, d] = iso.split("-");
+  return `${d}/${m}`;
+}
+
+/** Janela (since..until ISO date) → "dd/mm – dd/mm" (PT-BR). */
+export function windowLabel(since: string, until: string): string {
+  return `${dayMonth(since)} – ${dayMonth(until)}`;
+}
+
 /** Nota (A/B/C/D) → tom do badge. */
 export function gradeTone(grade: string | null): TimelineTone {
   if (grade === "A" || grade === "B") return "success";

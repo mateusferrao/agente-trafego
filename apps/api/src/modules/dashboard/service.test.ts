@@ -103,6 +103,32 @@ describe("createDashboardService.dashboard", () => {
   });
 });
 
+describe("createDashboardService.panorama", () => {
+  it("retorna os cards por conta ordenados por gasto desc (lista de Contas)", async () => {
+    const db = fakeDb([
+      // contas (2)
+      [
+        { accountId: "a1", agentId: "ag1", agentPaused: false, name: "Loja A", currency: "BRL", goals: {}, tokenStatus: "valid" },
+        { accountId: "a2", agentId: "ag2", agentPaused: false, name: "Loja B", currency: "BRL", goals: {}, tokenStatus: "valid" },
+      ],
+      [], // latestRuns (sem análise)
+      [], // pendências
+      [
+        { ...acctSnap("2026-08-20", 50, 0), adAccountId: "a1" },
+        { ...acctSnap("2026-08-20", 300, 0), adAccountId: "a2" },
+      ],
+      [
+        { accountId: "a1", latest: new Date("2026-08-20T11:00:00Z") },
+        { accountId: "a2", latest: new Date("2026-08-20T11:00:00Z") },
+      ],
+    ]);
+    const service = createDashboardService({ db, scheduler: {} as never, windowDays: 7, baselineDays: 7, freshThresholdMin: 120, now: NOW });
+    const cards = await service.panorama("org-1" as never);
+    expect(cards.map((c) => c.accountName)).toEqual(["Loja B", "Loja A"]); // maior gasto primeiro
+    expect(cards[0]!.live!.spend).toBe(300);
+  });
+});
+
 describe("createDashboardService.requestRefresh", () => {
   it("enfileira o sync-only da conta", async () => {
     const enqueue = vi.fn(async () => {});

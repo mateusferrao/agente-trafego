@@ -2,7 +2,13 @@ import { Injectable } from "@angular/core";
 import type { Observable } from "rxjs";
 import { BaseApiService } from "./base-api.service";
 import { silentApiContext } from "./api-request.interceptor";
-import type { DashboardOutput, LiveMetricsOutput, RefreshDataOutput, TimelineOutput } from "./generated";
+import type {
+  DashboardOutput,
+  LiveMetricsOutput,
+  PanoramaListOutput,
+  RefreshDataOutput,
+  TimelineOutput,
+} from "./generated";
 
 /** Filtros da timeline (todos opcionais). */
 export interface TimelineOptions {
@@ -18,6 +24,11 @@ export class DashboardApiService extends BaseApiService {
   /** `GET /api/dashboard` — painel cross-conta (pendências/atenção/atividade/panorama). */
   dashboard(): Observable<DashboardOutput> {
     return this.get<DashboardOutput>(["/dashboard"]);
+  }
+
+  /** `GET /api/accounts/panorama` — lista rica de contas (roster informativo — Contas). */
+  panorama(): Observable<PanoramaListOutput> {
+    return this.get<PanoramaListOutput>(["/accounts", "panorama"]);
   }
 
   /** `GET /api/accounts/:id/live-metrics` — KPIs ao vivo + as-of. Secundário → silencioso. */
