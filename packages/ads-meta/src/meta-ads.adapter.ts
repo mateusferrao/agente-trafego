@@ -26,6 +26,7 @@ import { MetaMutationsService } from "./mutations.js";
 import { MetaGovernor } from "./governor.js";
 import { MetaEntityCache } from "./entity-cache.js";
 import { objectiveFromAdSet, objectiveFromCampaign, type RawPromotedObject } from "./meta-conversion-map.js";
+import { audienceFromTargeting, type RawTargeting } from "./meta-audience-map.js";
 import type { CustomConversionsResolver, CustomConversionInfo } from "./custom-conversions.js";
 
 /** Campos de conta pedidos à Graph (id sem prefixo via `account_id`). */
@@ -53,7 +54,7 @@ const ENTITY_EDGE: Readonly<Record<ListableLevel, string>> = {
 const ENTITY_FIELDS: Readonly<Record<ListableLevel, string>> = {
   campaign: "id,name,status,effective_status,daily_budget,lifetime_budget,objective",
   adset:
-    "id,name,status,effective_status,daily_budget,lifetime_budget,campaign_id,optimization_goal,promoted_object{pixel_id,custom_event_type,custom_conversion_id,page_id}",
+    "id,name,status,effective_status,daily_budget,lifetime_budget,campaign_id,optimization_goal,promoted_object{pixel_id,custom_event_type,custom_conversion_id,page_id},targeting{geo_locations,age_min,age_max,custom_audiences,excluded_custom_audiences,flexible_spec,interests}",
   ad: "id,name,status,effective_status,adset_id,campaign_id",
 };
 
@@ -79,6 +80,7 @@ interface RawEntityNode {
   readonly objective?: string;
   readonly optimization_goal?: string;
   readonly promoted_object?: RawPromotedObject;
+  readonly targeting?: RawTargeting;
 }
 
 interface MetaEntitiesPage {
@@ -267,6 +269,8 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     const dailyBudget = toMajorBudget(node.daily_budget);
     const lifetimeBudget = toMajorBudget(node.lifetime_budget);
     const objective = this.deriveObjective(level, node, resolved);
+    // público só existe no nível adset (o targeting mora lá).
+    const audience = level === "adset" ? audienceFromTargeting(node.targeting) : undefined;
     return {
       id: node.id ?? "",
       level,
@@ -278,6 +282,7 @@ export class MetaAdsAdapter implements AdsPlatformPort {
       ...(dailyBudget !== undefined ? { dailyBudget } : {}),
       ...(lifetimeBudget !== undefined ? { lifetimeBudget } : {}),
       ...(objective ? { objective } : {}),
+      ...(audience ? { audience } : {}),
     };
   }
 

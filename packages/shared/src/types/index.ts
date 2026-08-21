@@ -33,6 +33,32 @@ export interface AdEntity {
   readonly lifetimeBudget?: number;
   /** Objetivo próprio da entidade (o que ela otimiza) — base do CPA/ROAS + intenção p/ análise. */
   readonly objective?: EntityObjective;
+  /** Perfil de público do adset (§Bloco 2) — presente só no nível adset, quando há targeting. */
+  readonly audience?: AudienceProfile;
+}
+
+/** Estágio do público: frio (prospecção) × quente (remarketing) × indeterminado. */
+export type AudienceStage = "prospecting" | "remarketing" | "unknown";
+
+/**
+ * Perfil de público NEUTRO de um adset (§Bloco 2). Resumo curado do targeting da
+ * plataforma — o core/prompt/UI só falam este tipo; o vocabulário Meta (custom
+ * audiences, flexible_spec) fica isolado no adapter (`meta-audience-map`). Compacto
+ * de propósito: não despeja o firehose de segmentação nem infla tokens.
+ */
+export interface AudienceProfile {
+  /** frio (só amplo/interesses/lookalike) × quente (tem custom audience de inclusão não-lookalike). */
+  readonly stage: AudienceStage;
+  /** nº de custom/lookalike audiences de INCLUSÃO. */
+  readonly customAudienceCount: number;
+  /** nº de audiences EXCLUÍDAS (ex: excluir compradores = prospecção limpa). */
+  readonly exclusionCount: number;
+  /** países/regiões resumidos (ex: ["BR"]). */
+  readonly geo?: readonly string[];
+  readonly ageMin?: number;
+  readonly ageMax?: number;
+  /** principais interesses/comportamentos (top-N nomes), quando houver. */
+  readonly interests?: readonly string[];
 }
 
 export interface InsightMetrics {
@@ -304,6 +330,8 @@ export interface EntitySummary {
   readonly flags: readonly string[];
   /** Objetivo da entidade — intenção que conduz a análise (o que "bom" significa aqui). */
   readonly objective?: EntityObjective;
+  /** Perfil de público do adset (§Bloco 2) — estágio + resumo compacto do targeting. */
+  readonly audience?: AudienceProfile;
   /** Base de medição vs a conversão de negócio do agente (§Fatia 4). */
   readonly conversionBasis?: ConversionBasis;
   /** Métrica-proxy do objetivo da entidade — presente só quando `conversionBasis === "proxy"`. */

@@ -583,6 +583,7 @@ function toEntitySummary(
     flags: metaFlags(metrics, goals, basis),
     conversionBasis: basis,
     ...(objective ? { objective } : {}),
+    ...(entity?.audience ? { audience: entity.audience } : {}),
     ...(proxy ? { proxy } : {}),
     ...(funnel ? { funnel } : {}),
   };

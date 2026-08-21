@@ -94,6 +94,27 @@ describe("MetaAdsAdapter.listEntities", () => {
     });
   });
 
+  it("adset com targeting → perfil de público neutro (estágio remarketing)", async () => {
+    stub({
+      data: [
+        {
+          id: "AS2",
+          name: "Set RMK",
+          effective_status: "ACTIVE",
+          campaign_id: "C1",
+          optimization_goal: "CONVERSATIONS",
+          targeting: {
+            geo_locations: { countries: ["BR"] },
+            age_min: 25,
+            custom_audiences: [{ id: "aud1", name: "Visitantes do site" }],
+          },
+        },
+      ],
+    });
+    const [e] = await makeAdapter().listEntities(account, "adset");
+    expect(e?.audience).toMatchObject({ stage: "remarketing", customAudienceCount: 1, geo: ["BR"], ageMin: 25 });
+  });
+
   it("ad → sem objetivo próprio (herda do adset no assemble), parentId = adset", async () => {
     stub({ data: [{ id: "AD1", name: "Ad", effective_status: "ACTIVE", adset_id: "AS1", campaign_id: "C1" }] });
     const [e] = await makeAdapter().listEntities(account, "ad");
