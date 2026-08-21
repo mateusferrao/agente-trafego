@@ -8,6 +8,7 @@ import {
   heroCheckCircle,
   heroCog6Tooth,
   heroComputerDesktop,
+  heroHome,
   heroMoon,
   heroRectangleGroup,
   heroSquares2x2,
@@ -44,6 +45,7 @@ const THEME_OPTIONS: readonly ThemeOption[] = [
   imports: [RouterOutlet, RouterLink, RouterLinkActive, NgIcon, UiBadge, UiConfirmDialogOutlet],
   providers: [
     provideIcons({
+      heroHome,
       heroRectangleGroup,
       heroCheckCircle,
       heroSquares2x2,

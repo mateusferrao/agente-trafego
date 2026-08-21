@@ -15,7 +15,13 @@ export const routes: Routes = [
     canActivateChild: [authGuard],
     loadComponent: () => import('./layouts/app-shell/app-shell').then((m) => m.AppShell),
     children: [
-      { path: '', pathMatch: 'full', redirectTo: 'accounts' },
+      { path: '', pathMatch: 'full', redirectTo: 'dashboard' },
+      {
+        path: 'dashboard',
+        title: 'Painel — AutoTraffic',
+        loadComponent: () =>
+          import('./features/dashboard/dashboard-page').then((m) => m.DashboardPage),
+      },
       {
         path: 'accounts',
         title: 'Contas — AutoTraffic',

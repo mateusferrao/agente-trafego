@@ -32,6 +32,14 @@ export const APP_MODULE_GROUPS: readonly AppModuleGroup[] = [
     label: 'Operar',
     modules: [
       {
+        id: 'dashboard',
+        label: 'Painel',
+        route: '/dashboard',
+        icon: 'heroHome',
+        exact: true,
+        description: 'Visão gerencial: onde agir agora, em todas as contas.',
+      },
+      {
         id: 'accounts',
         label: 'Contas',
         route: '/accounts',
