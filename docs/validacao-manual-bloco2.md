@@ -76,6 +76,30 @@ pnpm db:q "select direction, body, created_at from messages order by created_at 
 silêncio** (nada em `messages`, nada de resposta) — teste com um `remoteJid` aleatório
 e confirme que não gravou nada.
 
+### 1.4 Gotchas do ambiente (verificados ao vivo — leia antes da Camada 3)
+Descobertos executando este roteiro; economizam horas:
+- **Confirme a entrega OUTBOUND de verdade, não o status no banco.** `channel_instances.status`
+  é uma **view cacheada** (atualizada por `CONNECTION_UPDATE`); pode estar `disconnected`
+  mesmo com o app "conectado" — e vice-versa. Prova real: `pnpm db:q "select direction,
+  count(*) from messages m join conversations c on c.id=m.conversation_id where c.org_id='ORG_ID'
+  group by direction"`. **Zero outbound histórico = o canal nunca entregou** → reconecte a
+  instância Evolution (QR) antes de esperar resposta no WhatsApp.
+- **Canal caído QUEBRA o turno (não só "não entrega").** `runConversationTurn` faz o
+  `sendToContact` FORA do try/catch → se o envio falha (Evolution off), o job de flush
+  **lança e reenfileira** (re-roda o turno = re-gasta LLM) e o outbound **nem é gravado**.
+  Então: sem canal conectado, você não observa a resposta nem pelo banco. (Registrado como
+  fast-follow de resiliência no ROADMAP.)
+- **Agentes podem estar `paused`.** O chat só resolve "agente em contexto" com `status='active'`
+  (senão = concierge, sem tools de config) e a análise responde `skipped_paused`. Ative UM
+  agente de teste e **reverta** ao fim: `pnpm db:q "update agents set status='active' where
+  id='AGENT_ID'"` … testes … `update agents set status='paused' where id='AGENT_ID'`.
+- **O inbound funciona mesmo com o outbound caído.** Dá pra validar TODO o cano de entrada
+  (webhook→worker→parseInbound→contato verificado→dedup→debounce→grava inbound) sem canal —
+  o inbound é gravado em `messages`. O que exige canal é ver a RESPOSTA.
+- **Contas reais × teste.** Prefira uma conta de teste (ex: "My QuickStart Campaign") p/ os
+  fluxos de config/análise — evita mexer/analisar contas de cliente real e o risco de marcar
+  um token real como `invalid` (code 190) se estiver rotacionado.
+
 ---
 
 ## 2. Parte A — Qualidade (S1.1–S1.8)

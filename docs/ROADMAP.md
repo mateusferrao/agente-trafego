@@ -190,6 +190,11 @@ decaimento de token em runtime → `6b`; reuso do sync-service pelo `fetchData` 
   - **Override por-agente do modelo do chat** (já registrado) + **escrita proativa de config** (o agente sugerir mudança sozinho — hoje reativo).
 
 **Fast-follows da 5c (escrita/leitura por chat)**
+- **[MÉDIO] Resiliência do envio no `runConversationTurn`** (achado na validação ao vivo do Bloco 2) — o
+  `sendToContact` roda FORA do try/catch: se a Evolution está fora do ar, o job de flush **lança e
+  reenfileira**, re-rodando o turno (re-gasta LLM) e sem gravar o outbound nem sinalizar a falha. Envolver
+  o envio em try/catch (log + não relançar, ou marcar o canal `disconnected` + parar de retentar), e
+  gravar o outbound **antes/independente** do sucesso do envio (a resposta existe mesmo se a entrega falha).
 - **`agent_tool_bindings` completo** — adiado; redundante com `allowedActions` p/ liga/desliga (que já
   vale no chat). Só se justifica por **shadow por-tool** (hoje `dry_run` é agente-wide) + entitlements/
   billing (o catálogo `agent_tool_definitions` já está semeado).
