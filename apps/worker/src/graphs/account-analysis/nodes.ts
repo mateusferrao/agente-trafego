@@ -18,7 +18,7 @@ import {
   composeAgentPrompt,
   composeMethodologyPrompt,
   costSnapshotFromUsage,
-  creativePosterFrame,
+  creativePosterFrames,
   decideActions,
   dropUnsupportedFindings,
   eligibilityByEntity,
@@ -345,13 +345,15 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       const chosenCreatives = selectCreatives(notableAdIds, creativesByAdId, cfg.maxCreativesVisionPerCampaign);
       const visionByAdId = new Map<string, CreativeVisionResult[]>();
       for (const c of chosenCreatives) {
-        const poster = creativePosterFrame(c);
-        if (!poster) continue;
+        const frames = creativePosterFrames(c);
+        if (frames.length === 0) continue;
         const copy = creativeCopy(c);
+        // chave de cache ESTÁVEL (id do criativo + vídeo), não a URL do fbcdn (rotaciona).
+        const stableKey = `${c.id}:${c.videoId ?? ""}`;
         const result = await vision.resolve({
           creativeId: c.id,
-          imageUrl: poster,
-          contentHash: creativeContentHash(poster, copy),
+          imageUrls: frames,
+          contentHash: creativeContentHash(stableKey, copy),
           ...(copy ? { copy } : {}),
         });
         if (result) push(visionByAdId, c.adId, result);

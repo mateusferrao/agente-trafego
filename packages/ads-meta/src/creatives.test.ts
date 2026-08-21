@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Redis } from "ioredis";
 import { MetaGraphClient } from "./client.js";
-import { CREATIVE_FIELDS, MetaCreativesService } from "./creatives.js";
+import { CREATIVE_FIELDS, MetaCreativesService, pickSpacedFrames } from "./creatives.js";
 import { MetaGovernor } from "./governor.js";
 
 // Redis in-memory mínimo (set EX, pttl) p/ o governor no wrapper de rate-limit.
@@ -72,6 +72,9 @@ describe("MetaCreativesService.getCreatives", () => {
     expect(creatives).toContainEqual(
       expect.objectContaining({ adId: "AD2", thumbnailUrl: "http://thumb", videoId: "V1" }),
     );
+    // posterFrames (6c): imagem = [image_url]; vídeo sem frames HD cai no still.
+    expect(creatives.find((c) => c.adId === "AD1")!.posterFrames).toEqual(["http://img"]);
+    expect(creatives.find((c) => c.adId === "AD2")!.posterFrames).toEqual(["http://thumb"]);
   });
 
   it("extrai copy do object_story_spec quando falta no top-level", async () => {
@@ -95,6 +98,14 @@ describe("MetaCreativesService.getCreatives", () => {
     const creatives = await makeService().getCreatives(account, ["AD1", "AD2"]);
     expect(creatives).toHaveLength(1);
     expect(creatives[0]).toMatchObject({ adId: "AD1", imageUrl: "http://img" });
+  });
+
+  it("pickSpacedFrames: amostra N frames espaçados, dedupe", () => {
+    const thumbs = ["a", "b", "c", "d", "e", "f"].map((uri) => ({ uri }));
+    expect(pickSpacedFrames(thumbs, 4)).toEqual(["a", "c", "d", "f"]);
+    expect(pickSpacedFrames([{ uri: "x" }, { uri: "x" }], 4)).toEqual(["x"]); // dedupe
+    expect(pickSpacedFrames([], 4)).toEqual([]);
+    expect(pickSpacedFrames([{ uri: "a" }, { uri: "b" }], 4)).toEqual(["a", "b"]); // menos que N
   });
 
   it("cooldown ativo → degrada (rate-limit) sem bater na Meta", async () => {

@@ -15,6 +15,31 @@ import { normalizeAdAccountId } from "./ids.js";
 export const CREATIVE_FIELDS =
   "creative{id,name,image_url,thumbnail_url,object_story_spec,body,title,call_to_action_type,video_id}";
 
+/** Frames HD do vídeo (Fatia 6c): a Meta entrega ~10 thumbnails 1080p ao longo do vídeo. */
+export const VIDEO_THUMBNAILS_FIELDS = "thumbnails{uri,width,height,is_preferred}";
+
+/** Quantos frames HD amostrar por criativo de vídeo (default; override na composição). */
+export const DEFAULT_VISION_FRAMES = 4;
+
+interface RawVideoThumb {
+  readonly uri?: string;
+  readonly is_preferred?: boolean;
+}
+
+/**
+ * Escolhe N frames ESPAÇADOS (abertura → fim), dedupe por uri. Prioriza incluir o
+ * `is_preferred` (a capa que a Meta considera melhor) sem perder a cobertura.
+ */
+export function pickSpacedFrames(thumbs: readonly RawVideoThumb[], n: number): string[] {
+  const uris = [...new Set(thumbs.map((t) => t.uri).filter((u): u is string => !!u))];
+  if (uris.length === 0 || n <= 0) return [];
+  if (uris.length <= n) return uris;
+  const step = (uris.length - 1) / (n - 1);
+  const picked = new Set<string>();
+  for (let i = 0; i < n; i++) picked.add(uris[Math.round(i * step)]!);
+  return [...picked];
+}
+
 interface RawObjectStorySpec {
   readonly link_data?: { readonly message?: string; readonly name?: string; readonly call_to_action?: { readonly type?: string } };
   readonly video_data?: { readonly message?: string; readonly title?: string; readonly call_to_action?: { readonly type?: string } };
@@ -39,10 +64,12 @@ interface RawAdWithCreative {
 export class MetaCreativesService {
   private readonly client: MetaGraphClient;
   private readonly governor: MetaGovernor;
+  private readonly framesPerVideo: number;
 
-  constructor(client: MetaGraphClient, governor: MetaGovernor) {
+  constructor(client: MetaGraphClient, governor: MetaGovernor, framesPerVideo: number = DEFAULT_VISION_FRAMES) {
     this.client = client;
     this.governor = governor;
+    this.framesPerVideo = Math.max(1, framesPerVideo);
   }
 
   /** Resolve os criativos dos ads via Batch API (1 sub-GET por ad, ≤50 por HTTP). */
@@ -71,7 +98,49 @@ export class MetaCreativesService {
       }
       if (node.creative) out.push(this.normalizeCreative(adId, node.creative));
     });
-    return out;
+    return this.withPosterFrames(account, accountId, out);
+  }
+
+  /**
+   * Anexa `posterFrames` (Fatia 6c): imagem = [image_url]; vídeo = N frames HD via
+   * 2º Batch (`/{video_id}?fields=thumbnails`). Frames HD (1080p) substituem o selo
+   * pequeno do `thumbnail_url`. Degrada pro still único se a busca falhar.
+   */
+  private async withPosterFrames(account: AdAccountRef, accountId: string, creatives: readonly Creative[]): Promise<Creative[]> {
+    const videoIds = [...new Set(creatives.map((c) => c.videoId).filter((v): v is string => !!v))];
+    const framesByVideo = videoIds.length > 0 ? await this.fetchVideoFrames(account, accountId, videoIds) : new Map<string, string[]>();
+    return creatives.map((c) => {
+      const frames = c.videoId ? framesByVideo.get(c.videoId) : undefined;
+      const fallback = c.imageUrl ?? c.thumbnailUrl;
+      const posterFrames = frames && frames.length > 0 ? frames : fallback ? [fallback] : [];
+      return posterFrames.length > 0 ? { ...c, posterFrames } : c;
+    });
+  }
+
+  /** Busca os thumbnails HD de cada vídeo (Batch) e amostra N frames espaçados. */
+  private async fetchVideoFrames(account: AdAccountRef, accountId: string, videoIds: readonly string[]): Promise<Map<string, string[]>> {
+    const requests: BatchSubRequest[] = videoIds.map((id) => ({
+      method: "GET",
+      relativeUrl: `${id}?fields=${encodeURIComponent(VIDEO_THUMBNAILS_FIELDS)}`,
+    }));
+    const subs = await callWithGovernor<Array<BatchSubResponse | null>>(
+      accountId,
+      () => this.client.batch(account.accessToken, requests),
+      { governor: this.governor },
+    );
+    const byVideo = new Map<string, string[]>();
+    subs.forEach((sub, i) => {
+      const videoId = videoIds[i];
+      if (!videoId || !sub || sub.code !== 200) return;
+      try {
+        const node = JSON.parse(sub.body) as { thumbnails?: { data?: RawVideoThumb[] } };
+        const frames = pickSpacedFrames(node.thumbnails?.data ?? [], this.framesPerVideo);
+        if (frames.length > 0) byVideo.set(videoId, frames);
+      } catch {
+        // corpo malformado → sem frames HD p/ esse vídeo (cai no still no chamador)
+      }
+    });
+    return byVideo;
   }
 
   /** Normaliza um adcreative cru → Creative do domínio (top-level + fallback object_story_spec). */

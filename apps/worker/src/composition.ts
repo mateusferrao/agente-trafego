@@ -125,6 +125,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
     }),
     // cache do catálogo de entidades entre runs (corta o listEntities full = rate-limit).
     entityCache: new MetaEntityCache({ redis, ttlSec: env.META_ENTITY_CACHE_TTL_SEC }),
+    visionFrames: env.ANALYSIS_VISION_FRAMES,
   });
   const insightsSync = createInsightsSyncService({
     ads,

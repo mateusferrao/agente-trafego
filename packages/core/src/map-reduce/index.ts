@@ -96,11 +96,14 @@ export function selectUnitsToAnalyze(
 }
 
 /**
- * Poster-frame do criativo p/ a visão: imagem quando existe, senão o thumbnail
- * (Meta bloqueia o `source` de vídeo — usamos o still). Neutro (tipo Creative).
+ * Poster-frames do criativo p/ a visão (Fatia 6c): usa `posterFrames` (imagem = 1;
+ * vídeo = N frames HD do adapter) quando presente; senão cai no `imageUrl`/
+ * `thumbnailUrl` (compat). Meta bloqueia o `source` de vídeo — usamos os stills.
  */
-export function creativePosterFrame(c: Creative): string | undefined {
-  return c.imageUrl ?? c.thumbnailUrl;
+export function creativePosterFrames(c: Creative): readonly string[] {
+  if (c.posterFrames && c.posterFrames.length > 0) return c.posterFrames;
+  const single = c.imageUrl ?? c.thumbnailUrl;
+  return single ? [single] : [];
 }
 
 /** Criativos das unidades analisadas (por adId), com teto de segurança. */

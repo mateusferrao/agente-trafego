@@ -28,8 +28,8 @@ function fakeDb(cacheHit: boolean) {
 function input() {
   return {
     creativeId: "cr-1",
-    imageUrl: "https://img/1.jpg",
-    contentHash: creativeContentHash("https://img/1.jpg", "copy"),
+    imageUrls: ["https://img/1.jpg", "https://img/2.jpg"],
+    contentHash: creativeContentHash("cr-1:V1", "copy"),
     copy: "copy",
   };
 }

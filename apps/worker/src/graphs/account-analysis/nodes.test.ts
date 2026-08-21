@@ -144,6 +144,14 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
       executionPolicy: "deep_periodic_incremental",
       deepIntervalDays: 7,
       materialChangePct: 15,
+      quality: {
+        minConversions: 20,
+        minClicks: 100,
+        fatigueCtrDropPct: 20,
+        fatigueFrequency: 3,
+        fatigueCostRisePct: 30,
+        zombieMinSpend: 50,
+      },
     },
     webOrigin: "https://app.example.com",
     checkpointer: undefined as never, // grafo A é linear (sem checkpointer)

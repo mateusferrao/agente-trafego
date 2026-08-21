@@ -82,6 +82,12 @@ export interface Creative {
   readonly imageUrl?: string;
   readonly thumbnailUrl?: string;
   readonly videoId?: string;
+  /**
+   * Frames-pôster p/ a visão (Fatia 6c): imagem estática = 1; vídeo = N frames HD
+   * espaçados (Meta `/{video_id}?fields=thumbnails`, 1080p) em vez do selo pequeno.
+   * O resolver manda todos como conteúdo multimodal. Ordem = abertura → fim.
+   */
+  readonly posterFrames?: readonly string[];
 }
 
 // ─── Conversão (genérico, agnóstico de plataforma) ───────────────────────
@@ -455,6 +461,12 @@ export interface CreativeVisionResult {
   readonly summary: string;
   /** gancho/promessa principal, se identificável. */
   readonly hook?: string;
+  /** ângulo/apelo central (ex: prova social, dor, autoridade) — decomposição (6c). */
+  readonly angle?: string;
+  /** formato (antes-depois / depoimento / UGC / talking-head / oferta) — decomposição (6c). */
+  readonly format?: string;
+  /** chamada pra ação percebida — decomposição (6c). */
+  readonly cta?: string;
   readonly strengths: readonly string[];
   readonly weaknesses: readonly string[];
   /** qualidade geral 0-10 (heurística do modelo). */

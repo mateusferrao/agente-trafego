@@ -3,9 +3,16 @@ import type { CreativeVisionResult } from "../types/index.js";
 export interface CreativeVisionInput {
   /** id do criativo (Meta) — chave lógica. */
   readonly creativeId: string;
-  /** URL da imagem a analisar (poster-frame quando o criativo é vídeo). */
-  readonly imageUrl: string;
-  /** hash do conteúdo (imagem + copy) — chave do cache; muda se o criativo mudar. */
+  /**
+   * Frames a analisar (poster-frames): imagem = 1; vídeo = N frames HD espaçados.
+   * O resolver manda todos como conteúdo multimodal ao modelo (Fatia 6c).
+   */
+  readonly imageUrls: readonly string[];
+  /**
+   * Hash do conteúdo — chave do cache. Deriva de um id ESTÁVEL do criativo
+   * (id/video), NÃO da URL do fbcdn (que rotaciona a assinatura a cada fetch e
+   * furaria o cache). Muda só quando o criativo/analisador muda.
+   */
   readonly contentHash: string;
   /** texto do criativo (título/corpo/CTA), quando disponível. */
   readonly copy?: string;

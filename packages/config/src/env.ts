@@ -67,7 +67,11 @@ export const envSchema = z.object({
   OPENROUTER_UNIT_MODEL: z.string().min(1).default("google/gemini-2.5-flash"),
   OPENROUTER_MESSAGE_MODEL: z.string().min(1).default("google/gemini-2.5-flash"),
   // Versão do analisador de visão — bumpar invalida o cache de análises de criativo.
-  CREATIVE_VISION_ANALYZER_VERSION: z.coerce.number().int().positive().default(1),
+  // Bump p/ 2 na Fatia 6c: multi-frame HD + decomposição (hook/angle/format/cta) →
+  // invalida o cache antigo (chaveado por URL) uma vez.
+  CREATIVE_VISION_ANALYZER_VERSION: z.coerce.number().int().positive().default(2),
+  // Frames HD por criativo de vídeo enviados à visão (espaçados; imagem = 1). Fatia 6c.
+  ANALYSIS_VISION_FRAMES: z.coerce.number().int().positive().default(4),
   LLM_COST_CAP_USD_PER_PERIOD: z.coerce.number().min(0).default(0),
   // Retentativas in-process por chamada de LLM (429/5xx/rede/passthrough do provider).
   LLM_MAX_RETRIES: z.coerce.number().int().nonnegative().default(3),

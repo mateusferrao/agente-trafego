@@ -165,6 +165,8 @@ export interface MetaAdsAdapterDeps {
   readonly customConversions?: CustomConversionsResolver;
   /** Cache do catálogo de entidades entre runs (opcional; ausente = sempre lista fresco). */
   readonly entityCache?: MetaEntityCache;
+  /** Frames HD por criativo de vídeo p/ a visão (Fatia 6c; default do service). */
+  readonly visionFrames?: number;
 }
 
 /**
@@ -185,7 +187,7 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     this.client = deps.client;
     this.governor = deps.governor;
     this.insights = deps.insights ?? new MetaInsightsService(deps.client, deps.governor);
-    this.creatives = deps.creatives ?? new MetaCreativesService(deps.client, deps.governor);
+    this.creatives = deps.creatives ?? new MetaCreativesService(deps.client, deps.governor, deps.visionFrames);
     this.mutations = deps.mutations ?? new MetaMutationsService(deps.client);
     this.customConversions = deps.customConversions;
     this.entityCache = deps.entityCache;
