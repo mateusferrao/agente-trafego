@@ -10,13 +10,15 @@ import {
   hashSessionToken,
   SESSION_SLIDE_THROTTLE_MS,
 } from "./session-token.js";
-import { generateEmailCode, hashEmailCode } from "./one-time-token.js";
-import { buildVerificationEmail, buildAccountExistsEmail } from "./auth-email.js";
+import { generateEmailCode, generateResetToken, hashEmailCode, hashOneTimeToken } from "./one-time-token.js";
+import { buildVerificationEmail, buildAccountExistsEmail, buildPasswordResetEmail } from "./auth-email.js";
 import type {
   EmailCodeRequestInput,
   EmailCodeVerifyInput,
+  ForgotPasswordInput,
   LoginInput,
   MeOutput,
+  ResetPasswordInput,
   SignupInput,
   SignupOutput,
 } from "./schema.js";
@@ -212,6 +214,44 @@ export function createAuthService(deps: AuthDeps) {
 
       const rawToken = await issueSession(principal.userId, principal.orgId, ctx);
       return { rawToken, me: toMe(principal) };
+    },
+
+    /** Pede o link de reset (sempre resolve — anti-enum; só age se o email existir). */
+    async forgotPassword(input: ForgotPasswordInput): Promise<void> {
+      const user = await deps.repo.findUserByEmail(input.email);
+      if (!user) return;
+      const token = generateResetToken();
+      const now = clock();
+      await deps.repo.issueOneTimeToken({
+        userId: user.id,
+        email: user.email,
+        purpose: "password_reset",
+        tokenHash: hashOneTimeToken(token),
+        expiresAt: new Date(now.getTime() + deps.email.resetTtlMinutes * 60_000),
+      });
+      const resetUrl = `${deps.email.appUrl}/reset-password?token=${token}`;
+      await deps.mailQueue.enqueue(
+        buildPasswordResetEmail({ to: user.email, from: deps.email.from, resetUrl }),
+      );
+    },
+
+    /** Aplica a nova senha via token do link; revoga TODAS as outras sessões. */
+    async resetPassword(input: ResetPasswordInput): Promise<void> {
+      const invalid = badRequest("Link inválido ou expirado. Peça um novo.");
+      const token = await deps.repo.findUsableToken(
+        "password_reset",
+        hashOneTimeToken(input.token),
+        clock(),
+      );
+      if (!token?.userId) throw invalid;
+      // valida a força ANTES de consumir (senha fraca não queima o link).
+      const strength = checkPasswordStrength(input.password);
+      if (!strength.ok) throw badRequest(passwordMessage(strength.reason));
+      const consumed = await deps.repo.consumeOneTimeToken(token.id);
+      if (!consumed) throw invalid;
+      const passwordHash = await deps.hasher.hash(input.password);
+      await deps.repo.updatePassword(token.userId, passwordHash);
+      await deps.repo.revokeAllUserSessions(token.userId);
     },
 
     async logout(rawToken: string): Promise<void> {

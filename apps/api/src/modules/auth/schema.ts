@@ -40,6 +40,16 @@ export const emailCodeVerifyInput = z.object({
 });
 export type EmailCodeVerifyInput = z.infer<typeof emailCodeVerifyInput>;
 
+// Reset de senha: pedir o link (sempre 204 — anti-enum) + aplicar com o token.
+export const forgotPasswordInput = z.object({ email: emailInput });
+export type ForgotPasswordInput = z.infer<typeof forgotPasswordInput>;
+
+export const resetPasswordInput = z.object({
+  token: z.string().min(1),
+  password: z.string().min(8),
+});
+export type ResetPasswordInput = z.infer<typeof resetPasswordInput>;
+
 // Sessão corrente (retorno de login/signup e de GET /me). Refinado na 1a.2.
 export const meOutput = z.object({
   userId: z.string(),

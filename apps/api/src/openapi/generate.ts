@@ -15,8 +15,10 @@ import { z } from "zod";
 import {
   emailCodeRequestInput,
   emailCodeVerifyInput,
+  forgotPasswordInput,
   loginInput,
   meOutput,
+  resetPasswordInput,
   signupInput,
   signupOutput,
 } from "../modules/auth/schema.js";
@@ -86,6 +88,8 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const SignupOutput = registry.register("SignupOutput", signupOutput);
   const EmailCodeRequestInput = registry.register("EmailCodeRequestInput", emailCodeRequestInput);
   const EmailCodeVerifyInput = registry.register("EmailCodeVerifyInput", emailCodeVerifyInput);
+  const ForgotPasswordInput = registry.register("ForgotPasswordInput", forgotPasswordInput);
+  const ResetPasswordInput = registry.register("ResetPasswordInput", resetPasswordInput);
   const LoginInput = registry.register("LoginInput", loginInput);
   const MeOutput = registry.register("MeOutput", meOutput);
   const CreateOrgInput = registry.register("CreateOrgInput", createOrgInput);
@@ -185,6 +189,23 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
       200: jsonRes("sessão", MeOutput),
       401: { description: "credenciais inválidas" },
       403: { description: "email não verificado (código reenviado)" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/auth/forgot-password",
+    tags: ["auth"],
+    request: jsonBody(ForgotPasswordInput),
+    responses: { 204: { description: "link enviado (sempre 204 — anti-enumeração)" } },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/auth/reset-password",
+    tags: ["auth"],
+    request: jsonBody(ResetPasswordInput),
+    responses: {
+      204: { description: "senha redefinida (outras sessões revogadas)" },
+      400: { description: "link inválido/expirado ou senha fraca" },
     },
   });
   registry.registerPath({

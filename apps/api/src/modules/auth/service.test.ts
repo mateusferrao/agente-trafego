@@ -47,6 +47,8 @@ function makeRepo(overrides: Partial<AuthRepo> = {}): AuthRepo {
     findUsableToken: vi.fn(async () => null),
     consumeOneTimeToken: vi.fn(async () => true),
     markEmailVerified: vi.fn(async () => undefined),
+    updatePassword: vi.fn(async () => undefined),
+    revokeAllUserSessions: vi.fn(async () => undefined),
     ...overrides,
   };
 }
@@ -191,6 +193,58 @@ describe("authService.requestEmailCode (anti-enum)", () => {
     const { service, mailQueue } = makeService(repo);
     await service.requestEmailCode({ email: "no@b.com" });
     expect(mailQueue.enqueue).not.toHaveBeenCalled();
+  });
+});
+
+describe("authService.forgotPassword (anti-enum)", () => {
+  it("email existe → emite token de reset + email", async () => {
+    const repo = makeRepo({ findUserByEmail: vi.fn(async () => VERIFIED) });
+    const { service, mailQueue } = makeService(repo);
+    await service.forgotPassword({ email: "a@b.com" });
+    expect(repo.issueOneTimeToken).toHaveBeenCalledOnce();
+    expect(mailQueue.enqueue).toHaveBeenCalledOnce();
+  });
+
+  it("email não existe → resolve em silêncio (não vaza)", async () => {
+    const repo = makeRepo({ findUserByEmail: vi.fn(async () => null) });
+    const { service, mailQueue } = makeService(repo);
+    await service.forgotPassword({ email: "no@b.com" });
+    expect(repo.issueOneTimeToken).not.toHaveBeenCalled();
+    expect(mailQueue.enqueue).not.toHaveBeenCalled();
+  });
+});
+
+describe("authService.resetPassword", () => {
+  it("token válido + senha forte → troca senha e revoga outras sessões", async () => {
+    const repo = makeRepo({
+      findUsableToken: vi.fn(async () => ({ id: "t1", userId: "u1", email: "a@b.com" })),
+    });
+    const { service } = makeService(repo);
+    await service.resetPassword({ token: "rawtoken", password: "novaSenha1" });
+    expect(repo.consumeOneTimeToken).toHaveBeenCalledWith("t1");
+    expect(repo.updatePassword).toHaveBeenCalledOnce();
+    expect(repo.revokeAllUserSessions).toHaveBeenCalledWith("u1");
+  });
+
+  it("token inválido → 400 (não troca)", async () => {
+    const repo = makeRepo({ findUsableToken: vi.fn(async () => null) });
+    const { service } = makeService(repo);
+    await expect(service.resetPassword({ token: "x", password: "novaSenha1" })).rejects.toMatchObject({
+      statusCode: 400,
+    });
+    expect(repo.updatePassword).not.toHaveBeenCalled();
+  });
+
+  it("senha fraca → 400 SEM consumir o token (pode tentar de novo)", async () => {
+    const repo = makeRepo({
+      findUsableToken: vi.fn(async () => ({ id: "t1", userId: "u1", email: "a@b.com" })),
+    });
+    const { service } = makeService(repo);
+    await expect(service.resetPassword({ token: "rawtoken", password: "fraca" })).rejects.toMatchObject({
+      statusCode: 400,
+    });
+    expect(repo.consumeOneTimeToken).not.toHaveBeenCalled();
+    expect(repo.updatePassword).not.toHaveBeenCalled();
   });
 });
 

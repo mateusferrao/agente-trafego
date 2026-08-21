@@ -2,7 +2,14 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from "fastify";
 import { env } from "../../env.js";
 import { requireAuth } from "../../middleware/auth.js";
 import { SESSION_TOKEN_COOKIE, sessionCookieOptions } from "../../http/cookies.js";
-import { emailCodeRequestInput, emailCodeVerifyInput, loginInput, signupInput } from "./schema.js";
+import {
+  emailCodeRequestInput,
+  emailCodeVerifyInput,
+  forgotPasswordInput,
+  loginInput,
+  resetPasswordInput,
+  signupInput,
+} from "./schema.js";
 import type { SessionContext, SessionIssued } from "./service.js";
 
 /** Teto de tentativas em endpoints sensíveis (anti brute-force). Aplicado por-rota. */
@@ -63,6 +70,28 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     setSessionCookie(reply, issued);
     return reply.send(issued.me);
   });
+
+  // Pede o link de reset. Sempre 204 (anti-enumeração).
+  app.post(
+    "/auth/forgot-password",
+    { config: { rateLimit: AUTH_RATE_LIMIT } },
+    async (request, reply) => {
+      const input = forgotPasswordInput.parse(request.body);
+      await service.forgotPassword(input);
+      return reply.status(204).send();
+    },
+  );
+
+  // Aplica a nova senha via token do link (revoga as outras sessões).
+  app.post(
+    "/auth/reset-password",
+    { config: { rateLimit: AUTH_RATE_LIMIT } },
+    async (request, reply) => {
+      const input = resetPasswordInput.parse(request.body);
+      await service.resetPassword(input);
+      return reply.status(204).send();
+    },
+  );
 
   app.post("/auth/logout", async (request, reply) => {
     const token = request.cookies?.[SESSION_TOKEN_COOKIE];

@@ -79,6 +79,35 @@
           "code"
         ]
       },
+      "ForgotPasswordInput": {
+        "type": "object",
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          }
+        },
+        "required": [
+          "email"
+        ]
+      },
+      "ResetPasswordInput": {
+        "type": "object",
+        "properties": {
+          "token": {
+            "type": "string",
+            "minLength": 1
+          },
+          "password": {
+            "type": "string",
+            "minLength": 8
+          }
+        },
+        "required": [
+          "token",
+          "password"
+        ]
+      },
       "LoginInput": {
         "type": "object",
         "properties": {
@@ -3979,6 +4008,51 @@
           },
           "403": {
             "description": "email não verificado (código reenviado)"
+          }
+        }
+      }
+    },
+    "/api/auth/forgot-password": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForgotPasswordInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "link enviado (sempre 204 — anti-enumeração)"
+          }
+        }
+      }
+    },
+    "/api/auth/reset-password": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetPasswordInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "senha redefinida (outras sessões revogadas)"
+          },
+          "400": {
+            "description": "link inválido/expirado ou senha fraca"
           }
         }
       }

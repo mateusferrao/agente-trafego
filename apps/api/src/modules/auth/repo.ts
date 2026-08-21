@@ -101,6 +101,10 @@ export interface AuthRepo {
   consumeOneTimeToken(id: string): Promise<boolean>;
   /** Marca o email como verificado (idempotente — só se ainda null). */
   markEmailVerified(userId: string): Promise<void>;
+  /** Troca o hash de senha do usuário (reset). */
+  updatePassword(userId: string, passwordHash: string): Promise<void>;
+  /** Revoga TODAS as sessões ativas do usuário (após reset de senha). */
+  revokeAllUserSessions(userId: string): Promise<void>;
   findActiveSessionByHash(tokenHash: string, now: Date): Promise<ActiveSession | null>;
   /** Expiração deslizante: marca uso e empurra `expiresAt` a cada request autenticado. */
   slideSession(tokenHash: string, lastUsedAt: Date, expiresAt: Date): Promise<void>;
@@ -289,6 +293,17 @@ export function createDrizzleAuthRepo(db: Database): AuthRepo {
         .update(users)
         .set({ emailVerifiedAt: new Date() })
         .where(and(eq(users.id, userId), isNull(users.emailVerifiedAt)));
+    },
+
+    async updatePassword(userId, passwordHash) {
+      await db.update(users).set({ passwordHash }).where(eq(users.id, userId));
+    },
+
+    async revokeAllUserSessions(userId) {
+      await db
+        .update(sessions)
+        .set({ revokedAt: new Date() })
+        .where(and(eq(sessions.userId, userId), isNull(sessions.revokedAt)));
     },
   };
 }

@@ -25,6 +25,19 @@ export function buildVerificationEmail(params: { to: string; from: string; code:
   };
 }
 
+/** Email de reset de senha (link com token opaco). Builder puro. */
+export function buildPasswordResetEmail(params: { to: string; from: string; resetUrl: string }): EmailMessage {
+  const safeUrl = escapeHtml(params.resetUrl);
+  return {
+    to: params.to,
+    from: params.from,
+    subject: `${APP_NAME} — redefinir sua senha`,
+    text: `Você pediu para redefinir sua senha. Acesse ${params.resetUrl} para criar uma nova. O link expira em breve. Se não foi você, ignore este email — sua senha continua a mesma.`,
+    html: `<p>Você pediu para redefinir sua senha.</p><p><a href="${safeUrl}">Criar uma nova senha</a></p><p>O link expira em breve. Se não foi você, ignore este email — sua senha continua a mesma.</p>`,
+    category: "auth",
+  };
+}
+
 /**
  * Email de "conta já existe" — enviado no signup de email já cadastrado. Só o dono
  * real recebe; a resposta HTTP do signup é idêntica (anti-enumeração).
