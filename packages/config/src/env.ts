@@ -161,6 +161,8 @@ export const envSchema = z.object({
   ANALYSIS_QUALITY_FATIGUE_COST_RISE_PCT: z.coerce.number().nonnegative().default(30),
   // Zombie: gasto mínimo na janela (moeda da conta) p/ chamar de desperdício com 0 conversão.
   ANALYSIS_QUALITY_ZOMBIE_MIN_SPEND: z.coerce.number().nonnegative().default(50),
+  // Mostrar a referência de plataforma no cold-start (sem meta E sem histórico).
+  ANALYSIS_QUALITY_COLD_START_REFERENCE: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
 
   // ─── Cadência (cron por conta — 3b) ────────────────────────────────────
   // Default global da cadência (a UI de edição por-conta = Fatia 4). Cron 5-campos.

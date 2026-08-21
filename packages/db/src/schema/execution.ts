@@ -199,6 +199,8 @@ export const entityAnalyses = pgTable(
     // métricas usadas p/ detectar "mudança material" no próximo run.
     metricsJson: jsonb("metrics_json").$type<Record<string, unknown>>().notNull().default({}),
     flags: jsonb("flags").$type<string[]>().notNull().default([]),
+    // tier de desempenho (6c): winner|performer|underperformer|zombie — histórico coerente.
+    tier: text("tier"),
     analyzedAt: timestamp("analyzed_at", { withTimezone: true }).notNull().defaultNow(),
     ...timestamps,
   },

@@ -37,6 +37,7 @@ import {
   agentConfigInput,
   agentGoalsInput,
   agentSummary,
+  archetypeCatalogOutput,
   availableConversionsOutput,
   lastRunActionsOutput,
   muteCampaignInput,
@@ -107,6 +108,7 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const SelectAccountsInput = registry.register("SelectAccountsInput", selectAccountsInput);
   const SyncOutput = registry.register("SyncOutput", syncOutput);
   const AgentSummary = registry.register("AgentSummary", agentSummary);
+  const ArchetypeCatalogOutput = registry.register("ArchetypeCatalogOutput", archetypeCatalogOutput);
   const AgentGoalsInput = registry.register("AgentGoalsInput", agentGoalsInput);
   const AgentConfigInput = registry.register("AgentConfigInput", agentConfigInput);
   const AvailableConversionsOutput = registry.register("AvailableConversionsOutput", availableConversionsOutput);
@@ -302,6 +304,12 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
       200: jsonRes("contas reconciliadas", SyncOutput),
       400: { description: "token inválido ou sem permissões" },
     },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/agents/archetypes",
+    tags: ["agents"],
+    responses: { 200: jsonRes("catálogo de arquétipos (seleção na config)", ArchetypeCatalogOutput) },
   });
   registry.registerPath({
     method: "get",

@@ -18,6 +18,31 @@ const PROMPT_FIELD_MAX = 8000;
 /** Teto de persona/tone (rótulos curtos de identidade). */
 const IDENTITY_FIELD_MAX = 280;
 
+/** Limiares de qualidade editáveis (6c) — override por-agente; vazio = padrão do sistema. */
+export const qualityConfigInput = z.object({
+  minConversions: z.number().int().positive().optional(),
+  minClicks: z.number().int().positive().optional(),
+  fatigueCtrDropPct: z.number().nonnegative().optional(),
+  fatigueFrequency: z.number().positive().optional(),
+  fatigueCostRisePct: z.number().nonnegative().optional(),
+  zombieMinSpend: z.number().nonnegative().optional(),
+  coldStartReference: z.boolean().optional(),
+});
+export type QualityConfigInput = z.infer<typeof qualityConfigInput>;
+
+/** "Opções avançadas" (6c): override por-agente de model_config. Tudo opcional (patch). */
+export const modelConfigInput = z.object({
+  model: z.string().optional(),
+  unitModel: z.string().optional(),
+  messageModel: z.string().optional(),
+  visionModel: z.string().optional(),
+  reviewEnabled: z.boolean().optional(),
+  topN: z.number().int().positive().optional(),
+  maxOutputTokens: z.number().int().positive().optional(),
+  quality: qualityConfigInput.optional(),
+});
+export type ModelConfigInput = z.infer<typeof modelConfigInput>;
+
 export const agentGoalsInput = z.object({
   targetCPA: z.number().positive().optional(),
   targetROAS: z.number().positive().optional(),
@@ -54,6 +79,8 @@ export const agentConfigInput = z.object({
   autonomyPolicy: autonomyPolicySchema.optional(),
   /** guardrails (rede independente) — blast radius, cap, kill-switch, dry-run (5a). */
   guardrails: guardrailConfigSchema.optional(),
+  /** "Opções avançadas" (6c) — override do model_config (modelos/revisão/limiares). */
+  modelConfig: modelConfigInput.optional(),
 });
 export type AgentConfigInput = z.infer<typeof agentConfigInput>;
 
@@ -81,8 +108,20 @@ export const agentSummary = z.object({
   autonomyPolicy: autonomyPolicySchema,
   /** guardrails (5a) — semeados na criação do agente. */
   guardrails: guardrailConfigSchema,
+  /** "Opções avançadas" (6c) — overrides atuais do model_config (vazio = padrão do sistema). */
+  modelConfig: modelConfigInput,
 });
 export type AgentSummary = z.infer<typeof agentSummary>;
+
+/** Catálogo de arquétipos p/ a UI de seleção (6c). */
+export const archetypeOption = z.object({
+  key: z.string(),
+  label: z.string(),
+  description: z.string(),
+  whenToUse: z.string(),
+});
+export const archetypeCatalogOutput = z.object({ archetypes: z.array(archetypeOption) });
+export type ArchetypeCatalogOutput = z.infer<typeof archetypeCatalogOutput>;
 
 /** Re-seed do arquétipo (c2): reseta SÓ o comportamento, preserva meta+textos. */
 export const reseedArchetypeInput = z.object({ archetype: z.string().min(1) });

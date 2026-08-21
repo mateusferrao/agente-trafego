@@ -19,6 +19,11 @@ export const agentsRoutes: FastifyPluginAsync = async (app) => {
   const service = app.container.services.agents;
   const guard = { preHandler: [requireAuth, requireOrgScope, requireActiveAccess] };
 
+  // Catálogo de arquétipos (estático) p/ a UI de seleção — não é account-scoped.
+  app.get("/agents/archetypes", { preHandler: [requireAuth] }, async () => {
+    return service.listArchetypes();
+  });
+
   app.get("/accounts/:id/agent", guard, async (request) => {
     const { id } = request.params as { id: string };
     return service.getOrCreateForAccount(orgIdOf(request), id);

@@ -120,5 +120,6 @@ function resolveQuality(raw: unknown, defaults: QualityThresholds | undefined): 
     fatigueFrequency: pos(mc.fatigueFrequency) ?? d.fatigueFrequency,
     fatigueCostRisePct: nonNeg(mc.fatigueCostRisePct) ?? d.fatigueCostRisePct,
     zombieMinSpend: nonNeg(mc.zombieMinSpend) ?? d.zombieMinSpend,
+    coldStartReference: typeof mc.coldStartReference === "boolean" ? mc.coldStartReference : d.coldStartReference,
   };
 }

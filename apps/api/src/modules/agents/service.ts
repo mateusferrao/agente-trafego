@@ -12,7 +12,7 @@ import {
   playbookRules,
   type Database,
 } from "@trafego/db";
-import { archetypeDefaults, composeMethodologyPrompt, unseedIdentity, DEFAULT_ARCHETYPE_KEY } from "@trafego/core";
+import { archetypeCatalog, archetypeDefaults, composeMethodologyPrompt, unseedIdentity, DEFAULT_ARCHETYPE_KEY } from "@trafego/core";
 import {
   ACTION_UNDO_QUEUE,
   ACTION_UNDO_JOB,
@@ -37,6 +37,7 @@ import {
   type AgentSummary,
   type AvailableConversionsOutput,
   type LastRunActionsOutput,
+  type ModelConfigInput,
   type PlaybookRuleInput,
   type PlaybookRuleOutput,
 } from "./schema.js";
@@ -121,6 +122,7 @@ export function createAgentsService(deps: AgentsDeps) {
         paused: existing.status === "paused",
         autonomyPolicy: existing.autonomyPolicy,
         guardrails: await loadGuardrails(orgId, existing.id),
+        modelConfig: projectModelConfig(existing.modelConfig),
       };
     }
 
@@ -161,6 +163,7 @@ export function createAgentsService(deps: AgentsDeps) {
       paused: false,
       autonomyPolicy: defaults.autonomyPolicy,
       guardrails: GUARDRAIL_DEFAULTS as AgentSummary["guardrails"],
+      modelConfig: {},
     };
   }
 
@@ -204,7 +207,9 @@ export function createAgentsService(deps: AgentsDeps) {
       .limit(1);
     const currentModelConfig = row?.modelConfig ?? {};
     const nextWindow = input.analysisWindowDays ?? summary.analysisWindowDays;
-    const nextModelConfig = { ...currentModelConfig, windowDays: nextWindow };
+    // "Opções avançadas" (6c): merge dos knobs no model_config, preservando as outras
+    // chaves (ex: windowDays). quality é objeto → merge campo-a-campo.
+    const nextModelConfig = mergeAdvancedConfig(currentModelConfig, nextWindow, input.modelConfig);
     // autonomia/guardrails (5a): só mordem na ESCRITA — não bumpam config_changed_at
     // (não alteram o brief/análise). Persistidos direto.
     const nextAutonomy = input.autonomyPolicy ?? summary.autonomyPolicy;
@@ -220,7 +225,8 @@ export function createAgentsService(deps: AgentsDeps) {
       nextPersona !== (summary.persona ?? null) ||
       nextTone !== (summary.tone ?? null) ||
       nextSystemPrompt !== (summary.systemPrompt ?? null) ||
-      nextWindow !== summary.analysisWindowDays;
+      nextWindow !== summary.analysisWindowDays ||
+      input.modelConfig !== undefined; // knobs de qualidade/modelo afetam a análise
 
     await deps.db
       .update(agents)
@@ -279,6 +285,7 @@ export function createAgentsService(deps: AgentsDeps) {
       analysisWindowDays: nextWindow,
       autonomyPolicy: nextAutonomy,
       guardrails: nextGuardrails,
+      modelConfig: projectModelConfig(nextModelConfig),
     };
   }
 
@@ -672,10 +679,16 @@ export function createAgentsService(deps: AgentsDeps) {
     });
   }
 
+  /** Catálogo de arquétipos (estático) p/ a UI de seleção (6c). */
+  function listArchetypes(): { archetypes: ReturnType<typeof archetypeCatalog> } {
+    return { archetypes: archetypeCatalog() };
+  }
+
   return {
     getOrCreateForAccount,
     updateConfig,
     reseedArchetype,
+    listArchetypes,
     availableConversions,
     setPaused,
     listMutedCampaigns,
@@ -759,4 +772,34 @@ function windowFromModelConfig(mc: Readonly<Record<string, unknown>> | null | un
   const raw = mc?.windowDays;
   if (typeof raw !== "number" || !Number.isFinite(raw)) return ANALYSIS_WINDOW_DEFAULT_DAYS;
   return Math.min(ANALYSIS_WINDOW_MAX_DAYS, Math.max(ANALYSIS_WINDOW_MIN_DAYS, Math.floor(raw)));
+}
+
+/** Knobs de "Opções avançadas" (6c) reconhecidos no model_config (fora quality). */
+const ADVANCED_SCALAR_KEYS = ["model", "unitModel", "messageModel", "visionModel", "reviewEnabled", "topN", "maxOutputTokens"] as const;
+
+/** Merge dos knobs avançados no model_config, preservando outras chaves (windowDays). */
+function mergeAdvancedConfig(
+  current: Readonly<Record<string, unknown>>,
+  windowDays: number,
+  patch: ModelConfigInput | undefined,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...current, windowDays };
+  if (!patch) return out;
+  for (const k of ADVANCED_SCALAR_KEYS) if (patch[k] !== undefined) out[k] = patch[k];
+  if (patch.quality) {
+    const curQ = out.quality && typeof out.quality === "object" ? (out.quality as Record<string, unknown>) : {};
+    const nextQ: Record<string, unknown> = { ...curQ };
+    for (const [qk, qv] of Object.entries(patch.quality)) if (qv !== undefined) nextQ[qk] = qv;
+    out.quality = nextQ;
+  }
+  return out;
+}
+
+/** Projeta só os knobs conhecidos do model_config (o AgentSummary não vaza windowDays etc.). */
+function projectModelConfig(mc: Readonly<Record<string, unknown>> | null | undefined): ModelConfigInput {
+  const src = (mc && typeof mc === "object" ? mc : {}) as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const k of ADVANCED_SCALAR_KEYS) if (src[k] !== undefined) out[k] = src[k];
+  if (src.quality && typeof src.quality === "object") out.quality = src.quality;
+  return out as ModelConfigInput;
 }

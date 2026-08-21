@@ -5,13 +5,14 @@
 
 import { eq, sql } from "drizzle-orm";
 import { entityAnalyses, type Database } from "@trafego/db";
-import type { EntityLevel, InsightMetrics } from "@trafego/shared";
+import type { EntityLevel, InsightMetrics, PerformanceTier } from "@trafego/shared";
 import type { UnitAnalysis } from "@trafego/shared";
 
 export interface LastEntityAnalysis {
   readonly unit: UnitAnalysis;
   readonly metrics: Partial<InsightMetrics>;
   readonly flags: string[];
+  readonly tier: PerformanceTier | null;
   readonly analyzedAt: Date;
 }
 
@@ -22,6 +23,8 @@ export interface SaveEntityAnalysis {
   readonly unit: UnitAnalysis;
   readonly metrics: Partial<InsightMetrics>;
   readonly flags: string[];
+  /** tier de desempenho (6c) — persistido p/ o histórico. */
+  readonly tier?: PerformanceTier;
 }
 
 export interface EntityAnalysesRepo {
@@ -38,6 +41,7 @@ export function createEntityAnalysesRepo(db: Database): EntityAnalysesRepo {
           unitJson: entityAnalyses.unitJson,
           metricsJson: entityAnalyses.metricsJson,
           flags: entityAnalyses.flags,
+          tier: entityAnalyses.tier,
           analyzedAt: entityAnalyses.analyzedAt,
         })
         .from(entityAnalyses)
@@ -48,6 +52,7 @@ export function createEntityAnalysesRepo(db: Database): EntityAnalysesRepo {
           unit: r.unitJson as unknown as UnitAnalysis,
           metrics: r.metricsJson as Partial<InsightMetrics>,
           flags: r.flags,
+          tier: (r.tier as PerformanceTier | null) ?? null,
           analyzedAt: r.analyzedAt,
         });
       }
@@ -69,6 +74,7 @@ export function createEntityAnalysesRepo(db: Database): EntityAnalysesRepo {
             unitJson: e.unit as unknown as Record<string, unknown>,
             metricsJson: e.metrics as Record<string, unknown>,
             flags: e.flags,
+            tier: e.tier ?? null,
             analyzedAt: sql`now()`,
           })),
         )
@@ -81,6 +87,7 @@ export function createEntityAnalysesRepo(db: Database): EntityAnalysesRepo {
             unitJson: sql`excluded.unit_json`,
             metricsJson: sql`excluded.metrics_json`,
             flags: sql`excluded.flags`,
+            tier: sql`excluded.tier`,
             analyzedAt: sql`now()`,
             updatedAt: sql`now()`,
           },

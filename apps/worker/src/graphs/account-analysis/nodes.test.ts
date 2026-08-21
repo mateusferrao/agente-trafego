@@ -151,6 +151,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
         fatigueFrequency: 3,
         fatigueCostRisePct: 30,
         zombieMinSpend: 50,
+        coldStartReference: true,
       },
     },
     webOrigin: "https://app.example.com",
@@ -320,6 +321,7 @@ describe("account-analysis read-only nodes", () => {
         unit: ANALYSIS_OUTPUT as unknown as LastEntityAnalysis["unit"],
         metrics: { spend: 300, cpa: 100, roas: 1, ctr: 5 },
         flags: ["cpa_acima_da_meta"],
+        tier: null,
         analyzedAt: new Date(), // recente → não dispara o deep por intervalo
       }],
     ]);
@@ -335,6 +337,7 @@ describe("account-analysis read-only nodes", () => {
         unit: ANALYSIS_OUTPUT as unknown as LastEntityAnalysis["unit"],
         metrics: { spend: 300, cpa: 100, roas: 1, ctr: 5 },
         flags: ["cpa_acima_da_meta"],
+        tier: null,
         analyzedAt: new Date(Date.now() - 60_000), // 1 min atrás
       }],
     ]);

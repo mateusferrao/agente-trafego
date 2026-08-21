@@ -370,6 +370,8 @@ export interface RunCampaignCard {
   readonly summary: string | null;
   readonly topFinding: { readonly title: string; readonly severity: "info" | "warning" | "critical" } | null;
   readonly flags: readonly string[];
+  /** tier de desempenho congelado no run (6c) — histórico coerente. */
+  readonly tier?: PerformanceTier | null;
 }
 
 export interface AgentGoals {

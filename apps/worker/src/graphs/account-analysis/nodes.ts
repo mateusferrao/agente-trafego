@@ -383,6 +383,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           unit: parsed.data,
           metrics: unit.campaign.metrics,
           flags: [...unit.campaign.flags],
+          ...(unit.campaign.tier ? { tier: unit.campaign.tier } : {}),
         };
         return { unit: parsed.data, fresh, usage: completion.usage, partial: false };
       } catch (err) {
@@ -951,6 +952,7 @@ function buildCampaignCards(
       summary: analysis.summary ?? null,
       topFinding: top ? { title: top.title, severity: top.severity } : null,
       flags: [...u.campaign.flags],
+      ...(u.campaign.tier ? { tier: u.campaign.tier } : {}),
     });
   }
   return cards;

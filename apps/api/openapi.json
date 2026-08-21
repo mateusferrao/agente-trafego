@@ -990,6 +990,66 @@
               "dryRun",
               "killSwitch"
             ]
+          },
+          "modelConfig": {
+            "type": "object",
+            "properties": {
+              "model": {
+                "type": "string"
+              },
+              "unitModel": {
+                "type": "string"
+              },
+              "messageModel": {
+                "type": "string"
+              },
+              "visionModel": {
+                "type": "string"
+              },
+              "reviewEnabled": {
+                "type": "boolean"
+              },
+              "topN": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "maxOutputTokens": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "quality": {
+                "type": "object",
+                "properties": {
+                  "minConversions": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "minClicks": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "fatigueCtrDropPct": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "fatigueFrequency": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "fatigueCostRisePct": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "zombieMinSpend": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "coldStartReference": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
           }
         },
         "required": [
@@ -1006,7 +1066,42 @@
           "analysisWindowDays",
           "paused",
           "autonomyPolicy",
-          "guardrails"
+          "guardrails",
+          "modelConfig"
+        ]
+      },
+      "ArchetypeCatalogOutput": {
+        "type": "object",
+        "properties": {
+          "archetypes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "whenToUse": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key",
+                "label",
+                "description",
+                "whenToUse"
+              ]
+            }
+          }
+        },
+        "required": [
+          "archetypes"
         ]
       },
       "AgentGoalsInput": {
@@ -1288,6 +1383,66 @@
               "dryRun",
               "killSwitch"
             ]
+          },
+          "modelConfig": {
+            "type": "object",
+            "properties": {
+              "model": {
+                "type": "string"
+              },
+              "unitModel": {
+                "type": "string"
+              },
+              "messageModel": {
+                "type": "string"
+              },
+              "visionModel": {
+                "type": "string"
+              },
+              "reviewEnabled": {
+                "type": "boolean"
+              },
+              "topN": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "maxOutputTokens": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "quality": {
+                "type": "object",
+                "properties": {
+                  "minConversions": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "minClicks": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "fatigueCtrDropPct": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "fatigueFrequency": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "fatigueCostRisePct": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "zombieMinSpend": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "coldStartReference": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
           }
         }
       },
@@ -1706,6 +1861,18 @@
                     "type": "string"
                   }
                 },
+                "tier": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "winner",
+                    "performer",
+                    "underperformer",
+                    "zombie"
+                  ]
+                },
                 "muted": {
                   "type": "boolean"
                 }
@@ -1717,6 +1884,7 @@
                 "summary",
                 "topFinding",
                 "flags",
+                "tier",
                 "muted"
               ]
             }
@@ -3045,6 +3213,18 @@
                     "type": "string"
                   }
                 },
+                "tier": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "winner",
+                    "performer",
+                    "underperformer",
+                    "zombie"
+                  ]
+                },
                 "muted": {
                   "type": "boolean"
                 }
@@ -3056,6 +3236,7 @@
                 "summary",
                 "topFinding",
                 "flags",
+                "tier",
                 "muted"
               ]
             }
@@ -4459,6 +4640,25 @@
           },
           "400": {
             "description": "token inválido ou sem permissões"
+          }
+        }
+      }
+    },
+    "/api/agents/archetypes": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "responses": {
+          "200": {
+            "description": "catálogo de arquétipos (seleção na config)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArchetypeCatalogOutput"
+                }
+              }
+            }
           }
         }
       }

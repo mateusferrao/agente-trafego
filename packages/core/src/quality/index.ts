@@ -28,6 +28,8 @@ export interface QualityThresholds {
   readonly fatigueCostRisePct: number;
   /** zombie: gasto mínimo na janela p/ considerar desperdício (moeda da conta). */
   readonly zombieMinSpend: number;
+  /** mostrar a referência de plataforma no cold-start (sem meta E sem histórico). */
+  readonly coldStartReference: boolean;
 }
 
 export const DEFAULT_QUALITY_THRESHOLDS: QualityThresholds = {
@@ -37,6 +39,7 @@ export const DEFAULT_QUALITY_THRESHOLDS: QualityThresholds = {
   fatigueFrequency: 3,
   fatigueCostRisePct: 30,
   zombieMinSpend: 50,
+  coldStartReference: true,
 };
 
 // ─── Elegibilidade de decisão ─────────────────────────────────────────────
@@ -209,8 +212,8 @@ export function enrichEntitiesQuality(
     );
 
     // Cold-start = sem meta E sem histórico da entidade → única hora em que a
-    // referência de plataforma entra (rotulada, nunca meta).
-    const coldStart = !ctx.hasTarget && !hasBaseline;
+    // referência de plataforma entra (rotulada, nunca meta). Toggle por-agente.
+    const coldStart = t.coldStartReference && !ctx.hasTarget && !hasBaseline;
     const outcomeGoal = ctx.conversionGoal ?? e.objective?.goal;
     const benchmarkRef = coldStart
       ? benchmarkFor({

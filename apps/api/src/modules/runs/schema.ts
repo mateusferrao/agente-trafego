@@ -116,6 +116,8 @@ export const campaignAnalysisOutput = z.object({
   summary: z.string().nullable(),
   topFinding: campaignTopFinding.nullable(),
   flags: z.array(z.string()),
+  /** tier de desempenho (6c): winner|performer|underperformer|zombie. */
+  tier: z.enum(["winner", "performer", "underperformer", "zombie"]).nullable(),
   /** campanha silenciada pelo dono (opt-out da análise). */
   muted: z.boolean(),
 });

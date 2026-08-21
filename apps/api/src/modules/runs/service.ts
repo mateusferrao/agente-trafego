@@ -220,6 +220,7 @@ export function createRunsService(deps: RunsDeps) {
         unitJson: entityAnalyses.unitJson,
         metricsJson: entityAnalyses.metricsJson,
         flags: entityAnalyses.flags,
+        tier: entityAnalyses.tier,
         analyzedAt: entityAnalyses.analyzedAt,
       })
       .from(entityAnalyses)
@@ -342,6 +343,7 @@ export function createRunsService(deps: RunsDeps) {
       summary: c.summary,
       topFinding: c.topFinding,
       flags: [...c.flags],
+      tier: c.tier ?? null,
       muted: muted.has(c.externalId),
     }));
 
@@ -374,6 +376,7 @@ function toCampaignAnalysisOutput(
     unitJson: Record<string, unknown>;
     metricsJson: Record<string, unknown>;
     flags: string[];
+    tier: string | null;
   },
   muted: boolean,
 ): CampaignAnalysisOutput {
@@ -392,6 +395,7 @@ function toCampaignAnalysisOutput(
     summary: unit.summary ?? null,
     topFinding: top ? { title: top.title, severity: top.severity } : null,
     flags: row.flags ?? [],
+    tier: (row.tier as CampaignAnalysisOutput["tier"]) ?? null,
     muted,
   };
 }
