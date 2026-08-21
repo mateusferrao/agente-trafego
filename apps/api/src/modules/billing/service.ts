@@ -87,7 +87,7 @@ export function createBillingService(deps: BillingDeps) {
         totalCostUsd += cost;
       }
 
-      // série diária (UTC) — usa o índice created_at.
+      // série diária (UTC) — usa o índice created_at. Só volta dias COM custo…
       const dayRows = await deps.db
         .select({
           date: sql<string>`to_char(${usageEvents.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD')`,
@@ -97,7 +97,14 @@ export function createBillingService(deps: BillingDeps) {
         .where(inRange)
         .groupBy(sql`1`)
         .orderBy(sql`1`);
-      const byDay = dayRows.map((r) => ({ date: r.date, costUsd: r.total === null ? 0 : Number(r.total) }));
+      // …então densifica: TODO dia de since..until (0 onde não houve) → pontos alinham
+      // com o eixo de datas e a curva mostra a forma real (§ série temporal).
+      const dayMap = new Map(dayRows.map((r) => [r.date, r.total === null ? 0 : Number(r.total)]));
+      const byDay: { date: string; costUsd: number }[] = [];
+      for (const cur = new Date(start); cur < end; cur.setUTCDate(cur.getUTCDate() + 1)) {
+        const key = cur.toISOString().slice(0, 10);
+        byDay.push({ date: key, costUsd: dayMap.get(key) ?? 0 });
+      }
 
       // por conta (só linhas com run→agente→conta; chat/run_id null cai no não-atribuído).
       const acctRows = await deps.db

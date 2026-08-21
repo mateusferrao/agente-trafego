@@ -51,23 +51,25 @@ describe("billingService.costs (range por dia)", () => {
         { type: "unit", total: "20" },
         { type: "conversation", total: "10" },
       ],
-      // 2) byDay
+      // 2) byDay (esparso: 01 e 03 têm custo; 02 não)
       [
         { date: "2026-08-01", total: "12" },
-        { date: "2026-08-02", total: "18" },
+        { date: "2026-08-03", total: "18" },
       ],
       // 3) byAccount (só linhas com run→conta)
       [{ accountId: "a1", accountName: "Loja A", total: "20" }],
     ]);
     const service = createBillingService({ db, metering, costCapUsd: 5 });
 
-    const out = await service.costs(ORG, "2026-08-01", "2026-08-31");
+    const out = await service.costs(ORG, "2026-08-01", "2026-08-03");
     expect(out.since).toBe("2026-08-01");
-    expect(out.until).toBe("2026-08-31");
+    expect(out.until).toBe("2026-08-03");
     expect(out.totalCostUsd).toBe(30);
+    // zero-fill: 02/08 sem custo entra como 0 (série densa, alinhada ao eixo).
     expect(out.byDay).toEqual([
       { date: "2026-08-01", costUsd: 12 },
-      { date: "2026-08-02", costUsd: 18 },
+      { date: "2026-08-02", costUsd: 0 },
+      { date: "2026-08-03", costUsd: 18 },
     ]);
     expect(out.byType).toEqual({ unit: 20, conversation: 10 });
     expect(out.byAccount).toEqual([{ accountId: "a1", accountName: "Loja A", costUsd: 20 }]);
