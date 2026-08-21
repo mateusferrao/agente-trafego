@@ -6,7 +6,7 @@
 import { and, desc, eq, ilike } from "drizzle-orm";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { adAccounts, conversations, playbookRules } from "@trafego/db";
+import { adAccounts, agents, conversations, playbookRules } from "@trafego/db";
 import {
   ACTION_PARAM_AMOUNT_MINOR,
   ACTION_PARAM_MODE,
@@ -373,14 +373,80 @@ export function makeConversationTools(
     },
   );
 
+  // AUTOCONHECIMENTO (S2.7): descreve, com honestidade, TUDO o que o agente faz NESTE
+  // contexto — separando "o que faço quando você pede" (sempre com confirmação) do "o
+  // que faço sozinho nas análises" (depende da autonomia). Reflete o estado real (allow
+  // + allowedActions + kill-switch), nunca overpromete. Concierge = visão geral.
+  const describeCapabilities = tool(
+    async () => {
+      if (!ctx.agentId) {
+        return [
+          "Sou seu gestor de tráfego aqui no WhatsApp. Sem uma conta em foco, posso:",
+          "• ver e resolver pendências de aprovação (de todas as suas contas);",
+          '• focar numa conta (ex: "foca na Clínica X") pra ler, analisar e agir nela.',
+          "Me diz em qual conta você quer trabalhar.",
+        ].join("\n");
+      }
+      const parts: string[] = ["Aqui no WhatsApp eu consigo:"];
+      parts.push("📊 Ler: status da conta, métricas, análise por campanha, recomendações, desperdício, comparar períodos e ver pendências.");
+      const writeVerbs = [...WRITE_TOOL_NAMES].filter((n) => allow.has(n)).map((n) => WRITE_VERB_PT[n]).filter(Boolean);
+      if (writeVerbs.length > 0) {
+        parts.push(`✏️ Mexer nas campanhas (sempre te mostro e confirmo antes): ${writeVerbs.join(", ")}. Também dá pra desfazer o que apliquei.`);
+      } else {
+        parts.push("✏️ Mexer nas campanhas: hoje está desligado nos guardrails — dá pra liberar nas configurações.");
+      }
+      parts.push("⚡ Analisar agora e aprovar/rejeitar ações pendentes.");
+      if (ctx.configViaChat) {
+        parts.push("⚙️ Mudar a config do agente conversando (sempre com sua confirmação): meta, autonomia, guardrails, cadência, arquétipo, playbook e identidade.");
+      } else {
+        parts.push("⚙️ Config do agente: por aqui está desligada — mudanças de config são pelo site.");
+      }
+      const [row] = await deps.db
+        .select({ autonomyPolicy: agents.autonomyPolicy })
+        .from(agents)
+        .where(and(eq(agents.id, ctx.agentId), eq(agents.orgId, ctx.orgId)))
+        .limit(1);
+      const pol = row?.autonomyPolicy as AutonomyPolicy | undefined;
+      if (pol?.bySource) {
+        const lbl = (l: string) => AUTONOMY_LABEL_CHAT[l] ?? l;
+        parts.push(`🤖 Nas análises automáticas (sem você pedir): com o playbook eu ${lbl(pol.bySource.playbook)}; com sugestões de IA eu ${lbl(pol.bySource.llm)}.`);
+      }
+      parts.push("🚧 Ainda não: criar campanhas do zero (em breve) nem editar criativos.");
+      parts.push("É só pedir. 🙂");
+      return parts.join("\n");
+    },
+    {
+      name: "describe_capabilities",
+      description:
+        "Explica ao usuário tudo o que você consegue fazer nesta conversa (ler, mexer nas campanhas, analisar, aprovar, configurar), refletindo o que está habilitado agora. Use quando ele perguntar o que você faz / como ajuda / o que consegue fazer.",
+      schema: z.object({}),
+    },
+  );
+
   const configTools = [setGoal, setAutonomy, setGuardrail, setCadence, reseedArchetype, setPersona, setTone, setSystemPrompt];
   const playbookTools = [addPlaybookRule, togglePlaybookRule, removePlaybookRule, listPlaybookRules];
 
   const writeTools = [pauseEntity, resumeEntity, setStatus, adjustBudget, revertAction, confirmWrite, cancelWrite];
-  return [...readTools, triggerAnalysis, approve, reject, setFocus, ...writeTools, ...configTools, ...playbookTools].filter(
+  return [...readTools, triggerAnalysis, approve, reject, setFocus, describeCapabilities, ...writeTools, ...configTools, ...playbookTools].filter(
     (t) => allow.has(t.name),
   );
 }
+
+/** Rótulo de gente do nível de autonomia (1ª pessoa, p/ o describe_capabilities). */
+const AUTONOMY_LABEL_CHAT: Readonly<Record<string, string>> = {
+  notify: "só te aviso",
+  suggest: "sugiro e peço seu OK",
+  act_safe: "ajo no seguro",
+  act_full: "ajo sozinho",
+};
+
+/** Verbo de gente por tool de escrita Meta (p/ listar o que está habilitado). */
+const WRITE_VERB_PT: Readonly<Record<string, string>> = {
+  pause_entity: "pausar campanhas/conjuntos/anúncios",
+  resume_entity: "reativar o que está pausado",
+  set_status: "mudar o status de entidades",
+  adjust_budget: "ajustar o budget",
+};
 
 /** Constrói a `Action` neutra a partir de um tool_call de escrita livre do chat (5c). */
 export function actionFromToolCall(name: string, args: Record<string, unknown>, id: string): Action | null {
@@ -442,13 +508,20 @@ export const AGENT_TOOL_NAMES: ReadonlySet<string> = new Set([
   "confirm_write",
   "cancel_write",
   "set_focus",
+  "describe_capabilities",
 ]);
 
 /**
  * Concierge (org multi-conta SEM foco): org-level (pendentes cross-conta) + set_focus
- * p/ escolher a conta e destravar leitura/escrita (5c-6).
+ * p/ escolher a conta e destravar leitura/escrita (5c-6) + autoconhecimento (S2.7).
  */
-export const CONCIERGE_TOOL_NAMES: ReadonlySet<string> = new Set(["list_pending", "approve", "reject", "set_focus"]);
+export const CONCIERGE_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "list_pending",
+  "approve",
+  "reject",
+  "set_focus",
+  "describe_capabilities",
+]);
 
 /**
  * Tools de ESCRITA LIVRE que exigem ECO+CONFIRMA antes de aplicar (gate, 5c). O roteador

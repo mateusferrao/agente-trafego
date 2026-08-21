@@ -46,6 +46,37 @@ function toolOf(deps: never, name: string): { invoke: (args: unknown) => Promise
   return found as unknown as { invoke: (args: unknown) => Promise<string> };
 }
 
+describe("describe_capabilities tool", () => {
+  const capTool = (deps: never, ctx: ConversationToolContext, allow: Set<string>) =>
+    makeConversationTools(deps, ctx, allow).find((t) => t.name === "describe_capabilities")! as unknown as {
+      invoke: (a: unknown) => Promise<string>;
+    };
+  const dbWithAutonomy = (playbook: string, llm: string) =>
+    ({
+      select: () => ({ from: () => ({ where: () => ({ limit: async () => [{ autonomyPolicy: { bySource: { playbook, llm } } }] }) }) }),
+    }) as never;
+
+  it("concierge (sem agente em contexto) → visão geral, sem tocar o db", async () => {
+    const { deps } = makeDeps(() => null);
+    const out = await capTool(deps, { ...CTX, agentId: "" }, new Set(["describe_capabilities"])).invoke({});
+    expect(out.toLowerCase()).toContain("foca");
+  });
+
+  it("reflete o contexto: escrita só quando habilitada + config conforme o kill-switch", async () => {
+    const { deps } = makeDeps(() => null);
+    (deps as { db: unknown }).db = dbWithAutonomy("suggest", "notify");
+
+    const on = await capTool(deps, { ...CTX, configViaChat: true }, new Set(["describe_capabilities", "pause_entity"])).invoke({});
+    expect(on).toContain("pausar");
+    expect(on).toContain("Mudar a config");
+    expect(on).toContain("sugiro e peço seu OK"); // autonomia playbook em PT
+
+    const off = await capTool(deps, { ...CTX, configViaChat: false }, new Set(["describe_capabilities"])).invoke({});
+    expect(off).toContain("desligado nos guardrails"); // sem write tool habilitada
+    expect(off).toContain("pelo site"); // config off
+  });
+});
+
 describe("approve tool", () => {
   it("enfileira o apply-service p/ cada pendente da org, com o contato p/ o desfecho", async () => {
     const { deps, enqueue } = makeDeps((id) => (id === "ap-1" ? pending("ap-1") : null));
