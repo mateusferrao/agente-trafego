@@ -9,6 +9,9 @@ type RunMetrics = NonNullable<NonNullable<RunView>['metrics']>;
 type Scorecard = NonNullable<RunMetrics['scorecard']>;
 type RiskTone = 'neutral' | 'warning' | 'danger';
 export type GradeTone = 'success' | 'info' | 'warning' | 'danger';
+/** Faixa de desempenho da campanha (do backend) — tom+texto, nunca só cor. */
+type Tier = NonNullable<Campaign['tier']>;
+type TierTone = 'success' | 'info' | 'warning' | 'danger';
 
 /** item da faixa de KPIs / taxas (rótulo humano + valor já formatado). */
 interface Stat {
@@ -31,6 +34,20 @@ const ACTION_LABEL: Record<string, string> = {
   resume_entity: 'Reativar',
   adjust_budget: 'Ajustar orçamento',
   set_status: 'Mudar status',
+};
+/** Rótulo PT-BR de cada faixa (sem jargão). */
+const TIER_LABEL: Record<Tier, string> = {
+  winner: 'campeã',
+  performer: 'ok',
+  underperformer: 'abaixo da meta',
+  zombie: 'parada (desperdício)',
+};
+/** Tom da faixa (acompanha o rótulo — status = tom+texto). */
+const TIER_TONE: Record<Tier, TierTone> = {
+  winner: 'success',
+  performer: 'info',
+  underperformer: 'warning',
+  zombie: 'danger',
 };
 const LEVEL_LABEL: Record<string, string> = {
   account: 'conta',
@@ -129,7 +146,12 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
               >
                 <div class="flex items-start justify-between gap-3">
                   <div class="flex flex-col gap-1">
-                    <h3 class="font-brand text-base font-semibold text-ink">{{ campaignName(c) }}</h3>
+                    <div class="flex flex-wrap items-center gap-2">
+                      <h3 class="font-brand text-base font-semibold text-ink">{{ campaignName(c) }}</h3>
+                      @if (c.tier) {
+                        <span appBadge [tone]="tierTone(c.tier)" size="sm">{{ tierLabel(c.tier) }}</span>
+                      }
+                    </div>
                     <div class="flex flex-wrap items-center gap-2">
                       <span appBadge [tone]="campaignTone(c)" size="sm">{{ campaignStatusLabel(c) }}</span>
                       <span class="text-xs text-muted">Gasto {{ campaignSpend(c) }}</span>
@@ -174,7 +196,12 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
             @for (rec of recommendations(); track rec.id) {
               <article class="flex flex-col gap-2 rounded-lg border border-line bg-panel p-5">
                 <div class="flex items-start justify-between gap-3">
-                  <h3 class="font-brand text-base font-semibold text-ink">{{ rec.title }}</h3>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <h3 class="font-brand text-base font-semibold text-ink">{{ rec.title }}</h3>
+                    @if (recTier(rec); as t) {
+                      <span appBadge [tone]="tierTone(t)" size="sm">{{ tierLabel(t) }}</span>
+                    }
+                  </div>
                   <span appBadge [tone]="riskTone(rec.riskLevel)">{{ riskLabel(rec.riskLevel) }}</span>
                 </div>
                 @if (rec.rationale) {
@@ -291,6 +318,29 @@ export class AnalysisDetail {
 
   protected campaignName(c: Campaign): string {
     return c.name ?? c.externalId;
+  }
+
+  /** Índice externalId → faixa, p/ cruzar o tier nas recomendações (task 3b). */
+  private readonly tierByCampaign = computed<ReadonlyMap<string, Tier>>(() => {
+    const map = new Map<string, Tier>();
+    for (const c of this.campaigns()) if (c.tier) map.set(c.externalId, c.tier);
+    return map;
+  });
+
+  protected tierLabel(tier: Tier): string {
+    return TIER_LABEL[tier];
+  }
+  protected tierTone(tier: Tier): TierTone {
+    return TIER_TONE[tier];
+  }
+  /**
+   * Faixa da campanha-alvo de uma recomendação (só quando a ação mira uma campanha
+   * e ela está entre as campanhas já carregadas). Sem faixa → não renderiza badge.
+   */
+  protected recTier(rec: Recommendation): Tier | null {
+    const action = rec.proposedAction;
+    if (!action || action.target.level !== 'campaign') return null;
+    return this.tierByCampaign().get(action.target.id) ?? null;
   }
   /**
    * Precisa de atenção? flag de meta/anomalia OU um achado grave da análise —

@@ -1,15 +1,33 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  type WritableSignal,
+  computed,
+  inject,
+  signal,
+} from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { toast } from 'ngx-sonner';
 import { UiButton, UiPageHeader, UiSelectBox, UiSpinner, type UiSelectOptionItem } from '@ui';
 import { AccountsApiService } from '@core/api/accounts-api.service';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
-import type { AgentConfigInput, AgentSummary, AvailableConversionsOutput } from '@core/api/generated';
+import type {
+  AgentConfigInput,
+  AgentSummary,
+  ArchetypeCatalogOutput,
+  AvailableConversionsOutput,
+} from '@core/api/generated';
 import { AgentPlaybook } from './agent-playbook';
 import { AgentAutonomy } from './agent-autonomy';
 import { AgentGuardrails } from './agent-guardrails';
 
 type Conversion = AvailableConversionsOutput['conversions'][number];
+/** Um arquétipo do catálogo (chave + rótulo + descrição + quando usar). */
+type Archetype = ArchetypeCatalogOutput['archetypes'][number];
+/** Overrides de pipeline por-agente (vazio = padrão do sistema). */
+type ModelConfig = NonNullable<AgentConfigInput['modelConfig']>;
+type ModelQuality = NonNullable<ModelConfig['quality']>;
 /** `CadenceSpec` (fonte única do cron) — forma vinda do contrato gerado. */
 type Cadence = NonNullable<AgentSummary['cadence']>;
 /** Modo do editor de cadência (default = usa o ritmo global; raw = cron avançado). */
@@ -29,9 +47,16 @@ const WEEKDAY_OPTIONS: readonly UiSelectOptionItem[] = [
   { value: '6', label: 'sábado' },
   { value: '0', label: 'domingo' },
 ];
-/** Arquétipos disponíveis (hoje só o conservador; extensível). */
-const ARCHETYPE_OPTIONS: readonly UiSelectOptionItem[] = [
-  { value: 'conservador', label: 'Conservador (sugere com cautela)' },
+/**
+ * Toggle de 3 estados p/ os booleans das opções avançadas: "" = usa o padrão do
+ * sistema (não envia override), 'on'/'off' = força ligado/desligado.
+ */
+const TRISTATE_ON = 'on';
+const TRISTATE_OFF = 'off';
+const TRISTATE_OPTIONS: readonly UiSelectOptionItem[] = [
+  { value: '', label: 'Padrão do sistema' },
+  { value: TRISTATE_ON, label: 'Ligado' },
+  { value: TRISTATE_OFF, label: 'Desligado' },
 ];
 
 /** Rótulos amigáveis PT-BR da taxonomia neutra (custom cai no nome real do backend). */
@@ -74,6 +99,7 @@ interface FormState {
   readonly systemPrompt: string;
   readonly cadence: string; // JSON do CadenceSpec | "" (default) — comparado como string
   readonly windowDays: number;
+  readonly modelConfig: string; // JSON dos overrides preenchidos ("{}" = tudo no padrão)
 }
 
 /**
@@ -364,8 +390,16 @@ interface FormState {
             </p>
           </div>
           <div class="w-full max-w-sm">
-            <app-ui-select [options]="archetypeOptions" [value]="archetype()" (valueChange)="onArchetypeChange($event)" />
+            <app-ui-select [options]="archetypeOptions()" [value]="archetype()" (valueChange)="onArchetypeChange($event)" />
           </div>
+          @if (selectedArchetype(); as a) {
+            <div class="flex flex-col gap-1">
+              <p class="text-sm text-muted">{{ a.description }}</p>
+              <p class="text-sm text-muted">
+                <span class="font-medium text-ink">Quando usar:</span> {{ a.whenToUse }}
+              </p>
+            </div>
+          }
         </section>
 
         <!-- Identidade e voz (avançado) -->
@@ -403,6 +437,113 @@ interface FormState {
                 <summary class="cursor-pointer select-none">Ver a metodologia atual do arquétipo</summary>
                 <pre class="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-md border border-line bg-app p-3 text-xs text-muted">{{ methodologyPreview() }}</pre>
               </details>
+            </div>
+          </details>
+        </section>
+
+        <!-- Opções avançadas (divulgação progressiva) — overrides do pipeline por-agente -->
+        <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
+          <details class="flex flex-col gap-3">
+            <summary class="cursor-pointer select-none">
+              <span class="text-xs font-medium uppercase tracking-wide text-muted">Avançado</span>
+              <span class="font-brand text-base font-semibold text-ink"> · Opções avançadas</span>
+            </summary>
+            <div class="mt-3 flex flex-col gap-6">
+              <p class="text-xs text-muted">
+                Ajustes finos de como o agente pensa. Deixe em branco para usar o padrão do sistema — só mexa se
+                souber o efeito.
+              </p>
+
+              <!-- Modelos de IA -->
+              <div class="flex flex-col gap-3">
+                <span class="text-sm font-semibold text-ink">Modelos de IA</span>
+                <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Modelo de linguagem principal usado na análise. Ex: um modelo mais forte analisa melhor, mas custa mais.">
+                    Modelo principal
+                    <input type="text" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcModel()" (input)="onMcText(mcModel, $event)" />
+                    <span class="text-xs text-muted">O cérebro do agente. Modelos melhores analisam com mais qualidade e custam mais.</span>
+                  </label>
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Modelo usado ao analisar cada campanha em profundidade.">
+                    Modelo por campanha
+                    <input type="text" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcUnitModel()" (input)="onMcText(mcUnitModel, $event)" />
+                    <span class="text-xs text-muted">Usado no mergulho campanha a campanha.</span>
+                  </label>
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Modelo usado para escrever as mensagens ao usuário (resumo e conversa).">
+                    Modelo das mensagens
+                    <input type="text" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcMessageModel()" (input)="onMcText(mcMessageModel, $event)" />
+                    <span class="text-xs text-muted">Usado para redigir os textos que você lê.</span>
+                  </label>
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Modelo com visão, usado para olhar as imagens e vídeos dos anúncios.">
+                    Modelo de visão
+                    <input type="text" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcVisionModel()" (input)="onMcText(mcVisionModel, $event)" />
+                    <span class="text-xs text-muted">Usado para enxergar os criativos (imagem e vídeo).</span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- Pipeline da análise -->
+              <div class="flex flex-col gap-3">
+                <span class="text-sm font-semibold text-ink">Pipeline da análise</span>
+                <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Passo extra de revisão: um segundo olhar refina os achados antes de virar recomendação.">
+                    Revisão da análise
+                    <app-ui-select [options]="tristateOptions" [value]="mcReviewEnabled()" (valueChange)="mcReviewEnabled.set($event)" />
+                    <span class="text-xs text-muted">Um segundo olhar refina os achados. Mais qualidade, um pouco mais de custo.</span>
+                  </label>
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Quantas campanhas recebem a análise profunda por vez (as demais entram resumidas).">
+                    Campanhas analisadas a fundo
+                    <input type="number" min="1" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcTopN()" (input)="onMcText(mcTopN, $event)" />
+                    <span class="text-xs text-muted">Quantas campanhas ganham o mergulho profundo por análise.</span>
+                  </label>
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Tamanho máximo da resposta do modelo. Maior = respostas mais longas e mais caras.">
+                    Tamanho máx. da resposta
+                    <input type="number" min="1" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcMaxOutputTokens()" (input)="onMcText(mcMaxOutputTokens, $event)" />
+                    <span class="text-xs text-muted">Limite de texto que o modelo gera de cada vez.</span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- Qualidade e limiares -->
+              <div class="flex flex-col gap-3">
+                <span class="text-sm font-semibold text-ink">Qualidade e limiares</span>
+                <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Mínimo de conversões para o agente confiar no número e sugerir escalar.">
+                    Mínimo de conversões
+                    <input type="number" min="0" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcMinConversions()" (input)="onMcText(mcMinConversions, $event)" />
+                    <span class="text-xs text-muted">Abaixo disso, o agente evita conclusões precipitadas.</span>
+                  </label>
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Mínimo de cliques para considerar que já há dado suficiente para avaliar.">
+                    Mínimo de cliques
+                    <input type="number" min="0" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcMinClicks()" (input)="onMcText(mcMinClicks, $event)" />
+                    <span class="text-xs text-muted">Volume mínimo de cliques para tirar conclusões.</span>
+                  </label>
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Queda de CTR (% em relação ao início) a partir da qual o anúncio é considerado cansado.">
+                    Queda de CTR p/ saturação (%)
+                    <input type="number" min="0" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcFatigueCtrDropPct()" (input)="onMcText(mcFatigueCtrDropPct, $event)" />
+                    <span class="text-xs text-muted">Quanto o interesse pode cair antes de sinalizar cansaço do anúncio.</span>
+                  </label>
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Frequência (vezes que a mesma pessoa vê o anúncio) acima da qual consideramos saturação.">
+                    Frequência p/ saturação
+                    <input type="number" min="0" step="0.1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcFatigueFrequency()" (input)="onMcText(mcFatigueFrequency, $event)" />
+                    <span class="text-xs text-muted">Quantas vezes a mesma pessoa vê o anúncio antes de saturar.</span>
+                  </label>
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Alta de custo por resultado (%) a partir da qual o anúncio é considerado cansado.">
+                    Alta de custo p/ saturação (%)
+                    <input type="number" min="0" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcFatigueCostRisePct()" (input)="onMcText(mcFatigueCostRisePct, $event)" />
+                    <span class="text-xs text-muted">Quanto o custo pode subir antes de sinalizar cansaço.</span>
+                  </label>
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Gasto mínimo para uma campanha sem resultado ser marcada como parada (desperdício).">
+                    Gasto mín. p/ marcar desperdício (R$)
+                    <input type="number" min="0" step="0.01" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcZombieMinSpend()" (input)="onMcText(mcZombieMinSpend, $event)" />
+                    <span class="text-xs text-muted">A partir de quanto gasto sem retorno o agente aponta desperdício.</span>
+                  </label>
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Mostrar referência de mercado quando a conta ainda não tem meta nem histórico.">
+                    Referência de mercado
+                    <app-ui-select [options]="tristateOptions" [value]="mcColdStartReference()" (valueChange)="mcColdStartReference.set($event)" />
+                    <span class="text-xs text-muted">Mostra uma referência quando a conta ainda não tem meta nem histórico.</span>
+                  </label>
+                </div>
+              </div>
             </div>
           </details>
         </section>
@@ -448,7 +589,33 @@ export class AgentConfigPage {
   protected readonly systemPrompt = signal('');
   protected readonly methodologyPreview = signal('');
   protected readonly archetype = signal('conservador');
-  protected readonly archetypeOptions = ARCHETYPE_OPTIONS;
+  /** Catálogo vindo do backend (label + descrição + quando usar). */
+  private readonly archetypeCatalog = signal<Archetype[]>([]);
+  /** Opções do select (só key + label). */
+  protected readonly archetypeOptions = computed<UiSelectOptionItem[]>(() =>
+    this.archetypeCatalog().map((a) => ({ value: a.key, label: a.label })),
+  );
+  /** Arquétipo selecionado (p/ mostrar descrição + quando usar abaixo do select). */
+  protected readonly selectedArchetype = computed<Archetype | null>(
+    () => this.archetypeCatalog().find((a) => a.key === this.archetype()) ?? null,
+  );
+
+  // opções avançadas — overrides do pipeline (vazio = padrão do sistema).
+  protected readonly tristateOptions = TRISTATE_OPTIONS;
+  protected readonly mcModel = signal('');
+  protected readonly mcUnitModel = signal('');
+  protected readonly mcMessageModel = signal('');
+  protected readonly mcVisionModel = signal('');
+  protected readonly mcReviewEnabled = signal(''); // '' | 'on' | 'off'
+  protected readonly mcTopN = signal('');
+  protected readonly mcMaxOutputTokens = signal('');
+  protected readonly mcMinConversions = signal('');
+  protected readonly mcMinClicks = signal('');
+  protected readonly mcFatigueCtrDropPct = signal('');
+  protected readonly mcFatigueFrequency = signal('');
+  protected readonly mcFatigueCostRisePct = signal('');
+  protected readonly mcZombieMinSpend = signal('');
+  protected readonly mcColdStartReference = signal(''); // '' | 'on' | 'off'
 
   // cadência (c2) — sub-estado do editor; compõe o CadenceSpec.
   protected readonly cadenceKind = signal<CadenceKind>('default');
@@ -549,6 +716,11 @@ export class AgentConfigPage {
     this.systemPrompt.set((e.target as HTMLTextAreaElement).value);
   }
 
+  /** Handler genérico dos campos de texto/número das opções avançadas. */
+  protected onMcText(sig: WritableSignal<string>, e: Event): void {
+    sig.set((e.target as HTMLInputElement).value);
+  }
+
   protected setCadenceKind(kind: CadenceKind): void {
     this.cadenceKind.set(kind);
   }
@@ -615,6 +787,33 @@ export class AgentConfigPage {
       systemPrompt: this.systemPrompt(),
       cadence: JSON.stringify(this.cadenceSpec()),
       windowDays: this.analysisWindowDays(),
+      modelConfig: JSON.stringify(this.buildModelConfig()),
+    };
+  }
+
+  /**
+   * Monta os overrides preenchidos (só o que o usuário informou; vazio = padrão do
+   * sistema, então some do objeto). `quality` só entra quando tem algum campo.
+   */
+  private buildModelConfig(): ModelConfig {
+    const quality: ModelQuality = {
+      ...intField('minConversions', this.mcMinConversions()),
+      ...intField('minClicks', this.mcMinClicks()),
+      ...numField('fatigueCtrDropPct', this.mcFatigueCtrDropPct()),
+      ...numField('fatigueFrequency', this.mcFatigueFrequency()),
+      ...numField('fatigueCostRisePct', this.mcFatigueCostRisePct()),
+      ...numField('zombieMinSpend', this.mcZombieMinSpend()),
+      ...boolField('coldStartReference', this.mcColdStartReference()),
+    };
+    return {
+      ...textField('model', this.mcModel()),
+      ...textField('unitModel', this.mcUnitModel()),
+      ...textField('messageModel', this.mcMessageModel()),
+      ...textField('visionModel', this.mcVisionModel()),
+      ...boolField('reviewEnabled', this.mcReviewEnabled()),
+      ...intField('topN', this.mcTopN()),
+      ...intField('maxOutputTokens', this.mcMaxOutputTokens()),
+      ...(Object.keys(quality).length > 0 ? { quality } : {}),
     };
   }
 
@@ -629,6 +828,10 @@ export class AgentConfigPage {
       ...(goal ? { conversionGoal } : {}),
       ...(goal === 'custom' && customConversionId ? { customConversionId } : {}),
     };
+    // modelConfig só entra quando há algum override (vazio = não mexe; evita forçar
+    // deep num save que só mudou cadência — o backend trata modelConfig presente como
+    // relevante à análise).
+    const modelConfig = this.buildModelConfig();
     return {
       goals,
       businessContext: this.businessContext(),
@@ -638,6 +841,7 @@ export class AgentConfigPage {
       systemPrompt: this.systemPrompt(),
       cadence: this.cadenceSpec(),
       analysisWindowDays: this.analysisWindowDays(),
+      ...(Object.keys(modelConfig).length > 0 ? { modelConfig } : {}),
     };
   }
 
@@ -659,7 +863,28 @@ export class AgentConfigPage {
     );
     this.analysisWindowDays.set(agent.analysisWindowDays ?? DEFAULT_WINDOW_DAYS);
     this.applyCadence(agent.cadence ?? null);
+    this.applyModelConfig(agent.modelConfig);
     this.initial.set(this.current()); // baseline p/ o dirty
+  }
+
+  /** Semeia as opções avançadas com os overrides atuais (ausente = campo vazio = padrão). */
+  private applyModelConfig(mc: AgentSummary['modelConfig'] | undefined): void {
+    const c = mc ?? {};
+    this.mcModel.set(c.model ?? '');
+    this.mcUnitModel.set(c.unitModel ?? '');
+    this.mcMessageModel.set(c.messageModel ?? '');
+    this.mcVisionModel.set(c.visionModel ?? '');
+    this.mcReviewEnabled.set(triFrom(c.reviewEnabled));
+    this.mcTopN.set(numToStr(c.topN));
+    this.mcMaxOutputTokens.set(numToStr(c.maxOutputTokens));
+    const q = c.quality ?? {};
+    this.mcMinConversions.set(numToStr(q.minConversions));
+    this.mcMinClicks.set(numToStr(q.minClicks));
+    this.mcFatigueCtrDropPct.set(numToStr(q.fatigueCtrDropPct));
+    this.mcFatigueFrequency.set(numToStr(q.fatigueFrequency));
+    this.mcFatigueCostRisePct.set(numToStr(q.fatigueCostRisePct));
+    this.mcZombieMinSpend.set(numToStr(q.zombieMinSpend));
+    this.mcColdStartReference.set(triFrom(q.coldStartReference));
   }
 
   /** Decompõe o `CadenceSpec` salvo no sub-estado do editor. */
@@ -686,6 +911,11 @@ export class AgentConfigPage {
         if (acc) this.accountName.set(acc.name ?? acc.adAccountId);
       },
       error: () => {},
+    });
+    // catálogo de arquétipos (rótulo + descrição + quando usar) — silencioso, pode vir vazio.
+    this.analysisApi.archetypes().subscribe({
+      next: (out) => this.archetypeCatalog.set(out.archetypes),
+      error: () => this.archetypeCatalog.set([]),
     });
     // conversões disponíveis (anotação do select) — silenciosa, pode vir vazia.
     this.analysisApi.availableConversions(this.accountId).subscribe({
@@ -722,6 +952,7 @@ const EMPTY_FORM: FormState = {
   systemPrompt: '',
   cadence: 'null',
   windowDays: DEFAULT_WINDOW_DAYS,
+  modelConfig: '{}',
 };
 
 function sameForm(a: FormState, b: FormState): boolean {
@@ -735,8 +966,44 @@ function sameForm(a: FormState, b: FormState): boolean {
     a.tone.trim() === b.tone.trim() &&
     a.systemPrompt.trim() === b.systemPrompt.trim() &&
     a.cadence === b.cadence &&
-    a.windowDays === b.windowDays
+    a.windowDays === b.windowDays &&
+    a.modelConfig === b.modelConfig
   );
+}
+
+/** "" (após trim) = campo vazio = usa o padrão do sistema (não vira override). */
+function textField(key: string, value: string): Record<string, string> {
+  const v = value.trim();
+  return v.length > 0 ? { [key]: v } : {};
+}
+/** Inteiro finito ou nada (vazio/ inválido = padrão do sistema). */
+function intField(key: string, value: string): Record<string, number> {
+  const v = value.trim();
+  if (v.length === 0) return {};
+  const n = Number(v);
+  return Number.isFinite(n) ? { [key]: Math.trunc(n) } : {};
+}
+/** Número finito ou nada (vazio/ inválido = padrão do sistema). */
+function numField(key: string, value: string): Record<string, number> {
+  const v = value.trim();
+  if (v.length === 0) return {};
+  const n = Number(v);
+  return Number.isFinite(n) ? { [key]: n } : {};
+}
+/** Toggle de 3 estados → override booleano só quando 'on'/'off' ("" = padrão). */
+function boolField(key: string, tri: string): Record<string, boolean> {
+  if (tri === TRISTATE_ON) return { [key]: true };
+  if (tri === TRISTATE_OFF) return { [key]: false };
+  return {};
+}
+/** Booleano do backend → estado do toggle de 3 estados (undefined = padrão = ""). */
+function triFrom(value: boolean | undefined): string {
+  if (value === undefined) return '';
+  return value ? TRISTATE_ON : TRISTATE_OFF;
+}
+/** Número do backend → texto do input (undefined = vazio). */
+function numToStr(value: number | undefined): string {
+  return value != null ? String(value) : '';
 }
 
 function keyOf(goal: string, customConversionId: string): string {

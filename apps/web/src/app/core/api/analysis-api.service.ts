@@ -5,6 +5,7 @@ import { silentApiContext } from './api-request.interceptor';
 import type {
   AgentConfigInput,
   AgentSummary,
+  ArchetypeCatalogOutput,
   AvailableConversionsOutput,
   CampaignAnalysesOutput,
   FeedbackInput,
@@ -60,6 +61,16 @@ export class AnalysisApiService extends BaseApiService {
    */
   availableConversions(accountId: string): Observable<AvailableConversionsOutput> {
     return this.get<AvailableConversionsOutput>(['/accounts', accountId, 'available-conversions'], {
+      context: silentApiContext(),
+    });
+  }
+
+  /**
+   * `GET /api/agents/archetypes` — catálogo de arquétipos (label + descrição + quando usar)
+   * p/ o seletor da config. Não é account-scoped. Silencioso: falha degrada sem toast.
+   */
+  archetypes(): Observable<ArchetypeCatalogOutput> {
+    return this.get<ArchetypeCatalogOutput>(['/agents', 'archetypes'], {
       context: silentApiContext(),
     });
   }
