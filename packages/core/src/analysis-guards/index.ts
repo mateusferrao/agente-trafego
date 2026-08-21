@@ -131,6 +131,40 @@ export function guardScaleWithoutSignificance(
   return { ...output, recommendations };
 }
 
+// ─── Guard de "não matar em learning" (Fatia Bloco 2) ─────────────────────
+// Simetria do guard de significância: assim como não se ESCALA sem base, não se
+// MATA (pausa) o que ainda está em aprendizado — pausar descarta o aprendizado da
+// Meta (veto do squad). EXCEÇÃO deliberada à regra "defensiva nunca é barrada":
+// vale SÓ p/ recomendações de origem LLM (as de playbook não passam por aqui) e
+// não toca zumbi (zumbi exige !inLearning). Playbook/guardrail/kill-switch/pedido
+// explícito do dono continuam podendo pausar — não passam por este guard.
+
+/** Ações que MATAM a entidade (descartam o aprendizado se em learning). */
+const KILL_IN_LEARNING_ACTIONS: ReadonlySet<RecommendationActionType> = new Set(["pause"]);
+
+/**
+ * Rebaixa pausar → `investigate` quando o alvo está `inLearning`. Puro: não
+ * remove (o dono vê o sinal), só troca a ordem de ação + anota o porquê. Sem
+ * eligibility conhecida ou fora de learning → passa direto.
+ */
+export function guardKillWithoutMaturity(
+  output: AnalysisOutput,
+  eligibility: ReadonlyMap<string, DecisionEligibility>,
+): AnalysisOutput {
+  const recommendations = output.recommendations.map((r) => {
+    if (!KILL_IN_LEARNING_ACTIONS.has(r.actionType)) return r;
+    const id = r.targetEntity?.externalId;
+    const elig = id ? eligibility.get(id) : undefined;
+    if (!elig?.inLearning) return r;
+    return {
+      ...r,
+      actionType: "investigate" as RecommendationActionType,
+      rationale: `${r.rationale}\n[guard] pausar → investigar: em aprendizado (editada há pouco) — dar tempo antes de matar (não descartar o aprendizado).`,
+    };
+  });
+  return { ...output, recommendations };
+}
+
 // ─── Guard de tracking furado (Fatia Bloco 2) ─────────────────────────────
 // Sobre o sinal de conta `detectTrackingHealth`: quando a medição de venda parece
 // incompleta, anexa um CAVEAT (não rebaixa) às recomendações que MATARIAM uma

@@ -23,6 +23,7 @@ import {
   dropUnsupportedFindings,
   eligibilityByEntity,
   guardScaleWithoutSignificance,
+  guardKillWithoutMaturity,
   guardTrackingCaveat,
   basisByEntity,
   evaluatePlaybook,
@@ -507,7 +508,11 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const dropped = dropUnsupportedFindings(reviewed, state.brief);
     // guard de significância (6c): rebaixa escalar sem base → investigar (rede final,
     // roda ANTES de decide_actions → vale também pro caminho autônomo 5a).
-    const guarded = guardScaleWithoutSignificance(dropped, eligibilityByEntity(state.brief));
+    const eligibility = eligibilityByEntity(state.brief);
+    const scaled = guardScaleWithoutSignificance(dropped, eligibility);
+    // não-matar-em-learning (Bloco 2): rebaixa pausar → investigar em entidade nova
+    // (não descarta o aprendizado). LLM-origin; playbook/guardrail não passam por aqui.
+    const guarded = guardKillWithoutMaturity(scaled, eligibility);
     // guard de tracking (Bloco 2): caveat nas pausas por CPA de venda quando a
     // medição da conta parece incompleta (não rebaixa; só anexa ao rationale).
     const final = guardTrackingCaveat(guarded, basisByEntity(state.brief), state.brief.trackingHealth);
