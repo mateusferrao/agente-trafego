@@ -149,6 +149,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
         minClicks: 100,
         fatigueCtrDropPct: 20,
         fatigueFrequency: 3,
+        frequencyCapByStage: { prospecting: 2.5, remarketing: 8 },
         fatigueCostRisePct: 30,
         zombieMinSpend: 50,
         coldStartReference: true,

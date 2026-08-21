@@ -32,6 +32,15 @@ describe("detectHealthSignals", () => {
   it("sem significância → low_volume", () => {
     expect(detectHealthSignals({ ctrDropPct: 0, costRisePct: 0, hasSignificance: false }, T)).toContain("low_volume");
   });
+  it("frequencyCap por estágio sobrepõe o teto geral", () => {
+    // freq 2.6 satura na prospecção (cap 2.5) mas não no remarketing (cap 8).
+    expect(
+      detectHealthSignals({ frequency: 2.6, ctrDropPct: 0, costRisePct: 0, hasSignificance: true, frequencyCap: 2.5 }, T),
+    ).toContain("audience_saturation");
+    expect(
+      detectHealthSignals({ frequency: 2.6, ctrDropPct: 0, costRisePct: 0, hasSignificance: true, frequencyCap: 8 }, T),
+    ).not.toContain("audience_saturation");
+  });
 });
 
 describe("classifyTier", () => {
@@ -88,5 +97,21 @@ describe("enrichEntitiesQuality (integração das peças)", () => {
       { thresholds: T, hasTarget: true, currency: "BRL" },
     );
     expect(out[0]!.tier).toBe("winner");
+  });
+
+  it("frequência por estágio: prospecção satura a 2,6; remarketing não", () => {
+    const met = { spend: 100, impressions: 5000, clicks: 150, ctr: 2.5, cpc: 0.67, cpm: 20, frequency: 2.6, conversions: 30 };
+    const [prospect] = enrichEntitiesQuality(
+      [summary({ id: "P", level: "adset", metrics: met, audience: { stage: "prospecting", customAudienceCount: 0, exclusionCount: 0 } })],
+      {},
+      { thresholds: T, hasTarget: false, currency: "BRL" },
+    );
+    const [remarket] = enrichEntitiesQuality(
+      [summary({ id: "R", level: "adset", metrics: met, audience: { stage: "remarketing", customAudienceCount: 1, exclusionCount: 0 } })],
+      {},
+      { thresholds: T, hasTarget: false, currency: "BRL" },
+    );
+    expect(prospect!.healthSignals ?? []).toContain("audience_saturation");
+    expect(remarket!.healthSignals ?? []).not.toContain("audience_saturation");
   });
 });

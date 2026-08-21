@@ -22,8 +22,14 @@ export interface QualityThresholds {
   readonly minClicks: number;
   /** fadiga: queda relativa de CTR (%) semana/semana. */
   readonly fatigueCtrDropPct: number;
-  /** fadiga/saturação: frequência acima disso é sinal. */
+  /** fadiga/saturação: frequência acima disso é sinal (teto GERAL; fallback sem estágio). */
   readonly fatigueFrequency: number;
+  /**
+   * Teto de frequência por estágio de público (§Bloco 2): prospecção satura cedo
+   * (público amplo), remarketing tolera frequência alta (público pequeno). Aplicado
+   * quando o adset tem `audience.stage`; sem estágio → `fatigueFrequency`.
+   */
+  readonly frequencyCapByStage: { readonly prospecting: number; readonly remarketing: number };
   /** fadiga: alta do custo-por-resultado (%) vs baseline. */
   readonly fatigueCostRisePct: number;
   /** zombie: gasto mínimo na janela p/ considerar desperdício (moeda da conta). */
@@ -37,6 +43,7 @@ export const DEFAULT_QUALITY_THRESHOLDS: QualityThresholds = {
   minClicks: 100,
   fatigueCtrDropPct: 20,
   fatigueFrequency: 3,
+  frequencyCapByStage: { prospecting: 2.5, remarketing: 8 },
   fatigueCostRisePct: 30,
   zombieMinSpend: 50,
   coldStartReference: true,
@@ -78,15 +85,19 @@ export interface HealthInput {
   readonly costRisePct: number;
   /** elegibilidade (p/ o sinal `low_volume`). */
   readonly hasSignificance: boolean;
+  /** teto de frequência resolvido por estágio (§Bloco 2); ausente → `fatigueFrequency`. */
+  readonly frequencyCap?: number;
 }
 
 /**
  * Sinais nomeados: fadiga (2+ de {CTR caiu, freq alta, custo subiu}), saturação
- * de público (freq alta isolada) e baixo volume (sem significância).
+ * de público (freq alta isolada) e baixo volume (sem significância). O teto de
+ * frequência vem do estágio quando resolvido (`frequencyCap`), senão do geral.
  */
 export function detectHealthSignals(input: HealthInput, t: QualityThresholds): HealthSignal[] {
   const signals: HealthSignal[] = [];
-  const freqHigh = input.frequency !== undefined && input.frequency > t.fatigueFrequency;
+  const freqCap = input.frequencyCap ?? t.fatigueFrequency;
+  const freqHigh = input.frequency !== undefined && input.frequency > freqCap;
   const fatigueHits =
     (input.ctrDropPct >= t.fatigueCtrDropPct ? 1 : 0) +
     (freqHigh ? 1 : 0) +
@@ -201,8 +212,23 @@ export function enrichEntitiesQuality(
     const ctrDropPct = dropPct(e.metrics.ctr, e.deltaVsBaseline.ctr);
     const costMetric = typeof e.metrics.cpa === "number" ? "cpa" : "cpc";
     const costRisePct = risePct(e.metrics[costMetric], e.deltaVsBaseline[costMetric]);
+    // teto de frequência por estágio (adset com público); sem estágio → teto geral.
+    // "unknown" cai no teto conservador de prospecção.
+    const stage = e.audience?.stage;
+    const frequencyCap =
+      stage === "remarketing"
+        ? t.frequencyCapByStage.remarketing
+        : stage === "prospecting" || stage === "unknown"
+          ? t.frequencyCapByStage.prospecting
+          : undefined;
     const healthSignals = detectHealthSignals(
-      { ...(e.metrics.frequency !== undefined ? { frequency: e.metrics.frequency } : {}), ctrDropPct, costRisePct, hasSignificance: eligibility.hasSignificance },
+      {
+        ...(e.metrics.frequency !== undefined ? { frequency: e.metrics.frequency } : {}),
+        ctrDropPct,
+        costRisePct,
+        hasSignificance: eligibility.hasSignificance,
+        ...(frequencyCap !== undefined ? { frequencyCap } : {}),
+      },
       t,
     );
 

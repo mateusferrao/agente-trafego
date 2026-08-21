@@ -158,6 +158,9 @@ export const envSchema = z.object({
   // Fadiga (2+ sinais): queda relativa de CTR (%), frequência de alerta, alta de custo (%).
   ANALYSIS_QUALITY_FATIGUE_CTR_DROP_PCT: z.coerce.number().nonnegative().default(20),
   ANALYSIS_QUALITY_FATIGUE_FREQUENCY: z.coerce.number().positive().default(3),
+  // Teto de frequência por estágio (§Bloco 2): prospecção satura cedo, remarketing tolera alto.
+  ANALYSIS_QUALITY_FREQUENCY_CAP_PROSPECTING: z.coerce.number().positive().default(2.5),
+  ANALYSIS_QUALITY_FREQUENCY_CAP_REMARKETING: z.coerce.number().positive().default(8),
   ANALYSIS_QUALITY_FATIGUE_COST_RISE_PCT: z.coerce.number().nonnegative().default(30),
   // Zombie: gasto mínimo na janela (moeda da conta) p/ chamar de desperdício com 0 conversão.
   ANALYSIS_QUALITY_ZOMBIE_MIN_SPEND: z.coerce.number().nonnegative().default(50),

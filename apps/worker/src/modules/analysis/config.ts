@@ -113,11 +113,18 @@ function resolveQuality(raw: unknown, defaults: QualityThresholds | undefined): 
   const nonNeg = (v: unknown): number | undefined =>
     typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined;
   const pos = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined);
+  const stageCap = (raw && typeof raw === "object" ? (raw as Record<string, unknown>).frequencyCapByStage : undefined) as
+    | Record<string, unknown>
+    | undefined;
   return {
     minConversions: posInt(mc.minConversions) ?? d.minConversions,
     minClicks: posInt(mc.minClicks) ?? d.minClicks,
     fatigueCtrDropPct: nonNeg(mc.fatigueCtrDropPct) ?? d.fatigueCtrDropPct,
     fatigueFrequency: pos(mc.fatigueFrequency) ?? d.fatigueFrequency,
+    frequencyCapByStage: {
+      prospecting: pos(stageCap?.prospecting) ?? d.frequencyCapByStage.prospecting,
+      remarketing: pos(stageCap?.remarketing) ?? d.frequencyCapByStage.remarketing,
+    },
     fatigueCostRisePct: nonNeg(mc.fatigueCostRisePct) ?? d.fatigueCostRisePct,
     zombieMinSpend: nonNeg(mc.zombieMinSpend) ?? d.zombieMinSpend,
     coldStartReference: typeof mc.coldStartReference === "boolean" ? mc.coldStartReference : d.coldStartReference,
