@@ -44,6 +44,27 @@ export function planSyncWindow(input: SyncWindowInput): SyncWindow | null {
   return { since, until };
 }
 
+export interface ShouldSyncInput {
+  /** Quando o snapshot mais novo foi atualizado (ms epoch) = última vez que buscamos;
+   *  `null` = conta nunca sincronizada. */
+  readonly latestSnapshotAt: number | null;
+  /** Agora (ms epoch), injetado pela casca (sem `Date.now()` no core). */
+  readonly now: number;
+  /** Limite de frescura em minutos (`INSIGHTS_FRESH_THRESHOLD_MIN`). */
+  readonly thresholdMin: number;
+}
+
+/**
+ * Porta de staleness (pura): `true` = o dado passou do limite (ou nunca foi buscado) →
+ * precisa de um sync-only. Compartilhada pelos 4 gatilhos (análise inline, sweep, lazy,
+ * botão) p/ dedupe natural. `latest` no futuro (clock skew) = tratado como fresco.
+ */
+export function shouldSync(input: ShouldSyncInput): boolean {
+  if (input.latestSnapshotAt === null) return true;
+  const ageMs = input.now - input.latestSnapshotAt;
+  return ageMs >= input.thresholdMin * 60_000;
+}
+
 function parseIsoDate(s: string): Date {
   const p = s.split("-");
   return new Date(Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2])));

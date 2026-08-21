@@ -17,7 +17,12 @@ export interface JobSpec {
   readonly queue: string;
   readonly name: string;
   readonly payload: Readonly<Record<string, unknown>>;
+  /** vira `jobId` no BullMQ → dedupe/serialize por chave (ex: `sync:${accountId}`). */
   readonly idempotencyKey?: string;
+  /** libera o `jobId` ao concluir/falhar (senão o job retido bloqueia o próximo com a
+   *  mesma chave). Use com `idempotencyKey` p/ serialize + auto-limpeza. */
+  readonly removeOnComplete?: boolean | number;
+  readonly removeOnFail?: boolean | number;
 }
 
 /**

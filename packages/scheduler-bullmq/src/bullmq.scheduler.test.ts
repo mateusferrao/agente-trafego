@@ -42,6 +42,24 @@ describe("BullmqScheduler.enqueue", () => {
     expect(addSpy).toHaveBeenCalledWith("analysis-run", { accountId: "a1" }, { jobId: "run-42" });
   });
 
+  it("repassa removeOnComplete/removeOnFail junto do jobId (serialize + auto-limpeza)", async () => {
+    const scheduler = new BullmqScheduler(CONNECTION);
+    await scheduler.enqueue({
+      queue: "insights-sync",
+      name: "insights-sync-run",
+      payload: { accountId: "a1" },
+      idempotencyKey: "sync:a1",
+      removeOnComplete: true,
+      removeOnFail: true,
+    });
+
+    expect(addSpy).toHaveBeenCalledWith(
+      "insights-sync-run",
+      { accountId: "a1" },
+      { jobId: "sync:a1", removeOnComplete: true, removeOnFail: true },
+    );
+  });
+
   it("reusa a mesma Queue para o mesmo nome (não recria)", async () => {
     const scheduler = new BullmqScheduler(CONNECTION);
     await scheduler.enqueue({ queue: "agent-runs", name: "a", payload: {} });

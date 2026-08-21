@@ -119,6 +119,10 @@ export const envSchema = z.object({
   // TTL do cache (Redis) do CATÁLOGO de entidades por conta (§7 — corta o listEntities
   // full a cada run, maior fonte de rate-limit). Invalidado na escrita real. `0` desliga.
   META_ENTITY_CACHE_TTL_SEC: z.coerce.number().int().min(0).default(1800),
+  // Frescura (6a): idade máx. (min) do snapshot mais novo antes de disparar sync-only
+  // (porta `shouldSync`, compartilhada por sweep/lazy/análise/botão). Também = intervalo
+  // do sweep periódico. ~2-3h de default (equilíbrio frescura × chamadas Meta).
+  INSIGHTS_FRESH_THRESHOLD_MIN: z.coerce.number().int().positive().default(120),
   // ANALYSIS_MAX_CREATIVES_VISION = default global; alvo = config por agente (DB).
   // Fallback até 4 ligar a config por-agente. Não-usado na Fatia 0.
   ANALYSIS_MAX_CREATIVES_VISION: z.coerce

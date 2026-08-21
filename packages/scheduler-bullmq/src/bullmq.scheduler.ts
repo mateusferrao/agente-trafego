@@ -24,11 +24,12 @@ export class BullmqScheduler implements SchedulerPort {
   }
 
   async enqueue(job: JobSpec): Promise<void> {
-    await this.queue(job.queue).add(
-      job.name,
-      job.payload,
-      job.idempotencyKey ? { jobId: job.idempotencyKey } : undefined,
-    );
+    const opts: Parameters<Queue["add"]>[2] = {};
+    if (job.idempotencyKey) opts.jobId = job.idempotencyKey;
+    if (job.removeOnComplete !== undefined) opts.removeOnComplete = job.removeOnComplete;
+    if (job.removeOnFail !== undefined) opts.removeOnFail = job.removeOnFail;
+    // sem opções → passa undefined (mantém o contrato: não força objeto vazio).
+    await this.queue(job.queue).add(job.name, job.payload, Object.keys(opts).length ? opts : undefined);
   }
 
   /**
