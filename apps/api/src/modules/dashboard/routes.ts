@@ -7,6 +7,11 @@ export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   const service = app.container.services.dashboard;
   const guard = { preHandler: [requireAuth, requireOrgScope] };
 
+  // Painel gerencial cross-conta (home): pendências + atenção + atividade + panorama.
+  app.get("/dashboard", guard, async (request) => {
+    return service.dashboard(orgIdOf(request));
+  });
+
   // KPIs ao vivo de uma conta (computados do insights_snapshots) + as-of.
   app.get("/accounts/:id/live-metrics", guard, async (request) => {
     const { id } = request.params as { id: string };

@@ -2,14 +2,35 @@
 // core puro, sem LLM) + "atualizar agora" (força sync-only). Cross-conta (panorama) =
 // 6a-4. Números crus ao vivo; grade/recomendações seguem por-análise (datadas).
 
-import { and, between, eq, max } from "drizzle-orm";
-import { adAccounts, agents, insightsSnapshots, type Database } from "@trafego/db";
+import { and, between, count, desc, eq, inArray, max, ne, sql } from "drizzle-orm";
+import {
+  adAccounts,
+  agentRuns,
+  agentToolCalls,
+  agents,
+  approvals,
+  insightsSnapshots,
+  platformConnections,
+  type Database,
+} from "@trafego/db";
 import { computeLiveTotals, resolveWindows } from "@trafego/core";
-import { buildInsightsSyncJob } from "@trafego/shared";
+import { buildInsightsSyncJob, UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY } from "@trafego/shared";
 import type { AgentGoals, InsightRow, OrgId, StoredInsightMetrics } from "@trafego/shared";
 import type { SchedulerPort } from "@trafego/shared/ports";
 import { notFound } from "../../middleware/error-handler.js";
-import type { LiveKpis, LiveMetricsOutput, RefreshDataOutput } from "./schema.js";
+import type {
+  ActivityEvent,
+  DashboardOutput,
+  LiveKpis,
+  LiveMetricsOutput,
+  PanoramaCard,
+  RefreshDataOutput,
+} from "./schema.js";
+
+/** Sem análise há mais que isso (conta ativa) → sinal de atenção. 2× cadência = fast-follow. */
+const STALE_RUN_MS = 48 * 60 * 60 * 1000;
+/** Feed compacto de atividade recente. */
+const ACTIVITY_LIMIT = 20;
 
 export interface DashboardDeps {
   readonly db: Database;
@@ -112,7 +133,183 @@ export function createDashboardService(deps: DashboardDeps) {
       await deps.scheduler.enqueue(buildInsightsSyncJob({ accountId, orgId, trigger: "manual" }));
       return { enqueued: true };
     },
+
+    /** Painel gerencial cross-conta (6a-4): pendências + atenção + atividade + panorama. */
+    async dashboard(orgId: OrgId): Promise<DashboardOutput> {
+      // 1) contas sob gestão (agente + conta ativa) + token efetivo (conexão › legado).
+      const accounts = await deps.db
+        .select({
+          accountId: agents.adAccountId,
+          agentId: agents.id,
+          agentPaused: sql<boolean>`${agents.status} <> 'active'`,
+          name: adAccounts.name,
+          currency: adAccounts.currency,
+          goals: agents.goals,
+          tokenStatus: sql<string>`coalesce(${platformConnections.tokenStatus}, ${adAccounts.tokenStatus}, 'unchecked')`,
+        })
+        .from(agents)
+        .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
+        .leftJoin(platformConnections, eq(adAccounts.connectionId, platformConnections.id))
+        .where(and(eq(agents.orgId, orgId), eq(adAccounts.status, "active")));
+
+      if (accounts.length === 0) {
+        return { pendingCount: 0, attention: [], recentActivity: [], panorama: [] };
+      }
+      const accountIds = accounts.map((a) => a.accountId);
+
+      // 2) última análise (grade + data) por agente — 1 query (DISTINCT ON).
+      const latestRuns = await deps.db
+        .selectDistinctOn([agentRuns.agentId], {
+          agentId: agentRuns.agentId,
+          grade: sql<string | null>`${agentRuns.metricsSnapshot} #>> '{scorecard,grade}'`,
+          finishedAt: agentRuns.finishedAt,
+        })
+        .from(agentRuns)
+        .where(and(eq(agentRuns.orgId, orgId), eq(agentRuns.status, "succeeded")))
+        .orderBy(agentRuns.agentId, desc(agentRuns.finishedAt));
+      const runByAgent = new Map(latestRuns.map((r) => [r.agentId, r]));
+
+      // 3) pendências por conta (cross-conta).
+      const pendingRows = await deps.db
+        .select({ accountId: agents.adAccountId, c: count() })
+        .from(approvals)
+        .innerJoin(agents, eq(approvals.agentId, agents.id))
+        .where(and(eq(approvals.orgId, orgId), eq(approvals.status, "pending")))
+        .groupBy(agents.adAccountId);
+      const pendingByAccount = new Map(pendingRows.map((r) => [r.accountId, Number(r.c)]));
+
+      // 4) KPIs ao vivo por conta (1 query de snapshots p/ todas + as-of).
+      const live = await liveTotalsBatch(orgId, accountIds, accounts);
+
+      const now = deps.now().getTime();
+      const panorama: PanoramaCard[] = accounts.map((a) => {
+        const run = runByAgent.get(a.agentId);
+        const grade = run?.grade ?? null;
+        const finishedAt = run?.finishedAt ?? null;
+        const pendingCount = pendingByAccount.get(a.accountId) ?? 0;
+        const l = live.get(a.accountId);
+        const reasons: PanoramaCard["reasons"] = [];
+        if (a.tokenStatus === "invalid") reasons.push("token_invalid");
+        // "sem análise recente" só p/ agente ATIVO (pausado é esperado ficar parado).
+        if (!a.agentPaused && (!finishedAt || now - finishedAt.getTime() > STALE_RUN_MS)) {
+          reasons.push("no_recent_run");
+        }
+        if (grade === "C" || grade === "D") reasons.push("bad_grade");
+        if (pendingCount > 0) reasons.push("pending");
+        return {
+          accountId: a.accountId,
+          accountName: a.name ?? a.accountId,
+          currency: a.currency,
+          agentPaused: a.agentPaused,
+          tokenStatus: a.tokenStatus,
+          grade,
+          gradeAsOf: finishedAt ? finishedAt.toISOString() : null,
+          live: l?.totals ?? null,
+          asOf: l?.asOf ?? null,
+          pendingCount,
+          reasons,
+        };
+      });
+
+      const recentActivity = await recentActivityFeed(orgId);
+      const pendingCount = [...pendingByAccount.values()].reduce((s, n) => s + n, 0);
+      return {
+        pendingCount,
+        attention: panorama.filter((c) => c.reasons.length > 0),
+        recentActivity,
+        panorama,
+      };
+    },
   };
+
+  /** KPIs ao vivo em lote (1 query de snapshots p/ N contas — sem N+1) + as-of. */
+  async function liveTotalsBatch(
+      orgId: OrgId,
+      accountIds: readonly string[],
+      accounts: readonly { accountId: string; goals: AgentGoals | null }[],
+    ): Promise<Map<string, { totals: LiveKpis | null; asOf: string | null }>> {
+      const { window, baseline } = resolveWindows(todayIso(), deps.windowDays, deps.baselineDays);
+      const snaps = await deps.db
+        .select({
+          adAccountId: insightsSnapshots.adAccountId,
+          entityLevel: insightsSnapshots.entityLevel,
+          entityId: insightsSnapshots.entityId,
+          date: insightsSnapshots.date,
+          metricsJson: insightsSnapshots.metricsJson,
+        })
+        .from(insightsSnapshots)
+        .where(
+          and(
+            eq(insightsSnapshots.orgId, orgId),
+            inArray(insightsSnapshots.adAccountId, [...accountIds]),
+            between(insightsSnapshots.date, baseline.since, window.until),
+          ),
+        );
+      const asOfRows = await deps.db
+        .select({ accountId: insightsSnapshots.adAccountId, latest: max(insightsSnapshots.updatedAt) })
+        .from(insightsSnapshots)
+        .where(and(eq(insightsSnapshots.orgId, orgId), inArray(insightsSnapshots.adAccountId, [...accountIds])))
+        .groupBy(insightsSnapshots.adAccountId);
+      const asOfByAccount = new Map(asOfRows.map((r) => [r.accountId, r.latest]));
+      const goalsByAccount = new Map(accounts.map((a) => [a.accountId, a.goals ?? {}]));
+
+      const byAccount = new Map<string, { rows: InsightRow[]; baselineRows: InsightRow[] }>();
+      for (const id of accountIds) byAccount.set(id, { rows: [], baselineRows: [] });
+      for (const s of snaps) {
+        const bucket = byAccount.get(s.adAccountId);
+        if (!bucket) continue;
+        const row = toRow(s);
+        (s.date && s.date >= window.since ? bucket.rows : bucket.baselineRows).push(row);
+      }
+
+      const out = new Map<string, { totals: LiveKpis | null; asOf: string | null }>();
+      for (const id of accountIds) {
+        const b = byAccount.get(id)!;
+        const totals = computeLiveTotals({ rows: b.rows, baselineRows: b.baselineRows, goals: goalsByAccount.get(id) ?? {} });
+        const latest = asOfByAccount.get(id) ?? null;
+        out.set(id, { totals: totals ? pickKpis(totals) : null, asOf: latest ? latest.toISOString() : null });
+      }
+      return out;
+  }
+
+  /** Feed compacto cross-conta de ações do agente (inclui chat via coalesce). */
+  async function recentActivityFeed(orgId: OrgId): Promise<ActivityEvent[]> {
+      const rows = await deps.db
+        .select({
+          id: agentToolCalls.id,
+          toolKey: agentToolCalls.toolKey,
+          args: agentToolCalls.args,
+          runId: agentToolCalls.runId,
+          at: agentToolCalls.createdAt,
+          accountId: agents.adAccountId,
+          accountName: adAccounts.name,
+        })
+        .from(agentToolCalls)
+        .leftJoin(agentRuns, eq(agentToolCalls.runId, agentRuns.id))
+        .innerJoin(agents, eq(agents.id, sql`coalesce(${agentToolCalls.agentId}, ${agentRuns.agentId})`))
+        .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
+        .where(and(eq(agents.orgId, orgId), ne(agentToolCalls.toolKey, UNDO_BLOCKED_TOOL_KEY)))
+        .orderBy(desc(agentToolCalls.createdAt))
+        .limit(ACTIVITY_LIMIT * 3);
+
+      const events: ActivityEvent[] = [];
+      for (const r of rows) {
+        const args = r.args as { target?: { name?: string; id?: string }; dryRun?: boolean };
+        if (args.dryRun === true) continue; // simulado não é mudança real
+        events.push({
+          id: r.id,
+          accountId: r.accountId,
+          accountName: r.accountName ?? r.accountId,
+          type: r.toolKey === UNDO_TOOL_KEY ? "action_rolled_back" : "action_applied",
+          toolKey: r.toolKey,
+          entityName: args.target?.name ?? args.target?.id ?? null,
+          at: r.at.toISOString(),
+          fromChat: r.runId === null,
+        });
+        if (events.length >= ACTIVITY_LIMIT) break;
+      }
+      return events;
+  }
 }
 
 /** Projeta os totais (InsightMetrics & delta) no shape de saída (só os KPIs exibidos). */

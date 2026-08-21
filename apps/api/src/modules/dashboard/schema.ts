@@ -31,3 +31,48 @@ export type LiveMetricsOutput = z.infer<typeof liveMetricsOutput>;
 /** Resposta do "atualizar agora" (força sync-only, sem LLM). */
 export const refreshDataOutput = z.object({ enqueued: z.boolean() });
 export type RefreshDataOutput = z.infer<typeof refreshDataOutput>;
+
+/** Motivos de uma conta pedir atenção (ordem de severidade na UI). */
+export const attentionReason = z.enum(["token_invalid", "no_recent_run", "bad_grade", "pending"]);
+
+/** Card de decisão por conta (panorama + faixa de atenção). */
+export const panoramaCard = z.object({
+  accountId: z.string(),
+  accountName: z.string(),
+  currency: z.string().nullable(),
+  agentPaused: z.boolean(),
+  tokenStatus: z.string(),
+  /** grade da ÚLTIMA análise (datada) — null se nunca analisada. */
+  grade: z.string().nullable(),
+  gradeAsOf: z.string().nullable(),
+  /** KPIs AO VIVO (insights_snapshots) — null se sem atividade. */
+  live: liveKpis.nullable(),
+  asOf: z.string().nullable(),
+  pendingCount: z.number(),
+  reasons: z.array(attentionReason),
+});
+export type PanoramaCard = z.infer<typeof panoramaCard>;
+
+/** Evento compacto do feed de atividade cross-conta (inclui ações por chat). */
+export const activityEvent = z.object({
+  id: z.string(),
+  accountId: z.string(),
+  accountName: z.string(),
+  type: z.enum(["action_applied", "action_rolled_back"]),
+  toolKey: z.string(),
+  entityName: z.string().nullable(),
+  at: z.string(),
+  fromChat: z.boolean(),
+});
+export type ActivityEvent = z.infer<typeof activityEvent>;
+
+/** Painel gerencial cross-conta (6a): 4 widgets. */
+export const dashboardOutput = z.object({
+  /** total de ações aguardando OK (cross-conta). */
+  pendingCount: z.number(),
+  /** faixa de triagem = contas com ≥1 motivo (subconjunto do panorama). */
+  attention: z.array(panoramaCard),
+  recentActivity: z.array(activityEvent),
+  panorama: z.array(panoramaCard),
+});
+export type DashboardOutput = z.infer<typeof dashboardOutput>;

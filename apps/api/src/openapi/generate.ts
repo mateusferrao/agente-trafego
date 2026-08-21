@@ -47,7 +47,7 @@ import {
   runListOutput,
   triggerRunOutput,
 } from "../modules/runs/schema.js";
-import { liveMetricsOutput, refreshDataOutput } from "../modules/dashboard/schema.js";
+import { dashboardOutput, liveMetricsOutput, refreshDataOutput } from "../modules/dashboard/schema.js";
 import { channelStateOutput } from "../modules/channels/schema.js";
 import { feedbackInput, feedbackOutput } from "../modules/recommendations/schema.js";
 import {
@@ -101,6 +101,7 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const RunListOutput = registry.register("RunListOutput", runListOutput);
   const LiveMetricsOutput = registry.register("LiveMetricsOutput", liveMetricsOutput);
   const RefreshDataOutput = registry.register("RefreshDataOutput", refreshDataOutput);
+  const DashboardOutput = registry.register("DashboardOutput", dashboardOutput);
   const RunDetailOutput = registry.register("RunDetailOutput", runDetailOutput);
   const MuteCampaignInput = registry.register("MuteCampaignInput", muteCampaignInput);
   const MutedCampaignsOutput = registry.register("MutedCampaignsOutput", mutedCampaignsOutput);
@@ -380,6 +381,12 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
       200: jsonRes("detalhe de um run (histórico)", RunDetailOutput),
       404: { description: "análise não encontrada" },
     },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/dashboard",
+    tags: ["dashboard"],
+    responses: { 200: jsonRes("painel gerencial cross-conta (4 widgets)", DashboardOutput) },
   });
   registry.registerPath({
     method: "get",

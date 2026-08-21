@@ -1,27 +1,34 @@
 import { describe, expect, it, vi } from "vitest";
 import { createDashboardService } from "./service.js";
 
-/** DB fake: cada `.select()` consome o próximo resultado da fila (na ordem das queries). */
+/**
+ * DB fake chainável: cada método terminal (select/selectDistinctOn) inicia uma nova
+ * query que consome o próximo resultado da fila; os demais (from/join/where/orderBy/
+ * groupBy/limit) encadeiam; o nó é thenable (await resolve o resultado da query).
+ */
 function fakeDb(queue: unknown[][]) {
   let i = 0;
-  const next = () => queue[i++] ?? [];
-  const chain: Record<string, unknown> = {
-    select: () => chain,
-    from: () => chain,
-    where: () => {
-      const r = next();
-      const p = Promise.resolve(r) as Promise<unknown[]> & { limit: () => Promise<unknown[]> };
-      p.limit = async () => r;
-      return p;
-    },
+  const makeChain = () => {
+    const result = queue[i++] ?? [];
+    const chain: unknown = new Proxy(
+      {},
+      {
+        get(_t, prop) {
+          if (prop === "then") return (res: (v: unknown) => void) => res(result);
+          return () => chain;
+        },
+      },
+    );
+    return chain;
   };
-  return chain as never;
+  return new Proxy({}, { get: () => makeChain }) as never;
 }
 
 const NOW = () => new Date("2026-08-20T12:00:00Z");
 
 function acctSnap(date: string, spend: number, purchases: number) {
   return {
+    adAccountId: "a1", // usado no agrupamento do panorama (liveTotalsBatch)
     entityLevel: "account",
     entityId: "ACT1",
     date,
@@ -56,6 +63,43 @@ describe("createDashboardService.liveMetrics", () => {
     const db = fakeDb([[]]); // account vazio
     const service = createDashboardService({ db, scheduler: {} as never, windowDays: 7, baselineDays: 7, now: NOW });
     await expect(service.liveMetrics("org-1" as never, "nope")).rejects.toMatchObject({ statusCode: 404 });
+  });
+});
+
+describe("createDashboardService.dashboard", () => {
+  it("monta panorama + atenção + atividade + pendências cross-conta", async () => {
+    const db = fakeDb([
+      // 1) contas
+      [{ accountId: "a1", agentId: "ag1", agentPaused: false, name: "Loja A", currency: "BRL", goals: { conversionGoal: "purchase" }, tokenStatus: "valid" }],
+      // 2) última análise por agente (grade C → atenção)
+      [{ agentId: "ag1", grade: "C", finishedAt: new Date("2026-08-20T11:00:00Z") }],
+      // 3) pendências por conta
+      [{ accountId: "a1", c: 2 }],
+      // 4a) snapshots (janela) · 4b) as-of
+      [acctSnap("2026-08-20", 100, 5)],
+      [{ accountId: "a1", latest: new Date("2026-08-20T11:30:00Z") }],
+      // 5) atividade recente (ação por chat → runId null)
+      [{ id: "tc1", toolKey: "pause_entity", args: { target: { name: "Campanha X" } }, runId: null, at: new Date("2026-08-20T10:00:00Z"), accountId: "a1", accountName: "Loja A" }],
+    ]);
+    const service = createDashboardService({ db, scheduler: {} as never, windowDays: 7, baselineDays: 7, now: NOW });
+
+    const out = await service.dashboard("org-1" as never);
+    expect(out.pendingCount).toBe(2);
+    expect(out.panorama).toHaveLength(1);
+    const card = out.panorama[0]!;
+    expect(card.grade).toBe("C");
+    expect(card.live).not.toBeNull();
+    expect(card.reasons).toEqual(["bad_grade", "pending"]); // token válido + análise recente
+    expect(out.attention).toHaveLength(1); // tem motivos
+    expect(out.recentActivity).toHaveLength(1);
+    expect(out.recentActivity[0]).toMatchObject({ type: "action_applied", entityName: "Campanha X", fromChat: true });
+  });
+
+  it("org sem contas → painel vazio (sem quebrar)", async () => {
+    const db = fakeDb([[]]);
+    const service = createDashboardService({ db, scheduler: {} as never, windowDays: 7, baselineDays: 7, now: NOW });
+    const out = await service.dashboard("org-1" as never);
+    expect(out).toEqual({ pendingCount: 0, attention: [], recentActivity: [], panorama: [] });
   });
 });
 
