@@ -1,49 +1,72 @@
 # Validação manual — Fatia 6c (Qualidade do agente + verificações)
 
-Pré: `pnpm db:migrate` (aplica `0019` — `usage_events.ad_account_id`) e, opcionalmente,
-`pnpm backfill:usage-account` (preenche a conta dos runs antigos). Conta Meta conectada
-e sincronizada.
+Pré: `pnpm db:migrate` (aplica **`0019`** `usage_events.ad_account_id` **e `0020`** `entity_analyses.tier`)
+e, opcionalmente, `pnpm backfill:usage-account` (preenche a conta dos runs antigos). Conta Meta
+conectada e sincronizada; api+worker+pg+redis no ar.
 
-## 1. Core de qualidade (automático)
-- `pnpm --filter @trafego/core test` — verde (benchmarks, tiers, fadiga/significância,
-  guard de escala, fixture-ouro Steticos end-to-end).
-- `pnpm typecheck` — limpo.
+> Marcações **[✓ sessão]** = já validado ao vivo na sessão de implementação (conta real Steticos).
 
-## 2. Análise real (tiers + diagnóstico + guard)
-Dispare uma análise on-demand numa conta ativa (botão do site ou "analisa agora" no chat).
-Confira no resultado / detalhe da conta:
-- [ ] Recomendações citam número real + causa provável (diagnóstico por padrão de métrica).
-- [ ] Entidade com gasto e 0 conversão aparece como candidata a **pausar** (zombie).
-- [ ] Recomendação de **escalar** entidade sem base estatística vem rebaixada p/ "investigar"
-      com a nota "sem base estatística ainda (N)".
+## 1. Core de qualidade (automático)  **[✓ sessão]**
+- `pnpm --filter @trafego/core test` — verde (benchmarks, tiers, fadiga/significância, **sinal de
+  vida do zumbi**, guard de escala, fixture-ouro Steticos e2e). (194 testes)
+- `pnpm typecheck` — limpo (todos os packages). Web: `pnpm --filter web typecheck` + `tokens:check`.
+
+## 2. Análise real — tiers, diagnóstico e guard  **[✓ sessão]**
+Dispare uma análise on-demand (botão do site ou "analisa agora" no chat). Confira:
+- [ ] Recomendações citam número real + **causa provável** (árvore de diagnóstico por métrica).
+- [ ] **Tier** classificado por campanha (winner/performer/underperformer/zombie) coerente com meta+conta.
+- [ ] **Zumbi só sem NENHUM sinal de vida** (regra nova, pós-review): campanha que gera **conversas**
+      (funil) ou tem proxy **NÃO** é zumbi, mesmo com 0 conversão de negócio; e campanha **em learning**
+      (sem baseline) nunca é zumbi. Só é zumbi quem gastou ≥ mínimo, sem conversão/proxy/conversa, fora de learning.
+- [ ] **Winner que piorou vs baseline continua winner** (não é rebaixado a underperformer por bater a meta).
+- [ ] Recomendação de **escalar/reativar** entidade sem base estatística (ou em learning) vem rebaixada
+      p/ **investigar** com nota "sem base estatística ainda (N)". (Guard cobre origem **LLM**; regra de
+      **playbook** não passa pelo veto — intencional, o guardrail de blast-radius é a rede lá.)
 - [ ] Campanha com CTR caindo + frequência alta + custo subindo → sinal de **fadiga**.
 
-## 3. Visão HD + multi-frame (verificação pedida)
-- [ ] Rode a análise numa conta com criativos de **vídeo**. Nos logs/trace de visão,
-      confirme que o poster é o frame **HD** (não o selo 64px) e que há **múltiplos frames**.
-- [ ] Custo de `vision` só no **1º run**; no 2º run o cache acerta (chave por id estável do
-      criativo, não pela URL do fbcdn). Confira em `usage_events` (`type='vision'`).
+## 3. Visão HD + multi-frame + decomposição  **[✓ sessão — 16 criativos, $0,0174]**
+- [ ] Conta com criativos de **vídeo**: confirme frames **HD** (não o selo 64px) e **múltiplos frames**
+      por criativo (via `usage_events type='vision'` com custo por criativo maior que o de 1 frame).
+- [ ] O resultado da visão traz **decomposição** (hook/angle/format/cta) além de strengths/weaknesses/score.
+- [ ] Cache: no **2º run** da mesma conta o custo de `vision` cai a ~0 p/ criativos inalterados
+      (chave por **id estável** do criativo, não a URL fbcdn). *(não re-executado na sessão — por design.)*
 
-## 4. Custo do chat via POST simulado (verificação pedida)
-Com api+worker+pg+redis no ar e um contato verificado:
-1. Envie um POST ao webhook inbound simulando uma mensagem do contato (mesmo formato do
-   Evolution `MESSAGES_UPSERT`, com o secret da instância no header). Ex.:
-   `curl -X POST "$API_ORIGIN/webhooks/evolution/<instancia>" -H "<secret-header>" -d @payload.json`
-2. Aguarde o turno do Grafo B rodar.
+## 4. Custo do chat via POST simulado  **[✓ sessão]**
+1. POST no webhook inbound simulando `MESSAGES_UPSERT` do contato verificado, com o secret da instância
+   no header `x-webhook-secret`:
+   `curl -X POST "$API_ORIGIN/webhooks/evolution/<instancia>" -H "x-webhook-secret: <secret>" -d @payload.json`
+2. Aguarde o debounce (~5s) + o turno do Grafo B.
 3. Confira em `usage_events`:
-   - [ ] linha `type='conversation'` com `input_tokens`/`output_tokens` e **`cost`** preenchido
-         (o custo pode chegar via patch assíncrono alguns segundos depois — `bindTools` suprime
-         o usage; o fallback busca a generation).
-   - [ ] `ad_account_id` = a conta em foco da conversa (não nulo, salvo concierge sem foco).
-   - [ ] `payload_json.conversationId` presente.
-4. No painel de **Custos** (owner): o custo do chat aparece **atribuído à conta** (não mais em
-   "sem conta"), e o tipo **Revisão** aparece quando houve análise com revisor (D1).
+   - [ ] `type='conversation'` com `input_tokens`/`output_tokens` e **`cost`** preenchido (pode chegar
+         via patch assíncrono — `bindTools` suprime o usage; o fallback busca a generation).
+   - [ ] `payload_json.conversationId` **e** `contactId` presentes.
+   - [ ] `ad_account_id` = conta **em foco/sole**; **concierge** (multi-conta sem foco) → `ad_account_id`
+         **nulo** (correto — cai em org-only).
+4. **Painel de Custos (owner):** custo do chat **atribuído à conta** (COALESCE), some do "sem conta";
+   tipo **Revisão** aparece (D1 — o revisor agora emite `usage_event`).
 
-## 5. Arquétipos + UI avançada
-- [ ] Na config do agente, os 3 arquétipos aparecem com **descrição** + "quando usar".
-- [ ] Trocar p/ **Guardião de Lançamento** semeia cadência 2×/dia (se a cadência estava no
-      padrão do sistema); trocar p/ **Otimizador** deixa playbook "age no seguro".
-- [ ] "Opções avançadas" mostra os knobs (revisão/top-N/frames/significância/learning/fadiga
-      + toggle de cold-start) com **tooltips** amigáveis; "usar padrão do sistema" quando vazio.
-- [ ] Tag de **tier** (rótulo PT: campeã/ok/abaixo da meta/parada) nas recomendações e no
-      detalhe da conta.
+## 5. Atribuição de custo por conta + backfill  **[✓ sessão]**
+- [ ] Eventos de **run** (unit/vision/synthesis/review/message) têm `run_id`; a atribuição por conta usa
+      **COALESCE(ad_account_id direto, run→agente→conta)** — chat usa o direto, run usa o join.
+- [ ] `pnpm backfill:usage-account` (idempotente) preenche `ad_account_id` dos eventos de run antigos;
+      re-rodar não muda nada.
+- [ ] Billing byAccount não dupla-conta e o `unattributedCostUsd` = total − atribuído.
+
+## 6. Contrato + endpoint de arquétipos
+- [ ] `pnpm api:generate` sem drift (contrato inclui `ArchetypeCatalogOutput`, `modelConfig`, `tier`).
+- [ ] `GET /api/agents/archetypes` responde os 3 arquétipos (key/label/description/whenToUse).
+
+## 7. UI — arquétipos, opções avançadas, tier  (web em `localhost:4200`)
+- [ ] Config do agente: seletor mostra os 3 arquétipos com **descrição** + "quando usar" (do catálogo).
+- [ ] Trocar p/ **Guardião de Lançamento** semeia cadência 2×/dia (se estava no padrão); **Otimizador**
+      deixa playbook "age no seguro". Ambos trazem "criativo é o novo público" na metodologia (A4).
+- [ ] **"Opções avançadas"** (recolhida): knobs (modelos/revisão/top-N/tokens/significância/learning/
+      fadiga + toggle cold-start) com **tooltips**; "padrão do sistema" quando vazio. **Salvar um override**
+      persiste em `agents.model_config` e reflete no próximo run (força 1 deep). Campos de mínimo **não
+      aceitam 0** (alinhado ao contrato `exclusiveMinimum`).
+- [ ] Tag de **tier** (PT: campeã/ok/abaixo da meta/parada) no **detalhe da conta** e nas **recomendações**
+      que miram campanha; não renderiza quando `tier` é null. `entity_analyses.tier` persiste (histórico).
+
+## Observações
+- Custo real de rodar 2+4 ao vivo ≈ centavos–dezenas de centavos (1 run completo + turnos de chat).
+- Ativar um agente p/ testar atribuição/análise → **restaurar o status original** ao fim.
