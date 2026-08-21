@@ -1,13 +1,14 @@
 import type { FastifyPluginAsync } from "fastify";
 import type { ApprovalId } from "@trafego/shared/types";
 import { requireAuth } from "../../middleware/auth.js";
+import { requireActiveAccess } from "../../middleware/access-gate.js";
 import { requireOrgScope, orgIdOf } from "../../middleware/org-scope.js";
 import { resolveApprovalInput } from "./schema.js";
 
 /** Slice de aprovações: listar pendentes e resolver (fallback web do HITL). */
 export const approvalsRoutes: FastifyPluginAsync = async (app) => {
   const service = app.container.services.approvals;
-  const guard = { preHandler: [requireAuth, requireOrgScope] };
+  const guard = { preHandler: [requireAuth, requireOrgScope, requireActiveAccess] };
 
   app.get("/approvals", guard, async (request) => {
     return service.listPending(orgIdOf(request));

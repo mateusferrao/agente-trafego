@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { requireAuth } from "../../middleware/auth.js";
+import { requireActiveAccess } from "../../middleware/access-gate.js";
 import { requireOrgScope, orgIdOf } from "../../middleware/org-scope.js";
 import {
   agentConfigInput,
@@ -16,7 +17,7 @@ import {
  */
 export const agentsRoutes: FastifyPluginAsync = async (app) => {
   const service = app.container.services.agents;
-  const guard = { preHandler: [requireAuth, requireOrgScope] };
+  const guard = { preHandler: [requireAuth, requireOrgScope, requireActiveAccess] };
 
   app.get("/accounts/:id/agent", guard, async (request) => {
     const { id } = request.params as { id: string };

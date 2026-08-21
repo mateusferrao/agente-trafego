@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { requireAuth } from "../../middleware/auth.js";
+import { requireActiveAccess } from "../../middleware/access-gate.js";
 import { requireOrgScope, orgIdOf } from "../../middleware/org-scope.js";
 
 /**
@@ -8,7 +9,7 @@ import { requireOrgScope, orgIdOf } from "../../middleware/org-scope.js";
  */
 export const accountsRoutes: FastifyPluginAsync = async (app) => {
   const service = app.container.services.accounts;
-  const guard = { preHandler: [requireAuth, requireOrgScope] };
+  const guard = { preHandler: [requireAuth, requireOrgScope, requireActiveAccess] };
 
   app.get("/accounts", guard, async (request) => {
     return service.list(orgIdOf(request));

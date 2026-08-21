@@ -264,6 +264,11 @@ export function createAuthService(deps: AuthDeps) {
       return toMe(principal);
     },
 
+    /** Status do gate de acesso do usuário (guard do beta). null = sem grant. */
+    async accessStatus(userId: string): Promise<"pending" | "active" | "revoked" | null> {
+      return deps.repo.accessStatusByUserId(userId);
+    },
+
     /** Valida o token do cookie → sessão ativa (desliza a expiração). Usado por `requireAuth`. */
     async resolveSession(rawToken: string): Promise<AuthenticatedUser | null> {
       const tokenHash = hashSessionToken(rawToken);

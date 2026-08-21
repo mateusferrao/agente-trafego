@@ -49,6 +49,7 @@ function makeRepo(overrides: Partial<AuthRepo> = {}): AuthRepo {
     markEmailVerified: vi.fn(async () => undefined),
     updatePassword: vi.fn(async () => undefined),
     revokeAllUserSessions: vi.fn(async () => undefined),
+    accessStatusByUserId: vi.fn(async () => "active" as const),
     ...overrides,
   };
 }

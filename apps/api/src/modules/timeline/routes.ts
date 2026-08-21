@@ -1,12 +1,13 @@
 import type { FastifyPluginAsync } from "fastify";
 import { requireAuth } from "../../middleware/auth.js";
+import { requireActiveAccess } from "../../middleware/access-gate.js";
 import { requireOrgScope, orgIdOf } from "../../middleware/org-scope.js";
 import type { TimelineOptions } from "./service.js";
 
 /** Slice da Timeline (6a): feed de auditoria por conta (paginado + filtros). */
 export const timelineRoutes: FastifyPluginAsync = async (app) => {
   const service = app.container.services.timeline;
-  const guard = { preHandler: [requireAuth, requireOrgScope] };
+  const guard = { preHandler: [requireAuth, requireOrgScope, requireActiveAccess] };
 
   app.get("/accounts/:id/timeline", guard, async (request) => {
     const { id } = request.params as { id: string };

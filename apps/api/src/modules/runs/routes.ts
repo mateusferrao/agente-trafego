@@ -1,12 +1,13 @@
 import type { FastifyPluginAsync } from "fastify";
 import { requireAuth } from "../../middleware/auth.js";
+import { requireActiveAccess } from "../../middleware/access-gate.js";
 import { requireOrgScope, orgIdOf } from "../../middleware/org-scope.js";
 import type { ListRunsOptions } from "./service.js";
 
 /** Slice de runs: disparo on-demand + último resultado (3a); histórico = 6a. */
 export const runsRoutes: FastifyPluginAsync = async (app) => {
   const service = app.container.services.runs;
-  const guard = { preHandler: [requireAuth, requireOrgScope] };
+  const guard = { preHandler: [requireAuth, requireOrgScope, requireActiveAccess] };
 
   // 3a: "Analisar agora" + resultado no site.
   app.post("/accounts/:id/runs", guard, async (request, reply) => {

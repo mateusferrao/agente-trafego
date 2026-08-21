@@ -1,11 +1,12 @@
 import type { FastifyPluginAsync } from "fastify";
 import { requireAuth } from "../../middleware/auth.js";
+import { requireActiveAccess } from "../../middleware/access-gate.js";
 import { requireOrgScope, orgIdOf } from "../../middleware/org-scope.js";
 
 /** Slice do Painel (6a): KPIs ao vivo por conta + "atualizar agora" (sync-only). */
 export const dashboardRoutes: FastifyPluginAsync = async (app) => {
   const service = app.container.services.dashboard;
-  const guard = { preHandler: [requireAuth, requireOrgScope] };
+  const guard = { preHandler: [requireAuth, requireOrgScope, requireActiveAccess] };
 
   // Painel gerencial cross-conta (home): pendências + atenção + atividade + panorama.
   app.get("/dashboard", guard, async (request) => {

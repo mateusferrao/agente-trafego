@@ -55,6 +55,9 @@ export const badRequest = (msg: string, details?: unknown) =>
 /** Email ainda não verificado (6b): o front lê o `code` e leva à tela de código. */
 export const emailNotVerified = (msg = "Confirme seu email com o código que enviamos.") =>
   new AppError(403, "auth_email_not_verified", msg);
+/** Gate de beta (6b): acesso ainda não liberado. O front lê o `code` e mostra o muro. */
+export const accessPending = (msg = "Sua conta está em análise. Avisaremos por email quando o acesso for liberado.") =>
+  new AppError(403, "access_pending", msg);
 
 /**
  * Registra o error handler global: exceções na casca → resposta padronizada.

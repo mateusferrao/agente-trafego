@@ -25,6 +25,20 @@ export function buildVerificationEmail(params: { to: string; from: string; code:
   };
 }
 
+/** Email de "acesso liberado" (6b) — disparado no `access:grant`. Fecha o loop self-service. */
+export function buildAccessGrantedEmail(params: { to: string; from: string; appUrl: string }): EmailMessage {
+  const login = `${params.appUrl}/login`;
+  const safeLogin = escapeHtml(login);
+  return {
+    to: params.to,
+    from: params.from,
+    subject: `${APP_NAME} — seu acesso foi liberado`,
+    text: `Boas notícias! Seu acesso ao ${APP_NAME} foi liberado. Entre em ${login} para começar.`,
+    html: `<p>Boas notícias! Seu acesso ao ${APP_NAME} foi liberado.</p><p><a href="${safeLogin}">Entrar agora</a></p>`,
+    category: "auth",
+  };
+}
+
 /** Email de reset de senha (link com token opaco). Builder puro. */
 export function buildPasswordResetEmail(params: { to: string; from: string; resetUrl: string }): EmailMessage {
   const safeUrl = escapeHtml(params.resetUrl);

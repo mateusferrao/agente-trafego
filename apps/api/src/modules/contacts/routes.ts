@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { requireAuth } from "../../middleware/auth.js";
+import { requireActiveAccess } from "../../middleware/access-gate.js";
 import { requireOrgScope, orgIdOf } from "../../middleware/org-scope.js";
 import { startVerificationInput, confirmVerificationInput } from "./schema.js";
 
@@ -14,7 +15,7 @@ const VERIFY_RATE_LIMIT = { max: 5, timeWindow: "1 minute" };
 export const contactsRoutes: FastifyPluginAsync = async (app) => {
   const service = app.container.services.contacts;
   const guard = {
-    preHandler: [requireAuth, requireOrgScope],
+    preHandler: [requireAuth, requireOrgScope, requireActiveAccess],
     config: { rateLimit: VERIFY_RATE_LIMIT },
   };
 
@@ -30,7 +31,7 @@ export const contactsRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // Destinatário atual (verificado) — a tela reflete/permite trocar.
-  app.get("/contacts/recipient", { preHandler: [requireAuth, requireOrgScope] }, async (request) => {
+  app.get("/contacts/recipient", { preHandler: [requireAuth, requireOrgScope, requireActiveAccess] }, async (request) => {
     const recipient = await service.getRecipient(orgIdOf(request));
     return { recipient };
   });

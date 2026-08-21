@@ -18,6 +18,10 @@
     "db:seed": "tsx --env-file=.env packages/db/src/seed.ts",
     "db:q": "tsx --env-file=.env packages/db/src/query.ts",
     "db:deploy": "tsx packages/db/src/migrate.ts && pnpm db:seed",
+    "access:grant": "tsx --env-file=.env apps/api/src/scripts/access.ts grant",
+    "access:revoke": "tsx --env-file=.env apps/api/src/scripts/access.ts revoke",
+    "access:list": "tsx --env-file=.env apps/api/src/scripts/access.ts list",
+    "backfill:access": "tsx --env-file=.env apps/api/src/scripts/backfill-access.ts",
     "api:generate": "pnpm --filter @trafego/api openapi && pnpm --filter web api:generate"
   },
   "dependencies": {

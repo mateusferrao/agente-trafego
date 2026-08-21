@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { requireAuth } from "../../middleware/auth.js";
+import { requireActiveAccess } from "../../middleware/access-gate.js";
 import { requireOrgScope, orgIdOf } from "../../middleware/org-scope.js";
 import { connectionParams, createConnectionInput, selectAccountsInput } from "./schema.js";
 
@@ -10,7 +11,7 @@ import { connectionParams, createConnectionInput, selectAccountsInput } from "./
  */
 export const connectionsRoutes: FastifyPluginAsync = async (app) => {
   const service = app.container.services.connections;
-  const guard = { preHandler: [requireAuth, requireOrgScope] };
+  const guard = { preHandler: [requireAuth, requireOrgScope, requireActiveAccess] };
 
   // Cola token → valida → cria a conexão e devolve as contas p/ escolher já.
   app.post("/connections", guard, async (request, reply) => {

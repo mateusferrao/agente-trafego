@@ -4,7 +4,17 @@
 // índice único parcial em `agent_runs` (fecha o TOCTOU cron×manual — decisão 15).
 
 import { and, eq } from "drizzle-orm";
-import { adAccounts, agentRuns, agents, guardrailConfigs, isUniqueViolation, type Database } from "@trafego/db";
+import {
+  accessGrants,
+  adAccounts,
+  agentRuns,
+  agents,
+  guardrailConfigs,
+  isUniqueViolation,
+  memberships,
+  users,
+  type Database,
+} from "@trafego/db";
 import { isOverCostCap, resolveCostCapUsd, usagePeriod } from "@trafego/core";
 import {
   AGENT_RUNS_QUEUE,
@@ -43,6 +53,7 @@ export type DispatchOutcome =
   | "enqueued"
   | "skipped_paused"
   | "skipped_inactive_account"
+  | "skipped_access"
   | "skipped_cost_cap"
   | "skipped_in_flight";
 
@@ -56,6 +67,22 @@ export function createRunDispatcher(deps: RunDispatcherDeps) {
     } catch {
       return null; // ledger indisponível → fail-open (não trava o cron)
     }
+  }
+
+  /**
+   * Gate de beta (6b): o cron age em nome da org → gateia pelo grant do OWNER
+   * (allowlist por email). Sem request/usuário aqui (assimetria consciente vs API,
+   * que gateia o usuário requisitante). Org sem owner liberado não roda análise.
+   */
+  async function ownerAccessActive(orgId: string): Promise<boolean> {
+    const [row] = await deps.db
+      .select({ status: accessGrants.status })
+      .from(memberships)
+      .innerJoin(users, eq(memberships.userId, users.id))
+      .innerJoin(accessGrants, eq(accessGrants.email, users.email))
+      .where(and(eq(memberships.orgId, orgId), eq(memberships.role, "owner")))
+      .limit(1);
+    return row?.status === "active";
   }
 
   /** Cap por-org (guardrail_configs) do agente, se houver. */
@@ -82,6 +109,13 @@ export function createRunDispatcher(deps: RunDispatcherDeps) {
       .limit(1);
     if (!row || row.agentStatus === "paused") return "skipped_paused";
     if (row.accountStatus !== "active") return "skipped_inactive_account";
+
+    // 1b) gate de beta: org cujo owner não está liberado não roda análise (fecha a
+    // brecha de org liberada→revogada com conta/cron já ativos — decisão §7 do plano).
+    if (!(await ownerAccessActive(orgId))) {
+      deps.logger.info({ orgId, agentId }, "cron:pula — acesso da org não liberado (beta gate)");
+      return "skipped_access";
+    }
 
     // 2) cap de custo por org/período (decisão pura; fail-open se custo ausente).
     const cap = resolveCostCapUsd(await orgCostCap(orgId, agentId), deps.envCostCapUsd);

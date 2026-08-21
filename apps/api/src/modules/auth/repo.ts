@@ -105,6 +105,8 @@ export interface AuthRepo {
   updatePassword(userId: string, passwordHash: string): Promise<void>;
   /** Revoga TODAS as sessões ativas do usuário (após reset de senha). */
   revokeAllUserSessions(userId: string): Promise<void>;
+  /** Status do gate de acesso do usuário (por email). null = sem grant. Guard do beta. */
+  accessStatusByUserId(userId: string): Promise<"pending" | "active" | "revoked" | null>;
   findActiveSessionByHash(tokenHash: string, now: Date): Promise<ActiveSession | null>;
   /** Expiração deslizante: marca uso e empurra `expiresAt` a cada request autenticado. */
   slideSession(tokenHash: string, lastUsedAt: Date, expiresAt: Date): Promise<void>;
@@ -304,6 +306,17 @@ export function createDrizzleAuthRepo(db: Database): AuthRepo {
         .update(sessions)
         .set({ revokedAt: new Date() })
         .where(and(eq(sessions.userId, userId), isNull(sessions.revokedAt)));
+    },
+
+    async accessStatusByUserId(userId) {
+      // 1 query indexada: users.id (pk) → access_grants.email (unique). Gate por-usuário.
+      const [row] = await db
+        .select({ status: accessGrants.status })
+        .from(users)
+        .innerJoin(accessGrants, eq(accessGrants.email, users.email))
+        .where(eq(users.id, userId))
+        .limit(1);
+      return row?.status ?? null;
     },
   };
 }
