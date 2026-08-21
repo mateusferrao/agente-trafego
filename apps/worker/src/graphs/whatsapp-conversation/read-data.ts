@@ -9,12 +9,13 @@
 // métrica carregam `asOf` (frescor); a ausência de dado vira um sinal explícito
 // (`hasData:false` + nota) p/ o agente recusar com clareza.
 
-import { and, desc, eq, gte, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { agentRuns, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
+import { agentRuns, agentToolCalls, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
 import type { ApprovalPort } from "@trafego/shared/ports";
+import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY } from "@trafego/shared";
 import type { EntityLevel, InsightMetrics, OrgId, UnitAnalysis } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
 
@@ -35,6 +36,9 @@ const ACCOUNT_LEVEL: EntityLevel = "account";
 const CAMPAIGN_LEVEL: EntityLevel = "campaign";
 /** Marcador de frescor quando não há nenhum snapshot no período. */
 const ASOF_NONE = "sem dados";
+/** Janela e teto do "desfaz isso" (ações recentes revertíveis). */
+const RECENT_ACTIONS_DAYS = 7;
+const RECENT_ACTIONS_LIMIT = 10;
 
 // ─── Formas de saída (curadas p/ o modelo) ──────────────────────────────────
 interface NoData {
@@ -256,6 +260,57 @@ export async function listPendingData(
   }));
 }
 
+/** Ação REAL recente que pode ser desfeita (id p/ o agente reverter no chat, 5c-4). */
+interface RecentAction {
+  readonly id: string;
+  readonly type: string;
+  readonly entityName: string | null;
+  readonly appliedAt: string;
+}
+
+/**
+ * Ações REAIS recentes (últimos N dias) do agente que ainda NÃO foram revertidas —
+ * base do "desfaz isso" / "desfaz a pausa da X". Cobre ações de análise (via run) e de
+ * chat (via agentId) com coalesce. Exclui simuladas, undo/undo_blocked e já-revertidas.
+ */
+export async function findRecentActionsData(
+  db: Database,
+  agentId: string,
+  opts: { nameFilter?: string; limit?: number; sinceDays?: number } = {},
+): Promise<RecentAction[] | NoData> {
+  const since = daysAgo(new Date(), opts.sinceDays ?? RECENT_ACTIONS_DAYS);
+  const ownerOf = sql`coalesce(${agentToolCalls.agentId}, ${agentRuns.agentId})`;
+  const rows = await db
+    .select({ id: agentToolCalls.id, toolKey: agentToolCalls.toolKey, args: agentToolCalls.args, createdAt: agentToolCalls.createdAt })
+    .from(agentToolCalls)
+    .leftJoin(agentRuns, eq(agentToolCalls.runId, agentRuns.id))
+    .where(and(eq(ownerOf, agentId), gte(agentToolCalls.createdAt, since)))
+    .orderBy(desc(agentToolCalls.createdAt));
+
+  // ids já revertidos (undo aponta pro original via args.revertOf).
+  const reverted = new Set<string>();
+  for (const r of rows) {
+    if (r.toolKey !== UNDO_TOOL_KEY) continue;
+    const of = (r.args as { revertOf?: string }).revertOf;
+    if (of) reverted.add(of);
+  }
+
+  const needle = opts.nameFilter?.trim().toLowerCase();
+  const items: RecentAction[] = [];
+  for (const r of rows) {
+    if (r.toolKey === UNDO_TOOL_KEY || r.toolKey === UNDO_BLOCKED_TOOL_KEY) continue;
+    const a = r.args as { target?: { name?: string }; dryRun?: boolean };
+    if (a.dryRun || reverted.has(r.id)) continue; // simulada ou já desfeita
+    const name = a.target?.name ?? null;
+    if (needle && !(name ?? "").toLowerCase().includes(needle)) continue;
+    items.push({ id: r.id, type: r.toolKey, entityName: name, appliedAt: r.createdAt.toISOString() });
+    if (items.length >= (opts.limit ?? RECENT_ACTIONS_LIMIT)) break;
+  }
+
+  if (items.length === 0) return { hasData: false, note: "nenhuma ação recente pra desfazer" };
+  return items;
+}
+
 // ─── Helpers internos ────────────────────────────────────────────────────────
 
 /** Último run finalizado (succeeded/failed) do agente, org-scoped. */
@@ -361,8 +416,21 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     {
       name: "get_campaign_analysis",
       description:
-        "Última análise de uma campanha pelo nome (busca por trecho, sem diferenciar maiúsculas). Devolve resumo, métricas curadas e o maior gargalo.",
+        "Última análise de uma campanha pelo nome (busca por trecho, sem diferenciar maiúsculas). Devolve o id (use-o para agir), resumo, métricas curadas e o maior gargalo.",
       schema: z.object({ name: z.string() }),
+    },
+  );
+
+  const findRecentActions = tool(
+    async ({ name }: { name?: string }) => {
+      logger.debug({ agentId: ctx.agentId, name }, "tool:find_recent_actions");
+      return asString(await findRecentActionsData(db, ctx.agentId, name ? { nameFilter: name } : {}));
+    },
+    {
+      name: "find_recent_actions",
+      description:
+        "Ações recentes que VOCÊ aplicou e que dá pra desfazer (id, tipo, campanha, quando). Use para 'desfaz isso' (a mais recente) ou 'desfaz a pausa da X' (filtra por nome). Passe o id para revert_action.",
+      schema: z.object({ name: z.string().optional() }),
     },
   );
 
@@ -390,5 +458,5 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     },
   );
 
-  return [getAccountStatus, getMetrics, getCampaignAnalysis, listRecommendations, listPending];
+  return [getAccountStatus, getMetrics, getCampaignAnalysis, findRecentActions, listRecommendations, listPending];
 }

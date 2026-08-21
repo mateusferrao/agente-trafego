@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Action } from "@trafego/shared";
-import { buildWriteEcho, type EchoItem } from "./index.js";
+import { buildRevertEcho, buildWriteEcho, type EchoItem } from "./index.js";
 
 function item(action: Partial<Action>, over: Partial<EchoItem> = {}): EchoItem {
   return {
@@ -85,5 +85,24 @@ describe("buildWriteEcho", () => {
   it("set_status mostra o status alvo", () => {
     const echo = buildWriteEcho([item({ type: "set_status", params: { status: "paused" } })]);
     expect(echo.toLowerCase()).toContain("paus");
+  });
+});
+
+describe("buildRevertEcho", () => {
+  it("desfaz uma pausa → menciona a entidade e pede confirmação", () => {
+    const echo = buildRevertEcho([{ label: "Ruim", actionType: "pause_entity" }]);
+    expect(echo).toContain("desfazer a pausa");
+    expect(echo).toContain("*Ruim*");
+    expect(echo.toLowerCase()).toContain("confirma?");
+  });
+
+  it("lote → lista numerada", () => {
+    const echo = buildRevertEcho([
+      { label: "Ruim", actionType: "pause_entity" },
+      { label: "Boa", actionType: "adjust_budget" },
+    ]);
+    expect(echo).toContain("1.");
+    expect(echo).toContain("o ajuste de budget");
+    expect(echo).toContain("Confirma as 2");
   });
 });

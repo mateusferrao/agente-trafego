@@ -6,7 +6,7 @@ import { ChatOpenAI } from "@langchain/openai";
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import type { Logger } from "pino";
-import { applyGuardrails, buildWriteEcho, type EchoItem } from "@trafego/core";
+import { applyGuardrails, buildRevertEcho, buildWriteEcho, type EchoItem, type RevertEchoItem } from "@trafego/core";
 import { sleep } from "@trafego/shared";
 import type { Action, OrgId } from "@trafego/shared/types";
 import type { WorkerDeps } from "../../composition.js";
@@ -14,6 +14,7 @@ import { loadConversationConfig } from "./system-prompt.js";
 import { windowMessages } from "./window.js";
 import {
   CONTROL_WRITE_TOOL_NAMES,
+  REVERT_TOOL_NAME,
   WRITE_TOOL_NAMES,
   actionFromToolCall,
   makeConversationTools,
@@ -22,7 +23,9 @@ import {
 import { makeMetaToolExecutor } from "../../executors/meta-tools.js";
 import { applyCheckedAction, type ApplyOutcome } from "../../modules/apply/apply-confirmed-action.js";
 import { loadWriteContext } from "../../modules/apply/write-context.js";
+import { revertActionById } from "../../modules/apply/revert-action.js";
 import type {
+  PendingRevert,
   PendingWrite,
   WhatsappConversationStateType,
   WhatsappConversationUpdate,
@@ -41,6 +44,11 @@ function answerToolCalls(calls: readonly { id?: string }[], text: string): ToolM
 /** pendingWrite ainda válido (não expirado)? */
 function activePendingWrite(pw: PendingWrite | null): PendingWrite | null {
   return pw && Date.parse(pw.expiresAt) > Date.now() ? pw : null;
+}
+
+/** pendingRevert ainda válido (não expirado)? */
+function activePendingRevert(pr: PendingRevert | null): PendingRevert | null {
+  return pr && Date.parse(pr.expiresAt) > Date.now() ? pr : null;
 }
 
 const PAST_PHRASE: Record<string, (name: string) => string> = {
@@ -230,11 +238,13 @@ export function makeConversationNodes(
       deps.conversation.model,
     );
 
-    // eco+confirma (5c): se há ação pendente válida, oriente o LLM a só CLASSIFICAR a
-    // intenção (confirm_write/cancel_write) — a ação aplicada é a congelada, sem drift.
+    // eco+confirma (5c): se há ação/reversão pendente válida, oriente o LLM a só
+    // CLASSIFICAR a intenção (confirm_write/cancel_write) — o que se aplica é o congelado.
     const pending = activePendingWrite(state.pendingWrite);
-    const sys = pending
-      ? `${systemPrompt}\n\nHá ação(ões) que você já propôs e que aguardam a confirmação do usuário:\n${pending.echo}\n\nSe a última mensagem do usuário confirmar claramente (ex: "sim", "pode", "manda"), chame confirm_write. Se recusar, chame cancel_write. Se pedir mudança/outra coisa, IGNORE a pendência e trate normalmente.`
+    const pendingRevert = activePendingRevert(state.pendingRevert);
+    const echo = pending?.echo ?? pendingRevert?.echo;
+    const sys = echo
+      ? `${systemPrompt}\n\nHá algo que você já propôs e que aguarda a confirmação do usuário:\n${echo}\n\nSe a última mensagem do usuário confirmar claramente (ex: "sim", "pode", "manda"), chame confirm_write. Se recusar, chame cancel_write. Se pedir mudança/outra coisa, IGNORE a pendência e trate normalmente.`
       : systemPrompt;
 
     const windowed = windowMessages(state.messages, {
@@ -244,9 +254,11 @@ export function makeConversationNodes(
     const response = (await makeChat(model, true).invoke([new SystemMessage(sys), ...windowed])) as AIMessage;
     await recordConversationUsage(deps, ctx, model, response);
 
-    // limpa pendência expirada (o "sim" tardio não aplica ação esquecida).
-    const clearExpired = state.pendingWrite && !pending ? { pendingWrite: null } : {};
-    return { messages: [response], ...clearExpired };
+    // limpa pendências expiradas (o "sim" tardio não aplica algo esquecido).
+    const update: WhatsappConversationUpdate = { messages: [response] };
+    if (state.pendingWrite && !pending) update.pendingWrite = null;
+    if (state.pendingRevert && !pendingRevert) update.pendingRevert = null;
+    return update;
   }
 
   /** Executa as tools de leitura escolhidas pelo modelo (escrita passa pelo gate). */
@@ -262,7 +274,31 @@ export function makeConversationNodes(
    */
   async function confirmWriteGate(state: WhatsappConversationStateType): Promise<WhatsappConversationUpdate> {
     const last = state.messages.at(-1) as AIMessage | undefined;
-    const calls = (last?.tool_calls ?? []).filter((c) => WRITE_TOOL_NAMES.has(c.name));
+    const allCalls = last?.tool_calls ?? [];
+
+    // DESFAZER (5c-4): eco de reversão + congela pendingRevert. A ação real (por id) é
+    // aplicada no applyWrite; aqui só monta o eco (rótulos vêm do find_recent_actions).
+    const revertCalls = allCalls.filter((c) => c.name === REVERT_TOOL_NAME);
+    if (revertCalls.length > 0) {
+      const items: RevertEchoItem[] = [];
+      const ids: string[] = [];
+      for (const c of revertCalls) {
+        const a = (c.args ?? {}) as { toolCallId?: string; label?: string; actionType?: string };
+        if (!a.toolCallId) continue;
+        items.push({ label: a.label ?? "essa ação", actionType: a.actionType ?? "" });
+        ids.push(a.toolCallId);
+      }
+      if (ids.length === 0) {
+        return { messages: answerToolCalls(allCalls, "Não entendi qual ação desfazer. Use find_recent_actions.") };
+      }
+      const echo = buildRevertEcho(items);
+      return {
+        messages: answerToolCalls(allCalls, echo),
+        pendingRevert: { echo, expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString(), toolCallIds: ids },
+      };
+    }
+
+    const calls = allCalls.filter((c) => WRITE_TOOL_NAMES.has(c.name));
     const proposed = calls
       .map((c) => actionFromToolCall(c.name, (c.args ?? {}) as Record<string, unknown>, c.id ?? c.name))
       .filter((a): a is Action => a !== null);
@@ -345,7 +381,28 @@ export function makeConversationNodes(
     const isConfirm = calls.some((c) => c.name === "confirm_write");
 
     if (!isConfirm) {
-      return { messages: [...answerToolCalls(calls, "cancelado"), new AIMessage("Ok, não mexi em nada.")], pendingWrite: null };
+      return {
+        messages: [...answerToolCalls(calls, "cancelado"), new AIMessage("Ok, não mexi em nada.")],
+        pendingWrite: null,
+        pendingRevert: null,
+      };
+    }
+
+    // DESFAZER confirmado (5c-4): reverte cada ação por id (drift + TTL já no executor).
+    const pendingRevert = activePendingRevert(state.pendingRevert);
+    if (pendingRevert) {
+      const lines: string[] = [];
+      for (const toolCallId of pendingRevert.toolCallIds) {
+        const res = await revertActionById(deps, { orgId: ctx.orgId, toolCallId });
+        lines.push(
+          res.reverted
+            ? "✅ Desfeito."
+            : res.blockedByDrift
+              ? `Não desfiz: ${res.reason ?? "a entidade mudou desde a ação"}. Se quiser desfazer mesmo assim, me avise.`
+              : `Não consegui desfazer: ${res.reason ?? "ação não encontrada"}.`,
+        );
+      }
+      return { messages: [...answerToolCalls(calls, "revert"), new AIMessage(lines.join("\n"))], pendingRevert: null, pendingWrite: null };
     }
 
     const pending = activePendingWrite(state.pendingWrite);
@@ -398,6 +455,6 @@ export function routeConversation(
   const toolCalls = (last as AIMessage | undefined)?.tool_calls ?? [];
   if (toolCalls.length === 0) return "__end__";
   if (toolCalls.some((c) => CONTROL_WRITE_TOOL_NAMES.has(c.name))) return "apply";
-  if (toolCalls.some((c) => WRITE_TOOL_NAMES.has(c.name))) return "confirm";
+  if (toolCalls.some((c) => WRITE_TOOL_NAMES.has(c.name) || c.name === REVERT_TOOL_NAME)) return "confirm";
   return "tools";
 }

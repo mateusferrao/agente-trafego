@@ -21,6 +21,9 @@ describe("routeConversation", () => {
   it("confirm_write → apply", () => {
     expect(routeConversation(stateWith([{ name: "confirm_write" }]))).toBe("apply");
   });
+  it("revert_action → confirm (desfazer também é escrita)", () => {
+    expect(routeConversation(stateWith([{ name: "revert_action" }]))).toBe("confirm");
+  });
   it("cancel_write → apply", () => {
     expect(routeConversation(stateWith([{ name: "cancel_write" }]))).toBe("apply");
   });

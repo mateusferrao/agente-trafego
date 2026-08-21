@@ -93,3 +93,26 @@ export function buildWriteEcho(items: readonly EchoItem[]): string {
   const lines = items.map((it, i) => `${i + 1}. ${clauseOf(it)}`);
   return `Vou fazer:\n${lines.join("\n")}\n\nConfirma as ${items.length}?`;
 }
+
+/** Rótulo do que se desfaz, por tipo de ação original. */
+const UNDO_WHAT: Record<string, string> = {
+  pause_entity: "a pausa",
+  resume_entity: "a reativação",
+  set_status: "a mudança de status",
+  adjust_budget: "o ajuste de budget",
+};
+
+/** Uma reversão a ecoar: rótulo da entidade + tipo da ação original. */
+export interface RevertEchoItem {
+  readonly label: string;
+  readonly actionType: string;
+}
+
+/** Eco de confirmação de reversão (chat, 5c-4). Volta a entidade ao estado anterior. */
+export function buildRevertEcho(items: readonly RevertEchoItem[]): string {
+  const clause = (it: RevertEchoItem) => `desfazer ${UNDO_WHAT[it.actionType] ?? "a última ação"} de *${it.label}*`;
+  if (items.length === 0) return "";
+  if (items.length === 1) return `Vou ${clause(items[0]!)} (volta ao estado anterior). Confirma?`;
+  const lines = items.map((it, i) => `${i + 1}. ${clause(it)}`);
+  return `Vou desfazer:\n${lines.join("\n")}\n\nConfirma as ${items.length}?`;
+}

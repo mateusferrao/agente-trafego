@@ -3,7 +3,8 @@
 // confia em payload), resolve token e delega ao `executor.revert` (drift + TTL da 5b).
 // Extraído do worker `action-undo` p/ ser reusado pela tool `revert` do chat (5c-4).
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { agentRuns, agents, agentToolCalls } from "@trafego/db";
 import type { WorkerDeps } from "../../composition.js";
 import { createAnalysisRepo } from "../analysis/repo.js";
@@ -22,6 +23,11 @@ export async function revertActionById(deps: WorkerDeps, input: RevertByIdInput)
   const repo = createAnalysisRepo(db);
   const executor = makeMetaToolExecutor(deps);
 
+  // dono via run→agente (análise) OU via agentId direto (escrita por chat, runId null).
+  const agViaRun = alias(agents, "ag_via_run");
+  const agViaTc = alias(agents, "ag_via_tc");
+  const orgOf = sql<string>`coalesce(${agViaTc.orgId}, ${agViaRun.orgId})`;
+  const accountOf = sql<string>`coalesce(${agViaTc.adAccountId}, ${agViaRun.adAccountId})`;
   const [tc] = await db
     .select({
       id: agentToolCalls.id,
@@ -29,12 +35,13 @@ export async function revertActionById(deps: WorkerDeps, input: RevertByIdInput)
       beforeState: agentToolCalls.beforeState,
       args: agentToolCalls.args,
       result: agentToolCalls.result,
-      adAccountId: agents.adAccountId,
+      adAccountId: accountOf,
     })
     .from(agentToolCalls)
-    .innerJoin(agentRuns, eq(agentToolCalls.runId, agentRuns.id))
-    .innerJoin(agents, eq(agentRuns.agentId, agents.id))
-    .where(and(eq(agentToolCalls.id, input.toolCallId), eq(agentRuns.orgId, input.orgId)))
+    .leftJoin(agentRuns, eq(agentToolCalls.runId, agentRuns.id))
+    .leftJoin(agViaRun, eq(agentRuns.agentId, agViaRun.id))
+    .leftJoin(agViaTc, eq(agentToolCalls.agentId, agViaTc.id))
+    .where(and(eq(agentToolCalls.id, input.toolCallId), eq(orgOf, input.orgId)))
     .limit(1);
   if (!tc) {
     logger.warn({ toolCallId: input.toolCallId, orgId: input.orgId }, "undo:tool_call não encontrado (org-scoped)");

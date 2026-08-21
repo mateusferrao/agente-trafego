@@ -16,6 +16,14 @@ export interface PendingWrite {
   readonly actions: readonly Action[];
 }
 
+/** Reversão(ões) aguardando confirmação (eco+confirma, 5c-4). */
+export interface PendingRevert {
+  readonly echo: string;
+  readonly expiresAt: string;
+  /** ids de agent_tool_calls a reverter quando o usuário confirmar. */
+  readonly toolCallIds: readonly string[];
+}
+
 export const WhatsappConversationState = Annotation.Root({
   // histórico da conversa (reducer append padrão do LangGraph)
   messages: Annotation<BaseMessage[]>({
@@ -35,6 +43,9 @@ export const WhatsappConversationState = Annotation.Root({
   // eco+confirma: ação(ões) proposta(s) aguardando confirmação explícita do humano.
   // Antes de QUALQUER escrita → eco concreto + espera "sim". (CLAUDE §8)
   pendingWrite: Annotation<PendingWrite | null>,
+
+  // eco+confirma de REVERSÃO (5c-4) — desfazer também é escrita.
+  pendingRevert: Annotation<PendingRevert | null>,
 });
 
 export type WhatsappConversationStateType = typeof WhatsappConversationState.State;

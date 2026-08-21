@@ -180,7 +180,19 @@ export function makeConversationTools(
     schema: z.object({}),
   });
 
-  const writeTools = [pauseEntity, resumeEntity, setStatus, adjustBudget, confirmWrite, cancelWrite];
+  // DESFAZER (5c-4): também é escrita → passa pelo mesmo eco+confirma (roteado p/ confirm).
+  const revertAction = tool(proposeOnly, {
+    name: "revert_action",
+    description:
+      "Propõe DESFAZER uma ação que você aplicou (use find_recent_actions p/ achar o id). Requer eco+confirma.",
+    schema: z.object({
+      toolCallId: z.string().min(1),
+      label: z.string().min(1).describe("nome da entidade (de find_recent_actions)"),
+      actionType: z.string().min(1).describe("tipo da ação original (de find_recent_actions)"),
+    }),
+  });
+
+  const writeTools = [pauseEntity, resumeEntity, setStatus, adjustBudget, revertAction, confirmWrite, cancelWrite];
   return [...readTools, triggerAnalysis, approve, reject, ...writeTools].filter((t) => allow.has(t.name));
 }
 
@@ -232,6 +244,8 @@ export const AGENT_TOOL_NAMES: ReadonlySet<string> = new Set([
   "trigger_analysis",
   "approve",
   "reject",
+  "find_recent_actions",
+  "revert_action",
   "confirm_write",
   "cancel_write",
 ]);
@@ -250,6 +264,9 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   "set_status",
   "adjust_budget",
 ]);
+
+/** Tool de DESFAZER — também passa pelo eco+confirma (roteada pro nó `confirm`, 5c-4). */
+export const REVERT_TOOL_NAME = "revert_action";
 
 /** Tools de controle do eco+confirma (turno 2) — roteadas pro nó `applyWrite`. */
 export const CONTROL_WRITE_TOOL_NAMES: ReadonlySet<string> = new Set<string>(["confirm_write", "cancel_write"]);
