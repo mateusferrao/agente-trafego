@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { APPROVAL_APPLY_QUEUE } from "@trafego/shared";
-import { AGENT_TOOL_NAMES, makeConversationTools, type ConversationToolContext } from "./tools.js";
+import { AGENT_TOOL_NAMES, actionFromToolCall, makeConversationTools, type ConversationToolContext } from "./tools.js";
 
 const CTX: ConversationToolContext = {
   orgId: "org-1",
@@ -52,6 +52,40 @@ describe("approve tool", () => {
     const { deps, enqueue } = makeDeps(() => pending("ap-1", "org-outra"));
     await toolOf(deps, "approve").invoke({ approvalIds: ["ap-1"] });
     expect(enqueue).not.toHaveBeenCalled();
+  });
+});
+
+describe("actionFromToolCall", () => {
+  const args = (o: Record<string, unknown>) => ({ entityLevel: "campaign", entityId: "C1", entityName: "Boa", ...o });
+
+  it("pause → Action neutra com target correto", () => {
+    const a = actionFromToolCall("pause_entity", args({}), "tc1");
+    expect(a?.type).toBe("pause_entity");
+    expect(a?.target).toEqual({ level: "campaign", id: "C1", name: "Boa" });
+    expect(a?.id).toBe("tc1");
+  });
+
+  it("adjust_budget set → converte reais → amountMinor (centavos)", () => {
+    const a = actionFromToolCall("adjust_budget", args({ mode: "set", amountReais: 200 }), "tc2");
+    expect(a?.params).toEqual({ mode: "set", amountMinor: 20000 });
+  });
+
+  it("adjust_budget increase → pct (magnitude)", () => {
+    const a = actionFromToolCall("adjust_budget", args({ mode: "increase", pct: 30 }), "tc3");
+    expect(a?.params).toEqual({ mode: "increase", pct: 30 });
+  });
+
+  it("set_status → status nos params", () => {
+    const a = actionFromToolCall("set_status", args({ status: "paused" }), "tc4");
+    expect(a?.params).toEqual({ status: "paused" });
+  });
+
+  it("tool desconhecida → null", () => {
+    expect(actionFromToolCall("get_metrics", args({}), "x")).toBeNull();
+  });
+
+  it("set sem amountReais → null (não vira ação inválida)", () => {
+    expect(actionFromToolCall("adjust_budget", args({ mode: "set" }), "x")).toBeNull();
   });
 });
 

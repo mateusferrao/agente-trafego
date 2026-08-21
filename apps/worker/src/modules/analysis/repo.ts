@@ -345,11 +345,18 @@ export async function loadDailyToolContext(
   now: Date = new Date(),
 ): Promise<DailyToolContext> {
   const since = new Date(now.getTime() - DAY_MS);
+  // dono da ação = agentId direto (escrita por chat, 5c) OU o agente do run (análise).
+  // left join + coalesce cobre os dois sem precisar de backfill.
   const rows = await db
     .select({ toolKey: agentToolCalls.toolKey, args: agentToolCalls.args })
     .from(agentToolCalls)
-    .innerJoin(agentRuns, eq(agentToolCalls.runId, agentRuns.id))
-    .where(and(eq(agentRuns.agentId, agentId), gte(agentToolCalls.createdAt, since)));
+    .leftJoin(agentRuns, eq(agentToolCalls.runId, agentRuns.id))
+    .where(
+      and(
+        eq(sql`coalesce(${agentToolCalls.agentId}, ${agentRuns.agentId})`, agentId),
+        gte(agentToolCalls.createdAt, since),
+      ),
+    );
 
   const touchedToday = new Set<string>();
   const budgetChangedToday = new Set<string>();

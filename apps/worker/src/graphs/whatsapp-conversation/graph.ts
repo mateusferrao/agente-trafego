@@ -19,16 +19,22 @@ export function buildWhatsappConversationGraph(
     .addNode("agent", n.agent)
     .addNode("tools", n.toolsNode())
     .addNode("confirm", n.confirmWriteGate)
+    .addNode("echoRelay", n.echoRelay)
+    .addNode("apply", n.applyWrite)
     .addEdge(START, "agent")
-    // leitura → tools; escrita → gate de confirmação; nada → responde
+    // leitura → tools; escrita livre → gate de eco; confirm/cancel → apply; nada → responde
     .addConditionalEdges("agent", routeConversation, {
       tools: "tools",
       confirm: "confirm",
+      apply: "apply",
       __end__: END,
     })
     .addEdge("tools", "agent")
-    // após o gate, volta ao agente (que ecoa e aguarda "sim" no próximo turno)
-    .addEdge("confirm", "agent");
+    // gate → voz leve sobre o eco (LLM sem tools) → aguarda "sim" no próximo turno
+    .addEdge("confirm", "echoRelay")
+    .addEdge("echoRelay", END)
+    // aplicação da pendência confirmada → responde o desfecho e encerra
+    .addEdge("apply", END);
 
   // checkpointer Postgres: thread_id = conversationId → contexto entre mensagens.
   return workflow.compile({ checkpointer: deps.checkpointer });

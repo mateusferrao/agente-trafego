@@ -94,9 +94,11 @@ export const agentToolCalls = pgTable(
   "agent_tool_calls",
   {
     id: pk(),
-    runId: uuid("run_id")
-      .notNull()
-      .references(() => agentRuns.id, { onDelete: "cascade" }),
+    // dono da ação. Escrita por análise carrega o `run_id`; escrita LIVRE por chat (5c)
+    // não nasce de um run → `run_id` nullable, e o `agent_id` é a âncora (cap diário,
+    // undo, trilha). Rows legadas têm `agent_id` backfillado a partir do run.
+    agentId: uuid("agent_id").references(() => agents.id, { onDelete: "cascade" }),
+    runId: uuid("run_id").references(() => agentRuns.id, { onDelete: "cascade" }),
     toolKey: text("tool_key").notNull(),
     idempotencyKey: text("idempotency_key").notNull().unique(),
     risk: riskLevel("risk").notNull().default("low"),
@@ -106,7 +108,7 @@ export const agentToolCalls = pgTable(
     beforeState: jsonb("before_state").$type<Record<string, unknown>>(),
     ...timestamps,
   },
-  (t) => [index("agent_tool_calls_run_idx").on(t.runId)],
+  (t) => [index("agent_tool_calls_run_idx").on(t.runId), index("agent_tool_calls_agent_idx").on(t.agentId)],
 );
 
 /**

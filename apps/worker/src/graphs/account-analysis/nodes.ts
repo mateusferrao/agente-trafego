@@ -646,6 +646,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     for (const action of toApply) {
       try {
         const done = await executor.execute({
+          agentId: state.agentId,
           runId: state.runId,
           orgId: state.orgId,
           account: ref,

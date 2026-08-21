@@ -45,6 +45,7 @@ function fakeExecutor(result: MutationResult, opts?: { dryRun?: boolean; throws?
 
 const base = {
   account: { adAccountId: "act_1", accessToken: "tok" },
+  agentId: "agent1",
   runId: "run1",
   orgId: "org1",
   idempotencyKey: "k1",

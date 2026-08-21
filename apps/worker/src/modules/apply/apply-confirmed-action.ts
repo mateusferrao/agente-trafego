@@ -32,18 +32,25 @@ export interface CheckedApplyInput {
   readonly action: Action;
   readonly cfg: GuardrailConfig;
   readonly ctx: GuardrailContext;
-  readonly runId: string;
+  /** dono da ação (âncora do cap diário/undo/trilha). */
+  readonly agentId: string;
+  /** run de análise; null p/ escrita LIVRE por chat (5c). */
+  readonly runId: string | null;
   readonly orgId: string;
   readonly idempotencyKey: string;
+  /** força o dry-run (ex: preview do eco no chat, 5c); default = `cfg.dryRun`. */
+  readonly dryRun?: boolean;
 }
 
 /**
  * Núcleo puro-ish (executor injetado + `applyGuardrails` puro) — testável sem db.
  * Guardrail barra → `blocked`; executor lança → `failed`; escrita real sem mudança →
- * `noop`; senão → `applied` (dryRun herda de `cfg.dryRun`, aplicado dentro do executor).
+ * `noop`; senão → `applied`. `input.dryRun` força o ensaio (preview do eco); sem ele,
+ * herda de `cfg.dryRun`.
  */
 export async function applyCheckedAction(input: CheckedApplyInput): Promise<ApplyOutcome> {
-  const { executor, account, action, cfg, ctx, runId, orgId, idempotencyKey } = input;
+  const { executor, account, action, cfg, ctx, agentId, runId, orgId, idempotencyKey } = input;
+  const dryRun = input.dryRun ?? cfg.dryRun;
 
   const check = applyGuardrails([action], cfg, ctx);
   if (check.allowed.length === 0) {
@@ -53,7 +60,7 @@ export async function applyCheckedAction(input: CheckedApplyInput): Promise<Appl
 
   let done: Awaited<ReturnType<MetaToolExecutor["execute"]>>;
   try {
-    done = await executor.execute({ runId, orgId, account, action: clamped, idempotencyKey, dryRun: cfg.dryRun });
+    done = await executor.execute({ agentId, runId, orgId, account, action: clamped, idempotencyKey, dryRun });
   } catch (error) {
     return { kind: "failed", error, action: clamped };
   }
@@ -105,6 +112,7 @@ export async function applyConfirmedAction(deps: WorkerDeps, input: ApplyConfirm
     action: input.action,
     cfg,
     ctx: { touchedToday: daily.touchedToday, budgetChangedToday: daily.budgetChangedToday },
+    agentId: input.agentId,
     runId: input.runId,
     orgId: input.orgId,
     idempotencyKey: input.idempotencyKey,

@@ -60,6 +60,8 @@ interface AccountMetrics {
 }
 
 interface CampaignAnalysis {
+  /** id da campanha na plataforma — o agente usa p/ agir (pausar/budget) no chat (5c). */
+  readonly id: string;
   readonly name: string | null;
   readonly spend?: number;
   readonly cpa?: number;
@@ -170,6 +172,7 @@ export async function getCampaignAnalysisData(
 ): Promise<CampaignAnalysis | NoData | AmbiguousCampaign> {
   const rows = await db
     .select({
+      entityId: entityAnalyses.entityId,
       entityName: entityAnalyses.entityName,
       unitJson: entityAnalyses.unitJson,
       metricsJson: entityAnalyses.metricsJson,
@@ -201,6 +204,7 @@ export async function getCampaignAnalysisData(
   const m = row.metricsJson as Partial<InsightMetrics>;
   const top = unit.findings?.[0];
   return {
+    id: row.entityId,
     name: row.entityName ?? null,
     ...(typeof m.spend === "number" ? { spend: m.spend } : {}),
     ...(typeof m.cpa === "number" ? { cpa: m.cpa } : {}),

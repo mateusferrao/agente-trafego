@@ -11,7 +11,7 @@ export const DAY_MS = 24 * 60 * 60 * 1000;
 /** Linha crua de `agent_tool_calls` (inclui as de undo/undo_blocked). */
 export interface ToolCallRow {
   readonly id: string;
-  readonly runId: string;
+  readonly runId: string | null;
   readonly toolKey: string;
   readonly idempotencyKey: string;
   readonly args: Record<string, unknown>;
@@ -21,7 +21,7 @@ export interface ToolCallRow {
 
 export interface AppliedAction {
   readonly toolCallId: string;
-  readonly runId: string;
+  readonly runId: string | null;
   readonly type: string;
   readonly targetLevel: string;
   readonly targetId: string;

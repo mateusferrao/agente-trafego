@@ -4,12 +4,14 @@
 
 import { and, eq } from "drizzle-orm";
 import { HumanMessage, type AIMessage } from "@langchain/core/messages";
-import { adAccounts, agents, type Database } from "@trafego/db";
+import { adAccounts, agents, guardrailConfigs, type Database } from "@trafego/db";
+import type { ActionType } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
 import { buildWhatsappConversationGraph } from "../../graphs/whatsapp-conversation/graph.js";
 import {
   AGENT_TOOL_NAMES,
   CONCIERGE_TOOL_NAMES,
+  WRITE_TOOL_TO_ACTION,
   type ConversationToolContext,
 } from "../../graphs/whatsapp-conversation/tools.js";
 import { createNotifyRepo } from "../notify/repo.js";
@@ -30,6 +32,21 @@ async function resolveSoleAgent(
     .where(and(eq(agents.orgId, orgId), eq(agents.status, "active"), eq(adAccounts.status, "active")))
     .limit(2);
   return rows.length === 1 ? rows[0]! : null;
+}
+
+/**
+ * Nomes das tools de ESCRITA livre habilitadas p/ o agente = as cujo tipo de ação está em
+ * `allowedActions` (guardrail). É o "enforcement" do chat (5c): tool não permitida nem chega
+ * ao LLM → recusa honesta na hora. O guardrail re-checa no apply como 2ª rede.
+ */
+async function allowedWriteTools(db: Database, orgId: string, agentId: string): Promise<string[]> {
+  const [row] = await db
+    .select({ allowedActions: guardrailConfigs.allowedActions })
+    .from(guardrailConfigs)
+    .where(and(eq(guardrailConfigs.agentId, agentId), eq(guardrailConfigs.orgId, orgId)))
+    .limit(1);
+  const allowed = new Set<ActionType>((row?.allowedActions ?? []) as ActionType[]);
+  return [...WRITE_TOOL_TO_ACTION.entries()].filter(([, action]) => allowed.has(action)).map(([tool]) => tool);
 }
 
 export interface ConversationTurnInput {
@@ -53,7 +70,11 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
     contactId: input.contactId,
     conversationId: input.conversationId,
   };
-  const allow = sole ? AGENT_TOOL_NAMES : CONCIERGE_TOOL_NAMES;
+  // sole-agent: leitura/controle + escrita livre filtrada por allowedActions (5c).
+  // concierge (org multi-conta): só org-level (escrita via foco = 5c-6).
+  const allow = sole
+    ? new Set<string>([...AGENT_TOOL_NAMES, ...(await allowedWriteTools(deps.db, input.orgId, sole.agentId))])
+    : CONCIERGE_TOOL_NAMES;
 
   let reply = FALLBACK_REPLY;
   try {

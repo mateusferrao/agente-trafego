@@ -5,7 +5,19 @@
 
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE, type ApprovalId } from "@trafego/shared";
+import {
+  ACTION_PARAM_AMOUNT_MINOR,
+  ACTION_PARAM_MODE,
+  ACTION_PARAM_PCT,
+  ACTION_PARAM_STATUS,
+  APPROVAL_APPLY_JOB,
+  APPROVAL_APPLY_QUEUE,
+  BUDGET_MODE_SET,
+  type ActionType,
+  type ApprovalId,
+  type EntityLevel,
+} from "@trafego/shared";
+import type { Action } from "@trafego/shared/types";
 import type { WorkerDeps } from "../../composition.js";
 import { createRunDispatcher } from "../../modules/dispatch/run-dispatcher.js";
 import { makeReadTools, type ReadToolContext } from "./read-data.js";
@@ -118,10 +130,99 @@ export function makeConversationTools(
     },
   );
 
-  return [...readTools, triggerAnalysis, approve, reject].filter((t) => allow.has(t.name));
+  // ── ESCRITA LIVRE (5c): estas tools NÃO executam aqui — o roteador desvia pro nó
+  //    `confirm` (eco+confirma) ANTES do ToolNode. São só a declaração p/ o LLM propor.
+  //    A aplicação real acontece no nó `applyWrite` após o `confirm_write`.
+  const writeSchema = {
+    entityLevel: z.enum(["campaign", "adset", "ad"]),
+    entityId: z.string().min(1),
+    entityName: z.string().min(1).describe("nome legível da entidade (do get_campaign_analysis)"),
+  };
+  const proposeOnly = async () => "—"; // nunca chamado (roteado p/ confirm)
+
+  const pauseEntity = tool(proposeOnly, {
+    name: "pause_entity",
+    description: "Propõe PAUSAR uma entidade (campanha/conjunto/anúncio). Requer eco+confirma antes de aplicar.",
+    schema: z.object(writeSchema),
+  });
+  const resumeEntity = tool(proposeOnly, {
+    name: "resume_entity",
+    description: "Propõe REATIVAR uma entidade pausada. Requer eco+confirma.",
+    schema: z.object(writeSchema),
+  });
+  const setStatus = tool(proposeOnly, {
+    name: "set_status",
+    description: "Propõe mudar o status de uma entidade. Requer eco+confirma.",
+    schema: z.object({ ...writeSchema, status: z.enum(["active", "paused"]) }),
+  });
+  const adjustBudget = tool(proposeOnly, {
+    name: "adjust_budget",
+    description:
+      "Propõe ajustar o budget diário: por % (mode increase/decrease + pct) OU valor absoluto (mode set + amountReais). Requer eco+confirma.",
+    schema: z.object({
+      ...writeSchema,
+      mode: z.enum(["increase", "decrease", "set"]),
+      pct: z.number().positive().optional().describe("magnitude % (só para increase/decrease)"),
+      amountReais: z.number().positive().optional().describe("valor absoluto em reais (só para mode set)"),
+    }),
+  });
+
+  // ── CONTROLE do eco+confirma (turno 2): o LLM classifica a intenção do usuário.
+  //    A ação aplicada é a CONGELADA no state (não re-especifica nada). Roteadas p/ applyWrite.
+  const confirmWrite = tool(proposeOnly, {
+    name: "confirm_write",
+    description: "Confirma a(s) ação(ões) pendente(s) que você ecoou — só quando o usuário disser sim claramente.",
+    schema: z.object({}),
+  });
+  const cancelWrite = tool(proposeOnly, {
+    name: "cancel_write",
+    description: "Cancela a(s) ação(ões) pendente(s) — quando o usuário recusar.",
+    schema: z.object({}),
+  });
+
+  const writeTools = [pauseEntity, resumeEntity, setStatus, adjustBudget, confirmWrite, cancelWrite];
+  return [...readTools, triggerAnalysis, approve, reject, ...writeTools].filter((t) => allow.has(t.name));
 }
 
-/** Allowlist com 1 agente em contexto: leitura + análise + resolução de pendentes. */
+/** Constrói a `Action` neutra a partir de um tool_call de escrita livre do chat (5c). */
+export function actionFromToolCall(name: string, args: Record<string, unknown>, id: string): Action | null {
+  if (!WRITE_TOOL_NAMES.has(name)) return null;
+  const level = args["entityLevel"] as EntityLevel;
+  const entityId = String(args["entityId"] ?? "");
+  const entityName = typeof args["entityName"] === "string" ? (args["entityName"] as string) : undefined;
+  if (!level || !entityId) return null;
+
+  const base = {
+    id,
+    type: name as ActionType,
+    target: { level, id: entityId, ...(entityName ? { name: entityName } : {}) },
+    source: "llm" as const,
+    riskLevel: "medium" as const, // gate sempre confirma; risco real vem do guardrail
+    reason: "solicitado no chat",
+  };
+
+  if (name === "set_status") {
+    return { ...base, params: { [ACTION_PARAM_STATUS]: String(args["status"] ?? "") } };
+  }
+  if (name === "adjust_budget") {
+    const mode = String(args["mode"] ?? "");
+    if (mode === BUDGET_MODE_SET) {
+      const reais = Number(args["amountReais"]);
+      if (!Number.isFinite(reais)) return null;
+      return { ...base, params: { [ACTION_PARAM_MODE]: mode, [ACTION_PARAM_AMOUNT_MINOR]: Math.round(reais * 100) } };
+    }
+    const pct = Number(args["pct"]);
+    if (!Number.isFinite(pct)) return null;
+    return { ...base, params: { [ACTION_PARAM_MODE]: mode, [ACTION_PARAM_PCT]: Math.abs(pct) } };
+  }
+  return { ...base, params: {} };
+}
+
+/**
+ * Base com 1 agente em contexto: leitura + análise + resolução de pendentes + controle
+ * do eco+confirma. As tools de ESCRITA LIVRE (pause/resume/set_status/adjust_budget)
+ * entram por cima, filtradas por `allowedActions` do agente (montado em `turn.ts`).
+ */
 export const AGENT_TOOL_NAMES: ReadonlySet<string> = new Set([
   "get_account_status",
   "get_metrics",
@@ -131,14 +232,32 @@ export const AGENT_TOOL_NAMES: ReadonlySet<string> = new Set([
   "trigger_analysis",
   "approve",
   "reject",
+  "confirm_write",
+  "cancel_write",
 ]);
 
 /** Concierge (org multi-conta): só org-level — ver e resolver pendentes cross-conta. */
 export const CONCIERGE_TOOL_NAMES: ReadonlySet<string> = new Set(["list_pending", "approve", "reject"]);
 
 /**
- * Tools que exigem ECO+CONFIRMA antes de executar (gate). `approve`/`reject` NÃO
- * entram: o nudge/análise já foi o eco e a referência inequívoca aplica direto
- * (§8 — ambiguidade o LLM resolve perguntando). Escrita LIVRE do zero = 5c.
+ * Tools de ESCRITA LIVRE que exigem ECO+CONFIRMA antes de aplicar (gate, 5c). O roteador
+ * as desvia pro nó `confirm`. `approve`/`reject` NÃO entram: o nudge/análise já foi o eco.
+ * A allowlist real por-agente sai de `allowedActions` (guardrail) em `turn.ts`.
  */
-export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set<string>();
+export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
+  "pause_entity",
+  "resume_entity",
+  "set_status",
+  "adjust_budget",
+]);
+
+/** Tools de controle do eco+confirma (turno 2) — roteadas pro nó `applyWrite`. */
+export const CONTROL_WRITE_TOOL_NAMES: ReadonlySet<string> = new Set<string>(["confirm_write", "cancel_write"]);
+
+/** Nome de tool de escrita ↔ tipo de ação (p/ filtrar a allowlist por `allowedActions`). */
+export const WRITE_TOOL_TO_ACTION: ReadonlyMap<string, ActionType> = new Map([
+  ["pause_entity", "pause_entity"],
+  ["resume_entity", "resume_entity"],
+  ["set_status", "set_status"],
+  ["adjust_budget", "adjust_budget"],
+]);

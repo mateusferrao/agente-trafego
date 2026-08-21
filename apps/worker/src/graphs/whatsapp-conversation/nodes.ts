@@ -3,25 +3,69 @@
 // tools de LEITURA + trigger_analysis, então o gate fica inativo (nenhuma write tool).
 
 import { ChatOpenAI } from "@langchain/openai";
-import { AIMessage, SystemMessage } from "@langchain/core/messages";
+import { AIMessage, HumanMessage, SystemMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import type { Logger } from "pino";
+import { applyGuardrails, buildWriteEcho, type EchoItem } from "@trafego/core";
 import { sleep } from "@trafego/shared";
-import type { OrgId } from "@trafego/shared/types";
+import type { Action, OrgId } from "@trafego/shared/types";
 import type { WorkerDeps } from "../../composition.js";
 import { loadConversationConfig } from "./system-prompt.js";
 import { windowMessages } from "./window.js";
 import {
+  CONTROL_WRITE_TOOL_NAMES,
   WRITE_TOOL_NAMES,
+  actionFromToolCall,
   makeConversationTools,
   type ConversationToolContext,
 } from "./tools.js";
+import { makeMetaToolExecutor } from "../../executors/meta-tools.js";
+import { applyCheckedAction, type ApplyOutcome } from "../../modules/apply/apply-confirmed-action.js";
+import { loadWriteContext } from "../../modules/apply/write-context.js";
 import type {
+  PendingWrite,
   WhatsappConversationStateType,
   WhatsappConversationUpdate,
 } from "./state.js";
 
 const CONVERSATION_TEMPERATURE = 0.3;
+
+/** TTL do eco+confirma: um "sim" muito depois não aplica uma ação esquecida (§8). */
+const PENDING_WRITE_TTL_MS = 30 * 60 * 1000;
+
+/** ToolMessage p/ cada tool_call (mantém o histórico válido). Primeiro leva o texto; resto, eco curto. */
+function answerToolCalls(calls: readonly { id?: string }[], text: string): ToolMessage[] {
+  return calls.map((c, i) => new ToolMessage({ content: i === 0 ? text : "(ver acima)", tool_call_id: c.id ?? "" }));
+}
+
+/** pendingWrite ainda válido (não expirado)? */
+function activePendingWrite(pw: PendingWrite | null): PendingWrite | null {
+  return pw && Date.parse(pw.expiresAt) > Date.now() ? pw : null;
+}
+
+const PAST_PHRASE: Record<string, (name: string) => string> = {
+  pause_entity: (n) => `Pausei ${n}`,
+  resume_entity: (n) => `Reativei ${n}`,
+  set_status: (n) => `Atualizei ${n}`,
+  adjust_budget: (n) => `Ajustei o budget de ${n}`,
+};
+
+/** Linha de desfecho de UMA ação aplicada (voz determinística, §UX). */
+function outcomeLine(action: Action, outcome: ApplyOutcome): string {
+  const name = action.target.name ?? action.target.id;
+  switch (outcome.kind) {
+    case "applied":
+      return outcome.dryRun
+        ? `🧪 Simulei em ${name} (dry-run, não apliquei de verdade).`
+        : `✅ ${(PAST_PHRASE[action.type] ?? ((x: string) => `Mexi em ${x}`))(name)}.`;
+    case "noop":
+      return `Não precisei mexer em ${name} — já estava assim.`;
+    case "blocked":
+      return `Não consegui em ${name}: ${outcome.reason}.`;
+    case "failed":
+      return `Não consegui aplicar em ${name} agora — a Meta não respondeu. Tenta de novo.`;
+  }
+}
 
 /** Extrai tokens/custo da resposta do ChatOpenAI (OpenRouter com usage.include). */
 function usageOf(msg: AIMessage): { inputTokens?: number; outputTokens?: number; costUsd?: number } {
@@ -159,6 +203,23 @@ export function makeConversationNodes(
   const { logger } = deps;
   const tools = makeConversationTools(deps, ctx, allow);
 
+  const executor = makeMetaToolExecutor(deps);
+
+  /** Nova instância de chat LLM (OpenRouter). `withTools` liga as tools da allowlist. */
+  function makeChat(model: string, withTools: boolean) {
+    const chat = new ChatOpenAI({
+      model,
+      apiKey: deps.conversation.apiKey,
+      configuration: { baseURL: deps.conversation.baseUrl },
+      temperature: CONVERSATION_TEMPERATURE,
+      // OpenRouter devolve custo real quando pedimos usage — essencial p/ o billing (§11).
+      // Com .bindTools(), o @langchain/openai suprime response_metadata.usage (custo some)
+      // — patchCostInBackground() cobre com fallback assíncrono (nunca bloqueia a resposta).
+      modelKwargs: { usage: { include: true } },
+    });
+    return withTools ? chat.bindTools(tools) : chat;
+  }
+
   /** Nó ReAct: LLM (OpenRouter) com as tools da allowlist + voz do agente. */
   async function agent(state: WhatsappConversationStateType): Promise<WhatsappConversationUpdate> {
     logger.debug({ contactId: ctx.contactId }, "conversation:agent");
@@ -169,29 +230,23 @@ export function makeConversationNodes(
       deps.conversation.model,
     );
 
-    const chat = new ChatOpenAI({
-      model,
-      apiKey: deps.conversation.apiKey,
-      configuration: { baseURL: deps.conversation.baseUrl },
-      temperature: CONVERSATION_TEMPERATURE,
-      // OpenRouter devolve custo real quando pedimos usage — essencial p/ o billing (§11).
-      // Com .bindTools() abaixo, o @langchain/openai suprime response_metadata.usage
-      // (custo some) mesmo assim — patchCostInBackground() cobre com fallback
-      // assíncrono por generation id (nunca bloqueia esta resposta).
-      modelKwargs: { usage: { include: true } },
-    }).bindTools(tools);
+    // eco+confirma (5c): se há ação pendente válida, oriente o LLM a só CLASSIFICAR a
+    // intenção (confirm_write/cancel_write) — a ação aplicada é a congelada, sem drift.
+    const pending = activePendingWrite(state.pendingWrite);
+    const sys = pending
+      ? `${systemPrompt}\n\nHá ação(ões) que você já propôs e que aguardam a confirmação do usuário:\n${pending.echo}\n\nSe a última mensagem do usuário confirmar claramente (ex: "sim", "pode", "manda"), chame confirm_write. Se recusar, chame cancel_write. Se pedir mudança/outra coisa, IGNORE a pendência e trate normalmente.`
+      : systemPrompt;
 
-    // janela por turno + teto de tokens (nunca quebra par tool_call/tool_result).
     const windowed = windowMessages(state.messages, {
       maxTurns: deps.conversation.historyTurns,
       maxTokens: deps.conversation.maxTokens,
     });
-    const response = (await chat.invoke([new SystemMessage(systemPrompt), ...windowed])) as AIMessage;
-
-    // metering (§11): as chamadas do chat também entram no ledger de custo.
+    const response = (await makeChat(model, true).invoke([new SystemMessage(sys), ...windowed])) as AIMessage;
     await recordConversationUsage(deps, ctx, model, response);
 
-    return { messages: [response] };
+    // limpa pendência expirada (o "sim" tardio não aplica ação esquecida).
+    const clearExpired = state.pendingWrite && !pending ? { pendingWrite: null } : {};
+    return { messages: [response], ...clearExpired };
   }
 
   /** Executa as tools de leitura escolhidas pelo modelo (escrita passa pelo gate). */
@@ -200,26 +255,149 @@ export function makeConversationNodes(
   }
 
   /**
-   * Gate de confirmação antes de QUALQUER escrita (CLAUDE §8). Inativo na 5b-2.2
-   * (sem write tools); implementado na 5b-2.3 (aprovação conversacional).
+   * Gate de ECO+CONFIRMA antes de QUALQUER escrita (CLAUDE §8, 5c). Roda guardrail
+   * (clamp/drop) + dry-run SEM PERSISTIR (ports.ads.mutate direto — o executor persistiria
+   * agent_tool_calls até em dry-run), monta o eco determinístico do que VAI acontecer e
+   * congela as ações clampadas em `pendingWrite`. Nada é escrito na Meta aqui.
    */
-  async function confirmWriteGate(): Promise<WhatsappConversationUpdate> {
-    return {};
+  async function confirmWriteGate(state: WhatsappConversationStateType): Promise<WhatsappConversationUpdate> {
+    const last = state.messages.at(-1) as AIMessage | undefined;
+    const calls = (last?.tool_calls ?? []).filter((c) => WRITE_TOOL_NAMES.has(c.name));
+    const proposed = calls
+      .map((c) => actionFromToolCall(c.name, (c.args ?? {}) as Record<string, unknown>, c.id ?? c.name))
+      .filter((a): a is Action => a !== null);
+    if (proposed.length === 0) {
+      return { messages: answerToolCalls(calls, "Não entendi qual ação você quer. Pode repetir?") };
+    }
+
+    const wctx = await loadWriteContext(deps, ctx.orgId, ctx.agentId, proposed.map((a) => a.target));
+    if (!wctx) {
+      return { messages: answerToolCalls(calls, "Não consegui acessar a conta agora. Tenta de novo em instantes.") };
+    }
+
+    const echoItems: EchoItem[] = [];
+    const frozen: Action[] = [];
+    const blocked: string[] = [];
+    for (const action of proposed) {
+      const label = action.target.name ?? action.target.id;
+      const check = applyGuardrails([action], wctx.cfg, wctx.ctx);
+      if (check.allowed.length === 0) {
+        blocked.push(`${label}: ${check.dropped[0]?.reason ?? "não permitida"}`);
+        continue;
+      }
+      const clamped = check.allowed[0]!;
+      try {
+        const dry = await deps.ports.ads.mutate(wctx.account, clamped, { dryRun: true });
+        echoItems.push({
+          action: clamped,
+          before: dry.before as Record<string, unknown>,
+          after: dry.after as Record<string, unknown>,
+          entityName: clamped.target.name ?? clamped.target.id,
+        });
+        frozen.push(clamped);
+      } catch (err) {
+        logger.warn({ err, entityId: clamped.target.id }, "conversation:dry-run do eco falhou");
+        blocked.push(`${label}: não consegui simular agora`);
+      }
+    }
+
+    const parts: string[] = [];
+    if (echoItems.length > 0) parts.push(buildWriteEcho(echoItems));
+    if (blocked.length > 0) parts.push(`Não consigo:\n${blocked.map((b, i) => `${i + 1}. ${b}`).join("\n")}`);
+    const echo = parts.join("\n\n") || "Não consegui preparar essa ação.";
+
+    const update: WhatsappConversationUpdate = { messages: answerToolCalls(calls, echo) };
+    if (frozen.length > 0) {
+      update.pendingWrite = {
+        echo,
+        expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString(),
+        actions: frozen,
+      };
+    }
+    return update;
   }
 
-  return { agent, toolsNode, confirmWriteGate };
+  /** Voz leve (LLM SEM tools) sobre o eco determinístico — não pode disparar ação (sem loop). */
+  async function echoRelay(state: WhatsappConversationStateType): Promise<WhatsappConversationUpdate> {
+    const { systemPrompt, model } = await loadConversationConfig(
+      deps.db,
+      ctx.orgId,
+      ctx.agentId.length > 0 ? ctx.agentId : null,
+      deps.conversation.model,
+    );
+    const lastTool = [...state.messages].reverse().find((m: BaseMessage) => m.getType() === "tool");
+    const echoText = typeof lastTool?.content === "string" ? lastTool.content : "";
+    if (!echoText) return {};
+    const sys = new SystemMessage(
+      `${systemPrompt}\n\nRepasse ao usuário, em português e voz leve, EXATAMENTE este pedido de confirmação — não invente, não altere nomes, números ou valores, e termine perguntando se confirma:`,
+    );
+    const response = (await makeChat(model, false).invoke([sys, new HumanMessage(echoText)])) as AIMessage;
+    await recordConversationUsage(deps, ctx, model, response);
+    const text = typeof response.content === "string" ? response.content.trim() : "";
+    // fallback determinístico: se o LLM devolver vazio, manda o eco cru (nunca fica mudo).
+    return { messages: [text.length > 0 ? response : new AIMessage(echoText)] };
+  }
+
+  /** Turno 2: aplica (confirm_write) ou descarta (cancel_write) a pendência congelada. */
+  async function applyWrite(state: WhatsappConversationStateType): Promise<WhatsappConversationUpdate> {
+    const last = state.messages.at(-1) as AIMessage | undefined;
+    const calls = last?.tool_calls ?? [];
+    const isConfirm = calls.some((c) => c.name === "confirm_write");
+
+    if (!isConfirm) {
+      return { messages: [...answerToolCalls(calls, "cancelado"), new AIMessage("Ok, não mexi em nada.")], pendingWrite: null };
+    }
+
+    const pending = activePendingWrite(state.pendingWrite);
+    if (!pending) {
+      return {
+        messages: [...answerToolCalls(calls, "nada pendente"), new AIMessage("Não tenho nada pendente pra confirmar (ou já expirou). Me diz de novo o que você quer.")],
+        pendingWrite: null,
+      };
+    }
+
+    const wctx = await loadWriteContext(deps, ctx.orgId, ctx.agentId, pending.actions.map((a) => a.target));
+    if (!wctx) {
+      return {
+        messages: [...answerToolCalls(calls, "conta indisponível"), new AIMessage("Não consegui acessar a conta agora. Tenta de novo em instantes.")],
+        pendingWrite: null,
+      };
+    }
+
+    // escrita por chat: sem run de análise (runId null); o agentId é a âncora da trilha.
+    const lines: string[] = [];
+    for (const action of pending.actions) {
+      const outcome = await applyCheckedAction({
+        executor,
+        account: wctx.account,
+        action,
+        cfg: wctx.cfg,
+        ctx: wctx.ctx,
+        agentId: ctx.agentId,
+        runId: null,
+        orgId: ctx.orgId,
+        idempotencyKey: `conv:${ctx.conversationId}:${action.id}`,
+      });
+      lines.push(outcomeLine(action, outcome));
+    }
+    return { messages: [...answerToolCalls(calls, "aplicado"), new AIMessage(lines.join("\n"))], pendingWrite: null };
+  }
+
+  return { agent, toolsNode, confirmWriteGate, echoRelay, applyWrite };
 }
 
 /**
- * Roteamento ReAct pós-agent: tool de LEITURA → "tools"; tool de ESCRITA →
- * "confirm" (5b-2.3); sem tool call → END (responde ao usuário).
+ * Roteamento ReAct pós-agent: controle do eco (confirm_write/cancel_write) → "apply";
+ * tool de ESCRITA livre → "confirm" (eco+confirma); tool de LEITURA → "tools"; sem tool
+ * call → END (responde ao usuário).
  */
 export function routeConversation(
   state: WhatsappConversationStateType,
-): "tools" | "confirm" | "__end__" {
+): "tools" | "confirm" | "apply" | "__end__" {
   const last = state.messages.at(-1);
   const toolCalls = (last as AIMessage | undefined)?.tool_calls ?? [];
   if (toolCalls.length === 0) return "__end__";
-  const hasWrite = toolCalls.some((c) => WRITE_TOOL_NAMES.has(c.name));
-  return hasWrite ? "confirm" : "tools";
+  if (toolCalls.some((c) => CONTROL_WRITE_TOOL_NAMES.has(c.name))) return "apply";
+  if (toolCalls.some((c) => WRITE_TOOL_NAMES.has(c.name))) return "confirm";
+  return "tools";
 }

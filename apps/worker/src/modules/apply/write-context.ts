@@ -1,0 +1,96 @@
+// Contexto de escrita para o chat (5c-3): resolve conta + guardrail config + contexto
+// cross-run E lê o estado FRESCO de cada entidade-alvo (status + budget) p/ o guardrail
+// poder detectar no-op (statusByEntity) e clampar budget set-absoluto (budgetAmountByEntity)
+// ANTES do eco — assim o eco reflete o que de fato vai acontecer. IO na casca; o guardrail
+// segue puro. Diferente do `applyConfirmedAction` (approval-apply), que só precisa do
+// contexto diário (as aprovações nunca carregam budget set-absoluto).
+
+import { and, eq } from "drizzle-orm";
+import { agents, guardrailConfigs } from "@trafego/db";
+import { entityKeyOf, type GuardrailContext } from "@trafego/core";
+import { toGuardrailConfig } from "@trafego/shared";
+import type { ActionTarget, EntityStatus, GuardrailConfig } from "@trafego/shared";
+import type { AdAccountRef } from "@trafego/shared/ports";
+import { mapStatus } from "@trafego/ads-meta";
+import type { WorkerDeps } from "../../composition.js";
+import { createAnalysisRepo, loadDailyToolContext } from "../analysis/repo.js";
+
+export interface WriteContext {
+  readonly account: AdAccountRef;
+  readonly cfg: GuardrailConfig;
+  readonly ctx: GuardrailContext;
+}
+
+/** Budget do estado (daily preferido) em unidade mínima, ou null se o nível não tem. */
+function budgetAmountOf(state: Record<string, unknown>): number | null {
+  const daily = Number(state["daily_budget"]);
+  if (Number.isFinite(daily) && daily > 0) return daily;
+  const lifetime = Number(state["lifetime_budget"]);
+  if (Number.isFinite(lifetime) && lifetime > 0) return lifetime;
+  return null;
+}
+
+/**
+ * Monta o contexto de escrita do chat: conta/token (via agente), guardrail config,
+ * contexto diário (cap/dia + anti-compounding) e — por leitura FRESCA de cada alvo —
+ * status/budget atuais. Conta indisponível → null (o chamador recusa com clareza).
+ */
+export async function loadWriteContext(
+  deps: WorkerDeps,
+  orgId: string,
+  agentId: string,
+  targets: readonly ActionTarget[],
+): Promise<WriteContext | null> {
+  const { db, ports, logger } = deps;
+  const repo = createAnalysisRepo(db);
+
+  const [ag] = await db
+    .select({ adAccountId: agents.adAccountId })
+    .from(agents)
+    .where(eq(agents.id, agentId))
+    .limit(1);
+  const account = ag ? await repo.loadAccount(orgId, ag.adAccountId) : null;
+  if (!account) return null;
+  const accessToken = ports.vault.decrypt(account.tokenCripto);
+  const ref: AdAccountRef = { adAccountId: account.metaAdAccountId, accessToken };
+
+  const [guardrailRow] = await db
+    .select()
+    .from(guardrailConfigs)
+    .where(and(eq(guardrailConfigs.agentId, agentId), eq(guardrailConfigs.orgId, orgId)))
+    .limit(1);
+  const cfg = toGuardrailConfig(guardrailRow);
+  const daily = await loadDailyToolContext(db, agentId);
+
+  const statusByEntity = new Map<string, EntityStatus>();
+  const budgetByEntity = new Map<string, boolean>();
+  const budgetAmountByEntity = new Map<string, number>();
+  // 1 leitura fresca por alvo distinto (chat = baixo volume; interativo).
+  const seen = new Set<string>();
+  for (const target of targets) {
+    const key = entityKeyOf(target);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    try {
+      const fresh = await ports.ads.readEntityState(ref, target.id);
+      statusByEntity.set(key, mapStatus(fresh["effective_status"] as string | undefined, fresh["status"] as string | undefined));
+      const amount = budgetAmountOf(fresh);
+      budgetByEntity.set(key, amount !== null);
+      if (amount !== null) budgetAmountByEntity.set(key, amount);
+    } catch (err) {
+      logger.warn({ agentId, entityId: target.id, err }, "chat-write:leitura fresca falhou");
+    }
+  }
+
+  return {
+    account: ref,
+    cfg,
+    ctx: {
+      touchedToday: daily.touchedToday,
+      budgetChangedToday: daily.budgetChangedToday,
+      statusByEntity,
+      budgetByEntity,
+      budgetAmountByEntity,
+    },
+  };
+}

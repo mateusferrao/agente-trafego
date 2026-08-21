@@ -1,5 +1,30 @@
 import { describe, expect, it, vi } from "vitest";
-import { drainPendingCostPatches, needsCostFallback, patchCostInBackground, scheduleCostPatch } from "./nodes.js";
+import { AIMessage } from "@langchain/core/messages";
+import { drainPendingCostPatches, needsCostFallback, patchCostInBackground, routeConversation, scheduleCostPatch } from "./nodes.js";
+import type { WhatsappConversationStateType } from "./state.js";
+
+function stateWith(toolCalls: { name: string; args?: Record<string, unknown> }[]): WhatsappConversationStateType {
+  const msg = new AIMessage({ content: "", tool_calls: toolCalls.map((t, i) => ({ id: `c${i}`, name: t.name, args: t.args ?? {} })) });
+  return { messages: [msg] } as WhatsappConversationStateType;
+}
+
+describe("routeConversation", () => {
+  it("sem tool call → END", () => {
+    expect(routeConversation({ messages: [new AIMessage("oi")] } as WhatsappConversationStateType)).toBe("__end__");
+  });
+  it("tool de leitura → tools", () => {
+    expect(routeConversation(stateWith([{ name: "get_metrics" }]))).toBe("tools");
+  });
+  it("tool de escrita livre → confirm (eco+confirma)", () => {
+    expect(routeConversation(stateWith([{ name: "pause_entity" }]))).toBe("confirm");
+  });
+  it("confirm_write → apply", () => {
+    expect(routeConversation(stateWith([{ name: "confirm_write" }]))).toBe("apply");
+  });
+  it("cancel_write → apply", () => {
+    expect(routeConversation(stateWith([{ name: "cancel_write" }]))).toBe("apply");
+  });
+});
 
 const fakeLogger = { debug: vi.fn() };
 

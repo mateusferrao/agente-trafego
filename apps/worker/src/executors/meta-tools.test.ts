@@ -59,6 +59,7 @@ function makeDeps(existing: unknown[] = [], current: Record<string, unknown> = {
 }
 
 const baseInput: ExecuteActionInput = {
+  agentId: "agent1",
   runId: "run1",
   orgId: "org1",
   account: { adAccountId: "act_1", accessToken: "tok" },

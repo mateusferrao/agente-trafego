@@ -21,7 +21,7 @@ const USAGE_TYPE_ACTION_APPLIED = "action_applied";
 /** `agent_tool_call` carregado p/ o undo (org-scoped na casca que o carregou). */
 export interface RevertToolCall {
   readonly id: string;
-  readonly runId: string;
+  readonly runId: string | null;
   readonly beforeState: Record<string, unknown> | null;
   readonly args: Record<string, unknown>;
   /** result da ação original ({ before, after }) — base do re-check de drift. */
@@ -54,11 +54,14 @@ function driftFields(state: Record<string, unknown> | null | undefined): string 
 }
 
 export interface ExecuteActionInput {
-  readonly runId: string;
+  /** dono da ação — âncora do cap diário/undo/trilha (sempre presente). */
+  readonly agentId: string;
+  /** run de análise que originou a ação; null p/ escrita LIVRE por chat (5c). */
+  readonly runId: string | null;
   readonly orgId: string;
   readonly account: AdAccountRef;
   readonly action: Action;
-  /** chave idempotente estável (`${runId}:${action.id}`). */
+  /** chave idempotente estável (`${runId}:${action.id}` ou `conv:${conversationId}:${action.id}`). */
   readonly idempotencyKey: string;
   /** ensaio: simula (lê + computa) sem escrever na Meta. */
   readonly dryRun: boolean;
@@ -80,7 +83,7 @@ export function makeMetaToolExecutor(deps: WorkerDeps) {
 
   /** Aplica (ou simula) uma ação de escrita, idempotente + auditada. */
   async function execute(input: ExecuteActionInput): Promise<ExecutedAction> {
-    const { runId, orgId, account, action, idempotencyKey, dryRun } = input;
+    const { agentId, runId, orgId, account, action, idempotencyKey, dryRun } = input;
 
     // idempotência: já aplicado? → devolve o result gravado (sem re-mutar).
     const [existing] = await db
@@ -98,6 +101,7 @@ export function makeMetaToolExecutor(deps: WorkerDeps) {
     await db
       .insert(agentToolCalls)
       .values({
+        agentId,
         runId,
         toolKey: action.type,
         idempotencyKey,
@@ -113,7 +117,7 @@ export function makeMetaToolExecutor(deps: WorkerDeps) {
       actor: ACTOR_AGENT,
       action: `meta.${action.type}${dryRun ? ".dry_run" : ""}`,
       target: targetKey(action),
-      metadata: { runId, dryRun, risk: action.riskLevel },
+      metadata: { agentId, runId, dryRun, risk: action.riskLevel },
       before: result.before as Record<string, unknown>,
       after: result.after as Record<string, unknown>,
     });
@@ -122,7 +126,7 @@ export function makeMetaToolExecutor(deps: WorkerDeps) {
     if (!dryRun) {
       await ports.metering.record({
         orgId: orgId as OrgId,
-        runId: runId as RunId,
+        ...(runId ? { runId: runId as RunId } : {}),
         type: USAGE_TYPE_ACTION_APPLIED,
         payload: { actionType: action.type, target: targetKey(action), risk: action.riskLevel },
       });
