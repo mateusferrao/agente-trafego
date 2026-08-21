@@ -48,6 +48,7 @@ import {
   triggerRunOutput,
 } from "../modules/runs/schema.js";
 import { dashboardOutput, liveMetricsOutput, refreshDataOutput } from "../modules/dashboard/schema.js";
+import { timelineOutput } from "../modules/timeline/schema.js";
 import { channelStateOutput } from "../modules/channels/schema.js";
 import { feedbackInput, feedbackOutput } from "../modules/recommendations/schema.js";
 import {
@@ -102,6 +103,7 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const LiveMetricsOutput = registry.register("LiveMetricsOutput", liveMetricsOutput);
   const RefreshDataOutput = registry.register("RefreshDataOutput", refreshDataOutput);
   const DashboardOutput = registry.register("DashboardOutput", dashboardOutput);
+  const TimelineOutput = registry.register("TimelineOutput", timelineOutput);
   const RunDetailOutput = registry.register("RunDetailOutput", runDetailOutput);
   const MuteCampaignInput = registry.register("MuteCampaignInput", muteCampaignInput);
   const MutedCampaignsOutput = registry.register("MutedCampaignsOutput", mutedCampaignsOutput);
@@ -407,6 +409,21 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
       202: jsonRes("sync-only enfileirado (atualizar agora)", RefreshDataOutput),
       404: { description: "conta não encontrada" },
     },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts/{id}/timeline",
+    tags: ["timeline"],
+    request: {
+      params: accountParams,
+      query: z.object({
+        types: z.string().optional(),
+        since: z.string().optional(),
+        limit: z.string().optional(),
+        offset: z.string().optional(),
+      }),
+    },
+    responses: { 200: jsonRes("feed de auditoria da conta (paginado)", TimelineOutput) },
   });
   registry.registerPath({
     method: "get",

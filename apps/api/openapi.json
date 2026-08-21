@@ -2054,6 +2054,367 @@
           "panorama"
         ]
       },
+      "TimelineOutput": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "analysis_completed"
+                      ]
+                    },
+                    "runId": {
+                      "type": "string"
+                    },
+                    "grade": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "headline": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "recommendationCount": {
+                      "type": "number"
+                    },
+                    "recommendations": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "riskLevel": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "status": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "title",
+                          "riskLevel",
+                          "status"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "at",
+                    "type",
+                    "runId",
+                    "grade",
+                    "headline",
+                    "recommendationCount",
+                    "recommendations"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "error"
+                      ]
+                    },
+                    "runId": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "at",
+                    "type",
+                    "runId",
+                    "message"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "action_applied"
+                      ]
+                    },
+                    "toolCallId": {
+                      "type": "string"
+                    },
+                    "toolKey": {
+                      "type": "string"
+                    },
+                    "entityName": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "fromChat": {
+                      "type": "boolean"
+                    },
+                    "simulated": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "at",
+                    "type",
+                    "toolCallId",
+                    "toolKey",
+                    "entityName",
+                    "fromChat",
+                    "simulated"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "action_rolled_back"
+                      ]
+                    },
+                    "toolCallId": {
+                      "type": "string"
+                    },
+                    "toolKey": {
+                      "type": "string"
+                    },
+                    "entityName": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "fromChat": {
+                      "type": "boolean"
+                    },
+                    "simulated": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "at",
+                    "type",
+                    "toolCallId",
+                    "toolKey",
+                    "entityName",
+                    "fromChat",
+                    "simulated"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "approval_requested"
+                      ]
+                    },
+                    "approvalId": {
+                      "type": "string"
+                    },
+                    "actionType": {
+                      "type": "string"
+                    },
+                    "entityName": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "at",
+                    "type",
+                    "approvalId",
+                    "actionType",
+                    "entityName"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "approval_approved"
+                      ]
+                    },
+                    "approvalId": {
+                      "type": "string"
+                    },
+                    "actionType": {
+                      "type": "string"
+                    },
+                    "entityName": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "at",
+                    "type",
+                    "approvalId",
+                    "actionType",
+                    "entityName"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "approval_rejected"
+                      ]
+                    },
+                    "approvalId": {
+                      "type": "string"
+                    },
+                    "actionType": {
+                      "type": "string"
+                    },
+                    "entityName": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "at",
+                    "type",
+                    "approvalId",
+                    "actionType",
+                    "entityName"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "approval_expired"
+                      ]
+                    },
+                    "approvalId": {
+                      "type": "string"
+                    },
+                    "actionType": {
+                      "type": "string"
+                    },
+                    "entityName": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "at",
+                    "type",
+                    "approvalId",
+                    "actionType",
+                    "entityName"
+                  ]
+                }
+              ]
+            }
+          },
+          "hasMore": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "hasMore"
+        ]
+      },
       "RunDetailOutput": {
         "type": "object",
         "properties": {
@@ -4314,6 +4675,67 @@
           },
           "404": {
             "description": "conta não encontrada"
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/timeline": {
+      "get": {
+        "tags": [
+          "timeline"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "types",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "since",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "offset",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "feed de auditoria da conta (paginado)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimelineOutput"
+                }
+              }
+            }
           }
         }
       }

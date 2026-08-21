@@ -23,6 +23,7 @@ import { approvalsRoutes } from "../modules/approvals/routes.js";
 import { recommendationsRoutes } from "../modules/recommendations/routes.js";
 import { runsRoutes } from "../modules/runs/routes.js";
 import { dashboardRoutes } from "../modules/dashboard/routes.js";
+import { timelineRoutes } from "../modules/timeline/routes.js";
 import { billingRoutes } from "../modules/billing/routes.js";
 import { webhooksRoutes } from "../modules/webhooks/routes.js";
 
@@ -101,6 +102,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       await api.register(recommendationsRoutes);
       await api.register(runsRoutes);
       await api.register(dashboardRoutes);
+      await api.register(timelineRoutes);
       await api.register(billingRoutes);
     },
     { prefix: "/api" },

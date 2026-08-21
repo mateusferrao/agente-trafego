@@ -26,6 +26,7 @@ import { createApprovalsService } from "./modules/approvals/service.js";
 import { createRecommendationsService } from "./modules/recommendations/service.js";
 import { createRunsService } from "./modules/runs/service.js";
 import { createDashboardService } from "./modules/dashboard/service.js";
+import { createTimelineService } from "./modules/timeline/service.js";
 import { createBillingService } from "./modules/billing/service.js";
 import { createWebhooksService } from "./modules/webhooks/service.js";
 import { Aes256CredentialVault } from "@trafego/credential-vault";
@@ -70,6 +71,7 @@ export interface Services {
   readonly recommendations: ReturnType<typeof createRecommendationsService>;
   readonly runs: ReturnType<typeof createRunsService>;
   readonly dashboard: ReturnType<typeof createDashboardService>;
+  readonly timeline: ReturnType<typeof createTimelineService>;
   readonly billing: ReturnType<typeof createBillingService>;
   readonly webhooks: ReturnType<typeof createWebhooksService>;
 }
@@ -173,6 +175,7 @@ export function buildContainer(): Container {
       baselineDays: env.ANALYSIS_BASELINE_DAYS,
       now: () => new Date(),
     }),
+    timeline: createTimelineService({ db }),
     billing: createBillingService({ db, metering }),
     webhooks: createWebhooksService({ db, scheduler }),
   };
