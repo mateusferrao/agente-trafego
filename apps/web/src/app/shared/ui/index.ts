@@ -26,3 +26,6 @@ export type { UiSelectOptionItem } from './ui-select';
 export { UiSwitch, UiSwitchThumb } from './ui-switch';
 export { UiToggleGroup, UiToggleGroupItem, UiToggleIndicator } from './ui-toggle-group';
 export { UiCheckbox } from './ui-checkbox';
+export { UiRouteTabs, UiRouteTabLink, UiRouteTabPanel } from './ui-tabs';
+export { UiTimeline } from './ui-timeline';
+export type { TimelineEventVm, TimelineChildVm } from './ui-timeline';
