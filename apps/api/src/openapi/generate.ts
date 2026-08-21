@@ -47,6 +47,7 @@ import {
   runListOutput,
   triggerRunOutput,
 } from "../modules/runs/schema.js";
+import { liveMetricsOutput, refreshDataOutput } from "../modules/dashboard/schema.js";
 import { channelStateOutput } from "../modules/channels/schema.js";
 import { feedbackInput, feedbackOutput } from "../modules/recommendations/schema.js";
 import {
@@ -98,6 +99,8 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const LatestRunOutput = registry.register("LatestRunOutput", latestRunOutput);
   const CampaignAnalysesOutput = registry.register("CampaignAnalysesOutput", campaignAnalysesOutput);
   const RunListOutput = registry.register("RunListOutput", runListOutput);
+  const LiveMetricsOutput = registry.register("LiveMetricsOutput", liveMetricsOutput);
+  const RefreshDataOutput = registry.register("RefreshDataOutput", refreshDataOutput);
   const RunDetailOutput = registry.register("RunDetailOutput", runDetailOutput);
   const MuteCampaignInput = registry.register("MuteCampaignInput", muteCampaignInput);
   const MutedCampaignsOutput = registry.register("MutedCampaignsOutput", mutedCampaignsOutput);
@@ -376,6 +379,26 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     responses: {
       200: jsonRes("detalhe de um run (histórico)", RunDetailOutput),
       404: { description: "análise não encontrada" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts/{id}/live-metrics",
+    tags: ["dashboard"],
+    request: { params: accountParams },
+    responses: {
+      200: jsonRes("KPIs da conta ao vivo (insights_snapshots) + as-of", LiveMetricsOutput),
+      404: { description: "conta não encontrada" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/accounts/{id}/refresh-data",
+    tags: ["dashboard"],
+    request: { params: accountParams },
+    responses: {
+      202: jsonRes("sync-only enfileirado (atualizar agora)", RefreshDataOutput),
+      404: { description: "conta não encontrada" },
     },
   });
   registry.registerPath({

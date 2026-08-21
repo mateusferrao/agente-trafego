@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addDays, resolveWindows } from "./window.js";
+import { addDays, resolveWindows } from "./index.js";
 
 describe("addDays", () => {
   it("soma/subtrai dias atravessando meses", () => {

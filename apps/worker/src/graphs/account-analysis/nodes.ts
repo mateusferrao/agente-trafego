@@ -98,7 +98,7 @@ import {
   MESSAGE_OUTPUT_JSON_SCHEMA,
   MESSAGE_OUTPUT_SCHEMA_NAME,
 } from "../../modules/notify/prompt.js";
-import { resolveWindows } from "../../modules/analysis/window.js";
+import { resolveWindows } from "@trafego/core";
 import type { AccountAnalysisStateType, AccountAnalysisUpdate } from "./state.js";
 
 /** Nº de dias sem análise que dispara um run DEEP (reanalisa tudo). */

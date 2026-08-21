@@ -1663,6 +1663,100 @@
           "hasMore"
         ]
       },
+      "LiveMetricsOutput": {
+        "type": "object",
+        "properties": {
+          "currency": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "asOf": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "window": {
+            "type": "object",
+            "properties": {
+              "since": {
+                "type": "string"
+              },
+              "until": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "since",
+              "until"
+            ]
+          },
+          "totals": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "spend": {
+                "type": "number"
+              },
+              "impressions": {
+                "type": "number"
+              },
+              "clicks": {
+                "type": "number"
+              },
+              "ctr": {
+                "type": "number"
+              },
+              "cpc": {
+                "type": "number"
+              },
+              "cpm": {
+                "type": "number"
+              },
+              "cpa": {
+                "type": "number"
+              },
+              "roas": {
+                "type": "number"
+              },
+              "delta": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "number"
+                }
+              }
+            },
+            "required": [
+              "spend",
+              "impressions",
+              "clicks",
+              "ctr",
+              "delta"
+            ]
+          }
+        },
+        "required": [
+          "currency",
+          "asOf",
+          "window",
+          "totals"
+        ]
+      },
+      "RefreshDataOutput": {
+        "type": "object",
+        "properties": {
+          "enqueued": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enqueued"
+        ]
+      },
       "RunDetailOutput": {
         "type": "object",
         "properties": {
@@ -3840,6 +3934,70 @@
           },
           "404": {
             "description": "análise não encontrada"
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/live-metrics": {
+      "get": {
+        "tags": [
+          "dashboard"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "KPIs da conta ao vivo (insights_snapshots) + as-of",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveMetricsOutput"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "conta não encontrada"
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/refresh-data": {
+      "post": {
+        "tags": [
+          "dashboard"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "sync-only enfileirado (atualizar agora)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefreshDataOutput"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "conta não encontrada"
           }
         }
       }

@@ -25,6 +25,7 @@ import { createAgentsService } from "./modules/agents/service.js";
 import { createApprovalsService } from "./modules/approvals/service.js";
 import { createRecommendationsService } from "./modules/recommendations/service.js";
 import { createRunsService } from "./modules/runs/service.js";
+import { createDashboardService } from "./modules/dashboard/service.js";
 import { createBillingService } from "./modules/billing/service.js";
 import { createWebhooksService } from "./modules/webhooks/service.js";
 import { Aes256CredentialVault } from "@trafego/credential-vault";
@@ -68,6 +69,7 @@ export interface Services {
   readonly approvals: ReturnType<typeof createApprovalsService>;
   readonly recommendations: ReturnType<typeof createRecommendationsService>;
   readonly runs: ReturnType<typeof createRunsService>;
+  readonly dashboard: ReturnType<typeof createDashboardService>;
   readonly billing: ReturnType<typeof createBillingService>;
   readonly webhooks: ReturnType<typeof createWebhooksService>;
 }
@@ -163,6 +165,13 @@ export function buildContainer(): Container {
       metering,
       ensureAgent: (orgId, accountId) => agents.getOrCreateForAccount(orgId, accountId),
       costCapUsd: env.LLM_COST_CAP_USD_PER_PERIOD,
+    }),
+    dashboard: createDashboardService({
+      db,
+      scheduler,
+      windowDays: env.ANALYSIS_WINDOW_DAYS,
+      baselineDays: env.ANALYSIS_BASELINE_DAYS,
+      now: () => new Date(),
     }),
     billing: createBillingService({ db, metering }),
     webhooks: createWebhooksService({ db, scheduler }),

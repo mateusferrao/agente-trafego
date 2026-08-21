@@ -65,6 +65,29 @@ export function shouldSync(input: ShouldSyncInput): boolean {
   return ageMs >= input.thresholdMin * 60_000;
 }
 
+export interface DateWindow {
+  readonly since: string;
+  readonly until: string;
+}
+
+/**
+ * Janela de análise/leitura (pura): `[today-(windowDays-1), today]`; baseline = os
+ * `baselineDays` dias imediatamente anteriores. Ex: today=2026-08-18, 7d → janela
+ * 2026-08-12..2026-08-18; baseline 2026-08-05..2026-08-11. Reusada pelo worker
+ * (análise) e pela API (KPIs ao vivo — 6a). `today` injetado → testável sem relógio.
+ */
+export function resolveWindows(
+  today: string,
+  windowDays: number,
+  baselineDays: number,
+): { readonly window: DateWindow; readonly baseline: DateWindow } {
+  const until = today;
+  const since = addDays(today, -(windowDays - 1));
+  const baselineUntil = addDays(since, -1);
+  const baselineSince = addDays(baselineUntil, -(baselineDays - 1));
+  return { window: { since, until }, baseline: { since: baselineSince, until: baselineUntil } };
+}
+
 function parseIsoDate(s: string): Date {
   const p = s.split("-");
   return new Date(Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2])));
@@ -74,7 +97,7 @@ function formatIsoDate(dt: Date): string {
   return dt.toISOString().slice(0, 10);
 }
 
-function addDays(iso: string, days: number): string {
+export function addDays(iso: string, days: number): string {
   const dt = parseIsoDate(iso);
   dt.setUTCDate(dt.getUTCDate() + days);
   return formatIsoDate(dt);

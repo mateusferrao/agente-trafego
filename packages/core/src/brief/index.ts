@@ -446,6 +446,28 @@ export function buildAccountBrief(input: BuildAccountBriefInput): BuildAccountBr
   return { status: "ok", brief, adUnits: allByLevel.get("ad") ?? [], campaignUnits };
 }
 
+export interface LiveTotalsInput {
+  readonly rows: readonly InsightRow[];
+  readonly baselineRows: readonly InsightRow[];
+  readonly goals: AgentGoals;
+}
+
+/**
+ * Totais da conta AO VIVO (6a): MESMA cadeia do brief (`normalize` →
+ * `computeAccountTotals`), sem LLM nem catálogo de entidades — só a série do
+ * `insights_snapshots`. Reusa exatamente o cálculo da análise (os números batem).
+ * `null` quando não há atividade (spend+impressions = 0), p/ a casca mostrar vazio.
+ */
+export function computeLiveTotals(input: LiveTotalsInput): AccountBrief["totals"] | null {
+  const normalized = normalize(input.rows);
+  const baselineByKey = new Map(
+    normalize(input.baselineRows).map((n) => [`${n.level}:${n.entityId}`, n]),
+  );
+  const totals = computeAccountTotals(normalized, baselineByKey, input.goals);
+  if (totals.spend === 0 && totals.impressions === 0) return null;
+  return totals;
+}
+
 /** Agrega o funil neutro por `nível:entidade` a partir das linhas (soma dias). */
 function buildFunnelByKey(rows: readonly InsightRow[]): Map<string, FunnelBreakdown> {
   const byKey = new Map<string, FunnelBreakdown[]>();
