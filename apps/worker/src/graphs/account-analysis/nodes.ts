@@ -293,6 +293,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       playbookCandidates: state.playbookCandidates,
       topN: cfg.topN,
       notableAdsPerCampaign: cfg.notableAdsPerCampaign,
+      qualityThresholds: cfg.quality,
       ...(state.mutedCampaignIds ? { mutedCampaignIds: new Set(state.mutedCampaignIds) } : {}),
       memory: { objectives: [], pastActions: [], rejected: [...(state.rejectedMemory ?? [])] },
     });

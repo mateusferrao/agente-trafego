@@ -2,6 +2,7 @@
 // Precedência: agents.model_config (jsonb) → fallback nos defaults globais (env).
 // PURO — a Fatia 4 só pluga a UI de edição do model_config; nada muda aqui.
 import { ANALYSIS_WINDOW_MIN_DAYS, ANALYSIS_WINDOW_MAX_DAYS } from "@trafego/shared";
+import type { QualityThresholds } from "@trafego/core";
 
 /** Estratégias de execução (quais unidades reanalisar por run) — enum neutro, aberto. */
 export type ExecutionPolicy = "deep_periodic_incremental" | "full_every_run" | "budget_scaled";
@@ -48,6 +49,8 @@ export interface AnalysisDefaults {
   readonly executionPolicy: ExecutionPolicy;
   readonly deepIntervalDays: number;
   readonly materialChangePct: number;
+  /** Limiares de qualidade (Fatia 6c) — significância/fadiga/zombie. */
+  readonly quality: QualityThresholds;
 }
 
 export type ResolvedAnalysisConfig = AnalysisDefaults;
@@ -97,5 +100,24 @@ export function resolveAnalysisConfig(
     executionPolicy: policy(mc.executionPolicy) ?? defaults.executionPolicy,
     deepIntervalDays: posInt(mc.deepIntervalDays) ?? defaults.deepIntervalDays,
     materialChangePct: nonNeg(mc.materialChangePct) ?? defaults.materialChangePct,
+    quality: resolveQuality(mc.quality, defaults.quality),
+  };
+}
+
+/** Override por-agente dos limiares de qualidade (objeto `quality` no model_config). */
+function resolveQuality(raw: unknown, defaults: QualityThresholds): QualityThresholds {
+  const mc = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const posInt = (v: unknown): number | undefined =>
+    typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined;
+  const nonNeg = (v: unknown): number | undefined =>
+    typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined;
+  const pos = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined);
+  return {
+    minConversions: posInt(mc.minConversions) ?? defaults.minConversions,
+    minClicks: posInt(mc.minClicks) ?? defaults.minClicks,
+    fatigueCtrDropPct: nonNeg(mc.fatigueCtrDropPct) ?? defaults.fatigueCtrDropPct,
+    fatigueFrequency: pos(mc.fatigueFrequency) ?? defaults.fatigueFrequency,
+    fatigueCostRisePct: nonNeg(mc.fatigueCostRisePct) ?? defaults.fatigueCostRisePct,
+    zombieMinSpend: nonNeg(mc.zombieMinSpend) ?? defaults.zombieMinSpend,
   };
 }

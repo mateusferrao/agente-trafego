@@ -147,6 +147,17 @@ export const envSchema = z.object({
   // Quantas entidades por nível o brief seleciona (top-N por spend + flagadas).
   ANALYSIS_TOP_N: z.coerce.number().int().positive().default(5),
 
+  // ─── Qualidade (Fatia 6c) — limiares determinísticos, overridáveis por-agente ─
+  // Significância: mín. conversões de negócio OU cliques na janela p/ concluir/agir.
+  ANALYSIS_QUALITY_MIN_CONVERSIONS: z.coerce.number().int().positive().default(20),
+  ANALYSIS_QUALITY_MIN_CLICKS: z.coerce.number().int().positive().default(100),
+  // Fadiga (2+ sinais): queda relativa de CTR (%), frequência de alerta, alta de custo (%).
+  ANALYSIS_QUALITY_FATIGUE_CTR_DROP_PCT: z.coerce.number().nonnegative().default(20),
+  ANALYSIS_QUALITY_FATIGUE_FREQUENCY: z.coerce.number().positive().default(3),
+  ANALYSIS_QUALITY_FATIGUE_COST_RISE_PCT: z.coerce.number().nonnegative().default(30),
+  // Zombie: gasto mínimo na janela (moeda da conta) p/ chamar de desperdício com 0 conversão.
+  ANALYSIS_QUALITY_ZOMBIE_MIN_SPEND: z.coerce.number().nonnegative().default(50),
+
   // ─── Cadência (cron por conta — 3b) ────────────────────────────────────
   // Default global da cadência (a UI de edição por-conta = Fatia 4). Cron 5-campos.
   ANALYSIS_CRON_DEFAULT: z.string().min(1).default("0 8 * * *"), // 08:00 diário

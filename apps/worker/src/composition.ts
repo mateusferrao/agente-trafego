@@ -194,6 +194,14 @@ export async function buildComposition(): Promise<WorkerDeps> {
       executionPolicy: env.ANALYSIS_EXECUTION_POLICY,
       deepIntervalDays: env.ANALYSIS_DEEP_INTERVAL_DAYS,
       materialChangePct: env.ANALYSIS_MATERIAL_CHANGE_PCT,
+      quality: {
+        minConversions: env.ANALYSIS_QUALITY_MIN_CONVERSIONS,
+        minClicks: env.ANALYSIS_QUALITY_MIN_CLICKS,
+        fatigueCtrDropPct: env.ANALYSIS_QUALITY_FATIGUE_CTR_DROP_PCT,
+        fatigueFrequency: env.ANALYSIS_QUALITY_FATIGUE_FREQUENCY,
+        fatigueCostRisePct: env.ANALYSIS_QUALITY_FATIGUE_COST_RISE_PCT,
+        zombieMinSpend: env.ANALYSIS_QUALITY_ZOMBIE_MIN_SPEND,
+      },
     },
     insights: {
       freshThresholdMin: env.INSIGHTS_FRESH_THRESHOLD_MIN,

@@ -20,6 +20,8 @@ import type {
 } from "@trafego/shared";
 import { classifyBasis, resolveConversion, type ResolvedConversion } from "../conversion/index.js";
 import { computeFunnelSummary, mergeFunnel } from "../funnel/index.js";
+import type { CostReferenceBand, OutcomeKind } from "../benchmarks/index.js";
+import { DEFAULT_QUALITY_THRESHOLDS, type QualityThresholds, enrichEntitiesQuality } from "../quality/index.js";
 import { buildCampaignUnits } from "./campaign-units.js";
 
 export { buildCampaignUnits, type BuildCampaignUnitsInput } from "./campaign-units.js";
@@ -43,6 +45,11 @@ export interface NormalizedEntity {
   readonly impressions: number;
   readonly clicks: number;
   readonly conversions: ConversionBreakdown;
+  /**
+   * Frequência (impressões/alcance) — NÃO é somável entre dias (alcance é dedup).
+   * Guardamos o MÁXIMO por entidade na janela: sinal honesto de "chegou a saturar".
+   */
+  readonly frequency?: number;
 }
 
 /**
@@ -56,6 +63,7 @@ export function normalize(rows: readonly InsightRow[]): NormalizedEntity[] {
     spend: number;
     impressions: number;
     clicks: number;
+    frequency: number;
     conv: Map<
       string,
       { goal: ConversionBreakdown[number]["goal"]; customConversionId?: string; count: number; value: number; hasValue: boolean }
@@ -67,10 +75,13 @@ export function normalize(rows: readonly InsightRow[]): NormalizedEntity[] {
     const key = `${row.level}:${row.entityId}`;
     const acc =
       byKey.get(key) ??
-      { entityId: row.entityId, level: row.level, spend: 0, impressions: 0, clicks: 0, conv: new Map() };
+      { entityId: row.entityId, level: row.level, spend: 0, impressions: 0, clicks: 0, frequency: 0, conv: new Map() };
     acc.spend += row.metrics.spend ?? 0;
     acc.impressions += row.metrics.impressions ?? 0;
     acc.clicks += row.metrics.clicks ?? 0;
+    if (typeof row.metrics.frequency === "number") {
+      acc.frequency = Math.max(acc.frequency, row.metrics.frequency);
+    }
     for (const c of row.conversions ?? []) {
       const ck = `${c.goal}:${c.customConversionId ?? ""}`;
       const e =
@@ -94,6 +105,7 @@ export function normalize(rows: readonly InsightRow[]): NormalizedEntity[] {
     spend: a.spend,
     impressions: a.impressions,
     clicks: a.clicks,
+    ...(a.frequency > 0 ? { frequency: a.frequency } : {}),
     conversions: [...a.conv.values()].map((v) => ({
       goal: v.goal,
       ...(v.customConversionId ? { customConversionId: v.customConversionId } : {}),
@@ -145,6 +157,7 @@ export function computeDerived(
     ctr,
     cpc,
     cpm,
+    ...(entity.frequency !== undefined ? { frequency: entity.frequency } : {}),
     ...(conversions !== undefined ? { conversions } : {}),
     ...(cpa !== undefined ? { cpa } : {}),
     ...(roas !== undefined ? { roas } : {}),
@@ -355,6 +368,10 @@ export interface BuildAccountBriefInput {
   readonly notableAdsPerCampaign: number;
   /** Campanhas silenciadas pelo usuário (S5) — excluídas da análise por campanha. */
   readonly mutedCampaignIds?: ReadonlySet<string>;
+  /** Limiares de qualidade (Fatia 6c) — default do sistema se ausente. */
+  readonly qualityThresholds?: QualityThresholds;
+  /** Faixas de custo de cold-start (override) — default do sistema se ausente. */
+  readonly costTable?: Readonly<Record<OutcomeKind, CostReferenceBand>>;
 }
 
 export type BuildAccountBriefResult =
@@ -399,7 +416,16 @@ export function buildAccountBrief(input: BuildAccountBriefInput): BuildAccountBr
     // Anomalias (z-score) dentro do nível → viram flag (rankAndSelect sempre inclui flagado).
     const levelAnomalies = detectAnomaliesFromSummaries(base);
     anomalies.push(...levelAnomalies);
-    const summaries = applyAnomalyFlags(base, levelAnomalies);
+    const flagged = applyAnomalyFlags(base, levelAnomalies);
+    // Qualidade (Fatia 6c): tiers/sinais/elegibilidade/benchmark de cold-start,
+    // relativos à meta + à conta (ranking dentro do nível). Puro.
+    const summaries = enrichEntitiesQuality(flagged, input.goals, {
+      thresholds: input.qualityThresholds ?? DEFAULT_QUALITY_THRESHOLDS,
+      hasTarget: input.goals.targetCPA !== undefined || input.goals.targetROAS !== undefined,
+      currency: input.account.currency,
+      ...(input.goals.conversionGoal ? { conversionGoal: input.goals.conversionGoal } : {}),
+      ...(input.costTable ? { costTable: input.costTable } : {}),
+    });
     allByLevel.set(level, summaries);
     selectedByLevel.set(level, rankAndSelect(summaries, input.topN));
   }

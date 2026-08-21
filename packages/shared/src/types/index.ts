@@ -245,6 +245,49 @@ export interface ConversionProxy {
   readonly roas?: number;
 }
 
+// ─── Qualidade da análise (Fatia 6c) ─────────────────────────────────────
+// Camada determinística PURA sobre o dado curado (tiers, sinais de saúde,
+// elegibilidade de decisão, referência de cold-start). O comparador nº1 continua
+// sendo a meta do dono; isto é ranqueamento relativo + rede de segurança, nunca
+// declara sucesso de negócio (só a meta faz isso).
+
+/** Classe de desempenho relativa à meta + à conta. Rótulo amigável fica na UI. */
+export type PerformanceTier = "winner" | "performer" | "underperformer" | "zombie";
+
+/** Sinais de saúde nomeados (estende a detecção de anomalias com semântica de tráfego). */
+export type HealthSignal = "creative_fatigue" | "audience_saturation" | "low_volume";
+
+/**
+ * Elegibilidade de DECISÃO da entidade — se dá pra concluir/agir sobre a conversão.
+ * `hasSignificance` = dado suficiente (conversões de negócio OU cliques + dias);
+ * `inLearning` = criada/editada há pouco (Meta re-otimizando). Guard usa os dois.
+ */
+export interface DecisionEligibility {
+  readonly hasSignificance: boolean;
+  readonly inLearning: boolean;
+  /** conversões de negócio contadas na janela (p/ a nota do guard). */
+  readonly conversions: number;
+  readonly clicks: number;
+}
+
+export type BenchmarkCtrRating = "ruim" | "ok" | "bom" | "otimo";
+
+/**
+ * Referência de plataforma (cold-start apenas) — direcional, NUNCA a meta do dono.
+ * `coldStart` liga o nudge "defina sua meta". Ausente quando há meta ou histórico.
+ */
+export interface BenchmarkRef {
+  readonly coldStart: boolean;
+  readonly ctrRating?: BenchmarkCtrRating;
+  readonly frequencyAlert?: boolean;
+  readonly costReference?: {
+    readonly label: string;
+    readonly min: number;
+    readonly max: number;
+    readonly currency: string;
+  };
+}
+
 export interface EntitySummary {
   readonly id: string;
   readonly level: EntityLevel;
@@ -261,6 +304,14 @@ export interface EntitySummary {
   readonly proxy?: ConversionProxy;
   /** Funil de messaging da entidade (só quando há dado) — qualidade do lead. */
   readonly funnel?: FunnelSummary;
+  /** Classe de desempenho relativa à meta + à conta (Fatia 6c). */
+  readonly tier?: PerformanceTier;
+  /** Sinais de saúde detectados (fadiga/saturação/baixo volume) — Fatia 6c. */
+  readonly healthSignals?: readonly HealthSignal[];
+  /** Elegibilidade de decisão (significância/learning) — insumo do guard (Fatia 6c). */
+  readonly eligibility?: DecisionEligibility;
+  /** Referência de plataforma no cold-start (sem meta e sem histórico) — Fatia 6c. */
+  readonly benchmarkRef?: BenchmarkRef;
 }
 
 export interface Anomaly {
