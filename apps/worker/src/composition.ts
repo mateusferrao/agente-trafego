@@ -7,6 +7,7 @@ import type {
   ApprovalPort,
   CredentialVaultPort,
   LLMProviderPort,
+  MailerPort,
   MessagingChannelPort,
   MeteringPort,
   SchedulerPort,
@@ -21,6 +22,7 @@ import { EvolutionAdapter, EvolutionClient } from "@trafego/channel-evolution";
 import { OpenRouterAdapter, OpenRouterClient } from "@trafego/llm-openrouter";
 import { createPostgresApprovals } from "@trafego/approval-postgres";
 import { createPostgresMetering, withLlmMetering } from "@trafego/metering-postgres";
+import { createMailer } from "@trafego/mailer";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import type { BaseCheckpointSaver } from "@langchain/langgraph";
 import { Redis } from "ioredis";
@@ -45,6 +47,8 @@ export interface WorkerDeps {
     readonly scheduler: SchedulerPort;
     readonly metering: MeteringPort;
     readonly approval: ApprovalPort;
+    /** Entrega de email transacional (6b) — só o worker envia (consumidor da fila). */
+    readonly mailer: MailerPort;
   };
   /** Sync de insights (2a): coleta a série temporal Meta → insights_snapshots. */
   readonly insightsSync: InsightsSyncService;
@@ -164,6 +168,12 @@ export async function buildComposition(): Promise<WorkerDeps> {
       llm, // plugada na 3a (análise) + metering na 3b (decorator)
       metering, // plugada na 3b (Postgres usage_events)
       approval: createPostgresApprovals(db),
+      // email transacional (6b): SES em prod, console em dev. Creds AWS via env (só worker).
+      mailer: createMailer({
+        driver: env.AUTH_EMAIL_DELIVERY_DRIVER,
+        region: env.AWS_REGION,
+        log: (m) => logger.info(m),
+      }),
     },
     insightsSync,
     analysis: {

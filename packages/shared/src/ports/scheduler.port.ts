@@ -25,6 +25,10 @@ export interface JobSpec {
   readonly removeOnFail?: boolean | number;
   /** atrasa o início do job (ms) — stagger p/ espalhar carga (ex: sweep de frescura). */
   readonly delayMs?: number;
+  /** nº de tentativas (retry) — ex: email best-effort. Sem isto = 1 tentativa. */
+  readonly attempts?: number;
+  /** delay base (ms) do backoff exponencial entre tentativas (requer `attempts`). */
+  readonly backoffMs?: number;
 }
 
 /**

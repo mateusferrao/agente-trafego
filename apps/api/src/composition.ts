@@ -4,10 +4,12 @@ import type {
   ApprovalPort,
   CredentialVaultPort,
   LLMProviderPort,
+  MailQueuePort,
   MessagingChannelPort,
   MeteringPort,
   SchedulerPort,
 } from "@trafego/shared/ports";
+import { buildMailJob } from "@trafego/shared";
 
 import { env } from "./env.js";
 import { createAuthService } from "./modules/auth/service.js";
@@ -56,6 +58,9 @@ export interface Adapters {
   readonly scheduler: SchedulerPort;
   readonly metering: MeteringPort;
   readonly approvals: ApprovalPort;
+  /** Enfileira email transacional (6b). A API só PRODUZ (não conhece o SDK do SES);
+   *  o worker consome a fila `core.mail` e entrega. */
+  readonly mailQueue: MailQueuePort;
 }
 
 /** Serviços de cada slice (borda de aplicação). */
@@ -130,6 +135,10 @@ export function buildContainer(): Container {
   // Approvals (5b): Postgres — a API lista/resolve; o worker cria + aplica.
   const approvals = createPostgresApprovals(db);
 
+  // Email (6b): a API só ENFILEIRA (produtor) via scheduler → fila `core.mail`.
+  // O adapter de entrega (SES) vive só no worker; a API nunca importa o SDK.
+  const mailQueue: MailQueuePort = { enqueue: (message) => scheduler.enqueue(buildMailJob(message)) };
+
   // Portas ainda não plugadas (fatias seguintes) — placeholders que lançam ao usar.
   const llm = todoPort<LLMProviderPort>("LLMProviderPort"); // worker roda o LLM; a API não
 
@@ -142,6 +151,7 @@ export function buildContainer(): Container {
     scheduler,
     metering,
     approvals,
+    mailQueue,
   };
 
   // Services — cada slice recebe só as portas de que precisa.

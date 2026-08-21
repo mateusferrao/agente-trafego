@@ -6,3 +6,4 @@ export * from "./credential-vault.port.js";
 export * from "./scheduler.port.js";
 export * from "./metering.port.js";
 export * from "./approval.port.js";
+export * from "./mailer.port.js";
