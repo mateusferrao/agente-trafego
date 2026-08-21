@@ -11,7 +11,7 @@ import type { FastifyInstance } from "fastify";
 const DEFAULT_WEB_DIST = fileURLToPath(new URL("../../../web/dist/web/browser", import.meta.url));
 
 /** Prefixos servidos pela api (não caem no fallback SPA). */
-const API_PREFIXES = ["/api", "/webhooks", "/health", "/openapi.json"] as const;
+const API_PREFIXES = ["/api", "/webhooks", "/health", "/ready", "/openapi.json"] as const;
 
 export function isApiPath(url: string): boolean {
   return API_PREFIXES.some((p) => url === p || url.startsWith(`${p}/`) || url.startsWith(`${p}?`));

@@ -58,9 +58,8 @@ EVOLUTION_WEBHOOK_SECRET=<...>
 EVOLUTION_INSTANCE=<nome da instância>
 INSIGHTS_RETENTION_DAYS=90
 ANALYSIS_MAX_CREATIVES_VISION=8
-BETA_ADMIN_SECRET=<32+ chars>
-FATIA0_RECIPIENT_PHONE=<DDI+numero, ex 5511999999999>
 ```
+> Bloco completo/atualizado de envs = [`../.env.example`](../.env.example) (fonte da verdade, validada no boot pelo schema zod). Colar as chaves reais como **secrets do painel**.
 (Gerar a chave: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`.)
 - **Domains:** Add Domain → host (seu domínio/subdomínio), path `/`, **Target Port `3333`** (= `API_PORT`), marcar como primary. SSL automático pelo painel.
 - **Deploy**.
@@ -77,17 +76,13 @@ FATIA0_RECIPIENT_PHONE=<DDI+numero, ex 5511999999999>
 **Seed** (org beta — scaffolding da Fatia 0, roda **uma vez só**, não por deploy): no Shell da api → `pnpm db:seed`. Idempotente. Some quando a 1a trouxer signup real.
 
 ### 7. Fumaça (prova do fio)
-Com **token System User válido**, do seu terminal (detalhe em [`../docs/FATIA-0.md`](../docs/FATIA-0.md)):
-```
-curl -X POST https://<api>/admin/accounts \
-  -H "x-admin-secret: <BETA_ADMIN_SECRET>" -H "content-type: application/json" \
-  -d '{"metaBusinessId":"<bm>","adAccountId":"<id>","token":"<system_user_token>"}'
+`GET https://<api>/health` responde `{status:"ok"}` (liveness) e `GET https://<api>/ready` responde
+`200 {status:"ready",db:true,redis:true}` quando DB+Redis estão de pé. O app (Angular servido pela api)
+abre em `https://<api>/` → signup real → onboarding (colar token Meta em Integrações).
 
-curl -X POST https://<api>/admin/accounts/<id>/run -H "x-admin-secret: <BETA_ADMIN_SECRET>"
-```
-→ a mensagem de gasto chega no WhatsApp de teste. **Deploy verde = done.**
-
-> Webhook Evolution (`https://<api>/webhooks/evolution`) = fatia 5b (inbound não é usado na Fatia 0). web (Angular servido pela api) entra na 1a.
+> Os endpoints `/admin/*` da Fatia 0 (guardados por `x-admin-secret`) foram removidos — o fluxo real é
+> signup + onboarding no web. Webhook Evolution (`https://<api>/webhooks/evolution/<instance>`) é
+> registrado no connect (5b).
 
 ## SPOF / backup
 
@@ -95,4 +90,4 @@ Box único = ponto único de falha. Mitigar: backup agendado do Postgres + snaps
 
 ## Segredos
 
-`CREDENTIAL_MASTER_KEY` (32 bytes base64), `OPENROUTER_API_KEY`, `META_APP_SECRET`, `EVOLUTION_API_KEY`, `EVOLUTION_WEBHOOK_SECRET`, `BETA_ADMIN_SECRET` (guard dos endpoints admin) — **secrets do painel**, nunca no repo. Fatia 0 também precisa de `EVOLUTION_INSTANCE` e `FATIA0_RECIPIENT_PHONE` (config, não secret).
+`CREDENTIAL_MASTER_KEY` (32 bytes base64), `OPENROUTER_API_KEY`, `META_APP_SECRET`, `EVOLUTION_API_KEY`, `EVOLUTION_WEBHOOK_SECRET` — **secrets do painel**, nunca no repo. (6b) email transacional via SES adiciona `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` (IAM escopado a `ses:SendEmail`) — **só no serviço worker**.

@@ -38,3 +38,7 @@ jobs:
 
       - name: Design tokens
         run: pnpm --filter web tokens:check
+
+      # Build de produção (AOT) — pega quebra de template do web antes do deploy.
+      - name: Build web
+        run: pnpm --filter web build

@@ -2,6 +2,7 @@ import { pathToFileURL } from "node:url";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
 import Fastify, { type FastifyInstance } from "fastify";
+import { sql } from "drizzle-orm";
 import { runMigrations, runBackfillConnections } from "@trafego/db";
 
 import { env } from "../env.js";
@@ -41,7 +42,8 @@ export async function buildApp(): Promise<FastifyInstance> {
     // bucket global (lockout de todos) e o IP em sessão/audit fica o do proxy.
     trustProxy: true,
     logger: {
-      level: env.NODE_ENV === "production" ? "info" : "debug",
+      // Respeita LOG_LEVEL (env, default "info"); dev seta "debug" no .env.
+      level: env.LOG_LEVEL,
       // rede de segurança: nunca vazar segredo em log (§12). Token = joia da coroa;
       // senha nunca deve aparecer (defense-in-depth caso alguém logue o body).
       redact: [
@@ -79,8 +81,29 @@ export async function buildApp(): Promise<FastifyInstance> {
   registerErrorHandler(app);
   registerAudit(app);
 
-  // Health check (sem prefixo, sem auth).
+  // Liveness (sem prefixo, sem auth): "o processo está de pé". Estático de
+  // propósito — é o probe de restart do EasyPanel; NÃO checa deps (senão um
+  // Postgres/Redis fora reiniciaria a API em loop, sendo o problema a dependência).
   app.get("/health", async () => ({ status: "ok", ts: new Date().toISOString() }));
+
+  // Readiness: "as dependências respondem" (DB + Redis). Pra monitoramento, não
+  // pro probe de restart. 503 quando alguma dep está fora (não derruba o processo).
+  app.get("/ready", async (_req, reply) => {
+    const checks = { db: false, redis: false };
+    try {
+      await app.container.adapters.db.execute(sql`select 1`);
+      checks.db = true;
+    } catch (err) {
+      app.log.warn({ err }, "readiness: DB indisponível");
+    }
+    try {
+      checks.redis = (await app.container.redis.ping()) === "PONG";
+    } catch (err) {
+      app.log.warn({ err }, "readiness: Redis indisponível");
+    }
+    const ready = checks.db && checks.redis;
+    return reply.status(ready ? 200 : 503).send({ status: ready ? "ready" : "not_ready", ...checks });
+  });
 
   // Contrato OpenAPI ao vivo (gerado dos schemas zod) — input do kubb no web.
   app.get("/openapi.json", async () => buildDocument());
@@ -115,9 +138,35 @@ export async function buildApp(): Promise<FastifyInstance> {
   return app;
 }
 
+/**
+ * Shutdown gracioso: para de aceitar + drena requests no voo (`app.close()`),
+ * depois fecha Redis e o pool do Postgres. Sem isso, todo auto-deploy do
+ * EasyPanel (restart) derrubava request no meio. Idempotente (guard `closing`).
+ */
+let closing = false;
+async function shutdown(app: FastifyInstance, signal: string): Promise<void> {
+  if (closing) return;
+  closing = true;
+  app.log.info({ signal }, "encerrando graciosamente");
+  try {
+    await app.close(); // drena HTTP (para de aceitar, espera in-flight)
+    await app.container.redis.quit();
+    await app.container.adapters.db.$client.end();
+  } catch (err) {
+    app.log.error({ err }, "erro no shutdown");
+  } finally {
+    process.exit(0);
+  }
+}
+
 /** Entrypoint: sobe o listener na API_PORT. */
 async function start(): Promise<void> {
   const app = await buildApp();
+
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.once(signal, () => void shutdown(app, signal));
+  }
+
   try {
     // auto-migrate no boot (idempotente) — só a api migra; worker assume o schema.
     if (env.AUTO_MIGRATE) {
