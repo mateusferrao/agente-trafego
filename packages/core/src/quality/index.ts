@@ -107,17 +107,31 @@ export interface TierInput {
   readonly worseThanBaseline: boolean;
   /** sem meta definida E entre os mais eficientes da conta (top-quartil). */
   readonly topEfficiencyNoTarget: boolean;
+  /**
+   * Há QUALQUER sinal de resultado na entidade: conversão de negócio > 0, OU uma
+   * conversão-proxy (o objetivo próprio dela converte), OU atividade de funil
+   * (conversas). Zumbi exige a AUSÊNCIA disso — evita marcar como desperdício uma
+   * campanha cuja conversão de negócio não é rastreável ali mas que gera conversas
+   * baratas (o caso do ICP: meta = venda, mas o ad entrega conversa).
+   */
+  readonly hasSignOfLife: boolean;
+  /** entidade nova / em aprendizado — não declara zumbi antes de dar tempo. */
+  readonly inLearning: boolean;
 }
 
 /**
- * Classe de desempenho. Zombie independe de significância (gasto + 0 conversão JÁ
- * é o sinal). Sem significância (e não-zombie) → sem tier (não dá p/ julgar).
+ * Classe de desempenho. Zombie SÓ quando NÃO há nenhum sinal de resultado
+ * (`!hasSignOfLife`) com gasto relevante e fora de learning — nunca marca como
+ * desperdício quem gera conversas/proxy só porque a conversão de NEGÓCIO não é
+ * rastreável ali. Sem significância (e não-zombie) → sem tier. Winner é checado
+ * ANTES de underperformer: quem bate a meta não vira underperformer só por ter
+ * piorado vs o próprio baseline.
  */
 export function classifyTier(input: TierInput, t: QualityThresholds): PerformanceTier | undefined {
-  if (input.conversions === 0 && input.spend >= t.zombieMinSpend) return "zombie";
+  if (!input.hasSignOfLife && !input.inLearning && input.spend >= t.zombieMinSpend) return "zombie";
   if (!input.hasSignificance) return undefined;
-  if (input.belowTarget || input.worseThanBaseline) return "underperformer";
   if (input.beatsTarget || input.topEfficiencyNoTarget) return "winner";
+  if (input.belowTarget || input.worseThanBaseline) return "underperformer";
   return "performer";
 }
 
@@ -132,13 +146,6 @@ export interface EnrichQualityContext {
   readonly conversionGoal?: ConversionGoal;
   /** tabela de faixas de cold-start (override; senão default do sistema). */
   readonly costTable?: Readonly<Record<OutcomeKind, CostReferenceBand>>;
-}
-
-/** Custo-por-resultado da entidade (CPA quando há; senão CPC) — p/ eficiência. */
-function costPerResult(m: InsightMetrics): number | undefined {
-  if (typeof m.cpa === "number" && m.cpa > 0) return m.cpa;
-  if (typeof m.cpc === "number" && m.cpc > 0) return m.cpc;
-  return undefined;
 }
 
 /** Queda relativa (%) de uma métrica "maior = melhor" (CTR): baseline→atual. */
@@ -176,12 +183,14 @@ export function enrichEntitiesQuality(
   ctx: EnrichQualityContext,
 ): EntitySummary[] {
   const t = ctx.thresholds;
-  // top-quartil de eficiência (menor custo-por-resultado) dentro do nível.
-  const costs = summaries
-    .map((e) => costPerResult(e.metrics))
+  // top-quartil de eficiência (menor CPA) dentro do nível. SÓ CPA (mesma base) —
+  // misturar CPA (custo-por-conversão) com CPC (custo-por-clique) no mesmo pool
+  // compararia maçã com laranja. Sem CPA no nível → ninguém é winner por eficiência.
+  const cpaCosts = summaries
+    .map((e) => (typeof e.metrics.cpa === "number" && e.metrics.cpa > 0 ? e.metrics.cpa : undefined))
     .filter((c): c is number => typeof c === "number")
     .sort((a, b) => a - b);
-  const q1 = costs.length > 0 ? costs[Math.floor((costs.length - 1) * 0.25)]! : Infinity;
+  const q1 = cpaCosts.length > 0 ? cpaCosts[Math.floor((cpaCosts.length - 1) * 0.25)]! : Infinity;
 
   return summaries.map((e) => {
     const conversions = typeof e.metrics.conversions === "number" ? e.metrics.conversions : 0;
@@ -197,7 +206,12 @@ export function enrichEntitiesQuality(
       t,
     );
 
-    const cost = costPerResult(e.metrics);
+    // eficiência só vale p/ quem tem CPA (mesma base do pool q1).
+    const cpa = typeof e.metrics.cpa === "number" && e.metrics.cpa > 0 ? e.metrics.cpa : undefined;
+    // sinal de vida: conversão de negócio, OU conversão-proxy (objetivo próprio), OU
+    // conversas no funil. Ausência total (com gasto, fora de learning) = zumbi.
+    const conversationStarted = e.funnel?.counts?.conversation_started ?? 0;
+    const hasSignOfLife = conversions > 0 || typeof e.proxy?.cpa === "number" || conversationStarted > 0;
     const tier = classifyTier(
       {
         conversions,
@@ -206,7 +220,9 @@ export function enrichEntitiesQuality(
         beatsTarget: beatsTargetFor(e, goals),
         belowTarget: e.flags.some((f) => BELOW_TARGET_FLAGS.has(f)),
         worseThanBaseline: costRisePct >= t.fatigueCostRisePct,
-        topEfficiencyNoTarget: !ctx.hasTarget && cost !== undefined && cost <= q1,
+        topEfficiencyNoTarget: !ctx.hasTarget && cpa !== undefined && cpa <= q1,
+        hasSignOfLife,
+        inLearning: eligibility.inLearning,
       },
       t,
     );

@@ -89,6 +89,20 @@ decaimento de token em runtime → `6b`; reuso do sync-service pelo `fetchData` 
 - **Rollup de custo por conversa** — o custo do chat já é atribuído à conta + carrega `conversationId` no payload; falta a agregação/relatório **por conversa** (metering).
 - **Bloco 2 (Fatia 7):** criação de campanhas + **auto-configurar o agente por chat** (mudar metas/playbook/guardrails/cadência conversando) — estende o Grafo B do 5c.
 
+**Melhorias de valor da 6c (review squad + Steticos) — registradas p/ próxima iteração de qualidade:**
+- **[ALTO] Detector de tracking/atribuição furado** — quando conversas (funil) >> conversões rastreadas (Steticos: ~2.896 conversas → 26 leads → 3-10 compras), emitir finding "medição parece incompleta — cheque pixel/CAPI antes de decidir por CPA de venda". Determinístico + nota no prompt. (Mesma raiz do fix de zumbi já aplicado.)
+- **[ALTO] Quantificar desperdício + 80/20** — scorecard expõe `wastedSpend` (soma dos zumbis) + concentração 80/20 por nível + impacto estimado por recomendação de pausa. É o "money shot" da auditoria (squad audit-ad-account/analyze-performance).
+- **[ALTO] Transcrição de áudio de criativo** — reclassificada de médio p/ **ALTO**: criativos da Steticos são vídeo antes/depois **+ fala**; frames HD não capturam o gancho FALADO (~80% da mensagem de talking-head). Depende da biblioteca de criativos da Fatia 7 (cliente sobe o vídeo).
+- **[MÉDIO] Faixa de custo cold-start sensível a ticket/vertical** — `sale = R$40–120` é calibrado p/ e-commerce; blefaroplastia (cirúrgico, alto ticket) tem CPA de centenas a milhares. Derivar a faixa do ticket informado na config; até lá, caveat forte no cold-start.
+- **[MÉDIO] Frequência por estágio** — `audience_saturation` usa teto único (3); prospecção alerta em 2,5 e remarketing só em ~8. Classificar adset por targeting e aplicar teto por estágio (Steticos já roda freq média 2,54).
+- **[MÉDIO] Não matar em learning (simetria do guard)** — o guard de significância rebaixa escalar/reativar em learning, mas **pausar** não é freado; o squad veta matar campanha em learning (descarta o aprendizado). Estender o guard (cuidando do trade-off com o Guardião).
+- **[MÉDIO] Decomposição de criativo: `body` + `proof_strength`** — o creative-analyst decompõe também corpo e força de prova; em estética o antes/depois + autoridade médica é o motor de conversão e hoje some no score único.
+- **[BAIXO] Plano sequenciado + "monitorar no próximo período"** no prompt (squad analyze-performance).
+- **[BAIXO] Limpar override avançado na UI** — hoje o merge de `model_config` só seta (não remove); reverter um knob avançado ao padrão do sistema exige semântica de replace-subset. Setar/alterar funciona; limpar o último campo é no-op.
+- **[BAIXO] Faixas/`zombieMinSpend` por moeda** — hoje constantes BRL aplicadas a qualquer conta (MVP BR-only); escalar por moeda quando entrar conta não-BRL.
+
+> **Nota (guard × playbook):** o veto de significância cobre recomendações de **origem LLM**; ações de **playbook** (regra explícita do usuário) não passam pelo veto — o guardrail de blast-radius é a rede lá. Intencional.
+
 **Plataforma / integrações**
 - **Integrações como entidade real (`platform_connections`)** — feito: conexão dona do token, `ad_accounts` referenciam, lifecycle soft (`active|unavailable|removed`), reconciliador puro (`reconcileSync`/`reconcileSelect`), conectar+multi-selecionar+sincronizar em Integrações; Contas só reflete; WhatsApp virou integração (sem aba). Fast-follows abaixo.
   - **Drop de `ad_accounts.token_cripto`/`token_status`** — hoje a conexão é a fonte da verdade; a coluna legada segue por dup transitória até o backfill ser confirmado em produção. Aí: migration de drop + remover fallbacks.

@@ -35,9 +35,15 @@ describe("detectHealthSignals", () => {
 });
 
 describe("classifyTier", () => {
-  const base = { hasSignificance: true, beatsTarget: false, belowTarget: false, worseThanBaseline: false, topEfficiencyNoTarget: false };
-  it("zombie: gastou e não converteu (independe de significância)", () => {
-    expect(classifyTier({ ...base, conversions: 0, spend: 200, hasSignificance: false }, T)).toBe("zombie");
+  const base = { hasSignificance: true, beatsTarget: false, belowTarget: false, worseThanBaseline: false, topEfficiencyNoTarget: false, hasSignOfLife: true, inLearning: false };
+  it("zombie: gastou e sem NENHUM sinal de vida, fora de learning (independe de significância)", () => {
+    expect(classifyTier({ ...base, conversions: 0, spend: 200, hasSignOfLife: false, hasSignificance: false }, T)).toBe("zombie");
+  });
+  it("com sinal de vida (conversa/proxy) NÃO é zumbi mesmo com 0 conversão de negócio", () => {
+    expect(classifyTier({ ...base, conversions: 0, spend: 200, hasSignOfLife: true, hasSignificance: false }, T)).toBeUndefined();
+  });
+  it("em learning nunca é zumbi", () => {
+    expect(classifyTier({ ...base, conversions: 0, spend: 200, hasSignOfLife: false, inLearning: true, hasSignificance: false }, T)).toBeUndefined();
   });
   it("sem significância (não-zombie) → sem tier", () => {
     expect(classifyTier({ ...base, conversions: 3, spend: 200, hasSignificance: false }, T)).toBeUndefined();

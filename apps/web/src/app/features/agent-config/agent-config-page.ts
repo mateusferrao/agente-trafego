@@ -509,12 +509,12 @@ interface FormState {
                 <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Mínimo de conversões para o agente confiar no número e sugerir escalar.">
                     Mínimo de conversões
-                    <input type="number" min="0" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcMinConversions()" (input)="onMcText(mcMinConversions, $event)" />
+                    <input type="number" min="1" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcMinConversions()" (input)="onMcText(mcMinConversions, $event)" />
                     <span class="text-xs text-muted">Abaixo disso, o agente evita conclusões precipitadas.</span>
                   </label>
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Mínimo de cliques para considerar que já há dado suficiente para avaliar.">
                     Mínimo de cliques
-                    <input type="number" min="0" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcMinClicks()" (input)="onMcText(mcMinClicks, $event)" />
+                    <input type="number" min="1" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcMinClicks()" (input)="onMcText(mcMinClicks, $event)" />
                     <span class="text-xs text-muted">Volume mínimo de cliques para tirar conclusões.</span>
                   </label>
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Queda de CTR (% em relação ao início) a partir da qual o anúncio é considerado cansado.">
@@ -524,7 +524,7 @@ interface FormState {
                   </label>
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Frequência (vezes que a mesma pessoa vê o anúncio) acima da qual consideramos saturação.">
                     Frequência p/ saturação
-                    <input type="number" min="0" step="0.1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcFatigueFrequency()" (input)="onMcText(mcFatigueFrequency, $event)" />
+                    <input type="number" min="0.1" step="0.1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcFatigueFrequency()" (input)="onMcText(mcFatigueFrequency, $event)" />
                     <span class="text-xs text-muted">Quantas vezes a mesma pessoa vê o anúncio antes de saturar.</span>
                   </label>
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Alta de custo por resultado (%) a partir da qual o anúncio é considerado cansado.">

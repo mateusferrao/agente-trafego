@@ -120,7 +120,10 @@ export function createBillingService(deps: BillingDeps) {
         .leftJoin(agents, eq(agentRuns.agentId, agents.id))
         .innerJoin(
           adAccounts,
-          eq(sql`coalesce(${usageEvents.adAccountId}, ${agents.adAccountId})`, adAccounts.id),
+          and(
+            eq(sql`coalesce(${usageEvents.adAccountId}, ${agents.adAccountId})`, adAccounts.id),
+            eq(adAccounts.orgId, orgId),
+          ),
         )
         .where(inRange)
         .groupBy(adAccounts.id, adAccounts.name);

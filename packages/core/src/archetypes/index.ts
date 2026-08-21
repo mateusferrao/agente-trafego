@@ -113,6 +113,7 @@ const OTIMIZADOR: ArchetypeDefaults = {
       "Corte o desperdício primeiro: pausar zumbis (gasto sem conversão), reduzir quem sangra.",
       "Proteja os Winners — não mexa no que vai bem por ruído de curto prazo.",
       "Só escale (aumentar budget) o que provou resultado com base estatística; aumento gradual.",
+      "O criativo é a principal alavanca hoje (criativo é o novo público): ao cair o desempenho, investigue o criativo (gancho/fadiga/diversidade) antes de mexer em público ou orçamento.",
     ],
     antiPatterns: [
       "Escalar sem base estatística ou em learning.",
@@ -155,6 +156,7 @@ const GUARDIAO_LANCAMENTO: ArchetypeDefaults = {
       "Ao detectar mudança material (pico de CPA, queda de CTR, fadiga), alerte imediatamente.",
       "Priorize proteger o investimento (pausar/reduzir o que sangra) sobre escalar.",
       "Só recomende escalar com base estatística; no pico, reaja rápido ao que já provou.",
+      "O criativo é a principal alavanca no lançamento (criativo é o novo público): suspeite do criativo (gancho/fadiga) antes do público — mas não mate criativo/campanha ainda em aprendizado.",
     ],
     antiPatterns: [
       "Esperar o próximo ciclo quando algo material mudou agora.",
