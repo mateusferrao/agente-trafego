@@ -23,6 +23,9 @@ export const membershipRole = pgEnum("membership_role", ["owner", "member"]);
 // usar; `pending` = aguardando liberação; `revoked` = acesso removido.
 export const accessStatus = pgEnum("access_status", ["pending", "active", "revoked"]);
 export const tokenStatus = pgEnum("token_status", ["valid", "invalid", "unchecked"]);
+// Propósito de um token de uso único (6b): verificação de email + reset de senha.
+// Genérico (novos fluxos = novo valor), keyed só pelo hash — nunca o token em claro.
+export const tokenPurpose = pgEnum("token_purpose", ["email_verification", "password_reset"]);
 // Plataforma de anúncios de uma conexão externa (genérico — não vaza provider no
 // conceito; novo provider = novo valor + adapter, sem tocar no core). §13.
 export const platformType = pgEnum("platform_type", ["meta"]);

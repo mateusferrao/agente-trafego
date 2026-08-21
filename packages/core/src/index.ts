@@ -16,3 +16,4 @@ export * from "./message/index.js";
 export * from "./map-reduce/index.js";
 export * from "./cadence/index.js";
 export * from "./echo/index.js";
+export * from "./password/index.js";

@@ -1,6 +1,7 @@
 // Barrel do schema — importado por drizzle.config.ts e pelo client.
 export * from "./_shared.js";
 export * from "./tenancy.js";
+export * from "./auth-tokens.js";
 export * from "./integrations.js";
 export * from "./agents.js";
 export * from "./tools.js";

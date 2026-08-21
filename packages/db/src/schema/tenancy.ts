@@ -19,6 +19,9 @@ export const users = pgTable("users", {
   name: text("name"),
   // hash argon2 — nunca a senha em claro
   passwordHash: text("password_hash").notNull(),
+  // quando o email foi confirmado (6b). null = não verificado → login bloqueado
+  // com 403 (reenvia código). Users pré-6b são grandfathered pelo backfill one-time.
+  emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
   ...timestamps,
 });
 
