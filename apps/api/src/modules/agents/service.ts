@@ -12,28 +12,31 @@ import {
   playbookRules,
   type Database,
 } from "@trafego/db";
-import { archetypeCatalog, archetypeDefaults, composeMethodologyPrompt, unseedIdentity, DEFAULT_ARCHETYPE_KEY } from "@trafego/core";
+import {
+  archetypeCatalog,
+  archetypeDefaults,
+  composeMethodologyPrompt,
+  unseedIdentity,
+  windowFromModelConfig,
+  ADVANCED_SCALAR_KEYS,
+  DEFAULT_ARCHETYPE_KEY,
+  type AgentConfigPatch,
+} from "@trafego/core";
+import { applyAgentConfigChange, reseedArchetypeChange } from "@trafego/agent-config";
 import {
   ACTION_UNDO_QUEUE,
   ACTION_UNDO_JOB,
   GUARDRAIL_DEFAULTS,
-  SCHEDULE_RESYNC_QUEUE,
-  SCHEDULE_RESYNC_JOB,
   toGuardrailConfig,
   UNDO_BLOCKED_TOOL_KEY,
   UNDO_TOOL_KEY,
 } from "@trafego/shared";
-import type { Action, AgentGoals, AgentId, OrgId, StoredInsightMetrics } from "@trafego/shared/types";
+import type { Action, AgentId, OrgId, StoredInsightMetrics } from "@trafego/shared/types";
 import type { ApprovalPort, SchedulerPort } from "@trafego/shared/ports";
-import {
-  ANALYSIS_WINDOW_DEFAULT_DAYS,
-  ANALYSIS_WINDOW_MAX_DAYS,
-  ANALYSIS_WINDOW_MIN_DAYS,
-} from "@trafego/shared";
+import { ANALYSIS_WINDOW_DEFAULT_DAYS } from "@trafego/shared";
 import { badRequest, notFound } from "../../middleware/error-handler.js";
 import {
   type AgentConfigInput,
-  type AgentGoalsInput,
   type AgentSummary,
   type AvailableConversionsOutput,
   type LastRunActionsOutput,
@@ -182,115 +185,32 @@ export function createAgentsService(deps: AgentsDeps) {
     accountId: string,
     input: AgentConfigInput,
   ): Promise<AgentSummary> {
+    // getOrCreate resolve o agentId + a projeção base do AgentSummary (methodology/
+    // paused/archetype). A SEMÂNTICA (merge/validação/diff/persistência) vive na
+    // camada compartilhada — fonte única com o chat do worker, sem drift.
     const summary = await getOrCreateForAccount(orgId, accountId);
-    // cleanGoals normaliza os dois casos (input do form ou goals atuais) p/ AgentGoals.
-    const nextGoals = cleanGoals(input.goals ?? summary.goals);
-    // conversão personalizada exige o id (senão o brief casaria uma custom arbitrária).
-    if (nextGoals.conversionGoal === "custom" && !nextGoals.customConversionId) {
-      throw badRequest("Escolha qual conversão personalizada usar como resultado do negócio.");
-    }
-    const nextBusinessContext =
-      input.businessContext !== undefined ? trimOrNull(input.businessContext) : summary.businessContext;
-    const nextGuidance =
-      input.guidance !== undefined ? trimOrNull(input.guidance) : summary.guidance;
-    // identidade/voz (c2): "" limpa (persona/tone vazios) e systemPrompt "" = usa arquétipo.
-    const nextPersona = input.persona !== undefined ? trimOrNull(input.persona) : summary.persona;
-    const nextTone = input.tone !== undefined ? trimOrNull(input.tone) : summary.tone;
-    const nextSystemPrompt =
-      input.systemPrompt !== undefined ? trimOrNull(input.systemPrompt) : summary.systemPrompt;
-    // cadência (c2): quando enviada, define; senão preserva. null nunca vem do input aqui.
-    const nextCadence = input.cadence !== undefined ? input.cadence : summary.cadence;
-    const cadenceChanged =
-      input.cadence !== undefined &&
-      JSON.stringify(input.cadence) !== JSON.stringify(summary.cadence ?? null);
+    const result = await applyAgentConfigChange(
+      { db: deps.db, scheduler: deps.scheduler },
+      { orgId, agentId: summary.agentId, accountId, patch: toConfigPatch(input) },
+    );
+    // erro tipado do core → exceção só aqui, na casca (mesma mensagem de antes).
+    if (!result.ok) throw badRequest(result.error);
 
-    // janela de análise vive no model_config (jsonb) — merge p/ preservar as outras chaves.
-    const [row] = await deps.db
-      .select({ modelConfig: agents.modelConfig })
-      .from(agents)
-      .where(and(eq(agents.id, summary.agentId), eq(agents.orgId, orgId)))
-      .limit(1);
-    const currentModelConfig = row?.modelConfig ?? {};
-    const nextWindow = input.analysisWindowDays ?? summary.analysisWindowDays;
-    // "Opções avançadas" (6c): merge dos knobs no model_config, preservando as outras
-    // chaves (ex: windowDays). quality é objeto → merge campo-a-campo.
-    const nextModelConfig = mergeAdvancedConfig(currentModelConfig, nextWindow, input.modelConfig);
-    // autonomia/guardrails (5a): só mordem na ESCRITA — não bumpam config_changed_at
-    // (não alteram o brief/análise). Persistidos direto.
-    const nextAutonomy = input.autonomyPolicy ?? summary.autonomyPolicy;
-    const nextGuardrails = input.guardrails ?? summary.guardrails;
-
-    // só força 1 deep (bumpa config_changed_at) quando um campo relevante à ANÁLISE
-    // mudou (goals/textos/identidade/janela) — evita deep em save idêntico (idempotência).
-    // Cadência NÃO entra: muda só a agenda, não a análise.
-    const runRelevantChanged =
-      JSON.stringify(nextGoals) !== JSON.stringify(cleanGoals(summary.goals)) ||
-      nextBusinessContext !== (summary.businessContext ?? null) ||
-      nextGuidance !== (summary.guidance ?? null) ||
-      nextPersona !== (summary.persona ?? null) ||
-      nextTone !== (summary.tone ?? null) ||
-      nextSystemPrompt !== (summary.systemPrompt ?? null) ||
-      nextWindow !== summary.analysisWindowDays ||
-      input.modelConfig !== undefined; // knobs de qualidade/modelo afetam a análise
-
-    await deps.db
-      .update(agents)
-      .set({
-        goals: nextGoals,
-        businessContext: nextBusinessContext,
-        guidance: nextGuidance,
-        persona: nextPersona,
-        tone: nextTone,
-        systemPrompt: nextSystemPrompt,
-        cadence: nextCadence,
-        modelConfig: nextModelConfig,
-        autonomyPolicy: nextAutonomy,
-        ...(runRelevantChanged ? { configChangedAt: sql`now()` } : {}),
-        updatedAt: sql`now()`,
-      })
-      .where(and(eq(agents.id, summary.agentId), eq(agents.orgId, orgId)));
-
-    // guardrails: linha própria (guardrail_configs). Upsert atômico pelo unique(agent_id)
-    // — cobre pré-4b agents (sem linha) sem TOCTOU nem risco de duplicar.
-    if (input.guardrails !== undefined) {
-      const gRow = {
-        maxBudgetChangePct: nextGuardrails.maxBudgetChangePct,
-        maxEntitiesPerDay: nextGuardrails.maxEntitiesPerDay,
-        allowedActions: nextGuardrails.allowedActions,
-        dryRun: nextGuardrails.dryRun,
-        killSwitch: nextGuardrails.killSwitch,
-        llmCostCap: nextGuardrails.llmCostCapUsd != null ? String(nextGuardrails.llmCostCapUsd) : null,
-      };
-      await deps.db
-        .insert(guardrailConfigs)
-        .values({ orgId, agentId: summary.agentId, ...gRow })
-        .onConflictDoUpdate({ target: guardrailConfigs.agentId, set: { ...gRow, updatedAt: sql`now()` } });
-    }
-
-    // cadência mudou → re-sincroniza o schedule (worker é o dono; API só enfileira).
-    // Sem idempotencyKey: cada job lê o DB mais recente e o schedule é idempotente
-    // por key; um jobId fixo poderia descartar um resync enfileirado enquanto o
-    // anterior está ativo, deixando o schedule defasado vs o DB.
-    if (cadenceChanged) {
-      await deps.scheduler.enqueue({
-        queue: SCHEDULE_RESYNC_QUEUE,
-        name: SCHEDULE_RESYNC_JOB,
-        payload: { orgId, adAccountId: accountId },
-      });
-    }
+    // projeta o AgentSummary a partir do estado resolvido — idêntico ao de antes.
+    const { next } = result;
     return {
       ...summary,
-      goals: nextGoals,
-      businessContext: nextBusinessContext,
-      guidance: nextGuidance,
-      persona: nextPersona,
-      tone: nextTone,
-      systemPrompt: nextSystemPrompt,
-      cadence: nextCadence,
-      analysisWindowDays: nextWindow,
-      autonomyPolicy: nextAutonomy,
-      guardrails: nextGuardrails,
-      modelConfig: projectModelConfig(nextModelConfig),
+      goals: next.goals,
+      businessContext: next.businessContext,
+      guidance: next.guidance,
+      persona: next.persona,
+      tone: next.tone,
+      systemPrompt: next.systemPrompt,
+      cadence: next.cadence,
+      analysisWindowDays: next.analysisWindowDays,
+      autonomyPolicy: next.autonomyPolicy,
+      guardrails: next.guardrails as AgentSummary["guardrails"],
+      modelConfig: projectModelConfig(next.modelConfig),
       qualityDefaults: deps.qualityDefaults,
     };
   }
@@ -307,42 +227,22 @@ export function createAgentsService(deps: AgentsDeps) {
     archetype: string,
   ): Promise<AgentSummary> {
     const summary = await getOrCreateForAccount(orgId, accountId);
-    const defaults = archetypeDefaults(archetype);
-    // Cadência: preserva a do usuário; só semeia a default do arquétipo (Fatia 6c) quando
-    // ainda está no padrão do sistema (null) — ex: Guardião → 2×/dia.
-    const nextCadence = summary.cadence ?? defaults.defaultCadence ?? null;
-    const cadenceChanged = JSON.stringify(nextCadence) !== JSON.stringify(summary.cadence ?? null);
-    await deps.db
-      .update(agents)
-      .set({
-        archetype: defaults.key,
-        // reset = "usa o arquétipo" (null); não gravamos os textos do arquétipo.
-        persona: null,
-        tone: null,
-        systemPrompt: null,
-        autonomyPolicy: defaults.autonomyPolicy,
-        cadence: nextCadence,
-        configChangedAt: sql`now()`,
-        updatedAt: sql`now()`,
-      })
-      .where(and(eq(agents.id, summary.agentId), eq(agents.orgId, orgId)));
-    // cadência semeada mudou → re-sincroniza o schedule (mesmo caminho do updateConfig).
-    if (cadenceChanged) {
-      await deps.scheduler.enqueue({
-        queue: SCHEDULE_RESYNC_QUEUE,
-        name: SCHEDULE_RESYNC_JOB,
-        payload: { orgId, adAccountId: accountId },
-      });
-    }
+    // reset do comportamento (persona/tone/prompt/autonomia + cadência semeada) na
+    // camada compartilhada — fonte única com o chat do worker.
+    const result = await reseedArchetypeChange(
+      { db: deps.db, scheduler: deps.scheduler },
+      { orgId, agentId: summary.agentId, accountId, archetype },
+    );
+    if (!result.ok) throw badRequest(result.error);
     return {
       ...summary,
-      archetype: defaults.key,
+      archetype: result.archetype,
       persona: null,
       tone: null,
       systemPrompt: null,
-      autonomyPolicy: defaults.autonomyPolicy,
-      cadence: nextCadence,
-      methodologyPreview: methodologyFor(defaults.key),
+      autonomyPolicy: result.autonomyPolicy,
+      cadence: result.cadence,
+      methodologyPreview: methodologyFor(result.archetype),
     };
   }
 
@@ -752,53 +652,30 @@ function methodologyFor(archetype: string): string {
   return composeMethodologyPrompt(archetypeDefaults(archetype));
 }
 
-/** Só as chaves definidas (exactOptionalPropertyTypes — sem gravar `undefined`). */
-function cleanGoals(g: AgentGoalsInput): AgentGoals {
-  return {
-    ...(g.targetCPA !== undefined ? { targetCPA: g.targetCPA } : {}),
-    ...(g.targetROAS !== undefined ? { targetROAS: g.targetROAS } : {}),
-    ...(g.conversionGoal !== undefined ? { conversionGoal: g.conversionGoal } : {}),
-    ...(g.customConversionId !== undefined ? { customConversionId: g.customConversionId } : {}),
-  };
-}
-
-/** Texto aparado, ou null quando vazio (mantém o DB limpo; "" limpa o campo). */
-function trimOrNull(s: string): string | null {
-  const t = s.trim();
-  return t.length > 0 ? t : null;
-}
-
 /** Data → YYYY-MM-DD (coluna `date` do snapshot). */
 function ymd(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** Janela salva no model_config (ou o default), capada aos limites — p/ exibir na config. */
-function windowFromModelConfig(mc: Readonly<Record<string, unknown>> | null | undefined): number {
-  const raw = mc?.windowDays;
-  if (typeof raw !== "number" || !Number.isFinite(raw)) return ANALYSIS_WINDOW_DEFAULT_DAYS;
-  return Math.min(ANALYSIS_WINDOW_MAX_DAYS, Math.max(ANALYSIS_WINDOW_MIN_DAYS, Math.floor(raw)));
-}
-
-/** Knobs de "Opções avançadas" (6c) reconhecidos no model_config (fora quality). */
-const ADVANCED_SCALAR_KEYS = ["model", "unitModel", "messageModel", "visionModel", "reviewEnabled", "topN", "maxOutputTokens"] as const;
-
-/** Merge dos knobs avançados no model_config, preservando outras chaves (windowDays). */
-function mergeAdvancedConfig(
-  current: Readonly<Record<string, unknown>>,
-  windowDays: number,
-  patch: ModelConfigInput | undefined,
-): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...current, windowDays };
-  if (!patch) return out;
-  for (const k of ADVANCED_SCALAR_KEYS) if (patch[k] !== undefined) out[k] = patch[k];
-  if (patch.quality) {
-    const curQ = out.quality && typeof out.quality === "object" ? (out.quality as Record<string, unknown>) : {};
-    const nextQ: Record<string, unknown> = { ...curQ };
-    for (const [qk, qv] of Object.entries(patch.quality)) if (qv !== undefined) nextQ[qk] = qv;
-    out.quality = nextQ;
-  }
-  return out;
+/**
+ * Traduz o DTO da API (`AgentConfigInput`) → `AgentConfigPatch` do core. Preserva a
+ * semântica de patch (só inclui as chaves ENVIADAS; `undefined` = preserva). A
+ * validação/merge/diff vivem no resolver (`resolveAgentConfigChange`).
+ */
+function toConfigPatch(input: AgentConfigInput): AgentConfigPatch {
+  return {
+    ...(input.goals !== undefined ? { goals: input.goals } : {}),
+    ...(input.businessContext !== undefined ? { businessContext: input.businessContext } : {}),
+    ...(input.guidance !== undefined ? { guidance: input.guidance } : {}),
+    ...(input.persona !== undefined ? { persona: input.persona } : {}),
+    ...(input.tone !== undefined ? { tone: input.tone } : {}),
+    ...(input.systemPrompt !== undefined ? { systemPrompt: input.systemPrompt } : {}),
+    ...(input.cadence !== undefined ? { cadence: input.cadence } : {}),
+    ...(input.analysisWindowDays !== undefined ? { analysisWindowDays: input.analysisWindowDays } : {}),
+    ...(input.autonomyPolicy !== undefined ? { autonomyPolicy: input.autonomyPolicy } : {}),
+    ...(input.guardrails !== undefined ? { guardrails: input.guardrails } : {}),
+    ...(input.modelConfig !== undefined ? { modelConfig: input.modelConfig } : {}),
+  };
 }
 
 /** Projeta só os knobs conhecidos do model_config (o AgentSummary não vaza windowDays etc.). */

@@ -21,3 +21,4 @@ export * from "./waste/index.js";
 export * from "./cadence/index.js";
 export * from "./echo/index.js";
 export * from "./password/index.js";
+export * from "./agent-config/index.js";

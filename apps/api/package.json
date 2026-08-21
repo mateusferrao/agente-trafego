@@ -22,6 +22,7 @@
     "@fastify/static": "^8.0.0",
     "@node-rs/argon2": "^2.1.0",
     "@trafego/ads-meta": "workspace:*",
+    "@trafego/agent-config": "workspace:*",
     "@trafego/approval-postgres": "workspace:*",
     "@trafego/channel-evolution": "workspace:*",
     "@trafego/config": "workspace:*",

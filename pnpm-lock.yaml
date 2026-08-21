@@ -39,6 +39,9 @@ importers:
       '@trafego/ads-meta':
         specifier: workspace:*
         version: link:../../packages/ads-meta
+      '@trafego/agent-config':
+        specifier: workspace:*
+        version: link:../../packages/agent-config
       '@trafego/approval-postgres':
         specifier: workspace:*
         version: link:../../packages/approval-postgres
@@ -249,6 +252,25 @@ importers:
       ioredis:
         specifier: ^5.4.0
         version: 5.11.1
+
+  packages/agent-config:
+    dependencies:
+      '@trafego/core':
+        specifier: workspace:*
+        version: link:../core
+      '@trafego/db':
+        specifier: workspace:*
+        version: link:../db
+      '@trafego/shared':
+        specifier: workspace:*
+        version: link:../shared
+      drizzle-orm:
+        specifier: ^0.38.0
+        version: 0.38.4(@types/pg@8.23.1)(pg@8.23.0)(react@19.2.8)
+    devDependencies:
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.20.1)(lightningcss@1.32.0)(sass@1.97.3)
 
   packages/approval-postgres:
     dependencies:
