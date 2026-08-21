@@ -17,11 +17,14 @@ export type PanoramaCardVm = PanoramaListOutput["accounts"][number];
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [RouterLink, NgIcon, UiBadge, UiButton],
   providers: [provideIcons({ heroArrowPath })],
+  // host ocupa a célula inteira do grid (align stretch) → todos os cards da linha
+  // ficam com a MESMA altura, mesmo sem dado de gasto (footer alinhado por mt-auto).
+  host: { class: "block h-full" },
   template: `
     @let c = card();
     <!-- Card inteiro clicável: o link do nome estica sobre o card (::after); o botão
-         Atualizar fica acima (z-10) p/ não disparar a navegação. -->
-    <div class="relative flex flex-col gap-2 rounded-lg border border-line bg-panel p-4 transition hover:border-accent/40">
+         Atualizar fica acima (z-10) p/ não disparar a navegação. h-full = altura uniforme. -->
+    <div class="relative flex h-full flex-col gap-2 rounded-lg border border-line bg-panel p-4 transition hover:border-accent/40">
       <div class="flex items-start justify-between gap-2">
         <a
           [routerLink]="['/accounts', c.accountId]"
@@ -46,14 +49,17 @@ export type PanoramaCardVm = PanoramaListOutput["accounts"][number];
           }
         </div>
       } @else {
-        <span class="text-xs text-muted">sem dados na janela</span>
+        <span class="text-xs text-muted">sem gasto no período</span>
       }
       @if (c.tokenStatus === 'invalid') {
         <span class="text-xs text-danger-strong">Token expirado — reconecte em Integrações.</span>
       } @else if (c.agentPaused) {
-        <span class="text-xs text-warning-strong">Agente pausado — números não atualizam sozinhos.</span>
+        <span class="text-xs text-warning-strong">
+          Agente pausado — atualize aqui ou reative o agente para os números voltarem a atualizar sozinhos.
+        </span>
       }
-      <div class="mt-1 flex items-center justify-between gap-2">
+      <!-- mt-auto empurra o rodapé pra base → footer alinhado em todos os cards da linha. -->
+      <div class="mt-auto flex items-center justify-between gap-2 pt-1">
         <span class="text-xs" [class.text-muted]="!c.stale" [class.text-warning-strong]="c.stale">
           {{ asOfLabel(c.asOf, c.stale) }}
         </span>

@@ -19,11 +19,15 @@ export function timeLabel(iso: string): string {
   return TIME_FMT.format(new Date(iso));
 }
 
-/** Rótulo as-of: "atualizado HH:MM" | "desatualizado (HH:MM)" | "sem dados ainda". */
+/**
+ * Rótulo as-of (quando os números foram buscados da Meta pela última vez):
+ * "atualizado às HH:MM" | "desatualizado · última atualização HH:MM" | "ainda não sincronizado".
+ * O HH:MM é sempre o horário da última busca (não o momento em que ficou velho).
+ */
 export function asOfLabel(asOf: string | null, stale: boolean): string {
-  if (!asOf) return "sem dados ainda";
+  if (!asOf) return "ainda não sincronizado";
   const t = timeLabel(asOf);
-  return stale ? `desatualizado (${t})` : `atualizado ${t}`;
+  return stale ? `desatualizado · última atualização ${t}` : `atualizado às ${t}`;
 }
 
 /** Data ISO "YYYY-MM-DD" → "dd/mm" (PT-BR, sem shift de fuso). */
