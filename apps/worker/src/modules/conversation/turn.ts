@@ -4,7 +4,7 @@
 
 import { and, eq } from "drizzle-orm";
 import { HumanMessage, type AIMessage } from "@langchain/core/messages";
-import { adAccounts, agents, guardrailConfigs, type Database } from "@trafego/db";
+import { adAccounts, agents, conversations, guardrailConfigs, type Database } from "@trafego/db";
 import type { ActionType } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
 import { buildWhatsappConversationGraph } from "../../graphs/whatsapp-conversation/graph.js";
@@ -20,18 +20,56 @@ import { createSendToContact } from "../notify/send-to-contact.js";
 /** Erro amigável se o turno falhar (LLM/infra) — nunca vaza stack pro usuário (§UX). */
 const FALLBACK_REPLY = "Não consegui processar agora. Tenta de novo em instantes.";
 
-/** Agente/conta em contexto quando a org tem EXATAMENTE 1 agente ativo; senão null (concierge). */
-async function resolveSoleAgent(
+/** Agente em contexto (id + conta + nome da conta). */
+interface AgentInContext {
+  readonly agentId: string;
+  readonly adAccountId: string;
+  readonly accountName: string | null;
+}
+
+/**
+ * Agentes ativos da org (cap 2 p/ decidir sole × multi-conta). `sole` = exatamente 1;
+ * `multiAccount` = ≥2 (concierge/foco). Nome da conta vem junto (eco/foco).
+ */
+async function resolveActiveAgents(
   db: Database,
   orgId: string,
-): Promise<{ agentId: string; adAccountId: string } | null> {
+): Promise<{ sole: AgentInContext | null; multiAccount: boolean }> {
   const rows = await db
-    .select({ agentId: agents.id, adAccountId: agents.adAccountId })
+    .select({ agentId: agents.id, adAccountId: agents.adAccountId, accountName: adAccounts.name })
     .from(agents)
     .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
     .where(and(eq(agents.orgId, orgId), eq(agents.status, "active"), eq(adAccounts.status, "active")))
     .limit(2);
-  return rows.length === 1 ? rows[0]! : null;
+  return { sole: rows.length === 1 ? rows[0]! : null, multiAccount: rows.length >= 2 };
+}
+
+/** Agente da conta em FOCO do fio (5c-6) — org-scoped, conta+agente ativos. Null se sem foco/indisponível. */
+async function resolveFocusedAgent(
+  db: Database,
+  orgId: string,
+  conversationId: string,
+): Promise<AgentInContext | null> {
+  const [conv] = await db
+    .select({ focusedAccountId: conversations.focusedAccountId })
+    .from(conversations)
+    .where(eq(conversations.id, conversationId))
+    .limit(1);
+  if (!conv?.focusedAccountId) return null;
+  const [row] = await db
+    .select({ agentId: agents.id, adAccountId: agents.adAccountId, accountName: adAccounts.name })
+    .from(agents)
+    .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
+    .where(
+      and(
+        eq(agents.orgId, orgId),
+        eq(agents.status, "active"),
+        eq(adAccounts.status, "active"),
+        eq(adAccounts.id, conv.focusedAccountId),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
 }
 
 /**
@@ -62,18 +100,24 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
   const { logger, ports } = deps;
   const sendToContact = createSendToContact({ messaging: ports.messaging, repo: createNotifyRepo(deps.db) });
 
-  const sole = await resolveSoleAgent(deps.db, input.orgId);
+  // agente em contexto = a única conta ativa (sole) OU a conta em foco do fio (multi-conta,
+  // 5c-6). Sem nenhuma das duas → concierge (só org-level + set_focus p/ escolher).
+  const { sole, multiAccount } = await resolveActiveAgents(deps.db, input.orgId);
+  const inContext = sole ?? (await resolveFocusedAgent(deps.db, input.orgId, input.conversationId));
+
   const ctx: ConversationToolContext = {
     orgId: input.orgId,
-    agentId: sole?.agentId ?? "",
-    adAccountId: sole?.adAccountId ?? "",
+    agentId: inContext?.agentId ?? "",
+    adAccountId: inContext?.adAccountId ?? "",
     contactId: input.contactId,
     conversationId: input.conversationId,
+    multiAccount,
+    ...(inContext?.accountName ? { accountName: inContext.accountName } : {}),
   };
-  // sole-agent: leitura/controle + escrita livre filtrada por allowedActions (5c).
-  // concierge (org multi-conta): só org-level (escrita via foco = 5c-6).
-  const allow = sole
-    ? new Set<string>([...AGENT_TOOL_NAMES, ...(await allowedWriteTools(deps.db, input.orgId, sole.agentId))])
+  // com agente em contexto: leitura/controle + escrita livre filtrada por allowedActions (5c).
+  // sem contexto (multi-conta sem foco): concierge — org-level + set_focus.
+  const allow = inContext
+    ? new Set<string>([...AGENT_TOOL_NAMES, ...(await allowedWriteTools(deps.db, input.orgId, inContext.agentId))])
     : CONCIERGE_TOOL_NAMES;
 
   let reply = FALLBACK_REPLY;

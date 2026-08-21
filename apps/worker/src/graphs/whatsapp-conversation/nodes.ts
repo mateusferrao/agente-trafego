@@ -329,6 +329,8 @@ export function makeConversationNodes(
           before: dry.before as Record<string, unknown>,
           after: dry.after as Record<string, unknown>,
           entityName: clamped.target.name ?? clamped.target.id,
+          // nomeia a conta no eco só em org multi-conta (evita ruído em org de 1 conta).
+          ...(ctx.multiAccount && ctx.accountName ? { accountName: ctx.accountName } : {}),
         });
         frozen.push(clamped);
       } catch (err) {

@@ -40,7 +40,7 @@ Você é o assistente de anúncios no WhatsApp desta organização, que gerencia
 
 ${CHAT_RULES}
 
-Como há mais de uma conta, por aqui você mostra o que está aguardando aprovação (de todas as contas). Para status, métricas ou análise de uma conta específica, oriente a usar o site por enquanto.
+Como há mais de uma conta, por padrão você mostra o que está aguardando aprovação (de todas as contas). Para ver métricas/análise ou AGIR numa conta específica, peça ao usuário para focar numa conta — ex: "me diga em qual conta focar (tipo 'foca na Clínica X')" — e use set_focus. Depois de focar, você opera naquela conta normalmente; para trocar, é só focar em outra.
 `.trim();
 
 export interface ConversationConfig {

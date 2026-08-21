@@ -3,8 +3,10 @@
 // (dispara análise on-demand com push de volta na conversa). Nenhuma tool chama a
 // Meta. Tools de ESCRITA (aprovar/rejeitar) entram na 5b-2.3.
 
+import { and, eq, ilike } from "drizzle-orm";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
+import { adAccounts, conversations } from "@trafego/db";
 import {
   ACTION_PARAM_AMOUNT_MINOR,
   ACTION_PARAM_MODE,
@@ -25,6 +27,10 @@ import { makeReadTools, type ReadToolContext } from "./read-data.js";
 export interface ConversationToolContext extends ReadToolContext {
   /** thread da conversa (checkpointer) — alvo do push do "analisa agora". */
   readonly conversationId: string;
+  /** org com >1 conta ativa (concierge/multi-conta) — o eco nomeia a conta (5c-6). */
+  readonly multiAccount?: boolean;
+  /** nome da conta em foco/contexto (exibição no eco, org multi-conta). */
+  readonly accountName?: string;
 }
 
 /**
@@ -192,8 +198,30 @@ export function makeConversationTools(
     }),
   });
 
+  // FOCO (5c-6): em org multi-conta, escolhe a conta do fio. Executa direto (baixo risco,
+  // sem eco) e persiste em conversations.focused_account_id — o próximo turno opera nela.
+  const setFocus = tool(
+    async ({ name }: { name: string }) => {
+      const rows = await deps.db
+        .select({ id: adAccounts.id, name: adAccounts.name })
+        .from(adAccounts)
+        .where(and(eq(adAccounts.orgId, ctx.orgId), eq(adAccounts.status, "active"), ilike(adAccounts.name, `%${name}%`)));
+      if (rows.length === 0) return `Não achei uma conta ativa com "${name}" no nome.`;
+      if (rows.length > 1) return `Mais de uma conta casa "${name}": ${rows.map((r) => r.name).join(", ")}. Qual delas?`;
+      const acc = rows[0]!;
+      await deps.db.update(conversations).set({ focusedAccountId: acc.id }).where(eq(conversations.id, ctx.conversationId));
+      return `Ok, foquei na conta ${acc.name}. O que você quer fazer nela?`;
+    },
+    {
+      name: "set_focus",
+      description:
+        "Escolhe a conta em foco desta conversa (org com várias contas). Ex: 'foca na Clínica X'. Depois disso, leitura e ações passam a ser dessa conta.",
+      schema: z.object({ name: z.string().min(1) }),
+    },
+  );
+
   const writeTools = [pauseEntity, resumeEntity, setStatus, adjustBudget, revertAction, confirmWrite, cancelWrite];
-  return [...readTools, triggerAnalysis, approve, reject, ...writeTools].filter((t) => allow.has(t.name));
+  return [...readTools, triggerAnalysis, approve, reject, setFocus, ...writeTools].filter((t) => allow.has(t.name));
 }
 
 /** Constrói a `Action` neutra a partir de um tool_call de escrita livre do chat (5c). */
@@ -252,10 +280,14 @@ export const AGENT_TOOL_NAMES: ReadonlySet<string> = new Set([
   "revert_action",
   "confirm_write",
   "cancel_write",
+  "set_focus",
 ]);
 
-/** Concierge (org multi-conta): só org-level — ver e resolver pendentes cross-conta. */
-export const CONCIERGE_TOOL_NAMES: ReadonlySet<string> = new Set(["list_pending", "approve", "reject"]);
+/**
+ * Concierge (org multi-conta SEM foco): org-level (pendentes cross-conta) + set_focus
+ * p/ escolher a conta e destravar leitura/escrita (5c-6).
+ */
+export const CONCIERGE_TOOL_NAMES: ReadonlySet<string> = new Set(["list_pending", "approve", "reject", "set_focus"]);
 
 /**
  * Tools de ESCRITA LIVRE que exigem ECO+CONFIRMA antes de aplicar (gate, 5c). O roteador

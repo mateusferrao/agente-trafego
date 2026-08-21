@@ -2,7 +2,7 @@ import { index, jsonb, pgTable, text, uuid } from "drizzle-orm/pg-core";
 import { messageDirection, pk, timestamps } from "./_shared.js";
 import { agents } from "./agents.js";
 import { orgs } from "./tenancy.js";
-import { contacts } from "./integrations.js";
+import { adAccounts, contacts } from "./integrations.js";
 
 /** Fio de conversa WhatsApp (Grafo B). */
 export const conversations = pgTable(
@@ -14,6 +14,9 @@ export const conversations = pgTable(
       .references(() => orgs.id, { onDelete: "cascade" }),
     agentId: uuid("agent_id").references(() => agents.id, { onDelete: "set null" }),
     contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+    // conta em foco (org multi-conta, 5c-6): quando setada, leitura/escrita operam nela.
+    // Null = sem foco (org de 1 conta usa a única; multi-conta pede "foca na X").
+    focusedAccountId: uuid("focused_account_id").references(() => adAccounts.id, { onDelete: "set null" }),
     ...timestamps,
   },
   (t) => [index("conversations_org_idx").on(t.orgId)],
