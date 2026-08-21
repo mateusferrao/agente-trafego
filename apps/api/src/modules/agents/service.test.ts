@@ -3,6 +3,7 @@ import type { Database } from "@trafego/db";
 import type { OrgId } from "@trafego/shared/types";
 import type { ApprovalPort, SchedulerPort } from "@trafego/shared/ports";
 import { createAgentsService } from "./service.js";
+const QD = { minConversions: 20, minClicks: 100, fatigueCtrDropPct: 20, fatigueFrequency: 3, fatigueCostRisePct: 30, zombieMinSpend: 50, coldStartReference: true };
 
 /** Scheduler noop (resync = fila; irrelevante p/ os testes de serviço). */
 const scheduler: SchedulerPort = {
@@ -69,7 +70,7 @@ const ORG = "org-1" as OrgId;
 describe("agents.getOrCreateForAccount", () => {
   it("cria o agente default (arquétipo conservador) quando não existe", async () => {
     const { db, captured } = makeFakeDb([[{ id: "acc-1" }], []], [{ id: "agent-new" }]);
-    const service = createAgentsService({ db, scheduler, approvals, revertTtlDays: 7 });
+    const service = createAgentsService({ db, scheduler, approvals, revertTtlDays: 7, qualityDefaults: QD });
 
     const result = await service.getOrCreateForAccount(ORG, "acc-1");
 
@@ -81,7 +82,7 @@ describe("agents.getOrCreateForAccount", () => {
 
   it("retorna o agente existente sem criar outro", async () => {
     const { db, captured } = makeFakeDb([[{ id: "acc-1" }], [{ id: "ag-1", archetype: "conservador", goals: { targetCPA: 40 } }]]);
-    const service = createAgentsService({ db, scheduler, approvals, revertTtlDays: 7 });
+    const service = createAgentsService({ db, scheduler, approvals, revertTtlDays: 7, qualityDefaults: QD });
 
     const result = await service.getOrCreateForAccount(ORG, "acc-1");
 
@@ -92,7 +93,7 @@ describe("agents.getOrCreateForAccount", () => {
 
   it("404 quando a conta não é da org", async () => {
     const { db } = makeFakeDb([[]]);
-    const service = createAgentsService({ db, scheduler, approvals, revertTtlDays: 7 });
+    const service = createAgentsService({ db, scheduler, approvals, revertTtlDays: 7, qualityDefaults: QD });
     await expect(service.getOrCreateForAccount(ORG, "nope")).rejects.toMatchObject({ statusCode: 404 });
   });
 });
@@ -107,7 +108,7 @@ describe("agents.updateConfig", () => {
       [],
       [{ modelConfig: { model: "x" } }],
     ]);
-    const service = createAgentsService({ db, scheduler, approvals, revertTtlDays: 7 });
+    const service = createAgentsService({ db, scheduler, approvals, revertTtlDays: 7, qualityDefaults: QD });
 
     const result = await service.updateConfig(ORG, "acc-1", {
       goals: { targetCPA: 150, conversionGoal: "purchase" },
@@ -137,7 +138,7 @@ describe("agents.availableConversions", () => {
     ];
     const labels = [{ goal: "custom", customConversionId: "123", label: "Comprou Curso" }];
     const { db } = makeFakeDb([snapshots, labels]);
-    const service = createAgentsService({ db, scheduler, approvals, revertTtlDays: 7 });
+    const service = createAgentsService({ db, scheduler, approvals, revertTtlDays: 7, qualityDefaults: QD });
 
     const result = await service.availableConversions(ORG, "acc-1");
 
@@ -163,7 +164,7 @@ describe("agents.createPlaybookRule", () => {
       [[{ id: "acc-1" }], [{ id: "ag-1", archetype: "conservador", goals: {} }]],
       [createdRow],
     );
-    const service = createAgentsService({ db, scheduler, approvals, revertTtlDays: 7 });
+    const service = createAgentsService({ db, scheduler, approvals, revertTtlDays: 7, qualityDefaults: QD });
 
     const result = await service.createPlaybookRule(ORG, "acc-1", {
       scope: "ad",
@@ -194,7 +195,7 @@ describe("agents.muteCampaign / unmuteCampaign", () => {
       [],
       [{ externalId: "C1" }],
     ]);
-    const service = createAgentsService({ db, scheduler, approvals, revertTtlDays: 7 });
+    const service = createAgentsService({ db, scheduler, approvals, revertTtlDays: 7, qualityDefaults: QD });
 
     const result = await service.muteCampaign(ORG, "acc-1", "C1");
 
@@ -215,7 +216,7 @@ describe("agents.muteCampaign / unmuteCampaign", () => {
       [],
       [],
     ]);
-    const service = createAgentsService({ db, scheduler, approvals, revertTtlDays: 7 });
+    const service = createAgentsService({ db, scheduler, approvals, revertTtlDays: 7, qualityDefaults: QD });
 
     const result = await service.unmuteCampaign(ORG, "acc-1", "C1");
 

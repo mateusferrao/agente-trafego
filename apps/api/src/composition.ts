@@ -156,7 +156,21 @@ export function buildContainer(): Container {
 
   // Services — cada slice recebe só as portas de que precisa.
   // agents antes de runs: runs reusa `ensureAgent` (criação lazy) do slice de agentes.
-  const agents = createAgentsService({ db, scheduler, approvals, revertTtlDays: env.REVERT_TTL_DAYS });
+  const agents = createAgentsService({
+    db,
+    scheduler,
+    approvals,
+    revertTtlDays: env.REVERT_TTL_DAYS,
+    qualityDefaults: {
+      minConversions: env.ANALYSIS_QUALITY_MIN_CONVERSIONS,
+      minClicks: env.ANALYSIS_QUALITY_MIN_CLICKS,
+      fatigueCtrDropPct: env.ANALYSIS_QUALITY_FATIGUE_CTR_DROP_PCT,
+      fatigueFrequency: env.ANALYSIS_QUALITY_FATIGUE_FREQUENCY,
+      fatigueCostRisePct: env.ANALYSIS_QUALITY_FATIGUE_COST_RISE_PCT,
+      zombieMinSpend: env.ANALYSIS_QUALITY_ZOMBIE_MIN_SPEND,
+      coldStartReference: env.ANALYSIS_QUALITY_COLD_START_REFERENCE,
+    },
+  });
   const services: Services = {
     auth: createAuthService({
       repo: createDrizzleAuthRepo(db),

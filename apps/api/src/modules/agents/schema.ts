@@ -30,6 +30,18 @@ export const qualityConfigInput = z.object({
 });
 export type QualityConfigInput = z.infer<typeof qualityConfigInput>;
 
+/** Defaults do sistema dos limiares de qualidade (env) — p/ a UI mostrar como placeholder real. */
+export const qualityDefaultsOutput = z.object({
+  minConversions: z.number(),
+  minClicks: z.number(),
+  fatigueCtrDropPct: z.number(),
+  fatigueFrequency: z.number(),
+  fatigueCostRisePct: z.number(),
+  zombieMinSpend: z.number(),
+  coldStartReference: z.boolean(),
+});
+export type QualityDefaultsOutput = z.infer<typeof qualityDefaultsOutput>;
+
 /** "Opções avançadas" (6c): override por-agente de model_config. Tudo opcional (patch). */
 export const modelConfigInput = z.object({
   model: z.string().optional(),
@@ -110,6 +122,8 @@ export const agentSummary = z.object({
   guardrails: guardrailConfigSchema,
   /** "Opções avançadas" (6c) — overrides atuais do model_config (vazio = padrão do sistema). */
   modelConfig: modelConfigInput,
+  /** defaults do sistema dos limiares de qualidade (env) — placeholder real na UI. */
+  qualityDefaults: qualityDefaultsOutput,
 });
 export type AgentSummary = z.infer<typeof agentSummary>;
 

@@ -1050,6 +1050,41 @@
                 }
               }
             }
+          },
+          "qualityDefaults": {
+            "type": "object",
+            "properties": {
+              "minConversions": {
+                "type": "number"
+              },
+              "minClicks": {
+                "type": "number"
+              },
+              "fatigueCtrDropPct": {
+                "type": "number"
+              },
+              "fatigueFrequency": {
+                "type": "number"
+              },
+              "fatigueCostRisePct": {
+                "type": "number"
+              },
+              "zombieMinSpend": {
+                "type": "number"
+              },
+              "coldStartReference": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "minConversions",
+              "minClicks",
+              "fatigueCtrDropPct",
+              "fatigueFrequency",
+              "fatigueCostRisePct",
+              "zombieMinSpend",
+              "coldStartReference"
+            ]
           }
         },
         "required": [
@@ -1067,7 +1102,8 @@
           "paused",
           "autonomyPolicy",
           "guardrails",
-          "modelConfig"
+          "modelConfig",
+          "qualityDefaults"
         ]
       },
       "ArchetypeCatalogOutput": {

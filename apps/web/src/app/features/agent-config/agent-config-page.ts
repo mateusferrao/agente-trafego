@@ -450,58 +450,9 @@ interface FormState {
             </summary>
             <div class="mt-3 flex flex-col gap-6">
               <p class="text-xs text-muted">
-                Ajustes finos de como o agente pensa. Deixe em branco para usar o padrão do sistema — só mexa se
-                souber o efeito.
+                Limiares de qualidade do agente. Deixe em branco para usar o padrão do sistema (mostrado em cada
+                campo) — só mexa se souber o efeito.
               </p>
-
-              <!-- Modelos de IA -->
-              <div class="flex flex-col gap-3">
-                <span class="text-sm font-semibold text-ink">Modelos de IA</span>
-                <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <label class="flex flex-col gap-1 text-xs text-muted" title="Modelo de linguagem principal usado na análise. Ex: um modelo mais forte analisa melhor, mas custa mais.">
-                    Modelo principal
-                    <input type="text" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcModel()" (input)="onMcText(mcModel, $event)" />
-                    <span class="text-xs text-muted">O cérebro do agente. Modelos melhores analisam com mais qualidade e custam mais.</span>
-                  </label>
-                  <label class="flex flex-col gap-1 text-xs text-muted" title="Modelo usado ao analisar cada campanha em profundidade.">
-                    Modelo por campanha
-                    <input type="text" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcUnitModel()" (input)="onMcText(mcUnitModel, $event)" />
-                    <span class="text-xs text-muted">Usado no mergulho campanha a campanha.</span>
-                  </label>
-                  <label class="flex flex-col gap-1 text-xs text-muted" title="Modelo usado para escrever as mensagens ao usuário (resumo e conversa).">
-                    Modelo das mensagens
-                    <input type="text" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcMessageModel()" (input)="onMcText(mcMessageModel, $event)" />
-                    <span class="text-xs text-muted">Usado para redigir os textos que você lê.</span>
-                  </label>
-                  <label class="flex flex-col gap-1 text-xs text-muted" title="Modelo com visão, usado para olhar as imagens e vídeos dos anúncios.">
-                    Modelo de visão
-                    <input type="text" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcVisionModel()" (input)="onMcText(mcVisionModel, $event)" />
-                    <span class="text-xs text-muted">Usado para enxergar os criativos (imagem e vídeo).</span>
-                  </label>
-                </div>
-              </div>
-
-              <!-- Pipeline da análise -->
-              <div class="flex flex-col gap-3">
-                <span class="text-sm font-semibold text-ink">Pipeline da análise</span>
-                <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                  <label class="flex flex-col gap-1 text-xs text-muted" title="Passo extra de revisão: um segundo olhar refina os achados antes de virar recomendação.">
-                    Revisão da análise
-                    <app-ui-select [options]="tristateOptions" [value]="mcReviewEnabled()" (valueChange)="mcReviewEnabled.set($event)" />
-                    <span class="text-xs text-muted">Um segundo olhar refina os achados. Mais qualidade, um pouco mais de custo.</span>
-                  </label>
-                  <label class="flex flex-col gap-1 text-xs text-muted" title="Quantas campanhas recebem a análise profunda por vez (as demais entram resumidas).">
-                    Campanhas analisadas a fundo
-                    <input type="number" min="1" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcTopN()" (input)="onMcText(mcTopN, $event)" />
-                    <span class="text-xs text-muted">Quantas campanhas ganham o mergulho profundo por análise.</span>
-                  </label>
-                  <label class="flex flex-col gap-1 text-xs text-muted" title="Tamanho máximo da resposta do modelo. Maior = respostas mais longas e mais caras.">
-                    Tamanho máx. da resposta
-                    <input type="number" min="1" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcMaxOutputTokens()" (input)="onMcText(mcMaxOutputTokens, $event)" />
-                    <span class="text-xs text-muted">Limite de texto que o modelo gera de cada vez.</span>
-                  </label>
-                </div>
-              </div>
 
               <!-- Qualidade e limiares -->
               <div class="flex flex-col gap-3">
@@ -509,32 +460,32 @@ interface FormState {
                 <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Mínimo de conversões para o agente confiar no número e sugerir escalar.">
                     Mínimo de conversões
-                    <input type="number" min="1" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcMinConversions()" (input)="onMcText(mcMinConversions, $event)" />
+                    <input type="number" min="1" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.minConversions ?? ''" [value]="mcMinConversions()" (input)="onMcText(mcMinConversions, $event)" />
                     <span class="text-xs text-muted">Abaixo disso, o agente evita conclusões precipitadas.</span>
                   </label>
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Mínimo de cliques para considerar que já há dado suficiente para avaliar.">
                     Mínimo de cliques
-                    <input type="number" min="1" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcMinClicks()" (input)="onMcText(mcMinClicks, $event)" />
+                    <input type="number" min="1" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.minClicks ?? ''" [value]="mcMinClicks()" (input)="onMcText(mcMinClicks, $event)" />
                     <span class="text-xs text-muted">Volume mínimo de cliques para tirar conclusões.</span>
                   </label>
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Queda de CTR (% em relação ao início) a partir da qual o anúncio é considerado cansado.">
                     Queda de CTR p/ saturação (%)
-                    <input type="number" min="0" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcFatigueCtrDropPct()" (input)="onMcText(mcFatigueCtrDropPct, $event)" />
+                    <input type="number" min="0" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.fatigueCtrDropPct ?? ''" [value]="mcFatigueCtrDropPct()" (input)="onMcText(mcFatigueCtrDropPct, $event)" />
                     <span class="text-xs text-muted">Quanto o interesse pode cair antes de sinalizar cansaço do anúncio.</span>
                   </label>
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Frequência (vezes que a mesma pessoa vê o anúncio) acima da qual consideramos saturação.">
                     Frequência p/ saturação
-                    <input type="number" min="0.1" step="0.1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcFatigueFrequency()" (input)="onMcText(mcFatigueFrequency, $event)" />
+                    <input type="number" min="0.1" step="0.1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.fatigueFrequency ?? ''" [value]="mcFatigueFrequency()" (input)="onMcText(mcFatigueFrequency, $event)" />
                     <span class="text-xs text-muted">Quantas vezes a mesma pessoa vê o anúncio antes de saturar.</span>
                   </label>
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Alta de custo por resultado (%) a partir da qual o anúncio é considerado cansado.">
                     Alta de custo p/ saturação (%)
-                    <input type="number" min="0" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcFatigueCostRisePct()" (input)="onMcText(mcFatigueCostRisePct, $event)" />
+                    <input type="number" min="0" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.fatigueCostRisePct ?? ''" [value]="mcFatigueCostRisePct()" (input)="onMcText(mcFatigueCostRisePct, $event)" />
                     <span class="text-xs text-muted">Quanto o custo pode subir antes de sinalizar cansaço.</span>
                   </label>
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Gasto mínimo para uma campanha sem resultado ser marcada como parada (desperdício).">
                     Gasto mín. p/ marcar desperdício (R$)
-                    <input type="number" min="0" step="0.01" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="padrão do sistema" [value]="mcZombieMinSpend()" (input)="onMcText(mcZombieMinSpend, $event)" />
+                    <input type="number" min="0" step="0.01" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.zombieMinSpend ?? ''" [value]="mcZombieMinSpend()" (input)="onMcText(mcZombieMinSpend, $event)" />
                     <span class="text-xs text-muted">A partir de quanto gasto sem retorno o agente aponta desperdício.</span>
                   </label>
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Mostrar referência de mercado quando a conta ainda não tem meta nem histórico.">
@@ -601,15 +552,12 @@ export class AgentConfigPage {
     () => this.archetypeCatalog().find((a) => a.key === this.archetype()) ?? null,
   );
 
-  // opções avançadas — overrides do pipeline (vazio = padrão do sistema).
+  // opções avançadas — só limiares de qualidade (vazio = usa o padrão do sistema).
+  // Os knobs técnicos (modelos/IA, top-N, tokens, revisão) saíram da UI (roadmap:
+  // "Opções avançadas técnicas"); seguem overridáveis por env/model_config.
   protected readonly tristateOptions = TRISTATE_OPTIONS;
-  protected readonly mcModel = signal('');
-  protected readonly mcUnitModel = signal('');
-  protected readonly mcMessageModel = signal('');
-  protected readonly mcVisionModel = signal('');
-  protected readonly mcReviewEnabled = signal(''); // '' | 'on' | 'off'
-  protected readonly mcTopN = signal('');
-  protected readonly mcMaxOutputTokens = signal('');
+  /** defaults do sistema (env) — placeholder real dos campos vazios. */
+  protected readonly qualityDefaults = signal<AgentSummary['qualityDefaults'] | null>(null);
   protected readonly mcMinConversions = signal('');
   protected readonly mcMinClicks = signal('');
   protected readonly mcFatigueCtrDropPct = signal('');
@@ -812,13 +760,6 @@ export class AgentConfigPage {
       ...boolField('coldStartReference', this.mcColdStartReference()),
     };
     return {
-      ...textField('model', this.mcModel()),
-      ...textField('unitModel', this.mcUnitModel()),
-      ...textField('messageModel', this.mcMessageModel()),
-      ...textField('visionModel', this.mcVisionModel()),
-      ...boolField('reviewEnabled', this.mcReviewEnabled()),
-      ...intField('topN', this.mcTopN()),
-      ...intField('maxOutputTokens', this.mcMaxOutputTokens()),
       ...(Object.keys(quality).length > 0 ? { quality } : {}),
     };
   }
@@ -869,6 +810,7 @@ export class AgentConfigPage {
     );
     this.analysisWindowDays.set(agent.analysisWindowDays ?? DEFAULT_WINDOW_DAYS);
     this.applyCadence(agent.cadence ?? null);
+    this.qualityDefaults.set(agent.qualityDefaults);
     this.applyModelConfig(agent.modelConfig);
     this.initial.set(this.current()); // baseline p/ o dirty
   }
@@ -876,13 +818,6 @@ export class AgentConfigPage {
   /** Semeia as opções avançadas com os overrides atuais (ausente = campo vazio = padrão). */
   private applyModelConfig(mc: AgentSummary['modelConfig'] | undefined): void {
     const c = mc ?? {};
-    this.mcModel.set(c.model ?? '');
-    this.mcUnitModel.set(c.unitModel ?? '');
-    this.mcMessageModel.set(c.messageModel ?? '');
-    this.mcVisionModel.set(c.visionModel ?? '');
-    this.mcReviewEnabled.set(triFrom(c.reviewEnabled));
-    this.mcTopN.set(numToStr(c.topN));
-    this.mcMaxOutputTokens.set(numToStr(c.maxOutputTokens));
     const q = c.quality ?? {};
     this.mcMinConversions.set(numToStr(q.minConversions));
     this.mcMinClicks.set(numToStr(q.minClicks));
@@ -978,10 +913,6 @@ function sameForm(a: FormState, b: FormState): boolean {
 }
 
 /** "" (após trim) = campo vazio = usa o padrão do sistema (não vira override). */
-function textField(key: string, value: string): Record<string, string> {
-  const v = value.trim();
-  return v.length > 0 ? { [key]: v } : {};
-}
 /** Inteiro finito ou nada (vazio/ inválido = padrão do sistema). */
 function intField(key: string, value: string): Record<string, number> {
   const v = value.trim();

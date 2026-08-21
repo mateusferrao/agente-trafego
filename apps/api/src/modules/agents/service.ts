@@ -40,6 +40,7 @@ import {
   type ModelConfigInput,
   type PlaybookRuleInput,
   type PlaybookRuleOutput,
+  type QualityDefaultsOutput,
 } from "./schema.js";
 import type { PlaybookCondition } from "@trafego/shared/types";
 import { computeAppliedActions, DAY_MS, entityIdsMissingNames } from "../../lib/applied-actions.js";
@@ -55,6 +56,8 @@ export interface AgentsDeps {
   readonly approvals: ApprovalPort;
   /** janela (dias) em que "reverter" segue disponível (5b) — env. */
   readonly revertTtlDays: number;
+  /** defaults do sistema dos limiares de qualidade (env) — placeholder real na UI (6c). */
+  readonly qualityDefaults: QualityDefaultsOutput;
 }
 
 /**
@@ -123,6 +126,7 @@ export function createAgentsService(deps: AgentsDeps) {
         autonomyPolicy: existing.autonomyPolicy,
         guardrails: await loadGuardrails(orgId, existing.id),
         modelConfig: projectModelConfig(existing.modelConfig),
+        qualityDefaults: deps.qualityDefaults,
       };
     }
 
@@ -164,6 +168,7 @@ export function createAgentsService(deps: AgentsDeps) {
       autonomyPolicy: defaults.autonomyPolicy,
       guardrails: GUARDRAIL_DEFAULTS as AgentSummary["guardrails"],
       modelConfig: {},
+      qualityDefaults: deps.qualityDefaults,
     };
   }
 
@@ -286,6 +291,7 @@ export function createAgentsService(deps: AgentsDeps) {
       autonomyPolicy: nextAutonomy,
       guardrails: nextGuardrails,
       modelConfig: projectModelConfig(nextModelConfig),
+      qualityDefaults: deps.qualityDefaults,
     };
   }
 

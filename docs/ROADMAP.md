@@ -99,6 +99,7 @@ decaimento de token em runtime → `6b`; reuso do sync-service pelo `fetchData` 
 - **[MÉDIO] Decomposição de criativo: `body` + `proof_strength`** — o creative-analyst decompõe também corpo e força de prova; em estética o antes/depois + autoridade médica é o motor de conversão e hoje some no score único.
 - **[BAIXO] Plano sequenciado + "monitorar no próximo período"** no prompt (squad analyze-performance).
 - **[BAIXO] Limpar override avançado na UI** — hoje o merge de `model_config` só seta (não remove); reverter um knob avançado ao padrão do sistema exige semântica de replace-subset. Setar/alterar funciona; limpar o último campo é no-op.
+- **[MÉDIO] "Opções avançadas técnicas" na UI** — os knobs técnicos (modelos/IA principal/unit/mensagem/visão, top-N de campanhas, tokens de saída, revisão on/off) foram **removidos da UI** na 6c (a seção mostra só "Qualidade e limiares"). Seguem **overridáveis por env + `agents.model_config`** (contrato mantém os campos); a UI deles volta quando fizer sentido para o gestor técnico (provável seção "Técnico/avançado" separada, atrás de permissão).
 - **[BAIXO] Faixas/`zombieMinSpend` por moeda** — hoje constantes BRL aplicadas a qualquer conta (MVP BR-only); escalar por moeda quando entrar conta não-BRL.
 
 > **Nota (guard × playbook):** o veto de significância cobre recomendações de **origem LLM**; ações de **playbook** (regra explícita do usuário) não passam pelo veto — o guardrail de blast-radius é a rede lá. Intencional.
