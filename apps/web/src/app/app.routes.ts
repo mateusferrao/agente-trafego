@@ -22,22 +22,39 @@ export const routes: Routes = [
         loadComponent: () => import('./features/accounts/accounts-page').then((m) => m.AccountsPage),
       },
       {
-        path: 'accounts/:id',
-        title: 'Conta — AutoTraffic',
-        loadComponent: () =>
-          import('./features/account-detail/account-detail-page').then((m) => m.AccountDetailPage),
-      },
-      {
-        path: 'accounts/:id/agente',
-        title: 'Configurar agente — AutoTraffic',
-        loadComponent: () =>
-          import('./features/agent-config/agent-config-page').then((m) => m.AgentConfigPage),
-      },
-      {
+        // detalhe de um run (drill-down) — rota própria, ANTES da casca de abas
+        // (mais específica); fica fora do chrome de abas.
         path: 'accounts/:id/runs/:runId',
         title: 'Análise — AutoTraffic',
         loadComponent: () =>
           import('./features/run-detail/run-detail-page').then((m) => m.RunDetailPage),
+      },
+      {
+        // casca da conta (6a): cabeçalho + router-tabs; filhos = as abas.
+        path: 'accounts/:id',
+        title: 'Conta — AutoTraffic',
+        loadComponent: () =>
+          import('./features/account-detail/account-shell').then((m) => m.AccountShell),
+        children: [
+          {
+            path: '',
+            pathMatch: 'full',
+            loadComponent: () =>
+              import('./features/account-detail/account-overview').then((m) => m.AccountOverview),
+          },
+          {
+            path: 'agente',
+            title: 'Configurar agente — AutoTraffic',
+            loadComponent: () =>
+              import('./features/agent-config/agent-config-page').then((m) => m.AgentConfigPage),
+          },
+          {
+            path: 'timeline',
+            title: 'Linha do tempo — AutoTraffic',
+            loadComponent: () =>
+              import('./features/account-detail/account-timeline').then((m) => m.AccountTimeline),
+          },
+        ],
       },
       {
         path: 'approvals',

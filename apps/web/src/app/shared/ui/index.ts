@@ -28,4 +28,4 @@ export { UiToggleGroup, UiToggleGroupItem, UiToggleIndicator } from './ui-toggle
 export { UiCheckbox } from './ui-checkbox';
 export { UiRouteTabs, UiRouteTabLink, UiRouteTabPanel } from './ui-tabs';
 export { UiTimeline } from './ui-timeline';
-export type { TimelineEventVm, TimelineChildVm } from './ui-timeline';
+export type { TimelineEventVm, TimelineChildVm, TimelineTone } from './ui-timeline';
