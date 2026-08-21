@@ -233,9 +233,12 @@ Operar o agente pelo WhatsApp — conversa livre (linguagem natural), capacidade
 
 **Sem migration** (enum `run_trigger` já tinha `conversation`; `approvals.contact_id`, `messages.meta`
 e `channel_instances.webhook_secret` já existiam). **Adiado ao 5c:** escrita livre do zero,
-enforcement de `agent_tool_bindings`, leitura mais rica, sumarização rolante do histórico, resolução
-em lote por contrato, `focusedAccountId` por-thread (voz/tool por conta em orgs multi-conta). **Meta
-MCP embrulhado** = Fatia 7.
+**tool `revert`/desfazer por WhatsApp** (hoje só via site — validação manual do 5b-2 confirmou o
+agente recusa com honestidade, "não tenho essa função"; entra no catálogo do Grafo B junto de
+`approve`/`reject`, mesmo mecanismo de `requestUndo` — ver `agents/service.ts`), enforcement de
+`agent_tool_bindings`, leitura mais rica, sumarização rolante do histórico, resolução em lote por
+contrato, `focusedAccountId` por-thread (voz/tool por conta em orgs multi-conta). **Meta MCP
+embrulhado** = Fatia 7.
 
 **Fix ao vivo (pós-entrega):** o no-op da 5b-1.1 lê `state.entities` — o catálogo **cacheado**
 (`MetaEntityCache`, TTL). O cache só invalida na escrita REAL pelo nosso sistema; uma mudança

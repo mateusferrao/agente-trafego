@@ -123,3 +123,49 @@ describe("OpenRouterClient retry", () => {
     expect(fetchFn).toHaveBeenCalledTimes(3); // 1 + 2 retries
   });
 });
+
+describe("OpenRouterClient.getGenerationCost", () => {
+  it("retorna o total_cost quando o endpoint responde 200", async () => {
+    const spy = vi.fn(async (_url: string, _init?: RequestInit) => jsonResponse({ data: { total_cost: 0.0012 } }));
+    const client = new OpenRouterClient({ apiKey: "k", fetchFn: spy as unknown as typeof fetch, sleepFn: noSleep });
+
+    const cost = await client.getGenerationCost("gen-123");
+
+    expect(cost).toBeCloseTo(0.0012, 6);
+    const [url, init] = spy.mock.calls[0]!;
+    expect(String(url)).toBe("https://openrouter.ai/api/v1/generation?id=gen-123");
+    expect((init as RequestInit).headers).toMatchObject({ Authorization: "Bearer k" });
+  });
+
+  it("retorna undefined em resposta não-200, sem lançar", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({ error: "not found" }, 404)) as unknown as typeof fetch;
+    const client = new OpenRouterClient({ apiKey: "k", fetchFn, sleepFn: noSleep });
+
+    await expect(client.getGenerationCost("gen-123")).resolves.toBeUndefined();
+  });
+
+  it("retorna undefined quando o fetch rejeita (erro de rede), sem lançar", async () => {
+    const fetchFn = vi.fn(async () => {
+      throw new Error("network down");
+    }) as unknown as typeof fetch;
+    const client = new OpenRouterClient({ apiKey: "k", fetchFn, sleepFn: noSleep });
+
+    await expect(client.getGenerationCost("gen-123")).resolves.toBeUndefined();
+  });
+
+  it("retorna undefined quando o corpo não tem data.total_cost numérico", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({ data: { total_cost: "not-a-number" } })) as unknown as typeof fetch;
+    const client = new OpenRouterClient({ apiKey: "k", fetchFn, sleepFn: noSleep });
+
+    await expect(client.getGenerationCost("gen-123")).resolves.toBeUndefined();
+  });
+
+  it("não re-tenta em falha (canal best-effort, 1 tentativa só)", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({ error: "boom" }, 503)) as unknown as typeof fetch;
+    const client = new OpenRouterClient({ apiKey: "k", fetchFn, sleepFn: noSleep });
+
+    await client.getGenerationCost("gen-123");
+
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+});

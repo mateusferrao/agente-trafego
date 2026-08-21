@@ -14,6 +14,7 @@ import { startApprovalApplyWorker } from "./workers/approval-apply.js";
 import { startApprovalExpiryWorker } from "./workers/approval-expiry.js";
 import { startWebhookInboundWorker } from "./workers/webhook-inbound.js";
 import { startWhatsappFlushWorker } from "./workers/whatsapp-flush.js";
+import { drainPendingCostPatches } from "./graphs/whatsapp-conversation/nodes.js";
 import { makeAccountCron } from "./schedulers/account-cron.js";
 import { createRunReaper } from "./modules/dispatch/run-reaper.js";
 
@@ -78,6 +79,9 @@ async function main(): Promise<void> {
       webhookInbound.close(),
       whatsappFlush.close(),
     ]);
+    // espera (com teto) os patches de custo do WhatsApp em voo — sem isso, todo
+    // deploy/restart perde o fallback assíncrono de custo (§11).
+    await drainPendingCostPatches();
     await Promise.allSettled([connection.quit(), deps.redis.quit()]);
     process.exit(0);
   };

@@ -12,7 +12,10 @@ export interface UsageSummary {
  * de uso/cobrança sem migração. Base do billing (mensalidade + markup).
  */
 export interface MeteringPort {
-  record(event: UsageEvent): Promise<void>;
+  /** grava o evento; retorna o id da linha (p/ enriquecer depois, ex: custo assíncrono). */
+  record(event: UsageEvent): Promise<string>;
+  /** enriquece o custo de uma linha já gravada (best-effort — fallback assíncrono de custo). Org-scoped como toda query (§12). */
+  updateCost(orgId: OrgId, id: string, costUsd: number): Promise<void>;
   summarize(orgId: OrgId, period: string): Promise<UsageSummary>;
   /** custo LLM acumulado no período (p/ cap de custo). */
   llmCostInPeriod(orgId: OrgId, period: string): Promise<number>;

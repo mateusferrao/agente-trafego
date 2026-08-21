@@ -10,6 +10,7 @@
  * - `fetch` é injetável (testes mockam; prod usa o global).
  */
 
+import { sleep } from "@trafego/shared";
 import { LLMProviderError } from "@trafego/shared/ports";
 
 export interface OpenRouterClientOptions {
@@ -65,11 +66,10 @@ export interface OpenRouterChatResponse {
 
 const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
 const DEFAULT_MAX_RETRIES = 3;
+const GENERATION_LOOKUP_TIMEOUT_MS = 3_000;
 // backoff base por tentativa (ms) — mesmo shape do padrão do automato-api.
 const BACKOFF_MS = [500, 1500, 3000] as const;
 const JITTER_MS = 250;
-
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 export class OpenRouterClient {
   private readonly apiKey: string;
@@ -117,6 +117,31 @@ export class OpenRouterClient {
     }
     // inatingível (o loop sempre retorna ou lança), mas satisfaz o tipo.
     throw lastError instanceof Error ? lastError : new LLMProviderError("upstream", "falha desconhecida");
+  }
+
+  /**
+   * Fallback best-effort: busca o custo real de uma generation já concluída
+   * (`GET /generation?id=...`). Usado quando `.bindTools()` no LangChain suprime
+   * `response_metadata.usage` (o custo some, mas o `AIMessage.id` sobrevive — ver
+   * `apps/worker/src/graphs/whatsapp-conversation/nodes.ts`). Nunca lança — falha
+   * (rede/timeout/4xx/5xx/shape inesperado) = `undefined`, mesma convenção de
+   * "custo ausente ≠ zero" do resto do cliente. 1 tentativa, sem retry/backoff:
+   * canal secundário best-effort, não a chamada crítica de chat.
+   */
+  async getGenerationCost(generationId: string): Promise<number | undefined> {
+    const url = `${this.baseUrl}/generation?id=${encodeURIComponent(generationId)}`;
+    try {
+      const res = await this.fetchFn(url, {
+        headers: { Authorization: `Bearer ${this.apiKey}` },
+        signal: AbortSignal.timeout(GENERATION_LOOKUP_TIMEOUT_MS),
+      });
+      if (!res.ok) return undefined;
+      const body = (await res.json()) as { data?: { total_cost?: unknown } };
+      const cost = body.data?.total_cost;
+      return typeof cost === "number" ? cost : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private async attempt(

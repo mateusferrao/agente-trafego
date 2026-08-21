@@ -1,10 +1,11 @@
+import { sleep } from "@trafego/shared";
 import { MetaApiError, type BusinessUseCaseUsage } from "./client.js";
 import { stripActPrefix } from "./ids.js";
 
 /**
  * Helpers compartilhados de rate-limit/governor (antes duplicados entre o path de
- * insights e o wrapper de leituras): código+erro de cooldown, resolução do uso
- * reportado e `sleep`. PUROS (sem estado).
+ * insights e o wrapper de leituras): código+erro de cooldown e resolução do uso
+ * reportado. PUROS (sem estado).
  */
 
 /** Code BUC de rate-limit usado ao sinalizar cooldown ativo (→ `rate_limited` na casca). */
@@ -15,10 +16,7 @@ export function cooldownError(): MetaApiError {
   return new MetaApiError("rate-limit: cooldown ativo", COOLDOWN_CODE, undefined, 429);
 }
 
-/** Pausa `ms` (injetável nos consumidores p/ teste determinístico). */
-export function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+export { sleep };
 
 /**
  * Resolve o uso reportado da conta (o header BUC é keyed pelo id cru). Tenta id

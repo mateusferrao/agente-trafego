@@ -2,6 +2,7 @@
 // quebra opcional (chat), envia e grava a conversa/mensagem outbound. Reusado pelo
 // consumidor de inbound (ack/respostas), pelo push do cron e pelo apply-service (T2).
 
+import { sleep as defaultSleep } from "@trafego/shared";
 import type { MessagingChannelPort } from "@trafego/shared/ports";
 import type { NotifyRepo } from "./repo.js";
 import { WHATSAPP_PART_DELAY_MS, splitMessage } from "./split.js";
@@ -21,7 +22,7 @@ export interface SendToContactOptions {
 
 /** Envia texto a um contato. Sem instância conectada/contato → não envia (retorna false). */
 export function createSendToContact(deps: SendToContactDeps) {
-  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const sleep = deps.sleep ?? defaultSleep;
 
   return async function sendToContact(
     contactId: string,

@@ -77,6 +77,8 @@ export interface WorkerDeps {
     readonly historyTurns: number;
     readonly maxTokens: number;
     readonly debounceSeconds: number;
+    /** Fallback de custo (bug do bindTools suprimindo usage.cost — ver nodes.ts). */
+    readonly fetchGenerationCost: (generationId: string) => Promise<number | undefined>;
   };
   /** Checkpointer do LangGraph (Postgres) — memória durável do chat (Grafo B, 5b-2). */
   readonly checkpointer: BaseCheckpointSaver;
@@ -129,16 +131,15 @@ export async function buildComposition(): Promise<WorkerDeps> {
   // Metering (3b): grava usage_events (custo real por chamada). O LLM é envolvido
   // pelo decorator de metering (cross-cutting num lugar só — §13; atribui por meta).
   const metering = createPostgresMetering(db);
+  const openRouterClient = new OpenRouterClient({
+    apiKey: env.OPENROUTER_API_KEY,
+    baseUrl: env.OPENROUTER_BASE_URL,
+    maxRetries: env.LLM_MAX_RETRIES,
+    referer: env.WEB_ORIGIN,
+    title: "AutoTraffic",
+  });
   const llm = withLlmMetering(
-    new OpenRouterAdapter({
-      client: new OpenRouterClient({
-        apiKey: env.OPENROUTER_API_KEY,
-        baseUrl: env.OPENROUTER_BASE_URL,
-        maxRetries: env.LLM_MAX_RETRIES,
-        referer: env.WEB_ORIGIN,
-        title: "AutoTraffic",
-      }),
-    }),
+    new OpenRouterAdapter({ client: openRouterClient }),
     { metering, provider: "openrouter", onError: (err) => logger.warn({ err }, "metering:falhou") },
   );
 
@@ -200,6 +201,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
       historyTurns: env.CONVERSATION_HISTORY_TURNS,
       maxTokens: env.CONVERSATION_MAX_TOKENS,
       debounceSeconds: env.CONVERSATION_DEBOUNCE_SECONDS,
+      fetchGenerationCost: (id) => openRouterClient.getGenerationCost(id),
     },
     // checkpointer LangGraph (Postgres): memória durável da conversa do WhatsApp
     // (Grafo B ReAct, thread por conversa). setup() cria as tabelas (idempotente).

@@ -15,7 +15,8 @@ function fakeMetering(): MeteringPort & { records: unknown[] } {
   const records: unknown[] = [];
   return {
     records,
-    record: vi.fn(async (e) => { records.push(e); }),
+    record: vi.fn(async (e) => { records.push(e); return "usage-event-id"; }),
+    updateCost: vi.fn(async () => {}),
     summarize: vi.fn(async () => ({ orgId: "o" as never, period: "2026-08", totalCostUsd: 0, byType: {} })),
     llmCostInPeriod: vi.fn(async () => 0),
   };

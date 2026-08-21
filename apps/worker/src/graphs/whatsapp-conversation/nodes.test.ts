@@ -1,0 +1,143 @@
+import { describe, expect, it, vi } from "vitest";
+import { drainPendingCostPatches, needsCostFallback, patchCostInBackground, scheduleCostPatch } from "./nodes.js";
+
+const fakeLogger = { debug: vi.fn() };
+
+describe("needsCostFallback", () => {
+  it("false quando o custo já veio direto (não precisa consultar nada)", () => {
+    expect(needsCostFallback({ costUsd: 0.001 }, "gen-1")).toBe(false);
+  });
+
+  it("false quando não há generation id pra consultar", () => {
+    expect(needsCostFallback({}, undefined)).toBe(false);
+  });
+
+  it("true quando falta custo e há id", () => {
+    expect(needsCostFallback({}, "gen-1")).toBe(true);
+  });
+});
+
+describe("patchCostInBackground", () => {
+  it("espera (sleepFn) antes de consultar, e faz o PATCH quando acha o custo", async () => {
+    const order: string[] = [];
+    const sleepFn = vi.fn(async () => {
+      order.push("sleep");
+    });
+    const fetchGenerationCost = vi.fn(async () => {
+      order.push("fetch");
+      return 0.0034;
+    });
+    const updateCost = vi.fn(async () => {
+      order.push("update");
+    });
+
+    await patchCostInBackground({
+      usageEventId: "usage-1",
+      generationId: "gen-1",
+      fetchGenerationCost,
+      updateCost,
+      logger: fakeLogger,
+      sleepFn,
+    });
+
+    expect(order).toEqual(["sleep", "fetch", "update"]);
+    expect(fetchGenerationCost).toHaveBeenCalledWith("gen-1");
+    expect(updateCost).toHaveBeenCalledWith("usage-1", 0.0034);
+  });
+
+  it("custo ainda indisponível em todas as tentativas → desiste sem PATCH, sem lançar (5 tentativas)", async () => {
+    const sleepFn = vi.fn(async () => {});
+    const fetchGenerationCost = vi.fn(async () => undefined);
+    const updateCost = vi.fn(async () => {});
+
+    await patchCostInBackground({
+      usageEventId: "usage-1",
+      generationId: "gen-1",
+      fetchGenerationCost,
+      updateCost,
+      logger: fakeLogger,
+      sleepFn,
+    });
+
+    expect(fetchGenerationCost).toHaveBeenCalledTimes(5);
+    expect(updateCost).not.toHaveBeenCalled();
+  });
+
+  it("indisponível nas 2 primeiras, acha na 3ª tentativa → PATCH e para de tentar", async () => {
+    const sleepFn = vi.fn(async () => {});
+    let calls = 0;
+    const fetchGenerationCost = vi.fn(async () => {
+      calls += 1;
+      return calls < 3 ? undefined : 0.0056;
+    });
+    const updateCost = vi.fn(async () => {});
+
+    await patchCostInBackground({
+      usageEventId: "usage-1",
+      generationId: "gen-1",
+      fetchGenerationCost,
+      updateCost,
+      logger: fakeLogger,
+      sleepFn,
+    });
+
+    expect(fetchGenerationCost).toHaveBeenCalledTimes(3);
+    expect(updateCost).toHaveBeenCalledTimes(1);
+    expect(updateCost).toHaveBeenCalledWith("usage-1", 0.0056);
+  });
+
+  it("fetch lança → engolido, sem PATCH, sem propagar erro", async () => {
+    const sleepFn = vi.fn(async () => {});
+    const fetchGenerationCost = vi.fn(async () => {
+      throw new Error("boom");
+    });
+    const updateCost = vi.fn(async () => {});
+
+    await expect(
+      patchCostInBackground({
+        usageEventId: "usage-1",
+        generationId: "gen-1",
+        fetchGenerationCost,
+        updateCost,
+        logger: fakeLogger,
+        sleepFn,
+      }),
+    ).resolves.toBeUndefined();
+    expect(updateCost).not.toHaveBeenCalled();
+  });
+});
+
+describe("drainPendingCostPatches", () => {
+  it("nada agendado → resolve na hora", async () => {
+    await expect(drainPendingCostPatches()).resolves.toBeUndefined();
+  });
+
+  it("espera o job agendado terminar (dentro do teto)", async () => {
+    const updateCost = vi.fn(async () => {});
+    scheduleCostPatch({
+      usageEventId: "usage-1",
+      generationId: "gen-1",
+      fetchGenerationCost: vi.fn(async () => 0.002),
+      updateCost,
+      logger: fakeLogger,
+      sleepFn: vi.fn(async () => {}), // sem espera real neste teste
+    });
+
+    await drainPendingCostPatches(1000);
+
+    expect(updateCost).toHaveBeenCalledWith("usage-1", 0.002);
+  });
+
+  it("job travado (nunca termina) → drain desiste no teto, sem travar o teste", async () => {
+    scheduleCostPatch({
+      usageEventId: "usage-2",
+      generationId: "gen-2",
+      fetchGenerationCost: vi.fn(async () => undefined),
+      updateCost: vi.fn(async () => {}),
+      logger: fakeLogger,
+      sleepFn: () => new Promise(() => {}), // nunca resolve
+    });
+
+    await expect(drainPendingCostPatches(10)).resolves.toBeUndefined();
+  });
+});

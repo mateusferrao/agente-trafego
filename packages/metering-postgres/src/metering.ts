@@ -19,19 +19,30 @@ function periodRange(period: string): { start: Date; end: Date } {
  */
 export function createPostgresMetering(db: Database): MeteringPort {
   return {
-    async record(event: UsageEvent): Promise<void> {
-      await db.insert(usageEvents).values({
-        orgId: event.orgId,
-        ...(event.runId ? { runId: event.runId } : {}),
-        type: event.type,
-        payloadJson: event.payload,
-        ...(event.provider ? { provider: event.provider } : {}),
-        ...(event.model ? { model: event.model } : {}),
-        ...(event.inputTokens !== undefined ? { inputTokens: event.inputTokens } : {}),
-        ...(event.outputTokens !== undefined ? { outputTokens: event.outputTokens } : {}),
-        // custo ausente ≠ zero: só grava quando reportado.
-        ...(event.costUsd !== undefined ? { cost: String(event.costUsd) } : {}),
-      });
+    async record(event: UsageEvent): Promise<string> {
+      const [row] = await db
+        .insert(usageEvents)
+        .values({
+          orgId: event.orgId,
+          ...(event.runId ? { runId: event.runId } : {}),
+          type: event.type,
+          payloadJson: event.payload,
+          ...(event.provider ? { provider: event.provider } : {}),
+          ...(event.model ? { model: event.model } : {}),
+          ...(event.inputTokens !== undefined ? { inputTokens: event.inputTokens } : {}),
+          ...(event.outputTokens !== undefined ? { outputTokens: event.outputTokens } : {}),
+          // custo ausente ≠ zero: só grava quando reportado.
+          ...(event.costUsd !== undefined ? { cost: String(event.costUsd) } : {}),
+        })
+        .returning({ id: usageEvents.id });
+      return row!.id;
+    },
+
+    async updateCost(orgId: OrgId, id: string, costUsd: number): Promise<void> {
+      await db
+        .update(usageEvents)
+        .set({ cost: String(costUsd) })
+        .where(and(eq(usageEvents.id, id), eq(usageEvents.orgId, orgId)));
     },
 
     async summarize(orgId: OrgId, period: string): Promise<UsageSummary> {
