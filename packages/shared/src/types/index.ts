@@ -400,6 +400,8 @@ export interface RunCampaignCard {
   readonly flags: readonly string[];
   /** tier de desempenho congelado no run (6c) — histórico coerente. */
   readonly tier?: PerformanceTier | null;
+  /** estágio de público DOMINANTE da campanha (§Bloco 2) — do adset de maior gasto. */
+  readonly stage?: AudienceStage | null;
 }
 
 export interface AgentGoals {

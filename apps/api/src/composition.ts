@@ -166,9 +166,15 @@ export function buildContainer(): Container {
       minClicks: env.ANALYSIS_QUALITY_MIN_CLICKS,
       fatigueCtrDropPct: env.ANALYSIS_QUALITY_FATIGUE_CTR_DROP_PCT,
       fatigueFrequency: env.ANALYSIS_QUALITY_FATIGUE_FREQUENCY,
+      frequencyCapByStage: {
+        prospecting: env.ANALYSIS_QUALITY_FREQUENCY_CAP_PROSPECTING,
+        remarketing: env.ANALYSIS_QUALITY_FREQUENCY_CAP_REMARKETING,
+      },
       fatigueCostRisePct: env.ANALYSIS_QUALITY_FATIGUE_COST_RISE_PCT,
       zombieMinSpend: env.ANALYSIS_QUALITY_ZOMBIE_MIN_SPEND,
       coldStartReference: env.ANALYSIS_QUALITY_COLD_START_REFERENCE,
+      trackingBrokenRatio: env.ANALYSIS_QUALITY_TRACKING_BROKEN_RATIO,
+      trackingBrokenMinFunnel: env.ANALYSIS_QUALITY_TRACKING_BROKEN_MIN_FUNNEL,
     },
   });
   const services: Services = {

@@ -66,11 +66,62 @@ export const runFunnel = z.object({
   depthRate: z.number().optional(),
 });
 
-/** Snapshot de métricas do run (KPIs sempre; funil/scorecard quando houver). */
+/** Base de medição do custo por resultado (§Bloco 2) — espelha `ConversionBasis`. */
+export const conversionBasis = z.enum(["target", "proxy", "none"]);
+
+/** Um item do Pareto de gasto × resultado (§Bloco 2). */
+export const wasteParetoItem = z.object({
+  id: z.string(),
+  name: z.string(),
+  spend: z.number(),
+  /** % do gasto do grupo (mesma base de conversão). */
+  spendPct: z.number(),
+  /** resultado do grupo (vendas/conversas/cliques conforme a base), quando derivável. */
+  result: z.number().optional(),
+  resultPct: z.number().optional(),
+});
+
+/** Concentração 80/20 dentro de um grupo de mesma base de conversão (§Bloco 2). */
+export const wastePareto = z.object({
+  basis: conversionBasis,
+  groupSpend: z.number(),
+  items: z.array(wasteParetoItem),
+  /** má alocação: gasto alto e resultado desproporcionalmente baixo. */
+  misallocated: z.array(wasteParetoItem),
+});
+
+/** Um zumbi: campanha com gasto relevante e zero sinal de vida. */
+export const wasteZombie = z.object({ id: z.string(), name: z.string(), spend: z.number() });
+
+/** Quantificação de desperdício (§Bloco 2): quanto se queima + onde o gasto está mal alocado. */
+export const wasteReport = z.object({
+  totalSpend: z.number(),
+  wastedSpend: z.number(),
+  wastedPct: z.number(),
+  zombies: z.array(wasteZombie),
+  pareto: wastePareto.optional(),
+});
+
+/** Saúde da medição de conversão (§Bloco 2) — presente só quando suspeita. */
+export const trackingHealth = z.object({
+  suspect: z.boolean(),
+  /** conversas (conversation_started) agregadas da conta. */
+  funnelStarted: z.number(),
+  /** conversões de negócio rastreadas agregadas (meta do agente). */
+  trackedConversions: z.number(),
+  /** razão conversas / max(conversões,1) — quanto maior, mais suspeita a medição. */
+  ratio: z.number(),
+});
+
+/** Snapshot de métricas do run (KPIs sempre; funil/scorecard/waste/tracking quando houver). */
 export const runMetrics = z.object({
   kpis: runKpis,
   funnel: runFunnel.optional(),
   scorecard: scorecardSchema.optional(),
+  /** desperdício + concentração 80/20 (§Bloco 2) — o "money shot" da auditoria. */
+  waste: wasteReport.optional(),
+  /** saúde da medição de conversão (§Bloco 2) — ressalva antes de julgar por custo. */
+  trackingHealth: trackingHealth.optional(),
 });
 export type RunMetrics = z.infer<typeof runMetrics>;
 
@@ -118,6 +169,8 @@ export const campaignAnalysisOutput = z.object({
   flags: z.array(z.string()),
   /** tier de desempenho (6c): winner|performer|underperformer|zombie. */
   tier: z.enum(["winner", "performer", "underperformer", "zombie"]).nullable(),
+  /** estágio de público dominante (§Bloco 2) — congelado no run; null na visão ao vivo. */
+  stage: z.enum(["prospecting", "remarketing", "unknown"]).nullable(),
   /** campanha silenciada pelo dono (opt-out da análise). */
   muted: z.boolean(),
 });

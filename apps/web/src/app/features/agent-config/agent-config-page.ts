@@ -478,6 +478,16 @@ interface FormState {
                     <input type="number" min="0.1" step="0.1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.fatigueFrequency ?? ''" [value]="mcFatigueFrequency()" (input)="onMcText(mcFatigueFrequency, $event)" />
                     <span class="text-xs text-muted">Quantas vezes a mesma pessoa vê o anúncio antes de saturar.</span>
                   </label>
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Frequência para saturação em público frio (quem ainda não conhece você). Cansa mais rápido.">
+                    Frequência p/ saturação — público frio
+                    <input type="number" min="0.1" step="0.1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.frequencyCapByStage?.prospecting ?? ''" [value]="mcFreqCapProspecting()" (input)="onMcText(mcFreqCapProspecting, $event)" />
+                    <span class="text-xs text-muted">Quem ainda não te conhece satura com menos repetições.</span>
+                  </label>
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Frequência para saturação em público quente (remarketing). Tolera mais repetições.">
+                    Frequência p/ saturação — público quente
+                    <input type="number" min="0.1" step="0.1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.frequencyCapByStage?.remarketing ?? ''" [value]="mcFreqCapRemarketing()" (input)="onMcText(mcFreqCapRemarketing, $event)" />
+                    <span class="text-xs text-muted">Quem já te conhece (remarketing) aguenta ver mais vezes.</span>
+                  </label>
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Alta de custo por resultado (%) a partir da qual o anúncio é considerado cansado.">
                     Alta de custo p/ saturação (%)
                     <input type="number" min="0" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.fatigueCostRisePct ?? ''" [value]="mcFatigueCostRisePct()" (input)="onMcText(mcFatigueCostRisePct, $event)" />
@@ -492,6 +502,16 @@ interface FormState {
                     Referência de mercado
                     <app-ui-select [options]="tristateOptions" [value]="mcColdStartReference()" (valueChange)="mcColdStartReference.set($event)" />
                     <span class="text-xs text-muted">Mostra uma referência quando a conta ainda não tem meta nem histórico.</span>
+                  </label>
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Quantas conversas por venda rastreada até desconfiar que a medição (pixel/CAPI) está incompleta.">
+                    Conversas por venda p/ suspeitar da medição
+                    <input type="number" min="1" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.trackingBrokenRatio ?? ''" [value]="mcTrackingBrokenRatio()" (input)="onMcText(mcTrackingBrokenRatio, $event)" />
+                    <span class="text-xs text-muted">Muitas conversas e quase nenhuma venda registrada sugere rastreamento furado.</span>
+                  </label>
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Mínimo de conversas para sequer considerar a suspeita de medição incompleta.">
+                    Mínimo de conversas p/ avaliar a medição
+                    <input type="number" min="0" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.trackingBrokenMinFunnel ?? ''" [value]="mcTrackingBrokenMinFunnel()" (input)="onMcText(mcTrackingBrokenMinFunnel, $event)" />
+                    <span class="text-xs text-muted">Abaixo desse volume de conversas, o agente não levanta a suspeita.</span>
                   </label>
                 </div>
               </div>
@@ -562,9 +582,13 @@ export class AgentConfigPage {
   protected readonly mcMinClicks = signal('');
   protected readonly mcFatigueCtrDropPct = signal('');
   protected readonly mcFatigueFrequency = signal('');
+  protected readonly mcFreqCapProspecting = signal('');
+  protected readonly mcFreqCapRemarketing = signal('');
   protected readonly mcFatigueCostRisePct = signal('');
   protected readonly mcZombieMinSpend = signal('');
   protected readonly mcColdStartReference = signal(''); // '' | 'on' | 'off'
+  protected readonly mcTrackingBrokenRatio = signal('');
+  protected readonly mcTrackingBrokenMinFunnel = signal('');
 
   // cadência (c2) — sub-estado do editor; compõe o CadenceSpec.
   protected readonly cadenceKind = signal<CadenceKind>('default');
@@ -750,14 +774,25 @@ export class AgentConfigPage {
    * sistema, então some do objeto). `quality` só entra quando tem algum campo.
    */
   private buildModelConfig(): ModelConfig {
+    // frequência por estágio é objeto aninhado {prospecting?, remarketing?} — só entra
+    // quando o usuário informou algum dos dois (vazio = padrão do sistema).
+    const prospecting = numOrUndef(this.mcFreqCapProspecting());
+    const remarketing = numOrUndef(this.mcFreqCapRemarketing());
+    const frequencyCapByStage = {
+      ...(prospecting !== undefined ? { prospecting } : {}),
+      ...(remarketing !== undefined ? { remarketing } : {}),
+    };
     const quality: ModelQuality = {
       ...intField('minConversions', this.mcMinConversions()),
       ...intField('minClicks', this.mcMinClicks()),
       ...numField('fatigueCtrDropPct', this.mcFatigueCtrDropPct()),
       ...numField('fatigueFrequency', this.mcFatigueFrequency()),
+      ...(Object.keys(frequencyCapByStage).length > 0 ? { frequencyCapByStage } : {}),
       ...numField('fatigueCostRisePct', this.mcFatigueCostRisePct()),
       ...numField('zombieMinSpend', this.mcZombieMinSpend()),
       ...boolField('coldStartReference', this.mcColdStartReference()),
+      ...numField('trackingBrokenRatio', this.mcTrackingBrokenRatio()),
+      ...numField('trackingBrokenMinFunnel', this.mcTrackingBrokenMinFunnel()),
     };
     return {
       ...(Object.keys(quality).length > 0 ? { quality } : {}),
@@ -823,9 +858,13 @@ export class AgentConfigPage {
     this.mcMinClicks.set(numToStr(q.minClicks));
     this.mcFatigueCtrDropPct.set(numToStr(q.fatigueCtrDropPct));
     this.mcFatigueFrequency.set(numToStr(q.fatigueFrequency));
+    this.mcFreqCapProspecting.set(numToStr(q.frequencyCapByStage?.prospecting));
+    this.mcFreqCapRemarketing.set(numToStr(q.frequencyCapByStage?.remarketing));
     this.mcFatigueCostRisePct.set(numToStr(q.fatigueCostRisePct));
     this.mcZombieMinSpend.set(numToStr(q.zombieMinSpend));
     this.mcColdStartReference.set(triFrom(q.coldStartReference));
+    this.mcTrackingBrokenRatio.set(numToStr(q.trackingBrokenRatio));
+    this.mcTrackingBrokenMinFunnel.set(numToStr(q.trackingBrokenMinFunnel));
   }
 
   /** Decompõe o `CadenceSpec` salvo no sub-estado do editor. */
@@ -926,6 +965,13 @@ function numField(key: string, value: string): Record<string, number> {
   if (v.length === 0) return {};
   const n = Number(v);
   return Number.isFinite(n) ? { [key]: n } : {};
+}
+/** Número finito ou undefined (p/ campos aninhados tipados, ex: frequencyCapByStage). */
+function numOrUndef(value: string): number | undefined {
+  const v = value.trim();
+  if (v.length === 0) return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
 }
 /** Toggle de 3 estados → override booleano só quando 'on'/'off' ("" = padrão). */
 function boolField(key: string, tri: string): Record<string, boolean> {

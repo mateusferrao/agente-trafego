@@ -74,7 +74,24 @@ export type ActivityEvent = z.infer<typeof activityEvent>;
 export const panoramaListOutput = z.object({ accounts: z.array(panoramaCard) });
 export type PanoramaListOutput = z.infer<typeof panoramaListOutput>;
 
-/** Painel gerencial cross-conta (6a): 4 widgets. */
+/** Desperdício de UMA conta (gasto queimado na última análise). */
+export const wasteAccount = z.object({
+  accountId: z.string(),
+  accountName: z.string(),
+  /** Σ gasto dos zumbis na última análise finalizada. */
+  wastedSpend: z.number(),
+});
+export type WasteAccount = z.infer<typeof wasteAccount>;
+
+/** Desperdício cross-conta (§Bloco 2): total + contas que mais desperdiçam. */
+export const wasteSummary = z.object({
+  totalWasted: z.number(),
+  /** só contas com desperdício (> 0), maior primeiro. */
+  accounts: z.array(wasteAccount),
+});
+export type WasteSummary = z.infer<typeof wasteSummary>;
+
+/** Painel gerencial cross-conta (6a): widgets de decisão + desperdício (§Bloco 2). */
 export const dashboardOutput = z.object({
   /** total de ações aguardando OK (cross-conta). */
   pendingCount: z.number(),
@@ -82,5 +99,7 @@ export const dashboardOutput = z.object({
   attention: z.array(panoramaCard),
   recentActivity: z.array(activityEvent),
   panorama: z.array(panoramaCard),
+  /** desperdício cross-conta (§Bloco 2) — total + quem mais queima. */
+  waste: wasteSummary,
 });
 export type DashboardOutput = z.infer<typeof dashboardOutput>;

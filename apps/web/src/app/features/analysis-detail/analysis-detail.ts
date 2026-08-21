@@ -7,11 +7,16 @@ type Recommendation = RunDetailOutput['recommendations'][number];
 type Campaign = RunDetailOutput['campaigns'][number];
 type RunMetrics = NonNullable<NonNullable<RunView>['metrics']>;
 type Scorecard = NonNullable<RunMetrics['scorecard']>;
+/** Desperdício + saúde da medição (§Bloco 2) — do snapshot do run. */
+type Waste = NonNullable<RunMetrics['waste']>;
+type Tracking = NonNullable<RunMetrics['trackingHealth']>;
 type RiskTone = 'neutral' | 'warning' | 'danger';
 export type GradeTone = 'success' | 'info' | 'warning' | 'danger';
 /** Faixa de desempenho da campanha (do backend) — tom+texto, nunca só cor. */
 type Tier = NonNullable<Campaign['tier']>;
 type TierTone = 'success' | 'info' | 'warning' | 'danger';
+/** Estágio de público da campanha (§Bloco 2) — rótulo descritivo, sem juízo. */
+type Stage = NonNullable<Campaign['stage']>;
 
 /** item da faixa de KPIs / taxas (rótulo humano + valor já formatado). */
 interface Stat {
@@ -48,6 +53,12 @@ const TIER_TONE: Record<Tier, TierTone> = {
   performer: 'info',
   underperformer: 'warning',
   zombie: 'danger',
+};
+/** Rótulo PT-BR do estágio de público (descritivo — sem tom de bom/ruim). */
+const STAGE_LABEL: Record<Stage, string> = {
+  prospecting: 'prospecção',
+  remarketing: 'remarketing',
+  unknown: 'público indefinido',
 };
 const LEVEL_LABEL: Record<string, string> = {
   account: 'conta',
@@ -105,6 +116,17 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
           </p>
         }
 
+        <!-- Ressalva de medição: muita conversa e pouca venda rastreada = pixel/CAPI suspeito -->
+        @if (tracking(); as t) {
+          <div class="flex flex-col gap-1 rounded-lg border border-warning/40 bg-warning-soft p-4">
+            <span class="text-sm font-medium text-warning-strong">A medição de vendas parece incompleta</span>
+            <p class="text-sm text-ink">
+              {{ t.funnelStarted }} conversas e apenas {{ t.trackedConversions }} vendas rastreadas. Confira o
+              rastreamento de conversões (pixel/CAPI) antes de decidir pelo custo por venda.
+            </p>
+          </div>
+        }
+
         <!-- Scorecard: nota da conta (tom+texto) + maior vazamento + headline -->
         @if (scorecard(); as sc) {
           <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
@@ -130,6 +152,48 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
           </div>
         }
 
+        <!-- Desperdício (§Bloco 2): o "money shot" — quanto queima + gasto mal distribuído -->
+        @if (waste(); as w) {
+          <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
+            <div class="flex flex-col gap-1">
+              <h2 class="font-brand text-sm font-semibold text-ink">Dinheiro sem retorno</h2>
+              @if (w.wastedSpend > 0) {
+                <p class="text-sm text-ink">
+                  <span class="font-semibold text-warning-strong">{{ money(w.wastedSpend) }}</span>
+                  ({{ pct(w.wastedPct) }}) em campanhas paradas — pausá-las libera esse valor.
+                </p>
+              }
+            </div>
+
+            @if (w.zombies.length > 0) {
+              <ul class="flex flex-col gap-1.5">
+                @for (z of w.zombies; track z.id) {
+                  <li class="flex items-center justify-between gap-3 rounded-md bg-soft px-3 py-2 text-sm">
+                    <span class="min-w-0 truncate text-ink">{{ z.name }}</span>
+                    <span class="shrink-0 text-muted">{{ money(z.spend) }}</span>
+                  </li>
+                }
+              </ul>
+            }
+
+            @if (misallocated().length > 0) {
+              <div class="flex flex-col gap-1.5">
+                <span class="text-xs text-muted">Gasto mal distribuído — consomem mais do que entregam:</span>
+                <ul class="flex flex-col gap-1.5">
+                  @for (m of misallocated(); track m.id) {
+                    <li class="flex flex-col gap-0.5 rounded-md bg-soft px-3 py-2 text-sm">
+                      <span class="min-w-0 truncate text-ink">{{ m.name }}</span>
+                      <span class="text-xs text-muted">
+                        consome {{ pct(m.spendPct) }} do gasto e entrega {{ pct(m.resultPct ?? 0) }} dos resultados
+                      </span>
+                    </li>
+                  }
+                </ul>
+              </div>
+            }
+          </section>
+        }
+
         <!-- Recorte por campanha: o gestor pensa por campanha (não por conta-blob) -->
         @if (campaigns().length > 0) {
           <div class="flex flex-col gap-1">
@@ -150,6 +214,9 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                       <h3 class="font-brand text-base font-semibold text-ink">{{ campaignName(c) }}</h3>
                       @if (c.tier) {
                         <span appBadge [tone]="tierTone(c.tier)" size="sm">{{ tierLabel(c.tier) }}</span>
+                      }
+                      @if (c.stage) {
+                        <span appBadge size="sm">{{ stageLabel(c.stage) }}</span>
                       }
                     </div>
                     <div class="flex flex-wrap items-center gap-2">
@@ -267,6 +334,20 @@ export class AnalysisDetail {
   /** Diagnóstico único da conta (só quando o run trouxe scorecard). */
   protected readonly scorecard = computed<Scorecard | null>(() => this.run()?.metrics?.scorecard ?? null);
 
+  /** Desperdício do run — só renderiza quando há zumbis OU gasto mal distribuído. */
+  protected readonly waste = computed<Waste | null>(() => {
+    const w = this.run()?.metrics?.waste ?? null;
+    if (!w) return null;
+    return w.wastedSpend > 0 || (w.pareto?.misallocated.length ?? 0) > 0 ? w : null;
+  });
+  /** Itens mal alocados do Pareto (gasta mais do que entrega) — vazio = não mostra. */
+  protected readonly misallocated = computed(() => this.waste()?.pareto?.misallocated ?? []);
+  /** Saúde da medição — só quando suspeita (o backend só preenche nesse caso). */
+  protected readonly tracking = computed<Tracking | null>(() => {
+    const t = this.run()?.metrics?.trackingHealth;
+    return t?.suspect ? t : null;
+  });
+
   /**
    * Run trouxe algo acionável? (scorecard, KPIs ou recomendações). Se não — ex:
    * conta sem gasto — o resumo já basta; a ressalva "parcial" e o "nenhuma
@@ -332,6 +413,17 @@ export class AnalysisDetail {
   }
   protected tierTone(tier: Tier): TierTone {
     return TIER_TONE[tier];
+  }
+  protected stageLabel(stage: Stage): string {
+    return STAGE_LABEL[stage];
+  }
+  /** Valor monetário na moeda da conta (desperdício/zumbis). */
+  protected money(value: number): string {
+    return formatCurrency(value, this.currency());
+  }
+  /** Percentuais do desperdício já vêm 0-100 do backend — só arredonda + sufixo. */
+  protected pct(value: number): string {
+    return `${Math.round(value)}%`;
   }
   /**
    * Faixa da campanha-alvo de uma recomendação (só quando a ação mira uma campanha

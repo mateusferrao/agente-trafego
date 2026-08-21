@@ -1036,6 +1036,19 @@
                     "type": "number",
                     "exclusiveMinimum": 0
                   },
+                  "frequencyCapByStage": {
+                    "type": "object",
+                    "properties": {
+                      "prospecting": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      "remarketing": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      }
+                    }
+                  },
                   "fatigueCostRisePct": {
                     "type": "number",
                     "minimum": 0
@@ -1046,6 +1059,14 @@
                   },
                   "coldStartReference": {
                     "type": "boolean"
+                  },
+                  "trackingBrokenRatio": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "trackingBrokenMinFunnel": {
+                    "type": "number",
+                    "minimum": 0
                   }
                 }
               }
@@ -1066,6 +1087,21 @@
               "fatigueFrequency": {
                 "type": "number"
               },
+              "frequencyCapByStage": {
+                "type": "object",
+                "properties": {
+                  "prospecting": {
+                    "type": "number"
+                  },
+                  "remarketing": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "prospecting",
+                  "remarketing"
+                ]
+              },
               "fatigueCostRisePct": {
                 "type": "number"
               },
@@ -1074,6 +1110,12 @@
               },
               "coldStartReference": {
                 "type": "boolean"
+              },
+              "trackingBrokenRatio": {
+                "type": "number"
+              },
+              "trackingBrokenMinFunnel": {
+                "type": "number"
               }
             },
             "required": [
@@ -1081,9 +1123,12 @@
               "minClicks",
               "fatigueCtrDropPct",
               "fatigueFrequency",
+              "frequencyCapByStage",
               "fatigueCostRisePct",
               "zombieMinSpend",
-              "coldStartReference"
+              "coldStartReference",
+              "trackingBrokenRatio",
+              "trackingBrokenMinFunnel"
             ]
           }
         },
@@ -1465,6 +1510,19 @@
                     "type": "number",
                     "exclusiveMinimum": 0
                   },
+                  "frequencyCapByStage": {
+                    "type": "object",
+                    "properties": {
+                      "prospecting": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      "remarketing": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      }
+                    }
+                  },
                   "fatigueCostRisePct": {
                     "type": "number",
                     "minimum": 0
@@ -1475,6 +1533,14 @@
                   },
                   "coldStartReference": {
                     "type": "boolean"
+                  },
+                  "trackingBrokenRatio": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "trackingBrokenMinFunnel": {
+                    "type": "number",
+                    "minimum": 0
                   }
                 }
               }
@@ -1700,6 +1766,157 @@
                       "headline",
                       "biggestLeak"
                     ]
+                  },
+                  "waste": {
+                    "type": "object",
+                    "properties": {
+                      "totalSpend": {
+                        "type": "number"
+                      },
+                      "wastedSpend": {
+                        "type": "number"
+                      },
+                      "wastedPct": {
+                        "type": "number"
+                      },
+                      "zombies": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "spend": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "name",
+                            "spend"
+                          ]
+                        }
+                      },
+                      "pareto": {
+                        "type": "object",
+                        "properties": {
+                          "basis": {
+                            "type": "string",
+                            "enum": [
+                              "target",
+                              "proxy",
+                              "none"
+                            ]
+                          },
+                          "groupSpend": {
+                            "type": "number"
+                          },
+                          "items": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "spend": {
+                                  "type": "number"
+                                },
+                                "spendPct": {
+                                  "type": "number"
+                                },
+                                "result": {
+                                  "type": "number"
+                                },
+                                "resultPct": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "name",
+                                "spend",
+                                "spendPct"
+                              ]
+                            }
+                          },
+                          "misallocated": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "spend": {
+                                  "type": "number"
+                                },
+                                "spendPct": {
+                                  "type": "number"
+                                },
+                                "result": {
+                                  "type": "number"
+                                },
+                                "resultPct": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "name",
+                                "spend",
+                                "spendPct"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "basis",
+                          "groupSpend",
+                          "items",
+                          "misallocated"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "totalSpend",
+                      "wastedSpend",
+                      "wastedPct",
+                      "zombies"
+                    ]
+                  },
+                  "trackingHealth": {
+                    "type": "object",
+                    "properties": {
+                      "suspect": {
+                        "type": "boolean"
+                      },
+                      "funnelStarted": {
+                        "type": "number"
+                      },
+                      "trackedConversions": {
+                        "type": "number"
+                      },
+                      "ratio": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "suspect",
+                      "funnelStarted",
+                      "trackedConversions",
+                      "ratio"
+                    ]
                   }
                 },
                 "required": [
@@ -1909,6 +2126,17 @@
                     "zombie"
                   ]
                 },
+                "stage": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "prospecting",
+                    "remarketing",
+                    "unknown"
+                  ]
+                },
                 "muted": {
                   "type": "boolean"
                 }
@@ -1921,6 +2149,7 @@
                 "topFinding",
                 "flags",
                 "tier",
+                "stage",
                 "muted"
               ]
             }
@@ -2410,13 +2639,48 @@
                 "reasons"
               ]
             }
+          },
+          "waste": {
+            "type": "object",
+            "properties": {
+              "totalWasted": {
+                "type": "number"
+              },
+              "accounts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "accountId": {
+                      "type": "string"
+                    },
+                    "accountName": {
+                      "type": "string"
+                    },
+                    "wastedSpend": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "accountId",
+                    "accountName",
+                    "wastedSpend"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "totalWasted",
+              "accounts"
+            ]
           }
         },
         "required": [
           "pendingCount",
           "attention",
           "recentActivity",
-          "panorama"
+          "panorama",
+          "waste"
         ]
       },
       "PanoramaListOutput": {
@@ -3061,6 +3325,157 @@
                       "headline",
                       "biggestLeak"
                     ]
+                  },
+                  "waste": {
+                    "type": "object",
+                    "properties": {
+                      "totalSpend": {
+                        "type": "number"
+                      },
+                      "wastedSpend": {
+                        "type": "number"
+                      },
+                      "wastedPct": {
+                        "type": "number"
+                      },
+                      "zombies": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "spend": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "name",
+                            "spend"
+                          ]
+                        }
+                      },
+                      "pareto": {
+                        "type": "object",
+                        "properties": {
+                          "basis": {
+                            "type": "string",
+                            "enum": [
+                              "target",
+                              "proxy",
+                              "none"
+                            ]
+                          },
+                          "groupSpend": {
+                            "type": "number"
+                          },
+                          "items": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "spend": {
+                                  "type": "number"
+                                },
+                                "spendPct": {
+                                  "type": "number"
+                                },
+                                "result": {
+                                  "type": "number"
+                                },
+                                "resultPct": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "name",
+                                "spend",
+                                "spendPct"
+                              ]
+                            }
+                          },
+                          "misallocated": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "id": {
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "type": "string"
+                                },
+                                "spend": {
+                                  "type": "number"
+                                },
+                                "spendPct": {
+                                  "type": "number"
+                                },
+                                "result": {
+                                  "type": "number"
+                                },
+                                "resultPct": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "name",
+                                "spend",
+                                "spendPct"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "basis",
+                          "groupSpend",
+                          "items",
+                          "misallocated"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "totalSpend",
+                      "wastedSpend",
+                      "wastedPct",
+                      "zombies"
+                    ]
+                  },
+                  "trackingHealth": {
+                    "type": "object",
+                    "properties": {
+                      "suspect": {
+                        "type": "boolean"
+                      },
+                      "funnelStarted": {
+                        "type": "number"
+                      },
+                      "trackedConversions": {
+                        "type": "number"
+                      },
+                      "ratio": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "suspect",
+                      "funnelStarted",
+                      "trackedConversions",
+                      "ratio"
+                    ]
                   }
                 },
                 "required": [
@@ -3261,6 +3676,17 @@
                     "zombie"
                   ]
                 },
+                "stage": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "prospecting",
+                    "remarketing",
+                    "unknown"
+                  ]
+                },
                 "muted": {
                   "type": "boolean"
                 }
@@ -3273,6 +3699,7 @@
                 "topFinding",
                 "flags",
                 "tier",
+                "stage",
                 "muted"
               ]
             }

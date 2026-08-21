@@ -80,6 +80,8 @@ describe("createDashboardService.dashboard", () => {
       [{ accountId: "a1", latest: new Date("2026-08-20T11:30:00Z") }],
       // 5) atividade recente (ação por chat → runId null)
       [{ id: "tc1", toolKey: "pause_entity", args: { target: { name: "Campanha X" } }, runId: null, at: new Date("2026-08-20T10:00:00Z"), accountId: "a1", accountName: "Loja A" }],
+      // 6) desperdício cross-conta (waste.wastedSpend da última análise, texto do jsonb #>>)
+      [{ accountId: "a1", accountName: "Loja A", wastedSpend: "120" }],
     ]);
     const service = createDashboardService({ db, scheduler: {} as never, windowDays: 7, baselineDays: 7, freshThresholdMin: 120, now: NOW });
 
@@ -93,13 +95,15 @@ describe("createDashboardService.dashboard", () => {
     expect(out.attention).toHaveLength(1); // tem motivos
     expect(out.recentActivity).toHaveLength(1);
     expect(out.recentActivity[0]).toMatchObject({ type: "action_applied", entityName: "Campanha X", fromChat: true });
+    expect(out.waste.totalWasted).toBe(120);
+    expect(out.waste.accounts).toEqual([{ accountId: "a1", accountName: "Loja A", wastedSpend: 120 }]);
   });
 
   it("org sem contas → painel vazio (sem quebrar)", async () => {
     const db = fakeDb([[]]);
     const service = createDashboardService({ db, scheduler: {} as never, windowDays: 7, baselineDays: 7, freshThresholdMin: 120, now: NOW });
     const out = await service.dashboard("org-1" as never);
-    expect(out).toEqual({ pendingCount: 0, attention: [], recentActivity: [], panorama: [] });
+    expect(out).toEqual({ pendingCount: 0, attention: [], recentActivity: [], panorama: [], waste: { totalWasted: 0, accounts: [] } });
   });
 });
 

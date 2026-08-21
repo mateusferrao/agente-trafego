@@ -344,6 +344,7 @@ export function createRunsService(deps: RunsDeps) {
       topFinding: c.topFinding,
       flags: [...c.flags],
       tier: c.tier ?? null,
+      stage: c.stage ?? null,
       muted: muted.has(c.externalId),
     }));
 
@@ -396,6 +397,9 @@ function toCampaignAnalysisOutput(
     topFinding: top ? { title: top.title, severity: top.severity } : null,
     flags: row.flags ?? [],
     tier: (row.tier as CampaignAnalysisOutput["tier"]) ?? null,
+    // estágio congela só no snapshot do run (RunCampaignCard); a visão ao vivo lê
+    // `entity_analyses`, que não guarda o público → null aqui (aparece no histórico).
+    stage: null,
     muted,
   };
 }

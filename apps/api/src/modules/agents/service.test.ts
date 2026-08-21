@@ -3,7 +3,7 @@ import type { Database } from "@trafego/db";
 import type { OrgId } from "@trafego/shared/types";
 import type { ApprovalPort, SchedulerPort } from "@trafego/shared/ports";
 import { createAgentsService } from "./service.js";
-const QD = { minConversions: 20, minClicks: 100, fatigueCtrDropPct: 20, fatigueFrequency: 3, fatigueCostRisePct: 30, zombieMinSpend: 50, coldStartReference: true };
+const QD = { minConversions: 20, minClicks: 100, fatigueCtrDropPct: 20, fatigueFrequency: 3, frequencyCapByStage: { prospecting: 2.5, remarketing: 8 }, fatigueCostRisePct: 30, zombieMinSpend: 50, coldStartReference: true, trackingBrokenRatio: 50, trackingBrokenMinFunnel: 50 };
 
 /** Scheduler noop (resync = fila; irrelevante p/ os testes de serviço). */
 const scheduler: SchedulerPort = {

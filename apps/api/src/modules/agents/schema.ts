@@ -24,9 +24,20 @@ export const qualityConfigInput = z.object({
   minClicks: z.number().int().positive().optional(),
   fatigueCtrDropPct: z.number().nonnegative().optional(),
   fatigueFrequency: z.number().positive().optional(),
+  /** teto de frequência por estágio (§Bloco 2): frio satura antes; quente tolera mais. */
+  frequencyCapByStage: z
+    .object({
+      prospecting: z.number().positive().optional(),
+      remarketing: z.number().positive().optional(),
+    })
+    .optional(),
   fatigueCostRisePct: z.number().nonnegative().optional(),
   zombieMinSpend: z.number().nonnegative().optional(),
   coldStartReference: z.boolean().optional(),
+  /** tracking furado (§Bloco 2): conversas/max(conversões,1) acima disso = suspeita. */
+  trackingBrokenRatio: z.number().positive().optional(),
+  /** tracking furado: volume mínimo de conversas p/ sequer considerar a suspeita. */
+  trackingBrokenMinFunnel: z.number().nonnegative().optional(),
 });
 export type QualityConfigInput = z.infer<typeof qualityConfigInput>;
 
@@ -36,9 +47,12 @@ export const qualityDefaultsOutput = z.object({
   minClicks: z.number(),
   fatigueCtrDropPct: z.number(),
   fatigueFrequency: z.number(),
+  frequencyCapByStage: z.object({ prospecting: z.number(), remarketing: z.number() }),
   fatigueCostRisePct: z.number(),
   zombieMinSpend: z.number(),
   coldStartReference: z.boolean(),
+  trackingBrokenRatio: z.number(),
+  trackingBrokenMinFunnel: z.number(),
 });
 export type QualityDefaultsOutput = z.infer<typeof qualityDefaultsOutput>;
 

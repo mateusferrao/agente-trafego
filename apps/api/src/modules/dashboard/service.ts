@@ -25,12 +25,15 @@ import type {
   LiveMetricsOutput,
   PanoramaCard,
   RefreshDataOutput,
+  WasteSummary,
 } from "./schema.js";
 
 /** Sem análise há mais que isso (conta ativa) → sinal de atenção. 2× cadência = fast-follow. */
 const STALE_RUN_MS = 48 * 60 * 60 * 1000;
 /** Feed compacto de atividade recente. */
 const ACTIVITY_LIMIT = 20;
+/** Desperdício vazio (0 contas / sem análise) — evita `null` na saída. */
+const EMPTY_WASTE: WasteSummary = { totalWasted: 0, accounts: [] };
 
 export interface DashboardDeps {
   readonly db: Database;
@@ -144,9 +147,10 @@ export function createDashboardService(deps: DashboardDeps) {
     async dashboard(orgId: OrgId): Promise<DashboardOutput> {
       const panorama = await buildPanorama(orgId);
       if (panorama.length === 0) {
-        return { pendingCount: 0, attention: [], recentActivity: [], panorama: [] };
+        return { pendingCount: 0, attention: [], recentActivity: [], panorama: [], waste: EMPTY_WASTE };
       }
       const recentActivity = await recentActivityFeed(orgId);
+      const waste = await buildWaste(orgId);
       // total de pendências = soma por conta (toda pendente pertence a uma conta gerida).
       const pendingCount = panorama.reduce((s, c) => s + c.pendingCount, 0);
       return {
@@ -154,6 +158,7 @@ export function createDashboardService(deps: DashboardDeps) {
         attention: panorama.filter((c) => c.reasons.length > 0),
         recentActivity,
         panorama,
+        waste,
       };
     },
 
@@ -293,6 +298,42 @@ export function createDashboardService(deps: DashboardDeps) {
         out.set(id, { totals: totals ? pickKpis(totals) : null, asOf: latest ? latest.toISOString() : null, stale: isStale(latest) });
       }
       return out;
+  }
+
+  /**
+   * Desperdício cross-conta (§Bloco 2): o `waste.wastedSpend` da ÚLTIMA análise
+   * finalizada de cada conta (mesma junção do panorama — última succeeded por
+   * agente, via DISTINCT ON). Só contas que ainda queimam (> 0), maior primeiro.
+   */
+  async function buildWaste(orgId: OrgId): Promise<WasteSummary> {
+    const rows = await deps.db
+      .selectDistinctOn([agentRuns.agentId], {
+        accountId: agents.adAccountId,
+        accountName: adAccounts.name,
+        wastedSpend: sql<string | null>`${agentRuns.metricsSnapshot} #>> '{waste,wastedSpend}'`,
+      })
+      .from(agentRuns)
+      .innerJoin(agents, eq(agentRuns.agentId, agents.id))
+      .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
+      .where(
+        and(
+          eq(agentRuns.orgId, orgId),
+          eq(agentRuns.status, "succeeded"),
+          eq(adAccounts.status, "active"),
+        ),
+      )
+      .orderBy(agentRuns.agentId, desc(agentRuns.finishedAt));
+
+    const accounts = rows
+      .map((r) => ({
+        accountId: r.accountId,
+        accountName: r.accountName ?? r.accountId,
+        wastedSpend: r.wastedSpend === null ? 0 : Number(r.wastedSpend),
+      }))
+      .filter((a) => Number.isFinite(a.wastedSpend) && a.wastedSpend > 0)
+      .sort((a, b) => b.wastedSpend - a.wastedSpend);
+    const totalWasted = accounts.reduce((s, a) => s + a.wastedSpend, 0);
+    return { totalWasted, accounts };
   }
 
   /** Feed compacto cross-conta de ações do agente (inclui chat via coalesce). */

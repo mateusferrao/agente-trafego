@@ -55,6 +55,7 @@ import type {
   Action,
   ActionTarget,
   AdEntity,
+  AudienceStage,
   CampaignUnit,
   AgentId,
   Creative,
@@ -965,6 +966,7 @@ function buildCampaignCards(
     if (!analysis) continue;
     const m = u.campaign.metrics;
     const top = analysis.findings?.[0];
+    const stage = dominantStage(u);
     cards.push({
       externalId: u.campaign.id,
       name: u.campaign.name,
@@ -978,9 +980,27 @@ function buildCampaignCards(
       topFinding: top ? { title: top.title, severity: top.severity } : null,
       flags: [...u.campaign.flags],
       ...(u.campaign.tier ? { tier: u.campaign.tier } : {}),
+      ...(stage ? { stage } : {}),
     });
   }
   return cards;
+}
+
+/**
+ * Estágio de público DOMINANTE da campanha = o do adset de MAIOR gasto que tem
+ * perfil de público (§Bloco 2). Adsets sem `audience` são ignorados; nenhum com
+ * público → sem estágio (ausente no card). Uma campanha mistura frio/quente por
+ * adset; o de maior gasto é o que melhor rotula a intenção da campanha.
+ */
+function dominantStage(u: CampaignUnit): AudienceStage | undefined {
+  let best: { stage: AudienceStage; spend: number } | undefined;
+  for (const g of u.adsets) {
+    const stage = g.adset.audience?.stage;
+    if (!stage) continue;
+    const spend = g.adset.metrics.spend ?? 0;
+    if (!best || spend > best.spend) best = { stage, spend };
+  }
+  return best?.stage;
 }
 
 /** Busca entidades por nível (degrada em `partial` se um nível falhar). */
