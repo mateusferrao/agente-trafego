@@ -82,6 +82,37 @@ describe("applyGuardrails", () => {
     });
   });
 
+  describe("budget set-absoluto (clamp por budget atual)", () => {
+    const setAct = (amountMinor: number) =>
+      action("a", { type: "adjust_budget", params: { mode: "set", amountMinor } });
+
+    it("dentro do teto de % → passa intacto", () => {
+      // atual 10000, alvo 11000 (+10%), teto 20% → ok.
+      const res = applyGuardrails([setAct(11000)], baseCfg, { budgetAmountByEntity: new Map([["ad:a", 10000]]) });
+      expect(res.allowed).toHaveLength(1);
+      expect(res.allowed[0]?.params["amountMinor"]).toBe(11000);
+    });
+
+    it("acima do teto (increase) → clampa ao equivalente ao teto", () => {
+      // atual 10000, alvo 20000 (+100%), teto 20% → 12000.
+      const res = applyGuardrails([setAct(20000)], baseCfg, { budgetAmountByEntity: new Map([["ad:a", 10000]]) });
+      expect(res.allowed[0]?.params["amountMinor"]).toBe(12000);
+      expect(res.allowed[0]?.params["clampedFrom"]).toBe(20000);
+    });
+
+    it("abaixo do teto (decrease) → clampa ao piso do teto", () => {
+      // atual 10000, alvo 2000 (-80%), teto 20% → 8000.
+      const res = applyGuardrails([setAct(2000)], baseCfg, { budgetAmountByEntity: new Map([["ad:a", 10000]]) });
+      expect(res.allowed[0]?.params["amountMinor"]).toBe(8000);
+    });
+
+    it("budget atual desconhecido no contexto → dropa (não verifica → não arrisca)", () => {
+      const res = applyGuardrails([setAct(20000)], baseCfg, {});
+      expect(res.allowed).toHaveLength(0);
+      expect(res.dropped[0]?.reason).toContain("budget atual");
+    });
+  });
+
   describe("no-op (statusByEntity)", () => {
     const allCfg: GuardrailConfig = {
       ...baseCfg,

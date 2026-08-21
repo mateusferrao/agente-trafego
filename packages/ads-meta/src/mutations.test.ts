@@ -86,6 +86,32 @@ describe("MetaMutationsService", () => {
     expect(posts()[0]!.url).toContain("daily_budget=100");
   });
 
+  it("adjust_budget set: aplica valor ABSOLUTO exato (minor units)", async () => {
+    const { posts } = stubGraph({ status: "ACTIVE", daily_budget: "10000" });
+    const res = await svc().mutate(account, act("adjust_budget", { params: { mode: "set", amountMinor: 20000 } }));
+    expect(posts()[0]!.url).toContain("daily_budget=20000");
+    expect(res.after["daily_budget"]).toBe("20000");
+  });
+
+  it("adjust_budget set idempotente: já no valor alvo → no-op (sem POST)", async () => {
+    const { posts } = stubGraph({ status: "ACTIVE", daily_budget: "20000" });
+    const res = await svc().mutate(account, act("adjust_budget", { params: { mode: "set", amountMinor: 20000 } }));
+    expect(posts()).toHaveLength(0);
+    expect(res.after["daily_budget"]).toBe("20000");
+  });
+
+  it("adjust_budget set respeita o piso mínimo", async () => {
+    const { posts } = stubGraph({ status: "ACTIVE", daily_budget: "10000" });
+    await svc().mutate(account, act("adjust_budget", { params: { mode: "set", amountMinor: 50 } }));
+    expect(posts()[0]!.url).toContain("daily_budget=100"); // piso MIN
+  });
+
+  it("adjust_budget set aplica no lifetime quando não há daily", async () => {
+    const { posts } = stubGraph({ status: "ACTIVE", lifetime_budget: "50000" });
+    await svc().mutate(account, act("adjust_budget", { params: { mode: "set", amountMinor: 60000 } }));
+    expect(posts()[0]!.url).toContain("lifetime_budget=60000");
+  });
+
   it("set_status: aplica o status dos params", async () => {
     const { posts } = stubGraph({ status: "ACTIVE" });
     await svc().mutate(account, act("set_status", { params: { status: "PAUSED" } }));

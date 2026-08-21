@@ -1,6 +1,12 @@
 import type { Action } from "@trafego/shared/types";
 import type { AdAccountRef, MutateOptions, MutationResult, RestoreResult } from "@trafego/shared/ports";
-import { ACTION_PARAM_MODE, ACTION_PARAM_PCT, BUDGET_MODE_DECREASE } from "@trafego/shared";
+import {
+  ACTION_PARAM_AMOUNT_MINOR,
+  ACTION_PARAM_MODE,
+  ACTION_PARAM_PCT,
+  BUDGET_MODE_DECREASE,
+  BUDGET_MODE_SET,
+} from "@trafego/shared";
 import type { MetaGraphClient } from "./client.js";
 
 /**
@@ -129,6 +135,17 @@ function budgetChange(action: Action, before: EntityState): Change {
   if (!field) throw new Error("adjust_budget: entidade sem budget no nível (pré-check do guardrail deveria ter barrado)");
 
   const currentMinor = Number(before[field]);
+
+  // budget ABSOLUTO (chat, 5c): alvo exato em unidade mínima (sem % sobre o atual).
+  if (action.params[ACTION_PARAM_MODE] === BUDGET_MODE_SET) {
+    const target = Number(action.params[ACTION_PARAM_AMOUNT_MINOR]);
+    if (!Number.isFinite(target)) {
+      throw new Error("adjust_budget set: amountMinor ausente/inválido");
+    }
+    const nextMinor = Math.max(MIN_BUDGET_MINOR, Math.round(target));
+    return { params: { [field]: String(nextMinor) }, alreadyThere: nextMinor === currentMinor };
+  }
+
   const pct = Math.abs(Number(action.params[ACTION_PARAM_PCT]));
   if (!Number.isFinite(pct) || pct === 0) {
     throw new Error("adjust_budget: pct ausente/inválido (não deveria virar ação sem %)");

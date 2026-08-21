@@ -5,7 +5,13 @@ import type {
   EntityStatus,
   GuardrailConfig,
 } from "@trafego/shared";
-import { ACTION_PARAM_PCT, ACTION_PARAM_STATUS } from "@trafego/shared";
+import {
+  ACTION_PARAM_AMOUNT_MINOR,
+  ACTION_PARAM_MODE,
+  ACTION_PARAM_PCT,
+  ACTION_PARAM_STATUS,
+  BUDGET_MODE_SET,
+} from "@trafego/shared";
 
 export interface DroppedAction {
   readonly action: Action;
@@ -28,6 +34,8 @@ export interface GuardrailContext {
   readonly budgetChangedToday?: ReadonlySet<string>;
   /** `${level}:${id}` → o nível-alvo tem budget? (pré-check de `adjust_budget`). */
   readonly budgetByEntity?: ReadonlyMap<string, boolean>;
+  /** `${level}:${id}` → budget atual (unidade mínima) — clamp de `adjust_budget` set-absoluto (5c). */
+  readonly budgetAmountByEntity?: ReadonlyMap<string, number>;
   /** `${level}:${id}` → status atual da entidade (no-op de pause/resume/set_status). */
   readonly statusByEntity?: ReadonlyMap<string, EntityStatus>;
 }
@@ -112,8 +120,19 @@ export function applyGuardrails(
       continue;
     }
 
-    // 4) clamp de % de mudança de budget (não descarta, limita)
-    const clamped = clampBudgetChange(action, cfg.maxBudgetChangePct);
+    // 4) clamp de mudança de budget (não descarta, limita). Set-absoluto (chat, 5c)
+    //    precisa do budget atual p/ traduzir o teto de % — sem ele, não arrisca (dropa).
+    let clamped: Action;
+    if (action.type === "adjust_budget" && action.params[ACTION_PARAM_MODE] === BUDGET_MODE_SET) {
+      const current = ctx.budgetAmountByEntity?.get(entityKey);
+      if (current === undefined) {
+        dropped.push({ action, reason: "não foi possível verificar o budget atual" });
+        continue;
+      }
+      clamped = clampSetBudget(action, cfg.maxBudgetChangePct, current);
+    } else {
+      clamped = clampBudgetChange(action, cfg.maxBudgetChangePct);
+    }
 
     // 5) cap de entidades/dia — conta entidades distintas afetadas
     if (!seenEntities.has(entityKey)) {
@@ -131,6 +150,24 @@ export function applyGuardrails(
   // apply_actions), que só simula a mutação. `cfg.llmCostCapUsd` é checado no
   // metering antes de chamar o LLM, fora do guardrail de ações.
   return { allowed, dropped };
+}
+
+/**
+ * Clampa um budget ABSOLUTO (`mode:'set'`, chat 5c) à faixa [current−maxPct%, current+maxPct%],
+ * traduzindo o teto de blast-radius (que é em %) pro valor exato pedido. `clampedFrom` guarda
+ * o valor original p/ o eco honesto ("você pediu X, seu teto é Y% → vou pra Z").
+ */
+function clampSetBudget(action: Action, maxPct: number, currentMinor: number): Action {
+  const target = Number(action.params[ACTION_PARAM_AMOUNT_MINOR]);
+  if (!Number.isFinite(target) || currentMinor <= 0) return action;
+  const upper = Math.round(currentMinor * (1 + maxPct / 100));
+  const lower = Math.round(currentMinor * (1 - maxPct / 100));
+  const clampedTarget = Math.min(upper, Math.max(lower, target));
+  if (clampedTarget === target) return action;
+  return {
+    ...action,
+    params: { ...action.params, [ACTION_PARAM_AMOUNT_MINOR]: clampedTarget, clampedFrom: target },
+  };
 }
 
 /** Limita a magnitude de mudança de budget ao teto configurado. `pct` = magnitude (≥0). */
