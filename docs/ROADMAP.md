@@ -32,7 +32,7 @@ Plano de construção em fatias. Decisões de arquitetura/produto = [`../CLAUDE.
 | **5b-1** ✅ | HITL via **site** | Aprovar/rejeitar por ação (mini-surface + `/approvals` cross-conta); `approvals` granular (fonte da verdade); apply-service com **re-check fresco** (sem checkpointer); guardrail de no-op + `allowedActions` nas sugeridas + barradas visíveis; expira 24h; **revert endurecido** (drift + TTL) | 5a |
 | **5b-2** ✅ | HITL + operação via **WhatsApp** | Inbound real (webhook/set + `parseInbound` + debounce); Grafo B ReAct (leitura sobre nosso DB + "analisa agora" com push); aprovação conversacional (approve/reject, desfecho de volta); checkpointer Postgres | 5b-1 |
 | **5c** ✅ | Chat ReAct pleno (end-state) | **Escrita LIVRE por chat** (propor do zero, eco+confirma + guardrail, inline) + budget set-absoluto + revert por chat + leitura mais rica + foco multi-conta. Enforcement via `allowedActions` (não `agent_tool_bindings`) | 5b |
-| **6a** | Timeline / auditoria (UI) | Histórico de runs/ações/aprovações **+ barradas cross-conta** na dashboard (hoje barradas só na mini-surface do último run) | prévias |
+| **6a** ✅ | Observabilidade + Painel gerencial + Frescura | Timeline por conta (auditoria, inclui ações por chat) + **Painel** home cross-conta (pendências/atenção/atividade/panorama) + **frescura** (sync-only sob demanda + sweep periódico + lazy on-view + as-of, split ao-vivo×datado) + migração do detalhe p/ router-tabs (Visão geral·Agente·Timeline) | prévias |
 | **6b** | Endurecimento / ops | Throttle, token-190, degradação, backups; allowlist via script/DB | prévias |
 | **7** | Criação de campanhas (pós-MVP) | Gestor completo no WhatsApp: cria campanhas a pedido/proativo | MVP validado, 5a/5b |
 | **8** | Orquestração multi-agente / qualidade (pós-MVP) | Painéis de revisores, map-reduce por entidade, redator, validador de ação | MVP validado, 5a |
@@ -142,9 +142,9 @@ decaimento de token em runtime → `6b`; reuso do sync-service pelo `fetchData` 
 - **Shadow só-do-chat** (`agents.chat_shadow`) — isolar chat (simula) × pipeline (real); hoje `dry_run`
   afeta os dois caminhos.
 - **Set-absoluto de budget na UI de config** — hoje o `mode:'set'` existe só via chat (5c-2).
-- **Observabilidade de ações de chat no site** — ações por chat não têm run → invisíveis na web até a
-  **6a** (que lê `audit_log`/`agent_tool_calls` por `agent_id`); antecipar uma surface dedicada, ou
-  priorizar a 6a logo após a 5c.
+- ✅ **Observabilidade de ações de chat no site — ENTREGUE na 6a.** A Timeline por conta + o widget de
+  atividade recente do Painel leem `agent_tool_calls` com `coalesce(agent_id, run.agent_id)` + LEFT JOIN
+  → ações por chat (`run_id` null) aparecem na web.
 - **Agir sobre entidade viva FORA de análise (chat)** — hoje o agente só age sobre o que está em
   `entity_analyses` (resolve nome→id via `get_campaign_analysis`/`get_entity_detail`/`find_recent_actions`,
   todos lendo o DB curado); campanha nunca analisada (ex: recém-criada) não é resolvível → o agente não
@@ -311,6 +311,51 @@ ecoa concreto → confirma → aplica**, sob os guardrails existentes. Entregue 
 guardrail (rede independente) + org-scoping (inclusive `set_focus`); a ação confirmada é a **congelada**
 no gate (o "sim" não re-especifica nada — sem drift). Ações por chat gravam em
 `agent_tool_calls`/`audit_log`/`usage_events` (trilha completa), **não** em `approvals`.
+
+## Fatia 6a — Observabilidade + Painel gerencial + Frescura (entregue)
+
+O gestor abre uma **home gerencial** com números frescos e decisões à mão; cada conta tem **Timeline**
+de auditoria (inclui ações por chat); os números ficam frescos **sem pagar LLM**. Entregue em 9 sub-slices:
+
+- **6a-1 — Frescura: porta de staleness + produtor do sync-only.** `shouldSync` (core puro) +
+  `buildInsightsSyncJob` (shared, jobId por conta + `removeOn*`) reusando o worker morto `insights-sync`;
+  env `INSIGHTS_FRESH_THRESHOLD_MIN` (120). `JobSpec` ganhou `removeOnComplete/removeOnFail/delayMs`.
+- **6a-2 — Sweep periódico singleton.** Tick recorrente (= threshold) varre contas **ativas** (agente
+  ativo), aplica `shouldSync` e enfileira sync-only só p/ as velhas (stagger). `repo.latestSyncedAtByAccounts`
+  (max `updated_at`, sem N+1).
+- **6a-3 — KPIs ao vivo + "atualizar agora".** `computeLiveTotals` (core, mesma cadeia do brief) +
+  `GET /accounts/:id/live-metrics` (totais + as-of + janela) + `POST /accounts/:id/refresh-data` (força
+  sync-only). `resolveWindows` movido p/ `@trafego/core` (reuso api+worker).
+- **6a-4 — Painel cross-conta.** `GET /dashboard`: pendências + atenção (token/sem-análise-recente/grade
+  C-D/pendência) + atividade recente (tool_calls cross-conta via coalesce+LEFT JOIN → inclui chat) +
+  panorama (grade datada via DISTINCT ON + KPIs ao vivo em lote + as-of).
+- **6a-5 — Timeline por conta.** `GET /accounts/:id/timeline`: união discriminada ABERTA (extensível p/
+  Fatia 7) + paginada + filtros; híbrido expansível (run carrega recomendações aninhadas); runs+ações+
+  aprovações; blocked→rejected.
+- **6a-6 — `ui-timeline` + router-tabs.** Diretivas de route-tabs vendorizadas (só as de rota, puras) +
+  `ui-timeline` presentacional (agrupa por dia, expansível), VM próprio (desacoplado da API).
+- **6a-7 — Detalhe da conta em abas.** `AccountShell` (cabeçalho + tabs + outlet) + `AccountContextStore`
+  (scoped à rota) + `AccountOverview` (análise + mini-surface + faixa ao vivo) + `AccountTimeline`. Config
+  do agente vira aba; barra sticky some; Analisar/Pausar sobem pro cabeçalho.
+- **6a-8 — Painel (home).** `/` → Painel; nav "Painel"; 4 widgets; refresh por-conta + lazy on-view;
+  estados positivos/quietos; 0 contas → onboarding.
+- **6a-9 — Docs + ROADMAP.** `docs/validacao-manual-6a.md` + este registro.
+
+**Sem migration** (Timeline/Painel = read-only; frescura = env). **as-of** = `max(updated_at)` dos
+snapshots. **4 gatilhos, 1 caminho de sync, 1 porta de staleness** (análise inline + sweep + lazy + botão).
+
+**Fast-follows da 6a:**
+- **Aba "Conexões"** do detalhe (token/recolar + contato WhatsApp + modo) — o shell de abas já suporta.
+- **Cadência de sync por-conta** (hoje global via env) + sweep cobrir agente **pausado** (hoje lazy cobre).
+- **"> 2× cadência" no `no_recent_run`** (hoje 48h fixo) + tuning dos thresholds de atenção.
+- **Bust do `MetaEntityCache` no "atualizar agora"** — adiado: nenhuma superfície ao vivo mostra status/
+  budget de entidade na 6a (só insights); reintroduzir quando exibir estado de entidade ao vivo.
+- **Frescura no TEXTO da análise** (recomendação pode citar estado de até ~30min; a escrita já é protegida).
+- **Widget "próxima análise agendada"** (hoje "última análise há Xh"; falta getter de next-fire/parse cron).
+- **`audit_log` na Timeline** (v1 = runs+tool_calls+approvals) + **Timeline cross-conta** (v1 = per-conta
+  + atividade compacta no Painel) + **paginação real por UNION** (v1 = cap por fonte + merge em memória).
+- **Botão global "atualizar tudo"** no Painel (v1 = refresh só por-conta).
+- **Trimar o header próprio da config** dentro da aba Agente (hoje ainda renderiza o seu).
 
 ## Fatia 7 — Criação de campanhas (roadmap pós-MVP)
 
