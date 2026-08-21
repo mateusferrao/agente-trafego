@@ -96,6 +96,7 @@ describe("makeMetaToolExecutor.execute", () => {
 
 const toolCall = {
   id: "tc1",
+  agentId: "agent1",
   runId: "run1",
   beforeState: { status: "ACTIVE" } as Record<string, unknown>,
   args: { target: { level: "campaign", id: "C1" }, dryRun: false } as Record<string, unknown>,

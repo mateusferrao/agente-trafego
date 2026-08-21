@@ -209,7 +209,10 @@ export function makeConversationTools(
       if (rows.length === 0) return `Não achei uma conta ativa com "${name}" no nome.`;
       if (rows.length > 1) return `Mais de uma conta casa "${name}": ${rows.map((r) => r.name).join(", ")}. Qual delas?`;
       const acc = rows[0]!;
-      await deps.db.update(conversations).set({ focusedAccountId: acc.id }).where(eq(conversations.id, ctx.conversationId));
+      await deps.db
+        .update(conversations)
+        .set({ focusedAccountId: acc.id })
+        .where(and(eq(conversations.id, ctx.conversationId), eq(conversations.orgId, ctx.orgId)));
       return `Ok, foquei na conta ${acc.name}. O que você quer fazer nela?`;
     },
     {

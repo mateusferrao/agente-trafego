@@ -31,6 +31,7 @@ export async function revertActionById(deps: WorkerDeps, input: RevertByIdInput)
   const [tc] = await db
     .select({
       id: agentToolCalls.id,
+      agentId: sql<string | null>`coalesce(${agentToolCalls.agentId}, ${agentRuns.agentId})`,
       runId: agentToolCalls.runId,
       beforeState: agentToolCalls.beforeState,
       args: agentToolCalls.args,

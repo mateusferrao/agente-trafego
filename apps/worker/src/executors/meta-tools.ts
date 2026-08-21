@@ -21,6 +21,7 @@ const USAGE_TYPE_ACTION_APPLIED = "action_applied";
 /** `agent_tool_call` carregado p/ o undo (org-scoped na casca que o carregou). */
 export interface RevertToolCall {
   readonly id: string;
+  readonly agentId: string | null;
   readonly runId: string | null;
   readonly beforeState: Record<string, unknown> | null;
   readonly args: Record<string, unknown>;
@@ -165,6 +166,7 @@ export function makeMetaToolExecutor(deps: WorkerDeps) {
           await db
             .insert(agentToolCalls)
             .values({
+              agentId: toolCall.agentId,
               runId: toolCall.runId,
               toolKey: UNDO_BLOCKED_TOOL_KEY,
               idempotencyKey: `${toolCall.id}:${UNDO_BLOCKED_TOOL_KEY}`,
@@ -185,6 +187,7 @@ export function makeMetaToolExecutor(deps: WorkerDeps) {
     await db
       .insert(agentToolCalls)
       .values({
+        agentId: toolCall.agentId,
         runId: toolCall.runId,
         toolKey: UNDO_TOOL_KEY,
         idempotencyKey: undoKey,

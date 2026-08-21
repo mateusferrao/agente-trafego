@@ -6,7 +6,7 @@ import { ChatOpenAI } from "@langchain/openai";
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import type { Logger } from "pino";
-import { applyGuardrails, buildRevertEcho, buildWriteEcho, type EchoItem, type RevertEchoItem } from "@trafego/core";
+import { applyGuardrails, buildRevertEcho, buildWriteEcho, entityKeyOf, type EchoItem, type RevertEchoItem } from "@trafego/core";
 import { sleep } from "@trafego/shared";
 import type { Action, OrgId } from "@trafego/shared/types";
 import type { WorkerDeps } from "../../composition.js";
@@ -295,33 +295,33 @@ export function makeConversationNodes(
       return {
         messages: answerToolCalls(allCalls, echo),
         pendingRevert: { echo, expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString(), toolCallIds: ids },
+        pendingWrite: null, // uma pendência por vez (write × revert não coexistem)
       };
     }
 
-    const calls = allCalls.filter((c) => WRITE_TOOL_NAMES.has(c.name));
-    const proposed = calls
-      .map((c) => actionFromToolCall(c.name, (c.args ?? {}) as Record<string, unknown>, c.id ?? c.name))
+    // id do tool_call como id da ação (idempotência); índice desempata se faltar (raro).
+    const proposed = allCalls
+      .filter((c) => WRITE_TOOL_NAMES.has(c.name))
+      .map((c, i) => actionFromToolCall(c.name, (c.args ?? {}) as Record<string, unknown>, c.id ?? `${c.name}:${i}`))
       .filter((a): a is Action => a !== null);
     if (proposed.length === 0) {
-      return { messages: answerToolCalls(calls, "Não entendi qual ação você quer. Pode repetir?") };
+      return { messages: answerToolCalls(allCalls, "Não entendi qual ação você quer. Pode repetir?") };
     }
 
     const wctx = await loadWriteContext(deps, ctx.orgId, ctx.agentId, proposed.map((a) => a.target));
     if (!wctx) {
-      return { messages: answerToolCalls(calls, "Não consegui acessar a conta agora. Tenta de novo em instantes.") };
+      return { messages: answerToolCalls(allCalls, "Não consegui acessar a conta agora. Tenta de novo em instantes.") };
     }
+
+    // guardrail no LOTE inteiro (uma chamada) — senão o cap de entidades/dia não acumula
+    // entre as ações do mesmo turno (seenEntities é por-chamada). §8: guardrail sempre.
+    const check = applyGuardrails(proposed, wctx.cfg, wctx.ctx);
+    const labelOf = (a: Action) => a.target.name ?? a.target.id;
+    const blocked = check.dropped.map((d) => `${labelOf(d.action)}: ${d.reason}`);
 
     const echoItems: EchoItem[] = [];
     const frozen: Action[] = [];
-    const blocked: string[] = [];
-    for (const action of proposed) {
-      const label = action.target.name ?? action.target.id;
-      const check = applyGuardrails([action], wctx.cfg, wctx.ctx);
-      if (check.allowed.length === 0) {
-        blocked.push(`${label}: ${check.dropped[0]?.reason ?? "não permitida"}`);
-        continue;
-      }
-      const clamped = check.allowed[0]!;
+    for (const clamped of check.allowed) {
       try {
         const dry = await deps.ports.ads.mutate(wctx.account, clamped, { dryRun: true });
         echoItems.push({
@@ -335,16 +335,18 @@ export function makeConversationNodes(
         frozen.push(clamped);
       } catch (err) {
         logger.warn({ err, entityId: clamped.target.id }, "conversation:dry-run do eco falhou");
-        blocked.push(`${label}: não consegui simular agora`);
+        blocked.push(`${labelOf(clamped)}: não consegui simular agora`);
       }
     }
 
     const parts: string[] = [];
+    // shadow (dry_run): o eco avisa que vai SIMULAR — senão "vou pausar" soa como escrita real.
+    if (wctx.cfg.dryRun && echoItems.length > 0) parts.push("🧪 Modo simulação (não aplico de verdade):");
     if (echoItems.length > 0) parts.push(buildWriteEcho(echoItems));
     if (blocked.length > 0) parts.push(`Não consigo:\n${blocked.map((b, i) => `${i + 1}. ${b}`).join("\n")}`);
     const echo = parts.join("\n\n") || "Não consegui preparar essa ação.";
 
-    const update: WhatsappConversationUpdate = { messages: answerToolCalls(calls, echo) };
+    const update: WhatsappConversationUpdate = { messages: answerToolCalls(allCalls, echo), pendingRevert: null };
     if (frozen.length > 0) {
       update.pendingWrite = {
         echo,
@@ -363,8 +365,8 @@ export function makeConversationNodes(
       ctx.agentId.length > 0 ? ctx.agentId : null,
       deps.conversation.model,
     );
-    const lastTool = [...state.messages].reverse().find((m: BaseMessage) => m.getType() === "tool");
-    const echoText = typeof lastTool?.content === "string" ? lastTool.content : "";
+    // o eco congelado no state é a fonte exata (o ToolMessage do lote só leva "(ver acima)").
+    const echoText = activePendingWrite(state.pendingWrite)?.echo ?? activePendingRevert(state.pendingRevert)?.echo ?? "";
     if (!echoText) return {};
     const sys = new SystemMessage(
       `${systemPrompt}\n\nRepasse ao usuário, em português e voz leve, EXATAMENTE este pedido de confirmação — não invente, não altere nomes, números ou valores, e termine perguntando se confirma:`,
@@ -424,6 +426,9 @@ export function makeConversationNodes(
     }
 
     // escrita por chat: sem run de análise (runId null); o agentId é a âncora da trilha.
+    // Acumula as entidades já aplicadas em touchedToday a cada iteração — senão o cap de
+    // entidades/dia não vale DENTRO do lote (applyGuardrails é por-ação aqui). §8.
+    const touchedToday = new Set<string>(wctx.ctx.touchedToday ?? []);
     const lines: string[] = [];
     for (const action of pending.actions) {
       const outcome = await applyCheckedAction({
@@ -431,12 +436,13 @@ export function makeConversationNodes(
         account: wctx.account,
         action,
         cfg: wctx.cfg,
-        ctx: wctx.ctx,
+        ctx: { ...wctx.ctx, touchedToday },
         agentId: ctx.agentId,
         runId: null,
         orgId: ctx.orgId,
         idempotencyKey: `conv:${ctx.conversationId}:${action.id}`,
       });
+      if (outcome.kind === "applied") touchedToday.add(entityKeyOf(action.target));
       lines.push(outcomeLine(action, outcome));
     }
     return { messages: [...answerToolCalls(calls, "aplicado"), new AIMessage(lines.join("\n"))], pendingWrite: null };
