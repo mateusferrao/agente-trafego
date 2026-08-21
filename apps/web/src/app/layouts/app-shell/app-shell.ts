@@ -3,6 +3,7 @@ import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/rou
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
   heroArrowRightOnRectangle,
+  heroBanknotes,
   heroBuildingOffice2,
   heroChatBubbleLeftRight,
   heroCheckCircle,
@@ -20,7 +21,7 @@ import type { OrgOutput } from '@core/api';
 import { AuthStore } from '@core/auth';
 import { ThemeStore } from '@core/theme/theme.store';
 import type { ThemePreference } from '@core/theme/theme.store';
-import { APP_MODULE_GROUPS } from '@core/navigation/app-modules';
+import { APP_MODULE_GROUPS, type AppModule } from '@core/navigation/app-modules';
 
 interface ThemeOption {
   readonly value: ThemePreference;
@@ -52,6 +53,7 @@ const THEME_OPTIONS: readonly ThemeOption[] = [
       heroChatBubbleLeftRight,
       heroCog6Tooth,
       heroArrowRightOnRectangle,
+      heroBanknotes,
       heroBuildingOffice2,
       heroSun,
       heroMoon,
@@ -91,7 +93,7 @@ const THEME_OPTIONS: readonly ThemeOption[] = [
               <span class="px-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
                 {{ group.label }}
               </span>
-              @for (mod of group.modules; track mod.id) {
+              @for (mod of visibleModules(group.modules); track mod.id) {
                 <a
                   [routerLink]="mod.route"
                   routerLinkActive="bg-accent-soft text-accent-strong"
@@ -193,6 +195,12 @@ export class AppShell {
 
   protected roleLabel(role: string): string {
     return role === 'owner' ? 'Proprietário' : 'Membro';
+  }
+
+  /** Filtra itens owner-only (ex: Custos) quando o usuário não é owner. */
+  protected visibleModules(modules: readonly AppModule[]): readonly AppModule[] {
+    if (this.role() === 'owner') return modules;
+    return modules.filter((m) => !m.ownerOnly);
   }
 
   protected logout(): void {

@@ -80,6 +80,11 @@ export const routes: Routes = [
       // Redirect preserva links antigos.
       { path: 'whatsapp', pathMatch: 'full', redirectTo: 'integrations' },
       {
+        path: 'custos',
+        title: 'Custos — AutoTraffic',
+        loadComponent: () => import('./features/costs/costs-page').then((m) => m.CostsPage),
+      },
+      {
         path: 'settings',
         title: 'Configurações — AutoTraffic',
         loadComponent: () =>

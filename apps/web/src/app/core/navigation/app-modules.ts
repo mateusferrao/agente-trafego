@@ -18,6 +18,8 @@ export interface AppModule {
   readonly exact: boolean;
   /** Descrição curta para tooltip / empty states. */
   readonly description: string;
+  /** Só aparece para o owner da org (ex: custos/COGS). Default: todos. */
+  readonly ownerOnly?: boolean;
 }
 
 export interface AppModuleGroup {
@@ -68,6 +70,15 @@ export const APP_MODULE_GROUPS: readonly AppModuleGroup[] = [
         icon: 'heroSquares2x2',
         exact: false,
         description: 'Conecte a Meta e o WhatsApp e escolha quais contas gerir.',
+      },
+      {
+        id: 'costs',
+        label: 'Custos',
+        route: '/custos',
+        icon: 'heroBanknotes',
+        exact: false,
+        description: 'Custo operacional (COGS) por conta e período.',
+        ownerOnly: true,
       },
       {
         id: 'settings',

@@ -1,7 +1,14 @@
 import { Injectable } from '@angular/core';
 import type { Observable } from 'rxjs';
 import { BaseApiService } from './base-api.service';
-import type { AccessStatusOutput, OrgOutput, RenameOrgInput, SetTimezoneInput } from './generated';
+import { silentApiContext } from './api-request.interceptor';
+import type {
+  AccessStatusOutput,
+  CostsOutput,
+  OrgOutput,
+  RenameOrgInput,
+  SetTimezoneInput,
+} from './generated';
 
 /** Endpoints de organização + billing (`/api/orgs`, `/api/billing/access-status`). */
 @Injectable({ providedIn: 'root' })
@@ -29,5 +36,13 @@ export class OrgApiService extends BaseApiService {
   /** `GET /api/billing/access-status` — status do acesso beta da org atual. */
   accessStatus(): Observable<AccessStatusOutput> {
     return this.get<AccessStatusOutput>('/billing/access-status');
+  }
+
+  /** `GET /api/billing/costs` — custo (COGS) do owner por conta/período (6b). */
+  costs(period?: string): Observable<CostsOutput> {
+    return this.get<CostsOutput>('/billing/costs', {
+      context: silentApiContext(),
+      params: period ? { period } : {},
+    });
   }
 }
