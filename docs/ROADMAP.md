@@ -33,7 +33,7 @@ Plano de construção em fatias. Decisões de arquitetura/produto = [`../CLAUDE.
 | **5b-2** ✅ | HITL + operação via **WhatsApp** | Inbound real (webhook/set + `parseInbound` + debounce); Grafo B ReAct (leitura sobre nosso DB + "analisa agora" com push); aprovação conversacional (approve/reject, desfecho de volta); checkpointer Postgres | 5b-1 |
 | **5c** ✅ | Chat ReAct pleno (end-state) | **Escrita LIVRE por chat** (propor do zero, eco+confirma + guardrail, inline) + budget set-absoluto + revert por chat + leitura mais rica + foco multi-conta. Enforcement via `allowedActions` (não `agent_tool_bindings`) | 5b |
 | **6a** ✅ | Observabilidade + Painel gerencial + Frescura | Timeline por conta (auditoria, inclui ações por chat) + **Painel** home cross-conta (pendências/atenção/atividade/panorama) + **frescura** (sync-only sob demanda + sweep periódico + lazy on-view + as-of, split ao-vivo×datado) + migração do detalhe p/ router-tabs (Visão geral·Agente·Timeline) | prévias |
-| **6b** | Endurecimento / ops | Throttle, token-190, degradação, backups; allowlist via script/DB | prévias |
+| **6b** ✅ | Prontidão pra beta real (recortada) | Gate de beta (enforcement API+cron + CLI + backfill) + auth self-service com email (verificação + reset, SES) + billing owner (COGS por conta) + ops (shutdown/readiness/higiene). Throttle/token-190-proativo/backups-por-script = fast-follow | prévias |
 | **7** | Criação de campanhas (pós-MVP) | Gestor completo no WhatsApp: cria campanhas a pedido/proativo | MVP validado, 5a/5b |
 | **8** | Orquestração multi-agente / qualidade (pós-MVP) | Painéis de revisores, map-reduce por entidade, redator, validador de ação | MVP validado, 5a |
 
@@ -362,6 +362,53 @@ snapshots. **4 gatilhos, 1 caminho de sync, 1 porta de staleness** (análise inl
 - **Piso no stagger do sweep quando `ANALYSIS_CRON_JITTER_MS=0`** (hoje `step=0` = todas de uma vez; o
   governor mitiga, mas vale um piso) + `BadgeTone` exportado (hoje o tom do badge empresta `TimelineTone`)
   + not-found consistente na Timeline (retorna vazio vs 404 nas outras).
+
+## Fatia 6b — Prontidão pra beta real (recortada — entregue)
+
+O que destrava **colocar gente real** com responsabilidade: quem entra, o que veem, e não cair/
+perder dado. Espelha o padrão de email+auth do `automato-api` (SES). Entregue em 8 sub-slices:
+
+- **6b-1 — Ops safety + higiene.** Shutdown gracioso da API (SIGTERM → `app.close` + fecha pool/Redis);
+  `/health` = liveness estático (probe de restart) + **`/ready`** novo checa DB/Redis (503 sem loop);
+  API respeita `LOG_LEVEL`; `.env.example` sem mojibake; `EASYPANEL.md` sem vars mortas
+  (`BETA_ADMIN_SECRET`/`FATIA0_*`); CI ganha `build` do web.
+- **6b-2 — Infra de email.** `MailerPort` (entrega) + `MailQueuePort` (enfileira) + fila `core.mail`
+  (retry 5x) + worker consumidor. Adapter **`@trafego/mailer`** (drivers `ses`/`console`/`misconfigured`).
+  **Split**: API só enfileira (sem SDK SES no bundle); só o worker entrega. `JobSpec` ganhou
+  `attempts`/`backoffMs`.
+- **6b-3 — Verificação de email.** `one_time_tokens` (OTP 6-díg, hash `email:code`, uso único) +
+  `users.email_verified_at`. Signup **não autentica** (`pendingVerification`); `email-code/request|verify`;
+  login não-verificado → 403 `auth_email_not_verified` + reenvia; força de senha (core puro); anti-enum.
+- **6b-4 — Reset de senha.** `forgot-password` (204 anti-enum) + `reset-password` (token-link, revoga
+  todas as outras sessões; valida força antes de consumir).
+- **6b-5 — Gate de beta.** `requireActiveAccess` (API, por usuário/email) + `skipped_access` no cron
+  (por owner da org) + CLI `access:grant|revoke|list` (grant → email de liberação) + `backfill:access`
+  one-time (grandfather pré-6b — não trancar o dono).
+- **6b-6 — Billing owner.** `GET /billing/costs`: total + byType + **por conta** (rollup
+  usage_events→agent_runs→agents→ad_accounts; chat/`run_id null` = não-atribuído) + gasto vs cap.
+  Índice `usage_events.created_at`.
+- **6b-7 — Frontend auth.** Telas de código, forgot/reset, **muro `/acesso-pendente`** + `activeAccessGuard`
+  no shell; login trata 403 (não-verificado → código; pendente → muro); interceptor 403 `access_pending`.
+- **6b-8 — Frontend billing.** Tela **Custos** (owner-only): custo por conta/período + gasto vs cap;
+  deixa claro que é COGS, não preço.
+
+**Provider de email = AWS SES (SESv2)**, produção em `sa-east-1` (domínios verificados `msg.automato.pro`);
+IAM `trafego-ses-mailer` escopado a `ses:SendEmail`. **Migrations:** `0017` (one_time_tokens +
+email_verified_at) · `0018` (índice created_at). **Backfill = script one-time** (não migration, não boot).
+
+**Fast-follows da 6b (registrados):**
+- **Backup Postgres = ops no painel EasyPanel** (agendado + alvo offsite/S3) + restore documentado
+  (runbook em `docker/EASYPANEL.md`) — **checklist pré-go-live obrigatório** (não é código).
+- Prune de insights (DELETE > retenção); token-190 proativo (`/debug_token` + `appsecret_proof`) +
+  aviso de token inválido por WhatsApp; governor na escrita (retry/backoff) + token-bucket Lua + Batch API;
+  Langfuse (tracing LLM).
+- **eslint + `lint` no CI** — hoje `eslint` não está instalado (todo pacote tem `lint: eslint src` mas sem
+  a dep); `pnpm lint` quebra → instalar eslint + flat config + corrigir violações + ligar no CI.
+- Login passwordless; perfil editável + trocar senha logado + "revogar todas as sessões" explícito;
+  org-switcher; convite/adicionar membro (N:N — `membership_invitations`); split entitlement-org × acesso-usuário.
+- Billing pro cliente (uso sem COGS) + markup/BRL/Stripe + custo por série temporal + visão super-admin;
+  billing owner-only enforçado no backend (hoje só nav esconde); backup via script + `StoragePort`;
+  domínio de email próprio do produto + IAM não-root; health endpoint do worker; prune de orgs órfãs.
 
 ## Fatia 7 — Criação de campanhas (roadmap pós-MVP)
 

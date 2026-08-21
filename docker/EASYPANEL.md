@@ -88,6 +88,30 @@ abre em `https://<api>/` → signup real → onboarding (colar token Meta em Int
 
 Box único = ponto único de falha. Mitigar: backup agendado do Postgres + snapshots do EasyPanel. Escala futura: DB gerenciado + worker multi-nó + pool de números WhatsApp.
 
+## Backup / restore do Postgres (runbook — 6b)
+
+O dump carrega os tokens Meta (criptografados pela envelope AES) — **destino privado**, e **offsite**
+(um backup no mesmo box não sobrevive à perda do box). Decisão 6b: **backup pelo painel EasyPanel**
+(agendado + alvo offsite), não por script no repo.
+
+**Agendar (painel):** serviço `postgres` → Backups → agendar (diário) → destino **S3/offsite** →
+reter N dias. Confirmar que o painel suporta alvo offsite antes do go-live; se não, usar um cron
+externo de `pg_dump` (fast-follow `StoragePort`).
+
+**Restore de teste (validar antes do go-live):** baixar o último dump → subir num Postgres limpo →
+`pg_restore`/`psql` → apontar uma instância de staging pra ele → conferir que o app sobe e as contas
+aparecem. **Backup que nunca foi restaurado não conta.**
+
+## Go-live (beta) — checklist pré-abrir
+
+1. **Backup** do Postgres agendado (offsite) + **1 restore de teste** validado (acima).
+2. **Migrations** aplicadas (auto no boot da api) + **backfill one-time**: `pnpm backfill:access -- --confirm`
+   (grandfather de users/grants pré-6b — senão o gate tranca o dono).
+3. **Email**: `AUTH_EMAIL_DELIVERY_DRIVER=ses` + `AWS_*` (IAM `trafego-ses-mailer`, sa-east-1) no worker;
+   smoke de envio ok (código chega de `no-reply@msg.automato.pro`).
+4. **Liberar allowlist**: `pnpm access:grant <email>` para cada beta user aprovado.
+5. Secrets do painel conferidos (abaixo); `/health` e `/ready` verdes.
+
 ## Segredos
 
 `CREDENTIAL_MASTER_KEY` (32 bytes base64), `OPENROUTER_API_KEY`, `META_APP_SECRET`, `EVOLUTION_API_KEY`, `EVOLUTION_WEBHOOK_SECRET` — **secrets do painel**, nunca no repo. (6b) email transacional via SES adiciona `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` (IAM escopado a `ses:SendEmail`) — **só no serviço worker**.
