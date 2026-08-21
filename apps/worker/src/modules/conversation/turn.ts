@@ -5,12 +5,13 @@
 import { and, eq } from "drizzle-orm";
 import { HumanMessage, type AIMessage } from "@langchain/core/messages";
 import { adAccounts, agents, conversations, guardrailConfigs, type Database } from "@trafego/db";
-import type { ActionType } from "@trafego/shared";
+import type { ActionType, AutonomyPolicy } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
 import { buildWhatsappConversationGraph } from "../../graphs/whatsapp-conversation/graph.js";
 import {
   AGENT_TOOL_NAMES,
   CONCIERGE_TOOL_NAMES,
+  CONFIG_CHAT_TOOL_NAMES,
   WRITE_TOOL_TO_ACTION,
   type ConversationToolContext,
 } from "../../graphs/whatsapp-conversation/tools.js";
@@ -87,6 +88,27 @@ async function allowedWriteTools(db: Database, orgId: string, agentId: string): 
   return [...WRITE_TOOL_TO_ACTION.entries()].filter(([, action]) => allowed.has(action)).map(([tool]) => tool);
 }
 
+/**
+ * Kill-switch da auto-config por chat (S2.3): a config só entra na allowlist quando
+ * `autonomy_policy.autoConfigViaChat !== false` (ausente/true = ON; default). Desligado
+ * → as tools de config NEM CHEGAM ao LLM (config passa a ser pelo site). NÃO passam por
+ * `allowedActions` (isso é só escrita Meta). Retorna também o flag p/ moldar o prompt.
+ */
+export async function configToolsFor(
+  db: Database,
+  orgId: string,
+  agentId: string,
+): Promise<{ tools: string[]; enabled: boolean }> {
+  const [row] = await db
+    .select({ autonomyPolicy: agents.autonomyPolicy })
+    .from(agents)
+    .where(and(eq(agents.id, agentId), eq(agents.orgId, orgId)))
+    .limit(1);
+  const policy = row?.autonomyPolicy as AutonomyPolicy | undefined;
+  const enabled = policy?.autoConfigViaChat !== false;
+  return { tools: enabled ? [...CONFIG_CHAT_TOOL_NAMES] : [], enabled };
+}
+
 export interface ConversationTurnInput {
   readonly orgId: string;
   readonly contactId: string;
@@ -105,6 +127,11 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
   const { sole, multiAccount } = await resolveActiveAgents(deps.db, input.orgId);
   const inContext = sole ?? (await resolveFocusedAgent(deps.db, input.orgId, input.conversationId));
 
+  // com agente em contexto: leitura/controle + escrita livre filtrada por allowedActions (5c)
+  // + config-por-chat gated pelo kill-switch (S2.3). Sem contexto (multi-conta sem foco):
+  // concierge — org-level + set_focus.
+  const config = inContext ? await configToolsFor(deps.db, input.orgId, inContext.agentId) : { tools: [], enabled: false };
+
   const ctx: ConversationToolContext = {
     orgId: input.orgId,
     agentId: inContext?.agentId ?? "",
@@ -112,12 +139,16 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
     contactId: input.contactId,
     conversationId: input.conversationId,
     multiAccount,
+    // config-por-chat ligada? (molda o system-prompt: por chat × pelo site).
+    configViaChat: config.enabled,
     ...(inContext?.accountName ? { accountName: inContext.accountName } : {}),
   };
-  // com agente em contexto: leitura/controle + escrita livre filtrada por allowedActions (5c).
-  // sem contexto (multi-conta sem foco): concierge — org-level + set_focus.
   const allow = inContext
-    ? new Set<string>([...AGENT_TOOL_NAMES, ...(await allowedWriteTools(deps.db, input.orgId, inContext.agentId))])
+    ? new Set<string>([
+        ...AGENT_TOOL_NAMES,
+        ...(await allowedWriteTools(deps.db, input.orgId, inContext.agentId)),
+        ...config.tools,
+      ])
     : CONCIERGE_TOOL_NAMES;
 
   let reply = FALLBACK_REPLY;

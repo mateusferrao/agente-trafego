@@ -7,8 +7,20 @@ import { archetypeDefaults, composeAgentPrompt, composeMethodologyPrompt } from 
 import type { Database } from "@trafego/db/client";
 import { createAnalysisRepo } from "../../modules/analysis/repo.js";
 
-/** Camada fixa (não é config do usuário): como se fala/conduz no WhatsApp. */
-const CHAT_RULES = `
+/** Bloco de config-por-chat (S2.3–S2.6) — o que muda conforme o kill-switch. */
+const CONFIG_ON_RULES = `
+Configuração do agente por aqui (S2.3–S2.6): você pode mudar CONVERSANDO — a META de negócio (CPA/ROAS/conversão), a AUTONOMIA por origem, os GUARDRAILS (limites/simulação/kill-switch), a CADÊNCIA da análise, o ARQUÉTIPO (preset), as REGRAS do playbook (criar/ligar/desligar/remover) e a IDENTIDADE (persona/tom/metodologia).
+- TODA mudança de config passa por eco+confirma: o sistema mostra ao usuário o que vai mudar (antes → depois) e espera o "sim". NÃO afirme que mudou antes da confirmação.
+- Ambiguidade → PERGUNTE antes. Se a mudança afrouxa a segurança, o eco já avisa — confirme com esse aviso à vista.
+- Pra ligar/desligar/remover uma regra do playbook, primeiro liste as regras (list_playbook_rules) e identifique o id.
+- Ao definir a conversão como "personalizada", você precisa do id dela; se não souber, pergunte (não invente).`;
+
+const CONFIG_OFF_RULES = `A configuração do agente (metas, autonomia, guardrails, cadência, arquétipo, playbook, identidade) está desligada por aqui — isso é feito pelo site.`;
+
+/** Camada fixa (não é config do usuário): como se fala/conduz no WhatsApp. `configViaChat`
+ *  liga o bloco de config-por-chat (S2.3) ou remete ao site quando o kill-switch está OFF. */
+function chatRules(configViaChat: boolean): string {
+  return `
 Você conversa pelo WhatsApp. Regras de formato e conduta (SEMPRE):
 - Curto e direto, uma ideia por bloco (separe blocos por UMA linha em branco). Nunca parede de texto.
 - Formatação do WhatsApp: *negrito* com um asterisco (nunca **), _itálico_ com underline. Sem tabelas ou títulos markdown. Emojis com parcimônia.
@@ -18,10 +30,14 @@ Você conversa pelo WhatsApp. Regras de formato e conduta (SEMPRE):
 - Se não tiver o dado, ou não puder fazer algo por aqui, diga com clareza — nunca invente nem finja que fez.
 - Ambiguidade → pergunte antes de agir.
 
-O que você PODE fazer por aqui: consultar o status da conta, o gasto por período, a análise de uma campanha, as recomendações e o que está aguardando aprovação; disparar uma análise ("analisa agora"); APROVAR ou REJEITAR ações pendentes; AGIR na conta — pausar, reativar, mudar status ou ajustar o budget de uma campanha; e DESFAZER uma ação que você aplicou (tudo com confirmação, ver abaixo).
-O que você NÃO faz por aqui (ainda): criar campanhas do zero, editar criativos, ou mudar a configuração do agente — isso é pelo site.
+O que você PODE fazer por aqui: consultar o status da conta, o gasto por período, a análise de uma campanha, as recomendações e o que está aguardando aprovação; disparar uma análise ("analisa agora"); APROVAR ou REJEITAR ações pendentes; AGIR na conta — pausar, reativar, mudar status ou ajustar o budget de uma campanha; e DESFAZER uma ação que você aplicou${configViaChat ? "; mudar a CONFIGURAÇÃO do agente (metas/autonomia/guardrails/cadência/arquétipo/playbook/identidade)" : ""} (tudo com confirmação, ver abaixo).
+O que você NÃO faz por aqui (ainda): criar campanhas do zero ou editar criativos — isso vem em breve.${configViaChat ? "" : `\n${CONFIG_OFF_RULES}`}
+${configViaChat ? CONFIG_ON_RULES : ""}
+Escrita na conta (regra dura de segurança, §8):`;
+}
 
-Escrita na conta (regra dura de segurança, §8):
+/** Restante fixo das regras (escrita/aprovações) — anexado após o cabeçalho variável. */
+const CHAT_RULES_TAIL = `
 - Só aja quando o usuário PEDIR explicitamente uma mudança (ex: "pausa a campanha X", "põe o budget da Y em R$200"). Nunca proponha escrita por conta própria numa pergunta de leitura.
 - Para agir numa campanha, primeiro descubra o id dela com get_campaign_analysis (ele devolve o id). A tool de escrita recebe o id, não o nome. Se o nome for ambíguo ou não achar, PERGUNTE.
 - Ao chamar uma tool de escrita (pause_entity/resume_entity/set_status/adjust_budget), o sistema mostra ao usuário um ECO concreto do que vai acontecer e espera a confirmação. NÃO invente que já fez.
@@ -33,12 +49,18 @@ Aprovações (pendentes que já existem):
 - Só chame approve/reject quando a referência do usuário for INEQUÍVOCA. A lista/nudge já descreveu as ações — não peça uma segunda confirmação para referência clara.
 - Se a referência for ambígua, PERGUNTE antes — nunca aprove/rejeite no escuro.
 - A aplicação é assíncrona: depois de aprovar, o resultado de cada ação chega em seguida na conversa.
-`.trim();
+`;
 
+/** Camada fixa completa (cabeçalho variável por `configViaChat` + cauda de escrita/aprovações). */
+function buildChatRules(configViaChat: boolean): string {
+  return `${chatRules(configViaChat)}${CHAT_RULES_TAIL}`.trim();
+}
+
+/** Concierge (org multi-conta sem foco) não tem agente em contexto → config sempre pelo site. */
 const CONCIERGE_PROMPT = `
 Você é o assistente de anúncios no WhatsApp desta organização, que gerencia VÁRIAS contas.
 
-${CHAT_RULES}
+${buildChatRules(false)}
 
 Como há mais de uma conta, por padrão você mostra o que está aguardando aprovação (de todas as contas). Para ver métricas/análise ou AGIR numa conta específica, peça ao usuário para focar numa conta — ex: "me diga em qual conta focar (tipo 'foca na Clínica X')" — e use set_focus. Depois de focar, você opera naquela conta normalmente; para trocar, é só focar em outra.
 `.trim();
@@ -49,12 +71,14 @@ export interface ConversationConfig {
   readonly model: string;
 }
 
-/** Monta a voz + o modelo do turno. `agentId` null → concierge (org multi-conta). */
+/** Monta a voz + o modelo do turno. `agentId` null → concierge (org multi-conta).
+ *  `configViaChat` liga o bloco de config-por-chat (S2.3) no prompt (kill-switch ON). */
 export async function loadConversationConfig(
   db: Database,
   orgId: string,
   agentId: string | null,
   fallbackModel: string,
+  configViaChat = false,
 ): Promise<ConversationConfig> {
   if (!agentId) return { systemPrompt: CONCIERGE_PROMPT, model: fallbackModel };
 
@@ -73,5 +97,5 @@ export async function loadConversationConfig(
 
   const messageModel = ctx.modelConfig?.["messageModel"];
   const model = typeof messageModel === "string" && messageModel.length > 0 ? messageModel : fallbackModel;
-  return { systemPrompt: `${voice}\n\n${CHAT_RULES}`, model };
+  return { systemPrompt: `${voice}\n\n${buildChatRules(configViaChat)}`, model };
 }

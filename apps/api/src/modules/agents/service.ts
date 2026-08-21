@@ -31,7 +31,7 @@ import {
   UNDO_BLOCKED_TOOL_KEY,
   UNDO_TOOL_KEY,
 } from "@trafego/shared";
-import type { Action, AgentId, OrgId, StoredInsightMetrics } from "@trafego/shared/types";
+import type { Action, AgentId, AutonomyPolicy, OrgId, StoredInsightMetrics } from "@trafego/shared/types";
 import type { ApprovalPort, SchedulerPort } from "@trafego/shared/ports";
 import { ANALYSIS_WINDOW_DEFAULT_DAYS } from "@trafego/shared";
 import { badRequest, notFound } from "../../middleware/error-handler.js";
@@ -672,9 +672,20 @@ function toConfigPatch(input: AgentConfigInput): AgentConfigPatch {
     ...(input.systemPrompt !== undefined ? { systemPrompt: input.systemPrompt } : {}),
     ...(input.cadence !== undefined ? { cadence: input.cadence } : {}),
     ...(input.analysisWindowDays !== undefined ? { analysisWindowDays: input.analysisWindowDays } : {}),
-    ...(input.autonomyPolicy !== undefined ? { autonomyPolicy: input.autonomyPolicy } : {}),
+    ...(input.autonomyPolicy !== undefined ? { autonomyPolicy: cleanAutonomy(input.autonomyPolicy) } : {}),
     ...(input.guardrails !== undefined ? { guardrails: input.guardrails } : {}),
     ...(input.modelConfig !== undefined ? { modelConfig: input.modelConfig } : {}),
+  };
+}
+
+/**
+ * Normaliza a autonomia do DTO (zod) → `AutonomyPolicy` estrito: só inclui o kill-switch
+ * `autoConfigViaChat` quando definido (omite `undefined` — exactOptionalPropertyTypes).
+ */
+function cleanAutonomy(p: NonNullable<AgentConfigInput["autonomyPolicy"]>): AutonomyPolicy {
+  return {
+    bySource: p.bySource,
+    ...(p.autoConfigViaChat !== undefined ? { autoConfigViaChat: p.autoConfigViaChat } : {}),
   };
 }
 

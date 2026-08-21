@@ -17,6 +17,7 @@ import {
   ANALYSIS_WINDOW_MAX_DAYS,
   ANALYSIS_WINDOW_MIN_DAYS,
 } from "@trafego/shared";
+import { describeCadence } from "../cadence/index.js";
 
 /**
  * Estado ATUAL da config do agente (neutro — sem detalhe de banco/plataforma). A
@@ -325,4 +326,240 @@ export function windowFromModelConfig(mc: Readonly<Record<string, unknown>> | nu
 /** Igualdade estrutural por JSON (objetos de config pequenos e serializáveis). */
 function jsonEq(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
+}
+
+// ─── Eco determinístico de mudança de config (chat, S2.3) ────────────────────
+// PURO: a "verdade fixa" que o chat ecoa antes de aplicar QUALQUER mudança de config
+// (CLAUDE §8: eco+confirma). 1 mudança por linha, "campo: <antes> → <depois>". O LLM
+// não pode alterar os valores — o gate congela este texto + o patch. Sem IO.
+
+/** Nível de autonomia em PT (rótulo de gente, não o enum). */
+const AUTONOMY_LABEL_PT: Readonly<Record<AutonomyLevel, string>> = {
+  notify: "só avisa",
+  suggest: "sugere e pede OK",
+  act_safe: "age no seguro",
+  act_full: "age sozinho",
+};
+
+/** Origem da ação em PT (autonomia é por origem). */
+const SOURCE_LABEL_PT: Readonly<Record<ActionSource, string>> = {
+  playbook: "playbook (regras)",
+  llm: "análise por IA",
+};
+
+/** Tipo de ação em PT (ações permitidas do guardrail). */
+const ACTION_TYPE_LABEL_PT: Readonly<Record<ActionType, string>> = {
+  pause_entity: "pausar",
+  resume_entity: "reativar",
+  adjust_budget: "ajustar budget",
+  set_status: "mudar status",
+};
+
+/** Conversão de negócio em PT (fallback = a chave neutra). */
+const CONVERSION_GOAL_LABEL_PT: Partial<Record<ConversionGoal, string>> = {
+  purchase: "compra",
+  lead: "lead",
+  registration: "cadastro",
+  initiate_checkout: "início de checkout",
+  add_to_cart: "adição ao carrinho",
+  view_content: "visualização de conteúdo",
+  add_payment_info: "adição de pagamento",
+  search: "busca",
+  contact: "contato",
+  subscribe: "inscrição",
+  start_trial: "início de teste",
+  submit_application: "envio de inscrição",
+  messaging_started: "conversa iniciada",
+  app_install: "instalação de app",
+  custom: "conversão personalizada",
+};
+
+const onOff = (b: boolean): string => (b ? "ligado" : "desligado");
+const brlOrNone = (reais: number | undefined): string =>
+  reais == null ? "não definido" : `R$ ${reais.toFixed(2).replace(".", ",")}`;
+const roasOrNone = (r: number | undefined): string => (r == null ? "não definido" : `${r}x`);
+const conversionLabel = (g: ConversionGoal | undefined): string =>
+  g ? (CONVERSION_GOAL_LABEL_PT[g] ?? g) : "não definida";
+const actionsLabel = (actions: readonly ActionType[]): string =>
+  actions.length > 0 ? actions.map((a) => ACTION_TYPE_LABEL_PT[a] ?? a).join(", ") : "nenhuma";
+
+/** Linhas de detalhe de UM campo mudado (antes → depois). Vazio = nada a dizer. */
+function configDetailLines(label: string, cur: AgentConfigState, next: AgentConfigState): string[] {
+  const lines: string[] = [];
+  switch (label) {
+    case CONFIG_CHANGE_LABELS.goals: {
+      if (cur.goals.targetCPA !== next.goals.targetCPA)
+        lines.push(`meta de CPA (custo por resultado): ${brlOrNone(cur.goals.targetCPA)} → ${brlOrNone(next.goals.targetCPA)}`);
+      if (cur.goals.targetROAS !== next.goals.targetROAS)
+        lines.push(`meta de ROAS (retorno): ${roasOrNone(cur.goals.targetROAS)} → ${roasOrNone(next.goals.targetROAS)}`);
+      if (cur.goals.conversionGoal !== next.goals.conversionGoal)
+        lines.push(`resultado de negócio: ${conversionLabel(cur.goals.conversionGoal)} → ${conversionLabel(next.goals.conversionGoal)}`);
+      else if (cur.goals.customConversionId !== next.goals.customConversionId)
+        lines.push(`conversão personalizada: ${cur.goals.customConversionId ?? "não definida"} → ${next.goals.customConversionId ?? "não definida"}`);
+      return lines;
+    }
+    case CONFIG_CHANGE_LABELS.autonomyPolicy: {
+      for (const src of ["playbook", "llm"] as const) {
+        const a = cur.autonomyPolicy.bySource[src];
+        const b = next.autonomyPolicy.bySource[src];
+        if (a !== b)
+          lines.push(`autonomia — ${SOURCE_LABEL_PT[src]}: ${AUTONOMY_LABEL_PT[a]} → ${AUTONOMY_LABEL_PT[b]}`);
+      }
+      return lines;
+    }
+    case CONFIG_CHANGE_LABELS.guardrails: {
+      const g = cur.guardrails;
+      const h = next.guardrails;
+      if (g.maxBudgetChangePct !== h.maxBudgetChangePct)
+        lines.push(`limite de mudança de budget: ${g.maxBudgetChangePct}% → ${h.maxBudgetChangePct}%`);
+      if (g.maxEntitiesPerDay !== h.maxEntitiesPerDay)
+        lines.push(`máximo de entidades por dia: ${g.maxEntitiesPerDay} → ${h.maxEntitiesPerDay}`);
+      if (g.dryRun !== h.dryRun) lines.push(`modo simulação: ${onOff(g.dryRun)} → ${onOff(h.dryRun)}`);
+      if (g.killSwitch !== h.killSwitch)
+        lines.push(`botão de emergência (kill-switch): ${onOff(g.killSwitch)} → ${onOff(h.killSwitch)}`);
+      if (jsonEq(g.allowedActions, h.allowedActions) === false)
+        lines.push(`ações permitidas: ${actionsLabel(g.allowedActions)} → ${actionsLabel(h.allowedActions)}`);
+      if (g.llmCostCapUsd !== h.llmCostCapUsd)
+        lines.push(
+          `limite de custo de IA: ${g.llmCostCapUsd == null ? "sem limite" : `US$ ${g.llmCostCapUsd}`} → ${h.llmCostCapUsd == null ? "sem limite" : `US$ ${h.llmCostCapUsd}`}`,
+        );
+      return lines;
+    }
+    case CONFIG_CHANGE_LABELS.cadence:
+      lines.push(`cadência da análise: ${describeCadence(cur.cadence)} → ${describeCadence(next.cadence)}`);
+      return lines;
+    case CONFIG_CHANGE_LABELS.analysisWindowDays:
+      lines.push(`janela de análise: ${cur.analysisWindowDays} dias → ${next.analysisWindowDays} dias`);
+      return lines;
+    case CONFIG_CHANGE_LABELS.businessContext:
+      lines.push(`contexto do negócio: ${next.businessContext === null ? "limpo" : "atualizado"}`);
+      return lines;
+    case CONFIG_CHANGE_LABELS.guidance:
+      lines.push(`orientações ao agente: ${next.guidance === null ? "limpas" : "atualizadas"}`);
+      return lines;
+    case CONFIG_CHANGE_LABELS.persona:
+      lines.push(`persona: ${next.persona === null ? "limpa (volta ao arquétipo)" : "atualizada"}`);
+      return lines;
+    case CONFIG_CHANGE_LABELS.tone:
+      lines.push(`tom da comunicação: ${next.tone === null ? "limpo (volta ao arquétipo)" : "atualizado"}`);
+      return lines;
+    case CONFIG_CHANGE_LABELS.systemPrompt:
+      lines.push(
+        next.systemPrompt === null
+          ? "metodologia: limpa (volta à metodologia do arquétipo)"
+          : "metodologia: atualizada (isso substitui a metodologia do arquétipo)",
+      );
+      return lines;
+    case CONFIG_CHANGE_LABELS.modelConfig:
+      lines.push("limiares avançados: atualizados");
+      return lines;
+    default:
+      return lines;
+  }
+}
+
+// ─── Descrição de regra de playbook (chat, S2.5) ────────────────────────────
+// PURO: frase de gente de uma regra `condição → ação`, p/ o eco de add/toggle/remove.
+// Shape NEUTRO (serve o tool_call do add e a linha do banco no toggle/remove).
+
+/** Métrica da condição em PT (rótulo de gente). */
+const PLAYBOOK_METRIC_LABEL_PT: Readonly<Record<string, string>> = {
+  cpa: "custo por resultado",
+  roas: "ROAS (retorno)",
+  spend: "gasto",
+  cpc: "custo por clique",
+  cpm: "custo por mil impressões",
+  ctr: "CTR (taxa de clique)",
+  frequency: "frequência",
+};
+
+/** Operador da condição em PT. */
+const PLAYBOOK_OP_LABEL_PT: Readonly<Record<string, string>> = {
+  ">": "acima de",
+  "<": "abaixo de",
+  ">=": "de pelo menos",
+  "<=": "no máximo",
+  "==": "igual a",
+};
+
+/** Escopo da regra em PT (com artigo). */
+const PLAYBOOK_SCOPE_LABEL_PT: Readonly<Record<string, string>> = {
+  campaign: "a campanha",
+  adset: "o conjunto",
+  ad: "o anúncio",
+};
+
+/** Formata o valor da condição conforme a métrica (R$, x, %, número). */
+function playbookValueLabel(metric: string, value: number): string {
+  if (metric === "cpa" || metric === "spend" || metric === "cpc" || metric === "cpm")
+    return `R$ ${value.toFixed(2).replace(".", ",")}`;
+  if (metric === "roas") return `${value}x`;
+  if (metric === "ctr") return `${value}%`;
+  return `${value}`;
+}
+
+/** Shape NEUTRO de uma regra de playbook (do tool_call do add ou da linha do banco). */
+export interface PlaybookRuleDescriptor {
+  readonly scope: string;
+  readonly metric: string;
+  readonly op: string;
+  readonly value: number;
+  readonly minSpend?: number | null;
+  readonly thenType: string;
+  readonly budgetChangePct?: number | null;
+  readonly status?: string | null;
+}
+
+/** Cláusula da AÇÃO (então) de uma regra, em PT. */
+function playbookThenLabel(d: PlaybookRuleDescriptor): string {
+  switch (d.thenType) {
+    case "pause_entity":
+      return "pausar";
+    case "adjust_budget": {
+      const pct = d.budgetChangePct ?? 0;
+      const dir = pct >= 0 ? "aumentar" : "reduzir";
+      return `${dir} o budget em ${Math.abs(pct)}%`;
+    }
+    case "set_status":
+      return `mudar o status para ${d.status === "active" ? "ativo" : "pausado"}`;
+    default:
+      return d.thenType;
+  }
+}
+
+/** Frase de gente de uma regra de playbook (PURA) — base do eco de add/toggle/remove. */
+export function describePlaybookRule(d: PlaybookRuleDescriptor): string {
+  const scope = PLAYBOOK_SCOPE_LABEL_PT[d.scope] ?? d.scope;
+  const metric = PLAYBOOK_METRIC_LABEL_PT[d.metric] ?? d.metric;
+  const op = PLAYBOOK_OP_LABEL_PT[d.op] ?? d.op;
+  const value = playbookValueLabel(d.metric, d.value);
+  const minSpend =
+    d.minSpend != null ? ` (só com gasto de pelo menos R$ ${d.minSpend.toFixed(2).replace(".", ",")})` : "";
+  return `quando ${scope} tiver ${metric} ${op} ${value}${minSpend}, ${playbookThenLabel(d)}`;
+}
+
+/** Entrada do eco de mudança de config: estados antes/depois + o diff já computado. */
+export interface ConfigChangeEchoInput {
+  readonly current: AgentConfigState;
+  readonly next: AgentConfigState;
+  readonly changed: readonly string[];
+  readonly weakensSafety: boolean;
+}
+
+/** Prefixo de aviso quando a mudança afrouxa a rede de segurança (§8). */
+export const CONFIG_WEAKENS_SAFETY_PREFIX = "⚠️ Isso afrouxa sua segurança:";
+
+/**
+ * Monta o eco determinístico de uma mudança de config (chat, S2.3). PT, concreto,
+ * 1 mudança por linha (antes → depois). Prefixa o aviso de afrouxamento quando
+ * `weakensSafety`. Fecha com "Confirma?" (eco+confirma). PURO.
+ */
+export function buildConfigChangeEcho(input: ConfigChangeEchoInput): string {
+  const { current, next, changed, weakensSafety } = input;
+  const details: string[] = [];
+  for (const label of changed) details.push(...configDetailLines(label, current, next));
+  if (details.length === 0) return "Não vi nada pra mudar na config.";
+  const body = details.length === 1 ? details[0]! : details.map((d, i) => `${i + 1}. ${d}`).join("\n");
+  const warn = weakensSafety ? `${CONFIG_WEAKENS_SAFETY_PREFIX}\n` : "";
+  return `${warn}Vou atualizar:\n${body}\n\nConfirma?`;
 }

@@ -942,6 +942,9 @@
                   "playbook",
                   "llm"
                 ]
+              },
+              "autoConfigViaChat": {
+                "type": "boolean"
               }
             },
             "required": [
@@ -1416,6 +1419,9 @@
                   "playbook",
                   "llm"
                 ]
+              },
+              "autoConfigViaChat": {
+                "type": "boolean"
               }
             },
             "required": [

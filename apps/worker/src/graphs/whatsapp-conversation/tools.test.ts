@@ -1,6 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import { APPROVAL_APPLY_QUEUE } from "@trafego/shared";
-import { AGENT_TOOL_NAMES, actionFromToolCall, makeConversationTools, type ConversationToolContext } from "./tools.js";
+import type { AgentConfigState } from "@trafego/core";
+import type { GuardrailConfig, AutonomyPolicy } from "@trafego/shared";
+import {
+  AGENT_TOOL_NAMES,
+  actionFromToolCall,
+  configPatchFromToolCall,
+  makeConversationTools,
+  playbookOpFromToolCall,
+  ruleRowToDescriptor,
+  type ConversationToolContext,
+} from "./tools.js";
 
 const CTX: ConversationToolContext = {
   orgId: "org-1",
@@ -86,6 +96,126 @@ describe("actionFromToolCall", () => {
 
   it("set sem amountReais → null (não vira ação inválida)", () => {
     expect(actionFromToolCall("adjust_budget", args({ mode: "set" }), "x")).toBeNull();
+  });
+});
+
+// ─── Config por chat (S2.3–S2.6) ─────────────────────────────────────────
+const GUARDRAILS: GuardrailConfig = {
+  maxBudgetChangePct: 20,
+  maxEntitiesPerDay: 3,
+  allowedActions: ["pause_entity"],
+  dryRun: true,
+  killSwitch: false,
+};
+const AUTONOMY: AutonomyPolicy = { bySource: { playbook: "suggest", llm: "suggest" }, autoConfigViaChat: true };
+
+function state(over: Partial<AgentConfigState> = {}): AgentConfigState {
+  return {
+    goals: {},
+    businessContext: null,
+    guidance: null,
+    persona: null,
+    tone: null,
+    systemPrompt: null,
+    cadence: null,
+    analysisWindowDays: 7,
+    autonomyPolicy: AUTONOMY,
+    guardrails: GUARDRAILS,
+    modelConfig: {},
+    ...over,
+  };
+}
+
+describe("configPatchFromToolCall", () => {
+  it("set_goal: só troca o campo enviado; preserva o resto da meta", () => {
+    const cur = state({ goals: { targetCPA: 50, targetROAS: 3 } });
+    const patch = configPatchFromToolCall("set_goal", { targetCPA: 30 }, cur);
+    expect(patch?.goals).toEqual({ targetCPA: 30, targetROAS: 3 });
+  });
+
+  it("set_goal: null limpa o campo (vira undefined na meta)", () => {
+    const cur = state({ goals: { targetCPA: 50 } });
+    const patch = configPatchFromToolCall("set_goal", { targetCPA: null }, cur);
+    expect(patch?.goals?.targetCPA).toBeUndefined();
+  });
+
+  it("set_autonomy: só troca a origem enviada e preserva autoConfigViaChat", () => {
+    const patch = configPatchFromToolCall("set_autonomy", { playbook: "act_safe" }, state());
+    expect(patch?.autonomyPolicy).toEqual({
+      bySource: { playbook: "act_safe", llm: "suggest" },
+      autoConfigViaChat: true,
+    });
+  });
+
+  it("set_guardrail: dryRun=false é aplicado (não confundido com 'manter')", () => {
+    const patch = configPatchFromToolCall("set_guardrail", { dryRun: false }, state());
+    expect(patch?.guardrails?.dryRun).toBe(false);
+    expect(patch?.guardrails?.maxBudgetChangePct).toBe(20); // preservado
+  });
+
+  it("set_cadence: twice_daily → kind + hours (tupla)", () => {
+    const patch = configPatchFromToolCall("set_cadence", { kind: "twice_daily", hour: 8, secondHour: 18 }, state());
+    expect(patch?.cadence).toEqual({ kind: "twice_daily", hours: [8, 18] });
+  });
+
+  it("set_cadence: raw sem cron → não muda a cadência (patch vazio)", () => {
+    const patch = configPatchFromToolCall("set_cadence", { kind: "raw" }, state());
+    expect(patch).toEqual({});
+  });
+
+  it("set_persona: texto vira patch; identidade não é goal/guardrail", () => {
+    const patch = configPatchFromToolCall("set_persona", { text: "vendedor consultivo" }, state());
+    expect(patch).toEqual({ persona: "vendedor consultivo" });
+  });
+
+  it("tool que não é update de config → null", () => {
+    expect(configPatchFromToolCall("reseed_archetype", { archetype: "otimizador" }, state())).toBeNull();
+  });
+});
+
+describe("playbookOpFromToolCall", () => {
+  it("add: monta a regra com then (adjust_budget precisa de budgetChangePct)", () => {
+    const op = playbookOpFromToolCall("add_playbook_rule", {
+      scope: "ad",
+      metric: "cpa",
+      op: ">",
+      value: 30,
+      minSpend: 50,
+      thenAction: "adjust_budget",
+      budgetChangePct: -20,
+    });
+    expect(op).toEqual({
+      kind: "add",
+      rule: { scope: "ad", metric: "cpa", op: ">", value: 30, minSpend: 50, then: { type: "adjust_budget", budgetChangePct: -20 } },
+    });
+  });
+
+  it("add adjust_budget sem budgetChangePct → null (não vira regra inválida)", () => {
+    const op = playbookOpFromToolCall("add_playbook_rule", { scope: "ad", metric: "cpa", op: ">", value: 30, thenAction: "adjust_budget" });
+    expect(op).toBeNull();
+  });
+
+  it("toggle: carrega ruleId + enabled", () => {
+    expect(playbookOpFromToolCall("toggle_playbook_rule", { ruleId: "r1", enabled: false })).toEqual({
+      kind: "toggle",
+      ruleId: "r1",
+      enabled: false,
+    });
+  });
+
+  it("remove: carrega ruleId", () => {
+    expect(playbookOpFromToolCall("remove_playbook_rule", { ruleId: "r2" })).toEqual({ kind: "remove", ruleId: "r2" });
+  });
+});
+
+describe("ruleRowToDescriptor", () => {
+  it("achata a linha do banco no descritor neutro (metric numérico → string)", () => {
+    const d = ruleRowToDescriptor({
+      scope: "campaign",
+      whenJson: { metric: "roas", op: "<", value: 2, minSpend: 100 },
+      thenJson: { type: "pause_entity" },
+    });
+    expect(d).toEqual({ scope: "campaign", metric: "roas", op: "<", value: 2, minSpend: 100, thenType: "pause_entity", budgetChangePct: null, status: null });
   });
 });
 

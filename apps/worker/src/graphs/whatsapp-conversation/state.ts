@@ -4,6 +4,7 @@
 import { Annotation, messagesStateReducer } from "@langchain/langgraph";
 import type { BaseMessage } from "@langchain/core/messages";
 import type { Action } from "@trafego/shared/types";
+import type { AgentConfigPatch } from "@trafego/core";
 
 /** Ação congelada aguardando confirmação (eco+confirma, 5c). A ação aplicada é ESTA
  *  (já clampada pelo guardrail no gate) — o "sim" não re-especifica nada (sem drift). */
@@ -22,6 +23,51 @@ export interface PendingRevert {
   readonly expiresAt: string;
   /** ids de agent_tool_calls a reverter quando o usuário confirmar. */
   readonly toolCallIds: readonly string[];
+}
+
+/**
+ * Regra de playbook proposta/afetada por chat (S2.5), congelada no gate. Serializável
+ * (vai pro checkpointer). `add` carrega a regra a inserir; `toggle`/`remove` referenciam
+ * uma regra existente por id (resolvido no list). O que se aplica é ESTE congelado.
+ */
+export interface PendingPlaybookOp {
+  readonly kind: "add" | "toggle" | "remove";
+  /** regra a inserir (kind=add) — shape neutro do playbookRuleInput da API. */
+  readonly rule?: {
+    readonly scope: "campaign" | "adset" | "ad";
+    readonly metric: string;
+    readonly op: string;
+    readonly value: number;
+    readonly minSpend?: number;
+    readonly then: { readonly type: string } & Record<string, unknown>;
+  };
+  /** id da regra existente (kind=toggle|remove). */
+  readonly ruleId?: string;
+  /** novo estado (kind=toggle). */
+  readonly enabled?: boolean;
+}
+
+/**
+ * Mudança de CONFIG do agente aguardando confirmação (eco+confirma, S2.3). Serializável
+ * (congelada no checkpointer). `update` = patch de config; `reseed` = re-seed de arquétipo;
+ * `playbook` = CRUD de regra. O "sim" NÃO re-especifica nada — aplica-se o CONGELADO.
+ */
+export interface PendingConfigChange {
+  /** eco determinístico já enviado ao usuário. */
+  readonly echo: string;
+  /** ISO — TTL (um "sim" tardio não aplica algo esquecido). */
+  readonly expiresAt: string;
+  readonly kind: "update" | "reseed" | "playbook";
+  /** patch de config (kind=update). */
+  readonly patch?: AgentConfigPatch;
+  /** arquétipo a re-semear (kind=reseed). */
+  readonly archetype?: string;
+  /** operação de playbook (kind=playbook). */
+  readonly playbook?: PendingPlaybookOp;
+  /** a mudança afrouxa a rede de segurança (aviso no eco). */
+  readonly weakensSafety: boolean;
+  /** um campo relevante à análise mudou → oferecer rodar análise após aplicar. */
+  readonly runRelevantChanged: boolean;
 }
 
 export const WhatsappConversationState = Annotation.Root({
@@ -46,6 +92,10 @@ export const WhatsappConversationState = Annotation.Root({
 
   // eco+confirma de REVERSÃO (5c-4) — desfazer também é escrita.
   pendingRevert: Annotation<PendingRevert | null>,
+
+  // eco+confirma de mudança de CONFIG do agente (S2.3): metas/autonomia/guardrails/
+  // cadência/arquétipo/playbook/identidade. Config não toca a Meta (ramo próprio).
+  pendingConfigChange: Annotation<PendingConfigChange | null>,
 });
 
 export type WhatsappConversationStateType = typeof WhatsappConversationState.State;

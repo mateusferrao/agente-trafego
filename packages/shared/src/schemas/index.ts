@@ -55,6 +55,8 @@ export const guardrailConfigSchema = z.object({
 export const autonomyLevel = z.enum(["notify", "suggest", "act_safe", "act_full"]);
 export const autonomyPolicySchema = z.object({
   bySource: z.object({ playbook: autonomyLevel, llm: autonomyLevel }),
+  /** kill-switch da auto-config por chat (S2.3) — ausente/true = ON; false = OFF. */
+  autoConfigViaChat: z.boolean().optional(),
 });
 
 // ─── Cadência (Fatia 4 corte 2) ──────────────────────────────────────────

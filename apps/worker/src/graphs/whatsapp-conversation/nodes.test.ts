@@ -27,6 +27,18 @@ describe("routeConversation", () => {
   it("cancel_write → apply", () => {
     expect(routeConversation(stateWith([{ name: "cancel_write" }]))).toBe("apply");
   });
+  it("tool de config (set_goal) → confirm (eco+confirma)", () => {
+    expect(routeConversation(stateWith([{ name: "set_goal" }]))).toBe("confirm");
+  });
+  it("reseed_archetype → confirm", () => {
+    expect(routeConversation(stateWith([{ name: "reseed_archetype" }]))).toBe("confirm");
+  });
+  it("add_playbook_rule → confirm", () => {
+    expect(routeConversation(stateWith([{ name: "add_playbook_rule" }]))).toBe("confirm");
+  });
+  it("list_playbook_rules (leitura) → tools", () => {
+    expect(routeConversation(stateWith([{ name: "list_playbook_rules" }]))).toBe("tools");
+  });
 });
 
 const fakeLogger = { debug: vi.fn() };

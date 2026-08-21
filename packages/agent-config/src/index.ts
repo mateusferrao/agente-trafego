@@ -71,7 +71,7 @@ export async function applyAgentConfigChange(
   const { db, scheduler } = deps;
   const { orgId, agentId, accountId, patch, audit } = input;
 
-  const state = await loadState(db, orgId, agentId);
+  const state = await loadAgentConfigState(db, orgId, agentId);
   if (!state) return { ok: false, error: "Agente não encontrado." };
 
   const resolution = resolveAgentConfigChange(state, patch);
@@ -162,7 +162,7 @@ export async function reseedArchetypeChange(
   const { db, scheduler } = deps;
   const { orgId, agentId, accountId, archetype, audit } = input;
 
-  const state = await loadState(db, orgId, agentId);
+  const state = await loadAgentConfigState(db, orgId, agentId);
   if (!state) return { ok: false, error: "Agente não encontrado." };
 
   const defaults = archetypeDefaults(archetype);
@@ -229,8 +229,13 @@ export async function reseedArchetypeChange(
 /**
  * Monta o `AgentConfigState` neutro a partir da linha `agents` + `guardrail_configs`.
  * Identidade é UNSEEDED (valor == default do arquétipo → null, "vazio = usa arquétipo").
+ * EXPORTADO (S2.3): o gate do chat carrega o estado atual p/ computar o eco sem persistir.
  */
-async function loadState(db: Database, orgId: OrgId, agentId: string): Promise<AgentConfigState | null> {
+export async function loadAgentConfigState(
+  db: Database,
+  orgId: OrgId,
+  agentId: string,
+): Promise<AgentConfigState | null> {
   const [row] = await db
     .select({
       goals: agents.goals,

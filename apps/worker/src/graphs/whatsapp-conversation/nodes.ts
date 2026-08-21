@@ -6,25 +6,50 @@ import { ChatOpenAI } from "@langchain/openai";
 import { AIMessage, HumanMessage, SystemMessage, ToolMessage, type BaseMessage } from "@langchain/core/messages";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import type { Logger } from "pino";
-import { applyGuardrails, buildRevertEcho, buildWriteEcho, entityKeyOf, type EchoItem, type RevertEchoItem } from "@trafego/core";
+import {
+  applyGuardrails,
+  archetypeDefaults,
+  archetypeCatalog,
+  buildConfigChangeEcho,
+  buildRevertEcho,
+  buildWriteEcho,
+  describePlaybookRule,
+  entityKeyOf,
+  resolveAgentConfigChange,
+  type EchoItem,
+  type RevertEchoItem,
+} from "@trafego/core";
+import { applyAgentConfigChange, loadAgentConfigState, reseedArchetypeChange } from "@trafego/agent-config";
 import { sleep } from "@trafego/shared";
 import type { Action, OrgId } from "@trafego/shared/types";
+import { and, eq } from "drizzle-orm";
+import { playbookRules } from "@trafego/db";
 import type { WorkerDeps } from "../../composition.js";
 import { loadConversationConfig } from "./system-prompt.js";
 import { windowMessages } from "./window.js";
 import {
+  CONFIG_UPDATE_TOOL_NAMES,
   CONTROL_WRITE_TOOL_NAMES,
+  PLAYBOOK_WRITE_TOOL_NAMES,
   REVERT_TOOL_NAME,
+  RESEED_TOOL_NAME,
   WRITE_TOOL_NAMES,
   actionFromToolCall,
+  configPatchFromToolCall,
+  isConfirmableConfigTool,
   makeConversationTools,
+  pendingRuleToDescriptor,
+  playbookOpFromToolCall,
+  ruleRowToDescriptor,
   type ConversationToolContext,
 } from "./tools.js";
 import { makeMetaToolExecutor } from "../../executors/meta-tools.js";
 import { applyCheckedAction, type ApplyOutcome } from "../../modules/apply/apply-confirmed-action.js";
 import { loadWriteContext } from "../../modules/apply/write-context.js";
 import { revertActionById } from "../../modules/apply/revert-action.js";
+import { applyPlaybookOp } from "../../modules/conversation/config-writes.js";
 import type {
+  PendingConfigChange,
   PendingRevert,
   PendingWrite,
   WhatsappConversationStateType,
@@ -50,6 +75,14 @@ function activePendingWrite(pw: PendingWrite | null): PendingWrite | null {
 function activePendingRevert(pr: PendingRevert | null): PendingRevert | null {
   return pr && Date.parse(pr.expiresAt) > Date.now() ? pr : null;
 }
+
+/** pendingConfigChange ainda válido (não expirado)? */
+function activePendingConfig(pc: PendingConfigChange | null): PendingConfigChange | null {
+  return pc && Date.parse(pc.expiresAt) > Date.now() ? pc : null;
+}
+
+/** Oferta de rodar a análise após uma mudança relevante (NÃO dispara sozinho — §8). */
+const RUN_ANALYSIS_OFFER = "Quer que eu rode uma análise agora com a nova config?";
 
 const PAST_PHRASE: Record<string, (name: string) => string> = {
   pause_entity: (n) => `Pausei ${n}`,
@@ -206,6 +239,44 @@ async function recordConversationUsage(
   }
 }
 
+/**
+ * Aplica a mudança de CONFIG congelada (S2.3–S2.6): update (reusa @trafego/agent-config,
+ * fonte única com o site) / reseed / playbook. O ator da trilha é o CONTATO. Oferece rodar
+ * a análise quando a mudança é relevante (NÃO dispara sozinho — §8). Erro → resposta honesta.
+ */
+async function applyConfirmedConfig(
+  deps: WorkerDeps,
+  ctx: ConversationToolContext,
+  pending: PendingConfigChange,
+): Promise<string> {
+  const orgId = ctx.orgId as OrgId;
+  // ator = o contato que falou no WhatsApp (mesma trilha do executor de escrita — §12/§13).
+  const audit = { actor: { label: `contact:${ctx.contactId}` } };
+  const offerIfRelevant = (base: string) => (pending.runRelevantChanged ? `${base}\n\n${RUN_ANALYSIS_OFFER}` : base);
+
+  if (pending.kind === "update" && pending.patch) {
+    const res = await applyAgentConfigChange(
+      { db: deps.db, scheduler: deps.ports.scheduler },
+      { orgId, agentId: ctx.agentId, accountId: ctx.adAccountId, patch: pending.patch, audit },
+    );
+    if (!res.ok) return res.error;
+    return offerIfRelevant(`Pronto, atualizei: ${res.changed.join(", ")}.`);
+  }
+  if (pending.kind === "reseed" && pending.archetype) {
+    const res = await reseedArchetypeChange(
+      { db: deps.db, scheduler: deps.ports.scheduler },
+      { orgId, agentId: ctx.agentId, accountId: ctx.adAccountId, archetype: pending.archetype, audit },
+    );
+    if (!res.ok) return res.error;
+    return offerIfRelevant(`Pronto, resetei o agente pro arquétipo ${archetypeDefaults(res.archetype).label}.`);
+  }
+  if (pending.kind === "playbook" && pending.playbook) {
+    const res = await applyPlaybookOp(deps, { orgId: ctx.orgId, agentId: ctx.agentId, contactId: ctx.contactId, op: pending.playbook });
+    return res.ok ? offerIfRelevant(res.message) : res.message;
+  }
+  return "Não consegui aplicar a mudança de config — me diz de novo o que você quer?";
+}
+
 export function makeConversationNodes(
   deps: WorkerDeps,
   ctx: ConversationToolContext,
@@ -239,13 +310,15 @@ export function makeConversationNodes(
       ctx.orgId,
       ctx.agentId.length > 0 ? ctx.agentId : null,
       deps.conversation.model,
+      ctx.configViaChat ?? false,
     );
 
     // eco+confirma (5c): se há ação/reversão pendente válida, oriente o LLM a só
     // CLASSIFICAR a intenção (confirm_write/cancel_write) — o que se aplica é o congelado.
     const pending = activePendingWrite(state.pendingWrite);
     const pendingRevert = activePendingRevert(state.pendingRevert);
-    const echo = pending?.echo ?? pendingRevert?.echo;
+    const pendingConfig = activePendingConfig(state.pendingConfigChange);
+    const echo = pending?.echo ?? pendingRevert?.echo ?? pendingConfig?.echo;
     const sys = echo
       ? `${systemPrompt}\n\nHá algo que você já propôs e que aguarda a confirmação do usuário:\n${echo}\n\nSe a última mensagem do usuário confirmar claramente (ex: "sim", "pode", "manda"), chame confirm_write. Se recusar, chame cancel_write. Se pedir mudança/outra coisa, IGNORE a pendência e trate normalmente.`
       : systemPrompt;
@@ -261,6 +334,7 @@ export function makeConversationNodes(
     const update: WhatsappConversationUpdate = { messages: [response] };
     if (state.pendingWrite && !pending) update.pendingWrite = null;
     if (state.pendingRevert && !pendingRevert) update.pendingRevert = null;
+    if (state.pendingConfigChange && !pendingConfig) update.pendingConfigChange = null;
     return update;
   }
 
@@ -303,6 +377,99 @@ export function makeConversationNodes(
         pendingRevert: { echo, expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString(), toolCallIds: ids },
         pendingWrite: null, // uma pendência por vez (write × revert não coexistem)
       };
+    }
+
+    // CONFIG POR CHAT (S2.3–S2.6): ramo próprio ANTES da escrita Meta (config não toca a
+    // Meta → sem guardrail/dry-run de ads). Monta o eco determinístico + congela a mudança.
+    const configCalls = allCalls.filter((c) => isConfirmableConfigTool(c.name));
+    if (configCalls.length > 0) {
+      // uma pendência por vez: trata o 1º tool_call de config (o LLM chama um por turno).
+      const call = configCalls[0]!;
+      const expiresAt = new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString();
+
+      // ── UPDATE (meta/autonomia/guardrail/cadência/identidade): resolve SEM persistir.
+      if (CONFIG_UPDATE_TOOL_NAMES.has(call.name)) {
+        const cur = await loadAgentConfigState(deps.db, ctx.orgId as OrgId, ctx.agentId);
+        if (!cur) {
+          return { messages: answerToolCalls(allCalls, "Não consegui carregar a config agora. Tenta de novo em instantes.") };
+        }
+        const patch = configPatchFromToolCall(call.name, (call.args ?? {}) as Record<string, unknown>, cur);
+        if (!patch) {
+          return { messages: answerToolCalls(allCalls, "Não entendi essa mudança de config. Pode dizer de outro jeito?") };
+        }
+        const resolution = resolveAgentConfigChange(cur, patch);
+        // erro do resolver (ex: conversão personalizada sem id) → resposta honesta em PT.
+        if (resolution.error) return { messages: answerToolCalls(allCalls, resolution.error) };
+        if (resolution.changed.length === 0) {
+          return { messages: answerToolCalls(allCalls, "Isso já está assim — não mudei nada.") };
+        }
+        const echo = buildConfigChangeEcho({
+          current: cur,
+          next: resolution.next,
+          changed: resolution.changed,
+          weakensSafety: resolution.weakensSafety,
+        });
+        return {
+          messages: [...answerToolCalls(allCalls, "proposto — aguardando confirmação"), new AIMessage(echo)],
+          pendingConfigChange: {
+            echo,
+            expiresAt,
+            kind: "update",
+            patch,
+            weakensSafety: resolution.weakensSafety,
+            runRelevantChanged: resolution.runRelevantChanged,
+          },
+          pendingWrite: null,
+          pendingRevert: null,
+        };
+      }
+
+      // ── RESEED de arquétipo: reseta pros defaults do preset (neutro; runRelevant true).
+      if (call.name === RESEED_TOOL_NAME) {
+        const key = String((call.args as { archetype?: string } | undefined)?.archetype ?? "");
+        const known = archetypeCatalog().find((a) => a.key === key);
+        if (!known) {
+          const opts = archetypeCatalog().map((a) => `${a.label} (${a.key})`).join(", ");
+          return { messages: answerToolCalls(allCalls, `Não conheço esse arquétipo. Os disponíveis são: ${opts}.`) };
+        }
+        const echo = `Vou resetar o agente pro arquétipo *${known.label}*: isso volta persona, tom, metodologia e autonomia pros padrões desse preset (mantém sua meta, contexto e orientações). Confirma?`;
+        return {
+          messages: [...answerToolCalls(allCalls, "proposto — aguardando confirmação"), new AIMessage(echo)],
+          pendingConfigChange: { echo, expiresAt, kind: "reseed", archetype: known.key, weakensSafety: false, runRelevantChanged: true },
+          pendingWrite: null,
+          pendingRevert: null,
+        };
+      }
+
+      // ── PLAYBOOK (add/toggle/remove): eco em linguagem de gente + congela a operação.
+      if (PLAYBOOK_WRITE_TOOL_NAMES.has(call.name)) {
+        const op = playbookOpFromToolCall(call.name, (call.args ?? {}) as Record<string, unknown>);
+        if (!op) {
+          return { messages: answerToolCalls(allCalls, "Não entendi a regra. Me diz de novo o que ela deve fazer?") };
+        }
+        let echo: string;
+        if (op.kind === "add" && op.rule) {
+          echo = `Vou criar esta regra no playbook:\n${describePlaybookRule(pendingRuleToDescriptor(op.rule))}\n\nConfirma?`;
+        } else {
+          const [row] = await deps.db
+            .select()
+            .from(playbookRules)
+            .where(and(eq(playbookRules.id, op.ruleId ?? ""), eq(playbookRules.agentId, ctx.agentId), eq(playbookRules.orgId, ctx.orgId)))
+            .limit(1);
+          if (!row) {
+            return { messages: answerToolCalls(allCalls, "Não achei essa regra. Vê a lista de regras (list_playbook_rules) e me diz qual.") };
+          }
+          const desc = describePlaybookRule(ruleRowToDescriptor(row));
+          const verb = op.kind === "remove" ? "remover" : op.enabled ? "ligar" : "desligar";
+          echo = `Vou ${verb} esta regra:\n${desc}\n\nConfirma?`;
+        }
+        return {
+          messages: [...answerToolCalls(allCalls, "proposto — aguardando confirmação"), new AIMessage(echo)],
+          pendingConfigChange: { echo, expiresAt, kind: "playbook", playbook: op, weakensSafety: false, runRelevantChanged: true },
+          pendingWrite: null,
+          pendingRevert: null,
+        };
+      }
     }
 
     // id do tool_call como id da ação (idempotência); índice desempata se faltar (raro).
@@ -375,6 +542,20 @@ export function makeConversationNodes(
     if (!isConfirm) {
       return {
         messages: [...answerToolCalls(calls, "cancelado"), new AIMessage("Ok, não mexi em nada.")],
+        pendingWrite: null,
+        pendingRevert: null,
+        pendingConfigChange: null,
+      };
+    }
+
+    // CONFIG confirmada (S2.3–S2.6): aplica o CONGELADO (o "sim" não re-especifica nada).
+    // Ordem dos ramos: revert → config → write (mutuamente exclusivos por nome de tool).
+    const pendingConfig = activePendingConfig(state.pendingConfigChange);
+    if (pendingConfig) {
+      const reply = await applyConfirmedConfig(deps, ctx, pendingConfig);
+      return {
+        messages: [...answerToolCalls(calls, "config"), new AIMessage(reply)],
+        pendingConfigChange: null,
         pendingWrite: null,
         pendingRevert: null,
       };
@@ -451,6 +632,8 @@ export function routeConversation(
   const toolCalls = (last as AIMessage | undefined)?.tool_calls ?? [];
   if (toolCalls.length === 0) return "__end__";
   if (toolCalls.some((c) => CONTROL_WRITE_TOOL_NAMES.has(c.name))) return "apply";
-  if (toolCalls.some((c) => WRITE_TOOL_NAMES.has(c.name) || c.name === REVERT_TOOL_NAME)) return "confirm";
+  // escrita Meta livre, reversão OU mudança de config (update/reseed/playbook write) → eco+confirma.
+  if (toolCalls.some((c) => WRITE_TOOL_NAMES.has(c.name) || c.name === REVERT_TOOL_NAME || isConfirmableConfigTool(c.name)))
+    return "confirm";
   return "tools";
 }

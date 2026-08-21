@@ -191,6 +191,9 @@ importers:
       '@trafego/ads-meta':
         specifier: workspace:*
         version: link:../../packages/ads-meta
+      '@trafego/agent-config':
+        specifier: workspace:*
+        version: link:../../packages/agent-config
       '@trafego/approval-postgres':
         specifier: workspace:*
         version: link:../../packages/approval-postgres

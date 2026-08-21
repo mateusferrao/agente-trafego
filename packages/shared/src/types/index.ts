@@ -545,6 +545,13 @@ export type AutonomyLevel = "notify" | "suggest" | "act_safe" | "act_full";
 export interface AutonomyPolicy {
   /** decisão por origem da ação */
   readonly bySource: Readonly<Record<ActionSource, AutonomyLevel>>;
+  /**
+   * Kill-switch da AUTO-CONFIG POR CHAT (Bloco 2, S2.3): o dono muda a config do
+   * agente conversando no WhatsApp (sob eco+confirma). Ausente OU true = habilitado
+   * (default ON); false = desligado (a config passa a ser só pelo site). Vive aqui
+   * (jsonb `autonomy_policy`) por ser uma política de autonomia — sem migração.
+   */
+  readonly autoConfigViaChat?: boolean;
 }
 
 // ─── Visão de criativo (3b-2) ──────────────────────────────────────────────
