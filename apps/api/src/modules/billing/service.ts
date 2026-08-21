@@ -21,12 +21,12 @@ export interface BillingDeps {
   readonly costCapUsd: number;
 }
 
-/** Início/fim (UTC) do período "YYYY-MM". */
-function periodRange(period: string): { start: Date; end: Date } {
-  const [y, m] = period.split("-").map(Number);
-  const year = y ?? new Date().getUTCFullYear();
-  const month = (m ?? 1) - 1;
-  return { start: new Date(Date.UTC(year, month, 1)), end: new Date(Date.UTC(year, month + 1, 1)) };
+/** Bounds [start, end) UTC de um range inclusivo por dia (since..until = "YYYY-MM-DD"). */
+function dayRangeBounds(since: string, until: string): { start: Date; end: Date } {
+  const start = new Date(`${since}T00:00:00.000Z`);
+  const end = new Date(`${until}T00:00:00.000Z`);
+  end.setUTCDate(end.getUTCDate() + 1); // until inclusivo
+  return { start, end };
 }
 
 /**
@@ -60,15 +60,47 @@ export function createBillingService(deps: BillingDeps) {
     },
 
     /**
-     * Painel de custos do owner (economia unitária, 6b): total + por tipo (reusa
-     * summarize) + rollup por conta (usage_events→agent_runs→agents→ad_accounts).
-     * Custo de chat (run_id null) não mapeia a conta → vira `unattributedCostUsd`.
+     * Painel de custos do owner (economia unitária, 6b) num range por dia:
+     * total + série diária (byDay) + por tipo + rollup por conta
+     * (usage_events→agent_runs→agents→ad_accounts). Custo de chat (run_id null) não
+     * mapeia a conta → vira `unattributedCostUsd`. Tudo org-scoped, range [start,end).
      */
-    async costs(orgId: OrgId, period: string): Promise<CostsOutput> {
-      const summary = await deps.metering.summarize(orgId, period);
-      const { start, end } = periodRange(period);
+    async costs(orgId: OrgId, since: string, until: string): Promise<CostsOutput> {
+      const { start, end } = dayRangeBounds(since, until);
+      const inRange = and(
+        eq(usageEvents.orgId, orgId),
+        gte(usageEvents.createdAt, start),
+        lt(usageEvents.createdAt, end),
+      );
 
-      const rows = await deps.db
+      // por tipo (cobre TODAS as linhas) → também dá o total.
+      const typeRows = await deps.db
+        .select({ type: usageEvents.type, total: sql<string | null>`sum(${usageEvents.cost})` })
+        .from(usageEvents)
+        .where(inRange)
+        .groupBy(usageEvents.type);
+      const byType: Record<string, number> = {};
+      let totalCostUsd = 0;
+      for (const r of typeRows) {
+        const cost = r.total === null ? 0 : Number(r.total);
+        byType[r.type] = cost;
+        totalCostUsd += cost;
+      }
+
+      // série diária (UTC) — usa o índice created_at.
+      const dayRows = await deps.db
+        .select({
+          date: sql<string>`to_char(${usageEvents.createdAt} AT TIME ZONE 'UTC', 'YYYY-MM-DD')`,
+          total: sql<string | null>`sum(${usageEvents.cost})`,
+        })
+        .from(usageEvents)
+        .where(inRange)
+        .groupBy(sql`1`)
+        .orderBy(sql`1`);
+      const byDay = dayRows.map((r) => ({ date: r.date, costUsd: r.total === null ? 0 : Number(r.total) }));
+
+      // por conta (só linhas com run→agente→conta; chat/run_id null cai no não-atribuído).
+      const acctRows = await deps.db
         .select({
           accountId: adAccounts.id,
           accountName: adAccounts.name,
@@ -78,16 +110,9 @@ export function createBillingService(deps: BillingDeps) {
         .innerJoin(agentRuns, eq(usageEvents.runId, agentRuns.id))
         .innerJoin(agents, eq(agentRuns.agentId, agents.id))
         .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
-        .where(
-          and(
-            eq(usageEvents.orgId, orgId),
-            gte(usageEvents.createdAt, start),
-            lt(usageEvents.createdAt, end),
-          ),
-        )
+        .where(inRange)
         .groupBy(adAccounts.id, adAccounts.name);
-
-      const byAccount = rows
+      const byAccount = acctRows
         .map((r) => ({
           accountId: r.accountId,
           accountName: r.accountName,
@@ -97,13 +122,14 @@ export function createBillingService(deps: BillingDeps) {
         .sort((a, b) => b.costUsd - a.costUsd);
 
       const attributed = byAccount.reduce((sum, r) => sum + r.costUsd, 0);
-      // resto (chat/run_id null ou órfãos) — honesto: não força atribuição a conta.
-      const unattributedCostUsd = Math.max(0, summary.totalCostUsd - attributed);
+      const unattributedCostUsd = Math.max(0, totalCostUsd - attributed);
 
       return {
-        period: summary.period,
-        totalCostUsd: summary.totalCostUsd,
-        byType: summary.byType,
+        since,
+        until,
+        totalCostUsd,
+        byDay,
+        byType,
         byAccount,
         unattributedCostUsd,
         // cap default global (env); per-agente (guardrail_configs) = fast-follow.

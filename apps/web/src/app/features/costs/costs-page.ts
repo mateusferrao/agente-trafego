@@ -4,8 +4,6 @@ import { UiPageHeader, UiSpinner } from '@ui';
 import { OrgApiService } from '@core/api/org-api.service';
 import type { CostsOutput } from '@core/api';
 
-const MONTHS_BACK = 6;
-
 /** Formata USD (COGS do provider). Locale pt-BR, moeda USD. */
 function usd(value: number): string {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'USD' }).format(value);
@@ -23,9 +21,71 @@ const TYPE_LABELS: Readonly<Record<string, string>> = {
   llm: 'LLM (outros)',
 };
 
+const MAX_TYPE_SLICES = 6; // demais tipos → "Outros" (nunca cicla a paleta de tokens)
+const DONUT_LEN = 100; // pathLength → dasharray em % (sem π)
+
+interface Preset {
+  readonly key: string;
+  readonly label: string;
+}
+const PRESETS: readonly Preset[] = [
+  { key: 'this-month', label: 'Este mês' },
+  { key: 'last-month', label: 'Mês passado' },
+  { key: '7d', label: '7 dias' },
+  { key: '30d', label: '30 dias' },
+  { key: '90d', label: '90 dias' },
+  { key: 'year', label: 'Este ano' },
+];
+
+interface SeriePoint {
+  readonly x: number;
+  readonly y: number;
+}
+interface TypeSlice {
+  readonly label: string;
+  readonly color: string;
+  readonly cost: number;
+  readonly pct: number;
+  readonly len: number;
+  readonly offset: number;
+}
+
+/** "YYYY-MM-DD" a partir de um Date (local). */
+function ymd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+/** Range inclusivo (since,until) de um preset. */
+function presetRange(key: string): { since: string; until: string } {
+  const today = new Date();
+  const until = ymd(today);
+  const start = new Date(today);
+  switch (key) {
+    case 'this-month':
+      return { since: ymd(new Date(today.getFullYear(), today.getMonth(), 1)), until };
+    case 'last-month': {
+      const first = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      const last = new Date(today.getFullYear(), today.getMonth(), 0);
+      return { since: ymd(first), until: ymd(last) };
+    }
+    case '7d':
+      start.setDate(start.getDate() - 6);
+      return { since: ymd(start), until };
+    case '90d':
+      start.setDate(start.getDate() - 89);
+      return { since: ymd(start), until };
+    case 'year':
+      return { since: ymd(new Date(today.getFullYear(), 0, 1)), until };
+    case '30d':
+    default:
+      start.setDate(start.getDate() - 29);
+      return { since: ymd(start), until };
+  }
+}
+
 /**
- * Custos (6b) — visão do OWNER: custo operacional (COGS do provider) por conta e
- * período + gasto vs cap. NÃO é o preço do cliente (markup = fast-follow).
+ * Custos (6b) — visão do OWNER: COGS por período (range por dia) com gráficos:
+ * série diária (área), por conta (barras ranqueadas) e por tipo (donut + rótulos).
+ * Charts em SVG/HTML com design tokens (sem lib). Não é o preço do cliente.
  */
 @Component({
   selector: 'app-costs-page',
@@ -35,20 +95,48 @@ const TYPE_LABELS: Readonly<Record<string, string>> = {
     <div class="flex flex-col gap-6">
       <app-ui-page-header
         title="Custos"
-        subtitle="Custo operacional (COGS do provedor de IA) por conta e período. Não é o preço do cliente."
-      >
-        <select
-          actions
-          aria-label="Período"
-          class="rounded-md border border-line bg-panel px-3 py-1.5 text-sm text-ink"
-          [ngModel]="period()"
-          (ngModelChange)="setPeriod($event)"
-        >
-          @for (p of periods; track p) {
-            <option [value]="p">{{ periodLabel(p) }}</option>
+        subtitle="Custo operacional (COGS do provedor de IA) por período. Não é o preço do cliente."
+      />
+
+      <!-- Período: presets + range personalizado -->
+      <div class="flex flex-wrap items-end gap-3">
+        <div class="flex flex-wrap gap-1 rounded-md border border-line bg-panel p-1">
+          @for (p of presets; track p.key) {
+            <button
+              type="button"
+              class="rounded-sm px-2.5 py-1 text-xs font-medium transition"
+              [class.bg-accent-soft]="mode() === p.key"
+              [class.text-accent-strong]="mode() === p.key"
+              [class.text-muted]="mode() !== p.key"
+              (click)="setPreset(p.key)"
+            >
+              {{ p.label }}
+            </button>
           }
-        </select>
-      </app-ui-page-header>
+        </div>
+        <div class="flex items-end gap-2">
+          <label class="flex flex-col gap-0.5 text-[11px] text-muted">
+            De
+            <input
+              type="date"
+              class="rounded-md border border-line bg-panel px-2 py-1 text-sm text-ink"
+              [class.border-accent]="mode() === 'custom'"
+              [ngModel]="since()"
+              (ngModelChange)="setSince($event)"
+            />
+          </label>
+          <label class="flex flex-col gap-0.5 text-[11px] text-muted">
+            Até
+            <input
+              type="date"
+              class="rounded-md border border-line bg-panel px-2 py-1 text-sm text-ink"
+              [class.border-accent]="mode() === 'custom'"
+              [ngModel]="until()"
+              (ngModelChange)="setUntil($event)"
+            />
+          </label>
+        </div>
+      </div>
 
       @if (loading()) {
         <div class="flex items-center justify-center gap-3 rounded-lg border border-line bg-panel p-10 text-sm text-muted">
@@ -62,7 +150,7 @@ const TYPE_LABELS: Readonly<Record<string, string>> = {
           </button>
         </div>
       } @else if (data(); as d) {
-        <!-- Total + gasto vs cap -->
+        <!-- KPIs: total + gasto vs cap -->
         <section class="flex flex-col gap-2 rounded-lg border border-line bg-panel p-5">
           <span class="text-sm text-muted">Total no período</span>
           <span class="text-2xl font-semibold text-ink">{{ money(d.totalCostUsd) }}</span>
@@ -78,42 +166,95 @@ const TYPE_LABELS: Readonly<Record<string, string>> = {
           }
         </section>
 
-        <!-- Por conta -->
-        <section class="flex flex-col gap-3">
-          <h2 class="font-brand text-sm font-semibold text-ink">Por conta</h2>
-          @if (d.byAccount.length === 0) {
-            <p class="rounded-lg border border-line bg-panel p-4 text-sm text-muted">
-              Sem custo atribuível a contas neste período.
-            </p>
-          } @else {
-            <ul class="flex flex-col gap-2">
-              @for (a of d.byAccount; track a.accountId) {
-                <li class="flex items-center justify-between gap-3 rounded-lg border border-line bg-panel p-3 text-sm">
-                  <span class="truncate text-ink">{{ a.accountName ?? a.accountId }}</span>
-                  <span class="shrink-0 font-medium text-ink">{{ money(a.costUsd) }}</span>
-                </li>
-              }
-            </ul>
-          }
-          @if (d.unattributedCostUsd > 0) {
-            <p class="text-xs text-muted">
-              + {{ money(d.unattributedCostUsd) }} sem conta associada (ex: chat / conversas).
-            </p>
-          }
-        </section>
-
-        <!-- Por tipo -->
-        <section class="flex flex-col gap-3">
-          <h2 class="font-brand text-sm font-semibold text-ink">Por tipo</h2>
-          <ul class="flex flex-col gap-2">
-            @for (t of typeRows(d); track t.type) {
-              <li class="flex items-center justify-between gap-3 rounded-lg border border-line bg-panel p-3 text-sm">
-                <span class="text-ink">{{ typeLabel(t.type) }}</span>
-                <span class="shrink-0 font-medium text-ink">{{ money(t.cost) }}</span>
-              </li>
+        @if (d.totalCostUsd === 0) {
+          <p class="rounded-lg border border-line bg-panel p-6 text-sm text-muted">Sem custo no período.</p>
+        } @else {
+          <!-- Série diária (área) -->
+          <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
+            <div class="flex items-baseline justify-between">
+              <h2 class="font-brand text-sm font-semibold text-ink">Custo por dia</h2>
+              <span class="text-xs text-muted">pico {{ money(serieMax()) }}</span>
+            </div>
+            @if (serie().length >= 2) {
+              <svg viewBox="0 0 100 40" preserveAspectRatio="none" class="h-40 w-full" role="img" aria-label="Custo por dia no período">
+                <polygon [attr.points]="areaPoints()" [attr.fill]="accentVar" fill-opacity="0.15" />
+                <polyline
+                  [attr.points]="linePoints()"
+                  fill="none"
+                  [attr.stroke]="accentVar"
+                  stroke-width="1.5"
+                  vector-effect="non-scaling-stroke"
+                />
+              </svg>
+              <div class="flex justify-between text-[11px] text-muted">
+                <span>{{ dayLabel(d.since) }}</span>
+                <span>{{ dayLabel(d.until) }}</span>
+              </div>
+            } @else {
+              <p class="text-xs text-muted">Poucos dias com custo para desenhar a curva.</p>
             }
-          </ul>
-        </section>
+          </section>
+
+          <div class="grid gap-6 lg:grid-cols-2">
+            <!-- Por conta (barras ranqueadas) -->
+            <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
+              <h2 class="font-brand text-sm font-semibold text-ink">Por conta</h2>
+              @if (d.byAccount.length === 0) {
+                <p class="text-sm text-muted">Sem custo atribuível a contas neste período.</p>
+              } @else {
+                <ul class="flex flex-col gap-2.5">
+                  @for (a of d.byAccount; track a.accountId) {
+                    <li class="flex flex-col gap-1">
+                      <div class="flex items-baseline justify-between gap-3 text-sm">
+                        <span class="truncate text-ink">{{ a.accountName ?? a.accountId }}</span>
+                        <span class="shrink-0 font-medium text-ink">{{ money(a.costUsd) }}</span>
+                      </div>
+                      <div class="h-1.5 w-full overflow-hidden rounded-full bg-soft">
+                        <div class="h-full rounded-full bg-accent" [style.width.%]="acctPct(a.costUsd)"></div>
+                      </div>
+                    </li>
+                  }
+                </ul>
+              }
+              @if (d.unattributedCostUsd > 0) {
+                <p class="text-xs text-muted">+ {{ money(d.unattributedCostUsd) }} sem conta (chat / conversas).</p>
+              }
+            </section>
+
+            <!-- Por tipo (donut + legenda com rótulos) -->
+            <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
+              <h2 class="font-brand text-sm font-semibold text-ink">Por tipo</h2>
+              <div class="flex items-center gap-5">
+                <svg viewBox="0 0 42 42" class="h-28 w-28 shrink-0" role="img" aria-label="Custo por tipo">
+                  <g transform="rotate(-90 21 21)">
+                    @for (s of typeSlices(); track s.label) {
+                      <circle
+                        cx="21"
+                        cy="21"
+                        r="15.915"
+                        fill="transparent"
+                        stroke-width="8"
+                        pathLength="100"
+                        [attr.stroke]="s.color"
+                        [attr.stroke-dasharray]="s.len + ' ' + (100 - s.len)"
+                        [attr.stroke-dashoffset]="-s.offset"
+                      />
+                    }
+                  </g>
+                </svg>
+                <ul class="flex min-w-0 flex-1 flex-col gap-1.5">
+                  @for (s of typeSlices(); track s.label) {
+                    <li class="flex items-center gap-2 text-xs">
+                      <span class="size-2.5 shrink-0 rounded-full" [style.background]="s.color"></span>
+                      <span class="truncate text-ink">{{ s.label }}</span>
+                      <span class="ml-auto shrink-0 text-muted">{{ s.pct }}% · {{ money(s.cost) }}</span>
+                    </li>
+                  }
+                </ul>
+              </div>
+            </section>
+          </div>
+        }
       }
     </div>
   `,
@@ -121,27 +262,49 @@ const TYPE_LABELS: Readonly<Record<string, string>> = {
 export class CostsPage {
   private readonly orgApi = inject(OrgApiService);
 
-  protected readonly periods = buildPeriods();
-  protected readonly period = signal(this.periods[0]!);
+  protected readonly presets = PRESETS;
+  protected readonly mode = signal<string>('30d');
+  protected readonly since = signal(presetRange('30d').since);
+  protected readonly until = signal(presetRange('30d').until);
+
   protected readonly data = signal<CostsOutput | null>(null);
   protected readonly loading = signal(true);
   protected readonly failed = signal(false);
 
   protected readonly money = usd;
+  /** Token da cor accent p/ os marks SVG (via [attr.*] — tokens:check proíbe style= inline). */
+  protected readonly accentVar = 'var(--color-accent)';
 
   constructor() {
     this.load();
   }
 
-  protected setPeriod(p: string): void {
-    this.period.set(p);
+  protected setPreset(key: string): void {
+    const r = presetRange(key);
+    this.mode.set(key);
+    this.since.set(r.since);
+    this.until.set(r.until);
+    this.load();
+  }
+
+  protected setSince(v: string): void {
+    if (!v) return;
+    this.mode.set('custom');
+    this.since.set(v);
+    this.load();
+  }
+
+  protected setUntil(v: string): void {
+    if (!v) return;
+    this.mode.set('custom');
+    this.until.set(v);
     this.load();
   }
 
   protected load(): void {
     this.loading.set(true);
     this.failed.set(false);
-    this.orgApi.costs(this.period()).subscribe({
+    this.orgApi.costs(this.since(), this.until()).subscribe({
       next: (d) => {
         this.data.set(d);
         this.loading.set(false);
@@ -153,43 +316,82 @@ export class CostsPage {
     });
   }
 
+  // ─── gasto vs cap ─────────────────────────────────────────────────────
   protected capPct(d: CostsOutput): number {
-    if (d.capUsd <= 0) return 0;
-    return Math.min(100, (d.totalCostUsd / d.capUsd) * 100);
+    return d.capUsd <= 0 ? 0 : Math.min(100, (d.totalCostUsd / d.capUsd) * 100);
   }
-
   protected overCap(d: CostsOutput): boolean {
     return d.capUsd > 0 && d.totalCostUsd > d.capUsd;
   }
 
-  protected typeLabel(type: string): string {
-    return TYPE_LABELS[type] ?? type;
+  // ─── série diária (área) ──────────────────────────────────────────────
+  private readonly points = computed<SeriePoint[]>(() => {
+    const days = this.data()?.byDay ?? [];
+    if (days.length < 2) return [];
+    const max = Math.max(...days.map((p) => p.costUsd), 0.000001);
+    const n = days.length;
+    return days.map((p, i) => ({ x: (i / (n - 1)) * 100, y: 40 - (p.costUsd / max) * 40 }));
+  });
+  protected serie(): SeriePoint[] {
+    return this.points();
+  }
+  protected serieMax(): number {
+    return Math.max(...(this.data()?.byDay ?? []).map((p) => p.costUsd), 0);
+  }
+  protected linePoints(): string {
+    return this.points()
+      .map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`)
+      .join(' ');
+  }
+  protected areaPoints(): string {
+    const pts = this.points();
+    if (pts.length < 2) return '';
+    return `0,40 ${this.linePoints()} 100,40`;
   }
 
-  /** "YYYY-MM" → "agosto de 2026" (pt-BR). */
-  protected periodLabel(period: string): string {
-    const [y, m] = period.split('-').map(Number);
-    if (!y || !m) return period;
-    return new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(
-      new Date(Date.UTC(y, m - 1, 1)),
-    );
+  // ─── por conta (barras) ───────────────────────────────────────────────
+  private acctMax(): number {
+    return Math.max(...(this.data()?.byAccount ?? []).map((a) => a.costUsd), 0.000001);
+  }
+  protected acctPct(cost: number): number {
+    return Math.max(2, (cost / this.acctMax()) * 100); // piso 2% p/ barra visível
   }
 
-  protected typeRows(d: CostsOutput): readonly { type: string; cost: number }[] {
-    return Object.entries(d.byType)
+  // ─── por tipo (donut + legenda) ───────────────────────────────────────
+  protected typeSlices(): TypeSlice[] {
+    const byType = this.data()?.byType ?? {};
+    const rows = Object.entries(byType)
       .map(([type, cost]) => ({ type, cost: cost as number }))
       .filter((r) => r.cost > 0)
       .sort((a, b) => b.cost - a.cost);
-  }
-}
+    const total = rows.reduce((s, r) => s + r.cost, 0) || 1;
 
-/** Últimos N meses como "YYYY-MM" (mais recente primeiro). Sem libs de data. */
-function buildPeriods(): readonly string[] {
-  const now = new Date();
-  const out: string[] = [];
-  for (let i = 0; i < MONTHS_BACK; i += 1) {
-    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
-    out.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`);
+    // top N + "Outros" (nunca cicla a paleta de tokens além de cat-1..7).
+    const head = rows.slice(0, MAX_TYPE_SLICES);
+    const tail = rows.slice(MAX_TYPE_SLICES);
+    const merged = [...head];
+    if (tail.length) merged.push({ type: '__outros__', cost: tail.reduce((s, r) => s + r.cost, 0) });
+
+    let offset = 0;
+    return merged.map((r, i) => {
+      const pct = (r.cost / total) * 100;
+      const len = (pct / 100) * DONUT_LEN;
+      const slice: TypeSlice = {
+        label: r.type === '__outros__' ? 'Outros' : (TYPE_LABELS[r.type] ?? r.type),
+        color: `var(--color-cat-${(i % 7) + 1})`,
+        cost: r.cost,
+        pct: Math.round(pct),
+        len,
+        offset,
+      };
+      offset += len;
+      return slice;
+    });
   }
-  return out;
+
+  // ─── datas ────────────────────────────────────────────────────────────
+  protected dayLabel(iso: string): string {
+    const [y, m, d] = iso.split('-');
+    return `${d}/${m}/${y}`;
+  }
 }

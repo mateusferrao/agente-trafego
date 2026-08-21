@@ -21,10 +21,16 @@ export const costByAccount = z.object({
   costUsd: z.number(),
 });
 
-// Painel de custos do owner: total + por tipo + por conta + não-atribuído + cap.
+// Ponto da série temporal diária (custo do dia). `date` = "YYYY-MM-DD".
+export const costDayPoint = z.object({ date: z.string(), costUsd: z.number() });
+
+// Painel de custos do owner: janela (since/until) + total + série diária + por tipo +
+// por conta + não-atribuído + cap.
 export const costsOutput = z.object({
-  period: z.string(),
+  since: z.string(), // "YYYY-MM-DD" (inclusivo)
+  until: z.string(), // "YYYY-MM-DD" (inclusivo)
   totalCostUsd: z.number(),
+  byDay: z.array(costDayPoint),
   byType: z.record(z.number()),
   byAccount: z.array(costByAccount),
   // custo sem run associado (chat/conversa — run_id null) → não mapeia a conta.

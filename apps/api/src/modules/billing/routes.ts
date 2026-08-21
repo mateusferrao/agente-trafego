@@ -9,6 +9,26 @@ function resolvePeriod(raw: string | undefined): string {
   return raw && PERIOD_RE.test(raw) ? raw : new Date().toISOString().slice(0, 7);
 }
 
+/** Dia "YYYY-MM-DD" válido. */
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const DEFAULT_RANGE_DAYS = 30;
+function isoDay(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+/** Resolve o range por dia (inclusivo). Ausente/malformado → últimos 30 dias. since>until → troca. */
+function resolveRange(sinceRaw?: string, untilRaw?: string): { since: string; until: string } {
+  const until = untilRaw && DAY_RE.test(untilRaw) ? untilRaw : isoDay(new Date());
+  let since: string;
+  if (sinceRaw && DAY_RE.test(sinceRaw)) {
+    since = sinceRaw;
+  } else {
+    const d = new Date(`${until}T00:00:00.000Z`);
+    d.setUTCDate(d.getUTCDate() - (DEFAULT_RANGE_DAYS - 1));
+    since = isoDay(d);
+  }
+  return since <= until ? { since, until } : { since: until, until: since };
+}
+
 /** Slice de billing: status de acesso ao produto e resumo de uso do período. */
 export const billingRoutes: FastifyPluginAsync = async (app) => {
   const service = app.container.services.billing;
@@ -26,9 +46,11 @@ export const billingRoutes: FastifyPluginAsync = async (app) => {
     return service.usage(orgIdOf(request), resolvePeriod(period));
   });
 
-  // Painel de custos (owner): economia unitária por conta + total + gasto vs cap.
+  // Painel de custos (owner): range por dia (since/until) → total + série diária +
+  // por conta + por tipo + gasto vs cap. Ausente → últimos 30 dias.
   app.get("/billing/costs", gated, async (request) => {
-    const { period } = request.query as { period?: string };
-    return service.costs(orgIdOf(request), resolvePeriod(period));
+    const { since, until } = request.query as { since?: string; until?: string };
+    const range = resolveRange(since, until);
+    return service.costs(orgIdOf(request), range.since, range.until);
   });
 };

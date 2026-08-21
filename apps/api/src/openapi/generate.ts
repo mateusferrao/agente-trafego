@@ -609,8 +609,8 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     method: "get",
     path: "/api/billing/costs",
     tags: ["billing"],
-    request: { query: z.object({ period: z.string().optional() }) },
-    responses: { 200: jsonRes("custos do owner (por conta + total + cap)", CostsOutput) },
+    request: { query: z.object({ since: z.string().optional(), until: z.string().optional() }) },
+    responses: { 200: jsonRes("custos do owner (série diária + por conta + por tipo + cap)", CostsOutput) },
   });
 
   const generator = new OpenApiGeneratorV31(registry.definitions);

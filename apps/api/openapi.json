@@ -293,11 +293,32 @@
       "CostsOutput": {
         "type": "object",
         "properties": {
-          "period": {
+          "since": {
+            "type": "string"
+          },
+          "until": {
             "type": "string"
           },
           "totalCostUsd": {
             "type": "number"
+          },
+          "byDay": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "date": {
+                  "type": "string"
+                },
+                "costUsd": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "date",
+                "costUsd"
+              ]
+            }
           },
           "byType": {
             "type": "object",
@@ -338,8 +359,10 @@
           }
         },
         "required": [
-          "period",
+          "since",
+          "until",
           "totalCostUsd",
+          "byDay",
           "byType",
           "byAccount",
           "unattributedCostUsd",
@@ -5646,13 +5669,21 @@
               "type": "string"
             },
             "required": false,
-            "name": "period",
+            "name": "since",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "until",
             "in": "query"
           }
         ],
         "responses": {
           "200": {
-            "description": "custos do owner (por conta + total + cap)",
+            "description": "custos do owner (série diária + por conta + por tipo + cap)",
             "content": {
               "application/json": {
                 "schema": {

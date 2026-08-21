@@ -38,11 +38,11 @@ export class OrgApiService extends BaseApiService {
     return this.get<AccessStatusOutput>('/billing/access-status');
   }
 
-  /** `GET /api/billing/costs` — custo (COGS) do owner por conta/período (6b). */
-  costs(period?: string): Observable<CostsOutput> {
+  /** `GET /api/billing/costs` — custo (COGS) do owner num range por dia (since/until). */
+  costs(since?: string, until?: string): Observable<CostsOutput> {
     return this.get<CostsOutput>('/billing/costs', {
       context: silentApiContext(),
-      params: period ? { period } : {},
+      params: { since, until },
     });
   }
 }
