@@ -3,7 +3,7 @@
 
 import { Annotation, messagesStateReducer } from "@langchain/langgraph";
 import type { BaseMessage } from "@langchain/core/messages";
-import type { Action } from "@trafego/shared/types";
+import type { Action, AutonomyPolicy, GuardrailConfig } from "@trafego/shared/types";
 import type { AgentConfigPatch } from "@trafego/core";
 
 /** Ação congelada aguardando confirmação (eco+confirma, 5c). A ação aplicada é ESTA
@@ -64,6 +64,13 @@ export interface PendingConfigChange {
   readonly archetype?: string;
   /** operação de playbook (kind=playbook). */
   readonly playbook?: PendingPlaybookOp;
+  /**
+   * Foto da config de SEGURANÇA no momento do eco (guardrails + autonomia), quando o
+   * patch a toca (kind=update). O apply re-lê fresco e ABORTA se mudou desde o eco —
+   * senão o patch absoluto congelado reverteria em silêncio um endurecimento concorrente
+   * (ex: kill-switch ligado pelo site enquanto a pendência estava aberta).
+   */
+  readonly securityBaseline?: { readonly guardrails: GuardrailConfig; readonly autonomyPolicy: AutonomyPolicy };
   /** a mudança afrouxa a rede de segurança (aviso no eco). */
   readonly weakensSafety: boolean;
   /** um campo relevante à análise mudou → oferecer rodar análise após aplicar. */

@@ -503,10 +503,10 @@ interface FormState {
                     <app-ui-select [options]="tristateOptions" [value]="mcColdStartReference()" (valueChange)="mcColdStartReference.set($event)" />
                     <span class="text-xs text-muted">Mostra uma referência quando a conta ainda não tem meta nem histórico.</span>
                   </label>
-                  <label class="flex flex-col gap-1 text-xs text-muted" title="Quantas conversas por venda rastreada até desconfiar que a medição (pixel/CAPI) está incompleta.">
-                    Conversas por venda p/ suspeitar da medição
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Quantas conversas por conversão registrada até desconfiar que o rastreamento de conversões está incompleto.">
+                    Conversas por conversão p/ suspeitar da medição
                     <input type="number" min="1" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.trackingBrokenRatio ?? ''" [value]="mcTrackingBrokenRatio()" (input)="onMcText(mcTrackingBrokenRatio, $event)" />
-                    <span class="text-xs text-muted">Muitas conversas e quase nenhuma venda registrada sugere rastreamento furado.</span>
+                    <span class="text-xs text-muted">Muitas conversas e quase nenhuma conversão registrada sugere rastreamento furado.</span>
                   </label>
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Mínimo de conversas para sequer considerar a suspeita de medição incompleta.">
                     Mínimo de conversas p/ avaliar a medição

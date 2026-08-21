@@ -42,6 +42,27 @@ export function collectBriefNumbers(brief: AccountBrief): Set<number> {
   addMetrics(brief.totals);
   addMetrics(brief.totals.delta);
   addFunnel(brief.funnel);
+  // agregados determinísticos (Bloco 2) — o LLM PODE citá-los (WASTE_NOTE/TRACKING_NOTE
+  // pedem o "money shot" em reais); sem eles no gabarito, o drop comeria o próprio finding.
+  if (brief.waste) {
+    addNumber(nums, brief.waste.wastedSpend);
+    addNumber(nums, brief.waste.wastedPct);
+    for (const z of brief.waste.zombies) addNumber(nums, z.spend);
+    if (brief.waste.pareto) {
+      addNumber(nums, brief.waste.pareto.groupSpend);
+      for (const i of brief.waste.pareto.items) {
+        addNumber(nums, i.spend);
+        addNumber(nums, i.spendPct);
+        if (i.result !== undefined) addNumber(nums, i.result);
+        if (i.resultPct !== undefined) addNumber(nums, i.resultPct);
+      }
+    }
+  }
+  if (brief.trackingHealth) {
+    addNumber(nums, brief.trackingHealth.funnelStarted);
+    addNumber(nums, brief.trackingHealth.trackedConversions);
+    addNumber(nums, brief.trackingHealth.ratio);
+  }
   for (const e of brief.segments.campaigns) addEntity(e);
   for (const e of brief.segments.adsets) addEntity(e);
   for (const e of brief.segments.ads) addEntity(e);

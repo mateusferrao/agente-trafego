@@ -116,13 +116,13 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
           </p>
         }
 
-        <!-- Ressalva de medição: muita conversa e pouca venda rastreada = pixel/CAPI suspeito -->
+        <!-- Ressalva de medição: muita conversa e pouca conversão registrada = rastreamento suspeito -->
         @if (tracking(); as t) {
           <div class="flex flex-col gap-1 rounded-lg border border-warning/40 bg-warning-soft p-4">
-            <span class="text-sm font-medium text-warning-strong">A medição de vendas parece incompleta</span>
+            <span class="text-sm font-medium text-warning-strong">A medição de resultados parece incompleta</span>
             <p class="text-sm text-ink">
-              {{ t.funnelStarted }} conversas e apenas {{ t.trackedConversions }} vendas rastreadas. Confira o
-              rastreamento de conversões (pixel/CAPI) antes de decidir pelo custo por venda.
+              {{ t.funnelStarted }} conversas e apenas {{ t.trackedConversions }} conversões registradas. Confira o
+              rastreamento de conversões (o pixel/rastreamento do site) antes de decidir pelo custo por conversão.
             </p>
           </div>
         }

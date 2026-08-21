@@ -10,6 +10,7 @@ import {
   applyGuardrails,
   archetypeDefaults,
   archetypeCatalog,
+  autonomyPolicyWeakens,
   buildConfigChangeEcho,
   buildRevertEcho,
   buildWriteEcho,
@@ -83,6 +84,14 @@ function activePendingConfig(pc: PendingConfigChange | null): PendingConfigChang
 
 /** Oferta de rodar a análise após uma mudança relevante (NÃO dispara sozinho — §8). */
 const RUN_ANALYSIS_OFFER = "Quer que eu rode uma análise agora com a nova config?";
+
+/** Nível de autonomia em PT (3ª pessoa) — p/ o eco do reseed. */
+const AUTONOMY_LABEL_PT: Readonly<Record<string, string>> = {
+  notify: "só avisa",
+  suggest: "sugere e pede OK",
+  act_safe: "age no seguro",
+  act_full: "age sozinho",
+};
 
 const PAST_PHRASE: Record<string, (name: string) => string> = {
   pause_entity: (n) => `Pausei ${n}`,
@@ -255,6 +264,23 @@ async function applyConfirmedConfig(
   const offerIfRelevant = (base: string) => (pending.runRelevantChanged ? `${base}\n\n${RUN_ANALYSIS_OFFER}` : base);
 
   if (pending.kind === "update" && pending.patch) {
+    // guard de frescura (S2.3): se o patch toca a segurança, re-lê o estado FRESCO e
+    // aborta se (a) a auto-config foi desligada ou (b) guardrails/autonomia mudaram
+    // desde o eco — senão o patch absoluto congelado reverteria em silêncio um
+    // endurecimento concorrente (§8: a ação confirmada tem de ser a que foi ecoada).
+    if (pending.securityBaseline) {
+      const fresh = await loadAgentConfigState(deps.db, orgId, ctx.agentId);
+      if (fresh && fresh.autonomyPolicy.autoConfigViaChat === false) {
+        return "A configuração por chat foi desligada nesta conta — isso agora é pelo site.";
+      }
+      if (
+        fresh &&
+        (JSON.stringify(fresh.guardrails) !== JSON.stringify(pending.securityBaseline.guardrails) ||
+          JSON.stringify(fresh.autonomyPolicy) !== JSON.stringify(pending.securityBaseline.autonomyPolicy))
+      ) {
+        return "Sua configuração de segurança mudou desde que preparei isso — pra não desfazer nada sem querer, me pede a mudança de novo.";
+      }
+    }
     const res = await applyAgentConfigChange(
       { db: deps.db, scheduler: deps.ports.scheduler },
       { orgId, agentId: ctx.agentId, accountId: ctx.adAccountId, patch: pending.patch, audit },
@@ -383,6 +409,17 @@ export function makeConversationNodes(
     // Meta → sem guardrail/dry-run de ads). Monta o eco determinístico + congela a mudança.
     const configCalls = allCalls.filter((c) => isConfirmableConfigTool(c.name));
     if (configCalls.length > 0) {
+      // config + escrita Meta no MESMO turno: não engula a escrita em silêncio — peça
+      // uma coisa de cada vez (o gate trata 1 pendência por turno). §UX: nunca sumir com o pedido.
+      const alsoMetaWrite = allCalls.some((c) => WRITE_TOOL_NAMES.has(c.name) || c.name === REVERT_TOOL_NAME);
+      if (alsoMetaWrite) {
+        return {
+          messages: answerToolCalls(
+            allCalls,
+            "Você pediu uma mudança de config e uma ação na campanha juntas. Me peça uma de cada vez — qual você quer primeiro?",
+          ),
+        };
+      }
       // uma pendência por vez: trata o 1º tool_call de config (o LLM chama um por turno).
       const call = configCalls[0]!;
       const expiresAt = new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString();
@@ -409,6 +446,9 @@ export function makeConversationNodes(
           changed: resolution.changed,
           weakensSafety: resolution.weakensSafety,
         });
+        // foto da config de segurança quando o patch a toca → o apply aborta se mudou
+        // desde o eco (evita reverter em silêncio um endurecimento concorrente).
+        const touchesSecurity = patch.guardrails !== undefined || patch.autonomyPolicy !== undefined;
         return {
           messages: [...answerToolCalls(allCalls, "proposto — aguardando confirmação"), new AIMessage(echo)],
           pendingConfigChange: {
@@ -416,6 +456,7 @@ export function makeConversationNodes(
             expiresAt,
             kind: "update",
             patch,
+            ...(touchesSecurity ? { securityBaseline: { guardrails: cur.guardrails, autonomyPolicy: cur.autonomyPolicy } } : {}),
             weakensSafety: resolution.weakensSafety,
             runRelevantChanged: resolution.runRelevantChanged,
           },
@@ -424,7 +465,8 @@ export function makeConversationNodes(
         };
       }
 
-      // ── RESEED de arquétipo: reseta pros defaults do preset (neutro; runRelevant true).
+      // ── RESEED de arquétipo: reseta pros defaults do preset. Avisa se a autonomia SOBE
+      //    (o preset pode deixar o agente mais autônomo — §8 exige o aviso de afrouxamento).
       if (call.name === RESEED_TOOL_NAME) {
         const key = String((call.args as { archetype?: string } | undefined)?.archetype ?? "");
         const known = archetypeCatalog().find((a) => a.key === key);
@@ -432,10 +474,20 @@ export function makeConversationNodes(
           const opts = archetypeCatalog().map((a) => `${a.label} (${a.key})`).join(", ");
           return { messages: answerToolCalls(allCalls, `Não conheço esse arquétipo. Os disponíveis são: ${opts}.`) };
         }
-        const echo = `Vou resetar o agente pro arquétipo *${known.label}*: isso volta persona, tom, metodologia e autonomia pros padrões desse preset (mantém sua meta, contexto e orientações). Confirma?`;
+        const cur = await loadAgentConfigState(deps.db, ctx.orgId as OrgId, ctx.agentId);
+        if (!cur) {
+          return { messages: answerToolCalls(allCalls, "Não consegui carregar a config agora. Tenta de novo em instantes.") };
+        }
+        const target = archetypeDefaults(known.key).autonomyPolicy;
+        const weakens = autonomyPolicyWeakens(cur.autonomyPolicy, target);
+        const autoLines = (["playbook", "llm"] as const)
+          .filter((s) => cur.autonomyPolicy.bySource[s] !== target.bySource[s])
+          .map((s) => `- autonomia (${s === "playbook" ? "regras" : "IA"}): ${AUTONOMY_LABEL_PT[cur.autonomyPolicy.bySource[s]]} → ${AUTONOMY_LABEL_PT[target.bySource[s]]}`);
+        const warn = weakens ? "⚠️ Isso afrouxa sua segurança.\n" : "";
+        const echo = `${warn}Vou resetar o agente pro arquétipo *${known.label}*: volta persona, tom, metodologia e autonomia pros padrões desse preset (mantém sua meta, contexto e orientações).${autoLines.length > 0 ? `\n${autoLines.join("\n")}` : ""}\n\nConfirma?`;
         return {
           messages: [...answerToolCalls(allCalls, "proposto — aguardando confirmação"), new AIMessage(echo)],
-          pendingConfigChange: { echo, expiresAt, kind: "reseed", archetype: known.key, weakensSafety: false, runRelevantChanged: true },
+          pendingConfigChange: { echo, expiresAt, kind: "reseed", archetype: known.key, weakensSafety: weakens, runRelevantChanged: true },
           pendingWrite: null,
           pendingRevert: null,
         };

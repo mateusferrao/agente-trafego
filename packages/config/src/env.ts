@@ -67,8 +67,8 @@ export const envSchema = z.object({
   OPENROUTER_UNIT_MODEL: z.string().min(1).default("deepseek/deepseek-v4-flash-0731"),
   OPENROUTER_MESSAGE_MODEL: z.string().min(1).default("google/gemini-3.1-flash-lite"),
   // Versão do analisador de visão — bumpar invalida o cache de análises de criativo.
-  // Bump p/ 2 na Fatia 6c: multi-frame HD + decomposição (hook/angle/format/cta) →
-  // invalida o cache antigo (chaveado por URL) uma vez.
+  // 2 (Fatia 6c): multi-frame HD + decomposição hook/angle/format/cta.
+  // 3 (Bloco 2): decomposição ganha body + proofStrength → invalida o cache antigo uma vez.
   CREATIVE_VISION_ANALYZER_VERSION: z.coerce.number().int().positive().default(3),
   // Frames HD por criativo de vídeo enviados à visão (espaçados; imagem = 1). Fatia 6c.
   ANALYSIS_VISION_FRAMES: z.coerce.number().int().positive().default(4),
