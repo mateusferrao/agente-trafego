@@ -46,7 +46,8 @@ export const AccountAnalysisState = Annotation.Root({
   trigger: Annotation<AgentRunTrigger>,
   // alvo de push (5b-2): quando o run é disparado pelo WhatsApp, o resultado volta
   // na conversa (writeMessage/notify honram isto além do cron). null = sem push.
-  notify: Annotation<RunNotifyTarget | null>,
+  // (nome != nó "notify" do grafo — LangGraph proíbe state key == node name)
+  notifyTarget: Annotation<RunNotifyTarget | null>,
 
   // config congelada no início do run (reprodutibilidade — CLAUDE §6)
   goals: Annotation<AgentGoals>,

@@ -675,7 +675,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
    */
   async function writeMessage(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
     logger.debug({ runId: state.runId }, "write_message");
-    const isWhatsapp = state.notify != null; // run disparado pelo WhatsApp → responde na conversa
+    const isWhatsapp = state.notifyTarget != null; // run disparado pelo WhatsApp → responde na conversa
     if (state.trigger !== "cron" && !isWhatsapp) return { outboundMessage: null }; // on-demand no site
     const out = state.analysisOutput;
     if (!out || !state.account) return { outboundMessage: null };
@@ -745,7 +745,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     if (await notifyRepo.alreadyNotified(state.runId)) return {}; // idempotência de envio
 
     // alvo: WhatsApp-origin → quem pediu; cron → destinatário verificado da org.
-    let contactId = state.notify?.contactId ?? null;
+    let contactId = state.notifyTarget?.contactId ?? null;
     if (!contactId) {
       const target = await notifyRepo.loadTarget(state.orgId);
       contactId = target?.contactId ?? null;
@@ -759,7 +759,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const text = `${body}\n\nVer no site: ${link}`;
     // chat (push do WhatsApp) quebra em blocos; cron enxuto (1 msg) — ban-safety §9.
     const sent = await sendToContact(contactId, text, {
-      split: state.notify != null,
+      split: state.notifyTarget != null,
       meta: { runId: state.runId },
     });
     if (!sent) logger.warn({ runId: state.runId }, "notify:envio falhou/sem instância — sem push");
