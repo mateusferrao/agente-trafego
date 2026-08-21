@@ -1,36 +1,20 @@
-// Worker BullMQ da fila `approval-apply` (5b): a API valida a posse + enfileira; aqui
-// o worker (dono do governor/escrita) carrega a `approval`, RE-CHECA o estado fresco +
-// o guardrail ATUAL e aplica via o executor. Barrado no re-check → status `blocked` +
-// motivo (nunca escreve). Idempotente por `${approvalId}:apply`.
+// Worker BullMQ da fila `approval-apply` (5b): a API/WhatsApp valida a posse + enfileira;
+// aqui o worker carrega a `approval`, valida (posse/status/run) e delega a aplicação ao
+// núcleo compartilhado `applyConfirmedAction` (re-check fresco + guardrail atual + executor),
+// mapeando o desfecho tipado p/ resolver a approval + empurrar o resultado no WhatsApp.
+// Mesmo núcleo reusado pela escrita livre por chat (5c). Idempotente por `${approvalId}:apply`.
 
 import { Worker } from "bullmq";
-import { and, eq } from "drizzle-orm";
 import type { Redis } from "ioredis";
-import { agents, guardrailConfigs } from "@trafego/db";
-import { applyGuardrails } from "@trafego/core";
-import {
-  APPROVAL_APPLY_QUEUE,
-  toGuardrailConfig,
-  type ApprovalApplyPayload,
-  type ApprovalId,
-} from "@trafego/shared";
-import type { MutationResult } from "@trafego/shared/ports";
+import { APPROVAL_APPLY_QUEUE, type ApprovalApplyPayload, type ApprovalId } from "@trafego/shared";
 import type { WorkerDeps } from "../composition.js";
-import { createAnalysisRepo, loadDailyToolContext } from "../modules/analysis/repo.js";
-import { makeMetaToolExecutor } from "../executors/meta-tools.js";
+import { applyConfirmedAction } from "../modules/apply/apply-confirmed-action.js";
 import { createNotifyRepo } from "../modules/notify/repo.js";
 import { createSendToContact } from "../modules/notify/send-to-contact.js";
 
-/** O executor não escreveu (alvo já no estado desejado) → before == after. */
-function isNoWrite(result: MutationResult): boolean {
-  return JSON.stringify(result.before) === JSON.stringify(result.after);
-}
-
 export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): Worker<ApprovalApplyPayload> {
-  const { db, logger, ports } = deps;
-  const repo = createAnalysisRepo(db);
-  const executor = makeMetaToolExecutor(deps);
-  const sendToContact = createSendToContact({ messaging: ports.messaging, repo: createNotifyRepo(db) });
+  const { logger, ports } = deps;
+  const sendToContact = createSendToContact({ messaging: ports.messaging, repo: createNotifyRepo(deps.db) });
 
   return new Worker<ApprovalApplyPayload>(
     APPROVAL_APPLY_QUEUE,
@@ -66,76 +50,40 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
       const who = approval.action.target?.name ?? null;
       const suffix = who ? ` (${who})` : "";
 
-      // conta (via agente) + token.
-      const [ag] = await db
-        .select({ adAccountId: agents.adAccountId })
-        .from(agents)
-        .where(eq(agents.id, approval.agentId))
-        .limit(1);
-      const account = ag ? await repo.loadAccount(orgId, ag.adAccountId) : null;
-      if (!account) {
-        logger.warn({ approvalId, agentId: approval.agentId }, "approval-apply:conta não encontrada");
-        await ports.approval.resolve(approval.id, { status: "blocked", resolvedReason: "conta indisponível" });
-        await pushOutcome("Não consegui aplicar: a conta está indisponível no momento.");
-        return;
-      }
-
-      // guardrail ATUAL (config pode ter mudado desde a proposta) + contexto cross-run.
-      const [guardrailRow] = await db
-        .select()
-        .from(guardrailConfigs)
-        .where(and(eq(guardrailConfigs.agentId, approval.agentId), eq(guardrailConfigs.orgId, orgId)))
-        .limit(1);
-      const cfg = toGuardrailConfig(guardrailRow);
-      const daily = await loadDailyToolContext(db, approval.agentId);
-      const check = applyGuardrails([approval.action], cfg, {
-        touchedToday: daily.touchedToday,
-        budgetChangedToday: daily.budgetChangedToday,
+      const outcome = await applyConfirmedAction(deps, {
+        orgId,
+        agentId: approval.agentId,
+        action: approval.action,
+        runId: approval.runId,
+        idempotencyKey: `${approval.id}:apply`,
       });
-      if (check.allowed.length === 0) {
-        const reason = check.dropped[0]?.reason ?? "barrada pelo guardrail";
-        await ports.approval.resolve(approval.id, { status: "blocked", resolvedReason: reason });
-        logger.info({ approvalId, reason }, "approval-apply:barrada no re-check");
-        await pushOutcome(`Não apliquei${suffix}: ${reason}.`);
-        return;
-      }
 
-      // aplica a versão CLAMPADA (o que o guardrail liberou) — re-lê fresco no executor.
-      const action = check.allowed[0]!;
-      const accessToken = ports.vault.decrypt(account.tokenCripto);
-      const ref = { adAccountId: account.metaAdAccountId, accessToken };
-      let done: Awaited<ReturnType<typeof executor.execute>>;
-      try {
-        done = await executor.execute({
-          runId: approval.runId,
-          orgId,
-          account: ref,
-          action,
-          idempotencyKey: `${approval.id}:apply`,
-          dryRun: cfg.dryRun,
-        });
-      } catch (err) {
-        // falha da Meta (rede/rate-limit/etc): mantém a aprovação PENDENTE (dá p/ reaprovar)
-        // e avisa o usuário — a promessa de "te aviso o resultado" não pode sumir (§UX).
-        logger.error({ approvalId, err }, "approval-apply:execute falhou");
-        await pushOutcome(`Não consegui aplicar agora${suffix} — a Meta não respondeu. Tenta de novo em instantes.`);
-        return;
+      switch (outcome.kind) {
+        case "failed":
+          // falha da Meta (rede/rate-limit/etc): mantém a aprovação PENDENTE (dá p/ reaprovar)
+          // e avisa o usuário — a promessa de "te aviso o resultado" não pode sumir (§UX).
+          logger.error({ approvalId, err: outcome.error }, "approval-apply:execute falhou");
+          await pushOutcome(`Não consegui aplicar agora${suffix} — a Meta não respondeu. Tenta de novo em instantes.`);
+          return;
+        case "blocked":
+          await ports.approval.resolve(approval.id, { status: "blocked", resolvedReason: outcome.reason });
+          logger.info({ approvalId, reason: outcome.reason }, "approval-apply:barrada no re-check");
+          await pushOutcome(`Não apliquei${suffix}: ${outcome.reason}.`);
+          return;
+        case "noop":
+          await ports.approval.resolve(approval.id, {
+            status: "blocked",
+            resolvedReason: "a entidade já estava no estado desejado",
+          });
+          logger.info({ approvalId }, "approval-apply:no-op (já no estado)");
+          await pushOutcome(`Não precisei mexer${suffix} — já estava no estado desejado.`);
+          return;
+        case "applied":
+          await ports.approval.resolve(approval.id, { status: "approved" });
+          logger.info({ approvalId, dryRun: outcome.dryRun }, "approval-apply:aplicada");
+          await pushOutcome(outcome.dryRun ? `🧪 Simulei a ação${suffix} (dry-run).` : `✅ Apliquei${suffix}.`);
+          return;
       }
-
-      // escrita real que não mexeu em nada = alvo já no estado desejado → barrada honesta.
-      if (!done.dryRun && isNoWrite(done.result)) {
-        await ports.approval.resolve(approval.id, {
-          status: "blocked",
-          resolvedReason: "a entidade já estava no estado desejado",
-        });
-        logger.info({ approvalId }, "approval-apply:no-op (já no estado)");
-        await pushOutcome(`Não precisei mexer${suffix} — já estava no estado desejado.`);
-        return;
-      }
-
-      await ports.approval.resolve(approval.id, { status: "approved" });
-      logger.info({ approvalId, dryRun: done.dryRun }, "approval-apply:aplicada");
-      await pushOutcome(done.dryRun ? `🧪 Simulei a ação${suffix} (dry-run).` : `✅ Apliquei${suffix}.`);
     },
     { connection },
   );
