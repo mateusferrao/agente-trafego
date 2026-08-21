@@ -182,11 +182,14 @@ async function recordConversationUsage(
   try {
     const usageEventId = await deps.ports.metering.record({
       orgId: ctx.orgId as OrgId,
+      // atribui o custo do chat à conta em foco/contexto (Fatia 6c) — sai do balde
+      // "sem conta"; concierge sem foco → adAccountId ausente (fica org-only).
+      ...(ctx.adAccountId ? { adAccountId: ctx.adAccountId } : {}),
       type: "conversation",
       provider: "openrouter",
       model,
       ...usage,
-      payload: { contactId: ctx.contactId },
+      payload: { contactId: ctx.contactId, conversationId: ctx.conversationId },
     });
     if (needsCostFallback(usage, response.id)) {
       // fire-and-forget: o custo chega depois (patch), a resposta não espera.

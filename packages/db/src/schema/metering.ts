@@ -2,6 +2,7 @@ import { index, integer, jsonb, numeric, pgTable, text, uuid } from "drizzle-orm
 import { pk, timestamps } from "./_shared.js";
 import { orgs } from "./tenancy.js";
 import { agentRuns } from "./execution.js";
+import { adAccounts } from "./integrations.js";
 
 /**
  * Metering genérico (type + payload_json) → novas dimensões de uso/cobrança
@@ -15,6 +16,9 @@ export const usageEvents = pgTable(
       .notNull()
       .references(() => orgs.id, { onDelete: "cascade" }),
     runId: uuid("run_id").references(() => agentRuns.id, { onDelete: "set null" }),
+    // Atribuição direta de custo à conta (Fatia 6c) — preenchido no chat (conta em
+    // foco) e nos runs (via backfill/join). Nullable: chat sem foco/concierge = org-only.
+    adAccountId: uuid("ad_account_id").references(() => adAccounts.id, { onDelete: "set null" }),
     type: text("type").notNull(),
     payloadJson: jsonb("payload_json").$type<Record<string, unknown>>().notNull().default({}),
     provider: text("provider"),
@@ -27,6 +31,7 @@ export const usageEvents = pgTable(
   },
   (t) => [
     index("usage_events_org_idx").on(t.orgId),
+    index("usage_events_account_idx").on(t.adAccountId),
     index("usage_events_type_idx").on(t.type),
     // agregações de billing por período fazem range em created_at (6b).
     index("usage_events_created_idx").on(t.createdAt),

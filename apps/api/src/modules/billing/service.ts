@@ -61,9 +61,9 @@ export function createBillingService(deps: BillingDeps) {
 
     /**
      * Painel de custos do owner (economia unitária, 6b) num range por dia:
-     * total + série diária (byDay) + por tipo + rollup por conta
-     * (usage_events→agent_runs→agents→ad_accounts). Custo de chat (run_id null) não
-     * mapeia a conta → vira `unattributedCostUsd`. Tudo org-scoped, range [start,end).
+     * total + série diária (byDay) + por tipo + rollup por conta. Atribuição por
+     * conta (6c) = ad_account_id DIRETO (chat) ou run→agente→conta (runs); evento
+     * sem nenhum dos dois (chat sem foco) → `unattributedCostUsd`. Org-scoped, [start,end).
      */
     async costs(orgId: OrgId, since: string, until: string): Promise<CostsOutput> {
       const { start, end } = dayRangeBounds(since, until);
@@ -106,7 +106,9 @@ export function createBillingService(deps: BillingDeps) {
         byDay.push({ date: key, costUsd: dayMap.get(key) ?? 0 });
       }
 
-      // por conta (só linhas com run→agente→conta; chat/run_id null cai no não-atribuído).
+      // por conta: atribui pelo ad_account_id DIRETO (chat, Fatia 6c) ou, na falta,
+      // via run→agente→conta (runs; backfill preenche o direto também). COALESCE cobre
+      // os dois; evento sem nenhum dos dois (chat sem foco) cai no não-atribuído.
       const acctRows = await deps.db
         .select({
           accountId: adAccounts.id,
@@ -114,9 +116,12 @@ export function createBillingService(deps: BillingDeps) {
           total: sql<string | null>`sum(${usageEvents.cost})`,
         })
         .from(usageEvents)
-        .innerJoin(agentRuns, eq(usageEvents.runId, agentRuns.id))
-        .innerJoin(agents, eq(agentRuns.agentId, agents.id))
-        .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
+        .leftJoin(agentRuns, eq(usageEvents.runId, agentRuns.id))
+        .leftJoin(agents, eq(agentRuns.agentId, agents.id))
+        .innerJoin(
+          adAccounts,
+          eq(sql`coalesce(${usageEvents.adAccountId}, ${agents.adAccountId})`, adAccounts.id),
+        )
         .where(inRange)
         .groupBy(adAccounts.id, adAccounts.name);
       const byAccount = acctRows

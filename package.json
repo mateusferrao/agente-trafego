@@ -22,6 +22,7 @@
     "access:revoke": "tsx --env-file=.env apps/api/src/scripts/access.ts revoke",
     "access:list": "tsx --env-file=.env apps/api/src/scripts/access.ts list",
     "backfill:access": "tsx --env-file=.env apps/api/src/scripts/backfill-access.ts",
+    "backfill:usage-account": "tsx --env-file=.env apps/api/src/scripts/backfill-usage-account.ts",
     "api:generate": "pnpm --filter @trafego/api openapi && pnpm --filter web api:generate"
   },
   "dependencies": {

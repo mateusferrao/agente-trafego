@@ -477,6 +477,8 @@ export interface CreativeVisionResult {
 export interface UsageEvent {
   readonly orgId: OrgId;
   readonly runId?: RunId;
+  /** Conta atribuída diretamente (Fatia 6c) — chat (conta em foco) e runs (backfill). */
+  readonly adAccountId?: string;
   readonly type: string; // genérico/extensível
   readonly payload: Readonly<Record<string, unknown>>;
   readonly provider?: string;

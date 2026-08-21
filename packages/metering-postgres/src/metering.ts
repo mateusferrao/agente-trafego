@@ -25,6 +25,7 @@ export function createPostgresMetering(db: Database): MeteringPort {
         .values({
           orgId: event.orgId,
           ...(event.runId ? { runId: event.runId } : {}),
+          ...(event.adAccountId ? { adAccountId: event.adAccountId } : {}),
           type: event.type,
           payloadJson: event.payload,
           ...(event.provider ? { provider: event.provider } : {}),
