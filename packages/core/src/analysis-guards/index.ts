@@ -1,4 +1,4 @@
-import type { AccountBrief, DecisionEligibility, EntitySummary, FunnelSummary, InsightMetrics } from "@trafego/shared";
+import type { AccountBrief, ConversionBasis, DecisionEligibility, EntitySummary, FunnelSummary, InsightMetrics, TrackingHealth } from "@trafego/shared";
 import type { AnalysisFinding, AnalysisOutput, RecommendationActionType } from "@trafego/shared";
 
 /**
@@ -126,6 +126,47 @@ export function guardScaleWithoutSignificance(
       actionType: "investigate" as RecommendationActionType,
       rationale: `${r.rationale}\n[guard] escalar → investigar: ${why}.`,
       budgetChangePct: null,
+    };
+  });
+  return { ...output, recommendations };
+}
+
+// ─── Guard de tracking furado (Fatia Bloco 2) ─────────────────────────────
+// Sobre o sinal de conta `detectTrackingHealth`: quando a medição de venda parece
+// incompleta, anexa um CAVEAT (não rebaixa) às recomendações que MATARIAM uma
+// entidade por CPA de venda — mas só nas de base `target` (a venda É o objetivo
+// medido ali); `proxy` já não é julgada por venda, então não recebe caveat.
+
+/** Ações que reduzem/matam investimento (onde o CPA de venda inflado engana). */
+const KILL_ACTIONS: ReadonlySet<RecommendationActionType> = new Set(["pause", "decrease_budget"]);
+
+/** Mapa `externalId → conversionBasis` a partir dos segmentos do brief. */
+export function basisByEntity(brief: AccountBrief): Map<string, ConversionBasis> {
+  const map = new Map<string, ConversionBasis>();
+  for (const level of [brief.segments.campaigns, brief.segments.adsets, brief.segments.ads]) {
+    for (const e of level) if (e.conversionBasis) map.set(e.id, e.conversionBasis);
+  }
+  return map;
+}
+
+/**
+ * Anexa caveat de medição às pausas/cortes por CPA de venda em entidades base
+ * `target`, quando o sinal de conta é suspeito. Puro: só acrescenta ao `rationale`
+ * (o dono decide); não remove nem rebaixa. Sem sinal → passa direto.
+ */
+export function guardTrackingCaveat(
+  output: AnalysisOutput,
+  basis: ReadonlyMap<string, ConversionBasis>,
+  tracking: TrackingHealth | undefined,
+): AnalysisOutput {
+  if (!tracking?.suspect) return output;
+  const recommendations = output.recommendations.map((r) => {
+    if (!KILL_ACTIONS.has(r.actionType)) return r;
+    const id = r.targetEntity?.externalId;
+    if (!id || basis.get(id) !== "target") return r;
+    return {
+      ...r,
+      rationale: `${r.rationale}\n[tracking] a medição de vendas parece incompleta (${tracking.funnelStarted} conversas × ${tracking.trackedConversions} vendas rastreadas) — confirme pixel/CAPI antes de pausar por CPA de venda.`,
     };
   });
   return { ...output, recommendations };

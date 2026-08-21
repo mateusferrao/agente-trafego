@@ -415,6 +415,22 @@ export interface AgentGoals {
   readonly customConversionId?: string;
 }
 
+/**
+ * Saúde da MEDIÇÃO de conversão da conta (§Bloco 2). Sinaliza, de forma
+ * determinística, que a atribuição de venda/lead parece incompleta — muito funil
+ * (conversas) e pouquíssima conversão de negócio rastreada — p/ o agente não
+ * decidir por CPA de venda enganoso. Hipótese, nunca veredito.
+ */
+export interface TrackingHealth {
+  readonly suspect: boolean;
+  /** conversas (conversation_started) agregadas da conta. */
+  readonly funnelStarted: number;
+  /** conversões de negócio RASTREADAS agregadas (meta do agente). */
+  readonly trackedConversions: number;
+  /** razão conversas / max(conversões,1) — quanto maior, mais suspeita a medição. */
+  readonly ratio: number;
+}
+
 export interface AccountBrief {
   readonly account: {
     readonly id: string;
@@ -434,6 +450,8 @@ export interface AccountBrief {
   readonly anomalies: readonly Anomaly[];
   /** Funil de messaging agregado da conta (secundário; qualidade do lead do ICP). */
   readonly funnel?: FunnelSummary;
+  /** Saúde da medição de conversão (§Bloco 2) — presente só quando suspeita. */
+  readonly trackingHealth?: TrackingHealth;
   readonly creatives: readonly Creative[]; // só flagados (com imagem p/ visão)
   readonly playbookCandidates: readonly CandidateAction[];
   readonly memory: {

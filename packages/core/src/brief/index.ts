@@ -16,12 +16,14 @@ import type {
   FunnelSummary,
   InsightMetrics,
   InsightRow,
+  TrackingHealth,
   TrendPoint,
 } from "@trafego/shared";
 import { classifyBasis, resolveConversion, type ResolvedConversion } from "../conversion/index.js";
 import { computeFunnelSummary, mergeFunnel } from "../funnel/index.js";
 import type { CostReferenceBand, OutcomeKind } from "../benchmarks/index.js";
 import { DEFAULT_QUALITY_THRESHOLDS, type QualityThresholds, enrichEntitiesQuality } from "../quality/index.js";
+import { detectTrackingHealth } from "../tracking/index.js";
 import { buildCampaignUnits } from "./campaign-units.js";
 
 export { buildCampaignUnits, type BuildCampaignUnitsInput } from "./campaign-units.js";
@@ -316,6 +318,7 @@ export interface AssembleBriefInput {
   readonly ads: readonly EntitySummary[];
   readonly anomalies: readonly Anomaly[];
   readonly funnel?: FunnelSummary;
+  readonly trackingHealth?: TrackingHealth;
   readonly creatives: readonly Creative[];
   readonly playbookCandidates: readonly CandidateAction[];
   readonly memory: AccountBrief["memory"];
@@ -341,6 +344,7 @@ export function assembleBrief(input: AssembleBriefInput): AccountBrief {
     },
     anomalies: input.anomalies,
     ...(input.funnel ? { funnel: input.funnel } : {}),
+    ...(input.trackingHealth ? { trackingHealth: input.trackingHealth } : {}),
     creatives: input.creatives,
     playbookCandidates: input.playbookCandidates,
     memory: input.memory,
@@ -441,6 +445,15 @@ export function buildAccountBrief(input: BuildAccountBriefInput): BuildAccountBr
     mergeFunnel(input.rows.filter((r) => r.level === "account").map((r) => r.funnel ?? [])),
   );
 
+  // Saúde da medição (§Bloco 2): muito funil × pouca conversão de negócio rastreada.
+  const qt = input.qualityThresholds ?? DEFAULT_QUALITY_THRESHOLDS;
+  const trackingHealth = detectTrackingHealth({
+    ...(input.goals.conversionGoal ? { conversionGoal: input.goals.conversionGoal } : {}),
+    funnelStarted: accountFunnel?.counts.conversation_started ?? 0,
+    trackedConversions: totals.conversions ?? 0,
+    thresholds: { ratio: qt.trackingBrokenRatio, minFunnel: qt.trackingBrokenMinFunnel },
+  });
+
   const brief = assembleBrief({
     account: { ...input.account, window: input.window, baselineWindow: input.baselineWindow },
     goals: input.goals,
@@ -454,6 +467,7 @@ export function buildAccountBrief(input: BuildAccountBriefInput): BuildAccountBr
     ads: selectedByLevel.get("ad") ?? [],
     anomalies,
     ...(accountFunnel ? { funnel: accountFunnel } : {}),
+    ...(trackingHealth ? { trackingHealth } : {}),
     creatives: [], // visão entra por-unidade no map-reduce (3b-2), não no brief da conta
     playbookCandidates: input.playbookCandidates,
     memory: input.memory ?? EMPTY_MEMORY,

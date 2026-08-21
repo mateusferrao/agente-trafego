@@ -207,6 +207,8 @@ export async function buildComposition(): Promise<WorkerDeps> {
         fatigueCostRisePct: env.ANALYSIS_QUALITY_FATIGUE_COST_RISE_PCT,
         zombieMinSpend: env.ANALYSIS_QUALITY_ZOMBIE_MIN_SPEND,
         coldStartReference: env.ANALYSIS_QUALITY_COLD_START_REFERENCE,
+        trackingBrokenRatio: env.ANALYSIS_QUALITY_TRACKING_BROKEN_RATIO,
+        trackingBrokenMinFunnel: env.ANALYSIS_QUALITY_TRACKING_BROKEN_MIN_FUNNEL,
       },
     },
     insights: {

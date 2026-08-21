@@ -128,5 +128,7 @@ function resolveQuality(raw: unknown, defaults: QualityThresholds | undefined): 
     fatigueCostRisePct: nonNeg(mc.fatigueCostRisePct) ?? d.fatigueCostRisePct,
     zombieMinSpend: nonNeg(mc.zombieMinSpend) ?? d.zombieMinSpend,
     coldStartReference: typeof mc.coldStartReference === "boolean" ? mc.coldStartReference : d.coldStartReference,
+    trackingBrokenRatio: pos(mc.trackingBrokenRatio) ?? d.trackingBrokenRatio,
+    trackingBrokenMinFunnel: nonNeg(mc.trackingBrokenMinFunnel) ?? d.trackingBrokenMinFunnel,
   };
 }

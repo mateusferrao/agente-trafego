@@ -23,6 +23,8 @@ import {
   dropUnsupportedFindings,
   eligibilityByEntity,
   guardScaleWithoutSignificance,
+  guardTrackingCaveat,
+  basisByEntity,
   evaluatePlaybook,
   flagUnsupportedFindings,
   entityKeyOf,
@@ -505,7 +507,10 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const dropped = dropUnsupportedFindings(reviewed, state.brief);
     // guard de significância (6c): rebaixa escalar sem base → investigar (rede final,
     // roda ANTES de decide_actions → vale também pro caminho autônomo 5a).
-    const final = guardScaleWithoutSignificance(dropped, eligibilityByEntity(state.brief));
+    const guarded = guardScaleWithoutSignificance(dropped, eligibilityByEntity(state.brief));
+    // guard de tracking (Bloco 2): caveat nas pausas por CPA de venda quando a
+    // medição da conta parece incompleta (não rebaixa; só anexa ao rationale).
+    const final = guardTrackingCaveat(guarded, basisByEntity(state.brief), state.brief.trackingHealth);
     const findings: Finding[] = final.findings.map((f) => ({
       title: f.title,
       detail: f.detail,
@@ -911,6 +916,7 @@ function buildMetricsSnapshot(state: AccountAnalysisStateType): Record<string, u
       ...(t.roas !== undefined ? { roas: t.roas } : {}),
     },
     ...(state.brief.funnel ? { funnel: state.brief.funnel } : {}),
+    ...(state.brief.trackingHealth ? { trackingHealth: state.brief.trackingHealth } : {}),
     ...(state.analysisOutput?.scorecard ? { scorecard: state.analysisOutput.scorecard } : {}),
     // recorte por campanha congelado no run (base do histórico por-run).
     ...(cards.length > 0 ? { campaigns: cards } : {}),

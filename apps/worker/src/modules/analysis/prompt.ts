@@ -40,6 +40,13 @@ const FUNNEL_NOTE =
   "profundidade, com taxas. Trate como QUALIDADE do lead (não só volume): taxa de resposta/" +
   "profundidade baixa é problema mesmo com muitas conversas.";
 
+const TRACKING_NOTE =
+  "Se o briefing trouxer 'trackingHealth' (suspect=true), a MEDIÇÃO de venda/lead da conta parece " +
+  "incompleta: há muita conversa e pouquíssima conversão de negócio rastreada. Trate como HIPÓTESE " +
+  "(nunca veredito): provavelmente as vendas fecham fora do rastreio (ex: atendimento no WhatsApp) e " +
+  "não voltam pro pixel/CAPI. NÃO conclua que os anúncios vão mal só pelo CPA de venda; recomende " +
+  "conferir pixel/CAPI antes de pausar/cortar por CPA de venda, e apoie-se no funil como qualidade.";
+
 /** Honestidade do descasamento meta-de-negócio × objetivo da entidade (Fatia 4). */
 const MISMATCH_NOTE =
   "Cada entidade traz 'conversionBasis': 'target' = o CPA/ROAS mostrado É a conversão de " +
@@ -152,6 +159,7 @@ export function buildSynthesisMessages(
       "priorize o que mais importa, agrupe temas repetidos e proponha as recomendações de maior impacto.",
     GROUNDING_RULE,
     FUNNEL_NOTE,
+    TRACKING_NOTE,
     MISMATCH_NOTE,
     QUALITY_NOTE,
     DIAGNOSIS_NOTE,

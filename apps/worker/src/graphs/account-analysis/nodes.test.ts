@@ -153,6 +153,8 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
         fatigueCostRisePct: 30,
         zombieMinSpend: 50,
         coldStartReference: true,
+        trackingBrokenRatio: 50,
+        trackingBrokenMinFunnel: 50,
       },
     },
     webOrigin: "https://app.example.com",

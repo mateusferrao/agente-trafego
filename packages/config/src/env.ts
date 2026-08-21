@@ -166,6 +166,9 @@ export const envSchema = z.object({
   ANALYSIS_QUALITY_ZOMBIE_MIN_SPEND: z.coerce.number().nonnegative().default(50),
   // Mostrar a referência de plataforma no cold-start (sem meta E sem histórico).
   ANALYSIS_QUALITY_COLD_START_REFERENCE: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
+  // Tracking furado (§Bloco 2): conversas/max(conversões,1) acima da razão + piso de conversas.
+  ANALYSIS_QUALITY_TRACKING_BROKEN_RATIO: z.coerce.number().positive().default(50),
+  ANALYSIS_QUALITY_TRACKING_BROKEN_MIN_FUNNEL: z.coerce.number().nonnegative().default(50),
 
   // ─── Cadência (cron por conta — 3b) ────────────────────────────────────
   // Default global da cadência (a UI de edição por-conta = Fatia 4). Cron 5-campos.

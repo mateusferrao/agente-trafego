@@ -36,6 +36,10 @@ export interface QualityThresholds {
   readonly zombieMinSpend: number;
   /** mostrar a referência de plataforma no cold-start (sem meta E sem histórico). */
   readonly coldStartReference: boolean;
+  /** tracking furado (§Bloco 2): conversas/max(conversões,1) acima disso = suspeita. */
+  readonly trackingBrokenRatio: number;
+  /** tracking furado: volume mínimo de conversas p/ sequer considerar a suspeita. */
+  readonly trackingBrokenMinFunnel: number;
 }
 
 export const DEFAULT_QUALITY_THRESHOLDS: QualityThresholds = {
@@ -47,6 +51,8 @@ export const DEFAULT_QUALITY_THRESHOLDS: QualityThresholds = {
   fatigueCostRisePct: 30,
   zombieMinSpend: 50,
   coldStartReference: true,
+  trackingBrokenRatio: 50,
+  trackingBrokenMinFunnel: 50,
 };
 
 // ─── Elegibilidade de decisão ─────────────────────────────────────────────
