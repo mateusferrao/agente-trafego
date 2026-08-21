@@ -109,15 +109,17 @@ const REASON_TONE: Record<Reason, TimelineTone> = {
             <div class="flex items-end justify-between gap-2">
               <div class="flex flex-col gap-0.5">
                 <h2 class="font-brand text-sm font-semibold text-ink">Suas contas</h2>
-                @if (d.panorama.length > topN) {
-                  <span class="text-xs text-muted">as {{ topN }} de maior gasto · {{ d.panorama.length }} no total</span>
-                }
+                <span class="text-xs text-muted">
+                  @if (d.panorama.length > topN) {
+                    as {{ topN }} de maior gasto · {{ d.panorama.length }} no total
+                  } @else {
+                    ordenadas por gasto
+                  }
+                </span>
               </div>
-              @if (d.panorama.length > topN) {
-                <a routerLink="/accounts" class="shrink-0 text-xs font-medium text-accent-strong hover:text-ink">
-                  ver todas →
-                </a>
-              }
+              <a routerLink="/accounts" class="shrink-0 text-xs font-medium text-accent-strong hover:text-ink">
+                ver todas →
+              </a>
             </div>
             <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               @for (c of d.panorama.slice(0, topN); track c.accountId) {
