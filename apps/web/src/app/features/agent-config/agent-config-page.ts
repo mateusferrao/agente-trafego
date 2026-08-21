@@ -9,7 +9,7 @@ import {
 } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { toast } from 'ngx-sonner';
-import { UiButton, UiPageHeader, UiSelectBox, UiSpinner, type UiSelectOptionItem } from '@ui';
+import { UiButton, UiConfirmDialogService, UiPageHeader, UiSelectBox, UiSpinner, type UiSelectOptionItem } from '@ui';
 import { AccountsApiService } from '@core/api/accounts-api.service';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import type {
@@ -565,6 +565,7 @@ export class AgentConfigPage {
   private readonly route = inject(ActivatedRoute);
   private readonly accountsApi = inject(AccountsApiService);
   private readonly analysisApi = inject(AnalysisApiService);
+  private readonly confirmDialog = inject(UiConfirmDialogService);
   private readonly destroyRef = inject(DestroyRef);
 
   protected readonly accountId = this.route.snapshot.paramMap.get('id') ?? '';
@@ -738,11 +739,16 @@ export class AgentConfigPage {
   }
 
   /** Troca de arquétipo: confirma (reaplica padrões) e re-semeia via backend. */
-  protected onArchetypeChange(next: string): void {
+  protected async onArchetypeChange(next: string): Promise<void> {
     if (next === this.archetype()) return;
-    const ok = window.confirm(
-      'Trocar o arquétipo reaplica persona, tom e método padrão dele. Sua meta, contexto e orientações são preservados. Continuar?',
-    );
+    const ok = await this.confirmDialog.confirm({
+      title: 'Trocar o arquétipo?',
+      description:
+        'Reaplica persona, tom e método padrão dele. Sua meta, contexto e orientações são preservados.',
+      confirmLabel: 'Trocar',
+      tone: 'warning',
+    });
+    // cancelou → o select reverte sozinho (é controlado por [value]="archetype()").
     if (!ok) return;
     this.analysisApi.reseedArchetype(this.accountId, next).subscribe({
       next: (agent) => {
