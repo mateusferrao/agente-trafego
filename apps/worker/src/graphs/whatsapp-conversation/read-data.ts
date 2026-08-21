@@ -511,14 +511,16 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
   );
 
   const getMetrics = tool(
-    async ({ periodDays }: { periodDays: number }) => {
-      logger.debug({ adAccountId: ctx.adAccountId, periodDays }, "tool:get_metrics");
-      return asString(await getMetricsData(db, ctx.adAccountId, ctx.orgId, periodDays));
+    async ({ periodDays }: { periodDays?: number | null }) => {
+      const days = periodDays ?? DEFAULT_METRICS_PERIOD_DAYS;
+      logger.debug({ adAccountId: ctx.adAccountId, periodDays: days }, "tool:get_metrics");
+      return asString(await getMetricsData(db, ctx.adAccountId, ctx.orgId, days));
     },
     {
       name: "get_metrics",
       description: "Gasto total da conta nos últimos N dias (default 7). Só gasto — não deriva CPA/ROAS.",
-      schema: z.object({ periodDays: z.number().int().positive().default(DEFAULT_METRICS_PERIOD_DAYS) }),
+      // nullable+optional: structured-output exige que campo omissível seja nullable.
+      schema: z.object({ periodDays: z.number().int().positive().nullable().optional() }),
     },
   );
 
@@ -536,7 +538,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
   );
 
   const findRecentActions = tool(
-    async ({ name }: { name?: string }) => {
+    async ({ name }: { name?: string | null }) => {
       logger.debug({ agentId: ctx.agentId, name }, "tool:find_recent_actions");
       return asString(await findRecentActionsData(db, ctx.agentId, name ? { nameFilter: name } : {}));
     },
@@ -544,7 +546,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
       name: "find_recent_actions",
       description:
         "Ações recentes que VOCÊ aplicou e que dá pra desfazer (id, tipo, campanha, quando). Use para 'desfaz isso' (a mais recente) ou 'desfaz a pausa da X' (filtra por nome). Passe o id para revert_action.",
-      schema: z.object({ name: z.string().optional() }),
+      schema: z.object({ name: z.string().nullable().optional() }),
     },
   );
 
@@ -573,14 +575,15 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
   );
 
   const comparePeriods = tool(
-    async ({ periodDays }: { periodDays: number }) => {
-      logger.debug({ adAccountId: ctx.adAccountId, periodDays }, "tool:compare_periods");
-      return asString(await comparePeriodsData(db, ctx.adAccountId, ctx.orgId, periodDays));
+    async ({ periodDays }: { periodDays?: number | null }) => {
+      const days = periodDays ?? DEFAULT_METRICS_PERIOD_DAYS;
+      logger.debug({ adAccountId: ctx.adAccountId, periodDays: days }, "tool:compare_periods");
+      return asString(await comparePeriodsData(db, ctx.adAccountId, ctx.orgId, days));
     },
     {
       name: "compare_periods",
       description: "Compara o gasto da conta em duas janelas contíguas (esta vs a anterior de N dias) + variação %.",
-      schema: z.object({ periodDays: z.number().int().positive().default(DEFAULT_METRICS_PERIOD_DAYS) }),
+      schema: z.object({ periodDays: z.number().int().positive().nullable().optional() }),
     },
   );
 

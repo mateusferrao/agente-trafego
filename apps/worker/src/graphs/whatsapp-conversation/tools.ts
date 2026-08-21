@@ -168,8 +168,9 @@ export function makeConversationTools(
     schema: z.object({
       ...writeSchema,
       mode: z.enum(["increase", "decrease", "set"]),
-      pct: z.number().positive().optional().describe("magnitude % (só para increase/decrease)"),
-      amountReais: z.number().positive().optional().describe("valor absoluto em reais (só para mode set)"),
+      // nullable+optional: o structured-output exige que campo omissível seja nullable.
+      pct: z.number().positive().nullable().optional().describe("magnitude % (só para increase/decrease)"),
+      amountReais: z.number().positive().nullable().optional().describe("valor absoluto em reais (só para mode set)"),
     }),
   });
 
@@ -250,10 +251,13 @@ export function actionFromToolCall(name: string, args: Record<string, unknown>, 
   if (name === "adjust_budget") {
     const mode = String(args["mode"] ?? "");
     if (mode === BUDGET_MODE_SET) {
+      // == null cobre o `null` que o structured-output manda no campo não usado do outro modo.
+      if (args["amountReais"] == null) return null;
       const reais = Number(args["amountReais"]);
       if (!Number.isFinite(reais)) return null;
       return { ...base, params: { [ACTION_PARAM_MODE]: mode, [ACTION_PARAM_AMOUNT_MINOR]: Math.round(reais * 100) } };
     }
+    if (args["pct"] == null) return null;
     const pct = Number(args["pct"]);
     if (!Number.isFinite(pct)) return null;
     return { ...base, params: { [ACTION_PARAM_MODE]: mode, [ACTION_PARAM_PCT]: Math.abs(pct) } };
