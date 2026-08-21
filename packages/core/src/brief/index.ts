@@ -18,12 +18,14 @@ import type {
   InsightRow,
   TrackingHealth,
   TrendPoint,
+  WasteReport,
 } from "@trafego/shared";
 import { classifyBasis, resolveConversion, type ResolvedConversion } from "../conversion/index.js";
 import { computeFunnelSummary, mergeFunnel } from "../funnel/index.js";
 import type { CostReferenceBand, OutcomeKind } from "../benchmarks/index.js";
 import { DEFAULT_QUALITY_THRESHOLDS, type QualityThresholds, enrichEntitiesQuality } from "../quality/index.js";
 import { detectTrackingHealth } from "../tracking/index.js";
+import { computeWasteReport } from "../waste/index.js";
 import { buildCampaignUnits } from "./campaign-units.js";
 
 export { buildCampaignUnits, type BuildCampaignUnitsInput } from "./campaign-units.js";
@@ -319,6 +321,7 @@ export interface AssembleBriefInput {
   readonly anomalies: readonly Anomaly[];
   readonly funnel?: FunnelSummary;
   readonly trackingHealth?: TrackingHealth;
+  readonly waste?: WasteReport;
   readonly creatives: readonly Creative[];
   readonly playbookCandidates: readonly CandidateAction[];
   readonly memory: AccountBrief["memory"];
@@ -345,6 +348,7 @@ export function assembleBrief(input: AssembleBriefInput): AccountBrief {
     anomalies: input.anomalies,
     ...(input.funnel ? { funnel: input.funnel } : {}),
     ...(input.trackingHealth ? { trackingHealth: input.trackingHealth } : {}),
+    ...(input.waste ? { waste: input.waste } : {}),
     creatives: input.creatives,
     playbookCandidates: input.playbookCandidates,
     memory: input.memory,
@@ -454,6 +458,9 @@ export function buildAccountBrief(input: BuildAccountBriefInput): BuildAccountBr
     thresholds: { ratio: qt.trackingBrokenRatio, minFunnel: qt.trackingBrokenMinFunnel },
   });
 
+  // Desperdício + Pareto (§Bloco 2) sobre o conjunto COMPLETO de campanhas.
+  const waste = computeWasteReport(allByLevel.get("campaign") ?? []);
+
   const brief = assembleBrief({
     account: { ...input.account, window: input.window, baselineWindow: input.baselineWindow },
     goals: input.goals,
@@ -468,6 +475,7 @@ export function buildAccountBrief(input: BuildAccountBriefInput): BuildAccountBr
     anomalies,
     ...(accountFunnel ? { funnel: accountFunnel } : {}),
     ...(trackingHealth ? { trackingHealth } : {}),
+    ...(waste ? { waste } : {}),
     creatives: [], // visão entra por-unidade no map-reduce (3b-2), não no brief da conta
     playbookCandidates: input.playbookCandidates,
     memory: input.memory ?? EMPTY_MEMORY,

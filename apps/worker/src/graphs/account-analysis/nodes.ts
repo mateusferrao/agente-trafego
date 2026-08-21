@@ -26,6 +26,7 @@ import {
   guardKillWithoutMaturity,
   guardTrackingCaveat,
   basisByEntity,
+  annotateFreedSpend,
   evaluatePlaybook,
   flagUnsupportedFindings,
   entityKeyOf,
@@ -515,7 +516,13 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const guarded = guardKillWithoutMaturity(scaled, eligibility);
     // guard de tracking (Bloco 2): caveat nas pausas por CPA de venda quando a
     // medição da conta parece incompleta (não rebaixa; só anexa ao rationale).
-    const final = guardTrackingCaveat(guarded, basisByEntity(state.brief), state.brief.trackingHealth);
+    const caveated = guardTrackingCaveat(guarded, basisByEntity(state.brief), state.brief.trackingHealth);
+    // impacto (Bloco 2): anexa o gasto liberado a cada recomendação de pausa.
+    const spendById = new Map<string, number>();
+    for (const level of [state.brief.segments.campaigns, state.brief.segments.adsets, state.brief.segments.ads]) {
+      for (const e of level) spendById.set(e.id, e.metrics.spend ?? 0);
+    }
+    const final = annotateFreedSpend(caveated, spendById);
     const findings: Finding[] = final.findings.map((f) => ({
       title: f.title,
       detail: f.detail,
@@ -922,6 +929,7 @@ function buildMetricsSnapshot(state: AccountAnalysisStateType): Record<string, u
     },
     ...(state.brief.funnel ? { funnel: state.brief.funnel } : {}),
     ...(state.brief.trackingHealth ? { trackingHealth: state.brief.trackingHealth } : {}),
+    ...(state.brief.waste ? { waste: state.brief.waste } : {}),
     ...(state.analysisOutput?.scorecard ? { scorecard: state.analysisOutput.scorecard } : {}),
     // recorte por campanha congelado no run (base do histórico por-run).
     ...(cards.length > 0 ? { campaigns: cards } : {}),

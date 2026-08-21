@@ -40,6 +40,12 @@ const FUNNEL_NOTE =
   "profundidade, com taxas. Trate como QUALIDADE do lead (não só volume): taxa de resposta/" +
   "profundidade baixa é problema mesmo com muitas conversas.";
 
+const WASTE_NOTE =
+  "Se o briefing trouxer 'waste', LIDERE por ele (o 'money shot'): diga em reais quanto está sendo " +
+  "queimado ('wastedSpend' = campanhas paradas/sem resultado, com % do total) e onde o gasto está " +
+  "MAL ALOCADO ('pareto.misallocated' = leva muito gasto e entrega pouco resultado). Fale em dinheiro " +
+  "e ação (pausar libera R$X; realocar de A p/ B), não só em 'vai mal'.";
+
 const TRACKING_NOTE =
   "Se o briefing trouxer 'trackingHealth' (suspect=true), a MEDIÇÃO de venda/lead da conta parece " +
   "incompleta: há muita conversa e pouquíssima conversão de negócio rastreada. Trate como HIPÓTESE " +
@@ -159,6 +165,7 @@ export function buildSynthesisMessages(
       "priorize o que mais importa, agrupe temas repetidos e proponha as recomendações de maior impacto.",
     GROUNDING_RULE,
     FUNNEL_NOTE,
+    WASTE_NOTE,
     TRACKING_NOTE,
     MISMATCH_NOTE,
     QUALITY_NOTE,

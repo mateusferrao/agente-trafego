@@ -431,6 +431,47 @@ export interface TrackingHealth {
   readonly ratio: number;
 }
 
+/** Um item do Pareto de gasto × resultado (§Bloco 2). */
+export interface WasteParetoItem {
+  readonly id: string;
+  readonly name: string;
+  readonly spend: number;
+  /** % do gasto DO GRUPO (mesma base de conversão). */
+  readonly spendPct: number;
+  /** resultado do grupo (vendas/conversas/cliques conforme a base), quando derivável. */
+  readonly result?: number;
+  readonly resultPct?: number;
+}
+
+/**
+ * Concentração 80/20 dentro de UM grupo de mesma base de conversão (§Bloco 2) —
+ * nunca soma "conversa" com "venda". Grupo dominante = o de maior gasto.
+ */
+export interface WastePareto {
+  readonly basis: ConversionBasis;
+  readonly groupSpend: number;
+  /** entidades do grupo, maior gasto primeiro (com % de gasto × % de resultado). */
+  readonly items: readonly WasteParetoItem[];
+  /** má alocação: gasto alto e resultado desproporcionalmente baixo. */
+  readonly misallocated: readonly WasteParetoItem[];
+}
+
+/**
+ * Quantificação de desperdício (§Bloco 2) — o "money shot" da auditoria. Números
+ * de dinheiro determinísticos sobre o dado curado: quanto está sendo queimado
+ * (zumbis) e onde o gasto está mal alocado (Pareto por base). Computado sobre o
+ * conjunto COMPLETO de campanhas (não o brief podado), anexado ao AccountBrief.
+ */
+export interface WasteReport {
+  readonly totalSpend: number;
+  /** Σ gasto dos zumbis (campanhas com gasto relevante e zero sinal de vida). */
+  readonly wastedSpend: number;
+  readonly wastedPct: number;
+  /** zumbis (id/nome/gasto) — p/ UI e p/ o impacto liberado por recomendação de pausa. */
+  readonly zombies: readonly { readonly id: string; readonly name: string; readonly spend: number }[];
+  readonly pareto?: WastePareto;
+}
+
 export interface AccountBrief {
   readonly account: {
     readonly id: string;
@@ -452,6 +493,8 @@ export interface AccountBrief {
   readonly funnel?: FunnelSummary;
   /** Saúde da medição de conversão (§Bloco 2) — presente só quando suspeita. */
   readonly trackingHealth?: TrackingHealth;
+  /** Desperdício + concentração 80/20 (§Bloco 2) — o "money shot". */
+  readonly waste?: WasteReport;
   readonly creatives: readonly Creative[]; // só flagados (com imagem p/ visão)
   readonly playbookCandidates: readonly CandidateAction[];
   readonly memory: {
