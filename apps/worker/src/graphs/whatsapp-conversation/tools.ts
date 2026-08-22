@@ -433,7 +433,7 @@ export async function buildCapabilitiesText(
   }
   const parts: string[] = ["Aqui no WhatsApp eu consigo:"];
   parts.push(
-    "📊 Ler: status da conta, métricas, análise por campanha, recomendações, desperdício, comparar períodos, ver pendências e o panorama de todas as contas da organização.",
+    "📊 Ler: status da conta, métricas, dados ATUALIZADOS direto da Meta (hoje até 7 dias atrás, conta ou campanha), análise por campanha, recomendações, desperdício, comparar períodos, ver pendências e o panorama de todas as contas da organização.",
   );
   const writeVerbs = [...WRITE_TOOL_NAMES].filter((n) => allow.has(n)).map((n) => WRITE_VERB_PT[n]).filter(Boolean);
   if (writeVerbs.length > 0) {
@@ -524,6 +524,7 @@ export function actionFromToolCall(name: string, args: Record<string, unknown>, 
 export const AGENT_TOOL_NAMES: ReadonlySet<string> = new Set([
   "get_account_status",
   "get_metrics",
+  "get_fresh_metrics",
   "get_campaign_analysis",
   "get_entity_detail",
   "compare_periods",
