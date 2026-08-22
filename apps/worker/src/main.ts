@@ -15,6 +15,7 @@ import { startApprovalApplyWorker } from "./workers/approval-apply.js";
 import { startApprovalExpiryWorker } from "./workers/approval-expiry.js";
 import { startWebhookInboundWorker } from "./workers/webhook-inbound.js";
 import { startWhatsappFlushWorker } from "./workers/whatsapp-flush.js";
+import { startWhatsappTranscriptionWorker } from "./workers/whatsapp-transcription.js";
 import { startMailWorker } from "./workers/mail.js";
 import { drainPendingCostPatches } from "./graphs/whatsapp-conversation/nodes.js";
 import { makeAccountCron } from "./schedulers/account-cron.js";
@@ -54,6 +55,8 @@ async function main(): Promise<void> {
   const webhookInbound = startWebhookInboundWorker(deps, connection);
   // flush do debounce (5b-2.4): coalesce mensagens picadas → 1 turno do Grafo B.
   const whatsappFlush = startWhatsappFlushWorker(deps, connection);
+  // transcrição de nota de voz inbound: áudio → texto na borda (fila dedicada).
+  const whatsappTranscription = startWhatsappTranscriptionWorker(deps, connection);
 
   // entrega de email transacional (6b): verificação de email + reset de senha.
   const mail = startMailWorker(deps, connection);
@@ -72,7 +75,7 @@ async function main(): Promise<void> {
   await createRunReaper({ db: deps.db, logger, staleMinutes: deps.reaper.staleMinutes })
     .reapStale()
     .catch((err: unknown) => logger.error({ err }, "reaper:boot sweep falhou"));
-  logger.info("worker up: agent-runs + cron-dispatch + reaper + insights-sync + insights-sweep + schedule-resync + action-undo + approval-apply + approval-expiry + whatsapp-inbound + mail");
+  logger.info("worker up: agent-runs + cron-dispatch + reaper + insights-sync + insights-sweep + schedule-resync + action-undo + approval-apply + approval-expiry + whatsapp-inbound + whatsapp-transcription + mail");
 
   // shutdown gracioso (drena jobs em andamento antes de sair)
   const shutdown = async (signal: string): Promise<void> => {
@@ -89,6 +92,7 @@ async function main(): Promise<void> {
       approvalExpiry.close(),
       webhookInbound.close(),
       whatsappFlush.close(),
+      whatsappTranscription.close(),
       mail.close(),
     ]);
     // espera (com teto) os patches de custo do WhatsApp em voo — sem isso, todo

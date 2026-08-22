@@ -36,7 +36,7 @@ export async function isTranscribing(redis: Redis, conversationId: string): Prom
 
 /** (Re)agenda o flush da conversa (jobId = conversationId → reinicia a janela de debounce). */
 export async function scheduleConversationFlush(
-  flushQueue: Queue<WhatsappFlushPayload>,
+  flushQueue: Pick<Queue<WhatsappFlushPayload>, "add" | "remove">,
   payload: WhatsappFlushPayload,
   delayMs: number,
 ): Promise<void> {

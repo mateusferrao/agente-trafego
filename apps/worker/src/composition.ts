@@ -92,12 +92,14 @@ export interface WorkerDeps {
     /** Fallback de custo (bug do bindTools suprimindo usage.cost — ver nodes.ts). */
     readonly fetchGenerationCost: (generationId: string) => Promise<number | undefined>;
   };
-  /** Config da transcrição de áudio inbound (STT) — modelo/timeout vivem no adapter. */
+  /** Config da transcrição de áudio inbound (STT). Modelo vive no adapter. */
   readonly transcription: {
     /** dica ISO-639-1 (ex: "pt"); vazio = auto-detect do provider. */
     readonly language: string;
     /** teto de tamanho do áudio (MB) — acima disso, aviso amigável sem transcrever. */
     readonly maxAudioMb: number;
+    /** timeout (ms) por chamada — base do TTL-backstop da flag `wa:transcribing`. */
+    readonly timeoutMs: number;
   };
   /** Checkpointer do LangGraph (Postgres) — memória durável do chat (Grafo B, 5b-2). */
   readonly checkpointer: BaseCheckpointSaver;
@@ -259,6 +261,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
     transcription: {
       language: env.TRANSCRIPTION_LANGUAGE,
       maxAudioMb: env.TRANSCRIPTION_MAX_AUDIO_MB,
+      timeoutMs: env.TRANSCRIPTION_TIMEOUT_MS,
     },
     // checkpointer LangGraph (Postgres): memória durável da conversa do WhatsApp
     // (Grafo B ReAct, thread por conversa). setup() cria as tabelas (idempotente).
