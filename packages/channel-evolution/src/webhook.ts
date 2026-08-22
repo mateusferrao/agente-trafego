@@ -66,7 +66,52 @@ export function parseConnectionUpdate(payload: unknown): ConnectionStatus | null
   return null;
 }
 
-/** Extrai a mensagem inbound normalizada, ou null se deve ser ignorada. */
+/** Mime default de nota de voz do WhatsApp (ogg/opus) quando o payload não traz. */
+const DEFAULT_AUDIO_MIME = "audio/ogg";
+
+/** Nós de mídia reconhecidos mas NÃO suportados (não-texto, não-áudio) → rótulo neutro. */
+const UNSUPPORTED_MEDIA_NODES: ReadonlyArray<readonly [string, string]> = [
+  ["imageMessage", "image"],
+  ["videoMessage", "video"],
+  ["documentMessage", "document"],
+  ["stickerMessage", "sticker"],
+  ["contactMessage", "contact"],
+  ["locationMessage", "location"],
+];
+
+/** Primeiro base64 não-vazio entre os candidatos (ou "" se nenhum). */
+function firstBase64(...candidates: readonly unknown[]): string {
+  for (const c of candidates) {
+    if (typeof c === "string" && c.length > 0) return c;
+  }
+  return "";
+}
+
+/**
+ * Áudio (audioMessage/ptt) com bytes inline (webhook `base64:true`). O caminho
+ * exato do base64 varia por versão da Evolution → procura em candidatos; ausente
+ * → base64 vazio (o worker trata como falha amigável, nunca crash).
+ */
+function extractAudio(data: Record<string, unknown>): { base64: string; mimetype: string } | null {
+  const message = asRecord(data["message"]);
+  const audio = asRecord(message?.["audioMessage"]);
+  if (!audio) return null;
+  const rawMime = audio["mimetype"];
+  const mimetype = typeof rawMime === "string" && rawMime.length > 0 ? rawMime : DEFAULT_AUDIO_MIME;
+  const base64 = firstBase64(message?.["base64"], data["base64"], audio["base64"]);
+  return { base64, mimetype };
+}
+
+/** Mídia reconhecida mas não-suportada → rótulo neutro (ou null se não for). */
+function detectMediaType(message: Record<string, unknown> | null): string | null {
+  if (!message) return null;
+  for (const [node, label] of UNSUPPORTED_MEDIA_NODES) {
+    if (asRecord(message[node])) return label;
+  }
+  return null;
+}
+
+/** Extrai a mensagem inbound normalizada (união por `kind`), ou null se ignorar. */
 export function parseInbound(payload: unknown): InboundMessage | null {
   const root = asRecord(payload);
   if (!root) return null;
@@ -80,14 +125,22 @@ export function parseInbound(payload: unknown): InboundMessage | null {
   const from = jidToE164(typeof key["remoteJid"] === "string" ? (key["remoteJid"] as string) : "");
   if (!from) return null; // grupo / JID inválido
 
-  const text = extractText(asRecord(data["message"]));
-  if (!text) return null; // não-texto / vazio
-
   const messageId = key["id"];
   if (typeof messageId !== "string" || messageId.length === 0) return null;
-
   const instanceId = root["instance"];
   if (typeof instanceId !== "string" || instanceId.length === 0) return null;
 
-  return { instanceId, from, text, messageId, raw: root };
+  const base = { instanceId, from, messageId, raw: root } as const;
+  const message = asRecord(data["message"]);
+
+  const text = extractText(message);
+  if (text) return { ...base, kind: "text", text };
+
+  const audio = extractAudio(data);
+  if (audio) return { ...base, kind: "audio", audio };
+
+  const mediaType = detectMediaType(message);
+  if (mediaType) return { ...base, kind: "unsupported", mediaType };
+
+  return null; // sem conteúdo reconhecível (ACK/status/etc) → silêncio
 }

@@ -43,10 +43,15 @@ export function startWebhookInboundWorker(deps: WorkerDeps, connection: Redis): 
         return;
       }
 
-      // 2) mensagem: normaliza; null = ignorar (fromMe/ACK/grupo/não-texto).
+      // 2) mensagem: normaliza; null = ignorar (fromMe/ACK/grupo/sem conteúdo).
       const inbound = ports.messaging.parseInbound(raw);
       if (!inbound) {
         logger.debug({ jobId: job.id }, "inbound:ignored (unparseable)");
+        return;
+      }
+      // Áudio/mídia-não-suportada: ramos entram na S5 (transcrição + aviso). Por ora só texto flui.
+      if (inbound.kind !== "text") {
+        logger.debug({ jobId: job.id, kind: inbound.kind }, "inbound:ignored (kind pendente)");
         return;
       }
 
