@@ -208,6 +208,17 @@ export const envSchema = z.object({
   // Debounce do inbound: coalesce mensagens picadas do mesmo contato num turno só.
   CONVERSATION_DEBOUNCE_SECONDS: z.coerce.number().int().nonnegative().default(5),
 
+  // ─── Transcrição de áudio inbound (STT via OpenRouter) ─────────────────
+  // Nota de voz do WhatsApp → texto na borda. Reusa OPENROUTER_API_KEY/BASE_URL.
+  // Modelo trocável a qualquer momento (ex: openai/gpt-4o-transcribe).
+  TRANSCRIPTION_MODEL: z.string().min(1).default("openai/whisper-large-v3-turbo"),
+  // Dica ISO-639-1 (melhora PT-BR); vazio = auto-detect do provider.
+  TRANSCRIPTION_LANGUAGE: z.string().default("pt"),
+  // Teto de tamanho do áudio (MB) — acima disso não transcreve (aviso amigável).
+  TRANSCRIPTION_MAX_AUDIO_MB: z.coerce.number().int().positive().default(16),
+  // Timeout (ms) da chamada de transcrição.
+  TRANSCRIPTION_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
+
   // ─── Email (auth transacional — 6b) ────────────────────────────────────
   // Verificação de email + reset de senha via mailer genérico (porta + fila).
   // driver: console (dev, loga código/link) | ses (prod, AWS SESv2) | noop (testes).

@@ -227,6 +227,9 @@ importers:
       '@trafego/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@trafego/transcription-openrouter':
+        specifier: workspace:*
+        version: link:../../packages/transcription-openrouter
       bullmq:
         specifier: ^5.34.0
         version: 5.81.3

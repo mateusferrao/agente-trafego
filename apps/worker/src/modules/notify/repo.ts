@@ -37,8 +37,15 @@ export interface NotifyRepo {
   alreadyProcessed(messageId: string): Promise<boolean>;
   /** Garante a conversa (org/contato) e devolve seu id. */
   ensureConversation(orgId: string, contactId: string): Promise<string>;
-  /** Grava uma mensagem na conversa (in/out) com meta opcional. */
-  recordMessage(conversationId: string, direction: MessageDirection, body: string, meta?: Record<string, unknown>): Promise<void>;
+  /** Grava uma mensagem na conversa (in/out) com meta opcional; devolve o id da linha. */
+  recordMessage(
+    conversationId: string,
+    direction: MessageDirection,
+    body: string | null,
+    meta?: Record<string, unknown>,
+  ): Promise<string>;
+  /** Atualiza corpo + funde meta (merge jsonb) de uma mensagem por id — pós-transcrição. */
+  updateMessageContent(messageRowId: string, body: string | null, metaPatch: Record<string, unknown>): Promise<void>;
   /** Alvo de envio a um contato: instância conectada da org + telefone. */
   resolveOutboundTarget(contactId: string): Promise<ContactTarget | null>;
   /** Atualiza o status do canal pela instância (CONNECTION_UPDATE — status ao vivo). */
@@ -124,7 +131,22 @@ export function createNotifyRepo(db: Database): NotifyRepo {
     },
 
     async recordMessage(conversationId, direction, body, meta) {
-      await db.insert(messages).values({ conversationId, direction, body, ...(meta ? { meta } : {}) });
+      const [row] = await db
+        .insert(messages)
+        .values({ conversationId, direction, body, ...(meta ? { meta } : {}) })
+        .returning({ id: messages.id });
+      return row?.id ?? "";
+    },
+
+    /** Update por PK: corpo + merge do meta (`||` de jsonb) — pós-transcrição (S4). */
+    async updateMessageContent(messageRowId, body, metaPatch) {
+      await db
+        .update(messages)
+        .set({
+          body,
+          meta: sql`coalesce(${messages.meta}, '{}'::jsonb) || ${JSON.stringify(metaPatch)}::jsonb`,
+        })
+        .where(eq(messages.id, messageRowId));
     },
 
     /** Telefone do contato + instância conectada da sua org. */

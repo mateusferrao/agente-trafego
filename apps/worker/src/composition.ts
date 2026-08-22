@@ -11,6 +11,7 @@ import type {
   MessagingChannelPort,
   MeteringPort,
   SchedulerPort,
+  TranscriptionPort,
 } from "@trafego/shared/ports";
 import type { Database } from "@trafego/db/client";
 import { createDb } from "@trafego/db";
@@ -20,6 +21,7 @@ import { BullmqScheduler } from "@trafego/scheduler-bullmq";
 import { CustomConversionsResolver, MetaAdsAdapter, MetaEntityCache, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta";
 import { EvolutionAdapter, EvolutionClient } from "@trafego/channel-evolution";
 import { OpenRouterAdapter, OpenRouterClient } from "@trafego/llm-openrouter";
+import { OpenRouterTranscriptionAdapter } from "@trafego/transcription-openrouter";
 import { createPostgresApprovals } from "@trafego/approval-postgres";
 import { createPostgresMetering, withLlmMetering } from "@trafego/metering-postgres";
 import { createMailer } from "@trafego/mailer";
@@ -49,6 +51,8 @@ export interface WorkerDeps {
     readonly approval: ApprovalPort;
     /** Entrega de email transacional (6b) — só o worker envia (consumidor da fila). */
     readonly mailer: MailerPort;
+    /** Transcrição de nota de voz inbound (STT) — worker é o dono (API stuba o LLM). */
+    readonly transcription: TranscriptionPort;
   };
   /** Sync de insights (2a): coleta a série temporal Meta → insights_snapshots. */
   readonly insightsSync: InsightsSyncService;
@@ -87,6 +91,13 @@ export interface WorkerDeps {
     readonly debounceSeconds: number;
     /** Fallback de custo (bug do bindTools suprimindo usage.cost — ver nodes.ts). */
     readonly fetchGenerationCost: (generationId: string) => Promise<number | undefined>;
+  };
+  /** Config da transcrição de áudio inbound (STT) — modelo/timeout vivem no adapter. */
+  readonly transcription: {
+    /** dica ISO-639-1 (ex: "pt"); vazio = auto-detect do provider. */
+    readonly language: string;
+    /** teto de tamanho do áudio (MB) — acima disso, aviso amigável sem transcrever. */
+    readonly maxAudioMb: number;
   };
   /** Checkpointer do LangGraph (Postgres) — memória durável do chat (Grafo B, 5b-2). */
   readonly checkpointer: BaseCheckpointSaver;
@@ -151,6 +162,14 @@ export async function buildComposition(): Promise<WorkerDeps> {
     new OpenRouterAdapter({ client: openRouterClient }),
     { metering, provider: "openrouter", onError: (err) => logger.warn({ err }, "metering:falhou") },
   );
+  // Transcrição de nota de voz inbound (STT via OpenRouter, endpoint /audio/transcriptions).
+  // Custo real vai ao metering manualmente no worker de transcrição (S4).
+  const transcription = new OpenRouterTranscriptionAdapter({
+    apiKey: env.OPENROUTER_API_KEY,
+    baseUrl: env.OPENROUTER_BASE_URL,
+    model: env.TRANSCRIPTION_MODEL,
+    timeoutMs: env.TRANSCRIPTION_TIMEOUT_MS,
+  });
 
   // checkpointer do chat (Grafo B, 5b-2): memória durável por conversa (thread).
   // setup() cria as tabelas de checkpoint (idempotente) no boot.
@@ -175,6 +194,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
         region: env.AWS_REGION,
         log: (m) => logger.info(m),
       }),
+      transcription, // STT da nota de voz inbound (S3)
     },
     insightsSync,
     analysis: {
@@ -235,6 +255,10 @@ export async function buildComposition(): Promise<WorkerDeps> {
       maxTokens: env.CONVERSATION_MAX_TOKENS,
       debounceSeconds: env.CONVERSATION_DEBOUNCE_SECONDS,
       fetchGenerationCost: (id) => openRouterClient.getGenerationCost(id),
+    },
+    transcription: {
+      language: env.TRANSCRIPTION_LANGUAGE,
+      maxAudioMb: env.TRANSCRIPTION_MAX_AUDIO_MB,
     },
     // checkpointer LangGraph (Postgres): memória durável da conversa do WhatsApp
     // (Grafo B ReAct, thread por conversa). setup() cria as tabelas (idempotente).
