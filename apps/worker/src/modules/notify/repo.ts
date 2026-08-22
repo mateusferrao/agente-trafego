@@ -46,8 +46,8 @@ export interface NotifyRepo {
   ): Promise<string>;
   /** Atualiza corpo + funde meta (merge jsonb) de uma mensagem por id — pós-transcrição. */
   updateMessageContent(messageRowId: string, body: string | null, metaPatch: Record<string, unknown>): Promise<void>;
-  /** Conta em foco do fio (metering §6) — null se em modo concierge/sem foco. */
-  focusedAdAccountId(conversationId: string): Promise<string | null>;
+  /** Conta em foco do fio (metering §6), org-scoped — null se concierge/sem foco. */
+  focusedAdAccountId(orgId: string, conversationId: string): Promise<string | null>;
   /** Alvo de envio a um contato: instância conectada da org + telefone. */
   resolveOutboundTarget(contactId: string): Promise<ContactTarget | null>;
   /** Atualiza o status do canal pela instância (CONNECTION_UPDATE — status ao vivo). */
@@ -151,12 +151,13 @@ export function createNotifyRepo(db: Database): NotifyRepo {
         .where(eq(messages.id, messageRowId));
     },
 
-    /** Conta em foco do fio (ad_accounts.id) p/ atribuir o custo da transcrição (§6). */
-    async focusedAdAccountId(conversationId) {
+    /** Conta em foco do fio (ad_accounts.id) p/ atribuir o custo da transcrição (§6).
+     *  Org-scoped: a linha só resolve se a conversa é da org (evita mis-atribuição). */
+    async focusedAdAccountId(orgId, conversationId) {
       const [row] = await db
         .select({ focusedAccountId: conversations.focusedAccountId })
         .from(conversations)
-        .where(eq(conversations.id, conversationId))
+        .where(and(eq(conversations.id, conversationId), eq(conversations.orgId, orgId)))
         .limit(1);
       return row?.focusedAccountId ?? null;
     },

@@ -218,6 +218,10 @@ export const envSchema = z.object({
   TRANSCRIPTION_MAX_AUDIO_MB: z.coerce.number().int().positive().default(16),
   // Timeout (ms) da chamada de transcrição.
   TRANSCRIPTION_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
+  // Janela (s) do throttle dos avisos de cortesia (áudio-falha/vazio, mídia não-suportada):
+  // no máx 1 aviso por conversa/motivo por janela — anti-spam/ban-safety (§9). Dedicada
+  // (não os segundos do debounce), medida em ~minuto.
+  NOTICE_THROTTLE_SECONDS: z.coerce.number().int().positive().default(60),
 
   // ─── Email (auth transacional — 6b) ────────────────────────────────────
   // Verificação de email + reset de senha via mailer genérico (porta + fila).

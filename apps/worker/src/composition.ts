@@ -13,9 +13,11 @@ import type {
   SchedulerPort,
   TranscriptionPort,
 } from "@trafego/shared/ports";
+import { WHATSAPP_TRANSCRIPTION_ATTEMPTS, WHATSAPP_TRANSCRIPTION_BACKOFF_MS } from "@trafego/shared";
 import type { Database } from "@trafego/db/client";
 import { createDb } from "@trafego/db";
 import { loadEnv } from "@trafego/config";
+import { BUFFER_TTL_MARGIN_SEC } from "./modules/conversation/buffer.js";
 import { Aes256CredentialVault } from "@trafego/credential-vault";
 import { BullmqScheduler } from "@trafego/scheduler-bullmq";
 import { CustomConversionsResolver, MetaAdsAdapter, MetaEntityCache, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta";
@@ -89,6 +91,8 @@ export interface WorkerDeps {
     readonly historyTurns: number;
     readonly maxTokens: number;
     readonly debounceSeconds: number;
+    /** Janela (s) do throttle dos avisos de cortesia — dedicada (não o debounce). */
+    readonly noticeThrottleSec: number;
     /** Fallback de custo (bug do bindTools suprimindo usage.cost — ver nodes.ts). */
     readonly fetchGenerationCost: (generationId: string) => Promise<number | undefined>;
   };
@@ -98,8 +102,10 @@ export interface WorkerDeps {
     readonly language: string;
     /** teto de tamanho do áudio (MB) — acima disso, aviso amigável sem transcrever. */
     readonly maxAudioMb: number;
-    /** timeout (ms) por chamada — base do TTL-backstop da flag `wa:transcribing`. */
-    readonly timeoutMs: number;
+    /** provider p/ o metering (nome vem daqui, não literal no worker genérico — §13). */
+    readonly provider: string;
+    /** TTL (s) da flag `wa:transcribing` — cobre todas as tentativas + backoff + margem. */
+    readonly transcribingTtlSec: number;
   };
   /** Checkpointer do LangGraph (Postgres) — memória durável do chat (Grafo B, 5b-2). */
   readonly checkpointer: BaseCheckpointSaver;
@@ -172,6 +178,12 @@ export async function buildComposition(): Promise<WorkerDeps> {
     model: env.TRANSCRIPTION_MODEL,
     timeoutMs: env.TRANSCRIPTION_TIMEOUT_MS,
   });
+  // TTL da flag `wa:transcribing` = todas as tentativas (timeout) + backoff acumulado +
+  // margem. Backstop: se um job sumir sem baixar a flag, ela expira e o flush destrava.
+  const transcribingTtlSec =
+    Math.ceil(env.TRANSCRIPTION_TIMEOUT_MS / 1000) * WHATSAPP_TRANSCRIPTION_ATTEMPTS +
+    Math.ceil(WHATSAPP_TRANSCRIPTION_BACKOFF_MS / 1000) * WHATSAPP_TRANSCRIPTION_ATTEMPTS +
+    BUFFER_TTL_MARGIN_SEC;
 
   // checkpointer do chat (Grafo B, 5b-2): memória durável por conversa (thread).
   // setup() cria as tabelas de checkpoint (idempotente) no boot.
@@ -256,12 +268,14 @@ export async function buildComposition(): Promise<WorkerDeps> {
       historyTurns: env.CONVERSATION_HISTORY_TURNS,
       maxTokens: env.CONVERSATION_MAX_TOKENS,
       debounceSeconds: env.CONVERSATION_DEBOUNCE_SECONDS,
+      noticeThrottleSec: env.NOTICE_THROTTLE_SECONDS,
       fetchGenerationCost: (id) => openRouterClient.getGenerationCost(id),
     },
     transcription: {
       language: env.TRANSCRIPTION_LANGUAGE,
       maxAudioMb: env.TRANSCRIPTION_MAX_AUDIO_MB,
-      timeoutMs: env.TRANSCRIPTION_TIMEOUT_MS,
+      provider: "openrouter", // adapter concreto = OpenRouter (composition nomeia o concreto)
+      transcribingTtlSec,
     },
     // checkpointer LangGraph (Postgres): memória durável da conversa do WhatsApp
     // (Grafo B ReAct, thread por conversa). setup() cria as tabelas (idempotente).

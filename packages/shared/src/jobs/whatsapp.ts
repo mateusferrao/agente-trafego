@@ -35,6 +35,10 @@ export type WhatsappFlushPayload = {
  */
 export const WHATSAPP_TRANSCRIPTION_QUEUE = "whatsapp-transcription";
 export const WHATSAPP_TRANSCRIPTION_JOB = "transcribe-audio";
+/** Retentativas da transcrição (só erros transitórios re-tentam — ver worker). */
+export const WHATSAPP_TRANSCRIPTION_ATTEMPTS = 3;
+/** Base do backoff exponencial entre tentativas de transcrição (ms). */
+export const WHATSAPP_TRANSCRIPTION_BACKOFF_MS = 3_000;
 export type WhatsappTranscriptionPayload = {
   readonly orgId: string;
   readonly contactId: string;

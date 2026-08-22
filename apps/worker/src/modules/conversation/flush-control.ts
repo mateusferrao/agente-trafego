@@ -14,18 +14,28 @@ function transcribingKey(conversationId: string): string {
   return `${TRANSCRIBING_PREFIX}${conversationId}`;
 }
 
-/** Marca uma transcrição em voo (INCR + TTL backstop). */
+/**
+ * Marca uma transcrição em voo (INCR + TTL backstop), ATÔMICO (MULTI) — sem a janela
+ * incr-sem-expire que, num crash no meio, deixaria a flag órfã eterna (nunca destrava).
+ */
 export async function markTranscribing(redis: Redis, conversationId: string, ttlSec: number): Promise<void> {
   const k = transcribingKey(conversationId);
-  await redis.incr(k);
-  await redis.expire(k, ttlSec);
+  await redis.multi().incr(k).expire(k, ttlSec).exec();
 }
 
-/** Baixa o contador de transcrições em voo (DEL ao zerar). */
+/** Re-ancora o TTL da flag no INÍCIO do processamento (cobre espera na fila + backoff). */
+export async function refreshTranscribing(redis: Redis, conversationId: string, ttlSec: number): Promise<void> {
+  await redis.expire(transcribingKey(conversationId), ttlSec);
+}
+
+/**
+ * Baixa o contador de transcrições em voo. Só DECR — NÃO deleta: um DEL após "chegou a
+ * zero" poderia apagar a flag de um áudio NOVO que incrementou no meio (corrida
+ * decr-then-del → flush drena sem esperar → turno partido). A chave expira sozinha pelo
+ * TTL; contador ≤ 0 já conta como "não transcrevendo" (ver isTranscribing).
+ */
 export async function unmarkTranscribing(redis: Redis, conversationId: string): Promise<void> {
-  const k = transcribingKey(conversationId);
-  const remaining = await redis.decr(k);
-  if (remaining <= 0) await redis.del(k);
+  await redis.decr(transcribingKey(conversationId));
 }
 
 /** Há transcrição de áudio em voo pra esta conversa? (o flush espera enquanto sim). */

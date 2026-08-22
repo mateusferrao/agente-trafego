@@ -13,6 +13,8 @@ import { Queue, Worker } from "bullmq";
 import {
   WHATSAPP_FLUSH_QUEUE,
   WHATSAPP_INBOUND_QUEUE,
+  WHATSAPP_TRANSCRIPTION_ATTEMPTS,
+  WHATSAPP_TRANSCRIPTION_BACKOFF_MS,
   WHATSAPP_TRANSCRIPTION_JOB,
   WHATSAPP_TRANSCRIPTION_QUEUE,
   type WhatsappFlushPayload,
@@ -30,9 +32,8 @@ import { unsupportedMediaNotice } from "../modules/conversation/notices.js";
 import { createNotifyRepo, type NotifyRepo } from "../modules/notify/repo.js";
 import { createSendToContact, type SendToContact } from "../modules/notify/send-to-contact.js";
 
-/** Retentativas da transcrição (só erros transitórios re-tentam — ver worker). */
-const TRANSCRIPTION_ATTEMPTS = 3;
-const TRANSCRIPTION_BACKOFF_MS = 3_000;
+/** Balde de throttle do aviso de mídia não-suportada (separado do de áudio). */
+const UNSUPPORTED_NOTICE_BUCKET = "unsupported";
 
 /** Dependências do router de mensagem inbound (enxutas → testável sem BullMQ). */
 export interface InboundRouterDeps {
@@ -93,8 +94,8 @@ export function makeInboundRouter(d: InboundRouterDeps) {
         audio: inbound.audio,
       };
       await d.transcriptionQueue.add(WHATSAPP_TRANSCRIPTION_JOB, payload, {
-        attempts: TRANSCRIPTION_ATTEMPTS,
-        backoff: { type: "exponential", delay: TRANSCRIPTION_BACKOFF_MS },
+        attempts: WHATSAPP_TRANSCRIPTION_ATTEMPTS,
+        backoff: { type: "exponential", delay: WHATSAPP_TRANSCRIPTION_BACKOFF_MS },
         removeOnComplete: true,
         removeOnFail: true,
       });
@@ -114,6 +115,7 @@ export function makeInboundRouter(d: InboundRouterDeps) {
       conversationId,
       contactId: contact.contactId,
       text: unsupportedMediaNotice(inbound.mediaType),
+      bucket: UNSUPPORTED_NOTICE_BUCKET,
       throttleSec: d.throttleSec,
     });
     d.logger.debug({ conversationId, mediaType: inbound.mediaType }, "inbound:unsupported_media");
@@ -135,10 +137,8 @@ export function startWebhookInboundWorker(deps: WorkerDeps, connection: Redis): 
     logger,
     debounceMs: deps.conversation.debounceSeconds * 1000,
     bufferTtlSec: deps.conversation.debounceSeconds + BUFFER_TTL_MARGIN_SEC,
-    // TTL-backstop da flag: cobre todas as tentativas + margem (job sumiu → flag expira → flush destrava).
-    transcribingTtlSec:
-      Math.ceil((deps.transcription.timeoutMs / 1000) * TRANSCRIPTION_ATTEMPTS) + BUFFER_TTL_MARGIN_SEC,
-    throttleSec: deps.conversation.debounceSeconds,
+    transcribingTtlSec: deps.transcription.transcribingTtlSec, // backstop: flag expira → flush destrava
+    throttleSec: deps.conversation.noticeThrottleSec,
   });
 
   return new Worker<WhatsappInboundPayload>(

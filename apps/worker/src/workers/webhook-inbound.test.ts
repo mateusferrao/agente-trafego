@@ -14,11 +14,13 @@ function makeDeps(overrides: Partial<InboundRouterDeps> = {}) {
     ensureConversation: vi.fn(async () => "conv-1"),
     recordMessage: vi.fn(async () => "msg-1"),
   };
+  // markTranscribing usa MULTI (incr+expire atômico) — chain espionável.
+  const multiChain = { incr: vi.fn(() => multiChain), expire: vi.fn(() => multiChain), exec: vi.fn(async () => []) };
   const redis = {
     rpush: vi.fn(async () => 1),
     expire: vi.fn(async () => 1),
-    incr: vi.fn(async () => 1),
     set: vi.fn(async () => "OK" as const),
+    multi: vi.fn(() => multiChain),
   };
   const flushQueue = { add: vi.fn(async () => ({})), remove: vi.fn(async () => 1) };
   const transcriptionQueue = { add: vi.fn(async () => ({})) };
@@ -36,7 +38,7 @@ function makeDeps(overrides: Partial<InboundRouterDeps> = {}) {
     throttleSec: 5,
     ...overrides,
   } as unknown as InboundRouterDeps;
-  return { deps, repo, redis, flushQueue, transcriptionQueue, sendToContact };
+  return { deps, repo, redis, multiChain, flushQueue, transcriptionQueue, sendToContact };
 }
 
 describe("makeInboundRouter", () => {
@@ -58,7 +60,7 @@ describe("makeInboundRouter", () => {
       kind: "audio",
       transcribing: true,
     });
-    expect(t.redis.incr).toHaveBeenCalledWith("wa:transcribing:conv-1");
+    expect(t.multiChain.incr).toHaveBeenCalledWith("wa:transcribing:conv-1");
     expect(t.transcriptionQueue.add).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ conversationId: "conv-1", messageRowId: "msg-1", audio: { base64: "AAAA", mimetype: "audio/ogg" } }),
@@ -95,6 +97,6 @@ describe("makeInboundRouter", () => {
     t.repo.alreadyProcessed.mockResolvedValueOnce(true);
     await makeInboundRouter(t.deps)("inst-1", AUDIO);
     expect(t.repo.recordMessage).not.toHaveBeenCalled();
-    expect(t.redis.incr).not.toHaveBeenCalled();
+    expect(t.redis.multi).not.toHaveBeenCalled();
   });
 });

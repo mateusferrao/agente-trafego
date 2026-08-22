@@ -46,6 +46,9 @@ function makeDeps(overrides: Partial<TranscriptionProcessorDeps> = {}, setResult
     debounceSeconds: 5,
     maxAudioMb: 16,
     language: "pt",
+    provider: "openrouter",
+    noticeThrottleSec: 60,
+    transcribingTtlSec: 240,
     ...overrides,
   } as unknown as TranscriptionProcessorDeps;
   return { deps, redis, flushQueue, sendToContact, repo, metering, transcription };

@@ -95,6 +95,7 @@ decaimento de token em runtime → `6b`; reuso do sync-service pelo `fetchData` 
 - **`StoragePort` p/ o áudio** — guardar o blob e passar ref no job (evita o base64 ~20MB trafegar no Redis/BullMQ na fila de inbound **e** na de transcrição).
 - **Cap de custo/duração de transcrição** (proteção de margem, §11) + eventual gate por-org (desligar áudio).
 - **Adapter alternativo de mídia via `getBase64FromMediaMessage`** — se o `base64:true` do webhook se mostrar frágil (nota de voz iOS/ephemeral), buscar os bytes sob demanda atrás da mesma `MessagingChannelPort`, sem tocar o core.
+- **Dedupe atômico de `messageId`** — hoje `alreadyProcessed` é read-then-write sem índice único (seguro só com o worker single-réplica/concorrência 1). Sob >1 réplica, redelivery do mesmo áudio poderia transcrever/cobrar em dobro. Fix real: coluna `messageId` dedicada + índice único (ou `SET NX` no Redis antes de enfileirar) — casa com a escala do worker (§14).
 
 **Melhorias de valor da 6c (review squad + Steticos):**
 - ✅ **[ALTO] Detector de tracking/atribuição furado — ENTREGUE (Bloco 2, S1.3).** `detectTrackingHealth` (nota de conta) + `guardTrackingCaveat` (caveat nas pausas por CPA-de-venda em base `target`; não rebaixa; proxy não recebe) + nota no prompt. Limiares `ANALYSIS_QUALITY_TRACKING_BROKEN_{RATIO,MIN_FUNNEL}`.
