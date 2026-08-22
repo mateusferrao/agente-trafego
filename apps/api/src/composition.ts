@@ -195,6 +195,7 @@ export function buildContainer(): Container {
       repo: createDrizzleConnectionsRepo(db),
       adsPlatform,
       vault,
+      ensureAgent: (orgId, accountId) => agents.getOrCreateForAccount(orgId, accountId),
     }),
     channels: createChannelsService({ db, messaging }),
     contacts: createContactsService({ db, messaging }),

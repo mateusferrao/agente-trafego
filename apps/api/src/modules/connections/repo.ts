@@ -49,12 +49,13 @@ export interface ConnectionsRepo {
   listManaged(orgId: string, connectionId: string): Promise<ManagedAccount[]>;
   /** ids geridos por OUTRA conexão da org (não `removed`) — dedupe cross-conexão. */
   managedElsewhereIds(orgId: string, connectionId: string): Promise<string[]>;
+  /** Aplica o plano; retorna os ids internos (`ad_accounts.id`) das contas ativadas. */
   applySelect(
     orgId: string,
     connectionId: string,
     plan: SelectPlan,
     tokenCripto: EncryptedPayload,
-  ): Promise<void>;
+  ): Promise<readonly string[]>;
   applySync(orgId: string, connectionId: string, plan: SyncPlan): Promise<void>;
   /** Marca o status do token da conexão (ex: inválido quando a busca cai no 190). */
   markTokenStatus(orgId: string, connectionId: string, status: ConnectionTokenStatus): Promise<void>;
@@ -181,10 +182,11 @@ export function createDrizzleConnectionsRepo(db: Database): ConnectionsRepo {
     },
 
     async applySelect(orgId, connectionId, plan, tokenCripto) {
-      await db.transaction(async (tx) => {
+      return db.transaction(async (tx) => {
         const now = new Date();
+        const activatedIds: string[] = [];
         for (const acc of plan.toActivate) {
-          await tx
+          const [row] = await tx
             .insert(adAccounts)
             .values({
               orgId,
@@ -205,7 +207,9 @@ export function createDrizzleConnectionsRepo(db: Database): ConnectionsRepo {
                 status: "active",
                 updatedAt: now,
               },
-            });
+            })
+            .returning({ id: adAccounts.id });
+          if (row) activatedIds.push(row.id);
         }
         if (plan.toRemove.length > 0) {
           await tx
@@ -219,6 +223,7 @@ export function createDrizzleConnectionsRepo(db: Database): ConnectionsRepo {
               ),
             );
         }
+        return activatedIds;
       });
     },
 

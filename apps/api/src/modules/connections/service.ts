@@ -12,11 +12,14 @@ import type {
   SyncOutput,
 } from "./schema.js";
 import { notFound } from "../../middleware/error-handler.js";
+import type { EnsureAgent } from "../runs/service.js";
 
 export interface ConnectionsDeps {
   readonly repo: ConnectionsRepo;
   readonly adsPlatform: AdsPlatformPort;
   readonly vault: CredentialVaultPort;
+  /** Garante o agente (criação lazy) de cada conta recém-ativada — zero-config (CLAUDE.md §10). */
+  readonly ensureAgent: EnsureAgent;
 }
 
 /**
@@ -110,7 +113,12 @@ export function createConnectionsService(deps: ConnectionsDeps) {
       return { available: available.map(toConnectionAccount), managed };
     },
 
-    /** Aplica a multi-seleção do dono (ativa/soft-remove) via reconciler puro. */
+    /**
+     * Aplica a multi-seleção do dono (ativa/soft-remove) via reconciler puro.
+     * Cada conta recém-ativada já sai com agente (zero-config, CLAUDE.md §10) —
+     * sem isso a conta ficava invisível em Contas/Painel até uma visita manual a
+     * `/accounts/:id/agente` (só lá o agente nascia, via criação lazy).
+     */
     async select(
       orgId: OrgId,
       connectionId: string,
@@ -127,7 +135,10 @@ export function createConnectionsService(deps: ConnectionsDeps) {
         selectedIds: input.adAccountIds,
         managedElsewhereIds,
       });
-      await deps.repo.applySelect(orgId, connectionId, plan, conn.tokenCripto);
+      const activatedIds = await deps.repo.applySelect(orgId, connectionId, plan, conn.tokenCripto);
+      for (const accountId of activatedIds) {
+        await deps.ensureAgent(orgId, accountId);
+      }
       const managed = await deps.repo.listManaged(orgId, connectionId);
       return { available: available.map(toConnectionAccount), managed };
     },
