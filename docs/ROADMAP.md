@@ -89,6 +89,13 @@ decaimento de token em runtime → `6b`; reuso do sync-service pelo `fetchData` 
 - **Rollup de custo por conversa** — o custo do chat já é atribuído à conta + carrega `conversationId` no payload; falta a agregação/relatório **por conversa** (metering).
 - **Bloco 2 (Fatia 7):** criação de campanhas + **auto-configurar o agente por chat** (mudar metas/playbook/guardrails/cadência conversando) — estende o Grafo B do 5c.
 
+**Fast-follows do recebimento de áudio no chat (WhatsApp) — registrados:**
+- **Entender/processar mídia não-texto** (imagem/vídeo/documento) no chat — hoje o agente só **avisa** que ainda não lê; reusar a visão (`CreativeVisionPort`) e/ou OCR atrás de porta pra ler o conteúdo. A união `InboundMessage` (`kind:"unsupported"`) já nasce pronta pra virar tratamento.
+- **Áudio de saída (TTS)** — o agente responder por voz (hoje só recebe + transcreve).
+- **`StoragePort` p/ o áudio** — guardar o blob e passar ref no job (evita o base64 ~20MB trafegar no Redis/BullMQ na fila de inbound **e** na de transcrição).
+- **Cap de custo/duração de transcrição** (proteção de margem, §11) + eventual gate por-org (desligar áudio).
+- **Adapter alternativo de mídia via `getBase64FromMediaMessage`** — se o `base64:true` do webhook se mostrar frágil (nota de voz iOS/ephemeral), buscar os bytes sob demanda atrás da mesma `MessagingChannelPort`, sem tocar o core.
+
 **Melhorias de valor da 6c (review squad + Steticos):**
 - ✅ **[ALTO] Detector de tracking/atribuição furado — ENTREGUE (Bloco 2, S1.3).** `detectTrackingHealth` (nota de conta) + `guardTrackingCaveat` (caveat nas pausas por CPA-de-venda em base `target`; não rebaixa; proxy não recebe) + nota no prompt. Limiares `ANALYSIS_QUALITY_TRACKING_BROKEN_{RATIO,MIN_FUNNEL}`.
 - ✅ **[ALTO] Quantificar desperdício + 80/20 — ENTREGUE (Bloco 2, S1.5/S1.8).** `computeWasteReport` (`wastedSpend` = só zumbis + Pareto por base de conversão + `annotateFreedSpend` na pausa), no brief/`metrics_snapshot`, card na UI + widget cross-conta no Painel; o redator lidera pelo money-shot.

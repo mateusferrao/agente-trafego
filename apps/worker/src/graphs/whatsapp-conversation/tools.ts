@@ -428,7 +428,7 @@ export async function buildCapabilitiesText(
       "• ver e resolver pendências de aprovação (de todas as suas contas);",
       "• te dar um panorama de todas as contas (nota e gasto da última análise de cada uma);",
       '• focar numa conta (ex: "foca na Clínica X") pra ler, analisar e agir nela.',
-      "Me diz em qual conta você quer trabalhar.",
+      "Pode me mandar áudio também — eu transcrevo e entendo. Me diz em qual conta você quer trabalhar.",
     ].join("\n");
   }
   const parts: string[] = ["Aqui no WhatsApp eu consigo:"];
@@ -457,6 +457,7 @@ export async function buildCapabilitiesText(
     const lbl = (l: string) => AUTONOMY_LABEL_CHAT[l] ?? l;
     parts.push(`🤖 Nas análises automáticas (sem você pedir): com o playbook eu ${lbl(pol.bySource.playbook)}; com sugestões de IA eu ${lbl(pol.bySource.llm)}.`);
   }
+  parts.push("🎙️ Pode falar por áudio — eu transcrevo e respondo pelo conteúdo.");
   parts.push("🚧 Ainda não: criar campanhas do zero (em breve) nem editar criativos.");
   parts.push("É só pedir. 🙂");
   return parts.join("\n");
