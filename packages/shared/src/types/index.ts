@@ -580,6 +580,19 @@ export interface CreativeVisionResult {
 /** Força de prova de um criativo (§Bloco 2) — descritivo; não altera tier/score. */
 export type CreativeProofStrength = "weak" | "medium" | "strong";
 
+// ─── Transcrição de áudio (STT) ────────────────────────────────────────────
+/** Resultado de uma transcrição de áudio (texto + custo real p/ metering §11). */
+export interface TranscriptionResult {
+  readonly text: string;
+  /** id do modelo efetivamente usado (reportado pelo provider ou o configurado). */
+  readonly model: string;
+  /** custo real em USD reportado pelo provider; ausente ≠ zero (regra de LLMUsage). */
+  readonly costUsd?: number;
+  /** duração do áudio em segundos (quando o provider reporta). */
+  readonly durationSec?: number;
+  readonly tokensUsed?: number;
+}
+
 // ─── Metering ────────────────────────────────────────────────────────────
 export interface UsageEvent {
   readonly orgId: OrgId;
