@@ -4,8 +4,9 @@
 // resolve o contato pelo (instância, telefone), dedupa por messageId e grava
 // a conversa/mensagem inbound.
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { channelInstances, contacts, conversations, messages, type Database } from "@trafego/db";
+import { brPhoneVariants } from "@trafego/shared";
 
 export interface NotifyTarget {
   readonly instanceId: string;
@@ -85,10 +86,19 @@ export function createNotifyRepo(db: Database): NotifyRepo {
         .limit(1);
       if (!instance) return null;
 
+      // WhatsApp nem sempre entrega o mesmo formato p/ celular BR (quirk do
+      // `addressingMode: "lid"` — às vezes omite o 9º dígito) — tenta as variantes
+      // plausíveis antes de declarar "desconhecido" (ban-safety, CLAUDE.md §8).
       const [contact] = await db
         .select({ id: contacts.id })
         .from(contacts)
-        .where(and(eq(contacts.orgId, instance.orgId), eq(contacts.phone, phone), eq(contacts.verified, true)))
+        .where(
+          and(
+            eq(contacts.orgId, instance.orgId),
+            inArray(contacts.phone, [...brPhoneVariants(phone)]),
+            eq(contacts.verified, true),
+          ),
+        )
         .limit(1);
       return contact ? { orgId: instance.orgId, contactId: contact.id } : null;
     },
