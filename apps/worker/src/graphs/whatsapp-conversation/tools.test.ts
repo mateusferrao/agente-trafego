@@ -9,6 +9,7 @@ import {
   makeConversationTools,
   mergeConfigUpdatePatches,
   playbookOpFromToolCall,
+  resolveFocusMatch,
   ruleRowToDescriptor,
   type ConversationToolContext,
 } from "./tools.js";
@@ -202,6 +203,35 @@ describe("configPatchFromToolCall", () => {
 
   it("tool que não é update de config → null", () => {
     expect(configPatchFromToolCall("reseed_archetype", { archetype: "otimizador" }, state())).toBeNull();
+  });
+});
+
+describe("resolveFocusMatch", () => {
+  const bh = { id: "u-bh", name: "CLÍNICA BH", adAccountId: "187285994671922" };
+  const bh02 = { id: "u-02", name: "CLINICA BH 02", adAccountId: "634449609533551" };
+
+  it("nenhuma linha → none", () => {
+    expect(resolveFocusMatch([], "x").kind).toBe("none");
+  });
+
+  it("uma linha → one", () => {
+    const m = resolveFocusMatch([bh02], "clinica");
+    expect(m).toEqual({ kind: "one", row: bh02 });
+  });
+
+  it("várias, mas o id externo bate exatamente → desempata p/ essa", () => {
+    const m = resolveFocusMatch([bh, bh02], "187285994671922");
+    expect(m).toEqual({ kind: "one", row: bh });
+  });
+
+  it("várias, mas o nome bate EXATO → desempata (não o substring)", () => {
+    const m = resolveFocusMatch([bh, bh02], "clínica bh");
+    expect(m).toEqual({ kind: "one", row: bh });
+  });
+
+  it("várias sem desempate → ambiguous (lista as candidatas)", () => {
+    const m = resolveFocusMatch([bh, bh02], "clinica");
+    expect(m.kind).toBe("ambiguous");
   });
 });
 

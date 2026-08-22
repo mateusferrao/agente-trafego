@@ -39,6 +39,9 @@ describe("routeConversation", () => {
   it("list_playbook_rules (leitura) → tools", () => {
     expect(routeConversation(stateWith([{ name: "list_playbook_rules" }]))).toBe("tools");
   });
+  it("describe_capabilities → confirm (emitido verbatim, sem paráfrase do LLM)", () => {
+    expect(routeConversation(stateWith([{ name: "describe_capabilities" }]))).toBe("confirm");
+  });
 });
 
 const fakeLogger = { debug: vi.fn() };

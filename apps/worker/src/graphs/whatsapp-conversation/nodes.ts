@@ -33,9 +33,11 @@ import {
   CONTROL_WRITE_TOOL_NAMES,
   PLAYBOOK_WRITE_TOOL_NAMES,
   REVERT_TOOL_NAME,
+  DESCRIBE_CAPABILITIES_TOOL_NAME,
   RESEED_TOOL_NAME,
   WRITE_TOOL_NAMES,
   actionFromToolCall,
+  buildCapabilitiesText,
   isConfirmableConfigTool,
   makeConversationTools,
   mergeConfigUpdatePatches,
@@ -380,6 +382,14 @@ export function makeConversationNodes(
     const last = state.messages.at(-1) as AIMessage | undefined;
     const allCalls = last?.tool_calls ?? [];
 
+    // DESCRIBE_CAPABILITIES: emite o texto HONESTO VERBATIM (o LLM parafraseava e dropava
+    // linhas de limitação, ex: "config é pelo site"). É informativo puro — não coexiste com escrita.
+    const describeCall = allCalls.find((c) => c.name === DESCRIBE_CAPABILITIES_TOOL_NAME);
+    if (describeCall) {
+      const text = await buildCapabilitiesText(deps, ctx, allow);
+      return { messages: [...answerToolCalls(allCalls, "capabilities"), new AIMessage(text)] };
+    }
+
     // DESFAZER (5c-4): eco de reversão + congela pendingRevert. A ação real (por id) é
     // aplicada no applyWrite; aqui só monta o eco (rótulos vêm do find_recent_actions).
     const revertCalls = allCalls.filter((c) => c.name === REVERT_TOOL_NAME);
@@ -699,8 +709,16 @@ export function routeConversation(
   const toolCalls = (last as AIMessage | undefined)?.tool_calls ?? [];
   if (toolCalls.length === 0) return "__end__";
   if (toolCalls.some((c) => CONTROL_WRITE_TOOL_NAMES.has(c.name))) return "apply";
-  // escrita Meta livre, reversão OU mudança de config (update/reseed/playbook write) → eco+confirma.
-  if (toolCalls.some((c) => WRITE_TOOL_NAMES.has(c.name) || c.name === REVERT_TOOL_NAME || isConfirmableConfigTool(c.name)))
+  // escrita Meta livre, reversão, mudança de config OU describe (emitido verbatim) → nó "confirm".
+  if (
+    toolCalls.some(
+      (c) =>
+        WRITE_TOOL_NAMES.has(c.name) ||
+        c.name === REVERT_TOOL_NAME ||
+        c.name === DESCRIBE_CAPABILITIES_TOOL_NAME ||
+        isConfirmableConfigTool(c.name),
+    )
+  )
     return "confirm";
   return "tools";
 }

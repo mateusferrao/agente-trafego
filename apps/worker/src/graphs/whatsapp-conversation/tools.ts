@@ -3,7 +3,7 @@
 // (dispara análise on-demand com push de volta na conversa). Nenhuma tool chama a
 // Meta. Tools de ESCRITA (aprovar/rejeitar) entram na 5b-2.3.
 
-import { and, desc, eq, ilike } from "drizzle-orm";
+import { and, desc, eq, ilike, or } from "drizzle-orm";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { adAccounts, agents, conversations, playbookRules } from "@trafego/db";
@@ -233,13 +233,24 @@ export function makeConversationTools(
   // sem eco) e persiste em conversations.focused_account_id — o próximo turno opera nela.
   const setFocus = tool(
     async ({ name }: { name: string }) => {
+      const q = name.trim();
+      // casa por NOME (substring) OU pelo ID externo da conta (desempate robusto p/ nomes quase iguais).
       const rows = await deps.db
-        .select({ id: adAccounts.id, name: adAccounts.name })
+        .select({ id: adAccounts.id, name: adAccounts.name, adAccountId: adAccounts.adAccountId })
         .from(adAccounts)
-        .where(and(eq(adAccounts.orgId, ctx.orgId), eq(adAccounts.status, "active"), ilike(adAccounts.name, `%${name}%`)));
-      if (rows.length === 0) return `Não achei uma conta ativa com "${name}" no nome.`;
-      if (rows.length > 1) return `Mais de uma conta casa "${name}": ${rows.map((r) => r.name).join(", ")}. Qual delas?`;
-      const acc = rows[0]!;
+        .where(
+          and(
+            eq(adAccounts.orgId, ctx.orgId),
+            eq(adAccounts.status, "active"),
+            or(ilike(adAccounts.name, `%${q}%`), eq(adAccounts.adAccountId, q)),
+          ),
+        );
+      const match = resolveFocusMatch(rows, q);
+      if (match.kind === "none") return `Não achei uma conta ativa com "${name}" (nome ou id).`;
+      if (match.kind === "ambiguous") {
+        return `Mais de uma conta casa "${name}": ${match.rows.map((r) => `${r.name} (${r.adAccountId})`).join(", ")}. Qual delas? Pode me passar o id.`;
+      }
+      const acc = match.row;
       await deps.db
         .update(conversations)
         .set({ focusedAccountId: acc.id })
@@ -249,8 +260,8 @@ export function makeConversationTools(
     {
       name: "set_focus",
       description:
-        "Escolhe a conta em foco desta conversa (org com várias contas). Ex: 'foca na Clínica X'. Depois disso, leitura e ações passam a ser dessa conta.",
-      schema: z.object({ name: z.string().min(1) }),
+        "Escolhe a conta em foco desta conversa (org com várias contas). Aceita o NOME (ex: 'foca na Clínica X') ou o ID da conta. Depois disso, leitura e ações passam a ser dessa conta.",
+      schema: z.object({ name: z.string().min(1).describe("nome ou id da conta") }),
     },
   );
 
@@ -378,43 +389,7 @@ export function makeConversationTools(
   // que faço sozinho nas análises" (depende da autonomia). Reflete o estado real (allow
   // + allowedActions + kill-switch), nunca overpromete. Concierge = visão geral.
   const describeCapabilities = tool(
-    async () => {
-      if (!ctx.agentId) {
-        return [
-          "Sou seu gestor de tráfego aqui no WhatsApp. Sem uma conta em foco, posso:",
-          "• ver e resolver pendências de aprovação (de todas as suas contas);",
-          '• focar numa conta (ex: "foca na Clínica X") pra ler, analisar e agir nela.',
-          "Me diz em qual conta você quer trabalhar.",
-        ].join("\n");
-      }
-      const parts: string[] = ["Aqui no WhatsApp eu consigo:"];
-      parts.push("📊 Ler: status da conta, métricas, análise por campanha, recomendações, desperdício, comparar períodos e ver pendências.");
-      const writeVerbs = [...WRITE_TOOL_NAMES].filter((n) => allow.has(n)).map((n) => WRITE_VERB_PT[n]).filter(Boolean);
-      if (writeVerbs.length > 0) {
-        parts.push(`✏️ Mexer nas campanhas (sempre te mostro e confirmo antes): ${writeVerbs.join(", ")}. Também dá pra desfazer o que apliquei.`);
-      } else {
-        parts.push("✏️ Mexer nas campanhas: hoje está desligado nos guardrails — dá pra liberar nas configurações.");
-      }
-      parts.push("⚡ Analisar agora e aprovar/rejeitar ações pendentes.");
-      if (ctx.configViaChat) {
-        parts.push("⚙️ Mudar a config do agente conversando (sempre com sua confirmação): meta, autonomia, guardrails, cadência, arquétipo, playbook e identidade.");
-      } else {
-        parts.push("⚙️ Config do agente: por aqui está desligada — mudanças de config são pelo site.");
-      }
-      const [row] = await deps.db
-        .select({ autonomyPolicy: agents.autonomyPolicy })
-        .from(agents)
-        .where(and(eq(agents.id, ctx.agentId), eq(agents.orgId, ctx.orgId)))
-        .limit(1);
-      const pol = row?.autonomyPolicy as AutonomyPolicy | undefined;
-      if (pol?.bySource) {
-        const lbl = (l: string) => AUTONOMY_LABEL_CHAT[l] ?? l;
-        parts.push(`🤖 Nas análises automáticas (sem você pedir): com o playbook eu ${lbl(pol.bySource.playbook)}; com sugestões de IA eu ${lbl(pol.bySource.llm)}.`);
-      }
-      parts.push("🚧 Ainda não: criar campanhas do zero (em breve) nem editar criativos.");
-      parts.push("É só pedir. 🙂");
-      return parts.join("\n");
-    },
+    async () => buildCapabilitiesText(deps, ctx, allow),
     {
       name: "describe_capabilities",
       description:
@@ -430,6 +405,54 @@ export function makeConversationTools(
   return [...readTools, triggerAnalysis, approve, reject, setFocus, describeCapabilities, ...writeTools, ...configTools, ...playbookTools].filter(
     (t) => allow.has(t.name),
   );
+}
+
+/**
+ * Texto HONESTO do que o agente faz agora (allow + allowedActions + kill-switch + autonomia).
+ * Emitido VERBATIM pelo grafo (não parafraseado pelo LLM, que dropava linhas de limitação como
+ * "config é pelo site") — a honestidade é o ponto do describe_capabilities (§7). PURO exceto 1
+ * leitura de autonomia. Concierge (sem agente em foco) = visão geral.
+ */
+export async function buildCapabilitiesText(
+  deps: WorkerDeps,
+  ctx: ConversationToolContext,
+  allow: ReadonlySet<string>,
+): Promise<string> {
+  if (!ctx.agentId) {
+    return [
+      "Sou seu gestor de tráfego aqui no WhatsApp. Sem uma conta em foco, posso:",
+      "• ver e resolver pendências de aprovação (de todas as suas contas);",
+      '• focar numa conta (ex: "foca na Clínica X") pra ler, analisar e agir nela.',
+      "Me diz em qual conta você quer trabalhar.",
+    ].join("\n");
+  }
+  const parts: string[] = ["Aqui no WhatsApp eu consigo:"];
+  parts.push("📊 Ler: status da conta, métricas, análise por campanha, recomendações, desperdício, comparar períodos e ver pendências.");
+  const writeVerbs = [...WRITE_TOOL_NAMES].filter((n) => allow.has(n)).map((n) => WRITE_VERB_PT[n]).filter(Boolean);
+  if (writeVerbs.length > 0) {
+    parts.push(`✏️ Mexer nas campanhas (sempre te mostro e confirmo antes): ${writeVerbs.join(", ")}. Também dá pra desfazer o que apliquei.`);
+  } else {
+    parts.push("✏️ Mexer nas campanhas: hoje está desligado nos guardrails — dá pra liberar nas configurações.");
+  }
+  parts.push("⚡ Analisar agora e aprovar/rejeitar ações pendentes.");
+  if (ctx.configViaChat) {
+    parts.push("⚙️ Mudar a config do agente conversando (sempre com sua confirmação): meta, autonomia, guardrails, cadência, arquétipo, playbook e identidade.");
+  } else {
+    parts.push("⚙️ Config do agente: por aqui está desligada — mudanças de config são pelo site.");
+  }
+  const [row] = await deps.db
+    .select({ autonomyPolicy: agents.autonomyPolicy })
+    .from(agents)
+    .where(and(eq(agents.id, ctx.agentId), eq(agents.orgId, ctx.orgId)))
+    .limit(1);
+  const pol = row?.autonomyPolicy as AutonomyPolicy | undefined;
+  if (pol?.bySource) {
+    const lbl = (l: string) => AUTONOMY_LABEL_CHAT[l] ?? l;
+    parts.push(`🤖 Nas análises automáticas (sem você pedir): com o playbook eu ${lbl(pol.bySource.playbook)}; com sugestões de IA eu ${lbl(pol.bySource.llm)}.`);
+  }
+  parts.push("🚧 Ainda não: criar campanhas do zero (em breve) nem editar criativos.");
+  parts.push("É só pedir. 🙂");
+  return parts.join("\n");
 }
 
 /** Rótulo de gente do nível de autonomia (1ª pessoa, p/ o describe_capabilities). */
@@ -557,6 +580,8 @@ export const CONFIG_TOOL_NAMES: ReadonlySet<string> = new Set(["set_goal", "set_
 export const IDENTITY_TOOL_NAMES: ReadonlySet<string> = new Set(["set_persona", "set_tone", "set_system_prompt"]);
 /** Tool de re-seed de arquétipo (pendência kind="reseed"). */
 export const RESEED_TOOL_NAME = "reseed_archetype";
+/** Tool informativa emitida VERBATIM pelo grafo (honestidade — não parafrasear). */
+export const DESCRIBE_CAPABILITIES_TOOL_NAME = "describe_capabilities";
 /** Tools de escrita de playbook (pendência kind="playbook", eco+confirma). */
 export const PLAYBOOK_WRITE_TOOL_NAMES: ReadonlySet<string> = new Set([
   "add_playbook_rule",
@@ -668,6 +693,30 @@ export function mergeConfigUpdatePatches(
     found = true;
   }
   return found ? acc : null;
+}
+
+/** Candidata de foco (linha mínima de `ad_accounts` p/ o desempate). */
+export interface FocusCandidate {
+  readonly id: string;
+  readonly name: string | null;
+  readonly adAccountId: string;
+}
+
+/**
+ * Escolhe a conta de foco entre as candidatas casadas (nome substring OU id). Desempata
+ * nomes quase iguais ("CLÍNICA BH" vs "CLINICA BH 02"): id externo exato OU nome EXATO
+ * (case-insensitive) vence o substring. Só pergunta quando resta ambiguidade real. PURO.
+ */
+export function resolveFocusMatch(
+  rows: readonly FocusCandidate[],
+  query: string,
+): { readonly kind: "none" } | { readonly kind: "one"; readonly row: FocusCandidate } | { readonly kind: "ambiguous"; readonly rows: readonly FocusCandidate[] } {
+  if (rows.length === 0) return { kind: "none" };
+  if (rows.length === 1) return { kind: "one", row: rows[0]! };
+  const q = query.trim().toLowerCase();
+  const exact = rows.filter((r) => r.adAccountId.toLowerCase() === q || (r.name ?? "").trim().toLowerCase() === q);
+  if (exact.length === 1) return { kind: "one", row: exact[0]! };
+  return { kind: "ambiguous", rows };
 }
 
 /** Traduz o tool_call de `set_cadence` → `CadenceSpec` (ou undefined se raw sem cron). */
