@@ -35,6 +35,8 @@ export interface AgentConfigAudit {
     /** id do user, quando houver (FK opcional). */
     readonly userId?: string;
   };
+  /** contexto extra da trilha (ex: `{ channel: "whatsapp" }` p/ escrita por chat). */
+  readonly metadata?: Record<string, unknown>;
 }
 
 /** Ação de auditoria da escrita de config (durável — não vaza fase). */
@@ -293,5 +295,6 @@ async function writeAudit(
     target: `agent:${agentId}`,
     before: before as unknown as Record<string, unknown>,
     after: after as unknown as Record<string, unknown>,
+    ...(audit.metadata ? { metadata: audit.metadata } : {}),
   });
 }

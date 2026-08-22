@@ -7,6 +7,7 @@ import {
   actionFromToolCall,
   configPatchFromToolCall,
   makeConversationTools,
+  mergeConfigUpdatePatches,
   playbookOpFromToolCall,
   ruleRowToDescriptor,
   type ConversationToolContext,
@@ -201,6 +202,30 @@ describe("configPatchFromToolCall", () => {
 
   it("tool que não é update de config → null", () => {
     expect(configPatchFromToolCall("reseed_archetype", { archetype: "otimizador" }, state())).toBeNull();
+  });
+});
+
+describe("mergeConfigUpdatePatches", () => {
+  it("mescla set_goal + set_cadence num único patch (multi-campo no mesmo turno)", () => {
+    const cur = state({ goals: { targetCPA: 50 } });
+    const merged = mergeConfigUpdatePatches(
+      [
+        { name: "set_goal", args: { targetCPA: 100 } },
+        { name: "set_cadence", args: { kind: "twice_daily", hour: 9, secondHour: 17 } },
+      ],
+      cur,
+    );
+    expect(merged?.goals?.targetCPA).toBe(100);
+    expect(merged?.cadence).toEqual({ kind: "twice_daily", hours: [9, 17] });
+  });
+
+  it("uma única chamada = comportamento igual ao patch dela", () => {
+    const merged = mergeConfigUpdatePatches([{ name: "set_guardrail", args: { dryRun: false } }], state());
+    expect(merged?.guardrails?.dryRun).toBe(false);
+  });
+
+  it("ignora chamadas que não são update de config (reseed/playbook) e sem update → null", () => {
+    expect(mergeConfigUpdatePatches([{ name: "reseed_archetype", args: { archetype: "otimizador" } }], state())).toBeNull();
   });
 });
 

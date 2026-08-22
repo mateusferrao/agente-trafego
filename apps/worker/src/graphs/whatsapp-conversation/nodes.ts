@@ -36,9 +36,9 @@ import {
   RESEED_TOOL_NAME,
   WRITE_TOOL_NAMES,
   actionFromToolCall,
-  configPatchFromToolCall,
   isConfirmableConfigTool,
   makeConversationTools,
+  mergeConfigUpdatePatches,
   pendingRuleToDescriptor,
   playbookOpFromToolCall,
   ruleRowToDescriptor,
@@ -259,8 +259,9 @@ async function applyConfirmedConfig(
   pending: PendingConfigChange,
 ): Promise<string> {
   const orgId = ctx.orgId as OrgId;
-  // ator = o contato que falou no WhatsApp (mesma trilha do executor de escrita — §12/§13).
-  const audit = { actor: { label: `contact:${ctx.contactId}` } };
+  // ator = o contato que falou no WhatsApp (mesma trilha do executor de escrita — §12/§13);
+  // canal na trilha p/ paridade com o audit de playbook (S2: metadata.channel="whatsapp").
+  const audit = { actor: { label: `contact:${ctx.contactId}` }, metadata: { channel: "whatsapp" } };
   const offerIfRelevant = (base: string) => (pending.runRelevantChanged ? `${base}\n\n${RUN_ANALYSIS_OFFER}` : base);
 
   if (pending.kind === "update" && pending.patch) {
@@ -420,17 +421,31 @@ export function makeConversationNodes(
           ),
         };
       }
-      // uma pendência por vez: trata o 1º tool_call de config (o LLM chama um por turno).
+      // Multi-intenção: updates de config (meta/autonomia/guardrail/cadência/identidade) COMBINAM
+      // num único eco+confirma (§B3: "muda a meta E a cadência" persiste as duas num "sim"). Já
+      // reseed/playbook são pendências distintas que não fundem — misturar tipos (ou 2+ especiais)
+      // = uma de cada vez (nunca sumir com o pedido, §UX).
+      const updateCalls = configCalls.filter((c) => CONFIG_UPDATE_TOOL_NAMES.has(c.name));
+      const specialCalls = configCalls.filter((c) => !CONFIG_UPDATE_TOOL_NAMES.has(c.name));
+      if (specialCalls.length > 1 || (specialCalls.length >= 1 && updateCalls.length >= 1)) {
+        return {
+          messages: answerToolCalls(
+            allCalls,
+            "Você pediu mais de uma mudança de config de uma vez. Me peça uma de cada vez — qual você quer primeiro?",
+          ),
+        };
+      }
       const call = configCalls[0]!;
       const expiresAt = new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString();
 
-      // ── UPDATE (meta/autonomia/guardrail/cadência/identidade): resolve SEM persistir.
-      if (CONFIG_UPDATE_TOOL_NAMES.has(call.name)) {
+      // ── UPDATE (meta/autonomia/guardrail/cadência/identidade): resolve SEM persistir. Funde
+      //    TODOS os set_* do turno num patch só (multi-campo → um eco → um "sim").
+      if (updateCalls.length >= 1) {
         const cur = await loadAgentConfigState(deps.db, ctx.orgId as OrgId, ctx.agentId);
         if (!cur) {
           return { messages: answerToolCalls(allCalls, "Não consegui carregar a config agora. Tenta de novo em instantes.") };
         }
-        const patch = configPatchFromToolCall(call.name, (call.args ?? {}) as Record<string, unknown>, cur);
+        const patch = mergeConfigUpdatePatches(updateCalls, cur);
         if (!patch) {
           return { messages: answerToolCalls(allCalls, "Não entendi essa mudança de config. Pode dizer de outro jeito?") };
         }

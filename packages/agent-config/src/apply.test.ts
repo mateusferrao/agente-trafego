@@ -169,6 +169,24 @@ describe("applyAgentConfigChange", () => {
     expect(captured.auditInsert?.target).toBe("agent:ag-1");
     expect(captured.auditInsert?.actorUserId).toBe("u-1");
   });
+
+  it("audit.metadata → grava metadata na linha (ex: channel=whatsapp)", async () => {
+    const { db, captured } = makeFakeDb([[AGENT_ROW], []]);
+    const { scheduler } = makeScheduler();
+
+    await applyAgentConfigChange(
+      { db, scheduler },
+      {
+        orgId: ORG,
+        agentId: "ag-1",
+        accountId: "acc-1",
+        patch: { businessContext: "novo" },
+        audit: { actor: { label: "contact:ct-1" }, metadata: { channel: "whatsapp" } },
+      },
+    );
+
+    expect(captured.auditInsert?.metadata).toEqual({ channel: "whatsapp" });
+  });
 });
 
 describe("reseedArchetypeChange", () => {

@@ -647,6 +647,29 @@ export function configPatchFromToolCall(
   }
 }
 
+/**
+ * Mescla os patches de VÁRIOS tool_calls de update de config do MESMO turno (multi-campo:
+ * "muda a meta E a cadência"). Cada `set_*` toca uma chave top-level distinta do patch
+ * (goals | autonomyPolicy | guardrails | cadence | persona | tone | systemPrompt), então
+ * um spread raso combina sem perder campo; chamadas do mesmo tipo → a última vence. Chamadas
+ * que não são update (reseed/playbook) são ignoradas. Sem nenhum update válido → null. PURO.
+ */
+export function mergeConfigUpdatePatches(
+  calls: ReadonlyArray<{ readonly name: string; readonly args?: Record<string, unknown> }>,
+  current: AgentConfigState,
+): AgentConfigPatch | null {
+  const acc: AgentConfigPatch = {};
+  let found = false;
+  for (const c of calls) {
+    if (!CONFIG_UPDATE_TOOL_NAMES.has(c.name)) continue;
+    const patch = configPatchFromToolCall(c.name, c.args ?? {}, current);
+    if (!patch) continue;
+    Object.assign(acc, patch);
+    found = true;
+  }
+  return found ? acc : null;
+}
+
 /** Traduz o tool_call de `set_cadence` → `CadenceSpec` (ou undefined se raw sem cron). */
 function cadenceFromToolCall(args: Record<string, unknown>): CadenceSpec | undefined {
   const kind = String(args["kind"] ?? "");

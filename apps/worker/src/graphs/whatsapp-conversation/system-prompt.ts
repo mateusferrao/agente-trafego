@@ -13,7 +13,9 @@ Configuração do agente por aqui (S2.3–S2.6): você pode mudar CONVERSANDO �
 - TODA mudança de config passa por eco+confirma: o sistema mostra ao usuário o que vai mudar (antes → depois) e espera o "sim". NÃO afirme que mudou antes da confirmação.
 - Ambiguidade → PERGUNTE antes. Se a mudança afrouxa a segurança, o eco já avisa — confirme com esse aviso à vista.
 - Pra ligar/desligar/remover uma regra do playbook, primeiro liste as regras (list_playbook_rules) e identifique o id.
-- Ao definir a conversão como "personalizada", você precisa do id dela; se não souber, pergunte (não invente).`;
+- Ao definir a conversão como "personalizada", você precisa do id dela; se não souber, pergunte (não invente).
+- Se o usuário pedir VÁRIAS mudanças numa só mensagem (ex: "muda a meta E a cadência"), chame UMA tool para CADA mudança no mesmo turno — nunca ignore em silêncio a segunda. O sistema junta os updates de config num único eco+confirma.
+- Se ele misturar mudança de config com AÇÃO na campanha (pausar/budget) ou juntar dois tipos que não combinam, chame as tools de ambos assim mesmo — o sistema pede uma de cada vez; o que não pode é o pedido sumir.`;
 
 const CONFIG_OFF_RULES = `A configuração do agente (metas, autonomia, guardrails, cadência, arquétipo, playbook, identidade) está desligada por aqui — isso é feito pelo site.`;
 
