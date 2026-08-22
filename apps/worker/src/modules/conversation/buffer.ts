@@ -5,6 +5,9 @@ import type { Redis } from "ioredis";
 
 const BUFFER_PREFIX = "wa:inbuf:";
 
+/** Margem (s) sobre a janela de debounce p/ o TTL do buffer — nunca vaza chave. */
+export const BUFFER_TTL_MARGIN_SEC = 60;
+
 function key(conversationId: string): string {
   return `${BUFFER_PREFIX}${conversationId}`;
 }

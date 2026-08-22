@@ -103,6 +103,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
     ensureConversation: vi.fn(async () => "conv-1"),
     recordMessage: vi.fn(async () => "msg-1"),
     updateMessageContent: vi.fn(async () => {}),
+    focusedAdAccountId: vi.fn(async () => null),
     resolveOutboundTarget: vi.fn(async () => null),
     updateInstanceStatus: vi.fn(async () => {}),
   };
