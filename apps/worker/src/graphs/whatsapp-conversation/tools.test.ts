@@ -4,10 +4,13 @@ import type { AgentConfigState } from "@trafego/core";
 import type { GuardrailConfig, AutonomyPolicy } from "@trafego/shared";
 import {
   AGENT_TOOL_NAMES,
+  CONCIERGE_TOOL_NAMES,
   actionFromToolCall,
   configPatchFromToolCall,
+  diceSimilarity,
   makeConversationTools,
   mergeConfigUpdatePatches,
+  normalizeAccountText,
   playbookOpFromToolCall,
   resolveFocusMatch,
   ruleRowToDescriptor,
@@ -62,6 +65,7 @@ describe("describe_capabilities tool", () => {
     const { deps } = makeDeps(() => null);
     const out = await capTool(deps, { ...CTX, agentId: "" }, new Set(["describe_capabilities"])).invoke({});
     expect(out.toLowerCase()).toContain("foca");
+    expect(out.toLowerCase()).toContain("panorama");
   });
 
   it("reflete o contexto: escrita só quando habilitada + config conforme o kill-switch", async () => {
@@ -72,6 +76,7 @@ describe("describe_capabilities tool", () => {
     expect(on).toContain("pausar");
     expect(on).toContain("Mudar a config");
     expect(on).toContain("sugiro e peço seu OK"); // autonomia playbook em PT
+    expect(on.toLowerCase()).toContain("panorama");
 
     const off = await capTool(deps, { ...CTX, configViaChat: false }, new Set(["describe_capabilities"])).invoke({});
     expect(off).toContain("desligado nos guardrails"); // sem write tool habilitada
@@ -206,9 +211,38 @@ describe("configPatchFromToolCall", () => {
   });
 });
 
+describe("normalizeAccountText", () => {
+  it("acento, caixa, espaço duplo e zero à esquerda", () => {
+    expect(normalizeAccountText("Clínica  BH   02")).toBe("clinica bh 2");
+  });
+
+  it("sem acento, só caixa e zero à esquerda", () => {
+    expect(normalizeAccountText("CLINICA BH 02")).toBe("clinica bh 2");
+  });
+});
+
+describe("diceSimilarity", () => {
+  it("strings idênticas → 1", () => {
+    expect(diceSimilarity("clinica bh", "clinica bh")).toBe(1);
+  });
+
+  it("overlap parcial conhecido → entre 0 e 1", () => {
+    const score = diceSimilarity("clinica bh", "clinica bh 2");
+    expect(score).toBeGreaterThan(0.5);
+    expect(score).toBeLessThan(1);
+  });
+
+  it("strings totalmente diferentes → score baixo", () => {
+    expect(diceSimilarity("clinica bh", "loja de roupas xyz")).toBeLessThan(0.2);
+  });
+});
+
 describe("resolveFocusMatch", () => {
   const bh = { id: "u-bh", name: "CLÍNICA BH", adAccountId: "187285994671922" };
   const bh02 = { id: "u-02", name: "CLINICA BH 02", adAccountId: "634449609533551" };
+  const unrelated = { id: "u-x", name: "Loja de Roupas XYZ", adAccountId: "999" };
+  const pilates = { id: "u-p", name: "Studio Pilates Ipanema", adAccountId: "1" };
+  const yoga = { id: "u-y", name: "Studio Yoga Barra", adAccountId: "2" };
 
   it("nenhuma linha → none", () => {
     expect(resolveFocusMatch([], "x").kind).toBe("none");
@@ -229,9 +263,76 @@ describe("resolveFocusMatch", () => {
     expect(m).toEqual({ kind: "one", row: bh });
   });
 
-  it("várias sem desempate → ambiguous (lista as candidatas)", () => {
+  it("bug do print: acento + zero à esquerda → acha direto (nome exato normalizado)", () => {
+    const m = resolveFocusMatch([bh, bh02], "Clínica bh 2");
+    expect(m).toEqual({ kind: "one", row: bh02 });
+  });
+
+  it("typo (letra faltando) → acha por similaridade", () => {
+    const m = resolveFocusMatch([bh, unrelated], "Clinca BH");
+    expect(m).toEqual({ kind: "one", row: bh });
+  });
+
+  it("ordem de palavra trocada → acha por similaridade", () => {
+    const m = resolveFocusMatch([bh, unrelated], "BH Clínica");
+    expect(m).toEqual({ kind: "one", row: bh });
+  });
+
+  it("nome não relacionado não casa → none", () => {
+    const m = resolveFocusMatch([unrelated], "clinica bh");
+    expect(m.kind).toBe("none");
+  });
+
+  it("auto-pick por margem clara entre 2 contas parecidas", () => {
+    const m = resolveFocusMatch([pilates, yoga], "studio pilates rj");
+    expect(m).toEqual({ kind: "one", row: pilates });
+  });
+
+  it("ambíguo genuíno, ranqueado, sem overflow", () => {
     const m = resolveFocusMatch([bh, bh02], "clinica");
+    expect(m).toEqual({ kind: "ambiguous", rows: [bh, bh02], omittedCount: 0 });
+  });
+
+  it("lista de ambíguos capada com overflow", () => {
+    const many = Array.from({ length: 6 }, (_, i) => ({
+      id: `u-${i}`,
+      name: `Clinica Unidade 0${i + 1}`,
+      adAccountId: `id-${i}`,
+    }));
+    const m = resolveFocusMatch(many, "clinica unidade");
     expect(m.kind).toBe("ambiguous");
+    if (m.kind === "ambiguous") {
+      expect(m.rows.length).toBe(5);
+      expect(m.omittedCount).toBe(1);
+    }
+  });
+
+  it("único candidato plausível mas pouco confiante → pergunta, não foca sozinho", () => {
+    const weak = { id: "u-w", name: "abyyyyyy", adAccountId: "w1" };
+    const m = resolveFocusMatch([weak], "abxxxxxx");
+    expect(m).toEqual({ kind: "ambiguous", rows: [weak], omittedCount: 0 });
+  });
+
+  it("query só espaço + conta sem nome (null) → none (não casa nome vazio com query vazia)", () => {
+    const semNome = { id: "u-null", name: null, adAccountId: "999" };
+    const m = resolveFocusMatch([semNome], "   ");
+    expect(m).toEqual({ kind: "none" });
+  });
+
+  it("fragmento curto contido num nome de conta longo → acha (restaura garantia do ILIKE antigo)", () => {
+    const longa = { id: "u-long", name: "Studio Pilates e Yoga Zona Sul Unidade Copacabana", adAccountId: "777" };
+    const m = resolveFocusMatch([longa, unrelated], "copacabana");
+    expect(m).toEqual({ kind: "one", row: longa });
+  });
+});
+
+describe("list_accounts (allowlist wiring)", () => {
+  it("presente tanto em modo concierge quanto com agente focado", () => {
+    const { deps } = makeDeps(() => null);
+    const conciergeNames = makeConversationTools(deps, { ...CTX, agentId: "" }, CONCIERGE_TOOL_NAMES).map((t) => t.name);
+    const focusedNames = makeConversationTools(deps, CTX, AGENT_TOOL_NAMES).map((t) => t.name);
+    expect(conciergeNames).toContain("list_accounts");
+    expect(focusedNames).toContain("list_accounts");
   });
 });
 

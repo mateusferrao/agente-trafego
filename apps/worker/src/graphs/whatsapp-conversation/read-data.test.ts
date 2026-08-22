@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { agentRuns, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
+import { agentRuns, agents, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
 import type { Approval, ApprovalPort } from "@trafego/shared/ports";
 import {
   comparePeriodsData,
   getAccountStatusData,
   getCampaignAnalysisData,
   getMetricsData,
+  listAccountsData,
   listPendingData,
   listRecommendationsData,
 } from "./read-data.js";
@@ -15,15 +16,18 @@ import {
  * `from(table)` fixa o resultado da chamada corrente (via mapa por objeto-tabela); o
  * chain é thenable → `await` resolve as linhas do último `from`. Queries sequenciais
  * (awaited) resetam o alvo a cada `from`, então funções com várias queries funcionam.
+ * `innerJoin`/`selectDistinctOn` são passthrough (não mudam o alvo corrente).
  */
 function fakeDb(byTable: Map<unknown, unknown[]>) {
   let current: unknown[] = [];
   const chain: Record<string, unknown> = {
     select: () => chain,
+    selectDistinctOn: () => chain,
     from: (t: unknown) => {
       current = byTable.get(t) ?? [];
       return chain;
     },
+    innerJoin: () => chain,
     where: () => chain,
     orderBy: () => chain,
     limit: () => chain,
@@ -245,6 +249,140 @@ describe("listPendingData", () => {
   it("sem pendentes → hasData:false", async () => {
     const res = await listPendingData(fakeApprovals([]), ORG);
     expect(res).toMatchObject({ hasData: false });
+  });
+});
+
+describe("listAccountsData", () => {
+  it("org sem conta ativa → hasData:false", async () => {
+    const db = fakeDb(new Map<unknown, unknown[]>([[agents, []]]));
+    const res = await listAccountsData(db, ORG);
+    expect(res).toMatchObject({ hasData: false });
+    expect((res as { note: string }).note).toBeTruthy();
+  });
+
+  it("uma conta com análise → entrada única com grade/headline/spend/asOf", async () => {
+    const finishedAt = new Date("2026-08-20T10:00:00.000Z");
+    const db = fakeDb(
+      new Map<unknown, unknown[]>([
+        [agents, [{ agentId: "ag-1", accountName: "Clínica X" }]],
+        [
+          agentRuns,
+          [
+            {
+              agentId: "ag-1",
+              metricsSnapshot: { kpis: { spend: 200 }, scorecard: { grade: "B", headline: "vai bem" } },
+              createdAt: new Date("2026-08-20T09:00:00.000Z"),
+              finishedAt,
+            },
+          ],
+        ],
+      ]),
+    );
+    const res = await listAccountsData(db, ORG);
+    expect(res).toEqual({
+      accounts: [{ accountName: "Clínica X", hasData: true, grade: "B", headline: "vai bem", spend: 200, asOf: finishedAt.toISOString() }],
+      otherAccountNames: [],
+      totalCount: 1,
+    });
+  });
+
+  it("uma conta sem run finalizado → hasData:false na entrada, sem omitir", async () => {
+    const db = fakeDb(
+      new Map<unknown, unknown[]>([
+        [agents, [{ agentId: "ag-1", accountName: "Clínica Y" }]],
+        [agentRuns, []],
+      ]),
+    );
+    const res = await listAccountsData(db, ORG);
+    expect(res).toEqual({
+      accounts: [{ accountName: "Clínica Y", hasData: false, grade: null, headline: null, asOf: "sem dados" }],
+      otherAccountNames: [],
+      totalCount: 1,
+    });
+  });
+
+  it("várias contas mistas → pior nota primeiro, sem-análise por último", async () => {
+    const db = fakeDb(
+      new Map<unknown, unknown[]>([
+        [
+          agents,
+          [
+            { agentId: "ag-z", accountName: "Zeta" },
+            { agentId: "ag-a", accountName: "Alfa" },
+            { agentId: "ag-b", accountName: "Beta" },
+          ],
+        ],
+        [
+          agentRuns,
+          [
+            { agentId: "ag-z", metricsSnapshot: { scorecard: { grade: "A" } }, createdAt: new Date(), finishedAt: new Date() },
+            { agentId: "ag-a", metricsSnapshot: { scorecard: { grade: "D" } }, createdAt: new Date(), finishedAt: new Date() },
+          ],
+        ],
+      ]),
+    );
+    const res = await listAccountsData(db, ORG);
+    if ("hasData" in res) throw new Error("esperava PortfolioOverview");
+    expect(res.accounts.map((a) => a.accountName)).toEqual(["Alfa", "Zeta", "Beta"]);
+  });
+
+  it("empate de nota → desempate alfabético (pt-BR) pelo nome", async () => {
+    const db = fakeDb(
+      new Map<unknown, unknown[]>([
+        [
+          agents,
+          [
+            { agentId: "ag-b", accountName: "Bravo" },
+            { agentId: "ag-a", accountName: "Alfa" },
+          ],
+        ],
+        [
+          agentRuns,
+          [
+            { agentId: "ag-b", metricsSnapshot: { scorecard: { grade: "C" } }, createdAt: new Date(), finishedAt: new Date() },
+            { agentId: "ag-a", metricsSnapshot: { scorecard: { grade: "C" } }, createdAt: new Date(), finishedAt: new Date() },
+          ],
+        ],
+      ]),
+    );
+    const res = await listAccountsData(db, ORG);
+    if ("hasData" in res) throw new Error("esperava PortfolioOverview");
+    expect(res.accounts.map((a) => a.accountName)).toEqual(["Alfa", "Bravo"]);
+  });
+
+  it("mais contas que o teto → corta o DETALHE em 8, resto vira só nome (nunca omitido)", async () => {
+    const accountRows = Array.from({ length: 11 }, (_, i) => ({
+      agentId: `ag-${i + 1}`,
+      accountName: `Conta ${String(i + 1).padStart(2, "0")}`,
+    }));
+    const db = fakeDb(new Map<unknown, unknown[]>([[agents, accountRows], [agentRuns, []]]));
+    const res = await listAccountsData(db, ORG);
+    if ("hasData" in res) throw new Error("esperava PortfolioOverview");
+    expect(res.accounts.length).toBe(8); // = PORTFOLIO_OVERVIEW_MAX_ACCOUNTS
+    expect(res.accounts.map((a) => a.accountName)).toEqual([
+      "Conta 01", "Conta 02", "Conta 03", "Conta 04", "Conta 05", "Conta 06", "Conta 07", "Conta 08",
+    ]);
+    expect(res.otherAccountNames).toEqual(["Conta 09", "Conta 10", "Conta 11"]);
+    expect(res.totalCount).toBe(11);
+  });
+
+  it("totalCount reflete o total, sem overflow quando cabe tudo no cap", async () => {
+    const db = fakeDb(
+      new Map<unknown, unknown[]>([
+        [
+          agents,
+          [
+            { agentId: "ag-1", accountName: "Um" },
+            { agentId: "ag-2", accountName: "Dois" },
+          ],
+        ],
+        [agentRuns, []],
+      ]),
+    );
+    const res = await listAccountsData(db, ORG);
+    if ("hasData" in res) throw new Error("esperava PortfolioOverview");
+    expect(res.otherAccountNames).toEqual([]);
+    expect(res.totalCount).toBe(2);
   });
 });
 

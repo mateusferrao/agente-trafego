@@ -12,7 +12,7 @@
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { agentRuns, agentToolCalls, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
+import { adAccounts, agentRuns, agentToolCalls, agents, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
 import { createAnalysisRepo } from "../../modules/analysis/repo.js";
 import type { ApprovalPort } from "@trafego/shared/ports";
@@ -42,6 +42,8 @@ const RECENT_ACTIONS_DAYS = 7;
 const RECENT_ACTIONS_LIMIT = 10;
 /** Janela default da tendência de gasto por entidade. */
 const ENTITY_TREND_DAYS = 14;
+/** Teto de contas com DETALHE no panorama — WhatsApp não é lugar de parede de texto (chatRules). */
+const PORTFOLIO_OVERVIEW_MAX_ACCOUNTS = 8;
 
 // ─── Formas de saída (curadas p/ o modelo) ──────────────────────────────────
 interface NoData {
@@ -142,6 +144,83 @@ export async function getAccountStatusData(
     pendingCount: pending.length,
     asOf: (run.finishedAt ?? run.createdAt).toISOString(),
   };
+}
+
+/** Linha do panorama — versão enxuta de `AccountStatus` (sem recomendação/pendência,
+ *  que é detalhe por-conta; aqui o objetivo é "quais contas, como cada uma está indo"). */
+interface PortfolioAccountEntry {
+  readonly accountName: string | null;
+  readonly hasData: boolean;
+  readonly grade: string | null;
+  readonly headline: string | null;
+  readonly spend?: number;
+  readonly asOf: string; // ASOF_NONE quando hasData=false
+}
+
+interface PortfolioOverview {
+  readonly accounts: readonly PortfolioAccountEntry[]; // até PORTFOLIO_OVERVIEW_MAX_ACCOUNTS, com detalhe, ordenado
+  readonly otherAccountNames: readonly (string | null)[]; // resto, só nome — NUNCA omitido
+  readonly totalCount: number; // total de contas ativas da org
+}
+
+/** Pior nota primeiro (D>C>B>A); sem nota (ainda sem análise) por último. */
+const GRADE_SEVERITY: Readonly<Record<string, number>> = { D: 0, C: 1, B: 2, A: 3 };
+function byGradeThenName(a: PortfolioAccountEntry, b: PortfolioAccountEntry): number {
+  const ra = a.grade ? (GRADE_SEVERITY[a.grade] ?? 4) : 4;
+  const rb = b.grade ? (GRADE_SEVERITY[b.grade] ?? 4) : 4;
+  if (ra !== rb) return ra - rb;
+  return (a.accountName ?? "").localeCompare(b.accountName ?? "", "pt-BR");
+}
+
+/**
+ * Contas ativas da org + nota/resumo/gasto da ÚLTIMA análise concluída de cada uma —
+ * panorama do portfólio. NÃO é o `AccountStatus` completo (sem recomendação/pendência,
+ * reservado pra quando focar numa conta). 2 queries só (contas + `DISTINCT ON` de runs —
+ * mesmo idiom de `apps/api/.../dashboard/service.ts` — sem N+1). Ordenado da pior nota
+ * pra melhor, sem-dado por último (nunca omite, §UX). Detalhe cortado em
+ * `PORTFOLIO_OVERVIEW_MAX_ACCOUNTS`; o resto vira só nome em `otherAccountNames` (nunca
+ * some uma conta da resposta). Org sem conta ativa → `hasData:false`.
+ */
+export async function listAccountsData(db: Database, orgId: string): Promise<PortfolioOverview | NoData> {
+  const rows = await db
+    .select({ agentId: agents.id, accountName: adAccounts.name })
+    .from(agents)
+    .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
+    .where(and(eq(agents.orgId, orgId), eq(agents.status, "active"), eq(adAccounts.status, "active")));
+
+  if (rows.length === 0) return { hasData: false, note: "nenhuma conta ativa nesta organização" };
+
+  const latestRuns = await db
+    .selectDistinctOn([agentRuns.agentId], {
+      agentId: agentRuns.agentId,
+      metricsSnapshot: agentRuns.metricsSnapshot,
+      finishedAt: agentRuns.finishedAt,
+      createdAt: agentRuns.createdAt,
+    })
+    .from(agentRuns)
+    .where(and(eq(agentRuns.orgId, orgId), inArray(agentRuns.status, [...FINISHED_RUN_STATUSES])))
+    .orderBy(agentRuns.agentId, desc(agentRuns.createdAt));
+  const runByAgent = new Map(latestRuns.map((r) => [r.agentId, r]));
+
+  const entries: PortfolioAccountEntry[] = rows.map((r) => {
+    const run = runByAgent.get(r.agentId);
+    if (!run) return { accountName: r.accountName, hasData: false, grade: null, headline: null, asOf: ASOF_NONE };
+    const snap = (run.metricsSnapshot ?? null) as RunMetricsSnapshot | null;
+    const spend = snap?.kpis?.spend;
+    return {
+      accountName: r.accountName,
+      hasData: true,
+      grade: snap?.scorecard?.grade ?? null,
+      headline: snap?.scorecard?.headline ?? null,
+      ...(typeof spend === "number" ? { spend } : {}),
+      asOf: (run.finishedAt ?? run.createdAt).toISOString(),
+    };
+  });
+
+  const sorted = [...entries].sort(byGradeThenName);
+  const accounts = sorted.slice(0, PORTFOLIO_OVERVIEW_MAX_ACCOUNTS);
+  const otherAccountNames = sorted.slice(PORTFOLIO_OVERVIEW_MAX_ACCOUNTS).map((e) => e.accountName);
+  return { accounts, otherAccountNames, totalCount: rows.length };
 }
 
 /**
@@ -574,6 +653,19 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     },
   );
 
+  const listAccounts = tool(
+    async () => {
+      logger.debug({ orgId: ctx.orgId }, "tool:list_accounts");
+      return asString(await listAccountsData(db, ctx.orgId));
+    },
+    {
+      name: "list_accounts",
+      description:
+        `Panorama das contas ativas da org: as até ${PORTFOLIO_OVERVIEW_MAX_ACCOUNTS} que mais precisam de atenção vêm com nome, nota e gasto da última análise concluída (pior nota primeiro); as demais vêm só o nome, em otherAccountNames (sem detalhe, mas NUNCA omitidas). Contas sem análise ainda vêm com hasData:false — não omita, não invente dado. Use pra 'quantas contas eu tenho' / 'quais contas eu tenho' / 'como estão minhas contas'.`,
+      schema: z.object({}),
+    },
+  );
+
   const comparePeriods = tool(
     async ({ periodDays }: { periodDays?: number | null }) => {
       const days = periodDays ?? DEFAULT_METRICS_PERIOD_DAYS;
@@ -632,6 +724,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     findRecentActions,
     listRecommendations,
     listPending,
+    listAccounts,
     getAgentConfig,
     explainRecommendation,
   ];
