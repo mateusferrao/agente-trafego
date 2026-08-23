@@ -42,6 +42,24 @@ describe("EvolutionSender.sendText", () => {
     expect(body.number).toBe("5511999999999");
   });
 
+  it("traduz typingHintMs em delay + presence:composing ('digitando…')", async () => {
+    const spy = stubFetch({ key: { id: "abc" } });
+
+    await makeSender().sendText(INSTANCE, { to: "5511999999999", text: "oi", typingHintMs: 1500 });
+
+    const body = JSON.parse(String(spy.mock.calls[0]![1]?.body));
+    expect(body).toEqual({ number: "5511999999999", text: "oi", delay: 1500, presence: "composing" });
+  });
+
+  it("sem typingHintMs → body enxuto (sem delay/presence)", async () => {
+    const spy = stubFetch({ key: { id: "abc" } });
+
+    await makeSender().sendText(INSTANCE, { to: "5511999999999", text: "oi", typingHintMs: 0 });
+
+    const body = JSON.parse(String(spy.mock.calls[0]![1]?.body));
+    expect(body).toEqual({ number: "5511999999999", text: "oi" });
+  });
+
   it("erro HTTP da Evolution → lança exceção na casca", async () => {
     stubFetch({ error: "bad request" }, 400);
     await expect(

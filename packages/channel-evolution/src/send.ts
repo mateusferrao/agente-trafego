@@ -20,12 +20,18 @@ export class EvolutionSender {
     this.client = client;
   }
 
-  /** POST message/sendText/{instanceId} com { number, text }. */
+  /**
+   * POST message/sendText/{instanceId}. Body v2 flat `{ number, text }`; quando há
+   * `typingHintMs`, adiciona `delay`+`presence:"composing"` (a Evolution mostra
+   * "digitando…" por esse tempo antes de entregar) — o único ponto onde o vocabulário
+   * de presença do provider aparece (§5).
+   */
   async sendText(instance: ChannelInstanceRef, msg: OutboundMessage): Promise<void> {
+    const typing = msg.typingHintMs && msg.typingHintMs > 0 ? { delay: msg.typingHintMs, presence: "composing" } : {};
     await this.client.request({
       method: "POST",
       path: `${SEND_TEXT_PATH}/${instance.instanceId}`,
-      body: { number: normalizePhone(msg.to), text: msg.text },
+      body: { number: normalizePhone(msg.to), text: msg.text, ...typing },
     });
   }
 }

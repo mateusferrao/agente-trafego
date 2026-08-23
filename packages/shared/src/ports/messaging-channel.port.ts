@@ -7,6 +7,14 @@ export interface ChannelInstanceRef {
 export interface OutboundMessage {
   readonly to: string; // telefone E.164
   readonly text: string;
+  /**
+   * Dica NEUTRA de tempo de "preparo" antes de entregar a mensagem (ms) — dá o
+   * ritmo humano de conversa. O adapter TRADUZ p/ o recurso do canal (Evolution:
+   * `presence: composing` + `delay` = "digitando…"); um canal sem esse recurso
+   * pode emular ou ignorar. Ausente/0 = entrega imediata. Vocabulário do provider
+   * (composing/typing) vive SÓ no adapter (§5).
+   */
+  readonly typingHintMs?: number;
 }
 
 /** Campos comuns a toda mensagem inbound (independe do tipo de mídia). */
