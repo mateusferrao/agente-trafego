@@ -126,3 +126,32 @@ describe("EvolutionAdapter.connect — ensureWebhook", () => {
     expect(state).toEqual({ status: "connected" });
   });
 });
+
+describe("EvolutionAdapter.syncWebhook", () => {
+  const ROUTES = { "webhook/set/": { status: 200, body: { webhook: { enabled: true } } } };
+
+  it("re-registra o webhook direto, sem passar por instance/connect (backfill one-time)", async () => {
+    const spy = stubRoutes(ROUTES);
+    await makeAdapterWithOrigin().syncWebhook({ instanceId: INSTANCE.instanceId, webhookSecret: "sec-123" });
+
+    const call = webhookSetCall(spy);
+    expect(call).toBeDefined();
+    expect(String(call![0])).toBe(`${BASE_URL}/webhook/set/${INSTANCE.instanceId}`);
+    const body = JSON.parse(String(call![1]?.body)).webhook;
+    expect(body.base64).toBe(true);
+  });
+
+  it("sem apiOrigin ou secret → não registra e não lança", async () => {
+    const spy = stubRoutes(ROUTES);
+    await expect(makeAdapter().syncWebhook({ instanceId: INSTANCE.instanceId, webhookSecret: "sec-123" })).resolves.toBeUndefined();
+    await expect(makeAdapterWithOrigin().syncWebhook(INSTANCE)).resolves.toBeUndefined();
+    expect(webhookSetCall(spy)).toBeUndefined();
+  });
+
+  it("falha no webhook/set não lança (best-effort)", async () => {
+    stubRoutes({ "webhook/set/": { status: 500, body: { error: "boom" } } });
+    await expect(
+      makeAdapterWithOrigin().syncWebhook({ instanceId: INSTANCE.instanceId, webhookSecret: "sec-123" }),
+    ).resolves.toBeUndefined();
+  });
+});

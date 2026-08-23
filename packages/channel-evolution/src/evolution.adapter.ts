@@ -113,7 +113,7 @@ export class EvolutionAdapter implements MessagingChannelPort {
         path: `instance/connect/${id}`,
       });
       // registra o webhook (idempotente, best-effort — pareamento não pode falhar por isso).
-      await this.ensureWebhook(instance);
+      await this.syncWebhook(instance);
       // já pareado → conectado (com o número pareado); senão, entrega o QR.
       if (res.instance?.state === "open") return this.connectedState(instance.instanceId);
       return res.base64
@@ -170,10 +170,12 @@ export class EvolutionAdapter implements MessagingChannelPort {
   }
 
   /**
-   * Registra o webhook da instância (idempotente — sobrescreve a config). Best-effort:
-   * o pareamento não pode falhar por causa disto; sem `apiOrigin`/secret, não registra.
+   * Registra/re-registra o webhook da instância (idempotente — sobrescreve a
+   * config). Chamado no `connect` e reusável direto p/ backfill one-time
+   * (instâncias já pareadas antes de uma mudança na config do webhook). Best-effort:
+   * quem chama não pode falhar por causa disto; sem `apiOrigin`/secret, não registra.
    */
-  private async ensureWebhook(instance: ChannelInstanceRef): Promise<void> {
+  async syncWebhook(instance: ChannelInstanceRef): Promise<void> {
     if (!this.apiOrigin || !instance.webhookSecret) return;
     const url = `${this.apiOrigin}/webhooks/evolution/${encodeURIComponent(instance.instanceId)}`;
     try {

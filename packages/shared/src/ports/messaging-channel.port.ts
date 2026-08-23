@@ -85,4 +85,11 @@ export interface MessagingChannelPort {
   getState(instance: ChannelInstanceRef): Promise<InstanceState>;
   /** Desfaz o pareamento do número (logout), mantendo a instância p/ re-parear. */
   disconnect(instance: ChannelInstanceRef): Promise<void>;
+  /**
+   * Re-registra o webhook da instância já pareada (mesma config do `connect`) —
+   * usado por backfills one-time quando a config do webhook muda (ex: passar a
+   * pedir mídia em base64) e instâncias já conectadas ficam com a versão antiga
+   * até re-parear. Best-effort: nunca lança.
+   */
+  syncWebhook(instance: ChannelInstanceRef): Promise<void>;
 }

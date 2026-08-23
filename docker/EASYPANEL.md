@@ -81,6 +81,14 @@ ANALYSIS_MAX_CREATIVES_VISION=8
 
 > **Erro comum:** `type "action_source" already exists` (ou qualquer `CREATE TYPE`/`CREATE TABLE` batendo em objeto já existente) no boot da api, seguido no worker de erros como `column orgs.timezone does not exist` — schema **parcial e sem journal**. O migrator do `drizzle-orm` só decide o que falta aplicar comparando com a tabela `drizzle.__drizzle_migrations`; se o Postgres já tem objetos criados por fora dela (ex: alguém rodou `drizzle-kit push` ou SQL manual contra esse mesmo banco antes), ele tenta reaplicar tudo desde a `0000` e trava no primeiro `CREATE TYPE`. Se o banco ainda não tem dado real (setup inicial), a saída é resetar: no Shell/psql do serviço `postgres`, `DROP SCHEMA public CASCADE; CREATE SCHEMA public;` (e `DROP SCHEMA IF EXISTS drizzle CASCADE;` se existir) — depois reiniciar `api`+`worker` (o `AUTO_MIGRATE` reconstrói do zero) e rodar `pnpm db:seed` de novo.
 
+> **Config do webhook Evolution mudou?** `channel_instances` já pareadas só re-registram
+> o webhook (`webhook/set`) dentro do fluxo `connect()` — quem já estava conectado antes
+> do deploy fica com a config antiga até re-parear manualmente (foi o caso de `base64:
+> false → true`, pra entregar áudio inline — sem re-registrar, todo áudio inbound falhava
+> em silêncio com "não consegui ouvir agora"). Depois de um deploy que mude essa config,
+> roda uma vez no Shell da api: `pnpm resync:webhooks` (idempotente, itera as instâncias
+> `status=connected` e reafirma a config em cada uma).
+
 ### 7. Fumaça (prova do fio)
 `GET https://<api>/health` responde `{status:"ok"}` (liveness) e `GET https://<api>/ready` responde
 `200 {status:"ready",db:true,redis:true}` quando DB+Redis estão de pé. O app (Angular servido pela api)
