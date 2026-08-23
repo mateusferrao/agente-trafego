@@ -2,6 +2,8 @@
 // — WhatsApp-first: curta, 1-decisão-por-bloco (§ decisão 18). O redator LLM (voz
 // do arquétipo) é o caminho principal; esta função é a rede quando ele falha.
 
+export * from "./whatsapp-format.js";
+
 export interface MessageOverview {
   readonly accountName: string;
   /** headline do scorecard (diagnóstico único), quando houver. */
