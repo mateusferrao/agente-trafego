@@ -1,0 +1,1 @@
+ALTER TABLE "agents" ADD COLUMN "notify_policy" jsonb DEFAULT '{"pulse":{"enabled":false,"cadence":{"kind":"weekly","weekday":1,"hour":8}},"alerts":{"enabled":false,"sensitivity":"normal","throttleHours":6},"runPush":{"enabled":true}}'::jsonb NOT NULL;

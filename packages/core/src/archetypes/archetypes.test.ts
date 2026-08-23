@@ -44,6 +44,22 @@ describe("archetypeDefaults", () => {
     expect(a.defaultCadence).toEqual({ kind: "twice_daily", hours: [8, 18] });
   });
 
+  it("semeia notify policy por arquétipo (F4): conservador quieto, guardião vigilante", () => {
+    const conservador = archetypeDefaults("conservador");
+    expect(conservador.defaultNotifyPolicy.pulse.enabled).toBe(false);
+    expect(conservador.defaultNotifyPolicy.alerts.enabled).toBe(false);
+    expect(conservador.defaultNotifyPolicy.runPush.enabled).toBe(true);
+
+    const otimizador = archetypeDefaults("otimizador");
+    expect(otimizador.defaultNotifyPolicy.pulse).toEqual({ enabled: true, cadence: { kind: "daily", hour: 8 } });
+    expect(otimizador.defaultNotifyPolicy.alerts.sensitivity).toBe("normal");
+
+    const guardiao = archetypeDefaults("guardiao_lancamento");
+    expect(guardiao.defaultNotifyPolicy.pulse.cadence).toEqual({ kind: "twice_daily", hours: [8, 18] });
+    expect(guardiao.defaultNotifyPolicy.alerts.sensitivity).toBe("high");
+    expect(guardiao.defaultNotifyPolicy.alerts.throttleHours).toBe(3);
+  });
+
   it("catálogo expõe os 3 arquétipos com textos amigáveis", () => {
     const cat = archetypeCatalog();
     expect(cat.map((c) => c.key)).toEqual(["conservador", "otimizador", "guardiao_lancamento"]);

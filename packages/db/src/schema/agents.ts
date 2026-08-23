@@ -11,11 +11,13 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { DEFAULT_NOTIFY_POLICY } from "@trafego/shared";
 import type {
   ActionType,
   AgentGoals,
   AutonomyPolicy,
   CadenceSpec,
+  NotifyPolicy,
   PlaybookCondition,
 } from "@trafego/shared";
 import {
@@ -55,6 +57,9 @@ export const agents = pgTable(
     // `USING` (Drizzle não o gera p/ text→jsonb) convertendo cron legado em {kind:raw}.
     cadence: jsonb("cadence").$type<CadenceSpec>(),
     autonomyPolicy: jsonb("autonomy_policy").$type<AutonomyPolicy>().notNull(),
+    // Notificação proativa (F4): pulso/alerta/push. Default conservador de coluna
+    // cobre linhas existentes; o onboarding semeia por arquétipo.
+    notifyPolicy: jsonb("notify_policy").$type<NotifyPolicy>().notNull().default(DEFAULT_NOTIFY_POLICY),
     tone: text("tone"),
     // config do modelo (provider/model/params) via OpenRouter
     modelConfig: jsonb("model_config").$type<Record<string, unknown>>().notNull().default({}),

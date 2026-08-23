@@ -148,6 +148,13 @@
       "when": 1787335622196,
       "tag": "0020_faulty_mad_thinker",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1787524156302,
+      "tag": "0021_solid_swordsman",
+      "breakpoints": true
     }
   ]
 }

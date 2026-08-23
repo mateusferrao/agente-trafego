@@ -1,4 +1,5 @@
-import type { AgentGoals, AutonomyPolicy, CadenceSpec } from "@trafego/shared";
+import { DEFAULT_NOTIFY_POLICY } from "@trafego/shared";
+import type { AgentGoals, AutonomyPolicy, CadenceSpec, NotifyPolicy } from "@trafego/shared";
 
 /**
  * Defaults de **arquétipo** que semeiam um agente zero-config. Fonte única até a
@@ -20,6 +21,8 @@ export interface ArchetypeDefaults {
   readonly whenToUse: string;
   /** Cadência default semeada (ausente = padrão do sistema) — Fatia 6c. */
   readonly defaultCadence?: CadenceSpec;
+  /** Política de notificação proativa semeada (pulso/alerta/push) — F4. */
+  readonly defaultNotifyPolicy: NotifyPolicy;
   /** Instruções-base da análise (o formato JSON é anexado na chamada do LLM). */
   readonly systemPrompt: string;
   readonly goals: AgentGoals;
@@ -60,6 +63,8 @@ const CONSERVADOR: ArchetypeDefaults = {
   ].join("\n"),
   goals: {},
   autonomyPolicy: { bySource: { playbook: "suggest", llm: "suggest" } },
+  // conservador: só o push do cron; sem pulso/alerta proativos (o dono liga quando quiser).
+  defaultNotifyPolicy: DEFAULT_NOTIFY_POLICY,
   methodology: {
     tonePosture: "Consultivo, direto e sem jargão; explica o porquê em linguagem de dono do negócio.",
     evidenceRules: [
@@ -102,6 +107,12 @@ const OTIMIZADOR: ArchetypeDefaults = {
   // playbook age no seguro (pausar zumbi/corte pequeno); LLM e escala pedem OK.
   autonomyPolicy: { bySource: { playbook: "act_safe", llm: "suggest" } },
   defaultCadence: { kind: "daily", hour: 8 },
+  // otimizador: pulso diário (o dono acompanha o desperdício) + alerta normal.
+  defaultNotifyPolicy: {
+    pulse: { enabled: true, cadence: { kind: "daily", hour: 8 } },
+    alerts: { enabled: true, sensitivity: "normal", throttleHours: 6 },
+    runPush: { enabled: true },
+  },
   methodology: {
     tonePosture: "Eficiência primeiro: cada real tem que trabalhar. Explica o porquê em linguagem de dono.",
     evidenceRules: [
@@ -145,6 +156,12 @@ const GUARDIAO_LANCAMENTO: ArchetypeDefaults = {
   // lançamento é alto risco → sugere+OK em tudo; a velocidade vem da cadência curta + alerta.
   autonomyPolicy: { bySource: { playbook: "suggest", llm: "suggest" } },
   defaultCadence: { kind: "twice_daily", hours: [8, 18] },
+  // guardião: vigília de lançamento — pulso 2×/dia + alerta sensível e mais frequente.
+  defaultNotifyPolicy: {
+    pulse: { enabled: true, cadence: { kind: "twice_daily", hours: [8, 18] } },
+    alerts: { enabled: true, sensitivity: "high", throttleHours: 3 },
+    runPush: { enabled: true },
+  },
   methodology: {
     tonePosture: "Velocidade e vigilância: no lançamento, melhor avisar cedo que tarde — sem alarmismo.",
     evidenceRules: [

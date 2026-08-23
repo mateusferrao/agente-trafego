@@ -75,6 +75,33 @@ export const cadenceSpecSchema = z.discriminatedUnion("kind", [
 ]);
 export type CadenceSpec = z.infer<typeof cadenceSpecSchema>;
 
+// ─── Política de notificação proativa (F4) ───────────────────────────────
+// Governa o que o agente envia SEM ser perguntado: o pulso periódico (resumo
+// mesmo sem recomendação), o alerta de mudança material (dispara análise dirigida)
+// e o liga/desliga do push do cron. Configurável por chat + site; semeada por
+// arquétipo. `sensitivity` governa o limiar do alerta; `throttleHours` limita a
+// frequência (máx 1 alerta-run/conta/janela).
+export const alertSensitivity = z.enum(["low", "normal", "high"]);
+export type AlertSensitivity = z.infer<typeof alertSensitivity>;
+
+export const notifyPolicySchema = z.object({
+  pulse: z.object({ enabled: z.boolean(), cadence: cadenceSpecSchema }),
+  alerts: z.object({
+    enabled: z.boolean(),
+    sensitivity: alertSensitivity,
+    throttleHours: z.number().int().min(1),
+  }),
+  runPush: z.object({ enabled: z.boolean() }),
+});
+export type NotifyPolicy = z.infer<typeof notifyPolicySchema>;
+
+/** Default CONSERVADOR (coluna do db + fallback): só o push do cron ligado. */
+export const DEFAULT_NOTIFY_POLICY: NotifyPolicy = {
+  pulse: { enabled: false, cadence: { kind: "weekly", weekday: 1, hour: 8 } },
+  alerts: { enabled: false, sensitivity: "normal", throttleHours: 6 },
+  runPush: { enabled: true },
+};
+
 // ─── Saída estruturada da análise (LLM) ──────────────────────────────────
 // Contrato do que o LLM devolve em `llm_analyze` (structured output). Sem
 // `.optional()` — usamos `.nullable()`/arrays vazios p/ o strict json_schema do
