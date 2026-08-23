@@ -554,6 +554,29 @@ export interface AutonomyPolicy {
   readonly autoConfigViaChat?: boolean;
 }
 
+// ─── Sinais de mudança material (F4 — alerta proativo dirigido) ─────────────
+// Taxonomia NEUTRA de um sinal temporal que DIRIGE a análise (não é veredito): a
+// detecção determinística barata (D-1 fechado vs baseline) o produz, o run de
+// análise investiga. Ponto de convergência com sinais EXTERNOS do cliente (Fatia 9).
+export type SignalMetric = "results" | "spend" | "cpa";
+export type SignalDirection = "drop" | "spike" | "zeroed";
+
+export interface SignalEntityRef {
+  readonly level: EntityLevel;
+  readonly id: string;
+  readonly name?: string;
+}
+
+export interface SignalFinding {
+  readonly entityRef: SignalEntityRef;
+  readonly metric: SignalMetric;
+  readonly direction: SignalDirection;
+  /** magnitude da mudança vs baseline (% absoluto). */
+  readonly magnitudePct: number;
+  readonly current: number;
+  readonly baseline: number;
+}
+
 // ─── Visão de criativo (3b-2) ──────────────────────────────────────────────
 /** Análise multimodal de um criativo (resultado curado, cacheável por conteúdo). */
 export interface CreativeVisionResult {

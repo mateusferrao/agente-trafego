@@ -13,6 +13,7 @@ export * from "./funnel/index.js";
 export * from "./analysis-guards/index.js";
 export * from "./cost-cap/index.js";
 export * from "./message/index.js";
+export * from "./signals/index.js";
 export * from "./map-reduce/index.js";
 export * from "./benchmarks/index.js";
 export * from "./quality/index.js";
