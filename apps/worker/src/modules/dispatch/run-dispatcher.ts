@@ -22,6 +22,7 @@ import {
   type AgentRunExecutePayload,
   type AgentRunTrigger,
   type RunNotifyTarget,
+  type SignalFinding,
 } from "@trafego/shared";
 import type { MeteringPort, SchedulerPort } from "@trafego/shared/ports";
 import type { OrgId } from "@trafego/shared/types";
@@ -47,6 +48,8 @@ export interface CronDispatchInput {
   readonly trigger?: AgentRunTrigger;
   /** alvo de push do resultado (5b-2) — só p/ trigger "conversation". */
   readonly notify?: RunNotifyTarget;
+  /** sinal que disparou o run — só p/ trigger "signal" (F4): dirige o analista. */
+  readonly signalFinding?: SignalFinding;
 }
 
 export type DispatchOutcome =
@@ -159,6 +162,7 @@ export function createRunDispatcher(deps: RunDispatcherDeps) {
       agentId,
       adAccountId,
       ...(input.notify ? { notify: input.notify } : {}),
+      ...(input.signalFinding ? { signalFinding: input.signalFinding } : {}),
     };
     await deps.scheduler.enqueue({
       queue: AGENT_RUNS_QUEUE,

@@ -3,6 +3,8 @@
  * consumidor (worker) — evita string mágica e drift de payload entre processos.
  * A fila é a mesma ("agent-runs"); o worker distingue por `mode` (execute|resume).
  */
+import type { SignalFinding } from "../types/index.js";
+
 export const AGENT_RUNS_QUEUE = "agent-runs";
 export const AGENT_RUN_JOB = "agent-run";
 
@@ -78,7 +80,7 @@ export type ApprovalApplyPayload = {
   readonly notifyContactId?: string;
 };
 
-export type AgentRunTrigger = "cron" | "on_demand" | "conversation";
+export type AgentRunTrigger = "cron" | "on_demand" | "conversation" | "signal";
 
 /** Alvo de push do resultado (5b-2): run disparado pelo WhatsApp devolve na conversa. */
 export type RunNotifyTarget = {
@@ -110,4 +112,6 @@ export type AgentRunExecutePayload = {
   readonly adAccountId: string;
   /** alvo de push (5b-2): quando disparado pelo WhatsApp, o resultado volta na conversa. */
   readonly notify?: RunNotifyTarget;
+  /** sinal que DISPAROU o run (trigger "signal", F4): dirige o olhar do analista. */
+  readonly signalFinding?: SignalFinding;
 };

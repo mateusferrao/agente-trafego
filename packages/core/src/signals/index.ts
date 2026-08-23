@@ -5,7 +5,7 @@
 // instante); esta é temporal (mesma entidade ao longo do tempo). Limiares por
 // sensibilidade; guardas de baseline mínimo evitam alarme sobre número pequeno.
 
-import type { AlertSensitivity, SignalEntityRef, SignalFinding } from "@trafego/shared";
+import type { AlertSensitivity, SignalDirection, SignalEntityRef, SignalFinding, SignalMetric } from "@trafego/shared";
 
 /** Um ponto de métrica (D-1 fechado ou baseline médio) — campos ausentes = sem dado. */
 export interface SignalMetricPoint {
@@ -97,6 +97,27 @@ function findingsFor(c: SignalComparison, t: SignalThresholds): SignalFinding[] 
   }
 
   return out;
+}
+
+/** Rótulo PT do que mudou, p/ dirigir o analista (não é veredito — ele investiga). */
+const SIGNAL_PHRASE: Readonly<Record<SignalMetric, Readonly<Record<SignalDirection, string>>>> = {
+  results: { drop: "queda de resultado", spike: "salto de resultado", zeroed: "resultado zerado" },
+  spend: { drop: "queda de gasto", spike: "gasto disparando", zeroed: "gasto zerado (parou de rodar)" },
+  cpa: { drop: "queda de CPA", spike: "CPA estourando", zeroed: "CPA zerado" },
+};
+
+/**
+ * Nota que DIRIGE o analista quando um sinal disparou o run: descreve o que mudou
+ * e pede investigação específica + conclusão consciente (o sinal é pista, não veredito).
+ */
+export function describeSignal(f: SignalFinding): string {
+  const what = SIGNAL_PHRASE[f.metric]?.[f.direction] ?? "mudança material";
+  const where = f.entityRef.name ?? f.entityRef.id;
+  return [
+    `ATENÇÃO — um sinal automático apontou ${what} (~${f.magnitudePct}% vs a média recente) em "${where}".`,
+    "Investigue ESPECIFICAMENTE esse ponto no briefing e conclua se é material: se for, lidere por ele;",
+    "se NÃO for (ex: ruído, sazonalidade, atraso de medição), diga que checou e por que não é relevante.",
+  ].join(" ");
 }
 
 /** Detecta mudanças materiais (D-1 vs baseline) em todas as entidades comparadas. */

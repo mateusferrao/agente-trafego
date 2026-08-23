@@ -3,7 +3,7 @@
 
 import { Annotation } from "@langchain/langgraph";
 import type { AccumulatedTokenUsage, DecisionResult, DroppedAction, GuardrailResult } from "@trafego/core";
-import type { AgentRunTrigger, RunNotifyTarget } from "@trafego/shared";
+import type { AgentRunTrigger, RunNotifyTarget, SignalFinding } from "@trafego/shared";
 import type { MutationResult } from "@trafego/shared/ports";
 import type {
   AccountBrief,
@@ -48,6 +48,8 @@ export const AccountAnalysisState = Annotation.Root({
   // na conversa (writeMessage/notify honram isto além do cron). null = sem push.
   // (nome != nó "notify" do grafo — LangGraph proíbe state key == node name)
   notifyTarget: Annotation<RunNotifyTarget | null>,
+  // sinal que disparou o run (trigger "signal", F4): dirige o olhar do analista. null = run normal.
+  signalFinding: Annotation<SignalFinding | null>,
 
   // config congelada no início do run (reprodutibilidade — CLAUDE §6)
   goals: Annotation<AgentGoals>,

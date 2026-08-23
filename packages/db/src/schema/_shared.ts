@@ -68,7 +68,7 @@ export const toolBindingMode = pgEnum("tool_binding_mode", ["enabled", "disabled
 export const memoryType = pgEnum("memory_type", ["objective", "past_action", "rejected", "fact"]);
 export const memoryLifecycle = pgEnum("memory_lifecycle", ["active", "stale", "archived"]);
 
-export const runTrigger = pgEnum("run_trigger", ["cron", "on_demand", "conversation"]);
+export const runTrigger = pgEnum("run_trigger", ["cron", "on_demand", "conversation", "signal"]);
 export const runStatus = pgEnum("run_status", [
   "pending",
   "running",

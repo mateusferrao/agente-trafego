@@ -5,10 +5,12 @@
 import { Worker } from "bullmq";
 import type { Redis } from "ioredis";
 import { and, eq } from "drizzle-orm";
-import { adAccounts, platformConnections } from "@trafego/db";
+import { adAccounts, agents, platformConnections } from "@trafego/db";
 import { INSIGHTS_SYNC_JOB, SYNC_QUEUE, type InsightsSyncPayload } from "@trafego/shared";
 import type { WorkerDeps } from "../composition.js";
 import { markConnectionTokenInvalid } from "../lib/mark-token-invalid.js";
+import { createRunDispatcher } from "../modules/dispatch/run-dispatcher.js";
+import { runAlertGate } from "../modules/alerts/gate.js";
 
 /** Data de referência do sync (UTC). Timezone da conta = refinamento (follow-up). */
 function todayIso(): string {
@@ -70,6 +72,32 @@ export async function runInsightsSync(deps: WorkerDeps, payload: InsightsSyncPay
     { accountId: account.id, written: result.snapshotsWritten, partial: result.partial },
     "sync:concluído",
   );
+
+  // Gate do alerta proativo (F4): dados novos → checa mudança material (D-1 vs baseline)
+  // e, se cruza o limiar, dispara um run dirigido. Determinístico/barato; throttle +
+  // política de alerta ficam no gate. Falha aqui não invalida o sync (best-effort).
+  try {
+    const [agent] = await db
+      .select({ id: agents.id })
+      .from(agents)
+      .where(and(eq(agents.adAccountId, account.id), eq(agents.orgId, payload.orgId), eq(agents.status, "active")))
+      .limit(1);
+    if (agent) {
+      const dispatcher = createRunDispatcher({
+        db,
+        scheduler: ports.scheduler,
+        logger,
+        metering: ports.metering,
+        envCostCapUsd: deps.costCapUsd,
+      });
+      await runAlertGate(
+        { db, logger, dispatch: dispatcher.dispatch },
+        { orgId: payload.orgId, agentId: agent.id, adAccountId: account.id },
+      );
+    }
+  } catch (err) {
+    logger.warn({ accountId: account.id, err }, "sync:gate de alerta falhou (ignorado)");
+  }
 }
 
 /** Sobe o Worker BullMQ que processa os jobs `insights-sync-run`. */

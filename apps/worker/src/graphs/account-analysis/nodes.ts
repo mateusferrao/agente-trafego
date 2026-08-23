@@ -20,6 +20,7 @@ import {
   costSnapshotFromUsage,
   creativePosterFrames,
   decideActions,
+  describeSignal,
   dropUnsupportedFindings,
   eligibilityByEntity,
   guardScaleWithoutSignificance,
@@ -162,10 +163,14 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       .filter((s) => s.length > 0)
       .join("\n");
     const basePrompt = identity ? `${methodologyBase}\n\n${identity}` : methodologyBase;
-    const systemPrompt = composeAgentPrompt(basePrompt, {
+    const composed = composeAgentPrompt(basePrompt, {
       ...(ctx.businessContext ? { businessContext: ctx.businessContext } : {}),
       ...(ctx.guidance ? { guidance: ctx.guidance } : {}),
     });
+    // run disparado por sinal (F4): a nota do sinal DIRIGE o olhar do analista
+    // (investigue este ponto e conclua se é material) — cobre todos os prompts que
+    // usam state.systemPrompt (analista/mapa/síntese).
+    const systemPrompt = state.signalFinding ? `${composed}\n\n${describeSignal(state.signalFinding)}` : composed;
     const { window, baseline } = resolveWindows(today(), cfg.windowDays, cfg.baselineDays);
     const windowLabel = `últimos ${cfg.windowDays} dias`;
     const baselineLabel = `${cfg.baselineDays} dias anteriores`;
@@ -706,11 +711,14 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
   async function writeMessage(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
     logger.debug({ runId: state.runId }, "write_message");
     const isWhatsapp = state.notifyTarget != null; // run disparado pelo WhatsApp → responde na conversa
-    if (state.trigger !== "cron" && !isWhatsapp) return { outboundMessage: null }; // on-demand no site
+    // cron E signal (F4) empurram ao destinatário verificado da org; on-demand (site) não faz push.
+    const notifiesOrg = state.trigger === "cron" || state.trigger === "signal";
+    if (!notifiesOrg && !isWhatsapp) return { outboundMessage: null }; // on-demand no site
     const out = state.analysisOutput;
     if (!out || !state.account) return { outboundMessage: null };
     const hasRecs = out.recommendations.length > 0;
-    // cron sem recomendação = silêncio; WhatsApp SEMPRE responde (o usuário pediu "analisa agora").
+    // sem recomendação: cron/signal = silêncio (o alerta que não confirmou não incomoda);
+    // WhatsApp SEMPRE responde (o usuário pediu "analisa agora").
     if (!hasRecs && !isWhatsapp) return { outboundMessage: null };
 
     const cfg = state.analysisConfig ?? deps.analysis;
@@ -856,6 +864,7 @@ function decideDeepRun(
   configChangedAt: number | null,
 ): boolean {
   if (trigger === "on_demand") return true;
+  if (trigger === "signal") return true; // alerta (F4): análise fresca sobre o ponto sinalizado.
   if (last.size === 0) return true;
   if (configChangedAt !== null) {
     for (const u of adUnits) {

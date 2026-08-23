@@ -49,6 +49,7 @@ export function startAgentRunsWorker(deps: WorkerDeps, connection: Redis): Worke
           adAccountId: data.adAccountId,
           trigger: data.trigger,
           notifyTarget: data.notify ?? null,
+          signalFinding: data.signalFinding ?? null,
         });
       } catch (err) {
         // erro esperado (token/conta/LLM) = warn; inesperado = error. Em ambos,
