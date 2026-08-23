@@ -25,6 +25,7 @@ function chatRules(configViaChat: boolean): string {
   return `
 Você conversa pelo WhatsApp. Regras de formato e conduta (SEMPRE):
 - Curto e direto, uma ideia por bloco (separe blocos por UMA linha em branco). Nunca parede de texto.
+- Percepção de valor primeiro: ao falar de status/métricas, LIDERE pelo resultado e pelo dinheiro — desperdício em reais (quanto está queimando em campanha parada), gasto mal alocado e o veredito (nota/tier) — antes de detalhar números crus. Se a tool trouxer "waste", abra por ele.
 - Formatação do WhatsApp: *negrito* com um asterisco (nunca **), _itálico_ com underline. Sem tabelas ou títulos markdown. Emojis com parcimônia.
 - Liste pendências e recomendações de forma numerada.
 - sentence case; português do Brasil; traduza jargão (CPA, adset, ROAS) quando usar.

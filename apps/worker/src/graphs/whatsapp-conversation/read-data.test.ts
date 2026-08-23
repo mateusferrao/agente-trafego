@@ -117,6 +117,64 @@ describe("getAccountStatusData", () => {
     expect(res).toMatchObject({ hasData: false });
     expect((res as { note: string }).note).toBeTruthy();
   });
+
+  it("expõe o money-shot (waste) quando material no snapshot", async () => {
+    const db = fakeDb(
+      new Map<unknown, unknown[]>([
+        [
+          agentRuns,
+          [
+            {
+              id: "run-1",
+              summary: "s",
+              metricsSnapshot: {
+                kpis: { spend: 500 },
+                scorecard: { grade: "C", headline: "h" },
+                waste: {
+                  wastedSpend: 12000,
+                  wastedPct: 24,
+                  pareto: { misallocated: [{ name: "Campanha X", spendPct: 40, resultPct: 8 }] },
+                },
+              },
+              createdAt: new Date(),
+              finishedAt: new Date(),
+            },
+          ],
+        ],
+        [recommendations, []],
+      ]),
+    );
+    const res = await getAccountStatusData(db, AGENT, ORG, fakeApprovals([]));
+    expect(res).toMatchObject({
+      waste: {
+        wastedSpend: 12000,
+        wastedPct: 24,
+        misallocated: [{ name: "Campanha X", spendPct: 40, resultPct: 8 }],
+      },
+    });
+  });
+
+  it("omite waste quando não há desperdício material (não polui a resposta)", async () => {
+    const db = fakeDb(
+      new Map<unknown, unknown[]>([
+        [
+          agentRuns,
+          [
+            {
+              id: "run-1",
+              summary: "s",
+              metricsSnapshot: { kpis: { spend: 500 }, scorecard: { grade: "A" }, waste: { wastedSpend: 0, wastedPct: 0 } },
+              createdAt: new Date(),
+              finishedAt: new Date(),
+            },
+          ],
+        ],
+        [recommendations, []],
+      ]),
+    );
+    const res = await getAccountStatusData(db, AGENT, ORG, fakeApprovals([]));
+    expect(res).not.toHaveProperty("waste");
+  });
 });
 
 describe("getMetricsData", () => {

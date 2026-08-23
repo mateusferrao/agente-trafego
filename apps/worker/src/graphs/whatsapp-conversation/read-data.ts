@@ -52,11 +52,22 @@ interface NoData {
   readonly note: string;
 }
 
+/** Resumo do desperdício p/ o chat LIDERAR pelo dinheiro (§Bloco 2 money-shot). */
+interface AccountWaste {
+  /** gasto queimado em campanhas paradas (zumbis) — pausar libera esse valor. */
+  readonly wastedSpend: number;
+  readonly wastedPct: number;
+  /** até 2 campanhas mal alocadas (gasto alto × resultado baixo). */
+  readonly misallocated?: readonly { name: string | null; spendPct: number; resultPct?: number }[];
+}
+
 interface AccountStatus {
   readonly grade: string | null;
   readonly headline: string | null;
   readonly summary: string | null;
   readonly spend?: number;
+  /** money-shot: quanto está sendo queimado e onde (§Bloco 2). Ausente = nada material. */
+  readonly waste?: AccountWaste;
   readonly recommendationCount: number;
   readonly pendingCount: number;
   readonly asOf: string;
@@ -111,6 +122,33 @@ interface PendingItem {
 interface RunMetricsSnapshot {
   readonly kpis?: { readonly spend?: number };
   readonly scorecard?: { readonly grade?: string; readonly headline?: string };
+  readonly waste?: {
+    readonly wastedSpend?: number;
+    readonly wastedPct?: number;
+    readonly pareto?: {
+      readonly misallocated?: readonly { readonly name?: string; readonly spendPct?: number; readonly resultPct?: number }[];
+    };
+  };
+}
+
+/** Curadoria do desperdício persistido → resumo escaneável p/ o chat. Material-only. */
+function curateWasteForChat(waste: RunMetricsSnapshot["waste"]): AccountWaste | undefined {
+  if (!waste) return undefined;
+  const wastedSpend = typeof waste.wastedSpend === "number" ? waste.wastedSpend : 0;
+  const misallocated = (waste.pareto?.misallocated ?? [])
+    .slice(0, 2)
+    .filter((m) => typeof m.spendPct === "number")
+    .map((m) => ({
+      name: m.name ?? null,
+      spendPct: m.spendPct as number,
+      ...(typeof m.resultPct === "number" ? { resultPct: m.resultPct } : {}),
+    }));
+  if (wastedSpend <= 0 && misallocated.length === 0) return undefined;
+  return {
+    wastedSpend,
+    wastedPct: typeof waste.wastedPct === "number" ? waste.wastedPct : 0,
+    ...(misallocated.length > 0 ? { misallocated } : {}),
+  };
 }
 
 // ─── Funções de dados (puras/async, org-scoped) — testadas direto ────────────
@@ -136,11 +174,13 @@ export async function getAccountStatusData(
 
   const snap = (run.metricsSnapshot ?? null) as RunMetricsSnapshot | null;
   const spend = snap?.kpis?.spend;
+  const waste = curateWasteForChat(snap?.waste);
   return {
     grade: snap?.scorecard?.grade ?? null,
     headline: snap?.scorecard?.headline ?? null,
     summary: run.summary ?? null,
     ...(typeof spend === "number" ? { spend } : {}),
+    ...(waste ? { waste } : {}),
     recommendationCount: recIds.length,
     pendingCount: pending.length,
     asOf: (run.finishedAt ?? run.createdAt).toISOString(),
@@ -585,7 +625,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     {
       name: "get_account_status",
       description:
-        "Status atual da conta pela última análise concluída: nota, resumo, gasto, nº de recomendações e de aprovações pendentes.",
+        "Status atual da conta pela última análise concluída: nota, resumo, gasto, DESPERDÍCIO (waste: quanto está queimando em campanhas paradas e onde o gasto está mal alocado — lidere por isso quando houver), nº de recomendações e de aprovações pendentes.",
       schema: z.object({}),
     },
   );
