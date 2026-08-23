@@ -3,6 +3,8 @@ import type { EvolutionClient } from "./client.js";
 
 /** Path do endpoint de envio de texto da Evolution v2. */
 const SEND_TEXT_PATH = "message/sendText";
+/** Presença "digitando…" da Evolution (mostrada durante o `delay` antes de entregar). */
+const PRESENCE_COMPOSING = "composing";
 
 /** Evolution espera só dígitos com DDI (resolve o JID internamente) — sem +/espaços. */
 function normalizePhone(raw: string): string {
@@ -27,7 +29,8 @@ export class EvolutionSender {
    * de presença do provider aparece (§5).
    */
   async sendText(instance: ChannelInstanceRef, msg: OutboundMessage): Promise<void> {
-    const typing = msg.typingHintMs && msg.typingHintMs > 0 ? { delay: msg.typingHintMs, presence: "composing" } : {};
+    const typing =
+      msg.typingHintMs && msg.typingHintMs > 0 ? { delay: msg.typingHintMs, presence: PRESENCE_COMPOSING } : {};
     await this.client.request({
       method: "POST",
       path: `${SEND_TEXT_PATH}/${instance.instanceId}`,

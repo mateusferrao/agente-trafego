@@ -38,7 +38,8 @@ export function createSendToContact(deps: SendToContactDeps) {
 
     const conversationId = await deps.repo.ensureConversation(target.orgId, contactId);
     // Cada balão leva "digitando…" proporcional (composing+delay no adapter): o ritmo
-    // humano vem do canal, não de um sleep fixo. As chamadas são sequenciais (ordem).
+    // humano vem do canal, não de um sleep fixo. Envio sequencial (await por balão) — a
+    // Evolution entrega em ordem de chegada por instância; o `delay` segura cada entrega.
     for (const part of parts) {
       await deps.messaging.sendMessage(
         { instanceId: target.instanceId },
