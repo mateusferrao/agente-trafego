@@ -119,22 +119,30 @@ export const META_TRANSIENT_CODES = new Set([1, 2, 4, 17, 32, 613, 80000, 80001,
  */
 export const META_RATE_LIMIT_CODES = new Set([4, 17, 32, 613, 80000, 80001, 80002, 80003, 80004]);
 
+/** Default do timeout HTTP por chamada — sem isso, um fetch preso trava o run/turno
+ *  que espera a resposta pra sempre (nunca dá erro, só não responde). */
+const DEFAULT_TIMEOUT_MS = 30_000;
+
 export interface MetaClientOptions {
   /** override da versão (default = META_GRAPH_VERSION). */
   readonly graphVersion?: string;
   readonly baseUrl?: string; // default https://graph.facebook.com
   readonly appSecret?: string; // opcional: appsecret_proof (fast-follow)
+  /** timeout (ms) por chamada HTTP; default 30s (META_HTTP_TIMEOUT_MS). */
+  readonly timeoutMs?: number;
 }
 
 export class MetaGraphClient {
   private readonly graphVersion: string;
   private readonly baseUrl: string;
   private readonly appSecret: string | undefined;
+  private readonly timeoutMs: number;
 
   constructor(options: MetaClientOptions = {}) {
     this.graphVersion = options.graphVersion ?? META_GRAPH_VERSION;
     this.baseUrl = options.baseUrl ?? "https://graph.facebook.com";
     this.appSecret = options.appSecret;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
   /** Monta a URL versionada: `${baseUrl}/${graphVersion}/${path}`. */
@@ -163,6 +171,7 @@ export class MetaGraphClient {
     const res = await fetch(url.toString(), {
       method: req.method,
       headers: { Authorization: `Bearer ${req.accessToken}` },
+      signal: AbortSignal.timeout(this.timeoutMs),
     });
     return this.toGraphResponse<T>(res);
   }
@@ -222,6 +231,7 @@ export class MetaGraphClient {
           "content-type": "application/x-www-form-urlencoded",
         },
         body: form.toString(),
+        signal: AbortSignal.timeout(this.timeoutMs),
       });
       const parsed = await this.toGraphResponse<Array<BatchSubResponse | null>>(res);
       results.push(...parsed.data);

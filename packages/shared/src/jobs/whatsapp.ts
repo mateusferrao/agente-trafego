@@ -26,3 +26,27 @@ export type WhatsappFlushPayload = {
   readonly contactId: string;
   readonly conversationId: string;
 };
+
+/**
+ * Fila DEDICADA de transcrição de nota de voz (áudio → texto na borda). O inbound
+ * detecta áudio, marca a flag `wa:transcribing` (segura o flush) e enfileira aqui;
+ * o worker transcreve, grava o texto na linha da mensagem, mede o custo e empurra
+ * o texto no buffer do debounce (coalesce com texto picado) — ou avisa em falha.
+ */
+export const WHATSAPP_TRANSCRIPTION_QUEUE = "whatsapp-transcription";
+export const WHATSAPP_TRANSCRIPTION_JOB = "transcribe-audio";
+/** Retentativas da transcrição (só erros transitórios re-tentam — ver worker). */
+export const WHATSAPP_TRANSCRIPTION_ATTEMPTS = 3;
+/** Base do backoff exponencial entre tentativas de transcrição (ms). */
+export const WHATSAPP_TRANSCRIPTION_BACKOFF_MS = 3_000;
+export type WhatsappTranscriptionPayload = {
+  readonly orgId: string;
+  readonly contactId: string;
+  readonly conversationId: string;
+  /** id da LINHA da mensagem (messages.id) — update por PK após transcrever. */
+  readonly messageRowId: string;
+  readonly audio: {
+    readonly base64: string;
+    readonly mimetype: string;
+  };
+};

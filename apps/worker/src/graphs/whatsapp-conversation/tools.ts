@@ -428,12 +428,12 @@ export async function buildCapabilitiesText(
       "• ver e resolver pendências de aprovação (de todas as suas contas);",
       "• te dar um panorama de todas as contas (nota e gasto da última análise de cada uma);",
       '• focar numa conta (ex: "foca na Clínica X") pra ler, analisar e agir nela.',
-      "Me diz em qual conta você quer trabalhar.",
+      "Pode me mandar áudio também — eu transcrevo e entendo. Me diz em qual conta você quer trabalhar.",
     ].join("\n");
   }
   const parts: string[] = ["Aqui no WhatsApp eu consigo:"];
   parts.push(
-    "📊 Ler: status da conta, métricas, análise por campanha, recomendações, desperdício, comparar períodos, ver pendências e o panorama de todas as contas da organização.",
+    "📊 Ler: status da conta, métricas, dados ATUALIZADOS direto da Meta (hoje até 7 dias atrás, conta ou campanha), análise por campanha, recomendações, desperdício, comparar períodos, ver pendências e o panorama de todas as contas da organização.",
   );
   const writeVerbs = [...WRITE_TOOL_NAMES].filter((n) => allow.has(n)).map((n) => WRITE_VERB_PT[n]).filter(Boolean);
   if (writeVerbs.length > 0) {
@@ -457,6 +457,7 @@ export async function buildCapabilitiesText(
     const lbl = (l: string) => AUTONOMY_LABEL_CHAT[l] ?? l;
     parts.push(`🤖 Nas análises automáticas (sem você pedir): com o playbook eu ${lbl(pol.bySource.playbook)}; com sugestões de IA eu ${lbl(pol.bySource.llm)}.`);
   }
+  parts.push("🎙️ Pode falar por áudio — eu transcrevo e respondo pelo conteúdo.");
   parts.push("🚧 Ainda não: criar campanhas do zero (em breve) nem editar criativos.");
   parts.push("É só pedir. 🙂");
   return parts.join("\n");
@@ -523,6 +524,7 @@ export function actionFromToolCall(name: string, args: Record<string, unknown>, 
 export const AGENT_TOOL_NAMES: ReadonlySet<string> = new Set([
   "get_account_status",
   "get_metrics",
+  "get_fresh_metrics",
   "get_campaign_analysis",
   "get_entity_detail",
   "compare_periods",

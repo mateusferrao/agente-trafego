@@ -39,6 +39,12 @@ export interface SyncInput {
   readonly accessToken: string;
   /** data de referência (YYYY-MM-DD), injetada pela casca. */
   readonly today: string;
+  /**
+   * Níveis a sincronizar; default = todos (account+campaign+adset+ad, análise 3a).
+   * Consultas ao vivo do chat (get_fresh_metrics) restringem ao(s) nível(is) que vão
+   * ler — não paga rate-limit/chamadas de níveis que não vai usar.
+   */
+  readonly levels?: readonly EntityLevel[];
 }
 
 export interface SyncResult {
@@ -66,7 +72,7 @@ export function createInsightsSyncService(deps: InsightsSyncServiceDeps): Insigh
       let partial = false;
       let snapshotsWritten = 0;
 
-      for (const level of SYNC_LEVELS) {
+      for (const level of input.levels ?? SYNC_LEVELS) {
         const latest = await deps.repo.latestDate(input.orgId, input.adAccountUuid, level);
         const window = planSyncWindow({
           today: input.today,

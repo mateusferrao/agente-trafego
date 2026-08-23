@@ -15,6 +15,7 @@ import { z } from "zod";
 import { adAccounts, agentRuns, agentToolCalls, agents, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
 import { createAnalysisRepo } from "../../modules/analysis/repo.js";
+import { getFreshMetricsData } from "../../modules/conversation/fresh-metrics.js";
 import type { ApprovalPort } from "@trafego/shared/ports";
 import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY } from "@trafego/shared";
 import type { EntityLevel, InsightMetrics, OrgId, UnitAnalysis } from "@trafego/shared";
@@ -603,6 +604,28 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     },
   );
 
+  const getFreshMetrics = tool(
+    async ({ periodDays, campaign }: { periodDays?: number | null; campaign?: string | null }) => {
+      logger.debug({ adAccountId: ctx.adAccountId, periodDays, campaign }, "tool:get_fresh_metrics");
+      return asString(
+        await getFreshMetricsData(
+          { db, vault: ports.vault, insightsSync: deps.insightsSync, logger },
+          { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId },
+          { periodDays: periodDays ?? null, campaign: campaign ?? null },
+        ),
+      );
+    },
+    {
+      name: "get_fresh_metrics",
+      description:
+        "Puxa métricas ATUALIZADAS direto da Meta (gasto, resultados, CPA/ROAS, CPC/CPM) da conta nos últimos N dias (default hoje, máx 7 — hoje até 7 dias atrás). Se o usuário citar o nome de uma campanha, traz a dela em vez da conta. Use quando ele pedir 'como está HOJE / agora / atualizado / essa semana'. Se a Meta estiver indisponível/limitada, cai no último dado sincronizado e o campo updated vem false (avise que não atualizou agora); se não houver dado do período nem no salvo, o campo error explica — repasse ao usuário.",
+      schema: z.object({
+        periodDays: z.number().int().positive().nullable().optional(),
+        campaign: z.string().nullable().optional(),
+      }),
+    },
+  );
+
   const getCampaignAnalysis = tool(
     async ({ name }: { name: string }) => {
       logger.debug({ agentId: ctx.agentId, name }, "tool:get_campaign_analysis");
@@ -718,6 +741,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
   return [
     getAccountStatus,
     getMetrics,
+    getFreshMetrics,
     getCampaignAnalysis,
     getEntityDetail,
     comparePeriods,

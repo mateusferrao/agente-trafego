@@ -227,6 +227,9 @@ importers:
       '@trafego/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@trafego/transcription-openrouter':
+        specifier: workspace:*
+        version: link:../../packages/transcription-openrouter
       bullmq:
         specifier: ^5.34.0
         version: 5.81.3
@@ -385,6 +388,12 @@ importers:
       zod-to-json-schema:
         specifier: ^3.24.0
         version: 3.25.2(zod@3.25.76)
+
+  packages/transcription-openrouter:
+    dependencies:
+      '@trafego/shared':
+        specifier: workspace:*
+        version: link:../shared
 
 packages:
 

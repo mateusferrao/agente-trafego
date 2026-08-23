@@ -5,7 +5,7 @@
 // a conversa/mensagem inbound.
 
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { channelInstances, contacts, conversations, messages, type Database } from "@trafego/db";
+import { adAccounts, agents, channelInstances, contacts, conversations, messages, type Database } from "@trafego/db";
 import { brPhoneVariants } from "@trafego/shared";
 
 export interface NotifyTarget {
@@ -38,8 +38,22 @@ export interface NotifyRepo {
   alreadyProcessed(messageId: string): Promise<boolean>;
   /** Garante a conversa (org/contato) e devolve seu id. */
   ensureConversation(orgId: string, contactId: string): Promise<string>;
-  /** Grava uma mensagem na conversa (in/out) com meta opcional. */
-  recordMessage(conversationId: string, direction: MessageDirection, body: string, meta?: Record<string, unknown>): Promise<void>;
+  /** Grava uma mensagem na conversa (in/out) com meta opcional; devolve o id da linha. */
+  recordMessage(
+    conversationId: string,
+    direction: MessageDirection,
+    body: string | null,
+    meta?: Record<string, unknown>,
+  ): Promise<string>;
+  /** Atualiza corpo + funde meta (merge jsonb) de uma mensagem por id — pós-transcrição. */
+  updateMessageContent(messageRowId: string, body: string | null, metaPatch: Record<string, unknown>): Promise<void>;
+  /**
+   * Conta em CONTEXTO do fio p/ atribuir custo (metering §6), org-scoped: a única
+   * conta ativa da org (sole) OU a conta em FOCO explícito do fio (multi-conta) —
+   * mesma resolução de `turn.ts` (sole ?? focused), sem os campos extras (agentId/
+   * accountName) que o turno usa e a atribuição de custo não precisa.
+   */
+  contextAdAccountId(orgId: string, conversationId: string): Promise<string | null>;
   /** Alvo de envio a um contato: instância conectada da org + telefone. */
   resolveOutboundTarget(contactId: string): Promise<ContactTarget | null>;
   /** Atualiza o status do canal pela instância (CONNECTION_UPDATE — status ao vivo). */
@@ -134,7 +148,42 @@ export function createNotifyRepo(db: Database): NotifyRepo {
     },
 
     async recordMessage(conversationId, direction, body, meta) {
-      await db.insert(messages).values({ conversationId, direction, body, ...(meta ? { meta } : {}) });
+      const [row] = await db
+        .insert(messages)
+        .values({ conversationId, direction, body, ...(meta ? { meta } : {}) })
+        .returning({ id: messages.id });
+      return row?.id ?? "";
+    },
+
+    /** Update por PK: corpo + merge do meta (`||` de jsonb) — pós-transcrição (S4). */
+    async updateMessageContent(messageRowId, body, metaPatch) {
+      await db
+        .update(messages)
+        .set({
+          body,
+          meta: sql`coalesce(${messages.meta}, '{}'::jsonb) || ${JSON.stringify(metaPatch)}::jsonb`,
+        })
+        .where(eq(messages.id, messageRowId));
+    },
+
+    /** Conta em contexto do fio (ad_accounts.id) p/ atribuir o custo da transcrição
+     *  (§6): sole ativa da org, senão o foco explícito da conversa. Org-scoped em
+     *  ambos os passos (evita mis-atribuição cross-org). */
+    async contextAdAccountId(orgId, conversationId) {
+      const sole = await db
+        .select({ adAccountId: agents.adAccountId })
+        .from(agents)
+        .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
+        .where(and(eq(agents.orgId, orgId), eq(agents.status, "active"), eq(adAccounts.status, "active")))
+        .limit(2);
+      if (sole.length === 1) return sole[0]!.adAccountId;
+
+      const [conv] = await db
+        .select({ focusedAccountId: conversations.focusedAccountId })
+        .from(conversations)
+        .where(and(eq(conversations.id, conversationId), eq(conversations.orgId, orgId)))
+        .limit(1);
+      return conv?.focusedAccountId ?? null;
     },
 
     /** Telefone do contato + instância conectada da sua org. */

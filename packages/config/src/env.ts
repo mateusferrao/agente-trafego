@@ -95,6 +95,9 @@ export const envSchema = z.object({
   // + appsecret_proof.
   META_APP_ID: z.string().optional(),
   META_APP_SECRET: z.string().optional(),
+  // Timeout (ms) por chamada HTTP à Graph API — sem isso, um fetch preso (rede)
+  // trava o run/turno esperando pra sempre (nunca dá erro, só não responde).
+  META_HTTP_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
 
   // ─── WhatsApp (Evolution) ──────────────────────────────────────────────
   // Nível OPERADOR (compartilhado): 1 servidor Evolution hospeda as instâncias
@@ -207,6 +210,25 @@ export const envSchema = z.object({
   CONVERSATION_MAX_TOKENS: z.coerce.number().int().positive().default(6000),
   // Debounce do inbound: coalesce mensagens picadas do mesmo contato num turno só.
   CONVERSATION_DEBOUNCE_SECONDS: z.coerce.number().int().nonnegative().default(5),
+  // Teto (ms) do turno inteiro (ReAct: LLM + tools, pode chamar a Meta ao vivo via
+  // get_fresh_metrics). Travamento sem erro → cai no fallback amigável, nunca deixa
+  // o usuário sem resposta pra sempre.
+  CONVERSATION_TURN_TIMEOUT_MS: z.coerce.number().int().positive().default(90_000),
+
+  // ─── Transcrição de áudio inbound (STT via OpenRouter) ─────────────────
+  // Nota de voz do WhatsApp → texto na borda. Reusa OPENROUTER_API_KEY/BASE_URL.
+  // Modelo trocável a qualquer momento (ex: openai/gpt-4o-transcribe).
+  TRANSCRIPTION_MODEL: z.string().min(1).default("openai/whisper-large-v3-turbo"),
+  // Dica ISO-639-1 (melhora PT-BR); vazio = auto-detect do provider.
+  TRANSCRIPTION_LANGUAGE: z.string().default("pt"),
+  // Teto de tamanho do áudio (MB) — acima disso não transcreve (aviso amigável).
+  TRANSCRIPTION_MAX_AUDIO_MB: z.coerce.number().int().positive().default(16),
+  // Timeout (ms) da chamada de transcrição.
+  TRANSCRIPTION_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
+  // Janela (s) do throttle dos avisos de cortesia (áudio-falha/vazio, mídia não-suportada):
+  // no máx 1 aviso por conversa/motivo por janela — anti-spam/ban-safety (§9). Dedicada
+  // (não os segundos do debounce), medida em ~minuto.
+  NOTICE_THROTTLE_SECONDS: z.coerce.number().int().positive().default(60),
 
   // ─── Email (auth transacional — 6b) ────────────────────────────────────
   // Verificação de email + reset de senha via mailer genérico (porta + fila).

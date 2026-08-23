@@ -48,6 +48,7 @@ describe("parseInbound", () => {
   it("normaliza mensagem de texto (conversation)", () => {
     const msg = parseInbound(upsert({}));
     expect(msg).toEqual({
+      kind: "text",
       instanceId: "org-123",
       from: "+5511999999999",
       text: "oi, tudo bem?",
@@ -60,7 +61,7 @@ describe("parseInbound", () => {
     const msg = parseInbound(
       upsert({ message: { extendedTextMessage: { text: "mensagem longa aqui" } } }),
     );
-    expect(msg?.text).toBe("mensagem longa aqui");
+    expect(msg).toMatchObject({ kind: "text", text: "mensagem longa aqui" });
   });
 
   it("fromMe (nossa própria mensagem) → null", () => {
@@ -76,11 +77,7 @@ describe("parseInbound", () => {
   });
 
   it("aceita o evento no formato pontilhado (messages.upsert)", () => {
-    expect(parseInbound(upsert({ event: "messages.upsert" }))?.text).toBe("oi, tudo bem?");
-  });
-
-  it("mensagem não-texto (ex: imagem, sem conversation) → null", () => {
-    expect(parseInbound(upsert({ message: { imageMessage: { url: "x" } } }))).toBeNull();
+    expect(parseInbound(upsert({ event: "messages.upsert" }))).toMatchObject({ kind: "text", text: "oi, tudo bem?" });
   });
 
   it("texto vazio/espaços → null", () => {
@@ -91,6 +88,48 @@ describe("parseInbound", () => {
     expect(parseInbound(null)).toBeNull();
     expect(parseInbound("x")).toBeNull();
     expect(parseInbound({})).toBeNull();
+  });
+
+  // ─── Áudio (nota de voz) → kind:"audio" com bytes inline (base64:true) ───
+  it("áudio (audioMessage + base64 em data.message.base64) → kind audio", () => {
+    const msg = parseInbound(
+      upsert({ message: { audioMessage: { mimetype: "audio/ogg; codecs=opus", ptt: true }, base64: "AAAA" } }),
+    );
+    expect(msg).toMatchObject({ kind: "audio", audio: { base64: "AAAA", mimetype: "audio/ogg; codecs=opus" } });
+  });
+
+  it("áudio sem mimetype → default audio/ogg", () => {
+    const msg = parseInbound(upsert({ message: { audioMessage: { ptt: true }, base64: "BBBB" } }));
+    expect(msg).toMatchObject({ kind: "audio", audio: { base64: "BBBB", mimetype: "audio/ogg" } });
+  });
+
+  it("base64 defensivo: aceita data.base64 (fora de message)", () => {
+    const payload = {
+      event: "MESSAGES_UPSERT",
+      instance: "org-1",
+      data: {
+        key: { remoteJid: "5511999999999@s.whatsapp.net", fromMe: false, id: "MID1" },
+        message: { audioMessage: { mimetype: "audio/ogg" } },
+        base64: "CCCC",
+      },
+    };
+    expect(parseInbound(payload)).toMatchObject({ kind: "audio", audio: { base64: "CCCC" } });
+  });
+
+  it("áudio sem base64 em nenhum candidato → kind audio com base64 vazio (worker trata como falha)", () => {
+    const msg = parseInbound(upsert({ message: { audioMessage: { mimetype: "audio/ogg" } } }));
+    expect(msg).toMatchObject({ kind: "audio", audio: { base64: "", mimetype: "audio/ogg" } });
+  });
+
+  // ─── Mídia reconhecida não-suportada → kind:"unsupported" (vira aviso) ───
+  it.each([
+    ["imageMessage", "image"],
+    ["videoMessage", "video"],
+    ["documentMessage", "document"],
+    ["stickerMessage", "sticker"],
+  ])("%s → kind unsupported (%s)", (node, mediaType) => {
+    const msg = parseInbound(upsert({ message: { [node]: { url: "x" } } }));
+    expect(msg).toMatchObject({ kind: "unsupported", mediaType });
   });
 });
 

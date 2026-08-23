@@ -29,6 +29,7 @@
     "@trafego/metering-postgres": "workspace:*",
     "@trafego/scheduler-bullmq": "workspace:*",
     "@trafego/shared": "workspace:*",
+    "@trafego/transcription-openrouter": "workspace:*",
     "bullmq": "^5.34.0",
     "drizzle-orm": "^0.38.0",
     "ioredis": "^5.4.0",

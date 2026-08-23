@@ -9,14 +9,39 @@ export interface OutboundMessage {
   readonly text: string;
 }
 
-export interface InboundMessage {
+/** Campos comuns a toda mensagem inbound (independe do tipo de mídia). */
+export interface InboundMessageBase {
   readonly instanceId: string;
   readonly from: string; // telefone E.164
-  readonly text: string;
   /** id da mensagem no provider (Evolution `data.key.id`) — idempotência do inbound. */
   readonly messageId: string;
   readonly raw: Readonly<Record<string, unknown>>;
 }
+
+/** Mensagem de texto (conversation / extendedTextMessage). */
+export interface InboundTextMessage extends InboundMessageBase {
+  readonly kind: "text";
+  readonly text: string;
+}
+
+/** Nota de voz / áudio — bytes inline (base64) p/ transcrição na borda. */
+export interface InboundAudioMessage extends InboundMessageBase {
+  readonly kind: "audio";
+  readonly audio: { readonly base64: string; readonly mimetype: string };
+}
+
+/** Mídia reconhecida mas não-suportada (imagem/vídeo/doc/figurinha) — vira aviso, não drop. */
+export interface InboundUnsupportedMessage extends InboundMessageBase {
+  readonly kind: "unsupported";
+  readonly mediaType: string; // rótulo neutro: "image" | "video" | "document" | "sticker" | ...
+}
+
+/**
+ * Mensagem inbound normalizada (união discriminada por `kind`). Áudio é
+ * transcrito → texto na borda; mídia não-suportada vira aviso amigável; o resto
+ * (fromMe/grupo/ACK/sem conteúdo) o parser devolve como `null` (silêncio).
+ */
+export type InboundMessage = InboundTextMessage | InboundAudioMessage | InboundUnsupportedMessage;
 
 export type InstanceStatus = "disconnected" | "connecting" | "connected";
 

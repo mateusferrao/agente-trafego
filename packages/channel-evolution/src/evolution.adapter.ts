@@ -185,7 +185,9 @@ export class EvolutionAdapter implements MessagingChannelPort {
             enabled: true,
             url,
             byEvents: false,
-            base64: false,
+            // entrega a mídia decriptada inline (base64) no próprio webhook — o worker
+            // transcreve nota de voz na borda sem re-fetch (evita o getBase64, bugado).
+            base64: true,
             headers: { [WEBHOOK_SECRET_HEADER]: instance.webhookSecret },
             events: WEBHOOK_EVENTS,
           },
