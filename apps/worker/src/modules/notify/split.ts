@@ -1,23 +1,76 @@
 /**
- * Quebra de mensagem outbound do WhatsApp: cada bloco separado por 2+ quebras de
- * linha vira uma mensagem própria (evita parede de texto no chat). Puro/testável.
- * Só o chat quebra; o push do cron envia inteiro (ban-safety §9 — menos volume).
+ * Quebra de mensagem outbound do WhatsApp. Puro/testável. Cascata de fronteiras
+ * NATURAIS (nunca corta palavra/frase): parágrafo (`\n\n`) → linha (`\n`) → frase.
+ * O alvo em chars é só o GATILHO da subdivisão, jamais o ponto de corte; um bloco
+ * abaixo do alvo passa intacto. Só o chat quebra; o push do cron envia inteiro
+ * (ban-safety §9 — menos volume).
  */
 
 /** Teto de partes: acima disso, o excedente é juntado no último bloco. */
 export const WHATSAPP_SPLIT_MAX_PARTS = 5;
 /** Atraso entre partes no envio (ordem + toque natural). */
 export const WHATSAPP_PART_DELAY_MS = 800;
+/** Alvo de tamanho por balão: acima disso o bloco é subdividido por fronteira natural. */
+export const WHATSAPP_SOFT_MAX_CHARS = 600;
 
-/** Divide o texto em mensagens (blocos por `\n\n`), respeitando o cap de partes. */
+/** Empacota unidades (linhas/frases) em partes, juntando por `sep` até o alvo. */
+function packUnits(units: readonly string[], sep: string, softMax: number): string[] {
+  const parts: string[] = [];
+  let cur = "";
+  for (const u of units) {
+    if (cur.length === 0) {
+      cur = u;
+      continue;
+    }
+    const candidate = `${cur}${sep}${u}`;
+    if (candidate.length > softMax) {
+      parts.push(cur);
+      cur = u;
+    } else {
+      cur = candidate;
+    }
+  }
+  if (cur.length > 0) parts.push(cur);
+  return parts;
+}
+
+/** Divide um trecho por FRASE (fim de `.`/`!`/`?` + espaço). Frase única > alvo fica inteira. */
+function splitBySentence(text: string, softMax: number): string[] {
+  const sentences = text
+    .split(/(?<=[.!?])\s+/u)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  if (sentences.length <= 1) return [text]; // uma frase gigante: não parte o sentido
+  return packUnits(sentences, " ", softMax);
+}
+
+/** Subdivide UM bloco acima do alvo: por linha (`\n`) e, se a linha ainda passar, por frase. */
+function splitParagraph(paragraph: string, softMax: number): string[] {
+  if (paragraph.length <= softMax) return [paragraph];
+  const lines = paragraph
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  if (lines.length > 1) {
+    const units = lines.flatMap((l) => (l.length > softMax ? splitBySentence(l, softMax) : [l]));
+    return packUnits(units, "\n", softMax);
+  }
+  return splitBySentence(paragraph, softMax);
+}
+
+/**
+ * Divide o texto em mensagens: blocos por `\n\n`, cada bloco acima do alvo subdividido
+ * por fronteira natural, respeitando o cap de partes (excedente juntado no último).
+ */
 export function splitMessage(text: string, maxParts = WHATSAPP_SPLIT_MAX_PARTS): string[] {
   const blocks = text
     .split(/\n{2,}/)
     .map((b) => b.trim())
     .filter((b) => b.length > 0);
-  if (blocks.length <= maxParts) return blocks;
+  const expanded = blocks.flatMap((b) => splitParagraph(b, WHATSAPP_SOFT_MAX_CHARS));
+  if (expanded.length <= maxParts) return expanded;
   // excedente juntado no último bloco (mantém o cap sem perder conteúdo).
-  const head = blocks.slice(0, maxParts - 1);
-  const tail = blocks.slice(maxParts - 1).join("\n\n");
+  const head = expanded.slice(0, maxParts - 1);
+  const tail = expanded.slice(maxParts - 1).join("\n\n");
   return [...head, tail];
 }
