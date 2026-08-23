@@ -8,8 +8,6 @@
 
 /** Teto de partes: acima disso, o excedente é juntado no último bloco. */
 export const WHATSAPP_SPLIT_MAX_PARTS = 5;
-/** Atraso entre partes no envio (ordem + toque natural). */
-export const WHATSAPP_PART_DELAY_MS = 800;
 /** Alvo de tamanho por balão: acima disso o bloco é subdividido por fronteira natural. */
 export const WHATSAPP_SOFT_MAX_CHARS = 600;
 
