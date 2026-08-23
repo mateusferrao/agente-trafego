@@ -5,7 +5,7 @@
 // a conversa/mensagem inbound.
 
 import { and, eq, sql } from "drizzle-orm";
-import { channelInstances, contacts, conversations, messages, type Database } from "@trafego/db";
+import { adAccounts, agents, channelInstances, contacts, conversations, messages, type Database } from "@trafego/db";
 
 export interface NotifyTarget {
   readonly instanceId: string;
@@ -46,8 +46,13 @@ export interface NotifyRepo {
   ): Promise<string>;
   /** Atualiza corpo + funde meta (merge jsonb) de uma mensagem por id — pós-transcrição. */
   updateMessageContent(messageRowId: string, body: string | null, metaPatch: Record<string, unknown>): Promise<void>;
-  /** Conta em foco do fio (metering §6), org-scoped — null se concierge/sem foco. */
-  focusedAdAccountId(orgId: string, conversationId: string): Promise<string | null>;
+  /**
+   * Conta em CONTEXTO do fio p/ atribuir custo (metering §6), org-scoped: a única
+   * conta ativa da org (sole) OU a conta em FOCO explícito do fio (multi-conta) —
+   * mesma resolução de `turn.ts` (sole ?? focused), sem os campos extras (agentId/
+   * accountName) que o turno usa e a atribuição de custo não precisa.
+   */
+  contextAdAccountId(orgId: string, conversationId: string): Promise<string | null>;
   /** Alvo de envio a um contato: instância conectada da org + telefone. */
   resolveOutboundTarget(contactId: string): Promise<ContactTarget | null>;
   /** Atualiza o status do canal pela instância (CONNECTION_UPDATE — status ao vivo). */
@@ -151,15 +156,24 @@ export function createNotifyRepo(db: Database): NotifyRepo {
         .where(eq(messages.id, messageRowId));
     },
 
-    /** Conta em foco do fio (ad_accounts.id) p/ atribuir o custo da transcrição (§6).
-     *  Org-scoped: a linha só resolve se a conversa é da org (evita mis-atribuição). */
-    async focusedAdAccountId(orgId, conversationId) {
-      const [row] = await db
+    /** Conta em contexto do fio (ad_accounts.id) p/ atribuir o custo da transcrição
+     *  (§6): sole ativa da org, senão o foco explícito da conversa. Org-scoped em
+     *  ambos os passos (evita mis-atribuição cross-org). */
+    async contextAdAccountId(orgId, conversationId) {
+      const sole = await db
+        .select({ adAccountId: agents.adAccountId })
+        .from(agents)
+        .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
+        .where(and(eq(agents.orgId, orgId), eq(agents.status, "active"), eq(adAccounts.status, "active")))
+        .limit(2);
+      if (sole.length === 1) return sole[0]!.adAccountId;
+
+      const [conv] = await db
         .select({ focusedAccountId: conversations.focusedAccountId })
         .from(conversations)
         .where(and(eq(conversations.id, conversationId), eq(conversations.orgId, orgId)))
         .limit(1);
-      return row?.focusedAccountId ?? null;
+      return conv?.focusedAccountId ?? null;
     },
 
     /** Telefone do contato + instância conectada da sua org. */

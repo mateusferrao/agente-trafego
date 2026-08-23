@@ -36,7 +36,7 @@ export interface TranscriptionProcessorDeps {
   readonly redis: Redis;
   readonly flushQueue: Queue<WhatsappFlushPayload>;
   readonly sendToContact: SendToContact;
-  readonly repo: Pick<NotifyRepo, "updateMessageContent" | "focusedAdAccountId">;
+  readonly repo: Pick<NotifyRepo, "updateMessageContent" | "contextAdAccountId">;
   readonly logger: Pick<Logger, "warn">;
   readonly debounceSeconds: number;
   readonly maxAudioMb: number;
@@ -67,7 +67,7 @@ async function recordUsage(
   d: TranscriptionProcessorDeps,
   args: { orgId: string; conversationId: string; contactId: string; result: TranscriptionResult },
 ): Promise<void> {
-  const adAccountId = await d.repo.focusedAdAccountId(args.orgId, args.conversationId);
+  const adAccountId = await d.repo.contextAdAccountId(args.orgId, args.conversationId);
   await d.metering.record({
     orgId: args.orgId as OrgId,
     ...(adAccountId ? { adAccountId } : {}),

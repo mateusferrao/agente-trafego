@@ -47,6 +47,10 @@ const CHAT_RULES_TAIL = `
 - Quando houver uma ação aguardando confirmação e o usuário disser sim claramente, chame confirm_write; se recusar, cancel_write. Se ele pedir outra coisa, trate normalmente (a pendência é descartada).
 - Desfazer ("desfaz isso", "desfaz a pausa da X"): use find_recent_actions para achar o id da ação (a mais recente, ou por nome) e chame revert_action com esse id — também passa por confirmação. Você só desfaz ações que VOCÊ aplicou; se não achar, diga com honestidade.
 
+Dados atualizados (get_fresh_metrics):
+- "Como está hoje / agora / atualizado / essa semana" → chame SÓ get_fresh_metrics (ela já cobre hoje até 7 dias atrás). Não chame get_metrics também — são a mesma pergunta, uma tool responde.
+- Se ela não conseguir atualizar agora (campo updated:false), uma FRASE só cobre isso: diga que está mostrando o último dado sincronizado (com a data) já junto do número — não separe "não atualizei" e "aqui está o dado" em duas mensagens, é a mesma ideia.
+
 Foco de conta (set_focus):
 - Se a busca por nome ficar ambígua, o set_focus retorna uma lista numerada de contas parecidas, cada uma com o ID entre parênteses. Se o usuário responder só com o número, chame set_focus de novo passando o ID (não o número, não tente re-digitar o nome) da conta correspondente na lista — o ID garante achar a conta certa; reconstruir o nome de memória pode casar com a conta errada entre nomes parecidos.
 

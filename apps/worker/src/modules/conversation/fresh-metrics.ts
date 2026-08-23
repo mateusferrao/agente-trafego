@@ -200,9 +200,14 @@ export interface FreshMetricsCtx {
 
 /**
  * Consulta KPIs atualizados (live Meta ≤7d) com fallback ao snapshot salvo.
- * 1) atualiza via sync (absorve rate-limit → partial; token 190 → tokenInvalid).
- * 2) lê o snapshot da janela (conta agregada ou campanha por nome).
- * 3) sem linha no período (nem no salvo) → erro claro.
+ * 1) resolve o alvo (conta, ou campanha por nome) ANTES de tocar a Meta — campanha
+ *    inexistente localmente erra na hora, sem gastar chamada/rate-limit à toa.
+ * 2) atualiza via sync, restrito ao(s) nível(is) do alvo (não sincroniza os 4 níveis
+ *    da análise completa — menos chamadas, menos exposição a rate-limit). Degrada
+ *    sozinho (partial/tokenInvalid) sem lançar; defensivo contra throw inesperado →
+ *    cai no snapshot salvo.
+ * 3) lê o snapshot da janela (conta agregada ou campanha).
+ * 4) sem linha no período (nem no salvo) → erro claro.
  */
 export async function getFreshMetricsData(
   deps: FreshMetricsDeps,
@@ -212,26 +217,6 @@ export async function getFreshMetricsData(
   const days = clamp(args.periodDays ?? FRESH_METRICS_DEFAULT_DAYS, 1, FRESH_METRICS_MAX_DAYS);
   const account = await loadAccountToken(deps.db, deps.vault, ctx.orgId, ctx.adAccountId);
   if (!account) return { error: "não encontrei uma conta ativa em foco pra consultar agora." };
-
-  // tenta ATUALIZAR (live Meta). sync degrada sozinho (partial/tokenInvalid) sem lançar;
-  // defensivo contra throw inesperado → cai no snapshot salvo.
-  let updated = false;
-  try {
-    const res = await deps.insightsSync.sync({
-      orgId: ctx.orgId,
-      adAccountUuid: account.id,
-      metaAdAccountId: account.metaAdAccountId,
-      accessToken: account.accessToken,
-      today: todayIso(),
-    });
-    updated = !res.partial && !res.tokenInvalid;
-    if (res.tokenInvalid) await markConnectionTokenInvalid(deps.db, ctx.orgId, account.id).catch(() => {});
-  } catch (err) {
-    deps.logger.warn({ err: String(err) }, "fresh-metrics:sync falhou (fallback ao snapshot)");
-  }
-
-  const until = todayIso();
-  const since = isoDaysAgo(days);
 
   let level: EntityLevel = ACCOUNT_LEVEL;
   let entityId: string | undefined;
@@ -246,6 +231,27 @@ export async function getFreshMetricsData(
     entityId = resolved.id;
     target = resolved.name;
   }
+
+  // tenta ATUALIZAR (live Meta), só o nível do alvo — o sync completo (4 níveis) é
+  // trabalho da análise, não desta leitura pontual.
+  let updated = false;
+  try {
+    const res = await deps.insightsSync.sync({
+      orgId: ctx.orgId,
+      adAccountUuid: account.id,
+      metaAdAccountId: account.metaAdAccountId,
+      accessToken: account.accessToken,
+      today: todayIso(),
+      levels: [level],
+    });
+    updated = !res.partial && !res.tokenInvalid;
+    if (res.tokenInvalid) await markConnectionTokenInvalid(deps.db, ctx.orgId, account.id).catch(() => {});
+  } catch (err) {
+    deps.logger.warn({ err: String(err) }, "fresh-metrics:sync falhou (fallback ao snapshot)");
+  }
+
+  const until = todayIso();
+  const since = isoDaysAgo(days);
 
   const rows = await readSnapshotRows(deps.db, ctx.orgId, account.id, level, entityId, since, until);
   if (rows.length === 0) {

@@ -27,7 +27,7 @@ function makeDeps(overrides: Partial<TranscriptionProcessorDeps> = {}, setResult
   const sendToContact = vi.fn(async () => true);
   const repo = {
     updateMessageContent: vi.fn(async () => {}),
-    focusedAdAccountId: vi.fn(async (): Promise<string | null> => null),
+    contextAdAccountId: vi.fn(async (): Promise<string | null> => null),
   };
   const metering = { record: vi.fn(async () => "evt-1"), updateCost: vi.fn(), summarize: vi.fn(), llmCostInPeriod: vi.fn() };
   const transcription = {
@@ -90,9 +90,9 @@ describe("makeTranscriptionProcessor", () => {
     expect(t.flushQueue.add).toHaveBeenCalled();
   });
 
-  it("atribui a conta em foco ao metering quando há foco", async () => {
+  it("atribui a conta em contexto (sole ou foco) ao metering", async () => {
     const t = makeDeps();
-    t.repo.focusedAdAccountId.mockResolvedValueOnce("acc-9");
+    t.repo.contextAdAccountId.mockResolvedValueOnce("acc-9");
     await makeTranscriptionProcessor(t.deps)(job());
     expect(t.metering.record).toHaveBeenCalledWith(expect.objectContaining({ adAccountId: "acc-9" }));
   });

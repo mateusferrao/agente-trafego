@@ -76,7 +76,7 @@ describe("getFreshMetricsData", () => {
   it("conta + sync ok → updated:true, KPIs agregados da janela", async () => {
     const { deps, insightsSync } = makeDeps([[ACCOUNT_ROW], SNAP]);
     const res = (await getFreshMetricsData(deps, CTX, { periodDays: 1 })) as FreshMetricsData;
-    expect(insightsSync.sync).toHaveBeenCalled();
+    expect(insightsSync.sync).toHaveBeenCalledWith(expect.objectContaining({ levels: ["account"] }));
     expect(res.level).toBe("account");
     expect(res.updated).toBe(true);
     expect(res.kpis.spend).toBe(100);
@@ -103,19 +103,21 @@ describe("getFreshMetricsData", () => {
     expect(res).toHaveProperty("error");
   });
 
-  it("campanha por nome resolvida → nível campanha", async () => {
+  it("campanha por nome resolvida → nível campanha, sync restrito a campaign", async () => {
     const campaignRows = [{ id: "camp-9", name: "Black Friday", at: new Date() }];
-    const { deps } = makeDeps([[ACCOUNT_ROW], campaignRows, SNAP]);
+    const { deps, insightsSync } = makeDeps([[ACCOUNT_ROW], campaignRows, SNAP]);
     const res = (await getFreshMetricsData(deps, CTX, { campaign: "black" })) as FreshMetricsData;
     expect(res.level).toBe("campaign");
     expect(res.target).toBe("Black Friday");
     expect(res.kpis.spend).toBe(100);
+    expect(insightsSync.sync).toHaveBeenCalledWith(expect.objectContaining({ levels: ["campaign"] }));
   });
 
-  it("campanha não encontrada → erro pedindo o nome", async () => {
-    const { deps } = makeDeps([[ACCOUNT_ROW], []]);
+  it("campanha não encontrada → erro pedindo o nome, SEM chamar a Meta (resolve antes do sync)", async () => {
+    const { deps, insightsSync } = makeDeps([[ACCOUNT_ROW], []]);
     const res = await getFreshMetricsData(deps, CTX, { campaign: "inexistente" });
     expect((res as { error: string }).error).toContain("não achei a campanha");
+    expect(insightsSync.sync).not.toHaveBeenCalled();
   });
 
   it("periodDays acima de 7 é limitado a 7", async () => {
