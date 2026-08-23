@@ -93,6 +93,8 @@ export interface WorkerDeps {
     readonly debounceSeconds: number;
     /** Janela (s) do throttle dos avisos de cortesia — dedicada (não o debounce). */
     readonly noticeThrottleSec: number;
+    /** Teto (ms) do turno inteiro (ReAct) — travamento sem erro cai no fallback. */
+    readonly turnTimeoutMs: number;
     /** Fallback de custo (bug do bindTools suprimindo usage.cost — ver nodes.ts). */
     readonly fetchGenerationCost: (generationId: string) => Promise<number | undefined>;
   };
@@ -133,7 +135,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
   const redis = new Redis(env.REDIS_URL, { maxRetriesPerRequest: null });
 
   const vault = new Aes256CredentialVault(env.CREDENTIAL_MASTER_KEY, env.CREDENTIAL_KEY_VERSION);
-  const client = new MetaGraphClient();
+  const client = new MetaGraphClient({ timeoutMs: env.META_HTTP_TIMEOUT_MS });
   const ads = new MetaAdsAdapter({
     client,
     governor: new MetaGovernor({ redis }),
@@ -269,6 +271,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
       maxTokens: env.CONVERSATION_MAX_TOKENS,
       debounceSeconds: env.CONVERSATION_DEBOUNCE_SECONDS,
       noticeThrottleSec: env.NOTICE_THROTTLE_SECONDS,
+      turnTimeoutMs: env.CONVERSATION_TURN_TIMEOUT_MS,
       fetchGenerationCost: (id) => openRouterClient.getGenerationCost(id),
     },
     transcription: {

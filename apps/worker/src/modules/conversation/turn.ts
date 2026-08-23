@@ -17,6 +17,7 @@ import {
 } from "../../graphs/whatsapp-conversation/tools.js";
 import { createNotifyRepo } from "../notify/repo.js";
 import { createSendToContact } from "../notify/send-to-contact.js";
+import { withTimeout } from "./with-timeout.js";
 
 /** Erro amigável se o turno falhar (LLM/infra) — nunca vaza stack pro usuário (§UX). */
 const FALLBACK_REPLY = "Não consegui processar agora. Tenta de novo em instantes.";
@@ -154,15 +155,20 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
   let reply = FALLBACK_REPLY;
   try {
     const graph = buildWhatsappConversationGraph(deps, ctx, allow);
-    const result = await graph.invoke(
-      {
-        messages: [new HumanMessage(input.text)],
-        orgId: ctx.orgId,
-        agentId: ctx.agentId,
-        adAccountId: ctx.adAccountId,
-        contactId: ctx.contactId,
-      },
-      { configurable: { thread_id: input.conversationId } },
+    // Teto de tempo do turno inteiro: qualquer travamento (Meta/LLM/DB presos sem dar
+    // erro) não pode deixar o usuário sem resposta pra sempre — vira o fallback amigável.
+    const result = await withTimeout(
+      graph.invoke(
+        {
+          messages: [new HumanMessage(input.text)],
+          orgId: ctx.orgId,
+          agentId: ctx.agentId,
+          adAccountId: ctx.adAccountId,
+          contactId: ctx.contactId,
+        },
+        { configurable: { thread_id: input.conversationId } },
+      ),
+      deps.conversation.turnTimeoutMs,
     );
     const last = result.messages.at(-1) as AIMessage | undefined;
     const text = typeof last?.content === "string" ? last.content.trim() : "";
