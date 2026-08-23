@@ -3,6 +3,7 @@
 // sendToContact. Reusado pelo flush do debounce (5b-2.4). Erro → resposta amigável.
 
 import { and, eq } from "drizzle-orm";
+import type { Logger } from "pino";
 import { HumanMessage, type AIMessage } from "@langchain/core/messages";
 import { adAccounts, agents, conversations, guardrailConfigs, type Database } from "@trafego/db";
 import type { ActionType, AutonomyPolicy } from "@trafego/shared";
@@ -16,11 +17,32 @@ import {
   type ConversationToolContext,
 } from "../../graphs/whatsapp-conversation/tools.js";
 import { createNotifyRepo } from "../notify/repo.js";
-import { createSendToContact } from "../notify/send-to-contact.js";
+import { createSendToContact, type SendToContact } from "../notify/send-to-contact.js";
 import { withTimeout } from "./with-timeout.js";
 
 /** Erro amigável se o turno falhar (LLM/infra) — nunca vaza stack pro usuário (§UX). */
 const FALLBACK_REPLY = "Não consegui processar agora. Tenta de novo em instantes.";
+
+/**
+ * Entrega a resposta ao contato de forma RESILIENTE: uma falha de envio (Evolution
+ * fora) NÃO propaga. O turno já foi computado (LLM já gasto) — relançar faria o
+ * BullMQ re-invocar o grafo e re-gastar tokens. Melhor perder o envio (logado) do
+ * que recomputar. Reenvio idempotente = fast-follow.
+ */
+export async function deliverReply(
+  sendToContact: SendToContact,
+  contactId: string,
+  reply: string,
+  logger: Pick<Logger, "info" | "error">,
+  orgId: string,
+): Promise<void> {
+  try {
+    await sendToContact(contactId, reply, { split: true });
+    logger.info({ orgId }, "conversation:replied");
+  } catch (err) {
+    logger.error({ err, orgId }, "conversation:send falhou (resposta perdida, sem retry do grafo)");
+  }
+}
 
 /** Agente em contexto (id + conta + nome da conta). */
 interface AgentInContext {
@@ -177,6 +199,5 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
     logger.error({ err, orgId: input.orgId }, "conversation:turn falhou");
   }
 
-  await sendToContact(input.contactId, reply, { split: true });
-  logger.info({ orgId: input.orgId }, "conversation:replied");
+  await deliverReply(sendToContact, input.contactId, reply, logger, input.orgId);
 }

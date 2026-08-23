@@ -1,7 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Database } from "@trafego/db";
-import { configToolsFor } from "./turn.js";
+import { configToolsFor, deliverReply } from "./turn.js";
+import type { SendToContact } from "../notify/send-to-contact.js";
 import { CONFIG_CHAT_TOOL_NAMES } from "../../graphs/whatsapp-conversation/tools.js";
+
+function fakeLogger() {
+  return { info: vi.fn(), error: vi.fn() };
+}
 
 /** DB falso: devolve UMA linha de agente (autonomyPolicy) na leitura. */
 function fakeDb(autonomyPolicy: unknown) {
@@ -27,5 +32,25 @@ describe("configToolsFor (kill-switch da auto-config por chat, S2.3)", () => {
     const r = await configToolsFor(fakeDb({ bySource: { playbook: "suggest", llm: "suggest" }, autoConfigViaChat: false }), "o", "a");
     expect(r.enabled).toBe(false);
     expect(r.tools).toEqual([]);
+  });
+});
+
+describe("deliverReply (robustez de envio, F2)", () => {
+  it("envio ok → loga replied", async () => {
+    const send = vi.fn(async () => true) as unknown as SendToContact;
+    const logger = fakeLogger();
+    await deliverReply(send, "contact-1", "oi", logger, "org-1");
+    expect(logger.info).toHaveBeenCalledOnce();
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it("envio falha (Evolution fora) → NÃO propaga (não relança o grafo), só loga error", async () => {
+    const send = vi.fn(async () => {
+      throw new Error("evolution 500");
+    }) as unknown as SendToContact;
+    const logger = fakeLogger();
+    // não deve rejeitar — propagar faria o BullMQ re-invocar o grafo e re-gastar LLM
+    await expect(deliverReply(send, "contact-1", "oi", logger, "org-1")).resolves.toBeUndefined();
+    expect(logger.error).toHaveBeenCalledOnce();
   });
 });
