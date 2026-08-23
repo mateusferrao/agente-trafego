@@ -91,7 +91,8 @@ export function makeInboundRouter(d: InboundRouterDeps) {
         contactId: contact.contactId,
         conversationId,
         messageRowId,
-        audio: inbound.audio,
+        instanceId,
+        audio: { ...inbound.audio, messageKey: inbound.messageKey },
       };
       await d.transcriptionQueue.add(WHATSAPP_TRANSCRIPTION_JOB, payload, {
         attempts: WHATSAPP_TRANSCRIPTION_ATTEMPTS,

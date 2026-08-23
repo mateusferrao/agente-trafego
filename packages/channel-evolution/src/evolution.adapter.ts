@@ -4,6 +4,7 @@ import {
   type InboundMessage,
   type InstanceState,
   type InstanceStatus,
+  type MediaMessageKey,
   type MessagingChannelPort,
   type OutboundMessage,
 } from "@trafego/shared/ports";
@@ -35,6 +36,9 @@ interface EvolutionConnectResponse {
   readonly base64?: string; // QR em data-URL base64 (quando desconectado)
   readonly code?: string;
   readonly instance?: { readonly state?: string };
+}
+interface EvolutionMediaResponse {
+  readonly base64?: string;
 }
 
 /** Mapeia o `state` da Evolution (`open|connecting|close`) → status neutro da porta. */
@@ -197,6 +201,25 @@ export class EvolutionAdapter implements MessagingChannelPort {
       });
     } catch {
       // registro falhou → inbound não chega até re-conectar; não derruba o pareamento.
+    }
+  }
+
+  /**
+   * Busca o base64 decriptado de uma mídia direto na Evolution (`chat/getBase64FromMediaMessage`)
+   * — fallback pro caso do webhook não entregar inline (observado em áudio/`ptt` mesmo
+   * com `base64:true` registrado). Best-effort: qualquer falha (HTTP/rede/shape
+   * inesperado) vira `null`, nunca lança — quem chama decide o que fazer sem mídia.
+   */
+  async fetchMediaBase64(instance: ChannelInstanceRef, key: MediaMessageKey): Promise<string | null> {
+    try {
+      const res = await this.client.request<EvolutionMediaResponse>({
+        method: "POST",
+        path: `chat/getBase64FromMediaMessage/${encodeURIComponent(instance.instanceId)}`,
+        body: { message: { key: { id: key.id, remoteJid: key.remoteJid, fromMe: key.fromMe } } },
+      });
+      return typeof res.base64 === "string" && res.base64.length > 0 ? res.base64 : null;
+    } catch {
+      return null;
     }
   }
 

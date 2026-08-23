@@ -24,10 +24,19 @@ export interface InboundTextMessage extends InboundMessageBase {
   readonly text: string;
 }
 
+/** Key cru da mensagem no provider — único jeito de re-buscar a mídia por fora do webhook. */
+export interface MediaMessageKey {
+  readonly id: string;
+  readonly remoteJid: string;
+  readonly fromMe: boolean;
+}
+
 /** Nota de voz / áudio — bytes inline (base64) p/ transcrição na borda. */
 export interface InboundAudioMessage extends InboundMessageBase {
   readonly kind: "audio";
   readonly audio: { readonly base64: string; readonly mimetype: string };
+  /** p/ `fetchMediaBase64` quando o webhook não entrega o base64 inline (quirk do ptt). */
+  readonly messageKey: MediaMessageKey;
 }
 
 /** Mídia reconhecida mas não-suportada (imagem/vídeo/doc/figurinha) — vira aviso, não drop. */
@@ -92,4 +101,10 @@ export interface MessagingChannelPort {
    * até re-parear. Best-effort: nunca lança.
    */
   syncWebhook(instance: ChannelInstanceRef): Promise<void>;
+  /**
+   * Busca o base64 decriptado de uma mídia direto na Evolution — fallback pro caso
+   * do webhook não entregar inline (quirk observado em áudio/`ptt` mesmo com o
+   * webhook pedindo base64). Best-effort: `null` em qualquer falha, nunca lança.
+   */
+  fetchMediaBase64(instance: ChannelInstanceRef, key: MediaMessageKey): Promise<string | null>;
 }

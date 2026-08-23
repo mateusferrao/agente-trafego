@@ -121,6 +121,16 @@ describe("parseInbound", () => {
     expect(msg).toMatchObject({ kind: "audio", audio: { base64: "", mimetype: "audio/ogg" } });
   });
 
+  it("áudio carrega messageKey (id/remoteJid/fromMe) p/ o fallback fetchMediaBase64", () => {
+    const msg = parseInbound(
+      upsert({ remoteJid: "5531999999999@s.whatsapp.net", id: "MSG-XYZ", message: { audioMessage: { ptt: true } } }),
+    );
+    expect(msg).toMatchObject({
+      kind: "audio",
+      messageKey: { id: "MSG-XYZ", remoteJid: "5531999999999@s.whatsapp.net", fromMe: false },
+    });
+  });
+
   // ─── Mídia reconhecida não-suportada → kind:"unsupported" (vira aviso) ───
   it.each([
     ["imageMessage", "image"],

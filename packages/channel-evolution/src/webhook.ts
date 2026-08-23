@@ -1,4 +1,4 @@
-import type { InboundMessage } from "@trafego/shared/ports";
+import type { InboundMessage, MediaMessageKey } from "@trafego/shared/ports";
 
 /**
  * Normalização do payload cru do webhook da Evolution → `InboundMessage`.
@@ -137,7 +137,10 @@ export function parseInbound(payload: unknown): InboundMessage | null {
   if (text) return { ...base, kind: "text", text };
 
   const audio = extractAudio(data);
-  if (audio) return { ...base, kind: "audio", audio };
+  if (audio) {
+    const messageKey: MediaMessageKey = { id: messageId, remoteJid: key["remoteJid"] as string, fromMe: false };
+    return { ...base, kind: "audio", audio, messageKey };
+  }
 
   const mediaType = detectMediaType(message);
   if (mediaType) return { ...base, kind: "unsupported", mediaType };

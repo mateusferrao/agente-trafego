@@ -13,7 +13,7 @@ import {
   type WhatsappTranscriptionPayload,
 } from "@trafego/shared";
 import { TranscriptionError } from "@trafego/shared/ports";
-import type { MeteringPort, TranscriptionPort } from "@trafego/shared/ports";
+import type { MessagingChannelPort, MeteringPort, TranscriptionPort } from "@trafego/shared/ports";
 import type { OrgId, TranscriptionResult } from "@trafego/shared/types";
 import type { Redis } from "ioredis";
 import type { Logger } from "pino";
@@ -32,6 +32,8 @@ const PERMANENT_KINDS = new Set(["unsupported_format", "too_large"]);
 /** Dependências do processor (interface enxuta p/ testar sem BullMQ nem WorkerDeps inteiro). */
 export interface TranscriptionProcessorDeps {
   readonly transcription: TranscriptionPort;
+  /** fallback quando o webhook não entrega base64 inline (quirk do ptt/audioMessage). */
+  readonly messaging: Pick<MessagingChannelPort, "fetchMediaBase64">;
   readonly metering: MeteringPort;
   readonly redis: Redis;
   readonly flushQueue: Queue<WhatsappFlushPayload>;
@@ -98,7 +100,7 @@ async function audioNotice(d: TranscriptionProcessorDeps, conversationId: string
 /** Fábrica do processor — pura de BullMQ, testável com fakes. */
 export function makeTranscriptionProcessor(d: TranscriptionProcessorDeps) {
   return async function process(job: TranscriptionJob): Promise<void> {
-    const { orgId, contactId, conversationId, messageRowId, audio } = job.data;
+    const { orgId, contactId, conversationId, messageRowId, instanceId, audio } = job.data;
     const flushPayload: WhatsappFlushPayload = { orgId, contactId, conversationId };
     // settle = destrava a flag + re-agenda o flush. Best-effort: nunca re-lança (uma
     // falha aqui NÃO pode virar retry → re-transcrição paga). O backstop `.on("failed")`
@@ -118,8 +120,11 @@ export function makeTranscriptionProcessor(d: TranscriptionProcessorDeps) {
     // ── FASE 1: a chamada PAGA. Só esta pode disparar retry (re-transcrição). ──
     let result: TranscriptionResult;
     try {
-      const bytes = Buffer.from(audio.base64, "base64");
-      if (bytes.length === 0) throw new TranscriptionError("unsupported_format", "áudio sem bytes (base64 vazio)");
+      // Evolution às vezes não entrega o base64 inline no webhook (observado em
+      // áudio/`ptt` mesmo com base64:true) — busca direto a mídia como fallback.
+      const raw = audio.base64.length > 0 ? audio.base64 : await d.messaging.fetchMediaBase64({ instanceId }, audio.messageKey);
+      const bytes = Buffer.from(raw ?? "", "base64");
+      if (bytes.length === 0) throw new TranscriptionError("unsupported_format", "áudio sem bytes (base64 vazio, fallback também não achou a mídia)");
       if (bytes.length > d.maxAudioMb * MB) throw new TranscriptionError("too_large", `áudio acima de ${d.maxAudioMb}MB`);
       const language = d.language.trim();
       result = await d.transcription.transcribe({ bytes, mimetype: audio.mimetype, ...(language ? { language } : {}) });
@@ -167,6 +172,7 @@ export function startWhatsappTranscriptionWorker(deps: WorkerDeps, connection: R
   const flushQueue = new Queue<WhatsappFlushPayload>(WHATSAPP_FLUSH_QUEUE, { connection });
   const process = makeTranscriptionProcessor({
     transcription: deps.ports.transcription,
+    messaging: deps.ports.messaging,
     metering: deps.ports.metering,
     redis: deps.redis,
     flushQueue,

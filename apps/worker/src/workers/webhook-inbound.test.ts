@@ -4,7 +4,13 @@ import { makeInboundRouter, type InboundRouterDeps } from "./webhook-inbound.js"
 
 const BASE = { instanceId: "inst-1", from: "+5511999999999", messageId: "MID-1", raw: {} } as const;
 const TEXT: InboundMessage = { ...BASE, kind: "text", text: "oi" };
-const AUDIO: InboundMessage = { ...BASE, kind: "audio", audio: { base64: "AAAA", mimetype: "audio/ogg" } };
+const AUDIO_KEY = { id: "MID-1", remoteJid: "5511999999999@s.whatsapp.net", fromMe: false };
+const AUDIO: InboundMessage = {
+  ...BASE,
+  kind: "audio",
+  audio: { base64: "AAAA", mimetype: "audio/ogg" },
+  messageKey: AUDIO_KEY,
+};
 const UNSUPPORTED: InboundMessage = { ...BASE, kind: "unsupported", mediaType: "image" };
 
 function makeDeps(overrides: Partial<InboundRouterDeps> = {}) {
@@ -63,7 +69,12 @@ describe("makeInboundRouter", () => {
     expect(t.multiChain.incr).toHaveBeenCalledWith("wa:transcribing:conv-1");
     expect(t.transcriptionQueue.add).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ conversationId: "conv-1", messageRowId: "msg-1", audio: { base64: "AAAA", mimetype: "audio/ogg" } }),
+      expect.objectContaining({
+        conversationId: "conv-1",
+        messageRowId: "msg-1",
+        instanceId: "inst-1",
+        audio: { base64: "AAAA", mimetype: "audio/ogg", messageKey: AUDIO_KEY },
+      }),
       expect.objectContaining({ attempts: 3 }),
     );
     expect(t.flushQueue.add).toHaveBeenCalled();

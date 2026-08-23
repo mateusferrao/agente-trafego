@@ -45,8 +45,12 @@ export type WhatsappTranscriptionPayload = {
   readonly conversationId: string;
   /** id da LINHA da mensagem (messages.id) — update por PK após transcrever. */
   readonly messageRowId: string;
+  /** instância Evolution dona da mensagem — p/ o fallback `fetchMediaBase64`. */
+  readonly instanceId: string;
   readonly audio: {
     readonly base64: string;
     readonly mimetype: string;
+    /** key cru da mensagem — usado só se `base64` vier vazio (fallback). */
+    readonly messageKey: { readonly id: string; readonly remoteJid: string; readonly fromMe: boolean };
   };
 };

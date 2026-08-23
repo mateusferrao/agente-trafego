@@ -35,6 +35,7 @@ function makeDeps(overrides: Partial<TranscriptionProcessorDeps> = {}, setResult
       async (): Promise<TranscriptionResult> => ({ text: "olá pausa a campanha x", model: "whisper", costUsd: 0.0004, durationSec: 3.1, tokensUsed: 42 }),
     ),
   };
+  const messaging = { fetchMediaBase64: vi.fn(async (): Promise<string | null> => null) };
   const deps = {
     transcription,
     metering,
@@ -42,6 +43,7 @@ function makeDeps(overrides: Partial<TranscriptionProcessorDeps> = {}, setResult
     flushQueue,
     sendToContact,
     repo,
+    messaging,
     logger: { warn: vi.fn() },
     debounceSeconds: 5,
     maxAudioMb: 16,
@@ -51,8 +53,10 @@ function makeDeps(overrides: Partial<TranscriptionProcessorDeps> = {}, setResult
     transcribingTtlSec: 240,
     ...overrides,
   } as unknown as TranscriptionProcessorDeps;
-  return { deps, redis, flushQueue, sendToContact, repo, metering, transcription };
+  return { deps, redis, flushQueue, sendToContact, repo, metering, transcription, messaging };
 }
+
+const MESSAGE_KEY = { id: "MSG-1", remoteJid: "5531999999999@s.whatsapp.net", fromMe: false };
 
 function job(overrides: Partial<TranscriptionJob> = {}): TranscriptionJob {
   return {
@@ -61,7 +65,8 @@ function job(overrides: Partial<TranscriptionJob> = {}): TranscriptionJob {
       contactId: "c-1",
       conversationId: "conv-1",
       messageRowId: "msg-1",
-      audio: { base64: AUDIO_B64, mimetype: "audio/ogg; codecs=opus" },
+      instanceId: "inst-1",
+      audio: { base64: AUDIO_B64, mimetype: "audio/ogg; codecs=opus", messageKey: MESSAGE_KEY },
     },
     attemptsMade: 0,
     opts: { attempts: 2 },
@@ -136,6 +141,34 @@ describe("makeTranscriptionProcessor", () => {
     expect(t.sendToContact).toHaveBeenCalledWith("c-1", expect.stringContaining("não consegui ouvir agora"), { split: false });
     expect(t.repo.updateMessageContent).toHaveBeenCalledWith("msg-1", null, { transcribing: false, error: "too_large" });
     expect(t.redis.decr).toHaveBeenCalled(); // settle (permanente = terminal)
+  });
+
+  it("base64 vazio no job: busca via fetchMediaBase64 (fallback) e transcreve normalmente", async () => {
+    const t = makeDeps();
+    t.messaging.fetchMediaBase64.mockResolvedValueOnce(AUDIO_B64);
+    await makeTranscriptionProcessor(t.deps)(
+      job({ data: { ...job().data, audio: { base64: "", mimetype: "audio/ogg; codecs=opus", messageKey: MESSAGE_KEY } } }),
+    );
+
+    expect(t.messaging.fetchMediaBase64).toHaveBeenCalledWith({ instanceId: "inst-1" }, MESSAGE_KEY);
+    expect(t.transcription.transcribe).toHaveBeenCalledWith({
+      bytes: expect.any(Buffer),
+      mimetype: "audio/ogg; codecs=opus",
+      language: "pt",
+    });
+    expect(t.repo.updateMessageContent).toHaveBeenCalledWith("msg-1", "olá pausa a campanha x", { transcribing: false, durationSec: 3.1 });
+  });
+
+  it("base64 vazio e fallback também não acha a mídia: falha amigável (unsupported_format), sem chamar o provider", async () => {
+    const t = makeDeps(); // fetchMediaBase64 → null por default
+    await makeTranscriptionProcessor(t.deps)(
+      job({ data: { ...job().data, audio: { base64: "", mimetype: "audio/ogg; codecs=opus", messageKey: MESSAGE_KEY } } }),
+    );
+
+    expect(t.messaging.fetchMediaBase64).toHaveBeenCalledWith({ instanceId: "inst-1" }, MESSAGE_KEY);
+    expect(t.transcription.transcribe).not.toHaveBeenCalled();
+    expect(t.repo.updateMessageContent).toHaveBeenCalledWith("msg-1", null, { transcribing: false, error: "unsupported_format" });
+    expect(t.sendToContact).toHaveBeenCalledWith("c-1", expect.stringContaining("não consegui ouvir agora"), { split: false });
   });
 
   it("aviso throttled: se a janela já avisou (SET NX falhou), não reenvia", async () => {

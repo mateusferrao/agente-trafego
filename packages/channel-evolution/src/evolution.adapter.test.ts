@@ -155,3 +155,31 @@ describe("EvolutionAdapter.syncWebhook", () => {
     ).resolves.toBeUndefined();
   });
 });
+
+describe("EvolutionAdapter.fetchMediaBase64", () => {
+  const KEY = { id: "MSG-1", remoteJid: "5531999999999@s.whatsapp.net", fromMe: false };
+
+  it("devolve o base64 quando a Evolution decripta a mídia", async () => {
+    const spy = stubRoutes({
+      "chat/getBase64FromMediaMessage/": { status: 200, body: { base64: "QUJD", mimetype: "audio/ogg" } },
+    });
+    const result = await makeAdapter().fetchMediaBase64(INSTANCE, KEY);
+
+    expect(result).toBe("QUJD");
+    const call = spy.mock.calls.find(([url]) => String(url).includes("chat/getBase64FromMediaMessage/"));
+    expect(call).toBeDefined();
+    expect(String(call![0])).toBe(`${BASE_URL}/chat/getBase64FromMediaMessage/${INSTANCE.instanceId}`);
+    const body = JSON.parse(String(call![1]?.body));
+    expect(body.message.key).toEqual(KEY);
+  });
+
+  it("resposta sem base64 → null", async () => {
+    stubRoutes({ "chat/getBase64FromMediaMessage/": { status: 200, body: {} } });
+    await expect(makeAdapter().fetchMediaBase64(INSTANCE, KEY)).resolves.toBeNull();
+  });
+
+  it("falha HTTP → null (best-effort, nunca lança)", async () => {
+    stubRoutes({ "chat/getBase64FromMediaMessage/": { status: 500, body: { error: "boom" } } });
+    await expect(makeAdapter().fetchMediaBase64(INSTANCE, KEY)).resolves.toBeNull();
+  });
+});
