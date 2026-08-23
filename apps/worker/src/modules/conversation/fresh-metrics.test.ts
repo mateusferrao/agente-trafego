@@ -90,6 +90,29 @@ describe("getFreshMetricsData", () => {
     expect(res.kpis.spend).toBe(100);
   });
 
+  it("exceção inesperada (ex: vault.decrypt corrompido) → erro amigável, nunca vaza a mensagem crua", async () => {
+    const { deps } = makeDeps([[ACCOUNT_ROW]]);
+    (deps.vault.decrypt as ReturnType<typeof vi.fn>) = vi.fn(() => {
+      throw new Error("bad ciphertext: unable to authenticate data (segredo técnico)");
+    });
+    const res = await getFreshMetricsData(deps, CTX, {});
+    expect(res).toHaveProperty("error");
+    const msg = (res as { error: string }).error;
+    expect(msg).not.toContain("ciphertext");
+    expect(msg).not.toContain("segredo técnico");
+    expect(deps.logger.warn).toHaveBeenCalled();
+  });
+
+  it("exceção inesperada em qualquer leitura do banco → erro amigável (nunca crasha o turno)", async () => {
+    const { deps } = makeDeps([[ACCOUNT_ROW]]);
+    (deps.db as unknown as { select: () => never }).select = () => {
+      throw new Error("connection terminated unexpectedly");
+    };
+    const res = await getFreshMetricsData(deps, CTX, {});
+    expect(res).toHaveProperty("error");
+    expect((res as { error: string }).error).not.toContain("connection terminated");
+  });
+
   it("período sem dado (nem no salvo) → erro claro", async () => {
     const { deps } = makeDeps([[ACCOUNT_ROW], []]);
     const res = await getFreshMetricsData(deps, CTX, { periodDays: 3 });

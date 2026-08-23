@@ -214,6 +214,24 @@ export async function getFreshMetricsData(
   ctx: FreshMetricsCtx,
   args: { periodDays?: number | null; campaign?: string | null },
 ): Promise<FreshMetricsResult> {
+  // Rede de segurança: QUALQUER exceção não prevista (decrypt corrompido, blip de
+  // Postgres fora do try do sync — ex: latestDate) não pode vazar como texto cru pro
+  // usuário. O ToolNode do LangGraph (handleToolErrors:true, default) captura throws
+  // de tool e devolve `Error: <mensagem interna>` pro LLM — sem este catch, esse texto
+  // técnico podia ser parafraseado e chegar ao contato (§13: nunca vazar exceção/stack).
+  try {
+    return await getFreshMetricsDataInner(deps, ctx, args);
+  } catch (err) {
+    deps.logger.warn({ err: String(err) }, "fresh-metrics:falha inesperada");
+    return { error: "não consegui consultar os dados agora. Tenta de novo em instantes." };
+  }
+}
+
+async function getFreshMetricsDataInner(
+  deps: FreshMetricsDeps,
+  ctx: FreshMetricsCtx,
+  args: { periodDays?: number | null; campaign?: string | null },
+): Promise<FreshMetricsResult> {
   const days = clamp(args.periodDays ?? FRESH_METRICS_DEFAULT_DAYS, 1, FRESH_METRICS_MAX_DAYS);
   const account = await loadAccountToken(deps.db, deps.vault, ctx.orgId, ctx.adAccountId);
   if (!account) return { error: "não encontrei uma conta ativa em foco pra consultar agora." };
