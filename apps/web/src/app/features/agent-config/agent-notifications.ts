@@ -116,6 +116,9 @@ const SENSITIVITIES: readonly { value: Sensitivity; label: string }[] = [
                 [value]="pulseCron()"
                 (input)="onPulseCron($event)"
               />
+              @if (pulseCronInvalid()) {
+                <span class="text-xs text-muted">Preencha a expressão cron pra poder salvar.</span>
+              }
             }
           </div>
         }
@@ -232,9 +235,14 @@ export class AgentNotifications implements OnInit {
       case 'weekly':
         return { kind: 'weekly', weekday: this.pulseWeekday(), hour: this.pulseHour() };
       case 'raw':
-        return { kind: 'raw', cron: this.pulseCron().trim() || '0 8 * * *' };
+        return { kind: 'raw', cron: this.pulseCron().trim() };
     }
   });
+
+  /** raw sem cron = estado inválido (mesma regra de `cadenceFromToolCall`: nunca inventa cadência). */
+  protected readonly pulseCronInvalid = computed(
+    () => this.pulseCadenceKind() === 'raw' && this.pulseCron().trim().length === 0,
+  );
 
   protected readonly saving = signal(false);
   protected readonly loaded = signal(false);
@@ -243,7 +251,7 @@ export class AgentNotifications implements OnInit {
     () =>
       `${this.pulseEnabled()}|${JSON.stringify(this.pulseCadenceSpec())}|${this.alertsEnabled()}|${this.sensitivity()}|${this.throttleHours()}|${this.runPushEnabled()}`,
   );
-  protected readonly dirty = computed(() => this.sig() !== this.baseline());
+  protected readonly dirty = computed(() => this.sig() !== this.baseline() && !this.pulseCronInvalid());
 
   constructor() {
     // baseline = estado inicial → dirty começa false (Save só habilita após mudança).

@@ -27,7 +27,6 @@ import { applyAgentConfigChange, reseedArchetypeChange } from "@trafego/agent-co
 import {
   ACTION_UNDO_QUEUE,
   ACTION_UNDO_JOB,
-  DEFAULT_NOTIFY_POLICY,
   GUARDRAIL_DEFAULTS,
   toGuardrailConfig,
   UNDO_BLOCKED_TOOL_KEY,
