@@ -4,5 +4,6 @@
 import type { ConversationRef } from "@trafego/shared";
 
 export function actorLabel(ref: ConversationRef): string {
-  return ref.kind === "contact" ? `contact:${ref.contactId}` : `group:${ref.groupId}:${ref.participantPhone}`;
+  if (ref.kind === "contact") return `contact:${ref.contactId}`;
+  return ref.participantPhone ? `group:${ref.groupId}:${ref.participantPhone}` : `group:${ref.groupId}`;
 }

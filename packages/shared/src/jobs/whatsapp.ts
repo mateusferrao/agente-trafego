@@ -21,7 +21,10 @@ export type WhatsappInboundPayload = {
  */
 export type ConversationRef =
   | { readonly kind: "contact"; readonly contactId: string }
-  | { readonly kind: "group"; readonly groupId: string; readonly participantPhone: string };
+  // `participantPhone`: string = turno reativo (thread por participante, dá "só o
+  // iniciador confirma"); null = proativo/broadcast do agente pro grupo (sem
+  // participante específico — pulso/alerta/push do cron).
+  | { readonly kind: "group"; readonly groupId: string; readonly participantPhone: string | null };
 
 /**
  * Fila de FLUSH do debounce (5b-2.4): o inbound bufferiza as mensagens picadas e

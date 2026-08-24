@@ -5,7 +5,7 @@
 
 import { Worker } from "bullmq";
 import type { Redis } from "ioredis";
-import { and, desc, eq, gt } from "drizzle-orm";
+import { and, desc, eq, gt, isNull } from "drizzle-orm";
 import {
   adAccounts,
   agentRuns,
@@ -19,7 +19,7 @@ import { AGENT_PULSE_QUEUE, type AgentCronDispatchPayload, type NotifyPolicy } f
 import type { WorkerDeps } from "../composition.js";
 import { ownerAccessActive } from "../modules/access/owner-gate.js";
 import { createNotifyRepo } from "../modules/notify/repo.js";
-import { createSendToContact } from "../modules/notify/send-to-contact.js";
+import { createSendToConversation } from "../modules/notify/send-to-contact.js";
 import { composePulseOverview } from "../modules/pulse/compose.js";
 
 /** Não manda pulso se o agente já falou nas últimas N horas (evita colar no push). */
@@ -61,15 +61,15 @@ export async function runPulse(deps: WorkerDeps, payload: AgentCronDispatchPaylo
   if (!(await ownerAccessActive(db, payload.orgId))) return "skipped_access";
 
   const repo = createNotifyRepo(db);
-  const target = await repo.loadTarget(payload.orgId);
-  if (!target) return "skipped_no_target";
+  const ref = await repo.loadTarget(payload.orgId);
+  if (!ref) return "skipped_no_target";
 
-  // dedupe: última outbound recente do contato → não cola no push/alerta.
-  const [conv] = await db
-    .select({ id: conversations.id })
-    .from(conversations)
-    .where(and(eq(conversations.orgId, payload.orgId), eq(conversations.contactId, target.contactId)))
-    .limit(1);
+  // dedupe: última outbound recente NESTA thread (DM ou broadcast do grupo) → não cola no push/alerta.
+  const threadCond =
+    ref.kind === "contact"
+      ? and(eq(conversations.orgId, payload.orgId), eq(conversations.contactId, ref.contactId))
+      : and(eq(conversations.orgId, payload.orgId), eq(conversations.groupId, ref.groupId), isNull(conversations.participantPhone));
+  const [conv] = await db.select({ id: conversations.id }).from(conversations).where(threadCond).limit(1);
   if (conv) {
     const since = new Date(now - PULSE_DEDUP_HOURS * MS_PER_HOUR);
     const [recent] = await db
@@ -104,8 +104,8 @@ export async function runPulse(deps: WorkerDeps, payload: AgentCronDispatchPaylo
   });
   if (!overview) return "skipped_no_run";
 
-  const sendToContact = createSendToContact({ messaging: deps.ports.messaging, repo });
-  await sendToContact(target.contactId, buildMessageFallback(overview), { split: false, meta: { pulse: true } });
+  const sendToConversation = createSendToConversation({ messaging: deps.ports.messaging, repo });
+  await sendToConversation(ref, buildMessageFallback(overview), { split: false, meta: { pulse: true } });
   logger.info({ agentId: payload.agentId, orgId: payload.orgId }, "pulse:enviado");
   return "sent";
 }

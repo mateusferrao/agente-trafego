@@ -791,12 +791,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     if (!body) return {}; // nada acionável / não-cron sem push → silêncio
     if (await notifyRepo.alreadyNotified(state.runId)) return {}; // idempotência de envio
 
-    // alvo: WhatsApp-origin (DM ou grupo) → quem pediu; cron → destinatário verificado da org.
-    let ref = state.notifyTarget?.ref ?? null;
-    if (!ref) {
-      const target = await notifyRepo.loadTarget(state.orgId);
-      ref = target ? { kind: "contact" as const, contactId: target.contactId } : null;
-    }
+    // alvo: WhatsApp-origin (DM ou grupo) → quem pediu; cron/signal → alvo org-level
+    // (grupo ativo se houver, senão DM — G2).
+    const ref = state.notifyTarget?.ref ?? (await notifyRepo.loadTarget(state.orgId));
     if (!ref) {
       logger.warn({ orgId: state.orgId, runId: state.runId }, "notify:sem canal/contato — sem push");
       return {};

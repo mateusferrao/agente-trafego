@@ -4,15 +4,9 @@
 // resolve o contato pelo (instância, telefone), dedupa por messageId e grava
 // a conversa/mensagem inbound.
 
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { adAccounts, agents, channelGroups, channelInstances, contacts, conversations, messages, type Database } from "@trafego/db";
-import { brPhoneVariants } from "@trafego/shared";
-
-export interface NotifyTarget {
-  readonly instanceId: string;
-  readonly contactId: string;
-  readonly phone: string;
-}
+import { brPhoneVariants, type ConversationRef } from "@trafego/shared";
 
 /** Contato verificado resolvido a partir do inbound (instância + telefone). */
 export interface InboundContact {
@@ -43,7 +37,12 @@ export interface GroupTarget {
 export type MessageDirection = "inbound" | "outbound";
 
 export interface NotifyRepo {
-  loadTarget(orgId: string): Promise<NotifyTarget | null>;
+  /**
+   * Alvo org-level da proatividade (pulso/alerta/push do cron): grupo ATIVO da org
+   * (broadcast, sem participante) se houver; senão o contato DM verificado. Roteamento
+   * org-level — configurar o grupo MIGRA a proatividade do DM pro grupo (G2).
+   */
+  loadTarget(orgId: string): Promise<ConversationRef | null>;
   alreadyNotified(runId: string): Promise<boolean>;
   /** Contato verificado da org dona da instância, pelo telefone (inbound). */
   resolveInboundContact(instanceId: string, phone: string): Promise<InboundContact | null>;
@@ -75,16 +74,28 @@ export interface NotifyRepo {
   instancePhone(instanceId: string): Promise<string | null>;
   /** Grupo ATIVO da org dona da instância, pelo JID (inbound). Não-registrado/inativo → null. */
   resolveInboundGroup(instanceId: string, groupJid: string): Promise<InboundGroup | null>;
-  /** Garante a conversa (org/grupo/participante) e devolve seu id — thread por-(grupo,participante). */
-  ensureGroupConversation(orgId: string, groupId: string, participantPhone: string): Promise<string>;
+  /**
+   * Garante a conversa (org/grupo/participante) e devolve seu id — thread por-(grupo,
+   * participante). `participantPhone: null` = thread de BROADCAST do agente (proativo,
+   * sem participante específico — pulso/alerta/push).
+   */
+  ensureGroupConversation(orgId: string, groupId: string, participantPhone: string | null): Promise<string>;
   /** Alvo de envio a um grupo: instância conectada da org + JID do grupo. */
   resolveGroupTarget(groupId: string): Promise<GroupTarget | null>;
 }
 
 export function createNotifyRepo(db: Database): NotifyRepo {
   return {
-    /** Instância conectada + 1 contato verificado (dono, no MVP) da org. */
+    /** Grupo ATIVO da org (broadcast) se houver; senão instância conectada + 1 contato
+     *  verificado (DM, dono no MVP). Roteamento org-level (G2). */
     async loadTarget(orgId) {
+      const [group] = await db
+        .select({ id: channelGroups.id })
+        .from(channelGroups)
+        .where(and(eq(channelGroups.orgId, orgId), eq(channelGroups.status, "active")))
+        .limit(1);
+      if (group) return { kind: "group", groupId: group.id, participantPhone: null };
+
       const [instance] = await db
         .select({ instanceId: channelInstances.evolutionInstance })
         .from(channelInstances)
@@ -93,13 +104,13 @@ export function createNotifyRepo(db: Database): NotifyRepo {
       if (!instance) return null;
 
       const [contact] = await db
-        .select({ id: contacts.id, phone: contacts.phone })
+        .select({ id: contacts.id })
         .from(contacts)
         .where(and(eq(contacts.orgId, orgId), eq(contacts.verified, true)))
         .limit(1);
       if (!contact) return null;
 
-      return { instanceId: instance.instanceId, contactId: contact.id, phone: contact.phone };
+      return { kind: "contact", contactId: contact.id };
     },
 
     /** Já enviamos a mensagem deste run? (idempotência de envio — 1 msg por run.) */
@@ -264,18 +275,17 @@ export function createNotifyRepo(db: Database): NotifyRepo {
     },
 
     /** Conversa (org/grupo/participante) — thread por-participante dá "só o iniciador
-     *  confirma" e foco por participante de graça (reuso do foco da DM). */
+     *  confirma" e foco por participante de graça (reuso do foco da DM). `null` = thread
+     *  de BROADCAST do agente (proativo, sem participante — `isNull`, `eq` não casa NULL). */
     async ensureGroupConversation(orgId, groupId, participantPhone) {
+      const participantCond =
+        participantPhone === null
+          ? isNull(conversations.participantPhone)
+          : eq(conversations.participantPhone, participantPhone);
       const [existing] = await db
         .select({ id: conversations.id })
         .from(conversations)
-        .where(
-          and(
-            eq(conversations.orgId, orgId),
-            eq(conversations.groupId, groupId),
-            eq(conversations.participantPhone, participantPhone),
-          ),
-        )
+        .where(and(eq(conversations.orgId, orgId), eq(conversations.groupId, groupId), participantCond))
         .orderBy(conversations.createdAt)
         .limit(1);
       if (existing) return existing.id;

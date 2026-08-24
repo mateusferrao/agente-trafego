@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import type { MessagingChannelPort, OutboundMessage } from "@trafego/shared/ports";
-import { createSendToContact } from "./send-to-contact.js";
+import { createSendToContact, createSendToConversation } from "./send-to-contact.js";
 import type { NotifyRepo } from "./repo.js";
 import { TYPING_MIN_MS } from "./typing.js";
 
 const TARGET = { instanceId: "inst-1", phone: "5511999999999", orgId: "org-1" };
+const GROUP_TARGET = { instanceId: "inst-1", groupJid: "120363000000000000@g.us", orgId: "org-1" };
 
-function makeDeps(overrides: { target?: typeof TARGET | null } = {}) {
+function makeDeps(overrides: { target?: typeof TARGET | null; groupTarget?: typeof GROUP_TARGET | null } = {}) {
   const sent: OutboundMessage[] = [];
   const recorded: Array<{ direction: string; body: string | null }> = [];
   const messaging = {
@@ -17,6 +18,8 @@ function makeDeps(overrides: { target?: typeof TARGET | null } = {}) {
   const repo = {
     resolveOutboundTarget: vi.fn(async () => (overrides.target === undefined ? TARGET : overrides.target)),
     ensureConversation: vi.fn(async () => "conv-1"),
+    resolveGroupTarget: vi.fn(async () => (overrides.groupTarget === undefined ? GROUP_TARGET : overrides.groupTarget)),
+    ensureGroupConversation: vi.fn(async () => "conv-grp-1"),
     recordMessage: vi.fn(async (_c, direction: string, body: string | null) => {
       recorded.push({ direction, body });
       return "msg-id";
@@ -61,5 +64,38 @@ describe("sendToContact", () => {
       { direction: "outbound", body: "a" },
       { direction: "outbound", body: "b" },
     ]);
+  });
+});
+
+describe("sendToConversation — grupo", () => {
+  it("reativo (thread por participante): resolve o JID do grupo + toIsGroup:true", async () => {
+    const { deps, sent, recorded } = makeDeps();
+    const ref = { kind: "group" as const, groupId: "grp-1", participantPhone: "+5511999999999" };
+    const ok = await createSendToConversation(deps)(ref, "oi", { split: false });
+    expect(ok).toBe(true);
+    expect(sent[0]).toMatchObject({ to: GROUP_TARGET.groupJid, toIsGroup: true });
+    expect(deps.repo.ensureGroupConversation).toHaveBeenCalledWith("org-1", "grp-1", "+5511999999999");
+    expect(recorded).toEqual([{ direction: "outbound", body: "oi" }]);
+  });
+
+  it("proativo/broadcast (participantPhone null): thread de broadcast do grupo", async () => {
+    const { deps } = makeDeps();
+    const ref = { kind: "group" as const, groupId: "grp-1", participantPhone: null };
+    await createSendToConversation(deps)(ref, "alerta", { split: false });
+    expect(deps.repo.ensureGroupConversation).toHaveBeenCalledWith("org-1", "grp-1", null);
+  });
+
+  it("sem grupo resolvível → não envia (false)", async () => {
+    const { deps, sent } = makeDeps({ groupTarget: null });
+    const ok = await createSendToConversation(deps)({ kind: "group", groupId: "grp-1", participantPhone: null }, "x");
+    expect(ok).toBe(false);
+    expect(sent).toHaveLength(0);
+  });
+
+  it("ref contact ainda funciona (sem toIsGroup)", async () => {
+    const { deps, sent } = makeDeps();
+    await createSendToConversation(deps)({ kind: "contact", contactId: "contact-1" }, "oi");
+    expect(sent[0]).toMatchObject({ to: TARGET.phone });
+    expect(sent[0]!.toIsGroup).toBeUndefined();
   });
 });
