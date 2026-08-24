@@ -86,7 +86,6 @@ export const WhatsappConversationState = Annotation.Root({
 
   // contexto do tenant/conta resolvido no início do turno
   orgId: Annotation<string>,
-  contactId: Annotation<string>,
   agentId: Annotation<string>,
   adAccountId: Annotation<string>,
 

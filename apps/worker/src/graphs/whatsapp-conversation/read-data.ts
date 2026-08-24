@@ -26,7 +26,6 @@ export interface ReadToolContext {
   readonly orgId: string;
   readonly agentId: string;
   readonly adAccountId: string;
-  readonly contactId: string;
 }
 
 /** Janela default do gasto agregado (dias). */

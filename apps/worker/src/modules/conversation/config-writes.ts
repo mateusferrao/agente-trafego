@@ -24,8 +24,8 @@ const PLAYBOOK_AUDIT_ACTION: Readonly<Record<PendingPlaybookOp["kind"], string>>
 export interface ApplyPlaybookOpInput {
   readonly orgId: string;
   readonly agentId: string;
-  /** ator da trilha = o contato que falou no WhatsApp (§12/§13). */
-  readonly contactId: string;
+  /** ator da trilha, já formatado (`actorLabel`) — quem falou no WhatsApp, DM ou grupo (§12/§13). */
+  readonly actor: string;
   readonly op: PendingPlaybookOp;
 }
 
@@ -45,7 +45,7 @@ export async function applyPlaybookOp(
   input: ApplyPlaybookOpInput,
 ): Promise<ApplyPlaybookOpResult> {
   const { db } = deps;
-  const { orgId, agentId, contactId, op } = input;
+  const { orgId, agentId, actor, op } = input;
 
   if (op.kind === "add" && op.rule) {
     const r = op.rule;
@@ -73,7 +73,7 @@ export async function applyPlaybookOp(
       enabled: true,
       priority,
     });
-    await bumpAndAudit(deps, orgId, agentId, contactId, op, { rule: r });
+    await bumpAndAudit(deps, orgId, agentId, actor, op, { rule: r });
     return { ok: true, message: "Pronto, criei a regra no playbook." };
   }
 
@@ -84,7 +84,7 @@ export async function applyPlaybookOp(
       .where(and(eq(playbookRules.id, op.ruleId), eq(playbookRules.agentId, agentId), eq(playbookRules.orgId, orgId)))
       .returning({ id: playbookRules.id });
     if (updated.length === 0) return { ok: false, message: "Não achei essa regra. Vê a lista com as regras de novo?" };
-    await bumpAndAudit(deps, orgId, agentId, contactId, op, { ruleId: op.ruleId, enabled: !!op.enabled });
+    await bumpAndAudit(deps, orgId, agentId, actor, op, { ruleId: op.ruleId, enabled: !!op.enabled });
     return { ok: true, message: op.enabled ? "Liguei a regra." : "Desliguei a regra." };
   }
 
@@ -94,7 +94,7 @@ export async function applyPlaybookOp(
       .where(and(eq(playbookRules.id, op.ruleId), eq(playbookRules.agentId, agentId), eq(playbookRules.orgId, orgId)))
       .returning({ id: playbookRules.id });
     if (removed.length === 0) return { ok: false, message: "Não achei essa regra. Vê a lista com as regras de novo?" };
-    await bumpAndAudit(deps, orgId, agentId, contactId, op, { ruleId: op.ruleId });
+    await bumpAndAudit(deps, orgId, agentId, actor, op, { ruleId: op.ruleId });
     return { ok: true, message: "Removi a regra do playbook." };
   }
 
@@ -106,7 +106,7 @@ async function bumpAndAudit(
   deps: WorkerDeps,
   orgId: string,
   agentId: string,
-  contactId: string,
+  actor: string,
   op: PendingPlaybookOp,
   detail: Record<string, unknown>,
 ): Promise<void> {
@@ -116,7 +116,7 @@ async function bumpAndAudit(
     .where(and(eq(agents.id, agentId), eq(agents.orgId, orgId)));
   await deps.db.insert(auditLog).values({
     orgId: orgId as OrgId,
-    actor: `contact:${contactId}`,
+    actor,
     action: PLAYBOOK_AUDIT_ACTION[op.kind],
     target: `agent:${agentId}`,
     metadata: { channel: "whatsapp", ...detail },

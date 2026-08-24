@@ -97,6 +97,8 @@ export interface WorkerDeps {
     readonly turnTimeoutMs: number;
     /** Fallback de custo (bug do bindTools suprimindo usage.cost — ver nodes.ts). */
     readonly fetchGenerationCost: (generationId: string) => Promise<number | undefined>;
+    /** Grupo: mensagem NÃO-dirigida (sem @menção/reply ao bot) vira contexto (default: ignora e não persiste). */
+    readonly groupIngestContext: boolean;
   };
   /** Config da transcrição de áudio inbound (STT). Modelo vive no adapter. */
   readonly transcription: {
@@ -273,6 +275,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
       noticeThrottleSec: env.NOTICE_THROTTLE_SECONDS,
       turnTimeoutMs: env.CONVERSATION_TURN_TIMEOUT_MS,
       fetchGenerationCost: (id) => openRouterClient.getGenerationCost(id),
+      groupIngestContext: env.TRAFEGO_GROUP_INGEST_CONTEXT,
     },
     transcription: {
       language: env.TRANSCRIPTION_LANGUAGE,

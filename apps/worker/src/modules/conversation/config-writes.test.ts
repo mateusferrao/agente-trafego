@@ -33,6 +33,7 @@ function makeDeps(opts: { minPriority?: number | null; updateReturns?: unknown[]
 const AGENT = "ag-1";
 const ORG = "org-1";
 const CONTACT = "ct-1";
+const ACTOR = `contact:${CONTACT}`;
 
 describe("applyPlaybookOp — add", () => {
   it("prioridade nova = fim da fila (min existente - 1) + insere e audita", async () => {
@@ -40,7 +41,7 @@ describe("applyPlaybookOp — add", () => {
     const res = await applyPlaybookOp(deps, {
       orgId: ORG,
       agentId: AGENT,
-      contactId: CONTACT,
+      actor: ACTOR,
       op: { kind: "add", rule: { scope: "ad", metric: "cpa", op: ">", value: 30, then: { type: "pause_entity" } } },
     });
     expect(res.ok).toBe(true);
@@ -51,7 +52,7 @@ describe("applyPlaybookOp — add", () => {
     expect(captured.updateSets[0]?.configChangedAt).toBeDefined();
     const audit = captured.inserts.find((i) => "action" in i);
     expect(audit?.action).toBe("agent.playbook.add");
-    expect(audit?.actor).toBe(`contact:${CONTACT}`);
+    expect(audit?.actor).toBe(ACTOR);
   });
 
   it("sem regra existente → prioridade 0", async () => {
@@ -59,7 +60,7 @@ describe("applyPlaybookOp — add", () => {
     await applyPlaybookOp(deps, {
       orgId: ORG,
       agentId: AGENT,
-      contactId: CONTACT,
+      actor: ACTOR,
       op: { kind: "add", rule: { scope: "ad", metric: "cpa", op: ">", value: 30, then: { type: "pause_entity" } } },
     });
     expect(captured.inserts.find((i) => "thenActionType" in i)?.priority).toBe(0);
@@ -69,21 +70,21 @@ describe("applyPlaybookOp — add", () => {
 describe("applyPlaybookOp — toggle/remove", () => {
   it("toggle achou a regra → ok + mensagem de desligar", async () => {
     const { deps } = makeDeps({ updateReturns: [[{ id: "r1" }]] });
-    const res = await applyPlaybookOp(deps, { orgId: ORG, agentId: AGENT, contactId: CONTACT, op: { kind: "toggle", ruleId: "r1", enabled: false } });
+    const res = await applyPlaybookOp(deps, { orgId: ORG, agentId: AGENT, actor: ACTOR, op: { kind: "toggle", ruleId: "r1", enabled: false } });
     expect(res.ok).toBe(true);
     expect(res.message).toContain("Desliguei");
   });
 
   it("toggle não achou a regra → ok:false, mensagem honesta", async () => {
     const { deps } = makeDeps({ updateReturns: [[]] });
-    const res = await applyPlaybookOp(deps, { orgId: ORG, agentId: AGENT, contactId: CONTACT, op: { kind: "toggle", ruleId: "x", enabled: true } });
+    const res = await applyPlaybookOp(deps, { orgId: ORG, agentId: AGENT, actor: ACTOR, op: { kind: "toggle", ruleId: "x", enabled: true } });
     expect(res.ok).toBe(false);
     expect(res.message).toContain("Não achei");
   });
 
   it("remove achou a regra → ok", async () => {
     const { deps } = makeDeps({ deleteReturns: [[{ id: "r2" }]] });
-    const res = await applyPlaybookOp(deps, { orgId: ORG, agentId: AGENT, contactId: CONTACT, op: { kind: "remove", ruleId: "r2" } });
+    const res = await applyPlaybookOp(deps, { orgId: ORG, agentId: AGENT, actor: ACTOR, op: { kind: "remove", ruleId: "r2" } });
     expect(res.ok).toBe(true);
     expect(res.message).toContain("Removi");
   });

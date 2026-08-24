@@ -24,7 +24,7 @@ function fakeRedis(setResult: "OK" | null = "OK") {
 function makeDeps(overrides: Partial<TranscriptionProcessorDeps> = {}, setResult: "OK" | null = "OK") {
   const redis = fakeRedis(setResult);
   const flushQueue = { add: vi.fn(async () => ({})), remove: vi.fn(async () => 1) };
-  const sendToContact = vi.fn(async () => true);
+  const sendToConversation = vi.fn(async () => true);
   const repo = {
     updateMessageContent: vi.fn(async () => {}),
     contextAdAccountId: vi.fn(async (): Promise<string | null> => null),
@@ -41,7 +41,7 @@ function makeDeps(overrides: Partial<TranscriptionProcessorDeps> = {}, setResult
     metering,
     redis,
     flushQueue,
-    sendToContact,
+    sendToConversation,
     repo,
     messaging,
     logger: { warn: vi.fn() },
@@ -53,7 +53,7 @@ function makeDeps(overrides: Partial<TranscriptionProcessorDeps> = {}, setResult
     transcribingTtlSec: 240,
     ...overrides,
   } as unknown as TranscriptionProcessorDeps;
-  return { deps, redis, flushQueue, sendToContact, repo, metering, transcription, messaging };
+  return { deps, redis, flushQueue, sendToConversation, repo, metering, transcription, messaging };
 }
 
 const MESSAGE_KEY = { id: "MSG-1", remoteJid: "5531999999999@s.whatsapp.net", fromMe: false };
@@ -62,7 +62,7 @@ function job(overrides: Partial<TranscriptionJob> = {}): TranscriptionJob {
   return {
     data: {
       orgId: "org-1",
-      contactId: "c-1",
+      ref: { kind: "contact", contactId: "c-1" },
       conversationId: "conv-1",
       messageRowId: "msg-1",
       instanceId: "inst-1",
@@ -89,7 +89,7 @@ describe("makeTranscriptionProcessor", () => {
       expect.objectContaining({ type: "transcription", provider: "openrouter", model: "whisper", costUsd: 0.0004 }),
     );
     expect(t.redis.rpush).toHaveBeenCalledWith("wa:inbuf:conv-1", "olá pausa a campanha x");
-    expect(t.sendToContact).not.toHaveBeenCalled();
+    expect(t.sendToConversation).not.toHaveBeenCalled();
     // settle: destrava a flag + re-agenda o flush
     expect(t.redis.decr).toHaveBeenCalledWith("wa:transcribing:conv-1");
     expect(t.flushQueue.add).toHaveBeenCalled();
@@ -109,7 +109,7 @@ describe("makeTranscriptionProcessor", () => {
 
     expect(t.metering.record).toHaveBeenCalled(); // houve custo
     expect(t.repo.updateMessageContent).toHaveBeenCalledWith("msg-1", null, { transcribing: false, empty: true, durationSec: 1 });
-    expect(t.sendToContact).toHaveBeenCalledWith("c-1", expect.stringContaining("não consegui ouvir nada"), { split: false });
+    expect(t.sendToConversation).toHaveBeenCalledWith({ kind: "contact", contactId: "c-1" }, expect.stringContaining("não consegui ouvir nada"), { split: false });
     expect(t.redis.rpush).not.toHaveBeenCalled();
     expect(t.flushQueue.add).toHaveBeenCalled(); // settle mesmo assim
   });
@@ -120,7 +120,7 @@ describe("makeTranscriptionProcessor", () => {
     await makeTranscriptionProcessor(t.deps)(job({ attemptsMade: 1, opts: { attempts: 2 } }));
 
     expect(t.repo.updateMessageContent).toHaveBeenCalledWith("msg-1", null, { transcribing: false, error: "upstream" });
-    expect(t.sendToContact).toHaveBeenCalledWith("c-1", expect.stringContaining("não consegui ouvir agora"), { split: false });
+    expect(t.sendToConversation).toHaveBeenCalledWith({ kind: "contact", contactId: "c-1" }, expect.stringContaining("não consegui ouvir agora"), { split: false });
     expect(t.redis.rpush).not.toHaveBeenCalled();
     expect(t.redis.decr).toHaveBeenCalled();
   });
@@ -129,7 +129,7 @@ describe("makeTranscriptionProcessor", () => {
     const t = makeDeps();
     t.transcription.transcribe.mockRejectedValueOnce(new TranscriptionError("timeout", "abortou"));
     await expect(makeTranscriptionProcessor(t.deps)(job({ attemptsMade: 0, opts: { attempts: 3 } }))).rejects.toMatchObject({ kind: "timeout" });
-    expect(t.sendToContact).not.toHaveBeenCalled();
+    expect(t.sendToConversation).not.toHaveBeenCalled();
     expect(t.redis.decr).not.toHaveBeenCalled(); // flag segura o flush até a retentativa
     expect(t.flushQueue.add).not.toHaveBeenCalled();
   });
@@ -138,7 +138,7 @@ describe("makeTranscriptionProcessor", () => {
     const t = makeDeps({ maxAudioMb: 0.000001 }); // qualquer áudio estoura
     await makeTranscriptionProcessor(t.deps)(job({ attemptsMade: 0, opts: { attempts: 3 } }));
     expect(t.transcription.transcribe).not.toHaveBeenCalled();
-    expect(t.sendToContact).toHaveBeenCalledWith("c-1", expect.stringContaining("não consegui ouvir agora"), { split: false });
+    expect(t.sendToConversation).toHaveBeenCalledWith({ kind: "contact", contactId: "c-1" }, expect.stringContaining("não consegui ouvir agora"), { split: false });
     expect(t.repo.updateMessageContent).toHaveBeenCalledWith("msg-1", null, { transcribing: false, error: "too_large" });
     expect(t.redis.decr).toHaveBeenCalled(); // settle (permanente = terminal)
   });
@@ -168,13 +168,13 @@ describe("makeTranscriptionProcessor", () => {
     expect(t.messaging.fetchMediaBase64).toHaveBeenCalledWith({ instanceId: "inst-1" }, MESSAGE_KEY);
     expect(t.transcription.transcribe).not.toHaveBeenCalled();
     expect(t.repo.updateMessageContent).toHaveBeenCalledWith("msg-1", null, { transcribing: false, error: "unsupported_format" });
-    expect(t.sendToContact).toHaveBeenCalledWith("c-1", expect.stringContaining("não consegui ouvir agora"), { split: false });
+    expect(t.sendToConversation).toHaveBeenCalledWith({ kind: "contact", contactId: "c-1" }, expect.stringContaining("não consegui ouvir agora"), { split: false });
   });
 
   it("aviso throttled: se a janela já avisou (SET NX falhou), não reenvia", async () => {
     const t = makeDeps({}, null); // redis.set → null (janela já usada)
     t.transcription.transcribe.mockRejectedValueOnce(new TranscriptionError("upstream", "x"));
     await makeTranscriptionProcessor(t.deps)(job({ attemptsMade: 1, opts: { attempts: 2 } }));
-    expect(t.sendToContact).not.toHaveBeenCalled(); // throttle barrou
+    expect(t.sendToConversation).not.toHaveBeenCalled(); // throttle barrou
   });
 });

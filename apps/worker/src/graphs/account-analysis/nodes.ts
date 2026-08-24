@@ -90,7 +90,7 @@ import {
   type LastEntityAnalysis,
 } from "../../modules/analysis/entity-analyses.repo.js";
 import { createNotifyRepo, type NotifyRepo } from "../../modules/notify/repo.js";
-import { createSendToContact } from "../../modules/notify/send-to-contact.js";
+import { createSendToConversation } from "../../modules/notify/send-to-contact.js";
 import { createVisionResolver, creativeContentHash } from "../../modules/vision/resolver.js";
 import { makeMetaToolExecutor, type MetaToolExecutor } from "../../executors/meta-tools.js";
 import { AnalysisError } from "../../modules/analysis/errors.js";
@@ -142,7 +142,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
   const notifyRepo = repos?.notify ?? createNotifyRepo(deps.db);
   const entityAnalysesRepo = repos?.entityAnalyses ?? createEntityAnalysesRepo(deps.db);
   const executor = repos?.executor ?? makeMetaToolExecutor(deps);
-  const sendToContact = createSendToContact({ messaging: deps.ports.messaging, repo: notifyRepo });
+  const sendToConversation = createSendToConversation({ messaging: deps.ports.messaging, repo: notifyRepo });
 
   /** Carrega agent/config/janela e abre o run (status=running, snapshot congelado). */
   async function loadContext(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
@@ -791,13 +791,13 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     if (!body) return {}; // nada acionável / não-cron sem push → silêncio
     if (await notifyRepo.alreadyNotified(state.runId)) return {}; // idempotência de envio
 
-    // alvo: WhatsApp-origin → quem pediu; cron → destinatário verificado da org.
-    let contactId = state.notifyTarget?.contactId ?? null;
-    if (!contactId) {
+    // alvo: WhatsApp-origin (DM ou grupo) → quem pediu; cron → destinatário verificado da org.
+    let ref = state.notifyTarget?.ref ?? null;
+    if (!ref) {
       const target = await notifyRepo.loadTarget(state.orgId);
-      contactId = target?.contactId ?? null;
+      ref = target ? { kind: "contact" as const, contactId: target.contactId } : null;
     }
-    if (!contactId) {
+    if (!ref) {
       logger.warn({ orgId: state.orgId, runId: state.runId }, "notify:sem canal/contato — sem push");
       return {};
     }
@@ -805,7 +805,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const link = `${deps.webOrigin}/accounts/${state.adAccountId}`;
     const text = `${body}\n\nVer no site: ${link}`;
     // chat (push do WhatsApp) quebra em blocos; cron enxuto (1 msg) — ban-safety §9.
-    const sent = await sendToContact(contactId, text, {
+    const sent = await sendToConversation(ref, text, {
       split: state.notifyTarget != null,
       meta: { runId: state.runId },
     });

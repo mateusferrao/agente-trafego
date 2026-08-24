@@ -172,7 +172,15 @@ export function parseInbound(payload: unknown): InboundMessage | null {
 
   const audio = extractAudio(data);
   if (audio) {
-    const messageKey: MediaMessageKey = { id: messageId, remoteJid: key["remoteJid"] as string, fromMe: false };
+    // Mídia de grupo: a Evolution exige `participant` (JID de quem mandou dentro do
+    // grupo) na key p/ o fallback `getBase64FromMediaMessage` — doc oficial.
+    const participant = group && typeof key["participant"] === "string" ? (key["participant"] as string) : undefined;
+    const messageKey: MediaMessageKey = {
+      id: messageId,
+      remoteJid: key["remoteJid"] as string,
+      fromMe: false,
+      ...(participant ? { participant } : {}),
+    };
     return { ...base, kind: "audio", audio, messageKey };
   }
 

@@ -1,16 +1,17 @@
 // Aviso de cortesia throttled: no MÁXIMO 1 por conversa por janela (SET NX EX) —
-// evita parecer spam/bot (ban-safety §9). Reusa o envio unificado (createSendToContact:
-// resolve instância+telefone, grava outbound). Contato desconhecido nunca chega aqui
-// (o inbound já filtrou §8).
+// evita parecer spam/bot (ban-safety §9). Reusa o envio unificado (createSendToConversation:
+// resolve instância+destino DM/grupo, grava outbound). Remetente desconhecido (DM) ou
+// não-dirigido (grupo) nunca chega aqui (o roteador já filtrou §8/§9).
 
 import type { Redis } from "ioredis";
-import type { SendToContact } from "../notify/send-to-contact.js";
+import type { ConversationRef } from "@trafego/shared";
+import type { SendToConversation } from "../notify/send-to-contact.js";
 
 const NOTICE_THROTTLE_PREFIX = "wa:notice:";
 
 export interface CourtesyNoticeArgs {
   readonly conversationId: string;
-  readonly contactId: string;
+  readonly ref: ConversationRef;
   readonly text: string;
   /**
    * Balde do throttle (motivo) — avisos de motivos DIFERENTES não se engolem: um aviso
@@ -24,11 +25,11 @@ export interface CourtesyNoticeArgs {
 /** Envia o aviso se a janela do balde permitir; retorna se realmente enviou. */
 export async function sendCourtesyNotice(
   redis: Redis,
-  sendToContact: SendToContact,
+  sendToConversation: SendToConversation,
   args: CourtesyNoticeArgs,
 ): Promise<boolean> {
   const key = `${NOTICE_THROTTLE_PREFIX}${args.bucket}:${args.conversationId}`;
   const gate = await redis.set(key, "1", "EX", args.throttleSec, "NX");
   if (gate !== "OK") return false; // já avisamos deste motivo nesta janela
-  return sendToContact(args.contactId, args.text, { split: false });
+  return sendToConversation(args.ref, args.text, { split: false });
 }

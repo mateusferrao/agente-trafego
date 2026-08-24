@@ -173,6 +173,19 @@ describe("EvolutionAdapter.fetchMediaBase64", () => {
     expect(body.message.key).toEqual(KEY);
   });
 
+  it("mídia de GRUPO: repassa `participant` na key (Evolution exige p/ mídia de grupo)", async () => {
+    const spy = stubRoutes({
+      "chat/getBase64FromMediaMessage/": { status: 200, body: { base64: "QUJD" } },
+    });
+    const groupKey = { ...KEY, remoteJid: "120363000000000000@g.us", participant: "5511999999999@s.whatsapp.net" };
+
+    await makeAdapter().fetchMediaBase64(INSTANCE, groupKey);
+
+    const call = spy.mock.calls.find(([url]) => String(url).includes("chat/getBase64FromMediaMessage/"));
+    const body = JSON.parse(String(call![1]?.body));
+    expect(body.message.key).toEqual(groupKey);
+  });
+
   it("resposta sem base64 → null", async () => {
     stubRoutes({ "chat/getBase64FromMediaMessage/": { status: 200, body: {} } });
     await expect(makeAdapter().fetchMediaBase64(INSTANCE, KEY)).resolves.toBeNull();

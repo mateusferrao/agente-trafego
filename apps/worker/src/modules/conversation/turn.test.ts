@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Database } from "@trafego/db";
 import { configToolsFor, deliverReply } from "./turn.js";
-import type { SendToContact } from "../notify/send-to-contact.js";
+import type { SendToConversation } from "../notify/send-to-contact.js";
 import { CONFIG_CHAT_TOOL_NAMES } from "../../graphs/whatsapp-conversation/tools.js";
+
+const REF = { kind: "contact" as const, contactId: "contact-1" };
 
 function fakeLogger() {
   return { info: vi.fn(), error: vi.fn() };
@@ -37,9 +39,9 @@ describe("configToolsFor (kill-switch da auto-config por chat, S2.3)", () => {
 
 describe("deliverReply (robustez de envio, F2)", () => {
   it("envio ok → loga replied", async () => {
-    const send = vi.fn(async () => true) as unknown as SendToContact;
+    const send = vi.fn(async () => true) as unknown as SendToConversation;
     const logger = fakeLogger();
-    await deliverReply(send, "contact-1", "oi", logger, "org-1");
+    await deliverReply(send, REF, "oi", logger, "org-1");
     expect(logger.info).toHaveBeenCalledOnce();
     expect(logger.error).not.toHaveBeenCalled();
   });
@@ -47,10 +49,10 @@ describe("deliverReply (robustez de envio, F2)", () => {
   it("envio falha (Evolution fora) → NÃO propaga (não relança o grafo), só loga error", async () => {
     const send = vi.fn(async () => {
       throw new Error("evolution 500");
-    }) as unknown as SendToContact;
+    }) as unknown as SendToConversation;
     const logger = fakeLogger();
     // não deve rejeitar — propagar faria o BullMQ re-invocar o grafo e re-gastar LLM
-    await expect(deliverReply(send, "contact-1", "oi", logger, "org-1")).resolves.toBeUndefined();
+    await expect(deliverReply(send, REF, "oi", logger, "org-1")).resolves.toBeUndefined();
     expect(logger.error).toHaveBeenCalledOnce();
   });
 });

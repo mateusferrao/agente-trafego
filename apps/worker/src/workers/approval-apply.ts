@@ -10,21 +10,21 @@ import { APPROVAL_APPLY_QUEUE, type ApprovalApplyPayload, type ApprovalId } from
 import type { WorkerDeps } from "../composition.js";
 import { applyConfirmedAction } from "../modules/apply/apply-confirmed-action.js";
 import { createNotifyRepo } from "../modules/notify/repo.js";
-import { createSendToContact } from "../modules/notify/send-to-contact.js";
+import { createSendToConversation } from "../modules/notify/send-to-contact.js";
 
 export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): Worker<ApprovalApplyPayload> {
   const { logger, ports } = deps;
-  const sendToContact = createSendToContact({ messaging: ports.messaging, repo: createNotifyRepo(deps.db) });
+  const sendToConversation = createSendToConversation({ messaging: ports.messaging, repo: createNotifyRepo(deps.db) });
 
   return new Worker<ApprovalApplyPayload>(
     APPROVAL_APPLY_QUEUE,
     async (job) => {
-      const { orgId, approvalId, notifyContactId } = job.data;
-      // desfecho de volta no WhatsApp (só quando a aprovação veio do chat — 5b-2.3).
+      const { orgId, approvalId, notifyRef } = job.data;
+      // desfecho de volta no WhatsApp (só quando a aprovação veio do chat — 5b-2.3, DM ou grupo).
       const pushOutcome = async (text: string): Promise<void> => {
-        if (!notifyContactId) return;
+        if (!notifyRef) return;
         try {
-          await sendToContact(notifyContactId, text, { split: false });
+          await sendToConversation(notifyRef, text, { split: false });
         } catch (err) {
           logger.warn({ err, approvalId }, "approval-apply:push do desfecho falhou");
         }

@@ -4,6 +4,7 @@
  * A fila é a mesma ("agent-runs"); o worker distingue por `mode` (execute|resume).
  */
 import type { SignalFinding } from "../types/index.js";
+import type { ConversationRef } from "./whatsapp.js";
 
 export const AGENT_RUNS_QUEUE = "agent-runs";
 export const AGENT_RUN_JOB = "agent-run";
@@ -84,15 +85,15 @@ export const APPROVAL_APPLY_JOB = "approval-apply";
 export type ApprovalApplyPayload = {
   readonly orgId: string;
   readonly approvalId: string;
-  /** contato p/ empurrar o desfecho no WhatsApp (5b-2 — aprovação conversacional). */
-  readonly notifyContactId?: string;
+  /** conversa (DM ou grupo) p/ empurrar o desfecho no WhatsApp (5b-2 — aprovação conversacional). */
+  readonly notifyRef?: ConversationRef;
 };
 
 export type AgentRunTrigger = "cron" | "on_demand" | "conversation" | "signal";
 
 /** Alvo de push do resultado (5b-2): run disparado pelo WhatsApp devolve na conversa. */
 export type RunNotifyTarget = {
-  readonly contactId: string;
+  readonly ref: ConversationRef;
   readonly conversationId: string;
 };
 

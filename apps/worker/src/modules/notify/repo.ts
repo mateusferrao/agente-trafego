@@ -5,7 +5,7 @@
 // a conversa/mensagem inbound.
 
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { adAccounts, agents, channelInstances, contacts, conversations, messages, type Database } from "@trafego/db";
+import { adAccounts, agents, channelGroups, channelInstances, contacts, conversations, messages, type Database } from "@trafego/db";
 import { brPhoneVariants } from "@trafego/shared";
 
 export interface NotifyTarget {
@@ -24,6 +24,19 @@ export interface InboundContact {
 export interface ContactTarget {
   readonly instanceId: string;
   readonly phone: string;
+  readonly orgId: string;
+}
+
+/** Grupo ativo resolvido a partir do inbound (instância + JID do grupo). */
+export interface InboundGroup {
+  readonly orgId: string;
+  readonly groupId: string;
+}
+
+/** Alvo de envio a um grupo (instância conectada + JID do grupo). */
+export interface GroupTarget {
+  readonly instanceId: string;
+  readonly groupJid: string;
   readonly orgId: string;
 }
 
@@ -58,6 +71,14 @@ export interface NotifyRepo {
   resolveOutboundTarget(contactId: string): Promise<ContactTarget | null>;
   /** Atualiza o status do canal pela instância (CONNECTION_UPDATE — status ao vivo). */
   updateInstanceStatus(instanceId: string, status: "connected" | "connecting" | "disconnected"): Promise<void>;
+  /** Telefone (E.164) dono da instância — p/ o gate de endereçamento no grupo (menção/reply ao bot). */
+  instancePhone(instanceId: string): Promise<string | null>;
+  /** Grupo ATIVO da org dona da instância, pelo JID (inbound). Não-registrado/inativo → null. */
+  resolveInboundGroup(instanceId: string, groupJid: string): Promise<InboundGroup | null>;
+  /** Garante a conversa (org/grupo/participante) e devolve seu id — thread por-(grupo,participante). */
+  ensureGroupConversation(orgId: string, groupId: string, participantPhone: string): Promise<string>;
+  /** Alvo de envio a um grupo: instância conectada da org + JID do grupo. */
+  resolveGroupTarget(groupId: string): Promise<GroupTarget | null>;
 }
 
 export function createNotifyRepo(db: Database): NotifyRepo {
@@ -207,6 +228,78 @@ export function createNotifyRepo(db: Database): NotifyRepo {
         .update(channelInstances)
         .set({ status, updatedAt: sql`now()` })
         .where(eq(channelInstances.evolutionInstance, instanceId));
+    },
+
+    async instancePhone(instanceId) {
+      const [row] = await db
+        .select({ phone: channelInstances.phone })
+        .from(channelInstances)
+        .where(eq(channelInstances.evolutionInstance, instanceId))
+        .limit(1);
+      return row?.phone ?? null;
+    },
+
+    /** Grupo ATIVO da org dona da instância, pelo JID. Sem verificação de membro — a
+     *  adesão ao grupo é a fronteira de confiança (CLAUDE §9, diferente do DM). */
+    async resolveInboundGroup(instanceId, groupJid) {
+      const [instance] = await db
+        .select({ orgId: channelInstances.orgId })
+        .from(channelInstances)
+        .where(eq(channelInstances.evolutionInstance, instanceId))
+        .limit(1);
+      if (!instance) return null;
+
+      const [group] = await db
+        .select({ id: channelGroups.id })
+        .from(channelGroups)
+        .where(
+          and(
+            eq(channelGroups.orgId, instance.orgId),
+            eq(channelGroups.groupJid, groupJid),
+            eq(channelGroups.status, "active"),
+          ),
+        )
+        .limit(1);
+      return group ? { orgId: instance.orgId, groupId: group.id } : null;
+    },
+
+    /** Conversa (org/grupo/participante) — thread por-participante dá "só o iniciador
+     *  confirma" e foco por participante de graça (reuso do foco da DM). */
+    async ensureGroupConversation(orgId, groupId, participantPhone) {
+      const [existing] = await db
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(
+          and(
+            eq(conversations.orgId, orgId),
+            eq(conversations.groupId, groupId),
+            eq(conversations.participantPhone, participantPhone),
+          ),
+        )
+        .orderBy(conversations.createdAt)
+        .limit(1);
+      if (existing) return existing.id;
+      const [created] = await db
+        .insert(conversations)
+        .values({ orgId, groupId, participantPhone })
+        .returning({ id: conversations.id });
+      return created?.id ?? "";
+    },
+
+    /** JID do grupo + instância conectada da sua org. */
+    async resolveGroupTarget(groupId) {
+      const [group] = await db
+        .select({ orgId: channelGroups.orgId, groupJid: channelGroups.groupJid, evolutionInstance: channelGroups.evolutionInstance })
+        .from(channelGroups)
+        .where(eq(channelGroups.id, groupId))
+        .limit(1);
+      if (!group) return null;
+      const [instance] = await db
+        .select({ instanceId: channelInstances.evolutionInstance })
+        .from(channelInstances)
+        .where(and(eq(channelInstances.orgId, group.orgId), eq(channelInstances.status, "connected")))
+        .limit(1);
+      return instance ? { instanceId: instance.instanceId, groupJid: group.groupJid, orgId: group.orgId } : null;
     },
   };
 }

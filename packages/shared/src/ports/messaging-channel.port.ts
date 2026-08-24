@@ -5,7 +5,9 @@ export interface ChannelInstanceRef {
 }
 
 export interface OutboundMessage {
-  readonly to: string; // telefone E.164
+  readonly to: string; // telefone E.164, ou JID de grupo quando `toIsGroup`
+  /** Destino é um GRUPO (`to` = JID @g.us), não um telefone. Ausente/false = DM. */
+  readonly toIsGroup?: boolean;
   readonly text: string;
   /**
    * Dica NEUTRA de tempo de "preparo" antes de entregar a mensagem (ms) — dá o
@@ -53,6 +55,8 @@ export interface MediaMessageKey {
   readonly id: string;
   readonly remoteJid: string;
   readonly fromMe: boolean;
+  /** JID de quem mandou DENTRO do grupo (Evolution exige p/ mídia de grupo). Ausente em DM. */
+  readonly participant?: string;
 }
 
 /** Nota de voz / áudio — bytes inline (base64) p/ transcrição na borda. */

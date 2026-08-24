@@ -229,6 +229,10 @@ export const envSchema = z.object({
   // no máx 1 aviso por conversa/motivo por janela — anti-spam/ban-safety (§9). Dedicada
   // (não os segundos do debounce), medida em ~minuto.
   NOTICE_THROTTLE_SECONDS: z.coerce.number().int().positive().default(60),
+  // Grupo WhatsApp (agente-em-grupo): mensagens que NÃO dirigem o bot (sem @menção/reply)
+  // são ignoradas e NÃO persistidas por padrão (§12 LGPD — conversa alheia do time não
+  // entra no nosso banco). Ligar ingere como contexto (fast-follow de retenção dedicada).
+  TRAFEGO_GROUP_INGEST_CONTEXT: z.coerce.boolean().default(false),
 
   // ─── Email (auth transacional — 6b) ────────────────────────────────────
   // Verificação de email + reset de senha via mailer genérico (porta + fila).

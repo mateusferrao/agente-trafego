@@ -215,7 +215,11 @@ export class EvolutionAdapter implements MessagingChannelPort {
       const res = await this.client.request<EvolutionMediaResponse>({
         method: "POST",
         path: `chat/getBase64FromMediaMessage/${encodeURIComponent(instance.instanceId)}`,
-        body: { message: { key: { id: key.id, remoteJid: key.remoteJid, fromMe: key.fromMe } } },
+        body: {
+          message: {
+            key: { id: key.id, remoteJid: key.remoteJid, fromMe: key.fromMe, ...(key.participant ? { participant: key.participant } : {}) },
+          },
+        },
       });
       return typeof res.base64 === "string" && res.base64.length > 0 ? res.base64 : null;
     } catch {
