@@ -482,6 +482,27 @@ email_verified_at) · `0018` (índice created_at). **Backfill = script one-time*
   billing owner-only enforçado no backend (hoje só nav esconde); backup via script + `StoragePort`;
   domínio de email próprio do produto + IAM não-root; health endpoint do worker; prune de orgs órfãs.
 
+## Comunicação WhatsApp — fluidez + percepção de valor + proatividade (em entrega)
+
+Melhoria da comunicação do agente no WhatsApp: parecer conversa humana no padrão do canal e liderar pela percepção de valor. Fatiado (F1→F4).
+
+**Entregue:**
+- **F1 — fluidez de entrega (determinística, independe do modelo):** `sanitizeWhatsappText` (core: `**`→`*`, títulos, bullets estritos, links, tachado; idempotente) + split por **fronteira natural** (parágrafo→frase, nunca corta frase; `WHATSAPP_SOFT_MAX_CHARS`~600; cap 5) + porta neutra `typingHintMs` traduzida a `presence:composing`+`delay` **só no adapter** Evolution + orquestração em `send-to-contact` (sanitiza→split→"digitando…" proporcional por balão).
+- **F2 — robustez:** `deliverReply` isola o envio do chat — queda da Evolution não relança o grafo (não re-gasta LLM).
+- **F3 — valor no chat:** `get_account_status` expõe o `waste`/tier (já persistidos no `metrics_snapshot`); `chatRules` lidera pelo dinheiro/veredito.
+- **F4a — config:** `NotifyPolicy` (pulse/alerts/runPush) + coluna `agents.notify_policy` (default conservador) + defaults semeados por arquétipo.
+- **F4b — pulso:** scheduler `pulse:{id}` (cadência própria) + worker que resume do último run (`composePulseOverview`, sem rerun) com **dedupe** (não cola no push).
+- **F4c — alerta:** `detectMaterialChange` (core, D-1 fechado vs baseline; temporal, complementa o cross-sectional `detectAnomalies`) + gate barato no `insights-sync` (throttle + política) → dispara run `trigger=signal` **dirigido** (o `SignalFinding` injeta no prompt do analista via `describeSignal`); a análise é a autoridade (falso positivo → silêncio).
+
+**Fast-follows registrados:**
+- **[F4d] Controle da proatividade por chat + site** — tool `set_notifications` (Grafo B + `@trafego/agent-config` estendendo `resolveAgentConfigChange` p/ `notifyPolicy`) e campos no `agentConfigInput`/`updateConfig` + UI do Agente (Angular). Hoje a política é semeada por arquétipo (editável só no banco).
+- **Reenvio idempotente/outbox do chat** — F2 só isola o envio; persistir a resposta e reenviar quando a Evolution volta fica adiado.
+- **Outbound em fila dedicada** — o `delay` nativo da Evolution bloqueia a request; mover envio p/ worker/fila própria se o volume crescer.
+- **Alerta intradiário** — a detecção é D-1 (atribuição do Meta incompleta no dia corrente); checagem no mesmo dia (granularidade hora) fica adiada. Intradiário de lançamento é coberto pelo cron 2×/dia + "analisa agora".
+- **Modo silencioso / teto global de proatividade** — controle único p/ conter pulso+push+alerta por conta/dia.
+- **Backfill do `notify_policy` por arquétipo** nos agentes já criados (hoje ficam no default de coluna).
+- **Troca do modelo do chat** (`CONVERSATION_MODEL`) por custo-benefício, com validação de tool-calling; **tetos de fluidez via env** (hoje const nomeadas: `WHATSAPP_SOFT_MAX_CHARS`, `TYPING_*`).
+
 ## Fatia 7 — Criação de campanhas (roadmap pós-MVP)
 
 **Visão "gestor completo no WhatsApp":** o agente também **cria** campanhas — a pedido ou proativo. Só depois do MVP de otimização validar. Arquitetura já antecipa (catálogo de tools + `AdsPlatformPort` + porta nova de storage). **Depende:** MVP validado (pós-beta) + `5a`/`5b` (write path + HITL) + catálogo de tools.
