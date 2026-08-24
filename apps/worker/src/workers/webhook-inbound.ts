@@ -40,11 +40,30 @@ import { createSendToConversation, type SendToConversation } from "../modules/no
 /** Balde de throttle do aviso de mídia não-suportada (separado do de áudio). */
 const UNSUPPORTED_NOTICE_BUCKET = "unsupported";
 
+/** Placeholder de mídia no contexto ambiente de grupo (não transcreve; dá continuidade). */
+const AMBIENT_AUDIO_PLACEHOLDER = "[áudio]";
+const AMBIENT_MEDIA_PLACEHOLDER: Readonly<Record<string, string>> = { image: "[imagem]" };
+const AMBIENT_MEDIA_DEFAULT = "[mídia]";
+
+/** Corpo a guardar de uma mensagem AMBIENTE de grupo: texto cru ou placeholder de mídia. */
+function ambientBody(inbound: InboundMessage): string {
+  if (inbound.kind === "text") return inbound.text;
+  if (inbound.kind === "audio") return AMBIENT_AUDIO_PLACEHOLDER;
+  return AMBIENT_MEDIA_PLACEHOLDER[inbound.mediaType] ?? AMBIENT_MEDIA_DEFAULT;
+}
+
 /** Dependências do router de mensagem inbound (enxutas → testável sem BullMQ). */
 export interface InboundRouterDeps {
   readonly repo: Pick<
     NotifyRepo,
-    "resolveInboundContact" | "alreadyProcessed" | "ensureConversation" | "recordMessage" | "instancePhone" | "resolveInboundGroup" | "ensureGroupConversation"
+    | "resolveInboundContact"
+    | "alreadyProcessed"
+    | "ensureConversation"
+    | "recordMessage"
+    | "recordGroupMessage"
+    | "instancePhone"
+    | "resolveInboundGroup"
+    | "ensureGroupConversation"
   >;
   readonly messaging: Pick<MessagingChannelPort, "resolveGroupParticipants">;
   readonly redis: Redis;
@@ -164,9 +183,18 @@ async function routeGroupMessage(d: InboundRouterDeps, instanceId: string, inbou
   }
 
   if (!addressed) {
-    if (d.groupIngestContext && inbound.kind === "text") {
-      const conversationId = await d.repo.ensureGroupConversation(resolved.orgId, resolved.groupId, group.senderPhone);
-      await d.repo.recordMessage(conversationId, "inbound", inbound.text, { messageId: inbound.messageId, context: true });
+    // Contexto ambiente: guarda a mensagem alheia em group_messages (SEM fabricar conversa
+    // nem disparar turno) p/ o transcript read-only injetado quando o bot for dirigido.
+    // Idempotente por (grupo, messageId). Kill-switch de plataforma via groupIngestContext.
+    if (d.groupIngestContext) {
+      await d.repo.recordGroupMessage({
+        orgId: resolved.orgId,
+        groupId: resolved.groupId,
+        authorPhone: group.senderPhone,
+        authorName: group.senderName,
+        body: ambientBody(inbound),
+        messageId: inbound.messageId,
+      });
     }
     d.logger.debug({ instanceId }, "inbound:group_not_addressed");
     return;

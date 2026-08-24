@@ -113,7 +113,11 @@ function buildGroupContext(
   const quotedAuthorPhone = quotedRaw ? jidToE164(quotedRaw) : null;
   const quotedAuthorLid = quotedRaw && quotedRaw.endsWith(LID_SUFFIX) ? quotedRaw : null;
 
-  return { groupJid, senderPhone, mentionedPhones, quotedAuthorPhone, mentionedLids, quotedAuthorLid };
+  // nome de exibição do remetente (pushName) — atribuição legível no contexto ambiente.
+  const rawName = data["pushName"];
+  const senderName = typeof rawName === "string" && rawName.length > 0 ? rawName : null;
+
+  return { groupJid, senderPhone, senderName, mentionedPhones, quotedAuthorPhone, mentionedLids, quotedAuthorLid };
 }
 
 /**

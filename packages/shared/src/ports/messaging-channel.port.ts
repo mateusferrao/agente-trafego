@@ -36,6 +36,9 @@ export interface OutboundMessage {
 export interface InboundGroupContext {
   readonly groupJid: string;
   readonly senderPhone: string;
+  /** Nome de exibição do remetente no grupo (pushName do WhatsApp) — atribuição legível
+   *  no transcript de contexto. Null quando o provider não informa. */
+  readonly senderName: string | null;
   readonly mentionedPhones: readonly string[];
   readonly quotedAuthorPhone: string | null;
   readonly mentionedLids: readonly string[];

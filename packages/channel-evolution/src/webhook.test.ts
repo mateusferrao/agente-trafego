@@ -186,10 +186,17 @@ describe("parseInbound — grupo", () => {
       group: {
         groupJid: "120363000000000000@g.us",
         senderPhone: "+5511999999999",
+        senderName: "Fulano",
         mentionedPhones: [],
         quotedAuthorPhone: null,
       },
     });
+  });
+
+  it("sem pushName → senderName null (atribuição cai no fallback na casca)", () => {
+    const payload = groupUpsert({});
+    (payload.data as Record<string, unknown>).pushName = undefined;
+    expect(parseInbound(payload)).toMatchObject({ group: { senderName: null } });
   });
 
   it("grupo sem participant identificável → null (não dá pra rotear)", () => {

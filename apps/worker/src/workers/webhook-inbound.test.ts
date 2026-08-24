@@ -20,6 +20,7 @@ const GROUP_BASE = { instanceId: "inst-1", from: "+5511999999999", messageId: "G
 function groupText(
   overrides: {
     senderPhone?: string;
+    senderName?: string | null;
     mentionedPhones?: string[];
     quotedAuthorPhone?: string | null;
     mentionedLids?: string[];
@@ -33,12 +34,30 @@ function groupText(
     group: {
       groupJid: GROUP_JID,
       senderPhone: overrides.senderPhone ?? "+5511999999999",
+      senderName: overrides.senderName === undefined ? "João" : overrides.senderName,
       mentionedPhones: overrides.mentionedPhones ?? [BOT_PHONE],
       quotedAuthorPhone: overrides.quotedAuthorPhone ?? null,
       mentionedLids: overrides.mentionedLids ?? [],
       quotedAuthorLid: overrides.quotedAuthorLid ?? null,
     },
   };
+}
+
+/** Variante de mídia não-dirigida em grupo (áudio/imagem) p/ o placeholder de contexto. */
+function groupMedia(kind: "audio" | "unsupported", mediaType = "image"): InboundMessage {
+  const group = {
+    groupJid: GROUP_JID,
+    senderPhone: "+5511999999999",
+    senderName: "João" as string | null,
+    mentionedPhones: [] as string[],
+    quotedAuthorPhone: null,
+    mentionedLids: [] as string[],
+    quotedAuthorLid: null,
+  };
+  if (kind === "audio") {
+    return { ...GROUP_BASE, kind: "audio", audio: { base64: "AAAA", mimetype: "audio/ogg" }, messageKey: { id: "GMSG-1", remoteJid: GROUP_JID, fromMe: false }, group };
+  }
+  return { ...GROUP_BASE, kind: "unsupported", mediaType, group };
 }
 
 function makeDeps(overrides: Partial<InboundRouterDeps> = {}) {
@@ -50,6 +69,7 @@ function makeDeps(overrides: Partial<InboundRouterDeps> = {}) {
     instancePhone: vi.fn(async (): Promise<string | null> => BOT_PHONE),
     resolveInboundGroup: vi.fn(async (): Promise<{ orgId: string; groupId: string } | null> => ({ orgId: "org-1", groupId: "grp-1" })),
     ensureGroupConversation: vi.fn(async () => "conv-grp-1"),
+    recordGroupMessage: vi.fn(async () => undefined),
   };
   const messaging = { resolveGroupParticipants: vi.fn(async (): Promise<Record<string, string>> => ({})) };
   // markTranscribing usa MULTI (incr+expire atômico) — chain espionável.
@@ -76,7 +96,7 @@ function makeDeps(overrides: Partial<InboundRouterDeps> = {}) {
     bufferTtlSec: 65,
     transcribingTtlSec: 240,
     throttleSec: 5,
-    groupIngestContext: false,
+    groupIngestContext: true,
     groupParticipantsCacheTtlSec: 3600,
     ...overrides,
   } as unknown as InboundRouterDeps;
@@ -177,21 +197,50 @@ describe("makeInboundRouter — grupo", () => {
     expect(t.flushQueue.add).not.toHaveBeenCalled();
   });
 
-  it("NÃO dirigido (sem menção/reply ao bot) + ingest OFF (default) → ignora, não persiste", async () => {
+  it("NÃO dirigido (sem menção/reply ao bot) → não fabrica thread nem dispara turno", async () => {
     const t = makeDeps();
     await makeInboundRouter(t.deps)("inst-1", groupText({ mentionedPhones: ["+5511888888888"] }));
+    expect(t.repo.recordMessage).not.toHaveBeenCalled();
+    expect(t.repo.ensureGroupConversation).not.toHaveBeenCalled();
+    expect(t.flushQueue.add).not.toHaveBeenCalled();
+  });
+
+  it("NÃO dirigido + ingest ON (default) → grava em group_messages (contexto ambiente), sem thread/turno", async () => {
+    const t = makeDeps({ groupIngestContext: true });
+    await makeInboundRouter(t.deps)("inst-1", groupText({ mentionedPhones: ["+5511888888888"] }));
+    expect(t.repo.recordGroupMessage).toHaveBeenCalledWith({
+      orgId: "org-1",
+      groupId: "grp-1",
+      authorPhone: "+5511999999999",
+      authorName: "João",
+      body: "@bot analisa",
+      messageId: "GMSG-1",
+    });
+    // não fabrica conversa, não grava em messages, não dispara turno.
+    expect(t.repo.ensureGroupConversation).not.toHaveBeenCalled();
     expect(t.repo.recordMessage).not.toHaveBeenCalled();
     expect(t.flushQueue.add).not.toHaveBeenCalled();
   });
 
-  it("NÃO dirigido + ingest ON (env) → persiste como contexto, sem turno (sem flush)", async () => {
+  it("NÃO dirigido + ingest ON: áudio vira placeholder [áudio] (sem transcrever)", async () => {
     const t = makeDeps({ groupIngestContext: true });
+    await makeInboundRouter(t.deps)("inst-1", groupMedia("audio"));
+    expect(t.repo.recordGroupMessage).toHaveBeenCalledWith(expect.objectContaining({ body: "[áudio]" }));
+    expect(t.transcriptionQueue.add).not.toHaveBeenCalled();
+  });
+
+  it("NÃO dirigido + ingest ON: imagem vira [imagem], outra mídia vira [mídia]", async () => {
+    const t = makeDeps({ groupIngestContext: true });
+    await makeInboundRouter(t.deps)("inst-1", groupMedia("unsupported", "image"));
+    expect(t.repo.recordGroupMessage).toHaveBeenCalledWith(expect.objectContaining({ body: "[imagem]" }));
+    await makeInboundRouter(t.deps)("inst-1", groupMedia("unsupported", "video"));
+    expect(t.repo.recordGroupMessage).toHaveBeenLastCalledWith(expect.objectContaining({ body: "[mídia]" }));
+  });
+
+  it("NÃO dirigido + ingest OFF (kill-switch) → nem group_messages", async () => {
+    const t = makeDeps({ groupIngestContext: false });
     await makeInboundRouter(t.deps)("inst-1", groupText({ mentionedPhones: ["+5511888888888"] }));
-    expect(t.repo.recordMessage).toHaveBeenCalledWith("conv-grp-1", "inbound", "@bot analisa", {
-      messageId: "GMSG-1",
-      context: true,
-    });
-    expect(t.flushQueue.add).not.toHaveBeenCalled();
+    expect(t.repo.recordGroupMessage).not.toHaveBeenCalled();
   });
 
   it("sem verificação de membro: mensagem de grupo NÃO passa por resolveInboundContact", async () => {

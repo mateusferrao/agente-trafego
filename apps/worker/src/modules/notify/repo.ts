@@ -5,7 +5,7 @@
 // a conversa/mensagem inbound.
 
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
-import { adAccounts, agents, channelGroups, channelInstances, contacts, conversations, messages, type Database } from "@trafego/db";
+import { adAccounts, agents, channelGroups, channelInstances, contacts, conversations, groupMessages, messages, type Database } from "@trafego/db";
 import { brPhoneVariants, type ConversationRef } from "@trafego/shared";
 
 /** Contato verificado resolvido a partir do inbound (instância + telefone). */
@@ -80,6 +80,19 @@ export interface NotifyRepo {
    * sem participante específico — pulso/alerta/push).
    */
   ensureGroupConversation(orgId: string, groupId: string, participantPhone: string | null): Promise<string>;
+  /**
+   * Grava uma mensagem AMBIENTE de grupo (não-dirigida ao bot) como CONTEXTO — sem thread/
+   * conversa (o autor pode nunca ter falado com o bot). Idempotente por (grupo, messageId):
+   * a reentrega do webhook não duplica.
+   */
+  recordGroupMessage(input: {
+    orgId: string;
+    groupId: string;
+    authorPhone: string | null;
+    authorName: string | null;
+    body: string | null;
+    messageId: string;
+  }): Promise<void>;
   /** Alvo de envio a um grupo: instância conectada da org + JID do grupo. */
   resolveGroupTarget(groupId: string): Promise<GroupTarget | null>;
 }
@@ -294,6 +307,14 @@ export function createNotifyRepo(db: Database): NotifyRepo {
         .values({ orgId, groupId, participantPhone })
         .returning({ id: conversations.id });
       return created?.id ?? "";
+    },
+
+    /** Mensagem ambiente de grupo (contexto). Upsert idempotente por (grupo, messageId). */
+    async recordGroupMessage({ orgId, groupId, authorPhone, authorName, body, messageId }) {
+      await db
+        .insert(groupMessages)
+        .values({ orgId, groupId, authorPhone, authorName, body, messageId })
+        .onConflictDoNothing({ target: [groupMessages.groupId, groupMessages.messageId] });
     },
 
     /** JID do grupo + instância conectada da sua org. */
