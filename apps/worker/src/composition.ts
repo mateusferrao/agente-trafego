@@ -99,6 +99,9 @@ export interface WorkerDeps {
     readonly fetchGenerationCost: (generationId: string) => Promise<number | undefined>;
     /** Grupo: mensagem NÃO-dirigida (sem @menção/reply ao bot) vira contexto (default: ignora e não persiste). */
     readonly groupIngestContext: boolean;
+    /** TTL (s) do cache do mapa LID→telefone dos participantes de um grupo (resolve
+     *  menção/reply endereçada por LID quando o telefone não vem direto na mensagem). */
+    readonly groupParticipantsCacheTtlSec: number;
   };
   /** Config da transcrição de áudio inbound (STT). Modelo vive no adapter. */
   readonly transcription: {
@@ -280,6 +283,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
       turnTimeoutMs: env.CONVERSATION_TURN_TIMEOUT_MS,
       fetchGenerationCost: (id) => openRouterClient.getGenerationCost(id),
       groupIngestContext: env.TRAFEGO_GROUP_INGEST_CONTEXT,
+      groupParticipantsCacheTtlSec: env.GROUP_PARTICIPANTS_CACHE_TTL_SEC,
     },
     transcription: {
       language: env.TRANSCRIPTION_LANGUAGE,
