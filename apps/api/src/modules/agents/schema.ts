@@ -1,10 +1,12 @@
 import { z } from "zod";
 import {
   actionType,
+  alertSensitivity,
   autonomyPolicySchema,
   cadenceSpecSchema,
   conversionGoalSchema,
   guardrailConfigSchema,
+  notifyPolicySchema,
 } from "@trafego/shared/schemas";
 import { ANALYSIS_WINDOW_MIN_DAYS, ANALYSIS_WINDOW_MAX_DAYS } from "@trafego/shared";
 
@@ -79,6 +81,22 @@ export const agentGoalsInput = z.object({
 });
 export type AgentGoalsInput = z.infer<typeof agentGoalsInput>;
 
+/**
+ * Notificação proativa (F4d) — patch por SUB-OBJETO (pulse/alerts/runPush): cada
+ * bloco presente é aplicado por inteiro (leaf-merge fino fica no core via
+ * NotifyPolicyPatch); bloco ausente preserva o que já está salvo.
+ */
+export const notifyPolicyInput = z.object({
+  pulse: z.object({ enabled: z.boolean(), cadence: cadenceSpecSchema }).optional(),
+  alerts: z.object({
+    enabled: z.boolean(),
+    sensitivity: alertSensitivity,
+    throttleHours: z.number().int().min(1),
+  }).optional(),
+  runPush: z.object({ enabled: z.boolean() }).optional(),
+});
+export type NotifyPolicyInput = z.infer<typeof notifyPolicyInput>;
+
 /** Config editável do agente: meta+conversão + personalização + janela (c1) +
  *  identidade/voz + cadência (c2). Todos opcionais (patch parcial). */
 export const agentConfigInput = z.object({
@@ -107,6 +125,8 @@ export const agentConfigInput = z.object({
   guardrails: guardrailConfigSchema.optional(),
   /** "Opções avançadas" (6c) — override do model_config (modelos/revisão/limiares). */
   modelConfig: modelConfigInput.optional(),
+  /** proatividade (F4d): pulso/alerta/push do cron. */
+  notifyPolicy: notifyPolicyInput.optional(),
 });
 export type AgentConfigInput = z.infer<typeof agentConfigInput>;
 
@@ -138,6 +158,8 @@ export const agentSummary = z.object({
   modelConfig: modelConfigInput,
   /** defaults do sistema dos limiares de qualidade (env) — placeholder real na UI. */
   qualityDefaults: qualityDefaultsOutput,
+  /** proatividade (F4d) — estado atual completo (pulso/alerta/push). */
+  notifyPolicy: notifyPolicySchema,
 });
 export type AgentSummary = z.infer<typeof agentSummary>;
 

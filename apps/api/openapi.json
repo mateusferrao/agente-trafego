@@ -1133,6 +1133,163 @@
               "trackingBrokenRatio",
               "trackingBrokenMinFunnel"
             ]
+          },
+          "notifyPolicy": {
+            "type": "object",
+            "properties": {
+              "pulse": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "cadence": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "daily"
+                            ]
+                          },
+                          "hour": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 23
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "hour"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "twice_daily"
+                            ]
+                          },
+                          "hours": {
+                            "type": "array",
+                            "prefixItems": [
+                              {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 23
+                              },
+                              {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 23
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "hours"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "weekly"
+                            ]
+                          },
+                          "weekday": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 6
+                          },
+                          "hour": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 23
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "weekday",
+                          "hour"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "raw"
+                            ]
+                          },
+                          "cron": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "cron"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "enabled",
+                  "cadence"
+                ]
+              },
+              "alerts": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "sensitivity": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "normal",
+                      "high"
+                    ]
+                  },
+                  "throttleHours": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "required": [
+                  "enabled",
+                  "sensitivity",
+                  "throttleHours"
+                ]
+              },
+              "runPush": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "enabled"
+                ]
+              }
+            },
+            "required": [
+              "pulse",
+              "alerts",
+              "runPush"
+            ]
           }
         },
         "required": [
@@ -1151,7 +1308,8 @@
           "autonomyPolicy",
           "guardrails",
           "modelConfig",
-          "qualityDefaults"
+          "qualityDefaults",
+          "notifyPolicy"
         ]
       },
       "ArchetypeCatalogOutput": {
@@ -1549,6 +1707,158 @@
                     "minimum": 0
                   }
                 }
+              }
+            }
+          },
+          "notifyPolicy": {
+            "type": "object",
+            "properties": {
+              "pulse": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "cadence": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "daily"
+                            ]
+                          },
+                          "hour": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 23
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "hour"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "twice_daily"
+                            ]
+                          },
+                          "hours": {
+                            "type": "array",
+                            "prefixItems": [
+                              {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 23
+                              },
+                              {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 23
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "hours"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "weekly"
+                            ]
+                          },
+                          "weekday": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 6
+                          },
+                          "hour": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 23
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "weekday",
+                          "hour"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "raw"
+                            ]
+                          },
+                          "cron": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "cron"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "enabled",
+                  "cadence"
+                ]
+              },
+              "alerts": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "sensitivity": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "normal",
+                      "high"
+                    ]
+                  },
+                  "throttleHours": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "required": [
+                  "enabled",
+                  "sensitivity",
+                  "throttleHours"
+                ]
+              },
+              "runPush": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "enabled"
+                ]
               }
             }
           }

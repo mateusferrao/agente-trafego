@@ -15,7 +15,7 @@ import {
   type AgentConfigState,
 } from "@trafego/core";
 import { DEFAULT_NOTIFY_POLICY, SCHEDULE_RESYNC_JOB, SCHEDULE_RESYNC_QUEUE, toGuardrailConfig } from "@trafego/shared";
-import type { AutonomyPolicy, CadenceSpec, OrgId } from "@trafego/shared";
+import type { AutonomyPolicy, CadenceSpec, NotifyPolicy, OrgId } from "@trafego/shared";
 import type { SchedulerPort } from "@trafego/shared/ports";
 
 /** Dependências de infra da camada (composition root injeta). */
@@ -142,6 +142,8 @@ export type AgentReseedResult =
       readonly archetype: string;
       readonly cadence: CadenceSpec | null;
       readonly autonomyPolicy: AutonomyPolicy;
+      /** proatividade (F4d) — resetada pro default do arquétipo (mesma semântica da autonomia). */
+      readonly notifyPolicy: NotifyPolicy;
       readonly changed: readonly string[];
       readonly weakensSafety: boolean;
     };
@@ -173,6 +175,10 @@ export async function reseedArchetypeChange(
   const defaults = archetypeDefaults(archetype);
   const nextCadence = state.cadence ?? defaults.defaultCadence ?? null;
   const cadenceChanged = JSON.stringify(nextCadence) !== JSON.stringify(state.cadence);
+  // proatividade (F4d): comportamento do agente, mesma semântica da autonomia (reset
+  // incondicional pro default do arquétipo — não tem "não configurado" pra preservar,
+  // ao contrário da cadência da análise).
+  const notifyPolicyChanged = JSON.stringify(defaults.defaultNotifyPolicy) !== JSON.stringify(state.notifyPolicy);
 
   await db
     .update(agents)
@@ -184,12 +190,13 @@ export async function reseedArchetypeChange(
       systemPrompt: null,
       autonomyPolicy: defaults.autonomyPolicy,
       cadence: nextCadence,
+      notifyPolicy: defaults.defaultNotifyPolicy,
       configChangedAt: sql`now()`,
       updatedAt: sql`now()`,
     })
     .where(and(eq(agents.id, agentId), eq(agents.orgId, orgId)));
 
-  if (cadenceChanged) {
+  if (cadenceChanged || notifyPolicyChanged) {
     await scheduler.enqueue({
       queue: SCHEDULE_RESYNC_QUEUE,
       name: SCHEDULE_RESYNC_JOB,
@@ -198,7 +205,7 @@ export async function reseedArchetypeChange(
   }
 
   // o que mudou (p/ o eco do chat): identidade que estava setada (some ao resetar),
-  // autonomia e cadência semeada.
+  // autonomia, proatividade e cadência semeada.
   const changed: string[] = [];
   if (state.persona !== null) changed.push(CONFIG_CHANGE_LABELS.persona);
   if (state.tone !== null) changed.push(CONFIG_CHANGE_LABELS.tone);
@@ -206,6 +213,7 @@ export async function reseedArchetypeChange(
   if (JSON.stringify(state.autonomyPolicy) !== JSON.stringify(defaults.autonomyPolicy))
     changed.push(CONFIG_CHANGE_LABELS.autonomyPolicy);
   if (cadenceChanged) changed.push(CONFIG_CHANGE_LABELS.cadence);
+  if (notifyPolicyChanged) changed.push(CONFIG_CHANGE_LABELS.notifyPolicy);
 
   const weakensSafety = autonomyPolicyWeakens(state.autonomyPolicy, defaults.autonomyPolicy);
 
@@ -217,6 +225,7 @@ export async function reseedArchetypeChange(
       systemPrompt: null,
       autonomyPolicy: defaults.autonomyPolicy,
       cadence: nextCadence,
+      notifyPolicy: defaults.defaultNotifyPolicy,
     };
     await writeAudit(db, orgId, agentId, AGENT_ARCHETYPE_RESEED_ACTION, state, after, audit);
   }
@@ -226,6 +235,7 @@ export async function reseedArchetypeChange(
     archetype: defaults.key,
     cadence: nextCadence,
     autonomyPolicy: defaults.autonomyPolicy,
+    notifyPolicy: defaults.defaultNotifyPolicy,
     changed,
     weakensSafety,
   };

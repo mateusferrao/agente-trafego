@@ -21,11 +21,13 @@ import {
   ADVANCED_SCALAR_KEYS,
   DEFAULT_ARCHETYPE_KEY,
   type AgentConfigPatch,
+  type NotifyPolicyPatch,
 } from "@trafego/core";
 import { applyAgentConfigChange, reseedArchetypeChange } from "@trafego/agent-config";
 import {
   ACTION_UNDO_QUEUE,
   ACTION_UNDO_JOB,
+  DEFAULT_NOTIFY_POLICY,
   GUARDRAIL_DEFAULTS,
   toGuardrailConfig,
   UNDO_BLOCKED_TOOL_KEY,
@@ -41,6 +43,7 @@ import {
   type AvailableConversionsOutput,
   type LastRunActionsOutput,
   type ModelConfigInput,
+  type NotifyPolicyInput,
   type PlaybookRuleInput,
   type PlaybookRuleOutput,
   type QualityDefaultsOutput,
@@ -105,6 +108,7 @@ export function createAgentsService(deps: AgentsDeps) {
         cadence: agents.cadence,
         modelConfig: agents.modelConfig,
         autonomyPolicy: agents.autonomyPolicy,
+        notifyPolicy: agents.notifyPolicy,
         status: agents.status,
       })
       .from(agents)
@@ -130,6 +134,7 @@ export function createAgentsService(deps: AgentsDeps) {
         guardrails: await loadGuardrails(orgId, existing.id),
         modelConfig: projectModelConfig(existing.modelConfig),
         qualityDefaults: deps.qualityDefaults,
+        notifyPolicy: existing.notifyPolicy,
       };
     }
 
@@ -144,6 +149,7 @@ export function createAgentsService(deps: AgentsDeps) {
         // vazia). Semear travaria a metodologia e mostraria o campo pré-preenchido.
         goals: defaults.goals,
         autonomyPolicy: defaults.autonomyPolicy,
+        notifyPolicy: defaults.defaultNotifyPolicy,
         // ativo ao ser criado → o cron passa a cuidar da conta (pausável pelo dono).
         status: "active",
       })
@@ -172,6 +178,7 @@ export function createAgentsService(deps: AgentsDeps) {
       guardrails: GUARDRAIL_DEFAULTS as AgentSummary["guardrails"],
       modelConfig: {},
       qualityDefaults: deps.qualityDefaults,
+      notifyPolicy: defaults.defaultNotifyPolicy,
     };
   }
 
@@ -212,6 +219,7 @@ export function createAgentsService(deps: AgentsDeps) {
       guardrails: next.guardrails as AgentSummary["guardrails"],
       modelConfig: projectModelConfig(next.modelConfig),
       qualityDefaults: deps.qualityDefaults,
+      notifyPolicy: next.notifyPolicy,
     };
   }
 
@@ -242,6 +250,7 @@ export function createAgentsService(deps: AgentsDeps) {
       systemPrompt: null,
       autonomyPolicy: result.autonomyPolicy,
       cadence: result.cadence,
+      notifyPolicy: result.notifyPolicy,
       methodologyPreview: methodologyFor(result.archetype),
     };
   }
@@ -675,6 +684,18 @@ function toConfigPatch(input: AgentConfigInput): AgentConfigPatch {
     ...(input.autonomyPolicy !== undefined ? { autonomyPolicy: cleanAutonomy(input.autonomyPolicy) } : {}),
     ...(input.guardrails !== undefined ? { guardrails: input.guardrails } : {}),
     ...(input.modelConfig !== undefined ? { modelConfig: input.modelConfig } : {}),
+    ...(input.notifyPolicy !== undefined ? { notifyPolicy: toNotifyPolicyPatch(input.notifyPolicy) } : {}),
+  };
+}
+
+/** Traduz o DTO aninhado (por sub-objeto) → o patch FLAT do core (leaf-merge). */
+function toNotifyPolicyPatch(n: NotifyPolicyInput): NotifyPolicyPatch {
+  return {
+    ...(n.pulse !== undefined ? { pulseEnabled: n.pulse.enabled, pulseCadence: n.pulse.cadence } : {}),
+    ...(n.alerts !== undefined
+      ? { alertsEnabled: n.alerts.enabled, alertsSensitivity: n.alerts.sensitivity, alertsThrottleHours: n.alerts.throttleHours }
+      : {}),
+    ...(n.runPush !== undefined ? { runPushEnabled: n.runPush.enabled } : {}),
   };
 }
 

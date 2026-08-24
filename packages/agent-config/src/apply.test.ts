@@ -224,4 +224,20 @@ describe("reseedArchetypeChange", () => {
     expect(captured.updateSet?.configChangedAt).toBeDefined();
     expect(enqueue).toHaveBeenCalledTimes(1); // cadência semeada mudou
   });
+
+  it("reseta notifyPolicy pro default do arquétipo (F4d, mesma semântica da autonomia)", async () => {
+    const { db, captured } = makeFakeDb([[{ ...AGENT_ROW, cadence: null }], []]);
+    const { scheduler } = makeScheduler();
+
+    const result = await reseedArchetypeChange(
+      { db, scheduler },
+      { orgId: ORG, agentId: "ag-1", accountId: "acc-1", archetype: "guardiao_lancamento" },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.notifyPolicy.pulse).toEqual({ enabled: true, cadence: { kind: "twice_daily", hours: [8, 18] } });
+    expect(result.notifyPolicy.alerts.sensitivity).toBe("high");
+    expect(captured.updateSet?.notifyPolicy).toEqual(result.notifyPolicy);
+  });
 });
