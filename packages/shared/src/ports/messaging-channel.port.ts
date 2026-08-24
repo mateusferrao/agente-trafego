@@ -17,12 +17,28 @@ export interface OutboundMessage {
   readonly typingHintMs?: number;
 }
 
+/**
+ * Contexto de GRUPO de uma mensagem inbound (ausente = DM 1:1). Campos NEUTROS
+ * extraídos pelo adapter — quem é o bot e se a mensagem "dirige" o bot é decidido
+ * na casca (worker), comparando com o telefone da instância. `senderPhone` = quem
+ * mandou (o `from` da base espelha isso no grupo); `mentionedPhones` = telefones
+ * marcados (@); `quotedAuthorPhone` = autor da mensagem citada (reply), quando houver.
+ */
+export interface InboundGroupContext {
+  readonly groupJid: string;
+  readonly senderPhone: string;
+  readonly mentionedPhones: readonly string[];
+  readonly quotedAuthorPhone: string | null;
+}
+
 /** Campos comuns a toda mensagem inbound (independe do tipo de mídia). */
 export interface InboundMessageBase {
   readonly instanceId: string;
-  readonly from: string; // telefone E.164
+  readonly from: string; // telefone E.164 (no grupo = telefone do participante remetente)
   /** id da mensagem no provider (Evolution `data.key.id`) — idempotência do inbound. */
   readonly messageId: string;
+  /** Presente só em mensagens de GRUPO (DM = ausente). Ortogonal ao `kind`. */
+  readonly group?: InboundGroupContext;
   readonly raw: Readonly<Record<string, unknown>>;
 }
 

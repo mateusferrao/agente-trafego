@@ -2,6 +2,7 @@ import { boolean, index, integer, jsonb, pgTable, text, timestamp, unique, uuid 
 import type { EncryptedPayload } from "@trafego/shared";
 import {
   accountLifecycle,
+  channelGroupStatus,
   channelStatus,
   contactRole,
   pk,
@@ -93,6 +94,35 @@ export const channelInstances = pgTable(
     ...timestamps,
   },
   (t) => [index("channel_instances_org_idx").on(t.orgId)],
+);
+
+/**
+ * Grupo WhatsApp configurado pela org — **segunda superfície simétrica à DM**: como
+ * `channel_instances` é 1 número por org, `channel_groups` é **1 grupo por org**
+ * (`unique(org_id)`; trocar de grupo = UPDATE da linha, não nova linha). O agente atua
+ * nele (proativo + conversa) varrendo TODAS as contas da org via concierge (igual à DM);
+ * escopo de contas por-grupo é fast-follow (só faz sentido com N números — CLAUDE.md).
+ * Membros do grupo NÃO precisam ser contatos verificados (a adesão ao grupo é a fronteira
+ * de confiança); verificação segue só no DM 1:1.
+ */
+export const channelGroups = pgTable(
+  "channel_groups",
+  {
+    id: pk(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    // instância Evolution (número) que participa do grupo — hoje a única da org.
+    evolutionInstance: text("evolution_instance").notNull(),
+    // JID do grupo no WhatsApp (…@g.us).
+    groupJid: text("group_jid").notNull(),
+    // rótulo amigável (assunto do grupo) exibido na UI.
+    name: text("name"),
+    status: channelGroupStatus("status").notNull().default("active"),
+    ...timestamps,
+  },
+  // 1 grupo por org (espelho do número): reconfigurar = upsert por org, sem duplicar.
+  (t) => [unique("channel_groups_org_uq").on(t.orgId)],
 );
 
 /** Telefone WhatsApp vinculado a um user/org (opt-in verificado). */

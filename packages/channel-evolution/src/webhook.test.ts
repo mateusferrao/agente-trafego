@@ -143,6 +143,94 @@ describe("parseInbound", () => {
   });
 });
 
+/** Payload de MESSAGES_UPSERT vindo de um GRUPO (remoteJid @g.us + participant). */
+function groupUpsert(overrides: {
+  groupJid?: string;
+  participant?: string;
+  id?: string;
+  message?: Record<string, unknown>;
+}): Record<string, unknown> {
+  return {
+    event: "MESSAGES_UPSERT",
+    instance: "org-123",
+    data: {
+      key: {
+        remoteJid: overrides.groupJid ?? "120363000000000000@g.us",
+        participant: overrides.participant ?? "5511999999999@s.whatsapp.net",
+        fromMe: false,
+        id: overrides.id ?? "GROUPMSG1",
+      },
+      pushName: "Fulano",
+      message: overrides.message ?? { conversation: "oi grupo" },
+      messageType: "conversation",
+    },
+  };
+}
+
+describe("parseInbound — grupo", () => {
+  it("texto de grupo: from = telefone do participante + envelope group", () => {
+    const msg = parseInbound(groupUpsert({}));
+    expect(msg).toMatchObject({
+      kind: "text",
+      instanceId: "org-123",
+      from: "+5511999999999",
+      text: "oi grupo",
+      group: {
+        groupJid: "120363000000000000@g.us",
+        senderPhone: "+5511999999999",
+        mentionedPhones: [],
+        quotedAuthorPhone: null,
+      },
+    });
+  });
+
+  it("grupo sem participant identificável → null (não dá pra rotear)", () => {
+    const payload = groupUpsert({ participant: "" });
+    // remove o participant do payload
+    (((payload.data as Record<string, unknown>).key as Record<string, unknown>).participant as unknown) = undefined;
+    expect(parseInbound(payload)).toBeNull();
+  });
+
+  it("extrai mentionedJid (marcações @) → mentionedPhones em E.164", () => {
+    const msg = parseInbound(
+      groupUpsert({
+        message: {
+          extendedTextMessage: {
+            text: "@bot analisa",
+            contextInfo: { mentionedJid: ["5511888888888@s.whatsapp.net", "120363@g.us"] },
+          },
+        },
+      }),
+    );
+    // grupo mencionado (@g.us) é descartado; só telefones válidos entram
+    expect(msg).toMatchObject({ kind: "text", group: { mentionedPhones: ["+5511888888888"] } });
+  });
+
+  it("extrai o autor da mensagem citada (reply) → quotedAuthorPhone", () => {
+    const msg = parseInbound(
+      groupUpsert({
+        message: {
+          extendedTextMessage: {
+            text: "confirma",
+            contextInfo: { participant: "5511777777777@s.whatsapp.net", stanzaId: "QUOTED1" },
+          },
+        },
+      }),
+    );
+    expect(msg).toMatchObject({ kind: "text", group: { quotedAuthorPhone: "+5511777777777" } });
+  });
+
+  it("áudio de grupo: envelope group + messageKey.remoteJid = JID do grupo", () => {
+    const msg = parseInbound(groupUpsert({ message: { audioMessage: { ptt: true }, base64: "AAAA" } }));
+    expect(msg).toMatchObject({
+      kind: "audio",
+      from: "+5511999999999",
+      group: { groupJid: "120363000000000000@g.us", senderPhone: "+5511999999999" },
+      messageKey: { remoteJid: "120363000000000000@g.us", fromMe: false },
+    });
+  });
+});
+
 describe("parseConnectionUpdate", () => {
   const conn = (state: unknown) => ({ event: "CONNECTION_UPDATE", instance: "org-1", data: { state } });
 

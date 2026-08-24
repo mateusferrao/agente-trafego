@@ -2,7 +2,7 @@ import { index, jsonb, pgTable, text, uuid } from "drizzle-orm/pg-core";
 import { messageDirection, pk, timestamps } from "./_shared.js";
 import { agents } from "./agents.js";
 import { orgs } from "./tenancy.js";
-import { adAccounts, contacts } from "./integrations.js";
+import { adAccounts, channelGroups, contacts } from "./integrations.js";
 
 /** Fio de conversa WhatsApp (Grafo B). */
 export const conversations = pgTable(
@@ -14,6 +14,15 @@ export const conversations = pgTable(
       .references(() => orgs.id, { onDelete: "cascade" }),
     agentId: uuid("agent_id").references(() => agents.id, { onDelete: "set null" }),
     contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+    // Fio de GRUPO (aditivo à DM): quando setado, a conversa é dentro de um grupo e a
+    // identidade do remetente é o `participant_phone` (não um contato verificado). DM =
+    // ambos null + contactId; grupo = ambos setados + contactId null. O thread do
+    // checkpointer segue = conversationId, mas a chave lógica é (org, group, participante),
+    // o que dá "só o iniciador confirma" + foco por participante de graça.
+    groupId: uuid("group_id").references(() => channelGroups.id, { onDelete: "set null" }),
+    // telefone E.164 do participante que dirige o bot no grupo (opt-in ativo — LGPD §12:
+    // só persistimos de quem fala com o bot, nunca de todo membro do grupo).
+    participantPhone: text("participant_phone"),
     // conta em foco (org multi-conta, 5c-6): quando setada, leitura/escrita operam nela.
     // Null = sem foco (org de 1 conta usa a única; multi-conta pede "foca na X").
     focusedAccountId: uuid("focused_account_id").references(() => adAccounts.id, { onDelete: "set null" }),
