@@ -616,8 +616,18 @@ function asString(value: unknown): string {
 export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
   const { db, ports, logger } = deps;
 
+  // Self-guard (S6 — always-bind em grupo multi-conta): as tools account-scoped ficam
+  // BOUND mesmo sem foco (concierge-start em grupo), mas sem conta em contexto respondem
+  // pedindo o foco em vez de consultar com adAccountId vazio (dado errado). O LLM então
+  // dá set_focus (do explícito/ambiente) → muta o ctx → re-chama e responde no mesmo turno.
+  const NEEDS_FOCUS =
+    'Me diga primeiro em qual conta (a organização tem várias). Ex: "foca na Clínica X" — ou só o nome que eu identifico.';
+  /** Sem conta em contexto (concierge-start) → pede o foco em vez de consultar vazio. */
+  const noFocus = () => !ctx.adAccountId;
+
   const getAccountStatus = tool(
     async () => {
+      if (noFocus()) return NEEDS_FOCUS;
       logger.debug({ agentId: ctx.agentId }, "tool:get_account_status");
       return asString(await getAccountStatusData(db, ctx.agentId, ctx.orgId, ports.approval));
     },
@@ -631,6 +641,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
 
   const getMetrics = tool(
     async ({ periodDays }: { periodDays?: number | null }) => {
+      if (noFocus()) return NEEDS_FOCUS;
       const days = periodDays ?? DEFAULT_METRICS_PERIOD_DAYS;
       logger.debug({ adAccountId: ctx.adAccountId, periodDays: days }, "tool:get_metrics");
       return asString(await getMetricsData(db, ctx.adAccountId, ctx.orgId, days));
@@ -645,6 +656,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
 
   const getFreshMetrics = tool(
     async ({ periodDays, campaign }: { periodDays?: number | null; campaign?: string | null }) => {
+      if (noFocus()) return NEEDS_FOCUS;
       logger.debug({ adAccountId: ctx.adAccountId, periodDays, campaign }, "tool:get_fresh_metrics");
       return asString(
         await getFreshMetricsData(
@@ -667,6 +679,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
 
   const getCampaignAnalysis = tool(
     async ({ name }: { name: string }) => {
+      if (noFocus()) return NEEDS_FOCUS;
       logger.debug({ agentId: ctx.agentId, name }, "tool:get_campaign_analysis");
       return asString(await getCampaignAnalysisData(db, ctx.agentId, name));
     },
@@ -680,6 +693,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
 
   const findRecentActions = tool(
     async ({ name }: { name?: string | null }) => {
+      if (noFocus()) return NEEDS_FOCUS;
       logger.debug({ agentId: ctx.agentId, name }, "tool:find_recent_actions");
       return asString(await findRecentActionsData(db, ctx.agentId, name ? { nameFilter: name } : {}));
     },
@@ -693,6 +707,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
 
   const listRecommendations = tool(
     async () => {
+      if (noFocus()) return NEEDS_FOCUS;
       logger.debug({ agentId: ctx.agentId }, "tool:list_recommendations");
       return asString(await listRecommendationsData(db, ctx.agentId, ctx.orgId));
     },
@@ -730,6 +745,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
 
   const comparePeriods = tool(
     async ({ periodDays }: { periodDays?: number | null }) => {
+      if (noFocus()) return NEEDS_FOCUS;
       const days = periodDays ?? DEFAULT_METRICS_PERIOD_DAYS;
       logger.debug({ adAccountId: ctx.adAccountId, periodDays: days }, "tool:compare_periods");
       return asString(await comparePeriodsData(db, ctx.adAccountId, ctx.orgId, days));
@@ -743,6 +759,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
 
   const getEntityDetail = tool(
     async ({ name }: { name: string }) => {
+      if (noFocus()) return NEEDS_FOCUS;
       logger.debug({ agentId: ctx.agentId, name }, "tool:get_entity_detail");
       return asString(await getEntityDetailData(db, ctx.agentId, ctx.adAccountId, ctx.orgId, name));
     },
@@ -755,6 +772,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
 
   const getAgentConfig = tool(
     async () => {
+      if (noFocus()) return NEEDS_FOCUS;
       logger.debug({ agentId: ctx.agentId }, "tool:get_agent_config");
       return asString(await getAgentConfigData(db, ctx.orgId, ctx.agentId));
     },
@@ -767,6 +785,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
 
   const explainRecommendation = tool(
     async ({ title }: { title: string }) => {
+      if (noFocus()) return NEEDS_FOCUS;
       logger.debug({ agentId: ctx.agentId, title }, "tool:explain_recommendation");
       return asString(await explainRecommendationData(db, ctx.agentId, ctx.orgId, title));
     },

@@ -15,6 +15,7 @@ import {
   AGENT_TOOL_NAMES,
   CONCIERGE_TOOL_NAMES,
   CONFIG_CHAT_TOOL_NAMES,
+  GROUP_CONCIERGE_TOOL_NAMES,
   WRITE_TOOL_TO_ACTION,
   type ConversationToolContext,
 } from "../../graphs/whatsapp-conversation/tools.js";
@@ -188,13 +189,17 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
     configViaChat: config.enabled,
     ...(inContext?.accountName ? { accountName: inContext.accountName } : {}),
   };
+  // sem agente em contexto: concierge. Em GRUPO multi-conta, always-bind de LEITURA (S6) →
+  // a 1ª pergunta resolve num turno (set_focus muta o ctx; reads self-guardam sem foco).
+  const conciergeAllow =
+    input.ref.kind === "group" && multiAccount ? GROUP_CONCIERGE_TOOL_NAMES : CONCIERGE_TOOL_NAMES;
   const allow = inContext
     ? new Set<string>([
         ...AGENT_TOOL_NAMES,
         ...(await allowedWriteTools(deps.db, input.orgId, inContext.agentId)),
         ...config.tools,
       ])
-    : CONCIERGE_TOOL_NAMES;
+    : conciergeAllow;
 
   let reply = FALLBACK_REPLY;
   try {

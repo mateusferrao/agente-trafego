@@ -6,6 +6,7 @@ import type { GuardrailConfig, AutonomyPolicy, NotifyPolicy } from "@trafego/sha
 import {
   AGENT_TOOL_NAMES,
   CONCIERGE_TOOL_NAMES,
+  GROUP_CONCIERGE_TOOL_NAMES,
   actionFromToolCall,
   configPatchFromToolCall,
   diceSimilarity,
@@ -51,6 +52,36 @@ function toolOf(deps: never, name: string): { invoke: (args: unknown) => Promise
   const found = makeConversationTools(deps, CTX, AGENT_TOOL_NAMES).find((t) => t.name === name)!;
   return found as unknown as { invoke: (args: unknown) => Promise<string> };
 }
+
+describe("always-bind de leitura em grupo multi-conta (S6)", () => {
+  it("GROUP_CONCIERGE binda reads + set_focus; sem escrita/config/trigger/revert", () => {
+    expect(GROUP_CONCIERGE_TOOL_NAMES.has("get_fresh_metrics")).toBe(true);
+    expect(GROUP_CONCIERGE_TOOL_NAMES.has("get_campaign_analysis")).toBe(true);
+    expect(GROUP_CONCIERGE_TOOL_NAMES.has("set_focus")).toBe(true);
+    expect(GROUP_CONCIERGE_TOOL_NAMES.has("list_pending")).toBe(true);
+    expect(GROUP_CONCIERGE_TOOL_NAMES.has("pause_entity")).toBe(false);
+    expect(GROUP_CONCIERGE_TOOL_NAMES.has("set_goal")).toBe(false);
+    expect(GROUP_CONCIERGE_TOOL_NAMES.has("trigger_analysis")).toBe(false);
+    expect(GROUP_CONCIERGE_TOOL_NAMES.has("revert_action")).toBe(false);
+  });
+
+  it("read tool sem foco (adAccountId vazio) → pede a conta (self-guard), sem tocar o db", async () => {
+    const { deps } = makeDeps(() => null);
+    const ctxNoFocus: ConversationToolContext = {
+      ...CTX,
+      agentId: "",
+      adAccountId: "",
+      ref: { kind: "group", groupId: "grp-1", participantPhone: "+5511999999999" },
+      multiAccount: true,
+    };
+    const getMetrics = makeConversationTools(deps, ctxNoFocus, GROUP_CONCIERGE_TOOL_NAMES).find((t) => t.name === "get_metrics")! as unknown as {
+      invoke: (a: unknown) => Promise<string>;
+    };
+    const out = await getMetrics.invoke({ periodDays: 7 });
+    expect(out.toLowerCase()).toContain("conta");
+    expect(out.toLowerCase()).toContain("foca");
+  });
+});
 
 describe("set_focus tool (footgun S3: aplica o foco no MESMO turno)", () => {
   const ACC = { id: "acc-B", name: "Clínica B", adAccountId: "act_222" };

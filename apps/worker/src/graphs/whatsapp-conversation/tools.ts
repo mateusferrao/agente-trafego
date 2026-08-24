@@ -611,6 +611,31 @@ export const CONCIERGE_TOOL_NAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Concierge de GRUPO multi-conta (S6 — always-bind de leitura): além do concierge, BINDA as
+ * tools de LEITURA account-scoped (self-guard sem foco em read-data.ts). Assim a 1ª pergunta
+ * ("@bot como tá a Clínica X?") resolve num turno: o LLM dá set_focus (do explícito/ambiente)
+ * → muta o ctx → lê e responde. SEM escrita/config (dependem do allowedActions do agente) nem
+ * trigger_analysis/revert (não são o *hello* comum) — escrita-1º-turno segue barra-e-repete.
+ */
+export const GROUP_CONCIERGE_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "get_account_status",
+  "get_metrics",
+  "get_fresh_metrics",
+  "get_campaign_analysis",
+  "get_entity_detail",
+  "compare_periods",
+  "get_agent_config",
+  "explain_recommendation",
+  "list_recommendations",
+  "list_pending",
+  "list_accounts",
+  "approve",
+  "reject",
+  "set_focus",
+  "describe_capabilities",
+]);
+
+/**
  * Tools de ESCRITA LIVRE que exigem ECO+CONFIRMA antes de aplicar (gate, 5c). O roteador
  * as desvia pro nó `confirm`. `approve`/`reject` NÃO entram: o nudge/análise já foi o eco.
  * A allowlist real por-agente sai de `allowedActions` (guardrail) em `turn.ts`.
