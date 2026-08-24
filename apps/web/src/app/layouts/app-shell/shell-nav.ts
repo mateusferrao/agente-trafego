@@ -43,6 +43,11 @@ const THEME_OPTIONS: readonly ThemeOption[] = [
 @Component({
   selector: 'app-shell-nav',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  // host = flex column que preenche a altura do container (rail desktop / corpo do
+  // drawer mobile, ambos já de altura definida) — sem isso o `flex-1` do <nav> abaixo
+  // não tinha o que crescer, e o bloco de tema+usuário ficava colado ao conteúdo em
+  // vez de ancorado no rodapé.
+  host: { class: 'flex min-h-0 flex-1 flex-col gap-5' },
   imports: [RouterLink, RouterLinkActive, NgIcon, UiBadge],
   providers: [
     provideIcons({
