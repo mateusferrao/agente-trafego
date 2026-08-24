@@ -21,6 +21,7 @@ import type {
 import { AgentPlaybook } from './agent-playbook';
 import { AgentAutonomy } from './agent-autonomy';
 import { AgentGuardrails } from './agent-guardrails';
+import { AgentNotifications } from './agent-notifications';
 
 type Conversion = AvailableConversionsOutput['conversions'][number];
 /** Um arquétipo do catálogo (chave + rótulo + descrição + quando usar). */
@@ -111,7 +112,7 @@ interface FormState {
 @Component({
   selector: 'app-agent-config-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, UiButton, UiPageHeader, UiSpinner, UiSelectBox, AgentPlaybook, AgentAutonomy, AgentGuardrails],
+  imports: [RouterLink, UiButton, UiPageHeader, UiSpinner, UiSelectBox, AgentPlaybook, AgentAutonomy, AgentGuardrails, AgentNotifications],
   template: `
     <div class="flex flex-col gap-8">
       <div class="flex flex-col gap-1">
@@ -378,6 +379,9 @@ interface FormState {
           </details>
           <p class="text-xs text-muted">Fuso: definido em <a routerLink="/settings" class="underline">Configurações</a> da organização.</p>
         </section>
+
+        <!-- Notificações proativas (pulso/alerta/aviso) — componente próprio -->
+        <app-agent-notifications [accountId]="accountId" />
 
         <!-- Arquétipo (preset base) — logo abaixo da cadência -->
         <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
