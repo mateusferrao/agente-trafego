@@ -42,6 +42,10 @@ describe("jidToE164", () => {
   it("entrada não-string/vazia → null", () => {
     expect(jidToE164("")).toBeNull();
   });
+
+  it("LID (@lid, id opaco de grupo migrado) → null (não é telefone, não é reversível)", () => {
+    expect(jidToE164("95529518235847@lid")).toBeNull();
+  });
 });
 
 describe("parseInbound", () => {
@@ -147,8 +151,10 @@ describe("parseInbound", () => {
 function groupUpsert(overrides: {
   groupJid?: string;
   participant?: string;
+  participantAlt?: string;
   id?: string;
   message?: Record<string, unknown>;
+  contextInfo?: Record<string, unknown>;
 }): Record<string, unknown> {
   return {
     event: "MESSAGES_UPSERT",
@@ -157,11 +163,13 @@ function groupUpsert(overrides: {
       key: {
         remoteJid: overrides.groupJid ?? "120363000000000000@g.us",
         participant: overrides.participant ?? "5511999999999@s.whatsapp.net",
+        ...(overrides.participantAlt ? { participantAlt: overrides.participantAlt } : {}),
         fromMe: false,
         id: overrides.id ?? "GROUPMSG1",
       },
       pushName: "Fulano",
       message: overrides.message ?? { conversation: "oi grupo" },
+      ...(overrides.contextInfo ? { contextInfo: overrides.contextInfo } : {}),
       messageType: "conversation",
     },
   };
@@ -242,6 +250,56 @@ describe("parseInbound — grupo", () => {
       from: "+5511999999999",
       group: { groupJid: "120363000000000000@g.us", senderPhone: "+5511999999999" },
       messageKey: { remoteJid: "120363000000000000@g.us", fromMe: false },
+    });
+  });
+
+  // ─── Regressão: contextInfo como IRMÃO de `message` em `data` (formato real da
+  // Evolution — não aninhado em message.extendedTextMessage.contextInfo) + grupo
+  // migrado pra LID (addressingMode "lid", participant vira id opaco). Reproduz
+  // payload observado em produção. ───
+  describe("formato real da Evolution (contextInfo em data, não aninhado)", () => {
+    it("extrai mentionedJid de data.contextInfo (irmão de message, não dentro dele)", () => {
+      const msg = parseInbound(
+        groupUpsert({
+          message: { conversation: "@bot analisa" },
+          contextInfo: { mentionedJid: ["5511888888888@s.whatsapp.net"], groupMentions: [] },
+        }),
+      );
+      expect(msg).toMatchObject({ kind: "text", group: { mentionedPhones: ["+5511888888888"] } });
+    });
+
+    it("extrai o autor citado (reply) de data.contextInfo.participant", () => {
+      const msg = parseInbound(
+        groupUpsert({
+          message: { conversation: "confirma" },
+          contextInfo: { mentionedJid: [], participant: "5511777777777@s.whatsapp.net", stanzaId: "QUOTED1" },
+        }),
+      );
+      expect(msg).toMatchObject({ kind: "text", group: { quotedAuthorPhone: "+5511777777777" } });
+    });
+
+    it("grupo em addressingMode lid: participant é @lid, mas participantAlt tem o telefone real do remetente", () => {
+      const msg = parseInbound(
+        groupUpsert({
+          participant: "251165459624058@lid",
+          participantAlt: "5531999999999@s.whatsapp.net",
+          message: { conversation: "oi" },
+        }),
+      );
+      // senderPhone/from vêm do participantAlt (telefone real), não do LID do participant.
+      expect(msg).toMatchObject({ from: "+5531999999999", group: { senderPhone: "+5531999999999" } });
+    });
+
+    it("menção/reply endereçando o bot por LID (sem alt disponível pra terceiros): não vira telefone, mas também não quebra — mentionedPhones/quotedAuthorPhone ficam vazios (LID não é reversível; endereçamento por LID é fast-follow)", () => {
+      const msg = parseInbound(
+        groupUpsert({
+          participant: "251165459624058@lid",
+          participantAlt: "5531999999999@s.whatsapp.net",
+          message: { conversation: "@bot oi" },
+          contextInfo: { mentionedJid: ["95529518235847@lid"], groupMentions: [] },
+        }),
+      );
+      expect(msg).toMatchObject({ group: { mentionedPhones: [] } });
     });
   });
 });
