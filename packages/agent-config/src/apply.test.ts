@@ -101,6 +101,22 @@ describe("applyAgentConfigChange", () => {
     expect(enqueue).toHaveBeenCalledTimes(1);
   });
 
+  it("notifyPolicy mudou (F4d) → também enfileira resync (o pulso tem scheduler próprio)", async () => {
+    const { db, captured } = makeFakeDb([[AGENT_ROW], []]);
+    const { scheduler, enqueue } = makeScheduler();
+
+    const result = await applyAgentConfigChange(
+      { db, scheduler },
+      { orgId: ORG, agentId: "ag-1", accountId: "acc-1", patch: { notifyPolicy: { pulseEnabled: true } } },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.changed).toContain("notificações");
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(captured.updateSet?.notifyPolicy).toMatchObject({ pulse: { enabled: true } });
+  });
+
   it("guardrail afrouxado (dry-run off) → weakensSafety + upsert em guardrail_configs", async () => {
     const guardrailRow = {
       maxBudgetChangePct: 20,

@@ -14,7 +14,7 @@ import {
   type AgentConfigPatch,
   type AgentConfigState,
 } from "@trafego/core";
-import { SCHEDULE_RESYNC_JOB, SCHEDULE_RESYNC_QUEUE, toGuardrailConfig } from "@trafego/shared";
+import { DEFAULT_NOTIFY_POLICY, SCHEDULE_RESYNC_JOB, SCHEDULE_RESYNC_QUEUE, toGuardrailConfig } from "@trafego/shared";
 import type { AutonomyPolicy, CadenceSpec, OrgId } from "@trafego/shared";
 import type { SchedulerPort } from "@trafego/shared/ports";
 
@@ -78,7 +78,7 @@ export async function applyAgentConfigChange(
 
   const resolution = resolveAgentConfigChange(state, patch);
   if (resolution.error) return { ok: false, error: resolution.error };
-  const { next, changed, runRelevantChanged, cadenceChanged, weakensSafety } = resolution;
+  const { next, changed, runRelevantChanged, cadenceChanged, notifyPolicyChanged, weakensSafety } = resolution;
 
   // agents: goals/textos/identidade/cadence/modelConfig/autonomia. configChangedAt só
   // quando um campo relevante à análise mudou (força 1 deep no próximo run).
@@ -94,6 +94,7 @@ export async function applyAgentConfigChange(
       cadence: next.cadence,
       modelConfig: next.modelConfig,
       autonomyPolicy: next.autonomyPolicy,
+      notifyPolicy: next.notifyPolicy,
       ...(runRelevantChanged ? { configChangedAt: sql`now()` } : {}),
       updatedAt: sql`now()`,
     })
@@ -117,8 +118,10 @@ export async function applyAgentConfigChange(
       .onConflictDoUpdate({ target: guardrailConfigs.agentId, set: { ...gValues, updatedAt: sql`now()` } });
   }
 
-  // cadência mudou → re-sincroniza o schedule (worker é o dono; aqui só enfileira).
-  if (cadenceChanged) {
+  // cadência da análise OU da proatividade (F4d: o pulso tem scheduler próprio) mudou
+  // → re-sincroniza (worker é o dono; aqui só enfileira). resyncAccountSchedule relê
+  // AMBOS os schedulers do zero, então 1 enqueue cobre os dois casos.
+  if (cadenceChanged || notifyPolicyChanged) {
     await scheduler.enqueue({
       queue: SCHEDULE_RESYNC_QUEUE,
       name: SCHEDULE_RESYNC_JOB,
@@ -249,6 +252,7 @@ export async function loadAgentConfigState(
       cadence: agents.cadence,
       modelConfig: agents.modelConfig,
       autonomyPolicy: agents.autonomyPolicy,
+      notifyPolicy: agents.notifyPolicy,
       archetype: agents.archetype,
     })
     .from(agents)
@@ -274,6 +278,9 @@ export async function loadAgentConfigState(
     autonomyPolicy: row.autonomyPolicy,
     guardrails: toGuardrailConfig(gRow),
     modelConfig: row.modelConfig ?? {},
+    // fallback defensivo (linha pré-migração/fake de teste); a coluna real tem
+    // default NOT NULL (backfill automático), então isto é só uma rede de segurança.
+    notifyPolicy: row.notifyPolicy ?? DEFAULT_NOTIFY_POLICY,
   };
 }
 
