@@ -10,7 +10,7 @@ export const runStatus = z.enum([
   "partial",
 ]);
 
-export const runTrigger = z.enum(["cron", "on_demand", "conversation"]);
+export const runTrigger = z.enum(["cron", "on_demand", "conversation", "signal"]);
 
 // ─── 3a: disparo on-demand + resultado (run + recomendações) ─────────────
 export const triggerRunOutput = z.object({
