@@ -8,14 +8,17 @@ import { adAccounts, agents, orgs } from "@trafego/db";
 import { cadenceToCron } from "@trafego/core";
 import {
   AGENT_CRON_QUEUE,
+  AGENT_PULSE_QUEUE,
   AGENT_REAPER_QUEUE,
   AGENT_REAPER_SCHEDULE_KEY,
   APPROVAL_EXPIRY_QUEUE,
   APPROVAL_EXPIRY_SCHEDULE_KEY,
   INSIGHTS_SWEEP_QUEUE,
   INSIGHTS_SWEEP_SCHEDULE_KEY,
+  pulseScheduleKey,
   type AgentCronDispatchPayload,
   type CadenceSpec,
+  type NotifyPolicy,
 } from "@trafego/shared";
 import type { SchedulerPort } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../composition.js";
@@ -62,9 +65,37 @@ export function makeAccountCron(deps: WorkerDeps) {
     });
   }
 
-  /** Remove o scheduler (agente pausado / conta desconectada). */
+  /** Remove os schedulers da conta (análise + pulso) — agente pausado / conta desconectada. */
   async function removeAccountSchedule(adAccountId: string): Promise<void> {
     await scheduler.removeSchedule(scheduleKey(adAccountId));
+    await scheduler.removeSchedule(pulseScheduleKey(adAccountId));
+  }
+
+  /**
+   * Upsert/remoção do scheduler de PULSO da conta (F4) — cadência PRÓPRIA (independente
+   * da análise). Desligado (ou policy ausente) → remove. Mesmo padrão idempotente.
+   */
+  async function upsertPulseSchedule(s: {
+    orgId: string;
+    agentId: string;
+    adAccountId: string;
+    notifyPolicy: NotifyPolicy | null;
+    tz?: string;
+  }): Promise<void> {
+    const key = pulseScheduleKey(s.adAccountId);
+    if (!s.notifyPolicy?.pulse.enabled) {
+      await scheduler.removeSchedule(key);
+      return;
+    }
+    const payload: AgentCronDispatchPayload = { orgId: s.orgId, agentId: s.agentId, adAccountId: s.adAccountId };
+    await scheduler.upsertSchedule({
+      key,
+      queue: AGENT_PULSE_QUEUE,
+      cron: cadenceToCron(s.notifyPolicy.pulse.cadence),
+      tz: s.tz ?? deps.cron.tz,
+      jitterMs: deps.cron.jitterMs,
+      payload,
+    });
   }
 
   /** Garante o scheduler recorrente do reaper (singleton, key fixa — idempotente). */
@@ -119,6 +150,7 @@ export function makeAccountCron(deps: WorkerDeps) {
         agentId: agents.id,
         adAccountId: agents.adAccountId,
         cadence: agents.cadence,
+        notifyPolicy: agents.notifyPolicy,
         tz: orgs.timezone,
       })
       .from(agents)
@@ -134,6 +166,13 @@ export function makeAccountCron(deps: WorkerDeps) {
         tz: r.tz,
         enabled: true,
       });
+      await upsertPulseSchedule({
+        orgId: r.orgId,
+        agentId: r.agentId,
+        adAccountId: r.adAccountId,
+        notifyPolicy: r.notifyPolicy,
+        tz: r.tz,
+      });
     }
     logger.info({ count: rows.length }, "cron:sync_all done");
   }
@@ -148,6 +187,7 @@ export function makeAccountCron(deps: WorkerDeps) {
       .select({
         agentId: agents.id,
         cadence: agents.cadence,
+        notifyPolicy: agents.notifyPolicy,
         agentStatus: agents.status,
         accountStatus: adAccounts.status,
         tz: orgs.timezone,
@@ -170,6 +210,7 @@ export function makeAccountCron(deps: WorkerDeps) {
       tz: r.tz,
       enabled: true,
     });
+    await upsertPulseSchedule({ orgId, agentId: r.agentId, adAccountId, notifyPolicy: r.notifyPolicy, tz: r.tz });
   }
 
   return {

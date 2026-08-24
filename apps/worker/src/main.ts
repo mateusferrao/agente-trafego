@@ -16,6 +16,7 @@ import { startApprovalExpiryWorker } from "./workers/approval-expiry.js";
 import { startWebhookInboundWorker } from "./workers/webhook-inbound.js";
 import { startWhatsappFlushWorker } from "./workers/whatsapp-flush.js";
 import { startWhatsappTranscriptionWorker } from "./workers/whatsapp-transcription.js";
+import { startPulseWorker } from "./workers/pulse.js";
 import { startMailWorker } from "./workers/mail.js";
 import { drainPendingCostPatches } from "./graphs/whatsapp-conversation/nodes.js";
 import { makeAccountCron } from "./schedulers/account-cron.js";
@@ -60,6 +61,7 @@ async function main(): Promise<void> {
 
   // entrega de email transacional (6b): verificação de email + reset de senha.
   const mail = startMailWorker(deps, connection);
+  const pulse = startPulseWorker(deps, connection);
 
   // Sincroniza os schedulers recorrentes a partir dos agentes ativos (idempotente)
   // + agenda o reaper (singleton) e faz uma varredura de boot (limpa presos de um
@@ -94,6 +96,7 @@ async function main(): Promise<void> {
       whatsappFlush.close(),
       whatsappTranscription.close(),
       mail.close(),
+      pulse.close(),
     ]);
     // espera (com teto) os patches de custo do WhatsApp em voo — sem isso, todo
     // deploy/restart perde o fallback assíncrono de custo (§11).

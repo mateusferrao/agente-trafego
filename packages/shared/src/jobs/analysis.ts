@@ -18,6 +18,14 @@ export const AGENT_CRON_QUEUE = "agent-cron-dispatch";
 export const AGENT_CRON_JOB = "agent-cron";
 
 /**
+ * Pulso proativo (F4): resumo periódico da conta MESMO sem recomendação (o
+ * "não deixa a conta morrer"). Fila/scheduler próprios (cadência independente da
+ * análise). Reusa o último run persistido — sem rerun caro; dedupe evita colar no push.
+ */
+export const AGENT_PULSE_QUEUE = "agent-pulse";
+export const pulseScheduleKey = (adAccountId: string): string => `pulse:${adAccountId}`;
+
+/**
  * Fila do REAPER (3b): um Job Scheduler recorrente enfileira aqui; o worker marca
  * como `failed` os runs presos in-flight (crash duro entre criar o run e fechá-lo)
  * — sem isso o índice único parcial travaria o agente p/ sempre. Chave estável.
