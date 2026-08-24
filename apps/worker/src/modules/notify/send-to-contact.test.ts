@@ -20,6 +20,7 @@ function makeDeps(overrides: { target?: typeof TARGET | null; groupTarget?: type
     resolveOutboundTarget: vi.fn(async () => (overrides.target === undefined ? TARGET : overrides.target)),
     ensureConversation: vi.fn(async () => "conv-1"),
     recordGroupMessage: vi.fn(async () => undefined),
+    loadGroupTranscriptSources: vi.fn(async () => []),
     resolveGroupTarget: vi.fn(async () => (overrides.groupTarget === undefined ? GROUP_TARGET : overrides.groupTarget)),
     ensureGroupConversation: vi.fn(async () => "conv-grp-1"),
     recordMessage: vi.fn(async (_c, direction: string, body: string | null) => {

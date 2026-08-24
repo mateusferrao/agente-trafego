@@ -179,14 +179,14 @@ describe("makeInboundRouter — grupo", () => {
     await makeInboundRouter(t.deps)("inst-1", groupText());
     expect(t.repo.resolveInboundGroup).toHaveBeenCalledWith("inst-1", GROUP_JID);
     expect(t.repo.ensureGroupConversation).toHaveBeenCalledWith("org-1", "grp-1", "+5511999999999");
-    expect(t.repo.recordMessage).toHaveBeenCalledWith("conv-grp-1", "inbound", "@bot analisa", { messageId: "GMSG-1" });
+    expect(t.repo.recordMessage).toHaveBeenCalledWith("conv-grp-1", "inbound", "@bot analisa", { messageId: "GMSG-1", authorName: "João" });
     expect(t.flushQueue.add).toHaveBeenCalled();
   });
 
   it("dirigido por REPLY à msg do bot (sem menção): processa igual", async () => {
     const t = makeDeps();
     await makeInboundRouter(t.deps)("inst-1", groupText({ mentionedPhones: [], quotedAuthorPhone: BOT_PHONE }));
-    expect(t.repo.recordMessage).toHaveBeenCalledWith("conv-grp-1", "inbound", "@bot analisa", { messageId: "GMSG-1" });
+    expect(t.repo.recordMessage).toHaveBeenCalledWith("conv-grp-1", "inbound", "@bot analisa", { messageId: "GMSG-1", authorName: "João" });
   });
 
   it("grupo NÃO registrado → silêncio (nada gravado)", async () => {
@@ -268,7 +268,7 @@ describe("makeInboundRouter — grupo", () => {
       await makeInboundRouter(t.deps)("inst-1", groupText({ mentionedPhones: [], mentionedLids: [BOT_LID] }));
 
       expect(t.messaging.resolveGroupParticipants).toHaveBeenCalledWith({ instanceId: "inst-1" }, GROUP_JID);
-      expect(t.repo.recordMessage).toHaveBeenCalledWith("conv-grp-1", "inbound", "@bot analisa", { messageId: "GMSG-1" });
+      expect(t.repo.recordMessage).toHaveBeenCalledWith("conv-grp-1", "inbound", "@bot analisa", { messageId: "GMSG-1", authorName: "João" });
     });
 
     it("reply só por LID (quotedAuthorLid): resolve e processa como dirigido", async () => {
@@ -279,7 +279,7 @@ describe("makeInboundRouter — grupo", () => {
         t.deps,
       )("inst-1", groupText({ mentionedPhones: [], quotedAuthorPhone: null, quotedAuthorLid: BOT_LID }));
 
-      expect(t.repo.recordMessage).toHaveBeenCalledWith("conv-grp-1", "inbound", "@bot analisa", { messageId: "GMSG-1" });
+      expect(t.repo.recordMessage).toHaveBeenCalledWith("conv-grp-1", "inbound", "@bot analisa", { messageId: "GMSG-1", authorName: "João" });
     });
 
     it("LID mencionado NÃO é o do bot (mapa resolve pra outro telefone) → continua não-dirigido", async () => {

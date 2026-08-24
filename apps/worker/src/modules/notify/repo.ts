@@ -4,9 +4,10 @@
 // resolve o contato pelo (instância, telefone), dedupa por messageId e grava
 // a conversa/mensagem inbound.
 
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { adAccounts, agents, channelGroups, channelInstances, contacts, conversations, groupMessages, messages, type Database } from "@trafego/db";
 import { brPhoneVariants, type ConversationRef } from "@trafego/shared";
+import type { GroupTranscriptEntry } from "@trafego/core";
 
 /** Contato verificado resolvido a partir do inbound (instância + telefone). */
 export interface InboundContact {
@@ -93,6 +94,14 @@ export interface NotifyRepo {
     body: string | null;
     messageId: string;
   }): Promise<void>;
+  /**
+   * Fontes do transcript ambiente do grupo (mescladas pela função pura na casca):
+   * ambiente (group_messages) + dirigidas INBOUND (messages via conversations.groupId,
+   * com autor do participante + pushName do meta). Corpo nulo (áudio em transcrição /
+   * mídia dirigida) é excluído. Outbound do bot no transcript = fast-follow. Janela por
+   * `since` (tempo) + `limit` (teto de segurança; a função pura aplica os caps finais).
+   */
+  loadGroupTranscriptSources(orgId: string, groupId: string, since: Date, limit: number): Promise<GroupTranscriptEntry[]>;
   /** Alvo de envio a um grupo: instância conectada da org + JID do grupo. */
   resolveGroupTarget(groupId: string): Promise<GroupTarget | null>;
 }
@@ -315,6 +324,44 @@ export function createNotifyRepo(db: Database): NotifyRepo {
         .insert(groupMessages)
         .values({ orgId, groupId, authorPhone, authorName, body, messageId })
         .onConflictDoNothing({ target: [groupMessages.groupId, groupMessages.messageId] });
+    },
+
+    /** Ambiente (group_messages) + dirigidas inbound (messages do grupo) na janela `since`. */
+    async loadGroupTranscriptSources(orgId, groupId, since, limit) {
+      const ambient = await db
+        .select({
+          authorPhone: groupMessages.authorPhone,
+          authorName: groupMessages.authorName,
+          body: groupMessages.body,
+          at: groupMessages.createdAt,
+        })
+        .from(groupMessages)
+        .where(and(eq(groupMessages.orgId, orgId), eq(groupMessages.groupId, groupId), gte(groupMessages.createdAt, since)))
+        .orderBy(desc(groupMessages.createdAt))
+        .limit(limit);
+
+      const directed = await db
+        .select({
+          authorPhone: conversations.participantPhone,
+          authorName: sql<string | null>`${messages.meta} ->> 'authorName'`,
+          body: messages.body,
+          at: messages.createdAt,
+        })
+        .from(messages)
+        .innerJoin(conversations, eq(messages.conversationId, conversations.id))
+        .where(
+          and(
+            eq(conversations.orgId, orgId),
+            eq(conversations.groupId, groupId),
+            eq(messages.direction, "inbound"),
+            isNotNull(messages.body),
+            gte(messages.createdAt, since),
+          ),
+        )
+        .orderBy(desc(messages.createdAt))
+        .limit(limit);
+
+      return [...ambient, ...directed].map((r) => ({ ...r, fromBot: false }));
     },
 
     /** JID do grupo + instância conectada da sua org. */

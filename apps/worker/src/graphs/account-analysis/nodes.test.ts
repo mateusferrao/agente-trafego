@@ -110,6 +110,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
     resolveInboundGroup: vi.fn(async () => null),
     ensureGroupConversation: vi.fn(async () => "conv-1"),
     recordGroupMessage: vi.fn(async () => undefined),
+    loadGroupTranscriptSources: vi.fn(async () => []),
     resolveGroupTarget: vi.fn(async () => null),
   };
   const llm = vi.fn(async () => ({ output: ANALYSIS_OUTPUT, usage: { inputTokens: 100, outputTokens: 20, costUsd: 0.001 } }));

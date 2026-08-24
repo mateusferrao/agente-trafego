@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AIMessage } from "@langchain/core/messages";
-import { drainPendingCostPatches, needsCostFallback, patchCostInBackground, routeConversation, scheduleCostPatch } from "./nodes.js";
+import { assembleSystemPrompt, drainPendingCostPatches, needsCostFallback, patchCostInBackground, routeConversation, scheduleCostPatch } from "./nodes.js";
 import type { WhatsappConversationStateType } from "./state.js";
 
 function stateWith(toolCalls: { name: string; args?: Record<string, unknown> }[]): WhatsappConversationStateType {
@@ -41,6 +41,35 @@ describe("routeConversation", () => {
   });
   it("describe_capabilities → confirm (emitido verbatim, sem paráfrase do LLM)", () => {
     expect(routeConversation(stateWith([{ name: "describe_capabilities" }]))).toBe("confirm");
+  });
+});
+
+describe("assembleSystemPrompt (injeção do contexto de grupo)", () => {
+  const VOZ = "Você é o assistente.";
+
+  it("DM (groupBlock vazio, sem eco) → prompt IDÊNTICO à voz (regressão byte a byte)", () => {
+    expect(assembleSystemPrompt(VOZ, "", undefined)).toBe(VOZ);
+  });
+
+  it("grupo → injeta o transcript entre a voz e o (eventual) eco", () => {
+    const block = "### Conversa recente do grupo (contexto...)\nJoão [24/08 14:32]: oi";
+    const out = assembleSystemPrompt(VOZ, block, undefined);
+    expect(out).toBe(`${VOZ}\n\n${block}`);
+  });
+
+  it("eco+confirma preservado; em DM o eco vem logo após a voz (sem bloco de grupo)", () => {
+    const out = assembleSystemPrompt(VOZ, "", "vou pausar a Campanha X, confirma?");
+    expect(out.startsWith(VOZ)).toBe(true);
+    expect(out).toContain("aguarda a confirmação do usuário");
+    expect(out).toContain("vou pausar a Campanha X, confirma?");
+    expect(out).toContain("chame confirm_write");
+  });
+
+  it("grupo + eco: ordem = voz → transcript → eco", () => {
+    const block = "### Conversa recente do grupo\nMaria [24/08 15:00]: e a conta B?";
+    const out = assembleSystemPrompt(VOZ, block, "vou reativar a Campanha Y, confirma?");
+    expect(out.indexOf(block)).toBeLessThan(out.indexOf("aguarda a confirmação"));
+    expect(out.indexOf(VOZ)).toBeLessThan(out.indexOf(block));
   });
 });
 

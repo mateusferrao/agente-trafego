@@ -12,6 +12,7 @@ import {
   archetypeCatalog,
   autonomyPolicyWeakens,
   buildConfigChangeEcho,
+  buildGroupTranscript,
   buildRevertEcho,
   buildWriteEcho,
   describePlaybookRule,
@@ -51,6 +52,7 @@ import { applyCheckedAction, type ApplyOutcome } from "../../modules/apply/apply
 import { loadWriteContext } from "../../modules/apply/write-context.js";
 import { revertActionById } from "../../modules/apply/revert-action.js";
 import { actorLabel } from "../../modules/conversation/actor.js";
+import { createNotifyRepo } from "../../modules/notify/repo.js";
 import { applyPlaybookOp } from "../../modules/conversation/config-writes.js";
 import type {
   PendingConfigChange,
@@ -61,6 +63,24 @@ import type {
 } from "./state.js";
 
 const CONVERSATION_TEMPERATURE = 0.3;
+
+const MS_PER_HOUR = 60 * 60 * 1000;
+/** Rótulo do bot no transcript ambiente (outbound no transcript = fast-follow; hoje sem uso real). */
+const GROUP_BOT_LABEL = "Assistente";
+
+const ECHO_INTRO = "\n\nHá algo que você já propôs e que aguarda a confirmação do usuário:\n";
+const ECHO_OUTRO =
+  '\n\nSe a última mensagem do usuário confirmar claramente (ex: "sim", "pode", "manda"), chame confirm_write. Se recusar, chame cancel_write. Se pedir mudança/outra coisa, IGNORE a pendência e trate normalmente.';
+
+/**
+ * Monta o system prompt do turno: voz do agente + (grupo) bloco de contexto ambiente +
+ * (pendência) eco+confirma. PURA. Em DM `groupBlock` é "" → o prompt é IDÊNTICO ao de antes
+ * do contexto de grupo (regressão garantida por construção: "" cai no ramo `else`).
+ */
+export function assembleSystemPrompt(systemPrompt: string, groupBlock: string, echo: string | undefined): string {
+  const base = groupBlock ? `${systemPrompt}\n\n${groupBlock}` : systemPrompt;
+  return echo ? `${base}${ECHO_INTRO}${echo}${ECHO_OUTRO}` : base;
+}
 
 /** TTL do eco+confirma: um "sim" muito depois não aplica uma ação esquecida (§8). */
 const PENDING_WRITE_TTL_MS = 30 * 60 * 1000;
@@ -317,6 +337,33 @@ export function makeConversationNodes(
 
   const executor = makeMetaToolExecutor(deps);
 
+  // Transcript ambiente do grupo (read-only, efêmero): montado UMA vez por turno (cache no
+  // closure — o nó `agent` roda várias vezes no laço ReAct) e injetado no system prompt.
+  // Group-only: em DM devolve "" → prompt idêntico. NÃO vai ao checkpointer/state.
+  const groupRepo = createNotifyRepo(deps.db);
+  let groupContextCache: string | null = null;
+  async function groupContextBlock(): Promise<string> {
+    if (ctx.ref.kind !== "group") return "";
+    if (groupContextCache !== null) return groupContextCache;
+    const conv = deps.conversation;
+    const now = new Date();
+    const since = new Date(now.getTime() - conv.groupContextWindowHours * MS_PER_HOUR);
+    const sources = await groupRepo.loadGroupTranscriptSources(
+      ctx.orgId,
+      ctx.ref.groupId,
+      since,
+      conv.groupContextMaxMessages,
+    );
+    groupContextCache = buildGroupTranscript(sources, {
+      now,
+      windowHours: conv.groupContextWindowHours,
+      maxMessages: conv.groupContextMaxMessages,
+      maxTokens: conv.groupContextMaxTokens,
+      botLabel: GROUP_BOT_LABEL,
+    });
+    return groupContextCache;
+  }
+
   /** Nova instância de chat LLM (OpenRouter). `withTools` liga as tools da allowlist. */
   function makeChat(model: string, withTools: boolean) {
     const chat = new ChatOpenAI({
@@ -349,9 +396,9 @@ export function makeConversationNodes(
     const pendingRevert = activePendingRevert(state.pendingRevert);
     const pendingConfig = activePendingConfig(state.pendingConfigChange);
     const echo = pending?.echo ?? pendingRevert?.echo ?? pendingConfig?.echo;
-    const sys = echo
-      ? `${systemPrompt}\n\nHá algo que você já propôs e que aguarda a confirmação do usuário:\n${echo}\n\nSe a última mensagem do usuário confirmar claramente (ex: "sim", "pode", "manda"), chame confirm_write. Se recusar, chame cancel_write. Se pedir mudança/outra coisa, IGNORE a pendência e trate normalmente.`
-      : systemPrompt;
+
+    // contexto ambiente do grupo (group-only, efêmero, entre a voz e o eco). Em DM → "".
+    const sys = assembleSystemPrompt(systemPrompt, await groupContextBlock(), echo);
 
     const windowed = windowMessages(state.messages, {
       maxTurns: deps.conversation.historyTurns,

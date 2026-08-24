@@ -90,11 +90,13 @@ async function routeMessage(
   orgId: string,
   conversationId: string,
   ref: ConversationRef,
+  /** meta extra p/ atribuição no transcript de grupo (authorName do remetente). */
+  extraMeta: Record<string, unknown> = {},
 ): Promise<void> {
   const flushPayload: WhatsappFlushPayload = { orgId, conversationId, ref };
 
   if (inbound.kind === "text") {
-    await d.repo.recordMessage(conversationId, "inbound", inbound.text, { messageId: inbound.messageId });
+    await d.repo.recordMessage(conversationId, "inbound", inbound.text, { messageId: inbound.messageId, ...extraMeta });
     await pushInbound(d.redis, conversationId, inbound.text, d.bufferTtlSec);
     await scheduleConversationFlush(d.flushQueue, flushPayload, d.debounceMs);
     d.logger.debug({ conversationId }, "inbound:buffered");
@@ -106,6 +108,7 @@ async function routeMessage(
       messageId: inbound.messageId,
       kind: "audio",
       transcribing: true,
+      ...extraMeta,
     });
     await markTranscribing(d.redis, conversationId, d.transcribingTtlSec); // segura o flush
     const payload: WhatsappTranscriptionPayload = {
@@ -133,6 +136,7 @@ async function routeMessage(
     messageId: inbound.messageId,
     kind: "unsupported",
     mediaType: inbound.mediaType,
+    ...extraMeta,
   });
   await sendCourtesyNotice(d.redis, d.sendToConversation, {
     conversationId,
@@ -202,7 +206,8 @@ async function routeGroupMessage(d: InboundRouterDeps, instanceId: string, inbou
 
   const conversationId = await d.repo.ensureGroupConversation(resolved.orgId, resolved.groupId, group.senderPhone);
   const ref: ConversationRef = { kind: "group", groupId: resolved.groupId, participantPhone: group.senderPhone };
-  await routeMessage(d, instanceId, inbound, resolved.orgId, conversationId, ref);
+  // authorName no meta → atribuição legível da mensagem dirigida no transcript ambiente.
+  await routeMessage(d, instanceId, inbound, resolved.orgId, conversationId, ref, { authorName: group.senderName });
 }
 
 /**
