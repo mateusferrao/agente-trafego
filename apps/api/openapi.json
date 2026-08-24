@@ -2184,7 +2184,8 @@
                   "enum": [
                     "cron",
                     "on_demand",
-                    "conversation"
+                    "conversation",
+                    "signal"
                   ]
                 },
                 "status": {
