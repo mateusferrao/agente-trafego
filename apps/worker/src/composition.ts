@@ -97,8 +97,16 @@ export interface WorkerDeps {
     readonly turnTimeoutMs: number;
     /** Fallback de custo (bug do bindTools suprimindo usage.cost — ver nodes.ts). */
     readonly fetchGenerationCost: (generationId: string) => Promise<number | undefined>;
-    /** Grupo: mensagem NÃO-dirigida (sem @menção/reply ao bot) vira contexto (default: ignora e não persiste). */
+    /** Kill-switch de plataforma do ingest de contexto de grupo (default: ligado). */
     readonly groupIngestContext: boolean;
+    /** Retenção (dias) do dado ambiente de grupo (purge job diário). */
+    readonly groupContextRetentionDays: number;
+    /** Transcript ambiente injetado no prompt: teto de mensagens / janela (h) / teto de tokens. */
+    readonly groupContextMaxMessages: number;
+    readonly groupContextWindowHours: number;
+    readonly groupContextMaxTokens: number;
+    /** Staleness do foco de conta (h): foco cujo último uso passou disso perde precedência. */
+    readonly focusTtlHours: number;
     /** TTL (s) do cache do mapa LID→telefone dos participantes de um grupo (resolve
      *  menção/reply endereçada por LID quando o telefone não vem direto na mensagem). */
     readonly groupParticipantsCacheTtlSec: number;
@@ -283,6 +291,11 @@ export async function buildComposition(): Promise<WorkerDeps> {
       turnTimeoutMs: env.CONVERSATION_TURN_TIMEOUT_MS,
       fetchGenerationCost: (id) => openRouterClient.getGenerationCost(id),
       groupIngestContext: env.TRAFEGO_GROUP_INGEST_CONTEXT,
+      groupContextRetentionDays: env.GROUP_CONTEXT_RETENTION_DAYS,
+      groupContextMaxMessages: env.GROUP_CONTEXT_MAX_MESSAGES,
+      groupContextWindowHours: env.GROUP_CONTEXT_WINDOW_HOURS,
+      groupContextMaxTokens: env.GROUP_CONTEXT_MAX_TOKENS,
+      focusTtlHours: env.CONVERSATION_FOCUS_TTL_HOURS,
       groupParticipantsCacheTtlSec: env.GROUP_PARTICIPANTS_CACHE_TTL_SEC,
     },
     transcription: {

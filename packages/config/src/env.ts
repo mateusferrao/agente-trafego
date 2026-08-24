@@ -233,10 +233,22 @@ export const envSchema = z.object({
   // no máx 1 aviso por conversa/motivo por janela — anti-spam/ban-safety (§9). Dedicada
   // (não os segundos do debounce), medida em ~minuto.
   NOTICE_THROTTLE_SECONDS: z.coerce.number().int().positive().default(60),
-  // Grupo WhatsApp (agente-em-grupo): mensagens que NÃO dirigem o bot (sem @menção/reply)
-  // são ignoradas e NÃO persistidas por padrão (§12 LGPD — conversa alheia do time não
-  // entra no nosso banco). Ligar ingere como contexto (fast-follow de retenção dedicada).
-  TRAFEGO_GROUP_INGEST_CONTEXT: z.coerce.boolean().default(false),
+  // Kill-switch de PLATAFORMA do ingest de contexto de grupo: mensagens que NÃO dirigem
+  // o bot (sem @menção/reply) são guardadas como CONTEXTO (transcript ambiente) por padrão
+  // quando a org tem grupo registrado. Desligar aqui corta o ingest para todas as orgs.
+  // Controle org-facing = fast-follow. Reter/expirar via GROUP_CONTEXT_RETENTION_DAYS.
+  TRAFEGO_GROUP_INGEST_CONTEXT: z.coerce.boolean().default(true),
+  // Retenção (dias) do dado ambiente de grupo (purge job diário). Contexto usa só o
+  // recente, mas o dono optou por manter alinhado à retenção de insights (~90d).
+  GROUP_CONTEXT_RETENTION_DAYS: z.coerce.number().int().positive().default(90),
+  // Transcript ambiente injetado no prompt (só em turno de grupo dirigido): teto de
+  // mensagens, janela de tempo e teto de tokens. Separados da janela do state.messages.
+  GROUP_CONTEXT_MAX_MESSAGES: z.coerce.number().int().positive().default(25),
+  GROUP_CONTEXT_WINDOW_HOURS: z.coerce.number().int().positive().default(24),
+  GROUP_CONTEXT_MAX_TOKENS: z.coerce.number().int().positive().default(1500),
+  // Staleness do foco de conta (org multi-conta): foco cujo último uso passou desse TTL
+  // perde precedência — no grupo cai no contexto ambiente, na DM cai em "qual conta?".
+  CONVERSATION_FOCUS_TTL_HOURS: z.coerce.number().int().positive().default(12),
   // TTL (s) do cache do mapa LID→telefone dos participantes de um grupo — resolve
   // menção/reply endereçada por LID (grupo migrado, WhatsApp addressingMode "lid")
   // quando o telefone de quem foi mencionado/citado não vem direto no payload da
