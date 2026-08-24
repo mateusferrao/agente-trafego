@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { agents } from "@trafego/db";
 import { APPROVAL_APPLY_QUEUE } from "@trafego/shared";
 import type { AgentConfigState } from "@trafego/core";
 import type { GuardrailConfig, AutonomyPolicy, NotifyPolicy } from "@trafego/shared";
@@ -50,6 +51,51 @@ function toolOf(deps: never, name: string): { invoke: (args: unknown) => Promise
   const found = makeConversationTools(deps, CTX, AGENT_TOOL_NAMES).find((t) => t.name === name)!;
   return found as unknown as { invoke: (args: unknown) => Promise<string> };
 }
+
+describe("set_focus tool (footgun S3: aplica o foco no MESMO turno)", () => {
+  const ACC = { id: "acc-B", name: "Clínica B", adAccountId: "act_222" };
+  /** db falso: from(agents) → 1 agente ativo da conta; from(*) → a conta; update → no-op. */
+  function focusDb() {
+    let target: unknown[] = [];
+    const chain: Record<string, unknown> = {
+      select: () => chain,
+      from: (t: unknown) => {
+        target = t === agents ? [{ agentId: "ag-B" }] : [ACC];
+        return chain;
+      },
+      innerJoin: () => chain,
+      where: () => chain,
+      orderBy: () => chain,
+      limit: () => chain,
+      then: (resolve: (v: unknown[]) => unknown) => resolve(target),
+      update: () => ({ set: () => ({ where: async () => {} }) }),
+    };
+    return chain as never;
+  }
+
+  it("muta ctx.adAccountId/agentId/accountName na conta nova (turno-local)", async () => {
+    const { deps } = makeDeps(() => null);
+    (deps as { db: unknown }).db = focusDb();
+    const ctx: ConversationToolContext = {
+      orgId: "org-1",
+      agentId: "ag-A",
+      adAccountId: "acc-A",
+      ref: { kind: "group", groupId: "grp-1", participantPhone: "+5511999999999" },
+      conversationId: "cv-1",
+      multiAccount: true,
+    };
+    const setFocus = makeConversationTools(deps, ctx, AGENT_TOOL_NAMES).find((t) => t.name === "set_focus")! as unknown as {
+      invoke: (a: unknown) => Promise<string>;
+    };
+
+    const out = await setFocus.invoke({ name: "Clínica B" });
+
+    expect(out).toContain("foquei na conta Clínica B");
+    expect(ctx.adAccountId).toBe("acc-B");
+    expect(ctx.agentId).toBe("ag-B");
+    expect(ctx.accountName).toBe("Clínica B");
+  });
+});
 
 describe("describe_capabilities tool", () => {
   const capTool = (deps: never, ctx: ConversationToolContext, allow: Set<string>) =>

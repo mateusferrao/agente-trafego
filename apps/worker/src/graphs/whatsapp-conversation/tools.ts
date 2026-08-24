@@ -266,6 +266,22 @@ export function makeConversationTools(
         .update(conversations)
         .set({ focusedAccountId: acc.id })
         .where(and(eq(conversations.id, ctx.conversationId), eq(conversations.orgId, ctx.orgId)));
+
+      // Footgun fix (S3): aplica o foco JÁ NESTE turno mutando o ctx (turno-local — o ctx é
+      // criado por turno em turn.ts e compartilhado por referência com as demais tools, que
+      // leem ctx.* no MOMENTO DA CHAMADA). Sem isso, uma leitura/escrita no mesmo turno após
+      // set_focus bateria na conta ANTIGA (o eco diria a nova, a ação iria na velha).
+      const [agentRow] = await deps.db
+        .select({ agentId: agents.id })
+        .from(agents)
+        .where(and(eq(agents.orgId, ctx.orgId), eq(agents.adAccountId, acc.id), eq(agents.status, "active")))
+        .limit(1);
+      if (agentRow) {
+        const mut = ctx as { adAccountId: string; agentId: string; accountName?: string | undefined };
+        mut.adAccountId = acc.id;
+        mut.agentId = agentRow.agentId;
+        mut.accountName = acc.name ?? undefined;
+      }
       return `Ok, foquei na conta ${acc.name}. O que você quer fazer nela?`;
     },
     {
