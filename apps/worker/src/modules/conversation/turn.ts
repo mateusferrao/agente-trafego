@@ -70,18 +70,29 @@ async function resolveActiveAgents(
   return { sole: rows.length === 1 ? rows[0]! : null, multiAccount: rows.length >= 2 };
 }
 
-/** Agente da conta em FOCO do fio (5c-6) — org-scoped, conta+agente ativos. Null se sem foco/indisponível. */
-async function resolveFocusedAgent(
+/** ms por hora — staleness do foco (S4). */
+const MS_PER_HOUR = 60 * 60 * 1000;
+
+/**
+ * Agente da conta em FOCO do fio (5c-6) — org-scoped, conta+agente ativos. Null se sem foco/
+ * indisponível. **Staleness (S4, semântica de ÚLTIMO USO):** foco sem carimbo ou cujo último
+ * uso passou de `ttlHours` PERDE precedência (retorna null → grupo cai no contexto ambiente,
+ * DM cai em "qual conta?"). Ao resolver via foco fresco, RENOVA o carimbo (`focusedAt=now`).
+ */
+export async function resolveFocusedAgent(
   db: Database,
   orgId: string,
   conversationId: string,
+  ttlHours: number,
 ): Promise<AgentInContext | null> {
   const [conv] = await db
-    .select({ focusedAccountId: conversations.focusedAccountId })
+    .select({ focusedAccountId: conversations.focusedAccountId, focusedAt: conversations.focusedAt })
     .from(conversations)
     .where(eq(conversations.id, conversationId))
     .limit(1);
   if (!conv?.focusedAccountId) return null;
+  const staleBefore = Date.now() - ttlHours * MS_PER_HOUR;
+  if (!conv.focusedAt || conv.focusedAt.getTime() < staleBefore) return null;
   const [row] = await db
     .select({ agentId: agents.id, adAccountId: agents.adAccountId, accountName: adAccounts.name })
     .from(agents)
@@ -95,7 +106,13 @@ async function resolveFocusedAgent(
       ),
     )
     .limit(1);
-  return row ?? null;
+  if (!row) return null;
+  // último uso: renova o carimbo (o TTL conta desde a última atividade com foco).
+  await db
+    .update(conversations)
+    .set({ focusedAt: new Date() })
+    .where(and(eq(conversations.id, conversationId), eq(conversations.orgId, orgId)));
+  return row;
 }
 
 /**
@@ -152,7 +169,8 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
   // 5c-6). Sem nenhuma das duas → concierge (só org-level + set_focus p/ escolher). Igual
   // no grupo: mesmo concierge/foco, escopo = todas as contas da org (§13 reuso-primeiro).
   const { sole, multiAccount } = await resolveActiveAgents(deps.db, input.orgId);
-  const inContext = sole ?? (await resolveFocusedAgent(deps.db, input.orgId, input.conversationId));
+  const inContext =
+    sole ?? (await resolveFocusedAgent(deps.db, input.orgId, input.conversationId, deps.conversation.focusTtlHours));
 
   // com agente em contexto: leitura/controle + escrita livre filtrada por allowedActions (5c)
   // + config-por-chat gated pelo kill-switch (S2.3). Sem contexto (multi-conta sem foco):

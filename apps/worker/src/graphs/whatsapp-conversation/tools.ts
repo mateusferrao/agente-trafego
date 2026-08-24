@@ -264,7 +264,7 @@ export function makeConversationTools(
       const acc = match.row;
       await deps.db
         .update(conversations)
-        .set({ focusedAccountId: acc.id })
+        .set({ focusedAccountId: acc.id, focusedAt: new Date() })
         .where(and(eq(conversations.id, ctx.conversationId), eq(conversations.orgId, ctx.orgId)));
 
       // Footgun fix (S3): aplica o foco JÁ NESTE turno mutando o ctx (turno-local — o ctx é

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Database } from "@trafego/db";
-import { configToolsFor, deliverReply } from "./turn.js";
+import { agents, type Database } from "@trafego/db";
+import { configToolsFor, deliverReply, resolveFocusedAgent } from "./turn.js";
 import type { SendToConversation } from "../notify/send-to-contact.js";
 import { CONFIG_CHAT_TOOL_NAMES } from "../../graphs/whatsapp-conversation/tools.js";
 
@@ -34,6 +34,58 @@ describe("configToolsFor (kill-switch da auto-config por chat, S2.3)", () => {
     const r = await configToolsFor(fakeDb({ bySource: { playbook: "suggest", llm: "suggest" }, autoConfigViaChat: false }), "o", "a");
     expect(r.enabled).toBe(false);
     expect(r.tools).toEqual([]);
+  });
+});
+
+describe("resolveFocusedAgent (staleness do foco, S4 — último uso)", () => {
+  const TTL = 12;
+  const MS_H = 3_600_000;
+  const AGENT_ROW = [{ agentId: "ag-B", adAccountId: "acc-B", accountName: "Clínica B" }];
+
+  function focusDb(conv: { focusedAccountId: string | null; focusedAt: Date | null }) {
+    const updateSet = vi.fn();
+    let target: unknown[] = [];
+    const chain: Record<string, unknown> = {
+      select: () => chain,
+      from: (t: unknown) => {
+        target = t === agents ? AGENT_ROW : [conv];
+        return chain;
+      },
+      innerJoin: () => chain,
+      where: () => chain,
+      limit: () => chain,
+      then: (resolve: (v: unknown[]) => unknown) => resolve(target),
+      update: () => ({
+        set: (v: unknown) => {
+          updateSet(v);
+          return { where: async () => {} };
+        },
+      }),
+    };
+    return { db: chain as unknown as Database, updateSet };
+  }
+
+  it("foco fresco → resolve o agente E renova o carimbo (bump de último uso)", async () => {
+    const { db, updateSet } = focusDb({ focusedAccountId: "acc-B", focusedAt: new Date() });
+    const r = await resolveFocusedAgent(db, "org-1", "cv-1", TTL);
+    expect(r?.agentId).toBe("ag-B");
+    expect(updateSet).toHaveBeenCalledWith({ focusedAt: expect.any(Date) });
+  });
+
+  it("foco velho (> TTL) → null (perde precedência), sem bump", async () => {
+    const { db, updateSet } = focusDb({ focusedAccountId: "acc-B", focusedAt: new Date(Date.now() - 20 * MS_H) });
+    expect(await resolveFocusedAgent(db, "org-1", "cv-1", TTL)).toBeNull();
+    expect(updateSet).not.toHaveBeenCalled();
+  });
+
+  it("foco sem carimbo (focusedAt null) → null (legado/desconhecido perde precedência)", async () => {
+    const { db } = focusDb({ focusedAccountId: "acc-B", focusedAt: null });
+    expect(await resolveFocusedAgent(db, "org-1", "cv-1", TTL)).toBeNull();
+  });
+
+  it("sem foco (focusedAccountId null) → null", async () => {
+    const { db } = focusDb({ focusedAccountId: null, focusedAt: null });
+    expect(await resolveFocusedAgent(db, "org-1", "cv-1", TTL)).toBeNull();
   });
 });
 
