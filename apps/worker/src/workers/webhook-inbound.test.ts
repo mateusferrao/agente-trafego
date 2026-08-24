@@ -17,14 +17,16 @@ const BOT_PHONE = "+5511900000000";
 const GROUP_JID = "120363000000000000@g.us";
 const GROUP_BASE = { instanceId: "inst-1", from: "+5511999999999", messageId: "GMSG-1", raw: {} } as const;
 
-function groupText(overrides: { mentionedPhones?: string[]; quotedAuthorPhone?: string | null } = {}): InboundMessage {
+function groupText(
+  overrides: { senderPhone?: string; mentionedPhones?: string[]; quotedAuthorPhone?: string | null } = {},
+): InboundMessage {
   return {
     ...GROUP_BASE,
     kind: "text",
     text: "@bot analisa",
     group: {
       groupJid: GROUP_JID,
-      senderPhone: "+5511999999999",
+      senderPhone: overrides.senderPhone ?? "+5511999999999",
       mentionedPhones: overrides.mentionedPhones ?? [BOT_PHONE],
       quotedAuthorPhone: overrides.quotedAuthorPhone ?? null,
     },
@@ -184,5 +186,14 @@ describe("makeInboundRouter — grupo", () => {
     const t = makeDeps();
     await makeInboundRouter(t.deps)("inst-1", groupText());
     expect(t.repo.resolveInboundContact).not.toHaveBeenCalled();
+  });
+
+  it("G3 — participantes DIFERENTES do mesmo grupo caem em threads DIFERENTES (isolamento: 'só o iniciador confirma')", async () => {
+    const t = makeDeps();
+    await makeInboundRouter(t.deps)("inst-1", groupText());
+    await makeInboundRouter(t.deps)("inst-1", groupText({ senderPhone: "+5511777777777" }));
+
+    expect(t.repo.ensureGroupConversation).toHaveBeenNthCalledWith(1, "org-1", "grp-1", "+5511999999999");
+    expect(t.repo.ensureGroupConversation).toHaveBeenNthCalledWith(2, "org-1", "grp-1", "+5511777777777");
   });
 });
