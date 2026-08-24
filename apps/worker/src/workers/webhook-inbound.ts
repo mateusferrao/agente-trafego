@@ -148,7 +148,13 @@ async function routeGroupMessage(d: InboundRouterDeps, instanceId: string, inbou
       const conversationId = await d.repo.ensureGroupConversation(resolved.orgId, resolved.groupId, group.senderPhone);
       await d.repo.recordMessage(conversationId, "inbound", inbound.text, { messageId: inbound.messageId, context: true });
     }
-    d.logger.debug({ instanceId }, "inbound:group_not_addressed");
+    // diagnóstico: compara o que o parser extraiu da menção/reply contra o telefone do
+    // bot — suspeita de @lid (WhatsApp endereça contato não-salvo por id interno, não
+    // telefone) precisa VER os valores reais, não só saber que não bateu.
+    d.logger.debug(
+      { instanceId, botPhone, mentionedPhones: group.mentionedPhones, quotedAuthorPhone: group.quotedAuthorPhone },
+      "inbound:group_not_addressed",
+    );
     return;
   }
 
