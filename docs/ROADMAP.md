@@ -145,7 +145,7 @@ decaimento de token em runtime → `6b`; reuso do sync-service pelo `fetchData` 
   - **Auto-descoberta de contas** (hoje só "sincronizar" manual) — pendurar um refresh de catálogo na cadência de `insights-sync` da conexão (sem job novo, quase de graça). Token morto já é detectado pela cadência.
   - **Remover/desabilitar conexão** (soft, com confirmação) — hoje só há conectar/gerir/sincronizar; deletar conexão nunca deve cascatear delete de conta (FK `restrict`).
   - **Remover onboarding antigo (dead code)** — connect-dialog/connector-strategy + `/api/accounts/connect|select` ficaram mortos após o slice `connections`; retirar (+ avaliar aposentar o slice `admin`). *(admin já aposentado; falta o connect-dialog/endpoints — feito parcialmente.)*
-  - **N números de WhatsApp por org (destravar o canal)** — hoje o schema `channel_instances` **tolera** N (índice em `org_id`, sem unique; `evolution_instance`+`phone` por linha), mas o código assume 1: `instanceName(orgId) = org-${orgId}` + queries `limit(1)` (§9 MVP = 1 número/org). Ir pra N = mudança contida no adapter/serviço de canal (nome de instância próprio por número, tirar o `limit 1`, conceito de "qual número", `unique` em `evolution_instance`) — **sem re-arquitetura**. Aí o card WhatsApp fica re-conectável em "Disponíveis" (simétrico ao Meta); a UI já tem a costura (`availableProviders`). Casa com o pool de números / Cloud API.
+  - **N números de WhatsApp por org (destravar o canal)** — hoje o schema `channel_instances` **tolera** N (índice em `org_id`, sem unique; `evolution_instance`+`phone` por linha), mas o código assume 1: `instanceName(orgId) = org-${orgId}` + queries `limit(1)` (§9 MVP = 1 número/org). Ir pra N é mudança contida no adapter/serviço de canal (nome de instância próprio por número, tirar o `limit 1`, conceito de "qual número", `unique` em `evolution_instance`) — **sem re-arquitetura**. Aí o card WhatsApp fica re-conectável em "Disponíveis" (simétrico ao Meta); a UI já tem a costura (`availableProviders`). Casa com o pool de números / Cloud API.
 - OAuth oficial Meta + App Review (sai do System User token colado).
 - Checagem proativa de escopos (`/debug_token`) + `appsecret_proof` — reintroduz `META_APP_ID`/`META_APP_SECRET` (removidos no onboarding token-only da 1b).
 - WhatsApp **Cloud API** / pool de números (sai do Evolution não-oficial).
@@ -548,6 +548,15 @@ vez de duplicar lógica. Fatiado (G0→G4) — **entregue por completo**.
   participante (`set_focus` grava em `conversations.focused_account_id` chaveado por
   `conversationId`); aprovação por id / guardrail / kill-switch `autoConfigViaChat` não
   gateiam por contato — já corretos sem mudança.
+- **G6 — endereçamento por LID (grupo migrado, `addressingMode: "lid"`):** confirmado em
+  produção que a Evolution manda `contextInfo` (menção/reply) como irmão de `message` em
+  `data`, não aninhado (`parseInbound` corrigido); em grupo LID, `key.participant` é um id
+  opaco (não telefone) — `senderPhone` passa a preferir `key.participantAlt` (telefone real
+  do remetente, revelado só de quem manda). Terceiro mencionado/citado só por LID (sem alt
+  no payload) resolve via `resolveGroupParticipants` (`group/fetchAllGroups?getParticipants=true`
+  expõe `{id: lid, phoneNumber}` por participante), cacheado (Redis, `GROUP_PARTICIPANTS_CACHE_TTL_SEC`)
+  e chamado só quando há LID não resolvido (maioria das mensagens de grupo não menciona
+  ninguém — não bate na Evolution à toa).
 
 **Fast-follows registrados:**
 - **N integrações WhatsApp / número-por-agente (isolamento de ban) + escopo/granularidade
@@ -558,8 +567,6 @@ vez de duplicar lógica. Fatiado (G0→G4) — **entregue por completo**.
 - **Permissão granular por-pessoa no grupo** (limitar quem faz escrita/config — hoje
   qualquer membro pode).
 - **Rate-limit por-participante** no grupo (conter abuso/custo LLM de um membro).
-- **Resolver LID→telefone** p/ menção robusta (WhatsApp/Evolution às vezes endereça por
-  `@lid`; hoje mitigado por reply-ao-bot como caminho alternativo).
 - **Config fina de destino de proatividade** (dm/grupo/ambos por-tipo — pulso/alerta/push
   cada um, em vez do move org-level atual).
 - **Janela de frescor do foco no grupo** (TTL/re-pergunta — hoje reusa a DM: foco fixo até
