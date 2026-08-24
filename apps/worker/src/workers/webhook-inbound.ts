@@ -168,23 +168,7 @@ async function routeGroupMessage(d: InboundRouterDeps, instanceId: string, inbou
       const conversationId = await d.repo.ensureGroupConversation(resolved.orgId, resolved.groupId, group.senderPhone);
       await d.repo.recordMessage(conversationId, "inbound", inbound.text, { messageId: inbound.messageId, context: true });
     }
-    // diagnóstico: compara o que o parser extraiu da menção/reply contra o telefone do
-    // bot — suspeita de @lid (WhatsApp endereça contato não-salvo por id interno, não
-    // telefone) precisa VER os valores reais, não só saber que não bateu.
-    // TEMPORÁRIO (remover após confirmar a causa): mentionedPhones/quotedAuthorPhone vieram
-    // vazios em produção mesmo com @menção/reply reais — descarta LID, aponta pra formato do
-    // payload da Evolution divergindo do Baileys puro que o parser espera. `raw` expõe a
-    // estrutura de verdade (`message.extendedTextMessage.contextInfo` esperado x real).
-    d.logger.debug(
-      {
-        instanceId,
-        botPhone,
-        mentionedPhones: group.mentionedPhones,
-        quotedAuthorPhone: group.quotedAuthorPhone,
-        raw: inbound.raw,
-      },
-      "inbound:group_not_addressed",
-    );
+    d.logger.debug({ instanceId }, "inbound:group_not_addressed");
     return;
   }
 
