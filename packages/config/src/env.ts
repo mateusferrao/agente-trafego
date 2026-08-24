@@ -76,7 +76,7 @@ export const envSchema = z.object({
   // Retentativas in-process por chamada de LLM (429/5xx/rede/passthrough do provider).
   LLM_MAX_RETRIES: z.coerce.number().int().nonnegative().default(3),
   // Revisor (Analista→Revisor) ligado por padrão; default global — override por-agente
-  // em `agents.model_config.reviewEnabled` (Fatia 4 edita).
+  // em `agents.model_config.reviewEnabled` (Fatia 4).
   ANALYSIS_REVIEW_ENABLED: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
   // Teto de tokens de SAÍDA por chamada de LLM (controla custo/trunca). Override por-agente.
   // Folga p/ reasoning + JSON caberem juntos (modelos que "pensam" gastam saída antes da resposta).

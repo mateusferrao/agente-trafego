@@ -247,7 +247,13 @@ function onlyDigits(value: string): string {
             @if (filteredGroups().length === 0) {
               <p class="text-sm text-muted">Nenhum grupo encontrado para "{{ groupFilter() }}".</p>
             }
-            <ul class="flex max-h-60 flex-col gap-1 overflow-y-auto">
+            <!-- Sem max-height/scroll próprio aqui de propósito: o dialog (appDialog,
+                 ui-dialog.ts) já é o único scroll container (max-h-[90vh] overflow-y-auto).
+                 Scroll aninhado (lista rolando dentro do dialog que também rola) trava em
+                 touch/mobile quando o gesto chega ao fim da lista interna e não "vaza" pro
+                 scroll externo — com muitos grupos, o resto do conteúdo (fim da lista, botão
+                 "Atualizar lista") ficava inacessível. Fluir na única rolagem resolve. -->
+            <ul class="flex flex-col gap-1">
               @for (g of filteredGroups(); track g.jid) {
                 <li class="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-soft">
                   <span class="truncate text-sm text-ink">{{ g.name ?? g.jid }}</span>
@@ -585,4 +591,3 @@ export class WhatsappConnect {
     });
   }
 }
-
