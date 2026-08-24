@@ -157,7 +157,11 @@ export async function buildComposition(): Promise<WorkerDeps> {
     retentionDays: env.INSIGHTS_RETENTION_DAYS,
   });
   const messaging = new EvolutionAdapter({
-    client: new EvolutionClient({ baseUrl: env.EVOLUTION_BASE_URL, apiKey: env.EVOLUTION_API_KEY }),
+    client: new EvolutionClient({
+      baseUrl: env.EVOLUTION_BASE_URL,
+      apiKey: env.EVOLUTION_API_KEY,
+      timeoutMs: env.EVOLUTION_HTTP_TIMEOUT_MS,
+    }),
   });
   const scheduler = new BullmqScheduler(redis);
   // Metering (3b): grava usage_events (custo real por chamada). O LLM é envolvido

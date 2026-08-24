@@ -76,7 +76,7 @@ export const envSchema = z.object({
   // Retentativas in-process por chamada de LLM (429/5xx/rede/passthrough do provider).
   LLM_MAX_RETRIES: z.coerce.number().int().nonnegative().default(3),
   // Revisor (Analista→Revisor) ligado por padrão; default global — override por-agente
-  // em `agents.model_config.reviewEnabled` (Fatia 4 edita).
+  // em `agents.model_config.reviewEnabled` (Fatia 4).
   ANALYSIS_REVIEW_ENABLED: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
   // Teto de tokens de SAÍDA por chamada de LLM (controla custo/trunca). Override por-agente.
   // Folga p/ reasoning + JSON caberem juntos (modelos que "pensam" gastam saída antes da resposta).
@@ -104,6 +104,10 @@ export const envSchema = z.object({
   // de todos os clientes. Base URL + API key global (admin) = env.
   EVOLUTION_BASE_URL: z.string().url(),
   EVOLUTION_API_KEY: z.string().min(1, "EVOLUTION_API_KEY é obrigatória"),
+  // Timeout (ms) por chamada HTTP à Evolution — sem isso, um fetch preso (ex:
+  // group/fetchAllGroups devagar/travado) fica "buscando pra sempre" na UI, nunca
+  // dá erro (mesmo raciocínio do META_HTTP_TIMEOUT_MS acima).
+  EVOLUTION_HTTP_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
   // ⚠️ POR-ORG (scaffolding Fatia 0): instância + webhook secret são de tenant —
   // o alvo é `channel_instances(evolution_instance, webhook_secret)` no DB (1 por
   // org). Webhook secret PRECISA ser por-instância (identifica o org pelo nome da

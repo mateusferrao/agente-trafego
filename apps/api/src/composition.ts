@@ -127,7 +127,11 @@ export function buildContainer(): Container {
 
   // WhatsApp (Evolution) plugado na 3b: onboarding por QR + push proativo + código de opt-in.
   const messaging: MessagingChannelPort = new EvolutionAdapter({
-    client: new EvolutionClient({ baseUrl: env.EVOLUTION_BASE_URL, apiKey: env.EVOLUTION_API_KEY }),
+    client: new EvolutionClient({
+      baseUrl: env.EVOLUTION_BASE_URL,
+      apiKey: env.EVOLUTION_API_KEY,
+      timeoutMs: env.EVOLUTION_HTTP_TIMEOUT_MS,
+    }),
     apiOrigin: env.API_ORIGIN, // registra o webhook no connect (§9)
   });
 
