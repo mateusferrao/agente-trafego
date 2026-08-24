@@ -232,3 +232,81 @@ describe("EvolutionAdapter.listGroups", () => {
     await expect(makeAdapter().listGroups(INSTANCE)).rejects.toThrow();
   });
 });
+
+describe("EvolutionAdapter.resolveGroupParticipants", () => {
+  const GROUP_JID = "120363427920375586@g.us";
+
+  it("mapeia id (lid)→telefone via phoneNumber, achando o grupo pelo id (resposta em array cru)", async () => {
+    stubRoutes({
+      "group/fetchAllGroups/": {
+        status: 200,
+        body: [
+          {
+            id: GROUP_JID,
+            subject: "Teste",
+            participants: [
+              { id: "95529518235847@lid", phoneNumber: "5531953479261@s.whatsapp.net", admin: "superadmin" },
+              { id: "251165459624058@lid", phoneNumber: "553194811420@s.whatsapp.net", admin: null },
+            ],
+          },
+        ],
+      },
+    });
+
+    const result = await makeAdapter().resolveGroupParticipants(INSTANCE, GROUP_JID);
+
+    expect(result).toEqual({
+      "95529518235847@lid": "+5531953479261",
+      "251165459624058@lid": "+553194811420",
+    });
+  });
+
+  it("aceita resposta envelopada em { value: [...] } (observado variando por chamada)", async () => {
+    stubRoutes({
+      "group/fetchAllGroups/": {
+        status: 200,
+        body: {
+          value: [{ id: GROUP_JID, participants: [{ id: "95529518235847@lid", phoneNumber: "5531953479261@s.whatsapp.net" }] }],
+          Count: 1,
+        },
+      },
+    });
+
+    const result = await makeAdapter().resolveGroupParticipants(INSTANCE, GROUP_JID);
+
+    expect(result).toEqual({ "95529518235847@lid": "+5531953479261" });
+  });
+
+  it("grupo não encontrado na lista → {}", async () => {
+    stubRoutes({
+      "group/fetchAllGroups/": { status: 200, body: [{ id: "120363000000000099@g.us", participants: [] }] },
+    });
+    await expect(makeAdapter().resolveGroupParticipants(INSTANCE, GROUP_JID)).resolves.toEqual({});
+  });
+
+  it("participante sem phoneNumber resolvível → descartado do mapa (não quebra os outros)", async () => {
+    stubRoutes({
+      "group/fetchAllGroups/": {
+        status: 200,
+        body: [
+          {
+            id: GROUP_JID,
+            participants: [
+              { id: "95529518235847@lid" }, // sem phoneNumber
+              { id: "251165459624058@lid", phoneNumber: "553194811420@s.whatsapp.net" },
+            ],
+          },
+        ],
+      },
+    });
+
+    const result = await makeAdapter().resolveGroupParticipants(INSTANCE, GROUP_JID);
+
+    expect(result).toEqual({ "251165459624058@lid": "+553194811420" });
+  });
+
+  it("falha HTTP → {} (best-effort, nunca lança — é fallback)", async () => {
+    stubRoutes({ "group/fetchAllGroups/": { status: 500, body: { error: "boom" } } });
+    await expect(makeAdapter().resolveGroupParticipants(INSTANCE, GROUP_JID)).resolves.toEqual({});
+  });
+});

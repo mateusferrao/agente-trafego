@@ -25,12 +25,21 @@ export interface OutboundMessage {
  * na casca (worker), comparando com o telefone da instância. `senderPhone` = quem
  * mandou (o `from` da base espelha isso no grupo); `mentionedPhones` = telefones
  * marcados (@); `quotedAuthorPhone` = autor da mensagem citada (reply), quando houver.
+ *
+ * `mentionedLids`/`quotedAuthorLid`: em grupo migrado pro endereçamento por LID
+ * (id interno opaco, não reversível pra telefone), a menção/reply pode vir SÓ como
+ * LID — sem contrapartida telefone no próprio payload da mensagem (o WhatsApp só
+ * revela o telefone real de quem MANDA, nunca de terceiros mencionados/citados).
+ * Preserva o LID cru pra casca resolver via `resolveGroupParticipants` (fallback,
+ * best-effort) quando o telefone direto não bastar.
  */
 export interface InboundGroupContext {
   readonly groupJid: string;
   readonly senderPhone: string;
   readonly mentionedPhones: readonly string[];
   readonly quotedAuthorPhone: string | null;
+  readonly mentionedLids: readonly string[];
+  readonly quotedAuthorLid: string | null;
 }
 
 /** Campos comuns a toda mensagem inbound (independe do tipo de mídia). */
@@ -148,4 +157,11 @@ export interface MessagingChannelPort {
    * webhook pedindo base64). Best-effort: `null` em qualquer falha, nunca lança.
    */
   fetchMediaBase64(instance: ChannelInstanceRef, key: MediaMessageKey): Promise<string | null>;
+  /**
+   * Mapa LID→telefone (E.164) dos participantes de um grupo — resolve menção/reply
+   * endereçada por LID (grupo migrado, `InboundGroupContext.mentionedLids`/
+   * `quotedAuthorLid`) quando o telefone não veio direto na mensagem. Best-effort:
+   * `{}` em qualquer falha, nunca lança (é fallback; a casca cacheia o resultado).
+   */
+  resolveGroupParticipants(instance: ChannelInstanceRef, groupJid: string): Promise<Record<string, string>>;
 }

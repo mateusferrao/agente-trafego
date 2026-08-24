@@ -11,7 +11,7 @@ import {
 } from "@trafego/shared/ports";
 import { EvolutionApiError, EvolutionClient } from "./client.js";
 import { EvolutionSender } from "./send.js";
-import { parseConnectionUpdate, parseInbound } from "./webhook.js";
+import { jidToE164, parseConnectionUpdate, parseInbound } from "./webhook.js";
 
 export interface EvolutionAdapterDeps {
   readonly client: EvolutionClient;
@@ -183,6 +183,45 @@ export class EvolutionAdapter implements MessagingChannelPort {
       });
     } catch (error) {
       throw toChannelError(error);
+    }
+  }
+
+  /**
+   * Mapa LID→telefone dos participantes de um grupo (`group/fetchAllGroups?getParticipants=true`
+   * — cada participante vem `{ id: "<lid>@lid", phoneNumber: "<jid>@s.whatsapp.net" }`).
+   * Best-effort: qualquer falha (HTTP/rede/shape inesperado) vira `{}`, nunca lança — é
+   * fallback pra resolver menção/reply por LID; quem chama decide sem essa info se faltar.
+   * A resposta pode vir como array cru OU `{ value: [...] }` (observado variando por
+   * chamada) — aceita os dois formatos defensivamente.
+   */
+  async resolveGroupParticipants(instance: ChannelInstanceRef, groupJid: string): Promise<Record<string, string>> {
+    try {
+      const res = await this.client.request<unknown>({
+        method: "GET",
+        path: `group/fetchAllGroups/${encodeURIComponent(instance.instanceId)}?getParticipants=true`,
+      });
+      const rows = Array.isArray(res)
+        ? res
+        : Array.isArray((res as Record<string, unknown> | null)?.["value"])
+          ? ((res as Record<string, unknown>)["value"] as unknown[])
+          : [];
+      const group = rows.find((row) => typeof row === "object" && row !== null && (row as Record<string, unknown>)["id"] === groupJid);
+      if (typeof group !== "object" || group === null) return {};
+      const participants = (group as Record<string, unknown>)["participants"];
+      if (!Array.isArray(participants)) return {};
+
+      const map: Record<string, string> = {};
+      for (const p of participants) {
+        if (typeof p !== "object" || p === null) continue;
+        const rec = p as Record<string, unknown>;
+        const lid = typeof rec["id"] === "string" ? rec["id"] : null;
+        const phoneJid = typeof rec["phoneNumber"] === "string" ? rec["phoneNumber"] : null;
+        const phone = phoneJid ? jidToE164(phoneJid) : null;
+        if (lid && phone) map[lid] = phone;
+      }
+      return map;
+    } catch {
+      return {};
     }
   }
 

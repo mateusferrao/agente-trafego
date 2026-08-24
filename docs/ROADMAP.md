@@ -548,6 +548,15 @@ vez de duplicar lógica. Fatiado (G0→G4) — **entregue por completo**.
   participante (`set_focus` grava em `conversations.focused_account_id` chaveado por
   `conversationId`); aprovação por id / guardrail / kill-switch `autoConfigViaChat` não
   gateiam por contato — já corretos sem mudança.
+- **G6 — endereçamento por LID (grupo migrado, `addressingMode: "lid"`):** confirmado em
+  produção que a Evolution manda `contextInfo` (menção/reply) como irmão de `message` em
+  `data`, não aninhado (`parseInbound` corrigido); em grupo LID, `key.participant` é um id
+  opaco (não telefone) — `senderPhone` passa a preferir `key.participantAlt` (telefone real
+  do remetente, revelado só de quem manda). Terceiro mencionado/citado só por LID (sem alt
+  no payload) resolve via `resolveGroupParticipants` (`group/fetchAllGroups?getParticipants=true`
+  expõe `{id: lid, phoneNumber}` por participante), cacheado (Redis, `GROUP_PARTICIPANTS_CACHE_TTL_SEC`)
+  e chamado só quando há LID não resolvido (maioria das mensagens de grupo não menciona
+  ninguém — não bate na Evolution à toa).
 
 **Fast-follows registrados:**
 - **N integrações WhatsApp / número-por-agente (isolamento de ban) + escopo/granularidade
@@ -558,8 +567,6 @@ vez de duplicar lógica. Fatiado (G0→G4) — **entregue por completo**.
 - **Permissão granular por-pessoa no grupo** (limitar quem faz escrita/config — hoje
   qualquer membro pode).
 - **Rate-limit por-participante** no grupo (conter abuso/custo LLM de um membro).
-- **Resolver LID→telefone** p/ menção robusta (WhatsApp/Evolution às vezes endereça por
-  `@lid`; hoje mitigado por reply-ao-bot como caminho alternativo).
 - **Config fina de destino de proatividade** (dm/grupo/ambos por-tipo — pulso/alerta/push
   cada um, em vez do move org-level atual).
 - **Janela de frescor do foco no grupo** (TTL/re-pergunta — hoje reusa a DM: foco fixo até

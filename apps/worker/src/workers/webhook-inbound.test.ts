@@ -18,7 +18,13 @@ const GROUP_JID = "120363000000000000@g.us";
 const GROUP_BASE = { instanceId: "inst-1", from: "+5511999999999", messageId: "GMSG-1", raw: {} } as const;
 
 function groupText(
-  overrides: { senderPhone?: string; mentionedPhones?: string[]; quotedAuthorPhone?: string | null } = {},
+  overrides: {
+    senderPhone?: string;
+    mentionedPhones?: string[];
+    quotedAuthorPhone?: string | null;
+    mentionedLids?: string[];
+    quotedAuthorLid?: string | null;
+  } = {},
 ): InboundMessage {
   return {
     ...GROUP_BASE,
@@ -29,6 +35,8 @@ function groupText(
       senderPhone: overrides.senderPhone ?? "+5511999999999",
       mentionedPhones: overrides.mentionedPhones ?? [BOT_PHONE],
       quotedAuthorPhone: overrides.quotedAuthorPhone ?? null,
+      mentionedLids: overrides.mentionedLids ?? [],
+      quotedAuthorLid: overrides.quotedAuthorLid ?? null,
     },
   };
 }
@@ -43,11 +51,13 @@ function makeDeps(overrides: Partial<InboundRouterDeps> = {}) {
     resolveInboundGroup: vi.fn(async (): Promise<{ orgId: string; groupId: string } | null> => ({ orgId: "org-1", groupId: "grp-1" })),
     ensureGroupConversation: vi.fn(async () => "conv-grp-1"),
   };
+  const messaging = { resolveGroupParticipants: vi.fn(async (): Promise<Record<string, string>> => ({})) };
   // markTranscribing usa MULTI (incr+expire atômico) — chain espionável.
   const multiChain = { incr: vi.fn(() => multiChain), expire: vi.fn(() => multiChain), exec: vi.fn(async () => []) };
   const redis = {
     rpush: vi.fn(async () => 1),
     expire: vi.fn(async () => 1),
+    get: vi.fn(async (): Promise<string | null> => null),
     set: vi.fn(async () => "OK" as const),
     multi: vi.fn(() => multiChain),
   };
@@ -56,6 +66,7 @@ function makeDeps(overrides: Partial<InboundRouterDeps> = {}) {
   const sendToConversation = vi.fn(async () => true);
   const deps = {
     repo,
+    messaging,
     redis,
     flushQueue,
     transcriptionQueue,
@@ -66,9 +77,10 @@ function makeDeps(overrides: Partial<InboundRouterDeps> = {}) {
     transcribingTtlSec: 240,
     throttleSec: 5,
     groupIngestContext: false,
+    groupParticipantsCacheTtlSec: 3600,
     ...overrides,
   } as unknown as InboundRouterDeps;
-  return { deps, repo, redis, multiChain, flushQueue, transcriptionQueue, sendToConversation };
+  return { deps, repo, messaging, redis, multiChain, flushQueue, transcriptionQueue, sendToConversation };
 }
 
 describe("makeInboundRouter — DM", () => {
@@ -195,5 +207,51 @@ describe("makeInboundRouter — grupo", () => {
 
     expect(t.repo.ensureGroupConversation).toHaveBeenNthCalledWith(1, "org-1", "grp-1", "+5511999999999");
     expect(t.repo.ensureGroupConversation).toHaveBeenNthCalledWith(2, "org-1", "grp-1", "+5511777777777");
+  });
+
+  describe("endereçamento por LID (grupo migrado, addressingMode lid)", () => {
+    const BOT_LID = "95529518235847@lid";
+
+    it("@menção só por LID: resolve via mapa de participantes (cache-first) e processa como dirigido", async () => {
+      const t = makeDeps();
+      t.messaging.resolveGroupParticipants.mockResolvedValueOnce({ [BOT_LID]: BOT_PHONE });
+
+      await makeInboundRouter(t.deps)("inst-1", groupText({ mentionedPhones: [], mentionedLids: [BOT_LID] }));
+
+      expect(t.messaging.resolveGroupParticipants).toHaveBeenCalledWith({ instanceId: "inst-1" }, GROUP_JID);
+      expect(t.repo.recordMessage).toHaveBeenCalledWith("conv-grp-1", "inbound", "@bot analisa", { messageId: "GMSG-1" });
+    });
+
+    it("reply só por LID (quotedAuthorLid): resolve e processa como dirigido", async () => {
+      const t = makeDeps();
+      t.messaging.resolveGroupParticipants.mockResolvedValueOnce({ [BOT_LID]: BOT_PHONE });
+
+      await makeInboundRouter(
+        t.deps,
+      )("inst-1", groupText({ mentionedPhones: [], quotedAuthorPhone: null, quotedAuthorLid: BOT_LID }));
+
+      expect(t.repo.recordMessage).toHaveBeenCalledWith("conv-grp-1", "inbound", "@bot analisa", { messageId: "GMSG-1" });
+    });
+
+    it("LID mencionado NÃO é o do bot (mapa resolve pra outro telefone) → continua não-dirigido", async () => {
+      const t = makeDeps();
+      t.messaging.resolveGroupParticipants.mockResolvedValueOnce({ [BOT_LID]: "+5511222222222" });
+
+      await makeInboundRouter(t.deps)("inst-1", groupText({ mentionedPhones: [], mentionedLids: [BOT_LID] }));
+
+      expect(t.repo.recordMessage).not.toHaveBeenCalled();
+    });
+
+    it("já dirigido por telefone direto → NÃO chama resolveGroupParticipants (evita bater na Evolution à toa)", async () => {
+      const t = makeDeps();
+      await makeInboundRouter(t.deps)("inst-1", groupText()); // mentionedPhones = [BOT_PHONE], sem LID
+      expect(t.messaging.resolveGroupParticipants).not.toHaveBeenCalled();
+    });
+
+    it("sem menção/reply nenhuma → NÃO chama resolveGroupParticipants (maioria das mensagens de grupo)", async () => {
+      const t = makeDeps();
+      await makeInboundRouter(t.deps)("inst-1", groupText({ mentionedPhones: [] }));
+      expect(t.messaging.resolveGroupParticipants).not.toHaveBeenCalled();
+    });
   });
 });

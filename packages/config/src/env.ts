@@ -237,6 +237,11 @@ export const envSchema = z.object({
   // são ignoradas e NÃO persistidas por padrão (§12 LGPD — conversa alheia do time não
   // entra no nosso banco). Ligar ingere como contexto (fast-follow de retenção dedicada).
   TRAFEGO_GROUP_INGEST_CONTEXT: z.coerce.boolean().default(false),
+  // TTL (s) do cache do mapa LID→telefone dos participantes de um grupo — resolve
+  // menção/reply endereçada por LID (grupo migrado, WhatsApp addressingMode "lid")
+  // quando o telefone de quem foi mencionado/citado não vem direto no payload da
+  // mensagem. Participação de grupo muda pouco; folgado (~1h) é seguro.
+  GROUP_PARTICIPANTS_CACHE_TTL_SEC: z.coerce.number().int().positive().default(3600),
 
   // ─── Email (auth transacional — 6b) ────────────────────────────────────
   // Verificação de email + reset de senha via mailer genérico (porta + fila).
