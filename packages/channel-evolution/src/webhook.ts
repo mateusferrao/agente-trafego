@@ -92,7 +92,9 @@ function findContextInfo(
 /**
  * Monta o contexto NEUTRO de grupo: telefones mencionados (@) e autor da mensagem
  * citada (reply). O adapter NÃO decide se a mensagem "dirige" o bot — isso é IO na
- * casca (compara com o telefone da instância).
+ * casca (compara com o telefone da instância). Menção/reply por LID sem telefone
+ * direto (terceiro, não o remetente) preserva o LID cru em `mentionedLids`/
+ * `quotedAuthorLid` — a casca resolve via `resolveGroupParticipants` (fallback).
  */
 function buildGroupContext(
   groupJid: string,
@@ -101,12 +103,17 @@ function buildGroupContext(
   message: Record<string, unknown> | null,
 ): InboundGroupContext {
   const ctx = findContextInfo(data, message);
-  const mentionedRaw = Array.isArray(ctx?.["mentionedJid"]) ? (ctx["mentionedJid"] as unknown[]) : [];
-  const mentionedPhones = mentionedRaw
-    .map((j) => (typeof j === "string" ? jidToE164(j) : null))
-    .filter((p): p is string => p !== null);
-  const quotedAuthorPhone = typeof ctx?.["participant"] === "string" ? jidToE164(ctx["participant"] as string) : null;
-  return { groupJid, senderPhone, mentionedPhones, quotedAuthorPhone };
+  const mentionedRaw = (Array.isArray(ctx?.["mentionedJid"]) ? (ctx["mentionedJid"] as unknown[]) : []).filter(
+    (j): j is string => typeof j === "string",
+  );
+  const mentionedPhones = mentionedRaw.map((j) => jidToE164(j)).filter((p): p is string => p !== null);
+  const mentionedLids = mentionedRaw.filter((j) => j.endsWith(LID_SUFFIX));
+
+  const quotedRaw = typeof ctx?.["participant"] === "string" ? (ctx["participant"] as string) : null;
+  const quotedAuthorPhone = quotedRaw ? jidToE164(quotedRaw) : null;
+  const quotedAuthorLid = quotedRaw && quotedRaw.endsWith(LID_SUFFIX) ? quotedRaw : null;
+
+  return { groupJid, senderPhone, mentionedPhones, quotedAuthorPhone, mentionedLids, quotedAuthorLid };
 }
 
 /**

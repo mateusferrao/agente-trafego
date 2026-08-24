@@ -24,7 +24,7 @@ import {
   type WhatsappInboundPayload,
   type WhatsappTranscriptionPayload,
 } from "@trafego/shared";
-import type { InboundMessage } from "@trafego/shared/ports";
+import type { InboundMessage, MessagingChannelPort } from "@trafego/shared/ports";
 import type { Redis } from "ioredis";
 import type { Logger } from "pino";
 import type { WorkerDeps } from "../composition.js";
@@ -32,6 +32,7 @@ import { isAddressedToBot } from "../modules/conversation/addressing.js";
 import { BUFFER_TTL_MARGIN_SEC, pushInbound } from "../modules/conversation/buffer.js";
 import { markTranscribing, scheduleConversationFlush } from "../modules/conversation/flush-control.js";
 import { sendCourtesyNotice } from "../modules/conversation/courtesy-notice.js";
+import { loadGroupParticipantsMap } from "../modules/conversation/group-participants-cache.js";
 import { unsupportedMediaNotice } from "../modules/conversation/notices.js";
 import { createNotifyRepo, type NotifyRepo } from "../modules/notify/repo.js";
 import { createSendToConversation, type SendToConversation } from "../modules/notify/send-to-contact.js";
@@ -45,6 +46,7 @@ export interface InboundRouterDeps {
     NotifyRepo,
     "resolveInboundContact" | "alreadyProcessed" | "ensureConversation" | "recordMessage" | "instancePhone" | "resolveInboundGroup" | "ensureGroupConversation"
   >;
+  readonly messaging: Pick<MessagingChannelPort, "resolveGroupParticipants">;
   readonly redis: Redis;
   readonly flushQueue: Pick<Queue<WhatsappFlushPayload>, "add" | "remove">;
   readonly transcriptionQueue: Pick<Queue<WhatsappTranscriptionPayload>, "add">;
@@ -56,6 +58,8 @@ export interface InboundRouterDeps {
   readonly throttleSec: number;
   /** Grupo: mensagem não-dirigida vira contexto persistido em vez de ser ignorada. */
   readonly groupIngestContext: boolean;
+  /** TTL (s) do cache do mapa LID→telefone dos participantes do grupo. */
+  readonly groupParticipantsCacheTtlSec: number;
 }
 
 /** Enfileira/agenda o pipeline comum a DM e grupo (texto/áudio/não-suportada), já com
@@ -142,7 +146,23 @@ async function routeGroupMessage(d: InboundRouterDeps, instanceId: string, inbou
   }
 
   const botPhone = await d.repo.instancePhone(instanceId);
-  const addressed = isAddressedToBot(group, botPhone);
+  let addressed = isAddressedToBot(group, botPhone);
+
+  // Menção/reply só por LID (grupo migrado, addressingMode "lid"): o telefone de
+  // terceiros não vem no payload da mensagem (só o do remetente). Resolve via cache
+  // (Evolution group/fetchAllGroups?getParticipants=true) só quando precisa — a
+  // maioria das mensagens de grupo não tem menção nenhuma, não vale bater na API à toa.
+  if (!addressed && botPhone && (group.mentionedLids.length > 0 || group.quotedAuthorLid)) {
+    const lidMap = await loadGroupParticipantsMap(
+      { redis: d.redis, messaging: d.messaging, ttlSec: d.groupParticipantsCacheTtlSec },
+      { instanceId },
+      group.groupJid,
+    );
+    const mentionedPhones = [...group.mentionedPhones, ...group.mentionedLids.map((lid) => lidMap[lid]).filter((p): p is string => p !== undefined)];
+    const quotedAuthorPhone = group.quotedAuthorPhone ?? (group.quotedAuthorLid ? (lidMap[group.quotedAuthorLid] ?? null) : null);
+    addressed = isAddressedToBot({ mentionedPhones, quotedAuthorPhone }, botPhone);
+  }
+
   if (!addressed) {
     if (d.groupIngestContext && inbound.kind === "text") {
       const conversationId = await d.repo.ensureGroupConversation(resolved.orgId, resolved.groupId, group.senderPhone);
@@ -208,6 +228,7 @@ export function startWebhookInboundWorker(deps: WorkerDeps, connection: Redis): 
   const transcriptionQueue = new Queue<WhatsappTranscriptionPayload>(WHATSAPP_TRANSCRIPTION_QUEUE, { connection });
   const route = makeInboundRouter({
     repo,
+    messaging: ports.messaging,
     redis,
     flushQueue,
     transcriptionQueue,
@@ -218,6 +239,7 @@ export function startWebhookInboundWorker(deps: WorkerDeps, connection: Redis): 
     transcribingTtlSec: deps.transcription.transcribingTtlSec, // backstop: flag expira → flush destrava
     throttleSec: deps.conversation.noticeThrottleSec,
     groupIngestContext: deps.conversation.groupIngestContext,
+    groupParticipantsCacheTtlSec: deps.conversation.groupParticipantsCacheTtlSec,
   });
 
   return new Worker<WhatsappInboundPayload>(
