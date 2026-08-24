@@ -500,6 +500,8 @@ Melhoria da comunicação do agente no WhatsApp: parecer conversa humana no padr
 - **Outbound em fila dedicada** — o `delay` nativo da Evolution bloqueia a request; mover envio p/ worker/fila própria se o volume crescer.
 - **Alerta intradiário** — a detecção é D-1 (atribuição do Meta incompleta no dia corrente); checagem no mesmo dia (granularidade hora) fica adiada. Intradiário de lançamento é coberto pelo cron 2×/dia + "analisa agora".
 - **Modo silencioso / teto global de proatividade** — controle único p/ conter pulso+push+alerta por conta/dia.
+- **Dedupe do alerta no fuso da org** — o piso de "≤1/dia" do throttle é em UTC (alinhado ao módulo); na virada de meia-noite UTC pode escapar 1 alerta extra. Ancorar no fuso da org.
+- **Pulso: disparar run quando o último é velho** — hoje o pulso cala (`skipped_stale`) se o último run `succeeded` passa de 48h; alternativa é disparar um run leve p/ ter dado fresco.
 - **Backfill do `notify_policy` por arquétipo** nos agentes já criados (hoje ficam no default de coluna).
 - **Troca do modelo do chat** (`CONVERSATION_MODEL`) por custo-benefício, com validação de tool-calling; **tetos de fluidez via env** (hoje const nomeadas: `WHATSAPP_SOFT_MAX_CHARS`, `TYPING_*`).
 
