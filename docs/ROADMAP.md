@@ -506,6 +506,72 @@ Melhoria da comunicação do agente no WhatsApp: parecer conversa humana no padr
 - **Backfill do `notify_policy` por arquétipo** nos agentes já criados (hoje ficam no default de coluna).
 - **Troca do modelo do chat** (`CONVERSATION_MODEL`) por custo-benefício, com validação de tool-calling; **tetos de fluidez via env** (hoje const nomeadas: `WHATSAPP_SOFT_MAX_CHARS`, `TYPING_*`).
 
+## Agente em grupo do WhatsApp (entregue)
+
+**Segunda superfície simétrica à DM:** a org configura **um grupo** (espelho do número —
+`channel_groups`, 1 por org) onde o agente atua **por completo** (proativo + leitura +
+escrita + aprovação + config), reusando ao máximo a máquina já existente do chat 1:1 em
+vez de duplicar lógica. Fatiado (G0→G4) — **entregue por completo**.
+
+**Entregue:**
+- **G0 — schema + parse:** `channel_groups` (espelho de `channel_instances`, `unique(org_id)`)
+  + `conversations.{group_id, participant_phone}`. `parseInbound` processa mensagem de
+  grupo (`@g.us`): `from` = telefone do `participant` (não mais descartado), envelope
+  `group?` neutro (`groupJid`, `senderPhone`, `mentionedPhones`, `quotedAuthorPhone`) em
+  `InboundMessageBase`, ortogonal ao `kind` (texto/áudio).
+- **G1 — reativo (leitura/escrita/aprovação/config):** `ConversationRef` (`{kind:"contact"}`
+  ou `{kind:"group", groupId, participantPhone}`) substitui `contactId` em todo o pipeline
+  de conversa (`webhook-inbound` → `turn` → `tools`/`nodes` → outbound). Grupo precisa
+  estar registrado+ativo; **sem verificação de membro** (a adesão ao grupo é a fronteira
+  de confiança — diferente do DM). Só processa se **dirigido** (`isAddressedToBot`, puro:
+  @menção OU reply à msg do bot, comparado ao telefone da instância); não-dirigido ignora
+  e **não persiste** por padrão (`TRAFEGO_GROUP_INGEST_CONTEXT`, default off, ingere como
+  contexto quando ligado). Thread **por-(grupo,participante)** — reuso *verbatim* do
+  concierge/`set_focus`/foco da DM (todas as contas da org) dá "só o iniciador confirma" e
+  foco por participante **de graça**, sem lógica nova. Áudio em grupo funciona igual (a
+  Evolution exige `participant` na key de mídia de grupo — `MediaMessageKey.participant`).
+- **G4 — registro:** porta `listGroups` (Evolution `group/fetchAllGroups?getParticipants=false`)
+  + slice `groups` na API (`GET/PUT/DELETE /channels/group(s)`, upsert por org) + passo 3
+  na tela de WhatsApp (lista buscável, gated por número conectado, avisos de consentimento
+  — "qualquer pessoa no grupo poderá pedir análise/aprovar/mudar config", "avisos migram
+  pro grupo", recomendado pra time interno/1 cliente por ora).
+- **G2 — proatividade org-level:** `NotifyRepo.loadTarget` resolve o grupo **ativo** da org
+  primeiro (thread de **broadcast**, `participantPhone: null` — `isNull()` no lookup, já
+  que `eq()` nunca casa NULL); sem grupo, cai no contato DM verificado (mesmo método,
+  reusado por cron/signal/pulso). Configurar o grupo **migra** a proatividade do DM pro
+  grupo (roteamento único, sem vínculo conta↔grupo — o grupo varre todas as contas, igual
+  à DM). `send-to-contact.ts` generaliza p/ `createSendToConversation(ref)` (dispatch
+  DM×grupo); `createSendToContact` vira atalho fino p/ os últimos callers DM-only.
+- **G3 — hardening:** invariantes confirmadas **por construção** (thread isolada por
+  participante) + testadas explicitamente: cross-participante não confirma escrita alheia;
+  eco nomeia a conta (`ctx.multiAccount`/`accountName`, org-level, já reusado); foco por
+  participante (`set_focus` grava em `conversations.focused_account_id` chaveado por
+  `conversationId`); aprovação por id / guardrail / kill-switch `autoConfigViaChat` não
+  gateiam por contato — já corretos sem mudança.
+
+**Fast-follows registrados:**
+- **N integrações WhatsApp / número-por-agente (isolamento de ban) + escopo/granularidade
+  de contas por-grupo + multi-grupo por org** — bundle único: só com N números faz sentido
+  cada grupo escopar suas próprias contas (hoje, com 1 número, o grupo varre todas as
+  contas da org — seguro pra time interno/1 cliente, não pra agência multi-cliente com
+  gente de fora no grupo).
+- **Permissão granular por-pessoa no grupo** (limitar quem faz escrita/config — hoje
+  qualquer membro pode).
+- **Rate-limit por-participante** no grupo (conter abuso/custo LLM de um membro).
+- **Resolver LID→telefone** p/ menção robusta (WhatsApp/Evolution às vezes endereça por
+  `@lid`; hoje mitigado por reply-ao-bot como caminho alternativo).
+- **Config fina de destino de proatividade** (dm/grupo/ambos por-tipo — pulso/alerta/push
+  cada um, em vez do move org-level atual).
+- **Janela de frescor do foco no grupo** (TTL/re-pergunta — hoje reusa a DM: foco fixo até
+  trocar, com o eco+confirma nomeando a conta como rede contra foco velho).
+- **Auto-registro de grupo na 1ª menção**; **convite/entrada automática** no grupo (hoje a
+  org adiciona o bot manualmente).
+- **Ingestão de contexto de grupo** com retenção/LGPD dedicadas (hoje `TRAFEGO_GROUP_INGEST_CONTEXT`
+  é on/off simples).
+- **`OutboundTarget` união** (refinar `toIsGroup: boolean`) se surgir um 3º tipo de destino.
+- Taggear pessoas no outbound; janela temporal de conversa (alternativa ao reply p/ manter
+  o "dirigido" ativo por alguns minutos).
+
 ## Fatia 7 — Criação de campanhas (roadmap pós-MVP)
 
 **Visão "gestor completo no WhatsApp":** o agente também **cria** campanhas — a pedido ou proativo. Só depois do MVP de otimização validar. Arquitetura já antecipa (catálogo de tools + `AdsPlatformPort` + porta nova de storage). **Depende:** MVP validado (pós-beta) + `5a`/`5b` (write path + HITL) + catálogo de tools.
