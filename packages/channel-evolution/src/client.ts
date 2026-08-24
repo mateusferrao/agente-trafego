@@ -19,9 +19,16 @@ export class EvolutionApiError extends Error {
   }
 }
 
+/** Default do timeout HTTP por chamada — sem isso, um fetch preso (ex: Evolution
+ *  devagar/travada em `group/fetchAllGroups`) fica "buscando pra sempre" na UI,
+ *  nunca dá erro (mesmo raciocínio do DEFAULT_TIMEOUT_MS do client Meta). */
+const DEFAULT_TIMEOUT_MS = 30_000;
+
 export interface EvolutionClientOptions {
   readonly baseUrl: string; // EVOLUTION_BASE_URL
   readonly apiKey: string; // EVOLUTION_API_KEY
+  /** timeout (ms) por chamada HTTP; default 30s (EVOLUTION_HTTP_TIMEOUT_MS). */
+  readonly timeoutMs?: number;
 }
 
 export interface EvolutionRequest {
@@ -34,10 +41,12 @@ export interface EvolutionRequest {
 export class EvolutionClient {
   private readonly baseUrl: string;
   private readonly apiKey: string;
+  private readonly timeoutMs: number;
 
   constructor(options: EvolutionClientOptions) {
     this.baseUrl = options.baseUrl;
     this.apiKey = options.apiKey;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
   /** Executa uma request contra a Evolution API (anexa header apikey). */
@@ -47,6 +56,7 @@ export class EvolutionClient {
       method: req.method,
       headers: { apikey: this.apiKey, "content-type": "application/json" },
       ...(req.body ? { body: JSON.stringify(req.body) } : {}),
+      signal: AbortSignal.timeout(this.timeoutMs),
     });
     const text = await res.text();
     if (!res.ok) {
