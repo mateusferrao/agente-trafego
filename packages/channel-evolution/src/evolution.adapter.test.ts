@@ -196,3 +196,39 @@ describe("EvolutionAdapter.fetchMediaBase64", () => {
     await expect(makeAdapter().fetchMediaBase64(INSTANCE, KEY)).resolves.toBeNull();
   });
 });
+
+describe("EvolutionAdapter.listGroups", () => {
+  it("mapeia id→jid, subject→name, size (getParticipants=false)", async () => {
+    stubRoutes({
+      "group/fetchAllGroups/": {
+        status: 200,
+        body: [
+          { id: "120363000000000001@g.us", subject: "Sala de Guerra", size: 5 },
+          { id: "120363000000000002@g.us", subject: "Outro grupo" },
+        ],
+      },
+    });
+
+    const result = await makeAdapter().listGroups(INSTANCE);
+
+    expect(result).toEqual([
+      { jid: "120363000000000001@g.us", name: "Sala de Guerra", size: 5 },
+      { jid: "120363000000000002@g.us", name: "Outro grupo" },
+    ]);
+  });
+
+  it("descarta linha sem id (defensivo)", async () => {
+    stubRoutes({ "group/fetchAllGroups/": { status: 200, body: [{ subject: "sem id" }] } });
+    await expect(makeAdapter().listGroups(INSTANCE)).resolves.toEqual([]);
+  });
+
+  it("resposta que não é array → []", async () => {
+    stubRoutes({ "group/fetchAllGroups/": { status: 200, body: {} } });
+    await expect(makeAdapter().listGroups(INSTANCE)).resolves.toEqual([]);
+  });
+
+  it("falha HTTP → lança erro neutro na casca", async () => {
+    stubRoutes({ "group/fetchAllGroups/": { status: 500, body: { error: "boom" } } });
+    await expect(makeAdapter().listGroups(INSTANCE)).rejects.toThrow();
+  });
+});

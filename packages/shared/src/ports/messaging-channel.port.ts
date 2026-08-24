@@ -80,6 +80,13 @@ export interface InboundUnsupportedMessage extends InboundMessageBase {
  */
 export type InboundMessage = InboundTextMessage | InboundAudioMessage | InboundUnsupportedMessage;
 
+/** Grupo do WhatsApp em que o número da org já está (registro — G4). */
+export interface GroupSummary {
+  readonly jid: string;
+  readonly name: string | null;
+  readonly size?: number;
+}
+
 export type InstanceStatus = "disconnected" | "connecting" | "connected";
 
 export interface InstanceState {
@@ -120,6 +127,12 @@ export interface MessagingChannelPort {
   parseConnectionUpdate(payload: unknown): InstanceStatus | null;
   connect(instance: ChannelInstanceRef): Promise<InstanceState>;
   getState(instance: ChannelInstanceRef): Promise<InstanceState>;
+  /**
+   * Grupos em que o número JÁ está (a org adiciona o bot manualmente — sem convite
+   * automático, fast-follow). Usado só no registro (G4); não confundir com
+   * `channel_groups` (o grupo REGISTRADO pela org, que este endpoint não conhece).
+   */
+  listGroups(instance: ChannelInstanceRef): Promise<GroupSummary[]>;
   /** Desfaz o pareamento do número (logout), mantendo a instância p/ re-parear. */
   disconnect(instance: ChannelInstanceRef): Promise<void>;
   /**

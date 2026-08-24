@@ -18,6 +18,7 @@ import { orgsRoutes } from "../modules/orgs/routes.js";
 import { accountsRoutes } from "../modules/accounts/routes.js";
 import { connectionsRoutes } from "../modules/connections/routes.js";
 import { channelsRoutes } from "../modules/channels/routes.js";
+import { groupsRoutes } from "../modules/groups/routes.js";
 import { contactsRoutes } from "../modules/contacts/routes.js";
 import { agentsRoutes } from "../modules/agents/routes.js";
 import { approvalsRoutes } from "../modules/approvals/routes.js";
@@ -120,6 +121,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       await api.register(accountsRoutes);
       await api.register(connectionsRoutes);
       await api.register(channelsRoutes);
+      await api.register(groupsRoutes);
       await api.register(contactsRoutes);
       await api.register(agentsRoutes);
       await api.register(approvalsRoutes);

@@ -4650,6 +4650,91 @@
           "status"
         ]
       },
+      "GroupsListOutput": {
+        "type": "object",
+        "properties": {
+          "channelConnected": {
+            "type": "boolean"
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "jid": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "size": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "jid",
+                "name"
+              ]
+            }
+          },
+          "activeGroupJid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "channelConnected",
+          "groups",
+          "activeGroupJid"
+        ]
+      },
+      "SetGroupInput": {
+        "type": "object",
+        "properties": {
+          "groupJid": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "groupJid"
+        ]
+      },
+      "ChannelGroupStateOutput": {
+        "type": "object",
+        "properties": {
+          "active": {
+            "type": "boolean"
+          },
+          "groupJid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "active",
+          "groupJid",
+          "name"
+        ]
+      },
       "StartVerificationInput": {
         "type": "object",
         "properties": {
@@ -5665,6 +5750,70 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ChannelStateOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/channels/groups": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "responses": {
+          "200": {
+            "description": "grupos que o número integra + o ativo da org (se algum)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GroupsListOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/channels/group": {
+      "put": {
+        "tags": [
+          "channels"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetGroupInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "grupo ativado pra org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelGroupStateOutput"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "channels"
+        ],
+        "responses": {
+          "200": {
+            "description": "grupo desligado (soft)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelGroupStateOutput"
                 }
               }
             }
