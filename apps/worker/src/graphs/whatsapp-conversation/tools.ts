@@ -17,6 +17,7 @@ import {
   BUDGET_MODE_SET,
   CONVERSION_GOALS,
   type ActionType,
+  type AlertSensitivity,
   type ApprovalId,
   type AutonomyLevel,
   type AutonomyPolicy,
@@ -29,6 +30,7 @@ import {
   type AgentConfigPatch,
   type AgentConfigState,
   type AgentGoalsPatch,
+  type NotifyPolicyPatch,
 } from "@trafego/core";
 import type { Action } from "@trafego/shared/types";
 import type { WorkerDeps } from "../../composition.js";
@@ -51,6 +53,7 @@ export interface ConversationToolContext extends ReadToolContext {
 const AUTONOMY_LEVELS = ["notify", "suggest", "act_safe", "act_full"] as const satisfies readonly AutonomyLevel[];
 const ACTION_TYPES = ["pause_entity", "resume_entity", "adjust_budget", "set_status"] as const satisfies readonly ActionType[];
 const CADENCE_KINDS = ["daily", "twice_daily", "weekly", "raw"] as const;
+const ALERT_SENSITIVITIES = ["low", "normal", "high"] as const satisfies readonly AlertSensitivity[];
 // Playbook: MESMO shape do `playbookRuleInput` do site (apps/api). Não importável de um
 // app; modelado igual aqui. CRUD de playbook é candidato a extração p/ shared (fast-follow).
 const PLAYBOOK_SCOPES = ["campaign", "adset", "ad"] as const;
@@ -317,6 +320,29 @@ export function makeConversationTools(
       cron: z.string().nullable().optional().describe("expressão cron (só raw)"),
     }),
   });
+  const setNotifications = tool(proposeOnly, {
+    name: "set_notifications",
+    description:
+      "Configura o que o agente manda SEM ser perguntado: o PULSO (resumo periódico mesmo sem recomendação, cadência própria — mesmo formato de set_cadence), o ALERTA (aviso automático quando algo muda materialmente na conta, com sensibilidade e intervalo mínimo entre alertas em horas) e o AVISO APÓS ANÁLISE (mensagem depois de cada análise agendada com recomendação). Só troca os campos enviados. Requer eco+confirma.",
+    schema: z.object({
+      pulseEnabled: z.boolean().nullable().optional().describe("liga/desliga o resumo periódico"),
+      pulseCadence: z
+        .object({
+          kind: z.enum(CADENCE_KINDS),
+          hour: z.number().int().min(0).max(23).nullable().optional(),
+          secondHour: z.number().int().min(0).max(23).nullable().optional().describe("2ª hora (só twice_daily)"),
+          weekday: z.number().int().min(0).max(6).nullable().optional().describe("dia da semana (só weekly)"),
+          cron: z.string().nullable().optional().describe("expressão cron (só raw)"),
+        })
+        .nullable()
+        .optional()
+        .describe("cadência do pulso (mesmo formato de set_cadence)"),
+      alertsEnabled: z.boolean().nullable().optional().describe("liga/desliga o alerta automático de mudança material"),
+      alertsSensitivity: z.enum(ALERT_SENSITIVITIES).nullable().optional().describe("sensibilidade do alerta: low, normal ou high"),
+      alertsThrottleHours: z.number().int().min(1).nullable().optional().describe("intervalo mínimo entre alertas, em horas"),
+      runPushEnabled: z.boolean().nullable().optional().describe("liga/desliga o aviso automático depois de cada análise agendada"),
+    }),
+  });
   const reseedArchetype = tool(proposeOnly, {
     name: RESEED_TOOL_NAME,
     description:
@@ -402,7 +428,7 @@ export function makeConversationTools(
     },
   );
 
-  const configTools = [setGoal, setAutonomy, setGuardrail, setCadence, reseedArchetype, setPersona, setTone, setSystemPrompt];
+  const configTools = [setGoal, setAutonomy, setGuardrail, setCadence, setNotifications, reseedArchetype, setPersona, setTone, setSystemPrompt];
   const playbookTools = [addPlaybookRule, togglePlaybookRule, removePlaybookRule, listPlaybookRules];
 
   const writeTools = [pauseEntity, resumeEntity, setStatus, adjustBudget, revertAction, confirmWrite, cancelWrite];
@@ -443,7 +469,7 @@ export async function buildCapabilitiesText(
   }
   parts.push("⚡ Analisar agora e aprovar/rejeitar ações pendentes.");
   if (ctx.configViaChat) {
-    parts.push("⚙️ Mudar a config do agente conversando (sempre com sua confirmação): meta, autonomia, guardrails, cadência, arquétipo, playbook e identidade.");
+    parts.push("⚙️ Mudar a config do agente conversando (sempre com sua confirmação): meta, autonomia, guardrails, cadência, notificações proativas (pulso/alerta), arquétipo, playbook e identidade.");
   } else {
     parts.push("⚙️ Config do agente: por aqui está desligada — mudanças de config são pelo site.");
   }
@@ -586,7 +612,13 @@ export const WRITE_TOOL_TO_ACTION: ReadonlyMap<string, ActionType> = new Map([
 // ─── CONFIG POR CHAT (S2.3–S2.6): nomes + tradução tool_call → patch/op ──────────
 
 /** Tools de config que viram um `update` de `AgentConfigPatch` (meta/autonomia/guardrail/cadência). */
-export const CONFIG_TOOL_NAMES: ReadonlySet<string> = new Set(["set_goal", "set_autonomy", "set_guardrail", "set_cadence"]);
+export const CONFIG_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "set_goal",
+  "set_autonomy",
+  "set_guardrail",
+  "set_cadence",
+  "set_notifications",
+]);
 /** Tools de IDENTIDADE (S2.6) — também um `update` de patch (persona/tom/metodologia). */
 export const IDENTITY_TOOL_NAMES: ReadonlySet<string> = new Set(["set_persona", "set_tone", "set_system_prompt"]);
 /** Tool de re-seed de arquétipo (pendência kind="reseed"). */
@@ -671,6 +703,19 @@ export function configPatchFromToolCall(
       const spec = cadenceFromToolCall(args);
       // raw sem cron → não muda a cadência (patch vazio de cadência).
       return spec === undefined ? {} : { cadence: spec };
+    }
+    case "set_notifications": {
+      const pulseCadenceArg = args["pulseCadence"] as Record<string, unknown> | null | undefined;
+      const pulseCadence = pulseCadenceArg ? cadenceFromToolCall(pulseCadenceArg) : undefined;
+      const notifyPolicy: NotifyPolicyPatch = {
+        ...(args["pulseEnabled"] != null ? { pulseEnabled: args["pulseEnabled"] as boolean } : {}),
+        ...(pulseCadence !== undefined ? { pulseCadence } : {}),
+        ...(args["alertsEnabled"] != null ? { alertsEnabled: args["alertsEnabled"] as boolean } : {}),
+        ...(args["alertsSensitivity"] != null ? { alertsSensitivity: args["alertsSensitivity"] as AlertSensitivity } : {}),
+        ...(args["alertsThrottleHours"] != null ? { alertsThrottleHours: args["alertsThrottleHours"] as number } : {}),
+        ...(args["runPushEnabled"] != null ? { runPushEnabled: args["runPushEnabled"] as boolean } : {}),
+      };
+      return { notifyPolicy };
     }
     case "set_persona":
       return { persona: String(args["text"] ?? "") };

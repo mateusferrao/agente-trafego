@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { APPROVAL_APPLY_QUEUE } from "@trafego/shared";
 import type { AgentConfigState } from "@trafego/core";
-import type { GuardrailConfig, AutonomyPolicy } from "@trafego/shared";
+import type { GuardrailConfig, AutonomyPolicy, NotifyPolicy } from "@trafego/shared";
 import {
   AGENT_TOOL_NAMES,
   CONCIERGE_TOOL_NAMES,
@@ -146,6 +146,11 @@ const GUARDRAILS: GuardrailConfig = {
   killSwitch: false,
 };
 const AUTONOMY: AutonomyPolicy = { bySource: { playbook: "suggest", llm: "suggest" }, autoConfigViaChat: true };
+const NOTIFY_POLICY: NotifyPolicy = {
+  pulse: { enabled: false, cadence: { kind: "weekly", weekday: 1, hour: 8 } },
+  alerts: { enabled: false, sensitivity: "normal", throttleHours: 6 },
+  runPush: { enabled: true },
+};
 
 function state(over: Partial<AgentConfigState> = {}): AgentConfigState {
   return {
@@ -160,6 +165,7 @@ function state(over: Partial<AgentConfigState> = {}): AgentConfigState {
     autonomyPolicy: AUTONOMY,
     guardrails: GUARDRAILS,
     modelConfig: {},
+    notifyPolicy: NOTIFY_POLICY,
     ...over,
   };
 }
@@ -199,6 +205,41 @@ describe("configPatchFromToolCall", () => {
   it("set_cadence: raw sem cron → não muda a cadência (patch vazio)", () => {
     const patch = configPatchFromToolCall("set_cadence", { kind: "raw" }, state());
     expect(patch).toEqual({});
+  });
+
+  it("set_notifications: liga o pulso sem cadência → só pulseEnabled no patch", () => {
+    const patch = configPatchFromToolCall("set_notifications", { pulseEnabled: true }, state());
+    expect(patch).toEqual({ notifyPolicy: { pulseEnabled: true } });
+  });
+
+  it("set_notifications: cadência do pulso reusa o formato de set_cadence", () => {
+    const patch = configPatchFromToolCall(
+      "set_notifications",
+      { pulseCadence: { kind: "daily", hour: 9 } },
+      state(),
+    );
+    expect(patch).toEqual({ notifyPolicy: { pulseCadence: { kind: "daily", hour: 9 } } });
+  });
+
+  it("set_notifications: liga alerta + sensibilidade no mesmo call", () => {
+    const patch = configPatchFromToolCall(
+      "set_notifications",
+      { alertsEnabled: true, alertsSensitivity: "high", alertsThrottleHours: 3 },
+      state(),
+    );
+    expect(patch).toEqual({
+      notifyPolicy: { alertsEnabled: true, alertsSensitivity: "high", alertsThrottleHours: 3 },
+    });
+  });
+
+  it("set_notifications: desliga o push do cron", () => {
+    const patch = configPatchFromToolCall("set_notifications", { runPushEnabled: false }, state());
+    expect(patch).toEqual({ notifyPolicy: { runPushEnabled: false } });
+  });
+
+  it("set_notifications: sem nenhum campo enviado → patch de notifyPolicy vazio", () => {
+    const patch = configPatchFromToolCall("set_notifications", {}, state());
+    expect(patch).toEqual({ notifyPolicy: {} });
   });
 
   it("set_persona: texto vira patch; identidade não é goal/guardrail", () => {

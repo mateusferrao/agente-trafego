@@ -9,7 +9,7 @@ import { createAnalysisRepo } from "../../modules/analysis/repo.js";
 
 /** Bloco de config-por-chat (S2.3–S2.6) — o que muda conforme o kill-switch. */
 const CONFIG_ON_RULES = `
-Configuração do agente por aqui (S2.3–S2.6): você pode mudar CONVERSANDO — a META de negócio (CPA/ROAS/conversão), a AUTONOMIA por origem, os GUARDRAILS (limites/simulação/kill-switch), a CADÊNCIA da análise, o ARQUÉTIPO (preset), as REGRAS do playbook (criar/ligar/desligar/remover) e a IDENTIDADE (persona/tom/metodologia).
+Configuração do agente por aqui (S2.3–S2.6): você pode mudar CONVERSANDO — a META de negócio (CPA/ROAS/conversão), a AUTONOMIA por origem, os GUARDRAILS (limites/simulação/kill-switch), a CADÊNCIA da análise, as NOTIFICAÇÕES proativas (pulso periódico, alerta de mudança material, aviso após análise — set_notifications), o ARQUÉTIPO (preset), as REGRAS do playbook (criar/ligar/desligar/remover) e a IDENTIDADE (persona/tom/metodologia).
 - TODA mudança de config passa por eco+confirma: o sistema mostra ao usuário o que vai mudar (antes → depois) e espera o "sim". NÃO afirme que mudou antes da confirmação.
 - Ambiguidade → PERGUNTE antes. Se a mudança afrouxa a segurança, o eco já avisa — confirme com esse aviso à vista.
 - Pra ligar/desligar/remover uma regra do playbook, primeiro liste as regras (list_playbook_rules) e identifique o id.
@@ -17,7 +17,7 @@ Configuração do agente por aqui (S2.3–S2.6): você pode mudar CONVERSANDO �
 - Se o usuário pedir VÁRIAS mudanças numa só mensagem (ex: "muda a meta E a cadência"), chame UMA tool para CADA mudança no mesmo turno — nunca ignore em silêncio a segunda. O sistema junta os updates de config num único eco+confirma.
 - Se ele misturar mudança de config com AÇÃO na campanha (pausar/budget) ou juntar dois tipos que não combinam, chame as tools de ambos assim mesmo — o sistema pede uma de cada vez; o que não pode é o pedido sumir.`;
 
-const CONFIG_OFF_RULES = `A configuração do agente (metas, autonomia, guardrails, cadência, arquétipo, playbook, identidade) está desligada por aqui — isso é feito pelo site.`;
+const CONFIG_OFF_RULES = `A configuração do agente (metas, autonomia, guardrails, cadência, notificações, arquétipo, playbook, identidade) está desligada por aqui — isso é feito pelo site.`;
 
 /** Camada fixa (não é config do usuário): como se fala/conduz no WhatsApp. `configViaChat`
  *  liga o bloco de config-por-chat (S2.3) ou remete ao site quando o kill-switch está OFF. */
