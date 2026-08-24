@@ -24,6 +24,8 @@ import { composePulseOverview } from "../modules/pulse/compose.js";
 
 /** Não manda pulso se o agente já falou nas últimas N horas (evita colar no push). */
 const PULSE_DEDUP_HOURS = 6;
+/** Não manda pulso sobre um run velho demais (dado stale) — melhor calar que mentir. */
+const PULSE_MAX_RUN_AGE_HOURS = 48;
 const MS_PER_HOUR = 3_600_000;
 // Só runs que produziram síntese (degradado é `succeeded`+partial). Incluir `failed`
 // mascararia o último run bom (sem snapshot) e calaria o pulso justo quando falhou.
@@ -35,7 +37,8 @@ export type PulseOutcome =
   | "skipped_access"
   | "skipped_recent"
   | "skipped_no_target"
-  | "skipped_no_run";
+  | "skipped_no_run"
+  | "skipped_stale";
 
 export async function runPulse(deps: WorkerDeps, payload: AgentCronDispatchPayload): Promise<PulseOutcome> {
   const { db, logger } = deps;
@@ -79,12 +82,14 @@ export async function runPulse(deps: WorkerDeps, payload: AgentCronDispatchPaylo
 
   // último run finalizado → overview do pulso (money-shot).
   const [run] = await db
-    .select({ id: agentRuns.id, summary: agentRuns.summary, metricsSnapshot: agentRuns.metricsSnapshot })
+    .select({ id: agentRuns.id, summary: agentRuns.summary, metricsSnapshot: agentRuns.metricsSnapshot, createdAt: agentRuns.createdAt })
     .from(agentRuns)
     .where(and(eq(agentRuns.agentId, payload.agentId), eq(agentRuns.orgId, payload.orgId), eq(agentRuns.status, USEFUL_RUN_STATUS)))
     .orderBy(desc(agentRuns.createdAt))
     .limit(1);
   if (!run) return "skipped_no_run";
+  // run velho demais (ex: crons falhando há dias) → não empurra dado stale como "pulso".
+  if (now - run.createdAt.getTime() > PULSE_MAX_RUN_AGE_HOURS * MS_PER_HOUR) return "skipped_stale";
 
   const recs = await db
     .select({ title: recommendations.title })

@@ -42,6 +42,8 @@ function isoDay(d: Date): string {
  * Início da janela de throttle: o mais RESTRITIVO entre "throttleHours atrás" e "começo
  * do dia UTC". O sinal é sobre D-1 (muda 1×/dia), então um throttleHours curto (ex: 3h)
  * não pode re-alertar o MESMO dia fechado várias vezes — o piso do dia garante ≤1/dia.
+ * Piso em UTC (alinhado ao `isoDay`/`todayIso` do sync — o módulo todo opera em UTC);
+ * na virada de meia-noite UTC pode escapar 1 extra (fast-follow: piso no fuso da org).
  */
 export function throttleWindowStart(now: Date, throttleHours: number): Date {
   const startOfDay = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
