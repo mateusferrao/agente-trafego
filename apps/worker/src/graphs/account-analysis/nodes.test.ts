@@ -106,6 +106,10 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
     contextAdAccountId: vi.fn(async () => null),
     resolveOutboundTarget: vi.fn(async () => null),
     updateInstanceStatus: vi.fn(async () => {}),
+    instancePhone: vi.fn(async () => null),
+    resolveInboundGroup: vi.fn(async () => null),
+    ensureGroupConversation: vi.fn(async () => "conv-1"),
+    resolveGroupTarget: vi.fn(async () => null),
   };
   const llm = vi.fn(async () => ({ output: ANALYSIS_OUTPUT, usage: { inputTokens: 100, outputTokens: 20, costUsd: 0.001 } }));
   const readEntityState = vi.fn(async () => opts.freshEntityState ?? { status: "ACTIVE", effective_status: "ACTIVE" });

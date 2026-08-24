@@ -20,11 +20,11 @@ export function startWhatsappFlushWorker(deps: WorkerDeps, connection: Redis): W
   return new Worker<WhatsappFlushPayload>(
     WHATSAPP_FLUSH_QUEUE,
     async (job) => {
-      const { orgId, contactId, conversationId } = job.data;
+      const { orgId, conversationId, ref } = job.data;
 
       // Transcrição de áudio em voo → espera: re-agenda a si mesmo e sai sem drenar.
       if (await isTranscribing(redis, conversationId)) {
-        await scheduleConversationFlush(flushQueue, { orgId, contactId, conversationId }, debounceMs);
+        await scheduleConversationFlush(flushQueue, { orgId, conversationId, ref }, debounceMs);
         logger.debug({ conversationId }, "flush:aguardando transcrição");
         return;
       }
@@ -39,7 +39,7 @@ export function startWhatsappFlushWorker(deps: WorkerDeps, connection: Redis): W
           return;
         }
         // coalesce as mensagens picadas num único turno (na ordem de chegada).
-        await runConversationTurn(deps, { orgId, contactId, conversationId, text: fragments.join("\n") });
+        await runConversationTurn(deps, { orgId, conversationId, ref, text: fragments.join("\n") });
       }
     },
     { connection },

@@ -22,6 +22,7 @@ import {
   type AutonomyLevel,
   type AutonomyPolicy,
   type CadenceSpec,
+  type ConversationRef,
   type ConversionGoal,
   type EntityLevel,
 } from "@trafego/shared";
@@ -39,6 +40,9 @@ import { makeReadTools, type ReadToolContext } from "./read-data.js";
 import type { PendingPlaybookOp } from "./state.js";
 
 export interface ConversationToolContext extends ReadToolContext {
+  /** quem fala no turno — DM (contato verificado) ou grupo (participante). Alvo do
+   *  push assíncrono (analisa-agora/aprovação) e da trilha de auditoria (§12/§13). */
+  readonly ref: ConversationRef;
   /** thread da conversa (checkpointer) — alvo do push do "analisa agora". */
   readonly conversationId: string;
   /** org com >1 conta ativa (concierge/multi-conta) — o eco nomeia a conta (5c-6). */
@@ -94,7 +98,7 @@ export function makeConversationTools(
         agentId: ctx.agentId,
         adAccountId: ctx.adAccountId,
         trigger: "conversation",
-        notify: { contactId: ctx.contactId, conversationId: ctx.conversationId },
+        notify: { ref: ctx.ref, conversationId: ctx.conversationId },
       });
       logger.debug({ agentId: ctx.agentId, outcome }, "tool:trigger_analysis");
       // devolve ao modelo o desfecho p/ ele responder com honestidade (§UX).
@@ -128,7 +132,7 @@ export function makeConversationTools(
         await deps.ports.scheduler.enqueue({
           queue: APPROVAL_APPLY_QUEUE,
           name: APPROVAL_APPLY_JOB,
-          payload: { orgId: ctx.orgId, approvalId: id, notifyContactId: ctx.contactId },
+          payload: { orgId: ctx.orgId, approvalId: id, notifyRef: ctx.ref },
         });
         ok += 1;
       }

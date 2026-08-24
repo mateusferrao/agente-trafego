@@ -14,6 +14,19 @@ export type WhatsappInboundPayload = {
 };
 
 /**
+ * Referência de identidade/entrega de uma conversa: DM (contato verificado) ou GRUPO
+ * (participante, sem verificação — a adesão ao grupo é a fronteira de confiança). Thread
+ * por-(grupo, participante) → "só o iniciador confirma" + foco por participante de graça.
+ * Discriminada p/ o worker escolher o alvo de entrega (telefone × JID do grupo) e o ator.
+ */
+export type ConversationRef =
+  | { readonly kind: "contact"; readonly contactId: string }
+  // `participantPhone`: string = turno reativo (thread por participante, dá "só o
+  // iniciador confirma"); null = proativo/broadcast do agente pro grupo (sem
+  // participante específico — pulso/alerta/push do cron).
+  | { readonly kind: "group"; readonly groupId: string; readonly participantPhone: string | null };
+
+/**
  * Fila de FLUSH do debounce (5b-2.4): o inbound bufferiza as mensagens picadas e
  * agenda um flush atrasado (jobId = conversationId, re-agendado a cada fragmento).
  * Ao disparar, o flush coalesce o buffer num único turno do Grafo B. Serializa por
@@ -23,8 +36,8 @@ export const WHATSAPP_FLUSH_QUEUE = "whatsapp-flush";
 export const WHATSAPP_FLUSH_JOB = "flush-conversation";
 export type WhatsappFlushPayload = {
   readonly orgId: string;
-  readonly contactId: string;
   readonly conversationId: string;
+  readonly ref: ConversationRef;
 };
 
 /**
@@ -41,7 +54,7 @@ export const WHATSAPP_TRANSCRIPTION_ATTEMPTS = 3;
 export const WHATSAPP_TRANSCRIPTION_BACKOFF_MS = 3_000;
 export type WhatsappTranscriptionPayload = {
   readonly orgId: string;
-  readonly contactId: string;
+  readonly ref: ConversationRef;
   readonly conversationId: string;
   /** id da LINHA da mensagem (messages.id) — update por PK após transcrever. */
   readonly messageRowId: string;

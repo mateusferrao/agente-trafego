@@ -26,15 +26,18 @@ export class EvolutionSender {
    * POST message/sendText/{instanceId}. Body v2 flat `{ number, text }`; quando há
    * `typingHintMs`, adiciona `delay`+`presence:"composing"` (a Evolution mostra
    * "digitando…" por esse tempo antes de entregar) — o único ponto onde o vocabulário
-   * de presença do provider aparece (§5).
+   * de presença do provider aparece (§5). `toIsGroup`: `to` já é o JID do grupo
+   * (@g.us) — a Evolution aceita group JID no mesmo campo `number`; NÃO normaliza
+   * (normalizePhone destruiria o `@g.us`).
    */
   async sendText(instance: ChannelInstanceRef, msg: OutboundMessage): Promise<void> {
     const typing =
       msg.typingHintMs && msg.typingHintMs > 0 ? { delay: msg.typingHintMs, presence: PRESENCE_COMPOSING } : {};
+    const number = msg.toIsGroup ? msg.to : normalizePhone(msg.to);
     await this.client.request({
       method: "POST",
       path: `${SEND_TEXT_PATH}/${instance.instanceId}`,
-      body: { number: normalizePhone(msg.to), text: msg.text, ...typing },
+      body: { number, text: msg.text, ...typing },
     });
   }
 }

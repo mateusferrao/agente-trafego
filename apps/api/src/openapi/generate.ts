@@ -60,6 +60,7 @@ import {
 import { dashboardOutput, liveMetricsOutput, panoramaListOutput, refreshDataOutput } from "../modules/dashboard/schema.js";
 import { timelineOutput } from "../modules/timeline/schema.js";
 import { channelStateOutput } from "../modules/channels/schema.js";
+import { channelGroupStateOutput, groupsListOutput, setGroupInput } from "../modules/groups/schema.js";
 import { feedbackInput, feedbackOutput } from "../modules/recommendations/schema.js";
 import {
   startVerificationInput,
@@ -133,6 +134,9 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const ReseedArchetypeInput = registry.register("ReseedArchetypeInput", reseedArchetypeInput);
   const UndoActionInput = registry.register("UndoActionInput", undoActionInput);
   const ChannelStateOutput = registry.register("ChannelStateOutput", channelStateOutput);
+  const GroupsListOutput = registry.register("GroupsListOutput", groupsListOutput);
+  const SetGroupInput = registry.register("SetGroupInput", setGroupInput);
+  const ChannelGroupStateOutput = registry.register("ChannelGroupStateOutput", channelGroupStateOutput);
   const StartVerificationInput = registry.register("StartVerificationInput", startVerificationInput);
   const StartVerificationOutput = registry.register("StartVerificationOutput", startVerificationOutput);
   const ConfirmVerificationInput = registry.register("ConfirmVerificationInput", confirmVerificationInput);
@@ -363,6 +367,25 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     path: "/api/channels/disconnect",
     tags: ["channels"],
     responses: { 200: jsonRes("canal desconectado (logout do número)", ChannelStateOutput) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/channels/groups",
+    tags: ["channels"],
+    responses: { 200: jsonRes("grupos que o número integra + o ativo da org (se algum)", GroupsListOutput) },
+  });
+  registry.registerPath({
+    method: "put",
+    path: "/api/channels/group",
+    tags: ["channels"],
+    request: jsonBody(SetGroupInput),
+    responses: { 200: jsonRes("grupo ativado pra org", ChannelGroupStateOutput) },
+  });
+  registry.registerPath({
+    method: "delete",
+    path: "/api/channels/group",
+    tags: ["channels"],
+    responses: { 200: jsonRes("grupo desligado (soft)", ChannelGroupStateOutput) },
   });
   registry.registerPath({
     method: "post",

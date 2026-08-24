@@ -1,12 +1,14 @@
 // Um turno do chat do WhatsApp (Grafo B): resolve o agente em contexto (1 ativo →
 // conta; N/0 → concierge), roda o ReAct (checkpointer por conversa) e responde via
-// sendToContact. Reusado pelo flush do debounce (5b-2.4). Erro → resposta amigável.
+// sendToConversation (DM ou grupo). Reusado pelo flush do debounce (5b-2.4). Erro →
+// resposta amigável. Grupo é aditivo: mesmo concierge/foco/tools da DM (§9/§13
+// reuso-primeiro), só a origem (`ref`) e o destino de entrega mudam.
 
 import { and, eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import { HumanMessage, type AIMessage } from "@langchain/core/messages";
 import { adAccounts, agents, conversations, guardrailConfigs, type Database } from "@trafego/db";
-import type { ActionType, AutonomyPolicy } from "@trafego/shared";
+import type { ActionType, AutonomyPolicy, ConversationRef } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
 import { buildWhatsappConversationGraph } from "../../graphs/whatsapp-conversation/graph.js";
 import {
@@ -17,27 +19,27 @@ import {
   type ConversationToolContext,
 } from "../../graphs/whatsapp-conversation/tools.js";
 import { createNotifyRepo } from "../notify/repo.js";
-import { createSendToContact, type SendToContact } from "../notify/send-to-contact.js";
+import { createSendToConversation, type SendToConversation } from "../notify/send-to-contact.js";
 import { withTimeout } from "./with-timeout.js";
 
 /** Erro amigável se o turno falhar (LLM/infra) — nunca vaza stack pro usuário (§UX). */
 const FALLBACK_REPLY = "Não consegui processar agora. Tenta de novo em instantes.";
 
 /**
- * Entrega a resposta ao contato de forma RESILIENTE: uma falha de envio (Evolution
- * fora) NÃO propaga. O turno já foi computado (LLM já gasto) — relançar faria o
- * BullMQ re-invocar o grafo e re-gastar tokens. Melhor perder o envio (logado) do
- * que recomputar. Reenvio idempotente = fast-follow.
+ * Entrega a resposta à conversa (DM ou grupo) de forma RESILIENTE: uma falha de envio
+ * (Evolution fora) NÃO propaga. O turno já foi computado (LLM já gasto) — relançar
+ * faria o BullMQ re-invocar o grafo e re-gastar tokens. Melhor perder o envio (logado)
+ * do que recomputar. Reenvio idempotente = fast-follow.
  */
 export async function deliverReply(
-  sendToContact: SendToContact,
-  contactId: string,
+  sendToConversation: SendToConversation,
+  ref: ConversationRef,
   reply: string,
   logger: Pick<Logger, "info" | "error">,
   orgId: string,
 ): Promise<void> {
   try {
-    await sendToContact(contactId, reply, { split: true });
+    await sendToConversation(ref, reply, { split: true });
     logger.info({ orgId }, "conversation:replied");
   } catch (err) {
     logger.error({ err, orgId }, "conversation:send falhou (resposta perdida, sem retry do grafo)");
@@ -134,19 +136,21 @@ export async function configToolsFor(
 
 export interface ConversationTurnInput {
   readonly orgId: string;
-  readonly contactId: string;
+  /** quem fala — DM (contato verificado) ou grupo (participante, sem verificação). */
+  readonly ref: ConversationRef;
   readonly conversationId: string;
   /** texto do turno (uma ou mais mensagens coalescidas pelo debounce). */
   readonly text: string;
 }
 
-/** Roda o Grafo B para um turno e empurra a resposta na conversa. */
+/** Roda o Grafo B para um turno e empurra a resposta na conversa (DM ou grupo). */
 export async function runConversationTurn(deps: WorkerDeps, input: ConversationTurnInput): Promise<void> {
   const { logger, ports } = deps;
-  const sendToContact = createSendToContact({ messaging: ports.messaging, repo: createNotifyRepo(deps.db) });
+  const sendToConversation = createSendToConversation({ messaging: ports.messaging, repo: createNotifyRepo(deps.db) });
 
   // agente em contexto = a única conta ativa (sole) OU a conta em foco do fio (multi-conta,
-  // 5c-6). Sem nenhuma das duas → concierge (só org-level + set_focus p/ escolher).
+  // 5c-6). Sem nenhuma das duas → concierge (só org-level + set_focus p/ escolher). Igual
+  // no grupo: mesmo concierge/foco, escopo = todas as contas da org (§13 reuso-primeiro).
   const { sole, multiAccount } = await resolveActiveAgents(deps.db, input.orgId);
   const inContext = sole ?? (await resolveFocusedAgent(deps.db, input.orgId, input.conversationId));
 
@@ -159,7 +163,7 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
     orgId: input.orgId,
     agentId: inContext?.agentId ?? "",
     adAccountId: inContext?.adAccountId ?? "",
-    contactId: input.contactId,
+    ref: input.ref,
     conversationId: input.conversationId,
     multiAccount,
     // config-por-chat ligada? (molda o system-prompt: por chat × pelo site).
@@ -186,7 +190,6 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
           orgId: ctx.orgId,
           agentId: ctx.agentId,
           adAccountId: ctx.adAccountId,
-          contactId: ctx.contactId,
         },
         { configurable: { thread_id: input.conversationId } },
       ),
@@ -199,5 +202,5 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
     logger.error({ err, orgId: input.orgId }, "conversation:turn falhou");
   }
 
-  await deliverReply(sendToContact, input.contactId, reply, logger, input.orgId);
+  await deliverReply(sendToConversation, input.ref, reply, logger, input.orgId);
 }

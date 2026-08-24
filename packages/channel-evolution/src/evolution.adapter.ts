@@ -1,6 +1,7 @@
 import {
   MessagingChannelError,
   type ChannelInstanceRef,
+  type GroupSummary,
   type InboundMessage,
   type InstanceState,
   type InstanceStatus,
@@ -160,6 +161,31 @@ export class EvolutionAdapter implements MessagingChannelPort {
     }
   }
 
+  /**
+   * Grupos em que o número já está (`group/fetchAllGroups?getParticipants=false`,
+   * doc oficial — retorna `id`/`subject`/`size`). Grupo sem `id` é descartado (defensivo).
+   */
+  async listGroups(instance: ChannelInstanceRef): Promise<GroupSummary[]> {
+    try {
+      const res = await this.client.request<unknown>({
+        method: "GET",
+        path: `group/fetchAllGroups/${encodeURIComponent(instance.instanceId)}?getParticipants=false`,
+      });
+      const rows = Array.isArray(res) ? res : [];
+      return rows.flatMap((row) => {
+        if (typeof row !== "object" || row === null) return [];
+        const rec = row as Record<string, unknown>;
+        const jid = typeof rec["id"] === "string" ? rec["id"] : null;
+        if (!jid) return [];
+        const name = typeof rec["subject"] === "string" ? rec["subject"] : null;
+        const size = typeof rec["size"] === "number" ? rec["size"] : undefined;
+        return [{ jid, name, ...(size != null ? { size } : {}) }];
+      });
+    } catch (error) {
+      throw toChannelError(error);
+    }
+  }
+
   /** Logout do número (mantém a instância p/ re-parear). 404 = já desconectado (no-op). */
   async disconnect(instance: ChannelInstanceRef): Promise<void> {
     try {
@@ -215,7 +241,11 @@ export class EvolutionAdapter implements MessagingChannelPort {
       const res = await this.client.request<EvolutionMediaResponse>({
         method: "POST",
         path: `chat/getBase64FromMediaMessage/${encodeURIComponent(instance.instanceId)}`,
-        body: { message: { key: { id: key.id, remoteJid: key.remoteJid, fromMe: key.fromMe } } },
+        body: {
+          message: {
+            key: { id: key.id, remoteJid: key.remoteJid, fromMe: key.fromMe, ...(key.participant ? { participant: key.participant } : {}) },
+          },
+        },
       });
       return typeof res.base64 === "string" && res.base64.length > 0 ? res.base64 : null;
     } catch {

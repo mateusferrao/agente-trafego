@@ -38,6 +38,9 @@ export const channelStatus = pgEnum("channel_status", [
   "connecting",
   "connected",
 ]);
+// Ciclo de vida do grupo WhatsApp configurado pela org (soft): `active` = o agente
+// atua nele; `disabled` = desligado sem perder o registro. Espelha o padrão soft do resto.
+export const channelGroupStatus = pgEnum("channel_group_status", ["active", "disabled"]);
 export const contactRole = pgEnum("contact_role", ["owner", "member"]);
 
 export const entityLevel = pgEnum("entity_level", ["account", "campaign", "adset", "ad"]);

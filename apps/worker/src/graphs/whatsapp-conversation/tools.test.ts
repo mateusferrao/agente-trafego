@@ -21,7 +21,7 @@ const CTX: ConversationToolContext = {
   orgId: "org-1",
   agentId: "ag-1",
   adAccountId: "acc-1",
-  contactId: "ct-1",
+  ref: { kind: "contact", contactId: "ct-1" },
   conversationId: "cv-1",
 };
 
@@ -92,7 +92,7 @@ describe("approve tool", () => {
     expect(enqueue).toHaveBeenCalledOnce();
     const spec = enqueue.mock.calls[0]![0] as { queue: string; payload: unknown };
     expect(spec.queue).toBe(APPROVAL_APPLY_QUEUE);
-    expect(spec.payload).toEqual({ orgId: "org-1", approvalId: "ap-1", notifyContactId: "ct-1" });
+    expect(spec.payload).toEqual({ orgId: "org-1", approvalId: "ap-1", notifyRef: { kind: "contact", contactId: "ct-1" } });
     expect(out).toContain("aplicando");
   });
 

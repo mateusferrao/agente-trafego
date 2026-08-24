@@ -22,6 +22,7 @@ import { createDrizzleAccountsRepo } from "./modules/accounts/repo.js";
 import { createConnectionsService } from "./modules/connections/service.js";
 import { createDrizzleConnectionsRepo } from "./modules/connections/repo.js";
 import { createChannelsService } from "./modules/channels/service.js";
+import { createGroupsService } from "./modules/groups/service.js";
 import { createContactsService } from "./modules/contacts/service.js";
 import { createAgentsService } from "./modules/agents/service.js";
 import { createApprovalsService } from "./modules/approvals/service.js";
@@ -70,6 +71,7 @@ export interface Services {
   readonly accounts: ReturnType<typeof createAccountsService>;
   readonly connections: ReturnType<typeof createConnectionsService>;
   readonly channels: ReturnType<typeof createChannelsService>;
+  readonly groups: ReturnType<typeof createGroupsService>;
   readonly contacts: ReturnType<typeof createContactsService>;
   readonly agents: ReturnType<typeof createAgentsService>;
   readonly approvals: ReturnType<typeof createApprovalsService>;
@@ -198,6 +200,7 @@ export function buildContainer(): Container {
       ensureAgent: (orgId, accountId) => agents.getOrCreateForAccount(orgId, accountId),
     }),
     channels: createChannelsService({ db, messaging }),
+    groups: createGroupsService({ db, messaging }),
     contacts: createContactsService({ db, messaging }),
     agents,
     approvals: createApprovalsService({ db, approvals, scheduler, revertTtlDays: env.REVERT_TTL_DAYS }),

@@ -60,6 +60,15 @@ describe("EvolutionSender.sendText", () => {
     expect(body).toEqual({ number: "5511999999999", text: "oi" });
   });
 
+  it("toIsGroup: manda o JID do grupo intacto (sem normalizar)", async () => {
+    const spy = stubFetch({ key: { id: "abc" } });
+
+    await makeSender().sendText(INSTANCE, { to: "120363000000000000@g.us", text: "oi grupo", toIsGroup: true });
+
+    const body = JSON.parse(String(spy.mock.calls[0]![1]?.body));
+    expect(body.number).toBe("120363000000000000@g.us");
+  });
+
   it("erro HTTP da Evolution → lança exceção na casca", async () => {
     stubFetch({ error: "bad request" }, 400);
     await expect(

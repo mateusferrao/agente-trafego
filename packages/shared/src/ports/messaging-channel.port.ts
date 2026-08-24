@@ -5,7 +5,9 @@ export interface ChannelInstanceRef {
 }
 
 export interface OutboundMessage {
-  readonly to: string; // telefone E.164
+  readonly to: string; // telefone E.164, ou JID de grupo quando `toIsGroup`
+  /** Destino é um GRUPO (`to` = JID @g.us), não um telefone. Ausente/false = DM. */
+  readonly toIsGroup?: boolean;
   readonly text: string;
   /**
    * Dica NEUTRA de tempo de "preparo" antes de entregar a mensagem (ms) — dá o
@@ -17,12 +19,28 @@ export interface OutboundMessage {
   readonly typingHintMs?: number;
 }
 
+/**
+ * Contexto de GRUPO de uma mensagem inbound (ausente = DM 1:1). Campos NEUTROS
+ * extraídos pelo adapter — quem é o bot e se a mensagem "dirige" o bot é decidido
+ * na casca (worker), comparando com o telefone da instância. `senderPhone` = quem
+ * mandou (o `from` da base espelha isso no grupo); `mentionedPhones` = telefones
+ * marcados (@); `quotedAuthorPhone` = autor da mensagem citada (reply), quando houver.
+ */
+export interface InboundGroupContext {
+  readonly groupJid: string;
+  readonly senderPhone: string;
+  readonly mentionedPhones: readonly string[];
+  readonly quotedAuthorPhone: string | null;
+}
+
 /** Campos comuns a toda mensagem inbound (independe do tipo de mídia). */
 export interface InboundMessageBase {
   readonly instanceId: string;
-  readonly from: string; // telefone E.164
+  readonly from: string; // telefone E.164 (no grupo = telefone do participante remetente)
   /** id da mensagem no provider (Evolution `data.key.id`) — idempotência do inbound. */
   readonly messageId: string;
+  /** Presente só em mensagens de GRUPO (DM = ausente). Ortogonal ao `kind`. */
+  readonly group?: InboundGroupContext;
   readonly raw: Readonly<Record<string, unknown>>;
 }
 
@@ -37,6 +55,8 @@ export interface MediaMessageKey {
   readonly id: string;
   readonly remoteJid: string;
   readonly fromMe: boolean;
+  /** JID de quem mandou DENTRO do grupo (Evolution exige p/ mídia de grupo). Ausente em DM. */
+  readonly participant?: string;
 }
 
 /** Nota de voz / áudio — bytes inline (base64) p/ transcrição na borda. */
@@ -59,6 +79,13 @@ export interface InboundUnsupportedMessage extends InboundMessageBase {
  * (fromMe/grupo/ACK/sem conteúdo) o parser devolve como `null` (silêncio).
  */
 export type InboundMessage = InboundTextMessage | InboundAudioMessage | InboundUnsupportedMessage;
+
+/** Grupo do WhatsApp em que o número da org já está (registro — G4). */
+export interface GroupSummary {
+  readonly jid: string;
+  readonly name: string | null;
+  readonly size?: number;
+}
 
 export type InstanceStatus = "disconnected" | "connecting" | "connected";
 
@@ -100,6 +127,12 @@ export interface MessagingChannelPort {
   parseConnectionUpdate(payload: unknown): InstanceStatus | null;
   connect(instance: ChannelInstanceRef): Promise<InstanceState>;
   getState(instance: ChannelInstanceRef): Promise<InstanceState>;
+  /**
+   * Grupos em que o número JÁ está (a org adiciona o bot manualmente — sem convite
+   * automático, fast-follow). Usado só no registro (G4); não confundir com
+   * `channel_groups` (o grupo REGISTRADO pela org, que este endpoint não conhece).
+   */
+  listGroups(instance: ChannelInstanceRef): Promise<GroupSummary[]>;
   /** Desfaz o pareamento do número (logout), mantendo a instância p/ re-parear. */
   disconnect(instance: ChannelInstanceRef): Promise<void>;
   /**

@@ -50,6 +50,7 @@ import { makeMetaToolExecutor } from "../../executors/meta-tools.js";
 import { applyCheckedAction, type ApplyOutcome } from "../../modules/apply/apply-confirmed-action.js";
 import { loadWriteContext } from "../../modules/apply/write-context.js";
 import { revertActionById } from "../../modules/apply/revert-action.js";
+import { actorLabel } from "../../modules/conversation/actor.js";
 import { applyPlaybookOp } from "../../modules/conversation/config-writes.js";
 import type {
   PendingConfigChange,
@@ -233,7 +234,7 @@ async function recordConversationUsage(
       provider: "openrouter",
       model,
       ...usage,
-      payload: { contactId: ctx.contactId, conversationId: ctx.conversationId },
+      payload: { actor: actorLabel(ctx.ref), conversationId: ctx.conversationId },
     });
     if (needsCostFallback(usage, response.id)) {
       // fire-and-forget: o custo chega depois (patch), a resposta não espera.
@@ -263,7 +264,7 @@ async function applyConfirmedConfig(
   const orgId = ctx.orgId as OrgId;
   // ator = o contato que falou no WhatsApp (mesma trilha do executor de escrita — §12/§13);
   // canal na trilha p/ paridade com o audit de playbook (S2: metadata.channel="whatsapp").
-  const audit = { actor: { label: `contact:${ctx.contactId}` }, metadata: { channel: "whatsapp" } };
+  const audit = { actor: { label: actorLabel(ctx.ref) }, metadata: { channel: "whatsapp" } };
   const offerIfRelevant = (base: string) => (pending.runRelevantChanged ? `${base}\n\n${RUN_ANALYSIS_OFFER}` : base);
 
   if (pending.kind === "update" && pending.patch) {
@@ -300,7 +301,7 @@ async function applyConfirmedConfig(
     return offerIfRelevant(`Pronto, resetei o agente pro arquétipo ${archetypeDefaults(res.archetype).label}.`);
   }
   if (pending.kind === "playbook" && pending.playbook) {
-    const res = await applyPlaybookOp(deps, { orgId: ctx.orgId, agentId: ctx.agentId, contactId: ctx.contactId, op: pending.playbook });
+    const res = await applyPlaybookOp(deps, { orgId: ctx.orgId, agentId: ctx.agentId, actor: actorLabel(ctx.ref), op: pending.playbook });
     return res.ok ? offerIfRelevant(res.message) : res.message;
   }
   return "Não consegui aplicar a mudança de config — me diz de novo o que você quer?";
@@ -333,7 +334,7 @@ export function makeConversationNodes(
 
   /** Nó ReAct: LLM (OpenRouter) com as tools da allowlist + voz do agente. */
   async function agent(state: WhatsappConversationStateType): Promise<WhatsappConversationUpdate> {
-    logger.debug({ contactId: ctx.contactId }, "conversation:agent");
+    logger.debug({ actor: actorLabel(ctx.ref) }, "conversation:agent");
     const { systemPrompt, model } = await loadConversationConfig(
       deps.db,
       ctx.orgId,

@@ -9,6 +9,7 @@ import { Queue, Worker } from "bullmq";
 import {
   WHATSAPP_FLUSH_QUEUE,
   WHATSAPP_TRANSCRIPTION_QUEUE,
+  type ConversationRef,
   type WhatsappFlushPayload,
   type WhatsappTranscriptionPayload,
 } from "@trafego/shared";
@@ -18,12 +19,13 @@ import type { OrgId, TranscriptionResult } from "@trafego/shared/types";
 import type { Redis } from "ioredis";
 import type { Logger } from "pino";
 import type { WorkerDeps } from "../composition.js";
+import { actorLabel } from "../modules/conversation/actor.js";
 import { pushInbound, BUFFER_TTL_MARGIN_SEC } from "../modules/conversation/buffer.js";
 import { refreshTranscribing, scheduleConversationFlush, unmarkTranscribing } from "../modules/conversation/flush-control.js";
 import { sendCourtesyNotice } from "../modules/conversation/courtesy-notice.js";
 import { AUDIO_EMPTY_NOTICE, AUDIO_FAILED_NOTICE } from "../modules/conversation/notices.js";
 import { createNotifyRepo, type NotifyRepo } from "../modules/notify/repo.js";
-import { createSendToContact, type SendToContact } from "../modules/notify/send-to-contact.js";
+import { createSendToConversation, type SendToConversation } from "../modules/notify/send-to-contact.js";
 
 const MB = 1024 * 1024;
 /** Erros permanentes: não adianta re-tentar o mesmo áudio → caminho de falha na hora. */
@@ -37,7 +39,7 @@ export interface TranscriptionProcessorDeps {
   readonly metering: MeteringPort;
   readonly redis: Redis;
   readonly flushQueue: Queue<WhatsappFlushPayload>;
-  readonly sendToContact: SendToContact;
+  readonly sendToConversation: SendToConversation;
   readonly repo: Pick<NotifyRepo, "updateMessageContent" | "contextAdAccountId">;
   readonly logger: Pick<Logger, "warn">;
   readonly debounceSeconds: number;
@@ -67,7 +69,7 @@ function errorKind(err: unknown): string {
 
 async function recordUsage(
   d: TranscriptionProcessorDeps,
-  args: { orgId: string; conversationId: string; contactId: string; result: TranscriptionResult },
+  args: { orgId: string; conversationId: string; ref: ConversationRef; result: TranscriptionResult },
 ): Promise<void> {
   const adAccountId = await d.repo.contextAdAccountId(args.orgId, args.conversationId);
   await d.metering.record({
@@ -79,7 +81,7 @@ async function recordUsage(
     ...(args.result.costUsd != null ? { costUsd: args.result.costUsd } : {}),
     payload: {
       conversationId: args.conversationId,
-      contactId: args.contactId,
+      actor: actorLabel(args.ref),
       ...(args.result.durationSec != null ? { durationSec: args.result.durationSec } : {}),
       ...(args.result.tokensUsed != null ? { tokensUsed: args.result.tokensUsed } : {}),
     },
@@ -87,10 +89,10 @@ async function recordUsage(
 }
 
 /** Aviso de áudio (fail/empty) throttled no balde "audio". */
-async function audioNotice(d: TranscriptionProcessorDeps, conversationId: string, contactId: string, text: string): Promise<void> {
-  await sendCourtesyNotice(d.redis, d.sendToContact, {
+async function audioNotice(d: TranscriptionProcessorDeps, conversationId: string, ref: ConversationRef, text: string): Promise<void> {
+  await sendCourtesyNotice(d.redis, d.sendToConversation, {
     conversationId,
-    contactId,
+    ref,
     text,
     bucket: AUDIO_NOTICE_BUCKET,
     throttleSec: d.noticeThrottleSec,
@@ -100,8 +102,8 @@ async function audioNotice(d: TranscriptionProcessorDeps, conversationId: string
 /** Fábrica do processor — pura de BullMQ, testável com fakes. */
 export function makeTranscriptionProcessor(d: TranscriptionProcessorDeps) {
   return async function process(job: TranscriptionJob): Promise<void> {
-    const { orgId, contactId, conversationId, messageRowId, instanceId, audio } = job.data;
-    const flushPayload: WhatsappFlushPayload = { orgId, contactId, conversationId };
+    const { orgId, ref, conversationId, messageRowId, instanceId, audio } = job.data;
+    const flushPayload: WhatsappFlushPayload = { orgId, conversationId, ref };
     // settle = destrava a flag + re-agenda o flush. Best-effort: nunca re-lança (uma
     // falha aqui NÃO pode virar retry → re-transcrição paga). O backstop `.on("failed")`
     // cobre o caso raro do job morrer antes daqui.
@@ -136,7 +138,7 @@ export function makeTranscriptionProcessor(d: TranscriptionProcessorDeps) {
       d.logger.warn({ conversationId, err: String(err) }, "transcription:falhou");
       try {
         await d.repo.updateMessageContent(messageRowId, null, { transcribing: false, error: errorKind(err) });
-        await audioNotice(d, conversationId, contactId, AUDIO_FAILED_NOTICE);
+        await audioNotice(d, conversationId, ref, AUDIO_FAILED_NOTICE);
       } catch (e) {
         d.logger.warn({ conversationId, err: String(e) }, "transcription:fail_persist_falhou");
       }
@@ -147,13 +149,13 @@ export function makeTranscriptionProcessor(d: TranscriptionProcessorDeps) {
     // ── FASE 2: pós-transcrição. JÁ pagamos — persistência é BEST-EFFORT, nunca re-lança
     //    (uma falha aqui não pode re-executar o job e re-cobrar a transcrição). ──
     try {
-      await recordUsage(d, { orgId, conversationId, contactId, result });
+      await recordUsage(d, { orgId, conversationId, ref, result });
       if (result.costUsd == null) d.logger.warn({ conversationId, model: result.model }, "transcription:custo_ausente");
       const durationPatch = result.durationSec != null ? { durationSec: result.durationSec } : {};
       const text = result.text.trim();
       if (text.length === 0) {
         await d.repo.updateMessageContent(messageRowId, null, { transcribing: false, empty: true, ...durationPatch });
-        await audioNotice(d, conversationId, contactId, AUDIO_EMPTY_NOTICE);
+        await audioNotice(d, conversationId, ref, AUDIO_EMPTY_NOTICE);
       } else {
         await d.repo.updateMessageContent(messageRowId, text, { transcribing: false, ...durationPatch });
         await pushInbound(d.redis, conversationId, text, d.debounceSeconds + BUFFER_TTL_MARGIN_SEC);
@@ -168,7 +170,7 @@ export function makeTranscriptionProcessor(d: TranscriptionProcessorDeps) {
 /** Start do worker BullMQ (composition injeta deps; connection = conexão dos Workers). */
 export function startWhatsappTranscriptionWorker(deps: WorkerDeps, connection: Redis): Worker<WhatsappTranscriptionPayload> {
   const repo = createNotifyRepo(deps.db);
-  const sendToContact = createSendToContact({ messaging: deps.ports.messaging, repo });
+  const sendToConversation = createSendToConversation({ messaging: deps.ports.messaging, repo });
   const flushQueue = new Queue<WhatsappFlushPayload>(WHATSAPP_FLUSH_QUEUE, { connection });
   const process = makeTranscriptionProcessor({
     transcription: deps.ports.transcription,
@@ -176,7 +178,7 @@ export function startWhatsappTranscriptionWorker(deps: WorkerDeps, connection: R
     metering: deps.ports.metering,
     redis: deps.redis,
     flushQueue,
-    sendToContact,
+    sendToConversation,
     repo,
     logger: deps.logger,
     debounceSeconds: deps.conversation.debounceSeconds,
@@ -191,10 +193,10 @@ export function startWhatsappTranscriptionWorker(deps: WorkerDeps, connection: R
   // e re-agenda o flush — senão o transcript+texto ficariam presos (§9 nunca-silêncio).
   worker.on("failed", (job) => {
     if (!job) return;
-    const { orgId, contactId, conversationId } = job.data;
+    const { orgId, ref, conversationId } = job.data;
     void (async () => {
       await unmarkTranscribing(deps.redis, conversationId).catch(() => {});
-      await scheduleConversationFlush(flushQueue, { orgId, contactId, conversationId }, deps.conversation.debounceSeconds * 1000).catch(() => {});
+      await scheduleConversationFlush(flushQueue, { orgId, conversationId, ref }, deps.conversation.debounceSeconds * 1000).catch(() => {});
     })();
   });
   return worker;

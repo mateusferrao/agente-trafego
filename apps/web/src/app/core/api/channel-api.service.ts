@@ -3,11 +3,14 @@ import type { Observable } from 'rxjs';
 import { BaseApiService } from './base-api.service';
 import { silentApiContext } from './api-request.interceptor';
 import type {
+  ChannelGroupStateOutput,
   ChannelStateOutput,
   ConfirmVerificationInput,
   ConfirmVerificationOutput,
+  GroupsListOutput,
   RecipientOutput,
   RemoveRecipientOutput,
+  SetGroupInput,
   StartVerificationInput,
   StartVerificationOutput,
 } from './generated';
@@ -38,6 +41,27 @@ export class ChannelApiService extends BaseApiService {
       ['/channels', 'status'],
       silent ? { context: silentApiContext() } : {},
     );
+  }
+
+  /**
+   * `GET /api/channels/groups` — grupos que o número já integra + o ativo da org
+   * (se algum). `silent`: carga de fundo ao abrir a tela.
+   */
+  listGroups(silent = false): Observable<GroupsListOutput> {
+    return this.get<GroupsListOutput>(
+      ['/channels', 'groups'],
+      silent ? { context: silentApiContext() } : {},
+    );
+  }
+
+  /** `PUT /api/channels/group` — define/ativa o grupo (1 por org, como o número). */
+  setGroup(input: SetGroupInput): Observable<ChannelGroupStateOutput> {
+    return this.put<ChannelGroupStateOutput, SetGroupInput>(['/channels', 'group'], input);
+  }
+
+  /** `DELETE /api/channels/group` — desliga o grupo (soft, mantém o registro). */
+  disableGroup(): Observable<ChannelGroupStateOutput> {
+    return this.delete<ChannelGroupStateOutput>(['/channels', 'group']);
   }
 
   /** `POST /api/contacts/verify/start` — envia o código pelo WhatsApp. */

@@ -1,4 +1,4 @@
-import type { InboundMessage, MediaMessageKey } from "@trafego/shared/ports";
+import type { InboundGroupContext, InboundMessage, MediaMessageKey } from "@trafego/shared/ports";
 
 /**
  * Normalização do payload cru do webhook da Evolution → `InboundMessage`.
@@ -9,7 +9,7 @@ import type { InboundMessage, MediaMessageKey } from "@trafego/shared/ports";
  * Funções PURAS (sem IO) — testadas sem mock.
  */
 
-/** Sufixo de JID de grupo (ignoramos grupos). */
+/** Sufixo de JID de grupo (@g.us). */
 const GROUP_SUFFIX = "@g.us";
 /** Faixa de dígitos válida p/ DDI+telefone (defensivo contra JIDs estranhos). */
 const PHONE_MIN_DIGITS = 8;
@@ -48,6 +48,49 @@ export function jidToE164(jid: string): string | null {
   if (jid.endsWith(GROUP_SUFFIX)) return null;
   const digits = (jid.split("@")[0] ?? "").replace(/\D/g, "");
   return digits.length >= PHONE_MIN_DIGITS && digits.length <= PHONE_MAX_DIGITS ? `+${digits}` : null;
+}
+
+/**
+ * Nós de mensagem que podem carregar `contextInfo` (@menção/reply): texto vira
+ * `extendedTextMessage` quando tem contexto; mídia (áudio incl. — WhatsApp não permite
+ * @menção em áudio, então reply é o ÚNICO jeito de dirigir o bot por nota de voz) carrega
+ * o `contextInfo` DIRETO no próprio nó de tipo, não em `extendedTextMessage`.
+ */
+const CONTEXT_INFO_NODES = [
+  "extendedTextMessage",
+  "audioMessage",
+  "imageMessage",
+  "videoMessage",
+  "documentMessage",
+  "stickerMessage",
+] as const;
+
+function findContextInfo(message: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!message) return null;
+  for (const node of CONTEXT_INFO_NODES) {
+    const ctx = asRecord(asRecord(message[node])?.["contextInfo"]);
+    if (ctx) return ctx;
+  }
+  return null;
+}
+
+/**
+ * Monta o contexto NEUTRO de grupo: telefones mencionados (@) e autor da mensagem
+ * citada (reply). O adapter NÃO decide se a mensagem "dirige" o bot — isso é IO na
+ * casca (compara com o telefone da instância).
+ */
+function buildGroupContext(
+  groupJid: string,
+  senderPhone: string,
+  message: Record<string, unknown> | null,
+): InboundGroupContext {
+  const ctx = findContextInfo(message);
+  const mentionedRaw = Array.isArray(ctx?.["mentionedJid"]) ? (ctx["mentionedJid"] as unknown[]) : [];
+  const mentionedPhones = mentionedRaw
+    .map((j) => (typeof j === "string" ? jidToE164(j) : null))
+    .filter((p): p is string => p !== null);
+  const quotedAuthorPhone = typeof ctx?.["participant"] === "string" ? jidToE164(ctx["participant"] as string) : null;
+  return { groupJid, senderPhone, mentionedPhones, quotedAuthorPhone };
 }
 
 /**
@@ -122,23 +165,44 @@ export function parseInbound(payload: unknown): InboundMessage | null {
   if (!data || !key) return null;
   if (key["fromMe"] === true) return null; // nossa própria mensagem
 
-  const from = jidToE164(typeof key["remoteJid"] === "string" ? (key["remoteJid"] as string) : "");
-  if (!from) return null; // grupo / JID inválido
+  const remoteJid = typeof key["remoteJid"] === "string" ? (key["remoteJid"] as string) : "";
+  const message = asRecord(data["message"]);
+
+  // Grupo (@g.us): o remetente é o `participant`, não o `remoteJid` (que é o grupo).
+  // Sem participant identificável não dá pra rotear → ignora.
+  let from: string | null;
+  let group: InboundGroupContext | undefined;
+  if (remoteJid.endsWith(GROUP_SUFFIX)) {
+    const senderPhone = jidToE164(typeof key["participant"] === "string" ? (key["participant"] as string) : "");
+    if (!senderPhone) return null;
+    from = senderPhone;
+    group = buildGroupContext(remoteJid, senderPhone, message);
+  } else {
+    from = jidToE164(remoteJid);
+    if (!from) return null; // JID inválido
+  }
 
   const messageId = key["id"];
   if (typeof messageId !== "string" || messageId.length === 0) return null;
   const instanceId = root["instance"];
   if (typeof instanceId !== "string" || instanceId.length === 0) return null;
 
-  const base = { instanceId, from, messageId, raw: root } as const;
-  const message = asRecord(data["message"]);
+  const base = { instanceId, from, messageId, raw: root, ...(group ? { group } : {}) } as const;
 
   const text = extractText(message);
   if (text) return { ...base, kind: "text", text };
 
   const audio = extractAudio(data);
   if (audio) {
-    const messageKey: MediaMessageKey = { id: messageId, remoteJid: key["remoteJid"] as string, fromMe: false };
+    // Mídia de grupo: a Evolution exige `participant` (JID de quem mandou dentro do
+    // grupo) na key p/ o fallback `getBase64FromMediaMessage` — doc oficial.
+    const participant = group && typeof key["participant"] === "string" ? (key["participant"] as string) : undefined;
+    const messageKey: MediaMessageKey = {
+      id: messageId,
+      remoteJid: key["remoteJid"] as string,
+      fromMe: false,
+      ...(participant ? { participant } : {}),
+    };
     return { ...base, kind: "audio", audio, messageKey };
   }
 
