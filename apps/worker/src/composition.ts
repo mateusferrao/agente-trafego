@@ -81,6 +81,7 @@ export interface WorkerDeps {
   };
   /** Cadência da expiração de aprovações (5b) — varre pendentes vencidas (24h). */
   readonly approvalExpiryCron: string;
+  readonly groupContextPurgeCron: string;
   /** Cap default global de custo LLM por org/período (env). Cap por-org = guardrail_configs. */
   readonly costCapUsd: number;
   /** Config do chat do WhatsApp (Grafo B ReAct, 5b-2). Modelo = fallback (agente vence). */
@@ -279,6 +280,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
       cron: env.ANALYSIS_REAPER_CRON,
     },
     approvalExpiryCron: env.APPROVAL_EXPIRY_CRON,
+    groupContextPurgeCron: env.GROUP_CONTEXT_PURGE_CRON,
     costCapUsd: env.LLM_COST_CAP_USD_PER_PERIOD,
     conversation: {
       model: env.CONVERSATION_MODEL,

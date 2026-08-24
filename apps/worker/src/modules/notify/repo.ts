@@ -4,7 +4,7 @@
 // resolve o contato pelo (instância, telefone), dedupa por messageId e grava
 // a conversa/mensagem inbound.
 
-import { and, desc, eq, gte, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { adAccounts, agents, channelGroups, channelInstances, contacts, conversations, groupMessages, messages, type Database } from "@trafego/db";
 import { brPhoneVariants, type ConversationRef } from "@trafego/shared";
 import type { GroupTranscriptEntry } from "@trafego/core";
@@ -102,6 +102,8 @@ export interface NotifyRepo {
    * `since` (tempo) + `limit` (teto de segurança; a função pura aplica os caps finais).
    */
   loadGroupTranscriptSources(orgId: string, groupId: string, since: Date, limit: number): Promise<GroupTranscriptEntry[]>;
+  /** Apaga mensagens ambiente de grupo criadas antes de `cutoff` (retenção/LGPD). Devolve o nº apagado. */
+  purgeGroupMessagesBefore(cutoff: Date): Promise<number>;
   /** Alvo de envio a um grupo: instância conectada da org + JID do grupo. */
   resolveGroupTarget(groupId: string): Promise<GroupTarget | null>;
 }
@@ -362,6 +364,15 @@ export function createNotifyRepo(db: Database): NotifyRepo {
         .limit(limit);
 
       return [...ambient, ...directed].map((r) => ({ ...r, fromBot: false }));
+    },
+
+    /** Purge de retenção do contexto ambiente de grupo (global — a janela vale p/ toda org). */
+    async purgeGroupMessagesBefore(cutoff) {
+      const deleted = await db
+        .delete(groupMessages)
+        .where(lt(groupMessages.createdAt, cutoff))
+        .returning({ id: groupMessages.id });
+      return deleted.length;
     },
 
     /** JID do grupo + instância conectada da sua org. */

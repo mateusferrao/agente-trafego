@@ -47,6 +47,14 @@ export const APPROVAL_EXPIRY_SCHEDULE_KEY = "expiry:approvals";
 export type ApprovalExpiryTickPayload = Record<string, never>;
 
 /**
+ * Fila de PURGE do contexto de grupo (retenção/LGPD): um Job Scheduler recorrente (diário)
+ * enfileira aqui; o worker apaga as mensagens ambiente de grupo além da janela de retenção.
+ */
+export const GROUP_CONTEXT_PURGE_QUEUE = "group-context-purge";
+export const GROUP_CONTEXT_PURGE_SCHEDULE_KEY = "purge:group-context";
+export type GroupContextPurgeTickPayload = Record<string, never>;
+
+/**
  * Fila de RE-SYNC do schedule (Fatia 4 corte 2): a API só persiste a cadência e
  * enfileira aqui; o WORKER (dono único do scheduler) recarrega o `CadenceSpec` da
  * conta + o fuso da org, deriva o cron e faz upsert/remove. Mantém a API fora do

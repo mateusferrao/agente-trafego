@@ -13,6 +13,8 @@ import {
   AGENT_REAPER_SCHEDULE_KEY,
   APPROVAL_EXPIRY_QUEUE,
   APPROVAL_EXPIRY_SCHEDULE_KEY,
+  GROUP_CONTEXT_PURGE_QUEUE,
+  GROUP_CONTEXT_PURGE_SCHEDULE_KEY,
   INSIGHTS_SWEEP_QUEUE,
   INSIGHTS_SWEEP_SCHEDULE_KEY,
   pulseScheduleKey,
@@ -134,6 +136,17 @@ export function makeAccountCron(deps: WorkerDeps) {
     });
   }
 
+  /** Garante o scheduler recorrente do purge do contexto de grupo (singleton — retenção/LGPD). */
+  async function ensureGroupContextPurgeSchedule(): Promise<void> {
+    await scheduler.upsertSchedule({
+      key: GROUP_CONTEXT_PURGE_SCHEDULE_KEY,
+      queue: GROUP_CONTEXT_PURGE_QUEUE,
+      cron: deps.groupContextPurgeCron,
+      tz: deps.cron.tz,
+      payload: {},
+    });
+  }
+
   /** cron derivado do `CadenceSpec` (fonte única) ou o default global (env). */
   function cronFor(cadence: CadenceSpec | null): string {
     return cadence ? cadenceToCron(cadence) : deps.cron.defaultCron;
@@ -218,6 +231,7 @@ export function makeAccountCron(deps: WorkerDeps) {
     removeAccountSchedule,
     ensureReaperSchedule,
     ensureApprovalExpirySchedule,
+    ensureGroupContextPurgeSchedule,
     ensureInsightsSweepSchedule,
     syncAllFromDb,
     resyncAccountSchedule,

@@ -249,6 +249,8 @@ export const envSchema = z.object({
   // Staleness do foco de conta (org multi-conta): foco cujo último uso passou desse TTL
   // perde precedência — no grupo cai no contexto ambiente, na DM cai em "qual conta?".
   CONVERSATION_FOCUS_TTL_HOURS: z.coerce.number().int().positive().default(12),
+  // Cron do purge do contexto ambiente de grupo (retenção/LGPD) — diário (default 04:00).
+  GROUP_CONTEXT_PURGE_CRON: z.string().min(1).default("0 4 * * *"),
   // TTL (s) do cache do mapa LID→telefone dos participantes de um grupo — resolve
   // menção/reply endereçada por LID (grupo migrado, WhatsApp addressingMode "lid")
   // quando o telefone de quem foi mencionado/citado não vem direto no payload da

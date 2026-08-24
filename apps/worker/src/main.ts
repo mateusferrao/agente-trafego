@@ -13,6 +13,7 @@ import { startScheduleResyncWorker } from "./workers/schedule-resync.js";
 import { startActionUndoWorker } from "./workers/action-undo.js";
 import { startApprovalApplyWorker } from "./workers/approval-apply.js";
 import { startApprovalExpiryWorker } from "./workers/approval-expiry.js";
+import { startGroupContextPurgeWorker } from "./workers/group-context-purge.js";
 import { startWebhookInboundWorker } from "./workers/webhook-inbound.js";
 import { startWhatsappFlushWorker } from "./workers/whatsapp-flush.js";
 import { startWhatsappTranscriptionWorker } from "./workers/whatsapp-transcription.js";
@@ -50,6 +51,8 @@ async function main(): Promise<void> {
   const approvalApply = startApprovalApplyWorker(deps, connection);
   // expiração de aprovações (5b): tick recorrente marca as pendentes vencidas (24h).
   const approvalExpiry = startApprovalExpiryWorker(deps, connection);
+  // purge de retenção do contexto ambiente de grupo (LGPD) — tick recorrente diário.
+  const groupContextPurge = startGroupContextPurgeWorker(deps, connection);
 
   // inbound do WhatsApp (5b-2): a API valida o secret da instância e enfileira o
   // payload cru; aqui normaliza, resolve contato verificado e responde.
@@ -72,6 +75,9 @@ async function main(): Promise<void> {
     .ensureApprovalExpirySchedule()
     .catch((err: unknown) => logger.error({ err }, "approval-expiry:schedule falhou"));
   await cron
+    .ensureGroupContextPurgeSchedule()
+    .catch((err: unknown) => logger.error({ err }, "group-context-purge:schedule falhou"));
+  await cron
     .ensureInsightsSweepSchedule()
     .catch((err: unknown) => logger.error({ err }, "insights-sweep:schedule falhou"));
   await createRunReaper({ db: deps.db, logger, staleMinutes: deps.reaper.staleMinutes })
@@ -92,6 +98,7 @@ async function main(): Promise<void> {
       actionUndo.close(),
       approvalApply.close(),
       approvalExpiry.close(),
+      groupContextPurge.close(),
       webhookInbound.close(),
       whatsappFlush.close(),
       whatsappTranscription.close(),
