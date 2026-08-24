@@ -45,7 +45,11 @@ export class UiDialogOverlay {}
     },
   ],
   host: {
-    class: 'glass-surface w-full max-w-lg rounded-xl border border-line bg-panel p-5 text-ink shadow-panel',
+    // max-h + overflow-y-auto: sem isso, um painel mais alto que a viewport fica
+    // centralizado pelo overlay (place-items-center num fixed inset-0) com o excesso
+    // pra fora dos dois lados — inacessível, nem rolando (bug clássico de centralização
+    // flex/grid + overflow). dvh cobre mobile com barra de endereço dinâmica.
+    class: 'glass-surface w-full max-w-lg rounded-xl border border-line bg-panel p-5 text-ink shadow-panel max-h-[90dvh] overflow-y-auto',
   },
 })
 export class UiDialog {}
