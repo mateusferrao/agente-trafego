@@ -11,6 +11,10 @@ import type { InboundGroupContext, InboundMessage, MediaMessageKey } from "@traf
 
 /** Sufixo de JID de grupo (@g.us). */
 const GROUP_SUFFIX = "@g.us";
+/** Sufixo de JID por-id-interno (LID) — grupos migrados (`addressingMode: "lid"` no
+ *  payload) endereçam participantes por um id opaco, não pelo telefone. LID não é
+ *  reversível pra telefone (não é derivado dele) — nunca tratar como E.164. */
+const LID_SUFFIX = "@lid";
 /** Faixa de dígitos válida p/ DDI+telefone (defensivo contra JIDs estranhos). */
 const PHONE_MIN_DIGITS = 8;
 const PHONE_MAX_DIGITS = 15;
@@ -42,10 +46,10 @@ function extractText(message: Record<string, unknown> | null): string | null {
   return null;
 }
 
-/** Converte um JID do WhatsApp (55...@s.whatsapp.net) em telefone E.164. Grupo/inválido → null. */
+/** Converte um JID do WhatsApp (55...@s.whatsapp.net) em telefone E.164. Grupo/LID/inválido → null. */
 export function jidToE164(jid: string): string | null {
   if (typeof jid !== "string" || jid.length === 0) return null;
-  if (jid.endsWith(GROUP_SUFFIX)) return null;
+  if (jid.endsWith(GROUP_SUFFIX) || jid.endsWith(LID_SUFFIX)) return null;
   const digits = (jid.split("@")[0] ?? "").replace(/\D/g, "");
   return digits.length >= PHONE_MIN_DIGITS && digits.length <= PHONE_MAX_DIGITS ? `+${digits}` : null;
 }
@@ -65,7 +69,18 @@ const CONTEXT_INFO_NODES = [
   "stickerMessage",
 ] as const;
 
-function findContextInfo(message: Record<string, unknown> | null): Record<string, unknown> | null {
+/**
+ * `contextInfo` (menção @ / reply) vem como IRMÃO de `message` dentro de `data` na
+ * Evolution — não aninhado em `message.extendedTextMessage.contextInfo` como no
+ * Baileys puro (observado em produção). Checa esse local primeiro; mantém o
+ * fallback aninhado por robustez a outras versões/formas do payload.
+ */
+function findContextInfo(
+  data: Record<string, unknown>,
+  message: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  const direct = asRecord(data["contextInfo"]);
+  if (direct) return direct;
   if (!message) return null;
   for (const node of CONTEXT_INFO_NODES) {
     const ctx = asRecord(asRecord(message[node])?.["contextInfo"]);
@@ -82,9 +97,10 @@ function findContextInfo(message: Record<string, unknown> | null): Record<string
 function buildGroupContext(
   groupJid: string,
   senderPhone: string,
+  data: Record<string, unknown>,
   message: Record<string, unknown> | null,
 ): InboundGroupContext {
-  const ctx = findContextInfo(message);
+  const ctx = findContextInfo(data, message);
   const mentionedRaw = Array.isArray(ctx?.["mentionedJid"]) ? (ctx["mentionedJid"] as unknown[]) : [];
   const mentionedPhones = mentionedRaw
     .map((j) => (typeof j === "string" ? jidToE164(j) : null))
@@ -169,14 +185,21 @@ export function parseInbound(payload: unknown): InboundMessage | null {
   const message = asRecord(data["message"]);
 
   // Grupo (@g.us): o remetente é o `participant`, não o `remoteJid` (que é o grupo).
-  // Sem participant identificável não dá pra rotear → ignora.
+  // Em grupo migrado pra LID (`addressingMode: "lid"`), `participant` vem como
+  // `@lid` (id opaco, não telefone) — a Evolution revela o telefone REAL de quem
+  // manda em `participantAlt` (privacidade: só o SEU telefone é revelado a quem
+  // recebe sua mensagem; terceiros mencionados/citados continuam só como LID).
+  // Prefere Alt; cai pro participant puro (grupo não-LID, onde já é phone-based).
+  // Sem telefone identificável não dá pra rotear → ignora.
   let from: string | null;
   let group: InboundGroupContext | undefined;
   if (remoteJid.endsWith(GROUP_SUFFIX)) {
-    const senderPhone = jidToE164(typeof key["participant"] === "string" ? (key["participant"] as string) : "");
+    const participantAlt = typeof key["participantAlt"] === "string" ? (key["participantAlt"] as string) : "";
+    const participant = typeof key["participant"] === "string" ? (key["participant"] as string) : "";
+    const senderPhone = jidToE164(participantAlt) ?? jidToE164(participant);
     if (!senderPhone) return null;
     from = senderPhone;
-    group = buildGroupContext(remoteJid, senderPhone, message);
+    group = buildGroupContext(remoteJid, senderPhone, data, message);
   } else {
     from = jidToE164(remoteJid);
     if (!from) return null; // JID inválido
