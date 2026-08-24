@@ -48,8 +48,10 @@ export class UiDialogOverlay {}
     // max-h + overflow-y-auto: sem isso, um painel mais alto que a viewport fica
     // centralizado pelo overlay (place-items-center num fixed inset-0) com o excesso
     // pra fora dos dois lados — inacessível, nem rolando (bug clássico de centralização
-    // flex/grid + overflow). dvh cobre mobile com barra de endereço dinâmica.
-    class: 'glass-surface w-full max-w-lg rounded-xl border border-line bg-panel p-5 text-ink shadow-panel max-h-[90dvh] overflow-y-auto',
+    // flex/grid + overflow). `vh` (não `dvh`): suporte universal — `dvh` some no parser
+    // CSS de navegador que não a reconhece, descartando a declaração inteira e
+    // reproduzindo o bug (observado em produção).
+    class: 'glass-surface w-full max-w-lg rounded-xl border border-line bg-panel p-5 text-ink shadow-panel max-h-[90vh] overflow-y-auto',
   },
 })
 export class UiDialog {}
