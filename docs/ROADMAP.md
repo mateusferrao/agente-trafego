@@ -482,9 +482,9 @@ email_verified_at) · `0018` (índice created_at). **Backfill = script one-time*
   billing owner-only enforçado no backend (hoje só nav esconde); backup via script + `StoragePort`;
   domínio de email próprio do produto + IAM não-root; health endpoint do worker; prune de orgs órfãs.
 
-## Comunicação WhatsApp — fluidez + percepção de valor + proatividade (em entrega)
+## Comunicação WhatsApp — fluidez + percepção de valor + proatividade (entregue)
 
-Melhoria da comunicação do agente no WhatsApp: parecer conversa humana no padrão do canal e liderar pela percepção de valor. Fatiado (F1→F4).
+Melhoria da comunicação do agente no WhatsApp: parecer conversa humana no padrão do canal e liderar pela percepção de valor. Fatiado (F1→F4) — **entregue por completo**.
 
 **Entregue:**
 - **F1 — fluidez de entrega (determinística, independe do modelo):** `sanitizeWhatsappText` (core: `**`→`*`, títulos, bullets estritos, links, tachado; idempotente) + split por **fronteira natural** (parágrafo→frase, nunca corta frase; `WHATSAPP_SOFT_MAX_CHARS`~600; cap 5) + porta neutra `typingHintMs` traduzida a `presence:composing`+`delay` **só no adapter** Evolution + orquestração em `send-to-contact` (sanitiza→split→"digitando…" proporcional por balão).
@@ -493,13 +493,14 @@ Melhoria da comunicação do agente no WhatsApp: parecer conversa humana no padr
 - **F4a — config:** `NotifyPolicy` (pulse/alerts/runPush) + coluna `agents.notify_policy` (default conservador) + defaults semeados por arquétipo.
 - **F4b — pulso:** scheduler `pulse:{id}` (cadência própria) + worker que resume do último run (`composePulseOverview`, sem rerun) com **dedupe** (não cola no push).
 - **F4c — alerta:** `detectMaterialChange` (core, D-1 fechado vs baseline; temporal, complementa o cross-sectional `detectAnomalies`) + gate barato no `insights-sync` (throttle + política) → dispara run `trigger=signal` **dirigido** (o `SignalFinding` injeta no prompt do analista via `describeSignal`); a análise é a autoridade (falso positivo → silêncio).
+- **F4d — controle por chat + site.** `resolveAgentConfigChange` (core) ganha `notifyPolicy` (leaf-merge via `NotifyPolicyPatch` flat, mesmo padrão de `GuardrailConfigPatch`); eco determinístico em PT. Chat: tool `set_notifications` no Grafo B (eco+confirma, gated pelo kill-switch `autoConfigViaChat`), traduzida pra `configPatchFromToolCall` — flui pelo pipeline genérico de config, sem tocar em `nodes.ts`. Site: `agentConfigInput`/`agentSummary` ganham `notifyPolicy` (DTO por sub-objeto pulse/alerts/runPush), novo componente `AgentNotifications` (Angular, mesmo padrão self-contained de `AgentAutonomy`/`AgentGuardrails`) na superfície `/accounts/:id/agente`, logo após a cadência da análise. De quebra, fechou uma lacuna real da F4a: `defaultNotifyPolicy` do arquétipo nunca era aplicado (nem na criação do agente nem no reseed) — agora a criação semeia e o `reseedArchetypeChange` reseta `notifyPolicy` pro arquétipo escolhido (mesma semântica incondicional da autonomia).
 
 **Fast-follows registrados:**
-- **[F4d] Controle da proatividade por chat + site** — tool `set_notifications` (Grafo B + `@trafego/agent-config` estendendo `resolveAgentConfigChange` p/ `notifyPolicy`) e campos no `agentConfigInput`/`updateConfig` + UI do Agente (Angular). Hoje a política é semeada por arquétipo (editável só no banco).
 - **Reenvio idempotente/outbox do chat** — F2 só isola o envio; persistir a resposta e reenviar quando a Evolution volta fica adiado.
 - **Outbound em fila dedicada** — o `delay` nativo da Evolution bloqueia a request; mover envio p/ worker/fila própria se o volume crescer.
 - **Alerta intradiário** — a detecção é D-1 (atribuição do Meta incompleta no dia corrente); checagem no mesmo dia (granularidade hora) fica adiada. Intradiário de lançamento é coberto pelo cron 2×/dia + "analisa agora".
 - **Modo silencioso / teto global de proatividade** — controle único p/ conter pulso+push+alerta por conta/dia.
+- **Editor de cadência compartilhado (web)** — o editor de `CadenceSpec` (kind/hour/weekday/cron) hoje existe 2× (cadência da análise em `agent-config-page.ts`, cadência do pulso em `agent-notifications.ts`), cada um com sua cópia de `HOUR_OPTIONS`/`WEEKDAY_OPTIONS`. Extrair um componente `app-cadence-editor` reusável em `shared/ui` quando aparecer o 3º uso (§13 reuso-primeiro).
 - **Dedupe do alerta no fuso da org** — o piso de "≤1/dia" do throttle é em UTC (alinhado ao módulo); na virada de meia-noite UTC pode escapar 1 alerta extra. Ancorar no fuso da org.
 - **Pulso: disparar run quando o último é velho** — hoje o pulso cala (`skipped_stale`) se o último run `succeeded` passa de 48h; alternativa é disparar um run leve p/ ter dado fresco.
 - **Backfill do `notify_policy` por arquétipo** nos agentes já criados (hoje ficam no default de coluna).
