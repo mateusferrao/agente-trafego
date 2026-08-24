@@ -355,6 +355,7 @@ export function makeConversationNodes(
       ctx.ref.groupId,
       since,
       conv.groupContextMaxMessages,
+      ctx.ref.participantPhone, // exclui as dirigidas do próprio participante (já no state.messages)
     );
     const transcript = buildGroupTranscript(sources, {
       now,

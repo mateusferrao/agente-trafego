@@ -4,7 +4,7 @@
 // resolve o contato pelo (instância, telefone), dedupa por messageId e grava
 // a conversa/mensagem inbound.
 
-import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, ne, sql } from "drizzle-orm";
 import { adAccounts, agents, channelGroups, channelInstances, contacts, conversations, groupMessages, messages, type Database } from "@trafego/db";
 import { brPhoneVariants, type ConversationRef } from "@trafego/shared";
 import type { GroupTranscriptEntry } from "@trafego/core";
@@ -100,8 +100,16 @@ export interface NotifyRepo {
    * com autor do participante + pushName do meta). Corpo nulo (áudio em transcrição /
    * mídia dirigida) é excluído. Outbound do bot no transcript = fast-follow. Janela por
    * `since` (tempo) + `limit` (teto de segurança; a função pura aplica os caps finais).
+   * `excludeParticipantPhone`: exclui as DIRIGIDAS desse participante (já vêm no `state.messages`
+   * do turno dele — inclusive a mensagem atual, que senão apareceria rotulada como "contexto passado").
    */
-  loadGroupTranscriptSources(orgId: string, groupId: string, since: Date, limit: number): Promise<GroupTranscriptEntry[]>;
+  loadGroupTranscriptSources(
+    orgId: string,
+    groupId: string,
+    since: Date,
+    limit: number,
+    excludeParticipantPhone?: string | null,
+  ): Promise<GroupTranscriptEntry[]>;
   /** Apaga mensagens ambiente de grupo criadas antes de `cutoff` (retenção/LGPD). Devolve o nº apagado. */
   purgeGroupMessagesBefore(cutoff: Date): Promise<number>;
   /** Alvo de envio a um grupo: instância conectada da org + JID do grupo. */
@@ -329,7 +337,7 @@ export function createNotifyRepo(db: Database): NotifyRepo {
     },
 
     /** Ambiente (group_messages) + dirigidas inbound (messages do grupo) na janela `since`. */
-    async loadGroupTranscriptSources(orgId, groupId, since, limit) {
+    async loadGroupTranscriptSources(orgId, groupId, since, limit, excludeParticipantPhone) {
       const ambient = await db
         .select({
           authorPhone: groupMessages.authorPhone,
@@ -358,6 +366,9 @@ export function createNotifyRepo(db: Database): NotifyRepo {
             eq(messages.direction, "inbound"),
             isNotNull(messages.body),
             gte(messages.createdAt, since),
+            // as dirigidas do participante corrente já vêm no state.messages do turno dele
+            // (inclusive a msg atual) — excluir evita dupla contagem/"contexto passado" falso.
+            ...(excludeParticipantPhone ? [ne(conversations.participantPhone, excludeParticipantPhone)] : []),
           ),
         )
         .orderBy(desc(messages.createdAt))

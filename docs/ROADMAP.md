@@ -525,8 +525,8 @@ vez de duplicar lógica. Fatiado (G0→G4) — **entregue por completo**.
   estar registrado+ativo; **sem verificação de membro** (a adesão ao grupo é a fronteira
   de confiança — diferente do DM). Só processa se **dirigido** (`isAddressedToBot`, puro:
   @menção OU reply à msg do bot, comparado ao telefone da instância); não-dirigido ignora
-  e **não persiste** por padrão (`TRAFEGO_GROUP_INGEST_CONTEXT`, default off, ingere como
-  contexto quando ligado). Thread **por-(grupo,participante)** — reuso *verbatim* do
+  e **não persistia** por padrão (`TRAFEGO_GROUP_INGEST_CONTEXT` — no **G7** virou default ON
+  + kill-switch de plataforma; ver G7 abaixo). Thread **por-(grupo,participante)** — reuso *verbatim* do
   concierge/`set_focus`/foco da DM (todas as contas da org) dá "só o iniciador confirma" e
   foco por participante **de graça**, sem lógica nova. Áudio em grupo funciona igual (a
   Evolution exige `participant` na key de mídia de grupo — `MediaMessageKey.participant`).
@@ -600,6 +600,17 @@ vez de duplicar lógica. Fatiado (G0→G4) — **entregue por completo**.
 - **Aviso de transparência** no grupo (opt-in futuro — hoje on-by-default silencioso, decisão do dono).
 - **Timezone-aware** no display do transcript (hoje UTC com o "agora" em UTC → delta de recência correto).
 - **Semântica de foco por "setagem"** foi descartada em favor de "último uso" (entregue no G7).
+- **Corrida de tool-calls paralelos** (`set_focus` + read no mesmo passo → a read pega o foco
+  velho): hoje mitigado por orientação na descrição da tool (chamar isolada). Fix robusto =
+  `set_focus` retornar um `Command` que atualize o estado antes das reads concorrentes.
+- **Metering ignora staleness do foco** (`contextAdAccountId` lê `focusedAccountId` cru): um
+  foco stale (que o turno já tratou como concierge) ainda atribui custo à conta stale.
+- **Retenção assimétrica**: o purge cobre só `group_messages` (ambiente); as mensagens de grupo
+  DIRIGIDAS ao bot (em `messages`, com pushName de terceiro no meta) não têm retenção dedicada.
+- **`configViaChat` fica stale** após `set_focus` mutar de conta (só afeta a precisão do
+  `describe_capabilities` no mesmo turno; sem brecha de config).
+- **"foca na B e pausa a X" no mesmo passo**: o batch é roteado ao `confirm` e o `set_focus` não
+  executa (o foco não muda) — money-safe (age no foco vigente), mas o "foca na B" some sem ack.
 
 ## Fatia 7 — Criação de campanhas (roadmap pós-MVP)
 

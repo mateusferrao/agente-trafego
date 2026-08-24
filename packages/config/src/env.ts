@@ -237,7 +237,9 @@ export const envSchema = z.object({
   // o bot (sem @menção/reply) são guardadas como CONTEXTO (transcript ambiente) por padrão
   // quando a org tem grupo registrado. Desligar aqui corta o ingest para todas as orgs.
   // Controle org-facing = fast-follow. Reter/expirar via GROUP_CONTEXT_RETENTION_DAYS.
-  TRAFEGO_GROUP_INGEST_CONTEXT: z.coerce.boolean().default(true),
+  // enum (não z.coerce.boolean): "false" coage p/ true em Boolean() — o kill-switch NÃO
+  // desligaria. Mesmo padrão dos demais booleanos do arquivo.
+  TRAFEGO_GROUP_INGEST_CONTEXT: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
   // Retenção (dias) do dado ambiente de grupo (purge job diário). Contexto usa só o
   // recente, mas o dono optou por manter alinhado à retenção de insights (~90d).
   GROUP_CONTEXT_RETENTION_DAYS: z.coerce.number().int().positive().default(90),

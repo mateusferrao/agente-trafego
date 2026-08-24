@@ -262,6 +262,18 @@ export function makeConversationTools(
         return `${achei} com "${name}":\n${list}${overflow}\nResponde com o número (ex: "1") ou o nome completo.`;
       }
       const acc = match.row;
+      // Resolve o agente ativo da conta ANTES de prometer/persistir: uma conta ativa pode
+      // não ter agente ativo (pausado/draft) — nesse caso não dá pra operar nela, então NÃO
+      // afirmamos foco nem persistimos (senão o próximo turno cairia em concierge "mudo").
+      const [agentRow] = await deps.db
+        .select({ agentId: agents.id })
+        .from(agents)
+        .where(and(eq(agents.orgId, ctx.orgId), eq(agents.adAccountId, acc.id), eq(agents.status, "active")))
+        .limit(1);
+      if (!agentRow) {
+        return `Achei a conta ${acc.name}, mas ela ainda não tem um agente ativo — dá pra ativar no site. Quer focar em outra conta?`;
+      }
+
       await deps.db
         .update(conversations)
         .set({ focusedAccountId: acc.id, focusedAt: new Date() })
@@ -271,23 +283,16 @@ export function makeConversationTools(
       // criado por turno em turn.ts e compartilhado por referência com as demais tools, que
       // leem ctx.* no MOMENTO DA CHAMADA). Sem isso, uma leitura/escrita no mesmo turno após
       // set_focus bateria na conta ANTIGA (o eco diria a nova, a ação iria na velha).
-      const [agentRow] = await deps.db
-        .select({ agentId: agents.id })
-        .from(agents)
-        .where(and(eq(agents.orgId, ctx.orgId), eq(agents.adAccountId, acc.id), eq(agents.status, "active")))
-        .limit(1);
-      if (agentRow) {
-        const mut = ctx as { adAccountId: string; agentId: string; accountName?: string | undefined };
-        mut.adAccountId = acc.id;
-        mut.agentId = agentRow.agentId;
-        mut.accountName = acc.name ?? undefined;
-      }
+      const mut = ctx as { adAccountId: string; agentId: string; accountName?: string | undefined };
+      mut.adAccountId = acc.id;
+      mut.agentId = agentRow.agentId;
+      mut.accountName = acc.name ?? undefined;
       return `Ok, foquei na conta ${acc.name}. O que você quer fazer nela?`;
     },
     {
       name: "set_focus",
       description:
-        "Escolhe a conta em foco desta conversa (org com várias contas). Aceita o NOME (ex: 'foca na Clínica X') ou o ID da conta. Depois disso, leitura e ações passam a ser dessa conta.",
+        "Escolhe a conta em foco desta conversa (org com várias contas). Aceita o NOME (ex: 'foca na Clínica X') ou o ID da conta. Depois disso, leitura e ações passam a ser dessa conta. IMPORTANTE: chame set_focus SOZINHA (sem outra tool no mesmo passo); só depois de focar, faça a leitura/ação no passo seguinte.",
       schema: z.object({ name: z.string().min(1).describe("nome ou id da conta") }),
     },
   );

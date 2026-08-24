@@ -85,13 +85,13 @@ describe("always-bind de leitura em grupo multi-conta (S6)", () => {
 
 describe("set_focus tool (footgun S3: aplica o foco no MESMO turno)", () => {
   const ACC = { id: "acc-B", name: "Clínica B", adAccountId: "act_222" };
-  /** db falso: from(agents) → 1 agente ativo da conta; from(*) → a conta; update → no-op. */
-  function focusDb() {
+  /** db falso: from(agents) → `agentRows`; from(*) → a conta; update → no-op (espionável). */
+  function focusDb(agentRows: unknown[], updateSpy = vi.fn()) {
     let target: unknown[] = [];
     const chain: Record<string, unknown> = {
       select: () => chain,
       from: (t: unknown) => {
-        target = t === agents ? [{ agentId: "ag-B" }] : [ACC];
+        target = t === agents ? agentRows : [ACC];
         return chain;
       },
       innerJoin: () => chain,
@@ -99,32 +99,46 @@ describe("set_focus tool (footgun S3: aplica o foco no MESMO turno)", () => {
       orderBy: () => chain,
       limit: () => chain,
       then: (resolve: (v: unknown[]) => unknown) => resolve(target),
-      update: () => ({ set: () => ({ where: async () => {} }) }),
+      update: () => ({ set: (v: unknown) => { updateSpy(v); return { where: async () => {} }; } }),
     };
     return chain as never;
   }
-
-  it("muta ctx.adAccountId/agentId/accountName na conta nova (turno-local)", async () => {
-    const { deps } = makeDeps(() => null);
-    (deps as { db: unknown }).db = focusDb();
-    const ctx: ConversationToolContext = {
-      orgId: "org-1",
-      agentId: "ag-A",
-      adAccountId: "acc-A",
-      ref: { kind: "group", groupId: "grp-1", participantPhone: "+5511999999999" },
-      conversationId: "cv-1",
-      multiAccount: true,
-    };
-    const setFocus = makeConversationTools(deps, ctx, AGENT_TOOL_NAMES).find((t) => t.name === "set_focus")! as unknown as {
+  const groupCtx = (): ConversationToolContext => ({
+    orgId: "org-1",
+    agentId: "ag-A",
+    adAccountId: "acc-A",
+    ref: { kind: "group", groupId: "grp-1", participantPhone: "+5511999999999" },
+    conversationId: "cv-1",
+    multiAccount: true,
+  });
+  const setFocusTool = (deps: never, ctx: ConversationToolContext) =>
+    makeConversationTools(deps, ctx, AGENT_TOOL_NAMES).find((t) => t.name === "set_focus")! as unknown as {
       invoke: (a: unknown) => Promise<string>;
     };
 
-    const out = await setFocus.invoke({ name: "Clínica B" });
+  it("conta COM agente ativo: muta ctx.adAccountId/agentId/accountName (turno-local)", async () => {
+    const { deps } = makeDeps(() => null);
+    (deps as { db: unknown }).db = focusDb([{ agentId: "ag-B" }]);
+    const ctx = groupCtx();
+    const out = await setFocusTool(deps, ctx).invoke({ name: "Clínica B" });
 
     expect(out).toContain("foquei na conta Clínica B");
     expect(ctx.adAccountId).toBe("acc-B");
     expect(ctx.agentId).toBe("ag-B");
     expect(ctx.accountName).toBe("Clínica B");
+  });
+
+  it("conta SEM agente ativo: não promete nem persiste foco, e não muta o ctx", async () => {
+    const { deps } = makeDeps(() => null);
+    const updateSpy = vi.fn();
+    (deps as { db: unknown }).db = focusDb([], updateSpy);
+    const ctx = groupCtx();
+    const out = await setFocusTool(deps, ctx).invoke({ name: "Clínica B" });
+
+    expect(out).toContain("não tem um agente ativo");
+    expect(updateSpy).not.toHaveBeenCalled(); // não persistiu focusedAccountId
+    expect(ctx.adAccountId).toBe("acc-A"); // ctx intacto
+    expect(ctx.agentId).toBe("ag-A");
   });
 });
 

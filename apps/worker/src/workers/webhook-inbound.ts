@@ -8,7 +8,8 @@
 //      • GRUPO: grupo precisa estar REGISTRADO+ativo (não-registrado → silêncio).
 //        SEM verificação de membro (a adesão ao grupo é a fronteira — §9). Só
 //        processa se DIRIGIDO ao bot (@menção OU reply a msg do bot); não-dirigido
-//        → ignora e NÃO persiste (default) OU vira contexto se `groupIngestContext`.
+//        → vira CONTEXTO ambiente (group_messages, sem turno) quando `groupIngestContext`
+//        (kill-switch de plataforma, default ON); senão, ignora em silêncio.
 // O turno do Grafo B roda no worker de FLUSH (whatsapp-flush.ts) — 1 job por conversa.
 
 import { Queue, Worker } from "bullmq";
@@ -150,9 +151,10 @@ async function routeMessage(
 
 /**
  * Roteia uma mensagem de GRUPO: grupo precisa estar registrado+ativo (senão silêncio).
- * SEM verificação de membro (§9 — a adesão ao grupo é a fronteira). Só processa se
- * DIRIGIDA ao bot (@menção OU reply à msg do bot); não-dirigida → ignora e não
- * persiste (default) ou vira contexto (env `groupIngestContext`, texto apenas).
+ * SEM verificação de membro (§9 — a adesão ao grupo é a fronteira). Só processa (turno) se
+ * DIRIGIDA ao bot (@menção OU reply à msg do bot); não-dirigida → vira CONTEXTO ambiente em
+ * group_messages (texto/placeholder de mídia, sem turno) quando `groupIngestContext` (default
+ * ON); senão, ignora em silêncio.
  */
 async function routeGroupMessage(d: InboundRouterDeps, instanceId: string, inbound: InboundMessage): Promise<void> {
   const group = inbound.group;
