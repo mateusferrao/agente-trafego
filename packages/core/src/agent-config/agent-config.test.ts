@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AutonomyPolicy, GuardrailConfig } from "@trafego/shared";
+import type { AutonomyPolicy, GuardrailConfig, NotifyPolicy } from "@trafego/shared";
 import {
   CONFIG_CHANGE_LABELS,
   CUSTOM_CONVERSION_REQUIRED_ERROR,
@@ -18,6 +18,12 @@ const GUARDRAILS: GuardrailConfig = {
 
 const AUTONOMY: AutonomyPolicy = { bySource: { playbook: "suggest", llm: "suggest" } };
 
+const NOTIFY_POLICY: NotifyPolicy = {
+  pulse: { enabled: false, cadence: { kind: "weekly", weekday: 1, hour: 8 } },
+  alerts: { enabled: false, sensitivity: "normal", throttleHours: 6 },
+  runPush: { enabled: true },
+};
+
 /** Estado base neutro — cada teste sobrescreve o que precisa. */
 function baseState(over: Partial<AgentConfigState> = {}): AgentConfigState {
   return {
@@ -32,6 +38,7 @@ function baseState(over: Partial<AgentConfigState> = {}): AgentConfigState {
     autonomyPolicy: AUTONOMY,
     guardrails: GUARDRAILS,
     modelConfig: {},
+    notifyPolicy: NOTIFY_POLICY,
     ...over,
   };
 }
@@ -181,6 +188,46 @@ describe("resolveAgentConfigChange — weakensSafety", () => {
       guardrails: { ...GUARDRAILS, maxBudgetChangePct: 10, dryRun: true, killSwitch: true },
       autonomyPolicy: { bySource: { playbook: "suggest", llm: "notify" } },
     });
+    expect(r.weakensSafety).toBe(false);
+  });
+});
+
+describe("resolveAgentConfigChange — notifyPolicy (F4d)", () => {
+  it("sem patch de notifyPolicy → preserva o estado (não muda, não marca changed)", () => {
+    const r = resolve(baseState(), { goals: { targetCPA: 50 } });
+    expect(r.next.notifyPolicy).toEqual(NOTIFY_POLICY);
+    expect(r.changed).not.toContain(CONFIG_CHANGE_LABELS.notifyPolicy);
+    expect(r.notifyPolicyChanged).toBe(false);
+  });
+
+  it("liga o pulso preservando a cadência e os demais campos (leaf-merge)", () => {
+    const r = resolve(baseState(), { notifyPolicy: { pulseEnabled: true } });
+    expect(r.next.notifyPolicy).toEqual({
+      pulse: { enabled: true, cadence: NOTIFY_POLICY.pulse.cadence },
+      alerts: NOTIFY_POLICY.alerts,
+      runPush: NOTIFY_POLICY.runPush,
+    });
+    expect(r.changed).toContain(CONFIG_CHANGE_LABELS.notifyPolicy);
+    expect(r.notifyPolicyChanged).toBe(true);
+    expect(r.cadenceChanged).toBe(false); // é a cadência do PULSO, não a da análise
+  });
+
+  it("muda a cadência do pulso e a sensibilidade do alerta no mesmo patch", () => {
+    const r = resolve(baseState(), {
+      notifyPolicy: { pulseCadence: { kind: "daily", hour: 9 }, alertsSensitivity: "high" },
+    });
+    expect(r.next.notifyPolicy.pulse.cadence).toEqual({ kind: "daily", hour: 9 });
+    expect(r.next.notifyPolicy.alerts.sensitivity).toBe("high");
+    expect(r.next.notifyPolicy.alerts.enabled).toBe(false); // não tocado, preserva
+  });
+
+  it("notifyPolicy NÃO conta como runRelevantChanged (não força deep run)", () => {
+    const r = resolve(baseState(), { notifyPolicy: { runPushEnabled: false } });
+    expect(r.runRelevantChanged).toBe(false);
+  });
+
+  it("notifyPolicy NÃO enfraquece a segurança (weakensSafety)", () => {
+    const r = resolve(baseState(), { notifyPolicy: { alertsEnabled: true, pulseEnabled: true } });
     expect(r.weakensSafety).toBe(false);
   });
 });

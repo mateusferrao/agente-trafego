@@ -6,11 +6,13 @@ import type {
   ActionSource,
   ActionType,
   AgentGoals,
+  AlertSensitivity,
   AutonomyLevel,
   AutonomyPolicy,
   CadenceSpec,
   ConversionGoal,
   GuardrailConfig,
+  NotifyPolicy,
 } from "@trafego/shared";
 import {
   ANALYSIS_WINDOW_DEFAULT_DAYS,
@@ -36,6 +38,8 @@ export interface AgentConfigState {
   readonly autonomyPolicy: AutonomyPolicy;
   readonly guardrails: GuardrailConfig;
   readonly modelConfig: Record<string, unknown>;
+  /** Política de notificação proativa (F4d) — pulso/alerta/push. */
+  readonly notifyPolicy: NotifyPolicy;
 }
 
 // Nota: os leaves aceitam `| undefined` de propósito — os patches vêm de DTOs
@@ -74,6 +78,19 @@ export interface ModelConfigPatch {
 }
 
 /**
+ * Notificação proativa (F4d) em formato de patch — leaves FLAT (mesmo padrão de
+ * `GuardrailConfigPatch`): só sobrepõe os campos enviados, resto preserva o atual.
+ */
+export interface NotifyPolicyPatch {
+  readonly pulseEnabled?: boolean | undefined;
+  readonly pulseCadence?: CadenceSpec | undefined;
+  readonly alertsEnabled?: boolean | undefined;
+  readonly alertsSensitivity?: AlertSensitivity | undefined;
+  readonly alertsThrottleHours?: number | undefined;
+  readonly runPushEnabled?: boolean | undefined;
+}
+
+/**
  * Patch de config (equivalente parcial ao `AgentConfigInput` da API). Semântica dos
  * campos de texto: `""` limpa (→ null via `trimOrNull`); `undefined` preserva;
  * `systemPrompt ""` → null (cai no arquétipo). `cadence: null` limpa a cadência.
@@ -90,6 +107,8 @@ export interface AgentConfigPatch {
   readonly autonomyPolicy?: AutonomyPolicy | undefined;
   readonly guardrails?: GuardrailConfigPatch | undefined;
   readonly modelConfig?: ModelConfigPatch | undefined;
+  /** proatividade (F4d): pulso/alerta/push. Leaf-merge — só os campos enviados. */
+  readonly notifyPolicy?: NotifyPolicyPatch | undefined;
 }
 
 /**
@@ -108,6 +127,7 @@ export const CONFIG_CHANGE_LABELS = {
   systemPrompt: "prompt",
   analysisWindowDays: "janela",
   modelConfig: "limiares",
+  notifyPolicy: "notificações",
 } as const;
 
 /** Ranking de autonomia (menor = mais seguro) — base do "enfraqueceu a segurança?". */
@@ -132,6 +152,8 @@ export interface AgentConfigResolution {
   readonly runRelevantChanged: boolean;
   /** a cadência mudou → re-sincronizar o schedule. */
   readonly cadenceChanged: boolean;
+  /** a proatividade (F4d) mudou → o pulso tem scheduler próprio, também re-sincroniza. */
+  readonly notifyPolicyChanged: boolean;
   /** a mudança ENFRAQUECE a segurança (guardrail afrouxado / autonomia subiu). */
   readonly weakensSafety: boolean;
   /** validação falhou (PT) — não persistir. */
@@ -154,6 +176,7 @@ export function resolveAgentConfigChange(
       changed: [],
       runRelevantChanged: false,
       cadenceChanged: false,
+      notifyPolicyChanged: false,
       weakensSafety: false,
       error: CUSTOM_CONVERSION_REQUIRED_ERROR,
     };
@@ -172,6 +195,7 @@ export function resolveAgentConfigChange(
   const nextModelConfig = mergeAdvancedConfig(state.modelConfig, nextWindow, patch.modelConfig);
   const nextAutonomy = patch.autonomyPolicy ?? state.autonomyPolicy;
   const nextGuardrails = cleanGuardrails(patch.guardrails ?? state.guardrails);
+  const nextNotifyPolicy = mergeNotifyPolicy(state.notifyPolicy, patch.notifyPolicy);
 
   const next: AgentConfigState = {
     goals: nextGoals,
@@ -185,6 +209,7 @@ export function resolveAgentConfigChange(
     autonomyPolicy: nextAutonomy,
     guardrails: nextGuardrails,
     modelConfig: nextModelConfig,
+    notifyPolicy: nextNotifyPolicy,
   };
 
   // diffs por campo (json estável p/ objetos).
@@ -201,6 +226,9 @@ export function resolveAgentConfigChange(
   const cadenceChanged = jsonEq(nextCadence, state.cadence) === false;
   const autonomyChanged = jsonEq(nextAutonomy, state.autonomyPolicy) === false;
   const guardrailsChanged = jsonEq(nextGuardrails, state.guardrails) === false;
+  // proatividade (F4d): não afeta a ANÁLISE (não entra em runRelevantChanged), mas o
+  // pulso tem cadência própria → precisa re-sincronizar o scheduler (como a cadência).
+  const notifyPolicyChanged = jsonEq(nextNotifyPolicy, state.notifyPolicy) === false;
 
   // cadência NÃO entra: muda só a agenda, não a análise.
   const runRelevantChanged =
@@ -225,12 +253,30 @@ export function resolveAgentConfigChange(
   if (systemPromptChanged) changed.push(CONFIG_CHANGE_LABELS.systemPrompt);
   if (windowChanged) changed.push(CONFIG_CHANGE_LABELS.analysisWindowDays);
   if (modelConfigTouched) changed.push(CONFIG_CHANGE_LABELS.modelConfig);
+  if (notifyPolicyChanged) changed.push(CONFIG_CHANGE_LABELS.notifyPolicy);
 
   const weakensSafety =
     guardrailsWeaken(state.guardrails, nextGuardrails) ||
     autonomyPolicyWeakens(state.autonomyPolicy, nextAutonomy);
 
-  return { next, changed, runRelevantChanged, cadenceChanged, weakensSafety };
+  return { next, changed, runRelevantChanged, cadenceChanged, notifyPolicyChanged, weakensSafety };
+}
+
+/** Mescla o patch de notificação (leaf-a-leaf) no estado atual. Sempre retorna o shape cheio. */
+function mergeNotifyPolicy(cur: NotifyPolicy, patch: NotifyPolicyPatch | undefined): NotifyPolicy {
+  if (!patch) return cur;
+  return {
+    pulse: {
+      enabled: patch.pulseEnabled ?? cur.pulse.enabled,
+      cadence: patch.pulseCadence ?? cur.pulse.cadence,
+    },
+    alerts: {
+      enabled: patch.alertsEnabled ?? cur.alerts.enabled,
+      sensitivity: patch.alertsSensitivity ?? cur.alerts.sensitivity,
+      throttleHours: patch.alertsThrottleHours ?? cur.alerts.throttleHours,
+    },
+    runPush: { enabled: patch.runPushEnabled ?? cur.runPush.enabled },
+  };
 }
 
 /**
@@ -374,6 +420,13 @@ const CONVERSION_GOAL_LABEL_PT: Partial<Record<ConversionGoal, string>> = {
   custom: "conversão personalizada",
 };
 
+/** Sensibilidade do alerta em PT (rótulo de gente). */
+const ALERT_SENSITIVITY_LABEL_PT: Readonly<Record<AlertSensitivity, string>> = {
+  low: "baixa",
+  normal: "normal",
+  high: "alta",
+};
+
 const onOff = (b: boolean): string => (b ? "ligado" : "desligado");
 const brlOrNone = (reais: number | undefined): string =>
   reais == null ? "não definido" : `R$ ${reais.toFixed(2).replace(".", ",")}`;
@@ -453,6 +506,23 @@ function configDetailLines(label: string, cur: AgentConfigState, next: AgentConf
     case CONFIG_CHANGE_LABELS.modelConfig:
       lines.push("limiares avançados: atualizados");
       return lines;
+    case CONFIG_CHANGE_LABELS.notifyPolicy: {
+      const c = cur.notifyPolicy;
+      const n = next.notifyPolicy;
+      if (c.pulse.enabled !== n.pulse.enabled)
+        lines.push(`resumo periódico (pulso): ${onOff(c.pulse.enabled)} → ${onOff(n.pulse.enabled)}`);
+      if (jsonEq(c.pulse.cadence, n.pulse.cadence) === false)
+        lines.push(`cadência do pulso: ${describeCadence(c.pulse.cadence)} → ${describeCadence(n.pulse.cadence)}`);
+      if (c.alerts.enabled !== n.alerts.enabled)
+        lines.push(`alerta automático: ${onOff(c.alerts.enabled)} → ${onOff(n.alerts.enabled)}`);
+      if (c.alerts.sensitivity !== n.alerts.sensitivity)
+        lines.push(`sensibilidade do alerta: ${ALERT_SENSITIVITY_LABEL_PT[c.alerts.sensitivity]} → ${ALERT_SENSITIVITY_LABEL_PT[n.alerts.sensitivity]}`);
+      if (c.alerts.throttleHours !== n.alerts.throttleHours)
+        lines.push(`intervalo mínimo entre alertas: ${c.alerts.throttleHours}h → ${n.alerts.throttleHours}h`);
+      if (c.runPush.enabled !== n.runPush.enabled)
+        lines.push(`aviso após cada análise: ${onOff(c.runPush.enabled)} → ${onOff(n.runPush.enabled)}`);
+      return lines;
+    }
     default:
       return lines;
   }

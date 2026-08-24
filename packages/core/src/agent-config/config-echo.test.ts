@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AutonomyPolicy, GuardrailConfig } from "@trafego/shared";
+import type { AutonomyPolicy, GuardrailConfig, NotifyPolicy } from "@trafego/shared";
 import {
   buildConfigChangeEcho,
   CONFIG_CHANGE_LABELS,
@@ -17,6 +17,11 @@ const GUARDRAILS: GuardrailConfig = {
   killSwitch: false,
 };
 const AUTONOMY: AutonomyPolicy = { bySource: { playbook: "suggest", llm: "suggest" } };
+const NOTIFY_POLICY: NotifyPolicy = {
+  pulse: { enabled: false, cadence: { kind: "weekly", weekday: 1, hour: 8 } },
+  alerts: { enabled: false, sensitivity: "normal", throttleHours: 6 },
+  runPush: { enabled: true },
+};
 
 function baseState(over: Partial<AgentConfigState> = {}): AgentConfigState {
   return {
@@ -31,6 +36,7 @@ function baseState(over: Partial<AgentConfigState> = {}): AgentConfigState {
     autonomyPolicy: AUTONOMY,
     guardrails: GUARDRAILS,
     modelConfig: {},
+    notifyPolicy: NOTIFY_POLICY,
     ...over,
   };
 }
@@ -79,5 +85,20 @@ describe("buildConfigChangeEcho", () => {
   it("prompt setado avisa que substitui a metodologia do arquétipo", () => {
     const echo = echoFor(baseState(), { systemPrompt: "analise assim..." });
     expect(echo).toContain("substitui a metodologia do arquétipo");
+  });
+
+  it("proatividade: liga o pulso e mostra a linha em PT, sem afrouxar segurança", () => {
+    const echo = echoFor(baseState(), { notifyPolicy: { pulseEnabled: true } });
+    expect(echo).toContain("resumo periódico (pulso): desligado → ligado");
+    expect(echo).not.toContain(CONFIG_WEAKENS_SAFETY_PREFIX);
+  });
+
+  it("proatividade: várias mudanças no mesmo patch viram várias linhas", () => {
+    const echo = echoFor(baseState(), {
+      notifyPolicy: { alertsEnabled: true, alertsSensitivity: "high", runPushEnabled: false },
+    });
+    expect(echo).toContain("alerta automático: desligado → ligado");
+    expect(echo).toContain("sensibilidade do alerta: normal → alta");
+    expect(echo).toContain("aviso após cada análise: ligado → desligado");
   });
 });
