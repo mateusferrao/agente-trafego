@@ -38,6 +38,16 @@ function isoDay(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Início da janela de throttle: o mais RESTRITIVO entre "throttleHours atrás" e "começo
+ * do dia UTC". O sinal é sobre D-1 (muda 1×/dia), então um throttleHours curto (ex: 3h)
+ * não pode re-alertar o MESMO dia fechado várias vezes — o piso do dia garante ≤1/dia.
+ */
+export function throttleWindowStart(now: Date, throttleHours: number): Date {
+  const startOfDay = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return new Date(Math.min(now.getTime() - throttleHours * MS_PER_HOUR, startOfDay));
+}
+
 export async function runAlertGate(deps: AlertGateDeps, input: AlertGateInput): Promise<AlertGateOutcome> {
   const now = deps.now ?? (() => new Date());
 
@@ -51,8 +61,8 @@ export async function runAlertGate(deps: AlertGateDeps, input: AlertGateInput): 
   if (!policy?.alerts.enabled) return "disabled";
   const { sensitivity, throttleHours } = policy.alerts;
 
-  // 2) throttle: já houve um signal-run recente? (máx 1 por janela — sem spam/custo).
-  const since = new Date(now().getTime() - throttleHours * MS_PER_HOUR);
+  // 2) throttle: já houve um signal-run na janela? (máx 1 — sem spam/custo; ≤1/dia).
+  const since = throttleWindowStart(now(), throttleHours);
   const [recent] = await deps.db
     .select({ id: agentRuns.id })
     .from(agentRuns)

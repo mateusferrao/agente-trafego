@@ -5,7 +5,7 @@
 
 import { Worker } from "bullmq";
 import type { Redis } from "ioredis";
-import { and, desc, eq, gt, inArray } from "drizzle-orm";
+import { and, desc, eq, gt } from "drizzle-orm";
 import {
   adAccounts,
   agentRuns,
@@ -17,6 +17,7 @@ import {
 import { buildMessageFallback } from "@trafego/core";
 import { AGENT_PULSE_QUEUE, type AgentCronDispatchPayload, type NotifyPolicy } from "@trafego/shared";
 import type { WorkerDeps } from "../composition.js";
+import { ownerAccessActive } from "../modules/access/owner-gate.js";
 import { createNotifyRepo } from "../modules/notify/repo.js";
 import { createSendToContact } from "../modules/notify/send-to-contact.js";
 import { composePulseOverview } from "../modules/pulse/compose.js";
@@ -24,9 +25,17 @@ import { composePulseOverview } from "../modules/pulse/compose.js";
 /** Não manda pulso se o agente já falou nas últimas N horas (evita colar no push). */
 const PULSE_DEDUP_HOURS = 6;
 const MS_PER_HOUR = 3_600_000;
-const FINISHED = ["succeeded", "failed"] as const;
+// Só runs que produziram síntese (degradado é `succeeded`+partial). Incluir `failed`
+// mascararia o último run bom (sem snapshot) e calaria o pulso justo quando falhou.
+const USEFUL_RUN_STATUS = "succeeded" as const;
 
-export type PulseOutcome = "sent" | "skipped_disabled" | "skipped_recent" | "skipped_no_target" | "skipped_no_run";
+export type PulseOutcome =
+  | "sent"
+  | "skipped_disabled"
+  | "skipped_access"
+  | "skipped_recent"
+  | "skipped_no_target"
+  | "skipped_no_run";
 
 export async function runPulse(deps: WorkerDeps, payload: AgentCronDispatchPayload): Promise<PulseOutcome> {
   const { db, logger } = deps;
@@ -43,6 +52,10 @@ export async function runPulse(deps: WorkerDeps, payload: AgentCronDispatchPaylo
   if (!row || row.agentStatus !== "active" || row.accountStatus !== "active" || !policy?.pulse.enabled) {
     return "skipped_disabled";
   }
+
+  // gate de beta: proativo age em nome da org → mesmo gate do dispatcher (org com
+  // acesso revogado não recebe pulso, mesmo com agente/conta ainda ativos).
+  if (!(await ownerAccessActive(db, payload.orgId))) return "skipped_access";
 
   const repo = createNotifyRepo(db);
   const target = await repo.loadTarget(payload.orgId);
@@ -68,7 +81,7 @@ export async function runPulse(deps: WorkerDeps, payload: AgentCronDispatchPaylo
   const [run] = await db
     .select({ id: agentRuns.id, summary: agentRuns.summary, metricsSnapshot: agentRuns.metricsSnapshot })
     .from(agentRuns)
-    .where(and(eq(agentRuns.agentId, payload.agentId), eq(agentRuns.orgId, payload.orgId), inArray(agentRuns.status, [...FINISHED])))
+    .where(and(eq(agentRuns.agentId, payload.agentId), eq(agentRuns.orgId, payload.orgId), eq(agentRuns.status, USEFUL_RUN_STATUS)))
     .orderBy(desc(agentRuns.createdAt))
     .limit(1);
   if (!run) return "skipped_no_run";

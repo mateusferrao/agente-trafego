@@ -3,7 +3,7 @@
 
 import { Annotation } from "@langchain/langgraph";
 import type { AccumulatedTokenUsage, DecisionResult, DroppedAction, GuardrailResult } from "@trafego/core";
-import type { AgentRunTrigger, RunNotifyTarget, SignalFinding } from "@trafego/shared";
+import type { AgentRunTrigger, NotifyPolicy, RunNotifyTarget, SignalFinding } from "@trafego/shared";
 import type { MutationResult } from "@trafego/shared/ports";
 import type {
   AccountBrief,
@@ -58,6 +58,8 @@ export const AccountAnalysisState = Annotation.Root({
   rejectedMemory: Annotation<readonly string[]>,
   guardrailConfig: Annotation<GuardrailConfig>,
   autonomyPolicy: Annotation<AutonomyPolicy>,
+  // política de notificação (F4): governa o push do cron (runPush) no writeMessage.
+  notifyPolicy: Annotation<NotifyPolicy | null>,
 
   // ── contexto carregado (loadContext) ───────────────────────────────────
   account: Annotation<AnalysisAccount | null>,

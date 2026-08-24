@@ -163,14 +163,13 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       .filter((s) => s.length > 0)
       .join("\n");
     const basePrompt = identity ? `${methodologyBase}\n\n${identity}` : methodologyBase;
-    const composed = composeAgentPrompt(basePrompt, {
+    // systemPrompt LIMPO (voz base). A nota do sinal (F4) é anexada só nos prompts do
+    // ANALISTA (via analystPrompt), NUNCA no redator do WhatsApp — que redige a mensagem
+    // ao usuário e não deve receber diretivas de investigação em 2ª pessoa.
+    const systemPrompt = composeAgentPrompt(basePrompt, {
       ...(ctx.businessContext ? { businessContext: ctx.businessContext } : {}),
       ...(ctx.guidance ? { guidance: ctx.guidance } : {}),
     });
-    // run disparado por sinal (F4): a nota do sinal DIRIGE o olhar do analista
-    // (investigue este ponto e conclua se é material) — cobre todos os prompts que
-    // usam state.systemPrompt (analista/mapa/síntese).
-    const systemPrompt = state.signalFinding ? `${composed}\n\n${describeSignal(state.signalFinding)}` : composed;
     const { window, baseline } = resolveWindows(today(), cfg.windowDays, cfg.baselineDays);
     const windowLabel = `últimos ${cfg.windowDays} dias`;
     const baselineLabel = `${cfg.baselineDays} dias anteriores`;
@@ -188,6 +187,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       goals: ctx.goals,
       playbookRules: ctx.playbook,
       autonomyPolicy: ctx.autonomyPolicy,
+      notifyPolicy: ctx.notifyPolicy,
       guardrailConfig: ctx.guardrailConfig,
       rejectedMemory: ctx.rejectedMemory,
       mutedCampaignIds: ctx.mutedCampaignIds,
@@ -372,7 +372,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       try {
         const completion = await deps.ports.llm.completeStructured<UnitAnalysis>({
           model: cfg.unitModel,
-          messages: buildCampaignMessages(state.systemPrompt, unit, visionByAdId, {
+          messages: buildCampaignMessages(analystPrompt(state), unit, visionByAdId, {
             currency: accountCurrency,
             window: windowLabel,
             ...(businessGoal ? { businessGoal } : {}),
@@ -444,7 +444,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     try {
       const completion = await deps.ports.llm.completeStructured<AnalysisOutput>({
         model: cfg.model,
-        messages: buildSynthesisMessages(state.systemPrompt, state.brief, units),
+        messages: buildSynthesisMessages(analystPrompt(state), state.brief, units),
         responseSchema: ANALYSIS_OUTPUT_JSON_SCHEMA,
         responseSchemaName: ANALYSIS_OUTPUT_SCHEMA_NAME,
         temperature: ANALYSIS_TEMPERATURE,
@@ -714,6 +714,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     // cron E signal (F4) empurram ao destinatário verificado da org; on-demand (site) não faz push.
     const notifiesOrg = state.trigger === "cron" || state.trigger === "signal";
     if (!notifiesOrg && !isWhatsapp) return { outboundMessage: null }; // on-demand no site
+    // push do cron desligado por config (F4 runPush) → sem mensagem (a análise/ações
+    // seguem, só não empurra no WhatsApp). O signal é governado por alerts (no gate).
+    if (state.trigger === "cron" && state.notifyPolicy?.runPush.enabled === false) return { outboundMessage: null };
     const out = state.analysisOutput;
     if (!out || !state.account) return { outboundMessage: null };
     const hasRecs = out.recommendations.length > 0;
@@ -856,6 +859,15 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
  *  - a análise mais antiga entre as unidades atuais passou do intervalo → deep.
  * `analyzedAt` só avança em reanálise real (não no inherit) → o deep dispara sozinho.
  */
+/**
+ * systemPrompt do ANALISTA: a voz base + a nota do sinal (F4, `describeSignal`) quando
+ * o run foi disparado por sinal — DIRIGE o olhar do analista sem vazar pro redator do
+ * WhatsApp (que usa `state.systemPrompt` limpo).
+ */
+function analystPrompt(state: AccountAnalysisStateType): string {
+  return state.signalFinding ? `${state.systemPrompt}\n\n${describeSignal(state.signalFinding)}` : state.systemPrompt;
+}
+
 function decideDeepRun(
   trigger: AccountAnalysisStateType["trigger"],
   adUnits: readonly EntitySummary[],

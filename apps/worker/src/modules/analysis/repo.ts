@@ -5,7 +5,7 @@
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import type { Database } from "@trafego/db/client";
 import { adAccounts, agentMemory, agentMutedEntities, agentRunSteps, agentRuns, agentToolCalls, agents, conversionLabels, guardrailConfigs, platformConnections, playbookRules, recommendations } from "@trafego/db";
-import type { Action, ActionTarget, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, PlaybookRule, RiskLevel } from "@trafego/shared";
+import type { Action, ActionTarget, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, NotifyPolicy, PlaybookRule, RiskLevel } from "@trafego/shared";
 import { GUARDRAIL_DEFAULTS, toGuardrailConfig, UNDO_TOOL_KEY } from "@trafego/shared";
 import { entityKeyOf, unseedIdentity } from "@trafego/core";
 import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
@@ -26,6 +26,8 @@ export interface AgentContext {
   readonly modelConfig: Readonly<Record<string, unknown>>;
   /** Autonomia por origem (playbook×llm) — decisão de auto-aplicar × pedir OK (5a). */
   readonly autonomyPolicy: AutonomyPolicy;
+  /** Política de notificação proativa (F4) — governa o push do cron (runPush), etc. */
+  readonly notifyPolicy: NotifyPolicy;
   /** Guardrails (rede independente) — blast radius, cap, kill-switch, dry-run (5a). */
   readonly guardrailConfig: GuardrailConfig;
   readonly playbook: PlaybookRule[];
@@ -116,6 +118,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
           configChangedAt: agents.configChangedAt,
           modelConfig: agents.modelConfig,
           autonomyPolicy: agents.autonomyPolicy,
+          notifyPolicy: agents.notifyPolicy,
         })
         .from(agents)
         .where(and(eq(agents.id, agentId), eq(agents.orgId, orgId)))
@@ -186,6 +189,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
         configChangedAt: agent.configChangedAt,
         modelConfig: agent.modelConfig ?? {},
         autonomyPolicy: agent.autonomyPolicy,
+        notifyPolicy: agent.notifyPolicy,
         guardrailConfig,
         playbook,
         rejectedMemory: memory.map((m) => m.content),

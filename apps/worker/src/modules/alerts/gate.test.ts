@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { agentRuns, agents, insightsSnapshots } from "@trafego/db";
 import type { NotifyPolicy } from "@trafego/shared";
-import { runAlertGate, type AlertGateDeps } from "./gate.js";
+import { runAlertGate, throttleWindowStart, type AlertGateDeps } from "./gate.js";
 import type { CronDispatchInput, DispatchOutcome } from "../dispatch/run-dispatcher.js";
 
 /** Mock tipado do dispatch (assinatura do RunDispatcher). */
@@ -38,6 +38,20 @@ const INPUT = { orgId: "o", agentId: "a", adAccountId: "acc" };
 function snap(entityId: string, date: string, metrics: Record<string, number>) {
   return { entityId, date, metricsJson: { metrics } };
 }
+
+describe("throttleWindowStart (dedupe por dia)", () => {
+  const now = new Date("2026-08-23T10:00:00Z");
+
+  it("throttleHours curto (3h) ainda cobre desde o início do dia (não re-alerta o mesmo D-1)", () => {
+    // 3h atrás = 07:00; início do dia = 00:00 → vence o mais restritivo (00:00).
+    expect(throttleWindowStart(now, 3).toISOString()).toBe("2026-08-23T00:00:00.000Z");
+  });
+
+  it("throttleHours longo (>tempo desde meia-noite) manda além do início do dia", () => {
+    // 24h atrás = ontem 10:00, mais restritivo que 00:00 de hoje.
+    expect(throttleWindowStart(now, 24).toISOString()).toBe("2026-08-22T10:00:00.000Z");
+  });
+});
 
 describe("runAlertGate", () => {
   it("política de alerta desligada → disabled (nada dispara)", async () => {
