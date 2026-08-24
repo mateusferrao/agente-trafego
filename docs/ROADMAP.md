@@ -558,6 +558,19 @@ vez de duplicar lógica. Fatiado (G0→G4) — **entregue por completo**.
   e chamado só quando há LID não resolvido (maioria das mensagens de grupo não menciona
   ninguém — não bate na Evolution à toa).
 
+- **G7 — Contexto de grupo (transcript ambiente) + foco endurecido:** mensagens NÃO-dirigidas
+  do grupo passam a ser ingeridas como CONTEXTO (tabela dedicada `group_messages`, sem fabricar
+  conversa) e injetadas read-only no system prompt do turno dirigido (função pura
+  `buildGroupTranscript`: mescla ambiente + dirigidas, janela por contagem/tempo/tokens,
+  atribuição por pushName, datas UTC), group-only (DM intocada). `GROUP_RULES` adiciona
+  grounding da conta, resolução por ambiente sob confirm, honestidade de mídia e integração
+  suave (anti-vigilância). **Fix do footgun `set_focus`** (muta o `ctx` no mesmo turno →
+  troca de conta seamless). **Staleness do foco** (último uso > `CONVERSATION_FOCUS_TTL_HOURS`
+  perde precedência; DM + grupo). **Always-bind de leitura** em grupo multi-conta (a 1ª
+  pergunta resolve num turno; self-guard sem foco). **Retenção/LGPD:** on-by-default silencioso
+  (decisão do dono), retenção `GROUP_CONTEXT_RETENTION_DAYS` (~90d) + purge diário;
+  `TRAFEGO_GROUP_INGEST_CONTEXT` vira kill-switch de plataforma.
+
 **Fast-follows registrados:**
 - **N integrações WhatsApp / número-por-agente (isolamento de ban) + escopo/granularidade
   de contas por-grupo + multi-grupo por org** — bundle único: só com N números faz sentido
@@ -569,15 +582,24 @@ vez de duplicar lógica. Fatiado (G0→G4) — **entregue por completo**.
 - **Rate-limit por-participante** no grupo (conter abuso/custo LLM de um membro).
 - **Config fina de destino de proatividade** (dm/grupo/ambos por-tipo — pulso/alerta/push
   cada um, em vez do move org-level atual).
-- **Janela de frescor do foco no grupo** (TTL/re-pergunta — hoje reusa a DM: foco fixo até
-  trocar, com o eco+confirma nomeando a conta como rede contra foco velho).
 - **Auto-registro de grupo na 1ª menção**; **convite/entrada automática** no grupo (hoje a
   org adiciona o bot manualmente).
-- **Ingestão de contexto de grupo** com retenção/LGPD dedicadas (hoje `TRAFEGO_GROUP_INGEST_CONTEXT`
-  é on/off simples).
 - **`OutboundTarget` união** (refinar `toIsGroup: boolean`) se surgir um 3º tipo de destino.
 - Taggear pessoas no outbound; janela temporal de conversa (alternativa ao reply p/ manter
   o "dirigido" ativo por alguns minutos).
+
+**Fast-follows do contexto de grupo (G7):**
+- **Bot outbound no transcript** (hoje o transcript = ambiente + dirigidas inbound; as respostas
+  do bot ficam de fora p/ evitar ruído de avisos de cortesia — incluir com filtro de `meta.kind`).
+- **Dedup "excluir as próprias linhas"** do transcript (hoje o 1º corte aceita a leve
+  sobreposição com o `state.messages` do participante).
+- **Tool `get_group_context`** p/ lookback profundo sob demanda (complementa a janela sempre-injetada).
+- **Bind de ESCRITA com enforcement call-time** em grupo multi-conta → escrita no 1º turno sem
+  foco prévio também num turno só (hoje a leitura já resolve; escrita-1º-turno segue barra-e-repete).
+- **Controle org-facing do ingest** (ligar/desligar pela org — hoje só kill-switch de plataforma).
+- **Aviso de transparência** no grupo (opt-in futuro — hoje on-by-default silencioso, decisão do dono).
+- **Timezone-aware** no display do transcript (hoje UTC com o "agora" em UTC → delta de recência correto).
+- **Semântica de foco por "setagem"** foi descartada em favor de "último uso" (entregue no G7).
 
 ## Fatia 7 — Criação de campanhas (roadmap pós-MVP)
 
