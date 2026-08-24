@@ -16,7 +16,7 @@ export const groupsListOutput = z.object({
 export type GroupsListOutput = z.infer<typeof groupsListOutput>;
 
 export const setGroupInput = z.object({
-  groupJid: z.string().min(1),
+  groupJid: z.string().min(1).endsWith("@g.us", "JID de grupo inválido"),
   name: z.string().min(1).max(200).optional(),
 });
 export type SetGroupInput = z.infer<typeof setGroupInput>;

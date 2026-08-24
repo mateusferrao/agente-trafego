@@ -9,7 +9,7 @@ import type { InboundGroupContext, InboundMessage, MediaMessageKey } from "@traf
  * Funções PURAS (sem IO) — testadas sem mock.
  */
 
-/** Sufixo de JID de grupo (ignoramos grupos). */
+/** Sufixo de JID de grupo (@g.us). */
 const GROUP_SUFFIX = "@g.us";
 /** Faixa de dígitos válida p/ DDI+telefone (defensivo contra JIDs estranhos). */
 const PHONE_MIN_DIGITS = 8;
@@ -51,18 +51,40 @@ export function jidToE164(jid: string): string | null {
 }
 
 /**
+ * Nós de mensagem que podem carregar `contextInfo` (@menção/reply): texto vira
+ * `extendedTextMessage` quando tem contexto; mídia (áudio incl. — WhatsApp não permite
+ * @menção em áudio, então reply é o ÚNICO jeito de dirigir o bot por nota de voz) carrega
+ * o `contextInfo` DIRETO no próprio nó de tipo, não em `extendedTextMessage`.
+ */
+const CONTEXT_INFO_NODES = [
+  "extendedTextMessage",
+  "audioMessage",
+  "imageMessage",
+  "videoMessage",
+  "documentMessage",
+  "stickerMessage",
+] as const;
+
+function findContextInfo(message: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!message) return null;
+  for (const node of CONTEXT_INFO_NODES) {
+    const ctx = asRecord(asRecord(message[node])?.["contextInfo"]);
+    if (ctx) return ctx;
+  }
+  return null;
+}
+
+/**
  * Monta o contexto NEUTRO de grupo: telefones mencionados (@) e autor da mensagem
  * citada (reply). O adapter NÃO decide se a mensagem "dirige" o bot — isso é IO na
- * casca (compara com o telefone da instância). `contextInfo` mora no
- * `extendedTextMessage` (marcações/reply vêm com texto estendido).
+ * casca (compara com o telefone da instância).
  */
 function buildGroupContext(
   groupJid: string,
   senderPhone: string,
   message: Record<string, unknown> | null,
 ): InboundGroupContext {
-  const extended = asRecord(message?.["extendedTextMessage"]);
-  const ctx = asRecord(extended?.["contextInfo"]);
+  const ctx = findContextInfo(message);
   const mentionedRaw = Array.isArray(ctx?.["mentionedJid"]) ? (ctx["mentionedJid"] as unknown[]) : [];
   const mentionedPhones = mentionedRaw
     .map((j) => (typeof j === "string" ? jidToE164(j) : null))

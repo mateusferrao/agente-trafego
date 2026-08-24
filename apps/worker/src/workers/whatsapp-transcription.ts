@@ -19,17 +19,13 @@ import type { OrgId, TranscriptionResult } from "@trafego/shared/types";
 import type { Redis } from "ioredis";
 import type { Logger } from "pino";
 import type { WorkerDeps } from "../composition.js";
+import { actorLabel } from "../modules/conversation/actor.js";
 import { pushInbound, BUFFER_TTL_MARGIN_SEC } from "../modules/conversation/buffer.js";
 import { refreshTranscribing, scheduleConversationFlush, unmarkTranscribing } from "../modules/conversation/flush-control.js";
 import { sendCourtesyNotice } from "../modules/conversation/courtesy-notice.js";
 import { AUDIO_EMPTY_NOTICE, AUDIO_FAILED_NOTICE } from "../modules/conversation/notices.js";
 import { createNotifyRepo, type NotifyRepo } from "../modules/notify/repo.js";
 import { createSendToConversation, type SendToConversation } from "../modules/notify/send-to-contact.js";
-
-/** Rótulo do ator p/ metering/logs — não vaza vocabulário de DM/grupo além do necessário. */
-function refActor(ref: ConversationRef): string {
-  return ref.kind === "contact" ? ref.contactId : `${ref.groupId}:${ref.participantPhone}`;
-}
 
 const MB = 1024 * 1024;
 /** Erros permanentes: não adianta re-tentar o mesmo áudio → caminho de falha na hora. */
@@ -85,7 +81,7 @@ async function recordUsage(
     ...(args.result.costUsd != null ? { costUsd: args.result.costUsd } : {}),
     payload: {
       conversationId: args.conversationId,
-      actor: refActor(args.ref),
+      actor: actorLabel(args.ref),
       ...(args.result.durationSec != null ? { durationSec: args.result.durationSec } : {}),
       ...(args.result.tokensUsed != null ? { tokensUsed: args.result.tokensUsed } : {}),
     },

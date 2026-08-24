@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import type { MessagingChannelPort, OutboundMessage } from "@trafego/shared/ports";
-import { createSendToContact, createSendToConversation } from "./send-to-contact.js";
+import { createSendToConversation } from "./send-to-contact.js";
 import type { NotifyRepo } from "./repo.js";
 import { TYPING_MIN_MS } from "./typing.js";
 
 const TARGET = { instanceId: "inst-1", phone: "5511999999999", orgId: "org-1" };
 const GROUP_TARGET = { instanceId: "inst-1", groupJid: "120363000000000000@g.us", orgId: "org-1" };
+const CONTACT_REF = { kind: "contact" as const, contactId: "contact-1" };
 
 function makeDeps(overrides: { target?: typeof TARGET | null; groupTarget?: typeof GROUP_TARGET | null } = {}) {
   const sent: OutboundMessage[] = [];
@@ -28,30 +29,30 @@ function makeDeps(overrides: { target?: typeof TARGET | null; groupTarget?: type
   return { deps: { messaging, repo }, sent, recorded };
 }
 
-describe("sendToContact", () => {
+describe("sendToConversation — contato (DM)", () => {
   it("sem instância/contato → não envia (false)", async () => {
     const { deps, sent } = makeDeps({ target: null });
-    const ok = await createSendToContact(deps)("contact-1", "oi");
+    const ok = await createSendToConversation(deps)(CONTACT_REF, "oi");
     expect(ok).toBe(false);
     expect(sent).toHaveLength(0);
   });
 
   it("sanitiza o texto do LLM antes de enviar (** → *)", async () => {
     const { deps, sent } = makeDeps();
-    await createSendToContact(deps)("contact-1", "isto é **importante**");
+    await createSendToConversation(deps)(CONTACT_REF, "isto é **importante**");
     expect(sent[0]!.text).toBe("isto é *importante*");
   });
 
   it("split:true quebra em balões, cada um com typingHint proporcional", async () => {
     const { deps, sent } = makeDeps();
-    await createSendToContact(deps)("contact-1", "primeiro bloco\n\nsegundo bloco", { split: true });
+    await createSendToConversation(deps)(CONTACT_REF, "primeiro bloco\n\nsegundo bloco", { split: true });
     expect(sent.map((m) => m.text)).toEqual(["primeiro bloco", "segundo bloco"]);
     for (const m of sent) expect(m.typingHintMs).toBeGreaterThanOrEqual(TYPING_MIN_MS);
   });
 
   it("split:false (cron) envia inteiro, sanitizado, num balão só, com typingHint", async () => {
     const { deps, sent } = makeDeps();
-    await createSendToContact(deps)("contact-1", "linha um\n\nlinha dois", { split: false });
+    await createSendToConversation(deps)(CONTACT_REF, "linha um\n\nlinha dois", { split: false });
     expect(sent).toHaveLength(1);
     expect(sent[0]!.text).toBe("linha um\n\nlinha dois");
     expect(sent[0]!.typingHintMs).toBeGreaterThanOrEqual(TYPING_MIN_MS);
@@ -59,11 +60,18 @@ describe("sendToContact", () => {
 
   it("grava cada balão como outbound na conversa", async () => {
     const { deps, recorded } = makeDeps();
-    await createSendToContact(deps)("contact-1", "a\n\nb", { split: true });
+    await createSendToConversation(deps)(CONTACT_REF, "a\n\nb", { split: true });
     expect(recorded).toEqual([
       { direction: "outbound", body: "a" },
       { direction: "outbound", body: "b" },
     ]);
+  });
+
+  it("ref contact não marca toIsGroup", async () => {
+    const { deps, sent } = makeDeps();
+    await createSendToConversation(deps)(CONTACT_REF, "oi");
+    expect(sent[0]).toMatchObject({ to: TARGET.phone });
+    expect(sent[0]!.toIsGroup).toBeUndefined();
   });
 });
 
@@ -90,12 +98,5 @@ describe("sendToConversation — grupo", () => {
     const ok = await createSendToConversation(deps)({ kind: "group", groupId: "grp-1", participantPhone: null }, "x");
     expect(ok).toBe(false);
     expect(sent).toHaveLength(0);
-  });
-
-  it("ref contact ainda funciona (sem toIsGroup)", async () => {
-    const { deps, sent } = makeDeps();
-    await createSendToConversation(deps)({ kind: "contact", contactId: "contact-1" }, "oi");
-    expect(sent[0]).toMatchObject({ to: TARGET.phone });
-    expect(sent[0]!.toIsGroup).toBeUndefined();
   });
 });

@@ -79,12 +79,3 @@ export function createSendToConversation(deps: SendToContactDeps) {
 }
 
 export type SendToConversation = ReturnType<typeof createSendToConversation>;
-
-/** Atalho DM-only p/ callers ainda não migrados a `ConversationRef` (proatividade — G2). */
-export function createSendToContact(deps: SendToContactDeps): SendToContact {
-  const sendToConversation = createSendToConversation(deps);
-  return (contactId: string, text: string, opts: SendToContactOptions = {}) =>
-    sendToConversation({ kind: "contact", contactId }, text, opts);
-}
-
-export type SendToContact = (contactId: string, text: string, opts?: SendToContactOptions) => Promise<boolean>;

@@ -219,6 +219,13 @@ function onlyDigits(value: string): string {
               <app-ui-spinner [size]="14" [stroke]="2" aria-hidden="true" />
               Buscando grupos…
             </p>
+          } @else if (groupsLoadFailed()) {
+            <p class="text-sm text-warning-strong">
+              Não consegui buscar os grupos agora. Tenta de novo?
+            </p>
+            <button appButton variant="ghost" size="sm" type="button" [disabled]="!connected() || groupsLoading()" (click)="loadGroups()">
+              {{ groupsLoading() ? 'Tentando…' : 'Tentar de novo' }}
+            </button>
           } @else if (groups().length === 0) {
             <p class="text-sm text-muted">
               Nenhum grupo encontrado — adicione o número do agente a um grupo no WhatsApp e clique em atualizar.
@@ -231,10 +238,14 @@ function onlyDigits(value: string): string {
               <input
                 type="text"
                 placeholder="Buscar grupo…"
+                aria-label="Buscar grupo"
                 class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink"
                 [value]="groupFilter()"
                 (input)="onGroupFilter($event)"
               />
+            }
+            @if (filteredGroups().length === 0) {
+              <p class="text-sm text-muted">Nenhum grupo encontrado para "{{ groupFilter() }}".</p>
             }
             <ul class="flex max-h-60 flex-col gap-1 overflow-y-auto">
               @for (g of filteredGroups(); track g.jid) {
@@ -245,7 +256,7 @@ function onlyDigits(value: string): string {
                     variant="secondary"
                     size="sm"
                     type="button"
-                    [disabled]="settingGroupJid() !== null"
+                    [disabled]="!connected() || settingGroupJid() !== null"
                     (click)="activateGroup(g)"
                   >
                     {{ settingGroupJid() === g.jid ? 'Ativando…' : 'Ativar' }}
@@ -253,7 +264,7 @@ function onlyDigits(value: string): string {
                 </li>
               }
             </ul>
-            <button appButton variant="ghost" size="sm" type="button" [disabled]="groupsLoading()" (click)="loadGroups()">
+            <button appButton variant="ghost" size="sm" type="button" [disabled]="!connected() || groupsLoading()" (click)="loadGroups()">
               {{ groupsLoading() ? 'Atualizando…' : 'Atualizar lista' }}
             </button>
           }
@@ -294,6 +305,7 @@ export class WhatsappConnect {
   // Passo 3: grupo do WhatsApp (opcional).
   protected readonly groupsFetched = signal(false);
   protected readonly groupsLoading = signal(false);
+  protected readonly groupsLoadFailed = signal(false);
   protected readonly groups = signal<GroupOption[]>([]);
   protected readonly groupFilter = signal('');
   protected readonly activeGroupName = signal<string | null>(null);
@@ -481,17 +493,20 @@ export class WhatsappConnect {
   /** Busca os grupos do número + qual está ativo (silent = carga de fundo, sem toast de erro). */
   protected loadGroups(silent = false): void {
     this.groupsLoading.set(true);
+    this.groupsLoadFailed.set(false);
     this.api.listGroups(silent).subscribe({
       next: (r) => {
         this.groupsLoading.set(false);
         this.groupsFetched.set(true);
         this.groups.set(r.groups);
         const active = r.activeGroupJid ? (r.groups.find((g) => g.jid === r.activeGroupJid) ?? null) : null;
-        this.activeGroupName.set(active ? (active.name ?? active.jid) : r.activeGroupJid);
+        // sem nome resolvido (ex: canal desconectado no momento da busca) → rótulo
+        // amigável, nunca o JID técnico cru (§13 UX — sem jargão).
+        this.activeGroupName.set(active ? (active.name ?? active.jid) : r.activeGroupJid ? 'Grupo configurado' : null);
       },
       error: () => {
         this.groupsLoading.set(false);
-        this.groupsFetched.set(true);
+        this.groupsLoadFailed.set(true);
       },
     });
   }
@@ -501,6 +516,10 @@ export class WhatsappConnect {
     this.api.setGroup({ groupJid: g.jid, ...(g.name ? { name: g.name } : {}) }).subscribe({
       next: (r) => {
         this.settingGroupJid.set(null);
+        if (!r.active) {
+          toast.error('Não consegui ativar o grupo agora. Tenta de novo?');
+          return;
+        }
         this.activeGroupName.set(r.name ?? r.groupJid);
         toast.success('Grupo ativado — o agente já responde por lá');
       },
@@ -511,8 +530,12 @@ export class WhatsappConnect {
   protected disableGroup(): void {
     this.disablingGroup.set(true);
     this.api.disableGroup().subscribe({
-      next: () => {
+      next: (r) => {
         this.disablingGroup.set(false);
+        if (r.active) {
+          toast.error('Não consegui desligar o grupo agora. Tenta de novo?');
+          return;
+        }
         this.activeGroupName.set(null);
         toast.success('Grupo desligado — avisos voltam pro seu WhatsApp');
       },

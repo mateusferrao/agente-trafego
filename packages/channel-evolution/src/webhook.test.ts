@@ -220,6 +220,21 @@ describe("parseInbound — grupo", () => {
     expect(msg).toMatchObject({ kind: "text", group: { quotedAuthorPhone: "+5511777777777" } });
   });
 
+  it("reply a mensagem do bot POR ÁUDIO (nota de voz): contextInfo mora em audioMessage, não extendedTextMessage — WhatsApp não permite @menção em áudio", () => {
+    const msg = parseInbound(
+      groupUpsert({
+        message: {
+          audioMessage: {
+            ptt: true,
+            contextInfo: { participant: "5511777777777@s.whatsapp.net", stanzaId: "QUOTED2" },
+          },
+          base64: "AAAA",
+        },
+      }),
+    );
+    expect(msg).toMatchObject({ kind: "audio", group: { quotedAuthorPhone: "+5511777777777" } });
+  });
+
   it("áudio de grupo: envelope group + messageKey.remoteJid = JID do grupo", () => {
     const msg = parseInbound(groupUpsert({ message: { audioMessage: { ptt: true }, base64: "AAAA" } }));
     expect(msg).toMatchObject({
