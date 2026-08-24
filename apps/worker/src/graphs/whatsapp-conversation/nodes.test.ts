@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { AIMessage } from "@langchain/core/messages";
 import { assembleSystemPrompt, drainPendingCostPatches, needsCostFallback, patchCostInBackground, routeConversation, scheduleCostPatch } from "./nodes.js";
+import { GROUP_RULES } from "./system-prompt.js";
 import type { WhatsappConversationStateType } from "./state.js";
 
 function stateWith(toolCalls: { name: string; args?: Record<string, unknown> }[]): WhatsappConversationStateType {
@@ -70,6 +71,23 @@ describe("assembleSystemPrompt (injeção do contexto de grupo)", () => {
     const out = assembleSystemPrompt(VOZ, block, "vou reativar a Campanha Y, confirma?");
     expect(out.indexOf(block)).toBeLessThan(out.indexOf("aguarda a confirmação"));
     expect(out.indexOf(VOZ)).toBeLessThan(out.indexOf(block));
+  });
+});
+
+describe("GROUP_RULES (S5 — comportamentos de grupo)", () => {
+  it("cobre: só responde quando dirigido, contexto = histórico, anti-vigilância", () => {
+    expect(GROUP_RULES).toContain("DIRIGIDO");
+    expect(GROUP_RULES).toContain("Conversa recente do grupo");
+    expect(GROUP_RULES).toContain("NÃO trate uma fala antiga");
+    expect(GROUP_RULES.toLowerCase()).toContain("vigilante");
+  });
+
+  it("cobre: grounding da conta (nomear/inferir/confirmar) e honestidade de mídia", () => {
+    expect(GROUP_RULES).toContain("DE QUAL CONTA");
+    expect(GROUP_RULES).toContain("INFIRA");
+    expect(GROUP_RULES).toContain("eco+confirma");
+    expect(GROUP_RULES).toContain("NÃO enxerga imagens");
+    expect(GROUP_RULES.toLowerCase()).toContain("áudio enviado diretamente a você".toLowerCase());
   });
 });
 

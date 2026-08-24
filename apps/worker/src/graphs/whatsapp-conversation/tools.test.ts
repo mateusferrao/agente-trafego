@@ -114,6 +114,14 @@ describe("describe_capabilities tool", () => {
     expect(out.toLowerCase()).toContain("panorama");
   });
 
+  it("em GRUPO declara que acompanha a conversa recente (S5, honestidade contextual)", async () => {
+    const { deps } = makeDeps(() => null);
+    const groupCtx: ConversationToolContext = { ...CTX, agentId: "", ref: { kind: "group", groupId: "grp-1", participantPhone: "+5511999999999" } };
+    const out = await capTool(deps, groupCtx, new Set(["describe_capabilities"])).invoke({});
+    expect(out.toLowerCase()).toContain("grupo");
+    expect(out.toLowerCase()).toContain("só respondo quando me chamam");
+  });
+
   it("reflete o contexto: escrita só quando habilitada + config conforme o kill-switch", async () => {
     const { deps } = makeDeps(() => null);
     (deps as { db: unknown }).db = dbWithAutonomy("suggest", "notify");

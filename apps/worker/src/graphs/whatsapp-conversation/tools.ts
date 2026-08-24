@@ -469,13 +469,17 @@ export async function buildCapabilitiesText(
   allow: ReadonlySet<string>,
 ): Promise<string> {
   if (!ctx.agentId) {
-    return [
+    const lines = [
       "Sou seu gestor de tráfego aqui no WhatsApp. Sem uma conta em foco, posso:",
       "• ver e resolver pendências de aprovação (de todas as suas contas);",
       "• te dar um panorama de todas as contas (nota e gasto da última análise de cada uma);",
       '• focar numa conta (ex: "foca na Clínica X") pra ler, analisar e agir nela.',
       "Pode me mandar áudio também — eu transcrevo e entendo. Me diz em qual conta você quer trabalhar.",
-    ].join("\n");
+    ];
+    if (ctx.ref.kind === "group") {
+      lines.push("👥 Aqui no grupo eu acompanho a conversa recente de vocês pra ter contexto — mas só respondo quando me chamam (menção ou resposta).");
+    }
+    return lines.join("\n");
   }
   const parts: string[] = ["Aqui no WhatsApp eu consigo:"];
   parts.push(
@@ -504,6 +508,9 @@ export async function buildCapabilitiesText(
     parts.push(`🤖 Nas análises automáticas (sem você pedir): com o playbook eu ${lbl(pol.bySource.playbook)}; com sugestões de IA eu ${lbl(pol.bySource.llm)}.`);
   }
   parts.push("🎙️ Pode falar por áudio — eu transcrevo e respondo pelo conteúdo.");
+  if (ctx.ref.kind === "group") {
+    parts.push("👥 Aqui no grupo eu acompanho a conversa recente de vocês pra ter contexto — mas só respondo quando me chamam (menção ou resposta).");
+  }
   parts.push("🚧 Ainda não: criar campanhas do zero (em breve) nem editar criativos.");
   parts.push("É só pedir. 🙂");
   return parts.join("\n");

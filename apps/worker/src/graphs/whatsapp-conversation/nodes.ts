@@ -27,7 +27,7 @@ import type { Action, OrgId } from "@trafego/shared/types";
 import { and, eq } from "drizzle-orm";
 import { playbookRules } from "@trafego/db";
 import type { WorkerDeps } from "../../composition.js";
-import { loadConversationConfig } from "./system-prompt.js";
+import { GROUP_RULES, loadConversationConfig } from "./system-prompt.js";
 import { windowMessages } from "./window.js";
 import {
   CONFIG_UPDATE_TOOL_NAMES,
@@ -337,14 +337,16 @@ export function makeConversationNodes(
 
   const executor = makeMetaToolExecutor(deps);
 
-  // Transcript ambiente do grupo (read-only, efêmero): montado UMA vez por turno (cache no
-  // closure — o nó `agent` roda várias vezes no laço ReAct) e injetado no system prompt.
-  // Group-only: em DM devolve "" → prompt idêntico. NÃO vai ao checkpointer/state.
+  // Seção de GRUPO (group-only, efêmera): regras do grupo (S5) + transcript ambiente (S2),
+  // montada UMA vez por turno (cache no closure — o nó `agent` roda várias vezes no laço
+  // ReAct) e injetada no system prompt. Em DM devolve "" → prompt idêntico. As regras entram
+  // SEMPRE (mesmo sem transcript ainda); o transcript se soma quando há histórico. NÃO vai ao
+  // checkpointer/state.
   const groupRepo = createNotifyRepo(deps.db);
-  let groupContextCache: string | null = null;
-  async function groupContextBlock(): Promise<string> {
+  let groupSectionCache: string | null = null;
+  async function groupSection(): Promise<string> {
     if (ctx.ref.kind !== "group") return "";
-    if (groupContextCache !== null) return groupContextCache;
+    if (groupSectionCache !== null) return groupSectionCache;
     const conv = deps.conversation;
     const now = new Date();
     const since = new Date(now.getTime() - conv.groupContextWindowHours * MS_PER_HOUR);
@@ -354,14 +356,15 @@ export function makeConversationNodes(
       since,
       conv.groupContextMaxMessages,
     );
-    groupContextCache = buildGroupTranscript(sources, {
+    const transcript = buildGroupTranscript(sources, {
       now,
       windowHours: conv.groupContextWindowHours,
       maxMessages: conv.groupContextMaxMessages,
       maxTokens: conv.groupContextMaxTokens,
       botLabel: GROUP_BOT_LABEL,
     });
-    return groupContextCache;
+    groupSectionCache = transcript ? `${GROUP_RULES}\n\n${transcript}` : GROUP_RULES;
+    return groupSectionCache;
   }
 
   /** Nova instância de chat LLM (OpenRouter). `withTools` liga as tools da allowlist. */
@@ -397,8 +400,8 @@ export function makeConversationNodes(
     const pendingConfig = activePendingConfig(state.pendingConfigChange);
     const echo = pending?.echo ?? pendingRevert?.echo ?? pendingConfig?.echo;
 
-    // contexto ambiente do grupo (group-only, efêmero, entre a voz e o eco). Em DM → "".
-    const sys = assembleSystemPrompt(systemPrompt, await groupContextBlock(), echo);
+    // seção de grupo (regras + contexto ambiente; group-only, efêmera, entre a voz e o eco). DM → "".
+    const sys = assembleSystemPrompt(systemPrompt, await groupSection(), echo);
 
     const windowed = windowMessages(state.messages, {
       maxTurns: deps.conversation.historyTurns,
