@@ -598,7 +598,12 @@ vez de duplicar lógica. Fatiado (G0→G4) — **entregue por completo**.
   foco prévio também num turno só (hoje a leitura já resolve; escrita-1º-turno segue barra-e-repete).
 - **Controle org-facing do ingest** (ligar/desligar pela org — hoje só kill-switch de plataforma).
 - **Aviso de transparência** no grupo (opt-in futuro — hoje on-by-default silencioso, decisão do dono).
-- **Timezone-aware** no display do transcript (hoje UTC com o "agora" em UTC → delta de recência correto).
+- **Timezone-aware** no display do transcript — **ENTREGUE** junto do fix geral de fuso: datas de
+  "hoje"/janela passam a usar `orgs.timezone` (não UTC) em `get_fresh_metrics`/`get_metrics`/`compare`/
+  `entity`, análise, sync, alerts e dashboard, via `packages/core/src/time` (`todayInTz`/`daysAgoInTz`/
+  `startOfDayInTz`) + `loadOrgTimezone` (`packages/db`). Raiz: à noite BRT o "hoje" em UTC virava o dia
+  seguinte e a janela errava o snapshot. **Follow-up:** fuso da CONTA Meta (quando ≠ org); **billing**
+  (day-bucketing de `usage_events` ainda em UTC).
 - **Semântica de foco por "setagem"** foi descartada em favor de "último uso" (entregue no G7).
 - **Corrida de tool-calls paralelos** (`set_focus` + read no mesmo passo → a read pega o foco
   velho): hoje mitigado por orientação na descrição da tool (chamar isolada). Fix robusto =
