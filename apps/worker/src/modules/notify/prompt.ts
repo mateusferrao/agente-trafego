@@ -55,10 +55,12 @@ export function buildMessageMessages(
     summary: output.summary,
     ...(waste ? { waste } : {}),
     ...(extras?.trackingSuspect ? { trackingSuspect: true } : {}),
-    recommendations: output.recommendations.slice(0, MAX_RECS).map((r) => ({
-      title: r.title,
-      rationale: r.rationale,
-    })),
+    // Fix fadiga (S3): insight puro ('keep' → kind insight) NÃO entra no push proativo
+    // (fica na visão de análise). O push lidera por ação/direção acionável.
+    recommendations: output.recommendations
+      .filter((r) => r.actionType !== "keep")
+      .slice(0, MAX_RECS)
+      .map((r) => ({ title: r.title, rationale: r.rationale })),
   };
   const user = [
     "Resultado curado da análise (base da mensagem):",

@@ -72,6 +72,21 @@ const QUALITY_NOTE =
   "UNDERPERFORMERS. NUNCA recomende ESCALAR (aumentar orçamento / reativar) uma entidade sem " +
   "hasSignificance ou em inLearning — nesse caso recomende investigar ou aguardar mais dados.";
 
+/**
+ * Direção acionável-por-humano + conselho (S3). Agora que a COPY real chega ao
+ * prompt, o analista dá direção concreta de criativo/público e ACONSELHA escalar/
+ * criar (texto, o humano executa) — sem inventar ação de plataforma p/ isso.
+ */
+const ADVICE_NOTE =
+  "O briefing pode trazer a COPY real dos anúncios (bloco 'Copy real...'). Use-a para DIREÇÃO DE " +
+  "CRIATIVO concreta (ex: 'seu ângulo campeão é prova social; teste uma variação com depoimento') " +
+  "— actionType 'review_creative'. Para PÚBLICO, dê direção de teste (ampliar/estreitar/novo " +
+  "lookalike) — actionType 'review_audience'. Você pode ACONSELHAR em texto (o humano executa, " +
+  "você NÃO aplica): ESCALAR um vencedor com significância (subir orçamento / duplicar) ou CRIAR " +
+  "uma campanha (ex: manutenção entre lançamentos) — use actionType 'investigate' (próximo passo " +
+  "claro) ou 'keep' (leitura estratégica). NUNCA proponha ação de plataforma para escalar/criar " +
+  "(não são aplicáveis agora). Seja SELETIVO: só direções/insights materiais, priorizados por impacto.";
+
 /** Diagnóstico por padrão de métrica (causa provável, não só sintoma) — squad. */
 const DIAGNOSIS_NOTE =
   "Ao explicar um problema, aponte a CAUSA provável pelo padrão das métricas: CTR baixo → gancho/" +
@@ -133,7 +148,7 @@ export function buildCampaignMessages(
   accountContext: { readonly currency: string; readonly window: string; readonly businessGoal?: string },
   copyByAdId: ReadonlyMap<string, AdCopy> = new Map(),
 ): LLMMessage[] {
-  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, MISMATCH_NOTE, QUALITY_NOTE, DIAGNOSIS_NOTE, BENCHMARK_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
+  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, MISMATCH_NOTE, QUALITY_NOTE, DIAGNOSIS_NOTE, BENCHMARK_NOTE, ADVICE_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
   const notableAdIds = unit.adsets.flatMap((g) => g.notableAds.map((a) => a.id));
   const vision = notableAdIds
     .map((adId) => ({ adId, vision: visionByAdId.get(adId) ?? [] }))
