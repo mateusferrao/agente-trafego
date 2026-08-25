@@ -83,7 +83,7 @@ async function main(): Promise<void> {
   await createRunReaper({ db: deps.db, logger, staleMinutes: deps.reaper.staleMinutes })
     .reapStale()
     .catch((err: unknown) => logger.error({ err }, "reaper:boot sweep falhou"));
-  logger.info("worker up: agent-runs + cron-dispatch + reaper + insights-sync + insights-sweep + schedule-resync + action-undo + approval-apply + approval-expiry + whatsapp-inbound + whatsapp-transcription + mail");
+  logger.info("worker up: agent-runs + cron-dispatch + reaper + insights-sync + insights-sweep + schedule-resync + action-undo + approval-apply + approval-expiry + group-context-purge + whatsapp-inbound + whatsapp-transcription + mail");
 
   // shutdown gracioso (drena jobs em andamento antes de sair)
   const shutdown = async (signal: string): Promise<void> => {
