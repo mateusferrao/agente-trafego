@@ -4,8 +4,8 @@
 
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import type { Database } from "@trafego/db/client";
-import { adAccounts, agentMemory, agentMutedEntities, agentRunSteps, agentRuns, agentToolCalls, agents, conversionLabels, guardrailConfigs, orgs, platformConnections, playbookRules, recommendations } from "@trafego/db";
-import type { Action, ActionTarget, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, NotifyPolicy, PlaybookRule, RiskLevel } from "@trafego/shared";
+import { adAccounts, adCreatives, agentMemory, agentMutedEntities, agentRunSteps, agentRuns, agentToolCalls, agents, conversionLabels, guardrailConfigs, orgs, platformConnections, playbookRules, recommendations } from "@trafego/db";
+import type { Action, ActionTarget, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, NotifyPolicy, PerformanceTier, PlaybookRule, RiskLevel } from "@trafego/shared";
 import { GUARDRAIL_DEFAULTS, toGuardrailConfig, UNDO_TOOL_KEY } from "@trafego/shared";
 import { entityKeyOf, unseedIdentity } from "@trafego/core";
 import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
@@ -71,6 +71,25 @@ export interface RecommendationRow {
   readonly riskLevel: RiskLevel;
 }
 
+/** Copy + desempenho denormalizado de um anúncio, persistido do run (S1). */
+export interface AdCreativeRow {
+  readonly adId: string;
+  readonly creativeId: string | null;
+  readonly body: string | null;
+  readonly title: string | null;
+  readonly callToAction: string | null;
+  readonly imageUrl: string | null;
+  readonly thumbnailUrl: string | null;
+  readonly videoId: string | null;
+  readonly tier: PerformanceTier | null;
+  readonly spend: number | null;
+  readonly cpa: number | null;
+  readonly roas: number | null;
+}
+
+/** Só a copy/mídia de um anúncio (busca em tempo real) — sem desempenho. */
+export type AdCreativeCopyRow = Omit<AdCreativeRow, "tier" | "spend" | "cpa" | "roas">;
+
 export interface CloseRunInput {
   readonly status: "succeeded" | "failed";
   readonly summary: string | null;
@@ -86,6 +105,22 @@ export interface AnalysisRepo {
   openRun(orgId: string, runId: string, configSnapshot: Record<string, unknown>): Promise<void>;
   markTokenInvalid(orgId: string, adAccountUuid: string): Promise<void>;
   saveRecommendations(rows: readonly RecommendationRow[]): Promise<void>;
+  /** Upsert da copy + desempenho dos anúncios (1 linha viva por anúncio) — S1. */
+  saveAdCreatives(
+    orgId: string,
+    adAccountUuid: string,
+    runId: string,
+    rows: readonly AdCreativeRow[],
+  ): Promise<void>;
+  /**
+   * Upsert SÓ da copy (busca em tempo real, S1.5) — atualiza texto/mídia + `capturedAt`
+   * e **preserva** o desempenho denormalizado (tier/CPA/ROAS/gasto) do último run.
+   */
+  saveAdCreativeCopies(
+    orgId: string,
+    adAccountUuid: string,
+    rows: readonly AdCreativeCopyRow[],
+  ): Promise<void>;
   /** Upsert dos rótulos de conversão resolvidos no run (id→nome), p/ a config ler do banco. */
   saveConversionLabels(
     orgId: string,
@@ -262,6 +297,89 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
           riskLevel: r.riskLevel,
         })),
       );
+    },
+
+    async saveAdCreatives(orgId, adAccountUuid, runId, rows) {
+      if (rows.length === 0) return;
+      // upsert por (conta, anúncio) — 1 linha viva por anúncio; copy + desempenho
+      // denormalizado do run mais recente vencem (historização = fast-follow).
+      await db
+        .insert(adCreatives)
+        .values(
+          rows.map((r) => ({
+            orgId,
+            adAccountId: adAccountUuid,
+            adId: r.adId,
+            creativeId: r.creativeId,
+            body: r.body,
+            title: r.title,
+            callToAction: r.callToAction,
+            imageUrl: r.imageUrl,
+            thumbnailUrl: r.thumbnailUrl,
+            videoId: r.videoId,
+            tier: r.tier,
+            spend: r.spend,
+            cpa: r.cpa,
+            roas: r.roas,
+            capturedAt: sql`now()`,
+            runId,
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [adCreatives.adAccountId, adCreatives.adId],
+          set: {
+            creativeId: sql`excluded.creative_id`,
+            body: sql`excluded.body`,
+            title: sql`excluded.title`,
+            callToAction: sql`excluded.call_to_action`,
+            imageUrl: sql`excluded.image_url`,
+            thumbnailUrl: sql`excluded.thumbnail_url`,
+            videoId: sql`excluded.video_id`,
+            tier: sql`excluded.tier`,
+            spend: sql`excluded.spend`,
+            cpa: sql`excluded.cpa`,
+            roas: sql`excluded.roas`,
+            capturedAt: sql`excluded.captured_at`,
+            runId: sql`excluded.run_id`,
+            updatedAt: sql`now()`,
+          },
+        });
+    },
+
+    async saveAdCreativeCopies(orgId, adAccountUuid, rows) {
+      if (rows.length === 0) return;
+      // upsert SÓ da copy/mídia + capturedAt; PRESERVA tier/spend/cpa/roas (perf do run).
+      await db
+        .insert(adCreatives)
+        .values(
+          rows.map((r) => ({
+            orgId,
+            adAccountId: adAccountUuid,
+            adId: r.adId,
+            creativeId: r.creativeId,
+            body: r.body,
+            title: r.title,
+            callToAction: r.callToAction,
+            imageUrl: r.imageUrl,
+            thumbnailUrl: r.thumbnailUrl,
+            videoId: r.videoId,
+            capturedAt: sql`now()`,
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [adCreatives.adAccountId, adCreatives.adId],
+          set: {
+            creativeId: sql`excluded.creative_id`,
+            body: sql`excluded.body`,
+            title: sql`excluded.title`,
+            callToAction: sql`excluded.call_to_action`,
+            imageUrl: sql`excluded.image_url`,
+            thumbnailUrl: sql`excluded.thumbnail_url`,
+            videoId: sql`excluded.video_id`,
+            capturedAt: sql`excluded.captured_at`,
+            updatedAt: sql`now()`,
+          },
+        });
     },
 
     async saveConversionLabels(orgId, adAccountUuid, platform, labels) {

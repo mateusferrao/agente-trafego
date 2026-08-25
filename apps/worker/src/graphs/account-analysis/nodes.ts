@@ -80,6 +80,7 @@ import {
 } from "../../modules/insights/repo.js";
 import {
   createAnalysisRepo,
+  type AdCreativeRow,
   type AnalysisRepo,
   type ConversionLabelRow,
   type RecommendationRow,
@@ -100,6 +101,7 @@ import {
   buildCampaignMessages,
   buildReviewMessages,
   buildSynthesisMessages,
+  type AdCopy,
 } from "../../modules/analysis/prompt.js";
 import {
   buildMessageMessages,
@@ -329,6 +331,33 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     );
 
     const creativesByAdId = groupBy(state.creatives ?? [], (c) => c.adId);
+
+    // S1 — persistir copy + desempenho denormalizado (1 linha viva por anúncio).
+    // Best-effort: nunca aborta o run. Alimenta "qual copy campeã" e o bloco
+    // `copyByAdId` da análise, sem re-baixar da Meta. Perf vem do brief (tier/métricas).
+    try {
+      const adPerfById = new Map(built.brief.segments.ads.map((e) => [e.id, e]));
+      const creativeRows: AdCreativeRow[] = (state.creatives ?? []).map((c) => {
+        const perf = adPerfById.get(c.adId);
+        return {
+          adId: c.adId,
+          creativeId: c.id ?? null,
+          body: c.body ?? null,
+          title: c.title ?? null,
+          callToAction: c.callToAction ?? null,
+          imageUrl: c.imageUrl ?? null,
+          thumbnailUrl: c.thumbnailUrl ?? null,
+          videoId: c.videoId ?? null,
+          tier: perf?.tier ?? null,
+          spend: perf?.metrics.spend ?? null,
+          cpa: perf?.metrics.cpa ?? null,
+          roas: perf?.metrics.roas ?? null,
+        };
+      });
+      await repo.saveAdCreatives(state.orgId, state.adAccountId, state.runId, creativeRows);
+    } catch (err) {
+      logger.warn({ runId: state.runId, err: String(err) }, "map_units:persist_copy degradou");
+    }
     const vision = repos?.vision ?? createVisionResolver({
       db: deps.db,
       llm: deps.ports.llm,
@@ -366,6 +395,19 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
         if (result) push(visionByAdId, c.adId, result);
       }
 
+      // copy VERBATIM dos anúncios notáveis (texto real, complementa a visão).
+      const copyByAdId = new Map<string, AdCopy>();
+      for (const adId of notableAdIds) {
+        const c = creativesByAdId.get(adId)?.[0];
+        if (!c) continue;
+        const entry: AdCopy = {
+          ...(c.body ? { body: c.body } : {}),
+          ...(c.title ? { title: c.title } : {}),
+          ...(c.callToAction ? { callToAction: c.callToAction } : {}),
+        };
+        if (entry.body || entry.title || entry.callToAction) copyByAdId.set(adId, entry);
+      }
+
       try {
         const completion = await deps.ports.llm.completeStructured<UnitAnalysis>({
           model: cfg.unitModel,
@@ -373,7 +415,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
             currency: accountCurrency,
             window: windowLabel,
             ...(businessGoal ? { businessGoal } : {}),
-          }),
+          }, copyByAdId),
           responseSchema: UNIT_ANALYSIS_JSON_SCHEMA,
           responseSchemaName: UNIT_ANALYSIS_SCHEMA_NAME,
           temperature: ANALYSIS_TEMPERATURE,

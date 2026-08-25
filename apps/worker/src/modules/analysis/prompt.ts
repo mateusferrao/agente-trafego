@@ -119,23 +119,40 @@ const CAMPAIGN_OUTPUT_SHAPE = `{
  * criativos dos anúncios notáveis (quando houver) entra como texto, indexada por adId.
  * O LLM pode agir na entidade certa (campanha/adset/anúncio) — o id vem na árvore.
  */
+/** Copy real (verbatim) de um anúncio p/ o prompt — texto principal/título/CTA. */
+export interface AdCopy {
+  readonly body?: string;
+  readonly title?: string;
+  readonly callToAction?: string;
+}
+
 export function buildCampaignMessages(
   systemPrompt: string,
   unit: CampaignUnit,
   visionByAdId: ReadonlyMap<string, readonly CreativeVisionResult[]>,
   accountContext: { readonly currency: string; readonly window: string; readonly businessGoal?: string },
+  copyByAdId: ReadonlyMap<string, AdCopy> = new Map(),
 ): LLMMessage[] {
   const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, MISMATCH_NOTE, QUALITY_NOTE, DIAGNOSIS_NOTE, BENCHMARK_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
-  const vision = unit.adsets
-    .flatMap((g) => g.notableAds.map((a) => a.id))
+  const notableAdIds = unit.adsets.flatMap((g) => g.notableAds.map((a) => a.id));
+  const vision = notableAdIds
     .map((adId) => ({ adId, vision: visionByAdId.get(adId) ?? [] }))
     .filter((v) => v.vision.length > 0);
+  // Copy VERBATIM (complementa a visão: visão = interpretação, copy = texto real) —
+  // habilita direção de criativo e responder "qual copy campeã".
+  const copy = notableAdIds
+    .map((adId) => ({ adId, copy: copyByAdId.get(adId) }))
+    .filter((c): c is { adId: string; copy: AdCopy } => {
+      const k = c.copy;
+      return k != null && Boolean(k.body || k.title || k.callToAction);
+    });
   const user = [
     jsonBlock(
       "Campanha a analisar (árvore curada: adsets + anúncios notáveis + cauda agregada — analise SÓ com base nela)",
       unit,
     ),
     vision.length > 0 ? jsonBlock("Análise dos criativos dos anúncios notáveis (visão, por adId)", vision) : "",
+    copy.length > 0 ? jsonBlock("Copy real dos anúncios notáveis (texto verbatim, por adId)", copy) : "",
     jsonBlock("Contexto da conta", accountContext),
     "",
     "targetEntity: aponte a entidade certa (campaign, adset ou ad) usando o id que aparece na árvore; senão null.",

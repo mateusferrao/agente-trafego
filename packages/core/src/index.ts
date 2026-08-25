@@ -8,6 +8,7 @@ export * from "./time/index.js";
 export * from "./conversion/index.js";
 export * from "./connections/index.js";
 export * from "./recommendation/index.js";
+export * from "./creatives/index.js";
 export * from "./token-usage/index.js";
 export * from "./archetypes/index.js";
 export * from "./funnel/index.js";

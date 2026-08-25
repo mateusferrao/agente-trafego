@@ -12,10 +12,10 @@
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { adAccounts, agentRuns, agentToolCalls, agents, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
+import { adAccounts, adCreatives, agentRuns, agentToolCalls, agents, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
-import { daysAgoInTz } from "@trafego/core";
-import { createAnalysisRepo } from "../../modules/analysis/repo.js";
+import { daysAgoInTz, rankAdCreatives } from "@trafego/core";
+import { createAnalysisRepo, type AdCreativeCopyRow } from "../../modules/analysis/repo.js";
 import { getFreshMetricsData } from "../../modules/conversation/fresh-metrics.js";
 import type { ApprovalPort } from "@trafego/shared/ports";
 import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY } from "@trafego/shared";
@@ -611,6 +611,77 @@ function asString(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/** Teto de criativos retornados ao chat (WhatsApp não é parede de texto). */
+const TOP_CREATIVES_LIMIT = 5;
+
+/** "Qual minha copy campeã": lê `ad_creatives` (copy + desempenho denormalizado),
+ *  ranqueia (puro, core) e devolve o top-N curado. Org-scoped. */
+async function getTopCreativesData(
+  db: Database,
+  adAccountUuid: string,
+  orgId: string,
+): Promise<NoData | { hasData: true; creatives: readonly unknown[] }> {
+  const rows = await db
+    .select({
+      adId: adCreatives.adId,
+      tier: adCreatives.tier,
+      spend: adCreatives.spend,
+      cpa: adCreatives.cpa,
+      roas: adCreatives.roas,
+      body: adCreatives.body,
+      title: adCreatives.title,
+      callToAction: adCreatives.callToAction,
+    })
+    .from(adCreatives)
+    .where(and(eq(adCreatives.adAccountId, adAccountUuid), eq(adCreatives.orgId, orgId)));
+  if (rows.length === 0) {
+    return {
+      hasData: false,
+      note: "Ainda não tenho as copies desta conta — rode uma análise (ou me peça as métricas de hoje) que eu capturo.",
+    };
+  }
+  const creatives = rankAdCreatives(rows)
+    .slice(0, TOP_CREATIVES_LIMIT)
+    .map((r) => ({
+      adId: r.adId,
+      ...(r.tier ? { tier: r.tier } : {}),
+      ...(r.roas != null ? { roas: r.roas } : {}),
+      ...(r.cpa != null ? { cpa: r.cpa } : {}),
+      ...(r.spend != null ? { spend: r.spend } : {}),
+      ...(r.title ? { title: r.title } : {}),
+      ...(r.body ? { copy: r.body } : {}),
+      ...(r.callToAction ? { cta: r.callToAction } : {}),
+    }));
+  return { hasData: true, creatives };
+}
+
+/**
+ * Busca em TEMPO REAL na Meta (S1.5): puxa os criativos ao vivo (`getCreatives`)
+ * e faz upsert SÓ da copy (preserva o desempenho do último run). Best-effort —
+ * o chamador degrada pro persistido em erro. Sob o governor do adapter.
+ */
+async function refreshCreativeCopiesLive(deps: WorkerDeps, ctx: ReadToolContext): Promise<void> {
+  const repo = createAnalysisRepo(deps.db);
+  const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
+  if (!account) return;
+  const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
+  const adEntities = await deps.ports.ads.listEntities(ref, "ad");
+  const adIds = adEntities.map((e) => e.id);
+  if (adIds.length === 0) return;
+  const creatives = await deps.ports.ads.getCreatives(ref, adIds);
+  const rows: AdCreativeCopyRow[] = creatives.map((c) => ({
+    adId: c.adId,
+    creativeId: c.id ?? null,
+    body: c.body ?? null,
+    title: c.title ?? null,
+    callToAction: c.callToAction ?? null,
+    imageUrl: c.imageUrl ?? null,
+    thumbnailUrl: c.thumbnailUrl ?? null,
+    videoId: c.videoId ?? null,
+  }));
+  await repo.saveAdCreativeCopies(ctx.orgId, ctx.adAccountId, rows);
+}
+
 /**
  * Monta as 5 tools de LEITURA do turno (todas org-scoped, read-only sobre o nosso
  * DB curado). Seguro executar direto — não há escrita nem chamada à plataforma.
@@ -798,6 +869,26 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     },
   );
 
+  const getTopCreatives = tool(
+    async ({ fresh }: { fresh?: boolean | null }) => {
+      if (noFocus()) return NEEDS_FOCUS;
+      logger.debug({ agentId: ctx.agentId, fresh: Boolean(fresh) }, "tool:get_top_creatives");
+      // fresh = puxa a copy ATUAL da Meta antes de responder (preserva a perf do run).
+      if (fresh) {
+        await refreshCreativeCopiesLive(deps, ctx).catch((err) =>
+          logger.warn({ err: String(err) }, "get_top_creatives:refresh live degradou (usa persistido)"),
+        );
+      }
+      return asString(await getTopCreativesData(db, ctx.adAccountId, ctx.orgId));
+    },
+    {
+      name: "get_top_creatives",
+      description:
+        "Os melhores criativos da conta (copy: texto principal, título, CTA) ranqueados por desempenho. Use para 'qual minha copy campeã' ou para embasar direção de criativo. Passe fresh=true para buscar as copies ATUAIS na Meta em tempo real; senão usa as do último run.",
+      schema: z.object({ fresh: z.boolean().nullable() }),
+    },
+  );
+
   return [
     getAccountStatus,
     getMetrics,
@@ -811,5 +902,6 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     listAccounts,
     getAgentConfig,
     explainRecommendation,
+    getTopCreatives,
   ];
 }
