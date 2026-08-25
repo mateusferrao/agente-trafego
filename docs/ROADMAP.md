@@ -70,6 +70,31 @@ fatia MVP agendada **não** entram aqui — ficam na sua fatia: retenção/prune
 decaimento de token em runtime → `6b`; reuso do sync-service pelo `fetchData` → `3a`;
 **métricas de funil/engajamento na análise** → `3a` (ver nota abaixo).)
 
+### Fast-follows da fatia "Recomendações extensíveis + copy + auto-config"
+
+Diferidos ao implementar a fatia de recomendações extensíveis por tools (copy + 3 kinds +
+auto-config + reply-context). **Nenhuma escrita nova na Meta** entrou nesta fatia.
+
+- **Aplicar duplicar/escalar na Meta** (hoje só recomendação em texto) — **junto da criação de
+  campanha do zero**: porta `AdsPlatformPort.duplicateEntity` (`/copies`, `status_option=PAUSED`,
+  `deep_copy`, `parameter_overrides`, retorno `copied_*`/`ad_object_ids`) + `listCustomAudiences`
+  (`/customaudiences`) + `searchInterests` (`/search?type=adinterest`) + `updateTargeting`;
+  guardrail de gasto novo (teto R$/dia por entidade + nº máx/dia); executor/apply-service
+  `apply-duplicate` (mini-saga idempotente, P2 = cópia pausada + report, read-after-write anti-2ª-cópia);
+  tool `duplicate_scale` (proposeOnly, gate CREATE); extensão de `approvals` com `actionType='duplicate'`
+  chaveado pela entidade-origem (aprovação simétrica site+WhatsApp); `recommendations.draftSeed` +
+  `pendingDuplicate` (pré-carrega o rascunho); premissas P1 (sempre aprovação) / P2 (PAUSED).
+- **Criar campanha do zero** (saga de 5 POSTs, `StoragePort` S3-compat, Creative Library, upload de
+  mídia via WhatsApp, captura de Page/Pixel no onboarding, `object_story_spec`, copy por LLM) = Fatia 7.
+- **Catálogo de tools no caminho quente — convergência total:** hoje em `shadow` (loga divergência,
+  não muda comportamento); virar fonte da verdade da allowlist e remover o mapa hardcoded
+  `WRITE_TOOL_TO_ACTION`/`WRITE_TOOL_NAMES` quando billing/entitlement justificar.
+- **Laço de aprendizado do `agent_memory`** (hoje só grava `rejected`): passar a escrever/curar
+  vencedores/padrões aprendidos da conta e lê-los no fluxo de recomendação/criação.
+- **Historização de copy** (`ad_creatives` hoje = 1 linha viva por anúncio) — série de copy×desempenho.
+- Edição de targeting de conjunto **ao vivo**; tools `bid`/`CBO`/Advantage+; Creative Library **web**;
+  orçamento **vitalício** (lifetime + end_time); escopo de público **por-grupo**.
+
 > **Nota (Fatia 3a) — métricas de funil/engajamento.** A 2a normaliza como **conversão**
 > só o objetivo real da entidade (limpo, p/ CPA/ROAS não inflar). Mas a Meta reporta
 > muitos sinais **secundários** que NÃO são conversão e hoje ficam só no `rawActions`
