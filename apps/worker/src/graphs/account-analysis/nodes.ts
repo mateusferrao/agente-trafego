@@ -525,7 +525,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       const issues = flagUnsupportedFindings(draft, state.brief);
       try {
         const completion = await deps.ports.llm.completeStructured<AnalysisOutput>({
-          model: cfg.model,
+          model: cfg.reviewModel,
           messages: buildReviewMessages(state.brief, draft, issues),
           responseSchema: ANALYSIS_OUTPUT_JSON_SCHEMA,
           responseSchemaName: ANALYSIS_OUTPUT_SCHEMA_NAME,

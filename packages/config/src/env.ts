@@ -58,12 +58,16 @@ export const envSchema = z.object({
   // Default = modelo FORTE p/ validar o teto de qualidade da análise (3a). Trocável
   // em 1 linha por env; a otimização de custo/modelo (e config por-agente) vem depois.
   OPENROUTER_MODEL: z.string().min(1).default("x-ai/grok-4.5"),
+  // Reviewer (review_analysis) DESACOPLADO do synthesis: refina/corta (nunca inventa) →
+  // tarefa mais leve, roda em modelo mais barato e não-reasoning, com schema JSON enforçado.
+  // ~−75% do custo do bloco de review vs. o forte. Override por-agente em `model_config.reviewModel`.
+  OPENROUTER_REVIEW_MODEL: z.string().min(1).default("google/gemini-3.7-flash"),
   OPENROUTER_VISION_MODEL: z
     .string()
     .min(1)
     .default("google/gemini-3.1-flash-lite"),
   // Map-reduce (3b-2): modelo barato por-campanha (mapa) + modelo barato do redator do
-  // WhatsApp. Síntese/reviewer usam OPENROUTER_MODEL (forte). Override por-agente (Fatia 4).
+  // WhatsApp. Síntese usa OPENROUTER_MODEL (forte); reviewer usa OPENROUTER_REVIEW_MODEL. Override por-agente (Fatia 4).
   OPENROUTER_UNIT_MODEL: z.string().min(1).default("deepseek/deepseek-v4-flash-0731"),
   OPENROUTER_MESSAGE_MODEL: z.string().min(1).default("google/gemini-3.1-flash-lite"),
   // Versão do analisador de visão — bumpar invalida o cache de análises de criativo.

@@ -24,8 +24,10 @@ const EXECUTION_POLICIES: readonly ExecutionPolicy[] = [
 export { ANALYSIS_WINDOW_MIN_DAYS, ANALYSIS_WINDOW_MAX_DAYS };
 
 export interface AnalysisDefaults {
-  /** modelo FORTE — síntese da conta + reviewer (raciocínio cross-entidade). */
+  /** modelo FORTE — síntese da conta (raciocínio cross-entidade; é a autoridade da análise). */
   readonly model: string;
+  /** modelo do REVIEWER — refina/corta (nunca inventa); tarefa leve, barato e não-reasoning. */
+  readonly reviewModel: string;
   /** modelo BARATO por-anúncio (mapa) + visão. */
   readonly unitModel: string;
   /** modelo BARATO do redator do WhatsApp. */
@@ -83,6 +85,7 @@ export function resolveAnalysisConfig(
 
   return {
     model: str(mc.model) ?? defaults.model,
+    reviewModel: str(mc.reviewModel) ?? defaults.reviewModel,
     unitModel: str(mc.unitModel) ?? defaults.unitModel,
     messageModel: str(mc.messageModel) ?? defaults.messageModel,
     visionModel: str(mc.visionModel) ?? defaults.visionModel,

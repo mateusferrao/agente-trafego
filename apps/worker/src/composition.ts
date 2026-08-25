@@ -233,6 +233,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
     insightsSync,
     analysis: {
       model: env.OPENROUTER_MODEL,
+      reviewModel: env.OPENROUTER_REVIEW_MODEL,
       unitModel: env.OPENROUTER_UNIT_MODEL,
       messageModel: env.OPENROUTER_MESSAGE_MODEL,
       visionModel: env.OPENROUTER_VISION_MODEL,

@@ -139,6 +139,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
     insightsSync: { sync: vi.fn(async () => ({ partial: false, tokenInvalid: opts.tokenInvalid ?? false, snapshotsWritten: rows.length })) } as never,
     analysis: {
       model: "m",
+      reviewModel: "review-m",
       unitModel: "m",
       messageModel: "m",
       visionModel: "m",
@@ -307,6 +308,11 @@ describe("account-analysis read-only nodes", () => {
 
     // 1 mapa (c1) + 1 síntese + 1 revisor + 1 redator (narrativa sempre — S4) = 4 chamadas
     expect(h.llm).toHaveBeenCalledTimes(4);
+    // reviewer DESACOPLADO do synthesis: síntese usa o modelo forte (`model`), revisão o barato (`reviewModel`).
+    const modelByType = (type: string): unknown =>
+      h.llm.mock.calls.find((c) => (c[0] as { meta?: { type?: string } })?.meta?.type === type)?.[0]?.model;
+    expect(modelByType("synthesis")).toBe("m");
+    expect(modelByType("review")).toBe("review-m");
     // a análise por-campanha reanalisada é persistida (base do incremental), chaveada por id de campanha
     expect(repos.entityAnalyses.saveMany).toHaveBeenCalledTimes(1);
     const savedUnits = (repos.entityAnalyses.saveMany as ReturnType<typeof vi.fn>).mock.calls[0]?.[2] as { entityId: string }[];
