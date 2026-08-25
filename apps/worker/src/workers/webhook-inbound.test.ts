@@ -306,6 +306,29 @@ describe("makeInboundRouter — grupo", () => {
     );
   });
 
+  it("(a) nota de voz DIRIGIDA (reply ao bot) → transcreve com atribuição do autor", async () => {
+    const t = makeDeps();
+    const base = groupMedia("audio");
+    const inbound = { ...base, group: { ...base.group, mentionedPhones: [BOT_PHONE] } } as InboundMessage;
+    await makeInboundRouter(t.deps)("inst-1", inbound);
+    expect(t.repo.recordMessage).toHaveBeenCalledWith("conv-grp-1", "inbound", null, {
+      messageId: "GMSG-1",
+      kind: "audio",
+      transcribing: true,
+      authorName: "João",
+    });
+    expect(t.transcriptionQueue.add).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        conversationId: "conv-grp-1",
+        ref: { kind: "group", groupId: "grp-1", participantPhone: "+5511999999999" },
+        messageRowId: "msg-1",
+        audio: expect.objectContaining({ messageKey: { id: "GMSG-1", remoteJid: GROUP_JID, fromMe: false } }),
+      }),
+      expect.objectContaining({ attempts: 3 }),
+    );
+  });
+
   it("sem verificação de membro: mensagem de grupo NÃO passa por resolveInboundContact", async () => {
     const t = makeDeps();
     await makeInboundRouter(t.deps)("inst-1", groupText());
