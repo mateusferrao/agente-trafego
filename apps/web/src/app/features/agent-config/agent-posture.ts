@@ -95,7 +95,8 @@ export class AgentPosture implements OnInit {
   private readonly directiveness = signal<string>('consultative');
   private readonly volume = signal<string>('balanced');
   private readonly didacticDepth = signal<string>('explanatory');
-  private readonly experienceLevel = signal<string | null>(null);
+  // protected: referenciado no template (destaca o preset ativo). AOT exige ≥ protected.
+  protected readonly experienceLevel = signal<string | null>(null);
   private readonly isCustom = signal(false);
   private readonly baseline = signal('');
 
