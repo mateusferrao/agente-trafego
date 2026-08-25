@@ -4,6 +4,7 @@ import {
   buildConfigChangeEcho,
   CONFIG_CHANGE_LABELS,
   CONFIG_WEAKENS_SAFETY_PREFIX,
+  mergeConfigText,
   resolveAgentConfigChange,
   type AgentConfigPatch,
   type AgentConfigState,
@@ -97,9 +98,15 @@ describe("buildConfigChangeEcho", () => {
     expect(echo).toContain("analise assim");
   });
 
-  it("limpar campo de texto: eco diz 'limpo/limpas', não despeja valor", () => {
+  it("limpar campo de texto: eco mostra antes → limpo", () => {
     const echo = echoFor(baseState({ guidance: "orientação antiga" }), { guidance: "" });
-    expect(echo).toContain("orientações ao agente: limpas");
+    expect(echo).toContain('orientações ao agente: "orientação antiga" → limpo');
+  });
+
+  it("orientações: eco mostra ANTES → DEPOIS (o dono vê append × replace)", () => {
+    const cur = baseState({ guidance: "A" });
+    const echo = echoFor(cur, { guidance: "A\nB" }); // append já mesclado pelo chamador
+    expect(echo).toContain('orientações ao agente: "A" → "A B"');
   });
 
   it("proatividade: liga o pulso e mostra a linha em PT, sem afrouxar segurança", () => {
@@ -115,5 +122,25 @@ describe("buildConfigChangeEcho", () => {
     expect(echo).toContain("alerta automático: desligado → ligado");
     expect(echo).toContain("sensibilidade do alerta: normal → alta");
     expect(echo).toContain("aviso após cada análise: ligado → desligado");
+  });
+});
+
+describe("mergeConfigText", () => {
+  it("append PRESERVA o atual e soma o novo (nunca perde texto)", () => {
+    expect(mergeConfigText("não fale de política", "priorize leads", "append")).toBe("não fale de política\npriorize leads");
+  });
+
+  it("append com atual vazio = só o novo", () => {
+    expect(mergeConfigText(null, "priorize leads", "append")).toBe("priorize leads");
+    expect(mergeConfigText("   ", "priorize leads", "append")).toBe("priorize leads");
+  });
+
+  it("replace SUBSTITUI (o pedido explícito de trocar)", () => {
+    expect(mergeConfigText("velho", "novo", "replace")).toBe("novo");
+  });
+
+  it("texto vazio (limpar) passa direto (replace de fato)", () => {
+    expect(mergeConfigText("velho", "", "append")).toBe("");
+    expect(mergeConfigText("velho", "  ", "replace")).toBe("  ");
   });
 });

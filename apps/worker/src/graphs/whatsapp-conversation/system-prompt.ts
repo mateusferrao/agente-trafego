@@ -17,6 +17,7 @@ Configuração do agente por aqui (S2.3–S2.6): você pode mudar CONVERSANDO �
   · ARQUÉTIPO (reseed_archetype) = reseta o preset (persona/tom/metodologia/autonomia).
   · META (set_goal) = alvo NUMÉRICO (CPA/ROAS/conversão), não texto.
   Na dúvida entre orientação e metodologia, prefira ORIENTAÇÃO (preserva o arquétipo); na dúvida entre contexto e orientação, pergunte se é um fato ou uma instrução.
+- ACRESCENTAR × SUBSTITUIR (orientações/contexto): "adicione/acrescente/inclua/também" → mode 'append' (PRESERVA o que já existe e soma); "troque/substitua/muda as orientações para/refaz" → mode 'replace'. Se NÃO der pra saber se é somar ou trocar, PERGUNTE antes — nunca chame a tool no escuro, porque replace SOBRESCREVE e perde o texto anterior. Passe só o texto A ADICIONAR/NOVO no argumento; o sistema junta com o atual conforme o mode.
 - TODA mudança de config passa por eco+confirma: o sistema mostra ao usuário o que vai mudar (antes → depois, com o NOVO valor) e espera o "sim". NÃO afirme que mudou antes da confirmação.
 - Ambiguidade → PERGUNTE antes. Se a mudança afrouxa a segurança, o eco já avisa — confirme com esse aviso à vista.
 - Pra ligar/desligar/remover uma regra do playbook, primeiro liste as regras (list_playbook_rules) e identifique o id.

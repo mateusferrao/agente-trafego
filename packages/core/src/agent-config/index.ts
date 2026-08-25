@@ -333,6 +333,21 @@ export function trimOrNull(s: string): string | null {
   return t.length > 0 ? t : null;
 }
 
+/** Modo de escrita de um campo de texto acumulativo (orientações/contexto). */
+export type ConfigTextMode = "append" | "replace";
+
+/**
+ * Merge determinístico de um campo de texto acumulativo (orientações/contexto):
+ * `append` PRESERVA o valor atual e acrescenta o novo numa nova linha (nunca perde
+ * texto); `replace` substitui. Vazio (só espaços) → replace (limpa). Puro.
+ */
+export function mergeConfigText(current: string | null, text: string, mode: ConfigTextMode): string {
+  const add = text.trim();
+  const cur = (current ?? "").trim();
+  if (mode === "append" && cur.length > 0 && add.length > 0) return `${cur}\n${add}`;
+  return text;
+}
+
 /** Knobs escalares de "Opções avançadas" (6c) reconhecidos no model_config (fora quality). */
 export const ADVANCED_SCALAR_KEYS = [
   "model",
@@ -444,6 +459,13 @@ function preview(text: string): string {
   return t.length <= ECHO_PREVIEW_MAX ? t : `${t.slice(0, ECHO_PREVIEW_MAX - 1)}…`;
 }
 
+/** Antes → depois de um campo de texto acumulativo (o dono vê append × replace). */
+function textBeforeAfter(before: string | null, after: string | null): string {
+  const b = before === null ? "(vazio)" : `"${preview(before)}"`;
+  const a = after === null ? "limpo" : `"${preview(after)}"`;
+  return `${b} → ${a}`;
+}
+
 /** Linhas de detalhe de UM campo mudado (antes → depois). Vazio = nada a dizer. */
 function configDetailLines(label: string, cur: AgentConfigState, next: AgentConfigState): string[] {
   const lines: string[] = [];
@@ -493,10 +515,10 @@ function configDetailLines(label: string, cur: AgentConfigState, next: AgentConf
       lines.push(`janela de análise: ${cur.analysisWindowDays} dias → ${next.analysisWindowDays} dias`);
       return lines;
     case CONFIG_CHANGE_LABELS.businessContext:
-      lines.push(`contexto do negócio: ${next.businessContext === null ? "limpo" : `"${preview(next.businessContext)}"`}`);
+      lines.push(`contexto do negócio: ${textBeforeAfter(cur.businessContext, next.businessContext)}`);
       return lines;
     case CONFIG_CHANGE_LABELS.guidance:
-      lines.push(`orientações ao agente: ${next.guidance === null ? "limpas" : `"${preview(next.guidance)}"`}`);
+      lines.push(`orientações ao agente: ${textBeforeAfter(cur.guidance, next.guidance)}`);
       return lines;
     case CONFIG_CHANGE_LABELS.persona:
       lines.push(`persona: ${next.persona === null ? "limpa (volta ao arquétipo)" : `"${preview(next.persona)}"`}`);

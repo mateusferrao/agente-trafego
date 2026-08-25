@@ -28,6 +28,7 @@ import {
 } from "@trafego/shared";
 import {
   describePlaybookRule,
+  mergeConfigText,
   type AgentConfigPatch,
   type AgentConfigState,
   type AgentGoalsPatch,
@@ -390,14 +391,14 @@ export function makeConversationTools(
   const setBusinessContext = tool(proposeOnly, {
     name: "set_business_context",
     description:
-      "Define o CONTEXTO DO NEGÓCIO: FATOS sobre o negócio (nicho, oferta, ticket médio, público, sazonalidade) que o agente trata como verdade factual. É INFORMAÇÃO, não instrução de comportamento. Use para 'sou uma clínica de estética', 'meu ticket médio é R$2000', 'lanço 2x por ano'. Para dizer COMO o agente deve agir, use set_guidance. Texto vazio limpa. Requer eco+confirma.",
-    schema: z.object({ text: z.string() }),
+      "Define o CONTEXTO DO NEGÓCIO: FATOS sobre o negócio (nicho, oferta, ticket médio, público, sazonalidade) que o agente trata como verdade factual. É INFORMAÇÃO, não instrução de comportamento. Use para 'sou uma clínica de estética', 'meu ticket médio é R$2000'. Para dizer COMO o agente deve agir, use set_guidance. mode: 'append' ACRESCENTA ao contexto atual (nunca perde texto); 'replace' SUBSTITUI tudo. 'adicione/também/inclua' → append; 'troque/muda o contexto para' → replace; se não der pra saber, PERGUNTE antes (não chame a tool). Texto vazio limpa. Requer eco+confirma.",
+    schema: z.object({ text: z.string(), mode: z.enum(["append", "replace"]) }),
   });
   const setGuidance = tool(proposeOnly, {
     name: "set_guidance",
     description:
-      "Adiciona ORIENTAÇÕES de comportamento — instruções pontuais que o agente segue como prioridade SEM substituir o arquétipo (camada ADITIVA). É a opção certa para 'adicione nas suas instruções...', 'não responda assuntos fora de anúncios', 'priorize captação de leads', 'seja mais agressivo em escalar'. NÃO confundir com set_system_prompt (que SUBSTITUI a metodologia inteira) nem com set_goal (meta numérica de CPA/ROAS). Texto vazio limpa. Requer eco+confirma.",
-    schema: z.object({ text: z.string() }),
+      "Define ORIENTAÇÕES de comportamento — instruções que o agente segue como prioridade SEM substituir o arquétipo (camada ADITIVA). Certa para 'adicione nas suas instruções...', 'não responda fora de anúncios', 'priorize leads'. NÃO confundir com set_system_prompt (SUBSTITUI a metodologia inteira) nem set_goal (meta numérica). mode: 'append' ACRESCENTA às orientações atuais (nunca perde texto); 'replace' SUBSTITUI tudo. 'adicione/acrescente/inclua/também' → append; 'troque/substitua/muda as orientações para' → replace; se não der pra saber, PERGUNTE antes (não chame a tool). Texto vazio limpa. Requer eco+confirma.",
+    schema: z.object({ text: z.string(), mode: z.enum(["append", "replace"]) }),
   });
   const setSystemPrompt = tool(proposeOnly, {
     name: "set_system_prompt",
@@ -800,10 +801,14 @@ export function configPatchFromToolCall(
       return { tone: String(args["text"] ?? "") };
     case "set_system_prompt":
       return { systemPrompt: String(args["text"] ?? "") };
-    case "set_business_context":
-      return { businessContext: String(args["text"] ?? "") };
-    case "set_guidance":
-      return { guidance: String(args["text"] ?? "") };
+    case "set_business_context": {
+      const mode = (args["mode"] as "append" | "replace" | undefined) ?? "replace";
+      return { businessContext: mergeConfigText(current.businessContext, String(args["text"] ?? ""), mode) };
+    }
+    case "set_guidance": {
+      const mode = (args["mode"] as "append" | "replace" | undefined) ?? "replace";
+      return { guidance: mergeConfigText(current.guidance, String(args["text"] ?? ""), mode) };
+    }
     default:
       return null;
   }

@@ -348,6 +348,24 @@ describe("configPatchFromToolCall", () => {
     expect(patch).toEqual({ persona: "vendedor consultivo" });
   });
 
+  it("set_guidance append: PRESERVA a orientação atual e soma (não sobrescreve)", () => {
+    const cur = state({ guidance: "não fale de política" });
+    const patch = configPatchFromToolCall("set_guidance", { text: "priorize leads", mode: "append" }, cur);
+    expect(patch).toEqual({ guidance: "não fale de política\npriorize leads" });
+  });
+
+  it("set_guidance replace: SUBSTITUI a orientação atual", () => {
+    const cur = state({ guidance: "orientação antiga" });
+    const patch = configPatchFromToolCall("set_guidance", { text: "só o novo", mode: "replace" }, cur);
+    expect(patch).toEqual({ guidance: "só o novo" });
+  });
+
+  it("set_business_context append: soma ao contexto atual", () => {
+    const cur = state({ businessContext: "clínica de estética" });
+    const patch = configPatchFromToolCall("set_business_context", { text: "ticket médio R$2000", mode: "append" }, cur);
+    expect(patch).toEqual({ businessContext: "clínica de estética\nticket médio R$2000" });
+  });
+
   it("tool que não é update de config → null", () => {
     expect(configPatchFromToolCall("reseed_archetype", { archetype: "otimizador" }, state())).toBeNull();
   });
