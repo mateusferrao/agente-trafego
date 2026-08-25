@@ -21,7 +21,7 @@ export const MESSAGE_OUTPUT_SCHEMA_NAME = "whatsapp_message";
 // POSTURA (composePostureBlock), não hardcoded aqui — fonte única de voz.
 const VOICE_RULES = [
   "Escreva a mensagem de WhatsApp para o dono da conta, em linguagem natural.",
-  "Curta e escaneável: 1 decisão por linha. Comece pelo diagnóstico (1 frase), depois as sugestões.",
+  "Comece pelo diagnóstico em 1 frase. Se houver MAIS DE UMA sugestão, liste uma por linha (prefixe com '- '); se for UMA só, vá direto numa frase — não transforme em lista nem invente sugestões extras. NUNCA junte várias sugestões num parágrafo corrido. Escaneável, nunca parede de texto.",
   "Não inclua IDs internos, JSON, nem markdown pesado. Sem saudação longa.",
   "Não invente números nem ações: use SOMENTE o que está no resultado fornecido.",
   "Se houver 'waste' (wastedSpend > 0 ou 'misallocated'), ABRA pela mensagem em reais (o dono quer ver o dinheiro primeiro): quanto está parado e onde está mal alocado.",
