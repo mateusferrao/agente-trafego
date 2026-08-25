@@ -35,7 +35,7 @@ const MAX_POLLS = 6;
             </div>
             @if (t.cpa !== undefined) {
               <div class="flex flex-col">
-                <span class="text-xs text-muted">Custo por venda</span>
+                <span class="text-xs text-muted">{{ t.cpaLabel ?? 'Custo por resultado' }}</span>
                 <span class="text-lg font-semibold text-ink">{{ money(t.cpa, m.currency) }}</span>
               </div>
             }

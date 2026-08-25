@@ -13,6 +13,9 @@ export const liveKpis = z.object({
   cpm: z.number().optional(),
   cpa: z.number().optional(),
   roas: z.number().optional(),
+  /** rótulo do CPA derivado da conversão de negócio ("Custo por venda|conversa|lead|…"
+   *  ou genérico "Custo por resultado") — projetado pela API; corrige o "venda" hardcoded. */
+  cpaLabel: z.string().optional(),
   delta: deltaSchema,
 });
 export type LiveKpis = z.infer<typeof liveKpis>;

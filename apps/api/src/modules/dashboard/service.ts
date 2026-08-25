@@ -14,7 +14,7 @@ import {
   platformConnections,
   type Database,
 } from "@trafego/db";
-import { computeLiveTotals, resolveWindows, todayInTz } from "@trafego/core";
+import { computeLiveTotals, cpaLabelFor, resolveWindows, todayInTz } from "@trafego/core";
 import { buildInsightsSyncJob, DEFAULT_TIMEZONE, UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY } from "@trafego/shared";
 import type { AgentGoals, InsightRow, OrgId, StoredInsightMetrics } from "@trafego/shared";
 import type { SchedulerPort } from "@trafego/shared/ports";
@@ -126,7 +126,9 @@ export function createDashboardService(deps: DashboardDeps) {
         asOf: latest ? latest.toISOString() : null,
         stale: isStale(latest),
         window,
-        totals: totals ? pickKpis(totals) : null,
+        // rótulo do CPA derivado da conversão de negócio (fonte única @trafego/core) —
+        // corrige o "Custo por venda" hardcoded quando o objetivo é conversa/lead/etc.
+        totals: totals ? { ...pickKpis(totals), cpaLabel: cpaLabelFor(goals.conversionGoal ?? null) } : null,
       };
     },
 
