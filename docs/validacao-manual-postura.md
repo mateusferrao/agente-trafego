@@ -21,6 +21,16 @@ sessão; 🧑 = requer credenciais reais (Meta/OpenRouter/Evolution) — operado
 - ✅ Suíte completa verde: core 337, worker 287, api 100, agent-config 9, demais pacotes.
 - ✅ `tokens:check` do web sem token hardcoded.
 
+### Executado AO VIVO (LLM OpenRouter real + leitura Meta real; sem push, sem escrita na Meta)
+Script efêmero via `buildComposition()` do worker (removido após rodar).
+- ✅ **Postura muda a voz (push, LLM real)** — mesmos dados de análise, posturas opostas:
+  - *consultivo·abrangente·didático*: texto longo, 5 pontos numerados, explica termos, tom "sugiro/recomendo… como prefere seguir?".
+  - *diretivo·enxuto·direto*: curto, imperativo ("Pausar imediatamente a CAMP-Z"), sem básico.
+  → volume, diretividade e profundidade **visivelmente** diferentes com a MESMA base.
+- ✅ **Leitura Meta real** (`getFreshMetricsData`, ontem+hoje) — token da conexão (DB) descriptografado; conta de dev sem gasto no período → **erro amigável** ("não tenho dados de … entre …"), sem crash: valida o **caminho triste (Meta sem dado)** + a degradação.
+- ✅ **Pulso P2 voiceado** (LLM real) — declara o período + ressalva "dados de hoje ainda consolidando", lidera pelos números (gasto/CPA/CTR/Δ%), traz as recs que seguem valendo, na voz/postura escolhida.
+- Achado do E2E (corrigido): o script usava `orgId` não-uuid → `metering:falhou`; era bug do próprio script (em produção `orgId` é uuid), não do produto.
+
 ---
 
 ## 1. Config de postura no site (Slice 6)

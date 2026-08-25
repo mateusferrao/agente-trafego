@@ -1290,6 +1290,55 @@
               "alerts",
               "runPush"
             ]
+          },
+          "posture": {
+            "type": "object",
+            "properties": {
+              "directiveness": {
+                "type": "string",
+                "enum": [
+                  "consultative",
+                  "balanced",
+                  "directive"
+                ]
+              },
+              "volume": {
+                "type": "string",
+                "enum": [
+                  "concise",
+                  "balanced",
+                  "comprehensive"
+                ]
+              },
+              "didacticDepth": {
+                "type": "string",
+                "enum": [
+                  "direct",
+                  "balanced",
+                  "explanatory"
+                ]
+              },
+              "experienceLevel": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "enum": [
+                  "beginner",
+                  "intermediate",
+                  "advanced"
+                ]
+              }
+            },
+            "required": [
+              "directiveness",
+              "volume",
+              "didacticDepth",
+              "experienceLevel"
+            ]
+          },
+          "postureIsCustom": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -1309,7 +1358,9 @@
           "guardrails",
           "modelConfig",
           "qualityDefaults",
-          "notifyPolicy"
+          "notifyPolicy",
+          "posture",
+          "postureIsCustom"
         ]
       },
       "ArchetypeCatalogOutput": {
@@ -1340,10 +1391,128 @@
                 "whenToUse"
               ]
             }
+          },
+          "postureAxes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "enum": [
+                    "directiveness",
+                    "volume",
+                    "didacticDepth"
+                  ]
+                },
+                "label": {
+                  "type": "string"
+                },
+                "help": {
+                  "type": "string"
+                },
+                "levels": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "level": {
+                        "type": "string"
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "description": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "level",
+                      "label",
+                      "description"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "key",
+                "label",
+                "help",
+                "levels"
+              ]
+            }
+          },
+          "experienceLevels": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "level": {
+                  "type": "string",
+                  "enum": [
+                    "beginner",
+                    "intermediate",
+                    "advanced"
+                  ]
+                },
+                "label": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "whenToUse": {
+                  "type": "string"
+                },
+                "axes": {
+                  "type": "object",
+                  "properties": {
+                    "directiveness": {
+                      "type": "string",
+                      "enum": [
+                        "consultative",
+                        "balanced",
+                        "directive"
+                      ]
+                    },
+                    "volume": {
+                      "type": "string",
+                      "enum": [
+                        "concise",
+                        "balanced",
+                        "comprehensive"
+                      ]
+                    },
+                    "didacticDepth": {
+                      "type": "string",
+                      "enum": [
+                        "direct",
+                        "balanced",
+                        "explanatory"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "directiveness",
+                    "volume",
+                    "didacticDepth"
+                  ]
+                }
+              },
+              "required": [
+                "level",
+                "label",
+                "description",
+                "whenToUse",
+                "axes"
+              ]
+            }
           }
         },
         "required": [
-          "archetypes"
+          "archetypes",
+          "postureAxes",
+          "experienceLevels"
         ]
       },
       "AgentGoalsInput": {
@@ -1861,6 +2030,43 @@
                 ]
               }
             }
+          },
+          "posture": {
+            "type": "object",
+            "properties": {
+              "directiveness": {
+                "type": "string",
+                "enum": [
+                  "consultative",
+                  "balanced",
+                  "directive"
+                ]
+              },
+              "volume": {
+                "type": "string",
+                "enum": [
+                  "concise",
+                  "balanced",
+                  "comprehensive"
+                ]
+              },
+              "didacticDepth": {
+                "type": "string",
+                "enum": [
+                  "direct",
+                  "balanced",
+                  "explanatory"
+                ]
+              },
+              "experienceLevel": {
+                "type": "string",
+                "enum": [
+                  "beginner",
+                  "intermediate",
+                  "advanced"
+                ]
+              }
+            }
           }
         }
       },
@@ -1959,6 +2165,12 @@
                   "null"
                 ]
               },
+              "narrative": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "partial": {
                 "type": "boolean"
               },
@@ -2020,6 +2232,29 @@
                       },
                       "roas": {
                         "type": "number"
+                      },
+                      "conversionGoal": {
+                        "type": "string",
+                        "enum": [
+                          "purchase",
+                          "lead",
+                          "registration",
+                          "initiate_checkout",
+                          "add_to_cart",
+                          "view_content",
+                          "add_payment_info",
+                          "search",
+                          "contact",
+                          "subscribe",
+                          "start_trial",
+                          "submit_application",
+                          "messaging_started",
+                          "app_install",
+                          "custom"
+                        ]
+                      },
+                      "cpaLabel": {
+                        "type": "string"
                       }
                     },
                     "required": [
@@ -2258,6 +2493,7 @@
               "id",
               "status",
               "summary",
+              "narrative",
               "partial",
               "partialNote",
               "partialSeverity",
@@ -3551,6 +3787,12 @@
                   "null"
                 ]
               },
+              "narrative": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "partial": {
                 "type": "boolean"
               },
@@ -3612,6 +3854,29 @@
                       },
                       "roas": {
                         "type": "number"
+                      },
+                      "conversionGoal": {
+                        "type": "string",
+                        "enum": [
+                          "purchase",
+                          "lead",
+                          "registration",
+                          "initiate_checkout",
+                          "add_to_cart",
+                          "view_content",
+                          "add_payment_info",
+                          "search",
+                          "contact",
+                          "subscribe",
+                          "start_trial",
+                          "submit_application",
+                          "messaging_started",
+                          "app_install",
+                          "custom"
+                        ]
+                      },
+                      "cpaLabel": {
+                        "type": "string"
                       }
                     },
                     "required": [
@@ -3850,6 +4115,7 @@
               "id",
               "status",
               "summary",
+              "narrative",
               "partial",
               "partialNote",
               "partialSeverity",
