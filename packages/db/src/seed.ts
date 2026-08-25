@@ -31,7 +31,15 @@ async function seed(): Promise<void> {
       .values(tool)
       .onConflictDoUpdate({
         target: agentToolDefinitions.key,
-        set: { description: tool.description, riskLevel: tool.riskLevel, isIdempotent: tool.isIdempotent, requiredPermission: tool.requiredPermission },
+        set: {
+          description: tool.description,
+          riskLevel: tool.riskLevel,
+          isIdempotent: tool.isIdempotent,
+          requiredPermission: tool.requiredPermission,
+          executableInChat: tool.executableInChat,
+          proposable: tool.proposable,
+          approvalPolicy: tool.approvalPolicy,
+        },
       });
   }
 

@@ -68,6 +68,14 @@ export const autonomyLevel = pgEnum("autonomy_level", [
 
 export const agentStatus = pgEnum("agent_status", ["active", "paused", "draft"]);
 export const toolBindingMode = pgEnum("tool_binding_mode", ["enabled", "disabled", "shadow"]);
+// Política de aprovação por capacidade (S4) — o catálogo declara COMO cada tool é
+// gated: `auto` (por autonomia+origem), `approvals_table` (inbox site+WhatsApp,
+// granular), `chat_confirm` (sempre eco+confirma). Execução unificada, gating diferenciado.
+export const toolApprovalPolicy = pgEnum("tool_approval_policy", [
+  "auto",
+  "approvals_table",
+  "chat_confirm",
+]);
 export const memoryType = pgEnum("memory_type", ["objective", "past_action", "rejected", "fact"]);
 export const memoryLifecycle = pgEnum("memory_lifecycle", ["active", "stale", "archived"]);
 

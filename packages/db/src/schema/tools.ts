@@ -1,11 +1,12 @@
 import { boolean, index, jsonb, pgTable, text, uuid } from "drizzle-orm/pg-core";
-import { pk, riskLevel, timestamps, toolBindingMode } from "./_shared.js";
+import { pk, riskLevel, timestamps, toolApprovalPolicy, toolBindingMode } from "./_shared.js";
 import { agents } from "./agents.js";
 import { orgs } from "./tenancy.js";
 
 /**
  * Catálogo-DB de ferramentas do agente. Global (não `org`-scoped):
- * habilitado por org/agente via `agent_tool_bindings`.
+ * habilitado por org/agente via `agent_tool_bindings`. Fonte única de capacidades
+ * (S4): declara de quais superfícies cada tool participa + como é gated.
  */
 export const agentToolDefinitions = pgTable("agent_tool_definitions", {
   id: pk(),
@@ -17,6 +18,11 @@ export const agentToolDefinitions = pgTable("agent_tool_definitions", {
   schema: jsonb("schema").$type<Record<string, unknown>>().notNull().default({}),
   requiredPermission: text("required_permission"),
   requiredEntitlement: text("required_entitlement"),
+  // Superfícies + gating (S4). `executableInChat` = o chat pode executá-la;
+  // `proposable` = a análise pode recomendá-la (semeia platform_action).
+  executableInChat: boolean("executable_in_chat").notNull().default(true),
+  proposable: boolean("proposable").notNull().default(false),
+  approvalPolicy: toolApprovalPolicy("approval_policy").notNull().default("approvals_table"),
   ...timestamps,
 });
 

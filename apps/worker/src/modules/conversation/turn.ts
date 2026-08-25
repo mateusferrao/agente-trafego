@@ -7,7 +7,7 @@
 import { and, eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import { HumanMessage, type AIMessage } from "@langchain/core/messages";
-import { adAccounts, agents, conversations, guardrailConfigs, loadOrgTimezone, type Database } from "@trafego/db";
+import { adAccounts, agentToolBindings, agentToolDefinitions, agents, conversations, guardrailConfigs, loadOrgTimezone, type Database } from "@trafego/db";
 import type { ActionType, AutonomyPolicy, ConversationRef } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
 import { buildWhatsappConversationGraph } from "../../graphs/whatsapp-conversation/graph.js";
@@ -132,6 +132,59 @@ async function allowedWriteTools(db: Database, orgId: string, agentId: string): 
 }
 
 /**
+ * S4 (shadow-first) — resolve as write-tools a partir do CATÁLOGO∩bindings (fonte única):
+ * tool executável no chat + binding do agente (enabled/shadow contam; disabled não;
+ * ausência de binding = HERDA o comportamento atual via `fallback`). Interseção
+ * conservadora com o `fallback` (allowedActions): nunca habilita mais do que hoje.
+ * NÃO muda comportamento — usado só p/ logar divergência e validar a costura antes da virada.
+ */
+async function catalogWriteToolsShadow(
+  db: Database,
+  orgId: string,
+  agentId: string,
+  fallback: readonly string[],
+): Promise<string[]> {
+  const fallbackSet = new Set(fallback);
+  const defs = await db
+    .select({ key: agentToolDefinitions.key, executableInChat: agentToolDefinitions.executableInChat })
+    .from(agentToolDefinitions);
+  const bindings = await db
+    .select({ toolKey: agentToolBindings.toolKey, mode: agentToolBindings.mode })
+    .from(agentToolBindings)
+    .where(and(eq(agentToolBindings.agentId, agentId), eq(agentToolBindings.orgId, orgId)));
+  const modeByKey = new Map(bindings.map((b) => [b.toolKey, b.mode]));
+  const result: string[] = [];
+  for (const d of defs) {
+    if (!d.executableInChat) continue;
+    const mode = modeByKey.get(d.key);
+    const enabled = mode === undefined ? fallbackSet.has(d.key) : mode !== "disabled";
+    // interseção conservadora: só entra se também estava no fallback (allowedActions).
+    if (enabled && fallbackSet.has(d.key)) result.push(d.key);
+  }
+  return result;
+}
+
+/** Loga divergência catálogo↔allowedActions (shadow). Fire-and-forget; nunca lança. */
+async function logCatalogShadow(
+  db: Database,
+  orgId: string,
+  agentId: string,
+  current: readonly string[],
+  logger: Pick<Logger, "debug" | "warn">,
+): Promise<void> {
+  try {
+    const fromCatalog = await catalogWriteToolsShadow(db, orgId, agentId, current);
+    const a = new Set(current);
+    const b = new Set(fromCatalog);
+    const diverges = a.size !== b.size || [...a].some((k) => !b.has(k));
+    if (diverges) logger.warn({ agentId, current: [...a], fromCatalog: [...b] }, "catalog-shadow:divergência");
+    else logger.debug({ agentId }, "catalog-shadow:coerente");
+  } catch (err) {
+    logger.warn({ agentId, err: String(err) }, "catalog-shadow:falhou");
+  }
+}
+
+/**
  * Kill-switch da auto-config por chat (S2.3): a config só entra na allowlist quando
  * `autonomy_policy.autoConfigViaChat !== false` (ausente/true = ON; default). Desligado
  * → as tools de config NEM CHEGAM ao LLM (config passa a ser pelo site). NÃO passam por
@@ -195,12 +248,12 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
   // a 1ª pergunta resolve num turno (set_focus muta o ctx; reads self-guardam sem foco).
   const conciergeAllow =
     input.ref.kind === "group" && multiAccount ? GROUP_CONCIERGE_TOOL_NAMES : CONCIERGE_TOOL_NAMES;
+  const writeTools = inContext ? await allowedWriteTools(deps.db, input.orgId, inContext.agentId) : [];
+  // S4 shadow: valida a costura catálogo↔allowedActions sem mudar comportamento
+  // (fire-and-forget, fora do caminho crítico). Vira fonte da verdade numa fatia futura.
+  if (inContext) void logCatalogShadow(deps.db, input.orgId, inContext.agentId, writeTools, logger);
   const allow = inContext
-    ? new Set<string>([
-        ...AGENT_TOOL_NAMES,
-        ...(await allowedWriteTools(deps.db, input.orgId, inContext.agentId)),
-        ...config.tools,
-      ])
+    ? new Set<string>([...AGENT_TOOL_NAMES, ...writeTools, ...config.tools])
     : conciergeAllow;
 
   let reply = FALLBACK_REPLY;
