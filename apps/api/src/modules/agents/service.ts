@@ -18,6 +18,9 @@ import {
   archetypeDefaults,
   composeMethodologyPrompt,
   daysAgoInTz,
+  experienceCatalog,
+  experienceLevelIsCustom,
+  postureCatalog,
   todayInTz,
   unseedIdentity,
   windowFromModelConfig,
@@ -30,6 +33,7 @@ import { applyAgentConfigChange, reseedArchetypeChange } from "@trafego/agent-co
 import {
   ACTION_UNDO_QUEUE,
   ACTION_UNDO_JOB,
+  DEFAULT_POSTURE,
   GUARDRAIL_DEFAULTS,
   toGuardrailConfig,
   DEFAULT_TIMEZONE,
@@ -112,6 +116,7 @@ export function createAgentsService(deps: AgentsDeps) {
         modelConfig: agents.modelConfig,
         autonomyPolicy: agents.autonomyPolicy,
         notifyPolicy: agents.notifyPolicy,
+        posture: agents.posture,
         status: agents.status,
       })
       .from(agents)
@@ -138,6 +143,9 @@ export function createAgentsService(deps: AgentsDeps) {
         modelConfig: projectModelConfig(existing.modelConfig),
         qualityDefaults: deps.qualityDefaults,
         notifyPolicy: existing.notifyPolicy,
+        // fallback defensivo (linha pré-migração/fake de teste); coluna real é NOT NULL.
+        posture: existing.posture ?? DEFAULT_POSTURE,
+        postureIsCustom: experienceLevelIsCustom(existing.posture ?? DEFAULT_POSTURE),
       };
     }
 
@@ -183,6 +191,8 @@ export function createAgentsService(deps: AgentsDeps) {
       modelConfig: {},
       qualityDefaults: deps.qualityDefaults,
       notifyPolicy: defaults.defaultNotifyPolicy,
+      posture: defaults.defaultPosture,
+      postureIsCustom: false,
     };
   }
 
@@ -224,6 +234,8 @@ export function createAgentsService(deps: AgentsDeps) {
       modelConfig: projectModelConfig(next.modelConfig),
       qualityDefaults: deps.qualityDefaults,
       notifyPolicy: next.notifyPolicy,
+      posture: next.posture,
+      postureIsCustom: experienceLevelIsCustom(next.posture),
     };
   }
 
@@ -255,6 +267,8 @@ export function createAgentsService(deps: AgentsDeps) {
       autonomyPolicy: result.autonomyPolicy,
       cadence: result.cadence,
       notifyPolicy: result.notifyPolicy,
+      posture: result.posture,
+      postureIsCustom: false,
       methodologyPreview: methodologyFor(result.archetype),
     };
   }
@@ -603,8 +617,12 @@ export function createAgentsService(deps: AgentsDeps) {
   }
 
   /** Catálogo de arquétipos (estático) p/ a UI de seleção (6c). */
-  function listArchetypes(): { archetypes: ReturnType<typeof archetypeCatalog> } {
-    return { archetypes: archetypeCatalog() };
+  function listArchetypes(): {
+    archetypes: ReturnType<typeof archetypeCatalog>;
+    postureAxes: ReturnType<typeof postureCatalog>;
+    experienceLevels: ReturnType<typeof experienceCatalog>;
+  } {
+    return { archetypes: archetypeCatalog(), postureAxes: postureCatalog(), experienceLevels: experienceCatalog() };
   }
 
   return {
@@ -688,6 +706,8 @@ function toConfigPatch(input: AgentConfigInput): AgentConfigPatch {
     ...(input.guardrails !== undefined ? { guardrails: input.guardrails } : {}),
     ...(input.modelConfig !== undefined ? { modelConfig: input.modelConfig } : {}),
     ...(input.notifyPolicy !== undefined ? { notifyPolicy: toNotifyPolicyPatch(input.notifyPolicy) } : {}),
+    // posture DTO já é o shape do PosturePatch flat (todos opcionais) — passthrough.
+    ...(input.posture !== undefined ? { posture: input.posture } : {}),
   };
 }
 

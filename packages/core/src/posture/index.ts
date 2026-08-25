@@ -137,9 +137,11 @@ export interface ExperienceOption {
   readonly label: string;
   readonly description: string;
   readonly whenToUse: string;
+  /** eixos que este preset semeia (UI mostra o preview do que vai mudar). */
+  readonly axes: PostureAxes;
 }
 
-const EXPERIENCE_LABELS: Readonly<Record<ExperienceLevel, Omit<ExperienceOption, "level">>> = {
+const EXPERIENCE_LABELS: Readonly<Record<ExperienceLevel, Omit<ExperienceOption, "level" | "axes">>> = {
   beginner: {
     label: "Iniciante",
     description: "Ainda aprendendo tráfego; quer que o agente diga o que fazer e explique.",
@@ -159,7 +161,7 @@ const EXPERIENCE_LABELS: Readonly<Record<ExperienceLevel, Omit<ExperienceOption,
 
 /** Catálogo dos presets de experiência (padrão archetypeCatalog). PURO. */
 export function experienceCatalog(): ExperienceOption[] {
-  return EXPERIENCE_LEVELS.map((level) => ({ level, ...EXPERIENCE_LABELS[level] }));
+  return EXPERIENCE_LEVELS.map((level) => ({ level, ...EXPERIENCE_LABELS[level], axes: EXPERIENCE_PRESETS[level] }));
 }
 
 // ─── Lookups PT (fonte única do eco de mudança + describe_capabilities) ───────

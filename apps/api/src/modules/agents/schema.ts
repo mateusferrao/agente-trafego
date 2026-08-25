@@ -7,8 +7,16 @@ import {
   conversionGoalSchema,
   guardrailConfigSchema,
   notifyPolicySchema,
+  postureSchema,
 } from "@trafego/shared/schemas";
-import { ANALYSIS_WINDOW_MIN_DAYS, ANALYSIS_WINDOW_MAX_DAYS } from "@trafego/shared";
+import {
+  ANALYSIS_WINDOW_MIN_DAYS,
+  ANALYSIS_WINDOW_MAX_DAYS,
+  DIDACTIC_DEPTH_LEVELS,
+  DIRECTIVENESS_LEVELS,
+  EXPERIENCE_LEVELS,
+  VOLUME_LEVELS,
+} from "@trafego/shared";
 
 // Fatia 4: meta + conversão + personalização + janela (corte 1) · identidade/voz +
 // cadência + playbook (corte 2). Limites da janela = fonte única em @trafego/shared.
@@ -127,6 +135,16 @@ export const agentConfigInput = z.object({
   modelConfig: modelConfigInput.optional(),
   /** proatividade (F4d): pulso/alerta/push do cron. */
   notifyPolicy: notifyPolicyInput.optional(),
+  /** postura de comunicação (voz): patch parcial dos 3 eixos + preset de experiência.
+   *  experienceLevel semeia os 3 eixos no resolver; um eixo explícito sobrepõe. */
+  posture: z
+    .object({
+      directiveness: z.enum(DIRECTIVENESS_LEVELS).optional(),
+      volume: z.enum(VOLUME_LEVELS).optional(),
+      didacticDepth: z.enum(DIDACTIC_DEPTH_LEVELS).optional(),
+      experienceLevel: z.enum(EXPERIENCE_LEVELS).optional(),
+    })
+    .optional(),
 });
 export type AgentConfigInput = z.infer<typeof agentConfigInput>;
 
@@ -160,6 +178,10 @@ export const agentSummary = z.object({
   qualityDefaults: qualityDefaultsOutput,
   /** proatividade (F4d) — estado atual completo (pulso/alerta/push). */
   notifyPolicy: notifyPolicySchema,
+  /** postura de comunicação (voz) — estado atual (3 eixos + preset). */
+  posture: postureSchema,
+  /** true quando os eixos divergem do preset marcado (UI mostra "personalizado"). */
+  postureIsCustom: z.boolean(),
 });
 export type AgentSummary = z.infer<typeof agentSummary>;
 
@@ -170,7 +192,33 @@ export const archetypeOption = z.object({
   description: z.string(),
   whenToUse: z.string(),
 });
-export const archetypeCatalogOutput = z.object({ archetypes: z.array(archetypeOption) });
+/** Um nível de um eixo de postura (rótulo amigável) — UI + preview. */
+export const postureLevelOption = z.object({ level: z.string(), label: z.string(), description: z.string() });
+/** Um eixo de postura com todos os níveis. */
+export const postureAxisOption = z.object({
+  key: z.enum(["directiveness", "volume", "didacticDepth"]),
+  label: z.string(),
+  help: z.string(),
+  levels: z.array(postureLevelOption),
+});
+/** Um preset de experiência + os eixos que semeia (UI mostra o preview). */
+export const experienceOption = z.object({
+  level: z.enum(EXPERIENCE_LEVELS),
+  label: z.string(),
+  description: z.string(),
+  whenToUse: z.string(),
+  axes: z.object({
+    directiveness: z.enum(DIRECTIVENESS_LEVELS),
+    volume: z.enum(VOLUME_LEVELS),
+    didacticDepth: z.enum(DIDACTIC_DEPTH_LEVELS),
+  }),
+});
+/** Catálogo servido à UI: arquétipos + eixos de postura + presets de experiência. */
+export const archetypeCatalogOutput = z.object({
+  archetypes: z.array(archetypeOption),
+  postureAxes: z.array(postureAxisOption),
+  experienceLevels: z.array(experienceOption),
+});
 export type ArchetypeCatalogOutput = z.infer<typeof archetypeCatalogOutput>;
 
 /** Re-seed do arquétipo (c2): reseta SÓ o comportamento, preserva meta+textos. */

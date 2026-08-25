@@ -22,6 +22,7 @@ import { AgentPlaybook } from './agent-playbook';
 import { AgentAutonomy } from './agent-autonomy';
 import { AgentGuardrails } from './agent-guardrails';
 import { AgentNotifications } from './agent-notifications';
+import { AgentPosture } from './agent-posture';
 
 type Conversion = AvailableConversionsOutput['conversions'][number];
 /** Um arquétipo do catálogo (chave + rótulo + descrição + quando usar). */
@@ -112,7 +113,7 @@ interface FormState {
 @Component({
   selector: 'app-agent-config-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, UiButton, UiPageHeader, UiSpinner, UiSelectBox, AgentPlaybook, AgentAutonomy, AgentGuardrails, AgentNotifications],
+  imports: [RouterLink, UiButton, UiPageHeader, UiSpinner, UiSelectBox, AgentPlaybook, AgentAutonomy, AgentGuardrails, AgentNotifications, AgentPosture],
   template: `
     <div class="flex flex-col gap-8">
       <div class="flex flex-col gap-1">
@@ -382,6 +383,9 @@ interface FormState {
 
         <!-- Notificações proativas (pulso/alerta/aviso) — componente próprio -->
         <app-agent-notifications [accountId]="accountId" />
+
+        <!-- Postura de comunicação (como o agente FALA) — componente próprio -->
+        <app-agent-posture [accountId]="accountId" />
 
         <!-- Arquétipo (preset base) — logo abaixo da cadência -->
         <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
@@ -720,7 +724,7 @@ export class AgentConfigPage {
     const ok = await this.confirmDialog.confirm({
       title: 'Trocar o arquétipo?',
       description:
-        'Reaplica persona, tom e método padrão dele. Sua meta, contexto e orientações são preservados.',
+        'Reaplica os padrões dele: persona, tom, método, autonomia, notificações e a postura de comunicação (como o agente fala). Sua meta, contexto e orientações são preservados.',
       confirmLabel: 'Trocar',
       tone: 'warning',
     });
