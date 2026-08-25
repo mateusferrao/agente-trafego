@@ -803,7 +803,10 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
             accountName: state.account.name,
             ...(out.scorecard?.headline ? { headline: out.scorecard.headline } : {}),
             summary: out.summary,
-            recommendations: out.recommendations.map((r) => ({ title: r.title })),
+            // filtra insights ANTES de fatiar (mesma base do redator + do nudge de volume).
+            recommendations: out.recommendations
+              .filter((r) => kindForRecommendation(r.actionType) !== "insight")
+              .map((r) => ({ title: r.title })),
             ...(state.brief?.waste && state.brief.waste.wastedSpend > 0
               ? { money: { wastedSpend: state.brief.waste.wastedSpend, wastedPct: state.brief.waste.wastedPct } }
               : {}),
