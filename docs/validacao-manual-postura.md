@@ -29,7 +29,17 @@ Script efêmero via `buildComposition()` do worker (removido após rodar).
   → volume, diretividade e profundidade **visivelmente** diferentes com a MESMA base.
 - ✅ **Leitura Meta real** (`getFreshMetricsData`, ontem+hoje) — token da conexão (DB) descriptografado; conta de dev sem gasto no período → **erro amigável** ("não tenho dados de … entre …"), sem crash: valida o **caminho triste (Meta sem dado)** + a degradação.
 - ✅ **Pulso P2 voiceado** (LLM real) — declara o período + ressalva "dados de hoje ainda consolidando", lidera pelos números (gasto/CPA/CTR/Δ%), traz as recs que seguem valendo, na voz/postura escolhida.
-- Achado do E2E (corrigido): o script usava `orgId` não-uuid → `metering:falhou`; era bug do próprio script (em produção `orgId` é uuid), não do produto.
+- ✅ **Config de postura por HTTP autenticado** (Postgres real): `GET /agents/archetypes` traz postureAxes/experienceLevels; `GET agent` traz posture+postureIsCustom; `PUT posture experienceLevel=advanced` semeia os 3 eixos (consultivo/enxuto/direto, custom=false); `PUT volume=comprehensive` → custom=true; `GET` confirma persistência.
+- ✅ **Auto-config de postura por CHAT (LLM real, Grafo B, entrega stubbed):** comando explícito → `set_volume` → eco "volume: Abrangente → Enxuto — Confirma?" → "sim" → aplica (DB=concise). Queixa VAGA ("sugestão demais") → após o fix, dispara a tool + eco+confirma (aplica), estável em 2 rodadas.
+- ✅ **Fluidez de entrega (pipeline F4, sanitize+split+typing):** balões escaneáveis; nudge "Tem mais N — quer ver?" coerente no enxuto.
+
+### Achados do E2E ao vivo — CORRIGIDOS (foco em qualidade)
+1. **Redator em parede de texto** (push abrangente = parágrafo corrido de ~520c): `VOICE_RULES` reforçado (uma sugestão por linha, condicional à quantidade). Verificado: vira lista escaneável; enxuto = 1 bullet coerente com o nudge.
+2. **Auto-config afirmava mudança sem chamar a tool** (queixa vaga → "já ajustei" com DB inalterado = mentira): system-prompt endurecido (config só muda via tool; proibido afirmar sem tool+confirmação; queixa de comunicação → chama a tool ou pergunta). Verificado ao vivo.
+3. `metering:falhou` no 1º script: `orgId` não-uuid — bug do script de teste, não do produto.
+
+### Bloqueado por infra (não por código)
+- 🧑 **Envio real no WhatsApp**: a instância Evolution está `state:"close"` (número offline — reconectar exige QR humano). A pipeline F4 (o que define *como chega*) foi validada; só o hop de rede da Evolution não roda aqui.
 
 ---
 
