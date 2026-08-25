@@ -2,6 +2,7 @@ import type {
   ActionType,
   RecommendationActionType,
   RecommendationApplicability,
+  RecommendationKind,
   RiskLevel,
 } from "@trafego/shared";
 import { riskForAction } from "../risk/index.js";
@@ -40,6 +41,28 @@ const ACTION_TYPE_BY_RECOMMENDATION: Readonly<Record<RecommendationActionType, A
 
 export function applicableActionType(recActionType: RecommendationActionType): ActionType | null {
   return ACTION_TYPE_BY_RECOMMENDATION[recActionType];
+}
+
+/**
+ * Classifica o `actionType` sugerido pelo LLM (8 tipos) no `kind` persistido (3) —
+ * o eixo real de renderização/gating. PURA. Antes, os tipos consultivos eram
+ * DESCARTADOS (viravam `proposedAction=null` sem rótulo); aqui viram `human_direction`
+ * (direção que o humano executa) ou `insight` (leitura, sem ação). As ações
+ * executáveis viram `platform_action` (coerente com `applicableActionType !== null`).
+ */
+const KIND_BY_RECOMMENDATION: Readonly<Record<RecommendationActionType, RecommendationKind>> = {
+  pause: "platform_action",
+  resume: "platform_action",
+  increase_budget: "platform_action",
+  decrease_budget: "platform_action",
+  review_creative: "human_direction",
+  review_audience: "human_direction",
+  investigate: "human_direction",
+  keep: "insight",
+};
+
+export function kindForRecommendation(recActionType: RecommendationActionType): RecommendationKind {
+  return KIND_BY_RECOMMENDATION[recActionType];
 }
 
 /** Direção do ajuste de budget (p/ `params`), quando aplicável. */

@@ -253,6 +253,20 @@ export interface Finding {
  */
 export type RecommendationApplicability = "applicable" | "not_yet_applicable";
 
+/**
+ * Formato de uma recomendação — desacopla a recomendação da ação de plataforma
+ * (a ação é OPCIONAL). Tupla const = fonte única (deriva tipo + zod), padrão de
+ * `CONVERSION_GOALS`. Três formatos convivem:
+ *  - `platform_action` → carrega uma capacidade executável do catálogo (pausar,
+ *    ajustar budget, …); vira o caminho de eco+confirma/aprovação.
+ *  - `human_direction` → direção clara que o HUMANO executa (direção de criativo/
+ *    público, conselho de escalar/criar); nunca auto-aplica.
+ *  - `insight`         → leitura estratégica em texto, sem ação atrelada.
+ */
+export const RECOMMENDATION_KINDS = ["platform_action", "human_direction", "insight"] as const;
+
+export type RecommendationKind = (typeof RECOMMENDATION_KINDS)[number];
+
 // ─── AccountBrief (único input do LLM) ───────────────────────────────────
 export interface TrendPoint {
   readonly date: string;
