@@ -271,6 +271,30 @@ describe("makeInboundRouter — grupo", () => {
     );
   });
 
+  it("(b) dirigido respondendo um ÁUDIO → enfileira transcrição do citado com o texto do turno", async () => {
+    const t = makeDeps();
+    await makeInboundRouter(t.deps)(
+      "inst-1",
+      groupText({ quotedAuthorPhone: "+5511777777777", quotedKind: "audio", quotedStanzaId: "AUD-1" }),
+    );
+    // grava a dirigida com citação [áudio]; NÃO bufferiza o texto direto (espera a transcrição).
+    expect(t.repo.recordMessage).toHaveBeenCalledWith(
+      "conv-grp-1",
+      "inbound",
+      "@bot analisa",
+      expect.objectContaining({ quotedAuthorPhone: "+5511777777777", quotedSnippet: "[áudio]" }),
+    );
+    expect(t.redis.rpush).not.toHaveBeenCalled(); // o texto entra combinado após transcrever
+    expect(t.transcriptionQueue.add).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        quotedAudioContext: { userText: "@bot analisa", authorLabel: "Participante-7777" },
+        audio: expect.objectContaining({ messageKey: expect.objectContaining({ id: "AUD-1", remoteJid: GROUP_JID }) }),
+      }),
+      expect.objectContaining({ attempts: 3 }),
+    );
+  });
+
   it("ambiente em REPLY a áudio → group_messages com quotedSnippet [áudio]", async () => {
     const t = makeDeps({ groupIngestContext: true });
     await makeInboundRouter(t.deps)(

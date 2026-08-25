@@ -177,4 +177,47 @@ describe("makeTranscriptionProcessor", () => {
     await makeTranscriptionProcessor(t.deps)(job({ attemptsMade: 1, opts: { attempts: 2 } }));
     expect(t.sendToConversation).not.toHaveBeenCalled(); // throttle barrou
   });
+
+  // ── áudio CITADO (b): reply a um áudio marcando o bot ──
+  const quotedJob = (over: Partial<TranscriptionJob> = {}): TranscriptionJob =>
+    job({
+      data: {
+        orgId: "org-1",
+        ref: { kind: "group", groupId: "grp-1", participantPhone: "+5511999999999" },
+        conversationId: "conv-g",
+        instanceId: "inst-1",
+        audio: { base64: "", mimetype: "audio/ogg", messageKey: { id: "AUD-1", remoteJid: "grp-1@g.us", fromMe: false, participant: "5511777777777@s.whatsapp.net" } },
+        quotedAudioContext: { userText: "@bot o que ele falou?", authorLabel: "Participante-7777" },
+      },
+      ...over,
+    });
+
+  it("áudio citado sucesso: prefixa a transcrição + o texto do turno no buffer, sem tocar em linha de mensagem", async () => {
+    const t = makeDeps();
+    t.messaging.fetchMediaBase64.mockResolvedValueOnce(AUDIO_B64);
+    await makeTranscriptionProcessor(t.deps)(quotedJob());
+
+    expect(t.redis.rpush).toHaveBeenCalledWith(
+      "wa:inbuf:conv-g",
+      "[Em resposta ao áudio de Participante-7777: olá pausa a campanha x]\n\n@bot o que ele falou?",
+    );
+    expect(t.repo.updateMessageContent).not.toHaveBeenCalled(); // não há linha própria do áudio citado
+    expect(t.metering.record).toHaveBeenCalled(); // custo medido
+    expect(t.flushQueue.add).toHaveBeenCalled(); // settle
+  });
+
+  it("áudio citado falha: roda o turno só com o texto do usuário + nota, sem aviso avulso", async () => {
+    const t = makeDeps();
+    t.messaging.fetchMediaBase64.mockResolvedValueOnce(AUDIO_B64);
+    t.transcription.transcribe.mockRejectedValueOnce(new TranscriptionError("upstream", "502"));
+    await makeTranscriptionProcessor(t.deps)(quotedJob({ attemptsMade: 1, opts: { attempts: 2 } }));
+
+    expect(t.redis.rpush).toHaveBeenCalledWith(
+      "wa:inbuf:conv-g",
+      "@bot o que ele falou?\n\n[não consegui ouvir o áudio que você respondeu]",
+    );
+    expect(t.sendToConversation).not.toHaveBeenCalled(); // sem aviso avulso — a nota entra no próprio turno
+    expect(t.repo.updateMessageContent).not.toHaveBeenCalled();
+    expect(t.redis.decr).toHaveBeenCalled(); // settle
+  });
 });

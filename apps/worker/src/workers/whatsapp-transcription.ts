@@ -102,7 +102,7 @@ async function audioNotice(d: TranscriptionProcessorDeps, conversationId: string
 /** Fábrica do processor — pura de BullMQ, testável com fakes. */
 export function makeTranscriptionProcessor(d: TranscriptionProcessorDeps) {
   return async function process(job: TranscriptionJob): Promise<void> {
-    const { orgId, ref, conversationId, messageRowId, instanceId, audio } = job.data;
+    const { orgId, ref, conversationId, messageRowId, instanceId, audio, quotedAudioContext } = job.data;
     const flushPayload: WhatsappFlushPayload = { orgId, conversationId, ref };
     // settle = destrava a flag + re-agenda o flush. Best-effort: nunca re-lança (uma
     // falha aqui NÃO pode virar retry → re-transcrição paga). O backstop `.on("failed")`
@@ -137,8 +137,18 @@ export function makeTranscriptionProcessor(d: TranscriptionProcessorDeps) {
       if (!permanent && !lastAttempt) throw err;
       d.logger.warn({ conversationId, err: String(err) }, "transcription:falhou");
       try {
-        await d.repo.updateMessageContent(messageRowId, null, { transcribing: false, error: errorKind(err) });
-        await audioNotice(d, conversationId, ref, AUDIO_FAILED_NOTICE);
+        if (quotedAudioContext) {
+          // não deu pra ouvir o áudio CITADO → roda o turno só com o texto do usuário + nota.
+          await pushInbound(
+            d.redis,
+            conversationId,
+            `${quotedAudioContext.userText}\n\n[não consegui ouvir o áudio que você respondeu]`,
+            d.debounceSeconds + BUFFER_TTL_MARGIN_SEC,
+          );
+        } else if (messageRowId) {
+          await d.repo.updateMessageContent(messageRowId, null, { transcribing: false, error: errorKind(err) });
+          await audioNotice(d, conversationId, ref, AUDIO_FAILED_NOTICE);
+        }
       } catch (e) {
         d.logger.warn({ conversationId, err: String(e) }, "transcription:fail_persist_falhou");
       }
@@ -153,12 +163,20 @@ export function makeTranscriptionProcessor(d: TranscriptionProcessorDeps) {
       if (result.costUsd == null) d.logger.warn({ conversationId, model: result.model }, "transcription:custo_ausente");
       const durationPatch = result.durationSec != null ? { durationSec: result.durationSec } : {};
       const text = result.text.trim();
-      if (text.length === 0) {
-        await d.repo.updateMessageContent(messageRowId, null, { transcribing: false, empty: true, ...durationPatch });
+      const bufTtl = d.debounceSeconds + BUFFER_TTL_MARGIN_SEC;
+      if (quotedAudioContext) {
+        // áudio CITADO (b): prefixa a transcrição no turno, junto do texto que o usuário digitou.
+        const combined =
+          text.length > 0
+            ? `[Em resposta ao áudio de ${quotedAudioContext.authorLabel}: ${text}]\n\n${quotedAudioContext.userText}`
+            : `${quotedAudioContext.userText}\n\n[o áudio que você respondeu veio sem fala audível]`;
+        await pushInbound(d.redis, conversationId, combined, bufTtl);
+      } else if (text.length === 0) {
+        if (messageRowId) await d.repo.updateMessageContent(messageRowId, null, { transcribing: false, empty: true, ...durationPatch });
         await audioNotice(d, conversationId, ref, AUDIO_EMPTY_NOTICE);
       } else {
-        await d.repo.updateMessageContent(messageRowId, text, { transcribing: false, ...durationPatch });
-        await pushInbound(d.redis, conversationId, text, d.debounceSeconds + BUFFER_TTL_MARGIN_SEC);
+        if (messageRowId) await d.repo.updateMessageContent(messageRowId, text, { transcribing: false, ...durationPatch });
+        await pushInbound(d.redis, conversationId, text, bufTtl);
       }
     } catch (persistErr) {
       d.logger.warn({ conversationId, err: String(persistErr) }, "transcription:persist_falhou");

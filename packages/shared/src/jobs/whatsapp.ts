@@ -56,14 +56,22 @@ export type WhatsappTranscriptionPayload = {
   readonly orgId: string;
   readonly ref: ConversationRef;
   readonly conversationId: string;
-  /** id da LINHA da mensagem (messages.id) — update por PK após transcrever. */
-  readonly messageRowId: string;
+  /** id da LINHA da mensagem (messages.id) — update por PK após transcrever. Ausente no
+   *  caso de ÁUDIO CITADO (reply a áudio marcando o bot): não há linha própria a atualizar. */
+  readonly messageRowId?: string;
   /** instância Evolution dona da mensagem — p/ o fallback `fetchMediaBase64`. */
   readonly instanceId: string;
   readonly audio: {
     readonly base64: string;
     readonly mimetype: string;
-    /** key cru da mensagem — usado só se `base64` vier vazio (fallback). */
-    readonly messageKey: { readonly id: string; readonly remoteJid: string; readonly fromMe: boolean };
+    /** key cru da mensagem — usado se `base64` vier vazio (fallback) OU p/ áudio citado.
+     *  `participant` = autor (necessário p/ mídia de grupo). */
+    readonly messageKey: { readonly id: string; readonly remoteJid: string; readonly fromMe: boolean; readonly participant?: string };
+  };
+  /** ÁUDIO CITADO (b): transcreve o áudio que o usuário respondeu e prefixa no turno,
+   *  junto do texto que ele digitou. Ausente = transcrição normal (nota de voz própria). */
+  readonly quotedAudioContext?: {
+    readonly userText: string;
+    readonly authorLabel: string;
   };
 };

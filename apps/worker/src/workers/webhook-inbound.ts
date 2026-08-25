@@ -219,6 +219,46 @@ async function routeGroupMessage(d: InboundRouterDeps, instanceId: string, inbou
 
   const conversationId = await d.repo.ensureGroupConversation(resolved.orgId, resolved.groupId, group.senderPhone);
   const ref: ConversationRef = { kind: "group", groupId: resolved.groupId, participantPhone: group.senderPhone };
+
+  // (b) reply a um ÁUDIO marcando o bot: transcreve o áudio CITADO e prefixa no turno,
+  // junto do texto que o usuário digitou. O áudio citado é buscado por chave (fetchMediaBase64).
+  if (inbound.kind === "text" && group.quotedKind === "audio" && group.quotedStanzaId) {
+    const quotedFromBot = group.quotedAuthorPhone !== null && group.quotedAuthorPhone === botPhone;
+    await d.repo.recordMessage(conversationId, "inbound", inbound.text, {
+      messageId: inbound.messageId,
+      authorName: group.senderName,
+      ...(group.quotedAuthorPhone ? { quotedAuthorPhone: group.quotedAuthorPhone } : {}),
+      quotedSnippet: AMBIENT_AUDIO_PLACEHOLDER,
+      ...(quotedFromBot ? { quotedFromBot: true } : {}),
+    });
+    const digits = (group.quotedAuthorPhone ?? "").replace(/\D/gu, "");
+    const authorLabel = quotedFromBot ? "assistente" : digits.length >= 4 ? `Participante-${digits.slice(-4)}` : "alguém";
+    const participant =
+      group.quotedAuthorLid ?? (group.quotedAuthorPhone ? `${digits}@s.whatsapp.net` : undefined);
+    await markTranscribing(d.redis, conversationId, d.transcribingTtlSec); // segura o flush até transcrever
+    const payload: WhatsappTranscriptionPayload = {
+      orgId: resolved.orgId,
+      ref,
+      conversationId,
+      instanceId,
+      audio: {
+        base64: "",
+        mimetype: "audio/ogg",
+        messageKey: { id: group.quotedStanzaId, remoteJid: group.groupJid, fromMe: false, ...(participant ? { participant } : {}) },
+      },
+      quotedAudioContext: { userText: inbound.text, authorLabel },
+    };
+    await d.transcriptionQueue.add(WHATSAPP_TRANSCRIPTION_JOB, payload, {
+      attempts: WHATSAPP_TRANSCRIPTION_ATTEMPTS,
+      backoff: { type: "exponential", delay: WHATSAPP_TRANSCRIPTION_BACKOFF_MS },
+      removeOnComplete: true,
+      removeOnFail: true,
+    });
+    await scheduleConversationFlush(d.flushQueue, { orgId: resolved.orgId, conversationId, ref }, d.debounceMs);
+    d.logger.debug({ conversationId }, "inbound:group_quoted_audio");
+    return;
+  }
+
   // authorName + citação no meta → atribuição + "em resposta a X" da dirigida no transcript.
   // Captura o reply mesmo quando é ao PRÓPRIO bot (contexto útil pros outros participantes):
   // marca `quotedFromBot` p/ o transcript rotular como o assistente (não o telefone do bot).
