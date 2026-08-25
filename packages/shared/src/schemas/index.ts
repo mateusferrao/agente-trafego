@@ -1,12 +1,14 @@
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { CONVERSION_GOALS } from "../types/index.js";
+import { CONVERSION_GOALS, RECOMMENDATION_KINDS } from "../types/index.js";
 
 // Fonte da verdade dos contratos (zod → OpenAPI → kubb). Expandir por feature.
 
 export const entityLevel = z.enum(["account", "campaign", "adset", "ad"]);
 /** Taxonomia neutra de conversão (deriva da mesma tupla que o tipo — fonte única). */
 export const conversionGoalSchema = z.enum(CONVERSION_GOALS);
+/** Formato da recomendação (S2) — deriva da mesma tupla que o tipo (fonte única). */
+export const recommendationKindSchema = z.enum(RECOMMENDATION_KINDS);
 export const actionType = z.enum([
   "pause_entity",
   "resume_entity",

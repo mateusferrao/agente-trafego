@@ -40,6 +40,17 @@ const ACTION_LABEL: Record<string, string> = {
   adjust_budget: 'Ajustar orçamento',
   set_status: 'Mudar status',
 };
+/** Formato da recomendação (S2) em linguagem de gente — status = tom+texto. */
+const KIND_LABEL: Record<Recommendation['kind'], string> = {
+  platform_action: 'posso fazer isso',
+  human_direction: 'sugestão pra você',
+  insight: 'o que observei',
+};
+const KIND_TONE: Record<Recommendation['kind'], 'info' | 'neutral'> = {
+  platform_action: 'info',
+  human_direction: 'neutral',
+  insight: 'neutral',
+};
 /** Rótulo PT-BR de cada faixa (sem jargão). */
 const TIER_LABEL: Record<Tier, string> = {
   winner: 'campeã',
@@ -265,6 +276,7 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                 <div class="flex items-start justify-between gap-3">
                   <div class="flex flex-wrap items-center gap-2">
                     <h3 class="font-brand text-base font-semibold text-ink">{{ rec.title }}</h3>
+                    <span appBadge [tone]="kindTone(rec.kind)" size="sm">{{ kindLabel(rec.kind) }}</span>
                     @if (recTier(rec); as t) {
                       <span appBadge [tone]="tierTone(t)" size="sm">{{ tierLabel(t) }}</span>
                     }
@@ -274,9 +286,13 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                 @if (rec.rationale) {
                   <p class="text-sm text-muted">{{ rec.rationale }}</p>
                 }
-                @if (rec.proposedAction) {
+                @if (rec.kind === 'platform_action' && rec.proposedAction) {
                   <div class="rounded-md bg-soft p-3">
                     <span class="text-sm text-ink">Ação sugerida: {{ actionText(rec) }}</span>
+                  </div>
+                } @else if (rec.kind === 'human_direction') {
+                  <div class="rounded-md bg-soft p-3">
+                    <span class="text-sm text-ink">Direção — você aplica. Peça no WhatsApp se quiser ajuda.</span>
                   </div>
                 }
                 <!-- Feedback 👍/👎: ensina o agente (👎 vira memória "não repita isso") -->
@@ -388,6 +404,12 @@ export class AnalysisDetail {
   }
   protected riskLabel(risk: Recommendation['riskLevel']): string {
     return RISK_LABEL[risk];
+  }
+  protected kindLabel(kind: Recommendation['kind']): string {
+    return KIND_LABEL[kind];
+  }
+  protected kindTone(kind: Recommendation['kind']): 'info' | 'neutral' {
+    return KIND_TONE[kind];
   }
   protected actionText(rec: Recommendation): string {
     const action = rec.proposedAction;

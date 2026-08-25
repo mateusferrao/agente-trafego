@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { actionType, entityLevel, riskLevel, scorecardGrade, scorecardSchema } from "@trafego/shared/schemas";
+import { actionType, entityLevel, recommendationKindSchema, riskLevel, scorecardGrade, scorecardSchema } from "@trafego/shared/schemas";
 
 export const runStatus = z.enum([
   "pending",
@@ -30,10 +30,14 @@ export const recommendationOutput = z.object({
   id: z.string(),
   title: z.string(),
   rationale: z.string().nullable(),
+  /** formato (S2): platform_action (com ação) | human_direction | insight. */
+  kind: recommendationKindSchema,
   riskLevel,
   /** aplicabilidade da sugestão — em 3a nada é aplicável (aplicação = Fatia 5). */
   applicability: z.enum(["applicable", "not_yet_applicable"]),
   proposedAction: proposedActionOutput.nullable(),
+  /** capacidade do catálogo proposta — só em platform_action. */
+  toolKey: z.string().nullable(),
   /** voto do dono (👍/👎), quando houver — o card do site reflete o estado. */
   vote: z.enum(["up", "down"]).nullable(),
 });

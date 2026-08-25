@@ -463,11 +463,13 @@ function toRecommendationOutput(rec: RecommendationRow, vote: "up" | "down" | nu
     id: rec.id,
     title: rec.title,
     rationale: rec.rationale ?? null,
+    kind: rec.kind,
     riskLevel: rec.riskLevel,
     applicability: READ_ONLY_APPLICABILITY,
     proposedAction: action
       ? { type: action.type, target: { level: action.target.level, id: action.target.id }, params: action.params }
       : null,
+    toolKey: rec.toolKey ?? null,
     vote,
   };
 }

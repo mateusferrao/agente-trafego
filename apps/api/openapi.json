@@ -2268,6 +2268,14 @@
                     "null"
                   ]
                 },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "platform_action",
+                    "human_direction",
+                    "insight"
+                  ]
+                },
                 "riskLevel": {
                   "type": "string",
                   "enum": [
@@ -2330,6 +2338,12 @@
                     "params"
                   ]
                 },
+                "toolKey": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "vote": {
                   "type": [
                     "string",
@@ -2345,9 +2359,11 @@
                 "id",
                 "title",
                 "rationale",
+                "kind",
                 "riskLevel",
                 "applicability",
                 "proposedAction",
+                "toolKey",
                 "vote"
               ]
             }
@@ -3828,6 +3844,14 @@
                     "null"
                   ]
                 },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "platform_action",
+                    "human_direction",
+                    "insight"
+                  ]
+                },
                 "riskLevel": {
                   "type": "string",
                   "enum": [
@@ -3890,6 +3914,12 @@
                     "params"
                   ]
                 },
+                "toolKey": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "vote": {
                   "type": [
                     "string",
@@ -3905,9 +3935,11 @@
                 "id",
                 "title",
                 "rationale",
+                "kind",
                 "riskLevel",
                 "applicability",
                 "proposedAction",
+                "toolKey",
                 "vote"
               ]
             }
