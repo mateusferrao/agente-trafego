@@ -5,8 +5,8 @@
 // nunca fala sozinho.
 
 import { and, eq, gte } from "drizzle-orm";
-import { agentRuns, agents, insightsSnapshots, type Database } from "@trafego/db";
-import { detectMaterialChange } from "@trafego/core";
+import { agentRuns, agents, insightsSnapshots, loadOrgTimezone, type Database } from "@trafego/db";
+import { addDays, detectMaterialChange, startOfDayInTz, todayInTz } from "@trafego/core";
 import type { NotifyPolicy } from "@trafego/shared";
 import type { Logger } from "pino";
 import type { CronDispatchInput, DispatchOutcome } from "../dispatch/run-dispatcher.js";
@@ -16,7 +16,6 @@ import { buildSignalComparisons, strongestSignal, type SnapshotDay } from "./agg
 const ALERT_LOOKBACK_DAYS = 9;
 const CAMPAIGN_LEVEL = "campaign" as const;
 const MS_PER_HOUR = 3_600_000;
-const MS_PER_DAY = 86_400_000;
 
 export interface AlertGateDeps {
   readonly db: Database;
@@ -30,28 +29,27 @@ export interface AlertGateInput {
   readonly orgId: string;
   readonly agentId: string;
   readonly adAccountId: string;
+  /** fallback do fuso (ANALYSIS_TZ) quando a org não tem timezone. */
+  readonly fallbackTz: string;
 }
 
 export type AlertGateOutcome = "disabled" | "throttled" | "no_data" | "no_signal" | "dispatched";
 
-function isoDay(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-
 /**
- * Início da janela de throttle: o mais RESTRITIVO entre "throttleHours atrás" e "começo
- * do dia UTC". O sinal é sobre D-1 (muda 1×/dia), então um throttleHours curto (ex: 3h)
- * não pode re-alertar o MESMO dia fechado várias vezes — o piso do dia garante ≤1/dia.
- * Piso em UTC (alinhado ao `isoDay`/`todayIso` do sync — o módulo todo opera em UTC);
- * na virada de meia-noite UTC pode escapar 1 extra (fast-follow: piso no fuso da org).
+ * Início da janela de throttle: o mais RESTRITIVO entre "throttleHours atrás" e o começo
+ * do dia CIVIL no fuso da org. O sinal é sobre D-1 (muda 1×/dia), então um throttleHours
+ * curto (ex: 3h) não pode re-alertar o MESMO dia fechado várias vezes — o piso do dia
+ * garante ≤1/dia, agora alinhado ao dia civil da org (não à meia-noite UTC).
  */
-export function throttleWindowStart(now: Date, throttleHours: number): Date {
-  const startOfDay = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+export function throttleWindowStart(now: Date, throttleHours: number, tz: string): Date {
+  const startOfDay = startOfDayInTz(now, tz).getTime();
   return new Date(Math.min(now.getTime() - throttleHours * MS_PER_HOUR, startOfDay));
 }
 
 export async function runAlertGate(deps: AlertGateDeps, input: AlertGateInput): Promise<AlertGateOutcome> {
   const now = deps.now ?? (() => new Date());
+  // fuso da org — datas/janela do gate no fuso, não UTC.
+  const tz = await loadOrgTimezone(deps.db, input.orgId, input.fallbackTz);
 
   // 1) política de alerta do agente (desligada → nada).
   const [ag] = await deps.db
@@ -64,7 +62,7 @@ export async function runAlertGate(deps: AlertGateDeps, input: AlertGateInput): 
   const { sensitivity, throttleHours } = policy.alerts;
 
   // 2) throttle: já houve um signal-run na janela? (máx 1 — sem spam/custo; ≤1/dia).
-  const since = throttleWindowStart(now(), throttleHours);
+  const since = throttleWindowStart(now(), throttleHours, tz);
   const [recent] = await deps.db
     .select({ id: agentRuns.id })
     .from(agentRuns)
@@ -73,7 +71,7 @@ export async function runAlertGate(deps: AlertGateDeps, input: AlertGateInput): 
   if (recent) return "throttled";
 
   // 3) snapshots por campanha (janela curta) → comparações D-1 vs baseline.
-  const lookback = isoDay(new Date(now().getTime() - ALERT_LOOKBACK_DAYS * MS_PER_DAY));
+  const lookback = addDays(todayInTz(now(), tz), -ALERT_LOOKBACK_DAYS);
   const rows = await deps.db
     .select({ entityId: insightsSnapshots.entityId, date: insightsSnapshots.date, metricsJson: insightsSnapshots.metricsJson })
     .from(insightsSnapshots)
@@ -99,7 +97,7 @@ export async function runAlertGate(deps: AlertGateDeps, input: AlertGateInput): 
     };
   });
 
-  const comparisons = buildSignalComparisons(days, isoDay(now()));
+  const comparisons = buildSignalComparisons(days, todayInTz(now(), tz));
   const top = strongestSignal(detectMaterialChange(comparisons, sensitivity));
   if (!top) return "no_signal";
 

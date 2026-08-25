@@ -33,7 +33,7 @@ function fakeDb(byTable: Map<unknown, unknown[]>) {
 }
 
 const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } as never;
-const INPUT = { orgId: "o", agentId: "a", adAccountId: "acc" };
+const INPUT = { orgId: "o", agentId: "a", adAccountId: "acc", fallbackTz: "UTC" };
 
 function snap(entityId: string, date: string, metrics: Record<string, number>) {
   return { entityId, date, metricsJson: { metrics } };
@@ -44,12 +44,12 @@ describe("throttleWindowStart (dedupe por dia)", () => {
 
   it("throttleHours curto (3h) ainda cobre desde o início do dia (não re-alerta o mesmo D-1)", () => {
     // 3h atrás = 07:00; início do dia = 00:00 → vence o mais restritivo (00:00).
-    expect(throttleWindowStart(now, 3).toISOString()).toBe("2026-08-23T00:00:00.000Z");
+    expect(throttleWindowStart(now, 3, "UTC").toISOString()).toBe("2026-08-23T00:00:00.000Z");
   });
 
   it("throttleHours longo (>tempo desde meia-noite) manda além do início do dia", () => {
     // 24h atrás = ontem 10:00, mais restritivo que 00:00 de hoje.
-    expect(throttleWindowStart(now, 24).toISOString()).toBe("2026-08-22T10:00:00.000Z");
+    expect(throttleWindowStart(now, 24, "UTC").toISOString()).toBe("2026-08-22T10:00:00.000Z");
   });
 });
 

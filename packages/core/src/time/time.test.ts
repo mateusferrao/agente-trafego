@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { daysAgoInTz, todayInTz } from "./index.js";
+import { daysAgoInTz, startOfDayInTz, todayInTz } from "./index.js";
 
 const SP = "America/Sao_Paulo"; // UTC-3
 
@@ -29,5 +29,16 @@ describe("daysAgoInTz", () => {
 
   it("days=7 = 6 dias antes de hoje (no fuso)", () => {
     expect(daysAgoInTz(new Date("2026-08-25T02:00:00Z"), SP, 7)).toBe("2026-08-18");
+  });
+});
+
+describe("startOfDayInTz", () => {
+  it("meia-noite BRT de 24/08 = 03:00 UTC de 24/08 (offset -3h)", () => {
+    // now = 23:00 BRT de 24/08 (02:00 UTC de 25/08) → começo do dia civil BRT = 24/08 00:00 BRT.
+    expect(startOfDayInTz(new Date("2026-08-25T02:00:00Z"), SP).toISOString()).toBe("2026-08-24T03:00:00.000Z");
+  });
+
+  it("meia-noite UTC quando tz=UTC", () => {
+    expect(startOfDayInTz(new Date("2026-08-25T02:00:00Z"), "UTC").toISOString()).toBe("2026-08-25T00:00:00.000Z");
   });
 });

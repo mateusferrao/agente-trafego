@@ -106,7 +106,7 @@ import {
   MESSAGE_OUTPUT_JSON_SCHEMA,
   MESSAGE_OUTPUT_SCHEMA_NAME,
 } from "../../modules/notify/prompt.js";
-import { resolveWindows } from "@trafego/core";
+import { resolveWindows, todayInTz } from "@trafego/core";
 import type { AccountAnalysisStateType, AccountAnalysisUpdate } from "./state.js";
 
 /** Nº de dias sem análise que dispara um run DEEP (reanalisa tudo). */
@@ -117,10 +117,6 @@ const ANALYSIS_TEMPERATURE = 0.2;
 const NO_ACTIVITY_SUMMARY =
   "Sua conta não teve gasto nem impressões no período. Não há o que analisar por enquanto.";
 
-/** Data de hoje (YYYY-MM-DD, UTC) — IO/relógio fica na casca. */
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 /** Repos usados pelos nós — injetáveis p/ teste (default = Drizzle sobre deps.db). */
 export interface AnalysisNodeRepos {
@@ -170,7 +166,8 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       ...(ctx.businessContext ? { businessContext: ctx.businessContext } : {}),
       ...(ctx.guidance ? { guidance: ctx.guidance } : {}),
     });
-    const { window, baseline } = resolveWindows(today(), cfg.windowDays, cfg.baselineDays);
+    // "hoje" no fuso da org (não UTC) — casa o dia civil dos snapshots (fuso da conta Meta).
+    const { window, baseline } = resolveWindows(todayInTz(new Date(), ctx.timezone), cfg.windowDays, cfg.baselineDays);
     const windowLabel = `últimos ${cfg.windowDays} dias`;
     const baselineLabel = `${cfg.baselineDays} dias anteriores`;
 

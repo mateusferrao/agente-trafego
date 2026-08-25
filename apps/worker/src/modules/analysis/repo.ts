@@ -4,7 +4,7 @@
 
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import type { Database } from "@trafego/db/client";
-import { adAccounts, agentMemory, agentMutedEntities, agentRunSteps, agentRuns, agentToolCalls, agents, conversionLabels, guardrailConfigs, platformConnections, playbookRules, recommendations } from "@trafego/db";
+import { adAccounts, agentMemory, agentMutedEntities, agentRunSteps, agentRuns, agentToolCalls, agents, conversionLabels, guardrailConfigs, orgs, platformConnections, playbookRules, recommendations } from "@trafego/db";
 import type { Action, ActionTarget, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, NotifyPolicy, PlaybookRule, RiskLevel } from "@trafego/shared";
 import { GUARDRAIL_DEFAULTS, toGuardrailConfig, UNDO_TOOL_KEY } from "@trafego/shared";
 import { entityKeyOf, unseedIdentity } from "@trafego/core";
@@ -13,6 +13,8 @@ import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
 export interface AgentContext {
   readonly goals: AgentGoals;
   readonly archetype: string;
+  /** Fuso da org (orgs.timezone) — datas de "hoje"/janela nele, não UTC. */
+  readonly timezone: string;
   readonly systemPrompt: string | null;
   /** Identidade/voz (Fatia 4) — compõem o prompt-base (persona + tom). */
   readonly persona: string | null;
@@ -119,8 +121,10 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
           modelConfig: agents.modelConfig,
           autonomyPolicy: agents.autonomyPolicy,
           notifyPolicy: agents.notifyPolicy,
+          timezone: orgs.timezone,
         })
         .from(agents)
+        .innerJoin(orgs, eq(agents.orgId, orgs.id))
         .where(and(eq(agents.id, agentId), eq(agents.orgId, orgId)))
         .limit(1);
       if (!agent) return null;
@@ -179,6 +183,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
       return {
         goals: agent.goals,
         archetype: agent.archetype,
+        timezone: agent.timezone,
         // valor semeado igual ao default do arquétipo = "não configurado" (null) →
         // usa a metodologia composta completa (não o systemPrompt cru semeado).
         systemPrompt: unseedIdentity("systemPrompt", agent.systemPrompt, agent.archetype),

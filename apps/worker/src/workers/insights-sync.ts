@@ -5,17 +5,13 @@
 import { Worker } from "bullmq";
 import type { Redis } from "ioredis";
 import { and, eq } from "drizzle-orm";
-import { adAccounts, agents, platformConnections } from "@trafego/db";
+import { adAccounts, agents, loadOrgTimezone, platformConnections } from "@trafego/db";
+import { todayInTz } from "@trafego/core";
 import { INSIGHTS_SYNC_JOB, SYNC_QUEUE, type InsightsSyncPayload } from "@trafego/shared";
 import type { WorkerDeps } from "../composition.js";
 import { markConnectionTokenInvalid } from "../lib/mark-token-invalid.js";
 import { createRunDispatcher } from "../modules/dispatch/run-dispatcher.js";
 import { runAlertGate } from "../modules/alerts/gate.js";
-
-/** Data de referência do sync (UTC). Timezone da conta = refinamento (follow-up). */
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 export async function runInsightsSync(deps: WorkerDeps, payload: InsightsSyncPayload): Promise<void> {
   const { db, ports, logger, insightsSync } = deps;
@@ -52,12 +48,14 @@ export async function runInsightsSync(deps: WorkerDeps, payload: InsightsSyncPay
   }
 
   const accessToken = ports.vault.decrypt(account.connToken ?? account.accountToken);
+  // "hoje" no fuso da org (não UTC) — casa o dia civil dos snapshots (fuso da conta Meta).
+  const tz = await loadOrgTimezone(db, payload.orgId, deps.cron.tz);
   const result = await insightsSync.sync({
     orgId: payload.orgId,
     adAccountUuid: account.id,
     metaAdAccountId: account.adAccountId,
     accessToken,
-    today: todayIso(),
+    today: todayInTz(new Date(), tz),
   });
 
   if (result.tokenInvalid) {
@@ -92,7 +90,7 @@ export async function runInsightsSync(deps: WorkerDeps, payload: InsightsSyncPay
       });
       await runAlertGate(
         { db, logger, dispatch: dispatcher.dispatch },
-        { orgId: payload.orgId, agentId: agent.id, adAccountId: account.id },
+        { orgId: payload.orgId, agentId: agent.id, adAccountId: account.id, fallbackTz: deps.cron.tz },
       );
     }
   } catch (err) {
