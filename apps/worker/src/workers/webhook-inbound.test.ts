@@ -271,6 +271,27 @@ describe("makeInboundRouter — grupo", () => {
     );
   });
 
+  it("S7 — dirigido em REPLY de texto injeta a mensagem CITADA na intenção do turno", async () => {
+    const t = makeDeps();
+    await makeInboundRouter(t.deps)(
+      "inst-1",
+      groupText({ quotedAuthorPhone: "+5511777777777", quotedKind: "text", quotedSnippet: "quantos leads até 12h?" }),
+    );
+    // a msg PERSISTIDA segue a original; o BUFFER (turno) leva a citação injetada.
+    expect(t.repo.recordMessage).toHaveBeenCalledWith("conv-grp-1", "inbound", "@bot analisa", expect.anything());
+    const buffered = t.redis.rpush.mock.calls.flat().join(" ");
+    expect(buffered).toContain("quantos leads até 12h?");
+    expect(buffered).toContain("@bot analisa");
+  });
+
+  it("S7 — dirigido SEM citação não injeta prefixo (buffer = texto original)", async () => {
+    const t = makeDeps();
+    await makeInboundRouter(t.deps)("inst-1", groupText({ quotedSnippet: null, quotedKind: null }));
+    const buffered = t.redis.rpush.mock.calls.flat().join(" ");
+    expect(buffered).toContain("@bot analisa");
+    expect(buffered).not.toContain("Em resposta");
+  });
+
   it("(b) dirigido respondendo um ÁUDIO → enfileira transcrição do citado com o texto do turno", async () => {
     const t = makeDeps();
     await makeInboundRouter(t.deps)(

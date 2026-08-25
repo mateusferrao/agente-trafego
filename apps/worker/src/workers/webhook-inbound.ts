@@ -34,7 +34,7 @@ import { BUFFER_TTL_MARGIN_SEC, pushInbound } from "../modules/conversation/buff
 import { markTranscribing, scheduleConversationFlush } from "../modules/conversation/flush-control.js";
 import { sendCourtesyNotice } from "../modules/conversation/courtesy-notice.js";
 import { loadGroupParticipantsMap } from "../modules/conversation/group-participants-cache.js";
-import { QUOTED_AUTHOR_FALLBACK_LABEL, unsupportedMediaNotice } from "../modules/conversation/notices.js";
+import { QUOTED_AUTHOR_FALLBACK_LABEL, quotedTextPrefix, unsupportedMediaNotice } from "../modules/conversation/notices.js";
 import { participantLabelFromPhone } from "@trafego/core";
 import { createNotifyRepo, type NotifyRepo } from "../modules/notify/repo.js";
 import { createSendToConversation, type SendToConversation } from "../modules/notify/send-to-contact.js";
@@ -103,12 +103,15 @@ async function routeMessage(
   ref: ConversationRef,
   /** meta extra p/ atribuição no transcript de grupo (authorName do remetente). */
   extraMeta: Record<string, unknown> = {},
+  /** texto do TURNO (buffer) quando difere do exibido — ex: reply de texto injeta a
+   *  mensagem citada (S7). A mensagem PERSISTIDA continua sendo `inbound.text` (original). */
+  turnText?: string,
 ): Promise<void> {
   const flushPayload: WhatsappFlushPayload = { orgId, conversationId, ref };
 
   if (inbound.kind === "text") {
     await d.repo.recordMessage(conversationId, "inbound", inbound.text, { messageId: inbound.messageId, ...extraMeta });
-    await pushInbound(d.redis, conversationId, inbound.text, d.bufferTtlSec);
+    await pushInbound(d.redis, conversationId, turnText ?? inbound.text, d.bufferTtlSec);
     await scheduleConversationFlush(d.flushQueue, flushPayload, d.debounceMs);
     d.logger.debug({ conversationId }, "inbound:buffered");
     return;
@@ -267,12 +270,33 @@ async function routeGroupMessage(d: InboundRouterDeps, instanceId: string, inbou
   // marca `quotedFromBot` p/ o transcript rotular como o assistente (não o telefone do bot).
   const quotedSnippet = quotedSnippetDisplay(group);
   const quotedFromBot = quotedAuthorPhone !== null && quotedAuthorPhone === botPhone;
-  await routeMessage(d, instanceId, inbound, resolved.orgId, conversationId, ref, {
-    authorName: group.senderName,
-    ...(quotedAuthorPhone ? { quotedAuthorPhone } : {}),
-    ...(quotedSnippet ? { quotedSnippet } : {}),
-    ...(quotedFromBot ? { quotedFromBot: true } : {}),
-  });
+  // S7 — reply de TEXTO dirigido: injeta a mensagem CITADA na intenção do turno (não só no
+  // transcript), pro agente considerar o que foi respondido em vez de responder genérico.
+  // Só p/ texto (áudio citado já foi tratado acima). A msg persistida segue sendo a original.
+  let turnText: string | undefined;
+  if (inbound.kind === "text" && quotedSnippet && group.quotedKind !== "audio") {
+    const quotedLabel = quotedFromBot
+      ? "sua mensagem anterior"
+      : (participantLabelFromPhone(quotedAuthorPhone) ?? QUOTED_AUTHOR_FALLBACK_LABEL);
+    const prefix = quotedTextPrefix(quotedLabel, quotedSnippet);
+    const userText = inbound.text.trim();
+    turnText = userText.length > 0 ? `${prefix}\n\n${userText}` : prefix;
+  }
+  await routeMessage(
+    d,
+    instanceId,
+    inbound,
+    resolved.orgId,
+    conversationId,
+    ref,
+    {
+      authorName: group.senderName,
+      ...(quotedAuthorPhone ? { quotedAuthorPhone } : {}),
+      ...(quotedSnippet ? { quotedSnippet } : {}),
+      ...(quotedFromBot ? { quotedFromBot: true } : {}),
+    },
+    turnText,
+  );
 }
 
 /**

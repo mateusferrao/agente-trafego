@@ -32,6 +32,12 @@ export function quotedAudioPrefix(authorLabel: string, transcript: string): stri
   return `[Em resposta ao áudio de ${authorLabel}: ${transcript}]`;
 }
 
+/** Prefixo que injeta o TEXTO da mensagem citada no turno (reply de texto, S7) — para o
+ *  agente considerar a mensagem respondida em vez de responder genérico. */
+export function quotedTextPrefix(authorLabel: string, snippet: string): string {
+  return `[Em resposta à mensagem de ${authorLabel}: "${snippet}"]`;
+}
+
 /** Nota no turno quando o áudio citado não pôde ser ouvido (falha de transcrição). */
 export const QUOTED_AUDIO_UNHEARD_NOTE = "[não consegui ouvir o áudio que você respondeu]";
 
