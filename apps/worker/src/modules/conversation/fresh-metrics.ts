@@ -9,6 +9,7 @@
 // curado" (§7) — o usuário PEDE dado atualizado; fica atrás desta tool opt-in.
 
 import { and, desc, eq, gte, lte } from "drizzle-orm";
+import { daysAgoInTz, todayInTz } from "@trafego/core";
 import { adAccounts, entityAnalyses, insightsSnapshots, platformConnections, type Database } from "@trafego/db";
 import type { CredentialVaultPort } from "@trafego/shared/ports";
 import type { EntityLevel, StoredInsightMetrics } from "@trafego/shared/types";
@@ -60,14 +61,6 @@ export type FreshMetricsResult = FreshMetricsData | FreshMetricsError;
 
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
-}
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
-function isoDaysAgo(days: number): string {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() - (days - 1)); // days=1 → hoje; days=7 → 6 dias atrás..hoje
-  return d.toISOString().slice(0, 10);
 }
 function ratio(a: number, b: number): number | null {
   return b > 0 ? a / b : null;
@@ -190,12 +183,16 @@ export interface FreshMetricsDeps {
   readonly vault: CredentialVaultPort;
   readonly insightsSync: InsightsSyncService;
   readonly logger: { warn: (obj: unknown, msg: string) => void };
+  /** relógio injetável (testes / cenário noturno). Default = agora. */
+  readonly now?: () => Date;
 }
 
 export interface FreshMetricsCtx {
   readonly orgId: string;
   readonly agentId: string;
   readonly adAccountId: string;
+  /** fuso da org (datas de "hoje"/janela nele, não UTC). */
+  readonly timezone: string;
 }
 
 /**
@@ -233,6 +230,7 @@ async function getFreshMetricsDataInner(
   args: { periodDays?: number | null; campaign?: string | null },
 ): Promise<FreshMetricsResult> {
   const days = clamp(args.periodDays ?? FRESH_METRICS_DEFAULT_DAYS, 1, FRESH_METRICS_MAX_DAYS);
+  const now = (deps.now ?? (() => new Date()))();
   const account = await loadAccountToken(deps.db, deps.vault, ctx.orgId, ctx.adAccountId);
   if (!account) return { error: "não encontrei uma conta ativa em foco pra consultar agora." };
 
@@ -259,7 +257,7 @@ async function getFreshMetricsDataInner(
       adAccountUuid: account.id,
       metaAdAccountId: account.metaAdAccountId,
       accessToken: account.accessToken,
-      today: todayIso(),
+      today: todayInTz(now, ctx.timezone),
       levels: [level],
     });
     updated = !res.partial && !res.tokenInvalid;
@@ -268,8 +266,8 @@ async function getFreshMetricsDataInner(
     deps.logger.warn({ err: String(err) }, "fresh-metrics:sync falhou (fallback ao snapshot)");
   }
 
-  const until = todayIso();
-  const since = isoDaysAgo(days);
+  const until = todayInTz(now, ctx.timezone);
+  const since = daysAgoInTz(now, ctx.timezone, days);
 
   const rows = await readSnapshotRows(deps.db, ctx.orgId, account.id, level, entityId, since, until);
   if (rows.length === 0) {

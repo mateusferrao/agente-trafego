@@ -23,6 +23,7 @@ const CTX: ConversationToolContext = {
   orgId: "org-1",
   agentId: "ag-1",
   adAccountId: "acc-1",
+  timezone: "America/Sao_Paulo",
   ref: { kind: "contact", contactId: "ct-1" },
   conversationId: "cv-1",
 };
@@ -107,6 +108,7 @@ describe("set_focus tool (footgun S3: aplica o foco no MESMO turno)", () => {
     orgId: "org-1",
     agentId: "ag-A",
     adAccountId: "acc-A",
+    timezone: "America/Sao_Paulo",
     ref: { kind: "group", groupId: "grp-1", participantPhone: "+5511999999999" },
     conversationId: "cv-1",
     multiAccount: true,

@@ -46,7 +46,7 @@ describe("aggregateKpis", () => {
   });
 });
 
-const CTX: FreshMetricsCtx = { orgId: "org-1", agentId: "ag-1", adAccountId: "acc-1" };
+const CTX: FreshMetricsCtx = { orgId: "org-1", agentId: "ag-1", adAccountId: "acc-1", timezone: "America/Sao_Paulo" };
 const ACCOUNT_ROW = { id: "acc-1", metaAdAccountId: "act_9", status: "active", accountToken: "enc", connToken: null };
 const SNAP = [{ date: "2026-08-22", metricsJson: m({ spend: 100, impressions: 1000, clicks: 50, conversions: 5, roas: 3 }) }];
 
@@ -81,6 +81,17 @@ describe("getFreshMetricsData", () => {
     expect(res.updated).toBe(true);
     expect(res.kpis.spend).toBe(100);
     expect(res.asOf).toBe("2026-08-22");
+  });
+
+  it("cenário noturno BRT: 'hoje' no fuso, não em UTC (repro do bug 24/08 21:42)", async () => {
+    const { deps, insightsSync } = makeDeps([[ACCOUNT_ROW], SNAP]);
+    // 02:00 UTC = 23:00 BRT de 24/08 — em UTC "hoje" seria 25/08 (o bug).
+    (deps as { now?: () => Date }).now = () => new Date("2026-08-25T02:00:00Z");
+    const res = (await getFreshMetricsData(deps, CTX, { periodDays: 1 })) as FreshMetricsData; // CTX.timezone = America/Sao_Paulo
+    // sync e janela miram 24/08 (BRT), não 25/08 (UTC) → não erra o dia nem o snapshot.
+    expect(insightsSync.sync).toHaveBeenCalledWith(expect.objectContaining({ today: "2026-08-24" }));
+    expect(res.since).toBe("2026-08-24");
+    expect(res.until).toBe("2026-08-24");
   });
 
   it("sync degradou (partial) → updated:false (mostra o último salvo)", async () => {

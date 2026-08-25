@@ -7,7 +7,7 @@
 import { and, eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import { HumanMessage, type AIMessage } from "@langchain/core/messages";
-import { adAccounts, agents, conversations, guardrailConfigs, type Database } from "@trafego/db";
+import { adAccounts, agents, conversations, guardrailConfigs, orgs, type Database } from "@trafego/db";
 import type { ActionType, AutonomyPolicy, ConversationRef } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
 import { buildWhatsappConversationGraph } from "../../graphs/whatsapp-conversation/graph.js";
@@ -73,6 +73,12 @@ async function resolveActiveAgents(
 
 /** ms por hora — staleness do foco (S4). */
 const MS_PER_HOUR = 60 * 60 * 1000;
+
+/** Fuso da org (datas de "hoje"/janela nele, não UTC). Fallback ao TZ global (ANALYSIS_TZ). */
+async function loadOrgTimezone(db: Database, orgId: string, fallback: string): Promise<string> {
+  const [row] = await db.select({ timezone: orgs.timezone }).from(orgs).where(eq(orgs.id, orgId)).limit(1);
+  return row?.timezone ?? fallback;
+}
 
 /**
  * Agente da conta em FOCO do fio (5c-6) — org-scoped, conta+agente ativos. Null se sem foco/
@@ -177,11 +183,13 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
   // + config-por-chat gated pelo kill-switch (S2.3). Sem contexto (multi-conta sem foco):
   // concierge — org-level + set_focus.
   const config = inContext ? await configToolsFor(deps.db, input.orgId, inContext.agentId) : { tools: [], enabled: false };
+  const timezone = await loadOrgTimezone(deps.db, input.orgId, deps.cron.tz);
 
   const ctx: ConversationToolContext = {
     orgId: input.orgId,
     agentId: inContext?.agentId ?? "",
     adAccountId: inContext?.adAccountId ?? "",
+    timezone,
     ref: input.ref,
     conversationId: input.conversationId,
     multiAccount,

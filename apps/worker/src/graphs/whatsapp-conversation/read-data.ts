@@ -14,6 +14,7 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { adAccounts, agentRuns, agentToolCalls, agents, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
+import { daysAgoInTz } from "@trafego/core";
 import { createAnalysisRepo } from "../../modules/analysis/repo.js";
 import { getFreshMetricsData } from "../../modules/conversation/fresh-metrics.js";
 import type { ApprovalPort } from "@trafego/shared/ports";
@@ -26,6 +27,8 @@ export interface ReadToolContext {
   readonly orgId: string;
   readonly agentId: string;
   readonly adAccountId: string;
+  /** Fuso da org (orgs.timezone, fallback ANALYSIS_TZ) — datas de "hoje"/janela nele, não UTC. */
+  readonly timezone: string;
 }
 
 /** Janela default do gasto agregado (dias). */
@@ -273,9 +276,10 @@ export async function getMetricsData(
   adAccountId: string,
   orgId: string,
   periodDays: number,
+  tz: string,
   now: () => Date = () => new Date(),
 ): Promise<AccountMetrics> {
-  const since = formatDate(daysAgo(now(), periodDays));
+  const since = daysAgoInTz(now(), tz, periodDays);
   const accountRows = await spendRows(db, adAccountId, orgId, ACCOUNT_LEVEL, since);
   const rows = accountRows.length > 0 ? accountRows : await spendRows(db, adAccountId, orgId, CAMPAIGN_LEVEL, since);
 
@@ -442,10 +446,11 @@ export async function comparePeriodsData(
   adAccountId: string,
   orgId: string,
   periodDays: number,
+  tz: string,
   now: () => Date = () => new Date(),
 ): Promise<{ periodDays: number; current: number; previous: number; deltaPct: number | null; hasData: boolean }> {
-  const curSince = formatDate(daysAgo(now(), periodDays));
-  const prevSince = formatDate(daysAgo(now(), periodDays * 2));
+  const curSince = daysAgoInTz(now(), tz, periodDays);
+  const prevSince = daysAgoInTz(now(), tz, periodDays * 2);
   const rows = await db
     .select({ date: insightsSnapshots.date, metricsJson: insightsSnapshots.metricsJson, level: insightsSnapshots.entityLevel })
     .from(insightsSnapshots)
@@ -475,7 +480,9 @@ export async function getEntityDetailData(
   adAccountId: string,
   orgId: string,
   name: string,
+  tz: string,
   periodDays = ENTITY_TREND_DAYS,
+  now: () => Date = () => new Date(),
 ): Promise<
   | { name: string | null; id: string; trend: { date: string; spend: number }[]; totalSpend: number; flags: readonly string[] }
   | NoData
@@ -483,7 +490,7 @@ export async function getEntityDetailData(
 > {
   const analysis = await getCampaignAnalysisData(db, agentId, name);
   if ("hasData" in analysis) return analysis; // NoData | AmbiguousCampaign
-  const since = formatDate(daysAgo(new Date(), periodDays));
+  const since = daysAgoInTz(now(), tz, periodDays);
   const rows = await db
     .select({ date: insightsSnapshots.date, metricsJson: insightsSnapshots.metricsJson })
     .from(insightsSnapshots)
@@ -590,16 +597,11 @@ function spendOf(metricsJson: { readonly metrics?: { readonly spend?: number } }
   return typeof spend === "number" ? spend : 0;
 }
 
-/** Data N dias atrás (inclusiva da janela), em UTC. */
+/** Instante N dias atrás (p/ comparar com timestamptz — find_recent_actions). */
 function daysAgo(from: Date, days: number): Date {
   const d = new Date(from);
   d.setUTCDate(d.getUTCDate() - (days - 1));
   return d;
-}
-
-/** Date → "YYYY-MM-DD" (formato da coluna `insights_snapshots.date`). */
-function formatDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
 }
 
 // ─── Montagem das tools (LangChain) ──────────────────────────────────────────
@@ -644,7 +646,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
       if (noFocus()) return NEEDS_FOCUS;
       const days = periodDays ?? DEFAULT_METRICS_PERIOD_DAYS;
       logger.debug({ adAccountId: ctx.adAccountId, periodDays: days }, "tool:get_metrics");
-      return asString(await getMetricsData(db, ctx.adAccountId, ctx.orgId, days));
+      return asString(await getMetricsData(db, ctx.adAccountId, ctx.orgId, days, ctx.timezone));
     },
     {
       name: "get_metrics",
@@ -661,7 +663,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
       return asString(
         await getFreshMetricsData(
           { db, vault: ports.vault, insightsSync: deps.insightsSync, logger },
-          { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId },
+          { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, timezone: ctx.timezone },
           { periodDays: periodDays ?? null, campaign: campaign ?? null },
         ),
       );
@@ -748,7 +750,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
       if (noFocus()) return NEEDS_FOCUS;
       const days = periodDays ?? DEFAULT_METRICS_PERIOD_DAYS;
       logger.debug({ adAccountId: ctx.adAccountId, periodDays: days }, "tool:compare_periods");
-      return asString(await comparePeriodsData(db, ctx.adAccountId, ctx.orgId, days));
+      return asString(await comparePeriodsData(db, ctx.adAccountId, ctx.orgId, days, ctx.timezone));
     },
     {
       name: "compare_periods",
@@ -761,7 +763,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     async ({ name }: { name: string }) => {
       if (noFocus()) return NEEDS_FOCUS;
       logger.debug({ agentId: ctx.agentId, name }, "tool:get_entity_detail");
-      return asString(await getEntityDetailData(db, ctx.agentId, ctx.adAccountId, ctx.orgId, name));
+      return asString(await getEntityDetailData(db, ctx.agentId, ctx.adAccountId, ctx.orgId, name, ctx.timezone));
     },
     {
       name: "get_entity_detail",

@@ -190,13 +190,13 @@ describe("getMetricsData", () => {
         ],
       ]),
     );
-    const res = await getMetricsData(db, ACCOUNT, ORG, 7);
+    const res = await getMetricsData(db, ACCOUNT, ORG, 7, "America/Sao_Paulo");
     expect(res).toEqual({ periodDays: 7, spend: 25, asOf: "2026-08-20", hasData: true });
   });
 
   it("sem snapshots → hasData:false + asOf 'sem dados'", async () => {
     const db = fakeDb(new Map<unknown, unknown[]>([[insightsSnapshots, []]]));
-    const res = await getMetricsData(db, ACCOUNT, ORG, 7);
+    const res = await getMetricsData(db, ACCOUNT, ORG, 7, "America/Sao_Paulo");
     expect(res).toEqual({ periodDays: 7, spend: 0, asOf: "sem dados", hasData: false });
   });
 });
@@ -458,7 +458,7 @@ describe("comparePeriodsData", () => {
       ]),
     );
     const now = () => new Date("2026-08-21T00:00:00.000Z");
-    const res = await comparePeriodsData(db, ACCOUNT, ORG, 7, now);
+    const res = await comparePeriodsData(db, ACCOUNT, ORG, 7, "America/Sao_Paulo", now);
     expect(res.current).toBe(100);
     expect(res.previous).toBe(50);
     expect(res.deltaPct).toBe(100);
