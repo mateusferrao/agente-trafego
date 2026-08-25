@@ -70,6 +70,29 @@ fatia MVP agendada **não** entram aqui — ficam na sua fatia: retenção/prune
 decaimento de token em runtime → `6b`; reuso do sync-service pelo `fetchData` → `3a`;
 **métricas de funil/engajamento na análise** → `3a` (ver nota abaixo).)
 
+### Fast-follows da fatia "Postura de comunicação + narrativa no site + pulso resumo-do-dia"
+
+Postura configurável (diretividade/volume/profundidade + preset de experiência), voz única
+no push/chat/pulso/site, rótulo de CPA honesto e pulso P2 ("resumo do dia" voiceado).
+Diferidos:
+- **Backfill de `agents.posture` por-arquétipo** nos agentes já existentes (hoje ficam no
+  `DEFAULT_POSTURE` de coluna = conservador; novos semeiam do arquétipo). Mesmo precedente do
+  `notify_policy`.
+- **Read-tool de criativo/anúncio por nome/id no chat** — hoje `get_top_creatives` só devolve
+  o top-5 ranqueado e não há lookup de um criativo específico nem nível adset/ad; casa com o
+  workstream "aumentar leque de recomendações". Tratado à parte (não é postura).
+- **Slider mais fino (>3 níveis) por eixo** de postura; **escrita PROATIVA de config** mais
+  rica (hoje o agente OFERECE o ajuste ao sinal do dono, mas não muda sozinho).
+- **Pulso: tuning de rate-limit/cadência** — o P2 lê a Meta a cada disparo (`getFreshMetricsData`),
+  somando ao pull do cron; revisar cadência/token-bucket sob escala. Refino do **dedupe/janela**
+  do pulso conforme uso real.
+- **Atribuição de custo do pulso à conta** — hoje o `usage_events` do redator do pulso é
+  org-level (LLMCallMeta não carrega `adAccountId`); casa com o rollup de custo por conta.
+- **Narrativa voiceada no HISTÓRICO de runs** + toggle "ver resumo neutro" pro gestor técnico
+  (hoje a narrativa substitui o summary neutro no topo, com fallback).
+- **Postura no registro estruturado do analista** — DESCARTADO por decisão (protege o
+  substrato: feedback/dedupe/reprodutibilidade); registrado como fronteira, não como TODO.
+
 ### Fast-follows da fatia "Recomendações extensíveis + copy + auto-config"
 
 Diferidos ao implementar a fatia de recomendações extensíveis por tools (copy + 3 kinds +
