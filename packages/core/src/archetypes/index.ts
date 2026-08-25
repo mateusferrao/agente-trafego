@@ -278,3 +278,31 @@ export function composeAgentPrompt(base: string, extras: AgentPromptExtras = {})
   if (guide) blocks.push(`${GUIDANCE_LABEL}:\n${guide}`);
   return blocks.join("\n\n");
 }
+
+/** Insumos da voz do agente (metodologia/override + identidade + personalização). */
+export interface AgentVoiceInput {
+  readonly systemPrompt: string | null;
+  readonly archetype: string;
+  readonly persona: string | null;
+  readonly tone: string | null;
+  readonly businessContext: string | null;
+  readonly guidance: string | null;
+}
+
+/**
+ * Voz BASE do agente (fonte única — reusada pelo analista/redator do cron, pelo chat e
+ * pelo pulso): metodologia do arquétipo (ou override) + identidade (persona/tom) +
+ * personalização aditiva (contexto/orientações). NÃO inclui a POSTURA (bloco à parte,
+ * anexado por quem FALA) nem as regras de canal. PURO.
+ */
+export function composeAgentVoice(v: AgentVoiceInput): string {
+  const methodologyBase = v.systemPrompt ?? composeMethodologyPrompt(archetypeDefaults(v.archetype));
+  const identity = [v.persona ? `Persona: ${v.persona}` : "", v.tone ? `Tom da comunicação: ${v.tone}` : ""]
+    .filter((s) => s.length > 0)
+    .join("\n");
+  const base = identity ? `${methodologyBase}\n\n${identity}` : methodologyBase;
+  return composeAgentPrompt(base, {
+    ...(v.businessContext ? { businessContext: v.businessContext } : {}),
+    ...(v.guidance ? { guidance: v.guidance } : {}),
+  });
+}

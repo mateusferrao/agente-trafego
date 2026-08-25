@@ -3,14 +3,14 @@
 // — a MESMA base do redator do cron). Sobre a voz, uma camada FIXA de formato/conduta.
 // Sem agente em contexto (org multi-conta) → voz neutra de concierge.
 
-import { archetypeDefaults, composeAgentPrompt, composeMethodologyPrompt, composePostureBlock } from "@trafego/core";
+import { composeAgentVoice, composePostureBlock } from "@trafego/core";
 import { DEFAULT_POSTURE } from "@trafego/shared";
 import type { Database } from "@trafego/db/client";
 import { createAnalysisRepo } from "../../modules/analysis/repo.js";
 
 /** Bloco de config-por-chat (S2.3–S2.6) — o que muda conforme o kill-switch. */
 const CONFIG_ON_RULES = `
-Configuração do agente por aqui (S2.3–S2.6): você pode mudar CONVERSANDO — a META de negócio (CPA/ROAS/conversão), a AUTONOMIA por origem, os GUARDRAILS (limites/simulação/kill-switch), a CADÊNCIA da análise, as NOTIFICAÇÕES proativas (pulso periódico, alerta de mudança material, aviso após análise — set_notifications), o ARQUÉTIPO (preset), as REGRAS do playbook (criar/ligar/desligar/remover), a IDENTIDADE (persona/tom/metodologia), o CONTEXTO DO NEGÓCIO (fatos), as ORIENTAÇÕES (comportamento) e a POSTURA de comunicação — como você FALA com o dono: DIRETIVIDADE (set_directiveness: consultivo↔diretivo), VOLUME de sugestões (set_volume: enxuto↔abrangente), PROFUNDIDADE didática (set_didactic_depth: direto↔didático) e o PERFIL de experiência (set_experience_level: iniciante/intermediário/avançado, que semeia os três de uma vez).
+Configuração do agente por aqui (S2.3–S2.6): você pode mudar CONVERSANDO — a META de negócio (CPA/ROAS/conversão), a AUTONOMIA por origem, os GUARDRAILS (limites/simulação/kill-switch), a CADÊNCIA da análise, as NOTIFICAÇÕES proativas (pulso = resumo do dia ontem+hoje na cadência escolhida, alerta de mudança material, aviso após análise — set_notifications), o ARQUÉTIPO (preset), as REGRAS do playbook (criar/ligar/desligar/remover), a IDENTIDADE (persona/tom/metodologia), o CONTEXTO DO NEGÓCIO (fatos), as ORIENTAÇÕES (comportamento) e a POSTURA de comunicação — como você FALA com o dono: DIRETIVIDADE (set_directiveness: consultivo↔diretivo), VOLUME de sugestões (set_volume: enxuto↔abrangente), PROFUNDIDADE didática (set_didactic_depth: direto↔didático) e o PERFIL de experiência (set_experience_level: iniciante/intermediário/avançado, que semeia os três de uma vez).
 - POSTURA × AUTONOMIA (não confunda): postura é como o agente FALA (diretividade/volume/profundidade); autonomia é se ele APLICA mudanças na conta. "seja mais direto / me diz o que fazer" → set_directiveness; "me dá menos sugestão / tá demais" → set_volume (enxuto); "explica mais / não precisa explicar o básico" → set_didactic_depth. Se o dono se descreve ("sou iniciante", "já manjo bastante") → set_experience_level.
 - OFERTA PROATIVA de postura: se o dono SINALIZAR desconforto com o jeito de comunicar (ignora as sugestões, acha que é muita coisa, quer mais no automático, ou reclama que não entende os termos), OFEREÇA o ajuste em vez de só seguir — ex: "quer que eu deixe mais enxuto (só o principal)?" — e, se topar, aplique com eco+confirma. Não aplique sozinho; ofereça.
 - DESAMBIGUAÇÃO (escolha a tool certa — não confunda estes 5 conceitos):
@@ -25,7 +25,7 @@ Configuração do agente por aqui (S2.3–S2.6): você pode mudar CONVERSANDO �
 - Ambiguidade → PERGUNTE antes. Se a mudança afrouxa a segurança, o eco já avisa — confirme com esse aviso à vista.
 - Pra ligar/desligar/remover uma regra do playbook, primeiro liste as regras (list_playbook_rules) e identifique o id.
 - Ao definir a conversão como "personalizada", você precisa do id dela; se não souber, pergunte (não invente).
-- Se o usuário pedir para você LEMBRAR/AVISAR periodicamente (ex: "me avisa daqui 1h como está", "me manda o desempenho de hora em hora"), você NÃO tem lembrete avulso com timer exato — mas OFEREÇA a alternativa recorrente que você configura, em vez de só recusar: um PULSO (resumo automático na cadência que ele quiser, inclusive de hora em hora via cron) ou o AVISO APÓS ANÁLISE (set_notifications). Proponha ("não consigo um lembrete único, mas posso te mandar um resumo automático a cada hora enquanto o lançamento roda — quer?") e, se topar, configure com eco+confirma. Só se ele quiser MESMO uma vez só, aponte o caminho manual (me mandar mensagem na hora).
+- Se o usuário pedir para você LEMBRAR/AVISAR periodicamente (ex: "me avisa daqui 1h como está", "me manda o desempenho de hora em hora"), você NÃO tem lembrete avulso com timer exato — mas OFEREÇA a alternativa recorrente que você configura, em vez de só recusar: um PULSO (resumo do dia — ontem + hoje até agora — na cadência que ele quiser, inclusive de hora em hora via cron) ou o AVISO APÓS ANÁLISE (set_notifications). Proponha ("não consigo um lembrete único, mas posso te mandar o resumo do dia a cada hora enquanto o lançamento roda — quer?") e, se topar, configure com eco+confirma. Só se ele quiser MESMO uma vez só, aponte o caminho manual (me mandar mensagem na hora).
 - Se o usuário pedir VÁRIAS mudanças numa só mensagem (ex: "muda a meta E a cadência"), chame UMA tool para CADA mudança no mesmo turno — nunca ignore em silêncio a segunda. O sistema junta os updates de config num único eco+confirma.
 - Se ele misturar mudança de config com AÇÃO na campanha (pausar/budget) ou juntar dois tipos que não combinam, chame as tools de ambos assim mesmo — o sistema pede uma de cada vez; o que não pode é o pedido sumir.`;
 
@@ -125,15 +125,7 @@ export async function loadConversationConfig(
   const ctx = await createAnalysisRepo(db).loadAgentContext(orgId, agentId);
   if (!ctx) return { systemPrompt: CONCIERGE_PROMPT, model: fallbackModel };
 
-  const methodologyBase = ctx.systemPrompt ?? composeMethodologyPrompt(archetypeDefaults(ctx.archetype));
-  const identity = [ctx.persona ? `Persona: ${ctx.persona}` : "", ctx.tone ? `Tom da comunicação: ${ctx.tone}` : ""]
-    .filter((s) => s.length > 0)
-    .join("\n");
-  const base = identity ? `${methodologyBase}\n\n${identity}` : methodologyBase;
-  const voice = composeAgentPrompt(base, {
-    ...(ctx.businessContext ? { businessContext: ctx.businessContext } : {}),
-    ...(ctx.guidance ? { guidance: ctx.guidance } : {}),
-  });
+  const voice = composeAgentVoice(ctx);
   // postura (voz) como bloco próprio, FORA do systemPrompt sobrescrevível — governa
   // diretividade/volume/profundidade nas respostas do chat (fonte única com o push).
   const voiceWithPosture = `${voice}\n\n${composePostureBlock(ctx.posture)}`;

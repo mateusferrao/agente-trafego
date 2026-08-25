@@ -364,9 +364,9 @@ export function makeConversationTools(
   const setNotifications = tool(proposeOnly, {
     name: "set_notifications",
     description:
-      "Configura o que o agente manda SEM ser perguntado: o PULSO (resumo periódico mesmo sem recomendação, cadência própria — mesmo formato de set_cadence), o ALERTA (aviso automático quando algo muda materialmente na conta, com sensibilidade e intervalo mínimo entre alertas em horas) e o AVISO APÓS ANÁLISE (mensagem depois de cada análise agendada com recomendação). Só troca os campos enviados. Requer eco+confirma.",
+      "Configura o que o agente manda SEM ser perguntado: o PULSO (resumo do dia — retrato de ontem fechado + hoje até agora, na cadência que você definir; mesmo sem recomendação nova), o ALERTA (aviso automático quando algo muda materialmente na conta, com sensibilidade e intervalo mínimo entre alertas em horas) e o AVISO APÓS ANÁLISE (mensagem depois de cada análise agendada com recomendação). Só troca os campos enviados. Requer eco+confirma.",
     schema: z.object({
-      pulseEnabled: z.boolean().nullable().optional().describe("liga/desliga o resumo periódico"),
+      pulseEnabled: z.boolean().nullable().optional().describe("liga/desliga o resumo do dia (pulso)"),
       pulseCadence: z
         .object({
           kind: z.enum(CADENCE_KINDS),
@@ -553,7 +553,7 @@ export async function buildCapabilitiesText(
   }
   parts.push("⚡ Analisar agora e aprovar/rejeitar ações pendentes.");
   if (ctx.configViaChat) {
-    parts.push("⚙️ Mudar a config do agente conversando (sempre com sua confirmação): meta, autonomia, guardrails, cadência, notificações proativas (pulso/alerta), arquétipo, playbook, identidade (persona/tom/metodologia), contexto do negócio, orientações e como eu FALO com você (diretividade, volume de sugestões e o quanto explico — ou um perfil pronto: iniciante/intermediário/avançado).");
+    parts.push("⚙️ Mudar a config do agente conversando (sempre com sua confirmação): meta, autonomia, guardrails, cadência, notificações proativas (pulso = resumo do dia / alerta), arquétipo, playbook, identidade (persona/tom/metodologia), contexto do negócio, orientações e como eu FALO com você (diretividade, volume de sugestões e o quanto explico — ou um perfil pronto: iniciante/intermediário/avançado).");
   } else {
     parts.push("⚙️ Config do agente: por aqui está desligada — mudanças de config são pelo site.");
   }

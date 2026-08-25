@@ -10,14 +10,12 @@ import {
   addTokenUsage,
   applicableActionType,
   applyGuardrails,
-  archetypeDefaults,
   budgetDirection,
   kindForRecommendation,
   buildAccountBrief,
   buildEntityConversionMap,
   buildMessageFallback,
-  composeAgentPrompt,
-  composeMethodologyPrompt,
+  composeAgentVoice,
   costSnapshotFromUsage,
   creativePosterFrames,
   decideActions,
@@ -152,24 +150,11 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
 
     // config resolvida por-agente (model_config) com fallback nos defaults globais.
     const cfg = resolveAnalysisConfig(ctx.modelConfig, deps.analysis);
-    // system prompt = base (override do agente OU metodologia do arquétipo) +
-    // identidade/voz (persona/tom) + camada ADITIVA de personalização (contexto +
-    // orientações) — Fatia 4. persona/tom entram como diretiva de voz, sobre a base.
-    const methodologyBase = ctx.systemPrompt ?? composeMethodologyPrompt(archetypeDefaults(ctx.archetype));
-    const identity = [
-      ctx.persona ? `Persona: ${ctx.persona}` : "",
-      ctx.tone ? `Tom da comunicação: ${ctx.tone}` : "",
-    ]
-      .filter((s) => s.length > 0)
-      .join("\n");
-    const basePrompt = identity ? `${methodologyBase}\n\n${identity}` : methodologyBase;
-    // systemPrompt LIMPO (voz base). A nota do sinal (F4) é anexada só nos prompts do
-    // ANALISTA (via analystPrompt), NUNCA no redator do WhatsApp — que redige a mensagem
-    // ao usuário e não deve receber diretivas de investigação em 2ª pessoa.
-    const systemPrompt = composeAgentPrompt(basePrompt, {
-      ...(ctx.businessContext ? { businessContext: ctx.businessContext } : {}),
-      ...(ctx.guidance ? { guidance: ctx.guidance } : {}),
-    });
+    // systemPrompt LIMPO (voz base) = metodologia/override + identidade + personalização
+    // (fonte única `composeAgentVoice`). A POSTURA é bloco à parte, anexado só nos prompts
+    // que FALAM (redator). A nota do sinal (F4) idem — só no ANALISTA (via analystPrompt),
+    // NUNCA no redator (que redige ao usuário, sem diretiva de investigação em 2ª pessoa).
+    const systemPrompt = composeAgentVoice(ctx);
     // "hoje" no fuso da org (não UTC) — casa o dia civil dos snapshots (fuso da conta Meta).
     const { window, baseline } = resolveWindows(todayInTz(new Date(), ctx.timezone), cfg.windowDays, cfg.baselineDays);
     const windowLabel = `últimos ${cfg.windowDays} dias`;

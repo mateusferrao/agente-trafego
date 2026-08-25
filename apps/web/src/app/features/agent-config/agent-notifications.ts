@@ -35,8 +35,8 @@ const SENSITIVITIES: readonly { value: Sensitivity; label: string }[] = [
 ];
 
 /**
- * Proatividade (F4d): o que o agente manda SEM ser perguntado. Pulso (resumo periódico,
- * cadência própria — mesmo editor da cadência da análise), alerta (aviso de mudança
+ * Proatividade (F4d): o que o agente manda SEM ser perguntado. Pulso (resumo do dia —
+ * ontem + hoje até agora —, cadência própria — mesmo editor da cadência da análise), alerta (aviso de mudança
  * material, sensibilidade + intervalo mínimo) e o aviso após cada análise agendada.
  * Componente próprio (salva sua fatia), mesmo padrão de app-agent-autonomy/guardrails.
  */
@@ -62,8 +62,8 @@ const SENSITIVITIES: readonly { value: Sensitivity; label: string }[] = [
       <div class="flex flex-col gap-3 border-t border-line pt-4">
         <label class="flex items-center justify-between gap-3">
           <span class="flex flex-col">
-            <span class="text-sm font-medium text-ink">Resumo periódico (pulso)</span>
-            <span class="text-xs text-muted">Manda um resumo mesmo sem recomendação — não deixa a conta "sumir" entre lançamentos.</span>
+            <span class="text-sm font-medium text-ink">Resumo do dia (pulso)</span>
+            <span class="text-xs text-muted">Um retrato de ontem + hoje até agora, na cadência que você definir — mesmo sem recomendação nova. Não deixa a conta "sumir" entre lançamentos.</span>
           </span>
           <button appSwitch [ngpSwitchChecked]="pulseEnabled()" (ngpSwitchCheckedChange)="pulseEnabled.set($event)">
             <span appSwitchThumb></span>
