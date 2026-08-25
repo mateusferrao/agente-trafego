@@ -459,6 +459,7 @@ function toRunOutput(run: AgentRunRow): RunOutput {
     id: run.id,
     status: run.status,
     summary: run.summary ?? null,
+    narrative: run.narrative ?? null,
     partial: run.partial,
     partialNote: partialNote(reasons),
     partialSeverity: partialSeverity(reasons),

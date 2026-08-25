@@ -45,7 +45,7 @@ interface Harness {
   deps: WorkerDeps;
   saved: RecommendationRow[];
   savedLabels: ConversionLabelRow[];
-  closed: { status: string; summary: string | null; costSnapshot: number | null }[];
+  closed: { status: string; summary: string | null; narrative: string | null; costSnapshot: number | null }[];
   llm: ReturnType<typeof vi.fn>;
   readEntityState: ReturnType<typeof vi.fn>;
 }
@@ -84,7 +84,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
     consumeConfigChanged: vi.fn(async () => {}),
     loadDailyToolContext: vi.fn(async () => ({ touchedToday: new Set<string>(), budgetChangedToday: new Set<string>() })),
     recordStep: vi.fn(async () => {}),
-    closeRun: vi.fn(async (_o, _r, input) => { closed.push({ status: input.status, summary: input.summary, costSnapshot: input.costSnapshot }); }),
+    closeRun: vi.fn(async (_o, _r, input) => { closed.push({ status: input.status, summary: input.summary, narrative: input.narrative ?? null, costSnapshot: input.costSnapshot }); }),
   };
   const snapshots: InsightsSnapshotsRepo = {
     latestDate: vi.fn(async () => null),
@@ -217,8 +217,12 @@ describe("account-analysis read-only nodes", () => {
     const h = makeHarness();
     await runChain(h);
 
-    // 1 mapa (campanha c1 ativa) + síntese + revisor → 3 chamadas de LLM
-    expect(h.llm).toHaveBeenCalledTimes(3);
+    // 1 mapa (c1) + síntese + revisor + REDATOR (narrativa renderada SEMPRE, inclusive
+    // on-demand — S4) → 4 chamadas de LLM.
+    expect(h.llm).toHaveBeenCalledTimes(4);
+    // narrativa voiceada persistida no run (o site exibe no topo).
+    expect(typeof h.closed[0]?.narrative).toBe("string");
+    expect((h.closed[0]?.narrative ?? "").length).toBeGreaterThan(0);
     // 3 recomendações persistidas
     expect(h.saved).toHaveLength(3);
     // r1 (pause, id válido) → proposedAction tipado
@@ -234,7 +238,9 @@ describe("account-analysis read-only nodes", () => {
     expect(r3?.proposedAction).toBeNull();
     // run fechado com sucesso + custo
     expect(h.closed).toHaveLength(1);
-    // usage somado nas 3 chamadas (mapa + síntese + revisor)
+    // usage: mapa + síntese + revisor (0.001 cada). O redator É chamado (4ª call), mas o
+    // mock devolve o objeto de análise (sem .text) → cai no fallback e NÃO soma usage
+    // (usage só entra com texto válido). Em produção o redator retorna texto e somaria.
     expect(h.closed[0]).toMatchObject({ status: "succeeded", costSnapshot: 0.003 });
   });
 
@@ -299,8 +305,8 @@ describe("account-analysis read-only nodes", () => {
     const repos = (h.deps as unknown as { _repos: { entityAnalyses: EntityAnalysesRepo } })._repos;
     await runChain(h);
 
-    // 1 mapa (campanha c1) + 1 síntese + 1 revisor = 3 chamadas de LLM
-    expect(h.llm).toHaveBeenCalledTimes(3);
+    // 1 mapa (c1) + 1 síntese + 1 revisor + 1 redator (narrativa sempre — S4) = 4 chamadas
+    expect(h.llm).toHaveBeenCalledTimes(4);
     // a análise por-campanha reanalisada é persistida (base do incremental), chaveada por id de campanha
     expect(repos.entityAnalyses.saveMany).toHaveBeenCalledTimes(1);
     const savedUnits = (repos.entityAnalyses.saveMany as ReturnType<typeof vi.fn>).mock.calls[0]?.[2] as { entityId: string }[];

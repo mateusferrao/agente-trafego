@@ -105,6 +105,8 @@ export interface CloseRunInput {
   readonly tokenUsage: Record<string, unknown> | null;
   readonly costSnapshot: number | null;
   readonly metricsSnapshot?: Record<string, unknown> | null;
+  /** narrativa voiceada (redator) exibida no site; null quando não houve análise. */
+  readonly narrative?: string | null;
 }
 
 export interface AnalysisRepo {
@@ -452,6 +454,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
         .set({
           status: input.status,
           summary: input.summary,
+          ...(input.narrative !== undefined ? { narrative: input.narrative } : {}),
           partial: input.partial,
           ...(input.partialReasons !== undefined ? { partialReasons: input.partialReasons } : {}),
           tokenUsage: input.tokenUsage ?? null,

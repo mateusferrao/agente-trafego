@@ -115,8 +115,10 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
   imports: [UiBadge],
   template: `
     <section class="flex flex-col gap-4">
-      @if (run()?.summary) {
-        <p class="rounded-lg border border-line bg-panel p-5 text-sm text-ink">{{ run()?.summary }}</p>
+      <!-- Narrativa voiceada do agente (aplica a postura); fallback ao resumo neutro
+           em runs antigos / sem narrativa. É a "fala" do agente, no topo. -->
+      @if (narrative(); as n) {
+        <p class="rounded-lg border border-line bg-panel p-5 text-sm text-ink whitespace-pre-line">{{ n }}</p>
       }
       <!-- Sem resultados (ex: conta sem gasto): o resumo acima já basta; a
            ressalva "parcial" e o "nenhuma recomendação" viram ruído aqui. -->
@@ -388,6 +390,9 @@ export class AnalysisDetail {
       this.recommendations().length > 0 ||
       this.campaigns().length > 0,
   );
+
+  /** Fala do agente no topo: narrativa voiceada (postura); fallback ao resumo neutro. */
+  protected readonly narrative = computed(() => this.run()?.narrative ?? this.run()?.summary ?? null);
 
   /** Rótulo do CPA derivado da conversão de negócio (API projeta); fallback genérico. */
   protected readonly cpaLabel = computed(() => this.run()?.metrics?.kpis.cpaLabel ?? 'Custo por resultado');

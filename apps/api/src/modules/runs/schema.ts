@@ -138,6 +138,9 @@ export const runOutput = z.object({
   id: z.string(),
   status: runStatus,
   summary: z.string().nullable(),
+  /** narrativa voiceada (redator, aplica a postura) — a "fala" do agente; o site
+   *  exibe no topo no lugar do summary neutro (fallback ao summary se null). */
+  narrative: z.string().nullable(),
   partial: z.boolean(),
   /** Nota proporcional da degradação (null quando não parcial) — a UI exibe direto. */
   partialNote: z.string().nullable(),

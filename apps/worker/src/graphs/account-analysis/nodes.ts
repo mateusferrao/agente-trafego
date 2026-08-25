@@ -617,6 +617,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     await repo.closeRun(state.orgId, state.runId, {
       status: "succeeded",
       summary: state.summary ?? null,
+      narrative: state.narrative ?? null,
       partial: state.partial ?? false,
       partialReasons: [...(state.partialReasons ?? [])],
       tokenUsage: usage ? { ...usage } : null,
@@ -762,31 +763,32 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
   }
 
   /**
-   * Redator (papel dedicado) — redige a mensagem do WhatsApp a partir do resultado
-   * curado. Só p/ cron (push) e quando há algo acionável; senão silêncio (decisão 4).
-   * LLM barato + persona; fallback determinístico do core em erro/JSON.
+   * Redator (papel dedicado). Produz DUAS coisas: (1) a NARRATIVA voiceada da análise
+   * (SEMPRE que há análise — persistida no run p/ o site, aplica a postura); (2) a
+   * ENTREGA no WhatsApp (`outboundMessage`), gated por cron/signal+runPush OU origem
+   * WhatsApp (cron/signal sem recomendação = silêncio; WhatsApp sempre responde). O
+   * nudge de volume + notas de aplicadas/pendentes vão SÓ na entrega (o site mostra
+   * tudo nos cards). LLM barato + persona; fallback determinístico do core em erro/JSON.
    */
   async function writeMessage(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
     logger.debug({ runId: state.runId }, "write_message");
     const isWhatsapp = state.notifyTarget != null; // run disparado pelo WhatsApp → responde na conversa
     // cron E signal (F4) empurram ao destinatário verificado da org; on-demand (site) não faz push.
     const notifiesOrg = state.trigger === "cron" || state.trigger === "signal";
-    if (!notifiesOrg && !isWhatsapp) return { outboundMessage: null }; // on-demand no site
-    // push do cron desligado por config (F4 runPush) → sem mensagem (a análise/ações
-    // seguem, só não empurra no WhatsApp). O signal é governado por alerts (no gate).
-    if (state.trigger === "cron" && state.notifyPolicy?.runPush.enabled === false) return { outboundMessage: null };
+    // push do cron desligado por config (F4 runPush) → não empurra (a narrativa segue pro site).
+    const runPushOff = state.trigger === "cron" && state.notifyPolicy?.runPush.enabled === false;
     const out = state.analysisOutput;
-    if (!out || !state.account) return { outboundMessage: null };
-    const hasRecs = out.recommendations.length > 0;
-    // sem recomendação: cron/signal = silêncio (o alerta que não confirmou não incomoda);
-    // WhatsApp SEMPRE responde (o usuário pediu "analisa agora").
-    if (!hasRecs && !isWhatsapp) return { outboundMessage: null };
+    if (!out || !state.account) return { outboundMessage: null, narrative: null }; // sem análise → nada a renderizar
 
     const cfg = state.analysisConfig ?? deps.analysis;
     const posture = state.posture ?? DEFAULT_POSTURE;
-    let text: string | null = null;
+    const hasRecs = out.recommendations.length > 0;
+
+    // ── (1) NARRATIVA (SEMPRE): a voz do agente sobre a análise, p/ o site + WhatsApp ──
+    let narrative: string;
     let usage = state.usage;
     if (hasRecs) {
+      let text: string | null = null;
       try {
         const completion = await deps.ports.llm.completeStructured<{ text: string }>({
           model: cfg.messageModel,
@@ -809,8 +811,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
         if (!(err instanceof LLMProviderError)) throw err;
         logger.warn({ runId: state.runId, err }, "write_message:redator falhou; usando fallback");
       }
-      if (!text) {
-        text = buildMessageFallback(
+      narrative =
+        text ??
+        buildMessageFallback(
           {
             accountName: state.account.name,
             ...(out.scorecard?.headline ? { headline: out.scorecard.headline } : {}),
@@ -822,29 +825,34 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           },
           volumeToRecCount(posture.volume),
         );
-      }
-      // nudge de volume: o push LIDERA com N (volume); se sobram sugestões materiais,
-      // oferece ver o resto (o chat lista todas via list_recommendations).
-      const surfaceable = out.recommendations.filter((r) => kindForRecommendation(r.actionType) !== "insight");
-      const more = surfaceable.length - volumeToRecCount(posture.volume);
-      if (more > 0) text = `${text}\n\nTem mais ${more} sugestão(ões) — quer ver?`;
     } else {
-      // WhatsApp pediu análise e não há recomendação → resposta honesta e curta (nunca silêncio).
       const headline = out.scorecard?.headline ?? out.summary;
-      text = `Analisei a conta ${state.account.name}. ${headline} Nada crítico pra mexer agora — sigo de olho.`;
+      narrative = `Analisei a conta ${state.account.name}. ${headline} Nada crítico pra mexer agora — sigo de olho.`;
     }
-    // nota honesta do que o agente FEZ neste run (aplicou/simulou) — determinística.
-    const attempted = state.guardrail?.allowed.length ?? 0;
-    const applied = appliedSummary(state.results?.length ?? 0, attempted, state.guardrailConfig.dryRun);
-    if (applied) text = `${text}\n\n${applied}`;
-    // bridge do HITL via site (5b corte 1): avisa que há pendentes + linka o site (o
-    // link vem no nó notify). Aprovação pelo WhatsApp = corte 2.
-    const pending = state.approvalCandidates?.length ?? 0;
-    if (pending > 0) {
-      // bridge do HITL (5b-2): dá pra aprovar respondendo por aqui OU pelo site.
-      text = `${text}\n\n🔔 ${pending} ação(ões) aguardando seu OK. Responda por aqui pra aprovar/rejeitar, ou veja no site.`;
+
+    // ── (2) ENTREGA (push): gated. cron/signal sem recomendação = silêncio; WhatsApp sempre ──
+    const shouldDeliver = isWhatsapp || (notifiesOrg && !runPushOff);
+    let outbound: string | null = null;
+    if (shouldDeliver && (hasRecs || isWhatsapp)) {
+      outbound = narrative;
+      // nudge de volume: o push LIDERA com N (volume); se sobram sugestões materiais,
+      // oferece ver o resto (o chat lista todas via list_recommendations). Só na entrega.
+      if (hasRecs) {
+        const surfaceable = out.recommendations.filter((r) => kindForRecommendation(r.actionType) !== "insight");
+        const more = surfaceable.length - volumeToRecCount(posture.volume);
+        if (more > 0) outbound = `${outbound}\n\nTem mais ${more} sugestão(ões) — quer ver?`;
+      }
+      // nota honesta do que o agente FEZ neste run (aplicou/simulou) — determinística.
+      const attempted = state.guardrail?.allowed.length ?? 0;
+      const applied = appliedSummary(state.results?.length ?? 0, attempted, state.guardrailConfig.dryRun);
+      if (applied) outbound = `${outbound}\n\n${applied}`;
+      // bridge do HITL (5b-2): avisa que há pendentes + dá pra aprovar por aqui/site.
+      const pending = state.approvalCandidates?.length ?? 0;
+      if (pending > 0) {
+        outbound = `${outbound}\n\n🔔 ${pending} ação(ões) aguardando seu OK. Responda por aqui pra aprovar/rejeitar, ou veja no site.`;
+      }
     }
-    return { outboundMessage: text, usage };
+    return { outboundMessage: outbound, narrative, usage };
   }
 
   /**

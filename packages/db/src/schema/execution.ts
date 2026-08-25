@@ -47,8 +47,13 @@ export const agentRuns = pgTable(
     configSnapshot: jsonb("config_snapshot").$type<Record<string, unknown>>().notNull().default({}),
     tokenUsage: jsonb("token_usage").$type<Record<string, unknown>>(),
     costSnapshot: numeric("cost_snapshot", { precision: 12, scale: 4 }),
-    // resumo em linguagem natural da análise (LLM) — exibido no site/WhatsApp.
+    // resumo em linguagem natural da análise (LLM) — NEUTRO (síntese do analista);
+    // fonte estável p/ pulso/comparação e fallback do site.
     summary: text("summary"),
+    // narrativa VOICEADA (redator, aplica a postura) — a "fala" do agente exibida no
+    // site (topo do resultado, no lugar do summary neutro) e enviada no WhatsApp.
+    // Renderizada em todo run; null em run sem análise (fallback ao summary).
+    narrative: text("narrative"),
     // análise parcial (degradação graciosa do governor — §7) → nota na UI.
     partial: boolean("partial").notNull().default(false),
     // POR QUE degradou (métricas/entidades/criativo/campanha/ação) — deixa o parcial de
