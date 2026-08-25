@@ -3,9 +3,9 @@
 // (só números da síntese), voz do arquétipo, WhatsApp-first. Saída {text} mínima.
 
 import type { AnalysisOutput } from "@trafego/shared/schemas";
-import type { WasteReport } from "@trafego/shared";
+import type { Posture, WasteReport } from "@trafego/shared";
 import type { LLMMessage } from "@trafego/shared/ports";
-import { kindForRecommendation } from "@trafego/core";
+import { composePostureBlock, kindForRecommendation, volumeToRecCount } from "@trafego/core";
 import { GROUNDING_RULE } from "../analysis/prompt.js";
 
 /** Structured output do redator — um único campo de texto. */
@@ -17,13 +17,12 @@ export const MESSAGE_OUTPUT_JSON_SCHEMA: Readonly<Record<string, unknown>> = {
 };
 export const MESSAGE_OUTPUT_SCHEMA_NAME = "whatsapp_message";
 
-/** Máx. de recomendações a citar na mensagem (WhatsApp-first). */
-const MAX_RECS = 3;
-
+// A CONTAGEM de sugestões (volume) e o JARGÃO (profundidade) são governados pela
+// POSTURA (composePostureBlock), não hardcoded aqui — fonte única de voz.
 const VOICE_RULES = [
-  "Escreva a mensagem de WhatsApp para o dono da conta (linguagem de gente, sem jargão técnico).",
+  "Escreva a mensagem de WhatsApp para o dono da conta, em linguagem natural.",
   "Curta e escaneável: 1 decisão por linha. Comece pelo diagnóstico (1 frase), depois as sugestões.",
-  "Não inclua IDs internos, JSON, nem markdown pesado. Sem saudação longa. Use no máx. 3 sugestões.",
+  "Não inclua IDs internos, JSON, nem markdown pesado. Sem saudação longa.",
   "Não invente números nem ações: use SOMENTE o que está no resultado fornecido.",
   "Se houver 'waste' (wastedSpend > 0 ou 'misallocated'), ABRA pela mensagem em reais (o dono quer ver o dinheiro primeiro): quanto está parado e onde está mal alocado.",
   "Se 'trackingSuspect' for true, ressalve que a medição de vendas pode estar incompleta antes de sugerir cortes por CPA de venda.",
@@ -41,14 +40,17 @@ function curateWaste(waste: WasteReport | undefined): Record<string, unknown> | 
   return { wastedSpend: waste.wastedSpend, wastedPct: waste.wastedPct, misallocated };
 }
 
-/** Monta as mensagens do redator. `systemPrompt` = persona/metodologia do arquétipo. */
+/** Monta as mensagens do redator. `systemPrompt` = persona/metodologia do arquétipo.
+ *  A postura entra como bloco de voz próprio (fora do systemPrompt sobrescrevível) e
+ *  o volume determina quantas sugestões liderar (`volumeToRecCount`). */
 export function buildMessageMessages(
   systemPrompt: string,
   accountName: string,
   output: AnalysisOutput,
+  posture: Posture,
   extras?: { readonly waste?: WasteReport; readonly trackingSuspect?: boolean },
 ): LLMMessage[] {
-  const system = [systemPrompt, VOICE_RULES, GROUNDING_RULE].join("\n\n");
+  const system = [systemPrompt, composePostureBlock(posture), VOICE_RULES, GROUNDING_RULE].join("\n\n");
   const waste = curateWaste(extras?.waste);
   const curated = {
     accountName,
@@ -58,9 +60,10 @@ export function buildMessageMessages(
     ...(extras?.trackingSuspect ? { trackingSuspect: true } : {}),
     // Fix fadiga (S3): insight puro NÃO entra no push proativo (fica na visão de
     // análise). Reusa a fonte única kindForRecommendation (não re-deriva 'keep' à mão).
+    // Volume (postura) determina quantas liderar.
     recommendations: output.recommendations
       .filter((r) => kindForRecommendation(r.actionType) !== "insight")
-      .slice(0, MAX_RECS)
+      .slice(0, volumeToRecCount(posture.volume))
       .map((r) => ({ title: r.title, rationale: r.rationale })),
   };
   const user = [

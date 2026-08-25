@@ -38,9 +38,10 @@ import {
   selectCampaignsToAnalyze,
   selectCreatives,
   targetStatusOf,
+  volumeToRecCount,
   type LastUnit,
 } from "@trafego/core";
-import { ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS } from "@trafego/shared";
+import { ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS, DEFAULT_POSTURE } from "@trafego/shared";
 import { funnelFromRawActions, mapStatus } from "@trafego/ads-meta";
 import {
   analysisOutputSchema,
@@ -181,6 +182,8 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       window,
       baseline,
       topN: cfg.topN,
+      // congela a postura usada no render (reprodutibilidade — CLAUDE §6).
+      posture: ctx.posture,
     });
 
     return {
@@ -188,6 +191,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       playbookRules: ctx.playbook,
       autonomyPolicy: ctx.autonomyPolicy,
       notifyPolicy: ctx.notifyPolicy,
+      posture: ctx.posture,
       guardrailConfig: ctx.guardrailConfig,
       rejectedMemory: ctx.rejectedMemory,
       mutedCampaignIds: ctx.mutedCampaignIds,
@@ -779,13 +783,14 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     if (!hasRecs && !isWhatsapp) return { outboundMessage: null };
 
     const cfg = state.analysisConfig ?? deps.analysis;
+    const posture = state.posture ?? DEFAULT_POSTURE;
     let text: string | null = null;
     let usage = state.usage;
     if (hasRecs) {
       try {
         const completion = await deps.ports.llm.completeStructured<{ text: string }>({
           model: cfg.messageModel,
-          messages: buildMessageMessages(state.systemPrompt, state.account.name, out, {
+          messages: buildMessageMessages(state.systemPrompt, state.account.name, out, posture, {
             ...(state.brief?.waste ? { waste: state.brief.waste } : {}),
             ...(state.brief?.trackingHealth?.suspect ? { trackingSuspect: true } : {}),
           }),
@@ -805,16 +810,24 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
         logger.warn({ runId: state.runId, err }, "write_message:redator falhou; usando fallback");
       }
       if (!text) {
-        text = buildMessageFallback({
-          accountName: state.account.name,
-          ...(out.scorecard?.headline ? { headline: out.scorecard.headline } : {}),
-          summary: out.summary,
-          recommendations: out.recommendations.map((r) => ({ title: r.title })),
-          ...(state.brief?.waste && state.brief.waste.wastedSpend > 0
-            ? { money: { wastedSpend: state.brief.waste.wastedSpend, wastedPct: state.brief.waste.wastedPct } }
-            : {}),
-        });
+        text = buildMessageFallback(
+          {
+            accountName: state.account.name,
+            ...(out.scorecard?.headline ? { headline: out.scorecard.headline } : {}),
+            summary: out.summary,
+            recommendations: out.recommendations.map((r) => ({ title: r.title })),
+            ...(state.brief?.waste && state.brief.waste.wastedSpend > 0
+              ? { money: { wastedSpend: state.brief.waste.wastedSpend, wastedPct: state.brief.waste.wastedPct } }
+              : {}),
+          },
+          volumeToRecCount(posture.volume),
+        );
       }
+      // nudge de volume: o push LIDERA com N (volume); se sobram sugestões materiais,
+      // oferece ver o resto (o chat lista todas via list_recommendations).
+      const surfaceable = out.recommendations.filter((r) => kindForRecommendation(r.actionType) !== "insight");
+      const more = surfaceable.length - volumeToRecCount(posture.volume);
+      if (more > 0) text = `${text}\n\nTem mais ${more} sugestão(ões) — quer ver?`;
     } else {
       // WhatsApp pediu análise e não há recomendação → resposta honesta e curta (nunca silêncio).
       const headline = out.scorecard?.headline ?? out.summary;

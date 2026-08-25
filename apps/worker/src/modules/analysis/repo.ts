@@ -5,8 +5,8 @@
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import type { Database } from "@trafego/db/client";
 import { adAccounts, adCreatives, agentMemory, agentMutedEntities, agentRunSteps, agentRuns, agentToolCalls, agents, conversionLabels, guardrailConfigs, orgs, platformConnections, playbookRules, recommendations } from "@trafego/db";
-import type { Action, ActionTarget, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, NotifyPolicy, PartialReason, PerformanceTier, PlaybookRule, RecommendationKind, RiskLevel } from "@trafego/shared";
-import { GUARDRAIL_DEFAULTS, toGuardrailConfig, UNDO_TOOL_KEY } from "@trafego/shared";
+import type { Action, ActionTarget, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, NotifyPolicy, PartialReason, PerformanceTier, PlaybookRule, Posture, RecommendationKind, RiskLevel } from "@trafego/shared";
+import { DEFAULT_POSTURE, GUARDRAIL_DEFAULTS, toGuardrailConfig, UNDO_TOOL_KEY } from "@trafego/shared";
 import { entityKeyOf, unseedIdentity } from "@trafego/core";
 import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
 
@@ -30,6 +30,8 @@ export interface AgentContext {
   readonly autonomyPolicy: AutonomyPolicy;
   /** Política de notificação proativa (F4) — governa o push do cron (runPush), etc. */
   readonly notifyPolicy: NotifyPolicy;
+  /** Postura de comunicação (voz) — diretividade/volume/profundidade + preset. */
+  readonly posture: Posture;
   /** Guardrails (rede independente) — blast radius, cap, kill-switch, dry-run (5a). */
   readonly guardrailConfig: GuardrailConfig;
   readonly playbook: PlaybookRule[];
@@ -162,6 +164,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
           modelConfig: agents.modelConfig,
           autonomyPolicy: agents.autonomyPolicy,
           notifyPolicy: agents.notifyPolicy,
+          posture: agents.posture,
           timezone: orgs.timezone,
         })
         .from(agents)
@@ -236,6 +239,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
         modelConfig: agent.modelConfig ?? {},
         autonomyPolicy: agent.autonomyPolicy,
         notifyPolicy: agent.notifyPolicy,
+        posture: agent.posture ?? DEFAULT_POSTURE,
         guardrailConfig,
         playbook,
         rejectedMemory: memory.map((m) => m.content),
