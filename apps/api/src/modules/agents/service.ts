@@ -9,6 +9,7 @@ import {
   entityAnalyses,
   guardrailConfigs,
   insightsSnapshots,
+  loadOrgTimezone,
   playbookRules,
   type Database,
 } from "@trafego/db";
@@ -16,6 +17,8 @@ import {
   archetypeCatalog,
   archetypeDefaults,
   composeMethodologyPrompt,
+  daysAgoInTz,
+  todayInTz,
   unseedIdentity,
   windowFromModelConfig,
   ADVANCED_SCALAR_KEYS,
@@ -29,6 +32,7 @@ import {
   ACTION_UNDO_JOB,
   GUARDRAIL_DEFAULTS,
   toGuardrailConfig,
+  DEFAULT_TIMEZONE,
   UNDO_BLOCKED_TOOL_KEY,
   UNDO_TOOL_KEY,
 } from "@trafego/shared";
@@ -264,8 +268,12 @@ export function createAgentsService(deps: AgentsDeps) {
     orgId: OrgId,
     accountId: string,
   ): Promise<AvailableConversionsOutput> {
-    const until = new Date();
-    const since = new Date(until.getTime() - AVAILABLE_CONVERSIONS_WINDOW_DAYS * DAY_MS);
+    // Janela de datas no fuso da org (não UTC): `insights_snapshots.date` é gravada no fuso
+    // da conta — calcular "hoje" em UTC deslocaria a janela à noite (mesma raiz do fix de fuso).
+    const tz = await loadOrgTimezone(deps.db, orgId, DEFAULT_TIMEZONE);
+    const now = new Date();
+    const until = todayInTz(now, tz);
+    const since = daysAgoInTz(now, tz, AVAILABLE_CONVERSIONS_WINDOW_DAYS);
     const rows = await deps.db
       .select({ metricsJson: insightsSnapshots.metricsJson })
       .from(insightsSnapshots)
@@ -274,8 +282,8 @@ export function createAgentsService(deps: AgentsDeps) {
           eq(insightsSnapshots.orgId, orgId),
           eq(insightsSnapshots.adAccountId, accountId),
           eq(insightsSnapshots.entityLevel, "account"),
-          gte(insightsSnapshots.date, ymd(since)),
-          lte(insightsSnapshots.date, ymd(until)),
+          gte(insightsSnapshots.date, since),
+          lte(insightsSnapshots.date, until),
         ),
       );
 
@@ -658,11 +666,6 @@ function toRuleOutput(row: {
 /** Metodologia composta do arquétipo (read-only p/ o "ver metodologia" da UI). */
 function methodologyFor(archetype: string): string {
   return composeMethodologyPrompt(archetypeDefaults(archetype));
-}
-
-/** Data → YYYY-MM-DD (coluna `date` do snapshot). */
-function ymd(d: Date): string {
-  return d.toISOString().slice(0, 10);
 }
 
 /**

@@ -34,7 +34,8 @@ import { BUFFER_TTL_MARGIN_SEC, pushInbound } from "../modules/conversation/buff
 import { markTranscribing, scheduleConversationFlush } from "../modules/conversation/flush-control.js";
 import { sendCourtesyNotice } from "../modules/conversation/courtesy-notice.js";
 import { loadGroupParticipantsMap } from "../modules/conversation/group-participants-cache.js";
-import { unsupportedMediaNotice } from "../modules/conversation/notices.js";
+import { QUOTED_AUTHOR_FALLBACK_LABEL, unsupportedMediaNotice } from "../modules/conversation/notices.js";
+import { participantLabelFromPhone } from "@trafego/core";
 import { createNotifyRepo, type NotifyRepo } from "../modules/notify/repo.js";
 import { createSendToConversation, type SendToConversation } from "../modules/notify/send-to-contact.js";
 
@@ -181,6 +182,10 @@ async function routeGroupMessage(d: InboundRouterDeps, instanceId: string, inbou
 
   const botPhone = await d.repo.instancePhone(instanceId);
   let addressed = isAddressedToBot(group, botPhone);
+  // Telefone EFETIVO do autor citado: em grupo migrado (LID) o telefone de terceiros só
+  // aparece após resolver o LID — sem isso, downstream (quotedFromBot / rótulo do citado)
+  // leria `group.quotedAuthorPhone` stale (null) e perderia a atribuição do reply.
+  let quotedAuthorPhone = group.quotedAuthorPhone;
 
   // Menção/reply só por LID (grupo migrado, addressingMode "lid"): o telefone de
   // terceiros não vem no payload da mensagem (só o do remetente). Resolve via cache
@@ -193,7 +198,7 @@ async function routeGroupMessage(d: InboundRouterDeps, instanceId: string, inbou
       group.groupJid,
     );
     const mentionedPhones = [...group.mentionedPhones, ...group.mentionedLids.map((lid) => lidMap[lid]).filter((p): p is string => p !== undefined)];
-    const quotedAuthorPhone = group.quotedAuthorPhone ?? (group.quotedAuthorLid ? (lidMap[group.quotedAuthorLid] ?? null) : null);
+    quotedAuthorPhone = group.quotedAuthorPhone ?? (group.quotedAuthorLid ? (lidMap[group.quotedAuthorLid] ?? null) : null);
     addressed = isAddressedToBot({ mentionedPhones, quotedAuthorPhone }, botPhone);
   }
 
@@ -209,7 +214,7 @@ async function routeGroupMessage(d: InboundRouterDeps, instanceId: string, inbou
         authorName: group.senderName,
         body: ambientBody(inbound),
         messageId: inbound.messageId,
-        quotedAuthorPhone: group.quotedAuthorPhone,
+        quotedAuthorPhone,
         quotedSnippet: quotedSnippetDisplay(group),
       });
     }
@@ -223,18 +228,16 @@ async function routeGroupMessage(d: InboundRouterDeps, instanceId: string, inbou
   // (b) reply a um ÁUDIO marcando o bot: transcreve o áudio CITADO e prefixa no turno,
   // junto do texto que o usuário digitou. O áudio citado é buscado por chave (fetchMediaBase64).
   if (inbound.kind === "text" && group.quotedKind === "audio" && group.quotedStanzaId) {
-    const quotedFromBot = group.quotedAuthorPhone !== null && group.quotedAuthorPhone === botPhone;
+    // O bot nunca envia áudio → uma citação de áudio jamais é do próprio bot (sem quotedFromBot).
     await d.repo.recordMessage(conversationId, "inbound", inbound.text, {
       messageId: inbound.messageId,
       authorName: group.senderName,
-      ...(group.quotedAuthorPhone ? { quotedAuthorPhone: group.quotedAuthorPhone } : {}),
+      ...(quotedAuthorPhone ? { quotedAuthorPhone } : {}),
       quotedSnippet: AMBIENT_AUDIO_PLACEHOLDER,
-      ...(quotedFromBot ? { quotedFromBot: true } : {}),
     });
-    const digits = (group.quotedAuthorPhone ?? "").replace(/\D/gu, "");
-    const authorLabel = quotedFromBot ? "assistente" : digits.length >= 4 ? `Participante-${digits.slice(-4)}` : "alguém";
+    const authorLabel = participantLabelFromPhone(quotedAuthorPhone) ?? QUOTED_AUTHOR_FALLBACK_LABEL;
     const participant =
-      group.quotedAuthorLid ?? (group.quotedAuthorPhone ? `${digits}@s.whatsapp.net` : undefined);
+      group.quotedAuthorLid ?? (quotedAuthorPhone ? `${quotedAuthorPhone.replace(/\D/gu, "")}@s.whatsapp.net` : undefined);
     await markTranscribing(d.redis, conversationId, d.transcribingTtlSec); // segura o flush até transcrever
     const payload: WhatsappTranscriptionPayload = {
       orgId: resolved.orgId,
@@ -263,10 +266,10 @@ async function routeGroupMessage(d: InboundRouterDeps, instanceId: string, inbou
   // Captura o reply mesmo quando é ao PRÓPRIO bot (contexto útil pros outros participantes):
   // marca `quotedFromBot` p/ o transcript rotular como o assistente (não o telefone do bot).
   const quotedSnippet = quotedSnippetDisplay(group);
-  const quotedFromBot = group.quotedAuthorPhone !== null && group.quotedAuthorPhone === botPhone;
+  const quotedFromBot = quotedAuthorPhone !== null && quotedAuthorPhone === botPhone;
   await routeMessage(d, instanceId, inbound, resolved.orgId, conversationId, ref, {
     authorName: group.senderName,
-    ...(group.quotedAuthorPhone ? { quotedAuthorPhone: group.quotedAuthorPhone } : {}),
+    ...(quotedAuthorPhone ? { quotedAuthorPhone } : {}),
     ...(quotedSnippet ? { quotedSnippet } : {}),
     ...(quotedFromBot ? { quotedFromBot: true } : {}),
   });

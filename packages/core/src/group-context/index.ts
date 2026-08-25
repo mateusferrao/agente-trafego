@@ -45,12 +45,21 @@ const EMPTY_BODY = "[mídia]";
 
 const MS_PER_HOUR = 60 * 60 * 1000;
 
+/**
+ * Rótulo determinístico "Participante-XXXX" (últimos 4 dígitos) a partir do telefone;
+ * `null` quando não há dígitos suficientes — o chamador escolhe o fallback ("Participante"
+ * na atribuição, "alguém" no reply). Puro; reusado pela casca (áudio citado) e pelo core.
+ */
+export function participantLabelFromPhone(phone: string | null | undefined): string | null {
+  const digits = (phone ?? "").replace(/\D/gu, "");
+  return digits.length >= 4 ? `Participante-${digits.slice(-4)}` : null;
+}
+
 /** Fallback de atribuição quando não há pushName: "Participante-XXXX" (últimos 4 dígitos). */
 function authorLabel(entry: GroupTranscriptEntry, botLabel: string): string {
   if (entry.fromBot) return botLabel;
   if (entry.authorName && entry.authorName.length > 0) return entry.authorName;
-  const digits = (entry.authorPhone ?? "").replace(/\D/gu, "");
-  return digits.length >= 4 ? `Participante-${digits.slice(-4)}` : "Participante";
+  return participantLabelFromPhone(entry.authorPhone) ?? "Participante";
 }
 
 /** Timestamp curto no fuso `tz`: dd/mm HH:MM. */
@@ -89,8 +98,7 @@ export function buildGroupTranscript(
   for (const e of recent) if (e.authorPhone && e.authorName) nameByPhone.set(e.authorPhone, e.authorName);
   const quotedAuthorLabel = (phone: string | null | undefined): string => {
     if (phone && nameByPhone.has(phone)) return nameByPhone.get(phone)!;
-    const digits = (phone ?? "").replace(/\D/gu, "");
-    return digits.length >= 4 ? `Participante-${digits.slice(-4)}` : "alguém";
+    return participantLabelFromPhone(phone) ?? "alguém";
   };
   /** " (↳ resp. a Fulano: "trecho")" quando a mensagem foi reply; "" caso contrário. */
   const replyOf = (e: GroupTranscriptEntry): string => {

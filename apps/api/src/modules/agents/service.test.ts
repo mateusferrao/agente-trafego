@@ -137,7 +137,8 @@ describe("agents.availableConversions", () => {
       { metricsJson: { metrics: {}, conversions: [{ goal: "purchase", count: 3 }] } },
     ];
     const labels = [{ goal: "custom", customConversionId: "123", label: "Comprou Curso" }];
-    const { db } = makeFakeDb([snapshots, labels]);
+    // selects em ordem: fuso da org (loadOrgTimezone), snapshots da janela, rótulos.
+    const { db } = makeFakeDb([[{ timezone: "America/Sao_Paulo" }], snapshots, labels]);
     const service = createAgentsService({ db, scheduler, approvals, revertTtlDays: 7, qualityDefaults: QD });
 
     const result = await service.availableConversions(ORG, "acc-1");

@@ -357,7 +357,7 @@ describe("makeInboundRouter — grupo", () => {
       expect(t.repo.recordMessage).toHaveBeenCalledWith("conv-grp-1", "inbound", "@bot analisa", { messageId: "GMSG-1", authorName: "João" });
     });
 
-    it("reply só por LID (quotedAuthorLid): resolve e processa como dirigido", async () => {
+    it("reply só por LID (quotedAuthorLid) ao BOT: resolve o telefone e rotula como assistente", async () => {
       const t = makeDeps();
       t.messaging.resolveGroupParticipants.mockResolvedValueOnce({ [BOT_LID]: BOT_PHONE });
 
@@ -365,7 +365,13 @@ describe("makeInboundRouter — grupo", () => {
         t.deps,
       )("inst-1", groupText({ mentionedPhones: [], quotedAuthorPhone: null, quotedAuthorLid: BOT_LID }));
 
-      expect(t.repo.recordMessage).toHaveBeenCalledWith("conv-grp-1", "inbound", "@bot analisa", { messageId: "GMSG-1", authorName: "João" });
+      // o telefone resolvido via LID propaga downstream → quotedFromBot (S2 vale em grupo migrado).
+      expect(t.repo.recordMessage).toHaveBeenCalledWith("conv-grp-1", "inbound", "@bot analisa", {
+        messageId: "GMSG-1",
+        authorName: "João",
+        quotedAuthorPhone: BOT_PHONE,
+        quotedFromBot: true,
+      });
     });
 
     it("LID mencionado NÃO é o do bot (mapa resolve pra outro telefone) → continua não-dirigido", async () => {

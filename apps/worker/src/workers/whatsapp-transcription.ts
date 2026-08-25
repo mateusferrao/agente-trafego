@@ -23,7 +23,13 @@ import { actorLabel } from "../modules/conversation/actor.js";
 import { pushInbound, BUFFER_TTL_MARGIN_SEC } from "../modules/conversation/buffer.js";
 import { refreshTranscribing, scheduleConversationFlush, unmarkTranscribing } from "../modules/conversation/flush-control.js";
 import { sendCourtesyNotice } from "../modules/conversation/courtesy-notice.js";
-import { AUDIO_EMPTY_NOTICE, AUDIO_FAILED_NOTICE } from "../modules/conversation/notices.js";
+import {
+  AUDIO_EMPTY_NOTICE,
+  AUDIO_FAILED_NOTICE,
+  QUOTED_AUDIO_EMPTY_NOTE,
+  QUOTED_AUDIO_UNHEARD_NOTE,
+  quotedAudioPrefix,
+} from "../modules/conversation/notices.js";
 import { createNotifyRepo, type NotifyRepo } from "../modules/notify/repo.js";
 import { createSendToConversation, type SendToConversation } from "../modules/notify/send-to-contact.js";
 
@@ -142,7 +148,7 @@ export function makeTranscriptionProcessor(d: TranscriptionProcessorDeps) {
           await pushInbound(
             d.redis,
             conversationId,
-            `${quotedAudioContext.userText}\n\n[não consegui ouvir o áudio que você respondeu]`,
+            `${quotedAudioContext.userText}\n\n${QUOTED_AUDIO_UNHEARD_NOTE}`,
             d.debounceSeconds + BUFFER_TTL_MARGIN_SEC,
           );
         } else if (messageRowId) {
@@ -168,8 +174,8 @@ export function makeTranscriptionProcessor(d: TranscriptionProcessorDeps) {
         // áudio CITADO (b): prefixa a transcrição no turno, junto do texto que o usuário digitou.
         const combined =
           text.length > 0
-            ? `[Em resposta ao áudio de ${quotedAudioContext.authorLabel}: ${text}]\n\n${quotedAudioContext.userText}`
-            : `${quotedAudioContext.userText}\n\n[o áudio que você respondeu veio sem fala audível]`;
+            ? `${quotedAudioPrefix(quotedAudioContext.authorLabel, text)}\n\n${quotedAudioContext.userText}`
+            : `${quotedAudioContext.userText}\n\n${QUOTED_AUDIO_EMPTY_NOTE}`;
         await pushInbound(d.redis, conversationId, combined, bufTtl);
       } else if (text.length === 0) {
         if (messageRowId) await d.repo.updateMessageContent(messageRowId, null, { transcribing: false, empty: true, ...durationPatch });

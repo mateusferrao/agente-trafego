@@ -44,7 +44,13 @@ export function tzOffsetMs(at: Date, tz: string): number {
   return asUtc - at.getTime();
 }
 
-/** Instante UTC da meia-noite do dia CIVIL de `now` no fuso `tz`. */
+/**
+ * Instante UTC da meia-noite do dia CIVIL de `now` no fuso `tz`.
+ * Limitação de DST: usa o offset em `now`, não na meia-noite alvo — num dia de transição
+ * de horário de verão os dois diferem e o resultado pode sair ~1h deslocado. Aceitável hoje
+ * (único consumidor é o piso do throttle de alerta ≤1/dia; o fuso default BRT não tem DST).
+ * Se um consumidor sensível a hora surgir, derivar o offset da própria meia-noite construída.
+ */
 export function startOfDayInTz(now: Date, tz: string): Date {
   const midnightUtc = Date.parse(`${todayInTz(now, tz)}T00:00:00Z`);
   return new Date(midnightUtc - tzOffsetMs(now, tz));
