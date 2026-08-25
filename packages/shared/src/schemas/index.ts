@@ -1,6 +1,13 @@
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { CONVERSION_GOALS, RECOMMENDATION_KINDS } from "../types/index.js";
+import {
+  CONVERSION_GOALS,
+  DIDACTIC_DEPTH_LEVELS,
+  DIRECTIVENESS_LEVELS,
+  EXPERIENCE_LEVELS,
+  RECOMMENDATION_KINDS,
+  VOLUME_LEVELS,
+} from "../types/index.js";
 
 // Fonte da verdade dos contratos (zod → OpenAPI → kubb). Expandir por feature.
 
@@ -102,6 +109,26 @@ export const DEFAULT_NOTIFY_POLICY: NotifyPolicy = {
   pulse: { enabled: false, cadence: { kind: "weekly", weekday: 1, hour: 8 } },
   alerts: { enabled: false, sensitivity: "normal", throttleHours: 6 },
   runPush: { enabled: true },
+};
+
+// ─── Postura de comunicação (voz do agente) ──────────────────────────────
+// Deriva das tuplas fonte-única (types) — zero drift. `experienceLevel` nullable:
+// null = "definido pelo arquétipo"; um preset explícito semeia os 3 eixos.
+export const postureSchema = z.object({
+  directiveness: z.enum(DIRECTIVENESS_LEVELS),
+  volume: z.enum(VOLUME_LEVELS),
+  didacticDepth: z.enum(DIDACTIC_DEPTH_LEVELS),
+  experienceLevel: z.enum(EXPERIENCE_LEVELS).nullable(),
+});
+export type Posture = z.infer<typeof postureSchema>;
+
+/** Default CONSERVADOR (coluna do db + fallback): consultivo, equilibrado, DIDÁTICO
+ *  (preserva o "sem jargão" do ICP não-técnico de hoje no zero-config). */
+export const DEFAULT_POSTURE: Posture = {
+  directiveness: "consultative",
+  volume: "balanced",
+  didacticDepth: "explanatory",
+  experienceLevel: null,
 };
 
 // ─── Saída estruturada da análise (LLM) ──────────────────────────────────

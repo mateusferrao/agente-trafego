@@ -1,5 +1,5 @@
 import { DEFAULT_NOTIFY_POLICY } from "@trafego/shared";
-import type { AgentGoals, AutonomyPolicy, CadenceSpec, NotifyPolicy } from "@trafego/shared";
+import type { AgentGoals, AutonomyPolicy, CadenceSpec, NotifyPolicy, Posture } from "@trafego/shared";
 
 /**
  * Defaults de **arquétipo** que semeiam um agente zero-config. Fonte única até a
@@ -23,6 +23,13 @@ export interface ArchetypeDefaults {
   readonly defaultCadence?: CadenceSpec;
   /** Política de notificação proativa semeada (pulso/alerta/push) — F4. */
   readonly defaultNotifyPolicy: NotifyPolicy;
+  /**
+   * Postura de comunicação semeada (voz). Irmã de persona/tom — resetada no reseed
+   * de arquétipo, sobreposta depois pelo preset de experiência. `experienceLevel`
+   * nasce null (definido pelo arquétipo). Profundidade NUNCA nasce `direct` (o ICP é
+   * não-técnico independe do arquétipo — `direct` só via preset avançado/edição).
+   */
+  readonly defaultPosture: Posture;
   /** Instruções-base da análise (o formato JSON é anexado na chamada do LLM). */
   readonly systemPrompt: string;
   readonly goals: AgentGoals;
@@ -65,6 +72,8 @@ const CONSERVADOR: ArchetypeDefaults = {
   autonomyPolicy: { bySource: { playbook: "suggest", llm: "suggest" } },
   // conservador: só o push do cron; sem pulso/alerta proativos (o dono liga quando quiser).
   defaultNotifyPolicy: DEFAULT_NOTIFY_POLICY,
+  // cauteloso: consultivo, equilibrado e didático (ensina o dono não-técnico).
+  defaultPosture: { directiveness: "consultative", volume: "balanced", didacticDepth: "explanatory", experienceLevel: null },
   methodology: {
     tonePosture: "Consultivo, direto e sem jargão; explica o porquê em linguagem de dono do negócio.",
     evidenceRules: [
@@ -113,6 +122,8 @@ const OTIMIZADOR: ArchetypeDefaults = {
     alerts: { enabled: true, sensitivity: "normal", throttleHours: 6 },
     runPush: { enabled: true },
   },
+  // eficiência: diretivo e enxuto; profundidade equilibrada (não `direct` — ICP não-técnico).
+  defaultPosture: { directiveness: "directive", volume: "concise", didacticDepth: "balanced", experienceLevel: null },
   methodology: {
     tonePosture: "Eficiência primeiro: cada real tem que trabalhar. Explica o porquê em linguagem de dono.",
     evidenceRules: [
@@ -162,6 +173,8 @@ const GUARDIAO_LANCAMENTO: ArchetypeDefaults = {
     alerts: { enabled: true, sensitivity: "high", throttleHours: 3 },
     runPush: { enabled: true },
   },
+  // lançamento: diretivo e cobre tudo; profundidade equilibrada (não `direct`).
+  defaultPosture: { directiveness: "directive", volume: "comprehensive", didacticDepth: "balanced", experienceLevel: null },
   methodology: {
     tonePosture: "Velocidade e vigilância: no lançamento, melhor avisar cedo que tarde — sem alarmismo.",
     evidenceRules: [

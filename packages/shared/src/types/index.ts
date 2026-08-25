@@ -142,6 +142,24 @@ export const CONVERSION_GOALS = [
 
 export type ConversionGoal = (typeof CONVERSION_GOALS)[number];
 
+// ─── Postura de comunicação do agente (como ele FALA — não o que a análise decide) ──
+// Três eixos ORTOGONAIS que governam a VOZ do agente em toda superfície de fala
+// (push da análise, chat, pulso, narrativa do site) — nunca o output estruturado do
+// analista. Tuplas const = fonte única (derivam o tipo E o zod em schemas). Enums
+// neutros em inglês (padrão AutonomyLevel/AlertSensitivity); rótulos PT no catálogo (core).
+/** Quão diretivo: apresenta opções × assume e lidera com a recomendação. */
+export const DIRECTIVENESS_LEVELS = ["consultative", "balanced", "directive"] as const;
+export type Directiveness = (typeof DIRECTIVENESS_LEVELS)[number];
+/** Quanto traz: nº de recomendações que o agente lidera (mapeado a uma contagem no core). */
+export const VOLUME_LEVELS = ["concise", "balanced", "comprehensive"] as const;
+export type Volume = (typeof VOLUME_LEVELS)[number];
+/** Quanto explica: vai direto (assume familiaridade) × explica o básico (ensina). */
+export const DIDACTIC_DEPTH_LEVELS = ["direct", "balanced", "explanatory"] as const;
+export type DidacticDepth = (typeof DIDACTIC_DEPTH_LEVELS)[number];
+/** Preset de experiência do LEITOR — semeia os 3 eixos (null = definido pelo arquétipo). */
+export const EXPERIENCE_LEVELS = ["beginner", "intermediate", "advanced"] as const;
+export type ExperienceLevel = (typeof EXPERIENCE_LEVELS)[number];
+
 /** Uma linha do breakdown de conversões (count + valor monetário p/ ROAS). */
 export interface ConversionCount {
   readonly goal: ConversionGoal;
