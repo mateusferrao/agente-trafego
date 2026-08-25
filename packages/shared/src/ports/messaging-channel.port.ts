@@ -43,6 +43,15 @@ export interface InboundGroupContext {
   readonly quotedAuthorPhone: string | null;
   readonly mentionedLids: readonly string[];
   readonly quotedAuthorLid: string | null;
+  /**
+   * Mensagem CITADA (reply), quando houver — para contexto de reply no transcript e para
+   * transcrever um áudio citado. `quotedStanzaId` = id da msg citada (chave p/ `fetchMediaBase64`);
+   * `quotedKind` = tipo do citado; `quotedSnippet` = texto citado (truncado) ou null p/ mídia.
+   * Autor do citado = `quotedAuthorPhone`/`quotedAuthorLid` acima. Ausente = null.
+   */
+  readonly quotedStanzaId: string | null;
+  readonly quotedKind: "text" | "audio" | "image" | "media" | null;
+  readonly quotedSnippet: string | null;
 }
 
 /** Campos comuns a toda mensagem inbound (independe do tipo de mídia). */

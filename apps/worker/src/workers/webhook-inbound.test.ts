@@ -25,6 +25,9 @@ function groupText(
     quotedAuthorPhone?: string | null;
     mentionedLids?: string[];
     quotedAuthorLid?: string | null;
+    quotedStanzaId?: string | null;
+    quotedKind?: "text" | "audio" | "image" | "media" | null;
+    quotedSnippet?: string | null;
   } = {},
 ): InboundMessage {
   return {
@@ -39,6 +42,9 @@ function groupText(
       quotedAuthorPhone: overrides.quotedAuthorPhone ?? null,
       mentionedLids: overrides.mentionedLids ?? [],
       quotedAuthorLid: overrides.quotedAuthorLid ?? null,
+      quotedStanzaId: overrides.quotedStanzaId ?? null,
+      quotedKind: overrides.quotedKind ?? null,
+      quotedSnippet: overrides.quotedSnippet ?? null,
     },
   };
 }
@@ -53,6 +59,9 @@ function groupMedia(kind: "audio" | "unsupported", mediaType = "image"): Inbound
     quotedAuthorPhone: null,
     mentionedLids: [] as string[],
     quotedAuthorLid: null,
+    quotedStanzaId: null,
+    quotedKind: null,
+    quotedSnippet: null,
   };
   if (kind === "audio") {
     return { ...GROUP_BASE, kind: "audio", audio: { base64: "AAAA", mimetype: "audio/ogg" }, messageKey: { id: "GMSG-1", remoteJid: GROUP_JID, fromMe: false }, group };

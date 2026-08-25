@@ -117,7 +117,48 @@ function buildGroupContext(
   const rawName = data["pushName"];
   const senderName = typeof rawName === "string" && rawName.length > 0 ? rawName : null;
 
-  return { groupJid, senderPhone, senderName, mentionedPhones, quotedAuthorPhone, mentionedLids, quotedAuthorLid };
+  const { quotedStanzaId, quotedKind, quotedSnippet } = extractQuoted(ctx);
+
+  return {
+    groupJid,
+    senderPhone,
+    senderName,
+    mentionedPhones,
+    quotedAuthorPhone,
+    mentionedLids,
+    quotedAuthorLid,
+    quotedStanzaId,
+    quotedKind,
+    quotedSnippet,
+  };
+}
+
+/** Teto do trecho da mensagem citada no transcript (evita citar mensagens enormes). */
+const QUOTED_SNIPPET_MAX = 200;
+
+/**
+ * Extrai a mensagem CITADA (reply) do `contextInfo`: id (`stanzaId`), tipo e trecho.
+ * Texto → snippet truncado; mídia → `kind` + snippet null (o áudio citado é transcrito
+ * na casca via `fetchMediaBase64` usando o `stanzaId`). Sem citação → tudo null.
+ */
+function extractQuoted(ctx: Record<string, unknown> | null): {
+  quotedStanzaId: string | null;
+  quotedKind: InboundGroupContext["quotedKind"];
+  quotedSnippet: string | null;
+} {
+  const quoted = asRecord(ctx?.["quotedMessage"]);
+  if (!quoted) return { quotedStanzaId: null, quotedKind: null, quotedSnippet: null };
+  const stanzaId = typeof ctx?.["stanzaId"] === "string" ? (ctx["stanzaId"] as string) : null;
+
+  const trunc = (s: string): string => (s.length > QUOTED_SNIPPET_MAX ? `${s.slice(0, QUOTED_SNIPPET_MAX)}…` : s);
+  const conversation = typeof quoted["conversation"] === "string" ? (quoted["conversation"] as string) : null;
+  const extText = asRecord(quoted["extendedTextMessage"]);
+  const extTextValue = typeof extText?.["text"] === "string" ? (extText["text"] as string) : null;
+  const text = conversation ?? extTextValue;
+  if (text !== null) return { quotedStanzaId: stanzaId, quotedKind: "text", quotedSnippet: trunc(text) };
+  if (asRecord(quoted["audioMessage"])) return { quotedStanzaId: stanzaId, quotedKind: "audio", quotedSnippet: null };
+  if (asRecord(quoted["imageMessage"])) return { quotedStanzaId: stanzaId, quotedKind: "image", quotedSnippet: null };
+  return { quotedStanzaId: stanzaId, quotedKind: "media", quotedSnippet: null };
 }
 
 /**

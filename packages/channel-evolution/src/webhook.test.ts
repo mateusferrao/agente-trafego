@@ -199,6 +199,40 @@ describe("parseInbound — grupo", () => {
     expect(parseInbound(payload)).toMatchObject({ group: { senderName: null } });
   });
 
+  describe("mensagem citada (reply)", () => {
+    it("reply a TEXTO → quotedKind text + snippet + stanzaId", () => {
+      const msg = parseInbound(
+        groupUpsert({ contextInfo: { participant: "5511777777777@s.whatsapp.net", stanzaId: "Q1", quotedMessage: { conversation: "Oi pessoal" } } }),
+      );
+      expect(msg).toMatchObject({
+        group: { quotedAuthorPhone: "+5511777777777", quotedStanzaId: "Q1", quotedKind: "text", quotedSnippet: "Oi pessoal" },
+      });
+    });
+
+    it("reply a ÁUDIO → quotedKind audio + snippet null (a casca transcreve pelo stanzaId)", () => {
+      const msg = parseInbound(
+        groupUpsert({ contextInfo: { participant: "5511777777777@s.whatsapp.net", stanzaId: "Q2", quotedMessage: { audioMessage: { mimetype: "audio/ogg" } } } }),
+      );
+      expect(msg).toMatchObject({ group: { quotedStanzaId: "Q2", quotedKind: "audio", quotedSnippet: null } });
+    });
+
+    it("reply a IMAGEM → quotedKind image", () => {
+      const msg = parseInbound(groupUpsert({ contextInfo: { stanzaId: "Q3", quotedMessage: { imageMessage: {} } } }));
+      expect(msg).toMatchObject({ group: { quotedKind: "image", quotedSnippet: null } });
+    });
+
+    it("sem citação → quoted* null", () => {
+      expect(parseInbound(groupUpsert({}))).toMatchObject({ group: { quotedStanzaId: null, quotedKind: null, quotedSnippet: null } });
+    });
+
+    it("texto citado longo → trunca com reticências", () => {
+      const long = "a".repeat(250);
+      const msg = parseInbound(groupUpsert({ contextInfo: { stanzaId: "Q4", quotedMessage: { conversation: long } } })) as { group: { quotedSnippet: string } };
+      expect(msg.group.quotedSnippet.length).toBeLessThan(long.length);
+      expect(msg.group.quotedSnippet.endsWith("…")).toBe(true);
+    });
+  });
+
   it("grupo sem participant identificável → null (não dá pra rotear)", () => {
     const payload = groupUpsert({ participant: "" });
     // remove o participant do payload
