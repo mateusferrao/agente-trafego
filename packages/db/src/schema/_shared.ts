@@ -94,6 +94,15 @@ export const recommendationStatus = pgEnum("recommendation_status", [
   "dismissed",
   "expired",
 ]);
+// Formato da recomendação (S2) — espelha RECOMMENDATION_KINDS (@trafego/shared,
+// fonte única do tipo+zod). Desacopla a recomendação da ação: `platform_action` =
+// capacidade executável do catálogo; `human_direction` = direção que o humano
+// executa (criativo/público, escalar/criar); `insight` = leitura, sem ação.
+export const recommendationKind = pgEnum("recommendation_kind", [
+  "platform_action",
+  "human_direction",
+  "insight",
+]);
 export const feedbackVote = pgEnum("feedback_vote", ["up", "down"]);
 export const outcomeStatus = pgEnum("outcome_status", ["pending", "positive", "negative", "neutral"]);
 

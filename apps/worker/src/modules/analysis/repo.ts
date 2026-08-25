@@ -5,7 +5,7 @@
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import type { Database } from "@trafego/db/client";
 import { adAccounts, adCreatives, agentMemory, agentMutedEntities, agentRunSteps, agentRuns, agentToolCalls, agents, conversionLabels, guardrailConfigs, orgs, platformConnections, playbookRules, recommendations } from "@trafego/db";
-import type { Action, ActionTarget, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, NotifyPolicy, PerformanceTier, PlaybookRule, RiskLevel } from "@trafego/shared";
+import type { Action, ActionTarget, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, NotifyPolicy, PerformanceTier, PlaybookRule, RecommendationKind, RiskLevel } from "@trafego/shared";
 import { GUARDRAIL_DEFAULTS, toGuardrailConfig, UNDO_TOOL_KEY } from "@trafego/shared";
 import { entityKeyOf, unseedIdentity } from "@trafego/core";
 import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
@@ -67,7 +67,11 @@ export interface RecommendationRow {
   readonly runId: string;
   readonly title: string;
   readonly rationale: string;
+  /** Formato (S2): platform_action | human_direction | insight. */
+  readonly kind: RecommendationKind;
   readonly proposedAction: Action | null;
+  /** Capacidade do catálogo proposta — só em platform_action. */
+  readonly toolKey: string | null;
   readonly riskLevel: RiskLevel;
 }
 
@@ -293,7 +297,9 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
           runId: r.runId,
           title: r.title,
           rationale: r.rationale,
+          kind: r.kind,
           proposedAction: r.proposedAction ?? null,
+          toolKey: r.toolKey ?? null,
           riskLevel: r.riskLevel,
         })),
       );

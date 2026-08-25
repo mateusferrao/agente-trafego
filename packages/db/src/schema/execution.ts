@@ -19,6 +19,7 @@ import {
   feedbackVote,
   outcomeStatus,
   pk,
+  recommendationKind,
   recommendationStatus,
   riskLevel,
   runStatus,
@@ -167,7 +168,12 @@ export const recommendations = pgTable(
       .references(() => agentRuns.id, { onDelete: "cascade" }),
     title: text("title").notNull(),
     rationale: text("rationale"),
+    // Formato (S2): eixo de renderização/gating. Default platform_action p/ linhas
+    // legadas com ação; o backfill da migração seta `insight` onde não há ação.
+    kind: recommendationKind("kind").notNull().default("platform_action"),
     proposedAction: jsonb("proposed_action").$type<Action>(),
+    // Capacidade do catálogo (S4) que esta recomendação propõe — só em platform_action.
+    toolKey: text("tool_key"),
     riskLevel: riskLevel("risk_level").notNull().default("low"),
     status: recommendationStatus("status").notNull().default("open"),
     ...timestamps,

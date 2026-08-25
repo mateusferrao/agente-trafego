@@ -12,6 +12,7 @@ import {
   applyGuardrails,
   archetypeDefaults,
   budgetDirection,
+  kindForRecommendation,
   buildAccountBrief,
   buildEntityConversionMap,
   buildMessageFallback,
@@ -1081,7 +1082,14 @@ async function fetchEntities(
   return { entities, entitiesPartial };
 }
 
-/** Recomendação do LLM → linha persistível (ação tipada só quando aplicável + id real). */
+/**
+ * Recomendação do LLM → linha persistível. Antes DESCARTAVA as consultivas (viravam
+ * `proposedAction=null` sem rótulo); agora classifica em `kind` (S2): as executáveis
+ * viram `platform_action` (com `toolKey` = capacidade do catálogo), as de revisão
+ * viram `human_direction`, e "manter" vira `insight`. Uma `platform_action` que não
+ * materializa a ação (alvo inválido / budget sem pct) é rebaixada a `human_direction`
+ * — honesto: aparece, mas sem CTA de aplicar (invariante: platform_action ⟺ ação).
+ */
 function toRecommendationRow(
   rec: AnalysisRecommendation,
   orgId: string,
@@ -1105,12 +1113,18 @@ function toRecommendationRow(
           reason: rec.rationale,
         }
       : null;
+  const baseKind = kindForRecommendation(rec.actionType);
+  const kind =
+    baseKind === "platform_action" && proposedAction === null ? "human_direction" : baseKind;
+  const toolKey = kind === "platform_action" && proposedAction ? proposedAction.type : null;
   return {
     orgId,
     runId,
     title: rec.title,
     rationale: rec.rationale,
+    kind,
     proposedAction,
+    toolKey,
     riskLevel: actionType ? riskForAction(actionType, params) : "low",
   };
 }
