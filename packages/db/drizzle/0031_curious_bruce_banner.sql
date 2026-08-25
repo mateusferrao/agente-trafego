@@ -1,0 +1,1 @@
+ALTER TABLE "agents" ADD COLUMN "posture" jsonb DEFAULT '{"directiveness":"consultative","volume":"balanced","didacticDepth":"explanatory","experienceLevel":null}'::jsonb NOT NULL;

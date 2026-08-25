@@ -14,8 +14,8 @@ import {
   type AgentConfigPatch,
   type AgentConfigState,
 } from "@trafego/core";
-import { DEFAULT_NOTIFY_POLICY, SCHEDULE_RESYNC_JOB, SCHEDULE_RESYNC_QUEUE, toGuardrailConfig } from "@trafego/shared";
-import type { AutonomyPolicy, CadenceSpec, NotifyPolicy, OrgId } from "@trafego/shared";
+import { DEFAULT_NOTIFY_POLICY, DEFAULT_POSTURE, SCHEDULE_RESYNC_JOB, SCHEDULE_RESYNC_QUEUE, toGuardrailConfig } from "@trafego/shared";
+import type { AutonomyPolicy, CadenceSpec, NotifyPolicy, OrgId, Posture } from "@trafego/shared";
 import type { SchedulerPort } from "@trafego/shared/ports";
 
 /** Dependências de infra da camada (composition root injeta). */
@@ -95,6 +95,7 @@ export async function applyAgentConfigChange(
       modelConfig: next.modelConfig,
       autonomyPolicy: next.autonomyPolicy,
       notifyPolicy: next.notifyPolicy,
+      posture: next.posture,
       ...(runRelevantChanged ? { configChangedAt: sql`now()` } : {}),
       updatedAt: sql`now()`,
     })
@@ -144,6 +145,8 @@ export type AgentReseedResult =
       readonly autonomyPolicy: AutonomyPolicy;
       /** proatividade (F4d) — resetada pro default do arquétipo (mesma semântica da autonomia). */
       readonly notifyPolicy: NotifyPolicy;
+      /** postura (voz) — resetada pro default do arquétipo. */
+      readonly posture: Posture;
       readonly changed: readonly string[];
       readonly weakensSafety: boolean;
     };
@@ -179,6 +182,8 @@ export async function reseedArchetypeChange(
   // incondicional pro default do arquétipo — não tem "não configurado" pra preservar,
   // ao contrário da cadência da análise).
   const notifyPolicyChanged = JSON.stringify(defaults.defaultNotifyPolicy) !== JSON.stringify(state.notifyPolicy);
+  // postura: irmã de persona/tom — reset incondicional pro default do arquétipo.
+  const postureChanged = JSON.stringify(defaults.defaultPosture) !== JSON.stringify(state.posture);
 
   await db
     .update(agents)
@@ -191,6 +196,7 @@ export async function reseedArchetypeChange(
       autonomyPolicy: defaults.autonomyPolicy,
       cadence: nextCadence,
       notifyPolicy: defaults.defaultNotifyPolicy,
+      posture: defaults.defaultPosture,
       configChangedAt: sql`now()`,
       updatedAt: sql`now()`,
     })
@@ -214,6 +220,7 @@ export async function reseedArchetypeChange(
     changed.push(CONFIG_CHANGE_LABELS.autonomyPolicy);
   if (cadenceChanged) changed.push(CONFIG_CHANGE_LABELS.cadence);
   if (notifyPolicyChanged) changed.push(CONFIG_CHANGE_LABELS.notifyPolicy);
+  if (postureChanged) changed.push(CONFIG_CHANGE_LABELS.posture);
 
   const weakensSafety = autonomyPolicyWeakens(state.autonomyPolicy, defaults.autonomyPolicy);
 
@@ -226,6 +233,7 @@ export async function reseedArchetypeChange(
       autonomyPolicy: defaults.autonomyPolicy,
       cadence: nextCadence,
       notifyPolicy: defaults.defaultNotifyPolicy,
+      posture: defaults.defaultPosture,
     };
     await writeAudit(db, orgId, agentId, AGENT_ARCHETYPE_RESEED_ACTION, state, after, audit);
   }
@@ -236,6 +244,7 @@ export async function reseedArchetypeChange(
     cadence: nextCadence,
     autonomyPolicy: defaults.autonomyPolicy,
     notifyPolicy: defaults.defaultNotifyPolicy,
+    posture: defaults.defaultPosture,
     changed,
     weakensSafety,
   };
@@ -263,6 +272,7 @@ export async function loadAgentConfigState(
       modelConfig: agents.modelConfig,
       autonomyPolicy: agents.autonomyPolicy,
       notifyPolicy: agents.notifyPolicy,
+      posture: agents.posture,
       archetype: agents.archetype,
     })
     .from(agents)
@@ -291,6 +301,7 @@ export async function loadAgentConfigState(
     // fallback defensivo (linha pré-migração/fake de teste); a coluna real tem
     // default NOT NULL (backfill automático), então isto é só uma rede de segurança.
     notifyPolicy: row.notifyPolicy ?? DEFAULT_NOTIFY_POLICY,
+    posture: row.posture ?? DEFAULT_POSTURE,
   };
 }
 

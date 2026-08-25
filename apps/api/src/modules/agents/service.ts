@@ -153,6 +153,7 @@ export function createAgentsService(deps: AgentsDeps) {
         goals: defaults.goals,
         autonomyPolicy: defaults.autonomyPolicy,
         notifyPolicy: defaults.defaultNotifyPolicy,
+        posture: defaults.defaultPosture,
         // ativo ao ser criado → o cron passa a cuidar da conta (pausável pelo dono).
         status: "active",
       })

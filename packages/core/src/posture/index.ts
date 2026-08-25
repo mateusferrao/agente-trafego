@@ -161,3 +161,22 @@ const EXPERIENCE_LABELS: Readonly<Record<ExperienceLevel, Omit<ExperienceOption,
 export function experienceCatalog(): ExperienceOption[] {
   return EXPERIENCE_LEVELS.map((level) => ({ level, ...EXPERIENCE_LABELS[level] }));
 }
+
+// ─── Lookups PT (fonte única do eco de mudança + describe_capabilities) ───────
+/** Rótulo PT de cada eixo (Diretividade/Volume/Profundidade). */
+export const POSTURE_AXIS_PT = {
+  directiveness: "diretividade",
+  volume: "volume",
+  didacticDepth: "profundidade",
+} as const;
+
+/** Rótulo PT amigável de um nível de um eixo. PURO. */
+export function postureLevelLabel(axis: keyof typeof POSTURE_AXIS_PT, level: string): string {
+  const maps = { directiveness: DIRECTIVENESS_LABELS, volume: VOLUME_LABELS, didacticDepth: DIDACTIC_LABELS };
+  return (maps[axis] as Record<string, PostureLevelOption>)[level]?.label ?? level;
+}
+
+/** Rótulo PT de um preset de experiência (null = definido pelo arquétipo). PURO. */
+export function experienceLabel(level: ExperienceLevel | null): string {
+  return level === null ? "definido pelo arquétipo" : EXPERIENCE_LABELS[level].label;
+}

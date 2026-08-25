@@ -218,6 +218,13 @@
       "when": 1787669204027,
       "tag": "0030_useful_sandman",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1787677282580,
+      "tag": "0031_curious_bruce_banner",
+      "breakpoints": true
     }
   ]
 }

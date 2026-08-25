@@ -11,7 +11,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import { DEFAULT_NOTIFY_POLICY } from "@trafego/shared";
+import { DEFAULT_NOTIFY_POLICY, DEFAULT_POSTURE } from "@trafego/shared";
 import type {
   ActionType,
   AgentGoals,
@@ -19,6 +19,7 @@ import type {
   CadenceSpec,
   NotifyPolicy,
   PlaybookCondition,
+  Posture,
 } from "@trafego/shared";
 import {
   actionType,
@@ -60,6 +61,10 @@ export const agents = pgTable(
     // Notificação proativa (F4): pulso/alerta/push. Default conservador de coluna
     // cobre linhas existentes; o onboarding semeia por arquétipo.
     notifyPolicy: jsonb("notify_policy").$type<NotifyPolicy>().notNull().default(DEFAULT_NOTIFY_POLICY),
+    // Postura de comunicação (voz): diretividade/volume/profundidade + preset de
+    // experiência. Default conservador de coluna cobre linhas existentes; o
+    // onboarding semeia por arquétipo (backfill por-arquétipo = fast-follow).
+    posture: jsonb("posture").$type<Posture>().notNull().default(DEFAULT_POSTURE),
     tone: text("tone"),
     // config do modelo (provider/model/params) via OpenRouter
     modelConfig: jsonb("model_config").$type<Record<string, unknown>>().notNull().default({}),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AutonomyPolicy, GuardrailConfig, NotifyPolicy } from "@trafego/shared";
+import type { AutonomyPolicy, GuardrailConfig, NotifyPolicy, Posture } from "@trafego/shared";
 import {
   buildConfigChangeEcho,
   CONFIG_CHANGE_LABELS,
@@ -23,6 +23,12 @@ const NOTIFY_POLICY: NotifyPolicy = {
   alerts: { enabled: false, sensitivity: "normal", throttleHours: 6 },
   runPush: { enabled: true },
 };
+const POSTURE: Posture = {
+  directiveness: "consultative",
+  volume: "balanced",
+  didacticDepth: "explanatory",
+  experienceLevel: null,
+};
 
 function baseState(over: Partial<AgentConfigState> = {}): AgentConfigState {
   return {
@@ -38,6 +44,7 @@ function baseState(over: Partial<AgentConfigState> = {}): AgentConfigState {
     guardrails: GUARDRAILS,
     modelConfig: {},
     notifyPolicy: NOTIFY_POLICY,
+    posture: POSTURE,
     ...over,
   };
 }

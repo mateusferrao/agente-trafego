@@ -267,6 +267,7 @@ function state(over: Partial<AgentConfigState> = {}): AgentConfigState {
     guardrails: GUARDRAILS,
     modelConfig: {},
     notifyPolicy: NOTIFY_POLICY,
+    posture: { directiveness: "consultative", volume: "balanced", didacticDepth: "explanatory", experienceLevel: null },
     ...over,
   };
 }

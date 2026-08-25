@@ -11,8 +11,13 @@ import type {
   AutonomyPolicy,
   CadenceSpec,
   ConversionGoal,
+  DidacticDepth,
+  Directiveness,
+  ExperienceLevel,
   GuardrailConfig,
   NotifyPolicy,
+  Posture,
+  Volume,
 } from "@trafego/shared";
 import {
   ANALYSIS_WINDOW_DEFAULT_DAYS,
@@ -20,6 +25,12 @@ import {
   ANALYSIS_WINDOW_MIN_DAYS,
 } from "@trafego/shared";
 import { describeCadence } from "../cadence/index.js";
+import {
+  experienceLabel,
+  experiencePresetDefaults,
+  POSTURE_AXIS_PT,
+  postureLevelLabel,
+} from "../posture/index.js";
 
 /**
  * Estado ATUAL da config do agente (neutro — sem detalhe de banco/plataforma). A
@@ -40,6 +51,8 @@ export interface AgentConfigState {
   readonly modelConfig: Record<string, unknown>;
   /** Política de notificação proativa (F4d) — pulso/alerta/push. */
   readonly notifyPolicy: NotifyPolicy;
+  /** Postura de comunicação (voz) — diretividade/volume/profundidade + preset. */
+  readonly posture: Posture;
 }
 
 // Nota: os leaves aceitam `| undefined` de propósito — os patches vêm de DTOs
@@ -91,6 +104,17 @@ export interface NotifyPolicyPatch {
 }
 
 /**
+ * Postura (voz) em formato de patch — leaves FLAT. `experienceLevel` semeia os 3
+ * eixos (preset); um eixo explícito no mesmo patch sobrepõe a semente.
+ */
+export interface PosturePatch {
+  readonly directiveness?: Directiveness | undefined;
+  readonly volume?: Volume | undefined;
+  readonly didacticDepth?: DidacticDepth | undefined;
+  readonly experienceLevel?: ExperienceLevel | undefined;
+}
+
+/**
  * Patch de config (equivalente parcial ao `AgentConfigInput` da API). Semântica dos
  * campos de texto: `""` limpa (→ null via `trimOrNull`); `undefined` preserva;
  * `systemPrompt ""` → null (cai no arquétipo). `cadence: null` limpa a cadência.
@@ -109,6 +133,8 @@ export interface AgentConfigPatch {
   readonly modelConfig?: ModelConfigPatch | undefined;
   /** proatividade (F4d): pulso/alerta/push. Leaf-merge — só os campos enviados. */
   readonly notifyPolicy?: NotifyPolicyPatch | undefined;
+  /** postura (voz): diretividade/volume/profundidade + preset. Leaf-merge. */
+  readonly posture?: PosturePatch | undefined;
 }
 
 /**
@@ -128,6 +154,7 @@ export const CONFIG_CHANGE_LABELS = {
   analysisWindowDays: "janela",
   modelConfig: "limiares",
   notifyPolicy: "notificações",
+  posture: "postura",
 } as const;
 
 /** Ranking de autonomia (menor = mais seguro) — base do "enfraqueceu a segurança?". */
@@ -196,6 +223,7 @@ export function resolveAgentConfigChange(
   const nextAutonomy = patch.autonomyPolicy ?? state.autonomyPolicy;
   const nextGuardrails = cleanGuardrails(patch.guardrails ?? state.guardrails);
   const nextNotifyPolicy = mergeNotifyPolicy(state.notifyPolicy, patch.notifyPolicy);
+  const nextPosture = mergePosture(state.posture, patch.posture);
 
   const next: AgentConfigState = {
     goals: nextGoals,
@@ -210,6 +238,7 @@ export function resolveAgentConfigChange(
     guardrails: nextGuardrails,
     modelConfig: nextModelConfig,
     notifyPolicy: nextNotifyPolicy,
+    posture: nextPosture,
   };
 
   // diffs por campo (json estável p/ objetos).
@@ -229,6 +258,9 @@ export function resolveAgentConfigChange(
   // proatividade (F4d): não afeta a ANÁLISE (não entra em runRelevantChanged), mas o
   // pulso tem cadência própria → precisa re-sincronizar o scheduler (como a cadência).
   const notifyPolicyChanged = jsonEq(nextNotifyPolicy, state.notifyPolicy) === false;
+  // postura é VOZ (render) — não afeta a ANÁLISE (fora de runRelevantChanged); o
+  // próximo run relê a config no redator, como cadência/notify.
+  const postureChanged = jsonEq(nextPosture, state.posture) === false;
 
   // cadência NÃO entra: muda só a agenda, não a análise.
   const runRelevantChanged =
@@ -254,6 +286,7 @@ export function resolveAgentConfigChange(
   if (windowChanged) changed.push(CONFIG_CHANGE_LABELS.analysisWindowDays);
   if (modelConfigTouched) changed.push(CONFIG_CHANGE_LABELS.modelConfig);
   if (notifyPolicyChanged) changed.push(CONFIG_CHANGE_LABELS.notifyPolicy);
+  if (postureChanged) changed.push(CONFIG_CHANGE_LABELS.posture);
 
   const weakensSafety =
     guardrailsWeaken(state.guardrails, nextGuardrails) ||
@@ -276,6 +309,22 @@ function mergeNotifyPolicy(cur: NotifyPolicy, patch: NotifyPolicyPatch | undefin
       throttleHours: patch.alertsThrottleHours ?? cur.alerts.throttleHours,
     },
     runPush: { enabled: patch.runPushEnabled ?? cur.runPush.enabled },
+  };
+}
+
+/**
+ * Mescla o patch de postura (voz). Se `experienceLevel` vier, SEMEIA os 3 eixos com o
+ * preset; um eixo explícito no mesmo patch sobrepõe a semente. Sem preset, leaf-merge
+ * simples (mexer num eixo mantém o `experienceLevel` — "personalizado" é derivado). PURO.
+ */
+function mergePosture(cur: Posture, patch: PosturePatch | undefined): Posture {
+  if (!patch) return cur;
+  const seed = patch.experienceLevel !== undefined ? experiencePresetDefaults(patch.experienceLevel) : cur;
+  return {
+    directiveness: patch.directiveness ?? seed.directiveness,
+    volume: patch.volume ?? seed.volume,
+    didacticDepth: patch.didacticDepth ?? seed.didacticDepth,
+    experienceLevel: patch.experienceLevel ?? cur.experienceLevel,
   };
 }
 
@@ -536,6 +585,17 @@ function configDetailLines(label: string, cur: AgentConfigState, next: AgentConf
     case CONFIG_CHANGE_LABELS.modelConfig:
       lines.push("limiares avançados: atualizados");
       return lines;
+    case CONFIG_CHANGE_LABELS.posture: {
+      const c = cur.posture;
+      const n = next.posture;
+      if (c.experienceLevel !== n.experienceLevel)
+        lines.push(`perfil de comunicação: ${experienceLabel(c.experienceLevel)} → ${experienceLabel(n.experienceLevel)}`);
+      for (const axis of ["directiveness", "volume", "didacticDepth"] as const) {
+        if (c[axis] !== n[axis])
+          lines.push(`${POSTURE_AXIS_PT[axis]}: ${postureLevelLabel(axis, c[axis])} → ${postureLevelLabel(axis, n[axis])}`);
+      }
+      return lines;
+    }
     case CONFIG_CHANGE_LABELS.notifyPolicy: {
       const c = cur.notifyPolicy;
       const n = next.notifyPolicy;

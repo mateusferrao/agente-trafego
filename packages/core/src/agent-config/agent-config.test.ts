@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { AutonomyPolicy, GuardrailConfig, NotifyPolicy } from "@trafego/shared";
+import type { AutonomyPolicy, GuardrailConfig, NotifyPolicy, Posture } from "@trafego/shared";
 import {
+  buildConfigChangeEcho,
   CONFIG_CHANGE_LABELS,
   CUSTOM_CONVERSION_REQUIRED_ERROR,
   resolveAgentConfigChange,
@@ -24,6 +25,13 @@ const NOTIFY_POLICY: NotifyPolicy = {
   runPush: { enabled: true },
 };
 
+const POSTURE: Posture = {
+  directiveness: "consultative",
+  volume: "balanced",
+  didacticDepth: "explanatory",
+  experienceLevel: null,
+};
+
 /** Estado base neutro — cada teste sobrescreve o que precisa. */
 function baseState(over: Partial<AgentConfigState> = {}): AgentConfigState {
   return {
@@ -39,6 +47,7 @@ function baseState(over: Partial<AgentConfigState> = {}): AgentConfigState {
     guardrails: GUARDRAILS,
     modelConfig: {},
     notifyPolicy: NOTIFY_POLICY,
+    posture: POSTURE,
     ...over,
   };
 }
@@ -229,5 +238,59 @@ describe("resolveAgentConfigChange — notifyPolicy (F4d)", () => {
   it("notifyPolicy NÃO enfraquece a segurança (weakensSafety)", () => {
     const r = resolve(baseState(), { notifyPolicy: { alertsEnabled: true, pulseEnabled: true } });
     expect(r.weakensSafety).toBe(false);
+  });
+});
+
+describe("resolveAgentConfigChange — postura (voz)", () => {
+  it("altera um eixo (leaf-merge) e marca 'postura' no changed", () => {
+    const r = resolve(baseState(), { posture: { directiveness: "directive" } });
+    expect(r.next.posture.directiveness).toBe("directive");
+    expect(r.next.posture.volume).toBe("balanced"); // preservado
+    expect(r.changed).toContain(CONFIG_CHANGE_LABELS.posture);
+  });
+
+  it("postura é VOZ — não força deep run (runRelevantChanged=false)", () => {
+    const r = resolve(baseState(), { posture: { volume: "concise" } });
+    expect(r.runRelevantChanged).toBe(false);
+  });
+
+  it("escolher experienceLevel semeia os 3 eixos", () => {
+    const r = resolve(baseState(), { posture: { experienceLevel: "beginner" } });
+    expect(r.next.posture).toEqual({
+      directiveness: "directive",
+      volume: "comprehensive",
+      didacticDepth: "explanatory",
+      experienceLevel: "beginner",
+    });
+  });
+
+  it("eixo explícito no mesmo patch sobrepõe a semente do preset", () => {
+    const r = resolve(baseState(), { posture: { experienceLevel: "beginner", volume: "concise" } });
+    expect(r.next.posture.volume).toBe("concise");
+    expect(r.next.posture.directiveness).toBe("directive"); // do preset
+    expect(r.next.posture.experienceLevel).toBe("beginner");
+  });
+
+  it("postura NÃO enfraquece a segurança", () => {
+    const r = resolve(baseState(), { posture: { directiveness: "directive", volume: "comprehensive" } });
+    expect(r.weakensSafety).toBe(false);
+  });
+
+  it("patch sem mudança real não marca postura", () => {
+    const r = resolve(baseState(), { posture: { directiveness: "consultative" } });
+    expect(r.changed).not.toContain(CONFIG_CHANGE_LABELS.posture);
+  });
+
+  it("eco concreto: antes → depois por eixo (PT amigável)", () => {
+    const r = resolve(baseState(), { posture: { directiveness: "directive" } });
+    const echo = buildConfigChangeEcho({
+      current: baseState(),
+      next: r.next,
+      changed: r.changed,
+      weakensSafety: r.weakensSafety,
+    });
+    expect(echo.toLowerCase()).toContain("diretividade");
+    expect(echo).toContain("Consultivo");
+    expect(echo).toContain("Diretivo");
   });
 });
