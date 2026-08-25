@@ -16,6 +16,11 @@ import {
   APPROVAL_APPLY_QUEUE,
   BUDGET_MODE_SET,
   CONVERSION_GOALS,
+  DEFAULT_POSTURE,
+  DIDACTIC_DEPTH_LEVELS,
+  DIRECTIVENESS_LEVELS,
+  EXPERIENCE_LEVELS,
+  VOLUME_LEVELS,
   type ActionType,
   type AlertSensitivity,
   type ApprovalId,
@@ -24,15 +29,25 @@ import {
   type CadenceSpec,
   type ConversationRef,
   type ConversionGoal,
+  type DidacticDepth,
+  type Directiveness,
   type EntityLevel,
+  type ExperienceLevel,
+  type Posture,
+  type Volume,
 } from "@trafego/shared";
 import {
   describePlaybookRule,
+  experienceLabel,
+  experienceLevelIsCustom,
   mergeConfigText,
+  POSTURE_AXIS_PT,
+  postureLevelLabel,
   type AgentConfigPatch,
   type AgentConfigState,
   type AgentGoalsPatch,
   type NotifyPolicyPatch,
+  type PosturePatch,
 } from "@trafego/core";
 import type { Action } from "@trafego/shared/types";
 import type { WorkerDeps } from "../../composition.js";
@@ -407,6 +422,33 @@ export function makeConversationTools(
     schema: z.object({ text: z.string() }),
   });
 
+  // ── POSTURA POR CHAT: os 3 eixos de VOZ (como o agente FALA — não muda a análise nem
+  //    se ele APLICA mudanças, isso é a autonomia). Cada eixo mapeia um sinal do usuário.
+  const setDirectiveness = tool(proposeOnly, {
+    name: "set_directiveness",
+    description:
+      "Define a DIRETIVIDADE (como o agente ENTREGA o conselho): consultative (mostra as opções e prós/contras, você decide), balanced (recomenda o melhor caminho deixando alternativas à mostra), directive (assume UMA recomendação e lidera com ela). Use quando o dono pedir p/ ser mais direto/decidir por ele, ou mais consultivo. Não confunda com autonomia (aplicar mudanças). Requer eco+confirma.",
+    schema: z.object({ level: z.enum(DIRECTIVENESS_LEVELS) }),
+  });
+  const setVolume = tool(proposeOnly, {
+    name: "set_volume",
+    description:
+      "Define o VOLUME de recomendações que o agente LIDERA: concise (só o que mais importa agora), balanced (os principais), comprehensive (o panorama do que dá pra mexer). Use quando o dono reclamar de sugestão DEMAIS (concise) ou quiser ver TUDO (comprehensive). Requer eco+confirma.",
+    schema: z.object({ level: z.enum(VOLUME_LEVELS) }),
+  });
+  const setDidacticDepth = tool(proposeOnly, {
+    name: "set_didactic_depth",
+    description:
+      "Define a PROFUNDIDADE didática: direct (usa os termos CPA/ROAS/adset sem explicar), balanced (explica um termo só na 1ª vez), explanatory (explica tudo em linguagem de dono). Use quando o dono disser que já manja (direct) ou pedir p/ explicar o básico (explanatory). Requer eco+confirma.",
+    schema: z.object({ level: z.enum(DIDACTIC_DEPTH_LEVELS) }),
+  });
+  const setExperienceLevel = tool(proposeOnly, {
+    name: "set_experience_level",
+    description:
+      "Define o PERFIL DE EXPERIÊNCIA do leitor e SEMEIA os 3 eixos de comunicação de uma vez: beginner (diretivo + abrangente + didático — mão na roda p/ quem não domina), intermediate (equilibrado), advanced (consultivo + enxuto + direto — pouco e direto p/ quem manja). Depois dá pra ajustar cada eixo. Requer eco+confirma.",
+    schema: z.object({ level: z.enum(EXPERIENCE_LEVELS) }),
+  });
+
   // ── PLAYBOOK POR CHAT (S2.5): regras determinísticas condição→ação. add/toggle/remove
   //    exigem eco+confirma (proposeOnly). list é leitura (executa direto, numera as regras).
   const addPlaybookRule = tool(proposeOnly, {
@@ -466,7 +508,7 @@ export function makeConversationTools(
     },
   );
 
-  const configTools = [setGoal, setAutonomy, setGuardrail, setCadence, setNotifications, reseedArchetype, setPersona, setTone, setSystemPrompt, setBusinessContext, setGuidance];
+  const configTools = [setGoal, setAutonomy, setGuardrail, setCadence, setNotifications, reseedArchetype, setPersona, setTone, setSystemPrompt, setBusinessContext, setGuidance, setDirectiveness, setVolume, setDidacticDepth, setExperienceLevel];
   const playbookTools = [addPlaybookRule, togglePlaybookRule, removePlaybookRule, listPlaybookRules];
 
   const writeTools = [pauseEntity, resumeEntity, setStatus, adjustBudget, revertAction, confirmWrite, cancelWrite];
@@ -511,12 +553,12 @@ export async function buildCapabilitiesText(
   }
   parts.push("⚡ Analisar agora e aprovar/rejeitar ações pendentes.");
   if (ctx.configViaChat) {
-    parts.push("⚙️ Mudar a config do agente conversando (sempre com sua confirmação): meta, autonomia, guardrails, cadência, notificações proativas (pulso/alerta), arquétipo, playbook, identidade (persona/tom/metodologia), contexto do negócio e orientações.");
+    parts.push("⚙️ Mudar a config do agente conversando (sempre com sua confirmação): meta, autonomia, guardrails, cadência, notificações proativas (pulso/alerta), arquétipo, playbook, identidade (persona/tom/metodologia), contexto do negócio, orientações e como eu FALO com você (diretividade, volume de sugestões e o quanto explico — ou um perfil pronto: iniciante/intermediário/avançado).");
   } else {
     parts.push("⚙️ Config do agente: por aqui está desligada — mudanças de config são pelo site.");
   }
   const [row] = await deps.db
-    .select({ autonomyPolicy: agents.autonomyPolicy })
+    .select({ autonomyPolicy: agents.autonomyPolicy, posture: agents.posture })
     .from(agents)
     .where(and(eq(agents.id, ctx.agentId), eq(agents.orgId, ctx.orgId)))
     .limit(1);
@@ -525,6 +567,14 @@ export async function buildCapabilitiesText(
     const lbl = (l: string) => AUTONOMY_LABEL_CHAT[l] ?? l;
     parts.push(`🤖 Nas análises automáticas (sem você pedir): com o playbook eu ${lbl(pol.bySource.playbook)}; com sugestões de IA eu ${lbl(pol.bySource.llm)}.`);
   }
+  // como o agente FALA hoje (postura) — reflete o estado real p/ ele explicar/orientar.
+  const posture = (row?.posture as Posture | undefined) ?? DEFAULT_POSTURE;
+  const profile = posture.experienceLevel
+    ? `perfil ${experienceLabel(posture.experienceLevel)}${experienceLevelIsCustom(posture) ? " (com ajustes)" : ""}`
+    : "sem perfil definido (ajuste fino)";
+  parts.push(
+    `🗣️ Como eu falo com você agora (${profile}): ${POSTURE_AXIS_PT.directiveness} ${postureLevelLabel("directiveness", posture.directiveness)}, ${POSTURE_AXIS_PT.volume} ${postureLevelLabel("volume", posture.volume)}, ${POSTURE_AXIS_PT.didacticDepth} ${postureLevelLabel("didacticDepth", posture.didacticDepth)}. É só pedir p/ ajustar (ex: "me dá menos sugestão", "seja mais direto", "explica mais").`,
+  );
   parts.push("🎙️ Pode falar por áudio — eu transcrevo e respondo pelo conteúdo.");
   if (ctx.ref.kind === "group") {
     parts.push("👥 Aqui no grupo eu acompanho a conversa recente de vocês pra ter contexto — mas só respondo quando me chamam (menção ou resposta).");
@@ -690,6 +740,10 @@ export const CONFIG_TOOL_NAMES: ReadonlySet<string> = new Set([
   "set_guardrail",
   "set_cadence",
   "set_notifications",
+  "set_directiveness",
+  "set_volume",
+  "set_didactic_depth",
+  "set_experience_level",
 ]);
 /** Tools de IDENTIDADE (S2.6) + contexto/orientações (S6) — todas um `update` de patch. */
 export const IDENTITY_TOOL_NAMES: ReadonlySet<string> = new Set([
@@ -795,6 +849,14 @@ export function configPatchFromToolCall(
       };
       return { notifyPolicy };
     }
+    case "set_directiveness":
+      return { posture: { directiveness: args["level"] as Directiveness } satisfies PosturePatch };
+    case "set_volume":
+      return { posture: { volume: args["level"] as Volume } satisfies PosturePatch };
+    case "set_didactic_depth":
+      return { posture: { didacticDepth: args["level"] as DidacticDepth } satisfies PosturePatch };
+    case "set_experience_level":
+      return { posture: { experienceLevel: args["level"] as ExperienceLevel } satisfies PosturePatch };
     case "set_persona":
       return { persona: String(args["text"] ?? "") };
     case "set_tone":

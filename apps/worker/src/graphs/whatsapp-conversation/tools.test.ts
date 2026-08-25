@@ -272,6 +272,17 @@ function state(over: Partial<AgentConfigState> = {}): AgentConfigState {
   };
 }
 
+describe("configPatchFromToolCall — postura", () => {
+  it("set_directiveness/set_volume/set_didactic_depth viram PosturePatch do eixo", () => {
+    expect(configPatchFromToolCall("set_directiveness", { level: "directive" }, state())?.posture).toEqual({ directiveness: "directive" });
+    expect(configPatchFromToolCall("set_volume", { level: "concise" }, state())?.posture).toEqual({ volume: "concise" });
+    expect(configPatchFromToolCall("set_didactic_depth", { level: "direct" }, state())?.posture).toEqual({ didacticDepth: "direct" });
+  });
+  it("set_experience_level vira PosturePatch com o preset (semeia no resolver)", () => {
+    expect(configPatchFromToolCall("set_experience_level", { level: "advanced" }, state())?.posture).toEqual({ experienceLevel: "advanced" });
+  });
+});
+
 describe("configPatchFromToolCall", () => {
   it("set_goal: só troca o campo enviado; preserva o resto da meta", () => {
     const cur = state({ goals: { targetCPA: 50, targetROAS: 3 } });
