@@ -387,10 +387,22 @@ export function makeConversationTools(
     description: "Define o TOM da comunicação do agente. Texto vazio limpa (volta ao arquétipo). Requer eco+confirma.",
     schema: z.object({ text: z.string() }),
   });
+  const setBusinessContext = tool(proposeOnly, {
+    name: "set_business_context",
+    description:
+      "Define o CONTEXTO DO NEGÓCIO: FATOS sobre o negócio (nicho, oferta, ticket médio, público, sazonalidade) que o agente trata como verdade factual. É INFORMAÇÃO, não instrução de comportamento. Use para 'sou uma clínica de estética', 'meu ticket médio é R$2000', 'lanço 2x por ano'. Para dizer COMO o agente deve agir, use set_guidance. Texto vazio limpa. Requer eco+confirma.",
+    schema: z.object({ text: z.string() }),
+  });
+  const setGuidance = tool(proposeOnly, {
+    name: "set_guidance",
+    description:
+      "Adiciona ORIENTAÇÕES de comportamento — instruções pontuais que o agente segue como prioridade SEM substituir o arquétipo (camada ADITIVA). É a opção certa para 'adicione nas suas instruções...', 'não responda assuntos fora de anúncios', 'priorize captação de leads', 'seja mais agressivo em escalar'. NÃO confundir com set_system_prompt (que SUBSTITUI a metodologia inteira) nem com set_goal (meta numérica de CPA/ROAS). Texto vazio limpa. Requer eco+confirma.",
+    schema: z.object({ text: z.string() }),
+  });
   const setSystemPrompt = tool(proposeOnly, {
     name: "set_system_prompt",
     description:
-      "Substitui a METODOLOGIA-base (system prompt) do agente. ATENÇÃO: isso substitui a metodologia do arquétipo. Texto vazio limpa (volta ao arquétipo). Requer eco+confirma.",
+      "SUBSTITUI a METODOLOGIA-base (system prompt) INTEIRA do agente — troca o modo de raciocinar herdado do arquétipo. ATENÇÃO: é substituição total, não um ajuste pontual. Para orientações pontuais que PRESERVAM o arquétipo, use set_guidance. Texto vazio limpa (volta ao arquétipo). Requer eco+confirma.",
     schema: z.object({ text: z.string() }),
   });
 
@@ -453,7 +465,7 @@ export function makeConversationTools(
     },
   );
 
-  const configTools = [setGoal, setAutonomy, setGuardrail, setCadence, setNotifications, reseedArchetype, setPersona, setTone, setSystemPrompt];
+  const configTools = [setGoal, setAutonomy, setGuardrail, setCadence, setNotifications, reseedArchetype, setPersona, setTone, setSystemPrompt, setBusinessContext, setGuidance];
   const playbookTools = [addPlaybookRule, togglePlaybookRule, removePlaybookRule, listPlaybookRules];
 
   const writeTools = [pauseEntity, resumeEntity, setStatus, adjustBudget, revertAction, confirmWrite, cancelWrite];
@@ -498,7 +510,7 @@ export async function buildCapabilitiesText(
   }
   parts.push("⚡ Analisar agora e aprovar/rejeitar ações pendentes.");
   if (ctx.configViaChat) {
-    parts.push("⚙️ Mudar a config do agente conversando (sempre com sua confirmação): meta, autonomia, guardrails, cadência, notificações proativas (pulso/alerta), arquétipo, playbook e identidade.");
+    parts.push("⚙️ Mudar a config do agente conversando (sempre com sua confirmação): meta, autonomia, guardrails, cadência, notificações proativas (pulso/alerta), arquétipo, playbook, identidade (persona/tom/metodologia), contexto do negócio e orientações.");
   } else {
     parts.push("⚙️ Config do agente: por aqui está desligada — mudanças de config são pelo site.");
   }
@@ -678,8 +690,14 @@ export const CONFIG_TOOL_NAMES: ReadonlySet<string> = new Set([
   "set_cadence",
   "set_notifications",
 ]);
-/** Tools de IDENTIDADE (S2.6) — também um `update` de patch (persona/tom/metodologia). */
-export const IDENTITY_TOOL_NAMES: ReadonlySet<string> = new Set(["set_persona", "set_tone", "set_system_prompt"]);
+/** Tools de IDENTIDADE (S2.6) + contexto/orientações (S6) — todas um `update` de patch. */
+export const IDENTITY_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "set_persona",
+  "set_tone",
+  "set_system_prompt",
+  "set_business_context",
+  "set_guidance",
+]);
 /** Tool de re-seed de arquétipo (pendência kind="reseed"). */
 export const RESEED_TOOL_NAME = "reseed_archetype";
 /** Tool informativa emitida VERBATIM pelo grafo (honestidade — não parafrasear). */
@@ -782,6 +800,10 @@ export function configPatchFromToolCall(
       return { tone: String(args["text"] ?? "") };
     case "set_system_prompt":
       return { systemPrompt: String(args["text"] ?? "") };
+    case "set_business_context":
+      return { businessContext: String(args["text"] ?? "") };
+    case "set_guidance":
+      return { guidance: String(args["text"] ?? "") };
     default:
       return null;
   }

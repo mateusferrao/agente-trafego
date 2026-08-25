@@ -76,15 +76,30 @@ describe("buildConfigChangeEcho", () => {
     expect(echo).toContain("padrão do sistema → 2×/dia (8h e 18h)");
   });
 
-  it("campo de texto: diz apenas 'atualizado' (não despeja o texto)", () => {
+  it("campo de texto: mostra o NOVO valor no eco (concreto — §8, não 'atualizado')", () => {
     const echo = echoFor(baseState(), { businessContext: "somos uma clínica de estética em SP" });
-    expect(echo).toContain("contexto do negócio: atualizado");
-    expect(echo).not.toContain("clínica de estética");
+    expect(echo).toContain("contexto do negócio:");
+    expect(echo).toContain("somos uma clínica de estética em SP");
+    expect(echo).not.toContain("atualizado");
   });
 
-  it("prompt setado avisa que substitui a metodologia do arquétipo", () => {
+  it("campo de texto longo: trunca o valor no eco (não a parede inteira)", () => {
+    const long = "x".repeat(500);
+    const echo = echoFor(baseState(), { guidance: long });
+    expect(echo).toContain("orientações ao agente:");
+    expect(echo).toContain("…");
+    expect(echo).not.toContain(long);
+  });
+
+  it("prompt setado avisa que substitui o do arquétipo + mostra o valor", () => {
     const echo = echoFor(baseState(), { systemPrompt: "analise assim..." });
-    expect(echo).toContain("substitui a metodologia do arquétipo");
+    expect(echo).toContain("substitui a do arquétipo");
+    expect(echo).toContain("analise assim");
+  });
+
+  it("limpar campo de texto: eco diz 'limpo/limpas', não despeja valor", () => {
+    const echo = echoFor(baseState({ guidance: "orientação antiga" }), { guidance: "" });
+    expect(echo).toContain("orientações ao agente: limpas");
   });
 
   it("proatividade: liga o pulso e mostra a linha em PT, sem afrouxar segurança", () => {
