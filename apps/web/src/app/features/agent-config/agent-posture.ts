@@ -1,5 +1,5 @@
-import { ChangeDetectionStrategy, Component, type OnInit, inject, input, signal, computed } from '@angular/core';
-import { toast } from 'ngx-sonner';
+import { ChangeDetectionStrategy, Component, type OnInit, effect, inject, input, output, signal, computed } from '@angular/core';
+import { firstValueFrom } from 'rxjs';
 import { UiButton, UiToggleGroup, UiToggleGroupItem, UiConfirmDialogService } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import type { AgentConfigInput, AgentSummary, ArchetypeCatalogOutput } from '@core/api/generated';
@@ -73,11 +73,6 @@ type AxisKey = 'directiveness' | 'volume' | 'didacticDepth';
               </div>
             </div>
           }
-          <div class="flex justify-end">
-            <button appButton size="sm" [disabled]="saving() || !dirty() || !loaded()" (click)="save()">
-              {{ saving() ? 'Salvando…' : 'Salvar ajustes' }}
-            </button>
-          </div>
         </div>
       </details>
     </section>
@@ -88,6 +83,7 @@ export class AgentPosture implements OnInit {
   private readonly confirmDialog = inject(UiConfirmDialogService);
 
   readonly accountId = input.required<string>();
+  readonly dirtyChange = output<boolean>();
 
   protected readonly axesCatalog = signal<PostureAxis[]>([]);
   protected readonly presets = signal<ExperienceOpt[]>([]);
@@ -97,13 +93,28 @@ export class AgentPosture implements OnInit {
   private readonly didacticDepth = signal<string>('explanatory');
   // protected: referenciado no template (destaca o preset ativo). AOT exige ≥ protected.
   protected readonly experienceLevel = signal<string | null>(null);
-  private readonly isCustom = signal(false);
   private readonly baseline = signal('');
 
   protected readonly saving = signal(false);
   protected readonly loaded = signal(false);
-  private readonly sig = computed(() => `${this.directiveness()}|${this.volume()}|${this.didacticDepth()}`);
-  protected readonly dirty = computed(() => this.sig() !== this.baseline());
+  // inclui experienceLevel: trocar SÓ o perfil (mesmos eixos) também conta como mudança.
+  private readonly sig = computed(
+    () => `${this.directiveness()}|${this.volume()}|${this.didacticDepth()}|${this.experienceLevel() ?? ''}`,
+  );
+  readonly dirty = computed(() => this.sig() !== this.baseline());
+
+  /** Diverge do preset marcado? (reativo — reflete ajuste local antes de salvar). */
+  private readonly isCustom = computed(() => {
+    const lvl = this.experienceLevel();
+    if (!lvl) return false;
+    const p = this.presets().find((x) => x.level === lvl);
+    if (!p) return false;
+    return (
+      this.directiveness() !== p.axes.directiveness ||
+      this.volume() !== p.axes.volume ||
+      this.didacticDepth() !== p.axes.didacticDepth
+    );
+  });
 
   /** Frase do perfil atual (preset + "com ajustes" quando os eixos divergem). */
   protected readonly profileLine = computed(() => {
@@ -116,6 +127,7 @@ export class AgentPosture implements OnInit {
 
   constructor() {
     this.baseline.set(this.sig());
+    effect(() => this.dirtyChange.emit(this.dirty()));
   }
 
   ngOnInit(): void {
@@ -148,7 +160,8 @@ export class AgentPosture implements OnInit {
     return axis?.levels.find((l) => l.level === level)?.label ?? level;
   }
 
-  /** Escolher um perfil: modal de preview do que vai mudar → aplica (semeia os 3 eixos). */
+  /** Escolher um perfil: modal de preview → seta os 3 eixos LOCALMENTE (a save-bar única
+   *  da página persiste; não salva aqui, p/ consistência de um único "Salvar configuração"). */
   protected async pickPreset(p: ExperienceOpt): Promise<void> {
     if (this.saving()) return;
     const description =
@@ -156,7 +169,7 @@ export class AgentPosture implements OnInit {
       `diretividade → ${this.levelLabel('directiveness', p.axes.directiveness)}, ` +
       `volume → ${this.levelLabel('volume', p.axes.volume)}, ` +
       `profundidade → ${this.levelLabel('didacticDepth', p.axes.didacticDepth)}. ` +
-      `Você pode ajustar cada eixo depois.`;
+      `Você pode ajustar cada eixo depois. Salve no rodapé pra aplicar.`;
     const ok = await this.confirmDialog.confirm({
       title: `Usar o perfil "${p.label}"?`,
       description,
@@ -165,36 +178,31 @@ export class AgentPosture implements OnInit {
       tone: 'info',
     });
     if (!ok) return;
-    this.saving.set(true);
-    this.api.saveConfig(this.accountId(), { posture: { experienceLevel: p.level } }).subscribe({
-      next: (a) => {
-        this.seed(a);
-        this.saving.set(false);
-        toast.success('Perfil de comunicação salvo');
-      },
-      error: () => this.saving.set(false),
-    });
+    this.directiveness.set(p.axes.directiveness);
+    this.volume.set(p.axes.volume);
+    this.didacticDepth.set(p.axes.didacticDepth);
+    this.experienceLevel.set(p.level);
   }
 
-  protected save(): void {
+  /** Salva a fatia (chamada pela save-bar única da página). No-op se não há mudança.
+   *  Envia o experienceLevel junto (o resolver semeia; eixos explícitos sobrepõem). */
+  async save(): Promise<void> {
     if (!this.dirty()) return;
     this.saving.set(true);
-    // os valores vêm do catálogo (level: string), mas o contrato tipa os enums — cast seguro.
+    const lvl = this.experienceLevel();
+    // valores vêm do catálogo (level: string), mas o contrato tipa os enums — cast seguro.
     const posture = {
       directiveness: this.directiveness(),
       volume: this.volume(),
       didacticDepth: this.didacticDepth(),
+      ...(lvl ? { experienceLevel: lvl } : {}),
     } as AgentConfigInput['posture'];
-    this.api
-      .saveConfig(this.accountId(), { posture })
-      .subscribe({
-        next: (a) => {
-          this.seed(a);
-          this.saving.set(false);
-          toast.success('Comunicação salva');
-        },
-        error: () => this.saving.set(false),
-      });
+    try {
+      const a = await firstValueFrom(this.api.saveConfig(this.accountId(), { posture }));
+      this.seed(a);
+    } finally {
+      this.saving.set(false);
+    }
   }
 
   private seed(a: AgentSummary): void {
@@ -202,8 +210,7 @@ export class AgentPosture implements OnInit {
     this.volume.set(a.posture.volume);
     this.didacticDepth.set(a.posture.didacticDepth);
     this.experienceLevel.set(a.posture.experienceLevel);
-    this.isCustom.set(a.postureIsCustom);
-    this.baseline.set(`${a.posture.directiveness}|${a.posture.volume}|${a.posture.didacticDepth}`);
+    this.baseline.set(this.sig());
     this.loaded.set(true);
   }
 }

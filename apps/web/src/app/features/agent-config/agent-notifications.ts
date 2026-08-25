@@ -1,6 +1,6 @@
-import { ChangeDetectionStrategy, Component, type OnInit, inject, input, signal, computed } from '@angular/core';
-import { toast } from 'ngx-sonner';
-import { UiButton, UiInput, UiSelectBox, UiSwitch, UiSwitchThumb, UiToggleGroup, UiToggleGroupItem, type UiSelectOptionItem } from '@ui';
+import { ChangeDetectionStrategy, Component, type OnInit, effect, inject, input, output, signal, computed } from '@angular/core';
+import { firstValueFrom } from 'rxjs';
+import { UiInput, UiSelectBox, UiSwitch, UiSwitchThumb, UiToggleGroup, UiToggleGroupItem, type UiSelectOptionItem } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import type { AgentSummary } from '@core/api/generated';
 
@@ -43,19 +43,14 @@ const SENSITIVITIES: readonly { value: Sensitivity; label: string }[] = [
 @Component({
   selector: 'app-agent-notifications',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiButton, UiInput, UiSelectBox, UiSwitch, UiSwitchThumb, UiToggleGroup, UiToggleGroupItem],
+  imports: [UiInput, UiSelectBox, UiSwitch, UiSwitchThumb, UiToggleGroup, UiToggleGroupItem],
   template: `
     <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
-      <div class="flex items-start justify-between gap-3">
-        <div>
-          <h2 class="font-brand text-base font-semibold text-ink">O que o agente avisa sozinho</h2>
-          <p class="mt-1 text-xs text-muted">
-            Além de responder quando você pergunta, o agente pode falar por conta própria.
-          </p>
-        </div>
-        <button appButton size="sm" [disabled]="saving() || !dirty() || !loaded()" (click)="save()">
-          {{ saving() ? 'Salvando…' : 'Salvar' }}
-        </button>
+      <div>
+        <h2 class="font-brand text-base font-semibold text-ink">O que o agente avisa sozinho</h2>
+        <p class="mt-1 text-xs text-muted">
+          Além de responder quando você pergunta, o agente pode falar por conta própria.
+        </p>
       </div>
 
       <!-- Pulso -->
@@ -183,6 +178,7 @@ export class AgentNotifications implements OnInit {
   private readonly api = inject(AnalysisApiService);
 
   readonly accountId = input.required<string>();
+  readonly dirtyChange = output<boolean>();
 
   protected readonly hourOptions = HOUR_OPTIONS;
   protected readonly weekdayOptions = WEEKDAY_OPTIONS;
@@ -251,11 +247,12 @@ export class AgentNotifications implements OnInit {
     () =>
       `${this.pulseEnabled()}|${JSON.stringify(this.pulseCadenceSpec())}|${this.alertsEnabled()}|${this.sensitivity()}|${this.throttleHours()}|${this.runPushEnabled()}`,
   );
-  protected readonly dirty = computed(() => this.sig() !== this.baseline() && !this.pulseCronInvalid());
+  readonly dirty = computed(() => this.sig() !== this.baseline() && !this.pulseCronInvalid());
 
   constructor() {
     // baseline = estado inicial → dirty começa false (Save só habilita após mudança).
     this.baseline.set(this.sig());
+    effect(() => this.dirtyChange.emit(this.dirty()));
   }
 
   ngOnInit(): void {
@@ -290,28 +287,27 @@ export class AgentNotifications implements OnInit {
     if (cadence.kind === 'raw') this.pulseCron.set(cadence.cron);
   }
 
-  protected save(): void {
+  /** Salva a fatia (chamada pela save-bar única da página). No-op se não há mudança. */
+  async save(): Promise<void> {
     if (!this.dirty()) return;
     this.saving.set(true);
-    this.api
-      .saveConfig(this.accountId(), {
-        notifyPolicy: {
-          pulse: { enabled: this.pulseEnabled(), cadence: this.pulseCadenceSpec() },
-          alerts: {
-            enabled: this.alertsEnabled(),
-            sensitivity: this.sensitivity(),
-            throttleHours: Math.max(1, Number(this.throttleHours()) || 6),
+    try {
+      const a = await firstValueFrom(
+        this.api.saveConfig(this.accountId(), {
+          notifyPolicy: {
+            pulse: { enabled: this.pulseEnabled(), cadence: this.pulseCadenceSpec() },
+            alerts: {
+              enabled: this.alertsEnabled(),
+              sensitivity: this.sensitivity(),
+              throttleHours: Math.max(1, Number(this.throttleHours()) || 6),
+            },
+            runPush: { enabled: this.runPushEnabled() },
           },
-          runPush: { enabled: this.runPushEnabled() },
-        },
-      })
-      .subscribe({
-        next: (a) => {
-          this.seed(a);
-          this.saving.set(false);
-          toast.success('Notificações salvas');
-        },
-        error: () => this.saving.set(false),
-      });
+        }),
+      );
+      this.seed(a);
+    } finally {
+      this.saving.set(false);
+    }
   }
 }

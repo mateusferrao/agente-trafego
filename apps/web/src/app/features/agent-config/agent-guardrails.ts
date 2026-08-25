@@ -1,6 +1,6 @@
-import { ChangeDetectionStrategy, Component, type OnInit, type WritableSignal, inject, input, signal, computed } from '@angular/core';
-import { toast } from 'ngx-sonner';
-import { UiButton, UiInput, UiSwitch, UiSwitchThumb, UiCheckbox } from '@ui';
+import { ChangeDetectionStrategy, Component, type OnInit, type WritableSignal, effect, inject, input, output, signal, computed } from '@angular/core';
+import { firstValueFrom } from 'rxjs';
+import { UiInput, UiSwitch, UiSwitchThumb, UiCheckbox } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import type { AgentSummary } from '@core/api/generated';
 
@@ -18,19 +18,14 @@ const ACTIONS: readonly ActionType[] = ['pause_entity', 'resume_entity', 'adjust
 @Component({
   selector: 'app-agent-guardrails',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiButton, UiInput, UiSwitch, UiSwitchThumb, UiCheckbox],
+  imports: [UiInput, UiSwitch, UiSwitchThumb, UiCheckbox],
   template: `
     <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
-      <div class="flex items-start justify-between gap-3">
-        <div>
-          <h2 class="font-brand text-base font-semibold text-ink">Limites de segurança</h2>
-          <p class="mt-1 text-xs text-muted">
-            A rede que segura o agente mesmo agindo sozinho. Independente da autonomia.
-          </p>
-        </div>
-        <button appButton size="sm" [disabled]="saving() || !dirty() || !loaded()" (click)="save()">
-          {{ saving() ? 'Salvando…' : 'Salvar' }}
-        </button>
+      <div>
+        <h2 class="font-brand text-base font-semibold text-ink">Limites de segurança</h2>
+        <p class="mt-1 text-xs text-muted">
+          A rede que segura o agente mesmo agindo sozinho. Independente da autonomia.
+        </p>
       </div>
 
       <label class="flex items-center justify-between gap-3">
@@ -97,6 +92,7 @@ export class AgentGuardrails implements OnInit {
   private readonly api = inject(AnalysisApiService);
 
   readonly accountId = input.required<string>();
+  readonly dirtyChange = output<boolean>();
 
   protected readonly ACTIONS = ACTIONS;
   protected readonly ACTION_LABEL = ACTION_LABEL;
@@ -114,11 +110,12 @@ export class AgentGuardrails implements OnInit {
   private readonly sig = computed(
     () => `${this.dryRun()}|${this.killSwitch()}|${this.maxPct()}|${this.maxEntities()}|${this.llmCap()}|${[...this.allowed()].sort().join(',')}`,
   );
-  protected readonly dirty = computed(() => this.sig() !== this.baseline());
+  readonly dirty = computed(() => this.sig() !== this.baseline());
 
   constructor() {
     // baseline = estado inicial → dirty começa false (Save só habilita após mudança).
     this.baseline.set(this.sig());
+    effect(() => this.dirtyChange.emit(this.dirty()));
   }
 
   protected onNum(sig: WritableSignal<string>, e: Event): void {
@@ -156,29 +153,28 @@ export class AgentGuardrails implements OnInit {
     return Number.isFinite(n) ? Math.trunc(n) : fallback;
   }
 
-  protected save(): void {
+  /** Salva a fatia (chamada pela save-bar única da página). No-op se não há mudança. */
+  async save(): Promise<void> {
     if (!this.dirty()) return;
     this.saving.set(true);
     const cap = this.llmCap().trim();
     const capNum = Number(cap);
-    this.api
-      .saveConfig(this.accountId(), {
-        guardrails: {
-          maxBudgetChangePct: Math.max(0, Math.min(100, this.parseInt0(this.maxPct(), 20))),
-          maxEntitiesPerDay: Math.max(0, this.parseInt0(this.maxEntities(), 3)),
-          allowedActions: [...this.allowed()],
-          dryRun: this.dryRun(),
-          killSwitch: this.killSwitch(),
-          ...(cap.length > 0 && Number.isFinite(capNum) ? { llmCostCapUsd: Math.max(0, capNum) } : {}),
-        },
-      })
-      .subscribe({
-        next: (a) => {
-          this.seed(a);
-          this.saving.set(false);
-          toast.success('Limites salvos');
-        },
-        error: () => this.saving.set(false),
-      });
+    try {
+      const a = await firstValueFrom(
+        this.api.saveConfig(this.accountId(), {
+          guardrails: {
+            maxBudgetChangePct: Math.max(0, Math.min(100, this.parseInt0(this.maxPct(), 20))),
+            maxEntitiesPerDay: Math.max(0, this.parseInt0(this.maxEntities(), 3)),
+            allowedActions: [...this.allowed()],
+            dryRun: this.dryRun(),
+            killSwitch: this.killSwitch(),
+            ...(cap.length > 0 && Number.isFinite(capNum) ? { llmCostCapUsd: Math.max(0, capNum) } : {}),
+          },
+        }),
+      );
+      this.seed(a);
+    } finally {
+      this.saving.set(false);
+    }
   }
 }

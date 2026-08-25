@@ -2,12 +2,14 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
+  ViewChild,
   type WritableSignal,
   computed,
   inject,
   signal,
 } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
+import { firstValueFrom } from 'rxjs';
 import { toast } from 'ngx-sonner';
 import { UiButton, UiConfirmDialogService, UiPageHeader, UiSelectBox, UiSpinner, type UiSelectOptionItem } from '@ui';
 import { AccountsApiService } from '@core/api/accounts-api.service';
@@ -312,9 +314,9 @@ interface FormState {
         <!-- Regras (playbook) — componente próprio, salva por regra (fora da save-bar) -->
         <app-agent-playbook [accountId]="accountId" />
 
-        <app-agent-autonomy [accountId]="accountId" />
+        <app-agent-autonomy [accountId]="accountId" (dirtyChange)="onChildDirty('autonomy', $event)" />
 
-        <app-agent-guardrails [accountId]="accountId" />
+        <app-agent-guardrails [accountId]="accountId" (dirtyChange)="onChildDirty('guardrails', $event)" />
 
         <!-- Cadência (ritmo da análise automática) -->
         <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
@@ -382,10 +384,10 @@ interface FormState {
         </section>
 
         <!-- Notificações proativas (pulso/alerta/aviso) — componente próprio -->
-        <app-agent-notifications [accountId]="accountId" />
+        <app-agent-notifications [accountId]="accountId" (dirtyChange)="onChildDirty('notifications', $event)" />
 
         <!-- Postura de comunicação (como o agente FALA) — componente próprio -->
-        <app-agent-posture [accountId]="accountId" />
+        <app-agent-posture [accountId]="accountId" (dirtyChange)="onChildDirty('posture', $event)" />
 
         <!-- Arquétipo (preset base) — logo abaixo da cadência -->
         <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
@@ -527,12 +529,12 @@ interface FormState {
           </details>
         </section>
 
-        <!-- Save bar (dirty) — flutua no rodapé pra não obrigar a rolar até o fim -->
+        <!-- Save bar ÚNICA (dirty combinado: campos da página + todas as seções) -->
         <div class="sticky bottom-0 z-10 flex items-center justify-between gap-3 rounded-lg border border-line bg-panel p-4 shadow-card">
-          <span class="text-sm" [class.text-muted]="!dirty()" [class.text-ink]="dirty()">
-            {{ dirty() ? 'Alterações não salvas' : 'Configuração salva' }}
+          <span class="text-sm" [class.text-muted]="!combinedDirty()" [class.text-ink]="combinedDirty()">
+            {{ combinedDirty() ? 'Alterações não salvas' : 'Configuração salva' }}
           </span>
-          <button appButton variant="primary" type="button" [disabled]="!dirty() || saving()" (click)="save()">
+          <button appButton variant="primary" type="button" [disabled]="!combinedDirty() || saving()" (click)="save()">
             {{ saving() ? 'Salvando…' : 'Salvar configuração' }}
           </button>
         </div>
@@ -642,6 +644,22 @@ export class AgentConfigPage {
 
   protected readonly dirty = computed(() => !sameForm(this.current(), this.initial()));
 
+  // Seções self-contained (autonomia/guardrails/notificações/postura): a save-bar é
+  // ÚNICA — o dirty combina os campos da página + o dirty emitido por cada seção, e o
+  // "Salvar configuração" persiste tudo (seções primeiro, sequencial p/ evitar corrida
+  // na escrita da linha do agente, depois os campos da página).
+  @ViewChild(AgentAutonomy) private autonomy?: AgentAutonomy;
+  @ViewChild(AgentGuardrails) private guardrails?: AgentGuardrails;
+  @ViewChild(AgentNotifications) private notifications?: AgentNotifications;
+  @ViewChild(AgentPosture) private posture?: AgentPosture;
+  private readonly childDirty = signal<Record<string, boolean>>({});
+  protected onChildDirty(key: string, v: boolean): void {
+    this.childDirty.update((m) => (m[key] === v ? m : { ...m, [key]: v }));
+  }
+  protected readonly combinedDirty = computed(
+    () => this.dirty() || Object.values(this.childDirty()).some(Boolean),
+  );
+
   /** Opções do select: conversões que a conta reporta + a atual (se fora da lista). */
   protected readonly conversionOptions = computed<ConversionOption[]>(() => {
     const opts = this.available().map(toOption);
@@ -748,17 +766,29 @@ export class AgentConfigPage {
     this.conversionKey.set((e.target as HTMLSelectElement).value);
   }
 
-  protected save(): void {
+  /**
+   * Save ÚNICO: persiste as seções (sequencial — cada saveConfig reescreve a linha do
+   * agente a partir do estado FRESCO, então em paralelo se sobrescreveriam) e depois os
+   * campos da página. Um toast só. Erro amigável vem do interceptor global.
+   */
+  protected async save(): Promise<void> {
+    if (!this.combinedDirty()) return;
     this.saving.set(true);
-    this.analysisApi.saveConfig(this.accountId, this.buildInput()).subscribe({
-      next: () => {
-        this.initial.set(this.current()); // limpa o dirty
-        this.saving.set(false);
-        toast.success('Configuração salva');
-      },
-      // erro amigável já vem do interceptor global.
-      error: () => this.saving.set(false),
-    });
+    try {
+      await this.autonomy?.save();
+      await this.guardrails?.save();
+      await this.notifications?.save();
+      await this.posture?.save();
+      if (this.dirty()) {
+        const agent = await firstValueFrom(this.analysisApi.saveConfig(this.accountId, this.buildInput()));
+        this.applyAgent(agent); // reseed dos campos + baseline (limpa o dirty da página)
+      }
+      toast.success('Configuração salva');
+    } catch {
+      // interceptor global já mostrou o erro amigável.
+    } finally {
+      this.saving.set(false);
+    }
   }
 
   private current(): FormState {

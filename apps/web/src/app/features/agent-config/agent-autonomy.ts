@@ -1,6 +1,6 @@
-import { ChangeDetectionStrategy, Component, type OnInit, inject, input, signal, computed } from '@angular/core';
-import { toast } from 'ngx-sonner';
-import { UiButton, UiToggleGroup, UiToggleGroupItem } from '@ui';
+import { ChangeDetectionStrategy, Component, type OnInit, effect, inject, input, output, signal, computed } from '@angular/core';
+import { firstValueFrom } from 'rxjs';
+import { UiToggleGroup, UiToggleGroupItem } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import type { AgentSummary } from '@core/api/generated';
 
@@ -21,20 +21,15 @@ const LEVELS: readonly { value: Level; label: string }[] = [
 @Component({
   selector: 'app-agent-autonomy',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiButton, UiToggleGroup, UiToggleGroupItem],
+  imports: [UiToggleGroup, UiToggleGroupItem],
   template: `
     <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
-      <div class="flex items-start justify-between gap-3">
-        <div>
-          <h2 class="font-brand text-base font-semibold text-ink">Até onde o agente pode ir</h2>
-          <p class="mt-1 text-xs text-muted">
-            Quanto ele age sozinho, por origem. Só vale quando a escrita estiver ligada — por enquanto
-            configura e guarda; agir de verdade vem depois.
-          </p>
-        </div>
-        <button appButton size="sm" [disabled]="saving() || !dirty() || !loaded()" (click)="save()">
-          {{ saving() ? 'Salvando…' : 'Salvar' }}
-        </button>
+      <div>
+        <h2 class="font-brand text-base font-semibold text-ink">Até onde o agente pode ir</h2>
+        <p class="mt-1 text-xs text-muted">
+          Quanto ele age sozinho, por origem. Só vale quando a escrita estiver ligada — por enquanto
+          configura e guarda; agir de verdade vem depois.
+        </p>
       </div>
 
       @for (src of SOURCES; track src.key) {
@@ -63,6 +58,8 @@ export class AgentAutonomy implements OnInit {
   private readonly api = inject(AnalysisApiService);
 
   readonly accountId = input.required<string>();
+  /** emite o estado dirty p/ a save-bar única da página (§consistência de UX). */
+  readonly dirtyChange = output<boolean>();
 
   protected readonly LEVELS = LEVELS;
   protected readonly SOURCES = [
@@ -86,11 +83,13 @@ export class AgentAutonomy implements OnInit {
   protected readonly saving = signal(false);
   protected readonly loaded = signal(false);
   private readonly sig = computed(() => `${this.playbook()}|${this.llm()}`);
-  protected readonly dirty = computed(() => this.sig() !== this.baseline());
+  /** público: a página lê p/ compor o dirty da save-bar única + decidir se salva. */
+  readonly dirty = computed(() => this.sig() !== this.baseline());
 
   constructor() {
     // baseline = estado inicial → dirty começa false (Save só habilita após mudança).
     this.baseline.set(this.sig());
+    effect(() => this.dirtyChange.emit(this.dirty()));
   }
 
   ngOnInit(): void {
@@ -108,18 +107,17 @@ export class AgentAutonomy implements OnInit {
     this.loaded.set(true);
   }
 
-  protected save(): void {
+  /** Salva a fatia (chamada pela save-bar única da página). No-op se não há mudança. */
+  async save(): Promise<void> {
     if (!this.dirty()) return;
     this.saving.set(true);
-    this.api
-      .saveConfig(this.accountId(), { autonomyPolicy: { bySource: { playbook: this.playbook(), llm: this.llm() } } })
-      .subscribe({
-        next: (a) => {
-          this.seed(a);
-          this.saving.set(false);
-          toast.success('Autonomia salva');
-        },
-        error: () => this.saving.set(false),
-      });
+    try {
+      const a = await firstValueFrom(
+        this.api.saveConfig(this.accountId(), { autonomyPolicy: { bySource: { playbook: this.playbook(), llm: this.llm() } } }),
+      );
+      this.seed(a);
+    } finally {
+      this.saving.set(false);
+    }
   }
 }
