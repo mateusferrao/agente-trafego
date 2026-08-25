@@ -28,6 +28,8 @@ export interface GroupTranscriptOptions {
   readonly maxTokens: number;
   /** rótulo do bot no transcript (persona do agente, senão "Assistente"). */
   readonly botLabel: string;
+  /** fuso da org p/ exibir data/hora das mensagens (não UTC). */
+  readonly tz: string;
 }
 
 /** Aproximação chars→tokens (mesma de window.ts do Grafo B). */
@@ -45,10 +47,18 @@ function authorLabel(entry: GroupTranscriptEntry, botLabel: string): string {
   return digits.length >= 4 ? `Participante-${digits.slice(-4)}` : "Participante";
 }
 
-/** Timestamp curto em UTC: dd/mm HH:MM (o cabeçalho declara que é UTC → delta correto). */
-function stamp(at: Date): string {
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${p(at.getUTCDate())}/${p(at.getUTCMonth() + 1)} ${p(at.getUTCHours())}:${p(at.getUTCMinutes())}`;
+/** Timestamp curto no fuso `tz`: dd/mm HH:MM. */
+function stamp(at: Date, tz: string): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: tz,
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(at);
+  const g = (t: string): string => parts.find((p) => p.type === t)?.value ?? "";
+  return `${g("day")}/${g("month")} ${g("hour")}:${g("minute")}`;
 }
 
 /**
@@ -70,7 +80,7 @@ export function buildGroupTranscript(
 
   // formata cada linha e corta ao teto de tokens derrubando as mais antigas.
   const format = (e: GroupTranscriptEntry) =>
-    `${authorLabel(e, opts.botLabel)} [${stamp(e.at)}]: ${e.body && e.body.length > 0 ? e.body : EMPTY_BODY}`;
+    `${authorLabel(e, opts.botLabel)} [${stamp(e.at, opts.tz)}]: ${e.body && e.body.length > 0 ? e.body : EMPTY_BODY}`;
   const maxChars = opts.maxTokens * CHARS_PER_TOKEN;
   let lines = windowed.map(format);
   while (lines.length > 1 && lines.join("\n").length > maxChars) {
@@ -81,6 +91,6 @@ export function buildGroupTranscript(
 
   const header =
     `### Conversa recente do grupo (contexto — NÃO é a mensagem atual; é o que foi dito antes). ` +
-    `Agora: ${stamp(opts.now)} (UTC).`;
+    `Agora: ${stamp(opts.now, opts.tz)}.`;
   return `${header}\n${lines.join("\n")}`;
 }

@@ -45,6 +45,7 @@ describe("createDashboardService.liveMetrics", () => {
     const db = fakeDb([
       [{ currency: "BRL" }], // account
       [{ goals: { conversionGoal: "purchase" } }], // agent
+      [{ timezone: "America/Sao_Paulo" }], // orgs.timezone (loadOrgTimezone)
       [acctSnap("2026-08-19", 100, 5), acctSnap("2026-08-20", 100, 5)], // snapshots (janela)
       [{ latest: syncedAt }], // max(updated_at)
     ]);
@@ -75,6 +76,7 @@ describe("createDashboardService.dashboard", () => {
       [{ agentId: "ag1", grade: "C", finishedAt: new Date("2026-08-20T11:00:00Z") }],
       // 3) pendências por conta
       [{ accountId: "a1", c: 2 }],
+      [{ timezone: "America/Sao_Paulo" }], // orgs.timezone (liveTotalsBatch)
       // 4a) snapshots (janela) · 4b) as-of
       [acctSnap("2026-08-20", 100, 5)],
       [{ accountId: "a1", latest: new Date("2026-08-20T11:30:00Z") }],
@@ -117,6 +119,7 @@ describe("createDashboardService.panorama", () => {
       ],
       [], // latestRuns (sem análise)
       [], // pendências
+      [{ timezone: "America/Sao_Paulo" }], // orgs.timezone (liveTotalsBatch)
       [
         { ...acctSnap("2026-08-20", 50, 0), adAccountId: "a1" },
         { ...acctSnap("2026-08-20", 300, 0), adAccountId: "a2" },

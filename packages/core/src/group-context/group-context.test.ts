@@ -8,6 +8,7 @@ const OPTS: GroupTranscriptOptions = {
   maxMessages: 25,
   maxTokens: 1500,
   botLabel: "Assistente",
+  tz: "UTC",
 };
 
 function entry(over: Partial<GroupTranscriptEntry> = {}): GroupTranscriptEntry {
@@ -29,8 +30,13 @@ describe("buildGroupTranscript", () => {
   it("formata 'Autor [dd/mm HH:MM]: texto' em UTC + cabeçalho com o agora", () => {
     const out = buildGroupTranscript([entry({ at: new Date("2026-08-24T14:32:00Z") })], OPTS);
     expect(out).toContain("João [24/08 14:32]: oi");
-    expect(out).toContain("Agora: 24/08 18:00 (UTC).");
+    expect(out).toContain("Agora: 24/08 18:00.");
     expect(out).toContain("NÃO é a mensagem atual");
+  });
+
+  it("exibe data/hora no fuso configurado (BRT), não em UTC", () => {
+    const out = buildGroupTranscript([entry({ at: new Date("2026-08-24T14:32:00Z") })], { ...OPTS, tz: "America/Sao_Paulo" });
+    expect(out).toContain("João [24/08 11:32]: oi"); // 14:32 UTC = 11:32 BRT
   });
 
   it("ordena cronologicamente (antiga → nova)", () => {

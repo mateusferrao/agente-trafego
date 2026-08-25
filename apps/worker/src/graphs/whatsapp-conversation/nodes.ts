@@ -363,6 +363,7 @@ export function makeConversationNodes(
       maxMessages: conv.groupContextMaxMessages,
       maxTokens: conv.groupContextMaxTokens,
       botLabel: GROUP_BOT_LABEL,
+      tz: ctx.timezone,
     });
     groupSectionCache = transcript ? `${GROUP_RULES}\n\n${transcript}` : GROUP_RULES;
     return groupSectionCache;

@@ -10,11 +10,12 @@ import {
   agents,
   approvals,
   insightsSnapshots,
+  loadOrgTimezone,
   platformConnections,
   type Database,
 } from "@trafego/db";
-import { computeLiveTotals, resolveWindows } from "@trafego/core";
-import { buildInsightsSyncJob, UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY } from "@trafego/shared";
+import { computeLiveTotals, resolveWindows, todayInTz } from "@trafego/core";
+import { buildInsightsSyncJob, DEFAULT_TIMEZONE, UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY } from "@trafego/shared";
 import type { AgentGoals, InsightRow, OrgId, StoredInsightMetrics } from "@trafego/shared";
 import type { SchedulerPort } from "@trafego/shared/ports";
 import { notFound } from "../../middleware/error-handler.js";
@@ -49,7 +50,6 @@ export interface DashboardDeps {
 const KPI_KEYS = ["spend", "impressions", "clicks", "ctr", "cpc", "cpm", "cpa", "roas"] as const;
 
 export function createDashboardService(deps: DashboardDeps) {
-  const todayIso = (): string => deps.now().toISOString().slice(0, 10);
   /** dado velho? (fonte única do threshold — o web usa este booleano, não hardcoda). */
   const isStale = (latest: Date | null): boolean =>
     !latest || deps.now().getTime() - latest.getTime() > deps.freshThresholdMin * 60_000;
@@ -88,7 +88,9 @@ export function createDashboardService(deps: DashboardDeps) {
         .limit(1);
       const goals: AgentGoals = agent?.goals ?? {};
 
-      const { window, baseline } = resolveWindows(todayIso(), deps.windowDays, deps.baselineDays);
+      // "hoje" no fuso da org (não UTC) — casa o dia civil dos snapshots (fuso da conta Meta).
+      const tz = await loadOrgTimezone(deps.db, orgId, DEFAULT_TIMEZONE);
+      const { window, baseline } = resolveWindows(todayInTz(deps.now(), tz), deps.windowDays, deps.baselineDays);
       // 1 query cobrindo baseline+janela → split em memória (sem 2 round-trips).
       const snaps = await deps.db
         .select({
@@ -256,7 +258,8 @@ export function createDashboardService(deps: DashboardDeps) {
       accountIds: readonly string[],
       accounts: readonly { accountId: string; goals: AgentGoals | null }[],
     ): Promise<Map<string, { totals: LiveKpis | null; asOf: string | null; stale: boolean }>> {
-      const { window, baseline } = resolveWindows(todayIso(), deps.windowDays, deps.baselineDays);
+      const tz = await loadOrgTimezone(deps.db, orgId, DEFAULT_TIMEZONE);
+      const { window, baseline } = resolveWindows(todayInTz(deps.now(), tz), deps.windowDays, deps.baselineDays);
       const snaps = await deps.db
         .select({
           adAccountId: insightsSnapshots.adAccountId,
