@@ -66,6 +66,19 @@ describe("sanitizeWhatsappText", () => {
     }
   });
 
+  it("remove régua horizontal (---/***/___) — vira parágrafo, não '---' literal", () => {
+    expect(sanitizeWhatsappText("bloco 1\n\n---\n\nbloco 2")).toBe("bloco 1\n\nbloco 2");
+    expect(sanitizeWhatsappText("a\n\n***\n\nb")).toBe("a\n\nb");
+    expect(sanitizeWhatsappText("a\n\n___\n\nb")).toBe("a\n\nb");
+    expect(sanitizeWhatsappText("a\n- - -\nb")).toBe("a\nb");
+  });
+
+  it("NÃO confunde régua com negrito inline nem com hífen de valor", () => {
+    expect(sanitizeWhatsappText("olha ***isso*** aqui")).toBe("olha *isso* aqui");
+    expect(sanitizeWhatsappText("corta -- R$ 50")).toBe("corta -- R$ 50"); // 2 hífens, não é régua
+    expect(sanitizeWhatsappText("• corta R$ 120")).toBe("• corta R$ 120");
+  });
+
   it("deixa texto já-correto do WhatsApp inalterado", () => {
     const ok = "Vou pausar a campanha *Lançamento*.\n\n• corta R$ 120\n\nConfirma?";
     expect(sanitizeWhatsappText(ok)).toBe(ok);

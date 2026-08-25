@@ -33,6 +33,17 @@ function normalizeBullets(text: string): string {
   return text.replace(/^[ \t]*[-*][ \t]+/gm, "• ");
 }
 
+/**
+ * Remove RÉGUA HORIZONTAL markdown (linha só com `---` / `***` / `___`, 3+ chars,
+ * opcionalmente espaçada) — o WhatsApp não renderiza HR, então cairia como `---`
+ * literal (robótico, "zero fluido"). Roda ANTES do normalizeBold (senão `***`
+ * viraria `*`). Preserva a quebra de parágrafo em volta (collapseBlankLines cuida
+ * do espaçamento). Não toca em `***bold***`/`--valor` (exige a linha INTEIRA ser régua).
+ */
+function stripHorizontalRules(text: string): string {
+  return text.replace(/^[ \t]*([-*_])(?:[ \t]*\1){2,}[ \t]*$\n?/gm, "");
+}
+
 /** Colapsa 3+ quebras de linha em uma linha em branco (evita buracos no chat). */
 function collapseBlankLines(text: string): string {
   return text.replace(/\n{3,}/g, "\n\n");
@@ -40,10 +51,11 @@ function collapseBlankLines(text: string): string {
 
 /**
  * Normaliza o texto para o dialeto do WhatsApp. Idempotente (aplicar 2× = 1×).
- * Ordem: inline (negrito/tachado/link) → linha (título/bullet) → espaçamento.
+ * Ordem: régua horizontal → inline (negrito/tachado/link) → linha (título/bullet) → espaçamento.
  */
 export function sanitizeWhatsappText(text: string): string {
-  const inline = flattenLinks(normalizeStrike(normalizeBold(text)));
+  const noRules = stripHorizontalRules(text);
+  const inline = flattenLinks(normalizeStrike(normalizeBold(noRules)));
   const lineLevel = normalizeBullets(stripHeadings(inline));
   return collapseBlankLines(lineLevel).trim();
 }
