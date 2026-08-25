@@ -1005,6 +1005,9 @@ function buildMetricsSnapshot(state: AccountAnalysisStateType): Record<string, u
       ctr: t.ctr,
       ...(t.cpa !== undefined ? { cpa: t.cpa } : {}),
       ...(t.roas !== undefined ? { roas: t.roas } : {}),
+      // conversão de NEGÓCIO usada no CPA da conta (rótulo honesto no site;
+      // ausente = CPA por objetivo da entidade → rótulo genérico "resultado").
+      ...(state.goals.conversionGoal ? { conversionGoal: state.goals.conversionGoal } : {}),
     },
     ...(state.brief.funnel ? { funnel: state.brief.funnel } : {}),
     ...(state.brief.trackingHealth ? { trackingHealth: state.brief.trackingHealth } : {}),

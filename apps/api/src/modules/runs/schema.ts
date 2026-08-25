@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { actionType, entityLevel, recommendationKindSchema, riskLevel, scorecardGrade, scorecardSchema } from "@trafego/shared/schemas";
+import { actionType, conversionGoalSchema, entityLevel, recommendationKindSchema, riskLevel, scorecardGrade, scorecardSchema } from "@trafego/shared/schemas";
 
 export const runStatus = z.enum([
   "pending",
@@ -61,6 +61,11 @@ export const runKpis = z.object({
   ctr: z.number(),
   cpa: z.number().optional(),
   roas: z.number().optional(),
+  /** conversão de negócio do CPA da conta (persistida no snapshot) — deriva o rótulo. */
+  conversionGoal: conversionGoalSchema.optional(),
+  /** rótulo do CPA (projetado pela API a partir de `conversionGoal`): "Custo por venda"
+   *  / "Custo por lead" / "Custo por resultado" (genérico). Não persistido. */
+  cpaLabel: z.string().optional(),
 });
 
 /** Funil de messaging agregado (contagens + taxas) — só quando há dado. */

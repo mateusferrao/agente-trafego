@@ -11,7 +11,7 @@ import {
   type Database,
 } from "@trafego/db";
 import type { InsightMetrics, UnitAnalysis } from "@trafego/shared";
-import { isOverCostCap, partialNote, partialSeverity, READ_ONLY_APPLICABILITY, resolveCostCapUsd, usagePeriod } from "@trafego/core";
+import { cpaLabelFor, isOverCostCap, partialNote, partialSeverity, READ_ONLY_APPLICABILITY, resolveCostCapUsd, usagePeriod } from "@trafego/core";
 import {
   AGENT_RUNS_QUEUE,
   AGENT_RUN_JOB,
@@ -28,6 +28,7 @@ import {
   type RunDetailOutput,
   type RunListItem,
   type RunListOutput,
+  type RunMetrics,
   type RunOutput,
   type TriggerRunOutput,
 } from "./schema.js";
@@ -445,6 +446,11 @@ function extractCampaignCards(metricsSnapshot: Record<string, unknown> | null): 
 function toRunOutput(run: AgentRunRow): RunOutput {
   // metrics_snapshot é jsonb livre → valida contra o contrato (descarta se fora do shape).
   const parsedMetrics = runMetrics.safeParse(run.metricsSnapshot);
+  // rótulo do CPA derivado da conversão de negócio (corrige o "Custo por venda"
+  // hardcoded do site — fonte única em @trafego/core). Injetado, não persistido.
+  const metrics: RunMetrics | null = parsedMetrics.success
+    ? { ...parsedMetrics.data, kpis: { ...parsedMetrics.data.kpis, cpaLabel: cpaLabelFor(parsedMetrics.data.kpis.conversionGoal) } }
+    : null;
   // runs legados: partial=true sem motivos (pré-migração) → trata como grave (nota antiga),
   // preservando o comportamento até que novos runs tragam o motivo real.
   const stored = run.partialReasons ?? [];
@@ -459,7 +465,7 @@ function toRunOutput(run: AgentRunRow): RunOutput {
     costUsd: run.costSnapshot === null ? null : Number(run.costSnapshot),
     startedAt: run.startedAt ? run.startedAt.toISOString() : null,
     finishedAt: run.finishedAt ? run.finishedAt.toISOString() : null,
-    metrics: parsedMetrics.success ? parsedMetrics.data : null,
+    metrics,
   };
 }
 

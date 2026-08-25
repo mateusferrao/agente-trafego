@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EntityObjective } from "@trafego/shared";
-import { resolveConversion } from "./index.js";
+import { cpaLabelFor, resolveConversion } from "./index.js";
 
 describe("resolveConversion", () => {
   it("sem objetivo e sem override → null (sem conversão; julgar por CPC/CPM)", () => {
@@ -27,5 +27,17 @@ describe("resolveConversion", () => {
   it("override do agente vence o objetivo próprio (personalização)", () => {
     const objective: EntityObjective = { goal: "purchase" };
     expect(resolveConversion(objective, { goal: "lead" })).toEqual({ goal: "lead" });
+  });
+});
+
+describe("cpaLabelFor", () => {
+  it("deriva o rótulo do conversionGoal (venda/lead)", () => {
+    expect(cpaLabelFor("purchase")).toBe("Custo por venda");
+    expect(cpaLabelFor("lead")).toBe("Custo por lead");
+    expect(cpaLabelFor("messaging_started")).toBe("Custo por conversa");
+  });
+  it("sem goal → genérico 'Custo por resultado' (corrige o hardcoded)", () => {
+    expect(cpaLabelFor(null)).toBe("Custo por resultado");
+    expect(cpaLabelFor(undefined)).toBe("Custo por resultado");
   });
 });

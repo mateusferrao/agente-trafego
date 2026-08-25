@@ -46,6 +46,37 @@ export function resolveConversion(
  *
  * Fonte única desta classificação (reusada por `brief` e `playbook`).
  */
+// Substantivo PT do "custo por X" (perspectiva do vendedor — CPA). Distinto do
+// rótulo genérico da conversão (ex: purchase = "venda" aqui, "compra" no eco de
+// config). Fonte única do rótulo de CPA exibido ao dono (conta + cards).
+const CPA_NOUN_PT: Partial<Record<ConversionGoal, string>> = {
+  purchase: "venda",
+  lead: "lead",
+  registration: "cadastro",
+  initiate_checkout: "checkout",
+  add_to_cart: "carrinho",
+  view_content: "visualização",
+  add_payment_info: "pagamento",
+  search: "busca",
+  contact: "contato",
+  subscribe: "inscrição",
+  start_trial: "teste",
+  submit_application: "inscrição",
+  messaging_started: "conversa",
+  app_install: "instalação",
+  custom: "resultado",
+};
+
+/**
+ * Rótulo do KPI de custo-por-conversão exibido ao dono. Deriva do `conversionGoal`
+ * de NEGÓCIO (ex: "Custo por venda"); sem goal mensurável → "Custo por resultado"
+ * (genérico e honesto). Corrige o "Custo por venda" hardcoded do site. PURO.
+ */
+export function cpaLabelFor(goal: ConversionGoal | null | undefined): string {
+  const noun = goal ? CPA_NOUN_PT[goal] : undefined;
+  return `Custo por ${noun ?? "resultado"}`;
+}
+
 export function classifyBasis(params: {
   /** métricas com a conversão de negócio aplicada (override vence). */
   readonly businessMetrics: InsightMetrics;

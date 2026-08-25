@@ -240,7 +240,7 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                       <span appBadge [tone]="campaignTone(c)" size="sm">{{ campaignStatusLabel(c) }}</span>
                       <span class="text-xs text-muted">Gasto {{ campaignSpend(c) }}</span>
                       @if (c.metrics.cpa !== undefined) {
-                        <span class="text-xs text-muted">· Custo por venda {{ campaignCpa(c) }}</span>
+                        <span class="text-xs text-muted">· {{ cpaLabel() }} {{ campaignCpa(c) }}</span>
                       }
                       @if (c.muted) {
                         <span appBadge size="sm">silenciada</span>
@@ -389,6 +389,9 @@ export class AnalysisDetail {
       this.campaigns().length > 0,
   );
 
+  /** Rótulo do CPA derivado da conversão de negócio (API projeta); fallback genérico. */
+  protected readonly cpaLabel = computed(() => this.run()?.metrics?.kpis.cpaLabel ?? 'Custo por resultado');
+
   /** Faixa de KPIs + taxas de funil, já formatada (só o que houver). */
   protected readonly stats = computed<Stat[]>(() => {
     const metrics = this.run()?.metrics;
@@ -396,7 +399,7 @@ export class AnalysisDetail {
     const currency = this.currency();
     const { kpis, funnel } = metrics;
     const items: Stat[] = [{ label: 'Gasto', value: formatCurrency(kpis.spend, currency) }];
-    if (kpis.cpa !== undefined) items.push({ label: 'Custo por venda', value: formatCurrency(kpis.cpa, currency) });
+    if (kpis.cpa !== undefined) items.push({ label: this.cpaLabel(), value: formatCurrency(kpis.cpa, currency) });
     if (kpis.roas !== undefined) items.push({ label: 'Retorno (ROAS)', value: `${kpis.roas.toFixed(2)}x` });
     if (funnel?.replyRate !== undefined) items.push({ label: 'Taxa de resposta', value: formatPercent(funnel.replyRate) });
     if (funnel?.depthRate !== undefined) items.push({ label: 'Conversas que avançam', value: formatPercent(funnel.depthRate) });
