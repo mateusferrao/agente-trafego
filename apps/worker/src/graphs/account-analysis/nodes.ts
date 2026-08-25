@@ -758,10 +758,14 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
   async function writeMessage(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
     logger.debug({ runId: state.runId }, "write_message");
     const isWhatsapp = state.notifyTarget != null; // run disparado pelo WhatsApp → responde na conversa
-    // cron E signal (F4) empurram ao destinatário verificado da org; on-demand (site) não faz push.
-    const notifiesOrg = state.trigger === "cron" || state.trigger === "signal";
-    // push do cron desligado por config (F4 runPush) → não empurra (a narrativa segue pro site).
-    const runPushOff = state.trigger === "cron" && state.notifyPolicy?.runPush.enabled === false;
+    // cron/signal (F4) + on-demand do site empurram ao alvo org-level (grupo ativo, senão DM).
+    // on_demand PRECISA pushar: o site promete "te aviso no WhatsApp quando terminar" (a tela diz
+    // "pode fechar"), então o resultado do "Analisar agora" tem de chegar ao WhatsApp.
+    const notifiesOrg =
+      state.trigger === "cron" || state.trigger === "signal" || state.trigger === "on_demand";
+    // runPush (F4) desliga o push de RUN (cron/on-demand); signal tem gate próprio (alerts).
+    const isRunPush = state.trigger === "cron" || state.trigger === "on_demand";
+    const runPushOff = isRunPush && state.notifyPolicy?.runPush.enabled === false;
     const out = state.analysisOutput;
     if (!out || !state.account) return { outboundMessage: null, narrative: null }; // sem análise → nada a renderizar
 

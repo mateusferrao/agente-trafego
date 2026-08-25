@@ -62,6 +62,8 @@ interface HarnessOpts {
   executor?: { execute: ReturnType<typeof vi.fn> };
   /** estado FRESCO (Meta) devolvido pela releitura pontual do no-op (5b). */
   freshEntityState?: Record<string, unknown>;
+  /** F4 runPush: desliga o push de run (cron/on-demand). Default ON. */
+  runPushEnabled?: boolean;
 }
 
 function makeHarness(opts: HarnessOpts = {}): Harness {
@@ -73,7 +75,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
   const byLevel = (level: string) => entities.filter((e) => e.level === level);
 
   const repo: AnalysisRepo = {
-    loadAgentContext: vi.fn(async () => ({ goals: opts.goals ?? { targetCPA: 50 }, archetype: "conservador", timezone: "America/Sao_Paulo", systemPrompt: null, persona: null, tone: null, businessContext: null, guidance: null, configChangedAt: opts.configChangedAt ?? null, modelConfig: {}, autonomyPolicy: opts.autonomy ?? { bySource: { playbook: "suggest" as const, llm: "suggest" as const } }, notifyPolicy: { pulse: { enabled: false, cadence: { kind: "daily" as const, hour: 8 } }, alerts: { enabled: false, sensitivity: "normal" as const, throttleHours: 6 }, runPush: { enabled: true } }, posture: { directiveness: "consultative" as const, volume: "balanced" as const, didacticDepth: "explanatory" as const, experienceLevel: null }, guardrailConfig: opts.guardrail ?? { maxBudgetChangePct: 20, maxEntitiesPerDay: 3, allowedActions: ["pause_entity" as const], dryRun: true, killSwitch: false }, playbook: [], rejectedMemory: [], mutedCampaignIds: [] })),
+    loadAgentContext: vi.fn(async () => ({ goals: opts.goals ?? { targetCPA: 50 }, archetype: "conservador", timezone: "America/Sao_Paulo", systemPrompt: null, persona: null, tone: null, businessContext: null, guidance: null, configChangedAt: opts.configChangedAt ?? null, modelConfig: {}, autonomyPolicy: opts.autonomy ?? { bySource: { playbook: "suggest" as const, llm: "suggest" as const } }, notifyPolicy: { pulse: { enabled: false, cadence: { kind: "daily" as const, hour: 8 } }, alerts: { enabled: false, sensitivity: "normal" as const, throttleHours: 6 }, runPush: { enabled: opts.runPushEnabled ?? true } }, posture: { directiveness: "consultative" as const, volume: "balanced" as const, didacticDepth: "explanatory" as const, experienceLevel: null }, guardrailConfig: opts.guardrail ?? { maxBudgetChangePct: 20, maxEntitiesPerDay: 3, allowedActions: ["pause_entity" as const], dryRun: true, killSwitch: false }, playbook: [], rejectedMemory: [], mutedCampaignIds: [] })),
     loadAccount: vi.fn(async () => ({ metaAdAccountId: "act_1", name: "Conta", currency: "BRL", tokenCripto: TOKEN })),
     openRun: vi.fn(async () => {}),
     markTokenInvalid: vi.fn(async () => {}),
@@ -243,6 +245,23 @@ describe("account-analysis read-only nodes", () => {
     // mock devolve o objeto de análise (sem .text) → cai no fallback e NÃO soma usage
     // (usage só entra com texto válido). Em produção o redator retorna texto e somaria.
     expect(h.closed[0]).toMatchObject({ status: "succeeded", costSnapshot: 0.003 });
+  });
+
+  it("on_demand (site): compõe push pro WhatsApp — honra 'te aviso quando terminar'", async () => {
+    const h = makeHarness();
+    const state = await runChain(h, "on_demand");
+    // regressão: on_demand NÃO pushava (outboundMessage null); agora entrega ao alvo org-level.
+    expect(typeof state.outboundMessage).toBe("string");
+    expect((state.outboundMessage ?? "").length).toBeGreaterThan(0);
+  });
+
+  it("on_demand + runPush OFF: opt-out silencia o push (narrativa segue pro site)", async () => {
+    const h = makeHarness({ runPushEnabled: false });
+    const state = await runChain(h, "on_demand");
+    expect(state.outboundMessage).toBeNull();
+    // a narrativa do site é independente da entrega — continua renderizada.
+    expect(typeof state.narrative).toBe("string");
+    expect((state.narrative ?? "").length).toBeGreaterThan(0);
   });
 
   it("auto-apply: act_full + guardrail libera → executor aplica a ação do LLM", async () => {
