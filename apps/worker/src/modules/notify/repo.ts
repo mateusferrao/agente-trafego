@@ -93,6 +93,9 @@ export interface NotifyRepo {
     authorName: string | null;
     body: string | null;
     messageId: string;
+    /** reply: autor + trecho da mensagem citada (contexto de reply no transcript). */
+    quotedAuthorPhone?: string | null;
+    quotedSnippet?: string | null;
   }): Promise<void>;
   /**
    * Fontes do transcript ambiente do grupo (mescladas pela função pura na casca):
@@ -329,10 +332,10 @@ export function createNotifyRepo(db: Database): NotifyRepo {
     },
 
     /** Mensagem ambiente de grupo (contexto). Upsert idempotente por (grupo, messageId). */
-    async recordGroupMessage({ orgId, groupId, authorPhone, authorName, body, messageId }) {
+    async recordGroupMessage({ orgId, groupId, authorPhone, authorName, body, messageId, quotedAuthorPhone, quotedSnippet }) {
       await db
         .insert(groupMessages)
-        .values({ orgId, groupId, authorPhone, authorName, body, messageId })
+        .values({ orgId, groupId, authorPhone, authorName, body, messageId, quotedAuthorPhone: quotedAuthorPhone ?? null, quotedSnippet: quotedSnippet ?? null })
         .onConflictDoNothing({ target: [groupMessages.groupId, groupMessages.messageId] });
     },
 
@@ -344,6 +347,8 @@ export function createNotifyRepo(db: Database): NotifyRepo {
           authorName: groupMessages.authorName,
           body: groupMessages.body,
           at: groupMessages.createdAt,
+          quotedAuthorPhone: groupMessages.quotedAuthorPhone,
+          quotedSnippet: groupMessages.quotedSnippet,
         })
         .from(groupMessages)
         .where(and(eq(groupMessages.orgId, orgId), eq(groupMessages.groupId, groupId), gte(groupMessages.createdAt, since)))
@@ -356,6 +361,9 @@ export function createNotifyRepo(db: Database): NotifyRepo {
           authorName: sql<string | null>`${messages.meta} ->> 'authorName'`,
           body: messages.body,
           at: messages.createdAt,
+          quotedAuthorPhone: sql<string | null>`${messages.meta} ->> 'quotedAuthorPhone'`,
+          quotedSnippet: sql<string | null>`${messages.meta} ->> 'quotedSnippet'`,
+          quotedFromBot: sql<boolean>`(${messages.meta} ->> 'quotedFromBot') = 'true'`,
         })
         .from(messages)
         .innerJoin(conversations, eq(messages.conversationId, conversations.id))

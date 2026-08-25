@@ -73,6 +73,9 @@ export const groupMessages = pgTable(
     authorName: text("author_name"),
     // texto da mensagem, ou placeholder de mídia ([áudio]/[imagem]/[mídia]).
     body: text("body"),
+    // reply: telefone do autor da mensagem CITADA + trecho dela ("em resposta a X: ...").
+    quotedAuthorPhone: text("quoted_author_phone"),
+    quotedSnippet: text("quoted_snippet"),
     // id da mensagem no provider — dedupe de reentrega do webhook.
     messageId: text("message_id").notNull(),
     ...timestamps,

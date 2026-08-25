@@ -192,10 +192,16 @@ describe("makeInboundRouter — grupo", () => {
     expect(t.flushQueue.add).toHaveBeenCalled();
   });
 
-  it("dirigido por REPLY à msg do bot (sem menção): processa igual", async () => {
+  it("dirigido por REPLY à msg do bot (sem menção): processa + marca quotedFromBot", async () => {
     const t = makeDeps();
-    await makeInboundRouter(t.deps)("inst-1", groupText({ mentionedPhones: [], quotedAuthorPhone: BOT_PHONE }));
-    expect(t.repo.recordMessage).toHaveBeenCalledWith("conv-grp-1", "inbound", "@bot analisa", { messageId: "GMSG-1", authorName: "João" });
+    await makeInboundRouter(t.deps)("inst-1", groupText({ mentionedPhones: [], quotedAuthorPhone: BOT_PHONE, quotedKind: "text", quotedSnippet: "pausei a X" }));
+    expect(t.repo.recordMessage).toHaveBeenCalledWith("conv-grp-1", "inbound", "@bot analisa", {
+      messageId: "GMSG-1",
+      authorName: "João",
+      quotedAuthorPhone: BOT_PHONE,
+      quotedSnippet: "pausei a X",
+      quotedFromBot: true,
+    });
   });
 
   it("grupo NÃO registrado → silêncio (nada gravado)", async () => {
@@ -224,6 +230,8 @@ describe("makeInboundRouter — grupo", () => {
       authorName: "João",
       body: "@bot analisa",
       messageId: "GMSG-1",
+      quotedAuthorPhone: null,
+      quotedSnippet: null,
     });
     // não fabrica conversa, não grava em messages, não dispara turno.
     expect(t.repo.ensureGroupConversation).not.toHaveBeenCalled();
@@ -250,6 +258,28 @@ describe("makeInboundRouter — grupo", () => {
     const t = makeDeps({ groupIngestContext: false });
     await makeInboundRouter(t.deps)("inst-1", groupText({ mentionedPhones: ["+5511888888888"] }));
     expect(t.repo.recordGroupMessage).not.toHaveBeenCalled();
+  });
+
+  it("dirigido em REPLY → grava quotedAuthorPhone + quotedSnippet no meta (contexto de reply)", async () => {
+    const t = makeDeps();
+    await makeInboundRouter(t.deps)("inst-1", groupText({ quotedAuthorPhone: "+5511777777777", quotedKind: "text", quotedSnippet: "Oi" }));
+    expect(t.repo.recordMessage).toHaveBeenCalledWith(
+      "conv-grp-1",
+      "inbound",
+      "@bot analisa",
+      expect.objectContaining({ quotedAuthorPhone: "+5511777777777", quotedSnippet: "Oi" }),
+    );
+  });
+
+  it("ambiente em REPLY a áudio → group_messages com quotedSnippet [áudio]", async () => {
+    const t = makeDeps({ groupIngestContext: true });
+    await makeInboundRouter(t.deps)(
+      "inst-1",
+      groupText({ mentionedPhones: ["+5511888888888"], quotedAuthorPhone: "+5511777777777", quotedKind: "audio", quotedSnippet: null }),
+    );
+    expect(t.repo.recordGroupMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ quotedAuthorPhone: "+5511777777777", quotedSnippet: "[áudio]" }),
+    );
   });
 
   it("sem verificação de membro: mensagem de grupo NÃO passa por resolveInboundContact", async () => {

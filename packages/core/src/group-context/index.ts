@@ -15,6 +15,12 @@ export interface GroupTranscriptEntry {
   readonly at: Date;
   /** true = resposta do próprio bot (outbound) → rotulada com o botLabel. */
   readonly fromBot: boolean;
+  /** reply: telefone do autor da mensagem CITADA (null = sem reply). */
+  readonly quotedAuthorPhone?: string | null;
+  /** reply: trecho da mensagem citada (texto truncado; null p/ mídia/sem reply). */
+  readonly quotedSnippet?: string | null;
+  /** reply: a mensagem citada é do próprio bot → rotula como o assistente (não telefone). */
+  readonly quotedFromBot?: boolean;
 }
 
 export interface GroupTranscriptOptions {
@@ -78,9 +84,25 @@ export function buildGroupTranscript(
   // últimas N mensagens (mantém as mais recentes).
   let windowed = recent.slice(-opts.maxMessages);
 
+  // mapa telefone→nome (das próprias entradas) p/ rotular o autor citado num reply.
+  const nameByPhone = new Map<string, string>();
+  for (const e of recent) if (e.authorPhone && e.authorName) nameByPhone.set(e.authorPhone, e.authorName);
+  const quotedAuthorLabel = (phone: string | null | undefined): string => {
+    if (phone && nameByPhone.has(phone)) return nameByPhone.get(phone)!;
+    const digits = (phone ?? "").replace(/\D/gu, "");
+    return digits.length >= 4 ? `Participante-${digits.slice(-4)}` : "alguém";
+  };
+  /** " (↳ resp. a Fulano: "trecho")" quando a mensagem foi reply; "" caso contrário. */
+  const replyOf = (e: GroupTranscriptEntry): string => {
+    if (!e.quotedAuthorPhone && !e.quotedSnippet && !e.quotedFromBot) return "";
+    const who = e.quotedFromBot ? opts.botLabel : quotedAuthorLabel(e.quotedAuthorPhone);
+    const snip = e.quotedSnippet && e.quotedSnippet.length > 0 ? `: "${e.quotedSnippet}"` : "";
+    return ` (↳ resp. a ${who}${snip})`;
+  };
+
   // formata cada linha e corta ao teto de tokens derrubando as mais antigas.
   const format = (e: GroupTranscriptEntry) =>
-    `${authorLabel(e, opts.botLabel)} [${stamp(e.at, opts.tz)}]: ${e.body && e.body.length > 0 ? e.body : EMPTY_BODY}`;
+    `${authorLabel(e, opts.botLabel)} [${stamp(e.at, opts.tz)}]${replyOf(e)}: ${e.body && e.body.length > 0 ? e.body : EMPTY_BODY}`;
   const maxChars = opts.maxTokens * CHARS_PER_TOKEN;
   let lines = windowed.map(format);
   while (lines.length > 1 && lines.join("\n").length > maxChars) {

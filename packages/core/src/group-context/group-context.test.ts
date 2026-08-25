@@ -97,4 +97,31 @@ describe("buildGroupTranscript", () => {
     const out = buildGroupTranscript([entry({ body: null })], OPTS);
     expect(out).toContain("]: [mídia]");
   });
+
+  it("reply: mostra '↳ resp. a <autor>: \"trecho\"' e resolve o nome do autor citado pelas entradas", () => {
+    const out = buildGroupTranscript(
+      [
+        entry({ authorName: "Thiago", authorPhone: "+5511777777777", body: "Oi", at: new Date("2026-08-24T17:00:00Z") }),
+        entry({ authorName: "João", authorPhone: "+5511999999999", body: "e aí", at: new Date("2026-08-24T17:05:00Z"), quotedAuthorPhone: "+5511777777777", quotedSnippet: "Oi" }),
+      ],
+      OPTS,
+    );
+    expect(out).toContain('João [24/08 17:05] (↳ resp. a Thiago: "Oi"): e aí');
+  });
+
+  it("reply ao BOT → rotula como o assistente (não telefone)", () => {
+    const out = buildGroupTranscript(
+      [entry({ authorName: "João", body: "e a Y?", quotedFromBot: true, quotedSnippet: "pausei a X" })],
+      OPTS,
+    );
+    expect(out).toContain('(↳ resp. a Assistente: "pausei a X")');
+  });
+
+  it("reply a autor fora da janela → fallback Participante-XXXX", () => {
+    const out = buildGroupTranscript(
+      [entry({ authorName: "João", body: "e aí", quotedAuthorPhone: "+5511777777777", quotedSnippet: "Oi" })],
+      OPTS,
+    );
+    expect(out).toContain("(↳ resp. a Participante-7777");
+  });
 });

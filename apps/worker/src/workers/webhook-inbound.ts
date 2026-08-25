@@ -53,6 +53,15 @@ function ambientBody(inbound: InboundMessage): string {
   return AMBIENT_MEDIA_PLACEHOLDER[inbound.mediaType] ?? AMBIENT_MEDIA_DEFAULT;
 }
 
+/** Trecho da mensagem CITADA p/ o transcript ("em resposta a X: ..."): texto ou placeholder de mídia. */
+function quotedSnippetDisplay(group: NonNullable<InboundMessage["group"]>): string | null {
+  if (group.quotedSnippet) return group.quotedSnippet;
+  if (group.quotedKind === "audio") return AMBIENT_AUDIO_PLACEHOLDER;
+  if (group.quotedKind === "image") return AMBIENT_MEDIA_PLACEHOLDER["image"] ?? AMBIENT_MEDIA_DEFAULT;
+  if (group.quotedKind === "media") return AMBIENT_MEDIA_DEFAULT;
+  return null;
+}
+
 /** Dependências do router de mensagem inbound (enxutas → testável sem BullMQ). */
 export interface InboundRouterDeps {
   readonly repo: Pick<
@@ -200,6 +209,8 @@ async function routeGroupMessage(d: InboundRouterDeps, instanceId: string, inbou
         authorName: group.senderName,
         body: ambientBody(inbound),
         messageId: inbound.messageId,
+        quotedAuthorPhone: group.quotedAuthorPhone,
+        quotedSnippet: quotedSnippetDisplay(group),
       });
     }
     d.logger.debug({ instanceId }, "inbound:group_not_addressed");
@@ -208,8 +219,17 @@ async function routeGroupMessage(d: InboundRouterDeps, instanceId: string, inbou
 
   const conversationId = await d.repo.ensureGroupConversation(resolved.orgId, resolved.groupId, group.senderPhone);
   const ref: ConversationRef = { kind: "group", groupId: resolved.groupId, participantPhone: group.senderPhone };
-  // authorName no meta → atribuição legível da mensagem dirigida no transcript ambiente.
-  await routeMessage(d, instanceId, inbound, resolved.orgId, conversationId, ref, { authorName: group.senderName });
+  // authorName + citação no meta → atribuição + "em resposta a X" da dirigida no transcript.
+  // Captura o reply mesmo quando é ao PRÓPRIO bot (contexto útil pros outros participantes):
+  // marca `quotedFromBot` p/ o transcript rotular como o assistente (não o telefone do bot).
+  const quotedSnippet = quotedSnippetDisplay(group);
+  const quotedFromBot = group.quotedAuthorPhone !== null && group.quotedAuthorPhone === botPhone;
+  await routeMessage(d, instanceId, inbound, resolved.orgId, conversationId, ref, {
+    authorName: group.senderName,
+    ...(group.quotedAuthorPhone ? { quotedAuthorPhone: group.quotedAuthorPhone } : {}),
+    ...(quotedSnippet ? { quotedSnippet } : {}),
+    ...(quotedFromBot ? { quotedFromBot: true } : {}),
+  });
 }
 
 /**
