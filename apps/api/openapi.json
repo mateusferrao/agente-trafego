@@ -1962,6 +1962,20 @@
               "partial": {
                 "type": "boolean"
               },
+              "partialNote": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "partialSeverity": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "soft",
+                  "hard"
+                ]
+              },
               "costUsd": {
                 "type": [
                   "number",
@@ -2245,6 +2259,8 @@
               "status",
               "summary",
               "partial",
+              "partialNote",
+              "partialSeverity",
               "costUsd",
               "startedAt",
               "finishedAt",
@@ -3538,6 +3554,20 @@
               "partial": {
                 "type": "boolean"
               },
+              "partialNote": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "partialSeverity": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "soft",
+                  "hard"
+                ]
+              },
               "costUsd": {
                 "type": [
                   "number",
@@ -3821,6 +3851,8 @@
               "status",
               "summary",
               "partial",
+              "partialNote",
+              "partialSeverity",
               "costUsd",
               "startedAt",
               "finishedAt",

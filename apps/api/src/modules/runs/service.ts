@@ -11,7 +11,7 @@ import {
   type Database,
 } from "@trafego/db";
 import type { InsightMetrics, UnitAnalysis } from "@trafego/shared";
-import { isOverCostCap, READ_ONLY_APPLICABILITY, resolveCostCapUsd, usagePeriod } from "@trafego/core";
+import { isOverCostCap, partialNote, partialSeverity, READ_ONLY_APPLICABILITY, resolveCostCapUsd, usagePeriod } from "@trafego/core";
 import {
   AGENT_RUNS_QUEUE,
   AGENT_RUN_JOB,
@@ -445,11 +445,17 @@ function extractCampaignCards(metricsSnapshot: Record<string, unknown> | null): 
 function toRunOutput(run: AgentRunRow): RunOutput {
   // metrics_snapshot é jsonb livre → valida contra o contrato (descarta se fora do shape).
   const parsedMetrics = runMetrics.safeParse(run.metricsSnapshot);
+  // runs legados: partial=true sem motivos (pré-migração) → trata como grave (nota antiga),
+  // preservando o comportamento até que novos runs tragam o motivo real.
+  const stored = run.partialReasons ?? [];
+  const reasons = stored.length > 0 ? stored : run.partial ? (["metrics"] as const) : [];
   return {
     id: run.id,
     status: run.status,
     summary: run.summary ?? null,
     partial: run.partial,
+    partialNote: partialNote(reasons),
+    partialSeverity: partialSeverity(reasons),
     costUsd: run.costSnapshot === null ? null : Number(run.costSnapshot),
     startedAt: run.startedAt ? run.startedAt.toISOString() : null,
     finishedAt: run.finishedAt ? run.finishedAt.toISOString() : null,

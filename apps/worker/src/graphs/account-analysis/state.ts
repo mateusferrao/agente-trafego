@@ -3,7 +3,7 @@
 
 import { Annotation } from "@langchain/langgraph";
 import type { AccumulatedTokenUsage, DecisionResult, DroppedAction, GuardrailResult } from "@trafego/core";
-import type { AgentRunTrigger, NotifyPolicy, RunNotifyTarget, SignalFinding } from "@trafego/shared";
+import type { AgentRunTrigger, NotifyPolicy, PartialReason, RunNotifyTarget, SignalFinding } from "@trafego/shared";
 import type { MutationResult } from "@trafego/shared/ports";
 import type {
   AccountBrief,
@@ -110,6 +110,12 @@ export const AccountAnalysisState = Annotation.Root({
   results: Annotation<readonly MutationResult[]>,
   // nota de análise parcial (degradação graciosa do governor — CLAUDE §7)
   partial: Annotation<boolean>,
+  // POR QUE degradou — ACUMULADO (união) entre nós, então cada fonte só retorna o seu
+  // motivo e não precisa reler/threadar o estado. Alimenta a nota proporcional na UI.
+  partialReasons: Annotation<readonly PartialReason[]>({
+    reducer: (a, b) => [...new Set([...(a ?? []), ...(b ?? [])])],
+    default: () => [],
+  }),
 });
 
 export type AccountAnalysisStateType = typeof AccountAnalysisState.State;

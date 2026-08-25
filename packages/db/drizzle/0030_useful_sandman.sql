@@ -1,0 +1,1 @@
+ALTER TABLE "agent_runs" ADD COLUMN "partial_reasons" jsonb DEFAULT '[]'::jsonb NOT NULL;

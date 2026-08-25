@@ -267,6 +267,11 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       baselineInsights,
       creatives,
       partial: sync.partial || entitiesPartial || creativesPartial,
+      partialReasons: [
+        ...(sync.partial ? ["metrics" as const] : []),
+        ...(entitiesPartial ? ["entities" as const] : []),
+        ...(creativesPartial ? ["creative_vision" as const] : []),
+      ],
     };
   }
 
@@ -448,9 +453,10 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const freshUnits: FreshUnit[] = [];
     let usage = state.usage;
     let partial = state.partial ?? false;
+    let campaignPartial = false;
     for (const o of outcomes) {
       if (o.usage) usage = addTokenUsage(usage ?? undefined, o.usage);
-      if (o.partial) partial = true;
+      if (o.partial) { partial = true; campaignPartial = true; }
       if (o.unit) unitAnalyses.push(o.unit);
       if (o.fresh) freshUnits.push(o.fresh);
     }
@@ -465,7 +471,10 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const freshUnitById = new Map<string, UnitAnalysis>(freshUnits.map((f) => [f.entityId, f.unit]));
     const campaignCards = buildCampaignCards(built.campaignUnits, freshUnitById, last);
 
-    return { brief: built.brief, unitAnalyses, freshUnits, campaignCards, usage, partial };
+    return {
+      brief: built.brief, unitAnalyses, freshUnits, campaignCards, usage, partial,
+      ...(campaignPartial ? { partialReasons: ["campaign_analysis" as const] } : {}),
+    };
   }
 
   /**
@@ -521,6 +530,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     let reviewed: AnalysisOutput = draft;
     let usage = state.usage;
     let partial = state.partial ?? false;
+    let reviewDegraded = false;
 
     if (cfg.reviewEnabled) {
       const issues = flagUnsupportedFindings(draft, state.brief);
@@ -541,12 +551,12 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           reviewed = parsed.data;
           usage = addTokenUsage(usage ?? undefined, completion.usage);
         } else {
-          partial = true; // revisor devolveu fora do schema → usa o analista
+          partial = true; reviewDegraded = true; // revisor devolveu fora do schema → usa o analista
           logger.warn({ runId: state.runId }, "review:output fora do schema; usando analista");
         }
       } catch (err) {
         if (!(err instanceof LLMProviderError)) throw err; // erro inesperado sobe
-        partial = true; // revisor falhou → degradação graciosa (usa o analista)
+        partial = true; reviewDegraded = true; // revisor falhou → degradação graciosa (usa o analista)
         logger.warn({ runId: state.runId, err }, "review:falhou; usando análise sem revisão");
       }
     }
@@ -574,7 +584,10 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       detail: f.detail,
       severity: f.severity,
     }));
-    return { analysisOutput: final, findings, summary: final.summary, usage, partial };
+    return {
+      analysisOutput: final, findings, summary: final.summary, usage, partial,
+      ...(reviewDegraded ? { partialReasons: ["review" as const] } : {}),
+    };
   }
 
   /** Persiste recommendations (feedback/outcome tracking + base p/ 5a). */
@@ -601,6 +614,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       status: "succeeded",
       summary: state.summary ?? null,
       partial: state.partial ?? false,
+      partialReasons: [...(state.partialReasons ?? [])],
       tokenUsage: usage ? { ...usage } : null,
       costSnapshot: usage ? costSnapshotFromUsage(usage) : null,
       metricsSnapshot: buildMetricsSnapshot(state),
@@ -740,7 +754,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       }
     }
     // falha/rate-limit no lote → marca parcial (o site/nota mostram que não fez tudo).
-    return hadFailure ? { results, partial: true } : { results };
+    return hadFailure ? { results, partial: true, partialReasons: ["action_apply" as const] } : { results };
   }
 
   /**

@@ -134,6 +134,10 @@ export const runOutput = z.object({
   status: runStatus,
   summary: z.string().nullable(),
   partial: z.boolean(),
+  /** Nota proporcional da degradação (null quando não parcial) — a UI exibe direto. */
+  partialNote: z.string().nullable(),
+  /** Gravidade: none | soft (métricas ok) | hard (dado incompleto) — define o tom. */
+  partialSeverity: z.enum(["none", "soft", "hard"]),
   costUsd: z.number().nullable(),
   startedAt: z.string().nullable(),
   finishedAt: z.string().nullable(),

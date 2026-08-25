@@ -267,6 +267,24 @@ export const RECOMMENDATION_KINDS = ["platform_action", "human_direction", "insi
 
 export type RecommendationKind = (typeof RECOMMENDATION_KINDS)[number];
 
+/**
+ * Motivo da degradação graciosa de um run (por que virou "parcial") — deixa de ser
+ * caixa-preta: o run registra QUAL chamada caiu, e a nota da UI fica proporcional.
+ * `metrics`/`entities` = dado da análise incompleto (grave). `creative_vision`/
+ * `campaign_analysis` = só enriquecimento (métricas intactas). `action_apply` = uma
+ * escrita falhou (análise completa). Tupla const = fonte única (tipo + zod).
+ */
+export const PARTIAL_REASONS = [
+  "metrics",
+  "entities",
+  "creative_vision",
+  "campaign_analysis",
+  "review",
+  "action_apply",
+] as const;
+
+export type PartialReason = (typeof PARTIAL_REASONS)[number];
+
 // ─── AccountBrief (único input do LLM) ───────────────────────────────────
 export interface TrendPoint {
   readonly date: string;

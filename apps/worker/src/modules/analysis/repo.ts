@@ -5,7 +5,7 @@
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import type { Database } from "@trafego/db/client";
 import { adAccounts, adCreatives, agentMemory, agentMutedEntities, agentRunSteps, agentRuns, agentToolCalls, agents, conversionLabels, guardrailConfigs, orgs, platformConnections, playbookRules, recommendations } from "@trafego/db";
-import type { Action, ActionTarget, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, NotifyPolicy, PerformanceTier, PlaybookRule, RecommendationKind, RiskLevel } from "@trafego/shared";
+import type { Action, ActionTarget, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, NotifyPolicy, PartialReason, PerformanceTier, PlaybookRule, RecommendationKind, RiskLevel } from "@trafego/shared";
 import { GUARDRAIL_DEFAULTS, toGuardrailConfig, UNDO_TOOL_KEY } from "@trafego/shared";
 import { entityKeyOf, unseedIdentity } from "@trafego/core";
 import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
@@ -98,6 +98,8 @@ export interface CloseRunInput {
   readonly status: "succeeded" | "failed";
   readonly summary: string | null;
   readonly partial: boolean;
+  /** POR QUE degradou (motivos acumulados) — nota proporcional na UI. */
+  readonly partialReasons?: PartialReason[];
   readonly tokenUsage: Record<string, unknown> | null;
   readonly costSnapshot: number | null;
   readonly metricsSnapshot?: Record<string, unknown> | null;
@@ -447,6 +449,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
           status: input.status,
           summary: input.summary,
           partial: input.partial,
+          ...(input.partialReasons !== undefined ? { partialReasons: input.partialReasons } : {}),
           tokenUsage: input.tokenUsage ?? null,
           costSnapshot: input.costSnapshot === null ? null : String(input.costSnapshot),
           ...(input.metricsSnapshot !== undefined ? { metricsSnapshot: input.metricsSnapshot } : {}),

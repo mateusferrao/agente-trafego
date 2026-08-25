@@ -121,9 +121,15 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
       <!-- Sem resultados (ex: conta sem gasto): o resumo acima já basta; a
            ressalva "parcial" e o "nenhuma recomendação" viram ruído aqui. -->
       @if (hasResults()) {
-        @if (run()?.partial) {
-          <p class="text-xs text-warning-strong">
-            Análise parcial — a Meta limitou as chamadas ou alguns dados não vieram desta vez. Tente de novo em alguns minutos.
+        <!-- Nota de degradação PROPORCIONAL: hard (dado faltando) = alerta; soft
+             (métricas ok, só criativo/campanha) = nota discreta. Texto vem do backend. -->
+        @if (run()?.partialNote; as note) {
+          <p
+            class="text-xs"
+            [class.text-warning-strong]="run()?.partialSeverity === 'hard'"
+            [class.text-muted]="run()?.partialSeverity !== 'hard'"
+          >
+            {{ note }}
           </p>
         }
 

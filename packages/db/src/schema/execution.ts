@@ -11,7 +11,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import type { Action, CreativeVisionResult } from "@trafego/shared";
+import type { Action, CreativeVisionResult, PartialReason } from "@trafego/shared";
 import {
   actionType,
   approvalStatus,
@@ -51,6 +51,9 @@ export const agentRuns = pgTable(
     summary: text("summary"),
     // análise parcial (degradação graciosa do governor — §7) → nota na UI.
     partial: boolean("partial").notNull().default(false),
+    // POR QUE degradou (métricas/entidades/criativo/campanha/ação) — deixa o parcial de
+    // ser caixa-preta e a nota da UI proporcional. Vazio = não degradou.
+    partialReasons: jsonb("partial_reasons").$type<PartialReason[]>().notNull().default([]),
     // KPIs da conta + funil + scorecard congelados no run — a faixa do site lê daqui.
     metricsSnapshot: jsonb("metrics_snapshot").$type<Record<string, unknown>>(),
     traceId: text("trace_id"),
