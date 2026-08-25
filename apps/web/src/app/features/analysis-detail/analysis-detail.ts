@@ -294,6 +294,12 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                   <div class="rounded-md bg-soft p-3">
                     <span class="text-sm text-ink">Direção — você aplica. Peça no WhatsApp se quiser ajuda.</span>
                   </div>
+                } @else if (rec.kind === 'platform_action') {
+                  <!-- defensivo: platform_action sempre carrega ação (invariante do backend);
+                       fallback caso uma linha legada venha sem proposedAction. -->
+                  <div class="rounded-md bg-soft p-3">
+                    <span class="text-sm text-muted">{{ applicabilityNote }}</span>
+                  </div>
                 }
                 <!-- Feedback 👍/👎: ensina o agente (👎 vira memória "não repita isso") -->
                 <div class="flex items-center gap-2 pt-1">

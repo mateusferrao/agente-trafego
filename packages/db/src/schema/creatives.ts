@@ -1,4 +1,4 @@
-import { index, pgTable, real, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { doublePrecision, index, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import type { PerformanceTier } from "@trafego/shared";
 import { pk, timestamps } from "./_shared.js";
 import { agentRuns } from "./execution.js";
@@ -34,10 +34,12 @@ export const adCreatives = pgTable(
     thumbnailUrl: text("thumbnail_url"),
     videoId: text("video_id"),
     // desempenho DENORMALIZADO do run (ranking "campeã" sem join): tier + métricas.
+    // doublePrecision (não real/float4): `spend` é exibido ao usuário — real perderia
+    // centavos em contas de gasto alto (§13 sem número enganoso).
     tier: text("tier").$type<PerformanceTier>(),
-    spend: real("spend"),
-    cpa: real("cpa"),
-    roas: real("roas"),
+    spend: doublePrecision("spend"),
+    cpa: doublePrecision("cpa"),
+    roas: doublePrecision("roas"),
     // proveniência temporal: instante da captura + run que a produziu (soft-ref).
     capturedAt: timestamp("captured_at", { withTimezone: true }).notNull(),
     runId: uuid("run_id").references(() => agentRuns.id, { onDelete: "set null" }),

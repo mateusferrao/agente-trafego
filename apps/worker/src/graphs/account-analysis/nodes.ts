@@ -1125,7 +1125,9 @@ function toRecommendationRow(
     kind,
     proposedAction,
     toolKey,
-    riskLevel: actionType ? riskForAction(actionType, params) : "low",
+    // risco atrelado ao KIND: só platform_action (com ação real) carrega risco; direção/
+    // insight (sem CTA de aplicar) são sempre "low" — o rótulo não pode sugerir perigo.
+    riskLevel: kind === "platform_action" && actionType ? riskForAction(actionType, params) : "low",
   };
 }
 

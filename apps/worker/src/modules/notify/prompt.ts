@@ -5,6 +5,7 @@
 import type { AnalysisOutput } from "@trafego/shared/schemas";
 import type { WasteReport } from "@trafego/shared";
 import type { LLMMessage } from "@trafego/shared/ports";
+import { kindForRecommendation } from "@trafego/core";
 import { GROUNDING_RULE } from "../analysis/prompt.js";
 
 /** Structured output do redator — um único campo de texto. */
@@ -55,10 +56,10 @@ export function buildMessageMessages(
     summary: output.summary,
     ...(waste ? { waste } : {}),
     ...(extras?.trackingSuspect ? { trackingSuspect: true } : {}),
-    // Fix fadiga (S3): insight puro ('keep' → kind insight) NÃO entra no push proativo
-    // (fica na visão de análise). O push lidera por ação/direção acionável.
+    // Fix fadiga (S3): insight puro NÃO entra no push proativo (fica na visão de
+    // análise). Reusa a fonte única kindForRecommendation (não re-deriva 'keep' à mão).
     recommendations: output.recommendations
-      .filter((r) => r.actionType !== "keep")
+      .filter((r) => kindForRecommendation(r.actionType) !== "insight")
       .slice(0, MAX_RECS)
       .map((r) => ({ title: r.title, rationale: r.rationale })),
   };

@@ -204,6 +204,13 @@
       "when": 1787660551603,
       "tag": "0028_brave_raider",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1787662007718,
+      "tag": "0029_shocking_titania",
+      "breakpoints": true
     }
   ]
 }

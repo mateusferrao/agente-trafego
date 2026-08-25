@@ -341,10 +341,13 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
             imageUrl: sql`excluded.image_url`,
             thumbnailUrl: sql`excluded.thumbnail_url`,
             videoId: sql`excluded.video_id`,
-            tier: sql`excluded.tier`,
-            spend: sql`excluded.spend`,
-            cpa: sql`excluded.cpa`,
-            roas: sql`excluded.roas`,
+            // perf: anúncio fora do brief (não-notável) vem com perf null neste run —
+            // COALESCE preserva a perf boa do run anterior em vez de zerá-la (senão o
+            // anúncio despencaria no ranking por perda de tier).
+            tier: sql`coalesce(excluded.tier, ${adCreatives.tier})`,
+            spend: sql`coalesce(excluded.spend, ${adCreatives.spend})`,
+            cpa: sql`coalesce(excluded.cpa, ${adCreatives.cpa})`,
+            roas: sql`coalesce(excluded.roas, ${adCreatives.roas})`,
             capturedAt: sql`excluded.captured_at`,
             runId: sql`excluded.run_id`,
             updatedAt: sql`now()`,
