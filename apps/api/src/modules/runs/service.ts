@@ -15,6 +15,8 @@ import { cpaLabelFor, isOverCostCap, partialNote, partialSeverity, READ_ONLY_APP
 import {
   AGENT_RUNS_QUEUE,
   AGENT_RUN_JOB,
+  SCHEDULE_RESYNC_QUEUE,
+  SCHEDULE_RESYNC_JOB,
   type AgentRunExecutePayload,
 } from "@trafego/shared";
 import type { Action, OrgId, RunCampaignCard } from "@trafego/shared/types";
@@ -102,6 +104,43 @@ export function createRunsService(deps: RunsDeps) {
     };
     await deps.scheduler.enqueue({ queue: AGENT_RUNS_QUEUE, name: AGENT_RUN_JOB, payload });
     return { runId: run.id, status: "pending" };
+  }
+
+  /**
+   * Onboarding (Slice 4): ao selecionar a conta no connect, dispara a 1ª análise
+   * automaticamente (trigger "onboarding") + registra o Job Scheduler recorrente
+   * (fecha a lacuna do cron não-registrado ao conectar). **Best-effort:** NUNCA
+   * derruba o fluxo de conexão — a conta já está ativa; se a análise não puder
+   * iniciar agora (run em andamento, cap atingido, fila indisponível), o dono ainda
+   * vê o resultado depois (cron) ou dispara no botão "Analisar agora".
+   */
+  async function triggerOnboarding(orgId: OrgId, accountId: string, agentId: string): Promise<void> {
+    try {
+      await deps.scheduler.enqueue({
+        queue: SCHEDULE_RESYNC_QUEUE,
+        name: SCHEDULE_RESYNC_JOB,
+        payload: { orgId, adAccountId: accountId },
+      });
+      await assertUnderCostCap(orgId, agentId);
+      await assertNoRunInFlight(orgId, agentId);
+      const [run] = await deps.db
+        .insert(agentRuns)
+        .values({ orgId, agentId, trigger: "onboarding", status: "pending" })
+        .returning({ id: agentRuns.id });
+      if (!run) return;
+      const payload: AgentRunExecutePayload = {
+        mode: "execute",
+        trigger: "onboarding",
+        runId: run.id,
+        orgId,
+        agentId,
+        adAccountId: accountId,
+      };
+      await deps.scheduler.enqueue({ queue: AGENT_RUNS_QUEUE, name: AGENT_RUN_JOB, payload });
+    } catch {
+      // corrida com o cron (índice único in-flight), cap atingido ou fila indisponível
+      // → best-effort: não interrompe o onboarding da conta.
+    }
   }
 
   /** Último run da conta + recomendações (o site mostra o resultado). */
@@ -367,7 +406,7 @@ export function createRunsService(deps: RunsDeps) {
     return { run: toRunOutput(run), recommendations: recs, campaigns, isLatest: latestRow?.id === runId };
   }
 
-  return { trigger, latest, campaignAnalyses, listRuns, runDetail };
+  return { trigger, triggerOnboarding, latest, campaignAnalyses, listRuns, runDetail };
 }
 
 /** Linha de `entity_analyses` (campanha) → output do cartão (métrica + gargalo curados). */

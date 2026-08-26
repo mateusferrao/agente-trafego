@@ -183,6 +183,14 @@ export function buildContainer(): Container {
       trackingBrokenMinFunnel: env.ANALYSIS_QUALITY_TRACKING_BROKEN_MIN_FUNNEL,
     },
   });
+  // runs antes do literal: connections reusa `triggerOnboarding` (1ª análise + schedule no connect).
+  const runs = createRunsService({
+    db,
+    scheduler,
+    metering,
+    ensureAgent: (orgId, accountId) => agents.getOrCreateForAccount(orgId, accountId),
+    costCapUsd: env.LLM_COST_CAP_USD_PER_PERIOD,
+  });
   const services: Services = {
     auth: createAuthService({
       repo: createDrizzleAuthRepo(db),
@@ -202,6 +210,7 @@ export function buildContainer(): Container {
       adsPlatform,
       vault,
       ensureAgent: (orgId, accountId) => agents.getOrCreateForAccount(orgId, accountId),
+      onboardAccount: (orgId, accountId, agentId) => runs.triggerOnboarding(orgId, accountId, agentId),
     }),
     channels: createChannelsService({ db, messaging }),
     groups: createGroupsService({ db, messaging }),
@@ -209,13 +218,7 @@ export function buildContainer(): Container {
     agents,
     approvals: createApprovalsService({ db, approvals, scheduler, revertTtlDays: env.REVERT_TTL_DAYS }),
     recommendations: createRecommendationsService({ db }),
-    runs: createRunsService({
-      db,
-      scheduler,
-      metering,
-      ensureAgent: (orgId, accountId) => agents.getOrCreateForAccount(orgId, accountId),
-      costCapUsd: env.LLM_COST_CAP_USD_PER_PERIOD,
-    }),
+    runs,
     dashboard: createDashboardService({
       db,
       scheduler,

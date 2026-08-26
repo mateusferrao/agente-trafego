@@ -97,7 +97,7 @@ export type ApprovalApplyPayload = {
   readonly notifyRef?: ConversationRef;
 };
 
-export type AgentRunTrigger = "cron" | "on_demand" | "conversation" | "signal";
+export type AgentRunTrigger = "cron" | "on_demand" | "conversation" | "signal" | "onboarding";
 
 /** Alvo de push do resultado (5b-2): run disparado pelo WhatsApp devolve na conversa. */
 export type RunNotifyTarget = {

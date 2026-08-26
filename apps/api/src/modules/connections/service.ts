@@ -20,6 +20,9 @@ export interface ConnectionsDeps {
   readonly vault: CredentialVaultPort;
   /** Garante o agente (criação lazy) de cada conta recém-ativada — zero-config (CLAUDE.md §10). */
   readonly ensureAgent: EnsureAgent;
+  /** Onboarding (Slice 4): dispara a 1ª análise + registra o schedule ao ativar a conta.
+   *  Best-effort — não derruba a seleção se falhar (a conta já está ativa). */
+  readonly onboardAccount?: (orgId: OrgId, accountId: string, agentId: string) => Promise<void>;
 }
 
 /**
@@ -137,7 +140,9 @@ export function createConnectionsService(deps: ConnectionsDeps) {
       });
       const activatedIds = await deps.repo.applySelect(orgId, connectionId, plan, conn.tokenCripto);
       for (const accountId of activatedIds) {
-        await deps.ensureAgent(orgId, accountId);
+        const { agentId } = await deps.ensureAgent(orgId, accountId);
+        // 1ª análise automática + schedule (Slice 4) — o momento de valor do onboarding.
+        await deps.onboardAccount?.(orgId, accountId, agentId);
       }
       const managed = await deps.repo.listManaged(orgId, connectionId);
       return { available: available.map(toConnectionAccount), managed };
