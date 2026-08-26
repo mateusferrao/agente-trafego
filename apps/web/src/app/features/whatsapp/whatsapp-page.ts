@@ -1,10 +1,12 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, output, signal } from '@angular/core';
 import { toast } from 'ngx-sonner';
 import { UiButton, UiSpinner, UiEyebrow, UiInput } from '@ui';
 import { ChannelApiService } from '@core/api/channel-api.service';
 import type { ChannelStateOutput, GroupsListOutput } from '@core/api/generated';
 
 type GroupOption = GroupsListOutput['groups'][number];
+/** Passo do wizard sequencial (mesmo padrão da integração Meta). */
+type WaStep = 'pair' | 'recipient' | 'group';
 
 const POLL_INTERVAL_MS = 2500;
 /** Tenta reagendar o polling após erros transitórios de rede antes de desistir. */
@@ -40,9 +42,17 @@ function onlyDigits(value: string): string {
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [UiButton, UiSpinner, UiEyebrow, UiInput],
   template: `
-    <div class="flex flex-col gap-4">
-      <!-- Passo 1: conectar a instância por QR -->
-      <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
+    <div class="flex flex-col gap-5">
+      <!-- Step dots do wizard sequencial (padrão da integração Meta) -->
+      <div class="flex items-center gap-1.5" aria-hidden="true">
+        @for (i of stepDots; track i) {
+          <span class="h-1.5 flex-1 rounded-full transition-colors" [class]="dotClass(i)"></span>
+        }
+      </div>
+      @switch (step()) {
+        @case ('pair') {
+          <!-- Passo 1: conectar a instância por QR -->
+          <section class="flex flex-col gap-4">
         <div class="flex flex-col gap-1">
           <app-ui-eyebrow>Passo 1</app-ui-eyebrow>
           <h2 class="font-brand text-sm font-semibold text-ink">Parear o número do agente</h2>
@@ -100,10 +110,11 @@ function onlyDigits(value: string): string {
             {{ connecting() ? 'Gerando…' : 'Conectar WhatsApp' }}
           </button>
         }
-      </section>
-
-      <!-- Passo 2: verificar o número que vai RECEBER as análises -->
-      <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5" [class.opacity-50]="!connected()">
+          </section>
+        }
+        @case ('recipient') {
+          <!-- Passo 2: verificar o número que vai RECEBER as análises -->
+          <section class="flex flex-col gap-4">
         <div class="flex flex-col gap-1">
           <app-ui-eyebrow>Passo 2</app-ui-eyebrow>
           <h2 class="font-brand text-sm font-semibold text-ink">Confirmar para onde receber</h2>
@@ -189,11 +200,11 @@ function onlyDigits(value: string): string {
             </div>
           }
         }
-      </section>
-
-      <!-- Passo 3: grupo do WhatsApp (opcional) — espelho do número: 1 grupo por org,
-           o agente atua nele igual à DM (leitura, escrita, aprovação, config). -->
-      <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5" [class.opacity-50]="!connected()">
+          </section>
+        }
+        @case ('group') {
+          <!-- Passo 3: grupo do WhatsApp (opcional) — espelho do número: 1 grupo por org. -->
+          <section class="flex flex-col gap-4">
         <div class="flex flex-col gap-1">
           <app-ui-eyebrow>Passo 3 · opcional</app-ui-eyebrow>
           <h2 class="font-brand text-sm font-semibold text-ink">Grupo do WhatsApp</h2>
@@ -281,7 +292,31 @@ function onlyDigits(value: string): string {
             </button>
           }
         }
-      </section>
+          </section>
+        }
+      }
+
+      <!-- Footer do wizard: navegação sequencial -->
+      <div class="flex items-center justify-between gap-2 border-t border-line pt-3">
+        @if (step() === 'pair') {
+          <span></span>
+        } @else {
+          <button appButton variant="ghost" size="sm" type="button" (click)="back()">Voltar</button>
+        }
+        @switch (step()) {
+          @case ('pair') {
+            <button appButton variant="primary" size="sm" type="button" [disabled]="!connected()" (click)="next()">
+              Continuar
+            </button>
+          }
+          @case ('recipient') {
+            <button appButton variant="primary" size="sm" type="button" (click)="next()">Continuar</button>
+          }
+          @case ('group') {
+            <button appButton variant="primary" size="sm" type="button" (click)="finish()">Concluir</button>
+          }
+        }
+      </div>
     </div>
   `,
 })
@@ -293,6 +328,14 @@ export class WhatsappConnect {
   private connectStarted = false;
   /** erros de polling consecutivos (reagenda até o teto antes de parar). */
   private pollErrors = 0;
+
+  /** Wizard sequencial (padrão Meta): parear → destinatário → grupo. */
+  readonly done = output<void>();
+  protected readonly step = signal<WaStep>('pair');
+  protected readonly stepDots = [0, 1, 2] as const;
+  protected readonly stepIndex = computed(() =>
+    this.step() === 'pair' ? 0 : this.step() === 'recipient' ? 1 : 2,
+  );
 
   protected readonly loading = signal(true);
   protected readonly connecting = signal(false);
@@ -401,6 +444,19 @@ export class WhatsappConnect {
   protected qrSrc(): string {
     const qr = this.qrCode() ?? '';
     return qr.startsWith('data:') ? qr : `${DATA_URL_PREFIX}${qr}`;
+  }
+
+  protected dotClass(i: number): string {
+    return i <= this.stepIndex() ? 'bg-accent' : 'bg-line';
+  }
+  protected next(): void {
+    this.step.update((s) => (s === 'pair' ? 'recipient' : s === 'recipient' ? 'group' : s));
+  }
+  protected back(): void {
+    this.step.update((s) => (s === 'group' ? 'recipient' : s === 'recipient' ? 'pair' : s));
+  }
+  protected finish(): void {
+    this.done.emit();
   }
 
   protected connect(): void {

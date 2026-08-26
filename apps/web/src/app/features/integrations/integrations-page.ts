@@ -213,7 +213,7 @@ const CHANNEL_TEXT: Record<ChannelStatus, string> = {
             </button>
           </div>
           <div class="mt-4">
-            <app-whatsapp-connect />
+            <app-whatsapp-connect (done)="closeWhatsapp()" />
           </div>
         </section>
       </div>
