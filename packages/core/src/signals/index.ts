@@ -101,9 +101,9 @@ function findingsFor(c: SignalComparison, t: SignalThresholds): SignalFinding[] 
 
 /** Rótulo PT do que mudou, p/ dirigir o analista (não é veredito — ele investiga). */
 const SIGNAL_PHRASE: Readonly<Record<SignalMetric, Readonly<Record<SignalDirection, string>>>> = {
-  results: { drop: "queda de resultado", spike: "salto de resultado", zeroed: "resultado zerado" },
-  spend: { drop: "queda de gasto", spike: "gasto disparando", zeroed: "gasto zerado (parou de rodar)" },
-  cpa: { drop: "queda de CPA", spike: "CPA estourando", zeroed: "CPA zerado" },
+  results: { drop: "queda de resultado", spike: "salto de resultado", zeroed: "resultado zerado", reactivated: "resultado retomado" },
+  spend: { drop: "queda de gasto", spike: "gasto disparando", zeroed: "gasto zerado (parou de rodar)", reactivated: "voltou a rodar (gasto retomado)" },
+  cpa: { drop: "queda de CPA", spike: "CPA estourando", zeroed: "CPA zerado", reactivated: "CPA retomado" },
 };
 
 /**

@@ -50,6 +50,8 @@ export const panoramaCard = z.object({
   /** grade da ÚLTIMA análise (datada) — null se nunca analisada. */
   grade: z.string().nullable(),
   gradeAsOf: z.string().nullable(),
+  /** conta parada (activity_state=dormant) — o agente vigia o retorno (backoff). */
+  dormant: z.boolean(),
   /** KPIs AO VIVO (insights_snapshots) — null se sem atividade. */
   live: liveKpis.nullable(),
   asOf: z.string().nullable(),

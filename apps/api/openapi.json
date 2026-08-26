@@ -3674,6 +3674,9 @@
                     "null"
                   ]
                 },
+                "dormant": {
+                  "type": "boolean"
+                },
                 "live": {
                   "type": [
                     "object",
@@ -3755,6 +3758,7 @@
                 "tokenStatus",
                 "grade",
                 "gradeAsOf",
+                "dormant",
                 "live",
                 "asOf",
                 "stale",
@@ -3847,6 +3851,9 @@
                     "null"
                   ]
                 },
+                "dormant": {
+                  "type": "boolean"
+                },
                 "live": {
                   "type": [
                     "object",
@@ -3928,6 +3935,7 @@
                 "tokenStatus",
                 "grade",
                 "gradeAsOf",
+                "dormant",
                 "live",
                 "asOf",
                 "stale",
@@ -4046,6 +4054,9 @@
                     "null"
                   ]
                 },
+                "dormant": {
+                  "type": "boolean"
+                },
                 "live": {
                   "type": [
                     "object",
@@ -4127,6 +4138,7 @@
                 "tokenStatus",
                 "grade",
                 "gradeAsOf",
+                "dormant",
                 "live",
                 "asOf",
                 "stale",

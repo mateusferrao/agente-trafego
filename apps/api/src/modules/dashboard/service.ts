@@ -186,6 +186,7 @@ export function createDashboardService(deps: DashboardDeps) {
         agentPaused: sql<boolean>`${agents.status} <> 'active'`,
         name: adAccounts.name,
         currency: adAccounts.currency,
+        dormant: sql<boolean>`${adAccounts.activityState} = 'dormant'`,
         goals: agents.goals,
         tokenStatus: sql<string>`coalesce(${platformConnections.tokenStatus}, ${adAccounts.tokenStatus}, 'unchecked')`,
       })
@@ -241,6 +242,7 @@ export function createDashboardService(deps: DashboardDeps) {
         currency: a.currency,
         agentPaused: a.agentPaused,
         tokenStatus: a.tokenStatus,
+        dormant: a.dormant,
         grade,
         gradeAsOf: finishedAt ? finishedAt.toISOString() : null,
         live: l?.totals ?? null,

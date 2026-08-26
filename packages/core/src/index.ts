@@ -19,6 +19,7 @@ export * from "./cost-cap/index.js";
 export * from "./message/index.js";
 export * from "./group-context/index.js";
 export * from "./signals/index.js";
+export * from "./dormancy/index.js";
 export * from "./map-reduce/index.js";
 export * from "./benchmarks/index.js";
 export * from "./market-reference/index.js";

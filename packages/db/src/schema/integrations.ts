@@ -2,6 +2,7 @@ import { boolean, index, integer, jsonb, pgTable, text, timestamp, unique, uuid 
 import type { EncryptedPayload } from "@trafego/shared";
 import {
   accountLifecycle,
+  activityState,
   channelGroupStatus,
   channelStatus,
   contactRole,
@@ -65,6 +66,11 @@ export const adAccounts = pgTable(
     name: text("name"),
     currency: text("currency"),
     status: accountLifecycle("status").notNull().default("active"),
+    // Atividade (pivô): última vez com gasto/impressões + estado (active|dormant).
+    // Ortogonal ao `status` (lifecycle de conexão). `last_activity_at` null =
+    // nunca teve atividade → o relógio da dormância cai na data de conexão (createdAt).
+    lastActivityAt: timestamp("last_activity_at", { withTimezone: true }),
+    activityState: activityState("activity_state").notNull().default("active"),
     tokenCripto: jsonb("token_cripto").$type<EncryptedPayload>().notNull(),
     tokenStatus: tokenStatus("token_status").notNull().default("unchecked"),
     lastValidatedAt: timestamp("last_validated_at", { withTimezone: true }),

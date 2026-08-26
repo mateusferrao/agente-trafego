@@ -19,6 +19,7 @@ export function startInsightsSweepWorker(
     scheduler: deps.ports.scheduler,
     logger: deps.logger,
     thresholdMin: deps.insights.freshThresholdMin,
+    dormantThresholdMin: deps.dormancy.sweepIntervalMin,
     now: () => Date.now(),
     // reusa a janela de stagger da análise (espalha os enqueues sem bater a Meta juntas).
     staggerWindowMs: deps.cron.jitterMs,

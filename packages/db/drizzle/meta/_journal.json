@@ -239,6 +239,13 @@
       "when": 1787709692968,
       "tag": "0033_curly_zuras",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1787712130134,
+      "tag": "0034_confused_agent_brand",
+      "breakpoints": true
     }
   ]
 }

@@ -64,6 +64,11 @@ export interface WorkerDeps {
   readonly insights: {
     readonly freshThresholdMin: number;
   };
+  /** Dormância (pivô): dias sem atividade p/ dormir + intervalo lento do sweep dormante. */
+  readonly dormancy: {
+    readonly afterDays: number;
+    readonly sweepIntervalMin: number;
+  };
   /** Origem do site p/ deep-link nas mensagens de WhatsApp. */
   readonly webOrigin: string;
   /** Versão do analisador de visão (chave do cache de criativos — bump invalida). */
@@ -268,6 +273,10 @@ export async function buildComposition(): Promise<WorkerDeps> {
     },
     insights: {
       freshThresholdMin: env.INSIGHTS_FRESH_THRESHOLD_MIN,
+    },
+    dormancy: {
+      afterDays: env.DORMANT_AFTER_DAYS,
+      sweepIntervalMin: env.DORMANT_SWEEP_INTERVAL_MIN,
     },
     webOrigin: env.WEB_ORIGIN,
     visionAnalyzerVersion: env.CREATIVE_VISION_ANALYZER_VERSION,

@@ -33,6 +33,9 @@ export const platformType = pgEnum("platform_type", ["meta"]);
 // da plataforma (soft, preserva agente/histórico); `removed` = tirada pelo dono
 // (soft). Nunca deletamos (cascata apagaria agente + histórico — §8/§13).
 export const accountLifecycle = pgEnum("account_lifecycle", ["active", "unavailable", "removed"]);
+// Estado de ATIVIDADE da conta (pivô) — ORTOGONAL ao lifecycle: uma conta `active`
+// pode estar `dormant` (parou de anunciar) → backoff do cron; reativação recupera.
+export const activityState = pgEnum("activity_state", ["active", "dormant"]);
 export const channelStatus = pgEnum("channel_status", [
   "disconnected",
   "connecting",

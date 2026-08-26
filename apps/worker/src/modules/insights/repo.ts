@@ -24,6 +24,11 @@ export interface InsightsSnapshotsRepo {
   /** Lê a janela p/ montar o brief (reconstrói InsightRow do jsonb). */
   listWindow(orgId: string, adAccountId: string, since: string, until: string): Promise<InsightRow[]>;
   /**
+   * A conta teve atividade (spend>0 OU impressions>0) no nível `account` desde `since`?
+   * Predicado da dormância (mesmo critério do brief). Barato (só o nível account).
+   */
+  accountActivitySince(orgId: string, adAccountId: string, since: string): Promise<boolean>;
+  /**
    * Última vez que sincronizamos (max `updated_at`) por conta = base do as-of e da
    * porta de frescura. Batch (sem N+1) — 1 query p/ N contas. Contas sem snapshot não
    * aparecem no mapa (→ `shouldSync` trata como null = precisa sync).
@@ -77,6 +82,24 @@ export function createDrizzleInsightsSnapshotsRepo(db: Database): InsightsSnapsh
       const map = new Map<string, Date>();
       for (const r of rows) if (r.latest) map.set(r.accountId, r.latest);
       return map;
+    },
+
+    async accountActivitySince(orgId, adAccountId, since) {
+      const rows = await db
+        .select({ metricsJson: insightsSnapshots.metricsJson })
+        .from(insightsSnapshots)
+        .where(
+          and(
+            eq(insightsSnapshots.orgId, orgId),
+            eq(insightsSnapshots.adAccountId, adAccountId),
+            eq(insightsSnapshots.entityLevel, "account"),
+            gte(insightsSnapshots.date, since),
+          ),
+        );
+      return rows.some((r) => {
+        const m = r.metricsJson?.metrics ?? {};
+        return (m.spend ?? 0) > 0 || (m.impressions ?? 0) > 0;
+      });
     },
 
     async listWindow(orgId, adAccountId, since, until) {

@@ -121,6 +121,12 @@ const ANALYSIS_TEMPERATURE = 0.2;
 const NO_ACTIVITY_SUMMARY =
   "Sua conta não teve gasto nem impressões no período. Não há o que analisar por enquanto.";
 
+/** Empty-state amigável do chat/on-demand em conta zerada (+ oferta de alerta se OFF). */
+function buildNoActivityMessage(accountName: string, offerReactivation: boolean): string {
+  const base = `${accountName}: não teve gasto nem impressões nos últimos dias — não há dados pra analisar ainda.`;
+  return offerReactivation ? `${base}\n\nQuer que eu te avise assim que ela voltar a rodar?` : base;
+}
+
 
 /** Repos usados pelos nós — injetáveis p/ teste (default = Drizzle sobre deps.db). */
 export interface AnalysisNodeRepos {
@@ -786,7 +792,16 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const isRunPush = state.trigger === "cron" || state.trigger === "on_demand";
     const runPushOff = isRunPush && state.notifyPolicy?.runPush.enabled === false;
     const out = state.analysisOutput;
-    if (!out || !state.account) return { outboundMessage: null, narrative: null }; // sem análise → nada a renderizar
+    if (!out || !state.account) {
+      // conta zerada (brief vazio): cron/signal = silêncio; on-demand/chat = empty-state
+      // útil + oferta de ligar a reativação (só quando está OFF — evita oferta redundante).
+      const emptyDeliver = isWhatsapp || (state.trigger === "on_demand" && !runPushOff);
+      if (state.account && emptyDeliver) {
+        const offer = state.notifyPolicy?.reactivation?.enabled !== true;
+        return { outboundMessage: buildNoActivityMessage(state.account.name, offer), narrative: null };
+      }
+      return { outboundMessage: null, narrative: null }; // sem análise → nada a renderizar
+    }
 
     const cfg = state.analysisConfig ?? deps.analysis;
     const posture = state.posture ?? DEFAULT_POSTURE;

@@ -48,6 +48,8 @@ export type PanoramaCardVm = PanoramaListOutput["accounts"][number];
             <span class="text-xs text-muted">CPA {{ money(t.cpa, c.currency) }}</span>
           }
         </div>
+      } @else if (c.dormant) {
+        <span class="text-xs text-warning-strong">conta parada — vigiando o retorno</span>
       } @else {
         <span class="text-xs text-muted">sem gasto no período</span>
       }

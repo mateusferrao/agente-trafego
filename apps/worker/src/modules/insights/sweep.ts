@@ -18,6 +18,8 @@ export interface InsightsSweepDeps {
   readonly logger: Logger;
   /** limite de frescura (min) — `INSIGHTS_FRESH_THRESHOLD_MIN`. */
   readonly thresholdMin: number;
+  /** limite LENTO p/ contas dormantes — `DORMANT_SWEEP_INTERVAL_MIN` (corta chamadas Meta). */
+  readonly dormantThresholdMin: number;
   /** agora (ms) injetado p/ testabilidade determinística. */
   readonly now: () => number;
   /** janela (ms) p/ espalhar os enqueues (stagger anti-thundering-herd). */
@@ -34,7 +36,7 @@ export function createInsightsSweep(deps: InsightsSweepDeps): InsightsSweep {
       // contas sob gestão (cross-org — singleton): agente ativo + conta lifecycle active.
       // Agente pausado NÃO entra (fica fresco via lazy on-view quando aberto — decisão 6a).
       const rows = await deps.db
-        .select({ orgId: agents.orgId, accountId: agents.adAccountId })
+        .select({ orgId: agents.orgId, accountId: agents.adAccountId, activityState: adAccounts.activityState })
         .from(agents)
         .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
         .where(and(eq(agents.status, "active"), eq(adAccounts.status, "active")));
@@ -43,7 +45,9 @@ export function createInsightsSweep(deps: InsightsSweepDeps): InsightsSweep {
       const now = deps.now();
       const stale = rows.filter((r) => {
         const at = latest.get(r.accountId);
-        return shouldSync({ latestSnapshotAt: at ? at.getTime() : null, now, thresholdMin: deps.thresholdMin });
+        // conta dormante é varrida numa cadência LENTA (só p/ pegar a reativação).
+        const thresholdMin = r.activityState === "dormant" ? deps.dormantThresholdMin : deps.thresholdMin;
+        return shouldSync({ latestSnapshotAt: at ? at.getTime() : null, now, thresholdMin });
       });
 
       // spread uniforme sobre a janela de stagger (não estoura a Meta juntas).

@@ -138,6 +138,11 @@ export const envSchema = z.object({
   // (porta `shouldSync`, compartilhada por sweep/lazy/análise/botão). Também = intervalo
   // do sweep periódico. ~2-3h de default (equilíbrio frescura × chamadas Meta).
   INSIGHTS_FRESH_THRESHOLD_MIN: z.coerce.number().int().positive().default(120),
+  // Dormância (pivô): dias sem atividade (spend/impressões) p/ a conta virar dormante
+  // (backoff do cron); e o intervalo LENTO de varredura do sweep p/ contas dormantes
+  // (detecta a reativação em ~1 dia sem queimar chamadas Meta à toa).
+  DORMANT_AFTER_DAYS: z.coerce.number().int().positive().default(7),
+  DORMANT_SWEEP_INTERVAL_MIN: z.coerce.number().int().positive().default(1440),
   // ANALYSIS_MAX_CREATIVES_VISION = default global; alvo = config por agente (DB).
   // Fallback até 4 ligar a config por-agente. Não-usado na Fatia 0.
   ANALYSIS_MAX_CREATIVES_VISION: z.coerce

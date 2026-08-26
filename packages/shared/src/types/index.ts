@@ -613,7 +613,7 @@ export interface AutonomyPolicy {
 // detecção determinística barata (D-1 fechado vs baseline) o produz, o run de
 // análise investiga. Ponto de convergência com sinais EXTERNOS do cliente (Fatia 9).
 export type SignalMetric = "results" | "spend" | "cpa";
-export type SignalDirection = "drop" | "spike" | "zeroed";
+export type SignalDirection = "drop" | "spike" | "zeroed" | "reactivated";
 
 export interface SignalEntityRef {
   readonly level: EntityLevel;

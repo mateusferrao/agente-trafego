@@ -39,6 +39,7 @@ describe("createInsightsSweep.sweep", () => {
       scheduler,
       logger,
       thresholdMin: 120,
+      dormantThresholdMin: 1440,
       now: () => NOW,
       staggerWindowMs: 60_000,
     });
@@ -62,6 +63,7 @@ describe("createInsightsSweep.sweep", () => {
       scheduler,
       logger,
       thresholdMin: 120,
+      dormantThresholdMin: 1440,
       now: () => NOW,
       staggerWindowMs: 60_000,
     });
@@ -81,6 +83,7 @@ describe("createInsightsSweep.sweep", () => {
       scheduler,
       logger,
       thresholdMin: 120,
+      dormantThresholdMin: 1440,
       now: () => NOW,
       staggerWindowMs: 60_000,
     });
@@ -97,6 +100,7 @@ describe("createInsightsSweep.sweep", () => {
       scheduler,
       logger,
       thresholdMin: 120,
+      dormantThresholdMin: 1440,
       now: () => NOW,
       staggerWindowMs: 60_000,
     });

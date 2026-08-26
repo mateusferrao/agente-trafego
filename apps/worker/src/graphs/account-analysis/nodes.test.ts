@@ -93,6 +93,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
     upsertMany: vi.fn(async () => {}),
     listWindow: vi.fn(async () => rows),
     latestSyncedAtByAccounts: vi.fn(async () => new Map()),
+    accountActivitySince: vi.fn(async () => false),
   };
   const entityAnalyses: EntityAnalysesRepo = {
     loadByAgent: vi.fn(async () => opts.last ?? new Map<string, LastEntityAnalysis>()),

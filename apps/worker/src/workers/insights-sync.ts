@@ -6,12 +6,14 @@ import { Worker } from "bullmq";
 import type { Redis } from "ioredis";
 import { and, eq } from "drizzle-orm";
 import { adAccounts, agents, loadOrgTimezone, platformConnections } from "@trafego/db";
-import { todayInTz } from "@trafego/core";
-import { INSIGHTS_SYNC_JOB, SYNC_QUEUE, type InsightsSyncPayload } from "@trafego/shared";
+import { addDays, evaluateDormancy, reactivationSignal, todayInTz } from "@trafego/core";
+import { INSIGHTS_SYNC_JOB, SYNC_QUEUE, type InsightsSyncPayload, type NotifyPolicy } from "@trafego/shared";
 import type { WorkerDeps } from "../composition.js";
 import { markConnectionTokenInvalid } from "../lib/mark-token-invalid.js";
 import { createRunDispatcher } from "../modules/dispatch/run-dispatcher.js";
 import { runAlertGate } from "../modules/alerts/gate.js";
+import { makeAccountCron } from "../schedulers/account-cron.js";
+import { createDrizzleInsightsSnapshotsRepo } from "../modules/insights/repo.js";
 
 export async function runInsightsSync(deps: WorkerDeps, payload: InsightsSyncPayload): Promise<void> {
   const { db, ports, logger, insightsSync } = deps;
@@ -22,7 +24,12 @@ export async function runInsightsSync(deps: WorkerDeps, payload: InsightsSyncPay
     .select({
       id: adAccounts.id,
       adAccountId: adAccounts.adAccountId,
+      name: adAccounts.name,
       status: adAccounts.status,
+      tokenStatus: adAccounts.tokenStatus,
+      lastActivityAt: adAccounts.lastActivityAt,
+      activityState: adAccounts.activityState,
+      connectedAt: adAccounts.createdAt,
       accountToken: adAccounts.tokenCripto,
       connToken: platformConnections.tokenCripto,
     })
@@ -71,32 +78,80 @@ export async function runInsightsSync(deps: WorkerDeps, payload: InsightsSyncPay
     "sync:concluído",
   );
 
-  // Gate do alerta proativo (F4): dados novos → checa mudança material (D-1 vs baseline)
-  // e, se cruza o limiar, dispara um run dirigido. Determinístico/barato; throttle +
-  // política de alerta ficam no gate. Falha aqui não invalida o sync (best-effort).
+  // Dormância + reativação (pivô) + gate do alerta proativo (F4). Best-effort:
+  // falha aqui não invalida o sync.
   try {
     const [agent] = await db
-      .select({ id: agents.id })
+      .select({ id: agents.id, notifyPolicy: agents.notifyPolicy })
       .from(agents)
       .where(and(eq(agents.adAccountId, account.id), eq(agents.orgId, payload.orgId), eq(agents.status, "active")))
       .limit(1);
-    if (agent) {
-      const dispatcher = createRunDispatcher({
-        db,
-        scheduler: ports.scheduler,
-        logger,
-        metering: ports.metering,
-        envCostCapUsd: deps.costCapUsd,
-      });
-      await runAlertGate(
-        { db, logger, dispatch: dispatcher.dispatch },
-        { orgId: payload.orgId, agentId: agent.id, adAccountId: account.id, fallbackTz: deps.cron.tz },
-      );
+    if (!agent) return;
+
+    const dispatcher = createRunDispatcher({
+      db,
+      scheduler: ports.scheduler,
+      logger,
+      metering: ports.metering,
+      envCostCapUsd: deps.costCapUsd,
+    });
+
+    // Máquina de dormância: atividade recente (spend/impressões) → transição.
+    const today = todayInTz(new Date(), tz);
+    const since = addDays(today, -RECENT_ACTIVITY_LOOKBACK_DAYS);
+    const snapshotsRepo = createDrizzleInsightsSnapshotsRepo(db);
+    const hasActivity = await snapshotsRepo.accountActivitySince(payload.orgId, account.id, since);
+    const transition = evaluateDormancy({
+      hasActivity,
+      currentState: account.activityState,
+      lastActivityAt: account.lastActivityAt ? account.lastActivityAt.getTime() : null,
+      connectedAt: account.connectedAt.getTime(),
+      now: Date.now(),
+      afterDays: deps.dormancy.afterDays,
+      tokenValid: account.tokenStatus !== "invalid",
+      accountActive: account.status === "active",
+    });
+    const cron = makeAccountCron(deps);
+
+    if (transition.kind === "refresh_activity") {
+      await db.update(adAccounts).set({ lastActivityAt: new Date() }).where(eq(adAccounts.id, account.id));
+    } else if (transition.kind === "went_dormant") {
+      await db.update(adAccounts).set({ activityState: "dormant" }).where(eq(adAccounts.id, account.id));
+      await cron.removeAccountSchedule(account.id); // remove análise + pulso
+      logger.info({ accountId: account.id }, "dormancy:conta dormante — schedules removidos");
+      return; // dormante → não roda o gate de alerta
+    } else if (transition.kind === "reactivated") {
+      await db
+        .update(adAccounts)
+        .set({ activityState: "active", lastActivityAt: new Date() })
+        .where(eq(adAccounts.id, account.id));
+      await cron.resyncAccountSchedule(payload.orgId, account.id); // recria análise + pulso
+      logger.info({ accountId: account.id }, "dormancy:conta reativada — schedules recriados");
+      const policy = agent.notifyPolicy as NotifyPolicy | undefined;
+      if (policy?.reactivation?.enabled) {
+        await dispatcher.dispatch({
+          orgId: payload.orgId,
+          agentId: agent.id,
+          adAccountId: account.id,
+          trigger: "signal",
+          signalFinding: reactivationSignal(account.id, account.name),
+        });
+      }
+      return; // reativação já dispara a 1ª análise — não roda o gate normal
     }
+
+    // Conta ativa e estável → gate do alerta proativo (D-1 vs baseline).
+    await runAlertGate(
+      { db, logger, dispatch: dispatcher.dispatch },
+      { orgId: payload.orgId, agentId: agent.id, adAccountId: account.id, fallbackTz: deps.cron.tz },
+    );
   } catch (err) {
-    logger.warn({ accountId: account.id, err }, "sync:gate de alerta falhou (ignorado)");
+    logger.warn({ accountId: account.id, err }, "sync:dormância/gate de alerta falhou (ignorado)");
   }
 }
+
+/** Janela recente p/ "a conta está rodando agora?" (D-1 + hoje + folga de lag). */
+const RECENT_ACTIVITY_LOOKBACK_DAYS = 3;
 
 /** Sobe o Worker BullMQ que processa os jobs `insights-sync-run`. */
 export function startInsightsSyncWorker(deps: WorkerDeps, connection: Redis): Worker<InsightsSyncPayload> {
