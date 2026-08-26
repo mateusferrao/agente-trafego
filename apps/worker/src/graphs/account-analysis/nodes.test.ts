@@ -145,6 +145,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
       model: "m",
       reviewModel: "review-m",
       unitModel: "m",
+      unitFallbackModels: [],
       messageModel: "m",
       visionModel: "m",
       windowDays: 7,

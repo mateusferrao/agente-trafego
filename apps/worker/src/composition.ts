@@ -105,6 +105,8 @@ export interface WorkerDeps {
     readonly httpTimeoutMs: number;
     /** Retentativas por chamada de LLM (rede/429/5xx) — reroteia o provider ruim. */
     readonly maxRetries: number;
+    /** modelo de RESERVA do chat — se o primário esgotar o retry, tenta este (também com retry). */
+    readonly fallbackModel: string;
     /** Fallback de custo (bug do bindTools suprimindo usage.cost — ver nodes.ts). */
     readonly fetchGenerationCost: (generationId: string) => Promise<number | undefined>;
     /** Kill-switch de plataforma do ingest de contexto de grupo (default: ligado). */
@@ -193,11 +195,12 @@ export async function buildComposition(): Promise<WorkerDeps> {
     baseUrl: env.OPENROUTER_BASE_URL,
     maxRetries: env.LLM_MAX_RETRIES,
     requestTimeoutMs: env.LLM_HTTP_TIMEOUT_MS,
+    logger, // observa retries + troca de modelo (pontos de falha)
     referer: env.WEB_ORIGIN,
     title: "AutoTraffic",
   });
   const llm = withLlmMetering(
-    new OpenRouterAdapter({ client: openRouterClient, structuredMaxRetries: env.LLM_STRUCTURED_MAX_RETRIES }),
+    new OpenRouterAdapter({ client: openRouterClient, structuredMaxRetries: env.LLM_STRUCTURED_MAX_RETRIES, logger }),
     { metering, provider: "openrouter", onError: (err) => logger.warn({ err }, "metering:falhou") },
   );
   // Transcrição de nota de voz inbound (STT via OpenRouter, endpoint /audio/transcriptions).
@@ -245,6 +248,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
       model: env.OPENROUTER_MODEL,
       reviewModel: env.OPENROUTER_REVIEW_MODEL,
       unitModel: env.OPENROUTER_UNIT_MODEL,
+      unitFallbackModels: env.OPENROUTER_UNIT_FALLBACK_MODEL ? [env.OPENROUTER_UNIT_FALLBACK_MODEL] : [],
       messageModel: env.OPENROUTER_MESSAGE_MODEL,
       visionModel: env.OPENROUTER_VISION_MODEL,
       windowDays: env.ANALYSIS_WINDOW_DAYS,
@@ -308,6 +312,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
       turnTimeoutMs: env.CONVERSATION_TURN_TIMEOUT_MS,
       httpTimeoutMs: env.CONVERSATION_HTTP_TIMEOUT_MS,
       maxRetries: env.LLM_MAX_RETRIES,
+      fallbackModel: env.CONVERSATION_FALLBACK_MODEL,
       fetchGenerationCost: (id) => openRouterClient.getGenerationCost(id),
       groupIngestContext: env.TRAFEGO_GROUP_INGEST_CONTEXT,
       groupContextRetentionDays: env.GROUP_CONTEXT_RETENTION_DAYS,

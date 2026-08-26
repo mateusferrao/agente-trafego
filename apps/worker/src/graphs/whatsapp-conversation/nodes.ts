@@ -430,8 +430,35 @@ export function makeConversationNodes(
       maxTurns: deps.conversation.historyTurns,
       maxTokens: deps.conversation.maxTokens,
     });
-    const response = (await makeChat(model, true).invoke([new SystemMessage(sys), ...windowed])) as AIMessage;
-    await recordConversationUsage(deps, ctx, model, response);
+    const msgs = [new SystemMessage(sys), ...windowed];
+    // Primário com retry/backoff (ChatOpenAI.maxRetries); se ESGOTAR, tenta o RESERVA
+    // (também com retry/backoff). Loga cada ponto de falha. Provider diverso = resiliência a blip.
+    const fallback = deps.conversation.fallbackModel;
+    let response: AIMessage;
+    let usedModel = model;
+    try {
+      response = (await makeChat(model, true).invoke(msgs)) as AIMessage;
+    } catch (err) {
+      if (!fallback || fallback === model) {
+        logger.error({ actor: actorLabel(ctx.ref), model, err: String(err) }, "conversation:LLM falhou (sem reserva)");
+        throw err;
+      }
+      logger.warn(
+        { actor: actorLabel(ctx.ref), model, fallback, err: String(err) },
+        "conversation:LLM primário esgotou — tentando reserva",
+      );
+      usedModel = fallback;
+      try {
+        response = (await makeChat(fallback, true).invoke(msgs)) as AIMessage;
+      } catch (err2) {
+        logger.error(
+          { actor: actorLabel(ctx.ref), model, fallback, err: String(err2) },
+          "conversation:LLM primário E reserva falharam",
+        );
+        throw err2;
+      }
+    }
+    await recordConversationUsage(deps, ctx, usedModel, response);
 
     // limpa pendências expiradas (o "sim" tardio não aplica algo esquecido).
     const update: WhatsappConversationUpdate = { messages: [response] };

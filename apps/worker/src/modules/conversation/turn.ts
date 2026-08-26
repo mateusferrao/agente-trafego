@@ -277,6 +277,11 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
     const last = result.messages.at(-1) as AIMessage | undefined;
     const text = typeof last?.content === "string" ? last.content.trim() : "";
     if (text.length > 0) reply = text;
+    else
+      logger.error(
+        { orgId: input.orgId, lastType: last?.getType?.(), toolCalls: last?.tool_calls?.length ?? 0 },
+        "conversation:grafo terminou sem texto — usando fallback",
+      );
   } catch (err) {
     logger.error({ err, orgId: input.orgId }, "conversation:turn falhou");
   }

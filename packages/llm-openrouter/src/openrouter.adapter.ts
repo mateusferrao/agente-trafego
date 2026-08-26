@@ -11,6 +11,7 @@ import { LLMProviderError } from "@trafego/shared/ports";
 import { sleep } from "@trafego/shared";
 import {
   OpenRouterClient,
+  type ClientLogger,
   type OpenRouterChatRequest,
   type OpenRouterChatResponse,
   type OpenRouterContentPart,
@@ -26,6 +27,8 @@ export interface OpenRouterAdapterDeps {
   readonly structuredMaxRetries?: number;
   /** injeção p/ testes do backoff entre retentativas de parse. */
   readonly sleepFn?: (ms: number) => Promise<void>;
+  /** logger opcional p/ observar retries de parse (ponto de falha). */
+  readonly logger?: ClientLogger;
 }
 
 const DEFAULT_SCHEMA_NAME = "structured_output";
@@ -43,11 +46,13 @@ export class OpenRouterAdapter implements LLMProviderPort {
   private readonly client: OpenRouterClient;
   private readonly structuredMaxRetries: number;
   private readonly sleepFn: (ms: number) => Promise<void>;
+  private readonly logger: ClientLogger | undefined;
 
   constructor(deps: OpenRouterAdapterDeps) {
     this.client = deps.client;
     this.structuredMaxRetries = deps.structuredMaxRetries ?? DEFAULT_STRUCTURED_MAX_RETRIES;
     this.sleepFn = deps.sleepFn ?? sleep;
+    this.logger = deps.logger;
   }
 
   async complete(request: LLMRequest): Promise<LLMCompletion<string>> {
@@ -79,6 +84,12 @@ export class OpenRouterAdapter implements LLMProviderPort {
       } catch (error) {
         if (!(error instanceof LLMProviderError) || error.kind !== "parse_error") throw error;
         lastError = error;
+        this.logger?.warn(
+          { model: request.model, attempt: attempt + 1, maxRetries: this.structuredMaxRetries, err: error.message },
+          attempt === this.structuredMaxRetries
+            ? "openrouter:structured output falhou no parse/schema após retries"
+            : "openrouter:parse/schema inválido — re-chamando o LLM",
+        );
         if (attempt === this.structuredMaxRetries) throw error;
         await this.sleepFn(STRUCTURED_RETRY_DELAY_MS);
       }
@@ -119,6 +130,9 @@ export class OpenRouterAdapter implements LLMProviderPort {
       ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
       ...(request.maxTokens !== undefined ? { max_tokens: request.maxTokens } : {}),
       ...(request.reasoning ? { reasoning: mapReasoning(request.reasoning) } : {}),
+      ...(request.fallbackModels && request.fallbackModels.length > 0
+        ? { fallbackModels: request.fallbackModels }
+        : {}),
     };
   }
 

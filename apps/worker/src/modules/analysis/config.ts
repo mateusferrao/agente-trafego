@@ -30,6 +30,8 @@ export interface AnalysisDefaults {
   readonly reviewModel: string;
   /** modelo BARATO por-anúncio (mapa) + visão. */
   readonly unitModel: string;
+  /** modelo(s) de RESERVA do unit — fallback com retry/backoff se o primário esgotar. */
+  readonly unitFallbackModels: readonly string[];
   /** modelo BARATO do redator do WhatsApp. */
   readonly messageModel: string;
   /** modelo multimodal (visão de criativo). */
@@ -87,6 +89,7 @@ export function resolveAnalysisConfig(
     model: str(mc.model) ?? defaults.model,
     reviewModel: str(mc.reviewModel) ?? defaults.reviewModel,
     unitModel: str(mc.unitModel) ?? defaults.unitModel,
+    unitFallbackModels: defaults.unitFallbackModels,
     messageModel: str(mc.messageModel) ?? defaults.messageModel,
     visionModel: str(mc.visionModel) ?? defaults.visionModel,
     reviewEnabled: typeof mc.reviewEnabled === "boolean" ? mc.reviewEnabled : defaults.reviewEnabled,

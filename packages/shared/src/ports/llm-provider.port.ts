@@ -55,6 +55,11 @@ export interface LLMRequest {
   readonly maxTokens?: number;
   /** reasoning (modelos que pensam antes de responder) — ver LLMReasoning. */
   readonly reasoning?: LLMReasoning;
+  /**
+   * Modelos de RESERVA em ordem. O adapter tenta o `model` com retry/backoff completo;
+   * se esgotar (erro transitório do provider), passa ao próximo — também com retry/backoff.
+   */
+  readonly fallbackModels?: readonly string[];
   /** metering (opcional) — atribui o custo desta chamada à org/run/tipo. */
   readonly meta?: LLMCallMeta;
   /**

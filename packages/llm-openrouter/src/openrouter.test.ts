@@ -134,6 +134,44 @@ describe("OpenRouterAdapter.completeStructured", () => {
   });
 });
 
+describe("OpenRouterClient fallback chain", () => {
+  it("primário esgota retries → tenta reserva (com retry) → sucede", async () => {
+    const fetchFn = vi.fn(async (_u: string, init: RequestInit) => {
+      const body = JSON.parse(init.body as string);
+      if (body.model === "primary") return jsonResponse({ error: "down" }, 503); // sempre 5xx
+      return jsonResponse(chatBody("ok da reserva")); // reserva sucede
+    }) as unknown as typeof fetch;
+    const client = new OpenRouterClient({ apiKey: "k", fetchFn, sleepFn: noSleep, maxRetries: 2 });
+    const res = await client.chatCompletion({
+      model: "primary",
+      messages: [{ role: "user", content: "oi" }],
+      fallbackModels: ["reserve"],
+    });
+    expect(res.choices[0]!.message.content).toBe("ok da reserva");
+    // primário: 1 + 2 retries = 3; reserva: 1 = 4
+    expect((fetchFn as unknown as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(4);
+  });
+
+  it("erro permanente (401) → NÃO retenta nem tenta reserva", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({ error: "unauthorized" }, 401)) as unknown as typeof fetch;
+    const client = new OpenRouterClient({ apiKey: "k", fetchFn, sleepFn: noSleep, maxRetries: 2 });
+    await expect(
+      client.chatCompletion({ model: "primary", messages: [], fallbackModels: ["reserve"] }),
+    ).rejects.toMatchObject({ kind: "invalid_request" });
+    expect((fetchFn as unknown as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
+  });
+
+  it("todos os modelos esgotam → lança upstream", async () => {
+    const fetchFn = vi.fn(async () => jsonResponse({ error: "down" }, 500)) as unknown as typeof fetch;
+    const client = new OpenRouterClient({ apiKey: "k", fetchFn, sleepFn: noSleep, maxRetries: 1 });
+    await expect(
+      client.chatCompletion({ model: "primary", messages: [], fallbackModels: ["reserve"] }),
+    ).rejects.toMatchObject({ kind: "upstream" });
+    // primário: 1+1=2; reserva: 1+1=2 → 4
+    expect((fetchFn as unknown as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(4);
+  });
+});
+
 describe("OpenRouterClient timeout", () => {
   it("passa AbortSignal quando requestTimeoutMs > 0", async () => {
     const fetchFn = vi.fn(async (_url: string, init: RequestInit) => {

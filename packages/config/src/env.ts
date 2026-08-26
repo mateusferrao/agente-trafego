@@ -75,6 +75,9 @@ export const envSchema = z.object({
   // gemini-flash-lite) com a MELHOR qualidade analítica do grupo testado (action types
   // corretos, budget% específico, diagnóstico de funil). Fallback: `mistralai/mistral-small-24b-instruct-2501`.
   OPENROUTER_UNIT_MODEL: z.string().min(1).default("qwen/qwen3.7-flash"),
+  // Reserva do unit (OpenRouter `models` fallback): se o provider do primário falhar, roteia
+  // pra cá. Testado p/ structured output (mistral-small honra schema; provider diverso do qwen).
+  OPENROUTER_UNIT_FALLBACK_MODEL: z.string().default("mistralai/mistral-small-24b-instruct-2501"),
   OPENROUTER_MESSAGE_MODEL: z.string().min(1).default("google/gemini-3.1-flash-lite"),
   // Versão do analisador de visão — bumpar invalida o cache de análises de criativo.
   // 2 (Fatia 6c): multi-frame HD + decomposição hook/angle/format/cta.
@@ -234,6 +237,10 @@ export const envSchema = z.object({
   // Modelo do chat: fallback quando o agente não tem `model_config.messageModel`.
   // Chat = alto volume + tarefa simples → default barato com bom tool-calling.
   CONVERSATION_MODEL: z.string().min(1).default("google/gemini-3.7-flash"),
+  // Reserva do chat: se o primário esgotar o retry/backoff (blip do provider), tenta este
+  // (TAMBÉM com retry/backoff). Provider DIVERSO do primário (OpenAI × Google) — testado com
+  // tools + histórico real. Vazio = sem reserva.
+  CONVERSATION_FALLBACK_MODEL: z.string().default("openai/gpt-4.1-mini"),
   // Janela de contexto por TURNO enviada ao LLM (turno = fala do usuário + resposta
   // completa até a próxima fala; nunca quebra par tool_call/tool_result).
   CONVERSATION_HISTORY_TURNS: z.coerce.number().int().positive().default(8),

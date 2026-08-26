@@ -23,6 +23,8 @@ export interface OpenRouterClientOptions {
   readonly maxRetries?: number;
   /** timeout por tentativa HTTP (ms). 0/undefined = sem timeout. Evita hang infinito. */
   readonly requestTimeoutMs?: number;
+  /** logger opcional p/ observar retries/fallback (pontos de falha). */
+  readonly logger?: ClientLogger;
   /** injeção p/ testes; default = fetch global. */
   readonly fetchFn?: typeof fetch;
   /** injeção p/ testes do backoff (evita esperar de verdade). */
@@ -56,6 +58,18 @@ export interface OpenRouterChatRequest {
   readonly response_format?: Readonly<Record<string, unknown>>;
   /** Controle de reasoning do OpenRouter (`{ effort | max_tokens | exclude | enabled }`). */
   readonly reasoning?: Readonly<Record<string, unknown>>;
+  /**
+   * Modelos de RESERVA (NÃO vai no corpo). Cadeia de fallback DO NOSSO lado: cada modelo
+   * roda o retry/backoff completo; se esgotar, tenta o próximo (também com retry/backoff).
+   * Diferente do `models` do OpenRouter (fallback de 1 tentativa) — aqui é retry por modelo.
+   */
+  readonly fallbackModels?: readonly string[];
+}
+
+/** Logger estrutural (pino-compatível) — injetável p/ ver retries/fallback sem acoplar pino. */
+export interface ClientLogger {
+  warn(obj: unknown, msg: string): void;
+  info?(obj: unknown, msg: string): void;
 }
 
 export interface OpenRouterChatResponse {
@@ -80,6 +94,7 @@ export class OpenRouterClient {
   private readonly title: string | undefined;
   private readonly maxRetries: number;
   private readonly requestTimeoutMs: number;
+  private readonly logger: ClientLogger | undefined;
   private readonly fetchFn: typeof fetch;
   private readonly sleepFn: (ms: number) => Promise<void>;
 
@@ -90,11 +105,17 @@ export class OpenRouterClient {
     this.title = options.title;
     this.maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 0;
+    this.logger = options.logger;
     this.fetchFn = options.fetchFn ?? fetch;
     this.sleepFn = options.sleepFn ?? sleep;
   }
 
-  /** POST /chat/completions com Authorization Bearer + retry/backoff. */
+  /**
+   * POST /chat/completions com Authorization Bearer. Cadeia de modelos: o primário roda o
+   * retry/backoff COMPLETO; se esgotar (erro transitório), tenta o RESERVA — também com
+   * retry/backoff. Erro permanente (400/401/403) NÃO tenta reserva (o request é que está
+   * ruim). Loga cada retry, cada troca de modelo e a exaustão total (pontos de falha).
+   */
   async chatCompletion(request: OpenRouterChatRequest): Promise<OpenRouterChatResponse> {
     const url = `${this.baseUrl}/chat/completions`;
     const headers: Record<string, string> = {
@@ -103,23 +124,43 @@ export class OpenRouterClient {
     };
     if (this.referer) headers["HTTP-Referer"] = this.referer;
     if (this.title) headers["X-Title"] = this.title;
-    // pede o accounting de custo explicitamente (no-op no OpenRouter atual; exigido
-    // por gateways compatíveis mais antigos) — garante `usage.cost` p/ o metering (§11).
-    const body = JSON.stringify({ ...request, usage: { include: true } });
+
+    const { fallbackModels, ...wire } = request;
+    // cadeia de modelos: primário + reservas, sem duplicatas/vazios.
+    const chain = [wire.model, ...(fallbackModels ?? [])].filter((m, i, a) => m && a.indexOf(m) === i);
 
     let lastError: unknown;
-    for (let attempt = 0; attempt <= this.maxRetries; attempt += 1) {
-      try {
-        return await this.attempt(url, headers, body);
-      } catch (error) {
-        lastError = error;
-        const retryable = error instanceof LLMProviderError &&
-          (error.kind === "rate_limited" || error.kind === "upstream");
-        if (!retryable || attempt === this.maxRetries) throw error;
-        await this.sleepFn(backoffDelay(attempt));
+    for (let mi = 0; mi < chain.length; mi += 1) {
+      const model = chain[mi]!;
+      // `usage.include` p/ garantir custo real no metering (§11); `model` = o da vez.
+      const body = JSON.stringify({ ...wire, model, usage: { include: true } });
+      for (let attempt = 0; attempt <= this.maxRetries; attempt += 1) {
+        try {
+          return await this.attempt(url, headers, body);
+        } catch (error) {
+          lastError = error;
+          const retryable =
+            error instanceof LLMProviderError && (error.kind === "rate_limited" || error.kind === "upstream");
+          if (!retryable) throw error; // permanente → nem retry nem reserva
+          if (attempt < this.maxRetries) {
+            this.logger?.warn(
+              { model, attempt: attempt + 1, maxRetries: this.maxRetries, err: String(error) },
+              "openrouter:retry após erro transitório",
+            );
+            await this.sleepFn(backoffDelay(attempt));
+            continue;
+          }
+          // esgotou os retries deste modelo → próximo da cadeia (ou fim).
+          const next = chain[mi + 1];
+          this.logger?.warn(
+            { model, ...(next ? { nextModel: next } : {}), err: String(error) },
+            next
+              ? "openrouter:modelo esgotou retries — tentando reserva"
+              : "openrouter:todos os modelos esgotaram os retries",
+          );
+        }
       }
     }
-    // inatingível (o loop sempre retorna ou lança), mas satisfaz o tipo.
     throw lastError instanceof Error ? lastError : new LLMProviderError("upstream", "falha desconhecida");
   }
 

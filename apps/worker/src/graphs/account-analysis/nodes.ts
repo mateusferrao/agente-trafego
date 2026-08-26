@@ -440,6 +440,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           responseSchemaName: UNIT_ANALYSIS_SCHEMA_NAME,
           temperature: ANALYSIS_TEMPERATURE,
           maxTokens: cfg.maxOutputTokens,
+          ...(cfg.unitFallbackModels.length > 0 ? { fallbackModels: cfg.unitFallbackModels } : {}),
           // Mapa = extração JSON estrita: reasoning OFF (o modelo unit é instruct; reasoning
           // só gastaria orçamento/latência e arrisca truncar o JSON). Síntese/revisão mantêm.
           reasoning: { effort: "off" },
