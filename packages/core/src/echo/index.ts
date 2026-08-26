@@ -4,7 +4,7 @@
 // neutra (nada específico de Meta aqui).
 
 import type { Action, EntityLevel } from "@trafego/shared";
-import { ACTION_PARAM_STATUS } from "@trafego/shared";
+import { ACTION_PARAM_STATUS, formatMoney } from "@trafego/shared";
 
 /** Uma ação a ecoar + o estado projetado pelo dry-run + rótulos resolvidos. */
 export interface EchoItem {
@@ -15,6 +15,8 @@ export interface EchoItem {
   readonly entityName: string;
   /** nome da conta — só em org multi-conta (vira "(conta)" no eco). */
   readonly accountName?: string;
+  /** moeda da conta (ISO) — formata o budget na moeda certa no eco de escrita. */
+  readonly currency: string;
 }
 
 const WORD: Record<EntityLevel, string> = {
@@ -38,11 +40,10 @@ const STATUS_LABEL: Record<string, string> = {
   archived: "arquivado",
 };
 
-/** minor units (centavos) → "R$ 1234,56". */
-function brl(minor: unknown): string {
+/** minor units (centavos) → moeda da conta, ex "R$ 1234,56" / "$ 1234,56". */
+function budgetMoney(minor: unknown, currency: string): string {
   const n = Number(minor);
-  if (!Number.isFinite(n)) return "R$ 0,00";
-  return `R$ ${(n / 100).toFixed(2).replace(".", ",")}`;
+  return formatMoney(Number.isFinite(n) ? n / 100 : 0, currency);
 }
 
 /** Campo de budget presente no estado (daily preferido) + rótulo de período. */
@@ -54,7 +55,7 @@ function budgetField(state: Record<string, unknown>): { field: string; period: s
 
 /** Cláusula concreta de UMA ação (sem "Vou " e sem ponto final). */
 function clauseOf(item: EchoItem): string {
-  const { action, before, after, entityName, accountName } = item;
+  const { action, before, after, entityName, accountName, currency } = item;
   const level = action.target.level;
   const word = WORD[level];
   const article = ARTICLE[level];
@@ -72,13 +73,13 @@ function clauseOf(item: EchoItem): string {
     case "adjust_budget": {
       const de = article === "a" ? "da" : "do";
       const fld = budgetField(after) ?? budgetField(before);
-      const afterR = fld ? brl(after[fld.field]) : "";
+      const afterR = fld ? budgetMoney(after[fld.field], currency) : "";
       const period = fld?.period ?? "";
       const clampedFrom = action.params["clampedFrom"];
       if (typeof clampedFrom === "number") {
-        return `ajustar o budget ${de} ${word} ${name} pra ${afterR}${period} (você pediu ${brl(clampedFrom)}, mas passa do seu limite)`;
+        return `ajustar o budget ${de} ${word} ${name} pra ${afterR}${period} (você pediu ${budgetMoney(clampedFrom, currency)}, mas passa do seu limite)`;
       }
-      const beforeR = fld ? brl(before[fld.field]) : "";
+      const beforeR = fld ? budgetMoney(before[fld.field], currency) : "";
       return `ajustar o budget ${de} ${word} ${name}: ${beforeR} → ${afterR}${period}`;
     }
     default:

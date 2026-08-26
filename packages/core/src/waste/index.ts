@@ -4,6 +4,7 @@
 // Determinístico: NÃO entra no schema do LLM; é anexado ao brief e ao snapshot.
 
 import type { AnalysisOutput, ConversionBasis, EntitySummary, WastePareto, WasteParetoItem, WasteReport } from "@trafego/shared";
+import { formatMoney } from "@trafego/shared";
 
 /** Só destaca má alocação em quem pesa no gasto (evita ruído de item pequeno). */
 const MISALLOC_MIN_SPEND_PCT = 20;
@@ -94,7 +95,7 @@ export function annotateFreedSpend(
     const id = r.targetEntity?.externalId;
     const spend = id ? spendById.get(id) : undefined;
     if (spend === undefined || spend <= 0) return r;
-    return { ...r, rationale: `${r.rationale}\n[impacto] pausar libera ~${currency} ${round2(spend)} no período.` };
+    return { ...r, rationale: `${r.rationale}\n[impacto] pausar libera ~${formatMoney(round2(spend), currency)} no período.` };
   });
   return { ...output, recommendations };
 }

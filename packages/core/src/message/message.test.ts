@@ -6,6 +6,7 @@ describe("buildMessageFallback", () => {
     const msg = buildMessageFallback(
       {
         accountName: "Loja X",
+        currency: "BRL",
         headline: "CPA acima da meta na campanha principal.",
         summary: "Resumo longo. Segunda frase.",
         recommendations: [{ title: "Pausar Campanha A" }, { title: "Revisar criativo B" }, { title: "Subir budget C" }, { title: "Quarta" }],
@@ -22,6 +23,7 @@ describe("buildMessageFallback", () => {
   it("money shot: abre pelo desperdício em reais quando material", () => {
     const msg = buildMessageFallback({
       accountName: "Clínica Z",
+      currency: "BRL",
       headline: "Entrega ok.",
       summary: "s",
       recommendations: [{ title: "Pausar zumbi" }],
@@ -29,13 +31,14 @@ describe("buildMessageFallback", () => {
     });
     const lines = msg.split("\n");
     expect(lines[0]).toContain("Clínica Z");
-    expect(lines[1]).toContain("R$1600");
+    expect(lines[1]).toContain("R$ 1600,00");
     expect(lines[1]).toContain("16%");
   });
 
   it("desperdício zero → não abre com money shot", () => {
     const msg = buildMessageFallback({
       accountName: "Loja W",
+      currency: "BRL",
       headline: "Tudo certo.",
       summary: "s",
       recommendations: [],
@@ -47,6 +50,7 @@ describe("buildMessageFallback", () => {
   it("sem headline → cai p/ a primeira frase do resumo", () => {
     const msg = buildMessageFallback({
       accountName: "Loja Y",
+      currency: "BRL",
       summary: "Tudo estável hoje. Detalhe irrelevante.",
       recommendations: [],
     });

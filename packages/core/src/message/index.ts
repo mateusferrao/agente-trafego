@@ -2,10 +2,14 @@
 // — WhatsApp-first: curta, 1-decisão-por-bloco (§ decisão 18). O redator LLM (voz
 // do arquétipo) é o caminho principal; esta função é a rede quando ele falha.
 
+import { formatMoney } from "@trafego/shared";
+
 export * from "./whatsapp-format.js";
 
 export interface MessageOverview {
   readonly accountName: string;
+  /** moeda da conta (ISO) — formata o "money shot" na moeda certa. */
+  readonly currency: string;
   /** headline do scorecard (diagnóstico único), quando houver. */
   readonly headline?: string;
   /** resumo em linguagem natural (do analista/síntese). */
@@ -28,7 +32,7 @@ export function buildMessageFallback(overview: MessageOverview, maxRecs = DEFAUL
   lines.push(`📊 ${overview.accountName}`);
   // money shot primeiro (§Bloco 2): o dono quer ver o dinheiro antes do diagnóstico.
   if (overview.money && overview.money.wastedSpend > 0) {
-    lines.push(`💸 R$${overview.money.wastedSpend} (${overview.money.wastedPct}%) em campanhas paradas — pausar libera esse valor.`);
+    lines.push(`💸 ${formatMoney(overview.money.wastedSpend, overview.currency)} (${overview.money.wastedPct}%) em campanhas paradas — pausar libera esse valor.`);
   }
   const lead = overview.headline?.trim() || firstSentence(overview.summary);
   if (lead) lines.push(lead);

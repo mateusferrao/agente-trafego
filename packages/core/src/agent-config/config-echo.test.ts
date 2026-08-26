@@ -4,6 +4,7 @@ import {
   buildConfigChangeEcho,
   CONFIG_CHANGE_LABELS,
   CONFIG_WEAKENS_SAFETY_PREFIX,
+  describePlaybookRule,
   mergeConfigText,
   resolveAgentConfigChange,
   type AgentConfigPatch,
@@ -51,9 +52,15 @@ function baseState(over: Partial<AgentConfigState> = {}): AgentConfigState {
 }
 
 /** Resolve o patch e monta o eco a partir do resultado (o mesmo caminho do gate). */
-function echoFor(state: AgentConfigState, patch: AgentConfigPatch): string {
+function echoFor(state: AgentConfigState, patch: AgentConfigPatch, currency?: string): string {
   const r = resolveAgentConfigChange(state, patch);
-  return buildConfigChangeEcho({ current: state, next: r.next, changed: r.changed, weakensSafety: r.weakensSafety });
+  return buildConfigChangeEcho({
+    current: state,
+    next: r.next,
+    changed: r.changed,
+    weakensSafety: r.weakensSafety,
+    ...(currency ? { currency } : {}),
+  });
 }
 
 describe("buildConfigChangeEcho", () => {
@@ -63,6 +70,12 @@ describe("buildConfigChangeEcho", () => {
     expect(echo).toContain("R$ 50,00 → R$ 30,00");
     expect(echo).toContain("Confirma?");
     expect(echo).not.toContain(CONFIG_WEAKENS_SAFETY_PREFIX);
+  });
+
+  it("meta: formata a moeda da conta (conta em USD → $, não R$)", () => {
+    const echo = echoFor(baseState({ goals: { targetCPA: 50 } }), { goals: { targetCPA: 30 } }, "USD");
+    expect(echo).toContain("$ 50,00 → $ 30,00");
+    expect(echo).not.toContain("R$");
   });
 
   it("autonomia subindo → rótulo PT antes→depois + aviso de afrouxamento", () => {
@@ -130,6 +143,23 @@ describe("buildConfigChangeEcho", () => {
     expect(echo).toContain("alerta automático: desligado → ligado");
     expect(echo).toContain("sensibilidade do alerta: normal → alta");
     expect(echo).toContain("aviso após cada análise: ligado → desligado");
+  });
+});
+
+describe("describePlaybookRule", () => {
+  it("condição de custo (cpa) + minSpend usam a moeda passada; default = BRL", () => {
+    const rule = { scope: "campaign", metric: "cpa", op: ">", value: 40, minSpend: 100, thenType: "pause_entity" };
+    expect(describePlaybookRule(rule)).toContain("R$ 40,00");
+    expect(describePlaybookRule(rule)).toContain("R$ 100,00");
+    const usd = describePlaybookRule(rule, "USD");
+    expect(usd).toContain("$ 40,00");
+    expect(usd).toContain("$ 100,00");
+    expect(usd).not.toContain("R$");
+  });
+
+  it("condição não-monetária (roas) ignora a moeda", () => {
+    const rule = { scope: "campaign", metric: "roas", op: "<", value: 2, thenType: "pause_entity" };
+    expect(describePlaybookRule(rule, "USD")).toContain("2x");
   });
 });
 

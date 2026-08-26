@@ -16,6 +16,7 @@ import {
   APPROVAL_APPLY_QUEUE,
   BUDGET_MODE_SET,
   CONVERSION_GOALS,
+  DEFAULT_CURRENCY,
   DEFAULT_POSTURE,
   DIDACTIC_DEPTH_LEVELS,
   DIRECTIVENESS_LEVELS,
@@ -489,7 +490,13 @@ export function makeConversationTools(
         .where(and(eq(playbookRules.agentId, ctx.agentId), eq(playbookRules.orgId, ctx.orgId)))
         .orderBy(desc(playbookRules.priority));
       if (rows.length === 0) return "Você não tem nenhuma regra de playbook configurada nesta conta.";
-      const lines = rows.map((r, i) => `${i + 1}. [id: ${r.id}] ${describePlaybookRule(ruleRowToDescriptor(r))}${r.enabled ? "" : " (desligada)"}`);
+      const [accRow] = await deps.db
+        .select({ currency: adAccounts.currency })
+        .from(adAccounts)
+        .where(and(eq(adAccounts.id, ctx.adAccountId), eq(adAccounts.orgId, ctx.orgId)))
+        .limit(1);
+      const currency = accRow?.currency ?? DEFAULT_CURRENCY;
+      const lines = rows.map((r, i) => `${i + 1}. [id: ${r.id}] ${describePlaybookRule(ruleRowToDescriptor(r), currency)}${r.enabled ? "" : " (desligada)"}`);
       return `Regras de playbook desta conta:\n${lines.join("\n")}`;
     },
     {

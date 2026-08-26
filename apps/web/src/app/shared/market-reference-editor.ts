@@ -155,14 +155,16 @@ export class MarketReferenceEditor {
     ]),
   );
   private lastEmitted = '';
-  private hydrating = false;
+  /** JSON do último valor emitido — p/ IGNORAR o eco quando o pai realimenta `[value]`
+   *  (senão a re-hidratação zeraria o campo que o usuário está digitando). */
+  private lastEmittedValueJson = '';
 
   constructor() {
-    // hidrata a partir do input (value + currency) quando chegam.
+    // hidrata a partir do input (value + currency); ignora o eco do próprio valor.
     effect(() => {
       const cur = this.currencyInput();
       const v = this.value();
-      this.hydrating = true;
+      if (JSON.stringify(v ?? null) === this.lastEmittedValueJson) return; // eco → não re-hidrata
       this.currency.set(v?.currency ?? cur);
       this.costMin.set(this.readCost(v, 'min'));
       this.costMax.set(this.readCost(v, 'max'));
@@ -175,14 +177,15 @@ export class MarketReferenceEditor {
       this.baseNormal.set(this.numStr(v?.operational?.minBaselineSpend?.normal));
       this.baseHigh.set(this.numStr(v?.operational?.minBaselineSpend?.high));
       this.lastEmitted = this.sig();
-      this.hydrating = false;
     });
-    // emite ao mudar (mas não durante a hidratação).
+    // emite ao mudar (guardado pela assinatura serializada).
     effect(() => {
       const s = this.sig();
-      if (this.hydrating || s === this.lastEmitted) return;
+      if (s === this.lastEmitted) return;
       this.lastEmitted = s;
-      this.valueChange.emit(this.build());
+      const built = this.build();
+      this.lastEmittedValueJson = JSON.stringify(built ?? null);
+      this.valueChange.emit(built);
     });
   }
 

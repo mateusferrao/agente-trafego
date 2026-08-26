@@ -8,7 +8,7 @@
 import { and, eq } from "drizzle-orm";
 import { agents, guardrailConfigs } from "@trafego/db";
 import { entityKeyOf, type GuardrailContext } from "@trafego/core";
-import { toGuardrailConfig } from "@trafego/shared";
+import { DEFAULT_CURRENCY, toGuardrailConfig } from "@trafego/shared";
 import type { ActionTarget, EntityStatus, GuardrailConfig } from "@trafego/shared";
 import type { AdAccountRef } from "@trafego/shared/ports";
 import { mapStatus } from "@trafego/ads-meta";
@@ -17,6 +17,8 @@ import { createAnalysisRepo, loadDailyToolContext } from "../analysis/repo.js";
 
 export interface WriteContext {
   readonly account: AdAccountRef;
+  /** moeda da conta (ISO) — formata o budget no eco de escrita. */
+  readonly currency: string;
   readonly cfg: GuardrailConfig;
   readonly ctx: GuardrailContext;
 }
@@ -84,6 +86,7 @@ export async function loadWriteContext(
 
   return {
     account: ref,
+    currency: account.currency ?? DEFAULT_CURRENCY,
     cfg,
     ctx: {
       touchedToday: daily.touchedToday,

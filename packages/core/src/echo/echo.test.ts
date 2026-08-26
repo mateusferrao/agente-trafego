@@ -17,6 +17,7 @@ function item(action: Partial<Action>, over: Partial<EchoItem> = {}): EchoItem {
     before: {},
     after: {},
     entityName: "Ruim",
+    currency: "BRL",
     ...over,
   };
 }

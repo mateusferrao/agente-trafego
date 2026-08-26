@@ -25,7 +25,8 @@ import { applyAgentConfigChange, loadAgentConfigState, reseedArchetypeChange } f
 import { sleep } from "@trafego/shared";
 import type { Action, OrgId } from "@trafego/shared/types";
 import { and, eq } from "drizzle-orm";
-import { playbookRules } from "@trafego/db";
+import { adAccounts, agents, playbookRules, type Database } from "@trafego/db";
+import { DEFAULT_CURRENCY } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
 import { GROUP_RULES, loadConversationConfig } from "./system-prompt.js";
 import { windowMessages } from "./window.js";
@@ -84,6 +85,21 @@ export function assembleSystemPrompt(systemPrompt: string, groupBlock: string, e
 
 /** TTL do eco+confirma: um "sim" muito depois não aplica uma ação esquecida (§8). */
 const PENDING_WRITE_TTL_MS = 30 * 60 * 1000;
+
+/**
+ * Moeda (ISO) da conta do agente — o eco de config (meta de CPA, minSpend/valor de
+ * playbook) formata dinheiro nela (currency-aware, pivô B2B/B2C). Conta sem moeda ou
+ * agente órfão → default. Leitura leve (1 join), no baixo volume do chat.
+ */
+async function loadAgentAccountCurrency(db: Database, orgId: string, agentId: string): Promise<string> {
+  const [row] = await db
+    .select({ currency: adAccounts.currency })
+    .from(agents)
+    .innerJoin(adAccounts, and(eq(agents.adAccountId, adAccounts.id), eq(adAccounts.orgId, orgId)))
+    .where(and(eq(agents.id, agentId), eq(agents.orgId, orgId)))
+    .limit(1);
+  return row?.currency ?? DEFAULT_CURRENCY;
+}
 
 /** ToolMessage p/ cada tool_call (mantém o histórico válido). Primeiro leva o texto; resto, eco curto. */
 function answerToolCalls(calls: readonly { id?: string }[], text: string): ToolMessage[] {
@@ -523,6 +539,7 @@ export function makeConversationNodes(
           next: resolution.next,
           changed: resolution.changed,
           weakensSafety: resolution.weakensSafety,
+          currency: await loadAgentAccountCurrency(deps.db, ctx.orgId, ctx.agentId),
         });
         // foto da config de segurança quando o patch a toca → o apply aborta se mudou
         // desde o eco (evita reverter em silêncio um endurecimento concorrente).
@@ -577,9 +594,10 @@ export function makeConversationNodes(
         if (!op) {
           return { messages: answerToolCalls(allCalls, "Não entendi a regra. Me diz de novo o que ela deve fazer?") };
         }
+        const currency = await loadAgentAccountCurrency(deps.db, ctx.orgId, ctx.agentId);
         let echo: string;
         if (op.kind === "add" && op.rule) {
-          echo = `Vou criar esta regra no playbook:\n${describePlaybookRule(pendingRuleToDescriptor(op.rule))}\n\nConfirma?`;
+          echo = `Vou criar esta regra no playbook:\n${describePlaybookRule(pendingRuleToDescriptor(op.rule), currency)}\n\nConfirma?`;
         } else {
           const [row] = await deps.db
             .select()
@@ -589,7 +607,7 @@ export function makeConversationNodes(
           if (!row) {
             return { messages: answerToolCalls(allCalls, "Não achei essa regra. Vê a lista de regras (list_playbook_rules) e me diz qual.") };
           }
-          const desc = describePlaybookRule(ruleRowToDescriptor(row));
+          const desc = describePlaybookRule(ruleRowToDescriptor(row), currency);
           const verb = op.kind === "remove" ? "remover" : op.enabled ? "ligar" : "desligar";
           echo = `Vou ${verb} esta regra:\n${desc}\n\nConfirma?`;
         }
@@ -632,6 +650,7 @@ export function makeConversationNodes(
           before: dry.before as Record<string, unknown>,
           after: dry.after as Record<string, unknown>,
           entityName: clamped.target.name ?? clamped.target.id,
+          currency: wctx.currency,
           // nomeia a conta no eco só em org multi-conta (evita ruído em org de 1 conta).
           ...(ctx.multiAccount && ctx.accountName ? { accountName: ctx.accountName } : {}),
         });

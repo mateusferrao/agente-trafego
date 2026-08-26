@@ -5,6 +5,7 @@
 
 import type { LLMMessage } from "@trafego/shared/ports";
 import type { Posture } from "@trafego/shared";
+import { formatMoney } from "@trafego/shared";
 import { composePostureBlock } from "@trafego/core";
 import { GROUNDING_RULE } from "../analysis/prompt.js";
 import type { FreshKpis } from "../conversation/fresh-metrics.js";
@@ -49,7 +50,7 @@ export interface PulseInput {
 }
 
 function money(n: number | null | undefined, currency: string): string {
-  return typeof n === "number" ? `${currency} ${n.toFixed(2).replace(".", ",")}` : "—";
+  return typeof n === "number" ? formatMoney(n, currency) : "—";
 }
 
 /** Curadoria dos KPIs frescos p/ o prompt (só o material). */

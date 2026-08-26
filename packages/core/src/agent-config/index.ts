@@ -23,6 +23,8 @@ import {
   ANALYSIS_WINDOW_DEFAULT_DAYS,
   ANALYSIS_WINDOW_MAX_DAYS,
   ANALYSIS_WINDOW_MIN_DAYS,
+  DEFAULT_CURRENCY,
+  formatMoney,
 } from "@trafego/shared";
 import { describeCadence } from "../cadence/index.js";
 import {
@@ -495,8 +497,8 @@ const ALERT_SENSITIVITY_LABEL_PT: Readonly<Record<AlertSensitivity, string>> = {
 };
 
 const onOff = (b: boolean): string => (b ? "ligado" : "desligado");
-const brlOrNone = (reais: number | undefined): string =>
-  reais == null ? "não definido" : `R$ ${reais.toFixed(2).replace(".", ",")}`;
+const moneyOrNone = (reais: number | undefined, currency: string): string =>
+  reais == null ? "não definido" : formatMoney(reais, currency);
 const roasOrNone = (r: number | undefined): string => (r == null ? "não definido" : `${r}x`);
 const conversionLabel = (g: ConversionGoal | undefined): string =>
   g ? (CONVERSION_GOAL_LABEL_PT[g] ?? g) : "não definida";
@@ -519,12 +521,17 @@ function textBeforeAfter(before: string | null, after: string | null): string {
 }
 
 /** Linhas de detalhe de UM campo mudado (antes → depois). Vazio = nada a dizer. */
-function configDetailLines(label: string, cur: AgentConfigState, next: AgentConfigState): string[] {
+function configDetailLines(
+  label: string,
+  cur: AgentConfigState,
+  next: AgentConfigState,
+  currency: string,
+): string[] {
   const lines: string[] = [];
   switch (label) {
     case CONFIG_CHANGE_LABELS.goals: {
       if (cur.goals.targetCPA !== next.goals.targetCPA)
-        lines.push(`meta de CPA (custo por resultado): ${brlOrNone(cur.goals.targetCPA)} → ${brlOrNone(next.goals.targetCPA)}`);
+        lines.push(`meta de CPA (custo por resultado): ${moneyOrNone(cur.goals.targetCPA, currency)} → ${moneyOrNone(next.goals.targetCPA, currency)}`);
       if (cur.goals.targetROAS !== next.goals.targetROAS)
         lines.push(`meta de ROAS (retorno): ${roasOrNone(cur.goals.targetROAS)} → ${roasOrNone(next.goals.targetROAS)}`);
       if (cur.goals.conversionGoal !== next.goals.conversionGoal)
@@ -656,10 +663,10 @@ const PLAYBOOK_SCOPE_LABEL_PT: Readonly<Record<string, string>> = {
   ad: "o anúncio",
 };
 
-/** Formata o valor da condição conforme a métrica (R$, x, %, número). */
-function playbookValueLabel(metric: string, value: number): string {
+/** Formata o valor da condição conforme a métrica (moeda, x, %, número). */
+function playbookValueLabel(metric: string, value: number, currency: string): string {
   if (metric === "cpa" || metric === "spend" || metric === "cpc" || metric === "cpm")
-    return `R$ ${value.toFixed(2).replace(".", ",")}`;
+    return formatMoney(value, currency);
   if (metric === "roas") return `${value}x`;
   if (metric === "ctr") return `${value}%`;
   return `${value}`;
@@ -695,13 +702,12 @@ function playbookThenLabel(d: PlaybookRuleDescriptor): string {
 }
 
 /** Frase de gente de uma regra de playbook (PURA) — base do eco de add/toggle/remove. */
-export function describePlaybookRule(d: PlaybookRuleDescriptor): string {
+export function describePlaybookRule(d: PlaybookRuleDescriptor, currency: string = DEFAULT_CURRENCY): string {
   const scope = PLAYBOOK_SCOPE_LABEL_PT[d.scope] ?? d.scope;
   const metric = PLAYBOOK_METRIC_LABEL_PT[d.metric] ?? d.metric;
   const op = PLAYBOOK_OP_LABEL_PT[d.op] ?? d.op;
-  const value = playbookValueLabel(d.metric, d.value);
-  const minSpend =
-    d.minSpend != null ? ` (só com gasto de pelo menos R$ ${d.minSpend.toFixed(2).replace(".", ",")})` : "";
+  const value = playbookValueLabel(d.metric, d.value, currency);
+  const minSpend = d.minSpend != null ? ` (só com gasto de pelo menos ${formatMoney(d.minSpend, currency)})` : "";
   return `quando ${scope} tiver ${metric} ${op} ${value}${minSpend}, ${playbookThenLabel(d)}`;
 }
 
@@ -711,6 +717,8 @@ export interface ConfigChangeEchoInput {
   readonly next: AgentConfigState;
   readonly changed: readonly string[];
   readonly weakensSafety: boolean;
+  /** moeda da conta do agente (ISO) — formata metas/limiares em dinheiro. Default = BRL. */
+  readonly currency?: string;
 }
 
 /** Prefixo de aviso quando a mudança afrouxa a rede de segurança (§8). */
@@ -722,9 +730,9 @@ export const CONFIG_WEAKENS_SAFETY_PREFIX = "⚠️ Isso afrouxa sua segurança:
  * `weakensSafety`. Fecha com "Confirma?" (eco+confirma). PURO.
  */
 export function buildConfigChangeEcho(input: ConfigChangeEchoInput): string {
-  const { current, next, changed, weakensSafety } = input;
+  const { current, next, changed, weakensSafety, currency = DEFAULT_CURRENCY } = input;
   const details: string[] = [];
-  for (const label of changed) details.push(...configDetailLines(label, current, next));
+  for (const label of changed) details.push(...configDetailLines(label, current, next, currency));
   if (details.length === 0) return "Não vi nada pra mudar na config.";
   const body = details.length === 1 ? details[0]! : details.map((d, i) => `${i + 1}. ${d}`).join("\n");
   const warn = weakensSafety ? `${CONFIG_WEAKENS_SAFETY_PREFIX}\n` : "";

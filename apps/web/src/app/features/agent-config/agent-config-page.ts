@@ -221,7 +221,7 @@ interface FormState {
 
           <div class="flex flex-wrap items-end gap-4">
             <label class="flex flex-col gap-1 text-xs text-muted">
-              Custo por resultado alvo (R$)
+              Custo por resultado alvo ({{ accountCurrency() }})
               <input
                 type="number"
                 min="0"

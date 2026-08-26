@@ -141,10 +141,14 @@ export async function runInsightsSync(deps: WorkerDeps, payload: InsightsSyncPay
     }
 
     // Conta ativa e estável → gate do alerta proativo (D-1 vs baseline).
-    await runAlertGate(
-      { db, logger, dispatch: dispatcher.dispatch },
-      { orgId: payload.orgId, agentId: agent.id, adAccountId: account.id, fallbackTz: deps.cron.tz },
-    );
+    // Conta DORMANTE (transição `none`) NÃO roda o gate: está em backoff — evita
+    // disparar run pago / alerta "gasto zerou" logo após dormir (baseline ainda > 0).
+    if (account.activityState === "active") {
+      await runAlertGate(
+        { db, logger, dispatch: dispatcher.dispatch },
+        { orgId: payload.orgId, agentId: agent.id, adAccountId: account.id, fallbackTz: deps.cron.tz },
+      );
+    }
   } catch (err) {
     logger.warn({ accountId: account.id, err }, "sync:dormância/gate de alerta falhou (ignorado)");
   }

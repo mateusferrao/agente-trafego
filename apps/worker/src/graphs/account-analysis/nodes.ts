@@ -839,6 +839,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
         buildMessageFallback(
           {
             accountName: state.account.name,
+            currency: state.account.currency,
             ...(out.scorecard?.headline ? { headline: out.scorecard.headline } : {}),
             summary: out.summary,
             // filtra insights ANTES de fatiar (mesma base do redator + do nudge de volume).
