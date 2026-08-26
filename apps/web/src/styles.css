@@ -1114,3 +1114,109 @@ table[appUiResizableColumns] > tbody > tr > td {
   cursor: col-resize !important;
   user-select: none !important;
 }
+
+/* --- Micro-encanto (Personality Budget): loading do agente, chat, skeletons.
+   Só nas superfícies de Marca; proibido em erro/dinheiro/dados densos. --- */
+
+/* "Digitando…" estilo WhatsApp — só em contexto de conversa real. */
+@keyframes ui-typing {
+  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+.ui-typing-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+}
+.ui-typing-dots > span {
+  width: 0.44rem;
+  height: 0.44rem;
+  border-radius: 999px;
+  background: var(--color-success);
+  animation: ui-typing 1.2s infinite;
+}
+.ui-typing-dots > span:nth-child(2) { animation-delay: 0.2s; }
+.ui-typing-dots > span:nth-child(3) { animation-delay: 0.4s; }
+
+/* Pulso da marca (símbolo tomate respirando) — âncora do loading, nunca gira. */
+@keyframes ui-brand-pulse {
+  0%, 100% { transform: rotate(-8deg) scale(1); opacity: 0.85; }
+  50% { transform: rotate(-8deg) scale(1.12); opacity: 1; }
+}
+.brand-pulse { animation: ui-brand-pulse 1.8s ease-in-out infinite; }
+
+/* Narrativa de progresso honesta-genérica: descreve o TIPO de trabalho, sem fingir
+   passo/tempo real. Highlight ambiente escalonado (não é checklist que "completa"). */
+@keyframes ui-step-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+.ui-analysis-steps {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ui-analysis-steps > li {
+  color: var(--color-muted);
+  font-size: 0.86rem;
+  opacity: 0.55;
+  animation: ui-step-pulse 2.4s ease-in-out infinite;
+}
+.ui-analysis-steps > li:nth-child(1) { animation-delay: 0s; }
+.ui-analysis-steps > li:nth-child(2) { animation-delay: 0.4s; }
+.ui-analysis-steps > li:nth-child(3) { animation-delay: 0.8s; }
+.ui-analysis-steps > li:nth-child(4) { animation-delay: 1.2s; }
+.ui-analysis-steps > li:nth-child(5) { animation-delay: 1.6s; }
+
+/* Balão de chat (motif WhatsApp) — agente (menta) / usuário (painel + borda). */
+.ui-chat-bubble {
+  display: inline-block;
+  max-width: 82%;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  white-space: pre-line;
+}
+.ui-chat-bubble--agent {
+  align-self: flex-start;
+  background: var(--color-success-soft);
+  color: var(--color-ink);
+  border-radius: 1rem 1rem 1rem 0.25rem;
+}
+.ui-chat-bubble--user {
+  align-self: flex-end;
+  background: var(--color-panel);
+  color: var(--color-ink);
+  border: 1px solid var(--color-line);
+  border-radius: 1rem 1rem 0.25rem 1rem;
+}
+
+/* Skeleton de carregamento de conteúdo. */
+@keyframes ui-skeleton-shimmer {
+  0% { background-position: -160px 0; }
+  100% { background-position: 160px 0; }
+}
+.ui-skeleton {
+  display: block;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(
+    90deg,
+    var(--color-soft) 25%,
+    color-mix(in srgb, var(--color-soft) 55%, var(--color-panel)) 37%,
+    var(--color-soft) 63%
+  );
+  background-size: 320px 100%;
+  animation: ui-skeleton-shimmer 1.3s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-typing-dots > span,
+  .brand-pulse,
+  .ui-analysis-steps > li,
+  .ui-skeleton {
+    animation: none;
+  }
+  .ui-analysis-steps > li { opacity: 0.9; }
+}
