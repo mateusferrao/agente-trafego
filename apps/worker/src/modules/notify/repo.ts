@@ -7,6 +7,7 @@
 import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, ne, sql } from "drizzle-orm";
 import { adAccounts, agents, channelGroups, channelInstances, contacts, conversations, groupMessages, messages, type Database } from "@trafego/db";
 import { brPhoneVariants, type ConversationRef } from "@trafego/shared";
+import type { OutboundQuote } from "@trafego/shared/ports";
 import type { GroupTranscriptEntry } from "@trafego/core";
 
 /** Contato verificado resolvido a partir do inbound (instância + telefone). */
@@ -49,6 +50,12 @@ export interface NotifyRepo {
   resolveInboundContact(instanceId: string, phone: string): Promise<InboundContact | null>;
   /** Já processamos esta mensagem do provider? (idempotência do inbound.) */
   alreadyProcessed(messageId: string): Promise<boolean>;
+  /**
+   * Última mensagem INBOUND da conversa com id do provider + texto — p/ citar (quoted
+   * reply) a mensagem que estamos respondendo. No debounce, é a última picada (cada uma é
+   * uma linha inbound). `null` quando não há id/texto (ex.: mídia sem transcript) → sem citação.
+   */
+  lastInboundForQuote(conversationId: string): Promise<OutboundQuote | null>;
   /** Garante a conversa (org/contato) e devolve seu id. */
   ensureConversation(orgId: string, contactId: string): Promise<string>;
   /** Grava uma mensagem na conversa (in/out) com meta opcional; devolve o id da linha. */
@@ -192,6 +199,18 @@ export function createNotifyRepo(db: Database): NotifyRepo {
         .where(sql`${messages.meta} ->> 'messageId' = ${messageId}`)
         .limit(1);
       return Boolean(row);
+    },
+
+    async lastInboundForQuote(conversationId) {
+      const [row] = await db
+        .select({ messageId: sql<string | null>`${messages.meta} ->> 'messageId'`, body: messages.body })
+        .from(messages)
+        .where(and(eq(messages.conversationId, conversationId), eq(messages.direction, "inbound")))
+        .orderBy(desc(messages.createdAt))
+        .limit(1);
+      // só cita quando tem id do provider E texto (mídia sem transcript → sem citação).
+      if (!row?.messageId || !row.body) return null;
+      return { messageId: row.messageId, text: row.body };
     },
 
     /** Conversa (org/contato) — sem agente atrelado no inbound conversacional. */

@@ -60,6 +60,28 @@ describe("EvolutionSender.sendText", () => {
     expect(body).toEqual({ number: "5511999999999", text: "oi" });
   });
 
+  it("quoted → body inclui quoted { key:{id}, message:{conversation} }", async () => {
+    const spy = stubFetch({ key: { id: "abc" } });
+
+    await makeSender().sendText(INSTANCE, {
+      to: "5511999999999",
+      text: "resposta",
+      quoted: { messageId: "WAMID-123", text: "pergunta original" },
+    });
+
+    const body = JSON.parse(String(spy.mock.calls[0]![1]?.body));
+    expect(body.quoted).toEqual({ key: { id: "WAMID-123" }, message: { conversation: "pergunta original" } });
+  });
+
+  it("sem quoted → body sem o campo (contrato atual intacto)", async () => {
+    const spy = stubFetch({ key: { id: "abc" } });
+
+    await makeSender().sendText(INSTANCE, { to: "5511999999999", text: "oi" });
+
+    const body = JSON.parse(String(spy.mock.calls[0]![1]?.body));
+    expect(body.quoted).toBeUndefined();
+  });
+
   it("toIsGroup: manda o JID do grupo intacto (sem normalizar)", async () => {
     const spy = stubFetch({ key: { id: "abc" } });
 

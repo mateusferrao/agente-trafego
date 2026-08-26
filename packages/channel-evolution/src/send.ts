@@ -34,10 +34,15 @@ export class EvolutionSender {
     const typing =
       msg.typingHintMs && msg.typingHintMs > 0 ? { delay: msg.typingHintMs, presence: PRESENCE_COMPOSING } : {};
     const number = msg.toIsGroup ? msg.to : normalizePhone(msg.to);
+    // Quoted reply (§5): a Evolution v2 aceita `quoted: { key:{id}, message:{conversation} }`
+    // — só o id da msg citada + o texto dela bastam (não precisa remoteJid/participant).
+    const quoted = msg.quoted
+      ? { quoted: { key: { id: msg.quoted.messageId }, message: { conversation: msg.quoted.text } } }
+      : {};
     await this.client.request({
       method: "POST",
       path: `${SEND_TEXT_PATH}/${instance.instanceId}`,
-      body: { number, text: msg.text, ...typing },
+      body: { number, text: msg.text, ...typing, ...quoted },
     });
   }
 }

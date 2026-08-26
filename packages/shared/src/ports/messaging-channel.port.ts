@@ -4,11 +4,24 @@ export interface ChannelInstanceRef {
   readonly webhookSecret?: string;
 }
 
+/**
+ * Citação (quoted reply): manda a resposta "respondendo" a uma mensagem específica,
+ * mostrando-a acima. NEUTRO — o adapter traduz p/ o recurso do provider (Evolution:
+ * `quoted: { key:{id}, message:{conversation} }`). `messageId` = id da msg citada no
+ * provider; `text` = conteúdo dela (renderizado no balão citado).
+ */
+export interface OutboundQuote {
+  readonly messageId: string;
+  readonly text: string;
+}
+
 export interface OutboundMessage {
   readonly to: string; // telefone E.164, ou JID de grupo quando `toIsGroup`
   /** Destino é um GRUPO (`to` = JID @g.us), não um telefone. Ausente/false = DM. */
   readonly toIsGroup?: boolean;
   readonly text: string;
+  /** Citação opcional: responde à mensagem `quoted` (quoted reply). Ausente = msg solta. */
+  readonly quoted?: OutboundQuote;
   /**
    * Dica NEUTRA de tempo de "preparo" antes de entregar a mensagem (ms) — dá o
    * ritmo humano de conversa. O adapter TRADUZ p/ o recurso do canal (Evolution:

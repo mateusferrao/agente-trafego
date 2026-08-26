@@ -40,7 +40,8 @@ export async function deliverReply(
   orgId: string,
 ): Promise<void> {
   try {
-    await sendToConversation(ref, reply, { split: true });
+    // quoteLastInbound: cita a última mensagem do usuário (no debounce, a última picada).
+    await sendToConversation(ref, reply, { split: true, quoteLastInbound: true });
     logger.info({ orgId }, "conversation:replied");
   } catch (err) {
     logger.error({ err, orgId }, "conversation:send falhou (resposta perdida, sem retry do grafo)");

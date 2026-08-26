@@ -8,7 +8,13 @@ const TARGET = { instanceId: "inst-1", phone: "5511999999999", orgId: "org-1" };
 const GROUP_TARGET = { instanceId: "inst-1", groupJid: "120363000000000000@g.us", orgId: "org-1" };
 const CONTACT_REF = { kind: "contact" as const, contactId: "contact-1" };
 
-function makeDeps(overrides: { target?: typeof TARGET | null; groupTarget?: typeof GROUP_TARGET | null } = {}) {
+function makeDeps(
+  overrides: {
+    target?: typeof TARGET | null;
+    groupTarget?: typeof GROUP_TARGET | null;
+    lastInbound?: { messageId: string; text: string } | null;
+  } = {},
+) {
   const sent: OutboundMessage[] = [];
   const recorded: Array<{ direction: string; body: string | null }> = [];
   const messaging = {
@@ -24,6 +30,7 @@ function makeDeps(overrides: { target?: typeof TARGET | null; groupTarget?: type
     purgeGroupMessagesBefore: vi.fn(async () => 0),
     resolveGroupTarget: vi.fn(async () => (overrides.groupTarget === undefined ? GROUP_TARGET : overrides.groupTarget)),
     ensureGroupConversation: vi.fn(async () => "conv-grp-1"),
+    lastInboundForQuote: vi.fn(async () => overrides.lastInbound ?? null),
     recordMessage: vi.fn(async (_c, direction: string, body: string | null) => {
       recorded.push({ direction, body });
       return "msg-id";
@@ -75,6 +82,32 @@ describe("sendToConversation — contato (DM)", () => {
     await createSendToConversation(deps)(CONTACT_REF, "oi");
     expect(sent[0]).toMatchObject({ to: TARGET.phone });
     expect(sent[0]!.toIsGroup).toBeUndefined();
+  });
+});
+
+describe("sendToConversation — citação (quoted reply)", () => {
+  it("quoteLastInbound: cita SÓ o 1º balão com a última inbound", async () => {
+    const { deps, sent } = makeDeps({ lastInbound: { messageId: "WAMID-123", text: "me fale sobre o ad X" } });
+    await createSendToConversation(deps)(CONTACT_REF, "resposta a\n\nresposta b", {
+      split: true,
+      quoteLastInbound: true,
+    });
+    expect(sent).toHaveLength(2);
+    expect(sent[0]!.quoted).toEqual({ messageId: "WAMID-123", text: "me fale sobre o ad X" });
+    expect(sent[1]!.quoted).toBeUndefined();
+  });
+
+  it("sem última inbound (null) → nenhum balão cita (resposta normal)", async () => {
+    const { deps, sent } = makeDeps({ lastInbound: null });
+    await createSendToConversation(deps)(CONTACT_REF, "a\n\nb", { split: true, quoteLastInbound: true });
+    expect(sent.every((m) => m.quoted === undefined)).toBe(true);
+  });
+
+  it("sem quoteLastInbound → não consulta nem cita (proativo)", async () => {
+    const { deps, sent } = makeDeps({ lastInbound: { messageId: "X", text: "y" } });
+    await createSendToConversation(deps)(CONTACT_REF, "alerta", { split: false });
+    expect(deps.repo.lastInboundForQuote).not.toHaveBeenCalled();
+    expect(sent[0]!.quoted).toBeUndefined();
   });
 });
 

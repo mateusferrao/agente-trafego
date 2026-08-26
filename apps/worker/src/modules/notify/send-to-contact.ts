@@ -20,6 +20,11 @@ export interface SendToContactOptions {
   /** Chat quebra em balões; cron/verificação enviam inteiro (ban-safety §9). */
   readonly split?: boolean;
   readonly meta?: Record<string, unknown>;
+  /**
+   * Cita (quoted reply) a última mensagem inbound da conversa — só a resposta REATIVA
+   * do chat opta (proativo não responde a uma msg). A citação vai só no 1º balão.
+   */
+  readonly quoteLastInbound?: boolean;
 }
 
 interface ResolvedDelivery {
@@ -59,10 +64,16 @@ export function createSendToConversation(deps: SendToContactDeps) {
     const parts = opts.split ? splitMessage(sanitized) : [sanitized].filter((p) => p.length > 0);
     if (parts.length === 0) return false;
 
+    // Citação (quoted reply): só a resposta reativa opta; vai só no 1º balão. Sem id/texto
+    // da última inbound → segue sem citar (fallback seguro, nunca quebra a resposta).
+    const quoted = opts.quoteLastInbound
+      ? await deps.repo.lastInboundForQuote(delivery.conversationId)
+      : null;
+
     // Cada balão leva "digitando…" proporcional (composing+delay no adapter): o ritmo
     // humano vem do canal, não de um sleep fixo. Envio sequencial (await por balão) — a
     // Evolution entrega em ordem de chegada por instância; o `delay` segura cada entrega.
-    for (const part of parts) {
+    for (const [index, part] of parts.entries()) {
       await deps.messaging.sendMessage(
         { instanceId: delivery.instanceId },
         {
@@ -70,6 +81,7 @@ export function createSendToConversation(deps: SendToContactDeps) {
           text: part,
           typingHintMs: computeTypingHint(part),
           ...(delivery.toIsGroup ? { toIsGroup: true } : {}),
+          ...(index === 0 && quoted ? { quoted } : {}),
         },
       );
       await deps.repo.recordMessage(delivery.conversationId, "outbound", part, opts.meta);
