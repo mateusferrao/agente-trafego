@@ -61,7 +61,7 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                 <h2 class="font-brand text-sm font-semibold text-ink">{{ group.accountName }}</h2>
                 <ul class="flex flex-col gap-2">
                   @for (a of group.items; track a.id) {
-                    <li class="ui-panel-card--brand flex items-start justify-between gap-3">
+                    <li class="ui-panel-card--brand flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                       <span class="flex min-w-0 flex-col gap-1">
                         <app-ui-eyebrow>Aguardando seu OK@if (deadline(a.expiresAt); as d) { · {{ d }}}</app-ui-eyebrow>
                         <span class="font-semibold text-ink">
@@ -93,7 +93,7 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                 <h2 class="font-brand text-sm font-semibold text-ink">{{ group.accountName }}</h2>
                 <ul class="flex flex-col gap-2">
                   @for (a of group.items; track a.toolCallId) {
-                    <li class="flex items-start justify-between gap-3 rounded-lg border border-line bg-panel px-4 py-3">
+                    <li class="flex flex-col gap-3 rounded-lg border border-line bg-panel px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
                       <span class="flex min-w-0 flex-col gap-1">
                         <app-ui-eyebrow>Reversível</app-ui-eyebrow>
                         <span class="font-semibold text-ink">

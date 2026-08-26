@@ -683,11 +683,13 @@ textarea[appTextarea][surface='transparent']:focus-visible {
   background: var(--color-panel);
 }
 
-/* Nível Marca (Two-Tier Surface): assinatura neobrutalista sólida. */
+/* Nível Marca (Two-Tier Surface): assinatura neobrutalista sólida. Autossuficiente
+   (padding + fundo) para uso solto no template, não só como modificador do card base. */
 .ui-panel-card--brand {
-  border-width: 2px;
-  border-color: var(--color-ink);
+  padding: 1rem;
+  border: 2px solid var(--color-ink);
   border-radius: var(--radius-xl);
+  background: var(--color-panel);
   box-shadow: var(--shadow-offset);
 }
 

@@ -2,22 +2,13 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angular/forms';
 import { Router } from '@angular/router';
 import { toast } from 'ngx-sonner';
-import { UiBadge, UiButton, UiFormField, UiInput, UiPageHeader, UiSelectBox } from '@ui';
+import { UiButton, UiFormField, UiInput, UiPageHeader, UiSelectBox } from '@ui';
 import { MarketReferenceEditor } from '@app/shared/market-reference-editor';
 import type { MarketReference } from '@core/api/generated';
 import { AuthStore } from '@core/auth';
 import { OrgApiService } from '@core/api/org-api.service';
-import type { AccessStatusOutputStatusEnumKey as AccessStatus } from '@core/api/generated';
 import { ThemeStore } from '@core/theme/theme.store';
 import type { ThemePreference } from '@core/theme/theme.store';
-
-type BadgeTone = 'success' | 'warning' | 'danger' | 'neutral';
-
-interface AccessBadge {
-  readonly tone: BadgeTone;
-  readonly text: string;
-  readonly hint: string;
-}
 
 interface ThemeChoice {
   readonly value: ThemePreference;
@@ -47,21 +38,6 @@ const TIMEZONES: readonly { value: string; label: string }[] = [
   { value: 'Europe/Lisbon', label: 'Lisboa' },
 ];
 
-// Status = tom + texto, nunca cor sozinha (DESIGN.md §6).
-const ACCESS_BADGE: Record<AccessStatus, AccessBadge> = {
-  active: { tone: 'success', text: 'Ativo', hint: 'Seu acesso ao beta está liberado.' },
-  pending: {
-    tone: 'warning',
-    text: 'Aguardando liberação',
-    hint: 'Seu acesso está na fila do beta. Avisamos assim que liberar.',
-  },
-  revoked: {
-    tone: 'danger',
-    text: 'Revogado',
-    hint: 'Seu acesso ao beta foi revogado. Fale com o suporte.',
-  },
-};
-
 /**
  * Configurações da conta e da organização: Perfil (dados do usuário),
  * Organização (renomear — só owner), Tema (claro/escuro/sistema) e Acesso
@@ -70,7 +46,7 @@ const ACCESS_BADGE: Record<AccessStatus, AccessBadge> = {
 @Component({
   selector: 'app-settings-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [ReactiveFormsModule, UiBadge, UiButton, UiFormField, UiInput, UiPageHeader, UiSelectBox, MarketReferenceEditor],
+  imports: [ReactiveFormsModule, UiButton, UiFormField, UiInput, UiPageHeader, UiSelectBox, MarketReferenceEditor],
   template: `
     <div class="flex max-w-2xl flex-col gap-8">
       <app-ui-page-header title="Configurações" subtitle="Perfil, organização, tema e acesso." />
@@ -174,15 +150,6 @@ const ACCESS_BADGE: Record<AccessStatus, AccessBadge> = {
         </div>
       </section>
 
-      <!-- Acesso (beta) -->
-      <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
-        <div class="flex items-center justify-between gap-3">
-          <h2 class="font-brand text-base font-semibold text-ink">Acesso</h2>
-          <span appBadge [tone]="accessBadge().tone">{{ accessBadge().text }}</span>
-        </div>
-        <p class="text-sm text-muted">{{ accessBadge().hint }}</p>
-      </section>
-
       <!-- Sair -->
       <section class="flex items-center justify-between gap-3 rounded-lg border border-line bg-panel p-5">
         <div class="flex flex-col gap-0.5">
@@ -227,20 +194,7 @@ export class SettingsPage {
     }),
   });
 
-  private readonly accessStatus = signal<AccessStatus | null>(this.authStore.accessStatus());
-  protected readonly accessBadge = computed<AccessBadge>(() => {
-    const status = this.accessStatus();
-    return status
-      ? ACCESS_BADGE[status]
-      : { tone: 'neutral', text: 'Indefinido', hint: 'Não foi possível ler o status agora.' };
-  });
-
   constructor() {
-    // Confirma o status de acesso na fonte dedicada; se falhar, mantém o do MeOutput.
-    this.orgApi.accessStatus().subscribe({
-      next: (result) => this.accessStatus.set(result.status),
-      error: () => undefined,
-    });
     // Fuso atual da org (base do select).
     this.orgApi.currentOrg().subscribe({
       next: (org) => this.timezone.set(org.timezone),
