@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { toast } from 'ngx-sonner';
-import { UiButton, UiSpinner } from '@ui';
+import { UiButton, UiSpinner, UiEyebrow, UiInput } from '@ui';
 import { ChannelApiService } from '@core/api/channel-api.service';
 import type { ChannelStateOutput, GroupsListOutput } from '@core/api/generated';
 
@@ -38,13 +38,14 @@ function onlyDigits(value: string): string {
 @Component({
   selector: 'app-whatsapp-connect',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiButton, UiSpinner],
+  imports: [UiButton, UiSpinner, UiEyebrow, UiInput],
   template: `
     <div class="flex flex-col gap-4">
       <!-- Passo 1: conectar a instância por QR -->
       <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
         <div class="flex flex-col gap-1">
-          <h2 class="font-brand text-sm font-semibold text-ink">1. Parear o número do agente</h2>
+          <app-ui-eyebrow>Passo 1</app-ui-eyebrow>
+          <h2 class="font-brand text-sm font-semibold text-ink">Parear o número do agente</h2>
           <p class="text-xs text-muted">
             É o WhatsApp de onde o agente vai <strong>enviar</strong> as análises. Pareie o número da
             sua organização escaneando o QR.
@@ -57,12 +58,12 @@ function onlyDigits(value: string): string {
           </div>
         } @else if (connected()) {
           <p class="text-sm text-success-strong">
-            WhatsApp conectado — o agente fala pelo {{ pairedPhone() ?? 'número pareado' }}.
+            WhatsApp conectado. O agente fala pelo {{ pairedPhone() ?? 'número pareado' }}.
           </p>
           @if (confirmDisconnect()) {
-            <div class="flex flex-col gap-2 rounded-md bg-soft p-3">
+            <div class="flex flex-col gap-2 rounded-md border border-line p-3">
               <p class="text-xs text-muted">
-                Desconectar remove o pareamento — o agente para de te avisar até você parear de novo.
+                Desconectar remove o pareamento. O agente para de te avisar até você parear de novo.
               </p>
               <div class="flex items-center gap-2">
                 <button appButton variant="secondary" type="button" [disabled]="disconnecting()" (click)="disconnect()">
@@ -104,7 +105,8 @@ function onlyDigits(value: string): string {
       <!-- Passo 2: verificar o número que vai RECEBER as análises -->
       <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5" [class.opacity-50]="!connected()">
         <div class="flex flex-col gap-1">
-          <h2 class="font-brand text-sm font-semibold text-ink">2. Confirmar para onde receber</h2>
+          <app-ui-eyebrow>Passo 2</app-ui-eyebrow>
+          <h2 class="font-brand text-sm font-semibold text-ink">Confirmar para onde receber</h2>
           <p class="text-xs text-muted">
             Informe o seu WhatsApp pessoal — é para onde o agente vai te enviar as análises. Ele manda
             um código do número pareado acima para confirmar. Use um número <strong>diferente</strong>
@@ -125,9 +127,10 @@ function onlyDigits(value: string): string {
             <label class="flex flex-col gap-1 text-xs text-muted">
               Seu WhatsApp (com DDI + DDD)
               <input
+                appInput
                 type="tel"
                 placeholder="+55 11 99999-9999"
-                class="w-56 rounded-md border border-line bg-app px-3 py-2 text-sm text-ink"
+                class="w-56"
                 [value]="phone()"
                 (input)="onPhone($event)"
               />
@@ -149,7 +152,7 @@ function onlyDigits(value: string): string {
           } @else if (recipientIsPaired()) {
             <p class="text-xs text-warning-strong">
               Esse é o mesmo número do agente. O WhatsApp não entrega mensagem que você envia pra si
-              mesmo — use o seu número pessoal para receber as análises.
+              mesmo, então use o seu número pessoal para receber as análises.
             </p>
           }
           @if (codeSent()) {
@@ -159,16 +162,17 @@ function onlyDigits(value: string): string {
               </p>
             } @else {
               <p class="text-xs text-muted">
-                Código enviado para {{ sentPhone() }} — válido por {{ remainingLabel() }}. Digite-o abaixo.
+                Código enviado para {{ sentPhone() }}, válido por {{ remainingLabel() }}. Digite-o abaixo.
               </p>
             }
             <div class="flex flex-wrap items-end gap-3">
               <label class="flex flex-col gap-1 text-xs text-muted">
                 Código (6 dígitos)
                 <input
+                  appInput
                   inputmode="numeric"
                   maxlength="6"
-                  class="w-32 rounded-md border border-line bg-app px-3 py-2 text-sm tracking-widest text-ink"
+                  class="w-32 font-mono tracking-widest"
                   [value]="code()"
                   (input)="onCode($event)"
                 />
@@ -191,9 +195,10 @@ function onlyDigits(value: string): string {
            o agente atua nele igual à DM (leitura, escrita, aprovação, config). -->
       <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5" [class.opacity-50]="!connected()">
         <div class="flex flex-col gap-1">
-          <h2 class="font-brand text-sm font-semibold text-ink">3. Grupo do WhatsApp (opcional)</h2>
+          <app-ui-eyebrow>Passo 3 · opcional</app-ui-eyebrow>
+          <h2 class="font-brand text-sm font-semibold text-ink">Grupo do WhatsApp</h2>
           <p class="text-xs text-muted">
-            Além de te avisar no seu WhatsApp, o agente pode atuar dentro de um grupo — alertas e
+            Além de te avisar no seu WhatsApp, o agente pode atuar dentro de um grupo. Alertas e
             análises ficam visíveis pro time, e qualquer pessoa no grupo pode perguntar ao agente.
           </p>
         </div>
@@ -209,7 +214,7 @@ function onlyDigits(value: string): string {
             Avisos proativos (alerta/resumo) vão pro grupo em vez do seu WhatsApp pessoal.
           </p>
         } @else {
-          <div class="flex flex-col gap-2 rounded-md bg-soft p-3 text-xs text-muted">
+          <div class="flex flex-col gap-2 rounded-md border border-line p-3 text-xs text-muted">
             <p>Qualquer pessoa no grupo poderá pedir análise, aprovar ações e mudar a config do agente.</p>
             <p>Recomendado pro time interno ou org de 1 cliente — com vários clientes, evite colocar gente de fora ainda.</p>
           </div>
@@ -228,7 +233,7 @@ function onlyDigits(value: string): string {
             </button>
           } @else if (groups().length === 0) {
             <p class="text-sm text-muted">
-              Nenhum grupo encontrado — adicione o número do agente a um grupo no WhatsApp e clique em atualizar.
+              Nenhum grupo encontrado. Adicione o número do agente a um grupo no WhatsApp e clique em atualizar.
             </p>
             <button appButton variant="ghost" size="sm" type="button" [disabled]="!connected() || groupsLoading()" (click)="loadGroups()">
               {{ groupsLoading() ? 'Atualizando…' : 'Atualizar' }}
@@ -236,10 +241,11 @@ function onlyDigits(value: string): string {
           } @else {
             @if (groups().length > 5) {
               <input
+                appInput
                 type="text"
                 placeholder="Buscar grupo…"
                 aria-label="Buscar grupo"
-                class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink"
+                class="w-full"
                 [value]="groupFilter()"
                 (input)="onGroupFilter($event)"
               />
