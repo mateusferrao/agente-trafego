@@ -34,7 +34,9 @@ const GRADE_TEXT: Record<Grade, string> = {
     @let c = card();
     <!-- Card inteiro clicável: o link do nome estica sobre o card (::after); o botão
          Atualizar fica acima (z-10) p/ não disparar a navegação. h-full = altura uniforme. -->
-    <div class="relative flex h-full flex-col gap-2 rounded-lg border border-line bg-panel p-4 transition hover:border-accent/40">
+    <div
+      class="ui-panel-card--brand relative flex h-full flex-col gap-2 transition hover:border-accent motion-safe:hover:-translate-y-0.5"
+    >
       <div class="flex items-start justify-between gap-2">
         <a
           [routerLink]="['/accounts', c.accountId]"

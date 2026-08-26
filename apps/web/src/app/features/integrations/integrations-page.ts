@@ -2,12 +2,12 @@ import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@a
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideRefreshCw, lucidePlus, lucideX, lucidePlug } from '@ng-icons/lucide';
 import {
-  UiBadge,
   UiButton,
   UiDialog,
   UiDialogOverlay,
   UiDialogTitle,
   UiEmptyState,
+  UiEyebrow,
   UiPageHeader,
   UiSpinner,
 } from '@ui';
@@ -24,6 +24,14 @@ import { WhatsappConnect } from '../whatsapp/whatsapp-page';
 type TokenStatus = ConnectionOutput['tokenStatus'];
 type ChannelStatus = 'connected' | 'connecting' | 'disconnected';
 type BadgeTone = 'success' | 'info' | 'warning' | 'danger' | 'neutral';
+/** Tom → classe de texto (status como eyebrow colorido — tom+texto, sem pill). */
+const TONE_TEXT: Record<BadgeTone, string> = {
+  success: 'text-success-strong',
+  info: 'text-info-strong',
+  warning: 'text-warning-strong',
+  danger: 'text-danger-strong',
+  neutral: 'text-muted',
+};
 type ConnectionAccount = ConnectionAccountsOutput['available'][number];
 type ManagedAccountRef = ConnectionAccountsOutput['managed'][number];
 
@@ -59,12 +67,12 @@ const CHANNEL_TEXT: Record<ChannelStatus, string> = {
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [
     NgIcon,
-    UiBadge,
     UiButton,
     UiDialog,
     UiDialogOverlay,
     UiDialogTitle,
     UiEmptyState,
+    UiEyebrow,
     UiPageHeader,
     UiSpinner,
     ConnectDialogComponent,
@@ -107,7 +115,7 @@ const CHANNEL_TEXT: Record<ChannelStatus, string> = {
                   <span class="grid size-10 place-items-center rounded-lg bg-soft">
                     <img src="/integrations/whatsapp.svg" alt="" class="size-6" />
                   </span>
-                  <span appBadge [tone]="channelTone()" size="sm">{{ channelText() }}</span>
+                  <app-ui-eyebrow [class]="toneText(channelTone())">{{ channelText() }}</app-ui-eyebrow>
                 </div>
                 <div class="flex flex-col gap-0.5">
                   <h3 class="font-brand text-base font-semibold text-ink">WhatsApp</h3>
@@ -126,9 +134,9 @@ const CHANNEL_TEXT: Record<ChannelStatus, string> = {
                   <span class="grid size-10 place-items-center rounded-lg bg-soft">
                     <img src="/integrations/meta-ads.svg" alt="" class="size-6" />
                   </span>
-                  <span appBadge [tone]="tokenTone(conn.tokenStatus)" size="sm">
+                  <app-ui-eyebrow [class]="toneText(tokenTone(conn.tokenStatus))">
                     {{ tokenText(conn.tokenStatus) }}
-                  </span>
+                  </app-ui-eyebrow>
                 </div>
                 <div class="flex flex-col gap-0.5">
                   <h3 class="font-brand text-base font-semibold text-ink">Meta Ads</h3>
@@ -175,7 +183,7 @@ const CHANNEL_TEXT: Record<ChannelStatus, string> = {
                 <span class="grid size-10 place-items-center rounded-lg bg-soft">
                   <img [src]="'/integrations/' + entry.icon + '-mono.svg'" alt="" class="size-6" />
                 </span>
-                <span appBadge tone="neutral" size="sm">Disponível</span>
+                <app-ui-eyebrow>Disponível</app-ui-eyebrow>
               </div>
               <span class="text-xs font-semibold uppercase tracking-wide text-muted">{{ entry.category }}</span>
               <h3 class="font-brand text-base font-semibold text-ink">{{ entry.name }}</h3>
@@ -288,6 +296,9 @@ export class IntegrationsPage {
 
   protected tokenTone(status: TokenStatus): BadgeTone {
     return TOKEN_TONE[status];
+  }
+  protected toneText(tone: BadgeTone): string {
+    return TONE_TEXT[tone];
   }
   protected tokenText(status: TokenStatus): string {
     return TOKEN_TEXT[status];

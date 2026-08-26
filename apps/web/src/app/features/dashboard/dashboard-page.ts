@@ -7,7 +7,7 @@ import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from "
 import { RouterLink } from "@angular/router";
 import { NgIcon, provideIcons } from "@ng-icons/core";
 import { lucideCircleCheck, lucideActivity } from "@ng-icons/lucide";
-import { UiBadge, UiButton, UiEmptyState, UiEyebrow, UiPageHeader, UiSpinner, type TimelineTone } from "@ui";
+import { UiButton, UiEmptyState, UiEyebrow, UiPageHeader, UiSpinner } from "@ui";
 import { DashboardApiService } from "@core/api/dashboard-api.service";
 import { AGENT_NAME } from "@core/brand";
 import type { DashboardOutput } from "@core/api/generated";
@@ -30,17 +30,10 @@ const REASON_LABEL: Record<Reason, string> = {
   bad_grade: "nota baixa",
   pending: "pendências",
 };
-const REASON_TONE: Record<Reason, TimelineTone> = {
-  token_invalid: "danger",
-  no_recent_run: "warning",
-  bad_grade: "warning",
-  pending: "info",
-};
-
 @Component({
   selector: "app-dashboard-page",
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, NgIcon, UiBadge, UiButton, UiEmptyState, UiEyebrow, UiPageHeader, UiSpinner, AccountPanoramaCard],
+  imports: [RouterLink, NgIcon, UiButton, UiEmptyState, UiEyebrow, UiPageHeader, UiSpinner, AccountPanoramaCard],
   providers: [provideIcons({ lucideCircleCheck, lucideActivity })],
   template: `
     <div class="flex flex-col gap-6">
@@ -97,7 +90,7 @@ const REASON_TONE: Record<Reason, TimelineTone> = {
                 @for (c of d.attention; track c.accountId) {
                   <a
                     [routerLink]="['/accounts', c.accountId]"
-                    class="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-panel p-3 transition hover:border-accent/40"
+                    class="flex flex-wrap items-center gap-2 rounded-lg border border-line border-l-4 border-l-warning bg-panel p-3 transition hover:border-accent/40"
                   >
                     <span class="text-sm font-medium text-ink">{{ c.accountName }}</span>
                     @for (r of c.reasons; track r) {
@@ -123,7 +116,7 @@ const REASON_TONE: Record<Reason, TimelineTone> = {
                 @for (a of d.waste.accounts; track a.accountId) {
                   <a
                     [routerLink]="['/accounts', a.accountId]"
-                    class="flex items-center justify-between gap-3 rounded-lg border border-line bg-panel p-3 transition hover:border-accent/40"
+                    class="flex items-center justify-between gap-3 rounded-lg border border-line border-l-4 border-l-danger bg-panel p-3 transition hover:border-accent/40"
                   >
                     <span class="min-w-0 truncate text-sm font-medium text-ink">{{ a.accountName }}</span>
                     <span class="ui-stat__value shrink-0 text-sm text-danger-strong">{{ money(a.wastedSpend, a.currency) }}</span>
@@ -169,11 +162,11 @@ const REASON_TONE: Record<Reason, TimelineTone> = {
             } @else {
               <ul class="flex flex-col gap-2">
                 @for (a of d.recentActivity; track a.id) {
-                  <li class="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-panel p-3 text-sm">
+                  <li class="flex flex-wrap items-center gap-2 rounded-lg border border-line border-l-4 border-l-line bg-panel p-3 text-sm">
                     <span class="font-medium text-ink">{{ a.accountName }}</span>
                     <span class="text-muted">{{ activityLabel(a) }}</span>
                     @if (a.fromChat) {
-                      <span appBadge tone="accent" size="xs">chat</span>
+                      <app-ui-eyebrow>chat</app-ui-eyebrow>
                     }
                     <span class="ml-auto text-xs text-muted">{{ timeLabel(a.at) }}</span>
                   </li>
@@ -269,9 +262,6 @@ export class DashboardPage {
 
   protected reasonLabel(r: Reason): string {
     return REASON_LABEL[r];
-  }
-  protected reasonTone(r: Reason): TimelineTone {
-    return REASON_TONE[r];
   }
 
   protected activityLabel(a: Activity): string {

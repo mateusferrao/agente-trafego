@@ -15,9 +15,18 @@ import {
   lucideActivity,
   lucideCircleX,
 } from "@ng-icons/lucide";
-import { UiBadge } from "./ui-badge";
+import { UiEyebrow } from "./ui-eyebrow";
 
 export type TimelineTone = "success" | "warning" | "danger" | "info" | "neutral" | "accent";
+/** Tom → classe de texto (badge de evento como eyebrow colorido — tom+texto). */
+const TIMELINE_TONE_TEXT: Record<TimelineTone, string> = {
+  success: "text-success-strong",
+  warning: "text-warning-strong",
+  danger: "text-danger-strong",
+  info: "text-info-strong",
+  accent: "text-accent-strong",
+  neutral: "text-muted",
+};
 
 export interface TimelineChildVm {
   readonly id: string;
@@ -52,7 +61,7 @@ const TIME_FMT = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-
 @Component({
   selector: "app-ui-timeline",
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [NgIcon, UiBadge],
+  imports: [NgIcon, UiEyebrow],
   providers: [
     provideIcons({
       lucideUndo2,
@@ -80,7 +89,7 @@ const TIME_FMT = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-
                   <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <span class="text-sm font-medium text-ink">{{ event.title }}</span>
                     @if (event.badge) {
-                      <span appBadge [tone]="event.tone ?? 'neutral'" size="sm">{{ event.badge }}</span>
+                      <app-ui-eyebrow [class]="toneText(event.tone)">{{ event.badge }}</app-ui-eyebrow>
                     }
                     <span class="ml-auto text-xs text-muted">{{ timeLabel(event.at) }}</span>
                   </div>
@@ -110,7 +119,7 @@ const TIME_FMT = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-
                           <li class="flex flex-wrap items-center gap-2 text-sm text-ink">
                             {{ child.title }}
                             @if (child.badge) {
-                              <span appBadge [tone]="child.tone ?? 'neutral'" size="xs">{{ child.badge }}</span>
+                              <app-ui-eyebrow [class]="toneText(child.tone)">{{ child.badge }}</app-ui-eyebrow>
                             }
                           </li>
                         }
@@ -158,6 +167,10 @@ export class UiTimeline {
 
   protected timeLabel(iso: string): string {
     return TIME_FMT.format(new Date(iso));
+  }
+
+  protected toneText(tone: TimelineTone | undefined): string {
+    return TIMELINE_TONE_TEXT[tone ?? "neutral"];
   }
 
   private dayLabel(day: string): string {
