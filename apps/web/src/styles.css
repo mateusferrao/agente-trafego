@@ -660,6 +660,14 @@ textarea[appTextarea][surface='transparent']:focus-visible {
   background: var(--color-panel);
 }
 
+/* Nível Marca (Two-Tier Surface): assinatura neobrutalista sólida. */
+.ui-panel-card--brand {
+  border-width: 2px;
+  border-color: var(--color-ink);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-offset);
+}
+
 .ui-panel-title {
   margin: 0 0 0.75rem;
   color: var(--color-ink);

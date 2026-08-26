@@ -9,11 +9,16 @@ const BASE_CLASSES =
   'focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-accent/30 ' +
   'disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50';
 
+// Primário = assinatura neobrutalista: navy sólido + sombra offset tomate + "afundar" no hover
+// (translate só com motion-safe). Danger = vermelho profundo distinto do tomate de marca.
+// Secondary/ghost seguem calmos (nível Workspace): a marca vem do primário e dos cards.
 const VARIANT_CLASSES: Record<UiButtonVariant, string> = {
-  primary: 'border border-accent bg-accent text-panel shadow-card hover:bg-accent-strong',
-  secondary: 'border border-line bg-panel text-ink shadow-card hover:border-accent/35 hover:bg-soft',
+  primary:
+    'border-2 border-primary bg-primary text-primary-ink shadow-[var(--shadow-offset-accent)] hover:bg-primary-strong ' +
+    'motion-safe:hover:translate-x-[3px] motion-safe:hover:translate-y-[3px] motion-safe:hover:shadow-[var(--shadow-offset-accent-press)]',
+  secondary: 'border border-line bg-panel text-ink shadow-card hover:border-accent/40 hover:bg-soft',
   ghost: 'border border-transparent bg-transparent text-muted hover:bg-soft hover:text-ink',
-  danger: 'border border-tomato bg-tomato text-panel shadow-card hover:bg-tomato/90',
+  danger: 'border-2 border-danger bg-danger text-primary-ink shadow-card hover:bg-danger-strong',
 };
 
 const SIZE_CLASSES: Record<UiButtonSize, string> = {

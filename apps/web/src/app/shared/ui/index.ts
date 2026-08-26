@@ -13,6 +13,7 @@ export { UiEmptyText } from './ui-empty-text';
 export { UiEmptyStateComponent as UiEmptyState } from './ui-empty-state';
 export { UiPageHeaderComponent as UiPageHeader } from './ui-page-header';
 export { UiPanelCard, UiPanelGrid, UiPanelText, UiPanelTitle } from './ui-panel';
+export { UiAgentIdentity } from './ui-agent-identity';
 export { UiPulseDotComponent as UiPulseDot } from './ui-pulse-dot';
 export { UiModuleSidebarComponent as UiModuleSidebar } from './ui-module-sidebar';
 export type { UiModuleSidebarItem } from './ui-module-sidebar';
