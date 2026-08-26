@@ -200,6 +200,29 @@
   --grain-highlight: url("data:image/svg+xml,%3Csvg viewBox='0 0 120 120' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='grain'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.08' numOctaves='5' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.68 0 0 0 0 0.82 0 0 0 0 0.74 0 0 0 0.24 0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23grain)'/%3E%3C/svg%3E");
 }
 
+/* Controles nativos (date picker, scrollbars, selects) seguem o tema resolvido —
+   sem isso o calendário do <input type="date"> fica sempre claro no dark. Espelha a
+   estrutura dos tokens (data-theme explícito + fallback prefers-color-scheme). */
+:root {
+  color-scheme: light;
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+  }
+}
+input[type='date']::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.12s ease;
+}
+input[type='date']::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+
 html,
 body {
   margin: 0;
@@ -1146,11 +1169,7 @@ table[appUiResizableColumns] > tbody > tr > td {
 .brand-pulse { animation: ui-brand-pulse 1.8s ease-in-out infinite; }
 
 /* Narrativa de progresso honesta-genérica: descreve o TIPO de trabalho, sem fingir
-   passo/tempo real. Highlight ambiente escalonado (não é checklist que "completa"). */
-@keyframes ui-step-pulse {
-  0%, 100% { opacity: 0.45; }
-  50% { opacity: 1; }
-}
+   passo/tempo real. A linha ATIVA rotaciona em ciclo (destaque ambiente, não checklist). */
 .ui-analysis-steps {
   display: grid;
   gap: 0.35rem;
@@ -1161,14 +1180,15 @@ table[appUiResizableColumns] > tbody > tr > td {
 .ui-analysis-steps > li {
   color: var(--color-muted);
   font-size: 0.86rem;
-  opacity: 0.55;
-  animation: ui-step-pulse 2.4s ease-in-out infinite;
+  opacity: 0.4;
+  transition:
+    opacity 0.45s ease,
+    color 0.45s ease;
 }
-.ui-analysis-steps > li:nth-child(1) { animation-delay: 0s; }
-.ui-analysis-steps > li:nth-child(2) { animation-delay: 0.4s; }
-.ui-analysis-steps > li:nth-child(3) { animation-delay: 0.8s; }
-.ui-analysis-steps > li:nth-child(4) { animation-delay: 1.2s; }
-.ui-analysis-steps > li:nth-child(5) { animation-delay: 1.6s; }
+.ui-analysis-steps > li.is-active {
+  opacity: 1;
+  color: var(--color-ink);
+}
 
 /* Balão de chat (motif WhatsApp) — agente (menta) / usuário (painel + borda). */
 .ui-chat-bubble {
@@ -1214,9 +1234,12 @@ table[appUiResizableColumns] > tbody > tr > td {
 @media (prefers-reduced-motion: reduce) {
   .ui-typing-dots > span,
   .brand-pulse,
-  .ui-analysis-steps > li,
   .ui-skeleton {
     animation: none;
   }
-  .ui-analysis-steps > li { opacity: 0.9; }
+  /* Sem rotação: todas as linhas legíveis e estáticas. */
+  .ui-analysis-steps > li {
+    opacity: 0.85;
+    transition: none;
+  }
 }

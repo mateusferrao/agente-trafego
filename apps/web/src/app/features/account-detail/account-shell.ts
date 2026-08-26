@@ -5,7 +5,7 @@
 
 import { ChangeDetectionStrategy, Component, inject } from "@angular/core";
 import { RouterLink, RouterLinkActive, RouterOutlet } from "@angular/router";
-import { UiAgentIdentity, UiBadge, UiButton, UiPageHeader, UiRouteTabLink, UiRouteTabPanel, UiRouteTabs } from "@ui";
+import { UiAgentIdentity, UiButton, UiPageHeader, UiRouteTabLink, UiRouteTabPanel, UiRouteTabs } from "@ui";
 import { AccountContextStore } from "./account-context.store";
 
 @Component({
@@ -17,7 +17,6 @@ import { AccountContextStore } from "./account-context.store";
     RouterLinkActive,
     RouterOutlet,
     UiAgentIdentity,
-    UiBadge,
     UiButton,
     UiPageHeader,
     UiRouteTabs,
@@ -30,9 +29,22 @@ import { AccountContextStore } from "./account-context.store";
         <a routerLink="/accounts" class="text-xs text-muted hover:text-ink">← Contas</a>
         <app-ui-page-header [title]="store.accountName()" [subtitle]="store.accountSubtitle()">
           <div class="flex flex-wrap items-center gap-2" actions>
-            <app-ui-agent-identity />
-            <span appBadge [tone]="store.paused() ? 'warning' : 'success'" size="sm">
-              {{ store.paused() ? 'Agente pausado' : 'Agente ativo' }}
+            <!-- Chip de identidade do agente: marca + Roi + status (tom + texto). -->
+            <span class="inline-flex items-center gap-2 rounded-pill border border-line bg-soft/60 py-1 pl-2 pr-3">
+              <app-ui-agent-identity />
+              <span
+                class="inline-flex items-center gap-1.5 text-xs font-medium"
+                [class.text-warning-strong]="store.paused()"
+                [class.text-success-strong]="!store.paused()"
+              >
+                <span
+                  class="size-1.5 rounded-full"
+                  [class.bg-warning]="store.paused()"
+                  [class.bg-success]="!store.paused()"
+                  aria-hidden="true"
+                ></span>
+                {{ store.paused() ? 'pausado' : 'ativo' }}
+              </span>
             </span>
             <button
               appButton

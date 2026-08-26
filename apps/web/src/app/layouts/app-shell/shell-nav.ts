@@ -14,7 +14,6 @@ import {
   lucideLayoutDashboard,
   lucideSun,
 } from '@ng-icons/lucide';
-import { UiBadge } from '@ui';
 import { OrgApiService } from '@core/api/org-api.service';
 import type { OrgOutput } from '@core/api';
 import { AuthStore } from '@core/auth';
@@ -48,7 +47,7 @@ const THEME_OPTIONS: readonly ThemeOption[] = [
   // não tinha o que crescer, e o bloco de tema+usuário ficava colado ao conteúdo em
   // vez de ancorado no rodapé.
   host: { class: 'flex min-h-0 flex-1 flex-col gap-5' },
-  imports: [RouterLink, RouterLinkActive, NgIcon, UiBadge],
+  imports: [RouterLink, RouterLinkActive, NgIcon],
   providers: [
     provideIcons({
       lucideHouse,
@@ -72,15 +71,13 @@ const THEME_OPTIONS: readonly ThemeOption[] = [
       </span>
       <span class="flex min-w-0 flex-col">
         <span class="truncate text-sm font-semibold text-ink">{{ orgLabel() }}</span>
-        @if (role(); as role) {
-          <span appBadge tone="neutral" size="xs" class="mt-0.5 w-fit">{{ roleLabel(role) }}</span>
-        }
       </span>
     </div>
 
     <nav class="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto">
-      @for (group of groups; track group.id) {
-        <div class="flex flex-col gap-1">
+      @for (group of groups; track group.id; let last = $last) {
+        <!-- Último grupo (Configurar) desce e cola no rodapé da nav. -->
+        <div class="flex flex-col gap-1" [class.mt-auto]="last">
           <span class="px-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
             {{ group.label }}
           </span>
@@ -121,8 +118,11 @@ const THEME_OPTIONS: readonly ThemeOption[] = [
       </div>
 
       <!-- Usuário + sair -->
-      <div class="flex items-center justify-between gap-2 px-1">
-        <span class="flex min-w-0 flex-col">
+      <div class="flex items-center gap-2.5 px-1">
+        <span class="grid size-8 shrink-0 place-items-center rounded-full bg-accent-soft text-xs font-semibold text-accent-strong">
+          {{ initials() }}
+        </span>
+        <span class="flex min-w-0 flex-1 flex-col">
           <span class="truncate text-sm font-semibold text-ink">{{ userName() }}</span>
           <span class="truncate text-xs text-muted">{{ userEmail() }}</span>
         </span>
@@ -156,6 +156,14 @@ export class ShellNav {
   protected readonly userName = (): string => this.authStore.me()?.name ?? 'Você';
   protected readonly userEmail = (): string => this.authStore.me()?.email ?? '';
 
+  /** Iniciais do usuário para o avatar do rodapé (fallback '?'). */
+  protected readonly initials = (): string => {
+    const parts = this.userName().trim().split(/\s+/u).filter(Boolean);
+    const first = parts[0]?.[0] ?? '';
+    const last = parts.length > 1 ? (parts[parts.length - 1]?.[0] ?? '') : '';
+    return (first + last).toUpperCase() || '?';
+  };
+
   protected readonly orgLabel = (): string => {
     const current = this.authStore.me();
     if (current?.orgName) {
@@ -170,10 +178,6 @@ export class ShellNav {
       next: (orgs) => this.orgs.set(orgs),
       error: () => this.orgs.set([]),
     });
-  }
-
-  protected roleLabel(role: string): string {
-    return role === 'owner' ? 'Proprietário' : 'Membro';
   }
 
   /** Filtra itens owner-only (ex: Custos) quando o usuário não é owner. */
