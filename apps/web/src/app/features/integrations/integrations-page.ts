@@ -12,6 +12,7 @@ import {
   UiSpinner,
 } from '@ui';
 import { toast } from 'ngx-sonner';
+import { AGENT_NAME } from '@core/brand';
 import { ConnectionsApiService } from '@core/api/connections-api.service';
 import { ChannelApiService } from '@core/api/channel-api.service';
 import type { ConnectionAccountsOutput, ConnectionOutput } from '@core/api/generated';
@@ -311,7 +312,10 @@ export class IntegrationsPage {
   }
 
   protected onDialogDone(event: ConnectDialogDoneEvent): void {
-    if (event.result.kind === 'success') this.reload();
+    if (event.result.kind === 'success') {
+      this.reload();
+      toast.success(`Conta conectada. O ${AGENT_NAME} já começou a analisar.`);
+    }
   }
   protected closeDialog(): void {
     this.dialogEntry.set(null);

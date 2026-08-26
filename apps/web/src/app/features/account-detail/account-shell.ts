@@ -29,8 +29,8 @@ import { AccountContextStore } from "./account-context.store";
         <a routerLink="/accounts" class="text-xs text-muted hover:text-ink">← Contas</a>
         <app-ui-page-header [title]="store.accountName()" [subtitle]="store.accountSubtitle()">
           <div class="flex flex-wrap items-center gap-2" actions>
-            <!-- Chip de identidade do agente: marca + Roi + status (tom + texto). -->
-            <span class="inline-flex items-center gap-2 rounded-pill border border-line bg-soft/60 py-1 pl-2 pr-3">
+            <!-- Identidade do agente: marca + Roi + status (tom + texto), sem pill washed. -->
+            <span class="inline-flex items-center gap-2.5">
               <app-ui-agent-identity />
               <span
                 class="inline-flex items-center gap-1.5 text-xs font-medium"

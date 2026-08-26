@@ -24,6 +24,7 @@ import {
   UiLabel,
   UiSpinner,
 } from '@ui';
+import { AGENT_NAME } from '@core/brand';
 import { CONNECTOR_REGISTRY, resolveConnector } from '../connectors/connector-registry';
 import type { ConnectResult, SelectableTarget } from '../domain/connect-result';
 import type { ProviderCatalogEntry } from '../domain/provider-catalog-entry';
@@ -195,7 +196,9 @@ const STEP_DOTS = [0, 1, 2, 3] as const;
                   <ng-icon name="lucideCircleCheck" size="36" />
                 </div>
                 <p class="title">Conta conectada</p>
-                <p appUiHint class="centered-hint">{{ entry().name }} agora aparece em Contas.</p>
+                <p appUiHint class="centered-hint">
+                  O {{ agentName }}, seu agente de tráfego, já começou a analisar. Você vê o resultado em Contas.
+                </p>
               </div>
             }
             @case ('error') {
@@ -260,6 +263,7 @@ export class ConnectDialogComponent {
   readonly closed = output<void>();
   readonly done = output<ConnectDialogDoneEvent>();
 
+  protected readonly agentName = AGENT_NAME;
   protected readonly step = signal<Step>('intro');
   protected readonly errorMessage = signal<string>('');
   protected readonly targets = signal<readonly SelectableTarget[]>([]);
