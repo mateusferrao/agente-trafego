@@ -72,7 +72,7 @@ Pré: `pnpm install` · `pnpm db:migrate` · `pnpm db:seed` · `pnpm dev` (api+w
 
 ## Execução E2E — resultado (2026-08-26)
 
-Ambiente do container: Postgres 16 + Redis 7 nativos, API real no boot. Serviços externos (Meta, Evolution, OpenRouter) **não** disponíveis aqui — os passos que dependem deles ficam para a stack completa do usuário (`pnpm dev` com credenciais). A lógica determinística desses passos é coberta pela suíte automatizada (core 361 · api 100 · worker 289).
+Ambiente do container: Postgres 16 + Redis 7 nativos, API real no boot. Serviços externos (Meta, Evolution, OpenRouter) **não** disponíveis aqui — os passos que dependem deles ficam para a stack completa do usuário (`pnpm dev` com credenciais). A lógica determinística desses passos é coberta pela suíte automatizada (core 358 · api 100 · worker 289).
 
 ### ✅ Verificado ao vivo (infra + API real)
 - **§0 Gate estático:** `pnpm typecheck` (17/17), `pnpm test` (core/api/worker), `tokens:check`, `pnpm --filter web build` (AOT), `pnpm api:generate` sem drift.
