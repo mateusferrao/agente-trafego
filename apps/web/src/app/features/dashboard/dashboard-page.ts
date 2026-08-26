@@ -7,7 +7,7 @@ import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from "
 import { RouterLink } from "@angular/router";
 import { NgIcon, provideIcons } from "@ng-icons/core";
 import { lucideCircleCheck, lucideActivity } from "@ng-icons/lucide";
-import { UiBadge, UiButton, UiEmptyState, UiPageHeader, UiSpinner, type TimelineTone } from "@ui";
+import { UiBadge, UiButton, UiEmptyState, UiEyebrow, UiPageHeader, UiSpinner, type TimelineTone } from "@ui";
 import { DashboardApiService } from "@core/api/dashboard-api.service";
 import { AGENT_NAME } from "@core/brand";
 import type { DashboardOutput } from "@core/api/generated";
@@ -40,7 +40,7 @@ const REASON_TONE: Record<Reason, TimelineTone> = {
 @Component({
   selector: "app-dashboard-page",
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, NgIcon, UiBadge, UiButton, UiEmptyState, UiPageHeader, UiSpinner, AccountPanoramaCard],
+  imports: [RouterLink, NgIcon, UiBadge, UiButton, UiEmptyState, UiEyebrow, UiPageHeader, UiSpinner, AccountPanoramaCard],
   providers: [provideIcons({ lucideCircleCheck, lucideActivity })],
   template: `
     <div class="flex flex-col gap-6">
@@ -66,16 +66,20 @@ const REASON_TONE: Record<Reason, TimelineTone> = {
           </app-ui-empty-state>
         } @else {
           <!-- Pendências -->
-          <section class="rounded-lg border border-line bg-panel p-4">
+          <section
+            class="rounded-lg border border-line bg-panel p-4"
+            [class.border-l-4]="d.pendingCount > 0"
+            [class.border-l-accent]="d.pendingCount > 0"
+          >
             @if (d.pendingCount > 0) {
               <div class="flex flex-wrap items-center justify-between gap-3">
-                <div class="flex items-center gap-2">
-                  <span appBadge tone="warning" size="sm">{{ d.pendingCount }}</span>
+                <div class="flex items-center gap-2.5">
+                  <span class="ui-stat__value text-xl text-accent-strong">{{ d.pendingCount }}</span>
                   <span class="text-sm text-ink">
                     {{ d.pendingCount === 1 ? 'ação aguarda seu OK' : 'ações aguardam seu OK' }}
                   </span>
                 </div>
-                <a appButton variant="secondary" routerLink="/approvals">Revisar pendências</a>
+                <a appButton variant="primary" routerLink="/approvals">Revisar pendências</a>
               </div>
             } @else {
               <p class="flex items-center gap-2 text-sm text-muted">
@@ -97,7 +101,7 @@ const REASON_TONE: Record<Reason, TimelineTone> = {
                   >
                     <span class="text-sm font-medium text-ink">{{ c.accountName }}</span>
                     @for (r of c.reasons; track r) {
-                      <span appBadge [tone]="reasonTone(r)" size="xs">{{ reasonLabel(r) }}</span>
+                      <app-ui-eyebrow>{{ reasonLabel(r) }}</app-ui-eyebrow>
                     }
                   </a>
                 }
@@ -122,7 +126,7 @@ const REASON_TONE: Record<Reason, TimelineTone> = {
                     class="flex items-center justify-between gap-3 rounded-lg border border-line bg-panel p-3 transition hover:border-accent/40"
                   >
                     <span class="min-w-0 truncate text-sm font-medium text-ink">{{ a.accountName }}</span>
-                    <span class="shrink-0 text-sm text-warning-strong">{{ money(a.wastedSpend, a.currency) }}</span>
+                    <span class="ui-stat__value shrink-0 text-sm text-danger-strong">{{ money(a.wastedSpend, a.currency) }}</span>
                   </a>
                 }
               </div>

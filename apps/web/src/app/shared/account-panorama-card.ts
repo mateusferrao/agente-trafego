@@ -6,16 +6,26 @@ import { ChangeDetectionStrategy, Component, input, output } from "@angular/core
 import { RouterLink } from "@angular/router";
 import { NgIcon, provideIcons } from "@ng-icons/core";
 import { lucideRefreshCw } from "@ng-icons/lucide";
-import { UiBadge, UiButton } from "@ui";
+import { UiButton, UiEyebrow } from "@ui";
 import type { PanoramaListOutput } from "@core/api/generated";
-import { asOfLabel, dateTimeLabel, gradeTone, money } from "./format";
+import { asOfLabel, dateTimeLabel, money } from "./format";
 
 export type PanoramaCardVm = PanoramaListOutput["accounts"][number];
+
+type Grade = NonNullable<PanoramaCardVm["grade"]>;
+/** Nota → palavra de saúde (aposenta a nota-letra escolar). */
+const GRADE_WORD: Record<Grade, string> = { A: "ótimo", B: "bom", C: "atenção", D: "crítico" };
+const GRADE_TEXT: Record<Grade, string> = {
+  A: "text-success-strong",
+  B: "text-info-strong",
+  C: "text-warning-strong",
+  D: "text-danger-strong",
+};
 
 @Component({
   selector: "app-account-panorama-card",
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, NgIcon, UiBadge, UiButton],
+  imports: [RouterLink, NgIcon, UiButton, UiEyebrow],
   providers: [provideIcons({ lucideRefreshCw })],
   // host ocupa a célula inteira do grid (align stretch) → todos os cards da linha
   // ficam com a MESMA altura, mesmo sem dado de gasto (footer alinhado por mt-auto).
@@ -34,7 +44,7 @@ export type PanoramaCardVm = PanoramaListOutput["accounts"][number];
         </a>
         @if (c.grade) {
           <div class="flex flex-col items-end gap-0.5">
-            <span appBadge [tone]="gradeTone(c.grade)" size="sm">Nota {{ c.grade }}</span>
+            <app-ui-eyebrow [class]="gradeText(c.grade)">{{ gradeWord(c.grade) }}</app-ui-eyebrow>
             @if (c.gradeAsOf) {
               <span class="text-[10px] text-muted">análise {{ dateTimeLabel(c.gradeAsOf) }}</span>
             }
@@ -43,9 +53,9 @@ export type PanoramaCardVm = PanoramaListOutput["accounts"][number];
       </div>
       @if (c.live; as t) {
         <div class="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-          <span class="text-base font-semibold text-ink">{{ money(t.spend, c.currency) }}</span>
+          <span class="ui-stat__value text-lg text-ink">{{ money(t.spend, c.currency) }}</span>
           @if (t.cpa !== undefined) {
-            <span class="text-xs text-muted">CPA {{ money(t.cpa, c.currency) }}</span>
+            <span class="flex items-baseline gap-1"><app-ui-eyebrow>CPA</app-ui-eyebrow><b class="ui-stat__value text-xs text-ink">{{ money(t.cpa, c.currency) }}</b></span>
           }
         </div>
       } @else if (c.dormant) {
@@ -80,6 +90,11 @@ export class AccountPanoramaCard {
 
   protected readonly money = money;
   protected readonly asOfLabel = asOfLabel;
-  protected readonly gradeTone = gradeTone;
   protected readonly dateTimeLabel = dateTimeLabel;
+  protected gradeWord(g: Grade): string {
+    return GRADE_WORD[g];
+  }
+  protected gradeText(g: Grade): string {
+    return GRADE_TEXT[g];
+  }
 }
