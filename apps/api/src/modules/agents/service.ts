@@ -96,7 +96,7 @@ export function createAgentsService(deps: AgentsDeps) {
    */
   async function getOrCreateForAccount(orgId: OrgId, accountId: string): Promise<AgentSummary> {
     const [account] = await deps.db
-      .select({ id: adAccounts.id })
+      .select({ id: adAccounts.id, currency: adAccounts.currency })
       .from(adAccounts)
       .where(and(eq(adAccounts.id, accountId), eq(adAccounts.orgId, orgId)))
       .limit(1);
@@ -146,6 +146,7 @@ export function createAgentsService(deps: AgentsDeps) {
         // fallback defensivo (linha pré-migração/fake de teste); coluna real é NOT NULL.
         posture: existing.posture ?? DEFAULT_POSTURE,
         postureIsCustom: experienceLevelIsCustom(existing.posture ?? DEFAULT_POSTURE),
+        currency: account.currency ?? null,
       };
     }
 
@@ -193,6 +194,7 @@ export function createAgentsService(deps: AgentsDeps) {
       notifyPolicy: defaults.defaultNotifyPolicy,
       posture: defaults.defaultPosture,
       postureIsCustom: false,
+      currency: account.currency ?? null,
     };
   }
 

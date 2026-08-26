@@ -5,8 +5,10 @@ import { silentApiContext } from './api-request.interceptor';
 import type {
   AccessStatusOutput,
   CostsOutput,
+  MarketReferenceOutput,
   OrgOutput,
   RenameOrgInput,
+  SetMarketReferenceInput,
   SetTimezoneInput,
 } from './generated';
 
@@ -31,6 +33,16 @@ export class OrgApiService extends BaseApiService {
   /** `PATCH /api/orgs/current/timezone` — muda o fuso da org (só owner). */
   setTimezone(timezone: string): Observable<OrgOutput> {
     return this.patch<OrgOutput, SetTimezoneInput>('/orgs/current/timezone', { timezone });
+  }
+
+  /** `GET /api/orgs/current/market-reference` — referência de mercado padrão da org. */
+  marketReference(): Observable<MarketReferenceOutput> {
+    return this.get<MarketReferenceOutput>('/orgs/current/market-reference');
+  }
+
+  /** `PUT /api/orgs/current/market-reference` — define a referência de mercado (só owner). */
+  setMarketReference(body: SetMarketReferenceInput): Observable<MarketReferenceOutput> {
+    return this.put<MarketReferenceOutput, SetMarketReferenceInput>('/orgs/current/market-reference', body);
   }
 
   /** `GET /api/billing/access-status` — status do acesso beta da org atual. */

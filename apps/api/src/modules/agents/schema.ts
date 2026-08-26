@@ -188,6 +188,8 @@ export const agentSummary = z.object({
   posture: postureSchema,
   /** true quando os eixos divergem do preset marcado (UI mostra "personalizado"). */
   postureIsCustom: z.boolean(),
+  /** moeda da conta (ISO) — rótulo do override da referência de mercado. Null se ainda não sincronizada. */
+  currency: z.string().nullable(),
 });
 export type AgentSummary = z.infer<typeof agentSummary>;
 

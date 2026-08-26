@@ -3,6 +3,8 @@ import { FormControl, FormGroup, ReactiveFormsModule, Validators } from '@angula
 import { Router } from '@angular/router';
 import { toast } from 'ngx-sonner';
 import { UiBadge, UiButton, UiFormField, UiInput, UiPageHeader, UiSelectBox } from '@ui';
+import { MarketReferenceEditor } from '@app/shared/market-reference-editor';
+import type { MarketReference } from '@core/api/generated';
 import { AuthStore } from '@core/auth';
 import { OrgApiService } from '@core/api/org-api.service';
 import type { AccessStatusOutputStatusEnumKey as AccessStatus } from '@core/api/generated';
@@ -68,7 +70,7 @@ const ACCESS_BADGE: Record<AccessStatus, AccessBadge> = {
 @Component({
   selector: 'app-settings-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [ReactiveFormsModule, UiBadge, UiButton, UiFormField, UiInput, UiPageHeader, UiSelectBox],
+  imports: [ReactiveFormsModule, UiBadge, UiButton, UiFormField, UiInput, UiPageHeader, UiSelectBox, MarketReferenceEditor],
   template: `
     <div class="flex max-w-2xl flex-col gap-8">
       <app-ui-page-header title="Configurações" subtitle="Perfil, organização, tema e acesso." />
@@ -120,6 +122,30 @@ const ACCESS_BADGE: Record<AccessStatus, AccessBadge> = {
             [disabled]="savingTz()"
             (valueChange)="onTimezone($event)"
           />
+        </div>
+      </section>
+
+      <!-- Referência de mercado (padrão da org) — pivô -->
+      <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
+        <div class="flex flex-col gap-0.5">
+          <h2 class="font-brand text-base font-semibold text-ink">Referência de mercado</h2>
+          <p class="text-sm text-muted">
+            Faixas base do seu mercado. O agente usa como referência quando ainda não há meta nem histórico —
+            nunca como meta. Cada conta pode ter o seu ajuste na configuração do agente.
+          </p>
+        </div>
+        <app-market-reference-editor
+          [value]="marketRef()"
+          [currencyEditable]="true"
+          (valueChange)="onMarketChange($event)"
+        />
+        <div class="flex items-center gap-3">
+          <button appButton variant="secondary" type="button" [disabled]="savingMarket() || !marketDirty()" (click)="saveMarket()">
+            {{ savingMarket() ? 'Salvando…' : 'Salvar referência' }}
+          </button>
+          @if (marketDirty()) {
+            <span class="text-xs text-muted">Alterações não salvas.</span>
+          }
         </div>
       </section>
 
@@ -183,6 +209,14 @@ export class SettingsPage {
   protected readonly savingTz = signal(false);
   protected readonly timezone = signal(TIMEZONES[0]!.value); // base até currentOrg carregar
 
+  // Referência de mercado (org) — pivô. `marketRef` = valor salvo (hidrata o editor);
+  // `pendingMarket` = edição corrente; `marketDirty` habilita o Salvar.
+  protected readonly marketRef = signal<MarketReference | null>(null);
+  protected readonly savingMarket = signal(false);
+  private readonly pendingMarket = signal<MarketReference | null>(null);
+  private marketTouched = false;
+  protected readonly marketDirty = signal(false);
+
   protected readonly userName = (): string => this.authStore.me()?.name ?? '—';
   protected readonly userEmail = (): string => this.authStore.me()?.email ?? '—';
 
@@ -211,6 +245,35 @@ export class SettingsPage {
     this.orgApi.currentOrg().subscribe({
       next: (org) => this.timezone.set(org.timezone),
       error: () => undefined,
+    });
+    // Referência de mercado padrão da org (hidrata o editor).
+    this.orgApi.marketReference().subscribe({
+      next: (r) => this.marketRef.set(r.marketReference),
+      error: () => undefined,
+    });
+  }
+
+  protected onMarketChange(v: MarketReference | null): void {
+    this.pendingMarket.set(v);
+    this.marketTouched = true;
+    this.marketDirty.set(true);
+  }
+
+  protected saveMarket(): void {
+    if (this.savingMarket() || !this.marketTouched) return;
+    this.savingMarket.set(true);
+    this.orgApi.setMarketReference({ marketReference: this.pendingMarket() }).subscribe({
+      next: (r) => {
+        this.marketRef.set(r.marketReference);
+        this.marketTouched = false;
+        this.marketDirty.set(false);
+        this.savingMarket.set(false);
+        toast.success('Referência de mercado salva');
+      },
+      error: () => {
+        this.savingMarket.set(false);
+        toast.error('Não consegui salvar a referência', { description: 'Verifique sua conexão e tente de novo.' });
+      },
     });
   }
 

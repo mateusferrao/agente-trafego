@@ -12,6 +12,7 @@ import {
   OpenApiGeneratorV31,
 } from "@asteasolutions/zod-to-openapi";
 import { z } from "zod";
+import { marketReferenceSchema } from "@trafego/shared";
 import {
   emailCodeRequestInput,
   emailCodeVerifyInput,
@@ -104,6 +105,9 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const CreateOrgInput = registry.register("CreateOrgInput", createOrgInput);
   const RenameOrgInput = registry.register("RenameOrgInput", renameOrgInput);
   const SetTimezoneInput = registry.register("SetTimezoneInput", setTimezoneInput);
+  // registra o schema base como componente nomeado → kubb emite o tipo `MarketReference`
+  // reusável (a UI edita esse objeto direto). Referenciado por Output/Input + agente.
+  registry.register("MarketReference", marketReferenceSchema);
   const SetMarketReferenceInput = registry.register("SetMarketReferenceInput", setMarketReferenceInput);
   const MarketReferenceOutput = registry.register("MarketReferenceOutput", marketReferenceOutput);
   const OrgOutput = registry.register("OrgOutput", orgOutput);

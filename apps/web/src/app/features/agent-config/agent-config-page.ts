@@ -19,7 +19,9 @@ import type {
   AgentSummary,
   ArchetypeCatalogOutput,
   AvailableConversionsOutput,
+  MarketReference,
 } from '@core/api/generated';
+import { MarketReferenceEditor } from '@app/shared/market-reference-editor';
 import { AgentPlaybook } from './agent-playbook';
 import { AgentAutonomy } from './agent-autonomy';
 import { AgentGuardrails } from './agent-guardrails';
@@ -115,7 +117,7 @@ interface FormState {
 @Component({
   selector: 'app-agent-config-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, UiButton, UiPageHeader, UiSpinner, UiSelectBox, AgentPlaybook, AgentAutonomy, AgentGuardrails, AgentNotifications, AgentPosture],
+  imports: [RouterLink, UiButton, UiPageHeader, UiSpinner, UiSelectBox, AgentPlaybook, AgentAutonomy, AgentGuardrails, AgentNotifications, AgentPosture, MarketReferenceEditor],
   template: `
     <div class="flex flex-col gap-8">
       <div class="flex flex-col gap-1">
@@ -503,15 +505,10 @@ interface FormState {
                     <input type="number" min="0" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.fatigueCostRisePct ?? ''" [value]="mcFatigueCostRisePct()" (input)="onMcText(mcFatigueCostRisePct, $event)" />
                     <span class="text-xs text-muted">Quanto o custo pode subir antes de sinalizar cansaço.</span>
                   </label>
-                  <label class="flex flex-col gap-1 text-xs text-muted" title="Gasto mínimo para uma campanha sem resultado ser marcada como parada (desperdício).">
-                    Gasto mín. p/ marcar desperdício (R$)
-                    <input type="number" min="0" step="0.01" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.zombieMinSpend ?? ''" [value]="mcZombieMinSpend()" (input)="onMcText(mcZombieMinSpend, $event)" />
-                    <span class="text-xs text-muted">A partir de quanto gasto sem retorno o agente aponta desperdício.</span>
-                  </label>
-                  <label class="flex flex-col gap-1 text-xs text-muted" title="Mostrar referência de mercado quando a conta ainda não tem meta nem histórico.">
-                    Referência de mercado
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Ligar/desligar a referência de mercado quando a conta ainda não tem meta nem histórico.">
+                    Usar referência de mercado
                     <app-ui-select [options]="tristateOptions" [value]="mcColdStartReference()" (valueChange)="mcColdStartReference.set($event)" />
-                    <span class="text-xs text-muted">Mostra uma referência quando a conta ainda não tem meta nem histórico.</span>
+                    <span class="text-xs text-muted">Liga/desliga o bloco de referência (custo + CTR) no cold-start.</span>
                   </label>
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Quantas conversas por conversão registrada até desconfiar que o rastreamento de conversões está incompleto.">
                     Conversas por conversão p/ suspeitar da medição
@@ -523,6 +520,20 @@ interface FormState {
                     <input type="number" min="0" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.trackingBrokenMinFunnel ?? ''" [value]="mcTrackingBrokenMinFunnel()" (input)="onMcText(mcTrackingBrokenMinFunnel, $event)" />
                     <span class="text-xs text-muted">Abaixo desse volume de conversas, o agente não levanta a suspeita.</span>
                   </label>
+                </div>
+
+                <!-- Referência de mercado desta conta (override do padrão da org) -->
+                <div class="mt-4 flex flex-col gap-2 border-t border-line pt-4">
+                  <span class="text-sm font-medium text-ink">Referência de mercado desta conta</span>
+                  <span class="text-xs text-muted">
+                    Ajusta as faixas para este cliente. Vazio herda o padrão da organização (Configurações).
+                  </span>
+                  <app-market-reference-editor
+                    [value]="marketRefOverride()"
+                    [currency]="accountCurrency()"
+                    [currencyEditable]="false"
+                    (valueChange)="marketRefOverride.set($event)"
+                  />
                 </div>
               </div>
             </div>
@@ -599,6 +610,10 @@ export class AgentConfigPage {
   protected readonly mcColdStartReference = signal(''); // '' | 'on' | 'off'
   protected readonly mcTrackingBrokenRatio = signal('');
   protected readonly mcTrackingBrokenMinFunnel = signal('');
+  // referência de mercado desta conta (override do padrão da org) — pivô.
+  // moeda = a da conta (fixa no editor). null = herda da org.
+  protected readonly accountCurrency = signal('BRL');
+  protected readonly marketRefOverride = signal<MarketReference | null>(null);
 
   // cadência (c2) — sub-estado do editor; compõe o CadenceSpec.
   protected readonly cadenceKind = signal<CadenceKind>('default');
@@ -831,6 +846,7 @@ export class AgentConfigPage {
       ...boolField('coldStartReference', this.mcColdStartReference()),
       ...numField('trackingBrokenRatio', this.mcTrackingBrokenRatio()),
       ...numField('trackingBrokenMinFunnel', this.mcTrackingBrokenMinFunnel()),
+      ...(this.marketRefOverride() ? { marketReference: this.marketRefOverride()! } : {}),
     };
     return {
       ...(Object.keys(quality).length > 0 ? { quality } : {}),
@@ -884,6 +900,7 @@ export class AgentConfigPage {
     this.analysisWindowDays.set(agent.analysisWindowDays ?? DEFAULT_WINDOW_DAYS);
     this.applyCadence(agent.cadence ?? null);
     this.qualityDefaults.set(agent.qualityDefaults);
+    this.accountCurrency.set(agent.currency ?? 'BRL');
     this.applyModelConfig(agent.modelConfig);
     this.initial.set(this.current()); // baseline p/ o dirty
   }
@@ -903,6 +920,7 @@ export class AgentConfigPage {
     this.mcColdStartReference.set(triFrom(q.coldStartReference));
     this.mcTrackingBrokenRatio.set(numToStr(q.trackingBrokenRatio));
     this.mcTrackingBrokenMinFunnel.set(numToStr(q.trackingBrokenMinFunnel));
+    this.marketRefOverride.set(q.marketReference ?? null);
   }
 
   /** Decompõe o `CadenceSpec` salvo no sub-estado do editor. */
