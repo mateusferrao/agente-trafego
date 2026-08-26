@@ -4,10 +4,12 @@ Cobre as 4 frentes do pivô: posicionamento/copy, arquétipo Vigia Intensivo, re
 
 Pré: `pnpm install` · `pnpm db:migrate` · `pnpm db:seed` · `pnpm dev` (api+worker+web). Rodar os backfills uma vez: `pnpm backfill:archetype` e `pnpm backfill:notify-reactivation`.
 
+> ℹ️ O cliente gerado do web (`apps/web/src/app/core/api/generated`) é artefato de build **gitignored**. Agora `apps/web` tem hooks `pretypecheck`/`prebuild`/`predev` = `kubb generate`, então `typecheck`/`build`/`dev` regeneram o cliente sozinhos a partir do `apps/api/openapi.json` commitado — num checkout fresco não precisa mais rodar `api:generate` à mão. (Se você mudou schemas **zod** da API, aí sim rode `pnpm api:generate` — regenera o `openapi.json` **e** o cliente; os pre-hooks só cobrem "cliente ausente/velho no disco".)
+
 ---
 
 ## 0. Estático (gate antes do manual)
-- [ ] `pnpm typecheck` limpo (todos os packages).
+- [ ] `pnpm typecheck` limpo (todos os packages — o web regenera o cliente sozinho via `pretypecheck`).
 - [ ] `pnpm test` verde (core/api/worker).
 - [ ] `pnpm --filter web typecheck` + `cd apps/web && node scripts/validate-design-tokens.mjs` (tokens ok).
 - [ ] `pnpm api:generate` sem drift (git status limpo nos gerados).
@@ -89,3 +91,19 @@ Lógica determinística coberta por testes automatizados; a validação de ponta
 - **§3** referência de custo aparecendo num brief de análise real cold-start (core: `benchmarks`/`market-reference` tests).
 - **§5** transição de dormância após sync real da Meta + dispatch de reativação + push no WhatsApp (core `dormancy` 8 tests; gate no `insights-sync`); auto-config de reativação via chat (grafo do worker + Evolution).
 - **§6** regressão da análise completa (OpenRouter + Meta) e textos de pulso/alerta com a moeda correta.
+
+### 🔁 Re-execução E2E independente (2026-08-26, Docker local)
+Segundo passe crítico ponta a ponta (Postgres 16 + Redis 7 via `docker/docker-compose.yml`, API + worker reais, stack externa completa via `.env`). **Nenhum bug de código no pivô.** Achado de DX (corrigido de forma definitiva): num checkout fresco o cliente gerado do web (gitignored, sem postinstall) ficava velho → `pnpm typecheck` quebrava com "has no exported member". **Fix:** `apps/web` ganhou `pretypecheck`/`prebuild`/`predev` = `kubb generate` (regenera o cliente sozinho a partir do `openapi.json` commitado). Provado: apagando `…/generated` e rodando `pnpm --filter web typecheck` a frio → regenera 197 arquivos e passa (exit 0). Elimina a classe do problema, não só documenta.
+- **§0:** após `api:generate`, `pnpm typecheck` limpo; `pnpm test` verde (**core 358 · api 100 · worker 289** + adapters: shared 14, ads-meta 95, channel-evolution 78, credential-vault 6, llm-openrouter 13, agent-config 9, …); `tokens:check` ok; `pnpm --filter web build` (AOT) ok; `api:generate` sem drift de conteúdo em `openapi.json` (só EOL no Windows).
+- **Migrations + backfills (ao vivo):** schema confirmado no DB (`orgs.market_reference jsonb`; `ad_accounts.activity_state` enum {active,dormant} default active + `last_activity_at`; default de `agents.notify_policy` com `reactivation`); `backfill:archetype` (guardiao_lancamento→vigia_intensivo, idempotente) e `backfill:notify-reactivation` (adiciona reactivation, idempotente) ✓.
+- **§1** copy: placeholder "Sua agência ou empresa", cadência "momentos críticos", zero `médicos`/`lançamento` no web (fora de fixtures de teste) ✓.
+- **§2** catálogo `/api/agents/archetypes` = Conservador · Otimizador de Performance · **Vigia Intensivo** (sem Guardião); defaults do arquétipo = cadência 2×/dia [8,18], alerta high/throttle 3, reativação ON ✓.
+- **§3** round-trip HTTP real: GET null → PUT (BRL) persiste → GET confirma; chave de custo inválida (`purchase`) descartada pelo zod; **membro → 403** no PUT, 200 no GET; toggle "Usar referência de mercado" = `coldStartReference` (OFF → sem injeção); match-or-drop de moeda no `resolveMarketReference` ✓.
+- **§4** `GET /api/dashboard` → `waste.byCurrency` separa BRL (1200,1) e USD (300,1), **nunca soma** (≠1500); cada conta na sua moeda ✓.
+- **§5** revisão de código: máquina de dormância (`evaluateDormancy`) e o gate no `insights-sync` (went_dormant remove schedules + return; reactivated recria + dispatch só se `reactivation.enabled` + return evita duplicidade; dormant/cron → silêncio) + empty-state on-demand com oferta só quando reativação OFF — todos corretos e cobertos por testes.
+
+### 🟢 Stack completa ao vivo (Meta + OpenRouter + Evolution — creds do `.env`)
+Worker + API reais contra Postgres/Redis do Docker, conta Meta de verdade (token `valid`).
+- **§6 (real):** on-demand numa conta BRL com dados → run `succeeded`, **14 nós verdes** (load_context→fetch_data[Meta]→run_playbook→map_units→synthesize[OpenRouter]→review_analysis→build_recommendations→decide_actions→guardrail_check→apply_actions→create_approvals→write_message→record→notify). 5 recomendações reais; custo capturado (`token_usage.costUsd=0.0345`, 4 `costReportedCalls` — base de billing ✓). **Moeda correta no texto:** resumo "investiu **R$ 311,66** ... CPA de **R$ 2,34** ... meta de **R$ 2,00**" ✓.
+- **§5 (real):** cron numa conta **zerada** (sem gasto/impressões) → summary de empty-state, 0 recs, **sem push no WhatsApp** e **sem gasto de LLM** (short-circuit) — valida "cron em conta zerada = silêncio" ao vivo.
+- **Undo (5a) ao vivo:** o run auto-aplicou um `pause_entity` real (ACTIVE→PAUSED) numa campanha por causa de uma **regra de playbook agressiva do seed** (`spend>0.1→pause`, `source=playbook`, autonomia permitiu). `before_state` capturado → `POST …/actions/:id/undo` reverteu; **leitura direta na Graph API confirmou `status=ACTIVE, effective_status=ACTIVE`**. ⚠️ **Fica o alerta:** o seed traz uma regra de playbook que pausa qualquer campanha com gasto — num teste com conta real + autonomia auto-aplicando, isso muta a conta de verdade. Rodar E2E com escrita real exige `guardrails.dry_run=true` (ou kill-switch, ou desligar a regra) na conta de teste.
