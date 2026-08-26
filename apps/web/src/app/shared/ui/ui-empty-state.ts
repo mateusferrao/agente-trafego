@@ -5,7 +5,7 @@ import { NgIcon } from '@ng-icons/core';
  * Zero-state padronizado. Ícone + título + descrição + slot pra CTA.
  *
  * Uso:
- *   <app-ui-empty-state icon="heroUsers" title="Nenhum contato" description="Adicione manualmente ou importe um CSV.">
+ *   <app-ui-empty-state icon="lucideUsers" title="Nenhum contato" description="Adicione manualmente ou importe um CSV.">
  *     <button appButton variant="primary" actions>Novo contato</button>
  *   </app-ui-empty-state>
  */

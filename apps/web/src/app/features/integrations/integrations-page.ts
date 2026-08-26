@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { heroArrowPath, heroPlus, heroXMark } from '@ng-icons/heroicons/outline';
+import { lucideRefreshCw, lucidePlus, lucideX } from '@ng-icons/lucide';
 import {
   UiBadge,
   UiButton,
@@ -67,7 +67,7 @@ const CHANNEL_TEXT: Record<ChannelStatus, string> = {
     ConnectDialogComponent,
     WhatsappConnect,
   ],
-  providers: [provideIcons({ heroArrowPath, heroPlus, heroXMark })],
+  providers: [provideIcons({ lucideRefreshCw, lucidePlus, lucideX })],
   template: `
     <div class="flex flex-col gap-8">
       <app-ui-page-header
@@ -146,7 +146,7 @@ const CHANNEL_TEXT: Record<ChannelStatus, string> = {
                     aria-label="Sincronizar contas"
                     title="Sincronizar contas"
                   >
-                    <ng-icon name="heroArrowPath" size="16" aria-hidden="true" />
+                    <ng-icon name="lucideRefreshCw" size="16" aria-hidden="true" />
                   </button>
                 </div>
               </div>
@@ -176,7 +176,7 @@ const CHANNEL_TEXT: Record<ChannelStatus, string> = {
               <h3 class="font-brand text-base font-semibold text-ink">{{ entry.name }}</h3>
               <p class="text-sm text-muted">{{ entry.description }}</p>
               <span class="mt-1 inline-flex items-center gap-1 text-sm font-medium text-accent-strong">
-                <ng-icon name="heroPlus" size="15" aria-hidden="true" /> Conectar
+                <ng-icon name="lucidePlus" size="15" aria-hidden="true" /> Conectar
               </span>
             </button>
           }
@@ -196,7 +196,7 @@ const CHANNEL_TEXT: Record<ChannelStatus, string> = {
           <div class="flex items-start justify-between gap-3">
             <h2 appDialogTitle id="wa-dialog-title">Conectar WhatsApp</h2>
             <button appButton variant="ghost" size="sm" type="button" (click)="closeWhatsapp()" aria-label="Fechar">
-              <ng-icon name="heroXMark" size="17" aria-hidden="true" />
+              <ng-icon name="lucideX" size="17" aria-hidden="true" />
             </button>
           </div>
           <div class="mt-4">

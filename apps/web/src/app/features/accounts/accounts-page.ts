@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { provideIcons } from '@ng-icons/core';
-import { heroBuildingOffice2 } from '@ng-icons/heroicons/outline';
+import { lucideBuilding2 } from '@ng-icons/lucide';
 import { UiButton, UiEmptyState, UiPageHeader, UiSpinner } from '@ui';
 import { DashboardApiService } from '@core/api/dashboard-api.service';
 import { AccountPanoramaCard, type PanoramaCardVm } from '../../shared/account-panorama-card';
@@ -18,7 +18,7 @@ const RELOAD_MS = 5000;
   selector: 'app-accounts-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [UiButton, UiEmptyState, UiPageHeader, UiSpinner, AccountPanoramaCard],
-  providers: [provideIcons({ heroBuildingOffice2 })],
+  providers: [provideIcons({ lucideBuilding2 })],
   template: `
     <div class="flex flex-col gap-8">
       <app-ui-page-header title="Contas" subtitle="Contas de anúncio sob gestão e seus agentes.">
@@ -41,7 +41,7 @@ const RELOAD_MS = 5000;
         </div>
       } @else if ((cards()?.length ?? 0) === 0) {
         <app-ui-empty-state
-          icon="heroBuildingOffice2"
+          icon="lucideBuilding2"
           title="Nenhuma conta sob gestão ainda"
           description="Conecte sua conta Meta em Integrações e escolha quais contas o agente vai acompanhar."
         >

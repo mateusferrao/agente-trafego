@@ -168,7 +168,7 @@ function toVm(e: ApiEvent): TimelineEventVm {
       return {
         id: e.id,
         at: e.at,
-        icon: "heroSparkles",
+        icon: "lucideActivity",
         title: "Análise concluída",
         detail: e.headline,
         badge: e.grade ? `Nota ${e.grade}` : null,
@@ -181,28 +181,28 @@ function toVm(e: ApiEvent): TimelineEventVm {
         })),
       };
     case "error":
-      return { id: e.id, at: e.at, icon: "heroExclamationTriangle", title: "Análise não concluída", detail: e.message, badge: "erro", tone: "danger" };
+      return { id: e.id, at: e.at, icon: "lucideTriangleAlert", title: "Análise não concluída", detail: e.message, badge: "erro", tone: "danger" };
     case "action_applied":
       return {
         id: e.id,
         at: e.at,
-        icon: "heroBolt",
+        icon: "lucideZap",
         title: `${actionTypeLabel(e.toolKey)}${e.entityName ? ` · ${e.entityName}` : ""}`,
         detail: e.fromChat ? "via WhatsApp" : null,
         badge: e.simulated ? "simulado" : e.fromChat ? "chat" : null,
         tone: e.simulated ? "neutral" : "accent",
       };
     case "action_rolled_back":
-      return { id: e.id, at: e.at, icon: "heroArrowUturnLeft", title: `Ação revertida${e.entityName ? ` · ${e.entityName}` : ""}`, badge: "revertido", tone: "neutral" };
+      return { id: e.id, at: e.at, icon: "lucideUndo2", title: `Ação revertida${e.entityName ? ` · ${e.entityName}` : ""}`, badge: "revertido", tone: "neutral" };
     case "approval_requested":
-      return { id: e.id, at: e.at, icon: "heroClock", title: `Aprovação pedida · ${actionTypeLabel(e.actionType)}${e.entityName ? ` · ${e.entityName}` : ""}`, badge: "aguardando", tone: "warning" };
+      return { id: e.id, at: e.at, icon: "lucideClock", title: `Aprovação pedida · ${actionTypeLabel(e.actionType)}${e.entityName ? ` · ${e.entityName}` : ""}`, badge: "aguardando", tone: "warning" };
     case "approval_approved":
-      return { id: e.id, at: e.at, icon: "heroCheckCircle", title: `Aprovada · ${actionTypeLabel(e.actionType)}${e.entityName ? ` · ${e.entityName}` : ""}`, badge: "aprovada", tone: "success" };
+      return { id: e.id, at: e.at, icon: "lucideCircleCheck", title: `Aprovada · ${actionTypeLabel(e.actionType)}${e.entityName ? ` · ${e.entityName}` : ""}`, badge: "aprovada", tone: "success" };
     case "approval_rejected":
-      return { id: e.id, at: e.at, icon: "heroXCircle", title: `Rejeitada · ${actionTypeLabel(e.actionType)}${e.entityName ? ` · ${e.entityName}` : ""}`, badge: "rejeitada", tone: "neutral" };
+      return { id: e.id, at: e.at, icon: "lucideCircleX", title: `Rejeitada · ${actionTypeLabel(e.actionType)}${e.entityName ? ` · ${e.entityName}` : ""}`, badge: "rejeitada", tone: "neutral" };
     case "approval_expired":
-      return { id: e.id, at: e.at, icon: "heroClock", title: `Expirada · ${actionTypeLabel(e.actionType)}${e.entityName ? ` · ${e.entityName}` : ""}`, badge: "expirada", tone: "neutral" };
+      return { id: e.id, at: e.at, icon: "lucideClock", title: `Expirada · ${actionTypeLabel(e.actionType)}${e.entityName ? ` · ${e.entityName}` : ""}`, badge: "expirada", tone: "neutral" };
     default:
-      return { id: (e as { id: string }).id, at: (e as { at: string }).at, icon: "heroSparkles", title: "Evento", tone: "neutral" };
+      return { id: (e as { id: string }).id, at: (e as { at: string }).at, icon: "lucideActivity", title: "Evento", tone: "neutral" };
   }
 }

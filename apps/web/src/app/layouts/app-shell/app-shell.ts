@@ -3,7 +3,7 @@ import { toSignal } from '@angular/core/rxjs-interop';
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
 import { filter } from 'rxjs';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { heroBars3, heroXMark } from '@ng-icons/heroicons/outline';
+import { lucideMenu, lucideX } from '@ng-icons/lucide';
 import { UiConfirmDialogOutlet, UiDrawer, UiDrawerBody, UiDrawerHeader, UiDrawerOverlay } from '@ui';
 import { APP_MODULES } from '@core/navigation/app-modules';
 import { ShellNav } from './shell-nav';
@@ -17,7 +17,7 @@ import { ShellNav } from './shell-nav';
   selector: 'app-shell',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [RouterOutlet, NgIcon, UiConfirmDialogOutlet, UiDrawer, UiDrawerOverlay, UiDrawerHeader, UiDrawerBody, ShellNav],
-  providers: [provideIcons({ heroBars3, heroXMark })],
+  providers: [provideIcons({ lucideMenu, lucideX })],
   template: `
     <!-- Desktop: altura fixa + overflow-hidden → o <main> vira o container de scroll
          (habilita 'sticky' de barras de ação). Mobile: rola a janela (comportamento padrão). -->
@@ -33,7 +33,7 @@ import { ShellNav } from './shell-nav';
           title="Abrir menu"
           (click)="drawerOpen.set(true)"
         >
-          <ng-icon name="heroBars3" size="20" aria-hidden="true" />
+          <ng-icon name="lucideMenu" size="20" aria-hidden="true" />
         </button>
         <span class="truncate text-sm font-semibold text-ink">{{ currentModuleLabel() }}</span>
       </header>
@@ -61,7 +61,7 @@ import { ShellNav } from './shell-nav';
                 title="Fechar menu"
                 (click)="drawerOpen.set(false)"
               >
-                <ng-icon name="heroXMark" size="18" aria-hidden="true" />
+                <ng-icon name="lucideX" size="18" aria-hidden="true" />
               </button>
             </div>
             <div appUiDrawerBody class="flex flex-col gap-5">

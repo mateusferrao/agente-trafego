@@ -11,7 +11,7 @@ import {
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormControl, FormRecord, ReactiveFormsModule, Validators } from '@angular/forms';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { heroCheck, heroCheckCircle, heroExclamationTriangle, heroXMark } from '@ng-icons/heroicons/outline';
+import { lucideCheck, lucideCircleCheck, lucideTriangleAlert, lucideX } from '@ng-icons/lucide';
 import {
   UiButton,
   UiDialog,
@@ -67,7 +67,7 @@ const STEP_DOTS = [0, 1, 2, 3] as const;
     UiLabel,
     UiSpinner,
   ],
-  providers: [provideIcons({ heroCheck, heroCheckCircle, heroExclamationTriangle, heroXMark })],
+  providers: [provideIcons({ lucideCheck, lucideCircleCheck, lucideTriangleAlert, lucideX })],
   template: `
     <div appDialogOverlay>
       <section appDialog class="connect-dialog" aria-labelledby="connect-dialog-title" [ngpDialogModal]="true">
@@ -86,7 +86,7 @@ const STEP_DOTS = [0, 1, 2, 3] as const;
             [disabled]="step() === 'connecting'"
             aria-label="Fechar"
           >
-            <ng-icon name="heroXMark" size="17" aria-hidden="true" />
+            <ng-icon name="lucideX" size="17" aria-hidden="true" />
           </button>
         </header>
 
@@ -181,7 +181,7 @@ const STEP_DOTS = [0, 1, 2, 3] as const;
                         aria-hidden="true"
                       >
                         @if (isSelected(target.id)) {
-                          <ng-icon name="heroCheck" size="14" class="text-panel" />
+                          <ng-icon name="lucideCheck" size="14" class="text-panel" />
                         }
                       </span>
                     </button>
@@ -192,7 +192,7 @@ const STEP_DOTS = [0, 1, 2, 3] as const;
             @case ('success') {
               <div class="centered">
                 <div class="icon icon--success" aria-hidden="true">
-                  <ng-icon name="heroCheckCircle" size="36" />
+                  <ng-icon name="lucideCircleCheck" size="36" />
                 </div>
                 <p class="title">Conta conectada</p>
                 <p appUiHint class="centered-hint">{{ entry().name }} agora aparece em Contas.</p>
@@ -201,7 +201,7 @@ const STEP_DOTS = [0, 1, 2, 3] as const;
             @case ('error') {
               <div class="centered">
                 <div class="icon icon--error" aria-hidden="true">
-                  <ng-icon name="heroExclamationTriangle" size="36" />
+                  <ng-icon name="lucideTriangleAlert" size="36" />
                 </div>
                 <p class="title">Não deu certo</p>
                 <p appUiHint class="centered-hint">{{ errorMessage() }}</p>

@@ -12,7 +12,7 @@ export interface AppModule {
   readonly label: string;
   /** Rota absoluta (routerLink). */
   readonly route: string;
-  /** Nome do ícone (chave do set @ng-icons/heroicons registrado no shell). */
+  /** Nome do ícone (chave do set @ng-icons/lucide registrado no shell). */
   readonly icon: string;
   /** Casamento exato de rota ativa (necessário para a raiz '/'). */
   readonly exact: boolean;
@@ -37,7 +37,7 @@ export const APP_MODULE_GROUPS: readonly AppModuleGroup[] = [
         id: 'dashboard',
         label: 'Painel',
         route: '/dashboard',
-        icon: 'heroHome',
+        icon: 'lucideHouse',
         exact: true,
         description: 'Visão gerencial: onde agir agora, em todas as contas.',
       },
@@ -45,7 +45,7 @@ export const APP_MODULE_GROUPS: readonly AppModuleGroup[] = [
         id: 'accounts',
         label: 'Contas',
         route: '/accounts',
-        icon: 'heroRectangleGroup',
+        icon: 'lucideLayoutGrid',
         exact: false,
         description: 'Contas de anúncio conectadas e seus agentes.',
       },
@@ -53,7 +53,7 @@ export const APP_MODULE_GROUPS: readonly AppModuleGroup[] = [
         id: 'approvals',
         label: 'Aprovações',
         route: '/approvals',
-        icon: 'heroCheckCircle',
+        icon: 'lucideCircleCheck',
         exact: false,
         description: 'Ações que aguardam seu OK antes de aplicar.',
       },
@@ -67,7 +67,7 @@ export const APP_MODULE_GROUPS: readonly AppModuleGroup[] = [
         id: 'integrations',
         label: 'Integrações',
         route: '/integrations',
-        icon: 'heroSquares2x2',
+        icon: 'lucideLayoutDashboard',
         exact: false,
         description: 'Conecte a Meta e o WhatsApp e escolha quais contas gerir.',
       },
@@ -75,7 +75,7 @@ export const APP_MODULE_GROUPS: readonly AppModuleGroup[] = [
         id: 'costs',
         label: 'Custos',
         route: '/custos',
-        icon: 'heroBanknotes',
+        icon: 'lucideBanknote',
         exact: false,
         description: 'Custo operacional (COGS) por conta e período.',
         ownerOnly: true,
@@ -84,7 +84,7 @@ export const APP_MODULE_GROUPS: readonly AppModuleGroup[] = [
         id: 'settings',
         label: 'Configurações',
         route: '/settings',
-        icon: 'heroCog6Tooth',
+        icon: 'lucideSettings',
         exact: false,
         description: 'Perfil, organização, tema e acesso.',
       },

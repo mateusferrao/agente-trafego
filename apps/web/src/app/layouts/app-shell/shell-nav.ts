@@ -2,18 +2,18 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import { Router, RouterLink, RouterLinkActive } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
-  heroArrowRightOnRectangle,
-  heroBanknotes,
-  heroBuildingOffice2,
-  heroCheckCircle,
-  heroCog6Tooth,
-  heroComputerDesktop,
-  heroHome,
-  heroMoon,
-  heroRectangleGroup,
-  heroSquares2x2,
-  heroSun,
-} from '@ng-icons/heroicons/outline';
+  lucideLogOut,
+  lucideBanknote,
+  lucideBuilding2,
+  lucideCircleCheck,
+  lucideSettings,
+  lucideMonitor,
+  lucideHouse,
+  lucideMoon,
+  lucideLayoutGrid,
+  lucideLayoutDashboard,
+  lucideSun,
+} from '@ng-icons/lucide';
 import { UiBadge } from '@ui';
 import { OrgApiService } from '@core/api/org-api.service';
 import type { OrgOutput } from '@core/api';
@@ -29,9 +29,9 @@ interface ThemeOption {
 }
 
 const THEME_OPTIONS: readonly ThemeOption[] = [
-  { value: 'light', icon: 'heroSun', label: 'Tema claro' },
-  { value: 'dark', icon: 'heroMoon', label: 'Tema escuro' },
-  { value: 'system', icon: 'heroComputerDesktop', label: 'Tema do sistema' },
+  { value: 'light', icon: 'lucideSun', label: 'Tema claro' },
+  { value: 'dark', icon: 'lucideMoon', label: 'Tema escuro' },
+  { value: 'system', icon: 'lucideMonitor', label: 'Tema do sistema' },
 ];
 
 /**
@@ -51,24 +51,24 @@ const THEME_OPTIONS: readonly ThemeOption[] = [
   imports: [RouterLink, RouterLinkActive, NgIcon, UiBadge],
   providers: [
     provideIcons({
-      heroHome,
-      heroRectangleGroup,
-      heroCheckCircle,
-      heroSquares2x2,
-      heroCog6Tooth,
-      heroArrowRightOnRectangle,
-      heroBanknotes,
-      heroBuildingOffice2,
-      heroSun,
-      heroMoon,
-      heroComputerDesktop,
+      lucideHouse,
+      lucideLayoutGrid,
+      lucideCircleCheck,
+      lucideLayoutDashboard,
+      lucideSettings,
+      lucideLogOut,
+      lucideBanknote,
+      lucideBuilding2,
+      lucideSun,
+      lucideMoon,
+      lucideMonitor,
     }),
   ],
   template: `
     <!-- Troca de organização (única no MVP; wired a GET /api/orgs) -->
     <div class="flex items-center gap-2.5 rounded-md border border-line bg-soft/60 px-3 py-2">
       <span class="grid size-8 shrink-0 place-items-center rounded-md bg-accent-soft text-accent-strong">
-        <ng-icon name="heroBuildingOffice2" size="16" aria-hidden="true" />
+        <ng-icon name="lucideBuilding2" size="16" aria-hidden="true" />
       </span>
       <span class="flex min-w-0 flex-col">
         <span class="truncate text-sm font-semibold text-ink">{{ orgLabel() }}</span>
@@ -134,7 +134,7 @@ const THEME_OPTIONS: readonly ThemeOption[] = [
           [disabled]="loggingOut()"
           (click)="logout()"
         >
-          <ng-icon name="heroArrowRightOnRectangle" size="18" aria-hidden="true" />
+          <ng-icon name="lucideLogOut" size="18" aria-hidden="true" />
         </button>
       </div>
     </div>

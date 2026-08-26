@@ -1,11 +1,11 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import {
-  heroExclamationTriangle,
-  heroInformationCircle,
-  heroShieldExclamation,
-  heroXMark,
-} from '@ng-icons/heroicons/outline';
+  lucideTriangleAlert,
+  lucideInfo,
+  lucideShieldAlert,
+  lucideX,
+} from '@ng-icons/lucide';
 import { UiButton } from './ui-button';
 import { UiDialog, UiDialogDescription, UiDialogOverlay, UiDialogTitle } from './ui-dialog';
 import { UiConfirmDialogService } from './ui-confirm-dialog.service';
@@ -15,10 +15,10 @@ import { UiConfirmDialogService } from './ui-confirm-dialog.service';
   imports: [NgIcon, UiButton, UiDialog, UiDialogDescription, UiDialogOverlay, UiDialogTitle],
   providers: [
     provideIcons({
-      heroExclamationTriangle,
-      heroInformationCircle,
-      heroShieldExclamation,
-      heroXMark,
+      lucideTriangleAlert,
+      lucideInfo,
+      lucideShieldAlert,
+      lucideX,
     }),
   ],
   template: `
@@ -58,7 +58,7 @@ import { UiConfirmDialogService } from './ui-confirm-dialog.service';
                   (click)="confirm.cancelActive()"
                   aria-label="Fechar confirmação"
                 >
-                  <ng-icon name="heroXMark" size="16" aria-hidden="true" />
+                  <ng-icon name="lucideX" size="16" aria-hidden="true" />
                 </button>
               </div>
 
@@ -96,8 +96,8 @@ export class UiConfirmDialogOutletComponent {
 
   readonly iconName = computed(() => {
     const tone = this.confirm.request()?.tone;
-    if (tone === 'danger') return 'heroShieldExclamation';
-    if (tone === 'warning') return 'heroExclamationTriangle';
-    return 'heroInformationCircle';
+    if (tone === 'danger') return 'lucideShieldAlert';
+    if (tone === 'warning') return 'lucideTriangleAlert';
+    return 'lucideInfo';
   });
 }

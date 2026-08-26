@@ -6,15 +6,15 @@
 import { ChangeDetectionStrategy, Component, computed, input, signal } from "@angular/core";
 import { NgIcon, provideIcons } from "@ng-icons/core";
 import {
-  heroArrowUturnLeft,
-  heroBolt,
-  heroCheckCircle,
-  heroChevronDown,
-  heroClock,
-  heroExclamationTriangle,
-  heroSparkles,
-  heroXCircle,
-} from "@ng-icons/heroicons/outline";
+  lucideUndo2,
+  lucideZap,
+  lucideCircleCheck,
+  lucideChevronDown,
+  lucideClock,
+  lucideTriangleAlert,
+  lucideActivity,
+  lucideCircleX,
+} from "@ng-icons/lucide";
 import { UiBadge } from "./ui-badge";
 
 export type TimelineTone = "success" | "warning" | "danger" | "info" | "neutral" | "accent";
@@ -30,7 +30,7 @@ export interface TimelineEventVm {
   readonly id: string;
   /** ISO timestamp. */
   readonly at: string;
-  /** nome do ícone hero (ver provideIcons abaixo). */
+  /** nome do ícone lucide (ver provideIcons abaixo). */
   readonly icon: string;
   readonly title: string;
   readonly detail?: string | null;
@@ -55,14 +55,14 @@ const TIME_FMT = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-
   imports: [NgIcon, UiBadge],
   providers: [
     provideIcons({
-      heroArrowUturnLeft,
-      heroBolt,
-      heroCheckCircle,
-      heroChevronDown,
-      heroClock,
-      heroExclamationTriangle,
-      heroSparkles,
-      heroXCircle,
+      lucideUndo2,
+      lucideZap,
+      lucideCircleCheck,
+      lucideChevronDown,
+      lucideClock,
+      lucideTriangleAlert,
+      lucideActivity,
+      lucideCircleX,
     }),
   ],
   template: `
@@ -95,7 +95,7 @@ const TIME_FMT = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-
                       (click)="toggle(event.id)"
                     >
                       <ng-icon
-                        name="heroChevronDown"
+                        name="lucideChevronDown"
                         size="14"
                         aria-hidden="true"
                         class="transition-transform"

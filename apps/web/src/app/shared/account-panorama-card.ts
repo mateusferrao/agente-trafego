@@ -5,7 +5,7 @@
 import { ChangeDetectionStrategy, Component, input, output } from "@angular/core";
 import { RouterLink } from "@angular/router";
 import { NgIcon, provideIcons } from "@ng-icons/core";
-import { heroArrowPath } from "@ng-icons/heroicons/outline";
+import { lucideRefreshCw } from "@ng-icons/lucide";
 import { UiBadge, UiButton } from "@ui";
 import type { PanoramaListOutput } from "@core/api/generated";
 import { asOfLabel, dateTimeLabel, gradeTone, money } from "./format";
@@ -16,7 +16,7 @@ export type PanoramaCardVm = PanoramaListOutput["accounts"][number];
   selector: "app-account-panorama-card",
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [RouterLink, NgIcon, UiBadge, UiButton],
-  providers: [provideIcons({ heroArrowPath })],
+  providers: [provideIcons({ lucideRefreshCw })],
   // host ocupa a célula inteira do grid (align stretch) → todos os cards da linha
   // ficam com a MESMA altura, mesmo sem dado de gasto (footer alinhado por mt-auto).
   host: { class: "block h-full" },
@@ -66,7 +66,7 @@ export type PanoramaCardVm = PanoramaListOutput["accounts"][number];
           {{ asOfLabel(c.asOf, c.stale) }}
         </span>
         <button appButton variant="secondary" type="button" class="relative z-10" [disabled]="refreshing()" (click)="refresh.emit(c.accountId)">
-          <ng-icon name="heroArrowPath" size="14" aria-hidden="true" [class.animate-spin]="refreshing()" />
+          <ng-icon name="lucideRefreshCw" size="14" aria-hidden="true" [class.animate-spin]="refreshing()" />
           Atualizar
         </button>
       </div>

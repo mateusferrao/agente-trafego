@@ -6,7 +6,7 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from "@angular/core";
 import { RouterLink } from "@angular/router";
 import { NgIcon, provideIcons } from "@ng-icons/core";
-import { heroCheckCircle, heroSparkles } from "@ng-icons/heroicons/outline";
+import { lucideCircleCheck, lucideActivity } from "@ng-icons/lucide";
 import { UiBadge, UiButton, UiEmptyState, UiPageHeader, UiSpinner, type TimelineTone } from "@ui";
 import { DashboardApiService } from "@core/api/dashboard-api.service";
 import type { DashboardOutput } from "@core/api/generated";
@@ -40,7 +40,7 @@ const REASON_TONE: Record<Reason, TimelineTone> = {
   selector: "app-dashboard-page",
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [RouterLink, NgIcon, UiBadge, UiButton, UiEmptyState, UiPageHeader, UiSpinner, AccountPanoramaCard],
-  providers: [provideIcons({ heroCheckCircle, heroSparkles })],
+  providers: [provideIcons({ lucideCircleCheck, lucideActivity })],
   template: `
     <div class="flex flex-col gap-6">
       <app-ui-page-header title="Painel" subtitle="Onde agir agora, em todas as suas contas" />
@@ -57,7 +57,7 @@ const REASON_TONE: Record<Reason, TimelineTone> = {
       } @else if (data(); as d) {
         @if (d.panorama.length === 0) {
           <app-ui-empty-state
-            icon="heroSparkles"
+            icon="lucideActivity"
             title="Conecte sua primeira conta"
             description="Ligue uma conta Meta para o agente começar a analisar e sugerir melhorias."
           >
@@ -78,7 +78,7 @@ const REASON_TONE: Record<Reason, TimelineTone> = {
               </div>
             } @else {
               <p class="flex items-center gap-2 text-sm text-muted">
-                <ng-icon name="heroCheckCircle" size="16" aria-hidden="true" class="text-success-strong" />
+                <ng-icon name="lucideCircleCheck" size="16" aria-hidden="true" class="text-success-strong" />
                 Nenhuma pendência — tudo em dia.
               </p>
             }

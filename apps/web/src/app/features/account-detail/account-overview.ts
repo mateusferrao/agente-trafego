@@ -5,7 +5,7 @@
 
 import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from "@angular/core";
 import { NgIcon, provideIcons } from "@ng-icons/core";
-import { heroArrowPath, heroSparkles } from "@ng-icons/heroicons/outline";
+import { lucideRefreshCw, lucideActivity } from "@ng-icons/lucide";
 import { UiButton, UiEmptyState, UiSpinner } from "@ui";
 import { DashboardApiService } from "@core/api/dashboard-api.service";
 import type { LiveMetricsOutput } from "@core/api/generated";
@@ -22,7 +22,7 @@ const MAX_POLLS = 6;
   selector: "app-account-overview",
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [NgIcon, UiButton, UiEmptyState, UiSpinner, AnalysisDetail, AgentActions],
-  providers: [provideIcons({ heroArrowPath, heroSparkles })],
+  providers: [provideIcons({ lucideRefreshCw, lucideActivity })],
   template: `
     <div class="flex flex-col gap-6">
       <!-- Faixa de KPIs ao vivo (números crus; a avaliação do agente vem datada abaixo). -->
@@ -50,7 +50,7 @@ const MAX_POLLS = 6;
                 {{ asOfLabel(m.asOf, m.stale) }}
               </span>
               <button appButton variant="secondary" type="button" [disabled]="refreshing()" (click)="refresh()">
-                <ng-icon name="heroArrowPath" size="14" aria-hidden="true" [class.animate-spin]="refreshing()" />
+                <ng-icon name="lucideRefreshCw" size="14" aria-hidden="true" [class.animate-spin]="refreshing()" />
                 {{ refreshing() ? 'Atualizando…' : 'Atualizar agora' }}
               </button>
             </div>
@@ -72,7 +72,7 @@ const MAX_POLLS = 6;
         </div>
       } @else if (store.run() === null) {
         <app-ui-empty-state
-          icon="heroSparkles"
+          icon="lucideActivity"
           title="Rode a primeira análise"
           description="O agente analisa suas campanhas e sugere melhorias — sem alterar nada na sua conta."
         >

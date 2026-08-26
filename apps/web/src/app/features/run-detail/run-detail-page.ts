@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signa
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { toast } from 'ngx-sonner';
 import { provideIcons } from '@ng-icons/core';
-import { heroSparkles } from '@ng-icons/heroicons/outline';
+import { lucideActivity } from '@ng-icons/lucide';
 import { UiButton, UiEmptyState, UiPageHeader, UiSpinner } from '@ui';
 import { AccountsApiService } from '@core/api/accounts-api.service';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
@@ -25,7 +25,7 @@ const DATETIME_LOCALE = 'pt-BR';
   selector: 'app-run-detail-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [RouterLink, UiButton, UiEmptyState, UiPageHeader, UiSpinner, AnalysisDetail],
-  providers: [provideIcons({ heroSparkles })],
+  providers: [provideIcons({ lucideActivity })],
   template: `
     <div class="flex flex-col gap-8">
       <div class="flex flex-col gap-1">
@@ -40,7 +40,7 @@ const DATETIME_LOCALE = 'pt-BR';
         </div>
       } @else if (run() === null) {
         <app-ui-empty-state
-          icon="heroSparkles"
+          icon="lucideActivity"
           title="Análise não encontrada"
           description="Essa análise não existe ou não está mais disponível."
         >

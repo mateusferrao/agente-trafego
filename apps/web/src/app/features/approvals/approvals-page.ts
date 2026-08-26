@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, type OnInit, computed, inject, signal } from '@angular/core';
 import { provideIcons } from '@ng-icons/core';
-import { heroCheckCircle } from '@ng-icons/heroicons/outline';
+import { lucideCircleCheck } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
 import { UiBadge, UiButton, UiConfirmDialogService, UiEmptyState, UiPageHeader } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
@@ -37,7 +37,7 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
   selector: 'app-approvals-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [UiEmptyState, UiPageHeader, UiBadge, UiButton],
-  providers: [provideIcons({ heroCheckCircle })],
+  providers: [provideIcons({ lucideCircleCheck })],
   template: `
     <div class="flex flex-col gap-8">
       <app-ui-page-header
@@ -47,7 +47,7 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
 
       @if (loaded() && pendingGroups().length === 0 && revertibleGroups().length === 0) {
         <app-ui-empty-state
-          icon="heroCheckCircle"
+          icon="lucideCircleCheck"
           title="Nada aguardando OK nem revertível"
           description="Quando o agente propuser mudanças ou aplicar algo que ainda dá pra desfazer, aparece aqui."
         />

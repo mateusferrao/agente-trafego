@@ -1,14 +1,14 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { heroArrowLeft } from '@ng-icons/heroicons/outline';
+import { lucideArrowLeft } from '@ng-icons/lucide';
 
 @Component({
   selector: 'app-ui-page-header',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [NgIcon, RouterLink],
-  providers: [provideIcons({ heroArrowLeft })],
+  providers: [provideIcons({ lucideArrowLeft })],
   host: {
     class: 'block',
   },
@@ -21,7 +21,7 @@ import { heroArrowLeft } from '@ng-icons/heroicons/outline';
       <div class="ui-page-header__main">
         @if (backLink(); as backLink) {
           <a class="ui-page-header__back" [routerLink]="backLink" [attr.aria-label]="backLabel() || 'Voltar'">
-            <ng-icon name="heroArrowLeft" size="14" aria-hidden="true" />
+            <ng-icon name="lucideArrowLeft" size="14" aria-hidden="true" />
             <span>{{ backLabel() || 'Voltar' }}</span>
           </a>
         }
