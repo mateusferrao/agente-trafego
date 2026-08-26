@@ -8,7 +8,7 @@ import {
   signal,
   type WritableSignal,
 } from '@angular/core';
-import { UiInput } from '@ui';
+import { UiInput, UiSelectBox } from '@ui';
 import type { MarketReference } from '@core/api/generated';
 
 /** Moedas oferecidas no seletor (org). ISO 4217; a conta traz a sua no override. */
@@ -45,22 +45,16 @@ const num = (s: string): number | undefined => {
 @Component({
   selector: 'app-market-reference-editor',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiInput],
+  imports: [UiInput, UiSelectBox],
   template: `
     <div class="flex flex-col gap-4">
       @if (currencyEditable()) {
         <label class="flex flex-col gap-1">
           <span class="text-sm font-medium text-ink">Moeda das faixas</span>
           <span class="text-xs text-muted">As faixas em dinheiro valem para contas nesta moeda.</span>
-          <select
-            class="w-56 rounded-md border border-line bg-app px-3 py-2 text-sm text-ink"
-            [value]="currency()"
-            (change)="onCurrency($event)"
-          >
-            @for (c of CURRENCIES; track c.value) {
-              <option [value]="c.value">{{ c.label }}</option>
-            }
-          </select>
+          <div class="w-56">
+            <app-ui-select [options]="CURRENCIES" [value]="currency()" (valueChange)="onCurrency($event)" />
+          </div>
         </label>
       } @else {
         <p class="text-xs text-muted">Faixas na moeda da conta: <span class="font-medium text-ink">{{ currency() }}</span></p>
@@ -201,8 +195,8 @@ export class MarketReferenceEditor {
     return out;
   }
 
-  protected onCurrency(e: Event): void {
-    this.currency.set((e.target as HTMLSelectElement).value);
+  protected onCurrency(value: string): void {
+    this.currency.set(value);
   }
   protected onStr(sig: WritableSignal<string>, e: Event): void {
     sig.set((e.target as HTMLInputElement).value);
