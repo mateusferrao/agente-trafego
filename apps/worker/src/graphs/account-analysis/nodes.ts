@@ -440,11 +440,24 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           responseSchemaName: UNIT_ANALYSIS_SCHEMA_NAME,
           temperature: ANALYSIS_TEMPERATURE,
           maxTokens: cfg.maxOutputTokens,
-          reasoning: { effort: cfg.reasoningEffort },
+          // Mapa = extração JSON estrita: reasoning OFF (o modelo unit é instruct; reasoning
+          // só gastaria orçamento/latência e arrisca truncar o JSON). Síntese/revisão mantêm.
+          reasoning: { effort: "off" },
+          // valida contra o zod DENTRO do adapter → output inválido re-chama o LLM (retry)
+          // em vez de cair fora e descartar a análise (o custo já foi pago).
+          validate: (o) => unitAnalysisSchema.safeParse(o).success,
           meta: { orgId: state.orgId, runId: state.runId, type: "unit" },
         });
+        // Rede de segurança: com `validate` acima, o adapter já garante validade; se ainda
+        // assim falhar, LOGA (antes era drop silencioso — análise sumia sem rastro).
         const parsed = unitAnalysisSchema.safeParse(completion.output);
-        if (!parsed.success) return { unit: null, fresh: null, usage: completion.usage, partial: true };
+        if (!parsed.success) {
+          logger.warn(
+            { runId: state.runId, campaign: unit.campaign.id, issues: parsed.error.issues.slice(0, 5) },
+            "map_units:output do modelo unit não passou no schema — campanha descartada",
+          );
+          return { unit: null, fresh: null, usage: completion.usage, partial: true };
+        }
         const fresh: FreshUnit = {
           entityId: unit.campaign.id,
           entityLevel: "campaign",

@@ -101,6 +101,10 @@ export interface WorkerDeps {
     readonly noticeThrottleSec: number;
     /** Teto (ms) do turno inteiro (ReAct) — travamento sem erro cai no fallback. */
     readonly turnTimeoutMs: number;
+    /** Timeout por chamada HTTP ao LLM (ms) — evita hang no provider até o teto do turno. */
+    readonly httpTimeoutMs: number;
+    /** Retentativas por chamada de LLM (rede/429/5xx) — reroteia o provider ruim. */
+    readonly maxRetries: number;
     /** Fallback de custo (bug do bindTools suprimindo usage.cost — ver nodes.ts). */
     readonly fetchGenerationCost: (generationId: string) => Promise<number | undefined>;
     /** Kill-switch de plataforma do ingest de contexto de grupo (default: ligado). */
@@ -188,11 +192,12 @@ export async function buildComposition(): Promise<WorkerDeps> {
     apiKey: env.OPENROUTER_API_KEY,
     baseUrl: env.OPENROUTER_BASE_URL,
     maxRetries: env.LLM_MAX_RETRIES,
+    requestTimeoutMs: env.LLM_HTTP_TIMEOUT_MS,
     referer: env.WEB_ORIGIN,
     title: "AutoTraffic",
   });
   const llm = withLlmMetering(
-    new OpenRouterAdapter({ client: openRouterClient }),
+    new OpenRouterAdapter({ client: openRouterClient, structuredMaxRetries: env.LLM_STRUCTURED_MAX_RETRIES }),
     { metering, provider: "openrouter", onError: (err) => logger.warn({ err }, "metering:falhou") },
   );
   // Transcrição de nota de voz inbound (STT via OpenRouter, endpoint /audio/transcriptions).
@@ -301,6 +306,8 @@ export async function buildComposition(): Promise<WorkerDeps> {
       debounceSeconds: env.CONVERSATION_DEBOUNCE_SECONDS,
       noticeThrottleSec: env.NOTICE_THROTTLE_SECONDS,
       turnTimeoutMs: env.CONVERSATION_TURN_TIMEOUT_MS,
+      httpTimeoutMs: env.CONVERSATION_HTTP_TIMEOUT_MS,
+      maxRetries: env.LLM_MAX_RETRIES,
       fetchGenerationCost: (id) => openRouterClient.getGenerationCost(id),
       groupIngestContext: env.TRAFEGO_GROUP_INGEST_CONTEXT,
       groupContextRetentionDays: env.GROUP_CONTEXT_RETENTION_DAYS,

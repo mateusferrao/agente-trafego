@@ -21,6 +21,8 @@ export interface OpenRouterClientOptions {
   readonly title?: string; // X-Title
   /** nº de retentativas (default 3). */
   readonly maxRetries?: number;
+  /** timeout por tentativa HTTP (ms). 0/undefined = sem timeout. Evita hang infinito. */
+  readonly requestTimeoutMs?: number;
   /** injeção p/ testes; default = fetch global. */
   readonly fetchFn?: typeof fetch;
   /** injeção p/ testes do backoff (evita esperar de verdade). */
@@ -77,6 +79,7 @@ export class OpenRouterClient {
   private readonly referer: string | undefined;
   private readonly title: string | undefined;
   private readonly maxRetries: number;
+  private readonly requestTimeoutMs: number;
   private readonly fetchFn: typeof fetch;
   private readonly sleepFn: (ms: number) => Promise<void>;
 
@@ -86,6 +89,7 @@ export class OpenRouterClient {
     this.referer = options.referer;
     this.title = options.title;
     this.maxRetries = options.maxRetries ?? DEFAULT_MAX_RETRIES;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? 0;
     this.fetchFn = options.fetchFn ?? fetch;
     this.sleepFn = options.sleepFn ?? sleep;
   }
@@ -151,9 +155,16 @@ export class OpenRouterClient {
   ): Promise<OpenRouterChatResponse> {
     let res: Response;
     try {
-      res = await this.fetchFn(url, { method: "POST", headers, body });
+      res = await this.fetchFn(url, {
+        method: "POST",
+        headers,
+        body,
+        // timeout por tentativa: sem isto o fetch do Node espera pra sempre e uma call
+        // travada no provider pendura o run inteiro. Abort → cai no catch (transitório) → retry.
+        ...(this.requestTimeoutMs > 0 ? { signal: AbortSignal.timeout(this.requestTimeoutMs) } : {}),
+      });
     } catch (cause) {
-      // erro de rede/DNS/conexão → transitório.
+      // erro de rede/DNS/conexão/timeout → transitório (retryable).
       throw new LLMProviderError("upstream", `falha de rede ao chamar o OpenRouter: ${String(cause)}`);
     }
 

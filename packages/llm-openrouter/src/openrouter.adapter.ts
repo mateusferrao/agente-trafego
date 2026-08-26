@@ -8,9 +8,11 @@ import type {
   LLMUsage,
 } from "@trafego/shared/ports";
 import { LLMProviderError } from "@trafego/shared/ports";
+import { sleep } from "@trafego/shared";
 import {
   OpenRouterClient,
   type OpenRouterChatRequest,
+  type OpenRouterChatResponse,
   type OpenRouterContentPart,
   type OpenRouterMessage,
   type OpenRouterUsage,
@@ -18,9 +20,18 @@ import {
 
 export interface OpenRouterAdapterDeps {
   readonly client: OpenRouterClient;
+  /** retentativas de PARSE/validação do structured output (default 2). O retry de
+   *  REDE fica no client; este re-chama o LLM quando o JSON é inválido/trunca/falha
+   *  o schema — em vez de descartar a análise. */
+  readonly structuredMaxRetries?: number;
+  /** injeção p/ testes do backoff entre retentativas de parse. */
+  readonly sleepFn?: (ms: number) => Promise<void>;
 }
 
 const DEFAULT_SCHEMA_NAME = "structured_output";
+const DEFAULT_STRUCTURED_MAX_RETRIES = 2;
+/** Backoff curto entre retentativas de parse (o de rede já tem o seu no client). */
+const STRUCTURED_RETRY_DELAY_MS = 400;
 
 /**
  * Adapter OpenRouter da `LLMProviderPort` (§5/§11).
@@ -30,9 +41,13 @@ const DEFAULT_SCHEMA_NAME = "structured_output";
  */
 export class OpenRouterAdapter implements LLMProviderPort {
   private readonly client: OpenRouterClient;
+  private readonly structuredMaxRetries: number;
+  private readonly sleepFn: (ms: number) => Promise<void>;
 
   constructor(deps: OpenRouterAdapterDeps) {
     this.client = deps.client;
+    this.structuredMaxRetries = deps.structuredMaxRetries ?? DEFAULT_STRUCTURED_MAX_RETRIES;
+    this.sleepFn = deps.sleepFn ?? sleep;
   }
 
   async complete(request: LLMRequest): Promise<LLMCompletion<string>> {
@@ -55,7 +70,24 @@ export class OpenRouterAdapter implements LLMProviderPort {
         },
       },
     };
-    const response = await this.client.chatCompletion(chatRequest);
+    // Retry de PARSE/validação: JSON inválido, truncado ou que falha o schema (`validate`)
+    // re-chama o LLM em vez de descartar. O retry de REDE/429/5xx fica no client.
+    let lastError: LLMProviderError | undefined;
+    for (let attempt = 0; attempt <= this.structuredMaxRetries; attempt += 1) {
+      try {
+        return this.parseStructured<T>(await this.client.chatCompletion(chatRequest), request);
+      } catch (error) {
+        if (!(error instanceof LLMProviderError) || error.kind !== "parse_error") throw error;
+        lastError = error;
+        if (attempt === this.structuredMaxRetries) throw error;
+        await this.sleepFn(STRUCTURED_RETRY_DELAY_MS);
+      }
+    }
+    throw lastError ?? new LLMProviderError("parse_error", "structured output falhou após retries");
+  }
+
+  /** Extrai + valida o output estruturado de UMA resposta. Falhas → `parse_error` (retryable). */
+  private parseStructured<T>(response: OpenRouterChatResponse, request: LLMRequest): LLMCompletion<T> {
     const finishReason = response.choices[0]?.finish_reason;
     // Truncou no maxTokens (comum com modelos de reasoning, que gastam o orçamento
     // "pensando" antes do JSON) → erro claro e acionável, não "JSON inválido" genérico.
@@ -66,7 +98,17 @@ export class OpenRouterAdapter implements LLMProviderPort {
       );
     }
     const content = this.firstContent(response.choices);
-    return { output: parseJson<T>(content, finishReason), usage: this.mapUsage(response.usage) };
+    const output = parseJson<T>(content, finishReason);
+    // Validação de schema (ex.: zod do chamador): output estruturalmente-JSON mas com
+    // shape errado → `parse_error` (retryable) em vez de devolver algo que seria descartado.
+    if (request.validate && !request.validate(output)) {
+      const snippet = content.trim().slice(0, 300).replace(/\s+/g, " ");
+      throw new LLMProviderError(
+        "parse_error",
+        `structured output não passou na validação de schema (finish_reason=${finishReason ?? "?"}): ${snippet}`,
+      );
+    }
+    return { output, usage: this.mapUsage(response.usage) };
   }
 
   /** Monta o corpo comum do chat request a partir do LLMRequest do domínio. */

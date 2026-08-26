@@ -68,7 +68,13 @@ export const envSchema = z.object({
     .default("google/gemini-3.1-flash-lite"),
   // Map-reduce (3b-2): modelo barato por-campanha (mapa) + modelo barato do redator do
   // WhatsApp. Síntese usa OPENROUTER_MODEL (forte); reviewer usa OPENROUTER_REVIEW_MODEL. Override por-agente (Fatia 4).
-  OPENROUTER_UNIT_MODEL: z.string().min(1).default("deepseek/deepseek-v4-flash-0731"),
+  // NÃO usar modelo de reasoning aqui: o mapa é extração JSON estrita e o roteamento do
+  // OpenRouter para certos providers de reasoning é lento/instável (chamadas de minutos,
+  // conexão caindo) e viola o structured output → análise cai no zod e é descartada.
+  // Escolha por teste real (6/6 schema-válido, ~1s, ~$0.00016/call = ~23× mais barato que o
+  // gemini-flash-lite) com a MELHOR qualidade analítica do grupo testado (action types
+  // corretos, budget% específico, diagnóstico de funil). Fallback: `mistralai/mistral-small-24b-instruct-2501`.
+  OPENROUTER_UNIT_MODEL: z.string().min(1).default("qwen/qwen3.7-flash"),
   OPENROUTER_MESSAGE_MODEL: z.string().min(1).default("google/gemini-3.1-flash-lite"),
   // Versão do analisador de visão — bumpar invalida o cache de análises de criativo.
   // 2 (Fatia 6c): multi-frame HD + decomposição hook/angle/format/cta.
@@ -79,6 +85,18 @@ export const envSchema = z.object({
   LLM_COST_CAP_USD_PER_PERIOD: z.coerce.number().min(0).default(0),
   // Retentativas in-process por chamada de LLM (429/5xx/rede/passthrough do provider).
   LLM_MAX_RETRIES: z.coerce.number().int().nonnegative().default(3),
+  // Timeout por tentativa HTTP ao OpenRouter (ms). Sem isto o `fetch` do Node espera
+  // pra sempre: uma call que trava no provider pendura o run inteiro (reaper não pega —
+  // o lock do worker segue vivo). Ao estourar, vira erro de rede → retryable → reroteia.
+  LLM_HTTP_TIMEOUT_MS: z.coerce.number().int().positive().default(120000),
+  // Retentativas de PARSE/validação do structured output (JSON inválido, truncado ou
+  // que falha o schema zod). Separado do retry de rede — re-chama o LLM p/ obter um JSON
+  // válido em vez de descartar a análise em silêncio.
+  LLM_STRUCTURED_MAX_RETRIES: z.coerce.number().int().nonnegative().default(2),
+  // Timeout por chamada HTTP ao LLM no CHAT (ms) — DEVE ser < CONVERSATION_TURN_TIMEOUT_MS
+  // p/ o timeout+retry agir DENTRO do turno (senão o teto do turno corta antes e vira o
+  // fallback). Chat é rápido (flash + tools = segundos); 45s pega hang e sobra p/ 1 reroute.
+  CONVERSATION_HTTP_TIMEOUT_MS: z.coerce.number().int().positive().default(45000),
   // Revisor (Analista→Revisor) ligado por padrão; default global — override por-agente
   // em `agents.model_config.reviewEnabled` (Fatia 4).
   ANALYSIS_REVIEW_ENABLED: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),

@@ -19,9 +19,9 @@ function chatBody(content: string, usage?: Record<string, unknown>) {
 
 const noSleep = () => Promise.resolve();
 
-function makeAdapter(fetchFn: typeof fetch, maxRetries = 3) {
+function makeAdapter(fetchFn: typeof fetch, maxRetries = 3, structuredMaxRetries = 2) {
   const client = new OpenRouterClient({ apiKey: "k", fetchFn, sleepFn: noSleep, maxRetries });
-  return new OpenRouterAdapter({ client });
+  return new OpenRouterAdapter({ client, structuredMaxRetries, sleepFn: noSleep });
 }
 
 describe("OpenRouterAdapter.complete", () => {
@@ -87,6 +87,71 @@ describe("OpenRouterAdapter.completeStructured", () => {
     await expect(
       makeAdapter(fetchFn).completeStructured({ model: "m", messages: [], responseSchema: { type: "object" } }),
     ).rejects.toMatchObject({ kind: "parse_error" });
+  });
+
+  it("re-tenta quando o JSON é inválido e sucede na 2ª resposta", async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(chatBody("não é json")))
+      .mockResolvedValueOnce(jsonResponse(chatBody(JSON.stringify({ summary: "ok" })))) as unknown as typeof fetch;
+    const res = await makeAdapter(fetchFn).completeStructured<{ summary: string }>({
+      model: "m",
+      messages: [],
+      responseSchema: { type: "object" },
+    });
+    expect(res.output.summary).toBe("ok");
+    expect((fetchFn as unknown as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(2);
+  });
+
+  it("re-tenta quando o output falha a validação de schema (validate) e sucede depois", async () => {
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(chatBody(JSON.stringify({ wrong: true }))))
+      .mockResolvedValueOnce(jsonResponse(chatBody(JSON.stringify({ ok: true })))) as unknown as typeof fetch;
+    const res = await makeAdapter(fetchFn).completeStructured<{ ok: boolean }>({
+      model: "m",
+      messages: [],
+      responseSchema: { type: "object" },
+      validate: (o) => (o as { ok?: boolean }).ok === true,
+    });
+    expect(res.output.ok).toBe(true);
+    expect((fetchFn as unknown as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(2);
+  });
+
+  it("esgota os retries de validação e lança parse_error", async () => {
+    const fetchFn = vi.fn(async () =>
+      jsonResponse(chatBody(JSON.stringify({ wrong: true }))),
+    ) as unknown as typeof fetch;
+    await expect(
+      makeAdapter(fetchFn, 3, 2).completeStructured({
+        model: "m",
+        messages: [],
+        responseSchema: { type: "object" },
+        validate: () => false,
+      }),
+    ).rejects.toMatchObject({ kind: "parse_error" });
+    expect((fetchFn as unknown as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(3); // 1 + 2 retries
+  });
+});
+
+describe("OpenRouterClient timeout", () => {
+  it("passa AbortSignal quando requestTimeoutMs > 0", async () => {
+    const fetchFn = vi.fn(async (_url: string, init: RequestInit) => {
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+      return jsonResponse(chatBody("ok"));
+    }) as unknown as typeof fetch;
+    const client = new OpenRouterClient({ apiKey: "k", fetchFn, sleepFn: noSleep, requestTimeoutMs: 5000 });
+    await client.chatCompletion({ model: "m", messages: [{ role: "user", content: "oi" }] });
+    expect((fetchFn as unknown as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(1);
+  });
+
+  it("sem requestTimeoutMs NÃO passa signal (retrocompatível)", async () => {
+    const fetchFn = vi.fn(async (_url: string, init: RequestInit) => {
+      expect(init.signal).toBeUndefined();
+      return jsonResponse(chatBody("ok"));
+    }) as unknown as typeof fetch;
+    const client = new OpenRouterClient({ apiKey: "k", fetchFn, sleepFn: noSleep });
+    await client.chatCompletion({ model: "m", messages: [{ role: "user", content: "oi" }] });
   });
 });
 

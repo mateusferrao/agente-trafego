@@ -392,6 +392,11 @@ export function makeConversationNodes(
       apiKey: deps.conversation.apiKey,
       configuration: { baseURL: deps.conversation.baseUrl },
       temperature: CONVERSATION_TEMPERATURE,
+      // timeout por chamada + retries: sem isto uma call travada no provider (OpenRouter
+      // roteando p/ provider lento/instável) só é cortada pelo teto de 90s do turno, que
+      // vira o fallback "não consegui processar". Com timeout curto + retry, o SDK reroteia.
+      timeout: deps.conversation.httpTimeoutMs,
+      maxRetries: deps.conversation.maxRetries,
       // OpenRouter devolve custo real quando pedimos usage — essencial p/ o billing (§11).
       // Com .bindTools(), o @langchain/openai suprime response_metadata.usage (custo some)
       // — patchCostInBackground() cobre com fallback assíncrono (nunca bloqueia a resposta).

@@ -57,6 +57,13 @@ export interface LLMRequest {
   readonly reasoning?: LLMReasoning;
   /** metering (opcional) — atribui o custo desta chamada à org/run/tipo. */
   readonly meta?: LLMCallMeta;
+  /**
+   * Validação de schema do output estruturado (opcional). Roda em `completeStructured`
+   * DEPOIS do parse de JSON; retorna `false` → a chamada é re-tentada (parse_error)
+   * em vez de devolver um objeto que o chamador descartaria. Ex.: `(o) =>
+   * meuZodSchema.safeParse(o).success`. Sem isto, só o JSON.parse é validado.
+   */
+  readonly validate?: (parsed: unknown) => boolean;
 }
 
 export interface LLMCompletion<T = string> {
