@@ -50,7 +50,7 @@ describe("createInsightsSweep.sweep", () => {
     expect(enqueued[0]).toMatchObject({
       name: "insights-sync-run",
       payload: { accountId: "velha", orgId: "o1", trigger: "cron" },
-      idempotencyKey: "sync:velha",
+      idempotencyKey: "sync-velha",
       delayMs: 0,
     });
   });

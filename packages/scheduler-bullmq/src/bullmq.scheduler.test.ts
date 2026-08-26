@@ -48,7 +48,7 @@ describe("BullmqScheduler.enqueue", () => {
       queue: "insights-sync",
       name: "insights-sync-run",
       payload: { accountId: "a1" },
-      idempotencyKey: "sync:a1",
+      idempotencyKey: "sync-a1",
       removeOnComplete: true,
       removeOnFail: true,
     });
@@ -56,7 +56,7 @@ describe("BullmqScheduler.enqueue", () => {
     expect(addSpy).toHaveBeenCalledWith(
       "insights-sync-run",
       { accountId: "a1" },
-      { jobId: "sync:a1", removeOnComplete: true, removeOnFail: true },
+      { jobId: "sync-a1", removeOnComplete: true, removeOnFail: true },
     );
   });
 

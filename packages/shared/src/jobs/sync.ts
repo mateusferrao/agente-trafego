@@ -29,11 +29,15 @@ export type InsightsSyncPayload = {
 /**
  * jobId do sync-only por conta. O sweep periódico (`cron`) usa a chave base e enfileira
  * com delay (stagger); um trigger IMEDIATO (`manual`/`on_demand` = botão/lazy) usa uma
- * chave distinta (`:now`) p/ NÃO coalescer no job atrasado do sweep (senão o "atualizar
- * agora" herdaria o delay e só rodaria minutos depois). Cada classe dedupe em si.
+ * chave distinta (sufixo `-now`) p/ NÃO coalescer no job atrasado do sweep (senão o
+ * "atualizar agora" herdaria o delay e só rodaria minutos depois). Cada classe dedupe em si.
+ *
+ * Separador `-` (NUNCA `:`): esse id vira o `jobId` custom do BullMQ (via
+ * `SchedulerPort.idempotencyKey`), e o BullMQ PROÍBE `:` em jobId custom (é o separador de
+ * chave dele) → lança "Custom Id cannot contain :" no `add`, derrubando o enqueue.
  */
 export function insightsSyncJobId(accountId: string, trigger: SyncTrigger): string {
-  return trigger === "cron" ? `sync:${accountId}` : `sync:${accountId}:now`;
+  return trigger === "cron" ? `sync-${accountId}` : `sync-${accountId}-now`;
 }
 
 /**

@@ -151,7 +151,7 @@ describe("createDashboardService.requestRefresh", () => {
     const out = await service.requestRefresh("org-1" as never, "acc-1");
     expect(out).toEqual({ enqueued: true });
     expect(enqueue).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "insights-sync-run", idempotencyKey: "sync:acc-1:now" }),
+      expect.objectContaining({ name: "insights-sync-run", idempotencyKey: "sync-acc-1-now" }),
     );
   });
 
