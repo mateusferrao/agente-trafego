@@ -694,7 +694,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
   // pedindo o foco em vez de consultar com adAccountId vazio (dado errado). O LLM então
   // dá set_focus (do explícito/ambiente) → muta o ctx → re-chama e responde no mesmo turno.
   const NEEDS_FOCUS =
-    'Me diga primeiro em qual conta (a organização tem várias). Ex: "foca na Clínica X" — ou só o nome que eu identifico.';
+    'Me diga primeiro em qual conta (a organização tem várias). Ex: "foca na Loja X" — ou só o nome que eu identifico.';
   /** Sem conta em contexto (concierge-start) → pede o foco em vez de consultar vazio. */
   const noFocus = () => !ctx.adAccountId;
 

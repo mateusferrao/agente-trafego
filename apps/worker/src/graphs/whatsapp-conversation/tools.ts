@@ -308,7 +308,7 @@ export function makeConversationTools(
     {
       name: "set_focus",
       description:
-        "Escolhe a conta em foco desta conversa (org com várias contas). Aceita o NOME (ex: 'foca na Clínica X') ou o ID da conta. Depois disso, leitura e ações passam a ser dessa conta. IMPORTANTE: chame set_focus SOZINHA (sem outra tool no mesmo passo); só depois de focar, faça a leitura/ação no passo seguinte.",
+        "Escolhe a conta em foco desta conversa (org com várias contas). Aceita o NOME (ex: 'foca na Loja X') ou o ID da conta. Depois disso, leitura e ações passam a ser dessa conta. IMPORTANTE: chame set_focus SOZINHA (sem outra tool no mesmo passo); só depois de focar, faça a leitura/ação no passo seguinte.",
       schema: z.object({ name: z.string().min(1).describe("nome ou id da conta") }),
     },
   );
@@ -533,7 +533,7 @@ export async function buildCapabilitiesText(
       "Sou seu gestor de tráfego aqui no WhatsApp. Sem uma conta em foco, posso:",
       "• ver e resolver pendências de aprovação (de todas as suas contas);",
       "• te dar um panorama de todas as contas (nota e gasto da última análise de cada uma);",
-      '• focar numa conta (ex: "foca na Clínica X") pra ler, analisar e agir nela.',
+      '• focar numa conta (ex: "foca na Loja X") pra ler, analisar e agir nela.',
       "Pode me mandar áudio também — eu transcrevo e entendo. Me diz em qual conta você quer trabalhar.",
     ];
     if (ctx.ref.kind === "group") {
@@ -682,7 +682,7 @@ export const CONCIERGE_TOOL_NAMES: ReadonlySet<string> = new Set([
 /**
  * Concierge de GRUPO multi-conta (S6 — always-bind de leitura): além do concierge, BINDA as
  * tools de LEITURA account-scoped (self-guard sem foco em read-data.ts). Assim a 1ª pergunta
- * ("@bot como tá a Clínica X?") resolve num turno: o LLM dá set_focus (do explícito/ambiente)
+ * ("@bot como tá a Loja X?") resolve num turno: o LLM dá set_focus (do explícito/ambiente)
  * → muta o ctx → lê e responde. SEM escrita/config (dependem do allowedActions do agente) nem
  * trigger_analysis/revert (não são o *hello* comum) — escrita-1º-turno segue barra-e-repete.
  */

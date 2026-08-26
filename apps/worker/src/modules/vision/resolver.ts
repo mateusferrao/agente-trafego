@@ -78,7 +78,7 @@ function buildVisionMessages(input: CreativeVisionInput): LLMMessage[] {
     "o criativo: o que comunica (summary), o gancho dos primeiros segundos (hook), o ângulo/apelo " +
     "central (angle), o formato (format: antes-depois/depoimento/UGC/talking-head/oferta), o corpo/" +
     "argumento central (body), a chamada pra ação (cta), a FORÇA DE PROVA (proofStrength: weak/medium/" +
-    "strong — antes-depois real, autoridade médica, depoimento verificável elevam; promessa sem prova " +
+    "strong — antes-depois real, autoridade/credencial, depoimento verificável elevam; promessa sem prova " +
     "é weak), pontos fortes/fracos e uma nota 0-10 (score). Baseie-se SÓ no que vê e no texto dado; " +
     "não invente métricas.";
   const frames = input.imageUrls.map((url) => ({ type: "image_url" as const, imageUrl: url }));

@@ -279,14 +279,14 @@ interface FormState {
             <span class="text-xs font-medium uppercase tracking-wide text-muted">Sobre o negócio</span>
             <h2 class="font-brand text-base font-semibold text-ink">Contexto do negócio</h2>
             <p class="text-xs text-muted">
-              Fatos que ajudam o agente a entender sua realidade — público, oferta, momento de lançamento, ticket. Opcional.
+              Fatos que ajudam o agente a entender sua realidade — público, oferta, momento do negócio, ticket. Opcional.
             </p>
           </div>
           <textarea
             rows="4"
             maxlength="2000"
             class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink"
-            placeholder="Ex: estou em lançamento até 30/08, público de médicos, ticket R$2 mil. Priorizo lead qualificado."
+            placeholder="Ex: campanha de captação até 30/08, público B2B de compras, ticket R$2 mil. Priorizo lead qualificado."
             [value]="businessContext()"
             (input)="onBusinessContext($event)"
           ></textarea>
@@ -324,8 +324,8 @@ interface FormState {
             <span class="text-xs font-medium uppercase tracking-wide text-muted">Cadência</span>
             <h2 class="font-brand text-base font-semibold text-ink">Com que frequência analisar</h2>
             <p class="text-xs text-muted">
-              De quanto em quanto tempo o agente analisa a conta sozinho. No lançamento, mais vezes ao dia;
-              na manutenção, semanal já mantém a conta viva.
+              De quanto em quanto tempo o agente analisa a conta sozinho. Em momentos críticos, mais vezes ao dia;
+              na rotina, semanal já mantém a conta viva.
             </p>
           </div>
           <div class="flex flex-wrap gap-2" role="radiogroup" aria-label="Cadência">

@@ -83,7 +83,7 @@ const ADVICE_NOTE =
   "— actionType 'review_creative'. Para PÚBLICO, dê direção de teste (ampliar/estreitar/novo " +
   "lookalike) — actionType 'review_audience'. Você pode ACONSELHAR em texto (o humano executa, " +
   "você NÃO aplica): ESCALAR um vencedor com significância (subir orçamento / duplicar) ou CRIAR " +
-  "uma campanha (ex: manutenção entre lançamentos) — use actionType 'investigate' (próximo passo " +
+  "uma campanha (ex: manutenção entre campanhas) — use actionType 'investigate' (próximo passo " +
   "claro) ou 'keep' (leitura estratégica). NUNCA proponha ação de plataforma para escalar/criar " +
   "(não são aplicáveis agora). Seja SELETIVO: só direções/insights materiais, priorizados por impacto.";
 

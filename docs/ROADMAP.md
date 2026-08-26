@@ -131,7 +131,7 @@ auto-config + reply-context). **Nenhuma escrita nova na Meta** entrou nesta fati
 
 **Fast-follows da 6c (qualidade + verificações) — registrados:**
 
-- **Transcrição de áudio de criativo** — decompor o vídeo pela FALA (script/gancho), sinal mais rico p/ VSL de clínica. **Bloqueado hoje:** a Meta não expõe o `source` do vídeo com System User token (confirmado). Destrava com a **biblioteca de criativos da Fatia 7** (cliente sobe o vídeo → aí há áudio p/ STT).
+- **Transcrição de áudio de criativo** — decompor o vídeo pela FALA (script/gancho), sinal mais rico p/ VSL/vídeo longo. **Bloqueado hoje:** a Meta não expõe o `source` do vídeo com System User token (confirmado). Destrava com a **biblioteca de criativos da Fatia 7** (cliente sobe o vídeo → aí há áudio p/ STT).
 - **"Never miss timing" por gatilho de evento** (monitoramento intra-cadência) — o Guardião de Lançamento hoje é cadência curta (2×/dia) + limiares apertados + alerta proativo, **sem** gatilho em tempo real. Gatilho por evento (ex: pico de CPA dispara run) = **Fatia 8 / monitoramento**.
 - **Editor das FAIXAS de cold-start na UI** — as faixas de custo-por-resultado (saúde × conversa/lead/venda) hoje são editáveis por env/`model_config`; a UI de edição da matriz (por gestor técnico) fica p/ depois. Os knobs escalares (significância/fadiga/learning/frames/top-N/revisão) **já** entram na UI avançada na 6c.
 - **Rollup de custo por conversa** — o custo do chat já é atribuído à conta + carrega `conversationId` no payload; falta a agregação/relatório **por conversa** (metering).
@@ -415,7 +415,7 @@ ecoa concreto → confirma → aplica**, sob os guardrails existentes. Entregue 
 - **5c-5 — Leitura rica.** `compare_periods`, `get_entity_detail` (tendência), `get_agent_config`
   (só leitura), `explain_recommendation`.
 - **5c-6 — Foco multi-conta.** `conversations.focused_account_id` + `set_focus`: em org com >1 conta,
-  o usuário foca ("foca na Clínica X") e leitura/escrita passam a operar nela; `turn.ts` resolve o
+  o usuário foca ("foca na Loja X") e leitura/escrita passam a operar nela; `turn.ts` resolve o
   agente em contexto (única conta ativa OU conta focada); o eco nomeia a conta; cross-conta → pergunta.
 - **5c-7 — Prompt + endurecimento + validação.** System-prompt reescrito (escreve/desfaz/foca; não
   cria campanhas = Fatia 7; regra de não-volunteer; revert honesto); TTL do `pendingWrite` (~30 min);

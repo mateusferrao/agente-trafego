@@ -87,7 +87,7 @@ const ORG_NAME_MIN_LENGTH = 2;
               type="text"
               formControlName="orgName"
               autocomplete="organization"
-              placeholder="Sua agência ou marca"
+              placeholder="Sua agência ou empresa"
             />
           </app-ui-form-field>
         }

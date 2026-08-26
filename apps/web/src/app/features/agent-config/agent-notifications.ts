@@ -58,7 +58,7 @@ const SENSITIVITIES: readonly { value: Sensitivity; label: string }[] = [
         <label class="flex items-center justify-between gap-3">
           <span class="flex flex-col">
             <span class="text-sm font-medium text-ink">Resumo do dia (pulso)</span>
-            <span class="text-xs text-muted">Um retrato de ontem + hoje até agora, na cadência que você definir — mesmo sem recomendação nova. Não deixa a conta "sumir" entre lançamentos.</span>
+            <span class="text-xs text-muted">Um retrato de ontem + hoje até agora, na cadência que você definir — mesmo sem recomendação nova. Não deixa a conta "sumir" entre campanhas.</span>
           </span>
           <button appSwitch [ngpSwitchChecked]="pulseEnabled()" (ngpSwitchCheckedChange)="pulseEnabled.set($event)">
             <span appSwitchThumb></span>

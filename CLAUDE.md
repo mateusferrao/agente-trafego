@@ -8,13 +8,13 @@
 
 **Produto:** SaaS standalone onde **agentes de IA personalizáveis tocam tráfego pago de forma (semi)autônoma**. De tempos em tempos o agente analisa a conta Meta Ads (métricas + criativos), gera recomendações e — conforme configuração — aplica mudanças, atuando **principalmente via WhatsApp**.
 
-**ICP (MVP):** players de saúde no digital (cursos/infoproduto) que fazem **lançamentos**. Já anunciam de verdade (conta Meta ativa = pré-requisito). Dores: (1) trabalho manual diário de tráfego; (2) ciclo de lançamento — intenso no lançamento, **conta parada** entre eles.
+**ICP (MVP):** genérico, multi-segmento — quem já anuncia de verdade no Meta (conta ativa = pré-requisito). Dores: (1) trabalho manual diário de tráfego; (2) **momentos críticos** (lançamento, promo, sazonalidade) que exigem vigilância de perto e **conta parada** entre campanhas.
 
-**Proposta de valor:** reduz o trabalho manual diário + vigia forte no lançamento (never miss timing) + não deixa a conta morrer entre lançamentos.
+**Proposta de valor:** reduz o trabalho manual diário + vigia forte nos **momentos críticos** (never miss timing) + não deixa a conta morrer entre campanhas.
 
-**Comprador:** ambos — o próprio player (org de 1-poucas contas) e gestores de tráfego que atendem players (org multi-conta).
+**Comprador:** ambos — **B2B** agências/gestores de tráfego que atendem vários anunciantes (org multi-conta) e **B2C** o próprio anunciante/empresa que anuncia direto + consultores/gestores de contas (org de 1-poucas contas).
 
-**Fora do ICP (MVP):** PME que **não anuncia** — o MVP otimiza contas **ativas** (precisa de dado). Servir quem não anuncia depende de **criação de campanha**, que é capacidade de roadmap pós-MVP (ver §2 VISÃO).
+**Fora do ICP (MVP):** quem **não anuncia** — o MVP otimiza contas **ativas** (precisa de dado). Servir quem não anuncia depende de **criação de campanha**, que é capacidade de roadmap pós-MVP (ver §2 VISÃO). *(Conta ativa que fica parada entre campanhas é tratada com elegância — dormância + reativação, §7/§8.)*
 
 ---
 
@@ -32,7 +32,7 @@
 - **Feedback + outcome tracking** nas recomendações (instrumento de validação).
 - Gate de acesso = **allowlist manual de beta**.
 
-**OUT (fast-follow):** OAuth oficial Meta + App Review; WhatsApp Cloud API / pool de números; Stripe (mensalidade + custo por uso); Google/TikTok Ads; modo lançamento×manutenção como preset; ACL por conta (RBAC granular); multi-agente por conta; **sinais externos do cliente (API/webhook) que enriquecem a análise** (ex: agendamentos do CRM — ver §15 / `docs/ROADMAP.md` Fatia 9); pacote `@automato/design-system` compartilhado.
+**OUT (fast-follow):** OAuth oficial Meta + App Review; WhatsApp Cloud API / pool de números; Stripe (mensalidade + custo por uso); Google/TikTok Ads; ACL por conta (RBAC granular); multi-agente por conta; **sinais externos do cliente (API/webhook) que enriquecem a análise** (ex: agendamentos do CRM — ver §15 / `docs/ROADMAP.md` Fatia 9); pacote `@automato/design-system` compartilhado.
 
 **VISÃO (foco final, roadmap pós-MVP):** um **gestor de tráfego completo no WhatsApp** — o agente não só otimiza, mas **cria campanhas** (a pedido do usuário OU proativo, pelo que observou). MVP valida a otimização primeiro; **criação = fase de roadmap** (ver §15 e `docs/ROADMAP.md`). A arquitetura já antecipa (catálogo de tools + `AdsPlatformPort` extensíveis). Geração de criativo por IA = fase ainda mais tardia.
 
@@ -40,7 +40,7 @@
 
 ## 3. Glossário de domínio
 
-- **Org** — tenant. Agência/gestor ou player. Contém users, contas, canais, agentes.
+- **Org** — tenant. Agência/gestor ou anunciante. Contém users, contas, canais, agentes.
 - **AdAccount** — conta de anúncios Meta conectada (com token cripto).
 - **ChannelInstance** — instância Evolution (1 por org) = número WhatsApp.
 - **ChannelGroup** — grupo WhatsApp configurado pela org (1 por org, espelho de `ChannelInstance`) onde o agente atua por completo (proativo + conversa), varrendo todas as contas da org como o DM; membros **não** precisam ser contatos verificados.

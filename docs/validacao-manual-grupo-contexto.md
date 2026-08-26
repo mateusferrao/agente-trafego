@@ -90,7 +90,7 @@ bloco de contexto (excluída — já é a mensagem atual).
 
 *(Requer 2+ contas/agentes ativos na org — fora do escopo deste roteiro mínimo; cobertos por testes
 unitários `turn.test.ts`/`tools.test.ts`.)* Manualmente, numa org multi-conta:
-- **1ª pergunta com conta explícita** ("@bot como tá a Clínica X?") → resolve **num turno** (always-bind).
+- **1ª pergunta com conta explícita** ("@bot como tá a Loja X?") → resolve **num turno** (always-bind).
 - **Foco velho** (setar foco, esperar > `CONVERSATION_FOCUS_TTL_HOURS`, ou zerar `focused_at` via SQL)
   → o bot deixa de assumir a conta velha e resolve pelo ambiente / pergunta.
 - **Troca A→B no mesmo turno** ("foca na B") → o eco/ação passam a mirar **B** (footgun corrigido).
