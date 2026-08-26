@@ -6,7 +6,8 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from "@angular/core";
 import { NgIcon, provideIcons } from "@ng-icons/core";
 import { lucideRefreshCw, lucideActivity } from "@ng-icons/lucide";
-import { UiButton, UiEmptyState, UiSpinner } from "@ui";
+import { UiButton, UiEmptyState, UiSpinner, UiAnalysisProgress } from "@ui";
+import { AGENT_NAME } from "@core/brand";
 import { DashboardApiService } from "@core/api/dashboard-api.service";
 import type { LiveMetricsOutput } from "@core/api/generated";
 import { asOfLabel, money, windowLabel } from "../../shared/format";
@@ -21,7 +22,7 @@ const MAX_POLLS = 6;
 @Component({
   selector: "app-account-overview",
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [NgIcon, UiButton, UiEmptyState, UiSpinner, AnalysisDetail, AgentActions],
+  imports: [NgIcon, UiButton, UiEmptyState, UiSpinner, UiAnalysisProgress, AnalysisDetail, AgentActions],
   providers: [provideIcons({ lucideRefreshCw, lucideActivity })],
   template: `
     <div class="flex flex-col gap-6">
@@ -65,16 +66,15 @@ const MAX_POLLS = 6;
           Carregando…
         </div>
       } @else if (store.analyzing()) {
-        <div class="flex flex-col items-center justify-center gap-2 rounded-lg border border-line bg-panel p-10 text-center text-sm text-muted">
-          <app-ui-spinner [size]="20" [stroke]="2" aria-hidden="true" />
-          <span>Analisando sua conta… isso pode levar alguns minutos.</span>
-          <span class="text-xs">Pode fechar esta tela — o resultado fica salvo aqui e o agente te avisa no WhatsApp quando terminar.</span>
+        <div class="flex flex-col items-center justify-center gap-4 rounded-lg border border-line bg-panel p-10 text-center">
+          <app-ui-analysis-progress [title]="analyzingTitle" [steps]="analysisSteps" />
+          <span class="text-xs text-muted">Pode fechar esta tela. O resultado fica salvo aqui.</span>
         </div>
       } @else if (store.run() === null) {
         <app-ui-empty-state
           icon="lucideActivity"
           title="Rode a primeira análise"
-          description="O agente analisa suas campanhas e sugere melhorias — sem alterar nada na sua conta."
+          [description]="firstRunDescription"
         >
           <button appButton variant="primary" type="button" actions (click)="store.analyze()">Analisar agora</button>
         </app-ui-empty-state>
@@ -103,6 +103,15 @@ export class AccountOverview {
   protected readonly store = inject(AccountContextStore);
   private readonly api = inject(DashboardApiService);
   protected readonly defaultCurrency = DEFAULT_CURRENCY;
+  // Copy de Marca (tom lúdico, voz própria, com aposto na 1ª menção do Roi).
+  protected readonly analyzingTitle = `${AGENT_NAME} está analisando sua conta`;
+  protected readonly analysisSteps = [
+    "Puxando os números dos últimos dias",
+    "Vendo onde o dinheiro foi",
+    "Comparando com a sua meta",
+    "Separando o que vale a pena mexer",
+  ];
+  protected readonly firstRunDescription = `O ${AGENT_NAME}, seu agente de tráfego, analisa suas campanhas e sugere melhorias sem mexer em nada na sua conta.`;
   // funções de formatação compartilhadas expostas ao template.
   protected readonly money = money;
   protected readonly asOfLabel = asOfLabel;
