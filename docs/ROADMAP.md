@@ -70,6 +70,17 @@ fatia MVP agendada **não** entram aqui — ficam na sua fatia: retenção/prune
 decaimento de token em runtime → `6b`; reuso do sync-service pelo `fetchData` → `3a`;
 **métricas de funil/engajamento na análise** → `3a` (ver nota abaixo).)
 
+### Fast-follows do pivô B2B/B2C (referência de mercado configurável + multi-moeda + contas zeradas)
+- **[MÉDIO] Editar a referência de mercado via chat.** Hoje a tabela (custo/CTR/freq/zumbi/baseline) é editável só na UI (org + override por agente). O **alerta de reativação** já é configurável por chat (`set_notifications`); a tabela em si fica p/ depois (parsing conversacional de faixas + eco+confirma).
+- **[MÉDIO] Sub-unidade de moeda (moedas sem 2 casas: JPY/KWD…).** `MINOR_UNIT_DIVISOR=100`, `toFixed(2)`, `ZERO_SPEND_EPS`, `MIN_BUDGET_MINOR` assumem 2 casas. Ler `currency_offset` da Meta e generalizar a sub-unidade. ICP majoritário é BRL/USD (2 casas).
+- **[BAIXO] Câmbio/conversão de moeda.** As agregações cross-conta agrupam POR MOEDA (nunca somam moedas diferentes); não há conversão FX. Se algum dia fizer sentido um total único multi-moeda, exigiria um provider de câmbio (fonte + cache + data-de-referência).
+- **[BAIXO] Distinguir "nunca teve movimento" de "parou agora"** via `created_time`/`updated_time` da Meta (hoje `hasBaseline`/`last_activity_at` são proxies; a dormância por tempo já cobre o backoff sem isso).
+- **[BAIXO] Estado dormante no detalhe da conta.** A visibilidade de dormância ("conta parada — vigiando o retorno") está no card de panorama (dashboard + Contas); o empty-state do detalhe da conta (`account-overview`) ainda mostra o texto genérico.
+- **[BAIXO] Repropor reativação por-conta.** O alerta de reativação é por-agente (1:1 conta); escopo por-grupo/por-participante segue o fast-follow de N integrações.
+
+### Resolvido pelo pivô (era dívida): faixa de custo cold-start sensível a ticket/vertical
+A dívida **"[MÉDIO] Faixa de custo cold-start sensível a ticket/vertical"** (era `sale = R$40–120` hardcoded p/ saúde) foi **resolvida**: as faixas de custo (+ CTR/frequência + zumbi/baseline) agora são **configuráveis** (org-default + override por agente, currency-aware, match-or-drop de moeda). Vazio = não usa como contexto.
+
 ### Fast-follows da fatia "Postura de comunicação + narrativa no site + pulso resumo-do-dia"
 
 Postura configurável (diretividade/volume/profundidade + preset de experiência), voz única
@@ -133,7 +144,7 @@ auto-config + reply-context). **Nenhuma escrita nova na Meta** entrou nesta fati
 
 - **Transcrição de áudio de criativo** — decompor o vídeo pela FALA (script/gancho), sinal mais rico p/ VSL/vídeo longo. **Bloqueado hoje:** a Meta não expõe o `source` do vídeo com System User token (confirmado). Destrava com a **biblioteca de criativos da Fatia 7** (cliente sobe o vídeo → aí há áudio p/ STT).
 - **"Never miss timing" por gatilho de evento** (monitoramento intra-cadência) — o Vigia Intensivo hoje é cadência curta (2×/dia) + limiares apertados + alerta proativo, **sem** gatilho em tempo real. Gatilho por evento (ex: pico de CPA dispara run) = **Fatia 8 / monitoramento**.
-- **Editor das FAIXAS de cold-start na UI** — as faixas de custo-por-resultado (saúde × conversa/lead/venda) hoje são editáveis por env/`model_config`; a UI de edição da matriz (por gestor técnico) fica p/ depois. Os knobs escalares (significância/fadiga/learning/frames/top-N/revisão) **já** entram na UI avançada na 6c.
+- ✅ **Editor das FAIXAS de cold-start na UI — ENTREGUE (pivô).** As faixas de custo-por-resultado (conversa/lead/venda) + CTR/frequência + zumbi/baseline agora são editáveis na UI (Configurações = padrão da org; config do agente = override por conta), currency-aware. Vazio = não usa como contexto.
 - **Rollup de custo por conversa** — o custo do chat já é atribuído à conta + carrega `conversationId` no payload; falta a agregação/relatório **por conversa** (metering).
 - **Bloco 2 (Fatia 7):** criação de campanhas + **auto-configurar o agente por chat** (mudar metas/playbook/guardrails/cadência conversando) — estende o Grafo B do 5c.
 
@@ -149,7 +160,7 @@ auto-config + reply-context). **Nenhuma escrita nova na Meta** entrou nesta fati
 - ✅ **[ALTO] Detector de tracking/atribuição furado — ENTREGUE (Bloco 2, S1.3).** `detectTrackingHealth` (nota de conta) + `guardTrackingCaveat` (caveat nas pausas por CPA-de-venda em base `target`; não rebaixa; proxy não recebe) + nota no prompt. Limiares `ANALYSIS_QUALITY_TRACKING_BROKEN_{RATIO,MIN_FUNNEL}`.
 - ✅ **[ALTO] Quantificar desperdício + 80/20 — ENTREGUE (Bloco 2, S1.5/S1.8).** `computeWasteReport` (`wastedSpend` = só zumbis + Pareto por base de conversão + `annotateFreedSpend` na pausa), no brief/`metrics_snapshot`, card na UI + widget cross-conta no Painel; o redator lidera pelo money-shot.
 - **[ALTO] Transcrição de áudio de criativo** — segue **bloqueada**: criativos da Steticos são vídeo antes/depois **+ fala**; frames HD não capturam o gancho FALADO. Depende da biblioteca de criativos da Fatia 7 (cliente sobe o vídeo).
-- **[MÉDIO] Faixa de custo cold-start sensível a ticket/vertical** — `sale = R$40–120` é calibrado p/ e-commerce; alto ticket (cirúrgico) tem CPA de centenas a milhares. Derivar a faixa do ticket informado na config; até lá, caveat forte no cold-start.
+- ✅ **[MÉDIO] Faixa de custo cold-start sensível a ticket/vertical — RESOLVIDO (pivô).** Deixou de ser hardcoded: as faixas vêm da referência de mercado configurável (org + override por agente, currency-aware). Vazio = não injeta faixa.
 - ✅ **[MÉDIO] Frequência por estágio — ENTREGUE (Bloco 2, S1.1/S1.2).** `AudienceProfile` (sync `targeting`, sem chamadas extras) → `frequencyCapByStage` (prospecção ~2,5 / remarketing ~8). Classificação frio×quente por custom-audience de inclusão + nome do público. *Fast-follow: resolver `subtype` de cada audience + tamanho via `delivery_estimate` p/ lookalike×retarget cirúrgico.*
 - ✅ **[MÉDIO] Não matar em learning — ENTREGUE (Bloco 2, S1.4).** `guardKillWithoutMaturity` (pausar→investigar em learning, LLM-origin; playbook/guardrail/kill-switch passam — não cega o Vigia Intensivo).
 - ✅ **[MÉDIO] Decomposição de criativo `body` + `proof_strength` — ENTREGUE (Bloco 2, S1.6).** Visão decompõe corpo + força de prova (weak/medium/strong); descritivo, não altera tier/score. Bump `CREATIVE_VISION_ANALYZER_VERSION`→3.
