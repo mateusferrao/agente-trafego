@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { memberships, orgs, type Database } from "@trafego/db";
+import type { MarketReference } from "@trafego/shared";
 import { orgSlug } from "./slug.js";
 import type { OrgOutput } from "./schema.js";
 
@@ -23,6 +24,10 @@ export interface OrgsRepo {
   setTimezone(orgId: string, timezone: string): Promise<{ id: string; name: string; timezone: string }>;
   /** Org por id (nome+fuso) — base do GET /orgs/current. */
   findById(orgId: string): Promise<{ id: string; name: string; timezone: string } | null>;
+  /** Referência de mercado padrão da org (null = não configurada). */
+  getMarketReference(orgId: string): Promise<MarketReference | null>;
+  /** Grava (ou limpa com null) a referência de mercado padrão da org. */
+  setMarketReference(orgId: string, ref: MarketReference | null): Promise<void>;
 }
 
 export function createDrizzleOrgsRepo(db: Database): OrgsRepo {
@@ -83,6 +88,19 @@ export function createDrizzleOrgsRepo(db: Database): OrgsRepo {
         .where(eq(orgs.id, orgId))
         .limit(1);
       return org ?? null;
+    },
+
+    async getMarketReference(orgId) {
+      const [org] = await db
+        .select({ marketReference: orgs.marketReference })
+        .from(orgs)
+        .where(eq(orgs.id, orgId))
+        .limit(1);
+      return org?.marketReference ?? null;
+    },
+
+    async setMarketReference(orgId, ref) {
+      await db.update(orgs).set({ marketReference: ref }).where(eq(orgs.id, orgId));
     },
   };
 }

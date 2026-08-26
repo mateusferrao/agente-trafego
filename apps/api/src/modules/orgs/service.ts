@@ -1,5 +1,12 @@
 import { forbidden, notFound } from "../../middleware/error-handler.js";
-import type { CreateOrgInput, OrgOutput, RenameOrgInput, SetTimezoneInput } from "./schema.js";
+import type {
+  CreateOrgInput,
+  MarketReferenceOutput,
+  OrgOutput,
+  RenameOrgInput,
+  SetMarketReferenceInput,
+  SetTimezoneInput,
+} from "./schema.js";
 import type { MembershipRole, OrgsRepo } from "./repo.js";
 
 export interface OrgsDeps {
@@ -45,6 +52,25 @@ export function createOrgsService(deps: OrgsDeps) {
       if (role !== "owner") throw forbidden("Só o dono pode mudar o fuso horário");
       const org = await deps.repo.setTimezone(orgId, input.timezone);
       return { ...org, role };
+    },
+
+    /** Referência de mercado padrão da org — qualquer membro lê. */
+    async getMarketReference(userId: string, orgId: string): Promise<MarketReferenceOutput> {
+      const role = await deps.repo.findMembershipRole(userId, orgId);
+      if (!role) throw forbidden("Você não é membro desta organização");
+      return { marketReference: await deps.repo.getMarketReference(orgId) };
+    },
+
+    /** Define a referência de mercado padrão da org. Só o owner pode; membro é barrado (403). */
+    async setMarketReference(
+      userId: string,
+      orgId: string,
+      input: SetMarketReferenceInput,
+    ): Promise<MarketReferenceOutput> {
+      const role = await deps.repo.findMembershipRole(userId, orgId);
+      if (role !== "owner") throw forbidden("Só o dono pode mudar a referência de mercado");
+      await deps.repo.setMarketReference(orgId, input.marketReference);
+      return { marketReference: input.marketReference };
     },
   };
 }

@@ -16,13 +16,15 @@ import type {
   FunnelSummary,
   InsightMetrics,
   InsightRow,
+  OutcomeKind,
+  RangeBand,
   TrackingHealth,
   TrendPoint,
   WasteReport,
 } from "@trafego/shared";
 import { classifyBasis, resolveConversion, type ResolvedConversion } from "../conversion/index.js";
 import { computeFunnelSummary, mergeFunnel } from "../funnel/index.js";
-import type { CostReferenceBand, OutcomeKind } from "../benchmarks/index.js";
+import type { CtrBands } from "../benchmarks/index.js";
 import { DEFAULT_QUALITY_THRESHOLDS, type QualityThresholds, enrichEntitiesQuality } from "../quality/index.js";
 import { detectTrackingHealth } from "../tracking/index.js";
 import { computeWasteReport } from "../waste/index.js";
@@ -378,8 +380,12 @@ export interface BuildAccountBriefInput {
   readonly mutedCampaignIds?: ReadonlySet<string>;
   /** Limiares de qualidade (Fatia 6c) — default do sistema se ausente. */
   readonly qualityThresholds?: QualityThresholds;
-  /** Faixas de custo de cold-start (override) — default do sistema se ausente. */
-  readonly costTable?: Readonly<Record<OutcomeKind, CostReferenceBand>>;
+  /** Faixas de custo já resolvidas na moeda da conta (ausente = não injeta custo). */
+  readonly costTable?: Partial<Record<OutcomeKind, RangeBand>>;
+  /** Bandas de CTR override (senão default de plataforma). */
+  readonly ctrBands?: CtrBands;
+  /** Frequência de alerta override (senão default de plataforma). */
+  readonly frequencyAlert?: number;
 }
 
 export type BuildAccountBriefResult =
@@ -433,6 +439,8 @@ export function buildAccountBrief(input: BuildAccountBriefInput): BuildAccountBr
       currency: input.account.currency,
       ...(input.goals.conversionGoal ? { conversionGoal: input.goals.conversionGoal } : {}),
       ...(input.costTable ? { costTable: input.costTable } : {}),
+      ...(input.ctrBands ? { ctrBands: input.ctrBands } : {}),
+      ...(input.frequencyAlert !== undefined ? { frequencyAlert: input.frequencyAlert } : {}),
     });
     allByLevel.set(level, summaries);
     selectedByLevel.set(level, rankAndSelect(summaries, input.topN));

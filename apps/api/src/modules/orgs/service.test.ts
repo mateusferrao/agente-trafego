@@ -11,6 +11,8 @@ function makeRepo(overrides: Partial<OrgsRepo> = {}): OrgsRepo {
     rename: vi.fn(async () => ({ id: "o1", name: "Renomeada", timezone: TZ })),
     setTimezone: vi.fn(async () => ({ id: "o1", name: "Org", timezone: TZ })),
     findById: vi.fn(async () => ({ id: "o1", name: "Org", timezone: TZ })),
+    getMarketReference: vi.fn(async () => null),
+    setMarketReference: vi.fn(async () => {}),
     ...overrides,
   };
 }

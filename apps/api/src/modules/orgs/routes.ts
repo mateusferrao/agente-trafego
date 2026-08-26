@@ -1,7 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { requireAuth } from "../../middleware/auth.js";
 import { requireOrgScope, orgIdOf } from "../../middleware/org-scope.js";
-import { createOrgInput, renameOrgInput, setTimezoneInput } from "./schema.js";
+import { createOrgInput, renameOrgInput, setMarketReferenceInput, setTimezoneInput } from "./schema.js";
 
 /** Slice de orgs: listar orgs do user, criar nova (vira owner) e renomear a ativa. */
 export const orgsRoutes: FastifyPluginAsync = async (app) => {
@@ -32,5 +32,15 @@ export const orgsRoutes: FastifyPluginAsync = async (app) => {
   app.patch("/orgs/current/timezone", { preHandler: [requireAuth, requireOrgScope] }, async (request) => {
     const input = setTimezoneInput.parse(request.body);
     return service.setTimezone(request.userId!, orgIdOf(request), input);
+  });
+
+  // Referência de mercado padrão da org (pivô) — leitura p/ membro, escrita só owner.
+  app.get("/orgs/current/market-reference", { preHandler: [requireAuth, requireOrgScope] }, async (request) => {
+    return service.getMarketReference(request.userId!, orgIdOf(request));
+  });
+
+  app.put("/orgs/current/market-reference", { preHandler: [requireAuth, requireOrgScope] }, async (request) => {
+    const input = setMarketReferenceInput.parse(request.body);
+    return service.setMarketReference(request.userId!, orgIdOf(request), input);
   });
 };

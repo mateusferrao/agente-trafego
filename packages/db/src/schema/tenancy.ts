@@ -1,5 +1,6 @@
-import { index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { index, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { DEFAULT_TIMEZONE } from "@trafego/shared";
+import type { MarketReference } from "@trafego/shared";
 import { accessStatus, membershipRole, pk, timestamps } from "./_shared.js";
 
 /** Org = tenant. Raiz de todo scoping por `org_id`. */
@@ -10,6 +11,10 @@ export const orgs = pgTable("orgs", {
   // Fuso horário da org (Fatia 4) — usado p/ avaliar a cadência (cron) das análises.
   // Default BR (ICP, fonte única em @trafego/shared); editável em Configurações.
   timezone: text("timezone").notNull().default(DEFAULT_TIMEZONE),
+  // Referência de mercado padrão da org (pivô) — faixas base do mercado do usuário,
+  // currency-aware (a moeda mora dentro do objeto). Override por agente em
+  // `agents.model_config.quality.marketReference`. Null = não usa como contexto.
+  marketReference: jsonb("market_reference").$type<MarketReference>(),
   ...timestamps,
 });
 

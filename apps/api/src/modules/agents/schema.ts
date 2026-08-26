@@ -6,6 +6,7 @@ import {
   cadenceSpecSchema,
   conversionGoalSchema,
   guardrailConfigSchema,
+  marketReferenceSchema,
   notifyPolicySchema,
   postureSchema,
 } from "@trafego/shared/schemas";
@@ -42,12 +43,17 @@ export const qualityConfigInput = z.object({
     })
     .optional(),
   fatigueCostRisePct: z.number().nonnegative().optional(),
+  /** legado (currency-naïve): fallback do piso de zumbi. A referência currency-aware
+   *  (`marketReference.operational.zombieMinSpend`) tem precedência quando a moeda bate. */
   zombieMinSpend: z.number().nonnegative().optional(),
   coldStartReference: z.boolean().optional(),
   /** tracking furado (§Bloco 2): conversas/max(conversões,1) acima disso = suspeita. */
   trackingBrokenRatio: z.number().positive().optional(),
   /** tracking furado: volume mínimo de conversas p/ sequer considerar a suspeita. */
   trackingBrokenMinFunnel: z.number().nonnegative().optional(),
+  /** override por agente da referência de mercado (pivô), na moeda da conta. Merge por
+   *  campo sobre o org-default; campo em dinheiro só aplica se a moeda bate. */
+  marketReference: marketReferenceSchema.optional(),
 });
 export type QualityConfigInput = z.infer<typeof qualityConfigInput>;
 

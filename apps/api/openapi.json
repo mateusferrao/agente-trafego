@@ -221,6 +221,288 @@
           "timezone"
         ]
       },
+      "SetMarketReferenceInput": {
+        "type": "object",
+        "properties": {
+          "marketReference": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "currency": {
+                "type": "string",
+                "minLength": 1
+              },
+              "cost": {
+                "type": "object",
+                "properties": {
+                  "conversation": {
+                    "type": "object",
+                    "properties": {
+                      "min": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "max": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "min",
+                      "max"
+                    ]
+                  },
+                  "lead": {
+                    "type": "object",
+                    "properties": {
+                      "min": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "max": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "min",
+                      "max"
+                    ]
+                  },
+                  "sale": {
+                    "type": "object",
+                    "properties": {
+                      "min": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "max": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "min",
+                      "max"
+                    ]
+                  }
+                }
+              },
+              "platform": {
+                "type": "object",
+                "properties": {
+                  "ctrBands": {
+                    "type": "object",
+                    "properties": {
+                      "ok": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "good": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "great": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "ok",
+                      "good",
+                      "great"
+                    ]
+                  },
+                  "frequencyAlert": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                }
+              },
+              "operational": {
+                "type": "object",
+                "properties": {
+                  "zombieMinSpend": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "minBaselineSpend": {
+                    "type": "object",
+                    "properties": {
+                      "low": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "normal": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "high": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "low",
+                      "normal",
+                      "high"
+                    ]
+                  }
+                }
+              }
+            },
+            "required": [
+              "currency"
+            ]
+          }
+        },
+        "required": [
+          "marketReference"
+        ]
+      },
+      "MarketReferenceOutput": {
+        "type": "object",
+        "properties": {
+          "marketReference": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "currency": {
+                "type": "string",
+                "minLength": 1
+              },
+              "cost": {
+                "type": "object",
+                "properties": {
+                  "conversation": {
+                    "type": "object",
+                    "properties": {
+                      "min": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "max": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "min",
+                      "max"
+                    ]
+                  },
+                  "lead": {
+                    "type": "object",
+                    "properties": {
+                      "min": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "max": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "min",
+                      "max"
+                    ]
+                  },
+                  "sale": {
+                    "type": "object",
+                    "properties": {
+                      "min": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "max": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "min",
+                      "max"
+                    ]
+                  }
+                }
+              },
+              "platform": {
+                "type": "object",
+                "properties": {
+                  "ctrBands": {
+                    "type": "object",
+                    "properties": {
+                      "ok": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "good": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "great": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "ok",
+                      "good",
+                      "great"
+                    ]
+                  },
+                  "frequencyAlert": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                }
+              },
+              "operational": {
+                "type": "object",
+                "properties": {
+                  "zombieMinSpend": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "minBaselineSpend": {
+                    "type": "object",
+                    "properties": {
+                      "low": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "normal": {
+                        "type": "number",
+                        "minimum": 0
+                      },
+                      "high": {
+                        "type": "number",
+                        "minimum": 0
+                      }
+                    },
+                    "required": [
+                      "low",
+                      "normal",
+                      "high"
+                    ]
+                  }
+                }
+              }
+            },
+            "required": [
+              "currency"
+            ]
+          }
+        },
+        "required": [
+          "marketReference"
+        ]
+      },
       "OrgOutput": {
         "type": "object",
         "properties": {
@@ -1070,6 +1352,136 @@
                   "trackingBrokenMinFunnel": {
                     "type": "number",
                     "minimum": 0
+                  },
+                  "marketReference": {
+                    "type": "object",
+                    "properties": {
+                      "currency": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "cost": {
+                        "type": "object",
+                        "properties": {
+                          "conversation": {
+                            "type": "object",
+                            "properties": {
+                              "min": {
+                                "type": "number",
+                                "minimum": 0
+                              },
+                              "max": {
+                                "type": "number",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "min",
+                              "max"
+                            ]
+                          },
+                          "lead": {
+                            "type": "object",
+                            "properties": {
+                              "min": {
+                                "type": "number",
+                                "minimum": 0
+                              },
+                              "max": {
+                                "type": "number",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "min",
+                              "max"
+                            ]
+                          },
+                          "sale": {
+                            "type": "object",
+                            "properties": {
+                              "min": {
+                                "type": "number",
+                                "minimum": 0
+                              },
+                              "max": {
+                                "type": "number",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "min",
+                              "max"
+                            ]
+                          }
+                        }
+                      },
+                      "platform": {
+                        "type": "object",
+                        "properties": {
+                          "ctrBands": {
+                            "type": "object",
+                            "properties": {
+                              "ok": {
+                                "type": "number",
+                                "minimum": 0
+                              },
+                              "good": {
+                                "type": "number",
+                                "minimum": 0
+                              },
+                              "great": {
+                                "type": "number",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "ok",
+                              "good",
+                              "great"
+                            ]
+                          },
+                          "frequencyAlert": {
+                            "type": "number",
+                            "minimum": 0
+                          }
+                        }
+                      },
+                      "operational": {
+                        "type": "object",
+                        "properties": {
+                          "zombieMinSpend": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "minBaselineSpend": {
+                            "type": "object",
+                            "properties": {
+                              "low": {
+                                "type": "number",
+                                "minimum": 0
+                              },
+                              "normal": {
+                                "type": "number",
+                                "minimum": 0
+                              },
+                              "high": {
+                                "type": "number",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "low",
+                              "normal",
+                              "high"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "required": [
+                      "currency"
+                    ]
                   }
                 }
               }
@@ -1874,6 +2286,136 @@
                   "trackingBrokenMinFunnel": {
                     "type": "number",
                     "minimum": 0
+                  },
+                  "marketReference": {
+                    "type": "object",
+                    "properties": {
+                      "currency": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "cost": {
+                        "type": "object",
+                        "properties": {
+                          "conversation": {
+                            "type": "object",
+                            "properties": {
+                              "min": {
+                                "type": "number",
+                                "minimum": 0
+                              },
+                              "max": {
+                                "type": "number",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "min",
+                              "max"
+                            ]
+                          },
+                          "lead": {
+                            "type": "object",
+                            "properties": {
+                              "min": {
+                                "type": "number",
+                                "minimum": 0
+                              },
+                              "max": {
+                                "type": "number",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "min",
+                              "max"
+                            ]
+                          },
+                          "sale": {
+                            "type": "object",
+                            "properties": {
+                              "min": {
+                                "type": "number",
+                                "minimum": 0
+                              },
+                              "max": {
+                                "type": "number",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "min",
+                              "max"
+                            ]
+                          }
+                        }
+                      },
+                      "platform": {
+                        "type": "object",
+                        "properties": {
+                          "ctrBands": {
+                            "type": "object",
+                            "properties": {
+                              "ok": {
+                                "type": "number",
+                                "minimum": 0
+                              },
+                              "good": {
+                                "type": "number",
+                                "minimum": 0
+                              },
+                              "great": {
+                                "type": "number",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "ok",
+                              "good",
+                              "great"
+                            ]
+                          },
+                          "frequencyAlert": {
+                            "type": "number",
+                            "minimum": 0
+                          }
+                        }
+                      },
+                      "operational": {
+                        "type": "object",
+                        "properties": {
+                          "zombieMinSpend": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "minBaselineSpend": {
+                            "type": "object",
+                            "properties": {
+                              "low": {
+                                "type": "number",
+                                "minimum": 0
+                              },
+                              "normal": {
+                                "type": "number",
+                                "minimum": 0
+                              },
+                              "high": {
+                                "type": "number",
+                                "minimum": 0
+                              }
+                            },
+                            "required": [
+                              "low",
+                              "normal",
+                              "high"
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "required": [
+                      "currency"
+                    ]
                   }
                 }
               }
@@ -5672,6 +6214,51 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/OrgOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/orgs/current/market-reference": {
+      "get": {
+        "tags": [
+          "orgs"
+        ],
+        "responses": {
+          "200": {
+            "description": "referência de mercado padrão da org",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketReferenceOutput"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "orgs"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetMarketReferenceInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "referência de mercado atualizada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarketReferenceOutput"
                 }
               }
             }

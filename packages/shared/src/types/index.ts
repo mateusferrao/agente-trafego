@@ -370,6 +370,10 @@ export interface BenchmarkRef {
   };
 }
 
+/** Grupos neutros de resultado p/ a faixa de custo de referência (fonte única do tipo + zod). */
+export const OUTCOME_KINDS = ["conversation", "lead", "sale"] as const;
+export type OutcomeKind = (typeof OUTCOME_KINDS)[number];
+
 export interface EntitySummary {
   readonly id: string;
   readonly level: EntityLevel;

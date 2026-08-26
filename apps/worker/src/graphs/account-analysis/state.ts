@@ -3,7 +3,7 @@
 
 import { Annotation } from "@langchain/langgraph";
 import type { AccumulatedTokenUsage, DecisionResult, DroppedAction, GuardrailResult } from "@trafego/core";
-import type { AgentRunTrigger, NotifyPolicy, PartialReason, Posture, RunNotifyTarget, SignalFinding } from "@trafego/shared";
+import type { AgentRunTrigger, MarketReference, NotifyPolicy, PartialReason, Posture, RunNotifyTarget, SignalFinding } from "@trafego/shared";
 import type { MutationResult } from "@trafego/shared/ports";
 import type {
   AccountBrief,
@@ -73,6 +73,10 @@ export const AccountAnalysisState = Annotation.Root({
   baseline: Annotation<AnalysisWindow | null>,
   // campanhas silenciadas pelo usuário (S5) — excluídas da análise por campanha.
   mutedCampaignIds: Annotation<readonly string[]>,
+  // referência de mercado (pivô): org-default + override por agente — resolvidos na
+  // moeda da conta no mapUnits (match-or-drop). null = não configurada.
+  orgMarketReference: Annotation<MarketReference | null>,
+  agentMarketReference: Annotation<MarketReference | null>,
 
   // ── dados coletados / derivados ────────────────────────────────────────
   entities: Annotation<readonly AdEntity[]>,

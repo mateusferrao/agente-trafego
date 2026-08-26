@@ -25,17 +25,49 @@ describe("benchmarkFor", () => {
     expect(benchmarkFor({ ctr: 0.5, currency: "BRL", coldStart: false })).toEqual({ coldStart: false });
   });
 
-  it("no cold-start dá rating de CTR + faixa de custo do tipo de conversão", () => {
-    const ref = benchmarkFor({ ctr: 2.53, frequency: 2.6, outcomeGoal: "messaging_started", currency: "BRL", coldStart: true });
+  it("no cold-start dá rating de CTR + faixa de custo do costTable fornecido", () => {
+    const ref = benchmarkFor({
+      ctr: 2.53,
+      frequency: 2.6,
+      outcomeGoal: "messaging_started",
+      currency: "BRL",
+      coldStart: true,
+      costTable: { conversation: { min: 3, max: 15 } },
+    });
     expect(ref.coldStart).toBe(true);
     expect(ref.ctrRating).toBe("otimo");
-    expect(ref.frequencyAlert).toBe(true); // 2.6 > 2.5
+    expect(ref.frequencyAlert).toBe(true); // 2.6 > 2.5 (default de plataforma)
     expect(ref.costReference).toEqual({ label: "custo por conversa", min: 3, max: 15, currency: "BRL" });
   });
 
-  it("sem conversão mapeável, omite a faixa de custo", () => {
-    const ref = benchmarkFor({ ctr: 1.0, outcomeGoal: "view_content", currency: "BRL", coldStart: true });
+  it("sem costTable não injeta faixa de custo (pivô: vazio = não usa)", () => {
+    const ref = benchmarkFor({ ctr: 1.0, outcomeGoal: "messaging_started", currency: "USD", coldStart: true });
     expect(ref.costReference).toBeUndefined();
     expect(ref.ctrRating).toBe("ok");
+  });
+
+  it("sem conversão mapeável, omite a faixa de custo mesmo com costTable", () => {
+    const ref = benchmarkFor({
+      ctr: 1.0,
+      outcomeGoal: "view_content",
+      currency: "BRL",
+      coldStart: true,
+      costTable: { conversation: { min: 3, max: 15 } },
+    });
+    expect(ref.costReference).toBeUndefined();
+    expect(ref.ctrRating).toBe("ok");
+  });
+
+  it("bandas de CTR e frequência de alerta são overridáveis", () => {
+    const ref = benchmarkFor({
+      ctr: 1.0,
+      frequency: 3,
+      currency: "BRL",
+      coldStart: true,
+      ctrBands: { ok: 1.5, good: 3, great: 5 },
+      frequencyAlert: 4,
+    });
+    expect(ref.ctrRating).toBe("ruim"); // 1.0 < ok override (1.5)
+    expect(ref.frequencyAlert).toBe(false); // 3 < 4 (override)
   });
 });

@@ -10,9 +10,11 @@ import type {
   EntitySummary,
   HealthSignal,
   InsightMetrics,
+  OutcomeKind,
   PerformanceTier,
+  RangeBand,
 } from "@trafego/shared";
-import { type CostReferenceBand, type OutcomeKind, benchmarkFor } from "../benchmarks/index.js";
+import { type CtrBands, benchmarkFor } from "../benchmarks/index.js";
 
 /** Limiares (defaults do squad; overridáveis por env/por-agente). */
 export interface QualityThresholds {
@@ -161,8 +163,12 @@ export interface EnrichQualityContext {
   readonly currency: string;
   /** conversão de negócio do agente (define a faixa de custo de cold-start). */
   readonly conversionGoal?: ConversionGoal;
-  /** tabela de faixas de cold-start (override; senão default do sistema). */
-  readonly costTable?: Readonly<Record<OutcomeKind, CostReferenceBand>>;
+  /** faixas de custo já resolvidas na moeda da conta (ausente = não injeta custo). */
+  readonly costTable?: Partial<Record<OutcomeKind, RangeBand>>;
+  /** bandas de CTR override (senão default de plataforma). */
+  readonly ctrBands?: CtrBands;
+  /** frequência de alerta override (senão default de plataforma). */
+  readonly frequencyAlert?: number;
 }
 
 /** Queda relativa (%) de uma métrica "maior = melhor" (CTR): baseline→atual. */
@@ -271,6 +277,8 @@ export function enrichEntitiesQuality(
           currency: ctx.currency,
           coldStart: true,
           ...(ctx.costTable ? { costTable: ctx.costTable } : {}),
+          ...(ctx.ctrBands ? { ctrBands: ctx.ctrBands } : {}),
+          ...(ctx.frequencyAlert !== undefined ? { frequencyAlert: ctx.frequencyAlert } : {}),
         })
       : undefined;
 

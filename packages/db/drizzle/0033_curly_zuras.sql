@@ -1,0 +1,1 @@
+ALTER TABLE "orgs" ADD COLUMN "market_reference" jsonb;

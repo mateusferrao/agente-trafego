@@ -120,11 +120,20 @@ export function describeSignal(f: SignalFinding): string {
   ].join(" ");
 }
 
-/** Detecta mudanças materiais (D-1 vs baseline) em todas as entidades comparadas. */
+/**
+ * Detecta mudanças materiais (D-1 vs baseline) em todas as entidades comparadas.
+ * `minBaselineSpendBySensitivity` (opcional) = override currency-aware do piso de
+ * gasto/dia (referência de mercado); ausente → default do sistema (assume-BRL).
+ */
 export function detectMaterialChange(
   comparisons: readonly SignalComparison[],
   sensitivity: AlertSensitivity,
+  minBaselineSpendBySensitivity?: Readonly<Record<AlertSensitivity, number>>,
 ): SignalFinding[] {
-  const t = SIGNAL_THRESHOLDS[sensitivity];
+  const base = SIGNAL_THRESHOLDS[sensitivity];
+  const t: SignalThresholds =
+    minBaselineSpendBySensitivity !== undefined
+      ? { ...base, minBaselineSpend: minBaselineSpendBySensitivity[sensitivity] }
+      : base;
   return comparisons.flatMap((c) => findingsFor(c, t));
 }

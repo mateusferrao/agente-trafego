@@ -31,7 +31,9 @@ import {
   flagUnsupportedFindings,
   entityKeyOf,
   mergeUnitAnalyses,
+  agentMarketReferenceFromModelConfig,
   resolveActionConflicts,
+  resolveMarketReference,
   riskForAction,
   selectCampaignsToAnalyze,
   selectCreatives,
@@ -180,6 +182,8 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       guardrailConfig: ctx.guardrailConfig,
       rejectedMemory: ctx.rejectedMemory,
       mutedCampaignIds: ctx.mutedCampaignIds,
+      orgMarketReference: ctx.orgMarketReference,
+      agentMarketReference: agentMarketReferenceFromModelConfig(ctx.modelConfig),
       systemPrompt,
       configChangedAt: ctx.configChangedAt ? ctx.configChangedAt.getTime() : null,
       analysisConfig: cfg,
@@ -288,6 +292,18 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       throw new AnalysisError("analysis_failed", "contexto incompleto");
     }
     const cfg = state.analysisConfig ?? deps.analysis;
+    // referência de mercado (pivô): org-default + override por agente, resolvidos na
+    // moeda da conta (match-or-drop). `operational.zombieMinSpend` (currency-aware) tem
+    // precedência sobre o piso legado de `cfg.quality.zombieMinSpend`.
+    const market = resolveMarketReference(
+      state.orgMarketReference ?? null,
+      state.agentMarketReference ?? null,
+      state.account.currency ?? null,
+    );
+    const quality =
+      market.zombieMinSpend !== undefined
+        ? { ...cfg.quality, zombieMinSpend: market.zombieMinSpend }
+        : cfg.quality;
     const built = buildAccountBrief({
       account: { id: state.account.metaAdAccountId, name: state.account.name, currency: state.account.currency },
       window: state.window.label,
@@ -299,7 +315,10 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       playbookCandidates: state.playbookCandidates,
       topN: cfg.topN,
       notableAdsPerCampaign: cfg.notableAdsPerCampaign,
-      qualityThresholds: cfg.quality,
+      qualityThresholds: quality,
+      ...(market.costTable ? { costTable: market.costTable } : {}),
+      ...(market.ctrBands ? { ctrBands: market.ctrBands } : {}),
+      ...(market.frequencyAlert !== undefined ? { frequencyAlert: market.frequencyAlert } : {}),
       ...(state.mutedCampaignIds ? { mutedCampaignIds: new Set(state.mutedCampaignIds) } : {}),
       memory: { objectives: [], pastActions: [], rejected: [...(state.rejectedMemory ?? [])] },
     });

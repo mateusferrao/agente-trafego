@@ -15,6 +15,9 @@ function run(goals: Parameters<typeof buildAccountBrief>[0]["goals"]) {
     playbookCandidates: [],
     topN: 10,
     notableAdsPerCampaign: 3,
+    // pivô: as faixas de custo vêm da referência configurável (resolvida na moeda
+    // da conta) — aqui injetadas direto p/ exercitar o caminho de cold-start.
+    costTable: { conversation: { min: 3, max: 15 } },
   });
   if (res.status !== "ok") throw new Error("brief vazio inesperado");
   const byId = new Map(res.brief.segments.campaigns.map((c) => [c.id, c]));

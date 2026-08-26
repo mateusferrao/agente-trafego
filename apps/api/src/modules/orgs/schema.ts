@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { marketReferenceSchema } from "@trafego/shared";
 
 export const createOrgInput = z.object({
   name: z.string().min(2),
@@ -23,3 +24,15 @@ export const orgOutput = z.object({
   timezone: z.string(),
 });
 export type OrgOutput = z.infer<typeof orgOutput>;
+
+// Referência de mercado padrão da org (pivô) — faixas base do mercado do usuário.
+// `null` = não configurada (não usa como contexto). Editável só pelo owner.
+export const setMarketReferenceInput = z.object({
+  marketReference: marketReferenceSchema.nullable(),
+});
+export type SetMarketReferenceInput = z.infer<typeof setMarketReferenceInput>;
+
+export const marketReferenceOutput = z.object({
+  marketReference: marketReferenceSchema.nullable(),
+});
+export type MarketReferenceOutput = z.infer<typeof marketReferenceOutput>;

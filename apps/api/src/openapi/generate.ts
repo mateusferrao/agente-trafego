@@ -22,7 +22,14 @@ import {
   signupInput,
   signupOutput,
 } from "../modules/auth/schema.js";
-import { createOrgInput, orgOutput, renameOrgInput, setTimezoneInput } from "../modules/orgs/schema.js";
+import {
+  createOrgInput,
+  marketReferenceOutput,
+  orgOutput,
+  renameOrgInput,
+  setMarketReferenceInput,
+  setTimezoneInput,
+} from "../modules/orgs/schema.js";
 import { accessStatusOutput, costsOutput, usageSummaryOutput } from "../modules/billing/schema.js";
 import { adAccountOutput } from "../modules/accounts/schema.js";
 import {
@@ -97,6 +104,8 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const CreateOrgInput = registry.register("CreateOrgInput", createOrgInput);
   const RenameOrgInput = registry.register("RenameOrgInput", renameOrgInput);
   const SetTimezoneInput = registry.register("SetTimezoneInput", setTimezoneInput);
+  const SetMarketReferenceInput = registry.register("SetMarketReferenceInput", setMarketReferenceInput);
+  const MarketReferenceOutput = registry.register("MarketReferenceOutput", marketReferenceOutput);
   const OrgOutput = registry.register("OrgOutput", orgOutput);
   const AccessStatusOutput = registry.register("AccessStatusOutput", accessStatusOutput);
   const UsageSummaryOutput = registry.register("UsageSummaryOutput", usageSummaryOutput);
@@ -262,6 +271,19 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     tags: ["orgs"],
     request: jsonBody(SetTimezoneInput),
     responses: { 200: jsonRes("fuso da org atualizado", OrgOutput) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/orgs/current/market-reference",
+    tags: ["orgs"],
+    responses: { 200: jsonRes("referência de mercado padrão da org", MarketReferenceOutput) },
+  });
+  registry.registerPath({
+    method: "put",
+    path: "/api/orgs/current/market-reference",
+    tags: ["orgs"],
+    request: jsonBody(SetMarketReferenceInput),
+    responses: { 200: jsonRes("referência de mercado atualizada", MarketReferenceOutput) },
   });
   registry.registerPath({
     method: "get",

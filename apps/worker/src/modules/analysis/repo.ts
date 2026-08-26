@@ -5,7 +5,7 @@
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import type { Database } from "@trafego/db/client";
 import { adAccounts, adCreatives, agentMemory, agentMutedEntities, agentRunSteps, agentRuns, agentToolCalls, agents, conversionLabels, guardrailConfigs, orgs, platformConnections, playbookRules, recommendations } from "@trafego/db";
-import type { Action, ActionTarget, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, NotifyPolicy, PartialReason, PerformanceTier, PlaybookRule, Posture, RecommendationKind, RiskLevel } from "@trafego/shared";
+import type { Action, ActionTarget, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, MarketReference, NotifyPolicy, PartialReason, PerformanceTier, PlaybookRule, Posture, RecommendationKind, RiskLevel } from "@trafego/shared";
 import { DEFAULT_POSTURE, GUARDRAIL_DEFAULTS, toGuardrailConfig, UNDO_TOOL_KEY } from "@trafego/shared";
 import { entityKeyOf, unseedIdentity } from "@trafego/core";
 import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
@@ -39,6 +39,8 @@ export interface AgentContext {
   readonly rejectedMemory: string[];
   /** ids externos de campanhas silenciadas pelo usuário — excluídas da análise (S5). */
   readonly mutedCampaignIds: string[];
+  /** referência de mercado padrão da org (pivô) — resolvida na moeda da conta no run. */
+  readonly orgMarketReference: MarketReference | null;
 }
 
 /** Rótulo legível de uma conversão (id personalizada "" quando padrão) — Fatia 4. */
@@ -168,6 +170,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
           notifyPolicy: agents.notifyPolicy,
           posture: agents.posture,
           timezone: orgs.timezone,
+          orgMarketReference: orgs.marketReference,
         })
         .from(agents)
         .innerJoin(orgs, eq(agents.orgId, orgs.id))
@@ -246,6 +249,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
         playbook,
         rejectedMemory: memory.map((m) => m.content),
         mutedCampaignIds: muted.map((m) => m.externalId),
+        orgMarketReference: agent.orgMarketReference ?? null,
       };
     },
 

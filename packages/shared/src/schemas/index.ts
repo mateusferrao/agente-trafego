@@ -111,6 +111,46 @@ export const DEFAULT_NOTIFY_POLICY: NotifyPolicy = {
   runPush: { enabled: true },
 };
 
+// ─── Referência de mercado configurável (pivô — currency-aware) ───────────
+// Substitui as faixas hardcoded (era vertical saúde/BRL). Valor não preenchido =
+// não usa como contexto. Sub-objetos por concern: `cost`/`platform` = referência
+// DIRECIONAL (só cold-start; ausência = ok); `operational` = limiares SEMPRE-usados
+// (zombie/baseline, têm fallback no core). Campos em DINHEIRO (`cost` + `operational`)
+// valem na moeda `currency` e só aplicam quando ela bate com a da conta (match-or-drop,
+// resolvido no core). `platform` (CTR/frequência) é benchmark de plataforma — sem moeda.
+export const rangeBandSchema = z.object({
+  min: z.number().min(0),
+  max: z.number().min(0),
+});
+export type RangeBand = z.infer<typeof rangeBandSchema>;
+
+// chaves = OUTCOME_KINDS (fonte única); cada faixa é opcional (preenche só o que usa).
+const costBandsSchema = z.object({
+  conversation: rangeBandSchema.optional(),
+  lead: rangeBandSchema.optional(),
+  sale: rangeBandSchema.optional(),
+});
+
+export const marketReferenceSchema = z.object({
+  currency: z.string().min(1),
+  cost: costBandsSchema.optional(),
+  platform: z
+    .object({
+      ctrBands: z.object({ ok: z.number().min(0), good: z.number().min(0), great: z.number().min(0) }).optional(),
+      frequencyAlert: z.number().min(0).optional(),
+    })
+    .optional(),
+  operational: z
+    .object({
+      zombieMinSpend: z.number().min(0).optional(),
+      minBaselineSpend: z
+        .object({ low: z.number().min(0), normal: z.number().min(0), high: z.number().min(0) })
+        .optional(),
+    })
+    .optional(),
+});
+export type MarketReference = z.infer<typeof marketReferenceSchema>;
+
 // ─── Postura de comunicação (voz do agente) ──────────────────────────────
 // Deriva das tuplas fonte-única (types) — zero drift. `experienceLevel` nullable:
 // null = "definido pelo arquétipo"; um preset explícito semeia os 3 eixos.

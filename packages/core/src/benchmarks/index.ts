@@ -1,16 +1,15 @@
-// Referência de plataforma (Fatia 6c) — PURO. Prior DIRECIONAL de cold-start:
+// Referência de plataforma (Fatia 6c / pivô) — PURO. Prior DIRECIONAL de cold-start:
 // só entra quando NÃO há meta do dono E NÃO há histórico da conta. Nunca é a meta
 // e nunca declara sucesso — só dá uma âncora no 1º run e evita o LLM chamar um
 // número claramente fora de "normal" de aceitável. Comparador nº1 continua sendo
 // a meta do dono; nº2/3 o histórico/relativo da própria conta.
 //
-// Extensível: hoje 1 vertical implícito (saúde) — a chave real é o TIPO DE CONVERSÃO
-// (conversa/lead/venda). Nova vertical = adicionar a dimensão quando houver o campo.
+// Pivô B2B/B2C: as faixas de custo NÃO são mais hardcoded por vertical — vêm da
+// `MarketReference` configurável (org + override por agente), já resolvida na moeda
+// da conta pelo `resolveMarketReference`. Sem faixa preenchida → não injeta custo.
+// CTR/frequência têm default de plataforma (Meta), overridável pela mesma tabela.
 
-import type { BenchmarkCtrRating, BenchmarkRef, ConversionGoal } from "@trafego/shared";
-
-/** Agrupamento neutro do resultado de negócio p/ a faixa de custo de referência. */
-export type OutcomeKind = "conversation" | "lead" | "sale";
+import type { BenchmarkCtrRating, BenchmarkRef, ConversionGoal, OutcomeKind, RangeBand } from "@trafego/shared";
 
 /** Mapeia a conversão de negócio (neutra) → grupo de custo. `undefined` = sem faixa. */
 export function outcomeKindFor(goal: ConversionGoal | undefined): OutcomeKind | undefined {
@@ -34,34 +33,32 @@ export function outcomeKindFor(goal: ConversionGoal | undefined): OutcomeKind | 
   }
 }
 
-/** Faixas de CTR (link) da Meta — direcional, %. Fonte: benchmarks de plataforma. */
-export const CTR_BANDS = { ok: 0.9, good: 1.5, great: 2.5 } as const;
+/** Rótulos PT das faixas de custo por grupo de resultado (o usuário só informa min/max). */
+export const COST_LABELS: Readonly<Record<OutcomeKind, string>> = {
+  conversation: "custo por conversa",
+  lead: "custo por lead",
+  sale: "custo por venda",
+};
 
-/** Classifica o CTR (%) em rótulo direcional vs a plataforma. */
-export function ctrRating(ctr: number): BenchmarkCtrRating {
-  if (ctr >= CTR_BANDS.great) return "otimo";
-  if (ctr >= CTR_BANDS.good) return "bom";
-  if (ctr >= CTR_BANDS.ok) return "ok";
+/** Faixas CTR de bandas (%) — banda de plataforma (Meta). Default overridável pela tabela. */
+export interface CtrBands {
+  readonly ok: number;
+  readonly good: number;
+  readonly great: number;
+}
+/** Default de plataforma do CTR (link), %. Fonte: benchmarks de plataforma. */
+export const CTR_BANDS: CtrBands = { ok: 0.9, good: 1.5, great: 2.5 };
+
+/** Classifica o CTR (%) em rótulo direcional vs a plataforma (bandas overridáveis). */
+export function ctrRating(ctr: number, bands: CtrBands = CTR_BANDS): BenchmarkCtrRating {
+  if (ctr >= bands.great) return "otimo";
+  if (ctr >= bands.good) return "bom";
+  if (ctr >= bands.ok) return "ok";
   return "ruim";
 }
 
-/** Frequência de alerta em prospecção (público frio) — acima disso, satura rápido. */
+/** Default de plataforma da frequência de alerta em prospecção (público frio). */
 export const FREQUENCY_PROSPECTING_ALERT = 2.5;
-
-/**
- * Faixas de custo-por-resultado de cold-start (saúde, BRL) — EDITÁVEIS (default do
- * sistema; override por env/por-agente). Rotuladas como referência, nunca meta.
- */
-export interface CostReferenceBand {
-  readonly label: string;
-  readonly min: number;
-  readonly max: number;
-}
-export const DEFAULT_COST_REFERENCE_BRL: Readonly<Record<OutcomeKind, CostReferenceBand>> = {
-  conversation: { label: "custo por conversa", min: 3, max: 15 },
-  lead: { label: "custo por lead", min: 15, max: 60 },
-  sale: { label: "custo por venda", min: 40, max: 120 },
-};
 
 /** ROAS de referência (quando há receita) — direcional. */
 export const ROAS_REFERENCE = 2;
@@ -77,26 +74,31 @@ export interface BenchmarkInput {
   readonly currency: string;
   /** true = sem meta E sem histórico (o único caso em que a referência entra). */
   readonly coldStart: boolean;
-  /** Tabela de faixas (default do sistema ou override). */
-  readonly costTable?: Readonly<Record<OutcomeKind, CostReferenceBand>>;
+  /** Faixas de custo já resolvidas na moeda da conta (ausente = não injeta custo). */
+  readonly costTable?: Partial<Record<OutcomeKind, RangeBand>>;
+  /** Bandas de CTR override (senão default de plataforma). */
+  readonly ctrBands?: CtrBands;
+  /** Frequência de alerta override (senão default de plataforma). */
+  readonly frequencyAlert?: number;
 }
 
 /**
  * Monta a referência de plataforma. Só produz `costReference`/ratings quando
- * `coldStart` — fora do cold-start devolve `{ coldStart: false }` (a UI/promtp não
- * mostram referência; o comparador é a meta/histórico).
+ * `coldStart` — fora do cold-start devolve `{ coldStart: false }` (a UI/prompt não
+ * mostram referência; o comparador é a meta/histórico). Sem `costTable` p/ o grupo
+ * de resultado → não injeta faixa de custo (não inventa referência).
  */
 export function benchmarkFor(input: BenchmarkInput): BenchmarkRef {
   if (!input.coldStart) return { coldStart: false };
-  const table = input.costTable ?? DEFAULT_COST_REFERENCE_BRL;
   const kind = outcomeKindFor(input.outcomeGoal);
-  const band = kind ? table[kind] : undefined;
+  const band = kind ? input.costTable?.[kind] : undefined;
+  const freqThreshold = input.frequencyAlert ?? FREQUENCY_PROSPECTING_ALERT;
   return {
     coldStart: true,
-    ctrRating: ctrRating(input.ctr),
-    ...(input.frequency !== undefined ? { frequencyAlert: input.frequency > FREQUENCY_PROSPECTING_ALERT } : {}),
-    ...(band
-      ? { costReference: { label: band.label, min: band.min, max: band.max, currency: input.currency } }
+    ctrRating: ctrRating(input.ctr, input.ctrBands),
+    ...(input.frequency !== undefined ? { frequencyAlert: input.frequency > freqThreshold } : {}),
+    ...(band && kind
+      ? { costReference: { label: COST_LABELS[kind], min: band.min, max: band.max, currency: input.currency } }
       : {}),
   };
 }

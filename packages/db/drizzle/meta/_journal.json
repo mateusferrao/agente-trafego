@@ -232,6 +232,13 @@
       "when": 1787678403953,
       "tag": "0032_violet_bill_hollister",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1787709692968,
+      "tag": "0033_curly_zuras",
+      "breakpoints": true
     }
   ]
 }

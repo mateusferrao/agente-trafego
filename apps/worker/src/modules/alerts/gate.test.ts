@@ -25,6 +25,7 @@ function fakeDb(byTable: Map<unknown, unknown[]>) {
       current = byTable.get(t) ?? [];
       return chain;
     },
+    innerJoin: () => chain,
     where: () => chain,
     limit: () => chain,
     then: (r: (v: unknown[]) => unknown) => r(current),

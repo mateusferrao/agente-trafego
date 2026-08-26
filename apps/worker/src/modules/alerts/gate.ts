@@ -5,9 +5,16 @@
 // nunca fala sozinho.
 
 import { and, eq, gte } from "drizzle-orm";
-import { agentRuns, agents, insightsSnapshots, loadOrgTimezone, type Database } from "@trafego/db";
-import { addDays, detectMaterialChange, startOfDayInTz, todayInTz } from "@trafego/core";
-import type { NotifyPolicy } from "@trafego/shared";
+import { adAccounts, agentRuns, agents, insightsSnapshots, loadOrgTimezone, orgs, type Database } from "@trafego/db";
+import {
+  addDays,
+  agentMarketReferenceFromModelConfig,
+  detectMaterialChange,
+  resolveMarketReference,
+  startOfDayInTz,
+  todayInTz,
+} from "@trafego/core";
+import type { MarketReference, NotifyPolicy } from "@trafego/shared";
 import type { Logger } from "pino";
 import type { CronDispatchInput, DispatchOutcome } from "../dispatch/run-dispatcher.js";
 import { buildSignalComparisons, strongestSignal, type SnapshotDay } from "./aggregate.js";
@@ -51,15 +58,29 @@ export async function runAlertGate(deps: AlertGateDeps, input: AlertGateInput): 
   // fuso da org — datas/janela do gate no fuso, não UTC.
   const tz = await loadOrgTimezone(deps.db, input.orgId, input.fallbackTz);
 
-  // 1) política de alerta do agente (desligada → nada).
+  // 1) política de alerta do agente (desligada → nada) + referência de mercado
+  // (org-default + override) + moeda da conta p/ resolver o piso de gasto do sinal.
   const [ag] = await deps.db
-    .select({ notifyPolicy: agents.notifyPolicy })
+    .select({
+      notifyPolicy: agents.notifyPolicy,
+      modelConfig: agents.modelConfig,
+      orgMarketReference: orgs.marketReference,
+      currency: adAccounts.currency,
+    })
     .from(agents)
+    .innerJoin(orgs, eq(agents.orgId, orgs.id))
+    .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
     .where(and(eq(agents.id, input.agentId), eq(agents.orgId, input.orgId)))
     .limit(1);
   const policy = ag?.notifyPolicy as NotifyPolicy | undefined;
   if (!policy?.alerts.enabled) return "disabled";
   const { sensitivity, throttleHours } = policy.alerts;
+  // piso de gasto/dia do sinal currency-aware (referência de mercado) — undefined = fallback.
+  const market = resolveMarketReference(
+    (ag?.orgMarketReference as MarketReference | null) ?? null,
+    agentMarketReferenceFromModelConfig(ag?.modelConfig),
+    ag?.currency ?? null,
+  );
 
   // 2) throttle: já houve um signal-run na janela? (máx 1 — sem spam/custo; ≤1/dia).
   const since = throttleWindowStart(now(), throttleHours, tz);
@@ -98,7 +119,7 @@ export async function runAlertGate(deps: AlertGateDeps, input: AlertGateInput): 
   });
 
   const comparisons = buildSignalComparisons(days, todayInTz(now(), tz));
-  const top = strongestSignal(detectMaterialChange(comparisons, sensitivity));
+  const top = strongestSignal(detectMaterialChange(comparisons, sensitivity, market.minBaselineSpend));
   if (!top) return "no_signal";
 
   // 4) dispara o run dirigido — a análise investiga o ponto e decide se comunica.
