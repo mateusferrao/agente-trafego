@@ -23,6 +23,7 @@
     "access:list": "tsx --env-file=.env apps/api/src/scripts/access.ts list",
     "backfill:access": "tsx --env-file=.env apps/api/src/scripts/backfill-access.ts",
     "backfill:usage-account": "tsx --env-file=.env apps/api/src/scripts/backfill-usage-account.ts",
+    "backfill:archetype": "tsx --env-file=.env apps/api/src/scripts/backfill-archetype.ts",
     "resync:webhooks": "tsx --env-file=.env apps/api/src/scripts/resync-webhooks.ts",
     "api:generate": "pnpm --filter @trafego/api openapi && pnpm --filter web api:generate"
   },

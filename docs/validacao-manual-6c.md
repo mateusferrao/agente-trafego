@@ -58,7 +58,7 @@ Dispare uma análise on-demand (botão do site ou "analisa agora" no chat). Conf
 
 ## 7. UI — arquétipos, opções avançadas, tier  (web em `localhost:4200`)
 - [ ] Config do agente: seletor mostra os 3 arquétipos com **descrição** + "quando usar" (do catálogo).
-- [ ] Trocar p/ **Guardião de Lançamento** semeia cadência 2×/dia (se estava no padrão); **Otimizador**
+- [ ] Trocar p/ **Vigia Intensivo** semeia cadência 2×/dia (se estava no padrão); **Otimizador**
       deixa playbook "age no seguro". Ambos trazem "criativo é o novo público" na metodologia (A4).
 - [ ] **"Opções avançadas"** (recolhida): knobs (modelos/revisão/top-N/tokens/significância/learning/
       fadiga + toggle cold-start) com **tooltips**; "padrão do sistema" quando vazio. **Salvar um override**

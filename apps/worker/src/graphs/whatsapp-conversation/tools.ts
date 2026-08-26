@@ -388,7 +388,7 @@ export function makeConversationTools(
     name: RESEED_TOOL_NAME,
     description:
       "Re-semeia um ARQUÉTIPO (preset): reseta o comportamento (persona/tom/metodologia/autonomia) pros padrões do arquétipo, preservando meta+contexto+orientações. Requer eco+confirma.",
-    schema: z.object({ archetype: z.string().min(1).describe("chave do arquétipo (ex: conservador, otimizador, guardiao_lancamento)") }),
+    schema: z.object({ archetype: z.string().min(1).describe("chave do arquétipo (ex: conservador, otimizador, vigia_intensivo)") }),
   });
 
   // ── IDENTIDADE POR CHAT (S2.6): persona/tom/metodologia. Texto vazio limpa (volta ao

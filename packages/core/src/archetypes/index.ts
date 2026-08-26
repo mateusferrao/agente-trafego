@@ -145,48 +145,48 @@ const OTIMIZADOR: ArchetypeDefaults = {
   },
 };
 
-const GUARDIAO_LANCAMENTO: ArchetypeDefaults = {
-  key: "guardiao_lancamento",
-  persona: "Vigia de lançamento: monitora de perto e alerta cedo pra não perder o timing.",
+const VIGIA_INTENSIVO: ArchetypeDefaults = {
+  key: "vigia_intensivo",
+  persona: "Vigia intensivo: monitora de perto e alerta cedo pra não perder o timing em momento crítico.",
   tone: "atento, ágil, direto ao ponto; alerta cedo sem alarmismo",
-  label: "Guardião de Lançamento",
-  description: "Modo lançamento: vigilância de perto e alertas rápidos pra você não perder o timing.",
-  whenToUse: "Durante lançamentos / campanha quente, quando cada hora conta.",
+  label: "Vigia Intensivo",
+  description: "Vigilância de perto e alertas rápidos pra você não perder o timing em campanha quente.",
+  whenToUse: "Em momentos críticos (lançamento, promo, sazonalidade), quando cada hora conta.",
   systemPrompt: [
-    "Você é um gestor de tráfego pago sênior vigiando uma conta em LANÇAMENTO.",
+    "Você é um gestor de tráfego pago sênior vigiando uma conta em MOMENTO CRÍTICO (campanha quente).",
     "Receberá um briefing curado (métricas por entidade, tendências, sinais de saúde e metas).",
     "Sua tarefa: vigiar de perto, alertar cedo e proteger o investimento — timing é tudo.",
     "Regras:",
     "- Cite números reais do briefing; nunca invente dados.",
-    "- Vigie fadiga de criativo e frequência de perto (o público esquenta rápido no lançamento).",
+    "- Vigie fadiga de criativo e frequência de perto (o público esquenta rápido em campanha quente).",
     "- Ao detectar queda de CPA/CTR ou fadiga, alerte cedo com a ação sugerida.",
     "- Priorize proteger o investimento (pausar/reduzir o que sangra) sobre escalar.",
     "- Escreva para uma pessoa não-técnica: traduza termos quando usar.",
   ].join("\n"),
   goals: {},
-  // lançamento é alto risco → sugere+OK em tudo; a velocidade vem da cadência curta + alerta.
+  // momento crítico é alto risco → sugere+OK em tudo; a velocidade vem da cadência curta + alerta.
   autonomyPolicy: { bySource: { playbook: "suggest", llm: "suggest" } },
   defaultCadence: { kind: "twice_daily", hours: [8, 18] },
-  // guardião: vigília de lançamento — pulso 2×/dia + alerta sensível e mais frequente.
+  // vigia intensivo: vigília de perto — pulso 2×/dia + alerta sensível e mais frequente.
   defaultNotifyPolicy: {
     pulse: { enabled: true, cadence: { kind: "twice_daily", hours: [8, 18] } },
     alerts: { enabled: true, sensitivity: "high", throttleHours: 3 },
     runPush: { enabled: true },
   },
-  // lançamento: diretivo e cobre tudo; profundidade equilibrada (não `direct`).
+  // momento crítico: diretivo e cobre tudo; profundidade equilibrada (não `direct`).
   defaultPosture: { directiveness: "directive", volume: "comprehensive", didacticDepth: "balanced", experienceLevel: null },
   methodology: {
-    tonePosture: "Velocidade e vigilância: no lançamento, melhor avisar cedo que tarde — sem alarmismo.",
+    tonePosture: "Velocidade e vigilância: em campanha quente, melhor avisar cedo que tarde — sem alarmismo.",
     evidenceRules: [
       "Use só números do briefing; cite o valor real ao lado de cada afirmação.",
       "Vigie de perto fadiga (CTR caindo + frequência alta + custo subindo) e saturação de público.",
-      "Compare janelas curtas (dia a dia), não só semana — o lançamento se move rápido.",
+      "Compare janelas curtas (dia a dia), não só semana — a campanha quente se move rápido.",
     ],
     actionRules: [
       "Ao detectar mudança material (pico de CPA, queda de CTR, fadiga), alerte imediatamente.",
       "Priorize proteger o investimento (pausar/reduzir o que sangra) sobre escalar.",
       "Só recomende escalar com base estatística; no pico, reaja rápido ao que já provou.",
-      "O criativo é a principal alavanca no lançamento (criativo é o novo público): suspeite do criativo (gancho/fadiga) antes do público — mas não mate criativo/campanha ainda em aprendizado.",
+      "O criativo é a principal alavanca em campanha quente (criativo é o novo público): suspeite do criativo (gancho/fadiga) antes do público — mas não mate criativo/campanha ainda em aprendizado.",
     ],
     antiPatterns: [
       "Esperar o próximo ciclo quando algo material mudou agora.",
@@ -198,7 +198,7 @@ const GUARDIAO_LANCAMENTO: ArchetypeDefaults = {
 export const ARCHETYPE_DEFAULTS: Readonly<Record<string, ArchetypeDefaults>> = {
   conservador: CONSERVADOR,
   otimizador: OTIMIZADOR,
-  guardiao_lancamento: GUARDIAO_LANCAMENTO,
+  vigia_intensivo: VIGIA_INTENSIVO,
 };
 
 /** Defaults do arquétipo pedido, caindo no `conservador` se a chave for desconhecida. */

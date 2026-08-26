@@ -206,19 +206,19 @@ describe("applyAgentConfigChange", () => {
 });
 
 describe("reseedArchetypeChange", () => {
-  it("reseta comportamento p/ o arquétipo e semeia cadência default (Guardião → 2×/dia)", async () => {
+  it("reseta comportamento p/ o arquétipo e semeia cadência default (Vigia → 2×/dia)", async () => {
     // agente sem cadência própria → recebe a default do arquétipo.
     const { db, captured } = makeFakeDb([[{ ...AGENT_ROW, cadence: null }], []]);
     const { scheduler, enqueue } = makeScheduler();
 
     const result = await reseedArchetypeChange(
       { db, scheduler },
-      { orgId: ORG, agentId: "ag-1", accountId: "acc-1", archetype: "guardiao_lancamento" },
+      { orgId: ORG, agentId: "ag-1", accountId: "acc-1", archetype: "vigia_intensivo" },
     );
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.archetype).toBe("guardiao_lancamento");
+    expect(result.archetype).toBe("vigia_intensivo");
     expect(result.cadence).toEqual({ kind: "twice_daily", hours: [8, 18] });
     expect(captured.updateSet?.persona).toBeNull();
     expect(captured.updateSet?.configChangedAt).toBeDefined();
@@ -231,7 +231,7 @@ describe("reseedArchetypeChange", () => {
 
     const result = await reseedArchetypeChange(
       { db, scheduler },
-      { orgId: ORG, agentId: "ag-1", accountId: "acc-1", archetype: "guardiao_lancamento" },
+      { orgId: ORG, agentId: "ag-1", accountId: "acc-1", archetype: "vigia_intensivo" },
     );
 
     expect(result.ok).toBe(true);

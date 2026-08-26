@@ -37,14 +37,14 @@ describe("archetypeDefaults", () => {
     expect(a.defaultCadence).toEqual({ kind: "daily", hour: 8 });
   });
 
-  it("guardião de lançamento: sugere+OK, cadência 2×/dia", () => {
-    const a = archetypeDefaults("guardiao_lancamento");
+  it("vigia intensivo: sugere+OK, cadência 2×/dia", () => {
+    const a = archetypeDefaults("vigia_intensivo");
     expect(a.autonomyPolicy.bySource.playbook).toBe("suggest");
     expect(a.autonomyPolicy.bySource.llm).toBe("suggest");
     expect(a.defaultCadence).toEqual({ kind: "twice_daily", hours: [8, 18] });
   });
 
-  it("semeia notify policy por arquétipo (F4): conservador quieto, guardião vigilante", () => {
+  it("semeia notify policy por arquétipo (F4): conservador quieto, vigia vigilante", () => {
     const conservador = archetypeDefaults("conservador");
     expect(conservador.defaultNotifyPolicy.pulse.enabled).toBe(false);
     expect(conservador.defaultNotifyPolicy.alerts.enabled).toBe(false);
@@ -54,15 +54,15 @@ describe("archetypeDefaults", () => {
     expect(otimizador.defaultNotifyPolicy.pulse).toEqual({ enabled: true, cadence: { kind: "daily", hour: 8 } });
     expect(otimizador.defaultNotifyPolicy.alerts.sensitivity).toBe("normal");
 
-    const guardiao = archetypeDefaults("guardiao_lancamento");
-    expect(guardiao.defaultNotifyPolicy.pulse.cadence).toEqual({ kind: "twice_daily", hours: [8, 18] });
-    expect(guardiao.defaultNotifyPolicy.alerts.sensitivity).toBe("high");
-    expect(guardiao.defaultNotifyPolicy.alerts.throttleHours).toBe(3);
+    const vigia = archetypeDefaults("vigia_intensivo");
+    expect(vigia.defaultNotifyPolicy.pulse.cadence).toEqual({ kind: "twice_daily", hours: [8, 18] });
+    expect(vigia.defaultNotifyPolicy.alerts.sensitivity).toBe("high");
+    expect(vigia.defaultNotifyPolicy.alerts.throttleHours).toBe(3);
   });
 
   it("catálogo expõe os 3 arquétipos com textos amigáveis", () => {
     const cat = archetypeCatalog();
-    expect(cat.map((c) => c.key)).toEqual(["conservador", "otimizador", "guardiao_lancamento"]);
+    expect(cat.map((c) => c.key)).toEqual(["conservador", "otimizador", "vigia_intensivo"]);
     for (const c of cat) {
       expect(c.label.length).toBeGreaterThan(0);
       expect(c.description.length).toBeGreaterThan(0);
