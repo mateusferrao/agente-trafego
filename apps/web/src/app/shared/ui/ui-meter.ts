@@ -8,7 +8,7 @@ type MeterTone = 'primary' | 'danger' | 'success';
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div class="ui-meter">
+    <div class="ui-meter" role="progressbar" [attr.aria-valuenow]="pct()" aria-valuemin="0" aria-valuemax="100">
       <span class="ui-meter__fill" [class]="fillClass()" [style.width.%]="pct()"></span>
     </div>
   `,

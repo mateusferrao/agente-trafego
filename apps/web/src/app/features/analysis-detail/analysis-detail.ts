@@ -10,7 +10,6 @@ type RunMetrics = NonNullable<NonNullable<RunView>['metrics']>;
 type Scorecard = NonNullable<RunMetrics['scorecard']>;
 type Waste = NonNullable<RunMetrics['waste']>;
 type Tracking = NonNullable<RunMetrics['trackingHealth']>;
-export type GradeTone = 'success' | 'info' | 'warning' | 'danger';
 type Tier = NonNullable<Campaign['tier']>;
 type Stage = NonNullable<Campaign['stage']>;
 type StatTone = 'ink' | 'danger' | 'success' | 'accent';
@@ -63,9 +62,6 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
   conversao: 'transformar cliques em vendas',
   receita: 'retorno sobre o investimento',
 };
-// Mapas de nota mantidos p/ compat de export (outras telas importam), sem render de nota-letra.
-export const GRADE_TONE: Record<Scorecard['grade'], GradeTone> = { A: 'success', B: 'info', C: 'warning', D: 'danger' };
-export const GRADE_LABEL: Record<Scorecard['grade'], string> = { A: 'ótimo', B: 'bom', C: 'atenção', D: 'crítico' };
 
 /**
  * Resultado da análise, redesenhado (Fase 2): veredito liderado por dinheiro (sem

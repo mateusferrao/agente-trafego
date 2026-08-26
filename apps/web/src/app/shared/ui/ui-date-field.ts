@@ -50,7 +50,7 @@ const toIso = (y: number, m: number, d: number): string => `${y}-${pad(m + 1)}-$
     </button>
 
     @if (open()) {
-      <div class="ui-cal" role="dialog" (keydown.escape)="close()">
+      <div class="ui-cal" role="dialog" aria-modal="true" [attr.aria-label]="ariaLabel()" (keydown.escape)="close()">
         <div class="ui-cal__head">
           <button type="button" class="ui-cal__nav" aria-label="Mês anterior" (click)="shiftMonth(-1)">
             <ng-icon name="lucideChevronLeft" size="16" aria-hidden="true" />
