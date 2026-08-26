@@ -95,7 +95,7 @@ function presetRange(key: string): { since: string; until: string } {
   imports: [FormsModule, UiDateField, UiEmptyState, UiPageHeader, UiSpinner],
   providers: [provideIcons({ lucideBanknote })],
   template: `
-    <div class="flex flex-col gap-6">
+    <div class="flex flex-col gap-6 overflow-x-clip">
       <app-ui-page-header
         title="Custos"
         subtitle="Custo operacional (COGS do provedor de IA) por período. Não é o preço do cliente."
@@ -182,7 +182,7 @@ function presetRange(key: string): { since: string; until: string } {
             </div>
             @if (serie().length >= 2) {
               <!-- área + camada de hover (crosshair + tooltip por dia). -->
-              <div class="relative h-40 w-full">
+              <div class="relative h-40 w-full overflow-hidden">
                 <svg viewBox="0 0 100 40" preserveAspectRatio="none" class="h-full w-full" role="img" aria-label="Custo por dia no período">
                   <polygon [attr.points]="areaPoints()" [attr.fill]="accentVar" fill-opacity="0.15" />
                   <polyline
