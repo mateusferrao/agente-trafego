@@ -56,7 +56,7 @@ export async function runPulse(deps: WorkerDeps, payload: AgentCronDispatchPaylo
 
   // agente + conta ativos + política + nome da conta.
   const [row] = await db
-    .select({ notifyPolicy: agents.notifyPolicy, accountName: adAccounts.name, accountStatus: adAccounts.status, agentStatus: agents.status })
+    .select({ notifyPolicy: agents.notifyPolicy, accountName: adAccounts.name, currency: adAccounts.currency, accountStatus: adAccounts.status, agentStatus: agents.status })
     .from(agents)
     .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
     .where(and(eq(agents.id, payload.agentId), eq(agents.orgId, payload.orgId)))
@@ -136,6 +136,7 @@ export async function runPulse(deps: WorkerDeps, payload: AgentCronDispatchPaylo
 
   const pulseInput: PulseInput = {
     accountName,
+    currency: row.currency ?? "BRL",
     kpis: fresh.kpis,
     updated: fresh.updated,
     spendDeltaPct: cmp.deltaPct,

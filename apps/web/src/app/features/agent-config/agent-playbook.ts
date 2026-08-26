@@ -89,7 +89,7 @@ const STATUS_OPTIONS: readonly UiSelectOptionItem[] = [
       } @else if (rows().length === 0) {
         <p class="rounded-md border border-dashed border-line px-4 py-6 text-center text-sm text-muted">
           Nenhuma regra ainda. Crie uma para o agente vigiar automaticamente — ex: "pausar anúncio que custa
-          mais de R$ 150 por conversão".
+          mais de {{ currency() }} 150 por conversão".
         </p>
       } @else {
         <ul class="flex flex-col gap-3">
@@ -105,7 +105,7 @@ const STATUS_OPTIONS: readonly UiSelectOptionItem[] = [
               </div>
 
               <div class="flex flex-wrap items-center gap-2 text-sm text-ink">
-                <span class="text-muted">com gasto mínimo de R$</span>
+                <span class="text-muted">com gasto mínimo de {{ currency() }}</span>
                 <input type="number" step="0.01" min="0" class="w-28 rounded-md border border-line bg-app px-2 py-1.5 text-sm text-ink" placeholder="opcional" [value]="r.minSpend" (input)="setNum(i, 'minSpend', $event)" />
                 <span class="text-muted" title="evita disparar em entidade que mal rodou (número instável)">ⓘ</span>
               </div>
@@ -150,6 +150,8 @@ const STATUS_OPTIONS: readonly UiSelectOptionItem[] = [
 export class AgentPlaybook implements OnInit {
   private readonly api = inject(AnalysisApiService);
   readonly accountId = input.required<string>();
+  /** moeda da conta (ISO) — rótulos de valor do playbook. Default até o pai passar. */
+  readonly currency = input<string>('BRL');
 
   protected readonly scopeOptions = SCOPE_OPTIONS;
   protected readonly metricOptions = METRIC_OPTIONS;

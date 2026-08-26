@@ -322,7 +322,7 @@ describe("listAccountsData", () => {
     const finishedAt = new Date("2026-08-20T10:00:00.000Z");
     const db = fakeDb(
       new Map<unknown, unknown[]>([
-        [agents, [{ agentId: "ag-1", accountName: "Clínica X" }]],
+        [agents, [{ agentId: "ag-1", accountName: "Clínica X", currency: "BRL" }]],
         [
           agentRuns,
           [
@@ -338,7 +338,7 @@ describe("listAccountsData", () => {
     );
     const res = await listAccountsData(db, ORG);
     expect(res).toEqual({
-      accounts: [{ accountName: "Clínica X", hasData: true, grade: "B", headline: "vai bem", spend: 200, asOf: finishedAt.toISOString() }],
+      accounts: [{ accountName: "Clínica X", currency: "BRL", hasData: true, grade: "B", headline: "vai bem", spend: 200, asOf: finishedAt.toISOString() }],
       otherAccountNames: [],
       totalCount: 1,
     });
@@ -347,13 +347,13 @@ describe("listAccountsData", () => {
   it("uma conta sem run finalizado → hasData:false na entrada, sem omitir", async () => {
     const db = fakeDb(
       new Map<unknown, unknown[]>([
-        [agents, [{ agentId: "ag-1", accountName: "Clínica Y" }]],
+        [agents, [{ agentId: "ag-1", accountName: "Clínica Y", currency: "BRL" }]],
         [agentRuns, []],
       ]),
     );
     const res = await listAccountsData(db, ORG);
     expect(res).toEqual({
-      accounts: [{ accountName: "Clínica Y", hasData: false, grade: null, headline: null, asOf: "sem dados" }],
+      accounts: [{ accountName: "Clínica Y", currency: "BRL", hasData: false, grade: null, headline: null, asOf: "sem dados" }],
       otherAccountNames: [],
       totalCount: 1,
     });

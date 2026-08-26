@@ -87,13 +87,14 @@ export function computeWasteReport(campaigns: readonly EntitySummary[]): WasteRe
 export function annotateFreedSpend(
   output: AnalysisOutput,
   spendById: ReadonlyMap<string, number>,
+  currency: string,
 ): AnalysisOutput {
   const recommendations = output.recommendations.map((r) => {
     if (r.actionType !== "pause") return r;
     const id = r.targetEntity?.externalId;
     const spend = id ? spendById.get(id) : undefined;
     if (spend === undefined || spend <= 0) return r;
-    return { ...r, rationale: `${r.rationale}\n[impacto] pausar libera ~R$${round2(spend)} no período.` };
+    return { ...r, rationale: `${r.rationale}\n[impacto] pausar libera ~${currency} ${round2(spend)} no período.` };
   });
   return { ...output, recommendations };
 }

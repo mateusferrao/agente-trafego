@@ -17,6 +17,7 @@ const KPIS: FreshKpis = {
 function input(over: Partial<PulseInput> = {}): PulseInput {
   return {
     accountName: "Clínica X",
+    currency: "BRL",
     kpis: KPIS,
     updated: true,
     spendDeltaPct: 10,

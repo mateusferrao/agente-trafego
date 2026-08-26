@@ -110,7 +110,8 @@ const REASON_TONE: Record<Reason, TimelineTone> = {
               <div class="flex flex-col gap-0.5">
                 <h2 class="font-brand text-sm font-semibold text-ink">Dinheiro sem retorno</h2>
                 <span class="text-xs text-muted">
-                  {{ money(d.waste.totalWasted, null) }} parados em campanhas sem resultado, somando suas contas.
+                  Parado em campanhas sem resultado:
+                  {{ wasteHeadline(d.waste.byCurrency) }}.
                 </span>
               </div>
               <div class="flex flex-col gap-2">
@@ -120,7 +121,7 @@ const REASON_TONE: Record<Reason, TimelineTone> = {
                     class="flex items-center justify-between gap-3 rounded-lg border border-line bg-panel p-3 transition hover:border-accent/40"
                   >
                     <span class="min-w-0 truncate text-sm font-medium text-ink">{{ a.accountName }}</span>
-                    <span class="shrink-0 text-sm text-warning-strong">{{ money(a.wastedSpend, currencyOf(a.accountId)) }}</span>
+                    <span class="shrink-0 text-sm text-warning-strong">{{ money(a.wastedSpend, a.currency) }}</span>
                   </a>
                 }
               </div>
@@ -250,9 +251,13 @@ export class DashboardPage {
   protected readonly timeLabel = timeLabel; // usado no feed de atividade
   protected readonly money = money; // widget de desperdício
 
-  /** Moeda da conta (do panorama) — o desperdício cross-conta não carrega moeda. */
-  protected currencyOf(accountId: string): string | null {
-    return this.data()?.panorama.find((c) => c.accountId === accountId)?.currency ?? null;
+  /** Manchete do desperdício POR MOEDA — nunca soma moedas diferentes (sem câmbio). */
+  protected wasteHeadline(
+    byCurrency: readonly { currency: string | null; totalWasted: number; accountCount: number }[],
+  ): string {
+    return byCurrency
+      .map((b) => `${money(b.totalWasted, b.currency)} em ${b.accountCount} ${b.accountCount === 1 ? 'conta' : 'contas'}`)
+      .join(' · ');
   }
 
   protected reasonLabel(r: Reason): string {

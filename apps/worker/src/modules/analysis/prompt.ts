@@ -44,7 +44,7 @@ const WASTE_NOTE =
   "Se o briefing trouxer 'waste', LIDERE por ele (o 'money shot'): diga em reais quanto está sendo " +
   "queimado ('wastedSpend' = campanhas paradas/sem resultado, com % do total) e onde o gasto está " +
   "MAL ALOCADO ('pareto.misallocated' = leva muito gasto e entrega pouco resultado). Fale em dinheiro " +
-  "e ação (pausar libera R$X; realocar de A p/ B), não só em 'vai mal'.";
+  "e ação (pausar libera <valor> no período, na moeda da conta; realocar de A p/ B), não só em 'vai mal'.";
 
 const TRACKING_NOTE =
   "Se o briefing trouxer 'trackingHealth' (suspect=true), a MEDIÇÃO de venda/lead da conta parece " +

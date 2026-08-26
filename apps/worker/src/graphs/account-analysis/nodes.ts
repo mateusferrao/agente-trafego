@@ -586,7 +586,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     for (const level of [state.brief.segments.campaigns, state.brief.segments.adsets, state.brief.segments.ads]) {
       for (const e of level) spendById.set(e.id, e.metrics.spend ?? 0);
     }
-    const final = annotateFreedSpend(caveated, spendById);
+    const final = annotateFreedSpend(caveated, spendById, state.brief.account.currency);
     const findings: Finding[] = final.findings.map((f) => ({
       title: f.title,
       detail: f.detail,

@@ -3916,8 +3916,30 @@
           "waste": {
             "type": "object",
             "properties": {
-              "totalWasted": {
-                "type": "number"
+              "byCurrency": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "currency": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "totalWasted": {
+                      "type": "number"
+                    },
+                    "accountCount": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "currency",
+                    "totalWasted",
+                    "accountCount"
+                  ]
+                }
               },
               "accounts": {
                 "type": "array",
@@ -3932,18 +3954,25 @@
                     },
                     "wastedSpend": {
                       "type": "number"
+                    },
+                    "currency": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
                     "accountId",
                     "accountName",
-                    "wastedSpend"
+                    "wastedSpend",
+                    "currency"
                   ]
                 }
               }
             },
             "required": [
-              "totalWasted",
+              "byCurrency",
               "accounts"
             ]
           }

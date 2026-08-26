@@ -34,7 +34,7 @@ const STALE_RUN_MS = 48 * 60 * 60 * 1000;
 /** Feed compacto de atividade recente. */
 const ACTIVITY_LIMIT = 20;
 /** Desperdício vazio (0 contas / sem análise) — evita `null` na saída. */
-const EMPTY_WASTE: WasteSummary = { totalWasted: 0, accounts: [] };
+const EMPTY_WASTE: WasteSummary = { byCurrency: [], accounts: [] };
 
 export interface DashboardDeps {
   readonly db: Database;
@@ -315,6 +315,7 @@ export function createDashboardService(deps: DashboardDeps) {
       .selectDistinctOn([agentRuns.agentId], {
         accountId: agents.adAccountId,
         accountName: adAccounts.name,
+        currency: adAccounts.currency,
         wastedSpend: sql<string | null>`${agentRuns.metricsSnapshot} #>> '{waste,wastedSpend}'`,
       })
       .from(agentRuns)
@@ -334,11 +335,23 @@ export function createDashboardService(deps: DashboardDeps) {
         accountId: r.accountId,
         accountName: r.accountName ?? r.accountId,
         wastedSpend: r.wastedSpend === null ? 0 : Number(r.wastedSpend),
+        currency: r.currency ?? null,
       }))
       .filter((a) => Number.isFinite(a.wastedSpend) && a.wastedSpend > 0)
       .sort((a, b) => b.wastedSpend - a.wastedSpend);
-    const totalWasted = accounts.reduce((s, a) => s + a.wastedSpend, 0);
-    return { totalWasted, accounts };
+    // agrupa por MOEDA — multi-moeda: nunca soma contas de moedas diferentes (sem câmbio).
+    const byCurrencyMap = new Map<string | null, { totalWasted: number; accountCount: number }>();
+    for (const a of accounts) {
+      const cur = a.currency;
+      const acc = byCurrencyMap.get(cur) ?? { totalWasted: 0, accountCount: 0 };
+      acc.totalWasted += a.wastedSpend;
+      acc.accountCount += 1;
+      byCurrencyMap.set(cur, acc);
+    }
+    const byCurrency = [...byCurrencyMap.entries()]
+      .map(([currency, v]) => ({ currency, ...v }))
+      .sort((a, b) => b.totalWasted - a.totalWasted);
+    return { byCurrency, accounts };
   }
 
   /** Feed compacto cross-conta de ações do agente (inclui chat via coalesce). */

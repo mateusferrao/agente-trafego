@@ -83,12 +83,23 @@ export const wasteAccount = z.object({
   accountName: z.string(),
   /** Σ gasto dos zumbis na última análise finalizada. */
   wastedSpend: z.number(),
+  /** moeda da conta (ISO) — nunca somar contas de moedas diferentes. */
+  currency: z.string().nullable(),
 });
 export type WasteAccount = z.infer<typeof wasteAccount>;
 
-/** Desperdício cross-conta (§Bloco 2): total + contas que mais desperdiçam. */
-export const wasteSummary = z.object({
+/** Total de desperdício de UMA moeda (agrupamento — sem conversão de câmbio). */
+export const wasteByCurrency = z.object({
+  currency: z.string().nullable(),
   totalWasted: z.number(),
+  accountCount: z.number(),
+});
+export type WasteByCurrency = z.infer<typeof wasteByCurrency>;
+
+/** Desperdício cross-conta (§Bloco 2): totais POR MOEDA + contas que mais desperdiçam. */
+export const wasteSummary = z.object({
+  /** totais agrupados por moeda (multi-moeda: nunca soma moedas diferentes), maior primeiro. */
+  byCurrency: z.array(wasteByCurrency),
   /** só contas com desperdício (> 0), maior primeiro. */
   accounts: z.array(wasteAccount),
 });

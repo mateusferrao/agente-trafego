@@ -34,6 +34,8 @@ const PULSE_VOICE_RULES = [
 /** Insumo curado do pulso (fresco + recs que seguem valendo). */
 export interface PulseInput {
   readonly accountName: string;
+  /** moeda da conta (ISO) — formatação dos valores. */
+  readonly currency: string;
   readonly kpis: FreshKpis;
   readonly updated: boolean;
   /** variação % de gasto vs o período anterior (null = sem base). */
@@ -46,8 +48,8 @@ export interface PulseInput {
   readonly noAnalysisYet: boolean;
 }
 
-function money(n: number | null | undefined): string {
-  return typeof n === "number" ? `R$ ${n.toFixed(2).replace(".", ",")}` : "—";
+function money(n: number | null | undefined, currency: string): string {
+  return typeof n === "number" ? `${currency} ${n.toFixed(2).replace(".", ",")}` : "—";
 }
 
 /** Curadoria dos KPIs frescos p/ o prompt (só o material). */
@@ -66,6 +68,7 @@ export function buildPulseMessages(systemPrompt: string, posture: Posture, input
   const system = [systemPrompt, composePostureBlock(posture), PULSE_VOICE_RULES, GROUNDING_RULE].join("\n\n");
   const curated = {
     accountName: input.accountName,
+    currency: input.currency,
     period: PULSE_PERIOD_LABEL,
     updated: input.updated,
     cpaLabel: input.cpaLabel,
@@ -92,8 +95,8 @@ export function buildPulseMessages(systemPrompt: string, posture: Posture, input
 export function buildPulseFallback(input: PulseInput): string {
   const lines: string[] = [`📊 ${input.accountName} — resumo do dia (${PULSE_PERIOD_LABEL})`];
   const k = input.kpis;
-  const bits = [`gasto ${money(k.spend)}`];
-  if (k.cpa != null) bits.push(`${input.cpaLabel.toLowerCase()} ${money(k.cpa)}`);
+  const bits = [`gasto ${money(k.spend, input.currency)}`];
+  if (k.cpa != null) bits.push(`${input.cpaLabel.toLowerCase()} ${money(k.cpa, input.currency)}`);
   if (k.roas != null) bits.push(`ROAS ${k.roas.toFixed(2)}x`);
   lines.push(bits.join(" · "));
   if (input.spendDeltaPct != null) {

@@ -57,9 +57,9 @@ describe("annotateFreedSpend", () => {
     ],
   });
 
-  it("anexa gasto liberado só às pausas", () => {
-    const out = annotateFreedSpend(output(), new Map([["Z1", 700], ["B", 800]]));
-    expect(out.recommendations[0]!.rationale).toContain("libera ~R$700");
+  it("anexa gasto liberado só às pausas (na moeda da conta)", () => {
+    const out = annotateFreedSpend(output(), new Map([["Z1", 700], ["B", 800]]), "USD");
+    expect(out.recommendations[0]!.rationale).toContain("libera ~USD 700");
     expect(out.recommendations[1]!.rationale).toBe("boa");
   });
 });

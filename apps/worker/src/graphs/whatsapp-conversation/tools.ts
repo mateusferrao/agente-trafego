@@ -454,7 +454,7 @@ export function makeConversationTools(
   const addPlaybookRule = tool(proposeOnly, {
     name: "add_playbook_rule",
     description:
-      "Cria uma REGRA do playbook: SE [métrica op valor] (com gasto mínimo opcional) ENTÃO [ação], num nível. Ex: pausar anúncio com custo por resultado acima de R$ 30. Requer eco+confirma.",
+      "Cria uma REGRA do playbook: SE [métrica op valor] (com gasto mínimo opcional) ENTÃO [ação], num nível. Ex: pausar anúncio com custo por resultado acima de 30 (na moeda da conta). Requer eco+confirma.",
     schema: z.object({
       scope: z.enum(PLAYBOOK_SCOPES),
       metric: z.enum(PLAYBOOK_METRICS),

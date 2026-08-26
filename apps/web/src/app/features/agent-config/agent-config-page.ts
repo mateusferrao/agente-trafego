@@ -314,7 +314,7 @@ interface FormState {
         </section>
 
         <!-- Regras (playbook) — componente próprio, salva por regra (fora da save-bar) -->
-        <app-agent-playbook [accountId]="accountId" />
+        <app-agent-playbook [accountId]="accountId" [currency]="accountCurrency()" />
 
         <app-agent-autonomy [accountId]="accountId" (dirtyChange)="onChildDirty('autonomy', $event)" />
 

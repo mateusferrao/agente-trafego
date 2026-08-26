@@ -193,6 +193,8 @@ export async function getAccountStatusData(
  *  que é detalhe por-conta; aqui o objetivo é "quais contas, como cada uma está indo"). */
 interface PortfolioAccountEntry {
   readonly accountName: string | null;
+  /** moeda da conta (ISO) — o gasto de cada conta é na SUA moeda; nunca somar/comparar entre moedas. */
+  readonly currency: string | null;
   readonly hasData: boolean;
   readonly grade: string | null;
   readonly headline: string | null;
@@ -226,7 +228,7 @@ function byGradeThenName(a: PortfolioAccountEntry, b: PortfolioAccountEntry): nu
  */
 export async function listAccountsData(db: Database, orgId: string): Promise<PortfolioOverview | NoData> {
   const rows = await db
-    .select({ agentId: agents.id, accountName: adAccounts.name })
+    .select({ agentId: agents.id, accountName: adAccounts.name, currency: adAccounts.currency })
     .from(agents)
     .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
     .where(and(eq(agents.orgId, orgId), eq(agents.status, "active"), eq(adAccounts.status, "active")));
@@ -247,11 +249,13 @@ export async function listAccountsData(db: Database, orgId: string): Promise<Por
 
   const entries: PortfolioAccountEntry[] = rows.map((r) => {
     const run = runByAgent.get(r.agentId);
-    if (!run) return { accountName: r.accountName, hasData: false, grade: null, headline: null, asOf: ASOF_NONE };
+    if (!run)
+      return { accountName: r.accountName, currency: r.currency ?? null, hasData: false, grade: null, headline: null, asOf: ASOF_NONE };
     const snap = (run.metricsSnapshot ?? null) as RunMetricsSnapshot | null;
     const spend = snap?.kpis?.spend;
     return {
       accountName: r.accountName,
+      currency: r.currency ?? null,
       hasData: true,
       grade: snap?.scorecard?.grade ?? null,
       headline: snap?.scorecard?.headline ?? null,
