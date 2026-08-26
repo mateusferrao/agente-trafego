@@ -101,6 +101,7 @@ export interface NotifyPolicyPatch {
   readonly alertsSensitivity?: AlertSensitivity | undefined;
   readonly alertsThrottleHours?: number | undefined;
   readonly runPushEnabled?: boolean | undefined;
+  readonly reactivationEnabled?: boolean | undefined;
 }
 
 /**
@@ -309,6 +310,8 @@ function mergeNotifyPolicy(cur: NotifyPolicy, patch: NotifyPolicyPatch | undefin
       throttleHours: patch.alertsThrottleHours ?? cur.alerts.throttleHours,
     },
     runPush: { enabled: patch.runPushEnabled ?? cur.runPush.enabled },
+    // defensivo: linhas pré-pivô podem não ter `reactivation` no jsonb → default off.
+    reactivation: { enabled: patch.reactivationEnabled ?? cur.reactivation?.enabled ?? false },
   };
 }
 
@@ -611,6 +614,10 @@ function configDetailLines(label: string, cur: AgentConfigState, next: AgentConf
         lines.push(`intervalo mínimo entre alertas: ${c.alerts.throttleHours}h → ${n.alerts.throttleHours}h`);
       if (c.runPush.enabled !== n.runPush.enabled)
         lines.push(`aviso após cada análise: ${onOff(c.runPush.enabled)} → ${onOff(n.runPush.enabled)}`);
+      if ((c.reactivation?.enabled ?? false) !== (n.reactivation?.enabled ?? false))
+        lines.push(
+          `aviso quando a conta voltar a rodar: ${onOff(c.reactivation?.enabled ?? false)} → ${onOff(n.reactivation?.enabled ?? false)}`,
+        );
       return lines;
     }
     default:

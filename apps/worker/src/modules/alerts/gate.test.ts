@@ -13,6 +13,7 @@ const ON: NotifyPolicy = {
   pulse: { enabled: false, cadence: { kind: "daily", hour: 8 } },
   alerts: { enabled: true, sensitivity: "normal", throttleHours: 6 },
   runPush: { enabled: true },
+  reactivation: { enabled: false },
 };
 const OFF: NotifyPolicy = { ...ON, alerts: { ...ON.alerts, enabled: false } };
 

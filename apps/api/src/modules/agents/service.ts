@@ -721,6 +721,7 @@ function toNotifyPolicyPatch(n: NotifyPolicyInput): NotifyPolicyPatch {
       ? { alertsEnabled: n.alerts.enabled, alertsSensitivity: n.alerts.sensitivity, alertsThrottleHours: n.alerts.throttleHours }
       : {}),
     ...(n.runPush !== undefined ? { runPushEnabled: n.runPush.enabled } : {}),
+    ...(n.reactivation !== undefined ? { reactivationEnabled: n.reactivation.enabled } : {}),
   };
 }
 

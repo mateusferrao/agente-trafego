@@ -364,7 +364,7 @@ export function makeConversationTools(
   const setNotifications = tool(proposeOnly, {
     name: "set_notifications",
     description:
-      "Configura o que o agente manda SEM ser perguntado: o PULSO (resumo do dia — retrato de ontem fechado + hoje até agora, na cadência que você definir; mesmo sem recomendação nova), o ALERTA (aviso automático quando algo muda materialmente na conta, com sensibilidade e intervalo mínimo entre alertas em horas) e o AVISO APÓS ANÁLISE (mensagem depois de cada análise agendada com recomendação). Só troca os campos enviados. Requer eco+confirma.",
+      "Configura o que o agente manda SEM ser perguntado: o PULSO (resumo do dia — retrato de ontem fechado + hoje até agora, na cadência que você definir; mesmo sem recomendação nova), o ALERTA (aviso automático quando algo muda materialmente na conta, com sensibilidade e intervalo mínimo entre alertas em horas), o AVISO APÓS ANÁLISE (mensagem depois de cada análise agendada com recomendação) e a REATIVAÇÃO (avisa quando uma conta que estava PARADA volta a rodar — gasto/impressões de novo — e já roda a 1ª análise). Só troca os campos enviados. Requer eco+confirma.",
     schema: z.object({
       pulseEnabled: z.boolean().nullable().optional().describe("liga/desliga o resumo do dia (pulso)"),
       pulseCadence: z
@@ -382,6 +382,11 @@ export function makeConversationTools(
       alertsSensitivity: z.enum(ALERT_SENSITIVITIES).nullable().optional().describe("sensibilidade do alerta: low, normal ou high"),
       alertsThrottleHours: z.number().int().min(1).nullable().optional().describe("intervalo mínimo entre alertas, em horas"),
       runPushEnabled: z.boolean().nullable().optional().describe("liga/desliga o aviso automático depois de cada análise agendada"),
+      reactivationEnabled: z
+        .boolean()
+        .nullable()
+        .optional()
+        .describe("liga/desliga o aviso quando uma conta parada volta a rodar (dispara a 1ª análise)"),
     }),
   });
   const reseedArchetype = tool(proposeOnly, {
@@ -846,6 +851,7 @@ export function configPatchFromToolCall(
         ...(args["alertsSensitivity"] != null ? { alertsSensitivity: args["alertsSensitivity"] as AlertSensitivity } : {}),
         ...(args["alertsThrottleHours"] != null ? { alertsThrottleHours: args["alertsThrottleHours"] as number } : {}),
         ...(args["runPushEnabled"] != null ? { runPushEnabled: args["runPushEnabled"] as boolean } : {}),
+        ...(args["reactivationEnabled"] != null ? { reactivationEnabled: args["reactivationEnabled"] as boolean } : {}),
       };
       return { notifyPolicy };
     }

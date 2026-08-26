@@ -101,6 +101,9 @@ export const notifyPolicySchema = z.object({
     throttleHours: z.number().int().min(1),
   }),
   runPush: z.object({ enabled: z.boolean() }),
+  // Reativação (pivô): avisa quando uma conta PARADA volta a rodar (gasto/impressões).
+  // Baixo ruído (só na transição dormant→active). Default off no conservador.
+  reactivation: z.object({ enabled: z.boolean() }),
 });
 export type NotifyPolicy = z.infer<typeof notifyPolicySchema>;
 
@@ -109,6 +112,7 @@ export const DEFAULT_NOTIFY_POLICY: NotifyPolicy = {
   pulse: { enabled: false, cadence: { kind: "weekly", weekday: 1, hour: 8 } },
   alerts: { enabled: false, sensitivity: "normal", throttleHours: 6 },
   runPush: { enabled: true },
+  reactivation: { enabled: false },
 };
 
 // ─── Referência de mercado configurável (pivô — currency-aware) ───────────

@@ -108,6 +108,7 @@ export const notifyPolicyInput = z.object({
     throttleHours: z.number().int().min(1),
   }).optional(),
   runPush: z.object({ enabled: z.boolean() }).optional(),
+  reactivation: z.object({ enabled: z.boolean() }).optional(),
 });
 export type NotifyPolicyInput = z.infer<typeof notifyPolicyInput>;
 

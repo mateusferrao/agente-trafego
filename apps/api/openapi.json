@@ -1825,12 +1825,24 @@
                 "required": [
                   "enabled"
                 ]
+              },
+              "reactivation": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "enabled"
+                ]
               }
             },
             "required": [
               "pulse",
               "alerts",
-              "runPush"
+              "runPush",
+              "reactivation"
             ]
           },
           "posture": {
@@ -2698,6 +2710,17 @@
                 ]
               },
               "runPush": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "enabled"
+                ]
+              },
+              "reactivation": {
                 "type": "object",
                 "properties": {
                   "enabled": {

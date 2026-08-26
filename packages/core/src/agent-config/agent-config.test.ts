@@ -23,6 +23,7 @@ const NOTIFY_POLICY: NotifyPolicy = {
   pulse: { enabled: false, cadence: { kind: "weekly", weekday: 1, hour: 8 } },
   alerts: { enabled: false, sensitivity: "normal", throttleHours: 6 },
   runPush: { enabled: true },
+  reactivation: { enabled: false },
 };
 
 const POSTURE: Posture = {
@@ -215,6 +216,7 @@ describe("resolveAgentConfigChange — notifyPolicy (F4d)", () => {
       pulse: { enabled: true, cadence: NOTIFY_POLICY.pulse.cadence },
       alerts: NOTIFY_POLICY.alerts,
       runPush: NOTIFY_POLICY.runPush,
+      reactivation: NOTIFY_POLICY.reactivation,
     });
     expect(r.changed).toContain(CONFIG_CHANGE_LABELS.notifyPolicy);
     expect(r.notifyPolicyChanged).toBe(true);

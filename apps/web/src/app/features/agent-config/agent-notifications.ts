@@ -171,6 +171,19 @@ const SENSITIVITIES: readonly { value: Sensitivity; label: string }[] = [
           </button>
         </label>
       </div>
+
+      <!-- Reativação (pivô): conta parada volta a rodar -->
+      <div class="border-t border-line pt-4">
+        <label class="flex items-center justify-between gap-3">
+          <span class="flex flex-col">
+            <span class="text-sm font-medium text-ink">Avisar quando a conta voltar a rodar</span>
+            <span class="text-xs text-muted">Se a conta ficar parada e depois voltar a gastar, o agente avisa e já roda a primeira análise.</span>
+          </span>
+          <button appSwitch [ngpSwitchChecked]="reactivationEnabled()" (ngpSwitchCheckedChange)="reactivationEnabled.set($event)">
+            <span appSwitchThumb></span>
+          </button>
+        </label>
+      </div>
     </section>
   `,
 })
@@ -197,6 +210,7 @@ export class AgentNotifications implements OnInit {
   protected readonly throttleHours = signal('6');
 
   protected readonly runPushEnabled = signal(true);
+  protected readonly reactivationEnabled = signal(false);
 
   protected readonly pulseHourStr = computed(() => String(this.pulseHour()));
   protected readonly pulseHour2Str = computed(() => String(this.pulseHour2()));
@@ -245,7 +259,7 @@ export class AgentNotifications implements OnInit {
   private readonly baseline = signal('');
   private readonly sig = computed(
     () =>
-      `${this.pulseEnabled()}|${JSON.stringify(this.pulseCadenceSpec())}|${this.alertsEnabled()}|${this.sensitivity()}|${this.throttleHours()}|${this.runPushEnabled()}`,
+      `${this.pulseEnabled()}|${JSON.stringify(this.pulseCadenceSpec())}|${this.alertsEnabled()}|${this.sensitivity()}|${this.throttleHours()}|${this.runPushEnabled()}|${this.reactivationEnabled()}`,
   );
   readonly dirty = computed(() => this.sig() !== this.baseline() && !this.pulseCronInvalid());
 
@@ -268,6 +282,7 @@ export class AgentNotifications implements OnInit {
     this.sensitivity.set(n.alerts.sensitivity as Sensitivity);
     this.throttleHours.set(String(n.alerts.throttleHours));
     this.runPushEnabled.set(n.runPush.enabled);
+    this.reactivationEnabled.set(n.reactivation?.enabled ?? false);
     this.baseline.set(this.sig());
     this.loaded.set(true);
   }
@@ -302,6 +317,7 @@ export class AgentNotifications implements OnInit {
               throttleHours: Math.max(1, Number(this.throttleHours()) || 6),
             },
             runPush: { enabled: this.runPushEnabled() },
+            reactivation: { enabled: this.reactivationEnabled() },
           },
         }),
       );
