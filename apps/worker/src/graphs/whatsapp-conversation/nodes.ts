@@ -28,6 +28,7 @@ import { and, eq } from "drizzle-orm";
 import { adAccounts, agents, playbookRules, type Database } from "@trafego/db";
 import { DEFAULT_CURRENCY } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
+import { describeLlmError } from "./llm-error.js";
 import { GROUP_RULES, loadConversationConfig } from "./system-prompt.js";
 import { windowMessages } from "./window.js";
 import {
@@ -440,11 +441,11 @@ export function makeConversationNodes(
       response = (await makeChat(model, true).invoke(msgs)) as AIMessage;
     } catch (err) {
       if (!fallback || fallback === model) {
-        logger.error({ actor: actorLabel(ctx.ref), model, err: String(err) }, "conversation:LLM falhou (sem reserva)");
+        logger.error({ actor: actorLabel(ctx.ref), model, err: describeLlmError(err) }, "conversation:LLM falhou (sem reserva)");
         throw err;
       }
       logger.warn(
-        { actor: actorLabel(ctx.ref), model, fallback, err: String(err) },
+        { actor: actorLabel(ctx.ref), model, fallback, err: describeLlmError(err) },
         "conversation:LLM primário esgotou — tentando reserva",
       );
       usedModel = fallback;
@@ -452,7 +453,7 @@ export function makeConversationNodes(
         response = (await makeChat(fallback, true).invoke(msgs)) as AIMessage;
       } catch (err2) {
         logger.error(
-          { actor: actorLabel(ctx.ref), model, fallback, err: String(err2) },
+          { actor: actorLabel(ctx.ref), model, fallback, err: describeLlmError(err2) },
           "conversation:LLM primário E reserva falharam",
         );
         throw err2;
