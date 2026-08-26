@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { AGENT_NAME } from "@trafego/shared";
 import {
   ARCHETYPE_DEFAULTS,
   DEFAULT_ARCHETYPE_KEY,
   archetypeCatalog,
   archetypeDefaults,
   composeAgentPrompt,
+  composeAgentVoice,
 } from "./index.js";
 
 describe("archetypeDefaults", () => {
@@ -100,5 +102,34 @@ describe("composeAgentPrompt", () => {
 
   it("ignora texto só-espaços (tratado como ausente)", () => {
     expect(composeAgentPrompt(base, { businessContext: "   ", guidance: "\n\t" })).toBe(base);
+  });
+});
+
+describe("composeAgentVoice", () => {
+  const input = {
+    systemPrompt: null,
+    archetype: "conservador",
+    persona: null,
+    tone: null,
+    businessContext: null,
+    guidance: null,
+  };
+
+  it("injeta o nome fixo Roi no início da identidade", () => {
+    const out = composeAgentVoice(input);
+    expect(out).toContain(`Você é ${AGENT_NAME}`);
+    expect(out.startsWith(`Você é ${AGENT_NAME}`)).toBe(true); // nome vem primeiro
+  });
+
+  it("o nome PRECEDE a metodologia/persona (identidade acima do tom customizável)", () => {
+    const out = composeAgentVoice({ ...input, persona: "Analista cauteloso", tone: "consultivo" });
+    expect(out.indexOf(`Você é ${AGENT_NAME}`)).toBeLessThan(out.indexOf("Persona: Analista cauteloso"));
+    expect(out).toContain("Tom da comunicação: consultivo");
+  });
+
+  it("preserva persona/tom/contexto do dono (não substitui, só antepõe o nome)", () => {
+    const out = composeAgentVoice({ ...input, businessContext: "e-commerce de moda", guidance: "priorize leads" });
+    expect(out).toContain("e-commerce de moda");
+    expect(out).toContain("priorize leads");
   });
 });

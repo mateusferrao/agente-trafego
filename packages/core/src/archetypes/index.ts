@@ -1,4 +1,4 @@
-import { DEFAULT_NOTIFY_POLICY } from "@trafego/shared";
+import { AGENT_NAME, DEFAULT_NOTIFY_POLICY } from "@trafego/shared";
 import type { AgentGoals, AutonomyPolicy, CadenceSpec, NotifyPolicy, Posture } from "@trafego/shared";
 
 /**
@@ -299,10 +299,14 @@ export interface AgentVoiceInput {
  */
 export function composeAgentVoice(v: AgentVoiceInput): string {
   const methodologyBase = v.systemPrompt ?? composeMethodologyPrompt(archetypeDefaults(v.archetype));
+  // Nome de marca FIXO — precede metodologia/persona (identidade, não tom). O dono
+  // customiza COMO o agente fala (persona/tom), nunca QUEM ele é.
+  const name = `Você é ${AGENT_NAME}, o agente de tráfego desta conta. Esse é o seu nome fixo; a persona e o tom abaixo definem só como você se comunica.`;
   const identity = [v.persona ? `Persona: ${v.persona}` : "", v.tone ? `Tom da comunicação: ${v.tone}` : ""]
     .filter((s) => s.length > 0)
     .join("\n");
-  const base = identity ? `${methodologyBase}\n\n${identity}` : methodologyBase;
+  const core = identity ? `${methodologyBase}\n\n${identity}` : methodologyBase;
+  const base = `${name}\n\n${core}`;
   return composeAgentPrompt(base, {
     ...(v.businessContext ? { businessContext: v.businessContext } : {}),
     ...(v.guidance ? { guidance: v.guidance } : {}),

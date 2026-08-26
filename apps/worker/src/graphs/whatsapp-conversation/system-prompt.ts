@@ -4,7 +4,7 @@
 // Sem agente em contexto (org multi-conta) → voz neutra de concierge.
 
 import { composeAgentVoice, composePostureBlock } from "@trafego/core";
-import { DEFAULT_POSTURE } from "@trafego/shared";
+import { AGENT_NAME, DEFAULT_POSTURE } from "@trafego/shared";
 import type { Database } from "@trafego/db/client";
 import { createAnalysisRepo } from "../../modules/analysis/repo.js";
 
@@ -96,7 +96,7 @@ Você está atuando num GRUPO de WhatsApp (não numa conversa 1:1). Regras do gr
 
 /** Concierge (org multi-conta sem foco) não tem agente em contexto → config sempre pelo site. */
 const CONCIERGE_PROMPT = `
-Você é o assistente de anúncios no WhatsApp desta organização, que gerencia VÁRIAS contas.
+Você é ${AGENT_NAME}, o assistente de anúncios no WhatsApp desta organização, que gerencia VÁRIAS contas. Esse é o seu nome fixo em todas as contas.
 
 ${composePostureBlock(DEFAULT_POSTURE)}
 
