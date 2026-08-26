@@ -169,10 +169,15 @@ export const campaignAnalysisMetrics = z.object({
   roas: z.number().optional(),
 });
 
-/** Achado principal da campanha (título + severidade) — o maior gargalo. */
+/** Evidência numérica de um achado (métrica que o prova). */
+export const findingMetricRef = z.object({ label: z.string(), value: z.string() });
+
+/** Achado principal da campanha — o maior gargalo, agora COM evidência (detail + números). */
 export const campaignTopFinding = z.object({
   title: z.string(),
   severity: z.enum(["info", "warning", "critical"]),
+  detail: z.string().nullable().optional(),
+  metricRefs: z.array(findingMetricRef).optional(),
 });
 
 /** Uma campanha analisada: métrica + resumo + gargalo + flags + estado silenciado. */

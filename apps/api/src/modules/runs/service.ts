@@ -448,7 +448,14 @@ function toCampaignAnalysisOutput(
       ...(typeof m.roas === "number" ? { roas: m.roas } : {}),
     },
     summary: unit.summary ?? null,
-    topFinding: top ? { title: top.title, severity: top.severity } : null,
+    topFinding: top
+      ? {
+          title: top.title,
+          severity: top.severity,
+          detail: top.detail ?? null,
+          metricRefs: (top.metricRefs ?? []).map((r) => ({ label: r.label, value: String(r.value) })),
+        }
+      : null,
     flags: row.flags ?? [],
     tier: (row.tier as CampaignAnalysisOutput["tier"]) ?? null,
     // estágio congela só no snapshot do run (RunCampaignCard); a visão ao vivo lê
