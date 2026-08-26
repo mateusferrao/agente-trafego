@@ -73,6 +73,26 @@ const QUALITY_NOTE =
   "hasSignificance ou em inLearning — nesse caso recomende investigar ou aguardar mais dados.";
 
 /**
+ * Atribuição × incrementalidade — freia recomendação de pausa por CPA atribuído.
+ * O CPA/ROAS da Meta é ATRIBUÍDO (último clique/visualização numa janela), não medida de
+ * INCREMENTALIDADE: subestima o valor de topo de funil (prospecção), que gera demanda
+ * captada depois por remarketing/marca/direto (efeito halo). Nuança o "pausar" da QUALITY_NOTE.
+ */
+const INCREMENTALITY_NOTE =
+  "Atribuição NÃO é incrementalidade: o CPA/ROAS que a Meta reporta é ATRIBUÍDO (último clique/" +
+  "visualização dentro de uma janela) e SUBESTIMA o valor de campanhas de TOPO DE FUNIL " +
+  "(prospecção/reconhecimento), que geram demanda captada depois por remarketing/marca/direto " +
+  "(efeito halo). Isto rebaixa a AÇÃO, NUNCA a VISIBILIDADE: SEMPRE reporte o ponto de atenção " +
+  "(CPA atribuído alto / baixo desempenho) como finding, com o caveat de atribuição, e deixe a " +
+  "decisão de pausar com o dono — não omita nem minimize o achado. Antes de recomendar a AÇÃO de " +
+  "PAUSAR: (1) não pause prospecção/aquisição só pelo CPA atribuído alto — ela alimenta as campanhas " +
+  "de conversão; pausá-la pode secar o remarketing (pense no efeito na conta TODA, não na campanha " +
+  "isolada); (2) reserve a PAUSA para ZUMBI real (gasto sem resultado em lugar nenhum), não para " +
+  "underperformer que ainda pode ser incremental; (3) na dúvida, prefira 'investigate'/monitorar ou " +
+  "ajustar orçamento em vez de pausar — mas explicando o achado, não escondendo. Pausa de campanha " +
+  "ativa exige evidência clara de desperdício, não atribuição isolada.";
+
+/**
  * Direção acionável-por-humano + conselho (S3). Agora que a COPY real chega ao
  * prompt, o analista dá direção concreta de criativo/público e ACONSELHA escalar/
  * criar (texto, o humano executa) — sem inventar ação de plataforma p/ isso.
@@ -105,7 +125,7 @@ const jsonBlock = (label: string, value: unknown): string =>
 
 /** Mensagens do ANALISTA (system = metodologia; user = brief + shape). */
 export function buildAnalysisMessages(systemPrompt: string, brief: AccountBrief): LLMMessage[] {
-  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, MISMATCH_NOTE, QUALITY_NOTE, DIAGNOSIS_NOTE, BENCHMARK_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
+  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, MISMATCH_NOTE, QUALITY_NOTE, INCREMENTALITY_NOTE, DIAGNOSIS_NOTE, BENCHMARK_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
   const user = [
     jsonBlock("Briefing curado da conta (analise SOMENTE com base nele)", brief),
     "",
@@ -148,7 +168,7 @@ export function buildCampaignMessages(
   accountContext: { readonly currency: string; readonly window: string; readonly businessGoal?: string },
   copyByAdId: ReadonlyMap<string, AdCopy> = new Map(),
 ): LLMMessage[] {
-  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, MISMATCH_NOTE, QUALITY_NOTE, DIAGNOSIS_NOTE, BENCHMARK_NOTE, ADVICE_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
+  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, MISMATCH_NOTE, QUALITY_NOTE, INCREMENTALITY_NOTE, DIAGNOSIS_NOTE, BENCHMARK_NOTE, ADVICE_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
   const notableAdIds = unit.adsets.flatMap((g) => g.notableAds.map((a) => a.id));
   const vision = notableAdIds
     .map((adId) => ({ adId, vision: visionByAdId.get(adId) ?? [] }))
@@ -201,6 +221,7 @@ export function buildSynthesisMessages(
     TRACKING_NOTE,
     MISMATCH_NOTE,
     QUALITY_NOTE,
+    INCREMENTALITY_NOTE,
     DIAGNOSIS_NOTE,
     BENCHMARK_NOTE,
     FINDINGS_METRIC_INSTRUCTION,
