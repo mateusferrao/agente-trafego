@@ -76,8 +76,9 @@ export const envSchema = z.object({
   // corretos, budget% específico, diagnóstico de funil). Fallback: `mistralai/mistral-small-24b-instruct-2501`.
   OPENROUTER_UNIT_MODEL: z.string().min(1).default("qwen/qwen3.7-flash"),
   // Reserva do unit (OpenRouter `models` fallback): se o provider do primário falhar, roteia
-  // pra cá. Testado p/ structured output (mistral-small honra schema; provider diverso do qwen).
-  OPENROUTER_UNIT_FALLBACK_MODEL: z.string().default("mistralai/mistral-small-24b-instruct-2501"),
+  // pra cá. Provider diverso (Google × DeepSeek/Qwen), não-reasoning, barato, e enforça
+  // JSON-schema — que o structured output do `map_units` exige (por isso NÃO um sem enforcement).
+  OPENROUTER_UNIT_FALLBACK_MODEL: z.string().default("google/gemini-3.1-flash-lite"),
   OPENROUTER_MESSAGE_MODEL: z.string().min(1).default("google/gemini-3.1-flash-lite"),
   // Versão do analisador de visão — bumpar invalida o cache de análises de criativo.
   // 2 (Fatia 6c): multi-frame HD + decomposição hook/angle/format/cta.
@@ -235,8 +236,10 @@ export const envSchema = z.object({
 
   // ─── Conversa (WhatsApp — Grafo B ReAct, 5b-2) ─────────────────────────
   // Modelo do chat: fallback quando o agente não tem `model_config.messageModel`.
-  // Chat = alto volume + tarefa simples → default barato com bom tool-calling.
-  CONVERSATION_MODEL: z.string().min(1).default("google/gemini-3.7-flash"),
+  // Chat = alto volume + tarefa simples → default barato com bom tool-calling. First-party
+  // (OpenAI): shape de resposta estável. Trocado do gemini-3.7-flash, que retornava choices
+  // vazio de forma intermitente → BaseChatModel.invoke do LangChain estourava TypeError.
+  CONVERSATION_MODEL: z.string().min(1).default("openai/gpt-5.6-luna"),
   // Reserva do chat: se o primário esgotar o retry/backoff (blip do provider), tenta este
   // (TAMBÉM com retry/backoff). Provider DIVERSO do primário (OpenAI × Google) — testado com
   // tools + histórico real. Vazio = sem reserva.
