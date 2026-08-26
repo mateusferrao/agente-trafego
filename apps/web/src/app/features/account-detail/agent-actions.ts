@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, type OnInit, inject, input, signal } from '@angular/core';
 import { toast } from 'ngx-sonner';
-import { UiBadge, UiButton, UiConfirmDialogService } from '@ui';
+import { UiButton, UiConfirmDialogService, UiEyebrow } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import { ApprovalsApiService } from '@core/api/approvals-api.service';
 import type { LastRunActionsOutput } from '@core/api/generated';
@@ -19,7 +19,7 @@ type Dropped = LastRunActionsOutput['dropped'][number];
 @Component({
   selector: 'app-agent-actions',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiBadge, UiButton],
+  imports: [UiButton, UiEyebrow],
   template: `
     @if (applied().length > 0 || suggested().length > 0 || dropped().length > 0) {
       <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
@@ -34,16 +34,16 @@ type Dropped = LastRunActionsOutput['dropped'][number];
                       <span class="font-medium">{{ typeLabel(a.type) }}</span>
                       <span class="text-muted">{{ targetOf(a) }}</span>
                       @if (a.simulated) {
-                        <span appBadge tone="neutral">simulado (dry-run)</span>
+                        <app-ui-eyebrow>simulado</app-ui-eyebrow>
                       } @else if (a.reverted) {
-                        <span appBadge tone="neutral">revertido</span>
+                        <app-ui-eyebrow>revertido</app-ui-eyebrow>
                       }
                       @if (a.fromPreviousRun) {
-                        <span appBadge tone="neutral" size="xs">de uma análise anterior</span>
+                        <app-ui-eyebrow>análise anterior</app-ui-eyebrow>
                       }
                     </span>
                     @if (a.revertBlocked && a.revertBlockedReason) {
-                      <span class="text-xs text-muted">↩️ não revertida — {{ a.revertBlockedReason }}</span>
+                      <span class="text-xs text-muted">Não revertida: {{ a.revertBlockedReason }}</span>
                     }
                   </span>
                   @if (a.revertBlocked) {
@@ -72,12 +72,12 @@ type Dropped = LastRunActionsOutput['dropped'][number];
                       <span class="font-medium">{{ typeLabel(s.type) }}</span>
                       <span>{{ targetOf(s) }}</span>
                       @if (s.fromPreviousRun) {
-                        <span appBadge tone="neutral" size="xs">de uma análise anterior</span>
+                        <app-ui-eyebrow>análise anterior</app-ui-eyebrow>
                       }
                     </span>
                     <span class="text-xs text-muted">{{ s.reason }}</span>
                     @if (deadline(s.expiresAt); as d) {
-                      <span class="text-xs text-muted">⏳ {{ d }}</span>
+                      <app-ui-eyebrow>{{ d }}</app-ui-eyebrow>
                     }
                   </span>
                   <span class="flex shrink-0 gap-2">
@@ -103,7 +103,7 @@ type Dropped = LastRunActionsOutput['dropped'][number];
                   <span class="flex flex-wrap items-center gap-2 text-sm text-ink">
                     <span class="font-medium">{{ typeLabel(d.type) }}</span>
                     <span class="text-muted">{{ targetOf(d) }}</span>
-                    <span appBadge tone="neutral">barrada</span>
+                    <app-ui-eyebrow>barrada</app-ui-eyebrow>
                   </span>
                   <span class="text-xs text-muted">{{ d.reason }}</span>
                 </li>

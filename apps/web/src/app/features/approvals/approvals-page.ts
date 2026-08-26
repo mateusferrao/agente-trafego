@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, type OnInit, computed, inject, sign
 import { provideIcons } from '@ng-icons/core';
 import { lucideCircleCheck } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
-import { UiBadge, UiButton, UiConfirmDialogService, UiEmptyState, UiPageHeader } from '@ui';
+import { UiButton, UiConfirmDialogService, UiEmptyState, UiEyebrow, UiPageHeader } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import { ApprovalsApiService } from '@core/api/approvals-api.service';
 import { AGENT_NAME } from '@core/brand';
@@ -37,7 +37,7 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
 @Component({
   selector: 'app-approvals-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiEmptyState, UiPageHeader, UiBadge, UiButton],
+  imports: [UiEmptyState, UiPageHeader, UiButton, UiEyebrow],
   providers: [provideIcons({ lucideCircleCheck })],
   template: `
     <div class="flex flex-col gap-8">
@@ -61,15 +61,13 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                 <h2 class="font-brand text-sm font-semibold text-ink">{{ group.accountName }}</h2>
                 <ul class="flex flex-col gap-2">
                   @for (a of group.items; track a.id) {
-                    <li class="flex items-start justify-between gap-3 rounded-lg border border-line bg-panel px-4 py-3">
-                      <span class="flex min-w-0 flex-col gap-0.5">
-                        <span class="text-sm text-ink">
-                          <span class="font-medium">{{ typeLabel(a.type) }}</span> {{ pendingTargetOf(a) }}
+                    <li class="ui-panel-card--brand flex items-start justify-between gap-3">
+                      <span class="flex min-w-0 flex-col gap-1">
+                        <app-ui-eyebrow>Aguardando seu OK@if (deadline(a.expiresAt); as d) { · {{ d }}}</app-ui-eyebrow>
+                        <span class="font-semibold text-ink">
+                          {{ typeLabel(a.type) }} {{ pendingTargetOf(a) }}
                         </span>
                         <span class="text-xs text-muted">{{ a.reason }}</span>
-                        @if (deadline(a.expiresAt); as d) {
-                          <span appBadge tone="neutral" size="xs" class="mt-1 w-fit">⏳ {{ d }}</span>
-                        }
                       </span>
                       <span class="flex shrink-0 gap-2">
                         <button appButton variant="secondary" size="sm" [disabled]="resolving().has(a.id)" (click)="reject(a)">
@@ -96,12 +94,13 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                 <ul class="flex flex-col gap-2">
                   @for (a of group.items; track a.toolCallId) {
                     <li class="flex items-start justify-between gap-3 rounded-lg border border-line bg-panel px-4 py-3">
-                      <span class="flex min-w-0 flex-col gap-0.5">
-                        <span class="text-sm text-ink">
-                          <span class="font-medium">{{ typeLabel(a.type) }}</span> {{ revertibleTargetOf(a) }}
+                      <span class="flex min-w-0 flex-col gap-1">
+                        <app-ui-eyebrow>Reversível</app-ui-eyebrow>
+                        <span class="font-semibold text-ink">
+                          {{ typeLabel(a.type) }} {{ revertibleTargetOf(a) }}
                         </span>
                         @if (a.revertBlocked && a.revertBlockedReason) {
-                          <span class="text-xs text-muted">↩️ não revertida — {{ a.revertBlockedReason }}</span>
+                          <span class="text-xs text-muted">Não revertida: {{ a.revertBlockedReason }}</span>
                         }
                       </span>
                       @if (a.revertBlocked) {
