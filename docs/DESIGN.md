@@ -2,20 +2,23 @@
 
 Fonte da verdade de **design/UX**. Baseado nos padrões reais da plataforma **Automato** (`automato-web`) — reuso máximo, coerência total. Decisões de produto/arquitetura = [`../CLAUDE.md`](../CLAUDE.md). Construção = [`ROADMAP.md`](ROADMAP.md).
 
-## North-star — "Operational Glass Desk" (herdado do Automato)
+## North-star — "Bold Operational Desk"
 
-Workspace enterprise premium, **light-first** (dark first-class), calmo pro dia a dia operacional. Lanes de referência: **Stripe** (clareza/explicabilidade) + **Attio** (workflow, records/relacionamento) + **Raycast** (glass/noise pra foco/comando/AI-assist). A IA é **infraestrutura operacional embutida, não um chatbot à parte**.
+Skin de marca **neobrutalista refinado** (bordas 2px, sombra sólida offset, paper quente, tomate + menta + navy) sobre um **núcleo operacional calmo** para o trabalho denso e sensível a dinheiro. **Manychat no espírito** (acessível, caloroso, sem jargão, chat-native — herdado do site `autotraffic`, NÃO do app Manychat nem do azul dele), **operacional na substância**. A IA é **infraestrutura embutida encarnada no agente Roi**, nunca um chatbot à parte nem glitter genérico. Detalhe completo de tokens/componentes = `apps/web/DESIGN.md`.
 
 **Regras nomeadas (obrigatórias):**
-- **Rare Accent** — emerald só p/ decisão/seleção/conclusão. >10% de emerald saturado = o accent parou de funcionar.
-- **No Generic AI** — sem gradiente roxo-azul, glow neon, blob abstrato de "IA".
-- **Product Scale** — tipografia de produto (compacta), sem type gigante de landing dentro do app.
-- **The Layer Has A Job** — todo shadow/blur/glass tem que clarificar foco/estado/empilhamento; senão, remove.
-- **Status = tom + texto**, nunca só cor (acessibilidade). Grain/noise só em superfícies quietas (shell, command, empty states, dark).
+- **Two-Tier Surface** — superfícies "Marca" (decisão/onboarding/conversa) levam a assinatura bold (borda 2px + offset ~3px); superfícies "Workspace" (tabelas/config/shell) ficam calmas e planas. Offset nunca em grid denso.
+- **Brand Accent (tomate)** — tomate só p/ seleção/estado ativo/marca. >10% de tomate saturado = o accent parou de funcionar.
+- **No Generic AI** — sem gradiente roxo-azul, glow neon, blob de "IA" nem ✨ sparkles. A identidade da IA é o Roi + o símbolo tomate.
+- **Product Scale** — tipografia de produto (compacta), sem type de landing dentro do app.
+- **Solid Layer** — a camada é a sombra sólida offset; blur só micro-elevação em overlays reais. Glass-como-padrão aposentado.
+- **Personality Budget** — micro-encanto em loading/empty/sucesso/identidade do Roi; **proibido** em erro/dinheiro/dados densos.
+- **Voz própria, sem cara de IA** — sem travessão dramático, "não é só X, é Y", tríades, hype, confete de "!", emoji-como-personalidade na UI. Tom por zona (Marca lúdico / Operacional neutro / Crítica preciso) + guardrail B2B (nada lúdico no que o gestor mostra ao cliente dele).
+- **Status = tom + texto**, nunca só cor. Dois vermelhos (tomate marca × vermelho perigo) sempre com ícone+texto.
 
 **Composição de tela:** `object header → área de trabalho → rail de contexto → trace de atividade/agente`. Todo workflow: ownership explícito, estado de ciclo de vida, próxima ação, status de automação, trilha de auditoria. WCAG AA, teclado, foco visível, i18n (PT-BR), light+dark desde o início.
 
-Tokens/escala tipográfica/spacing = `apps/web/styles.css` + `apps/web/DESIGN.md` (vendorizados do Automato). **Nunca cor hardcoded** — só design tokens.
+Tokens/escala tipográfica/spacing = `apps/web/styles.css` + `apps/web/DESIGN.md`. Fontes: Archivo (display) + Instrument Sans (corpo) + JetBrains Mono (números). **Nunca cor hardcoded** — só design tokens.
 
 ## Arquitetura de Informação (account-centric)
 
@@ -61,7 +64,7 @@ Org, usuários (self-signup + membros), beta/assinatura, perfil, tema. Reusa o p
 
 ## Onboarding (first-run)
 
-Contas vazio → CTA → **connect-dialog** (state machine `intro → credentials → connecting → success → error`): colar token → validar (trata erro 190) → **listar contas** (`GET /me/adaccounts`) → escolher → prompt conectar **WhatsApp** (Integrações, QR) → agente **auto-semeado** pelo arquétipo default. O passo-a-passo do System User = doc + concierge no beta. Texto de privacidade: *"não armazenamos sua senha — só o token de acesso autorizado"*.
+Contas vazio → CTA → **connect-dialog** (state machine `intro → credentials → connecting → success → error`): colar token → validar (trata erro 190) → **listar contas** (`GET /me/adaccounts`) → escolher → agente **auto-semeado** pelo arquétipo default. Ao selecionar, **dispara a 1ª análise automaticamente** (trigger `onboarding`) — o momento de valor. A tela de **sucesso apresenta o Roi** (beat não-bloqueante, sem passo extra) e é **state-aware do WhatsApp**: conectado → *"O Roi já está analisando {conta} e te avisa no WhatsApp"*; não conectado → *"O resultado aparece aqui. Conecte seu WhatsApp para o Roi te avisar por lá também"* + CTA. Depois, prompt conectar **WhatsApp** (Integrações, QR). Texto de privacidade: *"não armazenamos sua senha — só o token de acesso autorizado"*.
 
 ## Componente net-new — `ui-timeline`
 
@@ -76,7 +79,8 @@ Tipos de evento: `analysis_started` · `analysis_completed` · `recommendation_c
 - **Foco no não-técnico:** sem jargão; traduzir termos (CPA, adset, token) quando aparecerem.
 - **Sempre mostrar o que está acontecendo:** loading/progresso/vazio/sucesso claros. Usuário nunca no escuro (ex: *"Analisando sua conta… ~1 min"*).
 - **Sempre o próximo passo:** empty states e confirmações apontam a ação.
-- **Voz:** sentence case; *"arquivo enviado"* (não "enviado com sucesso!"); sem "please"; status = tom+texto.
+- **Voz:** sentence case; sem "please"; status = tom+texto. **Voz própria, sem cara de IA** (sem travessão dramático, "não é só X, é Y", hype, confete de "!", jargão de IA). **Tom por zona:** Marca lúdico (voz própria, ex.: *"Bora conectar sua conta Meta?"*), Operacional neutro (*"Configuração salva"*), Crítica preciso (*"Não consegui validar seu token da Meta. Confira se ele está ativo e cole novamente."*). Guardrail B2B: nada lúdico no que o gestor mostra ao cliente dele.
+- **Agente = Roi** (nome de marca fixo em toda a org — contas + concierge; persona/tom customizável por conta, só o nome é fixo). 1ª menção numa tela qualifica (*"o Roi, seu agente de tráfego"*), depois só *"Roi"*; identidade visual persistente (símbolo tomate + "Roi").
 
 ## Mapa de reuso (Automato → nosso)
 

@@ -1,53 +1,65 @@
 ---
-name: Automato
-description: AI-first enterprise operating system with premium operational clarity
+name: AutoTraffic
+description: Bold operational desk — a neobrutalist brand skin over a calm operational workspace, with Roi the agent as its face
 colors:
-  canvas: "#f7f7f4"
-  surface: "#fffefa"
-  surface-muted: "#eef1ea"
-  line: "#d9ded5"
-  ink: "#17231e"
-  muted: "#64726a"
-  primary: "#047857"
-  primary-strong: "#065f46"
-  primary-soft: "#d9f5e6"
-  tomato: "#e04b35"
-  tomato-soft: "#ffe2dc"
-  dark-canvas: "#0b1110"
-  dark-surface: "#111a17"
-  dark-line: "#25342f"
-  dark-ink: "#edf7f1"
+  canvas: "#fbf9f4"
+  surface: "#ffffff"
+  surface-muted: "#f4f2ec"
+  line: "#e6e2d8"
+  ink: "#070a27"
+  muted: "#4a5070"
+  primary: "#0c1134"
+  primary-strong: "#070a27"
+  primary-ink: "#fbf9f4"
+  accent: "#e00202"
+  accent-strong: "#b00202"
+  accent-soft: "#ffe3dc"
+  success: "#047a4d"
+  success-soft: "#c9f3e1"
+  danger: "#b3241c"
+  danger-soft: "#f7dcd7"
+  tomato: "#e00202"
+  tomato-soft: "#ffe3dc"
+  navy-900: "#070a27"
+  navy-500: "#2c3572"
+  dark-canvas: "#070a27"
+  dark-surface: "#0c1134"
+  dark-line: "#2c3572"
+  dark-ink: "#fbf9f4"
 typography:
   display:
-    fontFamily: "Figtree, Plus Jakarta Sans, ui-sans-serif, system-ui, sans-serif"
+    fontFamily: "Archivo, ui-sans-serif, system-ui, sans-serif"
     fontSize: "2rem"
-    fontWeight: 700
+    fontWeight: 800
     lineHeight: 1.1
-    letterSpacing: "0"
+    letterSpacing: "-0.02em"
   headline:
-    fontFamily: "Plus Jakarta Sans, ui-sans-serif, system-ui, sans-serif"
+    fontFamily: "Archivo, ui-sans-serif, system-ui, sans-serif"
     fontSize: "1.5rem"
-    fontWeight: 650
+    fontWeight: 700
     lineHeight: 1.2
-    letterSpacing: "0"
+    letterSpacing: "-0.01em"
   title:
-    fontFamily: "Plus Jakarta Sans, ui-sans-serif, system-ui, sans-serif"
+    fontFamily: "Instrument Sans, ui-sans-serif, system-ui, sans-serif"
     fontSize: "1rem"
-    fontWeight: 650
+    fontWeight: 600
     lineHeight: 1.35
     letterSpacing: "0"
   body:
-    fontFamily: "Plus Jakarta Sans, ui-sans-serif, system-ui, sans-serif"
+    fontFamily: "Instrument Sans, ui-sans-serif, system-ui, sans-serif"
     fontSize: "0.875rem"
     fontWeight: 400
     lineHeight: 1.55
     letterSpacing: "0"
   label:
-    fontFamily: "Plus Jakarta Sans, ui-sans-serif, system-ui, sans-serif"
+    fontFamily: "Instrument Sans, ui-sans-serif, system-ui, sans-serif"
     fontSize: "0.75rem"
-    fontWeight: 650
+    fontWeight: 600
     lineHeight: 1.3
     letterSpacing: "0.025em"
+  numeric:
+    fontFamily: "JetBrains Mono, ui-monospace, monospace"
+    fontWeight: 500
 rounded:
   sm: "8px"
   md: "12px"
@@ -63,192 +75,175 @@ spacing:
 components:
   button-primary:
     backgroundColor: "{colors.primary}"
-    textColor: "#ffffff"
+    textColor: "{colors.primary-ink}"
+    boxShadow: "3px 3px 0 {colors.accent}"
     rounded: "{rounded.md}"
     padding: "10px 16px"
-  button-primary-hover:
-    backgroundColor: "{colors.primary-strong}"
-    textColor: "#ffffff"
-    rounded: "{rounded.md}"
-    padding: "10px 16px"
-  panel:
+  panel-brand:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.ink}"
+    border: "2px solid {colors.ink}"
+    boxShadow: "3px 3px 0 {colors.navy-900}"
+    rounded: "{rounded.xl}"
+    padding: "16px"
+  panel-workspace:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.ink}"
+    border: "1px solid {colors.line}"
     rounded: "{rounded.lg}"
-    padding: "20px"
-  chip:
-    backgroundColor: "{colors.surface-muted}"
-    textColor: "{colors.primary}"
-    rounded: "{rounded.sm}"
-    padding: "4px 8px"
+    padding: "16px"
 ---
 
-# Design System: Automato
-
-<!-- SEED -->
+# Design System: AutoTraffic
 
 ## 1. Overview
 
-**Creative North Star: "The Operational Glass Desk"**
+**Creative North Star: "The Bold Operational Desk"**
 
-Automato should feel like a precise enterprise workspace: light-first, premium, context-rich and calm enough for daily operations. The reference lane is Stripe for clarity and explainability, Attio for workflow composition and relationship surfaces, with selective Raycast-like glass, noise texture and depth when the interface needs focus, layering or command presence.
+AutoTraffic is a WhatsApp-native, semi-autonomous traffic agent. The product's face is **Roi**, the agent. The interface should feel like a confident, branded workspace: a **refined neobrutalist** brand skin (solid 2px borders, solid offset shadows, warm paper canvas, tomato and mint) over a **calm operational core** for the dense, money-critical work.
 
-This is a greenfield design system seed. The current UI is not the finished source of truth; these rules define the intended direction for future product surfaces. Automato should feel tailored and partner-like, with AI embedded into operational context rather than presented as a separate chatbot destination.
+Manychat in spirit (approachable, warm, jargon-free, chat-native), operational in substance (clear, dense, honest where money is at stake). We inherit the brand language of the marketing site (`autotraffic`), not Manychat's app or its blue.
+
+This is the intended direction for all product surfaces. AI is embedded operational infrastructure represented by Roi — never a generic sparkle or a separate chatbot destination.
 
 **Key Characteristics:**
 
-- Light-first neutral premium base, with dark mode planned as a first-class alternate theme.
-- Medium density: operational and fast, but explanatory enough for cross-functional enterprise teams.
-- Restrained emerald primary, tomato used sparingly as a brand note or critical emphasis.
-- Glass, grain and noise texture are allowed only for meaningful layering, command surfaces, workflow focus and contextual AI assist.
-- Stripe-grade clarity, Attio-grade workflow ergonomics, Raycast-grade polish, Automato-specific operational depth.
+- Warm paper canvas, navy structure, tomato brand accent, mint for success/agent. Light-first with dark as a first-class alternate (neobrutalist dark: solid offset shadows turn mint).
+- **Two tiers of surface.** "Brand" surfaces (decision, onboarding, conversation) carry the bold signature; "Workspace" surfaces (tables, config, shell) stay calm and flat for legibility.
+- Refined neobrutalism: 2px borders and ~3px solid offset shadows only where they earn identity; data-dense cards use a thin border and no offset.
+- Personality lives in motion and moments (loading, empty states, Roi's identity), not in extra chrome or shouty copy.
 
 ## 2. Colors
 
-The palette is a neutral premium system with a quiet green cast, designed to avoid generic AI blues and purple gradients.
+Warm, high-contrast, brand-owned. Designed to avoid generic AI blues and purple gradients.
 
-### Primary
+### Primary (action)
 
-- **Operational Emerald** (`#047857`): primary actions, selected navigation, active states and trusted AI completion states.
-- **Deep Emerald** (`#065f46`): hover, active and high-emphasis primary action states.
-- **Emerald Wash** (`#d9f5e6`): low-emphasis selected states, subtle chips and contextual AI assist backgrounds.
+- **Navy** (`#0c1134`): primary actions (solid navy button with a tomato offset shadow), primary emphasis. Hover uses **Deep Navy** (`#070a27`). Text on navy is **Paper** (`#fbf9f4`).
 
-### Secondary
+### Accent (rare brand)
 
-- **Tomato Signal** (`#e04b35`): brand mark, rare warning emphasis and important exceptions. It should not compete with primary actions.
-- **Tomato Wash** (`#ffe2dc`): low-emphasis warning or brand tint, used sparingly.
+- **Tomato** (`#e00202`): the rare brand accent — selection, active state, brand moments, and the Roi mark. **Tomato Wash** (`#ffe3dc`, peach) for low-emphasis selection backgrounds.
+
+### Semantic
+
+- **Mint** (`#047a4d`, wash `#c9f3e1`): success and agent (Roi) states.
+- **Deep Red** (`#b3241c`, wash `#f7dcd7`): danger and destructive actions. Distinct from the tomato brand accent, and **always paired with icon + text** (never color alone).
 
 ### Neutral
 
-- **Premium Canvas** (`#f7f7f4`): default app background. Slightly warmer and more neutral than the current green-tinted canvas.
-- **Warm Surface** (`#fffefa`): panels, menus and controlled working surfaces.
-- **Muted Surface** (`#eef1ea`): hover states, chips and low-emphasis fills.
-- **Quiet Line** (`#d9ded5`): dividers, borders and structure.
-- **Deep Ink** (`#17231e`): primary text and high-emphasis icons.
-- **Operational Muted** (`#64726a`): secondary text, metadata and helper labels.
+- **Paper Canvas** (`#fbf9f4`): default app background. **Surface** (`#ffffff`) for panels. **Muted Surface** (`#f4f2ec`) for low-emphasis fills. **Line** (`#e6e2d8`) for calm dividers/borders. **Ink/Navy** (`#070a27`) for text and bold borders. **Muted** (`#4a5070`) for secondary text.
 
-### Dark Mode
+### Dark Mode (neobrutalist)
 
-- **Dark Canvas** (`#0b1110`): default dark background.
-- **Dark Surface** (`#111a17`): panels and elevated surfaces.
-- **Dark Line** (`#25342f`): dividers and structural borders.
-- **Dark Ink** (`#edf7f1`): primary text in dark mode.
+- Canvas `#070a27`, Surface `#0c1134`, Line `#2c3572`, Ink `#fbf9f4`. Solid offset shadows turn **mint** (`#00cc82`) in dark, mirroring the marketing site's on-navy behavior. Primary in dark uses a lighter navy (`#2c3572`).
 
 ### Named Rules
 
-**The Rare Accent Rule.** Emerald is for decisions, selection and completion. If a screen has more than 10% saturated emerald, the accent has stopped working.
+**The Brand Accent Rule.** Tomato is for selection, active state and brand moments only. If a screen has more than ~10% saturated tomato, the accent has stopped working.
 
-**The No Generic AI Rule.** Do not use purple-blue gradients, neon glows or abstract AI blobs as the product identity.
+**The Two Reds Rule.** Tomato (brand) and deep red (danger) coexist; keep danger darker/less orange, use peach wash for selection, and **always** pair danger with an icon and text.
+
+**The No Generic AI Rule.** No purple-blue gradients, neon glows, abstract AI blobs, or ✨ sparkles as the AI identity. The agent's identity is Roi plus the tomato mark.
 
 ## 3. Typography
 
-**Display Font:** Figtree with Plus Jakarta Sans fallback.
-**Body Font:** Plus Jakarta Sans with system sans fallback.
-**Label/Mono Font:** Use Plus Jakarta Sans for labels; add a mono font only when technical IDs, logs or traces become product surfaces.
-
-**Character:** The pairing should feel precise, contemporary and premium without becoming editorial. Plus Jakarta Sans carries the operational product; Figtree gives the brand lockup a slightly warmer, more distinctive shape.
+**Display / Headings:** Archivo (weights 700–800, tight tracking).
+**Body / UI:** Instrument Sans.
+**Numeric / Metrics:** JetBrains Mono (tabular numbers for KPIs, currency, IDs).
+**Editorial (rare):** Noto Serif.
 
 ### Hierarchy
 
-- **Display** (700, 32px, 1.1): product identity, focused page titles and rare major announcements. Avoid oversized marketing hero scale inside authenticated product UI.
-- **Headline** (650, 24px, 1.2): top-level screen headings and workflow summaries.
-- **Title** (650, 16px, 1.35): panel titles, table group headings and card-level labels.
-- **Body** (400, 14px, 1.55): operational prose, descriptions and table-adjacent text. Cap long explanatory body copy at 65 to 75 characters.
-- **Label** (650, 12px, 1.3, 0.025em): metadata, section labels, compact navigation and status labels. Uppercase only when it improves scanning.
+- **Display** (Archivo 800, 32px, 1.1, -0.02em): focused page titles and brand moments. Product scale, not landing scale.
+- **Headline** (Archivo 700, 24px): top-level screen headings.
+- **Title** (Instrument 600, 16px): panel titles and card labels.
+- **Body** (Instrument 400, 14px, 1.55): operational prose. Cap explanatory copy at 65–75 characters.
+- **Label** (Instrument 600, 12px, 0.025em): metadata and status labels.
+- **Numeric** (JetBrains Mono 500): all displayed metrics and currency.
 
 ### Named Rules
 
-**The Product Scale Rule.** Use tight product typography. Do not introduce giant landing-page type into operational screens unless the surface is explicitly onboarding or marketing.
+**The Product Scale Rule.** Tight product typography. No giant landing-page type inside operational screens (onboarding/marketing surfaces excepted).
 
-## 4. Elevation
+## 4. Elevation & Material
 
-Automato uses tonal layering first and shadow second. Most screens should feel flat, precise and scannable. Elevation appears when a surface floats above the work plane: command menus, account menus, dialogs, focused AI assist and contextual overlays.
-
-Glass effects are allowed only for transient or layered surfaces. Use them with restraint: subtle border, translucent surface, backdrop blur and deliberate noise texture. Do not turn ordinary cards into glass.
-
-Noise texture is part of the material language. It should be fine-grained, low-contrast and more visible in large surfaces, command layers, empty states and dark mode. It should never reduce text contrast, make tables harder to scan or become a decorative pattern competing with content.
+The material language is **solid**, not glass. Elevation is a solid offset shadow (the neobrutalist signature), used with restraint. Blur is reserved for genuine floating overlays (dialogs, menus, command surface) as subtle micro-elevation only.
 
 ### Shadow Vocabulary
 
-- **Card Rest** (`0 1px 2px rgb(23 48 39 / 0.07)`): compact repeated items when separation is needed.
-- **Panel Float** (`0 18px 44px rgb(23 48 39 / 0.16)`): menus, overlays, command surfaces and focused assist layers.
-- **Glass Command**: translucent surface, 1px quiet border, 16px to 24px blur and visible fine grain. Use only above content, never as default page structure.
-- **Noise Plane**: low-opacity noise texture over Premium Canvas or Dark Canvas. Use to give large quiet areas material presence without adding gradients or decorative shapes.
+- **Offset** (`3px 3px 0` navy / mint in dark): the brand-surface signature (brand cards, active brand chrome). Press state collapses to `1px 1px 0`.
+- **Offset Accent** (`3px 3px 0` tomato / mint in dark): the primary button's brand pop.
+- **Card Rest / Panel Float**: subtle soft shadows for calm separation and for overlay elevation only.
+
+Fine-grained noise texture stays on large quiet surfaces (shell, command, empty states, dark) and must never reduce text contrast.
 
 ### Named Rules
 
-**The Layer Has A Job Rule.** If a shadow, blur or glass effect does not clarify focus, state or stacking, remove it.
+**The Solid Layer Rule.** The offset shadow is the layer. Blur/glass appears only when a surface genuinely floats above the work plane; if it does not clarify focus, state or stacking, remove it. Glass-as-default is retired.
 
-## 5. Components
+**The Two-Tier Surface Rule.** Bold (2px border + offset) belongs to Brand surfaces (decision, onboarding, conversation, approvals, timeline). Workspace surfaces (tables, agent config, shell, costs, settings) stay calm: thin border, no offset. Never put offset shadows on dense grids.
 
-Components should feel precise and work-focused, with enough polish to communicate premium enterprise quality.
+## 5. Personality & Voice
 
-Workflow surfaces should take inspiration from Attio: clear object context, relationship-first layout, compact timelines, side-by-side detail and activity, editable structured fields and calm state transitions. The goal is to make CRM, conversations, agent runs and operational processes feel like one coherent working graph, not isolated dashboard pages.
+**The Personality Budget Rule.** Micro-delight lives in loading (Roi's mark pulsing + an honest progress narrative), empty states (a lively brand illustration), success, and Roi's identity. It is **forbidden** in errors, money/budget actions, guardrails and dense data.
+
+**The Own Voice Rule (copy).** Write in AutoTraffic's own voice, never a generic-AI voice. Forbidden: em dashes as dramatic connectors, "não é só X, é Y" constructions, rhetorical triads, empty hype ("revolucione", "potencialize", "desbloqueie"), exclamation confetti, emoji as personality in the UI, assistant openers ("Claro!", "Aqui está"), AI jargon ("insights poderosos", "mágica"). Prefer short sentences, concrete verbs, a clear benefit, simple punctuation. A light, own metaphor is welcome on Brand surfaces.
+
+**Tone by zone.** Brand surfaces (onboarding, empty, success, "Roi working") = warm and playful. Operational surfaces (data, config, costs) = neutral and precise. Critical surfaces (errors, money, guardrails) = strictly precise.
+
+**The B2B Guardrail.** Playful tone never touches anything a manager would forward to their own client (numbers, results, spend recommendations) — that content stays sober.
+
+**Roi identity.** Roi is the fixed brand name of the agent everywhere (per-account agents and the org concierge); persona/tone stay configurable per account, but the name is fixed. First mention on a surface qualifies it ("o Roi, seu agente de tráfego"); later mentions use "Roi". A persistent identity block (tomato mark + "Roi") anchors the agent surface.
+
+**The status = tone + text rule.** Status is always tone plus text, never color alone.
+
+## 6. Components
+
+Components are directives that read design tokens; changing token values propagates the brand. Reuse `shared/ui` before building new.
 
 ### Buttons
 
-- **Shape:** rounded but controlled, default 12px radius.
-- **Primary:** Operational Emerald background, white text, 10px by 16px padding, medium weight.
-- **Hover / Focus:** Deep Emerald hover. Focus uses a visible emerald ring with sufficient contrast and no layout shift.
-- **Secondary / Ghost:** neutral surface or transparent background, Deep Ink text, Quiet Line border when containment is needed.
-
-### Chips
-
-- **Style:** Muted Surface background, Deep Ink or Operational Emerald text, 8px radius.
-- **State:** selected chips may use Emerald Wash. Status chips must not rely on color alone.
+- **Primary:** navy background, paper text, **tomato offset shadow (`3px 3px 0`)**, ~14px radius. Hover "sinks" (translate + shadow collapses to `1px 1px 0`); respects `prefers-reduced-motion`.
+- **Danger:** deep red background, paper text (destructive, always with an icon).
+- **Secondary / Ghost:** paper/transparent, ink text, navy 2px border on secondary when containment is needed.
 
 ### Cards / Containers
 
-- **Corner Style:** 16px for panels, 12px for compact repeated items.
-- **Background:** Warm Surface on Premium Canvas, with Quiet Line borders for structure.
-- **Shadow Strategy:** flat by default. Use Card Rest only when repeated items need separation.
-- **Border:** 1px Quiet Line. Avoid colored side borders.
-- **Internal Padding:** 16px for compact panels, 20px to 24px for explanatory surfaces.
+- **Brand tier:** 2px ink border + `3px 3px 0` navy offset shadow, 20px radius. For approvals, onboarding, empty states, brand moments.
+- **Workspace tier:** 1px line border, no offset, 16px radius. For tables, KPIs, config.
+
+### Chips / Badges
+
+- Muted surface or wash background; status chips carry tone + text. Selection uses peach wash + tomato.
 
 ### Inputs / Fields
 
-- **Style:** Warm Surface background, Quiet Line border, 12px radius, clear label and helper/error text areas.
-- **Focus:** Emerald ring or border shift, never only shadow.
-- **Error / Disabled:** error states use tomato plus icon/text; disabled states reduce contrast while preserving readability.
+- Calm workspace treatment: surface background, line border, accent focus (border/ring, never only shadow). Errors use deep red + icon/text.
 
-### Navigation
+### Navigation / Shell
 
-- **Style:** persistent app shell with compact labels and clear active state. Active navigation uses Operational Emerald or Emerald Wash depending on hierarchy.
-- **Typography:** 14px medium labels, predictable spacing, no decorative icons unless they improve scanning.
-- **Mobile Treatment:** collapse structure without hiding primary context. Prioritize current business, current module and active object.
+- Persistent app shell, calm workspace tier. Active state uses tomato sparingly. 14px medium labels; lucide icons (2px stroke).
 
-### AI Assist Surfaces
+### Loading & AI
 
-AI assist should appear as contextual product infrastructure: suggestions, analysis, actions, explanations and agent activity tied to the current business object. Prefer inline panels, side inspectors and command surfaces over generic chat windows.
+- Roi's mark pulses (never spins). The analysis loader shows an honest progress narrative. A WhatsApp-style typing indicator appears only in real conversation contexts. Skeletons for content loading.
 
-### Workflow Surfaces
-
-- **Structure:** object header, primary work area, relationship/context rail and activity or agent trace when relevant.
-- **Attio Reference:** use Attio's clarity around records, lists, relationships and workflow states as a specific reference for CRM-like and operational workflow screens.
-- **State:** workflows need explicit ownership, lifecycle state, next action, automation status and audit trail.
-- **Density:** medium density with enough explanation for cross-functional users. Avoid pure spreadsheet density unless the task is explicitly bulk operations.
-
-## 6. Do's and Don'ts
+## 7. Do's and Don'ts
 
 ### Do:
 
-- **Do** design for operational teams who switch between CRM, marketing, conversations, products, integrations, agents and analytics.
-- **Do** make AI explainable, grounded and recoverable in the current business context.
-- **Do** keep surfaces dense but calm, with medium spacing and strong scanning hierarchy.
-- **Do** use Stripe-like clarity for forms, tables, workflows and explanatory moments.
-- **Do** use Attio-like ergonomics for workflow, CRM and relationship-heavy surfaces.
-- **Do** reserve Raycast-like glass and noise texture for focused command, workflow and assist layers.
-- **Do** use fine-grained noise texture to give large quiet surfaces premium material presence without harming readability.
-- **Do** support WCAG AA, keyboard navigation, visible focus states, color-blind-safe status communication and i18n from the start.
-- **Do** plan every component for light and dark mode, even if light mode ships first.
+- **Do** keep the two-tier discipline: bold for brand, calm for workspace.
+- **Do** make AI explainable and grounded, embodied by Roi in the current context.
+- **Do** support WCAG AA, keyboard nav, visible focus, color-blind-safe status (tone + text), and light + dark from the start.
+- **Do** use JetBrains Mono for all metrics and currency.
+- **Do** keep copy in AutoTraffic's own voice, tone-by-zone.
 
 ### Don't:
 
-- **Don't** make Automato look like a generic AI platform, chatbot wrapper, dashboard template or overdecorated SaaS product.
-- **Don't** use vague AI futurism, purple-blue gradients, neon accents, abstract AI blobs or dark cockpit aesthetics.
-- **Don't** create generic card mosaics as the default dashboard answer.
-- **Don't** make AI a separate destination when it should be embedded into operational work.
-- **Don't** use glassmorphism as default page structure.
-- **Don't** use noise texture at an opacity that reduces text contrast, table scanning or WCAG compliance.
-- **Don't** rely on color alone for status, risk, permissions or agent state.
-- **Don't** use side-stripe borders, gradient text or decorative effects that do not clarify hierarchy or action.
+- **Don't** put offset shadows or 2px borders on dense tables/config.
+- **Don't** use glass as default page structure (retired).
+- **Don't** use ✨ sparkles, purple-blue gradients, neon or abstract AI blobs.
+- **Don't** rely on color alone for status, risk or the two reds.
+- **Don't** write in a generic-AI voice (see The Own Voice Rule).
+- **Don't** let playful tone touch client-forwardable content.
