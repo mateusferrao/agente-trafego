@@ -412,7 +412,7 @@ export function makeConversationTools(
   const setBusinessContext = tool(proposeOnly, {
     name: "set_business_context",
     description:
-      "Define o CONTEXTO DO NEGÓCIO: FATOS sobre o negócio (nicho, oferta, ticket médio, público, sazonalidade) que o agente trata como verdade factual. É INFORMAÇÃO, não instrução de comportamento. Use para 'sou uma clínica de estética', 'meu ticket médio é R$2000'. Para dizer COMO o agente deve agir, use set_guidance. mode: 'append' ACRESCENTA ao contexto atual (nunca perde texto); 'replace' SUBSTITUI tudo. 'adicione/também/inclua' → append; 'troque/muda o contexto para' → replace; se não der pra saber, PERGUNTE antes (não chame a tool). Texto vazio limpa. Requer eco+confirma.",
+      "Define o CONTEXTO DO NEGÓCIO: FATOS sobre o negócio (nicho, oferta, ticket médio, público, sazonalidade) que o agente trata como verdade factual. É INFORMAÇÃO, não instrução de comportamento. Use para 'sou um e-commerce de moda', 'meu ticket médio é 2000'. Para dizer COMO o agente deve agir, use set_guidance. mode: 'append' ACRESCENTA ao contexto atual (nunca perde texto); 'replace' SUBSTITUI tudo. 'adicione/também/inclua' → append; 'troque/muda o contexto para' → replace; se não der pra saber, PERGUNTE antes (não chame a tool). Texto vazio limpa. Requer eco+confirma.",
     schema: z.object({ text: z.string(), mode: z.enum(["append", "replace"]) }),
   });
   const setGuidance = tool(proposeOnly, {

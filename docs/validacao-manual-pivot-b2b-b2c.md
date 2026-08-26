@@ -67,3 +67,25 @@ Pré: `pnpm install` · `pnpm db:migrate` · `pnpm db:seed` · `pnpm dev` (api+w
 - [ ] Análise normal (conta ativa, com meta): fluxo cron→brief→recomendações→push inalterado.
 - [ ] Pulso e alerta de mudança material seguem funcionando (agora com moeda correta no texto).
 - [ ] Aprovação conversacional e via site inalteradas.
+
+---
+
+## Execução E2E — resultado (2026-08-26)
+
+Ambiente do container: Postgres 16 + Redis 7 nativos, API real no boot. Serviços externos (Meta, Evolution, OpenRouter) **não** disponíveis aqui — os passos que dependem deles ficam para a stack completa do usuário (`pnpm dev` com credenciais). A lógica determinística desses passos é coberta pela suíte automatizada (core 361 · api 100 · worker 289).
+
+### ✅ Verificado ao vivo (infra + API real)
+- **§0 Gate estático:** `pnpm typecheck` (17/17), `pnpm test` (core/api/worker), `tokens:check`, `pnpm --filter web build` (AOT), `pnpm api:generate` sem drift.
+- **Migrations (ao vivo):** `pnpm db:migrate` limpo (35 migrations). `orgs.market_reference jsonb` ✓; `ad_accounts.activity_state` (enum `active|dormant`, default `active`) + `last_activity_at timestamptz` ✓; enum `activity_state` = {active, dormant} ✓; default de `agents.notify_policy` já inclui `reactivation:{enabled:false}` ✓.
+- **§2 Backfill de arquétipo (ao vivo):** agente semeado com `guardiao_lancamento` → `pnpm backfill:archetype` → `vigia_intensivo` (1 migrado); rerun migra 0 (**idempotente**) ✓.
+- **§5 Backfill de reativação (ao vivo):** agente legado com `notify_policy` sem `reactivation` → `pnpm backfill:notify-reactivation` (1 normalizado) → todos com `reactivation:{enabled:false}`; rerun 0 (**idempotente**) ✓.
+- **Boot da API (ao vivo):** composition root sobe, auto-migrate roda, `/health` ok, `/ready` `{db:true, redis:true}` ✓.
+- **§3 Referência de mercado (round-trip HTTP real):** rota registrada (401 sem auth, não 404) + presente no `openapi.json` com o schema `MarketReference` ✓. Fluxo signup→verify→login→sessão real: `GET` inicial `{marketReference:null}` (vazio = não usa como contexto) ✓; `PUT` (org BRL: custo `sale`/`lead`, CTR bands, frequência, zombie/baseline) persiste e `GET`/DB confirmam ✓; **caminho triste:** chave de custo inválida (`purchase`) é **descartada** pela validação zod (só `conversation|lead|sale`) ✓; gate de acesso beta retorna 403 com mensagem amigável ("conta em análise") ✓.
+- **§4 Multi-moeda cross-conta (round-trip HTTP real):** org com conta BRL (waste 1200) + conta USD (waste 300) → `GET /dashboard` retorna `waste.byCurrency = [{BRL,1200,1},{USD,300,1}]` — **nunca soma** as moedas (não vira 1500); cada conta formatada na sua moeda ✓.
+
+### ⏳ Requer a stack completa do usuário (worker + Meta + Evolution + OpenRouter)
+Lógica determinística coberta por testes automatizados; a validação de ponta a ponta exige os serviços externos:
+- **§2** reseed de arquétipo pela UI (lógica em `agent-config/apply.test.ts`).
+- **§3** referência de custo aparecendo num brief de análise real cold-start (core: `benchmarks`/`market-reference` tests).
+- **§5** transição de dormância após sync real da Meta + dispatch de reativação + push no WhatsApp (core `dormancy` 8 tests; gate no `insights-sync`); auto-config de reativação via chat (grafo do worker + Evolution).
+- **§6** regressão da análise completa (OpenRouter + Meta) e textos de pulso/alerta com a moeda correta.
