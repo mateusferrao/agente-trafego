@@ -52,10 +52,17 @@ const FINISHED_STATUSES = ["succeeded", "failed"] as const;
 /** Garante o agente da conta (injetado do slice de agentes — evita duplicar lógica). */
 export type EnsureAgent = (orgId: OrgId, accountId: string) => Promise<{ agentId: string }>;
 
+/** Logger mínimo (compatível com pino/fastify) p/ observar o onboarding best-effort. */
+export interface OnboardingLogger {
+  warn(obj: Record<string, unknown>, msg: string): void;
+}
+
 export interface RunsDeps {
   readonly db: Database;
   readonly scheduler: SchedulerPort;
   readonly ensureAgent: EnsureAgent;
+  /** observabilidade do onboarding best-effort (§13) — falha inesperada não fica invisível. */
+  readonly logger?: OnboardingLogger;
   /** ledger de custo (usage_events) — fonte do gasto do período (inclui visão). */
   readonly metering: MeteringPort;
   /** cap de custo LLM por org/período (0 = sem cap) — checado pré-run. */
@@ -137,9 +144,16 @@ export function createRunsService(deps: RunsDeps) {
         adAccountId: accountId,
       };
       await deps.scheduler.enqueue({ queue: AGENT_RUNS_QUEUE, name: AGENT_RUN_JOB, payload });
-    } catch {
-      // corrida com o cron (índice único in-flight), cap atingido ou fila indisponível
-      // → best-effort: não interrompe o onboarding da conta.
+    } catch (err) {
+      // Corrida com o cron (índice único in-flight) = esperado, silencioso (sem 2º run).
+      // Qualquer outra falha (cap, fila indisponível, erro inesperado) → best-effort:
+      // não interrompe o onboarding da conta, mas fica visível no log (§13).
+      if (!isUniqueViolation(err)) {
+        deps.logger?.warn(
+          { err, orgId, accountId, agentId },
+          "onboarding: 1a analise/schedule nao disparou (best-effort)",
+        );
+      }
     }
   }
 

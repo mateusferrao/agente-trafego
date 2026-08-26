@@ -57,7 +57,7 @@ export type PanoramaCardVm = PanoramaListOutput["accounts"][number];
         <span class="text-xs text-danger-strong">Token expirado — reconecte em Integrações.</span>
       } @else if (c.agentPaused) {
         <span class="text-xs text-warning-strong">
-          Agente pausado — atualize aqui ou reative o agente para os números voltarem a atualizar sozinhos.
+          Agente pausado. Atualize aqui ou reative o agente para os números voltarem a atualizar sozinhos.
         </span>
       }
       <!-- mt-auto empurra o rodapé pra base → footer alinhado em todos os cards da linha. -->

@@ -4,6 +4,7 @@ import { provideIcons } from '@ng-icons/core';
 import { lucideBuilding2 } from '@ng-icons/lucide';
 import { UiButton, UiEmptyState, UiPageHeader, UiSpinner } from '@ui';
 import { DashboardApiService } from '@core/api/dashboard-api.service';
+import { AGENT_NAME } from '@core/brand';
 import { AccountPanoramaCard, type PanoramaCardVm } from '../../shared/account-panorama-card';
 
 const RELOAD_MS = 5000;
@@ -43,7 +44,7 @@ const RELOAD_MS = 5000;
         <app-ui-empty-state
           icon="lucideBuilding2"
           title="Nenhuma conta sob gestão ainda"
-          description="Conecte sua conta Meta em Integrações e escolha quais contas o agente vai acompanhar."
+          [description]="emptyDescription"
         >
           <button appButton variant="primary" type="button" actions (click)="goToIntegrations()">
             Ir para Integrações
@@ -64,6 +65,8 @@ const RELOAD_MS = 5000;
   `,
 })
 export class AccountsPage {
+  // Marca: 1ª menção do agente apresenta o Roi (aposto).
+  protected readonly emptyDescription = `Conecte sua conta Meta em Integrações e escolha quais contas o ${AGENT_NAME}, seu agente de tráfego, vai acompanhar.`;
   private readonly api = inject(DashboardApiService);
   private readonly router = inject(Router);
 

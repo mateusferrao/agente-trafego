@@ -5,7 +5,7 @@
 
 import { ChangeDetectionStrategy, Component, inject } from "@angular/core";
 import { RouterLink, RouterLinkActive, RouterOutlet } from "@angular/router";
-import { UiBadge, UiButton, UiPageHeader, UiRouteTabLink, UiRouteTabPanel, UiRouteTabs } from "@ui";
+import { UiAgentIdentity, UiBadge, UiButton, UiPageHeader, UiRouteTabLink, UiRouteTabPanel, UiRouteTabs } from "@ui";
 import { AccountContextStore } from "./account-context.store";
 
 @Component({
@@ -16,6 +16,7 @@ import { AccountContextStore } from "./account-context.store";
     RouterLink,
     RouterLinkActive,
     RouterOutlet,
+    UiAgentIdentity,
     UiBadge,
     UiButton,
     UiPageHeader,
@@ -29,6 +30,7 @@ import { AccountContextStore } from "./account-context.store";
         <a routerLink="/accounts" class="text-xs text-muted hover:text-ink">← Contas</a>
         <app-ui-page-header [title]="store.accountName()" [subtitle]="store.accountSubtitle()">
           <div class="flex flex-wrap items-center gap-2" actions>
+            <app-ui-agent-identity />
             <span appBadge [tone]="store.paused() ? 'warning' : 'success'" size="sm">
               {{ store.paused() ? 'Agente pausado' : 'Agente ativo' }}
             </span>

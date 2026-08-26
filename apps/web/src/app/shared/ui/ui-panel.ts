@@ -1,4 +1,4 @@
-import { computed, Directive, ElementRef, inject, input } from '@angular/core';
+import { Directive, input } from '@angular/core';
 
 @Directive({
   selector: '[appUiPanelGrid]',
@@ -11,22 +11,17 @@ export class UiPanelGrid {}
 
 // variant='brand' aplica a assinatura neobrutalista (borda 2px + sombra offset);
 // 'workspace' (default) fica calmo/plano para dados densos (Two-Tier Surface).
+// Host binding idiomático: o Angular faz o merge das classes do consumidor.
 @Directive({
   selector: '[appUiPanelCard]',
   standalone: true,
   host: {
-    '[class]': 'classes()',
+    class: 'ui-panel-card',
+    '[class.ui-panel-card--brand]': "variant() === 'brand'",
   },
 })
 export class UiPanelCard {
-  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
-  private readonly customClasses = this.host.nativeElement.getAttribute('class') ?? '';
-
   readonly variant = input<'workspace' | 'brand'>('workspace');
-
-  readonly classes = computed(() =>
-    `ui-panel-card ${this.variant() === 'brand' ? 'ui-panel-card--brand' : ''} ${this.customClasses}`.trim(),
-  );
 }
 
 @Directive({

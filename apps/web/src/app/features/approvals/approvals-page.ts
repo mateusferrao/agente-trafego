@@ -5,6 +5,7 @@ import { toast } from 'ngx-sonner';
 import { UiBadge, UiButton, UiConfirmDialogService, UiEmptyState, UiPageHeader } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import { ApprovalsApiService } from '@core/api/approvals-api.service';
+import { AGENT_NAME } from '@core/brand';
 import type { ApprovalOutput, RevertibleActionOutput } from '@core/api/generated';
 import { UNDO_WARNING, actionTypeLabel, deadlineText, entityTargetLabel } from '@app/shared/action-format';
 
@@ -49,7 +50,7 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
         <app-ui-empty-state
           icon="lucideCircleCheck"
           title="Nada aguardando OK nem revertível"
-          description="Quando o agente propuser mudanças ou aplicar algo que ainda dá pra desfazer, aparece aqui."
+          [description]="emptyDescription"
         />
       } @else {
         @if (pendingGroups().length > 0) {
@@ -124,6 +125,8 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
   `,
 })
 export class ApprovalsPage implements OnInit {
+  // Marca: 1ª menção do agente apresenta o Roi (aposto).
+  protected readonly emptyDescription = `Quando o ${AGENT_NAME}, seu agente de tráfego, propuser mudanças ou aplicar algo que ainda dá pra desfazer, aparece aqui.`;
   private readonly api = inject(ApprovalsApiService);
   private readonly analysisApi = inject(AnalysisApiService);
   private readonly confirmDialog = inject(UiConfirmDialogService);
@@ -166,7 +169,7 @@ export class ApprovalsPage implements OnInit {
     this.api.resolve(a.id, 'approve').subscribe({
       next: () => {
         this.removePending(a.id);
-        toast.success('Enviado para aplicação — o agente aplica em instantes');
+        toast.success('Enviado para aplicação. O agente aplica em instantes.');
       },
       error: () => this.clearResolving(a.id),
     });

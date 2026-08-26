@@ -187,7 +187,7 @@ export class AgentActions implements OnInit {
     this.approvalsApi.resolve(s.approvalId, 'approve').subscribe({
       next: () => {
         this.removeSuggested(s.approvalId);
-        toast.success('Enviado para aplicação — o agente aplica em instantes');
+        toast.success('Enviado para aplicação. O agente aplica em instantes.');
       },
       error: () => this.clearResolving(s.approvalId),
     });

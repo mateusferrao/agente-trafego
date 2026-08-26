@@ -68,7 +68,7 @@ const MAX_POLLS = 6;
       } @else if (store.analyzing()) {
         <div class="flex flex-col items-center justify-center gap-4 rounded-lg border border-line bg-panel p-10 text-center">
           <app-ui-analysis-progress [title]="analyzingTitle" [steps]="analysisSteps" />
-          <span class="text-xs text-muted">Pode fechar esta tela. O resultado fica salvo aqui.</span>
+          <span class="text-xs text-muted">{{ analyzingReassurance }}</span>
         </div>
       } @else if (store.run() === null) {
         <app-ui-empty-state
@@ -112,6 +112,7 @@ export class AccountOverview {
     "Separando o que vale a pena mexer",
   ];
   protected readonly firstRunDescription = `O ${AGENT_NAME}, seu agente de tráfego, analisa suas campanhas e sugere melhorias sem mexer em nada na sua conta.`;
+  protected readonly analyzingReassurance = `Pode fechar esta tela. O resultado fica salvo aqui e, se o seu WhatsApp estiver conectado, o ${AGENT_NAME} te avisa por lá.`;
   // funções de formatação compartilhadas expostas ao template.
   protected readonly money = money;
   protected readonly asOfLabel = asOfLabel;

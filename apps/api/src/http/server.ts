@@ -64,7 +64,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   // Composition root manual — portas + services montados uma vez.
-  app.decorate("container", buildContainer());
+  app.decorate("container", buildContainer(app.log));
 
   // Sessão (§12): cookie httpOnly com token opaco (casado com `sessions` no DB,
   // revogável). A org ativa mora na sessão no DB, não em cookie. Ver

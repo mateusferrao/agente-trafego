@@ -9,6 +9,7 @@ import { NgIcon, provideIcons } from "@ng-icons/core";
 import { lucideCircleCheck, lucideActivity } from "@ng-icons/lucide";
 import { UiBadge, UiButton, UiEmptyState, UiPageHeader, UiSpinner, type TimelineTone } from "@ui";
 import { DashboardApiService } from "@core/api/dashboard-api.service";
+import { AGENT_NAME } from "@core/brand";
 import type { DashboardOutput } from "@core/api/generated";
 import { actionTypeLabel } from "../../shared/action-format";
 import { money, timeLabel } from "../../shared/format";
@@ -59,7 +60,7 @@ const REASON_TONE: Record<Reason, TimelineTone> = {
           <app-ui-empty-state
             icon="lucideActivity"
             title="Conecte sua primeira conta"
-            description="Ligue uma conta Meta para o agente começar a analisar e sugerir melhorias."
+            [description]="emptyDescription"
           >
             <a appButton variant="primary" routerLink="/integrations" actions>Ir para Integrações</a>
           </app-ui-empty-state>
@@ -79,7 +80,7 @@ const REASON_TONE: Record<Reason, TimelineTone> = {
             } @else {
               <p class="flex items-center gap-2 text-sm text-muted">
                 <ng-icon name="lucideCircleCheck" size="16" aria-hidden="true" class="text-success-strong" />
-                Nenhuma pendência — tudo em dia.
+                Nenhuma pendência, tudo em dia.
               </p>
             }
           </section>
@@ -182,6 +183,8 @@ const REASON_TONE: Record<Reason, TimelineTone> = {
   `,
 })
 export class DashboardPage {
+  // Marca: 1ª menção do agente apresenta o Roi (aposto).
+  protected readonly emptyDescription = `Ligue uma conta Meta e o ${AGENT_NAME}, seu agente de tráfego, começa a analisar e sugerir melhorias.`;
   private readonly api = inject(DashboardApiService);
 
   protected readonly data = signal<DashboardOutput | null>(null);

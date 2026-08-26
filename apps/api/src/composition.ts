@@ -27,7 +27,7 @@ import { createContactsService } from "./modules/contacts/service.js";
 import { createAgentsService } from "./modules/agents/service.js";
 import { createApprovalsService } from "./modules/approvals/service.js";
 import { createRecommendationsService } from "./modules/recommendations/service.js";
-import { createRunsService } from "./modules/runs/service.js";
+import { createRunsService, type OnboardingLogger } from "./modules/runs/service.js";
 import { createDashboardService } from "./modules/dashboard/service.js";
 import { createTimelineService } from "./modules/timeline/service.js";
 import { createBillingService } from "./modules/billing/service.js";
@@ -110,7 +110,7 @@ function todoPort<T>(name: string): T {
  * Composition root manual: instancia adapters (portas) e injeta em cada
  * service; devolve o container que a casca HTTP monta nas rotas.
  */
-export function buildContainer(): Container {
+export function buildContainer(logger?: OnboardingLogger): Container {
   const db = createDb(env.DATABASE_URL);
 
   // Portas plugadas na Fatia 0: vault (cripto do token) + scheduler (enfileira).
@@ -190,6 +190,7 @@ export function buildContainer(): Container {
     metering,
     ensureAgent: (orgId, accountId) => agents.getOrCreateForAccount(orgId, accountId),
     costCapUsd: env.LLM_COST_CAP_USD_PER_PERIOD,
+    ...(logger ? { logger } : {}),
   });
   const services: Services = {
     auth: createAuthService({
