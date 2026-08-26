@@ -38,7 +38,7 @@ import { ShellNav } from './shell-nav';
         <span class="truncate text-sm font-semibold text-ink">{{ currentModuleLabel() }}</span>
       </header>
 
-      <aside class="hidden flex-col gap-5 border-r border-line bg-panel px-4 py-5 md:flex">
+      <aside class="surface-noise hidden flex-col gap-5 border-r border-line bg-panel px-4 py-5 md:flex">
         <div class="brand-lockup px-1">
           <span class="brand-mark" aria-hidden="true"></span>
           <span class="brand-wordmark">AutoTraffic</span>

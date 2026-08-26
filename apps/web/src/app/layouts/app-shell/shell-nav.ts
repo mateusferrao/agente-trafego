@@ -65,7 +65,7 @@ const THEME_OPTIONS: readonly ThemeOption[] = [
   ],
   template: `
     <!-- Troca de organização (única no MVP; wired a GET /api/orgs) -->
-    <div class="flex items-center gap-2.5 rounded-md border border-line bg-soft/60 px-3 py-2">
+    <div class="flex items-center gap-2.5 rounded-lg border-2 border-ink bg-panel px-3 py-2 shadow-[var(--shadow-offset-accent)]">
       <span class="grid size-8 shrink-0 place-items-center rounded-md bg-accent-soft text-accent-strong">
         <ng-icon name="lucideBuilding2" size="16" aria-hidden="true" />
       </span>
@@ -78,13 +78,11 @@ const THEME_OPTIONS: readonly ThemeOption[] = [
       @for (group of groups; track group.id; let last = $last) {
         <!-- Último grupo (Configurar) desce e cola no rodapé da nav. -->
         <div class="flex flex-col gap-1" [class.mt-auto]="last">
-          <span class="px-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
-            {{ group.label }}
-          </span>
+          <span class="ui-eyebrow px-2">{{ group.label }}</span>
           @for (mod of visibleModules(group.modules); track mod.id) {
             <a
               [routerLink]="mod.route"
-              routerLinkActive="bg-accent-soft text-accent-strong"
+              routerLinkActive="bg-accent-soft text-accent-strong font-semibold"
               [routerLinkActiveOptions]="{ exact: mod.exact }"
               class="flex items-center gap-2.5 rounded-md px-2 py-2 text-sm font-medium text-muted transition hover:bg-soft hover:text-ink"
               [title]="mod.description"
