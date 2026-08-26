@@ -1327,6 +1327,74 @@ table[appUiResizableColumns] > tbody > tr > td {
   text-decoration: underline;
 }
 
+/* --- Vocabulário visual de marca (R0): reusado por Análise, Aprovações, Painel,
+   Contas. Estilo do site: eyebrow em mono, evidência com número, meter, pastéis,
+   superfície "brand" (borda 2px + offset). Aposenta a sopa de pills cinza. --- */
+.ui-eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+/* Chip de evidência numérica (metricRefs) — no lugar da caixa cinza de 1 frase. */
+.ui-evidence {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-sm);
+  background: var(--color-soft);
+  padding: 0.15rem 0.5rem;
+  color: var(--color-ink);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.ui-evidence--danger {
+  border-color: color-mix(in srgb, var(--color-danger) 35%, var(--color-line));
+  background: var(--color-danger-soft);
+  color: var(--color-danger-strong);
+}
+.ui-evidence--success {
+  border-color: color-mix(in srgb, var(--color-success) 35%, var(--color-line));
+  background: var(--color-success-soft);
+  color: var(--color-success-strong);
+}
+/* Barra/meter (meta×realizado, funil). */
+.ui-meter {
+  height: 0.5rem;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--color-soft);
+}
+.ui-meter__fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--color-primary);
+}
+.ui-meter__fill--danger {
+  background: var(--color-danger);
+}
+.ui-meter__fill--success {
+  background: var(--color-success);
+}
+/* Superfícies pastel de destaque (veredito/impacto) — raras, nível Marca. */
+.ui-accent-peach {
+  background: var(--color-accent-soft);
+}
+.ui-accent-mint {
+  background: var(--color-success-soft);
+}
+/* Stat grande (dinheiro/KPI): número em mono + rótulo eyebrow. */
+.ui-stat__value {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  line-height: 1.1;
+}
+
 /* Skeleton de carregamento de conteúdo. */
 @keyframes ui-skeleton-shimmer {
   0% { background-position: -160px 0; }
