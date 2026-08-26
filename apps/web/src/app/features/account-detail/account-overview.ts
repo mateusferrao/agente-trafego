@@ -6,7 +6,7 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from "@angular/core";
 import { NgIcon, provideIcons } from "@ng-icons/core";
 import { lucideRefreshCw, lucideActivity } from "@ng-icons/lucide";
-import { UiButton, UiEmptyState, UiSpinner, UiAnalysisProgress } from "@ui";
+import { UiButton, UiEmptyState, UiSpinner, UiAnalysisProgress, UiSkeleton } from "@ui";
 import { AGENT_NAME } from "@core/brand";
 import { DashboardApiService } from "@core/api/dashboard-api.service";
 import type { LiveMetricsOutput } from "@core/api/generated";
@@ -22,7 +22,7 @@ const MAX_POLLS = 6;
 @Component({
   selector: "app-account-overview",
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [NgIcon, UiButton, UiEmptyState, UiSpinner, UiAnalysisProgress, AnalysisDetail, AgentActions],
+  imports: [NgIcon, UiButton, UiEmptyState, UiSpinner, UiAnalysisProgress, UiSkeleton, AnalysisDetail, AgentActions],
   providers: [provideIcons({ lucideRefreshCw, lucideActivity })],
   template: `
     <div class="flex flex-col gap-6">
@@ -66,9 +66,31 @@ const MAX_POLLS = 6;
           Carregando…
         </div>
       } @else if (store.analyzing()) {
-        <div class="flex flex-col items-center justify-center gap-4 rounded-lg border border-line bg-panel p-10 text-center">
-          <app-ui-analysis-progress [title]="analyzingTitle" [steps]="analysisSteps" />
-          <span class="text-xs text-muted">{{ analyzingReassurance }}</span>
+        <div class="flex flex-col gap-4">
+          <div class="ui-panel-card--brand ui-accent-peach flex flex-col items-center gap-3 text-center">
+            <app-ui-analysis-progress [title]="analyzingTitle" [steps]="analysisSteps" />
+            <span class="text-xs text-muted">{{ analyzingReassurance }}</span>
+          </div>
+          <!-- Esqueleto do que vai surgir (veredito + cards) — trabalho real + preview. -->
+          <div class="ui-panel-card--brand flex flex-col gap-3">
+            <app-ui-skeleton width="40%" height="0.75rem" />
+            <app-ui-skeleton width="80%" height="1.4rem" />
+            <div class="flex gap-6">
+              <app-ui-skeleton width="4rem" height="1.6rem" />
+              <app-ui-skeleton width="4rem" height="1.6rem" />
+              <app-ui-skeleton width="4rem" height="1.6rem" />
+            </div>
+          </div>
+          @for (i of skeletonRows; track i) {
+            <div class="flex flex-col gap-3 rounded-lg border border-line border-l-4 border-l-line bg-panel p-4">
+              <app-ui-skeleton width="30%" height="0.7rem" />
+              <app-ui-skeleton width="60%" height="1.1rem" />
+              <div class="flex gap-4">
+                <app-ui-skeleton width="3rem" height="1rem" />
+                <app-ui-skeleton width="3rem" height="1rem" />
+              </div>
+            </div>
+          }
         </div>
       } @else if (store.run() === null) {
         <app-ui-empty-state
@@ -113,6 +135,7 @@ export class AccountOverview {
   ];
   protected readonly firstRunDescription = `O ${AGENT_NAME}, seu agente de tráfego, analisa suas campanhas e sugere melhorias sem mexer em nada na sua conta.`;
   protected readonly analyzingReassurance = `Pode fechar esta tela. O resultado fica salvo aqui e, se o seu WhatsApp estiver conectado, o ${AGENT_NAME} te avisa por lá.`;
+  protected readonly skeletonRows = [1, 2];
   // funções de formatação compartilhadas expostas ao template.
   protected readonly money = money;
   protected readonly asOfLabel = asOfLabel;

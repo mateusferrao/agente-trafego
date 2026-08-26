@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
-import { UiBadge } from '@ui';
+import { UiEyebrow, UiStat, UiEvidence, UiMeter } from '@ui';
+import { AGENT_NAME } from '@core/brand';
 import type { RunDetailOutput } from '@core/api/generated';
 
 type RunView = RunDetailOutput['run'];
@@ -7,65 +8,43 @@ type Recommendation = RunDetailOutput['recommendations'][number];
 type Campaign = RunDetailOutput['campaigns'][number];
 type RunMetrics = NonNullable<NonNullable<RunView>['metrics']>;
 type Scorecard = NonNullable<RunMetrics['scorecard']>;
-/** Desperdício + saúde da medição (§Bloco 2) — do snapshot do run. */
 type Waste = NonNullable<RunMetrics['waste']>;
 type Tracking = NonNullable<RunMetrics['trackingHealth']>;
-type RiskTone = 'neutral' | 'warning' | 'danger';
 export type GradeTone = 'success' | 'info' | 'warning' | 'danger';
-/** Faixa de desempenho da campanha (do backend) — tom+texto, nunca só cor. */
 type Tier = NonNullable<Campaign['tier']>;
-type TierTone = 'success' | 'info' | 'warning' | 'danger';
-/** Estágio de público da campanha (§Bloco 2) — rótulo descritivo, sem juízo. */
 type Stage = NonNullable<Campaign['stage']>;
+type StatTone = 'ink' | 'danger' | 'success' | 'accent';
 
-/** item da faixa de KPIs / taxas (rótulo humano + valor já formatado). */
-interface Stat {
+interface VerdictStat {
   readonly label: string;
   readonly value: string;
+  readonly tone: StatTone;
 }
 
-const RISK_TONE: Record<Recommendation['riskLevel'], RiskTone> = {
-  low: 'neutral',
-  medium: 'warning',
-  high: 'danger',
-};
-const RISK_LABEL: Record<Recommendation['riskLevel'], string> = {
-  low: 'risco baixo',
-  medium: 'risco médio',
-  high: 'risco alto',
-};
 const ACTION_LABEL: Record<string, string> = {
   pause_entity: 'Pausar',
   resume_entity: 'Reativar',
   adjust_budget: 'Ajustar orçamento',
   set_status: 'Mudar status',
 };
-/** Formato da recomendação (S2) em linguagem de gente — status = tom+texto. */
 const KIND_LABEL: Record<Recommendation['kind'], string> = {
   platform_action: 'posso fazer isso',
   human_direction: 'sugestão pra você',
   insight: 'o que observei',
 };
-const KIND_TONE: Record<Recommendation['kind'], 'info' | 'neutral'> = {
-  platform_action: 'info',
-  human_direction: 'neutral',
-  insight: 'neutral',
-};
-/** Rótulo PT-BR de cada faixa (sem jargão). */
 const TIER_LABEL: Record<Tier, string> = {
   winner: 'campeã',
   performer: 'ok',
   underperformer: 'abaixo da meta',
-  zombie: 'parada (desperdício)',
+  zombie: 'parada · desperdício',
 };
-/** Tom da faixa (acompanha o rótulo — status = tom+texto). */
-const TIER_TONE: Record<Tier, TierTone> = {
-  winner: 'success',
-  performer: 'info',
-  underperformer: 'warning',
-  zombie: 'danger',
+/** cor da barra lateral do card por faixa (tom, nunca só cor — o rótulo em eyebrow acompanha). */
+const TIER_BORDER: Record<Tier, string> = {
+  winner: 'border-l-success',
+  performer: 'border-l-info',
+  underperformer: 'border-l-warning',
+  zombie: 'border-l-danger',
 };
-/** Rótulo PT-BR do estágio de público (descritivo — sem tom de bom/ruim). */
 const STAGE_LABEL: Record<Stage, string> = {
   prospecting: 'prospecção',
   remarketing: 'remarketing',
@@ -77,177 +56,145 @@ const LEVEL_LABEL: Record<string, string> = {
   adset: 'conjunto',
   ad: 'anúncio',
 };
-
-/** aplicação de ações chega na fase de escrita (Fatia 5) — texto único (decisão 13). */
 const APPLICABILITY_NOTE = 'Sugestão — a aplicação automática chega em breve.';
-
-/** Nota da conta (scorecard) → tom+texto (nunca só cor — docs/DESIGN.md). */
-export const GRADE_TONE: Record<Scorecard['grade'], GradeTone> = {
-  A: 'success',
-  B: 'info',
-  C: 'warning',
-  D: 'danger',
-};
-export const GRADE_LABEL: Record<Scorecard['grade'], string> = {
-  A: 'ótimo',
-  B: 'bom',
-  C: 'atenção',
-  D: 'crítico',
-};
-/** "Maior vazamento" em linguagem de gente (sem jargão). */
 const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
   consciencia: 'alcançar as pessoas certas',
   engajamento: 'engajamento com os anúncios',
   conversao: 'transformar cliques em vendas',
   receita: 'retorno sobre o investimento',
 };
+// Mapas de nota mantidos p/ compat de export (outras telas importam), sem render de nota-letra.
+export const GRADE_TONE: Record<Scorecard['grade'], GradeTone> = { A: 'success', B: 'info', C: 'warning', D: 'danger' };
+export const GRADE_LABEL: Record<Scorecard['grade'], string> = { A: 'ótimo', B: 'bom', C: 'atenção', D: 'crítico' };
 
 /**
- * Renderização apresentacional do resultado de uma análise: resumo + ressalva
- * "parcial" + scorecard + faixa de KPIs + cartões por campanha + recomendações
- * (👍/👎). Sem IO — voto/silenciar sobem como eventos; o container decide o que
- * fazer. Reusada pelo detalhe da conta (último run) e pelo detalhe de um run do
- * histórico. Segue docs/DESIGN.md (status=tom+texto).
+ * Resultado da análise, redesenhado (Fase 2): veredito liderado por dinheiro (sem
+ * nota-letra), KPIs/funil em stats+meter, cards de campanha com barra de faixa +
+ * evidência (metricRefs), recomendações com eyebrow. Estilo do site (neobrutalista).
+ * Sem IO — voto/silenciar sobem como eventos. Reusado por conta (último run) e histórico.
  */
 @Component({
   selector: 'app-analysis-detail',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiBadge],
+  imports: [UiEyebrow, UiStat, UiEvidence, UiMeter],
   template: `
-    <section class="flex flex-col gap-4">
-      <!-- Narrativa voiceada do agente (aplica a postura); fallback ao resumo neutro
-           em runs antigos / sem narrativa. É a "fala" do agente, no topo. -->
-      @if (narrative(); as n) {
-        <p class="rounded-lg border border-line bg-panel p-5 text-sm text-ink whitespace-pre-line">{{ n }}</p>
-      }
-      <!-- Sem resultados (ex: conta sem gasto): o resumo acima já basta; a
-           ressalva "parcial" e o "nenhuma recomendação" viram ruído aqui. -->
+    <section class="flex flex-col gap-5">
       @if (hasResults()) {
-        <!-- Nota de degradação PROPORCIONAL: hard (dado faltando) = alerta; soft
-             (métricas ok, só criativo/campanha) = nota discreta. Texto vem do backend. -->
+        <!-- VEREDITO DO ROI — lidera pelo dinheiro/resultado (pastel + offset, nível Marca) -->
+        @if (scorecard(); as sc) {
+          <section class="ui-panel-card--brand ui-accent-peach flex flex-col gap-3">
+            <div class="flex items-center gap-2">
+              <span class="brand-mark" aria-hidden="true"></span>
+              <app-ui-eyebrow>A leitura do {{ agentName }}</app-ui-eyebrow>
+            </div>
+            <p class="font-brand text-xl font-extrabold leading-tight text-ink">{{ sc.headline }}</p>
+            @if (verdictStats().length > 0) {
+              <div class="flex flex-wrap gap-x-8 gap-y-3">
+                @for (s of verdictStats(); track s.label) {
+                  <app-ui-stat [label]="s.label" [value]="s.value" [tone]="s.tone" />
+                }
+              </div>
+            }
+            <span class="text-xs text-muted">Maior oportunidade: {{ leakLabel(sc.biggestLeak) }}</span>
+          </section>
+        }
+
+        <!-- Fala do agente (narrativa voiceada) -->
+        @if (narrative(); as n) {
+          <p class="rounded-lg border border-line bg-panel p-4 text-sm text-ink whitespace-pre-line">{{ n }}</p>
+        }
+
         @if (run()?.partialNote; as note) {
-          <p
-            class="text-xs"
-            [class.text-warning-strong]="run()?.partialSeverity === 'hard'"
-            [class.text-muted]="run()?.partialSeverity !== 'hard'"
-          >
+          <p class="text-xs" [class.text-warning-strong]="run()?.partialSeverity === 'hard'" [class.text-muted]="run()?.partialSeverity !== 'hard'">
             {{ note }}
           </p>
         }
 
-        <!-- Ressalva de medição: muita conversa e pouca conversão registrada = rastreamento suspeito -->
+        <!-- Ressalva de medição (tracking suspeito) -->
         @if (tracking(); as t) {
-          <div class="flex flex-col gap-1 rounded-lg border border-warning/40 bg-warning-soft p-4">
-            <span class="text-sm font-medium text-warning-strong">A medição de resultados parece incompleta</span>
+          <div class="flex flex-col gap-1 rounded-lg border-2 border-warning bg-warning-soft p-4">
+            <app-ui-eyebrow>Medição incompleta</app-ui-eyebrow>
             <p class="text-sm text-ink">
               {{ t.funnelStarted }} conversas e apenas {{ t.trackedConversions }} conversões registradas. Confira o
-              rastreamento de conversões (o pixel/rastreamento do site) antes de decidir pelo custo por conversão.
+              rastreamento (pixel/CAPI) antes de decidir pelo custo por conversão.
             </p>
           </div>
         }
 
-        <!-- Scorecard: nota da conta (tom+texto) + maior vazamento + headline -->
-        @if (scorecard(); as sc) {
-          <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
-            <div class="flex items-center gap-3">
-              <span appBadge [tone]="gradeTone(sc.grade)" size="sm">
-                Nota {{ sc.grade }} · {{ gradeLabel(sc.grade) }}
-              </span>
-              <span class="text-xs text-muted">Maior oportunidade: {{ leakLabel(sc.biggestLeak) }}</span>
-            </div>
-            <p class="text-sm text-ink">{{ sc.headline }}</p>
+        <!-- Funil de conversa (meters) -->
+        @if (funnelRates().length > 0) {
+          <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-4">
+            <app-ui-eyebrow>Funil de conversa</app-ui-eyebrow>
+            @for (f of funnelRates(); track f.label) {
+              <div class="flex flex-col gap-1">
+                <div class="flex justify-between text-xs">
+                  <span class="text-ink">{{ f.label }}</span>
+                  <span class="ui-stat__value text-ink">{{ f.value }}</span>
+                </div>
+                <app-ui-meter [ratio]="f.ratio" tone="success" />
+              </div>
+            }
           </section>
         }
 
-        <!-- Faixa de KPIs (gasto/CPA/ROAS) + taxas de funil quando houver -->
-        @if (stats().length > 0) {
-          <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-            @for (stat of stats(); track stat.label) {
-              <div class="flex flex-col gap-1 rounded-lg border border-line bg-panel p-4">
-                <span class="text-xs text-muted">{{ stat.label }}</span>
-                <span class="font-brand text-lg font-semibold text-ink">{{ stat.value }}</span>
+        <!-- Dinheiro sem retorno (money shot) -->
+        @if (waste(); as w) {
+          <section class="ui-panel-card--brand flex flex-col gap-3">
+            <app-ui-eyebrow>Dinheiro sem retorno</app-ui-eyebrow>
+            @if (w.wastedSpend > 0) {
+              <div class="flex items-baseline gap-2">
+                <span class="ui-stat__value text-3xl text-danger-strong">{{ money(w.wastedSpend) }}</span>
+                <span class="text-sm text-muted">{{ pct(w.wastedPct) }} do gasto — pausar libera esse valor</span>
               </div>
             }
-          </div>
-        }
-
-        <!-- Desperdício (§Bloco 2): o "money shot" — quanto queima + gasto mal distribuído -->
-        @if (waste(); as w) {
-          <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
-            <div class="flex flex-col gap-1">
-              <h2 class="font-brand text-sm font-semibold text-ink">Dinheiro sem retorno</h2>
-              @if (w.wastedSpend > 0) {
-                <p class="text-sm text-ink">
-                  <span class="font-semibold text-warning-strong">{{ money(w.wastedSpend) }}</span>
-                  ({{ pct(w.wastedPct) }}) em campanhas paradas — pausá-las libera esse valor.
-                </p>
-              }
-            </div>
-
             @if (w.zombies.length > 0) {
-              <ul class="flex flex-col gap-1.5">
+              <div class="flex flex-wrap gap-2">
                 @for (z of w.zombies; track z.id) {
-                  <li class="flex items-center justify-between gap-3 rounded-md bg-soft px-3 py-2 text-sm">
-                    <span class="min-w-0 truncate text-ink">{{ z.name }}</span>
-                    <span class="shrink-0 text-muted">{{ money(z.spend) }}</span>
-                  </li>
+                  <app-ui-evidence>{{ z.name }} · {{ money(z.spend) }}</app-ui-evidence>
                 }
-              </ul>
+              </div>
             }
-
             @if (misallocated().length > 0) {
               <div class="flex flex-col gap-1.5">
-                <span class="text-xs text-muted">Gasto mal distribuído — consomem mais do que entregam:</span>
-                <ul class="flex flex-col gap-1.5">
-                  @for (m of misallocated(); track m.id) {
-                    <li class="flex flex-col gap-0.5 rounded-md bg-soft px-3 py-2 text-sm">
-                      <span class="min-w-0 truncate text-ink">{{ m.name }}</span>
-                      <span class="text-xs text-muted">
-                        consome {{ pct(m.spendPct) }} do gasto e entrega {{ pct(m.resultPct ?? 0) }} dos resultados
-                      </span>
-                    </li>
-                  }
-                </ul>
+                <span class="text-xs text-muted">Gasto mal distribuído (consome mais do que entrega):</span>
+                @for (m of misallocated(); track m.id) {
+                  <div class="flex items-center justify-between gap-3 text-sm">
+                    <span class="min-w-0 truncate text-ink">{{ m.name }}</span>
+                    <span class="shrink-0 text-xs text-muted">{{ pct(m.spendPct) }} gasto · {{ pct(m.resultPct ?? 0) }} resultado</span>
+                  </div>
+                }
               </div>
             }
           </section>
         }
 
-        <!-- Recorte por campanha: o gestor pensa por campanha (não por conta-blob) -->
+        <!-- Campanhas -->
         @if (campaigns().length > 0) {
           <div class="flex flex-col gap-1">
             <h2 class="font-brand text-sm font-semibold text-ink">Campanhas</h2>
-            <p class="text-xs text-muted">
-              Análise de cada campanha ativa. Silencie as que o agente não deve acompanhar.
-            </p>
+            <p class="text-xs text-muted">Análise de cada campanha ativa. Silencie as que o {{ agentName }} não deve acompanhar.</p>
           </div>
           <div class="flex flex-col gap-3">
             @for (c of campaigns(); track c.externalId) {
               <article
-                class="flex flex-col gap-2 rounded-lg border border-line bg-panel p-5"
+                class="flex flex-col gap-3 rounded-lg border border-line border-l-4 bg-panel p-4"
+                [class]="tierBorder(c)"
                 [class.opacity-60]="c.muted"
               >
                 <div class="flex items-start justify-between gap-3">
                   <div class="flex flex-col gap-1">
                     <div class="flex flex-wrap items-center gap-2">
-                      <h3 class="font-brand text-base font-semibold text-ink">{{ campaignName(c) }}</h3>
                       @if (c.tier) {
-                        <span appBadge [tone]="tierTone(c.tier)" size="sm">{{ tierLabel(c.tier) }}</span>
+                        <app-ui-eyebrow [class]="tierText(c.tier)">{{ tierLabel(c.tier) }}</app-ui-eyebrow>
                       }
                       @if (c.stage) {
-                        <span appBadge size="sm">{{ stageLabel(c.stage) }}</span>
-                      }
-                    </div>
-                    <div class="flex flex-wrap items-center gap-2">
-                      <span appBadge [tone]="campaignTone(c)" size="sm">{{ campaignStatusLabel(c) }}</span>
-                      <span class="text-xs text-muted">Gasto {{ campaignSpend(c) }}</span>
-                      @if (c.metrics.cpa !== undefined) {
-                        <span class="text-xs text-muted">· {{ cpaLabel() }} {{ campaignCpa(c) }}</span>
+                        <span class="text-[11px] text-muted">· {{ stageLabel(c.stage) }}</span>
                       }
                       @if (c.muted) {
-                        <span appBadge size="sm">silenciada</span>
+                        <span class="text-[11px] text-muted">· silenciada</span>
                       }
                     </div>
+                    <h3 class="font-semibold text-ink">{{ campaignName(c) }}</h3>
                   </div>
                   <button
                     type="button"
@@ -258,12 +205,32 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                     {{ mutingId() === c.externalId ? 'Salvando…' : c.muted ? 'Reativar' : 'Silenciar' }}
                   </button>
                 </div>
+
+                <!-- métricas inline em mono -->
+                <div class="flex flex-wrap gap-x-6 gap-y-1">
+                  <span class="flex items-baseline gap-1.5"><app-ui-eyebrow>Gasto</app-ui-eyebrow><b class="ui-stat__value text-sm text-ink">{{ campaignSpend(c) }}</b></span>
+                  @if (c.metrics.roas !== undefined) {
+                    <span class="flex items-baseline gap-1.5"><app-ui-eyebrow>ROAS</app-ui-eyebrow><b class="ui-stat__value text-sm text-success-strong">{{ c.metrics.roas.toFixed(2) }}x</b></span>
+                  }
+                  @if (c.metrics.cpa !== undefined) {
+                    <span class="flex items-baseline gap-1.5"><app-ui-eyebrow>{{ cpaLabel() }}</app-ui-eyebrow><b class="ui-stat__value text-sm text-ink">{{ campaignCpa(c) }}</b></span>
+                  }
+                  @if (c.metrics.ctr !== undefined) {
+                    <span class="flex items-baseline gap-1.5"><app-ui-eyebrow>CTR</app-ui-eyebrow><b class="ui-stat__value text-sm text-ink">{{ pctRatio(c.metrics.ctr) }}</b></span>
+                  }
+                </div>
+
                 @if (c.summary) {
-                  <p class="text-sm text-muted">{{ c.summary }}</p>
+                  <p class="text-sm text-ink">{{ c.summary }}</p>
                 }
-                @if (c.topFinding) {
-                  <div class="rounded-md bg-soft p-3">
-                    <span class="text-sm text-ink">{{ c.topFinding.title }}</span>
+                @if (c.topFinding?.detail) {
+                  <p class="text-sm text-muted">{{ c.topFinding?.detail }}</p>
+                }
+                @if (findingRefs(c).length > 0) {
+                  <div class="flex flex-wrap gap-2">
+                    @for (r of findingRefs(c); track r.label) {
+                      <app-ui-evidence [tone]="evidenceTone(c)">{{ r.label }} {{ r.value }}</app-ui-evidence>
+                    }
                   </div>
                 }
               </article>
@@ -271,6 +238,7 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
           </div>
         }
 
+        <!-- Recomendações -->
         @if (recommendations().length === 0) {
           <p class="text-sm text-muted">Nenhuma recomendação desta vez.</p>
         } @else {
@@ -280,41 +248,22 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
           </div>
           <div class="flex flex-col gap-3">
             @for (rec of recommendations(); track rec.id) {
-              <article class="flex flex-col gap-2 rounded-lg border border-line bg-panel p-5">
-                <div class="flex items-start justify-between gap-3">
-                  <div class="flex flex-wrap items-center gap-2">
-                    <h3 class="font-brand text-base font-semibold text-ink">{{ rec.title }}</h3>
-                    <span appBadge [tone]="kindTone(rec.kind)" size="sm">{{ kindLabel(rec.kind) }}</span>
-                    @if (recTier(rec); as t) {
-                      <span appBadge [tone]="tierTone(t)" size="sm">{{ tierLabel(t) }}</span>
-                    }
-                  </div>
-                  <span appBadge [tone]="riskTone(rec.riskLevel)">{{ riskLabel(rec.riskLevel) }}</span>
-                </div>
+              <article class="ui-panel-card--brand flex flex-col gap-2">
+                <app-ui-eyebrow [class]="kindText(rec.kind)">{{ kindLabel(rec.kind) }}</app-ui-eyebrow>
+                <h3 class="font-brand text-lg font-bold leading-tight text-ink">{{ rec.title }}</h3>
                 @if (rec.rationale) {
-                  <p class="text-sm text-muted">{{ rec.rationale }}</p>
+                  <p class="text-sm text-ink">{{ rec.rationale }}</p>
                 }
                 @if (rec.kind === 'platform_action' && rec.proposedAction) {
-                  <div class="rounded-md bg-soft p-3">
-                    <span class="text-sm text-ink">Ação sugerida: {{ actionText(rec) }}</span>
-                  </div>
+                  <span class="ui-tag-mint w-fit">Ação: {{ actionText(rec) }}</span>
                 } @else if (rec.kind === 'human_direction') {
-                  <div class="rounded-md bg-soft p-3">
-                    <span class="text-sm text-ink">Direção — você aplica. Peça no WhatsApp se quiser ajuda.</span>
-                  </div>
-                } @else if (rec.kind === 'platform_action') {
-                  <!-- defensivo: platform_action sempre carrega ação (invariante do backend);
-                       fallback caso uma linha legada venha sem proposedAction. -->
-                  <div class="rounded-md bg-soft p-3">
-                    <span class="text-sm text-muted">{{ applicabilityNote }}</span>
-                  </div>
+                  <span class="text-xs text-muted">Direção — você aplica. Peça ao {{ agentName }} no WhatsApp se quiser ajuda.</span>
                 }
-                <!-- Feedback 👍/👎: ensina o agente (👎 vira memória "não repita isso") -->
                 <div class="flex items-center gap-2 pt-1">
-                  <span class="text-xs text-muted">Essa sugestão faz sentido?</span>
+                  <span class="text-xs text-muted">Faz sentido?</span>
                   <button
                     type="button"
-                    class="rounded-md border border-line px-2 py-1 text-xs"
+                    class="rounded-md border border-line px-2.5 py-1 text-xs font-medium"
                     [class.bg-success-soft]="rec.vote === 'up'"
                     [class.text-success-strong]="rec.vote === 'up'"
                     [class.text-muted]="rec.vote !== 'up'"
@@ -322,11 +271,11 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                     [disabled]="votingId() === rec.id"
                     (click)="onVote(rec, 'up')"
                   >
-                    {{ rec.vote === 'up' ? '👍 Marcada como útil' : '👍 Útil' }}
+                    {{ rec.vote === 'up' ? 'Marcada como útil' : 'Útil' }}
                   </button>
                   <button
                     type="button"
-                    class="rounded-md border border-line px-2 py-1 text-xs"
+                    class="rounded-md border border-line px-2.5 py-1 text-xs font-medium"
                     [class.bg-danger-soft]="rec.vote === 'down'"
                     [class.text-danger-strong]="rec.vote === 'down'"
                     [class.text-muted]="rec.vote !== 'down'"
@@ -334,10 +283,10 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                     [disabled]="votingId() === rec.id"
                     (click)="onVote(rec, 'down')"
                   >
-                    👎 Não
+                    Não
                   </button>
                   @if (rec.vote === 'down') {
-                    <span class="text-xs text-muted">Anotado — o agente evita repetir isso.</span>
+                    <span class="text-xs text-muted">Anotado — o {{ agentName }} evita repetir isso.</span>
                   }
                 </div>
               </article>
@@ -360,76 +309,65 @@ export class AnalysisDetail {
   readonly toggleMute = output<Campaign>();
 
   protected readonly applicabilityNote = APPLICABILITY_NOTE;
+  protected readonly agentName = AGENT_NAME;
 
-  /** Diagnóstico único da conta (só quando o run trouxe scorecard). */
   protected readonly scorecard = computed<Scorecard | null>(() => this.run()?.metrics?.scorecard ?? null);
-
-  /** Desperdício do run — só renderiza quando há zumbis OU gasto mal distribuído. */
   protected readonly waste = computed<Waste | null>(() => {
     const w = this.run()?.metrics?.waste ?? null;
     if (!w) return null;
     return w.wastedSpend > 0 || (w.pareto?.misallocated.length ?? 0) > 0 ? w : null;
   });
-  /** Itens mal alocados do Pareto (gasta mais do que entrega) — vazio = não mostra. */
   protected readonly misallocated = computed(() => this.waste()?.pareto?.misallocated ?? []);
-  /** Saúde da medição — só quando suspeita (o backend só preenche nesse caso). */
   protected readonly tracking = computed<Tracking | null>(() => {
     const t = this.run()?.metrics?.trackingHealth;
     return t?.suspect ? t : null;
   });
-
-  /**
-   * Run trouxe algo acionável? (scorecard, KPIs ou recomendações). Se não — ex:
-   * conta sem gasto — o resumo já basta; a ressalva "parcial" e o "nenhuma
-   * recomendação" viram ruído, então ficam suprimidos.
-   */
   protected readonly hasResults = computed<boolean>(
     () =>
       this.scorecard() !== null ||
-      this.stats().length > 0 ||
+      this.verdictStats().length > 0 ||
       this.recommendations().length > 0 ||
       this.campaigns().length > 0,
   );
-
-  /** Fala do agente no topo: narrativa voiceada (postura); fallback ao resumo neutro. */
   protected readonly narrative = computed(() => this.run()?.narrative ?? this.run()?.summary ?? null);
-
-  /** Rótulo do CPA derivado da conversão de negócio (API projeta); fallback genérico. */
   protected readonly cpaLabel = computed(() => this.run()?.metrics?.kpis.cpaLabel ?? 'Custo por resultado');
 
-  /** Faixa de KPIs + taxas de funil, já formatada (só o que houver). */
-  protected readonly stats = computed<Stat[]>(() => {
+  /** Stats do veredito (dinheiro-primeiro): gasto, CPA, ROAS, parado. */
+  protected readonly verdictStats = computed<VerdictStat[]>(() => {
     const metrics = this.run()?.metrics;
     if (!metrics) return [];
-    const currency = this.currency();
-    const { kpis, funnel } = metrics;
-    const items: Stat[] = [{ label: 'Gasto', value: formatCurrency(kpis.spend, currency) }];
-    if (kpis.cpa !== undefined) items.push({ label: this.cpaLabel(), value: formatCurrency(kpis.cpa, currency) });
-    if (kpis.roas !== undefined) items.push({ label: 'Retorno (ROAS)', value: `${kpis.roas.toFixed(2)}x` });
-    if (funnel?.replyRate !== undefined) items.push({ label: 'Taxa de resposta', value: formatPercent(funnel.replyRate) });
-    if (funnel?.depthRate !== undefined) items.push({ label: 'Conversas que avançam', value: formatPercent(funnel.depthRate) });
+    const cur = this.currency();
+    const { kpis } = metrics;
+    const items: VerdictStat[] = [{ label: 'Gasto', value: formatCurrency(kpis.spend, cur), tone: 'ink' }];
+    if (kpis.cpa !== undefined) items.push({ label: this.cpaLabel(), value: formatCurrency(kpis.cpa, cur), tone: 'ink' });
+    if (kpis.roas !== undefined) items.push({ label: 'Retorno (ROAS)', value: `${kpis.roas.toFixed(2)}x`, tone: 'success' });
+    const w = this.run()?.metrics?.waste;
+    if (w && w.wastedSpend > 0) items.push({ label: 'Parado sem retorno', value: formatCurrency(w.wastedSpend, cur), tone: 'danger' });
     return items;
+  });
+
+  /** Funil de conversa como taxas (meter). */
+  protected readonly funnelRates = computed<{ label: string; value: string; ratio: number }[]>(() => {
+    const funnel = this.run()?.metrics?.funnel;
+    if (!funnel) return [];
+    const out: { label: string; value: string; ratio: number }[] = [];
+    if (funnel.replyRate !== undefined) out.push({ label: 'Taxa de resposta', value: formatPercent(funnel.replyRate), ratio: funnel.replyRate });
+    if (funnel.depthRate !== undefined) out.push({ label: 'Conversas que avançam', value: formatPercent(funnel.depthRate), ratio: funnel.depthRate });
+    return out;
   });
 
   protected onVote(rec: Recommendation, vote: 'up' | 'down'): void {
     this.vote.emit({ id: rec.id, vote });
   }
-
   protected onToggleMute(c: Campaign): void {
     this.toggleMute.emit(c);
   }
 
-  protected riskTone(risk: Recommendation['riskLevel']): RiskTone {
-    return RISK_TONE[risk];
-  }
-  protected riskLabel(risk: Recommendation['riskLevel']): string {
-    return RISK_LABEL[risk];
-  }
   protected kindLabel(kind: Recommendation['kind']): string {
     return KIND_LABEL[kind];
   }
-  protected kindTone(kind: Recommendation['kind']): 'info' | 'neutral' {
-    return KIND_TONE[kind];
+  protected kindText(kind: Recommendation['kind']): string {
+    return kind === 'platform_action' ? 'text-accent-strong' : 'text-muted';
   }
   protected actionText(rec: Recommendation): string {
     const action = rec.proposedAction;
@@ -442,67 +380,48 @@ export class AnalysisDetail {
   protected campaignName(c: Campaign): string {
     return c.name ?? c.externalId;
   }
-
-  /** Índice externalId → faixa, p/ cruzar o tier nas recomendações (task 3b). */
-  private readonly tierByCampaign = computed<ReadonlyMap<string, Tier>>(() => {
-    const map = new Map<string, Tier>();
-    for (const c of this.campaigns()) if (c.tier) map.set(c.externalId, c.tier);
-    return map;
-  });
-
   protected tierLabel(tier: Tier): string {
     return TIER_LABEL[tier];
   }
-  protected tierTone(tier: Tier): TierTone {
-    return TIER_TONE[tier];
+  protected tierBorder(c: Campaign): string {
+    return c.tier ? TIER_BORDER[c.tier] : 'border-l-line';
+  }
+  protected tierText(tier: Tier): string {
+    const t: Record<Tier, string> = {
+      winner: 'text-success-strong',
+      performer: 'text-info-strong',
+      underperformer: 'text-warning-strong',
+      zombie: 'text-danger-strong',
+    };
+    return t[tier];
   }
   protected stageLabel(stage: Stage): string {
     return STAGE_LABEL[stage];
   }
-  /** Valor monetário na moeda da conta (desperdício/zumbis). */
+  /** metricRefs do achado principal (evidência) — vazio se ausente (histórico). */
+  protected findingRefs(c: Campaign): { label: string; value: string }[] {
+    return c.topFinding?.metricRefs ?? [];
+  }
+  protected evidenceTone(c: Campaign): 'neutral' | 'danger' | 'success' {
+    const sev = c.topFinding?.severity;
+    if (sev === 'critical') return 'danger';
+    if (c.tier === 'winner') return 'success';
+    return 'neutral';
+  }
   protected money(value: number): string {
     return formatCurrency(value, this.currency());
   }
-  /** Percentuais do desperdício já vêm 0-100 do backend — só arredonda + sufixo. */
   protected pct(value: number): string {
     return `${Math.round(value)}%`;
   }
-  /**
-   * Faixa da campanha-alvo de uma recomendação (só quando a ação mira uma campanha
-   * e ela está entre as campanhas já carregadas). Sem faixa → não renderiza badge.
-   */
-  protected recTier(rec: Recommendation): Tier | null {
-    const action = rec.proposedAction;
-    if (!action || action.target.level !== 'campaign') return null;
-    return this.tierByCampaign().get(action.target.id) ?? null;
-  }
-  /**
-   * Precisa de atenção? flag de meta/anomalia OU um achado grave da análise —
-   * senão o badge "dentro da meta" contradiz um gargalo crítico exibido logo abaixo.
-   */
-  private campaignNeedsAttention(c: Campaign): boolean {
-    const sev = c.topFinding?.severity;
-    return c.flags.length > 0 || sev === 'warning' || sev === 'critical';
-  }
-  /** Tom+texto (nunca só cor): atenção × dentro da meta. */
-  protected campaignTone(c: Campaign): RiskTone {
-    return this.campaignNeedsAttention(c) ? 'warning' : 'neutral';
-  }
-  protected campaignStatusLabel(c: Campaign): string {
-    return this.campaignNeedsAttention(c) ? 'atenção' : 'dentro da meta';
+  protected pctRatio(ratio: number): string {
+    return `${(ratio * 100).toFixed(2)}%`;
   }
   protected campaignSpend(c: Campaign): string {
     return formatCurrency(c.metrics.spend, this.currency());
   }
   protected campaignCpa(c: Campaign): string {
     return formatCurrency(c.metrics.cpa ?? 0, this.currency());
-  }
-
-  protected gradeTone(grade: Scorecard['grade']): GradeTone {
-    return GRADE_TONE[grade];
-  }
-  protected gradeLabel(grade: Scorecard['grade']): string {
-    return GRADE_LABEL[grade];
   }
   protected leakLabel(leak: Scorecard['biggestLeak']): string {
     return LEAK_LABEL[leak];
@@ -516,7 +435,6 @@ function formatCurrency(value: number, currency: string): string {
   try {
     return new Intl.NumberFormat(CURRENCY_LOCALE, { style: 'currency', currency }).format(value);
   } catch {
-    // moeda desconhecida → não quebra a tela; mostra o número puro.
     return value.toFixed(2);
   }
 }
