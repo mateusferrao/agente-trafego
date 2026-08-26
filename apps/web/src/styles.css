@@ -2,34 +2,52 @@
 @source './app';
 
 @theme {
-  --color-bg: #f7f7f4;
-  --color-app: #f7f7f4;
-  --color-panel: #fffefa;
-  --color-soft: #eef1ea;
-  --color-line: #d9ded5;
-  --color-ink: #17231e;
-  --color-muted: #64726a;
-  --color-accent: #047857;
-  --color-accent-strong: #065f46;
-  --color-accent-soft: #d9f5e6;
-  --color-success: #047857;
-  --color-success-strong: #065f46;
-  --color-success-soft: #d9f5e6;
+  /* Identidade AutoTraffic (neobrutalismo refinado). Mapa old→new:
+     accent emerald→tomate · tomato (era vermelho de perigo)→tomate de marca · assistant verde-antigo→menta ·
+     danger ganha vermelho profundo distinto do tomate · primary novo = navy (ação). */
+  --color-bg: #fbf9f4;
+  --color-app: #fbf9f4;
+  --color-panel: #ffffff;
+  --color-soft: #f4f2ec;
+  --color-line: #e6e2d8;
+  --color-ink: #070a27;
+  --color-muted: #4a5070;
+  /* Escala navy (neutra escura da marca) — primário + borda bold */
+  --color-navy-900: #070a27;
+  --color-navy-800: #0c1134;
+  --color-navy-700: #141a44;
+  --color-navy-600: #1e2657;
+  --color-navy-500: #2c3572;
+  --color-navy-400: #7c86b8;
+  /* Primário = ação (navy sólido) */
+  --color-primary: #0c1134;
+  --color-primary-strong: #070a27;
+  --color-primary-ink: #fbf9f4;
+  /* Accent raro de marca = tomate (seleção/ativo/marca) */
+  --color-accent: #e00202;
+  --color-accent-strong: #b00202;
+  --color-accent-soft: #ffe3dc;
+  /* Sucesso/agente = menta */
+  --color-success: #047a4d;
+  --color-success-strong: #035c3a;
+  --color-success-soft: #c9f3e1;
   --color-warning: #b45309;
   --color-warning-strong: #92400e;
   --color-warning-soft: #fff1cf;
   --color-info: #2563eb;
   --color-info-strong: #1d4ed8;
   --color-info-soft: #dbeafe;
-  --color-danger: #e04b35;
-  --color-danger-strong: #b93824;
-  --color-danger-soft: #ffe2dc;
-  --color-overlay: rgb(23 35 30 / 0.18);
-  --color-assistant: #10a37f;
-  --color-assistant-strong: #063f34;
-  --color-tomato: #e04b35;
-  --color-tomato-soft: #ffe2dc;
-  /* Paleta categórica (não-semântica): distinção de séries/segmentos (ex.: barra de crédito por métrica). Não usar para status. */
+  /* Perigo = vermelho profundo, distinto do tomate de marca */
+  --color-danger: #b3241c;
+  --color-danger-strong: #8f1a14;
+  --color-danger-soft: #f7dcd7;
+  --color-overlay: rgb(7 10 39 / 0.28);
+  --color-assistant: #047a4d;
+  --color-assistant-strong: #035c3a;
+  /* Tomate de marca (símbolo/lockup do Roi) = accent */
+  --color-tomato: #e00202;
+  --color-tomato-soft: #ffe3dc;
+  /* Paleta categórica (não-semântica): distinção de séries/segmentos. Não usar para status. */
   --color-cat-1: #0ea5e9;
   --color-cat-2: #8b5cf6;
   --color-cat-3: #f59e0b;
@@ -37,55 +55,68 @@
   --color-cat-5: #ec4899;
   --color-cat-6: #84cc16;
   --color-cat-7: #f43f5e;
-  --color-dark-app: #090a0a;
-  --color-dark-panel: #111212;
-  --color-dark-line: #2a2c2b;
-  --color-dark-ink: #f2f3f2;
-  --shadow-card: 0 1px 2px rgb(23 35 30 / 0.07);
-  --shadow-float: 0 4px 10px rgb(23 35 30 / 0.11);
-  --shadow-lift: 0 8px 14px rgb(23 35 30 / 0.14);
-  --shadow-panel: 0 18px 44px rgb(23 35 30 / 0.14);
-  --shadow-glass: 0 24px 70px rgb(23 35 30 / 0.16);
+  --color-dark-app: #070a27;
+  --color-dark-panel: #0c1134;
+  --color-dark-line: #2c3572;
+  --color-dark-ink: #fbf9f4;
+  --shadow-card: 0 1px 2px rgb(7 10 39 / 0.08);
+  --shadow-float: 0 4px 10px rgb(7 10 39 / 0.12);
+  --shadow-lift: 0 8px 14px rgb(7 10 39 / 0.16);
+  --shadow-panel: 0 18px 44px rgb(7 10 39 / 0.18);
+  /* Assinatura neobrutalista: sombra sólida offset (sem blur). Bold genérico (navy) + pop de marca (tomate). */
+  --shadow-offset: 3px 3px 0 #070a27;
+  --shadow-offset-press: 1px 1px 0 #070a27;
+  --shadow-offset-accent: 3px 3px 0 #e00202;
+  --shadow-offset-accent-press: 1px 1px 0 #e00202;
   --radius-xs: 0.375rem;
   --radius-sm: 0.5rem;
   --radius-md: 0.75rem;
   --radius-lg: 1rem;
   --radius-xl: 1.25rem;
   --radius-pill: 999px;
-  --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
-  --font-brand: Figtree, ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-brand: 'Archivo', ui-sans-serif, system-ui, sans-serif;
   --font-serif: 'Noto Serif', Georgia, ui-serif, serif;
-  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
 }
 
 :root {
-  --color-bg: #f7f7f4;
-  --color-app: #f7f7f4;
-  --color-panel: #fffefa;
-  --color-soft: #eef1ea;
-  --color-line: #d9ded5;
-  --color-ink: #17231e;
-  --color-muted: #64726a;
-  --color-accent: #047857;
-  --color-accent-strong: #065f46;
-  --color-accent-soft: #d9f5e6;
-  --color-success: #047857;
-  --color-success-strong: #065f46;
-  --color-success-soft: #d9f5e6;
+  --color-bg: #fbf9f4;
+  --color-app: #fbf9f4;
+  --color-panel: #ffffff;
+  --color-soft: #f4f2ec;
+  --color-line: #e6e2d8;
+  --color-ink: #070a27;
+  --color-muted: #4a5070;
+  --color-navy-900: #070a27;
+  --color-navy-800: #0c1134;
+  --color-navy-700: #141a44;
+  --color-navy-600: #1e2657;
+  --color-navy-500: #2c3572;
+  --color-navy-400: #7c86b8;
+  --color-primary: #0c1134;
+  --color-primary-strong: #070a27;
+  --color-primary-ink: #fbf9f4;
+  --color-accent: #e00202;
+  --color-accent-strong: #b00202;
+  --color-accent-soft: #ffe3dc;
+  --color-success: #047a4d;
+  --color-success-strong: #035c3a;
+  --color-success-soft: #c9f3e1;
   --color-warning: #b45309;
   --color-warning-strong: #92400e;
   --color-warning-soft: #fff1cf;
   --color-info: #2563eb;
   --color-info-strong: #1d4ed8;
   --color-info-soft: #dbeafe;
-  --color-danger: #e04b35;
-  --color-danger-strong: #b93824;
-  --color-danger-soft: #ffe2dc;
-  --color-overlay: rgb(23 35 30 / 0.18);
-  --color-assistant: #10a37f;
-  --color-assistant-strong: #063f34;
-  --color-tomato: #e04b35;
-  --color-tomato-soft: #ffe2dc;
+  --color-danger: #b3241c;
+  --color-danger-strong: #8f1a14;
+  --color-danger-soft: #f7dcd7;
+  --color-overlay: rgb(7 10 39 / 0.28);
+  --color-assistant: #047a4d;
+  --color-assistant-strong: #035c3a;
+  --color-tomato: #e00202;
+  --color-tomato-soft: #ffe3dc;
   --color-cat-1: #0ea5e9;
   --color-cat-2: #8b5cf6;
   --color-cat-3: #f59e0b;
@@ -93,38 +124,50 @@
   --color-cat-5: #ec4899;
   --color-cat-6: #84cc16;
   --color-cat-7: #f43f5e;
-  --shadow-card: 0 1px 2px rgb(23 35 30 / 0.07);
-  --shadow-float: 0 4px 10px rgb(23 35 30 / 0.11);
-  --shadow-lift: 0 8px 14px rgb(23 35 30 / 0.14);
-  --shadow-panel: 0 18px 44px rgb(23 35 30 / 0.14);
-  --shadow-glass: 0 24px 70px rgb(23 35 30 / 0.16);
+  --shadow-card: 0 1px 2px rgb(7 10 39 / 0.08);
+  --shadow-float: 0 4px 10px rgb(7 10 39 / 0.12);
+  --shadow-lift: 0 8px 14px rgb(7 10 39 / 0.16);
+  --shadow-panel: 0 18px 44px rgb(7 10 39 / 0.18);
+  --shadow-offset: 3px 3px 0 #070a27;
+  --shadow-offset-press: 1px 1px 0 #070a27;
+  --shadow-offset-accent: 3px 3px 0 #e00202;
+  --shadow-offset-accent-press: 1px 1px 0 #e00202;
   --radius-xs: 0.375rem;
   --radius-sm: 0.5rem;
   --radius-md: 0.75rem;
   --radius-lg: 1rem;
   --radius-xl: 1.25rem;
   --radius-pill: 999px;
-  --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
-  --font-brand: Figtree, ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-brand: 'Archivo', ui-sans-serif, system-ui, sans-serif;
   --font-serif: 'Noto Serif', Georgia, ui-serif, serif;
-  --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
   --grain-texture: url("data:image/svg+xml,%3Csvg viewBox='0 0 120 120' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='grain'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.28' numOctaves='5' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.06 0 0 0 0 0.08 0 0 0 0 0.07 0 0 0 0.72 0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23grain)'/%3E%3C/svg%3E");
   --grain-highlight: url("data:image/svg+xml,%3Csvg viewBox='0 0 120 120' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='grain'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.18' numOctaves='5' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.92 0 0 0 0 0.96 0 0 0 0 0.92 0 0 0 0.48 0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23grain)'/%3E%3C/svg%3E");
 }
 
 :root[data-theme='dark'] {
-  --color-bg: #090a0a;
-  --color-app: #090a0a;
-  --color-panel: #111212;
-  --color-soft: #191a1a;
-  --color-line: #2a2c2b;
-  --color-ink: #f2f3f2;
-  --color-muted: #a0a4a2;
-  --color-accent: #34d399;
-  --color-accent-strong: #a7f3d0;
-  --color-accent-soft: #0d2a21;
+  --color-bg: #070a27;
+  --color-app: #070a27;
+  --color-panel: #0c1134;
+  --color-soft: #141a44;
+  --color-line: #2c3572;
+  --color-ink: #fbf9f4;
+  --color-muted: #a7aec9;
+  --color-navy-900: #070a27;
+  --color-navy-800: #0c1134;
+  --color-navy-700: #141a44;
+  --color-navy-600: #1e2657;
+  --color-navy-500: #2c3572;
+  --color-navy-400: #7c86b8;
+  --color-primary: #2c3572;
+  --color-primary-strong: #3a4488;
+  --color-primary-ink: #fbf9f4;
+  --color-accent: #ff7a6b;
+  --color-accent-strong: #ffb0a5;
+  --color-accent-soft: #3a1512;
   --color-success: #34d399;
-  --color-success-strong: #a7f3d0;
+  --color-success-strong: #6ee7b7;
   --color-success-soft: #0d2a21;
   --color-warning: #f59e0b;
   --color-warning-strong: #fde68a;
@@ -132,14 +175,14 @@
   --color-info: #60a5fa;
   --color-info-strong: #bfdbfe;
   --color-info-soft: #10233d;
-  --color-danger: #fb7b64;
-  --color-danger-strong: #fecaca;
-  --color-danger-soft: #301612;
-  --color-overlay: rgb(0 0 0 / 0.36);
+  --color-danger: #e5484d;
+  --color-danger-strong: #ff9b9b;
+  --color-danger-soft: #3a1416;
+  --color-overlay: rgb(0 0 0 / 0.5);
   --color-assistant: #34d399;
-  --color-assistant-strong: #0d2a21;
-  --color-tomato: #fb7b64;
-  --color-tomato-soft: #301612;
+  --color-assistant-strong: #6ee7b7;
+  --color-tomato: #ff7a6b;
+  --color-tomato-soft: #3a1512;
   --color-cat-1: #38bdf8;
   --color-cat-2: #a78bfa;
   --color-cat-3: #fbbf24;
@@ -147,9 +190,12 @@
   --color-cat-5: #f472b6;
   --color-cat-6: #a3e635;
   --color-cat-7: #fb7185;
-  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.28);
-  --shadow-panel: 0 18px 44px rgb(0 0 0 / 0.4);
-  --shadow-glass: 0 24px 70px rgb(0 0 0 / 0.44);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.32);
+  --shadow-panel: 0 18px 44px rgb(0 0 0 / 0.45);
+  --shadow-offset: 3px 3px 0 #00cc82;
+  --shadow-offset-press: 1px 1px 0 #00cc82;
+  --shadow-offset-accent: 3px 3px 0 #00cc82;
+  --shadow-offset-accent-press: 1px 1px 0 #00cc82;
   --grain-texture: url("data:image/svg+xml,%3Csvg viewBox='0 0 120 120' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='grain'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.18' numOctaves='5' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.76 0 0 0 0 0.86 0 0 0 0 0.8 0 0 0 0.34 0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23grain)'/%3E%3C/svg%3E");
   --grain-highlight: url("data:image/svg+xml,%3Csvg viewBox='0 0 120 120' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='grain'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.08' numOctaves='5' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.68 0 0 0 0 0.82 0 0 0 0 0.74 0 0 0 0.24 0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23grain)'/%3E%3C/svg%3E");
 }
@@ -159,8 +205,8 @@ body {
   margin: 0;
   min-height: 100%;
   background:
-    radial-gradient(circle at 10% -10%, rgb(4 120 87 / 0.08), transparent 24rem),
-    radial-gradient(circle at 88% 4%, rgb(224 75 53 / 0.07), transparent 20rem), var(--color-app);
+    radial-gradient(circle at 10% -10%, rgb(7 10 39 / 0.05), transparent 24rem),
+    radial-gradient(circle at 88% 4%, rgb(224 2 2 / 0.05), transparent 20rem), var(--color-app);
 }
 
 body {
@@ -276,9 +322,9 @@ button[appSwitch][data-checked] [appSwitchThumb] {
 }
 
 [appUiOtpRoot].is-invalid [appUiOtpSlot] {
-  border-color: var(--color-tomato);
-  background: color-mix(in srgb, var(--color-tomato-soft) 56%, var(--color-panel));
-  box-shadow: 0 0 0 0.1875rem color-mix(in srgb, var(--color-tomato) 12%, transparent);
+  border-color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger-soft) 56%, var(--color-panel));
+  box-shadow: 0 0 0 0.1875rem color-mix(in srgb, var(--color-danger) 12%, transparent);
 }
 
 @keyframes auth-caret {
@@ -294,7 +340,7 @@ button[appSwitch][data-checked] [appSwitchThumb] {
 }
 
 :focus-visible:not(input):not(textarea):not(select):not([ngpSelect]):not([ngpselect]) {
-  outline: 0.1875rem solid rgb(4 120 87 / 0.32);
+  outline: 0.1875rem solid rgb(224 2 2 / 0.32);
   outline-offset: 0.1875rem;
 }
 
@@ -344,7 +390,7 @@ select:focus-visible,
 
 input[appInput][surface='transparent'],
 textarea[appTextarea][surface='transparent'] {
-  border-color: rgb(185 196 188 / 0.95) !important;
+  border-color: color-mix(in srgb, var(--color-line) 88%, var(--color-muted)) !important;
   background: transparent !important;
 }
 
@@ -353,7 +399,7 @@ input[appInput][surface='transparent']:focus-visible,
 textarea[appTextarea][surface='transparent']:focus,
 textarea[appTextarea][surface='transparent']:focus-visible {
   border-color: var(--color-accent) !important;
-  background: rgb(217 245 230 / 0.2) !important;
+  background: color-mix(in srgb, var(--color-accent-soft) 40%, transparent) !important;
   box-shadow: none !important;
 }
 
@@ -386,23 +432,23 @@ textarea[appTextarea][surface='transparent']:focus-visible {
   z-index: 1;
 }
 
+/* Glass aposentado (neobrutalismo): superfície sólida, sem blur. Elevação sutil só como overlay. */
 .glass-surface {
-  border: 1px solid rgb(217 222 213 / 0.74);
-  background: rgb(255 254 250 / 0.72);
-  box-shadow: var(--shadow-glass);
-  backdrop-filter: blur(1.25rem) saturate(145%);
+  border: 1px solid var(--color-line);
+  background: var(--color-panel);
+  box-shadow: var(--shadow-panel);
 }
 
 :root[data-theme='dark'] .glass-surface {
-  border-color: color-mix(in oklch, var(--color-line) 78%, transparent);
-  background: color-mix(in oklch, var(--color-panel) 82%, transparent);
+  border-color: var(--color-line);
+  background: var(--color-panel);
 }
 
 .workflow-rail {
   background:
-    radial-gradient(circle at 12% 18%, rgb(4 120 87 / 0.24), transparent 19rem),
-    radial-gradient(circle at 92% 12%, rgb(224 75 53 / 0.16), transparent 17rem),
-    linear-gradient(90deg, rgb(4 120 87 / 0.14), rgb(224 75 53 / 0.1)), var(--color-soft);
+    radial-gradient(circle at 12% 18%, rgb(7 10 39 / 0.16), transparent 19rem),
+    radial-gradient(circle at 92% 12%, rgb(224 2 2 / 0.12), transparent 17rem),
+    linear-gradient(90deg, rgb(7 10 39 / 0.1), rgb(224 2 2 / 0.08)), var(--color-soft);
 }
 
 .workflow-rail::before {
@@ -446,7 +492,7 @@ textarea[appTextarea][surface='transparent']:focus-visible {
   }
 
   .domain-card:hover {
-    border-color: rgb(4 120 87 / 0.32);
+    border-color: rgb(224 2 2 / 0.32);
     box-shadow: var(--shadow-panel);
     transform: translateY(-0.125rem);
   }
@@ -476,14 +522,14 @@ textarea[appTextarea][surface='transparent']:focus-visible {
   width: 0.625rem;
   height: 0.4375rem;
   border-radius: 999px 0;
-  background: var(--color-accent);
+  background: var(--color-success);
   content: '';
   transform: rotate(-22deg);
 }
 
 .brand-wordmark {
   color: var(--color-ink);
-  font-family: Figtree, ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-brand);
   font-weight: 700;
   letter-spacing: 0;
 }
