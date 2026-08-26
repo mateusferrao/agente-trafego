@@ -1,6 +1,8 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { UiPageHeader, UiSpinner } from '@ui';
+import { provideIcons } from '@ng-icons/core';
+import { lucideBanknote } from '@ng-icons/lucide';
+import { UiDateField, UiEmptyState, UiPageHeader, UiSpinner } from '@ui';
 import { OrgApiService } from '@core/api/org-api.service';
 import type { CostsOutput } from '@core/api';
 
@@ -90,7 +92,8 @@ function presetRange(key: string): { since: string; until: string } {
 @Component({
   selector: 'app-costs-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, UiPageHeader, UiSpinner],
+  imports: [FormsModule, UiDateField, UiEmptyState, UiPageHeader, UiSpinner],
+  providers: [provideIcons({ lucideBanknote })],
   template: `
     <div class="flex flex-col gap-6">
       <app-ui-page-header
@@ -117,22 +120,20 @@ function presetRange(key: string): { since: string; until: string } {
         <div class="flex items-end gap-2">
           <label class="flex flex-col gap-0.5 text-[11px] text-muted">
             De
-            <input
-              type="date"
-              class="rounded-md border border-line bg-panel px-2 py-1 text-sm text-ink"
-              [class.border-accent]="mode() === 'custom'"
-              [ngModel]="since()"
-              (ngModelChange)="setSince($event)"
+            <app-ui-date-field
+              class="w-36"
+              [value]="since()"
+              ariaLabel="Data inicial"
+              (valueChange)="setSince($event)"
             />
           </label>
           <label class="flex flex-col gap-0.5 text-[11px] text-muted">
             Até
-            <input
-              type="date"
-              class="rounded-md border border-line bg-panel px-2 py-1 text-sm text-ink"
-              [class.border-accent]="mode() === 'custom'"
-              [ngModel]="until()"
-              (ngModelChange)="setUntil($event)"
+            <app-ui-date-field
+              class="w-36"
+              [value]="until()"
+              ariaLabel="Data final"
+              (valueChange)="setUntil($event)"
             />
           </label>
         </div>
@@ -167,7 +168,11 @@ function presetRange(key: string): { since: string; until: string } {
         </section>
 
         @if (d.totalCostUsd === 0) {
-          <p class="rounded-lg border border-line bg-panel p-6 text-sm text-muted">Sem custo no período.</p>
+          <app-ui-empty-state
+            icon="lucideBanknote"
+            title="Sem custo no período"
+            description="Nenhum custo operacional foi registrado no período selecionado."
+          />
         } @else {
           <!-- Série diária (área) -->
           <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">

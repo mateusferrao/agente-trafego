@@ -1,12 +1,13 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideRefreshCw, lucidePlus, lucideX } from '@ng-icons/lucide';
+import { lucideRefreshCw, lucidePlus, lucideX, lucidePlug } from '@ng-icons/lucide';
 import {
   UiBadge,
   UiButton,
   UiDialog,
   UiDialogOverlay,
   UiDialogTitle,
+  UiEmptyState,
   UiPageHeader,
   UiSpinner,
 } from '@ui';
@@ -62,12 +63,13 @@ const CHANNEL_TEXT: Record<ChannelStatus, string> = {
     UiDialog,
     UiDialogOverlay,
     UiDialogTitle,
+    UiEmptyState,
     UiPageHeader,
     UiSpinner,
     ConnectDialogComponent,
     WhatsappConnect,
   ],
-  providers: [provideIcons({ lucideRefreshCw, lucidePlus, lucideX })],
+  providers: [provideIcons({ lucideRefreshCw, lucidePlus, lucideX, lucidePlug })],
   template: `
     <div class="flex flex-col gap-8">
       <app-ui-page-header
@@ -90,9 +92,11 @@ const CHANNEL_TEXT: Record<ChannelStatus, string> = {
             Carregando…
           </div>
         } @else if (connectedCount() === 0) {
-          <p class="rounded-lg border border-line bg-panel p-5 text-sm text-muted">
-            Nada conectado ainda. Escolha um provedor abaixo para começar.
-          </p>
+          <app-ui-empty-state
+            icon="lucidePlug"
+            title="Nada conectado ainda"
+            description="Escolha um provedor abaixo para conectar a Meta e o WhatsApp."
+          />
         } @else {
           <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <!-- Canal WhatsApp -->

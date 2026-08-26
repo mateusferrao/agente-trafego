@@ -19,6 +19,7 @@ export { UiBrandPulse } from './ui-brand-pulse';
 export { UiAnalysisProgress } from './ui-analysis-progress';
 export { UiChatBubble } from './ui-chat-bubble';
 export { UiSkeleton } from './ui-skeleton';
+export { UiDateField } from './ui-date-field';
 export { UiPulseDotComponent as UiPulseDot } from './ui-pulse-dot';
 export { UiModuleSidebarComponent as UiModuleSidebar } from './ui-module-sidebar';
 export type { UiModuleSidebarItem } from './ui-module-sidebar';

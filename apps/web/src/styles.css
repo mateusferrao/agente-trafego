@@ -326,20 +326,20 @@ button[appSwitch][data-checked] [appSwitchThumb] {
 }
 
 [appUiOtpSlot][data-active] {
-  border-color: var(--color-accent);
+  border-color: var(--color-primary);
   background: var(--color-panel);
-  box-shadow: 0 0 0 0.1875rem color-mix(in srgb, var(--color-accent) 14%, transparent);
+  box-shadow: 0 0 0 0.1875rem color-mix(in srgb, var(--color-primary) 16%, transparent);
 }
 
 [appUiOtpSlot][data-filled] {
-  border-color: color-mix(in srgb, var(--color-accent) 45%, transparent);
-  background: color-mix(in srgb, var(--color-accent-soft) 78%, transparent);
+  border-color: color-mix(in srgb, var(--color-primary) 45%, transparent);
+  background: color-mix(in srgb, var(--color-soft) 70%, var(--color-panel));
 }
 
 [appUiOtpSlot][data-caret]::after {
   width: 0.125rem;
   height: 1.25rem;
-  background: var(--color-accent);
+  background: var(--color-primary);
   content: '';
   animation: auth-caret 1s steps(1) infinite;
 }
@@ -363,7 +363,7 @@ button[appSwitch][data-checked] [appSwitchThumb] {
 }
 
 :focus-visible:not(input):not(textarea):not(select):not([ngpSelect]):not([ngpselect]) {
-  outline: 0.1875rem solid rgb(224 2 2 / 0.32);
+  outline: 0.1875rem solid color-mix(in srgb, var(--color-ink) 30%, transparent);
   outline-offset: 0.1875rem;
 }
 
@@ -421,8 +421,8 @@ input[appInput][surface='transparent']:focus,
 input[appInput][surface='transparent']:focus-visible,
 textarea[appTextarea][surface='transparent']:focus,
 textarea[appTextarea][surface='transparent']:focus-visible {
-  border-color: var(--color-accent) !important;
-  background: color-mix(in srgb, var(--color-accent-soft) 40%, transparent) !important;
+  border-color: var(--color-ink) !important;
+  background: transparent !important;
   box-shadow: none !important;
 }
 
@@ -1168,26 +1168,27 @@ table[appUiResizableColumns] > tbody > tr > td {
 }
 .brand-pulse { animation: ui-brand-pulse 1.8s ease-in-out infinite; }
 
-/* Narrativa de progresso honesta-genérica: descreve o TIPO de trabalho, sem fingir
-   passo/tempo real. A linha ATIVA rotaciona em ciclo (destaque ambiente, não checklist). */
-.ui-analysis-steps {
-  display: grid;
-  gap: 0.35rem;
+/* Narrativa de progresso honesta-genérica: UMA frase por vez que some e é
+   substituída pela próxima (fade), em ciclo. Descreve o TIPO de trabalho, sem
+   fingir passo/tempo real. */
+@keyframes ui-analysis-fade {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.ui-analysis-line-wrap {
+  min-height: 1.35rem;
+}
+.ui-analysis-line {
   margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.ui-analysis-steps > li {
   color: var(--color-muted);
-  font-size: 0.86rem;
-  opacity: 0.4;
-  transition:
-    opacity 0.45s ease,
-    color 0.45s ease;
-}
-.ui-analysis-steps > li.is-active {
-  opacity: 1;
-  color: var(--color-ink);
+  font-size: 0.9rem;
+  animation: ui-analysis-fade 0.45s ease;
 }
 
 /* Balão de chat (motif WhatsApp) — agente (menta) / usuário (painel + borda). */
@@ -1213,6 +1214,119 @@ table[appUiResizableColumns] > tbody > tr > td {
   border-radius: 1rem 1rem 0.25rem 1rem;
 }
 
+/* Date field custom (DS): trigger + popup de calendário — substitui o <input type=date>
+   nativo (popup não estilizável). Tudo em tokens; seleção em navy (calmo, não-erro). */
+.ui-cal__trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  height: 2.5rem;
+  padding: 0 0.75rem;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-md);
+  background: var(--color-panel);
+  color: var(--color-ink);
+  font-size: 0.85rem;
+  transition: border-color 0.12s ease;
+}
+.ui-cal__trigger:hover {
+  border-color: color-mix(in srgb, var(--color-muted) 55%, var(--color-line));
+}
+.ui-cal__trigger[aria-expanded='true'] {
+  border-color: var(--color-ink);
+}
+.ui-cal__trigger--placeholder {
+  color: var(--color-muted);
+}
+.ui-cal {
+  position: absolute;
+  z-index: 50;
+  margin-top: 0.35rem;
+  width: 17rem;
+  padding: 0.75rem;
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-lg);
+  background: var(--color-panel);
+  box-shadow: var(--shadow-panel);
+}
+.ui-cal__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+.ui-cal__month {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-ink);
+  text-transform: capitalize;
+}
+.ui-cal__nav {
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+}
+.ui-cal__nav:hover {
+  background: var(--color-soft);
+  color: var(--color-ink);
+}
+.ui-cal__grid,
+.ui-cal__weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 0.15rem;
+}
+.ui-cal__wd {
+  padding: 0.2rem 0;
+  color: var(--color-muted);
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-align: center;
+}
+.ui-cal__day {
+  display: grid;
+  aspect-ratio: 1;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-ink);
+  font-size: 0.8rem;
+}
+.ui-cal__day:hover {
+  background: var(--color-soft);
+}
+.ui-cal__day--out {
+  color: var(--color-muted);
+  opacity: 0.5;
+}
+.ui-cal__day--today {
+  box-shadow: inset 0 0 0 1px var(--color-line);
+  font-weight: 700;
+}
+.ui-cal__day--selected,
+.ui-cal__day--selected:hover {
+  background: var(--color-primary);
+  color: var(--color-primary-ink);
+}
+.ui-cal__foot {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.5rem;
+}
+.ui-cal__foot button {
+  color: var(--color-accent-strong);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.ui-cal__foot button:hover {
+  text-decoration: underline;
+}
+
 /* Skeleton de carregamento de conteúdo. */
 @keyframes ui-skeleton-shimmer {
   0% { background-position: -160px 0; }
@@ -1234,12 +1348,8 @@ table[appUiResizableColumns] > tbody > tr > td {
 @media (prefers-reduced-motion: reduce) {
   .ui-typing-dots > span,
   .brand-pulse,
-  .ui-skeleton {
+  .ui-skeleton,
+  .ui-analysis-line {
     animation: none;
-  }
-  /* Sem rotação: todas as linhas legíveis e estáticas. */
-  .ui-analysis-steps > li {
-    opacity: 0.85;
-    transition: none;
   }
 }

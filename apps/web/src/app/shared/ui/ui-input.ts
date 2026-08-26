@@ -4,16 +4,18 @@ import { NgpInput } from 'ng-primitives/input';
 
 type UiInputSurface = 'panel' | 'transparent';
 
+// Foco/hover em NAVY (ink), neutro — tomate agora é o accent de marca e leria como erro
+// num campo. Estado inválido usa o vermelho profundo de perigo (distinto do tomate).
 const INPUT_BASE_CLASSES =
   'h-10 w-full rounded-md border border-line px-3 text-sm font-medium text-ink transition ' +
-  'placeholder:text-muted/70 hover:border-accent/35 focus:border-accent focus:outline-none ' +
+  'placeholder:text-muted/70 hover:border-muted/60 focus:border-ink focus:outline-none ' +
   'focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50';
 const INVALID_CLASSES =
-  'border-tomato bg-tomato-soft/45 hover:border-tomato focus:border-tomato focus:bg-tomato-soft/35';
+  'border-danger bg-danger-soft/40 hover:border-danger focus:border-danger';
 
 const INPUT_SURFACE_CLASSES: Record<UiInputSurface, string> = {
-  panel: 'bg-panel focus:bg-accent-soft/25',
-  transparent: 'bg-transparent focus:bg-accent-soft/20',
+  panel: 'bg-panel',
+  transparent: 'bg-transparent',
 };
 
 @Directive({
