@@ -62,7 +62,8 @@ async function main() {
     log("defaults inferidos", defaults);
 
     // 4) CRIAR DO ZERO (saga real, PAUSED).
-    if (defaults.pageId) {
+    let createdAdsetId: string | undefined;
+    if (defaults.pageId && process.env["SKIP_CREATE"] !== "1") {
       const goal = defaults.objectiveGoal ?? "purchase";
       const name = `E2E Fatia7 ${Date.now()} — do zero`;
       const { campaignId } = await ports.ads.createCampaign(ref, { name, objectiveGoal: goal, specialAdCategories: [], status: "paused" });
@@ -79,6 +80,7 @@ async function main() {
         status: "paused",
       });
       created.push({ label: "adset(from_scratch)", id: adsetId });
+      createdAdsetId = adsetId;
       log("adset criado", { adsetId, conv: resolveAdSetConversion(goal, defaults.pixelId) });
 
       if (defaults.imageHash) {
@@ -103,17 +105,20 @@ async function main() {
       log("SEM Page inferível → criar-do-zero bloqueado (caminho triste esperado)");
     }
 
-    // 5) DUPLICAR/ESCALAR (real /copies, PAUSED).
-    const adsets = await ports.ads.listEntities(ref, "adset");
-    const source = adsets.find((a) => a.id && !created.some((c) => c.id === a.id));
+    // 5) DUPLICAR/ESCALAR (real /copies, PAUSED). Fonte = o adset que NÓS criamos (criativo
+    // limpo). Os adsets LEGADOS da conta usam `standard_enhancements` (aprimoramentos padrão),
+    // descontinuado pela Meta → deep_copy deles falha (subcode 3858504) — limitação do dado de
+    // origem, não do nosso /copies. Duplicar o nosso adset valida o mecanismo de ponta a ponta.
+    const source = createdAdsetId;
     if (source) {
-      const dup = await ports.ads.duplicateEntity(ref, { sourceLevel: "adset", sourceId: source.id, status: "paused", renameSuffix: "E2E escala" });
+      log("source escolhido p/ duplicar (adset limpo criado agora)", { id: source });
+      const dup = await ports.ads.duplicateEntity(ref, { sourceLevel: "adset", sourceId: source, status: "paused", renameSuffix: "E2E escala" });
       created.push({ label: "duplicated_adset", id: dup.copiedId });
-      log("adset duplicado (real /copies, PAUSED)", { source: source.id, copied: dup.copiedId, children: dup.childIds });
+      log("adset duplicado (real /copies, PAUSED)", { source, copied: dup.copiedId, children: dup.childIds });
       await ports.ads.setEntityBudget(ref, dup.copiedId, DAILY_BUDGET_MINOR * 2);
       log("budget da cópia ajustado (escala)", { copiedId: dup.copiedId, dailyBudgetMinor: DAILY_BUDGET_MINOR * 2 });
     } else {
-      log("nenhum adset fonte pra duplicar — pulei escala");
+      log("sem adset criado nesta run p/ duplicar (SKIP_CREATE?) — pulei escala");
     }
 
     log("✅ E2E criou tudo PAUSED. Iniciando revert…");
