@@ -6396,6 +6396,97 @@
           "approvalId"
         ]
       },
+      "CreativeAssetOutput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "reuse",
+              "upload"
+            ]
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "image",
+              "video"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "ready",
+              "error"
+            ]
+          },
+          "metaImageHash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metaVideoId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "origin",
+          "format",
+          "status",
+          "metaImageHash",
+          "metaVideoId",
+          "createdAt"
+        ]
+      },
+      "UploadCreativeInput": {
+        "type": "object",
+        "properties": {
+          "imageBase64": {
+            "type": "string",
+            "minLength": 1
+          },
+          "contentType": {
+            "type": "string",
+            "minLength": 1
+          },
+          "filename": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "imageBase64",
+          "contentType",
+          "filename"
+        ]
+      },
+      "UploadCreativeOutput": {
+        "type": "object",
+        "properties": {
+          "assetId": {
+            "type": "string"
+          },
+          "metaImageHash": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "assetId",
+          "metaImageHash"
+        ]
+      },
       "RevertibleActionOutput": {
         "type": "object",
         "properties": {
@@ -8270,6 +8361,79 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ScaleWinnerOutput"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "conta ou agente não encontrado"
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/creatives": {
+      "get": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "biblioteca de criativos da conta",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CreativeAssetOutput"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/creatives/upload": {
+      "post": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UploadCreativeInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "imagem subida (image_hash) + asset criado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadCreativeOutput"
                 }
               }
             }

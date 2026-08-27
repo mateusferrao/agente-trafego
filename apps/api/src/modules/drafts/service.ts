@@ -1,8 +1,9 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import {
   adAccounts,
   agents,
   campaignDrafts,
+  creativeAssets,
   guardrailConfigs,
   platformConnections,
   type Database,
@@ -18,7 +19,14 @@ import {
 import type { Action, AgentId, DraftId, OrgId } from "@trafego/shared/types";
 import type { AdAccountRef, ApprovalPort, CredentialVaultPort } from "@trafego/shared/ports";
 import type { AdsPlatformPort } from "@trafego/shared/ports";
-import type { DraftApprovalOutput, ScaleWinnerInput, ScaleWinnerOutput } from "./schema.js";
+import type {
+  CreativeAssetOutput,
+  DraftApprovalOutput,
+  ScaleWinnerInput,
+  ScaleWinnerOutput,
+  UploadCreativeInput,
+  UploadCreativeOutput,
+} from "./schema.js";
 
 const MINOR_PER_UNIT = 100;
 const APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
@@ -203,6 +211,60 @@ export function createDraftsService(deps: DraftsServiceDeps) {
         expiresAt,
       });
       return { move: "duplicate", approvalId: appr.id };
+    },
+
+    /** Biblioteca de criativos da conta (aba Criativos). */
+    async listCreatives(orgId: OrgId, accountId: string): Promise<CreativeAssetOutput[]> {
+      const rows = await deps.db
+        .select({
+          id: creativeAssets.id,
+          origin: creativeAssets.origin,
+          format: creativeAssets.format,
+          status: creativeAssets.status,
+          metaImageHash: creativeAssets.metaImageHash,
+          metaVideoId: creativeAssets.metaVideoId,
+          createdAt: creativeAssets.createdAt,
+        })
+        .from(creativeAssets)
+        .where(and(eq(creativeAssets.orgId, orgId), eq(creativeAssets.adAccountId, accountId)))
+        .orderBy(desc(creativeAssets.createdAt));
+      return rows.map((r) => ({
+        id: r.id,
+        origin: r.origin,
+        format: r.format,
+        status: r.status,
+        metaImageHash: r.metaImageHash,
+        metaVideoId: r.metaVideoId,
+        createdAt: r.createdAt.toISOString(),
+      }));
+    },
+
+    /** Upload de imagem pela web → sobe pra Meta (image_hash) → asset na biblioteca. */
+    async uploadCreative(
+      orgId: OrgId,
+      accountId: string,
+      input: UploadCreativeInput,
+    ): Promise<UploadCreativeOutput | null> {
+      const ctx = await loadScaleContext(orgId, accountId);
+      if (!ctx) return null;
+      const bytes = new Uint8Array(Buffer.from(input.imageBase64, "base64"));
+      const { imageHash } = await deps.adsPlatform.uploadImage(ctx.ref, {
+        bytes,
+        contentType: input.contentType,
+        filename: input.filename,
+      });
+      const [row] = await deps.db
+        .insert(creativeAssets)
+        .values({
+          orgId,
+          adAccountId: accountId,
+          origin: "upload",
+          format: "image",
+          status: "ready",
+          metaImageHash: imageHash,
+        })
+        .returning({ id: creativeAssets.id });
+      return { assetId: row!.id, metaImageHash: imageHash };
     },
   };
 }

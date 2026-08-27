@@ -53,3 +53,26 @@ export const scaleWinnerOutput = z.object({
   approvalId: z.string(),
 });
 export type ScaleWinnerOutput = z.infer<typeof scaleWinnerOutput>;
+
+/** Um asset da biblioteca de criativos (aba Criativos). */
+export const creativeAssetOutput = z.object({
+  id: z.string(),
+  origin: z.enum(["reuse", "upload"]),
+  format: z.enum(["image", "video"]),
+  status: z.enum(["pending", "ready", "error"]),
+  metaImageHash: z.string().nullable(),
+  metaVideoId: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type CreativeAssetOutput = z.infer<typeof creativeAssetOutput>;
+export const creativeAssetsListOutput = z.array(creativeAssetOutput);
+
+/** Upload de imagem pela web (base64 — evita dep de multipart; sobe pra Meta → image_hash). */
+export const uploadCreativeInput = z.object({
+  imageBase64: z.string().min(1),
+  contentType: z.string().min(1),
+  filename: z.string().min(1),
+});
+export type UploadCreativeInput = z.infer<typeof uploadCreativeInput>;
+export const uploadCreativeOutput = z.object({ assetId: z.string(), metaImageHash: z.string() });
+export type UploadCreativeOutput = z.infer<typeof uploadCreativeOutput>;

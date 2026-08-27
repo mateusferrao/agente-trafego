@@ -86,6 +86,7 @@ import { AccountContextStore } from "./account-context.store";
           Visão geral
         </a>
         <a appRouteTabLink routerLink="agente" routerLinkActive ariaCurrentWhenActive="page">Agente</a>
+        <a appRouteTabLink routerLink="criativos" routerLinkActive ariaCurrentWhenActive="page">Criativos</a>
         <a appRouteTabLink routerLink="timeline" routerLinkActive ariaCurrentWhenActive="page">Timeline</a>
       </nav>
 

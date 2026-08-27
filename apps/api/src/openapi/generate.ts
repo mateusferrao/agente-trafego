@@ -84,7 +84,14 @@ import {
   resolveApprovalOutput,
   revertibleActionOutput,
 } from "../modules/approvals/schema.js";
-import { draftApprovalOutput, scaleWinnerInput, scaleWinnerOutput } from "../modules/drafts/schema.js";
+import {
+  creativeAssetOutput,
+  draftApprovalOutput,
+  scaleWinnerInput,
+  scaleWinnerOutput,
+  uploadCreativeInput,
+  uploadCreativeOutput,
+} from "../modules/drafts/schema.js";
 
 extendZodWithOpenApi(z);
 
@@ -165,6 +172,9 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const DraftApprovalOutput = registry.register("DraftApprovalOutput", draftApprovalOutput);
   const ScaleWinnerInput = registry.register("ScaleWinnerInput", scaleWinnerInput);
   const ScaleWinnerOutput = registry.register("ScaleWinnerOutput", scaleWinnerOutput);
+  const CreativeAssetOutput = registry.register("CreativeAssetOutput", creativeAssetOutput);
+  const UploadCreativeInput = registry.register("UploadCreativeInput", uploadCreativeInput);
+  const UploadCreativeOutput = registry.register("UploadCreativeOutput", uploadCreativeOutput);
   const RevertibleActionOutput = registry.register("RevertibleActionOutput", revertibleActionOutput);
 
   const accountParams = z.object({ id: z.string() });
@@ -666,6 +676,23 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     request: { params: z.object({ id: z.string() }), ...jsonBody(ScaleWinnerInput) },
     responses: {
       200: jsonRes("escala proposta (rascunho de duplicação ou ação de budget)", ScaleWinnerOutput),
+      404: { description: "conta ou agente não encontrado" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts/{id}/creatives",
+    tags: ["drafts"],
+    request: { params: z.object({ id: z.string() }) },
+    responses: { 200: jsonRes("biblioteca de criativos da conta", z.array(CreativeAssetOutput)) },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/accounts/{id}/creatives/upload",
+    tags: ["drafts"],
+    request: { params: z.object({ id: z.string() }), ...jsonBody(UploadCreativeInput) },
+    responses: {
+      200: jsonRes("imagem subida (image_hash) + asset criado", UploadCreativeOutput),
       404: { description: "conta ou agente não encontrado" },
     },
   });

@@ -63,6 +63,12 @@ export const routes: Routes = [
               import('./features/agent-config/agent-config-page').then((m) => m.AgentConfigPage),
           },
           {
+            path: 'criativos',
+            title: 'Criativos — AutoTraffic',
+            loadComponent: () =>
+              import('./features/account-detail/creative-library').then((m) => m.CreativeLibrary),
+          },
+          {
             path: 'timeline',
             title: 'Linha do tempo — AutoTraffic',
             loadComponent: () =>
