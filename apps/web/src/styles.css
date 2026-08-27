@@ -602,6 +602,35 @@ textarea[appTextarea][surface='transparent']:focus-visible {
   letter-spacing: 0;
 }
 
+/* Tomate grande como símbolo de empty-state (marca no lugar do ícone genérico). */
+.brand-mark--empty {
+  width: 2.75rem;
+  height: 2.75rem;
+}
+
+/* Roi que reage: leve "wobble" do tomate ao passar o mouse no lockup (âncora de
+   marca — sidebar/login). Pop de sucesso: entrada com pulinho de confirmação.
+   Ambos motion-safe (sem movimento em prefers-reduced-motion, item fica visível). */
+@keyframes brand-wobble {
+  0%, 100% { transform: rotate(0); }
+  25% { transform: rotate(-9deg); }
+  55% { transform: rotate(6deg); }
+  80% { transform: rotate(-3deg); }
+}
+@keyframes brand-pop {
+  0% { transform: scale(0.86); opacity: 0; }
+  60% { transform: scale(1.06); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .brand-lockup:hover .brand-mark {
+    animation: brand-wobble 0.6s ease-in-out;
+  }
+  .brand-pop {
+    animation: brand-pop 0.42s cubic-bezier(0.2, 0.8, 0.3, 1.2);
+  }
+}
+
 [data-overlay],
 [ngpSelectDropdown],
 [ngpselectdropdown],

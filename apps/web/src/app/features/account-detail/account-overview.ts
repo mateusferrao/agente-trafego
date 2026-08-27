@@ -5,7 +5,7 @@
 
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from "@angular/core";
 import { NgIcon, provideIcons } from "@ng-icons/core";
-import { lucideRefreshCw, lucideActivity } from "@ng-icons/lucide";
+import { lucideRefreshCw } from "@ng-icons/lucide";
 import { UiButton, UiEmptyState, UiSpinner, UiAnalysisProgress, UiSkeleton } from "@ui";
 import { AGENT_NAME } from "@core/brand";
 import { DashboardApiService } from "@core/api/dashboard-api.service";
@@ -23,7 +23,7 @@ const MAX_POLLS = 6;
   selector: "app-account-overview",
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [NgIcon, UiButton, UiEmptyState, UiSpinner, UiAnalysisProgress, UiSkeleton, AnalysisDetail, AgentActions],
-  providers: [provideIcons({ lucideRefreshCw, lucideActivity })],
+  providers: [provideIcons({ lucideRefreshCw })],
   template: `
     <div class="flex flex-col gap-6">
       <!-- Faixa de KPIs ao vivo (números crus; a avaliação do agente vem datada abaixo). -->
@@ -94,7 +94,7 @@ const MAX_POLLS = 6;
         </div>
       } @else if (showEmptyState()) {
         <app-ui-empty-state
-          icon="lucideActivity"
+          brand
           [title]="emptyTitle()"
           [description]="emptyDescription()"
         >

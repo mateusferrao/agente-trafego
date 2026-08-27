@@ -6,7 +6,7 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from "@angular/core";
 import { RouterLink } from "@angular/router";
 import { NgIcon, provideIcons } from "@ng-icons/core";
-import { lucideCircleCheck, lucideActivity } from "@ng-icons/lucide";
+import { lucideCircleCheck } from "@ng-icons/lucide";
 import { UiButton, UiEmptyState, UiEyebrow, UiPageHeader, UiSpinner } from "@ui";
 import { DashboardApiService } from "@core/api/dashboard-api.service";
 import { AGENT_NAME } from "@core/brand";
@@ -34,7 +34,7 @@ const REASON_LABEL: Record<Reason, string> = {
   selector: "app-dashboard-page",
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [RouterLink, NgIcon, UiButton, UiEmptyState, UiEyebrow, UiPageHeader, UiSpinner, AccountPanoramaCard],
-  providers: [provideIcons({ lucideCircleCheck, lucideActivity })],
+  providers: [provideIcons({ lucideCircleCheck })],
   template: `
     <div class="flex flex-col gap-6">
       <app-ui-page-header title="Painel" subtitle="Onde agir agora, em todas as suas contas" />
@@ -51,7 +51,7 @@ const REASON_LABEL: Record<Reason, string> = {
       } @else if (data(); as d) {
         @if (d.panorama.length === 0) {
           <app-ui-empty-state
-            icon="lucideActivity"
+            brand
             title="Conecte sua primeira conta"
             [description]="emptyDescription"
           >

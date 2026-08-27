@@ -1,4 +1,6 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, output, signal } from '@angular/core';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import { lucideCircleCheck } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
 import { UiButton, UiSpinner, UiEyebrow, UiInput } from '@ui';
 import { ChannelApiService } from '@core/api/channel-api.service';
@@ -40,7 +42,8 @@ function onlyDigits(value: string): string {
 @Component({
   selector: 'app-whatsapp-connect',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiButton, UiSpinner, UiEyebrow, UiInput],
+  imports: [NgIcon, UiButton, UiSpinner, UiEyebrow, UiInput],
+  providers: [provideIcons({ lucideCircleCheck })],
   template: `
     <div class="flex flex-col gap-5">
       <!-- Step dots do wizard sequencial (padrão da integração Meta) -->
@@ -67,9 +70,12 @@ function onlyDigits(value: string): string {
             Verificando a conexão…
           </div>
         } @else if (connected()) {
-          <p class="text-sm text-success-strong">
-            WhatsApp conectado. O agente fala pelo {{ pairedPhone() ?? 'número pareado' }}.
-          </p>
+          <div class="brand-pop flex items-start gap-2.5 rounded-lg border border-success/45 bg-success-soft/50 px-3 py-2.5">
+            <ng-icon name="lucideCircleCheck" size="17" aria-hidden="true" class="mt-px shrink-0 text-success-strong" />
+            <p class="text-sm text-ink">
+              Pareado. O agente envia pelo <span class="font-mono text-ink">{{ pairedPhone() ?? 'número pareado' }}</span>.
+            </p>
+          </div>
           @if (confirmDisconnect()) {
             <div class="flex flex-col gap-2 rounded-md border border-line p-3">
               <p class="text-xs text-muted">
@@ -97,7 +103,7 @@ function onlyDigits(value: string): string {
           <div class="flex flex-wrap items-center gap-3 text-xs text-muted">
             <span class="flex items-center gap-2">
               <app-ui-spinner [size]="16" [stroke]="2" aria-hidden="true" />
-              {{ pollStalled() ? 'Conexão instável — tentando de novo…' : 'Aguardando a leitura do QR…' }}
+              {{ pollStalled() ? 'Conexão instável, tentando de novo…' : 'Aguardando a leitura do QR…' }}
             </span>
             <!-- QR da Evolution expira em ~1 min; permite gerar um novo sem sair. -->
             <button appButton variant="ghost" size="sm" type="button" [disabled]="connecting()" (click)="connect()">
@@ -119,16 +125,19 @@ function onlyDigits(value: string): string {
           <app-ui-eyebrow>Passo 2</app-ui-eyebrow>
           <h2 class="font-brand text-sm font-semibold text-ink">Confirmar para onde receber</h2>
           <p class="text-xs text-muted">
-            Informe o seu WhatsApp pessoal — é para onde o agente vai te enviar as análises. Ele manda
+            Informe o seu WhatsApp pessoal. É para onde o agente vai te enviar as análises. Ele manda
             um código do número pareado acima para confirmar. Use um número <strong>diferente</strong>
             do número do agente (ele não envia mensagem para si mesmo).
           </p>
         </div>
         @if (verified()) {
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <p class="text-sm text-success-strong">
-              Número confirmado: {{ phone() }}. Você recebe as análises por aqui.
-            </p>
+          <div class="flex flex-wrap items-start justify-between gap-2">
+            <div class="brand-pop flex items-start gap-2.5 rounded-lg border border-success/45 bg-success-soft/50 px-3 py-2.5">
+              <ng-icon name="lucideCircleCheck" size="17" aria-hidden="true" class="mt-px shrink-0 text-success-strong" />
+              <p class="text-sm text-ink">
+                Confirmado. Você recebe as análises no <span class="font-mono text-ink">{{ phone() }}</span>.
+              </p>
+            </div>
             <button appButton variant="ghost" size="sm" type="button" [disabled]="changingRecipient()" (click)="trocarNumero()">
               {{ changingRecipient() ? 'Removendo…' : 'Trocar número' }}
             </button>
@@ -215,8 +224,11 @@ function onlyDigits(value: string): string {
         </div>
 
         @if (activeGroupName(); as name) {
-          <div class="flex flex-wrap items-center justify-between gap-2">
-            <p class="text-sm text-success-strong">Grupo ativo: {{ name }}</p>
+          <div class="flex flex-wrap items-start justify-between gap-2">
+            <div class="brand-pop flex items-start gap-2.5 rounded-lg border border-success/45 bg-success-soft/50 px-3 py-2.5">
+              <ng-icon name="lucideCircleCheck" size="17" aria-hidden="true" class="mt-px shrink-0 text-success-strong" />
+              <p class="text-sm text-ink">Ativo no grupo <span class="font-semibold text-ink">{{ name }}</span>.</p>
+            </div>
             <button appButton variant="ghost" size="sm" type="button" [disabled]="disablingGroup()" (click)="disableGroup()">
               {{ disablingGroup() ? 'Desligando…' : 'Desligar' }}
             </button>
@@ -227,7 +239,7 @@ function onlyDigits(value: string): string {
         } @else {
           <div class="flex flex-col gap-2 rounded-md border border-line p-3 text-xs text-muted">
             <p>Qualquer pessoa no grupo poderá pedir análise, aprovar ações e mudar a config do agente.</p>
-            <p>Recomendado pro time interno ou org de 1 cliente — com vários clientes, evite colocar gente de fora ainda.</p>
+            <p>Recomendado pro time interno ou org de 1 cliente. Com vários clientes, evite colocar gente de fora ainda.</p>
           </div>
 
           @if (groupsLoading() && !groupsFetched()) {
@@ -548,7 +560,7 @@ export class WhatsappConnect {
         this.code.set('');
         this.phone.set('');
         this.stopCountdown();
-        toast.success('Número removido — informe outro para receber');
+        toast.success('Número removido. Informe outro para receber');
       },
       error: () => this.changingRecipient.set(false),
     });
@@ -589,7 +601,7 @@ export class WhatsappConnect {
           return;
         }
         this.activeGroupName.set(r.name ?? r.groupJid);
-        toast.success('Grupo ativado — o agente já responde por lá');
+        toast.success('Grupo ativado. O agente já responde por lá');
       },
       error: () => this.settingGroupJid.set(null),
     });
@@ -605,7 +617,7 @@ export class WhatsappConnect {
           return;
         }
         this.activeGroupName.set(null);
-        toast.success('Grupo desligado — avisos voltam pro seu WhatsApp');
+        toast.success('Grupo desligado. Avisos voltam pro seu WhatsApp');
       },
       error: () => this.disablingGroup.set(false),
     });

@@ -16,7 +16,10 @@ import { NgIcon } from '@ng-icons/core';
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div [class]="containerClass">
-      @if (icon) {
+      @if (brand) {
+        <!-- Símbolo do agente (tomate) — momento de marca (Roi não tem nada ainda). -->
+        <span class="brand-mark brand-mark--empty brand-pop" aria-hidden="true"></span>
+      } @else if (icon) {
         <span class="grid size-12 place-items-center rounded-full bg-soft text-muted">
           <ng-icon [name]="icon" size="22" aria-hidden="true" />
         </span>
@@ -37,6 +40,8 @@ export class UiEmptyStateComponent {
   @Input({ required: true }) title!: string;
   @Input() description?: string;
   @Input() icon?: string;
+  /** Usa o símbolo do agente (tomate) no lugar do ícone — momentos de marca (Roi). */
+  @Input({ transform: booleanAttribute }) brand = false;
   @Input({ transform: booleanAttribute }) compact = false;
 
   get containerClass() {

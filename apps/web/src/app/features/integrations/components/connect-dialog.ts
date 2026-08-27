@@ -11,7 +11,7 @@ import {
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormControl, FormRecord, ReactiveFormsModule, Validators } from '@angular/forms';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideCheck, lucideCircleCheck, lucideTriangleAlert, lucideX } from '@ng-icons/lucide';
+import { lucideCheck, lucideTriangleAlert, lucideX } from '@ng-icons/lucide';
 import {
   UiButton,
   UiDialog,
@@ -68,7 +68,7 @@ const STEP_DOTS = [0, 1, 2, 3] as const;
     UiLabel,
     UiSpinner,
   ],
-  providers: [provideIcons({ lucideCheck, lucideCircleCheck, lucideTriangleAlert, lucideX })],
+  providers: [provideIcons({ lucideCheck, lucideTriangleAlert, lucideX })],
   template: `
     <div appDialogOverlay>
       <section appDialog class="connect-dialog" aria-labelledby="connect-dialog-title" [ngpDialogModal]="true">
@@ -192,9 +192,7 @@ const STEP_DOTS = [0, 1, 2, 3] as const;
             }
             @case ('success') {
               <div class="centered">
-                <div class="icon icon--success" aria-hidden="true">
-                  <ng-icon name="lucideCircleCheck" size="36" />
-                </div>
+                <span class="brand-mark brand-mark--empty brand-pop" aria-hidden="true"></span>
                 <p class="title">Conta conectada</p>
                 <p appUiHint class="centered-hint">
                   O {{ agentName }}, seu agente de tráfego, já começou a analisar. Você vê o resultado em Contas.
