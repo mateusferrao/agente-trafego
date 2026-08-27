@@ -736,23 +736,43 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
   );
 
   const getFreshMetrics = tool(
-    async ({ periodDays, campaign }: { periodDays?: number | null; campaign?: string | null }) => {
+    async ({
+      periodDays,
+      sinceDaysAgo,
+      untilDaysAgo,
+      campaign,
+    }: {
+      periodDays?: number | null;
+      sinceDaysAgo?: number | null;
+      untilDaysAgo?: number | null;
+      campaign?: string | null;
+    }) => {
       if (noFocus()) return NEEDS_FOCUS;
-      logger.debug({ adAccountId: ctx.adAccountId, periodDays, campaign }, "tool:get_fresh_metrics");
+      logger.debug(
+        { adAccountId: ctx.adAccountId, periodDays, sinceDaysAgo, untilDaysAgo, campaign },
+        "tool:get_fresh_metrics",
+      );
       return asString(
         await getFreshMetricsData(
           { db, vault: ports.vault, insightsSync: deps.insightsSync, logger },
           { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, timezone: ctx.timezone },
-          { periodDays: periodDays ?? null, campaign: campaign ?? null },
+          {
+            periodDays: periodDays ?? null,
+            sinceDaysAgo: sinceDaysAgo ?? null,
+            untilDaysAgo: untilDaysAgo ?? null,
+            campaign: campaign ?? null,
+          },
         ),
       );
     },
     {
       name: "get_fresh_metrics",
       description:
-        "Puxa métricas ATUALIZADAS direto da Meta (gasto, resultados, CPA/ROAS, CPC/CPM) da conta nos últimos N dias (default hoje, máx 7 — hoje até 7 dias atrás). Se o usuário citar o nome de uma campanha, traz a dela em vez da conta. Use quando ele pedir 'como está HOJE / agora / atualizado / essa semana'. Se a Meta estiver indisponível/limitada, cai no último dado sincronizado e o campo updated vem false (avise que não atualizou agora); se não houver dado do período nem no salvo, o campo error explica — repasse ao usuário.",
+        "Puxa métricas ATUALIZADAS da Meta (gasto, resultados, CPA/ROAS, CPC/CPM) da conta em QUALQUER recorte dentro dos últimos 7 dias. Recorte em DIAS ATRÁS (0=hoje, 1=ontem…): `untilDaysAgo` = fim da janela; `sinceDaysAgo` = início (mais antigo, >= untilDaysAgo). Exemplos: HOJE → {} (default); ONTEM fechado → {untilDaysAgo:1}; últimos 3 dias → {periodDays:3}; de 3 dias atrás até 2 dias atrás → {sinceDaysAgo:3, untilDaysAgo:2}. `periodDays` é atalho p/ 'últimos N dias terminando no fim'. Se citar o nome de uma campanha, traz a dela. Se a Meta estiver indisponível/limitada, cai no último dado sincronizado (updated=false — avise); sem dado do período nem no salvo, o campo error explica.",
       schema: z.object({
         periodDays: z.number().int().positive().nullable().optional(),
+        sinceDaysAgo: z.number().int().min(0).nullable().optional(),
+        untilDaysAgo: z.number().int().min(0).nullable().optional(),
         campaign: z.string().nullable().optional(),
       }),
     },

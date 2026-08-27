@@ -156,6 +156,12 @@ export function computeDerived(
     if (match && spend > 0 && match.value !== undefined) roas = round(match.value / spend, 4);
   }
 
+  // Receita rastreada TOTAL (todas as conversões com valor, ex.: compras) — contexto do
+  // retorno mesmo quando o goal de negócio é conversa/lead (sem valor). Não muda cpa/roas
+  // (que seguem o goal, §7); só EXPÕE a receita pro analista/chat não esconderem.
+  const revenueTotal = entity.conversions.reduce((s, c) => s + (c.value ?? 0), 0);
+  const revenue = entity.conversions.some((c) => c.value !== undefined) ? round(revenueTotal, 4) : undefined;
+
   return {
     spend,
     impressions,
@@ -167,6 +173,7 @@ export function computeDerived(
     ...(conversions !== undefined ? { conversions } : {}),
     ...(cpa !== undefined ? { cpa } : {}),
     ...(roas !== undefined ? { roas } : {}),
+    ...(revenue !== undefined ? { revenue } : {}),
   };
 }
 

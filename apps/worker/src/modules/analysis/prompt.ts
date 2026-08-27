@@ -63,6 +63,15 @@ const MISMATCH_NOTE =
   "como sinal de qualidade; 'none' = sem conversão, julgue por CPC/CPM. Nunca trate custo de " +
   "proxy barato como sucesso de negócio.";
 
+/** Receita rastreada além do goal de negócio (§7 — não esconder). */
+const REVENUE_NOTE =
+  "Se a entidade trouxer 'revenue' (receita rastreada TOTAL, ex.: valor de compras), SEMPRE " +
+  "mencione — mesmo quando o goal de negócio é conversa/lead (sem valor). Reporte a receita e o " +
+  "ROAS de retorno (revenue/gasto) como CONTEXTO adicional, deixando claro que vem de compras " +
+  "rastreadas (secundário ao objetivo principal, que segue medido pelo CPA do goal). NUNCA diga " +
+  "que 'não há ROAS/receita' quando 'revenue' está preenchido — o objetivo não muda, mas o dono " +
+  "precisa ver todo o retorno.";
+
 /** Tiers + sinais + elegibilidade (Fatia 6c) — como o LLM deve ler e agir. */
 const QUALITY_NOTE =
   "Cada entidade pode trazer 'tier' (winner/performer/underperformer/zombie), 'healthSignals' " +
@@ -125,7 +134,7 @@ const jsonBlock = (label: string, value: unknown): string =>
 
 /** Mensagens do ANALISTA (system = metodologia; user = brief + shape). */
 export function buildAnalysisMessages(systemPrompt: string, brief: AccountBrief): LLMMessage[] {
-  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, MISMATCH_NOTE, QUALITY_NOTE, INCREMENTALITY_NOTE, DIAGNOSIS_NOTE, BENCHMARK_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
+  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, MISMATCH_NOTE, REVENUE_NOTE, QUALITY_NOTE, INCREMENTALITY_NOTE, DIAGNOSIS_NOTE, BENCHMARK_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
   const user = [
     jsonBlock("Briefing curado da conta (analise SOMENTE com base nele)", brief),
     "",
@@ -168,7 +177,7 @@ export function buildCampaignMessages(
   accountContext: { readonly currency: string; readonly window: string; readonly businessGoal?: string },
   copyByAdId: ReadonlyMap<string, AdCopy> = new Map(),
 ): LLMMessage[] {
-  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, MISMATCH_NOTE, QUALITY_NOTE, INCREMENTALITY_NOTE, DIAGNOSIS_NOTE, BENCHMARK_NOTE, ADVICE_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
+  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, MISMATCH_NOTE, REVENUE_NOTE, QUALITY_NOTE, INCREMENTALITY_NOTE, DIAGNOSIS_NOTE, BENCHMARK_NOTE, ADVICE_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
   const notableAdIds = unit.adsets.flatMap((g) => g.notableAds.map((a) => a.id));
   const vision = notableAdIds
     .map((adId) => ({ adId, vision: visionByAdId.get(adId) ?? [] }))
@@ -220,6 +229,7 @@ export function buildSynthesisMessages(
     WASTE_NOTE,
     TRACKING_NOTE,
     MISMATCH_NOTE,
+    REVENUE_NOTE,
     QUALITY_NOTE,
     INCREMENTALITY_NOTE,
     DIAGNOSIS_NOTE,

@@ -8,33 +8,72 @@ import {
   type FreshMetricsData,
 } from "./fresh-metrics.js";
 
-function m(partial: Partial<StoredInsightMetrics["metrics"]>): StoredInsightMetrics {
-  return { metrics: { spend: 0, impressions: 0, clicks: 0, ctr: 0, cpc: 0, cpm: 0, ...partial } };
+function m(
+  partial: Partial<StoredInsightMetrics["metrics"]>,
+  conversions?: StoredInsightMetrics["conversions"],
+): StoredInsightMetrics {
+  return {
+    metrics: { spend: 0, impressions: 0, clicks: 0, ctr: 0, cpc: 0, cpm: 0, ...partial },
+    ...(conversions ? { conversions } : {}),
+  };
 }
 
 describe("aggregateKpis", () => {
-  it("soma a janela e re-deriva CPC/CPM/CTR/CPA/ROAS", () => {
-    const k = aggregateKpis([
-      m({ spend: 100, impressions: 1000, clicks: 50, conversions: 5, roas: 2 }),
-      m({ spend: 100, impressions: 3000, clicks: 50, conversions: 5, roas: 4 }),
-    ]);
+  it("soma a janela e re-deriva CPA/ROAS do ARRAY de conversões (goal de negócio)", () => {
+    const k = aggregateKpis(
+      [
+        m({ spend: 100, impressions: 1000, clicks: 50 }, [{ goal: "purchase", count: 5, value: 200 }]),
+        m({ spend: 100, impressions: 3000, clicks: 50 }, [{ goal: "purchase", count: 5, value: 400 }]),
+      ],
+      { goal: "purchase" },
+    );
     expect(k.spend).toBe(200);
     expect(k.impressions).toBe(4000);
     expect(k.clicks).toBe(100);
-    expect(k.ctr).toBeCloseTo(100 / 4000);
     expect(k.cpc).toBe(2); // 200/100
-    expect(k.cpm).toBe((200 / 4000) * 1000);
     expect(k.conversions).toBe(10);
     expect(k.cpa).toBe(20); // 200/10
-    // valor = 2*100 + 4*100 = 600; roas = 600/200 = 3
-    expect(k.roas).toBe(3);
+    expect(k.roas).toBe(3); // (200+400)/200
+    expect(k.conversionGoal).toBe("purchase");
   });
 
-  it("sem conversão reportada → conversions/cpa/roas null (não zero)", () => {
-    const k = aggregateKpis([m({ spend: 50, impressions: 500, clicks: 10 })]);
+  it("goal de conversa (sem valor) AINDA mostra receita/ROAS das compras (não esconde)", () => {
+    const row = m({ spend: 300, impressions: 10000, clicks: 200 }, [
+      { goal: "purchase", count: 3, value: 14900 },
+      { goal: "messaging_started", count: 115 },
+    ]);
+    // business goal = conversa: CPA na conversa, MAS roas/revenue da receita rastreada (compras).
+    const msg = aggregateKpis([row], { goal: "messaging_started" });
+    expect(msg.conversions).toBe(115);
+    expect(msg.conversionGoal).toBe("messaging_started");
+    expect(msg.cpa).toBeCloseTo(300 / 115);
+    expect(msg.revenue).toBe(14900); // NÃO esconde a receita de compra
+    expect(msg.roas).toBeCloseTo(14900 / 300); // ROAS do retorno real
+    expect(msg.breakdown).toEqual([
+      { goal: "purchase", count: 3, value: 14900 },
+      { goal: "messaging_started", count: 115, value: null },
+    ]);
+  });
+
+  it("sem businessGoal → usa a conversão de MAIOR volume (default sensato)", () => {
+    const k = aggregateKpis([
+      m({ spend: 300, impressions: 10000, clicks: 200 }, [
+        { goal: "purchase", count: 3 },
+        { goal: "messaging_started", count: 115 },
+      ]),
+    ]);
+    expect(k.conversionGoal).toBe("messaging_started");
+    expect(k.conversions).toBe(115);
+  });
+
+  it("sem conversão reportada → conversions/cpa/roas/revenue null (aí sim 'Meta não retornou')", () => {
+    const k = aggregateKpis([m({ spend: 50, impressions: 500, clicks: 10 })], { goal: "purchase" });
     expect(k.conversions).toBeNull();
     expect(k.cpa).toBeNull();
     expect(k.roas).toBeNull();
+    expect(k.revenue).toBeNull();
+    expect(k.conversionGoal).toBeNull();
+    expect(k.breakdown).toEqual([]);
     expect(k.cpc).toBe(5);
   });
 
@@ -92,6 +131,24 @@ describe("getFreshMetricsData", () => {
     expect(insightsSync.sync).toHaveBeenCalledWith(expect.objectContaining({ today: "2026-08-24" }));
     expect(res.since).toBe("2026-08-24");
     expect(res.until).toBe("2026-08-24");
+  });
+
+  it("recorte ONTEM (dia fechado): untilDaysAgo:1 → since=until=ontem (não o acumulado hoje+ontem)", async () => {
+    const { deps } = makeDeps([[ACCOUNT_ROW], SNAP]);
+    (deps as { now?: () => Date }).now = () => new Date("2026-08-27T12:00:00Z"); // BRT 09:00 → hoje 27/08
+    const res = (await getFreshMetricsData(deps, CTX, { untilDaysAgo: 1 })) as FreshMetricsData;
+    expect(res.since).toBe("2026-08-26");
+    expect(res.until).toBe("2026-08-26");
+    expect(res.periodDays).toBe(1);
+  });
+
+  it("recorte de PERÍODO arbitrário: sinceDaysAgo:3 + untilDaysAgo:2 → [3d atrás, 2d atrás]", async () => {
+    const { deps } = makeDeps([[ACCOUNT_ROW], SNAP]);
+    (deps as { now?: () => Date }).now = () => new Date("2026-08-27T12:00:00Z");
+    const res = (await getFreshMetricsData(deps, CTX, { sinceDaysAgo: 3, untilDaysAgo: 2 })) as FreshMetricsData;
+    expect(res.since).toBe("2026-08-24");
+    expect(res.until).toBe("2026-08-25");
+    expect(res.periodDays).toBe(2);
   });
 
   it("sync degradou (partial) → updated:false (mostra o último salvo)", async () => {
