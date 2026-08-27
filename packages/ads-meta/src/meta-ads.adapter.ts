@@ -355,6 +355,44 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     }
   }
 
+  async createCampaign(account: AdAccountRef, input: Parameters<AdsPlatformPort["createCampaign"]>[1]) {
+    return this.writeThroughGovernor(account, () => this.creation.createCampaign(account, input));
+  }
+
+  async createAdSet(account: AdAccountRef, input: Parameters<AdsPlatformPort["createAdSet"]>[1]) {
+    return this.writeThroughGovernor(account, () => this.creation.createAdSet(account, input));
+  }
+
+  async createAdCreative(account: AdAccountRef, input: Parameters<AdsPlatformPort["createAdCreative"]>[1]) {
+    return this.writeThroughGovernor(account, () => this.creation.createAdCreative(account, input));
+  }
+
+  async createAd(account: AdAccountRef, input: Parameters<AdsPlatformPort["createAd"]>[1]) {
+    return this.writeThroughGovernor(account, () => this.creation.createAd(account, input));
+  }
+
+  async inferCreationDefaults(account: AdAccountRef) {
+    try {
+      return await this.creation.inferCreationDefaults(account);
+    } catch (error) {
+      throw toAdsError(error);
+    }
+  }
+
+  /** Gate de cooldown de write + invalidação do catálogo, comum às criações. */
+  private async writeThroughGovernor<T>(account: AdAccountRef, fn: () => Promise<T>): Promise<T> {
+    try {
+      const accountId = normalizeAdAccountId(account.adAccountId);
+      const acquired = await this.governor.acquire(accountId);
+      if (!acquired.granted) throw cooldownError();
+      const result = await fn();
+      await this.entityCache?.invalidate(accountId);
+      return result;
+    } catch (error) {
+      throw toAdsError(error);
+    }
+  }
+
   async restoreEntityState(
     account: AdAccountRef,
     entityId: string,

@@ -2,9 +2,11 @@ import type {
   AccessibleAccount,
   Action,
   AdEntity,
+  ConversionGoal,
   Creative,
   EntityLevel,
   InsightRow,
+  TargetingSpec,
 } from "../types/index.js";
 
 /** Referência opaca a uma conta já resolvida (token + accountId internos ao adapter). */
@@ -61,6 +63,53 @@ export interface DuplicateResult {
   readonly childIds: readonly string[];
 }
 
+// ─── Criar do zero (saga granular — a casca orquestra + persiste ids parciais) ───
+
+export interface CreateCampaignInput {
+  readonly name: string;
+  readonly objectiveGoal: ConversionGoal;
+  readonly specialAdCategories: readonly string[];
+  readonly status: "active" | "paused";
+}
+export interface CreateAdSetInput {
+  readonly campaignId: string;
+  readonly name: string;
+  readonly dailyBudgetMinor: number;
+  readonly goal: ConversionGoal;
+  readonly pixelId?: string;
+  readonly targeting: TargetingSpec;
+  readonly status: "active" | "paused";
+}
+export interface CreateAdCreativeInput {
+  readonly name: string;
+  readonly pageId: string;
+  readonly imageHash?: string;
+  readonly videoId?: string;
+  readonly linkUrl?: string;
+  readonly copy: {
+    readonly primaryText: string;
+    readonly headline: string;
+    readonly description?: string;
+    readonly cta?: string;
+  };
+}
+export interface CreateAdInput {
+  readonly adsetId: string;
+  readonly creativeId: string;
+  readonly name: string;
+  readonly status: "active" | "paused";
+}
+
+/** Defaults inferidos da conta p/ criar do zero (Page/Pixel/objetivo/mídia/link) — §6. */
+export interface CreationDefaults {
+  readonly pageId?: string;
+  readonly pixelId?: string;
+  readonly objectiveGoal?: ConversionGoal;
+  readonly imageHash?: string;
+  readonly linkUrl?: string;
+  readonly sourceAdId?: string;
+}
+
 /**
  * Falha genérica da borda de ads — o adapter traduz o erro específico do provider
  * (ex: `MetaApiError`) para esta forma, e a casca mapeia p/ HTTP amigável **sem**
@@ -108,6 +157,13 @@ export interface AdsPlatformPort {
    * budget da cópia (escala) e nasce ACTIVE/PAUSED. Retorna a cópia + filhos p/ retomada.
    */
   duplicateEntity(account: AdAccountRef, input: DuplicateEntityInput): Promise<DuplicateResult>;
+  /** Saga de criação do zero — granular (a casca persiste ids parciais p/ retomada idempotente). */
+  createCampaign(account: AdAccountRef, input: CreateCampaignInput): Promise<{ campaignId: string }>;
+  createAdSet(account: AdAccountRef, input: CreateAdSetInput): Promise<{ adsetId: string }>;
+  createAdCreative(account: AdAccountRef, input: CreateAdCreativeInput): Promise<{ creativeId: string }>;
+  createAd(account: AdAccountRef, input: CreateAdInput): Promise<{ adId: string }>;
+  /** Infere Page/Pixel/objetivo/mídia/link do que a conta já usa (§6 — sem pages_show_list). */
+  inferCreationDefaults(account: AdAccountRef): Promise<CreationDefaults>;
   /**
    * Lista contas acessíveis pelo token (onboarding: cola token → escolhe).
    * Também **valida** o token — credencial inválida lança `AdsPlatformError`.

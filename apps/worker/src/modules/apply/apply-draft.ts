@@ -15,6 +15,9 @@ import { createAnalysisRepo } from "../analysis/repo.js";
 const ACTOR_AGENT = "agent";
 const USAGE_TYPE_CAMPAIGN_CREATED = "campaign_created";
 const TOOL_KEY_DUPLICATE = "duplicate_scale";
+const TOOL_KEY_CREATE = "create_campaign";
+/** Categoria especial default (§7): sem categoria; override por-agente = fast-follow. */
+const DEFAULT_SPECIAL_AD_CATEGORIES: readonly string[] = [];
 /** Janela do cap de campanhas novas/dia (rolling 24h — igual ao contexto de tool diário). */
 const CREATION_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -89,24 +92,29 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
   }
   const allowed = check.allowed;
 
-  if (allowed.kind !== "duplicate") {
-    // criar-do-zero (saga create*) chega na S3.
-    return { kind: "unsupported", reason: "criação do zero ainda não disponível" };
+  // valida pré-requisitos do criar-do-zero (Page + criativo) — sem eles não dá pra criar.
+  if (allowed.kind === "from_scratch") {
+    if (!allowed.spec.pageId || !allowed.spec.creative) {
+      return { kind: "blocked", reason: "faltou a Página ou o criativo pra criar a campanha" };
+    }
   }
 
   await db.update(campaignDrafts).set({ status: "creating" }).where(eq(campaignDrafts.id, row.id));
 
   const dryRun = cfg.dryRun;
+  const toolKey = allowed.kind === "duplicate" ? TOOL_KEY_DUPLICATE : TOOL_KEY_CREATE;
   let createdIds: Record<string, unknown> = {};
   try {
-    if (!dryRun) {
+    if (dryRun) {
+      createdIds = { simulated: true };
+    } else if (allowed.kind === "duplicate") {
       const dup = await ports.ads.duplicateEntity(ref, buildDuplicateInput(allowed));
       createdIds = { copiedId: dup.copiedId, childIds: dup.childIds };
     } else {
-      createdIds = { simulated: true };
+      createdIds = await runFromScratchSaga(ports.ads, ref, allowed, row.createdIds ?? {});
     }
   } catch (error) {
-    await db.update(campaignDrafts).set({ status: "failed" }).where(eq(campaignDrafts.id, row.id));
+    await db.update(campaignDrafts).set({ status: "failed", createdIds }).where(eq(campaignDrafts.id, row.id));
     return { kind: "failed", error };
   }
 
@@ -115,7 +123,7 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     .values({
       agentId: row.agentId,
       runId: row.runId,
-      toolKey: TOOL_KEY_DUPLICATE,
+      toolKey,
       idempotencyKey: `draft:${row.id}:apply`,
       risk: "high",
       args: { draftId: row.id, kind: row.kind, dryRun },
@@ -127,8 +135,8 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
   await db.insert(auditLog).values({
     orgId: input.orgId,
     actor: ACTOR_AGENT,
-    action: `meta.duplicate_scale${dryRun ? ".dry_run" : ""}`,
-    target: `${allowed.sourceRef?.level}:${allowed.sourceRef?.id}`,
+    action: `meta.${toolKey}${dryRun ? ".dry_run" : ""}`,
+    target: allowed.sourceRef ? `${allowed.sourceRef.level}:${allowed.sourceRef.id}` : `account:${row.adAccountId}`,
     metadata: { agentId: row.agentId, draftId: row.id, dryRun },
     before: null,
     after: createdIds,
@@ -150,4 +158,72 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
 
   logger.info({ draftId: row.id, dryRun }, "apply-draft:created");
   return { kind: "created", dryRun, createdIds };
+}
+
+/**
+ * Saga de criar-do-zero: createCampaign → createAdSet → N×(createAdCreative → createAd).
+ * Idempotente por `prior` (createdIds já persistidos): pula o que já foi criado (retomada).
+ */
+async function runFromScratchSaga(
+  ads: WorkerDeps["ports"]["ads"],
+  ref: AdAccountRef,
+  draft: CampaignDraft,
+  prior: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const spec = draft.spec;
+  const goal = spec.objective ?? "purchase";
+  const status = spec.activation;
+  const name = `Campanha ${goal} — rascunho`;
+
+  const campaignId =
+    (prior["campaignId"] as string | undefined) ??
+    (await ads.createCampaign(ref, {
+      name,
+      objectiveGoal: goal,
+      specialAdCategories: DEFAULT_SPECIAL_AD_CATEGORIES,
+      status,
+    })).campaignId;
+
+  const adsetId =
+    (prior["adsetId"] as string | undefined) ??
+    (await ads.createAdSet(ref, {
+      campaignId,
+      name: `${name} — conjunto`,
+      dailyBudgetMinor: spec.dailyBudgetMinor,
+      goal,
+      ...(spec.pixelId ? { pixelId: spec.pixelId } : {}),
+      targeting: spec.targeting ?? { kind: "advantage_plus" },
+      status,
+    })).adsetId;
+
+  const variants = spec.copyVariants ?? [];
+  const creativeIds = [...((prior["creativeIds"] as string[] | undefined) ?? [])];
+  const adIds = [...((prior["adIds"] as string[] | undefined) ?? [])];
+  const creative = spec.creative;
+  for (let i = creativeIds.length; i < variants.length; i++) {
+    const v = variants[i]!;
+    const { creativeId } = await ads.createAdCreative(ref, {
+      name: `${name} — criativo ${i + 1}`,
+      pageId: spec.pageId!,
+      ...(creative?.metaImageHash ? { imageHash: creative.metaImageHash } : {}),
+      ...(creative?.metaVideoId ? { videoId: creative.metaVideoId } : {}),
+      ...(spec.linkUrl ? { linkUrl: spec.linkUrl } : {}),
+      copy: {
+        primaryText: v.primaryText,
+        headline: v.headline,
+        ...(v.description ? { description: v.description } : {}),
+        ...(v.cta ? { cta: v.cta } : {}),
+      },
+    });
+    creativeIds.push(creativeId);
+    const { adId } = await ads.createAd(ref, {
+      adsetId,
+      creativeId,
+      name: `${name} — anúncio ${i + 1}`,
+      status,
+    });
+    adIds.push(adId);
+  }
+
+  return { campaignId, adsetId, creativeIds, adIds };
 }

@@ -679,6 +679,8 @@ export interface CampaignDraftSpec {
   /** Page/Pixel inferidos (display/confirmação no eco). */
   readonly pageId?: string;
   readonly pixelId?: string;
+  /** URL de destino do anúncio (link_data.link) — inferida da conta. */
+  readonly linkUrl?: string;
 }
 
 /** Entidade-origem de uma duplicação (o que foi copiado). */

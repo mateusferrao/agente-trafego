@@ -151,3 +151,94 @@ export function objectiveFromCampaign(campaignObjective?: string): EntityObjecti
 export function goalFromCustomEventType(customEventType?: string): ConversionGoal {
   return (customEventType && CUSTOM_EVENT_TYPE_TO_GOAL[customEventType]) || "custom";
 }
+
+// ─── Mapa INVERSO (Fatia 7 — criação): goal genérico → vocabulário Meta ───
+// Validar no Graph API Explorer v26: matriz objective↔optimization_goal↔billing_event
+// e a combinação exata de custom_event_type (pendências registradas no plano).
+
+const DEFAULT_OBJECTIVE = "OUTCOME_SALES";
+const DEFAULT_BILLING_EVENT = "IMPRESSIONS";
+const DEFAULT_CTA = "LEARN_MORE";
+
+const GOAL_TO_CAMPAIGN_OBJECTIVE: Readonly<Record<ConversionGoal, string>> = {
+  purchase: "OUTCOME_SALES",
+  lead: "OUTCOME_LEADS",
+  registration: "OUTCOME_LEADS",
+  initiate_checkout: "OUTCOME_SALES",
+  add_to_cart: "OUTCOME_SALES",
+  view_content: "OUTCOME_SALES",
+  add_payment_info: "OUTCOME_SALES",
+  search: "OUTCOME_SALES",
+  contact: "OUTCOME_LEADS",
+  subscribe: "OUTCOME_SALES",
+  start_trial: "OUTCOME_LEADS",
+  submit_application: "OUTCOME_LEADS",
+  messaging_started: "OUTCOME_ENGAGEMENT",
+  app_install: "OUTCOME_APP_PROMOTION",
+  custom: "OUTCOME_SALES",
+};
+
+// inverso do CUSTOM_EVENT_TYPE_TO_GOAL (goal → enum do promoted_object).
+const GOAL_TO_CUSTOM_EVENT_TYPE: Readonly<Partial<Record<ConversionGoal, string>>> = {
+  purchase: "PURCHASE",
+  lead: "LEAD",
+  registration: "COMPLETE_REGISTRATION",
+  initiate_checkout: "INITIATED_CHECKOUT",
+  add_to_cart: "ADD_TO_CART",
+  view_content: "CONTENT_VIEW",
+  add_payment_info: "ADD_PAYMENT_INFO",
+  search: "SEARCH",
+  contact: "CONTACT",
+  subscribe: "SUBSCRIBE",
+  start_trial: "START_TRIAL",
+  submit_application: "SUBMIT_APPLICATION",
+};
+
+const CTA_TO_META: Readonly<Record<string, string>> = {
+  shop_now: "SHOP_NOW",
+  learn_more: "LEARN_MORE",
+  sign_up: "SIGN_UP",
+  subscribe: "SUBSCRIBE",
+  contact_us: "CONTACT_US",
+  book_now: "BOOK_TRAVEL",
+  get_offer: "GET_OFFER",
+  send_message: "MESSAGE_PAGE",
+  download: "DOWNLOAD",
+};
+
+/** goal genérico → objetivo ODAX de campanha. */
+export function resolveMetaObjective(goal: ConversionGoal): string {
+  return GOAL_TO_CAMPAIGN_OBJECTIVE[goal] ?? DEFAULT_OBJECTIVE;
+}
+
+/** CTA neutro → call_to_action_type da Meta (fallback LEARN_MORE). */
+export function resolveMetaCta(cta?: string): string {
+  return (cta && CTA_TO_META[cta]) ?? DEFAULT_CTA;
+}
+
+/** optimization_goal + billing_event + promoted_object p/ um adset que otimiza `goal`. */
+export interface MetaAdSetConversion {
+  readonly optimizationGoal: string;
+  readonly billingEvent: string;
+  readonly promotedObject?: { readonly pixel_id: string; readonly custom_event_type: string };
+}
+
+/**
+ * Resolve a config de conversão do adset. Com pixel + evento mapeável → OFFSITE_CONVERSIONS
+ * + promoted_object. Sem pixel: lead → LEAD_GENERATION; messaging → CONVERSATIONS;
+ * app → APP_INSTALLS; senão OFFSITE_CONVERSIONS (exige pixel — a casca valida antes).
+ */
+export function resolveAdSetConversion(goal: ConversionGoal, pixelId?: string): MetaAdSetConversion {
+  const customEvent = GOAL_TO_CUSTOM_EVENT_TYPE[goal];
+  if (pixelId && customEvent && goal !== "messaging_started") {
+    return {
+      optimizationGoal: "OFFSITE_CONVERSIONS",
+      billingEvent: DEFAULT_BILLING_EVENT,
+      promotedObject: { pixel_id: pixelId, custom_event_type: customEvent },
+    };
+  }
+  if (goal === "messaging_started") return { optimizationGoal: "CONVERSATIONS", billingEvent: DEFAULT_BILLING_EVENT };
+  if (goal === "app_install") return { optimizationGoal: "APP_INSTALLS", billingEvent: DEFAULT_BILLING_EVENT };
+  if (goal === "lead") return { optimizationGoal: "LEAD_GENERATION", billingEvent: DEFAULT_BILLING_EVENT };
+  return { optimizationGoal: "OFFSITE_CONVERSIONS", billingEvent: DEFAULT_BILLING_EVENT };
+}
