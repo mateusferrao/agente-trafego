@@ -9,7 +9,8 @@ import type {
   DuplicateResult,
 } from "@trafego/shared/ports";
 import type { ConversionGoal } from "@trafego/shared/types";
-import type { MetaGraphClient } from "./client.js";
+import type { UploadMediaInput, VideoStatus } from "@trafego/shared/ports";
+import { MetaGraphClient, META_GRAPH_VERSION } from "./client.js";
 import { normalizeAdAccountId } from "./ids.js";
 import {
   objectiveFromCampaign,
@@ -176,6 +177,43 @@ export class MetaCreationService {
       status: input.status === "active" ? "ACTIVE" : "PAUSED",
     });
     return { adId };
+  }
+
+  /** POST multipart num edge da conta (upload de mídia — o client de query não faz multipart). */
+  private async uploadMultipart<T>(account: AdAccountRef, edge: string, field: string, input: UploadMediaInput): Promise<T> {
+    const accountId = normalizeAdAccountId(account.adAccountId);
+    const url = `https://graph.facebook.com/${META_GRAPH_VERSION}/${accountId}/${edge}`;
+    const fd = new FormData();
+    fd.append(field, new Blob([input.bytes], { type: input.contentType }), input.filename);
+    const res = await fetch(url, { method: "POST", headers: { Authorization: `Bearer ${account.accessToken}` }, body: fd });
+    const text = await res.text();
+    if (!res.ok) throw new Error(`upload ${edge} falhou (HTTP ${res.status}): ${text.slice(0, 200)}`);
+    return JSON.parse(text) as T;
+  }
+
+  async uploadImage(account: AdAccountRef, input: UploadMediaInput): Promise<{ imageHash: string }> {
+    // /adimages devolve { images: { <filename>: { hash, url } } }.
+    const data = await this.uploadMultipart<{ images?: Record<string, { hash?: string }> }>(account, "adimages", "filename", input);
+    const first = Object.values(data.images ?? {})[0];
+    if (!first?.hash) throw new Error("Meta /adimages não retornou hash");
+    return { imageHash: first.hash };
+  }
+
+  async uploadVideo(account: AdAccountRef, input: UploadMediaInput): Promise<{ videoId: string }> {
+    const data = await this.uploadMultipart<{ id?: string }>(account, "advideos", "source", input);
+    if (!data.id) throw new Error("Meta /advideos não retornou id");
+    return { videoId: data.id };
+  }
+
+  async getVideoStatus(account: AdAccountRef, videoId: string): Promise<VideoStatus> {
+    const { data } = await this.client.request<{ status?: { video_status?: string } }>({
+      method: "GET",
+      path: videoId,
+      accessToken: account.accessToken,
+      params: { fields: "status" },
+    });
+    const s = data.status?.video_status;
+    return { status: s === "ready" ? "ready" : s === "error" ? "error" : "processing" };
   }
 
   /** Targeting neutro → Meta. `reuse_adset` lê o targeting da fonte; `advantage_plus` = amplo. */

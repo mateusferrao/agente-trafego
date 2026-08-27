@@ -99,6 +99,17 @@ export interface CreateAdInput {
   readonly status: "active" | "paused";
 }
 
+/** Upload de mídia p/ a plataforma (Fatia 7). Imagem → hash; vídeo → id (async). */
+export interface UploadMediaInput {
+  readonly bytes: Uint8Array;
+  readonly contentType: string;
+  readonly filename: string;
+}
+export interface VideoStatus {
+  /** `ready` = pronto p/ usar em criativo; `processing` = ainda transcodificando; `error`. */
+  readonly status: "ready" | "processing" | "error";
+}
+
 /** Defaults inferidos da conta p/ criar do zero (Page/Pixel/objetivo/mídia/link) — §6. */
 export interface CreationDefaults {
   readonly pageId?: string;
@@ -165,6 +176,12 @@ export interface AdsPlatformPort {
   createAd(account: AdAccountRef, input: CreateAdInput): Promise<{ adId: string }>;
   /** Infere Page/Pixel/objetivo/mídia/link do que a conta já usa (§6 — sem pages_show_list). */
   inferCreationDefaults(account: AdAccountRef): Promise<CreationDefaults>;
+  /** Sobe imagem p/ a conta → `image_hash` estável (reusável em object_story_spec). */
+  uploadImage(account: AdAccountRef, input: UploadMediaInput): Promise<{ imageHash: string }>;
+  /** Sobe vídeo → `video_id` (processamento ASSÍNCRONO; checar getVideoStatus antes de usar). */
+  uploadVideo(account: AdAccountRef, input: UploadMediaInput): Promise<{ videoId: string }>;
+  /** Estado do processamento de um vídeo (ready|processing|error). */
+  getVideoStatus(account: AdAccountRef, videoId: string): Promise<VideoStatus>;
   /**
    * Lista contas acessíveis pelo token (onboarding: cola token → escolhe).
    * Também **valida** o token — credencial inválida lança `AdsPlatformError`.

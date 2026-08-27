@@ -1,4 +1,5 @@
 export * from "./ads-platform.port.js";
+export * from "./storage.port.js";
 export * from "./messaging-channel.port.js";
 export * from "./llm-provider.port.js";
 export * from "./creative-vision.port.js";

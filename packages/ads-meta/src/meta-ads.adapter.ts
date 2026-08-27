@@ -383,6 +383,22 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     }
   }
 
+  async uploadImage(account: AdAccountRef, input: Parameters<AdsPlatformPort["uploadImage"]>[1]) {
+    return this.writeThroughGovernor(account, () => this.creation.uploadImage(account, input));
+  }
+
+  async uploadVideo(account: AdAccountRef, input: Parameters<AdsPlatformPort["uploadVideo"]>[1]) {
+    return this.writeThroughGovernor(account, () => this.creation.uploadVideo(account, input));
+  }
+
+  async getVideoStatus(account: AdAccountRef, videoId: string) {
+    try {
+      return await this.creation.getVideoStatus(account, videoId);
+    } catch (error) {
+      throw toAdsError(error);
+    }
+  }
+
   /** Gate de cooldown de write + invalidação do catálogo, comum às criações. */
   private async writeThroughGovernor<T>(account: AdAccountRef, fn: () => Promise<T>): Promise<T> {
     try {
