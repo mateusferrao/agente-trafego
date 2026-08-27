@@ -687,6 +687,20 @@ vez de duplicar lógica. Fatiado (G0→G4) — **entregue por completo**.
 
 **Design das telas/fluxos** (Creative Library, card de aprovação de rascunho, intake de mídia WhatsApp) = ver `DESIGN.md`.
 
+**Fast-follows decididos no planejamento da Fatia 7 (2026-08-27)** — recortes deixados de fora do escopo batido (plano detalhado: sessão de planejamento). Entram depois, sem tocar no core:
+- **Autoria de criar-do-zero pelo site** (form de objetivo/budget/público + picker de mídia); no MVP da fatia o usuário cria do zero **só pelo chat**, e no site escala 1-clique / edita rascunho.
+- **Carrossel** (object_story_spec com `child_attachments`); MVP = imagem + vídeo single.
+- **Per-action LIMIT override** (tetos de guardrail por-ação no avançado); MVP = limites gerais (a autonomia **por-ação** já entra).
+- **`pages_show_list` + tabela `ad_pages`** (listagem explícita de Pages); MVP = inferir Page/Pixel do que a conta já usa.
+- **Targeting novo por interesses** (`searchInterests`/`listCustomAudiences`/`updateTargeting`); MVP = reusar targeting provado da conta → senão Advantage+/amplo.
+- **Orçamento vitalício** (lifetime + end_time); MVP = budget diário.
+- **Historização de copy** (série copy×desempenho); MVP = `ad_creatives` = 1 linha viva por anúncio.
+- **Variar mídia entre variações** (teste de criativo); MVP = mesma mídia + copy diferente.
+- **Geração de criativo por IA** (imagem/vídeo) — fase mais tardia; copy por LLM já entra.
+- **Transcrição de áudio de criativo** — destravada pela Creative Library (cliente sobe o vídeo → há áudio p/ STT).
+- **Enforcement de entitlement/billing** (`campaign_creation`); MVP = declarado no catálogo, não enforçado (beta allowlist).
+- **Escopo de público por-grupo** (WhatsApp); MVP = foco por-participante como na DM.
+
 ## Fatia 8 — Orquestração multi-agente / qualidade (roadmap pós-MVP)
 
 **Visão:** elevar a qualidade e a escala da análise com **mais papéis de agente** e **map-reduce por entidade** — sem reescrever o grafo. **Depende:** MVP validado (hipótese confirmada na 3a) + `5a` (write path, p/ o validador de segurança de ação). A costura já existe desde a 3a-2: o par **Analista→Revisor** é modelado como uma **lista de passes** (`reviewPasses`, default 1) — crescer = **registrar mais passes/papéis**, não reescrever nós.
