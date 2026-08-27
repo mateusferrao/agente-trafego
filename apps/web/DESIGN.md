@@ -1,6 +1,6 @@
 ---
 name: AutoTraffic
-description: Bold operational desk — a neobrutalist brand skin over a calm operational workspace, with Roi the agent as its face
+description: Bold operational desk — a neobrutalist brand skin over a calm operational workspace, with Roy the agent as its face
 colors:
   canvas: "#fbf9f4"
   surface: "#ffffff"
@@ -100,18 +100,18 @@ components:
 
 **Creative North Star: "The Bold Operational Desk"**
 
-AutoTraffic is a WhatsApp-native, semi-autonomous traffic agent. The product's face is **Roi**, the agent. The interface should feel like a confident, branded workspace: a **refined neobrutalist** brand skin (solid 2px borders, solid offset shadows, warm paper canvas, tomato and mint) over a **calm operational core** for the dense, money-critical work.
+AutoTraffic is a WhatsApp-native, semi-autonomous traffic agent. The product's face is **Roy**, the agent. The interface should feel like a confident, branded workspace: a **refined neobrutalist** brand skin (solid 2px borders, solid offset shadows, warm paper canvas, tomato and mint) over a **calm operational core** for the dense, money-critical work.
 
 Manychat in spirit (approachable, warm, jargon-free, chat-native), operational in substance (clear, dense, honest where money is at stake). We inherit the brand language of the marketing site (`autotraffic`), not Manychat's app or its blue.
 
-This is the intended direction for all product surfaces. AI is embedded operational infrastructure represented by Roi — never a generic sparkle or a separate chatbot destination.
+This is the intended direction for all product surfaces. AI is embedded operational infrastructure represented by Roy — never a generic sparkle or a separate chatbot destination.
 
 **Key Characteristics:**
 
 - Warm paper canvas, navy structure, tomato brand accent, mint for success/agent. Light-first with dark as a first-class alternate (neobrutalist dark: solid offset shadows turn mint).
 - **Two tiers of surface.** "Brand" surfaces (decision, onboarding, conversation) carry the bold signature; "Workspace" surfaces (tables, config, shell) stay calm and flat for legibility.
 - Refined neobrutalism: 2px borders and ~3px solid offset shadows only where they earn identity; data-dense cards use a thin border and no offset.
-- Personality lives in motion and moments (loading, empty states, Roi's identity), not in extra chrome or shouty copy.
+- Personality lives in motion and moments (loading, empty states, Roy's identity), not in extra chrome or shouty copy.
 
 ## 2. Colors
 
@@ -123,11 +123,11 @@ Warm, high-contrast, brand-owned. Designed to avoid generic AI blues and purple 
 
 ### Accent (rare brand)
 
-- **Tomato** (`#e00202`): the rare brand accent — selection, active state, brand moments, and the Roi mark. **Tomato Wash** (`#ffe3dc`, peach) for low-emphasis selection backgrounds.
+- **Tomato** (`#e00202`): the rare brand accent — selection, active state, brand moments, and the Roy mark. **Tomato Wash** (`#ffe3dc`, peach) for low-emphasis selection backgrounds.
 
 ### Semantic
 
-- **Mint** (`#047a4d`, wash `#c9f3e1`): success and agent (Roi) states.
+- **Mint** (`#047a4d`, wash `#c9f3e1`): success and agent (Roy) states.
 - **Deep Red** (`#b3241c`, wash `#f7dcd7`): danger and destructive actions. Distinct from the tomato brand accent, and **always paired with icon + text** (never color alone).
 
 ### Neutral
@@ -144,7 +144,7 @@ Warm, high-contrast, brand-owned. Designed to avoid generic AI blues and purple 
 
 **The Two Reds Rule.** Tomato (brand) and deep red (danger) coexist; keep danger darker/less orange, use peach wash for selection, and **always** pair danger with an icon and text.
 
-**The No Generic AI Rule.** No purple-blue gradients, neon glows, abstract AI blobs, or ✨ sparkles as the AI identity. The agent's identity is Roi plus the tomato mark.
+**The No Generic AI Rule.** No purple-blue gradients, neon glows, abstract AI blobs, or ✨ sparkles as the AI identity. The agent's identity is Roy plus the tomato mark.
 
 ## 3. Typography
 
@@ -186,15 +186,15 @@ Fine-grained noise texture stays on large quiet surfaces (shell, command, empty 
 
 ## 5. Personality & Voice
 
-**The Personality Budget Rule.** Micro-delight lives in loading (Roi's mark pulsing + an honest progress narrative), empty states (a lively brand illustration), success, and Roi's identity. It is **forbidden** in errors, money/budget actions, guardrails and dense data.
+**The Personality Budget Rule.** Micro-delight lives in loading (Roy's mark pulsing + an honest progress narrative), empty states (a lively brand illustration), success, and Roy's identity. It is **forbidden** in errors, money/budget actions, guardrails and dense data.
 
 **The Own Voice Rule (copy).** Write in AutoTraffic's own voice, never a generic-AI voice. Forbidden: em dashes as dramatic connectors, "não é só X, é Y" constructions, rhetorical triads, empty hype ("revolucione", "potencialize", "desbloqueie"), exclamation confetti, emoji as personality in the UI, assistant openers ("Claro!", "Aqui está"), AI jargon ("insights poderosos", "mágica"). Prefer short sentences, concrete verbs, a clear benefit, simple punctuation. A light, own metaphor is welcome on Brand surfaces.
 
-**Tone by zone.** Brand surfaces (onboarding, empty, success, "Roi working") = warm and playful. Operational surfaces (data, config, costs) = neutral and precise. Critical surfaces (errors, money, guardrails) = strictly precise.
+**Tone by zone.** Brand surfaces (onboarding, empty, success, "Roy working") = warm and playful. Operational surfaces (data, config, costs) = neutral and precise. Critical surfaces (errors, money, guardrails) = strictly precise.
 
 **The B2B Guardrail.** Playful tone never touches anything a manager would forward to their own client (numbers, results, spend recommendations) — that content stays sober.
 
-**Roi identity.** Roi is the fixed brand name of the agent everywhere (per-account agents and the org concierge); persona/tone stay configurable per account, but the name is fixed. First mention on a surface qualifies it ("o Roi, seu agente de tráfego"); later mentions use "Roi". A persistent identity block (tomato mark + "Roi") anchors the agent surface.
+**Roy identity.** Roy is the fixed brand name of the agent everywhere (per-account agents and the org concierge); persona/tone stay configurable per account, but the name is fixed. First mention on a surface qualifies it ("o Roy, seu agente de tráfego"); later mentions use "Roy". A persistent identity block (tomato mark + "Roy") anchors the agent surface.
 
 **The status = tone + text rule.** Status is always tone plus text, never color alone.
 
@@ -227,14 +227,14 @@ Components are directives that read design tokens; changing token values propaga
 
 ### Loading & AI
 
-- Roi's mark pulses (never spins). The analysis loader shows an honest progress narrative. A WhatsApp-style typing indicator appears only in real conversation contexts. Skeletons for content loading.
+- Roy's mark pulses (never spins). The analysis loader shows an honest progress narrative. A WhatsApp-style typing indicator appears only in real conversation contexts. Skeletons for content loading.
 
 ## 7. Do's and Don'ts
 
 ### Do:
 
 - **Do** keep the two-tier discipline: bold for brand, calm for workspace.
-- **Do** make AI explainable and grounded, embodied by Roi in the current context.
+- **Do** make AI explainable and grounded, embodied by Roy in the current context.
 - **Do** support WCAG AA, keyboard nav, visible focus, color-blind-safe status (tone + text), and light + dark from the start.
 - **Do** use JetBrains Mono for all metrics and currency.
 - **Do** keep copy in AutoTraffic's own voice, tone-by-zone.

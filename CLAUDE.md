@@ -235,7 +235,7 @@ Schema em `packages/db/src/schema`. Grupos:
 - **Sempre mostrar o que está acontecendo:** estados loading/progresso/vazio/sucesso claros; usuário nunca no escuro.
 - **Sempre o próximo passo:** empty states e confirmações apontam a ação.
 - **Voz:** sentence case; status = **tom+texto** (nunca só cor); "arquivo enviado" (não "enviado com sucesso!").
-- Linguagem visual + IA + telas = **`docs/DESIGN.md`** + `apps/web/DESIGN.md` (Bold Operational Desk: neobrutalismo refinado, 2 níveis de superfície, Brand Accent tomate, No Generic AI, voz própria por zona, agente **Roi**).
+- Linguagem visual + IA + telas = **`docs/DESIGN.md`** + `apps/web/DESIGN.md` (Bold Operational Desk: neobrutalismo refinado, 2 níveis de superfície, Brand Accent tomate, No Generic AI, voz própria por zona, agente **Roy**).
 
 ### Padrões
 - **TDD (superpowers):** core funcional testado primeiro (sem mock); adapters com externos mockados; grafos com fixtures gravadas.

@@ -121,7 +121,7 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
   `,
 })
 export class ApprovalsPage implements OnInit {
-  // Marca: 1ª menção do agente apresenta o Roi (aposto).
+  // Marca: 1ª menção do agente apresenta o Roy (aposto).
   protected readonly emptyDescription = `Quando o ${AGENT_NAME}, seu agente de tráfego, propuser mudanças ou aplicar algo que ainda dá pra desfazer, aparece aqui.`;
   private readonly api = inject(ApprovalsApiService);
   private readonly analysisApi = inject(AnalysisApiService);

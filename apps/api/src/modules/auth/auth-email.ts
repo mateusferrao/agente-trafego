@@ -55,7 +55,7 @@ export function buildVerificationEmail(params: { to: string; from: string; code:
 
 /**
  * Email de "acesso liberado" (6b) — disparado no `access:grant`. É o primeiro aperto
- * de mão: apresenta o Roi (zona de marca, tom caloroso, sem exclamação/confete).
+ * de mão: apresenta o Roy (zona de marca, tom caloroso, sem exclamação/confete).
  */
 export function buildAccessGrantedEmail(params: { to: string; from: string; appUrl: string }): EmailMessage {
   const login = `${params.appUrl}/login`;

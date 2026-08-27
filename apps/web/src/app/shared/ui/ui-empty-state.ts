@@ -17,7 +17,7 @@ import { NgIcon } from '@ng-icons/core';
   template: `
     <div [class]="containerClass">
       @if (brand) {
-        <!-- Símbolo do agente (tomate) — momento de marca (Roi não tem nada ainda). -->
+        <!-- Símbolo do agente (tomate) — momento de marca (Roy não tem nada ainda). -->
         <span class="brand-mark brand-mark--empty brand-pop" aria-hidden="true"></span>
       } @else if (icon) {
         <span class="grid size-12 place-items-center rounded-full bg-soft text-muted">
@@ -40,7 +40,7 @@ export class UiEmptyStateComponent {
   @Input({ required: true }) title!: string;
   @Input() description?: string;
   @Input() icon?: string;
-  /** Usa o símbolo do agente (tomate) no lugar do ícone — momentos de marca (Roi). */
+  /** Usa o símbolo do agente (tomate) no lugar do ícone — momentos de marca (Roy). */
   @Input({ transform: booleanAttribute }) brand = false;
   @Input({ transform: booleanAttribute }) compact = false;
 

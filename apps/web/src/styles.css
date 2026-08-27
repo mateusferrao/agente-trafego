@@ -44,7 +44,7 @@
   --color-overlay: rgb(7 10 39 / 0.28);
   --color-assistant: #047a4d;
   --color-assistant-strong: #035c3a;
-  /* Tomate de marca (símbolo/lockup do Roi) = accent */
+  /* Tomate de marca (símbolo/lockup do Roy) = accent */
   --color-tomato: #e00202;
   --color-tomato-soft: #ffe3dc;
   /* Paleta categórica (não-semântica): distinção de séries/segmentos. Não usar para status. */
@@ -608,7 +608,7 @@ textarea[appTextarea][surface='transparent']:focus-visible {
   height: 2.75rem;
 }
 
-/* Roi que reage: leve "wobble" do tomate ao passar o mouse no lockup (âncora de
+/* Roy que reage: leve "wobble" do tomate ao passar o mouse no lockup (âncora de
    marca — sidebar/login). Pop de sucesso: entrada com pulinho de confirmação.
    Ambos motion-safe (sem movimento em prefers-reduced-motion, item fica visível). */
 @keyframes brand-wobble {
