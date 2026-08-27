@@ -96,23 +96,31 @@ docker exec docker-postgres-1 psql -U postgres -d trafego -c "select max_new_dai
 
 ---
 
-## 2b. Consistência dos 2 gates + CTA gateada (efeito de desligar uma ação)
+## 2b. Consistência dos gates + CTA gateada (efeito de desligar uma ação)
 
-> **[Config por-ação]** Desligar uma ação tem de valer em **todas** as superfícies (chat, apply e site),
-> lendo da MESMA fonte (`agent_tool_bindings`). Continue do cenário do passo 2 (**Duplicar para escalar = OFF**).
+> **[Config por-ação]** Desligar uma ação vale em **TODAS as superfícies** de escrita — chat, apply,
+> site **e o run autônomo** — lendo da MESMA fonte (`agent_tool_bindings`). Continue do cenário do
+> passo 2 (**Duplicar para escalar = OFF**, **Ajustar orçamento = ON**).
 
 **[Site]:**
 - ✅ Na análise da conta (aba visão geral), o card de um **vencedor** **NÃO** mostra mais o botão **"Escalar"**
   se **Duplicar** E **Ajustar orçamento** estiverem ambos OFF. (Com só um dos dois ligado, o botão aparece
   e a escala usa o ramo habilitado.)
 
-**[WhatsApp] — peça a escrita desligada e confirme a recusa honesta:**
-- Envie: `duplica meu melhor vencedor pra escalar`
-  - ✅ o agente **não** cria o rascunho — responde que essa capacidade está desligada (recusa clara, sem stack).
+**[WhatsApp] — peça a escrita desligada e confirme o comportamento honesto:**
+- Com **Duplicar OFF** + **Ajustar orçamento ON**, envie: `duplica meu melhor vencedor pra escalar`
+  - ✅ o agente **não** propõe duplicar (capacidade off) — ele **oferece subir o orçamento** (o ramo
+    habilitado) sob eco+confirma. Não fica um rascunho de duplicata que barraria depois no apply.
+- Desligue **os dois** (Duplicar + Ajustar orçamento) e repita
+  - ✅ recusa clara: *"escalar está desligado para este agente…"* (sem stack).
 - Reative **Ajustar orçamento** e envie: `sobe 20% o orçamento da campanha X`
-  - ✅ agora ele **eco + confirma** (chat sempre confirma antes de escrever) e, no "sim", aplica.
+  - ✅ **eco + confirma** (chat sempre confirma antes de escrever) e, no "sim", aplica.
 
-**Verificar (nada foi criado quando desligado):**
+**[Run autônomo]** com o agente em **age sozinho** e uma ação desligada nos bindings:
+- ✅ o agente **não** aplica sozinho a ação desligada (o guardrail do run resolve `allowedActions`
+  dos bindings no início do run). Ex: `pause_entity` OFF → nenhum `pause` autônomo, mesmo em `act_full`.
+
+**Verificar (nada criado/aplicado quando desligado):**
 ```bash
 docker exec docker-postgres-1 psql -U postgres -d trafego -c "select id, kind, status from campaign_drafts order by created_at desc limit 5;"
 ```
