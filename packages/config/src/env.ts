@@ -36,6 +36,13 @@ export const envSchema = z.object({
   // aplica migrations no boot da api (idempotente). false = migrar fora (CI/release).
   AUTO_MIGRATE: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
 
+  // ─── Storage de assets de criativo (Fatia 7) ───────────────────────────
+  // diretório do blob original (adapter local-fs MVP; S3-compat = fast-follow).
+  CREATIVE_STORAGE_DIR: z.string().min(1).default("./.data/creatives"),
+  // base pública p/ signedUrl do adapter local (preview no site). Sem assinatura real
+  // no MVP local — a URL só compõe base + ref (o arquivo é servido pela api em dev).
+  CREATIVE_ASSET_URL_BASE: z.string().url().default("http://localhost:3333/assets"),
+
   // ─── Credential Vault (AES-256-GCM) ────────────────────────────────────
   // chave mestra base64 de 32 bytes (secret do EasyPanel em produção).
   CREDENTIAL_MASTER_KEY: z

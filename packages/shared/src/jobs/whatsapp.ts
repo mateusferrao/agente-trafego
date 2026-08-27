@@ -75,3 +75,30 @@ export type WhatsappTranscriptionPayload = {
     readonly authorLabel: string;
   };
 };
+
+/**
+ * Fila DEDICADA de intake de imagem (Fatia 7): o inbound detecta imagem, enfileira
+ * aqui; o worker resolve os bytes (inline ou `fetchMediaBase64`), grava o blob no
+ * StoragePort, sobe pra Meta (image_hash), registra o `creative_asset` (origin=upload)
+ * na conta em foco e responde "recebi, guardei". Imagem NÃO dispara turno do Grafo B —
+ * é side-effect + cortesia. Conta em foco ausente (org multi-conta) → pede antes de subir.
+ */
+export const WHATSAPP_MEDIA_INTAKE_QUEUE = "whatsapp-media-intake";
+export const WHATSAPP_MEDIA_INTAKE_JOB = "intake-image";
+/** Retentativas do intake (erros transitórios: fetch/upload). */
+export const WHATSAPP_MEDIA_INTAKE_ATTEMPTS = 3;
+/** Base do backoff exponencial entre tentativas de intake (ms). */
+export const WHATSAPP_MEDIA_INTAKE_BACKOFF_MS = 3_000;
+export type WhatsappMediaIntakePayload = {
+  readonly orgId: string;
+  readonly ref: ConversationRef;
+  readonly conversationId: string;
+  readonly instanceId: string;
+  readonly image: {
+    readonly base64: string;
+    readonly mimetype: string;
+    readonly caption: string | null;
+    /** key cru — usado se `base64` vier vazio (fallback `fetchMediaBase64`). */
+    readonly messageKey: { readonly id: string; readonly remoteJid: string; readonly fromMe: boolean; readonly participant?: string };
+  };
+};

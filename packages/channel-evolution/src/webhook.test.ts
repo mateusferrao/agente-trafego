@@ -135,9 +135,36 @@ describe("parseInbound", () => {
     });
   });
 
+  // ─── Imagem → kind:"image" (F7 intake: vira asset de criativo, não aviso) ───
+  it("imageMessage (base64 inline) → kind image com bytes + caption", () => {
+    const msg = parseInbound(
+      upsert({ message: { imageMessage: { mimetype: "image/png", caption: "  logo nova  " }, base64: "IMG64" } }),
+    );
+    expect(msg).toMatchObject({
+      kind: "image",
+      image: { base64: "IMG64", mimetype: "image/png" },
+      caption: "logo nova",
+    });
+  });
+
+  it("imageMessage sem mimetype/caption → default image/jpeg + caption null", () => {
+    const msg = parseInbound(upsert({ message: { imageMessage: { url: "x" }, base64: "Z" } }));
+    expect(msg).toMatchObject({ kind: "image", image: { base64: "Z", mimetype: "image/jpeg" }, caption: null });
+  });
+
+  it("imagem carrega messageKey p/ o fallback fetchMediaBase64 (sem base64 inline)", () => {
+    const msg = parseInbound(
+      upsert({ remoteJid: "5531988887777@s.whatsapp.net", id: "IMG-KEY", message: { imageMessage: { url: "x" } } }),
+    );
+    expect(msg).toMatchObject({
+      kind: "image",
+      image: { base64: "" },
+      messageKey: { id: "IMG-KEY", remoteJid: "5531988887777@s.whatsapp.net", fromMe: false },
+    });
+  });
+
   // ─── Mídia reconhecida não-suportada → kind:"unsupported" (vira aviso) ───
   it.each([
-    ["imageMessage", "image"],
     ["videoMessage", "video"],
     ["documentMessage", "document"],
     ["stickerMessage", "sticker"],

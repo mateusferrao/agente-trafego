@@ -101,18 +101,36 @@ export interface InboundAudioMessage extends InboundMessageBase {
   readonly messageKey: MediaMessageKey;
 }
 
-/** Mídia reconhecida mas não-suportada (imagem/vídeo/doc/figurinha) — vira aviso, não drop. */
+/**
+ * Imagem inbound (F7 intake) — vira asset de criativo na biblioteca da conta, não turno.
+ * Bytes inline (base64) quando o webhook entrega; ausente → `fetchMediaBase64` pela `messageKey`.
+ */
+export interface InboundImageMessage extends InboundMessageBase {
+  readonly kind: "image";
+  readonly image: { readonly base64: string; readonly mimetype: string };
+  /** legenda que veio junto da imagem (nomeia o criativo), ou null. */
+  readonly caption: string | null;
+  /** p/ `fetchMediaBase64` quando o base64 não vem inline no webhook. */
+  readonly messageKey: MediaMessageKey;
+}
+
+/** Mídia reconhecida mas não-suportada (vídeo/doc/figurinha) — vira aviso, não drop. */
 export interface InboundUnsupportedMessage extends InboundMessageBase {
   readonly kind: "unsupported";
-  readonly mediaType: string; // rótulo neutro: "image" | "video" | "document" | "sticker" | ...
+  readonly mediaType: string; // rótulo neutro: "video" | "document" | "sticker" | ...
 }
 
 /**
  * Mensagem inbound normalizada (união discriminada por `kind`). Áudio é
- * transcrito → texto na borda; mídia não-suportada vira aviso amigável; o resto
- * (fromMe/grupo/ACK/sem conteúdo) o parser devolve como `null` (silêncio).
+ * transcrito → texto na borda; imagem vira asset de criativo (F7); mídia não-
+ * suportada vira aviso amigável; o resto (fromMe/grupo/ACK/sem conteúdo) o parser
+ * devolve como `null` (silêncio).
  */
-export type InboundMessage = InboundTextMessage | InboundAudioMessage | InboundUnsupportedMessage;
+export type InboundMessage =
+  | InboundTextMessage
+  | InboundAudioMessage
+  | InboundImageMessage
+  | InboundUnsupportedMessage;
 
 /** Grupo do WhatsApp em que o número da org já está (registro — G4). */
 export interface GroupSummary {

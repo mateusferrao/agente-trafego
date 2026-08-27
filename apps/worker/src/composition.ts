@@ -12,12 +12,14 @@ import type {
   MeteringPort,
   SchedulerPort,
   TranscriptionPort,
+  StoragePort,
 } from "@trafego/shared/ports";
 import { WHATSAPP_TRANSCRIPTION_ATTEMPTS, WHATSAPP_TRANSCRIPTION_BACKOFF_MS } from "@trafego/shared";
 import type { Database } from "@trafego/db/client";
 import { createDb } from "@trafego/db";
 import { loadEnv } from "@trafego/config";
 import { BUFFER_TTL_MARGIN_SEC } from "./modules/conversation/buffer.js";
+import { createLocalStorage } from "./adapters/local-storage.js";
 import { Aes256CredentialVault } from "@trafego/credential-vault";
 import { BullmqScheduler } from "@trafego/scheduler-bullmq";
 import { CustomConversionsResolver, MetaAdsAdapter, MetaEntityCache, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta";
@@ -55,6 +57,8 @@ export interface WorkerDeps {
     readonly mailer: MailerPort;
     /** Transcrição de nota de voz inbound (STT) — worker é o dono (API stuba o LLM). */
     readonly transcription: TranscriptionPort;
+    /** Storage do blob original de criativo (F7 intake) — local-fs no MVP, S3-compat depois. */
+    readonly storage: StoragePort;
   };
   /** Sync de insights (2a): coleta a série temporal Meta → insights_snapshots. */
   readonly insightsSync: InsightsSyncService;
@@ -242,6 +246,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
         log: (m) => logger.info(m),
       }),
       transcription, // STT da nota de voz inbound (S3)
+      storage: createLocalStorage({ baseDir: env.CREATIVE_STORAGE_DIR, urlBase: env.CREATIVE_ASSET_URL_BASE }),
     },
     insightsSync,
     analysis: {
