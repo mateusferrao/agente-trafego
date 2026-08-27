@@ -112,6 +112,10 @@ export async function applyAgentConfigChange(
       dryRun: g.dryRun,
       killSwitch: g.killSwitch,
       llmCostCap: g.llmCostCapUsd != null ? String(g.llmCostCapUsd) : null,
+      // limites de gasto novo (Fatia 7) — só sobrescreve quando vierem (mantém default de coluna).
+      ...(g.maxNewDailyBudgetMinor != null ? { maxNewDailyBudgetMinor: g.maxNewDailyBudgetMinor } : {}),
+      ...(g.maxNewCampaignsPerDay != null ? { maxNewCampaignsPerDay: g.maxNewCampaignsPerDay } : {}),
+      ...(g.scalePct != null ? { scalePct: g.scalePct } : {}),
     };
     await db
       .insert(guardrailConfigs)

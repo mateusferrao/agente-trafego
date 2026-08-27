@@ -77,6 +77,10 @@ export interface GuardrailConfigPatch {
   readonly dryRun: boolean;
   readonly killSwitch: boolean;
   readonly llmCostCapUsd?: number | undefined;
+  // limites de gasto novo (Fatia 7).
+  readonly maxNewDailyBudgetMinor?: number | undefined;
+  readonly maxNewCampaignsPerDay?: number | undefined;
+  readonly scalePct?: number | undefined;
 }
 
 /** Knobs de "Opções avançadas" (6c) — patch parcial do model_config (fora `quality`). */
@@ -104,6 +108,7 @@ export interface NotifyPolicyPatch {
   readonly alertsThrottleHours?: number | undefined;
   readonly runPushEnabled?: boolean | undefined;
   readonly reactivationEnabled?: boolean | undefined;
+  readonly proactiveDraftsEnabled?: boolean | undefined;
 }
 
 /**
@@ -314,6 +319,7 @@ function mergeNotifyPolicy(cur: NotifyPolicy, patch: NotifyPolicyPatch | undefin
     runPush: { enabled: patch.runPushEnabled ?? cur.runPush.enabled },
     // defensivo: linhas pré-pivô podem não ter `reactivation` no jsonb → default off.
     reactivation: { enabled: patch.reactivationEnabled ?? cur.reactivation?.enabled ?? false },
+    proactiveDrafts: { enabled: patch.proactiveDraftsEnabled ?? cur.proactiveDrafts?.enabled ?? false },
   };
 }
 
@@ -378,6 +384,9 @@ export function cleanGuardrails(g: GuardrailConfigPatch): GuardrailConfig {
     dryRun: g.dryRun,
     killSwitch: g.killSwitch,
     ...(g.llmCostCapUsd !== undefined ? { llmCostCapUsd: g.llmCostCapUsd } : {}),
+    ...(g.maxNewDailyBudgetMinor !== undefined ? { maxNewDailyBudgetMinor: g.maxNewDailyBudgetMinor } : {}),
+    ...(g.maxNewCampaignsPerDay !== undefined ? { maxNewCampaignsPerDay: g.maxNewCampaignsPerDay } : {}),
+    ...(g.scalePct !== undefined ? { scalePct: g.scalePct } : {}),
   };
 }
 

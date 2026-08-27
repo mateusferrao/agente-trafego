@@ -184,6 +184,19 @@ const SENSITIVITIES: readonly { value: Sensitivity; label: string }[] = [
           </button>
         </label>
       </div>
+
+      <!-- Proatividade de criação (Fatia 7): propõe escalar/criar campanhas -->
+      <div class="border-t border-line pt-4">
+        <label class="flex items-center justify-between gap-3">
+          <span class="flex flex-col">
+            <span class="text-sm font-medium text-ink">Propor campanhas por conta própria</span>
+            <span class="text-xs text-muted">O agente sugere escalar um vencedor ou criar uma campanha quando faz sentido — sempre como proposta, nunca gasta sem sua aprovação.</span>
+          </span>
+          <button appSwitch [ngpSwitchChecked]="proactiveDraftsEnabled()" (ngpSwitchCheckedChange)="proactiveDraftsEnabled.set($event)">
+            <span appSwitchThumb></span>
+          </button>
+        </label>
+      </div>
     </section>
   `,
 })
@@ -211,6 +224,7 @@ export class AgentNotifications implements OnInit {
 
   protected readonly runPushEnabled = signal(true);
   protected readonly reactivationEnabled = signal(false);
+  protected readonly proactiveDraftsEnabled = signal(false);
 
   protected readonly pulseHourStr = computed(() => String(this.pulseHour()));
   protected readonly pulseHour2Str = computed(() => String(this.pulseHour2()));
@@ -259,7 +273,7 @@ export class AgentNotifications implements OnInit {
   private readonly baseline = signal('');
   private readonly sig = computed(
     () =>
-      `${this.pulseEnabled()}|${JSON.stringify(this.pulseCadenceSpec())}|${this.alertsEnabled()}|${this.sensitivity()}|${this.throttleHours()}|${this.runPushEnabled()}|${this.reactivationEnabled()}`,
+      `${this.pulseEnabled()}|${JSON.stringify(this.pulseCadenceSpec())}|${this.alertsEnabled()}|${this.sensitivity()}|${this.throttleHours()}|${this.runPushEnabled()}|${this.reactivationEnabled()}|${this.proactiveDraftsEnabled()}`,
   );
   readonly dirty = computed(() => this.sig() !== this.baseline() && !this.pulseCronInvalid());
 
@@ -283,6 +297,7 @@ export class AgentNotifications implements OnInit {
     this.throttleHours.set(String(n.alerts.throttleHours));
     this.runPushEnabled.set(n.runPush.enabled);
     this.reactivationEnabled.set(n.reactivation?.enabled ?? false);
+    this.proactiveDraftsEnabled.set(n.proactiveDrafts?.enabled ?? false);
     this.baseline.set(this.sig());
     this.loaded.set(true);
   }
@@ -318,6 +333,7 @@ export class AgentNotifications implements OnInit {
             },
             runPush: { enabled: this.runPushEnabled() },
             reactivation: { enabled: this.reactivationEnabled() },
+            proactiveDrafts: { enabled: this.proactiveDraftsEnabled() },
           },
         }),
       );

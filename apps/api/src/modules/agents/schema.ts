@@ -109,6 +109,7 @@ export const notifyPolicyInput = z.object({
   }).optional(),
   runPush: z.object({ enabled: z.boolean() }).optional(),
   reactivation: z.object({ enabled: z.boolean() }).optional(),
+  proactiveDrafts: z.object({ enabled: z.boolean() }).optional(),
 });
 export type NotifyPolicyInput = z.infer<typeof notifyPolicyInput>;
 
