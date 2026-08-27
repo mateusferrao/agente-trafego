@@ -180,9 +180,8 @@ export function parseConnectionUpdate(payload: unknown): ConnectionStatus | null
 /** Mime default de nota de voz do WhatsApp (ogg/opus) quando o payload não traz. */
 const DEFAULT_AUDIO_MIME = "audio/ogg";
 
-/** Nós de mídia reconhecidos mas NÃO suportados (não-texto, não-áudio, não-imagem) → rótulo neutro. */
+/** Nós de mídia reconhecidos mas NÃO suportados (não-texto/áudio/imagem/vídeo) → rótulo neutro. */
 const UNSUPPORTED_MEDIA_NODES: ReadonlyArray<readonly [string, string]> = [
-  ["videoMessage", "video"],
   ["documentMessage", "document"],
   ["stickerMessage", "sticker"],
   ["contactMessage", "contact"],
@@ -191,6 +190,8 @@ const UNSUPPORTED_MEDIA_NODES: ReadonlyArray<readonly [string, string]> = [
 
 /** Mime default de imagem quando o payload não traz o mimetype. */
 const DEFAULT_IMAGE_MIME = "image/jpeg";
+/** Mime default de vídeo quando o payload não traz o mimetype. */
+const DEFAULT_VIDEO_MIME = "video/mp4";
 
 /** Primeiro base64 não-vazio entre os candidatos (ou "" se nenhum). */
 function firstBase64(...candidates: readonly unknown[]): string {
@@ -230,6 +231,21 @@ function extractImage(data: Record<string, unknown>): { base64: string; mimetype
   const rawCaption = image["caption"];
   const caption = typeof rawCaption === "string" && rawCaption.trim().length > 0 ? rawCaption.trim() : null;
   return { base64, mimetype, caption };
+}
+
+/**
+ * Vídeo (videoMessage) — F7 intake. NÃO extrai base64 (vídeo é grande demais p/ o payload da
+ * fila): só detecta o nó + mimetype + legenda; o worker de intake busca os bytes por `messageKey`.
+ */
+function extractVideo(data: Record<string, unknown>): { mimetype: string; caption: string | null } | null {
+  const message = asRecord(data["message"]);
+  const video = asRecord(message?.["videoMessage"]);
+  if (!video) return null;
+  const rawMime = video["mimetype"];
+  const mimetype = typeof rawMime === "string" && rawMime.length > 0 ? rawMime : DEFAULT_VIDEO_MIME;
+  const rawCaption = video["caption"];
+  const caption = typeof rawCaption === "string" && rawCaption.trim().length > 0 ? rawCaption.trim() : null;
+  return { mimetype, caption };
 }
 
 /** Mídia reconhecida mas não-suportada → rótulo neutro (ou null se não for). */
@@ -305,6 +321,11 @@ export function parseInbound(payload: unknown): InboundMessage | null {
   if (image) {
     const { caption, ...bytes } = image;
     return { ...base, kind: "image", image: bytes, caption, messageKey: buildMediaKey() };
+  }
+
+  const video = extractVideo(data);
+  if (video) {
+    return { ...base, kind: "video", video: { mimetype: video.mimetype }, caption: video.caption, messageKey: buildMediaKey() };
   }
 
   const mediaType = detectMediaType(message);

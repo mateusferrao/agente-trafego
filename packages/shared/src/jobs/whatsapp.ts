@@ -84,7 +84,7 @@ export type WhatsappTranscriptionPayload = {
  * é side-effect + cortesia. Conta em foco ausente (org multi-conta) → pede antes de subir.
  */
 export const WHATSAPP_MEDIA_INTAKE_QUEUE = "whatsapp-media-intake";
-export const WHATSAPP_MEDIA_INTAKE_JOB = "intake-image";
+export const WHATSAPP_MEDIA_INTAKE_JOB = "intake-media";
 /** Retentativas do intake (erros transitórios: fetch/upload). */
 export const WHATSAPP_MEDIA_INTAKE_ATTEMPTS = 3;
 /** Base do backoff exponencial entre tentativas de intake (ms). */
@@ -94,10 +94,13 @@ export type WhatsappMediaIntakePayload = {
   readonly ref: ConversationRef;
   readonly conversationId: string;
   readonly instanceId: string;
-  readonly image: {
-    readonly base64: string;
+  readonly mediaType: "image" | "video";
+  readonly media: {
     readonly mimetype: string;
     readonly caption: string | null;
+    /** base64 inline (imagem, quando o webhook entrega). VÍDEO NÃO carrega base64 (grande demais
+     *  p/ o Redis, §9) — o worker busca por `messageKey` (fetchMediaBase64) sob cap de tamanho. */
+    readonly base64?: string;
     /** key cru — usado se `base64` vier vazio (fallback `fetchMediaBase64`). */
     readonly messageKey: { readonly id: string; readonly remoteJid: string; readonly fromMe: boolean; readonly participant?: string };
   };

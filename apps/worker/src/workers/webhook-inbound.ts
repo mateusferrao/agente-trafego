@@ -49,7 +49,7 @@ const UNSUPPORTED_NOTICE_BUCKET = "unsupported";
 
 /** Placeholder de mídia no contexto ambiente de grupo (não transcreve; dá continuidade). */
 const AMBIENT_AUDIO_PLACEHOLDER = "[áudio]";
-const AMBIENT_MEDIA_PLACEHOLDER: Readonly<Record<string, string>> = { image: "[imagem]" };
+const AMBIENT_MEDIA_PLACEHOLDER: Readonly<Record<string, string>> = { image: "[imagem]", video: "[vídeo]" };
 const AMBIENT_MEDIA_DEFAULT = "[mídia]";
 
 /** Corpo a guardar de uma mensagem AMBIENTE de grupo: texto cru ou placeholder de mídia. */
@@ -57,6 +57,7 @@ function ambientBody(inbound: InboundMessage): string {
   if (inbound.kind === "text") return inbound.text;
   if (inbound.kind === "audio") return AMBIENT_AUDIO_PLACEHOLDER;
   if (inbound.kind === "image") return AMBIENT_MEDIA_PLACEHOLDER["image"] ?? AMBIENT_MEDIA_DEFAULT;
+  if (inbound.kind === "video") return AMBIENT_MEDIA_PLACEHOLDER["video"] ?? AMBIENT_MEDIA_DEFAULT;
   return AMBIENT_MEDIA_PLACEHOLDER[inbound.mediaType] ?? AMBIENT_MEDIA_DEFAULT;
 }
 
@@ -124,27 +125,30 @@ async function routeMessage(
     return;
   }
 
-  if (inbound.kind === "image") {
-    // Imagem → asset de criativo (F7): registra a linha + enfileira o intake (grava,
-    // sobe pra Meta, confirma). NÃO dispara turno do Grafo B (side-effect + cortesia).
+  if (inbound.kind === "image" || inbound.kind === "video") {
+    // Mídia → asset de criativo (F7): registra a linha + enfileira o intake (grava, sobe pra
+    // Meta, confirma). NÃO dispara turno do Grafo B (side-effect + cortesia). Imagem carrega
+    // base64 inline; VÍDEO não (grande demais p/ o Redis) → o intake busca por messageKey.
     await d.repo.recordMessage(conversationId, "inbound", inbound.caption, {
       messageId: inbound.messageId,
-      kind: "image",
+      kind: inbound.kind,
       ...extraMeta,
     });
-    await d.mediaIntakeQueue.add(WHATSAPP_MEDIA_INTAKE_JOB, {
-      orgId,
-      ref,
-      conversationId,
-      instanceId,
-      image: { ...inbound.image, caption: inbound.caption, messageKey: inbound.messageKey },
-    }, {
-      attempts: WHATSAPP_MEDIA_INTAKE_ATTEMPTS,
-      backoff: { type: "exponential", delay: WHATSAPP_MEDIA_INTAKE_BACKOFF_MS },
-      removeOnComplete: true,
-      removeOnFail: true,
-    });
-    d.logger.debug({ conversationId }, "inbound:image_enqueued");
+    const media =
+      inbound.kind === "image"
+        ? { mimetype: inbound.image.mimetype, base64: inbound.image.base64, caption: inbound.caption, messageKey: inbound.messageKey }
+        : { mimetype: inbound.video.mimetype, caption: inbound.caption, messageKey: inbound.messageKey };
+    await d.mediaIntakeQueue.add(
+      WHATSAPP_MEDIA_INTAKE_JOB,
+      { orgId, ref, conversationId, instanceId, mediaType: inbound.kind, media },
+      {
+        attempts: WHATSAPP_MEDIA_INTAKE_ATTEMPTS,
+        backoff: { type: "exponential", delay: WHATSAPP_MEDIA_INTAKE_BACKOFF_MS },
+        removeOnComplete: true,
+        removeOnFail: true,
+      },
+    );
+    d.logger.debug({ conversationId, kind: inbound.kind }, "inbound:media_enqueued");
     return;
   }
 

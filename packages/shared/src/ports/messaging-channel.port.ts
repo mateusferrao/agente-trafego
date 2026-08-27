@@ -114,10 +114,23 @@ export interface InboundImageMessage extends InboundMessageBase {
   readonly messageKey: MediaMessageKey;
 }
 
-/** Mídia reconhecida mas não-suportada (vídeo/doc/figurinha) — vira aviso, não drop. */
+/**
+ * Vídeo inbound (F7 intake) — vira asset de criativo de vídeo. DIVERGE da imagem: NÃO carrega
+ * `base64` inline (vídeo é grande demais p/ o payload da fila/Redis) — o intake busca os bytes
+ * por `messageKey` (fetchMediaBase64) em memória do worker, sob cap de tamanho. Documentado p/ o
+ * próximo leitor não "consertar" a assimetria.
+ */
+export interface InboundVideoMessage extends InboundMessageBase {
+  readonly kind: "video";
+  readonly video: { readonly mimetype: string };
+  readonly caption: string | null;
+  readonly messageKey: MediaMessageKey;
+}
+
+/** Mídia reconhecida mas não-suportada (doc/figurinha) — vira aviso, não drop. */
 export interface InboundUnsupportedMessage extends InboundMessageBase {
   readonly kind: "unsupported";
-  readonly mediaType: string; // rótulo neutro: "video" | "document" | "sticker" | ...
+  readonly mediaType: string; // rótulo neutro: "document" | "sticker" | ...
 }
 
 /**
@@ -130,6 +143,7 @@ export type InboundMessage =
   | InboundTextMessage
   | InboundAudioMessage
   | InboundImageMessage
+  | InboundVideoMessage
   | InboundUnsupportedMessage;
 
 /** Grupo do WhatsApp em que o número da org já está (registro — G4). */

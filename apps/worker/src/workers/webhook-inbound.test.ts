@@ -246,11 +246,12 @@ describe("makeInboundRouter — grupo", () => {
     expect(t.transcriptionQueue.add).not.toHaveBeenCalled();
   });
 
-  it("NÃO dirigido + ingest ON: imagem vira [imagem], outra mídia vira [mídia]", async () => {
+  it("NÃO dirigido + ingest ON: imagem vira [imagem], mídia sem placeholder vira [mídia]", async () => {
     const t = makeDeps({ groupIngestContext: true });
     await makeInboundRouter(t.deps)("inst-1", groupMedia("unsupported", "image"));
     expect(t.repo.recordGroupMessage).toHaveBeenCalledWith(expect.objectContaining({ body: "[imagem]" }));
-    await makeInboundRouter(t.deps)("inst-1", groupMedia("unsupported", "video"));
+    // document não tem placeholder próprio → cai no default "[mídia]".
+    await makeInboundRouter(t.deps)("inst-1", groupMedia("unsupported", "document"));
     expect(t.repo.recordGroupMessage).toHaveBeenLastCalledWith(expect.objectContaining({ body: "[mídia]" }));
   });
 

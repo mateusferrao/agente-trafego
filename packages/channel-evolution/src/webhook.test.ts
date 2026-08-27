@@ -163,9 +163,18 @@ describe("parseInbound", () => {
     });
   });
 
+  // ─── Vídeo → kind:"video" (F7 intake; sem base64 inline — busca por messageKey) ───
+  it("videoMessage → kind video (mimetype + caption + messageKey; sem base64)", () => {
+    const msg = parseInbound(
+      upsert({ message: { videoMessage: { url: "x", mimetype: "video/mp4", caption: "promo" } } }),
+    );
+    expect(msg).toMatchObject({ kind: "video", video: { mimetype: "video/mp4" }, caption: "promo" });
+    expect(msg).toHaveProperty("messageKey");
+    expect(msg).not.toHaveProperty("video.base64");
+  });
+
   // ─── Mídia reconhecida não-suportada → kind:"unsupported" (vira aviso) ───
   it.each([
-    ["videoMessage", "video"],
     ["documentMessage", "document"],
     ["stickerMessage", "sticker"],
   ])("%s → kind unsupported (%s)", (node, mediaType) => {

@@ -74,6 +74,10 @@ export interface WorkerDeps {
     readonly afterDays: number;
     readonly sweepIntervalMin: number;
   };
+  /** Intake de criativo (F7): teto de vídeo no WhatsApp (bytes → memória do worker). */
+  readonly creative: {
+    readonly maxWhatsappVideoBytes: number;
+  };
   /** Origem do site p/ deep-link nas mensagens de WhatsApp. */
   readonly webOrigin: string;
   /** Versão do analisador de visão (chave do cache de criativos — bump invalida). */
@@ -303,6 +307,9 @@ export async function buildComposition(): Promise<WorkerDeps> {
     dormancy: {
       afterDays: env.DORMANT_AFTER_DAYS,
       sweepIntervalMin: env.DORMANT_SWEEP_INTERVAL_MIN,
+    },
+    creative: {
+      maxWhatsappVideoBytes: env.CREATIVE_MAX_WHATSAPP_VIDEO_MB * 1024 * 1024,
     },
     webOrigin: env.WEB_ORIGIN,
     visionAnalyzerVersion: env.CREATIVE_VISION_ANALYZER_VERSION,
