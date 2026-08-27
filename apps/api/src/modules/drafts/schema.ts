@@ -86,12 +86,23 @@ export const creativeAssetOutput = z.object({
 export type CreativeAssetOutput = z.infer<typeof creativeAssetOutput>;
 export const creativeAssetsListOutput = z.array(creativeAssetOutput);
 
-/** Upload de imagem pela web (base64 — evita dep de multipart; sobe pra Meta → image_hash). */
-export const uploadCreativeInput = z.object({
-  imageBase64: z.string().min(1),
-  contentType: z.string().min(1),
-  filename: z.string().min(1),
+/**
+ * Upload de criativo pela web (MULTIPART — imagem + vídeo unificados; o request é multipart,
+ * fora do contrato JSON/kubb — a web posta FormData). Só a RESPOSTA é tipada: imagem já vem
+ * `ready` (image_hash); vídeo vem `pending` (video_id; o poll flipa depois).
+ */
+export const uploadCreativeOutput = z.object({
+  assetId: z.string(),
+  format: z.enum(["image", "video"]),
+  status: z.enum(["pending", "ready", "error"]),
+  metaImageHash: z.string().nullable(),
+  metaVideoId: z.string().nullable(),
 });
-export type UploadCreativeInput = z.infer<typeof uploadCreativeInput>;
-export const uploadCreativeOutput = z.object({ assetId: z.string(), metaImageHash: z.string() });
 export type UploadCreativeOutput = z.infer<typeof uploadCreativeOutput>;
+
+/** Args internos da ingestão (o handler multipart resolve os bytes; não é contrato de rede). */
+export interface UploadCreativeArgs {
+  readonly bytes: Uint8Array;
+  readonly contentType: string;
+  readonly filename: string;
+}

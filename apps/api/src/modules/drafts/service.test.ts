@@ -23,6 +23,7 @@ function makeService(rows: unknown[], get = vi.fn()) {
       vault: {} as never,
       approvals: {} as never,
       storage: storage as never,
+      scheduler: {} as never,
     }),
     get,
   };

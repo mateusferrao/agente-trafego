@@ -53,6 +53,11 @@ export const envSchema = z.object({
   STORAGE_SECRET_KEY: z.string().min(1).optional(),
   STORAGE_REGION: z.string().min(1).default("us-east-1"),
   STORAGE_FORCE_PATH_STYLE: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
+  // Tetos de upload de criativo (MB). Vídeo no WhatsApp tem teto MENOR (bytes vão pra memória
+  // do worker via fetchMediaBase64 → OOM se grande). Web maior (streaming multipart).
+  CREATIVE_MAX_IMAGE_MB: z.coerce.number().int().positive().default(15),
+  CREATIVE_MAX_VIDEO_MB: z.coerce.number().int().positive().default(200),
+  CREATIVE_MAX_WHATSAPP_VIDEO_MB: z.coerce.number().int().positive().default(50),
 
   // ─── Credential Vault (AES-256-GCM) ────────────────────────────────────
   // chave mestra base64 de 32 bytes (secret do EasyPanel em produção).

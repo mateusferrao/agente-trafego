@@ -236,7 +236,7 @@ export function buildContainer(logger?: OnboardingLogger): Container {
     contacts: createContactsService({ db, messaging }),
     agents,
     approvals: createApprovalsService({ db, approvals, scheduler, revertTtlDays: env.REVERT_TTL_DAYS }),
-    drafts: createDraftsService({ db, adsPlatform, vault, approvals, storage }),
+    drafts: createDraftsService({ db, adsPlatform, vault, approvals, storage, scheduler }),
     recommendations: createRecommendationsService({ db }),
     runs,
     dashboard: createDashboardService({

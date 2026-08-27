@@ -6547,41 +6547,46 @@
           "ok"
         ]
       },
-      "UploadCreativeInput": {
-        "type": "object",
-        "properties": {
-          "imageBase64": {
-            "type": "string",
-            "minLength": 1
-          },
-          "contentType": {
-            "type": "string",
-            "minLength": 1
-          },
-          "filename": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "required": [
-          "imageBase64",
-          "contentType",
-          "filename"
-        ]
-      },
       "UploadCreativeOutput": {
         "type": "object",
         "properties": {
           "assetId": {
             "type": "string"
           },
+          "format": {
+            "type": "string",
+            "enum": [
+              "image",
+              "video"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "ready",
+              "error"
+            ]
+          },
           "metaImageHash": {
-            "type": "string"
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metaVideoId": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
           "assetId",
-          "metaImageHash"
+          "format",
+          "status",
+          "metaImageHash",
+          "metaVideoId"
         ]
       },
       "RevertibleActionOutput": {
@@ -8564,18 +8569,9 @@
             "in": "path"
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UploadCreativeInput"
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
-            "description": "imagem subida (image_hash) + asset criado",
+            "description": "criativo subido (imagem=ready/image_hash; vídeo=pending/video_id)",
             "content": {
               "application/json": {
                 "schema": {

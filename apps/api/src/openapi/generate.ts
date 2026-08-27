@@ -89,7 +89,6 @@ import {
   draftApprovalOutput,
   scaleWinnerInput,
   scaleWinnerOutput,
-  uploadCreativeInput,
   uploadCreativeOutput,
   setDraftCreativeInput,
   setDraftCreativeOutput,
@@ -177,7 +176,6 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const CreativeAssetOutput = registry.register("CreativeAssetOutput", creativeAssetOutput);
   const SetDraftCreativeInput = registry.register("SetDraftCreativeInput", setDraftCreativeInput);
 const SetDraftCreativeOutput = registry.register("SetDraftCreativeOutput", setDraftCreativeOutput);
-const UploadCreativeInput = registry.register("UploadCreativeInput", uploadCreativeInput);
   const UploadCreativeOutput = registry.register("UploadCreativeOutput", uploadCreativeOutput);
   const RevertibleActionOutput = registry.register("RevertibleActionOutput", revertibleActionOutput);
 
@@ -707,9 +705,10 @@ const UploadCreativeInput = registry.register("UploadCreativeInput", uploadCreat
     method: "post",
     path: "/api/accounts/{id}/creatives/upload",
     tags: ["drafts"],
-    request: { params: z.object({ id: z.string() }), ...jsonBody(UploadCreativeInput) },
+    // request = multipart/form-data (arquivo) — fora do contrato JSON; a web posta FormData.
+    request: { params: z.object({ id: z.string() }) },
     responses: {
-      200: jsonRes("imagem subida (image_hash) + asset criado", UploadCreativeOutput),
+      200: jsonRes("criativo subido (imagem=ready/image_hash; vídeo=pending/video_id)", UploadCreativeOutput),
       404: { description: "conta ou agente não encontrado" },
     },
   });

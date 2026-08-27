@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, type OnInit, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, type OnInit, inject, signal } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
 import { toast } from 'ngx-sonner';
 import { UiButton, UiEmptyState } from '@ui';
@@ -23,9 +23,9 @@ import { environment } from '../../../environments/environment';
           <p class="text-xs text-muted">Mídias reusáveis nos rascunhos de campanha. O agente reusa daqui — nunca inventa.</p>
         </div>
         <button type="button" appButton size="sm" [disabled]="uploading()" (click)="picker.click()">
-          {{ uploading() ? 'Enviando…' : 'Subir imagem' }}
+          {{ uploading() ? 'Enviando…' : 'Subir criativo' }}
         </button>
-        <input #picker type="file" accept="image/*" class="hidden" (change)="onFile($event)" />
+        <input #picker type="file" accept="image/*,video/*" class="hidden" (change)="onFile($event)" />
       </div>
 
       @if (failed()) {
@@ -68,6 +68,16 @@ import { environment } from '../../../environments/environment';
 export class CreativeLibrary implements OnInit {
   private readonly api = inject(DraftsApiService);
   private readonly accountId = inject(ActivatedRoute).snapshot.paramMap.get('id') ?? '';
+  private destroyed = false;
+
+  constructor() {
+    inject(DestroyRef).onDestroy(() => {
+      this.destroyed = true;
+    });
+  }
+
+  /** Cadência do re-load enquanto há vídeo `pending` (o poll do servidor flipa → ready/error). */
+  private static readonly PENDING_POLL_MS = 6000;
 
   protected readonly assets = signal<readonly CreativeAssetOutput[]>([]);
   protected readonly loaded = signal(false);
@@ -102,6 +112,13 @@ export class CreativeLibrary implements OnInit {
       next: (rows) => {
         this.assets.set(rows);
         this.loaded.set(true);
+        // vídeo processa async no servidor → re-consulta enquanto houver `pending` (para quando
+        // zerar). Feedback vivo: o card "processando" vira preview/erro sem recarregar a página.
+        if (!this.destroyed && rows.some((a) => a.status === 'pending')) {
+          setTimeout(() => {
+            if (!this.destroyed) this.load();
+          }, CreativeLibrary.PENDING_POLL_MS);
+        }
       },
       // falha de fetch = estado de erro dedicado (com retry), NUNCA o empty-state (que
       // significa "conta sem criativos" — enganaria o usuário).
@@ -117,30 +134,22 @@ export class CreativeLibrary implements OnInit {
     const file = input.files?.[0];
     if (!file) return;
     this.uploading.set(true);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64 = String(reader.result).split(',')[1] ?? '';
-      this.api
-        .uploadCreative(this.accountId, { imageBase64: base64, contentType: file.type, filename: file.name })
-        .subscribe({
-          next: () => {
-            toast.success('Imagem enviada — já dá pra reusar num rascunho.');
-            this.uploading.set(false);
-            input.value = ''; // reseta p/ re-selecionar o MESMO arquivo redisparar o change.
-            this.load();
-          },
-          error: () => {
-            this.uploading.set(false);
-            input.value = '';
-            toast.error('Não consegui enviar esse arquivo. Verifique o formato e o tamanho e tente de novo.');
-          },
-        });
-    };
-    reader.onerror = () => {
-      this.uploading.set(false);
-      input.value = '';
-      toast.error('Não consegui ler esse arquivo. Tente outro.');
-    };
-    reader.readAsDataURL(file);
+    this.api.uploadCreative(this.accountId, file).subscribe({
+      next: (out) => {
+        this.uploading.set(false);
+        input.value = ''; // reseta p/ re-selecionar o MESMO arquivo redisparar o change.
+        toast.success(
+          out.format === 'video'
+            ? 'Vídeo enviado — estou processando; ele fica pronto pra usar em instantes.'
+            : 'Imagem enviada — já dá pra reusar num rascunho.',
+        );
+        this.load();
+      },
+      error: () => {
+        this.uploading.set(false);
+        input.value = '';
+        toast.error('Não consegui enviar esse arquivo. Verifique o formato e o tamanho e tente de novo.');
+      },
+    });
   }
 }

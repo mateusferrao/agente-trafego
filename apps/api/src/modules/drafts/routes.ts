@@ -3,7 +3,9 @@ import type { OrgId } from "@trafego/shared/types";
 import { requireAuth } from "../../middleware/auth.js";
 import { requireActiveAccess } from "../../middleware/access-gate.js";
 import { requireOrgScope, orgIdOf } from "../../middleware/org-scope.js";
-import { scaleWinnerInput, setDraftCreativeInput, uploadCreativeInput } from "./schema.js";
+import { env } from "../../env.js";
+import { scaleWinnerInput, setDraftCreativeInput } from "./schema.js";
+import { isAllowedCreativeType } from "./service.js";
 
 /** Slice de rascunhos de campanha (Fatia 7): listar pendentes + escalar vencedor pelo site. */
 export const draftsRoutes: FastifyPluginAsync = async (app) => {
@@ -52,11 +54,35 @@ export const draftsRoutes: FastifyPluginAsync = async (app) => {
       .send(Buffer.from(blob.bytes));
   });
 
-  // bodyLimit maior: imagem em base64 (~1.3× o binário) estoura o default de 1MB.
-  app.post("/accounts/:id/creatives/upload", { ...guard, bodyLimit: 12 * 1024 * 1024 }, async (request, reply) => {
+  // Upload MULTIPART (imagem OU vídeo). Valida tipo (allowlist) + teto por-tipo → mensagem PT
+  // amigável (nunca o erro técnico cru do multipart). Vídeo grande faz streaming (não base64).
+  app.post("/accounts/:id/creatives/upload", guard, async (request, reply) => {
     const { id } = request.params as { id: string };
-    const input = uploadCreativeInput.parse(request.body);
-    const result = await service.uploadCreative(orgIdOf(request) as OrgId, id, input);
+    const file = await request.file();
+    if (!file) return reply.status(400).send({ message: "Envie um arquivo de imagem ou vídeo." });
+    const contentType = file.mimetype;
+    if (!isAllowedCreativeType(contentType)) {
+      return reply.status(415).send({ message: "Formato não suportado. Envie imagem (JPG/PNG/WebP/GIF) ou vídeo (MP4/MOV)." });
+    }
+    const isVideo = contentType.startsWith("video/");
+    let buf: Buffer;
+    try {
+      buf = await file.toBuffer(); // respeita o fileSize do multipart (teto de vídeo)
+    } catch {
+      return reply
+        .status(413)
+        .send({ message: `Arquivo grande demais. Limite: ${env.CREATIVE_MAX_VIDEO_MB}MB para vídeo.` });
+    }
+    // teto por-tipo (imagem tem limite menor que o do multipart) → PT amigável.
+    const maxMb = isVideo ? env.CREATIVE_MAX_VIDEO_MB : env.CREATIVE_MAX_IMAGE_MB;
+    if (buf.byteLength > maxMb * 1024 * 1024) {
+      return reply.status(413).send({ message: `Arquivo grande demais. Limite: ${maxMb}MB para ${isVideo ? "vídeo" : "imagem"}.` });
+    }
+    const result = await service.uploadCreative(orgIdOf(request) as OrgId, id, {
+      bytes: new Uint8Array(buf),
+      contentType,
+      filename: file.filename,
+    });
     if (!result) return reply.status(404).send({ message: "conta ou agente não encontrado" });
     return result;
   });

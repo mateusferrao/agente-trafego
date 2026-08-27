@@ -14,21 +14,29 @@ import {
   ACTION_PARAM_PCT,
   APPROVAL_TTL_HOURS,
   BUDGET_MODE_INCREASE,
+  buildCreativeVideoPollJob,
   toGuardrailConfig,
   type CampaignDraftSpec,
 } from "@trafego/shared";
 import type { Action, AgentId, CreativeAssetRef, DraftId, OrgId } from "@trafego/shared/types";
-import type { AdAccountRef, ApprovalPort, CredentialVaultPort, StoragePort } from "@trafego/shared/ports";
+import type { AdAccountRef, ApprovalPort, CredentialVaultPort, SchedulerPort, StoragePort } from "@trafego/shared/ports";
 import type { AdsPlatformPort } from "@trafego/shared/ports";
-import { ingestCreativeImage } from "@trafego/creative-library";
+import { ingestCreativeImage, ingestCreativeVideo } from "@trafego/creative-library";
 import type {
   CreativeAssetOutput,
   DraftApprovalOutput,
   ScaleWinnerInput,
   ScaleWinnerOutput,
-  UploadCreativeInput,
+  UploadCreativeArgs,
   UploadCreativeOutput,
 } from "./schema.js";
+
+/** Content-types aceitos no upload (declarado + allowlist; a Meta rejeita o resto na subida). */
+const ALLOWED_IMAGE_TYPES: ReadonlySet<string> = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+const ALLOWED_VIDEO_TYPES: ReadonlySet<string> = new Set(["video/mp4", "video/quicktime"]);
+export function isAllowedCreativeType(contentType: string): boolean {
+  return ALLOWED_IMAGE_TYPES.has(contentType) || ALLOWED_VIDEO_TYPES.has(contentType);
+}
 
 // unidade menor → maior. Assume moeda de 2 casas (BRL/USD/EUR); moedas sem centavos
 // (JPY/CLP) = fast-follow (derivar a subunidade da moeda). Beta é BRL.
@@ -42,6 +50,8 @@ export interface DraftsServiceDeps {
   readonly approvals: ApprovalPort;
   /** Storage do blob original (F7) — mesma porta do intake WhatsApp (convergência). */
   readonly storage: StoragePort;
+  /** enfileira o poll de status de vídeo (upload async). */
+  readonly scheduler: SchedulerPort;
 }
 
 /** Conta + agente + token + cfg resolvidos p/ operar uma escala. */
@@ -336,22 +346,31 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       return deps.storage.get(row.storageRef);
     },
 
-    /** Upload de imagem pela web → sobe pra Meta (image_hash) → asset na biblioteca. */
+    /** Upload de criativo pela web (multipart, imagem OU vídeo) → StoragePort → Meta
+     *  (image_hash / video_id) → asset. Vídeo processa async (pending + poll). Mesma
+     *  ingestão do intake WhatsApp (convergência). */
     async uploadCreative(
       orgId: OrgId,
       accountId: string,
-      input: UploadCreativeInput,
+      input: UploadCreativeArgs,
     ): Promise<UploadCreativeOutput | null> {
       const ctx = await loadScaleContext(orgId, accountId);
       if (!ctx) return null;
-      const bytes = new Uint8Array(Buffer.from(input.imageBase64, "base64"));
-      // INGESTÃO compartilhada (mesma fonte do intake WhatsApp): blob → StoragePort → Meta
-      // (image_hash) → creative_asset dedupado. Convergência total dos dois caminhos.
-      const { assetId, metaImageHash } = await ingestCreativeImage(
-        { db: deps.db, storage: deps.storage, ads: deps.adsPlatform },
-        { orgId, adAccountId: accountId, ref: ctx.ref, bytes, contentType: input.contentType, filename: input.filename },
-      );
-      return { assetId, metaImageHash };
+      const common = { orgId, adAccountId: accountId, ref: ctx.ref, bytes: input.bytes, contentType: input.contentType, filename: input.filename };
+
+      if (ALLOWED_VIDEO_TYPES.has(input.contentType)) {
+        const v = await ingestCreativeVideo({ db: deps.db, storage: deps.storage, ads: deps.adsPlatform }, common);
+        // vídeo novo (não deduped-ready) → enfileira o poll que flipa pending→ready/error.
+        if (v.status === "pending") {
+          await deps.scheduler.enqueue(
+            buildCreativeVideoPollJob({ orgId, adAccountId: accountId, assetId: v.assetId, metaVideoId: v.metaVideoId, attempt: 1 }),
+          );
+        }
+        return { assetId: v.assetId, format: "video", status: v.status, metaImageHash: null, metaVideoId: v.metaVideoId };
+      }
+
+      const img = await ingestCreativeImage({ db: deps.db, storage: deps.storage, ads: deps.adsPlatform }, common);
+      return { assetId: img.assetId, format: "image", status: "ready", metaImageHash: img.metaImageHash, metaVideoId: null };
     },
   };
 }

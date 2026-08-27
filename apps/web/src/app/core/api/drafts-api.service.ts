@@ -8,7 +8,6 @@ import type {
   ScaleWinnerOutput,
   SetDraftCreativeInput,
   SetDraftCreativeOutput,
-  UploadCreativeInput,
   UploadCreativeOutput,
 } from './generated';
 
@@ -53,11 +52,11 @@ export class DraftsApiService extends BaseApiService {
     return this.resolveUrl(['/accounts', accountId, 'creatives', assetId, 'blob']);
   }
 
-  /** `POST /api/accounts/:id/creatives/upload` — sobe imagem (base64) → asset. */
-  uploadCreative(accountId: string, input: UploadCreativeInput): Observable<UploadCreativeOutput> {
-    return this.post<UploadCreativeOutput, UploadCreativeInput>(
-      ['/accounts', accountId, 'creatives', 'upload'],
-      input,
-    );
+  /** `POST /api/accounts/:id/creatives/upload` — sobe criativo (multipart, imagem OU vídeo) → asset.
+   *  FormData: o HttpClient seta o multipart boundary sozinho (não forçar Content-Type). */
+  uploadCreative(accountId: string, file: File): Observable<UploadCreativeOutput> {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    return this.post<UploadCreativeOutput, FormData>(['/accounts', accountId, 'creatives', 'upload'], form);
   }
 }

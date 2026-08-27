@@ -110,8 +110,8 @@ describe("makeMediaIntake", () => {
     expect(send).toHaveBeenCalledWith(REF, expect.stringContaining("não consegui baixar"), expect.anything());
   });
 
-  it("idempotente: asset já existe (mesmo image_hash) → não re-insere", async () => {
-    const { deps, inserted, send } = makeDeps({}, [{ id: "existing" }]);
+  it("idempotente: asset já existe (mesmo conteúdo) → não re-insere", async () => {
+    const { deps, inserted, send } = makeDeps({}, [{ id: "existing", metaImageHash: "HASH1", metaVideoId: null }]);
     await makeMediaIntake(deps)(PAYLOAD);
     expect(inserted).toHaveLength(0);
     expect(send).toHaveBeenCalledWith(REF, expect.stringContaining("Loja X"), expect.anything());
