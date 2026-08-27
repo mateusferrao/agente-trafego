@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, type OnInit, computed, inject, signal } from '@angular/core';
 import { toast } from 'ngx-sonner';
 import { UiButton, UiConfirmDialogService, UiEmptyState, UiEyebrow, UiPageHeader } from '@ui';
+import { CreativePicker } from './creative-picker';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import { ApprovalsApiService } from '@core/api/approvals-api.service';
 import { DraftsApiService } from '@core/api/drafts-api.service';
@@ -38,7 +39,7 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
 @Component({
   selector: 'app-approvals-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiEmptyState, UiPageHeader, UiButton, UiEyebrow],
+  imports: [UiEmptyState, UiPageHeader, UiButton, UiEyebrow, CreativePicker],
   template: `
     <div class="flex flex-col gap-8">
       <app-ui-page-header
@@ -71,8 +72,8 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                       <dl class="grid grid-cols-1 gap-1 text-sm text-ink sm:grid-cols-2">
                         <div><dt class="inline text-muted">Gasto novo: </dt><dd class="inline font-semibold">{{ money(d.dailyBudgetMajor, d.currency) }}/dia</dd></div>
                         <div><dt class="inline text-muted">Entra: </dt><dd class="inline">{{ d.activation === 'active' ? 'ativa (a Meta revisa antes de veicular)' : 'pausada' }}</dd></div>
-                        @if (d.pageId) { <div><dt class="inline text-muted">Página: </dt><dd class="inline">{{ d.pageId }}</dd></div> }
-                        @if (d.pixelId) { <div><dt class="inline text-muted">Pixel: </dt><dd class="inline">{{ d.pixelId }}</dd></div> }
+                        @if (d.pageId) { <div><dt class="inline text-muted">Página: </dt><dd class="inline">conectada</dd></div> }
+                        @if (d.pixelId) { <div><dt class="inline text-muted">Rastreamento: </dt><dd class="inline">pixel conectado</dd></div> }
                         @if (d.objective) { <div><dt class="inline text-muted">Objetivo: </dt><dd class="inline">{{ objectiveLabel(d.objective) }}</dd></div> }
                         @if (d.sourceLabel) { <div><dt class="inline text-muted">Origem: </dt><dd class="inline">{{ sourceName(d) }}</dd></div> }
                       </dl>
@@ -86,7 +87,12 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                           }
                         </ul>
                       }
-                      <span class="flex shrink-0 gap-2">
+                      <span class="flex shrink-0 flex-wrap gap-2">
+                        @if (d.kind === 'from_scratch') {
+                          <button appButton variant="ghost" size="sm" [disabled]="resolving().has(d.id)" (click)="togglePicker(d)">
+                            {{ pickerFor() === d.id ? 'Cancelar troca' : 'Trocar criativo' }}
+                          </button>
+                        }
                         <button appButton variant="secondary" size="sm" [disabled]="resolving().has(d.id)" (click)="rejectDraft(d)">
                           Recusar
                         </button>
@@ -95,6 +101,16 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                         </button>
                       </span>
                     </li>
+                    @if (pickerFor() === d.id) {
+                      <li>
+                        <app-creative-picker
+                          [accountId]="d.accountId"
+                          [picking]="pickingCreative()"
+                          (pick)="onPickCreative(d, $event)"
+                          (cancel)="pickerFor.set(null)"
+                        />
+                      </li>
+                    }
                   }
                 </ul>
               </div>
@@ -192,6 +208,9 @@ export class ApprovalsPage implements OnInit {
   );
   protected readonly resolving = signal<ReadonlySet<string>>(new Set());
   protected readonly reverting = signal<ReadonlySet<string>>(new Set());
+  /** id do rascunho com o picker "trocar criativo" aberto (só 1 por vez). */
+  protected readonly pickerFor = signal<string | null>(null);
+  protected readonly pickingCreative = signal(false);
 
   protected typeLabel = actionTypeLabel;
   protected deadline = deadlineText;
@@ -261,6 +280,27 @@ export class ApprovalsPage implements OnInit {
         toast.success('Rascunho descartado');
       },
       error: () => this.clearResolving(d.id),
+    });
+  }
+
+  /** Abre/fecha o picker de criativo pra um rascunho (só from_scratch). */
+  protected togglePicker(d: DraftApprovalOutput): void {
+    this.pickerFor.update((cur) => (cur === d.id ? null : d.id));
+  }
+
+  /** Troca o criativo do rascunho pelo asset escolhido no picker. */
+  protected onPickCreative(d: DraftApprovalOutput, assetId: string): void {
+    this.pickingCreative.set(true);
+    this.draftsApi.setDraftCreative(d.accountId, d.draftId, { assetId }).subscribe({
+      next: () => {
+        this.pickingCreative.set(false);
+        this.pickerFor.set(null);
+        toast.success('Criativo trocado neste rascunho.');
+      },
+      error: () => {
+        this.pickingCreative.set(false);
+        toast.error('Não consegui trocar o criativo. Tente de novo.');
+      },
     });
   }
 

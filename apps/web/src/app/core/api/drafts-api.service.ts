@@ -6,6 +6,8 @@ import type {
   DraftApprovalOutput,
   ScaleWinnerInput,
   ScaleWinnerOutput,
+  SetDraftCreativeInput,
+  SetDraftCreativeOutput,
   UploadCreativeInput,
   UploadCreativeOutput,
 } from './generated';
@@ -29,9 +31,26 @@ export class DraftsApiService extends BaseApiService {
     );
   }
 
+  /** `POST /api/accounts/:id/drafts/:draftId/creative` — troca o criativo do rascunho (picker). */
+  setDraftCreative(
+    accountId: string,
+    draftId: string,
+    input: SetDraftCreativeInput,
+  ): Observable<SetDraftCreativeOutput> {
+    return this.post<SetDraftCreativeOutput, SetDraftCreativeInput>(
+      ['/accounts', accountId, 'drafts', draftId, 'creative'],
+      input,
+    );
+  }
+
   /** `GET /api/accounts/:id/creatives` — biblioteca de criativos da conta. */
   listCreatives(accountId: string): Observable<CreativeAssetOutput[]> {
     return this.get<CreativeAssetOutput[]>(['/accounts', accountId, 'creatives']);
+  }
+
+  /** URL da rota autenticada de blob (preview) — mesma origem/proxy da API. */
+  creativeBlobUrl(accountId: string, assetId: string): string {
+    return this.resolveUrl(['/accounts', accountId, 'creatives', assetId, 'blob']);
   }
 
   /** `POST /api/accounts/:id/creatives/upload` — sobe imagem (base64) → asset. */

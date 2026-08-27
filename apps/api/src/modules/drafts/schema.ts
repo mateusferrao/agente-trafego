@@ -67,6 +67,12 @@ export const scaleWinnerOutput = z.discriminatedUnion("move", [
 ]);
 export type ScaleWinnerOutput = z.infer<typeof scaleWinnerOutput>;
 
+/** Troca o criativo de um rascunho from_scratch (picker "trocar criativo"). */
+export const setDraftCreativeInput = z.object({ assetId: z.string().min(1) });
+export type SetDraftCreativeInput = z.infer<typeof setDraftCreativeInput>;
+export const setDraftCreativeOutput = z.object({ ok: z.boolean() });
+export type SetDraftCreativeOutput = z.infer<typeof setDraftCreativeOutput>;
+
 /** Um asset da biblioteca de criativos (aba Criativos). */
 export const creativeAssetOutput = z.object({
   id: z.string(),

@@ -91,6 +91,8 @@ import {
   scaleWinnerOutput,
   uploadCreativeInput,
   uploadCreativeOutput,
+  setDraftCreativeInput,
+  setDraftCreativeOutput,
 } from "../modules/drafts/schema.js";
 
 extendZodWithOpenApi(z);
@@ -173,7 +175,9 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const ScaleWinnerInput = registry.register("ScaleWinnerInput", scaleWinnerInput);
   const ScaleWinnerOutput = registry.register("ScaleWinnerOutput", scaleWinnerOutput);
   const CreativeAssetOutput = registry.register("CreativeAssetOutput", creativeAssetOutput);
-  const UploadCreativeInput = registry.register("UploadCreativeInput", uploadCreativeInput);
+  const SetDraftCreativeInput = registry.register("SetDraftCreativeInput", setDraftCreativeInput);
+const SetDraftCreativeOutput = registry.register("SetDraftCreativeOutput", setDraftCreativeOutput);
+const UploadCreativeInput = registry.register("UploadCreativeInput", uploadCreativeInput);
   const UploadCreativeOutput = registry.register("UploadCreativeOutput", uploadCreativeOutput);
   const RevertibleActionOutput = registry.register("RevertibleActionOutput", revertibleActionOutput);
 
@@ -677,6 +681,19 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     responses: {
       200: jsonRes("escala proposta (rascunho de duplicação ou ação de budget)", ScaleWinnerOutput),
       404: { description: "conta ou agente não encontrado" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/accounts/{id}/drafts/{draftId}/creative",
+    tags: ["drafts"],
+    request: {
+      params: z.object({ id: z.string(), draftId: z.string() }),
+      ...jsonBody(SetDraftCreativeInput),
+    },
+    responses: {
+      200: jsonRes("criativo do rascunho trocado", SetDraftCreativeOutput),
+      404: { description: "rascunho não encontrado ou não editável" },
     },
   });
   registry.registerPath({

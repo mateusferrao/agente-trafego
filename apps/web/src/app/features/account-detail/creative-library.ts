@@ -4,6 +4,7 @@ import { toast } from 'ngx-sonner';
 import { UiButton, UiEmptyState } from '@ui';
 import { DraftsApiService } from '@core/api/drafts-api.service';
 import type { CreativeAssetOutput } from '@core/api/generated';
+import { environment } from '../../../environments/environment';
 
 /**
  * Biblioteca de criativos da conta (Fatia 7): assets reusáveis nos rascunhos. Origem
@@ -38,12 +39,24 @@ import type { CreativeAssetOutput } from '@core/api/generated';
         <ul class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           @for (a of assets(); track a.id) {
             <li class="flex flex-col gap-2 rounded-lg border border-line bg-panel p-3">
+              <div class="flex aspect-square items-center justify-center overflow-hidden rounded-md bg-panel-2">
+                @if (a.format === 'image' && a.status === 'ready' && !broken().has(a.id)) {
+                  <img
+                    [src]="blobUrl(a)"
+                    [alt]="a.origin === 'upload' ? 'Criativo enviado' : 'Criativo da conta'"
+                    class="h-full w-full object-cover"
+                    loading="lazy"
+                    (error)="onImgError(a.id)"
+                  />
+                } @else {
+                  <span class="px-2 text-center text-xs text-muted">
+                    {{ a.status === 'pending' ? 'processando…' : a.format === 'video' ? 'vídeo' : 'sem preview' }}
+                  </span>
+                }
+              </div>
               <span class="flex items-center justify-between text-xs">
                 <span class="font-medium text-ink">{{ a.origin === 'upload' ? 'Enviado' : 'Da conta' }}</span>
                 <span class="text-muted">{{ formatLabel(a.format) }} · {{ statusLabel(a.status) }}</span>
-              </span>
-              <span class="truncate font-mono text-[11px] text-muted" title="{{ a.metaImageHash ?? a.metaVideoId }}">
-                {{ a.metaImageHash ?? a.metaVideoId ?? '—' }}
               </span>
             </li>
           }
@@ -60,6 +73,16 @@ export class CreativeLibrary implements OnInit {
   protected readonly loaded = signal(false);
   protected readonly failed = signal(false);
   protected readonly uploading = signal(false);
+  /** ids cujo <img> falhou (blob 404 / ref drift) → cai no placeholder, nunca ícone quebrado. */
+  protected readonly broken = signal<ReadonlySet<string>>(new Set());
+
+  /** URL da rota autenticada de blob (mesma origem/proxy do resto da API). */
+  protected blobUrl(a: CreativeAssetOutput): string {
+    return `${environment.apiBaseUrl}/accounts/${this.accountId}/creatives/${a.id}/blob`;
+  }
+  protected onImgError(id: string): void {
+    this.broken.update((s) => new Set(s).add(id));
+  }
 
   protected statusLabel(s: CreativeAssetOutput['status']): string {
     return s === 'ready' ? 'pronto' : s === 'pending' ? 'processando' : 'erro';
@@ -109,12 +132,14 @@ export class CreativeLibrary implements OnInit {
           error: () => {
             this.uploading.set(false);
             input.value = '';
+            toast.error('Não consegui enviar esse arquivo. Verifique o formato e o tamanho e tente de novo.');
           },
         });
     };
     reader.onerror = () => {
       this.uploading.set(false);
       input.value = '';
+      toast.error('Não consegui ler esse arquivo. Tente outro.');
     };
     reader.readAsDataURL(file);
   }

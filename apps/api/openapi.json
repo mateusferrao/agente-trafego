@@ -6524,6 +6524,29 @@
           "createdAt"
         ]
       },
+      "SetDraftCreativeInput": {
+        "type": "object",
+        "properties": {
+          "assetId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "assetId"
+        ]
+      },
+      "SetDraftCreativeOutput": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ]
+      },
       "UploadCreativeInput": {
         "type": "object",
         "properties": {
@@ -8441,6 +8464,55 @@
           },
           "404": {
             "description": "conta ou agente não encontrado"
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/drafts/{draftId}/creative": {
+      "post": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "draftId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetDraftCreativeInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "criativo do rascunho trocado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetDraftCreativeOutput"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "rascunho não encontrado ou não editável"
           }
         }
       }

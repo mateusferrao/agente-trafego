@@ -17,7 +17,7 @@ import {
   toGuardrailConfig,
   type CampaignDraftSpec,
 } from "@trafego/shared";
-import type { Action, AgentId, DraftId, OrgId } from "@trafego/shared/types";
+import type { Action, AgentId, CreativeAssetRef, DraftId, OrgId } from "@trafego/shared/types";
 import type { AdAccountRef, ApprovalPort, CredentialVaultPort, StoragePort } from "@trafego/shared/ports";
 import type { AdsPlatformPort } from "@trafego/shared/ports";
 import { ingestCreativeImage } from "@trafego/creative-library";
@@ -259,6 +259,81 @@ export function createDraftsService(deps: DraftsServiceDeps) {
         metaVideoId: r.metaVideoId,
         createdAt: r.createdAt.toISOString(),
       }));
+    },
+
+    /** Troca o criativo de um rascunho `from_scratch` proposto (picker "trocar criativo").
+     *  Org-scoped; só rascunho aberto + asset pronto da mesma conta. null → 404 (não editável). */
+    async setDraftCreative(
+      orgId: OrgId,
+      accountId: string,
+      draftId: string,
+      assetId: string,
+    ): Promise<{ ok: true } | null> {
+      const [draft] = await deps.db
+        .select({ spec: campaignDrafts.spec, kind: campaignDrafts.kind, status: campaignDrafts.status })
+        .from(campaignDrafts)
+        .where(
+          and(
+            eq(campaignDrafts.id, draftId),
+            eq(campaignDrafts.orgId, orgId),
+            eq(campaignDrafts.adAccountId, accountId),
+          ),
+        )
+        .limit(1);
+      if (!draft || draft.status !== "proposed" || draft.kind !== "from_scratch") return null;
+      const [asset] = await deps.db
+        .select({
+          format: creativeAssets.format,
+          origin: creativeAssets.origin,
+          status: creativeAssets.status,
+          metaImageHash: creativeAssets.metaImageHash,
+          metaVideoId: creativeAssets.metaVideoId,
+        })
+        .from(creativeAssets)
+        .where(
+          and(
+            eq(creativeAssets.id, assetId),
+            eq(creativeAssets.orgId, orgId),
+            eq(creativeAssets.adAccountId, accountId),
+          ),
+        )
+        .limit(1);
+      if (!asset || asset.status !== "ready") return null;
+      const spec = draft.spec as CampaignDraftSpec;
+      const creative: CreativeAssetRef = {
+        assetId,
+        format: asset.format,
+        origin: asset.origin,
+        ...(asset.metaImageHash ? { metaImageHash: asset.metaImageHash } : {}),
+        ...(asset.metaVideoId ? { metaVideoId: asset.metaVideoId } : {}),
+      };
+      await deps.db
+        .update(campaignDrafts)
+        .set({ spec: { ...spec, creative } })
+        .where(eq(campaignDrafts.id, draftId));
+      return { ok: true };
+    },
+
+    /** Blob original de um criativo (preview). Org-scoped pelo assetId — nunca confia em ref
+     *  do cliente. Devolve bytes+contentType+etag (content-addressed) ou null (404). */
+    async getCreativeBlob(
+      orgId: OrgId,
+      accountId: string,
+      assetId: string,
+    ): Promise<{ bytes: Uint8Array; contentType: string; etag: string } | null> {
+      const [row] = await deps.db
+        .select({ storageRef: creativeAssets.storageRef })
+        .from(creativeAssets)
+        .where(
+          and(
+            eq(creativeAssets.id, assetId),
+            eq(creativeAssets.orgId, orgId),
+            eq(creativeAssets.adAccountId, accountId),
+          ),
+        )
+        .limit(1);
+      if (!row?.storageRef) return null;
+      return deps.storage.get(row.storageRef);
     },
 
     /** Upload de imagem pela web → sobe pra Meta (image_hash) → asset na biblioteca. */
