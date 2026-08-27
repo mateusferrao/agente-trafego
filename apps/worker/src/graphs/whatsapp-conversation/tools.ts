@@ -560,7 +560,7 @@ export function makeConversationTools(
   const playbookTools = [addPlaybookRule, togglePlaybookRule, removePlaybookRule, listPlaybookRules];
 
   const writeTools = [pauseEntity, resumeEntity, setStatus, adjustBudget, revertAction, confirmWrite, cancelWrite];
-  const createTools = [scaleWinner, createCampaign];
+  const createTools = [scaleWinner, createCampaign, adjustDraft, regenerateCopy];
   return [
     ...readTools,
     triggerAnalysis,
@@ -637,7 +637,7 @@ export async function buildCapabilitiesText(
   if (ctx.ref.kind === "group") {
     parts.push("👥 Aqui no grupo eu acompanho a conversa recente de vocês pra ter contexto — mas só respondo quando me chamam (menção ou resposta).");
   }
-  parts.push("🚀 Também crio e escalo: posso escalar seu vencedor (mais budget ou duplicar) e criar campanhas novas reusando seu criativo + copy que eu gero — sempre com sua aprovação antes de gastar.");
+  parts.push("🚀 Também crio e escalo: posso escalar seu vencedor (mais budget ou duplicar) e criar campanhas novas reusando seu criativo + copy que eu gero. Depois de eu propor, você ajusta tudo conversando (budget, ativar/pausar, nº de variações, regerar a copy) — e só crio com sua aprovação.");
   parts.push("🚧 Ainda não: editar criativos nem gerar imagens/vídeos.");
   parts.push("É só pedir. 🙂");
   return parts.join("\n");
@@ -778,6 +778,8 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
 
 /** Tools de CRIAÇÃO (Fatia 7) — gasto novo, sempre eco+confirma → rascunho/aprovação. */
 export const CREATE_TOOL_NAMES: ReadonlySet<string> = new Set<string>(["scale_winner", "create_campaign"]);
+/** Tools de REFINAMENTO do rascunho pendente (mutam o pendingDraft, não criam novo). */
+export const REFINE_TOOL_NAMES: ReadonlySet<string> = new Set<string>(["adjust_draft", "regenerate_copy"]);
 
 /** Tool de DESFAZER — também passa pelo eco+confirma (roteada pro nó `confirm`, 5c-4). */
 export const REVERT_TOOL_NAME = "revert_action";

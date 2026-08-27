@@ -35,6 +35,7 @@ import {
   CONFIG_UPDATE_TOOL_NAMES,
   CONTROL_WRITE_TOOL_NAMES,
   CREATE_TOOL_NAMES,
+  REFINE_TOOL_NAMES,
   PLAYBOOK_WRITE_TOOL_NAMES,
   REVERT_TOOL_NAME,
   DESCRIBE_CAPABILITIES_TOOL_NAME,
@@ -52,7 +53,7 @@ import {
 } from "./tools.js";
 import { makeMetaToolExecutor } from "../../executors/meta-tools.js";
 import { applyCheckedAction, type ApplyOutcome } from "../../modules/apply/apply-confirmed-action.js";
-import { proposeCreateCampaign, proposeScaleWinner } from "../../modules/conversation/draft-proposal.js";
+import { proposeCreateCampaign, proposeScaleWinner, refineDraft } from "../../modules/conversation/draft-proposal.js";
 import { loadWriteContext } from "../../modules/apply/write-context.js";
 import { revertActionById } from "../../modules/apply/revert-action.js";
 import { actorLabel } from "../../modules/conversation/actor.js";
@@ -500,6 +501,33 @@ export function makeConversationNodes(
       return { messages: [...answerToolCalls(allCalls, "capabilities"), new AIMessage(text)] };
     }
 
+    // REFINAMENTO conversacional (Fatia 7): ajusta/regenera o rascunho PENDENTE sem criar
+    // outro — muta o campaign_drafts + re-ecoa; o "sim" segue aplicando o MESMO rascunho.
+    const refineCall = allCalls.find((c) => REFINE_TOOL_NAMES.has(c.name));
+    if (refineCall) {
+      const active = activePendingDraft(state.pendingDraft);
+      if (!active) {
+        return { messages: [...answerToolCalls(allCalls, "sem rascunho"), new AIMessage("Não tenho um rascunho aberto pra ajustar. Me diz o que quer criar/escalar primeiro.")] };
+      }
+      const a = (refineCall.args ?? {}) as Record<string, unknown>;
+      const patch =
+        refineCall.name === "regenerate_copy"
+          ? { regenerateCopy: true }
+          : {
+              ...(typeof a["budgetReais"] === "number" ? { budgetReais: a["budgetReais"] as number } : {}),
+              ...(a["activation"] === "active" || a["activation"] === "paused" ? { activation: a["activation"] as "active" | "paused" } : {}),
+              ...(typeof a["variantsCount"] === "number" ? { variantsCount: a["variantsCount"] as number } : {}),
+            };
+      const res = await refineDraft(deps, { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, currency: DEFAULT_CURRENCY }, active.draftId, patch);
+      if (res.kind === "blocked") {
+        return { messages: [...answerToolCalls(allCalls, "não deu"), new AIMessage(res.reason)] };
+      }
+      return {
+        messages: [...answerToolCalls(allCalls, "ajustado — aguardando confirmação"), new AIMessage(res.echo)],
+        pendingDraft: { ...active, echo: res.echo, expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString() },
+      };
+    }
+
     // CRIAÇÃO (Fatia 7): escalar/criar = gasto novo. Monta o rascunho (persiste
     // campaign_drafts + approval na hora → visível no site) + eco; o "sim" enfileira a saga.
     // scale_winner pode virar uma AÇÃO adjust_budget (passo pequeno) → pendingWrite normal.
@@ -521,7 +549,7 @@ export function makeConversationNodes(
       if (proposal.kind === "draft") {
         return {
           messages: [...answerToolCalls(allCalls, "proposto — aguardando confirmação"), new AIMessage(proposal.echo)],
-          pendingDraft: { echo: proposal.echo, expiresAt, approvalId: proposal.approvalId },
+          pendingDraft: { echo: proposal.echo, expiresAt, approvalId: proposal.approvalId, draftId: proposal.draftId },
           pendingWrite: null,
           pendingRevert: null,
           pendingConfigChange: null,
@@ -884,6 +912,7 @@ export function routeConversation(
       (c) =>
         WRITE_TOOL_NAMES.has(c.name) ||
         CREATE_TOOL_NAMES.has(c.name) ||
+        REFINE_TOOL_NAMES.has(c.name) ||
         c.name === REVERT_TOOL_NAME ||
         c.name === DESCRIBE_CAPABILITIES_TOOL_NAME ||
         isConfirmableConfigTool(c.name),
