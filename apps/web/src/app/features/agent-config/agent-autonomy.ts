@@ -1,6 +1,9 @@
 import { ChangeDetectionStrategy, Component, type OnInit, effect, inject, input, output, signal, computed } from '@angular/core';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import { lucideChevronDown } from '@ng-icons/lucide';
 import { firstValueFrom } from 'rxjs';
 import { UiToggleGroup, UiToggleGroupItem, UiSwitch, UiSwitchThumb, UiSelectBox } from '@ui';
+import { AGENT_NAME } from '@core/brand';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import type { AgentSummary } from '@core/api/generated';
 
@@ -52,7 +55,8 @@ const SCALE_PREFS: readonly { value: ScalePref; label: string }[] = [
 @Component({
   selector: 'app-agent-autonomy',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiToggleGroup, UiToggleGroupItem, UiSwitch, UiSwitchThumb, UiSelectBox],
+  imports: [UiToggleGroup, UiToggleGroupItem, UiSwitch, UiSwitchThumb, UiSelectBox, NgIcon],
+  providers: [provideIcons({ lucideChevronDown })],
   template: `
     <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
       <div>
@@ -84,12 +88,23 @@ const SCALE_PREFS: readonly { value: ScalePref; label: string }[] = [
       }
 
       <div class="flex flex-col gap-3 border-t border-line pt-4">
-        <button type="button" class="flex items-center justify-between gap-2 text-left" [attr.aria-expanded]="showActions()" (click)="showActions.set(!showActions())">
+        <button
+          type="button"
+          class="flex items-center justify-between gap-3 rounded-md border border-line bg-soft/50 px-3 py-2.5 text-left transition hover:border-accent/40 hover:bg-soft"
+          [attr.aria-expanded]="showActions()"
+          (click)="showActions.set(!showActions())"
+        >
           <span class="flex flex-col">
             <span class="text-sm font-medium text-ink">Ações permitidas</span>
-            <span class="text-xs text-muted">Quais capacidades o agente pode usar. Desligada aqui, ele nem propõe nem executa.</span>
+            <span class="text-xs text-muted">O que {{ agentName }} pode fazer na conta. Desligue uma e ele não sugere nem executa aquilo.</span>
           </span>
-          <span class="text-xs text-muted">{{ showActions() ? 'ocultar' : 'opções avançadas' }}</span>
+          <ng-icon
+            name="lucideChevronDown"
+            size="18"
+            class="shrink-0 text-muted transition-transform motion-safe:duration-200"
+            [class.rotate-180]="showActions()"
+            aria-hidden="true"
+          />
         </button>
 
         @if (showActions()) {
@@ -186,9 +201,10 @@ export class AgentAutonomy implements OnInit {
   protected readonly OPTIMIZE_TOOLS = OPTIMIZE_TOOLS;
   protected readonly CREATE_TOOLS = CREATE_TOOLS;
   protected readonly ACTION_AUTONOMY_OPTIONS = ACTION_AUTONOMY_OPTIONS;
+  protected readonly agentName = AGENT_NAME;
   protected readonly SOURCES = [
-    { key: 'playbook' as const, label: 'Regras do playbook', hint: 'Ações que saem das suas regras determinísticas.' },
-    { key: 'llm' as const, label: 'Análise do agente (IA)', hint: 'Ações que a IA propõe a partir da leitura da conta.' },
+    { key: 'playbook' as const, label: 'Regras do playbook', hint: 'Ações que saem das suas regras fixas.' },
+    { key: 'llm' as const, label: `Análise do ${AGENT_NAME}`, hint: `O que o ${AGENT_NAME} sugere ao ler a conta.` },
   ];
 
   private readonly playbook = signal<Level>('suggest');

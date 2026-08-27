@@ -1,39 +1,50 @@
-import { ChangeDetectionStrategy, Component, DestroyRef, type OnInit, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, DestroyRef, type OnInit, computed, inject, signal } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
 import { toast } from 'ngx-sonner';
 import { UiButton, UiEmptyState } from '@ui';
+import { AGENT_NAME } from '@core/brand';
 import { DraftsApiService } from '@core/api/drafts-api.service';
 import type { CreativeAssetOutput } from '@core/api/generated';
 
 /**
  * Biblioteca de criativos da conta (Fatia 7): assets reusáveis nos rascunhos. Origem
- * `reuse` (dos anúncios da conta) ou `upload` (aqui). O Roi nunca inventa mídia — reusa
- * o que existe ou o que você sobe. Upload → sobe pra Meta (image_hash) → asset pronto.
+ * `reuse` (dos anúncios da conta) ou `upload` (aqui). Roy usa o que está aqui pra montar
+ * campanhas e nunca inventa mídia. Upload → sobe pra Meta (image_hash) → asset pronto.
  */
 @Component({
   selector: 'app-creative-library',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [UiButton, UiEmptyState],
   template: `
-    <div class="flex flex-col gap-6">
+    <section class="flex flex-col gap-5 rounded-lg border border-line bg-panel p-5">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 class="font-brand text-lg font-semibold text-ink">Criativos</h1>
-          <p class="text-xs text-muted">Mídias reusáveis nos rascunhos de campanha. O agente reusa daqui — nunca inventa.</p>
+          <h2 class="font-brand text-base font-semibold text-ink">Criativos</h2>
+          <p class="mt-1 text-xs text-muted">Mídias reusáveis nos rascunhos. {{ agentName }} monta as campanhas com o que está aqui e nunca inventa mídia.</p>
         </div>
-        <button type="button" appButton size="sm" [disabled]="uploading()" (click)="picker.click()">
-          {{ uploading() ? 'Enviando…' : 'Subir criativo' }}
-        </button>
+        @if (!isEmpty()) {
+          <button type="button" appButton variant="primary" size="sm" [disabled]="uploading()" (click)="picker.click()">
+            {{ uploading() ? 'Enviando…' : 'Subir criativo' }}
+          </button>
+        }
         <input #picker type="file" accept="image/*,video/*" class="hidden" (change)="onFile($event)" />
       </div>
 
       @if (failed()) {
-        <div class="flex flex-col items-start gap-2 rounded-lg border border-line bg-panel p-4 text-sm">
+        <div class="flex flex-col items-start gap-2 rounded-md border border-line bg-soft p-4 text-sm">
           <p class="text-ink">Não consegui carregar os criativos desta conta.</p>
           <button type="button" appButton variant="secondary" size="sm" (click)="load()">Tentar de novo</button>
         </div>
-      } @else if (loaded() && assets().length === 0) {
-        <app-ui-empty-state title="Nenhum criativo ainda" description="Suba uma imagem ou rode uma análise — os criativos dos seus anúncios entram aqui automaticamente." />
+      } @else if (isEmpty()) {
+        <app-ui-empty-state
+          brand
+          title="Sua estante de criativos está vazia"
+          [description]="agentName + ' usa as mídias daqui pra montar campanhas. Suba a primeira, ou rode uma análise que os criativos dos seus anúncios chegam sozinhos.'"
+        >
+          <button type="button" appButton variant="primary" actions [disabled]="uploading()" (click)="picker.click()">
+            {{ uploading() ? 'Enviando…' : 'Subir criativo' }}
+          </button>
+        </app-ui-empty-state>
       } @else {
         <ul class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           @for (a of assets(); track a.id) {
@@ -61,7 +72,7 @@ import type { CreativeAssetOutput } from '@core/api/generated';
           }
         </ul>
       }
-    </div>
+    </section>
   `,
 })
 export class CreativeLibrary implements OnInit {
@@ -80,12 +91,15 @@ export class CreativeLibrary implements OnInit {
   /** Cadência do re-load enquanto há vídeo `pending` (o poll do servidor flipa → ready/error). */
   private static readonly PENDING_POLL_MS = 6000;
 
+  protected readonly agentName = AGENT_NAME;
   protected readonly assets = signal<readonly CreativeAssetOutput[]>([]);
   protected readonly loaded = signal(false);
   protected readonly failed = signal(false);
   protected readonly uploading = signal(false);
   /** ids cujo <img> falhou (blob 404 / ref drift) → cai no placeholder, nunca ícone quebrado. */
   protected readonly broken = signal<ReadonlySet<string>>(new Set());
+  /** biblioteca carregada, sem falha e sem asset → mostra o empty-state de marca (com CTA). */
+  protected readonly isEmpty = computed(() => this.loaded() && !this.failed() && this.assets().length === 0);
 
   /** URL da rota autenticada de blob — reusa o builder do service (evita drift). */
   protected blobUrl(a: CreativeAssetOutput): string {
@@ -144,8 +158,8 @@ export class CreativeLibrary implements OnInit {
         input.value = ''; // reseta p/ re-selecionar o MESMO arquivo redisparar o change.
         toast.success(
           out.format === 'video'
-            ? 'Vídeo enviado — estou processando; ele fica pronto pra usar em instantes.'
-            : 'Imagem enviada — já dá pra reusar num rascunho.',
+            ? 'Vídeo no forno. Deixo ele pronto pra usar em instantes.'
+            : 'Imagem na estante. Já dá pra usar num rascunho.',
         );
         this.load();
       },
