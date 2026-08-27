@@ -40,6 +40,7 @@ import { EvolutionAdapter, EvolutionClient } from "@trafego/channel-evolution";
 import { createPostgresApprovals } from "@trafego/approval-postgres";
 import { createPostgresMetering } from "@trafego/metering-postgres";
 import { createLocalStorage } from "@trafego/storage-local";
+import { createS3Storage } from "@trafego/storage-s3";
 import { Redis } from "ioredis";
 
 // ─── Adapters de saída (portas) ──────────────────────────────────────────
@@ -138,9 +139,19 @@ export function buildContainer(logger?: OnboardingLogger): Container {
     apiOrigin: env.API_ORIGIN, // registra o webhook no connect (§9)
   });
 
-  // Storage do blob de criativo (F7) — mesma porta do intake WhatsApp (worker). Local-fs
-  // no MVP; S3-compat = novo adapter atrás da porta. Convergência dos 2 caminhos de imagem.
-  const storage = createLocalStorage({ baseDir: env.CREATIVE_STORAGE_DIR, urlBase: env.CREATIVE_ASSET_URL_BASE });
+  // Storage do blob de criativo (F7) — mesma porta do intake WhatsApp (worker). Driver por env:
+  // local-fs (dev) ou s3-compat (prod). Trocar = só o env; core/casca/ingest intocados (§5).
+  const storage =
+    env.STORAGE_DRIVER === "s3"
+      ? createS3Storage({
+          region: env.STORAGE_REGION,
+          bucket: env.STORAGE_BUCKET!, // garantido pelo refine (STORAGE_DRIVER=s3)
+          accessKeyId: env.STORAGE_ACCESS_KEY!,
+          secretAccessKey: env.STORAGE_SECRET_KEY!,
+          forcePathStyle: env.STORAGE_FORCE_PATH_STYLE,
+          ...(env.STORAGE_ENDPOINT ? { endpoint: env.STORAGE_ENDPOINT } : {}),
+        })
+      : createLocalStorage({ baseDir: env.CREATIVE_STORAGE_DIR, urlBase: env.CREATIVE_ASSET_URL_BASE });
 
   // Metering (3b): Postgres usage_events — o billing/usage lê daqui.
   const metering = createPostgresMetering(db);

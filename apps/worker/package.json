@@ -26,6 +26,7 @@
     "@trafego/credential-vault": "workspace:*",
     "@trafego/db": "workspace:*",
     "@trafego/storage-local": "workspace:*",
+    "@trafego/storage-s3": "workspace:*",
     "@trafego/llm-openrouter": "workspace:*",
     "@trafego/mailer": "workspace:*",
     "@trafego/metering-postgres": "workspace:*",

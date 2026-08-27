@@ -20,6 +20,7 @@ import { createDb } from "@trafego/db";
 import { loadEnv } from "@trafego/config";
 import { BUFFER_TTL_MARGIN_SEC } from "./modules/conversation/buffer.js";
 import { createLocalStorage } from "@trafego/storage-local";
+import { createS3Storage } from "@trafego/storage-s3";
 import { Aes256CredentialVault } from "@trafego/credential-vault";
 import { BullmqScheduler } from "@trafego/scheduler-bullmq";
 import { CustomConversionsResolver, MetaAdsAdapter, MetaEntityCache, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta";
@@ -246,7 +247,18 @@ export async function buildComposition(): Promise<WorkerDeps> {
         log: (m) => logger.info(m),
       }),
       transcription, // STT da nota de voz inbound (S3)
-      storage: createLocalStorage({ baseDir: env.CREATIVE_STORAGE_DIR, urlBase: env.CREATIVE_ASSET_URL_BASE }),
+      // driver por env: local-fs (dev) ou s3-compat (prod) — mesma porta, core/ingest intocados (§5).
+      storage:
+        env.STORAGE_DRIVER === "s3"
+          ? createS3Storage({
+              region: env.STORAGE_REGION,
+              bucket: env.STORAGE_BUCKET!, // garantido pelo refine (STORAGE_DRIVER=s3)
+              accessKeyId: env.STORAGE_ACCESS_KEY!,
+              secretAccessKey: env.STORAGE_SECRET_KEY!,
+              forcePathStyle: env.STORAGE_FORCE_PATH_STYLE,
+              ...(env.STORAGE_ENDPOINT ? { endpoint: env.STORAGE_ENDPOINT } : {}),
+            })
+          : createLocalStorage({ baseDir: env.CREATIVE_STORAGE_DIR, urlBase: env.CREATIVE_ASSET_URL_BASE }),
     },
     insightsSync,
     analysis: {

@@ -37,11 +37,22 @@ export const envSchema = z.object({
   AUTO_MIGRATE: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
 
   // ─── Storage de assets de criativo (Fatia 7) ───────────────────────────
-  // diretório do blob original (adapter local-fs MVP; S3-compat = fast-follow).
+  // driver do StoragePort: local-fs (dev) ou s3-compat (prod: MinIO/R2/B2/AWS). Trocar =
+  // só este env — core/casca/ingest intocados (§5). `s3` exige os STORAGE_* abaixo (refine).
+  STORAGE_DRIVER: z.enum(["local", "s3"]).default("local"),
+  // diretório do blob original (driver local-fs).
   CREATIVE_STORAGE_DIR: z.string().min(1).default("./.data/creatives"),
   // base pública p/ signedUrl do adapter local (preview no site). Sem assinatura real
   // no MVP local — a URL só compõe base + ref (o arquivo é servido pela api em dev).
   CREATIVE_ASSET_URL_BASE: z.string().url().default("http://localhost:3333/assets"),
+  // driver s3-compat (nomes NEUTROS — não vaza provider; MinIO/R2/B2/AWS falam o mesmo protocolo).
+  // endpoint omitido = AWS S3 padrão da região; MinIO/R2 informam o endpoint + force-path-style.
+  STORAGE_ENDPOINT: z.string().url().optional(),
+  STORAGE_BUCKET: z.string().min(1).optional(),
+  STORAGE_ACCESS_KEY: z.string().min(1).optional(),
+  STORAGE_SECRET_KEY: z.string().min(1).optional(),
+  STORAGE_REGION: z.string().min(1).default("us-east-1"),
+  STORAGE_FORCE_PATH_STYLE: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
 
   // ─── Credential Vault (AES-256-GCM) ────────────────────────────────────
   // chave mestra base64 de 32 bytes (secret do EasyPanel em produção).
@@ -323,6 +334,15 @@ export const envSchema = z.object({
   LANGFUSE_PUBLIC_KEY: z.string().optional(),
   LANGFUSE_SECRET_KEY: z.string().optional(),
   LANGFUSE_BASE_URL: z.string().url().optional(),
+}).superRefine((v, ctx) => {
+  // driver s3 exige bucket + credenciais (fail-fast no boot; sem eles o adapter quebraria em runtime).
+  if (v.STORAGE_DRIVER === "s3") {
+    for (const key of ["STORAGE_BUCKET", "STORAGE_ACCESS_KEY", "STORAGE_SECRET_KEY"] as const) {
+      if (!v[key]) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: "obrigatório quando STORAGE_DRIVER=s3" });
+      }
+    }
+  }
 });
 
 /** Tipo validado do ambiente — fonte da verdade p/ o resto do sistema. */
