@@ -355,6 +355,10 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     }
   }
 
+  async setEntityBudget(account: AdAccountRef, entityId: string, dailyBudgetMinor: number) {
+    return this.writeThroughGovernor(account, () => this.creation.setEntityBudget(account, entityId, dailyBudgetMinor));
+  }
+
   async createCampaign(account: AdAccountRef, input: Parameters<AdsPlatformPort["createCampaign"]>[1]) {
     return this.writeThroughGovernor(account, () => this.creation.createCampaign(account, input));
   }

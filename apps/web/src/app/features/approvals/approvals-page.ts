@@ -7,6 +7,7 @@ import { DraftsApiService } from '@core/api/drafts-api.service';
 import { AGENT_NAME } from '@core/brand';
 import type { ApprovalOutput, DraftApprovalOutput, RevertibleActionOutput } from '@core/api/generated';
 import { UNDO_WARNING, actionTypeLabel, deadlineText, entityTargetLabel } from '@app/shared/action-format';
+import { conversionLabel } from '@app/shared/conversion-label';
 
 interface AccountGroup<T> {
   readonly accountId: string;
@@ -71,8 +72,8 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                         <div><dt class="inline text-muted">Entra: </dt><dd class="inline">{{ d.activation === 'active' ? 'ativa (a Meta revisa antes de veicular)' : 'pausada' }}</dd></div>
                         @if (d.pageId) { <div><dt class="inline text-muted">Página: </dt><dd class="inline">{{ d.pageId }}</dd></div> }
                         @if (d.pixelId) { <div><dt class="inline text-muted">Pixel: </dt><dd class="inline">{{ d.pixelId }}</dd></div> }
-                        @if (d.objective) { <div><dt class="inline text-muted">Objetivo: </dt><dd class="inline">{{ d.objective }}</dd></div> }
-                        @if (d.sourceLabel) { <div><dt class="inline text-muted">Origem: </dt><dd class="inline">{{ d.sourceLabel }}</dd></div> }
+                        @if (d.objective) { <div><dt class="inline text-muted">Objetivo: </dt><dd class="inline">{{ objectiveLabel(d.objective) }}</dd></div> }
+                        @if (d.sourceLabel) { <div><dt class="inline text-muted">Origem: </dt><dd class="inline">{{ sourceName(d) }}</dd></div> }
                       </dl>
                       @if (d.copyVariants && d.copyVariants.length > 0) {
                         <ul class="flex flex-col gap-2">
@@ -202,8 +203,16 @@ export class ApprovalsPage implements OnInit {
     d.kind === 'duplicate' ? 'Escalar vencedor' : 'Criar campanha';
   protected draftTitle = (d: DraftApprovalOutput): string =>
     d.kind === 'duplicate'
-      ? `Duplicar ${d.sourceLabel ?? 'o vencedor'} com mais budget`
-      : `Nova campanha${d.objective ? ` de ${d.objective}` : ''}`;
+      ? `Duplicar ${this.sourceName(d)} com mais budget`
+      : `Nova campanha${d.objective ? ` de ${conversionLabel(d.objective)}` : ''}`;
+  /** Origem legível (nome do backend; senão traduz o nível, sem expor "level:id" técnico). */
+  protected sourceName = (d: DraftApprovalOutput): string => {
+    if (!d.sourceLabel) return 'o vencedor';
+    const [level, id] = d.sourceLabel.split(':');
+    const lvl = level === 'campaign' ? 'campanha' : level === 'adset' ? 'conjunto' : level ?? '';
+    return id ? `${lvl} ${id}` : d.sourceLabel;
+  };
+  protected objectiveLabel = (o: string | null): string => (o ? conversionLabel(o) : '');
   protected money = (reais: number, currency: string): string =>
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency }).format(reais);
 

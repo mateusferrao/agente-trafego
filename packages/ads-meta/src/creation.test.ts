@@ -44,17 +44,18 @@ describe("MetaCreationService.duplicateEntity", () => {
     expect(res.childIds).toEqual(["AD1_NEW", "AD2_NEW"]);
   });
 
-  it("aplica override de budget na cópia quando newDailyBudgetMinor", async () => {
+  it("duplicateEntity NÃO aplica budget (passo separado) — só /copies", async () => {
     const { posts } = stubGraph({ copied_adset_id: "AS_NEW", ad_object_ids: [] });
-    await svc().duplicateEntity(account, {
-      sourceLevel: "adset",
-      sourceId: "AS1",
-      status: "active",
-      newDailyBudgetMinor: 9000,
-    });
+    await svc().duplicateEntity(account, { sourceLevel: "adset", sourceId: "AS1", status: "active" });
     const urls = posts().map((p) => p.url);
     expect(urls.some((u) => u.includes("AS1/copies"))).toBe(true);
-    expect(urls.some((u) => u.includes("/AS_NEW") && u.includes("daily_budget=9000"))).toBe(true);
+    expect(urls.some((u) => u.includes("daily_budget"))).toBe(false);
+  });
+
+  it("setEntityBudget faz POST de daily_budget na entidade", async () => {
+    const { posts } = stubGraph({ success: true });
+    await svc().setEntityBudget(account, "AS_NEW", 9000);
+    expect(posts().some((p) => p.url.includes("/AS_NEW") && p.url.includes("daily_budget=9000"))).toBe(true);
   });
 
   it("passa status_option ACTIVE/PAUSED no /copies", async () => {

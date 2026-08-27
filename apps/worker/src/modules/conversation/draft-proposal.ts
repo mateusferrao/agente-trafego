@@ -109,15 +109,21 @@ async function persistDraftAndApproval(
       ...(sourceRef ? { sourceRef } : {}),
     })
     .returning({ id: campaignDrafts.id });
-  const appr = await deps.ports.approval.upsertDraftPending({
-    orgId: ctx.orgId as never,
-    agentId: ctx.agentId as AgentId,
-    runId: null,
-    contactId: null,
-    draftId: row!.id as DraftId,
-    expiresAt: new Date(Date.now() + APPROVAL_TTL_MS),
-  });
-  return { draftId: row!.id, approvalId: appr.id };
+  try {
+    const appr = await deps.ports.approval.upsertDraftPending({
+      orgId: ctx.orgId as never,
+      agentId: ctx.agentId as AgentId,
+      runId: null,
+      contactId: null,
+      draftId: row!.id as DraftId,
+      expiresAt: new Date(Date.now() + APPROVAL_TTL_MS),
+    });
+    return { draftId: row!.id, approvalId: appr.id };
+  } catch (err) {
+    // a aprovação é a fronteira: sem ela o rascunho é inalcançável → remove o órfão.
+    await deps.db.delete(campaignDrafts).where(eq(campaignDrafts.id, row!.id));
+    throw err;
+  }
 }
 
 /** Escalar o melhor vencedor (curado do último run). Raise = ação; duplicate = rascunho. */
@@ -164,7 +170,11 @@ export async function proposeScaleWinner(
     return { kind: "action", action };
   }
 
-  const newDailyMinor = Math.round(sourceDailyMinor * (1 + move.scalePct / 100));
+  // clampa JÁ no propose ao teto de gasto novo → o eco mostra o valor REAL (o guardrail
+  // do apply é rede redundante, não uma surpresa que corta o que o usuário confirmou). §8.
+  const requested = Math.round(sourceDailyMinor * (1 + move.scalePct / 100));
+  const cap = ac.cfg.maxNewDailyBudgetMinor;
+  const newDailyMinor = cap != null ? Math.min(requested, cap) : requested;
   const spec: CampaignDraftSpec = {
     version: 1,
     currency: ac.currency,
@@ -202,9 +212,11 @@ export async function proposeCreateCampaign(
     };
   }
   const goal = args.goal ?? defaults.objectiveGoal ?? "purchase";
-  const dailyBudgetMinor = args.budgetReais
+  const requested = args.budgetReais
     ? Math.round(args.budgetReais * MINOR_PER_UNIT)
     : (ac.cfg.maxNewDailyBudgetMinor ?? DEFAULT_STARTER_BUDGET_MINOR);
+  const cap = ac.cfg.maxNewDailyBudgetMinor;
+  const dailyBudgetMinor = cap != null ? Math.min(requested, cap) : requested;
   const variantsCount = DEFAULT_VARIANTS;
 
   const copyVariants: CopyVariant[] = await generateCopy(

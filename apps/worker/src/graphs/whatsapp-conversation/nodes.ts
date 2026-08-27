@@ -534,6 +534,7 @@ export function makeConversationNodes(
         pendingWrite: { echo, expiresAt, actions: [proposal.action] },
         pendingDraft: null,
         pendingRevert: null,
+        pendingConfigChange: null,
       };
     }
 

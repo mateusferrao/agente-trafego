@@ -45,7 +45,7 @@ export function detectCreationOpportunities(input: DetectOpportunitiesInput): Cr
         entityLevel: e.level,
         entityId: e.id,
         ...(e.name ? { entityName: e.name } : {}),
-        rationale: `"${e.name ?? e.id}" é seu melhor em custo por resultado e está no teto de budget — dá pra escalar.`,
+        rationale: `"${e.name ?? e.id}" é seu melhor em custo por resultado — dá pra escalar.`,
       });
     } else if (e.fatigued && e.spending) {
       out.push({

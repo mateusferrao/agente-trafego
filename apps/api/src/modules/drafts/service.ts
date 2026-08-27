@@ -169,8 +169,11 @@ export function createDraftsService(deps: DraftsServiceDeps) {
         return { move: "raise_budget", approvalId: appr.id };
       }
 
-      // duplicate: budget novo = source * (1 + scalePct%), clampado depois pelo guardrail de gasto novo.
-      const newDailyBudgetMinor = Math.round(sourceDailyMinor * (1 + move.scalePct / 100));
+      // duplicate: budget novo = source * (1 + scalePct%), JÁ clampado ao teto de gasto novo
+      // aqui (o card mostra o valor real; o guardrail do apply é rede redundante). §8.
+      const requestedMinor = Math.round(sourceDailyMinor * (1 + move.scalePct / 100));
+      const cap = ctx.cfg.maxNewDailyBudgetMinor;
+      const newDailyBudgetMinor = cap != null ? Math.min(requestedMinor, cap) : requestedMinor;
       const spec: CampaignDraftSpec = {
         version: 1,
         currency: ctx.currency,

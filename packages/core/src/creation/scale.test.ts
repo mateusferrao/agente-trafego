@@ -35,7 +35,6 @@ describe("buildDuplicateInput", () => {
     expect(buildDuplicateInput(draft)).toEqual({
       sourceLevel: "adset",
       sourceId: "AS1",
-      newDailyBudgetMinor: 9000,
       status: "active",
       renameSuffix: "escala",
     });

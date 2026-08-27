@@ -49,7 +49,6 @@ export function buildDuplicateInput(draft: CampaignDraft): DuplicateEntityInput 
   return {
     sourceLevel: draft.sourceRef.level,
     sourceId: draft.sourceRef.id,
-    newDailyBudgetMinor: draft.spec.dailyBudgetMinor,
     status: draft.spec.activation,
     renameSuffix: DUPLICATE_RENAME_SUFFIX,
   };

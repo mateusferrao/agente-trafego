@@ -43,14 +43,13 @@ export interface RestoreResult {
 
 // ─── Criação/duplicação (Fatia 7) ────────────────────────────────────────
 
-/** Entrada de duplicação (escala/clone). O adapter traduz p/ `/copies` + override de budget. */
+/** Entrada de duplicação (escala/clone). O adapter traduz p/ `/copies` (só a cópia — o
+ *  override de budget é passo separado `setEntityBudget`, pra a saga ser retomável). */
 export interface DuplicateEntityInput {
   readonly sourceLevel: EntityLevel;
   readonly sourceId: string;
   /** campanha destino (cópia de adset entra na mesma campanha do vencedor). */
   readonly destinationCampaignId?: string;
-  /** budget diário novo (unidade mínima) — aplicado na cópia (escala). */
-  readonly newDailyBudgetMinor?: number;
   /** nasce ACTIVE ou PAUSED. */
   readonly status: "active" | "paused";
   /** sufixo de nome ("cópia"/"escala") p/ distinguir do original. */
@@ -157,6 +156,8 @@ export interface AdsPlatformPort {
    * budget da cópia (escala) e nasce ACTIVE/PAUSED. Retorna a cópia + filhos p/ retomada.
    */
   duplicateEntity(account: AdAccountRef, input: DuplicateEntityInput): Promise<DuplicateResult>;
+  /** Define o budget diário absoluto de uma entidade (escala pós-cópia; idempotente). */
+  setEntityBudget(account: AdAccountRef, entityId: string, dailyBudgetMinor: number): Promise<void>;
   /** Saga de criação do zero — granular (a casca persiste ids parciais p/ retomada idempotente). */
   createCampaign(account: AdAccountRef, input: CreateCampaignInput): Promise<{ campaignId: string }>;
   createAdSet(account: AdAccountRef, input: CreateAdSetInput): Promise<{ adsetId: string }>;

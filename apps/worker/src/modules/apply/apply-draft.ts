@@ -103,18 +103,32 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
 
   const dryRun = cfg.dryRun;
   const toolKey = allowed.kind === "duplicate" ? TOOL_KEY_DUPLICATE : TOOL_KEY_CREATE;
-  let createdIds: Record<string, unknown> = {};
+  // createdIds parte do que já foi criado (retomada) e é PERSISTIDO a cada passo — um retry
+  // após falha parcial pula o que já existe (sem duplicar gasto real). `/copies`/`create*`
+  // não têm idempotência nativa, então a persistência incremental É a idempotência.
+  const createdIds: Record<string, unknown> = { ...(row.createdIds ?? {}) };
+  const persist = async (patch: Record<string, unknown>): Promise<void> => {
+    Object.assign(createdIds, patch);
+    await db.update(campaignDrafts).set({ createdIds }).where(eq(campaignDrafts.id, row.id));
+  };
   try {
     if (dryRun) {
-      createdIds = { simulated: true };
+      Object.assign(createdIds, { simulated: true });
     } else if (allowed.kind === "duplicate") {
-      const dup = await ports.ads.duplicateEntity(ref, buildDuplicateInput(allowed));
-      createdIds = { copiedId: dup.copiedId, childIds: dup.childIds };
+      if (!createdIds["copiedId"]) {
+        const dup = await ports.ads.duplicateEntity(ref, buildDuplicateInput(allowed));
+        await persist({ copiedId: dup.copiedId, childIds: dup.childIds });
+      }
+      if (!createdIds["budgetApplied"]) {
+        await ports.ads.setEntityBudget(ref, createdIds["copiedId"] as string, allowed.spec.dailyBudgetMinor);
+        await persist({ budgetApplied: true });
+      }
     } else {
-      createdIds = await runFromScratchSaga(ports.ads, ref, allowed, row.createdIds ?? {});
+      await runFromScratchSaga(ports.ads, allowed, ref, createdIds, persist);
     }
   } catch (error) {
-    await db.update(campaignDrafts).set({ status: "failed", createdIds }).where(eq(campaignDrafts.id, row.id));
+    // createdIds já foi persistido incrementalmente → o retry retoma daqui.
+    await db.update(campaignDrafts).set({ status: "failed" }).where(eq(campaignDrafts.id, row.id));
     return { kind: "failed", error };
   }
 
@@ -161,69 +175,76 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
 }
 
 /**
- * Saga de criar-do-zero: createCampaign → createAdSet → N×(createAdCreative → createAd).
- * Idempotente por `prior` (createdIds já persistidos): pula o que já foi criado (retomada).
+ * Saga de criar-do-zero: createCampaign → createAdSet → por variação (createAdCreative →
+ * createAd). RETOMÁVEL: `persist` grava `createdIds` após CADA id → um retry pula o que já
+ * existe (sem duplicar gasto). Pareamento por índice de variação: um criativo órfão (ad
+ * falhou) é reusado na retomada, não recriado. `state` = createdIds mutável (lido + escrito).
  */
 async function runFromScratchSaga(
   ads: WorkerDeps["ports"]["ads"],
-  ref: AdAccountRef,
   draft: CampaignDraft,
-  prior: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
+  ref: AdAccountRef,
+  state: Record<string, unknown>,
+  persist: (patch: Record<string, unknown>) => Promise<void>,
+): Promise<void> {
   const spec = draft.spec;
   const goal = spec.objective ?? "purchase";
   const status = spec.activation;
   const name = `Campanha ${goal} — rascunho`;
 
-  const campaignId =
-    (prior["campaignId"] as string | undefined) ??
-    (await ads.createCampaign(ref, {
+  if (!state["campaignId"]) {
+    const { campaignId } = await ads.createCampaign(ref, {
       name,
       objectiveGoal: goal,
       specialAdCategories: DEFAULT_SPECIAL_AD_CATEGORIES,
       status,
-    })).campaignId;
-
-  const adsetId =
-    (prior["adsetId"] as string | undefined) ??
-    (await ads.createAdSet(ref, {
-      campaignId,
+    });
+    await persist({ campaignId });
+  }
+  if (!state["adsetId"]) {
+    const { adsetId } = await ads.createAdSet(ref, {
+      campaignId: state["campaignId"] as string,
       name: `${name} — conjunto`,
       dailyBudgetMinor: spec.dailyBudgetMinor,
       goal,
       ...(spec.pixelId ? { pixelId: spec.pixelId } : {}),
       targeting: spec.targeting ?? { kind: "advantage_plus" },
       status,
-    })).adsetId;
+    });
+    await persist({ adsetId });
+  }
 
   const variants = spec.copyVariants ?? [];
-  const creativeIds = [...((prior["creativeIds"] as string[] | undefined) ?? [])];
-  const adIds = [...((prior["adIds"] as string[] | undefined) ?? [])];
+  const creativeIds = [...((state["creativeIds"] as string[] | undefined) ?? [])];
+  const adIds = [...((state["adIds"] as string[] | undefined) ?? [])];
   const creative = spec.creative;
-  for (let i = creativeIds.length; i < variants.length; i++) {
+  for (let i = 0; i < variants.length; i++) {
+    if (adIds[i]) continue; // variação já completa (retomada)
     const v = variants[i]!;
-    const { creativeId } = await ads.createAdCreative(ref, {
-      name: `${name} — criativo ${i + 1}`,
-      pageId: spec.pageId!,
-      ...(creative?.metaImageHash ? { imageHash: creative.metaImageHash } : {}),
-      ...(creative?.metaVideoId ? { videoId: creative.metaVideoId } : {}),
-      ...(spec.linkUrl ? { linkUrl: spec.linkUrl } : {}),
-      copy: {
-        primaryText: v.primaryText,
-        headline: v.headline,
-        ...(v.description ? { description: v.description } : {}),
-        ...(v.cta ? { cta: v.cta } : {}),
-      },
-    });
-    creativeIds.push(creativeId);
+    if (!creativeIds[i]) {
+      const { creativeId } = await ads.createAdCreative(ref, {
+        name: `${name} — criativo ${i + 1}`,
+        pageId: spec.pageId!,
+        ...(creative?.metaImageHash ? { imageHash: creative.metaImageHash } : {}),
+        ...(creative?.metaVideoId ? { videoId: creative.metaVideoId } : {}),
+        ...(spec.linkUrl ? { linkUrl: spec.linkUrl } : {}),
+        copy: {
+          primaryText: v.primaryText,
+          headline: v.headline,
+          ...(v.description ? { description: v.description } : {}),
+          ...(v.cta ? { cta: v.cta } : {}),
+        },
+      });
+      creativeIds[i] = creativeId;
+      await persist({ creativeIds: [...creativeIds] });
+    }
     const { adId } = await ads.createAd(ref, {
-      adsetId,
-      creativeId,
+      adsetId: state["adsetId"] as string,
+      creativeId: creativeIds[i]!,
       name: `${name} — anúncio ${i + 1}`,
       status,
     });
-    adIds.push(adId);
+    adIds[i] = adId;
+    await persist({ adIds: [...adIds] });
   }
-
-  return { campaignId, adsetId, creativeIds, adIds };
 }

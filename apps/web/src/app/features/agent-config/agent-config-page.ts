@@ -65,24 +65,7 @@ const TRISTATE_OPTIONS: readonly UiSelectOptionItem[] = [
   { value: TRISTATE_OFF, label: 'Desligado' },
 ];
 
-/** Rótulos amigáveis PT-BR da taxonomia neutra (custom cai no nome real do backend). */
-const CONVERSION_LABEL: Record<string, string> = {
-  purchase: 'Venda',
-  lead: 'Lead',
-  registration: 'Cadastro',
-  initiate_checkout: 'Início de checkout',
-  add_to_cart: 'Adição ao carrinho',
-  view_content: 'Visualização de conteúdo',
-  add_payment_info: 'Adição de pagamento',
-  search: 'Busca',
-  contact: 'Contato',
-  subscribe: 'Assinatura',
-  start_trial: 'Início de teste',
-  submit_application: 'Envio de inscrição',
-  messaging_started: 'Conversa iniciada',
-  app_install: 'Instalação de app',
-  custom: 'Conversão personalizada',
-};
+import { CONVERSION_LABEL } from '@app/shared/conversion-label';
 
 /** Uma opção do select de conversão de negócio (chave + rótulo + anotação de dado). */
 interface ConversionOption {

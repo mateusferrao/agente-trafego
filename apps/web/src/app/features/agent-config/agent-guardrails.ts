@@ -201,7 +201,7 @@ export class AgentGuardrails implements OnInit {
             dryRun: this.dryRun(),
             killSwitch: this.killSwitch(),
             ...(cap.length > 0 && Number.isFinite(capNum) ? { llmCostCapUsd: Math.max(0, capNum) } : {}),
-            maxNewDailyBudgetMinor: Math.max(0, Math.round(Number(this.maxNewDaily()) || 0) * 100),
+            maxNewDailyBudgetMinor: Math.max(0, Math.round((Number(this.maxNewDaily()) || 0) * 100)),
             maxNewCampaignsPerDay: Math.max(0, this.parseInt0(this.maxNewCampaigns(), 1)),
             scalePct: Math.max(0, this.parseInt0(this.scalePct(), 50)),
           },

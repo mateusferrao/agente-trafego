@@ -46,8 +46,9 @@ export class MetaCreationService {
   constructor(private readonly client: MetaGraphClient) {}
 
   /**
-   * Duplica via `POST /{id}/copies` (deep_copy) e, quando `newDailyBudgetMinor`, ajusta o
-   * budget da cópia num 2º POST. Retorna a cópia + filhos (ids p/ retomada idempotente).
+   * Duplica via `POST /{id}/copies` (deep_copy). SÓ a cópia — o override de budget (escala)
+   * é passo SEPARADO (`setEntityBudget`), pra a saga persistir o `copiedId` ANTES do budget
+   * e não re-copiar num retry (`/copies` não tem idempotência). Retorna cópia + filhos.
    */
   async duplicateEntity(account: AdAccountRef, input: DuplicateEntityInput): Promise<DuplicateResult> {
     const statusOption = input.status === "active" ? STATUS_ACTIVE : STATUS_PAUSED;
@@ -72,18 +73,17 @@ export class MetaCreationService {
     const childIds = (data.ad_object_ids ?? [])
       .map((p) => p.copied_ad_id)
       .filter((id): id is string => typeof id === "string");
-
-    // escala: aplica o budget novo na cópia (o /copies herda o budget do original).
-    if (input.newDailyBudgetMinor !== undefined) {
-      await this.client.request({
-        method: "POST",
-        path: copiedId,
-        accessToken: account.accessToken,
-        params: { [BUDGET_FIELD_DAILY]: String(input.newDailyBudgetMinor) },
-      });
-    }
-
     return { copiedId, childIds };
+  }
+
+  /** Define o budget diário absoluto de uma entidade (unidade mínima). Idempotente (set). */
+  async setEntityBudget(account: AdAccountRef, entityId: string, dailyBudgetMinor: number): Promise<void> {
+    await this.client.request({
+      method: "POST",
+      path: entityId,
+      accessToken: account.accessToken,
+      params: { [BUDGET_FIELD_DAILY]: String(dailyBudgetMinor) },
+    });
   }
 
   /** POST num edge da conta (campaigns/adsets/adcreatives/ads) → id criado. */
