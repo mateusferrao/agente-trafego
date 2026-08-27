@@ -10,6 +10,8 @@ import type {
 import type {
   AdAccountRef,
   AdsPlatformPort,
+  DuplicateEntityInput,
+  DuplicateResult,
   InsightsQuery,
   MutateOptions,
   MutationResult,
@@ -23,6 +25,7 @@ import { normalizeAdAccountId, stripActPrefix } from "./ids.js";
 import { MetaInsightsService } from "./insights.js";
 import { MetaCreativesService } from "./creatives.js";
 import { MetaMutationsService } from "./mutations.js";
+import { MetaCreationService } from "./creation.js";
 import { MetaGovernor } from "./governor.js";
 import { MetaEntityCache } from "./entity-cache.js";
 import { objectiveFromAdSet, objectiveFromCampaign, type RawPromotedObject } from "./meta-conversion-map.js";
@@ -163,6 +166,7 @@ export interface MetaAdsAdapterDeps {
   readonly insights?: MetaInsightsService;
   readonly creatives?: MetaCreativesService;
   readonly mutations?: MetaMutationsService;
+  readonly creation?: MetaCreationService;
   /** Resolve nomes de conversão personalizada p/ rotular objetivos (opcional; degrada). */
   readonly customConversions?: CustomConversionsResolver;
   /** Cache do catálogo de entidades entre runs (opcional; ausente = sempre lista fresco). */
@@ -182,6 +186,7 @@ export class MetaAdsAdapter implements AdsPlatformPort {
   private readonly insights: MetaInsightsService;
   private readonly creatives: MetaCreativesService;
   private readonly mutations: MetaMutationsService;
+  private readonly creation: MetaCreationService;
   private readonly customConversions: CustomConversionsResolver | undefined;
   private readonly entityCache: MetaEntityCache | undefined;
 
@@ -191,6 +196,7 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     this.insights = deps.insights ?? new MetaInsightsService(deps.client, deps.governor);
     this.creatives = deps.creatives ?? new MetaCreativesService(deps.client, deps.governor, deps.visionFrames);
     this.mutations = deps.mutations ?? new MetaMutationsService(deps.client);
+    this.creation = deps.creation ?? new MetaCreationService(deps.client);
     this.customConversions = deps.customConversions;
     this.entityCache = deps.entityCache;
   }
@@ -329,6 +335,20 @@ export class MetaAdsAdapter implements AdsPlatformPort {
       const result = await this.mutations.mutate(account, action, opts);
       // escrita REAL mudou o estado → catálogo cacheado ficou stale (dry-run não muda nada).
       if (!opts?.dryRun) await this.entityCache?.invalidate(accountId);
+      return result;
+    } catch (error) {
+      throw toAdsError(error);
+    }
+  }
+
+  async duplicateEntity(account: AdAccountRef, input: DuplicateEntityInput): Promise<DuplicateResult> {
+    try {
+      // gate de cooldown de write (mesma rede do mutate); cria entidades novas → catálogo stale.
+      const accountId = normalizeAdAccountId(account.adAccountId);
+      const acquired = await this.governor.acquire(accountId);
+      if (!acquired.granted) throw cooldownError();
+      const result = await this.creation.duplicateEntity(account, input);
+      await this.entityCache?.invalidate(accountId);
       return result;
     } catch (error) {
       throw toAdsError(error);

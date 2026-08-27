@@ -9,6 +9,7 @@ import type { Redis } from "ioredis";
 import { APPROVAL_APPLY_QUEUE, type ApprovalApplyPayload, type ApprovalId } from "@trafego/shared";
 import type { WorkerDeps } from "../composition.js";
 import { applyConfirmedAction } from "../modules/apply/apply-confirmed-action.js";
+import { applyDraft } from "../modules/apply/apply-draft.js";
 import { createNotifyRepo } from "../modules/notify/repo.js";
 import { createSendToConversation } from "../modules/notify/send-to-contact.js";
 
@@ -40,10 +41,27 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
         logger.info({ approvalId, status: approval.status }, "approval-apply:já resolvida");
         return;
       }
-      if (approval.kind !== "action") {
-        // Aprovação de RASCUNHO (Fatia 7): despacho pra saga de criação entra num
-        // sub-slice seguinte (apply-draft). Nenhum rascunho é criado ainda.
-        logger.warn({ approvalId }, "approval-apply:rascunho ainda não despachável aqui");
+      if (approval.kind === "draft") {
+        // Aprovação de RASCUNHO (Fatia 7) → saga de criação (apply-draft).
+        const outcome = await applyDraft(deps, { orgId, draftId: approval.draftId });
+        switch (outcome.kind) {
+          case "failed":
+            logger.error({ approvalId, err: outcome.error }, "approval-apply:saga de criação falhou");
+            await pushOutcome("Não consegui criar agora — a Meta não respondeu. Tenta de novo em instantes.");
+            return;
+          case "blocked":
+            await ports.approval.resolve(approval.id, { status: "blocked", resolvedReason: outcome.reason });
+            await pushOutcome(`Não criei: ${outcome.reason}.`);
+            return;
+          case "unsupported":
+            await ports.approval.resolve(approval.id, { status: "blocked", resolvedReason: outcome.reason });
+            await pushOutcome(`Ainda não consigo fazer isso: ${outcome.reason}.`);
+            return;
+          case "created":
+            await ports.approval.resolve(approval.id, { status: "approved" });
+            await pushOutcome(outcome.dryRun ? "🧪 Simulei a criação (dry-run)." : "✅ Criado! Já subiu — a Meta vai revisar antes de veicular.");
+            return;
+        }
         return;
       }
       if (!approval.runId) {

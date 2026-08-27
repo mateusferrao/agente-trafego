@@ -1,3 +1,8 @@
+import type { CampaignDraft, DuplicateEntityInput } from "@trafego/shared";
+
+/** Sufixo de nome da entidade duplicada (distingue do original no Ads Manager). */
+const DUPLICATE_RENAME_SUFFIX = "escala";
+
 /** Onde mora o budget: adset (ABO) ou campanha (CBO). */
 export type BudgetLevel = "adset" | "campaign";
 
@@ -30,4 +35,22 @@ export function planScaleMove(input: PlanScaleMoveInput): ScaleMove {
     return { move: "raise_budget", pct: scalePct, level: "adset" };
   }
   return { move: "duplicate", scalePct };
+}
+
+/**
+ * Traduz um rascunho `duplicate` na entrada neutra de duplicação (a saga chama o adapter).
+ * Omite `destinationCampaignId` — a cópia de adset entra na MESMA campanha por default.
+ * PURO. Lança se faltar `sourceRef` (rascunho de duplicação sempre tem origem).
+ */
+export function buildDuplicateInput(draft: CampaignDraft): DuplicateEntityInput {
+  if (draft.kind !== "duplicate" || !draft.sourceRef) {
+    throw new Error("buildDuplicateInput: rascunho não é de duplicação ou não tem sourceRef");
+  }
+  return {
+    sourceLevel: draft.sourceRef.level,
+    sourceId: draft.sourceRef.id,
+    newDailyBudgetMinor: draft.spec.dailyBudgetMinor,
+    status: draft.spec.activation,
+    renameSuffix: DUPLICATE_RENAME_SUFFIX,
+  };
 }

@@ -39,6 +39,28 @@ export interface RestoreResult {
   readonly after: Readonly<Record<string, unknown>>;
 }
 
+// ─── Criação/duplicação (Fatia 7) ────────────────────────────────────────
+
+/** Entrada de duplicação (escala/clone). O adapter traduz p/ `/copies` + override de budget. */
+export interface DuplicateEntityInput {
+  readonly sourceLevel: EntityLevel;
+  readonly sourceId: string;
+  /** campanha destino (cópia de adset entra na mesma campanha do vencedor). */
+  readonly destinationCampaignId?: string;
+  /** budget diário novo (unidade mínima) — aplicado na cópia (escala). */
+  readonly newDailyBudgetMinor?: number;
+  /** nasce ACTIVE ou PAUSED. */
+  readonly status: "active" | "paused";
+  /** sufixo de nome ("cópia"/"escala") p/ distinguir do original. */
+  readonly renameSuffix?: string;
+}
+
+/** Resultado da duplicação — id da cópia + filhos criados (idempotência/retomada). */
+export interface DuplicateResult {
+  readonly copiedId: string;
+  readonly childIds: readonly string[];
+}
+
 /**
  * Falha genérica da borda de ads — o adapter traduz o erro específico do provider
  * (ex: `MetaApiError`) para esta forma, e a casca mapeia p/ HTTP amigável **sem**
@@ -81,6 +103,11 @@ export interface AdsPlatformPort {
   ): Promise<RestoreResult>;
   /** Lê o estado atual (status + budgets) de uma entidade — re-check fresco (drift). */
   readEntityState(account: AdAccountRef, entityId: string): Promise<Record<string, unknown>>;
+  /**
+   * Duplica uma entidade (escala/clone) via `/copies` (Fatia 7). Opcionalmente ajusta o
+   * budget da cópia (escala) e nasce ACTIVE/PAUSED. Retorna a cópia + filhos p/ retomada.
+   */
+  duplicateEntity(account: AdAccountRef, input: DuplicateEntityInput): Promise<DuplicateResult>;
   /**
    * Lista contas acessíveis pelo token (onboarding: cola token → escolhe).
    * Também **valida** o token — credencial inválida lança `AdsPlatformError`.
