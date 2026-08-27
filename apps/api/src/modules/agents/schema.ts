@@ -9,6 +9,7 @@ import {
   marketReferenceSchema,
   notifyPolicySchema,
   postureSchema,
+  toolBindingsSchema,
 } from "@trafego/shared/schemas";
 import {
   AGENT_IDENTITY_FIELD_MAX,
@@ -141,6 +142,8 @@ export const agentConfigInput = z.object({
     .optional(),
   /** autonomia por origem (playbook×llm) — só morde na escrita (5a). */
   autonomyPolicy: autonomyPolicySchema.optional(),
+  /** on/off por-ação das 6 tools (A3) — patch parcial; grava agent_tool_bindings. */
+  toolBindings: toolBindingsSchema.partial().optional(),
   /** guardrails (rede independente) — blast radius, cap, kill-switch, dry-run (5a). */
   guardrails: guardrailConfigSchema.optional(),
   /** "Opções avançadas" (6c) — override do model_config (modelos/revisão/limiares). */
@@ -182,6 +185,8 @@ export const agentSummary = z.object({
   paused: z.boolean(),
   /** autonomia por origem (5a) — semeada pelo arquétipo. */
   autonomyPolicy: autonomyPolicySchema,
+  /** on/off por-ação das 6 tools (A3) — estado RESOLVIDO (bindings + fallback allowedActions). */
+  toolBindings: toolBindingsSchema,
   /** guardrails (5a) — semeados na criação do agente. */
   guardrails: guardrailConfigSchema,
   /** "Opções avançadas" (6c) — overrides atuais do model_config (vazio = padrão do sistema). */

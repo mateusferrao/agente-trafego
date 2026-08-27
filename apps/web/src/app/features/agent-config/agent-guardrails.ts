@@ -1,25 +1,19 @@
 import { ChangeDetectionStrategy, Component, type OnInit, type WritableSignal, effect, inject, input, output, signal, computed } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
-import { NumberStepper, UiInput, UiSwitch, UiSwitchThumb, UiCheckbox } from '@ui';
+import { NumberStepper, UiInput, UiSwitch, UiSwitchThumb } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import type { AgentSummary } from '@core/api/generated';
 import { currencySymbol } from '@app/shared/format';
 
 type ActionType = 'pause_entity' | 'resume_entity' | 'adjust_budget' | 'set_status';
 
-const ACTION_LABEL: Record<ActionType, string> = {
-  pause_entity: 'pausar',
-  resume_entity: 'retomar',
-  adjust_budget: 'ajustar orçamento',
-  set_status: 'mudar status',
-};
-const ACTIONS: readonly ActionType[] = ['pause_entity', 'resume_entity', 'adjust_budget', 'set_status'];
-
-/** Guardrails (5a): rede de segurança independente da autonomia — sempre vale na escrita. */
+/** Guardrails (5a): rede de segurança independente da autonomia — sempre vale na escrita.
+ *  As "ações permitidas" (on/off por tipo) migraram p/ a lista única em "Até onde o agente
+ *  pode ir" (A3, bindings) — aqui o allowedActions é só preservado no save (coluna estável). */
 @Component({
   selector: 'app-agent-guardrails',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [NumberStepper, UiInput, UiSwitch, UiSwitchThumb, UiCheckbox],
+  imports: [NumberStepper, UiInput, UiSwitch, UiSwitchThumb],
   template: `
     <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
       <div>
@@ -94,23 +88,6 @@ const ACTIONS: readonly ActionType[] = ['pause_entity', 'resume_entity', 'adjust
           </label>
         </div>
       </div>
-
-      <div class="flex flex-col gap-2">
-        <span class="text-sm font-medium text-ink">Ações permitidas</span>
-        <span class="text-xs text-muted">Além de subir a autonomia, o tipo precisa estar liberado aqui.</span>
-        <div class="flex flex-wrap gap-4">
-          @for (a of ACTIONS; track a) {
-            <label class="flex items-center gap-2 text-sm text-ink">
-              <button appCheckbox [ngpCheckboxChecked]="isAllowed(a)" (ngpCheckboxCheckedChange)="toggleAllowed(a, $event)">
-                <svg viewBox="0 0 12 12" fill="none" class="hidden size-3 stroke-panel group-data-[checked]:block">
-                  <path d="M2.5 6.5 5 9l4.5-5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-              </button>
-              {{ ACTION_LABEL[a] }}
-            </label>
-          }
-        </div>
-      </div>
     </section>
   `,
 })
@@ -123,9 +100,6 @@ export class AgentGuardrails implements OnInit {
 
   protected readonly currencySymbol = currencySymbol;
 
-  protected readonly ACTIONS = ACTIONS;
-  protected readonly ACTION_LABEL = ACTION_LABEL;
-
   protected readonly dryRun = signal(true);
   protected readonly killSwitch = signal(false);
   protected readonly maxPct = signal('20');
@@ -134,6 +108,8 @@ export class AgentGuardrails implements OnInit {
   protected readonly maxNewDaily = signal('50');
   protected readonly maxNewCampaigns = signal('1');
   protected readonly scalePct = signal('50');
+  // preservado (não editável aqui — migrou p/ a lista única): reenviado no save p/ manter
+  // a coluna estável (bindings são a fonte autoritativa; allowedActions = fallback vestigial).
   private readonly allowed = signal<ReadonlySet<ActionType>>(new Set(['pause_entity']));
 
   protected readonly saving = signal(false);
@@ -141,7 +117,7 @@ export class AgentGuardrails implements OnInit {
   private readonly baseline = signal('');
   private readonly sig = computed(
     () =>
-      `${this.dryRun()}|${this.killSwitch()}|${this.maxPct()}|${this.maxEntities()}|${this.llmCap()}|${this.maxNewDaily()}|${this.maxNewCampaigns()}|${this.scalePct()}|${[...this.allowed()].sort().join(',')}`,
+      `${this.dryRun()}|${this.killSwitch()}|${this.maxPct()}|${this.maxEntities()}|${this.llmCap()}|${this.maxNewDaily()}|${this.maxNewCampaigns()}|${this.scalePct()}`,
   );
   readonly dirty = computed(() => this.sig() !== this.baseline());
 
@@ -153,15 +129,6 @@ export class AgentGuardrails implements OnInit {
 
   protected onNum(sig: WritableSignal<string>, e: Event): void {
     sig.set((e.target as HTMLInputElement).value);
-  }
-  protected isAllowed(a: ActionType): boolean {
-    return this.allowed().has(a);
-  }
-  protected toggleAllowed(a: ActionType, on: boolean): void {
-    const next = new Set(this.allowed());
-    if (on) next.add(a);
-    else next.delete(a);
-    this.allowed.set(next);
   }
 
   ngOnInit(): void {

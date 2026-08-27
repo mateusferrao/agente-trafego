@@ -1,4 +1,4 @@
-import { boolean, index, jsonb, pgTable, text, uuid } from "drizzle-orm/pg-core";
+import { boolean, index, jsonb, pgTable, text, unique, uuid } from "drizzle-orm/pg-core";
 import { pk, riskLevel, timestamps, toolApprovalPolicy, toolBindingMode } from "./_shared.js";
 import { agents } from "./agents.js";
 import { orgs } from "./tenancy.js";
@@ -43,5 +43,9 @@ export const agentToolBindings = pgTable(
     mode: toolBindingMode("mode").notNull().default("enabled"),
     ...timestamps,
   },
-  (t) => [index("agent_tool_bindings_agent_idx").on(t.agentId)],
+  (t) => [
+    index("agent_tool_bindings_agent_idx").on(t.agentId),
+    // 1 binding por (agente, tool) — chave do upsert do write-path de config (A3).
+    unique("agent_tool_bindings_agent_tool_uq").on(t.agentId, t.toolKey),
+  ],
 );

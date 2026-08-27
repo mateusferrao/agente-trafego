@@ -101,10 +101,11 @@ describe("agents.getOrCreateForAccount", () => {
 describe("agents.updateConfig", () => {
   it("salva meta+conversão+textos+janela, apara/limpa e bumpa configChangedAt (força deep)", async () => {
     // selects em ordem: conta, agente (getOrCreate), guardrails (loadGuardrails),
-    // model_config (merge da janela).
+    // tool_bindings (loadToolBindings, A3), model_config (merge da janela).
     const { db, captured } = makeFakeDb([
       [{ id: "acc-1" }],
       [{ id: "ag-1", archetype: "conservador", goals: {} }],
+      [],
       [],
       [{ modelConfig: { model: "x" } }],
     ]);
@@ -189,10 +190,12 @@ describe("agents.createPlaybookRule", () => {
 
 describe("agents.muteCampaign / unmuteCampaign", () => {
   it("silencia campanha: insere (level campaign, org+agente escopados) idempotente e devolve a lista", async () => {
-    // selects em ordem: conta, agente (getOrCreate), guardrails + lista de silenciadas.
+    // selects em ordem: conta, agente (getOrCreate), guardrails, tool_bindings (A3),
+    // lista de silenciadas.
     const { db, captured } = makeFakeDb([
       [{ id: "acc-1" }],
       [{ id: "ag-1", archetype: "conservador", goals: {} }],
+      [],
       [],
       [{ externalId: "C1" }],
     ]);
@@ -214,6 +217,7 @@ describe("agents.muteCampaign / unmuteCampaign", () => {
     const { db, captured } = makeFakeDb([
       [{ id: "acc-1" }],
       [{ id: "ag-1", archetype: "conservador", goals: {} }],
+      [],
       [],
       [],
     ]);

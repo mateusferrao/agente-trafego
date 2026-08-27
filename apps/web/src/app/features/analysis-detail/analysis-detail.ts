@@ -193,7 +193,7 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                     <h3 class="font-semibold text-ink">{{ campaignName(c) }}</h3>
                   </div>
                   <div class="flex shrink-0 items-center gap-2">
-                    @if (c.tier === 'winner' && !c.muted) {
+                    @if (c.tier === 'winner' && !c.muted && canScale()) {
                       <button
                         type="button"
                         class="rounded-md border border-accent px-2 py-1 text-xs text-accent-strong hover:bg-accent-soft"
@@ -347,6 +347,8 @@ export class AnalysisDetail {
   readonly mutingId = input<string | null>(null);
   /** id da campanha em escala (CTA "escalar este vencedor"). */
   readonly scalingId = input<string | null>(null);
+  /** escala habilitada (A3): duplicar OU subir orçamento ligado nos bindings. Off → CTA some. */
+  readonly canScale = input<boolean>(true);
   /** passo agressivo → escolha inline (subir seguro vs duplicar) no card desta campanha. */
   readonly scaleAsk = input<{ externalId: string; raisePct: number; duplicatePct: number } | null>(null);
 

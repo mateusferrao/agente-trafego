@@ -114,6 +114,7 @@ const MAX_POLLS = 6;
           [votingId]="store.votingId()"
           [mutingId]="store.mutingId()"
           [scalingId]="store.scalingId()"
+          [canScale]="store.canScale()"
           [scaleAsk]="store.scaleAskView()"
           (vote)="store.vote($event)"
           (toggleMute)="store.toggleMuted($event)"

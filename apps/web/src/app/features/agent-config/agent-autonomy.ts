@@ -1,11 +1,25 @@
 import { ChangeDetectionStrategy, Component, type OnInit, effect, inject, input, output, signal, computed } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
-import { UiToggleGroup, UiToggleGroupItem } from '@ui';
+import { UiToggleGroup, UiToggleGroupItem, UiSwitch, UiSwitchThumb } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import type { AgentSummary } from '@core/api/generated';
 
 type Level = 'notify' | 'suggest' | 'act_safe' | 'act_full';
 type ScalePref = 'ask' | 'raise' | 'duplicate';
+type ToolKey = 'pause_entity' | 'resume_entity' | 'set_status' | 'adjust_budget' | 'create_campaign' | 'duplicate_scale';
+
+/** Lista ÚNICA por-ação (A3): on/off das 6 capacidades. As 4 de otimização + as 2 de criação
+ *  (gasto novo). Fonte do gate real (agent_tool_bindings) — mesmo on/off que o chat/apply leem. */
+const OPTIMIZE_TOOLS: readonly { key: ToolKey; label: string; hint: string }[] = [
+  { key: 'pause_entity', label: 'Pausar', hint: 'Parar o gasto de uma campanha, conjunto ou anúncio.' },
+  { key: 'resume_entity', label: 'Retomar', hint: 'Voltar a rodar algo que estava pausado.' },
+  { key: 'set_status', label: 'Mudar status', hint: 'Ativar ou pausar uma entidade.' },
+  { key: 'adjust_budget', label: 'Ajustar orçamento', hint: 'Subir ou cortar o orçamento (±%).' },
+];
+const CREATE_TOOLS: readonly { key: ToolKey; label: string; hint: string }[] = [
+  { key: 'create_campaign', label: 'Criar campanha', hint: 'Montar uma campanha nova do zero (gasto novo).' },
+  { key: 'duplicate_scale', label: 'Duplicar para escalar', hint: 'Clonar um vencedor com mais orçamento (gasto novo).' },
+];
 
 const LEVELS: readonly { value: Level; label: string }[] = [
   { value: 'notify', label: 'só avisa' },
@@ -29,7 +43,7 @@ const SCALE_PREFS: readonly { value: ScalePref; label: string }[] = [
 @Component({
   selector: 'app-agent-autonomy',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiToggleGroup, UiToggleGroupItem],
+  imports: [UiToggleGroup, UiToggleGroupItem, UiSwitch, UiSwitchThumb],
   template: `
     <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
       <div>
@@ -59,6 +73,47 @@ const SCALE_PREFS: readonly { value: ScalePref; label: string }[] = [
           </div>
         </div>
       }
+
+      <div class="flex flex-col gap-3 border-t border-line pt-4">
+        <button type="button" class="flex items-center justify-between gap-2 text-left" (click)="showActions.set(!showActions())">
+          <span class="flex flex-col">
+            <span class="text-sm font-medium text-ink">Ações permitidas</span>
+            <span class="text-xs text-muted">Quais capacidades o agente pode usar. Desligada aqui, ele nem propõe nem executa.</span>
+          </span>
+          <span class="text-xs text-muted">{{ showActions() ? 'ocultar' : 'opções avançadas' }}</span>
+        </button>
+
+        @if (showActions()) {
+          <div class="flex flex-col gap-3">
+            @for (t of OPTIMIZE_TOOLS; track t.key) {
+              <label class="flex items-center justify-between gap-3">
+                <span class="flex flex-col">
+                  <span class="text-sm text-ink">{{ t.label }}</span>
+                  <span class="text-xs text-muted">{{ t.hint }}</span>
+                </span>
+                <button appSwitch [ngpSwitchChecked]="toolOn(t.key)" (ngpSwitchCheckedChange)="setTool(t.key, $event)">
+                  <span appSwitchThumb></span>
+                </button>
+              </label>
+            }
+          </div>
+
+          <div class="flex flex-col gap-3 rounded-lg border border-line p-4">
+            <span class="text-xs font-medium uppercase tracking-wide text-muted">Criação (gasto novo)</span>
+            @for (t of CREATE_TOOLS; track t.key) {
+              <label class="flex items-center justify-between gap-3">
+                <span class="flex flex-col">
+                  <span class="text-sm text-ink">{{ t.label }}</span>
+                  <span class="text-xs text-muted">{{ t.hint }}</span>
+                </span>
+                <button appSwitch [ngpSwitchChecked]="toolOn(t.key)" (ngpSwitchCheckedChange)="setTool(t.key, $event)">
+                  <span appSwitchThumb></span>
+                </button>
+              </label>
+            }
+          </div>
+        }
+      </div>
 
       <div class="flex flex-col gap-2 border-t border-line pt-4">
         <span id="autonomy-scale" class="text-sm font-medium text-ink">Escalar um vencedor além do limite seguro</span>
@@ -92,6 +147,8 @@ export class AgentAutonomy implements OnInit {
 
   protected readonly LEVELS = LEVELS;
   protected readonly SCALE_PREFS = SCALE_PREFS;
+  protected readonly OPTIMIZE_TOOLS = OPTIMIZE_TOOLS;
+  protected readonly CREATE_TOOLS = CREATE_TOOLS;
   protected readonly SOURCES = [
     { key: 'playbook' as const, label: 'Regras do playbook', hint: 'Ações que saem das suas regras determinísticas.' },
     { key: 'llm' as const, label: 'Análise do agente (IA)', hint: 'Ações que a IA propõe a partir da leitura da conta.' },
@@ -100,6 +157,9 @@ export class AgentAutonomy implements OnInit {
   private readonly playbook = signal<Level>('suggest');
   private readonly llm = signal<Level>('suggest');
   protected readonly scalePref = signal<ScalePref>('ask');
+  /** on/off das 6 tools (A3) — estado resolvido semeado do backend; edição grava bindings. */
+  protected readonly toolBindings = signal<Partial<Record<ToolKey, boolean>>>({});
+  protected readonly showActions = signal(false);
   /** preservado no save (não editável aqui) — o replace do autonomyPolicy zeraria senão. */
   private readonly autoConfigViaChat = signal<boolean | undefined>(undefined);
   private readonly baseline = signal<string>('');
@@ -117,10 +177,22 @@ export class AgentAutonomy implements OnInit {
     if (!v) return;
     this.scalePref.set(v);
   }
+  protected toolOn(key: ToolKey): boolean {
+    return this.toolBindings()[key] ?? false;
+  }
+  protected setTool(key: ToolKey, on: boolean): void {
+    this.toolBindings.set({ ...this.toolBindings(), [key]: on });
+  }
+  /** assinatura estável das 6 tools (ordem fixa) p/ o dirty. */
+  private toolsSig(): string {
+    return [...OPTIMIZE_TOOLS, ...CREATE_TOOLS].map((t) => `${t.key}:${this.toolOn(t.key)}`).join(',');
+  }
 
   protected readonly saving = signal(false);
   protected readonly loaded = signal(false);
-  private readonly sig = computed(() => `${this.playbook()}|${this.llm()}|${this.scalePref()}`);
+  private readonly sig = computed(
+    () => `${this.playbook()}|${this.llm()}|${this.scalePref()}|${this.toolsSig()}`,
+  );
   /** público: a página lê p/ compor o dirty da save-bar única + decidir se salva. */
   readonly dirty = computed(() => this.sig() !== this.baseline());
 
@@ -143,8 +215,9 @@ export class AgentAutonomy implements OnInit {
     this.playbook.set(a.autonomyPolicy.bySource.playbook as Level);
     this.llm.set(a.autonomyPolicy.bySource.llm as Level);
     this.scalePref.set(pref);
+    this.toolBindings.set({ ...(a.toolBindings as Partial<Record<ToolKey, boolean>>) });
     this.autoConfigViaChat.set(a.autonomyPolicy.autoConfigViaChat);
-    this.baseline.set(`${a.autonomyPolicy.bySource.playbook}|${a.autonomyPolicy.bySource.llm}|${pref}`);
+    this.baseline.set(this.sig());
     this.loaded.set(true);
   }
 
@@ -164,6 +237,8 @@ export class AgentAutonomy implements OnInit {
             scaleAggressivePreference: this.scalePref(),
             ...(autoConfig !== undefined ? { autoConfigViaChat: autoConfig } : {}),
           },
+          // grava as 6 explicitamente (backfill na edição) — bindings viram a fonte autoritativa.
+          toolBindings: this.toolBindings(),
         }),
       );
       this.seed(a);

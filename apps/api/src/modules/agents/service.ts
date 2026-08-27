@@ -4,6 +4,7 @@ import {
   agents,
   agentMutedEntities,
   agentRuns,
+  agentToolBindings,
   agentToolCalls,
   conversionLabels,
   entityAnalyses,
@@ -21,6 +22,7 @@ import {
   experienceCatalog,
   experienceLevelIsCustom,
   postureCatalog,
+  resolveEnabledTools,
   todayInTz,
   unseedIdentity,
   windowFromModelConfig,
@@ -37,8 +39,10 @@ import {
   GUARDRAIL_DEFAULTS,
   toGuardrailConfig,
   DEFAULT_TIMEZONE,
+  GATEABLE_TOOL_KEYS,
   UNDO_BLOCKED_TOOL_KEY,
   UNDO_TOOL_KEY,
+  type ToolBindingMode,
 } from "@trafego/shared";
 import type { Action, AgentId, AutonomyPolicy, OrgId, StoredInsightMetrics } from "@trafego/shared/types";
 import type { Approval, ApprovalPort, SchedulerPort } from "@trafego/shared/ports";
@@ -91,6 +95,50 @@ export function createAgentsService(deps: AgentsDeps) {
   }
 
   /**
+   * On/off RESOLVIDO das 6 tools (A3): lê agent_tool_bindings + resolve via o resolver puro
+   * (mesma fonte do gate do chat/apply). Binding ausente → fallback (as 4 = allowedActions,
+   * criação = default-on). Objeto cheio com as 6 chaves (contrato). `allowedActions` vem do
+   * guardrail já carregado (evita re-query).
+   */
+  async function loadToolBindings(
+    orgId: OrgId,
+    agentId: string,
+    allowedActions: readonly string[],
+  ): Promise<AgentSummary["toolBindings"]> {
+    const rows = await deps.db
+      .select({ toolKey: agentToolBindings.toolKey, mode: agentToolBindings.mode })
+      .from(agentToolBindings)
+      .where(and(eq(agentToolBindings.agentId, agentId), eq(agentToolBindings.orgId, orgId)));
+    const map = new Map<string, ToolBindingMode>(rows.map((r) => [r.toolKey, r.mode as ToolBindingMode]));
+    const enabled = resolveEnabledTools(map, new Set(allowedActions));
+    return Object.fromEntries(GATEABLE_TOOL_KEYS.map((k) => [k, enabled.has(k)])) as AgentSummary["toolBindings"];
+  }
+
+  /**
+   * Persiste o patch de on/off das tools em agent_tool_bindings (A3): cada chave presente
+   * vira uma linha explícita (enabled|disabled) por (agente, tool) — upsert idempotente. As
+   * chaves ausentes seguem no fallback (allowedActions/default). É a "migração na edição": ao
+   * salvar a lista, o estado fica explícito nos bindings. Só as 6 gateáveis (zod já restringe).
+   */
+  async function persistToolBindings(
+    orgId: OrgId,
+    agentId: string,
+    patch: Partial<Record<string, boolean>>,
+  ): Promise<void> {
+    const entries = Object.entries(patch).filter((e): e is [string, boolean] => typeof e[1] === "boolean");
+    for (const [toolKey, enabled] of entries) {
+      const mode: ToolBindingMode = enabled ? "enabled" : "disabled";
+      await deps.db
+        .insert(agentToolBindings)
+        .values({ orgId, agentId, toolKey, mode })
+        .onConflictDoUpdate({
+          target: [agentToolBindings.agentId, agentToolBindings.toolKey],
+          set: { mode },
+        });
+    }
+  }
+
+  /**
    * Garante 1 agente p/ a conta (org-scoped). Não existe → cria com os defaults
    * do arquétipo default (fonte única em @trafego/core). Idempotente.
    */
@@ -123,6 +171,7 @@ export function createAgentsService(deps: AgentsDeps) {
       .where(and(eq(agents.adAccountId, accountId), eq(agents.orgId, orgId)))
       .limit(1);
     if (existing) {
+      const guardrails = await loadGuardrails(orgId, existing.id);
       return {
         agentId: existing.id,
         archetype: existing.archetype,
@@ -139,7 +188,8 @@ export function createAgentsService(deps: AgentsDeps) {
         analysisWindowDays: windowFromModelConfig(existing.modelConfig),
         paused: existing.status === "paused",
         autonomyPolicy: existing.autonomyPolicy,
-        guardrails: await loadGuardrails(orgId, existing.id),
+        guardrails,
+        toolBindings: await loadToolBindings(orgId, existing.id, guardrails.allowedActions),
         modelConfig: projectModelConfig(existing.modelConfig),
         qualityDefaults: deps.qualityDefaults,
         notifyPolicy: existing.notifyPolicy,
@@ -189,6 +239,8 @@ export function createAgentsService(deps: AgentsDeps) {
       paused: false,
       autonomyPolicy: defaults.autonomyPolicy,
       guardrails: GUARDRAIL_DEFAULTS as AgentSummary["guardrails"],
+      // agente recém-criado: sem bindings → tudo cai no fallback (allowedActions default + criação on).
+      toolBindings: await loadToolBindings(orgId, row.id, GUARDRAIL_DEFAULTS.allowedActions),
       modelConfig: {},
       qualityDefaults: deps.qualityDefaults,
       notifyPolicy: defaults.defaultNotifyPolicy,
@@ -219,6 +271,10 @@ export function createAgentsService(deps: AgentsDeps) {
     // erro tipado do core → exceção só aqui, na casca (mesma mensagem de antes).
     if (!result.ok) throw badRequest(result.error);
 
+    // bindings (A3) vivem em tabela à parte (fora do applyAgentConfigChange) — persiste o patch
+    // e re-resolve o estado cheio p/ o retorno refletir a edição na mesma resposta.
+    if (input.toolBindings) await persistToolBindings(orgId, summary.agentId, input.toolBindings);
+
     // projeta o AgentSummary a partir do estado resolvido — idêntico ao de antes.
     const { next } = result;
     return {
@@ -233,6 +289,7 @@ export function createAgentsService(deps: AgentsDeps) {
       analysisWindowDays: next.analysisWindowDays,
       autonomyPolicy: next.autonomyPolicy,
       guardrails: next.guardrails as AgentSummary["guardrails"],
+      toolBindings: await loadToolBindings(orgId, summary.agentId, next.guardrails.allowedActions),
       modelConfig: projectModelConfig(next.modelConfig),
       qualityDefaults: deps.qualityDefaults,
       notifyPolicy: next.notifyPolicy,

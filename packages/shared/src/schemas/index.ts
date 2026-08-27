@@ -8,6 +8,7 @@ import {
   RECOMMENDATION_KINDS,
   VOLUME_LEVELS,
 } from "../types/index.js";
+import { GATEABLE_TOOL_KEYS } from "../constants/tools.js";
 
 // Fonte da verdade dos contratos (zod → OpenAPI → kubb). Expandir por feature.
 
@@ -75,7 +76,18 @@ export const autonomyPolicySchema = z.object({
   /** kill-switch da auto-config por chat (S2.3) — ausente/true = ON; false = OFF. */
   autoConfigViaChat: z.boolean().optional(),
   scaleAggressivePreference: scaleAggressivePreference.optional(),
+  /** autonomia POR-AÇÃO (B): por tool-key, VENCE o `bySource`; ausente = herda a origem. */
+  byAction: z.record(z.enum([...GATEABLE_TOOL_KEYS] as [string, ...string[]]), autonomyLevel).optional(),
 });
+
+/** On/off das 6 tools gateáveis (A3) — estado resolvido (read) ou patch (write parcial).
+ *  Deriva de GATEABLE_TOOL_KEYS (fonte única): as 4 de escrita + as 2 de criação. */
+export const toolBindingsSchema = z.object(
+  Object.fromEntries(GATEABLE_TOOL_KEYS.map((k) => [k, z.boolean()])) as Record<
+    (typeof GATEABLE_TOOL_KEYS)[number],
+    z.ZodBoolean
+  >,
+);
 
 // ─── Cadência (Fatia 4 corte 2) ──────────────────────────────────────────
 // `CadenceSpec` = FONTE ÚNICA do ritmo da análise automática; o cron 5-campos é

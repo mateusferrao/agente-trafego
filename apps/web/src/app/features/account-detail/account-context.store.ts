@@ -40,6 +40,8 @@ export class AccountContextStore {
   readonly mutingId = signal<string | null>(null);
   /** id da campanha em processo de escala (CTA "escalar este vencedor"). */
   readonly scalingId = signal<string | null>(null);
+  /** escala habilitada (A3): duplicar OU subir orçamento ligado nos bindings. Off → CTA some. */
+  readonly canScale = signal(true);
   /** passo agressivo → o backend PERGUNTA: subir seguro (raisePct) vs duplicar (duplicatePct).
    *  Quando setado, a UI mostra a escolha; a resposta re-chama scaleWinner com `choice`. */
   readonly scaleAsk = signal<{ campaign: Campaign; raisePct: number; duplicatePct: number } | null>(null);
@@ -176,7 +178,11 @@ export class AccountContextStore {
       error: () => this.account.set(null),
     });
     this.analysisApi.getAgent(this.accountId, { silent: true }).subscribe({
-      next: (agent) => this.paused.set(agent.paused),
+      next: (agent) => {
+        this.paused.set(agent.paused);
+        // escalar = duplicar OU subir orçamento (mesmo gate do backend scaleWinner).
+        this.canScale.set(agent.toolBindings.duplicate_scale || agent.toolBindings.adjust_budget);
+      },
       error: () => {},
     });
     this.analysisApi.latestRun(this.accountId).subscribe({

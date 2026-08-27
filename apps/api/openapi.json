@@ -1365,10 +1365,100 @@
                   "raise",
                   "duplicate"
                 ]
+              },
+              "byAction": {
+                "type": "object",
+                "properties": {
+                  "pause_entity": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  },
+                  "resume_entity": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  },
+                  "set_status": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  },
+                  "adjust_budget": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  },
+                  "create_campaign": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  },
+                  "duplicate_scale": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  }
+                }
               }
             },
             "required": [
               "bySource"
+            ]
+          },
+          "toolBindings": {
+            "type": "object",
+            "properties": {
+              "pause_entity": {
+                "type": "boolean"
+              },
+              "resume_entity": {
+                "type": "boolean"
+              },
+              "set_status": {
+                "type": "boolean"
+              },
+              "adjust_budget": {
+                "type": "boolean"
+              },
+              "create_campaign": {
+                "type": "boolean"
+              },
+              "duplicate_scale": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "pause_entity",
+              "resume_entity",
+              "set_status",
+              "adjust_budget",
+              "create_campaign",
+              "duplicate_scale"
             ]
           },
           "guardrails": {
@@ -1947,6 +2037,7 @@
           "analysisWindowDays",
           "paused",
           "autonomyPolicy",
+          "toolBindings",
           "guardrails",
           "modelConfig",
           "qualityDefaults",
@@ -2185,11 +2276,11 @@
           },
           "businessContext": {
             "type": "string",
-            "maxLength": 2000
+            "maxLength": 8000
           },
           "guidance": {
             "type": "string",
-            "maxLength": 2000
+            "maxLength": 8000
           },
           "persona": {
             "type": "string",
@@ -2350,11 +2441,93 @@
                   "raise",
                   "duplicate"
                 ]
+              },
+              "byAction": {
+                "type": "object",
+                "properties": {
+                  "pause_entity": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  },
+                  "resume_entity": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  },
+                  "set_status": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  },
+                  "adjust_budget": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  },
+                  "create_campaign": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  },
+                  "duplicate_scale": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  }
+                }
               }
             },
             "required": [
               "bySource"
             ]
+          },
+          "toolBindings": {
+            "type": "object",
+            "properties": {
+              "pause_entity": {
+                "type": "boolean"
+              },
+              "resume_entity": {
+                "type": "boolean"
+              },
+              "set_status": {
+                "type": "boolean"
+              },
+              "adjust_budget": {
+                "type": "boolean"
+              },
+              "create_campaign": {
+                "type": "boolean"
+              },
+              "duplicate_scale": {
+                "type": "boolean"
+              }
+            }
           },
           "guardrails": {
             "type": "object",
