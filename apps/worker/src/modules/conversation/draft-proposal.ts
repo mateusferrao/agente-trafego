@@ -38,9 +38,12 @@ export interface DraftProposalContext {
 }
 
 export type ChatDraftProposal =
-  | { readonly kind: "draft"; readonly echo: string; readonly approvalId: string }
+  | { readonly kind: "draft"; readonly echo: string; readonly approvalId: string; readonly draftId: string }
   | { readonly kind: "action"; readonly action: Action }
   | { readonly kind: "blocked"; readonly reason: string };
+
+/** on_demand (chat/site) ou proactive (proposto pelo agente no run). */
+export type DraftOrigin = "on_demand" | "proactive";
 
 interface AgentContext {
   readonly ref: AdAccountRef;
@@ -90,8 +93,9 @@ async function persistDraftAndApproval(
   ctx: DraftProposalContext,
   kind: "duplicate" | "from_scratch",
   spec: CampaignDraftSpec,
+  origin: DraftOrigin,
   sourceRef?: { level: "campaign" | "adset"; id: string },
-): Promise<string> {
+): Promise<{ draftId: string; approvalId: string }> {
   const [row] = await deps.db
     .insert(campaignDrafts)
     .values({
@@ -100,7 +104,7 @@ async function persistDraftAndApproval(
       agentId: ctx.agentId,
       kind,
       status: "proposed",
-      origin: "on_demand",
+      origin,
       spec,
       ...(sourceRef ? { sourceRef } : {}),
     })
@@ -113,7 +117,7 @@ async function persistDraftAndApproval(
     draftId: row!.id as DraftId,
     expiresAt: new Date(Date.now() + APPROVAL_TTL_MS),
   });
-  return appr.id;
+  return { draftId: row!.id, approvalId: appr.id };
 }
 
 /** Escalar o melhor vencedor (curado do último run). Raise = ação; duplicate = rascunho. */
@@ -121,6 +125,7 @@ export async function proposeScaleWinner(
   deps: WorkerDeps,
   ctx: DraftProposalContext,
   winnerName?: string,
+  origin: DraftOrigin = "on_demand",
 ): Promise<ChatDraftProposal> {
   const ac = await loadAgentContext(deps, ctx);
   if (!ac) return { kind: "blocked", reason: "não consegui acessar a conta agora" };
@@ -166,13 +171,16 @@ export async function proposeScaleWinner(
     dailyBudgetMinor: newDailyMinor,
     activation: "active",
   };
-  const approvalId = await persistDraftAndApproval(deps, ctx, "duplicate", spec, { level, id: chosen.entityId });
+  const { draftId, approvalId } = await persistDraftAndApproval(deps, ctx, "duplicate", spec, origin, {
+    level,
+    id: chosen.entityId,
+  });
   const echo = [
     `Vou **duplicar o vencedor "${label}"** com mais budget pra escalar sem estourar o aprendizado do original.`,
     `Gasto novo: ${money(newDailyMinor / MINOR_PER_UNIT, ac.currency)}/dia · entra ativa (a Meta revisa antes de veicular).`,
     `Confirma? (o original fica intocado)`,
   ].join("\n");
-  return { kind: "draft", echo, approvalId };
+  return { kind: "draft", echo, approvalId, draftId };
 }
 
 /** Criar do zero reusando o criativo/página/pixel da conta + copy gerada. */
@@ -180,6 +188,7 @@ export async function proposeCreateCampaign(
   deps: WorkerDeps,
   ctx: DraftProposalContext,
   args: { readonly goal?: ConversionGoal; readonly budgetReais?: number },
+  origin: DraftOrigin = "on_demand",
 ): Promise<ChatDraftProposal> {
   const ac = await loadAgentContext(deps, ctx);
   if (!ac) return { kind: "blocked", reason: "não consegui acessar a conta agora" };
@@ -224,11 +233,11 @@ export async function proposeCreateCampaign(
     ...(defaults.pixelId ? { pixelId: defaults.pixelId } : {}),
     ...(defaults.linkUrl ? { linkUrl: defaults.linkUrl } : {}),
   };
-  const approvalId = await persistDraftAndApproval(deps, ctx, "from_scratch", spec);
+  const { draftId, approvalId } = await persistDraftAndApproval(deps, ctx, "from_scratch", spec, origin);
   const echo = [
     `Vou **criar uma campanha de ${goal}** reusando seu criativo campeão e ${variantsCount} variações de copy novas.`,
     `Gasto novo: ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia · Página: ${defaults.pageId}${defaults.pixelId ? ` · Pixel: ${defaults.pixelId}` : ""} · entra ativa (a Meta revisa antes).`,
     `Confirma? (você pode editar/trocar o criativo no site antes de aprovar)`,
   ].join("\n");
-  return { kind: "draft", echo, approvalId };
+  return { kind: "draft", echo, approvalId, draftId };
 }

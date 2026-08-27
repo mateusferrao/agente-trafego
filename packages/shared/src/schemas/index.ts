@@ -108,6 +108,9 @@ export const notifyPolicySchema = z.object({
   // Reativação (pivô): avisa quando uma conta PARADA volta a rodar (gasto/impressões).
   // Baixo ruído (só na transição dormant→active). Default off no conservador.
   reactivation: z.object({ enabled: z.boolean() }),
+  // Proatividade de CRIAÇÃO (Fatia 7): o agente PROPÕE escalar/criar campanhas pelo que
+  // observou (nunca auto-aplica — sempre aprovação). Default OFF; ON em Otimizador/Vigia.
+  proactiveDrafts: z.object({ enabled: z.boolean() }).optional(),
 });
 export type NotifyPolicy = z.infer<typeof notifyPolicySchema>;
 
@@ -117,6 +120,7 @@ export const DEFAULT_NOTIFY_POLICY: NotifyPolicy = {
   alerts: { enabled: false, sensitivity: "normal", throttleHours: 6 },
   runPush: { enabled: true },
   reactivation: { enabled: false },
+  proactiveDrafts: { enabled: false },
 };
 
 // ─── Referência de mercado configurável (pivô — currency-aware) ───────────

@@ -696,6 +696,16 @@ export interface CampaignDraft {
   readonly sourceRef?: DraftSourceRef;
 }
 
+/** Oportunidade de criação detectada (determinística) — semeia o proativo (Fatia 7). */
+export interface CreationOpportunity {
+  readonly kind: CreationOpportunityKind;
+  readonly entityLevel?: EntityLevel;
+  readonly entityId?: string;
+  readonly entityName?: string;
+  /** por que o Roi propôs (rótulo honesto no card/nudge). */
+  readonly rationale: string;
+}
+
 // ─── Autonomia ───────────────────────────────────────────────────────────
 export type AutonomyLevel = "notify" | "suggest" | "act_safe" | "act_full";
 

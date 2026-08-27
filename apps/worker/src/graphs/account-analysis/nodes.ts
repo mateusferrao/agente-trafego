@@ -27,6 +27,7 @@ import {
   guardTrackingCaveat,
   basisByEntity,
   annotateFreedSpend,
+  detectCreationOpportunities,
   evaluatePlaybook,
   flagUnsupportedFindings,
   entityKeyOf,
@@ -41,8 +42,10 @@ import {
   volumeToRecCount,
   type LastUnit,
 } from "@trafego/core";
-import { ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS, DEFAULT_POSTURE } from "@trafego/shared";
+import { ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS, DEFAULT_CURRENCY, DEFAULT_POSTURE } from "@trafego/shared";
+import { recommendations } from "@trafego/db";
 import { funnelFromRawActions, mapStatus } from "@trafego/ads-meta";
+import { proposeCreateCampaign, proposeScaleWinner } from "../../modules/conversation/draft-proposal.js";
 import {
   analysisOutputSchema,
   ANALYSIS_OUTPUT_JSON_SCHEMA,
@@ -634,6 +637,61 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     return { llmCandidates };
   }
 
+  /**
+   * PROATIVO de criação (Fatia 7): detecta oportunidade (determinístico) + propõe rascunho
+   * (scale/create) → campaign_drafts(proposed) + approval + recommendation (draftId, reusa
+   * outcome tracking). Gated por notifyPolicy.proactiveDrafts; throttle = partial-unique
+   * (1 proposto proativo/conta) → conflito é engolido. NUNCA auto-aplica (sempre aprovação).
+   */
+  async function proposeDrafts(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
+    const enabled = state.notifyPolicy?.proactiveDrafts?.enabled === true;
+    if (!enabled || !state.brief) return {};
+    const campaigns = state.brief.segments?.campaigns ?? [];
+    const entities = campaigns.map((c) => ({
+      id: c.id,
+      level: c.level,
+      name: c.name,
+      ...(c.tier ? { tier: c.tier } : {}),
+      significant: c.eligibility?.hasSignificance ?? false,
+      atBudgetCeiling: true, // proposta (humano revisa); refino por budget = follow-up.
+      fatigued: (c.healthSignals ?? []).some((h) => h === "creative_fatigue" || h === "audience_saturation"),
+      spending: (c.metrics?.spend ?? 0) > 0,
+    }));
+    const hasActive = campaigns.some((c) => c.status === "active");
+    const top = detectCreationOpportunities({ hasActiveCampaigns: hasActive, entities })[0];
+    if (!top) return {};
+
+    const dctx = {
+      orgId: state.orgId,
+      agentId: state.agentId,
+      adAccountId: state.adAccountId,
+      currency: state.brief.account?.currency ?? DEFAULT_CURRENCY,
+    };
+    try {
+      const proposal =
+        top.kind === "scale_winner"
+          ? await proposeScaleWinner(deps, dctx, top.entityName, "proactive")
+          : await proposeCreateCampaign(deps, dctx, {}, "proactive");
+      if (proposal.kind !== "draft") return {};
+      // recomendação ligada ao rascunho — renderiza na lista + reusa feedback/outcome.
+      await deps.db.insert(recommendations).values({
+        orgId: state.orgId,
+        runId: state.runId,
+        title: top.kind === "scale_winner" ? "Escalar seu vencedor" : "Criar uma campanha nova",
+        rationale: top.rationale,
+        kind: "platform_action",
+        toolKey: top.kind === "scale_winner" ? "duplicate_scale" : "create_campaign",
+        draftId: proposal.draftId,
+        riskLevel: "high",
+      });
+      logger.info({ runId: state.runId, kind: top.kind }, "propose_drafts:proposto");
+    } catch (err) {
+      // conflito de throttle (1 proposto proativo/conta) ou falha best-effort → não quebra o run.
+      logger.debug({ runId: state.runId, err: String(err) }, "propose_drafts:pulado");
+    }
+    return {};
+  }
+
   /** Fecha o run (status, summary, partial, custo/usage, metrics_snapshot p/ o site). */
   async function record(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
     logger.debug({ runId: state.runId }, "record");
@@ -951,6 +1009,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     synthesize: step("synthesize", synthesize),
     reviewAnalysis: step("review_analysis", reviewAnalysis),
     buildRecommendations: step("build_recommendations", buildRecommendations),
+    proposeDrafts: step("propose_drafts", proposeDrafts),
     writeMessage: step("write_message", writeMessage),
     record: step("record", record),
     notify: step("notify", notify),

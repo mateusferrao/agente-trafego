@@ -1,0 +1,59 @@
+import { describe, expect, it } from "vitest";
+import { detectCreationOpportunities, type OpportunityEntity } from "./opportunity.js";
+
+function ent(over: Partial<OpportunityEntity> = {}): OpportunityEntity {
+  return {
+    id: "e1",
+    level: "adset",
+    name: "Adset 1",
+    significant: true,
+    atBudgetCeiling: false,
+    fatigued: false,
+    spending: true,
+    ...over,
+  };
+}
+
+describe("detectCreationOpportunities", () => {
+  it("scale_winner: vencedor significativo no teto de budget", () => {
+    const out = detectCreationOpportunities({
+      hasActiveCampaigns: true,
+      entities: [ent({ tier: "winner", atBudgetCeiling: true })],
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0]?.kind).toBe("scale_winner");
+    expect(out[0]?.entityId).toBe("e1");
+  });
+
+  it("não escala vencedor que não está no teto", () => {
+    const out = detectCreationOpportunities({
+      hasActiveCampaigns: true,
+      entities: [ent({ tier: "winner", atBudgetCeiling: false })],
+    });
+    expect(out).toHaveLength(0);
+  });
+
+  it("refresh_fatigued: fatigado ainda gastando", () => {
+    const out = detectCreationOpportunities({
+      hasActiveCampaigns: true,
+      entities: [ent({ fatigued: true, spending: true })],
+    });
+    expect(out[0]?.kind).toBe("refresh_fatigued");
+  });
+
+  it("cold_start quando não há campanha ativa", () => {
+    const out = detectCreationOpportunities({ hasActiveCampaigns: false, entities: [] });
+    expect(out).toEqual([{ kind: "cold_start", rationale: expect.any(String) }]);
+  });
+
+  it("prioridade: scale > refresh > cold_start", () => {
+    const out = detectCreationOpportunities({
+      hasActiveCampaigns: false,
+      entities: [
+        ent({ id: "f", fatigued: true }),
+        ent({ id: "w", tier: "winner", atBudgetCeiling: true }),
+      ],
+    });
+    expect(out.map((o) => o.kind)).toEqual(["scale_winner", "refresh_fatigued", "cold_start"]);
+  });
+});
