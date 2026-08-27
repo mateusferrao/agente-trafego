@@ -65,8 +65,10 @@ function beats(cur: Action, best: Action): boolean {
 }
 
 /**
- * Decide, POR ORIGEM da ação, o que auto-aplica vs. o que precisa de OK humano.
- * Autonomia é configurada por origem (`playbook` × `llm`) na `AutonomyPolicy`.
+ * Decide o que auto-aplica vs. o que precisa de OK humano. A autonomia da ação (B) é
+ * resolvida POR-AÇÃO com fallback POR-ORIGEM: `byAction[toolKey]` VENCE `bySource[source]`
+ * (ausente = herda a origem). O toolKey de uma ação de escrita == o `action.type` (as 4
+ * mutações têm chave idêntica ao tipo).
  *
  * Níveis:
  *  - notify    → só avisa; nunca aplica → aprovação
@@ -84,7 +86,7 @@ export function decideActions(
   const needApproval: Action[] = [];
 
   for (const action of actions) {
-    const level = autonomy.bySource[action.source];
+    const level = resolveAutonomyLevel(autonomy, action);
     if (isAutoApplicable(level, action)) {
       autoApply.push(action);
     } else {
@@ -93,6 +95,11 @@ export function decideActions(
   }
 
   return { autoApply, needApproval };
+}
+
+/** Nível de autonomia efetivo da ação: por-ação (toolKey) vence, senão por-origem. PURA. */
+export function resolveAutonomyLevel(autonomy: AutonomyPolicy, action: Action): AutonomyLevel {
+  return autonomy.byAction?.[action.type] ?? autonomy.bySource[action.source];
 }
 
 function isAutoApplicable(level: AutonomyLevel, action: Action): boolean {

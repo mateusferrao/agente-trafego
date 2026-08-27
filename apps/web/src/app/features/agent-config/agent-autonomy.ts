@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, type OnInit, effect, inject, input, output, signal, computed } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
-import { UiToggleGroup, UiToggleGroupItem, UiSwitch, UiSwitchThumb } from '@ui';
+import { UiToggleGroup, UiToggleGroupItem, UiSwitch, UiSwitchThumb, UiSelectBox } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import type { AgentSummary } from '@core/api/generated';
 
@@ -19,6 +19,15 @@ const OPTIMIZE_TOOLS: readonly { key: ToolKey; label: string; hint: string }[] =
 const CREATE_TOOLS: readonly { key: ToolKey; label: string; hint: string }[] = [
   { key: 'create_campaign', label: 'Criar campanha', hint: 'Montar uma campanha nova do zero (gasto novo).' },
   { key: 'duplicate_scale', label: 'Duplicar para escalar', hint: 'Clonar um vencedor com mais orçamento (gasto novo).' },
+];
+
+/** Autonomia POR-AÇÃO (B) — vence a origem. "" (herda) = usa a autonomia por origem acima. */
+const ACTION_AUTONOMY_OPTIONS: readonly { value: string; label: string }[] = [
+  { value: '', label: 'herda a origem' },
+  { value: 'notify', label: 'só avisa' },
+  { value: 'suggest', label: 'sugere + OK' },
+  { value: 'act_safe', label: 'age no seguro' },
+  { value: 'act_full', label: 'age sozinho' },
 ];
 
 const LEVELS: readonly { value: Level; label: string }[] = [
@@ -43,7 +52,7 @@ const SCALE_PREFS: readonly { value: ScalePref; label: string }[] = [
 @Component({
   selector: 'app-agent-autonomy',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiToggleGroup, UiToggleGroupItem, UiSwitch, UiSwitchThumb],
+  imports: [UiToggleGroup, UiToggleGroupItem, UiSwitch, UiSwitchThumb, UiSelectBox],
   template: `
     <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
       <div>
@@ -86,30 +95,56 @@ const SCALE_PREFS: readonly { value: ScalePref; label: string }[] = [
         @if (showActions()) {
           <div class="flex flex-col gap-3">
             @for (t of OPTIMIZE_TOOLS; track t.key) {
-              <label class="flex items-center justify-between gap-3">
-                <span class="flex flex-col">
-                  <span class="text-sm text-ink">{{ t.label }}</span>
-                  <span class="text-xs text-muted">{{ t.hint }}</span>
-                </span>
-                <button appSwitch [ngpSwitchChecked]="toolOn(t.key)" (ngpSwitchCheckedChange)="setTool(t.key, $event)">
-                  <span appSwitchThumb></span>
-                </button>
-              </label>
+              <div class="flex flex-col gap-2 border-b border-line/60 pb-3 last:border-0 last:pb-0">
+                <label class="flex items-center justify-between gap-3">
+                  <span class="flex flex-col">
+                    <span class="text-sm text-ink">{{ t.label }}</span>
+                    <span class="text-xs text-muted">{{ t.hint }}</span>
+                  </span>
+                  <button appSwitch [ngpSwitchChecked]="toolOn(t.key)" (ngpSwitchCheckedChange)="setTool(t.key, $event)">
+                    <span appSwitchThumb></span>
+                  </button>
+                </label>
+                @if (toolOn(t.key)) {
+                  <div class="flex items-center justify-between gap-3 pl-1">
+                    <span class="text-xs text-muted">Autonomia desta ação</span>
+                    <app-ui-select
+                      class="w-44"
+                      [options]="ACTION_AUTONOMY_OPTIONS"
+                      [value]="actionLevel(t.key)"
+                      (valueChange)="setActionLevel(t.key, $event)"
+                    />
+                  </div>
+                }
+              </div>
             }
           </div>
 
           <div class="flex flex-col gap-3 rounded-lg border border-line p-4">
             <span class="text-xs font-medium uppercase tracking-wide text-muted">Criação (gasto novo)</span>
             @for (t of CREATE_TOOLS; track t.key) {
-              <label class="flex items-center justify-between gap-3">
-                <span class="flex flex-col">
-                  <span class="text-sm text-ink">{{ t.label }}</span>
-                  <span class="text-xs text-muted">{{ t.hint }}</span>
-                </span>
-                <button appSwitch [ngpSwitchChecked]="toolOn(t.key)" (ngpSwitchCheckedChange)="setTool(t.key, $event)">
-                  <span appSwitchThumb></span>
-                </button>
-              </label>
+              <div class="flex flex-col gap-2 border-b border-line/60 pb-3 last:border-0 last:pb-0">
+                <label class="flex items-center justify-between gap-3">
+                  <span class="flex flex-col">
+                    <span class="text-sm text-ink">{{ t.label }}</span>
+                    <span class="text-xs text-muted">{{ t.hint }}</span>
+                  </span>
+                  <button appSwitch [ngpSwitchChecked]="toolOn(t.key)" (ngpSwitchCheckedChange)="setTool(t.key, $event)">
+                    <span appSwitchThumb></span>
+                  </button>
+                </label>
+                @if (toolOn(t.key)) {
+                  <div class="flex items-center justify-between gap-3 pl-1">
+                    <span class="text-xs text-muted">Quando ele pode criar sozinho</span>
+                    <app-ui-select
+                      class="w-44"
+                      [options]="ACTION_AUTONOMY_OPTIONS"
+                      [value]="actionLevel(t.key)"
+                      (valueChange)="setActionLevel(t.key, $event)"
+                    />
+                  </div>
+                }
+              </div>
             }
           </div>
         }
@@ -149,6 +184,7 @@ export class AgentAutonomy implements OnInit {
   protected readonly SCALE_PREFS = SCALE_PREFS;
   protected readonly OPTIMIZE_TOOLS = OPTIMIZE_TOOLS;
   protected readonly CREATE_TOOLS = CREATE_TOOLS;
+  protected readonly ACTION_AUTONOMY_OPTIONS = ACTION_AUTONOMY_OPTIONS;
   protected readonly SOURCES = [
     { key: 'playbook' as const, label: 'Regras do playbook', hint: 'Ações que saem das suas regras determinísticas.' },
     { key: 'llm' as const, label: 'Análise do agente (IA)', hint: 'Ações que a IA propõe a partir da leitura da conta.' },
@@ -159,6 +195,8 @@ export class AgentAutonomy implements OnInit {
   protected readonly scalePref = signal<ScalePref>('ask');
   /** on/off das 6 tools (A3) — estado resolvido semeado do backend; edição grava bindings. */
   protected readonly toolBindings = signal<Partial<Record<ToolKey, boolean>>>({});
+  /** autonomia por-ação (B) — override por tool-key; ausente/"" = herda a origem. */
+  protected readonly byAction = signal<Partial<Record<ToolKey, Level>>>({});
   protected readonly showActions = signal(false);
   /** preservado no save (não editável aqui) — o replace do autonomyPolicy zeraria senão. */
   private readonly autoConfigViaChat = signal<boolean | undefined>(undefined);
@@ -183,9 +221,20 @@ export class AgentAutonomy implements OnInit {
   protected setTool(key: ToolKey, on: boolean): void {
     this.toolBindings.set({ ...this.toolBindings(), [key]: on });
   }
-  /** assinatura estável das 6 tools (ordem fixa) p/ o dirty. */
+  protected actionLevel(key: ToolKey): string {
+    return this.byAction()[key] ?? '';
+  }
+  protected setActionLevel(key: ToolKey, value: string): void {
+    const next = { ...this.byAction() };
+    if (value === '') delete next[key];
+    else next[key] = value as Level;
+    this.byAction.set(next);
+  }
+  /** assinatura estável das 6 tools (on/off + override de autonomia) p/ o dirty. */
   private toolsSig(): string {
-    return [...OPTIMIZE_TOOLS, ...CREATE_TOOLS].map((t) => `${t.key}:${this.toolOn(t.key)}`).join(',');
+    return [...OPTIMIZE_TOOLS, ...CREATE_TOOLS]
+      .map((t) => `${t.key}:${this.toolOn(t.key)}:${this.actionLevel(t.key)}`)
+      .join(',');
   }
 
   protected readonly saving = signal(false);
@@ -216,6 +265,7 @@ export class AgentAutonomy implements OnInit {
     this.llm.set(a.autonomyPolicy.bySource.llm as Level);
     this.scalePref.set(pref);
     this.toolBindings.set({ ...(a.toolBindings as Partial<Record<ToolKey, boolean>>) });
+    this.byAction.set({ ...((a.autonomyPolicy.byAction ?? {}) as Partial<Record<ToolKey, Level>>) });
     this.autoConfigViaChat.set(a.autonomyPolicy.autoConfigViaChat);
     this.baseline.set(this.sig());
     this.loaded.set(true);
@@ -235,6 +285,8 @@ export class AgentAutonomy implements OnInit {
           autonomyPolicy: {
             bySource: { playbook: this.playbook(), llm: this.llm() },
             scaleAggressivePreference: this.scalePref(),
+            // byAction sempre presente (o backend REPLACE o autonomyPolicy) — {} = tudo herda.
+            byAction: this.byAction(),
             ...(autoConfig !== undefined ? { autoConfigViaChat: autoConfig } : {}),
           },
           // grava as 6 explicitamente (backfill na edição) — bindings viram a fonte autoritativa.

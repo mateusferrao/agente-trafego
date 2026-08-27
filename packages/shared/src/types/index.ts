@@ -719,6 +719,13 @@ export interface AutonomyPolicy {
   /** decisão por origem da ação */
   readonly bySource: Readonly<Record<ActionSource, AutonomyLevel>>;
   /**
+   * Autonomia POR-AÇÃO (B): por tool-key (as 6 gateáveis), VENCE o `bySource`; ausente =
+   * herda a origem. O toolKey das 4 de escrita == o `Action.type`. Vive aqui (jsonb) — sem
+   * migração. As 2 de criação (`create_campaign`/`duplicate_scale`) governam o proativo (C).
+   * Mapa ESPARSO em runtime (chaves ausentes = herda); leia sempre com `byAction?.[k] ?? …`.
+   */
+  readonly byAction?: Readonly<Record<string, AutonomyLevel>>;
+  /**
    * Kill-switch da AUTO-CONFIG POR CHAT (Bloco 2, S2.3): o dono muda a config do
    * agente conversando no WhatsApp (sob eco+confirma). Ausente OU true = habilitado
    * (default ON); false = desligado (a config passa a ser só pelo site). Vive aqui

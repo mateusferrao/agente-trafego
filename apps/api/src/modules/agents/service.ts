@@ -794,6 +794,8 @@ function cleanAutonomy(p: NonNullable<AgentConfigInput["autonomyPolicy"]>): Auto
     bySource: p.bySource,
     ...(p.autoConfigViaChat !== undefined ? { autoConfigViaChat: p.autoConfigViaChat } : {}),
     ...(p.scaleAggressivePreference !== undefined ? { scaleAggressivePreference: p.scaleAggressivePreference } : {}),
+    // autonomia por-ação (B) — persiste o override por tool-key ({} limpa todos = tudo herda).
+    ...(p.byAction !== undefined ? { byAction: p.byAction } : {}),
   };
 }
 
