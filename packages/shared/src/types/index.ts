@@ -591,6 +591,100 @@ export interface GuardrailConfig {
   readonly dryRun: boolean;
   readonly killSwitch: boolean;
   readonly llmCostCapUsd?: number;
+  // ─── Limites de GASTO NOVO (Fatia 7 — criação) ───
+  /** teto do budget diário (unidade mínima) de uma campanha/entidade NOVA. */
+  readonly maxNewDailyBudgetMinor?: number;
+  /** nº máx. de campanhas novas criadas por dia. */
+  readonly maxNewCampaignsPerDay?: number;
+  /** passo de escala (%) ao subir budget do vencedor / duplicar. */
+  readonly scalePct?: number;
+}
+
+// ─── Criação de campanhas (Fatia 7) ──────────────────────────────────────
+// Contrato NEUTRO — o vocabulário Meta (ODAX, object_story_spec, call_to_action_type,
+// targeting) fica isolado no adapter (`meta-conversion-map`). Trocar de plataforma =
+// novo adapter mapeando este mesmo contrato.
+
+export const DRAFT_KINDS = ["from_scratch", "duplicate"] as const;
+export type DraftKind = (typeof DRAFT_KINDS)[number];
+
+export const CREATION_OPPORTUNITY_KINDS = ["scale_winner", "refresh_fatigued", "cold_start"] as const;
+export type CreationOpportunityKind = (typeof CREATION_OPPORTUNITY_KINDS)[number];
+
+export const CREATIVE_FORMATS = ["image", "video"] as const;
+export type CreativeFormat = (typeof CREATIVE_FORMATS)[number];
+
+/** CTA neutro; o adapter mapeia p/ `call_to_action_type` da plataforma. */
+export const CTA_TYPES = [
+  "shop_now",
+  "learn_more",
+  "sign_up",
+  "subscribe",
+  "contact_us",
+  "book_now",
+  "get_offer",
+  "send_message",
+  "download",
+] as const;
+export type CtaType = (typeof CTA_TYPES)[number];
+
+/** Uma variação de copy (as N variações compartilham a mesma mídia). */
+export interface CopyVariant {
+  readonly primaryText: string;
+  readonly headline: string;
+  readonly description?: string;
+  readonly cta?: CtaType;
+}
+
+/** Referência a um asset da biblioteca de criativos (mídia já existente). */
+export interface CreativeAssetRef {
+  readonly assetId: string;
+  readonly format: CreativeFormat;
+  readonly origin: "reuse" | "upload";
+  /** ids da plataforma resolvidos (quando já subidos). */
+  readonly metaImageHash?: string;
+  readonly metaVideoId?: string;
+}
+
+/**
+ * Targeting NEUTRO do rascunho. No MVP: reusar o público provado de um adset OU
+ * amplo (Advantage+). Construir targeting novo por interesses = fast-follow.
+ */
+export type TargetingSpec =
+  | { readonly kind: "reuse_adset"; readonly sourceAdsetId: string }
+  | { readonly kind: "advantage_plus" };
+
+/** Estrutura proposta da campanha — NEUTRA + VERSIONADA (validada nas bordas por zod). */
+export interface CampaignDraftSpec {
+  readonly version: 1;
+  /** conversão de negócio → o adapter deriva o objetivo ODAX. */
+  readonly objective: ConversionGoal;
+  readonly currency: string;
+  /** budget diário proposto (unidade mínima). */
+  readonly dailyBudgetMinor: number;
+  readonly targeting: TargetingSpec;
+  /** nº de variações de copy num adset (mesma mídia). */
+  readonly variantsCount: number;
+  readonly copyVariants: readonly CopyVariant[];
+  readonly creative?: CreativeAssetRef;
+  /** Page/Pixel inferidos (display/confirmação no eco). */
+  readonly pageId?: string;
+  readonly pixelId?: string;
+  /** nasce ACTIVE ou PAUSED (activationPolicy do agente / override no eco). */
+  readonly activation: "active" | "paused";
+}
+
+/** Entidade-origem de uma duplicação (o que foi copiado). */
+export interface DraftSourceRef {
+  readonly level: EntityLevel;
+  readonly id: string;
+}
+
+/** Rascunho de campanha (domínio) — `from_scratch` ou `duplicate`. */
+export interface CampaignDraft {
+  readonly kind: DraftKind;
+  readonly spec: CampaignDraftSpec;
+  readonly sourceRef?: DraftSourceRef;
 }
 
 // ─── Autonomia ───────────────────────────────────────────────────────────

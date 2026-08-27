@@ -1,6 +1,7 @@
 import type {
   Action,
   ActionTarget,
+  CampaignDraft,
   CandidateAction,
   EntityStatus,
   GuardrailConfig,
@@ -11,6 +12,8 @@ import {
   ACTION_PARAM_PCT,
   ACTION_PARAM_STATUS,
   BUDGET_MODE_SET,
+  DEFAULT_MAX_NEW_CAMPAIGNS_PER_DAY,
+  DEFAULT_MAX_NEW_DAILY_BUDGET_MINOR,
 } from "@trafego/shared";
 
 export interface DroppedAction {
@@ -181,4 +184,59 @@ function clampBudgetChange(action: Action, maxPct: number): Action {
     ...action,
     params: { ...action.params, [ACTION_PARAM_PCT]: maxPct, clampedFrom: pct },
   };
+}
+
+// ─── Guardrail de GASTO NOVO (Fatia 7 — criação) ─────────────────────────
+// Rede de segurança sobre a CRIAÇÃO (rascunho), irmã de `applyGuardrails` (que age
+// sobre `Action[]`). Criação não é `Action` → função separada. PURA; o contexto
+// cross-run (nº de campanhas criadas hoje) vem da casca.
+
+/** Contexto cross-run da criação (dado pela casca). */
+export interface CreationGuardrailContext {
+  /** nº de campanhas novas já criadas hoje (conta no cap/dia). */
+  readonly createdCampaignsToday?: number;
+}
+
+export interface CreationGuardrailResult {
+  /** rascunho liberado (possivelmente com budget clampado); `null` = barrado. */
+  readonly allowed: CampaignDraft | null;
+  /** motivo do bloqueio; `null` = passou. */
+  readonly dropped: { readonly reason: string } | null;
+  /** budget diário original quando houve clamp (p/ o eco honesto). */
+  readonly clampedFromMinor?: number;
+}
+
+/**
+ * Rede de segurança do gasto novo. Ordem: killSwitch → cap de campanhas novas/dia →
+ * clamp do budget diário novo. Clamp NÃO descarta (limita); cap e killSwitch barram.
+ */
+export function applyCreationGuardrails(
+  draft: CampaignDraft,
+  cfg: GuardrailConfig,
+  ctx: CreationGuardrailContext = {},
+): CreationGuardrailResult {
+  if (cfg.killSwitch) {
+    return { allowed: null, dropped: { reason: "kill switch ativo" } };
+  }
+
+  const maxPerDay = cfg.maxNewCampaignsPerDay ?? DEFAULT_MAX_NEW_CAMPAIGNS_PER_DAY;
+  const createdToday = ctx.createdCampaignsToday ?? 0;
+  if (createdToday >= maxPerDay) {
+    return {
+      allowed: null,
+      dropped: { reason: `limite de campanhas novas/dia atingido (${maxPerDay})` },
+    };
+  }
+
+  const maxBudget = cfg.maxNewDailyBudgetMinor ?? DEFAULT_MAX_NEW_DAILY_BUDGET_MINOR;
+  const requested = draft.spec.dailyBudgetMinor;
+  if (requested > maxBudget) {
+    const clamped: CampaignDraft = {
+      ...draft,
+      spec: { ...draft.spec, dailyBudgetMinor: maxBudget },
+    };
+    return { allowed: clamped, dropped: null, clampedFromMinor: requested };
+  }
+
+  return { allowed: draft, dropped: null };
 }

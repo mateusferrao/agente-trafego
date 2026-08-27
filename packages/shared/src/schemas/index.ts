@@ -59,6 +59,8 @@ export const guardrailConfigSchema = z.object({
   dryRun: z.boolean(),
   killSwitch: z.boolean(),
   llmCostCapUsd: z.number().min(0).optional(),
+  // NOTA: os limites de gasto novo (maxNewDailyBudgetMinor/maxNewCampaignsPerDay/scalePct)
+  // entram aqui na S1 (junto da coluna em guardrail_configs + contrato), Fatia 7.
 });
 
 export const autonomyLevel = z.enum(["notify", "suggest", "act_safe", "act_full"]);
