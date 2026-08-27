@@ -17,6 +17,7 @@ const GROUPS: readonly { key: string; label: string; types: readonly string[] }[
   { key: "analises", label: "Análises", types: ["analysis_completed", "error"] },
   { key: "acoes", label: "Ações", types: ["action_applied", "action_rolled_back"] },
   { key: "aprovacoes", label: "Aprovações", types: ["approval_requested", "approval_approved", "approval_rejected", "approval_expired"] },
+  { key: "campanhas", label: "Campanhas", types: ["campaign_draft_proposed", "campaign_created"] },
 ];
 const PERIODS: readonly { days: number | null; label: string }[] = [
   { days: 7, label: "7 dias" },
@@ -161,6 +162,11 @@ export class AccountTimeline {
   }
 }
 
+/** Formata budget de rascunho (BRL por default — o evento não carrega moeda). */
+function draftMoney(reais: number): string {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(reais);
+}
+
 /** Evento tipado da API → view-model do ui-timeline. */
 function toVm(e: ApiEvent): TimelineEventVm {
   switch (e.type) {
@@ -202,6 +208,26 @@ function toVm(e: ApiEvent): TimelineEventVm {
       return { id: e.id, at: e.at, icon: "lucideCircleX", title: `Rejeitada · ${actionTypeLabel(e.actionType)}${e.entityName ? ` · ${e.entityName}` : ""}`, badge: "rejeitada", tone: "neutral" };
     case "approval_expired":
       return { id: e.id, at: e.at, icon: "lucideClock", title: `Expirada · ${actionTypeLabel(e.actionType)}${e.entityName ? ` · ${e.entityName}` : ""}`, badge: "expirada", tone: "neutral" };
+    case "campaign_draft_proposed":
+      return {
+        id: e.id,
+        at: e.at,
+        icon: "lucideClock",
+        title: e.kind === "duplicate" ? "Escala de vencedor proposta" : "Nova campanha proposta",
+        detail: `${draftMoney(e.dailyBudgetReais)}/dia`,
+        badge: "rascunho",
+        tone: "warning",
+      };
+    case "campaign_created":
+      return {
+        id: e.id,
+        at: e.at,
+        icon: "lucideZap",
+        title: e.kind === "duplicate" ? "Escala criada" : "Campanha criada",
+        detail: `${draftMoney(e.dailyBudgetReais)}/dia`,
+        badge: "criada",
+        tone: "accent",
+      };
     default:
       return { id: (e as { id: string }).id, at: (e as { at: string }).at, icon: "lucideActivity", title: "Evento", tone: "neutral" };
   }

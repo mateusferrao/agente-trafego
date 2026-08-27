@@ -9,9 +9,11 @@ import {
   agentToolCalls,
   agents,
   approvals,
+  campaignDrafts,
   recommendations,
   type Database,
 } from "@trafego/db";
+import type { CampaignDraftSpec } from "@trafego/shared";
 import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY } from "@trafego/shared";
 import type { OrgId } from "@trafego/shared";
 import type { TimelineEvent, TimelineOutput, TimelineRecommendation } from "./schema.js";
@@ -163,6 +165,43 @@ export function createTimelineService(deps: TimelineDeps) {
           actionType: r.actionType,
           entityName: action?.target?.name ?? action?.target?.id ?? null,
         });
+      }
+
+      // 4) rascunhos de campanha (Fatia 7) → proposto (createdAt) + criado (updatedAt quando created).
+      const draftRows = await deps.db
+        .select({
+          id: campaignDrafts.id,
+          kind: campaignDrafts.kind,
+          status: campaignDrafts.status,
+          spec: campaignDrafts.spec,
+          createdAt: campaignDrafts.createdAt,
+          updatedAt: campaignDrafts.updatedAt,
+        })
+        .from(campaignDrafts)
+        .where(eq(campaignDrafts.agentId, agentId))
+        .orderBy(desc(campaignDrafts.createdAt))
+        .limit(SOURCE_CAP);
+
+      for (const d of draftRows) {
+        const budgetReais = (d.spec as CampaignDraftSpec).dailyBudgetMinor / 100;
+        events.push({
+          id: `dp:${d.id}`,
+          at: d.createdAt.toISOString(),
+          type: "campaign_draft_proposed",
+          draftId: d.id,
+          kind: d.kind,
+          dailyBudgetReais: budgetReais,
+        });
+        if (d.status === "created") {
+          events.push({
+            id: `dc:${d.id}`,
+            at: d.updatedAt.toISOString(),
+            type: "campaign_created",
+            draftId: d.id,
+            kind: d.kind,
+            dailyBudgetReais: budgetReais,
+          });
+        }
       }
 
       // merge → filtro (tipo/período) → ordena desc → pagina.

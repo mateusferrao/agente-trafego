@@ -33,6 +33,16 @@ const approvalEvent = <T extends string>(type: T) =>
     entityName: z.string().nullable(),
   });
 
+/** Evento de rascunho de campanha (Fatia 7 — proposto/criado). */
+const draftEvent = <T extends string>(type: T) =>
+  z.object({
+    ...base,
+    type: z.literal(type),
+    draftId: z.string(),
+    kind: z.string(),
+    dailyBudgetReais: z.number(),
+  });
+
 /**
  * Evento da Timeline (união discriminada ABERTA por `type`) — extensível: Fatia 7
  * (campaign_draft_proposed/created) e outros encaixam sem reescrever o consumidor.
@@ -54,6 +64,8 @@ export const timelineEvent = z.discriminatedUnion("type", [
   approvalEvent("approval_approved"),
   approvalEvent("approval_rejected"),
   approvalEvent("approval_expired"),
+  draftEvent("campaign_draft_proposed"),
+  draftEvent("campaign_created"),
 ]);
 export type TimelineEvent = z.infer<typeof timelineEvent>;
 

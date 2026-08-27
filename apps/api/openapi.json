@@ -4551,6 +4551,74 @@
                     "actionType",
                     "entityName"
                   ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "campaign_draft_proposed"
+                      ]
+                    },
+                    "draftId": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "dailyBudgetReais": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "at",
+                    "type",
+                    "draftId",
+                    "kind",
+                    "dailyBudgetReais"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "campaign_created"
+                      ]
+                    },
+                    "draftId": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "dailyBudgetReais": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "at",
+                    "type",
+                    "draftId",
+                    "kind",
+                    "dailyBudgetReais"
+                  ]
                 }
               ]
             }
