@@ -108,7 +108,7 @@ export async function runPulse(deps: WorkerDeps, payload: AgentCronDispatchPaylo
 
   // retrato FRESCO da janela ontem+hoje (live Meta, degrada ao snapshot salvo sozinho).
   const fresh = await getFreshMetricsData(
-    { db, vault: deps.ports.vault, insightsSync: deps.insightsSync, logger },
+    { db, vault: deps.ports.vault, insightsSync: deps.insightsSync, ads: deps.ports.ads, logger },
     { orgId: payload.orgId, agentId: payload.agentId, adAccountId: payload.adAccountId, timezone: ctx.timezone },
     { periodDays: PULSE_WINDOW_DAYS },
   );

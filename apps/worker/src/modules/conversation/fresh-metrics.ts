@@ -11,7 +11,7 @@
 import { and, desc, eq, gte, lte } from "drizzle-orm";
 import { addDays, todayInTz } from "@trafego/core";
 import { adAccounts, agents, entityAnalyses, insightsSnapshots, platformConnections, type Database } from "@trafego/db";
-import type { CredentialVaultPort } from "@trafego/shared/ports";
+import type { AdsPlatformPort, CredentialVaultPort } from "@trafego/shared/ports";
 import type { AgentGoals, EntityLevel, StoredInsightMetrics } from "@trafego/shared/types";
 import type { InsightsSyncService } from "../insights/sync-service.js";
 import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
@@ -221,6 +221,8 @@ export interface FreshMetricsDeps {
   readonly db: Database;
   readonly vault: CredentialVaultPort;
   readonly insightsSync: InsightsSyncService;
+  /** ads port — só p/ resolver NOMES de campanha (listEntities) no breakdown por período. */
+  readonly ads: AdsPlatformPort;
   readonly logger: { warn: (obj: unknown, msg: string) => void };
   /** relógio injetável (testes / cenário noturno). Default = agora. */
   readonly now?: () => Date;
@@ -274,21 +276,30 @@ export async function getFreshMetricsData(
   }
 }
 
-async function getFreshMetricsDataInner(
-  deps: FreshMetricsDeps,
-  ctx: FreshMetricsCtx,
-  args: FreshMetricsArgs,
-): Promise<FreshMetricsResult> {
-  // Recorte: `untilDaysAgo` (fim, 0=hoje) + início por `sinceDaysAgo` OU `periodDays` (janela
-  // terminando no fim) OU, sem nenhum, dia isolado no fim. Tudo dentro de [0, 7] dias atrás.
+/**
+ * Janela [since,until] (YYYY-MM-DD, fuso da org) em DIAS ATRÁS: `untilDaysAgo` = fim
+ * (0=hoje, 1=ontem); início por `sinceDaysAgo` OU `periodDays` (janela terminando no fim)
+ * OU dia isolado no fim. Tudo dentro de [0, 7] dias atrás. `days` = nº de dias civis.
+ */
+function resolveWindow(args: FreshMetricsArgs, now: Date, tz: string): { since: string; until: string; days: number } {
   const untilAgo = clamp(args.untilDaysAgo ?? 0, 0, FRESH_METRICS_MAX_DAYS);
   const sinceAgo =
     args.sinceDaysAgo != null
       ? clamp(args.sinceDaysAgo, untilAgo, FRESH_METRICS_MAX_DAYS)
       : args.periodDays != null
         ? clamp(untilAgo + clamp(args.periodDays, 1, FRESH_METRICS_MAX_DAYS) - 1, untilAgo, FRESH_METRICS_MAX_DAYS)
-        : untilAgo; // sem período → dia isolado no fim (ex.: ontem)
+        : untilAgo;
+  const today = todayInTz(now, tz);
+  return { since: addDays(today, -sinceAgo), until: addDays(today, -untilAgo), days: sinceAgo - untilAgo + 1 };
+}
+
+async function getFreshMetricsDataInner(
+  deps: FreshMetricsDeps,
+  ctx: FreshMetricsCtx,
+  args: FreshMetricsArgs,
+): Promise<FreshMetricsResult> {
   const now = (deps.now ?? (() => new Date()))();
+  const { since, until, days } = resolveWindow(args, now, ctx.timezone);
   const account = await loadAccountToken(deps.db, deps.vault, ctx.orgId, ctx.adAccountId);
   if (!account) return { error: "não encontrei uma conta ativa em foco pra consultar agora." };
 
@@ -323,11 +334,6 @@ async function getFreshMetricsDataInner(
   } catch (err) {
     deps.logger.warn({ err: String(err) }, "fresh-metrics:sync falhou (fallback ao snapshot)");
   }
-
-  const today = todayInTz(now, ctx.timezone);
-  const until = addDays(today, -untilAgo);
-  const since = addDays(today, -sinceAgo);
-  const days = sinceAgo - untilAgo + 1; // nº de dias civis na janela (p/ o rótulo)
 
   const rows = await readSnapshotRows(deps.db, ctx.orgId, account.id, level, entityId, since, until);
   if (rows.length === 0) {
@@ -364,4 +370,108 @@ async function loadBusinessGoal(db: Database, orgId: string, agentId: string): P
     goal: goals.conversionGoal,
     ...(goals.customConversionId ? { customConversionId: goals.customConversionId } : {}),
   };
+}
+
+/** Uma campanha no breakdown por período (KPIs da janela + nome/status resolvidos). */
+export interface FreshCampaignRow {
+  readonly id: string;
+  readonly name: string;
+  readonly status: string | null;
+  readonly kpis: FreshKpis;
+}
+
+export interface FreshCampaignsBreakdown {
+  readonly since: string;
+  readonly until: string;
+  readonly periodDays: number;
+  readonly updated: boolean;
+  readonly campaigns: readonly FreshCampaignRow[];
+}
+
+/**
+ * Breakdown FRESH por campanha para QUALQUER período (≤7d): agrega os snapshots
+ * campaign-level da janela (gasto/conversões/CPA/ROAS/receita por campanha, via
+ * `aggregateKpis` + goal de negócio) e resolve o NOME de cada uma via `listEntities`
+ * (Meta) — porque o snapshot só tem o id. É a divisão por campanha que o agregado da
+ * conta não dá, agora recortável por dia/período. Erro inesperado → mensagem amigável.
+ */
+export async function getCampaignsBreakdownData(
+  deps: FreshMetricsDeps,
+  ctx: FreshMetricsCtx,
+  args: FreshMetricsArgs,
+): Promise<FreshCampaignsBreakdown | FreshMetricsError> {
+  try {
+    const now = (deps.now ?? (() => new Date()))();
+    const { since, until, days } = resolveWindow(args, now, ctx.timezone);
+    const account = await loadAccountToken(deps.db, deps.vault, ctx.orgId, ctx.adAccountId);
+    if (!account) return { error: "não encontrei uma conta ativa em foco pra consultar agora." };
+
+    let updated = false;
+    try {
+      const res = await deps.insightsSync.sync({
+        orgId: ctx.orgId,
+        adAccountUuid: account.id,
+        metaAdAccountId: account.metaAdAccountId,
+        accessToken: account.accessToken,
+        today: todayInTz(now, ctx.timezone),
+        levels: [CAMPAIGN_LEVEL],
+      });
+      updated = !res.partial && !res.tokenInvalid;
+      if (res.tokenInvalid) await markConnectionTokenInvalid(deps.db, ctx.orgId, account.id).catch(() => {});
+    } catch (err) {
+      deps.logger.warn({ err: String(err) }, "campaigns-breakdown:sync falhou (fallback ao snapshot)");
+    }
+
+    // snapshots campaign-level da janela COM o id (readSnapshotRows não devolve entityId).
+    const rows = await deps.db
+      .select({ entityId: insightsSnapshots.entityId, metricsJson: insightsSnapshots.metricsJson })
+      .from(insightsSnapshots)
+      .where(
+        and(
+          eq(insightsSnapshots.orgId, ctx.orgId),
+          eq(insightsSnapshots.adAccountId, account.id),
+          eq(insightsSnapshots.entityLevel, CAMPAIGN_LEVEL),
+          gte(insightsSnapshots.date, since),
+          lte(insightsSnapshots.date, until),
+        ),
+      );
+    if (rows.length === 0) return { since, until, periodDays: days, updated, campaigns: [] };
+
+    const businessGoal = await loadBusinessGoal(deps.db, ctx.orgId, ctx.agentId);
+
+    // agrupa por campanha e re-deriva os KPIs da janela por grupo.
+    const byId = new Map<string, StoredInsightMetrics[]>();
+    for (const r of rows) {
+      const list = byId.get(r.entityId) ?? [];
+      list.push(r.metricsJson as StoredInsightMetrics);
+      byId.set(r.entityId, list);
+    }
+
+    // NOME/status por id — via Meta (o snapshot não guarda nome). Best-effort: se falhar,
+    // cai no id (nunca quebra a leitura).
+    const names = new Map<string, { name: string; status: string }>();
+    try {
+      const entities = await deps.ads.listEntities(
+        { adAccountId: account.metaAdAccountId, accessToken: account.accessToken },
+        CAMPAIGN_LEVEL,
+      );
+      for (const e of entities) names.set(e.id, { name: e.name, status: e.status });
+    } catch (err) {
+      deps.logger.warn({ err: String(err) }, "campaigns-breakdown:listEntities falhou (usa id como nome)");
+    }
+
+    const campaigns: FreshCampaignRow[] = [...byId.entries()]
+      .map(([id, snaps]) => ({
+        id,
+        name: names.get(id)?.name ?? id,
+        status: names.get(id)?.status ?? null,
+        kpis: aggregateKpis(snaps, businessGoal),
+      }))
+      .sort((a, b) => b.kpis.spend - a.kpis.spend);
+
+    return { since, until, periodDays: days, updated, campaigns };
+  } catch (err) {
+    deps.logger.warn({ err: String(err) }, "campaigns-breakdown:falha inesperada");
+    return { error: "não consegui consultar as campanhas agora. Tenta de novo em instantes." };
+  }
 }

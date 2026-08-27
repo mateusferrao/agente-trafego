@@ -7,6 +7,7 @@ import {
   getCampaignAnalysisData,
   getMetricsData,
   listAccountsData,
+  listCampaignsData,
   listPendingData,
   listRecommendationsData,
 } from "./read-data.js";
@@ -250,6 +251,49 @@ describe("getCampaignAnalysisData", () => {
     const res = await getCampaignAnalysisData(db, AGENT, "vendas");
     expect(res).toMatchObject({ hasData: false, ambiguous: true });
     expect((res as { matches: readonly string[] }).matches).toEqual(["Campanha A - vendas", "Campanha B - vendas"]);
+  });
+});
+
+describe("listCampaignsData", () => {
+  const rows = [
+    {
+      entityId: "c-small",
+      entityName: "Remarketing",
+      metricsJson: { spend: 100, conversions: 5, cpa: 20, roas: 4, revenue: 400 },
+      tier: "performer",
+      analyzedAt: new Date("2026-08-20T08:00:00.000Z"),
+    },
+    {
+      entityId: "c-big",
+      entityName: "Prospecção",
+      metricsJson: { spend: 500, conversions: 40, cpa: 12.5 },
+      tier: "underperformer",
+      analyzedAt: new Date("2026-08-20T08:00:00.000Z"),
+    },
+    // linha antiga da MESMA campanha c-big → deve ser ignorada (dedup, fica a mais recente).
+    {
+      entityId: "c-big",
+      entityName: "Prospecção",
+      metricsJson: { spend: 999 },
+      tier: "winner",
+      analyzedAt: new Date("2026-08-19T08:00:00.000Z"),
+    },
+  ];
+
+  it("lista todas as campanhas (dedup por id) ordenadas por gasto desc", async () => {
+    const db = fakeDb(new Map<unknown, unknown[]>([[entityAnalyses, rows]]));
+    const res = await listCampaignsData(db, AGENT);
+    expect(res).toMatchObject({ hasData: true });
+    const r = res as { hasData: true; campaigns: Array<Record<string, unknown>> };
+    expect(r.campaigns.map((c) => c.id)).toEqual(["c-big", "c-small"]); // gasto 500 > 100; c-big só 1x
+    expect(r.campaigns[0]).toMatchObject({ name: "Prospecção", spend: 500, conversions: 40, cpa: 12.5, tier: "underperformer" });
+    expect(r.campaigns[1]).toMatchObject({ name: "Remarketing", spend: 100, roas: 4, revenue: 400 });
+  });
+
+  it("nenhuma campanha analisada → hasData:false", async () => {
+    const db = fakeDb(new Map<unknown, unknown[]>([[entityAnalyses, []]]));
+    const res = await listCampaignsData(db, AGENT);
+    expect(res).toMatchObject({ hasData: false });
   });
 });
 

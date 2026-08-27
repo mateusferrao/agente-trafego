@@ -16,7 +16,7 @@ import { adAccounts, adCreatives, agentRuns, agentToolCalls, agents, entityAnaly
 import type { Database } from "@trafego/db/client";
 import { daysAgoInTz, rankAdCreatives } from "@trafego/core";
 import { createAnalysisRepo, type AdCreativeCopyRow } from "../../modules/analysis/repo.js";
-import { getFreshMetricsData } from "../../modules/conversation/fresh-metrics.js";
+import { getCampaignsBreakdownData, getFreshMetricsData } from "../../modules/conversation/fresh-metrics.js";
 import type { Approval, ApprovalPort } from "@trafego/shared/ports";
 import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY } from "@trafego/shared";
 import type { EntityLevel, InsightMetrics, OrgId, UnitAnalysis } from "@trafego/shared";
@@ -348,6 +348,65 @@ export async function getCampaignAnalysisData(
     flags: row.flags ?? [],
     asOf: row.analyzedAt.toISOString(),
   };
+}
+
+/**
+ * TODAS as campanhas analisadas (última análise por campanha) com métricas curadas — p/ o
+ * agente COMPARAR/ALOCAR verba entre elas (ex.: "quais gastam mais e convertem pior"). Ordena
+ * por gasto desc. `entity_analyses` é upsertado (1 linha/campanha); dedup defensivo por id.
+ */
+export async function listCampaignsData(
+  db: Database,
+  agentId: string,
+): Promise<
+  | {
+      hasData: true;
+      asOf: string;
+      campaigns: Array<{
+        id: string;
+        name: string | null;
+        spend: number | null;
+        conversions: number | null;
+        cpa: number | null;
+        roas: number | null;
+        revenue: number | null;
+        tier: string | null;
+      }>;
+    }
+  | NoData
+> {
+  const rows = await db
+    .select({
+      entityId: entityAnalyses.entityId,
+      entityName: entityAnalyses.entityName,
+      metricsJson: entityAnalyses.metricsJson,
+      tier: entityAnalyses.tier,
+      analyzedAt: entityAnalyses.analyzedAt,
+    })
+    .from(entityAnalyses)
+    .where(and(eq(entityAnalyses.agentId, agentId), eq(entityAnalyses.entityLevel, CAMPAIGN_LEVEL)))
+    .orderBy(desc(entityAnalyses.analyzedAt));
+  if (rows.length === 0) return { hasData: false, note: "nenhuma campanha analisada ainda" };
+
+  const seen = new Set<string>();
+  const campaigns = [];
+  for (const r of rows) {
+    if (seen.has(r.entityId)) continue; // 1ª (mais recente) por campanha
+    seen.add(r.entityId);
+    const m = r.metricsJson as Partial<InsightMetrics>;
+    campaigns.push({
+      id: r.entityId,
+      name: r.entityName ?? null,
+      spend: typeof m.spend === "number" ? m.spend : null,
+      conversions: typeof m.conversions === "number" ? m.conversions : null,
+      cpa: typeof m.cpa === "number" ? m.cpa : null,
+      roas: typeof m.roas === "number" ? m.roas : null,
+      revenue: typeof m.revenue === "number" ? m.revenue : null,
+      tier: r.tier ?? null,
+    });
+  }
+  campaigns.sort((a, b) => (b.spend ?? 0) - (a.spend ?? 0));
+  return { hasData: true, asOf: rows[0]!.analyzedAt.toISOString(), campaigns };
 }
 
 /** Recomendações do último run finalizado do agente. Vazio → `hasData:false`. */
@@ -754,7 +813,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
       );
       return asString(
         await getFreshMetricsData(
-          { db, vault: ports.vault, insightsSync: deps.insightsSync, logger },
+          { db, vault: ports.vault, insightsSync: deps.insightsSync, ads: ports.ads, logger },
           { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, timezone: ctx.timezone },
           {
             periodDays: periodDays ?? null,
@@ -789,6 +848,44 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
       description:
         "Última análise de uma campanha pelo nome (busca por trecho, sem diferenciar maiúsculas). Devolve o id (use-o para agir), resumo, métricas curadas e o maior gargalo.",
       schema: z.object({ name: z.string() }),
+    },
+  );
+
+  const listCampaigns = tool(
+    async ({
+      periodDays,
+      sinceDaysAgo,
+      untilDaysAgo,
+    }: {
+      periodDays?: number | null;
+      sinceDaysAgo?: number | null;
+      untilDaysAgo?: number | null;
+    }) => {
+      if (noFocus()) return NEEDS_FOCUS;
+      const hasPeriod = periodDays != null || sinceDaysAgo != null || untilDaysAgo != null;
+      logger.debug({ agentId: ctx.agentId, periodDays, sinceDaysAgo, untilDaysAgo, hasPeriod }, "tool:list_campaigns");
+      // COM período → breakdown FRESH dos snapshots por campanha na janela (nomes via Meta);
+      // SEM período → última análise curada (com tier/achados).
+      if (hasPeriod) {
+        return asString(
+          await getCampaignsBreakdownData(
+            { db, vault: ports.vault, insightsSync: deps.insightsSync, ads: ports.ads, logger },
+            { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, timezone: ctx.timezone },
+            { periodDays: periodDays ?? null, sinceDaysAgo: sinceDaysAgo ?? null, untilDaysAgo: untilDaysAgo ?? null },
+          ),
+        );
+      }
+      return asString(await listCampaignsData(db, ctx.agentId));
+    },
+    {
+      name: "list_campaigns",
+      description:
+        "TODAS as campanhas da conta com métricas por campanha (gasto, conversões, CPA, ROAS, receita), ordenadas por gasto — pra COMPARAR/ALOCAR verba ('quais gastam mais e convertem pior', 'onde cortar/proteger', 'valores por campanha'). SEM args = última análise curada (inclui tier/diagnóstico). COM recorte de período (mesmo formato do get_fresh_metrics: periodDays, ou sinceDaysAgo+untilDaysAgo em dias atrás, 0=hoje/1=ontem, ≤7d) = dados FRESH agregados por campanha na janela. É a divisão por campanha que o get_fresh_metrics (agregado da conta) não dá.",
+      schema: z.object({
+        periodDays: z.number().int().positive().nullable().optional(),
+        sinceDaysAgo: z.number().int().min(0).nullable().optional(),
+        untilDaysAgo: z.number().int().min(0).nullable().optional(),
+      }),
     },
   );
 
@@ -922,6 +1019,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     getMetrics,
     getFreshMetrics,
     getCampaignAnalysis,
+    listCampaigns,
     getEntityDetail,
     comparePeriods,
     findRecentActions,

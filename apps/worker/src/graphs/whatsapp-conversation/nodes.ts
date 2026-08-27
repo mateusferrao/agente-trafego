@@ -89,6 +89,15 @@ const ECHO_OUTRO =
  * (pendência) eco+confirma. PURA. Em DM `groupBlock` é "" → o prompt é IDÊNTICO ao de antes
  * do contexto de grupo (regressão garantida por construção: "" cai no ramo `else`).
  */
+/**
+ * Data/hora atual no FUSO DA ORG — o LLM precisa do "agora" pra raciocínio temporal
+ * (checkpoints, "até 12h", "há X horas", hoje/ontem). Sem isto o modelo não sabe a data.
+ */
+export function currentDateTimeLine(tz: string, now: Date = new Date()): string {
+  const fmt = new Intl.DateTimeFormat("pt-BR", { timeZone: tz, dateStyle: "full", timeStyle: "short" }).format(now);
+  return `Agora (fuso ${tz}): ${fmt}. Este é o momento presente — use-o SEMPRE para raciocínio de tempo (checkpoints, "até 12h", "há X horas", hoje/ontem). Nunca diga que não sabe a data/hora.`;
+}
+
 export function assembleSystemPrompt(systemPrompt: string, groupBlock: string, echo: string | undefined): string {
   const base = groupBlock ? `${systemPrompt}\n\n${groupBlock}` : systemPrompt;
   return echo ? `${base}${ECHO_INTRO}${echo}${ECHO_OUTRO}` : base;
@@ -440,7 +449,13 @@ export function makeConversationNodes(
     const echo = pending?.echo ?? pendingRevert?.echo ?? pendingConfig?.echo;
 
     // seção de grupo (regras + contexto ambiente; group-only, efêmera, entre a voz e o eco). DM → "".
-    const sys = assembleSystemPrompt(systemPrompt, await groupSection(), echo);
+    // data/hora atual (fuso da org) na FRENTE — sem isso o LLM não tem "agora" p/ raciocínio
+    // temporal (checkpoints, "até 12h", "há X horas", hoje/ontem) e responde que não sabe a hora.
+    const sys = assembleSystemPrompt(
+      `${currentDateTimeLine(ctx.timezone)}\n\n${systemPrompt}`,
+      await groupSection(),
+      echo,
+    );
 
     const windowed = windowMessages(state.messages, {
       maxTurns: deps.conversation.historyTurns,
