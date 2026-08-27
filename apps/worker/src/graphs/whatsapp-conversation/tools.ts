@@ -272,6 +272,23 @@ export function makeConversationTools(
     }),
   });
 
+  // REFINAMENTO do rascunho pendente (Fatia 7): ajusta/regenera SEM criar rascunho novo.
+  const adjustDraft = tool(proposeOnly, {
+    name: "adjust_draft",
+    description:
+      "Ajusta o rascunho de campanha JÁ PROPOSTO (só quando há um pendente): budget diário, ativação (ativa/pausada) ou nº de variações. Não cria rascunho novo.",
+    schema: z.object({
+      budgetReais: z.number().positive().nullable().optional(),
+      activation: z.enum(["active", "paused"]).nullable().optional(),
+      variantsCount: z.number().int().positive().nullable().optional(),
+    }),
+  });
+  const regenerateCopy = tool(proposeOnly, {
+    name: "regenerate_copy",
+    description: "Gera NOVAS variações de copy pro rascunho de campanha já proposto (só quando há um pendente).",
+    schema: z.object({}),
+  });
+
   // FOCO (5c-6): em org multi-conta, escolhe a conta do fio. Executa direto (baixo risco,
   // sem eco) e persiste em conversations.focused_account_id — o próximo turno opera nela.
   const setFocus = tool(

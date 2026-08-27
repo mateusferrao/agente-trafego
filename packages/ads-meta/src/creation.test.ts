@@ -30,9 +30,11 @@ describe("MetaCreationService.duplicateEntity", () => {
   it("copia adset e retorna copiedId + childIds", async () => {
     stubGraph({
       copied_adset_id: "AS_NEW",
+      // shape real v26: o adset copiado + os ads copiados (só os "ad" são childIds).
       ad_object_ids: [
-        { ad_id: "AD1", copied_ad_id: "AD1_NEW" },
-        { ad_id: "AD2", copied_ad_id: "AD2_NEW" },
+        { ad_object_type: "ad_set", source_id: "AS1", copied_id: "AS_NEW" },
+        { ad_object_type: "ad", source_id: "AD1", copied_id: "AD1_NEW" },
+        { ad_object_type: "ad", source_id: "AD2", copied_id: "AD2_NEW" },
       ],
     });
     const res = await svc().duplicateEntity(account, {

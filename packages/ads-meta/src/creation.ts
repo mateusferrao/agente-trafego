@@ -24,13 +24,20 @@ const STATUS_ACTIVE = "ACTIVE";
 const STATUS_PAUSED = "PAUSED";
 const BUDGET_FIELD_DAILY = "daily_budget";
 
-/** Resposta do `/copies` (adset/campaign). `ad_object_ids` = pares origem→cópia. */
+/**
+ * Resposta do `/copies` (adset/campaign) — shape REAL v26 (validado em E2E):
+ * `ad_object_ids: [{ ad_object_type, source_id, copied_id }]` (um por filho copiado).
+ */
 interface CopiesResponse {
   readonly copied_adset_id?: string;
   readonly copied_campaign_id?: string;
   readonly copied_ad_id?: string;
   readonly id?: string;
-  readonly ad_object_ids?: ReadonlyArray<{ readonly ad_id?: string; readonly copied_ad_id?: string }>;
+  readonly ad_object_ids?: ReadonlyArray<{
+    readonly ad_object_type?: string;
+    readonly source_id?: string;
+    readonly copied_id?: string;
+  }>;
 }
 
 /** Id da cópia, tolerante ao nível (adset/campaign/ad) — a Graph nomeia por tipo. */
@@ -70,8 +77,10 @@ export class MetaCreationService {
     if (!copiedId) {
       throw new Error("Meta /copies não retornou o id da cópia");
     }
+    // filhos copiados = os do tipo "ad" (o adset copiado é o copiedId, não um filho).
     const childIds = (data.ad_object_ids ?? [])
-      .map((p) => p.copied_ad_id)
+      .filter((p) => p.ad_object_type === "ad")
+      .map((p) => p.copied_id)
       .filter((id): id is string => typeof id === "string");
     return { copiedId, childIds };
   }

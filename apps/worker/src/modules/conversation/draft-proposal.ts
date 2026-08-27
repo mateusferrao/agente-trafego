@@ -193,6 +193,80 @@ export async function proposeScaleWinner(
   return { kind: "draft", echo, approvalId, draftId };
 }
 
+function money2(reais: number, currency: string): string {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency }).format(reais);
+}
+
+/** Eco genérico de um rascunho (após refino) — o quê/quanto/ativação/copy. */
+function buildRefineEcho(kind: string, spec: CampaignDraftSpec): string {
+  const head = kind === "duplicate" ? "Rascunho de escala atualizado" : "Rascunho de campanha atualizado";
+  const lines = [
+    `${head}: gasto novo ${money2(spec.dailyBudgetMinor / MINOR_PER_UNIT, spec.currency)}/dia · entra ${spec.activation === "active" ? "ativa" : "pausada"}.`,
+  ];
+  if (spec.copyVariants && spec.copyVariants.length > 0) {
+    lines.push(`${spec.copyVariants.length} variação(ões) de copy. Ex: "${spec.copyVariants[0]!.headline}".`);
+  }
+  lines.push("Confirma agora ou quer ajustar mais?");
+  return lines.join("\n");
+}
+
+export interface RefineDraftPatch {
+  readonly budgetReais?: number;
+  readonly activation?: "active" | "paused";
+  readonly variantsCount?: number;
+  readonly regenerateCopy?: boolean;
+}
+
+export type RefineResult = { readonly kind: "ok"; readonly echo: string } | { readonly kind: "blocked"; readonly reason: string };
+
+/**
+ * Refinamento CONVERSACIONAL do rascunho pendente (Fatia 7): muta o campaign_drafts (spec)
+ * sem criar rascunho novo — budget/ativação/variações/regenerar copy — e re-ecoa. O
+ * "sim" segue aplicando o MESMO rascunho (mesma approval). Só mexe em rascunho `proposed`.
+ */
+export async function refineDraft(
+  deps: WorkerDeps,
+  ctx: DraftProposalContext,
+  draftId: string,
+  patch: RefineDraftPatch,
+): Promise<RefineResult> {
+  const [row] = await deps.db
+    .select({ kind: campaignDrafts.kind, spec: campaignDrafts.spec, status: campaignDrafts.status })
+    .from(campaignDrafts)
+    .where(and(eq(campaignDrafts.id, draftId), eq(campaignDrafts.orgId, ctx.orgId)))
+    .limit(1);
+  if (!row || row.status !== "proposed") return { kind: "blocked", reason: "esse rascunho não está mais aberto pra ajuste" };
+
+  const ac = await loadAgentContext(deps, ctx);
+  if (!ac) return { kind: "blocked", reason: "não consegui acessar a conta agora" };
+  const spec = row.spec as CampaignDraftSpec;
+
+  const cap = ac.cfg.maxNewDailyBudgetMinor;
+  const requestedBudget = patch.budgetReais != null ? Math.round(patch.budgetReais * MINOR_PER_UNIT) : spec.dailyBudgetMinor;
+  const dailyBudgetMinor = cap != null ? Math.min(requestedBudget, cap) : requestedBudget;
+  const activation = patch.activation ?? spec.activation;
+  const variantsCount = patch.variantsCount ?? spec.variantsCount ?? DEFAULT_VARIANTS;
+
+  let copyVariants = spec.copyVariants;
+  const needCopy = row.kind === "from_scratch" && (patch.regenerateCopy === true || (patch.variantsCount != null && patch.variantsCount !== (spec.variantsCount ?? 0)));
+  if (needCopy) {
+    copyVariants = await generateCopy(
+      deps.ports.llm,
+      { model: ac.model, goal: spec.objective ?? "purchase", variantsCount, businessContext: ac.businessContext, guidance: ac.guidance },
+      { orgId: ctx.orgId, adAccountId: ctx.adAccountId },
+    );
+  }
+
+  const nextSpec: CampaignDraftSpec = {
+    ...spec,
+    dailyBudgetMinor,
+    activation,
+    ...(row.kind === "from_scratch" ? { variantsCount, ...(copyVariants ? { copyVariants } : {}) } : {}),
+  };
+  await deps.db.update(campaignDrafts).set({ spec: nextSpec }).where(eq(campaignDrafts.id, draftId));
+  return { kind: "ok", echo: buildRefineEcho(row.kind, nextSpec) };
+}
+
 /** Criar do zero reusando o criativo/página/pixel da conta + copy gerada. */
 export async function proposeCreateCampaign(
   deps: WorkerDeps,

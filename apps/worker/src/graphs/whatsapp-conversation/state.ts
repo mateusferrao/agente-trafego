@@ -27,6 +27,8 @@ export interface PendingDraft {
   readonly expiresAt: string;
   /** id da aprovação de rascunho a resolver (enfileira apply-draft). */
   readonly approvalId: string;
+  /** id do rascunho (campaign_drafts) — alvo do refinamento conversacional (ajustar/regenerar). */
+  readonly draftId: string;
 }
 
 /** Reversão(ões) aguardando confirmação (eco+confirma, 5c-4). */
