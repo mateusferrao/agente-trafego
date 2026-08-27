@@ -286,12 +286,21 @@ interface FormState {
           </div>
           <textarea
             rows="4"
-            maxlength="2000"
-            class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink"
+            [class.border-line]="businessContext().length <= textMax"
+            [class.border-danger-strong]="businessContext().length > textMax"
+            class="w-full rounded-md border bg-app px-3 py-2 text-sm text-ink"
             placeholder="Ex: campanha de captação até 30/08, público B2B de compras, ticket R$2 mil. Priorizo lead qualificado."
             [value]="businessContext()"
             (input)="onBusinessContext($event)"
           ></textarea>
+          <div
+            class="flex justify-end gap-1 text-xs"
+            [class.text-muted]="businessContext().length <= textMax"
+            [class.text-danger-strong]="businessContext().length > textMax"
+          >
+            @if (businessContext().length > textMax) { <span>acima do limite ·</span> }
+            <span>{{ count(businessContext().length) }} / {{ count(textMax) }}</span>
+          </div>
         </section>
 
         <!-- Orientações (comportamento) -->
@@ -305,12 +314,21 @@ interface FormState {
           </div>
           <textarea
             rows="4"
-            maxlength="2000"
-            class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink"
+            [class.border-line]="guidance().length <= textMax"
+            [class.border-danger-strong]="guidance().length > textMax"
+            class="w-full rounded-md border bg-app px-3 py-2 text-sm text-ink"
             placeholder="Ex: não sugira pausar nos 3 primeiros dias de uma campanha. Priorize escalar o que já bate a meta."
             [value]="guidance()"
             (input)="onGuidance($event)"
           ></textarea>
+          <div
+            class="flex justify-end gap-1 text-xs"
+            [class.text-muted]="guidance().length <= textMax"
+            [class.text-danger-strong]="guidance().length > textMax"
+          >
+            @if (guidance().length > textMax) { <span>acima do limite ·</span> }
+            <span>{{ count(guidance().length) }} / {{ count(textMax) }}</span>
+          </div>
         </section>
 
         <!-- Regras (playbook) — componente próprio, salva por regra (fora da save-bar) -->
@@ -423,10 +441,18 @@ interface FormState {
           </div>
           <div class="flex flex-col gap-3">
             <label class="flex flex-col gap-1 text-xs text-muted">Persona (papel em 1 linha)
-              <input type="text" maxlength="280" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="Ex: gestor de tráfego sênior, cauteloso" [value]="persona()" (input)="onPersona($event)" />
+              <input type="text" [class.border-line]="persona().length <= identityMax" [class.border-danger-strong]="persona().length > identityMax" class="w-full rounded-md border bg-app px-3 py-2 text-sm text-ink" placeholder="Ex: gestor de tráfego sênior, cauteloso" [value]="persona()" (input)="onPersona($event)" />
+              <span class="flex justify-end gap-1" [class.text-muted]="persona().length <= identityMax" [class.text-danger-strong]="persona().length > identityMax">
+                @if (persona().length > identityMax) { <span>acima do limite ·</span> }
+                <span>{{ count(persona().length) }} / {{ count(identityMax) }}</span>
+              </span>
             </label>
             <label class="flex flex-col gap-1 text-xs text-muted">Tom
-              <input type="text" maxlength="280" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" placeholder="Ex: consultivo, claro e sem jargão" [value]="tone()" (input)="onTone($event)" />
+              <input type="text" [class.border-line]="tone().length <= identityMax" [class.border-danger-strong]="tone().length > identityMax" class="w-full rounded-md border bg-app px-3 py-2 text-sm text-ink" placeholder="Ex: consultivo, claro e sem jargão" [value]="tone()" (input)="onTone($event)" />
+              <span class="flex justify-end gap-1" [class.text-muted]="tone().length <= identityMax" [class.text-danger-strong]="tone().length > identityMax">
+                @if (tone().length > identityMax) { <span>acima do limite ·</span> }
+                <span>{{ count(tone().length) }} / {{ count(identityMax) }}</span>
+              </span>
             </label>
           </div>
 
@@ -439,12 +465,21 @@ interface FormState {
               </p>
               <textarea
                 rows="6"
-                maxlength="8000"
-                class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink"
+                [class.border-line]="systemPrompt().length <= promptMax"
+                [class.border-danger-strong]="systemPrompt().length > promptMax"
+                class="w-full rounded-md border bg-app px-3 py-2 text-sm text-ink"
                 placeholder="Vazio = usa a metodologia do arquétipo."
                 [value]="systemPrompt()"
                 (input)="onSystemPrompt($event)"
               ></textarea>
+              <div
+                class="flex justify-end gap-1"
+                [class.text-muted]="systemPrompt().length <= promptMax"
+                [class.text-danger-strong]="systemPrompt().length > promptMax"
+              >
+                @if (systemPrompt().length > promptMax) { <span>acima do limite ·</span> }
+                <span>{{ count(systemPrompt().length) }} / {{ count(promptMax) }}</span>
+              </div>
               <details>
                 <summary class="cursor-pointer select-none">Ver a metodologia atual do arquétipo</summary>
                 <pre class="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-md border border-line bg-app p-3 text-xs text-muted">{{ methodologyPreview() }}</pre>
@@ -542,10 +577,15 @@ interface FormState {
 
         <!-- Save bar ÚNICA (dirty combinado: campos da página + todas as seções) -->
         <div class="sticky bottom-0 z-10 flex items-center justify-between gap-3 rounded-lg border border-line bg-panel p-4 shadow-card">
-          <span class="text-sm" [class.text-muted]="!combinedDirty()" [class.text-ink]="combinedDirty()">
-            {{ combinedDirty() ? 'Alterações não salvas' : 'Configuração salva' }}
+          <span
+            class="text-sm"
+            [class.text-muted]="!combinedDirty() && !textOverLimit()"
+            [class.text-ink]="combinedDirty() && !textOverLimit()"
+            [class.text-danger-strong]="textOverLimit()"
+          >
+            {{ textOverLimit() ? 'Encurte os campos acima do limite para salvar' : combinedDirty() ? 'Alterações não salvas' : 'Configuração salva' }}
           </span>
-          <button appButton variant="primary" type="button" [disabled]="!combinedDirty() || saving()" (click)="save()">
+          <button appButton variant="primary" type="button" [disabled]="!combinedDirty() || saving() || textOverLimit()" (click)="save()">
             {{ saving() ? 'Salvando…' : 'Salvar configuração' }}
           </button>
         </div>
@@ -675,6 +715,25 @@ export class AgentConfigPage {
     () => this.dirty() || Object.values(this.childDirty()).some(Boolean),
   );
 
+  // Tetos dos campos de texto (espelham @trafego/shared: mesmo limite no site, na API
+  // e no auto-config por chat). Expostos ao template p/ o contador + o bloqueio de save.
+  protected readonly textMax = TEXT_FIELD_MAX;
+  protected readonly identityMax = IDENTITY_FIELD_MAX;
+  protected readonly promptMax = PROMPT_FIELD_MAX;
+  /** Formata a contagem com separador de milhar PT (ex: "8.000"). */
+  protected count(n: number): string {
+    return n.toLocaleString('pt-BR');
+  }
+  /** Algum campo de texto passou do teto → contador vermelho + save bloqueado. */
+  protected readonly textOverLimit = computed(
+    () =>
+      this.businessContext().length > TEXT_FIELD_MAX ||
+      this.guidance().length > TEXT_FIELD_MAX ||
+      this.persona().length > IDENTITY_FIELD_MAX ||
+      this.tone().length > IDENTITY_FIELD_MAX ||
+      this.systemPrompt().length > PROMPT_FIELD_MAX,
+  );
+
   /** Opções do select: conversões que a conta reporta + a atual (se fora da lista). */
   protected readonly conversionOptions = computed<ConversionOption[]>(() => {
     const opts = this.available().map(toOption);
@@ -787,7 +846,7 @@ export class AgentConfigPage {
    * campos da página. Um toast só. Erro amigável vem do interceptor global.
    */
   protected async save(): Promise<void> {
-    if (!this.combinedDirty()) return;
+    if (!this.combinedDirty() || this.textOverLimit()) return;
     this.saving.set(true);
     try {
       await this.autonomy?.save();
@@ -868,13 +927,18 @@ export class AgentConfigPage {
     // deep num save que só mudou cadência — o backend trata modelConfig presente como
     // relevante à análise).
     const modelConfig = this.buildModelConfig();
+    // Campos de texto só entram no PATCH quando MUDARAM (vs. o baseline carregado):
+    // reenviar um texto grande legado (ex: gravado por chat sem teto antigo) barraria
+    // um save que só mexeu na cadência. Trim espelha o comparador de dirty (sameForm).
+    const base = this.initial();
+    const changed = (cur: string, prev: string): boolean => cur.trim() !== prev.trim();
     return {
       goals,
-      businessContext: this.businessContext(),
-      guidance: this.guidance(),
-      persona: this.persona(),
-      tone: this.tone(),
-      systemPrompt: this.systemPrompt(),
+      ...(changed(this.businessContext(), base.businessContext) ? { businessContext: this.businessContext() } : {}),
+      ...(changed(this.guidance(), base.guidance) ? { guidance: this.guidance() } : {}),
+      ...(changed(this.persona(), base.persona) ? { persona: this.persona() } : {}),
+      ...(changed(this.tone(), base.tone) ? { tone: this.tone() } : {}),
+      ...(changed(this.systemPrompt(), base.systemPrompt) ? { systemPrompt: this.systemPrompt() } : {}),
       cadence: this.cadenceSpec(),
       analysisWindowDays: this.analysisWindowDays(),
       ...(Object.keys(modelConfig).length > 0 ? { modelConfig } : {}),
@@ -976,6 +1040,12 @@ const CONVERSION_SCROLL_THRESHOLD = 4;
 /** Presets do período de análise (dias) + default — espelham o backend (1..30). */
 const WINDOW_PRESETS = [7, 14, 30] as const;
 const DEFAULT_WINDOW_DAYS = 7;
+
+// Tetos de texto — espelham AGENT_TEXT_FIELD_MAX/_IDENTITY_/_PROMPT_ de @trafego/shared
+// (o web não importa o pacote; mantém a cópia como brand.ts faz com o nome do agente).
+const TEXT_FIELD_MAX = 8000;
+const IDENTITY_FIELD_MAX = 280;
+const PROMPT_FIELD_MAX = 8000;
 
 const EMPTY_FORM: FormState = {
   targetCPA: null,

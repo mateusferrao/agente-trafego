@@ -11,6 +11,9 @@ import {
   postureSchema,
 } from "@trafego/shared/schemas";
 import {
+  AGENT_IDENTITY_FIELD_MAX,
+  AGENT_PROMPT_FIELD_MAX,
+  AGENT_TEXT_FIELD_MAX,
   ANALYSIS_WINDOW_MIN_DAYS,
   ANALYSIS_WINDOW_MAX_DAYS,
   DIDACTIC_DEPTH_LEVELS,
@@ -20,14 +23,15 @@ import {
 } from "@trafego/shared";
 
 // Fatia 4: meta + conversão + personalização + janela (corte 1) · identidade/voz +
-// cadência + playbook (corte 2). Limites da janela = fonte única em @trafego/shared.
+// cadência + playbook (corte 2). Limites da janela e dos textos = fonte única em
+// @trafego/shared (mesmo teto no site, na API e no auto-config por chat).
 
 /** Teto de caracteres dos campos de texto livre (guarda prompt inchado). */
-const TEXT_FIELD_MAX = 2000;
+const TEXT_FIELD_MAX = AGENT_TEXT_FIELD_MAX;
 /** Teto do override de system_prompt (mais folgado — é o prompt inteiro do analista). */
-const PROMPT_FIELD_MAX = 8000;
+const PROMPT_FIELD_MAX = AGENT_PROMPT_FIELD_MAX;
 /** Teto de persona/tone (rótulos curtos de identidade). */
-const IDENTITY_FIELD_MAX = 280;
+const IDENTITY_FIELD_MAX = AGENT_IDENTITY_FIELD_MAX;
 
 /** Limiares de qualidade editáveis (6c) — override por-agente; vazio = padrão do sistema. */
 export const qualityConfigInput = z.object({
