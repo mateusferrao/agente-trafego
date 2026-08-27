@@ -26,6 +26,7 @@ import { createGroupsService } from "./modules/groups/service.js";
 import { createContactsService } from "./modules/contacts/service.js";
 import { createAgentsService } from "./modules/agents/service.js";
 import { createApprovalsService } from "./modules/approvals/service.js";
+import { createDraftsService } from "./modules/drafts/service.js";
 import { createRecommendationsService } from "./modules/recommendations/service.js";
 import { createRunsService, type OnboardingLogger } from "./modules/runs/service.js";
 import { createDashboardService } from "./modules/dashboard/service.js";
@@ -75,6 +76,7 @@ export interface Services {
   readonly contacts: ReturnType<typeof createContactsService>;
   readonly agents: ReturnType<typeof createAgentsService>;
   readonly approvals: ReturnType<typeof createApprovalsService>;
+  readonly drafts: ReturnType<typeof createDraftsService>;
   readonly recommendations: ReturnType<typeof createRecommendationsService>;
   readonly runs: ReturnType<typeof createRunsService>;
   readonly dashboard: ReturnType<typeof createDashboardService>;
@@ -218,6 +220,7 @@ export function buildContainer(logger?: OnboardingLogger): Container {
     contacts: createContactsService({ db, messaging }),
     agents,
     approvals: createApprovalsService({ db, approvals, scheduler, revertTtlDays: env.REVERT_TTL_DAYS }),
+    drafts: createDraftsService({ db, adsPlatform, vault, approvals }),
     recommendations: createRecommendationsService({ db }),
     runs,
     dashboard: createDashboardService({

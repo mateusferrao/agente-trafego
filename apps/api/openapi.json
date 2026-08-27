@@ -6123,6 +6123,189 @@
           "status"
         ]
       },
+      "DraftApprovalOutput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "accountId": {
+            "type": "string"
+          },
+          "accountName": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "rejected",
+              "expired",
+              "blocked"
+            ]
+          },
+          "expiresAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "draftId": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "from_scratch",
+              "duplicate"
+            ]
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "on_demand",
+              "proactive"
+            ]
+          },
+          "objective": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dailyBudgetReais": {
+            "type": "number"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "activation": {
+            "type": "string",
+            "enum": [
+              "active",
+              "paused"
+            ]
+          },
+          "sourceLabel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pageId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pixelId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "variantsCount": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "copyVariants": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "object",
+              "properties": {
+                "primaryText": {
+                  "type": "string"
+                },
+                "headline": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "cta": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "primaryText",
+                "headline",
+                "description",
+                "cta"
+              ]
+            }
+          }
+        },
+        "required": [
+          "id",
+          "accountId",
+          "accountName",
+          "status",
+          "expiresAt",
+          "draftId",
+          "kind",
+          "origin",
+          "objective",
+          "dailyBudgetReais",
+          "currency",
+          "activation",
+          "sourceLabel",
+          "pageId",
+          "pixelId",
+          "variantsCount",
+          "copyVariants"
+        ]
+      },
+      "ScaleWinnerInput": {
+        "type": "object",
+        "properties": {
+          "entityLevel": {
+            "type": "string",
+            "enum": [
+              "campaign",
+              "adset"
+            ]
+          },
+          "entityId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "entityLevel",
+          "entityId"
+        ]
+      },
+      "ScaleWinnerOutput": {
+        "type": "object",
+        "properties": {
+          "move": {
+            "type": "string",
+            "enum": [
+              "raise_budget",
+              "duplicate"
+            ]
+          },
+          "approvalId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "move",
+          "approvalId"
+        ]
+      },
       "RevertibleActionOutput": {
         "type": "object",
         "properties": {
@@ -7940,6 +8123,69 @@
           },
           "404": {
             "description": "aprovação não encontrada"
+          }
+        }
+      }
+    },
+    "/api/drafts/pending": {
+      "get": {
+        "tags": [
+          "drafts"
+        ],
+        "responses": {
+          "200": {
+            "description": "rascunhos de campanha aguardando aprovação (cross-conta)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DraftApprovalOutput"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/drafts/scale": {
+      "post": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScaleWinnerInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "escala proposta (rascunho de duplicação ou ação de budget)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScaleWinnerOutput"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "conta ou agente não encontrado"
           }
         }
       }

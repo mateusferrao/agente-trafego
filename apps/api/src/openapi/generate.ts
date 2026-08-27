@@ -84,6 +84,7 @@ import {
   resolveApprovalOutput,
   revertibleActionOutput,
 } from "../modules/approvals/schema.js";
+import { draftApprovalOutput, scaleWinnerInput, scaleWinnerOutput } from "../modules/drafts/schema.js";
 
 extendZodWithOpenApi(z);
 
@@ -161,6 +162,9 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const ApprovalOutput = registry.register("ApprovalOutput", approvalOutput);
   const ResolveApprovalInput = registry.register("ResolveApprovalInput", resolveApprovalInput);
   const ResolveApprovalOutput = registry.register("ResolveApprovalOutput", resolveApprovalOutput);
+  const DraftApprovalOutput = registry.register("DraftApprovalOutput", draftApprovalOutput);
+  const ScaleWinnerInput = registry.register("ScaleWinnerInput", scaleWinnerInput);
+  const ScaleWinnerOutput = registry.register("ScaleWinnerOutput", scaleWinnerOutput);
   const RevertibleActionOutput = registry.register("RevertibleActionOutput", revertibleActionOutput);
 
   const accountParams = z.object({ id: z.string() });
@@ -647,6 +651,22 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     responses: {
       200: jsonRes("aprovação resolvida (aprovada = enfileirada; rejeitada = direto)", ResolveApprovalOutput),
       404: { description: "aprovação não encontrada" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/drafts/pending",
+    tags: ["drafts"],
+    responses: { 200: jsonRes("rascunhos de campanha aguardando aprovação (cross-conta)", z.array(DraftApprovalOutput)) },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/accounts/{id}/drafts/scale",
+    tags: ["drafts"],
+    request: { params: z.object({ id: z.string() }), ...jsonBody(ScaleWinnerInput) },
+    responses: {
+      200: jsonRes("escala proposta (rascunho de duplicação ou ação de budget)", ScaleWinnerOutput),
+      404: { description: "conta ou agente não encontrado" },
     },
   });
   registry.registerPath({
