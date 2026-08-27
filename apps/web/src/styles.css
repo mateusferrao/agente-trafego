@@ -528,26 +528,11 @@ textarea[appTextarea][surface='transparent']:focus-visible {
 }
 
 .brand-mark {
-  position: relative;
   width: 1.125rem;
   height: 1.125rem;
   flex: 0 0 auto;
-  border-radius: 999px 999px 999px 0.375rem;
-  background: var(--color-tomato);
-  box-shadow: inset 0 -0.1875rem 0 rgb(23 48 39 / 0.12);
-  transform: rotate(-8deg);
-}
-
-.brand-mark::before {
-  position: absolute;
-  top: -0.3125rem;
-  left: 0.375rem;
-  width: 0.625rem;
-  height: 0.4375rem;
-  border-radius: 999px 0;
-  background: var(--color-success);
-  content: '';
-  transform: rotate(-22deg);
+  /* Logo oficial do tomate (silhueta real: corpo + folha) — asset em public/. */
+  background: url('/brand-tomato.svg') center / contain no-repeat;
 }
 
 .brand-wordmark {
@@ -1165,8 +1150,8 @@ table[appUiResizableColumns] > tbody > tr > td {
 
 /* Pulso da marca (símbolo tomate respirando) — âncora do loading, nunca gira. */
 @keyframes ui-brand-pulse {
-  0%, 100% { transform: rotate(-8deg) scale(1); opacity: 0.85; }
-  50% { transform: rotate(-8deg) scale(1.12); opacity: 1; }
+  0%, 100% { transform: scale(1); opacity: 0.85; }
+  50% { transform: scale(1.12); opacity: 1; }
 }
 .brand-pulse { animation: ui-brand-pulse 1.8s ease-in-out infinite; }
 
