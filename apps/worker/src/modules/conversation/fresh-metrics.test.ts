@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import type { StoredInsightMetrics } from "@trafego/shared/types";
 import {
   aggregateKpis,
+  getCampaignsBreakdownData,
   getFreshMetricsData,
+  type FreshCampaignsBreakdown,
   type FreshMetricsCtx,
   type FreshMetricsDeps,
   type FreshMetricsData,
@@ -100,15 +102,21 @@ function seqDb(results: unknown[][]) {
   return chain as never;
 }
 
-function makeDeps(results: unknown[][], syncResult = { partial: false, tokenInvalid: false, snapshotsWritten: 1 }) {
+function makeDeps(
+  results: unknown[][],
+  syncResult = { partial: false, tokenInvalid: false, snapshotsWritten: 1 },
+  entities: Array<{ id: string; name: string; status: string }> = [],
+) {
   const insightsSync = { sync: vi.fn(async () => syncResult) };
+  const ads = { listEntities: vi.fn(async () => entities) };
   const deps = {
     db: seqDb(results),
     vault: { decrypt: () => "tok", encrypt: () => ({ cripto: "x", keyVersion: 1 }) },
     insightsSync,
+    ads,
     logger: { warn: vi.fn() },
   } as unknown as FreshMetricsDeps;
-  return { deps, insightsSync };
+  return { deps, insightsSync, ads };
 }
 
 describe("getFreshMetricsData", () => {
@@ -215,5 +223,47 @@ describe("getFreshMetricsData", () => {
     const { deps } = makeDeps([[ACCOUNT_ROW], SNAP]);
     const res = (await getFreshMetricsData(deps, CTX, { periodDays: 30 })) as FreshMetricsData;
     expect(res.periodDays).toBe(7);
+  });
+});
+
+describe("getCampaignsBreakdownData (fresh por campanha, por período)", () => {
+  it("agrega snapshots por campanha + resolve nomes via listEntities, ordena por gasto", async () => {
+    const snaps = [
+      { entityId: "c1", metricsJson: m({ spend: 300, impressions: 5000, clicks: 100 }, [{ goal: "messaging_started", count: 40 }]) },
+      { entityId: "c1", metricsJson: m({ spend: 200, impressions: 3000, clicks: 60 }, [{ goal: "messaging_started", count: 20 }]) },
+      { entityId: "c2", metricsJson: m({ spend: 100, impressions: 1000, clicks: 30 }, [{ goal: "messaging_started", count: 5 }]) },
+    ];
+    const goalsRow = [{ goals: { conversionGoal: "messaging_started" } }];
+    const { deps, ads } = makeDeps([[ACCOUNT_ROW], snaps, goalsRow], undefined, [
+      { id: "c1", name: "Prospecção", status: "ACTIVE" },
+      { id: "c2", name: "Remarketing", status: "ACTIVE" },
+    ]);
+    (deps as { now?: () => Date }).now = () => new Date("2026-08-27T12:00:00Z");
+    const res = (await getCampaignsBreakdownData(deps, CTX, { untilDaysAgo: 1 })) as FreshCampaignsBreakdown;
+    expect(res.since).toBe("2026-08-26");
+    expect(res.until).toBe("2026-08-26");
+    expect(ads.listEntities).toHaveBeenCalled();
+    expect(res.campaigns.map((c) => c.id)).toEqual(["c1", "c2"]); // 500 > 100
+    expect(res.campaigns[0]).toMatchObject({ name: "Prospecção", status: "ACTIVE" });
+    expect(res.campaigns[0]!.kpis.spend).toBe(500);
+    expect(res.campaigns[0]!.kpis.conversions).toBe(60); // 40 + 20 conversas
+    expect(res.campaigns[1]!.name).toBe("Remarketing");
+  });
+
+  it("listEntities falha → nome cai no id (não quebra)", async () => {
+    const snaps = [{ entityId: "cX", metricsJson: m({ spend: 100, impressions: 1000, clicks: 10 }) }];
+    const { deps } = makeDeps([[ACCOUNT_ROW], snaps, []]);
+    (deps.ads.listEntities as ReturnType<typeof vi.fn>) = vi.fn(async () => {
+      throw new Error("meta down");
+    });
+    (deps as { now?: () => Date }).now = () => new Date("2026-08-27T12:00:00Z");
+    const res = (await getCampaignsBreakdownData(deps, CTX, {})) as FreshCampaignsBreakdown;
+    expect(res.campaigns[0]!.name).toBe("cX");
+  });
+
+  it("sem snapshot na janela → campanhas vazio (não erro)", async () => {
+    const { deps } = makeDeps([[ACCOUNT_ROW], [], []]);
+    const res = (await getCampaignsBreakdownData(deps, CTX, {})) as FreshCampaignsBreakdown;
+    expect(res.campaigns).toEqual([]);
   });
 });

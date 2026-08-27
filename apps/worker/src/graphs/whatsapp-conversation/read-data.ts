@@ -16,7 +16,7 @@ import { adAccounts, adCreatives, agentRuns, agentToolCalls, agents, entityAnaly
 import type { Database } from "@trafego/db/client";
 import { daysAgoInTz, rankAdCreatives } from "@trafego/core";
 import { createAnalysisRepo, type AdCreativeCopyRow } from "../../modules/analysis/repo.js";
-import { getFreshMetricsData } from "../../modules/conversation/fresh-metrics.js";
+import { getCampaignsBreakdownData, getFreshMetricsData } from "../../modules/conversation/fresh-metrics.js";
 import type { ApprovalPort } from "@trafego/shared/ports";
 import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY } from "@trafego/shared";
 import type { EntityLevel, InsightMetrics, OrgId, UnitAnalysis } from "@trafego/shared";
@@ -809,7 +809,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
       );
       return asString(
         await getFreshMetricsData(
-          { db, vault: ports.vault, insightsSync: deps.insightsSync, logger },
+          { db, vault: ports.vault, insightsSync: deps.insightsSync, ads: ports.ads, logger },
           { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, timezone: ctx.timezone },
           {
             periodDays: periodDays ?? null,
@@ -848,16 +848,40 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
   );
 
   const listCampaigns = tool(
-    async () => {
+    async ({
+      periodDays,
+      sinceDaysAgo,
+      untilDaysAgo,
+    }: {
+      periodDays?: number | null;
+      sinceDaysAgo?: number | null;
+      untilDaysAgo?: number | null;
+    }) => {
       if (noFocus()) return NEEDS_FOCUS;
-      logger.debug({ agentId: ctx.agentId }, "tool:list_campaigns");
+      const hasPeriod = periodDays != null || sinceDaysAgo != null || untilDaysAgo != null;
+      logger.debug({ agentId: ctx.agentId, periodDays, sinceDaysAgo, untilDaysAgo, hasPeriod }, "tool:list_campaigns");
+      // COM período → breakdown FRESH dos snapshots por campanha na janela (nomes via Meta);
+      // SEM período → última análise curada (com tier/achados).
+      if (hasPeriod) {
+        return asString(
+          await getCampaignsBreakdownData(
+            { db, vault: ports.vault, insightsSync: deps.insightsSync, ads: ports.ads, logger },
+            { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, timezone: ctx.timezone },
+            { periodDays: periodDays ?? null, sinceDaysAgo: sinceDaysAgo ?? null, untilDaysAgo: untilDaysAgo ?? null },
+          ),
+        );
+      }
       return asString(await listCampaignsData(db, ctx.agentId));
     },
     {
       name: "list_campaigns",
       description:
-        "TODAS as campanhas analisadas da conta com métricas curadas (id, nome, gasto, conversões, CPA, ROAS, receita, tier), ordenadas por gasto. Use para COMPARAR/ALOCAR verba entre campanhas — ex.: 'quais gastam mais e convertem pior', 'onde reduzir/proteger'. É a divisão por campanha que o get_fresh_metrics (agregado da conta) não dá.",
-      schema: z.object({}),
+        "TODAS as campanhas da conta com métricas por campanha (gasto, conversões, CPA, ROAS, receita), ordenadas por gasto — pra COMPARAR/ALOCAR verba ('quais gastam mais e convertem pior', 'onde cortar/proteger', 'valores por campanha'). SEM args = última análise curada (inclui tier/diagnóstico). COM recorte de período (mesmo formato do get_fresh_metrics: periodDays, ou sinceDaysAgo+untilDaysAgo em dias atrás, 0=hoje/1=ontem, ≤7d) = dados FRESH agregados por campanha na janela. É a divisão por campanha que o get_fresh_metrics (agregado da conta) não dá.",
+      schema: z.object({
+        periodDays: z.number().int().positive().nullable().optional(),
+        sinceDaysAgo: z.number().int().min(0).nullable().optional(),
+        untilDaysAgo: z.number().int().min(0).nullable().optional(),
+      }),
     },
   );
 
