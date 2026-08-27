@@ -436,7 +436,7 @@ textarea[appTextarea][surface='transparent']:focus-visible {
 }
 .ui-stepper > input {
   width: 100%;
-  padding-right: 1.9rem;
+  padding-right: 1.7rem;
 }
 .ui-stepper__ctrls {
   position: absolute;
@@ -444,7 +444,7 @@ textarea[appTextarea][surface='transparent']:focus-visible {
   right: 1px;
   bottom: 1px;
   display: flex;
-  width: 1.5rem;
+  width: 1.35rem;
   flex-direction: column;
   overflow: hidden;
   border-left: 1px solid var(--color-line);

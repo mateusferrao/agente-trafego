@@ -72,9 +72,12 @@ export function createChannelsService(deps: ChannelsDeps) {
     /**
      * Estado atual do canal da org (sem QR). Padrão = estado **persistido** no DB
      * (rápido, sem round-trip à Evolution) — mantido fresco pelo webhook
-     * `CONNECTION_UPDATE` e pelos próprios connect/disconnect. `live` força o probe
-     * ao vivo (`getState`), necessário só no fluxo de QR, que precisa detectar o
-     * pareamento em tempo real.
+     * `CONNECTION_UPDATE` e pelos próprios connect/disconnect. Se o webhook se perder
+     * (Evolution fora, secret rotacionado), o DB pode ficar stale; `?live=true` (usado
+     * pelo fluxo de QR / "Gerenciar") é a fonte da verdade e reconcilia. É display-only:
+     * o envio real resolve a instância na hora e falha explícito se o canal caiu. `live`
+     * força o probe ao vivo (`getState`), necessário no fluxo de QR (detecta o pareamento
+     * em tempo real).
      */
     async status(orgId: OrgId, opts?: { readonly live?: boolean }): Promise<InstanceState> {
       const [row] = await deps.db

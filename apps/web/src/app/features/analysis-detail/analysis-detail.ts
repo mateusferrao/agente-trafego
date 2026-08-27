@@ -427,6 +427,9 @@ export class AnalysisDetail {
   private formatByKind(v: number, kind: EvidenceKind): string {
     switch (kind) {
       case 'rate': {
+        // Premissa: nossos números vêm como RAZÃO (0..1, ex. CTR 0.0116 = 1,16%) ou já em %
+        // (>1). Zona cega conhecida: uma taxa <1% dada crua em percent (0.8 = 0,8%) viraria
+        // 80% — não ocorre no pipeline atual (o brief emite razão), mas a origem é da LLM.
         const p = Math.abs(v) <= 1 ? v * 100 : v;
         return `${trimNumber(p, Math.abs(p) < 10 ? 2 : 0)}%`;
       }

@@ -149,8 +149,12 @@ export class AccountOverview {
 
   /**
    * Run concluído mas sem nada a exibir — a conta não tem métricas/campanhas/recomendações
-   * pra mostrar (espelha o `hasResults` do analysis-detail, invertido). Ex.: conta sem
-   * campanhas com movimento. Evita a casca vazia; cai no mesmo empty-state acionável.
+   * pra mostrar. Ex.: conta sem campanhas com movimento. Evita a casca vazia; cai no mesmo
+   * empty-state acionável. Casa com o `hasResults` do analysis-detail INVERTIDO por conta de
+   * um invariante daquele componente: `verdictStats` sempre tem ≥1 item ("Gasto") quando
+   * `metrics` existe — então `!metrics && sem campanhas && sem recomendações` ⇒ hasResults=false.
+   * Se aquele invariante mudar, alinhar as duas condições (idealmente extrair um predicado único).
+   * Estados in-flight (pending/running/waiting_approval) não chegam aqui — o ramo `analyzing()` os trata antes.
    */
   private readonly runEmptyResult = computed<boolean>(() => {
     const run = this.store.run();

@@ -31,12 +31,19 @@ export class NumberStepper implements AfterViewInit, OnDestroy {
 
     const wrapper = this.renderer.createElement('span') as HTMLElement;
     this.renderer.addClass(wrapper, 'ui-stepper');
-    // Copia a(s) classe(s) de largura do input pro wrapper (w-40, w-24, w-full…): o
-    // wrapper passa a ter largura DEFINIDA igual à do input, então não é esticado pelo
-    // flex do pai (align-items:stretch) e o stepper fica colado na borda do campo.
+    // Copia a(s) classe(s) de largura do input pro wrapper (w-40, w-24, w-full, w-[…]):
+    // o wrapper passa a ter a MESMA largura definida do input, então não é esticado pelo
+    // flex do pai (align-items:stretch) e o stepper fica colado na borda do campo. Regex
+    // ancorada em larguras reais (evita casar w-fit/w-max). Sem classe de largura →
+    // fallback w-full (contrato explícito: o wrapper nunca colapsa ao conteúdo).
+    let hasWidth = false;
     for (const cls of input.className.split(/\s+/)) {
-      if (/^w-/.test(cls)) this.renderer.addClass(wrapper, cls);
+      if (/^w-(?:full|\d|\[)/.test(cls)) {
+        this.renderer.addClass(wrapper, cls);
+        hasWidth = true;
+      }
     }
+    if (!hasWidth) this.renderer.addClass(wrapper, 'w-full');
 
     this.renderer.insertBefore(parent, wrapper, input);
     this.renderer.appendChild(wrapper, input);
@@ -67,7 +74,9 @@ export class NumberStepper implements AfterViewInit, OnDestroy {
     else input.stepDown();
     input.dispatchEvent(new Event('input', { bubbles: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
-    input.focus();
+    // Mantém o foco (permite continuar pelas setas do teclado) sem provocar scroll-jump
+    // quando o campo está dentro de um dialog/container rolável.
+    input.focus({ preventScroll: true });
   }
 
   ngOnDestroy(): void {
