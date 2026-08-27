@@ -49,31 +49,74 @@ docker exec docker-postgres-1 psql -U postgres -d trafego -tc "select ad_account
 
 ---
 
-## 2. Config do agente — criação (SITE · Conta → aba **Agente**)
+## 2. Config do agente — autonomia + ações por-ação (SITE · Conta → aba **Agente**)
+
+> **[MUDOU nesta fatia — "Config por-ação"]** As 6 ações agora vivem numa **lista única** dentro de
+> **"Até onde o agente pode ir → opções avançadas"** (antes o on/off das 4 estava em "Limites de
+> segurança"). Cada linha tem **on/off** (grava `agent_tool_bindings`) **+** um seletor de
+> **autonomia por-ação** que **vence** a autonomia por origem.
 
 **[Site] — o que fazer + o que deve aparecer:**
 1. Seção **"Até onde o agente pode ir"** (Autonomia):
-   - ✅ frase-fato: *criar/escalar pedem sua aprovação* (não é toggle).
-   - ✅ **[NOVO]** subgrupo **"Escalar um vencedor além do limite seguro"** com 3 opções (segmented):
-     **perguntar · subir orçamento · duplicar**. Default = **perguntar**.
-2. **"Opções avançadas"** → lista **por-ação**:
-   - ✅ liga/desliga `create_campaign` e `duplicate_scale` (bindings).
-   - ✅ ao afrouxar a autonomia de uma criação → **alerta** proporcional (criar-do-zero+copy-IA tem
-     alerta mais forte que duplicar as-is).
-3. **Segurança / Limites → "Limites de criação"**: campos `Orçamento novo máx./dia`,
-   `Máx. campanhas novas/dia`, `Passo de escala (%)`.
-   - ✅ o símbolo de moeda ao lado do orçamento **segue a conta** (BRL → `R$`; conta USD → `$`).
+   - ✅ autonomia **por origem**: `Regras do playbook` × `Análise do agente (IA)` (segmented de 4:
+     só avisa · sugere+OK · age no seguro · age sozinho).
+   - ✅ subgrupo **"Quando o crescimento passa do limite de mudança"** com 3 opções:
+     **perguntar · subir orçamento · duplicar**. Default = **perguntar**. (Copy sem "limite seguro".)
+2. Clicar **"opções avançadas"** (Ações permitidas) → **lista única por-ação**:
+   - ✅ 4 de otimização: **Pausar · Retomar · Mudar status · Ajustar orçamento** (cada uma com switch on/off).
+   - ✅ bloco **"Criação (gasto novo)"**: **Criar campanha · Duplicar para escalar** (switch on/off).
+   - ✅ ao **ligar** uma ação, aparece o seletor **"Autonomia desta ação"** (criação: "Quando ele pode
+     criar sozinho") com: **herda a origem · só avisa · sugere+OK · age no seguro · age sozinho**.
+   - ✅ **"herda a origem"** (default) = usa a autonomia por origem acima.
+3. **"Limites de segurança"** (seção separada):
+   - ✅ **NÃO** existe mais a lista "Ações permitidas" aqui (migrou pra lista única do passo 2).
+   - ✅ segue com dry-run, kill-switch, mudança máx. de orçamento, máx. entidades/dia, teto de custo de IA.
+   - ✅ **"Limites de criação"**: `Orçamento novo máx./dia`, `Máx. campanhas novas/dia`, `Passo de escala (%)`.
+     O símbolo de moeda **segue a conta** (BRL → `R$`; conta USD → `$`).
 4. **Notificações** → ligar **"Rascunhos proativos"**.
-5. **Salvar** → ✅ recarregar a página mantém tudo (inclusive a preferência de escala).
+5. **Salvar** → ✅ recarregar a página mantém tudo (on/off, autonomia por-ação, preferência de escala).
+
+**Cenário de teste da lista única (faça e confira no banco):**
+- Desligue **Duplicar para escalar** + ponha **Criar campanha = age sozinho** + **Ajustar orçamento = sugere+OK** → Salvar.
 
 **Verificar:**
 ```bash
-docker exec docker-postgres-1 psql -U postgres -d trafego -c "select autonomy_policy->>'scaleAggressivePreference' as pref_escala from agents;"
+docker exec docker-postgres-1 psql -U postgres -d trafego -c "select tool_key, mode from agent_tool_bindings order by tool_key;"
+```
+```bash
+docker exec docker-postgres-1 psql -U postgres -d trafego -c "select autonomy_policy->'byAction' as por_acao, autonomy_policy->>'scaleAggressivePreference' as pref_escala from agents;"
 ```
 ```bash
 docker exec docker-postgres-1 psql -U postgres -d trafego -c "select max_new_daily_budget_minor, max_new_campaigns_per_day, scale_pct from guardrail_configs;"
 ```
+- ✅ `agent_tool_bindings` tem 6 linhas (as 6 ficam **explícitas** ao salvar — "backfill na edição").
+  `duplicate_scale = disabled`, o resto `enabled`.
+- ✅ `byAction` = `{"create_campaign":"act_full","adjust_budget":"suggest"}` (só os overrides ≠ "herda").
 - ⛔ **Salvar** falhando com "Payload inválido" em alguma seção = bug a reportar (anote qual seção).
+
+---
+
+## 2b. Consistência dos 2 gates + CTA gateada (efeito de desligar uma ação)
+
+> **[Config por-ação]** Desligar uma ação tem de valer em **todas** as superfícies (chat, apply e site),
+> lendo da MESMA fonte (`agent_tool_bindings`). Continue do cenário do passo 2 (**Duplicar para escalar = OFF**).
+
+**[Site]:**
+- ✅ Na análise da conta (aba visão geral), o card de um **vencedor** **NÃO** mostra mais o botão **"Escalar"**
+  se **Duplicar** E **Ajustar orçamento** estiverem ambos OFF. (Com só um dos dois ligado, o botão aparece
+  e a escala usa o ramo habilitado.)
+
+**[WhatsApp] — peça a escrita desligada e confirme a recusa honesta:**
+- Envie: `duplica meu melhor vencedor pra escalar`
+  - ✅ o agente **não** cria o rascunho — responde que essa capacidade está desligada (recusa clara, sem stack).
+- Reative **Ajustar orçamento** e envie: `sobe 20% o orçamento da campanha X`
+  - ✅ agora ele **eco + confirma** (chat sempre confirma antes de escrever) e, no "sim", aplica.
+
+**Verificar (nada foi criado quando desligado):**
+```bash
+docker exec docker-postgres-1 psql -U postgres -d trafego -c "select id, kind, status from campaign_drafts order by created_at desc limit 5;"
+```
+- ✅ nenhum rascunho novo `duplicate` enquanto `duplicate_scale=disabled`.
 
 ---
 
@@ -290,19 +333,41 @@ aprova o rascunho de escala
 
 ---
 
-## 11. Proatividade de criação
+## 11. Proatividade de criação — propor (default) × **[NOVO] auto-criar** (age sozinho)
 
 Pré: "Rascunhos proativos" ligado (§2) + um vencedor OU conta parada (cold_start).
+
+### 11a. Modo default — SÓ PROPÕE (criação **não** está "age sozinho")
 
 **[Site]** Conta → **"Analisar agora"** (ou esperar o cron). Aguardar o run terminar.
 > ✅ Havendo oportunidade → nasce um **rascunho como recomendação** + **nudge no WhatsApp** rotulado
 > como proposta do agente + o porquê.
 - ✅ Aparece em **Aprovações** e na **Timeline** (evento "… proposta"). Throttle: **1 proativo pendente/conta**.
-- ✅ **Nunca** auto-aplica.
+- ✅ **Não** auto-aplica (fica pendente de OK).
 
 ```bash
 docker exec docker-postgres-1 psql -U postgres -d trafego -c "select origin,status,kind from campaign_drafts where origin='proactive' order by created_at desc limit 3;"
 ```
+- ✅ `status = proposed` (esperando OK).
+
+### 11b. **[NOVO — Config por-ação C]** Auto-criar (age sozinho) — SEMPRE nasce PAUSADA
+
+**Pré:** em §2, ponha **Duplicar para escalar = age sozinho** (ou Criar campanha, conforme a oportunidade),
+mantenha **"Rascunhos proativos"** ligado e um **vencedor** claro na conta. Salvar.
+
+**[Site]** Conta → **"Analisar agora"**. Aguardar o run.
+- ✅ **[WhatsApp]** chega um **nudge transparente**: *"🤖 Agi sozinho e dupliquei seu vencedor… deixei
+  **pausada**, esperando seu OK (não veicula até você ativar). Por quê: …"* — o quê + porquê + pausada + próximo passo.
+- ✅ A campanha/duplicata é criada na Meta **PAUSADA** (não veicula) e a aprovação some do inbox (resolvida).
+
+```bash
+docker exec docker-postgres-1 psql -U postgres -d trafego -c "select origin,status,kind,created_ids from campaign_drafts where origin='proactive' order by created_at desc limit 3;"
+```
+- ✅ `status = created` + `created_ids` preenchido.
+- ⛔ **Meta:** a entidade criada tem de estar **PAUSED** (confira no Gerenciador de Anúncios — nunca ATIVA).
+- ✅ **Guardrail é a rede** (não há eco+confirma no caminho autônomo): baixe muito `Orçamento novo máx./dia`
+  (§12) → o run auto tenta criar e é **barrado** (nudge honesto "parei: …"), nada some sem aviso.
+- ✅ **Só-com-criativo:** conta sem criativo reusável → criar-do-zero é barrado (cold-start vira proposta, não auto).
 
 ---
 
@@ -389,6 +454,7 @@ Reiniciar api+worker. Depois suba uma imagem (§3).
 - [ ] Eco antes de escrita: **o quê / quanto / Página / Pixel / ativa-ou-pausada**.
 - [ ] Jargão traduzido (CPA/adset/pixel; ASK usa linguagem plana, sem "reentrar em aprendizado" cru).
 - [ ] Proposta proativa rotulada + porquê. Bloqueio explica limite + saída.
+- [ ] **Auto-criação (age sozinho):** nudge transparente (o quê/porquê/**pausada**/próximo passo); nasce PAUSED; guardrail é a rede (barra → nudge honesto).
 - [ ] Erro Meta = texto legível envelopado + próximo passo (nunca stack/token).
 - [ ] Mesmos estados/verdade nos 2 canais (site e WhatsApp).
 
@@ -410,8 +476,10 @@ docker exec docker-postgres-1 psql -U postgres -d trafego -c "select kind,status
 ---
 
 ## 20. E2E automatizado (docker, DB efêmero, não-destrutivo)
-Procedimento completo em `docs/validacao-manual-fatia7-fastfollows.e2e.md` (cria DB efêmero → migra
-0000→0038 → verifica schema → smoke das queries no PG real → `pnpm test` → dropa; `trafego` intocado).
+- Fast-follows: `docs/validacao-manual-fatia7-fastfollows.e2e.md` (migra 0000→0038 → schema → queries → drop).
+- **Config por-ação:** `docs/validacao-manual-config-por-acao.e2e.md` (migra 0000→**0039** → constraint
+  `agent_tool_bindings_agent_tool_uq` → seed do catálogo (6 tools) → smoke bindings/allowedActions/byAction
+  → `pnpm test` → dropa; `trafego` intocado). **Executado 2026-08-27: verde.**
 
 ### Referência — consultas DB (copiar)
 ```bash
