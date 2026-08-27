@@ -192,14 +192,26 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                     </div>
                     <h3 class="font-semibold text-ink">{{ campaignName(c) }}</h3>
                   </div>
-                  <button
-                    type="button"
-                    class="shrink-0 rounded-md border border-line px-2 py-1 text-xs text-muted hover:text-ink"
-                    [disabled]="mutingId() === c.externalId"
-                    (click)="onToggleMute(c)"
-                  >
-                    {{ mutingId() === c.externalId ? 'Salvando…' : c.muted ? 'Reativar' : 'Silenciar' }}
-                  </button>
+                  <div class="flex shrink-0 items-center gap-2">
+                    @if (c.tier === 'winner' && !c.muted) {
+                      <button
+                        type="button"
+                        class="rounded-md border border-accent px-2 py-1 text-xs text-accent-strong hover:bg-accent-soft"
+                        [disabled]="scalingId() === c.externalId"
+                        (click)="onScale(c)"
+                      >
+                        {{ scalingId() === c.externalId ? 'Propondo…' : 'Escalar' }}
+                      </button>
+                    }
+                    <button
+                      type="button"
+                      class="rounded-md border border-line px-2 py-1 text-xs text-muted hover:text-ink"
+                      [disabled]="mutingId() === c.externalId"
+                      (click)="onToggleMute(c)"
+                    >
+                      {{ mutingId() === c.externalId ? 'Salvando…' : c.muted ? 'Reativar' : 'Silenciar' }}
+                    </button>
+                  </div>
                 </div>
 
                 <!-- métricas inline em mono -->
@@ -227,6 +239,39 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                     @for (r of findingRefs(c); track $index) {
                       <app-ui-evidence [tone]="evidenceTone(c)">{{ r }}</app-ui-evidence>
                     }
+                  </div>
+                }
+
+                <!-- passo agressivo: o backend pergunta subir seguro vs duplicar (§eco+confirma) -->
+                @if (scaleAsk()?.externalId === c.externalId) {
+                  <div class="flex flex-col gap-2 rounded-md border border-accent-soft bg-accent-soft p-3">
+                    <p class="text-sm text-ink">
+                      Esse aumento é grande. Prefere subir o orçamento no limite seguro, ou criar uma cópia
+                      separada pra crescer sem arriscar a que já funciona?
+                    </p>
+                    <div class="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        class="rounded-md border border-accent bg-accent px-3 py-1.5 text-xs font-medium text-on-accent hover:bg-accent-strong"
+                        (click)="onScaleChoose('raise')"
+                      >
+                        Subir orçamento +{{ scaleAsk()?.raisePct }}%
+                      </button>
+                      <button
+                        type="button"
+                        class="rounded-md border border-line px-3 py-1.5 text-xs text-ink hover:bg-panel-2"
+                        (click)="onScaleChoose('duplicate')"
+                      >
+                        Duplicar (crescer +{{ scaleAsk()?.duplicatePct }}%)
+                      </button>
+                      <button
+                        type="button"
+                        class="rounded-md px-3 py-1.5 text-xs text-muted hover:text-ink"
+                        (click)="onScaleCancel()"
+                      >
+                        Agora não
+                      </button>
+                    </div>
                   </div>
                 }
               </article>
@@ -300,9 +345,16 @@ export class AnalysisDetail {
   readonly currency = input<string>(DEFAULT_CURRENCY);
   readonly votingId = input<string | null>(null);
   readonly mutingId = input<string | null>(null);
+  /** id da campanha em escala (CTA "escalar este vencedor"). */
+  readonly scalingId = input<string | null>(null);
+  /** passo agressivo → escolha inline (subir seguro vs duplicar) no card desta campanha. */
+  readonly scaleAsk = input<{ externalId: string; raisePct: number; duplicatePct: number } | null>(null);
 
   readonly vote = output<{ id: string; vote: 'up' | 'down' }>();
   readonly toggleMute = output<Campaign>();
+  readonly scale = output<Campaign>();
+  readonly scaleChoose = output<'raise' | 'duplicate'>();
+  readonly scaleCancel = output<void>();
 
   protected readonly applicabilityNote = APPLICABILITY_NOTE;
   protected readonly agentName = AGENT_NAME;
@@ -357,6 +409,15 @@ export class AnalysisDetail {
   }
   protected onToggleMute(c: Campaign): void {
     this.toggleMute.emit(c);
+  }
+  protected onScale(c: Campaign): void {
+    this.scale.emit(c);
+  }
+  protected onScaleChoose(choice: 'raise' | 'duplicate'): void {
+    this.scaleChoose.emit(choice);
+  }
+  protected onScaleCancel(): void {
+    this.scaleCancel.emit();
   }
 
   protected kindLabel(kind: Recommendation['kind']): string {

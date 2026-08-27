@@ -736,6 +736,7 @@ function cleanAutonomy(p: NonNullable<AgentConfigInput["autonomyPolicy"]>): Auto
   return {
     bySource: p.bySource,
     ...(p.autoConfigViaChat !== undefined ? { autoConfigViaChat: p.autoConfigViaChat } : {}),
+    ...(p.scaleAggressivePreference !== undefined ? { scaleAggressivePreference: p.scaleAggressivePreference } : {}),
   };
 }
 

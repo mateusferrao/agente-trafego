@@ -26,6 +26,9 @@ export interface StoredAsset {
 export interface StoredBlob {
   readonly bytes: Uint8Array;
   readonly contentType: string;
+  /** ETag/digest estável do conteúdo (content-addressed) — a rota de blob usa p/ `ETag`+304
+   *  e `Cache-Control: immutable`. Local-fs = sha256 dos bytes; S3-compat = ETag do objeto. */
+  readonly etag: string;
 }
 
 export interface StoragePort {

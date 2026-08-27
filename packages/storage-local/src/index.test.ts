@@ -25,6 +25,7 @@ describe("createLocalStorage", () => {
     const blob = await s.get(stored.ref);
     expect(blob?.contentType).toBe("image/png");
     expect(Array.from(blob?.bytes ?? [])).toEqual([1, 2, 3, 4]);
+    expect(blob?.etag).toMatch(/^[0-9a-f]{64}$/u); // sha256 content-addressed
   });
 
   it("content-addressed: mesmo conteúdo → mesma ref (idempotente)", async () => {

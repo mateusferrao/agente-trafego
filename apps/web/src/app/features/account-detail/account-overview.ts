@@ -113,8 +113,13 @@ const MAX_POLLS = 6;
           [currency]="store.account()?.currency ?? defaultCurrency"
           [votingId]="store.votingId()"
           [mutingId]="store.mutingId()"
+          [scalingId]="store.scalingId()"
+          [scaleAsk]="store.scaleAskView()"
           (vote)="store.vote($event)"
           (toggleMute)="store.toggleMuted($event)"
+          (scale)="store.scaleWinner($event)"
+          (scaleChoose)="store.scaleChoose($event)"
+          (scaleCancel)="store.scaleCancel()"
         />
         <app-agent-actions [accountId]="store.accountId" />
       }

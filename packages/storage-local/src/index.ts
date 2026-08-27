@@ -66,7 +66,10 @@ export function createLocalStorage(config: LocalStorageConfig): StoragePort {
         const abs = absOf(ref);
         const bytes = await readFile(abs);
         const contentType = await readFile(`${abs}.type`, "utf8").catch(() => "application/octet-stream");
-        return { bytes: new Uint8Array(bytes), contentType };
+        const data = new Uint8Array(bytes);
+        // etag = sha256 do conteúdo (content-addressed) — estável p/ Cache-Control/304 na rota de blob.
+        const etag = createHash("sha256").update(data).digest("hex");
+        return { bytes: data, contentType, etag };
       } catch {
         return null; // não existe → null (nunca crash)
       }
