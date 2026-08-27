@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, type OnInit, type WritableSignal, effect, inject, input, output, signal, computed } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
-import { UiInput, UiSwitch, UiSwitchThumb, UiCheckbox } from '@ui';
+import { NumberStepper, UiInput, UiSwitch, UiSwitchThumb, UiCheckbox } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import type { AgentSummary } from '@core/api/generated';
 
@@ -18,7 +18,7 @@ const ACTIONS: readonly ActionType[] = ['pause_entity', 'resume_entity', 'adjust
 @Component({
   selector: 'app-agent-guardrails',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiInput, UiSwitch, UiSwitchThumb, UiCheckbox],
+  imports: [NumberStepper, UiInput, UiSwitch, UiSwitchThumb, UiCheckbox],
   template: `
     <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
       <div>
@@ -52,19 +52,19 @@ const ACTIONS: readonly ActionType[] = ['pause_entity', 'resume_entity', 'adjust
         <label class="flex flex-col gap-1">
           <span class="text-sm font-medium text-ink">Mudança máx. de orçamento</span>
           <span class="flex items-center gap-1">
-            <input appInput type="number" inputmode="numeric" min="0" max="100" class="w-20" [value]="maxPct()" (input)="onNum(maxPct, $event)" />
+            <input appInput type="number" appNumberStepper inputmode="numeric" min="0" max="100" class="w-20" [value]="maxPct()" (input)="onNum(maxPct, $event)" />
             <span class="text-xs text-muted">% por vez</span>
           </span>
         </label>
         <label class="flex flex-col gap-1">
           <span class="text-sm font-medium text-ink">Máx. de entidades por dia</span>
-          <input appInput type="number" inputmode="numeric" min="0" class="w-20" [value]="maxEntities()" (input)="onNum(maxEntities, $event)" />
+          <input appInput type="number" appNumberStepper inputmode="numeric" min="0" class="w-20" [value]="maxEntities()" (input)="onNum(maxEntities, $event)" />
         </label>
         <label class="flex flex-col gap-1">
           <span class="text-sm font-medium text-ink">Teto de custo de IA</span>
           <span class="flex items-center gap-1">
             <span class="text-xs text-muted">US$</span>
-            <input appInput type="number" inputmode="decimal" min="0" class="w-24" placeholder="sem teto" [value]="llmCap()" (input)="onNum(llmCap, $event)" />
+            <input appInput type="number" appNumberStepper inputmode="decimal" min="0" class="w-24" placeholder="sem teto" [value]="llmCap()" (input)="onNum(llmCap, $event)" />
           </span>
         </label>
       </div>

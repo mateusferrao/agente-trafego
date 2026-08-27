@@ -20,6 +20,7 @@ export { UiAnalysisProgress } from './ui-analysis-progress';
 export { UiChatBubble } from './ui-chat-bubble';
 export { UiSkeleton } from './ui-skeleton';
 export { UiDateField } from './ui-date-field';
+export { NumberStepper } from './number-stepper.directive';
 export { UiEyebrow } from './ui-eyebrow';
 export { UiStat } from './ui-stat';
 export { UiEvidence } from './ui-evidence';

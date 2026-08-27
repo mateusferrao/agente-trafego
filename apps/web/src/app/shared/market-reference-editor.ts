@@ -8,7 +8,7 @@ import {
   signal,
   type WritableSignal,
 } from '@angular/core';
-import { UiInput, UiSelectBox } from '@ui';
+import { NumberStepper, UiInput, UiSelectBox } from '@ui';
 import type { MarketReference } from '@core/api/generated';
 
 /** Moedas oferecidas no seletor (org). ISO 4217; a conta traz a sua no override. */
@@ -45,7 +45,7 @@ const num = (s: string): number | undefined => {
 @Component({
   selector: 'app-market-reference-editor',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiInput, UiSelectBox],
+  imports: [NumberStepper, UiInput, UiSelectBox],
   template: `
     <div class="flex flex-col gap-4">
       @if (currencyEditable()) {
@@ -66,9 +66,9 @@ const num = (s: string): number | undefined => {
         @for (k of COST_KINDS; track k.key) {
           <div class="grid grid-cols-[1fr_auto_auto] items-center gap-2">
             <span class="text-sm text-ink">{{ k.label }}</span>
-            <input appInput type="number" inputmode="decimal" min="0" class="w-24" placeholder="mín"
+            <input appInput type="number" appNumberStepper inputmode="decimal" min="0" class="w-24" placeholder="mín"
               [value]="costMin()[k.key]" (input)="onCost(k.key, 'min', $event)" />
-            <input appInput type="number" inputmode="decimal" min="0" class="w-24" placeholder="máx"
+            <input appInput type="number" appNumberStepper inputmode="decimal" min="0" class="w-24" placeholder="máx"
               [value]="costMax()[k.key]" (input)="onCost(k.key, 'max', $event)" />
           </div>
         }
@@ -81,28 +81,28 @@ const num = (s: string): number | undefined => {
             <span class="text-sm font-medium text-ink">Bandas de CTR (%)</span>
             <span class="text-xs text-muted">Referência de plataforma. Vazio = usa o padrão da plataforma.</span>
             <div class="flex flex-wrap gap-2">
-              <input appInput type="number" inputmode="decimal" min="0" class="w-20" placeholder="ok" [value]="ctrOk()" (input)="onStr(ctrOk, $event)" />
-              <input appInput type="number" inputmode="decimal" min="0" class="w-20" placeholder="bom" [value]="ctrGood()" (input)="onStr(ctrGood, $event)" />
-              <input appInput type="number" inputmode="decimal" min="0" class="w-20" placeholder="ótimo" [value]="ctrGreat()" (input)="onStr(ctrGreat, $event)" />
+              <input appInput type="number" appNumberStepper inputmode="decimal" min="0" class="w-20" placeholder="ok" [value]="ctrOk()" (input)="onStr(ctrOk, $event)" />
+              <input appInput type="number" appNumberStepper inputmode="decimal" min="0" class="w-20" placeholder="bom" [value]="ctrGood()" (input)="onStr(ctrGood, $event)" />
+              <input appInput type="number" appNumberStepper inputmode="decimal" min="0" class="w-20" placeholder="ótimo" [value]="ctrGreat()" (input)="onStr(ctrGreat, $event)" />
             </div>
           </div>
           <label class="flex flex-col gap-1">
             <span class="text-sm font-medium text-ink">Alerta de frequência</span>
             <span class="text-xs text-muted">Acima disso, público satura. Vazio = padrão da plataforma.</span>
-            <input appInput type="number" inputmode="decimal" min="0" class="w-24" placeholder="2.5" [value]="freq()" (input)="onStr(freq, $event)" />
+            <input appInput type="number" appNumberStepper inputmode="decimal" min="0" class="w-24" placeholder="2.5" [value]="freq()" (input)="onStr(freq, $event)" />
           </label>
           <label class="flex flex-col gap-1">
             <span class="text-sm font-medium text-ink">Gasto mínimo para "zumbi" ({{ currency() }})</span>
             <span class="text-xs text-muted">Piso de gasto sem retorno para marcar desperdício. Vazio = padrão.</span>
-            <input appInput type="number" inputmode="decimal" min="0" class="w-24" placeholder="50" [value]="zombie()" (input)="onStr(zombie, $event)" />
+            <input appInput type="number" appNumberStepper inputmode="decimal" min="0" class="w-24" placeholder="50" [value]="zombie()" (input)="onStr(zombie, $event)" />
           </label>
           <div class="flex flex-col gap-2">
             <span class="text-sm font-medium text-ink">Gasto/dia mínimo p/ sinal ({{ currency() }})</span>
             <span class="text-xs text-muted">Piso por sensibilidade do alerta. Vazio = padrão.</span>
             <div class="flex flex-wrap gap-2">
-              <input appInput type="number" inputmode="decimal" min="0" class="w-20" placeholder="baixa" [value]="baseLow()" (input)="onStr(baseLow, $event)" />
-              <input appInput type="number" inputmode="decimal" min="0" class="w-20" placeholder="normal" [value]="baseNormal()" (input)="onStr(baseNormal, $event)" />
-              <input appInput type="number" inputmode="decimal" min="0" class="w-20" placeholder="alta" [value]="baseHigh()" (input)="onStr(baseHigh, $event)" />
+              <input appInput type="number" appNumberStepper inputmode="decimal" min="0" class="w-20" placeholder="baixa" [value]="baseLow()" (input)="onStr(baseLow, $event)" />
+              <input appInput type="number" appNumberStepper inputmode="decimal" min="0" class="w-20" placeholder="normal" [value]="baseNormal()" (input)="onStr(baseNormal, $event)" />
+              <input appInput type="number" appNumberStepper inputmode="decimal" min="0" class="w-20" placeholder="alta" [value]="baseHigh()" (input)="onStr(baseHigh, $event)" />
             </div>
           </div>
         </div>

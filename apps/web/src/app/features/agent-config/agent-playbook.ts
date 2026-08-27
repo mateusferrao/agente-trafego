@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, type OnInit, inject, input, signal } from '@angular/core';
 import { toast } from 'ngx-sonner';
-import { UiButton, UiSelectBox, type UiSelectOptionItem } from '@ui';
+import { NumberStepper, UiButton, UiSelectBox, type UiSelectOptionItem } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import type { PlaybookRuleInput, PlaybookRuleOutput } from '@core/api/generated';
 
@@ -69,7 +69,7 @@ const STATUS_OPTIONS: readonly UiSelectOptionItem[] = [
 @Component({
   selector: 'app-agent-playbook',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiButton, UiSelectBox],
+  imports: [NumberStepper, UiButton, UiSelectBox],
   template: `
     <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
       <div class="flex items-start justify-between gap-3">
@@ -101,12 +101,12 @@ const STATUS_OPTIONS: readonly UiSelectOptionItem[] = [
                 <span class="text-muted">, se</span>
                 <div class="w-48"><app-ui-select [options]="metricOptions" [value]="r.metric" (valueChange)="setField(i, 'metric', $event)" /></div>
                 <div class="w-40"><app-ui-select [options]="opOptions" [value]="r.op" (valueChange)="setField(i, 'op', $event)" /></div>
-                <input type="number" step="0.01" class="w-28 rounded-md border border-line bg-app px-2 py-1.5 text-sm text-ink" placeholder="valor" [value]="r.value" (input)="setNum(i, 'value', $event)" />
+                <input type="number" appNumberStepper step="0.01" class="w-28 rounded-md border border-line bg-app px-2 py-1.5 text-sm text-ink" placeholder="valor" [value]="r.value" (input)="setNum(i, 'value', $event)" />
               </div>
 
               <div class="flex flex-wrap items-center gap-2 text-sm text-ink">
                 <span class="text-muted">com gasto mínimo de {{ currency() }}</span>
-                <input type="number" step="0.01" min="0" class="w-28 rounded-md border border-line bg-app px-2 py-1.5 text-sm text-ink" placeholder="opcional" [value]="r.minSpend" (input)="setNum(i, 'minSpend', $event)" />
+                <input type="number" appNumberStepper step="0.01" min="0" class="w-28 rounded-md border border-line bg-app px-2 py-1.5 text-sm text-ink" placeholder="opcional" [value]="r.minSpend" (input)="setNum(i, 'minSpend', $event)" />
                 <span class="text-muted" title="evita disparar em entidade que mal rodou (número instável)">ⓘ</span>
               </div>
 
@@ -114,7 +114,7 @@ const STATUS_OPTIONS: readonly UiSelectOptionItem[] = [
                 <span class="text-muted">então</span>
                 <div class="w-48"><app-ui-select [options]="actionOptions" [value]="r.action" (valueChange)="setField(i, 'action', $event)" /></div>
                 @if (r.action === 'adjust_budget') {
-                  <input type="number" step="1" class="w-24 rounded-md border border-line bg-app px-2 py-1.5 text-sm text-ink" placeholder="% (±)" [value]="r.budgetChangePct" (input)="setNum(i, 'budgetChangePct', $event)" />
+                  <input type="number" appNumberStepper step="1" class="w-24 rounded-md border border-line bg-app px-2 py-1.5 text-sm text-ink" placeholder="% (±)" [value]="r.budgetChangePct" (input)="setNum(i, 'budgetChangePct', $event)" />
                   <span class="text-muted">% (use negativo para reduzir)</span>
                 }
                 @if (r.action === 'set_status') {

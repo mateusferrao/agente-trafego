@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, type OnInit, effect, inject, input, output, signal, computed } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
-import { UiInput, UiSelectBox, UiSwitch, UiSwitchThumb, UiToggleGroup, UiToggleGroupItem, type UiSelectOptionItem } from '@ui';
+import { NumberStepper, UiInput, UiSelectBox, UiSwitch, UiSwitchThumb, UiToggleGroup, UiToggleGroupItem, type UiSelectOptionItem } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import type { AgentSummary } from '@core/api/generated';
 
@@ -43,7 +43,7 @@ const SENSITIVITIES: readonly { value: Sensitivity; label: string }[] = [
 @Component({
   selector: 'app-agent-notifications',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiInput, UiSelectBox, UiSwitch, UiSwitchThumb, UiToggleGroup, UiToggleGroupItem],
+  imports: [NumberStepper, UiInput, UiSelectBox, UiSwitch, UiSwitchThumb, UiToggleGroup, UiToggleGroupItem],
   template: `
     <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
       <div>
@@ -151,7 +151,7 @@ const SENSITIVITIES: readonly { value: Sensitivity; label: string }[] = [
             <label class="flex flex-col gap-1">
               <span class="text-xs text-muted">Intervalo mínimo entre alertas</span>
               <span class="flex items-center gap-1">
-                <input appInput type="number" inputmode="numeric" min="1" class="w-20" [value]="throttleHours()" (input)="onThrottle($event)" />
+                <input appInput type="number" appNumberStepper inputmode="numeric" min="1" class="w-20" [value]="throttleHours()" (input)="onThrottle($event)" />
                 <span class="text-xs text-muted">horas</span>
               </span>
             </label>

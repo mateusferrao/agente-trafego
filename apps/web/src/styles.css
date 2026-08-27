@@ -426,6 +426,66 @@ textarea[appTextarea][surface='transparent']:focus-visible {
   box-shadow: none !important;
 }
 
+/* Stepper on-brand para <input type=number> (diretiva NumberStepper). Some o spinner
+   nativo e injeta setas ↑/↓ temáticas, ancoradas na borda direita do campo. */
+.ui-stepper {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  max-width: 100%;
+}
+.ui-stepper > input {
+  width: 100%;
+  padding-right: 1.9rem;
+}
+.ui-stepper__ctrls {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  display: flex;
+  width: 1.5rem;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--color-line);
+  border-radius: 0 calc(var(--radius-md) - 1px) calc(var(--radius-md) - 1px) 0;
+}
+.ui-stepper__btn {
+  display: grid;
+  flex: 1 1 0;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: var(--color-soft);
+  color: var(--color-muted);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.ui-stepper__btn + .ui-stepper__btn {
+  border-top: 1px solid var(--color-line);
+}
+.ui-stepper__btn:hover {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-strong);
+}
+.ui-stepper__btn:active {
+  background: var(--color-accent);
+  color: var(--color-panel);
+}
+.ui-stepper__btn svg {
+  width: 0.7rem;
+  height: 0.7rem;
+}
+.ui-stepper > input::-webkit-outer-spin-button,
+.ui-stepper > input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.ui-stepper > input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
 .surface-noise,
 .glass-surface,
 .workflow-rail {

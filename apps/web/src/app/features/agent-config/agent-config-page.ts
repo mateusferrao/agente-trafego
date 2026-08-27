@@ -11,7 +11,7 @@ import {
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { toast } from 'ngx-sonner';
-import { UiButton, UiConfirmDialogService, UiPageHeader, UiSelectBox, UiSpinner, type UiSelectOptionItem } from '@ui';
+import { NumberStepper, UiButton, UiConfirmDialogService, UiPageHeader, UiSelectBox, UiSpinner, type UiSelectOptionItem } from '@ui';
 import { AccountsApiService } from '@core/api/accounts-api.service';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import type {
@@ -117,7 +117,7 @@ interface FormState {
 @Component({
   selector: 'app-agent-config-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, UiButton, UiPageHeader, UiSpinner, UiSelectBox, AgentPlaybook, AgentAutonomy, AgentGuardrails, AgentNotifications, AgentPosture, MarketReferenceEditor],
+  imports: [RouterLink, UiButton, UiPageHeader, UiSpinner, UiSelectBox, NumberStepper, AgentPlaybook, AgentAutonomy, AgentGuardrails, AgentNotifications, AgentPosture, MarketReferenceEditor],
   template: `
     <div class="flex flex-col gap-8">
       <div class="flex flex-col gap-1">
@@ -223,7 +223,7 @@ interface FormState {
             <label class="flex flex-col gap-1 text-xs text-muted">
               Custo por resultado alvo ({{ accountCurrency() }})
               <input
-                type="number"
+                type="number" appNumberStepper
                 min="0"
                 step="0.01"
                 class="w-40 rounded-md border border-line bg-app px-3 py-2 text-sm text-ink"
@@ -234,7 +234,7 @@ interface FormState {
             <label class="flex flex-col gap-1 text-xs text-muted">
               Retorno sobre investimento alvo (ROAS)
               <input
-                type="number"
+                type="number" appNumberStepper
                 min="0"
                 step="0.1"
                 class="w-40 rounded-md border border-line bg-app px-3 py-2 text-sm text-ink"
@@ -472,37 +472,37 @@ interface FormState {
                 <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Mínimo de conversões para o agente confiar no número e sugerir escalar.">
                     Mínimo de conversões
-                    <input type="number" min="1" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.minConversions ?? ''" [value]="mcMinConversions()" (input)="onMcText(mcMinConversions, $event)" />
+                    <input type="number" appNumberStepper min="1" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.minConversions ?? ''" [value]="mcMinConversions()" (input)="onMcText(mcMinConversions, $event)" />
                     <span class="text-xs text-muted">Abaixo disso, o agente evita conclusões precipitadas.</span>
                   </label>
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Mínimo de cliques para considerar que já há dado suficiente para avaliar.">
                     Mínimo de cliques
-                    <input type="number" min="1" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.minClicks ?? ''" [value]="mcMinClicks()" (input)="onMcText(mcMinClicks, $event)" />
+                    <input type="number" appNumberStepper min="1" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.minClicks ?? ''" [value]="mcMinClicks()" (input)="onMcText(mcMinClicks, $event)" />
                     <span class="text-xs text-muted">Volume mínimo de cliques para tirar conclusões.</span>
                   </label>
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Queda de CTR (% em relação ao início) a partir da qual o anúncio é considerado cansado.">
                     Queda de CTR p/ saturação (%)
-                    <input type="number" min="0" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.fatigueCtrDropPct ?? ''" [value]="mcFatigueCtrDropPct()" (input)="onMcText(mcFatigueCtrDropPct, $event)" />
+                    <input type="number" appNumberStepper min="0" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.fatigueCtrDropPct ?? ''" [value]="mcFatigueCtrDropPct()" (input)="onMcText(mcFatigueCtrDropPct, $event)" />
                     <span class="text-xs text-muted">Quanto o interesse pode cair antes de sinalizar cansaço do anúncio.</span>
                   </label>
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Frequência (vezes que a mesma pessoa vê o anúncio) acima da qual consideramos saturação.">
                     Frequência p/ saturação
-                    <input type="number" min="0.1" step="0.1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.fatigueFrequency ?? ''" [value]="mcFatigueFrequency()" (input)="onMcText(mcFatigueFrequency, $event)" />
+                    <input type="number" appNumberStepper min="0.1" step="0.1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.fatigueFrequency ?? ''" [value]="mcFatigueFrequency()" (input)="onMcText(mcFatigueFrequency, $event)" />
                     <span class="text-xs text-muted">Quantas vezes a mesma pessoa vê o anúncio antes de saturar.</span>
                   </label>
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Frequência para saturação em público frio (quem ainda não conhece você). Cansa mais rápido.">
                     Frequência p/ saturação — público frio
-                    <input type="number" min="0.1" step="0.1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.frequencyCapByStage?.prospecting ?? ''" [value]="mcFreqCapProspecting()" (input)="onMcText(mcFreqCapProspecting, $event)" />
+                    <input type="number" appNumberStepper min="0.1" step="0.1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.frequencyCapByStage?.prospecting ?? ''" [value]="mcFreqCapProspecting()" (input)="onMcText(mcFreqCapProspecting, $event)" />
                     <span class="text-xs text-muted">Quem ainda não te conhece satura com menos repetições.</span>
                   </label>
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Frequência para saturação em público quente (remarketing). Tolera mais repetições.">
                     Frequência p/ saturação — público quente
-                    <input type="number" min="0.1" step="0.1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.frequencyCapByStage?.remarketing ?? ''" [value]="mcFreqCapRemarketing()" (input)="onMcText(mcFreqCapRemarketing, $event)" />
+                    <input type="number" appNumberStepper min="0.1" step="0.1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.frequencyCapByStage?.remarketing ?? ''" [value]="mcFreqCapRemarketing()" (input)="onMcText(mcFreqCapRemarketing, $event)" />
                     <span class="text-xs text-muted">Quem já te conhece (remarketing) aguenta ver mais vezes.</span>
                   </label>
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Alta de custo por resultado (%) a partir da qual o anúncio é considerado cansado.">
                     Alta de custo p/ saturação (%)
-                    <input type="number" min="0" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.fatigueCostRisePct ?? ''" [value]="mcFatigueCostRisePct()" (input)="onMcText(mcFatigueCostRisePct, $event)" />
+                    <input type="number" appNumberStepper min="0" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.fatigueCostRisePct ?? ''" [value]="mcFatigueCostRisePct()" (input)="onMcText(mcFatigueCostRisePct, $event)" />
                     <span class="text-xs text-muted">Quanto o custo pode subir antes de sinalizar cansaço.</span>
                   </label>
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Ligar/desligar a referência de mercado quando a conta ainda não tem meta nem histórico.">
@@ -512,12 +512,12 @@ interface FormState {
                   </label>
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Quantas conversas por conversão registrada até desconfiar que o rastreamento de conversões está incompleto.">
                     Conversas por conversão p/ suspeitar da medição
-                    <input type="number" min="1" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.trackingBrokenRatio ?? ''" [value]="mcTrackingBrokenRatio()" (input)="onMcText(mcTrackingBrokenRatio, $event)" />
+                    <input type="number" appNumberStepper min="1" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.trackingBrokenRatio ?? ''" [value]="mcTrackingBrokenRatio()" (input)="onMcText(mcTrackingBrokenRatio, $event)" />
                     <span class="text-xs text-muted">Muitas conversas e quase nenhuma conversão registrada sugere rastreamento furado.</span>
                   </label>
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Mínimo de conversas para sequer considerar a suspeita de medição incompleta.">
                     Mínimo de conversas p/ avaliar a medição
-                    <input type="number" min="0" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.trackingBrokenMinFunnel ?? ''" [value]="mcTrackingBrokenMinFunnel()" (input)="onMcText(mcTrackingBrokenMinFunnel, $event)" />
+                    <input type="number" appNumberStepper min="0" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.trackingBrokenMinFunnel ?? ''" [value]="mcTrackingBrokenMinFunnel()" (input)="onMcText(mcTrackingBrokenMinFunnel, $event)" />
                     <span class="text-xs text-muted">Abaixo desse volume de conversas, o agente não levanta a suspeita.</span>
                   </label>
                 </div>
