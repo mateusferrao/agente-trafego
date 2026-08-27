@@ -2,13 +2,15 @@ import { and, desc, eq } from "drizzle-orm";
 import {
   adAccounts,
   agents,
+  agentToolBindings,
   campaignDrafts,
   creativeAssets,
   guardrailConfigs,
   platformConnections,
   type Database,
 } from "@trafego/db";
-import { planScaleMove, type BudgetLevel, type ScaleAggressivePreference } from "@trafego/core";
+import { planScaleMove, resolveEnabledTools, type BudgetLevel, type ScaleAggressivePreference } from "@trafego/core";
+import type { ToolBindingMode } from "@trafego/shared";
 import {
   ACTION_PARAM_MODE,
   ACTION_PARAM_PCT,
@@ -63,6 +65,8 @@ interface ScaleContext {
   readonly cfg: ReturnType<typeof toGuardrailConfig>;
   /** Preferência do passo agressivo (autonomy_policy) — default "ask". */
   readonly scaleAggressivePreference: ScaleAggressivePreference;
+  /** Tool-keys habilitadas (bindings, mesma fonte do chat/apply) — gate da escala. */
+  readonly enabled: ReadonlySet<string>;
 }
 
 export function createDraftsService(deps: DraftsServiceDeps) {
@@ -91,12 +95,21 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       .where(and(eq(guardrailConfigs.agentId, row.agentId), eq(guardrailConfigs.orgId, orgId)))
       .limit(1);
 
+    const bindings = await deps.db
+      .select({ toolKey: agentToolBindings.toolKey, mode: agentToolBindings.mode })
+      .from(agentToolBindings)
+      .where(and(eq(agentToolBindings.agentId, row.agentId), eq(agentToolBindings.orgId, orgId)));
+    const bindingMap = new Map<string, ToolBindingMode>(bindings.map((b) => [b.toolKey, b.mode as ToolBindingMode]));
+    const cfg = toGuardrailConfig(g);
+    const enabled = resolveEnabledTools(bindingMap, new Set((cfg.allowedActions ?? []) as string[]));
+
     return {
       agentId: row.agentId,
       ref: { adAccountId: row.metaAdAccountId, accessToken: deps.vault.decrypt(encrypted) },
       currency: row.currency ?? DEFAULT_CURRENCY,
-      cfg: toGuardrailConfig(g),
+      cfg,
       scaleAggressivePreference: row.autonomyPolicy?.scaleAggressivePreference ?? "ask",
+      enabled,
     };
   }
 
@@ -169,13 +182,20 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       const ctx = await loadScaleContext(orgId, accountId);
       if (!ctx) return null;
 
+      // Gate por binding (A2): escalar precisa de ao menos uma capacidade — subir budget
+      // (adjust_budget) OU duplicar (duplicate_scale). Ambas desligadas → escala indisponível
+      // (o CTA já some no site). Os ramos concretos abaixo também barram a sua capacidade.
+      const canRaise = ctx.enabled.has("adjust_budget");
+      const canDuplicate = ctx.enabled.has("duplicate_scale");
+      if (!canRaise && !canDuplicate) return null;
+
       const state = await deps.adsPlatform.readEntityState(ctx.ref, input.entityId);
       const sourceDailyMinor = Number(state["daily_budget"] ?? 0);
       const budgetLevel: BudgetLevel =
         input.entityLevel === "adset" && sourceDailyMinor > 0 ? "adset" : "campaign";
 
       const scalePct = ctx.cfg.scalePct ?? 50;
-      const move = planScaleMove({
+      let move = planScaleMove({
         scalePct,
         maxBudgetChangePct: ctx.cfg.maxBudgetChangePct,
         budgetLevel,
@@ -186,9 +206,19 @@ export function createDraftsService(deps: DraftsServiceDeps) {
 
       // passo agressivo, intent aberto, sem resposta ainda → PERGUNTA (nada é criado).
       // O site renderiza as 2 opções e re-chama com `choice`; o chat pergunta e reusa o mesmo caminho.
+      // Só oferece o que está habilitado: capacidade off → força o outro ramo (sem "ask" morto).
       if (move.move === "ask") {
-        return { move: "ask", raisePct: move.raisePct, duplicatePct: move.duplicatePct };
+        if (canRaise && canDuplicate) {
+          return { move: "ask", raisePct: move.raisePct, duplicatePct: move.duplicatePct };
+        }
+        move = canRaise
+          ? { move: "raise_budget", pct: move.raisePct, level: budgetLevel }
+          : { move: "duplicate", scalePct: move.duplicatePct };
       }
+
+      // capacidade concreta desligada → escala indisponível por esse ramo (rede; o CTA some no site).
+      if (move.move === "raise_budget" && !canRaise) return null;
+      if (move.move === "duplicate" && !canDuplicate) return null;
 
       if (move.move === "raise_budget") {
         const action: Action = {

@@ -11,6 +11,7 @@ import { DEFAULT_CONVERSION_GOAL, toGuardrailConfig, type CampaignDraft, type Or
 import { AdsPlatformError, type AdAccountRef } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../../composition.js";
 import { createAnalysisRepo } from "../analysis/repo.js";
+import { loadEnabledTools } from "../tools/enabled.js";
 
 const ACTOR_AGENT = "agent";
 const USAGE_TYPE_CAMPAIGN_CREATED = "campaign_created";
@@ -58,6 +59,16 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
   // idempotência: já criado → replay (retomada de retry não duplica).
   if (row.status === "created" && Object.keys(row.createdIds ?? {}).length > 0) {
     return { kind: "created", dryRun: false, createdIds: row.createdIds as Record<string, unknown> };
+  }
+
+  // Gate de criação (A2, NET-NEW): a capacidade (create_campaign|duplicate_scale) desligada
+  // nos bindings → nem chega na Meta. MESMA fonte (bindings) que o chat/site/auto usam. Após
+  // o replay idempotente (um já-criado sempre retorna created, mesmo se depois desligarem).
+  const creationToolKey = row.kind === "duplicate" ? TOOL_KEY_DUPLICATE : TOOL_KEY_CREATE;
+  const enabledCreation = await loadEnabledTools(db, input.orgId, row.agentId);
+  if (!enabledCreation.has(creationToolKey)) {
+    await db.update(campaignDrafts).set({ status: "failed" }).where(eq(campaignDrafts.id, row.id));
+    return { kind: "blocked", reason: "essa capacidade de criação está desligada para este agente" };
   }
 
   const draft: CampaignDraft = {

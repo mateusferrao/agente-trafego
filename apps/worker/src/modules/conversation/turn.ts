@@ -7,20 +7,20 @@
 import { and, eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import { HumanMessage, type AIMessage } from "@langchain/core/messages";
-import { adAccounts, agentToolBindings, agentToolDefinitions, agents, conversations, guardrailConfigs, loadOrgTimezone, type Database } from "@trafego/db";
-import type { ActionType, AutonomyPolicy, ConversationRef } from "@trafego/shared";
+import { adAccounts, agents, conversations, loadOrgTimezone, type Database } from "@trafego/db";
+import type { AutonomyPolicy, ConversationRef } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
 import { buildWhatsappConversationGraph } from "../../graphs/whatsapp-conversation/graph.js";
 import {
   AGENT_TOOL_NAMES,
-  CREATE_TOOL_NAMES,
   REFINE_TOOL_NAMES,
   CONCIERGE_TOOL_NAMES,
   CONFIG_CHAT_TOOL_NAMES,
   GROUP_CONCIERGE_TOOL_NAMES,
-  WRITE_TOOL_TO_ACTION,
+  WRITE_TOOL_NAMES,
   type ConversationToolContext,
 } from "../../graphs/whatsapp-conversation/tools.js";
+import { loadEnabledTools } from "../tools/enabled.js";
 import { createNotifyRepo } from "../notify/repo.js";
 import { createSendToConversation, type SendToConversation } from "../notify/send-to-contact.js";
 import { withTimeout } from "./with-timeout.js";
@@ -120,71 +120,20 @@ export async function resolveFocusedAgent(
 }
 
 /**
- * Nomes das tools de ESCRITA livre habilitadas p/ o agente = as cujo tipo de ação está em
- * `allowedActions` (guardrail). É o "enforcement" do chat (5c): tool não permitida nem chega
- * ao LLM → recusa honesta na hora. O guardrail re-checa no apply como 2ª rede.
+ * Tools de ESCRITA/CRIAÇÃO habilitadas p/ o chat (A2) — AUTORITATIVO por `agent_tool_bindings`
+ * (fallback = allowedActions p/ as 4, default-on p/ criação; ver `loadEnabledTools`). Tool não
+ * habilitada nem chega ao LLM → recusa honesta. O apply re-checa da MESMA fonte (consistência).
+ * Mapeamento tool-de-chat → binding: as 4 mutações têm nome == binding-key; `create_campaign` ↔
+ * binding homônimo; `scale_winner` (faz raise OU duplicate) habilita se `duplicate_scale` OU
+ * `adjust_budget` (o raise) estiver ligado.
  */
-async function allowedWriteTools(db: Database, orgId: string, agentId: string): Promise<string[]> {
-  const [row] = await db
-    .select({ allowedActions: guardrailConfigs.allowedActions })
-    .from(guardrailConfigs)
-    .where(and(eq(guardrailConfigs.agentId, agentId), eq(guardrailConfigs.orgId, orgId)))
-    .limit(1);
-  const allowed = new Set<ActionType>((row?.allowedActions ?? []) as ActionType[]);
-  return [...WRITE_TOOL_TO_ACTION.entries()].filter(([, action]) => allowed.has(action)).map(([tool]) => tool);
-}
-
-/**
- * S4 (shadow-first) — resolve as write-tools a partir do CATÁLOGO∩bindings (fonte única):
- * tool executável no chat + binding do agente (enabled/shadow contam; disabled não;
- * ausência de binding = HERDA o comportamento atual via `fallback`). Interseção
- * conservadora com o `fallback` (allowedActions): nunca habilita mais do que hoje.
- * NÃO muda comportamento — usado só p/ logar divergência e validar a costura antes da virada.
- */
-async function catalogWriteToolsShadow(
-  db: Database,
-  orgId: string,
-  agentId: string,
-  fallback: readonly string[],
-): Promise<string[]> {
-  const fallbackSet = new Set(fallback);
-  const defs = await db
-    .select({ key: agentToolDefinitions.key, executableInChat: agentToolDefinitions.executableInChat })
-    .from(agentToolDefinitions);
-  const bindings = await db
-    .select({ toolKey: agentToolBindings.toolKey, mode: agentToolBindings.mode })
-    .from(agentToolBindings)
-    .where(and(eq(agentToolBindings.agentId, agentId), eq(agentToolBindings.orgId, orgId)));
-  const modeByKey = new Map(bindings.map((b) => [b.toolKey, b.mode]));
-  const result: string[] = [];
-  for (const d of defs) {
-    if (!d.executableInChat) continue;
-    const mode = modeByKey.get(d.key);
-    const enabled = mode === undefined ? fallbackSet.has(d.key) : mode !== "disabled";
-    // interseção conservadora: só entra se também estava no fallback (allowedActions).
-    if (enabled && fallbackSet.has(d.key)) result.push(d.key);
-  }
-  return result;
-}
-
-/** Loga divergência catálogo↔allowedActions (shadow). Fire-and-forget; nunca lança. */
-async function logCatalogShadow(
-  db: Database,
-  orgId: string,
-  agentId: string,
-  current: readonly string[],
-  logger: Pick<Logger, "debug" | "warn">,
-): Promise<void> {
-  try {
-    const fromCatalog = await catalogWriteToolsShadow(db, orgId, agentId, current);
-    const a = new Set(current);
-    const b = new Set(fromCatalog);
-    const diverges = a.size !== b.size || [...a].some((k) => !b.has(k));
-    if (diverges) logger.warn({ agentId, current: [...a], fromCatalog: [...b] }, "catalog-shadow:divergência");
-    else logger.debug({ agentId }, "catalog-shadow:coerente");
-  } catch (err) {
-    logger.warn({ agentId, err: String(err) }, "catalog-shadow:falhou");
-  }
+async function allowedChatWriteTools(db: Database, orgId: string, agentId: string): Promise<string[]> {
+  const enabled = await loadEnabledTools(db, orgId, agentId);
+  const tools: string[] = [];
+  for (const t of WRITE_TOOL_NAMES) if (enabled.has(t)) tools.push(t);
+  if (enabled.has("create_campaign")) tools.push("create_campaign");
+  if (enabled.has("duplicate_scale") || enabled.has("adjust_budget")) tools.push("scale_winner");
+  return tools;
 }
 
 /**
@@ -251,12 +200,11 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
   // a 1ª pergunta resolve num turno (set_focus muta o ctx; reads self-guardam sem foco).
   const conciergeAllow =
     input.ref.kind === "group" && multiAccount ? GROUP_CONCIERGE_TOOL_NAMES : CONCIERGE_TOOL_NAMES;
-  const writeTools = inContext ? await allowedWriteTools(deps.db, input.orgId, inContext.agentId) : [];
-  // S4 shadow: valida a costura catálogo↔allowedActions sem mudar comportamento
-  // (fire-and-forget, fora do caminho crítico). Vira fonte da verdade numa fatia futura.
-  if (inContext) void logCatalogShadow(deps.db, input.orgId, inContext.agentId, writeTools, logger);
+  // escrita + criação resolvidas da MESMA fonte (bindings) que o apply usa (A2). Criação
+  // desligada nos bindings → tool fora do toolset (recusa honesta), sem re-checar no apply.
+  const writeTools = inContext ? await allowedChatWriteTools(deps.db, input.orgId, inContext.agentId) : [];
   const allow = inContext
-    ? new Set<string>([...AGENT_TOOL_NAMES, ...writeTools, ...CREATE_TOOL_NAMES, ...REFINE_TOOL_NAMES, ...config.tools])
+    ? new Set<string>([...AGENT_TOOL_NAMES, ...writeTools, ...REFINE_TOOL_NAMES, ...config.tools])
     : conciergeAllow;
 
   let reply = FALLBACK_REPLY;

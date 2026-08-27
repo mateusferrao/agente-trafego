@@ -12,6 +12,7 @@ import type { Action, GuardrailConfig } from "@trafego/shared/types";
 import type { AdAccountRef, MutationResult } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../../composition.js";
 import { createAnalysisRepo, loadDailyToolContext } from "../analysis/repo.js";
+import { loadEnabledTools, enabledActionTypes } from "../tools/enabled.js";
 import { makeMetaToolExecutor, type MetaToolExecutor } from "../../executors/meta-tools.js";
 
 /** Desfecho tipado de aplicar UMA ação confirmada (o chamador mapeia p/ seu I/O). */
@@ -103,7 +104,10 @@ export async function applyConfirmedAction(deps: WorkerDeps, input: ApplyConfirm
     .from(guardrailConfigs)
     .where(and(eq(guardrailConfigs.agentId, input.agentId), eq(guardrailConfigs.orgId, input.orgId)))
     .limit(1);
-  const cfg = toGuardrailConfig(guardrailRow);
+  // A2: allowedActions AUTORITATIVA dos bindings (mesma fonte do gate do chat) — consistência.
+  const baseCfg = toGuardrailConfig(guardrailRow);
+  const enabled = await loadEnabledTools(db, input.orgId, input.agentId);
+  const cfg: GuardrailConfig = { ...baseCfg, allowedActions: enabledActionTypes(enabled) };
   const daily = await loadDailyToolContext(db, input.agentId);
 
   return applyCheckedAction({
