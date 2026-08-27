@@ -40,7 +40,11 @@ async function main() {
       .where(eq(adAccounts.id, BM_AUTOMATO_ACCOUNT_ID))
       .limit(1);
     if (!row) throw new Error("conta BM Automato não encontrada");
-    const token = ports.vault.decrypt((row.connToken ?? row.accToken)!);
+    // Override opcional por env (E2E_META_TOKEN): permite rodar com um token FRESCO sem
+    // regravar o banco. Nunca é logado. Ausente → usa o token cripto do DB (fluxo normal).
+    const overrideToken = process.env["E2E_META_TOKEN"];
+    const token = overrideToken && overrideToken.length > 0 ? overrideToken : ports.vault.decrypt((row.connToken ?? row.accToken)!);
+    log("token", { fonte: overrideToken ? "env override (E2E_META_TOKEN)" : "banco (cripto)" });
     ref = { adAccountId: row.metaAdAccountId, accessToken: token };
     log("conta resolvida", { metaAdAccountId: row.metaAdAccountId, currency: row.currency });
 
