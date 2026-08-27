@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AIMessage } from "@langchain/core/messages";
-import { assembleSystemPrompt, drainPendingCostPatches, needsCostFallback, patchCostInBackground, routeConversation, scheduleCostPatch } from "./nodes.js";
+import { assembleSystemPrompt, currentDateTimeLine, drainPendingCostPatches, needsCostFallback, patchCostInBackground, routeConversation, scheduleCostPatch } from "./nodes.js";
 import { GROUP_RULES } from "./system-prompt.js";
 import type { WhatsappConversationStateType } from "./state.js";
 
@@ -42,6 +42,17 @@ describe("routeConversation", () => {
   });
   it("describe_capabilities → confirm (emitido verbatim, sem paráfrase do LLM)", () => {
     expect(routeConversation(stateWith([{ name: "describe_capabilities" }]))).toBe("confirm");
+  });
+});
+
+describe("currentDateTimeLine (data/hora no fuso da org)", () => {
+  it("formata 'agora' no fuso da org (não UTC) e instrui uso temporal", () => {
+    // 12:00 UTC = 09:00 em São Paulo (UTC-3).
+    const line = currentDateTimeLine("America/Sao_Paulo", new Date("2026-08-27T12:00:00Z"));
+    expect(line).toContain("America/Sao_Paulo");
+    expect(line).toContain("09:00");
+    expect(line).toContain("2026");
+    expect(line.toLowerCase()).toContain("momento presente");
   });
 });
 

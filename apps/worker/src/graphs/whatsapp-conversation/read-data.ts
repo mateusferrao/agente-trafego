@@ -350,6 +350,65 @@ export async function getCampaignAnalysisData(
   };
 }
 
+/**
+ * TODAS as campanhas analisadas (última análise por campanha) com métricas curadas — p/ o
+ * agente COMPARAR/ALOCAR verba entre elas (ex.: "quais gastam mais e convertem pior"). Ordena
+ * por gasto desc. `entity_analyses` é upsertado (1 linha/campanha); dedup defensivo por id.
+ */
+export async function listCampaignsData(
+  db: Database,
+  agentId: string,
+): Promise<
+  | {
+      hasData: true;
+      asOf: string;
+      campaigns: Array<{
+        id: string;
+        name: string | null;
+        spend: number | null;
+        conversions: number | null;
+        cpa: number | null;
+        roas: number | null;
+        revenue: number | null;
+        tier: string | null;
+      }>;
+    }
+  | NoData
+> {
+  const rows = await db
+    .select({
+      entityId: entityAnalyses.entityId,
+      entityName: entityAnalyses.entityName,
+      metricsJson: entityAnalyses.metricsJson,
+      tier: entityAnalyses.tier,
+      analyzedAt: entityAnalyses.analyzedAt,
+    })
+    .from(entityAnalyses)
+    .where(and(eq(entityAnalyses.agentId, agentId), eq(entityAnalyses.entityLevel, CAMPAIGN_LEVEL)))
+    .orderBy(desc(entityAnalyses.analyzedAt));
+  if (rows.length === 0) return { hasData: false, note: "nenhuma campanha analisada ainda" };
+
+  const seen = new Set<string>();
+  const campaigns = [];
+  for (const r of rows) {
+    if (seen.has(r.entityId)) continue; // 1ª (mais recente) por campanha
+    seen.add(r.entityId);
+    const m = r.metricsJson as Partial<InsightMetrics>;
+    campaigns.push({
+      id: r.entityId,
+      name: r.entityName ?? null,
+      spend: typeof m.spend === "number" ? m.spend : null,
+      conversions: typeof m.conversions === "number" ? m.conversions : null,
+      cpa: typeof m.cpa === "number" ? m.cpa : null,
+      roas: typeof m.roas === "number" ? m.roas : null,
+      revenue: typeof m.revenue === "number" ? m.revenue : null,
+      tier: r.tier ?? null,
+    });
+  }
+  campaigns.sort((a, b) => (b.spend ?? 0) - (a.spend ?? 0));
+  return { hasData: true, asOf: rows[0]!.analyzedAt.toISOString(), campaigns };
+}
+
 /** Recomendações do último run finalizado do agente. Vazio → `hasData:false`. */
 export async function listRecommendationsData(
   db: Database,
@@ -788,6 +847,20 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     },
   );
 
+  const listCampaigns = tool(
+    async () => {
+      if (noFocus()) return NEEDS_FOCUS;
+      logger.debug({ agentId: ctx.agentId }, "tool:list_campaigns");
+      return asString(await listCampaignsData(db, ctx.agentId));
+    },
+    {
+      name: "list_campaigns",
+      description:
+        "TODAS as campanhas analisadas da conta com métricas curadas (id, nome, gasto, conversões, CPA, ROAS, receita, tier), ordenadas por gasto. Use para COMPARAR/ALOCAR verba entre campanhas — ex.: 'quais gastam mais e convertem pior', 'onde reduzir/proteger'. É a divisão por campanha que o get_fresh_metrics (agregado da conta) não dá.",
+      schema: z.object({}),
+    },
+  );
+
   const findRecentActions = tool(
     async ({ name }: { name?: string | null }) => {
       if (noFocus()) return NEEDS_FOCUS;
@@ -918,6 +991,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     getMetrics,
     getFreshMetrics,
     getCampaignAnalysis,
+    listCampaigns,
     getEntityDetail,
     comparePeriods,
     findRecentActions,
