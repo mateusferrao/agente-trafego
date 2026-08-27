@@ -13,6 +13,7 @@ import type { WorkerDeps } from "../../composition.js";
 import { buildWhatsappConversationGraph } from "../../graphs/whatsapp-conversation/graph.js";
 import {
   AGENT_TOOL_NAMES,
+  CREATE_TOOL_NAMES,
   CONCIERGE_TOOL_NAMES,
   CONFIG_CHAT_TOOL_NAMES,
   GROUP_CONCIERGE_TOOL_NAMES,
@@ -254,7 +255,7 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
   // (fire-and-forget, fora do caminho crítico). Vira fonte da verdade numa fatia futura.
   if (inContext) void logCatalogShadow(deps.db, input.orgId, inContext.agentId, writeTools, logger);
   const allow = inContext
-    ? new Set<string>([...AGENT_TOOL_NAMES, ...writeTools, ...config.tools])
+    ? new Set<string>([...AGENT_TOOL_NAMES, ...writeTools, ...CREATE_TOOL_NAMES, ...config.tools])
     : conciergeAllow;
 
   let reply = FALLBACK_REPLY;

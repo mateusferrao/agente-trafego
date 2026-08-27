@@ -1,0 +1,234 @@
+// Proposta de rascunho de campanha por CHAT (Fatia 7): escalar vencedor + criar do zero.
+// Persiste campaign_drafts(proposed) + approvals(pending) na hora (fonte única visível no
+// site) e monta o eco determinístico. O "sim" (applyWrite) enfileira a saga (mesmo
+// apply-service do site). Escala inteligente por passo (planScaleMove): raise = ação
+// adjust_budget (caminho de escrita existente); duplicate/from_scratch = rascunho.
+
+import { and, desc, eq } from "drizzle-orm";
+import { adAccounts, agents, campaignDrafts, entityAnalyses, guardrailConfigs } from "@trafego/db";
+import { planScaleMove, type BudgetLevel } from "@trafego/core";
+import {
+  ACTION_PARAM_MODE,
+  ACTION_PARAM_PCT,
+  BUDGET_MODE_INCREASE,
+  toGuardrailConfig,
+  type Action,
+  type AgentId,
+  type CampaignDraftSpec,
+  type ConversionGoal,
+  type CopyVariant,
+  type DraftId,
+} from "@trafego/shared";
+import type { AdAccountRef } from "@trafego/shared/ports";
+import type { WorkerDeps } from "../../composition.js";
+import { createAnalysisRepo } from "../analysis/repo.js";
+import { generateCopy } from "../copy/generate-copy.js";
+
+const MINOR_PER_UNIT = 100;
+const APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_VARIANTS = 2;
+const DEFAULT_STARTER_BUDGET_MINOR = 3000;
+const DEFAULT_COPY_MODEL = "openai/gpt-4o-mini";
+
+export interface DraftProposalContext {
+  readonly orgId: string;
+  readonly agentId: string;
+  readonly adAccountId: string;
+  readonly currency: string;
+}
+
+export type ChatDraftProposal =
+  | { readonly kind: "draft"; readonly echo: string; readonly approvalId: string }
+  | { readonly kind: "action"; readonly action: Action }
+  | { readonly kind: "blocked"; readonly reason: string };
+
+interface AgentContext {
+  readonly ref: AdAccountRef;
+  readonly currency: string;
+  readonly cfg: ReturnType<typeof toGuardrailConfig>;
+  readonly model: string;
+  readonly businessContext: string | null;
+  readonly guidance: string | null;
+}
+
+function money(reais: number, currency: string): string {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency }).format(reais);
+}
+
+async function loadAgentContext(deps: WorkerDeps, ctx: DraftProposalContext): Promise<AgentContext | null> {
+  const repo = createAnalysisRepo(deps.db);
+  const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
+  if (!account) return null;
+  const [ag] = await deps.db
+    .select({ modelConfig: agents.modelConfig, businessContext: agents.businessContext, guidance: agents.guidance })
+    .from(agents)
+    .where(and(eq(agents.id, ctx.agentId), eq(agents.orgId, ctx.orgId)))
+    .limit(1);
+  const [g] = await deps.db
+    .select()
+    .from(guardrailConfigs)
+    .where(and(eq(guardrailConfigs.agentId, ctx.agentId), eq(guardrailConfigs.orgId, ctx.orgId)))
+    .limit(1);
+  const [acc] = await deps.db
+    .select({ currency: adAccounts.currency })
+    .from(adAccounts)
+    .where(eq(adAccounts.id, ctx.adAccountId))
+    .limit(1);
+  const mc = (ag?.modelConfig ?? {}) as Record<string, unknown>;
+  return {
+    ref: { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) },
+    currency: acc?.currency ?? ctx.currency ?? "BRL",
+    cfg: toGuardrailConfig(g),
+    model: (mc["messageModel"] as string) ?? (mc["model"] as string) ?? DEFAULT_COPY_MODEL,
+    businessContext: ag?.businessContext ?? null,
+    guidance: ag?.guidance ?? null,
+  };
+}
+
+async function persistDraftAndApproval(
+  deps: WorkerDeps,
+  ctx: DraftProposalContext,
+  kind: "duplicate" | "from_scratch",
+  spec: CampaignDraftSpec,
+  sourceRef?: { level: "campaign" | "adset"; id: string },
+): Promise<string> {
+  const [row] = await deps.db
+    .insert(campaignDrafts)
+    .values({
+      orgId: ctx.orgId,
+      adAccountId: ctx.adAccountId,
+      agentId: ctx.agentId,
+      kind,
+      status: "proposed",
+      origin: "on_demand",
+      spec,
+      ...(sourceRef ? { sourceRef } : {}),
+    })
+    .returning({ id: campaignDrafts.id });
+  const appr = await deps.ports.approval.upsertDraftPending({
+    orgId: ctx.orgId as never,
+    agentId: ctx.agentId as AgentId,
+    runId: null,
+    contactId: null,
+    draftId: row!.id as DraftId,
+    expiresAt: new Date(Date.now() + APPROVAL_TTL_MS),
+  });
+  return appr.id;
+}
+
+/** Escalar o melhor vencedor (curado do último run). Raise = ação; duplicate = rascunho. */
+export async function proposeScaleWinner(
+  deps: WorkerDeps,
+  ctx: DraftProposalContext,
+  winnerName?: string,
+): Promise<ChatDraftProposal> {
+  const ac = await loadAgentContext(deps, ctx);
+  if (!ac) return { kind: "blocked", reason: "não consegui acessar a conta agora" };
+
+  const winners = await deps.db
+    .select({ entityId: entityAnalyses.entityId, entityLevel: entityAnalyses.entityLevel, entityName: entityAnalyses.entityName })
+    .from(entityAnalyses)
+    .where(and(eq(entityAnalyses.agentId, ctx.agentId), eq(entityAnalyses.tier, "winner")))
+    .orderBy(desc(entityAnalyses.analyzedAt))
+    .limit(10);
+  if (winners.length === 0) {
+    return { kind: "blocked", reason: "não achei um vencedor claro na última análise — roda a análise primeiro" };
+  }
+  const chosen =
+    (winnerName ? winners.find((w) => (w.entityName ?? "").toLowerCase().includes(winnerName.toLowerCase())) : undefined) ??
+    winners[0]!;
+
+  const state = await deps.ports.ads.readEntityState(ac.ref, chosen.entityId);
+  const sourceDailyMinor = Number(state["daily_budget"] ?? 0);
+  const level = chosen.entityLevel === "campaign" ? "campaign" : "adset";
+  const budgetLevel: BudgetLevel = level === "adset" && sourceDailyMinor > 0 ? "adset" : "campaign";
+  const scalePct = ac.cfg.scalePct ?? 50;
+  const move = planScaleMove({ scalePct, maxBudgetChangePct: ac.cfg.maxBudgetChangePct, budgetLevel });
+  const label = chosen.entityName ?? chosen.entityId;
+
+  if (move.move === "raise_budget") {
+    const action: Action = {
+      id: `scale:${chosen.entityId}`,
+      type: "adjust_budget",
+      target: { level: budgetLevel === "campaign" ? "campaign" : "adset", id: chosen.entityId, name: label },
+      params: { [ACTION_PARAM_MODE]: BUDGET_MODE_INCREASE, [ACTION_PARAM_PCT]: move.pct },
+      source: "llm",
+      riskLevel: "medium",
+      reason: `escalar o vencedor "${label}": +${move.pct}% de budget`,
+    };
+    return { kind: "action", action };
+  }
+
+  const newDailyMinor = Math.round(sourceDailyMinor * (1 + move.scalePct / 100));
+  const spec: CampaignDraftSpec = {
+    version: 1,
+    currency: ac.currency,
+    dailyBudgetMinor: newDailyMinor,
+    activation: "active",
+  };
+  const approvalId = await persistDraftAndApproval(deps, ctx, "duplicate", spec, { level, id: chosen.entityId });
+  const echo = [
+    `Vou **duplicar o vencedor "${label}"** com mais budget pra escalar sem estourar o aprendizado do original.`,
+    `Gasto novo: ${money(newDailyMinor / MINOR_PER_UNIT, ac.currency)}/dia · entra ativa (a Meta revisa antes de veicular).`,
+    `Confirma? (o original fica intocado)`,
+  ].join("\n");
+  return { kind: "draft", echo, approvalId };
+}
+
+/** Criar do zero reusando o criativo/página/pixel da conta + copy gerada. */
+export async function proposeCreateCampaign(
+  deps: WorkerDeps,
+  ctx: DraftProposalContext,
+  args: { readonly goal?: ConversionGoal; readonly budgetReais?: number },
+): Promise<ChatDraftProposal> {
+  const ac = await loadAgentContext(deps, ctx);
+  if (!ac) return { kind: "blocked", reason: "não consegui acessar a conta agora" };
+
+  const defaults = await deps.ports.ads.inferCreationDefaults(ac.ref);
+  if (!defaults.pageId || !defaults.imageHash) {
+    return {
+      kind: "blocked",
+      reason:
+        "essa conta ainda não tem um anúncio de onde eu possa reusar a página e o criativo — me manda um criativo ou conecte uma conta com anúncios",
+    };
+  }
+  const goal = args.goal ?? defaults.objectiveGoal ?? "purchase";
+  const dailyBudgetMinor = args.budgetReais
+    ? Math.round(args.budgetReais * MINOR_PER_UNIT)
+    : (ac.cfg.maxNewDailyBudgetMinor ?? DEFAULT_STARTER_BUDGET_MINOR);
+  const variantsCount = DEFAULT_VARIANTS;
+
+  const copyVariants: CopyVariant[] = await generateCopy(
+    deps.ports.llm,
+    {
+      model: ac.model,
+      goal,
+      variantsCount,
+      businessContext: ac.businessContext,
+      guidance: ac.guidance,
+    },
+    { orgId: ctx.orgId, adAccountId: ctx.adAccountId },
+  );
+
+  const spec: CampaignDraftSpec = {
+    version: 1,
+    currency: ac.currency,
+    dailyBudgetMinor,
+    activation: "active",
+    objective: goal,
+    targeting: { kind: "advantage_plus" },
+    variantsCount,
+    copyVariants,
+    creative: { assetId: defaults.sourceAdId ?? "reuse", format: "image", origin: "reuse", metaImageHash: defaults.imageHash },
+    pageId: defaults.pageId,
+    ...(defaults.pixelId ? { pixelId: defaults.pixelId } : {}),
+    ...(defaults.linkUrl ? { linkUrl: defaults.linkUrl } : {}),
+  };
+  const approvalId = await persistDraftAndApproval(deps, ctx, "from_scratch", spec);
+  const echo = [
+    `Vou **criar uma campanha de ${goal}** reusando seu criativo campeão e ${variantsCount} variações de copy novas.`,
+    `Gasto novo: ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia · Página: ${defaults.pageId}${defaults.pixelId ? ` · Pixel: ${defaults.pixelId}` : ""} · entra ativa (a Meta revisa antes).`,
+    `Confirma? (você pode editar/trocar o criativo no site antes de aprovar)`,
+  ].join("\n");
+  return { kind: "draft", echo, approvalId };
+}

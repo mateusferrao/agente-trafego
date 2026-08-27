@@ -253,6 +253,25 @@ export function makeConversationTools(
     }),
   });
 
+  // CRIAÇÃO (Fatia 7): gasto novo — proposeOnly (roteadas p/ confirm → rascunho/aprovação).
+  const scaleWinner = tool(proposeOnly, {
+    name: "scale_winner",
+    description:
+      "Propõe ESCALAR um vencedor (mais budget no que funciona). O sistema decide subir o budget ou duplicar. Requer eco+confirma.",
+    schema: z.object({
+      winnerName: z.string().nullable().optional().describe("nome do vencedor a escalar (opcional; senão o melhor)"),
+    }),
+  });
+  const createCampaign = tool(proposeOnly, {
+    name: "create_campaign",
+    description:
+      "Propõe CRIAR uma campanha nova reusando o criativo/página/pixel da conta + copy gerada. Requer eco+confirma.",
+    schema: z.object({
+      goal: z.string().nullable().optional().describe("objetivo de negócio (ex: purchase, lead)"),
+      budgetReais: z.number().positive().nullable().optional().describe("budget diário em reais (opcional)"),
+    }),
+  });
+
   // FOCO (5c-6): em org multi-conta, escolhe a conta do fio. Executa direto (baixo risco,
   // sem eco) e persiste em conversations.focused_account_id — o próximo turno opera nela.
   const setFocus = tool(
@@ -524,9 +543,19 @@ export function makeConversationTools(
   const playbookTools = [addPlaybookRule, togglePlaybookRule, removePlaybookRule, listPlaybookRules];
 
   const writeTools = [pauseEntity, resumeEntity, setStatus, adjustBudget, revertAction, confirmWrite, cancelWrite];
-  return [...readTools, triggerAnalysis, approve, reject, setFocus, describeCapabilities, ...writeTools, ...configTools, ...playbookTools].filter(
-    (t) => allow.has(t.name),
-  );
+  const createTools = [scaleWinner, createCampaign];
+  return [
+    ...readTools,
+    triggerAnalysis,
+    approve,
+    reject,
+    setFocus,
+    describeCapabilities,
+    ...writeTools,
+    ...createTools,
+    ...configTools,
+    ...playbookTools,
+  ].filter((t) => allow.has(t.name));
 }
 
 /**
@@ -591,7 +620,8 @@ export async function buildCapabilitiesText(
   if (ctx.ref.kind === "group") {
     parts.push("👥 Aqui no grupo eu acompanho a conversa recente de vocês pra ter contexto — mas só respondo quando me chamam (menção ou resposta).");
   }
-  parts.push("🚧 Ainda não: criar campanhas do zero (em breve) nem editar criativos.");
+  parts.push("🚀 Também crio e escalo: posso escalar seu vencedor (mais budget ou duplicar) e criar campanhas novas reusando seu criativo + copy que eu gero — sempre com sua aprovação antes de gastar.");
+  parts.push("🚧 Ainda não: editar criativos nem gerar imagens/vídeos.");
   parts.push("É só pedir. 🙂");
   return parts.join("\n");
 }
@@ -728,6 +758,9 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
   "set_status",
   "adjust_budget",
 ]);
+
+/** Tools de CRIAÇÃO (Fatia 7) — gasto novo, sempre eco+confirma → rascunho/aprovação. */
+export const CREATE_TOOL_NAMES: ReadonlySet<string> = new Set<string>(["scale_winner", "create_campaign"]);
 
 /** Tool de DESFAZER — também passa pelo eco+confirma (roteada pro nó `confirm`, 5c-4). */
 export const REVERT_TOOL_NAME = "revert_action";

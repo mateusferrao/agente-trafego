@@ -22,8 +22,8 @@ import {
   type RevertEchoItem,
 } from "@trafego/core";
 import { applyAgentConfigChange, loadAgentConfigState, reseedArchetypeChange } from "@trafego/agent-config";
-import { sleep } from "@trafego/shared";
-import type { Action, OrgId } from "@trafego/shared/types";
+import { sleep, APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE } from "@trafego/shared";
+import type { Action, ConversionGoal, OrgId } from "@trafego/shared/types";
 import { and, eq } from "drizzle-orm";
 import { adAccounts, agents, playbookRules, type Database } from "@trafego/db";
 import { DEFAULT_CURRENCY } from "@trafego/shared";
@@ -34,6 +34,7 @@ import { windowMessages } from "./window.js";
 import {
   CONFIG_UPDATE_TOOL_NAMES,
   CONTROL_WRITE_TOOL_NAMES,
+  CREATE_TOOL_NAMES,
   PLAYBOOK_WRITE_TOOL_NAMES,
   REVERT_TOOL_NAME,
   DESCRIBE_CAPABILITIES_TOOL_NAME,
@@ -51,6 +52,7 @@ import {
 } from "./tools.js";
 import { makeMetaToolExecutor } from "../../executors/meta-tools.js";
 import { applyCheckedAction, type ApplyOutcome } from "../../modules/apply/apply-confirmed-action.js";
+import { proposeCreateCampaign, proposeScaleWinner } from "../../modules/conversation/draft-proposal.js";
 import { loadWriteContext } from "../../modules/apply/write-context.js";
 import { revertActionById } from "../../modules/apply/revert-action.js";
 import { actorLabel } from "../../modules/conversation/actor.js";
@@ -58,6 +60,7 @@ import { createNotifyRepo } from "../../modules/notify/repo.js";
 import { applyPlaybookOp } from "../../modules/conversation/config-writes.js";
 import type {
   PendingConfigChange,
+  PendingDraft,
   PendingRevert,
   PendingWrite,
   WhatsappConversationStateType,
@@ -115,6 +118,11 @@ function activePendingWrite(pw: PendingWrite | null): PendingWrite | null {
 /** pendingRevert ainda válido (não expirado)? */
 function activePendingRevert(pr: PendingRevert | null): PendingRevert | null {
   return pr && Date.parse(pr.expiresAt) > Date.now() ? pr : null;
+}
+
+/** pendingDraft ainda válido (não expirado)? */
+function activePendingDraft(pd: PendingDraft | null): PendingDraft | null {
+  return pd && Date.parse(pd.expiresAt) > Date.now() ? pd : null;
 }
 
 /** pendingConfigChange ainda válido (não expirado)? */
@@ -492,6 +500,43 @@ export function makeConversationNodes(
       return { messages: [...answerToolCalls(allCalls, "capabilities"), new AIMessage(text)] };
     }
 
+    // CRIAÇÃO (Fatia 7): escalar/criar = gasto novo. Monta o rascunho (persiste
+    // campaign_drafts + approval na hora → visível no site) + eco; o "sim" enfileira a saga.
+    // scale_winner pode virar uma AÇÃO adjust_budget (passo pequeno) → pendingWrite normal.
+    const createCall = allCalls.find((c) => CREATE_TOOL_NAMES.has(c.name));
+    if (createCall) {
+      const dctx = { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, currency: DEFAULT_CURRENCY };
+      const args = (createCall.args ?? {}) as Record<string, unknown>;
+      const proposal =
+        createCall.name === "scale_winner"
+          ? await proposeScaleWinner(deps, dctx, typeof args["winnerName"] === "string" ? (args["winnerName"] as string) : undefined)
+          : await proposeCreateCampaign(deps, dctx, {
+              ...(typeof args["goal"] === "string" ? { goal: args["goal"] as ConversionGoal } : {}),
+              ...(typeof args["budgetReais"] === "number" ? { budgetReais: args["budgetReais"] as number } : {}),
+            });
+      const expiresAt = new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString();
+      if (proposal.kind === "blocked") {
+        return { messages: [...answerToolCalls(allCalls, "não deu"), new AIMessage(proposal.reason)] };
+      }
+      if (proposal.kind === "draft") {
+        return {
+          messages: [...answerToolCalls(allCalls, "proposto — aguardando confirmação"), new AIMessage(proposal.echo)],
+          pendingDraft: { echo: proposal.echo, expiresAt, approvalId: proposal.approvalId },
+          pendingWrite: null,
+          pendingRevert: null,
+          pendingConfigChange: null,
+        };
+      }
+      // scale raise → ação adjust_budget (guardrail re-checa no applyWrite).
+      const echo = `Vou escalar subindo o budget: ${proposal.action.reason}. Confirma?`;
+      return {
+        messages: [...answerToolCalls(allCalls, "proposto — aguardando confirmação"), new AIMessage(echo)],
+        pendingWrite: { echo, expiresAt, actions: [proposal.action] },
+        pendingDraft: null,
+        pendingRevert: null,
+      };
+    }
+
     // DESFAZER (5c-4): eco de reversão + congela pendingRevert. A ação real (por id) é
     // aplicada no applyWrite; aqui só monta o eco (rótulos vêm do find_recent_actions).
     const revertCalls = allCalls.filter((c) => c.name === REVERT_TOOL_NAME);
@@ -727,6 +772,24 @@ export function makeConversationNodes(
         pendingWrite: null,
         pendingRevert: null,
         pendingConfigChange: null,
+        pendingDraft: null,
+      };
+    }
+
+    // RASCUNHO confirmado (Fatia 7): enfileira a saga de criação (mesmo apply-service do
+    // site) — o worker re-checa o guardrail de gasto novo, cria e empurra o desfecho.
+    const pendingDraft = activePendingDraft(state.pendingDraft);
+    if (pendingDraft) {
+      await deps.ports.scheduler.enqueue({
+        queue: APPROVAL_APPLY_QUEUE,
+        name: APPROVAL_APPLY_JOB,
+        payload: { orgId: ctx.orgId, approvalId: pendingDraft.approvalId, notifyRef: ctx.ref },
+      });
+      return {
+        messages: [...answerToolCalls(calls, "criando"), new AIMessage("Beleza, tô criando — te aviso quando ficar pronto. 🚀")],
+        pendingDraft: null,
+        pendingWrite: null,
+        pendingRevert: null,
       };
     }
 
@@ -819,6 +882,7 @@ export function routeConversation(
     toolCalls.some(
       (c) =>
         WRITE_TOOL_NAMES.has(c.name) ||
+        CREATE_TOOL_NAMES.has(c.name) ||
         c.name === REVERT_TOOL_NAME ||
         c.name === DESCRIBE_CAPABILITIES_TOOL_NAME ||
         isConfirmableConfigTool(c.name),
