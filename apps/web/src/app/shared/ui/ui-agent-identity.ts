@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 import { AGENT_NAME } from '@core/brand';
 
-// Identidade visual persistente do agente: símbolo tomate + nome fixo (Roi).
+// Identidade visual persistente do agente: símbolo tomate + nome fixo (Roy).
 // Substitui o ✨ sparkles genérico (regra No Generic AI). Reusa .brand-lockup/.brand-mark.
 @Component({
   selector: 'app-ui-agent-identity',

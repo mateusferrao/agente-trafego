@@ -4,15 +4,15 @@ Fonte da verdade de **design/UX**. Baseado nos padrões reais da plataforma **Au
 
 ## North-star — "Bold Operational Desk"
 
-Skin de marca **neobrutalista refinado** (bordas 2px, sombra sólida offset, paper quente, tomate + menta + navy) sobre um **núcleo operacional calmo** para o trabalho denso e sensível a dinheiro. **Manychat no espírito** (acessível, caloroso, sem jargão, chat-native — herdado do site `autotraffic`, NÃO do app Manychat nem do azul dele), **operacional na substância**. A IA é **infraestrutura embutida encarnada no agente Roi**, nunca um chatbot à parte nem glitter genérico. Detalhe completo de tokens/componentes = `apps/web/DESIGN.md`.
+Skin de marca **neobrutalista refinado** (bordas 2px, sombra sólida offset, paper quente, tomate + menta + navy) sobre um **núcleo operacional calmo** para o trabalho denso e sensível a dinheiro. **Manychat no espírito** (acessível, caloroso, sem jargão, chat-native — herdado do site `autotraffic`, NÃO do app Manychat nem do azul dele), **operacional na substância**. A IA é **infraestrutura embutida encarnada no agente Roy**, nunca um chatbot à parte nem glitter genérico. Detalhe completo de tokens/componentes = `apps/web/DESIGN.md`.
 
 **Regras nomeadas (obrigatórias):**
 - **Two-Tier Surface** — superfícies "Marca" (decisão/onboarding/conversa) levam a assinatura bold (borda 2px + offset ~3px); superfícies "Workspace" (tabelas/config/shell) ficam calmas e planas. Offset nunca em grid denso.
 - **Brand Accent (tomate)** — tomate só p/ seleção/estado ativo/marca. >10% de tomate saturado = o accent parou de funcionar.
-- **No Generic AI** — sem gradiente roxo-azul, glow neon, blob de "IA" nem ✨ sparkles. A identidade da IA é o Roi + o símbolo tomate.
+- **No Generic AI** — sem gradiente roxo-azul, glow neon, blob de "IA" nem ✨ sparkles. A identidade da IA é o Roy + o símbolo tomate.
 - **Product Scale** — tipografia de produto (compacta), sem type de landing dentro do app.
 - **Solid Layer** — a camada é a sombra sólida offset; blur só micro-elevação em overlays reais. Glass-como-padrão aposentado.
-- **Personality Budget** — micro-encanto em loading/empty/sucesso/identidade do Roi; **proibido** em erro/dinheiro/dados densos.
+- **Personality Budget** — micro-encanto em loading/empty/sucesso/identidade do Roy; **proibido** em erro/dinheiro/dados densos.
 - **Voz própria, sem cara de IA** — sem travessão dramático, "não é só X, é Y", tríades, hype, confete de "!", emoji-como-personalidade na UI. Tom por zona (Marca lúdico / Operacional neutro / Crítica preciso) + guardrail B2B (nada lúdico no que o gestor mostra ao cliente dele).
 - **Status = tom + texto**, nunca só cor. Dois vermelhos (tomate marca × vermelho perigo) sempre com ícone+texto.
 
@@ -64,7 +64,7 @@ Org, usuários (self-signup + membros), beta/assinatura, perfil, tema. Reusa o p
 
 ## Onboarding (first-run)
 
-Contas vazio → CTA → **connect-dialog** (state machine `intro → credentials → connecting → success → error`): colar token → validar (trata erro 190) → **listar contas** (`GET /me/adaccounts`) → escolher → agente **auto-semeado** pelo arquétipo default. Ao selecionar, **dispara a 1ª análise automaticamente** (trigger `onboarding`) — o momento de valor. A tela de **sucesso apresenta o Roi** (beat não-bloqueante, sem passo extra) e é **state-aware do WhatsApp**: conectado → *"O Roi já está analisando {conta} e te avisa no WhatsApp"*; não conectado → *"O resultado aparece aqui. Conecte seu WhatsApp para o Roi te avisar por lá também"* + CTA. Depois, prompt conectar **WhatsApp** (Integrações, QR). Texto de privacidade: *"não armazenamos sua senha — só o token de acesso autorizado"*.
+Contas vazio → CTA → **connect-dialog** (state machine `intro → credentials → connecting → success → error`): colar token → validar (trata erro 190) → **listar contas** (`GET /me/adaccounts`) → escolher → agente **auto-semeado** pelo arquétipo default. Ao selecionar, **dispara a 1ª análise automaticamente** (trigger `onboarding`) — o momento de valor. A tela de **sucesso apresenta o Roy** (beat não-bloqueante, sem passo extra) e é **state-aware do WhatsApp**: conectado → *"O Roy já está analisando {conta} e te avisa no WhatsApp"*; não conectado → *"O resultado aparece aqui. Conecte seu WhatsApp para o Roy te avisar por lá também"* + CTA. Depois, prompt conectar **WhatsApp** (Integrações, QR). Texto de privacidade: *"não armazenamos sua senha — só o token de acesso autorizado"*.
 
 ## Componente net-new — `ui-timeline`
 
@@ -80,7 +80,7 @@ Tipos de evento: `analysis_started` · `analysis_completed` · `recommendation_c
 - **Sempre mostrar o que está acontecendo:** loading/progresso/vazio/sucesso claros. Usuário nunca no escuro (ex: *"Analisando sua conta… ~1 min"*).
 - **Sempre o próximo passo:** empty states e confirmações apontam a ação.
 - **Voz:** sentence case; sem "please"; status = tom+texto. **Voz própria, sem cara de IA** (sem travessão dramático, "não é só X, é Y", hype, confete de "!", jargão de IA). **Tom por zona:** Marca lúdico (voz própria, ex.: *"Bora conectar sua conta Meta?"*), Operacional neutro (*"Configuração salva"*), Crítica preciso (*"Não consegui validar seu token da Meta. Confira se ele está ativo e cole novamente."*). Guardrail B2B: nada lúdico no que o gestor mostra ao cliente dele.
-- **Agente = Roi** (nome de marca fixo em toda a org — contas + concierge; persona/tom customizável por conta, só o nome é fixo). 1ª menção numa tela qualifica (*"o Roi, seu agente de tráfego"*), depois só *"Roi"*; identidade visual persistente (símbolo tomate + "Roi").
+- **Agente = Roy** (nome de marca fixo em toda a org — contas + concierge; persona/tom customizável por conta, só o nome é fixo). 1ª menção numa tela qualifica (*"o Roy, seu agente de tráfego"*), depois só *"Roy"*; identidade visual persistente (símbolo tomate + "Roy").
 
 ## Mapa de reuso (Automato → nosso)
 

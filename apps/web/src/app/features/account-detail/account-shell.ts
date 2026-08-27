@@ -29,7 +29,7 @@ import { AccountContextStore } from "./account-context.store";
         <a routerLink="/accounts" class="text-xs text-muted hover:text-ink">← Contas</a>
         <app-ui-page-header [title]="store.accountName()" [subtitle]="store.accountSubtitle()">
           <div class="flex flex-wrap items-center gap-2" actions>
-            <!-- Identidade do agente: marca + Roi + status (tom + texto), sem pill washed. -->
+            <!-- Identidade do agente: marca + Roy + status (tom + texto), sem pill washed. -->
             <span class="inline-flex items-center gap-2.5">
               <app-ui-agent-identity />
               <span

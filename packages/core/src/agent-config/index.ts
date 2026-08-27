@@ -20,6 +20,9 @@ import type {
   Volume,
 } from "@trafego/shared";
 import {
+  AGENT_IDENTITY_FIELD_MAX,
+  AGENT_PROMPT_FIELD_MAX,
+  AGENT_TEXT_FIELD_MAX,
   ANALYSIS_WINDOW_DEFAULT_DAYS,
   ANALYSIS_WINDOW_MAX_DAYS,
   ANALYSIS_WINDOW_MIN_DAYS,
@@ -225,6 +228,27 @@ export function resolveAgentConfigChange(
   const nextTone = patch.tone !== undefined ? trimOrNull(patch.tone) : state.tone;
   const nextSystemPrompt =
     patch.systemPrompt !== undefined ? trimOrNull(patch.systemPrompt) : state.systemPrompt;
+
+  // Teto de texto (mesmo do site/API): o chat pode mandar textão. NÃO trunca em
+  // silêncio (perderia sentido) — devolve erro guiando o agente a OFERECER condensar
+  // mantendo o essencial (regra no system prompt). Só valida o que o patch tocou.
+  const tooLong =
+    (patch.businessContext !== undefined && overCap(nextBusinessContext, AGENT_TEXT_FIELD_MAX, CONFIG_CHANGE_LABELS.businessContext)) ||
+    (patch.guidance !== undefined && overCap(nextGuidance, AGENT_TEXT_FIELD_MAX, CONFIG_CHANGE_LABELS.guidance)) ||
+    (patch.persona !== undefined && overCap(nextPersona, AGENT_IDENTITY_FIELD_MAX, CONFIG_CHANGE_LABELS.persona)) ||
+    (patch.tone !== undefined && overCap(nextTone, AGENT_IDENTITY_FIELD_MAX, CONFIG_CHANGE_LABELS.tone)) ||
+    (patch.systemPrompt !== undefined && overCap(nextSystemPrompt, AGENT_PROMPT_FIELD_MAX, CONFIG_CHANGE_LABELS.systemPrompt));
+  if (tooLong) {
+    return {
+      next: state,
+      changed: [],
+      runRelevantChanged: false,
+      cadenceChanged: false,
+      notifyPolicyChanged: false,
+      weakensSafety: false,
+      error: tooLong,
+    };
+  }
   const nextCadence = patch.cadence !== undefined ? patch.cadence : state.cadence;
   const nextWindow = patch.analysisWindowDays ?? state.analysisWindowDays;
   const nextModelConfig = mergeAdvancedConfig(state.modelConfig, nextWindow, patch.modelConfig);
@@ -394,6 +418,16 @@ export function cleanGuardrails(g: GuardrailConfigPatch): GuardrailConfig {
 export function trimOrNull(s: string): string | null {
   const t = s.trim();
   return t.length > 0 ? t : null;
+}
+
+/**
+ * Se o texto passou do teto, devolve a mensagem de erro (que guia o agente a
+ * OFERECER condensar mantendo o essencial); senão `null`. Não trunca — quem decide
+ * o corte é o agente/usuário, não o sistema.
+ */
+export function overCap(value: string | null, max: number, label: string): string | null {
+  if (value === null || value.length <= max) return null;
+  return `O texto de ${label} ficou com ${value.length} caracteres, mas o limite é ${max}. Não dá pra salvar assim — me diga que quer que eu resuma mantendo o essencial e eu proponho uma versão mais curta.`;
 }
 
 /** Modo de escrita de um campo de texto acumulativo (orientações/contexto). */

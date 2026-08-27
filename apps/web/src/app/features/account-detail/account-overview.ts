@@ -130,7 +130,7 @@ export class AccountOverview {
   protected readonly store = inject(AccountContextStore);
   private readonly api = inject(DashboardApiService);
   protected readonly defaultCurrency = DEFAULT_CURRENCY;
-  // Copy de Marca (tom lúdico, voz própria, com aposto na 1ª menção do Roi).
+  // Copy de Marca (tom lúdico, voz própria, com aposto na 1ª menção do Roy).
   protected readonly analyzingTitle = `${AGENT_NAME} está analisando sua conta`;
   protected readonly analysisSteps = [
     "Puxando os números dos últimos dias",

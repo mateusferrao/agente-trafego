@@ -180,7 +180,7 @@ const REASON_LABEL: Record<Reason, string> = {
   `,
 })
 export class DashboardPage {
-  // Marca: 1ª menção do agente apresenta o Roi (aposto).
+  // Marca: 1ª menção do agente apresenta o Roy (aposto).
   protected readonly emptyDescription = `Ligue uma conta Meta e o ${AGENT_NAME}, seu agente de tráfego, começa a analisar e sugerir melhorias.`;
   private readonly api = inject(DashboardApiService);
 

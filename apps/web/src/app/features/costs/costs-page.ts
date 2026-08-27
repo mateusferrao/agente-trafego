@@ -131,6 +131,7 @@ function presetRange(key: string): { since: string; until: string } {
             Até
             <app-ui-date-field
               class="w-36"
+              align="end"
               [value]="until()"
               ariaLabel="Data final"
               (valueChange)="setUntil($event)"

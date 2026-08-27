@@ -62,7 +62,7 @@ const RELOAD_MS = 5000;
   `,
 })
 export class AccountsPage {
-  // Marca: 1ª menção do agente apresenta o Roi (aposto).
+  // Marca: 1ª menção do agente apresenta o Roy (aposto).
   protected readonly emptyDescription = `Conecte sua conta Meta em Integrações e escolha quais contas o ${AGENT_NAME}, seu agente de tráfego, vai acompanhar.`;
   private readonly api = inject(DashboardApiService);
   private readonly router = inject(Router);

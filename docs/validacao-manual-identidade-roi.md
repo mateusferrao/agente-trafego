@@ -1,6 +1,6 @@
-# Roteiro de validação manual — Identidade neobrutalista + agente Roi
+# Roteiro de validação manual — Identidade neobrutalista + agente Roy
 
-Branch: `feat/brand-identity-roi`. Objetivo: conferir, passo a passo, a nova identidade visual (Bold Operational Desk), o agente **Roi** e a copy de marca — em **light e dark**.
+Branch: `feat/brand-identity-roi`. Objetivo: conferir, passo a passo, a nova identidade visual (Bold Operational Desk), o agente **Roy** e a copy de marca — em **light e dark**.
 
 ## 0. Subir o ambiente
 
@@ -27,30 +27,30 @@ Alterne o tema no shell (claro/escuro/sistema) e confira em cada modo:
 
 ## 3. E-mails (marca robusta) — dispare cada um e abra no cliente
 - **Verificação (OTP):** header com wordmark "Auto**Traffic**" (Traffic em tomate), card branco, código destacado. Sóbrio.
-- **Acesso liberado:** apresenta o Roi — *"Seu acesso está liberado. Entre e conheça o Roi, seu agente de tráfego."* + botão navy "Entrar agora". Sem "!".
-- **Reset de senha / conta já existe:** sóbrios, sem citar Roi, sem travessão.
+- **Acesso liberado:** apresenta o Roy — *"Seu acesso está liberado. Entre e conheça o Roy, seu agente de tráfego."* + botão navy "Entrar agora". Sem "!".
+- **Reset de senha / conta já existe:** sóbrios, sem citar Roy, sem travessão.
 - `Esperado`: renderiza bem em Gmail/Outlook/Apple Mail (CSS inline + tabela; sem depender de Archivo).
 
 ## 4. Onboarding + auto-análise (precisa de token Meta System User)
 1. `/integrations` → conectar Meta → colar token → escolher conta(s) → concluir.
 2. **`Esperado` (novo comportamento):** ao selecionar, dispara **automaticamente** a 1ª análise (run `trigger=onboarding`) e registra o schedule. Confira no worker log: `agent-run:execute` com a conta; e no banco `SELECT trigger,status FROM agent_runs ORDER BY created_at DESC LIMIT 1;` → `onboarding`.
-3. Abra a conta → estado **"Roi está analisando sua conta"** com o **símbolo tomate pulsando** + narrativa de progresso (Puxando os números / Vendo onde o dinheiro foi / …). Reassurance honesta sobre o WhatsApp.
-4. Sem conta conectada ainda, o empty state de `/accounts` e do Painel apresenta o Roi (aposto): *"…o Roi, seu agente de tráfego, …"*.
+3. Abra a conta → estado **"Roy está analisando sua conta"** com o **símbolo tomate pulsando** + narrativa de progresso (Puxando os números / Vendo onde o dinheiro foi / …). Reassurance honesta sobre o WhatsApp.
+4. Sem conta conectada ainda, o empty state de `/accounts` e do Painel apresenta o Roy (aposto): *"…o Roy, seu agente de tráfego, …"*.
 
-## 5. Identidade persistente do Roi
-- No **cabeçalho da conta** (`/accounts/:id`): bloco **símbolo tomate + "Roi"** ao lado do status do agente.
-- Copy: 1ª menção numa tela = "o Roi, seu agente de tráfego"; depois só "Roi".
+## 5. Identidade persistente do Roy
+- No **cabeçalho da conta** (`/accounts/:id`): bloco **símbolo tomate + "Roy"** ao lado do status do agente.
+- Copy: 1ª menção numa tela = "o Roy, seu agente de tráfego"; depois só "Roy".
 
 ## 6. Superfície em 2 níveis (Two-Tier)
 - **Marca (bold):** empty states, cards de aprovação, momentos de decisão — borda 2px + offset.
 - **Workspace (calmo):** tabelas/KPIs, config do agente, shell, custos — plano, borda fina, sem offset.
 
 ## 7. Aprovações — `/approvals`
-- Empty state com Roi. Toasts sem travessão ("Enviado para aplicação. O agente aplica em instantes."). Status = tom + texto (nunca só cor). Dois vermelhos (seleção tomate × perigo) sempre com ícone/rótulo.
+- Empty state com Roy. Toasts sem travessão ("Enviado para aplicação. O agente aplica em instantes."). Status = tom + texto (nunca só cor). Dois vermelhos (seleção tomate × perigo) sempre com ícone/rótulo.
 
 ## 8. Agente no WhatsApp (precisa de Evolution + contato verificado)
-- Em DM e no concierge (org multi-conta), o agente **se apresenta como Roi**. Persona/tom seguem os do arquétipo/config (customizáveis) — só o **nome** é fixo.
-- "digitando…" só aparece quando o Roi compõe resposta de conversa (não como loader de análise).
+- Em DM e no concierge (org multi-conta), o agente **se apresenta como Roy**. Persona/tom seguem os do arquétipo/config (customizáveis) — só o **nome** é fixo.
+- "digitando…" só aparece quando o Roy compõe resposta de conversa (não como loader de análise).
 
 ## 9. Acessibilidade
 - Contraste AA (primário navy, textos, os dois vermelhos). Foco visível. `prefers-reduced-motion` desliga pulso/typing/skeleton/afundar.

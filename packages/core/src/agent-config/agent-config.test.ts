@@ -110,6 +110,21 @@ describe("resolveAgentConfigChange — validação", () => {
     expect(r.error).toBeUndefined();
     expect(r.next.goals).toEqual({ conversionGoal: "custom", customConversionId: "123" });
   });
+
+  it("orientações acima do teto → error (não trunca) guiando a condensar; estado inalterado", () => {
+    const state = baseState({ guidance: "ok" });
+    const r = resolve(state, { guidance: "x".repeat(9000) });
+    expect(r.error).toContain("limite");
+    expect(r.error).toContain("resuma"); // guia o agente a condensar
+    expect(r.next).toBe(state); // não escreveu o textão
+    expect(r.changed).toEqual([]);
+  });
+
+  it("texto no limite exato passa (inclusive)", () => {
+    const r = resolve(baseState(), { businessContext: "y".repeat(8000) });
+    expect(r.error).toBeUndefined();
+    expect(r.next.businessContext).toBe("y".repeat(8000));
+  });
 });
 
 describe("resolveAgentConfigChange — runRelevantChanged / cadenceChanged", () => {

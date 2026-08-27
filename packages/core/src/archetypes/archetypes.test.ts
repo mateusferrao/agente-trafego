@@ -115,7 +115,7 @@ describe("composeAgentVoice", () => {
     guidance: null,
   };
 
-  it("injeta o nome fixo Roi no início da identidade", () => {
+  it("injeta o nome fixo Roy no início da identidade", () => {
     const out = composeAgentVoice(input);
     expect(out).toContain(`Você é ${AGENT_NAME}`);
     expect(out.startsWith(`Você é ${AGENT_NAME}`)).toBe(true); // nome vem primeiro
