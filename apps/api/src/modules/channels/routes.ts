@@ -13,7 +13,10 @@ export const channelsRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.get("/channels/status", guard, async (request) => {
-    return service.status(orgIdOf(request));
+    // `?live=true` força o probe ao vivo na Evolution (fluxo de QR); o padrão lê o
+    // estado persistido — instantâneo para o render da tela de integrações.
+    const live = (request.query as { live?: string }).live === "true";
+    return service.status(orgIdOf(request), { live });
   });
 
   // Desconecta (logout) o número da org — mantém a instância p/ re-parear.

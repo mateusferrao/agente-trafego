@@ -69,14 +69,27 @@ export function createChannelsService(deps: ChannelsDeps) {
       return state;
     },
 
-    /** Estado atual do canal da org (sem QR). */
-    async status(orgId: OrgId): Promise<InstanceState> {
+    /**
+     * Estado atual do canal da org (sem QR). Padrão = estado **persistido** no DB
+     * (rápido, sem round-trip à Evolution) — mantido fresco pelo webhook
+     * `CONNECTION_UPDATE` e pelos próprios connect/disconnect. `live` força o probe
+     * ao vivo (`getState`), necessário só no fluxo de QR, que precisa detectar o
+     * pareamento em tempo real.
+     */
+    async status(orgId: OrgId, opts?: { readonly live?: boolean }): Promise<InstanceState> {
       const [row] = await deps.db
-        .select({ evolutionInstance: channelInstances.evolutionInstance })
+        .select({
+          evolutionInstance: channelInstances.evolutionInstance,
+          status: channelInstances.status,
+          phone: channelInstances.phone,
+        })
         .from(channelInstances)
         .where(eq(channelInstances.orgId, orgId))
         .limit(1);
       if (!row) return { status: "disconnected" };
+      if (!opts?.live) {
+        return { status: row.status, ...(row.phone ? { phone: row.phone } : {}) };
+      }
       const state = await deps.messaging.getState({ instanceId: row.evolutionInstance });
       await persistState(orgId, state);
       return state;

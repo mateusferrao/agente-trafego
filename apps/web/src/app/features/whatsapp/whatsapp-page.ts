@@ -398,7 +398,7 @@ export class WhatsappConnect {
       this.destroyed = true;
       this.stopCountdown();
     });
-    this.api.status(true).subscribe({
+    this.api.status(true, true).subscribe({
       next: (s) => {
         if (!this.connectStarted) this.applyState(s); // não sobrescreve um QR recém-obtido
         this.loading.set(false);
@@ -630,7 +630,8 @@ export class WhatsappConnect {
     if (this.destroyed || this.connected()) return;
     // silent: o polling não pode spammar toast a cada blip — reage pela UI
     // (estado "instável") e emite um toast único ao esgotar as tentativas.
-    this.api.status(true).subscribe({
+    // live: o polling do QR precisa do estado real da Evolution p/ detectar o pareamento.
+    this.api.status(true, true).subscribe({
       next: (s) => {
         this.pollErrors = 0;
         this.pollStalled.set(false);

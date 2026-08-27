@@ -3,7 +3,7 @@
 // (grade/campanhas/recomendações, datado) + mini-surface acionável. Reusa o
 // AccountContextStore (provido pelo shell) p/ run/recomendações/voto/silenciar.
 
-import { ChangeDetectionStrategy, Component, DestroyRef, inject, signal } from "@angular/core";
+import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from "@angular/core";
 import { NgIcon, provideIcons } from "@ng-icons/core";
 import { lucideRefreshCw, lucideActivity } from "@ng-icons/lucide";
 import { UiButton, UiEmptyState, UiSpinner, UiAnalysisProgress, UiSkeleton } from "@ui";
@@ -92,11 +92,11 @@ const MAX_POLLS = 6;
             </div>
           }
         </div>
-      } @else if (store.run() === null) {
+      } @else if (showEmptyState()) {
         <app-ui-empty-state
           icon="lucideActivity"
-          title="Rode a primeira análise"
-          [description]="firstRunDescription"
+          [title]="emptyTitle()"
+          [description]="emptyDescription()"
         >
           <button appButton variant="primary" type="button" actions (click)="store.analyze()">Analisar agora</button>
         </app-ui-empty-state>
@@ -134,6 +134,8 @@ export class AccountOverview {
     "Separando o que vale a pena mexer",
   ];
   protected readonly firstRunDescription = `O ${AGENT_NAME}, seu agente de tráfego, analisa suas campanhas e sugere melhorias sem mexer em nada na sua conta.`;
+  // Run concluído mas sem nada a mostrar (conta sem campanhas/movimento pra avaliar).
+  protected readonly emptyResultDescription = `O ${AGENT_NAME} olhou a conta e não achou campanhas com movimento pra avaliar. Assim que houver anúncios rodando ele entra em ação. Se quiser, rode uma análise agora pra dar uma olhada.`;
   protected readonly analyzingReassurance = `Pode fechar esta tela. O resultado fica salvo aqui e, se o seu WhatsApp estiver conectado, o ${AGENT_NAME} te avisa por lá.`;
   protected readonly skeletonRows = [1, 2];
   // funções de formatação compartilhadas expostas ao template.
@@ -144,6 +146,26 @@ export class AccountOverview {
   protected readonly live = signal<LiveMetricsOutput | null>(null);
   protected readonly refreshing = signal(false);
   private destroyed = false;
+
+  /**
+   * Run concluído mas sem nada a exibir — a conta não tem métricas/campanhas/recomendações
+   * pra mostrar (espelha o `hasResults` do analysis-detail, invertido). Ex.: conta sem
+   * campanhas com movimento. Evita a casca vazia; cai no mesmo empty-state acionável.
+   */
+  private readonly runEmptyResult = computed<boolean>(() => {
+    const run = this.store.run();
+    if (!run || run.status === "failed") return false;
+    return !run.metrics && this.store.campaigns().length === 0 && this.store.recommendations().length === 0;
+  });
+  protected readonly showEmptyState = computed<boolean>(
+    () => this.store.run() === null || this.runEmptyResult(),
+  );
+  protected readonly emptyTitle = computed<string>(() =>
+    this.runEmptyResult() ? "Nada para analisar ainda" : "Rode a primeira análise",
+  );
+  protected readonly emptyDescription = computed<string>(() =>
+    this.runEmptyResult() ? this.emptyResultDescription : this.firstRunDescription,
+  );
 
   constructor() {
     inject(DestroyRef).onDestroy(() => (this.destroyed = true));

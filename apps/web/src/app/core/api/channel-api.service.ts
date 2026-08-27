@@ -35,12 +35,14 @@ export class ChannelApiService extends BaseApiService {
    * `GET /api/channels/status` — estado atual do canal (para polling do QR).
    * `silent` suprime o toast global de erro: o polling reage a blip transitório
    * pela própria UI (estado "instável" + toast único ao esgotar), sem spammar.
+   * `live` força o probe ao vivo na Evolution (necessário no fluxo de QR); o padrão
+   * lê o estado persistido no servidor — instantâneo, sem round-trip ao provedor.
    */
-  status(silent = false): Observable<ChannelStateOutput> {
-    return this.get<ChannelStateOutput>(
-      ['/channels', 'status'],
-      silent ? { context: silentApiContext() } : {},
-    );
+  status(silent = false, live = false): Observable<ChannelStateOutput> {
+    return this.get<ChannelStateOutput>(['/channels', 'status'], {
+      ...(silent ? { context: silentApiContext() } : {}),
+      ...(live ? { params: { live: true } } : {}),
+    });
   }
 
   /**
