@@ -515,6 +515,12 @@ function preview(text: string): string {
 
 /** Antes → depois de um campo de texto acumulativo (o dono vê append × replace). */
 function textBeforeAfter(before: string | null, after: string | null): string {
+  // APPEND: o texto novo entra no FIM. Truncar before→after esconderia justo o que muda
+  // (o preview de 140 chars corta antes de chegar no acréscimo). Mostra o DELTA adicionado.
+  if (before !== null && after !== null && after.length > before.length && after.startsWith(before)) {
+    const added = after.slice(before.length).trim();
+    if (added.length > 0) return `mantém o texto atual e ADICIONA: "${preview(added)}"`;
+  }
   const b = before === null ? "(vazio)" : `"${preview(before)}"`;
   const a = after === null ? "limpo" : `"${preview(after)}"`;
   return `${b} → ${a}`;

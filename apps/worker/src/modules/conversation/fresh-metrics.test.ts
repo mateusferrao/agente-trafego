@@ -94,6 +94,24 @@ describe("getFreshMetricsData", () => {
     expect(res.until).toBe("2026-08-24");
   });
 
+  it("recorte ONTEM (dia fechado): untilDaysAgo:1 → since=until=ontem (não o acumulado hoje+ontem)", async () => {
+    const { deps } = makeDeps([[ACCOUNT_ROW], SNAP]);
+    (deps as { now?: () => Date }).now = () => new Date("2026-08-27T12:00:00Z"); // BRT 09:00 → hoje 27/08
+    const res = (await getFreshMetricsData(deps, CTX, { untilDaysAgo: 1 })) as FreshMetricsData;
+    expect(res.since).toBe("2026-08-26");
+    expect(res.until).toBe("2026-08-26");
+    expect(res.periodDays).toBe(1);
+  });
+
+  it("recorte de PERÍODO arbitrário: sinceDaysAgo:3 + untilDaysAgo:2 → [3d atrás, 2d atrás]", async () => {
+    const { deps } = makeDeps([[ACCOUNT_ROW], SNAP]);
+    (deps as { now?: () => Date }).now = () => new Date("2026-08-27T12:00:00Z");
+    const res = (await getFreshMetricsData(deps, CTX, { sinceDaysAgo: 3, untilDaysAgo: 2 })) as FreshMetricsData;
+    expect(res.since).toBe("2026-08-24");
+    expect(res.until).toBe("2026-08-25");
+    expect(res.periodDays).toBe(2);
+  });
+
   it("sync degradou (partial) → updated:false (mostra o último salvo)", async () => {
     const { deps } = makeDeps([[ACCOUNT_ROW], SNAP], { partial: true, tokenInvalid: false, snapshotsWritten: 0 });
     const res = (await getFreshMetricsData(deps, CTX, {})) as FreshMetricsData;

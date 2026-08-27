@@ -9,7 +9,7 @@
 // curado" (§7) — o usuário PEDE dado atualizado; fica atrás desta tool opt-in.
 
 import { and, desc, eq, gte, lte } from "drizzle-orm";
-import { daysAgoInTz, todayInTz } from "@trafego/core";
+import { addDays, todayInTz } from "@trafego/core";
 import { adAccounts, entityAnalyses, insightsSnapshots, platformConnections, type Database } from "@trafego/db";
 import type { CredentialVaultPort } from "@trafego/shared/ports";
 import type { EntityLevel, StoredInsightMetrics } from "@trafego/shared/types";
@@ -206,10 +206,21 @@ export interface FreshMetricsCtx {
  * 3) lê o snapshot da janela (conta agregada ou campanha).
  * 4) sem linha no período (nem no salvo) → erro claro.
  */
+/** Argumentos de recorte temporal: qualquer dia isolado OU período contíguo em [hoje, 7d atrás].
+ *  `untilDaysAgo` = fim da janela em dias atrás (0=hoje, 1=ontem…); `sinceDaysAgo` = início (mais
+ *  antigo). `periodDays` = atalho p/ "últimos N dias terminando em untilDaysAgo" quando `sinceDaysAgo`
+ *  não vem. Dia isolado = só `untilDaysAgo` (ex.: ontem = untilDaysAgo:1). */
+export interface FreshMetricsArgs {
+  readonly periodDays?: number | null;
+  readonly sinceDaysAgo?: number | null;
+  readonly untilDaysAgo?: number | null;
+  readonly campaign?: string | null;
+}
+
 export async function getFreshMetricsData(
   deps: FreshMetricsDeps,
   ctx: FreshMetricsCtx,
-  args: { periodDays?: number | null; campaign?: string | null },
+  args: FreshMetricsArgs,
 ): Promise<FreshMetricsResult> {
   // Rede de segurança: QUALQUER exceção não prevista (decrypt corrompido, blip de
   // Postgres fora do try do sync — ex: latestDate) não pode vazar como texto cru pro
@@ -227,9 +238,17 @@ export async function getFreshMetricsData(
 async function getFreshMetricsDataInner(
   deps: FreshMetricsDeps,
   ctx: FreshMetricsCtx,
-  args: { periodDays?: number | null; campaign?: string | null },
+  args: FreshMetricsArgs,
 ): Promise<FreshMetricsResult> {
-  const days = clamp(args.periodDays ?? FRESH_METRICS_DEFAULT_DAYS, 1, FRESH_METRICS_MAX_DAYS);
+  // Recorte: `untilDaysAgo` (fim, 0=hoje) + início por `sinceDaysAgo` OU `periodDays` (janela
+  // terminando no fim) OU, sem nenhum, dia isolado no fim. Tudo dentro de [0, 7] dias atrás.
+  const untilAgo = clamp(args.untilDaysAgo ?? 0, 0, FRESH_METRICS_MAX_DAYS);
+  const sinceAgo =
+    args.sinceDaysAgo != null
+      ? clamp(args.sinceDaysAgo, untilAgo, FRESH_METRICS_MAX_DAYS)
+      : args.periodDays != null
+        ? clamp(untilAgo + clamp(args.periodDays, 1, FRESH_METRICS_MAX_DAYS) - 1, untilAgo, FRESH_METRICS_MAX_DAYS)
+        : untilAgo; // sem período → dia isolado no fim (ex.: ontem)
   const now = (deps.now ?? (() => new Date()))();
   const account = await loadAccountToken(deps.db, deps.vault, ctx.orgId, ctx.adAccountId);
   if (!account) return { error: "não encontrei uma conta ativa em foco pra consultar agora." };
@@ -266,8 +285,10 @@ async function getFreshMetricsDataInner(
     deps.logger.warn({ err: String(err) }, "fresh-metrics:sync falhou (fallback ao snapshot)");
   }
 
-  const until = todayInTz(now, ctx.timezone);
-  const since = daysAgoInTz(now, ctx.timezone, days);
+  const today = todayInTz(now, ctx.timezone);
+  const until = addDays(today, -untilAgo);
+  const since = addDays(today, -sinceAgo);
+  const days = sinceAgo - untilAgo + 1; // nº de dias civis na janela (p/ o rótulo)
 
   const rows = await readSnapshotRows(deps.db, ctx.orgId, account.id, level, entityId, since, until);
   if (rows.length === 0) {

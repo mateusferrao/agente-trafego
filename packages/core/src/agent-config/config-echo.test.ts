@@ -124,10 +124,23 @@ describe("buildConfigChangeEcho", () => {
     expect(echo).toContain('orientações ao agente: "orientação antiga" → limpo');
   });
 
-  it("orientações: eco mostra ANTES → DEPOIS (o dono vê append × replace)", () => {
+  it("orientações (append): eco mostra o DELTA adicionado (não before→after truncado)", () => {
     const cur = baseState({ guidance: "A" });
     const echo = echoFor(cur, { guidance: "A\nB" }); // append já mesclado pelo chamador
-    expect(echo).toContain('orientações ao agente: "A" → "A B"');
+    expect(echo).toContain('orientações ao agente: mantém o texto atual e ADICIONA: "B"');
+  });
+
+  it("orientações (append longo): mostra o TRECHO NOVO mesmo com base grande (não some)", () => {
+    const base = "x".repeat(500);
+    const cur = baseState({ guidance: base });
+    const echo = echoFor(cur, { guidance: `${base}\nnova regra importante` }); // append
+    expect(echo).toContain("nova regra importante"); // o delta aparece, mesmo com base > 140 chars
+  });
+
+  it("orientações (replace): eco mostra antes → depois", () => {
+    const cur = baseState({ guidance: "antigo" });
+    const echo = echoFor(cur, { guidance: "totalmente novo" }); // replace (não começa com o atual)
+    expect(echo).toContain('orientações ao agente: "antigo" → "totalmente novo"');
   });
 
   it("proatividade: liga o pulso e mostra a linha em PT, sem afrouxar segurança", () => {
