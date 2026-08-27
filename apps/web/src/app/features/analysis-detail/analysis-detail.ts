@@ -224,8 +224,8 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                 }
                 @if (findingRefs(c).length > 0) {
                   <div class="flex flex-wrap gap-2">
-                    @for (r of findingRefs(c); track r.label) {
-                      <app-ui-evidence [tone]="evidenceTone(c)">{{ r.label }} {{ r.value }}</app-ui-evidence>
+                    @for (r of findingRefs(c); track $index) {
+                      <app-ui-evidence [tone]="evidenceTone(c)">{{ r }}</app-ui-evidence>
                     }
                   </div>
                 }
@@ -394,9 +394,53 @@ export class AnalysisDetail {
   protected stageLabel(stage: Stage): string {
     return STAGE_LABEL[stage];
   }
-  /** metricRefs do achado principal (evidência) — vazio se ausente (histórico). */
-  protected findingRefs(c: Campaign): { label: string; value: string }[] {
-    return c.topFinding?.metricRefs ?? [];
+  /**
+   * metricRefs do achado principal (evidência) — vazio se ausente (histórico).
+   * A LLM emite label + valor crus e inconsistentes (ex.: "ReplyRate" 0.9173,
+   * "CPA atual" 2.2065, "Flag" "cpa_acima_da_meta"); aqui deixamos amigável de
+   * forma determinística — rótulo em PT/humanizado + valor formatado pelo tipo
+   * inferido do rótulo (taxa → %, custo → moeda, ROAS → ×, contagem → inteiro),
+   * e valores string humanizados. Não toca no tom da LLM. Devolve o texto pronto.
+   */
+  protected findingRefs(c: Campaign): string[] {
+    return (c.topFinding?.metricRefs ?? []).map((r) => this.evidenceText(r));
+  }
+
+  private evidenceText(ref: { label: string; value: number | string }): string {
+    const key = normalizeMetricKey(ref.label);
+    const meta = METRIC_META[key];
+    const kind = meta?.kind ?? inferEvidenceKind(key);
+    let label = meta?.label ?? humanizeText(ref.label);
+    // A LLM às vezes manda o número como string ("2.2065") — trata como número.
+    const num = typeof ref.value === 'number' ? ref.value : parseNumeric(ref.value);
+    let value: string;
+    if (num !== null) {
+      value = this.formatByKind(num, kind);
+    } else {
+      value = humanizeText(String(ref.value));
+      // rótulos genéricos ("flag"/"status"/"sinal") não agregam — o valor já fala.
+      if (GENERIC_LABEL_KEYS.has(key)) label = '';
+    }
+    return `${label} ${value}`.replace(/\s+/g, ' ').trim();
+  }
+
+  private formatByKind(v: number, kind: EvidenceKind): string {
+    switch (kind) {
+      case 'rate': {
+        const p = Math.abs(v) <= 1 ? v * 100 : v;
+        return `${trimNumber(p, Math.abs(p) < 10 ? 2 : 0)}%`;
+      }
+      case 'currency':
+        return formatCurrency(v, this.currency());
+      case 'ratio':
+        return `${trimNumber(v, 2)}x`;
+      case 'decimal':
+        return trimNumber(v, 1);
+      case 'count':
+        return formatInteger(v);
+      default:
+        return Number.isInteger(v) ? formatInteger(v) : trimNumber(v, 2);
+    }
   }
   protected evidenceTone(c: Campaign): 'neutral' | 'danger' | 'success' {
     const sev = c.topFinding?.severity;
@@ -426,6 +470,108 @@ export class AnalysisDetail {
 
 const DEFAULT_CURRENCY = 'BRL';
 const CURRENCY_LOCALE = 'pt-BR';
+
+/** Como formatar o valor de uma evidência (chip de metricRef). */
+type EvidenceKind = 'rate' | 'currency' | 'ratio' | 'decimal' | 'count' | 'raw';
+
+/**
+ * Métricas conhecidas → rótulo em PT + tipo de formatação. Cobre as chaves que a
+ * LLM costuma citar (cruas, em inglês/camelCase, ou já em PT). Chave desconhecida
+ * cai no rótulo original + formatação numérica genérica (sem inventar semântica).
+ */
+const METRIC_META: Record<string, { label: string; kind: EvidenceKind }> = {
+  replyrate: { label: 'Taxa de resposta', kind: 'rate' },
+  taxaderesposta: { label: 'Taxa de resposta', kind: 'rate' },
+  depthrate: { label: 'Conversas que avançam', kind: 'rate' },
+  conversasqueavancam: { label: 'Conversas que avançam', kind: 'rate' },
+  ctr: { label: 'CTR', kind: 'rate' },
+  cvr: { label: 'Taxa de conversão', kind: 'rate' },
+  conversionrate: { label: 'Taxa de conversão', kind: 'rate' },
+  taxadeconversao: { label: 'Taxa de conversão', kind: 'rate' },
+  hookrate: { label: 'Retenção inicial', kind: 'rate' },
+  cpa: { label: 'CPA', kind: 'currency' },
+  cpc: { label: 'CPC', kind: 'currency' },
+  cpm: { label: 'CPM', kind: 'currency' },
+  spend: { label: 'Gasto', kind: 'currency' },
+  gasto: { label: 'Gasto', kind: 'currency' },
+  revenue: { label: 'Receita', kind: 'currency' },
+  receita: { label: 'Receita', kind: 'currency' },
+  roas: { label: 'ROAS', kind: 'ratio' },
+  frequency: { label: 'Frequência', kind: 'decimal' },
+  frequencia: { label: 'Frequência', kind: 'decimal' },
+  conversions: { label: 'Conversões', kind: 'count' },
+  conversoes: { label: 'Conversões', kind: 'count' },
+  results: { label: 'Resultados', kind: 'count' },
+  resultados: { label: 'Resultados', kind: 'count' },
+  clicks: { label: 'Cliques', kind: 'count' },
+  cliques: { label: 'Cliques', kind: 'count' },
+  impressions: { label: 'Impressões', kind: 'count' },
+  impressoes: { label: 'Impressões', kind: 'count' },
+  reach: { label: 'Alcance', kind: 'count' },
+  alcance: { label: 'Alcance', kind: 'count' },
+  purchases: { label: 'Compras', kind: 'count' },
+  compras: { label: 'Compras', kind: 'count' },
+  leads: { label: 'Leads', kind: 'count' },
+};
+
+/** Normaliza o rótulo p/ casar no mapa: minúsculas, sem acentos nem separadores. */
+function normalizeMetricKey(label: string): string {
+  return label
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
+
+/** R\u00f3tulos gen\u00e9ricos que n\u00e3o agregam ao lado do valor (o valor j\u00e1 descreve). */
+const GENERIC_LABEL_KEYS = new Set(['flag', 'status', 'sinal', 'motivo', 'reason']);
+/** Siglas que ficam em CAIXA ALTA ao humanizar texto cru. */
+const ACRONYMS = new Set(['cpa', 'cpc', 'cpm', 'cpl', 'cpv', 'ctr', 'roas', 'roi']);
+
+/**
+ * Infere o tipo de formata\u00e7\u00e3o por TOKEN presente na chave (cobre r\u00f3tulos compostos
+ * que o mapa exato n\u00e3o pega: "CPA atual", "Delta CPA vs baseline"). Custo antes de
+ * taxa (sen\u00e3o "cpa" cairia em rate). Chave sem token conhecido \u2192 cru.
+ */
+function inferEvidenceKind(key: string): EvidenceKind {
+  if (/(cpa|cpc|cpm|cpl|cpv|spend|gasto|custo|receita|revenue|budget|orcamento|ticket)/.test(key)) return 'currency';
+  if (/roas/.test(key)) return 'ratio';
+  if (/(taxa|rate|ctr|resposta|profundidade)/.test(key)) return 'rate';
+  if (/frequenc/.test(key)) return 'decimal';
+  if (/(conversas|conversoes|conversions|cliques|clicks|leads|compras|purchases|impress|alcance|reach|resultados|results)/.test(key)) {
+    return 'count';
+  }
+  return 'raw';
+}
+
+/** String estritamente num\u00e9rica ("2.2065", "-1,3", "133") \u2192 n\u00famero; sen\u00e3o null. */
+function parseNumeric(raw: string): number | null {
+  const t = raw.trim();
+  if (!/^-?\d+([.,]\d+)?$/.test(t)) return null;
+  const n = Number(t.replace(',', '.'));
+  return Number.isFinite(n) ? n : null;
+}
+
+/** snake_case/camelCase cru \u2192 texto leg\u00edvel; siglas conhecidas em caixa alta. */
+function humanizeText(raw: string): string {
+  const spaced = raw
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return spaced
+    .split(' ')
+    .map((w) => (ACRONYMS.has(w.toLowerCase()) ? w.toUpperCase() : w))
+    .join(' ');
+}
+
+function trimNumber(value: number, maxDecimals: number): string {
+  return new Intl.NumberFormat(CURRENCY_LOCALE, { maximumFractionDigits: maxDecimals }).format(value);
+}
+
+function formatInteger(value: number): string {
+  return new Intl.NumberFormat(CURRENCY_LOCALE, { maximumFractionDigits: 0 }).format(value);
+}
 
 function formatCurrency(value: number, currency: string): string {
   try {

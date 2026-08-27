@@ -528,8 +528,8 @@ textarea[appTextarea][surface='transparent']:focus-visible {
 }
 
 .brand-mark {
-  width: 1.125rem;
-  height: 1.125rem;
+  width: 1.5rem;
+  height: 1.5rem;
   flex: 0 0 auto;
   /* Logo oficial do tomate (silhueta real: corpo + folha) — asset em public/. */
   background: url('/brand-tomato.svg') center / contain no-repeat;
