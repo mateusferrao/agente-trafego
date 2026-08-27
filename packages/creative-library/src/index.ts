@@ -77,7 +77,10 @@ async function findReadyAsset(
 /**
  * Ingesta uma IMAGEM: grava o blob (StoragePort, content-addressed) → dedup por (conta,
  * storageRef) ANTES de subir (reusa e poupa o upload) → sobe pra plataforma (image_hash) →
- * registra o creative_asset. Idempotente por conteúdo. PURO de canal.
+ * registra o creative_asset. Dedup é **best-effort** (check-then-insert sem unique constraint):
+ * dois uploads idênticos concorrentes podem duplicar a linha — benigno na imagem (image_hash é
+ * content-addressed). Constraint única `(ad_account_id, storage_ref)` = fast-follow (ROADMAP).
+ * Gatilho mitigado (a UI desabilita o botão no upload; WhatsApp dedupa por messageId). PURO de canal.
  */
 export async function ingestCreativeImage(
   deps: CreativeIngestDeps,

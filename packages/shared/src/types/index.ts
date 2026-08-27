@@ -146,6 +146,9 @@ export const CONVERSION_GOALS = [
 
 export type ConversionGoal = (typeof CONVERSION_GOALS)[number];
 
+/** Objetivo default quando não há meta de negócio nem conversão dominante inferível (criação F7). */
+export const DEFAULT_CONVERSION_GOAL: ConversionGoal = "purchase";
+
 // ─── Postura de comunicação do agente (como ele FALA — não o que a análise decide) ──
 // Três eixos ORTOGONAIS que governam a VOZ do agente em toda superfície de fala
 // (push da análise, chat, pulso, narrativa do site) — nunca o output estruturado do

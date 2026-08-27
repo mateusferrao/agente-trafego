@@ -11,6 +11,10 @@ export const CREATIVE_VIDEO_POLL_JOB = "poll-video-status";
 export const CREATIVE_VIDEO_POLL_DELAY_MS = 8_000;
 /** teto de tentativas — ~16min a 8s; estourou = marca `error` (não fica pending pra sempre). */
 export const CREATIVE_VIDEO_POLL_MAX_ATTEMPTS = 120;
+/** retry do BullMQ p/ throw no CORPO do job (blip de DB no setStatus / Redis no re-enqueue) —
+ *  sem isso a cadeia morreria num blip transiente (job attempts=1 + removeOnFail). */
+export const CREATIVE_VIDEO_POLL_JOB_ATTEMPTS = 3;
+export const CREATIVE_VIDEO_POLL_JOB_BACKOFF_MS = 5_000;
 
 // `type` (não `interface`) → assignável a `JobSpec.payload` (Record<string, unknown>).
 export type CreativeVideoPollPayload = {
@@ -31,6 +35,8 @@ export function buildCreativeVideoPollJob(payload: CreativeVideoPollPayload): Jo
     name: CREATIVE_VIDEO_POLL_JOB,
     payload,
     delayMs: CREATIVE_VIDEO_POLL_DELAY_MS,
+    attempts: CREATIVE_VIDEO_POLL_JOB_ATTEMPTS,
+    backoffMs: CREATIVE_VIDEO_POLL_JOB_BACKOFF_MS,
     removeOnComplete: true,
     removeOnFail: true,
   };

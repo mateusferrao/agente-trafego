@@ -7,6 +7,7 @@ import type { Redis } from "ioredis";
 import { AGENT_REAPER_QUEUE, type AgentReaperTickPayload } from "@trafego/shared";
 import type { WorkerDeps } from "../composition.js";
 import { createRunReaper } from "../modules/dispatch/run-reaper.js";
+import { reapStalePendingVideos } from "./creative-video-poll.js";
 
 export function startAgentReaperWorker(
   deps: WorkerDeps,
@@ -22,7 +23,12 @@ export function startAgentReaperWorker(
     AGENT_REAPER_QUEUE,
     async () => {
       const count = await reaper.reapStale();
-      deps.logger.debug({ count }, "reaper:tick");
+      // piggyback: reaper de vídeo `pending` órfão (cadeia de poll perdida sem restart) — recorrente.
+      const videos = await reapStalePendingVideos(deps.db, deps.logger).catch((err: unknown) => {
+        deps.logger.warn({ err: String(err) }, "reaper:video sweep falhou");
+        return 0;
+      });
+      deps.logger.debug({ count, videos }, "reaper:tick");
     },
     { connection },
   );

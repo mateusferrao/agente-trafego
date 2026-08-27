@@ -32,6 +32,9 @@ const BUDGET_FIELD_DAILY = "daily_budget";
  * Fica INTERNO ao adapter — nunca vaza pro port neutro (traduzido p/ kind `not_duplicable`).
  */
 const LEGACY_ENHANCEMENTS_SUBCODE = 3858504;
+/** País default do targeting amplo (Advantage+) quando não há adset provado pra reusar. Beta =
+ *  Brasil; geo derivado do mercado/conta = fast-follow (o adapter não recebe o país da conta hoje). */
+const DEFAULT_ADVANTAGE_GEO_COUNTRY = "BR";
 function isLegacyEnhancementsCopyError(error: unknown): boolean {
   return error instanceof MetaApiError && error.subcode === LEGACY_ENHANCEMENTS_SUBCODE;
 }
@@ -92,7 +95,7 @@ export class MetaCreationService {
       if (isLegacyEnhancementsCopyError(error)) {
         throw new AdsPlatformError(
           "not_duplicable",
-          `deep_copy rejeitado (subcode ${LEGACY_ENHANCEMENTS_SUBCODE}): criativo com recurso descontinuado`,
+          "deep_copy rejeitado: criativo com recurso descontinuado pela plataforma",
           (error as MetaApiError).userMessage,
         );
       }
@@ -259,7 +262,10 @@ export class MetaCreationService {
         // fonte indisponível → cai no amplo (Advantage+).
       }
     }
-    return { geo_locations: { countries: ["BR"] }, targeting_automation: { advantage_audience: 1 } };
+    return {
+      geo_locations: { countries: [DEFAULT_ADVANTAGE_GEO_COUNTRY] },
+      targeting_automation: { advantage_audience: 1 },
+    };
   }
 
   /**

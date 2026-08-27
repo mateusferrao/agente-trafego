@@ -14,6 +14,7 @@ import {
   ACTION_PARAM_PCT,
   APPROVAL_TTL_HOURS,
   BUDGET_MODE_INCREASE,
+  DEFAULT_CURRENCY,
   buildCreativeVideoPollJob,
   toGuardrailConfig,
   type CampaignDraftSpec,
@@ -93,7 +94,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     return {
       agentId: row.agentId,
       ref: { adAccountId: row.metaAdAccountId, accessToken: deps.vault.decrypt(encrypted) },
-      currency: row.currency ?? "BRL",
+      currency: row.currency ?? DEFAULT_CURRENCY,
       cfg: toGuardrailConfig(g),
       scaleAggressivePreference: row.autonomyPolicy?.scaleAggressivePreference ?? "ask",
     };

@@ -7,7 +7,7 @@
 import { and, count, eq, gte, inArray } from "drizzle-orm";
 import { agentToolCalls, auditLog, campaignDrafts, guardrailConfigs } from "@trafego/db";
 import { applyCreationGuardrails, buildDuplicateInput, goalNounPt } from "@trafego/core";
-import { toGuardrailConfig, type CampaignDraft, type OrgId } from "@trafego/shared";
+import { DEFAULT_CONVERSION_GOAL, toGuardrailConfig, type CampaignDraft, type OrgId } from "@trafego/shared";
 import { AdsPlatformError, type AdAccountRef } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../../composition.js";
 import { createAnalysisRepo } from "../analysis/repo.js";
@@ -79,6 +79,9 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     .where(and(eq(guardrailConfigs.agentId, row.agentId), eq(guardrailConfigs.orgId, input.orgId)))
     .limit(1);
   const cfg = toGuardrailConfig(guardrailRow);
+  // Cap rolling 24h de campanhas novas/dia. APROXIMAÇÃO: conta por `createdAt` do rascunho (quando
+  // foi proposto), não pelo instante em que foi aplicado na Meta — um rascunho proposto há >24h e
+  // aplicado agora escapa. Aceitável como teto de segurança; medir pelo apply-time = fast-follow.
   const since = new Date(Date.now() - CREATION_DAY_MS);
   const [{ n } = { n: 0 }] = await db
     .select({ n: count() })
@@ -123,8 +126,11 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
   const dryRun = cfg.dryRun;
   const toolKey = allowed.kind === "duplicate" ? TOOL_KEY_DUPLICATE : TOOL_KEY_CREATE;
   // createdIds parte do que já foi criado (retomada) e é PERSISTIDO a cada passo — um retry
-  // após falha parcial pula o que já existe (sem duplicar gasto real). `/copies`/`create*`
-  // não têm idempotência nativa, então a persistência incremental É a idempotência.
+  // após falha parcial pula o que já existe. `/copies`/`create*` não têm idempotência nativa,
+  // então a persistência incremental É a idempotência. LIMITAÇÃO conhecida: um crash na janela
+  // (ms) entre a Meta retornar o create e o persist deixa um órfão que o retry re-cria (dup).
+  // Mitigado por PENDING_REVIEW (a Meta revisa antes de veicular → não gasta na hora) + claim
+  // atômico. Fechar 100% = criar PAUSED → persist → ativar no fim (fast-follow no ROADMAP).
   const createdIds: Record<string, unknown> = { ...(row.createdIds ?? {}) };
   const persist = async (patch: Record<string, unknown>): Promise<void> => {
     Object.assign(createdIds, patch);
@@ -212,7 +218,7 @@ async function runFromScratchSaga(
   persist: (patch: Record<string, unknown>) => Promise<void>,
 ): Promise<void> {
   const spec = draft.spec;
-  const goal = spec.objective ?? "purchase";
+  const goal = spec.objective ?? DEFAULT_CONVERSION_GOAL;
   const status = spec.activation;
   const name = `AutoTraffic — ${goalNounPt(goal)}`;
 

@@ -55,7 +55,8 @@ export const draftsRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // Upload MULTIPART (imagem OU vídeo). Valida tipo (allowlist) + teto por-tipo → mensagem PT
-  // amigável (nunca o erro técnico cru do multipart). Vídeo grande faz streaming (não base64).
+  // amigável (nunca o erro técnico cru do multipart). `toBuffer` materializa o arquivo em memória
+  // (limitado pelo fileSize do multipart) — não é streaming; o ingest precisa dos bytes de qualquer forma.
   app.post("/accounts/:id/creatives/upload", guard, async (request, reply) => {
     const { id } = request.params as { id: string };
     const file = await request.file();

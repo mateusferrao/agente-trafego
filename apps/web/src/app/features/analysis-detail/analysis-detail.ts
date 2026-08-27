@@ -252,14 +252,14 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                     <div class="flex flex-wrap gap-2">
                       <button
                         type="button"
-                        class="rounded-md border border-accent bg-accent px-3 py-1.5 text-xs font-medium text-on-accent hover:bg-accent-strong"
+                        class="rounded-md border border-accent bg-accent px-3 py-1.5 text-xs font-medium text-primary-ink hover:bg-accent-strong"
                         (click)="onScaleChoose('raise')"
                       >
                         Subir orçamento +{{ scaleAsk()?.raisePct }}%
                       </button>
                       <button
                         type="button"
-                        class="rounded-md border border-line px-3 py-1.5 text-xs text-ink hover:bg-panel-2"
+                        class="rounded-md border border-line px-3 py-1.5 text-xs text-ink hover:bg-soft"
                         (click)="onScaleChoose('duplicate')"
                       >
                         Duplicar (crescer +{{ scaleAsk()?.duplicatePct }}%)

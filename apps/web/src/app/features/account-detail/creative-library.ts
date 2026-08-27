@@ -4,7 +4,6 @@ import { toast } from 'ngx-sonner';
 import { UiButton, UiEmptyState } from '@ui';
 import { DraftsApiService } from '@core/api/drafts-api.service';
 import type { CreativeAssetOutput } from '@core/api/generated';
-import { environment } from '../../../environments/environment';
 
 /**
  * Biblioteca de criativos da conta (Fatia 7): assets reusáveis nos rascunhos. Origem
@@ -39,7 +38,7 @@ import { environment } from '../../../environments/environment';
         <ul class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           @for (a of assets(); track a.id) {
             <li class="flex flex-col gap-2 rounded-lg border border-line bg-panel p-3">
-              <div class="flex aspect-square items-center justify-center overflow-hidden rounded-md bg-panel-2">
+              <div class="flex aspect-square items-center justify-center overflow-hidden rounded-md bg-soft">
                 @if (a.format === 'image' && a.status === 'ready' && !broken().has(a.id)) {
                   <img
                     [src]="blobUrl(a)"
@@ -69,6 +68,8 @@ export class CreativeLibrary implements OnInit {
   private readonly api = inject(DraftsApiService);
   private readonly accountId = inject(ActivatedRoute).snapshot.paramMap.get('id') ?? '';
   private destroyed = false;
+  /** evita cadeias de poll concorrentes (N uploads enquanto um vídeo processa). */
+  private pollScheduled = false;
 
   constructor() {
     inject(DestroyRef).onDestroy(() => {
@@ -86,9 +87,9 @@ export class CreativeLibrary implements OnInit {
   /** ids cujo <img> falhou (blob 404 / ref drift) → cai no placeholder, nunca ícone quebrado. */
   protected readonly broken = signal<ReadonlySet<string>>(new Set());
 
-  /** URL da rota autenticada de blob (mesma origem/proxy do resto da API). */
+  /** URL da rota autenticada de blob — reusa o builder do service (evita drift). */
   protected blobUrl(a: CreativeAssetOutput): string {
-    return `${environment.apiBaseUrl}/accounts/${this.accountId}/creatives/${a.id}/blob`;
+    return this.api.creativeBlobUrl(this.accountId, a.id);
   }
   protected onImgError(id: string): void {
     this.broken.update((s) => new Set(s).add(id));
@@ -114,8 +115,11 @@ export class CreativeLibrary implements OnInit {
         this.loaded.set(true);
         // vídeo processa async no servidor → re-consulta enquanto houver `pending` (para quando
         // zerar). Feedback vivo: o card "processando" vira preview/erro sem recarregar a página.
-        if (!this.destroyed && rows.some((a) => a.status === 'pending')) {
+        // `pollScheduled` garante UMA cadeia (uploads repetidos não abrem loops paralelos).
+        if (!this.destroyed && !this.pollScheduled && rows.some((a) => a.status === 'pending')) {
+          this.pollScheduled = true;
           setTimeout(() => {
+            this.pollScheduled = false;
             if (!this.destroyed) this.load();
           }, CreativeLibrary.PENDING_POLL_MS);
         }

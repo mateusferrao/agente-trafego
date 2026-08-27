@@ -24,6 +24,7 @@ const EXT_BY_TYPE: Readonly<Record<string, string>> = {
   "image/webp": "webp",
   "image/gif": "gif",
   "video/mp4": "mp4",
+  "video/quicktime": "mov",
 };
 
 /** ref = `<keyPrefix>/<sha256>.<ext>` — determinística por conteúdo (idempotência). */

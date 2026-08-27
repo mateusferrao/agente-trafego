@@ -221,7 +221,7 @@ function toVm(e: ApiEvent): TimelineEventVm {
         title: e.kind === "duplicate" ? "Escala criada" : "Campanha criada",
         detail: `${money(e.dailyBudgetMajor, e.currency)}/dia`,
         badge: "criada",
-        tone: "accent",
+        tone: "success",
       };
     default:
       return { id: (e as { id: string }).id, at: (e as { at: string }).at, icon: "lucideActivity", title: "Evento", tone: "neutral" };

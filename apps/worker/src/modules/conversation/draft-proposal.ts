@@ -11,6 +11,8 @@ import {
   ACTION_PARAM_MODE,
   ACTION_PARAM_PCT,
   BUDGET_MODE_INCREASE,
+  DEFAULT_CONVERSION_GOAL,
+  DEFAULT_CURRENCY,
   toGuardrailConfig,
   type Action,
   type AgentId,
@@ -93,12 +95,12 @@ async function loadAgentContext(deps: WorkerDeps, ctx: DraftProposalContext): Pr
   const [acc] = await deps.db
     .select({ currency: adAccounts.currency })
     .from(adAccounts)
-    .where(eq(adAccounts.id, ctx.adAccountId))
+    .where(and(eq(adAccounts.id, ctx.adAccountId), eq(adAccounts.orgId, ctx.orgId)))
     .limit(1);
   const mc = (ag?.modelConfig ?? {}) as Record<string, unknown>;
   return {
     ref: { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) },
-    currency: acc?.currency ?? ctx.currency ?? "BRL",
+    currency: acc?.currency ?? ctx.currency ?? DEFAULT_CURRENCY,
     cfg: toGuardrailConfig(g),
     model: (mc["messageModel"] as string) ?? (mc["model"] as string) ?? DEFAULT_COPY_MODEL,
     businessContext: ag?.businessContext ?? null,
@@ -206,7 +208,9 @@ export async function proposeScaleWinner(
     const action: Action = {
       id: `scale:${chosen.entityId}`,
       type: "adjust_budget",
-      target: { level: budgetLevel === "campaign" ? "campaign" : "adset", id: chosen.entityId, name: label },
+      // target = a entidade REAL (nível dela + id dela). budgetLevel só decidiu raise-vs-ask;
+      // usar budgetLevel no target casaria nível "campaign" com id de adset (CBO) — mismatch.
+      target: { level, id: chosen.entityId, name: label },
       params: { [ACTION_PARAM_MODE]: BUDGET_MODE_INCREASE, [ACTION_PARAM_PCT]: move.pct },
       source: "llm",
       riskLevel: "medium",
@@ -293,7 +297,7 @@ export async function refineDraft(
   if (needCopy) {
     copyVariants = await generateCopy(
       deps.ports.llm,
-      { model: ac.model, goal: spec.objective ?? "purchase", variantsCount, businessContext: ac.businessContext, guidance: ac.guidance },
+      { model: ac.model, goal: spec.objective ?? DEFAULT_CONVERSION_GOAL, variantsCount, businessContext: ac.businessContext, guidance: ac.guidance },
       { orgId: ctx.orgId, adAccountId: ctx.adAccountId },
     );
   }
@@ -326,7 +330,7 @@ export async function proposeCreateCampaign(
         "essa conta ainda não tem um anúncio de onde eu possa reusar a página e o criativo — me manda um criativo ou conecte uma conta com anúncios",
     };
   }
-  const goal = args.goal ?? defaults.objectiveGoal ?? "purchase";
+  const goal = args.goal ?? defaults.objectiveGoal ?? DEFAULT_CONVERSION_GOAL;
   const requested = args.budgetReais
     ? Math.round(args.budgetReais * MINOR_PER_UNIT)
     : (ac.cfg.maxNewDailyBudgetMinor ?? DEFAULT_STARTER_BUDGET_MINOR);

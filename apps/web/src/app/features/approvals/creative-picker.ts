@@ -12,7 +12,7 @@ import type { CreativeAssetOutput } from '@core/api/generated';
   selector: 'app-creative-picker',
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div class="flex flex-col gap-2 rounded-md border border-line bg-panel-2 p-3">
+    <div class="flex flex-col gap-2 rounded-md border border-line bg-soft p-3">
       <div class="flex items-center justify-between">
         <span class="text-xs font-medium text-ink">Trocar criativo</span>
         <button type="button" class="text-xs text-muted hover:text-ink" (click)="cancel.emit()">Fechar</button>
@@ -23,20 +23,20 @@ import type { CreativeAssetOutput } from '@core/api/generated';
         <p class="text-xs text-muted">Nenhuma imagem pronta na biblioteca ainda. Suba uma na aba Criativos.</p>
       } @else {
         <ul class="grid grid-cols-3 gap-2 sm:grid-cols-4">
-          @for (a of ready(); track a.id) {
+          @for (a of ready(); track a.id; let i = $index) {
             <li>
               <button
                 type="button"
                 class="block w-full overflow-hidden rounded-md border border-line hover:border-accent focus:border-accent"
                 [disabled]="picking()"
                 (click)="pick.emit(a.id)"
-                title="Usar este criativo"
+                [attr.aria-label]="'Usar o criativo ' + (i + 1) + ' (' + (a.origin === 'upload' ? 'enviado' : 'da conta') + ')'"
               >
                 <span class="flex aspect-square items-center justify-center bg-panel">
                   @if (!broken().has(a.id)) {
                     <img
                       [src]="blobUrl(a)"
-                      alt="Criativo da biblioteca"
+                      alt=""
                       class="h-full w-full object-cover"
                       loading="lazy"
                       (error)="onImgError(a.id)"
