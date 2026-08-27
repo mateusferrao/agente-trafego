@@ -151,10 +151,11 @@ const SCALE_PREFS: readonly { value: ScalePref; label: string }[] = [
       </div>
 
       <div class="flex flex-col gap-2 border-t border-line pt-4">
-        <span id="autonomy-scale" class="text-sm font-medium text-ink">Escalar um vencedor além do limite seguro</span>
+        <span id="autonomy-scale" class="text-sm font-medium text-ink">Quando o crescimento passa do limite de mudança</span>
         <span class="text-xs text-muted">
-          Quando o aumento pedido é grande, o agente pode perguntar como crescer, sempre subir o orçamento
-          no limite seguro, ou sempre criar uma cópia separada.
+          Se o aumento necessário passa da "mudança máxima de orçamento" que você definiu em Limites de
+          segurança, o agente pode perguntar como crescer, subir o orçamento até esse limite, ou criar uma
+          cópia separada pra crescer além dele sem arriscar a que já funciona.
         </span>
         <div
           appToggleGroup

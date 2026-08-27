@@ -46,6 +46,7 @@ import { ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS, DEFAULT_CURREN
 import { recommendations } from "@trafego/db";
 import { funnelFromRawActions, mapStatus } from "@trafego/ads-meta";
 import { proposeCreateCampaign, proposeScaleWinner } from "../../modules/conversation/draft-proposal.js";
+import { autoApplyProactiveDraft, type DraftApplyOutcome } from "../../modules/apply/apply-draft.js";
 import {
   analysisOutputSchema,
   ANALYSIS_OUTPUT_JSON_SCHEMA,
@@ -643,6 +644,39 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
    * outcome tracking). Gated por notifyPolicy.proactiveDrafts; throttle = partial-unique
    * (1 proposto proativo/conta) → conflito é engolido. NUNCA auto-aplica (sempre aprovação).
    */
+  /**
+   * Nudge TRANSPARENTE da auto-criação (C): o quê + porquê + que nasceu PAUSADA + próximo passo.
+   * Honestidade obrigatória — o agente agiu sozinho, o dono precisa saber e poder ativar/desfazer.
+   * Best-effort (Evolution fora não quebra o run). Alvo org-level (grupo ativo, senão DM).
+   */
+  async function pushCreationNudge(
+    state: AccountAnalysisStateType,
+    toolKey: "duplicate_scale" | "create_campaign",
+    rationale: string,
+    outcome: DraftApplyOutcome,
+  ): Promise<void> {
+    const isScale = toolKey === "duplicate_scale";
+    const what = isScale ? "dupliquei seu vencedor pra escalar" : "criei uma campanha nova reusando seu criativo";
+    const wouldHave = isScale ? "duplicar seu vencedor" : "criar uma campanha";
+    let text: string;
+    if (outcome.kind === "created") {
+      text = outcome.dryRun
+        ? `🧪 Simulei uma criação automática (dry-run): ${what}. Por quê: ${rationale}.`
+        : `🤖 Agi sozinho e ${what} — mas deixei **pausada**, esperando seu OK (não veicula até você ativar). Por quê: ${rationale}. Dá uma olhada no site e ative quando quiser.`;
+    } else if (outcome.kind === "blocked" || outcome.kind === "unsupported") {
+      text = `Ia ${wouldHave} sozinho, mas parei: ${outcome.reason}.`;
+    } else {
+      text = `Tentei ${wouldHave} sozinho, mas não consegui agora — deixei pendente pra você revisar.`;
+    }
+    const ref = await notifyRepo.loadTarget(state.orgId);
+    if (!ref) return;
+    try {
+      await sendToConversation(ref, text, { split: false });
+    } catch (err) {
+      logger.warn({ runId: state.runId, err: String(err) }, "propose_drafts:nudge de auto-criação falhou");
+    }
+  }
+
   async function proposeDrafts(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
     const enabled = state.notifyPolicy?.proactiveDrafts?.enabled === true;
     if (!enabled || !state.brief) return {};
@@ -675,6 +709,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           ? await proposeScaleWinner(deps, dctx, top.entityName, "proactive")
           : await proposeCreateCampaign(deps, dctx, {}, "proactive");
       if (proposal.kind !== "draft") return {};
+      const toolKey = top.kind === "scale_winner" ? "duplicate_scale" : "create_campaign";
       // recomendação ligada ao rascunho — renderiza na lista + reusa feedback/outcome.
       await deps.db.insert(recommendations).values({
         orgId: state.orgId,
@@ -682,11 +717,24 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
         title: top.kind === "scale_winner" ? "Escalar seu vencedor" : "Criar uma campanha nova",
         rationale: top.rationale,
         kind: "platform_action",
-        toolKey: top.kind === "scale_winner" ? "duplicate_scale" : "create_campaign",
+        toolKey,
         draftId: proposal.draftId,
         riskLevel: "high",
       });
       logger.info({ runId: state.runId, kind: top.kind }, "propose_drafts:proposto");
+
+      // C: auto-criação PROATIVA. A autonomia da CRIAÇÃO (byAction[toolKey]) VENCE; fallback
+      // conservador = "sempre pede" (ausente → só a proposta acima). "age sozinho" → aplica JÁ,
+      // mas SEMPRE PAUSED (não veicula) + guardrail de gasto novo (rede) + nudge transparente.
+      if (state.autonomyPolicy?.byAction?.[toolKey] === "act_full") {
+        const outcome = await autoApplyProactiveDraft(deps, {
+          orgId: state.orgId,
+          draftId: proposal.draftId,
+          approvalId: proposal.approvalId,
+        });
+        await pushCreationNudge(state, toolKey, top.rationale, outcome);
+        logger.info({ runId: state.runId, kind: top.kind, outcome: outcome.kind }, "propose_drafts:auto");
+      }
     } catch (err) {
       // conflito de throttle (1 proposto proativo/conta) ou falha best-effort → não quebra o run.
       logger.debug({ runId: state.runId, err: String(err) }, "propose_drafts:pulado");

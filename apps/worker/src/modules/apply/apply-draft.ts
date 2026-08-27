@@ -7,7 +7,8 @@
 import { and, count, eq, gte, inArray } from "drizzle-orm";
 import { agentToolCalls, auditLog, campaignDrafts, guardrailConfigs } from "@trafego/db";
 import { applyCreationGuardrails, buildDuplicateInput, goalNounPt } from "@trafego/core";
-import { DEFAULT_CONVERSION_GOAL, toGuardrailConfig, type CampaignDraft, type OrgId } from "@trafego/shared";
+import { DEFAULT_CONVERSION_GOAL, toGuardrailConfig, type CampaignDraft, type CampaignDraftSpec, type OrgId } from "@trafego/shared";
+import type { ApprovalId } from "@trafego/shared";
 import { AdsPlatformError, type AdAccountRef } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../../composition.js";
 import { createAnalysisRepo } from "../analysis/repo.js";
@@ -213,6 +214,42 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
 
   logger.info({ draftId: row.id, dryRun }, "apply-draft:created");
   return { kind: "created", dryRun, createdIds };
+}
+
+/**
+ * Auto-criação PROATIVA (C): o agente cria sozinho ("age sozinho" por-ação) — com travas.
+ * (1) força o rascunho a nascer **PAUSED** (não veicula sozinho; nasce pendente de revisão);
+ * (2) aplica a saga (o guardrail de gasto novo é re-checado = rede; criar-do-zero sem criativo
+ * é barrado lá dentro); (3) resolve a approval pendente conforme o desfecho (some do inbox).
+ * `failed` mantém a approval PENDENTE (humano reaprova). O nudge transparente fica no chamador.
+ */
+export async function autoApplyProactiveDraft(
+  deps: WorkerDeps,
+  input: { readonly orgId: string; readonly draftId: string; readonly approvalId: string },
+): Promise<DraftApplyOutcome> {
+  const { db, ports, logger } = deps;
+  // trava #1: PAUSED sempre (read-modify-write no spec) — mesmo que o proponente marque active.
+  const [row] = await db
+    .select({ spec: campaignDrafts.spec })
+    .from(campaignDrafts)
+    .where(and(eq(campaignDrafts.id, input.draftId), eq(campaignDrafts.orgId, input.orgId)))
+    .limit(1);
+  if (row?.spec) {
+    const spec: CampaignDraftSpec = { ...(row.spec as CampaignDraftSpec), activation: "paused" };
+    await db.update(campaignDrafts).set({ spec }).where(eq(campaignDrafts.id, input.draftId));
+  }
+
+  const outcome = await applyDraft(deps, { orgId: input.orgId, draftId: input.draftId });
+  const approvalId = input.approvalId as ApprovalId;
+  if (outcome.kind === "created") {
+    await ports.approval.resolve(approvalId, { status: "approved" });
+  } else if (outcome.kind === "blocked" || outcome.kind === "unsupported") {
+    await ports.approval.resolve(approvalId, { status: "blocked", resolvedReason: outcome.reason });
+  } else {
+    // failed → mantém pendente (a promessa de criar não some; humano reaprova).
+    logger.warn({ draftId: input.draftId }, "auto-create:saga falhou — approval mantida pendente");
+  }
+  return outcome;
 }
 
 /**
