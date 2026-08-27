@@ -27,9 +27,14 @@ export interface ToolCatalogEntry {
 // As 4 de otimização: executáveis no chat E propostas na análise; gate por
 // autonomia/guardrail hoje (approvals_table declara o inbox site+WhatsApp).
 const OPT_DEFAULTS = { isIdempotent: true, requiredPermission: ADS_MANAGEMENT, executableInChat: true, proposable: true, approvalPolicy: "approvals_table" as const };
+// Criação (Fatia 7 / config por-ação): gasto NOVO, risco alto, não-idempotente. `proposable` (a
+// análise propõe/auto-cria) + `executableInChat` (o dono pede no chat). Gate por binding = net-new.
+const CREATE_DEFAULTS = { isIdempotent: false, requiredPermission: ADS_MANAGEMENT, executableInChat: true, proposable: true, approvalPolicy: "approvals_table" as const };
 export const AGENT_TOOL_CATALOG: readonly ToolCatalogEntry[] = [
   { key: "pause_entity", description: "Pausar uma entidade (parar o gasto).", riskLevel: "low", ...OPT_DEFAULTS },
   { key: "resume_entity", description: "Retomar uma entidade pausada.", riskLevel: "medium", ...OPT_DEFAULTS },
   { key: "set_status", description: "Definir o status de uma entidade.", riskLevel: "medium", ...OPT_DEFAULTS },
   { key: "adjust_budget", description: "Ajustar o budget da entidade (±%).", riskLevel: "medium", ...OPT_DEFAULTS },
+  { key: "create_campaign", description: "Criar uma campanha nova (gasto novo).", riskLevel: "high", ...CREATE_DEFAULTS },
+  { key: "duplicate_scale", description: "Duplicar um vencedor pra escalar (gasto novo).", riskLevel: "high", ...CREATE_DEFAULTS },
 ];
