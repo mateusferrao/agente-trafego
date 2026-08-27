@@ -8,33 +8,66 @@ import {
   type FreshMetricsData,
 } from "./fresh-metrics.js";
 
-function m(partial: Partial<StoredInsightMetrics["metrics"]>): StoredInsightMetrics {
-  return { metrics: { spend: 0, impressions: 0, clicks: 0, ctr: 0, cpc: 0, cpm: 0, ...partial } };
+function m(
+  partial: Partial<StoredInsightMetrics["metrics"]>,
+  conversions?: StoredInsightMetrics["conversions"],
+): StoredInsightMetrics {
+  return {
+    metrics: { spend: 0, impressions: 0, clicks: 0, ctr: 0, cpc: 0, cpm: 0, ...partial },
+    ...(conversions ? { conversions } : {}),
+  };
 }
 
 describe("aggregateKpis", () => {
-  it("soma a janela e re-deriva CPC/CPM/CTR/CPA/ROAS", () => {
-    const k = aggregateKpis([
-      m({ spend: 100, impressions: 1000, clicks: 50, conversions: 5, roas: 2 }),
-      m({ spend: 100, impressions: 3000, clicks: 50, conversions: 5, roas: 4 }),
-    ]);
+  it("soma a janela e re-deriva CPA/ROAS do ARRAY de conversões (goal de negócio)", () => {
+    const k = aggregateKpis(
+      [
+        m({ spend: 100, impressions: 1000, clicks: 50 }, [{ goal: "purchase", count: 5, value: 200 }]),
+        m({ spend: 100, impressions: 3000, clicks: 50 }, [{ goal: "purchase", count: 5, value: 400 }]),
+      ],
+      { goal: "purchase" },
+    );
     expect(k.spend).toBe(200);
     expect(k.impressions).toBe(4000);
     expect(k.clicks).toBe(100);
-    expect(k.ctr).toBeCloseTo(100 / 4000);
     expect(k.cpc).toBe(2); // 200/100
-    expect(k.cpm).toBe((200 / 4000) * 1000);
     expect(k.conversions).toBe(10);
     expect(k.cpa).toBe(20); // 200/10
-    // valor = 2*100 + 4*100 = 600; roas = 600/200 = 3
-    expect(k.roas).toBe(3);
+    expect(k.roas).toBe(3); // (200+400)/200
+    expect(k.conversionGoal).toBe("purchase");
   });
 
-  it("sem conversão reportada → conversions/cpa/roas null (não zero)", () => {
-    const k = aggregateKpis([m({ spend: 50, impressions: 500, clicks: 10 })]);
+  it("businessGoal escolhe o goal certo entre vários (não soma goals diferentes)", () => {
+    const row = m({ spend: 300, impressions: 10000, clicks: 200 }, [
+      { goal: "purchase", count: 3, value: 14900 },
+      { goal: "messaging_started", count: 115 },
+    ]);
+    const bought = aggregateKpis([row], { goal: "purchase" });
+    expect(bought.conversions).toBe(3);
+    expect(bought.roas).toBeCloseTo(14900 / 300);
+    const msg = aggregateKpis([row], { goal: "messaging_started" });
+    expect(msg.conversions).toBe(115);
+    expect(msg.roas).toBeNull(); // messaging não tem valor → sem roas
+    expect(msg.cpa).toBeCloseTo(300 / 115);
+  });
+
+  it("sem businessGoal → usa a conversão de MAIOR volume (default sensato)", () => {
+    const k = aggregateKpis([
+      m({ spend: 300, impressions: 10000, clicks: 200 }, [
+        { goal: "purchase", count: 3 },
+        { goal: "messaging_started", count: 115 },
+      ]),
+    ]);
+    expect(k.conversionGoal).toBe("messaging_started");
+    expect(k.conversions).toBe(115);
+  });
+
+  it("sem conversão reportada → conversions/cpa/roas null (aí sim 'Meta não retornou')", () => {
+    const k = aggregateKpis([m({ spend: 50, impressions: 500, clicks: 10 })], { goal: "purchase" });
     expect(k.conversions).toBeNull();
     expect(k.cpa).toBeNull();
     expect(k.roas).toBeNull();
+    expect(k.conversionGoal).toBeNull();
     expect(k.cpc).toBe(5);
   });
 

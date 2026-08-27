@@ -12,6 +12,7 @@ const KPIS: FreshKpis = {
   conversions: 40,
   cpa: 12.5,
   roas: null,
+  conversionGoal: "purchase",
 };
 
 function input(over: Partial<PulseInput> = {}): PulseInput {
