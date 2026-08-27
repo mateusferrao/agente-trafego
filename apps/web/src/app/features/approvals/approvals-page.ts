@@ -3,8 +3,9 @@ import { toast } from 'ngx-sonner';
 import { UiButton, UiConfirmDialogService, UiEmptyState, UiEyebrow, UiPageHeader } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import { ApprovalsApiService } from '@core/api/approvals-api.service';
+import { DraftsApiService } from '@core/api/drafts-api.service';
 import { AGENT_NAME } from '@core/brand';
-import type { ApprovalOutput, RevertibleActionOutput } from '@core/api/generated';
+import type { ApprovalOutput, DraftApprovalOutput, RevertibleActionOutput } from '@core/api/generated';
 import { UNDO_WARNING, actionTypeLabel, deadlineText, entityTargetLabel } from '@app/shared/action-format';
 
 interface AccountGroup<T> {
@@ -43,13 +44,62 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
         subtitle="Ações que aguardam seu OK ou que ainda podem ser revertidas."
       />
 
-      @if (loaded() && pendingGroups().length === 0 && revertibleGroups().length === 0) {
+      @if (loaded() && pendingGroups().length === 0 && revertibleGroups().length === 0 && draftGroups().length === 0) {
         <app-ui-empty-state
           brand
           title="Nada aguardando OK nem revertível"
           [description]="emptyDescription"
         />
       } @else {
+        @if (draftGroups().length > 0) {
+          <section class="flex flex-col gap-4">
+            <h1 class="font-brand text-base font-semibold text-ink">Rascunhos de campanha</h1>
+            @for (group of draftGroups(); track group.accountId) {
+              <div class="flex flex-col gap-3">
+                <h2 class="font-brand text-sm font-semibold text-ink">{{ group.accountName }}</h2>
+                <ul class="flex flex-col gap-2">
+                  @for (d of group.items; track d.id) {
+                    <li class="ui-panel-card--brand flex flex-col gap-3">
+                      <span class="flex flex-col gap-1">
+                        <app-ui-eyebrow>
+                          {{ draftKindLabel(d) }}@if (d.origin === 'proactive') { · proposta do {{ agentName }}}@if (deadline(d.expiresAt); as dl) { · {{ dl }}}
+                        </app-ui-eyebrow>
+                        <span class="font-semibold text-ink">{{ draftTitle(d) }}</span>
+                      </span>
+                      <dl class="grid grid-cols-1 gap-1 text-sm text-ink sm:grid-cols-2">
+                        <div><dt class="inline text-muted">Gasto novo: </dt><dd class="inline font-semibold">{{ money(d.dailyBudgetReais, d.currency) }}/dia</dd></div>
+                        <div><dt class="inline text-muted">Entra: </dt><dd class="inline">{{ d.activation === 'active' ? 'ativa (a Meta revisa antes de veicular)' : 'pausada' }}</dd></div>
+                        @if (d.pageId) { <div><dt class="inline text-muted">Página: </dt><dd class="inline">{{ d.pageId }}</dd></div> }
+                        @if (d.pixelId) { <div><dt class="inline text-muted">Pixel: </dt><dd class="inline">{{ d.pixelId }}</dd></div> }
+                        @if (d.objective) { <div><dt class="inline text-muted">Objetivo: </dt><dd class="inline">{{ d.objective }}</dd></div> }
+                        @if (d.sourceLabel) { <div><dt class="inline text-muted">Origem: </dt><dd class="inline">{{ d.sourceLabel }}</dd></div> }
+                      </dl>
+                      @if (d.copyVariants && d.copyVariants.length > 0) {
+                        <ul class="flex flex-col gap-2">
+                          @for (c of d.copyVariants; track $index) {
+                            <li class="rounded-lg border border-line bg-panel px-3 py-2 text-sm">
+                              <span class="block font-semibold text-ink">{{ c.headline }}</span>
+                              <span class="block text-muted">{{ c.primaryText }}</span>
+                            </li>
+                          }
+                        </ul>
+                      }
+                      <span class="flex shrink-0 gap-2">
+                        <button appButton variant="secondary" size="sm" [disabled]="resolving().has(d.id)" (click)="rejectDraft(d)">
+                          Recusar
+                        </button>
+                        <button appButton size="sm" [disabled]="resolving().has(d.id)" (click)="approveDraft(d)">
+                          {{ resolving().has(d.id) ? 'Enviando…' : 'Aprovar' }}
+                        </button>
+                      </span>
+                    </li>
+                  }
+                </ul>
+              </div>
+            }
+          </section>
+        }
+
         @if (pendingGroups().length > 0) {
           <section class="flex flex-col gap-4">
             <h1 class="font-brand text-base font-semibold text-ink">Aguardando OK</h1>
@@ -123,15 +173,21 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
 export class ApprovalsPage implements OnInit {
   // Marca: 1ª menção do agente apresenta o Roi (aposto).
   protected readonly emptyDescription = `Quando o ${AGENT_NAME}, seu agente de tráfego, propuser mudanças ou aplicar algo que ainda dá pra desfazer, aparece aqui.`;
+  protected readonly agentName = AGENT_NAME;
   private readonly api = inject(ApprovalsApiService);
+  private readonly draftsApi = inject(DraftsApiService);
   private readonly analysisApi = inject(AnalysisApiService);
   private readonly confirmDialog = inject(UiConfirmDialogService);
 
   protected readonly pendingGroups = signal<readonly AccountGroup<ApprovalOutput>[]>([]);
   protected readonly revertibleGroups = signal<readonly AccountGroup<RevertibleActionOutput>[]>([]);
+  protected readonly draftGroups = signal<readonly AccountGroup<DraftApprovalOutput>[]>([]);
   private readonly pendingLoaded = signal(false);
   private readonly revertibleLoaded = signal(false);
-  protected readonly loaded = computed(() => this.pendingLoaded() && this.revertibleLoaded());
+  private readonly draftsLoaded = signal(false);
+  protected readonly loaded = computed(
+    () => this.pendingLoaded() && this.revertibleLoaded() && this.draftsLoaded(),
+  );
   protected readonly resolving = signal<ReadonlySet<string>>(new Set());
   protected readonly reverting = signal<ReadonlySet<string>>(new Set());
 
@@ -141,6 +197,15 @@ export class ApprovalsPage implements OnInit {
     entityTargetLabel(a.entityLevel, a.entityId, a.entityName);
   protected revertibleTargetOf = (a: RevertibleActionOutput): string =>
     entityTargetLabel(a.targetLevel, a.targetId, a.targetName);
+
+  protected draftKindLabel = (d: DraftApprovalOutput): string =>
+    d.kind === 'duplicate' ? 'Escalar vencedor' : 'Criar campanha';
+  protected draftTitle = (d: DraftApprovalOutput): string =>
+    d.kind === 'duplicate'
+      ? `Duplicar ${d.sourceLabel ?? 'o vencedor'} com mais budget`
+      : `Nova campanha${d.objective ? ` de ${d.objective}` : ''}`;
+  protected money = (reais: number, currency: string): string =>
+    new Intl.NumberFormat('pt-BR', { style: 'currency', currency }).format(reais);
 
   ngOnInit(): void {
     this.api.listPending().subscribe({
@@ -157,6 +222,44 @@ export class ApprovalsPage implements OnInit {
       },
       error: () => this.revertibleLoaded.set(true),
     });
+    this.draftsApi.listPending().subscribe({
+      next: (rows) => {
+        this.draftGroups.set(groupByAccount(rows));
+        this.draftsLoaded.set(true);
+      },
+      error: () => this.draftsLoaded.set(true),
+    });
+  }
+
+  /** Aprovar rascunho: enfileira a saga de criação (mesma rota resolve). Otimista. */
+  protected approveDraft(d: DraftApprovalOutput): void {
+    this.markResolving(d.id);
+    this.api.resolve(d.id, 'approve').subscribe({
+      next: () => {
+        this.removeDraft(d.id);
+        toast.success('Enviado para criação. O agente cria em instantes.');
+      },
+      error: () => this.clearResolving(d.id),
+    });
+  }
+
+  /** Recusar rascunho: descarta (nada é criado na Meta). */
+  protected rejectDraft(d: DraftApprovalOutput): void {
+    this.markResolving(d.id);
+    this.api.resolve(d.id, 'reject').subscribe({
+      next: () => {
+        this.removeDraft(d.id);
+        toast.success('Rascunho descartado');
+      },
+      error: () => this.clearResolving(d.id),
+    });
+  }
+
+  private removeDraft(id: string): void {
+    this.draftGroups.update((gs) =>
+      gs.map((g) => ({ ...g, items: g.items.filter((x) => x.id !== id) })).filter((g) => g.items.length > 0),
+    );
+    this.clearResolving(id);
   }
 
   /** Aprovar: enfileira a aplicação (worker re-checa fresco + aplica). Otimista. */
