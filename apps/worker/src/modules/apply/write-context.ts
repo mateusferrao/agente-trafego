@@ -65,7 +65,7 @@ export async function loadWriteContext(
   // A2: allowedActions do guardrail vem AUTORITATIVA dos bindings (mesma fonte do gate do chat) —
   // senão a tool passa no chat e barra aqui (ou vice-versa). Fallback preserva o comportamento.
   const baseCfg = toGuardrailConfig(guardrailRow);
-  const enabled = await loadEnabledTools(db, orgId, agentId);
+  const enabled = await loadEnabledTools(db, orgId, agentId, baseCfg.allowedActions);
   const cfg: GuardrailConfig = { ...baseCfg, allowedActions: enabledActionTypes(enabled) };
   const daily = await loadDailyToolContext(db, agentId);
 

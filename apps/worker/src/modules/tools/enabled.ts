@@ -9,19 +9,31 @@ import type { Database } from "@trafego/db/client";
 import { resolveEnabledTools } from "@trafego/core";
 import { WRITE_TOOL_TO_ACTION, type ActionType, type ToolBindingMode } from "@trafego/shared";
 
-/** Resolve as tool-keys HABILITADAS (as 6) do agente, org-scoped. */
-export async function loadEnabledTools(db: Database, orgId: string, agentId: string): Promise<Set<string>> {
-  const [g] = await db
-    .select({ allowedActions: guardrailConfigs.allowedActions })
-    .from(guardrailConfigs)
-    .where(and(eq(guardrailConfigs.agentId, agentId), eq(guardrailConfigs.orgId, orgId)))
-    .limit(1);
+/**
+ * Resolve as tool-keys HABILITADAS (as 6) do agente, org-scoped. `allowedActionsFallback` pode
+ * vir do chamador que JÁ carregou a linha de guardrail (evita o round-trip extra); omitido → lê.
+ */
+export async function loadEnabledTools(
+  db: Database,
+  orgId: string,
+  agentId: string,
+  allowedActionsFallback?: readonly string[],
+): Promise<Set<string>> {
+  let fallback = allowedActionsFallback;
+  if (fallback === undefined) {
+    const [g] = await db
+      .select({ allowedActions: guardrailConfigs.allowedActions })
+      .from(guardrailConfigs)
+      .where(and(eq(guardrailConfigs.agentId, agentId), eq(guardrailConfigs.orgId, orgId)))
+      .limit(1);
+    fallback = (g?.allowedActions ?? []) as string[];
+  }
   const bindings = await db
     .select({ toolKey: agentToolBindings.toolKey, mode: agentToolBindings.mode })
     .from(agentToolBindings)
     .where(and(eq(agentToolBindings.agentId, agentId), eq(agentToolBindings.orgId, orgId)));
   const map = new Map<string, ToolBindingMode>(bindings.map((b) => [b.toolKey, b.mode as ToolBindingMode]));
-  return resolveEnabledTools(map, new Set((g?.allowedActions ?? []) as string[]));
+  return resolveEnabledTools(map, new Set(fallback));
 }
 
 /** Subconjunto das ACTION-types habilitadas (das 4) — p/ sobrescrever `cfg.allowedActions` no apply. */

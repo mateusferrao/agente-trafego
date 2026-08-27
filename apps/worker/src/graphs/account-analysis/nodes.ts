@@ -47,6 +47,7 @@ import { recommendations } from "@trafego/db";
 import { funnelFromRawActions, mapStatus } from "@trafego/ads-meta";
 import { proposeCreateCampaign, proposeScaleWinner } from "../../modules/conversation/draft-proposal.js";
 import { autoApplyProactiveDraft, type DraftApplyOutcome } from "../../modules/apply/apply-draft.js";
+import { loadEnabledTools, enabledActionTypes } from "../../modules/tools/enabled.js";
 import {
   analysisOutputSchema,
   ANALYSIS_OUTPUT_JSON_SCHEMA,
@@ -160,6 +161,14 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const ctx = await repo.loadAgentContext(state.orgId, state.agentId);
     if (!ctx) throw new AnalysisError("agent_missing", "agente não encontrado");
 
+    // Bindings AUTORITATIVOS também no caminho AUTÔNOMO (3ª superfície de escrita): resolve
+    // allowedActions dos bindings (mesma fonte do chat/apply) e CONGELA no snapshot do run
+    // (reprodutibilidade — travado no início, refletindo a capacidade atual). Sem isto, desligar
+    // uma ação nos bindings não impediria o agente de aplicá-la sozinho (o guardrail leria a
+    // coluna allowedActions, hoje vestigial). Fallback preserva o comportamento.
+    const enabledTools = await loadEnabledTools(deps.db, state.orgId, state.agentId, ctx.guardrailConfig.allowedActions);
+    const guardrailConfig = { ...ctx.guardrailConfig, allowedActions: enabledActionTypes(enabledTools) };
+
     // config resolvida por-agente (model_config) com fallback nos defaults globais.
     const cfg = resolveAnalysisConfig(ctx.modelConfig, deps.analysis);
     // systemPrompt LIMPO (voz base) = metodologia/override + identidade + personalização
@@ -189,7 +198,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       autonomyPolicy: ctx.autonomyPolicy,
       notifyPolicy: ctx.notifyPolicy,
       posture: ctx.posture,
-      guardrailConfig: ctx.guardrailConfig,
+      guardrailConfig,
       rejectedMemory: ctx.rejectedMemory,
       mutedCampaignIds: ctx.mutedCampaignIds,
       orgMarketReference: ctx.orgMarketReference,

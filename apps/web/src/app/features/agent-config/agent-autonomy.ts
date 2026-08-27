@@ -84,7 +84,7 @@ const SCALE_PREFS: readonly { value: ScalePref; label: string }[] = [
       }
 
       <div class="flex flex-col gap-3 border-t border-line pt-4">
-        <button type="button" class="flex items-center justify-between gap-2 text-left" (click)="showActions.set(!showActions())">
+        <button type="button" class="flex items-center justify-between gap-2 text-left" [attr.aria-expanded]="showActions()" (click)="showActions.set(!showActions())">
           <span class="flex flex-col">
             <span class="text-sm font-medium text-ink">Ações permitidas</span>
             <span class="text-xs text-muted">Quais capacidades o agente pode usar. Desligada aqui, ele nem propõe nem executa.</span>

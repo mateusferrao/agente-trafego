@@ -24,6 +24,7 @@ import {
 import type { AdAccountRef } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../../composition.js";
 import { createAnalysisRepo } from "../analysis/repo.js";
+import { loadEnabledTools } from "../tools/enabled.js";
 import { generateCopy } from "../copy/generate-copy.js";
 
 const MINOR_PER_UNIT = 100;
@@ -67,6 +68,8 @@ interface AgentContext {
   readonly guidance: string | null;
   /** Preferência do passo agressivo (autonomy_policy) — default "ask". */
   readonly scaleAggressivePreference: ScaleAggressivePreference;
+  /** Tool-keys habilitadas (bindings, mesma fonte do chat/apply) — gate da escala. */
+  readonly enabled: ReadonlySet<string>;
 }
 
 function money(reais: number, currency: string): string {
@@ -98,6 +101,7 @@ async function loadAgentContext(deps: WorkerDeps, ctx: DraftProposalContext): Pr
     .where(and(eq(adAccounts.id, ctx.adAccountId), eq(adAccounts.orgId, ctx.orgId)))
     .limit(1);
   const mc = (ag?.modelConfig ?? {}) as Record<string, unknown>;
+  const enabled = await loadEnabledTools(deps.db, ctx.orgId, ctx.agentId);
   return {
     ref: { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) },
     currency: acc?.currency ?? ctx.currency ?? DEFAULT_CURRENCY,
@@ -106,6 +110,7 @@ async function loadAgentContext(deps: WorkerDeps, ctx: DraftProposalContext): Pr
     businessContext: ag?.businessContext ?? null,
     guidance: ag?.guidance ?? null,
     scaleAggressivePreference: ag?.autonomyPolicy?.scaleAggressivePreference ?? "ask",
+    enabled,
   };
 }
 
@@ -171,12 +176,22 @@ export async function proposeScaleWinner(
     (winnerName ? winners.find((w) => (w.entityName ?? "").toLowerCase().includes(winnerName.toLowerCase())) : undefined) ??
     winners[0]!;
 
+  // Gate por binding (mesma fonte/lógica do site scaleWinner): escalar precisa de ao menos uma
+  // capacidade — subir budget (adjust_budget) OU duplicar (duplicate_scale). Sem alinhar isto,
+  // o chat exporia scale_winner e proporia duplicar mesmo com duplicate_scale off → passaria no
+  // gate do chat e barraria no apply (divergência dos gates).
+  const canRaise = ac.enabled.has("adjust_budget");
+  const canDuplicate = ac.enabled.has("duplicate_scale");
+  if (!canRaise && !canDuplicate) {
+    return { kind: "blocked", reason: "escalar está desligado para este agente (ligue duplicar ou ajustar orçamento nas ações permitidas)" };
+  }
+
   const state = await deps.ports.ads.readEntityState(ac.ref, chosen.entityId);
   const sourceDailyMinor = Number(state["daily_budget"] ?? 0);
   const level = chosen.entityLevel === "campaign" ? "campaign" : "adset";
   const budgetLevel: BudgetLevel = level === "adset" && sourceDailyMinor > 0 ? "adset" : "campaign";
   const scalePct = ac.cfg.scalePct ?? 50;
-  const move = planScaleMove({
+  let move = planScaleMove({
     scalePct,
     maxBudgetChangePct: ac.cfg.maxBudgetChangePct,
     budgetLevel,
@@ -184,6 +199,20 @@ export async function proposeScaleWinner(
     ...(choice ? { choice } : {}),
   });
   const label = chosen.entityName ?? chosen.entityId;
+
+  // só oferece/decide o que está habilitado: capacidade off → força o ramo disponível (sem
+  // "ask" morto nem proposta que o apply barraria).
+  if (move.move === "ask" && !(canRaise && canDuplicate)) {
+    move = canRaise
+      ? { move: "raise_budget", pct: move.raisePct, level: budgetLevel }
+      : { move: "duplicate", scalePct: move.duplicatePct };
+  }
+  if (move.move === "raise_budget" && !canRaise) {
+    return { kind: "blocked", reason: "subir orçamento está desligado — posso duplicar o vencedor, se quiser" };
+  }
+  if (move.move === "duplicate" && !canDuplicate) {
+    return { kind: "blocked", reason: "duplicar está desligado — posso subir o orçamento no limite, se quiser" };
+  }
 
   // passo agressivo, intent aberto, sem resposta → PERGUNTA em linguagem plana (§UX: sem jargão).
   if (move.move === "ask") {

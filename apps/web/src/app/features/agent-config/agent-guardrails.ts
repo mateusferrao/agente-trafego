@@ -156,9 +156,11 @@ export class AgentGuardrails implements OnInit {
     return Number.isFinite(n) ? Math.trunc(n) : fallback;
   }
 
-  /** Salva a fatia (chamada pela save-bar única da página). No-op se não há mudança. */
+  /** Salva a fatia (chamada pela save-bar única da página). No-op se não há mudança.
+   *  Gate em loaded(): sem o seed, `allowed` (allowedActions, não editável aqui) está no
+   *  default pause-only — salvar sobrescreveria o real com esse default (perda de dado). */
   async save(): Promise<void> {
-    if (!this.dirty()) return;
+    if (!this.dirty() || !this.loaded()) return;
     this.saving.set(true);
     const cap = this.llmCap().trim();
     const capNum = Number(cap);

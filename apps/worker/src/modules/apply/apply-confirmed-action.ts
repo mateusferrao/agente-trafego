@@ -106,7 +106,7 @@ export async function applyConfirmedAction(deps: WorkerDeps, input: ApplyConfirm
     .limit(1);
   // A2: allowedActions AUTORITATIVA dos bindings (mesma fonte do gate do chat) — consistência.
   const baseCfg = toGuardrailConfig(guardrailRow);
-  const enabled = await loadEnabledTools(db, input.orgId, input.agentId);
+  const enabled = await loadEnabledTools(db, input.orgId, input.agentId, baseCfg.allowedActions);
   const cfg: GuardrailConfig = { ...baseCfg, allowedActions: enabledActionTypes(enabled) };
   const daily = await loadDailyToolContext(db, input.agentId);
 

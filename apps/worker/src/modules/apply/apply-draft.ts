@@ -68,7 +68,7 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
   const creationToolKey = row.kind === "duplicate" ? TOOL_KEY_DUPLICATE : TOOL_KEY_CREATE;
   const enabledCreation = await loadEnabledTools(db, input.orgId, row.agentId);
   if (!enabledCreation.has(creationToolKey)) {
-    await db.update(campaignDrafts).set({ status: "failed" }).where(eq(campaignDrafts.id, row.id));
+    await db.update(campaignDrafts).set({ status: "failed" }).where(and(eq(campaignDrafts.id, row.id), eq(campaignDrafts.orgId, input.orgId)));
     return { kind: "blocked", reason: "essa capacidade de criação está desligada para este agente" };
   }
 
@@ -108,7 +108,7 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
 
   const check = applyCreationGuardrails(draft, cfg, { createdCampaignsToday: n });
   if (!check.allowed) {
-    await db.update(campaignDrafts).set({ status: "failed" }).where(eq(campaignDrafts.id, row.id));
+    await db.update(campaignDrafts).set({ status: "failed" }).where(and(eq(campaignDrafts.id, row.id), eq(campaignDrafts.orgId, input.orgId)));
     return { kind: "blocked", reason: check.dropped?.reason ?? "barrado pelo guardrail de gasto novo" };
   }
   const allowed = check.allowed;
@@ -128,7 +128,13 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
   const claimed = await db
     .update(campaignDrafts)
     .set({ status: "creating" })
-    .where(and(eq(campaignDrafts.id, row.id), inArray(campaignDrafts.status, ["proposed", "failed"])))
+    .where(
+      and(
+        eq(campaignDrafts.id, row.id),
+        eq(campaignDrafts.orgId, input.orgId),
+        inArray(campaignDrafts.status, ["proposed", "failed"]),
+      ),
+    )
     .returning({ id: campaignDrafts.id });
   if (claimed.length === 0) {
     logger.debug({ draftId: row.id }, "apply-draft:already_in_flight");
@@ -146,7 +152,7 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
   const createdIds: Record<string, unknown> = { ...(row.createdIds ?? {}) };
   const persist = async (patch: Record<string, unknown>): Promise<void> => {
     Object.assign(createdIds, patch);
-    await db.update(campaignDrafts).set({ createdIds }).where(eq(campaignDrafts.id, row.id));
+    await db.update(campaignDrafts).set({ createdIds }).where(and(eq(campaignDrafts.id, row.id), eq(campaignDrafts.orgId, input.orgId)));
   };
   try {
     if (dryRun) {
@@ -165,7 +171,7 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     }
   } catch (error) {
     // createdIds já foi persistido incrementalmente → o retry retoma daqui.
-    await db.update(campaignDrafts).set({ status: "failed" }).where(eq(campaignDrafts.id, row.id));
+    await db.update(campaignDrafts).set({ status: "failed" }).where(and(eq(campaignDrafts.id, row.id), eq(campaignDrafts.orgId, input.orgId)));
     // vencedor legado (criativo descontinuado): falha HONESTA + 2 saídas, não erro genérico.
     // Nada foi criado (o /copies falhou antes do 1º persist) → sem órfão pra reconciliar.
     if (error instanceof AdsPlatformError && error.kind === "not_duplicable") {
@@ -210,7 +216,7 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
   await db
     .update(campaignDrafts)
     .set({ status: "created", createdIds })
-    .where(eq(campaignDrafts.id, row.id));
+    .where(and(eq(campaignDrafts.id, row.id), eq(campaignDrafts.orgId, input.orgId)));
 
   logger.info({ draftId: row.id, dryRun }, "apply-draft:created");
   return { kind: "created", dryRun, createdIds };
@@ -236,7 +242,10 @@ export async function autoApplyProactiveDraft(
     .limit(1);
   if (row?.spec) {
     const spec: CampaignDraftSpec = { ...(row.spec as CampaignDraftSpec), activation: "paused" };
-    await db.update(campaignDrafts).set({ spec }).where(eq(campaignDrafts.id, input.draftId));
+    await db
+      .update(campaignDrafts)
+      .set({ spec })
+      .where(and(eq(campaignDrafts.id, input.draftId), eq(campaignDrafts.orgId, input.orgId)));
   }
 
   const outcome = await applyDraft(deps, { orgId: input.orgId, draftId: input.draftId });

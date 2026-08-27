@@ -123,8 +123,11 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
   const llm = vi.fn(async () => ({ output: ANALYSIS_OUTPUT, usage: { inputTokens: 100, outputTokens: 20, costUsd: 0.001 } }));
   const readEntityState = vi.fn(async () => opts.freshEntityState ?? { status: "ACTIVE", effective_status: "ACTIVE" });
 
+  // db falso mínimo: loadEnabledTools (load_context) faz 1 select em agent_tool_bindings —
+  // sem bindings → resolveEnabledTools cai no fallback (allowedActions do guardrailConfig).
+  const emptySelect = { from: () => ({ where: async () => [] }) };
   const deps = {
-    db: {} as never,
+    db: { select: () => emptySelect } as never,
     logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
     redis: {} as never,
     ports: {

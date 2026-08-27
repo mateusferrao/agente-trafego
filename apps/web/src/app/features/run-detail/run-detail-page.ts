@@ -66,6 +66,7 @@ const DATETIME_LOCALE = 'pt-BR';
           [currency]="currency()"
           [votingId]="votingId()"
           [mutingId]="mutingId()"
+          [canScale]="false"
           (vote)="vote($event)"
           (toggleMute)="toggleMuted($event)"
         />
