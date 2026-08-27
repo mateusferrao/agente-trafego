@@ -50,7 +50,14 @@ const toIso = (y: number, m: number, d: number): string => `${y}-${pad(m + 1)}-$
     </button>
 
     @if (open()) {
-      <div class="ui-cal" role="dialog" aria-modal="true" [attr.aria-label]="ariaLabel()" (keydown.escape)="close()">
+      <div
+        class="ui-cal"
+        [class.ui-cal--end]="align() === 'end'"
+        role="dialog"
+        aria-modal="true"
+        [attr.aria-label]="ariaLabel()"
+        (keydown.escape)="close()"
+      >
         <div class="ui-cal__head">
           <button type="button" class="ui-cal__nav" aria-label="Mês anterior" (click)="shiftMonth(-1)">
             <ng-icon name="lucideChevronLeft" size="16" aria-hidden="true" />
@@ -91,6 +98,9 @@ export class UiDateField {
   readonly value = input<string | null>(null);
   readonly placeholder = input('dd/mm/aaaa');
   readonly ariaLabel = input('Escolher data');
+  // Lado de ancoragem do popup: 'start' abre pra direita (default), 'end' pra
+  // esquerda — usar 'end' em campos próximos da borda direita (não vaza a tela).
+  readonly align = input<'start' | 'end'>('start');
   readonly valueChange = output<string>();
 
   protected readonly weekdays = WEEKDAYS;

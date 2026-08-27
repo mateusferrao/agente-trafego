@@ -1321,11 +1321,18 @@ table[appUiResizableColumns] > tbody > tr > td {
   z-index: 50;
   margin-top: 0.35rem;
   width: 17rem;
+  max-width: calc(100vw - 1.5rem);
   padding: 0.75rem;
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
   background: var(--color-panel);
   box-shadow: var(--shadow-panel);
+}
+/* Ancorado à direita do trigger: abre pra esquerda (não vaza a borda direita
+   em telas estreitas). Usado no campo "até". */
+.ui-cal--end {
+  right: 0;
+  left: auto;
 }
 .ui-cal__head {
   display: flex;
