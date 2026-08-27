@@ -1,0 +1,1 @@
+ALTER TABLE "agents" ALTER COLUMN "notify_policy" SET DEFAULT '{"pulse":{"enabled":false,"cadence":{"kind":"weekly","weekday":1,"hour":8}},"alerts":{"enabled":false,"sensitivity":"normal","throttleHours":6},"runPush":{"enabled":true},"reactivation":{"enabled":false},"proactiveDrafts":{"enabled":false}}'::jsonb;

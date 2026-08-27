@@ -267,6 +267,13 @@
       "when": 1787810343362,
       "tag": "0037_magenta_venus",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1787855574740,
+      "tag": "0038_smiling_excalibur",
+      "breakpoints": true
     }
   ]
 }
