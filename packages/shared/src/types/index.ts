@@ -654,24 +654,30 @@ export type TargetingSpec =
   | { readonly kind: "reuse_adset"; readonly sourceAdsetId: string }
   | { readonly kind: "advantage_plus" };
 
-/** Estrutura proposta da campanha — NEUTRA + VERSIONADA (validada nas bordas por zod). */
+/**
+ * Estrutura proposta da campanha — NEUTRA + VERSIONADA (validada nas bordas por zod,
+ * com refine por `kind`). Campos comuns são obrigatórios; os de `from_scratch`
+ * (objetivo/targeting/copy/criativo/página/pixel) são opcionais — no `duplicate` a
+ * estrutura é herdada do source via `/copies`, só o budget/ativação variam.
+ */
 export interface CampaignDraftSpec {
   readonly version: 1;
-  /** conversão de negócio → o adapter deriva o objetivo ODAX. */
-  readonly objective: ConversionGoal;
   readonly currency: string;
   /** budget diário proposto (unidade mínima). */
   readonly dailyBudgetMinor: number;
-  readonly targeting: TargetingSpec;
+  /** nasce ACTIVE ou PAUSED (activationPolicy do agente / override no eco). */
+  readonly activation: "active" | "paused";
+  // ─── só `from_scratch` (herdados no `duplicate`) ───
+  /** conversão de negócio → o adapter deriva o objetivo ODAX. */
+  readonly objective?: ConversionGoal;
+  readonly targeting?: TargetingSpec;
   /** nº de variações de copy num adset (mesma mídia). */
-  readonly variantsCount: number;
-  readonly copyVariants: readonly CopyVariant[];
+  readonly variantsCount?: number;
+  readonly copyVariants?: readonly CopyVariant[];
   readonly creative?: CreativeAssetRef;
   /** Page/Pixel inferidos (display/confirmação no eco). */
   readonly pageId?: string;
   readonly pixelId?: string;
-  /** nasce ACTIVE ou PAUSED (activationPolicy do agente / override no eco). */
-  readonly activation: "active" | "paused";
 }
 
 /** Entidade-origem de uma duplicação (o que foi copiado). */

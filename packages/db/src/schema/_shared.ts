@@ -118,3 +118,23 @@ export const feedbackVote = pgEnum("feedback_vote", ["up", "down"]);
 export const outcomeStatus = pgEnum("outcome_status", ["pending", "positive", "negative", "neutral"]);
 
 export const messageDirection = pgEnum("message_direction", ["inbound", "outbound"]);
+
+// ─── Criação de campanhas (Fatia 7) ──────────────────────────────────────
+// `from_scratch` = campanha do zero; `duplicate` = cópia/escala de um vencedor.
+export const draftKind = pgEnum("draft_kind", ["from_scratch", "duplicate"]);
+// Ciclo de vida do rascunho: proposto → aprovado → criando → criado (ou falhou/revertido).
+export const draftStatus = pgEnum("draft_status", [
+  "proposed",
+  "approved",
+  "creating",
+  "created",
+  "failed",
+  "reverted",
+]);
+// Origem do rascunho: pedido no chat/site (`on_demand`) ou proposto pelo agente (`proactive`).
+export const draftOrigin = pgEnum("draft_origin", ["on_demand", "proactive"]);
+// Origem do asset da biblioteca: reuso da conta ou upload do usuário.
+export const creativeAssetOrigin = pgEnum("creative_asset_origin", ["reuse", "upload"]);
+// Estado do asset (upload de vídeo processa async na plataforma).
+export const creativeAssetStatus = pgEnum("creative_asset_status", ["pending", "ready", "error"]);
+export const creativeFormat = pgEnum("creative_format", ["image", "video"]);

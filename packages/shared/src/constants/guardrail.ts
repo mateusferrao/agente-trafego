@@ -30,6 +30,9 @@ export function toGuardrailConfig(
         dryRun: boolean;
         killSwitch: boolean;
         llmCostCap: string | null;
+        maxNewDailyBudgetMinor: number;
+        maxNewCampaignsPerDay: number;
+        scalePct: number;
       }
     | undefined,
 ): GuardrailConfig {
@@ -40,6 +43,9 @@ export function toGuardrailConfig(
     allowedActions: row.allowedActions,
     dryRun: row.dryRun,
     killSwitch: row.killSwitch,
+    maxNewDailyBudgetMinor: row.maxNewDailyBudgetMinor,
+    maxNewCampaignsPerDay: row.maxNewCampaignsPerDay,
+    scalePct: row.scalePct,
     ...(row.llmCostCap !== null ? { llmCostCapUsd: Number(row.llmCostCap) } : {}),
   };
 }

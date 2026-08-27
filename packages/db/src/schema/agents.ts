@@ -11,7 +11,13 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import { DEFAULT_NOTIFY_POLICY, DEFAULT_POSTURE } from "@trafego/shared";
+import {
+  DEFAULT_MAX_NEW_CAMPAIGNS_PER_DAY,
+  DEFAULT_MAX_NEW_DAILY_BUDGET_MINOR,
+  DEFAULT_NOTIFY_POLICY,
+  DEFAULT_POSTURE,
+  DEFAULT_SCALE_PCT,
+} from "@trafego/shared";
 import type {
   ActionType,
   AgentGoals,
@@ -102,6 +108,14 @@ export const guardrailConfigs = pgTable(
     killSwitch: boolean("kill_switch").notNull().default(false),
     // cap de custo LLM por org/período (protege margem)
     llmCostCap: numeric("llm_cost_cap", { precision: 12, scale: 4 }),
+    // ─── Limites de GASTO NOVO (Fatia 7 — criação) ───
+    maxNewDailyBudgetMinor: integer("max_new_daily_budget_minor")
+      .notNull()
+      .default(DEFAULT_MAX_NEW_DAILY_BUDGET_MINOR),
+    maxNewCampaignsPerDay: integer("max_new_campaigns_per_day")
+      .notNull()
+      .default(DEFAULT_MAX_NEW_CAMPAIGNS_PER_DAY),
+    scalePct: integer("scale_pct").notNull().default(DEFAULT_SCALE_PCT),
     ...timestamps,
   },
   // 1 linha de guardrail por agente (rede única): sem isso duplicatas fariam a leitura

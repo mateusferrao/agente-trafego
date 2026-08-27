@@ -1396,6 +1396,19 @@
               "llmCostCapUsd": {
                 "type": "number",
                 "minimum": 0
+              },
+              "maxNewDailyBudgetMinor": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "maxNewCampaignsPerDay": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "scalePct": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1000
               }
             },
             "required": [
@@ -2349,6 +2362,19 @@
               "llmCostCapUsd": {
                 "type": "number",
                 "minimum": 0
+              },
+              "maxNewDailyBudgetMinor": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "maxNewCampaignsPerDay": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "scalePct": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1000
               }
             },
             "required": [

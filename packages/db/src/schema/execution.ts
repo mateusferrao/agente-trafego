@@ -11,10 +11,22 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import type { Action, CreativeVisionResult, PartialReason } from "@trafego/shared";
+import type {
+  Action,
+  CampaignDraftSpec,
+  CreativeVisionResult,
+  DraftSourceRef,
+  PartialReason,
+} from "@trafego/shared";
 import {
   actionType,
   approvalStatus,
+  creativeAssetOrigin,
+  creativeAssetStatus,
+  creativeFormat,
+  draftKind,
+  draftOrigin,
+  draftStatus,
   entityLevel,
   feedbackVote,
   outcomeStatus,
@@ -28,7 +40,7 @@ import {
 } from "./_shared.js";
 import { agents } from "./agents.js";
 import { orgs } from "./tenancy.js";
-import { contacts } from "./integrations.js";
+import { adAccounts, contacts } from "./integrations.js";
 
 /** Execução do agente (análise). Congela config + custo p/ reprodutibilidade. */
 export const agentRuns = pgTable(
@@ -182,11 +194,17 @@ export const recommendations = pgTable(
     proposedAction: jsonb("proposed_action").$type<Action>(),
     // Capacidade do catálogo (S4) que esta recomendação propõe — só em platform_action.
     toolKey: text("tool_key"),
+    // Rascunho de campanha semeado por esta recomendação (Fatia 7, proativo) — o card
+    // rico abre a partir daqui e reusa o outcome tracking da recomendação.
+    draftId: uuid("draft_id").references(() => campaignDrafts.id, { onDelete: "set null" }),
     riskLevel: riskLevel("risk_level").notNull().default("low"),
     status: recommendationStatus("status").notNull().default("open"),
     ...timestamps,
   },
-  (t) => [index("recommendations_run_idx").on(t.runId)],
+  (t) => [
+    index("recommendations_run_idx").on(t.runId),
+    index("recommendations_draft_idx").on(t.draftId),
+  ],
 );
 
 /**
@@ -256,4 +274,74 @@ export const recommendationFeedback = pgTable(
     ...timestamps,
   },
   (t) => [index("recommendation_feedback_rec_idx").on(t.recommendationId)],
+);
+
+/**
+ * Rascunho de campanha (Fatia 7) — ENTIDADE CENTRAL da criação. `from_scratch` ou
+ * `duplicate`. Fonte única da verdade em qualquer gatilho (chat/site/proativo):
+ * `approvals.draft_id` e `recommendations.draft_id` apontam pra cá. `spec` = contrato
+ * NEUTRO versionado (Meta só no adapter). `created_ids` = ids parciais da saga p/
+ * retomada idempotente. Nunca deletar (histórico) — status `reverted` desfaz.
+ */
+export const campaignDrafts = pgTable(
+  "campaign_drafts",
+  {
+    id: pk(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    adAccountId: uuid("ad_account_id")
+      .notNull()
+      .references(() => adAccounts.id, { onDelete: "cascade" }),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    runId: uuid("run_id").references(() => agentRuns.id, { onDelete: "set null" }),
+    kind: draftKind("kind").notNull(),
+    status: draftStatus("status").notNull().default("proposed"),
+    origin: draftOrigin("origin").notNull(),
+    spec: jsonb("spec").$type<CampaignDraftSpec>().notNull(),
+    // entidade-origem quando `duplicate` (o que foi copiado).
+    sourceRef: jsonb("source_ref").$type<DraftSourceRef>(),
+    // ids parciais criados na Meta (saga) p/ dedupe/retomada idempotente.
+    createdIds: jsonb("created_ids").$type<Record<string, unknown>>().notNull().default({}),
+    ...timestamps,
+  },
+  (t) => [
+    index("campaign_drafts_account_idx").on(t.adAccountId),
+    index("campaign_drafts_agent_idx").on(t.agentId),
+    // throttle do PROATIVO: no máx. 1 rascunho proposto por conta (não pega chat/site).
+    uniqueIndex("campaign_drafts_proactive_pending_uq")
+      .on(t.adAccountId)
+      .where(sql`status = 'proposed' and origin = 'proactive'`),
+  ],
+);
+
+/**
+ * Biblioteca de criativos por conta (Fatia 7). `reuse` = auto-populado dos anúncios
+ * existentes (mídia já provada); `upload` = fornecido pelo usuário (web/WhatsApp). O
+ * agente NUNCA inventa mídia — só reusa/recebe. `storage_ref` = blob no StoragePort;
+ * `meta_image_hash`/`meta_video_id` = ids resolvidos na plataforma.
+ */
+export const creativeAssets = pgTable(
+  "creative_assets",
+  {
+    id: pk(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    adAccountId: uuid("ad_account_id")
+      .notNull()
+      .references(() => adAccounts.id, { onDelete: "cascade" }),
+    origin: creativeAssetOrigin("origin").notNull(),
+    format: creativeFormat("format").notNull(),
+    status: creativeAssetStatus("status").notNull().default("ready"),
+    storageRef: text("storage_ref"),
+    metaImageHash: text("meta_image_hash"),
+    metaVideoId: text("meta_video_id"),
+    // anúncio de origem quando `reuse` (liga o asset ao desempenho em ad_creatives).
+    sourceAdId: text("source_ad_id"),
+    ...timestamps,
+  },
+  (t) => [index("creative_assets_account_idx").on(t.adAccountId)],
 );
