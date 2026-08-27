@@ -10,7 +10,8 @@ import type {
 } from "@trafego/shared/ports";
 import type { ConversionGoal } from "@trafego/shared/types";
 import type { UploadMediaInput, VideoStatus } from "@trafego/shared/ports";
-import { MetaGraphClient, META_GRAPH_VERSION } from "./client.js";
+import { AdsPlatformError } from "@trafego/shared/ports";
+import { MetaGraphClient, MetaApiError, META_GRAPH_VERSION } from "./client.js";
 import { normalizeAdAccountId } from "./ids.js";
 import {
   objectiveFromCampaign,
@@ -24,6 +25,16 @@ const COPIES_EDGE = "copies";
 const STATUS_ACTIVE = "ACTIVE";
 const STATUS_PAUSED = "PAUSED";
 const BUDGET_FIELD_DAILY = "daily_budget";
+
+/**
+ * Subcode Meta: criativo com "aprimoramentos padrão" (standard_enhancements) descontinuados na v22 —
+ * `deep_copy` re-valida o criativo copiado e rejeita. Não-documentado; confirmado no E2E real da Fatia 7.
+ * Fica INTERNO ao adapter — nunca vaza pro port neutro (traduzido p/ kind `not_duplicable`).
+ */
+const LEGACY_ENHANCEMENTS_SUBCODE = 3858504;
+function isLegacyEnhancementsCopyError(error: unknown): boolean {
+  return error instanceof MetaApiError && error.subcode === LEGACY_ENHANCEMENTS_SUBCODE;
+}
 
 /**
  * Resposta do `/copies` (adset/campaign) — shape REAL v26 (validado em E2E):
@@ -67,12 +78,26 @@ export class MetaCreationService {
     if (input.destinationCampaignId) params["campaign_id"] = input.destinationCampaignId;
     if (input.renameSuffix) params["rename_options"] = JSON.stringify({ rename_suffix: input.renameSuffix });
 
-    const { data } = await this.client.request<CopiesResponse>({
-      method: "POST",
-      path: `${input.sourceId}/${COPIES_EDGE}`,
-      accessToken: account.accessToken,
-      params,
-    });
+    let data: CopiesResponse;
+    try {
+      ({ data } = await this.client.request<CopiesResponse>({
+        method: "POST",
+        path: `${input.sourceId}/${COPIES_EDGE}`,
+        accessToken: account.accessToken,
+        params,
+      }));
+    } catch (error) {
+      // criativo legado (standard_enhancements) → traduz p/ kind NEUTRO `not_duplicable`
+      // (subcode não sai do adapter); a casca oferece as 2 saídas (subir budget / recriar).
+      if (isLegacyEnhancementsCopyError(error)) {
+        throw new AdsPlatformError(
+          "not_duplicable",
+          `deep_copy rejeitado (subcode ${LEGACY_ENHANCEMENTS_SUBCODE}): criativo com recurso descontinuado`,
+          (error as MetaApiError).userMessage,
+        );
+      }
+      throw error; // demais erros → toAdsError na borda do adapter
+    }
 
     const copiedId = copiedIdOf(data);
     if (!copiedId) {

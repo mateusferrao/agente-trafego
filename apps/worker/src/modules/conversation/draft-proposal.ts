@@ -6,7 +6,7 @@
 
 import { and, desc, eq } from "drizzle-orm";
 import { adAccounts, agents, campaignDrafts, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { planScaleMove, type BudgetLevel } from "@trafego/core";
+import { planScaleMove, type BudgetLevel, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
 import {
   ACTION_PARAM_MODE,
   ACTION_PARAM_PCT,
@@ -40,6 +40,17 @@ export interface DraftProposalContext {
 export type ChatDraftProposal =
   | { readonly kind: "draft"; readonly echo: string; readonly approvalId: string; readonly draftId: string }
   | { readonly kind: "action"; readonly action: Action }
+  // passo agressivo, intent aberto: o agente PERGUNTA (subir seguro vs duplicar) e re-chama
+  // proposeScaleWinner com `choice`. Nada é criado ainda.
+  | {
+      readonly kind: "ask";
+      readonly echo: string;
+      readonly winnerLabel: string;
+      readonly entityId: string;
+      readonly entityLevel: "campaign" | "adset";
+      readonly raisePct: number;
+      readonly duplicatePct: number;
+    }
   | { readonly kind: "blocked"; readonly reason: string };
 
 /** on_demand (chat/site) ou proactive (proposto pelo agente no run). */
@@ -52,6 +63,8 @@ interface AgentContext {
   readonly model: string;
   readonly businessContext: string | null;
   readonly guidance: string | null;
+  /** Preferência do passo agressivo (autonomy_policy) — default "ask". */
+  readonly scaleAggressivePreference: ScaleAggressivePreference;
 }
 
 function money(reais: number, currency: string): string {
@@ -63,7 +76,12 @@ async function loadAgentContext(deps: WorkerDeps, ctx: DraftProposalContext): Pr
   const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
   if (!account) return null;
   const [ag] = await deps.db
-    .select({ modelConfig: agents.modelConfig, businessContext: agents.businessContext, guidance: agents.guidance })
+    .select({
+      modelConfig: agents.modelConfig,
+      businessContext: agents.businessContext,
+      guidance: agents.guidance,
+      autonomyPolicy: agents.autonomyPolicy,
+    })
     .from(agents)
     .where(and(eq(agents.id, ctx.agentId), eq(agents.orgId, ctx.orgId)))
     .limit(1);
@@ -85,6 +103,7 @@ async function loadAgentContext(deps: WorkerDeps, ctx: DraftProposalContext): Pr
     model: (mc["messageModel"] as string) ?? (mc["model"] as string) ?? DEFAULT_COPY_MODEL,
     businessContext: ag?.businessContext ?? null,
     guidance: ag?.guidance ?? null,
+    scaleAggressivePreference: ag?.autonomyPolicy?.scaleAggressivePreference ?? "ask",
   };
 }
 
@@ -132,6 +151,7 @@ export async function proposeScaleWinner(
   ctx: DraftProposalContext,
   winnerName?: string,
   origin: DraftOrigin = "on_demand",
+  choice?: ScaleChoice,
 ): Promise<ChatDraftProposal> {
   const ac = await loadAgentContext(deps, ctx);
   if (!ac) return { kind: "blocked", reason: "não consegui acessar a conta agora" };
@@ -154,8 +174,33 @@ export async function proposeScaleWinner(
   const level = chosen.entityLevel === "campaign" ? "campaign" : "adset";
   const budgetLevel: BudgetLevel = level === "adset" && sourceDailyMinor > 0 ? "adset" : "campaign";
   const scalePct = ac.cfg.scalePct ?? 50;
-  const move = planScaleMove({ scalePct, maxBudgetChangePct: ac.cfg.maxBudgetChangePct, budgetLevel });
+  const move = planScaleMove({
+    scalePct,
+    maxBudgetChangePct: ac.cfg.maxBudgetChangePct,
+    budgetLevel,
+    preference: ac.scaleAggressivePreference,
+    ...(choice ? { choice } : {}),
+  });
   const label = chosen.entityName ?? chosen.entityId;
+
+  // passo agressivo, intent aberto, sem resposta → PERGUNTA em linguagem plana (§UX: sem jargão).
+  if (move.move === "ask") {
+    const echo = [
+      `O aumento que você pediu é grande pro "${label}".`,
+      `Posso **subir o orçamento** dele em até ${move.raisePct}% (o limite seguro, que não reinicia o desempenho que ele já tem),`,
+      `ou **criar uma cópia separada** pra crescer mais que isso sem arriscar a que já está funcionando.`,
+      `O que você prefere?`,
+    ].join(" ");
+    return {
+      kind: "ask",
+      echo,
+      winnerLabel: label,
+      entityId: chosen.entityId,
+      entityLevel: level,
+      raisePct: move.raisePct,
+      duplicatePct: move.duplicatePct,
+    };
+  }
 
   if (move.move === "raise_budget") {
     const action: Action = {

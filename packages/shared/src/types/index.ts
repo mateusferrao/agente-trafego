@@ -722,6 +722,13 @@ export interface AutonomyPolicy {
    * (jsonb `autonomy_policy`) por ser uma política de autonomia — sem migração.
    */
   readonly autoConfigViaChat?: boolean;
+  /**
+   * Preferência do passo AGRESSIVO da escala (Fatia 7): "ask" (default — pergunta subir vs
+   * duplicar), "raise" (sempre sobe o budget no limite seguro) ou "duplicate" (sempre duplica).
+   * Tira a fricção do perguntar-toda-vez pro power-user. Ausente = "ask". Vive aqui (jsonb) —
+   * sem migração.
+   */
+  readonly scaleAggressivePreference?: "ask" | "raise" | "duplicate";
 }
 
 // ─── Sinais de mudança material (F4 — alerta proativo dirigido) ─────────────

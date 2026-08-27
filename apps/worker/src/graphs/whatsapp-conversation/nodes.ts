@@ -25,6 +25,7 @@ import { applyAgentConfigChange, loadAgentConfigState, reseedArchetypeChange } f
 import { sleep, APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE } from "@trafego/shared";
 import type { Action, ConversionGoal, OrgId } from "@trafego/shared/types";
 import { CONVERSION_GOALS } from "@trafego/shared/types";
+import { AdsPlatformError } from "@trafego/shared/ports";
 import { and, eq } from "drizzle-orm";
 import { adAccounts, agents, playbookRules, type Database } from "@trafego/db";
 import { DEFAULT_CURRENCY } from "@trafego/shared";
@@ -177,7 +178,9 @@ function outcomeLine(action: Action, outcome: ApplyOutcome): string {
     case "blocked":
       return `Não consegui em ${name}: ${outcome.reason}.`;
     case "failed":
-      return `Não consegui aplicar em ${name} agora — a Meta não respondeu. Tenta de novo.`;
+      return outcome.error instanceof AdsPlatformError && outcome.error.userMessage
+        ? `Não consegui em ${name}. A Meta informou: ${outcome.error.userMessage.trim()}`
+        : `Não consegui aplicar em ${name} agora — a Meta não respondeu. Tenta de novo.`;
   }
 }
 
@@ -556,9 +559,16 @@ export function makeConversationNodes(
     if (createCall) {
       const dctx = { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, currency: DEFAULT_CURRENCY };
       const args = (createCall.args ?? {}) as Record<string, unknown>;
+      const scaleChoice = args["choice"] === "raise" || args["choice"] === "duplicate" ? (args["choice"] as "raise" | "duplicate") : undefined;
       const proposal =
         createCall.name === "scale_winner"
-          ? await proposeScaleWinner(deps, dctx, typeof args["winnerName"] === "string" ? (args["winnerName"] as string) : undefined)
+          ? await proposeScaleWinner(
+              deps,
+              dctx,
+              typeof args["winnerName"] === "string" ? (args["winnerName"] as string) : undefined,
+              "on_demand",
+              scaleChoice,
+            )
           : await proposeCreateCampaign(deps, dctx, {
               // valida o goal contra a taxonomia neutra ANTES de propor: goal inválido (o LLM
               // manda texto livre) descartado → o propose infere da meta/conta, e o eco mostra
@@ -570,6 +580,12 @@ export function makeConversationNodes(
       const expiresAt = new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString();
       if (proposal.kind === "blocked") {
         return { messages: [...answerToolCalls(allCalls, "não deu"), new AIMessage(proposal.reason)] };
+      }
+      if (proposal.kind === "ask") {
+        // passo agressivo, intent aberto → o agente PERGUNTA; sem pending (nada a confirmar
+        // ainda). O usuário responde "sobe o budget"/"duplica" → o LLM re-chama scale_winner
+        // com choice → vira ação (raise) ou rascunho (duplicate).
+        return { messages: [...answerToolCalls(allCalls, "perguntando"), new AIMessage(proposal.echo)] };
       }
       if (proposal.kind === "draft") {
         return {

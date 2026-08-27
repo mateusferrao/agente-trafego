@@ -7,11 +7,21 @@
 import { Worker } from "bullmq";
 import type { Redis } from "ioredis";
 import { APPROVAL_APPLY_QUEUE, type ApprovalApplyPayload, type ApprovalId } from "@trafego/shared";
+import { AdsPlatformError } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../composition.js";
 import { applyConfirmedAction } from "../modules/apply/apply-confirmed-action.js";
 import { applyDraft } from "../modules/apply/apply-draft.js";
 import { createNotifyRepo } from "../modules/notify/repo.js";
 import { createSendToConversation } from "../modules/notify/send-to-contact.js";
+
+/** Envelopa o desfecho de falha: se a plataforma mandou uma mensagem legível (`userMessage`),
+ *  prefere-a ("A Meta informou: …"); senão o texto genérico. Nunca vaza `message` técnico. */
+function metaFailureLine(error: unknown, fallback: string): string {
+  if (error instanceof AdsPlatformError && error.userMessage) {
+    return `A Meta informou: ${error.userMessage.trim()}`;
+  }
+  return fallback;
+}
 
 export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): Worker<ApprovalApplyPayload> {
   const { logger, ports } = deps;
@@ -47,7 +57,9 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
         switch (outcome.kind) {
           case "failed":
             logger.error({ approvalId, err: outcome.error }, "approval-apply:saga de criação falhou");
-            await pushOutcome("Não consegui criar agora — a Meta não respondeu. Tenta de novo em instantes.");
+            await pushOutcome(
+              metaFailureLine(outcome.error, "Não consegui criar agora — a Meta não respondeu. Tenta de novo em instantes."),
+            );
             return;
           case "blocked":
             await ports.approval.resolve(approval.id, { status: "blocked", resolvedReason: outcome.reason });
@@ -87,7 +99,9 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
           // falha da Meta (rede/rate-limit/etc): mantém a aprovação PENDENTE (dá p/ reaprovar)
           // e avisa o usuário — a promessa de "te aviso o resultado" não pode sumir (§UX).
           logger.error({ approvalId, err: outcome.error }, "approval-apply:execute falhou");
-          await pushOutcome(`Não consegui aplicar agora${suffix} — a Meta não respondeu. Tenta de novo em instantes.`);
+          await pushOutcome(
+            metaFailureLine(outcome.error, `Não consegui aplicar agora${suffix} — a Meta não respondeu. Tenta de novo em instantes.`),
+          );
           return;
         case "blocked":
           await ports.approval.resolve(approval.id, { status: "blocked", resolvedReason: outcome.reason });

@@ -23,9 +23,40 @@ describe("planScaleMove", () => {
     expect(move).toEqual({ move: "raise_budget", pct: 20, level: "adset" });
   });
 
-  it("ABO + passo agressivo (> teto) → duplica o adset pra isolar", () => {
+  it("ABO + passo agressivo (> teto) + sem preferência (default ask) → PERGUNTA (raise seguro vs duplicar)", () => {
     const move = planScaleMove({ scalePct: 50, maxBudgetChangePct: 20, budgetLevel: "adset" });
+    expect(move).toEqual({ move: "ask", raisePct: 20, duplicatePct: 50 });
+  });
+
+  it("ABO agressivo + choice=duplicate (resposta do usuário) → duplica", () => {
+    const move = planScaleMove({ scalePct: 50, maxBudgetChangePct: 20, budgetLevel: "adset", choice: "duplicate" });
     expect(move).toEqual({ move: "duplicate", scalePct: 50 });
+  });
+
+  it("ABO agressivo + choice=raise → sobe o budget clampado à faixa segura (não estoura o learning)", () => {
+    const move = planScaleMove({ scalePct: 50, maxBudgetChangePct: 20, budgetLevel: "adset", choice: "raise" });
+    expect(move).toEqual({ move: "raise_budget", pct: 20, level: "adset" });
+  });
+
+  it("ABO agressivo + preferência lembrada = duplicate → duplica sem perguntar", () => {
+    const move = planScaleMove({ scalePct: 50, maxBudgetChangePct: 20, budgetLevel: "adset", preference: "duplicate" });
+    expect(move).toEqual({ move: "duplicate", scalePct: 50 });
+  });
+
+  it("ABO agressivo + preferência lembrada = raise → sobe clampado sem perguntar", () => {
+    const move = planScaleMove({ scalePct: 50, maxBudgetChangePct: 20, budgetLevel: "adset", preference: "raise" });
+    expect(move).toEqual({ move: "raise_budget", pct: 20, level: "adset" });
+  });
+
+  it("choice vence a preferência (usuário respondeu explicitamente)", () => {
+    const move = planScaleMove({
+      scalePct: 50,
+      maxBudgetChangePct: 20,
+      budgetLevel: "adset",
+      preference: "duplicate",
+      choice: "raise",
+    });
+    expect(move).toEqual({ move: "raise_budget", pct: 20, level: "adset" });
   });
 });
 

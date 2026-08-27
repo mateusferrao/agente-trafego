@@ -128,6 +128,20 @@ describe("MetaAdsAdapter.getAdAccount", () => {
       kind: "rate_limited",
     });
   });
+
+  it("erro com error_user_msg → AdsPlatformError carrega userMessage (mensagem legível repassada)", async () => {
+    stubFetchSequence([
+      {
+        body: { error: { message: "Invalid parameter", code: 100, error_user_msg: "explicação legível pro usuário" } },
+        status: 400,
+      },
+    ]);
+    await expect(makeAdapter().getAdAccount("tok", "9")).rejects.toMatchObject({
+      name: "AdsPlatformError",
+      kind: "not_accessible",
+      userMessage: "explicação legível pro usuário",
+    });
+  });
 });
 
 describe("MetaAdsAdapter.listEntities (governor)", () => {

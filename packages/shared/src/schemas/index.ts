@@ -66,10 +66,15 @@ export const guardrailConfigSchema = z.object({
 });
 
 export const autonomyLevel = z.enum(["notify", "suggest", "act_safe", "act_full"]);
+/** Preferência do passo AGRESSIVO da escala (Fatia 7): perguntar (default) / sempre subir budget /
+ *  sempre duplicar. Tira a fricção do "perguntar toda vez" pro power-user. Ausente = "ask". */
+export const scaleAggressivePreference = z.enum(["ask", "raise", "duplicate"]);
+export type ScaleAggressivePreference = z.infer<typeof scaleAggressivePreference>;
 export const autonomyPolicySchema = z.object({
   bySource: z.object({ playbook: autonomyLevel, llm: autonomyLevel }),
   /** kill-switch da auto-config por chat (S2.3) — ausente/true = ON; false = OFF. */
   autoConfigViaChat: z.boolean().optional(),
+  scaleAggressivePreference: scaleAggressivePreference.optional(),
 });
 
 // ─── Cadência (Fatia 4 corte 2) ──────────────────────────────────────────

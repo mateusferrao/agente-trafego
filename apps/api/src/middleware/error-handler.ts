@@ -6,6 +6,23 @@ import { AdsPlatformError, MessagingChannelError, type AdsPlatformErrorKind } fr
  * Mapa erro-de-plataforma → HTTP amigável. A casca NÃO conhece o provider (Meta):
  * o adapter traduz seu erro específico p/ `AdsPlatformError` e aqui vira mensagem.
  */
+/** Kinds "acionáveis" (o usuário pode corrigir) — quando a plataforma mandou uma mensagem legível
+ *  (`userMessage`), preferimos ela (o QUÊ) + mantemos o next-step canned (o QUE FAZER). Transientes
+ *  (rate_limited/upstream) ficam só no canned: a mensagem crua da plataforma não ajuda ali. */
+const ADS_ACTIONABLE_KINDS: ReadonlySet<AdsPlatformErrorKind> = new Set([
+  "invalid_credential",
+  "not_accessible",
+  "not_duplicable",
+]);
+
+/** Envelopa: "{userMessage legível} {próximo passo canned}". Nunca vaza o `message` técnico de dev. */
+function envelopeAdsMessage(error: AdsPlatformError, canned: string): string {
+  if (ADS_ACTIONABLE_KINDS.has(error.kind) && error.userMessage) {
+    return `${error.userMessage.trim()} ${canned}`;
+  }
+  return canned;
+}
+
 const ADS_ERROR_HTTP: Record<AdsPlatformErrorKind, { status: number; code: string; message: string }> = {
   invalid_credential: {
     status: 400,
@@ -21,6 +38,11 @@ const ADS_ERROR_HTTP: Record<AdsPlatformErrorKind, { status: number; code: strin
     status: 429,
     code: "ads_rate_limited",
     message: "A Meta recebeu chamadas demais agora. Espere alguns minutos e tente de novo.",
+  },
+  not_duplicable: {
+    status: 422,
+    code: "ads_not_duplicable",
+    message: "Posso subir o orçamento dele, ou você recria o criativo para eu duplicar.",
   },
   upstream: {
     status: 502,
@@ -78,7 +100,7 @@ export function registerErrorHandler(app: FastifyInstance): void {
     if (error instanceof AdsPlatformError) {
       const mapped = ADS_ERROR_HTTP[error.kind];
       if (error.kind === "upstream") request.log.error({ err: error }, "plataforma de ads indisponível");
-      return reply.status(mapped.status).send({ code: mapped.code, message: mapped.message });
+      return reply.status(mapped.status).send({ code: mapped.code, message: envelopeAdsMessage(error, mapped.message) });
     }
     if (error instanceof MessagingChannelError) {
       // canal (WhatsApp) fora do ar — mensagem amigável, sem vazar o provider.

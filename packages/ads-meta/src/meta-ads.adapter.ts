@@ -146,16 +146,19 @@ function mapAccount(node: MetaAdAccountNode): AccessibleAccount {
 function toAdsError(error: unknown): AdsPlatformError {
   if (error instanceof AdsPlatformError) return error; // já traduzido — não re-embrulha
   if (error instanceof MetaApiError) {
-    if (error.code === 190) return new AdsPlatformError("invalid_credential", error.message);
+    // `error_user_msg` = texto legível que a Meta fez pro usuário final; repassa no port neutro
+    // (a casca envelopa). O `subcode` NÃO sai daqui — fica interno ao adapter.
+    const userMsg = error.userMessage;
+    if (error.code === 190) return new AdsPlatformError("invalid_credential", error.message, userMsg);
     // rate-limit (throttling) → recuperável esperando; mensagem própria na casca.
     if (error.code !== undefined && META_RATE_LIMIT_CODES.has(error.code)) {
-      return new AdsPlatformError("rate_limited", error.message);
+      return new AdsPlatformError("rate_limited", error.message, userMsg);
     }
-    if (error.httpStatus >= 500) return new AdsPlatformError("upstream", error.message);
+    if (error.httpStatus >= 500) return new AdsPlatformError("upstream", error.message, userMsg);
     if (error.code !== undefined && META_TRANSIENT_CODES.has(error.code)) {
-      return new AdsPlatformError("upstream", error.message);
+      return new AdsPlatformError("upstream", error.message, userMsg);
     }
-    return new AdsPlatformError("not_accessible", error.message);
+    return new AdsPlatformError("not_accessible", error.message, userMsg);
   }
   return new AdsPlatformError("upstream", error instanceof Error ? error.message : "erro Meta desconhecido");
 }

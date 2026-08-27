@@ -41,19 +41,30 @@ export type DraftApprovalOutput = z.infer<typeof draftApprovalOutput>;
 
 export const draftApprovalsListOutput = z.array(draftApprovalOutput);
 
-/** Pedido de escalar um vencedor pelo site (CTA no card da campanha). */
+/** Resposta do usuário ao ASK do passo agressivo (subir seguro vs duplicar). */
+export const scaleChoiceInput = z.enum(["raise", "duplicate"]);
+export type ScaleChoiceInput = z.infer<typeof scaleChoiceInput>;
+
+/** Pedido de escalar um vencedor pelo site (CTA no card da campanha). `choice` = resposta
+ *  do usuário quando o passo agressivo perguntou (ausente na 1ª chamada). */
 export const scaleWinnerInput = z.object({
   entityLevel: z.enum(["campaign", "adset"]),
   entityId: z.string().min(1),
+  choice: scaleChoiceInput.optional(),
 });
 export type ScaleWinnerInput = z.infer<typeof scaleWinnerInput>;
 
-/** Resultado de propor a escala: rascunho de duplicação OU ação de budget (raise). */
-export const scaleWinnerOutput = z.object({
-  move: z.enum(["raise_budget", "duplicate"]),
-  /** id da aprovação criada (rascunho, move=duplicate; ação, move=raise_budget). */
-  approvalId: z.string(),
-});
+/**
+ * Resultado de propor a escala (discriminado por `move`):
+ * - `raise_budget`/`duplicate` → aprovação criada (`approvalId`);
+ * - `ask` → passo agressivo, intent aberto: o site renderiza as 2 opções (subir `raisePct`%
+ *   seguro vs duplicar +`duplicatePct`%) e re-chama com `choice`. Nada é criado ainda.
+ */
+export const scaleWinnerOutput = z.discriminatedUnion("move", [
+  z.object({ move: z.literal("raise_budget"), approvalId: z.string() }),
+  z.object({ move: z.literal("duplicate"), approvalId: z.string() }),
+  z.object({ move: z.literal("ask"), raisePct: z.number(), duplicatePct: z.number() }),
+]);
 export type ScaleWinnerOutput = z.infer<typeof scaleWinnerOutput>;
 
 /** Um asset da biblioteca de criativos (aba Criativos). */

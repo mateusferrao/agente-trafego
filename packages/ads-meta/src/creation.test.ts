@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { AdsPlatformError } from "@trafego/shared/ports";
 import { MetaGraphClient } from "./client.js";
 import { MetaCreationService } from "./creation.js";
 
@@ -65,6 +66,50 @@ describe("MetaCreationService.duplicateEntity", () => {
     await svc().duplicateEntity(account, { sourceLevel: "adset", sourceId: "AS1", status: "paused" });
     const copies = posts().find((p) => p.url.includes("/copies"))!;
     expect(copies.url).toContain("status_option=PAUSED");
+  });
+
+  it("vencedor legado (subcode 3858504) → AdsPlatformError kind neutro not_duplicable + userMessage (subcode não vaza)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              message: "Invalid parameter",
+              code: 100,
+              error_subcode: 3858504,
+              error_user_msg: "O criativo não deve incluir aprimoramentos padrão.",
+            },
+          }),
+          { status: 400, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+    const err = await svc()
+      .duplicateEntity(account, { sourceLevel: "adset", sourceId: "AS1", status: "paused" })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AdsPlatformError);
+    expect(err).toMatchObject({ kind: "not_duplicable", userMessage: "O criativo não deve incluir aprimoramentos padrão." });
+    // o subcode Meta NÃO vaza pro erro neutro (fica interno ao adapter).
+    expect(err).not.toHaveProperty("subcode");
+  });
+
+  it("outros erros do /copies → NÃO viram not_duplicable (propagam p/ toAdsError)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ error: { message: "boom", code: 1 } }), {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+    const err = await svc()
+      .duplicateEntity(account, { sourceLevel: "adset", sourceId: "AS1", status: "paused" })
+      .catch((e: unknown) => e);
+    // não é AdsPlatformError (a tradução p/ port é do adapter, não do service) — é o MetaApiError cru.
+    expect(err).not.toBeInstanceOf(AdsPlatformError);
+    expect((err as Error).name).toBe("MetaApiError");
   });
 });
 

@@ -130,12 +130,19 @@ export type AdsPlatformErrorKind =
   | "invalid_credential"
   | "not_accessible"
   | "rate_limited"
+  // a entidade-fonte não pode ser duplicada COMO ESTÁ (ex: criativo com recurso descontinuado
+  // pela plataforma) — neutro, qualquer provider pode ter esse caso. A casca oferece alternativas.
+  | "not_duplicable"
   | "upstream";
 
 export class AdsPlatformError extends Error {
   constructor(
     readonly kind: AdsPlatformErrorKind,
     message: string,
+    /** Mensagem que a PLATAFORMA escreveu pro usuário final (neutro — qualquer provider pode
+     *  ter uma). A casca prefere-a ao `message` técnico, envelopando ("A plataforma informou: …"
+     *  + próximo passo). NUNCA carrega vocabulário específico do provider (ex: subcode Meta). */
+    readonly userMessage?: string,
   ) {
     super(message);
     this.name = "AdsPlatformError";

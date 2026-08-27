@@ -8,7 +8,7 @@ import { and, count, eq, gte, inArray } from "drizzle-orm";
 import { agentToolCalls, auditLog, campaignDrafts, guardrailConfigs } from "@trafego/db";
 import { applyCreationGuardrails, buildDuplicateInput, goalNounPt } from "@trafego/core";
 import { toGuardrailConfig, type CampaignDraft, type OrgId } from "@trafego/shared";
-import type { AdAccountRef } from "@trafego/shared/ports";
+import { AdsPlatformError, type AdAccountRef } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../../composition.js";
 import { createAnalysisRepo } from "../analysis/repo.js";
 
@@ -20,6 +20,12 @@ const TOOL_KEY_CREATE = "create_campaign";
 const DEFAULT_SPECIAL_AD_CATEGORIES: readonly string[] = [];
 /** Janela do cap de campanhas novas/dia (rolling 24h — igual ao contexto de tool diário). */
 const CREATION_DAY_MS = 24 * 60 * 60 * 1000;
+/** Vencedor legado (criativo com recurso descontinuado) não pode ser duplicado como está.
+ *  Honesto + 2 saídas explícitas (subir budget / recriar criativo). Auto-recriar-do-zero foi
+ *  descartado (baixa-fidelidade + eco+confirma) — ver ROADMAP / plano. */
+const NOT_DUPLICABLE_REASON =
+  "esse vencedor usa um recurso que a Meta descontinuou para cópia, então não consigo cloná-lo fielmente. " +
+  "Posso subir o orçamento dele agora, ou você recria o criativo no Gerenciador de Anúncios que eu duplico";
 
 /** Desfecho tipado (o chamador mapeia p/ resolver a approval + push). */
 export type DraftApplyOutcome =
@@ -142,6 +148,11 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
   } catch (error) {
     // createdIds já foi persistido incrementalmente → o retry retoma daqui.
     await db.update(campaignDrafts).set({ status: "failed" }).where(eq(campaignDrafts.id, row.id));
+    // vencedor legado (criativo descontinuado): falha HONESTA + 2 saídas, não erro genérico.
+    // Nada foi criado (o /copies falhou antes do 1º persist) → sem órfão pra reconciliar.
+    if (error instanceof AdsPlatformError && error.kind === "not_duplicable") {
+      return { kind: "blocked", reason: NOT_DUPLICABLE_REASON };
+    }
     return { kind: "failed", error };
   }
 

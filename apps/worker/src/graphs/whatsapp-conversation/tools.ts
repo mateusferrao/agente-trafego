@@ -218,7 +218,9 @@ export function makeConversationTools(
   const adjustBudget = tool(proposeOnly, {
     name: "adjust_budget",
     description:
-      "Propõe ajustar o budget diário: por % (mode increase/decrease + pct) OU valor absoluto (mode set + amountReais). Requer eco+confirma.",
+      "Propõe ajustar o budget diário: por % (mode increase/decrease + pct) OU valor absoluto (mode set + amountReais). " +
+      "USE ISTO quando o usuário der um NÚMERO explícito de orçamento — inclusive 'escala em 30%' ou 'aumenta o orçamento em 20%' " +
+      "(intenção de budget = sobe direto, NUNCA duplica). Só use scale_winner quando NÃO houver número. Requer eco+confirma.",
     schema: z.object({
       ...writeSchema,
       mode: z.enum(["increase", "decrease", "set"]),
@@ -257,9 +259,16 @@ export function makeConversationTools(
   const scaleWinner = tool(proposeOnly, {
     name: "scale_winner",
     description:
-      "Propõe ESCALAR um vencedor (mais budget no que funciona). O sistema decide subir o budget ou duplicar. Requer eco+confirma.",
+      "Propõe ESCALAR um vencedor quando o usuário quer crescer SEM dar um número (ex: 'escala o vencedor', 'cresce isso', 'bota mais grana no que tá indo bem'). " +
+      "Se ele deu % ou valor de orçamento, use adjust_budget em vez disto. Passo pequeno sobe o budget; passo grande o sistema PERGUNTA (subir seguro vs duplicar). " +
+      "Quando o usuário responder a essa pergunta, chame de novo com choice='raise' (subir orçamento) ou choice='duplicate' (criar cópia). Requer eco+confirma.",
     schema: z.object({
       winnerName: z.string().nullable().optional().describe("nome do vencedor a escalar (opcional; senão o melhor)"),
+      choice: z
+        .enum(["raise", "duplicate"])
+        .nullable()
+        .optional()
+        .describe("resposta do usuário à pergunta do passo agressivo: 'raise' = subir orçamento; 'duplicate' = criar cópia"),
     }),
   });
   const createCampaign = tool(proposeOnly, {

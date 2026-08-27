@@ -8,7 +8,7 @@ import {
   platformConnections,
   type Database,
 } from "@trafego/db";
-import { planScaleMove, type BudgetLevel } from "@trafego/core";
+import { planScaleMove, type BudgetLevel, type ScaleAggressivePreference } from "@trafego/core";
 import {
   ACTION_PARAM_MODE,
   ACTION_PARAM_PCT,
@@ -50,6 +50,8 @@ interface ScaleContext {
   readonly ref: AdAccountRef;
   readonly currency: string;
   readonly cfg: ReturnType<typeof toGuardrailConfig>;
+  /** Preferência do passo agressivo (autonomy_policy) — default "ask". */
+  readonly scaleAggressivePreference: ScaleAggressivePreference;
 }
 
 export function createDraftsService(deps: DraftsServiceDeps) {
@@ -61,6 +63,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
         accountToken: adAccounts.tokenCripto,
         connToken: platformConnections.tokenCripto,
         agentId: agents.id,
+        autonomyPolicy: agents.autonomyPolicy,
       })
       .from(adAccounts)
       .leftJoin(platformConnections, eq(adAccounts.connectionId, platformConnections.id))
@@ -82,6 +85,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       ref: { adAccountId: row.metaAdAccountId, accessToken: deps.vault.decrypt(encrypted) },
       currency: row.currency ?? "BRL",
       cfg: toGuardrailConfig(g),
+      scaleAggressivePreference: row.autonomyPolicy?.scaleAggressivePreference ?? "ask",
     };
   }
 
@@ -160,8 +164,20 @@ export function createDraftsService(deps: DraftsServiceDeps) {
         input.entityLevel === "adset" && sourceDailyMinor > 0 ? "adset" : "campaign";
 
       const scalePct = ctx.cfg.scalePct ?? 50;
-      const move = planScaleMove({ scalePct, maxBudgetChangePct: ctx.cfg.maxBudgetChangePct, budgetLevel });
+      const move = planScaleMove({
+        scalePct,
+        maxBudgetChangePct: ctx.cfg.maxBudgetChangePct,
+        budgetLevel,
+        preference: ctx.scaleAggressivePreference,
+        ...(input.choice ? { choice: input.choice } : {}),
+      });
       const expiresAt = new Date(Date.now() + APPROVAL_TTL_MS);
+
+      // passo agressivo, intent aberto, sem resposta ainda → PERGUNTA (nada é criado).
+      // O site renderiza as 2 opções e re-chama com `choice`; o chat pergunta e reusa o mesmo caminho.
+      if (move.move === "ask") {
+        return { move: "ask", raisePct: move.raisePct, duplicatePct: move.duplicatePct };
+      }
 
       if (move.move === "raise_budget") {
         const action: Action = {

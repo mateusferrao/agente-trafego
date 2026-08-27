@@ -1357,6 +1357,14 @@
               },
               "autoConfigViaChat": {
                 "type": "boolean"
+              },
+              "scaleAggressivePreference": {
+                "type": "string",
+                "enum": [
+                  "ask",
+                  "raise",
+                  "duplicate"
+                ]
               }
             },
             "required": [
@@ -2334,6 +2342,14 @@
               },
               "autoConfigViaChat": {
                 "type": "boolean"
+              },
+              "scaleAggressivePreference": {
+                "type": "string",
+                "enum": [
+                  "ask",
+                  "raise",
+                  "duplicate"
+                ]
               }
             },
             "required": [
@@ -6378,6 +6394,13 @@
           "entityId": {
             "type": "string",
             "minLength": 1
+          },
+          "choice": {
+            "type": "string",
+            "enum": [
+              "raise",
+              "duplicate"
+            ]
           }
         },
         "required": [
@@ -6386,22 +6409,65 @@
         ]
       },
       "ScaleWinnerOutput": {
-        "type": "object",
-        "properties": {
-          "move": {
-            "type": "string",
-            "enum": [
-              "raise_budget",
-              "duplicate"
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "move": {
+                "type": "string",
+                "enum": [
+                  "raise_budget"
+                ]
+              },
+              "approvalId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "move",
+              "approvalId"
             ]
           },
-          "approvalId": {
-            "type": "string"
+          {
+            "type": "object",
+            "properties": {
+              "move": {
+                "type": "string",
+                "enum": [
+                  "duplicate"
+                ]
+              },
+              "approvalId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "move",
+              "approvalId"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "move": {
+                "type": "string",
+                "enum": [
+                  "ask"
+                ]
+              },
+              "raisePct": {
+                "type": "number"
+              },
+              "duplicatePct": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "move",
+              "raisePct",
+              "duplicatePct"
+            ]
           }
-        },
-        "required": [
-          "move",
-          "approvalId"
         ]
       },
       "CreativeAssetOutput": {
