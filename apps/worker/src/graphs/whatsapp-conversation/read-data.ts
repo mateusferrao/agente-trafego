@@ -17,7 +17,7 @@ import type { Database } from "@trafego/db/client";
 import { daysAgoInTz, rankAdCreatives } from "@trafego/core";
 import { createAnalysisRepo, type AdCreativeCopyRow } from "../../modules/analysis/repo.js";
 import { getFreshMetricsData } from "../../modules/conversation/fresh-metrics.js";
-import type { ApprovalPort } from "@trafego/shared/ports";
+import type { Approval, ApprovalPort } from "@trafego/shared/ports";
 import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY } from "@trafego/shared";
 import type { EntityLevel, InsightMetrics, OrgId, UnitAnalysis } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
@@ -377,7 +377,11 @@ export async function listPendingData(
   approvalPort: ApprovalPort,
   orgId: string,
 ): Promise<PendingItem[] | NoData> {
-  const pending = await approvalPort.listPendingByOrg(orgId as OrgId);
+  // rascunhos de campanha (Fatia 7) são apresentados à parte; o list_pending do chat
+  // (aprovação conversacional de ações) lista só as aprovações de AÇÃO.
+  const pending = (await approvalPort.listPendingByOrg(orgId as OrgId)).filter(
+    (a): a is Approval => a.kind === "action",
+  );
   if (pending.length === 0) return { hasData: false, note: "nenhuma ação aguardando aprovação" };
   return pending.map((a) => ({
     id: a.id,

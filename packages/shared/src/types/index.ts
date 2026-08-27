@@ -5,6 +5,7 @@ export type AgentId = string & { readonly __brand: "AgentId" };
 export type RunId = string & { readonly __brand: "RunId" };
 export type ContactId = string & { readonly __brand: "ContactId" };
 export type ApprovalId = string & { readonly __brand: "ApprovalId" };
+export type DraftId = string & { readonly __brand: "DraftId" };
 
 // ─── Result (core usa isto; casca usa exceções) ──────────────────────────
 export type Result<T, E = Error> =

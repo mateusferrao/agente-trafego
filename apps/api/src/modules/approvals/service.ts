@@ -1,7 +1,7 @@
 import { and, eq, gte, inArray } from "drizzle-orm";
 import { adAccounts, agentRuns, agentToolCalls, agents, type Database } from "@trafego/db";
 import type { ApprovalId, OrgId } from "@trafego/shared/types";
-import type { ApprovalPort } from "@trafego/shared/ports";
+import type { Approval, ApprovalPort } from "@trafego/shared/ports";
 import type { SchedulerPort } from "@trafego/shared/ports";
 import { APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE } from "@trafego/shared";
 import { badRequest, notFound } from "../../middleware/error-handler.js";
@@ -47,7 +47,11 @@ export function createApprovalsService(deps: ApprovalsDeps) {
 
   return {
     async listPending(orgId: OrgId): Promise<ApprovalOutput[]> {
-      const pending = await deps.approvals.listPendingByOrg(orgId);
+      // Rascunhos de campanha (Fatia 7) têm sua própria superfície (card de rascunho);
+      // este inbox de AÇÕES lista só as aprovações de ação.
+      const pending = (await deps.approvals.listPendingByOrg(orgId)).filter(
+        (a): a is Approval => a.kind === "action",
+      );
       const accounts = await accountByAgent([...new Set(pending.map((a) => a.agentId))]);
       return pending.map((a) => {
         const acc = accounts.get(a.agentId);

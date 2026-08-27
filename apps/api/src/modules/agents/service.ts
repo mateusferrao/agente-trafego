@@ -41,7 +41,7 @@ import {
   UNDO_TOOL_KEY,
 } from "@trafego/shared";
 import type { Action, AgentId, AutonomyPolicy, OrgId, StoredInsightMetrics } from "@trafego/shared/types";
-import type { ApprovalPort, SchedulerPort } from "@trafego/shared/ports";
+import type { Approval, ApprovalPort, SchedulerPort } from "@trafego/shared/ports";
 import { ANALYSIS_WINDOW_DEFAULT_DAYS } from "@trafego/shared";
 import { badRequest, notFound } from "../../middleware/error-handler.js";
 import {
@@ -531,7 +531,9 @@ export function createAgentsService(deps: AgentsDeps) {
     const droppedActions = snapshot?.droppedActions ?? [];
     // Sugeridas = pendentes de OK (fonte da verdade: `approvals`), TODAS do agente
     // (cross-run), não só as do último run. `barradas` (dropped) seguem do snapshot.
-    const pendingApprovals = await deps.approvals.listPendingByAgent(summary.agentId as AgentId);
+    const pendingApprovals = (
+      await deps.approvals.listPendingByAgent(summary.agentId as AgentId)
+    ).filter((a): a is Approval => a.kind === "action");
     // fallback p/ tool_calls antigos (gravados antes do target carregar `name`) — os
     // novos já vêm com o nome embutido (decide_actions enriquece via `state.entities`,
     // cobre inclusive entidade pausada que nunca passa pelo mapa/LLM).

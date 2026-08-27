@@ -150,6 +150,9 @@ export function createTimelineService(deps: TimelineDeps) {
       for (const r of apprRows) {
         const type = APPROVAL_EVENT_BY_STATUS[r.status];
         if (!type) continue;
+        // rascunhos de campanha (Fatia 7) têm eventos próprios (campaign_draft_*); aqui
+        // só entram aprovações de AÇÃO (actionType set).
+        if (r.actionType === null) continue;
         const at = (r.resolvedAt ?? r.createdAt).toISOString();
         const action = r.action as { target?: { name?: string; id?: string } } | null;
         events.push({

@@ -55,6 +55,7 @@ const ACCOUNT = "acc-1";
 function approval(overrides: Record<string, unknown> = {}): Approval {
   return {
     id: "ap-1",
+    kind: "action",
     orgId: ORG,
     agentId: AGENT,
     runId: null,

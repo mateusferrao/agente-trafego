@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -153,11 +154,14 @@ export const approvals = pgTable(
     contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
     status: approvalStatus("status").notNull().default("pending"),
     // chave granular (a ação proposta vive inteira em `action`; estas colunas chaveiam
-    // o upsert + índices, sem espalhar params).
-    entityLevel: entityLevel("entity_level").notNull(),
-    entityId: text("entity_id").notNull(),
-    actionType: actionType("action_type").notNull(),
-    action: jsonb("action").$type<Action>().notNull(),
+    // o upsert + índices, sem espalhar params). NULL nas aprovações de RASCUNHO (Fatia 7):
+    // a proposta vive em `campaign_drafts` (via `draft_id`), não em `action`.
+    entityLevel: entityLevel("entity_level"),
+    entityId: text("entity_id"),
+    actionType: actionType("action_type"),
+    action: jsonb("action").$type<Action>(),
+    // Aprovação de rascunho de campanha (Fatia 7) — exclui `action` (check exatamente-um).
+    draftId: uuid("draft_id").references(() => campaignDrafts.id, { onDelete: "cascade" }),
     // motivo quando resolvida sem aplicar (rejeitada pelo usuário ou `blocked` no re-check).
     resolvedReason: text("resolved_reason"),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
@@ -168,10 +172,17 @@ export const approvals = pgTable(
     index("approvals_org_idx").on(t.orgId),
     index("approvals_run_idx").on(t.runId),
     index("approvals_agent_status_idx").on(t.agentId, t.status),
-    // no máx. 1 pendente por (agente, entidade, tipo de ação) → upsert atômico.
+    index("approvals_draft_idx").on(t.draftId),
+    // no máx. 1 pendente por (agente, entidade, tipo de ação) → upsert atômico. Rascunhos
+    // (entity/actionType NULL) ficam FORA daqui — a unicidade deles mora em campaign_drafts.
     uniqueIndex("approvals_pending_uq")
       .on(t.agentId, t.entityLevel, t.entityId, t.actionType)
       .where(sql`status = 'pending'`),
+    // exatamente um: aprovação de AÇÃO (action set, draft null) OU de RASCUNHO (draft set, action null).
+    check(
+      "approvals_action_xor_draft",
+      sql`(${t.action} is not null and ${t.draftId} is null) or (${t.action} is null and ${t.draftId} is not null)`,
+    ),
   ],
 );
 

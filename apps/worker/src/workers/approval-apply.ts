@@ -40,6 +40,12 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
         logger.info({ approvalId, status: approval.status }, "approval-apply:já resolvida");
         return;
       }
+      if (approval.kind !== "action") {
+        // Aprovação de RASCUNHO (Fatia 7): despacho pra saga de criação entra num
+        // sub-slice seguinte (apply-draft). Nenhum rascunho é criado ainda.
+        logger.warn({ approvalId }, "approval-apply:rascunho ainda não despachável aqui");
+        return;
+      }
       if (!approval.runId) {
         logger.warn({ approvalId }, "approval-apply:sem runId — não atribuível");
         await ports.approval.resolve(approval.id, { status: "blocked", resolvedReason: "sem run de origem" });
