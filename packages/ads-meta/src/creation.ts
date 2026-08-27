@@ -108,6 +108,10 @@ export class MetaCreationService {
       name: input.name,
       objective: resolveMetaObjective(input.objectiveGoal),
       special_ad_categories: JSON.stringify(input.specialAdCategories),
+      // budget mora no ADSET (ABO) → a Meta (v26) exige declarar explicitamente que a
+      // campanha não compartilha orçamento entre adsets (senão exige budget de campanha).
+      // O bid_strategy vai no ADSET (ABO) — na campanha exigiria budget de campanha (CBO).
+      is_adset_budget_sharing_enabled: "false",
       status: input.status === "active" ? "ACTIVE" : "PAUSED",
     });
     return { campaignId };
@@ -122,6 +126,9 @@ export class MetaCreationService {
       daily_budget: String(input.dailyBudgetMinor),
       optimization_goal: conv.optimizationGoal,
       billing_event: conv.billingEvent,
+      // ABO: o adset é dono do budget → o lance mora aqui. "maior volume sem teto" não
+      // exige bid_amount (senão a Meta pede valor/restrições de lance — subcode 2490487).
+      bid_strategy: "LOWEST_COST_WITHOUT_CAP",
       targeting: JSON.stringify(targeting),
       status: input.status === "active" ? "ACTIVE" : "PAUSED",
     };

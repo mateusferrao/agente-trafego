@@ -65,3 +65,54 @@ describe("MetaCreationService.duplicateEntity", () => {
     expect(copies.url).toContain("status_option=PAUSED");
   });
 });
+
+/** Stub que devolve {id} em TODO POST (create* espera id). */
+function stubCreate(id: string) {
+  const posts: Array<{ url: string }> = [];
+  const spy = vi.fn(async (input: string | URL | Request) => {
+    posts.push({ url: String(input) });
+    return new Response(JSON.stringify({ id }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  vi.stubGlobal("fetch", spy);
+  return { posts: () => posts };
+}
+
+// Regressão dos contratos validados no E2E real (Meta v26): campanha ABO exige
+// is_adset_budget_sharing_enabled; o bid vai no adset (LOWEST_COST_WITHOUT_CAP).
+describe("MetaCreationService.createCampaign / createAdSet — contrato v26", () => {
+  it("createCampaign envia special_ad_categories + is_adset_budget_sharing_enabled=false (ABO)", async () => {
+    const { posts } = stubCreate("CAMP1");
+    const r = await svc().createCampaign(account, {
+      name: "C",
+      objectiveGoal: "lead",
+      specialAdCategories: [],
+      status: "paused",
+    });
+    expect(r.campaignId).toBe("CAMP1");
+    const u = posts().find((p) => p.url.includes("/campaigns"))!.url;
+    expect(u).toContain("objective=OUTCOME_LEADS");
+    expect(u).toContain("is_adset_budget_sharing_enabled=false");
+    expect(u).toContain("special_ad_categories=%5B%5D"); // "[]"
+    expect(u).not.toContain("bid_strategy"); // bid vai no adset, não na campanha (ABO)
+  });
+
+  it("createAdSet põe o bid_strategy no adset + optimization/billing/promoted_object", async () => {
+    const { posts } = stubCreate("AS1");
+    const r = await svc().createAdSet(account, {
+      campaignId: "CAMP1",
+      name: "A",
+      dailyBudgetMinor: 1000,
+      goal: "purchase",
+      pixelId: "PX1",
+      targeting: { kind: "advantage_plus" },
+      status: "paused",
+    });
+    expect(r.adsetId).toBe("AS1");
+    const u = posts().find((p) => p.url.includes("/adsets"))!.url;
+    expect(u).toContain("bid_strategy=LOWEST_COST_WITHOUT_CAP");
+    expect(u).toContain("optimization_goal=OFFSITE_CONVERSIONS");
+    expect(u).toContain("billing_event=IMPRESSIONS");
+    expect(u).toContain("daily_budget=1000");
+    expect(u).toContain("promoted_object="); // pixel + custom_event_type
+  });
+});
