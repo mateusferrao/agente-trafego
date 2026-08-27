@@ -19,7 +19,7 @@ import type { Database } from "@trafego/db/client";
 import { createDb } from "@trafego/db";
 import { loadEnv } from "@trafego/config";
 import { BUFFER_TTL_MARGIN_SEC } from "./modules/conversation/buffer.js";
-import { createLocalStorage } from "./adapters/local-storage.js";
+import { createLocalStorage } from "@trafego/storage-local";
 import { Aes256CredentialVault } from "@trafego/credential-vault";
 import { BullmqScheduler } from "@trafego/scheduler-bullmq";
 import { CustomConversionsResolver, MetaAdsAdapter, MetaEntityCache, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta";

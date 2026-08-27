@@ -20,8 +20,7 @@ import {
 import type { AdAccountRef, AdsPlatformPort, CredentialVaultPort, MessagingChannelPort, StoragePort } from "@trafego/shared/ports";
 import type { Redis } from "ioredis";
 import type { Logger } from "pino";
-import { and, eq } from "drizzle-orm";
-import { creativeAssets } from "@trafego/db/schema";
+import { ingestCreativeImage } from "@trafego/creative-library";
 import type { Database } from "@trafego/db/client";
 import type { WorkerDeps } from "../composition.js";
 import { createAnalysisRepo } from "../modules/analysis/repo.js";
@@ -98,40 +97,19 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
     const bytes = new Uint8Array(Buffer.from(base64, "base64"));
 
     try {
-      // 3) blob original → StoragePort (ref opaca; nunca na fila).
-      const stored = await d.ports.storage.put({
-        bytes,
-        contentType: image.mimetype,
-        keyPrefix: `org/${orgId}/creatives`,
-      });
-
-      // 4) sobe pra Meta (image_hash) — conta + token frescos.
+      // 3) INGESTÃO compartilhada (mesma fonte do upload web): blob → StoragePort → Meta
+      // (image_hash) → creative_asset dedupado. Conta + token frescos.
       const accessToken = d.ports.vault.decrypt(account.tokenCripto);
       const accountRef: AdAccountRef = { adAccountId: account.metaAdAccountId, accessToken };
       const ext = EXT_BY_TYPE[image.mimetype] ?? "jpg";
       const filename = image.caption ? `${image.caption}.${ext}` : `whatsapp-${Date.now()}.${ext}`;
-      const { imageHash } = await d.ports.ads.uploadImage(accountRef, { bytes, contentType: image.mimetype, filename });
-
-      // 5) registra o asset (idempotente por image_hash + conta: reenvio não duplica).
-      const [existing] = await d.db
-        .select({ id: creativeAssets.id })
-        .from(creativeAssets)
-        .where(and(eq(creativeAssets.adAccountId, adAccountUuid), eq(creativeAssets.metaImageHash, imageHash)))
-        .limit(1);
-      if (!existing) {
-        await d.db.insert(creativeAssets).values({
-          orgId,
-          adAccountId: adAccountUuid,
-          origin: "upload",
-          format: "image",
-          status: "ready",
-          storageRef: stored.ref,
-          metaImageHash: imageHash,
-        });
-      }
+      const { metaImageHash } = await ingestCreativeImage(
+        { db: d.db, storage: d.ports.storage, ads: d.ports.ads },
+        { orgId, adAccountId: adAccountUuid, ref: accountRef, bytes, contentType: image.mimetype, filename },
+      );
 
       await d.sendToConversation(ref, NOTICE.saved(account.name), { split: true, quoteLastInbound: true });
-      d.logger.debug({ conversationId, imageHash }, "intake:saved");
+      d.logger.debug({ conversationId, metaImageHash }, "intake:saved");
     } catch (err) {
       // Falha de IO: RE-LANÇA → BullMQ re-tenta com backoff (upload/storage transitórios). O
       // aviso de cortesia só sai na ÚLTIMA tentativa (`notifyOnFailure`) — senão o usuário

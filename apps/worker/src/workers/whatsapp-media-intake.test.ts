@@ -28,7 +28,7 @@ function fakeDb(selectRows: unknown[] = []) {
   const inserted: unknown[] = [];
   const db = {
     select: () => ({ from: () => ({ where: () => ({ limit: () => selectRows }) }) }),
-    insert: () => ({ values: (v: unknown) => { inserted.push(v); return Promise.resolve(); } }),
+    insert: () => ({ values: (v: unknown) => { inserted.push(v); return { returning: () => [{ id: "new-id" }] }; } }),
   };
   return { db: db as unknown as MediaIntakeDeps["db"], inserted };
 }

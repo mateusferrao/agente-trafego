@@ -54,6 +54,9 @@ importers:
       '@trafego/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@trafego/creative-library':
+        specifier: workspace:*
+        version: link:../../packages/creative-library
       '@trafego/credential-vault':
         specifier: workspace:*
         version: link:../../packages/credential-vault
@@ -69,6 +72,9 @@ importers:
       '@trafego/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@trafego/storage-local':
+        specifier: workspace:*
+        version: link:../../packages/storage-local
       drizzle-orm:
         specifier: ^0.38.0
         version: 0.38.4(@types/pg@8.23.1)(pg@8.23.0)(react@19.2.8)
@@ -206,6 +212,9 @@ importers:
       '@trafego/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@trafego/creative-library':
+        specifier: workspace:*
+        version: link:../../packages/creative-library
       '@trafego/credential-vault':
         specifier: workspace:*
         version: link:../../packages/credential-vault
@@ -227,6 +236,9 @@ importers:
       '@trafego/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@trafego/storage-local':
+        specifier: workspace:*
+        version: link:../../packages/storage-local
       '@trafego/transcription-openrouter':
         specifier: workspace:*
         version: link:../../packages/transcription-openrouter
@@ -316,6 +328,18 @@ importers:
         specifier: ^2.1.0
         version: 2.1.9(@types/node@22.20.1)(lightningcss@1.32.0)(sass@1.97.3)
 
+  packages/creative-library:
+    dependencies:
+      '@trafego/db':
+        specifier: workspace:*
+        version: link:../db
+      '@trafego/shared':
+        specifier: workspace:*
+        version: link:../shared
+      drizzle-orm:
+        specifier: ^0.38.0
+        version: 0.38.4(@types/pg@8.23.1)(pg@8.23.0)(react@19.2.8)
+
   packages/credential-vault:
     dependencies:
       '@trafego/shared':
@@ -388,6 +412,12 @@ importers:
       zod-to-json-schema:
         specifier: ^3.24.0
         version: 3.25.2(zod@3.25.76)
+
+  packages/storage-local:
+    dependencies:
+      '@trafego/shared':
+        specifier: workspace:*
+        version: link:../shared
 
   packages/transcription-openrouter:
     dependencies:

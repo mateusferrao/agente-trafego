@@ -18,8 +18,9 @@ import {
   type CampaignDraftSpec,
 } from "@trafego/shared";
 import type { Action, AgentId, DraftId, OrgId } from "@trafego/shared/types";
-import type { AdAccountRef, ApprovalPort, CredentialVaultPort } from "@trafego/shared/ports";
+import type { AdAccountRef, ApprovalPort, CredentialVaultPort, StoragePort } from "@trafego/shared/ports";
 import type { AdsPlatformPort } from "@trafego/shared/ports";
+import { ingestCreativeImage } from "@trafego/creative-library";
 import type {
   CreativeAssetOutput,
   DraftApprovalOutput,
@@ -39,6 +40,8 @@ export interface DraftsServiceDeps {
   readonly adsPlatform: AdsPlatformPort;
   readonly vault: CredentialVaultPort;
   readonly approvals: ApprovalPort;
+  /** Storage do blob original (F7) — mesma porta do intake WhatsApp (convergência). */
+  readonly storage: StoragePort;
 }
 
 /** Conta + agente + token + cfg resolvidos p/ operar uma escala. */
@@ -251,23 +254,13 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       const ctx = await loadScaleContext(orgId, accountId);
       if (!ctx) return null;
       const bytes = new Uint8Array(Buffer.from(input.imageBase64, "base64"));
-      const { imageHash } = await deps.adsPlatform.uploadImage(ctx.ref, {
-        bytes,
-        contentType: input.contentType,
-        filename: input.filename,
-      });
-      const [row] = await deps.db
-        .insert(creativeAssets)
-        .values({
-          orgId,
-          adAccountId: accountId,
-          origin: "upload",
-          format: "image",
-          status: "ready",
-          metaImageHash: imageHash,
-        })
-        .returning({ id: creativeAssets.id });
-      return { assetId: row!.id, metaImageHash: imageHash };
+      // INGESTÃO compartilhada (mesma fonte do intake WhatsApp): blob → StoragePort → Meta
+      // (image_hash) → creative_asset dedupado. Convergência total dos dois caminhos.
+      const { assetId, metaImageHash } = await ingestCreativeImage(
+        { db: deps.db, storage: deps.storage, ads: deps.adsPlatform },
+        { orgId, adAccountId: accountId, ref: ctx.ref, bytes, contentType: input.contentType, filename: input.filename },
+      );
+      return { assetId, metaImageHash };
     },
   };
 }

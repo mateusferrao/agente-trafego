@@ -39,6 +39,7 @@ import { MetaAdsAdapter, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta
 import { EvolutionAdapter, EvolutionClient } from "@trafego/channel-evolution";
 import { createPostgresApprovals } from "@trafego/approval-postgres";
 import { createPostgresMetering } from "@trafego/metering-postgres";
+import { createLocalStorage } from "@trafego/storage-local";
 import { Redis } from "ioredis";
 
 // ─── Adapters de saída (portas) ──────────────────────────────────────────
@@ -137,6 +138,10 @@ export function buildContainer(logger?: OnboardingLogger): Container {
     apiOrigin: env.API_ORIGIN, // registra o webhook no connect (§9)
   });
 
+  // Storage do blob de criativo (F7) — mesma porta do intake WhatsApp (worker). Local-fs
+  // no MVP; S3-compat = novo adapter atrás da porta. Convergência dos 2 caminhos de imagem.
+  const storage = createLocalStorage({ baseDir: env.CREATIVE_STORAGE_DIR, urlBase: env.CREATIVE_ASSET_URL_BASE });
+
   // Metering (3b): Postgres usage_events — o billing/usage lê daqui.
   const metering = createPostgresMetering(db);
 
@@ -220,7 +225,7 @@ export function buildContainer(logger?: OnboardingLogger): Container {
     contacts: createContactsService({ db, messaging }),
     agents,
     approvals: createApprovalsService({ db, approvals, scheduler, revertTtlDays: env.REVERT_TTL_DAYS }),
-    drafts: createDraftsService({ db, adsPlatform, vault, approvals }),
+    drafts: createDraftsService({ db, adsPlatform, vault, approvals, storage }),
     recommendations: createRecommendationsService({ db }),
     runs,
     dashboard: createDashboardService({
