@@ -77,6 +77,11 @@ export function cpaLabelFor(goal: ConversionGoal | null | undefined): string {
   return `Custo por ${noun ?? "resultado"}`;
 }
 
+/** Substantivo PT do objetivo (ex: purchase → "venda") p/ nomear entidades — fonte única. */
+export function goalNounPt(goal: ConversionGoal | null | undefined): string {
+  return (goal ? CPA_NOUN_PT[goal] : undefined) ?? "resultado";
+}
+
 export function classifyBasis(params: {
   /** métricas com a conversão de negócio aplicada (override vence). */
   readonly businessMetrics: InsightMetrics;

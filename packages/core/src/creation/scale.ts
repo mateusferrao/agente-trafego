@@ -29,7 +29,10 @@ export interface PlanScaleMoveInput {
 export function planScaleMove(input: PlanScaleMoveInput): ScaleMove {
   const { scalePct, maxBudgetChangePct, budgetLevel } = input;
   if (budgetLevel === "campaign") {
-    return { move: "raise_budget", pct: scalePct, level: "campaign" };
+    // CBO não pode isolar por duplicação (duplicar adset não escala sob CBO) → só resta
+    // subir o budget da campanha, mas LIMITADO à faixa segura: o guardrail clamparia o
+    // excesso em silêncio, e o eco+confirma (§8) tem que prometer o valor REAL aplicado.
+    return { move: "raise_budget", pct: Math.min(scalePct, maxBudgetChangePct), level: "campaign" };
   }
   if (scalePct <= maxBudgetChangePct) {
     return { move: "raise_budget", pct: scalePct, level: "adset" };

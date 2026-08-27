@@ -301,7 +301,7 @@ interface FormState {
 
         <app-agent-autonomy [accountId]="accountId" (dirtyChange)="onChildDirty('autonomy', $event)" />
 
-        <app-agent-guardrails [accountId]="accountId" (dirtyChange)="onChildDirty('guardrails', $event)" />
+        <app-agent-guardrails [accountId]="accountId" [currency]="accountCurrency()" (dirtyChange)="onChildDirty('guardrails', $event)" />
 
         <!-- Cadência (ritmo da análise automática) -->
         <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">

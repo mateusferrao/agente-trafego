@@ -25,12 +25,19 @@ describe("detectCreationOpportunities", () => {
     expect(out[0]?.entityId).toBe("e1");
   });
 
-  it("não escala vencedor que não está no teto", () => {
+  it("não escala vencedor com folga de budget (atBudgetCeiling=false explícito)", () => {
     const out = detectCreationOpportunities({
       hasActiveCampaigns: true,
       entities: [ent({ tier: "winner", atBudgetCeiling: false })],
     });
     expect(out).toHaveLength(0);
+  });
+
+  it("escala vencedor provado quando o teto é desconhecido (atBudgetCeiling undefined → propõe pro humano)", () => {
+    const { atBudgetCeiling: _omit, ...rest } = ent({ tier: "winner" });
+    const out = detectCreationOpportunities({ hasActiveCampaigns: true, entities: [rest] });
+    expect(out).toHaveLength(1);
+    expect(out[0]?.kind).toBe("scale_winner");
   });
 
   it("refresh_fatigued: fatigado ainda gastando", () => {

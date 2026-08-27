@@ -8,6 +8,7 @@ import { AGENT_NAME } from '@core/brand';
 import type { ApprovalOutput, DraftApprovalOutput, RevertibleActionOutput } from '@core/api/generated';
 import { UNDO_WARNING, actionTypeLabel, deadlineText, entityTargetLabel } from '@app/shared/action-format';
 import { conversionLabel } from '@app/shared/conversion-label';
+import { money } from '@app/shared/format';
 
 interface AccountGroup<T> {
   readonly accountId: string;
@@ -68,7 +69,7 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                         <span class="font-semibold text-ink">{{ draftTitle(d) }}</span>
                       </span>
                       <dl class="grid grid-cols-1 gap-1 text-sm text-ink sm:grid-cols-2">
-                        <div><dt class="inline text-muted">Gasto novo: </dt><dd class="inline font-semibold">{{ money(d.dailyBudgetReais, d.currency) }}/dia</dd></div>
+                        <div><dt class="inline text-muted">Gasto novo: </dt><dd class="inline font-semibold">{{ money(d.dailyBudgetMajor, d.currency) }}/dia</dd></div>
                         <div><dt class="inline text-muted">Entra: </dt><dd class="inline">{{ d.activation === 'active' ? 'ativa (a Meta revisa antes de veicular)' : 'pausada' }}</dd></div>
                         @if (d.pageId) { <div><dt class="inline text-muted">Página: </dt><dd class="inline">{{ d.pageId }}</dd></div> }
                         @if (d.pixelId) { <div><dt class="inline text-muted">Pixel: </dt><dd class="inline">{{ d.pixelId }}</dd></div> }
@@ -213,8 +214,7 @@ export class ApprovalsPage implements OnInit {
     return id ? `${lvl} ${id}` : d.sourceLabel;
   };
   protected objectiveLabel = (o: string | null): string => (o ? conversionLabel(o) : '');
-  protected money = (reais: number, currency: string): string =>
-    new Intl.NumberFormat('pt-BR', { style: 'currency', currency }).format(reais);
+  protected money = money;
 
   ngOnInit(): void {
     this.api.listPending().subscribe({

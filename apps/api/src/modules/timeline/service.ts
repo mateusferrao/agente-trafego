@@ -34,6 +34,8 @@ const PAGE_DEFAULT = 30;
 const PAGE_MAX = 100;
 /** Teto por fonte antes do merge (paginação profunda real via UNION = fast-follow). */
 const SOURCE_CAP = 300;
+/** unidade menor → maior (2 casas; JPY/CLP = fast-follow). */
+const MINOR_PER_UNIT = 100;
 
 export function createTimelineService(deps: TimelineDeps) {
   return {
@@ -183,14 +185,18 @@ export function createTimelineService(deps: TimelineDeps) {
         .limit(SOURCE_CAP);
 
       for (const d of draftRows) {
-        const budgetReais = (d.spec as CampaignDraftSpec).dailyBudgetMinor / 100;
+        const spec = d.spec as CampaignDraftSpec;
+        // 2 casas (BRL/USD/EUR); moeda sem centavos (JPY/CLP) = fast-follow. `currency` vai
+        // junto p/ o front formatar com o símbolo certo (nunca hardcodar).
+        const budgetMajor = spec.dailyBudgetMinor / MINOR_PER_UNIT;
         events.push({
           id: `dp:${d.id}`,
           at: d.createdAt.toISOString(),
           type: "campaign_draft_proposed",
           draftId: d.id,
           kind: d.kind,
-          dailyBudgetReais: budgetReais,
+          dailyBudgetMajor: budgetMajor,
+          currency: spec.currency,
         });
         if (d.status === "created") {
           events.push({
@@ -199,7 +205,8 @@ export function createTimelineService(deps: TimelineDeps) {
             type: "campaign_created",
             draftId: d.id,
             kind: d.kind,
-            dailyBudgetReais: budgetReais,
+            dailyBudgetMajor: budgetMajor,
+            currency: spec.currency,
           });
         }
       }

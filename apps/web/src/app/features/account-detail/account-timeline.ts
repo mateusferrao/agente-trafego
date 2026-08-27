@@ -8,7 +8,7 @@ import { UiButton, UiSpinner, UiTimeline, type TimelineEventVm } from "@ui";
 import { DashboardApiService } from "@core/api/dashboard-api.service";
 import type { TimelineOutput } from "@core/api/generated";
 import { actionTypeLabel } from "../../shared/action-format";
-import { gradeTone } from "../../shared/format";
+import { gradeTone, money } from "../../shared/format";
 
 type ApiEvent = TimelineOutput["items"][number];
 
@@ -162,11 +162,6 @@ export class AccountTimeline {
   }
 }
 
-/** Formata budget de rascunho (BRL por default — o evento não carrega moeda). */
-function draftMoney(reais: number): string {
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(reais);
-}
-
 /** Evento tipado da API → view-model do ui-timeline. */
 function toVm(e: ApiEvent): TimelineEventVm {
   switch (e.type) {
@@ -214,7 +209,7 @@ function toVm(e: ApiEvent): TimelineEventVm {
         at: e.at,
         icon: "lucideClock",
         title: e.kind === "duplicate" ? "Escala de vencedor proposta" : "Nova campanha proposta",
-        detail: `${draftMoney(e.dailyBudgetReais)}/dia`,
+        detail: `${money(e.dailyBudgetMajor, e.currency)}/dia`,
         badge: "rascunho",
         tone: "warning",
       };
@@ -224,7 +219,7 @@ function toVm(e: ApiEvent): TimelineEventVm {
         at: e.at,
         icon: "lucideZap",
         title: e.kind === "duplicate" ? "Escala criada" : "Campanha criada",
-        detail: `${draftMoney(e.dailyBudgetReais)}/dia`,
+        detail: `${money(e.dailyBudgetMajor, e.currency)}/dia`,
         badge: "criada",
         tone: "accent",
       };

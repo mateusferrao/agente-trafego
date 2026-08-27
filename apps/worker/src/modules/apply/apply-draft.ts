@@ -4,9 +4,9 @@
 // audit_log + metering → marca campaign_drafts.status. Reusa o padrão de
 // apply-confirmed-action / meta-tools. O EFEITO no chamador (resolver approval / push).
 
-import { and, count, eq, gte } from "drizzle-orm";
+import { and, count, eq, gte, inArray } from "drizzle-orm";
 import { agentToolCalls, auditLog, campaignDrafts, guardrailConfigs } from "@trafego/db";
-import { applyCreationGuardrails, buildDuplicateInput } from "@trafego/core";
+import { applyCreationGuardrails, buildDuplicateInput, goalNounPt } from "@trafego/core";
 import { toGuardrailConfig, type CampaignDraft, type OrgId } from "@trafego/shared";
 import type { AdAccountRef } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../../composition.js";
@@ -99,7 +99,20 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     }
   }
 
-  await db.update(campaignDrafts).set({ status: "creating" }).where(eq(campaignDrafts.id, row.id));
+  // Claim ATÔMICO da transição proposed|failed → creating: um único UPDATE guardado por
+  // status serializa dois applies concorrentes do MESMO rascunho (ex: usuário confirma no
+  // chat e aprova no site na janela em que o card ainda está pendente). O 2º pega 0 linhas
+  // (status já é `creating`) e aborta — sem isso, ambos leriam createdIds vazio e criariam
+  // campanha/duplicata em DOBRO (gasto novo real). Retry de `failed` é permitido (retomada).
+  const claimed = await db
+    .update(campaignDrafts)
+    .set({ status: "creating" })
+    .where(and(eq(campaignDrafts.id, row.id), inArray(campaignDrafts.status, ["proposed", "failed"])))
+    .returning({ id: campaignDrafts.id });
+  if (claimed.length === 0) {
+    logger.debug({ draftId: row.id }, "apply-draft:already_in_flight");
+    return { kind: "blocked", reason: "este rascunho já está sendo aplicado" };
+  }
 
   const dryRun = cfg.dryRun;
   const toolKey = allowed.kind === "duplicate" ? TOOL_KEY_DUPLICATE : TOOL_KEY_CREATE;
@@ -190,7 +203,7 @@ async function runFromScratchSaga(
   const spec = draft.spec;
   const goal = spec.objective ?? "purchase";
   const status = spec.activation;
-  const name = `Campanha ${goal} — rascunho`;
+  const name = `AutoTraffic — ${goalNounPt(goal)}`;
 
   if (!state["campaignId"]) {
     const { campaignId } = await ads.createCampaign(ref, {

@@ -21,13 +21,18 @@ import type { CreativeAssetOutput } from '@core/api/generated';
           <h1 class="font-brand text-lg font-semibold text-ink">Criativos</h1>
           <p class="text-xs text-muted">Mídias reusáveis nos rascunhos de campanha. O agente reusa daqui — nunca inventa.</p>
         </div>
-        <label class="cursor-pointer">
-          <input type="file" accept="image/*" class="hidden" (change)="onFile($event)" [disabled]="uploading()" />
-          <span appButton size="sm">{{ uploading() ? 'Enviando…' : 'Subir imagem' }}</span>
-        </label>
+        <button type="button" appButton size="sm" [disabled]="uploading()" (click)="picker.click()">
+          {{ uploading() ? 'Enviando…' : 'Subir imagem' }}
+        </button>
+        <input #picker type="file" accept="image/*" class="hidden" (change)="onFile($event)" />
       </div>
 
-      @if (loaded() && assets().length === 0) {
+      @if (failed()) {
+        <div class="flex flex-col items-start gap-2 rounded-lg border border-line bg-panel p-4 text-sm">
+          <p class="text-ink">Não consegui carregar os criativos desta conta.</p>
+          <button type="button" appButton variant="secondary" size="sm" (click)="load()">Tentar de novo</button>
+        </div>
+      } @else if (loaded() && assets().length === 0) {
         <app-ui-empty-state title="Nenhum criativo ainda" description="Suba uma imagem ou rode uma análise — os criativos dos seus anúncios entram aqui automaticamente." />
       } @else {
         <ul class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
@@ -35,7 +40,7 @@ import type { CreativeAssetOutput } from '@core/api/generated';
             <li class="flex flex-col gap-2 rounded-lg border border-line bg-panel p-3">
               <span class="flex items-center justify-between text-xs">
                 <span class="font-medium text-ink">{{ a.origin === 'upload' ? 'Enviado' : 'Da conta' }}</span>
-                <span class="text-muted">{{ a.format }} · {{ statusLabel(a.status) }}</span>
+                <span class="text-muted">{{ formatLabel(a.format) }} · {{ statusLabel(a.status) }}</span>
               </span>
               <span class="truncate font-mono text-[11px] text-muted" title="{{ a.metaImageHash ?? a.metaVideoId }}">
                 {{ a.metaImageHash ?? a.metaVideoId ?? '—' }}
@@ -53,28 +58,40 @@ export class CreativeLibrary implements OnInit {
 
   protected readonly assets = signal<readonly CreativeAssetOutput[]>([]);
   protected readonly loaded = signal(false);
+  protected readonly failed = signal(false);
   protected readonly uploading = signal(false);
 
   protected statusLabel(s: CreativeAssetOutput['status']): string {
     return s === 'ready' ? 'pronto' : s === 'pending' ? 'processando' : 'erro';
   }
 
+  protected formatLabel(f: CreativeAssetOutput['format']): string {
+    return f === 'video' ? 'vídeo' : 'imagem';
+  }
+
   ngOnInit(): void {
     this.load();
   }
 
-  private load(): void {
+  protected load(): void {
+    this.failed.set(false);
     this.api.listCreatives(this.accountId).subscribe({
       next: (rows) => {
         this.assets.set(rows);
         this.loaded.set(true);
       },
-      error: () => this.loaded.set(true),
+      // falha de fetch = estado de erro dedicado (com retry), NUNCA o empty-state (que
+      // significa "conta sem criativos" — enganaria o usuário).
+      error: () => {
+        this.loaded.set(true);
+        this.failed.set(true);
+      },
     });
   }
 
   protected onFile(e: Event): void {
-    const file = (e.target as HTMLInputElement).files?.[0];
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
     if (!file) return;
     this.uploading.set(true);
     const reader = new FileReader();
@@ -86,12 +103,19 @@ export class CreativeLibrary implements OnInit {
           next: () => {
             toast.success('Imagem enviada — já dá pra reusar num rascunho.');
             this.uploading.set(false);
+            input.value = ''; // reseta p/ re-selecionar o MESMO arquivo redisparar o change.
             this.load();
           },
-          error: () => this.uploading.set(false),
+          error: () => {
+            this.uploading.set(false);
+            input.value = '';
+          },
         });
     };
-    reader.onerror = () => this.uploading.set(false);
+    reader.onerror = () => {
+      this.uploading.set(false);
+      input.value = '';
+    };
     reader.readAsDataURL(file);
   }
 }

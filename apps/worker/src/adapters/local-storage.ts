@@ -6,7 +6,7 @@
 
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import type { StoragePort, StoragePutInput, StoredAsset, StoredBlob } from "@trafego/shared/ports";
 
 /** Config do adapter local (injetada pela composition a partir do env). */
@@ -39,7 +39,16 @@ function refFor(input: StoragePutInput, digest: string): string {
 export function createLocalStorage(config: LocalStorageConfig): StoragePort {
   const root = resolve(config.baseDir);
 
-  const absOf = (ref: string): string => join(root, ref);
+  // Resolve `ref` DENTRO da raiz e barra escape (`../`): o `ref` do `put` é seguro (sha256),
+  // mas `get`/`signedUrl` aceitam `ref` externo — sem isso, o dia que uma rota servir blob
+  // por `ref` viraria LFI (path traversal). Fora da raiz → lança (nunca lê fora).
+  const absOf = (ref: string): string => {
+    const abs = resolve(root, ref);
+    if (abs !== root && !abs.startsWith(root + sep)) {
+      throw new Error("storage: ref fora da raiz");
+    }
+    return abs;
+  };
 
   return {
     async put(input: StoragePutInput): Promise<StoredAsset> {

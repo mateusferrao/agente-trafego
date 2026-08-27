@@ -3,9 +3,14 @@ import type { CampaignDraft } from "@trafego/shared";
 import { buildDuplicateInput, planScaleMove } from "./scale.js";
 
 describe("planScaleMove", () => {
-  it("CBO (budget na campanha) → sempre sobe o budget da campanha", () => {
+  it("CBO (budget na campanha) → sobe o budget da campanha, clampado à faixa segura (eco = valor real)", () => {
     const move = planScaleMove({ scalePct: 50, maxBudgetChangePct: 20, budgetLevel: "campaign" });
-    expect(move).toEqual({ move: "raise_budget", pct: 50, level: "campaign" });
+    expect(move).toEqual({ move: "raise_budget", pct: 20, level: "campaign" });
+  });
+
+  it("CBO + passo dentro da faixa → sobe pelo passo pedido (sem clamp)", () => {
+    const move = planScaleMove({ scalePct: 15, maxBudgetChangePct: 20, budgetLevel: "campaign" });
+    expect(move).toEqual({ move: "raise_budget", pct: 15, level: "campaign" });
   });
 
   it("ABO + passo dentro da faixa segura → sobe o budget do adset", () => {

@@ -8,8 +8,13 @@ export interface OpportunityEntity {
   readonly tier?: PerformanceTier;
   /** significância de negócio (conversões/cliques + baseline) — 6c. */
   readonly significant: boolean;
-  /** gasto encostando no teto de budget (capado → dá pra escalar). */
-  readonly atBudgetCeiling: boolean;
+  /**
+   * Gasto encostando no teto de budget (capado → dá pra escalar). Três estados:
+   * `false` = tem folga de budget (não precisa de gasto novo — pula); `true` = confirmado
+   * no teto (sinal forte); `undefined` = desconhecido (o caller não computa o sinal ainda) —
+   * um vencedor provado ainda vale propor pro humano revisar. Só `false` bloqueia.
+   */
+  readonly atBudgetCeiling?: boolean;
   /** criativo fatigado (fadiga/saturação) — 6c. */
   readonly fatigued: boolean;
   /** ainda gastando de verdade (não zumbi). */
@@ -39,7 +44,7 @@ export function detectCreationOpportunities(input: DetectOpportunitiesInput): Cr
   const out: CreationOpportunity[] = [];
 
   for (const e of input.entities) {
-    if (e.tier === "winner" && e.significant && e.atBudgetCeiling) {
+    if (e.tier === "winner" && e.significant && e.atBudgetCeiling !== false) {
       out.push({
         kind: "scale_winner",
         entityLevel: e.level,

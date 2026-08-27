@@ -15,6 +15,19 @@ export function money(value: number, currency: string | null): string {
   }
 }
 
+/** Símbolo da moeda (ex: BRL → "R$", USD → "$") p/ prefixar campos de valor. Fallback = o código. */
+export function currencySymbol(currency: string | null): string {
+  const code = currency ?? DEFAULT_CURRENCY;
+  try {
+    const part = new Intl.NumberFormat("pt-BR", { style: "currency", currency: code })
+      .formatToParts(0)
+      .find((p) => p.type === "currency");
+    return part?.value ?? code;
+  } catch {
+    return code;
+  }
+}
+
 export function timeLabel(iso: string): string {
   return TIME_FMT.format(new Date(iso));
 }

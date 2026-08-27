@@ -12,6 +12,7 @@ import { planScaleMove, type BudgetLevel } from "@trafego/core";
 import {
   ACTION_PARAM_MODE,
   ACTION_PARAM_PCT,
+  APPROVAL_TTL_HOURS,
   BUDGET_MODE_INCREASE,
   toGuardrailConfig,
   type CampaignDraftSpec,
@@ -28,8 +29,10 @@ import type {
   UploadCreativeOutput,
 } from "./schema.js";
 
+// unidade menor → maior. Assume moeda de 2 casas (BRL/USD/EUR); moedas sem centavos
+// (JPY/CLP) = fast-follow (derivar a subunidade da moeda). Beta é BRL.
 const MINOR_PER_UNIT = 100;
-const APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
+const APPROVAL_TTL_MS = APPROVAL_TTL_HOURS * 60 * 60 * 1000;
 
 export interface DraftsServiceDeps {
   readonly db: Database;
@@ -97,13 +100,13 @@ export function createDraftsService(deps: DraftsServiceDeps) {
             accountId: campaignDrafts.adAccountId,
           })
           .from(campaignDrafts)
-          .where(eq(campaignDrafts.id, appr.draftId))
+          .where(and(eq(campaignDrafts.id, appr.draftId), eq(campaignDrafts.orgId, orgId)))
           .limit(1);
         if (!d) continue;
         const [acc] = await deps.db
           .select({ name: adAccounts.name })
           .from(adAccounts)
-          .where(eq(adAccounts.id, d.accountId))
+          .where(and(eq(adAccounts.id, d.accountId), eq(adAccounts.orgId, orgId)))
           .limit(1);
         const spec = d.spec as CampaignDraftSpec;
         out.push({
@@ -116,7 +119,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
           kind: d.kind,
           origin: d.origin,
           objective: spec.objective ?? null,
-          dailyBudgetReais: spec.dailyBudgetMinor / MINOR_PER_UNIT,
+          dailyBudgetMajor: spec.dailyBudgetMinor / MINOR_PER_UNIT,
           currency: spec.currency,
           activation: spec.activation,
           sourceLabel: d.sourceRef ? `${d.sourceRef.level}:${d.sourceRef.id}` : null,

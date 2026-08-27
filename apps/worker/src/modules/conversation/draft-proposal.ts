@@ -193,15 +193,11 @@ export async function proposeScaleWinner(
   return { kind: "draft", echo, approvalId, draftId };
 }
 
-function money2(reais: number, currency: string): string {
-  return new Intl.NumberFormat("pt-BR", { style: "currency", currency }).format(reais);
-}
-
 /** Eco genérico de um rascunho (após refino) — o quê/quanto/ativação/copy. */
 function buildRefineEcho(kind: string, spec: CampaignDraftSpec): string {
   const head = kind === "duplicate" ? "Rascunho de escala atualizado" : "Rascunho de campanha atualizado";
   const lines = [
-    `${head}: gasto novo ${money2(spec.dailyBudgetMinor / MINOR_PER_UNIT, spec.currency)}/dia · entra ${spec.activation === "active" ? "ativa" : "pausada"}.`,
+    `${head}: gasto novo ${money(spec.dailyBudgetMinor / MINOR_PER_UNIT, spec.currency)}/dia · entra ${spec.activation === "active" ? "ativa" : "pausada"}.`,
   ];
   if (spec.copyVariants && spec.copyVariants.length > 0) {
     lines.push(`${spec.copyVariants.length} variação(ões) de copy. Ex: "${spec.copyVariants[0]!.headline}".`);

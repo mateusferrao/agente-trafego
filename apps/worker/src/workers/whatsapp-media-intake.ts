@@ -7,11 +7,13 @@
 // guardei". Imagem NUNCA dispara turno do Grafo B (é side-effect + cortesia).
 //
 // Ban-safety/§9: só chega aqui inbound JÁ autorizado (DM de contato verificado ou
-// grupo dirigido — o router de inbound filtrou). O blob trafega por REF do
-// StoragePort, nunca no payload da fila.
+// grupo dirigido — o router de inbound filtrou). A partir do StoragePort o blob vive
+// por REF (nunca em log); na FILA os bytes podem vir inline (mesmo padrão do áudio na
+// transcrição) quando o webhook os entregou — fica no Redis interno, fora de log.
 
 import { Worker } from "bullmq";
 import {
+  WHATSAPP_MEDIA_INTAKE_ATTEMPTS,
   WHATSAPP_MEDIA_INTAKE_QUEUE,
   type WhatsappMediaIntakePayload,
 } from "@trafego/shared";
@@ -29,6 +31,7 @@ import { createSendToConversation, type SendToConversation } from "../modules/no
 /** Mensagens de cortesia do intake — sempre o que aconteceu + próximo passo (§13 UX). */
 const NOTICE = {
   noAccount: "recebi sua imagem! só me diz de qual conta ela é (você tem mais de uma) que eu guardo na biblioteca de criativos.",
+  accountUnavailable: "recebi sua imagem, mas não consegui acessar essa conta agora — tenta de novo daqui a pouco?",
   noBytes: "não consegui baixar a imagem — pode mandar de novo?",
   failed: "recebi a imagem mas tive um problema pra guardar — pode tentar de novo em instantes?",
   saved: (accountName: string) =>
@@ -64,7 +67,7 @@ export interface MediaIntakeDeps {
  * casos de negócio (sem conta / sem bytes) respondem cortesia e encerram (sem retry).
  */
 export function makeMediaIntake(d: MediaIntakeDeps) {
-  return async function intake(payload: WhatsappMediaIntakePayload): Promise<void> {
+  return async function intake(payload: WhatsappMediaIntakePayload, notifyOnFailure = true): Promise<void> {
     const { orgId, conversationId, ref, instanceId, image } = payload;
 
     // 1) conta em foco (única ativa OU foco da conversa). Ambíguo → pede antes de subir.
@@ -77,7 +80,7 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
 
     const account = await d.analysisRepo.loadAccount(orgId, adAccountUuid);
     if (!account) {
-      await d.sendToConversation(ref, NOTICE.noBytes, { split: true });
+      await d.sendToConversation(ref, NOTICE.accountUnavailable, { split: true });
       d.logger.warn({ conversationId, adAccountUuid }, "intake:account_unavailable");
       return;
     }
@@ -130,8 +133,10 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
       await d.sendToConversation(ref, NOTICE.saved(account.name), { split: true, quoteLastInbound: true });
       d.logger.debug({ conversationId, imageHash }, "intake:saved");
     } catch (err) {
-      // Falha de IO: avisa e RE-LANÇA → BullMQ re-tenta com backoff (upload/storage transitórios).
-      await d.sendToConversation(ref, NOTICE.failed, { split: true }).catch(() => undefined);
+      // Falha de IO: RE-LANÇA → BullMQ re-tenta com backoff (upload/storage transitórios). O
+      // aviso de cortesia só sai na ÚLTIMA tentativa (`notifyOnFailure`) — senão o usuário
+      // receberia "problema pra guardar" a cada retry (até 3×).
+      if (notifyOnFailure) await d.sendToConversation(ref, NOTICE.failed, { split: true }).catch(() => undefined);
       throw err;
     }
   };
@@ -153,7 +158,9 @@ export function startWhatsappMediaIntakeWorker(deps: WorkerDeps, connection: Red
   return new Worker<WhatsappMediaIntakePayload>(
     WHATSAPP_MEDIA_INTAKE_QUEUE,
     async (job) => {
-      await intake(job.data);
+      // avisa a falha só quando esgotou as tentativas (attemptsMade é 0-based na execução atual).
+      const isLastAttempt = job.attemptsMade + 1 >= (job.opts.attempts ?? WHATSAPP_MEDIA_INTAKE_ATTEMPTS);
+      await intake(job.data, isLastAttempt);
     },
     { connection },
   );

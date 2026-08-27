@@ -25,7 +25,9 @@ export const draftApprovalOutput = z.object({
   kind: z.enum(["from_scratch", "duplicate"]),
   origin: z.enum(["on_demand", "proactive"]),
   objective: z.string().nullable(),
-  dailyBudgetReais: z.number(),
+  // budget diário em unidade MAIOR da moeda (ex: reais/dólares) — pareado com `currency`
+  // p/ o front formatar (nunca hardcodar símbolo). Nome neutro de moeda (não "reais").
+  dailyBudgetMajor: z.number(),
   currency: z.string(),
   activation: z.enum(["active", "paused"]),
   /** rótulo da entidade-origem (quando duplicate). */

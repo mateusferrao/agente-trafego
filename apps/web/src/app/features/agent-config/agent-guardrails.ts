@@ -3,6 +3,7 @@ import { firstValueFrom } from 'rxjs';
 import { NumberStepper, UiInput, UiSwitch, UiSwitchThumb, UiCheckbox } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import type { AgentSummary } from '@core/api/generated';
+import { currencySymbol } from '@app/shared/format';
 
 type ActionType = 'pause_entity' | 'resume_entity' | 'adjust_budget' | 'set_status';
 
@@ -74,9 +75,9 @@ const ACTIONS: readonly ActionType[] = ['pause_entity', 'resume_entity', 'adjust
         <span class="text-xs text-muted">Teto de segurança quando o agente cria ou escala campanhas.</span>
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <label class="flex flex-col gap-1">
-            <span class="text-sm font-medium text-ink">Budget novo máx./dia</span>
+            <span class="text-sm font-medium text-ink">Orçamento novo máx./dia</span>
             <span class="flex items-center gap-1">
-              <span class="text-xs text-muted">R$</span>
+              <span class="text-xs text-muted">{{ currencySymbol(currency()) }}</span>
               <input appInput type="number" appNumberStepper inputmode="decimal" min="0" class="w-24" [value]="maxNewDaily()" (input)="onNum(maxNewDaily, $event)" />
             </span>
           </label>
@@ -117,7 +118,10 @@ export class AgentGuardrails implements OnInit {
   private readonly api = inject(AnalysisApiService);
 
   readonly accountId = input.required<string>();
+  readonly currency = input('BRL');
   readonly dirtyChange = output<boolean>();
+
+  protected readonly currencySymbol = currencySymbol;
 
   protected readonly ACTIONS = ACTIONS;
   protected readonly ACTION_LABEL = ACTION_LABEL;

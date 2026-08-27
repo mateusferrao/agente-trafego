@@ -4595,8 +4595,11 @@
                     "kind": {
                       "type": "string"
                     },
-                    "dailyBudgetReais": {
+                    "dailyBudgetMajor": {
                       "type": "number"
+                    },
+                    "currency": {
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -4605,7 +4608,8 @@
                     "type",
                     "draftId",
                     "kind",
-                    "dailyBudgetReais"
+                    "dailyBudgetMajor",
+                    "currency"
                   ]
                 },
                 {
@@ -4629,8 +4633,11 @@
                     "kind": {
                       "type": "string"
                     },
-                    "dailyBudgetReais": {
+                    "dailyBudgetMajor": {
                       "type": "number"
+                    },
+                    "currency": {
+                      "type": "string"
                     }
                   },
                   "required": [
@@ -4639,7 +4646,8 @@
                     "type",
                     "draftId",
                     "kind",
-                    "dailyBudgetReais"
+                    "dailyBudgetMajor",
+                    "currency"
                   ]
                 }
               ]
@@ -6264,7 +6272,7 @@
               "null"
             ]
           },
-          "dailyBudgetReais": {
+          "dailyBudgetMajor": {
             "type": "number"
           },
           "currency": {
@@ -6347,7 +6355,7 @@
           "kind",
           "origin",
           "objective",
-          "dailyBudgetReais",
+          "dailyBudgetMajor",
           "currency",
           "activation",
           "sourceLabel",

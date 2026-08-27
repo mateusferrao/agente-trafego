@@ -40,7 +40,8 @@ const draftEvent = <T extends string>(type: T) =>
     type: z.literal(type),
     draftId: z.string(),
     kind: z.string(),
-    dailyBudgetReais: z.number(),
+    dailyBudgetMajor: z.number(),
+    currency: z.string(),
   });
 
 /**

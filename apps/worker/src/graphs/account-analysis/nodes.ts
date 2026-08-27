@@ -653,7 +653,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       name: c.name,
       ...(c.tier ? { tier: c.tier } : {}),
       significant: c.eligibility?.hasSignificance ?? false,
-      atBudgetCeiling: true, // proposta (humano revisa); refino por budget = follow-up.
+      // atBudgetCeiling omitido (undefined): o brief não carrega budget/teto ainda, então
+      // não simulamos o sinal — um vencedor provado é proposto pro humano revisar (§8). Só
+      // um `false` explícito (folga de budget) bloquearia. Plumbar budget = follow-up.
       fatigued: (c.healthSignals ?? []).some((h) => h === "creative_fatigue" || h === "audience_saturation"),
       spending: (c.metrics?.spend ?? 0) > 0,
     }));

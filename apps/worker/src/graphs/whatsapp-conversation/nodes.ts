@@ -24,6 +24,7 @@ import {
 import { applyAgentConfigChange, loadAgentConfigState, reseedArchetypeChange } from "@trafego/agent-config";
 import { sleep, APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE } from "@trafego/shared";
 import type { Action, ConversionGoal, OrgId } from "@trafego/shared/types";
+import { CONVERSION_GOALS } from "@trafego/shared/types";
 import { and, eq } from "drizzle-orm";
 import { adAccounts, agents, playbookRules, type Database } from "@trafego/db";
 import { DEFAULT_CURRENCY } from "@trafego/shared";
@@ -69,6 +70,11 @@ import type {
 } from "./state.js";
 
 const CONVERSATION_TEMPERATURE = 0.3;
+
+/** Guard: `v` é um ConversionGoal da taxonomia neutra (o LLM manda goal como texto livre). */
+function isConversionGoal(v: unknown): v is ConversionGoal {
+  return typeof v === "string" && (CONVERSION_GOALS as readonly string[]).includes(v);
+}
 
 const MS_PER_HOUR = 60 * 60 * 1000;
 /** Rótulo do bot no transcript ambiente (outbound no transcript = fast-follow; hoje sem uso real). */
@@ -539,7 +545,11 @@ export function makeConversationNodes(
         createCall.name === "scale_winner"
           ? await proposeScaleWinner(deps, dctx, typeof args["winnerName"] === "string" ? (args["winnerName"] as string) : undefined)
           : await proposeCreateCampaign(deps, dctx, {
-              ...(typeof args["goal"] === "string" ? { goal: args["goal"] as ConversionGoal } : {}),
+              // valida o goal contra a taxonomia neutra ANTES de propor: goal inválido (o LLM
+              // manda texto livre) descartado → o propose infere da meta/conta, e o eco mostra
+              // o objetivo REAL. Sem isso, um goal fora do enum viraria DEFAULT_OBJECTIVE no
+              // adapter, criando campanha (gasto real) com objetivo diferente do prometido (§8).
+              ...(isConversionGoal(args["goal"]) ? { goal: args["goal"] } : {}),
               ...(typeof args["budgetReais"] === "number" ? { budgetReais: args["budgetReais"] as number } : {}),
             });
       const expiresAt = new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString();

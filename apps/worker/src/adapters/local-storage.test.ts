@@ -40,6 +40,11 @@ describe("createLocalStorage", () => {
     expect(await s.get("org/o1/creatives/deadbeef.png")).toBeNull();
   });
 
+  it("get de ref com escape (../) → null (barra path traversal, não lê fora da raiz)", async () => {
+    const s = createLocalStorage({ baseDir: dir, urlBase });
+    expect(await s.get("../../../../etc/passwd")).toBeNull();
+  });
+
   it("signedUrl compõe base + ref", async () => {
     const s = createLocalStorage({ baseDir: dir, urlBase });
     expect(await s.signedUrl("org/o1/creatives/x.png", 60)).toBe(
