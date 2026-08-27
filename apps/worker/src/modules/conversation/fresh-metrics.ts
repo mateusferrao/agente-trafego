@@ -35,9 +35,15 @@ export interface FreshKpis {
   /** conversões de negócio na janela (null se a conta não reporta NENHUMA conversão). */
   readonly conversions: number | null;
   readonly cpa: number | null;
+  /** ROAS = receita rastreada TOTAL / gasto (não só o goal de negócio) — mostra o retorno de
+   *  compras mesmo quando o goal principal é conversa/lead (sem valor). Null se não há receita. */
   readonly roas: number | null;
   /** goal da conversão contada (rótulo p/ o texto — ex.: "messaging_started"); null = sem conversão. */
   readonly conversionGoal: string | null;
+  /** receita rastreada TOTAL na janela (soma de todo `value` das conversões). Null = sem receita. */
+  readonly revenue: number | null;
+  /** TODAS as conversões da janela (goal→contagem/receita) — o agente enumera sem esconder nada. */
+  readonly breakdown: ReadonlyArray<{ readonly goal: string; readonly count: number; readonly value: number | null }>;
 }
 
 /** Conversão de NEGÓCIO do agente p/ contar CPA/ROAS (vence o objetivo da entidade, §7). */
@@ -117,6 +123,10 @@ export function aggregateKpis(
           (businessGoal.customConversionId ? e.customConversionId === businessGoal.customConversionId : true),
       )
     : [...entries].sort((a, b) => b.count - a.count)[0];
+  // receita TOTAL rastreada (todas as conversões com valor) → ROAS do retorno real, mesmo
+  // quando o goal de negócio é conversa/lead (sem valor). Não esconde receita de compra.
+  const revenueTotal = entries.reduce((s, e) => s + (e.hasValue ? e.value : 0), 0);
+  const hasRevenue = entries.some((e) => e.hasValue);
   return {
     spend,
     impressions,
@@ -126,8 +136,10 @@ export function aggregateKpis(
     cpm: impressions > 0 ? (spend / impressions) * 1000 : null,
     conversions: match ? match.count : null,
     cpa: match && match.count > 0 ? ratio(spend, match.count) : null,
-    roas: match && match.hasValue && spend > 0 ? match.value / spend : null,
+    roas: hasRevenue && spend > 0 ? revenueTotal / spend : null,
     conversionGoal: match?.goal ?? null,
+    revenue: hasRevenue ? revenueTotal : null,
+    breakdown: entries.map((e) => ({ goal: e.goal, count: e.count, value: e.hasValue ? e.value : null })),
   };
 }
 

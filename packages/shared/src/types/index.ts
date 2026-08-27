@@ -72,6 +72,9 @@ export interface InsightMetrics {
   readonly conversions?: number;
   readonly cpa?: number;
   readonly roas?: number;
+  /** Receita rastreada TOTAL (soma de todo `value` das conversões, ex.: compras) — surfaça
+   *  o retorno mesmo quando o goal de negócio é conversa/lead (sem valor). Undefined = sem receita. */
+  readonly revenue?: number;
   readonly [key: string]: number | undefined;
 }
 

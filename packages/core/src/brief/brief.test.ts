@@ -40,18 +40,20 @@ describe("computeDerived — conversão por objetivo", () => {
     expect(m).toMatchObject({ spend: 200, conversions: 10, cpa: 20, roas: 5 });
   });
 
-  it("override do agente (messaging) vence → conta conversas, sem ROAS (sem valor)", () => {
+  it("override do agente (messaging) vence → conta conversas, sem ROAS no goal MAS receita surfaçada", () => {
     const m = computeDerived(entity!, { goal: "purchase" }, { goal: "messaging_started" });
     expect(m.conversions).toBe(50);
     expect(m.cpa).toBe(4); // 200 / 50
-    expect(m.roas).toBeUndefined();
+    expect(m.roas).toBeUndefined(); // messaging não tem valor → roas do goal fica indefinido
+    expect(m.revenue).toBe(1000); // MAS a receita rastreada (compras) aparece — não esconde
   });
 
-  it("sem objetivo → só CPC/CPM (nada de CPA)", () => {
+  it("sem objetivo → só CPC/CPM (nada de CPA), mas ainda surfaça receita rastreada", () => {
     const m = computeDerived(entity!);
     expect(m.cpa).toBeUndefined();
     expect(m.conversions).toBeUndefined();
     expect(m.cpc).toBe(5); // 200 / 40 cliques
+    expect(m.revenue).toBe(1000);
   });
 });
 

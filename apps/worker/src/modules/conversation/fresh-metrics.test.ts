@@ -37,18 +37,22 @@ describe("aggregateKpis", () => {
     expect(k.conversionGoal).toBe("purchase");
   });
 
-  it("businessGoal escolhe o goal certo entre vários (não soma goals diferentes)", () => {
+  it("goal de conversa (sem valor) AINDA mostra receita/ROAS das compras (não esconde)", () => {
     const row = m({ spend: 300, impressions: 10000, clicks: 200 }, [
       { goal: "purchase", count: 3, value: 14900 },
       { goal: "messaging_started", count: 115 },
     ]);
-    const bought = aggregateKpis([row], { goal: "purchase" });
-    expect(bought.conversions).toBe(3);
-    expect(bought.roas).toBeCloseTo(14900 / 300);
+    // business goal = conversa: CPA na conversa, MAS roas/revenue da receita rastreada (compras).
     const msg = aggregateKpis([row], { goal: "messaging_started" });
     expect(msg.conversions).toBe(115);
-    expect(msg.roas).toBeNull(); // messaging não tem valor → sem roas
+    expect(msg.conversionGoal).toBe("messaging_started");
     expect(msg.cpa).toBeCloseTo(300 / 115);
+    expect(msg.revenue).toBe(14900); // NÃO esconde a receita de compra
+    expect(msg.roas).toBeCloseTo(14900 / 300); // ROAS do retorno real
+    expect(msg.breakdown).toEqual([
+      { goal: "purchase", count: 3, value: 14900 },
+      { goal: "messaging_started", count: 115, value: null },
+    ]);
   });
 
   it("sem businessGoal → usa a conversão de MAIOR volume (default sensato)", () => {
@@ -62,12 +66,14 @@ describe("aggregateKpis", () => {
     expect(k.conversions).toBe(115);
   });
 
-  it("sem conversão reportada → conversions/cpa/roas null (aí sim 'Meta não retornou')", () => {
+  it("sem conversão reportada → conversions/cpa/roas/revenue null (aí sim 'Meta não retornou')", () => {
     const k = aggregateKpis([m({ spend: 50, impressions: 500, clicks: 10 })], { goal: "purchase" });
     expect(k.conversions).toBeNull();
     expect(k.cpa).toBeNull();
     expect(k.roas).toBeNull();
+    expect(k.revenue).toBeNull();
     expect(k.conversionGoal).toBeNull();
+    expect(k.breakdown).toEqual([]);
     expect(k.cpc).toBe(5);
   });
 
