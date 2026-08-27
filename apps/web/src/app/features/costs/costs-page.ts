@@ -226,9 +226,9 @@ function presetRange(key: string): { since: string; until: string } {
             }
           </section>
 
-          <div class="grid gap-6 lg:grid-cols-2">
+          <div class="grid min-w-0 gap-6 lg:grid-cols-2">
             <!-- Por conta (barras ranqueadas) -->
-            <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
+            <section class="flex min-w-0 flex-col gap-3 rounded-lg border border-line bg-panel p-5">
               <h2 class="font-brand text-sm font-semibold text-ink">Por conta</h2>
               @if (d.byAccount.length === 0) {
                 <p class="text-sm text-muted">Sem custo atribuível a contas neste período.</p>
@@ -263,9 +263,9 @@ function presetRange(key: string): { since: string; until: string } {
             </section>
 
             <!-- Por tipo (donut + legenda com rótulos) -->
-            <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
+            <section class="flex min-w-0 flex-col gap-3 rounded-lg border border-line bg-panel p-5">
               <h2 class="font-brand text-sm font-semibold text-ink">Por tipo</h2>
-              <div class="flex items-center gap-5">
+              <div class="flex min-w-0 items-center gap-5">
                 <svg viewBox="0 0 42 42" class="h-28 w-28 shrink-0" role="img" aria-label="Custo por tipo">
                   <g transform="rotate(-90 21 21)">
                     @for (s of typeSlices(); track s.label; let i = $index) {

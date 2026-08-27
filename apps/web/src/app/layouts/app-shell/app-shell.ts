@@ -21,7 +21,7 @@ import { ShellNav } from './shell-nav';
   template: `
     <!-- Desktop: altura fixa + overflow-hidden → o <main> vira o container de scroll
          (habilita 'sticky' de barras de ação). Mobile: rola a janela (comportamento padrão). -->
-    <div class="grid min-h-dvh grid-cols-1 bg-app text-ink md:h-dvh md:grid-cols-[260px_1fr] md:overflow-hidden">
+    <div class="grid min-h-dvh grid-cols-1 content-start bg-app text-ink md:h-dvh md:grid-cols-[260px_1fr] md:content-normal md:overflow-hidden">
       <!-- Header mobile-only: hambúrguer + nome da seção atual (some no desktop, onde o rail já
            orienta). sticky top-0: mobile rola a JANELA (comment acima), então sem sticky o header
            sumiria ao descer a página — fica fixo no topo, acima do conteúdo (z-40 < z-50 do drawer). -->
