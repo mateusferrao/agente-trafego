@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { agentRuns, agents, campaignDrafts, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
 import type { Approval, ApprovalPort } from "@trafego/shared/ports";
+import type { PerformanceTier } from "@trafego/shared";
 import {
   comparePeriodsData,
   getAccountStatusData,
@@ -10,6 +11,8 @@ import {
   listCampaignsData,
   listPendingData,
   listRecommendationsData,
+  pickAdIdsToRefresh,
+  TOP_CREATIVES_LIMIT,
 } from "./read-data.js";
 
 /**
@@ -48,6 +51,28 @@ function fakeApprovals(pending: Approval[]): ApprovalPort {
     expireOverdue: vi.fn(),
   } as unknown as ApprovalPort;
 }
+
+describe("pickAdIdsToRefresh (fresh=true refresca só o top-N que será exibido)", () => {
+  it("ranqueia (campeã→pior) e limita ao TOP_CREATIVES_LIMIT", () => {
+    // mais anúncios que o teto, tiers embaralhados → só os melhores, em ordem.
+    const rows: { adId: string; tier: PerformanceTier | null; roas: number | null; cpa: number | null; spend: number | null }[] = [
+      { adId: "zombie", tier: "zombie", roas: null, cpa: null, spend: 10 },
+      { adId: "winner", tier: "winner", roas: 5, cpa: 2, spend: 100 },
+      { adId: "perf", tier: "performer", roas: 3, cpa: 4, spend: 50 },
+      { adId: "under", tier: "underperformer", roas: 1, cpa: 8, spend: 30 },
+      { adId: "notier", tier: null, roas: null, cpa: null, spend: 5 },
+      { adId: "winner2", tier: "winner", roas: 4, cpa: 3, spend: 80 },
+    ];
+    const ids = pickAdIdsToRefresh(rows);
+    expect(ids.length).toBeLessThanOrEqual(TOP_CREATIVES_LIMIT);
+    expect(ids[0]).toBe("winner"); // melhor tier + melhor roas
+    expect(ids).not.toContain("notier"); // ficou de fora do top-N (6 > 5)
+  });
+
+  it("sem linhas persistidas → nada a refrescar", () => {
+    expect(pickAdIdsToRefresh([])).toEqual([]);
+  });
+});
 
 const ORG = "org-1";
 const AGENT = "agent-1";

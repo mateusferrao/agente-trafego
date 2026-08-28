@@ -14,8 +14,9 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { adAccounts, adCreatives, agentRuns, agentToolCalls, agents, campaignDrafts, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
-import { daysAgoInTz, rankAdCreatives, todayInTz } from "@trafego/core";
+import { daysAgoInTz, rankAdCreatives, todayInTz, type RankableCreative } from "@trafego/core";
 import { createAnalysisRepo, type AdCreativeCopyRow } from "../../modules/analysis/repo.js";
+import { withTimeout } from "../../modules/conversation/with-timeout.js";
 import {
   aggregateKpis,
   attributionCaveat,
@@ -740,7 +741,15 @@ function asString(value: unknown): string {
 }
 
 /** Teto de criativos retornados ao chat (WhatsApp não é parede de texto). */
-const TOP_CREATIVES_LIMIT = 5;
+export const TOP_CREATIVES_LIMIT = 5;
+
+/** Ad ids a refrescar ao vivo (fresh=true): só o TOP-N que será exibido, ranqueado do
+ *  persistido (campeã→pior). Puro — o refresh ao vivo não puxa a conta inteira da Meta. */
+export function pickAdIdsToRefresh<T extends RankableCreative & { adId: string }>(rows: readonly T[]): string[] {
+  return rankAdCreatives(rows)
+    .slice(0, TOP_CREATIVES_LIMIT)
+    .map((r) => r.adId);
+}
 
 /** "Qual minha copy campeã": lê `ad_creatives` (copy + desempenho denormalizado),
  *  ranqueia (puro, core) e devolve o top-N curado. Org-scoped. */
@@ -792,10 +801,16 @@ async function refreshCreativeCopiesLive(deps: WorkerDeps, ctx: ReadToolContext)
   const repo = createAnalysisRepo(deps.db);
   const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
   if (!account) return;
-  const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
-  const adEntities = await deps.ports.ads.listEntities(ref, "ad");
-  const adIds = adEntities.map((e) => e.id);
+  // Refresca só o TOP-N que será EXIBIDO (ranqueado do persistido), não a conta inteira: antes
+  // listava TODOS os ads + getCreatives de todos → minutos numa conta grande, estourando o teto
+  // do turno. Sem persistido (nunca analisou) → nada a refrescar (getTopCreativesData já é vazio).
+  const persisted = await deps.db
+    .select({ adId: adCreatives.adId, tier: adCreatives.tier, spend: adCreatives.spend, cpa: adCreatives.cpa, roas: adCreatives.roas })
+    .from(adCreatives)
+    .where(and(eq(adCreatives.adAccountId, ctx.adAccountId), eq(adCreatives.orgId, ctx.orgId)));
+  const adIds = pickAdIdsToRefresh(persisted);
   if (adIds.length === 0) return;
+  const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
   const creatives = await deps.ports.ads.getCreatives(ref, adIds);
   const rows: AdCreativeCopyRow[] = creatives.map((c) => ({
     adId: c.adId,
@@ -1060,9 +1075,11 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     async ({ fresh }: { fresh?: boolean | null }) => {
       if (noFocus()) return NEEDS_FOCUS;
       logger.debug({ agentId: ctx.agentId, fresh: Boolean(fresh) }, "tool:get_top_creatives");
-      // fresh = puxa a copy ATUAL da Meta antes de responder (preserva a perf do run).
+      // fresh = puxa a copy ATUAL da Meta antes de responder (preserva a perf do run). Sob teto
+      // de tempo próprio (< turnTimeout): Meta lenta → degrada pro persistido em vez de estourar
+      // o turno inteiro (a causa do fallback genérico quando o refresh levava minutos).
       if (fresh) {
-        await refreshCreativeCopiesLive(deps, ctx).catch((err) =>
+        await withTimeout(refreshCreativeCopiesLive(deps, ctx), deps.conversation.liveFetchTimeoutMs).catch((err) =>
           logger.warn({ err: String(err) }, "get_top_creatives:refresh live degradou (usa persistido)"),
         );
       }

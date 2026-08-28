@@ -278,6 +278,11 @@ export const envSchema = z.object({
   // get_fresh_metrics). Travamento sem erro → cai no fallback amigável, nunca deixa
   // o usuário sem resposta pra sempre.
   CONVERSATION_TURN_TIMEOUT_MS: z.coerce.number().int().positive().default(90_000),
+  // Teto (ms) do fetch AO VIVO da Meta dentro de uma read-tool do chat (ex: get_top_creatives
+  // fresh=true refresca copies). DEVE ser < CONVERSATION_TURN_TIMEOUT_MS: se a Meta demora, a
+  // tool degrada pro dado persistido em vez de estourar o turno inteiro (a causa do fallback
+  // genérico quando o refresh de todos os criativos levava minutos).
+  CHAT_LIVE_FETCH_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
 
   // ─── Transcrição de áudio inbound (STT via OpenRouter) ─────────────────
   // Nota de voz do WhatsApp → texto na borda. Reusa OPENROUTER_API_KEY/BASE_URL.

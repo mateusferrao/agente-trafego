@@ -110,6 +110,8 @@ export interface WorkerDeps {
     readonly noticeThrottleSec: number;
     /** Teto (ms) do turno inteiro (ReAct) — travamento sem erro cai no fallback. */
     readonly turnTimeoutMs: number;
+    /** Teto (ms) do fetch ao vivo da Meta numa read-tool — degrada pro persistido (< turnTimeout). */
+    readonly liveFetchTimeoutMs: number;
     /** Timeout por chamada HTTP ao LLM (ms) — evita hang no provider até o teto do turno. */
     readonly httpTimeoutMs: number;
     /** Retentativas por chamada de LLM (rede/429/5xx) — reroteia o provider ruim. */
@@ -334,6 +336,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
       debounceSeconds: env.CONVERSATION_DEBOUNCE_SECONDS,
       noticeThrottleSec: env.NOTICE_THROTTLE_SECONDS,
       turnTimeoutMs: env.CONVERSATION_TURN_TIMEOUT_MS,
+      liveFetchTimeoutMs: env.CHAT_LIVE_FETCH_TIMEOUT_MS,
       httpTimeoutMs: env.CONVERSATION_HTTP_TIMEOUT_MS,
       maxRetries: env.LLM_MAX_RETRIES,
       fallbackModel: env.CONVERSATION_FALLBACK_MODEL,
