@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { copyOf, rankAdsForReuse, type RawAdCandidate } from "./creative-select.js";
+import { copyOf, creativeFormatOf, isReusableCreative, rankAdsForReuse, selectReuseCreative, type RawAdCandidate } from "./creative-select.js";
 
 const ad = (id: string, over: Partial<RawAdCandidate> = {}): RawAdCandidate => ({ id, effective_status: "ACTIVE", ...over });
 const withInsights = (spend: number, results?: { type: string; value: number }[]) => ({
@@ -48,6 +48,45 @@ describe("rankAdsForReuse", () => {
     const a = ad("a", { insights: withInsights(100, [{ type: "lead", value: 4 }, { type: "purchase", value: 1 }]) }); // 5 → CPR 20
     const b = ad("b", { insights: withInsights(100, [{ type: "purchase", value: 2 }]) }); // CPR 50
     expect(rankAdsForReuse([b, a])[0]!.ad.id).toBe("a");
+  });
+});
+
+
+describe("creativeFormatOf / isReusableCreative", () => {
+  it("classifica imagem, vídeo, carrossel, catálogo, outro", () => {
+    expect(creativeFormatOf(ad("a", { creative: { object_story_spec: { link_data: { image_hash: "H" } } } }))).toBe("image");
+    expect(creativeFormatOf(ad("a", { creative: { object_story_spec: { video_data: { video_id: "V" } } } }))).toBe("video");
+    expect(creativeFormatOf(ad("a", { creative: { object_story_spec: { link_data: { child_attachments: [{}, {}] } } } }))).toBe("carousel");
+    expect(creativeFormatOf(ad("a", { creative: { object_story_spec: { product_set_id: "PS" } } }))).toBe("catalog");
+    expect(creativeFormatOf(ad("a", {}))).toBe("other");
+  });
+  it("reusável = só imagem/vídeo", () => {
+    expect(isReusableCreative(ad("a", { creative: { object_story_spec: { link_data: { image_hash: "H" } } } }))).toBe(true);
+    expect(isReusableCreative(ad("a", { creative: { object_story_spec: { video_data: { video_id: "V" } } } }))).toBe(true);
+    expect(isReusableCreative(ad("a", { creative: { object_story_spec: { link_data: { child_attachments: [{}] } } } }))).toBe(false);
+    expect(isReusableCreative(ad("a", { creative: { object_story_spec: { product_set_id: "PS" } } }))).toBe(false);
+  });
+});
+
+describe("selectReuseCreative (vencedor não-reusável não zera o pick)", () => {
+  it("carrossel é #1 por desempenho → pick cai no melhor IMAGEM/VÍDEO + flag do formato do topo", () => {
+    const carousel = ad("carousel", { creative: { object_story_spec: { link_data: { child_attachments: [{}, {}] } } }, insights: withInsights(100, [{ type: "purchase", value: 20 }]) }); // CPR 5, melhor
+    const image = ad("img", { creative: { object_story_spec: { link_data: { image_hash: "H" } } }, insights: withInsights(100, [{ type: "purchase", value: 4 }]) }); // CPR 25
+    const out = selectReuseCreative([image, carousel]);
+    expect(out.best?.ad.id).toBe("img");
+    expect(out.topUnsupportedFormat).toBe("carousel");
+  });
+  it("todos reusáveis → sem flag, best = o melhor", () => {
+    const a = ad("a", { creative: { object_story_spec: { link_data: { image_hash: "H" } } }, insights: withInsights(100, [{ type: "purchase", value: 10 }]) });
+    const b = ad("b", { creative: { object_story_spec: { link_data: { image_hash: "H2" } } }, insights: withInsights(100, [{ type: "purchase", value: 2 }]) });
+    const out = selectReuseCreative([a, b]);
+    expect(out.best?.ad.id).toBe("a");
+    expect(out.topUnsupportedFormat).toBeNull();
+  });
+  it("só carrossel → best null + flag (a casca explica o porquê)", () => {
+    const out = selectReuseCreative([ad("c", { creative: { object_story_spec: { link_data: { child_attachments: [{}] } } }, insights: withInsights(100) })]);
+    expect(out.best).toBeNull();
+    expect(out.topUnsupportedFormat).toBe("carousel");
   });
 });
 

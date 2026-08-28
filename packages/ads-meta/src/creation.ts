@@ -19,7 +19,7 @@ import {
   resolveMetaCta,
   resolveMetaObjective,
 } from "./meta-conversion-map.js";
-import { copyOf, rankAdsForReuse, type RawAdCandidate } from "./creative-select.js";
+import { copyOf, creativeFormatOf, isReusableCreative, rankAdsForReuse, type RawAdCandidate } from "./creative-select.js";
 
 /** Quantos anúncios buscar p/ ranquear o melhor criativo reusável (1 call, com insights). */
 const INFER_CANDIDATES_LIMIT = 25;
@@ -329,8 +329,19 @@ export class MetaCreationService {
       },
     });
     const ranked = rankAdsForReuse(data.data ?? []);
-    const best = ranked[0]?.ad;
-    if (!best) return {};
+    // FONTE de reuso = o melhor anúncio REUSÁVEL (imagem/vídeo único). Se o #1 por desempenho
+    // for carrossel/catálogo (não-clonável hoje), NÃO zera o pick: usa o melhor reusável abaixo
+    // dele + sinaliza `unsupportedTopFormat` p/ a casca ser transparente com o dono.
+    const top = ranked[0];
+    // !isReusable garante que o formato ∈ {carousel,catalog,other} (nunca image/video).
+    const unsupportedTopFormat: "carousel" | "catalog" | "other" | undefined =
+      top && !isReusableCreative(top.ad) ? (creativeFormatOf(top.ad) as "carousel" | "catalog" | "other") : undefined;
+    const best = ranked.find((r) => isReusableCreative(r.ad))?.ad;
+    if (!best) {
+      // nenhum criativo reusável — mas talvez o topo seja um formato não suportado: reporta o
+      // formato (sem mídia) p/ a casca explicar o porquê, em vez de só "não achei criativo".
+      return unsupportedTopFormat ? { unsupportedTopFormat } : {};
+    }
     const spec = best.creative?.object_story_spec;
     const linkData = spec?.link_data;
     // link de destino: imagem → link_data.link; vídeo → call_to_action.value.link do video_data.
@@ -349,6 +360,7 @@ export class MetaCreationService {
       ...(reuseLink ? { linkUrl: reuseLink } : {}),
       ...(best.id ? { sourceAdId: best.id } : {}),
       ...(winnerCopy.length > 0 ? { winnerCopy } : {}),
+      ...(unsupportedTopFormat ? { unsupportedTopFormat } : {}),
     };
     return result;
   }

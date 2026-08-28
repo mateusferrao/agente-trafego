@@ -128,6 +128,12 @@ export interface CreationDefaults {
    * O core nunca vê o firehose; só esta amostra curada do que já performa.
    */
   readonly winnerCopy?: ReadonlyArray<{ readonly primaryText?: string; readonly headline?: string }>;
+  /**
+   * Formato do anúncio #1 por desempenho quando ele NÃO é reusável hoje (`carousel`/`catalog`/
+   * `other`) — a mídia devolvida é do melhor REUSÁVEL abaixo dele. A casca usa isto pra ser
+   * transparente ("seu melhor é um carrossel, que ainda não sei clonar"). Neutro (sem PT).
+   */
+  readonly unsupportedTopFormat?: "carousel" | "catalog" | "other";
 }
 
 /**

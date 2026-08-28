@@ -10,7 +10,7 @@ export interface RawInsightAction {
   readonly value?: string;
 }
 
-/** object_story_spec cru (imagem OU vídeo) — de onde extraímos copy + mídia. */
+/** object_story_spec cru — imagem/vídeo (reusáveis) + carrossel/catálogo (não-reusáveis hoje). */
 export interface RawObjectStorySpec {
   readonly page_id?: string;
   readonly link_data?: {
@@ -19,6 +19,8 @@ export interface RawObjectStorySpec {
     readonly message?: string;
     readonly name?: string;
     readonly description?: string;
+    /** carrossel: cada card é um attachment (não clonável como criativo único hoje). */
+    readonly child_attachments?: readonly unknown[];
   };
   readonly video_data?: {
     readonly video_id?: string;
@@ -29,6 +31,45 @@ export interface RawObjectStorySpec {
     /** o link de destino do vídeo mora aqui (não em link_data) — CTA do object_story_spec. */
     readonly call_to_action?: { readonly value?: { readonly link?: string } };
   };
+  /** catálogo/DPA (Advantage+ catalog): usa product set, não uma mídia única. */
+  readonly template_data?: unknown;
+  readonly product_set_id?: string;
+}
+
+/** Formato do criativo veiculado. `image`/`video` = REUSÁVEIS hoje; os outros = não. */
+export type ServingCreativeFormat = "image" | "video" | "carousel" | "catalog" | "other";
+
+/** Classifica o formato pelo object_story_spec (neutro; o vocabulário PT fica na casca). */
+export function creativeFormatOf(ad: RawAdCandidate): ServingCreativeFormat {
+  const spec = ad.creative?.object_story_spec;
+  if (spec?.link_data?.image_hash) return "image";
+  if (spec?.video_data?.video_id) return "video";
+  if ((spec?.link_data?.child_attachments?.length ?? 0) > 0) return "carousel";
+  if (spec?.template_data !== undefined || spec?.product_set_id !== undefined) return "catalog";
+  return "other";
+}
+
+/** Reusável hoje = imagem única OU vídeo único (o create* só monta esses). */
+export function isReusableCreative(ad: RawAdCandidate): boolean {
+  const f = creativeFormatOf(ad);
+  return f === "image" || f === "video";
+}
+
+/**
+ * Escolhe a FONTE de reuso: o melhor anúncio REUSÁVEL (imagem/vídeo único) do ranking. Se o
+ * #1 por desempenho NÃO for reusável (carrossel/catálogo), devolve `topUnsupportedFormat` com o
+ * formato dele — a casca avisa o dono ("seu melhor é um carrossel, que ainda não sei clonar")
+ * em vez de silenciosamente pegar outro. PURA.
+ */
+export function selectReuseCreative(ads: readonly RawAdCandidate[]): {
+  readonly best: RankedAd | null;
+  readonly topUnsupportedFormat: ServingCreativeFormat | null;
+} {
+  const ranked = rankAdsForReuse(ads);
+  const best = ranked.find((r) => isReusableCreative(r.ad)) ?? null;
+  const top = ranked[0];
+  const topUnsupportedFormat = top && !isReusableCreative(top.ad) ? creativeFormatOf(top.ad) : null;
+  return { best, topUnsupportedFormat };
 }
 
 /** Anúncio candidato cru (campos pedidos no /ads). */

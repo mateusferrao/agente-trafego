@@ -77,6 +77,11 @@ function money(reais: number, currency: string): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency }).format(reais);
 }
 
+/** Rótulo PT do formato não-reusável (o vocabulário neutro vem do adapter). */
+function unsupportedFormatPt(f: "carousel" | "catalog" | "other"): string {
+  return f === "carousel" ? "carrossel" : f === "catalog" ? "anúncio de catálogo" : "formato que ainda não sei clonar";
+}
+
 async function loadAgentContext(deps: WorkerDeps, ctx: DraftProposalContext): Promise<AgentContext | null> {
   const repo = createAnalysisRepo(deps.db);
   const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
@@ -455,8 +460,9 @@ export async function proposeCreateCampaign(
   if (!defaults.pageId || !chosen) {
     return {
       kind: "blocked",
-      reason:
-        "essa conta ainda não tem um anúncio de onde eu possa reusar a página e o criativo — me manda um criativo ou conecte uma conta com anúncios",
+      reason: defaults.unsupportedTopFormat
+        ? `seu melhor anúncio é um ${unsupportedFormatPt(defaults.unsupportedTopFormat)}, que eu ainda não sei clonar, e não achei um criativo de imagem/vídeo pra reusar — me manda uma imagem ou vídeo pra eu criar a campanha.`
+        : "essa conta ainda não tem um anúncio de onde eu possa reusar a página e o criativo — me manda um criativo ou conecte uma conta com anúncios",
     };
   }
   const goal = args.goal ?? defaults.objectiveGoal ?? DEFAULT_CONVERSION_GOAL;
@@ -508,10 +514,17 @@ export async function proposeCreateCampaign(
     chosen.source === "serving"
       ? "reusando o criativo que melhor performa na sua conta"
       : "reusando um criativo da sua biblioteca (você não tem anúncio ativo pra eu comparar desempenho)";
-  const echo = [
+  // Transparência (§clareza pro dono): se o #1 por desempenho for um formato que ainda não sei
+  // clonar (carrossel/catálogo), avisa que peguei o melhor de imagem/vídeo no lugar.
+  const lines = [
     `Vou **criar uma campanha de ${goal}** ${creativeSourcePhrase} e ${variantsCount} variações de copy novas (baseadas no que já converte).`,
+  ];
+  if (defaults.unsupportedTopFormat) {
+    lines.push(`Obs: seu anúncio de melhor desempenho é um **${unsupportedFormatPt(defaults.unsupportedTopFormat)}**, que eu ainda não sei clonar — então usei o melhor criativo de imagem/vídeo que você tem.`);
+  }
+  lines.push(
     `Gasto novo: ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia · Página: ${defaults.pageId}${defaults.pixelId ? ` · Pixel: ${defaults.pixelId}` : ""} · entra ativa (a Meta revisa antes).`,
     `Confirma? (você pode editar/trocar o criativo no site antes de aprovar)`,
-  ].join("\n");
-  return { kind: "draft", echo, approvalId, draftId };
+  );
+  return { kind: "draft", echo: lines.join("\n"), approvalId, draftId };
 }
