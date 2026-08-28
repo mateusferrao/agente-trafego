@@ -6,6 +6,7 @@
 
 import { and, count, eq, gte, inArray, sql } from "drizzle-orm";
 import { agentToolCalls, auditLog, campaignDrafts, guardrailConfigs } from "@trafego/db";
+import type { Database } from "@trafego/db/client";
 import { applyCreationGuardrails, buildDuplicateInput, goalNounPt } from "@trafego/core";
 import { DEFAULT_CONVERSION_GOAL, toGuardrailConfig, type CampaignDraft, type CampaignDraftSpec, type OrgId } from "@trafego/shared";
 import type { ApprovalId } from "@trafego/shared";
@@ -28,6 +29,38 @@ const CREATION_DAY_MS = 24 * 60 * 60 * 1000;
 const NOT_DUPLICABLE_REASON =
   "esse vencedor usa um recurso que a Meta descontinuou para cópia, então não consigo cloná-lo fielmente. " +
   "Posso subir o orçamento dele agora, ou você recria o criativo no Gerenciador de Anúncios que eu duplico";
+
+/**
+ * Conta as campanhas novas dentro do cap/dia (P0.4 — fix): apply-time REAL via `agent_tool_calls`
+ * (o `create_campaign`/`duplicate_scale` mais recente do agente), não `createdAt` do rascunho —
+ * um rascunho proposto há >24h e aplicado agora não escapa mais o cap. Exclui dry-run (não gasta,
+ * não deve consumir o cap). Soma o EM-VOO (`campaign_drafts` `creating` do mesmo agente) só quando
+ * o agente não está em dry-run — sem isso, dois applies de rascunhos DIFERENTES concorrentes lêem
+ * o mesmo N e podem estourar o cap transitoriamente (o tool_call só é gravado no FIM da saga).
+ */
+export async function countCreationsLast24h(
+  db: Database,
+  input: { readonly agentId: string; readonly adAccountId: string; readonly dryRun: boolean },
+): Promise<number> {
+  const since = new Date(Date.now() - CREATION_DAY_MS);
+  const [{ n: appliedToday } = { n: 0 }] = await db
+    .select({ n: count() })
+    .from(agentToolCalls)
+    .where(
+      and(
+        eq(agentToolCalls.agentId, input.agentId),
+        inArray(agentToolCalls.toolKey, [TOOL_KEY_DUPLICATE, TOOL_KEY_CREATE]),
+        gte(agentToolCalls.createdAt, since),
+        sql`(${agentToolCalls.args} ->> 'dryRun') IS DISTINCT FROM 'true'`,
+      ),
+    );
+  if (input.dryRun) return appliedToday;
+  const [{ n: inFlight } = { n: 0 }] = await db
+    .select({ n: count() })
+    .from(campaignDrafts)
+    .where(and(eq(campaignDrafts.adAccountId, input.adAccountId), eq(campaignDrafts.status, "creating")));
+  return appliedToday + inFlight;
+}
 
 /** Desfecho tipado (o chamador mapeia p/ resolver a approval + push). */
 export type DraftApplyOutcome =
@@ -91,24 +124,8 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     .where(and(eq(guardrailConfigs.agentId, row.agentId), eq(guardrailConfigs.orgId, input.orgId)))
     .limit(1);
   const cfg = toGuardrailConfig(guardrailRow);
-  // Cap rolling 24h de campanhas novas/dia. APROXIMAÇÃO: conta por `createdAt` do rascunho (quando
-  // foi proposto), não pelo instante em que foi aplicado na Meta — um rascunho proposto há >24h e
-  // aplicado agora escapa. Aceitável como teto de segurança; medir pelo apply-time = fast-follow.
-  const since = new Date(Date.now() - CREATION_DAY_MS);
-  // Conta `creating` (em voo) + `created` — sem o `creating`, dois applies de rascunhos
-  // DIFERENTES concorrentes lêem o mesmo N e podem estourar o cap transitoriamente. Exclui
-  // simulações de dry-run (`createdIds.simulated`) — ensaios não gastam, não consomem o cap.
-  const [{ n } = { n: 0 }] = await db
-    .select({ n: count() })
-    .from(campaignDrafts)
-    .where(
-      and(
-        eq(campaignDrafts.adAccountId, row.adAccountId),
-        inArray(campaignDrafts.status, ["creating", "created"]),
-        sql`(${campaignDrafts.createdIds} ->> 'simulated') IS DISTINCT FROM 'true'`,
-        gte(campaignDrafts.createdAt, since),
-      ),
-    );
+  // Cap rolling 24h de campanhas novas/dia — pelo APPLY-TIME real (P0.4, ver countCreationsLast24h).
+  const n = await countCreationsLast24h(db, { agentId: row.agentId, adAccountId: row.adAccountId, dryRun: cfg.dryRun });
 
   const check = applyCreationGuardrails(draft, cfg, { createdCampaignsToday: n });
   if (!check.allowed) {
