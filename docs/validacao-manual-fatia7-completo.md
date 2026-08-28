@@ -661,3 +661,37 @@ WhatsApp funilam no MESMO `applyDraft`/`proposeCreateCampaign`, então provar l�
 - **Catálogo dev sem `create_campaign`/`duplicate_scale`** (seed não rodou no dev) → binding de criação
   FK-falha. Criação em si funciona (default-on, sem linha de binding); só o **desligar/ligar** exige o catálogo.
   Prod resolve no seed do deploy. Seedei no dev manualmente.
+
+## 23. Qualidade de criativo — pool + formatos + visão da biblioteca (2026-08-28)
+
+### 23a. Seleção de criativo pra recomendação (pool único veiculados + biblioteca)
+- ✅ O agente escolhe o **melhor criativo VEICULANDO** (ranqueado por desempenho, `rankAdsForReuse`) —
+  verificado ao vivo (escolheu o vídeo vencedor real). Copy **aterrada** no vencedor.
+- ✅ **Pool único:** sem criativo veiculando, cai no **upload mais recente da biblioteca** (`chooseCreative`).
+  Antes uploads eram ignorados na recomendação. (Unit: 5 casos.)
+- ✅ **Formato não-reusável não zera o pick:** se o #1 por desempenho for **carrossel/catálogo** (não-clonável
+  hoje), usa o melhor **imagem/vídeo** abaixo + **avisa o dono** ("seu melhor é um carrossel, que ainda não
+  sei clonar; usei o melhor de imagem/vídeo"). Bloqueio honesto quando não há reusável nem biblioteca. (Unit.)
+- Cobre **imagem única + vídeo único** (reuso/criação). Carrossel/catálogo/coleção = fast-follow, **explícito** pro dono.
+
+### 23b. Visão + cache na biblioteca (analisa cada upload 1x)
+`apps/worker/e2e-library-vision-battery.ts` (live, limpa tudo). **9/9:**
+- ✅ imagem: **blob → data-url → visão** (LLM lê o data-url — descrição correta do logo) → **cacheia**.
+- ✅ **cache HIT** na 2ª análise: não duplica linha, não re-analisa (mesmo conteúdo do cache).
+- ✅ vídeo (cadeia completa ao vivo, `e2e-video-vision-live.ts`): `getVideoFrames` (frames HD da Meta por
+  `video_id`) → visão → **descrição correta** do vídeo real da conta ("talking-head", decompôs hook/ângulo).
+- ✅ guardas: arquivado / não-pronto / sem-mídia → **pula** (não analisa à toa).
+- Reusa o MESMO `createVisionResolver` + a tabela `creative_vision_analyses` dos veiculados (custo one-time por
+  criativo, amortizado). Enfileirado no upload (web + WhatsApp) e quando o poll flipa o vídeo pra `ready`.
+- **Fast-follow:** transcrição de áudio do vídeo (ffmpeg + STT) + **usar a descrição no pick/UI** (hoje só cacheia).
+
+### 23c. Qualidade da ANÁLISE completa (bateria ao vivo, 30 dias)
+`apps/worker/e2e-analysis-battery.ts` (dryRun on = zero escrita/mídia). Resultado (conta de teste):
+- **Custo real ~$0.026/run** (8,4k in + 4,1k out, 3 chamadas). Uma análise completa custa ~2-3 centavos.
+- Summary/recomendações **coerentes e honestos**: citam números, respeitam **significância** (`low_volume` →
+  não crava vencedor), aplicam **recência** (30d vs 30d anteriores), sem overclaim. Conservador quando sem meta.
+- **Visão cacheada** (cache hit, sem re-pagar). Empty-state (janela sem gasto) honesto.
+
+### 23d. Excluir criativo — HÍBRIDO (nunca quebra) — ver também §3
+- ✅ em uso → **arquiva** (some da estante/picker, mantém ref; Meta/rascunho não quebram); livre → apaga de vez.
+  Verificado ao vivo (arquiva-se-em-uso com draft intacto / apaga-se-livre / arquivado some da listagem).
