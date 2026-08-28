@@ -22,6 +22,7 @@ import type {
   MarketReference,
 } from '@core/api/generated';
 import { MarketReferenceEditor } from '@app/shared/market-reference-editor';
+import { AccountContextStore } from '@app/features/account-detail/account-context.store';
 import { AgentPlaybook } from './agent-playbook';
 import { AgentAutonomy } from './agent-autonomy';
 import { AgentGuardrails } from './agent-guardrails';
@@ -582,6 +583,9 @@ export class AgentConfigPage {
   private readonly analysisApi = inject(AnalysisApiService);
   private readonly confirmDialog = inject(UiConfirmDialogService);
   private readonly destroyRef = inject(DestroyRef);
+  /** Store da conta (provido pelo AccountShell; a aba de config é rota-filha). Opcional —
+   *  se a config for aberta fora do shell, segue sem o refresh do gate. */
+  private readonly accountStore = inject(AccountContextStore, { optional: true });
 
   protected readonly accountId = this.route.snapshot.paramMap.get('id') ?? '';
   private destroyed = false;
@@ -832,15 +836,26 @@ export class AgentConfigPage {
     if (!this.combinedDirty() || this.textOverLimit()) return;
     this.saving.set(true);
     try {
-      await this.autonomy?.save();
-      await this.guardrails?.save();
-      await this.notifications?.save();
-      await this.posture?.save();
+      // cada seção devolve se REALMENTE persistiu: `false` = tinha mudança mas a seção não
+      // carregou (seed falhou) e foi pulada — sem isto o toast mentia "salvo" (F-FALSE-SAVE).
+      // `undefined` = a seção nem existe no DOM (ViewChild ausente) → não conta como falha.
+      const persisted = [
+        await this.autonomy?.save(),
+        await this.guardrails?.save(),
+        await this.notifications?.save(),
+        await this.posture?.save(),
+      ];
       if (this.dirty()) {
         const agent = await firstValueFrom(this.analysisApi.saveConfig(this.accountId, this.buildInput()));
         this.applyAgent(agent); // reseed dos campos + baseline (limpa o dirty da página)
       }
-      toast.success('Configuração salva');
+      // gate de escala (bindings) pode ter mudado na aba de autonomia → re-lê no shell.
+      this.accountStore?.refreshGate();
+      if (persisted.some((ok) => ok === false)) {
+        toast.warning('Salvei o que deu, mas uma seção não tinha carregado. Recarregue a página e revise.');
+      } else {
+        toast.success('Configuração salva');
+      }
     } catch {
       // interceptor global já mostrou o erro amigável.
     } finally {

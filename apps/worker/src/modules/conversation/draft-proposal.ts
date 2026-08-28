@@ -189,6 +189,20 @@ export async function proposeScaleWinner(
   const state = await deps.ports.ads.readEntityState(ac.ref, chosen.entityId);
   const sourceDailyMinor = Number(state["daily_budget"] ?? 0);
   const level = chosen.entityLevel === "campaign" ? "campaign" : "adset";
+
+  // Vencedor é um ADSET sem orçamento próprio (CBO — orçamento na campanha; ou lifetime):
+  // subir o orçamento teria de mirar a CAMPANHA, cujo id não temos aqui (entity_analyses
+  // guarda só o adset). Antes isso emitia um `adjust_budget` no adset que o guardrail dropava
+  // silenciosamente ("budget não está neste nível") APÓS o eco "vou subir o orçamento" —
+  // promessa quebrada. Bloqueio honesto; escalar sob CBO/lifetime = fast-follow (ROADMAP).
+  if (level === "adset" && sourceDailyMinor <= 0) {
+    return {
+      kind: "blocked",
+      reason:
+        "esse vencedor está sob orçamento no nível da campanha (CBO) — escalar por aqui ainda não está disponível. Ajuste o orçamento da campanha no gerenciador; suporte a CBO vem em breve.",
+    };
+  }
+
   const budgetLevel: BudgetLevel = level === "adset" && sourceDailyMinor > 0 ? "adset" : "campaign";
   const scalePct = ac.cfg.scalePct ?? 50;
   let move = planScaleMove({
@@ -324,9 +338,18 @@ export async function refineDraft(
   let copyVariants = spec.copyVariants;
   const needCopy = row.kind === "from_scratch" && (patch.regenerateCopy === true || (patch.variantsCount != null && patch.variantsCount !== (spec.variantsCount ?? 0)));
   if (needCopy) {
+    // re-aterra a regeneração na copy que já performa (mesma fonte da proposta inicial).
+    const defaults = await deps.ports.ads.inferCreationDefaults(ac.ref);
     copyVariants = await generateCopy(
       deps.ports.llm,
-      { model: ac.model, goal: spec.objective ?? DEFAULT_CONVERSION_GOAL, variantsCount, businessContext: ac.businessContext, guidance: ac.guidance },
+      {
+        model: ac.model,
+        goal: spec.objective ?? DEFAULT_CONVERSION_GOAL,
+        variantsCount,
+        businessContext: ac.businessContext,
+        guidance: ac.guidance,
+        ...(defaults.winnerCopy ? { winnerCopy: defaults.winnerCopy } : {}),
+      },
       { orgId: ctx.orgId, adAccountId: ctx.adAccountId },
     );
   }
@@ -351,8 +374,18 @@ export async function proposeCreateCampaign(
   const ac = await loadAgentContext(deps, ctx);
   if (!ac) return { kind: "blocked", reason: "não consegui acessar a conta agora" };
 
+  // Gate por binding (mesma fonte/lógica do chat/apply/scale): criar do zero precisa de
+  // `create_campaign` ligado. O chat já filtra pelo toolset, mas o caminho PROATIVO chama
+  // isto direto — sem este gate, proporia um rascunho de uma capacidade desligada (some no
+  // apply, mas já teria mostrado a proposta + approval + recomendação). Alinha com o scale.
+  if (!ac.enabled.has("create_campaign")) {
+    return { kind: "blocked", reason: "criar campanha está desligado para este agente (ligue em ações permitidas)" };
+  }
+
   const defaults = await deps.ports.ads.inferCreationDefaults(ac.ref);
-  if (!defaults.pageId || !defaults.imageHash) {
+  const reuseImageHash = defaults.imageHash;
+  const reuseVideoId = defaults.videoId;
+  if (!defaults.pageId || (!reuseImageHash && !reuseVideoId)) {
     return {
       kind: "blocked",
       reason:
@@ -375,10 +408,13 @@ export async function proposeCreateCampaign(
       variantsCount,
       businessContext: ac.businessContext,
       guidance: ac.guidance,
+      // aterramento no que já performa (§7): a copy dos melhores anúncios veiculando.
+      ...(defaults.winnerCopy ? { winnerCopy: defaults.winnerCopy } : {}),
     },
     { orgId: ctx.orgId, adAccountId: ctx.adAccountId },
   );
 
+  const isVideo = !reuseImageHash && Boolean(reuseVideoId);
   const spec: CampaignDraftSpec = {
     version: 1,
     currency: ac.currency,
@@ -388,14 +424,20 @@ export async function proposeCreateCampaign(
     targeting: { kind: "advantage_plus" },
     variantsCount,
     copyVariants,
-    creative: { assetId: defaults.sourceAdId ?? "reuse", format: "image", origin: "reuse", metaImageHash: defaults.imageHash },
+    creative: {
+      assetId: defaults.sourceAdId ?? "reuse",
+      format: isVideo ? "video" : "image",
+      origin: "reuse",
+      ...(reuseImageHash ? { metaImageHash: reuseImageHash } : {}),
+      ...(reuseVideoId ? { metaVideoId: reuseVideoId } : {}),
+    },
     pageId: defaults.pageId,
     ...(defaults.pixelId ? { pixelId: defaults.pixelId } : {}),
     ...(defaults.linkUrl ? { linkUrl: defaults.linkUrl } : {}),
   };
   const { draftId, approvalId } = await persistDraftAndApproval(deps, ctx, "from_scratch", spec, origin);
   const echo = [
-    `Vou **criar uma campanha de ${goal}** reusando seu criativo campeão e ${variantsCount} variações de copy novas.`,
+    `Vou **criar uma campanha de ${goal}** reusando o criativo que melhor performa na sua conta e ${variantsCount} variações de copy novas (baseadas no que já converte).`,
     `Gasto novo: ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia · Página: ${defaults.pageId}${defaults.pixelId ? ` · Pixel: ${defaults.pixelId}` : ""} · entra ativa (a Meta revisa antes).`,
     `Confirma? (você pode editar/trocar o criativo no site antes de aprovar)`,
   ].join("\n");

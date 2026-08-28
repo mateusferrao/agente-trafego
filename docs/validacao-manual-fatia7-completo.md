@@ -46,6 +46,13 @@ esse token, verifique e cole de novo" (tela não quebra).
 docker exec docker-postgres-1 psql -U postgres -d trafego -tc "select ad_account_id, currency, token_status from ad_accounts;"
 ```
 - ✅ `token_status = valid`.
+- ⚠️ **Checar também a CONEXÃO** (a fonte da verdade do token — usada antes do legado da conta):
+  ```bash
+  docker exec docker-postgres-1 psql -U postgres -d trafego -tc "select platform, token_status from platform_connections;"
+  ```
+  Se `platform_connections.token_status = invalid`, **todo GET Graph falha** ("The application does not
+  belong to system user's business") — **recole o token** no Integrações. Diagnóstico sem logar o token:
+  `cd apps/worker && pnpm exec tsx --env-file=../../.env e2e-token-check.ts` (só reads; imprime OK/FAIL por endpoint).
 
 ---
 
@@ -75,6 +82,9 @@ docker exec docker-postgres-1 psql -U postgres -d trafego -tc "select ad_account
      O símbolo de moeda **segue a conta** (BRL → `R$`; conta USD → `$`).
 4. **Notificações** → ligar **"Rascunhos proativos"**.
 5. **Salvar** → ✅ recarregar a página mantém tudo (on/off, autonomia por-ação, preferência de escala).
+6. ✅ **[NOVO] Toast honesto no save:** salvar mostra **"Configuração salva"** só quando salvou de fato.
+   Se uma seção não tiver carregado (seed falhou) e você mexeu nela, o toast vira **aviso** ("salvei o que
+   deu, mas uma seção não tinha carregado…") em vez de mentir "salvo". (Antes: dizia "salva" sempre.)
 
 **Cenário de teste da lista única (faça e confira no banco):**
 - Desligue **Duplicar para escalar** + ponha **Criar campanha = age sozinho** + **Ajustar orçamento = sugere+OK** → Salvar.
@@ -156,6 +166,42 @@ docker exec docker-postgres-1 psql -U postgres -d trafego -c "select origin,form
 
 ---
 
+## 3b. **[NOVO] Aba Criativos após rodar análise + seleção do MELHOR criativo veiculando (decisão A)**
+
+> **Contexto do achado (dono, 2026-08-27):** "rodei uma análise e a aba de criativos não puxou nenhum,
+> mesmo a copy dizendo que puxaria". **Correto — por design:** `creative_assets` só é populada por
+> **upload** (web/WhatsApp); a análise **nunca** ingere os criativos veiculando (origem `reuse`). A copy
+> do empty-state prometia isso e foi **corrigida** (não promete mais). Popular a aba na análise =
+> **fast-follow** (ROADMAP). O que importa (decisão do dono) é (A) abaixo — e **não** depende da aba.
+
+**Empty-state honesto (SITE · conta sem uploads · aba Criativos):**
+1. Rodar uma análise (aba Visão geral → "Analisar agora") e voltar pra aba **Criativos**.
+2. ✅ A aba segue **vazia** (nenhum upload) — isso está **certo**. O empty-state agora diz que a aba é pra
+   **mídias extras** e que o agente **já escolhe sozinho** o melhor criativo veiculando. **NÃO** deve
+   aparecer "rode uma análise que os criativos chegam sozinhos" (promessa removida).
+
+**(A) O agente escolhe o MELHOR criativo veiculando pra recomendar/publicar** *(live — precisa de token Meta válido, §1)*:
+- **Onde entra:** criar do zero (chat "cria uma campanha" §9 · proativo from_scratch §11b · cold-start). A
+  seleção lê a Meta ao vivo (`inferCreationDefaults`), **independe da aba/tabela**.
+- **[MUDOU]** antes pegava um anúncio **arbitrário** (`/ads limit:1`, sem ordem/status) e dizia "criativo
+  campeão" (falso). Agora busca os **ativos com insights** e **ranqueia** (`rankAdsForReuse`): menor custo
+  por resultado > maior gasto; só ativos.
+1. Ter na conta ≥2 anúncios ativos com desempenho diferente (um claramente melhor).
+2. Pedir criação (chat/proativo) → abrir o rascunho no site (aba **Sugeridas** / preview).
+3. ✅ O criativo do rascunho é o do **melhor anúncio ativo** (confira o `meta_image_hash`/`source_ad_id`):
+   ```bash
+   docker exec docker-postgres-1 psql -U postgres -d trafego -c "select spec->'creative'->>'metaImageHash' as hash, spec->'creative'->>'assetId' as source_ad, spec->'creative'->>'format' as fmt from campaign_drafts where kind='from_scratch' order by created_at desc limit 1;"
+   ```
+4. ✅ **Copy aterrada no vencedor:** as `copyVariants` do rascunho ecoam os ângulos que já convertem (não
+   genéricas). O eco diz "reusando o criativo que **melhor performa** … copy baseada no que já converte".
+   *(Prova offline do ganho do aterramento: `apps/worker/e2e-copy-probe.ts` — grounded × ungrounded, OpenRouter real.)*
+5. ✅ Vencedor em **vídeo**: o rascunho usa `metaVideoId` + `format:"video"` (não trava em conta só-vídeo).
+
+**Publicar autônomo (A + auto-criação):** com winner presente, o caminho autônomo é **duplicar** o vencedor
+(clona o anúncio campeão **com o criativo fiel** via `/copies`) — ver §6/§11b. Sempre nasce **PAUSED** (trava).
+
+---
+
 ## 4. **[NOVO] Upload de VÍDEO** (SITE · aba Criativos · async)
 
 **[Site]:**
@@ -222,6 +268,19 @@ Pré: conta com um "vencedor" na última análise. **[Site]** Conta → aba de a
 docker exec docker-postgres-1 psql -U postgres -d trafego -c "select kind,status,origin,(spec->>'dailyBudgetMinor') as budget from campaign_drafts order by created_at desc limit 3;"
 ```
 
+**[NOVO] CTA de escala consistente com os bindings (sem promessa-quebrada) — `canScale`:**
+1. Aba **Agente** → em "Ações permitidas", **desligar** *duplicar* **e** *ajustar orçamento* → **Salvar**.
+2. ✅ Voltar pra Visão geral **sem recarregar** → o botão **"Escalar" some** (o `canScale` é re-lido no
+   sucesso do save; antes ficava stale → clicar dava 404 + toast de erro). Religar uma das duas → o botão volta.
+3. ✅ Se o agente **não carregar** (rede), o "Escalar" **não** aparece (default-safe = não oferecer o que o
+   backend recusaria).
+
+**[NOVO] Vencedor sob CBO (orçamento na campanha) → bloqueio HONESTO (não promete e falha):**
+- Vencedor = **adset sob CBO** (sem orçamento próprio no adset). Pedir escala (site/WhatsApp).
+- ✅ O agente responde honesto: *"esse vencedor está sob orçamento no nível da campanha (CBO) — escalar por
+  aqui ainda não está disponível…"* e **não** cria um rascunho que o guardrail dropava em silêncio depois.
+  (Escala real sob CBO/lifetime = fast-follow no ROADMAP.)
+
 ---
 
 ## 7. Escalar vencedor — WhatsApp (**[NOVO] intent: budget × escala**)
@@ -287,12 +346,23 @@ docker exec docker-postgres-1 psql -U postgres -d trafego -c "select id,status,r
 
 ## 9. Criar do zero + refino conversacional — WhatsApp
 
+> **[CORRIGIDO nesta rodada — bug crítico do caminho WhatsApp]** O system-prompt do Roy DISOWNAVA a
+> criação ("O que você NÃO faz por aqui: criar campanhas do zero — vem em breve"), então o LLM **recusava
+> e mandava o usuário criar no Gerenciador** — mesmo com a tool `create_campaign` ligada e funcional. Agora
+> o prompt DECLARA a capacidade (criar reusando o melhor criativo veiculando + copy aterrada) e tem regra
+> própria ("NÃO mande criar no Gerenciador nem peça pra analisar antes: você cria por aqui"). Verificado ao
+> vivo: 2 turnos → rascunho proposto + eco correto + confirma → aplica na Meta (via apply-service).
+>
+> **Pré (org multi-conta):** dê foco à conta primeiro (`foca na conta <nome>`) — sem foco, o concierge
+> pergunta em qual conta (correto). Org de 1 conta ativa não precisa.
+
 **[WhatsApp]** cole:
 ```
-cria uma campanha de vendas reusando o criativo campeão
+cria uma campanha de leads reusando o criativo que já está rodando
 ```
 > ✅ O agente propõe defaults (objetivo da meta/conta, Página/Pixel **inferidos e mostrados no eco**,
-> orçamento, N variações de **copy gerada por IA** em tom sóbrio) e pede confirmação.
+> **melhor criativo veiculando** — imagem OU vídeo —, orçamento, N variações de **copy gerada por IA**
+> aterrada no que já converte) e pede confirmação. **Não** manda você criar no Gerenciador.
 
 Refinar (cole uma de cada vez; o agente **re-ecoa** o rascunho a cada ajuste):
 ```
@@ -489,6 +559,41 @@ docker exec docker-postgres-1 psql -U postgres -d trafego -c "select kind,status
   `agent_tool_bindings_agent_tool_uq` → seed do catálogo (6 tools) → smoke bindings/allowedActions/byAction
   → `pnpm test` → dropa; `trafego` intocado). **Executado 2026-08-27: verde.**
 
+### 20a. **[NOVO] E2E RUNTIME das travas (adapter Meta FALSO + Postgres efêmero)**
+`apps/worker/e2e-config-acao-saga.ts` — prova em **runtime** o que a suíte unitária não cobre ponta-a-ponta,
+**sem tocar a Meta nem o DB dev**. Semeia um grafo mínimo no efêmero + adapter de ads falso (grava as calls).
+```bash
+docker exec docker-postgres-1 psql -U postgres -tc "DROP DATABASE IF EXISTS trafego_e2e_cfg;"
+docker exec docker-postgres-1 psql -U postgres -tc "CREATE DATABASE trafego_e2e_cfg;"
+DATABASE_URL="postgres://postgres:postgres@localhost:5432/trafego_e2e_cfg" pnpm --filter @trafego/db exec drizzle-kit migrate
+DATABASE_URL="postgres://postgres:postgres@localhost:5432/trafego_e2e_cfg" pnpm --filter @trafego/db exec tsx src/seed.ts
+cd apps/worker && E2E_DATABASE_URL="postgres://postgres:postgres@localhost:5432/trafego_e2e_cfg" pnpm exec tsx --env-file=../../.env e2e-config-acao-saga.ts
+docker exec docker-postgres-1 psql -U postgres -tc "DROP DATABASE trafego_e2e_cfg;"
+```
+**Cenários (esperado — 19 asserts verdes, executado 2026-08-27):** S1 gate `duplicate_scale` off → `blocked`,
+**adapter não chamado**, draft `failed`; S2 clamp de gasto novo (cap 1000 < 50000) **chega no `setEntityBudget`**;
+S3 kill-switch barra; S4 `autoApplyProactiveDraft` força **PAUSED** em `createCampaign/AdSet/Ad` mesmo com
+spec `active` + resolve approval `approved` + draft persistido paused; S5 **corrida de claim** (2 applies do
+MESMO rascunho) cria **exatamente 1×**; S6 cap de campanhas/dia barra.
+
+### 20b. Provas ao vivo desta rodada (2026-08-27)
+- ✅ **Determinístico:** `pnpm typecheck` + `pnpm test` (core 399 · ads-meta 121 · worker 321 · api 103 · …) verdes.
+- ✅ **Copy (OpenRouter real):** `e2e-copy-probe.ts` — grounded × ungrounded (aterramento reusa os ângulos que convertem).
+- ✅ **WhatsApp (Evolution real):** `e2e-whatsapp-nudge.ts` — nudge de auto-criação entregue ao contato verificado.
+- ✅ **Travas runtime:** §20a (19/19).
+- ✅ **Meta ao vivo (com token fresco via `E2E_META_TOKEN`, tudo PAUSED/revertido):**
+  - `e2e-token-check.ts` — token valida (/me, /me/adaccounts, /ads).
+  - `e2e-creative-select-live.ts` — (A) escolhe o melhor ativo (aqui, um VÍDEO) + `winnerCopy` + copy aterrada.
+  - `e2e-real-fatia7.ts` — createCampaign/AdSet + duplicate `/copies` + setBudget, revert.
+  - `e2e-creation-video-live.ts` — criar do zero com CRIATIVO DE VÍDEO (thumbnail buscado) + revert.
+  - `e2e-site-create-live.ts` — SITE propor→aplicar (applyDraft) na Meta REAL (dryRun off) + revert + limpa DB.
+  - `e2e-whatsapp-flow-live.ts` — WhatsApp 2 turnos (LLM roteia `create_campaign`) → confirma → apply-service cria na Meta.
+- ⚠️ **Cuidado (worker rodando):** se um `pnpm dev`/worker estiver de pé, o "sim" no chat ENFILEIRA e o
+  worker **cria de verdade** (rascunho de chat nasce **ativo** por design — a Meta revisa antes). No teste,
+  ou pare o worker, ou garanta que o revert varra a Meta (`/campaigns` + `/adcreatives`) por órfãos.
+- ⚠️ **Token de teste no DB:** rodar os fluxos de site/WhatsApp exige o token no banco (recolar). Após
+  **rotacionar** o token, recole o novo em Integrações (senão o cron dá `token_status=invalid`).
+
 ### Referência — consultas DB (copiar)
 ```bash
 docker exec docker-postgres-1 psql -U postgres -d trafego -c "select id,kind,status,origin,created_at from campaign_drafts order by created_at desc limit 10;"
@@ -499,3 +604,52 @@ docker exec docker-postgres-1 psql -U postgres -d trafego -c "select id,status,(
 ```bash
 docker exec docker-postgres-1 psql -U postgres -d trafego -c "select origin,format,status from creative_assets order by created_at desc limit 10;"
 ```
+
+---
+
+## 21. Achados corrigidos nesta rodada de validação (2026-08-27)
+
+Ordenado por severidade. Todos com código corrigido + verde (typecheck + `pnpm test` + build web); os de Meta verificados ao vivo (PAUSED/revert).
+
+1. **[crítico · WhatsApp] Roy não criava campanha por chat** — o system-prompt disownava a criação ("vem em
+   breve") apesar da tool ligada → o LLM mandava criar no Gerenciador. **Fix:** prompt declara + regra própria.
+2. **[alto · qualidade A] Criativo arbitrário vendido como "campeão"** — `inferCreationDefaults` pegava
+   `/ads limit:1` sem ordem/status. **Fix:** ranqueia ativos por desempenho (`rankAdsForReuse`), escolhe o
+   melhor, devolve `winnerCopy`; echo honesto. Verificado ao vivo (escolheu o vídeo vencedor).
+3. **[alto · Meta] Criar do zero com VÍDEO falhava** ("Invalid parameter") — `video_data` montado com chaves
+   de `link_data` e sem thumbnail obrigatório. **Fix:** `video_data` correto + busca a capa do vídeo +
+   extrai o link do CTA do vídeo. Verificado ao vivo (criou creative de vídeo + revert).
+4. **[médio · qualidade] Copy ignorava o que converte** — `winnerCopy` nunca era passado. **Fix:** aterrado
+   em `proposeCreateCampaign` + `refineDraft`. Verificado ao vivo (copy espelha os ângulos vencedores).
+5. **[médio · UX/análise] Sem ênfase em recência** — o prompt do analista não pedia mais peso aos resultados
+   recentes. **Fix:** `RECENCY_NOTE` nos 3 prompts (analista/mapa/síntese) — pesa últimos dias/trends sem ruído de 1 dia.
+6. **[médio · consistência] `proposeCreateCampaign` não gateava `create_campaign` no proativo.** **Fix:** gate igual ao scale.
+7. **[médio · UX] Escala sob CBO prometia e o guardrail dropava calado.** **Fix:** bloqueio honesto (CBO/lifetime = fast-follow).
+8. **[médio · segurança] Cap de gasto novo/dia** não contava `creating` (corrida entre rascunhos) e contava dry-runs. **Fix:** conta `creating`+`created`, exclui simulados.
+9. **[médio · web] CTA "Escalar" stale** (mostrava após desligar → 404). **Fix:** re-lê o gate no save + default-safe.
+10. **[baixo · web] Toast "Configuração salva" mentia** quando uma seção não carregou. **Fix:** aviso honesto.
+11. **[baixo · UX] Empty-state dos Criativos prometia ingestão inexistente.** **Fix:** copy honesta (ingestão da aba = fast-follow; o agente escolhe o melhor veiculando ao vivo).
+12. **[médio · UX chat] Respostas a pedidos AMBÍGUOS deflitiam genérico** ("como prefere seguir?", "só me
+    avisar!") em vez de perguntar concreto ou ler o óbvio. **Fix:** regra forte de ambiguidade no prompt +
+    tratamento específico ("aprova" sem ref → `list_pending`; "aumenta o orçamento" sem qual/quanto →
+    pergunta os dois). Verificado ao vivo: `aumenta o orçamento` → pede campanha+valor; `melhora minha
+    conta` → oferece analisar/criar; deflexões sumiram. (`e2e-ambiguity-probe.ts`.)
+
+## 22. Guardrails nas superfícies (site + WhatsApp) — verificado
+
+`apps/worker/e2e-guardrail-surfaces.ts` (não-destrutivo — tudo bloqueia/clampa/recusa ANTES da Meta). Site e
+WhatsApp funilam no MESMO `applyDraft`/`proposeCreateCampaign`, então provar lá cobre os dois:
+- ✅ **Clamp de gasto novo** aparece no eco (`maxNewDailyBudgetMinor` baixo → budget clampado + eco honesto).
+- ✅ **Gate de criação** (`create_campaign` off): `proposeCreateCampaign` recusa **e** `applyDraft` barra (rede final).
+- ✅ **Kill-switch** barra o apply.
+- ✅ **Cap de campanhas/dia** barra o apply.
+- ✅ **WhatsApp**: `create_campaign` off → a tool sai do toolset → Roy **não cria** (oferta honesta), sem rascunho.
+- (Guardrails das 4 mutações = `applyGuardrails` puro, testado em `packages/core`; blast-radius clamp
+  verificado via unit + o clamp de budget do chat no eco.)
+
+### ⚠️ Gaps de ambiente detectados nesta rodada (deploy notes — não são bug do código)
+- **DB dev sem migration 0039** (lineage divergente de outra branch) → constraint `agent_tool_bindings_agent_tool_uq`
+  ausente → **write de binding de criação FK/ON-CONFLICT falha**. Prod resolve no `db:migrate` (0000→0039 limpo, provado no efêmero). Apliquei no dev manualmente.
+- **Catálogo dev sem `create_campaign`/`duplicate_scale`** (seed não rodou no dev) → binding de criação
+  FK-falha. Criação em si funciona (default-on, sem linha de binding); só o **desligar/ligar** exige o catálogo.
+  Prod resolve no seed do deploy. Seedei no dev manualmente.

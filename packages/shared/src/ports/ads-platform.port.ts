@@ -118,6 +118,16 @@ export interface CreationDefaults {
   readonly imageHash?: string;
   readonly linkUrl?: string;
   readonly sourceAdId?: string;
+  /**
+   * Vídeo do melhor anúncio reusável (quando o criativo escolhido é vídeo). Espelha
+   * `imageHash` — a saga usa um OU outro conforme o formato do criativo campeão.
+   */
+  readonly videoId?: string;
+  /**
+   * Copy dos melhores anúncios veiculando (aterramento da geração — melhor primeiro).
+   * O core nunca vê o firehose; só esta amostra curada do que já performa.
+   */
+  readonly winnerCopy?: ReadonlyArray<{ readonly primaryText?: string; readonly headline?: string }>;
 }
 
 /**

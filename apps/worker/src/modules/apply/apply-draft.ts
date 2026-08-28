@@ -4,7 +4,7 @@
 // audit_log + metering → marca campaign_drafts.status. Reusa o padrão de
 // apply-confirmed-action / meta-tools. O EFEITO no chamador (resolver approval / push).
 
-import { and, count, eq, gte, inArray } from "drizzle-orm";
+import { and, count, eq, gte, inArray, sql } from "drizzle-orm";
 import { agentToolCalls, auditLog, campaignDrafts, guardrailConfigs } from "@trafego/db";
 import { applyCreationGuardrails, buildDuplicateInput, goalNounPt } from "@trafego/core";
 import { DEFAULT_CONVERSION_GOAL, toGuardrailConfig, type CampaignDraft, type CampaignDraftSpec, type OrgId } from "@trafego/shared";
@@ -95,13 +95,17 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
   // foi proposto), não pelo instante em que foi aplicado na Meta — um rascunho proposto há >24h e
   // aplicado agora escapa. Aceitável como teto de segurança; medir pelo apply-time = fast-follow.
   const since = new Date(Date.now() - CREATION_DAY_MS);
+  // Conta `creating` (em voo) + `created` — sem o `creating`, dois applies de rascunhos
+  // DIFERENTES concorrentes lêem o mesmo N e podem estourar o cap transitoriamente. Exclui
+  // simulações de dry-run (`createdIds.simulated`) — ensaios não gastam, não consomem o cap.
   const [{ n } = { n: 0 }] = await db
     .select({ n: count() })
     .from(campaignDrafts)
     .where(
       and(
         eq(campaignDrafts.adAccountId, row.adAccountId),
-        eq(campaignDrafts.status, "created"),
+        inArray(campaignDrafts.status, ["creating", "created"]),
+        sql`(${campaignDrafts.createdIds} ->> 'simulated') IS DISTINCT FROM 'true'`,
         gte(campaignDrafts.createdAt, since),
       ),
     );

@@ -40,8 +40,10 @@ export class AccountContextStore {
   readonly mutingId = signal<string | null>(null);
   /** id da campanha em processo de escala (CTA "escalar este vencedor"). */
   readonly scalingId = signal<string | null>(null);
-  /** escala habilitada (A3): duplicar OU subir orçamento ligado nos bindings. Off → CTA some. */
-  readonly canScale = signal(true);
+  /** escala habilitada (A3): duplicar OU subir orçamento ligado nos bindings. Off → CTA some.
+   *  Default FALSE (default-safe): se o agente não carregar, não oferecemos uma ação que o
+   *  backend recusaria (404 + toast de erro). Ligado só quando os bindings confirmam. */
+  readonly canScale = signal(false);
   /** passo agressivo → o backend PERGUNTA: subir seguro (raisePct) vs duplicar (duplicatePct).
    *  Quando setado, a UI mostra a escolha; a resposta re-chama scaleWinner com `choice`. */
   readonly scaleAsk = signal<{ campaign: Campaign; raisePct: number; duplicatePct: number } | null>(null);
@@ -177,14 +179,7 @@ export class AccountContextStore {
       next: (rows) => this.account.set(rows.find((r) => r.id === this.accountId) ?? null),
       error: () => this.account.set(null),
     });
-    this.analysisApi.getAgent(this.accountId, { silent: true }).subscribe({
-      next: (agent) => {
-        this.paused.set(agent.paused);
-        // escalar = duplicar OU subir orçamento (mesmo gate do backend scaleWinner).
-        this.canScale.set(agent.toolBindings.duplicate_scale || agent.toolBindings.adjust_budget);
-      },
-      error: () => {},
-    });
+    this.refreshGate();
     this.analysisApi.latestRun(this.accountId).subscribe({
       next: (latest) => {
         this.applyLatest(latest);
@@ -197,6 +192,23 @@ export class AccountContextStore {
         }
       },
       error: () => this.loading.set(false),
+    });
+  }
+
+  /**
+   * Re-lê o gate de escala + estado de pausa a partir dos bindings do agente. A aba "Agente"
+   * é rota-FILHA do shell e o store vive a visita inteira → sem re-ler após salvar a config,
+   * `canScale` ficaria stale (CTA aparecendo pra ação desligada, ou some até dar reload). A
+   * página de config chama isto no sucesso do save. `silent` (sem toast do interceptor).
+   */
+  refreshGate(): void {
+    this.analysisApi.getAgent(this.accountId, { silent: true }).subscribe({
+      next: (agent) => {
+        this.paused.set(agent.paused);
+        // escalar = duplicar OU subir orçamento (mesmo gate do backend scaleWinner).
+        this.canScale.set(agent.toolBindings.duplicate_scale || agent.toolBindings.adjust_budget);
+      },
+      error: () => {},
     });
   }
 

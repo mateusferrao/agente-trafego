@@ -19,6 +19,12 @@ import {
   resolveMetaCta,
   resolveMetaObjective,
 } from "./meta-conversion-map.js";
+import { copyOf, rankAdsForReuse, type RawAdCandidate } from "./creative-select.js";
+
+/** Quantos anúncios buscar p/ ranquear o melhor criativo reusável (1 call, com insights). */
+const INFER_CANDIDATES_LIMIT = 25;
+/** Quantas copies de topo devolver como aterramento da geração (melhor primeiro). */
+const INFER_WINNER_COPY_SAMPLE = 3;
 
 /** Sufixo de edge de cópia da Graph API. */
 const COPIES_EDGE = "copies";
@@ -188,13 +194,47 @@ export class MetaCreationService {
       },
     };
     const objectStorySpec: Record<string, unknown> = { page_id: input.pageId };
-    if (input.videoId) objectStorySpec["video_data"] = { ...linkData, video_id: input.videoId };
-    else objectStorySpec["link_data"] = linkData;
+    if (input.videoId) {
+      // video_data tem SCHEMA PRÓPRIO (≠ link_data): usa `title` (não `name`), o link vai no
+      // call_to_action.value.link, e a Meta EXIGE uma capa (`image_url`/`image_hash`) — sem ela
+      // é "Invalid parameter". Sem thumbnail dado, busca a capa preferida do próprio vídeo.
+      const thumbUrl = input.imageHash ? undefined : await this.fetchVideoThumbnailUrl(account, input.videoId);
+      objectStorySpec["video_data"] = {
+        video_id: input.videoId,
+        message: input.copy.primaryText,
+        title: input.copy.headline,
+        ...(input.copy.description ? { link_description: input.copy.description } : {}),
+        ...(input.imageHash ? { image_hash: input.imageHash } : thumbUrl ? { image_url: thumbUrl } : {}),
+        call_to_action: {
+          type: resolveMetaCta(input.copy.cta),
+          ...(input.linkUrl ? { value: { link: input.linkUrl } } : {}),
+        },
+      };
+    } else {
+      objectStorySpec["link_data"] = linkData;
+    }
     const creativeId = await this.createOnAccount(account, "adcreatives", {
       name: input.name,
       object_story_spec: JSON.stringify(objectStorySpec),
     });
     return { creativeId };
+  }
+
+  /** Capa (thumbnail) de um vídeo — a preferida da Meta, senão a 1ª. Usada como `image_url`
+   *  obrigatório no `video_data`. Falha → undefined (o caller decide se ainda tenta criar). */
+  private async fetchVideoThumbnailUrl(account: AdAccountRef, videoId: string): Promise<string | undefined> {
+    try {
+      const { data } = await this.client.request<{ thumbnails?: { data?: ReadonlyArray<{ uri?: string; is_preferred?: boolean }> } }>({
+        method: "GET",
+        path: videoId,
+        accessToken: account.accessToken,
+        params: { fields: "thumbnails{uri,is_preferred}" },
+      });
+      const list = data.thumbnails?.data ?? [];
+      return list.find((t) => t.is_preferred)?.uri ?? list[0]?.uri;
+    } catch {
+      return undefined;
+    }
   }
 
   async createAd(account: AdAccountRef, input: CreateAdInput): Promise<{ adId: string }> {
@@ -269,48 +309,47 @@ export class MetaCreationService {
   }
 
   /**
-   * Infere Page/Pixel/objetivo/mídia/link do que a conta já usa (§6). Uma call: 1 anúncio
-   * com creative(object_story_spec) + adset(promoted_object) + campaign(objective).
+   * Infere Page/Pixel/objetivo/mídia/link/copy do MELHOR criativo veiculando (§6 + decisão
+   * A do dono, Fatia 7). Antes pegava um anúncio ARBITRÁRIO (`limit:1`, sem ordem/status) e
+   * vendia como "campeão" — falso. Agora busca os anúncios ATIVOS com insights (1 call),
+   * ranqueia por desempenho de negócio (`rankAdsForReuse`) e escolhe o melhor; devolve
+   * também a copy dos melhores (aterramento da geração). Sem ativos → cai no que houver
+   * (cold-start ainda reusa uma mídia real). O ranqueamento é PURO/testável.
    */
   async inferCreationDefaults(account: AdAccountRef): Promise<CreationDefaults> {
     const accountId = normalizeAdAccountId(account.adAccountId);
-    const { data } = await this.client.request<{ data?: ReadonlyArray<RawAdForDefaults> }>({
+    const { data } = await this.client.request<{ data?: ReadonlyArray<RawAdCandidate> }>({
       method: "GET",
       path: `${accountId}/ads`,
       accessToken: account.accessToken,
       params: {
         fields:
-          "id,creative{object_story_spec},adset{promoted_object},campaign{objective}",
-        limit: "1",
+          "id,effective_status,creative{object_story_spec},adset{promoted_object},campaign{objective},insights.date_preset(last_30d){spend,actions}",
+        limit: String(INFER_CANDIDATES_LIMIT),
       },
     });
-    const ad = data.data?.[0];
-    if (!ad) return {};
-    const spec = ad.creative?.object_story_spec;
+    const ranked = rankAdsForReuse(data.data ?? []);
+    const best = ranked[0]?.ad;
+    if (!best) return {};
+    const spec = best.creative?.object_story_spec;
     const linkData = spec?.link_data;
-    const objective = ad.campaign?.objective;
-    const goal = objectiveFromCampaign(objective)?.goal as ConversionGoal | undefined;
+    // link de destino: imagem → link_data.link; vídeo → call_to_action.value.link do video_data.
+    const reuseLink = linkData?.link ?? spec?.video_data?.call_to_action?.value?.link;
+    const goal = objectiveFromCampaign(best.campaign?.objective)?.goal as ConversionGoal | undefined;
+    const winnerCopy = ranked
+      .slice(0, INFER_WINNER_COPY_SAMPLE)
+      .map((r) => copyOf(r.ad))
+      .filter((c): c is { primaryText?: string; headline?: string } => c !== null);
     const result: CreationDefaults = {
       ...(spec?.page_id ? { pageId: spec.page_id } : {}),
-      ...(ad.adset?.promoted_object?.pixel_id ? { pixelId: ad.adset.promoted_object.pixel_id } : {}),
+      ...(best.adset?.promoted_object?.pixel_id ? { pixelId: best.adset.promoted_object.pixel_id } : {}),
       ...(goal ? { objectiveGoal: goal } : {}),
       ...(linkData?.image_hash ? { imageHash: linkData.image_hash } : {}),
-      ...(linkData?.link ? { linkUrl: linkData.link } : {}),
-      ...(ad.id ? { sourceAdId: ad.id } : {}),
+      ...(spec?.video_data?.video_id ? { videoId: spec.video_data.video_id } : {}),
+      ...(reuseLink ? { linkUrl: reuseLink } : {}),
+      ...(best.id ? { sourceAdId: best.id } : {}),
+      ...(winnerCopy.length > 0 ? { winnerCopy } : {}),
     };
     return result;
   }
-}
-
-/** Forma crua do anúncio p/ inferência de defaults. */
-interface RawAdForDefaults {
-  readonly id?: string;
-  readonly creative?: {
-    readonly object_story_spec?: {
-      readonly page_id?: string;
-      readonly link_data?: { readonly image_hash?: string; readonly link?: string };
-    };
-  };
-  readonly adset?: { readonly promoted_object?: { readonly pixel_id?: string } };
-  readonly campaign?: { readonly objective?: string };
 }

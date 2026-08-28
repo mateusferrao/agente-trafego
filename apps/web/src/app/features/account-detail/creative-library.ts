@@ -20,7 +20,7 @@ import type { CreativeAssetOutput } from '@core/api/generated';
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 class="font-brand text-base font-semibold text-ink">Criativos</h2>
-          <p class="mt-1 text-xs text-muted">Mídias reusáveis nos rascunhos. {{ agentName }} monta as campanhas com o que está aqui e nunca inventa mídia.</p>
+          <p class="mt-1 text-xs text-muted">Mídias que você sobe pra usar nos rascunhos. Pra recomendar, {{ agentName }} também olha os criativos que já estão rodando na sua conta — nunca inventa mídia.</p>
         </div>
         @if (!isEmpty()) {
           <button type="button" appButton variant="primary" size="sm" [disabled]="uploading()" (click)="picker.click()">
@@ -39,7 +39,7 @@ import type { CreativeAssetOutput } from '@core/api/generated';
         <app-ui-empty-state
           brand
           title="Sua estante de criativos está vazia"
-          [description]="agentName + ' usa as mídias daqui pra montar campanhas. Suba a primeira, ou rode uma análise que os criativos dos seus anúncios chegam sozinhos.'"
+          [description]="'Aqui você guarda mídias extras pra usar nos rascunhos. Pra recomendar uma campanha, ' + agentName + ' já escolhe sozinho o melhor criativo que está rodando na sua conta — subir aqui é opcional.'"
         >
           <button type="button" appButton variant="primary" actions [disabled]="uploading()" (click)="picker.click()">
             {{ uploading() ? 'Enviando…' : 'Subir criativo' }}

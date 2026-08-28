@@ -290,10 +290,12 @@ export class AgentAutonomy implements OnInit {
 
   /** Salva a fatia (chamada pela save-bar única da página). No-op se não há mudança.
    *  Envia autoConfigViaChat junto (o backend REPLACE o autonomyPolicy — sem reenviar, zeraria). */
-  async save(): Promise<void> {
+  async save(): Promise<boolean> {
     // gate em loaded(): se o seed falhou, não envia autonomyPolicy (o REPLACE do backend zeraria
-    // autoConfigViaChat/scaleAggressivePreference que não foram semeados).
-    if (!this.dirty() || !this.loaded()) return;
+    // autoConfigViaChat/scaleAggressivePreference que não foram semeados). Retorna se persistiu:
+    // `true` = salvo ou nada a salvar; `false` = tinha mudança mas pulou (a página avisa, não mente).
+    if (!this.dirty()) return true;
+    if (!this.loaded()) return false;
     this.saving.set(true);
     try {
       const autoConfig = this.autoConfigViaChat();
@@ -314,5 +316,6 @@ export class AgentAutonomy implements OnInit {
     } finally {
       this.saving.set(false);
     }
+    return true;
   }
 }

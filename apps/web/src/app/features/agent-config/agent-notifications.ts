@@ -318,8 +318,8 @@ export class AgentNotifications implements OnInit {
   }
 
   /** Salva a fatia (chamada pela save-bar única da página). No-op se não há mudança. */
-  async save(): Promise<void> {
-    if (!this.dirty()) return;
+  async save(): Promise<boolean> {
+    if (!this.dirty()) return true;
     this.saving.set(true);
     try {
       const a = await firstValueFrom(
@@ -341,5 +341,6 @@ export class AgentNotifications implements OnInit {
     } finally {
       this.saving.set(false);
     }
+    return true;
   }
 }

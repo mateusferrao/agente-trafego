@@ -123,6 +123,19 @@ const DIAGNOSIS_NOTE =
   "qualificação do lead; conversão ok mas CPA alto → lance/orçamento ou concorrência; alcance baixo " +
   "→ público estreito ou orçamento baixo; frequência alta + CTR caindo → fadiga de criativo (renove).";
 
+/**
+ * Peso na RECÊNCIA (foco nos resultados mais recentes). O briefing traz 'trends' (recente vs
+ * anterior) e a janela do período; dentro dela, o que aconteceu nos ÚLTIMOS DIAS pesa mais que
+ * a média antiga acumulada. Sem virar gatilho de ruído de 1 dia.
+ */
+const RECENCY_NOTE =
+  "Dê MAIS PESO aos resultados RECENTES: use 'trends' (recente vs anterior) e a janela do período — " +
+  "o desempenho dos últimos dias importa mais que a média acumulada. Uma entidade com boa média mas " +
+  "PIORANDO nos últimos dias é risco (sinalize mesmo que o acumulado ainda pareça bom); uma que MELHOROU " +
+  "recentemente merece o benefício da dúvida antes de cortar. Priorize achados e ações pela FOTO ATUAL + " +
+  "direção recente, não só pelo acumulado do período. Mas NÃO reaja a um único dia (ruído): leia a " +
+  "tendência dos últimos dias, não o pico/vale isolado, e prefira 'investigate' quando o recente for curto demais pra concluir.";
+
 /** Referência de plataforma (cold-start) — direcional, nunca a meta. */
 const BENCHMARK_NOTE =
   "Se uma entidade trouxer 'benchmarkRef' (cold-start: conta sem meta e sem histórico), trate-o só " +
@@ -134,7 +147,7 @@ const jsonBlock = (label: string, value: unknown): string =>
 
 /** Mensagens do ANALISTA (system = metodologia; user = brief + shape). */
 export function buildAnalysisMessages(systemPrompt: string, brief: AccountBrief): LLMMessage[] {
-  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, MISMATCH_NOTE, REVENUE_NOTE, QUALITY_NOTE, INCREMENTALITY_NOTE, DIAGNOSIS_NOTE, BENCHMARK_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
+  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, MISMATCH_NOTE, REVENUE_NOTE, QUALITY_NOTE, INCREMENTALITY_NOTE, RECENCY_NOTE, DIAGNOSIS_NOTE, BENCHMARK_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
   const user = [
     jsonBlock("Briefing curado da conta (analise SOMENTE com base nele)", brief),
     "",
@@ -177,7 +190,7 @@ export function buildCampaignMessages(
   accountContext: { readonly currency: string; readonly window: string; readonly businessGoal?: string },
   copyByAdId: ReadonlyMap<string, AdCopy> = new Map(),
 ): LLMMessage[] {
-  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, MISMATCH_NOTE, REVENUE_NOTE, QUALITY_NOTE, INCREMENTALITY_NOTE, DIAGNOSIS_NOTE, BENCHMARK_NOTE, ADVICE_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
+  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, MISMATCH_NOTE, REVENUE_NOTE, QUALITY_NOTE, INCREMENTALITY_NOTE, RECENCY_NOTE, DIAGNOSIS_NOTE, BENCHMARK_NOTE, ADVICE_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
   const notableAdIds = unit.adsets.flatMap((g) => g.notableAds.map((a) => a.id));
   const vision = notableAdIds
     .map((adId) => ({ adId, vision: visionByAdId.get(adId) ?? [] }))
@@ -232,6 +245,7 @@ export function buildSynthesisMessages(
     REVENUE_NOTE,
     QUALITY_NOTE,
     INCREMENTALITY_NOTE,
+    RECENCY_NOTE,
     DIAGNOSIS_NOTE,
     BENCHMARK_NOTE,
     FINDINGS_METRIC_INSTRUCTION,

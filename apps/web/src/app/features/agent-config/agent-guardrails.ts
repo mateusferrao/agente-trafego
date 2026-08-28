@@ -159,8 +159,9 @@ export class AgentGuardrails implements OnInit {
   /** Salva a fatia (chamada pela save-bar única da página). No-op se não há mudança.
    *  Gate em loaded(): sem o seed, `allowed` (allowedActions, não editável aqui) está no
    *  default pause-only — salvar sobrescreveria o real com esse default (perda de dado). */
-  async save(): Promise<void> {
-    if (!this.dirty() || !this.loaded()) return;
+  async save(): Promise<boolean> {
+    if (!this.dirty()) return true;
+    if (!this.loaded()) return false; // dirty mas sem seed → não persiste (a página avisa).
     this.saving.set(true);
     const cap = this.llmCap().trim();
     const capNum = Number(cap);
@@ -184,5 +185,6 @@ export class AgentGuardrails implements OnInit {
     } finally {
       this.saving.set(false);
     }
+    return true;
   }
 }
