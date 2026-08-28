@@ -73,9 +73,12 @@ export class DraftsApiService extends BaseApiService {
   }
 
   /** URL da miniatura do criativo do rascunho (card de aprovação) — proxy autenticado; reuse
-   *  busca fresco da Meta, upload serve o blob. Cacheada por ETag no browser. */
-  draftCreativeThumbUrl(accountId: string, draftId: string): string {
-    return this.resolveUrl(['/accounts', accountId, 'drafts', draftId, 'creative', 'thumb']);
+   *  busca fresco da Meta, upload serve o blob. Cacheada por ETag no browser. `version` (opcional)
+   *  = cache-buster: a URL é estável por rascunho, então trocar o criativo não re-buscaria a img
+   *  sozinho; bumpar a versão muda a URL e força o refetch. */
+  draftCreativeThumbUrl(accountId: string, draftId: string, version = 0): string {
+    const url = this.resolveUrl(['/accounts', accountId, 'drafts', draftId, 'creative', 'thumb']);
+    return version > 0 ? `${url}?v=${version}` : url;
   }
 
   /** `DELETE /api/accounts/:id/creatives/:assetId` — exclui um criativo (híbrido): em uso →

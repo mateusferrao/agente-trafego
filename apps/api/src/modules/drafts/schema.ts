@@ -39,8 +39,10 @@ export const draftApprovalOutput = z.object({
   clampedFromMajor: z.number().nullable(),
   currency: z.string(),
   activation: z.enum(["active", "paused"]),
-  /** rótulo da entidade-origem (quando duplicate). */
-  sourceLabel: z.string().nullable(),
+  /** entidade-origem (quando duplicate): nível + nome legível. O front monta "conjunto <nome>"
+   *  (ou só "o conjunto vencedor" sem nome) — NUNCA o id cru da Meta. */
+  sourceLevel: z.enum(["account", "campaign", "adset", "ad"]).nullable(),
+  sourceName: z.string().nullable(),
   pageId: z.string().nullable(),
   pixelId: z.string().nullable(),
   variantsCount: z.number().nullable(),
@@ -72,6 +74,8 @@ export type ScaleChoiceInput = z.infer<typeof scaleChoiceInput>;
 export const scaleWinnerInput = z.object({
   entityLevel: z.enum(["campaign", "adset"]),
   entityId: z.string().min(1),
+  /** nome legível do vencedor (pro card mostrar o nome, não o id cru); opcional. */
+  entityName: z.string().optional(),
   choice: scaleChoiceInput.optional(),
 });
 export type ScaleWinnerInput = z.infer<typeof scaleWinnerInput>;

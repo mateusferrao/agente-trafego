@@ -31,7 +31,7 @@ import type { CreativeAssetOutput, ServingCreativeOutput, SetDraftCreativeInput 
         @if (serving().length > 0) {
           <div class="flex flex-col gap-1.5">
             <span class="text-[11px] font-medium uppercase tracking-wide text-muted">Anúncios da conta (vídeo)</span>
-            <ul class="grid grid-cols-3 gap-2 sm:grid-cols-4">
+            <ul class="grid grid-cols-[repeat(auto-fill,minmax(84px,1fr))] gap-2">
               @for (s of serving(); track s.adId; let i = $index) {
                 <li>
                   <button
@@ -59,7 +59,7 @@ import type { CreativeAssetOutput, ServingCreativeOutput, SetDraftCreativeInput 
         @if (libraryReady().length > 0) {
           <div class="flex flex-col gap-1.5">
             <span class="text-[11px] font-medium uppercase tracking-wide text-muted">Sua biblioteca</span>
-            <ul class="grid grid-cols-3 gap-2 sm:grid-cols-4">
+            <ul class="grid grid-cols-[repeat(auto-fill,minmax(84px,1fr))] gap-2">
               @for (a of libraryReady(); track a.id; let i = $index) {
                 <li>
                   <button

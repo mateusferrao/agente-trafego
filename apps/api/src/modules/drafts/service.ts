@@ -215,7 +215,8 @@ export function createDraftsService(deps: DraftsServiceDeps) {
               : null,
           currency: spec.currency,
           activation: spec.activation,
-          sourceLabel: d.sourceRef ? `${d.sourceRef.level}:${d.sourceRef.id}` : null,
+          sourceLevel: d.sourceRef?.level ?? null,
+          sourceName: d.sourceRef?.name ?? null,
           pageId: spec.pageId ?? null,
           pixelId: spec.pixelId ?? null,
           variantsCount: spec.variantsCount ?? null,
@@ -328,7 +329,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
           status: "proposed",
           origin: "on_demand",
           spec,
-          sourceRef: { level: input.entityLevel, id: input.entityId },
+          sourceRef: { level: input.entityLevel, id: input.entityId, ...(input.entityName ? { name: input.entityName } : {}) },
         })
         .returning({ id: campaignDrafts.id });
 

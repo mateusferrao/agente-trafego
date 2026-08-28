@@ -715,10 +715,12 @@ export interface CampaignDraftSpec {
   readonly linkUrl?: string;
 }
 
-/** Entidade-origem de uma duplicação (o que foi copiado). */
+/** Entidade-origem de uma duplicação (o que foi copiado). `name` = rótulo legível do vencedor
+ *  (pro card mostrar "Duplicar conjunto <nome>" em vez do id cru); ausente em rascunhos antigos. */
 export interface DraftSourceRef {
   readonly level: EntityLevel;
   readonly id: string;
+  readonly name?: string;
 }
 
 /** Rascunho de campanha (domínio) — `from_scratch` ou `duplicate`. */

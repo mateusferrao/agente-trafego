@@ -75,7 +75,7 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                         @if (d.pageId) { <div><dt class="inline text-muted">Página: </dt><dd class="inline">conectada</dd></div> }
                         @if (d.pixelId) { <div><dt class="inline text-muted">Rastreamento: </dt><dd class="inline">pixel conectado</dd></div> }
                         @if (d.objective) { <div><dt class="inline text-muted">Objetivo: </dt><dd class="inline">{{ objectiveLabel(d.objective) }}</dd></div> }
-                        @if (d.sourceLabel) { <div><dt class="inline text-muted">Origem: </dt><dd class="inline">{{ sourceName(d) }}</dd></div> }
+                        @if (d.sourceLevel) { <div><dt class="inline text-muted">Origem: </dt><dd class="inline">{{ sourceName(d) }}</dd></div> }
                       </dl>
                       @if (d.creative; as cr) {
                         <div class="flex items-center gap-3">
@@ -241,9 +241,11 @@ export class ApprovalsPage implements OnInit {
   protected readonly pickingCreative = signal(false);
   /** ids de rascunho cuja miniatura falhou (reuse fbcdn/Meta indisponível) → placeholder. */
   protected readonly thumbBroken = signal<ReadonlySet<string>>(new Set());
+  /** versão da miniatura por rascunho — bumpa após trocar o criativo (cache-buster da img). */
+  protected readonly thumbVersion = signal<ReadonlyMap<string, number>>(new Map());
 
   protected thumbUrl = (d: DraftApprovalOutput): string =>
-    this.draftsApi.draftCreativeThumbUrl(d.accountId, d.draftId);
+    this.draftsApi.draftCreativeThumbUrl(d.accountId, d.draftId, this.thumbVersion().get(d.id) ?? 0);
   protected onThumbError(id: string): void {
     this.thumbBroken.update((s) => new Set(s).add(id));
   }
@@ -306,12 +308,12 @@ export class ApprovalsPage implements OnInit {
     if (d.approvalKind === 'activation') return 'criada e PAUSADA — aguardando seu OK pra ativar';
     return d.activation === 'active' ? 'nasce pausada — você confirma a ativação em seguida' : 'fica pausada (você pediu assim)';
   };
-  /** Origem legível (nome do backend; senão traduz o nível, sem expor "level:id" técnico). */
+  /** Origem legível: "conjunto <nome>" quando há nome; senão "o conjunto vencedor" (nunca o id
+   *  cru da Meta). O nível vira palavra amigável (adset→conjunto). */
   protected sourceName = (d: DraftApprovalOutput): string => {
-    if (!d.sourceLabel) return 'o vencedor';
-    const [level, id] = d.sourceLabel.split(':');
-    const lvl = level === 'campaign' ? 'campanha' : level === 'adset' ? 'conjunto' : level ?? '';
-    return id ? `${lvl} ${id}` : d.sourceLabel;
+    const lvl = d.sourceLevel === 'campaign' ? 'campanha' : d.sourceLevel === 'adset' ? 'conjunto' : d.sourceLevel === 'ad' ? 'anúncio' : '';
+    if (d.sourceName) return lvl ? `${lvl} ${d.sourceName}` : d.sourceName;
+    return lvl ? `o ${lvl} vencedor` : 'o vencedor';
   };
   protected objectiveLabel = (o: string | null): string => (o ? conversionLabel(o) : '');
   protected money = money;
@@ -371,19 +373,40 @@ export class ApprovalsPage implements OnInit {
     this.pickerFor.update((cur) => (cur === d.id ? null : d.id));
   }
 
-  /** Troca o criativo do rascunho pela escolha do picker (biblioteca × reuse ao vivo). */
+  /** Troca o criativo do rascunho pela escolha do picker (biblioteca × reuse ao vivo). Ao trocar,
+   *  atualiza o rótulo (recarrega a lista) E a miniatura (bumpa a versão = cache-buster da img). */
   protected onPickCreative(d: DraftApprovalOutput, choice: SetDraftCreativeInput): void {
     this.pickingCreative.set(true);
     this.draftsApi.setDraftCreative(d.accountId, d.draftId, choice).subscribe({
       next: () => {
         this.pickingCreative.set(false);
         this.pickerFor.set(null);
+        this.bumpThumbVersion(d.id);
+        this.clearThumbBroken(d.id);
+        this.reloadDrafts();
         toast.success('Criativo trocado neste rascunho.');
       },
       error: () => {
         this.pickingCreative.set(false);
         toast.error('Não consegui trocar o criativo. Tente de novo.');
       },
+    });
+  }
+
+  private bumpThumbVersion(id: string): void {
+    this.thumbVersion.update((m) => new Map(m).set(id, (m.get(id) ?? 0) + 1));
+  }
+  private clearThumbBroken(id: string): void {
+    this.thumbBroken.update((s) => {
+      const next = new Set(s);
+      next.delete(id);
+      return next;
+    });
+  }
+  /** Recarrega os rascunhos pendentes (rótulo do criativo/público fresco após uma troca). */
+  private reloadDrafts(): void {
+    this.draftsApi.listPending().subscribe({
+      next: (rows) => this.draftGroups.set(groupByAccount(rows)),
     });
   }
 

@@ -165,7 +165,7 @@ async function persistDraftAndApproval(
   kind: "duplicate" | "from_scratch",
   spec: CampaignDraftSpec,
   origin: DraftOrigin,
-  sourceRef?: { level: "campaign" | "adset"; id: string },
+  sourceRef?: { level: "campaign" | "adset"; id: string; name?: string },
 ): Promise<{ draftId: string; approvalId: string }> {
   const [row] = await deps.db
     .insert(campaignDrafts)
@@ -348,6 +348,7 @@ export async function proposeScaleWinner(
   const { draftId, approvalId } = await persistDraftAndApproval(deps, ctx, "duplicate", spec, origin, {
     level,
     id: chosen.entityId,
+    name: label, // nome do vencedor → card mostra "Duplicar conjunto <nome>" (não o id cru)
   });
   const budgetLine = clampedByCap
     ? `Gasto novo: ${money(newDailyMinor / MINOR_PER_UNIT, ac.currency)}/dia (você pediu ${money(requested / MINOR_PER_UNIT, ac.currency)}, mas seu teto de gasto novo é ${money(newDailyMinor / MINOR_PER_UNIT, ac.currency)}) · ${activationPhrase("active")}.`
