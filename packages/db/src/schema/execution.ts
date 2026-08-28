@@ -358,5 +358,12 @@ export const creativeAssets = pgTable(
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     ...timestamps,
   },
-  (t) => [index("creative_assets_account_idx").on(t.adAccountId)],
+  (t) => [
+    index("creative_assets_account_idx").on(t.adAccountId),
+    // dedup determinístico (P0.2, review Fatia 7): dois uploads CONCORRENTES do mesmo
+    // conteúdo (mesma conta+storageRef) não duplicam a linha — o insert usa
+    // onConflictDoNothing + re-select. Parcial (storage_ref pode ser null em rows legadas
+    // sem blob) — nunca colide nessas.
+    uniqueIndex("creative_assets_account_storage_uq").on(t.adAccountId, t.storageRef).where(sql`storage_ref is not null`),
+  ],
 );

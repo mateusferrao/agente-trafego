@@ -25,13 +25,20 @@ const VIDEO_PAYLOAD: WhatsappMediaIntakePayload = {
 
 const ACCOUNT = { metaAdAccountId: "act_123", name: "Loja X", currency: "BRL", tokenCripto: { v: 1 } as never };
 
-/** db fake encadeável: select→from→where→limit devolve `selectRows`; insert→values registra. */
-function fakeDb(selectRows: unknown[] = []) {
+/** db fake encadeável: select→from→where→limit devolve `selectRows`; insert→values→
+ *  onConflictDoNothing→returning devolve `insertReturns` (dedup real, P0.2). */
+function fakeDb(selectRows: unknown[] = [], insertReturns: unknown[] = [{ id: "new-id" }]) {
   const inserted: unknown[] = [];
   const db = {
     select: () => ({ from: () => ({ where: () => ({ limit: () => selectRows }) }) }),
-    insert: () => ({ values: (v: unknown) => { inserted.push(v); return { returning: () => [{ id: "new-id" }] }; } }),
+    insert: () => ({
+      values: (v: unknown) => {
+        inserted.push(v);
+        return { onConflictDoNothing: () => ({ returning: () => insertReturns }) };
+      },
+    }),
     update: () => ({ set: () => ({ where: () => Promise.resolve() }) }),
+    delete: () => ({ where: () => Promise.resolve() }),
   };
   return { db: db as unknown as MediaIntakeDeps["db"], inserted };
 }
@@ -91,7 +98,7 @@ describe("makeMediaIntake — imagem", () => {
   });
 
   it("idempotente: asset já existe (mesmo conteúdo) → não re-insere", async () => {
-    const { deps, inserted, send } = makeDeps({}, [{ id: "existing", metaImageHash: "HASH1", metaVideoId: null }]);
+    const { deps, inserted, send } = makeDeps({}, [{ id: "existing", status: "ready", metaImageHash: "HASH1", metaVideoId: null, archivedAt: null }]);
     await makeMediaIntake(deps)(IMAGE_PAYLOAD);
     expect(inserted).toHaveLength(0);
     expect(send).toHaveBeenCalledWith(REF, expect.stringContaining("Loja X"), expect.anything());
