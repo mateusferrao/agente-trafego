@@ -706,6 +706,23 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const top = detectCreationOpportunities({ hasActiveCampaigns: hasActive, entities })[0];
     if (!top) return {};
 
+    // P1.1: `refresh_fatigued` vira SÓ recomendação (human_direction) — sem rascunho/approval/
+    // auto-apply. `proposeCreateCampaign` reusaria o MESMO criativo já fatigado (não temos
+    // geração de criativo por IA ainda), o que contradiria o rationale "teste um ângulo novo".
+    // O agente não promete o que não entrega — nunca chega no ramo `byAction[...] === "act_full"`.
+    if (top.kind === "refresh_fatigued") {
+      await deps.db.insert(recommendations).values({
+        orgId: state.orgId,
+        runId: state.runId,
+        title: "Testar um ângulo novo",
+        rationale: top.rationale,
+        kind: "human_direction",
+        riskLevel: "low",
+      });
+      logger.info({ runId: state.runId, kind: top.kind }, "propose_drafts:recomendação (sem draft)");
+      return {};
+    }
+
     const dctx = {
       orgId: state.orgId,
       agentId: state.agentId,

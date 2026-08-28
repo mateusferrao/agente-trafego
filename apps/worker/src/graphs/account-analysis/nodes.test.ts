@@ -48,6 +48,8 @@ interface Harness {
   closed: { status: string; summary: string | null; narrative: string | null; costSnapshot: number | null }[];
   llm: ReturnType<typeof vi.fn>;
   readEntityState: ReturnType<typeof vi.fn>;
+  /** inserts CRUS via `deps.db.insert(recommendations).values(v)` (fora do repo — proposeDrafts). */
+  insertedRecommendations: Record<string, unknown>[];
 }
 
 interface HarnessOpts {
@@ -125,9 +127,15 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
 
   // db falso mínimo: loadEnabledTools (load_context) faz 1 select em agent_tool_bindings —
   // sem bindings → resolveEnabledTools cai no fallback (allowedActions do guardrailConfig).
+  // `insert` cobre o insert CRU de `proposeDrafts` (recommendations `human_direction`, P1.1) —
+  // fora do repo (o resto do harness passa pelo AnalysisRepo acima).
   const emptySelect = { from: () => ({ where: async () => [] }) };
+  const insertedRecommendations: Record<string, unknown>[] = [];
   const deps = {
-    db: { select: () => emptySelect } as never,
+    db: {
+      select: () => emptySelect,
+      insert: () => ({ values: async (v: Record<string, unknown>) => { insertedRecommendations.push(v); } }),
+    } as never,
     logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
     redis: {} as never,
     ports: {
@@ -184,7 +192,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
   const nodesWithFakes = { repo, snapshots, entityAnalyses, notify, ...(opts.executor ? { executor: opts.executor } : {}) };
   // guarda os fakes p/ o teste montar os nós
   (deps as unknown as { _repos: typeof nodesWithFakes })._repos = nodesWithFakes;
-  return { deps, saved, savedLabels, closed, llm, readEntityState };
+  return { deps, saved, savedLabels, closed, llm, readEntityState, insertedRecommendations };
 }
 
 /** Nº de chamadas de LLM do MAPA (por-campanha) — identificadas por meta.type "unit". */
@@ -450,5 +458,64 @@ describe("account-analysis read-only nodes", () => {
     const afterLoad = { ...base, ...(await n.loadContext(base)) } as AccountAnalysisStateType;
     await expect(n.fetchData(afterLoad)).rejects.toBeInstanceOf(AnalysisError);
     expect(repos.repo.markTokenInvalid).toHaveBeenCalled();
+  });
+
+  describe("proposeDrafts (P1.1 — refresh_fatigued vira recomendação-only)", () => {
+    function stateWithCampaign(campaign: Record<string, unknown>): AccountAnalysisStateType {
+      return {
+        runId: "run-1",
+        orgId: "org-1",
+        agentId: "agent-1",
+        adAccountId: "acc-uuid",
+        notifyPolicy: { proactiveDrafts: { enabled: true } },
+        brief: { account: { currency: "BRL" }, segments: { campaigns: [campaign] } },
+      } as unknown as AccountAnalysisStateType;
+    }
+
+    it("campanha FATIGADA (sem vencedor) → só insere recommendation human_direction, sem draft/approval", async () => {
+      const h = makeHarness();
+      const repos = (h.deps as unknown as { _repos: Parameters<typeof makeAccountAnalysisNodes>[1] })._repos;
+      const n = makeAccountAnalysisNodes(h.deps, repos);
+      const state = stateWithCampaign({
+        id: "c1",
+        level: "campaign",
+        name: "Campanha Fatigada",
+        status: "active",
+        eligibility: { hasSignificance: true },
+        healthSignals: ["creative_fatigue"],
+        metrics: { spend: 100 },
+      });
+
+      await n.proposeDrafts(state);
+
+      expect(h.insertedRecommendations).toHaveLength(1);
+      expect(h.insertedRecommendations[0]).toMatchObject({ kind: "human_direction", title: "Testar um ângulo novo" });
+      expect(h.insertedRecommendations[0]?.["toolKey"]).toBeUndefined();
+      expect(h.insertedRecommendations[0]?.["draftId"]).toBeUndefined();
+    });
+
+    it("vencedor claro (scale_winner) NÃO entra no ramo human_direction do P1.1", async () => {
+      // mock de db/ads aqui é mínimo (não simula a saga inteira de proposeScaleWinner) — este
+      // teste prova só o ROTEAMENTO: uma oportunidade `scale_winner` nunca cai no atalho
+      // `human_direction` (exclusivo de `refresh_fatigued`). O caminho normal segue seu try/catch
+      // próprio (best-effort), coberto por outros testes/roteiro manual.
+      const h = makeHarness();
+      const repos = (h.deps as unknown as { _repos: Parameters<typeof makeAccountAnalysisNodes>[1] })._repos;
+      const n = makeAccountAnalysisNodes(h.deps, repos);
+      const state = stateWithCampaign({
+        id: "c1",
+        level: "campaign",
+        name: "Campanha Vencedora",
+        status: "active",
+        tier: "winner",
+        eligibility: { hasSignificance: true },
+        healthSignals: [],
+        metrics: { spend: 100 },
+      });
+
+      await n.proposeDrafts(state);
+
+      expect(h.insertedRecommendations).toHaveLength(0);
+    });
   });
 });
