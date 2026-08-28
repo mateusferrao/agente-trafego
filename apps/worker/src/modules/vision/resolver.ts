@@ -71,6 +71,16 @@ export function creativeContentHash(stableKey: string, copy: string | undefined)
   return createHash("sha256").update(`${stableKey}\n${copy ?? ""}`).digest("base64url");
 }
 
+/**
+ * Chave de cache de visão de um anúncio VEICULANDO — FONTE ÚNICA da composição (`${creativeId}:
+ * ${videoId}` + copy), usada tanto pelo run de análise quanto pela criação de campanha, pra o
+ * cache-hit ser consistente. `creativeId` = id do criativo na Meta (não o ad id). Sem essa fonte
+ * única, os dois lados hasheariam diferente e o cache erraria silenciosamente.
+ */
+export function servingVisionKey(creativeId: string, videoId: string | undefined | null, copy: string | undefined): string {
+  return creativeContentHash(`${creativeId}:${videoId ?? ""}`, copy);
+}
+
 function buildVisionMessages(input: CreativeVisionInput): LLMMessage[] {
   const system =
     "Você analisa criativos de anúncio (imagem/vídeo + copy) para tráfego pago. Quando houver vários " +

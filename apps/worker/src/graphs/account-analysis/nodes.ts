@@ -99,7 +99,7 @@ import {
 } from "../../modules/analysis/entity-analyses.repo.js";
 import { createNotifyRepo, type NotifyRepo } from "../../modules/notify/repo.js";
 import { createSendToConversation } from "../../modules/notify/send-to-contact.js";
-import { createVisionResolver, creativeContentHash } from "../../modules/vision/resolver.js";
+import { createVisionResolver, servingVisionKey } from "../../modules/vision/resolver.js";
 import { makeMetaToolExecutor, type MetaToolExecutor } from "../../executors/meta-tools.js";
 import { AnalysisError } from "../../modules/analysis/errors.js";
 import { mapWithConcurrency } from "../../lib/concurrency.js";
@@ -419,12 +419,12 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
         const frames = creativePosterFrames(c);
         if (frames.length === 0) continue;
         const copy = creativeCopy(c);
-        // chave de cache ESTÁVEL (id do criativo + vídeo), não a URL do fbcdn (rotaciona).
-        const stableKey = `${c.id}:${c.videoId ?? ""}`;
+        // chave de cache ESTÁVEL (fonte única `servingVisionKey`) — reusada pela criação de
+        // campanha p/ o cache-hit ser consistente (id do criativo + vídeo + copy).
         const result = await vision.resolve({
           creativeId: c.id,
           imageUrls: frames,
-          contentHash: creativeContentHash(stableKey, copy),
+          contentHash: servingVisionKey(c.id, c.videoId, copy),
           ...(copy ? { copy } : {}),
         });
         if (result) push(visionByAdId, c.adId, result);

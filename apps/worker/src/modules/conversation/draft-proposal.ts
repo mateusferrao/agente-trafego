@@ -5,8 +5,8 @@
 // adjust_budget (caminho de escrita existente); duplicate/from_scratch = rascunho.
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
-import { adAccounts, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { applyDraftEdit, planScaleMove, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { adAccounts, adCreatives, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, entityAnalyses, guardrailConfigs } from "@trafego/db";
+import { applyDraftEdit, planScaleMove, resolveCreativeSourceStrategy, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
 import { loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
   ACTION_PARAM_MODE,
@@ -21,6 +21,7 @@ import {
   type ConversionGoal,
   type CopyVariant,
   type CreativeAssetRef,
+  type CreativeSourceStrategy,
   type DraftId,
   type TargetingSpec,
 } from "@trafego/shared";
@@ -29,8 +30,8 @@ import type { WorkerDeps } from "../../composition.js";
 import { createAnalysisRepo } from "../analysis/repo.js";
 import { loadEnabledTools } from "../tools/enabled.js";
 import { generateCopy } from "../copy/generate-copy.js";
-import { creativeContentHash } from "../vision/resolver.js";
-import { pickLibraryCreativeByContext, type LibraryCandidate, type MatchContext } from "../creative/match-library.js";
+import { createVisionResolver, creativeContentHash, servingVisionKey } from "../vision/resolver.js";
+import { pickLibraryCreativeByContext, type MatchContext } from "../creative/match-library.js";
 import { joinBalloons } from "../notify/split.js";
 
 const MINOR_PER_UNIT = 100;
@@ -39,6 +40,9 @@ const DEFAULT_VARIANTS = 2;
 const DEFAULT_STARTER_BUDGET_MINOR = 3000;
 /** Quantos uploads recentes considerar no pick da biblioteca (ranqueados por score da visão). */
 const LIBRARY_PICK_CANDIDATES = 20;
+/** Quantos anúncios veiculando (mais recentes) descrever por visão no pick por-contexto (Slice 10).
+ *  Teto do custo: só os SEM cache computam visão fresca (vídeo = 1 fetch de frames cada). */
+const SERVING_PICK_CANDIDATES = 10;
 
 /**
  * Clampa o gasto novo (diário) ao teto do agente e sinaliza se cortou — fonte única do
@@ -87,6 +91,8 @@ interface AgentContext {
   readonly model: string;
   readonly businessContext: string | null;
   readonly guidance: string | null;
+  /** estratégia de fonte do criativo na criação (Slice 10) — default serving.best_performing. */
+  readonly creativeSource: CreativeSourceStrategy;
   /** Preferência do passo agressivo (autonomy_policy) — default "ask". */
   readonly scaleAggressivePreference: ScaleAggressivePreference;
   /** Tool-keys habilitadas (bindings, mesma fonte do chat/apply) — gate da escala. */
@@ -155,6 +161,7 @@ async function loadAgentContext(deps: WorkerDeps, ctx: DraftProposalContext): Pr
     model: (mc["messageModel"] as string) ?? (mc["model"] as string) ?? deps.conversation.copyModel,
     businessContext: ag?.businessContext ?? null,
     guidance: ag?.guidance ?? null,
+    creativeSource: resolveCreativeSourceStrategy(mc),
     scaleAggressivePreference: ag?.autonomyPolicy?.scaleAggressivePreference ?? "ask",
     enabled,
   };
@@ -526,22 +533,89 @@ export async function chooseCreative(
   deps: WorkerDeps,
   orgId: string,
   accountId: string,
+  ref: AdAccountRef,
   serving: { imageHash?: string; videoId?: string; sourceAdId?: string },
+  strategy: CreativeSourceStrategy,
   match?: MatchContext & { readonly model: string },
 ): Promise<ChosenCreative | null> {
-  if (serving.imageHash || serving.videoId) {
-    return {
-      ...(serving.imageHash ? { imageHash: serving.imageHash } : {}),
-      ...(serving.videoId ? { videoId: serving.videoId } : {}),
-      assetId: serving.sourceAdId ?? "reuse",
-      origin: "reuse",
-      source: "serving",
-    };
+  const servingRef = (): ChosenCreative | null =>
+    serving.imageHash || serving.videoId
+      ? {
+          ...(serving.imageHash ? { imageHash: serving.imageHash } : {}),
+          ...(serving.videoId ? { videoId: serving.videoId } : {}),
+          assetId: serving.sourceAdId ?? "reuse",
+          origin: "reuse",
+          source: "serving",
+        }
+      : null;
+
+  // MODO PADRÃO (serving.best_performing = comportamento de hoje): reusa o melhor veiculando (provado
+  // por desempenho, determinístico, SEM LLM); sem veiculando, cai na biblioteca por contexto.
+  if (strategy.mode === "serving" && (strategy.servingPick ?? "best_performing") === "best_performing") {
+    return servingRef() ?? (await chooseLibraryByContext(deps, orgId, accountId, match));
   }
-  // Sem criativo veiculando → BIBLIOTECA. A escolha considera o CONTEXTO da campanha (objetivo +
-  // negócio + orientações) casado com a DESCRIÇÃO cacheada de cada upload (visão feita no upload) —
-  // via um matcher LLM barato (texto, sem re-analisar). NÃO é ranking genérico/aleatório. Sem
-  // descrições cacheadas ou sem contexto → recência (a lista já vem por createdAt desc).
+
+  // MODOS COM LLM (serving.agent / library / both): monta o POOL de candidatos DESCRITOS por visão
+  // (reusa o cache dos runs/uploads; computa fresh o que faltar, dentro do teto) e o LLM escolhe o
+  // melhor ENCAIXE no contexto (objetivo/negócio/orientações). Desempenho é sinal, não veto.
+  const pool: DescribedCandidate[] = [];
+  if (strategy.mode === "serving" || strategy.mode === "both") {
+    pool.push(...(await describeServingCandidates(deps, orgId, accountId, ref)));
+  }
+  if (strategy.mode === "library" || strategy.mode === "both") {
+    pool.push(...(await describeLibraryCandidates(deps, orgId, accountId)));
+  }
+  if (pool.length === 0) {
+    // pediu veiculando mas não há candidato descrito → cai no melhor veiculando; senão nada.
+    return strategy.mode === "library" ? null : servingRef();
+  }
+
+  let chosen = pool[0]!; // fallback: ordem (veiculando recentes primeiro, depois biblioteca)
+  const described = pool.filter((c) => c.description.trim().length > 0);
+  if (match && described.length > 0) {
+    const picked = await pickLibraryCreativeByContext(
+      deps.ports.llm,
+      match.model,
+      match,
+      described.map((c) => ({ assetId: c.key, description: c.description })),
+    );
+    if (picked) chosen = pool.find((c) => c.key === picked) ?? chosen;
+  }
+  return chosen.ref;
+}
+
+/** Um candidato a criativo com descrição (pro matcher) + a ref concreta (pro spec). */
+interface DescribedCandidate {
+  readonly key: string;
+  readonly description: string;
+  readonly ref: ChosenCreative;
+}
+
+/** Escolha na BIBLIOTECA por contexto (o caminho de hoje quando não há veiculando). `null` = vazia. */
+async function chooseLibraryByContext(
+  deps: WorkerDeps,
+  orgId: string,
+  accountId: string,
+  match?: MatchContext & { readonly model: string },
+): Promise<ChosenCreative | null> {
+  const pool = await describeLibraryCandidates(deps, orgId, accountId);
+  if (pool.length === 0) return null;
+  let chosen = pool[0]!; // recência
+  const described = pool.filter((c) => c.description.trim().length > 0);
+  if (match && described.length > 0) {
+    const picked = await pickLibraryCreativeByContext(
+      deps.ports.llm,
+      match.model,
+      match,
+      described.map((c) => ({ assetId: c.key, description: c.description })),
+    );
+    if (picked) chosen = pool.find((c) => c.key === picked) ?? chosen;
+  }
+  return chosen.ref;
+}
+
+/** Candidatos da BIBLIOTECA (uploads `ready`) com a DESCRIÇÃO de visão CACHEADA (feita no upload). */
+async function describeLibraryCandidates(deps: WorkerDeps, orgId: string, accountId: string): Promise<DescribedCandidate[]> {
   const libs = await deps.db
     .select({ id: creativeAssets.id, imageHash: creativeAssets.metaImageHash, videoId: creativeAssets.metaVideoId })
     .from(creativeAssets)
@@ -556,40 +630,104 @@ export async function chooseCreative(
     .orderBy(desc(creativeAssets.createdAt))
     .limit(LIBRARY_PICK_CANDIDATES);
   const withMedia = libs.filter((l) => l.imageHash || l.videoId);
-  if (withMedia.length === 0) return null;
+  if (withMedia.length === 0) return [];
+  const hashOf = new Map(withMedia.map((l) => [l.id, creativeContentHash(l.id, undefined)]));
+  const visions = await deps.db
+    .select({ hash: creativeVisionAnalyses.contentHash, result: creativeVisionAnalyses.result })
+    .from(creativeVisionAnalyses)
+    .where(
+      and(
+        inArray(creativeVisionAnalyses.contentHash, [...hashOf.values()]),
+        eq(creativeVisionAnalyses.analyzerVersion, deps.visionAnalyzerVersion),
+      ),
+    );
+  const descByHash = new Map(visions.map((v) => [v.hash, describeVision(v.result)]));
+  return withMedia.map((l) => ({
+    key: `lib:${l.id}`,
+    description: descByHash.get(hashOf.get(l.id)!) ?? "",
+    ref: {
+      ...(l.imageHash ? { imageHash: l.imageHash } : {}),
+      ...(l.videoId ? { videoId: l.videoId } : {}),
+      assetId: l.id,
+      origin: "upload",
+      source: "library",
+    },
+  }));
+}
 
-  let chosenId = withMedia[0]!.id; // default: recência (mais recente)
-  if (match) {
-    // descrições cacheadas por asset (contentHash estável = creativeContentHash(assetId)).
-    const hashOf = new Map(withMedia.map((l) => [l.id, creativeContentHash(l.id, undefined)]));
-    const visions = await deps.db
-      .select({ hash: creativeVisionAnalyses.contentHash, result: creativeVisionAnalyses.result })
+/** Candidatos VEICULANDO (X mais recentes de `ad_creatives`) com DESCRIÇÃO de visão cache-read-through:
+ *  hit reusa o cache dos runs; MISS computa fresh (auto-cacheia) — imagem usa o url guardado, vídeo
+ *  busca frames ao vivo (só o que falta, teto `SERVING_PICK_CANDIDATES`). Sem visão → copy (nunca mudo). */
+async function describeServingCandidates(deps: WorkerDeps, orgId: string, accountId: string, ref: AdAccountRef): Promise<DescribedCandidate[]> {
+  const rows = await deps.db
+    .select({
+      adId: adCreatives.adId,
+      creativeId: adCreatives.creativeId,
+      videoId: adCreatives.videoId,
+      imageHash: adCreatives.imageHash,
+      imageUrl: adCreatives.imageUrl,
+      thumbnailUrl: adCreatives.thumbnailUrl,
+      body: adCreatives.body,
+      title: adCreatives.title,
+      callToAction: adCreatives.callToAction,
+    })
+    .from(adCreatives)
+    .where(and(eq(adCreatives.orgId, orgId), eq(adCreatives.adAccountId, accountId)))
+    .orderBy(desc(adCreatives.capturedAt))
+    .limit(SERVING_PICK_CANDIDATES);
+  const usable = rows.filter((r) => r.creativeId && (r.imageHash || r.videoId));
+  if (usable.length === 0) return [];
+
+  const vision = createVisionResolver({
+    db: deps.db,
+    llm: deps.ports.llm,
+    model: deps.analysis.visionModel,
+    analyzerVersion: deps.visionAnalyzerVersion,
+    logger: deps.logger,
+  });
+
+  const out: DescribedCandidate[] = [];
+  for (const r of usable) {
+    const copy = [r.title, r.body, r.callToAction].filter(Boolean).join(" ") || undefined;
+    const contentHash = servingVisionKey(r.creativeId!, r.videoId, copy);
+    // pré-checa o cache (evita buscar frames de vídeo já analisado no run).
+    const [cached] = await deps.db
+      .select({ result: creativeVisionAnalyses.result })
       .from(creativeVisionAnalyses)
-      .where(
-        and(
-          inArray(creativeVisionAnalyses.contentHash, [...hashOf.values()]),
-          eq(creativeVisionAnalyses.analyzerVersion, deps.visionAnalyzerVersion),
-        ),
-      );
-    const descByHash = new Map(visions.map((v) => [v.hash, describeVision(v.result)]));
-    const candidates: LibraryCandidate[] = withMedia
-      .map((l) => ({ assetId: l.id, description: descByHash.get(hashOf.get(l.id)!) ?? "" }))
-      .filter((c) => c.description.length > 0);
-    if (candidates.length > 0) {
-      // ordena os candidatos por recência (já vêm assim) → o fallback do matcher = mais recente.
-      const picked = await pickLibraryCreativeByContext(deps.ports.llm, match.model, match, candidates);
-      if (picked) chosenId = picked;
+      .where(and(eq(creativeVisionAnalyses.contentHash, contentHash), eq(creativeVisionAnalyses.analyzerVersion, deps.visionAnalyzerVersion)))
+      .limit(1);
+    let description = cached ? describeVision(cached.result) : "";
+    if (!cached) {
+      // MISS: monta a mídia e computa fresh (auto-cacheia). Imagem = url guardado; vídeo = frames ao vivo.
+      let imageUrls: string[] = [];
+      if (r.videoId) {
+        try {
+          imageUrls = await deps.ports.ads.getVideoFrames(ref, r.videoId);
+        } catch {
+          /* sem frames → cai no fallback de copy */
+        }
+      } else if (r.imageUrl ?? r.thumbnailUrl) {
+        imageUrls = [(r.imageUrl ?? r.thumbnailUrl)!];
+      }
+      if (imageUrls.length > 0) {
+        const result = await vision.resolve({ creativeId: r.creativeId!, imageUrls, contentHash, ...(copy ? { copy } : {}) });
+        if (result) description = describeVision(result);
+      }
     }
+    if (!description) description = copy ? `Anúncio que já veicula. Texto: ${copy}` : "Anúncio que já veicula.";
+    out.push({
+      key: `srv:${r.adId}`,
+      description,
+      ref: {
+        ...(r.imageHash ? { imageHash: r.imageHash } : {}),
+        ...(r.videoId ? { videoId: r.videoId } : {}),
+        assetId: r.adId,
+        origin: "reuse",
+        source: "serving",
+      },
+    });
   }
-
-  const best = withMedia.find((l) => l.id === chosenId) ?? withMedia[0]!;
-  return {
-    ...(best.imageHash ? { imageHash: best.imageHash } : {}),
-    ...(best.videoId ? { videoId: best.videoId } : {}),
-    assetId: best.id,
-    origin: "upload",
-    source: "library",
-  };
+  return out;
 }
 
 /** Descrição compacta da visão cacheada p/ o matcher de contexto (o que o criativo comunica). */
@@ -634,11 +772,13 @@ export async function proposeCreateCampaign(
         deps,
         ctx.orgId,
         ctx.adAccountId,
+        ac.ref,
         {
           ...(defaults.imageHash ? { imageHash: defaults.imageHash } : {}),
           ...(defaults.videoId ? { videoId: defaults.videoId } : {}),
           ...(defaults.sourceAdId ? { sourceAdId: defaults.sourceAdId } : {}),
         },
+        ac.creativeSource,
         { goal, businessContext: ac.businessContext, guidance: ac.guidance, model: ac.model },
       );
   const reuseImageHash = chosen?.imageHash;

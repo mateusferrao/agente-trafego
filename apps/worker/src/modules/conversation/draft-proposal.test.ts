@@ -3,13 +3,23 @@ import { chooseCreative, clampNewBudget, resolveCreationTargeting } from "./draf
 import { creativeContentHash } from "../vision/resolver.js";
 import type { WorkerDeps } from "../../composition.js";
 
-/** deps.db falso p/ o caminho de RECÊNCIA (sem match): só o SELECT da biblioteca
- *  (from→where→orderBy→limit) devolve `libRows`. */
+const REF = { adAccountId: "act_1", accessToken: "tok" };
+/** Estratégia default = comportamento de hoje (reusa o melhor veiculando; senão biblioteca). */
+const BEST_PERFORMING = { mode: "serving", servingPick: "best_performing" } as const;
+
+/** deps.db falso p/ o caminho de RECÊNCIA (sem match): 1º SELECT = libs (orderBy→limit) devolve
+ *  `libRows`; 2º SELECT = visões cacheadas (where awaitável) → vazio (describeLibraryCandidates
+ *  sempre consulta visão agora). */
 function fakeDeps(libRows: unknown[]) {
+  let call = 0;
   const db = {
-    select: () => ({ from: () => ({ where: () => ({ orderBy: () => ({ limit: () => libRows }) }) }) }),
+    select: () => {
+      call += 1;
+      if (call === 1) return { from: () => ({ where: () => ({ orderBy: () => ({ limit: () => libRows }) }) }) };
+      return { from: () => ({ where: () => [] as unknown[] }) };
+    },
   };
-  return { db } as unknown as WorkerDeps;
+  return { db, visionAnalyzerVersion: 1 } as unknown as WorkerDeps;
 }
 
 /** deps.db falso p/ o caminho CONTEXT-AWARE (com match): 1º SELECT = libs (orderBy→limit),
@@ -35,25 +45,25 @@ describe("chooseCreative (pool único: veiculando + biblioteca)", () => {
   it("criativo VEICULANDO presente → escolhe o veiculado (provado), NÃO consulta biblioteca", async () => {
     const select = vi.fn();
     const deps = { db: { select } } as unknown as WorkerDeps;
-    const out = await chooseCreative(deps, ORG, ACC, { imageHash: "H", sourceAdId: "ad_1" });
+    const out = await chooseCreative(deps, ORG, ACC, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING);
     expect(out).toEqual({ imageHash: "H", assetId: "ad_1", origin: "reuse", source: "serving" });
     expect(select).not.toHaveBeenCalled();
   });
 
   it("SEM veiculando, sem match → biblioteca por recência (mais recente)", async () => {
     const deps = fakeDeps([{ id: "asset_9", imageHash: "HLIB", videoId: null }]);
-    const out = await chooseCreative(deps, ORG, ACC, {});
+    const out = await chooseCreative(deps, ORG, ACC, REF, {}, BEST_PERFORMING);
     expect(out).toEqual({ imageHash: "HLIB", assetId: "asset_9", origin: "upload", source: "library" });
   });
 
   it("SEM veiculando + vídeo na biblioteca → usa metaVideoId", async () => {
     const deps = fakeDeps([{ id: "asset_v", imageHash: null, videoId: "VID1" }]);
-    const out = await chooseCreative(deps, ORG, ACC, {});
+    const out = await chooseCreative(deps, ORG, ACC, REF, {}, BEST_PERFORMING);
     expect(out).toEqual({ videoId: "VID1", assetId: "asset_v", origin: "upload", source: "library" });
   });
 
   it("SEM veiculando + biblioteca vazia → null", async () => {
-    expect(await chooseCreative(fakeDeps([]), ORG, ACC, {})).toBeNull();
+    expect(await chooseCreative(fakeDeps([]), ORG, ACC, REF, {}, BEST_PERFORMING)).toBeNull();
   });
 
   it("CONTEXT-AWARE: com match + descrições, o matcher escolhe pelo CONTEXTO (não recência)", async () => {
@@ -71,7 +81,7 @@ describe("chooseCreative (pool único: veiculando + biblioteca)", () => {
       ],
       1,
     );
-    const out = await chooseCreative(deps, ORG, ACC, {}, MATCH);
+    const out = await chooseCreative(deps, ORG, ACC, REF, {}, BEST_PERFORMING, MATCH);
     expect(llm.completeStructured).toHaveBeenCalledOnce(); // consultou o contexto
     expect(out?.assetId).toBe("b"); // escolheu pelo contexto (index 1), não a recência (a)
     expect(out?.source).toBe("library");
@@ -79,7 +89,7 @@ describe("chooseCreative (pool único: veiculando + biblioteca)", () => {
 
   it("veiculando em vídeo → escolhe o vídeo veiculado", async () => {
     const deps = { db: { select: vi.fn() } } as unknown as WorkerDeps;
-    const out = await chooseCreative(deps, ORG, ACC, { videoId: "SVID", sourceAdId: "ad_2" });
+    const out = await chooseCreative(deps, ORG, ACC, REF, { videoId: "SVID", sourceAdId: "ad_2" }, BEST_PERFORMING);
     expect(out).toEqual({ videoId: "SVID", assetId: "ad_2", origin: "reuse", source: "serving" });
   });
 });
