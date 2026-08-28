@@ -52,6 +52,12 @@ export class DraftsApiService extends BaseApiService {
     return this.resolveUrl(['/accounts', accountId, 'creatives', assetId, 'blob']);
   }
 
+  /** URL da miniatura do criativo do rascunho (card de aprovação) — proxy autenticado; reuse
+   *  busca fresco da Meta, upload serve o blob. Cacheada por ETag no browser. */
+  draftCreativeThumbUrl(accountId: string, draftId: string): string {
+    return this.resolveUrl(['/accounts', accountId, 'drafts', draftId, 'creative', 'thumb']);
+  }
+
   /** `DELETE /api/accounts/:id/creatives/:assetId` — exclui um criativo (híbrido): em uso →
    *  ARQUIVA (`archived:true`, some da biblioteca, não quebra Meta/rascunho); livre → apaga
    *  (`archived:false`). Nunca 409. O componente troca o toast conforme `archived`. */

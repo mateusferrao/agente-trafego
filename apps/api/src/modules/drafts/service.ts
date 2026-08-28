@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { and, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   adAccounts,
@@ -175,6 +176,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
                 cta: c.cta ?? null,
               }))
             : null,
+          creative: spec.creative ? { format: spec.creative.format, origin: spec.creative.origin } : null,
           createdIds: appr.kind === "activation" ? (d.createdIds as Record<string, unknown>) : null,
         });
       }
@@ -388,6 +390,64 @@ export function createDraftsService(deps: DraftsServiceDeps) {
         .limit(1);
       if (!row?.storageRef) return null;
       return deps.storage.get(row.storageRef);
+    },
+
+    /**
+     * Miniatura do criativo de um rascunho (card /approvals) — FIEL ao spec + cache HTTP por ETag
+     * estável. `upload` → blob do StoragePort (mesmo lookup do getCreativeBlob). `reuse` → busca
+     * FRESCO da Meta (getVideoFrames p/ vídeo HD, getCreatives p/ imagem) e faz stream dos bytes —
+     * a URL do fbcdn expira, então nunca a mandamos crua pro browser. O ETag é estável pelo id do
+     * criativo (metaVideoId/hash) → o browser cacheia e revalida com 304 SEM tocar na Meta. Cache
+     * COMPARTILHADO no StoragePort (1 fetch serve todos os viewers) = fast-follow. Org-scoped pelo
+     * draftId; `null` = 404 (rascunho/criativo/preview indisponível).
+     */
+    async getDraftCreativeThumb(
+      orgId: OrgId,
+      accountId: string,
+      draftId: string,
+      ifNoneMatch?: string,
+    ): Promise<{ notModified: true; etag: string } | { bytes: Uint8Array; contentType: string; etag: string } | null> {
+      const [draft] = await deps.db
+        .select({ spec: campaignDrafts.spec })
+        .from(campaignDrafts)
+        .where(and(eq(campaignDrafts.id, draftId), eq(campaignDrafts.orgId, orgId), eq(campaignDrafts.adAccountId, accountId)))
+        .limit(1);
+      if (!draft) return null;
+      const creative = (draft.spec as CampaignDraftSpec).creative;
+      if (!creative) return null;
+
+      // upload → blob do StoragePort (content-addressed; ETag do próprio blob).
+      if (creative.origin === "upload") {
+        const [row] = await deps.db
+          .select({ storageRef: creativeAssets.storageRef })
+          .from(creativeAssets)
+          .where(and(eq(creativeAssets.id, creative.assetId), eq(creativeAssets.orgId, orgId), eq(creativeAssets.adAccountId, accountId)))
+          .limit(1);
+        if (!row?.storageRef) return null;
+        const blob = await deps.storage.get(row.storageRef);
+        return blob ? { bytes: blob.bytes, contentType: blob.contentType, etag: blob.etag } : null;
+      }
+
+      // reuse → ETag ESTÁVEL pelo id do criativo: revalidação (If-None-Match) responde 304 sem
+      // NENHUMA chamada à Meta. Só busca fresco no miss.
+      const stableId = creative.metaVideoId ?? creative.metaImageHash ?? creative.assetId;
+      const etag = createHash("sha256").update(`draft-thumb:${stableId}`).digest("hex").slice(0, 32);
+      if (ifNoneMatch === `"${etag}"`) return { notModified: true, etag };
+
+      const ctx = await loadScaleContext(orgId, accountId);
+      if (!ctx) return null;
+      let url: string | undefined;
+      if (creative.format === "video" && creative.metaVideoId) {
+        url = (await deps.adsPlatform.getVideoFrames(ctx.ref, creative.metaVideoId))[0];
+      } else {
+        const [c] = await deps.adsPlatform.getCreatives(ctx.ref, [creative.assetId]);
+        url = c?.imageUrl ?? c?.thumbnailUrl;
+      }
+      if (!url) return null;
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const contentType = res.headers.get("content-type") ?? "image/jpeg";
+      return { bytes: new Uint8Array(await res.arrayBuffer()), contentType, etag };
     },
 
     /**

@@ -6540,6 +6540,32 @@
               ]
             }
           },
+          "creative": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "format": {
+                "type": "string",
+                "enum": [
+                  "image",
+                  "video"
+                ]
+              },
+              "origin": {
+                "type": "string",
+                "enum": [
+                  "reuse",
+                  "upload"
+                ]
+              }
+            },
+            "required": [
+              "format",
+              "origin"
+            ]
+          },
           "createdIds": {
             "type": [
               "object",
@@ -6567,6 +6593,7 @@
           "pixelId",
           "variantsCount",
           "copyVariants",
+          "creative",
           "createdIds"
         ]
       },

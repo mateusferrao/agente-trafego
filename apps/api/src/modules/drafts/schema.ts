@@ -42,6 +42,14 @@ export const draftApprovalOutput = z.object({
   pixelId: z.string().nullable(),
   variantsCount: z.number().nullable(),
   copyVariants: z.array(draftCopyVariantOutput).nullable(),
+  /** criativo do rascunho (from_scratch) — o card mostra formato/origem + a miniatura
+   *  (rota /creative/thumb). `null` em duplicate (clona o anúncio inteiro, sem criativo próprio). */
+  creative: z
+    .object({
+      format: z.enum(["image", "video"]),
+      origin: z.enum(["reuse", "upload"]),
+    })
+    .nullable(),
   /** ids reais criados na Meta — só presente em `approvalKind:"activation"` (já existe na Meta). */
   createdIds: z.record(z.string(), z.unknown()).nullable(),
 });

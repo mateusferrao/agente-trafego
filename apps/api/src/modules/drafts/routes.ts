@@ -33,6 +33,29 @@ export const draftsRoutes: FastifyPluginAsync = async (app) => {
     return result;
   });
 
+  // Miniatura do criativo do rascunho (card /approvals). Org-scoped pelo draftId. upload → blob
+  // do StoragePort; reuse → busca fresco da Meta e faz stream (fbcdn expira → nunca URL crua).
+  // ETag estável pelo id do criativo → browser cacheia + 304 na revalidação (sem tocar na Meta).
+  app.get("/accounts/:id/drafts/:draftId/creative/thumb", guard, async (request, reply) => {
+    const { id, draftId } = request.params as { id: string; draftId: string };
+    const inm = request.headers["if-none-match"];
+    const thumb = await service.getDraftCreativeThumb(
+      orgIdOf(request) as OrgId,
+      id,
+      draftId,
+      typeof inm === "string" ? inm : undefined,
+    );
+    if (!thumb) return reply.status(404).send({ message: "miniatura indisponível" });
+    const etag = `"${thumb.etag}"`;
+    if ("notModified" in thumb) return reply.status(304).header("ETag", etag).send();
+    return reply
+      .header("Content-Type", thumb.contentType)
+      .header("Cache-Control", "private, max-age=86400")
+      .header("ETag", etag)
+      .header("Content-Disposition", "inline")
+      .send(Buffer.from(thumb.bytes));
+  });
+
   app.get("/accounts/:id/creatives", guard, async (request) => {
     const { id } = request.params as { id: string };
     return service.listCreatives(orgIdOf(request) as OrgId, id);

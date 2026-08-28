@@ -77,6 +77,21 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                         @if (d.objective) { <div><dt class="inline text-muted">Objetivo: </dt><dd class="inline">{{ objectiveLabel(d.objective) }}</dd></div> }
                         @if (d.sourceLabel) { <div><dt class="inline text-muted">Origem: </dt><dd class="inline">{{ sourceName(d) }}</dd></div> }
                       </dl>
+                      @if (d.creative; as cr) {
+                        <div class="flex items-center gap-3">
+                          @if (!thumbBroken().has(d.id)) {
+                            <img
+                              [src]="thumbUrl(d)"
+                              (error)="onThumbError(d.id)"
+                              alt="Prévia do criativo"
+                              class="h-16 w-16 shrink-0 rounded-lg border border-line object-cover"
+                            />
+                          } @else {
+                            <span class="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg border border-line text-xs text-muted">sem prévia</span>
+                          }
+                          <span class="text-sm text-ink"><span class="text-muted">Criativo: </span>{{ creativeLabel(cr) }}</span>
+                        </div>
+                      }
                       @if (d.copyVariants && d.copyVariants.length > 0) {
                         <ul class="flex flex-col gap-2">
                           @for (c of d.copyVariants; track $index) {
@@ -211,6 +226,19 @@ export class ApprovalsPage implements OnInit {
   /** id do rascunho com o picker "trocar criativo" aberto (só 1 por vez). */
   protected readonly pickerFor = signal<string | null>(null);
   protected readonly pickingCreative = signal(false);
+  /** ids de rascunho cuja miniatura falhou (reuse fbcdn/Meta indisponível) → placeholder. */
+  protected readonly thumbBroken = signal<ReadonlySet<string>>(new Set());
+
+  protected thumbUrl = (d: DraftApprovalOutput): string =>
+    this.draftsApi.draftCreativeThumbUrl(d.accountId, d.draftId);
+  protected onThumbError(id: string): void {
+    this.thumbBroken.update((s) => new Set(s).add(id));
+  }
+  /** rótulo do criativo (formato + origem) — sem jargão, sem citar id técnico. */
+  protected creativeLabel = (cr: NonNullable<DraftApprovalOutput['creative']>): string => {
+    const fmt = cr.format === 'video' ? 'vídeo' : 'imagem';
+    return `${fmt} · ${cr.origin === 'reuse' ? 'reusado de um anúncio da conta' : 'da sua biblioteca'}`;
+  };
 
   protected typeLabel = actionTypeLabel;
   protected deadline = deadlineText;

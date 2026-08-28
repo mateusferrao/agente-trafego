@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type { OrgId } from "@trafego/shared/types";
 import { createDraftsService } from "./service.js";
@@ -115,5 +116,57 @@ describe("DraftsService.getCreativeBlob", () => {
     const { service } = makeService([{ storageRef: null }], get);
     expect(await service.getCreativeBlob(ORG, "acct-1", "asset-1")).toBeNull();
     expect(get).not.toHaveBeenCalled();
+  });
+});
+
+describe("getDraftCreativeThumb (miniatura do criativo do rascunho)", () => {
+  const reuseDraft = {
+    spec: {
+      version: 1,
+      currency: "BRL",
+      dailyBudgetMinor: 5000,
+      activation: "active",
+      creative: { assetId: "AD1", format: "video", origin: "reuse", metaVideoId: "VID9" },
+    },
+  };
+
+  it("reuse + If-None-Match com ETag estável → 304 SEM tocar na Meta", async () => {
+    const getVideoFrames = vi.fn();
+    const service = createDraftsService({
+      db: fakeDb([reuseDraft]),
+      adsPlatform: { getVideoFrames } as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    const etag = createHash("sha256").update("draft-thumb:VID9").digest("hex").slice(0, 32);
+    const out = await service.getDraftCreativeThumb(ORG, "acc", "draft-1", `"${etag}"`);
+    expect(out).toEqual({ notModified: true, etag });
+    expect(getVideoFrames).not.toHaveBeenCalled(); // revalidação não busca fresco
+  });
+
+  it("rascunho inexistente (ou de outro tenant) → null (404)", async () => {
+    const service = createDraftsService({
+      db: fakeDb([]),
+      adsPlatform: {} as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    expect(await service.getDraftCreativeThumb(ORG, "acc", "nope")).toBeNull();
+  });
+
+  it("rascunho sem criativo (ex: duplicate) → null", async () => {
+    const service = createDraftsService({
+      db: fakeDb([{ spec: { version: 1, currency: "BRL", dailyBudgetMinor: 8000, activation: "active" } }]),
+      adsPlatform: {} as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    expect(await service.getDraftCreativeThumb(ORG, "acc", "draft-dup")).toBeNull();
   });
 });
