@@ -4,8 +4,8 @@
 // apply-service do site). Escala inteligente por passo (planScaleMove): raise = ação
 // adjust_budget (caminho de escrita existente); duplicate/from_scratch = rascunho.
 
-import { and, desc, eq } from "drizzle-orm";
-import { adAccounts, agents, campaignDrafts, entityAnalyses, guardrailConfigs } from "@trafego/db";
+import { and, desc, eq, isNull } from "drizzle-orm";
+import { adAccounts, agents, campaignDrafts, creativeAssets, entityAnalyses, guardrailConfigs } from "@trafego/db";
 import { planScaleMove, type BudgetLevel, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
 import {
   ACTION_PARAM_MODE,
@@ -19,6 +19,7 @@ import {
   type CampaignDraftSpec,
   type ConversionGoal,
   type CopyVariant,
+  type CreativeAssetRef,
   type DraftId,
 } from "@trafego/shared";
 import type { AdAccountRef } from "@trafego/shared/ports";
@@ -364,6 +365,64 @@ export async function refineDraft(
   return { kind: "ok", echo: buildRefineEcho(row.kind, nextSpec) };
 }
 
+/** Criativo escolhido pro rascunho + de onde veio (pro eco honesto). `source`: `serving` =
+ *  melhor anúncio veiculando (provado); `library` = upload da biblioteca (fallback quando não
+ *  há criativo veiculando). */
+interface ChosenCreative {
+  readonly imageHash?: string;
+  readonly videoId?: string;
+  readonly assetId: string;
+  readonly origin: CreativeAssetRef["origin"];
+  readonly source: "serving" | "library";
+}
+
+/**
+ * Pool ÚNICO de candidatos a criativo (decisão do dono): anúncios VEICULANDO + biblioteca.
+ * Rank: o melhor VEICULANDO (provado por desempenho, via `inferCreationDefaults`) vence; sem
+ * criativo veiculando, cai no upload mais recente da biblioteca (`ready`, não-arquivado). Assim
+ * um criativo que você subiu mas nunca veiculou também é candidato (antes era ignorado). O
+ * picker manual segue podendo forçar qualquer asset. `null` = nenhum criativo em lugar nenhum.
+ */
+export async function chooseCreative(
+  deps: WorkerDeps,
+  orgId: string,
+  accountId: string,
+  serving: { imageHash?: string; videoId?: string; sourceAdId?: string },
+): Promise<ChosenCreative | null> {
+  if (serving.imageHash || serving.videoId) {
+    return {
+      ...(serving.imageHash ? { imageHash: serving.imageHash } : {}),
+      ...(serving.videoId ? { videoId: serving.videoId } : {}),
+      assetId: serving.sourceAdId ?? "reuse",
+      origin: "reuse",
+      source: "serving",
+    };
+  }
+  const [lib] = await deps.db
+    .select({ id: creativeAssets.id, imageHash: creativeAssets.metaImageHash, videoId: creativeAssets.metaVideoId })
+    .from(creativeAssets)
+    .where(
+      and(
+        eq(creativeAssets.orgId, orgId),
+        eq(creativeAssets.adAccountId, accountId),
+        eq(creativeAssets.status, "ready"),
+        isNull(creativeAssets.archivedAt),
+      ),
+    )
+    .orderBy(desc(creativeAssets.createdAt))
+    .limit(1);
+  if (lib && (lib.imageHash || lib.videoId)) {
+    return {
+      ...(lib.imageHash ? { imageHash: lib.imageHash } : {}),
+      ...(lib.videoId ? { videoId: lib.videoId } : {}),
+      assetId: lib.id,
+      origin: "upload",
+      source: "library",
+    };
+  }
+  return null;
+}
+
 /** Criar do zero reusando o criativo/página/pixel da conta + copy gerada. */
 export async function proposeCreateCampaign(
   deps: WorkerDeps,
@@ -383,9 +442,17 @@ export async function proposeCreateCampaign(
   }
 
   const defaults = await deps.ports.ads.inferCreationDefaults(ac.ref);
-  const reuseImageHash = defaults.imageHash;
-  const reuseVideoId = defaults.videoId;
-  if (!defaults.pageId || (!reuseImageHash && !reuseVideoId)) {
+  // Pool único: melhor veiculando (provado) OU, sem nenhum, um upload da biblioteca (fallback).
+  const chosen = await chooseCreative(deps, ctx.orgId, ctx.adAccountId, {
+    ...(defaults.imageHash ? { imageHash: defaults.imageHash } : {}),
+    ...(defaults.videoId ? { videoId: defaults.videoId } : {}),
+    ...(defaults.sourceAdId ? { sourceAdId: defaults.sourceAdId } : {}),
+  });
+  const reuseImageHash = chosen?.imageHash;
+  const reuseVideoId = chosen?.videoId;
+  // Página é obrigatória (object_story_spec). Vem do anúncio veiculando; conta sem NENHUM
+  // anúncio não tem página inferível — nesse caso nem um upload da biblioteca cria (falta a Page).
+  if (!defaults.pageId || !chosen) {
     return {
       kind: "blocked",
       reason:
@@ -425,9 +492,9 @@ export async function proposeCreateCampaign(
     variantsCount,
     copyVariants,
     creative: {
-      assetId: defaults.sourceAdId ?? "reuse",
+      assetId: chosen.assetId,
       format: isVideo ? "video" : "image",
-      origin: "reuse",
+      origin: chosen.origin,
       ...(reuseImageHash ? { metaImageHash: reuseImageHash } : {}),
       ...(reuseVideoId ? { metaVideoId: reuseVideoId } : {}),
     },
@@ -436,8 +503,13 @@ export async function proposeCreateCampaign(
     ...(defaults.linkUrl ? { linkUrl: defaults.linkUrl } : {}),
   };
   const { draftId, approvalId } = await persistDraftAndApproval(deps, ctx, "from_scratch", spec, origin);
+  // eco honesto sobre a FONTE do criativo (veiculando/provado × biblioteca).
+  const creativeSourcePhrase =
+    chosen.source === "serving"
+      ? "reusando o criativo que melhor performa na sua conta"
+      : "reusando um criativo da sua biblioteca (você não tem anúncio ativo pra eu comparar desempenho)";
   const echo = [
-    `Vou **criar uma campanha de ${goal}** reusando o criativo que melhor performa na sua conta e ${variantsCount} variações de copy novas (baseadas no que já converte).`,
+    `Vou **criar uma campanha de ${goal}** ${creativeSourcePhrase} e ${variantsCount} variações de copy novas (baseadas no que já converte).`,
     `Gasto novo: ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia · Página: ${defaults.pageId}${defaults.pixelId ? ` · Pixel: ${defaults.pixelId}` : ""} · entra ativa (a Meta revisa antes).`,
     `Confirma? (você pode editar/trocar o criativo no site antes de aprovar)`,
   ].join("\n");
