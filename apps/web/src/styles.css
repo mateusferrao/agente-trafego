@@ -125,8 +125,8 @@
   --shadow-panel: 0 18px 44px rgb(7 10 39 / 0.18);
   --shadow-offset: 3px 3px 0 #070a27;
   --shadow-offset-press: 1px 1px 0 #070a27;
-  --shadow-offset-accent: 3px 3px 0 #e00202;
-  --shadow-offset-accent-press: 1px 1px 0 #e00202;
+  --shadow-offset-accent: 3px 3px 0 #e8720d;
+  --shadow-offset-accent-press: 1px 1px 0 #e8720d;
   --radius-xs: 0.375rem;
   --radius-sm: 0.5rem;
   --radius-md: 0.75rem;
@@ -523,8 +523,8 @@ textarea[appTextarea][surface='transparent']:focus-visible {
 .workflow-rail {
   background:
     radial-gradient(circle at 12% 18%, rgb(7 10 39 / 0.16), transparent 19rem),
-    radial-gradient(circle at 92% 12%, rgb(224 2 2 / 0.12), transparent 17rem),
-    linear-gradient(90deg, rgb(7 10 39 / 0.1), rgb(224 2 2 / 0.08)), var(--color-soft);
+    radial-gradient(circle at 92% 12%, rgb(232 114 13 / 0.12), transparent 17rem),
+    linear-gradient(90deg, rgb(7 10 39 / 0.1), rgb(232 114 13 / 0.08)), var(--color-soft);
 }
 
 .workflow-rail::before {
@@ -568,7 +568,7 @@ textarea[appTextarea][surface='transparent']:focus-visible {
   }
 
   .domain-card:hover {
-    border-color: rgb(224 2 2 / 0.32);
+    border-color: rgb(232 114 13 / 0.32);
     box-shadow: var(--shadow-panel);
     transform: translateY(-0.125rem);
   }
