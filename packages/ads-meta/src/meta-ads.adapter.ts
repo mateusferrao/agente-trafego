@@ -54,10 +54,12 @@ const ENTITY_EDGE: Readonly<Record<ListableLevel, string>> = {
 };
 
 /** Campos pedidos por nível (adset traz optimization_goal + promoted_object). */
+// `budget_remaining` (P1.2): a Meta já contabiliza o saldo restante do lifetime_budget — dá o
+// sinal de teto de vitalício sem precisar de pacing por data nem de query de gasto all-time.
 const ENTITY_FIELDS: Readonly<Record<ListableLevel, string>> = {
-  campaign: "id,name,status,effective_status,daily_budget,lifetime_budget,objective",
+  campaign: "id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,objective",
   adset:
-    "id,name,status,effective_status,daily_budget,lifetime_budget,campaign_id,optimization_goal,promoted_object{pixel_id,custom_event_type,custom_conversion_id,page_id},targeting{geo_locations,age_min,age_max,custom_audiences,excluded_custom_audiences,flexible_spec,interests}",
+    "id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,campaign_id,optimization_goal,promoted_object{pixel_id,custom_event_type,custom_conversion_id,page_id},targeting{geo_locations,age_min,age_max,custom_audiences,excluded_custom_audiences,flexible_spec,interests}",
   ad: "id,name,status,effective_status,adset_id,campaign_id",
 };
 
@@ -78,6 +80,7 @@ interface RawEntityNode {
   readonly effective_status?: string;
   readonly daily_budget?: string;
   readonly lifetime_budget?: string;
+  readonly budget_remaining?: string;
   readonly campaign_id?: string;
   readonly adset_id?: string;
   readonly objective?: string;
@@ -277,6 +280,7 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     const adsetId = level === "ad" ? node.adset_id : undefined;
     const dailyBudget = toMajorBudget(node.daily_budget);
     const lifetimeBudget = toMajorBudget(node.lifetime_budget);
+    const budgetRemaining = toMajorBudget(node.budget_remaining);
     const objective = this.deriveObjective(level, node, resolved);
     // público só existe no nível adset (o targeting mora lá).
     const audience = level === "adset" ? audienceFromTargeting(node.targeting) : undefined;
@@ -290,6 +294,7 @@ export class MetaAdsAdapter implements AdsPlatformPort {
       ...(adsetId ? { adsetId } : {}),
       ...(dailyBudget !== undefined ? { dailyBudget } : {}),
       ...(lifetimeBudget !== undefined ? { lifetimeBudget } : {}),
+      ...(budgetRemaining !== undefined ? { budgetRemaining } : {}),
       ...(objective ? { objective } : {}),
       ...(audience ? { audience } : {}),
     };

@@ -516,6 +516,34 @@ describe("account-analysis read-only nodes", () => {
       await n.proposeDrafts(state);
 
       expect(h.insertedRecommendations).toHaveLength(0);
+      // chegou a TENTAR escalar (entrou no try/catch best-effort) — distingue do próximo teste,
+      // onde o sinal de budget barra a oportunidade ANTES de qualquer tentativa.
+      const debug = (h.deps as unknown as { logger: { debug: ReturnType<typeof vi.fn> } }).logger.debug;
+      expect(debug).toHaveBeenCalledWith(expect.anything(), "propose_drafts:pulado");
+    });
+
+    it("P1.2: vencedor com FOLGA de budget CONFIRMADA (atBudgetCeiling=false) → nem gera a oportunidade, não tenta escalar", async () => {
+      const h = makeHarness();
+      const repos = (h.deps as unknown as { _repos: Parameters<typeof makeAccountAnalysisNodes>[1] })._repos;
+      const n = makeAccountAnalysisNodes(h.deps, repos);
+      const state = stateWithCampaign({
+        id: "c1",
+        level: "campaign",
+        name: "Campanha com Folga",
+        status: "active",
+        tier: "winner",
+        eligibility: { hasSignificance: true },
+        healthSignals: [],
+        metrics: { spend: 100 },
+        atBudgetCeiling: false, // sinal REAL confirmado (P1.2) — folga de orçamento
+      });
+
+      await n.proposeDrafts(state);
+
+      expect(h.insertedRecommendations).toHaveLength(0);
+      // NÃO tentou escalar (early-return por falta de oportunidade — nem chega no try/catch).
+      const debug = (h.deps as unknown as { logger: { debug: ReturnType<typeof vi.fn> } }).logger.debug;
+      expect(debug).not.toHaveBeenCalledWith(expect.anything(), "propose_drafts:pulado");
     });
   });
 });

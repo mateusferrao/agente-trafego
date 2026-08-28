@@ -66,6 +66,16 @@ describe("MetaAdsAdapter.listEntities", () => {
     });
   });
 
+  it("P1.2: campaign com lifetime_budget + budget_remaining → mapeia os dois ÷100", async () => {
+    stub({
+      data: [
+        { id: "C2", name: "Camp Vitalícia", effective_status: "ACTIVE", lifetime_budget: "100000", budget_remaining: "15000" },
+      ],
+    });
+    const [e] = await makeAdapter().listEntities(account, "campaign");
+    expect(e).toMatchObject({ id: "C2", lifetimeBudget: 1000, budgetRemaining: 150 });
+  });
+
   it("adset com conversão personalizada → objetivo custom + label resolvido", async () => {
     stub({
       data: [

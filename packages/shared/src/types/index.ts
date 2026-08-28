@@ -32,6 +32,11 @@ export interface AdEntity {
   readonly adsetId?: string;
   readonly dailyBudget?: number;
   readonly lifetimeBudget?: number;
+  /** Saldo restante do `lifetimeBudget` (P1.2) — a Meta já contabiliza (campo `budget_remaining`
+   *  da Graph API); dá o sinal de teto de vitalício SEM precisar de pacing por data (start/stop_time)
+   *  nem de uma query de gasto all-time. Só tem sentido junto de `lifetimeBudget` (budget diário
+   *  não tem "restante" — reseta todo dia). */
+  readonly budgetRemaining?: number;
   /** Objetivo próprio da entidade (o que ela otimiza) — base do CPA/ROAS + intenção p/ análise. */
   readonly objective?: EntityObjective;
   /** Perfil de público do adset (§Bloco 2) — presente só no nível adset, quando há targeting. */
@@ -381,6 +386,15 @@ export interface BenchmarkRef {
 export const OUTCOME_KINDS = ["conversation", "lead", "sale"] as const;
 export type OutcomeKind = (typeof OUTCOME_KINDS)[number];
 
+/** Budget resolvido de uma entidade (P1.2 — sinal de teto de gasto p/ criação proativa). Unidade
+ *  MAIOR da moeda (major), mesma convenção de `AdEntity.dailyBudget`/`lifetimeBudget`. */
+export interface EntityBudget {
+  readonly dailyMajor?: number;
+  readonly lifetimeMajor?: number;
+  /** só presente junto de `lifetimeMajor` — ver `AdEntity.budgetRemaining`. */
+  readonly lifetimeRemainingMajor?: number;
+}
+
 export interface EntitySummary {
   readonly id: string;
   readonly level: EntityLevel;
@@ -391,6 +405,15 @@ export interface EntitySummary {
   readonly flags: readonly string[];
   /** Objetivo da entidade — intenção que conduz a análise (o que "bom" significa aqui). */
   readonly objective?: EntityObjective;
+  /** Campanha-mãe (só adset) — P1.2 agrega budget ABO por-campanha a partir daqui. */
+  readonly campaignId?: string;
+  /** Budget resolvido (P1.2) — CBO: da própria campanha; ABO: ausente aqui (agregado dos
+   *  adsets filhos via `campaignId` em `attachBudgetCeiling`). */
+  readonly budget?: EntityBudget;
+  /** Sinal de teto de gasto (P1.2, só em campanhas) — `true` no teto, `false` com folga,
+   *  ausente = sem dado de budget em lugar nenhum (nem próprio, nem dos adsets ABO). Tri-estado
+   *  honesto: só `true` confirmado autoriza o AUTO-apply autônomo a duplicar/escalar sozinho. */
+  readonly atBudgetCeiling?: boolean;
   /** Perfil de público do adset (§Bloco 2) — estágio + resumo compacto do targeting. */
   readonly audience?: AudienceProfile;
   /** Base de medição vs a conversão de negócio do agente (§Fatia 4). */

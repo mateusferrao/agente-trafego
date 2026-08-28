@@ -29,6 +29,7 @@ import { DEFAULT_QUALITY_THRESHOLDS, type QualityThresholds, enrichEntitiesQuali
 import { detectTrackingHealth } from "../tracking/index.js";
 import { computeWasteReport } from "../waste/index.js";
 import { buildCampaignUnits } from "./campaign-units.js";
+import { attachBudgetCeiling, type BudgetCeilingThresholds } from "../creation/budget-ceiling.js";
 
 export { buildCampaignUnits, type BuildCampaignUnitsInput } from "./campaign-units.js";
 
@@ -373,6 +374,9 @@ export function assembleBrief(input: AssembleBriefInput): AccountBrief {
 export interface BuildAccountBriefInput {
   readonly account: { readonly id: string; readonly name: string; readonly currency: string };
   readonly window: string;
+  /** tamanho da janela em dias (P1.2) — normaliza `metrics.spend` (somado na janela) pra gasto
+   *  médio/dia no sinal de teto de budget. Mesmo valor que gerou `window`/`rows`. */
+  readonly windowDays: number;
   readonly baselineWindow: string;
   readonly goals: AgentGoals;
   readonly entities: readonly AdEntity[];
@@ -393,6 +397,8 @@ export interface BuildAccountBriefInput {
   readonly ctrBands?: CtrBands;
   /** Frequência de alerta override (senão default de plataforma). */
   readonly frequencyAlert?: number;
+  /** Limiares do sinal de teto de budget (P1.2) — default do sistema se ausente. */
+  readonly budgetCeilingThresholds?: BudgetCeilingThresholds;
 }
 
 export type BuildAccountBriefResult =
@@ -452,6 +458,18 @@ export function buildAccountBrief(input: BuildAccountBriefInput): BuildAccountBr
     allByLevel.set(level, summaries);
     selectedByLevel.set(level, rankAndSelect(summaries, input.topN));
   }
+
+  // Sinal de teto de budget (P1.2) — pós-loop porque agrega CAMPANHA×ADSET (ABO), então
+  // precisa dos DOIS níveis já prontos. Re-deriva a seleção de campanha (o topN roda de novo
+  // sobre a lista com `atBudgetCeiling` anexado — ranking em si não muda, o campo é aditivo).
+  const campaignsWithCeiling = attachBudgetCeiling({
+    campaigns: allByLevel.get("campaign") ?? [],
+    adsets: allByLevel.get("adset") ?? [],
+    windowDays: input.windowDays,
+    ...(input.budgetCeilingThresholds ? { thresholds: input.budgetCeilingThresholds } : {}),
+  });
+  allByLevel.set("campaign", campaignsWithCeiling);
+  selectedByLevel.set("campaign", rankAndSelect(campaignsWithCeiling, input.topN));
 
   // Cauda = campanhas não selecionadas (nível primário; evita dupla-contagem entre níveis).
   const aggregatesRest = summarizeRest(
@@ -610,6 +628,15 @@ function toEntitySummary(
   const baseMetrics = base ? computeDerived(base, objective, override) : undefined;
   const funnel = computeFunnelSummary(funnelByKey.get(`${n.level}:${n.entityId}`) ?? []);
   const { basis, proxy } = resolveBasis(n, objective, override, metrics);
+  // budget resolvido (P1.2) — CBO/próprio; ABO agrega via `campaignId` em `attachBudgetCeiling`.
+  const hasBudget = entity?.dailyBudget !== undefined || entity?.lifetimeBudget !== undefined;
+  const budget = hasBudget
+    ? {
+        ...(entity?.dailyBudget !== undefined ? { dailyMajor: entity.dailyBudget } : {}),
+        ...(entity?.lifetimeBudget !== undefined ? { lifetimeMajor: entity.lifetimeBudget } : {}),
+        ...(entity?.budgetRemaining !== undefined ? { lifetimeRemainingMajor: entity.budgetRemaining } : {}),
+      }
+    : undefined;
   return {
     id: n.entityId,
     level: n.level,
@@ -623,6 +650,8 @@ function toEntitySummary(
     ...(entity?.audience ? { audience: entity.audience } : {}),
     ...(proxy ? { proxy } : {}),
     ...(funnel ? { funnel } : {}),
+    ...(entity?.campaignId ? { campaignId: entity.campaignId } : {}),
+    ...(budget ? { budget } : {}),
   };
 }
 

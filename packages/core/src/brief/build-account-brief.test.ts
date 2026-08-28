@@ -32,6 +32,7 @@ function baseInput(overrides: Partial<BuildAccountBriefInput> = {}): BuildAccoun
   return {
     account: { id: "act_1", name: "Conta Teste", currency: "BRL" },
     window: "últimos 7 dias",
+    windowDays: 7,
     baselineWindow: "7 dias anteriores",
     goals: { targetCPA: 50 },
     entities,
@@ -174,6 +175,7 @@ describe("buildAccountBrief", () => {
       return {
         account: { id: "act_1", name: "Conta", currency: "BRL" },
         window: "últimos 7 dias",
+        windowDays: 7,
         baselineWindow: "7 dias anteriores",
         goals: { targetCPA: 150, conversionGoal: "purchase" }, // meta de VENDA
         entities: msgEntities,

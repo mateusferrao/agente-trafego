@@ -326,6 +326,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const built = buildAccountBrief({
       account: { id: state.account.metaAdAccountId, name: state.account.name, currency: state.account.currency },
       window: state.window.label,
+      windowDays: cfg.windowDays,
       baselineWindow: state.baseline.label,
       goals: state.goals,
       entities: state.entities,
@@ -696,9 +697,10 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       name: c.name,
       ...(c.tier ? { tier: c.tier } : {}),
       significant: c.eligibility?.hasSignificance ?? false,
-      // atBudgetCeiling omitido (undefined): o brief não carrega budget/teto ainda, então
-      // não simulamos o sinal — um vencedor provado é proposto pro humano revisar (§8). Só
-      // um `false` explícito (folga de budget) bloquearia. Plumbar budget = follow-up.
+      // P1.2: sinal REAL (CBO/ABO/vitalício, attachBudgetCeiling no brief) — `undefined` só
+      // quando genuinamente indeterminável (sem budget em lugar nenhum); nesse caso um vencedor
+      // provado ainda é proposto pro humano revisar (§8), mas o AUTO-apply exige `true` confirmado.
+      ...(c.atBudgetCeiling !== undefined ? { atBudgetCeiling: c.atBudgetCeiling } : {}),
       fatigued: (c.healthSignals ?? []).some((h) => h === "creative_fatigue" || h === "audience_saturation"),
       spending: (c.metrics?.spend ?? 0) > 0,
     }));
