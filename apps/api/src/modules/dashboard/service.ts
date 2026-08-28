@@ -378,7 +378,7 @@ export function createDashboardService(deps: DashboardDeps) {
 
       const events: ActivityEvent[] = [];
       for (const r of rows) {
-        const args = r.args as { target?: { name?: string; id?: string }; dryRun?: boolean };
+        const args = r.args as { target?: { name?: string; id?: string; level?: string }; dryRun?: boolean };
         if (args.dryRun === true) continue; // simulado não é mudança real
         events.push({
           id: r.id,
@@ -386,7 +386,9 @@ export function createDashboardService(deps: DashboardDeps) {
           accountName: r.accountName ?? r.accountId,
           type: r.toolKey === UNDO_TOOL_KEY ? "action_rolled_back" : "action_applied",
           toolKey: r.toolKey,
+          // nome AMIGÁVEL só (o front cai pro tipo de entidade quando é um id cru).
           entityName: args.target?.name ?? args.target?.id ?? null,
+          entityLevel: args.target?.level ?? null,
           at: r.at.toISOString(),
           fromChat: r.runId === null,
         });

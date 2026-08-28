@@ -7,6 +7,8 @@ export const ACTION_TYPE_LABEL: Record<string, string> = {
   resume_entity: 'Retomar',
   adjust_budget: 'Ajustar orçamento',
   set_status: 'Mudar status',
+  create_campaign: 'Criar campanha',
+  duplicate_scale: 'Duplicar para escalar',
 };
 export const ENTITY_LEVEL_LABEL: Record<string, string> = {
   campaign: 'campanha',
@@ -21,6 +23,20 @@ export const UNDO_WARNING =
 /** Rótulo legível do tipo de ação (o toolKey vem cru do backend). */
 export function actionTypeLabel(type: string): string {
   return ACTION_TYPE_LABEL[type] ?? type;
+}
+
+/** Nome de entidade "amigável"? Um id cru da Meta (só dígitos) não é — não mostrar ao usuário. */
+export function friendlyEntityName(name: string | null | undefined): string | null {
+  if (!name) return null;
+  return /^\d+$/.test(name.trim()) ? null : name;
+}
+
+/**
+ * O que mostrar pra uma entidade num feed: o NOME amigável quando há; senão o TIPO
+ * ("anúncio"/"conjunto"/"campanha") — nunca o id cru da Meta. `null` = nada a mostrar.
+ */
+export function entityDisplay(name: string | null | undefined, level: string | null | undefined): string | null {
+  return friendlyEntityName(name) ?? (level ? ENTITY_LEVEL_LABEL[level] ?? level : null);
 }
 
 /** "campanha <nome>" (cai pro id cru quando não há nome). */

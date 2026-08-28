@@ -19,6 +19,7 @@ const actionEvent = <T extends string>(type: T) =>
     toolCallId: z.string(),
     toolKey: z.string(),
     entityName: z.string().nullable(),
+    entityLevel: z.string().nullable(),
     fromChat: z.boolean(),
     simulated: z.boolean(),
   });
@@ -31,6 +32,7 @@ const approvalEvent = <T extends string>(type: T) =>
     approvalId: z.string(),
     actionType: z.string(),
     entityName: z.string().nullable(),
+    entityLevel: z.string().nullable(),
   });
 
 /** Evento de rascunho de campanha (Fatia 7 — proposto/criado). */

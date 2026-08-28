@@ -123,7 +123,7 @@ export function createTimelineService(deps: TimelineDeps) {
         .limit(SOURCE_CAP);
 
       for (const r of tcRows) {
-        const args = r.args as { target?: { name?: string; id?: string }; dryRun?: boolean };
+        const args = r.args as { target?: { name?: string; id?: string; level?: string }; dryRun?: boolean };
         events.push({
           id: `tc:${r.id}`,
           at: r.at.toISOString(),
@@ -131,6 +131,7 @@ export function createTimelineService(deps: TimelineDeps) {
           toolCallId: r.id,
           toolKey: r.toolKey,
           entityName: args.target?.name ?? args.target?.id ?? null,
+          entityLevel: args.target?.level ?? null,
           fromChat: r.runId === null,
           simulated: args.dryRun === true,
         });
@@ -158,7 +159,7 @@ export function createTimelineService(deps: TimelineDeps) {
         // só entram aprovações de AÇÃO (actionType set).
         if (r.actionType === null) continue;
         const at = (r.resolvedAt ?? r.createdAt).toISOString();
-        const action = r.action as { target?: { name?: string; id?: string } } | null;
+        const action = r.action as { target?: { name?: string; id?: string; level?: string } } | null;
         events.push({
           id: `ap:${r.id}`,
           at,
@@ -166,6 +167,7 @@ export function createTimelineService(deps: TimelineDeps) {
           approvalId: r.id,
           actionType: r.actionType,
           entityName: action?.target?.name ?? action?.target?.id ?? null,
+          entityLevel: action?.target?.level ?? null,
         });
       }
 
