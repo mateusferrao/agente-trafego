@@ -25,13 +25,19 @@ import { AccountContextStore } from "./account-context.store";
   ],
   template: `
     <div class="flex flex-col gap-6">
+      <!-- Mobile (<920px, mesmo breakpoint do ui-page-header): o perfil do agente vai
+           acima de tudo, canto superior esquerdo — no desktop some daqui e reaparece
+           ao lado dos botões (abaixo), onde já cabe sem empurrar o título. -->
+      <div class="flex items-center gap-2.5 min-[920px]:hidden">
+        <app-ui-agent-identity [status]="store.paused() ? 'paused' : 'active'" />
+      </div>
       <div class="flex flex-col gap-1">
         <a routerLink="/accounts" class="text-xs text-muted hover:text-ink">← Contas</a>
         <app-ui-page-header [title]="store.accountName()" [subtitle]="store.accountSubtitle()">
           <div class="flex flex-col items-end gap-2" actions>
-            <!-- Perfil do agente: avatar com anel de status (verde/âmbar) + nome, linha
-                 própria acima dos botões — não compete com as ações como um controle a mais. -->
-            <app-ui-agent-identity [status]="store.paused() ? 'paused' : 'active'" />
+            <div class="hidden min-[920px]:flex">
+              <app-ui-agent-identity [status]="store.paused() ? 'paused' : 'active'" />
+            </div>
             <div class="flex flex-wrap items-center gap-2">
               <button
                 appButton
