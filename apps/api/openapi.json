@@ -6740,16 +6740,100 @@
           "createdAt"
         ]
       },
-      "SetDraftCreativeInput": {
+      "ServingCreativeOutput": {
         "type": "object",
         "properties": {
-          "assetId": {
+          "adId": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "copy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cta": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tier": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "format": {
             "type": "string",
-            "minLength": 1
+            "enum": [
+              "image",
+              "video"
+            ]
+          },
+          "thumbnailUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
-          "assetId"
+          "adId",
+          "title",
+          "copy",
+          "cta",
+          "tier",
+          "format",
+          "thumbnailUrl"
+        ]
+      },
+      "SetDraftCreativeInput": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "asset"
+                ]
+              },
+              "assetId": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "kind",
+              "assetId"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "serving"
+                ]
+              },
+              "adId": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "kind",
+              "adId"
+            ]
+          }
         ]
       },
       "SetDraftCreativeOutput": {
@@ -8762,6 +8846,38 @@
                   "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/CreativeAssetOutput"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/serving-creatives": {
+      "get": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "anúncios ao vivo da conta oferecidos como reuse (só vídeo)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ServingCreativeOutput"
                   }
                 }
               }

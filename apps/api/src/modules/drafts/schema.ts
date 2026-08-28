@@ -83,11 +83,33 @@ export const scaleWinnerOutput = z.discriminatedUnion("move", [
 ]);
 export type ScaleWinnerOutput = z.infer<typeof scaleWinnerOutput>;
 
-/** Troca o criativo de um rascunho from_scratch (picker "trocar criativo"). */
-export const setDraftCreativeInput = z.object({ assetId: z.string().min(1) });
+/**
+ * Troca o criativo de um rascunho from_scratch (picker "trocar criativo"). União discriminada:
+ * `asset` = um upload da biblioteca (uuid de creative_assets); `serving` = reuse de um anúncio
+ * AO VIVO da conta (ad id da Meta) — o serviço busca o video_id fresco. Reuse de vídeo cobre o
+ * caso comum; imagem ao vivo = fast-follow (falta image_hash).
+ */
+export const setDraftCreativeInput = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("asset"), assetId: z.string().min(1) }),
+  z.object({ kind: z.literal("serving"), adId: z.string().min(1) }),
+]);
 export type SetDraftCreativeInput = z.infer<typeof setDraftCreativeInput>;
 export const setDraftCreativeOutput = z.object({ ok: z.boolean() });
 export type SetDraftCreativeOutput = z.infer<typeof setDraftCreativeOutput>;
+
+/** Um anúncio AO VIVO da conta oferecido como candidato de reuse no picker (lê ad_creatives). */
+export const servingCreativeOutput = z.object({
+  adId: z.string(),
+  title: z.string().nullable(),
+  copy: z.string().nullable(),
+  cta: z.string().nullable(),
+  tier: z.string().nullable(),
+  /** só vídeo é reusável ao vivo hoje (imagem precisa de image_hash — fast-follow). */
+  format: z.enum(["image", "video"]),
+  thumbnailUrl: z.string().nullable(),
+});
+export type ServingCreativeOutput = z.infer<typeof servingCreativeOutput>;
+export const servingCreativesListOutput = z.array(servingCreativeOutput);
 
 /** Um asset da biblioteca de criativos (aba Criativos). */
 export const creativeAssetOutput = z.object({

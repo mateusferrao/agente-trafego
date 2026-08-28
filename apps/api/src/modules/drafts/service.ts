@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { and, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   adAccounts,
+  adCreatives,
   agents,
   agentToolBindings,
   campaignDrafts,
@@ -10,7 +11,7 @@ import {
   platformConnections,
   type Database,
 } from "@trafego/db";
-import { planScaleMove, resolveEnabledTools, type BudgetLevel, type ScaleAggressivePreference } from "@trafego/core";
+import { planScaleMove, rankAdCreatives, resolveEnabledTools, type BudgetLevel, type ScaleAggressivePreference } from "@trafego/core";
 import type { ToolBindingMode } from "@trafego/shared";
 import {
   ACTION_PARAM_MODE,
@@ -32,6 +33,8 @@ import type {
   DraftApprovalOutput,
   ScaleWinnerInput,
   ScaleWinnerOutput,
+  ServingCreativeOutput,
+  SetDraftCreativeInput,
   UploadCreativeArgs,
   UploadCreativeOutput,
 } from "./schema.js";
@@ -113,6 +116,46 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       scaleAggressivePreference: row.autonomyPolicy?.scaleAggressivePreference ?? "ask",
       enabled,
     };
+  }
+
+  /** Ref de reuse de um upload da BIBLIOTECA (uuid). Só `ready` + não-arquivado da mesma conta. */
+  async function resolveLibraryCreative(orgId: OrgId, accountId: string, assetId: string): Promise<CreativeAssetRef | null> {
+    const [asset] = await deps.db
+      .select({
+        format: creativeAssets.format,
+        origin: creativeAssets.origin,
+        status: creativeAssets.status,
+        metaImageHash: creativeAssets.metaImageHash,
+        metaVideoId: creativeAssets.metaVideoId,
+      })
+      .from(creativeAssets)
+      .where(
+        and(
+          eq(creativeAssets.id, assetId),
+          eq(creativeAssets.orgId, orgId),
+          eq(creativeAssets.adAccountId, accountId),
+          isNull(creativeAssets.archivedAt),
+        ),
+      )
+      .limit(1);
+    if (!asset || asset.status !== "ready") return null;
+    return {
+      assetId,
+      format: asset.format,
+      origin: asset.origin,
+      ...(asset.metaImageHash ? { metaImageHash: asset.metaImageHash } : {}),
+      ...(asset.metaVideoId ? { metaVideoId: asset.metaVideoId } : {}),
+    };
+  }
+
+  /** Ref de reuse de um anúncio AO VIVO (ad id da Meta): busca o video_id FRESCO (não o
+   *  ad_creatives stale). Só vídeo hoje — imagem ao vivo precisa de image_hash (fast-follow). */
+  async function resolveServingCreative(orgId: OrgId, accountId: string, adId: string): Promise<CreativeAssetRef | null> {
+    const ctx = await loadScaleContext(orgId, accountId);
+    if (!ctx) return null;
+    const [c] = await deps.adsPlatform.getCreatives(ctx.ref, [adId]);
+    if (!c?.videoId) return null;
+    return { assetId: adId, format: "video", origin: "reuse", metaVideoId: c.videoId };
   }
 
   return {
@@ -316,13 +359,14 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       }));
     },
 
-    /** Troca o criativo de um rascunho `from_scratch` proposto (picker "trocar criativo").
-     *  Org-scoped; só rascunho aberto + asset pronto da mesma conta. null → 404 (não editável). */
+    /** Troca o criativo de um rascunho `from_scratch` proposto (picker "trocar criativo"). Org-scoped;
+     *  só rascunho aberto da mesma conta. `asset` = upload da biblioteca; `serving` = reuse de um
+     *  anúncio ao vivo (busca o video_id FRESCO). null → 404 (não editável / criativo inválido). */
     async setDraftCreative(
       orgId: OrgId,
       accountId: string,
       draftId: string,
-      assetId: string,
+      input: SetDraftCreativeInput,
     ): Promise<{ ok: true } | null> {
       const [draft] = await deps.db
         .select({ spec: campaignDrafts.spec, kind: campaignDrafts.kind, status: campaignDrafts.status })
@@ -336,38 +380,49 @@ export function createDraftsService(deps: DraftsServiceDeps) {
         )
         .limit(1);
       if (!draft || draft.status !== "proposed" || draft.kind !== "from_scratch") return null;
-      const [asset] = await deps.db
-        .select({
-          format: creativeAssets.format,
-          origin: creativeAssets.origin,
-          status: creativeAssets.status,
-          metaImageHash: creativeAssets.metaImageHash,
-          metaVideoId: creativeAssets.metaVideoId,
-        })
-        .from(creativeAssets)
-        .where(
-          and(
-            eq(creativeAssets.id, assetId),
-            eq(creativeAssets.orgId, orgId),
-            eq(creativeAssets.adAccountId, accountId),
-            isNull(creativeAssets.archivedAt), // não deixa o picker escolher um arquivado
-          ),
-        )
-        .limit(1);
-      if (!asset || asset.status !== "ready") return null;
+      const creative =
+        input.kind === "asset"
+          ? await resolveLibraryCreative(orgId, accountId, input.assetId)
+          : await resolveServingCreative(orgId, accountId, input.adId);
+      if (!creative) return null;
       const spec = draft.spec as CampaignDraftSpec;
-      const creative: CreativeAssetRef = {
-        assetId,
-        format: asset.format,
-        origin: asset.origin,
-        ...(asset.metaImageHash ? { metaImageHash: asset.metaImageHash } : {}),
-        ...(asset.metaVideoId ? { metaVideoId: asset.metaVideoId } : {}),
-      };
       await deps.db
         .update(campaignDrafts)
         .set({ spec: { ...spec, creative } })
         .where(eq(campaignDrafts.id, draftId));
       return { ok: true };
+    },
+
+    /** Anúncios AO VIVO da conta oferecidos como candidatos de reuse no picker (lê ad_creatives,
+     *  ranqueado campeã→pior). Só VÍDEO por ora (imagem ao vivo precisa de image_hash — fast-follow);
+     *  o pick fresco (setDraftCreative serving) confirma o video_id atual. */
+    async listServingCreatives(orgId: OrgId, accountId: string): Promise<ServingCreativeOutput[]> {
+      const rows = await deps.db
+        .select({
+          adId: adCreatives.adId,
+          title: adCreatives.title,
+          body: adCreatives.body,
+          callToAction: adCreatives.callToAction,
+          tier: adCreatives.tier,
+          videoId: adCreatives.videoId,
+          thumbnailUrl: adCreatives.thumbnailUrl,
+          spend: adCreatives.spend,
+          cpa: adCreatives.cpa,
+          roas: adCreatives.roas,
+        })
+        .from(adCreatives)
+        .where(and(eq(adCreatives.adAccountId, accountId), eq(adCreatives.orgId, orgId)));
+      return rankAdCreatives(rows)
+        .filter((r) => r.videoId) // reusável ao vivo = vídeo (imagem = fast-follow)
+        .map((r) => ({
+          adId: r.adId,
+          title: r.title,
+          copy: r.body,
+          cta: r.callToAction,
+          tier: r.tier,
+          format: "video" as const,
+          thumbnailUrl: r.thumbnailUrl,
+        }));
     },
 
     /** Blob original de um criativo (preview). Org-scoped pelo assetId — nunca confia em ref

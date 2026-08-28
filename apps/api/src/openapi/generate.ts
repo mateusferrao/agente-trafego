@@ -89,6 +89,7 @@ import {
   draftApprovalOutput,
   scaleWinnerInput,
   scaleWinnerOutput,
+  servingCreativeOutput,
   uploadCreativeOutput,
   setDraftCreativeInput,
   setDraftCreativeOutput,
@@ -174,6 +175,7 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const ScaleWinnerInput = registry.register("ScaleWinnerInput", scaleWinnerInput);
   const ScaleWinnerOutput = registry.register("ScaleWinnerOutput", scaleWinnerOutput);
   const CreativeAssetOutput = registry.register("CreativeAssetOutput", creativeAssetOutput);
+  const ServingCreativeOutput = registry.register("ServingCreativeOutput", servingCreativeOutput);
   const SetDraftCreativeInput = registry.register("SetDraftCreativeInput", setDraftCreativeInput);
 const SetDraftCreativeOutput = registry.register("SetDraftCreativeOutput", setDraftCreativeOutput);
   const UploadCreativeOutput = registry.register("UploadCreativeOutput", uploadCreativeOutput);
@@ -700,6 +702,13 @@ const SetDraftCreativeOutput = registry.register("SetDraftCreativeOutput", setDr
     tags: ["drafts"],
     request: { params: z.object({ id: z.string() }) },
     responses: { 200: jsonRes("biblioteca de criativos da conta", z.array(CreativeAssetOutput)) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts/{id}/serving-creatives",
+    tags: ["drafts"],
+    request: { params: z.object({ id: z.string() }) },
+    responses: { 200: jsonRes("anúncios ao vivo da conta oferecidos como reuse (só vídeo)", z.array(ServingCreativeOutput)) },
   });
   registry.registerPath({
     method: "post",

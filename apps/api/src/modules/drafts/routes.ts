@@ -24,13 +24,20 @@ export const draftsRoutes: FastifyPluginAsync = async (app) => {
     return result;
   });
 
-  // Troca o criativo de um rascunho from_scratch proposto (picker "trocar criativo").
+  // Troca o criativo de um rascunho from_scratch proposto (picker "trocar criativo"). Body =
+  // união { kind:'asset', assetId } (biblioteca) | { kind:'serving', adId } (reuse ao vivo).
   app.post("/accounts/:id/drafts/:draftId/creative", guard, async (request, reply) => {
     const { id, draftId } = request.params as { id: string; draftId: string };
     const input = setDraftCreativeInput.parse(request.body);
-    const result = await service.setDraftCreative(orgIdOf(request) as OrgId, id, draftId, input.assetId);
+    const result = await service.setDraftCreative(orgIdOf(request) as OrgId, id, draftId, input);
     if (!result) return reply.status(404).send({ message: "não consegui trocar o criativo desse rascunho" });
     return result;
+  });
+
+  // Anúncios ao vivo da conta oferecidos como reuse no picker (só vídeo hoje). Lê ad_creatives.
+  app.get("/accounts/:id/serving-creatives", guard, async (request) => {
+    const { id } = request.params as { id: string };
+    return service.listServingCreatives(orgIdOf(request) as OrgId, id);
   });
 
   // Miniatura do criativo do rascunho (card /approvals). Org-scoped pelo draftId. upload → blob

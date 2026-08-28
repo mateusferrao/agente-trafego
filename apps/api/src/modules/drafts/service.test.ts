@@ -170,3 +170,41 @@ describe("getDraftCreativeThumb (miniatura do criativo do rascunho)", () => {
     expect(await service.getDraftCreativeThumb(ORG, "acc", "draft-dup")).toBeNull();
   });
 });
+
+describe("listServingCreatives (candidatos de reuse no picker: só vídeo, ranqueado)", () => {
+  /** fakeDb p/ select→from→where AWAITADO (sem .limit). */
+  function fakeDbAwait(rows: unknown[]) {
+    return {
+      select: () => ({ from: () => ({ where: () => ({ then: (r: (v: unknown[]) => void) => r(rows) }) }) }),
+    } as never;
+  }
+  function makeServingService(rows: unknown[]) {
+    return createDraftsService({
+      db: fakeDbAwait(rows),
+      adsPlatform: {} as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+  }
+
+  it("filtra p/ VÍDEO (imagem ao vivo = fast-follow) e mapeia campos", async () => {
+    const service = makeServingService([
+      { adId: "vid_win", title: "Campeão", body: "copy campeã", callToAction: "WHATSAPP", tier: "winner", videoId: "V1", thumbnailUrl: "u1", spend: 100, cpa: 2, roas: 5 },
+      { adId: "img_ad", title: "Imagem", body: "x", callToAction: null, tier: "performer", videoId: null, thumbnailUrl: "u2", spend: 50, cpa: 4, roas: 3 },
+    ]);
+    const out = await service.listServingCreatives(ORG, "acc");
+    expect(out).toHaveLength(1); // a imagem (videoId null) sai
+    expect(out[0]).toMatchObject({ adId: "vid_win", format: "video", copy: "copy campeã", cta: "WHATSAPP", tier: "winner" });
+  });
+
+  it("ranqueia campeã→pior (winner antes de performer)", async () => {
+    const service = makeServingService([
+      { adId: "perf", title: null, body: null, callToAction: null, tier: "performer", videoId: "V2", thumbnailUrl: null, spend: 30, cpa: 6, roas: 2 },
+      { adId: "win", title: null, body: null, callToAction: null, tier: "winner", videoId: "V1", thumbnailUrl: null, spend: 100, cpa: 2, roas: 5 },
+    ]);
+    const out = await service.listServingCreatives(ORG, "acc");
+    expect(out.map((c) => c.adId)).toEqual(["win", "perf"]);
+  });
+});

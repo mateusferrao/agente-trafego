@@ -6,7 +6,7 @@ import { AnalysisApiService } from '@core/api/analysis-api.service';
 import { ApprovalsApiService } from '@core/api/approvals-api.service';
 import { DraftsApiService } from '@core/api/drafts-api.service';
 import { AGENT_NAME } from '@core/brand';
-import type { ApprovalOutput, DraftApprovalOutput, RevertibleActionOutput } from '@core/api/generated';
+import type { ApprovalOutput, DraftApprovalOutput, RevertibleActionOutput, SetDraftCreativeInput } from '@core/api/generated';
 import { UNDO_WARNING, actionTypeLabel, deadlineText, entityTargetLabel } from '@app/shared/action-format';
 import { conversionLabel } from '@app/shared/conversion-label';
 import { money } from '@app/shared/format';
@@ -326,10 +326,10 @@ export class ApprovalsPage implements OnInit {
     this.pickerFor.update((cur) => (cur === d.id ? null : d.id));
   }
 
-  /** Troca o criativo do rascunho pelo asset escolhido no picker. */
-  protected onPickCreative(d: DraftApprovalOutput, assetId: string): void {
+  /** Troca o criativo do rascunho pela escolha do picker (biblioteca × reuse ao vivo). */
+  protected onPickCreative(d: DraftApprovalOutput, choice: SetDraftCreativeInput): void {
     this.pickingCreative.set(true);
-    this.draftsApi.setDraftCreative(d.accountId, d.draftId, { assetId }).subscribe({
+    this.draftsApi.setDraftCreative(d.accountId, d.draftId, choice).subscribe({
       next: () => {
         this.pickingCreative.set(false);
         this.pickerFor.set(null);

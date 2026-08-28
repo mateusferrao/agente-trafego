@@ -6,6 +6,7 @@ import type {
   DraftApprovalOutput,
   ScaleWinnerInput,
   ScaleWinnerOutput,
+  ServingCreativeOutput,
   SetDraftCreativeInput,
   SetDraftCreativeOutput,
   UploadCreativeOutput,
@@ -45,6 +46,11 @@ export class DraftsApiService extends BaseApiService {
   /** `GET /api/accounts/:id/creatives` — biblioteca de criativos da conta. */
   listCreatives(accountId: string): Observable<CreativeAssetOutput[]> {
     return this.get<CreativeAssetOutput[]>(['/accounts', accountId, 'creatives']);
+  }
+
+  /** `GET /api/accounts/:id/serving-creatives` — anúncios ao vivo (reuse no picker; só vídeo). */
+  listServingCreatives(accountId: string): Observable<ServingCreativeOutput[]> {
+    return this.get<ServingCreativeOutput[]>(['/accounts', accountId, 'serving-creatives']);
   }
 
   /** URL da rota autenticada de blob (preview) — mesma origem/proxy da API. */
