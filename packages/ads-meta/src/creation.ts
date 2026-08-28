@@ -112,12 +112,17 @@ export class MetaCreationService {
     if (!copiedId) {
       throw new Error("Meta /copies não retornou o id da cópia");
     }
-    // filhos copiados = os do tipo "ad" (o adset copiado é o copiedId, não um filho).
-    const childIds = (data.ad_object_ids ?? [])
-      .filter((p) => p.ad_object_type === "ad")
-      .map((p) => p.copied_id)
-      .filter((id): id is string => typeof id === "string");
-    return { copiedId, childIds };
+    // filhos copiados por tipo: "ad" = os anúncios; "ad_set" = adsets intermediários (só no
+    // deep_copy de CAMPANHA — o próprio copiedId é a campanha, não um adset). Ambos nascem
+    // pausados e precisam ser ativados junto (a ativação resume a ÁRVORE inteira).
+    const copiedByType = (type: string): string[] =>
+      (data.ad_object_ids ?? [])
+        .filter((p) => p.ad_object_type === type)
+        .map((p) => p.copied_id)
+        .filter((id): id is string => typeof id === "string");
+    // o adset-raiz (quando se duplica um adset) É o copiedId — não relistar como intermediário.
+    const childAdsetIds = copiedByType("ad_set").filter((id) => id !== copiedId);
+    return { copiedId, childIds: copiedByType("ad"), childAdsetIds };
   }
 
   /** Define o budget diário absoluto de uma entidade (unidade mínima). Idempotente (set). */

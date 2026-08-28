@@ -45,6 +45,24 @@ describe("MetaCreationService.duplicateEntity", () => {
     });
     expect(res.copiedId).toBe("AS_NEW");
     expect(res.childIds).toEqual(["AD1_NEW", "AD2_NEW"]);
+    // o adset-raiz É o copiedId — não relistado como intermediário.
+    expect(res.childAdsetIds).toEqual([]);
+  });
+
+  it("deep_copy de CAMPANHA → childAdsetIds tem os adsets intermediários (ativar a árvore inteira)", async () => {
+    stubGraph({
+      copied_campaign_id: "C_NEW",
+      ad_object_ids: [
+        { ad_object_type: "campaign", source_id: "C1", copied_id: "C_NEW" },
+        { ad_object_type: "ad_set", source_id: "AS1", copied_id: "AS1_NEW" },
+        { ad_object_type: "ad_set", source_id: "AS2", copied_id: "AS2_NEW" },
+        { ad_object_type: "ad", source_id: "AD1", copied_id: "AD1_NEW" },
+      ],
+    });
+    const res = await svc().duplicateEntity(account, { sourceLevel: "campaign", sourceId: "C1", status: "paused" });
+    expect(res.copiedId).toBe("C_NEW");
+    expect(res.childAdsetIds).toEqual(["AS1_NEW", "AS2_NEW"]);
+    expect(res.childIds).toEqual(["AD1_NEW"]);
   });
 
   it("duplicateEntity NÃO aplica budget (passo separado) — só /copies", async () => {

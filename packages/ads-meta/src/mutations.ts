@@ -1,4 +1,4 @@
-import type { Action } from "@trafego/shared/types";
+import type { Action, EntityLevel } from "@trafego/shared/types";
 import type { AdAccountRef, MutateOptions, MutationResult, RestoreResult } from "@trafego/shared/ports";
 import {
   ACTION_PARAM_AMOUNT_MINOR,
@@ -25,8 +25,11 @@ const MIN_BUDGET_MINOR = 100;
 
 type EntityState = Record<string, unknown>;
 
-/** Campos lidos p/ before-image (status + budgets). */
+/** Campos lidos p/ before-image (status + budgets). ANÚNCIO não tem budget (o orçamento vive no
+ *  adset/campanha) — pedir `daily_budget`/`lifetime_budget` num ad = erro Meta #100. */
 const STATE_FIELDS = "status,effective_status,daily_budget,lifetime_budget";
+const AD_STATE_FIELDS = "status,effective_status";
+const stateFieldsFor = (level: EntityLevel | undefined): string => (level === "ad" ? AD_STATE_FIELDS : STATE_FIELDS);
 
 /** Mudança computada: campos a escrever + se o alvo já está no estado desejado. */
 interface Change {
@@ -44,7 +47,7 @@ export class MetaMutationsService {
   /** Aplica a ação e retorna before/after (rollback). Idempotente por leitura.
    *  `dryRun` → lê + computa o after, mas NÃO escreve (ensaio). */
   async mutate(account: AdAccountRef, action: Action, opts?: MutateOptions): Promise<MutationResult> {
-    const before = await this.readEntityState(account, action.target.id);
+    const before = await this.readEntityState(account, action.target.id, action.target.level);
     const change = computeChange(action, before);
     // after = intenção aplicada sobre o before (evita 2º GET; o undo restaura o before).
     const after: EntityState = change.alreadyThere ? before : { ...before, ...change.params };
@@ -65,13 +68,14 @@ export class MetaMutationsService {
     return { before: current, after: { ...current, ...fields } };
   }
 
-  /** Lê o estado atual da entidade (status + budgets) p/ before-image. */
-  async readEntityState(account: AdAccountRef, entityId: string): Promise<EntityState> {
+  /** Lê o estado atual da entidade (status + budgets) p/ before-image. `level` opcional: "ad"
+   *  omite os campos de budget (que não existem no anúncio) — evita o erro Meta #100. */
+  async readEntityState(account: AdAccountRef, entityId: string, level?: EntityLevel): Promise<EntityState> {
     const res = await this.client.request<EntityState>({
       method: "GET",
       path: entityId,
       accessToken: account.accessToken,
-      params: { fields: STATE_FIELDS },
+      params: { fields: stateFieldsFor(level) },
     });
     return res.data;
   }

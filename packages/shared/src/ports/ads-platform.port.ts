@@ -56,10 +56,13 @@ export interface DuplicateEntityInput {
   readonly renameSuffix?: string;
 }
 
-/** Resultado da duplicação — id da cópia + filhos criados (idempotência/retomada). */
+/** Resultado da duplicação — id da cópia + filhos criados (idempotência/retomada). `childIds`
+ *  = ads copiados; `childAdsetIds` = adsets copiados INTERMEDIÁRIOS (só existem no deep_copy de
+ *  CAMPANHA — precisam ser ativados junto, senão travam a entrega mesmo com campanha+ads ativos). */
 export interface DuplicateResult {
   readonly copiedId: string;
   readonly childIds: readonly string[];
+  readonly childAdsetIds: readonly string[];
 }
 
 // ─── Criar do zero (saga granular — a casca orquestra + persiste ids parciais) ───
