@@ -220,6 +220,22 @@ export class MetaCreationService {
     return { creativeId };
   }
 
+  /**
+   * Campanha-mãe de um adset + seu orçamento diário (unidade mínima). Usado pra escalar um
+   * vencedor sob CBO (orçamento na campanha, não no adset). `null` se não resolver a campanha.
+   */
+  async getAdSetCampaignBudget(account: AdAccountRef, adsetId: string): Promise<{ campaignId: string; dailyBudgetMinor: number } | null> {
+    const { data } = await this.client.request<{ campaign?: { id?: string; daily_budget?: string } }>({
+      method: "GET",
+      path: adsetId,
+      accessToken: account.accessToken,
+      params: { fields: "campaign{id,daily_budget}" },
+    });
+    const c = data.campaign;
+    if (!c?.id) return null;
+    return { campaignId: c.id, dailyBudgetMinor: Number(c.daily_budget ?? 0) };
+  }
+
   /** Capa (thumbnail) de um vídeo — a preferida da Meta, senão a 1ª. Usada como `image_url`
    *  obrigatório no `video_data`. Falha → undefined (o caller decide se ainda tenta criar). */
   private async fetchVideoThumbnailUrl(account: AdAccountRef, videoId: string): Promise<string | undefined> {

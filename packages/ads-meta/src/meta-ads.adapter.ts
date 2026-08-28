@@ -337,6 +337,14 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     }
   }
 
+  async getAdSetCampaignBudget(account: AdAccountRef, adsetId: string): Promise<{ campaignId: string; dailyBudgetMinor: number } | null> {
+    try {
+      return await this.creation.getAdSetCampaignBudget(account, adsetId);
+    } catch (error) {
+      throw toAdsError(error);
+    }
+  }
+
   async mutate(account: AdAccountRef, action: Action, opts?: MutateOptions): Promise<MutationResult> {
     try {
       // gate de cooldown nos writes (parcial-rápido): cooldown ativo → não escreve.

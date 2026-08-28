@@ -176,6 +176,9 @@ export interface AdsPlatformPort {
   getCreatives(account: AdAccountRef, adIds: readonly string[]): Promise<Creative[]>;
   /** Frames HD (URLs) de um vídeo por `video_id` — p/ a visão de criativo da biblioteca. */
   getVideoFrames(account: AdAccountRef, videoId: string): Promise<string[]>;
+  /** Campanha-mãe de um adset + seu orçamento diário (minor) — p/ escalar vencedor sob CBO
+   *  (orçamento na campanha, não no adset). `null` se a campanha não resolver. */
+  getAdSetCampaignBudget(account: AdAccountRef, adsetId: string): Promise<{ campaignId: string; dailyBudgetMinor: number } | null>;
   /** Aplica uma mutação idempotente; retorna before/after p/ rollback. `dryRun`
    *  (opcional) só simula (lê + computa o after, não escreve). */
   mutate(account: AdAccountRef, action: Action, opts?: MutateOptions): Promise<MutationResult>;

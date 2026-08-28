@@ -4,8 +4,8 @@
 // apply-service do site). Escala inteligente por passo (planScaleMove): raise = ação
 // adjust_budget (caminho de escrita existente); duplicate/from_scratch = rascunho.
 
-import { and, desc, eq, isNull } from "drizzle-orm";
-import { adAccounts, agents, campaignDrafts, creativeAssets, entityAnalyses, guardrailConfigs } from "@trafego/db";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { adAccounts, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, entityAnalyses, guardrailConfigs } from "@trafego/db";
 import { planScaleMove, type BudgetLevel, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
 import {
   ACTION_PARAM_MODE,
@@ -27,12 +27,16 @@ import type { WorkerDeps } from "../../composition.js";
 import { createAnalysisRepo } from "../analysis/repo.js";
 import { loadEnabledTools } from "../tools/enabled.js";
 import { generateCopy } from "../copy/generate-copy.js";
+import { creativeContentHash } from "../vision/resolver.js";
+import { pickLibraryCreativeByContext, type LibraryCandidate, type MatchContext } from "../creative/match-library.js";
 
 const MINOR_PER_UNIT = 100;
 const APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_VARIANTS = 2;
 const DEFAULT_STARTER_BUDGET_MINOR = 3000;
 const DEFAULT_COPY_MODEL = "openai/gpt-4o-mini";
+/** Quantos uploads recentes considerar no pick da biblioteca (ranqueados por score da visão). */
+const LIBRARY_PICK_CANDIDATES = 20;
 
 export interface DraftProposalContext {
   readonly orgId: string;
@@ -195,22 +199,37 @@ export async function proposeScaleWinner(
   const state = await deps.ports.ads.readEntityState(ac.ref, chosen.entityId);
   const sourceDailyMinor = Number(state["daily_budget"] ?? 0);
   const level = chosen.entityLevel === "campaign" ? "campaign" : "adset";
+  const label = chosen.entityName ?? chosen.entityId;
+  const scalePct = ac.cfg.scalePct ?? 50;
 
-  // Vencedor é um ADSET sem orçamento próprio (CBO — orçamento na campanha; ou lifetime):
-  // subir o orçamento teria de mirar a CAMPANHA, cujo id não temos aqui (entity_analyses
-  // guarda só o adset). Antes isso emitia um `adjust_budget` no adset que o guardrail dropava
-  // silenciosamente ("budget não está neste nível") APÓS o eco "vou subir o orçamento" —
-  // promessa quebrada. Bloqueio honesto; escalar sob CBO/lifetime = fast-follow (ROADMAP).
+  // Vencedor é um ADSET sem orçamento próprio (CBO — orçamento na CAMPANHA). Escalar = subir o
+  // orçamento da CAMPANHA-mãe (o adset não tem knob de budget). Busca o campaign_id + o budget
+  // da campanha (o entity_analyses guarda só o adset) e emite o raise mirando a campanha.
   if (level === "adset" && sourceDailyMinor <= 0) {
-    return {
-      kind: "blocked",
-      reason:
-        "esse vencedor está sob orçamento no nível da campanha (CBO) — escalar por aqui ainda não está disponível. Ajuste o orçamento da campanha no gerenciador; suporte a CBO vem em breve.",
+    if (!canRaise) {
+      return { kind: "blocked", reason: "esse vencedor está sob orçamento de campanha (CBO) e escalar aqui exige subir o orçamento — ligue 'ajustar orçamento' nas ações permitidas, ou ajuste no gerenciador." };
+    }
+    const parent = await deps.ports.ads.getAdSetCampaignBudget(ac.ref, chosen.entityId);
+    if (!parent || parent.dailyBudgetMinor <= 0) {
+      // campanha sem orçamento diário (ex.: vitalício) → clamp por % não se aplica; honesto.
+      return { kind: "blocked", reason: "esse vencedor está numa campanha com orçamento vitalício (sem diário) — escalar por aqui ainda não dá; ajuste o orçamento no gerenciador." };
+    }
+    const pct = Math.min(scalePct, ac.cfg.maxBudgetChangePct);
+    const action: Action = {
+      id: `scale:${parent.campaignId}`,
+      type: "adjust_budget",
+      target: { level: "campaign", id: parent.campaignId, name: label },
+      params: { [ACTION_PARAM_MODE]: BUDGET_MODE_INCREASE, [ACTION_PARAM_PCT]: pct },
+      source: "llm",
+      riskLevel: "medium",
+      // eco = "Vou escalar subindo o budget: <reason>. Confirma?" → deixa CLARO que é a CAMPANHA
+      // (CBO), não o conjunto, e por quê.
+      reason: `seu vencedor "${label}" está sob orçamento de campanha (CBO), então subo +${pct}% no orçamento da CAMPANHA (o conjunto não tem orçamento próprio pra mexer)`,
     };
+    return { kind: "action", action };
   }
 
   const budgetLevel: BudgetLevel = level === "adset" && sourceDailyMinor > 0 ? "adset" : "campaign";
-  const scalePct = ac.cfg.scalePct ?? 50;
   let move = planScaleMove({
     scalePct,
     maxBudgetChangePct: ac.cfg.maxBudgetChangePct,
@@ -218,7 +237,6 @@ export async function proposeScaleWinner(
     preference: ac.scaleAggressivePreference,
     ...(choice ? { choice } : {}),
   });
-  const label = chosen.entityName ?? chosen.entityId;
 
   // só oferece/decide o que está habilitado: capacidade off → força o ramo disponível (sem
   // "ask" morto nem proposta que o apply barraria).
@@ -393,6 +411,7 @@ export async function chooseCreative(
   orgId: string,
   accountId: string,
   serving: { imageHash?: string; videoId?: string; sourceAdId?: string },
+  match?: MatchContext & { readonly model: string },
 ): Promise<ChosenCreative | null> {
   if (serving.imageHash || serving.videoId) {
     return {
@@ -403,7 +422,11 @@ export async function chooseCreative(
       source: "serving",
     };
   }
-  const [lib] = await deps.db
+  // Sem criativo veiculando → BIBLIOTECA. A escolha considera o CONTEXTO da campanha (objetivo +
+  // negócio + orientações) casado com a DESCRIÇÃO cacheada de cada upload (visão feita no upload) —
+  // via um matcher LLM barato (texto, sem re-analisar). NÃO é ranking genérico/aleatório. Sem
+  // descrições cacheadas ou sem contexto → recência (a lista já vem por createdAt desc).
+  const libs = await deps.db
     .select({ id: creativeAssets.id, imageHash: creativeAssets.metaImageHash, videoId: creativeAssets.metaVideoId })
     .from(creativeAssets)
     .where(
@@ -415,17 +438,55 @@ export async function chooseCreative(
       ),
     )
     .orderBy(desc(creativeAssets.createdAt))
-    .limit(1);
-  if (lib && (lib.imageHash || lib.videoId)) {
-    return {
-      ...(lib.imageHash ? { imageHash: lib.imageHash } : {}),
-      ...(lib.videoId ? { videoId: lib.videoId } : {}),
-      assetId: lib.id,
-      origin: "upload",
-      source: "library",
-    };
+    .limit(LIBRARY_PICK_CANDIDATES);
+  const withMedia = libs.filter((l) => l.imageHash || l.videoId);
+  if (withMedia.length === 0) return null;
+
+  let chosenId = withMedia[0]!.id; // default: recência (mais recente)
+  if (match) {
+    // descrições cacheadas por asset (contentHash estável = creativeContentHash(assetId)).
+    const hashOf = new Map(withMedia.map((l) => [l.id, creativeContentHash(l.id, undefined)]));
+    const visions = await deps.db
+      .select({ hash: creativeVisionAnalyses.contentHash, result: creativeVisionAnalyses.result })
+      .from(creativeVisionAnalyses)
+      .where(
+        and(
+          inArray(creativeVisionAnalyses.contentHash, [...hashOf.values()]),
+          eq(creativeVisionAnalyses.analyzerVersion, deps.visionAnalyzerVersion),
+        ),
+      );
+    const descByHash = new Map(visions.map((v) => [v.hash, describeVision(v.result)]));
+    const candidates: LibraryCandidate[] = withMedia
+      .map((l) => ({ assetId: l.id, description: descByHash.get(hashOf.get(l.id)!) ?? "" }))
+      .filter((c) => c.description.length > 0);
+    if (candidates.length > 0) {
+      // ordena os candidatos por recência (já vêm assim) → o fallback do matcher = mais recente.
+      const picked = await pickLibraryCreativeByContext(deps.ports.llm, match.model, match, candidates);
+      if (picked) chosenId = picked;
+    }
   }
-  return null;
+
+  const best = withMedia.find((l) => l.id === chosenId) ?? withMedia[0]!;
+  return {
+    ...(best.imageHash ? { imageHash: best.imageHash } : {}),
+    ...(best.videoId ? { videoId: best.videoId } : {}),
+    assetId: best.id,
+    origin: "upload",
+    source: "library",
+  };
+}
+
+/** Descrição compacta da visão cacheada p/ o matcher de contexto (o que o criativo comunica). */
+function describeVision(result: unknown): string {
+  const r = (result ?? {}) as { summary?: string; hook?: string; angle?: string; format?: string };
+  return [
+    r.summary,
+    r.hook ? `Gancho: ${r.hook}` : "",
+    r.angle ? `Ângulo: ${r.angle}` : "",
+    r.format ? `Formato: ${r.format}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 /** Criar do zero reusando o criativo/página/pixel da conta + copy gerada. */
@@ -447,12 +508,20 @@ export async function proposeCreateCampaign(
   }
 
   const defaults = await deps.ports.ads.inferCreationDefaults(ac.ref);
-  // Pool único: melhor veiculando (provado) OU, sem nenhum, um upload da biblioteca (fallback).
-  const chosen = await chooseCreative(deps, ctx.orgId, ctx.adAccountId, {
-    ...(defaults.imageHash ? { imageHash: defaults.imageHash } : {}),
-    ...(defaults.videoId ? { videoId: defaults.videoId } : {}),
-    ...(defaults.sourceAdId ? { sourceAdId: defaults.sourceAdId } : {}),
-  });
+  const goal = args.goal ?? defaults.objectiveGoal ?? DEFAULT_CONVERSION_GOAL;
+  // Pool único: melhor veiculando (provado) OU, sem nenhum, o upload da biblioteca que MELHOR
+  // CASA com o contexto da campanha (objetivo + negócio + orientações) via matcher LLM barato.
+  const chosen = await chooseCreative(
+    deps,
+    ctx.orgId,
+    ctx.adAccountId,
+    {
+      ...(defaults.imageHash ? { imageHash: defaults.imageHash } : {}),
+      ...(defaults.videoId ? { videoId: defaults.videoId } : {}),
+      ...(defaults.sourceAdId ? { sourceAdId: defaults.sourceAdId } : {}),
+    },
+    { goal, businessContext: ac.businessContext, guidance: ac.guidance, model: ac.model },
+  );
   const reuseImageHash = chosen?.imageHash;
   const reuseVideoId = chosen?.videoId;
   // Página é obrigatória (object_story_spec). Vem do anúncio veiculando; conta sem NENHUM
@@ -465,7 +534,6 @@ export async function proposeCreateCampaign(
         : "essa conta ainda não tem um anúncio de onde eu possa reusar a página e o criativo — me manda um criativo ou conecte uma conta com anúncios",
     };
   }
-  const goal = args.goal ?? defaults.objectiveGoal ?? DEFAULT_CONVERSION_GOAL;
   const requested = args.budgetReais
     ? Math.round(args.budgetReais * MINOR_PER_UNIT)
     : (ac.cfg.maxNewDailyBudgetMinor ?? DEFAULT_STARTER_BUDGET_MINOR);
