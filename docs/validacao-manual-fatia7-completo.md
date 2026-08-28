@@ -695,3 +695,12 @@ WhatsApp funilam no MESMO `applyDraft`/`proposeCreateCampaign`, então provar l�
 ### 23d. Excluir criativo — HÍBRIDO (nunca quebra) — ver também §3
 - ✅ em uso → **arquiva** (some da estante/picker, mantém ref; Meta/rascunho não quebram); livre → apaga de vez.
   Verificado ao vivo (arquiva-se-em-uso com draft intacto / apaga-se-livre / arquivado some da listagem).
+
+### 23e. Escala CBO + pick da biblioteca context-aware (2026-08-28)
+`apps/worker/e2e-cbo-context-battery.ts` (live, cria CBO PAUSED + revert). **8/8:**
+- ✅ **CBO:** vencedor = adset sob CBO (`daily_budget=0`) → `getAdSetCampaignBudget` resolve a campanha-mãe +
+  orçamento → `proposeScaleWinner` retorna `adjust_budget` **mirando a CAMPANHA** (não o adset), reason
+  **claro** ("…sob orçamento de campanha (CBO), então subo +X% no orçamento da CAMPANHA"). `adjust_budget`
+  off → bloqueio honesto. Site opera em campanha (CBO ok lá).
+- ✅ **Contexto:** o matcher LLM (`pickLibraryCreativeByContext`) escolheu o criativo de **estética** (casa com
+  clínica/lead) sobre "genérico" e "carro" — escolha **pelo contexto**, não recência/score cego.
