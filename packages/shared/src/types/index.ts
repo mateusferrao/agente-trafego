@@ -664,6 +664,8 @@ export interface CopyVariant {
   readonly headline: string;
   readonly description?: string;
   readonly cta?: CtaType;
+  /** nome do anúncio desta variação (a variação É o anúncio, 1:1). Ausente → derivado no apply. */
+  readonly adName?: string;
 }
 
 /** Referência a um asset da biblioteca de criativos (mídia já existente). */
@@ -713,6 +715,13 @@ export interface CampaignDraftSpec {
   readonly pixelId?: string;
   /** URL de destino do anúncio (link_data.link) — inferida da conta. */
   readonly linkUrl?: string;
+  /** nome editável da campanha / do conjunto (Fatia 7 — edição). Ausente → derivado no apply. */
+  readonly campaignName?: string;
+  readonly adsetName?: string;
+  // ─── só `duplicate` (escala) ───
+  /** rótulo do sufixo aplicado ao nome do vencedor no `/copies` (`<vencedor> — <rótulo>`).
+   *  Ausente → "escala". NÃO é o nome inteiro (o `/copies` só ANEXA). */
+  readonly suffixLabel?: string;
 }
 
 /** Entidade-origem de uma duplicação (o que foi copiado). `name` = rótulo legível do vencedor

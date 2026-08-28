@@ -2,6 +2,8 @@ import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import {
   CONVERSION_GOALS,
+  CREATIVE_FORMATS,
+  CTA_TYPES,
   DIDACTIC_DEPTH_LEVELS,
   DIRECTIVENESS_LEVELS,
   EXPERIENCE_LEVELS,
@@ -64,6 +66,62 @@ export const guardrailConfigSchema = z.object({
   maxNewDailyBudgetMinor: z.number().int().min(0).optional(),
   maxNewCampaignsPerDay: z.number().int().min(0).optional(),
   scalePct: z.number().int().min(0).max(1000).optional(),
+});
+
+// ─── Rascunho de campanha (Fatia 7 — shape-validation, NÃO regra de negócio) ──
+// Valida a FORMA + limites de campo do `CampaignDraftSpec` (nomes/objetivo/copy/budget).
+// Refine-by-kind é DELIBERADAMENTE leniente: os campos de `from_scratch` ficam opcionais
+// pra o read-back do apply (`parse`) NUNCA rejeitar um rascunho em voo — os pré-requisitos
+// (page/creative) têm guard próprio com mensagem amigável no apply. A regra de negócio da
+// edição (pixel/clamp/derivados) vive no core (`applyDraftEdit`), não aqui.
+/** cap de nome de entidade na Meta (~400 chars). */
+export const ENTITY_NAME_MAX = 400;
+/** cap generoso de texto de copy (o Meta não rejeita a maioria; evita abuso). */
+export const COPY_TEXT_MAX = 3000;
+
+export const ctaTypeSchema = z.enum(CTA_TYPES);
+export const creativeFormatSchema = z.enum(CREATIVE_FORMATS);
+
+export const copyVariantSchema = z.object({
+  primaryText: z.string().min(1).max(COPY_TEXT_MAX),
+  headline: z.string().min(1).max(COPY_TEXT_MAX),
+  description: z.string().max(COPY_TEXT_MAX).optional(),
+  cta: ctaTypeSchema.optional(),
+  adName: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+});
+
+export const creativeAssetRefSchema = z.object({
+  assetId: z.string().min(1),
+  format: creativeFormatSchema,
+  origin: z.enum(["reuse", "upload"]),
+  metaImageHash: z.string().optional(),
+  metaVideoId: z.string().optional(),
+});
+
+export const targetingSpecSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("reuse_adset"), sourceAdsetId: z.string().min(1) }),
+  z.object({ kind: z.literal("advantage_plus") }),
+]);
+
+export const campaignDraftSpecSchema = z.object({
+  version: z.literal(1),
+  currency: z.string().min(1),
+  dailyBudgetMinor: z.number().int().positive(),
+  requestedDailyBudgetMinor: z.number().int().positive().optional(),
+  activation: z.enum(["active", "paused"]),
+  // ─── só `from_scratch` (opcionais p/ read-back seguro) ───
+  objective: conversionGoalSchema.optional(),
+  targeting: targetingSpecSchema.optional(),
+  variantsCount: z.number().int().positive().optional(),
+  copyVariants: z.array(copyVariantSchema).optional(),
+  creative: creativeAssetRefSchema.optional(),
+  pageId: z.string().optional(),
+  pixelId: z.string().optional(),
+  linkUrl: z.string().optional(),
+  campaignName: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+  adsetName: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+  // ─── só `duplicate` (escala) ───
+  suffixLabel: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
 });
 
 export const autonomyLevel = z.enum(["notify", "suggest", "act_safe", "act_full"]);
