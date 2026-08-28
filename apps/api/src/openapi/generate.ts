@@ -95,6 +95,8 @@ import {
   setDraftCreativeOutput,
   setDraftTargetingInput,
   setDraftTargetingOutput,
+  updateDraftInput,
+  updateDraftOutput,
 } from "../modules/drafts/schema.js";
 
 extendZodWithOpenApi(z);
@@ -182,6 +184,8 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const SetDraftTargetingOutput = registry.register("SetDraftTargetingOutput", setDraftTargetingOutput);
   const SetDraftCreativeInput = registry.register("SetDraftCreativeInput", setDraftCreativeInput);
 const SetDraftCreativeOutput = registry.register("SetDraftCreativeOutput", setDraftCreativeOutput);
+  const UpdateDraftInput = registry.register("UpdateDraftInput", updateDraftInput);
+  const UpdateDraftOutput = registry.register("UpdateDraftOutput", updateDraftOutput);
   const UploadCreativeOutput = registry.register("UploadCreativeOutput", uploadCreativeOutput);
   const RevertibleActionOutput = registry.register("RevertibleActionOutput", revertibleActionOutput);
 
@@ -685,6 +689,19 @@ const SetDraftCreativeOutput = registry.register("SetDraftCreativeOutput", setDr
     responses: {
       200: jsonRes("escala proposta (rascunho de duplicação ou ação de budget)", ScaleWinnerOutput),
       404: { description: "conta ou agente não encontrado" },
+    },
+  });
+  registry.registerPath({
+    method: "patch",
+    path: "/api/accounts/{id}/drafts/{draftId}",
+    tags: ["drafts"],
+    request: {
+      params: z.object({ id: z.string(), draftId: z.string() }),
+      ...jsonBody(UpdateDraftInput),
+    },
+    responses: {
+      200: jsonRes("rascunho editado", UpdateDraftOutput),
+      422: { description: "edição inválida (mensagem amigável)" },
     },
   });
   registry.registerPath({
