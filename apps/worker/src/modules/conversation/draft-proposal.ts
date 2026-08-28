@@ -39,6 +39,20 @@ const DEFAULT_STARTER_BUDGET_MINOR = 3000;
 /** Quantos uploads recentes considerar no pick da biblioteca (ranqueados por score da visão). */
 const LIBRARY_PICK_CANDIDATES = 20;
 
+/**
+ * Clampa o gasto novo (diário) ao teto do agente e sinaliza se cortou — fonte única do
+ * `dailyBudgetMinor`/`clampedByCap` p/ criar E escalar (§13 reuso-primeiro). O eco/card usam
+ * `clampedByCap` p/ a transparência "você pediu X, virou Y" (§8); o guardrail do apply é a
+ * rede redundante, não uma surpresa que corta o que o usuário confirmou.
+ */
+export function clampNewBudget(
+  requestedMinor: number,
+  capMinor: number | null | undefined,
+): { readonly dailyBudgetMinor: number; readonly clampedByCap: boolean } {
+  const dailyBudgetMinor = capMinor != null ? Math.min(requestedMinor, capMinor) : requestedMinor;
+  return { dailyBudgetMinor, clampedByCap: dailyBudgetMinor < requestedMinor };
+}
+
 export interface DraftProposalContext {
   readonly orgId: string;
   readonly agentId: string;
@@ -323,9 +337,7 @@ export async function proposeScaleWinner(
   // clampa JÁ no propose ao teto de gasto novo → o eco mostra o valor REAL (o guardrail
   // do apply é rede redundante, não uma surpresa que corta o que o usuário confirmou). §8.
   const requested = Math.round(sourceDailyMinor * (1 + move.scalePct / 100));
-  const cap = ac.cfg.maxNewDailyBudgetMinor;
-  const newDailyMinor = cap != null ? Math.min(requested, cap) : requested;
-  const clampedByCap = newDailyMinor < requested;
+  const { dailyBudgetMinor: newDailyMinor, clampedByCap } = clampNewBudget(requested, ac.cfg.maxNewDailyBudgetMinor);
   const spec: CampaignDraftSpec = {
     version: 1,
     currency: ac.currency,
@@ -645,8 +657,9 @@ export async function proposeCreateCampaign(
   const requested = args.budgetReais
     ? Math.round(args.budgetReais * MINOR_PER_UNIT)
     : (ac.cfg.maxNewDailyBudgetMinor ?? DEFAULT_STARTER_BUDGET_MINOR);
-  const cap = ac.cfg.maxNewDailyBudgetMinor;
-  const dailyBudgetMinor = cap != null ? Math.min(requested, cap) : requested;
+  // Transparência do teto (§8 clareza pro dono): pediu mais que o teto de gasto novo →
+  // o eco/card mostram "pediu X, virou Y" (mesmo helper/campo do escalar).
+  const { dailyBudgetMinor, clampedByCap } = clampNewBudget(requested, ac.cfg.maxNewDailyBudgetMinor);
   const variantsCount = DEFAULT_VARIANTS;
 
   const copyVariants: CopyVariant[] = await generateCopy(
@@ -668,6 +681,7 @@ export async function proposeCreateCampaign(
     version: 1,
     currency: ac.currency,
     dailyBudgetMinor,
+    ...(clampedByCap ? { requestedDailyBudgetMinor: requested } : {}),
     activation: "active",
     objective: goal,
     targeting: resolveCreationTargeting(defaults),
@@ -700,8 +714,11 @@ export async function proposeCreateCampaign(
   if (defaults.unsupportedTopFormat) {
     lines.push(`Obs: seu anúncio de melhor desempenho é um **${unsupportedFormatPt(defaults.unsupportedTopFormat)}**, que eu ainda não sei clonar — então usei o melhor criativo de imagem/vídeo que você tem.`);
   }
+  const budgetPhrase = clampedByCap
+    ? `${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia (você pediu ${money(requested / MINOR_PER_UNIT, ac.currency)}, mas seu teto de gasto novo é ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)})`
+    : `${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia`;
   lines.push(
-    `Gasto novo: ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia · Página: ${defaults.pageId}${defaults.pixelId ? ` · Pixel: ${defaults.pixelId}` : ""} · ${activationPhrase("active")}.`,
+    `Gasto novo: ${budgetPhrase} · Página: ${defaults.pageId}${defaults.pixelId ? ` · Pixel: ${defaults.pixelId}` : ""} · ${activationPhrase("active")}.`,
     `Confirma? (você pode trocar o criativo no site antes de aprovar)`,
   );
   return { kind: "draft", echo: joinBalloons(lines), approvalId, draftId };

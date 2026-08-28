@@ -1,5 +1,5 @@
-import { and, eq, lt, sql } from "drizzle-orm";
-import { approvals, type Database } from "@trafego/db";
+import { and, eq, inArray, lt, sql } from "drizzle-orm";
+import { approvals, campaignDrafts, type Database } from "@trafego/db";
 import type {
   ActivationApproval,
   Approval,
@@ -168,6 +168,12 @@ export function createPostgresApprovals(db: Database): ApprovalPort {
         })
         .where(eq(approvals.id, id))
         .returning();
+      // Rascunho recusado (kind "draft", NÃO "activation" — nessa a campanha já existe): tira
+      // o draft de "proposed" p/ os pickers por-status (intake de mídia / troca de criativo) não
+      // oferecerem mexer num rascunho morto. `activation`/`approved` não passam por aqui.
+      if (input.status === "rejected" && row?.kind === "draft" && row.draftId) {
+        await revertOrphanedDrafts(db, [row.draftId]);
+      }
       return toPendingApproval(row as Row);
     },
 
@@ -186,8 +192,24 @@ export function createPostgresApprovals(db: Database): ApprovalPort {
         .update(approvals)
         .set({ status: "expired", resolvedAt: now })
         .where(and(eq(approvals.status, "pending"), lt(approvals.expiresAt, now)))
-        .returning({ id: approvals.id });
+        .returning({ id: approvals.id, kind: approvals.kind, draftId: approvals.draftId });
+      // Mesmo cuidado do reject: rascunho que expirou some dos pickers por-status (só "draft").
+      const orphanedDrafts = rows.filter((r) => r.kind === "draft" && r.draftId).map((r) => r.draftId as string);
+      if (orphanedDrafts.length > 0) await revertOrphanedDrafts(db, orphanedDrafts);
       return rows.length;
     },
   };
+}
+
+/**
+ * Sincroniza rascunhos cuja approval de CRIAÇÃO foi recusada/expirada: `proposed`/`failed`
+ * → `reverted` (terminal), num único UPDATE. Fonte única p/ resolve + expireOverdue (§13
+ * DRY) — evita que os pickers por `status='proposed'` (intake de mídia, troca de criativo)
+ * ofereçam mexer num rascunho que não vai mais virar campanha.
+ */
+async function revertOrphanedDrafts(db: Database, draftIds: readonly string[]): Promise<void> {
+  await db
+    .update(campaignDrafts)
+    .set({ status: "reverted" })
+    .where(and(inArray(campaignDrafts.id, [...draftIds]), inArray(campaignDrafts.status, ["proposed", "failed"])));
 }

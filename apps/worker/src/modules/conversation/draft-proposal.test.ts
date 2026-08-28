@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { chooseCreative, resolveCreationTargeting } from "./draft-proposal.js";
+import { chooseCreative, clampNewBudget, resolveCreationTargeting } from "./draft-proposal.js";
 import { creativeContentHash } from "../vision/resolver.js";
 import type { WorkerDeps } from "../../composition.js";
 
@@ -94,5 +94,24 @@ describe("resolveCreationTargeting (público da campanha criada do zero)", () =>
 
   it("cold-start (sem adset vencedor) → cai em Advantage+ (não há público provado pra herdar)", () => {
     expect(resolveCreationTargeting({})).toEqual({ kind: "advantage_plus" });
+  });
+});
+
+describe("clampNewBudget (teto de gasto novo — criar E escalar)", () => {
+  it("pediu acima do teto → corta e sinaliza clampedByCap (transparência 'pediu X virou Y')", () => {
+    expect(clampNewBudget(10000, 3000)).toEqual({ dailyBudgetMinor: 3000, clampedByCap: true });
+  });
+
+  it("pediu dentro do teto → passa sem clamp", () => {
+    expect(clampNewBudget(2000, 3000)).toEqual({ dailyBudgetMinor: 2000, clampedByCap: false });
+  });
+
+  it("exatamente no teto → não conta como clamp", () => {
+    expect(clampNewBudget(3000, 3000)).toEqual({ dailyBudgetMinor: 3000, clampedByCap: false });
+  });
+
+  it("sem teto configurado → nunca clampa", () => {
+    expect(clampNewBudget(999999, null)).toEqual({ dailyBudgetMinor: 999999, clampedByCap: false });
+    expect(clampNewBudget(999999, undefined)).toEqual({ dailyBudgetMinor: 999999, clampedByCap: false });
   });
 });
