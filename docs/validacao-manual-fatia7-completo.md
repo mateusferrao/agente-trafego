@@ -155,6 +155,12 @@ docker exec docker-postgres-1 psql -U postgres -d trafego -c "select id, kind, s
 docker exec docker-postgres-1 psql -U postgres -d trafego -c "select origin,format,status, meta_image_hash is not null as tem_hash, storage_ref is not null as tem_blob from creative_assets order by created_at desc limit 3;"
 ```
 
+**[NOVO] Excluir criativo (com guarda de referência):**
+1. No card, clicar **"Excluir"** → confirma (tom danger). ✅ Some da estante + toast "Criativo excluído."
+2. ⛔ Excluir um criativo **em uso** (num rascunho aberto OU campanha criada que o referencia) → **recusa honesta**
+   (409): "esse criativo está em uso em N campanhas ou rascunhos — finalize ou remova antes de excluir." (Não apaga; sem órfão.)
+3. ✅ Verificar no storage/DB que o blob + a linha sumiram só quando não havia referência.
+
 **⛔ Tristes (visual):**
 - Derrubar a API e recarregar a aba → **caixa de erro com "Tentar de novo"** (NÃO o empty-state "nenhum criativo").
 - Miniatura que não carrega (asset sem blob) → placeholder **"sem preview"** (nunca ícone quebrado).

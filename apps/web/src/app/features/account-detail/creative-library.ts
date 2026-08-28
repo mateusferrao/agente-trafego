@@ -1,7 +1,10 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, type OnInit, computed, inject, signal } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
+import { HttpErrorResponse } from '@angular/common/http';
 import { toast } from 'ngx-sonner';
-import { UiButton, UiEmptyState } from '@ui';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import { lucideTrash2 } from '@ng-icons/lucide';
+import { UiButton, UiEmptyState, UiConfirmDialogService } from '@ui';
 import { AGENT_NAME } from '@core/brand';
 import { DraftsApiService } from '@core/api/drafts-api.service';
 import type { CreativeAssetOutput } from '@core/api/generated';
@@ -14,7 +17,8 @@ import type { CreativeAssetOutput } from '@core/api/generated';
 @Component({
   selector: 'app-creative-library',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiButton, UiEmptyState],
+  imports: [UiButton, UiEmptyState, NgIcon],
+  providers: [provideIcons({ lucideTrash2 })],
   template: `
     <section class="flex flex-col gap-5 rounded-lg border border-line bg-panel p-5">
       <div class="flex flex-wrap items-center justify-between gap-3">
@@ -68,6 +72,18 @@ import type { CreativeAssetOutput } from '@core/api/generated';
                 <span class="font-medium text-ink">{{ a.origin === 'upload' ? 'Enviado' : 'Da conta' }}</span>
                 <span class="text-muted">{{ formatLabel(a.format) }} · {{ statusLabel(a.status) }}</span>
               </span>
+              <button
+                type="button"
+                appButton
+                variant="ghost"
+                size="sm"
+                class="self-end"
+                [disabled]="deletingId() === a.id"
+                (click)="onDelete(a)"
+              >
+                <ng-icon name="lucideTrash2" size="14" aria-hidden="true" />
+                {{ deletingId() === a.id ? 'Excluindo…' : 'Excluir' }}
+              </button>
             </li>
           }
         </ul>
@@ -77,6 +93,7 @@ import type { CreativeAssetOutput } from '@core/api/generated';
 })
 export class CreativeLibrary implements OnInit {
   private readonly api = inject(DraftsApiService);
+  private readonly confirmDialog = inject(UiConfirmDialogService);
   private readonly accountId = inject(ActivatedRoute).snapshot.paramMap.get('id') ?? '';
   private destroyed = false;
   /** evita cadeias de poll concorrentes (N uploads enquanto um vídeo processa). */
@@ -96,6 +113,8 @@ export class CreativeLibrary implements OnInit {
   protected readonly loaded = signal(false);
   protected readonly failed = signal(false);
   protected readonly uploading = signal(false);
+  /** id do criativo em exclusão (desabilita o botão + rótulo "Excluindo…"). */
+  protected readonly deletingId = signal<string | null>(null);
   /** ids cujo <img> falhou (blob 404 / ref drift) → cai no placeholder, nunca ícone quebrado. */
   protected readonly broken = signal<ReadonlySet<string>>(new Set());
   /** biblioteca carregada, sem falha e sem asset → mostra o empty-state de marca (com CTA). */
@@ -167,6 +186,34 @@ export class CreativeLibrary implements OnInit {
         this.uploading.set(false);
         input.value = '';
         toast.error('Não consegui enviar esse arquivo. Verifique o formato e o tamanho e tente de novo.');
+      },
+    });
+  }
+
+  /** Exclui um criativo (confirma antes). O backend guarda referência: se estiver em uso num
+   *  rascunho/campanha, responde 409 e mostramos o motivo — sem quebrar nada. */
+  protected async onDelete(a: CreativeAssetOutput): Promise<void> {
+    const confirmed = await this.confirmDialog.confirm({
+      title: 'Excluir este criativo?',
+      description: 'Ele sai da sua estante. Se estiver em uso num rascunho ou campanha, eu aviso e não excluo.',
+      confirmLabel: 'Excluir',
+      tone: 'danger',
+    });
+    if (!confirmed) return;
+    this.deletingId.set(a.id);
+    this.api.deleteCreative(this.accountId, a.id).subscribe({
+      next: () => {
+        this.assets.update((list) => list.filter((x) => x.id !== a.id));
+        this.deletingId.set(null);
+        toast.success('Criativo excluído.');
+      },
+      error: (err: unknown) => {
+        this.deletingId.set(null);
+        // 409 = em uso: o backend manda o motivo legível; preferimos ele ao genérico.
+        const msg = err instanceof HttpErrorResponse && err.status === 409 && typeof err.error?.message === 'string'
+          ? err.error.message
+          : 'Não consegui excluir esse criativo agora. Tente de novo em instantes.';
+        toast.error(msg);
       },
     });
   }

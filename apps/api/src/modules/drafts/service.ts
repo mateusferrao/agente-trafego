@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   adAccounts,
   agents,
@@ -375,6 +375,54 @@ export function createDraftsService(deps: DraftsServiceDeps) {
         .limit(1);
       if (!row?.storageRef) return null;
       return deps.storage.get(row.storageRef);
+    },
+
+    /**
+     * Exclui um criativo da biblioteca COM GUARDA DE REFERÊNCIA (fast-follow #707). Org-scoped
+     * pelo assetId (nunca confia no cliente). Recusa se algum rascunho ABERTO (`proposed`/
+     * `creating`) OU campanha já CRIADA (`created`) referencia o asset (`spec.creative.assetId`)
+     * — apagar deixaria o apply/veiculação com criativo órfão. Sem referência: apaga o blob no
+     * storage (idempotente) DEPOIS de confirmar, e então a linha. `null` = não existe (404);
+     * `{ok:false, referencedBy}` = em uso (409); `{ok:true}` = excluído.
+     */
+    async deleteCreative(
+      orgId: OrgId,
+      accountId: string,
+      assetId: string,
+    ): Promise<{ ok: true } | { ok: false; referencedBy: number } | null> {
+      const [row] = await deps.db
+        .select({ storageRef: creativeAssets.storageRef })
+        .from(creativeAssets)
+        .where(
+          and(
+            eq(creativeAssets.id, assetId),
+            eq(creativeAssets.orgId, orgId),
+            eq(creativeAssets.adAccountId, accountId),
+          ),
+        )
+        .limit(1);
+      if (!row) return null;
+
+      const [{ n } = { n: 0 }] = await deps.db
+        .select({ n: count() })
+        .from(campaignDrafts)
+        .where(
+          and(
+            eq(campaignDrafts.orgId, orgId),
+            eq(campaignDrafts.adAccountId, accountId),
+            inArray(campaignDrafts.status, ["proposed", "creating", "created"]),
+            sql`${campaignDrafts.spec} -> 'creative' ->> 'assetId' = ${assetId}`,
+          ),
+        );
+      if (n > 0) return { ok: false, referencedBy: n };
+
+      // zero referências: apaga o blob (se houver) e a linha. Blob antes da linha → se o storage
+      // falhar, a linha fica (retry possível) em vez de virar linha órfã apontando pra nada.
+      if (row.storageRef) await deps.storage.delete(row.storageRef);
+      await deps.db
+        .delete(creativeAssets)
+        .where(and(eq(creativeAssets.id, assetId), eq(creativeAssets.orgId, orgId), eq(creativeAssets.adAccountId, accountId)));
+      return { ok: true };
     },
 
     /** Upload de criativo pela web (multipart, imagem OU vídeo) → StoragePort → Meta

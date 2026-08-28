@@ -36,6 +36,8 @@ export interface StoragePort {
   put(input: StoragePutInput): Promise<StoredAsset>;
   /** Lê o blob por referência (ex: p/ subir pra Meta). `null` se não existir. */
   get(ref: string): Promise<StoredBlob | null>;
+  /** Remove o blob por referência. IDEMPOTENTE (não-existe = no-op, nunca lança por ausência). */
+  delete(ref: string): Promise<void>;
   /** URL temporária de leitura (preview no site) — expira em `expiresSec`. */
   signedUrl(ref: string, expiresSec: number): Promise<string>;
 }

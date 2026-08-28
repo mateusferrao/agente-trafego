@@ -31,7 +31,7 @@ function makeDeps(selectRows: unknown[] = []) {
   const { db, inserted } = fakeDb(selectRows);
   const deps: CreativeIngestDeps = {
     db,
-    storage: { put, get: vi.fn(), signedUrl: vi.fn() },
+    storage: { put, get: vi.fn(), delete: vi.fn(), signedUrl: vi.fn() },
     ads: { uploadImage },
   };
   return { deps, put, uploadImage, inserted };
@@ -72,7 +72,7 @@ function makeVideoDeps(selectRows: unknown[] = []) {
   const { db, inserted } = fakeDb(selectRows);
   const deps: CreativeVideoIngestDeps = {
     db,
-    storage: { put, get: vi.fn(), signedUrl: vi.fn() },
+    storage: { put, get: vi.fn(), delete: vi.fn(), signedUrl: vi.fn() },
     ads: { uploadVideo },
   };
   return { deps, put, uploadVideo, inserted };

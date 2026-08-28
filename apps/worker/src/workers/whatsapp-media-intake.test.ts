@@ -62,7 +62,7 @@ function makeDeps(over: Partial<MediaIntakeDeps> = {}, selectRows: unknown[] = [
       ads: { uploadImage, uploadVideo },
       messaging: { fetchMediaBase64 },
       vault: { decrypt: vi.fn().mockReturnValue("tok") },
-      storage: { put, get: vi.fn(), signedUrl: vi.fn() },
+      storage: { put, get: vi.fn(), delete: vi.fn(), signedUrl: vi.fn() },
       scheduler: { enqueue },
     },
     maxWhatsappVideoBytes: TEN_MB,

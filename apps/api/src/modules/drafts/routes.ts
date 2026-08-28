@@ -54,6 +54,20 @@ export const draftsRoutes: FastifyPluginAsync = async (app) => {
       .send(Buffer.from(blob.bytes));
   });
 
+  // Exclui um criativo da biblioteca (fast-follow #707). Org-scoped pelo lookup do assetId —
+  // NUNCA confia em ref do cliente. Guarda de referência: em uso por rascunho aberto/campanha
+  // criada → 409 (não apaga, evita órfão). Ausente → 404. Excluído → { ok: true }.
+  app.delete("/accounts/:id/creatives/:assetId", guard, async (request, reply) => {
+    const { id, assetId } = request.params as { id: string; assetId: string };
+    const result = await service.deleteCreative(orgIdOf(request) as OrgId, id, assetId);
+    if (!result) return reply.status(404).send({ message: "criativo não encontrado" });
+    if (!result.ok) {
+      const unit = result.referencedBy === 1 ? "1 campanha ou rascunho" : `${result.referencedBy} campanhas ou rascunhos`;
+      return reply.status(409).send({ message: `esse criativo está em uso em ${unit} — finalize ou remova antes de excluir.` });
+    }
+    return { ok: true };
+  });
+
   // Upload MULTIPART (imagem OU vídeo). Valida tipo (allowlist) + teto por-tipo → mensagem PT
   // amigável (nunca o erro técnico cru do multipart). `toBuffer` materializa o arquivo em memória
   // (limitado pelo fileSize do multipart) — não é streaming; o ingest precisa dos bytes de qualquer forma.

@@ -5,7 +5,7 @@
 // PRIVADO — o serving é a rota autenticada da api (não signedUrl), então `signedUrl` fica stub.
 
 import { createHash } from "node:crypto";
-import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import type { StoragePort, StoragePutInput, StoredAsset, StoredBlob } from "@trafego/shared/ports";
 
 /** Config do adapter S3-compat (injetada pela composition a partir do env). */
@@ -72,6 +72,11 @@ export function createS3Storage(config: S3StorageConfig): StoragePort {
       } catch {
         return null; // não existe / erro → null (a rota devolve 404; nunca crash)
       }
+    },
+
+    async delete(ref: string): Promise<void> {
+      // DeleteObject é idempotente no S3 (chave ausente → 204, não lança).
+      await client.send(new DeleteObjectCommand({ Bucket: config.bucket, Key: ref }));
     },
 
     async signedUrl(): Promise<string> {

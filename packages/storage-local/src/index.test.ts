@@ -46,6 +46,15 @@ describe("createLocalStorage", () => {
     expect(await s.get("../../../../etc/passwd")).toBeNull();
   });
 
+  it("delete remove o blob (get vira null) e é idempotente", async () => {
+    const s = createLocalStorage({ baseDir: dir, urlBase });
+    const stored = await s.put({ bytes: new Uint8Array([7, 7]), contentType: "image/png", keyPrefix: "org/o1/creatives" });
+    expect(await s.get(stored.ref)).not.toBeNull();
+    await s.delete(stored.ref);
+    expect(await s.get(stored.ref)).toBeNull();
+    await s.delete(stored.ref); // idempotente: apagar de novo não lança
+  });
+
   it("signedUrl compõe base + ref", async () => {
     const s = createLocalStorage({ baseDir: dir, urlBase });
     expect(await s.signedUrl("org/o1/creatives/x.png", 60)).toBe(

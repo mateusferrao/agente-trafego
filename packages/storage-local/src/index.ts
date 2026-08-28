@@ -5,7 +5,7 @@
 // na fila — grava aqui e passa a `ref` (§ StoragePort).
 
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import type { StoragePort, StoragePutInput, StoredAsset, StoredBlob } from "@trafego/shared/ports";
 
@@ -74,6 +74,13 @@ export function createLocalStorage(config: LocalStorageConfig): StoragePort {
       } catch {
         return null; // não existe → null (nunca crash)
       }
+    },
+
+    async delete(ref: string): Promise<void> {
+      // apaga o blob + o `.type` irmão. `force` = não lança se já não existe (idempotente).
+      const abs = absOf(ref);
+      await rm(abs, { force: true });
+      await rm(`${abs}.type`, { force: true });
     },
 
     async signedUrl(ref: string): Promise<string> {
