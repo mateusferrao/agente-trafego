@@ -230,6 +230,94 @@ function stubAds(data: Record<string, unknown>[]) {
   );
 }
 
+/** Extrai e parseia o `object_story_spec` (param na querystring do POST /adcreatives). */
+function ossOf(url: string): Record<string, any> {
+  const raw = new URL(url).searchParams.get("object_story_spec");
+  return JSON.parse(raw ?? "{}");
+}
+
+/** Stub p/ createAdCreative: GET no vídeo (thumbnails) devolve a capa; POST /adcreatives devolve id. */
+function stubCreativeGraph(coverUri: string | null) {
+  const posts: Array<{ url: string }> = [];
+  const spy = vi.fn(async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes("thumbnails")) {
+      const data = coverUri ? [{ uri: coverUri, is_preferred: true }] : [];
+      return new Response(JSON.stringify({ thumbnails: { data } }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    posts.push({ url });
+    return new Response(JSON.stringify({ id: "CR1" }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  vi.stubGlobal("fetch", spy);
+  return { posts: () => posts };
+}
+
+describe("MetaCreationService.createAdCreative — object_story_spec por formato de criativo", () => {
+  const copy = { primaryText: "corpo", headline: "titulo", description: "desc", cta: "sign_up" as const };
+
+  it("IMAGEM → link_data (name=headline, description, image_hash, cta com link)", async () => {
+    const { posts } = stubCreativeGraph(null);
+    const r = await svc().createAdCreative(account, {
+      name: "cr img",
+      pageId: "PAGE1",
+      imageHash: "IMGHASH",
+      linkUrl: "https://ex.com/lp",
+      copy,
+    });
+    expect(r.creativeId).toBe("CR1");
+    const oss = ossOf(posts().find((p) => p.url.includes("/adcreatives"))!.url);
+    expect(oss.page_id).toBe("PAGE1");
+    expect(oss.video_data).toBeUndefined();
+    expect(oss.link_data).toMatchObject({
+      message: "corpo",
+      name: "titulo", // link_data usa `name` p/ o headline
+      description: "desc",
+      link: "https://ex.com/lp",
+      image_hash: "IMGHASH",
+    });
+    expect(oss.link_data.call_to_action.type).toBe("SIGN_UP");
+    expect(oss.link_data.call_to_action.value.link).toBe("https://ex.com/lp");
+  });
+
+  it("VÍDEO → video_data (title=headline, link_description, busca a capa do vídeo como image_url)", async () => {
+    const { posts } = stubCreativeGraph("https://cover.jpg");
+    await svc().createAdCreative(account, {
+      name: "cr vid",
+      pageId: "PAGE1",
+      videoId: "VID1",
+      linkUrl: "https://ex.com/lp",
+      copy,
+    });
+    const oss = ossOf(posts().find((p) => p.url.includes("/adcreatives"))!.url);
+    expect(oss.link_data).toBeUndefined();
+    expect(oss.video_data).toMatchObject({
+      video_id: "VID1",
+      message: "corpo",
+      title: "titulo", // video_data usa `title` (≠ link_data.name)
+      link_description: "desc", // video_data usa `link_description` (≠ link_data.description)
+      image_url: "https://cover.jpg", // capa obrigatória, buscada do vídeo
+    });
+    expect(oss.video_data.call_to_action.type).toBe("SIGN_UP");
+  });
+
+  it("VÍDEO com imageHash → usa a capa dada (image_hash) e NÃO busca thumbnail", async () => {
+    const { posts } = stubCreativeGraph("https://cover.jpg");
+    await svc().createAdCreative(account, { name: "cr", pageId: "PAGE1", videoId: "VID1", imageHash: "COVERHASH", copy });
+    const oss = ossOf(posts().find((p) => p.url.includes("/adcreatives"))!.url);
+    expect(oss.video_data.image_hash).toBe("COVERHASH");
+    expect(oss.video_data.image_url).toBeUndefined();
+  });
+
+  it("VÍDEO sem capa disponível → cria mesmo assim, sem image_url (o caller decide)", async () => {
+    const { posts } = stubCreativeGraph(null); // vídeo sem thumbnails
+    await svc().createAdCreative(account, { name: "cr", pageId: "PAGE1", videoId: "VID1", copy });
+    const oss = ossOf(posts().find((p) => p.url.includes("/adcreatives"))!.url);
+    expect(oss.video_data.video_id).toBe("VID1");
+    expect(oss.video_data.image_url).toBeUndefined();
+    expect(oss.video_data.image_hash).toBeUndefined();
+  });
+});
+
 describe("MetaCreationService.inferCreationDefaults", () => {
   it("devolve sourceAdsetId do melhor anúncio reusável, pra herdar o público provado (reuse_adset)", async () => {
     stubAds([
