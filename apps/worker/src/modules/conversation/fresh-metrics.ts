@@ -64,6 +64,8 @@ export interface FreshMetricsData {
   /** true = a Meta respondeu e atualizamos agora; false = mostrando o último sync salvo. */
   readonly updated: boolean;
   readonly kpis: FreshKpis;
+  /** presente quando `until` toca os últimos 7 dias — número ainda pode subir (atribuição). */
+  readonly attributionNote?: string;
 }
 
 /** Erro amigável (período inexistente até no salvo, conta/campanha não resolvida). */
@@ -78,6 +80,23 @@ function clamp(n: number, lo: number, hi: number): number {
 }
 function ratio(a: number, b: number): number | null {
   return b > 0 ? a / b : null;
+}
+
+/** Dias entre duas datas YYYY-MM-DD (UTC, sem fuso — mesma semântica de `addDays`). */
+function daysBetween(fromIso: string, toIso: string): number {
+  const [fy, fm, fd] = fromIso.split("-").map(Number);
+  const [ty, tm, td] = toIso.split("-").map(Number);
+  return Math.round((Date.UTC(ty!, tm! - 1, td!) - Date.UTC(fy!, fm! - 1, fd!)) / 86_400_000);
+}
+
+/** Janela de atribuição da Meta (dias) — evento pode postar com atraso até esse teto. */
+const ATTRIBUTION_LAG_DAYS = 7;
+const ATTRIBUTION_CAVEAT_TEXT =
+  "números dos últimos 7 dias ainda podem subir: a Meta pode levar até ~7 dias pra fechar a atribuição de conversão.";
+
+/** `until` a ≤7 dias de hoje → avisa que o número ainda pode mudar (nunca esconde, só rotula). */
+export function attributionCaveat(until: string, today: string): string | undefined {
+  return daysBetween(until, today) <= ATTRIBUTION_LAG_DAYS ? ATTRIBUTION_CAVEAT_TEXT : undefined;
 }
 
 /**
@@ -281,13 +300,18 @@ export async function getFreshMetricsData(
  * (0=hoje, 1=ontem); início por `sinceDaysAgo` OU `periodDays` (janela terminando no fim)
  * OU dia isolado no fim. Tudo dentro de [0, 7] dias atrás. `days` = nº de dias civis.
  */
-function resolveWindow(args: FreshMetricsArgs, now: Date, tz: string): { since: string; until: string; days: number } {
-  const untilAgo = clamp(args.untilDaysAgo ?? 0, 0, FRESH_METRICS_MAX_DAYS);
+function resolveWindow(
+  args: FreshMetricsArgs,
+  now: Date,
+  tz: string,
+  maxDaysAgo: number = FRESH_METRICS_MAX_DAYS,
+): { since: string; until: string; days: number } {
+  const untilAgo = clamp(args.untilDaysAgo ?? 0, 0, maxDaysAgo);
   const sinceAgo =
     args.sinceDaysAgo != null
-      ? clamp(args.sinceDaysAgo, untilAgo, FRESH_METRICS_MAX_DAYS)
+      ? clamp(args.sinceDaysAgo, untilAgo, maxDaysAgo)
       : args.periodDays != null
-        ? clamp(untilAgo + clamp(args.periodDays, 1, FRESH_METRICS_MAX_DAYS) - 1, untilAgo, FRESH_METRICS_MAX_DAYS)
+        ? clamp(untilAgo + clamp(args.periodDays, 1, maxDaysAgo) - 1, untilAgo, maxDaysAgo)
         : untilAgo;
   const today = todayInTz(now, tz);
   return { since: addDays(today, -sinceAgo), until: addDays(today, -untilAgo), days: sinceAgo - untilAgo + 1 };
@@ -345,6 +369,7 @@ async function getFreshMetricsDataInner(
   const businessGoal = await loadBusinessGoal(deps.db, ctx.orgId, ctx.agentId);
 
   const asOf = rows.reduce((latest, r) => (r.date > latest ? r.date : latest), rows[0]!.date);
+  const note = attributionCaveat(until, todayInTz(now, ctx.timezone));
   return {
     level: level === CAMPAIGN_LEVEL ? "campaign" : "account",
     target,
@@ -354,11 +379,12 @@ async function getFreshMetricsDataInner(
     asOf,
     updated,
     kpis: aggregateKpis(rows.map((r) => r.metricsJson), businessGoal),
+    ...(note ? { attributionNote: note } : {}),
   };
 }
 
 /** Conversão de negócio configurada no agente (goals.conversionGoal) — null se zero-config. */
-async function loadBusinessGoal(db: Database, orgId: string, agentId: string): Promise<BusinessGoal | null> {
+export async function loadBusinessGoal(db: Database, orgId: string, agentId: string): Promise<BusinessGoal | null> {
   const [row] = await db
     .select({ goals: agents.goals })
     .from(agents)
@@ -386,6 +412,8 @@ export interface FreshCampaignsBreakdown {
   readonly periodDays: number;
   readonly updated: boolean;
   readonly campaigns: readonly FreshCampaignRow[];
+  /** presente quando `until` toca os últimos 7 dias — número ainda pode subir (atribuição). */
+  readonly attributionNote?: string;
 }
 
 /**
@@ -435,7 +463,8 @@ export async function getCampaignsBreakdownData(
           lte(insightsSnapshots.date, until),
         ),
       );
-    if (rows.length === 0) return { since, until, periodDays: days, updated, campaigns: [] };
+    const note = attributionCaveat(until, todayInTz(now, ctx.timezone));
+    if (rows.length === 0) return { since, until, periodDays: days, updated, campaigns: [], ...(note ? { attributionNote: note } : {}) };
 
     const businessGoal = await loadBusinessGoal(deps.db, ctx.orgId, ctx.agentId);
 
@@ -469,9 +498,120 @@ export async function getCampaignsBreakdownData(
       }))
       .sort((a, b) => b.kpis.spend - a.kpis.spend);
 
-    return { since, until, periodDays: days, updated, campaigns };
+    return { since, until, periodDays: days, updated, campaigns, ...(note ? { attributionNote: note } : {}) };
   } catch (err) {
     deps.logger.warn({ err: String(err) }, "campaigns-breakdown:falha inesperada");
     return { error: "não consegui consultar as campanhas agora. Tenta de novo em instantes." };
+  }
+}
+
+const AD_LEVEL: EntityLevel = "ad";
+/** Teto de janela do breakdown por anúncio — sem sync, sem cap de 7d (histórico, não tempo
+ *  real): espelha o default de `INSIGHTS_RETENTION_DAYS` (dado mais antigo não existe mesmo). */
+const ADS_BREAKDOWN_MAX_DAYS = 90;
+/** Teto de anúncios devolvidos SEM filtro de campanha (conta toda) — WhatsApp não é parede de texto. */
+const ADS_BREAKDOWN_LIMIT = 10;
+
+/** Um anúncio no breakdown financeiro por-anúncio. */
+export interface FreshAdRow {
+  readonly id: string;
+  readonly name: string;
+  readonly kpis: FreshKpis;
+}
+
+export interface FreshAdsBreakdown {
+  readonly since: string;
+  readonly until: string;
+  readonly periodDays: number;
+  readonly ads: readonly FreshAdRow[];
+  /** presente quando `until` toca os últimos 7 dias — número ainda pode subir (atribuição). */
+  readonly attributionNote?: string;
+}
+
+/**
+ * Receita/conversão/gasto POR ANÚNCIO (separado por criativo) em QUALQUER período já
+ * sincronizado — SEM sync novo, SEM cap de 7 dias (histórico puro, `insights_snapshots`
+ * nível "ad" — a mesma métrica completa que `get_fresh_metrics` usa a conta/campanha,
+ * só que nunca lida em nível de anúncio até aqui). Sem filtro → top-N conta toda por
+ * gasto; com `campaign`, filtra pelos anúncios daquela campanha (via `AdEntity.campaignId`,
+ * resolvido de graça na mesma chamada de nomes). Nome do anúncio via `listEntities` —
+ * best-effort quando SEM filtro (cai no id); com filtro de campanha, uma falha aqui vira
+ * erro claro (não dá pra confirmar o pertencimento sem o dado da Meta).
+ */
+export async function getAdsBreakdownData(
+  deps: FreshMetricsDeps,
+  ctx: FreshMetricsCtx,
+  args: FreshMetricsArgs,
+): Promise<FreshAdsBreakdown | FreshMetricsError> {
+  try {
+    const now = (deps.now ?? (() => new Date()))();
+    const { since, until, days } = resolveWindow(args, now, ctx.timezone, ADS_BREAKDOWN_MAX_DAYS);
+    const account = await loadAccountToken(deps.db, deps.vault, ctx.orgId, ctx.adAccountId);
+    if (!account) return { error: "não encontrei uma conta ativa em foco pra consultar agora." };
+
+    let campaignId: string | undefined;
+    const campaign = args.campaign?.trim();
+    if (campaign) {
+      const resolved = await resolveCampaignId(deps.db, ctx.agentId, campaign);
+      if (!resolved) return { error: `não achei a campanha "${campaign}". Me diz o nome como aparece na conta.` };
+      campaignId = resolved.id;
+    }
+
+    const rows = await deps.db
+      .select({ entityId: insightsSnapshots.entityId, metricsJson: insightsSnapshots.metricsJson })
+      .from(insightsSnapshots)
+      .where(
+        and(
+          eq(insightsSnapshots.orgId, ctx.orgId),
+          eq(insightsSnapshots.adAccountId, account.id),
+          eq(insightsSnapshots.entityLevel, AD_LEVEL),
+          gte(insightsSnapshots.date, since),
+          lte(insightsSnapshots.date, until),
+        ),
+      );
+    const note = attributionCaveat(until, todayInTz(now, ctx.timezone));
+    if (rows.length === 0) return { since, until, periodDays: days, ads: [], ...(note ? { attributionNote: note } : {}) };
+
+    const businessGoal = await loadBusinessGoal(deps.db, ctx.orgId, ctx.agentId);
+
+    const byId = new Map<string, StoredInsightMetrics[]>();
+    for (const r of rows) {
+      const list = byId.get(r.entityId) ?? [];
+      list.push(r.metricsJson as StoredInsightMetrics);
+      byId.set(r.entityId, list);
+    }
+
+    // nome + campanha-pai por id — via Meta (o snapshot só guarda o id do anúncio).
+    const names = new Map<string, { name: string; campaignId?: string }>();
+    let namesFailed = false;
+    try {
+      const entities = await deps.ads.listEntities(
+        { adAccountId: account.metaAdAccountId, accessToken: account.accessToken },
+        AD_LEVEL,
+      );
+      for (const e of entities) names.set(e.id, { name: e.name, ...(e.campaignId ? { campaignId: e.campaignId } : {}) });
+    } catch (err) {
+      namesFailed = true;
+      deps.logger.warn({ err: String(err) }, "ads-breakdown:listEntities falhou");
+    }
+
+    // filtro de campanha exige o mapeamento ad→campanha da Meta; sem ele, não dá pra
+    // confirmar pertencimento — erro claro em vez de silenciosamente devolver vazio/errado.
+    if (campaignId && namesFailed) {
+      return { error: "não consegui confirmar quais anúncios pertencem a essa campanha agora. Tenta sem o filtro de campanha, ou de novo em instantes." };
+    }
+
+    let ids = [...byId.keys()];
+    if (campaignId) ids = ids.filter((id) => names.get(id)?.campaignId === campaignId);
+
+    const ads: FreshAdRow[] = ids
+      .map((id) => ({ id, name: names.get(id)?.name ?? id, kpis: aggregateKpis(byId.get(id)!, businessGoal) }))
+      .sort((a, b) => b.kpis.spend - a.kpis.spend)
+      .slice(0, campaignId ? undefined : ADS_BREAKDOWN_LIMIT);
+
+    return { since, until, periodDays: days, ads, ...(note ? { attributionNote: note } : {}) };
+  } catch (err) {
+    deps.logger.warn({ err: String(err) }, "ads-breakdown:falha inesperada");
+    return { error: "não consegui consultar os anúncios agora. Tenta de novo em instantes." };
   }
 }

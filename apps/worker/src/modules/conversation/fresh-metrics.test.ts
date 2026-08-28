@@ -2,8 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import type { StoredInsightMetrics } from "@trafego/shared/types";
 import {
   aggregateKpis,
+  attributionCaveat,
+  getAdsBreakdownData,
   getCampaignsBreakdownData,
   getFreshMetricsData,
+  type FreshAdsBreakdown,
   type FreshCampaignsBreakdown,
   type FreshMetricsCtx,
   type FreshMetricsDeps,
@@ -105,7 +108,7 @@ function seqDb(results: unknown[][]) {
 function makeDeps(
   results: unknown[][],
   syncResult = { partial: false, tokenInvalid: false, snapshotsWritten: 1 },
-  entities: Array<{ id: string; name: string; status: string }> = [],
+  entities: Array<{ id: string; name: string; status?: string; campaignId?: string }> = [],
 ) {
   const insightsSync = { sync: vi.fn(async () => syncResult) };
   const ads = { listEntities: vi.fn(async () => entities) };
@@ -265,5 +268,102 @@ describe("getCampaignsBreakdownData (fresh por campanha, por período)", () => {
     const { deps } = makeDeps([[ACCOUNT_ROW], [], []]);
     const res = (await getCampaignsBreakdownData(deps, CTX, {})) as FreshCampaignsBreakdown;
     expect(res.campaigns).toEqual([]);
+  });
+});
+
+describe("attributionCaveat", () => {
+  it("until dentro dos últimos 7 dias → avisa que ainda pode subir", () => {
+    expect(attributionCaveat("2026-08-20", "2026-08-20")).toBeDefined(); // hoje
+    expect(attributionCaveat("2026-08-13", "2026-08-20")).toBeDefined(); // exatamente 7d atrás (borda)
+  });
+
+  it("until há mais de 7 dias → sem aviso (já fechado)", () => {
+    expect(attributionCaveat("2026-08-12", "2026-08-20")).toBeUndefined(); // 8d atrás
+    expect(attributionCaveat("2026-07-01", "2026-08-20")).toBeUndefined();
+  });
+});
+
+describe("getAdsBreakdownData (histórico por anúncio, sem cap de 7d, sem sync)", () => {
+  it("sem filtro → agrega por anúncio, resolve nome via listEntities, ordena por gasto desc", async () => {
+    const snaps = [
+      { entityId: "ad1", metricsJson: m({ spend: 300, impressions: 5000, clicks: 100 }, [{ goal: "purchase", count: 3, value: 900 }]) },
+      { entityId: "ad2", metricsJson: m({ spend: 500, impressions: 8000, clicks: 200 }, [{ goal: "purchase", count: 5, value: 1500 }]) },
+    ];
+    const { deps, insightsSync, ads } = makeDeps([[ACCOUNT_ROW], snaps, [{ goals: null }]], undefined, [
+      { id: "ad1", name: "Criativo A" },
+      { id: "ad2", name: "Criativo B" },
+    ]);
+    (deps as { now?: () => Date }).now = () => new Date("2026-09-15T12:00:00Z");
+    // untilDaysAgo:10 → janela termina há 10 dias (fechada, sem caveat de atribuição).
+    const res = (await getAdsBreakdownData(deps, CTX, { periodDays: 30, untilDaysAgo: 10 })) as FreshAdsBreakdown;
+    expect(insightsSync.sync).not.toHaveBeenCalled(); // histórico puro, nunca chama a Meta pra métrica
+    expect(ads.listEntities).toHaveBeenCalled(); // só pra nome
+    expect(res.ads.map((a) => a.id)).toEqual(["ad2", "ad1"]); // 500 > 300
+    expect(res.ads[0]).toMatchObject({ name: "Criativo B" });
+    expect(res.ads[0]!.kpis.revenue).toBe(1500);
+    expect(res.attributionNote).toBeUndefined(); // janela terminando há 10 dias → já fechado
+  });
+
+  it("corta em 10 SEM filtro de campanha (conta toda)", async () => {
+    const snaps = Array.from({ length: 12 }, (_, i) => ({
+      entityId: `ad${i}`,
+      metricsJson: m({ spend: 100 - i, impressions: 1000, clicks: 10 }),
+    }));
+    const { deps } = makeDeps([[ACCOUNT_ROW], snaps, [{ goals: null }]]);
+    const res = (await getAdsBreakdownData(deps, CTX, { periodDays: 30 })) as FreshAdsBreakdown;
+    expect(res.ads).toHaveLength(10);
+    expect(res.ads[0]!.id).toBe("ad0"); // maior spend
+  });
+
+  it("com campaign resolvida → filtra pelos ads daquela campanha (via AdEntity.campaignId), SEM cortar em 10", async () => {
+    const snaps = Array.from({ length: 3 }, (_, i) => ({ entityId: `ad${i}`, metricsJson: m({ spend: 10, impressions: 100, clicks: 5 }) }));
+    const campaignRows = [{ id: "camp-1", name: "Black Friday", at: new Date() }];
+    const { deps } = makeDeps([[ACCOUNT_ROW], campaignRows, snaps, [{ goals: null }]], undefined, [
+      { id: "ad0", name: "A0", campaignId: "camp-1" },
+      { id: "ad1", name: "A1", campaignId: "camp-1" },
+      { id: "ad2", name: "A2", campaignId: "camp-OUTRA" },
+    ]);
+    const res = (await getAdsBreakdownData(deps, CTX, { periodDays: 30, campaign: "black" })) as FreshAdsBreakdown;
+    expect(res.ads.map((a) => a.id).sort()).toEqual(["ad0", "ad1"]);
+  });
+
+  it("campanha não encontrada → erro pedindo o nome", async () => {
+    const { deps } = makeDeps([[ACCOUNT_ROW], []]);
+    const res = await getAdsBreakdownData(deps, CTX, { campaign: "inexistente" });
+    expect((res as { error: string }).error).toContain("não achei a campanha");
+  });
+
+  it("com filtro de campanha + listEntities falha → erro claro (não confirma pertencimento às cegas)", async () => {
+    const campaignRows = [{ id: "camp-1", name: "Black Friday", at: new Date() }];
+    const snaps = [{ entityId: "ad0", metricsJson: m({ spend: 10, impressions: 100, clicks: 5 }) }];
+    const { deps } = makeDeps([[ACCOUNT_ROW], campaignRows, snaps]);
+    (deps.ads.listEntities as ReturnType<typeof vi.fn>) = vi.fn(async () => {
+      throw new Error("meta down");
+    });
+    const res = await getAdsBreakdownData(deps, CTX, { campaign: "black" });
+    expect(res).toHaveProperty("error");
+    expect((res as { error: string }).error).toContain("não consegui confirmar");
+  });
+
+  it("SEM filtro de campanha + listEntities falha → degrada pro id como nome (não quebra)", async () => {
+    const snaps = [{ entityId: "adX", metricsJson: m({ spend: 10, impressions: 100, clicks: 5 }) }];
+    const { deps } = makeDeps([[ACCOUNT_ROW], snaps, [{ goals: null }]]);
+    (deps.ads.listEntities as ReturnType<typeof vi.fn>) = vi.fn(async () => {
+      throw new Error("meta down");
+    });
+    const res = (await getAdsBreakdownData(deps, CTX, {})) as FreshAdsBreakdown;
+    expect(res.ads[0]!.name).toBe("adX");
+  });
+
+  it("sem snapshot ad-level no período → ads vazio (não erro)", async () => {
+    const { deps } = makeDeps([[ACCOUNT_ROW], []]);
+    const res = (await getAdsBreakdownData(deps, CTX, {})) as FreshAdsBreakdown;
+    expect(res.ads).toEqual([]);
+  });
+
+  it("conta não encontrada/ativa → erro", async () => {
+    const { deps } = makeDeps([[]]);
+    const res = await getAdsBreakdownData(deps, CTX, {});
+    expect(res).toHaveProperty("error");
   });
 });

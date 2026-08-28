@@ -180,25 +180,45 @@ describe("getAccountStatusData", () => {
 });
 
 describe("getMetricsData", () => {
-  it("com snapshots de conta → soma o gasto + asOf do dia mais recente", async () => {
+  it("com snapshots de conta → soma gasto+conversões/receita (array de conversões) + asOf do dia mais recente", async () => {
     const db = fakeDb(
       new Map<unknown, unknown[]>([
         [
           insightsSnapshots,
           [
-            { date: "2026-08-18", metricsJson: { metrics: { spend: 10 } } },
-            { date: "2026-08-20", metricsJson: { metrics: { spend: 15 } } },
+            { date: "2026-08-18", metricsJson: { metrics: { spend: 10 }, conversions: [{ goal: "purchase", count: 1, value: 50 }] } },
+            { date: "2026-08-20", metricsJson: { metrics: { spend: 15 }, conversions: [{ goal: "purchase", count: 2, value: 80 }] } },
           ],
         ],
+        [agents, []],
       ]),
     );
-    const res = await getMetricsData(db, ACCOUNT, ORG, 7, "America/Sao_Paulo");
-    expect(res).toEqual({ periodDays: 7, spend: 25, asOf: "2026-08-20", hasData: true });
+    const res = await getMetricsData(db, ACCOUNT, ORG, AGENT, 7, "America/Sao_Paulo", () => new Date("2026-08-20T12:00:00Z"));
+    expect(res.hasData).toBe(true);
+    if (!res.hasData) return;
+    expect(res.spend).toBe(25);
+    expect(res.asOf).toBe("2026-08-20");
+    expect(res.conversions).toBe(3);
+    expect(res.revenue).toBe(130);
+    expect(res.attributionNote).toBeDefined(); // asOf recente → ainda pode subir
+  });
+
+  it("período antigo (asOf >7 dias de hoje) → sem attributionNote (já fechado)", async () => {
+    const db = fakeDb(
+      new Map<unknown, unknown[]>([
+        [insightsSnapshots, [{ date: "2026-08-01", metricsJson: { metrics: { spend: 10 } } }]],
+        [agents, []],
+      ]),
+    );
+    const res = await getMetricsData(db, ACCOUNT, ORG, AGENT, 7, "America/Sao_Paulo", () => new Date("2026-08-20T12:00:00Z"));
+    expect(res.hasData).toBe(true);
+    if (!res.hasData) return;
+    expect(res.attributionNote).toBeUndefined();
   });
 
   it("sem snapshots → hasData:false + asOf 'sem dados'", async () => {
     const db = fakeDb(new Map<unknown, unknown[]>([[insightsSnapshots, []]]));
-    const res = await getMetricsData(db, ACCOUNT, ORG, 7, "America/Sao_Paulo");
+    const res = await getMetricsData(db, ACCOUNT, ORG, AGENT, 7, "America/Sao_Paulo");
     expect(res).toEqual({ periodDays: 7, spend: 0, asOf: "sem dados", hasData: false });
   });
 });

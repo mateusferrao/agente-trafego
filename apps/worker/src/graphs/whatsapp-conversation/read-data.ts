@@ -14,13 +14,23 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { adAccounts, adCreatives, agentRuns, agentToolCalls, agents, campaignDrafts, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
-import { daysAgoInTz, rankAdCreatives } from "@trafego/core";
+import { daysAgoInTz, rankAdCreatives, todayInTz } from "@trafego/core";
 import { createAnalysisRepo, type AdCreativeCopyRow } from "../../modules/analysis/repo.js";
-import { getCampaignsBreakdownData, getFreshMetricsData } from "../../modules/conversation/fresh-metrics.js";
+import {
+  aggregateKpis,
+  attributionCaveat,
+  getAdsBreakdownData,
+  getCampaignsBreakdownData,
+  getFreshMetricsData,
+  loadBusinessGoal,
+  type FreshAdsBreakdown,
+  type FreshKpis,
+} from "../../modules/conversation/fresh-metrics.js";
 import { describeCreatedDraft } from "../../modules/apply/draft-summary.js";
 import type { ActivationApproval, Approval, ApprovalPort } from "@trafego/shared/ports";
 import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY } from "@trafego/shared";
 import type { CampaignDraftSpec, EntityLevel, InsightMetrics, OrgId, UnitAnalysis } from "@trafego/shared";
+import type { StoredInsightMetrics } from "@trafego/shared/types";
 import type { WorkerDeps } from "../../composition.js";
 
 /** Contexto do turno (tenant/conta resolvidos no início) — injetado nas tools. */
@@ -76,11 +86,20 @@ interface AccountStatus {
   readonly asOf: string;
 }
 
-interface AccountMetrics {
+interface AccountMetrics extends FreshKpis {
+  readonly periodDays: number;
+  readonly asOf: string;
+  readonly hasData: true;
+  /** presente quando o dado somado toca os últimos 7 dias — número ainda pode subir (atribuição). */
+  readonly attributionNote?: string;
+}
+
+/** Sem snapshot no período (nem sync ainda rodou pra essa janela). */
+interface NoAccountMetrics {
   readonly periodDays: number;
   readonly spend: number;
   readonly asOf: string;
-  readonly hasData: boolean;
+  readonly hasData: false;
 }
 
 interface CampaignAnalysis {
@@ -295,19 +314,22 @@ export async function getMetricsData(
   db: Database,
   adAccountId: string,
   orgId: string,
+  agentId: string,
   periodDays: number,
   tz: string,
   now: () => Date = () => new Date(),
-): Promise<AccountMetrics> {
+): Promise<AccountMetrics | NoAccountMetrics> {
   const since = daysAgoInTz(now(), tz, periodDays);
   const accountRows = await spendRows(db, adAccountId, orgId, ACCOUNT_LEVEL, since);
   const rows = accountRows.length > 0 ? accountRows : await spendRows(db, adAccountId, orgId, CAMPAIGN_LEVEL, since);
 
   if (rows.length === 0) return { periodDays, spend: 0, asOf: ASOF_NONE, hasData: false };
 
-  const spend = rows.reduce((sum, r) => sum + spendOf(r.metricsJson), 0);
   const asOf = rows.reduce((latest, r) => (r.date > latest ? r.date : latest), rows[0]!.date);
-  return { periodDays, spend, asOf, hasData: true };
+  const businessGoal = await loadBusinessGoal(db, orgId, agentId);
+  const kpis = aggregateKpis(rows.map((r) => r.metricsJson as StoredInsightMetrics), businessGoal);
+  const note = attributionCaveat(asOf, todayInTz(now(), tz));
+  return { periodDays, asOf, hasData: true, ...kpis, ...(note ? { attributionNote: note } : {}) };
 }
 
 /**
@@ -823,11 +845,12 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
       if (noFocus()) return NEEDS_FOCUS;
       const days = periodDays ?? DEFAULT_METRICS_PERIOD_DAYS;
       logger.debug({ adAccountId: ctx.adAccountId, periodDays: days }, "tool:get_metrics");
-      return asString(await getMetricsData(db, ctx.adAccountId, ctx.orgId, days, ctx.timezone));
+      return asString(await getMetricsData(db, ctx.adAccountId, ctx.orgId, ctx.agentId, days, ctx.timezone));
     },
     {
       name: "get_metrics",
-      description: "Gasto total da conta nos últimos N dias (default 7). Só gasto — não deriva CPA/ROAS.",
+      description:
+        "Gasto, conversões, CPA, ROAS e receita da conta (ou campanha, se ela for a única com dado) em QUALQUER período JÁ SINCRONIZADO — SEM limite de 7 dias (usa o último dado salvo, pode estar até 1 dia desatualizado; sem chamada nova à Meta). Use para períodos LONGOS (ex: 'últimos 10/30 dias', 'esse mês'). Pra dado mais atual e recente (hoje/ontem/últimos dias ≤7d), prefira get_fresh_metrics.",
       // nullable+optional: structured-output exige que campo omissível seja nullable.
       schema: z.object({ periodDays: z.number().int().positive().nullable().optional() }),
     },
@@ -866,7 +889,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     {
       name: "get_fresh_metrics",
       description:
-        "Puxa métricas ATUALIZADAS da Meta (gasto, resultados, CPA/ROAS, CPC/CPM) da conta em QUALQUER recorte dentro dos últimos 7 dias. Recorte em DIAS ATRÁS (0=hoje, 1=ontem…): `untilDaysAgo` = fim da janela; `sinceDaysAgo` = início (mais antigo, >= untilDaysAgo). Exemplos: HOJE → {} (default); ONTEM fechado → {untilDaysAgo:1}; últimos 3 dias → {periodDays:3}; de 3 dias atrás até 2 dias atrás → {sinceDaysAgo:3, untilDaysAgo:2}. `periodDays` é atalho p/ 'últimos N dias terminando no fim'. Se citar o nome de uma campanha, traz a dela. Se a Meta estiver indisponível/limitada, cai no último dado sincronizado (updated=false — avise); sem dado do período nem no salvo, o campo error explica.",
+        "Puxa métricas ATUALIZADAS da Meta (gasto, resultados, CPA/ROAS, CPC/CPM) da conta em QUALQUER recorte dentro dos últimos 7 dias. Recorte em DIAS ATRÁS (0=hoje, 1=ontem…): `untilDaysAgo` = fim da janela; `sinceDaysAgo` = início (mais antigo, >= untilDaysAgo). Exemplos: HOJE → {} (default); ONTEM fechado → {untilDaysAgo:1}; últimos 3 dias → {periodDays:3}; de 3 dias atrás até 2 dias atrás → {sinceDaysAgo:3, untilDaysAgo:2}. `periodDays` é atalho p/ 'últimos N dias terminando no fim'. Se citar o nome de uma campanha, traz a dela. Se a Meta estiver indisponível/limitada, cai no último dado sincronizado (updated=false — avise); sem dado do período nem no salvo, o campo error explica. Período MAIOR que 7 dias → use get_metrics (dado salvo, sem chamada nova à Meta).",
       schema: z.object({
         periodDays: z.number().int().positive().nullable().optional(),
         sinceDaysAgo: z.number().int().min(0).nullable().optional(),
@@ -1048,8 +1071,50 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     {
       name: "get_top_creatives",
       description:
-        "Os melhores criativos da conta (copy: texto principal, título, CTA) ranqueados por desempenho. Use para 'qual minha copy campeã' ou para embasar direção de criativo. Passe fresh=true para buscar as copies ATUAIS na Meta em tempo real; senão usa as do último run.",
+        "Os melhores criativos da conta (copy: texto principal, título, CTA) ranqueados por desempenho. Use para 'qual minha copy campeã' ou para embasar direção de criativo. Passe fresh=true para buscar as copies ATUAIS na Meta em tempo real; senão usa as do último run. SEM receita/conversão por anúncio — pra 'quais anúncios trouxeram essa receita'/'separar por criativo' (financeiro), use get_ads_breakdown.",
       schema: z.object({ fresh: z.boolean().nullable() }),
+    },
+  );
+
+  const getAdsBreakdown = tool(
+    async ({
+      periodDays,
+      sinceDaysAgo,
+      untilDaysAgo,
+      campaign,
+    }: {
+      periodDays?: number | null;
+      sinceDaysAgo?: number | null;
+      untilDaysAgo?: number | null;
+      campaign?: string | null;
+    }) => {
+      if (noFocus()) return NEEDS_FOCUS;
+      logger.debug(
+        { adAccountId: ctx.adAccountId, periodDays, sinceDaysAgo, untilDaysAgo, campaign },
+        "tool:get_ads_breakdown",
+      );
+      const result: FreshAdsBreakdown | { error: string } = await getAdsBreakdownData(
+        { db, vault: ports.vault, insightsSync: deps.insightsSync, ads: ports.ads, logger },
+        { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, timezone: ctx.timezone },
+        {
+          periodDays: periodDays ?? null,
+          sinceDaysAgo: sinceDaysAgo ?? null,
+          untilDaysAgo: untilDaysAgo ?? null,
+          campaign: campaign ?? null,
+        },
+      );
+      return asString(result);
+    },
+    {
+      name: "get_ads_breakdown",
+      description:
+        "Gasto, conversões, CPA, ROAS e RECEITA POR ANÚNCIO (separado por criativo) em QUALQUER período JÁ SINCRONIZADO — SEM limite de 7 dias, dado salvo (sem chamada nova à Meta). Use para 'quais anúncios trouxeram essa receita', 'separar por criativo', 'qual anúncio converteu mais'. Sem `campaign`, traz os top 10 anúncios da conta por gasto; com `campaign` (nome), traz TODOS os anúncios daquela campanha. Mesmo formato de período do get_fresh_metrics (periodDays/sinceDaysAgo/untilDaysAgo em dias atrás), sem o cap de 7d. SEM copy/texto do criativo — pra isso use get_top_creatives.",
+      schema: z.object({
+        periodDays: z.number().int().positive().nullable().optional(),
+        sinceDaysAgo: z.number().int().min(0).nullable().optional(),
+        untilDaysAgo: z.number().int().min(0).nullable().optional(),
+        campaign: z.string().nullable().optional(),
+      }),
     },
   );
 
@@ -1068,5 +1133,6 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     getAgentConfig,
     explainRecommendation,
     getTopCreatives,
+    getAdsBreakdown,
   ];
 }
