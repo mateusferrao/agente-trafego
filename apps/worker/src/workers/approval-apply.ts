@@ -5,12 +5,16 @@
 // Mesmo núcleo reusado pela escrita livre por chat (5c). Idempotente por `${approvalId}:apply`.
 
 import { Worker } from "bullmq";
+import { eq } from "drizzle-orm";
 import type { Redis } from "ioredis";
-import { APPROVAL_APPLY_QUEUE, type ApprovalApplyPayload, type ApprovalId } from "@trafego/shared";
+import { campaignDrafts } from "@trafego/db";
+import { APPROVAL_APPLY_QUEUE, type ApprovalApplyPayload, type ApprovalId, type CampaignDraftSpec } from "@trafego/shared";
 import { AdsPlatformError } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../composition.js";
+import { applyActivation } from "../modules/apply/apply-activation.js";
 import { applyConfirmedAction } from "../modules/apply/apply-confirmed-action.js";
 import { applyDraft } from "../modules/apply/apply-draft.js";
+import { describeCreatedDraft } from "../modules/apply/draft-summary.js";
 import { createNotifyRepo } from "../modules/notify/repo.js";
 import { createSendToConversation } from "../modules/notify/send-to-contact.js";
 
@@ -69,9 +73,46 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
             await ports.approval.resolve(approval.id, { status: "blocked", resolvedReason: outcome.reason });
             await pushOutcome(`Ainda não consigo fazer isso: ${outcome.reason}.`);
             return;
-          case "created":
+          case "created": {
             await ports.approval.resolve(approval.id, { status: "approved" });
-            await pushOutcome(outcome.dryRun ? "🧪 Simulei a criação (dry-run)." : "✅ Criado! Já subiu — a Meta vai revisar antes de veicular.");
+            if (outcome.dryRun) {
+              await pushOutcome("🧪 Simulei a criação (dry-run).");
+              return;
+            }
+            // P0.1: nasce SEMPRE pausada — o resumo diz O QUÊ pro usuário decidir sobre ativar.
+            const [draftRow] = await deps.db
+              .select({ kind: campaignDrafts.kind, spec: campaignDrafts.spec })
+              .from(campaignDrafts)
+              .where(eq(campaignDrafts.id, approval.draftId))
+              .limit(1);
+            const summary = draftRow ? describeCreatedDraft(draftRow.kind, draftRow.spec as CampaignDraftSpec) : "sua campanha";
+            const text = outcome.activationApprovalId
+              ? `✅ Criei ${summary} — nasceu PAUSADA (a Meta ainda vai revisar o criativo). Quer que eu ATIVE agora? Me diz, ou aprova no site quando quiser.`
+              : `✅ Criei ${summary} — ficou pausada, do jeito que você pediu.`;
+            await pushOutcome(text);
+            return;
+          }
+        }
+        return;
+      }
+      if (approval.kind === "activation") {
+        // Aprovação de ATIVAÇÃO (P0.1 — 2º passo HITL): o rascunho já foi criado PAUSADO;
+        // confirmar aqui ativa a raiz da árvore criada na Meta (não cria nada novo).
+        const outcome = await applyActivation(deps, { orgId, draftId: approval.draftId });
+        switch (outcome.kind) {
+          case "failed":
+            logger.error({ approvalId, err: outcome.error }, "approval-apply:ativação falhou");
+            await pushOutcome(
+              metaFailureLine(outcome.error, "Não consegui ativar agora — a Meta não respondeu. Tenta de novo em instantes."),
+            );
+            return;
+          case "blocked":
+            await ports.approval.resolve(approval.id, { status: "blocked", resolvedReason: outcome.reason });
+            await pushOutcome(`Não ativei: ${outcome.reason}.`);
+            return;
+          case "activated":
+            await ports.approval.resolve(approval.id, { status: "approved" });
+            await pushOutcome(outcome.dryRun ? "🧪 Simulei a ativação (dry-run)." : "✅ Ativado! Já está veiculando.");
             return;
         }
         return;

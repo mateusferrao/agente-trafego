@@ -47,8 +47,19 @@ export interface DraftApproval extends ApprovalBase {
   readonly draftId: DraftId;
 }
 
-/** União discriminada por `kind` — a caixa de entrada mistura ações e rascunhos. */
-export type PendingApproval = Approval | DraftApproval;
+/**
+ * Aprovação de ATIVAÇÃO de uma campanha JÁ CRIADA (P0.1 — 2º passo HITL). A criação
+ * (`DraftApproval` acima) sempre nasce PAUSADA; esta é a confirmação SEGUINTE ("posso
+ * ativar o que criei?"), sobre o MESMO `draftId`. Ao aprovar, o apply-service ativa as
+ * entidades criadas (`campaign_drafts.created_ids`) — não cria nada novo.
+ */
+export interface ActivationApproval extends ApprovalBase {
+  readonly kind: "activation";
+  readonly draftId: DraftId;
+}
+
+/** União discriminada por `kind` — a caixa de entrada mistura ações, rascunhos e ativações. */
+export type PendingApproval = Approval | DraftApproval | ActivationApproval;
 
 /** Entrada do upsert de AÇÃO — a chave (agente+entidade+tipo) deriva de `action`. */
 export interface UpsertPendingInput {
@@ -61,6 +72,16 @@ export interface UpsertPendingInput {
 
 /** Entrada da aprovação de RASCUNHO — aponta pro `campaign_drafts` já persistido. */
 export interface UpsertDraftPendingInput {
+  readonly orgId: OrgId;
+  readonly agentId: AgentId;
+  readonly runId: RunId | null;
+  readonly contactId: ContactId | null;
+  readonly draftId: DraftId;
+  readonly expiresAt: Date;
+}
+
+/** Entrada da aprovação de ATIVAÇÃO (P0.1) — mesma forma da de rascunho, `draftId` já `created`. */
+export interface UpsertActivationPendingInput {
   readonly orgId: OrgId;
   readonly agentId: AgentId;
   readonly runId: RunId | null;
@@ -85,9 +106,11 @@ export interface ApprovalPort {
   upsertPending(input: UpsertPendingInput): Promise<Approval>;
   /** Cria uma pendente de RASCUNHO (Fatia 7). Unicidade = campaign_drafts (não upsert aqui). */
   upsertDraftPending(input: UpsertDraftPendingInput): Promise<DraftApproval>;
-  /** Pendentes da org (caixa de entrada cross-conta) — ações + rascunhos. */
+  /** Cria uma pendente de ATIVAÇÃO (P0.1). Unicidade = `approvals_pending_draft_uq` (draftId+kind). */
+  upsertActivationPending(input: UpsertActivationPendingInput): Promise<ActivationApproval>;
+  /** Pendentes da org (caixa de entrada cross-conta) — ações + rascunhos + ativações. */
   listPendingByOrg(orgId: OrgId): Promise<PendingApproval[]>;
-  /** Pendentes de um agente (mini-surface da conta) — ações + rascunhos. */
+  /** Pendentes de um agente (mini-surface da conta) — ações + rascunhos + ativações. */
   listPendingByAgent(agentId: AgentId): Promise<PendingApproval[]>;
   /** Uma aprovação por id (apply-service / ownership). */
   getById(id: ApprovalId): Promise<PendingApproval | null>;

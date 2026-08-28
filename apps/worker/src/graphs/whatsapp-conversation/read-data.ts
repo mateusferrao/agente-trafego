@@ -12,14 +12,15 @@
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { adAccounts, adCreatives, agentRuns, agentToolCalls, agents, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
+import { adAccounts, adCreatives, agentRuns, agentToolCalls, agents, campaignDrafts, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
 import { daysAgoInTz, rankAdCreatives } from "@trafego/core";
 import { createAnalysisRepo, type AdCreativeCopyRow } from "../../modules/analysis/repo.js";
 import { getCampaignsBreakdownData, getFreshMetricsData } from "../../modules/conversation/fresh-metrics.js";
-import type { Approval, ApprovalPort } from "@trafego/shared/ports";
+import { describeCreatedDraft } from "../../modules/apply/draft-summary.js";
+import type { ActivationApproval, Approval, ApprovalPort } from "@trafego/shared/ports";
 import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY } from "@trafego/shared";
-import type { EntityLevel, InsightMetrics, OrgId, UnitAnalysis } from "@trafego/shared";
+import type { CampaignDraftSpec, EntityLevel, InsightMetrics, OrgId, UnitAnalysis } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
 
 /** Contexto do turno (tenant/conta resolvidos no início) — injetado nas tools. */
@@ -109,7 +110,9 @@ interface RecommendationItem {
   readonly riskLevel: string;
 }
 
-interface PendingItem {
+/** Aprovação de AÇÃO de otimização (a maioria das pendentes). */
+interface PendingActionItem {
+  readonly kind: "action";
   /** id da aprovação — o agente referencia por ele ao aprovar/rejeitar (5b-2.3). */
   readonly id: string;
   readonly entityLevel: string;
@@ -119,6 +122,19 @@ interface PendingItem {
   readonly reason: string;
   readonly expiresAt: string;
 }
+
+/** Aprovação de ATIVAÇÃO (P0.1 — 2º passo HITL, async): o rascunho já foi CRIADO pausado; isto
+ *  pergunta "posso ativar?". Chega aqui (não no fluxo de confirmação em-turno da criação) porque
+ *  a criação é assíncrona — o momento de confirmar ativação é depois, numa mensagem à parte. */
+interface PendingActivationItem {
+  readonly kind: "activation";
+  readonly id: string;
+  /** o que foi criado (PT, ex: "uma campanha de vendas, R$ 50,00/dia") — a ação é ATIVAR isso. */
+  readonly reason: string;
+  readonly expiresAt: string;
+}
+
+type PendingItem = PendingActionItem | PendingActivationItem;
 
 /** Snapshot de métricas do run (jsonb livre) — lido defensivamente. */
 interface RunMetricsSnapshot {
@@ -431,18 +447,24 @@ export async function listRecommendationsData(
   return recs.map((r) => ({ title: r.title, rationale: r.rationale ?? null, riskLevel: r.riskLevel }));
 }
 
-/** Aprovações pendentes da org (cross-conta por design). Vazio → `hasData:false`. */
+/** Aprovações pendentes da org (cross-conta por design). Vazio → `hasData:false`. `action` +
+ *  `activation` (P0.1) entram aqui — são async por natureza (a confirmação chega numa mensagem
+ *  à parte, não no mesmo turno). `draft` (criação) fica DE FORA — essa é confirmada em-turno via
+ *  `confirm_write`/`pendingDraft` (o eco da proposta JÁ é a pergunta), não por list_pending. */
 export async function listPendingData(
+  db: Pick<Database, "select">,
   approvalPort: ApprovalPort,
   orgId: string,
 ): Promise<PendingItem[] | NoData> {
-  // rascunhos de campanha (Fatia 7) são apresentados à parte; o list_pending do chat
-  // (aprovação conversacional de ações) lista só as aprovações de AÇÃO.
-  const pending = (await approvalPort.listPendingByOrg(orgId as OrgId)).filter(
-    (a): a is Approval => a.kind === "action",
-  );
-  if (pending.length === 0) return { hasData: false, note: "nenhuma ação aguardando aprovação" };
-  return pending.map((a) => ({
+  const all = await approvalPort.listPendingByOrg(orgId as OrgId);
+  const actions = all.filter((a): a is Approval => a.kind === "action");
+  const activations = all.filter((a): a is ActivationApproval => a.kind === "activation");
+  if (actions.length === 0 && activations.length === 0) {
+    return { hasData: false, note: "nenhuma ação aguardando aprovação" };
+  }
+
+  const actionItems: PendingActionItem[] = actions.map((a) => ({
+    kind: "action",
     id: a.id,
     entityLevel: a.entityLevel,
     entityId: a.entityId,
@@ -451,6 +473,23 @@ export async function listPendingData(
     reason: a.action.reason,
     expiresAt: a.expiresAt.toISOString(),
   }));
+
+  let activationItems: PendingActivationItem[] = [];
+  if (activations.length > 0) {
+    const draftIds = activations.map((a) => a.draftId);
+    const drafts = await db
+      .select({ id: campaignDrafts.id, kind: campaignDrafts.kind, spec: campaignDrafts.spec })
+      .from(campaignDrafts)
+      .where(inArray(campaignDrafts.id, draftIds));
+    const byDraftId = new Map(drafts.map((d) => [d.id, d]));
+    activationItems = activations.map((a) => {
+      const draft = byDraftId.get(a.draftId);
+      const what = draft ? describeCreatedDraft(draft.kind, draft.spec as CampaignDraftSpec) : "o que foi criado";
+      return { kind: "activation", id: a.id, reason: `ativar ${what}`, expiresAt: a.expiresAt.toISOString() };
+    });
+  }
+
+  return [...actionItems, ...activationItems];
 }
 
 /** Ação REAL recente que pode ser desfeita (id p/ o agente reverter no chat, 5c-4). */
@@ -919,7 +958,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
   const listPending = tool(
     async () => {
       logger.debug({ orgId: ctx.orgId }, "tool:list_pending");
-      return asString(await listPendingData(ports.approval, ctx.orgId));
+      return asString(await listPendingData(db, ports.approval, ctx.orgId));
     },
     {
       name: "list_pending",

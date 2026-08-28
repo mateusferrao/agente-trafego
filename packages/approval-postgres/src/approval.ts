@@ -1,11 +1,13 @@
 import { and, eq, lt, sql } from "drizzle-orm";
 import { approvals, type Database } from "@trafego/db";
 import type {
+  ActivationApproval,
   Approval,
   ApprovalPort,
   DraftApproval,
   PendingApproval,
   ResolveApprovalInput,
+  UpsertActivationPendingInput,
   UpsertDraftPendingInput,
   UpsertPendingInput,
 } from "@trafego/shared/ports";
@@ -24,8 +26,9 @@ import type {
 type Row = typeof approvals.$inferSelect;
 
 /**
- * Linha do banco → contrato de domínio (union discriminada por `draft_id`): rascunho
- * (Fatia 7) quando `draft_id` set, senão ação. Ids reidratados p/ os tipos branded.
+ * Linha do banco → contrato de domínio (union discriminada por `kind`, P0.1): rascunho/
+ * ativação (Fatia 7) quando `draft_id` set — `kind` decide qual dos dois —, senão ação.
+ * Ids reidratados p/ os tipos branded.
  */
 function toPendingApproval(r: Row): PendingApproval {
   const base = {
@@ -40,7 +43,7 @@ function toPendingApproval(r: Row): PendingApproval {
     createdAt: r.createdAt,
   };
   if (r.draftId !== null) {
-    return { ...base, kind: "draft", draftId: r.draftId as DraftId };
+    return { ...base, kind: r.kind === "activation" ? "activation" : "draft", draftId: r.draftId as DraftId };
   }
   return {
     ...base,
@@ -96,11 +99,40 @@ export function createPostgresApprovals(db: Database): ApprovalPort {
           runId: input.runId,
           contactId: input.contactId,
           status: "pending",
+          kind: "draft",
           draftId: input.draftId,
           expiresAt: input.expiresAt,
         })
         .returning();
       return toPendingApproval(row as Row) as DraftApproval;
+    },
+
+    async upsertActivationPending(input: UpsertActivationPendingInput): Promise<ActivationApproval> {
+      // Unicidade por `approvals_pending_draft_uq` (draft_id, kind) WHERE pending — no máx.
+      // 1 ativação pendente por rascunho. `onConflictDoNothing` + re-select cobre retry/replay
+      // da saga de criação (idempotente, mesmo padrão do dedup de criativo — P0.2).
+      const inserted = await db
+        .insert(approvals)
+        .values({
+          orgId: input.orgId,
+          agentId: input.agentId,
+          runId: input.runId,
+          contactId: input.contactId,
+          status: "pending",
+          kind: "activation",
+          draftId: input.draftId,
+          expiresAt: input.expiresAt,
+        })
+        .onConflictDoNothing({ target: [approvals.draftId, approvals.kind], where: sql`status = 'pending' and draft_id is not null` })
+        .returning();
+      if (inserted[0]) return toPendingApproval(inserted[0] as Row) as ActivationApproval;
+      const [existing] = await db
+        .select()
+        .from(approvals)
+        .where(and(eq(approvals.draftId, input.draftId), eq(approvals.kind, "activation"), eq(approvals.status, "pending")))
+        .limit(1);
+      if (!existing) throw new Error("upsertActivationPending: conflito sem linha resolvível");
+      return toPendingApproval(existing as Row) as ActivationApproval;
     },
 
     async listPendingByOrg(orgId: OrgId): Promise<PendingApproval[]> {

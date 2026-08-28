@@ -70,8 +70,8 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                         <span class="font-semibold text-ink">{{ draftTitle(d) }}</span>
                       </span>
                       <dl class="grid grid-cols-1 gap-1 text-sm text-ink sm:grid-cols-2">
-                        <div><dt class="inline text-muted">Gasto novo: </dt><dd class="inline font-semibold">{{ money(d.dailyBudgetMajor, d.currency) }}/dia</dd></div>
-                        <div><dt class="inline text-muted">Entra: </dt><dd class="inline">{{ d.activation === 'active' ? 'ativa (a Meta revisa antes de veicular)' : 'pausada' }}</dd></div>
+                        <div><dt class="inline text-muted">{{ d.approvalKind === 'activation' ? 'Gasto' : 'Gasto novo' }}: </dt><dd class="inline font-semibold">{{ money(d.dailyBudgetMajor, d.currency) }}/dia</dd></div>
+                        <div><dt class="inline text-muted">Status: </dt><dd class="inline">{{ activationStatusText(d) }}</dd></div>
                         @if (d.pageId) { <div><dt class="inline text-muted">Página: </dt><dd class="inline">conectada</dd></div> }
                         @if (d.pixelId) { <div><dt class="inline text-muted">Rastreamento: </dt><dd class="inline">pixel conectado</dd></div> }
                         @if (d.objective) { <div><dt class="inline text-muted">Objetivo: </dt><dd class="inline">{{ objectiveLabel(d.objective) }}</dd></div> }
@@ -88,16 +88,16 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                         </ul>
                       }
                       <span class="flex shrink-0 flex-wrap gap-2">
-                        @if (d.kind === 'from_scratch') {
+                        @if (d.approvalKind === 'draft' && d.kind === 'from_scratch') {
                           <button appButton variant="ghost" size="sm" [disabled]="resolving().has(d.id)" (click)="togglePicker(d)">
                             {{ pickerFor() === d.id ? 'Cancelar troca' : 'Trocar criativo' }}
                           </button>
                         }
                         <button appButton variant="secondary" size="sm" [disabled]="resolving().has(d.id)" (click)="rejectDraft(d)">
-                          Recusar
+                          {{ d.approvalKind === 'activation' ? 'Deixar pausada' : 'Recusar' }}
                         </button>
                         <button appButton size="sm" [disabled]="resolving().has(d.id)" (click)="approveDraft(d)">
-                          {{ resolving().has(d.id) ? 'Enviando…' : 'Aprovar' }}
+                          {{ resolving().has(d.id) ? 'Enviando…' : (d.approvalKind === 'activation' ? 'Ativar' : 'Aprovar') }}
                         </button>
                       </span>
                     </li>
@@ -219,12 +219,20 @@ export class ApprovalsPage implements OnInit {
   protected revertibleTargetOf = (a: RevertibleActionOutput): string =>
     entityTargetLabel(a.targetLevel, a.targetId, a.targetName);
 
-  protected draftKindLabel = (d: DraftApprovalOutput): string =>
-    d.kind === 'duplicate' ? 'Escalar vencedor' : 'Criar campanha';
+  protected draftKindLabel = (d: DraftApprovalOutput): string => {
+    if (d.approvalKind === 'activation') return 'Pronta pra ativar';
+    return d.kind === 'duplicate' ? 'Escalar vencedor' : 'Criar campanha';
+  };
   protected draftTitle = (d: DraftApprovalOutput): string =>
     d.kind === 'duplicate'
       ? `Duplicar ${this.sourceName(d)} com mais budget`
       : `Nova campanha${d.objective ? ` de ${conversionLabel(d.objective)}` : ''}`;
+  /** P0.1: a criação SEMPRE nasce pausada — o card diz isso com honestidade em vez de prometer
+   *  "ativa" antes de existir o 2º OK. */
+  protected activationStatusText = (d: DraftApprovalOutput): string => {
+    if (d.approvalKind === 'activation') return 'criada e PAUSADA — aguardando seu OK pra ativar';
+    return d.activation === 'active' ? 'nasce pausada — você confirma a ativação em seguida' : 'fica pausada (você pediu assim)';
+  };
   /** Origem legível (nome do backend; senão traduz o nível, sem expor "level:id" técnico). */
   protected sourceName = (d: DraftApprovalOutput): string => {
     if (!d.sourceLabel) return 'o vencedor';
@@ -259,25 +267,27 @@ export class ApprovalsPage implements OnInit {
     });
   }
 
-  /** Aprovar rascunho: enfileira a saga de criação (mesma rota resolve). Otimista. */
+  /** Aprovar rascunho (criação) OU confirmar ativação (P0.1) — mesma rota resolve
+   *  (kind-agnóstica no backend). Otimista. */
   protected approveDraft(d: DraftApprovalOutput): void {
     this.markResolving(d.id);
     this.api.resolve(d.id, 'approve').subscribe({
       next: () => {
         this.removeDraft(d.id);
-        toast.success('Enviado para criação. O agente cria em instantes.');
+        toast.success(d.approvalKind === 'activation' ? 'Ativando — já deve estar veiculando.' : 'Enviado para criação. O agente cria em instantes.');
       },
       error: () => this.clearResolving(d.id),
     });
   }
 
-  /** Recusar rascunho: descarta (nada é criado na Meta). */
+  /** Recusar a criação (nada é criado) OU manter pausada (P0.1 — a campanha já criada não é
+   *  desfeita, só segue sem ativar). */
   protected rejectDraft(d: DraftApprovalOutput): void {
     this.markResolving(d.id);
     this.api.resolve(d.id, 'reject').subscribe({
       next: () => {
         this.removeDraft(d.id);
-        toast.success('Rascunho descartado');
+        toast.success(d.approvalKind === 'activation' ? 'Tudo bem, ela continua pausada.' : 'Rascunho descartado');
       },
       error: () => this.clearResolving(d.id),
     });

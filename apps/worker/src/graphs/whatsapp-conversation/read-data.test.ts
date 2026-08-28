@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { agentRuns, agents, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
+import { agentRuns, agents, campaignDrafts, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
 import type { Approval, ApprovalPort } from "@trafego/shared/ports";
 import {
   comparePeriodsData,
@@ -335,9 +335,10 @@ describe("listRecommendationsData", () => {
 
 describe("listPendingData", () => {
   it("com pendentes → array curado com reason da ação + expiresAt ISO", async () => {
-    const res = await listPendingData(fakeApprovals([approval()]), ORG);
+    const res = await listPendingData(fakeDb(new Map()), fakeApprovals([approval()]), ORG);
     expect(res).toEqual([
       {
+        kind: "action",
         id: "ap-1",
         entityLevel: "campaign",
         entityId: "c-99",
@@ -350,8 +351,34 @@ describe("listPendingData", () => {
   });
 
   it("sem pendentes → hasData:false", async () => {
-    const res = await listPendingData(fakeApprovals([]), ORG);
+    const res = await listPendingData(fakeDb(new Map()), fakeApprovals([]), ORG);
     expect(res).toMatchObject({ hasData: false });
+  });
+
+  it("P0.1: aprovação de ATIVAÇÃO → item 'ativação' com resumo do rascunho", async () => {
+    const activationApproval = {
+      id: "ap-act-1",
+      kind: "activation",
+      orgId: ORG,
+      agentId: AGENT,
+      runId: null,
+      contactId: null,
+      status: "pending",
+      draftId: "draft-1",
+      resolvedReason: null,
+      expiresAt: new Date("2026-08-21T00:00:00.000Z"),
+      createdAt: new Date("2026-08-20T00:00:00.000Z"),
+    };
+    const draftRow = {
+      id: "draft-1",
+      kind: "from_scratch",
+      spec: { version: 1, currency: "BRL", dailyBudgetMinor: 5000, activation: "active", objective: "sale" },
+    };
+    const db = fakeDb(new Map([[campaignDrafts, [draftRow]]]));
+    const res = await listPendingData(db, fakeApprovals([activationApproval as unknown as Approval]), ORG);
+    expect(res).toEqual([
+      { kind: "activation", id: "ap-act-1", reason: expect.stringContaining("ativar"), expiresAt: "2026-08-21T00:00:00.000Z" },
+    ]);
   });
 });
 

@@ -2,33 +2,34 @@ import { describe, expect, it, vi } from "vitest";
 import { autoApplyProactiveDraft } from "./apply-draft.js";
 import type { WorkerDeps } from "../../composition.js";
 
+// applyActivation é mockado (não injetado) — o teste isola o wrapper `autoApplyProactiveDraft`
+// sem precisar simular a cadeia inteira de queries da ativação (guardrail + loadAccount/join).
+// vi.mock é hoisted pelo vitest — aplica mesmo com import estático acima.
+const applyActivationMock = vi.fn();
+vi.mock("./apply-activation.js", () => ({ applyActivation: (...args: unknown[]) => applyActivationMock(...args) }));
+
 /**
- * DB falso sequencial: cada `where().limit()` consome UM resultado (em ordem). Captura o
- * update do spec (a trava PAUSED). applyDraft é chamado de verdade, mas a 1ª leitura devolve
- * um rascunho já `created` (replay idempotente) → NÃO toca na Meta.
+ * db falso sequencial: cada `where().limit()`/`where()` (thenable) consome UM resultado (em
+ * ordem). `applyDraft` é chamado de verdade; a 1ª leitura devolve um rascunho já `created`
+ * (replay idempotente) → NÃO toca na Meta. A 2ª leitura (P0.1) é o lookup da activation
+ * approval PENDENTE (novo, ver `apply-draft.ts`).
  */
 function fakeDeps(selectRows: unknown[][]) {
-  const captured: { updatedSpec?: Record<string, unknown> } = {};
   const resolve = vi.fn(async () => {});
+  const queue = [...selectRows];
   const whereResult = () => {
-    const rows = selectRows.shift() ?? [];
+    const rows = queue.shift() ?? [];
     return { limit: async () => rows, then: (r: (v: unknown) => void) => r(rows) };
   };
   const db = {
     select: () => ({ from: () => ({ where: () => whereResult() }) }),
-    update: () => ({
-      set: (v: Record<string, unknown>) => {
-        if (v.spec) captured.updatedSpec = v.spec as Record<string, unknown>;
-        return { where: async () => undefined };
-      },
-    }),
   };
   const deps = {
     db,
     logger: { warn: () => {}, info: () => {}, debug: () => {} },
     ports: { approval: { resolve } },
   } as unknown as WorkerDeps;
-  return { deps, captured, resolve };
+  return { deps, resolve };
 }
 
 const CREATED_DRAFT = {
@@ -36,34 +37,38 @@ const CREATED_DRAFT = {
   status: "created",
   createdIds: { copiedId: "123" },
   kind: "duplicate",
-  spec: { activation: "paused" },
 };
 
 describe("autoApplyProactiveDraft", () => {
-  it("força PAUSED no spec e resolve a approval como approved quando cria", async () => {
-    // select #1 (spec do rascunho, veio ACTIVE); select #2 (applyDraft: replay created).
-    const { deps, captured, resolve } = fakeDeps([
-      [{ spec: { version: 1, currency: "BRL", dailyBudgetMinor: 5000, activation: "active" } }],
-      [CREATED_DRAFT],
-    ]);
-
+  it("replay idempotente (já criado, sem activation pendente) → resolve a approval de CRIAÇÃO como approved", async () => {
+    const { deps, resolve } = fakeDeps([[CREATED_DRAFT], []]);
     const outcome = await autoApplyProactiveDraft(deps, { orgId: "o1", draftId: "d1", approvalId: "a1" });
-
-    expect(captured.updatedSpec?.activation).toBe("paused"); // trava #1
     expect(outcome.kind).toBe("created");
     expect(resolve).toHaveBeenCalledWith("a1", { status: "approved" });
+    expect(applyActivationMock).not.toHaveBeenCalled();
   });
 
-  it("mantém a approval pendente quando a saga falha (não resolve)", async () => {
-    // select #1 spec; select #2 applyDraft não acha o rascunho → blocked (não é failed, mas
-    // exercita o ramo de resolve blocked). Para failed real precisaria simular erro de Meta.
-    const { deps, resolve } = fakeDeps([
-      [{ spec: { version: 1, currency: "BRL", dailyBudgetMinor: 5000, activation: "active" } }],
-      [], // applyDraft: rascunho não encontrado → blocked
-    ]);
-
+  it("P1.3: com activation approval pendente → encadeia applyActivation e resolve AS DUAS approvals (act_full ativa sozinho)", async () => {
+    applyActivationMock.mockResolvedValueOnce({ kind: "activated", dryRun: false });
+    const { deps, resolve } = fakeDeps([[CREATED_DRAFT], [{ id: "act-approval-1" }]]);
     const outcome = await autoApplyProactiveDraft(deps, { orgId: "o1", draftId: "d1", approvalId: "a1" });
+    expect(outcome.kind).toBe("created");
+    expect(applyActivationMock).toHaveBeenCalledWith(deps, { orgId: "o1", draftId: "d1" });
+    expect(resolve).toHaveBeenCalledWith("a1", { status: "approved" });
+    expect(resolve).toHaveBeenCalledWith("act-approval-1", { status: "approved" });
+  });
 
+  it("P1.3: ativação barrada/falhou → approval de ATIVAÇÃO fica pendente (não resolve)", async () => {
+    applyActivationMock.mockResolvedValueOnce({ kind: "blocked", reason: "kill switch ativo" });
+    const { deps, resolve } = fakeDeps([[CREATED_DRAFT], [{ id: "act-approval-1" }]]);
+    await autoApplyProactiveDraft(deps, { orgId: "o1", draftId: "d1", approvalId: "a1" });
+    expect(resolve).toHaveBeenCalledWith("a1", { status: "approved" }); // criação segue aprovada
+    expect(resolve).not.toHaveBeenCalledWith("act-approval-1", expect.anything()); // ativação intocada
+  });
+
+  it("mantém a approval pendente quando o rascunho não é encontrado (blocked)", async () => {
+    const { deps, resolve } = fakeDeps([[]]);
+    const outcome = await autoApplyProactiveDraft(deps, { orgId: "o1", draftId: "d1", approvalId: "a1" });
     expect(outcome.kind).toBe("blocked");
     expect(resolve).toHaveBeenCalledWith("a1", { status: "blocked", resolvedReason: expect.any(String) });
   });

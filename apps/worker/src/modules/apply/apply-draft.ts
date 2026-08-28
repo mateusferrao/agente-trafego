@@ -5,15 +5,16 @@
 // apply-confirmed-action / meta-tools. O EFEITO no chamador (resolver approval / push).
 
 import { and, count, eq, gte, inArray, sql } from "drizzle-orm";
-import { agentToolCalls, auditLog, campaignDrafts, guardrailConfigs } from "@trafego/db";
+import { agentToolCalls, approvals, auditLog, campaignDrafts, guardrailConfigs } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
 import { applyCreationGuardrails, buildDuplicateInput, goalNounPt } from "@trafego/core";
-import { DEFAULT_CONVERSION_GOAL, toGuardrailConfig, type CampaignDraft, type CampaignDraftSpec, type OrgId } from "@trafego/shared";
-import type { ApprovalId } from "@trafego/shared";
+import { DEFAULT_CONVERSION_GOAL, toGuardrailConfig, type CampaignDraft, type OrgId } from "@trafego/shared";
+import type { AgentId, ApprovalId, DraftId, RunId } from "@trafego/shared";
 import { AdsPlatformError, type AdAccountRef } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../../composition.js";
 import { createAnalysisRepo } from "../analysis/repo.js";
 import { loadEnabledTools } from "../tools/enabled.js";
+import { applyActivation } from "./apply-activation.js";
 
 const ACTOR_AGENT = "agent";
 const USAGE_TYPE_CAMPAIGN_CREATED = "campaign_created";
@@ -62,9 +63,14 @@ export async function countCreationsLast24h(
   return appliedToday + inFlight;
 }
 
-/** Desfecho tipado (o chamador mapeia p/ resolver a approval + push). */
+/** Aprovação TTL — reusa a mesma janela da aprovação de criação (24h, §8). */
+const ACTIVATION_APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Desfecho tipado (o chamador mapeia p/ resolver a approval + push). `activationApprovalId`
+ *  (P0.1) presente quando a criação pediu `activation:"active"` — a criação SEMPRE nasce pausada
+ *  (fecha o risco de órfão em crash), então esse é o 2º passo HITL que falta pra veicular. */
 export type DraftApplyOutcome =
-  | { readonly kind: "created"; readonly dryRun: boolean; readonly createdIds: Record<string, unknown> }
+  | { readonly kind: "created"; readonly dryRun: boolean; readonly createdIds: Record<string, unknown>; readonly activationApprovalId: string | null }
   | { readonly kind: "blocked"; readonly reason: string }
   | { readonly kind: "failed"; readonly error: unknown }
   | { readonly kind: "unsupported"; readonly reason: string };
@@ -90,9 +96,20 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     .limit(1);
   if (!row) return { kind: "blocked", reason: "rascunho não encontrado" };
 
-  // idempotência: já criado → replay (retomada de retry não duplica).
+  // idempotência: já criado → replay (retomada de retry não duplica). Reporta a activation
+  // approval PENDENTE se houver uma (mesmo desfecho de sempre, sem recriar a linha).
   if (row.status === "created" && Object.keys(row.createdIds ?? {}).length > 0) {
-    return { kind: "created", dryRun: false, createdIds: row.createdIds as Record<string, unknown> };
+    const [pendingActivation] = await db
+      .select({ id: approvals.id })
+      .from(approvals)
+      .where(and(eq(approvals.draftId, row.id), eq(approvals.kind, "activation"), eq(approvals.status, "pending")))
+      .limit(1);
+    return {
+      kind: "created",
+      dryRun: false,
+      createdIds: row.createdIds as Record<string, unknown>,
+      activationApprovalId: pendingActivation?.id ?? null,
+    };
   }
 
   // Gate de criação (A2, NET-NEW): a capacidade (create_campaign|duplicate_scale) desligada
@@ -141,6 +158,14 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     }
   }
 
+  // P0.1: a criação SEMPRE nasce PAUSADA nos dois ramos (fecha o risco de órfão em crash — um
+  // crash na janela entre a Meta retornar o create e o persist deixaria um órfão que o retry
+  // re-cria; pausado, esse órfão não gasta). `requestedActivation` (o que o usuário PEDIU)
+  // decide, no FIM, se nasce uma approval de ATIVAÇÃO (2º passo HITL) — pedido "paused" desde
+  // o início não precisa de segundo OK, fica pausado e pronto.
+  const requestedActivation = allowed.spec.activation;
+  const pausedDraft: CampaignDraft = { ...allowed, spec: { ...allowed.spec, activation: "paused" } };
+
   // Claim ATÔMICO da transição proposed|failed → creating: um único UPDATE guardado por
   // status serializa dois applies concorrentes do MESMO rascunho (ex: usuário confirma no
   // chat e aprova no site na janela em que o card ainda está pendente). O 2º pega 0 linhas
@@ -163,7 +188,7 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
   }
 
   const dryRun = cfg.dryRun;
-  const toolKey = allowed.kind === "duplicate" ? TOOL_KEY_DUPLICATE : TOOL_KEY_CREATE;
+  const toolKey = pausedDraft.kind === "duplicate" ? TOOL_KEY_DUPLICATE : TOOL_KEY_CREATE;
   // createdIds parte do que já foi criado (retomada) e é PERSISTIDO a cada passo — um retry
   // após falha parcial pula o que já existe. `/copies`/`create*` não têm idempotência nativa,
   // então a persistência incremental É a idempotência. LIMITAÇÃO conhecida: um crash na janela
@@ -178,17 +203,17 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
   try {
     if (dryRun) {
       Object.assign(createdIds, { simulated: true });
-    } else if (allowed.kind === "duplicate") {
+    } else if (pausedDraft.kind === "duplicate") {
       if (!createdIds["copiedId"]) {
-        const dup = await ports.ads.duplicateEntity(ref, buildDuplicateInput(allowed));
+        const dup = await ports.ads.duplicateEntity(ref, buildDuplicateInput(pausedDraft));
         await persist({ copiedId: dup.copiedId, childIds: dup.childIds });
       }
       if (!createdIds["budgetApplied"]) {
-        await ports.ads.setEntityBudget(ref, createdIds["copiedId"] as string, allowed.spec.dailyBudgetMinor);
+        await ports.ads.setEntityBudget(ref, createdIds["copiedId"] as string, pausedDraft.spec.dailyBudgetMinor);
         await persist({ budgetApplied: true });
       }
     } else {
-      await runFromScratchSaga(ports.ads, allowed, ref, createdIds, persist);
+      await runFromScratchSaga(ports.ads, pausedDraft, ref, createdIds, persist);
     }
   } catch (error) {
     // createdIds já foi persistido incrementalmente → o retry retoma daqui.
@@ -219,7 +244,7 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     orgId: input.orgId,
     actor: ACTOR_AGENT,
     action: `meta.${toolKey}${dryRun ? ".dry_run" : ""}`,
-    target: allowed.sourceRef ? `${allowed.sourceRef.level}:${allowed.sourceRef.id}` : `account:${row.adAccountId}`,
+    target: pausedDraft.sourceRef ? `${pausedDraft.sourceRef.level}:${pausedDraft.sourceRef.id}` : `account:${row.adAccountId}`,
     metadata: { agentId: row.agentId, draftId: row.id, dryRun },
     before: null,
     after: createdIds,
@@ -239,40 +264,58 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     .set({ status: "created", createdIds })
     .where(and(eq(campaignDrafts.id, row.id), eq(campaignDrafts.orgId, input.orgId)));
 
-  logger.info({ draftId: row.id, dryRun }, "apply-draft:created");
-  return { kind: "created", dryRun, createdIds };
+  // P0.1: pedido "active" (o comum) → nasce PAUSADA na Meta + approval de ATIVAÇÃO pendente
+  // (2º passo HITL, mesmo TTL da criação). Pedido "paused" desde o início → fica pausada, sem
+  // pedir 2º OK (o usuário já não queria veicular). Dry-run não cria approval (nada foi criado de
+  // verdade). `upsertActivationPending` é idempotente (onConflict no unique draftId+kind) —
+  // um retry deste apply (replay já tratado acima) não duplicaria a approval de qualquer forma.
+  let activationApprovalId: string | null = null;
+  if (!dryRun && requestedActivation === "active") {
+    const appr = await ports.approval.upsertActivationPending({
+      orgId: input.orgId as OrgId,
+      agentId: row.agentId as AgentId,
+      runId: row.runId as RunId | null,
+      contactId: null,
+      draftId: row.id as DraftId,
+      expiresAt: new Date(Date.now() + ACTIVATION_APPROVAL_TTL_MS),
+    });
+    activationApprovalId = appr.id;
+  }
+
+  logger.info({ draftId: row.id, dryRun, activationApprovalId }, "apply-draft:created");
+  return { kind: "created", dryRun, createdIds, activationApprovalId };
 }
 
 /**
  * Auto-criação PROATIVA (C): o agente cria sozinho ("age sozinho" por-ação) — com travas.
- * (1) força o rascunho a nascer **PAUSED** (não veicula sozinho; nasce pendente de revisão);
- * (2) aplica a saga (o guardrail de gasto novo é re-checado = rede; criar-do-zero sem criativo
- * é barrado lá dentro); (3) resolve a approval pendente conforme o desfecho (some do inbox).
- * `failed` mantém a approval PENDENTE (humano reaprova). O nudge transparente fica no chamador.
+ * (1) aplica a saga — `applyDraft` já força PAUSADO internamente nos dois ramos (P0.1), sem
+ * trava externa aqui; o guardrail de gasto novo é re-checado = rede; criar-do-zero sem criativo
+ * é barrado lá dentro. (2) resolve a approval de CRIAÇÃO conforme o desfecho (some do inbox).
+ * (3) P1.3 — autonomia "age sozinho" ATIVA o que acabou de criar (mantém o sentido de "agiu
+ * sozinho"); falhar/barrar na ativação mantém a approval de ATIVAÇÃO pendente (humano decide) —
+ * `failed` na CRIAÇÃO mantém a approval de criação pendente (a promessa não some; humano reaprova).
+ * O nudge transparente fica no chamador.
  */
 export async function autoApplyProactiveDraft(
   deps: WorkerDeps,
   input: { readonly orgId: string; readonly draftId: string; readonly approvalId: string },
 ): Promise<DraftApplyOutcome> {
-  const { db, ports, logger } = deps;
-  // trava #1: PAUSED sempre (read-modify-write no spec) — mesmo que o proponente marque active.
-  const [row] = await db
-    .select({ spec: campaignDrafts.spec })
-    .from(campaignDrafts)
-    .where(and(eq(campaignDrafts.id, input.draftId), eq(campaignDrafts.orgId, input.orgId)))
-    .limit(1);
-  if (row?.spec) {
-    const spec: CampaignDraftSpec = { ...(row.spec as CampaignDraftSpec), activation: "paused" };
-    await db
-      .update(campaignDrafts)
-      .set({ spec })
-      .where(and(eq(campaignDrafts.id, input.draftId), eq(campaignDrafts.orgId, input.orgId)));
-  }
-
+  const { ports, logger } = deps;
   const outcome = await applyDraft(deps, { orgId: input.orgId, draftId: input.draftId });
   const approvalId = input.approvalId as ApprovalId;
   if (outcome.kind === "created") {
     await ports.approval.resolve(approvalId, { status: "approved" });
+    if (outcome.activationApprovalId) {
+      const activation = await applyActivation(deps, { orgId: input.orgId, draftId: input.draftId });
+      if (activation.kind === "activated") {
+        await ports.approval.resolve(outcome.activationApprovalId as ApprovalId, { status: "approved" });
+      } else {
+        logger.warn(
+          { draftId: input.draftId, outcome: activation.kind },
+          "auto-create:auto-ativação não completou — approval de ativação mantida pendente",
+        );
+      }
+    }
   } else if (outcome.kind === "blocked" || outcome.kind === "unsupported") {
     await ports.approval.resolve(approvalId, { status: "blocked", resolvedReason: outcome.reason });
   } else {

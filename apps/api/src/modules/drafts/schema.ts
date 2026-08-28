@@ -14,9 +14,15 @@ export const draftCopyVariantOutput = z.object({
  * Aprovação de RASCUNHO de campanha (Fatia 7) — mais rica que 1 ação: estrutura + copy +
  * budget novo + Página/Pixel (card de rascunho, Brand tier). Espelha o card no WhatsApp
  * (eco concreto). Resolve pela MESMA rota (`/approvals/:id/resolve`).
+ *
+ * `approvalKind` (P0.1) distingue os 2 momentos que usam este MESMO card: `draft` = pedindo OK
+ * pra CRIAR (gasto novo, ainda não existe na Meta); `activation` = já foi CRIADO pausado
+ * (`createdIds` preenchido) e pede OK pra ATIVAR (2º passo HITL — fecha o risco de órfão em
+ * crash). O site troca só o texto/CTA por `approvalKind`; o resto do card é o mesmo.
  */
 export const draftApprovalOutput = z.object({
   id: z.string(),
+  approvalKind: z.enum(["draft", "activation"]),
   accountId: z.string(),
   accountName: z.string(),
   status: approvalStatusOutput,
@@ -36,6 +42,8 @@ export const draftApprovalOutput = z.object({
   pixelId: z.string().nullable(),
   variantsCount: z.number().nullable(),
   copyVariants: z.array(draftCopyVariantOutput).nullable(),
+  /** ids reais criados na Meta — só presente em `approvalKind:"activation"` (já existe na Meta). */
+  createdIds: z.record(z.string(), z.unknown()).nullable(),
 });
 export type DraftApprovalOutput = z.infer<typeof draftApprovalOutput>;
 

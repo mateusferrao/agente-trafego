@@ -6416,6 +6416,13 @@
           "id": {
             "type": "string"
           },
+          "approvalKind": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "activation"
+            ]
+          },
           "accountId": {
             "type": "string"
           },
@@ -6532,10 +6539,18 @@
                 "cta"
               ]
             }
+          },
+          "createdIds": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": {}
           }
         },
         "required": [
           "id",
+          "approvalKind",
           "accountId",
           "accountName",
           "status",
@@ -6551,7 +6566,8 @@
           "pageId",
           "pixelId",
           "variantsCount",
-          "copyVariants"
+          "copyVariants",
+          "createdIds"
         ]
       },
       "ScaleWinnerInput": {

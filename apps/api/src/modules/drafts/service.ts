@@ -115,9 +115,16 @@ export function createDraftsService(deps: DraftsServiceDeps) {
   }
 
   return {
-    /** Rascunhos de campanha aguardando aprovação (card de rascunho no inbox). */
+    /**
+     * Rascunhos de campanha aguardando aprovação (card de rascunho no inbox) — inclui os 2
+     * momentos que compartilham o card (P0.1): `draft` (pedindo OK pra criar, gasto novo ainda
+     * não existe) e `activation` (já criado PAUSADO, pedindo OK pra ativar). O site distingue
+     * pelo `approvalKind` na resposta.
+     */
     async listPendingDrafts(orgId: OrgId): Promise<DraftApprovalOutput[]> {
-      const pending = (await deps.approvals.listPendingByOrg(orgId)).filter((a) => a.kind === "draft");
+      const pending = (await deps.approvals.listPendingByOrg(orgId)).filter(
+        (a) => a.kind === "draft" || a.kind === "activation",
+      );
       if (pending.length === 0) return [];
 
       const out: DraftApprovalOutput[] = [];
@@ -130,6 +137,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
             spec: campaignDrafts.spec,
             sourceRef: campaignDrafts.sourceRef,
             accountId: campaignDrafts.adAccountId,
+            createdIds: campaignDrafts.createdIds,
           })
           .from(campaignDrafts)
           .where(and(eq(campaignDrafts.id, appr.draftId), eq(campaignDrafts.orgId, orgId)))
@@ -143,6 +151,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
         const spec = d.spec as CampaignDraftSpec;
         out.push({
           id: appr.id,
+          approvalKind: appr.kind,
           accountId: d.accountId,
           accountName: acc?.name ?? "conta",
           status: appr.status,
@@ -166,6 +175,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
                 cta: c.cta ?? null,
               }))
             : null,
+          createdIds: appr.kind === "activation" ? (d.createdIds as Record<string, unknown>) : null,
         });
       }
       return out;

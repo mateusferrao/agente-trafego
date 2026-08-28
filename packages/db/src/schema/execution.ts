@@ -21,6 +21,7 @@ import type {
 } from "@trafego/shared";
 import {
   actionType,
+  approvalKind,
   approvalStatus,
   creativeAssetOrigin,
   creativeAssetStatus,
@@ -153,14 +154,19 @@ export const approvals = pgTable(
     runId: uuid("run_id").references(() => agentRuns.id, { onDelete: "cascade" }),
     contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
     status: approvalStatus("status").notNull().default("pending"),
+    // discrimina a FORMA (P0.1): `action`/`draft` (como antes) + `activation` (NOVO — 2º
+    // passo HITL, ativa o que já foi criado PAUSADO; reusa `draft_id`, não dá pra distinguir
+    // de `draft` só pela nulidade). Default `action` cobre o grosso das linhas legadas; o
+    // backfill da migração corrige as `draft` existentes (ver 00xx_....sql).
+    kind: approvalKind("kind").notNull().default("action"),
     // chave granular (a ação proposta vive inteira em `action`; estas colunas chaveiam
-    // o upsert + índices, sem espalhar params). NULL nas aprovações de RASCUNHO (Fatia 7):
-    // a proposta vive em `campaign_drafts` (via `draft_id`), não em `action`.
+    // o upsert + índices, sem espalhar params). NULL nas aprovações de RASCUNHO/ATIVAÇÃO
+    // (Fatia 7): a proposta vive em `campaign_drafts` (via `draft_id`), não em `action`.
     entityLevel: entityLevel("entity_level"),
     entityId: text("entity_id"),
     actionType: actionType("action_type"),
     action: jsonb("action").$type<Action>(),
-    // Aprovação de rascunho de campanha (Fatia 7) — exclui `action` (check exatamente-um).
+    // Aprovação de rascunho OU ativação de campanha (Fatia 7) — exclui `action` (check por-kind).
     draftId: uuid("draft_id").references(() => campaignDrafts.id, { onDelete: "cascade" }),
     // motivo quando resolvida sem aplicar (rejeitada pelo usuário ou `blocked` no re-check).
     resolvedReason: text("resolved_reason"),
@@ -173,15 +179,22 @@ export const approvals = pgTable(
     index("approvals_run_idx").on(t.runId),
     index("approvals_agent_status_idx").on(t.agentId, t.status),
     index("approvals_draft_idx").on(t.draftId),
-    // no máx. 1 pendente por (agente, entidade, tipo de ação) → upsert atômico. Rascunhos
-    // (entity/actionType NULL) ficam FORA daqui — a unicidade deles mora em campaign_drafts.
+    // no máx. 1 pendente por (agente, entidade, tipo de ação) → upsert atômico. Rascunhos/
+    // ativações (entity/actionType NULL) ficam FORA daqui — a unicidade deles é por draftId+kind.
     uniqueIndex("approvals_pending_uq")
       .on(t.agentId, t.entityLevel, t.entityId, t.actionType)
       .where(sql`status = 'pending'`),
-    // exatamente um: aprovação de AÇÃO (action set, draft null) OU de RASCUNHO (draft set, action null).
+    // no máx. 1 pendente por (rascunho, kind) — evita 2 aprovações de ATIVAÇÃO (ou de CRIAÇÃO)
+    // simultâneas pro MESMO draft_id (P0.1).
+    uniqueIndex("approvals_pending_draft_uq")
+      .on(t.draftId, t.kind)
+      .where(sql`status = 'pending' and draft_id is not null`),
+    // exatamente um formato por `kind`: AÇÃO (action set, draft null) OU RASCUNHO/ATIVAÇÃO
+    // (draft set, action null).
     check(
       "approvals_action_xor_draft",
-      sql`(${t.action} is not null and ${t.draftId} is null) or (${t.action} is null and ${t.draftId} is not null)`,
+      sql`(${t.kind} = 'action' and ${t.action} is not null and ${t.draftId} is null)
+          or (${t.kind} in ('draft', 'activation') and ${t.action} is null and ${t.draftId} is not null)`,
     ),
   ],
 );

@@ -122,6 +122,12 @@ export const messageDirection = pgEnum("message_direction", ["inbound", "outboun
 // ─── Criação de campanhas (Fatia 7) ──────────────────────────────────────
 // `from_scratch` = campanha do zero; `duplicate` = cópia/escala de um vencedor.
 export const draftKind = pgEnum("draft_kind", ["from_scratch", "duplicate"]);
+// Discrimina a FORMA da aprovação (P0.1): `action` = ação de otimização (`action` set);
+// `draft` = aprovação de CRIAR o rascunho (gasto novo, `draft_id` set); `activation` =
+// aprovação de ATIVAR o que já foi criado (nasce sempre PAUSADO — 2º passo HITL, mesmo
+// `draft_id`). Antes só existia `action`×`draft`, discriminado pela nulidade de `draft_id`;
+// `activation` reusa o mesmo `draft_id`, então precisa de um discriminador explícito.
+export const approvalKind = pgEnum("approval_kind", ["action", "draft", "activation"]);
 // Ciclo de vida do rascunho: proposto → aprovado → criando → criado (ou falhou/revertido).
 export const draftStatus = pgEnum("draft_status", [
   "proposed",
