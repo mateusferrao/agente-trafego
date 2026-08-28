@@ -212,6 +212,9 @@ importers:
       '@trafego/approval-postgres':
         specifier: workspace:*
         version: link:../../packages/approval-postgres
+      '@trafego/campaign-drafts':
+        specifier: workspace:*
+        version: link:../../packages/campaign-drafts
       '@trafego/channel-evolution':
         specifier: workspace:*
         version: link:../../packages/channel-evolution

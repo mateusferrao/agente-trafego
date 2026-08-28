@@ -6,7 +6,8 @@
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { adAccounts, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { planScaleMove, type BudgetLevel, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { applyDraftEdit, planScaleMove, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
   ACTION_PARAM_MODE,
   ACTION_PARAM_PCT,
@@ -388,14 +389,34 @@ export interface RefineDraftPatch {
   readonly regenerateCopy?: boolean;
   /** público (só from_scratch): `reuse` = herda o conjunto que converte; `broad` = a Meta escolhe. */
   readonly audience?: "reuse" | "broad";
+  /** nome da campanha (chat leve — ajuste de intenção única, só from_scratch). */
+  readonly campaignName?: string;
 }
 
 export type RefineResult = { readonly kind: "ok"; readonly echo: string } | { readonly kind: "blocked"; readonly reason: string };
 
+type MutableEdit = { -readonly [K in keyof DraftEdit]: DraftEdit[K] };
+
+const NOT_OPEN_REASON = "esse rascunho não está mais aberto pra ajuste";
+
+/** Erro tipado do núcleo → motivo amigável no chat (§13). O caminho leve do chat raramente cai
+ *  aqui (não edita objetivo nem remove anúncio), mas mapeia por completude. */
+function refineErrorReason(error: RefineError): string {
+  switch (error.code) {
+    case "field_not_editable":
+      return "numa escala eu mantenho o que já converte — pra mexer nisso o caminho é criar uma campanha nova";
+    case "empty_variants":
+      return "toda campanha precisa de pelo menos um anúncio";
+    case "objective_requires_pixel":
+      return "esse objetivo precisa do pixel configurado na conta, e ela ainda não tem";
+  }
+}
+
 /**
- * Refinamento CONVERSACIONAL do rascunho pendente (Fatia 7): muta o campaign_drafts (spec)
- * sem criar rascunho novo — budget/ativação/variações/regenerar copy — e re-ecoa. O
- * "sim" segue aplicando o MESMO rascunho (mesma approval). Só mexe em rascunho `proposed`.
+ * Refinamento CONVERSACIONAL do rascunho pendente (Fatia 7): muta o campaign_drafts (spec) sem
+ * criar rascunho novo e re-ecoa. Converge com o site no núcleo `applyDraftEdit` + `persistDraftSpec`
+ * (§13 DRY) — a casca só resolve os fragmentos de IO (copy via LLM, público ao vivo). O chat é LEVE
+ * (Slice 8): budget/ativação/nome/público/regenerar copy; edição pesada vai pro painel do site.
  */
 export async function refineDraft(
   deps: WorkerDeps,
@@ -403,29 +424,24 @@ export async function refineDraft(
   draftId: string,
   patch: RefineDraftPatch,
 ): Promise<RefineResult> {
-  const [row] = await deps.db
-    .select({ kind: campaignDrafts.kind, spec: campaignDrafts.spec, status: campaignDrafts.status })
-    .from(campaignDrafts)
-    .where(and(eq(campaignDrafts.id, draftId), eq(campaignDrafts.orgId, ctx.orgId)))
-    .limit(1);
-  if (!row || row.status !== "proposed") return { kind: "blocked", reason: "esse rascunho não está mais aberto pra ajuste" };
+  const loaded = await loadDraftForEdit(deps.db, { orgId: ctx.orgId, draftId });
+  if (!loaded) return { kind: "blocked", reason: NOT_OPEN_REASON };
+  const { kind, spec } = loaded;
 
   const ac = await loadAgentContext(deps, ctx);
   if (!ac) return { kind: "blocked", reason: "não consegui acessar a conta agora" };
-  const spec = row.spec as CampaignDraftSpec;
 
-  const cap = ac.cfg.maxNewDailyBudgetMinor;
-  const requestedBudget = patch.budgetReais != null ? Math.round(patch.budgetReais * MINOR_PER_UNIT) : spec.dailyBudgetMinor;
-  const dailyBudgetMinor = cap != null ? Math.min(requestedBudget, cap) : requestedBudget;
-  const activation = patch.activation ?? spec.activation;
+  const edit: MutableEdit = {};
+  if (patch.budgetReais != null) edit.budgetMinor = Math.round(patch.budgetReais * MINOR_PER_UNIT);
+  if (patch.activation) edit.activation = patch.activation;
+  if (kind === "from_scratch" && patch.campaignName != null) edit.campaignName = patch.campaignName;
+
+  // copy (só from_scratch): regenerar re-aterra na copy que já performa (LLM na casca → fragmento).
   const variantsCount = patch.variantsCount ?? spec.variantsCount ?? DEFAULT_VARIANTS;
-
-  let copyVariants = spec.copyVariants;
-  const needCopy = row.kind === "from_scratch" && (patch.regenerateCopy === true || (patch.variantsCount != null && patch.variantsCount !== (spec.variantsCount ?? 0)));
+  const needCopy = kind === "from_scratch" && (patch.regenerateCopy === true || (patch.variantsCount != null && patch.variantsCount !== (spec.variantsCount ?? 0)));
   if (needCopy) {
-    // re-aterra a regeneração na copy que já performa (mesma fonte da proposta inicial).
     const defaults = await deps.ports.ads.inferCreationDefaults(ac.ref);
-    copyVariants = await generateCopy(
+    edit.copyVariants = await generateCopy(
       deps.ports.llm,
       {
         model: ac.model,
@@ -439,28 +455,18 @@ export async function refineDraft(
     );
   }
 
-  // público (só from_scratch): broad → Advantage+ amplo; reuse → mantém o conjunto provado do
-  // spec, ou re-infere ao vivo se ainda não havia um (nada pra herdar → mantém o que estava).
-  let targeting = spec.targeting;
-  if (row.kind === "from_scratch" && patch.audience) {
-    if (patch.audience === "broad") {
-      targeting = { kind: "advantage_plus" };
-    } else if (spec.targeting?.kind !== "reuse_adset") {
-      const defaults = await deps.ports.ads.inferCreationDefaults(ac.ref);
-      targeting = defaults.sourceAdsetId ? { kind: "reuse_adset", sourceAdsetId: defaults.sourceAdsetId } : targeting;
-    }
+  // público (só from_scratch): thunk lazy (broad/keep não tocam a conta).
+  if (kind === "from_scratch" && patch.audience) {
+    const targeting = await resolveAudienceTargeting(patch.audience, spec.targeting, async () => (await deps.ports.ads.inferCreationDefaults(ac.ref)).sourceAdsetId);
+    if (targeting) edit.targeting = targeting;
   }
 
-  const nextSpec: CampaignDraftSpec = {
-    ...spec,
-    dailyBudgetMinor,
-    activation,
-    ...(row.kind === "from_scratch"
-      ? { variantsCount, ...(copyVariants ? { copyVariants } : {}), ...(targeting ? { targeting } : {}) }
-      : {}),
-  };
-  await deps.db.update(campaignDrafts).set({ spec: nextSpec }).where(eq(campaignDrafts.id, draftId));
-  return { kind: "ok", echo: buildRefineEcho(row.kind, nextSpec) };
+  const result = applyDraftEdit(kind, spec, edit, { budgetCapMinor: ac.cfg.maxNewDailyBudgetMinor ?? null, hasPixel: true });
+  if (!result.ok) return { kind: "blocked", reason: refineErrorReason(result.error) };
+
+  const persisted = await persistDraftSpec(deps.db, { orgId: ctx.orgId, draftId }, result.value.spec);
+  if (!persisted) return { kind: "blocked", reason: NOT_OPEN_REASON };
+  return { kind: "ok", echo: buildRefineEcho(kind, result.value.spec) };
 }
 
 /** Criativo escolhido pro rascunho + de onde veio (pro eco honesto). `source`: `serving` =

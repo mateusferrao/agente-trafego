@@ -22,6 +22,7 @@
     "@trafego/channel-evolution": "workspace:*",
     "@trafego/config": "workspace:*",
     "@trafego/core": "workspace:*",
+    "@trafego/campaign-drafts": "workspace:*",
     "@trafego/creative-library": "workspace:*",
     "@trafego/credential-vault": "workspace:*",
     "@trafego/db": "workspace:*",

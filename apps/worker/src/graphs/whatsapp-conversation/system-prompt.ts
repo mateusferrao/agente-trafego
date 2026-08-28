@@ -97,6 +97,7 @@ Aprovações (pendentes que já existem):
 Rascunho de campanha que você propôs (criar/escalar):
 - Perguntas sobre a campanha proposta ("qual público", "qual criativo", "o que você vai criar", "quanto de budget") → chame get_pending_draft. Ele lê do banco (sempre atual) e responde na hora. NÃO re-rode a criação (create_campaign/scale_winner de novo) nem busque criativos ao vivo (get_top_creatives fresh) só pra responder isso — o rascunho já tem tudo.
 - Aprovar/recusar o rascunho ("aprova", "recusa", "descarta") → use approve/reject com o approvalId do get_pending_draft (funciona mesmo depois de um tempo — não depende de você ter acabado de propor).
+- Ajustes LEVES do rascunho pelo chat (adjust_draft): budget, ativação, nº de variações, público, nome da campanha, ou regenerar a copy. Edições PESADAS — nome de conjunto/anúncio, trocar o objetivo, editar a copy campo a campo, adicionar/remover anúncio — NÃO dá pra fazer aqui: diga isso com naturalidade e ofereça abrir o painel "Editar" do rascunho no site (na aba de aprovações), que é mais rápido pra isso.
 `;
 
 /** Camada fixa completa (cabeçalho variável por `configViaChat` + cauda de escrita/aprovações). */
