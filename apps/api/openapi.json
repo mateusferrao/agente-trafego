@@ -1725,6 +1725,29 @@
                     ]
                   }
                 }
+              },
+              "creativeSource": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "serving",
+                      "library",
+                      "both"
+                    ]
+                  },
+                  "servingPick": {
+                    "type": "string",
+                    "enum": [
+                      "best_performing",
+                      "agent"
+                    ]
+                  }
+                },
+                "required": [
+                  "mode"
+                ]
               }
             }
           },
@@ -2793,6 +2816,29 @@
                     ]
                   }
                 }
+              },
+              "creativeSource": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "serving",
+                      "library",
+                      "both"
+                    ]
+                  },
+                  "servingPick": {
+                    "type": "string",
+                    "enum": [
+                      "best_performing",
+                      "agent"
+                    ]
+                  }
+                },
+                "required": [
+                  "mode"
+                ]
               }
             }
           },

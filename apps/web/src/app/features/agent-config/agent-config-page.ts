@@ -14,6 +14,7 @@ import { toast } from 'ngx-sonner';
 import { NumberStepper, UiButton, UiConfirmDialogService, UiPageHeader, UiSelectBox, UiSpinner, type UiSelectOptionItem } from '@ui';
 import { AccountsApiService } from '@core/api/accounts-api.service';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
+import { AGENT_NAME } from '@core/brand';
 import type {
   AgentConfigInput,
   AgentSummary,
@@ -472,6 +473,25 @@ interface FormState {
           </details>
         </section>
 
+        <!-- Fonte do criativo na criação (Slice 10) — resultado, sem jargão -->
+        <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
+          <div class="flex flex-col gap-1">
+            <span class="font-brand text-base font-semibold text-ink">De onde o {{ agentName }} tira o criativo?</span>
+            <span class="text-xs text-muted">Quando ele cria uma campanha nova, qual criativo usar.</span>
+          </div>
+          <div class="flex flex-col gap-2">
+            @for (o of creativeSourceOptions; track o.value) {
+              <label class="flex cursor-pointer items-start gap-3 rounded-md border border-line bg-app p-3" [class.border-accent]="creativeSourceMode() === o.value">
+                <input type="radio" name="creativeSource" class="mt-1" [value]="o.value" [checked]="creativeSourceMode() === o.value" (change)="creativeSourceMode.set(o.value)" />
+                <span class="flex flex-col gap-0.5">
+                  <span class="text-sm font-medium text-ink">{{ o.label }}@if (o.recommended) { <span class="text-xs font-normal text-muted">(recomendado)</span>}</span>
+                  <span class="text-xs text-muted">{{ o.hint }}</span>
+                </span>
+              </label>
+            }
+          </div>
+        </section>
+
         <!-- Opções avançadas (divulgação progressiva) — overrides do pipeline por-agente -->
         <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
           <details class="flex flex-col gap-3">
@@ -626,6 +646,14 @@ export class AgentConfigPage {
   protected readonly tristateOptions = TRISTATE_OPTIONS;
   /** defaults do sistema (env) — placeholder real dos campos vazios. */
   protected readonly qualityDefaults = signal<AgentSummary['qualityDefaults'] | null>(null);
+  protected readonly agentName = AGENT_NAME;
+  /** De onde o Roy tira o criativo pra campanhas novas (Slice 10) — 3 resultados claros. */
+  protected readonly creativeSourceMode = signal<'serving' | 'both' | 'library'>('serving');
+  protected readonly creativeSourceOptions = [
+    { value: 'serving' as const, label: 'Reaproveitar o que já está funcionando', recommended: true, hint: 'Usa um anúncio que já roda bem na sua conta.' },
+    { value: 'both' as const, label: `Deixar o ${AGENT_NAME} escolher`, recommended: false, hint: 'Ele compara os anúncios no ar e os da sua biblioteca e escolhe o que mais combina com a campanha.' },
+    { value: 'library' as const, label: 'Usar só a minha biblioteca', recommended: false, hint: 'Escolhe entre os criativos que você subiu.' },
+  ];
   protected readonly mcMinConversions = signal('');
   protected readonly mcMinClicks = signal('');
   protected readonly mcFatigueCtrDropPct = signal('');
@@ -905,7 +933,13 @@ export class AgentConfigPage {
       ...numField('trackingBrokenMinFunnel', this.mcTrackingBrokenMinFunnel()),
       ...(this.marketRefOverride() ? { marketReference: this.marketRefOverride()! } : {}),
     };
+    // fonte do criativo: mapeia o RESULTADO escolhido → {mode, servingPick}. "serving" carrega
+    // servingPick=best_performing (determinístico, sem LLM = default de hoje); "both" = o Roy
+    // escolhe entre no ar + biblioteca; "library" = só a biblioteca.
+    const mode = this.creativeSourceMode();
+    const creativeSource = mode === 'serving' ? { mode, servingPick: 'best_performing' as const } : { mode };
     return {
+      creativeSource,
       ...(Object.keys(quality).length > 0 ? { quality } : {}),
     };
   }
@@ -983,6 +1017,9 @@ export class AgentConfigPage {
     this.mcTrackingBrokenRatio.set(numToStr(q.trackingBrokenRatio));
     this.mcTrackingBrokenMinFunnel.set(numToStr(q.trackingBrokenMinFunnel));
     this.marketRefOverride.set(q.marketReference ?? null);
+    // fonte do criativo: `both`/`library` explícitos; qualquer serving.* → o resultado "reaproveitar".
+    const cs = c.creativeSource?.mode;
+    this.creativeSourceMode.set(cs === 'both' ? 'both' : cs === 'library' ? 'library' : 'serving');
   }
 
   /** Decompõe o `CadenceSpec` salvo no sub-estado do editor. */
