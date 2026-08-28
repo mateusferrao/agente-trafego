@@ -4,7 +4,7 @@ import { requireAuth } from "../../middleware/auth.js";
 import { requireActiveAccess } from "../../middleware/access-gate.js";
 import { requireOrgScope, orgIdOf } from "../../middleware/org-scope.js";
 import { env } from "../../env.js";
-import { scaleWinnerInput, setDraftCreativeInput } from "./schema.js";
+import { scaleWinnerInput, setDraftCreativeInput, setDraftTargetingInput } from "./schema.js";
 import { isAllowedCreativeType } from "./service.js";
 
 /** Slice de rascunhos de campanha (Fatia 7): listar pendentes + escalar vencedor pelo site. */
@@ -31,6 +31,15 @@ export const draftsRoutes: FastifyPluginAsync = async (app) => {
     const input = setDraftCreativeInput.parse(request.body);
     const result = await service.setDraftCreative(orgIdOf(request) as OrgId, id, draftId, input);
     if (!result) return reply.status(404).send({ message: "não consegui trocar o criativo desse rascunho" });
+    return result;
+  });
+
+  // Alterna o público do rascunho (herda o conjunto que converte × Advantage+ amplo).
+  app.post("/accounts/:id/drafts/:draftId/targeting", guard, async (request, reply) => {
+    const { id, draftId } = request.params as { id: string; draftId: string };
+    const input = setDraftTargetingInput.parse(request.body);
+    const result = await service.setDraftTargeting(orgIdOf(request) as OrgId, id, draftId, input.audience);
+    if (!result) return reply.status(404).send({ message: "não consegui ajustar o público desse rascunho" });
     return result;
   });
 

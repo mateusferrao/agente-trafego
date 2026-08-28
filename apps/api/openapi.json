@@ -6566,6 +6566,16 @@
               "origin"
             ]
           },
+          "audience": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "reuse",
+              "broad"
+            ]
+          },
           "createdIds": {
             "type": [
               "object",
@@ -6594,6 +6604,7 @@
           "variantsCount",
           "copyVariants",
           "creative",
+          "audience",
           "createdIds"
         ]
       },
@@ -6792,6 +6803,40 @@
           "tier",
           "format",
           "thumbnailUrl"
+        ]
+      },
+      "SetDraftTargetingInput": {
+        "type": "object",
+        "properties": {
+          "audience": {
+            "type": "string",
+            "enum": [
+              "reuse",
+              "broad"
+            ]
+          }
+        },
+        "required": [
+          "audience"
+        ]
+      },
+      "SetDraftTargetingOutput": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "audience": {
+            "type": "string",
+            "enum": [
+              "reuse",
+              "broad"
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "audience"
         ]
       },
       "SetDraftCreativeInput": {
@@ -8879,6 +8924,52 @@
                   "items": {
                     "$ref": "#/components/schemas/ServingCreativeOutput"
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/drafts/{draftId}/targeting": {
+      "post": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "draftId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetDraftTargetingInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "público do rascunho alternado (reuse × amplo)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetDraftTargetingOutput"
                 }
               }
             }

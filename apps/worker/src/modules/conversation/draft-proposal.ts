@@ -352,6 +352,13 @@ function buildRefineEcho(kind: string, spec: CampaignDraftSpec): string {
   if (spec.copyVariants && spec.copyVariants.length > 0) {
     lines.push(`${spec.copyVariants.length} variação(ões) de copy. Ex: "${spec.copyVariants[0]!.headline}".`);
   }
+  if (kind === "from_scratch" && spec.targeting) {
+    lines.push(
+      spec.targeting.kind === "reuse_adset"
+        ? "Público: herda o que já converte."
+        : "Público: a Meta escolhe (mais amplo).",
+    );
+  }
   lines.push("Confirma agora ou quer ajustar mais?");
   return joinBalloons(lines);
 }
@@ -361,6 +368,8 @@ export interface RefineDraftPatch {
   readonly activation?: "active" | "paused";
   readonly variantsCount?: number;
   readonly regenerateCopy?: boolean;
+  /** público (só from_scratch): `reuse` = herda o conjunto que converte; `broad` = a Meta escolhe. */
+  readonly audience?: "reuse" | "broad";
 }
 
 export type RefineResult = { readonly kind: "ok"; readonly echo: string } | { readonly kind: "blocked"; readonly reason: string };
@@ -412,11 +421,25 @@ export async function refineDraft(
     );
   }
 
+  // público (só from_scratch): broad → Advantage+ amplo; reuse → mantém o conjunto provado do
+  // spec, ou re-infere ao vivo se ainda não havia um (nada pra herdar → mantém o que estava).
+  let targeting = spec.targeting;
+  if (row.kind === "from_scratch" && patch.audience) {
+    if (patch.audience === "broad") {
+      targeting = { kind: "advantage_plus" };
+    } else if (spec.targeting?.kind !== "reuse_adset") {
+      const defaults = await deps.ports.ads.inferCreationDefaults(ac.ref);
+      targeting = defaults.sourceAdsetId ? { kind: "reuse_adset", sourceAdsetId: defaults.sourceAdsetId } : targeting;
+    }
+  }
+
   const nextSpec: CampaignDraftSpec = {
     ...spec,
     dailyBudgetMinor,
     activation,
-    ...(row.kind === "from_scratch" ? { variantsCount, ...(copyVariants ? { copyVariants } : {}) } : {}),
+    ...(row.kind === "from_scratch"
+      ? { variantsCount, ...(copyVariants ? { copyVariants } : {}), ...(targeting ? { targeting } : {}) }
+      : {}),
   };
   await deps.db.update(campaignDrafts).set({ spec: nextSpec }).where(eq(campaignDrafts.id, draftId));
   return { kind: "ok", echo: buildRefineEcho(row.kind, nextSpec) };

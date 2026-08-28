@@ -93,6 +93,8 @@ import {
   uploadCreativeOutput,
   setDraftCreativeInput,
   setDraftCreativeOutput,
+  setDraftTargetingInput,
+  setDraftTargetingOutput,
 } from "../modules/drafts/schema.js";
 
 extendZodWithOpenApi(z);
@@ -176,6 +178,8 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const ScaleWinnerOutput = registry.register("ScaleWinnerOutput", scaleWinnerOutput);
   const CreativeAssetOutput = registry.register("CreativeAssetOutput", creativeAssetOutput);
   const ServingCreativeOutput = registry.register("ServingCreativeOutput", servingCreativeOutput);
+  const SetDraftTargetingInput = registry.register("SetDraftTargetingInput", setDraftTargetingInput);
+  const SetDraftTargetingOutput = registry.register("SetDraftTargetingOutput", setDraftTargetingOutput);
   const SetDraftCreativeInput = registry.register("SetDraftCreativeInput", setDraftCreativeInput);
 const SetDraftCreativeOutput = registry.register("SetDraftCreativeOutput", setDraftCreativeOutput);
   const UploadCreativeOutput = registry.register("UploadCreativeOutput", uploadCreativeOutput);
@@ -709,6 +713,16 @@ const SetDraftCreativeOutput = registry.register("SetDraftCreativeOutput", setDr
     tags: ["drafts"],
     request: { params: z.object({ id: z.string() }) },
     responses: { 200: jsonRes("anúncios ao vivo da conta oferecidos como reuse (só vídeo)", z.array(ServingCreativeOutput)) },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/accounts/{id}/drafts/{draftId}/targeting",
+    tags: ["drafts"],
+    request: {
+      params: z.object({ id: z.string(), draftId: z.string() }),
+      ...jsonBody(SetDraftTargetingInput),
+    },
+    responses: { 200: jsonRes("público do rascunho alternado (reuse × amplo)", SetDraftTargetingOutput) },
   });
   registry.registerPath({
     method: "post",

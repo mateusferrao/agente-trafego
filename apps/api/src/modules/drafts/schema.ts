@@ -50,6 +50,9 @@ export const draftApprovalOutput = z.object({
       origin: z.enum(["reuse", "upload"]),
     })
     .nullable(),
+  /** público do rascunho pelo MODO: `reuse` = herda o conjunto que já converte; `broad` = a Meta
+   *  escolhe (amplo). `null` em duplicate/activation. O card oferece alternar entre os dois. */
+  audience: z.enum(["reuse", "broad"]).nullable(),
   /** ids reais criados na Meta — só presente em `approvalKind:"activation"` (já existe na Meta). */
   createdIds: z.record(z.string(), z.unknown()).nullable(),
 });
@@ -96,6 +99,12 @@ export const setDraftCreativeInput = z.discriminatedUnion("kind", [
 export type SetDraftCreativeInput = z.infer<typeof setDraftCreativeInput>;
 export const setDraftCreativeOutput = z.object({ ok: z.boolean() });
 export type SetDraftCreativeOutput = z.infer<typeof setDraftCreativeOutput>;
+
+/** Alterna o público do rascunho: `reuse` = herda o conjunto provado; `broad` = Meta escolhe. */
+export const setDraftTargetingInput = z.object({ audience: z.enum(["reuse", "broad"]) });
+export type SetDraftTargetingInput = z.infer<typeof setDraftTargetingInput>;
+export const setDraftTargetingOutput = z.object({ ok: z.boolean(), audience: z.enum(["reuse", "broad"]) });
+export type SetDraftTargetingOutput = z.infer<typeof setDraftTargetingOutput>;
 
 /** Um anúncio AO VIVO da conta oferecido como candidato de reuse no picker (lê ad_creatives). */
 export const servingCreativeOutput = z.object({

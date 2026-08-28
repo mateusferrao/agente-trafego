@@ -92,6 +92,19 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                           <span class="text-sm text-ink"><span class="text-muted">Criativo: </span>{{ creativeLabel(cr) }}</span>
                         </div>
                       }
+                      @if (d.audience; as aud) {
+                        <div class="flex flex-col gap-1">
+                          <span class="text-xs text-muted">Público</span>
+                          <span class="flex flex-wrap gap-2">
+                            <button appButton [variant]="aud === 'reuse' ? 'secondary' : 'ghost'" size="sm" [disabled]="settingAudience().has(d.id)" (click)="onSetAudience(d, 'reuse')">
+                              Herda o que já converte
+                            </button>
+                            <button appButton [variant]="aud === 'broad' ? 'secondary' : 'ghost'" size="sm" [disabled]="settingAudience().has(d.id)" (click)="onSetAudience(d, 'broad')">
+                              Deixa a Meta escolher
+                            </button>
+                          </span>
+                        </div>
+                      }
                       @if (d.copyVariants && d.copyVariants.length > 0) {
                         <ul class="flex flex-col gap-2">
                           @for (c of d.copyVariants; track $index) {
@@ -239,6 +252,37 @@ export class ApprovalsPage implements OnInit {
     const fmt = cr.format === 'video' ? 'vídeo' : 'imagem';
     return `${fmt} · ${cr.origin === 'reuse' ? 'reusado de um anúncio da conta' : 'da sua biblioteca'}`;
   };
+
+  /** rascunhos com a troca de público em voo (desabilita os botões). */
+  protected readonly settingAudience = signal<ReadonlySet<string>>(new Set());
+  /** Alterna o público do rascunho (reuse × amplo). Otimista no desfecho do backend. */
+  protected onSetAudience(d: DraftApprovalOutput, audience: 'reuse' | 'broad'): void {
+    if (d.audience === audience) return;
+    this.settingAudience.update((s) => new Set(s).add(d.id));
+    this.draftsApi.setDraftTargeting(d.accountId, d.draftId, { audience }).subscribe({
+      next: (r) => {
+        this.patchDraftAudience(d.id, r.audience);
+        this.clearSettingAudience(d.id);
+        toast.success(r.audience === 'reuse' ? 'Público: herda o que já converte.' : 'Público: a Meta escolhe (mais amplo).');
+      },
+      error: () => {
+        this.clearSettingAudience(d.id);
+        toast.error('Não consegui ajustar o público desse rascunho. Tente de novo.');
+      },
+    });
+  }
+  private patchDraftAudience(id: string, audience: 'reuse' | 'broad'): void {
+    this.draftGroups.update((gs) =>
+      gs.map((g) => ({ ...g, items: g.items.map((x) => (x.id === id ? { ...x, audience } : x)) })),
+    );
+  }
+  private clearSettingAudience(id: string): void {
+    this.settingAudience.update((s) => {
+      const next = new Set(s);
+      next.delete(id);
+      return next;
+    });
+  }
 
   protected typeLabel = actionTypeLabel;
   protected deadline = deadlineText;

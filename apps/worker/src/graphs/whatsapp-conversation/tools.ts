@@ -286,11 +286,12 @@ export function makeConversationTools(
   const adjustDraft = tool(proposeOnly, {
     name: "adjust_draft",
     description:
-      "Ajusta o rascunho de campanha JÁ PROPOSTO (só quando há um pendente): budget diário, ativação (ativa/pausada) ou nº de variações. Não cria rascunho novo.",
+      "Ajusta o rascunho de campanha JÁ PROPOSTO (só quando há um pendente): budget diário, ativação (ativa/pausada), nº de variações ou PÚBLICO (audience: 'reuse' = herda o conjunto que já converte; 'broad' = deixa a Meta escolher, mais amplo). Não cria rascunho novo.",
     schema: z.object({
       budgetReais: z.number().positive().nullable().optional(),
       activation: z.enum(["active", "paused"]).nullable().optional(),
       variantsCount: z.number().int().positive().nullable().optional(),
+      audience: z.enum(["reuse", "broad"]).nullable().optional(),
     }),
   });
   const regenerateCopy = tool(proposeOnly, {

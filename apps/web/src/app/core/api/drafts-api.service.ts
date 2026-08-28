@@ -9,6 +9,8 @@ import type {
   ServingCreativeOutput,
   SetDraftCreativeInput,
   SetDraftCreativeOutput,
+  SetDraftTargetingInput,
+  SetDraftTargetingOutput,
   UploadCreativeOutput,
 } from './generated';
 
@@ -51,6 +53,18 @@ export class DraftsApiService extends BaseApiService {
   /** `GET /api/accounts/:id/serving-creatives` — anúncios ao vivo (reuse no picker; só vídeo). */
   listServingCreatives(accountId: string): Observable<ServingCreativeOutput[]> {
     return this.get<ServingCreativeOutput[]>(['/accounts', accountId, 'serving-creatives']);
+  }
+
+  /** `POST /api/accounts/:id/drafts/:draftId/targeting` — alterna o público (reuse × amplo). */
+  setDraftTargeting(
+    accountId: string,
+    draftId: string,
+    input: SetDraftTargetingInput,
+  ): Observable<SetDraftTargetingOutput> {
+    return this.post<SetDraftTargetingOutput, SetDraftTargetingInput>(
+      ['/accounts', accountId, 'drafts', draftId, 'targeting'],
+      input,
+    );
   }
 
   /** URL da rota autenticada de blob (preview) — mesma origem/proxy da API. */

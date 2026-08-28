@@ -208,3 +208,63 @@ describe("listServingCreatives (candidatos de reuse no picker: só vídeo, ranqu
     expect(out.map((c) => c.adId)).toEqual(["win", "perf"]);
   });
 });
+
+describe("setDraftTargeting (alterna público reuse × amplo)", () => {
+  /** db com select (draft) + update no-op capturado. */
+  function fakeDbSelUpd(draftRow: unknown, captured: { spec?: unknown }) {
+    return {
+      select: () => ({ from: () => ({ where: () => ({ limit: () => (draftRow ? [draftRow] : []) }) }) }),
+      update: () => ({ set: (v: { spec: unknown }) => ({ where: async () => { captured.spec = v.spec; } }) }),
+    } as never;
+  }
+
+  it("reuse quando o spec JÁ herda um conjunto → mantém, sem chamar a Meta", async () => {
+    const captured: { spec?: unknown } = {};
+    const infer = vi.fn();
+    const service = createDraftsService({
+      db: fakeDbSelUpd(
+        { spec: { version: 1, currency: "BRL", dailyBudgetMinor: 5000, activation: "active", targeting: { kind: "reuse_adset", sourceAdsetId: "AS1" } }, kind: "from_scratch", status: "proposed" },
+        captured,
+      ),
+      adsPlatform: { inferCreationDefaults: infer } as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    const out = await service.setDraftTargeting(ORG, "acc", "d1", "reuse");
+    expect(out).toEqual({ ok: true, audience: "reuse" });
+    expect(infer).not.toHaveBeenCalled(); // já herda → não re-infere
+    expect((captured.spec as { targeting: unknown }).targeting).toEqual({ kind: "reuse_adset", sourceAdsetId: "AS1" });
+  });
+
+  it("broad → Advantage+ (a Meta escolhe), sem tocar na Meta", async () => {
+    const captured: { spec?: unknown } = {};
+    const service = createDraftsService({
+      db: fakeDbSelUpd(
+        { spec: { version: 1, currency: "BRL", dailyBudgetMinor: 5000, activation: "active", targeting: { kind: "reuse_adset", sourceAdsetId: "AS1" } }, kind: "from_scratch", status: "proposed" },
+        captured,
+      ),
+      adsPlatform: {} as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    const out = await service.setDraftTargeting(ORG, "acc", "d1", "broad");
+    expect(out).toEqual({ ok: true, audience: "broad" });
+    expect((captured.spec as { targeting: unknown }).targeting).toEqual({ kind: "advantage_plus" });
+  });
+
+  it("rascunho não-proposto/duplicate → null (não editável)", async () => {
+    const service = createDraftsService({
+      db: fakeDbSelUpd({ spec: {}, kind: "duplicate", status: "proposed" }, {}),
+      adsPlatform: {} as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    expect(await service.setDraftTargeting(ORG, "acc", "d1", "broad")).toBeNull();
+  });
+});

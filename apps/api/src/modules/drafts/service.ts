@@ -24,7 +24,7 @@ import {
   toGuardrailConfig,
   type CampaignDraftSpec,
 } from "@trafego/shared";
-import type { Action, AgentId, CreativeAssetRef, DraftId, OrgId } from "@trafego/shared/types";
+import type { Action, AgentId, CreativeAssetRef, DraftId, OrgId, TargetingSpec } from "@trafego/shared/types";
 import type { AdAccountRef, ApprovalPort, CredentialVaultPort, SchedulerPort, StoragePort } from "@trafego/shared/ports";
 import type { AdsPlatformPort } from "@trafego/shared/ports";
 import { ingestCreativeImage, ingestCreativeVideo } from "@trafego/creative-library";
@@ -220,6 +220,8 @@ export function createDraftsService(deps: DraftsServiceDeps) {
               }))
             : null,
           creative: spec.creative ? { format: spec.creative.format, origin: spec.creative.origin } : null,
+          audience:
+            spec.targeting?.kind === "reuse_adset" ? "reuse" : spec.targeting?.kind === "advantage_plus" ? "broad" : null,
           createdIds: appr.kind === "activation" ? (d.createdIds as Record<string, unknown>) : null,
         });
       }
@@ -391,6 +393,43 @@ export function createDraftsService(deps: DraftsServiceDeps) {
         .set({ spec: { ...spec, creative } })
         .where(eq(campaignDrafts.id, draftId));
       return { ok: true };
+    },
+
+    /** Alterna o PÚBLICO de um rascunho from_scratch proposto (card /approvals). `broad` = Advantage+
+     *  (a Meta escolhe). `reuse` = herda o conjunto provado — reusa o que já está no spec, senão
+     *  re-infere ao vivo (inferCreationDefaults); sem conjunto provado disponível → null (nada pra
+     *  herdar). Org-scoped; só rascunho aberto. */
+    async setDraftTargeting(
+      orgId: OrgId,
+      accountId: string,
+      draftId: string,
+      audience: "reuse" | "broad",
+    ): Promise<{ ok: true; audience: "reuse" | "broad" } | null> {
+      const [draft] = await deps.db
+        .select({ spec: campaignDrafts.spec, kind: campaignDrafts.kind, status: campaignDrafts.status })
+        .from(campaignDrafts)
+        .where(and(eq(campaignDrafts.id, draftId), eq(campaignDrafts.orgId, orgId), eq(campaignDrafts.adAccountId, accountId)))
+        .limit(1);
+      if (!draft || draft.status !== "proposed" || draft.kind !== "from_scratch") return null;
+      const spec = draft.spec as CampaignDraftSpec;
+
+      let targeting: TargetingSpec;
+      if (audience === "broad") {
+        targeting = { kind: "advantage_plus" };
+      } else if (spec.targeting?.kind === "reuse_adset") {
+        targeting = spec.targeting; // já herda — mantém o conjunto
+      } else {
+        const ctx = await loadScaleContext(orgId, accountId);
+        if (!ctx) return null;
+        const defaults = await deps.adsPlatform.inferCreationDefaults(ctx.ref);
+        if (!defaults.sourceAdsetId) return null; // sem público provado pra herdar
+        targeting = { kind: "reuse_adset", sourceAdsetId: defaults.sourceAdsetId };
+      }
+      await deps.db
+        .update(campaignDrafts)
+        .set({ spec: { ...spec, targeting } })
+        .where(eq(campaignDrafts.id, draftId));
+      return { ok: true, audience };
     },
 
     /** Anúncios AO VIVO da conta oferecidos como candidatos de reuse no picker (lê ad_creatives,

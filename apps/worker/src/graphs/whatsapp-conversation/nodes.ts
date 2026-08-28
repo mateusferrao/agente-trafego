@@ -541,6 +541,7 @@ export function makeConversationNodes(
               ...(typeof a["budgetReais"] === "number" ? { budgetReais: a["budgetReais"] as number } : {}),
               ...(a["activation"] === "active" || a["activation"] === "paused" ? { activation: a["activation"] as "active" | "paused" } : {}),
               ...(typeof a["variantsCount"] === "number" ? { variantsCount: a["variantsCount"] as number } : {}),
+              ...(a["audience"] === "reuse" || a["audience"] === "broad" ? { audience: a["audience"] as "reuse" | "broad" } : {}),
             };
       const res = await refineDraft(deps, { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, currency: DEFAULT_CURRENCY }, active.draftId, patch);
       if (res.kind === "blocked") {
