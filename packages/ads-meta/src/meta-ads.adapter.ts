@@ -337,7 +337,7 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     }
   }
 
-  async getAdSetCampaignBudget(account: AdAccountRef, adsetId: string): Promise<{ campaignId: string; dailyBudgetMinor: number } | null> {
+  async getAdSetCampaignBudget(account: AdAccountRef, adsetId: string): Promise<{ campaignId: string; dailyBudgetMinor: number; lifetimeBudgetMinor: number } | null> {
     try {
       return await this.creation.getAdSetCampaignBudget(account, adsetId);
     } catch (error) {

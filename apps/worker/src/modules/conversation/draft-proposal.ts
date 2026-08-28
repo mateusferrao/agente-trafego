@@ -198,35 +198,48 @@ export async function proposeScaleWinner(
 
   const state = await deps.ports.ads.readEntityState(ac.ref, chosen.entityId);
   const sourceDailyMinor = Number(state["daily_budget"] ?? 0);
+  const sourceLifetimeMinor = Number(state["lifetime_budget"] ?? 0);
   const level = chosen.entityLevel === "campaign" ? "campaign" : "adset";
   const label = chosen.entityName ?? chosen.entityId;
   const scalePct = ac.cfg.scalePct ?? 50;
 
-  // Vencedor é um ADSET sem orçamento próprio (CBO — orçamento na CAMPANHA). Escalar = subir o
-  // orçamento da CAMPANHA-mãe (o adset não tem knob de budget). Busca o campaign_id + o budget
-  // da campanha (o entity_analyses guarda só o adset) e emite o raise mirando a campanha.
+  // Vencedor ADSET sem orçamento DIÁRIO próprio. Dois casos: (a) o adset tem orçamento VITALÍCIO
+  // (ABO lifetime) → sobe o vitalício do PRÓPRIO conjunto; (b) sem nenhum budget no adset → é CBO
+  // (orçamento na CAMPANHA) → sobe o da campanha-mãe (diário ou vitalício). O adapter escreve
+  // daily/lifetime conforme o que a entidade usa; o eco deixa CLARO qual budget e por quê.
   if (level === "adset" && sourceDailyMinor <= 0) {
     if (!canRaise) {
-      return { kind: "blocked", reason: "esse vencedor está sob orçamento de campanha (CBO) e escalar aqui exige subir o orçamento — ligue 'ajustar orçamento' nas ações permitidas, ou ajuste no gerenciador." };
-    }
-    const parent = await deps.ports.ads.getAdSetCampaignBudget(ac.ref, chosen.entityId);
-    if (!parent || parent.dailyBudgetMinor <= 0) {
-      // campanha sem orçamento diário (ex.: vitalício) → clamp por % não se aplica; honesto.
-      return { kind: "blocked", reason: "esse vencedor está numa campanha com orçamento vitalício (sem diário) — escalar por aqui ainda não dá; ajuste o orçamento no gerenciador." };
+      return { kind: "blocked", reason: "escalar esse vencedor exige subir o orçamento — ligue 'ajustar orçamento' nas ações permitidas, ou ajuste no gerenciador." };
     }
     const pct = Math.min(scalePct, ac.cfg.maxBudgetChangePct);
-    const action: Action = {
-      id: `scale:${parent.campaignId}`,
-      type: "adjust_budget",
-      target: { level: "campaign", id: parent.campaignId, name: label },
-      params: { [ACTION_PARAM_MODE]: BUDGET_MODE_INCREASE, [ACTION_PARAM_PCT]: pct },
-      source: "llm",
-      riskLevel: "medium",
-      // eco = "Vou escalar subindo o budget: <reason>. Confirma?" → deixa CLARO que é a CAMPANHA
-      // (CBO), não o conjunto, e por quê.
-      reason: `seu vencedor "${label}" está sob orçamento de campanha (CBO), então subo +${pct}% no orçamento da CAMPANHA (o conjunto não tem orçamento próprio pra mexer)`,
-    };
-    return { kind: "action", action };
+    const raise = (targetLevel: "adset" | "campaign", targetId: string, reason: string): ChatDraftProposal => ({
+      kind: "action",
+      action: {
+        id: `scale:${targetId}`,
+        type: "adjust_budget",
+        target: { level: targetLevel, id: targetId, name: label },
+        params: { [ACTION_PARAM_MODE]: BUDGET_MODE_INCREASE, [ACTION_PARAM_PCT]: pct },
+        source: "llm",
+        riskLevel: "medium",
+        reason,
+      },
+    });
+    // (a) adset com orçamento VITALÍCIO próprio → sobe o vitalício do conjunto.
+    if (sourceLifetimeMinor > 0) {
+      return raise("adset", chosen.entityId, `seu vencedor "${label}" usa orçamento vitalício no conjunto, então subo +${pct}% no orçamento vitalício dele`);
+    }
+    // (b) sem orçamento no adset → CBO: sobe o da CAMPANHA-mãe (diário ou vitalício).
+    const parent = await deps.ports.ads.getAdSetCampaignBudget(ac.ref, chosen.entityId);
+    if (!parent || (parent.dailyBudgetMinor <= 0 && parent.lifetimeBudgetMinor <= 0)) {
+      return { kind: "blocked", reason: "essa campanha não tem um orçamento que eu consiga escalar por aqui — ajuste o orçamento no gerenciador." };
+    }
+    const isLifetime = parent.dailyBudgetMinor <= 0;
+    const kindTxt = isLifetime ? "vitalício" : "diário";
+    return raise(
+      "campaign",
+      parent.campaignId,
+      `seu vencedor "${label}" está sob orçamento de campanha (CBO), então subo +${pct}% no orçamento ${kindTxt} da CAMPANHA (o conjunto não tem orçamento próprio pra mexer)`,
+    );
   }
 
   const budgetLevel: BudgetLevel = level === "adset" && sourceDailyMinor > 0 ? "adset" : "campaign";

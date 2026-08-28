@@ -704,3 +704,12 @@ WhatsApp funilam no MESMO `applyDraft`/`proposeCreateCampaign`, então provar l�
   off → bloqueio honesto. Site opera em campanha (CBO ok lá).
 - ✅ **Contexto:** o matcher LLM (`pickLibraryCreativeByContext`) escolheu o criativo de **estética** (casa com
   clínica/lead) sobre "genérico" e "carro" — escolha **pelo contexto**, não recência/score cego.
+
+### 23f. Escala sob orçamento VITALÍCIO (lifetime) (2026-08-28)
+`apps/worker/e2e-lifetime-scale.ts` (live, PAUSED + revert). O write já escreve `lifetime_budget`
+(adapter); o propose agora não bloqueia:
+- ✅ **CBO lifetime** (campanha com `lifetime_budget`): `getAdSetCampaignBudget` devolve `lifetimeBudgetMinor>0`
+  → `proposeScaleWinner` mira a CAMPANHA, reason claro ("…subo +X% no orçamento **vitalício** da CAMPANHA").
+- **ABO adset lifetime** (adset com `lifetime_budget` próprio): sobe o vitalício do CONJUNTO (lê `state.lifetime_budget`).
+  (O create de adset-lifetime standalone é chato na Meta p/ o harness; o branch lê o lifetime e o write o cobre.)
+- Sem NENHUM orçamento (adset+campanha) → bloqueio honesto.
