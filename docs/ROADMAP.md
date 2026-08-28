@@ -745,7 +745,21 @@ vez de duplicar lógica. Fatiado (G0→G4) — **entregue por completo**.
 
 **Dependência técnica (o gargalo):** os modos `serving.agent` e `both` precisam de (a) **descrição de visão dos criativos veiculando** (reusar a decomposição de visão do run de análise / `creative_vision_analyses`) e (b) **listar VÁRIOS candidatos veiculando** com métrica — hoje `inferCreationDefaults` devolve só o **#1** por desempenho. Ampliar pra uma lista rankeada de candidatos veiculando (id + imageHash/videoId + descrição de visão + custo-por-resultado).
 
-**Escopo:** nova config (`agents.model_config.creativeSourceStrategy`, default `serving.best_performing`) + refan do `chooseCreative` (recebe a estratégia + o pool unificado com visão+perf) + ampliar `inferCreationDefaults` (lista de candidatos veiculando) + UI (Opções avançadas do agente + `set_*` por chat) + testes por modo. Registrado como slice própria (não implementado no lote de correção da 2026-08-28) porque é feature de produto no carro-chefe, além dos bugs que o teste achou.
+**Escopo:** nova config (`agents.model_config.creativeSourceStrategy`, default `serving.best_performing`) + refan do `chooseCreative` (recebe a estratégia + o pool unificado com visão+perf) + ampliar `inferCreationDefaults` (lista de candidatos veiculando) + UI (Opções avançadas do agente + `set_*` por chat) + testes por modo. Registrado como slice própria (não implementado no lote de correção da 2026-08-28) porque é feature de produto no carro-chefe, além dos bugs que o teste achou. **Agendado: Slice 10 do plano de edição/reversão (aprovado 2026-08-28).**
+
+### Fast-follows da fatia "Editar rascunho + reverter criação/escala + picker" (desenho fechado 2026-08-28)
+
+Decisões adiadas do plano aprovado (edição completa do rascunho pelo site + chat leve, reversão de criação/escala, picker com imagem veiculando):
+
+- **Nome completo próprio (não sufixo) na escala** — hoje o nome de um duplicado é `<vencedor> — <rótulo>` (via `rename_options.rename_suffix` do `/copies`, que só anexa). Nome inteiro próprio exigiria um `renameEntity` **pós-cópia** (write extra, retomável). Fora do escopo inicial.
+- **Nome individual dos filhos na escala** (renomear conjuntos/anúncios copiados) — exige casar a árvore copiada por **estrutura** (a ordem do deep_copy não é garantida pela Meta). Hoje só o nome-raiz (sufixo).
+- **Editar copy/criativo/objetivo numa escala** — hoje mudar isso = "criar do zero" (a escala replica o vencedor; objetivo é imutável na Meta pós-criação, copy/criativo exigem reescrever os anúncios copiados). Um fluxo "escalar + ajustar" que reescreve os filhos fica pra depois.
+- **Edição pesada pelo chat** (nomes de conjunto/anúncio, objetivo, copy campo-a-campo, add/remover anúncio) — decisão de produto: o chat fica **leve** (ajuste de intenção única) e redireciona pro painel do site; reavaliar se o ICP pedir.
+- **Delete permanente na reversão** — decidido ficar **de fora**; reverter pausa (default) ou **arquiva** (ARCHIVED, recuperável). Deletar de vez é destrutivo e a Meta recusa pós-gasto.
+- **Público/targeting customizado completo** no editor (idade/gênero/local/interesse) — novo `TargetingSpec` + UI; o painel só expõe reuse↔advantage por ora.
+- **Paginação/busca server-side robusta no picker** — se a busca client-side sobre a página carregada não bastar em contas gigantes (o picker já ordena por data + trunca + "ver mais").
+- **Detecção proativa de escalar adset** (tierar/avaliar adsets na camada de qualidade 6c; hoje o brief/proposeDrafts só olham campanhas).
+- **Persistir frames HD** (`posterFrames`) p/ miniatura de vídeo melhor que o selo 64px do picker/card.
 
 ## Fatia 8 — Orquestração multi-agente / qualidade (roadmap pós-MVP)
 
