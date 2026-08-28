@@ -641,6 +641,21 @@ export interface GuardrailConfig {
 export const DRAFT_KINDS = ["from_scratch", "duplicate"] as const;
 export type DraftKind = (typeof DRAFT_KINDS)[number];
 
+// ─── Estratégia de fonte do criativo na criação (config por-agente, Fatia 7 Slice 10) ──
+// De onde o agente tira o criativo pra uma campanha nova: reusar um que já veicula, escolher
+// na biblioteca, ou o pool único (ambos). Vocabulário NEUTRO (nada de Meta).
+export const CREATIVE_SOURCE_MODES = ["serving", "library", "both"] as const;
+export type CreativeSourceMode = (typeof CREATIVE_SOURCE_MODES)[number];
+/** sub-opção do modo `serving`: determinístico (melhor desempenho) OU o LLM escolhe por encaixe. */
+export const SERVING_PICKS = ["best_performing", "agent"] as const;
+export type ServingPick = (typeof SERVING_PICKS)[number];
+export interface CreativeSourceStrategy {
+  readonly mode: CreativeSourceMode;
+  readonly servingPick?: ServingPick;
+}
+/** Default = comportamento de hoje (reusa o melhor veiculando, determinístico, sem LLM). */
+export const DEFAULT_CREATIVE_SOURCE_STRATEGY: CreativeSourceStrategy = { mode: "serving", servingPick: "best_performing" };
+
 export const CREATION_OPPORTUNITY_KINDS = ["scale_winner", "refresh_fatigued", "cold_start"] as const;
 export type CreationOpportunityKind = (typeof CREATION_OPPORTUNITY_KINDS)[number];
 

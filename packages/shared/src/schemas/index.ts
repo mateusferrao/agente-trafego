@@ -3,7 +3,9 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import {
   CONVERSION_GOALS,
   CREATIVE_FORMATS,
+  CREATIVE_SOURCE_MODES,
   CTA_TYPES,
+  SERVING_PICKS,
   DIDACTIC_DEPTH_LEVELS,
   DIRECTIVENESS_LEVELS,
   EXPERIENCE_LEVELS,
@@ -122,6 +124,12 @@ export const campaignDraftSpecSchema = z.object({
   adsetName: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
   // ─── só `duplicate` (escala) ───
   suffixLabel: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+});
+
+/** Estratégia de fonte do criativo (Slice 10) — deriva das tuplas fonte-única. */
+export const creativeSourceStrategySchema = z.object({
+  mode: z.enum(CREATIVE_SOURCE_MODES),
+  servingPick: z.enum(SERVING_PICKS).optional(),
 });
 
 export const autonomyLevel = z.enum(["notify", "suggest", "act_safe", "act_full"]);

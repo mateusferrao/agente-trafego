@@ -787,5 +787,6 @@ function projectModelConfig(mc: Readonly<Record<string, unknown>> | null | undef
   const out: Record<string, unknown> = {};
   for (const k of ADVANCED_SCALAR_KEYS) if (src[k] !== undefined) out[k] = src[k];
   if (src.quality && typeof src.quality === "object") out.quality = src.quality;
+  if (src.creativeSource && typeof src.creativeSource === "object") out.creativeSource = src.creativeSource;
   return out as ModelConfigInput;
 }
