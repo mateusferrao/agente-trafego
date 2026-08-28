@@ -23,7 +23,7 @@ import {
 } from "@trafego/core";
 import { applyAgentConfigChange, loadAgentConfigState, reseedArchetypeChange } from "@trafego/agent-config";
 import { sleep, APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE } from "@trafego/shared";
-import type { Action, ConversionGoal, OrgId } from "@trafego/shared/types";
+import type { Action, ApprovalId, ConversionGoal, OrgId } from "@trafego/shared/types";
 import { CONVERSION_GOALS } from "@trafego/shared/types";
 import { AdsPlatformError } from "@trafego/shared/ports";
 import { and, eq } from "drizzle-orm";
@@ -837,8 +837,18 @@ export function makeConversationNodes(
     const isConfirm = calls.some((c) => c.name === "confirm_write");
 
     if (!isConfirm) {
+      // recusa em-turno de um RASCUNHO → resolve a approval no BANCO (some do site também),
+      // não só limpa o estado efêmero (senão o rascunho seguia pendente 24h no card). As demais
+      // pendências (write/revert/config) não têm approval persistida aqui.
+      const rejectedDraft = activePendingDraft(state.pendingDraft);
+      if (rejectedDraft) {
+        await deps.ports.approval.resolve(rejectedDraft.approvalId as ApprovalId, { status: "rejected" });
+      }
       return {
-        messages: [...answerToolCalls(calls, "cancelado"), new AIMessage("Ok, não mexi em nada.")],
+        messages: [
+          ...answerToolCalls(calls, "cancelado"),
+          new AIMessage(rejectedDraft ? "Ok, descartei o rascunho." : "Ok, não mexi em nada."),
+        ],
         pendingWrite: null,
         pendingRevert: null,
         pendingConfigChange: null,
