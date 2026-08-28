@@ -115,14 +115,40 @@ describe("makeMediaIntake — vídeo", () => {
     expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ queue: "creative-video-poll" }));
   });
 
-  it("vídeo grande demais (> cap WhatsApp) → avisa e NÃO sobe", async () => {
+  it("vídeo grande demais (> cap WhatsApp, checado PÓS-decode) → avisa e NÃO sobe", async () => {
     const big = Buffer.alloc(TEN_MB + 1).toString("base64");
     const { deps, send, uploadVideo, enqueue } = makeDeps();
     (deps.ports.messaging.fetchMediaBase64 as ReturnType<typeof vi.fn>).mockResolvedValue(big);
-    await makeMediaIntake(deps)(VIDEO_PAYLOAD);
+    await makeMediaIntake(deps)(VIDEO_PAYLOAD); // sem fileLength na metadata → fallback pós-decode
     expect(uploadVideo).not.toHaveBeenCalled();
     expect(enqueue).not.toHaveBeenCalled();
     expect(send).toHaveBeenCalledWith(REF, expect.stringContaining("grande demais"), expect.anything());
+  });
+
+  it("P0.3: vídeo grande demais por fileLength da METADATA → recusa SEM baixar os bytes", async () => {
+    const { deps, send, uploadVideo, enqueue } = makeDeps();
+    const fetchMediaBase64 = deps.ports.messaging.fetchMediaBase64 as ReturnType<typeof vi.fn>;
+    const payload: WhatsappMediaIntakePayload = {
+      ...VIDEO_PAYLOAD,
+      media: { ...VIDEO_PAYLOAD.media, fileLength: TEN_MB + 1 },
+    };
+    await makeMediaIntake(deps)(payload);
+    expect(fetchMediaBase64).not.toHaveBeenCalled(); // nem tentou buscar os bytes
+    expect(uploadVideo).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledWith(REF, expect.stringContaining("grande demais"), expect.anything());
+  });
+
+  it("P0.3: fileLength dentro do cap → segue normal (busca os bytes)", async () => {
+    const { deps, uploadVideo } = makeDeps();
+    const fetchMediaBase64 = deps.ports.messaging.fetchMediaBase64 as ReturnType<typeof vi.fn>;
+    const payload: WhatsappMediaIntakePayload = {
+      ...VIDEO_PAYLOAD,
+      media: { ...VIDEO_PAYLOAD.media, fileLength: 1024 },
+    };
+    await makeMediaIntake(deps)(payload);
+    expect(fetchMediaBase64).toHaveBeenCalled();
+    expect(uploadVideo).toHaveBeenCalled();
   });
 
   it("sem bytes (fetch falhou) → avisa e encerra", async () => {

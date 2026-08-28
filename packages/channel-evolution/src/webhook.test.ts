@@ -381,6 +381,30 @@ describe("parseInbound — grupo", () => {
   });
 });
 
+// ─── Vídeo (F7 intake) → kind:"video" + fileLength (P0.3: cap sem baixar) ───
+describe("parseInbound — vídeo", () => {
+  it("carrega fileLength da metadata (probe de tamanho antes do fetch)", () => {
+    const msg = parseInbound(upsert({ message: { videoMessage: { mimetype: "video/mp4", fileLength: "52428800" } } }));
+    expect(msg).toMatchObject({ kind: "video", video: { mimetype: "video/mp4", fileLength: 52428800 } });
+  });
+
+  it("fileLength ausente → undefined (worker cai no fallback pós-decode)", () => {
+    const msg = parseInbound(upsert({ message: { videoMessage: { mimetype: "video/mp4" } } }));
+    expect(msg).toMatchObject({ kind: "video", video: { mimetype: "video/mp4" } });
+    expect((msg as { video: { fileLength?: number } })?.video.fileLength).toBeUndefined();
+  });
+
+  it("fileLength não-numérico → undefined (defensivo)", () => {
+    const msg = parseInbound(upsert({ message: { videoMessage: { mimetype: "video/mp4", fileLength: "abc" } } }));
+    expect((msg as { video: { fileLength?: number } })?.video.fileLength).toBeUndefined();
+  });
+
+  it("sem mimetype → default video/mp4", () => {
+    const msg = parseInbound(upsert({ message: { videoMessage: { fileLength: "1000" } } }));
+    expect(msg).toMatchObject({ kind: "video", video: { mimetype: "video/mp4", fileLength: 1000 } });
+  });
+});
+
 describe("parseConnectionUpdate", () => {
   const conn = (state: unknown) => ({ event: "CONNECTION_UPDATE", instance: "org-1", data: { state } });
 

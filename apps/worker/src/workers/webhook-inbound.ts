@@ -137,7 +137,12 @@ async function routeMessage(
     const media =
       inbound.kind === "image"
         ? { mimetype: inbound.image.mimetype, base64: inbound.image.base64, caption: inbound.caption, messageKey: inbound.messageKey }
-        : { mimetype: inbound.video.mimetype, caption: inbound.caption, messageKey: inbound.messageKey };
+        : {
+            mimetype: inbound.video.mimetype,
+            caption: inbound.caption,
+            messageKey: inbound.messageKey,
+            ...(inbound.video.fileLength !== undefined ? { fileLength: inbound.video.fileLength } : {}),
+          };
     await d.mediaIntakeQueue.add(
       WHATSAPP_MEDIA_INTAKE_JOB,
       { orgId, ref, conversationId, instanceId, mediaType: inbound.kind, media },

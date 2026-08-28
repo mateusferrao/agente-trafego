@@ -103,5 +103,8 @@ export type WhatsappMediaIntakePayload = {
     readonly base64?: string;
     /** key cru — usado se `base64` vier vazio (fallback `fetchMediaBase64`). */
     readonly messageKey: { readonly id: string; readonly remoteJid: string; readonly fromMe: boolean; readonly participant?: string };
+    /** VÍDEO apenas (P0.3): tamanho em bytes já na metadata do WhatsApp — o intake recusa
+     *  vídeo grande demais ANTES de baixar/decodificar. Ausente → fallback pós-decode. */
+    readonly fileLength?: number;
   };
 };

@@ -235,9 +235,14 @@ function extractImage(data: Record<string, unknown>): { base64: string; mimetype
 
 /**
  * Vídeo (videoMessage) — F7 intake. NÃO extrai base64 (vídeo é grande demais p/ o payload da
- * fila): só detecta o nó + mimetype + legenda; o worker de intake busca os bytes por `messageKey`.
+ * fila): só detecta o nó + mimetype + legenda + `fileLength`; o worker de intake busca os bytes
+ * por `messageKey`. `fileLength` (P0.3) é o TAMANHO do arquivo que o WhatsApp já entrega na
+ * metadata — dá pro intake recusar vídeo grande demais ANTES de baixar/decodificar os bytes
+ * (HTTP HEAD é inviável: a Evolution só entrega mídia por base64, nunca por URL).
  */
-function extractVideo(data: Record<string, unknown>): { mimetype: string; caption: string | null } | null {
+function extractVideo(
+  data: Record<string, unknown>,
+): { mimetype: string; caption: string | null; fileLength?: number } | null {
   const message = asRecord(data["message"]);
   const video = asRecord(message?.["videoMessage"]);
   if (!video) return null;
@@ -245,7 +250,20 @@ function extractVideo(data: Record<string, unknown>): { mimetype: string; captio
   const mimetype = typeof rawMime === "string" && rawMime.length > 0 ? rawMime : DEFAULT_VIDEO_MIME;
   const rawCaption = video["caption"];
   const caption = typeof rawCaption === "string" && rawCaption.trim().length > 0 ? rawCaption.trim() : null;
-  return { mimetype, caption };
+  const fileLength = parseFileLength(video["fileLength"]);
+  return { mimetype, caption, ...(fileLength !== undefined ? { fileLength } : {}) };
+}
+
+/** `fileLength` chega como string decimal (protobuf int64) na maioria das versões da Evolution;
+ *  aceita number também (defensivo). Não-numérico/ausente → `undefined` (o intake cai no fallback
+ *  pós-decode, nunca crasha por metadata estranha). */
+function parseFileLength(raw: unknown): number | undefined {
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw === "string" && raw.trim().length > 0) {
+    const n = Number(raw);
+    if (Number.isFinite(n)) return n;
+  }
+  return undefined;
 }
 
 /** Mídia reconhecida mas não-suportada → rótulo neutro (ou null se não for). */
@@ -325,7 +343,13 @@ export function parseInbound(payload: unknown): InboundMessage | null {
 
   const video = extractVideo(data);
   if (video) {
-    return { ...base, kind: "video", video: { mimetype: video.mimetype }, caption: video.caption, messageKey: buildMediaKey() };
+    return {
+      ...base,
+      kind: "video",
+      video: { mimetype: video.mimetype, ...(video.fileLength !== undefined ? { fileLength: video.fileLength } : {}) },
+      caption: video.caption,
+      messageKey: buildMediaKey(),
+    };
   }
 
   const mediaType = detectMediaType(message);

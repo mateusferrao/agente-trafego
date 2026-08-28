@@ -122,7 +122,10 @@ export interface InboundImageMessage extends InboundMessageBase {
  */
 export interface InboundVideoMessage extends InboundMessageBase {
   readonly kind: "video";
-  readonly video: { readonly mimetype: string };
+  /** `fileLength` (P0.3) = tamanho em bytes que o WhatsApp já entrega na metadata — dá pro
+   *  intake recusar vídeo grande demais ANTES de baixar/decodificar (HTTP HEAD é inviável: a
+   *  Evolution só entrega mídia por base64, nunca por URL). Ausente → fallback pós-decode. */
+  readonly video: { readonly mimetype: string; readonly fileLength?: number };
   readonly caption: string | null;
   readonly messageKey: MediaMessageKey;
 }

@@ -103,9 +103,17 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
       return;
     }
 
-    // 2) bytes: imagem pode vir inline (webhook base64:true); vídeo SEMPRE por chave (não
-    // trafega no payload). Fallback por `fetchMediaBase64`. (Probe de tamanho antes do fetch =
-    // fast-follow — a porta não expõe HEAD; por ora checamos o tamanho após baixar.)
+    // 2) PROBE de tamanho (P0.3) — vídeo carrega `fileLength` na METADATA do webhook (não dá pra
+    // fazer HTTP HEAD: a Evolution só entrega mídia por base64, nunca por URL). Grande demais →
+    // recusa SEM baixar/decodificar (evita materializar base64 gigante em memória à toa).
+    if (mediaType === "video" && media.fileLength !== undefined && media.fileLength > d.maxWhatsappVideoBytes) {
+      await d.sendToConversation(ref, NOTICE.videoTooLarge(Math.round(d.maxWhatsappVideoBytes / (1024 * 1024))), { split: true });
+      d.logger.warn({ conversationId, fileLength: media.fileLength }, "intake:video_too_large_metadata");
+      return;
+    }
+
+    // 3) bytes: imagem pode vir inline (webhook base64:true); vídeo SEMPRE por chave (não
+    // trafega no payload). Fallback por `fetchMediaBase64`.
     const inline = media.base64 ?? "";
     const base64 =
       inline.length > 0 ? inline : (await d.ports.messaging.fetchMediaBase64({ instanceId }, media.messageKey)) ?? "";
@@ -116,7 +124,8 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
     }
     const bytes = new Uint8Array(Buffer.from(base64, "base64"));
 
-    // vídeo: teto de tamanho (memória do worker) — grande demais → manda pro upload web.
+    // vídeo: teto de tamanho PÓS-decode (fallback quando `fileLength` não veio na metadata) —
+    // teto de memória do worker. Grande demais → manda pro upload web.
     if (mediaType === "video" && bytes.byteLength > d.maxWhatsappVideoBytes) {
       await d.sendToConversation(ref, NOTICE.videoTooLarge(Math.round(d.maxWhatsappVideoBytes / (1024 * 1024))), { split: true });
       d.logger.warn({ conversationId, bytes: bytes.byteLength }, "intake:video_too_large");
