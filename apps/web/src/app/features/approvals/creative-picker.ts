@@ -1,7 +1,12 @@
 import { ChangeDetectionStrategy, Component, type OnInit, computed, inject, input, output, signal } from '@angular/core';
 import { catchError, forkJoin, of } from 'rxjs';
+import { UiInput } from '@ui';
 import { DraftsApiService } from '@core/api/drafts-api.service';
 import type { CreativeAssetOutput, ServingCreativeOutput, SetDraftCreativeInput } from '@core/api/generated';
+
+/** Quantos anúncios mostrar antes do "ver mais"; e a partir de quantos aparece a busca. */
+const SERVING_PAGE = 12;
+const SEARCH_THRESHOLD = 12;
 
 /**
  * Picker "trocar criativo" (Fatia 7): escolhe um criativo pra um rascunho from_scratch, de DUAS
@@ -12,6 +17,8 @@ import type { CreativeAssetOutput, ServingCreativeOutput, SetDraftCreativeInput 
  */
 @Component({
   selector: 'app-creative-picker',
+  standalone: true,
+  imports: [UiInput],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="flex flex-col gap-3 rounded-md border border-line bg-soft p-3">
@@ -30,9 +37,19 @@ import type { CreativeAssetOutput, ServingCreativeOutput, SetDraftCreativeInput 
       } @else {
         @if (serving().length > 0) {
           <div class="flex flex-col gap-1.5">
-            <span class="text-[11px] font-medium uppercase tracking-wide text-muted">Anúncios da conta (vídeo)</span>
+            <span class="text-[11px] font-medium uppercase tracking-wide text-muted">Anúncios da conta</span>
+            @if (serving().length > SEARCH_THRESHOLD) {
+              <input
+                appInput
+                class="w-full"
+                type="search"
+                placeholder="Buscar por título ou texto…"
+                [value]="search()"
+                (input)="onSearch($event)"
+              />
+            }
             <ul class="grid grid-cols-[repeat(auto-fill,minmax(84px,1fr))] gap-2">
-              @for (s of serving(); track s.adId; let i = $index) {
+              @for (s of visibleServing(); track s.adId; let i = $index) {
                 <li>
                   <button
                     type="button"
@@ -47,12 +64,19 @@ import type { CreativeAssetOutput, ServingCreativeOutput, SetDraftCreativeInput 
                       } @else {
                         <span class="px-1 text-center text-[11px] text-muted">sem preview</span>
                       }
-                      <span class="absolute bottom-0.5 right-0.5 rounded bg-ink/70 px-1 text-[9px] text-primary-ink">vídeo</span>
+                      <span class="absolute bottom-0.5 right-0.5 rounded bg-ink/70 px-1 text-[9px] text-primary-ink">{{ s.format === 'video' ? 'vídeo' : 'imagem' }}</span>
                     </span>
                   </button>
                 </li>
               }
             </ul>
+            @if (filteredServing().length === 0) {
+              <span class="text-[11px] text-muted">Nenhum anúncio bate com “{{ search() }}”.</span>
+            } @else if (filteredServing().length > visibleServing().length) {
+              <button type="button" class="self-start text-xs text-accent hover:underline" (click)="showMore()">
+                Ver mais ({{ filteredServing().length - visibleServing().length }})
+              </button>
+            }
           </div>
         }
 
@@ -101,9 +125,32 @@ export class CreativePicker implements OnInit {
   protected readonly loaded = signal(false);
   protected readonly failed = signal(false);
   protected readonly broken = signal<ReadonlySet<string>>(new Set());
+  /** busca + truncamento do picker (contas com muitos criativos — Slice 12). */
+  protected readonly search = signal('');
+  protected readonly servingLimit = signal(SERVING_PAGE);
+  protected readonly SEARCH_THRESHOLD = SEARCH_THRESHOLD;
 
   /** biblioteca escolhível = pronta (imagem com preview; vídeo com selo). */
   protected readonly libraryReady = computed(() => this.assets().filter((a) => a.status === 'ready'));
+
+  /** anúncios veiculando filtrados pela busca (título/copy). */
+  protected readonly filteredServing = computed(() => {
+    const q = this.search().toLowerCase().trim();
+    if (!q) return this.serving();
+    return this.serving().filter(
+      (s) => (s.title ?? '').toLowerCase().includes(q) || (s.copy ?? '').toLowerCase().includes(q),
+    );
+  });
+  /** truncado ao limite atual (o "ver mais" aumenta). */
+  protected readonly visibleServing = computed(() => this.filteredServing().slice(0, this.servingLimit()));
+
+  protected onSearch(event: Event): void {
+    this.search.set((event.target as HTMLInputElement).value);
+    this.servingLimit.set(SERVING_PAGE); // nova busca → reinicia o truncamento
+  }
+  protected showMore(): void {
+    this.servingLimit.update((n) => n + SERVING_PAGE);
+  }
 
   protected blobUrl(a: CreativeAssetOutput): string {
     return this.api.creativeBlobUrl(this.accountId(), a.id);

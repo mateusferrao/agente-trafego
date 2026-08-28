@@ -87,6 +87,7 @@ export interface AdCreativeRow {
   readonly title: string | null;
   readonly callToAction: string | null;
   readonly imageUrl: string | null;
+  readonly imageHash: string | null;
   readonly thumbnailUrl: string | null;
   readonly videoId: string | null;
   readonly tier: PerformanceTier | null;
@@ -333,6 +334,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
             title: r.title,
             callToAction: r.callToAction,
             imageUrl: r.imageUrl,
+            imageHash: r.imageHash,
             thumbnailUrl: r.thumbnailUrl,
             videoId: r.videoId,
             tier: r.tier,
@@ -351,6 +353,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
             title: sql`excluded.title`,
             callToAction: sql`excluded.call_to_action`,
             imageUrl: sql`excluded.image_url`,
+            imageHash: sql`excluded.image_hash`,
             thumbnailUrl: sql`excluded.thumbnail_url`,
             videoId: sql`excluded.video_id`,
             // perf: anúncio fora do brief (não-notável) vem com perf null neste run —
@@ -382,6 +385,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
             title: r.title,
             callToAction: r.callToAction,
             imageUrl: r.imageUrl,
+            imageHash: r.imageHash,
             thumbnailUrl: r.thumbnailUrl,
             videoId: r.videoId,
             capturedAt: sql`now()`,
@@ -395,6 +399,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
             title: sql`excluded.title`,
             callToAction: sql`excluded.call_to_action`,
             imageUrl: sql`excluded.image_url`,
+            imageHash: sql`excluded.image_hash`,
             thumbnailUrl: sql`excluded.thumbnail_url`,
             videoId: sql`excluded.video_id`,
             capturedAt: sql`excluded.captured_at`,

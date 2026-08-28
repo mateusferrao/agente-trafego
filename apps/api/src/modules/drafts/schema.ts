@@ -162,7 +162,7 @@ export const servingCreativeOutput = z.object({
   copy: z.string().nullable(),
   cta: z.string().nullable(),
   tier: z.string().nullable(),
-  /** só vídeo é reusável ao vivo hoje (imagem precisa de image_hash — fast-follow). */
+  /** vídeo (video_id) OU imagem (image_hash) — ambos reusáveis ao vivo (Slice 12). */
   format: z.enum(["image", "video"]),
   thumbnailUrl: z.string().nullable(),
 });

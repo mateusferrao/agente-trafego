@@ -115,6 +115,9 @@ export interface Creative {
   readonly title?: string;
   readonly callToAction?: string;
   readonly imageUrl?: string;
+  /** hash estável da imagem (reusável em `object_story_spec.link_data.image_hash`) — permite
+   *  reusar um anúncio de IMAGEM ao vivo na criação (Fatia 7, Slice 12). */
+  readonly imageHash?: string;
   readonly thumbnailUrl?: string;
   readonly videoId?: string;
   /**

@@ -195,11 +195,12 @@ describe("getDraftCreativeThumb (miniatura do criativo do rascunho)", () => {
   });
 });
 
-describe("listServingCreatives (candidatos de reuse no picker: só vídeo, ranqueado)", () => {
-  /** fakeDb p/ select→from→where AWAITADO (sem .limit). */
+describe("listServingCreatives (candidatos de reuse: vídeo + imagem, por data — Slice 12)", () => {
+  /** fakeDb p/ select→from→where→orderBy→limit AWAITADO. `rows` = já na ordem que o db devolveria. */
   function fakeDbAwait(rows: unknown[]) {
+    const tail = { then: (r: (v: unknown[]) => void) => r(rows) };
     return {
-      select: () => ({ from: () => ({ where: () => ({ then: (r: (v: unknown[]) => void) => r(rows) }) }) }),
+      select: () => ({ from: () => ({ where: () => ({ orderBy: () => ({ limit: () => tail }) }) }) }),
     } as never;
   }
   function makeServingService(rows: unknown[]) {
@@ -213,23 +214,25 @@ describe("listServingCreatives (candidatos de reuse no picker: só vídeo, ranqu
     });
   }
 
-  it("filtra p/ VÍDEO (imagem ao vivo = fast-follow) e mapeia campos", async () => {
+  it("inclui VÍDEO (video_id) E IMAGEM (image_hash); descarta o que não tem nenhum", async () => {
     const service = makeServingService([
-      { adId: "vid_win", title: "Campeão", body: "copy campeã", callToAction: "WHATSAPP", tier: "winner", videoId: "V1", thumbnailUrl: "u1", spend: 100, cpa: 2, roas: 5 },
-      { adId: "img_ad", title: "Imagem", body: "x", callToAction: null, tier: "performer", videoId: null, thumbnailUrl: "u2", spend: 50, cpa: 4, roas: 3 },
+      { adId: "vid", title: "V", body: "cv", callToAction: "WHATSAPP", tier: "winner", videoId: "V1", imageHash: null, imageUrl: null, thumbnailUrl: "u1" },
+      { adId: "img", title: "I", body: "ci", callToAction: null, tier: "performer", videoId: null, imageHash: "H1", imageUrl: "iu", thumbnailUrl: null },
+      { adId: "none", title: "N", body: null, callToAction: null, tier: null, videoId: null, imageHash: null, imageUrl: null, thumbnailUrl: null },
     ]);
     const out = await service.listServingCreatives(ORG, "acc");
-    expect(out).toHaveLength(1); // a imagem (videoId null) sai
-    expect(out[0]).toMatchObject({ adId: "vid_win", format: "video", copy: "copy campeã", cta: "WHATSAPP", tier: "winner" });
+    expect(out.map((c) => c.adId)).toEqual(["vid", "img"]); // "none" (sem vídeo nem hash) sai
+    expect(out[0]).toMatchObject({ format: "video" });
+    expect(out[1]).toMatchObject({ format: "image", thumbnailUrl: "iu" }); // cai no imageUrl
   });
 
-  it("ranqueia campeã→pior (winner antes de performer)", async () => {
+  it("preserva a ordem do db (por data desc — o db orderBy resolve)", async () => {
     const service = makeServingService([
-      { adId: "perf", title: null, body: null, callToAction: null, tier: "performer", videoId: "V2", thumbnailUrl: null, spend: 30, cpa: 6, roas: 2 },
-      { adId: "win", title: null, body: null, callToAction: null, tier: "winner", videoId: "V1", thumbnailUrl: null, spend: 100, cpa: 2, roas: 5 },
+      { adId: "novo", title: null, body: null, callToAction: null, tier: "performer", videoId: "V2", imageHash: null, imageUrl: null, thumbnailUrl: null },
+      { adId: "velho", title: null, body: null, callToAction: null, tier: "winner", videoId: "V1", imageHash: null, imageUrl: null, thumbnailUrl: null },
     ]);
     const out = await service.listServingCreatives(ORG, "acc");
-    expect(out.map((c) => c.adId)).toEqual(["win", "perf"]);
+    expect(out.map((c) => c.adId)).toEqual(["novo", "velho"]);
   });
 });
 

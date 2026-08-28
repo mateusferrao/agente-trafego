@@ -41,7 +41,7 @@ export function pickSpacedFrames(thumbs: readonly RawVideoThumb[], n: number): s
 }
 
 interface RawObjectStorySpec {
-  readonly link_data?: { readonly message?: string; readonly name?: string; readonly call_to_action?: { readonly type?: string } };
+  readonly link_data?: { readonly message?: string; readonly name?: string; readonly image_hash?: string; readonly call_to_action?: { readonly type?: string } };
   readonly video_data?: { readonly message?: string; readonly title?: string; readonly call_to_action?: { readonly type?: string } };
 }
 
@@ -156,6 +156,7 @@ export class MetaCreativesService {
     const body = c.body ?? story?.message;
     const title = c.title ?? (c.object_story_spec?.link_data?.name || c.object_story_spec?.video_data?.title);
     const callToAction = c.call_to_action_type ?? story?.call_to_action?.type;
+    const imageHash = c.object_story_spec?.link_data?.image_hash;
     return {
       id: c.id ?? adId,
       adId,
@@ -164,6 +165,7 @@ export class MetaCreativesService {
       ...(title ? { title } : {}),
       ...(callToAction ? { callToAction } : {}),
       ...(c.image_url ? { imageUrl: c.image_url } : {}),
+      ...(imageHash ? { imageHash } : {}),
       ...(c.thumbnail_url ? { thumbnailUrl: c.thumbnail_url } : {}),
       ...(c.video_id ? { videoId: c.video_id } : {}),
     };

@@ -29,8 +29,10 @@ export const adCreatives = pgTable(
     body: text("body"),
     title: text("title"),
     callToAction: text("call_to_action"),
-    // mídia (opcional) p/ preview futuro.
+    // mídia (opcional) p/ preview + reuse na criação (Fatia 7).
     imageUrl: text("image_url"),
+    /** hash estável da imagem → reusar anúncio de IMAGEM ao vivo no picker (Slice 12). */
+    imageHash: text("image_hash"),
     thumbnailUrl: text("thumbnail_url"),
     videoId: text("video_id"),
     // desempenho DENORMALIZADO do run (ranking "campeã" sem join): tier + métricas.

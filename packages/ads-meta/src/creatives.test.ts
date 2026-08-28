@@ -90,6 +90,12 @@ describe("MetaCreativesService.getCreatives", () => {
     expect(c).toMatchObject({ adId: "AD3", body: "corpo do anúncio", title: "manchete", callToAction: "LEARN_MORE" });
   });
 
+  it("extrai o image_hash do link_data (reuse de imagem ao vivo — Slice 12)", async () => {
+    stubBatch([{ id: "AD9", creative: { object_story_spec: { link_data: { image_hash: "IMGHASH9" } } } }]);
+    const [c] = await makeService().getCreatives(account, ["AD9"]);
+    expect(c!.imageHash).toBe("IMGHASH9");
+  });
+
   it("sub-request que falhou (code != 200 ou null) é pulada, não derruba o lote", async () => {
     stubBatch([
       { id: "AD1", creative: { image_url: "http://img" } },

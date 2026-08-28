@@ -380,6 +380,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           title: c.title ?? null,
           callToAction: c.callToAction ?? null,
           imageUrl: c.imageUrl ?? null,
+          imageHash: c.imageHash ?? null,
           thumbnailUrl: c.thumbnailUrl ?? null,
           videoId: c.videoId ?? null,
           tier: perf?.tier ?? null,

@@ -302,6 +302,13 @@
       "when": 1787891463163,
       "tag": "0042_loose_multiple_man",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1787957407475,
+      "tag": "0043_strange_skin",
+      "breakpoints": true
     }
   ]
 }

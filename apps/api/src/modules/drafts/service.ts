@@ -11,7 +11,7 @@ import {
   platformConnections,
   type Database,
 } from "@trafego/db";
-import { applyDraftEdit, planScaleMove, rankAdCreatives, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
+import { applyDraftEdit, planScaleMove, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
 import { loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import type { ToolBindingMode } from "@trafego/shared";
 import {
@@ -56,6 +56,9 @@ const APPROVAL_TTL_MS = APPROVAL_TTL_HOURS * 60 * 60 * 1000;
  *  materializa payload gigante em memória (a thumb da Meta é pequena; isto é a rede de segurança). */
 const THUMB_FETCH_TIMEOUT_MS = 8000;
 const THUMB_MAX_BYTES = 5 * 1024 * 1024;
+/** Cap de segurança do picker de anúncios veiculando (o web trunca + "ver mais" + busca; a
+ *  paginação server-side robusta é fast-follow). Evita payload patológico em contas gigantes. */
+const SERVING_PICKER_CAP = 200;
 
 const DRAFT_NOT_OPEN_MSG = "esse rascunho não está mais aberto pra ajuste.";
 const ACCOUNT_UNAVAILABLE_MSG = "não consegui acessar a conta agora";
@@ -171,14 +174,15 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     };
   }
 
-  /** Ref de reuse de um anúncio AO VIVO (ad id da Meta): busca o video_id FRESCO (não o
-   *  ad_creatives stale). Só vídeo hoje — imagem ao vivo precisa de image_hash (fast-follow). */
+  /** Ref de reuse de um anúncio AO VIVO (ad id da Meta): busca o video_id / image_hash FRESCO (não
+   *  o ad_creatives stale). Vídeo → metaVideoId; imagem → metaImageHash (Slice 12). */
   async function resolveServingCreative(orgId: OrgId, accountId: string, adId: string): Promise<CreativeAssetRef | null> {
     const ctx = await loadScaleContext(orgId, accountId);
     if (!ctx) return null;
     const [c] = await deps.adsPlatform.getCreatives(ctx.ref, [adId]);
-    if (!c?.videoId) return null;
-    return { assetId: adId, format: "video", origin: "reuse", metaVideoId: c.videoId };
+    if (c?.videoId) return { assetId: adId, format: "video", origin: "reuse", metaVideoId: c.videoId };
+    if (c?.imageHash) return { assetId: adId, format: "image", origin: "reuse", metaImageHash: c.imageHash };
+    return null;
   }
 
   /**
@@ -537,23 +541,27 @@ export function createDraftsService(deps: DraftsServiceDeps) {
           callToAction: adCreatives.callToAction,
           tier: adCreatives.tier,
           videoId: adCreatives.videoId,
+          imageHash: adCreatives.imageHash,
+          imageUrl: adCreatives.imageUrl,
           thumbnailUrl: adCreatives.thumbnailUrl,
-          spend: adCreatives.spend,
-          cpa: adCreatives.cpa,
-          roas: adCreatives.roas,
         })
         .from(adCreatives)
-        .where(and(eq(adCreatives.adAccountId, accountId), eq(adCreatives.orgId, orgId)));
-      return rankAdCreatives(rows)
-        .filter((r) => r.videoId) // reusável ao vivo = vídeo (imagem = fast-follow)
+        .where(and(eq(adCreatives.adAccountId, accountId), eq(adCreatives.orgId, orgId)))
+        // ordena por DATA (mais recente capturado primeiro) — o usuário acha o criativo novo; o
+        // picker trunca + "ver mais" + busca. Cap de segurança (paginação server-side = fast-follow).
+        .orderBy(desc(adCreatives.capturedAt))
+        .limit(SERVING_PICKER_CAP);
+      // reusável ao vivo = VÍDEO (video_id) OU IMAGEM (image_hash). O pick fresco confirma na Meta.
+      return rows
+        .filter((r) => r.videoId || r.imageHash)
         .map((r) => ({
           adId: r.adId,
           title: r.title,
           copy: r.body,
           cta: r.callToAction,
           tier: r.tier,
-          format: "video" as const,
-          thumbnailUrl: r.thumbnailUrl,
+          format: r.videoId ? ("video" as const) : ("image" as const),
+          thumbnailUrl: r.thumbnailUrl ?? r.imageUrl,
         }));
     },
 
