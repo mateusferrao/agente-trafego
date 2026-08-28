@@ -9,6 +9,8 @@ import {
   getMetricsData,
   listAccountsData,
   listCampaignsData,
+  describeDraftAudience,
+  describeDraftCreative,
   listPendingData,
   listRecommendationsData,
   pickAdIdsToRefresh,
@@ -71,6 +73,44 @@ describe("pickAdIdsToRefresh (fresh=true refresca só o top-N que será exibido)
 
   it("sem linhas persistidas → nada a refrescar", () => {
     expect(pickAdIdsToRefresh([])).toEqual([]);
+  });
+});
+
+describe("describeDraftAudience (público do rascunho pelo MODO, sem jargão nem chamada Meta)", () => {
+  it("reuse_adset → herda o público que já converte", () => {
+    expect(describeDraftAudience({ kind: "reuse_adset", sourceAdsetId: "AS1" })).toContain("herda o público");
+  });
+
+  it("advantage_plus → a Meta escolhe (amplo), sem citar 'Advantage+'", () => {
+    const txt = describeDraftAudience({ kind: "advantage_plus" });
+    expect(txt.toLowerCase()).toContain("meta escolhe");
+    expect(txt.toLowerCase()).not.toContain("advantage");
+  });
+
+  it("sem targeting → cai no amplo (default seguro)", () => {
+    expect(describeDraftAudience(undefined).toLowerCase()).toContain("meta escolhe");
+  });
+});
+
+describe("describeDraftCreative (rótulo do criativo do rascunho, do BANCO — sem chamar a Meta)", () => {
+  const reuseVideo = { assetId: "AD1", format: "video" as const, origin: "reuse" as const };
+  it("reuse com título conhecido → nomeia o anúncio real + formato", () => {
+    const txt = describeDraftCreative("from_scratch", reuseVideo, new Map([["AD1", "Agende sua avaliação"]]));
+    expect(txt).toContain("Agende sua avaliação");
+    expect(txt).toContain("vídeo");
+  });
+  it("reuse sem título salvo → fala genérico honesto (não inventa)", () => {
+    const txt = describeDraftCreative("from_scratch", reuseVideo, new Map());
+    expect(txt).toContain("já veicula");
+    expect(txt).toContain("vídeo");
+  });
+  it("upload da biblioteca → diz biblioteca + formato", () => {
+    const txt = describeDraftCreative("from_scratch", { assetId: "u1", format: "image", origin: "upload" }, new Map());
+    expect(txt.toLowerCase()).toContain("biblioteca");
+    expect(txt).toContain("imagem");
+  });
+  it("duplicate (sem creative no spec) → fala do criativo do vencedor duplicado", () => {
+    expect(describeDraftCreative("duplicate", undefined, new Map()).toLowerCase()).toContain("vencedor");
   });
 });
 
@@ -453,6 +493,31 @@ describe("listPendingData", () => {
     const res = await listPendingData(db, fakeApprovals([activationApproval as unknown as Approval]), ORG);
     expect(res).toEqual([
       { kind: "activation", id: "ap-act-1", reason: expect.stringContaining("ativar"), expiresAt: "2026-08-21T00:00:00.000Z" },
+    ]);
+  });
+
+  it("rascunho de CRIAÇÃO entra no list_pending (aprovável/recusável por id, não só no eco de 30min)", async () => {
+    const draftApproval = {
+      id: "ap-draft-1",
+      kind: "draft",
+      orgId: ORG,
+      agentId: AGENT,
+      runId: null,
+      status: "pending",
+      draftId: "draft-9",
+      resolvedReason: null,
+      expiresAt: new Date("2026-08-29T00:00:00.000Z"),
+      createdAt: new Date("2026-08-28T00:00:00.000Z"),
+    };
+    const draftRow = {
+      id: "draft-9",
+      kind: "from_scratch",
+      spec: { version: 1, currency: "BRL", dailyBudgetMinor: 5000, activation: "active", objective: "lead" },
+    };
+    const db = fakeDb(new Map([[campaignDrafts, [draftRow]]]));
+    const res = await listPendingData(db, fakeApprovals([draftApproval as unknown as Approval]), ORG);
+    expect(res).toEqual([
+      { kind: "draft", id: "ap-draft-1", reason: expect.stringContaining("criar"), expiresAt: "2026-08-29T00:00:00.000Z" },
     ]);
   });
 });
