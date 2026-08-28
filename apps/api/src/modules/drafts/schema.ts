@@ -34,6 +34,9 @@ export const draftApprovalOutput = z.object({
   // budget diário em unidade MAIOR da moeda (ex: reais/dólares) — pareado com `currency`
   // p/ o front formatar (nunca hardcodar símbolo). Nome neutro de moeda (não "reais").
   dailyBudgetMajor: z.number(),
+  /** budget PEDIDO antes do clamp pelo teto de gasto novo — só quando cortado. O card mostra
+   *  "pedi X, virou Y" (transparência §8). `null` quando não houve clamp. */
+  clampedFromMajor: z.number().nullable(),
   currency: z.string(),
   activation: z.enum(["active", "paused"]),
   /** rótulo da entidade-origem (quando duplicate). */

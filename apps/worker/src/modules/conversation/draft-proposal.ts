@@ -325,19 +325,24 @@ export async function proposeScaleWinner(
   const requested = Math.round(sourceDailyMinor * (1 + move.scalePct / 100));
   const cap = ac.cfg.maxNewDailyBudgetMinor;
   const newDailyMinor = cap != null ? Math.min(requested, cap) : requested;
+  const clampedByCap = newDailyMinor < requested;
   const spec: CampaignDraftSpec = {
     version: 1,
     currency: ac.currency,
     dailyBudgetMinor: newDailyMinor,
+    ...(clampedByCap ? { requestedDailyBudgetMinor: requested } : {}),
     activation: "active",
   };
   const { draftId, approvalId } = await persistDraftAndApproval(deps, ctx, "duplicate", spec, origin, {
     level,
     id: chosen.entityId,
   });
+  const budgetLine = clampedByCap
+    ? `Gasto novo: ${money(newDailyMinor / MINOR_PER_UNIT, ac.currency)}/dia (você pediu ${money(requested / MINOR_PER_UNIT, ac.currency)}, mas seu teto de gasto novo é ${money(newDailyMinor / MINOR_PER_UNIT, ac.currency)}) · ${activationPhrase("active")}.`
+    : `Gasto novo: ${money(newDailyMinor / MINOR_PER_UNIT, ac.currency)}/dia · ${activationPhrase("active")}.`;
   const echo = joinBalloons([
     `Vou **duplicar o vencedor "${label}"** com mais budget pra escalar sem estourar o aprendizado do original.`,
-    `Gasto novo: ${money(newDailyMinor / MINOR_PER_UNIT, ac.currency)}/dia · ${activationPhrase("active")}.`,
+    budgetLine,
     `Confirma? (o original fica intocado)`,
   ]);
   return { kind: "draft", echo, approvalId, draftId };

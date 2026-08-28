@@ -205,6 +205,10 @@ export function createDraftsService(deps: DraftsServiceDeps) {
           origin: d.origin,
           objective: spec.objective ?? null,
           dailyBudgetMajor: spec.dailyBudgetMinor / MINOR_PER_UNIT,
+          clampedFromMajor:
+            spec.requestedDailyBudgetMinor && spec.requestedDailyBudgetMinor > spec.dailyBudgetMinor
+              ? spec.requestedDailyBudgetMinor / MINOR_PER_UNIT
+              : null,
           currency: spec.currency,
           activation: spec.activation,
           sourceLabel: d.sourceRef ? `${d.sourceRef.level}:${d.sourceRef.id}` : null,
@@ -307,6 +311,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
         version: 1,
         currency: ctx.currency,
         dailyBudgetMinor: newDailyBudgetMinor,
+        ...(newDailyBudgetMinor < requestedMinor ? { requestedDailyBudgetMinor: requestedMinor } : {}),
         activation: "active",
       };
       const [draftRow] = await deps.db

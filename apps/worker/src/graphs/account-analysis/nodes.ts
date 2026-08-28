@@ -736,6 +736,31 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
         top.kind === "scale_winner"
           ? await proposeScaleWinner(deps, dctx, top.entityName, "proactive")
           : await proposeCreateCampaign(deps, dctx, {}, "proactive");
+
+      // 5.1: vencedor no teto sob CBO/ABO-pequeno → a decisão é SUBIR BUDGET (ação adjust_budget),
+      // não duplicar. Antes o proativo só seguia no ramo `draft` (duplicate) e IGNORAVA o `action`
+      // → o vencedor CBO no teto nunca era escalado sozinho. Agora cria a aprovação + a recomendação
+      // (HITL — o humano aprova; auto-apply da subida proativa = fast-follow).
+      if (top.kind === "scale_winner" && proposal.kind === "action") {
+        await deps.ports.approval.upsertPending({
+          orgId: state.orgId as OrgId,
+          agentId: state.agentId as AgentId,
+          runId: state.runId as RunId,
+          action: proposal.action,
+          expiresAt: new Date(Date.now() + APPROVAL_TTL_HOURS * 3_600_000),
+        });
+        await deps.db.insert(recommendations).values({
+          orgId: state.orgId,
+          runId: state.runId,
+          title: "Escalar seu vencedor (subir orçamento)",
+          rationale: top.rationale,
+          kind: "platform_action",
+          toolKey: "adjust_budget",
+          riskLevel: "high",
+        });
+        logger.info({ runId: state.runId }, "propose_drafts:scale_raise proposto");
+        return {};
+      }
       if (proposal.kind !== "draft") return {};
       const toolKey = top.kind === "scale_winner" ? "duplicate_scale" : "create_campaign";
       // recomendação ligada ao rascunho — renderiza na lista + reusa feedback/outcome.

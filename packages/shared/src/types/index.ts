@@ -695,6 +695,9 @@ export interface CampaignDraftSpec {
   readonly currency: string;
   /** budget diário proposto (unidade mínima). */
   readonly dailyBudgetMinor: number;
+  /** budget PEDIDO antes do clamp pelo teto de gasto novo — só quando cortado (`dailyBudgetMinor`
+   *  ficou abaixo do pedido). Transparência §8: o eco/card mostram "pedi X, virou Y". */
+  readonly requestedDailyBudgetMinor?: number;
   /** nasce ACTIVE ou PAUSED (activationPolicy do agente / override no eco). */
   readonly activation: "active" | "paused";
   // ─── só `from_scratch` (herdados no `duplicate`) ───

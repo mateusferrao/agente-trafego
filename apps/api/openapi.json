@@ -6471,6 +6471,12 @@
           "dailyBudgetMajor": {
             "type": "number"
           },
+          "clampedFromMajor": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
           "currency": {
             "type": "string"
           },
@@ -6596,6 +6602,7 @@
           "origin",
           "objective",
           "dailyBudgetMajor",
+          "clampedFromMajor",
           "currency",
           "activation",
           "sourceLabel",

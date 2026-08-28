@@ -70,7 +70,7 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                         <span class="font-semibold text-ink">{{ draftTitle(d) }}</span>
                       </span>
                       <dl class="grid grid-cols-1 gap-1 text-sm text-ink sm:grid-cols-2">
-                        <div><dt class="inline text-muted">{{ d.approvalKind === 'activation' ? 'Gasto' : 'Gasto novo' }}: </dt><dd class="inline font-semibold">{{ money(d.dailyBudgetMajor, d.currency) }}/dia</dd></div>
+                        <div><dt class="inline text-muted">{{ d.approvalKind === 'activation' ? 'Gasto' : 'Gasto novo' }}: </dt><dd class="inline font-semibold">{{ money(d.dailyBudgetMajor, d.currency) }}/dia</dd>@if (d.clampedFromMajor; as req) {<dd class="inline text-xs text-muted"> (você pediu {{ money(req, d.currency) }} — cortei pro seu teto)</dd>}</div>
                         <div><dt class="inline text-muted">Status: </dt><dd class="inline">{{ activationStatusText(d) }}</dd></div>
                         @if (d.pageId) { <div><dt class="inline text-muted">Página: </dt><dd class="inline">conectada</dd></div> }
                         @if (d.pixelId) { <div><dt class="inline text-muted">Rastreamento: </dt><dd class="inline">pixel conectado</dd></div> }
