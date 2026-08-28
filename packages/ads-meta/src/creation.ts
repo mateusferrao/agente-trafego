@@ -161,9 +161,9 @@ export class MetaCreationService {
     return { campaignId };
   }
 
-  async createAdSet(account: AdAccountRef, input: CreateAdSetInput): Promise<{ adsetId: string }> {
+  async createAdSet(account: AdAccountRef, input: CreateAdSetInput): Promise<{ adsetId: string; targetingFallback: boolean }> {
     const conv = resolveAdSetConversion(input.goal, input.pixelId);
-    const targeting = await this.resolveTargeting(account, input.targeting);
+    const { targeting, fallback } = await this.resolveTargeting(account, input.targeting);
     const params: Record<string, string> = {
       name: input.name,
       campaign_id: input.campaignId,
@@ -178,7 +178,7 @@ export class MetaCreationService {
     };
     if (conv.promotedObject) params["promoted_object"] = JSON.stringify(conv.promotedObject);
     const adsetId = await this.createOnAccount(account, "adsets", params);
-    return { adsetId };
+    return { adsetId, targetingFallback: fallback };
   }
 
   async createAdCreative(account: AdAccountRef, input: CreateAdCreativeInput): Promise<{ creativeId: string }> {
@@ -300,11 +300,25 @@ export class MetaCreationService {
     return { status: s === "ready" ? "ready" : s === "error" ? "error" : "processing" };
   }
 
-  /** Targeting neutro → Meta. `reuse_adset` lê o targeting da fonte; `advantage_plus` = amplo. */
+  /** Targeting amplo default (Advantage+) — sem trava de geo/audience. */
+  private advantagePlusTargeting(): Record<string, unknown> {
+    return {
+      geo_locations: { countries: [DEFAULT_ADVANTAGE_GEO_COUNTRY] },
+      targeting_automation: { advantage_audience: 1 },
+    };
+  }
+
+  /**
+   * Targeting neutro → Meta. `reuse_adset` lê o targeting da fonte (herda travas de geo/audience
+   * que o dono já tenha configurado); `advantage_plus` = amplo, sem trava. `fallback: true` sinaliza
+   * que um `reuse_adset` foi PEDIDO mas a fonte não estava disponível (adset pausado/arquivado/
+   * deletado entre a proposta e a confirmação) — o caller usa isso pra avisar o dono, em vez de
+   * a campanha sair silenciosamente com público amplo sem ninguém saber.
+   */
   private async resolveTargeting(
     account: AdAccountRef,
     spec: CreateAdSetInput["targeting"],
-  ): Promise<Record<string, unknown>> {
+  ): Promise<{ targeting: Record<string, unknown>; fallback: boolean }> {
     if (spec.kind === "reuse_adset") {
       try {
         const { data } = await this.client.request<{ targeting?: Record<string, unknown> }>({
@@ -313,15 +327,13 @@ export class MetaCreationService {
           accessToken: account.accessToken,
           params: { fields: "targeting" },
         });
-        if (data.targeting) return data.targeting;
+        if (data.targeting) return { targeting: data.targeting, fallback: false };
       } catch {
-        // fonte indisponível → cai no amplo (Advantage+).
+        // fonte indisponível → cai no amplo (Advantage+), sinalizado no retorno.
       }
+      return { targeting: this.advantagePlusTargeting(), fallback: true };
     }
-    return {
-      geo_locations: { countries: [DEFAULT_ADVANTAGE_GEO_COUNTRY] },
-      targeting_automation: { advantage_audience: 1 },
-    };
+    return { targeting: this.advantagePlusTargeting(), fallback: false };
   }
 
   /**
@@ -340,7 +352,7 @@ export class MetaCreationService {
       accessToken: account.accessToken,
       params: {
         fields:
-          "id,effective_status,creative{object_story_spec},adset{promoted_object},campaign{objective},insights.date_preset(last_30d){spend,actions}",
+          "id,effective_status,creative{object_story_spec},adset{id,promoted_object},campaign{objective},insights.date_preset(last_30d){spend,actions}",
         limit: String(INFER_CANDIDATES_LIMIT),
       },
     });
@@ -375,6 +387,7 @@ export class MetaCreationService {
       ...(spec?.video_data?.video_id ? { videoId: spec.video_data.video_id } : {}),
       ...(reuseLink ? { linkUrl: reuseLink } : {}),
       ...(best.id ? { sourceAdId: best.id } : {}),
+      ...(best.adset?.id ? { sourceAdsetId: best.adset.id } : {}),
       ...(winnerCopy.length > 0 ? { winnerCopy } : {}),
       ...(unsupportedTopFormat ? { unsupportedTopFormat } : {}),
     };

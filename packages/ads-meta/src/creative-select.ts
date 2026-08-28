@@ -77,7 +77,7 @@ export interface RawAdCandidate {
   readonly id?: string;
   readonly effective_status?: string;
   readonly creative?: { readonly object_story_spec?: RawObjectStorySpec };
-  readonly adset?: { readonly promoted_object?: { readonly pixel_id?: string } };
+  readonly adset?: { readonly id?: string; readonly promoted_object?: { readonly pixel_id?: string } };
   readonly campaign?: { readonly objective?: string };
   readonly insights?: { readonly data?: ReadonlyArray<{ readonly spend?: string; readonly actions?: readonly RawInsightAction[] }> };
 }

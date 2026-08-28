@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { chooseCreative } from "./draft-proposal.js";
+import { chooseCreative, resolveCreationTargeting } from "./draft-proposal.js";
 import { creativeContentHash } from "../vision/resolver.js";
 import type { WorkerDeps } from "../../composition.js";
 
@@ -81,5 +81,18 @@ describe("chooseCreative (pool único: veiculando + biblioteca)", () => {
     const deps = { db: { select: vi.fn() } } as unknown as WorkerDeps;
     const out = await chooseCreative(deps, ORG, ACC, { videoId: "SVID", sourceAdId: "ad_2" });
     expect(out).toEqual({ videoId: "SVID", assetId: "ad_2", origin: "reuse", source: "serving" });
+  });
+});
+
+describe("resolveCreationTargeting (público da campanha criada do zero)", () => {
+  it("com adset vencedor real → herda o público provado (reuse_adset), não Advantage+ amplo", () => {
+    expect(resolveCreationTargeting({ sourceAdsetId: "AS_WINNER" })).toEqual({
+      kind: "reuse_adset",
+      sourceAdsetId: "AS_WINNER",
+    });
+  });
+
+  it("cold-start (sem adset vencedor) → cai em Advantage+ (não há público provado pra herdar)", () => {
+    expect(resolveCreationTargeting({})).toEqual({ kind: "advantage_plus" });
   });
 });

@@ -119,6 +119,12 @@ export interface CreationDefaults {
   readonly linkUrl?: string;
   readonly sourceAdId?: string;
   /**
+   * Adset do melhor anúncio reusável — permite herdar o PÚBLICO já provado (targeting
+   * `reuse_adset`) em vez de cair em Advantage+ amplo, honrando travas de geo/audience que
+   * o dono já tenha configurado manualmente naquele conjunto.
+   */
+  readonly sourceAdsetId?: string;
+  /**
    * Vídeo do melhor anúncio reusável (quando o criativo escolhido é vídeo). Espelha
    * `imageHash` — a saga usa um OU outro conforme o formato do criativo campeão.
    */
@@ -199,7 +205,9 @@ export interface AdsPlatformPort {
   setEntityBudget(account: AdAccountRef, entityId: string, dailyBudgetMinor: number): Promise<void>;
   /** Saga de criação do zero — granular (a casca persiste ids parciais p/ retomada idempotente). */
   createCampaign(account: AdAccountRef, input: CreateCampaignInput): Promise<{ campaignId: string }>;
-  createAdSet(account: AdAccountRef, input: CreateAdSetInput): Promise<{ adsetId: string }>;
+  /** `targetingFallback: true` = um `reuse_adset` foi pedido mas a fonte não estava disponível
+   *  (caiu em Advantage+ amplo) — o caller usa isso pra avisar o dono, não fica silencioso. */
+  createAdSet(account: AdAccountRef, input: CreateAdSetInput): Promise<{ adsetId: string; targetingFallback: boolean }>;
   createAdCreative(account: AdAccountRef, input: CreateAdCreativeInput): Promise<{ creativeId: string }>;
   createAd(account: AdAccountRef, input: CreateAdInput): Promise<{ adId: string }>;
   /** Infere Page/Pixel/objetivo/mídia/link do que a conta já usa (§6 — sem pages_show_list). */

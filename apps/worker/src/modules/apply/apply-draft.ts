@@ -353,7 +353,7 @@ async function runFromScratchSaga(
     await persist({ campaignId });
   }
   if (!state["adsetId"]) {
-    const { adsetId } = await ads.createAdSet(ref, {
+    const { adsetId, targetingFallback } = await ads.createAdSet(ref, {
       campaignId: state["campaignId"] as string,
       name: `${name} — conjunto`,
       dailyBudgetMinor: spec.dailyBudgetMinor,
@@ -362,7 +362,9 @@ async function runFromScratchSaga(
       targeting: spec.targeting ?? { kind: "advantage_plus" },
       status,
     });
-    await persist({ adsetId });
+    // targetingFallback: o `reuse_adset` pedido não pôde ser resolvido (fonte indisponível) e
+    // caiu em Advantage+ amplo — persiste pra o push do apply avisar o dono (nunca silencioso).
+    await persist({ adsetId, ...(targetingFallback ? { targetingFallback: true } : {}) });
   }
 
   const variants = spec.copyVariants ?? [];

@@ -21,6 +21,7 @@ import {
   type CopyVariant,
   type CreativeAssetRef,
   type DraftId,
+  type TargetingSpec,
 } from "@trafego/shared";
 import type { AdAccountRef } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../../composition.js";
@@ -88,6 +89,17 @@ function activationPhrase(activation: "active" | "paused"): string {
   return activation === "active"
     ? "nasce PAUSADA (a Meta revisa antes) — te aviso separado pra confirmar a ativação"
     : "fica pausada, do jeito que você pediu";
+}
+
+/**
+ * Targeting da campanha criada do zero: com um adset vencedor real, HERDA o público já
+ * provado dele (`reuse_adset`) — inclusive travas de geo/audience que o dono já tenha
+ * configurado manualmente ali. Só cai em `advantage_plus` (amplo, sem trava) no cold-start,
+ * quando não há nenhum adset vencedor pra herdar. PURA — sem isso, criar do zero sempre
+ * ignoraria as travas de público da conta (ver guidance §7 do agente).
+ */
+export function resolveCreationTargeting(defaults: { readonly sourceAdsetId?: string }): TargetingSpec {
+  return defaults.sourceAdsetId ? { kind: "reuse_adset", sourceAdsetId: defaults.sourceAdsetId } : { kind: "advantage_plus" };
 }
 
 /** Rótulo PT do formato não-reusável (o vocabulário neutro vem do adapter). */
@@ -584,7 +596,7 @@ export async function proposeCreateCampaign(
     dailyBudgetMinor,
     activation: "active",
     objective: goal,
-    targeting: { kind: "advantage_plus" },
+    targeting: resolveCreationTargeting(defaults),
     variantsCount,
     copyVariants,
     creative: {
@@ -599,15 +611,17 @@ export async function proposeCreateCampaign(
     ...(defaults.linkUrl ? { linkUrl: defaults.linkUrl } : {}),
   };
   const { draftId, approvalId } = await persistDraftAndApproval(deps, ctx, "from_scratch", spec, origin);
-  // eco honesto sobre a FONTE do criativo (veiculando/provado × biblioteca).
+  // eco honesto sobre a FONTE do criativo (veiculando/provado × biblioteca) e do PÚBLICO
+  // (herdado de um adset provado × amplo/Advantage+ no cold-start).
   const creativeSourcePhrase =
     chosen.source === "serving"
       ? "reusando o criativo que melhor performa na sua conta"
       : "reusando um criativo da sua biblioteca (você não tem anúncio ativo pra eu comparar desempenho)";
+  const audienceSourcePhrase = spec.targeting?.kind === "reuse_adset" ? " e o público que já converte" : "";
   // Transparência (§clareza pro dono): se o #1 por desempenho for um formato que ainda não sei
   // clonar (carrossel/catálogo), avisa que peguei o melhor de imagem/vídeo no lugar.
   const lines = [
-    `Vou **criar uma campanha de ${goal}** ${creativeSourcePhrase} e ${variantsCount} variações de copy novas (baseadas no que já converte).`,
+    `Vou **criar uma campanha de ${goal}** ${creativeSourcePhrase}${audienceSourcePhrase} e ${variantsCount} variações de copy novas (baseadas no que já converte).`,
   ];
   if (defaults.unsupportedTopFormat) {
     lines.push(`Obs: seu anúncio de melhor desempenho é um **${unsupportedFormatPt(defaults.unsupportedTopFormat)}**, que eu ainda não sei clonar — então usei o melhor criativo de imagem/vídeo que você tem.`);

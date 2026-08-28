@@ -155,11 +155,109 @@ describe("MetaCreationService.createCampaign / createAdSet — contrato v26", ()
       status: "paused",
     });
     expect(r.adsetId).toBe("AS1");
+    expect(r.targetingFallback).toBe(false); // advantage_plus foi o PEDIDO, não um fallback
     const u = posts().find((p) => p.url.includes("/adsets"))!.url;
     expect(u).toContain("bid_strategy=LOWEST_COST_WITHOUT_CAP");
     expect(u).toContain("optimization_goal=OFFSITE_CONVERSIONS");
     expect(u).toContain("billing_event=IMPRESSIONS");
     expect(u).toContain("daily_budget=1000");
     expect(u).toContain("promoted_object="); // pixel + custom_event_type
+  });
+
+  /** Stub que distingue o GET de leitura do targeting-fonte (path = sourceAdsetId) do POST de
+   *  criação (/adsets) — só assim dá pra testar reuse_adset de ponta a ponta. */
+  function stubReuseAdset(sourceAdsetId: string, sourceResponse: "ok" | "not_found") {
+    const posts: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        posts.push({ url, method: String(init?.method ?? "GET") });
+        if (url.includes(`/${sourceAdsetId}?`) || url.endsWith(`/${sourceAdsetId}`)) {
+          if (sourceResponse === "not_found") {
+            return new Response(JSON.stringify({ error: { message: "Unsupported get request", code: 100 } }), {
+              status: 400,
+              headers: { "content-type": "application/json" },
+            });
+          }
+          return new Response(JSON.stringify({ targeting: { geo_locations: { cities: [{ key: "123" }] } } }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ id: "AS_NEW" }), { status: 200, headers: { "content-type": "application/json" } });
+      }),
+    );
+    return { posts: () => posts };
+  }
+
+  it("reuse_adset: fonte disponível → herda o targeting dela, targetingFallback=false", async () => {
+    const { posts } = stubReuseAdset("AS_WINNER", "ok");
+    const r = await svc().createAdSet(account, {
+      campaignId: "CAMP1",
+      name: "A",
+      dailyBudgetMinor: 1000,
+      goal: "purchase",
+      targeting: { kind: "reuse_adset", sourceAdsetId: "AS_WINNER" },
+      status: "paused",
+    });
+    expect(r.targetingFallback).toBe(false);
+    const adsetPost = posts().find((p) => p.url.includes("/adsets"))!;
+    expect(decodeURIComponent(adsetPost.url)).toContain('"cities":[{"key":"123"}]');
+  });
+
+  it("reuse_adset: fonte indisponível (deletada/pausada) → cai em Advantage+ e sinaliza targetingFallback=true (nunca silencioso)", async () => {
+    const { posts } = stubReuseAdset("AS_GONE", "not_found");
+    const r = await svc().createAdSet(account, {
+      campaignId: "CAMP1",
+      name: "A",
+      dailyBudgetMinor: 1000,
+      goal: "purchase",
+      targeting: { kind: "reuse_adset", sourceAdsetId: "AS_GONE" },
+      status: "paused",
+    });
+    expect(r.targetingFallback).toBe(true);
+    const adsetPost = posts().find((p) => p.url.includes("/adsets"))!;
+    expect(decodeURIComponent(adsetPost.url)).toContain('"advantage_audience":1');
+  });
+});
+
+/** Stub do /ads: devolve uma lista fixa de candidatos pra inferCreationDefaults. */
+function stubAds(data: Record<string, unknown>[]) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(JSON.stringify({ data }), { status: 200, headers: { "content-type": "application/json" } })),
+  );
+}
+
+describe("MetaCreationService.inferCreationDefaults", () => {
+  it("devolve sourceAdsetId do melhor anúncio reusável, pra herdar o público provado (reuse_adset)", async () => {
+    stubAds([
+      {
+        id: "AD1",
+        effective_status: "ACTIVE",
+        creative: { object_story_spec: { link_data: { image_hash: "HASH1", link: "https://x.test" } } },
+        adset: { id: "AS_WINNER", promoted_object: { pixel_id: "PX1" } },
+        campaign: { objective: "OUTCOME_LEADS" },
+        insights: { data: [{ spend: "100", actions: [{ action_type: "lead", value: "5" }] }] },
+      },
+    ]);
+    const r = await svc().inferCreationDefaults(account);
+    expect(r.sourceAdsetId).toBe("AS_WINNER");
+    expect(r.pixelId).toBe("PX1");
+  });
+
+  it("sem adset.id no anúncio candidato (shape antigo/parcial) → sourceAdsetId ausente, sem quebrar", async () => {
+    stubAds([
+      {
+        id: "AD1",
+        effective_status: "ACTIVE",
+        creative: { object_story_spec: { link_data: { image_hash: "HASH1" } } },
+        campaign: { objective: "OUTCOME_LEADS" },
+        insights: { data: [{ spend: "100", actions: [] }] },
+      },
+    ]);
+    const r = await svc().inferCreationDefaults(account);
+    expect(r.sourceAdsetId).toBeUndefined();
   });
 });
