@@ -732,6 +732,21 @@ vez de duplicar lógica. Fatiado (G0→G4) — **entregue por completo**.
 - **Oferta de VÍDEO no fecho-de-loop do WhatsApp.** Ao mandar um criativo no WhatsApp, o intake oferece usar no rascunho / criar campanha (`creative-offer` no Redis + resolução pré-grafo no `turn.ts` num "sim" determinístico) — mas SÓ pra IMAGEM (nasce `ready`). Vídeo nasce `pending` (poll async), então não dá pra usar na hora. Fast-follow: oferecer também vídeo, resolvendo quando o poll flipar `ready` (ou avisar "assim que processar eu uso"). 
 - **Cache COMPARTILHADO da miniatura de rascunho no StoragePort.** O `/creative/thumb` (reuse) hoje cacheia por ETag HTTP (browser) + busca fresco da Meta no miss por-viewer — o StoragePort é content-addressed (ref por conteúdo), então cache-por-`videoId` exigiria um mapping (`ad_creatives.thumb_ref` ou tabela) + migração. Fast-follow: persistir a thumb no StoragePort keyed pelo id estável → o 1º fetch serve TODOS os viewers (não 1 por browser). Decidido HTTP-cache no MVP desta rodada pra evitar a migração.
 
+### Slice própria — Estratégia de fonte do criativo na criação (config por-agente) — desenho fechado 2026-08-28
+
+**Problema (achado no E2E 2026-08-28):** `chooseCreative` **curto-circuita** — se há QUALQUER criativo veiculando, devolve o melhor-por-desempenho na hora e **nunca consulta a biblioteca**. O matcher por visão+LLM (`pickLibraryCreativeByContext`, já entregue) só roda quando **não há nenhum** veiculando. O comentário diz "pool ÚNICO", mas o comportamento é **prioridade** (veiculando vence), não escolha por encaixe. Decisão do dono: **performar ≠ encaixar** na campanha nova — a existência de um vencedor não deve excluir a biblioteca da escolha.
+
+**Desenho (confirmado com o dono 2026-08-28):** config **por-agente** `creativeSourceStrategy` com 3 modos:
+1. **`serving`** (veiculando) — reusa um criativo no ar. Sub-opção:
+   - **`best_performing`** (determinístico, sem LLM — **DEFAULT**, preserva o comportamento de hoje), ou
+   - **`agent`** — o LLM escolhe entre os veiculando por **encaixe no contexto** (objetivo/negócio/orientações), não só desempenho.
+2. **`library`** — o LLM escolhe entre os uploads da biblioteca por encaixe (força o caminho `pickLibraryCreativeByContext`, ignorando veiculando).
+3. **`both`** — pool REALMENTE único: o LLM recebe **veiculando + biblioteca** juntos, cada um com **descrição de visão + desempenho quando houver**, e escolhe o melhor encaixe (desempenho = sinal forte, não veto; empate/dúvida → prefere quem já performa).
+
+**Dependência técnica (o gargalo):** os modos `serving.agent` e `both` precisam de (a) **descrição de visão dos criativos veiculando** (reusar a decomposição de visão do run de análise / `creative_vision_analyses`) e (b) **listar VÁRIOS candidatos veiculando** com métrica — hoje `inferCreationDefaults` devolve só o **#1** por desempenho. Ampliar pra uma lista rankeada de candidatos veiculando (id + imageHash/videoId + descrição de visão + custo-por-resultado).
+
+**Escopo:** nova config (`agents.model_config.creativeSourceStrategy`, default `serving.best_performing`) + refan do `chooseCreative` (recebe a estratégia + o pool unificado com visão+perf) + ampliar `inferCreationDefaults` (lista de candidatos veiculando) + UI (Opções avançadas do agente + `set_*` por chat) + testes por modo. Registrado como slice própria (não implementado no lote de correção da 2026-08-28) porque é feature de produto no carro-chefe, além dos bugs que o teste achou.
+
 ## Fatia 8 — Orquestração multi-agente / qualidade (roadmap pós-MVP)
 
 **Visão:** elevar a qualidade e a escala da análise com **mais papéis de agente** e **map-reduce por entidade** — sem reescrever o grafo. **Depende:** MVP validado (hipótese confirmada na 3a) + `5a` (write path, p/ o validador de segurança de ação). A costura já existe desde a 3a-2: o par **Analista→Revisor** é modelado como uma **lista de passes** (`reviewPasses`, default 1) — crescer = **registrar mais passes/papéis**, não reescrever nós.
