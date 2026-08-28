@@ -11,6 +11,8 @@ import type {
   SetDraftCreativeOutput,
   SetDraftTargetingInput,
   SetDraftTargetingOutput,
+  UpdateDraftInput,
+  UpdateDraftOutput,
   UploadCreativeOutput,
 } from './generated';
 
@@ -41,6 +43,15 @@ export class DraftsApiService extends BaseApiService {
   ): Observable<SetDraftCreativeOutput> {
     return this.post<SetDraftCreativeOutput, SetDraftCreativeInput>(
       ['/accounts', accountId, 'drafts', draftId, 'creative'],
+      input,
+    );
+  }
+
+  /** `PATCH /api/accounts/:id/drafts/:draftId` — edição consolidada do rascunho (painel). Só os
+   *  campos alterados. Erro do núcleo → 422 com mensagem amigável (o componente mostra o toast). */
+  updateDraft(accountId: string, draftId: string, input: UpdateDraftInput): Observable<UpdateDraftOutput> {
+    return this.patch<UpdateDraftOutput, UpdateDraftInput>(
+      ['/accounts', accountId, 'drafts', draftId],
       input,
     );
   }

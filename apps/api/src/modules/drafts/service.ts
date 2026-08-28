@@ -326,6 +326,9 @@ export function createDraftsService(deps: DraftsServiceDeps) {
           sourceName: d.sourceRef?.name ?? null,
           pageId: spec.pageId ?? null,
           pixelId: spec.pixelId ?? null,
+          campaignName: spec.campaignName ?? null,
+          adsetName: spec.adsetName ?? null,
+          suffixLabel: spec.suffixLabel ?? null,
           variantsCount: spec.variantsCount ?? null,
           copyVariants: spec.copyVariants
             ? spec.copyVariants.map((c) => ({
@@ -333,6 +336,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
                 headline: c.headline,
                 description: c.description ?? null,
                 cta: c.cta ?? null,
+                adName: c.adName ?? null,
               }))
             : null,
           creative: spec.creative ? { format: spec.creative.format, origin: spec.creative.origin } : null,

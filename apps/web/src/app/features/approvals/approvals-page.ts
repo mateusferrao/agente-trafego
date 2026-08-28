@@ -2,6 +2,7 @@ import { ChangeDetectionStrategy, Component, type OnInit, computed, inject, sign
 import { toast } from 'ngx-sonner';
 import { UiButton, UiConfirmDialogService, UiEmptyState, UiEyebrow, UiPageHeader } from '@ui';
 import { CreativePicker } from './creative-picker';
+import { DraftEditPanel } from './draft-edit-panel';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import { ApprovalsApiService } from '@core/api/approvals-api.service';
 import { DraftsApiService } from '@core/api/drafts-api.service';
@@ -39,7 +40,7 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
 @Component({
   selector: 'app-approvals-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiEmptyState, UiPageHeader, UiButton, UiEyebrow, CreativePicker],
+  imports: [UiEmptyState, UiPageHeader, UiButton, UiEyebrow, CreativePicker, DraftEditPanel],
   template: `
     <div class="flex flex-col gap-8">
       <app-ui-page-header
@@ -116,6 +117,11 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                         </ul>
                       }
                       <span class="flex shrink-0 flex-wrap gap-2">
+                        @if (d.approvalKind === 'draft') {
+                          <button appButton variant="ghost" size="sm" [disabled]="resolving().has(d.id)" (click)="toggleEdit(d)">
+                            {{ editingFor() === d.id ? 'Fechar edição' : 'Editar' }}
+                          </button>
+                        }
                         @if (d.approvalKind === 'draft' && d.kind === 'from_scratch') {
                           <button appButton variant="ghost" size="sm" [disabled]="resolving().has(d.id)" (click)="togglePicker(d)">
                             {{ pickerFor() === d.id ? 'Cancelar troca' : 'Trocar criativo' }}
@@ -137,6 +143,11 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                           (pick)="onPickCreative(d, $event)"
                           (cancel)="pickerFor.set(null)"
                         />
+                      </li>
+                    }
+                    @if (editingFor() === d.id) {
+                      <li>
+                        <app-draft-edit-panel [draft]="d" (saved)="onDraftSaved()" (close)="editingFor.set(null)" />
                       </li>
                     }
                   }
@@ -238,6 +249,8 @@ export class ApprovalsPage implements OnInit {
   protected readonly reverting = signal<ReadonlySet<string>>(new Set());
   /** id do rascunho com o picker "trocar criativo" aberto (só 1 por vez). */
   protected readonly pickerFor = signal<string | null>(null);
+  /** id do rascunho com o painel "Editar rascunho" aberto (só 1 por vez). */
+  protected readonly editingFor = signal<string | null>(null);
   protected readonly pickingCreative = signal(false);
   /** ids de rascunho cuja miniatura falhou (reuse fbcdn/Meta indisponível) → placeholder. */
   protected readonly thumbBroken = signal<ReadonlySet<string>>(new Set());
@@ -403,6 +416,17 @@ export class ApprovalsPage implements OnInit {
       return next;
     });
   }
+  /** Abre/fecha o painel de edição do rascunho (fecha o picker se estava aberto). */
+  protected toggleEdit(d: DraftApprovalOutput): void {
+    this.pickerFor.set(null);
+    this.editingFor.update((cur) => (cur === d.id ? null : d.id));
+  }
+  /** O painel salvou → recarrega os rascunhos (reflete nomes/gasto/copy frescos) e fecha. */
+  protected onDraftSaved(): void {
+    this.editingFor.set(null);
+    this.reloadDrafts();
+  }
+
   /** Recarrega os rascunhos pendentes (rótulo do criativo/público fresco após uma troca). */
   private reloadDrafts(): void {
     this.draftsApi.listPending().subscribe({

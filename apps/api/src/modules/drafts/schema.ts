@@ -3,12 +3,14 @@ import { z } from "zod";
 
 const approvalStatusOutput = z.enum(["pending", "approved", "rejected", "expired", "blocked"]);
 
-/** Uma variação de copy (resumo p/ o card de rascunho). */
+/** Uma variação de copy (resumo p/ o card + edição no painel). */
 export const draftCopyVariantOutput = z.object({
   primaryText: z.string(),
   headline: z.string(),
   description: z.string().nullable(),
   cta: z.string().nullable(),
+  /** nome editável do anúncio desta variação (painel "Editar rascunho"). `null` = derivado. */
+  adName: z.string().nullable(),
 });
 
 /**
@@ -46,6 +48,11 @@ export const draftApprovalOutput = z.object({
   sourceName: z.string().nullable(),
   pageId: z.string().nullable(),
   pixelId: z.string().nullable(),
+  /** nomes editáveis (painel). `null` = derivado no apply (`CaquiAI — <objetivo>`). */
+  campaignName: z.string().nullable(),
+  adsetName: z.string().nullable(),
+  /** rótulo do sufixo (só duplicate) — `<vencedor> — <rótulo>`. `null` = "escala". */
+  suffixLabel: z.string().nullable(),
   variantsCount: z.number().nullable(),
   copyVariants: z.array(draftCopyVariantOutput).nullable(),
   /** criativo do rascunho (from_scratch) — o card mostra formato/origem + a miniatura
