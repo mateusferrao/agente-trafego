@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { WHATSAPP_SOFT_MAX_CHARS, WHATSAPP_SPLIT_MAX_PARTS, splitMessage } from "./split.js";
+import { WHATSAPP_SOFT_MAX_CHARS, WHATSAPP_SPLIT_MAX_PARTS, joinBalloons, splitMessage } from "./split.js";
 
 /** Frase determinística de ~n chars terminada em ponto (fronteira de frase). */
 function sentence(n: number): string {
@@ -73,5 +73,27 @@ describe("splitMessage", () => {
       // cada balão é composto de linhas inteiras
       for (const l of p.split("\n")) expect(l).toBe(line);
     }
+  });
+});
+
+describe("joinBalloons", () => {
+  it("junta parágrafos com fronteira de balão (\\n\\n) → splitMessage separa cada um", () => {
+    const echo = joinBalloons(["primeira ideia.", "segunda ideia.", "confirma?"]);
+    expect(echo).toBe("primeira ideia.\n\nsegunda ideia.\n\nconfirma?");
+    expect(splitMessage(echo)).toHaveLength(3);
+  });
+
+  it("descarta parágrafos vazios/em branco (linhas opcionais condicionais)", () => {
+    expect(joinBalloons(["a", "", "  ", "b"])).toBe("a\n\nb");
+  });
+
+  it("faz trim de cada parágrafo", () => {
+    expect(joinBalloons(["  a  ", " b "])).toBe("a\n\nb");
+  });
+
+  it("um parágrafo só → sem separador (um balão)", () => {
+    const echo = joinBalloons(["só isso"]);
+    expect(echo).toBe("só isso");
+    expect(splitMessage(echo)).toEqual(["só isso"]);
   });
 });

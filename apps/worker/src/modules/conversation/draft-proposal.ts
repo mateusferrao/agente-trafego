@@ -30,6 +30,7 @@ import { loadEnabledTools } from "../tools/enabled.js";
 import { generateCopy } from "../copy/generate-copy.js";
 import { creativeContentHash } from "../vision/resolver.js";
 import { pickLibraryCreativeByContext, type LibraryCandidate, type MatchContext } from "../creative/match-library.js";
+import { joinBalloons } from "../notify/split.js";
 
 const MINOR_PER_UNIT = 100;
 const APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
@@ -288,12 +289,12 @@ export async function proposeScaleWinner(
 
   // passo agressivo, intent aberto, sem resposta → PERGUNTA em linguagem plana (§UX: sem jargão).
   if (move.move === "ask") {
-    const echo = [
+    const echo = joinBalloons([
       `O aumento que você pediu é grande pro "${label}".`,
       `Posso **subir o orçamento** dele em até ${move.raisePct}% (o limite seguro, que não reinicia o desempenho que ele já tem),`,
       `ou **criar uma cópia separada** pra crescer mais que isso sem arriscar a que já está funcionando.`,
       `O que você prefere?`,
-    ].join(" ");
+    ]);
     return {
       kind: "ask",
       echo,
@@ -335,11 +336,11 @@ export async function proposeScaleWinner(
     level,
     id: chosen.entityId,
   });
-  const echo = [
+  const echo = joinBalloons([
     `Vou **duplicar o vencedor "${label}"** com mais budget pra escalar sem estourar o aprendizado do original.`,
     `Gasto novo: ${money(newDailyMinor / MINOR_PER_UNIT, ac.currency)}/dia · ${activationPhrase("active")}.`,
     `Confirma? (o original fica intocado)`,
-  ].join("\n");
+  ]);
   return { kind: "draft", echo, approvalId, draftId };
 }
 
@@ -353,7 +354,7 @@ function buildRefineEcho(kind: string, spec: CampaignDraftSpec): string {
     lines.push(`${spec.copyVariants.length} variação(ões) de copy. Ex: "${spec.copyVariants[0]!.headline}".`);
   }
   lines.push("Confirma agora ou quer ajustar mais?");
-  return lines.join("\n");
+  return joinBalloons(lines);
 }
 
 export interface RefineDraftPatch {
@@ -630,5 +631,5 @@ export async function proposeCreateCampaign(
     `Gasto novo: ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia · Página: ${defaults.pageId}${defaults.pixelId ? ` · Pixel: ${defaults.pixelId}` : ""} · ${activationPhrase("active")}.`,
     `Confirma? (você pode editar/trocar o criativo no site antes de aprovar)`,
   );
-  return { kind: "draft", echo: lines.join("\n"), approvalId, draftId };
+  return { kind: "draft", echo: joinBalloons(lines), approvalId, draftId };
 }
