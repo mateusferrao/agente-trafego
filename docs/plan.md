@@ -400,7 +400,7 @@ Invariantes/regras ficam no **CLAUDE.md (always-on)**; as skills carregam o **ne
 - **Handoff = sugestão com checkpoint** (plan→implement→review): cada skill termina sugerindo a próxima, mas **não auto-invoca**; plano aprovado antes de implementar (respeita o HARD-GATE do brainstorming). Cada uma usável isolada.
 
 ### 1. `planning-trafego-feature` (holístico, só SKILL.md)
-- **Description (trigger):** planejar/planning **antes de codar** — nova feature, slice, tela, endpoint, entidade, porta no AutoTraffic; "planejar feature", "nova tela", "novo endpoint".
+- **Description (trigger):** planejar/planning **antes de codar** — nova feature, slice, tela, endpoint, entidade, porta no CaquiAI; "planejar feature", "nova tela", "novo endpoint".
 - **Workflow:** compõe `superpowers:brainstorming` (intenção, sem assumir, perguntas críticas 1-a-1) → `superpowers:writing-plans`. Raciocina **cross-stack** (feature toca backend+frontend junto). Gates project-specific (ref CLAUDE.md por nome de seção): mapear camada(s) tocada(s) (slice VSA? nova porta na borda? função pura no core? feature Angular?); **reuso-primeiro** (buscar em `packages/{shared,core,db}` + adapters antes de propor novo); definir costura de extensibilidade.
 - **Termina** sugerindo (com checkpoint) `implementing-trafego-feature`.
 

@@ -324,7 +324,7 @@ export const envSchema = z.object({
   // driver: console (dev, loga código/link) | ses (prod, AWS SESv2) | noop (testes).
   AUTH_EMAIL_DELIVERY_DRIVER: z.enum(["console", "ses", "noop"]).default("console"),
   // Remetente. Domínio precisa estar verificado no SES (DKIM). Beta = msg.automato.pro.
-  AUTH_EMAIL_FROM: z.string().min(1).default("AutoTraffic <no-reply@msg.automato.pro>"),
+  AUTH_EMAIL_FROM: z.string().min(1).default("CaquiAI <no-reply@msg.automato.pro>"),
   // Região do SES de produção (só o worker envia). Creds AWS (AWS_ACCESS_KEY_ID/
   // AWS_SECRET_ACCESS_KEY) vêm da cadeia default do SDK — secret só no worker, IAM escopado.
   AWS_REGION: z.string().min(1).default("sa-east-1"),

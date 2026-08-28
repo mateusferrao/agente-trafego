@@ -1,14 +1,14 @@
 ---
 name: reviewing-trafego-changes
 description: >-
-  Use when reviewing a diff, branch, or pull request in the AutoTraffic
+  Use when reviewing a diff, branch, or pull request in the CaquiAI
   monorepo before merging — triggers on "revisar", "revisar mudança", "revisar
   PR", "code review", "antes de mergear", "review this diff", "review before
   merge". Not for planning (use planning-trafego-feature) or writing code (use
   implementing-trafego-feature).
 ---
 
-# Revisar mudanças — AutoTraffic
+# Revisar mudanças — CaquiAI
 
 Revisa um diff antes do merge combinando qualidade geral **+** aderência aos princípios do projeto, e emite veredito.
 

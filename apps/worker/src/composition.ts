@@ -206,7 +206,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
     requestTimeoutMs: env.LLM_HTTP_TIMEOUT_MS,
     logger, // observa retries + troca de modelo (pontos de falha)
     referer: env.WEB_ORIGIN,
-    title: "AutoTraffic",
+    title: "CaquiAI",
   });
   const llm = withLlmMetering(
     new OpenRouterAdapter({ client: openRouterClient, structuredMaxRetries: env.LLM_STRUCTURED_MAX_RETRIES, logger }),

@@ -1,4 +1,4 @@
-# ROADMAP — Construção do AutoTraffic
+# ROADMAP — Construção do CaquiAI
 
 Plano de construção em fatias. Decisões de arquitetura/produto = [`../CLAUDE.md`](../CLAUDE.md). Design/UX (IA, telas, componentes) = [`DESIGN.md`](DESIGN.md). Histórico completo = [`plan.md`](plan.md).
 

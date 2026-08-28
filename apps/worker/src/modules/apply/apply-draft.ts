@@ -341,7 +341,7 @@ async function runFromScratchSaga(
   const spec = draft.spec;
   const goal = spec.objective ?? DEFAULT_CONVERSION_GOAL;
   const status = spec.activation;
-  const name = `AutoTraffic — ${goalNounPt(goal)}`;
+  const name = `CaquiAI — ${goalNounPt(goal)}`;
 
   if (!state["campaignId"]) {
     const { campaignId } = await ads.createCampaign(ref, {

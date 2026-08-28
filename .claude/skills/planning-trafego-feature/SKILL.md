@@ -2,14 +2,14 @@
 name: planning-trafego-feature
 description: >-
   Use when planning a new feature, slice, screen, endpoint, entity, or port in
-  the AutoTraffic monorepo BEFORE writing any code — triggers on "planejar
+  the CaquiAI monorepo BEFORE writing any code — triggers on "planejar
   feature", "planejar antes de codar", "nova tela", "novo endpoint", "novo
   slice", "novo agente", "plan a feature", "design before implementing". Not for
   writing code (use implementing-trafego-feature) or reviewing a diff (use
   reviewing-trafego-changes).
 ---
 
-# Planejar feature — AutoTraffic
+# Planejar feature — CaquiAI
 
 Planeja uma mudança **antes de codar**, raciocinando **cross-stack** (backend Node/VSA + frontend Angular juntos), ancorado nas decisões do `CLAUDE.md`. Não escreve código.
 

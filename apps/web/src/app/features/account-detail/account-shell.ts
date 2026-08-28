@@ -28,42 +28,30 @@ import { AccountContextStore } from "./account-context.store";
       <div class="flex flex-col gap-1">
         <a routerLink="/accounts" class="text-xs text-muted hover:text-ink">← Contas</a>
         <app-ui-page-header [title]="store.accountName()" [subtitle]="store.accountSubtitle()">
-          <div class="flex flex-wrap items-center gap-2" actions>
-            <!-- Identidade do agente: marca + Roy + status (tom + texto), sem pill washed. -->
-            <span class="inline-flex items-center gap-2.5">
-              <app-ui-agent-identity />
-              <span
-                class="inline-flex items-center gap-1.5 text-xs font-medium"
-                [class.text-warning-strong]="store.paused()"
-                [class.text-success-strong]="!store.paused()"
+          <div class="flex flex-col items-end gap-2" actions>
+            <!-- Perfil do agente: avatar com anel de status (verde/âmbar) + nome, linha
+                 própria acima dos botões — não compete com as ações como um controle a mais. -->
+            <app-ui-agent-identity [status]="store.paused() ? 'paused' : 'active'" />
+            <div class="flex flex-wrap items-center gap-2">
+              <button
+                appButton
+                variant="secondary"
+                type="button"
+                [disabled]="store.pausing()"
+                (click)="store.togglePaused()"
               >
-                <span
-                  class="size-1.5 rounded-full"
-                  [class.bg-warning]="store.paused()"
-                  [class.bg-success]="!store.paused()"
-                  aria-hidden="true"
-                ></span>
-                {{ store.paused() ? 'pausado' : 'ativo' }}
-              </span>
-            </span>
-            <button
-              appButton
-              variant="secondary"
-              type="button"
-              [disabled]="store.pausing()"
-              (click)="store.togglePaused()"
-            >
-              {{ store.pausing() ? 'Salvando…' : store.paused() ? 'Retomar' : 'Pausar' }}
-            </button>
-            <button
-              appButton
-              variant="primary"
-              type="button"
-              [disabled]="store.analyzing()"
-              (click)="store.analyze()"
-            >
-              {{ store.analyzing() ? 'Analisando…' : 'Analisar agora' }}
-            </button>
+                {{ store.pausing() ? 'Salvando…' : store.paused() ? 'Retomar' : 'Pausar' }}
+              </button>
+              <button
+                appButton
+                variant="primary"
+                type="button"
+                [disabled]="store.analyzing()"
+                (click)="store.analyze()"
+              >
+                {{ store.analyzing() ? 'Analisando…' : 'Analisar agora' }}
+              </button>
+            </div>
           </div>
         </app-ui-page-header>
       </div>
