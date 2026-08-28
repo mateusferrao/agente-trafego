@@ -843,7 +843,13 @@ export function makeConversationNodes(
       // pendências (write/revert/config) não têm approval persistida aqui.
       const rejectedDraft = activePendingDraft(state.pendingDraft);
       if (rejectedDraft) {
-        await deps.ports.approval.resolve(rejectedDraft.approvalId as ApprovalId, { status: "rejected" });
+        // só recusa se AINDA pendente: o rascunho pode ter sido aprovado por id nesse meio-tempo
+        // (apply-service já criou a campanha) → não reverter approved→rejected com a campanha viva.
+        // Espelha o guard de approve/reject (getById + status pending).
+        const appr = await deps.ports.approval.getById(rejectedDraft.approvalId as ApprovalId);
+        if (appr && appr.status === "pending") {
+          await deps.ports.approval.resolve(rejectedDraft.approvalId as ApprovalId, { status: "rejected" });
+        }
       }
       return {
         messages: [

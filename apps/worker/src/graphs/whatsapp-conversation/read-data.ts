@@ -816,6 +816,7 @@ async function getPendingDraftData(
   approvalPort: ApprovalPort,
   orgId: string,
   agentId: string,
+  adAccountId: string,
 ): Promise<NoData | { hasData: true; drafts: readonly unknown[] }> {
   const pending = (await approvalPort.listPendingByAgent(agentId as AgentId)).filter(
     (a): a is DraftApproval => a.kind === "draft",
@@ -833,6 +834,7 @@ async function getPendingDraftData(
           pending.map((a) => a.draftId),
         ),
         eq(campaignDrafts.orgId, orgId),
+        eq(campaignDrafts.adAccountId, adAccountId),
       ),
     );
   const byId = new Map(drafts.map((d) => [d.id, d]));
@@ -1259,7 +1261,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     async () => {
       if (noFocus()) return NEEDS_FOCUS;
       logger.debug({ agentId: ctx.agentId }, "tool:get_pending_draft");
-      return asString(await getPendingDraftData(db, ports.approval, ctx.orgId, ctx.agentId));
+      return asString(await getPendingDraftData(db, ports.approval, ctx.orgId, ctx.agentId, ctx.adAccountId));
     },
     {
       name: "get_pending_draft",

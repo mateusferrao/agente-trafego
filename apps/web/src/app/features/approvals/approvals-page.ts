@@ -255,7 +255,8 @@ export class ApprovalsPage implements OnInit {
 
   /** rascunhos com a troca de público em voo (desabilita os botões). */
   protected readonly settingAudience = signal<ReadonlySet<string>>(new Set());
-  /** Alterna o público do rascunho (reuse × amplo). Otimista no desfecho do backend. */
+  /** Alterna o público do rascunho (reuse × amplo). Pessimista: desabilita os botões e só reflete
+   *  a `audience` que o backend retornou (o backend pode negar reuse sem público provado). */
   protected onSetAudience(d: DraftApprovalOutput, audience: 'reuse' | 'broad'): void {
     if (d.audience === audience) return;
     this.settingAudience.update((s) => new Set(s).add(d.id));

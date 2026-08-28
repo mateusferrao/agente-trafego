@@ -50,6 +50,10 @@ export function isAllowedCreativeType(contentType: string): boolean {
 // (JPY/CLP) = fast-follow (derivar a subunidade da moeda). Beta é BRL.
 const MINOR_PER_UNIT = 100;
 const APPROVAL_TTL_MS = APPROVAL_TTL_HOURS * 60 * 60 * 1000;
+/** Teto de tempo e tamanho do fetch da miniatura (fbcdn) — não pendura o handler da API nem
+ *  materializa payload gigante em memória (a thumb da Meta é pequena; isto é a rede de segurança). */
+const THUMB_FETCH_TIMEOUT_MS = 8000;
+const THUMB_MAX_BYTES = 5 * 1024 * 1024;
 
 export interface DraftsServiceDeps {
   readonly db: Database;
@@ -543,10 +547,16 @@ export function createDraftsService(deps: DraftsServiceDeps) {
         url = c?.imageUrl ?? c?.thumbnailUrl;
       }
       if (!url) return null;
-      const res = await fetch(url);
-      if (!res.ok) return null;
+      // rede de segurança: teto de tempo (fbcdn lento não pendura a API) + só imagem + cap de
+      // tamanho (não materializa payload gigante). Falha/timeout → null (o card mostra fallback).
+      const res = await fetch(url, { signal: AbortSignal.timeout(THUMB_FETCH_TIMEOUT_MS) }).catch(() => null);
+      if (!res || !res.ok) return null;
       const contentType = res.headers.get("content-type") ?? "image/jpeg";
-      return { bytes: new Uint8Array(await res.arrayBuffer()), contentType, etag };
+      if (!contentType.startsWith("image/")) return null; // não ecoa content-type arbitrário inline
+      if (Number(res.headers.get("content-length") ?? 0) > THUMB_MAX_BYTES) return null;
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      if (bytes.byteLength > THUMB_MAX_BYTES) return null; // fallback quando não veio content-length
+      return { bytes, contentType, etag };
     },
 
     /**

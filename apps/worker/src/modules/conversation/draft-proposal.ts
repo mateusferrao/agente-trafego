@@ -627,6 +627,14 @@ export async function proposeCreateCampaign(
   // Página é obrigatória (object_story_spec). Vem do anúncio veiculando; conta sem NENHUM
   // anúncio não tem página inferível — nesse caso nem um upload da biblioteca cria (falta a Page).
   if (!defaults.pageId || !chosen) {
+    // criativo JÁ resolvido (ex: o usuário mandou um no WhatsApp) mas falta a Página → a mensagem
+    // de "me manda um criativo" confundiria; o bloqueio real é a Página, que vem de um anúncio ativo.
+    if (chosen && !defaults.pageId) {
+      return {
+        kind: "blocked",
+        reason: "recebi o criativo, mas essa conta ainda não tem uma Página de onde eu monte o anúncio — ela vem de um anúncio ativo. Conecte uma conta com anúncios (ou publique um) que eu crio a campanha.",
+      };
+    }
     return {
       kind: "blocked",
       reason: defaults.unsupportedTopFormat

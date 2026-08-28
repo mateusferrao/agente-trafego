@@ -756,7 +756,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           rationale: top.rationale,
           kind: "platform_action",
           toolKey: "adjust_budget",
-          riskLevel: "high",
+          // alinha com o riskLevel da própria ação adjust_budget (medium) — subir orçamento é
+          // menos arriscado que duplicar (que cria campanha nova = high).
+          riskLevel: "medium",
         });
         logger.info({ runId: state.runId }, "propose_drafts:scale_raise proposto");
         return {};

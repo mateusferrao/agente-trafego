@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, type OnInit, computed, inject, input, output, signal } from '@angular/core';
-import { forkJoin } from 'rxjs';
+import { catchError, forkJoin, of } from 'rxjs';
 import { DraftsApiService } from '@core/api/drafts-api.service';
 import type { CreativeAssetOutput, ServingCreativeOutput, SetDraftCreativeInput } from '@core/api/generated';
 
@@ -47,7 +47,7 @@ import type { CreativeAssetOutput, ServingCreativeOutput, SetDraftCreativeInput 
                       } @else {
                         <span class="px-1 text-center text-[11px] text-muted">sem preview</span>
                       }
-                      <span class="absolute bottom-0.5 right-0.5 rounded bg-ink/70 px-1 text-[9px] text-white">vídeo</span>
+                      <span class="absolute bottom-0.5 right-0.5 rounded bg-ink/70 px-1 text-[9px] text-primary-ink">vídeo</span>
                     </span>
                   </button>
                 </li>
@@ -113,19 +113,16 @@ export class CreativePicker implements OnInit {
   }
 
   ngOnInit(): void {
+    // degrada POR FONTE: o reuse ao vivo (Meta) é mais frágil que a biblioteca local — um hiccup
+    // no serving não pode derrubar o picker todo (reuso-primeiro). Só falha se AMBAS caírem.
     forkJoin({
-      library: this.api.listCreatives(this.accountId()),
-      serving: this.api.listServingCreatives(this.accountId()),
-    }).subscribe({
-      next: ({ library, serving }) => {
-        this.assets.set(library);
-        this.serving.set(serving);
-        this.loaded.set(true);
-      },
-      error: () => {
-        this.loaded.set(true);
-        this.failed.set(true);
-      },
+      library: this.api.listCreatives(this.accountId()).pipe(catchError(() => of(null))),
+      serving: this.api.listServingCreatives(this.accountId()).pipe(catchError(() => of(null))),
+    }).subscribe(({ library, serving }) => {
+      this.assets.set(library ?? []);
+      this.serving.set(serving ?? []);
+      this.loaded.set(true);
+      if (library === null && serving === null) this.failed.set(true);
     });
   }
 }

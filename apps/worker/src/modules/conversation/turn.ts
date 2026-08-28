@@ -217,13 +217,20 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
   if (inContext) {
     const offer = await getCreativeOffer(deps.redis, input.conversationId);
     if (offer && isSimpleAffirmation(input.text)) {
-      await clearCreativeOffer(deps.redis, input.conversationId);
-      const offerReply = await applyOfferedCreative(
-        deps,
-        { orgId: input.orgId, agentId: inContext.agentId, adAccountId: inContext.adAccountId, currency: DEFAULT_CURRENCY },
-        offer,
-      );
-      await deliverReply(sendToConversation, input.ref, offerReply, logger, input.orgId);
+      try {
+        const offerReply = await applyOfferedCreative(
+          deps,
+          { orgId: input.orgId, agentId: inContext.agentId, adAccountId: inContext.adAccountId, currency: DEFAULT_CURRENCY },
+          offer,
+        );
+        // limpa a oferta só APÓS o sucesso: se applyOfferedCreative falhar (Meta/LLM), a oferta
+        // fica no TTL e o usuário pode tentar de novo — sem sumir silenciosamente.
+        await clearCreativeOffer(deps.redis, input.conversationId);
+        await deliverReply(sendToConversation, input.ref, offerReply, logger, input.orgId);
+      } catch (err) {
+        logger.error({ err, orgId: input.orgId }, "conversation:oferta de criativo falhou");
+        await deliverReply(sendToConversation, input.ref, FALLBACK_REPLY, logger, input.orgId);
+      }
       return;
     }
   }
