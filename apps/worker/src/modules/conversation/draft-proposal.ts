@@ -36,7 +36,6 @@ const MINOR_PER_UNIT = 100;
 const APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_VARIANTS = 2;
 const DEFAULT_STARTER_BUDGET_MINOR = 3000;
-const DEFAULT_COPY_MODEL = "openai/gpt-4o-mini";
 /** Quantos uploads recentes considerar no pick da biblioteca (ranqueados por score da visão). */
 const LIBRARY_PICK_CANDIDATES = 20;
 
@@ -138,7 +137,7 @@ async function loadAgentContext(deps: WorkerDeps, ctx: DraftProposalContext): Pr
     ref: { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) },
     currency: acc?.currency ?? ctx.currency ?? DEFAULT_CURRENCY,
     cfg: toGuardrailConfig(g),
-    model: (mc["messageModel"] as string) ?? (mc["model"] as string) ?? DEFAULT_COPY_MODEL,
+    model: (mc["messageModel"] as string) ?? (mc["model"] as string) ?? deps.conversation.copyModel,
     businessContext: ag?.businessContext ?? null,
     guidance: ag?.guidance ?? null,
     scaleAggressivePreference: ag?.autonomyPolicy?.scaleAggressivePreference ?? "ask",
@@ -629,7 +628,7 @@ export async function proposeCreateCampaign(
   }
   lines.push(
     `Gasto novo: ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia · Página: ${defaults.pageId}${defaults.pixelId ? ` · Pixel: ${defaults.pixelId}` : ""} · ${activationPhrase("active")}.`,
-    `Confirma? (você pode editar/trocar o criativo no site antes de aprovar)`,
+    `Confirma? (você pode trocar o criativo no site antes de aprovar)`,
   );
   return { kind: "draft", echo: joinBalloons(lines), approvalId, draftId };
 }

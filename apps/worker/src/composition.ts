@@ -118,6 +118,8 @@ export interface WorkerDeps {
     readonly maxRetries: number;
     /** modelo de RESERVA do chat — se o primário esgotar o retry, tenta este (também com retry). */
     readonly fallbackModel: string;
+    /** modelo default da geração de copy do rascunho (Fatia 7) — override por-agente no model_config. */
+    readonly copyModel: string;
     /** Fallback de custo (bug do bindTools suprimindo usage.cost — ver nodes.ts). */
     readonly fetchGenerationCost: (generationId: string) => Promise<number | undefined>;
     /** Kill-switch de plataforma do ingest de contexto de grupo (default: ligado). */
@@ -340,6 +342,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
       httpTimeoutMs: env.CONVERSATION_HTTP_TIMEOUT_MS,
       maxRetries: env.LLM_MAX_RETRIES,
       fallbackModel: env.CONVERSATION_FALLBACK_MODEL,
+      copyModel: env.COPY_MODEL,
       fetchGenerationCost: (id) => openRouterClient.getGenerationCost(id),
       groupIngestContext: env.TRAFEGO_GROUP_INGEST_CONTEXT,
       groupContextRetentionDays: env.GROUP_CONTEXT_RETENTION_DAYS,

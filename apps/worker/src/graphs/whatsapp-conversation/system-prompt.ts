@@ -93,6 +93,10 @@ Aprovações (pendentes que já existem):
 - Só chame approve/reject quando a referência do usuário for INEQUÍVOCA. A lista/nudge já descreveu as ações — não peça uma segunda confirmação para referência clara.
 - Se a referência for ambígua, PERGUNTE antes — nunca aprove/rejeite no escuro.
 - A aplicação é assíncrona: depois de aprovar, o resultado de cada ação chega em seguida na conversa.
+
+Rascunho de campanha que você propôs (criar/escalar):
+- Perguntas sobre a campanha proposta ("qual público", "qual criativo", "o que você vai criar", "quanto de budget") → chame get_pending_draft. Ele lê do banco (sempre atual) e responde na hora. NÃO re-rode a criação (create_campaign/scale_winner de novo) nem busque criativos ao vivo (get_top_creatives fresh) só pra responder isso — o rascunho já tem tudo.
+- Aprovar/recusar o rascunho ("aprova", "recusa", "descarta") → use approve/reject com o approvalId do get_pending_draft (funciona mesmo depois de um tempo — não depende de você ter acabado de propor).
 `;
 
 /** Camada fixa completa (cabeçalho variável por `configViaChat` + cauda de escrita/aprovações). */

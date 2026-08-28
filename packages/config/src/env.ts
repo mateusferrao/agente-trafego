@@ -283,6 +283,10 @@ export const envSchema = z.object({
   // tool degrada pro dado persistido em vez de estourar o turno inteiro (a causa do fallback
   // genérico quando o refresh de todos os criativos levava minutos).
   CHAT_LIVE_FETCH_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+  // Modelo default da geração de COPY do rascunho (Fatia 7) quando o agente não tem modelo
+  // próprio (model_config.messageModel/model). Env em vez de hardcoded — mesmo padrão dos
+  // modelos de análise. Tarefa de escrita curta e barata.
+  COPY_MODEL: z.string().min(1).default("openai/gpt-4o-mini"),
 
   // ─── Transcrição de áudio inbound (STT via OpenRouter) ─────────────────
   // Nota de voz do WhatsApp → texto na borda. Reusa OPENROUTER_API_KEY/BASE_URL.
