@@ -70,6 +70,7 @@ export function buildDuplicateInput(draft: CampaignDraft): DuplicateEntityInput 
     sourceLevel: draft.sourceRef.level,
     sourceId: draft.sourceRef.id,
     status: draft.spec.activation,
-    renameSuffix: DUPLICATE_RENAME_SUFFIX,
+    // rótulo editável do sufixo (Slice 7/9): `<vencedor> — <rótulo>`. Ausente → "escala".
+    renameSuffix: draft.spec.suffixLabel ?? DUPLICATE_RENAME_SUFFIX,
   };
 }

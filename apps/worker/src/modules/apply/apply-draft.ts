@@ -226,6 +226,19 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     return { kind: "failed", error };
   }
 
+  // `target` = raiz criada na Meta (campanha do zero, ou a entidade copiada na escala). Grava no
+  // tool_call p/ a reversão (Slice 11) montar o rótulo/alvo do item reversível sem hack — e p/
+  // `computeAppliedActions` (função pura) não ver `target` vazio. Ausente em dry-run (nada criado).
+  const revertTarget = dryRun
+    ? undefined
+    : row.kind === "duplicate"
+      ? createdIds["copiedId"]
+        ? { level: pausedDraft.sourceRef?.level ?? "campaign", id: createdIds["copiedId"] as string }
+        : undefined
+      : createdIds["campaignId"]
+        ? { level: "campaign" as const, id: createdIds["campaignId"] as string }
+        : undefined;
+
   await db
     .insert(agentToolCalls)
     .values({
@@ -234,7 +247,7 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
       toolKey,
       idempotencyKey: `draft:${row.id}:apply`,
       risk: "high",
-      args: { draftId: row.id, kind: row.kind, dryRun },
+      args: { draftId: row.id, kind: row.kind, dryRun, ...(revertTarget ? { target: revertTarget } : {}) },
       result: { createdIds, dryRun },
       beforeState: null,
     })
@@ -341,11 +354,13 @@ async function runFromScratchSaga(
   const spec = draft.spec;
   const goal = spec.objective ?? DEFAULT_CONVERSION_GOAL;
   const status = spec.activation;
-  const name = `CaquiAI — ${goalNounPt(goal)}`;
+  // nome DERIVADO (default) — o usuário pode ter editado (Slice 7/8): campanha/conjunto/anúncio
+  // têm nome próprio quando setado, senão caem no derivado. O nome do criativo (interno) segue derivado.
+  const derived = `CaquiAI — ${goalNounPt(goal)}`;
 
   if (!state["campaignId"]) {
     const { campaignId } = await ads.createCampaign(ref, {
-      name,
+      name: spec.campaignName ?? derived,
       objectiveGoal: goal,
       specialAdCategories: DEFAULT_SPECIAL_AD_CATEGORIES,
       status,
@@ -355,7 +370,7 @@ async function runFromScratchSaga(
   if (!state["adsetId"]) {
     const { adsetId, targetingFallback } = await ads.createAdSet(ref, {
       campaignId: state["campaignId"] as string,
-      name: `${name} — conjunto`,
+      name: spec.adsetName ?? `${derived} — conjunto`,
       dailyBudgetMinor: spec.dailyBudgetMinor,
       goal,
       ...(spec.pixelId ? { pixelId: spec.pixelId } : {}),
@@ -376,7 +391,7 @@ async function runFromScratchSaga(
     const v = variants[i]!;
     if (!creativeIds[i]) {
       const { creativeId } = await ads.createAdCreative(ref, {
-        name: `${name} — criativo ${i + 1}`,
+        name: `${derived} — criativo ${i + 1}`,
         pageId: spec.pageId!,
         ...(creative?.metaImageHash ? { imageHash: creative.metaImageHash } : {}),
         ...(creative?.metaVideoId ? { videoId: creative.metaVideoId } : {}),
@@ -394,7 +409,7 @@ async function runFromScratchSaga(
     const { adId } = await ads.createAd(ref, {
       adsetId: state["adsetId"] as string,
       creativeId: creativeIds[i]!,
-      name: `${name} — anúncio ${i + 1}`,
+      name: v.adName ?? `${derived} — anúncio ${i + 1}`,
       status,
     });
     adIds[i] = adId;
