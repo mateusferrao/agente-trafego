@@ -49,6 +49,7 @@ function baseState(over: Partial<AgentConfigState> = {}): AgentConfigState {
     modelConfig: {},
     notifyPolicy: NOTIFY_POLICY,
     posture: POSTURE,
+    toolBindings: {},
     ...over,
   };
 }
@@ -310,5 +311,33 @@ describe("resolveAgentConfigChange — postura (voz)", () => {
     expect(echo.toLowerCase()).toContain("diretividade");
     expect(echo).toContain("Consultivo");
     expect(echo).toContain("Diretivo");
+  });
+});
+
+describe("toolBindings (A3 — on/off por-ação, gap de auto-config por chat)", () => {
+  it("leaf-merge: só a chave ENVIADA muda, o resto preserva", () => {
+    const r = resolve(baseState({ toolBindings: { create_campaign: true, adjust_budget: true } }), {
+      toolBindings: { create_campaign: false },
+    });
+    expect(r.next.toolBindings).toEqual({ create_campaign: false, adjust_budget: true });
+    expect(r.toolBindingsChanged).toBe(true);
+    expect(r.changed).toContain(CONFIG_CHANGE_LABELS.toolBindings);
+  });
+
+  it("patch ausente → não mexe (toolBindingsChanged=false)", () => {
+    const r = resolve(baseState({ toolBindings: { create_campaign: true } }), {});
+    expect(r.next.toolBindings).toEqual({ create_campaign: true });
+    expect(r.toolBindingsChanged).toBe(false);
+    expect(r.changed).not.toContain(CONFIG_CHANGE_LABELS.toolBindings);
+  });
+
+  it("patch com o MESMO valor já vigente → sem mudança real", () => {
+    const r = resolve(baseState({ toolBindings: { pause_entity: true } }), { toolBindings: { pause_entity: true } });
+    expect(r.toolBindingsChanged).toBe(false);
+  });
+
+  it("liga uma capacidade nova (chave ausente antes) e mantém as demais", () => {
+    const r = resolve(baseState({ toolBindings: { pause_entity: true } }), { toolBindings: { duplicate_scale: true } });
+    expect(r.next.toolBindings).toEqual({ pause_entity: true, duplicate_scale: true });
   });
 });

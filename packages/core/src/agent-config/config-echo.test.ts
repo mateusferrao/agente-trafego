@@ -47,6 +47,7 @@ function baseState(over: Partial<AgentConfigState> = {}): AgentConfigState {
     modelConfig: {},
     notifyPolicy: NOTIFY_POLICY,
     posture: POSTURE,
+    toolBindings: {},
     ...over,
   };
 }

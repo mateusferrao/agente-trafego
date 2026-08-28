@@ -21,6 +21,7 @@ import {
   DIDACTIC_DEPTH_LEVELS,
   DIRECTIVENESS_LEVELS,
   EXPERIENCE_LEVELS,
+  GATEABLE_TOOL_KEYS,
   VOLUME_LEVELS,
   type ActionType,
   type AlertSensitivity,
@@ -376,16 +377,27 @@ export function makeConversationTools(
   const setAutonomy = tool(proposeOnly, {
     name: "set_autonomy",
     description:
-      "Define a AUTONOMIA por origem: só avisa (notify), sugere e pede OK (suggest), age no seguro (act_safe) ou age sozinho (act_full). 'playbook' = regras determinísticas; 'llm' = análise por IA. Só troca as origens enviadas. Requer eco+confirma.",
+      "Define a AUTONOMIA. Por ORIGEM (padrão): só avisa (notify), sugere e pede OK (suggest), age no seguro (act_safe) ou age sozinho (act_full) — 'playbook' = regras determinísticas; 'llm' = análise por IA. Por AÇÃO ('byAction'): vence a autonomia por origem SÓ pra aquela ação (pausar=pause_entity, retomar=resume_entity, mudar status=set_status, ajustar orçamento=adjust_budget, criar campanha=create_campaign, duplicar pra escalar=duplicate_scale); level=null volta a herdar a autonomia por origem. 'scaleAggressivePreference' decide o passo AGRESSIVO de escalar: 'ask' pergunta toda vez (default), 'raise' sempre sobe o orçamento no limite seguro, 'duplicate' sempre duplica o vencedor. Só troca os campos enviados. Requer eco+confirma.",
     schema: z.object({
       playbook: z.enum(AUTONOMY_LEVELS).nullable().optional(),
       llm: z.enum(AUTONOMY_LEVELS).nullable().optional(),
+      byAction: z
+        .array(
+          z.object({
+            toolKey: z.enum(GATEABLE_TOOL_KEYS as unknown as [string, ...string[]]).describe("pause_entity, resume_entity, set_status, adjust_budget, create_campaign ou duplicate_scale"),
+            level: z.enum(AUTONOMY_LEVELS).nullable().describe("null = volta a herdar a autonomia por origem"),
+          }),
+        )
+        .nullable()
+        .optional()
+        .describe("autonomia específica por ação — ex: [{toolKey:'create_campaign', level:'act_full'}]"),
+      scaleAggressivePreference: z.enum(["ask", "raise", "duplicate"]).nullable().optional(),
     }),
   });
   const setGuardrail = tool(proposeOnly, {
     name: "set_guardrail",
     description:
-      "Ajusta os GUARDRAILS (rede de segurança): limite de mudança de budget (%), máximo de entidades por dia, modo simulação (dryRun), botão de emergência (killSwitch), ações permitidas e teto de custo de IA. Só troca os campos enviados. Requer eco+confirma.",
+      "Ajusta os GUARDRAILS (rede de segurança): limite de mudança de budget (%), máximo de entidades por dia, modo simulação (dryRun), botão de emergência (killSwitch), a lista CLÁSSICA de ações permitidas (só as 4 antigas: pausar/retomar/status/orçamento) e teto de custo de IA. Pra ligar/desligar UMA ação específica (inclusive criar campanha/duplicar, que não entram aqui) use set_action_access — ele VENCE esta lista quando definido pra aquela ação. Só troca os campos enviados. Requer eco+confirma.",
     schema: z.object({
       maxBudgetChangePct: z.number().min(0).max(100).nullable().optional(),
       maxEntitiesPerDay: z.number().int().min(0).nullable().optional(),
@@ -393,6 +405,17 @@ export function makeConversationTools(
       killSwitch: z.boolean().nullable().optional(),
       allowedActions: z.array(z.enum(ACTION_TYPES)).nullable().optional(),
       llmCostCapUsd: z.number().min(0).nullable().optional(),
+    }),
+  });
+  const setActionAccess = tool(proposeOnly, {
+    name: "set_action_access",
+    description:
+      "Liga ou desliga UMA ação específica por completo (o agente NUNCA a executa enquanto desligada, nem sozinho nem com sua aprovação) — pausar=pause_entity, retomar=resume_entity, mudar status=set_status, ajustar orçamento=adjust_budget, criar campanha=create_campaign, duplicar pra escalar=duplicate_scale. Mais fino que a lista clássica de guardrails (é a MESMA fonte da tela 'Ações permitidas' do site) e é o ÚNICO jeito de ligar/desligar criar/duplicar. Requer eco+confirma.",
+    schema: z.object({
+      actions: z
+        .array(z.object({ toolKey: z.enum(GATEABLE_TOOL_KEYS as unknown as [string, ...string[]]), enabled: z.boolean() }))
+        .min(1)
+        .describe("ex: [{toolKey:'create_campaign', enabled:false}]"),
     }),
   });
   const setCadence = tool(proposeOnly, {
@@ -410,7 +433,7 @@ export function makeConversationTools(
   const setNotifications = tool(proposeOnly, {
     name: "set_notifications",
     description:
-      "Configura o que o agente manda SEM ser perguntado: o PULSO (resumo do dia — retrato de ontem fechado + hoje até agora, na cadência que você definir; mesmo sem recomendação nova), o ALERTA (aviso automático quando algo muda materialmente na conta, com sensibilidade e intervalo mínimo entre alertas em horas), o AVISO APÓS ANÁLISE (mensagem depois de cada análise agendada com recomendação) e a REATIVAÇÃO (avisa quando uma conta que estava PARADA volta a rodar — gasto/impressões de novo — e já roda a 1ª análise). Só troca os campos enviados. Requer eco+confirma.",
+      "Configura o que o agente manda SEM ser perguntado: o PULSO (resumo do dia — retrato de ontem fechado + hoje até agora, na cadência que você definir; mesmo sem recomendação nova), o ALERTA (aviso automático quando algo muda materialmente na conta, com sensibilidade e intervalo mínimo entre alertas em horas), o AVISO APÓS ANÁLISE (mensagem depois de cada análise agendada com recomendação), a REATIVAÇÃO (avisa quando uma conta que estava PARADA volta a rodar — gasto/impressões de novo — e já roda a 1ª análise) e a PROPOSTA DE CAMPANHA por conta própria (o agente sugere escalar um vencedor ou criar uma campanha quando faz sentido, sempre como proposta — nunca gasta sem sua aprovação). Só troca os campos enviados. Requer eco+confirma.",
     schema: z.object({
       pulseEnabled: z.boolean().nullable().optional().describe("liga/desliga o resumo do dia (pulso)"),
       pulseCadence: z
@@ -433,6 +456,11 @@ export function makeConversationTools(
         .nullable()
         .optional()
         .describe("liga/desliga o aviso quando uma conta parada volta a rodar (dispara a 1ª análise)"),
+      proactiveDraftsEnabled: z
+        .boolean()
+        .nullable()
+        .optional()
+        .describe("liga/desliga o agente propor escalar vencedor ou criar campanha por conta própria (sempre como proposta, nunca gasta sozinho)"),
     }),
   });
   const reseedArchetype = tool(proposeOnly, {
@@ -565,7 +593,7 @@ export function makeConversationTools(
     },
   );
 
-  const configTools = [setGoal, setAutonomy, setGuardrail, setCadence, setNotifications, reseedArchetype, setPersona, setTone, setSystemPrompt, setBusinessContext, setGuidance, setDirectiveness, setVolume, setDidacticDepth, setExperienceLevel];
+  const configTools = [setGoal, setAutonomy, setGuardrail, setActionAccess, setCadence, setNotifications, reseedArchetype, setPersona, setTone, setSystemPrompt, setBusinessContext, setGuidance, setDirectiveness, setVolume, setDidacticDepth, setExperienceLevel];
   const playbookTools = [addPlaybookRule, togglePlaybookRule, removePlaybookRule, listPlaybookRules];
 
   const writeTools = [pauseEntity, resumeEntity, setStatus, adjustBudget, revertAction, confirmWrite, cancelWrite];
@@ -620,7 +648,7 @@ export async function buildCapabilitiesText(
   }
   parts.push("⚡ Analisar agora e aprovar/rejeitar ações pendentes.");
   if (ctx.configViaChat) {
-    parts.push("⚙️ Mudar a config do agente conversando (sempre com sua confirmação): meta, autonomia, guardrails, cadência, notificações proativas (pulso = resumo do dia / alerta), arquétipo, playbook, identidade (persona/tom/metodologia), contexto do negócio, orientações e como eu FALO com você (diretividade, volume de sugestões e o quanto explico — ou um perfil pronto: iniciante/intermediário/avançado).");
+    parts.push("⚙️ Mudar a config do agente conversando (sempre com sua confirmação): meta, autonomia (por origem OU por ação específica, inclusive criar/duplicar), quais ações estão LIGADAS, guardrails, cadência, notificações proativas (pulso = resumo do dia / alerta / proposta de campanha por conta própria), arquétipo, playbook, identidade (persona/tom/metodologia), contexto do negócio, orientações e como eu FALO com você (diretividade, volume de sugestões e o quanto explico — ou um perfil pronto: iniciante/intermediário/avançado).");
   } else {
     parts.push("⚙️ Config do agente: por aqui está desligada — mudanças de config são pelo site.");
   }
@@ -646,7 +674,21 @@ export async function buildCapabilitiesText(
   if (ctx.ref.kind === "group") {
     parts.push("👥 Aqui no grupo eu acompanho a conversa recente de vocês pra ter contexto — mas só respondo quando me chamam (menção ou resposta).");
   }
-  parts.push("🚀 Também crio e escalo: posso escalar seu vencedor (mais budget ou duplicar) e criar campanhas novas reusando seu criativo + copy que eu gero. Depois de eu propor, você ajusta tudo conversando (budget, ativar/pausar, nº de variações, regerar a copy) — e só crio com sua aprovação.");
+  // Criação (Fatia 7) — CONDICIONAL às bindings reais (`allow`), como o resto da função:
+  // nunca afirma o que está desligado (o mesmo cuidado de `writeVerbs` acima).
+  const canScale = allow.has("scale_winner");
+  const canCreate = allow.has("create_campaign");
+  if (canScale || canCreate) {
+    const abilities = [
+      ...(canScale ? ["escalar seu vencedor (mais budget ou duplicar)"] : []),
+      ...(canCreate ? ["criar campanhas novas reusando seu criativo + copy que eu gero"] : []),
+    ];
+    parts.push(
+      `🚀 Também ${abilities.join(" e ")}. Depois de eu propor, você ajusta tudo conversando (budget, ativar/pausar, nº de variações, regerar a copy) — crio/escalo sempre PAUSADO (a Meta revisa antes) e só ATIVO de verdade com um 2º OK seu, separado.`,
+    );
+  } else {
+    parts.push("🚀 Criar ou escalar campanha: hoje está desligado nas ações permitidas — dá pra liberar nas configurações (pelo site).");
+  }
   parts.push("🚧 Ainda não: editar criativos nem gerar imagens/vídeos.");
   parts.push("É só pedir. 🙂");
   return parts.join("\n");
@@ -813,6 +855,7 @@ export const CONFIG_TOOL_NAMES: ReadonlySet<string> = new Set([
   "set_goal",
   "set_autonomy",
   "set_guardrail",
+  "set_action_access",
   "set_cadence",
   "set_notifications",
   "set_directiveness",
@@ -889,7 +932,27 @@ export function configPatchFromToolCall(
       const cur = current.autonomyPolicy;
       const playbook = (args["playbook"] as AutonomyLevel | null | undefined) ?? cur.bySource.playbook;
       const llm = (args["llm"] as AutonomyLevel | null | undefined) ?? cur.bySource.llm;
-      const next: AutonomyPolicy = { ...cur, bySource: { playbook, llm } };
+      // Por-AÇÃO (B): mapa ESPARSO — level=null remove a chave (volta a herdar a origem).
+      const byActionArg = args["byAction"] as readonly { toolKey: string; level: AutonomyLevel | null }[] | null | undefined;
+      let byAction = cur.byAction;
+      if (byActionArg) {
+        const merged: Record<string, AutonomyLevel> = { ...(cur.byAction ?? {}) };
+        for (const { toolKey, level } of byActionArg) {
+          if (level === null) delete merged[toolKey];
+          else merged[toolKey] = level;
+        }
+        byAction = Object.keys(merged).length > 0 ? merged : undefined;
+      }
+      const scaleAggressivePreference =
+        (args["scaleAggressivePreference"] as "ask" | "raise" | "duplicate" | null | undefined) ?? cur.scaleAggressivePreference;
+      const next: AutonomyPolicy = {
+        ...cur,
+        bySource: { playbook, llm },
+        // usa a PRESENÇA do argumento (não o resultado) — `byActionArg` enviado zerando todas
+        // as chaves tem que LIMPAR `byAction` (não deixar o valor antigo escapar pelo spread).
+        ...(byActionArg ? { byAction } : {}),
+        ...(scaleAggressivePreference !== undefined ? { scaleAggressivePreference } : {}),
+      };
       return { autonomyPolicy: next };
     }
     case "set_guardrail": {
@@ -905,6 +968,11 @@ export function configPatchFromToolCall(
           llmCostCapUsd: llmCostCapArg === undefined ? g.llmCostCapUsd : (llmCostCapArg === null ? undefined : llmCostCapArg),
         },
       };
+    }
+    case "set_action_access": {
+      const actions = args["actions"] as readonly { toolKey: string; enabled: boolean }[];
+      const toolBindings = Object.fromEntries(actions.map(({ toolKey, enabled }) => [toolKey, enabled]));
+      return { toolBindings };
     }
     case "set_cadence": {
       const spec = cadenceFromToolCall(args);
@@ -922,6 +990,7 @@ export function configPatchFromToolCall(
         ...(args["alertsThrottleHours"] != null ? { alertsThrottleHours: args["alertsThrottleHours"] as number } : {}),
         ...(args["runPushEnabled"] != null ? { runPushEnabled: args["runPushEnabled"] as boolean } : {}),
         ...(args["reactivationEnabled"] != null ? { reactivationEnabled: args["reactivationEnabled"] as boolean } : {}),
+        ...(args["proactiveDraftsEnabled"] != null ? { proactiveDraftsEnabled: args["proactiveDraftsEnabled"] as boolean } : {}),
       };
       return { notifyPolicy };
     }

@@ -8,6 +8,7 @@ import {
   CONCIERGE_TOOL_NAMES,
   GROUP_CONCIERGE_TOOL_NAMES,
   actionFromToolCall,
+  buildCapabilitiesText,
   configPatchFromToolCall,
   diceSimilarity,
   makeConversationTools,
@@ -269,6 +270,7 @@ function state(over: Partial<AgentConfigState> = {}): AgentConfigState {
     modelConfig: {},
     notifyPolicy: NOTIFY_POLICY,
     posture: { directiveness: "consultative", volume: "balanced", didacticDepth: "explanatory", experienceLevel: null },
+    toolBindings: {},
     ...over,
   };
 }
@@ -303,6 +305,48 @@ describe("configPatchFromToolCall", () => {
       bySource: { playbook: "act_safe", llm: "suggest" },
       autoConfigViaChat: true,
     });
+  });
+
+  it("set_autonomy: byAction liga act_full pra create_campaign (gap #2 — antes só existia via site)", () => {
+    const patch = configPatchFromToolCall(
+      "set_autonomy",
+      { byAction: [{ toolKey: "create_campaign", level: "act_full" }] },
+      state(),
+    );
+    expect(patch?.autonomyPolicy?.byAction).toEqual({ create_campaign: "act_full" });
+    expect(patch?.autonomyPolicy?.bySource).toEqual({ playbook: "suggest", llm: "suggest" }); // preservado
+  });
+
+  it("set_autonomy: byAction level=null remove a chave (volta a herdar a origem)", () => {
+    const cur = state({ autonomyPolicy: { ...AUTONOMY, byAction: { create_campaign: "act_full", adjust_budget: "act_safe" } } });
+    const patch = configPatchFromToolCall("set_autonomy", { byAction: [{ toolKey: "create_campaign", level: null }] }, cur);
+    expect(patch?.autonomyPolicy?.byAction).toEqual({ adjust_budget: "act_safe" });
+  });
+
+  it("set_autonomy: byAction zerando a ÚLTIMA chave limpa byAction (undefined, não objeto vazio)", () => {
+    const cur = state({ autonomyPolicy: { ...AUTONOMY, byAction: { create_campaign: "act_full" } } });
+    const patch = configPatchFromToolCall("set_autonomy", { byAction: [{ toolKey: "create_campaign", level: null }] }, cur);
+    expect(patch?.autonomyPolicy?.byAction).toBeUndefined();
+  });
+
+  it("set_autonomy: byAction ausente NÃO mexe no byAction atual", () => {
+    const cur = state({ autonomyPolicy: { ...AUTONOMY, byAction: { create_campaign: "act_full" } } });
+    const patch = configPatchFromToolCall("set_autonomy", { playbook: "act_safe" }, cur);
+    expect(patch?.autonomyPolicy?.byAction).toEqual({ create_campaign: "act_full" });
+  });
+
+  it("set_autonomy: scaleAggressivePreference (gap #4 — antes só existia via site)", () => {
+    const patch = configPatchFromToolCall("set_autonomy", { scaleAggressivePreference: "duplicate" }, state());
+    expect(patch?.autonomyPolicy?.scaleAggressivePreference).toBe("duplicate");
+  });
+
+  it("set_action_access: liga/desliga ações específicas (gap #3 — mesma fonte da tela 'Ações permitidas')", () => {
+    const patch = configPatchFromToolCall(
+      "set_action_access",
+      { actions: [{ toolKey: "create_campaign", enabled: false }, { toolKey: "adjust_budget", enabled: true }] },
+      state(),
+    );
+    expect(patch?.toolBindings).toEqual({ create_campaign: false, adjust_budget: true });
   });
 
   it("set_guardrail: dryRun=false é aplicado (não confundido com 'manter')", () => {
@@ -590,5 +634,39 @@ describe("reject tool", () => {
     const { deps, resolve } = makeDeps(() => ({ id: "ap-1", orgId: "org-1", status: "approved" }));
     await toolOf(deps, "reject").invoke({ approvalIds: ["ap-1"] });
     expect(resolve).not.toHaveBeenCalled();
+  });
+});
+
+describe("buildCapabilitiesText — criação (fix: honesto, condicional às bindings reais)", () => {
+  function fakeCapabilitiesDeps() {
+    return {
+      db: { select: () => ({ from: () => ({ where: () => ({ limit: async () => [{ autonomyPolicy: { bySource: { playbook: "suggest", llm: "suggest" } } }] }) }) }) },
+    } as never;
+  }
+
+  it("scale_winner E create_campaign habilitados → menciona os dois + o 2º OK de ativação", async () => {
+    const text = await buildCapabilitiesText(fakeCapabilitiesDeps(), CTX, new Set(["scale_winner", "create_campaign"]));
+    expect(text).toContain("escalar seu vencedor");
+    expect(text).toContain("criar campanhas novas");
+    expect(text).toContain("2º OK");
+  });
+
+  it("NENHUM habilitado → NÃO afirma que cria/escala (honestidade — antes era incondicional)", async () => {
+    const text = await buildCapabilitiesText(fakeCapabilitiesDeps(), CTX, new Set());
+    expect(text).not.toContain("escalar seu vencedor");
+    expect(text).not.toContain("criar campanhas novas");
+    expect(text).toContain("desligado nas ações permitidas");
+  });
+
+  it("só scale_winner habilitado (duplicate_scale/adjust_budget ligado, create_campaign não) → menciona só escalar", async () => {
+    const text = await buildCapabilitiesText(fakeCapabilitiesDeps(), CTX, new Set(["scale_winner"]));
+    expect(text).toContain("escalar seu vencedor");
+    expect(text).not.toContain("criar campanhas novas");
+  });
+
+  it("só create_campaign habilitado → menciona só criar", async () => {
+    const text = await buildCapabilitiesText(fakeCapabilitiesDeps(), CTX, new Set(["create_campaign"]));
+    expect(text).not.toContain("escalar seu vencedor");
+    expect(text).toContain("criar campanhas novas");
   });
 });

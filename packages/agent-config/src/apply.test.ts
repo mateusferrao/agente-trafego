@@ -28,7 +28,8 @@ function makeFakeDb(selectResults: unknown[][]) {
     updateSet?: Record<string, unknown>;
     guardrailInsert?: Record<string, unknown>;
     auditInsert?: Record<string, unknown>;
-  } = {};
+    toolBindingInserts: Record<string, unknown>[];
+  } = { toolBindingInserts: [] };
   const whereResult = () => {
     const rows = selectResults.shift() ?? [];
     return { limit: async () => rows, then: (r: (v: unknown) => void) => r(rows) };
@@ -43,8 +44,9 @@ function makeFakeDb(selectResults: unknown[][]) {
     }),
     insert: () => ({
       values: (v: Record<string, unknown>) => {
-        // audit_log carrega `action`; guardrail_configs carrega `maxBudgetChangePct`.
+        // audit_log carrega `action`; agent_tool_bindings carrega `toolKey`; o resto (guardrail_configs) carrega `maxBudgetChangePct`.
         if ("action" in v) captured.auditInsert = v;
+        else if ("toolKey" in v) captured.toolBindingInserts.push(v);
         else captured.guardrailInsert = v;
         const chain = {
           onConflictDoUpdate: async () => undefined,
@@ -66,7 +68,7 @@ function makeScheduler() {
 describe("applyAgentConfigChange", () => {
   it("mescla + persiste, bumpa configChangedAt e devolve changed/weakensSafety", async () => {
     // selects: agent row, guardrails (vazio → defaults).
-    const { db, captured } = makeFakeDb([[AGENT_ROW], []]);
+    const { db, captured } = makeFakeDb([[AGENT_ROW], [], []]);
     const { scheduler } = makeScheduler();
 
     const result = await applyAgentConfigChange(
@@ -90,7 +92,7 @@ describe("applyAgentConfigChange", () => {
   });
 
   it("cadência nova → enfileira resync (uma vez)", async () => {
-    const { db } = makeFakeDb([[AGENT_ROW], []]);
+    const { db } = makeFakeDb([[AGENT_ROW], [], []]);
     const { scheduler, enqueue } = makeScheduler();
 
     await applyAgentConfigChange(
@@ -102,7 +104,7 @@ describe("applyAgentConfigChange", () => {
   });
 
   it("notifyPolicy mudou (F4d) → também enfileira resync (o pulso tem scheduler próprio)", async () => {
-    const { db, captured } = makeFakeDb([[AGENT_ROW], []]);
+    const { db, captured } = makeFakeDb([[AGENT_ROW], [], []]);
     const { scheduler, enqueue } = makeScheduler();
 
     const result = await applyAgentConfigChange(
@@ -126,7 +128,7 @@ describe("applyAgentConfigChange", () => {
       killSwitch: false,
       llmCostCap: null,
     };
-    const { db, captured } = makeFakeDb([[AGENT_ROW], [guardrailRow]]);
+    const { db, captured } = makeFakeDb([[AGENT_ROW], [guardrailRow], []]);
     const { scheduler } = makeScheduler();
 
     const result = await applyAgentConfigChange(
@@ -154,7 +156,7 @@ describe("applyAgentConfigChange", () => {
   });
 
   it("conversão custom sem id → ok:false, não persiste", async () => {
-    const { db, captured } = makeFakeDb([[AGENT_ROW], []]);
+    const { db, captured } = makeFakeDb([[AGENT_ROW], [], []]);
     const { scheduler } = makeScheduler();
 
     const result = await applyAgentConfigChange(
@@ -167,7 +169,7 @@ describe("applyAgentConfigChange", () => {
   });
 
   it("audit fornecido → grava linha em audit_log", async () => {
-    const { db, captured } = makeFakeDb([[AGENT_ROW], []]);
+    const { db, captured } = makeFakeDb([[AGENT_ROW], [], []]);
     const { scheduler } = makeScheduler();
 
     await applyAgentConfigChange(
@@ -187,7 +189,7 @@ describe("applyAgentConfigChange", () => {
   });
 
   it("audit.metadata → grava metadata na linha (ex: channel=whatsapp)", async () => {
-    const { db, captured } = makeFakeDb([[AGENT_ROW], []]);
+    const { db, captured } = makeFakeDb([[AGENT_ROW], [], []]);
     const { scheduler } = makeScheduler();
 
     await applyAgentConfigChange(
@@ -203,12 +205,53 @@ describe("applyAgentConfigChange", () => {
 
     expect(captured.auditInsert?.metadata).toEqual({ channel: "whatsapp" });
   });
+
+  it("toolBindings (A3): patch com chaves → upsert em agent_tool_bindings, uma linha por chave", async () => {
+    // selects: agent row, guardrails (vazio → default allowedActions=[pause_entity]),
+    // agent_tool_bindings (vazio → fallback: create_campaign default-ON, adjust_budget OFF
+    // (fora do allowedActions default) — o patch abaixo INVERTE os dois (mudança real).
+    const { db, captured } = makeFakeDb([[AGENT_ROW], [], []]);
+    const { scheduler } = makeScheduler();
+
+    const result = await applyAgentConfigChange(
+      { db, scheduler },
+      {
+        orgId: ORG,
+        agentId: "ag-1",
+        accountId: "acc-1",
+        patch: { toolBindings: { create_campaign: false, adjust_budget: true } },
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.changed).toContain("ações permitidas");
+    expect(captured.toolBindingInserts).toHaveLength(2);
+    expect(captured.toolBindingInserts).toContainEqual(
+      expect.objectContaining({ toolKey: "create_campaign", mode: "disabled" }),
+    );
+    expect(captured.toolBindingInserts).toContainEqual(
+      expect.objectContaining({ toolKey: "adjust_budget", mode: "enabled" }),
+    );
+  });
+
+  it("toolBindings ausente do patch → não grava nada em agent_tool_bindings", async () => {
+    const { db, captured } = makeFakeDb([[AGENT_ROW], [], []]);
+    const { scheduler } = makeScheduler();
+
+    await applyAgentConfigChange(
+      { db, scheduler },
+      { orgId: ORG, agentId: "ag-1", accountId: "acc-1", patch: { businessContext: "novo" } },
+    );
+
+    expect(captured.toolBindingInserts).toHaveLength(0);
+  });
 });
 
 describe("reseedArchetypeChange", () => {
   it("reseta comportamento p/ o arquétipo e semeia cadência default (Vigia → 2×/dia)", async () => {
     // agente sem cadência própria → recebe a default do arquétipo.
-    const { db, captured } = makeFakeDb([[{ ...AGENT_ROW, cadence: null }], []]);
+    const { db, captured } = makeFakeDb([[{ ...AGENT_ROW, cadence: null }], [], []]);
     const { scheduler, enqueue } = makeScheduler();
 
     const result = await reseedArchetypeChange(
@@ -226,7 +269,7 @@ describe("reseedArchetypeChange", () => {
   });
 
   it("reseta notifyPolicy pro default do arquétipo (F4d, mesma semântica da autonomia)", async () => {
-    const { db, captured } = makeFakeDb([[{ ...AGENT_ROW, cadence: null }], []]);
+    const { db, captured } = makeFakeDb([[{ ...AGENT_ROW, cadence: null }], [], []]);
     const { scheduler } = makeScheduler();
 
     const result = await reseedArchetypeChange(

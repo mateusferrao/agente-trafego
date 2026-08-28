@@ -4,7 +4,6 @@ import {
   agents,
   agentMutedEntities,
   agentRuns,
-  agentToolBindings,
   agentToolCalls,
   conversionLabels,
   entityAnalyses,
@@ -22,7 +21,6 @@ import {
   experienceCatalog,
   experienceLevelIsCustom,
   postureCatalog,
-  resolveEnabledTools,
   todayInTz,
   unseedIdentity,
   windowFromModelConfig,
@@ -31,7 +29,7 @@ import {
   type AgentConfigPatch,
   type NotifyPolicyPatch,
 } from "@trafego/core";
-import { applyAgentConfigChange, reseedArchetypeChange } from "@trafego/agent-config";
+import { applyAgentConfigChange, applyToolBindingsChange, loadToolBindingsState, reseedArchetypeChange } from "@trafego/agent-config";
 import {
   ACTION_UNDO_QUEUE,
   ACTION_UNDO_JOB,
@@ -39,10 +37,8 @@ import {
   GUARDRAIL_DEFAULTS,
   toGuardrailConfig,
   DEFAULT_TIMEZONE,
-  GATEABLE_TOOL_KEYS,
   UNDO_BLOCKED_TOOL_KEY,
   UNDO_TOOL_KEY,
-  type ToolBindingMode,
 } from "@trafego/shared";
 import type { Action, AgentId, AutonomyPolicy, OrgId, StoredInsightMetrics } from "@trafego/shared/types";
 import type { Approval, ApprovalPort, SchedulerPort } from "@trafego/shared/ports";
@@ -95,47 +91,25 @@ export function createAgentsService(deps: AgentsDeps) {
   }
 
   /**
-   * On/off RESOLVIDO das 6 tools (A3): lê agent_tool_bindings + resolve via o resolver puro
-   * (mesma fonte do gate do chat/apply). Binding ausente → fallback (as 4 = allowedActions,
-   * criação = default-on). Objeto cheio com as 6 chaves (contrato). `allowedActions` vem do
-   * guardrail já carregado (evita re-query).
+   * On/off RESOLVIDO das 6 tools (A3) + persistência do patch — delegam pro `@trafego/agent-config`
+   * (fonte ÚNICA reusada pelo chat, que precisa da MESMA lógica pro auto-config por WhatsApp;
+   * antes esta era uma cópia local só da API). `allowedActions` vem do guardrail já carregado
+   * (evita re-query).
    */
   async function loadToolBindings(
     orgId: OrgId,
     agentId: string,
     allowedActions: readonly string[],
   ): Promise<AgentSummary["toolBindings"]> {
-    const rows = await deps.db
-      .select({ toolKey: agentToolBindings.toolKey, mode: agentToolBindings.mode })
-      .from(agentToolBindings)
-      .where(and(eq(agentToolBindings.agentId, agentId), eq(agentToolBindings.orgId, orgId)));
-    const map = new Map<string, ToolBindingMode>(rows.map((r) => [r.toolKey, r.mode as ToolBindingMode]));
-    const enabled = resolveEnabledTools(map, new Set(allowedActions));
-    return Object.fromEntries(GATEABLE_TOOL_KEYS.map((k) => [k, enabled.has(k)])) as AgentSummary["toolBindings"];
+    return (await loadToolBindingsState(deps.db, orgId, agentId, allowedActions)) as AgentSummary["toolBindings"];
   }
 
-  /**
-   * Persiste o patch de on/off das tools em agent_tool_bindings (A3): cada chave presente
-   * vira uma linha explícita (enabled|disabled) por (agente, tool) — upsert idempotente. As
-   * chaves ausentes seguem no fallback (allowedActions/default). É a "migração na edição": ao
-   * salvar a lista, o estado fica explícito nos bindings. Só as 6 gateáveis (zod já restringe).
-   */
   async function persistToolBindings(
     orgId: OrgId,
     agentId: string,
     patch: Partial<Record<string, boolean>>,
   ): Promise<void> {
-    const entries = Object.entries(patch).filter((e): e is [string, boolean] => typeof e[1] === "boolean");
-    for (const [toolKey, enabled] of entries) {
-      const mode: ToolBindingMode = enabled ? "enabled" : "disabled";
-      await deps.db
-        .insert(agentToolBindings)
-        .values({ orgId, agentId, toolKey, mode })
-        .onConflictDoUpdate({
-          target: [agentToolBindings.agentId, agentToolBindings.toolKey],
-          set: { mode },
-        });
-    }
+    await applyToolBindingsChange(deps.db, { orgId, agentId, patch });
   }
 
   /**

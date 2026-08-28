@@ -81,6 +81,15 @@ function money(reais: number, currency: string): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency }).format(reais);
 }
 
+/** Frase honesta sobre o que acontece ao confirmar (P0.1): a criação SEMPRE nasce pausada —
+ *  só entra no ar depois de um 2º OK separado (approval de ativação). Sem isso o eco+confirma
+ *  (§8) mentiria sobre o que vai acontecer ANTES do usuário dizer sim. */
+function activationPhrase(activation: "active" | "paused"): string {
+  return activation === "active"
+    ? "nasce PAUSADA (a Meta revisa antes) — te aviso separado pra confirmar a ativação"
+    : "fica pausada, do jeito que você pediu";
+}
+
 /** Rótulo PT do formato não-reusável (o vocabulário neutro vem do adapter). */
 function unsupportedFormatPt(f: "carousel" | "catalog" | "other"): string {
   return f === "carousel" ? "carrossel" : f === "catalog" ? "anúncio de catálogo" : "formato que ainda não sei clonar";
@@ -316,7 +325,7 @@ export async function proposeScaleWinner(
   });
   const echo = [
     `Vou **duplicar o vencedor "${label}"** com mais budget pra escalar sem estourar o aprendizado do original.`,
-    `Gasto novo: ${money(newDailyMinor / MINOR_PER_UNIT, ac.currency)}/dia · entra ativa (a Meta revisa antes de veicular).`,
+    `Gasto novo: ${money(newDailyMinor / MINOR_PER_UNIT, ac.currency)}/dia · ${activationPhrase("active")}.`,
     `Confirma? (o original fica intocado)`,
   ].join("\n");
   return { kind: "draft", echo, approvalId, draftId };
@@ -326,7 +335,7 @@ export async function proposeScaleWinner(
 function buildRefineEcho(kind: string, spec: CampaignDraftSpec): string {
   const head = kind === "duplicate" ? "Rascunho de escala atualizado" : "Rascunho de campanha atualizado";
   const lines = [
-    `${head}: gasto novo ${money(spec.dailyBudgetMinor / MINOR_PER_UNIT, spec.currency)}/dia · entra ${spec.activation === "active" ? "ativa" : "pausada"}.`,
+    `${head}: gasto novo ${money(spec.dailyBudgetMinor / MINOR_PER_UNIT, spec.currency)}/dia · ${activationPhrase(spec.activation)}.`,
   ];
   if (spec.copyVariants && spec.copyVariants.length > 0) {
     lines.push(`${spec.copyVariants.length} variação(ões) de copy. Ex: "${spec.copyVariants[0]!.headline}".`);
@@ -604,7 +613,7 @@ export async function proposeCreateCampaign(
     lines.push(`Obs: seu anúncio de melhor desempenho é um **${unsupportedFormatPt(defaults.unsupportedTopFormat)}**, que eu ainda não sei clonar — então usei o melhor criativo de imagem/vídeo que você tem.`);
   }
   lines.push(
-    `Gasto novo: ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia · Página: ${defaults.pageId}${defaults.pixelId ? ` · Pixel: ${defaults.pixelId}` : ""} · entra ativa (a Meta revisa antes).`,
+    `Gasto novo: ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia · Página: ${defaults.pageId}${defaults.pixelId ? ` · Pixel: ${defaults.pixelId}` : ""} · ${activationPhrase("active")}.`,
     `Confirma? (você pode editar/trocar o criativo no site antes de aprovar)`,
   );
   return { kind: "draft", echo: lines.join("\n"), approvalId, draftId };

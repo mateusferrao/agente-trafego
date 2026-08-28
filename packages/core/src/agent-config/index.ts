@@ -58,6 +58,11 @@ export interface AgentConfigState {
   readonly notifyPolicy: NotifyPolicy;
   /** Postura de comunicação (voz) — diretividade/volume/profundidade + preset. */
   readonly posture: Posture;
+  /** On/off por-ação (A3, `agent_tool_bindings` já resolvido) — as 6 capacidades gateáveis
+   *  (pause_entity/resume_entity/set_status/adjust_budget/create_campaign/duplicate_scale). A
+   *  casca resolve via `resolveEnabledTools` (fallback allowedActions/default) antes de montar
+   *  o estado — o resolver aqui só enxerga o booleano final. */
+  readonly toolBindings: Readonly<Record<string, boolean>>;
 }
 
 // Nota: os leaves aceitam `| undefined` de propósito — os patches vêm de DTOs
@@ -146,6 +151,9 @@ export interface AgentConfigPatch {
   readonly notifyPolicy?: NotifyPolicyPatch | undefined;
   /** postura (voz): diretividade/volume/profundidade + preset. Leaf-merge. */
   readonly posture?: PosturePatch | undefined;
+  /** on/off por-ação (A3) — só as chaves ENVIADAS mudam (leaf-merge); ausentes preservam o
+   *  estado atual. Persistido à parte (agent_tool_bindings, não é coluna de `agents`). */
+  readonly toolBindings?: Partial<Record<string, boolean>> | undefined;
 }
 
 /**
@@ -166,6 +174,7 @@ export const CONFIG_CHANGE_LABELS = {
   modelConfig: "limiares",
   notifyPolicy: "notificações",
   posture: "postura",
+  toolBindings: "ações permitidas",
 } as const;
 
 /** Ranking de autonomia (menor = mais seguro) — base do "enfraqueceu a segurança?". */
@@ -192,6 +201,9 @@ export interface AgentConfigResolution {
   readonly cadenceChanged: boolean;
   /** a proatividade (F4d) mudou → o pulso tem scheduler próprio, também re-sincroniza. */
   readonly notifyPolicyChanged: boolean;
+  /** o on/off por-ação (A3) mudou → a casca persiste em `agent_tool_bindings` (tabela à
+   *  parte, não é coluna de `agents`/`guardrail_configs`). */
+  readonly toolBindingsChanged: boolean;
   /** a mudança ENFRAQUECE a segurança (guardrail afrouxado / autonomia subiu). */
   readonly weakensSafety: boolean;
   /** validação falhou (PT) — não persistir. */
@@ -215,6 +227,7 @@ export function resolveAgentConfigChange(
       runRelevantChanged: false,
       cadenceChanged: false,
       notifyPolicyChanged: false,
+      toolBindingsChanged: false,
       weakensSafety: false,
       error: CUSTOM_CONVERSION_REQUIRED_ERROR,
     };
@@ -245,6 +258,7 @@ export function resolveAgentConfigChange(
       runRelevantChanged: false,
       cadenceChanged: false,
       notifyPolicyChanged: false,
+      toolBindingsChanged: false,
       weakensSafety: false,
       error: tooLong,
     };
@@ -256,6 +270,11 @@ export function resolveAgentConfigChange(
   const nextGuardrails = cleanGuardrails(patch.guardrails ?? state.guardrails);
   const nextNotifyPolicy = mergeNotifyPolicy(state.notifyPolicy, patch.notifyPolicy);
   const nextPosture = mergePosture(state.posture, patch.posture);
+  const toolBindingsEntries = patch.toolBindings
+    ? Object.entries(patch.toolBindings).filter((e): e is [string, boolean] => typeof e[1] === "boolean")
+    : [];
+  const nextToolBindings: Readonly<Record<string, boolean>> =
+    toolBindingsEntries.length > 0 ? { ...state.toolBindings, ...Object.fromEntries(toolBindingsEntries) } : state.toolBindings;
 
   const next: AgentConfigState = {
     goals: nextGoals,
@@ -271,6 +290,7 @@ export function resolveAgentConfigChange(
     modelConfig: nextModelConfig,
     notifyPolicy: nextNotifyPolicy,
     posture: nextPosture,
+    toolBindings: nextToolBindings,
   };
 
   // diffs por campo (json estável p/ objetos).
@@ -293,6 +313,7 @@ export function resolveAgentConfigChange(
   // postura é VOZ (render) — não afeta a ANÁLISE (fora de runRelevantChanged); o
   // próximo run relê a config no redator, como cadência/notify.
   const postureChanged = jsonEq(nextPosture, state.posture) === false;
+  const toolBindingsChanged = jsonEq(nextToolBindings, state.toolBindings) === false;
 
   // cadência NÃO entra: muda só a agenda, não a análise.
   const runRelevantChanged =
@@ -319,12 +340,13 @@ export function resolveAgentConfigChange(
   if (modelConfigTouched) changed.push(CONFIG_CHANGE_LABELS.modelConfig);
   if (notifyPolicyChanged) changed.push(CONFIG_CHANGE_LABELS.notifyPolicy);
   if (postureChanged) changed.push(CONFIG_CHANGE_LABELS.posture);
+  if (toolBindingsChanged) changed.push(CONFIG_CHANGE_LABELS.toolBindings);
 
   const weakensSafety =
     guardrailsWeaken(state.guardrails, nextGuardrails) ||
     autonomyPolicyWeakens(state.autonomyPolicy, nextAutonomy);
 
-  return { next, changed, runRelevantChanged, cadenceChanged, notifyPolicyChanged, weakensSafety };
+  return { next, changed, runRelevantChanged, cadenceChanged, notifyPolicyChanged, toolBindingsChanged, weakensSafety };
 }
 
 /** Mescla o patch de notificação (leaf-a-leaf) no estado atual. Sempre retorna o shape cheio. */
