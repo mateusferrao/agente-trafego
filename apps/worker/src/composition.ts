@@ -17,7 +17,7 @@ import type {
 import { WHATSAPP_TRANSCRIPTION_ATTEMPTS, WHATSAPP_TRANSCRIPTION_BACKOFF_MS } from "@trafego/shared";
 import type { Database } from "@trafego/db/client";
 import { createDb } from "@trafego/db";
-import { loadEnv } from "@trafego/config";
+import { loadEnv, resolveDataDir } from "@trafego/config";
 import { BUFFER_TTL_MARGIN_SEC } from "./modules/conversation/buffer.js";
 import { createLocalStorage } from "@trafego/storage-local";
 import { createS3Storage } from "@trafego/storage-s3";
@@ -266,7 +266,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
               forcePathStyle: env.STORAGE_FORCE_PATH_STYLE,
               ...(env.STORAGE_ENDPOINT ? { endpoint: env.STORAGE_ENDPOINT } : {}),
             })
-          : createLocalStorage({ baseDir: env.CREATIVE_STORAGE_DIR, urlBase: env.CREATIVE_ASSET_URL_BASE }),
+          : createLocalStorage({ baseDir: resolveDataDir(env.CREATIVE_STORAGE_DIR), urlBase: env.CREATIVE_ASSET_URL_BASE }),
     },
     insightsSync,
     analysis: {

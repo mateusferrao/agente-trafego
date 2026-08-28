@@ -40,6 +40,7 @@ import { EvolutionAdapter, EvolutionClient } from "@trafego/channel-evolution";
 import { createPostgresApprovals } from "@trafego/approval-postgres";
 import { createPostgresMetering } from "@trafego/metering-postgres";
 import { createLocalStorage } from "@trafego/storage-local";
+import { resolveDataDir } from "@trafego/config";
 import { createS3Storage } from "@trafego/storage-s3";
 import { Redis } from "ioredis";
 
@@ -151,7 +152,7 @@ export function buildContainer(logger?: OnboardingLogger): Container {
           forcePathStyle: env.STORAGE_FORCE_PATH_STYLE,
           ...(env.STORAGE_ENDPOINT ? { endpoint: env.STORAGE_ENDPOINT } : {}),
         })
-      : createLocalStorage({ baseDir: env.CREATIVE_STORAGE_DIR, urlBase: env.CREATIVE_ASSET_URL_BASE });
+      : createLocalStorage({ baseDir: resolveDataDir(env.CREATIVE_STORAGE_DIR), urlBase: env.CREATIVE_ASSET_URL_BASE });
 
   // Metering (3b): Postgres usage_events — o billing/usage lê daqui.
   const metering = createPostgresMetering(db);

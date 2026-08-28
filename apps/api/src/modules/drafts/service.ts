@@ -542,7 +542,14 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       if (!ctx) return null;
       let url: string | undefined;
       if (creative.format === "video" && creative.metaVideoId) {
+        // frames HD do vídeo — MAS o System User token pode não ter permissão pro endpoint
+        // `/{video_id}?fields=thumbnails` (erro Meta #10). Sem frames, cai no thumbnail do
+        // ANÚNCIO (getCreatives), que é acessível — o card é 64px, então o selo já basta.
         url = (await deps.adsPlatform.getVideoFrames(ctx.ref, creative.metaVideoId))[0];
+        if (!url) {
+          const [c] = await deps.adsPlatform.getCreatives(ctx.ref, [creative.assetId]);
+          url = c?.thumbnailUrl ?? c?.imageUrl;
+        }
       } else {
         const [c] = await deps.adsPlatform.getCreatives(ctx.ref, [creative.assetId]);
         url = c?.imageUrl ?? c?.thumbnailUrl;
