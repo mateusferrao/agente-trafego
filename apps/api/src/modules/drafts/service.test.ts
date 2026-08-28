@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type { OrgId } from "@trafego/shared/types";
-import { createDraftsService } from "./service.js";
+import { createDraftsService, refineErrorMessage } from "./service.js";
 
 /**
  * db fake encadeável só p/ getCreativeBlob: select→from→where→limit devolve `rows`.
@@ -90,6 +90,30 @@ describe("DraftsService.deleteCreative (híbrido: arquiva se em uso, apaga se li
     const { service, del } = makeDeleteService([{ storageRef: null }], [{ n: 0 }]);
     expect(await service.deleteCreative(ORG, "acct-1", "asset-1")).toEqual({ ok: true, archived: false });
     expect(del).not.toHaveBeenCalled();
+  });
+});
+
+describe("DraftsService.updateDraft (edição consolidada — Slice 7)", () => {
+  it("rascunho não-aberto (load vazio) → {ok:false} com mensagem amigável, sem persistir", async () => {
+    const { service } = makeService([]); // loadDraftForEdit não acha linha proposed
+    const r = await service.updateDraft(ORG, "acct-1", "draft-x", { campaignName: "Nova" });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.message).toMatch(/não está mais aberto/i);
+  });
+});
+
+describe("refineErrorMessage (§13 — o quê + o que fazer, sem jargão cru)", () => {
+  it("field_not_editable explica a fronteira da escala + o caminho (criar nova)", () => {
+    expect(refineErrorMessage({ code: "field_not_editable", field: "objective" })).toMatch(/escala|criar uma campanha nova/i);
+  });
+  it("empty_variants pede pelo menos um anúncio", () => {
+    expect(refineErrorMessage({ code: "empty_variants" })).toMatch(/pelo menos um anúncio/i);
+  });
+  it("objective_requires_pixel traduz 'pixel' e oferece objetivo viável", () => {
+    const msg = refineErrorMessage({ code: "objective_requires_pixel", objective: "purchase" });
+    expect(msg).toMatch(/pixel/i);
+    expect(msg).toMatch(/mensagens|engajamento/i);
   });
 });
 
@@ -210,11 +234,17 @@ describe("listServingCreatives (candidatos de reuse no picker: só vídeo, ranqu
 });
 
 describe("setDraftTargeting (alterna público reuse × amplo)", () => {
-  /** db com select (draft) + update no-op capturado. */
+  /** db com select (draft, p/ loadDraftForEdit) + update GUARDADO (persistDraftSpec usa
+   *  .where().returning()); captura o spec gravado e devolve 1 linha (write efetivado). */
   function fakeDbSelUpd(draftRow: unknown, captured: { spec?: unknown }) {
     return {
       select: () => ({ from: () => ({ where: () => ({ limit: () => (draftRow ? [draftRow] : []) }) }) }),
-      update: () => ({ set: (v: { spec: unknown }) => ({ where: async () => { captured.spec = v.spec; } }) }),
+      update: () => ({
+        set: (v: { spec: unknown }) => {
+          captured.spec = v.spec;
+          return { where: () => ({ returning: () => [{ id: "d1" }] }) };
+        },
+      }),
     } as never;
   }
 

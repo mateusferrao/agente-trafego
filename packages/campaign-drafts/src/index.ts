@@ -8,7 +8,6 @@ import { and, eq } from "drizzle-orm";
 import { campaignDrafts } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
 import type { CampaignDraftSpec, DraftKind, TargetingSpec } from "@trafego/shared";
-import type { AdAccountRef, AdsPlatformPort } from "@trafego/shared/ports";
 
 const DRAFT_OPEN_STATUS = "proposed" as const;
 
@@ -20,7 +19,16 @@ export interface DraftForEdit {
 export interface DraftRef {
   readonly draftId: string;
   readonly orgId: string;
+  /** escopo opcional por conta (defesa em profundidade — o org-scoping já isola o tenant). */
+  readonly adAccountId?: string;
 }
+
+const scopeOf = (ref: DraftRef) =>
+  and(
+    eq(campaignDrafts.id, ref.draftId),
+    eq(campaignDrafts.orgId, ref.orgId),
+    ...(ref.adAccountId ? [eq(campaignDrafts.adAccountId, ref.adAccountId)] : []),
+  );
 
 /**
  * Lê um rascunho pra edição, ORG-SCOPED. Só devolve se ainda `proposed` (aberto pra ajuste);
@@ -30,7 +38,7 @@ export async function loadDraftForEdit(db: Database, ref: DraftRef): Promise<Dra
   const [row] = await db
     .select({ kind: campaignDrafts.kind, spec: campaignDrafts.spec, status: campaignDrafts.status })
     .from(campaignDrafts)
-    .where(and(eq(campaignDrafts.id, ref.draftId), eq(campaignDrafts.orgId, ref.orgId)))
+    .where(scopeOf(ref))
     .limit(1);
   if (!row || row.status !== DRAFT_OPEN_STATUS) return null;
   return { kind: row.kind, spec: row.spec as CampaignDraftSpec };
@@ -50,30 +58,27 @@ export async function persistDraftSpec(
   const updated = await db
     .update(campaignDrafts)
     .set({ spec: nextSpec })
-    .where(
-      and(
-        eq(campaignDrafts.id, ref.draftId),
-        eq(campaignDrafts.orgId, ref.orgId),
-        eq(campaignDrafts.status, DRAFT_OPEN_STATUS),
-      ),
-    )
+    .where(and(scopeOf(ref), eq(campaignDrafts.status, DRAFT_OPEN_STATUS)))
     .returning({ id: campaignDrafts.id });
   return updated.length > 0;
 }
 
 /**
- * Resolve o modo de PÚBLICO (neutro) → `TargetingSpec` — IO compartilhada por chat e site.
+ * Resolve o modo de PÚBLICO (neutro) → `TargetingSpec` — lógica compartilhada por chat e site.
  * `broad` = Advantage+ amplo; `reuse` = herda o conjunto provado (mantém o que o spec já tinha,
  * ou re-infere ao vivo se ainda não havia). Nada pra herdar → mantém o atual (não força).
+ *
+ * `inferSourceAdset` é um THUNK LAZY: só é chamado quando de fato precisa inferir (reuse SEM
+ * herança) — assim broad/keep não carregam contexto de conta/token à toa (a casca resolve o
+ * token e chama a plataforma dentro do thunk).
  */
 export async function resolveAudienceTargeting(
-  ads: Pick<AdsPlatformPort, "inferCreationDefaults">,
-  accountRef: AdAccountRef,
   audience: "reuse" | "broad",
   current: TargetingSpec | undefined,
+  inferSourceAdset: () => Promise<string | undefined>,
 ): Promise<TargetingSpec | undefined> {
   if (audience === "broad") return { kind: "advantage_plus" };
   if (current?.kind === "reuse_adset") return current;
-  const defaults = await ads.inferCreationDefaults(accountRef);
-  return defaults.sourceAdsetId ? { kind: "reuse_adset", sourceAdsetId: defaults.sourceAdsetId } : current;
+  const sourceAdsetId = await inferSourceAdset();
+  return sourceAdsetId ? { kind: "reuse_adset", sourceAdsetId } : current;
 }

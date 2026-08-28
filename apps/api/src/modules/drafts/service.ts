@@ -11,7 +11,8 @@ import {
   platformConnections,
   type Database,
 } from "@trafego/db";
-import { planScaleMove, rankAdCreatives, resolveEnabledTools, type BudgetLevel, type ScaleAggressivePreference } from "@trafego/core";
+import { applyDraftEdit, planScaleMove, rankAdCreatives, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
+import { loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import type { ToolBindingMode } from "@trafego/shared";
 import {
   ACTION_PARAM_MODE,
@@ -35,6 +36,7 @@ import type {
   ScaleWinnerOutput,
   ServingCreativeOutput,
   SetDraftCreativeInput,
+  UpdateDraftInput,
   UploadCreativeArgs,
   UploadCreativeOutput,
 } from "./schema.js";
@@ -54,6 +56,23 @@ const APPROVAL_TTL_MS = APPROVAL_TTL_HOURS * 60 * 60 * 1000;
  *  materializa payload gigante em memória (a thumb da Meta é pequena; isto é a rede de segurança). */
 const THUMB_FETCH_TIMEOUT_MS = 8000;
 const THUMB_MAX_BYTES = 5 * 1024 * 1024;
+
+const DRAFT_NOT_OPEN_MSG = "esse rascunho não está mais aberto pra ajuste.";
+const ACCOUNT_UNAVAILABLE_MSG = "não consegui acessar a conta agora";
+
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+
+/** Traduz o erro TIPADO do núcleo de refino p/ mensagem amigável (§13 — o quê + o que fazer). */
+export function refineErrorMessage(error: RefineError): string {
+  switch (error.code) {
+    case "field_not_editable":
+      return "Numa escala eu mantenho o que já converte (público, criativo e copy do vencedor). Pra mexer nisso, o caminho é criar uma campanha nova.";
+    case "empty_variants":
+      return "Toda campanha precisa de pelo menos um anúncio. Edite este em vez de remover.";
+    case "objective_requires_pixel":
+      return "Esse objetivo precisa do rastreamento de conversões (pixel) configurado na Meta, e esta conta ainda não tem. Configure no Gerenciador de Eventos da Meta, ou escolha um objetivo que não precise disso (como mensagens ou engajamento).";
+  }
+}
 
 export interface DraftsServiceDeps {
   readonly db: Database;
@@ -162,7 +181,95 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     return { assetId: adId, format: "video", origin: "reuse", metaVideoId: c.videoId };
   }
 
+  /**
+   * Edição CONSOLIDADA de um rascunho (painel "Editar rascunho", Slice 7). Resolve os fragmentos
+   * de IO (público→targeting, asset/serving→creative) na CASCA, monta o `DraftEdit` neutro, aplica
+   * o núcleo puro `applyDraftEdit` (clamp/guards/merge) e persiste com UPDATE guardado por status.
+   * Chat e site convergem aqui (§13 DRY). Erro tipado do núcleo → mensagem amigável (§13). A
+   * auditoria é cross-cutting (hook onResponse), não copiada aqui.
+   */
+  async function updateDraftImpl(
+    orgId: OrgId,
+    accountId: string,
+    draftId: string,
+    input: UpdateDraftInput,
+  ): Promise<{ ok: true } | { ok: false; message: string }> {
+    const loaded = await loadDraftForEdit(deps.db, { orgId, draftId, adAccountId: accountId });
+    if (!loaded) return { ok: false, message: DRAFT_NOT_OPEN_MSG };
+    const { kind, spec } = loaded;
+
+    // Contexto de conta (token/cfg) carregado UMA vez, sob demanda (cap de budget OU inferir
+    // público). Nomes/ativação/copy não tocam a conta → não pagam a query.
+    let ctxCache: ScaleContext | null | undefined;
+    const getCtx = async (): Promise<ScaleContext | null> => {
+      if (ctxCache === undefined) ctxCache = await loadScaleContext(orgId, accountId);
+      return ctxCache;
+    };
+
+    const edit: Mutable<DraftEdit> = {};
+    if (input.activation) edit.activation = input.activation;
+    if (input.campaignName != null) edit.campaignName = input.campaignName;
+    if (input.adsetName != null) edit.adsetName = input.adsetName;
+    if (input.suffixLabel != null) edit.suffixLabel = input.suffixLabel;
+
+    let budgetCapMinor: number | null = null;
+    if (input.budgetReais != null) {
+      const ctx = await getCtx();
+      if (!ctx) return { ok: false, message: ACCOUNT_UNAVAILABLE_MSG };
+      edit.budgetMinor = Math.round(input.budgetReais * MINOR_PER_UNIT);
+      budgetCapMinor = ctx.cfg.maxNewDailyBudgetMinor ?? null;
+    }
+
+    if (input.audience) {
+      const targeting = await resolveAudienceTargeting(input.audience, spec.targeting, async () => {
+        const ctx = await getCtx();
+        if (!ctx) return undefined;
+        return (await deps.adsPlatform.inferCreationDefaults(ctx.ref)).sourceAdsetId;
+      });
+      if (input.audience === "reuse" && targeting?.kind !== "reuse_adset") {
+        return { ok: false, message: "não achei um público provado pra herdar nesta conta." };
+      }
+      if (targeting) edit.targeting = targeting;
+    }
+
+    if (input.creative) {
+      const creative =
+        input.creative.kind === "asset"
+          ? await resolveLibraryCreative(orgId, accountId, input.creative.assetId)
+          : await resolveServingCreative(orgId, accountId, input.creative.adId);
+      if (!creative) return { ok: false, message: "não consegui usar esse criativo — tente outro." };
+      edit.creative = creative;
+    }
+
+    if (input.copyEdits || input.removeAdIndex != null) {
+      let variants = [...(spec.copyVariants ?? [])];
+      for (const e of input.copyEdits ?? []) {
+        const current = variants[e.index];
+        if (!current) continue;
+        variants[e.index] = {
+          ...current,
+          ...(e.primaryText !== undefined ? { primaryText: e.primaryText } : {}),
+          ...(e.headline !== undefined ? { headline: e.headline } : {}),
+          ...(e.description !== undefined ? { description: e.description } : {}),
+          ...(e.cta !== undefined ? { cta: e.cta } : {}),
+          ...(e.adName !== undefined ? { adName: e.adName } : {}),
+        };
+      }
+      if (input.removeAdIndex != null) variants = variants.filter((_, i) => i !== input.removeAdIndex);
+      edit.copyVariants = variants;
+    }
+
+    // hasPixel: 7a não edita objetivo → o guard não dispara (7b re-resolve o pixel da conta).
+    const result = applyDraftEdit(kind, spec, edit, { budgetCapMinor, hasPixel: true });
+    if (!result.ok) return { ok: false, message: refineErrorMessage(result.error) };
+
+    const persisted = await persistDraftSpec(deps.db, { orgId, draftId, adAccountId: accountId }, result.value.spec);
+    if (!persisted) return { ok: false, message: DRAFT_NOT_OPEN_MSG };
+    return { ok: true };
+  }
+
   return {
+    updateDraft: updateDraftImpl,
     /**
      * Rascunhos de campanha aguardando aprovação (card de rascunho no inbox) — inclui os 2
      * momentos que compartilham o card (P0.1): `draft` (pedindo OK pra criar, gasto novo ainda
@@ -374,72 +481,26 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     /** Troca o criativo de um rascunho `from_scratch` proposto (picker "trocar criativo"). Org-scoped;
      *  só rascunho aberto da mesma conta. `asset` = upload da biblioteca; `serving` = reuse de um
      *  anúncio ao vivo (busca o video_id FRESCO). null → 404 (não editável / criativo inválido). */
+    /** Troca o criativo de um rascunho (picker) — DELEGA ao `updateDraft` (via única). */
     async setDraftCreative(
       orgId: OrgId,
       accountId: string,
       draftId: string,
       input: SetDraftCreativeInput,
     ): Promise<{ ok: true } | null> {
-      const [draft] = await deps.db
-        .select({ spec: campaignDrafts.spec, kind: campaignDrafts.kind, status: campaignDrafts.status })
-        .from(campaignDrafts)
-        .where(
-          and(
-            eq(campaignDrafts.id, draftId),
-            eq(campaignDrafts.orgId, orgId),
-            eq(campaignDrafts.adAccountId, accountId),
-          ),
-        )
-        .limit(1);
-      if (!draft || draft.status !== "proposed" || draft.kind !== "from_scratch") return null;
-      const creative =
-        input.kind === "asset"
-          ? await resolveLibraryCreative(orgId, accountId, input.assetId)
-          : await resolveServingCreative(orgId, accountId, input.adId);
-      if (!creative) return null;
-      const spec = draft.spec as CampaignDraftSpec;
-      await deps.db
-        .update(campaignDrafts)
-        .set({ spec: { ...spec, creative } })
-        .where(eq(campaignDrafts.id, draftId));
-      return { ok: true };
+      const r = await updateDraftImpl(orgId, accountId, draftId, { creative: input });
+      return r.ok ? { ok: true } : null;
     },
 
-    /** Alterna o PÚBLICO de um rascunho from_scratch proposto (card /approvals). `broad` = Advantage+
-     *  (a Meta escolhe). `reuse` = herda o conjunto provado — reusa o que já está no spec, senão
-     *  re-infere ao vivo (inferCreationDefaults); sem conjunto provado disponível → null (nada pra
-     *  herdar). Org-scoped; só rascunho aberto. */
+    /** Alterna o PÚBLICO de um rascunho (card /approvals) — DELEGA ao `updateDraft` (via única). */
     async setDraftTargeting(
       orgId: OrgId,
       accountId: string,
       draftId: string,
       audience: "reuse" | "broad",
     ): Promise<{ ok: true; audience: "reuse" | "broad" } | null> {
-      const [draft] = await deps.db
-        .select({ spec: campaignDrafts.spec, kind: campaignDrafts.kind, status: campaignDrafts.status })
-        .from(campaignDrafts)
-        .where(and(eq(campaignDrafts.id, draftId), eq(campaignDrafts.orgId, orgId), eq(campaignDrafts.adAccountId, accountId)))
-        .limit(1);
-      if (!draft || draft.status !== "proposed" || draft.kind !== "from_scratch") return null;
-      const spec = draft.spec as CampaignDraftSpec;
-
-      let targeting: TargetingSpec;
-      if (audience === "broad") {
-        targeting = { kind: "advantage_plus" };
-      } else if (spec.targeting?.kind === "reuse_adset") {
-        targeting = spec.targeting; // já herda — mantém o conjunto
-      } else {
-        const ctx = await loadScaleContext(orgId, accountId);
-        if (!ctx) return null;
-        const defaults = await deps.adsPlatform.inferCreationDefaults(ctx.ref);
-        if (!defaults.sourceAdsetId) return null; // sem público provado pra herdar
-        targeting = { kind: "reuse_adset", sourceAdsetId: defaults.sourceAdsetId };
-      }
-      await deps.db
-        .update(campaignDrafts)
-        .set({ spec: { ...spec, targeting } })
-        .where(eq(campaignDrafts.id, draftId));
-      return { ok: true, audience };
+      const r = await updateDraftImpl(orgId, accountId, draftId, { audience });
+      return r.ok ? { ok: true, audience } : null;
     },
 
     /** Anúncios AO VIVO da conta oferecidos como candidatos de reuse no picker (lê ad_creatives,

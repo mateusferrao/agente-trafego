@@ -54,23 +54,26 @@ describe("persistDraftSpec — UPDATE guardado por status", () => {
 });
 
 describe("resolveAudienceTargeting", () => {
-  const ACCT = { adAccountId: "act_1", accessToken: "tok" };
-
-  it("broad → advantage_plus (sem tocar na plataforma)", async () => {
-    const ads = { inferCreationDefaults: vi.fn() };
-    expect(await resolveAudienceTargeting(ads, ACCT, "broad", undefined)).toEqual({ kind: "advantage_plus" });
-    expect(ads.inferCreationDefaults).not.toHaveBeenCalled();
+  it("broad → advantage_plus (sem chamar o thunk de inferência)", async () => {
+    const infer = vi.fn();
+    expect(await resolveAudienceTargeting("broad", undefined, infer)).toEqual({ kind: "advantage_plus" });
+    expect(infer).not.toHaveBeenCalled();
   });
 
-  it("reuse com reuse_adset já no spec → mantém (sem re-inferir)", async () => {
-    const ads = { inferCreationDefaults: vi.fn() };
+  it("reuse com reuse_adset já no spec → mantém (sem chamar o thunk)", async () => {
+    const infer = vi.fn();
     const current = { kind: "reuse_adset", sourceAdsetId: "as_1" } as const;
-    expect(await resolveAudienceTargeting(ads, ACCT, "reuse", current)).toEqual(current);
-    expect(ads.inferCreationDefaults).not.toHaveBeenCalled();
+    expect(await resolveAudienceTargeting("reuse", current, infer)).toEqual(current);
+    expect(infer).not.toHaveBeenCalled();
   });
 
-  it("reuse sem herança → infere ao vivo", async () => {
-    const ads = { inferCreationDefaults: vi.fn().mockResolvedValue({ sourceAdsetId: "as_9" }) };
-    expect(await resolveAudienceTargeting(ads, ACCT, "reuse", undefined)).toEqual({ kind: "reuse_adset", sourceAdsetId: "as_9" });
+  it("reuse sem herança → infere (thunk lazy)", async () => {
+    const infer = vi.fn().mockResolvedValue("as_9");
+    expect(await resolveAudienceTargeting("reuse", undefined, infer)).toEqual({ kind: "reuse_adset", sourceAdsetId: "as_9" });
+  });
+
+  it("reuse sem herança e sem fonte → mantém o atual (não força)", async () => {
+    const infer = vi.fn().mockResolvedValue(undefined);
+    expect(await resolveAudienceTargeting("reuse", undefined, infer)).toBeUndefined();
   });
 });

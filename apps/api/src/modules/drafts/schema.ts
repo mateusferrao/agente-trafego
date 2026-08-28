@@ -1,3 +1,4 @@
+import { COPY_TEXT_MAX, ENTITY_NAME_MAX, ctaTypeSchema } from "@trafego/shared";
 import { z } from "zod";
 
 const approvalStatusOutput = z.enum(["pending", "approved", "rejected", "expired", "blocked"]);
@@ -106,6 +107,37 @@ export const setDraftCreativeInput = z.discriminatedUnion("kind", [
 export type SetDraftCreativeInput = z.infer<typeof setDraftCreativeInput>;
 export const setDraftCreativeOutput = z.object({ ok: z.boolean() });
 export type SetDraftCreativeOutput = z.infer<typeof setDraftCreativeOutput>;
+
+/** Edição de UMA variação de copy (por índice) no painel "Editar rascunho" (Slice 7). Campos
+ *  omitidos = inalterados; texto não-vazio (blank = anúncio sem texto vira estado inválido). */
+export const draftCopyEditInput = z.object({
+  index: z.number().int().min(0),
+  adName: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+  primaryText: z.string().min(1).max(COPY_TEXT_MAX).optional(),
+  headline: z.string().min(1).max(COPY_TEXT_MAX).optional(),
+  description: z.string().max(COPY_TEXT_MAX).optional(),
+  cta: ctaTypeSchema.optional(),
+});
+
+/**
+ * Edição CONSOLIDADA de um rascunho (painel "Editar rascunho", Slice 7) — só os campos ALTERADOS.
+ * Converge com o chat no núcleo `applyDraftEdit` (§13 DRY). `objective` + geração de copy por IA =
+ * 7b (exigem re-resolução de pixel + porta LLM). Escala aceita só `suffixLabel`/budget/activation.
+ */
+export const updateDraftInput = z.object({
+  budgetReais: z.number().positive().optional(),
+  activation: z.enum(["active", "paused"]).optional(),
+  campaignName: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+  adsetName: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+  suffixLabel: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+  audience: z.enum(["reuse", "broad"]).optional(),
+  creative: setDraftCreativeInput.optional(),
+  copyEdits: z.array(draftCopyEditInput).optional(),
+  removeAdIndex: z.number().int().min(0).optional(),
+});
+export type UpdateDraftInput = z.infer<typeof updateDraftInput>;
+export const updateDraftOutput = z.object({ ok: z.boolean() });
+export type UpdateDraftOutput = z.infer<typeof updateDraftOutput>;
 
 /** Alterna o público do rascunho: `reuse` = herda o conjunto provado; `broad` = Meta escolhe. */
 export const setDraftTargetingInput = z.object({ audience: z.enum(["reuse", "broad"]) });
