@@ -630,6 +630,9 @@ export function createAgentsService(deps: AgentsDeps) {
     const summary = await getOrCreateForAccount(orgId, accountId);
     // dono via run→agente (análise) OU agentId direto (criação/escrita por chat, runId null) —
     // `coalesce` p/ criações via chat (runId null) também listarem/reverterem (Slice 11.4).
+    // Escopo de tenant: `summary.agentId` vem de getOrCreateForAccount(orgId, accountId) — UUID
+    // globalmente único e org-bound; casar por ele já amarra à org (dispensa predicado de org_id
+    // explícito, que não caberia no ramo runId-null). O worker re-escopa por orgId antes de mutar.
     const [tc] = await deps.db
       .select({
         id: agentToolCalls.id,

@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { toast } from 'ngx-sonner';
 import { UiButton, UiInput } from '@ui';
 import { DraftsApiService } from '@core/api/drafts-api.service';
-import { CONVERSION_LABEL } from '@app/shared/conversion-label';
+import { CONVERSION_LABEL, conversionLabel } from '@app/shared/conversion-label';
 import type { DraftApprovalOutput, UpdateDraftInput } from '@core/api/generated';
 
 /** Uma variação de copy no formulário (espelho editável do `DraftApprovalOutput.copyVariants`). */
@@ -60,7 +60,8 @@ type DraftCopy = NonNullable<DraftApprovalOutput['copyVariants']>[number];
         </label>
         <label class="flex flex-col gap-1">
           <span class="text-xs font-medium text-ink">Objetivo</span>
-          <select appInput class="w-full" [(ngModel)]="objective">
+          <select [class]="fieldClasses" [(ngModel)]="objective">
+            <option value="" disabled>Selecione o objetivo</option>
             @for (o of objectiveOptions; track o[0]) {
               <option [value]="o[0]">{{ o[1] }}</option>
             }
@@ -107,7 +108,7 @@ type DraftCopy = NonNullable<DraftApprovalOutput['copyVariants']>[number];
               </div>
               <input appInput class="w-full" [(ngModel)]="c.adName" placeholder="Nome do anúncio (opcional)" />
               <input appInput class="w-full" [(ngModel)]="c.headline" placeholder="Título" />
-              <textarea appInput class="w-full" rows="2" [(ngModel)]="c.primaryText" placeholder="Texto principal"></textarea>
+              <textarea [class]="fieldClasses" rows="2" [(ngModel)]="c.primaryText" placeholder="Texto principal"></textarea>
               <input appInput class="w-full" [(ngModel)]="c.description" placeholder="Descrição (opcional)" />
             </div>
           }
@@ -134,8 +135,12 @@ export class DraftEditPanel implements OnInit {
   protected readonly adsetName = signal('');
   protected readonly objective = signal('');
   protected readonly suffixLabel = signal('');
-  /** opções de objetivo (valor neutro + rótulo PT) — fonte única do frontend. */
-  protected readonly objectiveOptions = Object.entries(CONVERSION_LABEL);
+  /** classes de campo (select/textarea nativos — `appInput` só casa `<input>`), no visual do design system. */
+  protected readonly fieldClasses =
+    'w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink transition hover:border-muted/60 focus:border-ink focus:outline-none';
+  /** opções de objetivo (valor neutro + rótulo PT) — fonte única do frontend. `custom` fica de fora:
+   *  não é um objetivo de criação escolhível manualmente (vem de conversão personalizada da conta). */
+  protected readonly objectiveOptions = Object.entries(CONVERSION_LABEL).filter(([key]) => key !== 'custom');
   protected readonly budget = signal(0);
   protected readonly activation = signal<'active' | 'paused'>('paused');
   protected readonly copies = signal<CopyForm[]>([]);
@@ -146,7 +151,7 @@ export class DraftEditPanel implements OnInit {
   /** placeholder do nome derivado (o que o agente usa se você deixar em branco). */
   protected readonly derivedNamePlaceholder = computed(() => {
     const o = this.draft().objective;
-    return o ? `CaquiAI — ${o}` : 'CaquiAI';
+    return o ? `CaquiAI — ${conversionLabel(o)}` : 'CaquiAI';
   });
 
   ngOnInit(): void {
@@ -242,10 +247,15 @@ export class DraftEditPanel implements OnInit {
     if (!original) return null;
     const edit: Record<string, unknown> = { index };
     let changed = false;
-    if (this.trimmed(c.adName) && c.adName !== (original.adName ?? '')) { edit['adName'] = this.trimmed(c.adName); changed = true; }
-    if (this.trimmed(c.headline) && c.headline !== original.headline) { edit['headline'] = this.trimmed(c.headline); changed = true; }
-    if (this.trimmed(c.primaryText) && c.primaryText !== original.primaryText) { edit['primaryText'] = this.trimmed(c.primaryText); changed = true; }
-    if (c.description !== (original.description ?? '')) { edit['description'] = this.trimmed(c.description); changed = true; }
+    // Compara SEMPRE pelo valor trimado (o que de fato será enviado) → edição só de espaço = no-op.
+    const adName = this.trimmed(c.adName);
+    if (adName && adName !== (original.adName ?? '')) { edit['adName'] = adName; changed = true; }
+    const headline = this.trimmed(c.headline);
+    if (headline && headline !== original.headline) { edit['headline'] = headline; changed = true; }
+    const primaryText = this.trimmed(c.primaryText);
+    if (primaryText && primaryText !== original.primaryText) { edit['primaryText'] = primaryText; changed = true; }
+    const description = this.trimmed(c.description);
+    if (description !== (original.description ?? '')) { edit['description'] = description; changed = true; }
     return changed ? edit : null;
   }
 

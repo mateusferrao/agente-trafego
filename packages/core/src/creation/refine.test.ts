@@ -55,6 +55,17 @@ describe("applyDraftEdit — merge puro do rascunho", () => {
     expect(r.value.clampedByCap).toBe(true);
   });
 
+  it("from_scratch: edição sem clamp LIMPA um requestedDailyBudgetMinor de clamp anterior", () => {
+    // spec já veio de um clamp anterior (pediu 150, virou 100); agora o usuário edita p/ 50 (< teto).
+    const clamped: CampaignDraftSpec = { ...fromScratch, dailyBudgetMinor: 10000, requestedDailyBudgetMinor: 15000 };
+    const r = applyDraftEdit("from_scratch", clamped, { budgetMinor: 5000 }, { hasPixel: true, budgetCapMinor: 10000 });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.spec.dailyBudgetMinor).toBe(5000);
+    expect(r.value.clampedByCap).toBe(false);
+    expect(r.value.spec.requestedDailyBudgetMinor).toBeUndefined(); // não mostra "reduzido de" falso
+  });
+
   it("from_scratch: objetivo que exige pixel SEM pixel → erro", () => {
     const r = applyDraftEdit("from_scratch", fromScratch, { objective: "purchase" }, { hasPixel: false });
     expect(r.ok).toBe(false);

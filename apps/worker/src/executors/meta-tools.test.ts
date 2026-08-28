@@ -210,6 +210,22 @@ describe("revertCreation (Slice 11 — teardown de criação/escala)", () => {
     expect(mutate).not.toHaveBeenCalled();
   });
 
+  it("ESCALA: já pausado + pedido de arquivar → aplica ARCHIVED (não devolve sucesso vazio)", async () => {
+    const { deps, mutate, updates } = makeCreationDeps([{ id: "undo1", args: { mode: "pause" } }]);
+    const res = await makeMetaToolExecutor(deps).revertCreation({ orgId: "org1", account, toolCall: creationTc, mode: "archive" });
+    expect(res.reverted).toBe(true);
+    expect((mutate.mock.calls[0]![1]).params["status"]).toBe("ARCHIVED"); // aplicou de verdade
+    expect(updates.length).toBe(2); // atualiza o undo tool_call + campaign_drafts
+  });
+
+  it("NÃO desarquiva: já arquivado + pedido de pausar → no-op honesto, sem re-mutar", async () => {
+    const { deps, mutate } = makeCreationDeps([{ id: "undo1", args: { mode: "archive" } }]);
+    const res = await makeMetaToolExecutor(deps).revertCreation({ orgId: "org1", account, toolCall: creationTc, mode: "pause" });
+    expect(res.reverted).toBe(true);
+    expect(res.reason).toContain("arquivada");
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
   it("dry-run → nada a reverter", async () => {
     const { deps, mutate } = makeCreationDeps([]);
     const dryTc = { ...(creationTc as object), args: { draftId: "d1", dryRun: true } } as never;

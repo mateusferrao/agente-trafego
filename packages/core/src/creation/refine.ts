@@ -116,8 +116,12 @@ export function applyDraftEdit(
   const requested = edit.budgetMinor ?? spec.dailyBudgetMinor;
   const { dailyBudgetMinor, clampedByCap } = clampBudget(requested, ctx.budgetCapMinor);
 
+  // Descarta um `requestedDailyBudgetMinor` de um clamp ANTERIOR: se esta edição não clampa, o
+  // campo obsoleto faria o card mostrar um "reduzido de" falso. Só re-adiciona quando clampou agora.
+  const { requestedDailyBudgetMinor: _staleRequested, ...base } = spec;
+
   const next: CampaignDraftSpec = {
-    ...spec,
+    ...base,
     dailyBudgetMinor,
     ...(clampedByCap ? { requestedDailyBudgetMinor: requested } : {}),
     ...(edit.activation !== undefined ? { activation: edit.activation } : {}),

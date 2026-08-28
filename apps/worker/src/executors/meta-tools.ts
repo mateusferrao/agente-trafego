@@ -212,7 +212,7 @@ export function makeMetaToolExecutor(deps: WorkerDeps) {
 
     await ports.metering.record({
       orgId: orgId as OrgId,
-      runId: toolCall.runId as RunId,
+      ...(toolCall.runId ? { runId: toolCall.runId as RunId } : {}),
       type: USAGE_TYPE_ACTION_APPLIED,
       payload: { actionType: UNDO_TOOL_KEY, target: targetLabel, revertOf: toolCall.id },
     });
@@ -243,11 +243,19 @@ export function makeMetaToolExecutor(deps: WorkerDeps) {
 
     const undoKey = `${toolCall.id}:${UNDO_TOOL_KEY}`;
     const [existing] = await db
-      .select({ id: agentToolCalls.id })
+      .select({ id: agentToolCalls.id, args: agentToolCalls.args })
       .from(agentToolCalls)
       .where(eq(agentToolCalls.idempotencyKey, undoKey))
       .limit(1);
-    if (existing) return { reverted: true, reason: "já revertido" };
+    // Já revertido: idempotente no MESMO modo. Uma corrida "arquivar" DEPOIS de "pausar" ESCALA
+    // (aplica ARCHIVED e atualiza o registro — a árvore já estava parada, só faltava tirar da lista
+    // ativa); "pausar" DEPOIS de "arquivar" é no-op honesto (não desarquiva). Sem isso, o 2º pedido
+    // devolveria sucesso sem aplicar nada (toast desonesto numa lista stale).
+    const existingMode: "pause" | "archive" = (existing?.args as { mode?: "pause" | "archive" } | undefined)?.mode ?? "pause";
+    const isEscalation = Boolean(existing) && existingMode === "pause" && mode === "archive";
+    if (existing && !isEscalation) {
+      return { reverted: true, reason: existingMode === "archive" ? "essa campanha já estava arquivada" : "essa campanha já estava pausada" };
+    }
 
     const status = mode === "archive" ? "ARCHIVED" : "PAUSED";
     const action: Action = {
@@ -268,33 +276,41 @@ export function makeMetaToolExecutor(deps: WorkerDeps) {
     }
 
     const targetLabel = entityKeyOf(target);
-    await db
-      .insert(agentToolCalls)
-      .values({
-        agentId: toolCall.agentId,
-        runId: toolCall.runId,
-        toolKey: UNDO_TOOL_KEY,
-        idempotencyKey: undoKey,
-        risk: "low",
-        args: { revertOf: toolCall.id, target, mode },
-        result: { ...result },
-        beforeState: result.before as Record<string, unknown>,
-      })
-      .onConflictDoNothing();
+    if (isEscalation) {
+      // escalar pause → archive: atualiza o registro existente (o undoKey já ocupa a chave).
+      await db
+        .update(agentToolCalls)
+        .set({ args: { revertOf: toolCall.id, target, mode }, result: { ...result }, beforeState: result.before as Record<string, unknown> })
+        .where(eq(agentToolCalls.idempotencyKey, undoKey));
+    } else {
+      await db
+        .insert(agentToolCalls)
+        .values({
+          agentId: toolCall.agentId,
+          runId: toolCall.runId,
+          toolKey: UNDO_TOOL_KEY,
+          idempotencyKey: undoKey,
+          risk: "low",
+          args: { revertOf: toolCall.id, target, mode },
+          result: { ...result },
+          beforeState: result.before as Record<string, unknown>,
+        })
+        .onConflictDoNothing();
+    }
 
     await db.insert(auditLog).values({
       orgId,
       actor: ACTOR_AGENT,
       action: `meta.${UNDO_TOOL_KEY}`,
       target: targetLabel,
-      metadata: { revertOf: toolCall.id, mode },
+      metadata: { revertOf: toolCall.id, mode, ...(isEscalation ? { escalatedFrom: "pause" } : {}) },
       before: result.before as Record<string, unknown>,
       after: result.after as Record<string, unknown>,
     });
 
     await ports.metering.record({
       orgId: orgId as OrgId,
-      runId: toolCall.runId as RunId,
+      ...(toolCall.runId ? { runId: toolCall.runId as RunId } : {}),
       type: USAGE_TYPE_ACTION_APPLIED,
       payload: { actionType: UNDO_TOOL_KEY, target: targetLabel, revertOf: toolCall.id, mode },
     });

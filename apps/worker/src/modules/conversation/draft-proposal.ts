@@ -678,6 +678,23 @@ async function describeServingCandidates(deps: WorkerDeps, orgId: string, accoun
   const usable = rows.filter((r) => r.creativeId && (r.imageHash || r.videoId));
   if (usable.length === 0) return [];
 
+  // pré-computa a chave de visão de cada candidato e lê TODAS as descrições cacheadas numa ÚNICA
+  // query (hit reusa o cache dos runs) — sem N+1 no turno de chat, espelhando a biblioteca.
+  const keyed = usable.map((r) => {
+    const copy = [r.title, r.body, r.callToAction].filter(Boolean).join(" ") || undefined;
+    return { r, copy, contentHash: servingVisionKey(r.creativeId!, r.videoId, copy) };
+  });
+  const cachedRows = await deps.db
+    .select({ hash: creativeVisionAnalyses.contentHash, result: creativeVisionAnalyses.result })
+    .from(creativeVisionAnalyses)
+    .where(
+      and(
+        inArray(creativeVisionAnalyses.contentHash, [...new Set(keyed.map((k) => k.contentHash))]),
+        eq(creativeVisionAnalyses.analyzerVersion, deps.visionAnalyzerVersion),
+      ),
+    );
+  const cachedByHash = new Map(cachedRows.map((v) => [v.hash, v.result]));
+
   const vision = createVisionResolver({
     db: deps.db,
     llm: deps.ports.llm,
@@ -687,17 +704,10 @@ async function describeServingCandidates(deps: WorkerDeps, orgId: string, accoun
   });
 
   const out: DescribedCandidate[] = [];
-  for (const r of usable) {
-    const copy = [r.title, r.body, r.callToAction].filter(Boolean).join(" ") || undefined;
-    const contentHash = servingVisionKey(r.creativeId!, r.videoId, copy);
-    // pré-checa o cache (evita buscar frames de vídeo já analisado no run).
-    const [cached] = await deps.db
-      .select({ result: creativeVisionAnalyses.result })
-      .from(creativeVisionAnalyses)
-      .where(and(eq(creativeVisionAnalyses.contentHash, contentHash), eq(creativeVisionAnalyses.analyzerVersion, deps.visionAnalyzerVersion)))
-      .limit(1);
-    let description = cached ? describeVision(cached.result) : "";
-    if (!cached) {
+  for (const { r, copy, contentHash } of keyed) {
+    const wasCached = cachedByHash.has(contentHash);
+    let description = wasCached ? describeVision(cachedByHash.get(contentHash)) : "";
+    if (!wasCached) {
       // MISS: monta a mídia e computa fresh (auto-cacheia). Imagem = url guardado; vídeo = frames ao vivo.
       let imageUrls: string[] = [];
       if (r.videoId) {
@@ -923,7 +933,14 @@ export async function applyOfferedCreative(
       ...(asset.metaImageHash ? { metaImageHash: asset.metaImageHash } : {}),
       ...(asset.metaVideoId ? { metaVideoId: asset.metaVideoId } : {}),
     };
-    await deps.db.update(campaignDrafts).set({ spec: { ...spec, creative } }).where(eq(campaignDrafts.id, offer.draftId));
+    // Grava pelo núcleo compartilhado (UPDATE GUARDADO por status): fecha a corrida com o apply
+    // virando `creating` entre a leitura e este write — sem sobrescrever um rascunho já em voo.
+    const persisted = await persistDraftSpec(
+      deps.db,
+      { orgId: ctx.orgId, draftId: offer.draftId, adAccountId: ctx.adAccountId },
+      { ...spec, creative },
+    );
+    if (!persisted) return "esse rascunho não está mais aberto pra troca — mas guardei o criativo na sua biblioteca.";
     return "Troquei o criativo do rascunho pra esse que você mandou. Ele segue aguardando sua aprovação — é só aprovar quando quiser.";
   }
 
