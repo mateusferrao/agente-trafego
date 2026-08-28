@@ -221,6 +221,36 @@ describe("getMetricsData", () => {
     const res = await getMetricsData(db, ACCOUNT, ORG, AGENT, 7, "America/Sao_Paulo");
     expect(res).toEqual({ periodDays: 7, spend: 0, asOf: "sem dados", hasData: false });
   });
+
+  it("businessGoal do agente (goals.conversionGoal) vence a conversão de maior volume, mas NÃO esconde a receita de compra", async () => {
+    const db = fakeDb(
+      new Map<unknown, unknown[]>([
+        [
+          insightsSnapshots,
+          [
+            {
+              date: "2026-08-20",
+              metricsJson: {
+                metrics: { spend: 300 },
+                conversions: [
+                  { goal: "purchase", count: 2, value: 400 },
+                  { goal: "messaging_started", count: 50 },
+                ],
+              },
+            },
+          ],
+        ],
+        [agents, [{ goals: { conversionGoal: "messaging_started" } }]],
+      ]),
+    );
+    const res = await getMetricsData(db, ACCOUNT, ORG, AGENT, 7, "America/Sao_Paulo", () => new Date("2026-08-20T12:00:00Z"));
+    expect(res.hasData).toBe(true);
+    if (!res.hasData) return;
+    expect(res.conversionGoal).toBe("messaging_started");
+    expect(res.conversions).toBe(50);
+    expect(res.cpa).toBeCloseTo(300 / 50);
+    expect(res.revenue).toBe(400);
+  });
 });
 
 describe("getCampaignAnalysisData", () => {

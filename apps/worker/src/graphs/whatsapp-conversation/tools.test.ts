@@ -670,3 +670,17 @@ describe("buildCapabilitiesText — criação (fix: honesto, condicional às bin
     expect(text).toContain("criar campanhas novas");
   });
 });
+
+describe("buildCapabilitiesText — leitura de métricas (honesto sobre período >7d e receita por anúncio)", () => {
+  function fakeCapabilitiesDeps() {
+    return {
+      db: { select: () => ({ from: () => ({ where: () => ({ limit: async () => [{}] }) }) }) },
+    } as never;
+  }
+
+  it("menciona período SEM limite de 7 dias e receita por anúncio (não só o dado ao vivo capado)", async () => {
+    const text = await buildCapabilitiesText(fakeCapabilitiesDeps(), CTX, new Set());
+    expect(text).toContain("sem limite de 7 dias");
+    expect(text).toContain("POR ANÚNCIO");
+  });
+});

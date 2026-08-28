@@ -366,4 +366,10 @@ describe("getAdsBreakdownData (histórico por anúncio, sem cap de 7d, sem sync)
     const res = await getAdsBreakdownData(deps, CTX, {});
     expect(res).toHaveProperty("error");
   });
+
+  it("periodDays acima de 90 é limitado a 90 (teto de retenção, não 7 como o fresh)", async () => {
+    const { deps } = makeDeps([[ACCOUNT_ROW], [], [{ goals: null }]]);
+    const res = (await getAdsBreakdownData(deps, CTX, { periodDays: 500 })) as FreshAdsBreakdown;
+    expect(res.periodDays).toBe(90);
+  });
 });

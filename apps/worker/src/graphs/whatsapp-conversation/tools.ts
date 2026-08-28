@@ -638,7 +638,7 @@ export async function buildCapabilitiesText(
   }
   const parts: string[] = ["Aqui no WhatsApp eu consigo:"];
   parts.push(
-    "📊 Ler: status da conta, métricas, dados ATUALIZADOS direto da Meta (hoje até 7 dias atrás, conta ou campanha), análise por campanha, recomendações, desperdício, comparar períodos, ver pendências e o panorama de todas as contas da organização.",
+    "📊 Ler: status da conta, dados ATUALIZADOS direto da Meta (hoje até 7 dias atrás, conta ou campanha), gasto/conversões/receita em QUALQUER período já sincronizado (sem limite de 7 dias), receita separada POR ANÚNCIO/criativo, análise por campanha, recomendações, desperdício, comparar períodos, ver pendências e o panorama de todas as contas da organização.",
   );
   const writeVerbs = [...WRITE_TOOL_NAMES].filter((n) => allow.has(n)).map((n) => WRITE_VERB_PT[n]).filter(Boolean);
   if (writeVerbs.length > 0) {
