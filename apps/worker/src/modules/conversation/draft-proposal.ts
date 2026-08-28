@@ -456,6 +456,41 @@ interface ChosenCreative {
   readonly source: "serving" | "library";
 }
 
+/** Carrega o criativo FORÇADO (upload que o usuário mandou no WhatsApp, Slice 7) como ChosenCreative.
+ *  Só `ready` + não-arquivado da conta; sem mídia utilizável → null (o create cai no blocked honesto). */
+async function loadForcedCreative(
+  deps: WorkerDeps,
+  orgId: string,
+  accountId: string,
+  assetId: string,
+): Promise<ChosenCreative | null> {
+  const [asset] = await deps.db
+    .select({
+      id: creativeAssets.id,
+      status: creativeAssets.status,
+      metaImageHash: creativeAssets.metaImageHash,
+      metaVideoId: creativeAssets.metaVideoId,
+    })
+    .from(creativeAssets)
+    .where(
+      and(
+        eq(creativeAssets.id, assetId),
+        eq(creativeAssets.orgId, orgId),
+        eq(creativeAssets.adAccountId, accountId),
+        isNull(creativeAssets.archivedAt),
+      ),
+    )
+    .limit(1);
+  if (!asset || asset.status !== "ready" || (!asset.metaImageHash && !asset.metaVideoId)) return null;
+  return {
+    ...(asset.metaImageHash ? { imageHash: asset.metaImageHash } : {}),
+    ...(asset.metaVideoId ? { videoId: asset.metaVideoId } : {}),
+    assetId: asset.id,
+    origin: "upload",
+    source: "library",
+  };
+}
+
 /**
  * Pool ÚNICO de candidatos a criativo (decisão do dono): anúncios VEICULANDO + biblioteca.
  * Rank: o melhor VEICULANDO (provado por desempenho, via `inferCreationDefaults`) vence; sem
@@ -550,7 +585,7 @@ function describeVision(result: unknown): string {
 export async function proposeCreateCampaign(
   deps: WorkerDeps,
   ctx: DraftProposalContext,
-  args: { readonly goal?: ConversionGoal; readonly budgetReais?: number },
+  args: { readonly goal?: ConversionGoal; readonly budgetReais?: number; readonly forcedCreativeAssetId?: string },
   origin: DraftOrigin = "on_demand",
 ): Promise<ChatDraftProposal> {
   const ac = await loadAgentContext(deps, ctx);
@@ -566,19 +601,22 @@ export async function proposeCreateCampaign(
 
   const defaults = await deps.ports.ads.inferCreationDefaults(ac.ref);
   const goal = args.goal ?? defaults.objectiveGoal ?? DEFAULT_CONVERSION_GOAL;
-  // Pool único: melhor veiculando (provado) OU, sem nenhum, o upload da biblioteca que MELHOR
-  // CASA com o contexto da campanha (objetivo + negócio + orientações) via matcher LLM barato.
-  const chosen = await chooseCreative(
-    deps,
-    ctx.orgId,
-    ctx.adAccountId,
-    {
-      ...(defaults.imageHash ? { imageHash: defaults.imageHash } : {}),
-      ...(defaults.videoId ? { videoId: defaults.videoId } : {}),
-      ...(defaults.sourceAdId ? { sourceAdId: defaults.sourceAdId } : {}),
-    },
-    { goal, businessContext: ac.businessContext, guidance: ac.guidance, model: ac.model },
-  );
+  // Criativo: FORÇADO (o que o usuário mandou no WhatsApp, Slice 7) OU pool único — melhor
+  // veiculando (provado) OU, sem nenhum, o upload da biblioteca que MELHOR CASA com o contexto
+  // (objetivo + negócio + orientações) via matcher LLM barato.
+  const chosen = args.forcedCreativeAssetId
+    ? await loadForcedCreative(deps, ctx.orgId, ctx.adAccountId, args.forcedCreativeAssetId)
+    : await chooseCreative(
+        deps,
+        ctx.orgId,
+        ctx.adAccountId,
+        {
+          ...(defaults.imageHash ? { imageHash: defaults.imageHash } : {}),
+          ...(defaults.videoId ? { videoId: defaults.videoId } : {}),
+          ...(defaults.sourceAdId ? { sourceAdId: defaults.sourceAdId } : {}),
+        },
+        { goal, businessContext: ac.businessContext, guidance: ac.guidance, model: ac.model },
+      );
   const reuseImageHash = chosen?.imageHash;
   const reuseVideoId = chosen?.videoId;
   // Página é obrigatória (object_story_spec). Vem do anúncio veiculando; conta sem NENHUM
@@ -654,4 +692,66 @@ export async function proposeCreateCampaign(
     `Confirma? (você pode trocar o criativo no site antes de aprovar)`,
   );
   return { kind: "draft", echo: joinBalloons(lines), approvalId, draftId };
+}
+
+/**
+ * Resolve uma OFERTA de criativo (Slice 7 — ponte estado→turno): o usuário mandou um criativo no
+ * WhatsApp e disse "sim". Com rascunho pendente → TROCA o criativo dele (segue aguardando aprovação);
+ * sem rascunho → propõe CRIAR uma campanha semeada com o criativo. Devolve a resposta pronta pro chat.
+ */
+export async function applyOfferedCreative(
+  deps: WorkerDeps,
+  ctx: DraftProposalContext,
+  offer: { readonly assetId: string; readonly draftId?: string },
+): Promise<string> {
+  if (offer.draftId) {
+    const [asset] = await deps.db
+      .select({
+        format: creativeAssets.format,
+        origin: creativeAssets.origin,
+        status: creativeAssets.status,
+        metaImageHash: creativeAssets.metaImageHash,
+        metaVideoId: creativeAssets.metaVideoId,
+      })
+      .from(creativeAssets)
+      .where(
+        and(
+          eq(creativeAssets.id, offer.assetId),
+          eq(creativeAssets.orgId, ctx.orgId),
+          eq(creativeAssets.adAccountId, ctx.adAccountId),
+          isNull(creativeAssets.archivedAt),
+        ),
+      )
+      .limit(1);
+    if (!asset || asset.status !== "ready") return "esse criativo ainda não está pronto — me manda de novo daqui a pouco.";
+    const [row] = await deps.db
+      .select({ spec: campaignDrafts.spec, kind: campaignDrafts.kind, status: campaignDrafts.status })
+      .from(campaignDrafts)
+      .where(
+        and(
+          eq(campaignDrafts.id, offer.draftId),
+          eq(campaignDrafts.orgId, ctx.orgId),
+          eq(campaignDrafts.adAccountId, ctx.adAccountId),
+        ),
+      )
+      .limit(1);
+    if (!row || row.status !== "proposed" || row.kind !== "from_scratch") {
+      return "esse rascunho não está mais aberto pra troca — mas guardei o criativo na sua biblioteca.";
+    }
+    const spec = row.spec as CampaignDraftSpec;
+    const creative: CreativeAssetRef = {
+      assetId: offer.assetId,
+      format: asset.format,
+      origin: asset.origin,
+      ...(asset.metaImageHash ? { metaImageHash: asset.metaImageHash } : {}),
+      ...(asset.metaVideoId ? { metaVideoId: asset.metaVideoId } : {}),
+    };
+    await deps.db.update(campaignDrafts).set({ spec: { ...spec, creative } }).where(eq(campaignDrafts.id, offer.draftId));
+    return "Troquei o criativo do rascunho pra esse que você mandou. Ele segue aguardando sua aprovação — é só aprovar quando quiser.";
+  }
+
+  const proposal = await proposeCreateCampaign(deps, ctx, { forcedCreativeAssetId: offer.assetId }, "on_demand");
+  if (proposal.kind === "draft") return proposal.echo;
+  if (proposal.kind === "blocked") return proposal.reason;
+  return "não consegui montar a campanha agora — tenta de novo em instantes.";
 }

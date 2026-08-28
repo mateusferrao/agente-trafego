@@ -30,11 +30,14 @@ import type {
 import type { Redis } from "ioredis";
 import type { Logger } from "pino";
 import { ingestCreativeImage, ingestCreativeVideo } from "@trafego/creative-library";
+import { and, desc, eq } from "drizzle-orm";
+import { campaignDrafts } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
 import type { WorkerDeps } from "../composition.js";
 import { createAnalysisRepo } from "../modules/analysis/repo.js";
 import { createNotifyRepo, type NotifyRepo } from "../modules/notify/repo.js";
 import { createSendToConversation, type SendToConversation } from "../modules/notify/send-to-contact.js";
+import { setCreativeOffer } from "../modules/conversation/creative-offer.js";
 
 /** Mensagens de cortesia do intake — sempre o que aconteceu + próximo passo (§13 UX). */
 const NOTICE = {
@@ -46,6 +49,10 @@ const NOTICE = {
     `esse vídeo é grande demais pra eu receber por aqui (limite ${maxMb}MB) — sobe ele pela biblioteca de criativos no site.`,
   saved: (accountName: string) =>
     `imagem guardada na biblioteca de criativos${accountName ? ` da ${accountName}` : ""} — já dá pra usar num rascunho de campanha.`,
+  savedOfferUse: () =>
+    `imagem guardada! quer que eu use ela no rascunho de campanha que te propus? Responde *sim* que eu troco o criativo.`,
+  savedOfferCreate: (accountName: string) =>
+    `imagem guardada${accountName ? ` na ${accountName}` : ""}! quer que eu crie uma campanha com ela? Responde *sim* que eu monto o rascunho.`,
   videoSaved: (accountName: string) =>
     `vídeo recebido${accountName ? ` na ${accountName}` : ""} — tô processando; ele fica pronto pra usar num rascunho em instantes.`,
 } as const;
@@ -76,7 +83,27 @@ export interface MediaIntakeDeps {
   /** teto de tamanho do vídeo no WhatsApp (bytes vão pra memória do worker → OOM se grande). */
   readonly maxWhatsappVideoBytes: number;
   readonly sendToConversation: SendToConversation;
+  /** guarda a OFERTA (usar no rascunho / criar) pro próximo turno resolver (ponte estado→turno). */
+  readonly redis: Redis;
   readonly logger: Pick<Logger, "debug" | "warn">;
+}
+
+/** Rascunho from_scratch ainda aberto da conta → o intake oferece USAR o criativo nele. */
+async function pendingFromScratchDraftId(db: Database, orgId: string, adAccountId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ id: campaignDrafts.id })
+    .from(campaignDrafts)
+    .where(
+      and(
+        eq(campaignDrafts.orgId, orgId),
+        eq(campaignDrafts.adAccountId, adAccountId),
+        eq(campaignDrafts.status, "proposed"),
+        eq(campaignDrafts.kind, "from_scratch"),
+      ),
+    )
+    .orderBy(desc(campaignDrafts.createdAt))
+    .limit(1);
+  return row?.id ?? null;
 }
 
 /**
@@ -159,8 +186,16 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
       );
       // imagem `ready` → analisa a visão 1x (cache) pra biblioteca (mesmo pipeline do web).
       await d.ports.scheduler.enqueue(buildCreativeAnalyzeJob({ orgId, adAccountId: adAccountUuid, assetId }));
-      await d.sendToConversation(ref, NOTICE.saved(account.name), { split: true, quoteLastInbound: true });
-      d.logger.debug({ conversationId, metaImageHash }, "intake:saved");
+      // fecha o loop (Slice 7): guarda uma OFERTA pro próximo turno resolver no "sim" — usar o
+      // criativo no rascunho pendente, ou criar uma campanha com ele. (Vídeo = fast-follow: nasce
+      // `pending`, não dá pra usar até o poll flipar ready.)
+      const draftId = await pendingFromScratchDraftId(d.db, orgId, adAccountUuid);
+      await setCreativeOffer(d.redis, conversationId, { assetId, ...(draftId ? { draftId } : {}) });
+      await d.sendToConversation(ref, draftId ? NOTICE.savedOfferUse() : NOTICE.savedOfferCreate(account.name), {
+        split: true,
+        quoteLastInbound: true,
+      });
+      d.logger.debug({ conversationId, metaImageHash, offeredDraftId: draftId }, "intake:saved+offer");
     } catch (err) {
       // Falha de IO: RE-LANÇA → BullMQ re-tenta com backoff (upload/storage transitórios). O
       // aviso de cortesia só sai na ÚLTIMA tentativa (`notifyOnFailure`) — senão o usuário
@@ -182,6 +217,7 @@ export function startWhatsappMediaIntakeWorker(deps: WorkerDeps, connection: Red
     ports: { ads: ports.ads, messaging: ports.messaging, vault: ports.vault, storage: ports.storage, scheduler: ports.scheduler },
     maxWhatsappVideoBytes: deps.creative.maxWhatsappVideoBytes,
     sendToConversation: createSendToConversation({ messaging: ports.messaging, repo }),
+    redis: deps.redis,
     logger,
   });
 
