@@ -52,10 +52,11 @@ export class DraftsApiService extends BaseApiService {
     return this.resolveUrl(['/accounts', accountId, 'creatives', assetId, 'blob']);
   }
 
-  /** `DELETE /api/accounts/:id/creatives/:assetId` — exclui um criativo (guarda de referência
-   *  no backend: 409 se em uso). O componente trata o 409 com a mensagem do servidor. */
-  deleteCreative(accountId: string, assetId: string): Observable<{ ok: true }> {
-    return this.delete<{ ok: true }>(['/accounts', accountId, 'creatives', assetId]);
+  /** `DELETE /api/accounts/:id/creatives/:assetId` — exclui um criativo (híbrido): em uso →
+   *  ARQUIVA (`archived:true`, some da biblioteca, não quebra Meta/rascunho); livre → apaga
+   *  (`archived:false`). Nunca 409. O componente troca o toast conforme `archived`. */
+  deleteCreative(accountId: string, assetId: string): Observable<{ ok: true; archived: boolean }> {
+    return this.delete<{ ok: true; archived: boolean }>(['/accounts', accountId, 'creatives', assetId]);
   }
 
   /** `POST /api/accounts/:id/creatives/upload` — sobe criativo (multipart, imagem OU vídeo) → asset.

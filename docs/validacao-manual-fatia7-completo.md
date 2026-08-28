@@ -155,11 +155,13 @@ docker exec docker-postgres-1 psql -U postgres -d trafego -c "select id, kind, s
 docker exec docker-postgres-1 psql -U postgres -d trafego -c "select origin,format,status, meta_image_hash is not null as tem_hash, storage_ref is not null as tem_blob from creative_assets order by created_at desc limit 3;"
 ```
 
-**[NOVO] Excluir criativo (com guarda de referência):**
-1. No card, clicar **"Excluir"** → confirma (tom danger). ✅ Some da estante + toast "Criativo excluído."
-2. ⛔ Excluir um criativo **em uso** (num rascunho aberto OU campanha criada que o referencia) → **recusa honesta**
-   (409): "esse criativo está em uso em N campanhas ou rascunhos — finalize ou remova antes de excluir." (Não apaga; sem órfão.)
-3. ✅ Verificar no storage/DB que o blob + a linha sumiram só quando não havia referência.
+**[NOVO] Excluir criativo (HÍBRIDO — nunca quebra nada):**
+1. No card, clicar **"Excluir"** → confirma (tom danger).
+2. ✅ Criativo **LIVRE** (nenhum rascunho/campanha usa) → apaga de vez: some da estante + blob+linha removidos + toast "Criativo excluído."
+3. ✅ Criativo **EM USO** (rascunho aberto OU campanha criada referencia) → **ARQUIVA**: some da estante e do picker,
+   mas linha+blob ficam (rascunho antigo/preview e a campanha na Meta **não quebram**) + toast "Criativo arquivado (estava em uso…)".
+   O agente **deixa de oferecê-lo** pros próximos (biblioteca/picker); a recomendação autônoma já vem dos anúncios ativos na Meta, não da biblioteca.
+4. ✅ DB: `archived_at` setado no arquivado; linha some só no caso livre. Draft que referenciava segue intacto.
 
 **⛔ Tristes (visual):**
 - Derrubar a API e recarregar a aba → **caixa de erro com "Tentar de novo"** (NÃO o empty-state "nenhum criativo").

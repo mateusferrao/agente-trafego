@@ -281,6 +281,13 @@
       "when": 1787863492945,
       "tag": "0039_nasty_mystique",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1787880567284,
+      "tag": "0040_talented_wendell_vaughn",
+      "breakpoints": true
     }
   ]
 }

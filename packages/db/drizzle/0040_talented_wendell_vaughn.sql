@@ -1,0 +1,1 @@
+ALTER TABLE "creative_assets" ADD COLUMN "archived_at" timestamp with time zone;

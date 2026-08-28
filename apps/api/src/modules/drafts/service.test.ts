@@ -32,8 +32,9 @@ function makeService(rows: unknown[], get = vi.fn()) {
 const ORG = "org-1" as OrgId;
 
 /** db fake p/ deleteCreative: 1º select = lookup do asset (via .limit), 2º select = count de
- *  referências (via await direto). delete() é no-op. Cada `where` consome o próximo resultado. */
-function fakeDbForDelete(assetRows: unknown[], countRows: unknown[]) {
+ *  referências (via await direto). update()/delete() são no-op capturados. Cada `where` consome
+ *  o próximo resultado da fila. */
+function fakeDbForDelete(assetRows: unknown[], countRows: unknown[], captured: { archived?: boolean; deleted?: boolean }) {
   const queue = [assetRows, countRows];
   const where = () => {
     const rows = queue.shift() ?? [];
@@ -41,46 +42,52 @@ function fakeDbForDelete(assetRows: unknown[], countRows: unknown[]) {
   };
   return {
     select: () => ({ from: () => ({ where }) }),
-    delete: () => ({ where: async () => undefined }),
+    update: () => ({ set: () => ({ where: async () => { captured.archived = true; } }) }),
+    delete: () => ({ where: async () => { captured.deleted = true; } }),
   } as never;
 }
 
 function makeDeleteService(assetRows: unknown[], countRows: unknown[]) {
   const del = vi.fn(async () => {});
+  const captured: { archived?: boolean; deleted?: boolean } = {};
   const storage = { put: vi.fn(), get: vi.fn(), delete: del, signedUrl: vi.fn() };
   const service = createDraftsService({
-    db: fakeDbForDelete(assetRows, countRows),
+    db: fakeDbForDelete(assetRows, countRows, captured),
     adsPlatform: {} as never,
     vault: {} as never,
     approvals: {} as never,
     storage: storage as never,
     scheduler: {} as never,
   });
-  return { service, del };
+  return { service, del, captured };
 }
 
-describe("DraftsService.deleteCreative (guarda de referência)", () => {
+describe("DraftsService.deleteCreative (híbrido: arquiva se em uso, apaga se livre)", () => {
   it("asset inexistente / outra org → null (404), sem tocar o storage", async () => {
     const { service, del } = makeDeleteService([], []);
     expect(await service.deleteCreative(ORG, "acct-1", "asset-x")).toBeNull();
     expect(del).not.toHaveBeenCalled();
   });
 
-  it("em uso por rascunho/campanha (count>0) → {ok:false, referencedBy}, NÃO apaga", async () => {
-    const { service, del } = makeDeleteService([{ storageRef: "org/org-1/creatives/x.png" }], [{ n: 2 }]);
-    expect(await service.deleteCreative(ORG, "acct-1", "asset-1")).toEqual({ ok: false, referencedBy: 2 });
+  it("em uso (count>0) → ARQUIVA (archived:true), NÃO apaga blob nem linha", async () => {
+    const { service, del, captured } = makeDeleteService([{ storageRef: "org/org-1/creatives/x.png" }], [{ n: 2 }]);
+    expect(await service.deleteCreative(ORG, "acct-1", "asset-1")).toEqual({ ok: true, archived: true });
+    expect(captured.archived).toBe(true);
+    expect(captured.deleted).toBeUndefined();
     expect(del).not.toHaveBeenCalled();
   });
 
-  it("sem referências → apaga o blob no storage + a linha → {ok:true}", async () => {
-    const { service, del } = makeDeleteService([{ storageRef: "org/org-1/creatives/x.png" }], [{ n: 0 }]);
-    expect(await service.deleteCreative(ORG, "acct-1", "asset-1")).toEqual({ ok: true });
+  it("livre (count=0) → APAGA o blob + a linha → {ok:true, archived:false}", async () => {
+    const { service, del, captured } = makeDeleteService([{ storageRef: "org/org-1/creatives/x.png" }], [{ n: 0 }]);
+    expect(await service.deleteCreative(ORG, "acct-1", "asset-1")).toEqual({ ok: true, archived: false });
     expect(del).toHaveBeenCalledWith("org/org-1/creatives/x.png");
+    expect(captured.deleted).toBe(true);
+    expect(captured.archived).toBeUndefined();
   });
 
-  it("sem storageRef (reuse) e sem referências → {ok:true} sem chamar storage.delete", async () => {
+  it("livre sem storageRef (reuse) → {ok:true, archived:false} sem chamar storage.delete", async () => {
     const { service, del } = makeDeleteService([{ storageRef: null }], [{ n: 0 }]);
-    expect(await service.deleteCreative(ORG, "acct-1", "asset-1")).toEqual({ ok: true });
+    expect(await service.deleteCreative(ORG, "acct-1", "asset-1")).toEqual({ ok: true, archived: false });
     expect(del).not.toHaveBeenCalled();
   });
 });

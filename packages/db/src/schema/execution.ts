@@ -352,6 +352,10 @@ export const creativeAssets = pgTable(
     metaVideoId: text("meta_video_id"),
     // anúncio de origem quando `reuse` (liga o asset ao desempenho em ad_creatives).
     sourceAdId: text("source_ad_id"),
+    // Arquivamento (soft-delete híbrido): excluir um asset EM USO (rascunho/campanha o
+    // referencia) só ARQUIVA — some da biblioteca e do picker, mas a linha+blob ficam
+    // (preview/histórico não quebram, Meta é independente). Asset livre é apagado de vez.
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
     ...timestamps,
   },
   (t) => [index("creative_assets_account_idx").on(t.adAccountId)],

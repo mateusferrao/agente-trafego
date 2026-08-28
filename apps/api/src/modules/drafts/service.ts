@@ -1,4 +1,4 @@
-import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   adAccounts,
   agents,
@@ -289,7 +289,8 @@ export function createDraftsService(deps: DraftsServiceDeps) {
           createdAt: creativeAssets.createdAt,
         })
         .from(creativeAssets)
-        .where(and(eq(creativeAssets.orgId, orgId), eq(creativeAssets.adAccountId, accountId)))
+        // arquivados (soft-delete) somem da biblioteca — não são oferecidos pra reuso.
+        .where(and(eq(creativeAssets.orgId, orgId), eq(creativeAssets.adAccountId, accountId), isNull(creativeAssets.archivedAt)))
         .orderBy(desc(creativeAssets.createdAt));
       return rows.map((r) => ({
         id: r.id,
@@ -336,6 +337,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
             eq(creativeAssets.id, assetId),
             eq(creativeAssets.orgId, orgId),
             eq(creativeAssets.adAccountId, accountId),
+            isNull(creativeAssets.archivedAt), // não deixa o picker escolher um arquivado
           ),
         )
         .limit(1);
@@ -378,18 +380,20 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     },
 
     /**
-     * Exclui um criativo da biblioteca COM GUARDA DE REFERÊNCIA (fast-follow #707). Org-scoped
-     * pelo assetId (nunca confia no cliente). Recusa se algum rascunho ABERTO (`proposed`/
-     * `creating`) OU campanha já CRIADA (`created`) referencia o asset (`spec.creative.assetId`)
-     * — apagar deixaria o apply/veiculação com criativo órfão. Sem referência: apaga o blob no
-     * storage (idempotente) DEPOIS de confirmar, e então a linha. `null` = não existe (404);
-     * `{ok:false, referencedBy}` = em uso (409); `{ok:true}` = excluído.
+     * Exclui um criativo da biblioteca — HÍBRIDO com guarda de referência (fast-follow #707).
+     * Org-scoped pelo assetId (nunca confia no cliente). NUNCA quebra nada:
+     *  - EM USO (algum `campaign_drafts` `proposed`/`creating`/`created` referencia
+     *    `spec.creative.assetId`) → **arquiva** (soft): seta `archived_at`, mantém linha+blob
+     *    (preview de rascunho antigo + histórico seguem; a Meta é independente do nosso blob) e
+     *    o asset some da biblioteca/picker → não é mais oferecido pra reuso.
+     *  - LIVRE (zero referências) → **apaga de vez**: blob no storage (idempotente) + a linha.
+     * `null` = não existe (404); `{ok:true, archived:true|false}` = arquivado × excluído.
      */
     async deleteCreative(
       orgId: OrgId,
       accountId: string,
       assetId: string,
-    ): Promise<{ ok: true } | { ok: false; referencedBy: number } | null> {
+    ): Promise<{ ok: true; archived: boolean } | null> {
       const [row] = await deps.db
         .select({ storageRef: creativeAssets.storageRef })
         .from(creativeAssets)
@@ -414,15 +418,21 @@ export function createDraftsService(deps: DraftsServiceDeps) {
             sql`${campaignDrafts.spec} -> 'creative' ->> 'assetId' = ${assetId}`,
           ),
         );
-      if (n > 0) return { ok: false, referencedBy: n };
 
-      // zero referências: apaga o blob (se houver) e a linha. Blob antes da linha → se o storage
-      // falhar, a linha fica (retry possível) em vez de virar linha órfã apontando pra nada.
+      const scope = and(
+        eq(creativeAssets.id, assetId),
+        eq(creativeAssets.orgId, orgId),
+        eq(creativeAssets.adAccountId, accountId),
+      );
+      if (n > 0) {
+        // em uso → arquiva (mantém a ref pra não quebrar nada; some das listagens/picker).
+        await deps.db.update(creativeAssets).set({ archivedAt: sql`now()` }).where(scope);
+        return { ok: true, archived: true };
+      }
+      // livre → apaga de vez. Blob antes da linha → se o storage falhar, a linha fica (retry).
       if (row.storageRef) await deps.storage.delete(row.storageRef);
-      await deps.db
-        .delete(creativeAssets)
-        .where(and(eq(creativeAssets.id, assetId), eq(creativeAssets.orgId, orgId), eq(creativeAssets.adAccountId, accountId)));
-      return { ok: true };
+      await deps.db.delete(creativeAssets).where(scope);
+      return { ok: true, archived: false };
     },
 
     /** Upload de criativo pela web (multipart, imagem OU vídeo) → StoragePort → Meta

@@ -1,6 +1,5 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, type OnInit, computed, inject, signal } from '@angular/core';
 import { ActivatedRoute } from '@angular/router';
-import { HttpErrorResponse } from '@angular/common/http';
 import { toast } from 'ngx-sonner';
 import { NgIcon, provideIcons } from '@ng-icons/core';
 import { lucideTrash2 } from '@ng-icons/lucide';
@@ -190,30 +189,27 @@ export class CreativeLibrary implements OnInit {
     });
   }
 
-  /** Exclui um criativo (confirma antes). O backend guarda referência: se estiver em uso num
-   *  rascunho/campanha, responde 409 e mostramos o motivo — sem quebrar nada. */
+  /** Exclui um criativo (confirma antes). Híbrido no backend: em uso → ARQUIVA (some da
+   *  estante, mantém a referência pra não quebrar campanha/rascunho); livre → apaga de vez.
+   *  Some da lista dos dois jeitos; o toast diz qual aconteceu. */
   protected async onDelete(a: CreativeAssetOutput): Promise<void> {
     const confirmed = await this.confirmDialog.confirm({
       title: 'Excluir este criativo?',
-      description: 'Ele sai da sua estante. Se estiver em uso num rascunho ou campanha, eu aviso e não excluo.',
+      description: 'Ele sai da sua estante. Se estiver em uso numa campanha ou rascunho, eu arquivo em vez de apagar — nada quebra e ele deixa de ser usado nas próximas.',
       confirmLabel: 'Excluir',
       tone: 'danger',
     });
     if (!confirmed) return;
     this.deletingId.set(a.id);
     this.api.deleteCreative(this.accountId, a.id).subscribe({
-      next: () => {
+      next: (res) => {
         this.assets.update((list) => list.filter((x) => x.id !== a.id));
         this.deletingId.set(null);
-        toast.success('Criativo excluído.');
+        toast.success(res.archived ? 'Criativo arquivado (estava em uso — não mexi nas campanhas).' : 'Criativo excluído.');
       },
-      error: (err: unknown) => {
+      error: () => {
         this.deletingId.set(null);
-        // 409 = em uso: o backend manda o motivo legível; preferimos ele ao genérico.
-        const msg = err instanceof HttpErrorResponse && err.status === 409 && typeof err.error?.message === 'string'
-          ? err.error.message
-          : 'Não consegui excluir esse criativo agora. Tente de novo em instantes.';
-        toast.error(msg);
+        toast.error('Não consegui excluir esse criativo agora. Tente de novo em instantes.');
       },
     });
   }
