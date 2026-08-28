@@ -62,11 +62,17 @@ describe("applyDraftEdit — merge puro do rascunho", () => {
     expect(r.error.code).toBe("objective_requires_pixel");
   });
 
-  it("from_scratch: objetivo que exige pixel COM pixel → ok", () => {
-    const r = applyDraftEdit("from_scratch", fromScratch, { objective: "purchase" }, { hasPixel: true });
+  it("from_scratch: objetivo que exige pixel COM pixel → ok, grava objetivo + pixelId", () => {
+    const r = applyDraftEdit("from_scratch", fromScratch, { objective: "purchase", pixelId: "PX9" }, { hasPixel: true });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.value.spec.objective).toBe("purchase");
+    expect(r.value.spec.pixelId).toBe("PX9");
+  });
+
+  it("duplicate: tentar editar pixelId → erro field_not_editable", () => {
+    const r = applyDraftEdit("duplicate", duplicate, { pixelId: "PX9" }, noCap);
+    expect(r.ok).toBe(false);
   });
 
   it("from_scratch: objetivo que NÃO exige pixel sem pixel → ok", () => {

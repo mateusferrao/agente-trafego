@@ -7016,6 +7016,26 @@
             "minLength": 1,
             "maxLength": 400
           },
+          "objective": {
+            "type": "string",
+            "enum": [
+              "purchase",
+              "lead",
+              "registration",
+              "initiate_checkout",
+              "add_to_cart",
+              "view_content",
+              "add_payment_info",
+              "search",
+              "contact",
+              "subscribe",
+              "start_trial",
+              "submit_application",
+              "messaging_started",
+              "app_install",
+              "custom"
+            ]
+          },
           "suffixLabel": {
             "type": "string",
             "minLength": 1,

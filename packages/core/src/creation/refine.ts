@@ -43,6 +43,9 @@ export interface DraftEdit {
   readonly campaignName?: string;
   readonly adsetName?: string;
   readonly objective?: ConversionGoal;
+  /** pixel resolvido DA CONTA (setado junto com `objective` quando o novo objetivo precisa dele —
+   *  o apply deriva o `promoted_object` disso). Não é campo direto do usuário. */
+  readonly pixelId?: string;
   readonly targeting?: TargetingSpec;
   readonly creative?: CreativeAssetRef;
   readonly copyVariants?: readonly CopyVariant[];
@@ -72,6 +75,7 @@ const FROM_SCRATCH_ONLY: readonly (keyof DraftEdit)[] = [
   "campaignName",
   "adsetName",
   "objective",
+  "pixelId",
   "targeting",
   "creative",
   "copyVariants",
@@ -121,6 +125,7 @@ export function applyDraftEdit(
     ...(edit.campaignName !== undefined ? { campaignName: edit.campaignName } : {}),
     ...(edit.adsetName !== undefined ? { adsetName: edit.adsetName } : {}),
     ...(edit.objective !== undefined ? { objective: edit.objective } : {}),
+    ...(edit.pixelId !== undefined ? { pixelId: edit.pixelId } : {}),
     ...(edit.targeting !== undefined ? { targeting: edit.targeting } : {}),
     ...(edit.creative !== undefined ? { creative: edit.creative } : {}),
     ...(edit.copyVariants !== undefined ? { copyVariants: edit.copyVariants, variantsCount: edit.copyVariants.length } : {}),

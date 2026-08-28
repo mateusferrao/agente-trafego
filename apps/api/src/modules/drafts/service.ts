@@ -198,12 +198,21 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     if (!loaded) return { ok: false, message: DRAFT_NOT_OPEN_MSG };
     const { kind, spec } = loaded;
 
-    // Contexto de conta (token/cfg) carregado UMA vez, sob demanda (cap de budget OU inferir
-    // público). Nomes/ativação/copy não tocam a conta → não pagam a query.
+    // Contexto de conta (token/cfg) + defaults (page/pixel/público) carregados UMA vez, sob demanda
+    // (cap de budget, inferir público, re-resolver pixel do objetivo). Nomes/ativação/copy não
+    // tocam a conta → não pagam a query.
     let ctxCache: ScaleContext | null | undefined;
     const getCtx = async (): Promise<ScaleContext | null> => {
       if (ctxCache === undefined) ctxCache = await loadScaleContext(orgId, accountId);
       return ctxCache;
+    };
+    let defaultsCache: Awaited<ReturnType<AdsPlatformPort["inferCreationDefaults"]>> | null | undefined;
+    const getDefaults = async () => {
+      if (defaultsCache === undefined) {
+        const ctx = await getCtx();
+        defaultsCache = ctx ? await deps.adsPlatform.inferCreationDefaults(ctx.ref) : null;
+      }
+      return defaultsCache;
     };
 
     const edit: Mutable<DraftEdit> = {};
@@ -220,11 +229,21 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       budgetCapMinor = ctx.cfg.maxNewDailyBudgetMinor ?? null;
     }
 
+    // Objetivo (só from_scratch): re-resolve o pixel DA CONTA (não de spec.pixelId). O guard do
+    // núcleo bloqueia objetivo-que-exige-pixel sem pixel; quando há, grava o pixel no spec.
+    let hasPixel = true;
+    if (input.objective) {
+      const defaults = await getDefaults();
+      if (!defaults) return { ok: false, message: ACCOUNT_UNAVAILABLE_MSG };
+      hasPixel = Boolean(defaults.pixelId);
+      edit.objective = input.objective;
+      if (defaults.pixelId) edit.pixelId = defaults.pixelId;
+    }
+
     if (input.audience) {
       const targeting = await resolveAudienceTargeting(input.audience, spec.targeting, async () => {
-        const ctx = await getCtx();
-        if (!ctx) return undefined;
-        return (await deps.adsPlatform.inferCreationDefaults(ctx.ref)).sourceAdsetId;
+        const defaults = await getDefaults();
+        return defaults?.sourceAdsetId;
       });
       if (input.audience === "reuse" && targeting?.kind !== "reuse_adset") {
         return { ok: false, message: "não achei um público provado pra herdar nesta conta." };
@@ -259,8 +278,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       edit.copyVariants = variants;
     }
 
-    // hasPixel: 7a não edita objetivo → o guard não dispara (7b re-resolve o pixel da conta).
-    const result = applyDraftEdit(kind, spec, edit, { budgetCapMinor, hasPixel: true });
+    const result = applyDraftEdit(kind, spec, edit, { budgetCapMinor, hasPixel });
     if (!result.ok) return { ok: false, message: refineErrorMessage(result.error) };
 
     const persisted = await persistDraftSpec(deps.db, { orgId, draftId, adAccountId: accountId }, result.value.spec);

@@ -1,4 +1,4 @@
-import { COPY_TEXT_MAX, ENTITY_NAME_MAX, ctaTypeSchema } from "@trafego/shared";
+import { COPY_TEXT_MAX, ENTITY_NAME_MAX, conversionGoalSchema, ctaTypeSchema } from "@trafego/shared";
 import { z } from "zod";
 
 const approvalStatusOutput = z.enum(["pending", "approved", "rejected", "expired", "blocked"]);
@@ -136,6 +136,9 @@ export const updateDraftInput = z.object({
   activation: z.enum(["active", "paused"]).optional(),
   campaignName: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
   adsetName: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+  /** conversão de negócio (só from_scratch) — o backend re-resolve o pixel da conta e bloqueia se
+   *  o objetivo exige pixel e a conta não tem (§13 mensagem amigável). */
+  objective: conversionGoalSchema.optional(),
   suffixLabel: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
   audience: z.enum(["reuse", "broad"]).optional(),
   creative: setDraftCreativeInput.optional(),

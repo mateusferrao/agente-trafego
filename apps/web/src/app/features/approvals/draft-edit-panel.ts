@@ -3,6 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { toast } from 'ngx-sonner';
 import { UiButton, UiInput } from '@ui';
 import { DraftsApiService } from '@core/api/drafts-api.service';
+import { CONVERSION_LABEL } from '@app/shared/conversion-label';
 import type { DraftApprovalOutput, UpdateDraftInput } from '@core/api/generated';
 
 /** Uma variação de copy no formulário (espelho editável do `DraftApprovalOutput.copyVariants`). */
@@ -56,6 +57,15 @@ type DraftCopy = NonNullable<DraftApprovalOutput['copyVariants']>[number];
         <label class="flex flex-col gap-1">
           <span class="text-xs font-medium text-ink">Nome do conjunto</span>
           <input appInput class="w-full" [(ngModel)]="adsetName" [placeholder]="derivedNamePlaceholder() + ' — conjunto'" />
+        </label>
+        <label class="flex flex-col gap-1">
+          <span class="text-xs font-medium text-ink">Objetivo</span>
+          <select appInput class="w-full" [(ngModel)]="objective">
+            @for (o of objectiveOptions; track o[0]) {
+              <option [value]="o[0]">{{ o[1] }}</option>
+            }
+          </select>
+          <span class="text-[11px] text-muted">Objetivos de venda/lead precisam do pixel configurado na conta.</span>
         </label>
       }
 
@@ -122,7 +132,10 @@ export class DraftEditPanel implements OnInit {
   protected readonly saving = signal(false);
   protected readonly campaignName = signal('');
   protected readonly adsetName = signal('');
+  protected readonly objective = signal('');
   protected readonly suffixLabel = signal('');
+  /** opções de objetivo (valor neutro + rótulo PT) — fonte única do frontend. */
+  protected readonly objectiveOptions = Object.entries(CONVERSION_LABEL);
   protected readonly budget = signal(0);
   protected readonly activation = signal<'active' | 'paused'>('paused');
   protected readonly copies = signal<CopyForm[]>([]);
@@ -140,6 +153,7 @@ export class DraftEditPanel implements OnInit {
     const d = this.draft();
     this.campaignName.set(d.campaignName ?? '');
     this.adsetName.set(d.adsetName ?? '');
+    this.objective.set(d.objective ?? '');
     this.suffixLabel.set(d.suffixLabel ?? '');
     this.budget.set(d.dailyBudgetMajor);
     this.activation.set(d.activation);
@@ -213,6 +227,7 @@ export class DraftEditPanel implements OnInit {
       const v = this.trimmed(this.adsetName());
       if (v) patch['adsetName'] = v;
     }
+    if (this.objective() && this.objective() !== (d.objective ?? '')) patch['objective'] = this.objective();
 
     const original = d.copyVariants ?? [];
     const edits = this.copies()
