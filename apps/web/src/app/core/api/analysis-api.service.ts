@@ -192,10 +192,10 @@ export class AnalysisApiService extends BaseApiService {
   }
 
   /** `POST /api/accounts/:id/agent/actions/:toolCallId/undo` — pede o undo (force = mesmo com drift). */
-  undoAction(accountId: string, toolCallId: string, force = false): Observable<OkOutput> {
-    return this.post<OkOutput, { force: boolean }>(
+  undoAction(accountId: string, toolCallId: string, force = false, mode?: 'pause' | 'archive'): Observable<OkOutput> {
+    return this.post<OkOutput, { force: boolean; mode?: 'pause' | 'archive' }>(
       ['/accounts', accountId, 'agent', 'actions', toolCallId, 'undo'],
-      { force },
+      { force, ...(mode ? { mode } : {}) },
     );
   }
 }

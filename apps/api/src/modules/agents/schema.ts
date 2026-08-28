@@ -353,6 +353,8 @@ export const appliedActionOutput = z.object({
 /** Body do undo — `force` = reverter mesmo com drift ("mesmo assim"). */
 export const undoActionInput = z.object({
   force: z.boolean().default(false),
+  /** reversão de CRIAÇÃO/escala (Slice 11): pausar (default) ou arquivar a árvore criada. */
+  mode: z.enum(["pause", "archive"]).optional(),
 });
 export type UndoActionInput = z.infer<typeof undoActionInput>;
 /**

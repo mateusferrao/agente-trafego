@@ -6,15 +6,20 @@
 import { and, eq, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { agentRuns, agents, agentToolCalls } from "@trafego/db";
+import { CREATION_TOOL_KEYS } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
 import { createAnalysisRepo } from "../analysis/repo.js";
 import { makeMetaToolExecutor, type RevertResult } from "../../executors/meta-tools.js";
 
+const CREATION_KEYS: ReadonlySet<string> = new Set(CREATION_TOOL_KEYS);
+
 export interface RevertByIdInput {
   readonly orgId: string;
   readonly toolCallId: string;
-  /** ignora o drift ("reverter mesmo assim"). */
+  /** ignora o drift ("reverter mesmo assim") — só reversão de AÇÃO (não de criação). */
   readonly force?: boolean;
+  /** reversão de CRIAÇÃO/escala: pausar (default) ou arquivar a árvore criada. */
+  readonly mode?: "pause" | "archive";
 }
 
 /** Reverte uma ação por id. Não-achado/conta indisponível → `reverted:false` + motivo. */
@@ -33,6 +38,7 @@ export async function revertActionById(deps: WorkerDeps, input: RevertByIdInput)
       id: agentToolCalls.id,
       agentId: sql<string | null>`coalesce(${agentToolCalls.agentId}, ${agentRuns.agentId})`,
       runId: agentToolCalls.runId,
+      toolKey: agentToolCalls.toolKey,
       beforeState: agentToolCalls.beforeState,
       args: agentToolCalls.args,
       result: agentToolCalls.result,
@@ -57,5 +63,9 @@ export async function revertActionById(deps: WorkerDeps, input: RevertByIdInput)
   const accessToken = ports.vault.decrypt(account.tokenCripto);
   const ref = { adAccountId: account.metaAdAccountId, accessToken };
 
+  // Criação/escala = algoritmo de teardown próprio (sem before_state/drift); ação = restore por drift.
+  if (CREATION_KEYS.has(tc.toolKey)) {
+    return executor.revertCreation({ orgId: input.orgId, account: ref, toolCall: tc, mode: input.mode ?? "pause" });
+  }
   return executor.revert({ orgId: input.orgId, account: ref, toolCall: tc, force: input.force ?? false });
 }

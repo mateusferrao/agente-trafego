@@ -625,8 +625,11 @@ export function createAgentsService(deps: AgentsDeps) {
     accountId: string,
     toolCallId: string,
     force = false,
+    mode?: "pause" | "archive",
   ): Promise<void> {
     const summary = await getOrCreateForAccount(orgId, accountId);
+    // dono via run→agente (análise) OU agentId direto (criação/escrita por chat, runId null) —
+    // `coalesce` p/ criações via chat (runId null) também listarem/reverterem (Slice 11.4).
     const [tc] = await deps.db
       .select({
         id: agentToolCalls.id,
@@ -635,8 +638,13 @@ export function createAgentsService(deps: AgentsDeps) {
         createdAt: agentToolCalls.createdAt,
       })
       .from(agentToolCalls)
-      .innerJoin(agentRuns, eq(agentToolCalls.runId, agentRuns.id))
-      .where(and(eq(agentToolCalls.id, toolCallId), eq(agentRuns.orgId, orgId), eq(agentRuns.agentId, summary.agentId)))
+      .leftJoin(agentRuns, eq(agentToolCalls.runId, agentRuns.id))
+      .where(
+        and(
+          eq(agentToolCalls.id, toolCallId),
+          eq(sql`coalesce(${agentToolCalls.agentId}, ${agentRuns.agentId})`, summary.agentId),
+        ),
+      )
       .limit(1);
     if (!tc) throw notFound("Ação não encontrada.");
     if (tc.toolKey === UNDO_TOOL_KEY || tc.toolKey === UNDO_BLOCKED_TOOL_KEY)
@@ -647,7 +655,7 @@ export function createAgentsService(deps: AgentsDeps) {
     await deps.scheduler.enqueue({
       queue: ACTION_UNDO_QUEUE,
       name: ACTION_UNDO_JOB,
-      payload: { orgId, adAccountId: accountId, toolCallId, force },
+      payload: { orgId, adAccountId: accountId, toolCallId, force, ...(mode ? { mode } : {}) },
     });
   }
 

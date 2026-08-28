@@ -5,8 +5,8 @@
 //  - registra usage_events (ação aplicada) via MeteringPort
 // A regra de negócio (guardrail, autonomia, conflito) já rodou ANTES daqui.
 
-import { eq } from "drizzle-orm";
-import { agentToolCalls, auditLog } from "@trafego/db";
+import { and, eq } from "drizzle-orm";
+import { agentToolCalls, auditLog, campaignDrafts } from "@trafego/db";
 import type { Action, ActionTarget } from "@trafego/shared/types";
 import type { AdAccountRef, MutationResult } from "@trafego/shared/ports";
 import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY, type OrgId, type RunId } from "@trafego/shared";
@@ -35,6 +35,8 @@ export interface RevertInput {
   readonly toolCall: RevertToolCall;
   /** ignora o drift (usuário confirmou "reverter mesmo assim"). */
   readonly force?: boolean;
+  /** reversão de CRIAÇÃO/escala: pausar (default) ou arquivar a árvore criada. */
+  readonly mode?: "pause" | "archive";
 }
 
 export interface RevertResult {
@@ -219,7 +221,97 @@ export function makeMetaToolExecutor(deps: WorkerDeps) {
     return { reverted: true };
   }
 
-  return { execute, revert };
+  /**
+   * Reversão de uma CRIAÇÃO/escala (Slice 11) — algoritmo DISTINTO do `revert` (não há
+   * `before_state`/drift: a árvore não existia antes). Desmonta pausando (default) ou arquivando
+   * a RAIZ (`args.target`, gravado no apply): como o `effective_status` da Meta é o AND da árvore,
+   * pausar/arquivar a campanha raiz já para toda a entrega dos filhos. Idempotente (`${id}:undo`);
+   * marca o rascunho `created → reverted`.
+   */
+  async function revertCreation(input: RevertInput): Promise<RevertResult> {
+    const { orgId, account, toolCall } = input;
+    const mode = input.mode ?? "pause";
+    const args = toolCall.args as { target?: ActionTarget; draftId?: string; dryRun?: boolean };
+    if (args?.dryRun) return { reverted: false, reason: "ação simulada — nada a reverter" };
+
+    const createdIds = (toolCall.result as { createdIds?: Record<string, unknown> } | null)?.createdIds ?? {};
+    const rootId = createdIds["campaignId"] ?? createdIds["copiedId"];
+    // alvo = raiz criada. `args.target` (Slice 9) é a fonte; fallback p/ tool_calls pré-Slice-9.
+    const target: ActionTarget | undefined =
+      args.target ?? (rootId ? { level: "campaign", id: String(rootId) } : undefined);
+    if (!target) return { reverted: false, reason: "não achei a campanha criada pra reverter" };
+
+    const undoKey = `${toolCall.id}:${UNDO_TOOL_KEY}`;
+    const [existing] = await db
+      .select({ id: agentToolCalls.id })
+      .from(agentToolCalls)
+      .where(eq(agentToolCalls.idempotencyKey, undoKey))
+      .limit(1);
+    if (existing) return { reverted: true, reason: "já revertido" };
+
+    const status = mode === "archive" ? "ARCHIVED" : "PAUSED";
+    const action: Action = {
+      id: `${toolCall.id}:revert`,
+      type: "set_status",
+      target,
+      params: { status },
+      source: "llm",
+      riskLevel: "high",
+      reason: mode === "archive" ? "arquivar a campanha criada (reversão)" : "pausar a campanha criada (reversão)",
+    };
+    let result: MutationResult;
+    try {
+      result = await ports.ads.mutate(account, action, { dryRun: false });
+    } catch (error) {
+      logger.error({ err: error, toolCallId: toolCall.id, mode }, "revertCreation:mutate falhou");
+      return { reverted: false, reason: mode === "archive" ? "não consegui arquivar a campanha na Meta" : "não consegui pausar a campanha na Meta" };
+    }
+
+    const targetLabel = entityKeyOf(target);
+    await db
+      .insert(agentToolCalls)
+      .values({
+        agentId: toolCall.agentId,
+        runId: toolCall.runId,
+        toolKey: UNDO_TOOL_KEY,
+        idempotencyKey: undoKey,
+        risk: "low",
+        args: { revertOf: toolCall.id, target, mode },
+        result: { ...result },
+        beforeState: result.before as Record<string, unknown>,
+      })
+      .onConflictDoNothing();
+
+    await db.insert(auditLog).values({
+      orgId,
+      actor: ACTOR_AGENT,
+      action: `meta.${UNDO_TOOL_KEY}`,
+      target: targetLabel,
+      metadata: { revertOf: toolCall.id, mode },
+      before: result.before as Record<string, unknown>,
+      after: result.after as Record<string, unknown>,
+    });
+
+    await ports.metering.record({
+      orgId: orgId as OrgId,
+      runId: toolCall.runId as RunId,
+      type: USAGE_TYPE_ACTION_APPLIED,
+      payload: { actionType: UNDO_TOOL_KEY, target: targetLabel, revertOf: toolCall.id, mode },
+    });
+
+    // transição created → reverted (some da lista de reversíveis; não repropõe).
+    if (args.draftId) {
+      await db
+        .update(campaignDrafts)
+        .set({ status: "reverted" })
+        .where(and(eq(campaignDrafts.id, args.draftId), eq(campaignDrafts.orgId, orgId)));
+    }
+
+    logger.info({ toolCallId: toolCall.id, mode }, "meta-tool:creation reverted");
+    return { reverted: true };
+  }
+
+  return { execute, revert, revertCreation };
 }
 
 export type MetaToolExecutor = ReturnType<typeof makeMetaToolExecutor>;

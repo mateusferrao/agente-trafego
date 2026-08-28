@@ -207,7 +207,17 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                           <span class="text-xs text-muted">Não revertida: {{ a.revertBlockedReason }}</span>
                         }
                       </span>
-                      @if (a.revertBlocked) {
+                      @if (isCreation(a)) {
+                        <span class="flex shrink-0 flex-col items-stretch gap-1 sm:items-end">
+                          <span class="flex gap-2">
+                            <button appButton variant="secondary" size="sm" [disabled]="reverting().has(a.toolCallId)" (click)="revert(a, false, 'pause')">
+                              {{ reverting().has(a.toolCallId) ? 'Pausando…' : 'Pausar a campanha criada' }}
+                            </button>
+                            <button appButton variant="ghost" size="sm" [disabled]="reverting().has(a.toolCallId)" (click)="archiveCreation(a)">Arquivar</button>
+                          </span>
+                          <span class="text-[11px] text-muted">Pausar mantém a campanha na conta (não gasta, dá pra reativar). Arquivar tira da lista ativa (recuperável).</span>
+                        </span>
+                      } @else if (a.revertBlocked) {
                         <button appButton variant="secondary" size="sm" [disabled]="reverting().has(a.toolCallId)" (click)="revert(a, true)">
                           {{ reverting().has(a.toolCallId) ? 'Revertendo…' : 'Reverter mesmo assim' }}
                         </button>
@@ -465,8 +475,30 @@ export class ApprovalsPage implements OnInit {
     });
   }
 
-  /** Reverter (por-conta, mesma rota da mini-surface). `force` = "mesmo assim" após drift. */
-  protected async revert(a: RevertibleActionOutput, force = false): Promise<void> {
+  /** Item reversível é uma CRIAÇÃO/escala? (teardown pausa/arquiva a árvore, não "reverte" estado). */
+  protected isCreation = (a: RevertibleActionOutput): boolean =>
+    a.type === 'create_campaign' || a.type === 'duplicate_scale';
+
+  /** Arquivar a campanha criada (destrutivo-leve — confirma antes). */
+  protected async archiveCreation(a: RevertibleActionOutput): Promise<void> {
+    const confirmed = await this.confirmDialog.confirm({
+      title: 'Arquivar a campanha criada?',
+      description: 'Arquivar tira a campanha da sua lista ativa na Meta. Ela não é apagada e dá pra recuperar, mas some da visão do dia a dia.',
+      confirmLabel: 'Arquivar',
+      tone: 'warning',
+    });
+    if (!confirmed) return;
+    this.runRevert(a, false, 'archive', 'Arquivando a campanha criada');
+  }
+
+  /** Reverter (por-conta, mesma rota da mini-surface). `force` = "mesmo assim" após drift;
+   *  `mode` = pausar/arquivar quando é uma criação/escala. */
+  protected async revert(a: RevertibleActionOutput, force = false, mode?: 'pause' | 'archive'): Promise<void> {
+    if (this.isCreation(a) && mode === 'pause') {
+      // pausar é seguro/reversível — sem diálogo, ação direta.
+      this.runRevert(a, false, 'pause', 'Pausando a campanha criada');
+      return;
+    }
     const description = force && a.revertBlockedReason ? `${a.revertBlockedReason}. ${UNDO_WARNING}` : UNDO_WARNING;
     const confirmed = await this.confirmDialog.confirm({
       title: force ? 'Reverter mesmo assim?' : 'Reverter ação?',
@@ -475,11 +507,15 @@ export class ApprovalsPage implements OnInit {
       tone: 'warning',
     });
     if (!confirmed) return;
+    this.runRevert(a, force, mode, 'Revertendo — a ação volta ao estado anterior');
+  }
+
+  private runRevert(a: RevertibleActionOutput, force: boolean, mode: 'pause' | 'archive' | undefined, successMsg: string): void {
     this.markReverting(a.toolCallId);
-    this.analysisApi.undoAction(a.accountId, a.toolCallId, force).subscribe({
+    this.analysisApi.undoAction(a.accountId, a.toolCallId, force, mode).subscribe({
       next: () => {
         this.removeRevertible(a.toolCallId);
-        toast.success('Revertendo — a ação volta ao estado anterior');
+        toast.success(successMsg);
       },
       error: () => this.clearReverting(a.toolCallId),
     });

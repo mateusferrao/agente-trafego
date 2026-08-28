@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray } from "drizzle-orm";
+import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import { adAccounts, agentRuns, agentToolCalls, agents, type Database } from "@trafego/db";
 import type { ApprovalId, OrgId } from "@trafego/shared/types";
 import type { Approval, ApprovalPort } from "@trafego/shared/ports";
@@ -116,10 +116,12 @@ export function createApprovalsService(deps: ApprovalsDeps) {
           accountName: adAccounts.name,
         })
         .from(agentToolCalls)
-        .innerJoin(agentRuns, eq(agentToolCalls.runId, agentRuns.id))
-        .innerJoin(agents, eq(agentRuns.agentId, agents.id))
+        // dono via run→agente (análise) OU agentId direto (criação/escrita por chat, runId null) —
+        // `coalesce` p/ criações via chat (runId null) também aparecerem nos reversíveis (Slice 11.4).
+        .leftJoin(agentRuns, eq(agentToolCalls.runId, agentRuns.id))
+        .innerJoin(agents, eq(sql`coalesce(${agentToolCalls.agentId}, ${agentRuns.agentId})`, agents.id))
         .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
-        .where(and(eq(agentRuns.orgId, orgId), gte(agentToolCalls.createdAt, since)));
+        .where(and(eq(agents.orgId, orgId), gte(agentToolCalls.createdAt, since)));
 
       const accountByToolCallId = new Map(rows.map((r) => [r.id, { accountId: r.accountId, accountName: r.accountName ?? r.accountId }]));
       const actions = computeAppliedActions(rows, deps.revertTtlDays, new Map());

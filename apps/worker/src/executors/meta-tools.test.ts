@@ -147,3 +147,74 @@ describe("makeMetaToolExecutor.revert", () => {
     expect(restoreEntityState).toHaveBeenCalled();
   });
 });
+
+describe("revertCreation (Slice 11 — teardown de criação/escala)", () => {
+  function makeCreationDeps(existing: unknown[] = []) {
+    const updates: Array<{ values: unknown }> = [];
+    const selectChain = {
+      from: () => selectChain,
+      where: () => selectChain,
+      limit: () => Promise.resolve(existing),
+    };
+    const db = {
+      select: () => selectChain,
+      insert: () => ({
+        values: () => ({
+          onConflictDoNothing: () => Promise.resolve(),
+          then: (onF: (v: unknown) => unknown) => Promise.resolve().then(onF),
+        }),
+      }),
+      update: () => ({ set: (values: unknown) => ({ where: () => { updates.push({ values }); return Promise.resolve(); } }) }),
+    };
+    const mutate = vi.fn(async () => mutation);
+    const record = vi.fn(async () => {});
+    const deps = {
+      db,
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      ports: { ads: { mutate }, metering: { record } },
+    } as unknown as WorkerDeps;
+    return { deps, updates, mutate };
+  }
+
+  const account = { adAccountId: "act1", accessToken: "t" };
+  const creationTc = {
+    id: "tc1",
+    agentId: "ag1",
+    runId: null,
+    beforeState: null,
+    args: { draftId: "d1", kind: "from_scratch", target: { level: "campaign", id: "C9" } },
+    result: { createdIds: { campaignId: "C9" } },
+  } as never;
+
+  it("pausa a RAIZ (set_status PAUSED) + marca o rascunho revertido", async () => {
+    const { deps, mutate, updates } = makeCreationDeps([]);
+    const res = await makeMetaToolExecutor(deps).revertCreation({ orgId: "org1", account, toolCall: creationTc, mode: "pause" });
+    expect(res.reverted).toBe(true);
+    const emitted = mutate.mock.calls[0]![1] as Action;
+    expect(emitted.type).toBe("set_status");
+    expect(emitted.params["status"]).toBe("PAUSED");
+    expect(emitted.target.id).toBe("C9");
+    expect(updates.length).toBe(1); // campaign_drafts → reverted
+  });
+
+  it("mode archive → set_status ARCHIVED", async () => {
+    const { deps, mutate } = makeCreationDeps([]);
+    await makeMetaToolExecutor(deps).revertCreation({ orgId: "org1", account, toolCall: creationTc, mode: "archive" });
+    expect((mutate.mock.calls[0]![1] as Action).params["status"]).toBe("ARCHIVED");
+  });
+
+  it("já revertido (undo existe) → reverted:true sem re-mutar", async () => {
+    const { deps, mutate } = makeCreationDeps([{ id: "undo1" }]);
+    const res = await makeMetaToolExecutor(deps).revertCreation({ orgId: "org1", account, toolCall: creationTc });
+    expect(res.reverted).toBe(true);
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it("dry-run → nada a reverter", async () => {
+    const { deps, mutate } = makeCreationDeps([]);
+    const dryTc = { ...(creationTc as object), args: { draftId: "d1", dryRun: true } } as never;
+    const res = await makeMetaToolExecutor(deps).revertCreation({ orgId: "org1", account, toolCall: dryTc });
+    expect(res.reverted).toBe(false);
+    expect(mutate).not.toHaveBeenCalled();
+  });
+});

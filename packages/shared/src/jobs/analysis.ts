@@ -80,6 +80,8 @@ export type ActionUndoPayload = {
   readonly toolCallId: string;
   /** ignora o re-check de drift ("reverter mesmo assim") — 5b. */
   readonly force?: boolean;
+  /** reversão de CRIAÇÃO/escala (Slice 11): pausar (default) ou arquivar a árvore criada. */
+  readonly mode?: "pause" | "archive";
 };
 
 /**

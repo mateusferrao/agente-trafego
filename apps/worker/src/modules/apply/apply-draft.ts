@@ -233,10 +233,18 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     ? undefined
     : row.kind === "duplicate"
       ? createdIds["copiedId"]
-        ? { level: pausedDraft.sourceRef?.level ?? "campaign", id: createdIds["copiedId"] as string }
+        ? {
+            level: pausedDraft.sourceRef?.level ?? "campaign",
+            id: createdIds["copiedId"] as string,
+            ...(pausedDraft.sourceRef?.name ? { name: pausedDraft.sourceRef.name } : {}),
+          }
         : undefined
       : createdIds["campaignId"]
-        ? { level: "campaign" as const, id: createdIds["campaignId"] as string }
+        ? {
+            level: "campaign" as const,
+            id: createdIds["campaignId"] as string,
+            ...(pausedDraft.spec.campaignName ? { name: pausedDraft.spec.campaignName } : {}),
+          }
         : undefined;
 
   await db

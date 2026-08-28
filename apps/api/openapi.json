@@ -6121,6 +6121,13 @@
           "force": {
             "type": "boolean",
             "default": false
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "pause",
+              "archive"
+            ]
           }
         }
       },
