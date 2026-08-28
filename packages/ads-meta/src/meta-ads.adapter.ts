@@ -329,6 +329,14 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     }
   }
 
+  async getVideoFrames(account: AdAccountRef, videoId: string): Promise<string[]> {
+    try {
+      return await this.creatives.videoFrames(account, videoId);
+    } catch (error) {
+      throw toAdsError(error);
+    }
+  }
+
   async mutate(account: AdAccountRef, action: Action, opts?: MutateOptions): Promise<MutationResult> {
     try {
       // gate de cooldown nos writes (parcial-rápido): cooldown ativo → não escreve.

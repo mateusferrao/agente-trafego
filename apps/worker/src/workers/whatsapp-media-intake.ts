@@ -15,6 +15,7 @@ import { Worker } from "bullmq";
 import {
   WHATSAPP_MEDIA_INTAKE_ATTEMPTS,
   WHATSAPP_MEDIA_INTAKE_QUEUE,
+  buildCreativeAnalyzeJob,
   buildCreativeVideoPollJob,
   type WhatsappMediaIntakePayload,
 } from "@trafego/shared";
@@ -143,10 +144,12 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
         return;
       }
 
-      const { metaImageHash } = await ingestCreativeImage(
+      const { assetId, metaImageHash } = await ingestCreativeImage(
         { db: d.db, storage: d.ports.storage, ads: d.ports.ads },
         ingestInput,
       );
+      // imagem `ready` → analisa a visão 1x (cache) pra biblioteca (mesmo pipeline do web).
+      await d.ports.scheduler.enqueue(buildCreativeAnalyzeJob({ orgId, adAccountId: adAccountUuid, assetId }));
       await d.sendToConversation(ref, NOTICE.saved(account.name), { split: true, quoteLastInbound: true });
       d.logger.debug({ conversationId, metaImageHash }, "intake:saved");
     } catch (err) {

@@ -41,3 +41,35 @@ export function buildCreativeVideoPollJob(payload: CreativeVideoPollPayload): Jo
     removeOnFail: true,
   };
 }
+
+// ─── Análise de VISÃO de criativo da biblioteca (upload) ──────────────────────────────
+// Cada upload é analisado UMA vez pela visão (reusa o resolver + o cache creative_vision_analyses,
+// os mesmos dos veiculados) → descrição fica disponível pro agente sem repetir custo. Imagem usa
+// nosso blob (data-url, zero call Meta); vídeo usa os frames da Meta (video_id). Enfileirado no
+// upload (imagem) ou quando o poll flipa o vídeo pra `ready`. Idempotente pelo cache do resolver.
+export const CREATIVE_ANALYZE_QUEUE = "creative-analyze";
+export const CREATIVE_ANALYZE_JOB = "analyze-creative";
+export const CREATIVE_ANALYZE_JOB_ATTEMPTS = 3;
+export const CREATIVE_ANALYZE_JOB_BACKOFF_MS = 5_000;
+
+export type CreativeAnalyzePayload = {
+  readonly orgId: string;
+  /** id INTERNO da conta (uuid) — o worker resolve o token via ela (só p/ vídeo). */
+  readonly adAccountId: string;
+  readonly assetId: string;
+};
+
+export function buildCreativeAnalyzeJob(payload: CreativeAnalyzePayload): JobSpec {
+  return {
+    queue: CREATIVE_ANALYZE_QUEUE,
+    name: CREATIVE_ANALYZE_JOB,
+    payload,
+    // idempotente por conteúdo no cache do resolver → 1 job por asset basta. (jobId não pode
+    // conter ':' — BullMQ rejeita; usa '-'.)
+    idempotencyKey: `creative-analyze-${payload.assetId}`,
+    attempts: CREATIVE_ANALYZE_JOB_ATTEMPTS,
+    backoffMs: CREATIVE_ANALYZE_JOB_BACKOFF_MS,
+    removeOnComplete: true,
+    removeOnFail: true,
+  };
+}

@@ -122,3 +122,18 @@ describe("MetaCreativesService.getCreatives", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 });
+
+describe("MetaCreativesService.videoFrames (visão da biblioteca)", () => {
+  it("devolve frames HD espaçados de um vídeo por id", async () => {
+    const svc = makeService();
+    stubBatch([{ thumbnails: { data: [{ uri: "f1", is_preferred: true }, { uri: "f2" }, { uri: "f3" }] } }]);
+    const frames = await svc.videoFrames(account, "VID1");
+    expect(frames.length).toBeGreaterThan(0);
+    expect(frames).toContain("f1");
+  });
+  it("vídeo sem thumbnails → []", async () => {
+    const svc = makeService();
+    stubBatch([{ thumbnails: { data: [] } }]);
+    expect(await svc.videoFrames(account, "VID2")).toEqual([]);
+  });
+});

@@ -17,6 +17,7 @@ import {
   APPROVAL_TTL_HOURS,
   BUDGET_MODE_INCREASE,
   DEFAULT_CURRENCY,
+  buildCreativeAnalyzeJob,
   buildCreativeVideoPollJob,
   toGuardrailConfig,
   type CampaignDraftSpec,
@@ -459,6 +460,8 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       }
 
       const img = await ingestCreativeImage({ db: deps.db, storage: deps.storage, ads: deps.adsPlatform }, common);
+      // imagem já `ready` → analisa a visão 1x (cache), pra biblioteca ter a descrição.
+      await deps.scheduler.enqueue(buildCreativeAnalyzeJob({ orgId, adAccountId: accountId, assetId: img.assetId }));
       return { assetId: img.assetId, format: "image", status: "ready", metaImageHash: img.metaImageHash, metaVideoId: null };
     },
   };

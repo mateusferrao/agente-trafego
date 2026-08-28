@@ -12,6 +12,7 @@ import type { Logger } from "pino";
 import {
   CREATIVE_VIDEO_POLL_MAX_ATTEMPTS,
   CREATIVE_VIDEO_POLL_QUEUE,
+  buildCreativeAnalyzeJob,
   buildCreativeVideoPollJob,
   type CreativeVideoPollPayload,
 } from "@trafego/shared";
@@ -84,6 +85,8 @@ export function startCreativeVideoPollWorker(deps: WorkerDeps, connection: Redis
 
       if (status === "ready") {
         await setStatus(p.assetId, p.orgId, "ready");
+        // vídeo pronto → analisa a visão 1x (frames Meta) + cacheia p/ a biblioteca.
+        await scheduler.enqueue(buildCreativeAnalyzeJob({ orgId: p.orgId, adAccountId: p.adAccountId, assetId: p.assetId }));
         logger.info({ assetId: p.assetId }, "creative-video-poll:pronto");
         return;
       }

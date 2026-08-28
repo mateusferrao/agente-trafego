@@ -174,6 +174,8 @@ export interface AdsPlatformPort {
   listEntities(account: AdAccountRef, level: EntityLevel): Promise<AdEntity[]>;
   getInsights(query: InsightsQuery): Promise<InsightRow[]>;
   getCreatives(account: AdAccountRef, adIds: readonly string[]): Promise<Creative[]>;
+  /** Frames HD (URLs) de um vídeo por `video_id` — p/ a visão de criativo da biblioteca. */
+  getVideoFrames(account: AdAccountRef, videoId: string): Promise<string[]>;
   /** Aplica uma mutação idempotente; retorna before/after p/ rollback. `dryRun`
    *  (opcional) só simula (lê + computa o after, não escreve). */
   mutate(account: AdAccountRef, action: Action, opts?: MutateOptions): Promise<MutationResult>;

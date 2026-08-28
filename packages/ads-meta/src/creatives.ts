@@ -72,6 +72,13 @@ export class MetaCreativesService {
     this.framesPerVideo = Math.max(1, framesPerVideo);
   }
 
+  /** Frames HD de UM vídeo (por video_id) — reuso da biblioteca p/ a visão de criativo. */
+  async videoFrames(account: AdAccountRef, videoId: string): Promise<string[]> {
+    const accountId = normalizeAdAccountId(account.adAccountId);
+    const byVideo = await this.fetchVideoFrames(account, accountId, [videoId]);
+    return byVideo.get(videoId) ?? [];
+  }
+
   /** Resolve os criativos dos ads via Batch API (1 sub-GET por ad, ≤50 por HTTP). */
   async getCreatives(account: AdAccountRef, adIds: readonly string[]): Promise<Creative[]> {
     if (adIds.length === 0) return [];
