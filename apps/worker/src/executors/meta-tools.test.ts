@@ -166,7 +166,7 @@ describe("revertCreation (Slice 11 — teardown de criação/escala)", () => {
       }),
       update: () => ({ set: (values: unknown) => ({ where: () => { updates.push({ values }); return Promise.resolve(); } }) }),
     };
-    const mutate = vi.fn(async () => mutation);
+    const mutate = vi.fn(async (_account: unknown, _action: Action) => mutation);
     const record = vi.fn(async () => {});
     const deps = {
       db,
@@ -190,7 +190,7 @@ describe("revertCreation (Slice 11 — teardown de criação/escala)", () => {
     const { deps, mutate, updates } = makeCreationDeps([]);
     const res = await makeMetaToolExecutor(deps).revertCreation({ orgId: "org1", account, toolCall: creationTc, mode: "pause" });
     expect(res.reverted).toBe(true);
-    const emitted = mutate.mock.calls[0]![1] as Action;
+    const emitted = mutate.mock.calls[0]![1];
     expect(emitted.type).toBe("set_status");
     expect(emitted.params["status"]).toBe("PAUSED");
     expect(emitted.target.id).toBe("C9");
@@ -200,7 +200,7 @@ describe("revertCreation (Slice 11 — teardown de criação/escala)", () => {
   it("mode archive → set_status ARCHIVED", async () => {
     const { deps, mutate } = makeCreationDeps([]);
     await makeMetaToolExecutor(deps).revertCreation({ orgId: "org1", account, toolCall: creationTc, mode: "archive" });
-    expect((mutate.mock.calls[0]![1] as Action).params["status"]).toBe("ARCHIVED");
+    expect((mutate.mock.calls[0]![1]).params["status"]).toBe("ARCHIVED");
   });
 
   it("já revertido (undo existe) → reverted:true sem re-mutar", async () => {
