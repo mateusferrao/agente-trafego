@@ -28,6 +28,7 @@ function stubGraph(opts: {
   creativeByAd: Record<string, Record<string, unknown>>;
   pageWhatsapp?: string;
   campaignName?: string;
+  adsetPromotedWhatsapp?: string;
 }): void {
   vi.stubGlobal(
     "fetch",
@@ -46,6 +47,8 @@ function stubGraph(opts: {
         });
         return json(batch);
       }
+      if (url.includes("/adsets"))
+        return json({ data: opts.adsetPromotedWhatsapp ? [{ promoted_object: { whatsapp_phone_number: opts.adsetPromotedWhatsapp } }] : [] });
       if (url.includes("/ads?") || url.endsWith("/ads")) return json({ data: opts.adIds.map((id) => ({ id })) });
       if (url.includes("fields=whatsapp_number")) return json({ whatsapp_number: opts.pageWhatsapp ?? "" });
       if (url.includes("fields=name")) return json({ name: opts.campaignName ?? "" });
@@ -63,6 +66,18 @@ function makeService(): MetaWhatsappDestinationService {
 }
 
 describe("MetaWhatsappDestinationService.resolve", () => {
+  it("CTWA: número no promoted_object do conjunto → meta_promoted_object (1º tier, autoritativo)", async () => {
+    // caso REAL (prod): CTA vem genérico (api.whatsapp.com/send, sem número) e a página não expõe
+    // whatsapp_number — o destino está em adset.promoted_object.whatsapp_phone_number.
+    stubGraph({
+      adIds: ["AD1"],
+      adsetPromotedWhatsapp: "5531953491398",
+      creativeByAd: { AD1: { object_story_spec: { video_data: { call_to_action: { type: "WHATSAPP_MESSAGE", value: { link: "https://api.whatsapp.com/send" } } } } } },
+      campaignName: "[1398 CAPTACAO] ESCALA - BH home-only",
+    });
+    expect(await makeService().resolve(account, "CMP1")).toEqual({ number: "5531953491398", source: "meta_promoted_object" });
+  });
+
   it("CTA de WhatsApp no criativo → meta_cta (autoritativo)", async () => {
     stubGraph({
       adIds: ["AD1"],

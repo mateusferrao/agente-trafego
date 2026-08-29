@@ -31,8 +31,15 @@ export class MetaWhatsappDestinationService {
 
   async resolve(account: AdAccountRef, campaignId: string): Promise<WhatsappDestination> {
     const accountId = normalizeAdAccountId(account.adAccountId);
-    // CTA dos criativos (autoritativo). Falha (rate-limit/cooldown) NÃO derruba a resolução:
-    // cai pros tiers seguintes (página → nome), que são baratos e igualmente honestos.
+    // 1) promoted_object do CONJUNTO (destino CTWA REAL): em campanha click-to-WhatsApp o número NÃO
+    // vai no link do CTA (vem genérico `api.whatsapp.com/send`) nem no `page.whatsapp_number` (vazio)
+    // — mora em `adset.promoted_object.whatsapp_phone_number` (destination_type=WHATSAPP). É a fonte
+    // autoritativa; 1 GET/campanha. Falha → cai pros tiers seguintes.
+    const fromPromoted = await this.promotedObjectWhatsapp(account, campaignId);
+    if (fromPromoted) return { number: fromPromoted, source: "meta_promoted_object" };
+
+    // CTA dos criativos (quando o número está no wa.me). Falha (rate-limit/cooldown) NÃO derruba a
+    // resolução: cai pros tiers seguintes (página → nome), que são baratos e igualmente honestos.
     let creatives: Awaited<ReturnType<MetaCreativesService["getCreatives"]>> = [];
     try {
       const adIds = await this.campaignAdIds(accountId, account.accessToken, campaignId);
@@ -55,6 +62,35 @@ export class MetaWhatsappDestinationService {
     if (fromName) return { number: fromName, source: "campaign_name", ...(name ? { entityName: name } : {}) };
 
     return { number: null, source: "none" };
+  }
+
+  /**
+   * Número CTWA do `promoted_object.whatsapp_phone_number` dos conjuntos da campanha (destino REAL
+   * de campanha click-to-WhatsApp). 1 GET/campanha; primeiro conjunto com número vence. Qualquer
+   * falha → null (cai pros tiers seguintes). Escopado à campanha — nunca de outra entidade.
+   */
+  private async promotedObjectWhatsapp(account: AdAccountRef, campaignId: string): Promise<string | null> {
+    try {
+      const accountId = normalizeAdAccountId(account.adAccountId);
+      const node = await callWithGovernor(
+        accountId,
+        () =>
+          this.client.request<{ data?: ReadonlyArray<{ promoted_object?: { whatsapp_phone_number?: string } }> }>({
+            method: "GET",
+            path: `${campaignId}/adsets`,
+            accessToken: account.accessToken,
+            params: { fields: "promoted_object", limit: MetaWhatsappDestinationService.AD_SCAN_LIMIT },
+          }),
+        { governor: this.governor },
+      );
+      for (const adset of node.data ?? []) {
+        const digits = (adset.promoted_object?.whatsapp_phone_number ?? "").replace(/\D+/g, "");
+        if (digits.length > 0) return digits;
+      }
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   /** ids dos anúncios da campanha (1 página; só precisamos de um com CTA WhatsApp). */

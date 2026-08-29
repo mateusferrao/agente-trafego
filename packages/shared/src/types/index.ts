@@ -138,9 +138,10 @@ export interface Creative {
 }
 
 // ─── Destino de WhatsApp (Fatia 7, genérico) ─────────────────────────────
-// De onde veio o número (rótulo de honestidade): CTA do criativo (autoritativo) →
-// Página conectada → nome da campanha (convenção do cliente, pede confirmação) → nenhum.
-export const WHATSAPP_SOURCES = ["meta_cta", "meta_page", "campaign_name", "none"] as const;
+// De onde veio o número (rótulo de honestidade): promoted_object do conjunto (destino CTWA REAL,
+// autoritativo) → CTA do criativo (quando o número está no wa.me) → Página conectada → nome da
+// campanha (convenção do cliente, pede confirmação) → nenhum.
+export const WHATSAPP_SOURCES = ["meta_promoted_object", "meta_cta", "meta_page", "campaign_name", "none"] as const;
 export type WhatsappSource = (typeof WHATSAPP_SOURCES)[number];
 
 /** Número de WhatsApp de destino de uma campanha + a origem de onde foi resolvido. */

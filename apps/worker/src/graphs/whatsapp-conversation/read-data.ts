@@ -1068,9 +1068,9 @@ export async function listCampaignsLive(
 
 /**
  * Renderiza o número + origem de forma HONESTA e DETERMINÍSTICA (emitido verbatim pela
- * casca — o LLM não digita os dígitos, então não pode misatribuir). `meta_cta`/`meta_page`
- * = confiante; `campaign_name` = pede confirmação (o nome não é autoritativo); `none` =
- * não consta + próximo passo.
+ * casca — o LLM não digita os dígitos, então não pode misatribuir). `meta_promoted_object`/
+ * `meta_cta`/`meta_page` = confiante; `campaign_name` = pede confirmação (o nome não é
+ * autoritativo); `none` = não consta + próximo passo.
  */
 export function renderWhatsappNumber(dest: WhatsappDestination, campaignLabel: string): string {
   const alvo = `da campanha *${campaignLabel}*`;

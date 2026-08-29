@@ -748,6 +748,21 @@ telefone, listar+usar custom audiences da BM, e **cópia fiel de campanha** via 
   `estimate_dau` (que veio ausente) → a nota usa a faixa mensal; custom audiences pequenas/privadas
   voltam achatadas no piso de 1000 (ou `ready:false`) → tratadas como não-informativas → fallback
   por-público. Fast-follow: estimar também sem público indicado (targeting da fonte/amplo).
+- ✅ **Número CTWA via `promoted_object` do conjunto — ENTREGUE (2026-08-29, achado em prod real).**
+  Em campanha click-to-WhatsApp o número NÃO fica no CTA do criativo (o link vem genérico
+  `api.whatsapp.com/send`) nem em `page.whatsapp_number` (vazio) — mora em
+  `adset.promoted_object.whatsapp_phone_number` (destination_type=WHATSAPP). `getWhatsappDestination`
+  ganhou o tier `meta_promoted_object` como **1º** (autoritativo, 1 GET/campanha). Diagnosticado
+  decriptando o token de prod e batendo na Graph: token TEM escopo (`business_management`/
+  `whatsapp_business_management`) — a hipótese de escopo estava errada; o furo era não ler o
+  promoted_object. Verificado ao vivo: [1398] → `5531953491398` (source meta_promoted_object). O E2E
+  anterior não pegou porque rodou na BM Automato (sem cenário CTWA).
+  - **Fast-follow: cachear o número CTWA no run.** O run persiste whatsapp só de `meta_cta`/
+    `campaign_name` (`ad_creatives`) → pra CTWA fica vazio e o chat sempre resolve ao vivo (1 GET/
+    campanha). Threading `adset.promoted_object.whatsapp_phone_number` pelo listEntities → AdEntity →
+    persistência por-ad daria DB-first. Enquanto não vem, o live cobre (correto, só não-cacheado).
+  - **`meta_page` (número da Página) fica menos crítico** — o promoted_object cobre CTWA; a camada
+    de Página segue pro caso raro de número conectado à Página fora de CTWA.
 - **Guard de contagens inteiras no chat** — o backstop soft cobre dinheiro+% (baixo falso-positivo);
   contagens inteiras soltas em prosa têm alto falso-positivo (datas/ids/ordinais) → adiado até haver
   normalização/tuning que não gere ruído.
