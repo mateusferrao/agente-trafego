@@ -6,7 +6,7 @@
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { adAccounts, adCreatives, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { applyDraftEdit, goalNounPt, planScaleMove, resolveCreativeSourceStrategy, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { applyDraftEdit, describeDeliveryEstimate, goalNounPt, planScaleMove, resolveCreativeSourceStrategy, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
 import { loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
   ACTION_PARAM_MODE,
@@ -223,7 +223,9 @@ async function loadAccountAudiences(deps: WorkerDeps, ctx: DraftProposalContext,
   return live;
 }
 
-type AudiencePrep = { readonly kind: "ok"; readonly includeIds: string[]; readonly excludeIds: string[]; readonly notes: string[] } | { readonly kind: "blocked"; readonly reason: string };
+type AudiencePrep =
+  | { readonly kind: "ok"; readonly includeIds: string[]; readonly excludeIds: string[]; readonly notes: string[]; readonly sizeWarnings: string[] }
+  | { readonly kind: "blocked"; readonly reason: string };
 
 /**
  * Resolve os públicos pedidos (por NOME/descrição) → ids, de forma DETERMINÍSTICA (mesmo
@@ -238,7 +240,7 @@ async function prepareAudiences(
   includeQueries: readonly string[],
   excludeQueries: readonly string[],
 ): Promise<AudiencePrep> {
-  if (includeQueries.length === 0 && excludeQueries.length === 0) return { kind: "ok", includeIds: [], excludeIds: [], notes: [] };
+  if (includeQueries.length === 0 && excludeQueries.length === 0) return { kind: "ok", includeIds: [], excludeIds: [], notes: [], sizeWarnings: [] };
   const audiences = await loadAccountAudiences(deps, ctx, ref);
   if (audiences.length === 0) return { kind: "blocked", reason: "não achei públicos salvos nessa conta — confere no Gerenciador ou rode uma análise que eu cacheio os públicos" };
   const byId = new Map(audiences.map((a) => [a.id, a]));
@@ -275,14 +277,37 @@ async function prepareAudiences(
       notes.push(`Já *sugeri excluir* quem parece ter convertido (${names}) — se quiser manter, é só falar.`);
     }
   }
-  // Gap 3: público de inclusão pequeno demais → pode não entregar.
+  // Gap 3: público de inclusão pequeno demais → pode não entregar. FALLBACK por-público (o
+  // sinal combinado do delivery_estimate, quando pronto, é superior e o substitui no eco).
+  const sizeWarnings: string[] = [];
   for (const id of includeIds) {
     const a = byId.get(id);
     if (a?.approximateCount != null && a.approximateCount < MIN_DELIVERABLE_AUDIENCE) {
-      notes.push(`⚠️ o público *${a.name}* é pequeno (~${a.approximateCount} pessoas) — pode entregar pouco.`);
+      sizeWarnings.push(`⚠️ o público *${a.name}* é pequeno (~${a.approximateCount} pessoas) — pode entregar pouco.`);
     }
   }
-  return { kind: "ok", includeIds, excludeIds, notes };
+  return { kind: "ok", includeIds, excludeIds, notes, sizeWarnings };
+}
+
+/**
+ * Estima o alcance do targeting COMBINADO ao vivo (Fatia 7 — fast-follow) → nota pro eco. Best-effort:
+ * qualquer erro/indisponibilidade da plataforma vira `null` e o caller degrada pro sinal por-público
+ * (`sizeWarnings`). NÃO cacheável no run: depende do público/exclusões escolhidos no chat. Chamado só
+ * quando o dono indicou público (alcance incerto — onde a estimativa agrega valor).
+ */
+async function reachNoteFor(
+  deps: WorkerDeps,
+  ref: AdAccountRef,
+  targeting: TargetingSpec,
+  goal: ConversionGoal,
+  pixelId?: string,
+): Promise<string | null> {
+  try {
+    const estimate = await deps.ports.ads.getDeliveryEstimate(ref, { targeting, goal, ...(pixelId ? { pixelId } : {}) });
+    return describeDeliveryEstimate(estimate);
+  } catch {
+    return null; // estimativa é enriquecimento, nunca bloqueia a proposta
+  }
 }
 
 /** Escalar o melhor vencedor (curado do último run). Raise = ação; duplicate = rascunho. */
@@ -977,6 +1002,11 @@ export async function proposeCreateCampaign(
     `Gasto novo: ${budgetPhrase} · Página: ${defaults.pageId}${defaults.pixelId ? ` · Pixel: ${defaults.pixelId}` : ""} · ${activationPhrase("active")}.`,
   );
   for (const n of aud.notes) lines.push(n);
+  // alcance combinado (delivery_estimate ao vivo) quando o dono indicou público; superior ao
+  // por-público → substitui o `sizeWarnings`, que fica de fallback quando a estimativa não vem.
+  const reachNote = hasAudience ? await reachNoteFor(deps, ac.ref, targeting, goal, defaults.pixelId) : null;
+  if (reachNote) lines.push(reachNote);
+  else for (const w of aud.sizeWarnings) lines.push(w);
   lines.push(`Confirma? (você pode trocar o criativo no site antes de aprovar)`);
   return { kind: "draft", echo: joinBalloons(lines), approvalId, draftId };
 }
@@ -1148,12 +1178,17 @@ export async function proposeCopyCampaign(
   const budgetLine = sourceIsLifetime
     ? `• *Orçamento:* ${structure.budgetMode.toUpperCase()} · ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia (a original usa orçamento vitalício; comecei com um diário seguro — ajuste se quiser)`
     : `• *Orçamento:* ${structure.budgetMode.toUpperCase()} · ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia`;
+  // alcance combinado (delivery_estimate ao vivo) só quando o dono trocou o público (senão o
+  // targeting é o mesmo da base, alcance já conhecido). Superior ao por-público (`sizeWarnings`).
+  const reachNote = hasAudience ? await reachNoteFor(deps, ac.ref, targeting, goal, structure.pixelId) : null;
+  const reachLines = reachNote ? [reachNote] : aud.sizeWarnings;
   const echo = [
     `Vou *copiar a estrutura* de "${baseName}" numa campanha nova:`,
     budgetLine,
     `• *Anúncios:* ${structure.creativeRefs.length} da original, reusados (mantém o criativo e o destino/WhatsApp)${audienceLine}`,
     `• *Objetivo:* ${goalNounPt(goal)} · ${activationPhrase("paused")}.`,
     ...aud.notes,
+    ...reachLines,
     `Confirma? (dá pra ajustar orçamento/público antes)`,
   ].join("\n");
   return { kind: "draft", echo, approvalId, draftId };

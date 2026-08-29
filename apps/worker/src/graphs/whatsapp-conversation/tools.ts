@@ -736,7 +736,7 @@ export async function buildCapabilitiesText(
       `🚀 Também ${abilities.join(" e ")}. Depois de eu propor, você ajusta por aqui o que é leve (budget, ativar/pausar, nº de variações, público, nome, regerar a copy) — crio/escalo/copio sempre PAUSADO (a Meta revisa antes) e só ATIVO de verdade com um 2º OK seu, separado. Pra TROCAR o criativo ou editar o TEXTO da copy, é no painel "Editar" do rascunho no site (te passo o link).`,
     );
     if (canCreate) {
-      parts.push("🔢 Números que eu uso vêm sempre da conta/ferramenta — número de WhatsApp de destino eu confirmo pela campanha certa (nunca de outra), e público eu pego dos públicos reais da sua conta (não invento).");
+      parts.push("🔢 Números que eu uso vêm sempre da conta/ferramenta — número de WhatsApp de destino eu confirmo pela campanha certa (nunca de outra), e público eu pego dos públicos reais da sua conta (não invento). Quando você escolhe um público, eu ainda te digo o alcance estimado dele (pra você saber se entrega bem).");
     }
   } else {
     parts.push("🚀 Criar, copiar ou escalar campanha: hoje está desligado nas ações permitidas — dá pra liberar nas configurações (pelo site).");

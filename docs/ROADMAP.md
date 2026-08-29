@@ -161,13 +161,13 @@ auto-config + reply-context). **Nenhuma escrita nova na Meta** entrou nesta fati
 - ✅ **[ALTO] Quantificar desperdício + 80/20 — ENTREGUE (Bloco 2, S1.5/S1.8).** `computeWasteReport` (`wastedSpend` = só zumbis + Pareto por base de conversão + `annotateFreedSpend` na pausa), no brief/`metrics_snapshot`, card na UI + widget cross-conta no Painel; o redator lidera pelo money-shot.
 - **[ALTO] Transcrição de áudio de criativo** — segue **bloqueada**: criativos da Steticos são vídeo antes/depois **+ fala**; frames HD não capturam o gancho FALADO. Depende da biblioteca de criativos da Fatia 7 (cliente sobe o vídeo).
 - ✅ **[MÉDIO] Faixa de custo cold-start sensível a ticket/vertical — RESOLVIDO (pivô).** Deixou de ser hardcoded: as faixas vêm da referência de mercado configurável (org + override por agente, currency-aware). Vazio = não injeta faixa.
-- ✅ **[MÉDIO] Frequência por estágio — ENTREGUE (Bloco 2, S1.1/S1.2).** `AudienceProfile` (sync `targeting`, sem chamadas extras) → `frequencyCapByStage` (prospecção ~2,5 / remarketing ~8). Classificação frio×quente por custom-audience de inclusão + nome do público. *Fast-follow: resolver `subtype` de cada audience + tamanho via `delivery_estimate` p/ lookalike×retarget cirúrgico.*
+- ✅ **[MÉDIO] Frequência por estágio — ENTREGUE (Bloco 2, S1.1/S1.2).** `AudienceProfile` (sync `targeting`, sem chamadas extras) → `frequencyCapByStage` (prospecção ~2,5 / remarketing ~8). Classificação frio×quente por custom-audience de inclusão + nome do público. *Fast-follow: resolver `subtype` de cada audience p/ lookalike×retarget cirúrgico (tamanho via `delivery_estimate` ENTREGUE na Fatia 7, 2026-08-29).*
 - ✅ **[MÉDIO] Não matar em learning — ENTREGUE (Bloco 2, S1.4).** `guardKillWithoutMaturity` (pausar→investigar em learning, LLM-origin; playbook/guardrail/kill-switch passam — não cega o Vigia Intensivo).
 - ✅ **[MÉDIO] Decomposição de criativo `body` + `proof_strength` — ENTREGUE (Bloco 2, S1.6).** Visão decompõe corpo + força de prova (weak/medium/strong); descritivo, não altera tier/score. Bump `CREATIVE_VISION_ANALYZER_VERSION`→3.
 - **[BAIXO] Plano sequenciado + "monitorar no próximo período"** no prompt (squad analyze-performance).
 
 **Fast-follows do Bloco 2 (qualidade) — registrados:**
-- **Resolver público (subtype + tamanho via `delivery_estimate`)** — hoje frio×quente sai do nome do público (sem chamadas extras); resolver o `subtype` de cada custom audience + o tamanho estimado dá precisão cirúrgica de lookalike×retargeting. Evolução do `AudienceProfile` (S1.1).
+- **Resolver público — `subtype`** (o *tamanho* via `delivery_estimate` foi ENTREGUE, ver Fatia 7 2026-08-29): hoje frio×quente sai do nome do público (sem chamadas extras); resolver o `subtype` de cada custom audience daria precisão cirúrgica de lookalike×retargeting. Evolução do `AudienceProfile` (S1.1).
 - **Superfície de criativo no web (body/proofStrength/decomposição)** — a visão já decompõe (hook/angle/format/cta/body/proofStrength), mas não há tela de criativo hoje; quando houver (casa com a biblioteca da Fatia 7), renderizar a decomposição.
 - **Estágio de público na visão AO VIVO da conta** — hoje o `stage` só aparece nos cartões congelados do run (`RunCampaignCard`); a visão ao vivo lê `entity_analyses`, que não congela público → exige migração p/ persistir o estágio por entidade.
 - **Desperdício cross-conta multi-moeda** — o total do widget do Painel soma valores em BRL (MVP BR-only); por moeda quando entrar conta não-BRL. (Mesma raiz: o `annotateFreedSpend`/mensagem hardcodam `R$`; derivar da moeda da conta.)
@@ -734,7 +734,17 @@ sessão entrega: resolução honesta do número de WhatsApp (`call_to_action.val
 nome-da-campanha normalizado, sempre com origem; cache em `ad_creatives`), desambiguação determinística
 de campanha com âncora de id (`resolveNamedMatch`), backstop soft de grounding + checagem estrutural de
 telefone, listar+usar custom audiences da BM, e **cópia fiel de campanha** via draft parametrizado
-(reusa `creative_id` da fonte por referência; CBO/ABO; para-e-explica na troca de objetivo). Adiado:
+(reusa `creative_id` da fonte por referência; CBO/ABO; para-e-explica na troca de objetivo).
+- ✅ **Alcance combinado do público via `delivery_estimate` — ENTREGUE (2026-08-29).** Antes o único
+  sinal de tamanho era o `approximateCount` por-público (ignora exclusões + combinação + geo/idade).
+  Agora, quando o dono indica público (criar-do-zero OU cópia), o eco traz o alcance REAL do targeting
+  combinado: novo `AdsPlatformPort.getDeliveryEstimate` (adapter reusa a MESMA montagem de
+  targeting/optimization_goal do `createAdSet` → `GET /act_x/delivery_estimate` v26, sob governor,
+  traduz `estimate_dau`/`estimate_mau`/`-1` p/ neutro) + núcleo puro `describeDeliveryEstimate` (nota
+  informativa vs ⚠️ "pode entregar pouco", formatação PT). **Ao vivo no momento da proposta — NÃO
+  cacheável no run** (depende do público/exclusões escolhidos no chat, que não existem no run).
+  Best-effort: erro/indisponível → degrada pro sinal por-público (`sizeWarnings`). Fast-follow: usar
+  `estimate_mau_lower/upper_bound` (faixa mensal) além do DAU; estimar também sem público indicado.
 - **Guard de contagens inteiras no chat** — o backstop soft cobre dinheiro+% (baixo falso-positivo);
   contagens inteiras soltas em prosa têm alto falso-positivo (datas/ids/ordinais) → adiado até haver
   normalização/tuning que não gere ruído.
