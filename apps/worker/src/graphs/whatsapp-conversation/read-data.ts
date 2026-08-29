@@ -9,7 +9,7 @@
 // métrica carregam `asOf` (frescor); a ausência de dado vira um sinal explícito
 // (`hasData:false` + nota) p/ o agente recusar com clareza.
 
-import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { adAccounts, adCreatives, agentRuns, agentToolCalls, agents, campaignDrafts, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
@@ -29,7 +29,7 @@ import {
 import { describeCreatedDraft } from "../../modules/apply/draft-summary.js";
 import type { ActivationApproval, Approval, ApprovalPort } from "@trafego/shared/ports";
 import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY } from "@trafego/shared";
-import type { CampaignDraftSpec, EntityLevel, InsightMetrics, OrgId, UnitAnalysis } from "@trafego/shared";
+import type { CampaignDraftSpec, EntityLevel, InsightMetrics, OrgId, UnitAnalysis, WhatsappDestination } from "@trafego/shared";
 import type { StoredInsightMetrics } from "@trafego/shared/types";
 import type { WorkerDeps } from "../../composition.js";
 
@@ -818,6 +818,59 @@ async function refreshCreativeCopiesLive(deps: WorkerDeps, ctx: ReadToolContext)
     };
   });
   await repo.saveAdCreativeCopies(ctx.orgId, ctx.adAccountId, rows);
+}
+
+/**
+ * Resolve o número de WhatsApp de destino de UMA campanha (Fatia 7) — DB-first (cache do
+ * run em `ad_creatives`, escopado ao `campaign_id`), Meta ao vivo no fallback. Escopado à
+ * campanha pedida: nunca devolve o número de outra entidade (a raiz do bug reportado).
+ */
+export async function resolveWhatsappNumber(
+  deps: WorkerDeps,
+  ctx: ReadToolContext,
+  campaignId: string,
+): Promise<WhatsappDestination> {
+  const repo = createAnalysisRepo(deps.db);
+  const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
+  if (!account) return { number: null, source: "none" };
+
+  const cached = await deps.db
+    .select({ number: adCreatives.whatsappNumber, source: adCreatives.whatsappSource })
+    .from(adCreatives)
+    .where(
+      and(
+        eq(adCreatives.orgId, ctx.orgId as OrgId),
+        eq(adCreatives.adAccountId, ctx.adAccountId),
+        eq(adCreatives.campaignId, campaignId),
+        isNotNull(adCreatives.whatsappNumber),
+      ),
+    );
+  // preferência: CTA autoritativo (meta_cta) > qualquer outro cacheado.
+  const cta = cached.find((r) => r.source === "meta_cta" && r.number);
+  if (cta?.number) return { number: cta.number, source: "meta_cta" };
+  const other = cached.find((r) => r.number);
+  if (other?.number) return { number: other.number, source: other.source ?? "campaign_name" };
+
+  // fallback ao vivo (cobre página + campanhas fora do último run).
+  const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
+  return deps.ports.ads.getWhatsappDestination(ref, campaignId);
+}
+
+/**
+ * Renderiza o número + origem de forma HONESTA e DETERMINÍSTICA (emitido verbatim pela
+ * casca — o LLM não digita os dígitos, então não pode misatribuir). `meta_cta`/`meta_page`
+ * = confiante; `campaign_name` = pede confirmação (o nome não é autoritativo); `none` =
+ * não consta + próximo passo.
+ */
+export function renderWhatsappNumber(dest: WhatsappDestination, campaignLabel: string): string {
+  const alvo = `da campanha *${campaignLabel}*`;
+  if (dest.source === "none" || !dest.number) {
+    return `Não achei o número de WhatsApp de destino ${alvo} nos dados que tenho. Dá pra conferir direto no Gerenciador de Anúncios.`;
+  }
+  if (dest.source === "campaign_name") {
+    return `No *nome* ${alvo} aparece o número *${dest.number}* — mas isso vem do nome da campanha, não do destino configurado, então não é 100% confiável. Confirma que é esse mesmo?`;
+  }
+  return `O WhatsApp de destino ${alvo} é *${dest.number}*.`;
 }
 
 /**

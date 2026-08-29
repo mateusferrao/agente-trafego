@@ -593,6 +593,22 @@ export function makeConversationTools(
     },
   );
 
+  // NÚMERO DE WHATSAPP (Fatia 7): escopado ao campaignId. A resposta é RENDERIZADA VERBATIM
+  // pela casca (nó confirm) — o LLM não digita os dígitos, então não pode atribuir o número
+  // de outra campanha (a raiz do bug). O fn abaixo não é usado (o confirm resolve + rende).
+  const getWhatsappNumber = tool(
+    async () => "whatsapp_number",
+    {
+      name: WHATSAPP_NUMBER_TOOL_NAME,
+      description:
+        "Descobre o número de WhatsApp de DESTINO de uma campanha específica (pra onde os anúncios mandam a conversa). Recebe o id da campanha — descubra o id antes com get_campaign_analysis/list_campaigns. Nunca responda telefone de cabeça; sempre use esta tool.",
+      schema: z.object({
+        campaignId: z.string().describe("id da campanha (não o nome)"),
+        campaignName: z.string().optional().describe("nome da campanha, só p/ rotular a resposta"),
+      }),
+    },
+  );
+
   const configTools = [setGoal, setAutonomy, setGuardrail, setActionAccess, setCadence, setNotifications, reseedArchetype, setPersona, setTone, setSystemPrompt, setBusinessContext, setGuidance, setDirectiveness, setVolume, setDidacticDepth, setExperienceLevel];
   const playbookTools = [addPlaybookRule, togglePlaybookRule, removePlaybookRule, listPlaybookRules];
 
@@ -605,6 +621,7 @@ export function makeConversationTools(
     reject,
     setFocus,
     describeCapabilities,
+    getWhatsappNumber,
     ...writeTools,
     ...createTools,
     ...configTools,
@@ -776,6 +793,7 @@ export const AGENT_TOOL_NAMES: ReadonlySet<string> = new Set([
   "cancel_write",
   "set_focus",
   "describe_capabilities",
+  "get_whatsapp_number",
 ]);
 
 /**
@@ -817,7 +835,12 @@ export const GROUP_CONCIERGE_TOOL_NAMES: ReadonlySet<string> = new Set([
   "reject",
   "set_focus",
   "describe_capabilities",
+  "get_whatsapp_number",
 ]);
+
+/** Tool de LEITURA de número de WhatsApp (Fatia 7) — roteada pro `confirm` p/ RENDER VERBATIM
+ *  (o LLM não digita os dígitos → não pode misatribuir; escopada ao campaignId). */
+export const WHATSAPP_NUMBER_TOOL_NAME = "get_whatsapp_number";
 
 /**
  * Tools de ESCRITA LIVRE que exigem ECO+CONFIRMA antes de aplicar (gate, 5c). O roteador

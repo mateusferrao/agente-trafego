@@ -41,6 +41,7 @@ import {
   PLAYBOOK_WRITE_TOOL_NAMES,
   REVERT_TOOL_NAME,
   DESCRIBE_CAPABILITIES_TOOL_NAME,
+  WHATSAPP_NUMBER_TOOL_NAME,
   RESEED_TOOL_NAME,
   WRITE_TOOL_NAMES,
   actionFromToolCall,
@@ -53,6 +54,7 @@ import {
   ruleRowToDescriptor,
   type ConversationToolContext,
 } from "./tools.js";
+import { renderWhatsappNumber, resolveWhatsappNumber } from "./read-data.js";
 import { makeMetaToolExecutor } from "../../executors/meta-tools.js";
 import { applyCheckedAction, type ApplyOutcome } from "../../modules/apply/apply-confirmed-action.js";
 import { proposeCreateCampaign, proposeScaleWinner, refineDraft } from "../../modules/conversation/draft-proposal.js";
@@ -525,6 +527,23 @@ export function makeConversationNodes(
       return { messages: [...answerToolCalls(allCalls, "capabilities"), new AIMessage(text)] };
     }
 
+    // GET_WHATSAPP_NUMBER (Fatia 7): resolve escopado ao campaignId (DB-first + live) e
+    // RENDERIZA VERBATIM — o LLM não digita os dígitos, então não pode misatribuir o número
+    // de outra campanha (a raiz do bug reportado). Informativo puro — não coexiste com escrita.
+    const waCall = allCalls.find((c) => c.name === WHATSAPP_NUMBER_TOOL_NAME);
+    if (waCall) {
+      const a = (waCall.args ?? {}) as Record<string, unknown>;
+      const campaignId = typeof a["campaignId"] === "string" ? a["campaignId"].trim() : "";
+      if (!campaignId) {
+        return {
+          messages: [...answerToolCalls(allCalls, "sem id"), new AIMessage("Me diz qual campanha (o nome que eu identifico) que eu descubro o número de WhatsApp de destino dela.")],
+        };
+      }
+      const dest = await resolveWhatsappNumber(deps, ctx, campaignId);
+      const label = typeof a["campaignName"] === "string" && a["campaignName"] ? (a["campaignName"] as string) : (dest.entityName ?? campaignId);
+      return { messages: [...answerToolCalls(allCalls, "whatsapp"), new AIMessage(renderWhatsappNumber(dest, label))] };
+    }
+
     // REFINAMENTO conversacional (Fatia 7): ajusta/regenera o rascunho PENDENTE sem criar
     // outro — muta o campaign_drafts + re-ecoa; o "sim" segue aplicando o MESMO rascunho.
     const refineCall = allCalls.find((c) => REFINE_TOOL_NAMES.has(c.name));
@@ -956,6 +975,7 @@ export function routeConversation(
         REFINE_TOOL_NAMES.has(c.name) ||
         c.name === REVERT_TOOL_NAME ||
         c.name === DESCRIBE_CAPABILITIES_TOOL_NAME ||
+        c.name === WHATSAPP_NUMBER_TOOL_NAME ||
         isConfirmableConfigTool(c.name),
     )
   )

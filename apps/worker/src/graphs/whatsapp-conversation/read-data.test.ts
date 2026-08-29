@@ -10,6 +10,7 @@ import {
   listCampaignsData,
   listPendingData,
   listRecommendationsData,
+  renderWhatsappNumber,
 } from "./read-data.js";
 
 /**
@@ -584,5 +585,25 @@ describe("comparePeriodsData", () => {
     expect(res.current).toBe(100);
     expect(res.previous).toBe(50);
     expect(res.deltaPct).toBe(100);
+  });
+});
+
+describe("renderWhatsappNumber (verbatim, honesto)", () => {
+  it("meta_cta → afirma com confiança", () => {
+    const t = renderWhatsappNumber({ number: "5531953491166", source: "meta_cta" }, "1398 CAPTACAO");
+    expect(t).toContain("5531953491166");
+    expect(t).toContain("1398 CAPTACAO");
+    expect(t.toLowerCase()).not.toContain("confirma");
+  });
+  it("campaign_name → pede confirmação (não é autoritativo)", () => {
+    const t = renderWhatsappNumber({ number: "953491166", source: "campaign_name", entityName: "X" }, "X");
+    expect(t).toContain("953491166");
+    expect(t.toLowerCase()).toContain("confirma");
+    expect(t.toLowerCase()).toContain("nome");
+  });
+  it("none → diz que não achou + próximo passo, sem número", () => {
+    const t = renderWhatsappNumber({ number: null, source: "none" }, "Y");
+    expect(t.toLowerCase()).toContain("não achei");
+    expect(t.toLowerCase()).toContain("gerenciador");
   });
 });
