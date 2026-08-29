@@ -731,4 +731,12 @@ describe("resolveWhatsappNumber (fallback ao vivo bounded — incidente do grupo
     const dest = await resolveWhatsappNumber(d, ctx, "CMP_1");
     expect(dest).toEqual({ number: "5531999", source: "meta_cta" });
   });
+
+  it("SEM conta em foco (adAccountId vazio — grupo com foco expirado) → none, sem crash de uuid", async () => {
+    // loadAccount guarda uuid vazio (senão o Postgres lança 22P02 e derruba o turno).
+    const noAccountCtx = { orgId: "o1", agentId: "ag1", adAccountId: "" } as never;
+    const d = deps(() => Promise.reject(new Error("não deveria nem chamar a Meta")));
+    const dest = await resolveWhatsappNumber(d, noAccountCtx, "CMP_1");
+    expect(dest).toEqual({ number: null, source: "none" });
+  });
 });

@@ -266,6 +266,9 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
     },
 
     async loadAccount(orgId, adAccountUuid) {
+      // Sem conta resolvida (ex: grupo com FOCO EXPIRADO → adAccountId "") NÃO consulta: um uuid
+      // vazio faz o Postgres lançar 22P02 (invalid input syntax for type uuid) e derruba o turno.
+      if (!orgId || !adAccountUuid) return null;
       // Token vem da CONEXÃO dona (fonte da verdade); cai no legado da conta se
       // ainda não houver conexão (contas pré-migração — o backfill preenche).
       const [row] = await db

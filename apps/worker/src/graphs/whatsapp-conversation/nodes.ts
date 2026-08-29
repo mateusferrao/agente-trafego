@@ -578,6 +578,13 @@ export function makeConversationNodes(
     if (waCall) {
       const a = (waCall.args ?? {}) as Record<string, unknown>;
       const campaignId = typeof a["campaignId"] === "string" ? a["campaignId"].trim() : "";
+      // sem CONTA em foco (ex: grupo com foco expirado) → pede a conta antes de tentar resolver
+      // (resolver com adAccountId vazio derrubava o turno no loadAccount — uuid inválido).
+      if (!ctx.adAccountId) {
+        return {
+          messages: [...answerToolCalls(allCalls, "sem conta"), new AIMessage("Primeiro me diz de qual conta é essa campanha (ex: \"foca na Loja X\") que aí eu busco o número de WhatsApp certo.")],
+        };
+      }
       if (!campaignId) {
         return {
           messages: [...answerToolCalls(allCalls, "sem id"), new AIMessage("Me diz qual campanha (o nome que eu identifico) que eu descubro o número de WhatsApp de destino dela.")],
