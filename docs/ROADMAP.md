@@ -743,8 +743,11 @@ telefone, listar+usar custom audiences da BM, e **cópia fiel de campanha** via 
   traduz `estimate_dau`/`estimate_mau`/`-1` p/ neutro) + núcleo puro `describeDeliveryEstimate` (nota
   informativa vs ⚠️ "pode entregar pouco", formatação PT). **Ao vivo no momento da proposta — NÃO
   cacheável no run** (depende do público/exclusões escolhidos no chat, que não existem no run).
-  Best-effort: erro/indisponível → degrada pro sinal por-público (`sizeWarnings`). Fast-follow: usar
-  `estimate_mau_lower/upper_bound` (faixa mensal) além do DAU; estimar também sem público indicado.
+  Best-effort: erro/indisponível → degrada pro sinal por-público (`sizeWarnings`). **E2E real (BM
+  Automato, 2026-08-29):** a Meta v26 devolve o alcance **MENSAL** como faixa (`estimate_mau_*`), NÃO o
+  `estimate_dau` (que veio ausente) → a nota usa a faixa mensal; custom audiences pequenas/privadas
+  voltam achatadas no piso de 1000 (ou `ready:false`) → tratadas como não-informativas → fallback
+  por-público. Fast-follow: estimar também sem público indicado (targeting da fonte/amplo).
 - **Guard de contagens inteiras no chat** — o backstop soft cobre dinheiro+% (baixo falso-positivo);
   contagens inteiras soltas em prosa têm alto falso-positivo (datas/ids/ordinais) → adiado até haver
   normalização/tuning que não gere ruído.

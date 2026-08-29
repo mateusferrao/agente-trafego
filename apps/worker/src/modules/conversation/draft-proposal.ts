@@ -34,6 +34,7 @@ import { generateCopy } from "../copy/generate-copy.js";
 import { createVisionResolver, creativeContentHash, servingVisionKey } from "../vision/resolver.js";
 import { pickLibraryCreativeByContext, type MatchContext } from "../creative/match-library.js";
 import { joinBalloons } from "../notify/split.js";
+import { withTimeout } from "./with-timeout.js";
 
 const MINOR_PER_UNIT = 100;
 const APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
@@ -303,7 +304,12 @@ async function reachNoteFor(
   pixelId?: string,
 ): Promise<string | null> {
   try {
-    const estimate = await deps.ports.ads.getDeliveryEstimate(ref, { targeting, goal, ...(pixelId ? { pixelId } : {}) });
+    // bounded pelo MESMO teto dos outros fetches ao vivo do chat: enrichment opcional NÃO pode
+    // travar até o teto do turno inteiro (derrubaria a proposta) — Meta lenta → degrada p/ null.
+    const estimate = await withTimeout(
+      deps.ports.ads.getDeliveryEstimate(ref, { targeting, goal, ...(pixelId ? { pixelId } : {}) }),
+      deps.conversation.liveFetchTimeoutMs,
+    );
     return describeDeliveryEstimate(estimate);
   } catch {
     return null; // estimativa é enriquecimento, nunca bloqueia a proposta

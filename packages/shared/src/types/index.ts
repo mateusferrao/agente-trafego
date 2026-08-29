@@ -170,14 +170,17 @@ export interface CustomAudience {
  * previsão de quantas pessoas o público proposto (includes − excludes + geo/idade) atinge; superior
  * ao `approximateCount` por-público (que ignora exclusões/combinação). `ready:false` = a plataforma
  * ainda não conseguiu estimar (público novo/lookalike) → o caller degrada pro sinal por-público.
+ * A Meta (v26) devolve o alcance MENSAL como faixa (`monthlyReach*`, sinal principal); `dailyActiveUsers`
+ * (o antigo `estimate_dau`) vem raro → fallback. Custom audiences pequenas/privadas voltam achatadas no
+ * piso de 1000 (a plataforma esconde o tamanho real) → o caller trata como não-informativo.
  */
 export interface DeliveryEstimate {
   readonly ready: boolean;
-  /** pessoas ativas/dia que satisfazem o targeting (omitido quando não pronto). */
-  readonly dailyActiveUsers?: number;
-  /** faixa mensal (limite inferior/superior) quando a plataforma devolve. */
+  /** faixa de alcance MENSAL (limite inferior/superior) — o que a Meta v26 devolve. */
   readonly monthlyReachMin?: number;
   readonly monthlyReachMax?: number;
+  /** pessoas ativas/dia (antigo `estimate_dau`, raro) — fallback quando não há faixa mensal. */
+  readonly dailyActiveUsers?: number;
 }
 
 // ─── Conversão (genérico, agnóstico de plataforma) ───────────────────────

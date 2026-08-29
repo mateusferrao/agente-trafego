@@ -38,26 +38,38 @@ describe("suggestConverterExclusions", () => {
 describe("describeDeliveryEstimate", () => {
   it("não pronto → null (caller degrada pro sinal por-público)", () => {
     expect(describeDeliveryEstimate({ ready: false })).toBeNull();
-    expect(describeDeliveryEstimate({ ready: false, dailyActiveUsers: 5000 })).toBeNull();
+    expect(describeDeliveryEstimate({ ready: false, monthlyReachMin: 50000, monthlyReachMax: 60000 })).toBeNull();
   });
   it("pronto mas sem contagem → null (nada honesto a dizer)", () => {
     expect(describeDeliveryEstimate({ ready: true })).toBeNull();
   });
-  it("alcance saudável → nota informativa (sem alarme)", () => {
-    const note = describeDeliveryEstimate({ ready: true, dailyActiveUsers: 25000 });
-    expect(note).toContain("~25 mil");
+  it("achatado no piso de privacidade da Meta (≤1000) → null (não informativo → fallback por-público)", () => {
+    // caso REAL do E2E: custom audience pequena/privada volta 1000–1000 (piso), não o tamanho real.
+    expect(describeDeliveryEstimate({ ready: true, monthlyReachMin: 1000, monthlyReachMax: 1000 })).toBeNull();
+  });
+  it("faixa mensal saudável → nota informativa com faixa (sem alarme)", () => {
+    // caso REAL do E2E: BR amplo ~163,5 mi–192,3 mi/mês.
+    const note = describeDeliveryEstimate({ ready: true, monthlyReachMin: 163_500_000, monthlyReachMax: 192_300_000 });
+    expect(note).toContain("~163,5 mi–192,3 mi");
+    expect(note).toContain("pessoas/mês");
     expect(note).not.toContain("⚠️");
   });
-  it("alcance abaixo do piso → aviso de entrega fraca", () => {
-    const note = describeDeliveryEstimate({ ready: true, dailyActiveUsers: 400 });
+  it("faixa mensal acima do piso mas magra → aviso de entrega fraca", () => {
+    const note = describeDeliveryEstimate({ ready: true, monthlyReachMin: 2000, monthlyReachMax: 4000 });
     expect(note).toContain("⚠️");
-    expect(note).toContain("~400");
+    expect(note).toContain("~2 mil–4 mil");
     expect(note).toContain("pode entregar pouco");
   });
-  it("formata milhões com vírgula PT", () => {
-    expect(describeDeliveryEstimate({ ready: true, dailyActiveUsers: 1_200_000 })).toContain("~1,2 mi");
+  it("min==max → mostra valor único (sem faixa)", () => {
+    expect(describeDeliveryEstimate({ ready: true, monthlyReachMin: 50000, monthlyReachMax: 50000 })).toContain("~50 mil pessoas/mês");
   });
-  it("formata milhares fracionários com vírgula PT", () => {
-    expect(describeDeliveryEstimate({ ready: true, dailyActiveUsers: 1500 })).toContain("~1,5 mil");
+  it("sem faixa mensal, só DAU (fallback raro) → usa o diário", () => {
+    const note = describeDeliveryEstimate({ ready: true, dailyActiveUsers: 25000 });
+    expect(note).toContain("~25 mil");
+    expect(note).toContain("pessoas ativas/dia");
+    expect(note).not.toContain("⚠️");
+  });
+  it("DAU no piso → null (degrada)", () => {
+    expect(describeDeliveryEstimate({ ready: true, dailyActiveUsers: 800 })).toBeNull();
   });
 });
