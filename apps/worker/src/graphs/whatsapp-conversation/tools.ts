@@ -293,7 +293,7 @@ export function makeConversationTools(
       "Propõe COPIAR a estrutura de uma campanha existente (ex: 'copia a campanha X pra remarketing'). Recebe o id da campanha-base (descubra antes com get_campaign_analysis/list_campaigns). Reusa os criativos da original (mantém o destino/WhatsApp), preserva CBO/ABO e objetivo; troca o público se você passar públicos (use list_audiences pra achar os ids). Requer eco+confirma; nasce pausada.",
     schema: z.object({
       campaignId: z.string().describe("id da campanha-base (não o nome)"),
-      campaignName: z.string().optional().describe("nome da campanha-base, só p/ rotular"),
+      campaignName: z.string().nullable().optional().describe("nome da campanha-base, só p/ rotular"),
       includeAudienceIds: z.array(z.string()).nullable().optional().describe("ids de públicos a INCLUIR (remarketing) — de list_audiences"),
       excludeAudienceIds: z.array(z.string()).nullable().optional().describe("ids de públicos a EXCLUIR (ex: leads/compradores)"),
       budgetReais: z.number().positive().nullable().optional().describe("budget diário em reais (opcional; default = o da original)"),
@@ -623,7 +623,7 @@ export function makeConversationTools(
         "Descobre o número de WhatsApp de DESTINO de uma campanha específica (pra onde os anúncios mandam a conversa). Recebe o id da campanha — descubra o id antes com get_campaign_analysis/list_campaigns. Nunca responda telefone de cabeça; sempre use esta tool.",
       schema: z.object({
         campaignId: z.string().describe("id da campanha (não o nome)"),
-        campaignName: z.string().optional().describe("nome da campanha, só p/ rotular a resposta"),
+        campaignName: z.string().nullable().optional().describe("nome da campanha, só p/ rotular a resposta"),
       }),
     },
   );
