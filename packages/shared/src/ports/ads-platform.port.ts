@@ -2,6 +2,7 @@ import type {
   AccessibleAccount,
   Action,
   AdEntity,
+  CampaignStructure,
   ConversionGoal,
   Creative,
   CustomAudience,
@@ -71,11 +72,18 @@ export interface CreateCampaignInput {
   readonly objectiveGoal: ConversionGoal;
   readonly specialAdCategories: readonly string[];
   readonly status: "active" | "paused";
+  /**
+   * CBO (Fatia 7 — cópia fiel): quando presente, o orçamento vive na CAMPANHA (bid_strategy +
+   * budget_sharing na campanha) e o adset NÃO leva budget. Ausente = ABO (budget no adset).
+   */
+  readonly dailyBudgetMinor?: number;
+  readonly lifetimeBudgetMinor?: number;
 }
 export interface CreateAdSetInput {
   readonly campaignId: string;
   readonly name: string;
-  readonly dailyBudgetMinor: number;
+  /** ABO: budget diário no adset. Ausente/0 = CBO (o orçamento está na campanha). */
+  readonly dailyBudgetMinor?: number;
   readonly goal: ConversionGoal;
   readonly pixelId?: string;
   readonly targeting: TargetingSpec;
@@ -186,6 +194,8 @@ export interface AdsPlatformPort {
   getWhatsappDestination(account: AdAccountRef, campaignId: string): Promise<WhatsappDestination>;
   /** Lista os custom/saved audiences da conta (Fatia 7) — remarketing/exclusões reais. */
   listCustomAudiences(account: AdAccountRef): Promise<CustomAudience[]>;
+  /** Lê a estrutura NEUTRA de uma campanha existente p/ cópia fiel (Fatia 7) — escopado. */
+  readCampaignStructure(account: AdAccountRef, campaignId: string): Promise<CampaignStructure>;
   /** Campanha-mãe de um adset + seu orçamento (diário E vitalício, minor) — p/ escalar vencedor
    *  sob CBO (orçamento na campanha, não no adset). `null` se a campanha não resolver. */
   getAdSetCampaignBudget(account: AdAccountRef, adsetId: string): Promise<{ campaignId: string; dailyBudgetMinor: number; lifetimeBudgetMinor: number } | null>;

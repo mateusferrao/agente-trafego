@@ -148,34 +148,47 @@ export class MetaCreationService {
   }
 
   async createCampaign(account: AdAccountRef, input: CreateCampaignInput): Promise<{ campaignId: string }> {
-    const campaignId = await this.createOnAccount(account, "campaigns", {
+    // CBO (cópia fiel): orçamento + lance + compartilhamento na CAMPANHA. ABO: nada disso aqui
+    // (o adset é dono do budget/lance) e declara-se explicitamente budget_sharing=false (v26).
+    const isCbo = (input.dailyBudgetMinor ?? 0) > 0 || (input.lifetimeBudgetMinor ?? 0) > 0;
+    const params: Record<string, string> = {
       name: input.name,
       objective: resolveMetaObjective(input.objectiveGoal),
       special_ad_categories: JSON.stringify(input.specialAdCategories),
-      // budget mora no ADSET (ABO) → a Meta (v26) exige declarar explicitamente que a
-      // campanha não compartilha orçamento entre adsets (senão exige budget de campanha).
-      // O bid_strategy vai no ADSET (ABO) — na campanha exigiria budget de campanha (CBO).
-      is_adset_budget_sharing_enabled: "false",
       status: input.status === "active" ? "ACTIVE" : "PAUSED",
-    });
+    };
+    if (isCbo) {
+      if ((input.dailyBudgetMinor ?? 0) > 0) params["daily_budget"] = String(input.dailyBudgetMinor);
+      else params["lifetime_budget"] = String(input.lifetimeBudgetMinor);
+      params["bid_strategy"] = "LOWEST_COST_WITHOUT_CAP";
+      params["is_adset_budget_sharing_enabled"] = "true";
+    } else {
+      params["is_adset_budget_sharing_enabled"] = "false";
+    }
+    const campaignId = await this.createOnAccount(account, "campaigns", params);
     return { campaignId };
   }
 
   async createAdSet(account: AdAccountRef, input: CreateAdSetInput): Promise<{ adsetId: string }> {
     const conv = resolveAdSetConversion(input.goal, input.pixelId);
     const targeting = await this.resolveTargeting(account, input.targeting);
+    // CBO: o orçamento/lance estão na campanha → o adset NÃO leva daily_budget/bid_strategy
+    // (a Meta rejeita ter budget nos dois níveis). ABO: budget + lance no adset.
+    const isAbo = (input.dailyBudgetMinor ?? 0) > 0;
     const params: Record<string, string> = {
       name: input.name,
       campaign_id: input.campaignId,
-      daily_budget: String(input.dailyBudgetMinor),
       optimization_goal: conv.optimizationGoal,
       billing_event: conv.billingEvent,
-      // ABO: o adset é dono do budget → o lance mora aqui. "maior volume sem teto" não
-      // exige bid_amount (senão a Meta pede valor/restrições de lance — subcode 2490487).
-      bid_strategy: "LOWEST_COST_WITHOUT_CAP",
       targeting: JSON.stringify(targeting),
       status: input.status === "active" ? "ACTIVE" : "PAUSED",
     };
+    if (isAbo) {
+      params["daily_budget"] = String(input.dailyBudgetMinor);
+      // ABO: o adset é dono do budget → o lance mora aqui. "maior volume sem teto" não
+      // exige bid_amount (senão a Meta pede valor/restrições de lance — subcode 2490487).
+      params["bid_strategy"] = "LOWEST_COST_WITHOUT_CAP";
+    }
     if (conv.promotedObject) params["promoted_object"] = JSON.stringify(conv.promotedObject);
     const adsetId = await this.createOnAccount(account, "adsets", params);
     return { adsetId };
@@ -300,24 +313,59 @@ export class MetaCreationService {
     return { status: s === "ready" ? "ready" : s === "error" ? "error" : "processing" };
   }
 
-  /** Targeting neutro → Meta. `reuse_adset` lê o targeting da fonte; `advantage_plus` = amplo. */
+  /**
+   * Targeting neutro → Meta. `reuse_adset` lê o targeting da fonte; `custom_audiences` reusa
+   * geo/idade da fonte e TROCA o público (include/exclude) com expansões zeradas (remarketing);
+   * `advantage_plus` = amplo. SWITCH EXAUSTIVO (`never`): um kind não tratado é erro de
+   * compilação, não fall-through silencioso p/ amplo num caminho que gasta dinheiro.
+   */
   private async resolveTargeting(
     account: AdAccountRef,
     spec: CreateAdSetInput["targeting"],
   ): Promise<Record<string, unknown>> {
-    if (spec.kind === "reuse_adset") {
-      try {
-        const { data } = await this.client.request<{ targeting?: Record<string, unknown> }>({
-          method: "GET",
-          path: spec.sourceAdsetId,
-          accessToken: account.accessToken,
-          params: { fields: "targeting" },
-        });
-        if (data.targeting) return data.targeting;
-      } catch {
-        // fonte indisponível → cai no amplo (Advantage+).
+    switch (spec.kind) {
+      case "reuse_adset":
+        return (await this.sourceAdsetTargeting(account, spec.sourceAdsetId)) ?? this.broadTargeting();
+      case "custom_audiences": {
+        // remarketing: base = geo/idade da fonte (as "7 cidades" reais, não parseadas), com o
+        // público trocado e expansões zeradas (§guidance). Sem a fonte → amplo com o público.
+        const base = (await this.sourceAdsetTargeting(account, spec.sourceAdsetId)) ?? {};
+        const out: Record<string, unknown> = {
+          ...(base["geo_locations"] ? { geo_locations: base["geo_locations"] } : { geo_locations: { countries: [DEFAULT_ADVANTAGE_GEO_COUNTRY] } }),
+          ...(base["age_min"] !== undefined ? { age_min: base["age_min"] } : {}),
+          ...(base["age_max"] !== undefined ? { age_max: base["age_max"] } : {}),
+          // troca o público: inclui os escolhidos, exclui os escolhidos; expansões OFF.
+          ...(spec.includeIds.length > 0 ? { custom_audiences: spec.includeIds.map((id) => ({ id })) } : {}),
+          ...(spec.excludeIds.length > 0 ? { excluded_custom_audiences: spec.excludeIds.map((id) => ({ id })) } : {}),
+          targeting_automation: { advantage_audience: 0 },
+        };
+        return out;
+      }
+      case "advantage_plus":
+        return this.broadTargeting();
+      default: {
+        const _exhaustive: never = spec;
+        return _exhaustive;
       }
     }
+  }
+
+  /** Targeting cru do adset-fonte (geo/idade/público) — reusado por reuse_adset e custom_audiences. */
+  private async sourceAdsetTargeting(account: AdAccountRef, sourceAdsetId: string): Promise<Record<string, unknown> | null> {
+    try {
+      const { data } = await this.client.request<{ targeting?: Record<string, unknown> }>({
+        method: "GET",
+        path: sourceAdsetId,
+        accessToken: account.accessToken,
+        params: { fields: "targeting" },
+      });
+      return data.targeting ?? null;
+    } catch {
+      return null; // fonte indisponível → o chamador cai no amplo
+    }
+  }
+
+  private broadTargeting(): Record<string, unknown> {
     return {
       geo_locations: { countries: [DEFAULT_ADVANTAGE_GEO_COUNTRY] },
       targeting_automation: { advantage_audience: 1 },

@@ -6,7 +6,7 @@
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { adAccounts, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { planScaleMove, type BudgetLevel, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { goalNounPt, planScaleMove, type BudgetLevel, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
 import {
   ACTION_PARAM_MODE,
   ACTION_PARAM_PCT,
@@ -617,4 +617,98 @@ export async function proposeCreateCampaign(
     `Confirma? (você pode editar/trocar o criativo no site antes de aprovar)`,
   );
   return { kind: "draft", echo: lines.join("\n"), approvalId, draftId };
+}
+
+/**
+ * CÓPIA FIEL de uma campanha específica (Fatia 7): lê a estrutura ESCOPADA à campanha-base
+ * (CBO/ABO, objetivo, N criativos, geo/idade) — NÃO account-wide — e monta um rascunho que
+ * reusa os criativos por REFERÊNCIA (preserva destino WhatsApp), trocando só o público quando
+ * pedido. Nasce PAUSADA. Objetivo divergente = para e explica (§7). Refino via adjust_draft.
+ */
+export async function proposeCopyCampaign(
+  deps: WorkerDeps,
+  ctx: DraftProposalContext,
+  args: {
+    readonly sourceCampaignId: string;
+    readonly sourceName?: string;
+    readonly includeAudienceIds?: readonly string[];
+    readonly excludeAudienceIds?: readonly string[];
+    readonly budgetReais?: number;
+    readonly goal?: ConversionGoal;
+  },
+  origin: DraftOrigin = "on_demand",
+): Promise<ChatDraftProposal> {
+  const ac = await loadAgentContext(deps, ctx);
+  if (!ac) return { kind: "blocked", reason: "não consegui acessar a conta agora" };
+  if (!ac.enabled.has("create_campaign")) {
+    return { kind: "blocked", reason: "criar/copiar campanha está desligado para este agente (ligue em ações permitidas)" };
+  }
+
+  let structure;
+  try {
+    structure = await deps.ports.ads.readCampaignStructure(ac.ref, args.sourceCampaignId);
+  } catch {
+    return { kind: "blocked", reason: "não consegui ler a estrutura dessa campanha na Meta agora — tenta de novo em instantes" };
+  }
+  if (structure.creativeRefs.length === 0) {
+    return { kind: "blocked", reason: "essa campanha não tem anúncios que eu consiga reusar pra copiar — confere se ela tem anúncios ativos" };
+  }
+
+  // Parar e explicar (§7): trocar o objetivo muda o mecanismo (pode perder o destino WhatsApp
+  // / exigir formulário). Não cria silenciosamente o oposto.
+  if (args.goal && args.goal !== structure.objective) {
+    return {
+      kind: "blocked",
+      reason: `essa campanha otimiza *${goalNounPt(structure.objective)}* — copiar como *${goalNounPt(args.goal)}* trocaria o mecanismo (pode perder o destino de WhatsApp e exigir outra configuração). Pra manter fiel eu copio com o mesmo objetivo (${goalNounPt(structure.objective)}); se você quer mesmo o outro objetivo, aí é criar uma campanha nova do zero. Como prefere?`,
+    };
+  }
+
+  const goal = structure.objective;
+  const hasAudience = (args.includeAudienceIds?.length ?? 0) > 0 || (args.excludeAudienceIds?.length ?? 0) > 0;
+  const targeting: NonNullable<CampaignDraftSpec["targeting"]> = hasAudience
+    ? {
+        kind: "custom_audiences",
+        sourceAdsetId: structure.sourceAdsetId,
+        includeIds: args.includeAudienceIds ?? [],
+        excludeIds: args.excludeAudienceIds ?? [],
+      }
+    : { kind: "reuse_adset", sourceAdsetId: structure.sourceAdsetId };
+
+  const sourceBudgetMinor = structure.dailyBudgetMinor ?? structure.lifetimeBudgetMinor ?? DEFAULT_STARTER_BUDGET_MINOR;
+  const requested = args.budgetReais ? Math.round(args.budgetReais * MINOR_PER_UNIT) : sourceBudgetMinor;
+  const cap = ac.cfg.maxNewDailyBudgetMinor;
+  const dailyBudgetMinor = cap != null ? Math.min(requested, cap) : requested;
+
+  const baseName = args.sourceName ?? structure.name;
+  const name = `${baseName}${args.includeAudienceIds?.length ? " — REMARKETING" : " — cópia"}`;
+
+  const spec: CampaignDraftSpec = {
+    version: 1,
+    currency: ac.currency,
+    dailyBudgetMinor,
+    activation: "paused",
+    objective: goal,
+    targeting,
+    creativeRefs: structure.creativeRefs,
+    sourceCampaignId: args.sourceCampaignId,
+    budgetMode: structure.budgetMode,
+    specialAdCategories: structure.specialAdCategories,
+    name,
+  };
+  const { draftId, approvalId } = await persistDraftAndApproval(deps, ctx, "from_scratch", spec, origin, {
+    level: "campaign",
+    id: args.sourceCampaignId,
+  });
+
+  const audienceLine = hasAudience
+    ? `\n• *Público:* remarketing selecionado${args.excludeAudienceIds?.length ? " (com exclusões)" : ""}, mantendo geo/idade da original`
+    : `\n• *Público:* o mesmo da campanha-base`;
+  const echo = [
+    `Vou *copiar a estrutura* de "${baseName}" numa campanha nova:`,
+    `• *Orçamento:* ${structure.budgetMode.toUpperCase()} · ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia`,
+    `• *Anúncios:* ${structure.creativeRefs.length} da original, reusados (mantém o criativo e o destino/WhatsApp)${audienceLine}`,
+    `• *Objetivo:* ${goalNounPt(goal)} · ${activationPhrase("paused")}.`,
+    `Confirma? (dá pra ajustar orçamento/público antes)`,
+  ].join("\n");
+  return { kind: "draft", echo, approvalId, draftId };
 }

@@ -132,6 +132,8 @@ async function allowedChatWriteTools(db: Database, orgId: string, agentId: strin
   const tools: string[] = [];
   for (const t of WRITE_TOOL_NAMES) if (enabled.has(t)) tools.push(t);
   if (enabled.has("create_campaign")) tools.push("create_campaign");
+  // copiar campanha (Fatia 7) reusa o mesmo gate de criação (gasto novo, mesma saga).
+  if (enabled.has("create_campaign")) tools.push("copy_campaign");
   if (enabled.has("duplicate_scale") || enabled.has("adjust_budget")) tools.push("scale_winner");
   return tools;
 }

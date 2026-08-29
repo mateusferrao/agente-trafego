@@ -284,6 +284,23 @@ export function makeConversationTools(
     }),
   });
 
+  // CÓPIA FIEL de uma campanha específica (Fatia 7): lê a estrutura da campanha-base e propõe
+  // uma cópia (mesmos criativos por referência, CBO/ABO e objetivo preservados), trocando só o
+  // público quando pedido. Requer eco+confirma. Descubra o campaignId antes (get_campaign_analysis).
+  const copyCampaign = tool(proposeOnly, {
+    name: "copy_campaign",
+    description:
+      "Propõe COPIAR a estrutura de uma campanha existente (ex: 'copia a campanha X pra remarketing'). Recebe o id da campanha-base (descubra antes com get_campaign_analysis/list_campaigns). Reusa os criativos da original (mantém o destino/WhatsApp), preserva CBO/ABO e objetivo; troca o público se você passar públicos (use list_audiences pra achar os ids). Requer eco+confirma; nasce pausada.",
+    schema: z.object({
+      campaignId: z.string().describe("id da campanha-base (não o nome)"),
+      campaignName: z.string().optional().describe("nome da campanha-base, só p/ rotular"),
+      includeAudienceIds: z.array(z.string()).nullable().optional().describe("ids de públicos a INCLUIR (remarketing) — de list_audiences"),
+      excludeAudienceIds: z.array(z.string()).nullable().optional().describe("ids de públicos a EXCLUIR (ex: leads/compradores)"),
+      budgetReais: z.number().positive().nullable().optional().describe("budget diário em reais (opcional; default = o da original)"),
+      goal: z.string().nullable().optional().describe("objetivo — só se quiser MUDAR (o agente vai avisar que troca o mecanismo)"),
+    }),
+  });
+
   // REFINAMENTO do rascunho pendente (Fatia 7): ajusta/regenera SEM criar rascunho novo.
   const adjustDraft = tool(proposeOnly, {
     name: "adjust_draft",
@@ -615,7 +632,7 @@ export function makeConversationTools(
   const playbookTools = [addPlaybookRule, togglePlaybookRule, removePlaybookRule, listPlaybookRules];
 
   const writeTools = [pauseEntity, resumeEntity, setStatus, adjustBudget, revertAction, confirmWrite, cancelWrite];
-  const createTools = [scaleWinner, createCampaign, adjustDraft, regenerateCopy];
+  const createTools = [scaleWinner, createCampaign, copyCampaign, adjustDraft, regenerateCopy];
   return [
     ...readTools,
     triggerAnalysis,
@@ -859,7 +876,7 @@ export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
 ]);
 
 /** Tools de CRIAÇÃO (Fatia 7) — gasto novo, sempre eco+confirma → rascunho/aprovação. */
-export const CREATE_TOOL_NAMES: ReadonlySet<string> = new Set<string>(["scale_winner", "create_campaign"]);
+export const CREATE_TOOL_NAMES: ReadonlySet<string> = new Set<string>(["scale_winner", "create_campaign", "copy_campaign"]);
 /** Tools de REFINAMENTO do rascunho pendente (mutam o pendingDraft, não criam novo). */
 export const REFINE_TOOL_NAMES: ReadonlySet<string> = new Set<string>(["adjust_draft", "regenerate_copy"]);
 

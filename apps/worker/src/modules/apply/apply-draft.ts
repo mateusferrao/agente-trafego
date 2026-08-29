@@ -341,14 +341,18 @@ async function runFromScratchSaga(
   const spec = draft.spec;
   const goal = spec.objective ?? DEFAULT_CONVERSION_GOAL;
   const status = spec.activation;
-  const name = `AutoTraffic — ${goalNounPt(goal)}`;
+  // nome: preserva a convenção do cliente na cópia (spec.name), senão o default genérico.
+  const name = spec.name ?? `AutoTraffic — ${goalNounPt(goal)}`;
+  // CBO (cópia fiel): budget na CAMPANHA; ABO: no adset. `budgetMode` vem da leitura fiel.
+  const isCbo = spec.budgetMode === "cbo";
 
   if (!state["campaignId"]) {
     const { campaignId } = await ads.createCampaign(ref, {
       name,
       objectiveGoal: goal,
-      specialAdCategories: DEFAULT_SPECIAL_AD_CATEGORIES,
+      specialAdCategories: spec.specialAdCategories ?? DEFAULT_SPECIAL_AD_CATEGORIES,
       status,
+      ...(isCbo ? { dailyBudgetMinor: spec.dailyBudgetMinor } : {}),
     });
     await persist({ campaignId });
   }
@@ -356,13 +360,33 @@ async function runFromScratchSaga(
     const { adsetId } = await ads.createAdSet(ref, {
       campaignId: state["campaignId"] as string,
       name: `${name} — conjunto`,
-      dailyBudgetMinor: spec.dailyBudgetMinor,
+      // ABO leva budget no adset; CBO não (está na campanha).
+      ...(isCbo ? {} : { dailyBudgetMinor: spec.dailyBudgetMinor }),
       goal,
       ...(spec.pixelId ? { pixelId: spec.pixelId } : {}),
       targeting: spec.targeting ?? { kind: "advantage_plus" },
       status,
     });
     await persist({ adsetId });
+  }
+
+  // CÓPIA FIEL (Fatia 7): reusa os criativos da fonte por REFERÊNCIA (creative_id) — 1 anúncio
+  // por ref, preservando object_story_spec/destino WhatsApp sem rebuild. Retomável por índice.
+  const refs = spec.creativeRefs ?? [];
+  if (refs.length > 0) {
+    const copyAdIds = [...((state["adIds"] as string[] | undefined) ?? [])];
+    for (let i = 0; i < refs.length; i++) {
+      if (copyAdIds[i]) continue;
+      const { adId } = await ads.createAd(ref, {
+        adsetId: state["adsetId"] as string,
+        creativeId: refs[i]!,
+        name: `${name} — anúncio ${i + 1}`,
+        status,
+      });
+      copyAdIds[i] = adId;
+      await persist({ adIds: [...copyAdIds] });
+    }
+    return;
   }
 
   const variants = spec.copyVariants ?? [];

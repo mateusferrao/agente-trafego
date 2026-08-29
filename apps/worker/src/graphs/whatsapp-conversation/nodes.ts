@@ -60,7 +60,7 @@ import {
 import { renderWhatsappNumber, resolveWhatsappNumber } from "./read-data.js";
 import { makeMetaToolExecutor } from "../../executors/meta-tools.js";
 import { applyCheckedAction, type ApplyOutcome } from "../../modules/apply/apply-confirmed-action.js";
-import { proposeCreateCampaign, proposeScaleWinner, refineDraft } from "../../modules/conversation/draft-proposal.js";
+import { proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner, refineDraft } from "../../modules/conversation/draft-proposal.js";
 import { loadWriteContext } from "../../modules/apply/write-context.js";
 import { revertActionById } from "../../modules/apply/revert-action.js";
 import { actorLabel } from "../../modules/conversation/actor.js";
@@ -618,6 +618,8 @@ export function makeConversationNodes(
       const dctx = { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, currency: DEFAULT_CURRENCY };
       const args = (createCall.args ?? {}) as Record<string, unknown>;
       const scaleChoice = args["choice"] === "raise" || args["choice"] === "duplicate" ? (args["choice"] as "raise" | "duplicate") : undefined;
+      const strList = (v: unknown): string[] | undefined =>
+        Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : undefined;
       const proposal =
         createCall.name === "scale_winner"
           ? await proposeScaleWinner(
@@ -627,6 +629,19 @@ export function makeConversationNodes(
               "on_demand",
               scaleChoice,
             )
+          : createCall.name === "copy_campaign"
+            ? await (async () => {
+                const inc = strList(args["includeAudienceIds"]);
+                const exc = strList(args["excludeAudienceIds"]);
+                return proposeCopyCampaign(deps, dctx, {
+                  sourceCampaignId: String(args["campaignId"] ?? ""),
+                  ...(typeof args["campaignName"] === "string" ? { sourceName: args["campaignName"] as string } : {}),
+                  ...(inc ? { includeAudienceIds: inc } : {}),
+                  ...(exc ? { excludeAudienceIds: exc } : {}),
+                  ...(typeof args["budgetReais"] === "number" ? { budgetReais: args["budgetReais"] as number } : {}),
+                  ...(isConversionGoal(args["goal"]) ? { goal: args["goal"] } : {}),
+                });
+              })()
           : await proposeCreateCampaign(deps, dctx, {
               // valida o goal contra a taxonomia neutra ANTES de propor: goal inválido (o LLM
               // manda texto livre) descartado → o propose infere da meta/conta, e o eco mostra

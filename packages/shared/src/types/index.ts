@@ -760,6 +760,10 @@ export interface CampaignDraftSpec {
   // ─── cópia fiel de campanha (Fatia 7, kind `copy`) ───
   /** campanha-base copiada (leitura fiel escopada, NÃO account-wide). */
   readonly sourceCampaignId?: string;
+  /** nome proposto da campanha (preserva a convenção do cliente; fallback = "AutoTraffic — objetivo"). */
+  readonly name?: string;
+  /** categorias especiais herdadas da fonte (habitação/emprego/crédito) — Meta exige preservar. */
+  readonly specialAdCategories?: readonly string[];
   /** otimização de orçamento herdada da fonte (CBO = na campanha; ABO = no adset). */
   readonly budgetMode?: BudgetMode;
   /**

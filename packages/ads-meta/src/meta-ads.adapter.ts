@@ -2,6 +2,7 @@ import type {
   AccessibleAccount,
   Action,
   AdEntity,
+  CampaignStructure,
   Creative,
   CustomAudience,
   EntityLevel,
@@ -30,6 +31,7 @@ import { MetaMutationsService } from "./mutations.js";
 import { MetaCreationService } from "./creation.js";
 import { MetaWhatsappDestinationService } from "./whatsapp-destination.js";
 import { MetaAudiencesService } from "./audiences.js";
+import { MetaCampaignStructureService } from "./campaign-structure.js";
 import { MetaGovernor } from "./governor.js";
 import { MetaEntityCache } from "./entity-cache.js";
 import { objectiveFromAdSet, objectiveFromCampaign, type RawPromotedObject } from "./meta-conversion-map.js";
@@ -199,6 +201,7 @@ export class MetaAdsAdapter implements AdsPlatformPort {
   private readonly creation: MetaCreationService;
   private readonly whatsapp: MetaWhatsappDestinationService;
   private readonly audiences: MetaAudiencesService;
+  private readonly campaignStructure: MetaCampaignStructureService;
   private readonly customConversions: CustomConversionsResolver | undefined;
   private readonly entityCache: MetaEntityCache | undefined;
 
@@ -211,6 +214,7 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     this.creation = deps.creation ?? new MetaCreationService(deps.client);
     this.whatsapp = new MetaWhatsappDestinationService(deps.client, deps.governor, this.creatives);
     this.audiences = new MetaAudiencesService(deps.client, deps.governor);
+    this.campaignStructure = new MetaCampaignStructureService(deps.client, deps.governor);
     this.customConversions = deps.customConversions;
     this.entityCache = deps.entityCache;
   }
@@ -361,6 +365,14 @@ export class MetaAdsAdapter implements AdsPlatformPort {
   async listCustomAudiences(account: AdAccountRef): Promise<CustomAudience[]> {
     try {
       return await this.audiences.list(account);
+    } catch (error) {
+      throw toAdsError(error);
+    }
+  }
+
+  async readCampaignStructure(account: AdAccountRef, campaignId: string): Promise<CampaignStructure> {
+    try {
+      return await this.campaignStructure.read(account, campaignId, normalizeAdAccountId(account.adAccountId));
     } catch (error) {
       throw toAdsError(error);
     }
