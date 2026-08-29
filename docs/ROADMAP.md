@@ -724,6 +724,26 @@ vez de duplicar lógica. Fatiado (G0→G4) — **entregue por completo**.
 - **Formatos de criativo além de imagem/vídeo único.** `chooseCreative` (pool veiculados+biblioteca) + `selectReuseCreative` (pula carrossel/catálogo no pick e **avisa o dono**) cobrem imagem+vídeo único. Fast-follow: reusar/criar **carrossel** (`child_attachments`), **catálogo/DPA** (product sets), **coleção** + visão card-a-card.
 - **Virada do catálogo legado (S8) — adiada de propósito.** Promover as 4 mutations existentes (`pause_entity`/`resume_entity`/`adjust_budget`/`set_status`) a **catalog-autoritativo** (resolver via `agent_tool_definitions ∩ agent_tool_bindings` + `approvalPolicy:auto`), backfillar `agent_tool_bindings` de `allowedActions` (+ defaults por arquétipo), **dropar a coluna `allowedActions`** e religar o allowed-set do `applyGuardrails` a partir de bindings (core intocado, resolvido na casca). **Por que fora do MVP da fatia:** é cross-cutting sobre o caminho de escrita **autônomo já testado** (6+ call sites de `toGuardrailConfig`, contrato zod→web, UI de guardrails, tool `set_guardrails` no chat) com **zero valor visível** — e o **shadow** (`catalogWriteToolsShadow`/`logCatalogShadow` em `turn.ts`, ativo) existe justamente pra **provar paridade sobre tráfego real antes da virada**, que ainda não rodou (pré-beta). O próprio plano sequencia como a **última** slice "com o caminho já provado". `create_campaign`/`duplicate_scale` já nascem catalog-autoritativos; só as 4 legadas seguem em `allowedActions` até a virada. Fazer quando o shadow acumular paridade em beta.
 
+**Fast-follows da sessão "Honestidade + cópia fiel de campanha por chat" (2026-08-29) — registrados:**
+Motivada por conversa real (copiar `[1398 CAPTACAO] ESCALA` p/ remarketing) onde o agente atribuiu um
+número de WhatsApp de OUTRA campanha (misatribuição cross-entity) e chutou públicos inexistentes. A
+sessão entrega: resolução honesta do número de WhatsApp (`call_to_action.value` → `/{page_id}` →
+nome-da-campanha normalizado, sempre com origem; cache em `ad_creatives`), desambiguação determinística
+de campanha com âncora de id (`resolveNamedMatch`), backstop soft de grounding + checagem estrutural de
+telefone, listar+usar custom audiences da BM, e **cópia fiel de campanha** via draft parametrizado
+(reusa `creative_id` da fonte por referência; CBO/ABO; para-e-explica na troca de objetivo). Adiado:
+- **Guard de contagens inteiras no chat** — o backstop soft cobre dinheiro+% (baixo falso-positivo);
+  contagens inteiras soltas em prosa têm alto falso-positivo (datas/ids/ordinais) → adiado até haver
+  normalização/tuning que não gere ruído.
+- **Rebuild de `object_story_spec` + carrossel/catálogo na cópia fiel** — hoje a cópia reusa o criativo
+  da fonte por REFERÊNCIA (`creative_id`), o que preserva o destino WhatsApp e evita a falha de /copies
+  legado; rebuildar o `object_story_spec` (necessário só quando nem a referência ao criativo legado é
+  aceita, e p/ carrossel/catálogo) fica adiado (é o "recriar-fiel" completo).
+- **Resolver NOME humano de Página/Pixel no eco** — o eco de criação ainda mostra ids crus da Meta
+  (`pageId`/`pixelId`); resolver o nome legível da Página (viola §13 jargão) — fast-follow de UX.
+- **Reforçar `error_user_msg`/`error_user_title` da Meta** na mensagem de erro (cross-cutting, já
+  anotado na Fatia 7) — continua valendo p/ a saga de cópia.
+
 ## Fatia 8 — Orquestração multi-agente / qualidade (roadmap pós-MVP)
 
 **Visão:** elevar a qualidade e a escala da análise com **mais papéis de agente** e **map-reduce por entidade** — sem reescrever o grafo. **Depende:** MVP validado (hipótese confirmada na 3a) + `5a` (write path, p/ o validador de segurança de ação). A costura já existe desde a 3a-2: o par **Analista→Revisor** é modelado como uma **lista de passes** (`reviewPasses`, default 1) — crescer = **registrar mais passes/papéis**, não reescrever nós.
