@@ -633,20 +633,20 @@ export function makeConversationNodes(
             )
           : createCall.name === "copy_campaign"
             ? await (async () => {
-                const inc = strList(args["includeAudienceIds"]);
-                const exc = strList(args["excludeAudienceIds"]);
+                const inc = strList(args["includeAudiences"]);
+                const exc = strList(args["excludeAudiences"]);
                 return proposeCopyCampaign(deps, dctx, {
                   sourceCampaignId: String(args["campaignId"] ?? ""),
                   ...(typeof args["campaignName"] === "string" ? { sourceName: args["campaignName"] as string } : {}),
-                  ...(inc ? { includeAudienceIds: inc } : {}),
-                  ...(exc ? { excludeAudienceIds: exc } : {}),
+                  ...(inc ? { includeAudiences: inc } : {}),
+                  ...(exc ? { excludeAudiences: exc } : {}),
                   ...(typeof args["budgetReais"] === "number" ? { budgetReais: args["budgetReais"] as number } : {}),
                   ...(isConversionGoal(args["goal"]) ? { goal: args["goal"] } : {}),
                 });
               })()
           : await (async () => {
-              const inc = strList(args["includeAudienceIds"]);
-              const exc = strList(args["excludeAudienceIds"]);
+              const inc = strList(args["includeAudiences"]);
+              const exc = strList(args["excludeAudiences"]);
               return proposeCreateCampaign(deps, dctx, {
                 // valida o goal contra a taxonomia neutra ANTES de propor: goal inválido (o LLM
                 // manda texto livre) descartado → o propose infere da meta/conta, e o eco mostra
@@ -654,8 +654,8 @@ export function makeConversationNodes(
                 // adapter, criando campanha (gasto real) com objetivo diferente do prometido (§8).
                 ...(isConversionGoal(args["goal"]) ? { goal: args["goal"] } : {}),
                 ...(typeof args["budgetReais"] === "number" ? { budgetReais: args["budgetReais"] as number } : {}),
-                ...(inc ? { includeAudienceIds: inc } : {}),
-                ...(exc ? { excludeAudienceIds: exc } : {}),
+                ...(inc ? { includeAudiences: inc } : {}),
+                ...(exc ? { excludeAudiences: exc } : {}),
               });
             })();
       const expiresAt = new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString();

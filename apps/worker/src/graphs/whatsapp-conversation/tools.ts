@@ -281,8 +281,8 @@ export function makeConversationTools(
     schema: z.object({
       goal: z.string().nullable().optional().describe("objetivo de negócio (ex: purchase, lead)"),
       budgetReais: z.number().positive().nullable().optional().describe("budget diário em reais (opcional)"),
-      includeAudienceIds: z.array(z.string()).nullable().optional().describe("ids de públicos a INCLUIR (de list_audiences) — mira esse público em vez de amplo"),
-      excludeAudienceIds: z.array(z.string()).nullable().optional().describe("ids de públicos a EXCLUIR"),
+      includeAudiences: z.array(z.string()).nullable().optional().describe("públicos a INCLUIR, pelo NOME/descrição que o usuário disse (ex: 'engajamento 90 dias') — eu resolvo pro público real e pergunto se ambíguo. Mira esse público em vez de amplo."),
+      excludeAudiences: z.array(z.string()).nullable().optional().describe("públicos a EXCLUIR, pelo nome/descrição"),
     }),
   });
 
@@ -296,8 +296,8 @@ export function makeConversationTools(
     schema: z.object({
       campaignId: z.string().describe("id da campanha-base (não o nome)"),
       campaignName: z.string().nullable().optional().describe("nome da campanha-base, só p/ rotular"),
-      includeAudienceIds: z.array(z.string()).nullable().optional().describe("ids de públicos a INCLUIR (remarketing) — de list_audiences"),
-      excludeAudienceIds: z.array(z.string()).nullable().optional().describe("ids de públicos a EXCLUIR (ex: leads/compradores)"),
+      includeAudiences: z.array(z.string()).nullable().optional().describe("públicos a INCLUIR (remarketing), pelo NOME/descrição que o usuário disse — eu resolvo pro público real e pergunto se ambíguo"),
+      excludeAudiences: z.array(z.string()).nullable().optional().describe("públicos a EXCLUIR, pelo nome/descrição (ex: 'leads', 'compradores')"),
       budgetReais: z.number().positive().nullable().optional().describe("budget diário em reais (opcional; default = o da original)"),
       goal: z.string().nullable().optional().describe("objetivo — só se quiser MUDAR (o agente vai avisar que troca o mecanismo)"),
     }),

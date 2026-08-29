@@ -34,3 +34,4 @@ export * from "./echo/index.js";
 export * from "./password/index.js";
 export * from "./agent-config/index.js";
 export * from "./creation/index.js";
+export * from "./audiences/index.js";

@@ -5,8 +5,8 @@
 // adjust_budget (caminho de escrita existente); duplicate/from_scratch = rascunho.
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
-import { adAccounts, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { goalNounPt, planScaleMove, type BudgetLevel, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { adAccounts, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, guardrailConfigs } from "@trafego/db";
+import { goalNounPt, planScaleMove, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
 import {
   ACTION_PARAM_MODE,
   ACTION_PARAM_PCT,
@@ -20,6 +20,7 @@ import {
   type ConversionGoal,
   type CopyVariant,
   type CreativeAssetRef,
+  type CustomAudience,
   type DraftId,
 } from "@trafego/shared";
 import type { AdAccountRef } from "@trafego/shared/ports";
@@ -169,6 +170,85 @@ async function persistDraftAndApproval(
     await deps.db.delete(campaignDrafts).where(eq(campaignDrafts.id, row!.id));
     throw err;
   }
+}
+
+/** Piso de tamanho pra um público entregar bem (custom audience Meta ~1000). Abaixo = aviso. */
+const MIN_DELIVERABLE_AUDIENCE = 1000;
+
+/** Públicos da conta — DB-first (cache do run), Meta ao vivo no fallback (+ re-cacheia). */
+async function loadAccountAudiences(deps: WorkerDeps, ctx: DraftProposalContext, ref: AdAccountRef): Promise<CustomAudience[]> {
+  const rows = await deps.db
+    .select({ id: customAudiences.externalId, name: customAudiences.name, subtype: customAudiences.subtype, approximateCount: customAudiences.approximateCount, isLookalike: customAudiences.isLookalike })
+    .from(customAudiences)
+    .where(and(eq(customAudiences.orgId, ctx.orgId as never), eq(customAudiences.adAccountId, ctx.adAccountId)));
+  if (rows.length > 0) {
+    return rows.map((r) => ({ id: r.id, name: r.name, ...(r.subtype ? { subtype: r.subtype } : {}), ...(r.approximateCount != null ? { approximateCount: r.approximateCount } : {}), isLookalike: r.isLookalike }));
+  }
+  const live = await deps.ports.ads.listCustomAudiences(ref);
+  if (live.length > 0) await createAnalysisRepo(deps.db).saveCustomAudiences(ctx.orgId, ctx.adAccountId, live);
+  return live;
+}
+
+type AudiencePrep = { readonly kind: "ok"; readonly includeIds: string[]; readonly excludeIds: string[]; readonly notes: string[] } | { readonly kind: "blocked"; readonly reason: string };
+
+/**
+ * Resolve os públicos pedidos (por NOME/descrição) → ids, de forma DETERMINÍSTICA (mesmo
+ * `resolveNamedMatch` da campanha: typo/acento/ordem, e ambíguo → PERGUNTA com as opções, nunca
+ * chuta). Gap 2: se o dono deu inclusão mas não exclusão, SUGERE excluir quem já converteu
+ * (decisão final dele — só entra no rascunho + eco). Gap 3: avisa público pequeno demais.
+ */
+async function prepareAudiences(
+  deps: WorkerDeps,
+  ctx: DraftProposalContext,
+  ref: AdAccountRef,
+  includeQueries: readonly string[],
+  excludeQueries: readonly string[],
+): Promise<AudiencePrep> {
+  if (includeQueries.length === 0 && excludeQueries.length === 0) return { kind: "ok", includeIds: [], excludeIds: [], notes: [] };
+  const audiences = await loadAccountAudiences(deps, ctx, ref);
+  if (audiences.length === 0) return { kind: "blocked", reason: "não achei públicos salvos nessa conta — confere no Gerenciador ou rode uma análise que eu cacheio os públicos" };
+  const byId = new Map(audiences.map((a) => [a.id, a]));
+  const acc = { name: (a: CustomAudience) => a.name, keys: (a: CustomAudience) => [a.id] };
+
+  const resolve = (q: string): { id: string } | { blocked: string } => {
+    const m = resolveNamedMatch(audiences, q, acc);
+    if (m.kind === "one") return { id: m.row.id };
+    if (m.kind === "none") return { blocked: `não achei um público chamado "${q}" na conta. Chega perto? me diga o nome exato (posso listar com "quais públicos eu tenho").` };
+    const opts = m.rows.map((r, i) => `${i + 1}. ${r.name}`).join("\n");
+    return { blocked: `achei mais de um público parecido com "${q}":\n${opts}\nQual desses? (me diz o nome exato)` };
+  };
+
+  const includeIds: string[] = [];
+  for (const q of includeQueries) {
+    const r = resolve(q);
+    if ("blocked" in r) return { kind: "blocked", reason: r.blocked };
+    includeIds.push(r.id);
+  }
+  const excludeIds: string[] = [];
+  for (const q of excludeQueries) {
+    const r = resolve(q);
+    if ("blocked" in r) return { kind: "blocked", reason: r.blocked };
+    excludeIds.push(r.id);
+  }
+
+  const notes: string[] = [];
+  // Gap 2 (sugestão, decisão do dono): incluiu mas não excluiu → sugere excluir convertidos.
+  if (includeIds.length > 0 && excludeQueries.length === 0) {
+    const suggested = suggestConverterExclusions(audiences, includeIds);
+    if (suggested.length > 0) {
+      excludeIds.push(...suggested);
+      const names = suggested.map((id) => byId.get(id)?.name ?? id).join(", ");
+      notes.push(`Já *sugeri excluir* quem parece ter convertido (${names}) — se quiser manter, é só falar.`);
+    }
+  }
+  // Gap 3: público de inclusão pequeno demais → pode não entregar.
+  for (const id of includeIds) {
+    const a = byId.get(id);
+    if (a?.approximateCount != null && a.approximateCount < MIN_DELIVERABLE_AUDIENCE) {
+      notes.push(`⚠️ o público *${a.name}* é pequeno (~${a.approximateCount} pessoas) — pode entregar pouco.`);
+    }
+  }
+  return { kind: "ok", includeIds, excludeIds, notes };
 }
 
 /** Escalar o melhor vencedor (curado do último run). Raise = ação; duplicate = rascunho. */
@@ -518,8 +598,9 @@ export async function proposeCreateCampaign(
   args: {
     readonly goal?: ConversionGoal;
     readonly budgetReais?: number;
-    readonly includeAudienceIds?: readonly string[];
-    readonly excludeAudienceIds?: readonly string[];
+    /** públicos DESCRITOS pelo dono (nome/descrição) — resolvidos determinístico p/ id. */
+    readonly includeAudiences?: readonly string[];
+    readonly excludeAudiences?: readonly string[];
   },
   origin: DraftOrigin = "on_demand",
 ): Promise<ChatDraftProposal> {
@@ -533,6 +614,10 @@ export async function proposeCreateCampaign(
   if (!ac.enabled.has("create_campaign")) {
     return { kind: "blocked", reason: "criar campanha está desligado para este agente (ligue em ações permitidas)" };
   }
+
+  // resolve os públicos pedidos → ids (determinístico; ambíguo/inexistente → pergunta).
+  const aud = await prepareAudiences(deps, ctx, ac.ref, args.includeAudiences ?? [], args.excludeAudiences ?? []);
+  if (aud.kind === "blocked") return { kind: "blocked", reason: aud.reason };
 
   const defaults = await deps.ports.ads.inferCreationDefaults(ac.ref);
   const goal = args.goal ?? defaults.objectiveGoal ?? DEFAULT_CONVERSION_GOAL;
@@ -584,9 +669,9 @@ export async function proposeCreateCampaign(
 
   const isVideo = !reuseImageHash && Boolean(reuseVideoId);
   // público específico (sem fonte — geo amplo + o público) quando o dono indicou; senão amplo.
-  const hasAudience = (args.includeAudienceIds?.length ?? 0) > 0 || (args.excludeAudienceIds?.length ?? 0) > 0;
+  const hasAudience = aud.includeIds.length > 0 || aud.excludeIds.length > 0;
   const targeting: NonNullable<CampaignDraftSpec["targeting"]> = hasAudience
-    ? { kind: "custom_audiences", includeIds: args.includeAudienceIds ?? [], excludeIds: args.excludeAudienceIds ?? [] }
+    ? { kind: "custom_audiences", includeIds: aud.includeIds, excludeIds: aud.excludeIds }
     : { kind: "advantage_plus" };
   const spec: CampaignDraftSpec = {
     version: 1,
@@ -623,10 +708,11 @@ export async function proposeCreateCampaign(
     lines.push(`Obs: seu anúncio de melhor desempenho é um **${unsupportedFormatPt(defaults.unsupportedTopFormat)}**, que eu ainda não sei clonar — então usei o melhor criativo de imagem/vídeo que você tem.`);
   }
   lines.push(
-    `Público: ${hasAudience ? "o que você indicou" + (args.excludeAudienceIds?.length ? " (com exclusões)" : "") : "amplo (Advantage+)"}.`,
+    `Público: ${hasAudience ? "o que você indicou" + (aud.excludeIds.length ? " (com exclusões)" : "") : "amplo (Advantage+)"}.`,
     `Gasto novo: ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia · Página: ${defaults.pageId}${defaults.pixelId ? ` · Pixel: ${defaults.pixelId}` : ""} · ${activationPhrase("active")}.`,
-    `Confirma? (você pode editar/trocar o criativo no site antes de aprovar)`,
   );
+  for (const n of aud.notes) lines.push(n);
+  lines.push(`Confirma? (você pode editar/trocar o criativo no site antes de aprovar)`);
   return { kind: "draft", echo: lines.join("\n"), approvalId, draftId };
 }
 
@@ -642,8 +728,9 @@ export async function proposeCopyCampaign(
   args: {
     readonly sourceCampaignId: string;
     readonly sourceName?: string;
-    readonly includeAudienceIds?: readonly string[];
-    readonly excludeAudienceIds?: readonly string[];
+    /** públicos DESCRITOS pelo dono (nome/descrição) — resolvidos determinístico p/ id. */
+    readonly includeAudiences?: readonly string[];
+    readonly excludeAudiences?: readonly string[];
     readonly budgetReais?: number;
     readonly goal?: ConversionGoal;
   },
@@ -654,6 +741,10 @@ export async function proposeCopyCampaign(
   if (!ac.enabled.has("create_campaign")) {
     return { kind: "blocked", reason: "criar/copiar campanha está desligado para este agente (ligue em ações permitidas)" };
   }
+
+  // resolve os públicos pedidos → ids (determinístico; ambíguo/inexistente → pergunta).
+  const aud = await prepareAudiences(deps, ctx, ac.ref, args.includeAudiences ?? [], args.excludeAudiences ?? []);
+  if (aud.kind === "blocked") return { kind: "blocked", reason: aud.reason };
 
   let structure;
   try {
@@ -675,13 +766,13 @@ export async function proposeCopyCampaign(
   }
 
   const goal = structure.objective;
-  const hasAudience = (args.includeAudienceIds?.length ?? 0) > 0 || (args.excludeAudienceIds?.length ?? 0) > 0;
+  const hasAudience = aud.includeIds.length > 0 || aud.excludeIds.length > 0;
   const targeting: NonNullable<CampaignDraftSpec["targeting"]> = hasAudience
     ? {
         kind: "custom_audiences",
         sourceAdsetId: structure.sourceAdsetId,
-        includeIds: args.includeAudienceIds ?? [],
-        excludeIds: args.excludeAudienceIds ?? [],
+        includeIds: aud.includeIds,
+        excludeIds: aud.excludeIds,
       }
     : { kind: "reuse_adset", sourceAdsetId: structure.sourceAdsetId };
 
@@ -695,7 +786,7 @@ export async function proposeCopyCampaign(
   const dailyBudgetMinor = cap != null ? Math.min(requested, cap) : requested;
 
   const baseName = args.sourceName ?? structure.name;
-  const name = `${baseName}${args.includeAudienceIds?.length ? " — REMARKETING" : " — cópia"}`;
+  const name = `${baseName}${aud.includeIds.length ? " — REMARKETING" : " — cópia"}`;
 
   const spec: CampaignDraftSpec = {
     version: 1,
@@ -718,7 +809,7 @@ export async function proposeCopyCampaign(
   });
 
   const audienceLine = hasAudience
-    ? `\n• *Público:* remarketing selecionado${args.excludeAudienceIds?.length ? " (com exclusões)" : ""}, mantendo geo/idade da original`
+    ? `\n• *Público:* remarketing selecionado${aud.excludeIds.length ? " (com exclusões)" : ""}, mantendo geo/idade da original`
     : `\n• *Público:* o mesmo da campanha-base`;
   const budgetLine = sourceIsLifetime
     ? `• *Orçamento:* ${structure.budgetMode.toUpperCase()} · ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia (a original usa orçamento vitalício; comecei com um diário seguro — ajuste se quiser)`
@@ -728,6 +819,7 @@ export async function proposeCopyCampaign(
     budgetLine,
     `• *Anúncios:* ${structure.creativeRefs.length} da original, reusados (mantém o criativo e o destino/WhatsApp)${audienceLine}`,
     `• *Objetivo:* ${goalNounPt(goal)} · ${activationPhrase("paused")}.`,
+    ...aud.notes,
     `Confirma? (dá pra ajustar orçamento/público antes)`,
   ].join("\n");
   return { kind: "draft", echo, approvalId, draftId };
