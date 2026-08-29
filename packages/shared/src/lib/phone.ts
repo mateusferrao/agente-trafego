@@ -62,6 +62,21 @@ export function extractPhoneFromName(name: string): string | null {
   }
   return best;
 }
+
+/**
+ * TODOS os telefones plausíveis (só dígitos) presentes num texto — p/ o guard de atribuição
+ * de telefone no chat (Fatia 7): um número telefônico na resposta do agente que não bate com
+ * nenhum vindo de tool = misatribuição. Pura.
+ */
+export function phoneTokensInText(text: string): string[] {
+  const matches = text.match(PHONE_TOKEN_RE) ?? [];
+  const out = new Set<string>();
+  for (const token of matches) {
+    const digits = digitsOnly(token);
+    if (isPlausiblePhone(digits)) out.add(digits);
+  }
+  return [...out];
+}
 /** Celular BR = DDD + 9 dígitos (nono dígito obrigatório desde 2016). */
 const BR_MOBILE_LOCAL_LENGTH = 9;
 /** Forma legada/quirk (ex: WhatsApp em `addressingMode: "lid"` às vezes omite o 9º dígito). */

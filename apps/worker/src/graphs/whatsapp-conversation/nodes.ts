@@ -15,14 +15,17 @@ import {
   buildGroupTranscript,
   buildRevertEcho,
   buildWriteEcho,
+  checkPhoneAttribution,
+  collectGroundedNumbers,
   describePlaybookRule,
   entityKeyOf,
+  flagUngroundedNumbers,
   resolveAgentConfigChange,
   type EchoItem,
   type RevertEchoItem,
 } from "@trafego/core";
 import { applyAgentConfigChange, loadAgentConfigState, reseedArchetypeChange } from "@trafego/agent-config";
-import { sleep, APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE } from "@trafego/shared";
+import { sleep, phoneTokensInText, APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE } from "@trafego/shared";
 import type { Action, ConversionGoal, OrgId } from "@trafego/shared/types";
 import { CONVERSION_GOALS } from "@trafego/shared/types";
 import { AdsPlatformError } from "@trafego/shared/ports";
@@ -127,6 +130,33 @@ async function loadAgentAccountCurrency(db: Database, orgId: string, agentId: st
 /** ToolMessage p/ cada tool_call (mantém o histórico válido). Primeiro leva o texto; resto, eco curto. */
 function answerToolCalls(calls: readonly { id?: string }[], text: string): ToolMessage[] {
   return calls.map((c, i) => new ToolMessage({ content: i === 0 ? text : "(ver acima)", tool_call_id: c.id ?? "" }));
+}
+
+/**
+ * Backstop SOFT de honestidade (Fatia 7): anexa um caveat quando a resposta cita DINHEIRO/%
+ * ausente das fontes (tools + config no system-prompt + histórico) ou um TELEFONE que não veio
+ * de tool (misatribuição). NUNCA remove/reescreve o texto — só acrescenta o aviso. Puro.
+ */
+function guardFinalAnswer(text: string, systemPrompt: string, windowed: readonly BaseMessage[]): string {
+  const toolResults: string[] = [];
+  const history: string[] = [];
+  for (const m of windowed) {
+    const c = typeof m.content === "string" ? m.content : "";
+    if (!c) continue;
+    if (m instanceof ToolMessage) toolResults.push(c);
+    else history.push(c);
+  }
+  const known = collectGroundedNumbers({ toolResults, configText: [systemPrompt], history });
+  const allowedPhones = new Set(toolResults.flatMap((t) => phoneTokensInText(t)));
+  const money = flagUngroundedNumbers(text, known);
+  const phones = checkPhoneAttribution(text, allowedPhones);
+  if (money.length === 0 && phones.length === 0) return text;
+  const notes: string[] = [];
+  if (phones.length > 0) {
+    notes.push("não vou garantir número de telefone que não veio da ferramenta — me pergunta o número da campanha específica que eu confirmo.");
+  }
+  if (money.length > 0) notes.push("alguns valores acima eu não consegui confirmar nos dados — trate com cautela.");
+  return `${text}\n\n_⚠️ ${notes.join(" ")}_`;
 }
 
 /** pendingWrite ainda válido (não expirado)? */
@@ -495,6 +525,15 @@ export function makeConversationNodes(
       }
     }
     await recordConversationUsage(deps, ctx, usedModel, response);
+
+    // BACKSTOP SOFT de honestidade (Fatia 7): só na resposta FINAL (sem tool call — o que
+    // vai ao usuário). Nunca dropa; no máximo anexa caveat. Answer-key = system-prompt (tem
+    // config: guidance/metas/guardrails) + resultados de tool + histórico do turno. Telefone
+    // tem checagem estrutural própria (a raiz do bug foi misatribuição cross-entity).
+    if ((response.tool_calls?.length ?? 0) === 0 && typeof response.content === "string") {
+      const guarded = guardFinalAnswer(response.content, sys, windowed);
+      if (guarded !== response.content) response = new AIMessage(guarded);
+    }
 
     // limpa pendências expiradas (o "sim" tardio não aplica algo esquecido).
     const update: WhatsappConversationUpdate = { messages: [response] };

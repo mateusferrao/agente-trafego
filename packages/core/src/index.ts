@@ -17,6 +17,7 @@ export * from "./posture/index.js";
 export * from "./funnel/index.js";
 export * from "./analysis-guards/index.js";
 export * from "./matching/index.js";
+export * from "./chat-guards/index.js";
 export * from "./cost-cap/index.js";
 export * from "./message/index.js";
 export * from "./group-context/index.js";
