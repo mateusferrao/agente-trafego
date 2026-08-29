@@ -718,14 +718,19 @@ export async function buildCapabilitiesText(
     const abilities = [
       ...(canScale ? ["escalar seu vencedor (mais budget ou duplicar)"] : []),
       ...(canCreate ? ["criar campanhas novas reusando seu criativo + copy que eu gero"] : []),
+      // copy_campaign ri no mesmo gate de create_campaign (turn.ts).
+      ...(canCreate ? ["copiar a estrutura de uma campanha sua pra outra (ex: remarketing), reusando os criativos e trocando só o público"] : []),
     ];
     parts.push(
-      `🚀 Também ${abilities.join(" e ")}. Depois de eu propor, você ajusta tudo conversando (budget, ativar/pausar, nº de variações, regerar a copy) — crio/escalo sempre PAUSADO (a Meta revisa antes) e só ATIVO de verdade com um 2º OK seu, separado.`,
+      `🚀 Também ${abilities.join(", ")}. Depois de eu propor, você ajusta tudo conversando (budget, ativar/pausar, público, nº de variações) — crio/escalo/copio sempre PAUSADO (a Meta revisa antes) e só ATIVO de verdade com um 2º OK seu, separado.`,
     );
+    if (canCreate) {
+      parts.push("🔢 Números que eu uso vêm sempre da conta/ferramenta — número de WhatsApp de destino eu confirmo pela campanha certa (nunca de outra), e público eu pego dos públicos reais da sua conta (não invento).");
+    }
   } else {
-    parts.push("🚀 Criar ou escalar campanha: hoje está desligado nas ações permitidas — dá pra liberar nas configurações (pelo site).");
+    parts.push("🚀 Criar, copiar ou escalar campanha: hoje está desligado nas ações permitidas — dá pra liberar nas configurações (pelo site).");
   }
-  parts.push("🚧 Ainda não: editar criativos nem gerar imagens/vídeos.");
+  parts.push("🚧 Ainda não: editar criativos nem gerar imagens/vídeos. Roteiro de conversa nomeado (ex: um 'modelo de mensagem' seu) eu referencio pelo nome — quem escreve/mantém é você.");
   parts.push("É só pedir. 🙂");
   return parts.join("\n");
 }
