@@ -253,6 +253,12 @@ export function makeConversationTools(
       toolCallId: z.string().min(1),
       label: z.string().min(1).describe("nome da entidade (de find_recent_actions)"),
       actionType: z.string().min(1).describe("tipo da ação original (de find_recent_actions)"),
+      mode: z
+        .enum(["pause", "archive"])
+        .optional()
+        .describe(
+          'só p/ CRIAÇÕES (create_campaign/duplicate_scale): "pause" (padrão) mantém a campanha na conta pausada; "archive" tira da lista ativa (recuperável). Use "archive" só se o usuário pedir explicitamente pra arquivar.',
+        ),
     }),
   });
 
@@ -686,7 +692,7 @@ export async function buildCapabilitiesText(
       ...(canCreate ? ["criar campanhas novas reusando seu criativo + copy que eu gero"] : []),
     ];
     parts.push(
-      `🚀 Também ${abilities.join(" e ")}. Depois de eu propor, você ajusta tudo conversando (budget, ativar/pausar, nº de variações, regerar a copy) — crio/escalo sempre PAUSADO (a Meta revisa antes) e só ATIVO de verdade com um 2º OK seu, separado.`,
+      `🚀 Também ${abilities.join(" e ")}. Depois de eu propor, você ajusta por aqui o que é leve (budget, ativar/pausar, nº de variações, público, nome, regerar a copy) — crio/escalo sempre PAUSADO (a Meta revisa antes) e só ATIVO de verdade com um 2º OK seu, separado. Pra TROCAR o criativo ou editar o TEXTO da copy, é no painel "Editar" do rascunho no site (te passo o link).`,
     );
   } else {
     parts.push("🚀 Criar ou escalar campanha: hoje está desligado nas ações permitidas — dá pra liberar nas configurações (pelo site).");

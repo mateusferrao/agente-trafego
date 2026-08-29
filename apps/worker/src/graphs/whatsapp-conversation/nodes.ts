@@ -615,11 +615,14 @@ export function makeConversationNodes(
     if (revertCalls.length > 0) {
       const items: RevertEchoItem[] = [];
       const ids: string[] = [];
+      const modes: ("pause" | "archive")[] = [];
       for (const c of revertCalls) {
-        const a = (c.args ?? {}) as { toolCallId?: string; label?: string; actionType?: string };
+        const a = (c.args ?? {}) as { toolCallId?: string; label?: string; actionType?: string; mode?: "pause" | "archive" };
         if (!a.toolCallId) continue;
-        items.push({ label: a.label ?? "essa ação", actionType: a.actionType ?? "" });
+        const mode = a.mode === "archive" ? "archive" : "pause";
+        items.push({ label: a.label ?? "essa ação", actionType: a.actionType ?? "", mode });
         ids.push(a.toolCallId);
+        modes.push(mode);
       }
       if (ids.length === 0) {
         return { messages: answerToolCalls(allCalls, "Não entendi qual ação desfazer. Use find_recent_actions.") };
@@ -630,7 +633,7 @@ export function makeConversationNodes(
         // pode omitir dados/segurança do eco; validação ao vivo confirmou o risco). O eco é a
         // verdade fixa; o ToolMessage só satisfaz o par tool_call/result.
         messages: [...answerToolCalls(allCalls, "proposto — aguardando confirmação"), new AIMessage(echo)],
-        pendingRevert: { echo, expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString(), toolCallIds: ids },
+        pendingRevert: { echo, expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString(), toolCallIds: ids, modes },
         pendingWrite: null, // uma pendência por vez (write × revert não coexistem)
       };
     }
@@ -898,11 +901,15 @@ export function makeConversationNodes(
     const pendingRevert = activePendingRevert(state.pendingRevert);
     if (pendingRevert) {
       const lines: string[] = [];
-      for (const toolCallId of pendingRevert.toolCallIds) {
-        const res = await revertActionById(deps, { orgId: ctx.orgId, toolCallId });
+      for (let i = 0; i < pendingRevert.toolCallIds.length; i++) {
+        const toolCallId = pendingRevert.toolCallIds[i]!;
+        const mode = pendingRevert.modes?.[i] ?? "pause"; // estado antigo sem modes → pausar
+        const res = await revertActionById(deps, { orgId: ctx.orgId, toolCallId, mode });
         lines.push(
           res.reverted
-            ? "✅ Desfeito."
+            ? mode === "archive"
+              ? "✅ Arquivada."
+              : "✅ Desfeito."
             : res.blockedByDrift
               ? `Não desfiz: ${res.reason ?? "a entidade mudou desde a ação"}. Se quiser desfazer mesmo assim, me avise.`
               : `Não consegui desfazer: ${res.reason ?? "ação não encontrada"}.`,

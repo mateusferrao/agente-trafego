@@ -507,26 +507,27 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     /** Troca o criativo de um rascunho `from_scratch` proposto (picker "trocar criativo"). Org-scoped;
      *  só rascunho aberto da mesma conta. `asset` = upload da biblioteca; `serving` = reuse de um
      *  anúncio ao vivo (busca o video_id FRESCO). null → 404 (não editável / criativo inválido). */
-    /** Troca o criativo de um rascunho (picker) — DELEGA ao `updateDraft` (via única). */
+    /** Troca o criativo de um rascunho (picker) — DELEGA ao `updateDraft` (via única). Propaga o
+     *  resultado tipado (ok/message) → a rota devolve 422 com a mensagem GRANULAR (não um 404 cego). */
     async setDraftCreative(
       orgId: OrgId,
       accountId: string,
       draftId: string,
       input: SetDraftCreativeInput,
-    ): Promise<{ ok: true } | null> {
-      const r = await updateDraftImpl(orgId, accountId, draftId, { creative: input });
-      return r.ok ? { ok: true } : null;
+    ): Promise<{ ok: true } | { ok: false; message: string }> {
+      return updateDraftImpl(orgId, accountId, draftId, { creative: input });
     },
 
-    /** Alterna o PÚBLICO de um rascunho (card /approvals) — DELEGA ao `updateDraft` (via única). */
+    /** Alterna o PÚBLICO de um rascunho (card /approvals) — DELEGA ao `updateDraft` (via única).
+     *  Propaga a mensagem granular do núcleo (ex.: "não achei um público provado pra herdar"). */
     async setDraftTargeting(
       orgId: OrgId,
       accountId: string,
       draftId: string,
       audience: "reuse" | "broad",
-    ): Promise<{ ok: true; audience: "reuse" | "broad" } | null> {
+    ): Promise<{ ok: true; audience: "reuse" | "broad" } | { ok: false; message: string }> {
       const r = await updateDraftImpl(orgId, accountId, draftId, { audience });
-      return r.ok ? { ok: true, audience } : null;
+      return r.ok ? { ok: true, audience } : r;
     },
 
     /** Anúncios AO VIVO da conta oferecidos como candidatos de reuse no picker (lê ad_creatives,

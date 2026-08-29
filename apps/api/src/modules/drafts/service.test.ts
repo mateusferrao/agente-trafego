@@ -289,7 +289,7 @@ describe("setDraftTargeting (alterna público reuse × amplo)", () => {
     expect((captured.spec as { targeting: unknown }).targeting).toEqual({ kind: "advantage_plus" });
   });
 
-  it("rascunho não-proposto/duplicate → null (não editável)", async () => {
+  it("rascunho duplicate → erro tipado com mensagem granular (não editável), não null cego", async () => {
     const service = createDraftsService({
       db: fakeDbSelUpd({ spec: {}, kind: "duplicate", status: "proposed" }, {}),
       adsPlatform: {} as never,
@@ -298,6 +298,9 @@ describe("setDraftTargeting (alterna público reuse × amplo)", () => {
       storage: {} as never,
       scheduler: {} as never,
     });
-    expect(await service.setDraftTargeting(ORG, "acc", "d1", "broad")).toBeNull();
+    const out = await service.setDraftTargeting(ORG, "acc", "d1", "broad");
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.message).toContain("escala"); // mensagem granular propagada (era 404 cego)
   });
 });

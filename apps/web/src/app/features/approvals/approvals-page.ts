@@ -291,9 +291,9 @@ export class ApprovalsPage implements OnInit {
         this.clearSettingAudience(d.id);
         toast.success(r.audience === 'reuse' ? 'Público: herda o que já converte.' : 'Público: a Meta escolhe (mais amplo).');
       },
-      error: () => {
+      error: (err: unknown) => {
         this.clearSettingAudience(d.id);
-        toast.error('Não consegui ajustar o público desse rascunho. Tente de novo.');
+        toast.error(this.serverMessage(err, 'Não consegui ajustar o público desse rascunho. Tente de novo.'));
       },
     });
   }
@@ -409,11 +409,17 @@ export class ApprovalsPage implements OnInit {
         this.reloadDrafts();
         toast.success('Criativo trocado neste rascunho.');
       },
-      error: () => {
+      error: (err: unknown) => {
         this.pickingCreative.set(false);
-        toast.error('Não consegui trocar o criativo. Tente de novo.');
+        toast.error(this.serverMessage(err, 'Não consegui trocar o criativo. Tente de novo.'));
       },
     });
+  }
+
+  /** Extrai a mensagem amigável do 422 do backend (agora granular — §13); fallback genérico. */
+  private serverMessage(err: unknown, fallback: string): string {
+    const message = (err as { error?: { message?: string } })?.error?.message;
+    return typeof message === 'string' && message.length > 0 ? message : fallback;
   }
 
   private bumpThumbVersion(id: string): void {

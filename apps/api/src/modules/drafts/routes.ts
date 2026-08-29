@@ -40,8 +40,8 @@ export const draftsRoutes: FastifyPluginAsync = async (app) => {
     const { id, draftId } = request.params as { id: string; draftId: string };
     const input = setDraftCreativeInput.parse(request.body);
     const result = await service.setDraftCreative(orgIdOf(request) as OrgId, id, draftId, input);
-    if (!result) return reply.status(404).send({ message: "não consegui trocar o criativo desse rascunho" });
-    return result;
+    if (!result.ok) return reply.status(422).send({ message: result.message });
+    return { ok: true };
   });
 
   // Alterna o público do rascunho (herda o conjunto que converte × Advantage+ amplo).
@@ -49,8 +49,8 @@ export const draftsRoutes: FastifyPluginAsync = async (app) => {
     const { id, draftId } = request.params as { id: string; draftId: string };
     const input = setDraftTargetingInput.parse(request.body);
     const result = await service.setDraftTargeting(orgIdOf(request) as OrgId, id, draftId, input.audience);
-    if (!result) return reply.status(404).send({ message: "não consegui ajustar o público desse rascunho" });
-    return result;
+    if (!result.ok) return reply.status(422).send({ message: result.message });
+    return { ok: true, audience: result.audience };
   });
 
   // Anúncios ao vivo da conta oferecidos como reuse no picker (só vídeo hoje). Lê ad_creatives.
