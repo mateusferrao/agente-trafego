@@ -515,7 +515,12 @@ function describeVision(result: unknown): string {
 export async function proposeCreateCampaign(
   deps: WorkerDeps,
   ctx: DraftProposalContext,
-  args: { readonly goal?: ConversionGoal; readonly budgetReais?: number },
+  args: {
+    readonly goal?: ConversionGoal;
+    readonly budgetReais?: number;
+    readonly includeAudienceIds?: readonly string[];
+    readonly excludeAudienceIds?: readonly string[];
+  },
   origin: DraftOrigin = "on_demand",
 ): Promise<ChatDraftProposal> {
   const ac = await loadAgentContext(deps, ctx);
@@ -578,13 +583,18 @@ export async function proposeCreateCampaign(
   );
 
   const isVideo = !reuseImageHash && Boolean(reuseVideoId);
+  // público específico (sem fonte — geo amplo + o público) quando o dono indicou; senão amplo.
+  const hasAudience = (args.includeAudienceIds?.length ?? 0) > 0 || (args.excludeAudienceIds?.length ?? 0) > 0;
+  const targeting: NonNullable<CampaignDraftSpec["targeting"]> = hasAudience
+    ? { kind: "custom_audiences", includeIds: args.includeAudienceIds ?? [], excludeIds: args.excludeAudienceIds ?? [] }
+    : { kind: "advantage_plus" };
   const spec: CampaignDraftSpec = {
     version: 1,
     currency: ac.currency,
     dailyBudgetMinor,
     activation: "active",
     objective: goal,
-    targeting: { kind: "advantage_plus" },
+    targeting,
     variantsCount,
     copyVariants,
     creative: {
@@ -613,6 +623,7 @@ export async function proposeCreateCampaign(
     lines.push(`Obs: seu anúncio de melhor desempenho é um **${unsupportedFormatPt(defaults.unsupportedTopFormat)}**, que eu ainda não sei clonar — então usei o melhor criativo de imagem/vídeo que você tem.`);
   }
   lines.push(
+    `Público: ${hasAudience ? "o que você indicou" + (args.excludeAudienceIds?.length ? " (com exclusões)" : "") : "amplo (Advantage+)"}.`,
     `Gasto novo: ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia · Página: ${defaults.pageId}${defaults.pixelId ? ` · Pixel: ${defaults.pixelId}` : ""} · ${activationPhrase("active")}.`,
     `Confirma? (você pode editar/trocar o criativo no site antes de aprovar)`,
   );

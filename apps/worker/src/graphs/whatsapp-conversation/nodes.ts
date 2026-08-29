@@ -644,14 +644,20 @@ export function makeConversationNodes(
                   ...(isConversionGoal(args["goal"]) ? { goal: args["goal"] } : {}),
                 });
               })()
-          : await proposeCreateCampaign(deps, dctx, {
-              // valida o goal contra a taxonomia neutra ANTES de propor: goal inválido (o LLM
-              // manda texto livre) descartado → o propose infere da meta/conta, e o eco mostra
-              // o objetivo REAL. Sem isso, um goal fora do enum viraria DEFAULT_OBJECTIVE no
-              // adapter, criando campanha (gasto real) com objetivo diferente do prometido (§8).
-              ...(isConversionGoal(args["goal"]) ? { goal: args["goal"] } : {}),
-              ...(typeof args["budgetReais"] === "number" ? { budgetReais: args["budgetReais"] as number } : {}),
-            });
+          : await (async () => {
+              const inc = strList(args["includeAudienceIds"]);
+              const exc = strList(args["excludeAudienceIds"]);
+              return proposeCreateCampaign(deps, dctx, {
+                // valida o goal contra a taxonomia neutra ANTES de propor: goal inválido (o LLM
+                // manda texto livre) descartado → o propose infere da meta/conta, e o eco mostra
+                // o objetivo REAL. Sem isso, um goal fora do enum viraria DEFAULT_OBJECTIVE no
+                // adapter, criando campanha (gasto real) com objetivo diferente do prometido (§8).
+                ...(isConversionGoal(args["goal"]) ? { goal: args["goal"] } : {}),
+                ...(typeof args["budgetReais"] === "number" ? { budgetReais: args["budgetReais"] as number } : {}),
+                ...(inc ? { includeAudienceIds: inc } : {}),
+                ...(exc ? { excludeAudienceIds: exc } : {}),
+              });
+            })();
       const expiresAt = new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString();
       if (proposal.kind === "blocked") {
         return { messages: [...answerToolCalls(allCalls, "não deu"), new AIMessage(proposal.reason)] };

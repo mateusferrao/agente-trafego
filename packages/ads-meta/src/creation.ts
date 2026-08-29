@@ -331,9 +331,10 @@ export class MetaCreationService {
       case "reuse_adset":
         return (await this.sourceAdsetTargeting(account, spec.sourceAdsetId)) ?? this.broadTargeting();
       case "custom_audiences": {
-        // remarketing: base = geo/idade da fonte (as "7 cidades" reais, não parseadas), com o
-        // público trocado e expansões zeradas (§guidance). Sem a fonte → amplo com o público.
-        const base = (await this.sourceAdsetTargeting(account, spec.sourceAdsetId)) ?? {};
+        // público específico: base = geo/idade do adset-fonte quando há (CÓPIA — "7 cidades"
+        // reais, não parseadas); sem fonte (CRIAR-DO-ZERO com público) = geo amplo + o público.
+        // Em ambos: troca o público e zera expansões (§guidance).
+        const base = spec.sourceAdsetId ? ((await this.sourceAdsetTargeting(account, spec.sourceAdsetId)) ?? {}) : {};
         const out: Record<string, unknown> = {
           ...(base["geo_locations"] ? { geo_locations: base["geo_locations"] } : { geo_locations: { countries: [DEFAULT_ADVANTAGE_GEO_COUNTRY] } }),
           ...(base["age_min"] !== undefined ? { age_min: base["age_min"] } : {}),

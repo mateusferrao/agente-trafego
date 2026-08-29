@@ -720,13 +720,14 @@ export type TargetingSpec =
   | { readonly kind: "reuse_adset"; readonly sourceAdsetId: string }
   | { readonly kind: "advantage_plus" }
   /**
-   * Remarketing/segmentado (Fatia 7): mantém geo/idade do adset-fonte e troca só o
-   * público — inclui `includeIds`, exclui `excludeIds` (custom audiences reais da BM),
-   * expansões (advantage/lookalike/geo) zeradas. Vocabulário Meta fica no adapter.
+   * Segmentado por público (Fatia 7): inclui `includeIds`, exclui `excludeIds` (custom
+   * audiences reais da BM), expansões (advantage/lookalike/geo) zeradas. `sourceAdsetId`
+   * (opcional) = herda geo/idade de um adset-fonte (CÓPIA); ausente = geo amplo + o público
+   * (CRIAR-DO-ZERO com público indicado). Vocabulário Meta fica no adapter.
    */
   | {
       readonly kind: "custom_audiences";
-      readonly sourceAdsetId: string;
+      readonly sourceAdsetId?: string;
       readonly includeIds: readonly string[];
       readonly excludeIds: readonly string[];
     };

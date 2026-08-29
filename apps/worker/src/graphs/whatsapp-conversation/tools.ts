@@ -277,10 +277,12 @@ export function makeConversationTools(
   const createCampaign = tool(proposeOnly, {
     name: "create_campaign",
     description:
-      "Propõe CRIAR uma campanha nova reusando o criativo/página/pixel da conta + copy gerada. Requer eco+confirma.",
+      "Propõe CRIAR uma campanha nova reusando o criativo/página/pixel da conta + copy gerada. Pode mirar um PÚBLICO específico (passe includeAudienceIds/excludeAudienceIds — use list_audiences pra achar os ids); sem público = amplo (Advantage+). Requer eco+confirma.",
     schema: z.object({
       goal: z.string().nullable().optional().describe("objetivo de negócio (ex: purchase, lead)"),
       budgetReais: z.number().positive().nullable().optional().describe("budget diário em reais (opcional)"),
+      includeAudienceIds: z.array(z.string()).nullable().optional().describe("ids de públicos a INCLUIR (de list_audiences) — mira esse público em vez de amplo"),
+      excludeAudienceIds: z.array(z.string()).nullable().optional().describe("ids de públicos a EXCLUIR"),
     }),
   });
 
