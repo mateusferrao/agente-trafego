@@ -474,20 +474,38 @@ interface FormState {
         </section>
 
         <!-- Fonte do criativo na criação (Slice 10) — resultado, sem jargão -->
-        <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
+        <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
           <div class="flex flex-col gap-1">
-            <span class="font-brand text-base font-semibold text-ink">De onde o {{ agentName }} tira o criativo?</span>
-            <span class="text-xs text-muted">Quando ele cria uma campanha nova, qual criativo usar.</span>
+            <span class="text-xs font-medium uppercase tracking-wide text-muted">Criativo</span>
+            <h2 class="font-brand text-base font-semibold text-ink">De onde o {{ agentName }} tira o criativo?</h2>
+            <p class="text-xs text-muted">Quando ele cria uma campanha nova, qual criativo usar.</p>
           </div>
-          <div class="flex flex-col gap-2">
+          <div class="flex flex-col gap-2" role="radiogroup" aria-label="Fonte do criativo">
             @for (o of creativeSourceOptions; track o.value) {
-              <label class="flex cursor-pointer items-start gap-3 rounded-md border border-line bg-app p-3" [class.border-accent]="creativeSourceMode() === o.value">
-                <input type="radio" name="creativeSource" class="mt-1" [value]="o.value" [checked]="creativeSourceMode() === o.value" (change)="creativeSourceMode.set(o.value)" />
-                <span class="flex flex-col gap-0.5">
-                  <span class="text-sm font-medium text-ink">{{ o.label }}@if (o.recommended) { <span class="text-xs font-normal text-muted">(recomendado)</span>}</span>
+              <button
+                type="button"
+                role="radio"
+                [attr.aria-checked]="creativeSourceMode() === o.value"
+                (click)="creativeSourceMode.set(o.value)"
+                class="flex items-center justify-between gap-3 rounded-md border px-4 py-3 text-left transition hover:border-accent/40"
+                [class.border-accent]="creativeSourceMode() === o.value"
+                [class.bg-accent-soft]="creativeSourceMode() === o.value"
+                [class.border-line]="creativeSourceMode() !== o.value"
+              >
+                <span class="flex min-w-0 flex-col gap-0.5">
+                  <span class="text-sm font-semibold text-ink"
+                    >{{ o.label }}@if (o.recommended) {<span class="ml-1 text-xs font-normal text-muted">recomendado</span>}</span
+                  >
                   <span class="text-xs text-muted">{{ o.hint }}</span>
                 </span>
-              </label>
+                <span
+                  class="size-4 shrink-0 rounded-full border transition"
+                  [class.border-accent]="creativeSourceMode() === o.value"
+                  [class.bg-accent]="creativeSourceMode() === o.value"
+                  [class.border-line]="creativeSourceMode() !== o.value"
+                  aria-hidden="true"
+                ></span>
+              </button>
             }
           </div>
         </section>

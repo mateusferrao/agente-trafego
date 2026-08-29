@@ -1,13 +1,12 @@
 import { ChangeDetectionStrategy, Component, type OnInit, computed, inject, signal } from '@angular/core';
 import { toast } from 'ngx-sonner';
 import { UiButton, UiConfirmDialogService, UiEmptyState, UiEyebrow, UiPageHeader } from '@ui';
-import { CreativePicker } from './creative-picker';
 import { DraftEditPanel } from './draft-edit-panel';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import { ApprovalsApiService } from '@core/api/approvals-api.service';
 import { DraftsApiService } from '@core/api/drafts-api.service';
 import { AGENT_NAME } from '@core/brand';
-import type { ApprovalOutput, DraftApprovalOutput, RevertibleActionOutput, SetDraftCreativeInput } from '@core/api/generated';
+import type { ApprovalOutput, DraftApprovalOutput, RevertibleActionOutput } from '@core/api/generated';
 import { UNDO_WARNING, actionTypeLabel, deadlineText, entityTargetLabel } from '@app/shared/action-format';
 import { conversionLabel } from '@app/shared/conversion-label';
 import { money } from '@app/shared/format';
@@ -40,7 +39,7 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
 @Component({
   selector: 'app-approvals-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiEmptyState, UiPageHeader, UiButton, UiEyebrow, CreativePicker, DraftEditPanel],
+  imports: [UiEmptyState, UiPageHeader, UiButton, UiEyebrow, DraftEditPanel],
   template: `
     <div class="flex flex-col gap-8">
       <app-ui-page-header
@@ -94,16 +93,8 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                         </div>
                       }
                       @if (d.audience; as aud) {
-                        <div class="flex flex-col gap-1">
-                          <span class="text-xs text-muted">Público</span>
-                          <span class="flex flex-wrap gap-2">
-                            <button appButton [variant]="aud === 'reuse' ? 'secondary' : 'ghost'" size="sm" [disabled]="settingAudience().has(d.id)" (click)="onSetAudience(d, 'reuse')">
-                              Herda o que já converte
-                            </button>
-                            <button appButton [variant]="aud === 'broad' ? 'secondary' : 'ghost'" size="sm" [disabled]="settingAudience().has(d.id)" (click)="onSetAudience(d, 'broad')">
-                              Deixa a Meta escolher
-                            </button>
-                          </span>
+                        <div class="text-sm text-ink">
+                          <span class="text-muted">Público: </span>{{ aud === 'reuse' ? 'herda o que já converte' : 'a Meta escolhe (mais amplo)' }}
                         </div>
                       }
                       @if (d.copyVariants && d.copyVariants.length > 0) {
@@ -116,38 +107,30 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                           }
                         </ul>
                       }
-                      <span class="flex shrink-0 flex-wrap gap-2">
+                      <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
                         @if (d.approvalKind === 'draft') {
-                          <button appButton variant="ghost" size="sm" [disabled]="resolving().has(d.id)" (click)="toggleEdit(d)">
+                          <button appButton variant="ghost" size="sm" class="sm:mr-auto" [disabled]="resolving().has(d.id)" (click)="toggleEdit(d)">
                             {{ editingFor() === d.id ? 'Fechar edição' : 'Editar' }}
                           </button>
                         }
-                        @if (d.approvalKind === 'draft' && d.kind === 'from_scratch') {
-                          <button appButton variant="ghost" size="sm" [disabled]="resolving().has(d.id)" (click)="togglePicker(d)">
-                            {{ pickerFor() === d.id ? 'Cancelar troca' : 'Trocar criativo' }}
+                        <div class="flex gap-2">
+                          <button appButton variant="secondary" size="sm" class="flex-1 sm:flex-none" [disabled]="resolving().has(d.id)" (click)="rejectDraft(d)">
+                            {{ d.approvalKind === 'activation' ? 'Deixar pausada' : 'Recusar' }}
                           </button>
-                        }
-                        <button appButton variant="secondary" size="sm" [disabled]="resolving().has(d.id)" (click)="rejectDraft(d)">
-                          {{ d.approvalKind === 'activation' ? 'Deixar pausada' : 'Recusar' }}
-                        </button>
-                        <button appButton size="sm" [disabled]="resolving().has(d.id)" (click)="approveDraft(d)">
-                          {{ resolving().has(d.id) ? 'Enviando…' : (d.approvalKind === 'activation' ? 'Ativar' : 'Aprovar') }}
-                        </button>
-                      </span>
+                          <button appButton size="sm" class="flex-1 sm:flex-none" [disabled]="resolving().has(d.id)" (click)="approveDraft(d)">
+                            {{ resolving().has(d.id) ? 'Enviando…' : (d.approvalKind === 'activation' ? 'Ativar' : 'Aprovar') }}
+                          </button>
+                        </div>
+                      </div>
                     </li>
-                    @if (pickerFor() === d.id) {
-                      <li>
-                        <app-creative-picker
-                          [accountId]="d.accountId"
-                          [picking]="pickingCreative()"
-                          (pick)="onPickCreative(d, $event)"
-                          (cancel)="pickerFor.set(null)"
-                        />
-                      </li>
-                    }
                     @if (editingFor() === d.id) {
                       <li>
-                        <app-draft-edit-panel [draft]="d" (saved)="onDraftSaved()" (close)="editingFor.set(null)" />
+                        <app-draft-edit-panel
+                          [draft]="d"
+                          (saved)="onDraftSaved()"
+                          (creativeChanged)="onDraftCreativeChanged(d)"
+                          (close)="editingFor.set(null)"
+                        />
                       </li>
                     }
                   }
@@ -257,11 +240,8 @@ export class ApprovalsPage implements OnInit {
   );
   protected readonly resolving = signal<ReadonlySet<string>>(new Set());
   protected readonly reverting = signal<ReadonlySet<string>>(new Set());
-  /** id do rascunho com o picker "trocar criativo" aberto (só 1 por vez). */
-  protected readonly pickerFor = signal<string | null>(null);
   /** id do rascunho com o painel "Editar rascunho" aberto (só 1 por vez). */
   protected readonly editingFor = signal<string | null>(null);
-  protected readonly pickingCreative = signal(false);
   /** ids de rascunho cuja miniatura falhou (reuse fbcdn/Meta indisponível) → placeholder. */
   protected readonly thumbBroken = signal<ReadonlySet<string>>(new Set());
   /** versão da miniatura por rascunho — bumpa após trocar o criativo (cache-buster da img). */
@@ -277,38 +257,6 @@ export class ApprovalsPage implements OnInit {
     const fmt = cr.format === 'video' ? 'vídeo' : 'imagem';
     return `${fmt} · ${cr.origin === 'reuse' ? 'reusado de um anúncio da conta' : 'da sua biblioteca'}`;
   };
-
-  /** rascunhos com a troca de público em voo (desabilita os botões). */
-  protected readonly settingAudience = signal<ReadonlySet<string>>(new Set());
-  /** Alterna o público do rascunho (reuse × amplo). Pessimista: desabilita os botões e só reflete
-   *  a `audience` que o backend retornou (o backend pode negar reuse sem público provado). */
-  protected onSetAudience(d: DraftApprovalOutput, audience: 'reuse' | 'broad'): void {
-    if (d.audience === audience) return;
-    this.settingAudience.update((s) => new Set(s).add(d.id));
-    this.draftsApi.setDraftTargeting(d.accountId, d.draftId, { audience }).subscribe({
-      next: (r) => {
-        this.patchDraftAudience(d.id, r.audience);
-        this.clearSettingAudience(d.id);
-        toast.success(r.audience === 'reuse' ? 'Público: herda o que já converte.' : 'Público: a Meta escolhe (mais amplo).');
-      },
-      error: (err: unknown) => {
-        this.clearSettingAudience(d.id);
-        toast.error(this.serverMessage(err, 'Não consegui ajustar o público desse rascunho. Tente de novo.'));
-      },
-    });
-  }
-  private patchDraftAudience(id: string, audience: 'reuse' | 'broad'): void {
-    this.draftGroups.update((gs) =>
-      gs.map((g) => ({ ...g, items: g.items.map((x) => (x.id === id ? { ...x, audience } : x)) })),
-    );
-  }
-  private clearSettingAudience(id: string): void {
-    this.settingAudience.update((s) => {
-      const next = new Set(s);
-      next.delete(id);
-      return next;
-    });
-  }
 
   protected typeLabel = actionTypeLabel;
   protected deadline = deadlineText;
@@ -391,35 +339,12 @@ export class ApprovalsPage implements OnInit {
     });
   }
 
-  /** Abre/fecha o picker de criativo pra um rascunho (só from_scratch). */
-  protected togglePicker(d: DraftApprovalOutput): void {
-    this.pickerFor.update((cur) => (cur === d.id ? null : d.id));
-  }
-
-  /** Troca o criativo do rascunho pela escolha do picker (biblioteca × reuse ao vivo). Ao trocar,
-   *  atualiza o rótulo (recarrega a lista) E a miniatura (bumpa a versão = cache-buster da img). */
-  protected onPickCreative(d: DraftApprovalOutput, choice: SetDraftCreativeInput): void {
-    this.pickingCreative.set(true);
-    this.draftsApi.setDraftCreative(d.accountId, d.draftId, choice).subscribe({
-      next: () => {
-        this.pickingCreative.set(false);
-        this.pickerFor.set(null);
-        this.bumpThumbVersion(d.id);
-        this.clearThumbBroken(d.id);
-        this.reloadDrafts();
-        toast.success('Criativo trocado neste rascunho.');
-      },
-      error: (err: unknown) => {
-        this.pickingCreative.set(false);
-        toast.error(this.serverMessage(err, 'Não consegui trocar o criativo. Tente de novo.'));
-      },
-    });
-  }
-
-  /** Extrai a mensagem amigável do 422 do backend (agora granular — §13); fallback genérico. */
-  private serverMessage(err: unknown, fallback: string): string {
-    const message = (err as { error?: { message?: string } })?.error?.message;
-    return typeof message === 'string' && message.length > 0 ? message : fallback;
+  /** O painel trocou o criativo (ação imediata) — atualiza a miniatura (cache-buster) e recarrega
+   *  a lista SEM fechar o painel (o usuário segue editando; o rótulo/thumb refletem o novo). */
+  protected onDraftCreativeChanged(d: DraftApprovalOutput): void {
+    this.bumpThumbVersion(d.id);
+    this.clearThumbBroken(d.id);
+    this.reloadDrafts();
   }
 
   private bumpThumbVersion(id: string): void {
@@ -434,7 +359,6 @@ export class ApprovalsPage implements OnInit {
   }
   /** Abre/fecha o painel de edição do rascunho (fecha o picker se estava aberto). */
   protected toggleEdit(d: DraftApprovalOutput): void {
-    this.pickerFor.set(null);
     this.editingFor.update((cur) => (cur === d.id ? null : d.id));
   }
   /** O painel salvou → recarrega os rascunhos (reflete nomes/gasto/copy frescos) e fecha. */

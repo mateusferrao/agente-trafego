@@ -1,10 +1,11 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, type OnInit, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { toast } from 'ngx-sonner';
-import { UiButton, UiInput } from '@ui';
+import { UiButton, UiInput, UiSelectBox, UiToggleGroup, UiToggleGroupItem, type UiSelectOptionItem } from '@ui';
+import { CreativePicker } from './creative-picker';
 import { DraftsApiService } from '@core/api/drafts-api.service';
 import { CONVERSION_LABEL, conversionLabel } from '@app/shared/conversion-label';
-import type { DraftApprovalOutput, UpdateDraftInput } from '@core/api/generated';
+import type { DraftApprovalOutput, SetDraftCreativeInput, UpdateDraftInput } from '@core/api/generated';
 
 /** Uma variação de copy no formulário (espelho editável do `DraftApprovalOutput.copyVariants`). */
 interface CopyForm {
@@ -26,7 +27,7 @@ type DraftCopy = NonNullable<DraftApprovalOutput['copyVariants']>[number];
 @Component({
   selector: 'app-draft-edit-panel',
   standalone: true,
-  imports: [FormsModule, UiButton, UiInput],
+  imports: [FormsModule, UiButton, UiInput, UiSelectBox, UiToggleGroup, UiToggleGroupItem, CreativePicker],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="flex flex-col gap-4 rounded-md border border-line bg-soft p-4">
@@ -60,34 +61,86 @@ type DraftCopy = NonNullable<DraftApprovalOutput['copyVariants']>[number];
         </label>
         <label class="flex flex-col gap-1">
           <span class="text-xs font-medium text-ink">Objetivo</span>
-          <select [class]="fieldClasses" [(ngModel)]="objective">
-            <option value="" disabled>Selecione o objetivo</option>
-            @for (o of objectiveOptions; track o[0]) {
-              <option [value]="o[0]">{{ o[1] }}</option>
-            }
-          </select>
+          <app-ui-select
+            [options]="objectiveSelectOptions"
+            [value]="objective()"
+            placeholder="Selecione o objetivo"
+            (valueChange)="objective.set($event)"
+          />
           <span class="text-[11px] text-muted">Objetivos de venda/lead precisam do pixel configurado na conta.</span>
         </label>
       }
 
-      <!-- Gasto + ativação (comuns) -->
-      <div class="flex flex-wrap gap-4">
-        <label class="flex flex-1 flex-col gap-1">
+      <!-- Gasto + ativação (comuns) — empilha no mobile, lado a lado no desktop -->
+      <div class="flex flex-col gap-4 sm:flex-row sm:items-start">
+        <label class="flex flex-col gap-1 sm:flex-1">
           <span class="text-xs font-medium text-ink">Gasto por dia ({{ draft().currency }})</span>
           <input appInput class="w-full" type="number" min="1" step="1" [(ngModel)]="budget" />
         </label>
-        <div class="flex flex-col gap-1">
+        <div class="flex flex-col gap-1 sm:flex-1">
           <span class="text-xs font-medium text-ink">Ao aprovar</span>
-          <span class="flex gap-2">
-            <button appButton [variant]="activation() === 'paused' ? 'secondary' : 'ghost'" size="sm" (click)="activation.set('paused')">
-              Deixar pausada
-            </button>
-            <button appButton [variant]="activation() === 'active' ? 'secondary' : 'ghost'" size="sm" (click)="activation.set('active')">
-              Ativar em seguida
-            </button>
-          </span>
+          <div
+            appToggleGroup
+            ngpToggleGroupType="single"
+            layout="segmented"
+            [columns]="2"
+            aria-label="Ao aprovar"
+            [ngpToggleGroupValue]="[activation()]"
+            (ngpToggleGroupValueChange)="setActivation($event)"
+          >
+            <button appToggleGroupItem tone="accent" ngpToggleGroupItemValue="paused">Deixar pausada</button>
+            <button appToggleGroupItem tone="accent" ngpToggleGroupItemValue="active">Ativar em seguida</button>
+          </div>
         </div>
       </div>
+
+      <!-- Público (só quando o rascunho carrega um público editável — some na escala) -->
+      @if (draft().audience) {
+        <div class="flex flex-col gap-1">
+          <span class="text-xs font-medium text-ink">Público</span>
+          <div
+            appToggleGroup
+            ngpToggleGroupType="single"
+            layout="segmented"
+            [columns]="2"
+            aria-label="Público"
+            [ngpToggleGroupValue]="[audience()]"
+            (ngpToggleGroupValueChange)="setAudience($event)"
+          >
+            <button appToggleGroupItem tone="accent" ngpToggleGroupItemValue="reuse">Herda o que já converte</button>
+            <button appToggleGroupItem tone="accent" ngpToggleGroupItemValue="broad">Deixa a Meta escolher</button>
+          </div>
+        </div>
+      }
+
+      <!-- Criativo (troca imediata — biblioteca × anúncio ao vivo; só criação) -->
+      @if (!isScale()) {
+        <div class="flex flex-col gap-2">
+          <span class="text-xs font-medium text-ink">Criativo</span>
+          <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <span class="text-sm text-ink"><span class="text-muted">Atual: </span>{{ creativeLabel() }}</span>
+            <button
+              appButton
+              variant="ghost"
+              size="sm"
+              type="button"
+              class="shrink-0 self-start whitespace-nowrap sm:self-auto"
+              [disabled]="picking()"
+              (click)="showPicker.set(!showPicker())"
+            >
+              {{ showPicker() ? 'Cancelar troca' : 'Trocar criativo' }}
+            </button>
+          </div>
+          @if (showPicker()) {
+            <app-creative-picker
+              [accountId]="draft().accountId"
+              [picking]="picking()"
+              (pick)="onPick($event)"
+              (cancel)="showPicker.set(false)"
+            />
+          }
+        </div>
+      }
 
       <!-- Copy por anúncio (só criação) -->
       @if (!isScale() && copies().length > 0) {
@@ -126,8 +179,10 @@ export class DraftEditPanel implements OnInit {
   private readonly api = inject(DraftsApiService);
 
   readonly draft = input.required<DraftApprovalOutput>();
-  /** salvou (o pai recarrega os rascunhos). */
+  /** salvou os campos do formulário (o pai recarrega e FECHA o painel). */
   readonly saved = output<void>();
+  /** trocou o criativo (ação imediata) — o pai recarrega e MANTÉM o painel aberto. */
+  readonly creativeChanged = output<void>();
   readonly close = output<void>();
 
   protected readonly saving = signal(false);
@@ -135,17 +190,30 @@ export class DraftEditPanel implements OnInit {
   protected readonly adsetName = signal('');
   protected readonly objective = signal('');
   protected readonly suffixLabel = signal('');
-  /** classes de campo (select/textarea nativos — `appInput` só casa `<input>`), no visual do design system. */
+  /** classes do `<textarea>` nativo (`appInput` só casa `<input>`), no visual do design system. */
   protected readonly fieldClasses =
     'w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink transition hover:border-muted/60 focus:border-ink focus:outline-none';
   /** opções de objetivo (valor neutro + rótulo PT) — fonte única do frontend. `custom` fica de fora:
    *  não é um objetivo de criação escolhível manualmente (vem de conversão personalizada da conta). */
-  protected readonly objectiveOptions = Object.entries(CONVERSION_LABEL).filter(([key]) => key !== 'custom');
+  protected readonly objectiveSelectOptions: readonly UiSelectOptionItem[] = Object.entries(CONVERSION_LABEL)
+    .filter(([key]) => key !== 'custom')
+    .map(([value, label]) => ({ value, label }));
   protected readonly budget = signal(0);
   protected readonly activation = signal<'active' | 'paused'>('paused');
+  protected readonly audience = signal<'reuse' | 'broad'>('reuse');
   protected readonly copies = signal<CopyForm[]>([]);
+  /** picker de criativo aberto dentro do painel + troca em voo. */
+  protected readonly showPicker = signal(false);
+  protected readonly picking = signal(false);
 
   protected readonly isScale = computed(() => this.draft().kind === 'duplicate');
+  /** rótulo do criativo atual (formato + origem) — sem jargão, sem id técnico. */
+  protected readonly creativeLabel = computed(() => {
+    const cr = this.draft().creative;
+    if (!cr) return 'nenhum criativo escolhido';
+    const fmt = cr.format === 'video' ? 'vídeo' : 'imagem';
+    return `${fmt} · ${cr.origin === 'reuse' ? 'reusado de um anúncio da conta' : 'da sua biblioteca'}`;
+  });
   /** nome legível do vencedor (pro preview do sufixo na escala). */
   protected readonly sourceLabel = computed(() => this.draft().sourceName ?? 'vencedor');
   /** placeholder do nome derivado (o que o agente usa se você deixar em branco). */
@@ -162,6 +230,7 @@ export class DraftEditPanel implements OnInit {
     this.suffixLabel.set(d.suffixLabel ?? '');
     this.budget.set(d.dailyBudgetMajor);
     this.activation.set(d.activation);
+    if (d.audience === 'reuse' || d.audience === 'broad') this.audience.set(d.audience);
     this.copies.set(
       (d.copyVariants ?? []).map((c) => ({
         adName: c.adName ?? '',
@@ -170,6 +239,36 @@ export class DraftEditPanel implements OnInit {
         description: c.description ?? '',
       })),
     );
+  }
+
+  /** Toggle "Ao aprovar" (o grupo emite string[] no modo single) → normaliza pro signal. */
+  protected setActivation(value: string | string[]): void {
+    const v = Array.isArray(value) ? value[0] : value;
+    if (v === 'active' || v === 'paused') this.activation.set(v);
+  }
+
+  /** Toggle "Público" (reuse × amplo) — vai no diff do Salvar (campo `audience` do PATCH). */
+  protected setAudience(value: string | string[]): void {
+    const v = Array.isArray(value) ? value[0] : value;
+    if (v === 'reuse' || v === 'broad') this.audience.set(v);
+  }
+
+  /** Troca o criativo (ação imediata — endpoint próprio resolve o reuse ao vivo). Mantém o painel
+   *  aberto e pede ao pai pra recarregar (a miniatura do card e o rótulo aqui refletem o novo). */
+  protected onPick(choice: SetDraftCreativeInput): void {
+    this.picking.set(true);
+    this.api.setDraftCreative(this.draft().accountId, this.draft().draftId, choice).subscribe({
+      next: () => {
+        this.picking.set(false);
+        this.showPicker.set(false);
+        toast.success('Criativo trocado neste rascunho.');
+        this.creativeChanged.emit();
+      },
+      error: (err: unknown) => {
+        this.picking.set(false);
+        toast.error(this.errorMessage(err));
+      },
+    });
   }
 
   /** Remove um anúncio (mín 1) — ação imediata (o backend re-indexa). */
@@ -233,6 +332,7 @@ export class DraftEditPanel implements OnInit {
       if (v) patch['adsetName'] = v;
     }
     if (this.objective() && this.objective() !== (d.objective ?? '')) patch['objective'] = this.objective();
+    if (d.audience && this.audience() !== d.audience) patch['audience'] = this.audience();
 
     const original = d.copyVariants ?? [];
     const edits = this.copies()
