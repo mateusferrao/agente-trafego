@@ -96,6 +96,13 @@ describe("MetaCreativesService.getCreatives", () => {
     expect(c!.imageHash).toBe("IMGHASH9");
   });
 
+  it("VÍDEO: extrai a CAPA (video_data.image_hash) como imageHash — reusar a capa do anúncio-fonte evita o #10 ao ler thumbnails", async () => {
+    stubBatch([{ id: "ADV", creative: { video_id: "VID9", object_story_spec: { video_data: { image_hash: "COVER9", title: "t" } } } }]);
+    const [c] = await makeService().getCreatives(account, ["ADV"]);
+    expect(c!.videoId).toBe("VID9");
+    expect(c!.imageHash).toBe("COVER9");
+  });
+
   it("sub-request que falhou (code != 200 ou null) é pulada, não derruba o lote", async () => {
     stubBatch([
       { id: "AD1", creative: { image_url: "http://img" } },

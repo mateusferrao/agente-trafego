@@ -366,4 +366,20 @@ describe("MetaCreationService.inferCreationDefaults", () => {
     const r = await svc().inferCreationDefaults(account);
     expect(r.sourceAdsetId).toBeUndefined();
   });
+
+  it("VÍDEO reusável → carrega a CAPA (video_data.image_hash) + o video_id (não depende de ler thumbnails, que pode dar #10)", async () => {
+    stubAds([
+      {
+        id: "ADV",
+        effective_status: "ACTIVE",
+        creative: { object_story_spec: { page_id: "PAGE1", video_data: { video_id: "VID9", image_hash: "COVER9", call_to_action: { value: { link: "https://x.test" } } } } },
+        adset: { id: "AS_V", promoted_object: { pixel_id: "PX9" } },
+        campaign: { objective: "OUTCOME_LEADS" },
+        insights: { data: [{ spend: "100", actions: [{ action_type: "lead", value: "5" }] }] },
+      },
+    ]);
+    const r = await svc().inferCreationDefaults(account);
+    expect(r.videoId).toBe("VID9");
+    expect(r.imageHash).toBe("COVER9"); // a capa do vídeo (antes ficava ausente → apply falhava na Meta)
+  });
 });

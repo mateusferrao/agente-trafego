@@ -180,7 +180,10 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     const ctx = await loadScaleContext(orgId, accountId);
     if (!ctx) return null;
     const [c] = await deps.adsPlatform.getCreatives(ctx.ref, [adId]);
-    if (c?.videoId) return { assetId: adId, format: "video", origin: "reuse", metaVideoId: c.videoId };
+    // VÍDEO: carrega TAMBÉM a capa (metaImageHash = video_data.image_hash do anúncio-fonte) — a Meta
+    // exige capa no video_data e ler os thumbnails do vídeo pode falhar (#10). Sem capa → o apply cai
+    // no fallback de thumbnails; com ela, cria direto.
+    if (c?.videoId) return { assetId: adId, format: "video", origin: "reuse", metaVideoId: c.videoId, ...(c.imageHash ? { metaImageHash: c.imageHash } : {}) };
     if (c?.imageHash) return { assetId: adId, format: "image", origin: "reuse", metaImageHash: c.imageHash };
     return null;
   }

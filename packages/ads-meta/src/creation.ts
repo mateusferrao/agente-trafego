@@ -388,7 +388,10 @@ export class MetaCreationService {
       ...(spec?.page_id ? { pageId: spec.page_id } : {}),
       ...(best.adset?.promoted_object?.pixel_id ? { pixelId: best.adset.promoted_object.pixel_id } : {}),
       ...(goal ? { objectiveGoal: goal } : {}),
-      ...(linkData?.image_hash ? { imageHash: linkData.image_hash } : {}),
+      // capa: imagem → link_data.image_hash; VÍDEO → video_data.image_hash (a capa do anúncio-fonte,
+      // acessível — evita o fetch de thumbnails do vídeo que pode falhar com #10). É o `image_hash`
+      // do video_data que o createAdCreative reusa como capa obrigatória.
+      ...((linkData?.image_hash ?? spec?.video_data?.image_hash) ? { imageHash: (linkData?.image_hash ?? spec?.video_data?.image_hash)! } : {}),
       ...(spec?.video_data?.video_id ? { videoId: spec.video_data.video_id } : {}),
       ...(reuseLink ? { linkUrl: reuseLink } : {}),
       ...(best.id ? { sourceAdId: best.id } : {}),

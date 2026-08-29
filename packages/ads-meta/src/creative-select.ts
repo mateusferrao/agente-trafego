@@ -27,6 +27,9 @@ export interface RawObjectStorySpec {
     readonly message?: string;
     readonly title?: string;
     readonly link_description?: string;
+    /** capa do vídeo — a Meta EXIGE `image_hash` OU `image_url` no video_data. Reusar a capa do
+     *  anúncio-fonte é robusto (ler os thumbnails do vídeo pode dar #10 conforme a origem do vídeo). */
+    readonly image_hash?: string;
     readonly image_url?: string;
     /** o link de destino do vídeo mora aqui (não em link_data) — CTA do object_story_spec. */
     readonly call_to_action?: { readonly value?: { readonly link?: string } };

@@ -833,7 +833,9 @@ export async function proposeCreateCampaign(
     { orgId: ctx.orgId, adAccountId: ctx.adAccountId },
   );
 
-  const isVideo = !reuseImageHash && Boolean(reuseVideoId);
+  // VÍDEO se tem video_id (o imageHash acompanha como CAPA do vídeo, não descaracteriza). Anúncio de
+  // imagem tem imageHash e NÃO tem videoId → o videoId é o discriminador correto.
+  const isVideo = Boolean(reuseVideoId);
   const spec: CampaignDraftSpec = {
     version: 1,
     currency: ac.currency,

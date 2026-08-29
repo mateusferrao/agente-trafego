@@ -42,7 +42,7 @@ export function pickSpacedFrames(thumbs: readonly RawVideoThumb[], n: number): s
 
 interface RawObjectStorySpec {
   readonly link_data?: { readonly message?: string; readonly name?: string; readonly image_hash?: string; readonly call_to_action?: { readonly type?: string } };
-  readonly video_data?: { readonly message?: string; readonly title?: string; readonly call_to_action?: { readonly type?: string } };
+  readonly video_data?: { readonly message?: string; readonly title?: string; readonly image_hash?: string; readonly call_to_action?: { readonly type?: string } };
 }
 
 interface RawCreative {
@@ -156,7 +156,9 @@ export class MetaCreativesService {
     const body = c.body ?? story?.message;
     const title = c.title ?? (c.object_story_spec?.link_data?.name || c.object_story_spec?.video_data?.title);
     const callToAction = c.call_to_action_type ?? story?.call_to_action?.type;
-    const imageHash = c.object_story_spec?.link_data?.image_hash;
+    // capa: imagem → link_data.image_hash; VÍDEO → video_data.image_hash (a capa do anúncio-fonte).
+    // Reusar essa capa é robusto — ler os thumbnails do vídeo pode dar #10 conforme a origem do vídeo.
+    const imageHash = c.object_story_spec?.link_data?.image_hash ?? c.object_story_spec?.video_data?.image_hash;
     return {
       id: c.id ?? adId,
       adId,
