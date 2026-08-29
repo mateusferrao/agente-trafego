@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { agentRuns, agents, campaignDrafts, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
+import { adAccounts, adCreatives, agentRuns, agents, campaignDrafts, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
 import type { Approval, ApprovalPort } from "@trafego/shared/ports";
 import type { PerformanceTier } from "@trafego/shared";
 import {
@@ -14,6 +14,7 @@ import {
   listPendingData,
   listRecommendationsData,
   renderWhatsappNumber,
+  resolveWhatsappNumber,
   pickAdIdsToRefresh,
   TOP_CREATIVES_LIMIT,
 } from "./read-data.js";
@@ -35,6 +36,7 @@ function fakeDb(byTable: Map<unknown, unknown[]>) {
       return chain;
     },
     innerJoin: () => chain,
+    leftJoin: () => chain,
     where: () => chain,
     orderBy: () => chain,
     limit: () => chain,
@@ -697,5 +699,36 @@ describe("renderWhatsappNumber (verbatim, honesto)", () => {
     const t = renderWhatsappNumber({ number: null, source: "none" }, "Y");
     expect(t.toLowerCase()).toContain("não achei");
     expect(t.toLowerCase()).toContain("gerenciador");
+  });
+});
+
+describe("resolveWhatsappNumber (fallback ao vivo bounded — incidente do grupo)", () => {
+  const ctx = { orgId: "o1", agentId: "ag1", adAccountId: "acc1" } as never;
+  const account = [{ metaAdAccountId: "act_1", name: "X", currency: "BRL", accountToken: "tok", connToken: null }];
+
+  function deps(getWhatsappDestination: () => Promise<unknown>) {
+    return {
+      db: fakeDb(new Map<unknown, unknown[]>([[adAccounts, account], [adCreatives, []]])),
+      ports: { ads: { getWhatsappDestination: vi.fn(getWhatsappDestination) }, vault: { decrypt: (t: string) => t } },
+      conversation: { liveFetchTimeoutMs: 1000 },
+    } as never;
+  }
+
+  it("sem cache + Meta LANÇANDO → degrada p/ none (NÃO propaga → não derruba o turno)", async () => {
+    const d = deps(() => Promise.reject(new Error("Meta 500")));
+    const dest = await resolveWhatsappNumber(d, ctx, "CMP_1");
+    expect(dest).toEqual({ number: null, source: "none" });
+  });
+
+  it("sem cache + Meta TRAVANDO além do teto → degrada p/ none (não pendura o turno)", async () => {
+    const d = deps(() => new Promise(() => {})); // nunca resolve
+    const dest = await resolveWhatsappNumber(d, ctx, "CMP_1");
+    expect(dest).toEqual({ number: null, source: "none" });
+  });
+
+  it("sem cache + Meta OK → devolve o número vivo", async () => {
+    const d = deps(() => Promise.resolve({ number: "5531999", source: "meta_cta" }));
+    const dest = await resolveWhatsappNumber(d, ctx, "CMP_1");
+    expect(dest).toEqual({ number: "5531999", source: "meta_cta" });
   });
 });

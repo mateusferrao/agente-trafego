@@ -986,9 +986,15 @@ export async function resolveWhatsappNumber(
   const other = cached.find((r) => r.number);
   if (other?.number) return { number: other.number, source: other.source ?? "campaign_name" };
 
-  // fallback ao vivo (cobre página + campanhas fora do último run).
+  // fallback ao vivo (cobre página + campanhas fora do último run). Bounded + capturado: a Meta
+  // lenta/errando NÃO pode derrubar o turno inteiro (era a raiz do "Não consegui processar" no
+  // grupo) — degrada honesto p/ `none` (o render diz "não achei o número"), nunca lança.
   const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
-  return deps.ports.ads.getWhatsappDestination(ref, campaignId);
+  try {
+    return await withTimeout(deps.ports.ads.getWhatsappDestination(ref, campaignId), deps.conversation.liveFetchTimeoutMs);
+  } catch {
+    return { number: null, source: "none" };
+  }
 }
 
 /**
@@ -1023,8 +1029,14 @@ export async function listAudiencesData(
   const repo = createAnalysisRepo(deps.db);
   const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
   if (!account) return { hasData: false, note: "conta não encontrada" };
+  // bounded + capturado: Meta lenta/errando degrada honesto (não derruba o turno).
   const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
-  const live = await deps.ports.ads.listCustomAudiences(ref);
+  let live: CustomAudience[];
+  try {
+    live = await withTimeout(deps.ports.ads.listCustomAudiences(ref), deps.conversation.liveFetchTimeoutMs);
+  } catch {
+    return { hasData: false, note: "não consegui buscar os públicos agora — tenta de novo em instantes" };
+  }
   if (live.length === 0) return { hasData: false, note: "não achei públicos salvos nessa conta" };
   await repo.saveCustomAudiences(ctx.orgId, ctx.adAccountId, live);
   return { hasData: true, audiences: live };
@@ -1042,8 +1054,14 @@ export async function listCampaignsLive(
   const repo = createAnalysisRepo(deps.db);
   const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
   if (!account) return { hasData: false, note: "conta não encontrada" };
+  // bounded + capturado: Meta lenta/errando degrada honesto (não derruba o turno).
   const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
-  const entities = await deps.ports.ads.listEntities(ref, "campaign");
+  let entities;
+  try {
+    entities = await withTimeout(deps.ports.ads.listEntities(ref, "campaign"), deps.conversation.liveFetchTimeoutMs);
+  } catch {
+    return { hasData: false, note: "não consegui listar as campanhas agora — tenta de novo em instantes" };
+  }
   if (entities.length === 0) return { hasData: false, note: "a conta não tem campanhas na Meta" };
   return { hasData: true, live: true, campaigns: entities.map((e) => ({ id: e.id, name: e.name, status: e.status })) };
 }
