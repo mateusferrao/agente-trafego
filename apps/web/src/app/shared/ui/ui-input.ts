@@ -4,8 +4,8 @@ import { NgpInput } from 'ng-primitives/input';
 
 type UiInputSurface = 'panel' | 'transparent';
 
-// Foco/hover em NAVY (ink), neutro — tomate agora é o accent de marca e leria como erro
-// num campo. Estado inválido usa o vermelho profundo de perigo (distinto do tomate).
+// Foco/hover em NAVY (ink), neutro — caqui agora é o accent de marca e leria como erro
+// num campo. Estado inválido usa o vermelho profundo de perigo (distinto do caqui).
 const INPUT_BASE_CLASSES =
   'h-10 w-full rounded-md border border-line px-3 text-sm font-medium text-ink transition ' +
   'placeholder:text-muted/70 hover:border-muted/60 focus:border-ink focus:outline-none ' +

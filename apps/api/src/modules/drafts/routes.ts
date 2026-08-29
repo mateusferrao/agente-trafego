@@ -4,7 +4,7 @@ import { requireAuth } from "../../middleware/auth.js";
 import { requireActiveAccess } from "../../middleware/access-gate.js";
 import { requireOrgScope, orgIdOf } from "../../middleware/org-scope.js";
 import { env } from "../../env.js";
-import { scaleWinnerInput, setDraftCreativeInput } from "./schema.js";
+import { scaleWinnerInput, setDraftCreativeInput, setDraftTargetingInput, updateDraftInput } from "./schema.js";
 import { isAllowedCreativeType } from "./service.js";
 
 /** Slice de rascunhos de campanha (Fatia 7): listar pendentes + escalar vencedor pelo site. */
@@ -24,13 +24,62 @@ export const draftsRoutes: FastifyPluginAsync = async (app) => {
     return result;
   });
 
-  // Troca o criativo de um rascunho from_scratch proposto (picker "trocar criativo").
+  // Edição CONSOLIDADA do rascunho (painel "Editar rascunho"): só os campos alterados. Converge
+  // com o chat no núcleo `applyDraftEdit`. Erro tipado do núcleo → 422 com mensagem amigável (§13).
+  app.patch("/accounts/:id/drafts/:draftId", guard, async (request, reply) => {
+    const { id, draftId } = request.params as { id: string; draftId: string };
+    const input = updateDraftInput.parse(request.body);
+    const result = await service.updateDraft(orgIdOf(request) as OrgId, id, draftId, input);
+    if (!result.ok) return reply.status(422).send({ message: result.message });
+    return { ok: true };
+  });
+
+  // Troca o criativo de um rascunho from_scratch proposto (picker "trocar criativo"). Body =
+  // união { kind:'asset', assetId } (biblioteca) | { kind:'serving', adId } (reuse ao vivo).
   app.post("/accounts/:id/drafts/:draftId/creative", guard, async (request, reply) => {
     const { id, draftId } = request.params as { id: string; draftId: string };
     const input = setDraftCreativeInput.parse(request.body);
-    const result = await service.setDraftCreative(orgIdOf(request) as OrgId, id, draftId, input.assetId);
-    if (!result) return reply.status(404).send({ message: "não consegui trocar o criativo desse rascunho" });
-    return result;
+    const result = await service.setDraftCreative(orgIdOf(request) as OrgId, id, draftId, input);
+    if (!result.ok) return reply.status(422).send({ message: result.message });
+    return { ok: true };
+  });
+
+  // Alterna o público do rascunho (herda o conjunto que converte × Advantage+ amplo).
+  app.post("/accounts/:id/drafts/:draftId/targeting", guard, async (request, reply) => {
+    const { id, draftId } = request.params as { id: string; draftId: string };
+    const input = setDraftTargetingInput.parse(request.body);
+    const result = await service.setDraftTargeting(orgIdOf(request) as OrgId, id, draftId, input.audience);
+    if (!result.ok) return reply.status(422).send({ message: result.message });
+    return { ok: true, audience: result.audience };
+  });
+
+  // Anúncios ao vivo da conta oferecidos como reuse no picker (só vídeo hoje). Lê ad_creatives.
+  app.get("/accounts/:id/serving-creatives", guard, async (request) => {
+    const { id } = request.params as { id: string };
+    return service.listServingCreatives(orgIdOf(request) as OrgId, id);
+  });
+
+  // Miniatura do criativo do rascunho (card /approvals). Org-scoped pelo draftId. upload → blob
+  // do StoragePort; reuse → busca fresco da Meta e faz stream (fbcdn expira → nunca URL crua).
+  // ETag estável pelo id do criativo → browser cacheia + 304 na revalidação (sem tocar na Meta).
+  app.get("/accounts/:id/drafts/:draftId/creative/thumb", guard, async (request, reply) => {
+    const { id, draftId } = request.params as { id: string; draftId: string };
+    const inm = request.headers["if-none-match"];
+    const thumb = await service.getDraftCreativeThumb(
+      orgIdOf(request) as OrgId,
+      id,
+      draftId,
+      typeof inm === "string" ? inm : undefined,
+    );
+    if (!thumb) return reply.status(404).send({ message: "miniatura indisponível" });
+    const etag = `"${thumb.etag}"`;
+    if ("notModified" in thumb) return reply.status(304).header("ETag", etag).send();
+    return reply
+      .header("Content-Type", thumb.contentType)
+      .header("Cache-Control", "private, max-age=86400")
+      .header("ETag", etag)
+      .header("Content-Disposition", "inline")
+      .send(Buffer.from(thumb.bytes));
   });
 
   app.get("/accounts/:id/creatives", guard, async (request) => {

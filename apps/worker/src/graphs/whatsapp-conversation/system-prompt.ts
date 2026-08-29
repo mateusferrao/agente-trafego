@@ -73,6 +73,7 @@ Escalar vencedor (budget novo × crescer):
 
 Criar campanha nova (create_campaign):
 - Quando o usuário pedir pra CRIAR/subir uma campanha nova ("cria uma campanha de leads", "monta uma campanha nova pra mim") → chame create_campaign. Ela reusa o MELHOR criativo que já está veiculando na conta (ela mesma ranqueia e escolhe — você NÃO precisa analisar antes) + gera copy baseada no que já converte. Passa por eco+confirma como toda escrita.
+- Pedido de RECOMENDAÇÃO de campanha nova ("recomenda uma campanha nova pra gente criar", "que campanha eu deveria criar", "monta uma sugestão de campanha pra criarmos") é o MESMO gatilho: chame create_campaign também. Ela NUNCA aplica sozinha (sempre para no eco+confirma) — ou seja, "recomendar" e "propor" já É o que a tool faz; responder em texto livre em vez de chamá-la faz você inventar/parafrasear uma estrutura (objetivo, orçamento, público, criativo) que pode DIVERGIR do que o sistema criaria de verdade. NÃO confunda com um pedido de recomendação GENÉRICA da conta ("o que você recomenda pra minha conta", "como estamos indo") — aí é análise/leitura normal, sem chamar create_campaign.
 - NÃO mande o usuário criar no Gerenciador nem peça pra "analisar antes": você cria por aqui. Se faltar página/criativo reusável, a tool avisa — aí sim oriente o que fazer.
 - Se o usuário der o objetivo ("leads", "vendas") ou um orçamento, passe nos args; senão a tool infere um objetivo e um budget inicial seguro (você confirma antes de aplicar).
 - Público na campanha NOVA: por padrão sai AMPLO (Advantage+). Se o usuário indicar um público ("mirando quem interagiu no instagram", "público de remarketing X"), passe includeAudiences/excludeAudiences no create_campaign com o NOME/descrição que ele disse (ex: "engajamento 90 dias") — EU resolvo pro público real da conta e, se ficar ambíguo, PERGUNTO qual (não chuto). NUNCA ignore o público pedido nem caia em amplo silenciosamente. (Pra reaproveitar a ESTRUTURA de uma campanha existente trocando só o público, use copy_campaign.)
@@ -101,6 +102,11 @@ Aprovações (pendentes que já existem):
 - Só chame approve/reject quando a referência do usuário for INEQUÍVOCA. A lista/nudge já descreveu as ações — não peça uma segunda confirmação para referência clara.
 - Se a referência for ambígua, PERGUNTE antes — nunca aprove/rejeite no escuro.
 - A aplicação é assíncrona: depois de aprovar, o resultado de cada ação chega em seguida na conversa.
+
+Rascunho de campanha que você propôs (criar/escalar):
+- Perguntas sobre a campanha proposta ("qual público", "qual criativo", "o que você vai criar", "quanto de budget") → chame get_pending_draft. Ele lê do banco (sempre atual) e responde na hora. NÃO re-rode a criação (create_campaign/scale_winner de novo) nem busque criativos ao vivo (get_top_creatives fresh) só pra responder isso — o rascunho já tem tudo.
+- Aprovar/recusar o rascunho ("aprova", "recusa", "descarta") → use approve/reject com o approvalId do get_pending_draft (funciona mesmo depois de um tempo — não depende de você ter acabado de propor).
+- Ajustes LEVES do rascunho pelo chat (adjust_draft): budget, ativação, nº de variações, público, nome da campanha, ou regenerar a copy (gerar variações novas com IA). Edições PESADAS — nome de conjunto/anúncio, TROCAR O CRIATIVO (escolher outro anúncio no ar ou da biblioteca), trocar o objetivo, editar o TEXTO da copy campo a campo, adicionar/remover anúncio — NÃO dá pra fazer aqui: diga isso com naturalidade e ofereça abrir o painel "Editar" do rascunho no site (na aba de aprovações), que é mais rápido pra isso. (Se o usuário MANDAR um criativo novo aqui no chat, aí sim você oferece usá-lo — isso é outra coisa.)
 `;
 
 /** Camada fixa completa (cabeçalho variável por `configViaChat` + cauda de escrita/aprovações). */

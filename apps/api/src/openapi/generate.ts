@@ -89,9 +89,14 @@ import {
   draftApprovalOutput,
   scaleWinnerInput,
   scaleWinnerOutput,
+  servingCreativeOutput,
   uploadCreativeOutput,
   setDraftCreativeInput,
   setDraftCreativeOutput,
+  setDraftTargetingInput,
+  setDraftTargetingOutput,
+  updateDraftInput,
+  updateDraftOutput,
 } from "../modules/drafts/schema.js";
 
 extendZodWithOpenApi(z);
@@ -174,8 +179,13 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const ScaleWinnerInput = registry.register("ScaleWinnerInput", scaleWinnerInput);
   const ScaleWinnerOutput = registry.register("ScaleWinnerOutput", scaleWinnerOutput);
   const CreativeAssetOutput = registry.register("CreativeAssetOutput", creativeAssetOutput);
+  const ServingCreativeOutput = registry.register("ServingCreativeOutput", servingCreativeOutput);
+  const SetDraftTargetingInput = registry.register("SetDraftTargetingInput", setDraftTargetingInput);
+  const SetDraftTargetingOutput = registry.register("SetDraftTargetingOutput", setDraftTargetingOutput);
   const SetDraftCreativeInput = registry.register("SetDraftCreativeInput", setDraftCreativeInput);
 const SetDraftCreativeOutput = registry.register("SetDraftCreativeOutput", setDraftCreativeOutput);
+  const UpdateDraftInput = registry.register("UpdateDraftInput", updateDraftInput);
+  const UpdateDraftOutput = registry.register("UpdateDraftOutput", updateDraftOutput);
   const UploadCreativeOutput = registry.register("UploadCreativeOutput", uploadCreativeOutput);
   const RevertibleActionOutput = registry.register("RevertibleActionOutput", revertibleActionOutput);
 
@@ -682,6 +692,19 @@ const SetDraftCreativeOutput = registry.register("SetDraftCreativeOutput", setDr
     },
   });
   registry.registerPath({
+    method: "patch",
+    path: "/api/accounts/{id}/drafts/{draftId}",
+    tags: ["drafts"],
+    request: {
+      params: z.object({ id: z.string(), draftId: z.string() }),
+      ...jsonBody(UpdateDraftInput),
+    },
+    responses: {
+      200: jsonRes("rascunho editado", UpdateDraftOutput),
+      422: { description: "edição inválida (mensagem amigável)" },
+    },
+  });
+  registry.registerPath({
     method: "post",
     path: "/api/accounts/{id}/drafts/{draftId}/creative",
     tags: ["drafts"],
@@ -700,6 +723,23 @@ const SetDraftCreativeOutput = registry.register("SetDraftCreativeOutput", setDr
     tags: ["drafts"],
     request: { params: z.object({ id: z.string() }) },
     responses: { 200: jsonRes("biblioteca de criativos da conta", z.array(CreativeAssetOutput)) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts/{id}/serving-creatives",
+    tags: ["drafts"],
+    request: { params: z.object({ id: z.string() }) },
+    responses: { 200: jsonRes("anúncios ao vivo da conta oferecidos como reuse (só vídeo)", z.array(ServingCreativeOutput)) },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/accounts/{id}/drafts/{draftId}/targeting",
+    tags: ["drafts"],
+    request: {
+      params: z.object({ id: z.string(), draftId: z.string() }),
+      ...jsonBody(SetDraftTargetingInput),
+    },
+    responses: { 200: jsonRes("público do rascunho alternado (reuse × amplo)", SetDraftTargetingOutput) },
   });
   registry.registerPath({
     method: "post",
@@ -736,7 +776,7 @@ const SetDraftCreativeOutput = registry.register("SetDraftCreativeOutput", setDr
   const generator = new OpenApiGeneratorV31(registry.definitions);
   return generator.generateDocument({
     openapi: "3.1.0",
-    info: { title: "AutoTraffic API", version: "0.1.0" },
+    info: { title: "CaquiAI API", version: "0.1.0" },
     servers: [{ url: "/" }],
   });
 }

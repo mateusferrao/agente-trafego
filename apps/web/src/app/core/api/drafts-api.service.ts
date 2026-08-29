@@ -6,8 +6,13 @@ import type {
   DraftApprovalOutput,
   ScaleWinnerInput,
   ScaleWinnerOutput,
+  ServingCreativeOutput,
   SetDraftCreativeInput,
   SetDraftCreativeOutput,
+  SetDraftTargetingInput,
+  SetDraftTargetingOutput,
+  UpdateDraftInput,
+  UpdateDraftOutput,
   UploadCreativeOutput,
 } from './generated';
 
@@ -42,14 +47,49 @@ export class DraftsApiService extends BaseApiService {
     );
   }
 
+  /** `PATCH /api/accounts/:id/drafts/:draftId` — edição consolidada do rascunho (painel). Só os
+   *  campos alterados. Erro do núcleo → 422 com mensagem amigável (o componente mostra o toast). */
+  updateDraft(accountId: string, draftId: string, input: UpdateDraftInput): Observable<UpdateDraftOutput> {
+    return this.patch<UpdateDraftOutput, UpdateDraftInput>(
+      ['/accounts', accountId, 'drafts', draftId],
+      input,
+    );
+  }
+
   /** `GET /api/accounts/:id/creatives` — biblioteca de criativos da conta. */
   listCreatives(accountId: string): Observable<CreativeAssetOutput[]> {
     return this.get<CreativeAssetOutput[]>(['/accounts', accountId, 'creatives']);
   }
 
+  /** `GET /api/accounts/:id/serving-creatives` — anúncios ao vivo (reuse no picker; só vídeo). */
+  listServingCreatives(accountId: string): Observable<ServingCreativeOutput[]> {
+    return this.get<ServingCreativeOutput[]>(['/accounts', accountId, 'serving-creatives']);
+  }
+
+  /** `POST /api/accounts/:id/drafts/:draftId/targeting` — alterna o público (reuse × amplo). */
+  setDraftTargeting(
+    accountId: string,
+    draftId: string,
+    input: SetDraftTargetingInput,
+  ): Observable<SetDraftTargetingOutput> {
+    return this.post<SetDraftTargetingOutput, SetDraftTargetingInput>(
+      ['/accounts', accountId, 'drafts', draftId, 'targeting'],
+      input,
+    );
+  }
+
   /** URL da rota autenticada de blob (preview) — mesma origem/proxy da API. */
   creativeBlobUrl(accountId: string, assetId: string): string {
     return this.resolveUrl(['/accounts', accountId, 'creatives', assetId, 'blob']);
+  }
+
+  /** URL da miniatura do criativo do rascunho (card de aprovação) — proxy autenticado; reuse
+   *  busca fresco da Meta, upload serve o blob. Cacheada por ETag no browser. `version` (opcional)
+   *  = cache-buster: a URL é estável por rascunho, então trocar o criativo não re-buscaria a img
+   *  sozinho; bumpar a versão muda a URL e força o refetch. */
+  draftCreativeThumbUrl(accountId: string, draftId: string, version = 0): string {
+    const url = this.resolveUrl(['/accounts', accountId, 'drafts', draftId, 'creative', 'thumb']);
+    return version > 0 ? `${url}?v=${version}` : url;
   }
 
   /** `DELETE /api/accounts/:id/creatives/:assetId` — exclui um criativo (híbrido): em uso →

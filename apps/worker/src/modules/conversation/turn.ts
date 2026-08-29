@@ -24,6 +24,9 @@ import { loadEnabledTools } from "../tools/enabled.js";
 import { createNotifyRepo } from "../notify/repo.js";
 import { createSendToConversation, type SendToConversation } from "../notify/send-to-contact.js";
 import { withTimeout } from "./with-timeout.js";
+import { applyOfferedCreative } from "./draft-proposal.js";
+import { clearCreativeOffer, getCreativeOffer, isSimpleAffirmation } from "./creative-offer.js";
+import { DEFAULT_CURRENCY } from "@trafego/shared";
 
 /** Erro amigável se o turno falhar (LLM/infra) — nunca vaza stack pro usuário (§UX). */
 const FALLBACK_REPLY = "Não consegui processar agora. Tenta de novo em instantes.";
@@ -208,6 +211,31 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
   const allow = inContext
     ? new Set<string>([...AGENT_TOOL_NAMES, ...writeTools, ...REFINE_TOOL_NAMES, ...config.tools])
     : conciergeAllow;
+
+  // Slice 7 (ponte estado→turno): o usuário mandou um criativo no WhatsApp (o intake guardou uma
+  // OFERTA no Redis) e agora respondeu. Só um "sim" CLARO resolve — usar o criativo no rascunho
+  // pendente ou criar uma campanha com ele — ANTES do grafo. Ambíguo/composto → segue pro turno
+  // normal (a oferta fica no TTL; o usuário pode confirmar depois). Precisa de agente em contexto.
+  if (inContext) {
+    const offer = await getCreativeOffer(deps.redis, input.conversationId);
+    if (offer && isSimpleAffirmation(input.text)) {
+      try {
+        const offerReply = await applyOfferedCreative(
+          deps,
+          { orgId: input.orgId, agentId: inContext.agentId, adAccountId: inContext.adAccountId, currency: DEFAULT_CURRENCY },
+          offer,
+        );
+        // limpa a oferta só APÓS o sucesso: se applyOfferedCreative falhar (Meta/LLM), a oferta
+        // fica no TTL e o usuário pode tentar de novo — sem sumir silenciosamente.
+        await clearCreativeOffer(deps.redis, input.conversationId);
+        await deliverReply(sendToConversation, input.ref, offerReply, logger, input.orgId);
+      } catch (err) {
+        logger.error({ err, orgId: input.orgId }, "conversation:oferta de criativo falhou");
+        await deliverReply(sendToConversation, input.ref, FALLBACK_REPLY, logger, input.orgId);
+      }
+      return;
+    }
+  }
 
   let reply = FALLBACK_REPLY;
   try {

@@ -34,9 +34,9 @@ import { UiConfirmDialogService } from './ui-confirm-dialog.service';
           <div class="flex items-start gap-4">
             <div
               class="grid size-10 shrink-0 place-items-center rounded-lg border"
-              [class.border-tomato-soft]="request.tone === 'danger'"
-              [class.bg-tomato-soft]="request.tone === 'danger'"
-              [class.text-tomato]="request.tone === 'danger'"
+              [class.border-danger-soft]="request.tone === 'danger'"
+              [class.bg-danger-soft]="request.tone === 'danger'"
+              [class.text-danger]="request.tone === 'danger'"
               [class.border-accent-soft]="request.tone !== 'danger'"
               [class.bg-accent-soft]="request.tone !== 'danger'"
               [class.text-accent-strong]="request.tone !== 'danger'"

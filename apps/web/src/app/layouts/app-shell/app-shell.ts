@@ -41,7 +41,7 @@ import { ShellNav } from './shell-nav';
       <aside class="surface-noise hidden flex-col gap-5 border-r border-line bg-panel px-4 py-5 md:flex">
         <div class="brand-lockup px-1">
           <span class="brand-mark" aria-hidden="true"></span>
-          <span class="brand-wordmark">AutoTraffic</span>
+          <span class="brand-wordmark">Caqui<span class="text-accent">AI</span></span>
         </div>
         <app-shell-nav />
       </aside>
@@ -52,7 +52,7 @@ import { ShellNav } from './shell-nav';
             <div appUiDrawerHeader>
               <div class="brand-lockup px-1">
                 <span class="brand-mark" aria-hidden="true"></span>
-                <span class="brand-wordmark">AutoTraffic</span>
+                <span class="brand-wordmark">Caqui<span class="text-accent">AI</span></span>
               </div>
               <button
                 type="button"
@@ -91,7 +91,7 @@ export class AppShell {
     this.navigationEnd();
     const url = this.router.url;
     const match = APP_MODULES.find((m) => (m.exact ? url === m.route : url.startsWith(m.route)));
-    return match?.label ?? 'AutoTraffic';
+    return match?.label ?? 'CaquiAI';
   });
 
   constructor() {

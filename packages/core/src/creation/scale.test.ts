@@ -76,6 +76,11 @@ describe("buildDuplicateInput", () => {
     });
   });
 
+  it("usa o rótulo de sufixo EDITADO quando o spec tem (Slice 7/9)", () => {
+    const edited: CampaignDraft = { ...draft, spec: { ...draft.spec, suffixLabel: "escala 2" } };
+    expect(buildDuplicateInput(edited).renameSuffix).toBe("escala 2");
+  });
+
   it("lança se o rascunho não é de duplicação", () => {
     const fromScratch: CampaignDraft = { kind: "from_scratch", spec: draft.spec };
     expect(() => buildDuplicateInput(fromScratch)).toThrow();

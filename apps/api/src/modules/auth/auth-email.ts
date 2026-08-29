@@ -1,12 +1,12 @@
 import type { EmailMessage } from "@trafego/shared/ports";
 import { AGENT_NAME } from "@trafego/shared";
 
-const APP_NAME = "AutoTraffic";
+const APP_NAME = "CaquiAI";
 
 // Paleta de marca (subset seguro p/ e-mail — sem depender de fontes/offset).
 const C_INK = "#0c1134";
 const C_PAPER = "#fbf9f4";
-const C_TOMATO = "#e00202";
+const C_CAQUI = "#e8720d";
 const C_MUTED = "#4a5070";
 const C_LINE = "#e6e2d8";
 const FONT = "Arial, Helvetica, sans-serif";
@@ -26,7 +26,7 @@ export function escapeHtml(value: string): string {
 function wrapEmailHtml(inner: string): string {
   return `<div style="margin:0;padding:24px;background:${C_PAPER};font-family:${FONT};color:${C_INK}">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;margin:0 auto">
-<tr><td style="padding:0 0 16px 2px;font-size:20px;font-weight:bold;color:${C_INK}">Auto<span style="color:${C_TOMATO}">Traffic</span></td></tr>
+<tr><td style="padding:0 0 16px 2px;font-size:20px;font-weight:bold;color:${C_INK}">Caqui<span style="color:${C_CAQUI}">AI</span></td></tr>
 <tr><td style="background:#ffffff;border:1px solid ${C_LINE};border-radius:12px;padding:24px;font-size:15px;line-height:1.55">${inner}</td></tr>
 <tr><td style="padding:16px 2px 0;font-size:12px;color:${C_MUTED}">${APP_NAME} — gestão de tráfego pago no WhatsApp.</td></tr>
 </table></div>`;
@@ -104,7 +104,7 @@ export function buildAccountExistsEmail(params: { to: string; from: string; appU
     text: `Alguém tentou criar uma conta com este email, mas você já tem uma. Para entrar, acesse ${login}. Se esqueceu a senha, use "Esqueci minha senha".`,
     html: wrapEmailHtml(
       `<p style="margin:0 0 12px">Alguém tentou criar uma conta com este email, mas você já tem uma.</p>` +
-        `<p style="margin:0">Para entrar, acesse <a href="${safeLogin}" style="color:${C_TOMATO}">${safeLogin}</a>. Se esqueceu a senha, use "Esqueci minha senha".</p>`,
+        `<p style="margin:0">Para entrar, acesse <a href="${safeLogin}" style="color:${C_CAQUI}">${safeLogin}</a>. Se esqueceu a senha, use "Esqueci minha senha".</p>`,
     ),
     category: "auth",
   };

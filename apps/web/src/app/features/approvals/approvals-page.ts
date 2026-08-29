@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, type OnInit, computed, inject, signal } from '@angular/core';
 import { toast } from 'ngx-sonner';
 import { UiButton, UiConfirmDialogService, UiEmptyState, UiEyebrow, UiPageHeader } from '@ui';
-import { CreativePicker } from './creative-picker';
+import { DraftEditPanel } from './draft-edit-panel';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import { ApprovalsApiService } from '@core/api/approvals-api.service';
 import { DraftsApiService } from '@core/api/drafts-api.service';
@@ -39,7 +39,7 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
 @Component({
   selector: 'app-approvals-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiEmptyState, UiPageHeader, UiButton, UiEyebrow, CreativePicker],
+  imports: [UiEmptyState, UiPageHeader, UiButton, UiEyebrow, DraftEditPanel],
   template: `
     <div class="flex flex-col gap-8">
       <app-ui-page-header
@@ -70,13 +70,33 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                         <span class="font-semibold text-ink">{{ draftTitle(d) }}</span>
                       </span>
                       <dl class="grid grid-cols-1 gap-1 text-sm text-ink sm:grid-cols-2">
-                        <div><dt class="inline text-muted">{{ d.approvalKind === 'activation' ? 'Gasto' : 'Gasto novo' }}: </dt><dd class="inline font-semibold">{{ money(d.dailyBudgetMajor, d.currency) }}/dia</dd></div>
+                        <div><dt class="inline text-muted">{{ d.approvalKind === 'activation' ? 'Gasto' : 'Gasto novo' }}: </dt><dd class="inline font-semibold">{{ money(d.dailyBudgetMajor, d.currency) }}/dia</dd>@if (d.clampedFromMajor; as req) {<dd class="inline text-xs text-muted"> (você pediu {{ money(req, d.currency) }} — cortei pro seu teto)</dd>}</div>
                         <div><dt class="inline text-muted">Status: </dt><dd class="inline">{{ activationStatusText(d) }}</dd></div>
                         @if (d.pageId) { <div><dt class="inline text-muted">Página: </dt><dd class="inline">conectada</dd></div> }
                         @if (d.pixelId) { <div><dt class="inline text-muted">Rastreamento: </dt><dd class="inline">pixel conectado</dd></div> }
                         @if (d.objective) { <div><dt class="inline text-muted">Objetivo: </dt><dd class="inline">{{ objectiveLabel(d.objective) }}</dd></div> }
-                        @if (d.sourceLabel) { <div><dt class="inline text-muted">Origem: </dt><dd class="inline">{{ sourceName(d) }}</dd></div> }
+                        @if (d.sourceLevel) { <div><dt class="inline text-muted">Origem: </dt><dd class="inline">{{ sourceName(d) }}</dd></div> }
                       </dl>
+                      @if (d.creative; as cr) {
+                        <div class="flex items-center gap-3">
+                          @if (!thumbBroken().has(d.id)) {
+                            <img
+                              [src]="thumbUrl(d)"
+                              (error)="onThumbError(d.id)"
+                              alt="Prévia do criativo"
+                              class="h-16 w-16 shrink-0 rounded-lg border border-line object-cover"
+                            />
+                          } @else {
+                            <span class="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg border border-line text-xs text-muted">sem prévia</span>
+                          }
+                          <span class="text-sm text-ink"><span class="text-muted">Criativo: </span>{{ creativeLabel(cr) }}</span>
+                        </div>
+                      }
+                      @if (d.audience; as aud) {
+                        <div class="text-sm text-ink">
+                          <span class="text-muted">Público: </span>{{ aud === 'reuse' ? 'herda o que já converte' : 'a Meta escolhe (mais amplo)' }}
+                        </div>
+                      }
                       @if (d.copyVariants && d.copyVariants.length > 0) {
                         <ul class="flex flex-col gap-2">
                           @for (c of d.copyVariants; track $index) {
@@ -87,27 +107,29 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                           }
                         </ul>
                       }
-                      <span class="flex shrink-0 flex-wrap gap-2">
-                        @if (d.approvalKind === 'draft' && d.kind === 'from_scratch') {
-                          <button appButton variant="ghost" size="sm" [disabled]="resolving().has(d.id)" (click)="togglePicker(d)">
-                            {{ pickerFor() === d.id ? 'Cancelar troca' : 'Trocar criativo' }}
+                      <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+                        @if (d.approvalKind === 'draft') {
+                          <button appButton variant="ghost" size="sm" class="sm:mr-auto" [disabled]="resolving().has(d.id)" (click)="toggleEdit(d)">
+                            {{ editingFor() === d.id ? 'Fechar edição' : 'Editar' }}
                           </button>
                         }
-                        <button appButton variant="secondary" size="sm" [disabled]="resolving().has(d.id)" (click)="rejectDraft(d)">
-                          {{ d.approvalKind === 'activation' ? 'Deixar pausada' : 'Recusar' }}
-                        </button>
-                        <button appButton size="sm" [disabled]="resolving().has(d.id)" (click)="approveDraft(d)">
-                          {{ resolving().has(d.id) ? 'Enviando…' : (d.approvalKind === 'activation' ? 'Ativar' : 'Aprovar') }}
-                        </button>
-                      </span>
+                        <div class="flex gap-2">
+                          <button appButton variant="secondary" size="sm" class="flex-1 sm:flex-none" [disabled]="resolving().has(d.id)" (click)="rejectDraft(d)">
+                            {{ d.approvalKind === 'activation' ? 'Deixar pausada' : 'Recusar' }}
+                          </button>
+                          <button appButton size="sm" class="flex-1 sm:flex-none" [disabled]="resolving().has(d.id)" (click)="approveDraft(d)">
+                            {{ resolving().has(d.id) ? 'Enviando…' : (d.approvalKind === 'activation' ? 'Ativar' : 'Aprovar') }}
+                          </button>
+                        </div>
+                      </div>
                     </li>
-                    @if (pickerFor() === d.id) {
+                    @if (editingFor() === d.id) {
                       <li>
-                        <app-creative-picker
-                          [accountId]="d.accountId"
-                          [picking]="pickingCreative()"
-                          (pick)="onPickCreative(d, $event)"
-                          (cancel)="pickerFor.set(null)"
+                        <app-draft-edit-panel
+                          [draft]="d"
+                          (saved)="onDraftSaved()"
+                          (creativeChanged)="onDraftCreativeChanged(d)"
+                          (close)="editingFor.set(null)"
                         />
                       </li>
                     }
@@ -168,7 +190,17 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                           <span class="text-xs text-muted">Não revertida: {{ a.revertBlockedReason }}</span>
                         }
                       </span>
-                      @if (a.revertBlocked) {
+                      @if (isCreation(a)) {
+                        <span class="flex shrink-0 flex-col items-stretch gap-1 sm:items-end">
+                          <span class="flex gap-2">
+                            <button appButton variant="secondary" size="sm" [disabled]="reverting().has(a.toolCallId)" (click)="revert(a, false, 'pause')">
+                              {{ reverting().has(a.toolCallId) ? 'Pausando…' : 'Pausar a campanha criada' }}
+                            </button>
+                            <button appButton variant="ghost" size="sm" [disabled]="reverting().has(a.toolCallId)" (click)="archiveCreation(a)">Arquivar</button>
+                          </span>
+                          <span class="text-[11px] text-muted">Pausar mantém a campanha na conta (não gasta, dá pra reativar). Arquivar tira da lista ativa (recuperável).</span>
+                        </span>
+                      } @else if (a.revertBlocked) {
                         <button appButton variant="secondary" size="sm" [disabled]="reverting().has(a.toolCallId)" (click)="revert(a, true)">
                           {{ reverting().has(a.toolCallId) ? 'Revertendo…' : 'Reverter mesmo assim' }}
                         </button>
@@ -208,9 +240,23 @@ export class ApprovalsPage implements OnInit {
   );
   protected readonly resolving = signal<ReadonlySet<string>>(new Set());
   protected readonly reverting = signal<ReadonlySet<string>>(new Set());
-  /** id do rascunho com o picker "trocar criativo" aberto (só 1 por vez). */
-  protected readonly pickerFor = signal<string | null>(null);
-  protected readonly pickingCreative = signal(false);
+  /** id do rascunho com o painel "Editar rascunho" aberto (só 1 por vez). */
+  protected readonly editingFor = signal<string | null>(null);
+  /** ids de rascunho cuja miniatura falhou (reuse fbcdn/Meta indisponível) → placeholder. */
+  protected readonly thumbBroken = signal<ReadonlySet<string>>(new Set());
+  /** versão da miniatura por rascunho — bumpa após trocar o criativo (cache-buster da img). */
+  protected readonly thumbVersion = signal<ReadonlyMap<string, number>>(new Map());
+
+  protected thumbUrl = (d: DraftApprovalOutput): string =>
+    this.draftsApi.draftCreativeThumbUrl(d.accountId, d.draftId, this.thumbVersion().get(d.id) ?? 0);
+  protected onThumbError(id: string): void {
+    this.thumbBroken.update((s) => new Set(s).add(id));
+  }
+  /** rótulo do criativo (formato + origem) — sem jargão, sem citar id técnico. */
+  protected creativeLabel = (cr: NonNullable<DraftApprovalOutput['creative']>): string => {
+    const fmt = cr.format === 'video' ? 'vídeo' : 'imagem';
+    return `${fmt} · ${cr.origin === 'reuse' ? 'reusado de um anúncio da conta' : 'da sua biblioteca'}`;
+  };
 
   protected typeLabel = actionTypeLabel;
   protected deadline = deadlineText;
@@ -233,12 +279,12 @@ export class ApprovalsPage implements OnInit {
     if (d.approvalKind === 'activation') return 'criada e PAUSADA — aguardando seu OK pra ativar';
     return d.activation === 'active' ? 'nasce pausada — você confirma a ativação em seguida' : 'fica pausada (você pediu assim)';
   };
-  /** Origem legível (nome do backend; senão traduz o nível, sem expor "level:id" técnico). */
+  /** Origem legível: "conjunto <nome>" quando há nome; senão "o conjunto vencedor" (nunca o id
+   *  cru da Meta). O nível vira palavra amigável (adset→conjunto). */
   protected sourceName = (d: DraftApprovalOutput): string => {
-    if (!d.sourceLabel) return 'o vencedor';
-    const [level, id] = d.sourceLabel.split(':');
-    const lvl = level === 'campaign' ? 'campanha' : level === 'adset' ? 'conjunto' : level ?? '';
-    return id ? `${lvl} ${id}` : d.sourceLabel;
+    const lvl = d.sourceLevel === 'campaign' ? 'campanha' : d.sourceLevel === 'adset' ? 'conjunto' : d.sourceLevel === 'ad' ? 'anúncio' : '';
+    if (d.sourceName) return lvl ? `${lvl} ${d.sourceName}` : d.sourceName;
+    return lvl ? `o ${lvl} vencedor` : 'o vencedor';
   };
   protected objectiveLabel = (o: string | null): string => (o ? conversionLabel(o) : '');
   protected money = money;
@@ -293,24 +339,38 @@ export class ApprovalsPage implements OnInit {
     });
   }
 
-  /** Abre/fecha o picker de criativo pra um rascunho (só from_scratch). */
-  protected togglePicker(d: DraftApprovalOutput): void {
-    this.pickerFor.update((cur) => (cur === d.id ? null : d.id));
+  /** O painel trocou o criativo (ação imediata) — atualiza a miniatura (cache-buster) e recarrega
+   *  a lista SEM fechar o painel (o usuário segue editando; o rótulo/thumb refletem o novo). */
+  protected onDraftCreativeChanged(d: DraftApprovalOutput): void {
+    this.bumpThumbVersion(d.id);
+    this.clearThumbBroken(d.id);
+    this.reloadDrafts();
   }
 
-  /** Troca o criativo do rascunho pelo asset escolhido no picker. */
-  protected onPickCreative(d: DraftApprovalOutput, assetId: string): void {
-    this.pickingCreative.set(true);
-    this.draftsApi.setDraftCreative(d.accountId, d.draftId, { assetId }).subscribe({
-      next: () => {
-        this.pickingCreative.set(false);
-        this.pickerFor.set(null);
-        toast.success('Criativo trocado neste rascunho.');
-      },
-      error: () => {
-        this.pickingCreative.set(false);
-        toast.error('Não consegui trocar o criativo. Tente de novo.');
-      },
+  private bumpThumbVersion(id: string): void {
+    this.thumbVersion.update((m) => new Map(m).set(id, (m.get(id) ?? 0) + 1));
+  }
+  private clearThumbBroken(id: string): void {
+    this.thumbBroken.update((s) => {
+      const next = new Set(s);
+      next.delete(id);
+      return next;
+    });
+  }
+  /** Abre/fecha o painel de edição do rascunho (fecha o picker se estava aberto). */
+  protected toggleEdit(d: DraftApprovalOutput): void {
+    this.editingFor.update((cur) => (cur === d.id ? null : d.id));
+  }
+  /** O painel salvou → recarrega os rascunhos (reflete nomes/gasto/copy frescos) e fecha. */
+  protected onDraftSaved(): void {
+    this.editingFor.set(null);
+    this.reloadDrafts();
+  }
+
+  /** Recarrega os rascunhos pendentes (rótulo do criativo/público fresco após uma troca). */
+  private reloadDrafts(): void {
+    this.draftsApi.listPending().subscribe({
+      next: (rows) => this.draftGroups.set(groupByAccount(rows)),
     });
   }
 
@@ -345,8 +405,30 @@ export class ApprovalsPage implements OnInit {
     });
   }
 
-  /** Reverter (por-conta, mesma rota da mini-surface). `force` = "mesmo assim" após drift. */
-  protected async revert(a: RevertibleActionOutput, force = false): Promise<void> {
+  /** Item reversível é uma CRIAÇÃO/escala? (teardown pausa/arquiva a árvore, não "reverte" estado). */
+  protected isCreation = (a: RevertibleActionOutput): boolean =>
+    a.type === 'create_campaign' || a.type === 'duplicate_scale';
+
+  /** Arquivar a campanha criada (destrutivo-leve — confirma antes). */
+  protected async archiveCreation(a: RevertibleActionOutput): Promise<void> {
+    const confirmed = await this.confirmDialog.confirm({
+      title: 'Arquivar a campanha criada?',
+      description: 'Arquivar tira a campanha da sua lista ativa na Meta. Ela não é apagada e dá pra recuperar, mas some da visão do dia a dia.',
+      confirmLabel: 'Arquivar',
+      tone: 'warning',
+    });
+    if (!confirmed) return;
+    this.runRevert(a, false, 'archive', 'Arquivando a campanha criada');
+  }
+
+  /** Reverter (por-conta, mesma rota da mini-surface). `force` = "mesmo assim" após drift;
+   *  `mode` = pausar/arquivar quando é uma criação/escala. */
+  protected async revert(a: RevertibleActionOutput, force = false, mode?: 'pause' | 'archive'): Promise<void> {
+    if (this.isCreation(a) && mode === 'pause') {
+      // pausar é seguro/reversível — sem diálogo, ação direta.
+      this.runRevert(a, false, 'pause', 'Pausando a campanha criada');
+      return;
+    }
     const description = force && a.revertBlockedReason ? `${a.revertBlockedReason}. ${UNDO_WARNING}` : UNDO_WARNING;
     const confirmed = await this.confirmDialog.confirm({
       title: force ? 'Reverter mesmo assim?' : 'Reverter ação?',
@@ -355,11 +437,15 @@ export class ApprovalsPage implements OnInit {
       tone: 'warning',
     });
     if (!confirmed) return;
+    this.runRevert(a, force, mode, 'Revertendo — a ação volta ao estado anterior');
+  }
+
+  private runRevert(a: RevertibleActionOutput, force: boolean, mode: 'pause' | 'archive' | undefined, successMsg: string): void {
     this.markReverting(a.toolCallId);
-    this.analysisApi.undoAction(a.accountId, a.toolCallId, force).subscribe({
+    this.analysisApi.undoAction(a.accountId, a.toolCallId, force, mode).subscribe({
       next: () => {
         this.removeRevertible(a.toolCallId);
-        toast.success('Revertendo — a ação volta ao estado anterior');
+        toast.success(successMsg);
       },
       error: () => this.clearReverting(a.toolCallId),
     });

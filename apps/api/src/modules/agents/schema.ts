@@ -21,6 +21,7 @@ import {
   DIRECTIVENESS_LEVELS,
   EXPERIENCE_LEVELS,
   VOLUME_LEVELS,
+  creativeSourceStrategySchema,
 } from "@trafego/shared";
 
 // Fatia 4: meta + conversão + personalização + janela (corte 1) · identidade/voz +
@@ -87,6 +88,8 @@ export const modelConfigInput = z.object({
   topN: z.number().int().positive().optional(),
   maxOutputTokens: z.number().int().positive().optional(),
   quality: qualityConfigInput.optional(),
+  /** estratégia de fonte do criativo na criação (Slice 10) — default serving.best_performing. */
+  creativeSource: creativeSourceStrategySchema.optional(),
 });
 export type ModelConfigInput = z.infer<typeof modelConfigInput>;
 
@@ -353,6 +356,8 @@ export const appliedActionOutput = z.object({
 /** Body do undo — `force` = reverter mesmo com drift ("mesmo assim"). */
 export const undoActionInput = z.object({
   force: z.boolean().default(false),
+  /** reversão de CRIAÇÃO/escala (Slice 11): pausar (default) ou arquivar a árvore criada. */
+  mode: z.enum(["pause", "archive"]).optional(),
 });
 export type UndoActionInput = z.infer<typeof undoActionInput>;
 /**

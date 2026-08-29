@@ -11,6 +11,19 @@ export const WHATSAPP_SPLIT_MAX_PARTS = 5;
 /** Alvo de tamanho por balão: acima disso o bloco é subdividido por fronteira natural. */
 export const WHATSAPP_SOFT_MAX_CHARS = 600;
 
+/**
+ * Junta parágrafos numa mensagem cujos balões o `splitMessage` separa (fronteira `\n\n`).
+ * Fonte única do contrato de "balão" para os ecos (eco+confirma) — usar isto em vez de
+ * `.join("\n")` (que vira UM balão) ou `.join("\n\n")` solto. Descarta vazios (linhas
+ * opcionais condicionais) e faz trim de cada um.
+ */
+export function joinBalloons(paragraphs: readonly string[]): string {
+  return paragraphs
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+    .join("\n\n");
+}
+
 /** Empacota unidades (linhas/frases) em partes, juntando por `sep` até o alvo. */
 function packUnits(units: readonly string[], sep: string, softMax: number): string[] {
   const parts: string[] = [];

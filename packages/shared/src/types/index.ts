@@ -115,6 +115,9 @@ export interface Creative {
   readonly title?: string;
   readonly callToAction?: string;
   readonly imageUrl?: string;
+  /** hash estável da imagem (reusável em `object_story_spec.link_data.image_hash`) — permite
+   *  reusar um anúncio de IMAGEM ao vivo na criação (Fatia 7, Slice 12). */
+  readonly imageHash?: string;
   readonly thumbnailUrl?: string;
   readonly videoId?: string;
   /** Page do `object_story_spec` (Fatia 7) — p/ lookup do WhatsApp na Página + reuso na criação. */
@@ -674,6 +677,21 @@ export interface GuardrailConfig {
 export const DRAFT_KINDS = ["from_scratch", "duplicate"] as const;
 export type DraftKind = (typeof DRAFT_KINDS)[number];
 
+// ─── Estratégia de fonte do criativo na criação (config por-agente, Fatia 7 Slice 10) ──
+// De onde o agente tira o criativo pra uma campanha nova: reusar um que já veicula, escolher
+// na biblioteca, ou o pool único (ambos). Vocabulário NEUTRO (nada de Meta).
+export const CREATIVE_SOURCE_MODES = ["serving", "library", "both"] as const;
+export type CreativeSourceMode = (typeof CREATIVE_SOURCE_MODES)[number];
+/** sub-opção do modo `serving`: determinístico (melhor desempenho) OU o LLM escolhe por encaixe. */
+export const SERVING_PICKS = ["best_performing", "agent"] as const;
+export type ServingPick = (typeof SERVING_PICKS)[number];
+export interface CreativeSourceStrategy {
+  readonly mode: CreativeSourceMode;
+  readonly servingPick?: ServingPick;
+}
+/** Default = comportamento de hoje (reusa o melhor veiculando, determinístico, sem LLM). */
+export const DEFAULT_CREATIVE_SOURCE_STRATEGY: CreativeSourceStrategy = { mode: "serving", servingPick: "best_performing" };
+
 export const CREATION_OPPORTUNITY_KINDS = ["scale_winner", "refresh_fatigued", "cold_start"] as const;
 export type CreationOpportunityKind = (typeof CREATION_OPPORTUNITY_KINDS)[number];
 
@@ -700,6 +718,8 @@ export interface CopyVariant {
   readonly headline: string;
   readonly description?: string;
   readonly cta?: CtaType;
+  /** nome do anúncio desta variação (a variação É o anúncio, 1:1). Ausente → derivado no apply. */
+  readonly adName?: string;
 }
 
 /** Referência a um asset da biblioteca de criativos (mídia já existente). */
@@ -743,6 +763,9 @@ export interface CampaignDraftSpec {
   readonly currency: string;
   /** budget diário proposto (unidade mínima). */
   readonly dailyBudgetMinor: number;
+  /** budget PEDIDO antes do clamp pelo teto de gasto novo — só quando cortado (`dailyBudgetMinor`
+   *  ficou abaixo do pedido). Transparência §8: o eco/card mostram "pedi X, virou Y". */
+  readonly requestedDailyBudgetMinor?: number;
   /** nasce ACTIVE ou PAUSED (activationPolicy do agente / override no eco). */
   readonly activation: "active" | "paused";
   // ─── só `from_scratch` (herdados no `duplicate`) ───
@@ -761,7 +784,7 @@ export interface CampaignDraftSpec {
   // ─── cópia fiel de campanha (Fatia 7, kind `copy`) ───
   /** campanha-base copiada (leitura fiel escopada, NÃO account-wide). */
   readonly sourceCampaignId?: string;
-  /** nome proposto da campanha (preserva a convenção do cliente; fallback = "AutoTraffic — objetivo"). */
+  /** nome proposto da campanha (preserva a convenção do cliente; fallback derivado no apply). */
   readonly name?: string;
   /** categorias especiais herdadas da fonte (habitação/emprego/crédito) — Meta exige preservar. */
   readonly specialAdCategories?: readonly string[];
@@ -773,6 +796,14 @@ export interface CampaignDraftSpec {
    * `creative`+`copyVariants` (criar-do-zero). `copy`+refs = cópia fiel dos N anúncios.
    */
   readonly creativeRefs?: readonly string[];
+  // ─── edição (Fatia 7 — nome editável no site/chat) ───
+  /** nome editável da campanha / do conjunto (Fatia 7 — edição). Ausente → derivado no apply. */
+  readonly campaignName?: string;
+  readonly adsetName?: string;
+  // ─── só `duplicate` (escala) ───
+  /** rótulo do sufixo aplicado ao nome do vencedor no `/copies` (`<vencedor> — <rótulo>`).
+   *  Ausente → "escala". NÃO é o nome inteiro (o `/copies` só ANEXA). */
+  readonly suffixLabel?: string;
 }
 
 /** Otimização de orçamento (neutro): campanha (CBO) × conjunto (ABO). */
@@ -804,10 +835,12 @@ export interface CampaignStructure {
   readonly creativeRefs: readonly string[];
 }
 
-/** Entidade-origem de uma duplicação (o que foi copiado). */
+/** Entidade-origem de uma duplicação (o que foi copiado). `name` = rótulo legível do vencedor
+ *  (pro card mostrar "Duplicar conjunto <nome>" em vez do id cru); ausente em rascunhos antigos. */
 export interface DraftSourceRef {
   readonly level: EntityLevel;
   readonly id: string;
+  readonly name?: string;
 }
 
 /** Rascunho de campanha (domínio) — `from_scratch` ou `duplicate`. */

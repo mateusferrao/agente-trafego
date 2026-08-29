@@ -100,7 +100,7 @@ import {
 } from "../../modules/analysis/entity-analyses.repo.js";
 import { createNotifyRepo, type NotifyRepo } from "../../modules/notify/repo.js";
 import { createSendToConversation } from "../../modules/notify/send-to-contact.js";
-import { createVisionResolver, creativeContentHash } from "../../modules/vision/resolver.js";
+import { createVisionResolver, servingVisionKey } from "../../modules/vision/resolver.js";
 import { makeMetaToolExecutor, type MetaToolExecutor } from "../../executors/meta-tools.js";
 import { AnalysisError } from "../../modules/analysis/errors.js";
 import { mapWithConcurrency } from "../../lib/concurrency.js";
@@ -408,6 +408,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           title: c.title ?? null,
           callToAction: c.callToAction ?? null,
           imageUrl: c.imageUrl ?? null,
+          imageHash: c.imageHash ?? null,
           thumbnailUrl: c.thumbnailUrl ?? null,
           videoId: c.videoId ?? null,
           whatsappNumber,
@@ -450,12 +451,12 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
         const frames = creativePosterFrames(c);
         if (frames.length === 0) continue;
         const copy = creativeCopy(c);
-        // chave de cache ESTÁVEL (id do criativo + vídeo), não a URL do fbcdn (rotaciona).
-        const stableKey = `${c.id}:${c.videoId ?? ""}`;
+        // chave de cache ESTÁVEL (fonte única `servingVisionKey`) — reusada pela criação de
+        // campanha p/ o cache-hit ser consistente (id do criativo + vídeo + copy).
         const result = await vision.resolve({
           creativeId: c.id,
           imageUrls: frames,
-          contentHash: creativeContentHash(stableKey, copy),
+          contentHash: servingVisionKey(c.id, c.videoId, copy),
           ...(copy ? { copy } : {}),
         });
         if (result) push(visionByAdId, c.adId, result);
@@ -768,6 +769,33 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
         top.kind === "scale_winner"
           ? await proposeScaleWinner(deps, dctx, top.entityName, "proactive")
           : await proposeCreateCampaign(deps, dctx, {}, "proactive");
+
+      // 5.1: vencedor no teto sob CBO/ABO-pequeno → a decisão é SUBIR BUDGET (ação adjust_budget),
+      // não duplicar. Antes o proativo só seguia no ramo `draft` (duplicate) e IGNORAVA o `action`
+      // → o vencedor CBO no teto nunca era escalado sozinho. Agora cria a aprovação + a recomendação
+      // (HITL — o humano aprova; auto-apply da subida proativa = fast-follow).
+      if (top.kind === "scale_winner" && proposal.kind === "action") {
+        await deps.ports.approval.upsertPending({
+          orgId: state.orgId as OrgId,
+          agentId: state.agentId as AgentId,
+          runId: state.runId as RunId,
+          action: proposal.action,
+          expiresAt: new Date(Date.now() + APPROVAL_TTL_HOURS * 3_600_000),
+        });
+        await deps.db.insert(recommendations).values({
+          orgId: state.orgId,
+          runId: state.runId,
+          title: "Escalar seu vencedor (subir orçamento)",
+          rationale: top.rationale,
+          kind: "platform_action",
+          toolKey: "adjust_budget",
+          // alinha com o riskLevel da própria ação adjust_budget (medium) — subir orçamento é
+          // menos arriscado que duplicar (que cria campanha nova = high).
+          riskLevel: "medium",
+        });
+        logger.info({ runId: state.runId }, "propose_drafts:scale_raise proposto");
+        return {};
+      }
       if (proposal.kind !== "draft") return {};
       const toolKey = top.kind === "scale_winner" ? "duplicate_scale" : "create_campaign";
       // recomendação ligada ao rascunho — renderiza na lista + reusa feedback/outcome.

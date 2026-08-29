@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type { OrgId } from "@trafego/shared/types";
-import { createDraftsService } from "./service.js";
+import { createDraftsService, refineErrorMessage } from "./service.js";
 
 /**
  * db fake encadeável só p/ getCreativeBlob: select→from→where→limit devolve `rows`.
@@ -92,6 +93,30 @@ describe("DraftsService.deleteCreative (híbrido: arquiva se em uso, apaga se li
   });
 });
 
+describe("DraftsService.updateDraft (edição consolidada — Slice 7)", () => {
+  it("rascunho não-aberto (load vazio) → {ok:false} com mensagem amigável, sem persistir", async () => {
+    const { service } = makeService([]); // loadDraftForEdit não acha linha proposed
+    const r = await service.updateDraft(ORG, "acct-1", "draft-x", { campaignName: "Nova" });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.message).toMatch(/não está mais aberto/i);
+  });
+});
+
+describe("refineErrorMessage (§13 — o quê + o que fazer, sem jargão cru)", () => {
+  it("field_not_editable explica a fronteira da escala + o caminho (criar nova)", () => {
+    expect(refineErrorMessage({ code: "field_not_editable", field: "objective" })).toMatch(/escala|criar uma campanha nova/i);
+  });
+  it("empty_variants pede pelo menos um anúncio", () => {
+    expect(refineErrorMessage({ code: "empty_variants" })).toMatch(/pelo menos um anúncio/i);
+  });
+  it("objective_requires_pixel traduz 'pixel' e oferece objetivo viável", () => {
+    const msg = refineErrorMessage({ code: "objective_requires_pixel", objective: "purchase" });
+    expect(msg).toMatch(/pixel/i);
+    expect(msg).toMatch(/mensagens|engajamento/i);
+  });
+});
+
 describe("DraftsService.getCreativeBlob", () => {
   it("asset da própria org → faz stream do storage.get(storageRef)", async () => {
     const blob = { bytes: new Uint8Array([1, 2]), contentType: "image/png", etag: "abc" };
@@ -115,5 +140,167 @@ describe("DraftsService.getCreativeBlob", () => {
     const { service } = makeService([{ storageRef: null }], get);
     expect(await service.getCreativeBlob(ORG, "acct-1", "asset-1")).toBeNull();
     expect(get).not.toHaveBeenCalled();
+  });
+});
+
+describe("getDraftCreativeThumb (miniatura do criativo do rascunho)", () => {
+  const reuseDraft = {
+    spec: {
+      version: 1,
+      currency: "BRL",
+      dailyBudgetMinor: 5000,
+      activation: "active",
+      creative: { assetId: "AD1", format: "video", origin: "reuse", metaVideoId: "VID9" },
+    },
+  };
+
+  it("reuse + If-None-Match com ETag estável → 304 SEM tocar na Meta", async () => {
+    const getVideoFrames = vi.fn();
+    const service = createDraftsService({
+      db: fakeDb([reuseDraft]),
+      adsPlatform: { getVideoFrames } as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    const etag = createHash("sha256").update("draft-thumb:VID9").digest("hex").slice(0, 32);
+    const out = await service.getDraftCreativeThumb(ORG, "acc", "draft-1", `"${etag}"`);
+    expect(out).toEqual({ notModified: true, etag });
+    expect(getVideoFrames).not.toHaveBeenCalled(); // revalidação não busca fresco
+  });
+
+  it("rascunho inexistente (ou de outro tenant) → null (404)", async () => {
+    const service = createDraftsService({
+      db: fakeDb([]),
+      adsPlatform: {} as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    expect(await service.getDraftCreativeThumb(ORG, "acc", "nope")).toBeNull();
+  });
+
+  it("rascunho sem criativo (ex: duplicate) → null", async () => {
+    const service = createDraftsService({
+      db: fakeDb([{ spec: { version: 1, currency: "BRL", dailyBudgetMinor: 8000, activation: "active" } }]),
+      adsPlatform: {} as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    expect(await service.getDraftCreativeThumb(ORG, "acc", "draft-dup")).toBeNull();
+  });
+});
+
+describe("listServingCreatives (candidatos de reuse: vídeo + imagem, por data — Slice 12)", () => {
+  /** fakeDb p/ select→from→where→orderBy→limit AWAITADO. `rows` = já na ordem que o db devolveria. */
+  function fakeDbAwait(rows: unknown[]) {
+    const tail = { then: (r: (v: unknown[]) => void) => r(rows) };
+    return {
+      select: () => ({ from: () => ({ where: () => ({ orderBy: () => ({ limit: () => tail }) }) }) }),
+    } as never;
+  }
+  function makeServingService(rows: unknown[]) {
+    return createDraftsService({
+      db: fakeDbAwait(rows),
+      adsPlatform: {} as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+  }
+
+  it("inclui VÍDEO (video_id) E IMAGEM (image_hash); descarta o que não tem nenhum", async () => {
+    const service = makeServingService([
+      { adId: "vid", title: "V", body: "cv", callToAction: "WHATSAPP", tier: "winner", videoId: "V1", imageHash: null, imageUrl: null, thumbnailUrl: "u1" },
+      { adId: "img", title: "I", body: "ci", callToAction: null, tier: "performer", videoId: null, imageHash: "H1", imageUrl: "iu", thumbnailUrl: null },
+      { adId: "none", title: "N", body: null, callToAction: null, tier: null, videoId: null, imageHash: null, imageUrl: null, thumbnailUrl: null },
+    ]);
+    const out = await service.listServingCreatives(ORG, "acc");
+    expect(out.map((c) => c.adId)).toEqual(["vid", "img"]); // "none" (sem vídeo nem hash) sai
+    expect(out[0]).toMatchObject({ format: "video" });
+    expect(out[1]).toMatchObject({ format: "image", thumbnailUrl: "iu" }); // cai no imageUrl
+  });
+
+  it("preserva a ordem do db (por data desc — o db orderBy resolve)", async () => {
+    const service = makeServingService([
+      { adId: "novo", title: null, body: null, callToAction: null, tier: "performer", videoId: "V2", imageHash: null, imageUrl: null, thumbnailUrl: null },
+      { adId: "velho", title: null, body: null, callToAction: null, tier: "winner", videoId: "V1", imageHash: null, imageUrl: null, thumbnailUrl: null },
+    ]);
+    const out = await service.listServingCreatives(ORG, "acc");
+    expect(out.map((c) => c.adId)).toEqual(["novo", "velho"]);
+  });
+});
+
+describe("setDraftTargeting (alterna público reuse × amplo)", () => {
+  /** db com select (draft, p/ loadDraftForEdit) + update GUARDADO (persistDraftSpec usa
+   *  .where().returning()); captura o spec gravado e devolve 1 linha (write efetivado). */
+  function fakeDbSelUpd(draftRow: unknown, captured: { spec?: unknown }) {
+    return {
+      select: () => ({ from: () => ({ where: () => ({ limit: () => (draftRow ? [draftRow] : []) }) }) }),
+      update: () => ({
+        set: (v: { spec: unknown }) => {
+          captured.spec = v.spec;
+          return { where: () => ({ returning: () => [{ id: "d1" }] }) };
+        },
+      }),
+    } as never;
+  }
+
+  it("reuse quando o spec JÁ herda um conjunto → mantém, sem chamar a Meta", async () => {
+    const captured: { spec?: unknown } = {};
+    const infer = vi.fn();
+    const service = createDraftsService({
+      db: fakeDbSelUpd(
+        { spec: { version: 1, currency: "BRL", dailyBudgetMinor: 5000, activation: "active", targeting: { kind: "reuse_adset", sourceAdsetId: "AS1" } }, kind: "from_scratch", status: "proposed" },
+        captured,
+      ),
+      adsPlatform: { inferCreationDefaults: infer } as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    const out = await service.setDraftTargeting(ORG, "acc", "d1", "reuse");
+    expect(out).toEqual({ ok: true, audience: "reuse" });
+    expect(infer).not.toHaveBeenCalled(); // já herda → não re-infere
+    expect((captured.spec as { targeting: unknown }).targeting).toEqual({ kind: "reuse_adset", sourceAdsetId: "AS1" });
+  });
+
+  it("broad → Advantage+ (a Meta escolhe), sem tocar na Meta", async () => {
+    const captured: { spec?: unknown } = {};
+    const service = createDraftsService({
+      db: fakeDbSelUpd(
+        { spec: { version: 1, currency: "BRL", dailyBudgetMinor: 5000, activation: "active", targeting: { kind: "reuse_adset", sourceAdsetId: "AS1" } }, kind: "from_scratch", status: "proposed" },
+        captured,
+      ),
+      adsPlatform: {} as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    const out = await service.setDraftTargeting(ORG, "acc", "d1", "broad");
+    expect(out).toEqual({ ok: true, audience: "broad" });
+    expect((captured.spec as { targeting: unknown }).targeting).toEqual({ kind: "advantage_plus" });
+  });
+
+  it("rascunho duplicate → erro tipado com mensagem granular (não editável), não null cego", async () => {
+    const service = createDraftsService({
+      db: fakeDbSelUpd({ spec: {}, kind: "duplicate", status: "proposed" }, {}),
+      adsPlatform: {} as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    const out = await service.setDraftTargeting(ORG, "acc", "d1", "broad");
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.message).toContain("escala"); // mensagem granular propagada (era 404 cego)
   });
 });

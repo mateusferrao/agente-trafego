@@ -1,5 +1,5 @@
 ---
-name: AutoTraffic
+name: CaquiAI
 description: Bold operational desk — a neobrutalist brand skin over a calm operational workspace, with Roy the agent as its face
 colors:
   canvas: "#fbf9f4"
@@ -11,15 +11,15 @@ colors:
   primary: "#0c1134"
   primary-strong: "#070a27"
   primary-ink: "#fbf9f4"
-  accent: "#e00202"
-  accent-strong: "#b00202"
-  accent-soft: "#ffe3dc"
+  accent: "#e8720d"
+  accent-strong: "#b3560a"
+  accent-soft: "#ffe8d1"
   success: "#047a4d"
   success-soft: "#c9f3e1"
   danger: "#b3241c"
   danger-soft: "#f7dcd7"
-  tomato: "#e00202"
-  tomato-soft: "#ffe3dc"
+  caqui: "#e8720d"
+  caqui-soft: "#ffe8d1"
   navy-900: "#070a27"
   navy-500: "#2c3572"
   dark-canvas: "#070a27"
@@ -28,13 +28,13 @@ colors:
   dark-ink: "#fbf9f4"
 typography:
   display:
-    fontFamily: "Archivo, ui-sans-serif, system-ui, sans-serif"
+    fontFamily: "Space Grotesk, ui-sans-serif, system-ui, sans-serif"
     fontSize: "2rem"
-    fontWeight: 800
+    fontWeight: 700
     lineHeight: 1.1
     letterSpacing: "-0.02em"
   headline:
-    fontFamily: "Archivo, ui-sans-serif, system-ui, sans-serif"
+    fontFamily: "Space Grotesk, ui-sans-serif, system-ui, sans-serif"
     fontSize: "1.5rem"
     fontWeight: 700
     lineHeight: 1.2
@@ -94,21 +94,21 @@ components:
     padding: "16px"
 ---
 
-# Design System: AutoTraffic
+# Design System: CaquiAI
 
 ## 1. Overview
 
 **Creative North Star: "The Bold Operational Desk"**
 
-AutoTraffic is a WhatsApp-native, semi-autonomous traffic agent. The product's face is **Roy**, the agent. The interface should feel like a confident, branded workspace: a **refined neobrutalist** brand skin (solid 2px borders, solid offset shadows, warm paper canvas, tomato and mint) over a **calm operational core** for the dense, money-critical work.
+CaquiAI is a WhatsApp-native, semi-autonomous traffic agent. The product's face is **Roy**, the agent. The interface should feel like a confident, branded workspace: a **refined neobrutalist** brand skin (solid 2px borders, solid offset shadows, warm paper canvas, caqui and mint) over a **calm operational core** for the dense, money-critical work.
 
-Manychat in spirit (approachable, warm, jargon-free, chat-native), operational in substance (clear, dense, honest where money is at stake). We inherit the brand language of the marketing site (`autotraffic`), not Manychat's app or its blue.
+Manychat in spirit (approachable, warm, jargon-free, chat-native), operational in substance (clear, dense, honest where money is at stake). We inherit the brand language of the marketing site, not Manychat's app or its blue.
 
 This is the intended direction for all product surfaces. AI is embedded operational infrastructure represented by Roy — never a generic sparkle or a separate chatbot destination.
 
 **Key Characteristics:**
 
-- Warm paper canvas, navy structure, tomato brand accent, mint for success/agent. Light-first with dark as a first-class alternate (neobrutalist dark: solid offset shadows turn mint).
+- Warm paper canvas, navy structure, caqui brand accent, mint for success/agent. Light-first with dark as a first-class alternate (neobrutalist dark: solid offset shadows turn mint).
 - **Two tiers of surface.** "Brand" surfaces (decision, onboarding, conversation) carry the bold signature; "Workspace" surfaces (tables, config, shell) stay calm and flat for legibility.
 - Refined neobrutalism: 2px borders and ~3px solid offset shadows only where they earn identity; data-dense cards use a thin border and no offset.
 - Personality lives in motion and moments (loading, empty states, Roy's identity), not in extra chrome or shouty copy.
@@ -119,16 +119,16 @@ Warm, high-contrast, brand-owned. Designed to avoid generic AI blues and purple 
 
 ### Primary (action)
 
-- **Navy** (`#0c1134`): primary actions (solid navy button with a tomato offset shadow), primary emphasis. Hover uses **Deep Navy** (`#070a27`). Text on navy is **Paper** (`#fbf9f4`).
+- **Navy** (`#0c1134`): primary actions (solid navy button with a caqui offset shadow), primary emphasis. Hover uses **Deep Navy** (`#070a27`). Text on navy is **Paper** (`#fbf9f4`).
 
 ### Accent (rare brand)
 
-- **Tomato** (`#e00202`): the rare brand accent — selection, active state, brand moments, and the Roy mark. **Tomato Wash** (`#ffe3dc`, peach) for low-emphasis selection backgrounds.
+- **Caqui** (`#e8720d`): the rare brand accent — selection, active state, brand moments, and the Roy mark. **Caqui Wash** (`#ffe8d1`, peach) for low-emphasis selection backgrounds.
 
 ### Semantic
 
 - **Mint** (`#047a4d`, wash `#c9f3e1`): success and agent (Roy) states.
-- **Deep Red** (`#b3241c`, wash `#f7dcd7`): danger and destructive actions. Distinct from the tomato brand accent, and **always paired with icon + text** (never color alone).
+- **Deep Red** (`#b3241c`, wash `#f7dcd7`): danger and destructive actions. Distinct from the caqui brand accent, and **always paired with icon + text** (never color alone).
 
 ### Neutral
 
@@ -140,23 +140,23 @@ Warm, high-contrast, brand-owned. Designed to avoid generic AI blues and purple 
 
 ### Named Rules
 
-**The Brand Accent Rule.** Tomato is for selection, active state and brand moments only. If a screen has more than ~10% saturated tomato, the accent has stopped working.
+**The Brand Accent Rule.** Caqui is for selection, active state and brand moments only. If a screen has more than ~10% saturated caqui, the accent has stopped working.
 
-**The Two Reds Rule.** Tomato (brand) and deep red (danger) coexist; keep danger darker/less orange, use peach wash for selection, and **always** pair danger with an icon and text.
+**The Caqui & Red Rule.** Caqui (brand) and deep red (danger) coexist and read as clearly distinct hue families (warm orange vs. red) — no "two reds" ambiguity like the old tomato accent had. Still, **always** pair danger with an icon and text (never color alone), and keep an eye on **warning** (`#b45309`, also orange-leaning): if a screen mixes accent and warning, differentiate by tone + text, not hue alone.
 
-**The No Generic AI Rule.** No purple-blue gradients, neon glows, abstract AI blobs, or ✨ sparkles as the AI identity. The agent's identity is Roy plus the tomato mark.
+**The No Generic AI Rule.** No purple-blue gradients, neon glows, abstract AI blobs, or ✨ sparkles as the AI identity. The agent's identity is Roy plus the caqui mark.
 
 ## 3. Typography
 
-**Display / Headings:** Archivo (weights 700–800, tight tracking).
+**Display / Headings:** Space Grotesk (weight 700, tight tracking).
 **Body / UI:** Instrument Sans.
 **Numeric / Metrics:** JetBrains Mono (tabular numbers for KPIs, currency, IDs).
 **Editorial (rare):** Noto Serif.
 
 ### Hierarchy
 
-- **Display** (Archivo 800, 32px, 1.1, -0.02em): focused page titles and brand moments. Product scale, not landing scale.
-- **Headline** (Archivo 700, 24px): top-level screen headings.
+- **Display** (Space Grotesk 700, 32px, 1.1, -0.02em): focused page titles and brand moments. Product scale, not landing scale.
+- **Headline** (Space Grotesk 700, 24px): top-level screen headings.
 - **Title** (Instrument 600, 16px): panel titles and card labels.
 - **Body** (Instrument 400, 14px, 1.55): operational prose. Cap explanatory copy at 65–75 characters.
 - **Label** (Instrument 600, 12px, 0.025em): metadata and status labels.
@@ -173,7 +173,7 @@ The material language is **solid**, not glass. Elevation is a solid offset shado
 ### Shadow Vocabulary
 
 - **Offset** (`3px 3px 0` navy / mint in dark): the brand-surface signature (brand cards, active brand chrome). Press state collapses to `1px 1px 0`.
-- **Offset Accent** (`3px 3px 0` tomato / mint in dark): the primary button's brand pop.
+- **Offset Accent** (`3px 3px 0` caqui / mint in dark): the primary button's brand pop.
 - **Card Rest / Panel Float**: subtle soft shadows for calm separation and for overlay elevation only.
 
 Fine-grained noise texture stays on large quiet surfaces (shell, command, empty states, dark) and must never reduce text contrast.
@@ -188,13 +188,13 @@ Fine-grained noise texture stays on large quiet surfaces (shell, command, empty 
 
 **The Personality Budget Rule.** Micro-delight lives in loading (Roy's mark pulsing + an honest progress narrative), empty states (a lively brand illustration), success, and Roy's identity. It is **forbidden** in errors, money/budget actions, guardrails and dense data.
 
-**The Own Voice Rule (copy).** Write in AutoTraffic's own voice, never a generic-AI voice. Forbidden: em dashes as dramatic connectors, "não é só X, é Y" constructions, rhetorical triads, empty hype ("revolucione", "potencialize", "desbloqueie"), exclamation confetti, emoji as personality in the UI, assistant openers ("Claro!", "Aqui está"), AI jargon ("insights poderosos", "mágica"). Prefer short sentences, concrete verbs, a clear benefit, simple punctuation. A light, own metaphor is welcome on Brand surfaces.
+**The Own Voice Rule (copy).** Write in CaquiAI's own voice, never a generic-AI voice. Forbidden: em dashes as dramatic connectors, "não é só X, é Y" constructions, rhetorical triads, empty hype ("revolucione", "potencialize", "desbloqueie"), exclamation confetti, emoji as personality in the UI, assistant openers ("Claro!", "Aqui está"), AI jargon ("insights poderosos", "mágica"). Prefer short sentences, concrete verbs, a clear benefit, simple punctuation. A light, own metaphor is welcome on Brand surfaces.
 
 **Tone by zone.** Brand surfaces (onboarding, empty, success, "Roy working") = warm and playful. Operational surfaces (data, config, costs) = neutral and precise. Critical surfaces (errors, money, guardrails) = strictly precise.
 
 **The B2B Guardrail.** Playful tone never touches anything a manager would forward to their own client (numbers, results, spend recommendations) — that content stays sober.
 
-**Roy identity.** Roy is the fixed brand name of the agent everywhere (per-account agents and the org concierge); persona/tone stay configurable per account, but the name is fixed. First mention on a surface qualifies it ("o Roy, seu agente de tráfego"); later mentions use "Roy". A persistent identity block (tomato mark + "Roy") anchors the agent surface.
+**Roy identity.** Roy is the fixed brand name of the agent everywhere (per-account agents and the org concierge); persona/tone stay configurable per account, but the name is fixed. First mention on a surface qualifies it ("o Roy, seu agente de tráfego"); later mentions use "Roy". A persistent identity block (caqui mark + "Roy") anchors the agent surface.
 
 **The status = tone + text rule.** Status is always tone plus text, never color alone.
 
@@ -204,7 +204,7 @@ Components are directives that read design tokens; changing token values propaga
 
 ### Buttons
 
-- **Primary:** navy background, paper text, **tomato offset shadow (`3px 3px 0`)**, ~14px radius. Hover "sinks" (translate + shadow collapses to `1px 1px 0`); respects `prefers-reduced-motion`.
+- **Primary:** navy background, paper text, **caqui offset shadow (`3px 3px 0`)**, ~14px radius. Hover "sinks" (translate + shadow collapses to `1px 1px 0`); respects `prefers-reduced-motion`.
 - **Danger:** deep red background, paper text (destructive, always with an icon).
 - **Secondary / Ghost:** paper/transparent, ink text, navy 2px border on secondary when containment is needed.
 
@@ -215,7 +215,7 @@ Components are directives that read design tokens; changing token values propaga
 
 ### Chips / Badges
 
-- Muted surface or wash background; status chips carry tone + text. Selection uses peach wash + tomato.
+- Muted surface or wash background; status chips carry tone + text. Selection uses peach wash + caqui.
 
 ### Inputs / Fields
 
@@ -223,7 +223,7 @@ Components are directives that read design tokens; changing token values propaga
 
 ### Navigation / Shell
 
-- Persistent app shell, calm workspace tier. Active state uses tomato sparingly. 14px medium labels; lucide icons (2px stroke).
+- Persistent app shell, calm workspace tier. Active state uses caqui sparingly. 14px medium labels; lucide icons (2px stroke).
 
 ### Loading & AI
 
@@ -237,7 +237,7 @@ Components are directives that read design tokens; changing token values propaga
 - **Do** make AI explainable and grounded, embodied by Roy in the current context.
 - **Do** support WCAG AA, keyboard nav, visible focus, color-blind-safe status (tone + text), and light + dark from the start.
 - **Do** use JetBrains Mono for all metrics and currency.
-- **Do** keep copy in AutoTraffic's own voice, tone-by-zone.
+- **Do** keep copy in CaquiAI's own voice, tone-by-zone.
 
 ### Don't:
 

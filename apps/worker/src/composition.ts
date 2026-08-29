@@ -17,7 +17,7 @@ import type {
 import { WHATSAPP_TRANSCRIPTION_ATTEMPTS, WHATSAPP_TRANSCRIPTION_BACKOFF_MS } from "@trafego/shared";
 import type { Database } from "@trafego/db/client";
 import { createDb } from "@trafego/db";
-import { loadEnv } from "@trafego/config";
+import { loadEnv, resolveDataDir } from "@trafego/config";
 import { BUFFER_TTL_MARGIN_SEC } from "./modules/conversation/buffer.js";
 import { createLocalStorage } from "@trafego/storage-local";
 import { createS3Storage } from "@trafego/storage-s3";
@@ -110,12 +110,16 @@ export interface WorkerDeps {
     readonly noticeThrottleSec: number;
     /** Teto (ms) do turno inteiro (ReAct) — travamento sem erro cai no fallback. */
     readonly turnTimeoutMs: number;
+    /** Teto (ms) do fetch ao vivo da Meta numa read-tool — degrada pro persistido (< turnTimeout). */
+    readonly liveFetchTimeoutMs: number;
     /** Timeout por chamada HTTP ao LLM (ms) — evita hang no provider até o teto do turno. */
     readonly httpTimeoutMs: number;
     /** Retentativas por chamada de LLM (rede/429/5xx) — reroteia o provider ruim. */
     readonly maxRetries: number;
     /** modelo de RESERVA do chat — se o primário esgotar o retry, tenta este (também com retry). */
     readonly fallbackModel: string;
+    /** modelo default da geração de copy do rascunho (Fatia 7) — override por-agente no model_config. */
+    readonly copyModel: string;
     /** Fallback de custo (bug do bindTools suprimindo usage.cost — ver nodes.ts). */
     readonly fetchGenerationCost: (generationId: string) => Promise<number | undefined>;
     /** Kill-switch de plataforma do ingest de contexto de grupo (default: ligado). */
@@ -206,7 +210,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
     requestTimeoutMs: env.LLM_HTTP_TIMEOUT_MS,
     logger, // observa retries + troca de modelo (pontos de falha)
     referer: env.WEB_ORIGIN,
-    title: "AutoTraffic",
+    title: "CaquiAI",
   });
   const llm = withLlmMetering(
     new OpenRouterAdapter({ client: openRouterClient, structuredMaxRetries: env.LLM_STRUCTURED_MAX_RETRIES, logger }),
@@ -262,7 +266,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
               forcePathStyle: env.STORAGE_FORCE_PATH_STYLE,
               ...(env.STORAGE_ENDPOINT ? { endpoint: env.STORAGE_ENDPOINT } : {}),
             })
-          : createLocalStorage({ baseDir: env.CREATIVE_STORAGE_DIR, urlBase: env.CREATIVE_ASSET_URL_BASE }),
+          : createLocalStorage({ baseDir: resolveDataDir(env.CREATIVE_STORAGE_DIR), urlBase: env.CREATIVE_ASSET_URL_BASE }),
     },
     insightsSync,
     analysis: {
@@ -334,9 +338,11 @@ export async function buildComposition(): Promise<WorkerDeps> {
       debounceSeconds: env.CONVERSATION_DEBOUNCE_SECONDS,
       noticeThrottleSec: env.NOTICE_THROTTLE_SECONDS,
       turnTimeoutMs: env.CONVERSATION_TURN_TIMEOUT_MS,
+      liveFetchTimeoutMs: env.CHAT_LIVE_FETCH_TIMEOUT_MS,
       httpTimeoutMs: env.CONVERSATION_HTTP_TIMEOUT_MS,
       maxRetries: env.LLM_MAX_RETRIES,
       fallbackModel: env.CONVERSATION_FALLBACK_MODEL,
+      copyModel: env.COPY_MODEL,
       fetchGenerationCost: (id) => openRouterClient.getGenerationCost(id),
       groupIngestContext: env.TRAFEGO_GROUP_INGEST_CONTEXT,
       groupContextRetentionDays: env.GROUP_CONTEXT_RETENTION_DAYS,

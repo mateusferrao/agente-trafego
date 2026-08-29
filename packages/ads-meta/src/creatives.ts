@@ -14,7 +14,7 @@ import { normalizeAdAccountId } from "./ids.js";
  */
 
 export const CREATIVE_FIELDS =
-  "creative{id,name,image_url,thumbnail_url,object_story_spec{page_id,link_data{message,name,call_to_action{type,value{link,app_destination}}},video_data{message,title,call_to_action{type,value{link,app_destination}}}},body,title,call_to_action_type,video_id}";
+  "creative{id,name,image_url,thumbnail_url,object_story_spec{page_id,link_data{message,name,image_hash,call_to_action{type,value{link,app_destination}}},video_data{message,title,image_hash,call_to_action{type,value{link,app_destination}}}},body,title,call_to_action_type,video_id}";
 
 /** Frames HD do vídeo (Fatia 6c): a Meta entrega ~10 thumbnails 1080p ao longo do vídeo. */
 export const VIDEO_THUMBNAILS_FIELDS = "thumbnails{uri,width,height,is_preferred}";
@@ -48,8 +48,8 @@ interface RawCallToAction {
 }
 interface RawObjectStorySpec {
   readonly page_id?: string;
-  readonly link_data?: { readonly message?: string; readonly name?: string; readonly call_to_action?: RawCallToAction };
-  readonly video_data?: { readonly message?: string; readonly title?: string; readonly call_to_action?: RawCallToAction };
+  readonly link_data?: { readonly message?: string; readonly name?: string; readonly image_hash?: string; readonly call_to_action?: RawCallToAction };
+  readonly video_data?: { readonly message?: string; readonly title?: string; readonly image_hash?: string; readonly call_to_action?: RawCallToAction };
 }
 
 interface RawCreative {
@@ -169,6 +169,9 @@ export class MetaCreativesService {
     const ctaLink = story?.call_to_action?.value?.link;
     const whatsappNumber = ctaLink ? extractPhoneFromUrl(ctaLink) : null;
     const pageId = c.object_story_spec?.page_id;
+    // capa: imagem → link_data.image_hash; VÍDEO → video_data.image_hash (a capa do anúncio-fonte).
+    // Reusar essa capa é robusto — ler os thumbnails do vídeo pode dar #10 conforme a origem do vídeo.
+    const imageHash = c.object_story_spec?.link_data?.image_hash ?? c.object_story_spec?.video_data?.image_hash;
     return {
       id: c.id ?? adId,
       adId,
@@ -179,6 +182,7 @@ export class MetaCreativesService {
       ...(pageId ? { pageId } : {}),
       ...(whatsappNumber ? { whatsappNumber } : {}),
       ...(c.image_url ? { imageUrl: c.image_url } : {}),
+      ...(imageHash ? { imageHash } : {}),
       ...(c.thumbnail_url ? { thumbnailUrl: c.thumbnail_url } : {}),
       ...(c.video_id ? { videoId: c.video_id } : {}),
     };

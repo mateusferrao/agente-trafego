@@ -267,7 +267,7 @@ Pré: conta com um "vencedor" na última análise. **[Site]** Conta → aba de a
 1. No card da campanha **campeã** (tier "campeã") → botão **"Escalar"** (canto do card, ao lado de "Silenciar").
 2. **Passo pequeno** (scale_pct ≤ faixa segura) → cria direto um **rascunho proposto** de raise (vai pra Aprovações).
 3. **[NOVO] Passo agressivo** (scale_pct > faixa) → **abaixo do card** aparecem **2 botões inline**:
-   - **"Subir orçamento +X%"** (fundo tomate) e **"Duplicar (crescer +Y%)"** + **"Agora não"**.
+   - **"Subir orçamento +X%"** (fundo caqui) e **"Duplicar (crescer +Y%)"** + **"Agora não"**.
    - Clicar um → cria a proposta correspondente; toast "Proposta de escala criada … Aprove em Sugeridas."
 4. **Deve aparecer:** a proposta em **Aprovações → Rascunhos** (duplicar) ou em **Sugeridas** (raise).
 
@@ -482,7 +482,7 @@ docker exec docker-postgres-1 psql -U postgres -d trafego -c "select status, cre
 ## 14. Timeline (SITE · Conta → aba **Timeline** · filtro "Campanhas")
 
 - ✅ **"Nova campanha proposta"** / **"Escala de vencedor proposta"** — badge "rascunho", "R$ X/dia" na moeda da conta.
-- ✅ **"Campanha criada"** / **"Escala criada"** — badge "criada" (**[NOVO]** cor de **sucesso/menta**, não tomate).
+- ✅ **"Campanha criada"** / **"Escala criada"** — badge "criada" (**[NOVO]** cor de **sucesso/menta**, não caqui).
 
 ---
 

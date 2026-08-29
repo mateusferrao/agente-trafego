@@ -27,6 +27,9 @@ export interface RawObjectStorySpec {
     readonly message?: string;
     readonly title?: string;
     readonly link_description?: string;
+    /** capa do vídeo — a Meta EXIGE `image_hash` OU `image_url` no video_data. Reusar a capa do
+     *  anúncio-fonte é robusto (ler os thumbnails do vídeo pode dar #10 conforme a origem do vídeo). */
+    readonly image_hash?: string;
     readonly image_url?: string;
     /** o link de destino do vídeo mora aqui (não em link_data) — CTA do object_story_spec. */
     readonly call_to_action?: { readonly value?: { readonly link?: string } };
@@ -77,7 +80,7 @@ export interface RawAdCandidate {
   readonly id?: string;
   readonly effective_status?: string;
   readonly creative?: { readonly object_story_spec?: RawObjectStorySpec };
-  readonly adset?: { readonly promoted_object?: { readonly pixel_id?: string } };
+  readonly adset?: { readonly id?: string; readonly promoted_object?: { readonly pixel_id?: string } };
   readonly campaign?: { readonly objective?: string };
   readonly insights?: { readonly data?: ReadonlyArray<{ readonly spend?: string; readonly actions?: readonly RawInsightAction[] }> };
 }

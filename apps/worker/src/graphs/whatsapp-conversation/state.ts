@@ -37,6 +37,9 @@ export interface PendingRevert {
   readonly expiresAt: string;
   /** ids de agent_tool_calls a reverter quando o usuário confirmar. */
   readonly toolCallIds: readonly string[];
+  /** modo por id (paralelo a `toolCallIds`) — só afeta CRIAÇÕES: pausar (padrão) × arquivar.
+   *  Ausente (estado antigo) → pausar em tudo (mesmo comportamento de antes). */
+  readonly modes?: readonly ("pause" | "archive")[];
 }
 
 /**

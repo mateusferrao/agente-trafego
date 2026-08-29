@@ -70,6 +70,7 @@ export const activityEvent = z.object({
   type: z.enum(["action_applied", "action_rolled_back"]),
   toolKey: z.string(),
   entityName: z.string().nullable(),
+  entityLevel: z.string().nullable(),
   at: z.string(),
   fromChat: z.boolean(),
 });

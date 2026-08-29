@@ -125,7 +125,7 @@ export class AccountContextStore {
    *  intent aberto → o backend devolve `ask` e a UI mostra as 2 saídas (subir vs duplicar). */
   scaleWinner(c: Campaign): void {
     this.scalingId.set(c.externalId);
-    this.draftsApi.scaleWinner(this.accountId, { entityLevel: "campaign", entityId: c.externalId }).subscribe({
+    this.draftsApi.scaleWinner(this.accountId, { entityLevel: "campaign", entityId: c.externalId, ...(c.name ? { entityName: c.name } : {}) }).subscribe({
       next: (out) => {
         this.scalingId.set(null);
         if (out.move === "ask") {
@@ -149,7 +149,7 @@ export class AccountContextStore {
     this.scaleAsk.set(null);
     this.scalingId.set(c.externalId);
     this.draftsApi
-      .scaleWinner(this.accountId, { entityLevel: "campaign", entityId: c.externalId, choice })
+      .scaleWinner(this.accountId, { entityLevel: "campaign", entityId: c.externalId, ...(c.name ? { entityName: c.name } : {}), choice })
       .subscribe({
         next: (out) => {
           this.scalingId.set(null);

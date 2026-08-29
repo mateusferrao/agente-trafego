@@ -1,13 +1,16 @@
+import { COPY_TEXT_MAX, ENTITY_NAME_MAX, conversionGoalSchema, ctaTypeSchema } from "@trafego/shared";
 import { z } from "zod";
 
 const approvalStatusOutput = z.enum(["pending", "approved", "rejected", "expired", "blocked"]);
 
-/** Uma variação de copy (resumo p/ o card de rascunho). */
+/** Uma variação de copy (resumo p/ o card + edição no painel). */
 export const draftCopyVariantOutput = z.object({
   primaryText: z.string(),
   headline: z.string(),
   description: z.string().nullable(),
   cta: z.string().nullable(),
+  /** nome editável do anúncio desta variação (painel "Editar rascunho"). `null` = derivado. */
+  adName: z.string().nullable(),
 });
 
 /**
@@ -34,14 +37,35 @@ export const draftApprovalOutput = z.object({
   // budget diário em unidade MAIOR da moeda (ex: reais/dólares) — pareado com `currency`
   // p/ o front formatar (nunca hardcodar símbolo). Nome neutro de moeda (não "reais").
   dailyBudgetMajor: z.number(),
+  /** budget PEDIDO antes do clamp pelo teto de gasto novo — só quando cortado. O card mostra
+   *  "pedi X, virou Y" (transparência §8). `null` quando não houve clamp. */
+  clampedFromMajor: z.number().nullable(),
   currency: z.string(),
   activation: z.enum(["active", "paused"]),
-  /** rótulo da entidade-origem (quando duplicate). */
-  sourceLabel: z.string().nullable(),
+  /** entidade-origem (quando duplicate): nível + nome legível. O front monta "conjunto <nome>"
+   *  (ou só "o conjunto vencedor" sem nome) — NUNCA o id cru da Meta. */
+  sourceLevel: z.enum(["account", "campaign", "adset", "ad"]).nullable(),
+  sourceName: z.string().nullable(),
   pageId: z.string().nullable(),
   pixelId: z.string().nullable(),
+  /** nomes editáveis (painel). `null` = derivado no apply (`CaquiAI — <objetivo>`). */
+  campaignName: z.string().nullable(),
+  adsetName: z.string().nullable(),
+  /** rótulo do sufixo (só duplicate) — `<vencedor> — <rótulo>`. `null` = "escala". */
+  suffixLabel: z.string().nullable(),
   variantsCount: z.number().nullable(),
   copyVariants: z.array(draftCopyVariantOutput).nullable(),
+  /** criativo do rascunho (from_scratch) — o card mostra formato/origem + a miniatura
+   *  (rota /creative/thumb). `null` em duplicate (clona o anúncio inteiro, sem criativo próprio). */
+  creative: z
+    .object({
+      format: z.enum(["image", "video"]),
+      origin: z.enum(["reuse", "upload"]),
+    })
+    .nullable(),
+  /** público do rascunho pelo MODO: `reuse` = herda o conjunto que já converte; `broad` = a Meta
+   *  escolhe (amplo). `null` em duplicate/activation. O card oferece alternar entre os dois. */
+  audience: z.enum(["reuse", "broad"]).nullable(),
   /** ids reais criados na Meta — só presente em `approvalKind:"activation"` (já existe na Meta). */
   createdIds: z.record(z.string(), z.unknown()).nullable(),
 });
@@ -58,6 +82,8 @@ export type ScaleChoiceInput = z.infer<typeof scaleChoiceInput>;
 export const scaleWinnerInput = z.object({
   entityLevel: z.enum(["campaign", "adset"]),
   entityId: z.string().min(1),
+  /** nome legível do vencedor (pro card mostrar o nome, não o id cru); opcional. */
+  entityName: z.string().optional(),
   choice: scaleChoiceInput.optional(),
 });
 export type ScaleWinnerInput = z.infer<typeof scaleWinnerInput>;
@@ -75,11 +101,73 @@ export const scaleWinnerOutput = z.discriminatedUnion("move", [
 ]);
 export type ScaleWinnerOutput = z.infer<typeof scaleWinnerOutput>;
 
-/** Troca o criativo de um rascunho from_scratch (picker "trocar criativo"). */
-export const setDraftCreativeInput = z.object({ assetId: z.string().min(1) });
+/**
+ * Troca o criativo de um rascunho from_scratch (picker "trocar criativo"). União discriminada:
+ * `asset` = um upload da biblioteca (uuid de creative_assets); `serving` = reuse de um anúncio
+ * AO VIVO da conta (ad id da Meta) — o serviço busca o video_id fresco. Reuse de vídeo cobre o
+ * caso comum; imagem ao vivo = fast-follow (falta image_hash).
+ */
+export const setDraftCreativeInput = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("asset"), assetId: z.string().min(1) }),
+  z.object({ kind: z.literal("serving"), adId: z.string().min(1) }),
+]);
 export type SetDraftCreativeInput = z.infer<typeof setDraftCreativeInput>;
 export const setDraftCreativeOutput = z.object({ ok: z.boolean() });
 export type SetDraftCreativeOutput = z.infer<typeof setDraftCreativeOutput>;
+
+/** Edição de UMA variação de copy (por índice) no painel "Editar rascunho" (Slice 7). Campos
+ *  omitidos = inalterados; texto não-vazio (blank = anúncio sem texto vira estado inválido). */
+export const draftCopyEditInput = z.object({
+  index: z.number().int().min(0),
+  adName: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+  primaryText: z.string().min(1).max(COPY_TEXT_MAX).optional(),
+  headline: z.string().min(1).max(COPY_TEXT_MAX).optional(),
+  description: z.string().max(COPY_TEXT_MAX).optional(),
+  cta: ctaTypeSchema.optional(),
+});
+
+/**
+ * Edição CONSOLIDADA de um rascunho (painel "Editar rascunho", Slice 7) — só os campos ALTERADOS.
+ * Converge com o chat no núcleo `applyDraftEdit` (§13 DRY). `objective` + geração de copy por IA =
+ * 7b (exigem re-resolução de pixel + porta LLM). Escala aceita só `suffixLabel`/budget/activation.
+ */
+export const updateDraftInput = z.object({
+  budgetReais: z.number().positive().optional(),
+  activation: z.enum(["active", "paused"]).optional(),
+  campaignName: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+  adsetName: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+  /** conversão de negócio (só from_scratch) — o backend re-resolve o pixel da conta e bloqueia se
+   *  o objetivo exige pixel e a conta não tem (§13 mensagem amigável). */
+  objective: conversionGoalSchema.optional(),
+  suffixLabel: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+  audience: z.enum(["reuse", "broad"]).optional(),
+  creative: setDraftCreativeInput.optional(),
+  copyEdits: z.array(draftCopyEditInput).optional(),
+  removeAdIndex: z.number().int().min(0).optional(),
+});
+export type UpdateDraftInput = z.infer<typeof updateDraftInput>;
+export const updateDraftOutput = z.object({ ok: z.boolean() });
+export type UpdateDraftOutput = z.infer<typeof updateDraftOutput>;
+
+/** Alterna o público do rascunho: `reuse` = herda o conjunto provado; `broad` = Meta escolhe. */
+export const setDraftTargetingInput = z.object({ audience: z.enum(["reuse", "broad"]) });
+export type SetDraftTargetingInput = z.infer<typeof setDraftTargetingInput>;
+export const setDraftTargetingOutput = z.object({ ok: z.boolean(), audience: z.enum(["reuse", "broad"]) });
+export type SetDraftTargetingOutput = z.infer<typeof setDraftTargetingOutput>;
+
+/** Um anúncio AO VIVO da conta oferecido como candidato de reuse no picker (lê ad_creatives). */
+export const servingCreativeOutput = z.object({
+  adId: z.string(),
+  title: z.string().nullable(),
+  copy: z.string().nullable(),
+  cta: z.string().nullable(),
+  tier: z.string().nullable(),
+  /** vídeo (video_id) OU imagem (image_hash) — ambos reusáveis ao vivo (Slice 12). */
+  format: z.enum(["image", "video"]),
+  thumbnailUrl: z.string().nullable(),
+});
+export type ServingCreativeOutput = z.infer<typeof servingCreativeOutput>;
+export const servingCreativesListOutput = z.array(servingCreativeOutput);
 
 /** Um asset da biblioteca de criativos (aba Criativos). */
 export const creativeAssetOutput = z.object({

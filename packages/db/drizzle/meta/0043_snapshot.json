@@ -1,5 +1,5 @@
 {
-  "id": "121c9e41-a8c7-468c-b3ae-2db09be16d9e",
+  "id": "05f56b56-b4a5-48a5-96b8-0969646c4585",
   "prevId": "294b6693-abfb-49c3-b5eb-5e6506b710ff",
   "version": "7",
   "dialect": "postgresql",
@@ -4131,6 +4131,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "image_hash": {
+          "name": "image_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "thumbnail_url": {
           "name": "thumbnail_url",
           "type": "text",
@@ -4139,30 +4145,6 @@
         },
         "video_id": {
           "name": "video_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "whatsapp_number": {
-          "name": "whatsapp_number",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "whatsapp_source": {
-          "name": "whatsapp_source",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "campaign_id": {
-          "name": "campaign_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "adset_id": {
-          "name": "adset_id",
           "type": "text",
           "primaryKey": false,
           "notNull": false

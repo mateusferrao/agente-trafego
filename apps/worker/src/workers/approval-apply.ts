@@ -86,10 +86,17 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
               .where(eq(campaignDrafts.id, approval.draftId))
               .limit(1);
             const summary = draftRow ? describeCreatedDraft(draftRow.kind, draftRow.spec as CampaignDraftSpec) : "sua campanha";
-            const text = outcome.activationApprovalId
-              ? `✅ Criei ${summary} — nasceu PAUSADA (a Meta ainda vai revisar o criativo). Quer que eu ATIVE agora? Me diz, ou aprova no site quando quiser.`
-              : `✅ Criei ${summary} — ficou pausada, do jeito que você pediu.`;
-            await pushOutcome(text);
+            const lines = [
+              outcome.activationApprovalId
+                ? `✅ Criei ${summary} — nasceu PAUSADA (a Meta ainda vai revisar o criativo). Quer que eu ATIVE agora? Me diz, ou aprova no site quando quiser.`
+                : `✅ Criei ${summary} — ficou pausada, do jeito que você pediu.`,
+            ];
+            // honestidade (§eco+confirma): eu tinha prometido herdar o público que já converte,
+            // mas a fonte não estava mais disponível na hora de criar — nunca fica silencioso.
+            if (outcome.createdIds["targetingFallback"] === true) {
+              lines.push("Obs: não consegui herdar o público que eu tinha prometido (a fonte não estava mais disponível) — usei um público amplo (Advantage+). Revise o público antes de ativar.");
+            }
+            await pushOutcome(lines.join("\n\n"));
             return;
           }
         }

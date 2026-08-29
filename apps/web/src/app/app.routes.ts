@@ -26,27 +26,27 @@ export const routes: Routes = [
       { path: '', pathMatch: 'full', redirectTo: 'dashboard' },
       {
         path: 'dashboard',
-        title: 'Painel — AutoTraffic',
+        title: 'Painel',
         loadComponent: () =>
           import('./features/dashboard/dashboard-page').then((m) => m.DashboardPage),
       },
       {
         path: 'accounts',
-        title: 'Contas — AutoTraffic',
+        title: 'Contas',
         loadComponent: () => import('./features/accounts/accounts-page').then((m) => m.AccountsPage),
       },
       {
         // detalhe de um run (drill-down) — rota própria, ANTES da casca de abas
         // (mais específica); fica fora do chrome de abas.
         path: 'accounts/:id/runs/:runId',
-        title: 'Análise — AutoTraffic',
+        title: 'Análise',
         loadComponent: () =>
           import('./features/run-detail/run-detail-page').then((m) => m.RunDetailPage),
       },
       {
         // casca da conta (6a): cabeçalho + router-tabs; filhos = as abas.
         path: 'accounts/:id',
-        title: 'Conta — AutoTraffic',
+        title: 'Conta',
         loadComponent: () =>
           import('./features/account-detail/account-shell').then((m) => m.AccountShell),
         children: [
@@ -58,19 +58,19 @@ export const routes: Routes = [
           },
           {
             path: 'agente',
-            title: 'Configurar agente — AutoTraffic',
+            title: 'Configurar agente',
             loadComponent: () =>
               import('./features/agent-config/agent-config-page').then((m) => m.AgentConfigPage),
           },
           {
             path: 'criativos',
-            title: 'Criativos — AutoTraffic',
+            title: 'Criativos',
             loadComponent: () =>
               import('./features/account-detail/creative-library').then((m) => m.CreativeLibrary),
           },
           {
             path: 'timeline',
-            title: 'Linha do tempo — AutoTraffic',
+            title: 'Linha do tempo',
             loadComponent: () =>
               import('./features/account-detail/account-timeline').then((m) => m.AccountTimeline),
           },
@@ -78,13 +78,13 @@ export const routes: Routes = [
       },
       {
         path: 'approvals',
-        title: 'Aprovações — AutoTraffic',
+        title: 'Aprovações',
         loadComponent: () =>
           import('./features/approvals/approvals-page').then((m) => m.ApprovalsPage),
       },
       {
         path: 'integrations',
-        title: 'Integrações — AutoTraffic',
+        title: 'Integrações',
         loadComponent: () =>
           import('./features/integrations/integrations-page').then((m) => m.IntegrationsPage),
       },
@@ -93,13 +93,13 @@ export const routes: Routes = [
       { path: 'whatsapp', pathMatch: 'full', redirectTo: 'integrations' },
       {
         path: 'custos',
-        title: 'Custos — AutoTraffic',
+        title: 'Custos',
         canActivate: [ownerGuard],
         loadComponent: () => import('./features/costs/costs-page').then((m) => m.CostsPage),
       },
       {
         path: 'settings',
-        title: 'Configurações — AutoTraffic',
+        title: 'Configurações',
         loadComponent: () =>
           import('./features/settings/settings-page').then((m) => m.SettingsPage),
       },
@@ -113,31 +113,31 @@ export const routes: Routes = [
     children: [
       {
         path: 'login',
-        title: 'Entrar — AutoTraffic',
+        title: 'Entrar',
         data: { mode: 'login' },
         loadComponent: () => import('./features/login/login-page').then((m) => m.LoginPage),
       },
       {
         path: 'signup',
-        title: 'Criar conta — AutoTraffic',
+        title: 'Criar conta',
         data: { mode: 'signup' },
         loadComponent: () => import('./features/login/login-page').then((m) => m.LoginPage),
       },
       {
         path: 'verify-email',
-        title: 'Confirmar email — AutoTraffic',
+        title: 'Confirmar email',
         loadComponent: () =>
           import('./features/verify-email/verify-email-page').then((m) => m.VerifyEmailPage),
       },
       {
         path: 'forgot-password',
-        title: 'Redefinir senha — AutoTraffic',
+        title: 'Redefinir senha',
         loadComponent: () =>
           import('./features/forgot-password/forgot-password-page').then((m) => m.ForgotPasswordPage),
       },
       {
         path: 'reset-password',
-        title: 'Nova senha — AutoTraffic',
+        title: 'Nova senha',
         loadComponent: () =>
           import('./features/reset-password/reset-password-page').then((m) => m.ResetPasswordPage),
       },
@@ -147,7 +147,7 @@ export const routes: Routes = [
     // Muro do gate de beta (6b): logado + verificado, mas acesso ainda não liberado.
     // Fora do shell (senão activeAccessGuard entraria em loop) e fora do guestOnly.
     path: 'acesso-pendente',
-    title: 'Acesso em análise — AutoTraffic',
+    title: 'Acesso em análise',
     canActivate: [authGuard, pendingAccessGuard],
     loadComponent: () =>
       import('./features/pending-access/pending-access-page').then((m) => m.PendingAccessPage),

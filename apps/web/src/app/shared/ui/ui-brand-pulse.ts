@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, input } from '@angular/core';
 
-// Símbolo da marca (tomate) em pulso/respiração — âncora de loading (nunca gira).
+// Símbolo da marca (caqui) em pulso/respiração — âncora de loading (nunca gira).
 // Reusa .brand-mark; opcionalmente um rótulo ao lado.
 @Component({
   selector: 'app-ui-brand-pulse',

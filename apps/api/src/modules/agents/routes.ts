@@ -108,8 +108,8 @@ export const agentsRoutes: FastifyPluginAsync = async (app) => {
 
   app.post("/accounts/:id/agent/actions/:toolCallId/undo", guard, async (request) => {
     const { id, toolCallId } = request.params as { id: string; toolCallId: string };
-    const { force } = undoActionInput.parse(request.body ?? {});
-    await service.requestUndo(orgIdOf(request), id, toolCallId, force);
+    const { force, mode } = undoActionInput.parse(request.body ?? {});
+    await service.requestUndo(orgIdOf(request), id, toolCallId, force, mode);
     return { ok: true };
   });
 };

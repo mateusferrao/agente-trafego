@@ -26,7 +26,7 @@ import {
 } from "@trafego/core";
 import { applyAgentConfigChange, loadAgentConfigState, reseedArchetypeChange } from "@trafego/agent-config";
 import { sleep, phoneTokensInText, APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE } from "@trafego/shared";
-import type { Action, ConversionGoal, OrgId } from "@trafego/shared/types";
+import type { Action, ApprovalId, ConversionGoal, OrgId } from "@trafego/shared/types";
 import { CONVERSION_GOALS } from "@trafego/shared/types";
 import { AdsPlatformError } from "@trafego/shared/ports";
 import { and, eq } from "drizzle-orm";
@@ -601,6 +601,8 @@ export function makeConversationNodes(
               ...(typeof a["budgetReais"] === "number" ? { budgetReais: a["budgetReais"] as number } : {}),
               ...(a["activation"] === "active" || a["activation"] === "paused" ? { activation: a["activation"] as "active" | "paused" } : {}),
               ...(typeof a["variantsCount"] === "number" ? { variantsCount: a["variantsCount"] as number } : {}),
+              ...(a["audience"] === "reuse" || a["audience"] === "broad" ? { audience: a["audience"] as "reuse" | "broad" } : {}),
+              ...(typeof a["campaignName"] === "string" && a["campaignName"] ? { campaignName: a["campaignName"] as string } : {}),
             };
       const res = await refineDraft(deps, { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, currency: DEFAULT_CURRENCY }, active.draftId, patch);
       if (res.kind === "blocked") {
@@ -694,11 +696,14 @@ export function makeConversationNodes(
     if (revertCalls.length > 0) {
       const items: RevertEchoItem[] = [];
       const ids: string[] = [];
+      const modes: ("pause" | "archive")[] = [];
       for (const c of revertCalls) {
-        const a = (c.args ?? {}) as { toolCallId?: string; label?: string; actionType?: string };
+        const a = (c.args ?? {}) as { toolCallId?: string; label?: string; actionType?: string; mode?: "pause" | "archive" };
         if (!a.toolCallId) continue;
-        items.push({ label: a.label ?? "essa ação", actionType: a.actionType ?? "" });
+        const mode = a.mode === "archive" ? "archive" : "pause";
+        items.push({ label: a.label ?? "essa ação", actionType: a.actionType ?? "", mode });
         ids.push(a.toolCallId);
+        modes.push(mode);
       }
       if (ids.length === 0) {
         return { messages: answerToolCalls(allCalls, "Não entendi qual ação desfazer. Use find_recent_actions.") };
@@ -709,7 +714,7 @@ export function makeConversationNodes(
         // pode omitir dados/segurança do eco; validação ao vivo confirmou o risco). O eco é a
         // verdade fixa; o ToolMessage só satisfaz o par tool_call/result.
         messages: [...answerToolCalls(allCalls, "proposto — aguardando confirmação"), new AIMessage(echo)],
-        pendingRevert: { echo, expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString(), toolCallIds: ids },
+        pendingRevert: { echo, expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString(), toolCallIds: ids, modes },
         pendingWrite: null, // uma pendência por vez (write × revert não coexistem)
       };
     }
@@ -918,8 +923,24 @@ export function makeConversationNodes(
     const isConfirm = calls.some((c) => c.name === "confirm_write");
 
     if (!isConfirm) {
+      // recusa em-turno de um RASCUNHO → resolve a approval no BANCO (some do site também),
+      // não só limpa o estado efêmero (senão o rascunho seguia pendente 24h no card). As demais
+      // pendências (write/revert/config) não têm approval persistida aqui.
+      const rejectedDraft = activePendingDraft(state.pendingDraft);
+      if (rejectedDraft) {
+        // só recusa se AINDA pendente: o rascunho pode ter sido aprovado por id nesse meio-tempo
+        // (apply-service já criou a campanha) → não reverter approved→rejected com a campanha viva.
+        // Espelha o guard de approve/reject (getById + status pending).
+        const appr = await deps.ports.approval.getById(rejectedDraft.approvalId as ApprovalId);
+        if (appr && appr.status === "pending") {
+          await deps.ports.approval.resolve(rejectedDraft.approvalId as ApprovalId, { status: "rejected" });
+        }
+      }
       return {
-        messages: [...answerToolCalls(calls, "cancelado"), new AIMessage("Ok, não mexi em nada.")],
+        messages: [
+          ...answerToolCalls(calls, "cancelado"),
+          new AIMessage(rejectedDraft ? "Ok, descartei o rascunho." : "Ok, não mexi em nada."),
+        ],
         pendingWrite: null,
         pendingRevert: null,
         pendingConfigChange: null,
@@ -961,11 +982,15 @@ export function makeConversationNodes(
     const pendingRevert = activePendingRevert(state.pendingRevert);
     if (pendingRevert) {
       const lines: string[] = [];
-      for (const toolCallId of pendingRevert.toolCallIds) {
-        const res = await revertActionById(deps, { orgId: ctx.orgId, toolCallId });
+      for (let i = 0; i < pendingRevert.toolCallIds.length; i++) {
+        const toolCallId = pendingRevert.toolCallIds[i]!;
+        const mode = pendingRevert.modes?.[i] ?? "pause"; // estado antigo sem modes → pausar
+        const res = await revertActionById(deps, { orgId: ctx.orgId, toolCallId, mode });
         lines.push(
           res.reverted
-            ? "✅ Desfeito."
+            ? mode === "archive"
+              ? "✅ Arquivada."
+              : "✅ Desfeito."
             : res.blockedByDrift
               ? `Não desfiz: ${res.reason ?? "a entidade mudou desde a ação"}. Se quiser desfazer mesmo assim, me avise.`
               : `Não consegui desfazer: ${res.reason ?? "ação não encontrada"}.`,

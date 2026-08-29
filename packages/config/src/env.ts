@@ -278,6 +278,15 @@ export const envSchema = z.object({
   // get_fresh_metrics). Travamento sem erro → cai no fallback amigável, nunca deixa
   // o usuário sem resposta pra sempre.
   CONVERSATION_TURN_TIMEOUT_MS: z.coerce.number().int().positive().default(90_000),
+  // Teto (ms) do fetch AO VIVO da Meta dentro de uma read-tool do chat (ex: get_top_creatives
+  // fresh=true refresca copies). DEVE ser < CONVERSATION_TURN_TIMEOUT_MS: se a Meta demora, a
+  // tool degrada pro dado persistido em vez de estourar o turno inteiro (a causa do fallback
+  // genérico quando o refresh de todos os criativos levava minutos).
+  CHAT_LIVE_FETCH_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+  // Modelo default da geração de COPY do rascunho (Fatia 7) quando o agente não tem modelo
+  // próprio (model_config.messageModel/model). Env em vez de hardcoded — mesmo padrão dos
+  // modelos de análise. Tarefa de escrita curta e barata.
+  COPY_MODEL: z.string().min(1).default("openai/gpt-4o-mini"),
 
   // ─── Transcrição de áudio inbound (STT via OpenRouter) ─────────────────
   // Nota de voz do WhatsApp → texto na borda. Reusa OPENROUTER_API_KEY/BASE_URL.
@@ -324,7 +333,7 @@ export const envSchema = z.object({
   // driver: console (dev, loga código/link) | ses (prod, AWS SESv2) | noop (testes).
   AUTH_EMAIL_DELIVERY_DRIVER: z.enum(["console", "ses", "noop"]).default("console"),
   // Remetente. Domínio precisa estar verificado no SES (DKIM). Beta = msg.automato.pro.
-  AUTH_EMAIL_FROM: z.string().min(1).default("AutoTraffic <no-reply@msg.automato.pro>"),
+  AUTH_EMAIL_FROM: z.string().min(1).default("CaquiAI <no-reply@msg.automato.pro>"),
   // Região do SES de produção (só o worker envia). Creds AWS (AWS_ACCESS_KEY_ID/
   // AWS_SECRET_ACCESS_KEY) vêm da cadeia default do SDK — secret só no worker, IAM escopado.
   AWS_REGION: z.string().min(1).default("sa-east-1"),

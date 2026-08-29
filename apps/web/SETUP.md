@@ -1,6 +1,6 @@
 # `apps/web` — setup
 
-App **web** do AutoTraffic: Angular 21 (standalone + signals, zoneless),
+App **web** do CaquiAI: Angular 21 (standalone + signals, zoneless),
 Tailwind 4 (CSS-config, sem `tailwind.config.js` — tokens em `src/styles.css`),
 dentro do pnpm workspace (`pnpm-workspace.yaml` → `apps/*`).
 

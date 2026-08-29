@@ -1,6 +1,8 @@
+import { createHash } from "node:crypto";
 import { and, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   adAccounts,
+  adCreatives,
   agents,
   agentToolBindings,
   campaignDrafts,
@@ -9,7 +11,8 @@ import {
   platformConnections,
   type Database,
 } from "@trafego/db";
-import { planScaleMove, resolveEnabledTools, type BudgetLevel, type ScaleAggressivePreference } from "@trafego/core";
+import { applyDraftEdit, planScaleMove, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
+import { loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import type { ToolBindingMode } from "@trafego/shared";
 import {
   ACTION_PARAM_MODE,
@@ -22,7 +25,7 @@ import {
   toGuardrailConfig,
   type CampaignDraftSpec,
 } from "@trafego/shared";
-import type { Action, AgentId, CreativeAssetRef, DraftId, OrgId } from "@trafego/shared/types";
+import type { Action, AgentId, CreativeAssetRef, DraftId, OrgId, TargetingSpec } from "@trafego/shared/types";
 import type { AdAccountRef, ApprovalPort, CredentialVaultPort, SchedulerPort, StoragePort } from "@trafego/shared/ports";
 import type { AdsPlatformPort } from "@trafego/shared/ports";
 import { ingestCreativeImage, ingestCreativeVideo } from "@trafego/creative-library";
@@ -31,6 +34,9 @@ import type {
   DraftApprovalOutput,
   ScaleWinnerInput,
   ScaleWinnerOutput,
+  ServingCreativeOutput,
+  SetDraftCreativeInput,
+  UpdateDraftInput,
   UploadCreativeArgs,
   UploadCreativeOutput,
 } from "./schema.js";
@@ -46,6 +52,30 @@ export function isAllowedCreativeType(contentType: string): boolean {
 // (JPY/CLP) = fast-follow (derivar a subunidade da moeda). Beta é BRL.
 const MINOR_PER_UNIT = 100;
 const APPROVAL_TTL_MS = APPROVAL_TTL_HOURS * 60 * 60 * 1000;
+/** Teto de tempo e tamanho do fetch da miniatura (fbcdn) — não pendura o handler da API nem
+ *  materializa payload gigante em memória (a thumb da Meta é pequena; isto é a rede de segurança). */
+const THUMB_FETCH_TIMEOUT_MS = 8000;
+const THUMB_MAX_BYTES = 5 * 1024 * 1024;
+/** Cap de segurança do picker de anúncios veiculando (o web trunca + "ver mais" + busca; a
+ *  paginação server-side robusta é fast-follow). Evita payload patológico em contas gigantes. */
+const SERVING_PICKER_CAP = 200;
+
+const DRAFT_NOT_OPEN_MSG = "esse rascunho não está mais aberto pra ajuste.";
+const ACCOUNT_UNAVAILABLE_MSG = "não consegui acessar a conta agora";
+
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+
+/** Traduz o erro TIPADO do núcleo de refino p/ mensagem amigável (§13 — o quê + o que fazer). */
+export function refineErrorMessage(error: RefineError): string {
+  switch (error.code) {
+    case "field_not_editable":
+      return "Numa escala eu mantenho o que já converte (público, criativo e copy do vencedor). Pra mexer nisso, o caminho é criar uma campanha nova.";
+    case "empty_variants":
+      return "Toda campanha precisa de pelo menos um anúncio. Edite este em vez de remover.";
+    case "objective_requires_pixel":
+      return "Esse objetivo precisa do rastreamento de conversões (pixel) configurado na Meta, e esta conta ainda não tem. Configure no Gerenciador de Eventos da Meta, ou escolha um objetivo que não precise disso (como mensagens ou engajamento).";
+  }
+}
 
 export interface DraftsServiceDeps {
   readonly db: Database;
@@ -114,7 +144,157 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     };
   }
 
+  /** Ref de reuse de um upload da BIBLIOTECA (uuid). Só `ready` + não-arquivado da mesma conta. */
+  async function resolveLibraryCreative(orgId: OrgId, accountId: string, assetId: string): Promise<CreativeAssetRef | null> {
+    const [asset] = await deps.db
+      .select({
+        format: creativeAssets.format,
+        origin: creativeAssets.origin,
+        status: creativeAssets.status,
+        metaImageHash: creativeAssets.metaImageHash,
+        metaVideoId: creativeAssets.metaVideoId,
+      })
+      .from(creativeAssets)
+      .where(
+        and(
+          eq(creativeAssets.id, assetId),
+          eq(creativeAssets.orgId, orgId),
+          eq(creativeAssets.adAccountId, accountId),
+          isNull(creativeAssets.archivedAt),
+        ),
+      )
+      .limit(1);
+    if (!asset || asset.status !== "ready") return null;
+    return {
+      assetId,
+      format: asset.format,
+      origin: asset.origin,
+      ...(asset.metaImageHash ? { metaImageHash: asset.metaImageHash } : {}),
+      ...(asset.metaVideoId ? { metaVideoId: asset.metaVideoId } : {}),
+    };
+  }
+
+  /** Ref de reuse de um anúncio AO VIVO (ad id da Meta): busca o video_id / image_hash FRESCO (não
+   *  o ad_creatives stale). Vídeo → metaVideoId; imagem → metaImageHash (Slice 12). */
+  async function resolveServingCreative(orgId: OrgId, accountId: string, adId: string): Promise<CreativeAssetRef | null> {
+    const ctx = await loadScaleContext(orgId, accountId);
+    if (!ctx) return null;
+    const [c] = await deps.adsPlatform.getCreatives(ctx.ref, [adId]);
+    // VÍDEO: carrega TAMBÉM a capa (metaImageHash = video_data.image_hash do anúncio-fonte) — a Meta
+    // exige capa no video_data e ler os thumbnails do vídeo pode falhar (#10). Sem capa → o apply cai
+    // no fallback de thumbnails; com ela, cria direto.
+    if (c?.videoId) return { assetId: adId, format: "video", origin: "reuse", metaVideoId: c.videoId, ...(c.imageHash ? { metaImageHash: c.imageHash } : {}) };
+    if (c?.imageHash) return { assetId: adId, format: "image", origin: "reuse", metaImageHash: c.imageHash };
+    return null;
+  }
+
+  /**
+   * Edição CONSOLIDADA de um rascunho (painel "Editar rascunho", Slice 7). Resolve os fragmentos
+   * de IO (público→targeting, asset/serving→creative) na CASCA, monta o `DraftEdit` neutro, aplica
+   * o núcleo puro `applyDraftEdit` (clamp/guards/merge) e persiste com UPDATE guardado por status.
+   * Chat e site convergem aqui (§13 DRY). Erro tipado do núcleo → mensagem amigável (§13). A
+   * auditoria é cross-cutting (hook onResponse), não copiada aqui.
+   */
+  async function updateDraftImpl(
+    orgId: OrgId,
+    accountId: string,
+    draftId: string,
+    input: UpdateDraftInput,
+  ): Promise<{ ok: true } | { ok: false; message: string }> {
+    const loaded = await loadDraftForEdit(deps.db, { orgId, draftId, adAccountId: accountId });
+    if (!loaded) return { ok: false, message: DRAFT_NOT_OPEN_MSG };
+    const { kind, spec } = loaded;
+
+    // Contexto de conta (token/cfg) + defaults (page/pixel/público) carregados UMA vez, sob demanda
+    // (cap de budget, inferir público, re-resolver pixel do objetivo). Nomes/ativação/copy não
+    // tocam a conta → não pagam a query.
+    let ctxCache: ScaleContext | null | undefined;
+    const getCtx = async (): Promise<ScaleContext | null> => {
+      if (ctxCache === undefined) ctxCache = await loadScaleContext(orgId, accountId);
+      return ctxCache;
+    };
+    let defaultsCache: Awaited<ReturnType<AdsPlatformPort["inferCreationDefaults"]>> | null | undefined;
+    const getDefaults = async () => {
+      if (defaultsCache === undefined) {
+        const ctx = await getCtx();
+        defaultsCache = ctx ? await deps.adsPlatform.inferCreationDefaults(ctx.ref) : null;
+      }
+      return defaultsCache;
+    };
+
+    const edit: Mutable<DraftEdit> = {};
+    if (input.activation) edit.activation = input.activation;
+    if (input.campaignName != null) edit.campaignName = input.campaignName;
+    if (input.adsetName != null) edit.adsetName = input.adsetName;
+    if (input.suffixLabel != null) edit.suffixLabel = input.suffixLabel;
+
+    let budgetCapMinor: number | null = null;
+    if (input.budgetReais != null) {
+      const ctx = await getCtx();
+      if (!ctx) return { ok: false, message: ACCOUNT_UNAVAILABLE_MSG };
+      edit.budgetMinor = Math.round(input.budgetReais * MINOR_PER_UNIT);
+      budgetCapMinor = ctx.cfg.maxNewDailyBudgetMinor ?? null;
+    }
+
+    // Objetivo (só from_scratch): re-resolve o pixel DA CONTA (não de spec.pixelId). O guard do
+    // núcleo bloqueia objetivo-que-exige-pixel sem pixel; quando há, grava o pixel no spec.
+    let hasPixel = true;
+    if (input.objective) {
+      const defaults = await getDefaults();
+      if (!defaults) return { ok: false, message: ACCOUNT_UNAVAILABLE_MSG };
+      hasPixel = Boolean(defaults.pixelId);
+      edit.objective = input.objective;
+      if (defaults.pixelId) edit.pixelId = defaults.pixelId;
+    }
+
+    if (input.audience) {
+      const targeting = await resolveAudienceTargeting(input.audience, spec.targeting, async () => {
+        const defaults = await getDefaults();
+        return defaults?.sourceAdsetId;
+      });
+      if (input.audience === "reuse" && targeting?.kind !== "reuse_adset") {
+        return { ok: false, message: "não achei um público provado pra herdar nesta conta." };
+      }
+      if (targeting) edit.targeting = targeting;
+    }
+
+    if (input.creative) {
+      const creative =
+        input.creative.kind === "asset"
+          ? await resolveLibraryCreative(orgId, accountId, input.creative.assetId)
+          : await resolveServingCreative(orgId, accountId, input.creative.adId);
+      if (!creative) return { ok: false, message: "não consegui usar esse criativo — tente outro." };
+      edit.creative = creative;
+    }
+
+    if (input.copyEdits || input.removeAdIndex != null) {
+      let variants = [...(spec.copyVariants ?? [])];
+      for (const e of input.copyEdits ?? []) {
+        const current = variants[e.index];
+        if (!current) continue;
+        variants[e.index] = {
+          ...current,
+          ...(e.primaryText !== undefined ? { primaryText: e.primaryText } : {}),
+          ...(e.headline !== undefined ? { headline: e.headline } : {}),
+          ...(e.description !== undefined ? { description: e.description } : {}),
+          ...(e.cta !== undefined ? { cta: e.cta } : {}),
+          ...(e.adName !== undefined ? { adName: e.adName } : {}),
+        };
+      }
+      if (input.removeAdIndex != null) variants = variants.filter((_, i) => i !== input.removeAdIndex);
+      edit.copyVariants = variants;
+    }
+
+    const result = applyDraftEdit(kind, spec, edit, { budgetCapMinor, hasPixel });
+    if (!result.ok) return { ok: false, message: refineErrorMessage(result.error) };
+
+    const persisted = await persistDraftSpec(deps.db, { orgId, draftId, adAccountId: accountId }, result.value.spec);
+    if (!persisted) return { ok: false, message: DRAFT_NOT_OPEN_MSG };
+    return { ok: true };
+  }
+
   return {
+    updateDraft: updateDraftImpl,
     /**
      * Rascunhos de campanha aguardando aprovação (card de rascunho no inbox) — inclui os 2
      * momentos que compartilham o card (P0.1): `draft` (pedindo OK pra criar, gasto novo ainda
@@ -161,11 +341,19 @@ export function createDraftsService(deps: DraftsServiceDeps) {
           origin: d.origin,
           objective: spec.objective ?? null,
           dailyBudgetMajor: spec.dailyBudgetMinor / MINOR_PER_UNIT,
+          clampedFromMajor:
+            spec.requestedDailyBudgetMinor && spec.requestedDailyBudgetMinor > spec.dailyBudgetMinor
+              ? spec.requestedDailyBudgetMinor / MINOR_PER_UNIT
+              : null,
           currency: spec.currency,
           activation: spec.activation,
-          sourceLabel: d.sourceRef ? `${d.sourceRef.level}:${d.sourceRef.id}` : null,
+          sourceLevel: d.sourceRef?.level ?? null,
+          sourceName: d.sourceRef?.name ?? null,
           pageId: spec.pageId ?? null,
           pixelId: spec.pixelId ?? null,
+          campaignName: spec.campaignName ?? null,
+          adsetName: spec.adsetName ?? null,
+          suffixLabel: spec.suffixLabel ?? null,
           variantsCount: spec.variantsCount ?? null,
           copyVariants: spec.copyVariants
             ? spec.copyVariants.map((c) => ({
@@ -173,8 +361,12 @@ export function createDraftsService(deps: DraftsServiceDeps) {
                 headline: c.headline,
                 description: c.description ?? null,
                 cta: c.cta ?? null,
+                adName: c.adName ?? null,
               }))
             : null,
+          creative: spec.creative ? { format: spec.creative.format, origin: spec.creative.origin } : null,
+          audience:
+            spec.targeting?.kind === "reuse_adset" ? "reuse" : spec.targeting?.kind === "advantage_plus" ? "broad" : null,
           createdIds: appr.kind === "activation" ? (d.createdIds as Record<string, unknown>) : null,
         });
       }
@@ -260,6 +452,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
         version: 1,
         currency: ctx.currency,
         dailyBudgetMinor: newDailyBudgetMinor,
+        ...(newDailyBudgetMinor < requestedMinor ? { requestedDailyBudgetMinor: requestedMinor } : {}),
         activation: "active",
       };
       const [draftRow] = await deps.db
@@ -272,7 +465,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
           status: "proposed",
           origin: "on_demand",
           spec,
-          sourceRef: { level: input.entityLevel, id: input.entityId },
+          sourceRef: { level: input.entityLevel, id: input.entityId, ...(input.entityName ? { name: input.entityName } : {}) },
         })
         .returning({ id: campaignDrafts.id });
 
@@ -314,58 +507,66 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       }));
     },
 
-    /** Troca o criativo de um rascunho `from_scratch` proposto (picker "trocar criativo").
-     *  Org-scoped; só rascunho aberto + asset pronto da mesma conta. null → 404 (não editável). */
+    /** Troca o criativo de um rascunho `from_scratch` proposto (picker "trocar criativo"). Org-scoped;
+     *  só rascunho aberto da mesma conta. `asset` = upload da biblioteca; `serving` = reuse de um
+     *  anúncio ao vivo (busca o video_id FRESCO). null → 404 (não editável / criativo inválido). */
+    /** Troca o criativo de um rascunho (picker) — DELEGA ao `updateDraft` (via única). Propaga o
+     *  resultado tipado (ok/message) → a rota devolve 422 com a mensagem GRANULAR (não um 404 cego). */
     async setDraftCreative(
       orgId: OrgId,
       accountId: string,
       draftId: string,
-      assetId: string,
-    ): Promise<{ ok: true } | null> {
-      const [draft] = await deps.db
-        .select({ spec: campaignDrafts.spec, kind: campaignDrafts.kind, status: campaignDrafts.status })
-        .from(campaignDrafts)
-        .where(
-          and(
-            eq(campaignDrafts.id, draftId),
-            eq(campaignDrafts.orgId, orgId),
-            eq(campaignDrafts.adAccountId, accountId),
-          ),
-        )
-        .limit(1);
-      if (!draft || draft.status !== "proposed" || draft.kind !== "from_scratch") return null;
-      const [asset] = await deps.db
+      input: SetDraftCreativeInput,
+    ): Promise<{ ok: true } | { ok: false; message: string }> {
+      return updateDraftImpl(orgId, accountId, draftId, { creative: input });
+    },
+
+    /** Alterna o PÚBLICO de um rascunho (card /approvals) — DELEGA ao `updateDraft` (via única).
+     *  Propaga a mensagem granular do núcleo (ex.: "não achei um público provado pra herdar"). */
+    async setDraftTargeting(
+      orgId: OrgId,
+      accountId: string,
+      draftId: string,
+      audience: "reuse" | "broad",
+    ): Promise<{ ok: true; audience: "reuse" | "broad" } | { ok: false; message: string }> {
+      const r = await updateDraftImpl(orgId, accountId, draftId, { audience });
+      return r.ok ? { ok: true, audience } : r;
+    },
+
+    /** Anúncios AO VIVO da conta oferecidos como candidatos de reuse no picker (lê ad_creatives,
+     *  ranqueado campeã→pior). Só VÍDEO por ora (imagem ao vivo precisa de image_hash — fast-follow);
+     *  o pick fresco (setDraftCreative serving) confirma o video_id atual. */
+    async listServingCreatives(orgId: OrgId, accountId: string): Promise<ServingCreativeOutput[]> {
+      const rows = await deps.db
         .select({
-          format: creativeAssets.format,
-          origin: creativeAssets.origin,
-          status: creativeAssets.status,
-          metaImageHash: creativeAssets.metaImageHash,
-          metaVideoId: creativeAssets.metaVideoId,
+          adId: adCreatives.adId,
+          title: adCreatives.title,
+          body: adCreatives.body,
+          callToAction: adCreatives.callToAction,
+          tier: adCreatives.tier,
+          videoId: adCreatives.videoId,
+          imageHash: adCreatives.imageHash,
+          imageUrl: adCreatives.imageUrl,
+          thumbnailUrl: adCreatives.thumbnailUrl,
         })
-        .from(creativeAssets)
-        .where(
-          and(
-            eq(creativeAssets.id, assetId),
-            eq(creativeAssets.orgId, orgId),
-            eq(creativeAssets.adAccountId, accountId),
-            isNull(creativeAssets.archivedAt), // não deixa o picker escolher um arquivado
-          ),
-        )
-        .limit(1);
-      if (!asset || asset.status !== "ready") return null;
-      const spec = draft.spec as CampaignDraftSpec;
-      const creative: CreativeAssetRef = {
-        assetId,
-        format: asset.format,
-        origin: asset.origin,
-        ...(asset.metaImageHash ? { metaImageHash: asset.metaImageHash } : {}),
-        ...(asset.metaVideoId ? { metaVideoId: asset.metaVideoId } : {}),
-      };
-      await deps.db
-        .update(campaignDrafts)
-        .set({ spec: { ...spec, creative } })
-        .where(eq(campaignDrafts.id, draftId));
-      return { ok: true };
+        .from(adCreatives)
+        .where(and(eq(adCreatives.adAccountId, accountId), eq(adCreatives.orgId, orgId)))
+        // ordena por DATA (mais recente capturado primeiro) — o usuário acha o criativo novo; o
+        // picker trunca + "ver mais" + busca. Cap de segurança (paginação server-side = fast-follow).
+        .orderBy(desc(adCreatives.capturedAt))
+        .limit(SERVING_PICKER_CAP);
+      // reusável ao vivo = VÍDEO (video_id) OU IMAGEM (image_hash). O pick fresco confirma na Meta.
+      return rows
+        .filter((r) => r.videoId || r.imageHash)
+        .map((r) => ({
+          adId: r.adId,
+          title: r.title,
+          copy: r.body,
+          cta: r.callToAction,
+          tier: r.tier,
+          format: r.videoId ? ("video" as const) : ("image" as const),
+          thumbnailUrl: r.thumbnailUrl ?? r.imageUrl,
+        }));
     },
 
     /** Blob original de um criativo (preview). Org-scoped pelo assetId — nunca confia em ref
@@ -388,6 +589,77 @@ export function createDraftsService(deps: DraftsServiceDeps) {
         .limit(1);
       if (!row?.storageRef) return null;
       return deps.storage.get(row.storageRef);
+    },
+
+    /**
+     * Miniatura do criativo de um rascunho (card /approvals) — FIEL ao spec + cache HTTP por ETag
+     * estável. `upload` → blob do StoragePort (mesmo lookup do getCreativeBlob). `reuse` → busca
+     * FRESCO da Meta (getVideoFrames p/ vídeo HD, getCreatives p/ imagem) e faz stream dos bytes —
+     * a URL do fbcdn expira, então nunca a mandamos crua pro browser. O ETag é estável pelo id do
+     * criativo (metaVideoId/hash) → o browser cacheia e revalida com 304 SEM tocar na Meta. Cache
+     * COMPARTILHADO no StoragePort (1 fetch serve todos os viewers) = fast-follow. Org-scoped pelo
+     * draftId; `null` = 404 (rascunho/criativo/preview indisponível).
+     */
+    async getDraftCreativeThumb(
+      orgId: OrgId,
+      accountId: string,
+      draftId: string,
+      ifNoneMatch?: string,
+    ): Promise<{ notModified: true; etag: string } | { bytes: Uint8Array; contentType: string; etag: string } | null> {
+      const [draft] = await deps.db
+        .select({ spec: campaignDrafts.spec })
+        .from(campaignDrafts)
+        .where(and(eq(campaignDrafts.id, draftId), eq(campaignDrafts.orgId, orgId), eq(campaignDrafts.adAccountId, accountId)))
+        .limit(1);
+      if (!draft) return null;
+      const creative = (draft.spec as CampaignDraftSpec).creative;
+      if (!creative) return null;
+
+      // upload → blob do StoragePort (content-addressed; ETag do próprio blob).
+      if (creative.origin === "upload") {
+        const [row] = await deps.db
+          .select({ storageRef: creativeAssets.storageRef })
+          .from(creativeAssets)
+          .where(and(eq(creativeAssets.id, creative.assetId), eq(creativeAssets.orgId, orgId), eq(creativeAssets.adAccountId, accountId)))
+          .limit(1);
+        if (!row?.storageRef) return null;
+        const blob = await deps.storage.get(row.storageRef);
+        return blob ? { bytes: blob.bytes, contentType: blob.contentType, etag: blob.etag } : null;
+      }
+
+      // reuse → ETag ESTÁVEL pelo id do criativo: revalidação (If-None-Match) responde 304 sem
+      // NENHUMA chamada à Meta. Só busca fresco no miss.
+      const stableId = creative.metaVideoId ?? creative.metaImageHash ?? creative.assetId;
+      const etag = createHash("sha256").update(`draft-thumb:${stableId}`).digest("hex").slice(0, 32);
+      if (ifNoneMatch === `"${etag}"`) return { notModified: true, etag };
+
+      const ctx = await loadScaleContext(orgId, accountId);
+      if (!ctx) return null;
+      let url: string | undefined;
+      if (creative.format === "video" && creative.metaVideoId) {
+        // frames HD do vídeo — MAS o System User token pode não ter permissão pro endpoint
+        // `/{video_id}?fields=thumbnails` (erro Meta #10). Sem frames, cai no thumbnail do
+        // ANÚNCIO (getCreatives), que é acessível — o card é 64px, então o selo já basta.
+        url = (await deps.adsPlatform.getVideoFrames(ctx.ref, creative.metaVideoId))[0];
+        if (!url) {
+          const [c] = await deps.adsPlatform.getCreatives(ctx.ref, [creative.assetId]);
+          url = c?.thumbnailUrl ?? c?.imageUrl;
+        }
+      } else {
+        const [c] = await deps.adsPlatform.getCreatives(ctx.ref, [creative.assetId]);
+        url = c?.imageUrl ?? c?.thumbnailUrl;
+      }
+      if (!url) return null;
+      // rede de segurança: teto de tempo (fbcdn lento não pendura a API) + só imagem + cap de
+      // tamanho (não materializa payload gigante). Falha/timeout → null (o card mostra fallback).
+      const res = await fetch(url, { signal: AbortSignal.timeout(THUMB_FETCH_TIMEOUT_MS) }).catch(() => null);
+      if (!res || !res.ok) return null;
+      const contentType = res.headers.get("content-type") ?? "image/jpeg";
+      if (!contentType.startsWith("image/")) return null; // não ecoa content-type arbitrário inline
+      if (Number(res.headers.get("content-length") ?? 0) > THUMB_MAX_BYTES) return null;
+      const bytes = new Uint8Array(await res.arrayBuffer());
+      if (bytes.byteLength > THUMB_MAX_BYTES) return null; // fallback quando não veio content-length
+      return { bytes, contentType, etag };
     },
 
     /**

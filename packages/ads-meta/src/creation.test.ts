@@ -45,6 +45,24 @@ describe("MetaCreationService.duplicateEntity", () => {
     });
     expect(res.copiedId).toBe("AS_NEW");
     expect(res.childIds).toEqual(["AD1_NEW", "AD2_NEW"]);
+    // o adset-raiz É o copiedId — não relistado como intermediário.
+    expect(res.childAdsetIds).toEqual([]);
+  });
+
+  it("deep_copy de CAMPANHA → childAdsetIds tem os adsets intermediários (ativar a árvore inteira)", async () => {
+    stubGraph({
+      copied_campaign_id: "C_NEW",
+      ad_object_ids: [
+        { ad_object_type: "campaign", source_id: "C1", copied_id: "C_NEW" },
+        { ad_object_type: "ad_set", source_id: "AS1", copied_id: "AS1_NEW" },
+        { ad_object_type: "ad_set", source_id: "AS2", copied_id: "AS2_NEW" },
+        { ad_object_type: "ad", source_id: "AD1", copied_id: "AD1_NEW" },
+      ],
+    });
+    const res = await svc().duplicateEntity(account, { sourceLevel: "campaign", sourceId: "C1", status: "paused" });
+    expect(res.copiedId).toBe("C_NEW");
+    expect(res.childAdsetIds).toEqual(["AS1_NEW", "AS2_NEW"]);
+    expect(res.childIds).toEqual(["AD1_NEW"]);
   });
 
   it("duplicateEntity NÃO aplica budget (passo separado) — só /copies", async () => {
@@ -155,11 +173,213 @@ describe("MetaCreationService.createCampaign / createAdSet — contrato v26", ()
       status: "paused",
     });
     expect(r.adsetId).toBe("AS1");
+    expect(r.targetingFallback).toBe(false); // advantage_plus foi o PEDIDO, não um fallback
     const u = posts().find((p) => p.url.includes("/adsets"))!.url;
     expect(u).toContain("bid_strategy=LOWEST_COST_WITHOUT_CAP");
     expect(u).toContain("optimization_goal=OFFSITE_CONVERSIONS");
     expect(u).toContain("billing_event=IMPRESSIONS");
     expect(u).toContain("daily_budget=1000");
     expect(u).toContain("promoted_object="); // pixel + custom_event_type
+  });
+
+  /** Stub que distingue o GET de leitura do targeting-fonte (path = sourceAdsetId) do POST de
+   *  criação (/adsets) — só assim dá pra testar reuse_adset de ponta a ponta. */
+  function stubReuseAdset(sourceAdsetId: string, sourceResponse: "ok" | "not_found") {
+    const posts: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        posts.push({ url, method: String(init?.method ?? "GET") });
+        if (url.includes(`/${sourceAdsetId}?`) || url.endsWith(`/${sourceAdsetId}`)) {
+          if (sourceResponse === "not_found") {
+            return new Response(JSON.stringify({ error: { message: "Unsupported get request", code: 100 } }), {
+              status: 400,
+              headers: { "content-type": "application/json" },
+            });
+          }
+          return new Response(JSON.stringify({ targeting: { geo_locations: { cities: [{ key: "123" }] } } }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response(JSON.stringify({ id: "AS_NEW" }), { status: 200, headers: { "content-type": "application/json" } });
+      }),
+    );
+    return { posts: () => posts };
+  }
+
+  it("reuse_adset: fonte disponível → herda o targeting dela, targetingFallback=false", async () => {
+    const { posts } = stubReuseAdset("AS_WINNER", "ok");
+    const r = await svc().createAdSet(account, {
+      campaignId: "CAMP1",
+      name: "A",
+      dailyBudgetMinor: 1000,
+      goal: "purchase",
+      targeting: { kind: "reuse_adset", sourceAdsetId: "AS_WINNER" },
+      status: "paused",
+    });
+    expect(r.targetingFallback).toBe(false);
+    const adsetPost = posts().find((p) => p.url.includes("/adsets"))!;
+    expect(decodeURIComponent(adsetPost.url)).toContain('"cities":[{"key":"123"}]');
+  });
+
+  it("reuse_adset: fonte indisponível (deletada/pausada) → cai em Advantage+ e sinaliza targetingFallback=true (nunca silencioso)", async () => {
+    const { posts } = stubReuseAdset("AS_GONE", "not_found");
+    const r = await svc().createAdSet(account, {
+      campaignId: "CAMP1",
+      name: "A",
+      dailyBudgetMinor: 1000,
+      goal: "purchase",
+      targeting: { kind: "reuse_adset", sourceAdsetId: "AS_GONE" },
+      status: "paused",
+    });
+    expect(r.targetingFallback).toBe(true);
+    const adsetPost = posts().find((p) => p.url.includes("/adsets"))!;
+    expect(decodeURIComponent(adsetPost.url)).toContain('"advantage_audience":1');
+  });
+});
+
+/** Stub do /ads: devolve uma lista fixa de candidatos pra inferCreationDefaults. */
+function stubAds(data: Record<string, unknown>[]) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(JSON.stringify({ data }), { status: 200, headers: { "content-type": "application/json" } })),
+  );
+}
+
+/** Extrai e parseia o `object_story_spec` (param na querystring do POST /adcreatives). */
+function ossOf(url: string): Record<string, any> {
+  const raw = new URL(url).searchParams.get("object_story_spec");
+  return JSON.parse(raw ?? "{}");
+}
+
+/** Stub p/ createAdCreative: GET no vídeo (thumbnails) devolve a capa; POST /adcreatives devolve id. */
+function stubCreativeGraph(coverUri: string | null) {
+  const posts: Array<{ url: string }> = [];
+  const spy = vi.fn(async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url.includes("thumbnails")) {
+      const data = coverUri ? [{ uri: coverUri, is_preferred: true }] : [];
+      return new Response(JSON.stringify({ thumbnails: { data } }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    posts.push({ url });
+    return new Response(JSON.stringify({ id: "CR1" }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  vi.stubGlobal("fetch", spy);
+  return { posts: () => posts };
+}
+
+describe("MetaCreationService.createAdCreative — object_story_spec por formato de criativo", () => {
+  const copy = { primaryText: "corpo", headline: "titulo", description: "desc", cta: "sign_up" as const };
+
+  it("IMAGEM → link_data (name=headline, description, image_hash, cta com link)", async () => {
+    const { posts } = stubCreativeGraph(null);
+    const r = await svc().createAdCreative(account, {
+      name: "cr img",
+      pageId: "PAGE1",
+      imageHash: "IMGHASH",
+      linkUrl: "https://ex.com/lp",
+      copy,
+    });
+    expect(r.creativeId).toBe("CR1");
+    const oss = ossOf(posts().find((p) => p.url.includes("/adcreatives"))!.url);
+    expect(oss.page_id).toBe("PAGE1");
+    expect(oss.video_data).toBeUndefined();
+    expect(oss.link_data).toMatchObject({
+      message: "corpo",
+      name: "titulo", // link_data usa `name` p/ o headline
+      description: "desc",
+      link: "https://ex.com/lp",
+      image_hash: "IMGHASH",
+    });
+    expect(oss.link_data.call_to_action.type).toBe("SIGN_UP");
+    expect(oss.link_data.call_to_action.value.link).toBe("https://ex.com/lp");
+  });
+
+  it("VÍDEO → video_data (title=headline, link_description, busca a capa do vídeo como image_url)", async () => {
+    const { posts } = stubCreativeGraph("https://cover.jpg");
+    await svc().createAdCreative(account, {
+      name: "cr vid",
+      pageId: "PAGE1",
+      videoId: "VID1",
+      linkUrl: "https://ex.com/lp",
+      copy,
+    });
+    const oss = ossOf(posts().find((p) => p.url.includes("/adcreatives"))!.url);
+    expect(oss.link_data).toBeUndefined();
+    expect(oss.video_data).toMatchObject({
+      video_id: "VID1",
+      message: "corpo",
+      title: "titulo", // video_data usa `title` (≠ link_data.name)
+      link_description: "desc", // video_data usa `link_description` (≠ link_data.description)
+      image_url: "https://cover.jpg", // capa obrigatória, buscada do vídeo
+    });
+    expect(oss.video_data.call_to_action.type).toBe("SIGN_UP");
+  });
+
+  it("VÍDEO com imageHash → usa a capa dada (image_hash) e NÃO busca thumbnail", async () => {
+    const { posts } = stubCreativeGraph("https://cover.jpg");
+    await svc().createAdCreative(account, { name: "cr", pageId: "PAGE1", videoId: "VID1", imageHash: "COVERHASH", copy });
+    const oss = ossOf(posts().find((p) => p.url.includes("/adcreatives"))!.url);
+    expect(oss.video_data.image_hash).toBe("COVERHASH");
+    expect(oss.video_data.image_url).toBeUndefined();
+  });
+
+  it("VÍDEO sem capa disponível → cria mesmo assim, sem image_url (o caller decide)", async () => {
+    const { posts } = stubCreativeGraph(null); // vídeo sem thumbnails
+    await svc().createAdCreative(account, { name: "cr", pageId: "PAGE1", videoId: "VID1", copy });
+    const oss = ossOf(posts().find((p) => p.url.includes("/adcreatives"))!.url);
+    expect(oss.video_data.video_id).toBe("VID1");
+    expect(oss.video_data.image_url).toBeUndefined();
+    expect(oss.video_data.image_hash).toBeUndefined();
+  });
+});
+
+describe("MetaCreationService.inferCreationDefaults", () => {
+  it("devolve sourceAdsetId do melhor anúncio reusável, pra herdar o público provado (reuse_adset)", async () => {
+    stubAds([
+      {
+        id: "AD1",
+        effective_status: "ACTIVE",
+        creative: { object_story_spec: { link_data: { image_hash: "HASH1", link: "https://x.test" } } },
+        adset: { id: "AS_WINNER", promoted_object: { pixel_id: "PX1" } },
+        campaign: { objective: "OUTCOME_LEADS" },
+        insights: { data: [{ spend: "100", actions: [{ action_type: "lead", value: "5" }] }] },
+      },
+    ]);
+    const r = await svc().inferCreationDefaults(account);
+    expect(r.sourceAdsetId).toBe("AS_WINNER");
+    expect(r.pixelId).toBe("PX1");
+  });
+
+  it("sem adset.id no anúncio candidato (shape antigo/parcial) → sourceAdsetId ausente, sem quebrar", async () => {
+    stubAds([
+      {
+        id: "AD1",
+        effective_status: "ACTIVE",
+        creative: { object_story_spec: { link_data: { image_hash: "HASH1" } } },
+        campaign: { objective: "OUTCOME_LEADS" },
+        insights: { data: [{ spend: "100", actions: [] }] },
+      },
+    ]);
+    const r = await svc().inferCreationDefaults(account);
+    expect(r.sourceAdsetId).toBeUndefined();
+  });
+
+  it("VÍDEO reusável → carrega a CAPA (video_data.image_hash) + o video_id (não depende de ler thumbnails, que pode dar #10)", async () => {
+    stubAds([
+      {
+        id: "ADV",
+        effective_status: "ACTIVE",
+        creative: { object_story_spec: { page_id: "PAGE1", video_data: { video_id: "VID9", image_hash: "COVER9", call_to_action: { value: { link: "https://x.test" } } } } },
+        adset: { id: "AS_V", promoted_object: { pixel_id: "PX9" } },
+        campaign: { objective: "OUTCOME_LEADS" },
+        insights: { data: [{ spend: "100", actions: [{ action_type: "lead", value: "5" }] }] },
+      },
+    ]);
+    const r = await svc().inferCreationDefaults(account);
+    expect(r.videoId).toBe("VID9");
+    expect(r.imageHash).toBe("COVER9"); // a capa do vídeo (antes ficava ausente → apply falhava na Meta)
   });
 });

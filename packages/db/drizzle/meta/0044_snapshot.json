@@ -1,6 +1,6 @@
 {
-  "id": "6a98c3a7-3e94-4b54-8946-0aacd770ea86",
-  "prevId": "121c9e41-a8c7-468c-b3ae-2db09be16d9e",
+  "id": "3c47f53b-aff9-4711-aaf6-baa53c0b1496",
+  "prevId": "05f56b56-b4a5-48a5-96b8-0969646c4585",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -4127,6 +4127,12 @@
         },
         "image_url": {
           "name": "image_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "image_hash": {
+          "name": "image_hash",
           "type": "text",
           "primaryKey": false,
           "notNull": false

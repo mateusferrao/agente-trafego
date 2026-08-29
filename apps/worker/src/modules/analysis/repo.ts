@@ -87,6 +87,7 @@ export interface AdCreativeRow {
   readonly title: string | null;
   readonly callToAction: string | null;
   readonly imageUrl: string | null;
+  readonly imageHash: string | null;
   readonly thumbnailUrl: string | null;
   readonly videoId: string | null;
   /** destino WhatsApp do CTA (Fatia 7) + hierarquia p/ resolver por-campanha no chat (cache). */
@@ -344,6 +345,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
             title: r.title,
             callToAction: r.callToAction,
             imageUrl: r.imageUrl,
+            imageHash: r.imageHash,
             thumbnailUrl: r.thumbnailUrl,
             videoId: r.videoId,
             whatsappNumber: r.whatsappNumber,
@@ -366,6 +368,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
             title: sql`excluded.title`,
             callToAction: sql`excluded.call_to_action`,
             imageUrl: sql`excluded.image_url`,
+            imageHash: sql`excluded.image_hash`,
             thumbnailUrl: sql`excluded.thumbnail_url`,
             videoId: sql`excluded.video_id`,
             // WhatsApp/hierarquia: COALESCE preserva o número/campanha de um run anterior
@@ -403,6 +406,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
             title: r.title,
             callToAction: r.callToAction,
             imageUrl: r.imageUrl,
+            imageHash: r.imageHash,
             thumbnailUrl: r.thumbnailUrl,
             videoId: r.videoId,
             whatsappNumber: r.whatsappNumber,
@@ -420,6 +424,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
             title: sql`excluded.title`,
             callToAction: sql`excluded.call_to_action`,
             imageUrl: sql`excluded.image_url`,
+            imageHash: sql`excluded.image_hash`,
             thumbnailUrl: sql`excluded.thumbnail_url`,
             videoId: sql`excluded.video_id`,
             whatsappNumber: sql`coalesce(excluded.whatsapp_number, ${adCreatives.whatsappNumber})`,

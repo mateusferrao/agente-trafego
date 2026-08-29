@@ -25,45 +25,39 @@ import { AccountContextStore } from "./account-context.store";
   ],
   template: `
     <div class="flex flex-col gap-6">
+      <!-- Mobile (<920px, mesmo breakpoint do ui-page-header): o perfil do agente vai
+           acima de tudo, canto superior esquerdo — no desktop some daqui e reaparece
+           ao lado dos botões (abaixo), onde já cabe sem empurrar o título. -->
+      <div class="flex items-center gap-2.5 min-[920px]:hidden">
+        <app-ui-agent-identity [status]="store.paused() ? 'paused' : 'active'" />
+      </div>
       <div class="flex flex-col gap-1">
         <a routerLink="/accounts" class="text-xs text-muted hover:text-ink">← Contas</a>
         <app-ui-page-header [title]="store.accountName()" [subtitle]="store.accountSubtitle()">
-          <div class="flex flex-wrap items-center gap-2" actions>
-            <!-- Identidade do agente: marca + Roy + status (tom + texto), sem pill washed. -->
-            <span class="inline-flex items-center gap-2.5">
-              <app-ui-agent-identity />
-              <span
-                class="inline-flex items-center gap-1.5 text-xs font-medium"
-                [class.text-warning-strong]="store.paused()"
-                [class.text-success-strong]="!store.paused()"
+          <div class="flex flex-col items-end gap-2" actions>
+            <div class="hidden min-[920px]:flex">
+              <app-ui-agent-identity [status]="store.paused() ? 'paused' : 'active'" />
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <button
+                appButton
+                variant="secondary"
+                type="button"
+                [disabled]="store.pausing()"
+                (click)="store.togglePaused()"
               >
-                <span
-                  class="size-1.5 rounded-full"
-                  [class.bg-warning]="store.paused()"
-                  [class.bg-success]="!store.paused()"
-                  aria-hidden="true"
-                ></span>
-                {{ store.paused() ? 'pausado' : 'ativo' }}
-              </span>
-            </span>
-            <button
-              appButton
-              variant="secondary"
-              type="button"
-              [disabled]="store.pausing()"
-              (click)="store.togglePaused()"
-            >
-              {{ store.pausing() ? 'Salvando…' : store.paused() ? 'Retomar' : 'Pausar' }}
-            </button>
-            <button
-              appButton
-              variant="primary"
-              type="button"
-              [disabled]="store.analyzing()"
-              (click)="store.analyze()"
-            >
-              {{ store.analyzing() ? 'Analisando…' : 'Analisar agora' }}
-            </button>
+                {{ store.pausing() ? 'Salvando…' : store.paused() ? 'Retomar' : 'Pausar' }}
+              </button>
+              <button
+                appButton
+                variant="primary"
+                type="button"
+                [disabled]="store.analyzing()"
+                (click)="store.analyze()"
+              >
+                {{ store.analyzing() ? 'Analisando…' : 'Analisar agora' }}
+              </button>
+            </div>
           </div>
         </app-ui-page-header>
       </div>

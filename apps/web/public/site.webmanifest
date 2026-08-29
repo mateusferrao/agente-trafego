@@ -1,6 +1,6 @@
 {
-  "name": "AutoTraffic",
-  "short_name": "AutoTraffic",
+  "name": "CaquiAI",
+  "short_name": "CaquiAI",
   "description": "Agente de IA que analisa e otimiza seu tráfego pago.",
   "start_url": "/",
   "scope": "/",

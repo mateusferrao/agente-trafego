@@ -15,8 +15,8 @@ export function startActionUndoWorker(deps: WorkerDeps, connection: Redis): Work
   return new Worker<ActionUndoPayload>(
     ACTION_UNDO_QUEUE,
     async (job) => {
-      const { orgId, toolCallId, force } = job.data;
-      const res = await revertActionById(deps, { orgId, toolCallId, force: force ?? false });
+      const { orgId, toolCallId, force, mode } = job.data;
+      const res = await revertActionById(deps, { orgId, toolCallId, force: force ?? false, ...(mode ? { mode } : {}) });
       logger.info(
         { toolCallId, reverted: res.reverted, blockedByDrift: res.blockedByDrift, reason: res.reason },
         "undo:processado",

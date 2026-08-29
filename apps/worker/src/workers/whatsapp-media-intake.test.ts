@@ -30,7 +30,9 @@ const ACCOUNT = { metaAdAccountId: "act_123", name: "Loja X", currency: "BRL", t
 function fakeDb(selectRows: unknown[] = [], insertReturns: unknown[] = [{ id: "new-id" }]) {
   const inserted: unknown[] = [];
   const db = {
-    select: () => ({ from: () => ({ where: () => ({ limit: () => selectRows }) }) }),
+    select: () => ({
+      from: () => ({ where: () => ({ orderBy: () => ({ limit: () => selectRows }), limit: () => selectRows }) }),
+    }),
     insert: () => ({
       values: (v: unknown) => {
         inserted.push(v);
@@ -74,6 +76,7 @@ function makeDeps(over: Partial<MediaIntakeDeps> = {}, selectRows: unknown[] = [
     },
     maxWhatsappVideoBytes: TEN_MB,
     sendToConversation: send,
+    redis: { set: vi.fn().mockResolvedValue("OK"), get: vi.fn(), del: vi.fn() } as unknown as MediaIntakeDeps["redis"],
     logger: { debug: vi.fn(), warn: vi.fn() },
     ...over,
   };
@@ -101,7 +104,14 @@ describe("makeMediaIntake — imagem", () => {
     const { deps, inserted, send } = makeDeps({}, [{ id: "existing", status: "ready", metaImageHash: "HASH1", metaVideoId: null, archivedAt: null }]);
     await makeMediaIntake(deps)(IMAGE_PAYLOAD);
     expect(inserted).toHaveLength(0);
-    expect(send).toHaveBeenCalledWith(REF, expect.stringContaining("Loja X"), expect.anything());
+    expect(send).toHaveBeenCalledWith(REF, expect.stringContaining("guardada"), expect.anything());
+  });
+
+  it("imagem sem rascunho pendente → guarda OFERTA de criar (redis) + convida a criar campanha", async () => {
+    const { deps, send } = makeDeps({}, []); // selectRows=[] → sem asset existente, sem rascunho pendente
+    await makeMediaIntake(deps)(IMAGE_PAYLOAD);
+    expect(deps.redis.set as ReturnType<typeof vi.fn>).toHaveBeenCalled(); // oferta guardada pro próximo turno
+    expect(send).toHaveBeenCalledWith(REF, expect.stringContaining("campanha com ela"), expect.anything());
   });
 
   it("falha de upload → avisa e re-lança (BullMQ re-tenta)", async () => {

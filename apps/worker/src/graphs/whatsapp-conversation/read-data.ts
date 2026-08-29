@@ -14,8 +14,9 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { adAccounts, adCreatives, agentRuns, agentToolCalls, agents, campaignDrafts, customAudiences, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
-import { daysAgoInTz, rankAdCreatives, resolveNamedMatch, todayInTz } from "@trafego/core";
+import { daysAgoInTz, rankAdCreatives, resolveNamedMatch, todayInTz, type RankableCreative } from "@trafego/core";
 import { createAnalysisRepo, type AdCreativeCopyRow } from "../../modules/analysis/repo.js";
+import { withTimeout } from "../../modules/conversation/with-timeout.js";
 import {
   aggregateKpis,
   attributionCaveat,
@@ -29,7 +30,8 @@ import {
 import { describeCreatedDraft } from "../../modules/apply/draft-summary.js";
 import type { ActivationApproval, Approval, ApprovalPort } from "@trafego/shared/ports";
 import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY } from "@trafego/shared";
-import type { CampaignDraftSpec, CustomAudience, EntityLevel, InsightMetrics, OrgId, UnitAnalysis, WhatsappDestination } from "@trafego/shared";
+import type { AgentId, CampaignDraftSpec, CreativeAssetRef, CustomAudience, DraftKind, EntityLevel, InsightMetrics, OrgId, TargetingSpec, UnitAnalysis, WhatsappDestination } from "@trafego/shared";
+import type { DraftApproval } from "@trafego/shared/ports";
 import type { StoredInsightMetrics } from "@trafego/shared/types";
 import type { WorkerDeps } from "../../composition.js";
 
@@ -154,7 +156,15 @@ interface PendingActivationItem {
   readonly expiresAt: string;
 }
 
-type PendingItem = PendingActionItem | PendingActivationItem;
+interface PendingDraftItem {
+  readonly kind: "draft";
+  readonly id: string;
+  /** o que vai ser criado (PT) — a ação é APROVAR pra criar (ou recusar). */
+  readonly reason: string;
+  readonly expiresAt: string;
+}
+
+type PendingItem = PendingActionItem | PendingDraftItem | PendingActivationItem;
 
 /** Snapshot de métricas do run (jsonb livre) — lido defensivamente. */
 interface RunMetricsSnapshot {
@@ -470,9 +480,10 @@ export async function listRecommendationsData(
 }
 
 /** Aprovações pendentes da org (cross-conta por design). Vazio → `hasData:false`. `action` +
- *  `activation` (P0.1) entram aqui — são async por natureza (a confirmação chega numa mensagem
- *  à parte, não no mesmo turno). `draft` (criação) fica DE FORA — essa é confirmada em-turno via
- *  `confirm_write`/`pendingDraft` (o eco da proposta JÁ é a pergunta), não por list_pending. */
+ *  `draft` (criação) + `activation` (P0.1) entram aqui — todas com id p/ aprovar/recusar por
+ *  referência. `draft` passou a entrar (antes ficava só no eco de 30min): a approval vive 24h, o
+ *  eco efêmero expira — sem isto, um rascunho ficava invisível ao chat depois de 30min (não dava
+ *  pra recusar). O eco/`confirm_write` segue pro "sim/não" imediato do mesmo turno. */
 export async function listPendingData(
   db: Pick<Database, "select">,
   approvalPort: ApprovalPort,
@@ -480,9 +491,10 @@ export async function listPendingData(
 ): Promise<PendingItem[] | NoData> {
   const all = await approvalPort.listPendingByOrg(orgId as OrgId);
   const actions = all.filter((a): a is Approval => a.kind === "action");
+  const drafts = all.filter((a): a is DraftApproval => a.kind === "draft");
   const activations = all.filter((a): a is ActivationApproval => a.kind === "activation");
-  if (actions.length === 0 && activations.length === 0) {
-    return { hasData: false, note: "nenhuma ação aguardando aprovação" };
+  if (actions.length === 0 && drafts.length === 0 && activations.length === 0) {
+    return { hasData: false, note: "nenhuma ação nem rascunho aguardando aprovação" };
   }
 
   const actionItems: PendingActionItem[] = actions.map((a) => ({
@@ -496,22 +508,36 @@ export async function listPendingData(
     expiresAt: a.expiresAt.toISOString(),
   }));
 
-  let activationItems: PendingActivationItem[] = [];
-  if (activations.length > 0) {
-    const draftIds = activations.map((a) => a.draftId);
-    const drafts = await db
+  // draft (criar) + activation (ativar o já-criado) referenciam campaign_drafts → 1 query só.
+  const draftRefs = [...drafts, ...activations];
+  const byDraftId = new Map<string, { kind: DraftKind; spec: unknown }>();
+  if (draftRefs.length > 0) {
+    const rows = await db
       .select({ id: campaignDrafts.id, kind: campaignDrafts.kind, spec: campaignDrafts.spec })
       .from(campaignDrafts)
-      .where(and(eq(campaignDrafts.orgId, orgId as OrgId), inArray(campaignDrafts.id, draftIds)));
-    const byDraftId = new Map(drafts.map((d) => [d.id, d]));
-    activationItems = activations.map((a) => {
-      const draft = byDraftId.get(a.draftId);
-      const what = draft ? describeCreatedDraft(draft.kind, draft.spec as CampaignDraftSpec) : "o que foi criado";
-      return { kind: "activation", id: a.id, reason: `ativar ${what}`, expiresAt: a.expiresAt.toISOString() };
-    });
+      .where(and(eq(campaignDrafts.orgId, orgId as OrgId), inArray(campaignDrafts.id, draftRefs.map((a) => a.draftId))));
+    for (const d of rows) byDraftId.set(d.id, { kind: d.kind, spec: d.spec });
   }
+  const whatOf = (draftId: string, fallback: string): string => {
+    const d = byDraftId.get(draftId);
+    return d ? describeCreatedDraft(d.kind, d.spec as CampaignDraftSpec) : fallback;
+  };
 
-  return [...actionItems, ...activationItems];
+  const draftItems: PendingDraftItem[] = drafts.map((a) => ({
+    kind: "draft",
+    id: a.id,
+    reason: `criar ${whatOf(a.draftId, "uma campanha")}`,
+    expiresAt: a.expiresAt.toISOString(),
+  }));
+
+  const activationItems: PendingActivationItem[] = activations.map((a) => ({
+    kind: "activation",
+    id: a.id,
+    reason: `ativar ${whatOf(a.draftId, "o que foi criado")}`,
+    expiresAt: a.expiresAt.toISOString(),
+  }));
+
+  return [...actionItems, ...draftItems, ...activationItems];
 }
 
 /** Ação REAL recente que pode ser desfeita (id p/ o agente reverter no chat, 5c-4). */
@@ -740,7 +766,112 @@ function asString(value: unknown): string {
 }
 
 /** Teto de criativos retornados ao chat (WhatsApp não é parede de texto). */
-const TOP_CREATIVES_LIMIT = 5;
+export const TOP_CREATIVES_LIMIT = 5;
+
+/** Ad ids a refrescar ao vivo (fresh=true): só o TOP-N que será exibido, ranqueado do
+ *  persistido (campeã→pior). Puro — o refresh ao vivo não puxa a conta inteira da Meta. */
+export function pickAdIdsToRefresh<T extends RankableCreative & { adId: string }>(rows: readonly T[]): string[] {
+  return rankAdCreatives(rows)
+    .slice(0, TOP_CREATIVES_LIMIT)
+    .map((r) => r.adId);
+}
+
+/** Descreve o PÚBLICO do rascunho pelo MODO (só 2 hoje), sem jargão Meta nem chamada à
+ *  plataforma. O público não é editável por texto livre → o detalhe exato do reuse não
+ *  ajudaria (e custaria uma chamada Meta que estoura o turno). §UX. */
+export function describeDraftAudience(targeting: TargetingSpec | undefined): string {
+  return targeting?.kind === "reuse_adset"
+    ? "herda o público do conjunto do seu anúncio reusado (a mesma segmentação que já converte)"
+    : "público amplo — a Meta escolhe quem tem mais chance de converter";
+}
+
+/** Rótulo do criativo do rascunho, do nosso DB (nunca inventa). Reuse → nomeia o anúncio real
+ *  (título salvo em ad_creatives) ou fala genérico honesto; upload → biblioteca; duplicate não
+ *  tem criativo próprio (clona o vencedor inteiro). */
+export function describeDraftCreative(
+  kind: DraftKind,
+  creative: CreativeAssetRef | undefined,
+  titleByAdId: ReadonlyMap<string, string>,
+): string {
+  if (!creative) {
+    return kind === "duplicate"
+      ? "usa o mesmo criativo do vencedor (a duplicata clona o anúncio inteiro)"
+      : "sem criativo definido ainda";
+  }
+  const fmt = creative.format === "video" ? "vídeo" : "imagem";
+  if (creative.origin === "reuse") {
+    const title = titleByAdId.get(creative.assetId);
+    return title
+      ? `reusa seu anúncio "${title}" (${fmt})`
+      : `reusa um anúncio que já veicula na sua conta (${fmt})`;
+  }
+  return `usa um criativo da sua biblioteca (${fmt})`;
+}
+
+/** Detalhe RICO do(s) rascunho(s) pendente(s) da conta — do BANCO (spec + approval de 24h), não
+ *  do estado efêmero da conversa (30min). Responde "qual público/criativo" na hora, sem Meta. O
+ *  `approvalId` deixa o usuário aprovar/recusar por referência (approve/reject). */
+async function getPendingDraftData(
+  db: Database,
+  approvalPort: ApprovalPort,
+  orgId: string,
+  agentId: string,
+  adAccountId: string,
+): Promise<NoData | { hasData: true; drafts: readonly unknown[] }> {
+  const pending = (await approvalPort.listPendingByAgent(agentId as AgentId)).filter(
+    (a): a is DraftApproval => a.kind === "draft",
+  );
+  if (pending.length === 0) {
+    return { hasData: false, note: "não há rascunho de campanha aguardando sua aprovação nessa conta agora." };
+  }
+  const drafts = await db
+    .select({ id: campaignDrafts.id, kind: campaignDrafts.kind, spec: campaignDrafts.spec })
+    .from(campaignDrafts)
+    .where(
+      and(
+        inArray(
+          campaignDrafts.id,
+          pending.map((a) => a.draftId),
+        ),
+        eq(campaignDrafts.orgId, orgId),
+        eq(campaignDrafts.adAccountId, adAccountId),
+      ),
+    );
+  const byId = new Map(drafts.map((d) => [d.id, d]));
+
+  // rótulo do criativo reusado = título REAL do anúncio (join ad_creatives por ad_id), 1 query.
+  const reuseAdIds = drafts
+    .map((d) => (d.spec as CampaignDraftSpec).creative)
+    .filter((c): c is CreativeAssetRef => c?.origin === "reuse")
+    .map((c) => c.assetId);
+  const titleByAdId = new Map<string, string>();
+  if (reuseAdIds.length > 0) {
+    const rows = await db
+      .select({ adId: adCreatives.adId, title: adCreatives.title, body: adCreatives.body })
+      .from(adCreatives)
+      .where(and(inArray(adCreatives.adId, reuseAdIds), eq(adCreatives.orgId, orgId)));
+    for (const r of rows) {
+      const label = r.title ?? (r.body ? r.body.split("\n")[0]!.slice(0, 50) : "");
+      if (label) titleByAdId.set(r.adId, label);
+    }
+  }
+
+  const items = pending.flatMap((a) => {
+    const d = byId.get(a.draftId);
+    if (!d) return [];
+    const spec = d.spec as CampaignDraftSpec;
+    return [
+      {
+        approvalId: a.id,
+        resumo: describeCreatedDraft(d.kind, spec),
+        criativo: describeDraftCreative(d.kind, spec.creative, titleByAdId),
+        publico: describeDraftAudience(spec.targeting),
+        copies: spec.copyVariants?.map((c) => c.headline) ?? [],
+      },
+    ];
+  });
+  return { hasData: true, drafts: items };
+}
 
 /** "Qual minha copy campeã": lê `ad_creatives` (copy + desempenho denormalizado),
  *  ranqueia (puro, core) e devolve o top-N curado. Org-scoped. */
@@ -792,31 +923,35 @@ async function refreshCreativeCopiesLive(deps: WorkerDeps, ctx: ReadToolContext)
   const repo = createAnalysisRepo(deps.db);
   const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
   if (!account) return;
-  const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
-  const adEntities = await deps.ports.ads.listEntities(ref, "ad");
-  const adIds = adEntities.map((e) => e.id);
+  // Refresca só o TOP-N que será EXIBIDO (ranqueado do persistido), não a conta inteira: antes
+  // listava TODOS os ads + getCreatives de todos → minutos numa conta grande, estourando o teto
+  // do turno. Sem persistido (nunca analisou) → nada a refrescar (getTopCreativesData já é vazio).
+  const persisted = await deps.db
+    .select({ adId: adCreatives.adId, tier: adCreatives.tier, spend: adCreatives.spend, cpa: adCreatives.cpa, roas: adCreatives.roas })
+    .from(adCreatives)
+    .where(and(eq(adCreatives.adAccountId, ctx.adAccountId), eq(adCreatives.orgId, ctx.orgId)));
+  const adIds = pickAdIdsToRefresh(persisted);
   if (adIds.length === 0) return;
+  const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
   const creatives = await deps.ports.ads.getCreatives(ref, adIds);
-  const adEntityById = new Map(adEntities.filter((e) => e.level === "ad").map((e) => [e.id, e]));
-  const rows: AdCreativeCopyRow[] = creatives.map((c) => {
-    const entity = adEntityById.get(c.adId);
-    return {
-      adId: c.adId,
-      creativeId: c.id ?? null,
-      body: c.body ?? null,
-      title: c.title ?? null,
-      callToAction: c.callToAction ?? null,
-      imageUrl: c.imageUrl ?? null,
-      thumbnailUrl: c.thumbnailUrl ?? null,
-      videoId: c.videoId ?? null,
-      // cache do destino WhatsApp (Fatia 7): CTA do criativo (`meta_cta`). Nome/página
-      // resolvem no `getWhatsappDestination` ao vivo — este path de refresh é só copy/mídia.
-      whatsappNumber: c.whatsappNumber ?? null,
-      whatsappSource: c.whatsappNumber ? ("meta_cta" as const) : null,
-      campaignId: entity?.campaignId ?? null,
-      adsetId: entity?.adsetId ?? null,
-    };
-  });
+  const rows: AdCreativeCopyRow[] = creatives.map((c) => ({
+    adId: c.adId,
+    creativeId: c.id ?? null,
+    body: c.body ?? null,
+    title: c.title ?? null,
+    callToAction: c.callToAction ?? null,
+    imageUrl: c.imageUrl ?? null,
+    imageHash: c.imageHash ?? null,
+    thumbnailUrl: c.thumbnailUrl ?? null,
+    videoId: c.videoId ?? null,
+    // cache do destino WhatsApp (Fatia 7): CTA do criativo (`meta_cta`). Nome/página resolvem no
+    // `getWhatsappDestination` ao vivo — este path de refresh é só copy/mídia. campaign_id/adset_id
+    // vêm do RUN (join de entities); aqui ficam null e o upsert preserva o valor do run (coalesce).
+    whatsappNumber: c.whatsappNumber ?? null,
+    whatsappSource: c.whatsappNumber ? ("meta_cta" as const) : null,
+    campaignId: null,
+    adsetId: null,
+  }));
   await repo.saveAdCreativeCopies(ctx.orgId, ctx.adAccountId, rows);
 }
 
@@ -1184,9 +1319,11 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     async ({ fresh }: { fresh?: boolean | null }) => {
       if (noFocus()) return NEEDS_FOCUS;
       logger.debug({ agentId: ctx.agentId, fresh: Boolean(fresh) }, "tool:get_top_creatives");
-      // fresh = puxa a copy ATUAL da Meta antes de responder (preserva a perf do run).
+      // fresh = puxa a copy ATUAL da Meta antes de responder (preserva a perf do run). Sob teto
+      // de tempo próprio (< turnTimeout): Meta lenta → degrada pro persistido em vez de estourar
+      // o turno inteiro (a causa do fallback genérico quando o refresh levava minutos).
       if (fresh) {
-        await refreshCreativeCopiesLive(deps, ctx).catch((err) =>
+        await withTimeout(refreshCreativeCopiesLive(deps, ctx), deps.conversation.liveFetchTimeoutMs).catch((err) =>
           logger.warn({ err: String(err) }, "get_top_creatives:refresh live degradou (usa persistido)"),
         );
       }
@@ -1256,6 +1393,20 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     },
   );
 
+  const getPendingDraft = tool(
+    async () => {
+      if (noFocus()) return NEEDS_FOCUS;
+      logger.debug({ agentId: ctx.agentId }, "tool:get_pending_draft");
+      return asString(await getPendingDraftData(db, ports.approval, ctx.orgId, ctx.agentId, ctx.adAccountId));
+    },
+    {
+      name: "get_pending_draft",
+      description:
+        "Detalhe do RASCUNHO de campanha aguardando sua aprovação (do banco, sempre atual — não expira em 30min como o eco): QUAL criativo (anúncio real), QUAL público, e as copies, com o id pra aprovar/recusar. Use quando o usuário perguntar sobre a campanha que você propôs ('qual público', 'qual criativo', 'o que você vai criar', 'recusa/aprova o rascunho'). Responde na hora, sem chamar a Meta.",
+      schema: z.object({}),
+    },
+  );
+
   return [
     getAccountStatus,
     getMetrics,
@@ -1267,6 +1418,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     findRecentActions,
     listRecommendations,
     listPending,
+    getPendingDraft,
     listAccounts,
     getAgentConfig,
     explainRecommendation,

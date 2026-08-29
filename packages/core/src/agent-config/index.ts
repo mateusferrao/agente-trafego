@@ -102,6 +102,8 @@ export interface ModelConfigPatch {
   readonly maxOutputTokens?: number | undefined;
   /** limiares de qualidade (merge campo-a-campo). */
   readonly quality?: Record<string, unknown> | undefined;
+  /** estratégia de fonte do criativo na criação (Slice 10) — objeto pequeno, trocado como unidade. */
+  readonly creativeSource?: { readonly mode: string; readonly servingPick?: string | undefined } | undefined;
 }
 
 /**
@@ -493,6 +495,9 @@ export function mergeAdvancedConfig(
     for (const [qk, qv] of Object.entries(patch.quality)) if (qv !== undefined) nextQ[qk] = qv;
     out.quality = nextQ;
   }
+  // estratégia de criativo = objeto pequeno (mode + servingPick), trocado como unidade (trocar
+  // pra `library` não deve preservar um `servingPick` obsoleto).
+  if (patch.creativeSource !== undefined) out.creativeSource = patch.creativeSource;
   return out;
 }
 

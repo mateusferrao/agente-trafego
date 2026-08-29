@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "AutoTraffic API",
+    "title": "CaquiAI API",
     "version": "0.1.0"
   },
   "servers": [
@@ -1725,6 +1725,29 @@
                     ]
                   }
                 }
+              },
+              "creativeSource": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "serving",
+                      "library",
+                      "both"
+                    ]
+                  },
+                  "servingPick": {
+                    "type": "string",
+                    "enum": [
+                      "best_performing",
+                      "agent"
+                    ]
+                  }
+                },
+                "required": [
+                  "mode"
+                ]
               }
             }
           },
@@ -2793,6 +2816,29 @@
                     ]
                   }
                 }
+              },
+              "creativeSource": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "serving",
+                      "library",
+                      "both"
+                    ]
+                  },
+                  "servingPick": {
+                    "type": "string",
+                    "enum": [
+                      "best_performing",
+                      "agent"
+                    ]
+                  }
+                },
+                "required": [
+                  "mode"
+                ]
               }
             }
           },
@@ -4059,6 +4105,12 @@
                     "null"
                   ]
                 },
+                "entityLevel": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "at": {
                   "type": "string"
                 },
@@ -4073,6 +4125,7 @@
                 "type",
                 "toolKey",
                 "entityName",
+                "entityLevel",
                 "at",
                 "fromChat"
               ]
@@ -4552,6 +4605,12 @@
                         "null"
                       ]
                     },
+                    "entityLevel": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "fromChat": {
                       "type": "boolean"
                     },
@@ -4566,6 +4625,7 @@
                     "toolCallId",
                     "toolKey",
                     "entityName",
+                    "entityLevel",
                     "fromChat",
                     "simulated"
                   ]
@@ -4597,6 +4657,12 @@
                         "null"
                       ]
                     },
+                    "entityLevel": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "fromChat": {
                       "type": "boolean"
                     },
@@ -4611,6 +4677,7 @@
                     "toolCallId",
                     "toolKey",
                     "entityName",
+                    "entityLevel",
                     "fromChat",
                     "simulated"
                   ]
@@ -4641,6 +4708,12 @@
                         "string",
                         "null"
                       ]
+                    },
+                    "entityLevel": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
@@ -4649,7 +4722,8 @@
                     "type",
                     "approvalId",
                     "actionType",
-                    "entityName"
+                    "entityName",
+                    "entityLevel"
                   ]
                 },
                 {
@@ -4678,6 +4752,12 @@
                         "string",
                         "null"
                       ]
+                    },
+                    "entityLevel": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
@@ -4686,7 +4766,8 @@
                     "type",
                     "approvalId",
                     "actionType",
-                    "entityName"
+                    "entityName",
+                    "entityLevel"
                   ]
                 },
                 {
@@ -4715,6 +4796,12 @@
                         "string",
                         "null"
                       ]
+                    },
+                    "entityLevel": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
@@ -4723,7 +4810,8 @@
                     "type",
                     "approvalId",
                     "actionType",
-                    "entityName"
+                    "entityName",
+                    "entityLevel"
                   ]
                 },
                 {
@@ -4752,6 +4840,12 @@
                         "string",
                         "null"
                       ]
+                    },
+                    "entityLevel": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
@@ -4760,7 +4854,8 @@
                     "type",
                     "approvalId",
                     "actionType",
-                    "entityName"
+                    "entityName",
+                    "entityLevel"
                   ]
                 },
                 {
@@ -6072,6 +6167,13 @@
           "force": {
             "type": "boolean",
             "default": false
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "pause",
+              "archive"
+            ]
           }
         }
       },
@@ -6471,6 +6573,12 @@
           "dailyBudgetMajor": {
             "type": "number"
           },
+          "clampedFromMajor": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
           "currency": {
             "type": "string"
           },
@@ -6481,7 +6589,19 @@
               "paused"
             ]
           },
-          "sourceLabel": {
+          "sourceLevel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "account",
+              "campaign",
+              "adset",
+              "ad"
+            ]
+          },
+          "sourceName": {
             "type": [
               "string",
               "null"
@@ -6494,6 +6614,24 @@
             ]
           },
           "pixelId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "campaignName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "adsetName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "suffixLabel": {
             "type": [
               "string",
               "null"
@@ -6530,15 +6668,58 @@
                     "string",
                     "null"
                   ]
+                },
+                "adName": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               },
               "required": [
                 "primaryText",
                 "headline",
                 "description",
-                "cta"
+                "cta",
+                "adName"
               ]
             }
+          },
+          "creative": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "format": {
+                "type": "string",
+                "enum": [
+                  "image",
+                  "video"
+                ]
+              },
+              "origin": {
+                "type": "string",
+                "enum": [
+                  "reuse",
+                  "upload"
+                ]
+              }
+            },
+            "required": [
+              "format",
+              "origin"
+            ]
+          },
+          "audience": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "reuse",
+              "broad"
+            ]
           },
           "createdIds": {
             "type": [
@@ -6560,13 +6741,20 @@
           "origin",
           "objective",
           "dailyBudgetMajor",
+          "clampedFromMajor",
           "currency",
           "activation",
-          "sourceLabel",
+          "sourceLevel",
+          "sourceName",
           "pageId",
           "pixelId",
+          "campaignName",
+          "adsetName",
+          "suffixLabel",
           "variantsCount",
           "copyVariants",
+          "creative",
+          "audience",
           "createdIds"
         ]
       },
@@ -6583,6 +6771,9 @@
           "entityId": {
             "type": "string",
             "minLength": 1
+          },
+          "entityName": {
+            "type": "string"
           },
           "choice": {
             "type": "string",
@@ -6713,19 +6904,300 @@
           "createdAt"
         ]
       },
-      "SetDraftCreativeInput": {
+      "ServingCreativeOutput": {
         "type": "object",
         "properties": {
-          "assetId": {
+          "adId": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "copy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cta": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tier": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "format": {
             "type": "string",
-            "minLength": 1
+            "enum": [
+              "image",
+              "video"
+            ]
+          },
+          "thumbnailUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
-          "assetId"
+          "adId",
+          "title",
+          "copy",
+          "cta",
+          "tier",
+          "format",
+          "thumbnailUrl"
+        ]
+      },
+      "SetDraftTargetingInput": {
+        "type": "object",
+        "properties": {
+          "audience": {
+            "type": "string",
+            "enum": [
+              "reuse",
+              "broad"
+            ]
+          }
+        },
+        "required": [
+          "audience"
+        ]
+      },
+      "SetDraftTargetingOutput": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "audience": {
+            "type": "string",
+            "enum": [
+              "reuse",
+              "broad"
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "audience"
+        ]
+      },
+      "SetDraftCreativeInput": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "asset"
+                ]
+              },
+              "assetId": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "kind",
+              "assetId"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "serving"
+                ]
+              },
+              "adId": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "kind",
+              "adId"
+            ]
+          }
         ]
       },
       "SetDraftCreativeOutput": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ]
+      },
+      "UpdateDraftInput": {
+        "type": "object",
+        "properties": {
+          "budgetReais": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "activation": {
+            "type": "string",
+            "enum": [
+              "active",
+              "paused"
+            ]
+          },
+          "campaignName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400
+          },
+          "adsetName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400
+          },
+          "objective": {
+            "type": "string",
+            "enum": [
+              "purchase",
+              "lead",
+              "registration",
+              "initiate_checkout",
+              "add_to_cart",
+              "view_content",
+              "add_payment_info",
+              "search",
+              "contact",
+              "subscribe",
+              "start_trial",
+              "submit_application",
+              "messaging_started",
+              "app_install",
+              "custom"
+            ]
+          },
+          "suffixLabel": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400
+          },
+          "audience": {
+            "type": "string",
+            "enum": [
+              "reuse",
+              "broad"
+            ]
+          },
+          "creative": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "asset"
+                    ]
+                  },
+                  "assetId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "kind",
+                  "assetId"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "serving"
+                    ]
+                  },
+                  "adId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "kind",
+                  "adId"
+                ]
+              }
+            ]
+          },
+          "copyEdits": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "index": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "adName": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 400
+                },
+                "primaryText": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 3000
+                },
+                "headline": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 3000
+                },
+                "description": {
+                  "type": "string",
+                  "maxLength": 3000
+                },
+                "cta": {
+                  "type": "string",
+                  "enum": [
+                    "shop_now",
+                    "learn_more",
+                    "sign_up",
+                    "subscribe",
+                    "contact_us",
+                    "book_now",
+                    "get_offer",
+                    "send_message",
+                    "download"
+                  ]
+                }
+              },
+              "required": [
+                "index"
+              ]
+            }
+          },
+          "removeAdIndex": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "UpdateDraftOutput": {
         "type": "object",
         "properties": {
           "ok": {
@@ -8662,6 +9134,55 @@
         }
       }
     },
+    "/api/accounts/{id}/drafts/{draftId}": {
+      "patch": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "draftId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateDraftInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "rascunho editado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateDraftOutput"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "edição inválida (mensagem amigável)"
+          }
+        }
+      }
+    },
     "/api/accounts/{id}/drafts/{draftId}/creative": {
       "post": {
         "tags": [
@@ -8736,6 +9257,84 @@
                   "items": {
                     "$ref": "#/components/schemas/CreativeAssetOutput"
                   }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/serving-creatives": {
+      "get": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "anúncios ao vivo da conta oferecidos como reuse (só vídeo)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ServingCreativeOutput"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/drafts/{draftId}/targeting": {
+      "post": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "draftId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetDraftTargetingInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "público do rascunho alternado (reuse × amplo)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetDraftTargetingOutput"
                 }
               }
             }

@@ -11,7 +11,7 @@ import { UiButton, UiEmptyState, UiEyebrow, UiPageHeader, UiSpinner } from "@ui"
 import { DashboardApiService } from "@core/api/dashboard-api.service";
 import { AGENT_NAME } from "@core/brand";
 import type { DashboardOutput } from "@core/api/generated";
-import { actionTypeLabel } from "../../shared/action-format";
+import { actionTypeLabel, entityDisplay } from "../../shared/action-format";
 import { money, timeLabel } from "../../shared/format";
 import { AccountPanoramaCard } from "../../shared/account-panorama-card";
 
@@ -266,6 +266,7 @@ export class DashboardPage {
 
   protected activityLabel(a: Activity): string {
     const action = a.type === "action_rolled_back" ? "reverteu" : actionTypeLabel(a.toolKey);
-    return a.entityName ? `${action} · ${a.entityName}` : action;
+    const name = entityDisplay(a.entityName, a.entityLevel);
+    return name ? `${action} · ${name}` : action;
   }
 }

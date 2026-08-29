@@ -112,12 +112,17 @@ export class MetaCreationService {
     if (!copiedId) {
       throw new Error("Meta /copies não retornou o id da cópia");
     }
-    // filhos copiados = os do tipo "ad" (o adset copiado é o copiedId, não um filho).
-    const childIds = (data.ad_object_ids ?? [])
-      .filter((p) => p.ad_object_type === "ad")
-      .map((p) => p.copied_id)
-      .filter((id): id is string => typeof id === "string");
-    return { copiedId, childIds };
+    // filhos copiados por tipo: "ad" = os anúncios; "ad_set" = adsets intermediários (só no
+    // deep_copy de CAMPANHA — o próprio copiedId é a campanha, não um adset). Ambos nascem
+    // pausados e precisam ser ativados junto (a ativação resume a ÁRVORE inteira).
+    const copiedByType = (type: string): string[] =>
+      (data.ad_object_ids ?? [])
+        .filter((p) => p.ad_object_type === type)
+        .map((p) => p.copied_id)
+        .filter((id): id is string => typeof id === "string");
+    // o adset-raiz (quando se duplica um adset) É o copiedId — não relistar como intermediário.
+    const childAdsetIds = copiedByType("ad_set").filter((id) => id !== copiedId);
+    return { copiedId, childIds: copiedByType("ad"), childAdsetIds };
   }
 
   /** Define o budget diário absoluto de uma entidade (unidade mínima). Idempotente (set). */
@@ -173,9 +178,9 @@ export class MetaCreationService {
     return { campaignId };
   }
 
-  async createAdSet(account: AdAccountRef, input: CreateAdSetInput): Promise<{ adsetId: string }> {
+  async createAdSet(account: AdAccountRef, input: CreateAdSetInput): Promise<{ adsetId: string; targetingFallback: boolean }> {
     const conv = resolveAdSetConversion(input.goal, input.pixelId);
-    const targeting = await this.resolveTargeting(account, input.targeting);
+    const { targeting, fallback } = await this.resolveTargeting(account, input.targeting);
     // CBO: o orçamento/lance estão na campanha → o adset NÃO leva daily_budget/bid_strategy
     // (a Meta rejeita ter budget nos dois níveis). ABO: budget + lance no adset.
     const isAbo = (input.dailyBudgetMinor ?? 0) > 0;
@@ -195,7 +200,7 @@ export class MetaCreationService {
     }
     if (conv.promotedObject) params["promoted_object"] = JSON.stringify(conv.promotedObject);
     const adsetId = await this.createOnAccount(account, "adsets", params);
-    return { adsetId };
+    return { adsetId, targetingFallback: fallback };
   }
 
   async createAdCreative(account: AdAccountRef, input: CreateAdCreativeInput): Promise<{ creativeId: string }> {
@@ -317,42 +322,12 @@ export class MetaCreationService {
     return { status: s === "ready" ? "ready" : s === "error" ? "error" : "processing" };
   }
 
-  /**
-   * Targeting neutro → Meta. `reuse_adset` lê o targeting da fonte; `custom_audiences` reusa
-   * geo/idade da fonte e TROCA o público (include/exclude) com expansões zeradas (remarketing);
-   * `advantage_plus` = amplo. SWITCH EXAUSTIVO (`never`): um kind não tratado é erro de
-   * compilação, não fall-through silencioso p/ amplo num caminho que gasta dinheiro.
-   */
-  private async resolveTargeting(
-    account: AdAccountRef,
-    spec: CreateAdSetInput["targeting"],
-  ): Promise<Record<string, unknown>> {
-    switch (spec.kind) {
-      case "reuse_adset":
-        return (await this.sourceAdsetTargeting(account, spec.sourceAdsetId)) ?? this.broadTargeting();
-      case "custom_audiences": {
-        // público específico: base = geo/idade do adset-fonte quando há (CÓPIA — "7 cidades"
-        // reais, não parseadas); sem fonte (CRIAR-DO-ZERO com público) = geo amplo + o público.
-        // Em ambos: troca o público e zera expansões (§guidance).
-        const base = spec.sourceAdsetId ? ((await this.sourceAdsetTargeting(account, spec.sourceAdsetId)) ?? {}) : {};
-        const out: Record<string, unknown> = {
-          ...(base["geo_locations"] ? { geo_locations: base["geo_locations"] } : { geo_locations: { countries: [DEFAULT_ADVANTAGE_GEO_COUNTRY] } }),
-          ...(base["age_min"] !== undefined ? { age_min: base["age_min"] } : {}),
-          ...(base["age_max"] !== undefined ? { age_max: base["age_max"] } : {}),
-          // troca o público: inclui os escolhidos, exclui os escolhidos; expansões OFF.
-          ...(spec.includeIds.length > 0 ? { custom_audiences: spec.includeIds.map((id) => ({ id })) } : {}),
-          ...(spec.excludeIds.length > 0 ? { excluded_custom_audiences: spec.excludeIds.map((id) => ({ id })) } : {}),
-          targeting_automation: { advantage_audience: 0 },
-        };
-        return out;
-      }
-      case "advantage_plus":
-        return this.broadTargeting();
-      default: {
-        const _exhaustive: never = spec;
-        return _exhaustive;
-      }
-    }
+  /** Targeting amplo default (Advantage+) — sem trava de geo/audience. */
+  private advantagePlusTargeting(): Record<string, unknown> {
+    return {
+      geo_locations: { countries: [DEFAULT_ADVANTAGE_GEO_COUNTRY] },
+      targeting_automation: { advantage_audience: 1 },
+    };
   }
 
   /** Targeting cru do adset-fonte (geo/idade/público) — reusado por reuse_adset e custom_audiences. */
@@ -366,15 +341,46 @@ export class MetaCreationService {
       });
       return data.targeting ?? null;
     } catch {
-      return null; // fonte indisponível → o chamador cai no amplo
+      return null;
     }
   }
 
-  private broadTargeting(): Record<string, unknown> {
-    return {
-      geo_locations: { countries: [DEFAULT_ADVANTAGE_GEO_COUNTRY] },
-      targeting_automation: { advantage_audience: 1 },
-    };
+  /**
+   * Targeting neutro → Meta. `reuse_adset` lê o targeting da fonte (herda travas do dono; `fallback:true`
+   * quando a fonte sumiu → o caller avisa em vez de sair amplo silencioso); `custom_audiences` reusa
+   * geo/idade da fonte (quando há) e TROCA o público (include/exclude) com expansões zeradas; `advantage_plus`
+   * = amplo. SWITCH EXAUSTIVO (`never`) — kind não tratado é erro de compilação, não fall-through de gasto.
+   */
+  private async resolveTargeting(
+    account: AdAccountRef,
+    spec: CreateAdSetInput["targeting"],
+  ): Promise<{ targeting: Record<string, unknown>; fallback: boolean }> {
+    switch (spec.kind) {
+      case "reuse_adset": {
+        const src = await this.sourceAdsetTargeting(account, spec.sourceAdsetId);
+        return src ? { targeting: src, fallback: false } : { targeting: this.advantagePlusTargeting(), fallback: true };
+      }
+      case "custom_audiences": {
+        // público específico: base = geo/idade do adset-fonte quando há (CÓPIA — "7 cidades" reais);
+        // sem fonte (CRIAR-DO-ZERO com público) = geo amplo + o público. Em ambos zera expansões.
+        const base = spec.sourceAdsetId ? ((await this.sourceAdsetTargeting(account, spec.sourceAdsetId)) ?? {}) : {};
+        const out: Record<string, unknown> = {
+          ...(base["geo_locations"] ? { geo_locations: base["geo_locations"] } : { geo_locations: { countries: [DEFAULT_ADVANTAGE_GEO_COUNTRY] } }),
+          ...(base["age_min"] !== undefined ? { age_min: base["age_min"] } : {}),
+          ...(base["age_max"] !== undefined ? { age_max: base["age_max"] } : {}),
+          ...(spec.includeIds.length > 0 ? { custom_audiences: spec.includeIds.map((id) => ({ id })) } : {}),
+          ...(spec.excludeIds.length > 0 ? { excluded_custom_audiences: spec.excludeIds.map((id) => ({ id })) } : {}),
+          targeting_automation: { advantage_audience: 0 },
+        };
+        return { targeting: out, fallback: false };
+      }
+      case "advantage_plus":
+        return { targeting: this.advantagePlusTargeting(), fallback: false };
+      default: {
+        const _exhaustive: never = spec;
+        return _exhaustive;
+      }
+    }
   }
 
   /**
@@ -393,7 +399,7 @@ export class MetaCreationService {
       accessToken: account.accessToken,
       params: {
         fields:
-          "id,effective_status,creative{object_story_spec},adset{promoted_object},campaign{objective},insights.date_preset(last_30d){spend,actions}",
+          "id,effective_status,creative{object_story_spec},adset{id,promoted_object},campaign{objective},insights.date_preset(last_30d){spend,actions}",
         limit: String(INFER_CANDIDATES_LIMIT),
       },
     });
@@ -424,10 +430,14 @@ export class MetaCreationService {
       ...(spec?.page_id ? { pageId: spec.page_id } : {}),
       ...(best.adset?.promoted_object?.pixel_id ? { pixelId: best.adset.promoted_object.pixel_id } : {}),
       ...(goal ? { objectiveGoal: goal } : {}),
-      ...(linkData?.image_hash ? { imageHash: linkData.image_hash } : {}),
+      // capa: imagem → link_data.image_hash; VÍDEO → video_data.image_hash (a capa do anúncio-fonte,
+      // acessível — evita o fetch de thumbnails do vídeo que pode falhar com #10). É o `image_hash`
+      // do video_data que o createAdCreative reusa como capa obrigatória.
+      ...((linkData?.image_hash ?? spec?.video_data?.image_hash) ? { imageHash: (linkData?.image_hash ?? spec?.video_data?.image_hash)! } : {}),
       ...(spec?.video_data?.video_id ? { videoId: spec.video_data.video_id } : {}),
       ...(reuseLink ? { linkUrl: reuseLink } : {}),
       ...(best.id ? { sourceAdId: best.id } : {}),
+      ...(best.adset?.id ? { sourceAdsetId: best.adset.id } : {}),
       ...(winnerCopy.length > 0 ? { winnerCopy } : {}),
       ...(unsupportedTopFormat ? { unsupportedTopFormat } : {}),
     };
