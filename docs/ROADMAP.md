@@ -743,6 +743,19 @@ telefone, listar+usar custom audiences da BM, e **cópia fiel de campanha** via 
   (`pageId`/`pixelId`); resolver o nome legível da Página (viola §13 jargão) — fast-follow de UX.
 - **Reforçar `error_user_msg`/`error_user_title` da Meta** na mensagem de erro (cross-cutting, já
   anotado na Fatia 7) — continua valendo p/ a saga de cópia.
+- **`reuse_adset` cai em Advantage+ amplo quando a leitura do targeting da fonte falha** (403/erro
+  swallow → `broadTargeting`). Na cópia fiel isso é perda de fidelidade num caminho de gasto —
+  mitigado hoje por nascer PAUSADA + eco + 2º OK. Fast-follow: falhar honesto (ou sinalizar) em
+  vez de amplo silencioso. (`creation.ts` `resolveTargeting`/`sourceAdsetTargeting`.)
+- **Orçamento VITALÍCIO na cópia/criação** — hoje o create só escreve `daily_budget`; fonte
+  vitalícia vira diário seguro + aviso (não copia o total). Suportar vitalício exige `end_time`/
+  schedule no create (campanha e adset). (`creation.ts` `createCampaign`/`createAdSet`.)
+- **Conversão personalizada na cópia** — a cópia carrega `pixelId`; `customConversionId`/
+  `customEventType` da fonte ainda não são threaded (copiar campanha de conversão personalizada
+  cai no evento padrão do goal). (`campaign-structure.ts` → `CampaignStructure` → `createAdSet`.)
+- **Reads sem governor em `MetaCreationService`** (`getVideoStatus`/`getAdSetCampaignBudget`/
+  `inferCreationDefaults`) — pré-existentes, fora do `callWithGovernor`. `getVideoStatus` (poll) é
+  o pior caso. Passar o governor ao service e envelopar. (Não introduzido pela Fatia 7.)
 
 ## Fatia 8 — Orquestração multi-agente / qualidade (roadmap pós-MVP)
 
