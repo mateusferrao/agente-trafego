@@ -35,7 +35,7 @@ import { DEFAULT_CURRENCY } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
 import { describeLlmError } from "./llm-error.js";
 import { GROUP_RULES, loadConversationConfig } from "./system-prompt.js";
-import { windowMessages } from "./window.js";
+import { sanitizeToolPairs, windowMessages } from "./window.js";
 import {
   CONFIG_UPDATE_TOOL_NAMES,
   CONTROL_WRITE_TOOL_NAMES,
@@ -498,7 +498,10 @@ export function makeConversationNodes(
       maxTurns: deps.conversation.historyTurns,
       maxTokens: deps.conversation.maxTokens,
     });
-    const msgs = [new SystemMessage(sys), ...windowed];
+    // Sanitiza pares tool_call/result: um turno anterior que QUEBROU entre o AI(tool_calls) e as
+    // respostas das tools deixa um órfão no checkpoint → a API rejeita (400 "No tool output found")
+    // e o thread fica envenenado (todo turno reenvia o órfão). Remover o órfão CURA o thread.
+    const msgs = [new SystemMessage(sys), ...sanitizeToolPairs(windowed)];
     // Primário com retry/backoff (ChatOpenAI.maxRetries); se ESGOTAR, tenta o RESERVA
     // (também com retry/backoff). Loga cada ponto de falha. Provider diverso = resiliência a blip.
     const fallback = deps.conversation.fallbackModel;
