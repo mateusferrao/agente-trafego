@@ -14,7 +14,7 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { adAccounts, adCreatives, agentRuns, agentToolCalls, agents, campaignDrafts, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
-import { daysAgoInTz, rankAdCreatives, todayInTz } from "@trafego/core";
+import { daysAgoInTz, rankAdCreatives, resolveNamedMatch, todayInTz } from "@trafego/core";
 import { createAnalysisRepo, type AdCreativeCopyRow } from "../../modules/analysis/repo.js";
 import {
   aggregateKpis,
@@ -115,11 +115,12 @@ interface CampaignAnalysis {
   readonly asOf: string;
 }
 
-/** Várias campanhas casaram o nome → o agente desambigua. */
+/** Várias campanhas casaram o nome → o agente desambigua com opções NUMERADAS + id
+ *  (o id explícito ao lado do número fecha a porta de misatribuição — o agente age pelo id). */
 interface AmbiguousCampaign {
   readonly hasData: false;
   readonly ambiguous: true;
-  readonly matches: readonly string[];
+  readonly options: readonly { readonly n: number; readonly id: string; readonly name: string }[];
   readonly note: string;
 }
 
@@ -355,23 +356,22 @@ export async function getCampaignAnalysisData(
     .where(and(eq(entityAnalyses.agentId, agentId), eq(entityAnalyses.entityLevel, CAMPAIGN_LEVEL)))
     .orderBy(desc(entityAnalyses.analyzedAt));
 
-  const needle = name.trim().toLowerCase();
-  const matches = rows.filter((r) => (r.entityName ?? "").toLowerCase().includes(needle));
-
-  if (matches.length === 0) {
+  // Match determinístico (Dice + contenção + margem) — mesmo matcher do foco de conta
+  // (`resolveNamedMatch`), tolera typo/acento/ordem e só autoescolhe com folga clara.
+  const match = resolveNamedMatch(rows, name, { name: (r) => r.entityName, keys: (r) => [r.entityId] });
+  if (match.kind === "none") {
     return { hasData: false, note: `nenhuma campanha analisada com "${name}" no nome` };
   }
-  if (matches.length > 1) {
-    const names = matches.map((r) => r.entityName ?? "(sem nome)");
+  if (match.kind === "ambiguous") {
     return {
       hasData: false,
       ambiguous: true,
-      matches: names,
-      note: "mais de uma campanha casa esse nome — peça p/ especificar qual",
+      options: match.rows.map((r, i) => ({ n: i + 1, id: r.entityId, name: r.entityName ?? "(sem nome)" })),
+      note: 'mais de uma campanha casa esse nome — mostre as opções numeradas e peça o número; aja SEMPRE pelo id da opção escolhida (nunca por outra campanha)',
     };
   }
 
-  const row = matches[0]!;
+  const row = match.row;
   const unit = row.unitJson as Partial<UnitAnalysis>;
   const m = row.metricsJson as Partial<InsightMetrics>;
   const top = unit.findings?.[0];

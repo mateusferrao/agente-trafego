@@ -293,15 +293,17 @@ describe("getCampaignAnalysisData", () => {
     expect(res).toMatchObject({ hasData: false });
   });
 
-  it("várias casam → ambíguo, lista os nomes", async () => {
+  it("várias casam → ambíguo, opções numeradas COM id (âncora anti-misatribuição)", async () => {
     const ambiguousRows = [
-      { ...rows[0], entityName: "Campanha A - vendas" },
-      { ...rows[1], entityName: "Campanha B - vendas" },
+      { ...rows[0], entityId: "cmp-a", entityName: "Campanha vendas — Cópia 01" },
+      { ...rows[1], entityId: "cmp-b", entityName: "Campanha vendas — Cópia 02" },
     ];
     const db = fakeDb(new Map<unknown, unknown[]>([[entityAnalyses, ambiguousRows]]));
-    const res = await getCampaignAnalysisData(db, AGENT, "vendas");
+    const res = await getCampaignAnalysisData(db, AGENT, "Campanha vendas");
     expect(res).toMatchObject({ hasData: false, ambiguous: true });
-    expect((res as { matches: readonly string[] }).matches).toEqual(["Campanha A - vendas", "Campanha B - vendas"]);
+    const opts = (res as { options: readonly { n: number; id: string; name: string }[] }).options;
+    expect(opts.map((o) => o.id).sort()).toEqual(["cmp-a", "cmp-b"]);
+    expect(opts.map((o) => o.n)).toEqual([1, 2]);
   });
 });
 

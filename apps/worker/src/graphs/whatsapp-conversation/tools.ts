@@ -45,9 +45,11 @@ import {
   mergeConfigText,
   POSTURE_AXIS_PT,
   postureLevelLabel,
+  resolveNamedMatch,
   type AgentConfigPatch,
   type AgentConfigState,
   type AgentGoalsPatch,
+  type NamedMatch,
   type NotifyPolicyPatch,
   type PosturePatch,
 } from "@trafego/core";
@@ -1076,132 +1078,17 @@ export interface FocusCandidate {
   readonly adAccountId: string;
 }
 
-/** Faixa de diacríticos combinantes (Unicode) removida após NFD — mesmo padrão de `apps/api/src/modules/orgs/slug.ts`. */
-const DIACRITIC_MARKS = /[̀-ͯ]/g;
+// Match textual (Dice + contenção + margem/solo) é GENÉRICO e vive em `@trafego/core`
+// (`resolveNamedMatch`), reusado por foco de conta E desambiguação de campanha/público.
+// Re-export mantém a superfície que os testes/consumidores locais já usam.
+export { diceSimilarity, normalizeName as normalizeAccountText } from "@trafego/core";
 
 /**
- * Score mínimo (Dice sobre bigramas) p/ uma conta ainda ser candidata plausível. 0.3 =
- * mesmo default de similaridade do pg_trgm do Postgres (não usamos a extensão, mas é o
- * mesmo princípio: bigramas de caractere + Dice) — nomes não-relacionados calibrados nos
- * testes ficam em 0-0.08, nomes reais em 0.7+.
+ * Foco de conta = `resolveNamedMatch` sobre `FocusCandidate` (match exato pelo id externo
+ * cru `adAccountId` OU nome normalizado; senão Dice+contenção com folga). Fino sobre o core.
  */
-const MIN_ACCOUNT_MATCH_SCORE = 0.3;
-
-/**
- * Vantagem mínima do 1º colocado sobre o 2º p/ autoescolher sem perguntar. Calibrado pra
- * ficar acima da margem observada entre contas-irmãs genuinamente ambíguas (~0.09) e
- * abaixo da margem de um vencedor claro (~0.38).
- */
-const ACCOUNT_MATCH_WINNER_MARGIN = 0.15;
-
-/** Teto de sugestões quando fica ambíguo — cabe numa mensagem de WhatsApp. */
-const ACCOUNT_MATCH_MAX_SUGGESTIONS = 5;
-
-/**
- * Score mínimo p/ o ÚNICO candidato plausível se autoescolher sem perguntar — mais alto
- * que `MIN_ACCOUNT_MATCH_SCORE` (que só filtra candidatos "possíveis", não "confiáveis").
- * Sem essa barra, um match fraco (ex: 0.31) focaria a conta errada sem confirmação,
- * violando "ambiguidade = pergunta" (CLAUDE.md §8) por não ter um 2º candidato pra
- * comparar a margem. Calibrado bem acima de nomes não-relacionados (0-0.08) e de matches
- * fracos/coincidentais (~0.2-0.4), mas abaixo de match real por typo/palavra trocada (0.7+).
- */
-const ACCOUNT_MATCH_SOLO_CONFIRM_SCORE = 0.5;
-
-/**
- * Score que uma contenção literal (query é substring do nome normalizado, ou vice-versa)
- * garante — restaura a garantia do `ILIKE '%q%'` antigo, que o Dice puro perde quando a
- * query é bem mais curta que o nome (o denominador do Dice penaliza a diferença de
- * tamanho mesmo com contenção perfeita). Alto o bastante pra vencer sozinho ou empatar
- * (e então perguntar) entre contas que genuinamente compartilham o fragmento.
- */
-const CONTAINMENT_MATCH_SCORE = 0.9;
-
-/** Score de match entre query e nome, já normalizados — Dice, com piso de contenção literal (ver `CONTAINMENT_MATCH_SCORE`). */
-function accountMatchScore(query: string, name: string): number {
-  const dice = diceSimilarity(query, name);
-  if (query.length > 0 && name.length > 0 && (name.includes(query) || query.includes(name))) {
-    return Math.max(CONTAINMENT_MATCH_SCORE, dice);
-  }
-  return dice;
-}
-
-/** Normaliza texto de conta p/ comparação: acento, caixa, espaço e zero à esquerda em dígito não importam. */
-export function normalizeAccountText(s: string): string {
-  return s
-    .normalize("NFD")
-    .replace(DIACRITIC_MARKS, "")
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/\d+/g, (run) => String(Number(run)));
-}
-
-/** Bigramas de caractere (janela de 2, com espaço — a fronteira de palavra importa pro score). */
-function bigramSet(s: string): Set<string> {
-  const out = new Set<string>();
-  for (let i = 0; i < s.length - 1; i++) out.add(s.slice(i, i + 2));
-  return out;
-}
-
-/**
- * Similaridade Sørensen–Dice sobre bigramas de caractere — mesmo princípio do `pg_trgm`
- * do Postgres, sem precisar da extensão. Tolera typo leve e ordem de palavra trocada
- * (a maioria dos bigramas internos de cada palavra sobrevive à reordenação).
- */
-export function diceSimilarity(a: string, b: string): number {
-  if (a === b) return 1;
-  const setA = bigramSet(a);
-  const setB = bigramSet(b);
-  if (setA.size === 0 || setB.size === 0) return 0;
-  let intersection = 0;
-  for (const bg of setA) if (setB.has(bg)) intersection++;
-  return (2 * intersection) / (setA.size + setB.size);
-}
-
-/**
- * Escolhe a conta de foco entre TODAS as contas ativas da org, por normalização + score
- * de similaridade (nome digitado pode ter typo, acento, zero à esquerda ou ordem de
- * palavra diferente do cadastro Meta). Id externo exato (RAW — sem normalizar, é opaco)
- * ou nome normalizado exato ganham direto. Senão, rankeia por `diceSimilarity` e só
- * autoescolhe com folga clara (`ACCOUNT_MATCH_WINNER_MARGIN`); resto pergunta, ranqueado
- * e capado (`ACCOUNT_MATCH_MAX_SUGGESTIONS`), com `omittedCount` do que ficou de fora. PURO.
- */
-export function resolveFocusMatch(
-  rows: readonly FocusCandidate[],
-  query: string,
-):
-  | { readonly kind: "none" }
-  | { readonly kind: "one"; readonly row: FocusCandidate }
-  | { readonly kind: "ambiguous"; readonly rows: readonly FocusCandidate[]; readonly omittedCount: number } {
-  if (rows.length === 0) return { kind: "none" };
-
-  const rawQ = query.trim().toLowerCase();
-  const idExact = rows.filter((r) => r.adAccountId.toLowerCase() === rawQ);
-  if (idExact.length === 1) return { kind: "one", row: idExact[0]! };
-
-  const q = normalizeAccountText(query);
-  // query em branco não identifica ninguém — evita casar com conta de nome vazio/null
-  // (normalizeAccountText(null) também vira "") e com o score degenerado do Dice em "".
-  if (q.length === 0) return { kind: "none" };
-
-  const nameExact = rows.filter((r) => normalizeAccountText(r.name ?? "") === q);
-  if (nameExact.length === 1) return { kind: "one", row: nameExact[0]! };
-
-  const scored = rows
-    .map((row) => ({ row, score: accountMatchScore(q, normalizeAccountText(row.name ?? "")) }))
-    .filter((c) => c.score >= MIN_ACCOUNT_MATCH_SCORE)
-    .sort((a, b) => b.score - a.score);
-
-  if (scored.length === 0) return { kind: "none" };
-  if (scored.length === 1 && scored[0]!.score >= ACCOUNT_MATCH_SOLO_CONFIRM_SCORE) {
-    return { kind: "one", row: scored[0]!.row };
-  }
-  if (scored.length >= 2 && scored[0]!.score - scored[1]!.score >= ACCOUNT_MATCH_WINNER_MARGIN) {
-    return { kind: "one", row: scored[0]!.row };
-  }
-
-  const capped = scored.slice(0, ACCOUNT_MATCH_MAX_SUGGESTIONS).map((c) => c.row);
-  return { kind: "ambiguous", rows: capped, omittedCount: scored.length - capped.length };
+export function resolveFocusMatch(rows: readonly FocusCandidate[], query: string): NamedMatch<FocusCandidate> {
+  return resolveNamedMatch(rows, query, { name: (r) => r.name, keys: (r) => [r.adAccountId] });
 }
 
 /** Traduz o tool_call de `set_cadence` → `CadenceSpec` (ou undefined se raw sem cron). */
