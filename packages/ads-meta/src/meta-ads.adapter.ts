@@ -6,6 +6,7 @@ import type {
   EntityLevel,
   EntityStatus,
   InsightRow,
+  WhatsappDestination,
 } from "@trafego/shared/types";
 import type {
   AdAccountRef,
@@ -26,6 +27,7 @@ import { MetaInsightsService } from "./insights.js";
 import { MetaCreativesService } from "./creatives.js";
 import { MetaMutationsService } from "./mutations.js";
 import { MetaCreationService } from "./creation.js";
+import { MetaWhatsappDestinationService } from "./whatsapp-destination.js";
 import { MetaGovernor } from "./governor.js";
 import { MetaEntityCache } from "./entity-cache.js";
 import { objectiveFromAdSet, objectiveFromCampaign, type RawPromotedObject } from "./meta-conversion-map.js";
@@ -193,6 +195,7 @@ export class MetaAdsAdapter implements AdsPlatformPort {
   private readonly creatives: MetaCreativesService;
   private readonly mutations: MetaMutationsService;
   private readonly creation: MetaCreationService;
+  private readonly whatsapp: MetaWhatsappDestinationService;
   private readonly customConversions: CustomConversionsResolver | undefined;
   private readonly entityCache: MetaEntityCache | undefined;
 
@@ -203,6 +206,7 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     this.creatives = deps.creatives ?? new MetaCreativesService(deps.client, deps.governor, deps.visionFrames);
     this.mutations = deps.mutations ?? new MetaMutationsService(deps.client);
     this.creation = deps.creation ?? new MetaCreationService(deps.client);
+    this.whatsapp = new MetaWhatsappDestinationService(deps.client, deps.governor, this.creatives);
     this.customConversions = deps.customConversions;
     this.entityCache = deps.entityCache;
   }
@@ -337,6 +341,14 @@ export class MetaAdsAdapter implements AdsPlatformPort {
   async getVideoFrames(account: AdAccountRef, videoId: string): Promise<string[]> {
     try {
       return await this.creatives.videoFrames(account, videoId);
+    } catch (error) {
+      throw toAdsError(error);
+    }
+  }
+
+  async getWhatsappDestination(account: AdAccountRef, campaignId: string): Promise<WhatsappDestination> {
+    try {
+      return await this.whatsapp.resolve(account, campaignId);
     } catch (error) {
       throw toAdsError(error);
     }

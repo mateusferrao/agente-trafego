@@ -117,6 +117,8 @@ export interface Creative {
   readonly imageUrl?: string;
   readonly thumbnailUrl?: string;
   readonly videoId?: string;
+  /** Page do `object_story_spec` (Fatia 7) — p/ lookup do WhatsApp na Página + reuso na criação. */
+  readonly pageId?: string;
   /**
    * Número de WhatsApp de destino resolvido do CTA do criativo (Fatia 7): o adapter
    * traversa o `object_story_spec…call_to_action.value` (vocabulário Meta só lá) e

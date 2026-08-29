@@ -42,7 +42,7 @@ import {
   volumeToRecCount,
   type LastUnit,
 } from "@trafego/core";
-import { ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS, DEFAULT_CURRENCY, DEFAULT_POSTURE } from "@trafego/shared";
+import { ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS, DEFAULT_CURRENCY, DEFAULT_POSTURE, extractPhoneFromName } from "@trafego/shared";
 import { recommendations } from "@trafego/db";
 import { funnelFromRawActions, mapStatus } from "@trafego/ads-meta";
 import { proposeCreateCampaign, proposeScaleWinner } from "../../modules/conversation/draft-proposal.js";
@@ -77,6 +77,7 @@ import type {
   OrgId,
   RunCampaignCard,
   RunId,
+  WhatsappSource,
 } from "@trafego/shared";
 import type { AdsPlatformPort, CreativeVisionPort, MutationResult } from "@trafego/shared/ports";
 import { AdsPlatformError, LLMProviderError } from "@trafego/shared/ports";
@@ -371,8 +372,27 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     // `copyByAdId` da análise, sem re-baixar da Meta. Perf vem do brief (tier/métricas).
     try {
       const adPerfById = new Map(built.brief.segments.ads.map((e) => [e.id, e]));
+      // hierarquia anúncio→campanha/adset + nome da campanha, dos ENTITIES já listados
+      // (Fatia 7). Resolve o destino WhatsApp SEM chamada extra à Meta: CTA do criativo
+      // (`meta_cta`) ou, na ausência, o nome da campanha (`campaign_name`, pede confirmação
+      // no chat). O tier `meta_page` (1 GET/Página) fica p/ o fallback ao vivo — não onera
+      // o run. Cache DB-first; live é fallback.
+      const adEntityById = new Map((state.entities ?? []).filter((e) => e.level === "ad").map((e) => [e.id, e]));
+      const campaignNameById = new Map(
+        (state.entities ?? []).filter((e) => e.level === "campaign").map((e) => [e.id, e.name]),
+      );
       const creativeRows: AdCreativeRow[] = (state.creatives ?? []).map((c) => {
         const perf = adPerfById.get(c.adId);
+        const entity = adEntityById.get(c.adId);
+        const campaignId = entity?.campaignId ?? null;
+        const campaignName = campaignId ? campaignNameById.get(campaignId) : undefined;
+        const fromName = campaignName ? extractPhoneFromName(campaignName) : null;
+        const whatsappNumber = c.whatsappNumber ?? fromName ?? null;
+        const whatsappSource: WhatsappSource | null = c.whatsappNumber
+          ? "meta_cta"
+          : fromName
+            ? "campaign_name"
+            : null;
         return {
           adId: c.adId,
           creativeId: c.id ?? null,
@@ -382,6 +402,10 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           imageUrl: c.imageUrl ?? null,
           thumbnailUrl: c.thumbnailUrl ?? null,
           videoId: c.videoId ?? null,
+          whatsappNumber,
+          whatsappSource,
+          campaignId,
+          adsetId: entity?.adsetId ?? null,
           tier: perf?.tier ?? null,
           spend: perf?.metrics.spend ?? null,
           cpa: perf?.metrics.cpa ?? null,

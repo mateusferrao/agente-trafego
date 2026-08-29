@@ -90,6 +90,34 @@ describe("MetaCreativesService.getCreatives", () => {
     expect(c).toMatchObject({ adId: "AD3", body: "corpo do anúncio", title: "manchete", callToAction: "LEARN_MORE" });
   });
 
+  it("extrai o número de WhatsApp do CTA (click-to-WhatsApp) via value.link", async () => {
+    stubBatch([
+      {
+        id: "AD4",
+        creative: {
+          object_story_spec: {
+            page_id: "PAGE1",
+            link_data: {
+              message: "fale conosco",
+              call_to_action: { type: "WHATSAPP_MESSAGE", value: { link: "https://wa.me/5531953491166", app_destination: "WHATSAPP" } },
+            },
+          },
+        },
+      },
+    ]);
+    const [c] = await makeService().getCreatives(account, ["AD4"]);
+    expect(c).toMatchObject({ adId: "AD4", whatsappNumber: "5531953491166", pageId: "PAGE1", callToAction: "WHATSAPP_MESSAGE" });
+  });
+
+  it("CTA sem link de WhatsApp → sem whatsappNumber (não inventa)", async () => {
+    stubBatch([
+      { id: "AD5", creative: { object_story_spec: { page_id: "P2", link_data: { call_to_action: { type: "LEARN_MORE", value: { link: "https://site.com/x" } } } } } },
+    ]);
+    const [c] = await makeService().getCreatives(account, ["AD5"]);
+    expect(c.whatsappNumber).toBeUndefined();
+    expect(c.pageId).toBe("P2");
+  });
+
   it("sub-request que falhou (code != 200 ou null) é pulada, não derruba o lote", async () => {
     stubBatch([
       { id: "AD1", creative: { image_url: "http://img" } },

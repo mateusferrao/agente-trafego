@@ -1,5 +1,6 @@
 import type { Creative } from "@trafego/shared/types";
 import type { AdAccountRef } from "@trafego/shared/ports";
+import { extractPhoneFromUrl } from "@trafego/shared";
 import type { BatchSubRequest, BatchSubResponse, MetaGraphClient } from "./client.js";
 import { callWithGovernor } from "./call-with-governor.js";
 import type { MetaGovernor } from "./governor.js";
@@ -13,7 +14,7 @@ import { normalizeAdAccountId } from "./ids.js";
  */
 
 export const CREATIVE_FIELDS =
-  "creative{id,name,image_url,thumbnail_url,object_story_spec,body,title,call_to_action_type,video_id}";
+  "creative{id,name,image_url,thumbnail_url,object_story_spec{page_id,link_data{message,name,call_to_action{type,value{link,app_destination}}},video_data{message,title,call_to_action{type,value{link,app_destination}}}},body,title,call_to_action_type,video_id}";
 
 /** Frames HD do vídeo (Fatia 6c): a Meta entrega ~10 thumbnails 1080p ao longo do vídeo. */
 export const VIDEO_THUMBNAILS_FIELDS = "thumbnails{uri,width,height,is_preferred}";
@@ -40,9 +41,15 @@ export function pickSpacedFrames(thumbs: readonly RawVideoThumb[], n: number): s
   return [...picked];
 }
 
+interface RawCallToAction {
+  readonly type?: string;
+  /** valor do CTA (Fatia 7): link de destino (`wa.me`/`api.whatsapp.com`) + app_destination. */
+  readonly value?: { readonly link?: string; readonly app_destination?: string };
+}
 interface RawObjectStorySpec {
-  readonly link_data?: { readonly message?: string; readonly name?: string; readonly call_to_action?: { readonly type?: string } };
-  readonly video_data?: { readonly message?: string; readonly title?: string; readonly call_to_action?: { readonly type?: string } };
+  readonly page_id?: string;
+  readonly link_data?: { readonly message?: string; readonly name?: string; readonly call_to_action?: RawCallToAction };
+  readonly video_data?: { readonly message?: string; readonly title?: string; readonly call_to_action?: RawCallToAction };
 }
 
 interface RawCreative {
@@ -156,6 +163,12 @@ export class MetaCreativesService {
     const body = c.body ?? story?.message;
     const title = c.title ?? (c.object_story_spec?.link_data?.name || c.object_story_spec?.video_data?.title);
     const callToAction = c.call_to_action_type ?? story?.call_to_action?.type;
+    // Destino WhatsApp (Fatia 7): o CTA de click-to-WhatsApp carrega o número no
+    // `value.link` (wa.me/api.whatsapp.com). Extração pura em `@trafego/shared` (formato
+    // de deep-link é público); o vocabulário Meta (`object_story_spec.value`) fica aqui.
+    const ctaLink = story?.call_to_action?.value?.link;
+    const whatsappNumber = ctaLink ? extractPhoneFromUrl(ctaLink) : null;
+    const pageId = c.object_story_spec?.page_id;
     return {
       id: c.id ?? adId,
       adId,
@@ -163,6 +176,8 @@ export class MetaCreativesService {
       ...(body ? { body } : {}),
       ...(title ? { title } : {}),
       ...(callToAction ? { callToAction } : {}),
+      ...(pageId ? { pageId } : {}),
+      ...(whatsappNumber ? { whatsappNumber } : {}),
       ...(c.image_url ? { imageUrl: c.image_url } : {}),
       ...(c.thumbnail_url ? { thumbnailUrl: c.thumbnail_url } : {}),
       ...(c.video_id ? { videoId: c.video_id } : {}),

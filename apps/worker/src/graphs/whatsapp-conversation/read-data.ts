@@ -797,16 +797,26 @@ async function refreshCreativeCopiesLive(deps: WorkerDeps, ctx: ReadToolContext)
   const adIds = adEntities.map((e) => e.id);
   if (adIds.length === 0) return;
   const creatives = await deps.ports.ads.getCreatives(ref, adIds);
-  const rows: AdCreativeCopyRow[] = creatives.map((c) => ({
-    adId: c.adId,
-    creativeId: c.id ?? null,
-    body: c.body ?? null,
-    title: c.title ?? null,
-    callToAction: c.callToAction ?? null,
-    imageUrl: c.imageUrl ?? null,
-    thumbnailUrl: c.thumbnailUrl ?? null,
-    videoId: c.videoId ?? null,
-  }));
+  const adEntityById = new Map(adEntities.filter((e) => e.level === "ad").map((e) => [e.id, e]));
+  const rows: AdCreativeCopyRow[] = creatives.map((c) => {
+    const entity = adEntityById.get(c.adId);
+    return {
+      adId: c.adId,
+      creativeId: c.id ?? null,
+      body: c.body ?? null,
+      title: c.title ?? null,
+      callToAction: c.callToAction ?? null,
+      imageUrl: c.imageUrl ?? null,
+      thumbnailUrl: c.thumbnailUrl ?? null,
+      videoId: c.videoId ?? null,
+      // cache do destino WhatsApp (Fatia 7): CTA do criativo (`meta_cta`). Nome/página
+      // resolvem no `getWhatsappDestination` ao vivo — este path de refresh é só copy/mídia.
+      whatsappNumber: c.whatsappNumber ?? null,
+      whatsappSource: c.whatsappNumber ? ("meta_cta" as const) : null,
+      campaignId: entity?.campaignId ?? null,
+      adsetId: entity?.adsetId ?? null,
+    };
+  });
   await repo.saveAdCreativeCopies(ctx.orgId, ctx.adAccountId, rows);
 }
 

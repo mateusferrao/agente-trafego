@@ -5,7 +5,7 @@
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import type { Database } from "@trafego/db/client";
 import { adAccounts, adCreatives, agentMemory, agentMutedEntities, agentRunSteps, agentRuns, agentToolCalls, agents, conversionLabels, guardrailConfigs, orgs, platformConnections, playbookRules, recommendations } from "@trafego/db";
-import type { Action, ActionTarget, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, MarketReference, NotifyPolicy, PartialReason, PerformanceTier, PlaybookRule, Posture, RecommendationKind, RiskLevel } from "@trafego/shared";
+import type { Action, ActionTarget, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, MarketReference, NotifyPolicy, PartialReason, PerformanceTier, PlaybookRule, Posture, RecommendationKind, RiskLevel, WhatsappSource } from "@trafego/shared";
 import { DEFAULT_POSTURE, GUARDRAIL_DEFAULTS, toGuardrailConfig, UNDO_TOOL_KEY } from "@trafego/shared";
 import { entityKeyOf, unseedIdentity } from "@trafego/core";
 import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
@@ -89,6 +89,11 @@ export interface AdCreativeRow {
   readonly imageUrl: string | null;
   readonly thumbnailUrl: string | null;
   readonly videoId: string | null;
+  /** destino WhatsApp do CTA (Fatia 7) + hierarquia p/ resolver por-campanha no chat (cache). */
+  readonly whatsappNumber: string | null;
+  readonly whatsappSource: WhatsappSource | null;
+  readonly campaignId: string | null;
+  readonly adsetId: string | null;
   readonly tier: PerformanceTier | null;
   readonly spend: number | null;
   readonly cpa: number | null;
@@ -335,6 +340,10 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
             imageUrl: r.imageUrl,
             thumbnailUrl: r.thumbnailUrl,
             videoId: r.videoId,
+            whatsappNumber: r.whatsappNumber,
+            whatsappSource: r.whatsappSource,
+            campaignId: r.campaignId,
+            adsetId: r.adsetId,
             tier: r.tier,
             spend: r.spend,
             cpa: r.cpa,
@@ -353,6 +362,12 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
             imageUrl: sql`excluded.image_url`,
             thumbnailUrl: sql`excluded.thumbnail_url`,
             videoId: sql`excluded.video_id`,
+            // WhatsApp/hierarquia: COALESCE preserva o número/campanha de um run anterior
+            // quando o run atual não resolveu (anúncio sem CTA de mensagem neste ciclo).
+            whatsappNumber: sql`coalesce(excluded.whatsapp_number, ${adCreatives.whatsappNumber})`,
+            whatsappSource: sql`coalesce(excluded.whatsapp_source, ${adCreatives.whatsappSource})`,
+            campaignId: sql`coalesce(excluded.campaign_id, ${adCreatives.campaignId})`,
+            adsetId: sql`coalesce(excluded.adset_id, ${adCreatives.adsetId})`,
             // perf: anúncio fora do brief (não-notável) vem com perf null neste run —
             // COALESCE preserva a perf boa do run anterior em vez de zerá-la (senão o
             // anúncio despencaria no ranking por perda de tier).

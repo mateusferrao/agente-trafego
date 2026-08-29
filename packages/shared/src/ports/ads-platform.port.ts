@@ -7,6 +7,7 @@ import type {
   EntityLevel,
   InsightRow,
   TargetingSpec,
+  WhatsappDestination,
 } from "../types/index.js";
 
 /** Referência opaca a uma conta já resolvida (token + accountId internos ao adapter). */
@@ -176,6 +177,12 @@ export interface AdsPlatformPort {
   getCreatives(account: AdAccountRef, adIds: readonly string[]): Promise<Creative[]>;
   /** Frames HD (URLs) de um vídeo por `video_id` — p/ a visão de criativo da biblioteca. */
   getVideoFrames(account: AdAccountRef, videoId: string): Promise<string[]>;
+  /**
+   * Resolve o número de WhatsApp de DESTINO de uma campanha (Fatia 7), escopado à campanha:
+   * CTA do criativo (`meta_cta`) → Página conectada (`meta_page`) → nome da campanha
+   * (`campaign_name`) → `none`. Sempre rotula a origem; nunca atribui de outra entidade.
+   */
+  getWhatsappDestination(account: AdAccountRef, campaignId: string): Promise<WhatsappDestination>;
   /** Campanha-mãe de um adset + seu orçamento (diário E vitalício, minor) — p/ escalar vencedor
    *  sob CBO (orçamento na campanha, não no adset). `null` se a campanha não resolver. */
   getAdSetCampaignBudget(account: AdAccountRef, adsetId: string): Promise<{ campaignId: string; dailyBudgetMinor: number; lifetimeBudgetMinor: number } | null>;
