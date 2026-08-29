@@ -255,6 +255,7 @@ export function makeConversationTools(
       actionType: z.string().min(1).describe("tipo da ação original (de find_recent_actions)"),
       mode: z
         .enum(["pause", "archive"])
+        .nullable()
         .optional()
         .describe(
           'só p/ CRIAÇÕES (create_campaign/duplicate_scale): "pause" (padrão) mantém a campanha na conta pausada; "archive" tira da lista ativa (recuperável). Use "archive" só se o usuário pedir explicitamente pra arquivar.',
