@@ -6,6 +6,7 @@ import type {
   ConversionGoal,
   Creative,
   CustomAudience,
+  DeliveryEstimate,
   EntityLevel,
   InsightRow,
   TargetingSpec,
@@ -66,6 +67,15 @@ export interface DuplicateResult {
   readonly copiedId: string;
   readonly childIds: readonly string[];
   readonly childAdsetIds: readonly string[];
+}
+
+/** Entrada da estimativa de alcance (Fatia 7 — fast-follow): targeting NEUTRO + objetivo; o
+ *  adapter monta o `targeting_spec` Meta (reusa a MESMA lógica do `createAdSet`) + o
+ *  `optimization_goal` derivado do objetivo. `pixelId` afina o optimization_goal (conversão). */
+export interface DeliveryEstimateInput {
+  readonly targeting: TargetingSpec;
+  readonly goal: ConversionGoal;
+  readonly pixelId?: string;
 }
 
 // ─── Criar do zero (saga granular — a casca orquestra + persiste ids parciais) ───
@@ -203,6 +213,10 @@ export interface AdsPlatformPort {
   getWhatsappDestination(account: AdAccountRef, campaignId: string): Promise<WhatsappDestination>;
   /** Lista os custom/saved audiences da conta (Fatia 7) — remarketing/exclusões reais. */
   listCustomAudiences(account: AdAccountRef): Promise<CustomAudience[]>;
+  /** Estima o alcance de um targeting COMBINADO (Fatia 7 — fast-follow), ao vivo no momento da
+   *  proposta (depende do público/exclusões escolhidos → não cacheável no run). Best-effort:
+   *  `ready:false` quando a plataforma ainda não estimou. */
+  getDeliveryEstimate(account: AdAccountRef, input: DeliveryEstimateInput): Promise<DeliveryEstimate>;
   /** Lê a estrutura NEUTRA de uma campanha existente p/ cópia fiel (Fatia 7) — escopado. */
   readCampaignStructure(account: AdAccountRef, campaignId: string): Promise<CampaignStructure>;
   /** Campanha-mãe de um adset + seu orçamento (diário E vitalício, minor) — p/ escalar vencedor

@@ -164,6 +164,22 @@ export interface CustomAudience {
   readonly isLookalike: boolean;
 }
 
+/**
+ * Estimativa de alcance/entrega de um targeting COMBINADO (Fatia 7 — fast-follow) — taxonomia
+ * neutra (vocabulário Meta `estimate_dau`/`estimate_mau`/`delivery_estimate` só no adapter). É a
+ * previsão de quantas pessoas o público proposto (includes − excludes + geo/idade) atinge; superior
+ * ao `approximateCount` por-público (que ignora exclusões/combinação). `ready:false` = a plataforma
+ * ainda não conseguiu estimar (público novo/lookalike) → o caller degrada pro sinal por-público.
+ */
+export interface DeliveryEstimate {
+  readonly ready: boolean;
+  /** pessoas ativas/dia que satisfazem o targeting (omitido quando não pronto). */
+  readonly dailyActiveUsers?: number;
+  /** faixa mensal (limite inferior/superior) quando a plataforma devolve. */
+  readonly monthlyReachMin?: number;
+  readonly monthlyReachMax?: number;
+}
+
 // ─── Conversão (genérico, agnóstico de plataforma) ───────────────────────
 // O vocabulário/mapeamento específico de cada plataforma (Meta action_type,
 // optimization_goal, etc.) vive SÓ no adapter. O core e o restante do sistema

@@ -5,13 +5,16 @@ import type {
   CreateAdSetInput,
   CreateCampaignInput,
   CreationDefaults,
+  DeliveryEstimateInput,
   DuplicateEntityInput,
   DuplicateResult,
 } from "@trafego/shared/ports";
-import type { ConversionGoal } from "@trafego/shared/types";
+import type { ConversionGoal, DeliveryEstimate } from "@trafego/shared/types";
 import type { UploadMediaInput, VideoStatus } from "@trafego/shared/ports";
 import { AdsPlatformError } from "@trafego/shared/ports";
 import { MetaGraphClient, MetaApiError, META_GRAPH_VERSION } from "./client.js";
+import { callWithGovernor } from "./call-with-governor.js";
+import type { MetaGovernor } from "./governor.js";
 import { normalizeAdAccountId } from "./ids.js";
 import {
   objectiveFromCampaign,
@@ -64,6 +67,22 @@ interface CopiesResponse {
 /** Id da cópia, tolerante ao nível (adset/campaign/ad) — a Graph nomeia por tipo. */
 function copiedIdOf(body: CopiesResponse): string | null {
   return body.copied_adset_id ?? body.copied_campaign_id ?? body.copied_ad_id ?? body.id ?? null;
+}
+
+/** Resposta do `/delivery_estimate` (v26): `data:[{ estimate_dau, estimate_mau_*, estimate_ready }]`.
+ *  `-1` = a plataforma ainda não estimou (público/lookalike novo) → tratado como "sem contagem". */
+interface RawDeliveryEstimate {
+  readonly estimate_dau?: number;
+  readonly estimate_mau_lower_bound?: number;
+  readonly estimate_mau_upper_bound?: number;
+  readonly estimate_ready?: boolean;
+}
+interface RawDeliveryEstimatePage {
+  readonly data?: readonly RawDeliveryEstimate[];
+}
+/** contagem válida = número presente e ≥ 0 (a Meta devolve -1 quando ainda não estimou). */
+function positiveCount(n: number | undefined): number | undefined {
+  return typeof n === "number" && n >= 0 ? n : undefined;
 }
 
 /**
@@ -256,6 +275,40 @@ export class MetaCreationService {
     const c = data.campaign;
     if (!c?.id) return null;
     return { campaignId: c.id, dailyBudgetMinor: Number(c.daily_budget ?? 0), lifetimeBudgetMinor: Number(c.lifetime_budget ?? 0) };
+  }
+
+  /**
+   * Estima o alcance de um targeting COMBINADO (Fatia 7 — fast-follow). Reusa a MESMA montagem de
+   * targeting + optimization_goal do `createAdSet` (fiel ao que será criado) e chama
+   * `GET /act_{id}/delivery_estimate`. Vocabulário Meta (estimate_dau/mau/-1) traduzido p/ neutro;
+   * sob o governor (read). Erro sobe → a casca degrada (best-effort, não bloqueia a proposta).
+   */
+  async deliveryEstimate(account: AdAccountRef, input: DeliveryEstimateInput, governor: MetaGovernor): Promise<DeliveryEstimate> {
+    const accountId = normalizeAdAccountId(account.adAccountId);
+    const { targeting } = await this.resolveTargeting(account, input.targeting);
+    const conv = resolveAdSetConversion(input.goal, input.pixelId);
+    const body = await callWithGovernor<RawDeliveryEstimatePage>(
+      accountId,
+      () =>
+        this.client.request<RawDeliveryEstimatePage>({
+          method: "GET",
+          path: `${accountId}/delivery_estimate`,
+          accessToken: account.accessToken,
+          params: { optimization_goal: conv.optimizationGoal, targeting_spec: JSON.stringify(targeting) },
+        }),
+      { governor },
+    );
+    const row = body.data?.[0];
+    if (!row || row.estimate_ready !== true) return { ready: false };
+    const dau = positiveCount(row.estimate_dau);
+    const mauMin = positiveCount(row.estimate_mau_lower_bound);
+    const mauMax = positiveCount(row.estimate_mau_upper_bound);
+    return {
+      ready: true,
+      ...(dau !== undefined ? { dailyActiveUsers: dau } : {}),
+      ...(mauMin !== undefined ? { monthlyReachMin: mauMin } : {}),
+      ...(mauMax !== undefined ? { monthlyReachMax: mauMax } : {}),
+    };
   }
 
   /** Capa (thumbnail) de um vídeo — a preferida da Meta, senão a 1ª. Usada como `image_url`

@@ -5,6 +5,7 @@ import type {
   CampaignStructure,
   Creative,
   CustomAudience,
+  DeliveryEstimate,
   EntityLevel,
   EntityStatus,
   InsightRow,
@@ -13,6 +14,7 @@ import type {
 import type {
   AdAccountRef,
   AdsPlatformPort,
+  DeliveryEstimateInput,
   DuplicateEntityInput,
   DuplicateResult,
   InsightsQuery,
@@ -365,6 +367,14 @@ export class MetaAdsAdapter implements AdsPlatformPort {
   async listCustomAudiences(account: AdAccountRef): Promise<CustomAudience[]> {
     try {
       return await this.audiences.list(account);
+    } catch (error) {
+      throw toAdsError(error);
+    }
+  }
+
+  async getDeliveryEstimate(account: AdAccountRef, input: DeliveryEstimateInput): Promise<DeliveryEstimate> {
+    try {
+      return await this.creation.deliveryEstimate(account, input, this.governor);
     } catch (error) {
       throw toAdsError(error);
     }

@@ -1,9 +1,28 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Redis } from "ioredis";
 import { AdsPlatformError } from "@trafego/shared/ports";
 import { MetaGraphClient } from "./client.js";
 import { MetaCreationService } from "./creation.js";
+import { MetaGovernor } from "./governor.js";
 
 const account = { adAccountId: "act_123", accessToken: "tok" };
+
+/** Redis in-memory mínimo (set EX, pttl) p/ o governor nos reads governados. */
+class FakeRedis {
+  private store = new Map<string, { value: string; expiresAt: number | null }>();
+  async set(key: string, value: string, mode?: string, ttlSec?: number): Promise<"OK"> {
+    this.store.set(key, { value, expiresAt: mode === "EX" && ttlSec ? Date.now() + ttlSec * 1000 : null });
+    return "OK";
+  }
+  async pttl(key: string): Promise<number> {
+    const e = this.store.get(key);
+    if (!e) return -2;
+    if (e.expiresAt === null) return -1;
+    const ms = e.expiresAt - Date.now();
+    return ms > 0 ? ms : -2;
+  }
+}
+const governor = (): MetaGovernor => new MetaGovernor({ redis: new FakeRedis() as unknown as Redis, rng: () => 0 });
 
 /** Stub: /copies devolve a cópia; POST no id da cópia (override de budget) devolve success. */
 function stubGraph(copiesBody: Record<string, unknown>) {
@@ -128,6 +147,60 @@ describe("MetaCreationService.duplicateEntity", () => {
     // não é AdsPlatformError (a tradução p/ port é do adapter, não do service) — é o MetaApiError cru.
     expect(err).not.toBeInstanceOf(AdsPlatformError);
     expect((err as Error).name).toBe("MetaApiError");
+  });
+});
+
+/** Stub do /delivery_estimate: captura a URL (params) e devolve o `data:[row]` dado. */
+function stubEstimate(row: Record<string, unknown> | null) {
+  const urls: string[] = [];
+  const spy = vi.fn(async (input: string | URL | Request) => {
+    urls.push(String(input));
+    return new Response(JSON.stringify({ data: row ? [row] : [] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  });
+  vi.stubGlobal("fetch", spy);
+  return { urls: () => urls };
+}
+
+describe("MetaCreationService.deliveryEstimate", () => {
+  it("mapeia estimate_ready + estimate_dau → { ready, dailyActiveUsers }", async () => {
+    stubEstimate({ estimate_ready: true, estimate_dau: 25000, estimate_mau_lower_bound: 400000, estimate_mau_upper_bound: 600000 });
+    const est = await svc().deliveryEstimate(account, { targeting: { kind: "advantage_plus" }, goal: "lead" }, governor());
+    expect(est).toEqual({ ready: true, dailyActiveUsers: 25000, monthlyReachMin: 400000, monthlyReachMax: 600000 });
+  });
+
+  it("estimate_dau = -1 (ainda não estimou) → ready true SEM contagem", async () => {
+    stubEstimate({ estimate_ready: true, estimate_dau: -1, estimate_mau_lower_bound: -1, estimate_mau_upper_bound: -1 });
+    const est = await svc().deliveryEstimate(account, { targeting: { kind: "advantage_plus" }, goal: "lead" }, governor());
+    expect(est).toEqual({ ready: true });
+  });
+
+  it("estimate_ready false → { ready: false }", async () => {
+    stubEstimate({ estimate_ready: false, estimate_dau: 100 });
+    const est = await svc().deliveryEstimate(account, { targeting: { kind: "advantage_plus" }, goal: "lead" }, governor());
+    expect(est).toEqual({ ready: false });
+  });
+
+  it("data vazio → { ready: false }", async () => {
+    stubEstimate(null);
+    const est = await svc().deliveryEstimate(account, { targeting: { kind: "advantage_plus" }, goal: "lead" }, governor());
+    expect(est).toEqual({ ready: false });
+  });
+
+  it("envia optimization_goal + targeting_spec com os públicos incluídos/excluídos", async () => {
+    const { urls } = stubEstimate({ estimate_ready: true, estimate_dau: 5000 });
+    await svc().deliveryEstimate(
+      account,
+      { targeting: { kind: "custom_audiences", includeIds: ["AUD_IN"], excludeIds: ["AUD_OUT"] }, goal: "lead" },
+      governor(),
+    );
+    const url = decodeURIComponent(urls()[0]!);
+    expect(url).toContain("/act_123/delivery_estimate");
+    expect(url).toContain("optimization_goal=LEAD_GENERATION");
+    expect(url).toContain("AUD_IN");
+    expect(url).toContain("AUD_OUT");
   });
 });
 

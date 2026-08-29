@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isConverterAudienceName, suggestConverterExclusions } from "./index.js";
+import { describeDeliveryEstimate, isConverterAudienceName, suggestConverterExclusions } from "./index.js";
 
 describe("isConverterAudienceName", () => {
   it("detecta convertidos por nome", () => {
@@ -32,5 +32,32 @@ describe("suggestConverterExclusions", () => {
   });
   it("sem convertidos → vazio", () => {
     expect(suggestConverterExclusions([{ id: "X", name: "Engajamento" }], [])).toEqual([]);
+  });
+});
+
+describe("describeDeliveryEstimate", () => {
+  it("não pronto → null (caller degrada pro sinal por-público)", () => {
+    expect(describeDeliveryEstimate({ ready: false })).toBeNull();
+    expect(describeDeliveryEstimate({ ready: false, dailyActiveUsers: 5000 })).toBeNull();
+  });
+  it("pronto mas sem contagem → null (nada honesto a dizer)", () => {
+    expect(describeDeliveryEstimate({ ready: true })).toBeNull();
+  });
+  it("alcance saudável → nota informativa (sem alarme)", () => {
+    const note = describeDeliveryEstimate({ ready: true, dailyActiveUsers: 25000 });
+    expect(note).toContain("~25 mil");
+    expect(note).not.toContain("⚠️");
+  });
+  it("alcance abaixo do piso → aviso de entrega fraca", () => {
+    const note = describeDeliveryEstimate({ ready: true, dailyActiveUsers: 400 });
+    expect(note).toContain("⚠️");
+    expect(note).toContain("~400");
+    expect(note).toContain("pode entregar pouco");
+  });
+  it("formata milhões com vírgula PT", () => {
+    expect(describeDeliveryEstimate({ ready: true, dailyActiveUsers: 1_200_000 })).toContain("~1,2 mi");
+  });
+  it("formata milhares fracionários com vírgula PT", () => {
+    expect(describeDeliveryEstimate({ ready: true, dailyActiveUsers: 1500 })).toContain("~1,5 mil");
   });
 });
