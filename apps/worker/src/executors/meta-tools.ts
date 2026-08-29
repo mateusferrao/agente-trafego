@@ -6,7 +6,7 @@
 // A regra de negócio (guardrail, autonomia, conflito) já rodou ANTES daqui.
 
 import { and, eq } from "drizzle-orm";
-import { agentToolCalls, auditLog, campaignDrafts } from "@trafego/db";
+import { agentToolCalls, approvals, auditLog, campaignDrafts } from "@trafego/db";
 import type { Action, ActionTarget } from "@trafego/shared/types";
 import type { AdAccountRef, MutationResult } from "@trafego/shared/ports";
 import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY, type OrgId, type RunId } from "@trafego/shared";
@@ -321,6 +321,12 @@ export function makeMetaToolExecutor(deps: WorkerDeps) {
         .update(campaignDrafts)
         .set({ status: "reverted" })
         .where(and(eq(campaignDrafts.id, args.draftId), eq(campaignDrafts.orgId, orgId)));
+      // Cancela a aprovação de ATIVAÇÃO pendente órfã (P0.1): a campanha foi pausada/arquivada, então
+      // o "2º OK pra ativar" não faz mais sentido — sem isso, aprovar tentaria ativar algo revertido.
+      await db
+        .update(approvals)
+        .set({ status: "expired" })
+        .where(and(eq(approvals.draftId, args.draftId), eq(approvals.orgId, orgId), eq(approvals.kind, "activation"), eq(approvals.status, "pending")));
     }
 
     logger.info({ toolCallId: toolCall.id, mode }, "meta-tool:creation reverted");

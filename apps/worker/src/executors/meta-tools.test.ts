@@ -194,7 +194,10 @@ describe("revertCreation (Slice 11 — teardown de criação/escala)", () => {
     expect(emitted.type).toBe("set_status");
     expect(emitted.params["status"]).toBe("PAUSED");
     expect(emitted.target.id).toBe("C9");
-    expect(updates.length).toBe(1); // campaign_drafts → reverted
+    expect(updates.length).toBe(2); // campaign_drafts → reverted + approval de ativação → expired
+    const statuses = updates.map((u) => (u.values as { status?: string }).status);
+    expect(statuses).toContain("reverted"); // rascunho
+    expect(statuses).toContain("expired"); // aprovação de ativação órfã cancelada
   });
 
   it("mode archive → set_status ARCHIVED", async () => {
@@ -215,7 +218,7 @@ describe("revertCreation (Slice 11 — teardown de criação/escala)", () => {
     const res = await makeMetaToolExecutor(deps).revertCreation({ orgId: "org1", account, toolCall: creationTc, mode: "archive" });
     expect(res.reverted).toBe(true);
     expect((mutate.mock.calls[0]![1]).params["status"]).toBe("ARCHIVED"); // aplicou de verdade
-    expect(updates.length).toBe(2); // atualiza o undo tool_call + campaign_drafts
+    expect(updates.length).toBe(3); // undo tool_call + campaign_drafts + approval de ativação
   });
 
   it("NÃO desarquiva: já arquivado + pedido de pausar → no-op honesto, sem re-mutar", async () => {
