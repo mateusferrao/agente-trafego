@@ -4,6 +4,7 @@ import type {
   AdEntity,
   ConversionGoal,
   Creative,
+  CustomAudience,
   EntityLevel,
   InsightRow,
   TargetingSpec,
@@ -183,6 +184,8 @@ export interface AdsPlatformPort {
    * (`campaign_name`) → `none`. Sempre rotula a origem; nunca atribui de outra entidade.
    */
   getWhatsappDestination(account: AdAccountRef, campaignId: string): Promise<WhatsappDestination>;
+  /** Lista os custom/saved audiences da conta (Fatia 7) — remarketing/exclusões reais. */
+  listCustomAudiences(account: AdAccountRef): Promise<CustomAudience[]>;
   /** Campanha-mãe de um adset + seu orçamento (diário E vitalício, minor) — p/ escalar vencedor
    *  sob CBO (orçamento na campanha, não no adset). `null` se a campanha não resolver. */
   getAdSetCampaignBudget(account: AdAccountRef, adsetId: string): Promise<{ campaignId: string; dailyBudgetMinor: number; lifetimeBudgetMinor: number } | null>;

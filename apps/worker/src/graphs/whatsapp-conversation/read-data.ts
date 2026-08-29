@@ -12,7 +12,7 @@
 import { and, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { adAccounts, adCreatives, agentRuns, agentToolCalls, agents, campaignDrafts, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
+import { adAccounts, adCreatives, agentRuns, agentToolCalls, agents, campaignDrafts, customAudiences, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
 import { daysAgoInTz, rankAdCreatives, resolveNamedMatch, todayInTz } from "@trafego/core";
 import { createAnalysisRepo, type AdCreativeCopyRow } from "../../modules/analysis/repo.js";
@@ -29,7 +29,7 @@ import {
 import { describeCreatedDraft } from "../../modules/apply/draft-summary.js";
 import type { ActivationApproval, Approval, ApprovalPort } from "@trafego/shared/ports";
 import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY } from "@trafego/shared";
-import type { CampaignDraftSpec, EntityLevel, InsightMetrics, OrgId, UnitAnalysis, WhatsappDestination } from "@trafego/shared";
+import type { CampaignDraftSpec, CustomAudience, EntityLevel, InsightMetrics, OrgId, UnitAnalysis, WhatsappDestination } from "@trafego/shared";
 import type { StoredInsightMetrics } from "@trafego/shared/types";
 import type { WorkerDeps } from "../../composition.js";
 
@@ -857,6 +857,45 @@ export async function resolveWhatsappNumber(
 }
 
 /**
+ * Lista os custom audiences REAIS da conta (Fatia 7) — DB-first (cache do run), Meta ao vivo
+ * no fallback (e re-cacheia). O agente para de CHUTAR público; propõe/segmenta com os reais.
+ */
+export async function listAudiencesData(
+  deps: WorkerDeps,
+  ctx: ReadToolContext,
+): Promise<{ hasData: true; audiences: CustomAudience[] } | { hasData: false; note: string }> {
+  const cached = await deps.db
+    .select({
+      externalId: customAudiences.externalId,
+      name: customAudiences.name,
+      subtype: customAudiences.subtype,
+      approximateCount: customAudiences.approximateCount,
+      isLookalike: customAudiences.isLookalike,
+    })
+    .from(customAudiences)
+    .where(and(eq(customAudiences.orgId, ctx.orgId as OrgId), eq(customAudiences.adAccountId, ctx.adAccountId)))
+    .orderBy(customAudiences.name);
+  const toNeutral = (r: (typeof cached)[number]): CustomAudience => ({
+    id: r.externalId,
+    name: r.name,
+    ...(r.subtype ? { subtype: r.subtype } : {}),
+    ...(typeof r.approximateCount === "number" ? { approximateCount: r.approximateCount } : {}),
+    isLookalike: r.isLookalike,
+  });
+  if (cached.length > 0) return { hasData: true, audiences: cached.map(toNeutral) };
+
+  // fallback ao vivo + re-cacheia (a próxima consulta já vem do banco).
+  const repo = createAnalysisRepo(deps.db);
+  const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
+  if (!account) return { hasData: false, note: "conta não encontrada" };
+  const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
+  const live = await deps.ports.ads.listCustomAudiences(ref);
+  if (live.length === 0) return { hasData: false, note: "não achei públicos salvos nessa conta" };
+  await repo.saveCustomAudiences(ctx.orgId, ctx.adAccountId, live);
+  return { hasData: true, audiences: live };
+}
+
+/**
  * Renderiza o número + origem de forma HONESTA e DETERMINÍSTICA (emitido verbatim pela
  * casca — o LLM não digita os dígitos, então não pode misatribuir). `meta_cta`/`meta_page`
  * = confiante; `campaign_name` = pede confirmação (o nome não é autoritativo); `none` =
@@ -1139,6 +1178,20 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     },
   );
 
+  const listAudiences = tool(
+    async () => {
+      if (noFocus()) return NEEDS_FOCUS;
+      logger.debug({ agentId: ctx.agentId }, "tool:list_audiences");
+      return asString(await listAudiencesData(deps, ctx));
+    },
+    {
+      name: "list_audiences",
+      description:
+        "Lista os públicos (custom audiences) REAIS da conta — id, nome, tamanho aproximado e se é lookalike. Use pra propor remarketing/exclusões com base nos públicos que EXISTEM (nunca invente público). Necessário antes de segmentar uma campanha por público.",
+      schema: z.object({}),
+    },
+  );
+
   const getAdsBreakdown = tool(
     async ({
       periodDays,
@@ -1197,5 +1250,6 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     explainRecommendation,
     getTopCreatives,
     getAdsBreakdown,
+    listAudiences,
   ];
 }

@@ -84,6 +84,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
     saveRecommendations: vi.fn(async (r: readonly RecommendationRow[]) => { saved.push(...r); }),
     saveAdCreatives: vi.fn(async () => {}),
     saveAdCreativeCopies: vi.fn(async () => {}),
+    saveCustomAudiences: vi.fn(async () => {}),
     saveConversionLabels: vi.fn(async (_o, _a, _p, labels: readonly ConversionLabelRow[]) => { savedLabels.push(...labels); }),
     consumeConfigChanged: vi.fn(async () => {}),
     loadDailyToolContext: vi.fn(async () => ({ touchedToday: new Set<string>(), budgetChangedToday: new Set<string>() })),

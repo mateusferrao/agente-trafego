@@ -40,7 +40,7 @@ export interface RawTargeting {
   readonly interests?: readonly RawAudienceRef[];
 }
 
-function isLookalikeName(name: string | undefined): boolean {
+export function isLookalikeName(name: string | undefined): boolean {
   if (!name) return false;
   const lower = name.toLowerCase();
   return LOOKALIKE_HINTS.some((hint) => lower.includes(hint));

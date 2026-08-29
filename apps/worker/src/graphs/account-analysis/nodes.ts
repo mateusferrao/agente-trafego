@@ -241,6 +241,14 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     // persiste os rótulos de conversão resolvidos (id→nome) p/ a config ler do banco
     // sem falar com a plataforma (Fatia 4). Genérico: platform como coluna.
     await repo.saveConversionLabels(state.orgId, state.adAccountId, ADS_PLATFORM, collectConversionLabels(entities));
+    // Cache dos custom audiences da conta (Fatia 7): a análise completa busca 1x + persiste;
+    // o chat lê DB-first (Meta só no fallback, evita rate limit). Best-effort — nunca aborta o run.
+    try {
+      const audiences = await deps.ports.ads.listCustomAudiences(ref);
+      await repo.saveCustomAudiences(state.orgId, state.adAccountId, audiences);
+    } catch (err) {
+      logger.warn({ runId: state.runId, err: String(err) }, "fetch_data:cache_audiences degradou");
+    }
     const rawInsights = await snapshots.listWindow(
       state.orgId,
       state.adAccountId,

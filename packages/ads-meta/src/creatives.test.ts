@@ -114,8 +114,8 @@ describe("MetaCreativesService.getCreatives", () => {
       { id: "AD5", creative: { object_story_spec: { page_id: "P2", link_data: { call_to_action: { type: "LEARN_MORE", value: { link: "https://site.com/x" } } } } } },
     ]);
     const [c] = await makeService().getCreatives(account, ["AD5"]);
-    expect(c.whatsappNumber).toBeUndefined();
-    expect(c.pageId).toBe("P2");
+    expect(c!.whatsappNumber).toBeUndefined();
+    expect(c!.pageId).toBe("P2");
   });
 
   it("sub-request que falhou (code != 200 ou null) é pulada, não derruba o lote", async () => {

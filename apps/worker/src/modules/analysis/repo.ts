@@ -4,8 +4,8 @@
 
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import type { Database } from "@trafego/db/client";
-import { adAccounts, adCreatives, agentMemory, agentMutedEntities, agentRunSteps, agentRuns, agentToolCalls, agents, conversionLabels, guardrailConfigs, orgs, platformConnections, playbookRules, recommendations } from "@trafego/db";
-import type { Action, ActionTarget, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, MarketReference, NotifyPolicy, PartialReason, PerformanceTier, PlaybookRule, Posture, RecommendationKind, RiskLevel, WhatsappSource } from "@trafego/shared";
+import { adAccounts, adCreatives, agentMemory, agentMutedEntities, agentRunSteps, agentRuns, agentToolCalls, agents, conversionLabels, customAudiences, guardrailConfigs, orgs, platformConnections, playbookRules, recommendations } from "@trafego/db";
+import type { Action, ActionTarget, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, MarketReference, NotifyPolicy, CustomAudience, PartialReason, PerformanceTier, PlaybookRule, Posture, RecommendationKind, RiskLevel, WhatsappSource } from "@trafego/shared";
 import { DEFAULT_POSTURE, GUARDRAIL_DEFAULTS, toGuardrailConfig, UNDO_TOOL_KEY } from "@trafego/shared";
 import { entityKeyOf, unseedIdentity } from "@trafego/core";
 import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
@@ -137,6 +137,12 @@ export interface AnalysisRepo {
     orgId: string,
     adAccountUuid: string,
     rows: readonly AdCreativeCopyRow[],
+  ): Promise<void>;
+  /** Upsert do cache de custom audiences da conta (Fatia 7) — populado no run, lido DB-first. */
+  saveCustomAudiences(
+    orgId: string,
+    adAccountUuid: string,
+    rows: readonly CustomAudience[],
   ): Promise<void>;
   /** Upsert dos rótulos de conversão resolvidos no run (id→nome), p/ a config ler do banco. */
   saveConversionLabels(
@@ -399,6 +405,10 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
             imageUrl: r.imageUrl,
             thumbnailUrl: r.thumbnailUrl,
             videoId: r.videoId,
+            whatsappNumber: r.whatsappNumber,
+            whatsappSource: r.whatsappSource,
+            campaignId: r.campaignId,
+            adsetId: r.adsetId,
             capturedAt: sql`now()`,
           })),
         )
@@ -412,6 +422,40 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
             imageUrl: sql`excluded.image_url`,
             thumbnailUrl: sql`excluded.thumbnail_url`,
             videoId: sql`excluded.video_id`,
+            whatsappNumber: sql`coalesce(excluded.whatsapp_number, ${adCreatives.whatsappNumber})`,
+            whatsappSource: sql`coalesce(excluded.whatsapp_source, ${adCreatives.whatsappSource})`,
+            campaignId: sql`coalesce(excluded.campaign_id, ${adCreatives.campaignId})`,
+            adsetId: sql`coalesce(excluded.adset_id, ${adCreatives.adsetId})`,
+            capturedAt: sql`excluded.captured_at`,
+            updatedAt: sql`now()`,
+          },
+        });
+    },
+
+    async saveCustomAudiences(orgId, adAccountUuid, rows) {
+      if (rows.length === 0) return;
+      // upsert por (conta, público externo) — 1 linha viva; dados do run mais recente vencem.
+      await db
+        .insert(customAudiences)
+        .values(
+          rows.map((a) => ({
+            orgId,
+            adAccountId: adAccountUuid,
+            externalId: a.id,
+            name: a.name,
+            subtype: a.subtype ?? null,
+            approximateCount: a.approximateCount ?? null,
+            isLookalike: a.isLookalike,
+            capturedAt: sql`now()`,
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [customAudiences.adAccountId, customAudiences.externalId],
+          set: {
+            name: sql`excluded.name`,
+            subtype: sql`excluded.subtype`,
+            approximateCount: sql`excluded.approximate_count`,
+            isLookalike: sql`excluded.is_lookalike`,
             capturedAt: sql`excluded.captured_at`,
             updatedAt: sql`now()`,
           },

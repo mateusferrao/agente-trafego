@@ -309,6 +309,13 @@
       "when": 1788019461153,
       "tag": "0043_safe_warbound",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1788021641073,
+      "tag": "0044_quick_rumiko_fujikawa",
+      "breakpoints": true
     }
   ]
 }
