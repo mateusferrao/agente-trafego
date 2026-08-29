@@ -112,6 +112,8 @@ export interface RawPromotedObject {
   readonly custom_event_type?: string;
   readonly custom_conversion_id?: string;
   readonly page_id?: string;
+  /** destino CTWA (click-to-WhatsApp) — número que recebe as conversas do conjunto. */
+  readonly whatsapp_phone_number?: string;
 }
 
 /**

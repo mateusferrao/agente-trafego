@@ -67,7 +67,7 @@ const ENTITY_EDGE: Readonly<Record<ListableLevel, string>> = {
 const ENTITY_FIELDS: Readonly<Record<ListableLevel, string>> = {
   campaign: "id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,objective",
   adset:
-    "id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,campaign_id,optimization_goal,promoted_object{pixel_id,custom_event_type,custom_conversion_id,page_id},targeting{geo_locations,age_min,age_max,custom_audiences,excluded_custom_audiences,flexible_spec,interests}",
+    "id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,campaign_id,optimization_goal,promoted_object{pixel_id,custom_event_type,custom_conversion_id,page_id,whatsapp_phone_number},targeting{geo_locations,age_min,age_max,custom_audiences,excluded_custom_audiences,flexible_spec,interests}",
   ad: "id,name,status,effective_status,adset_id,campaign_id",
 };
 
@@ -296,8 +296,9 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     const lifetimeBudget = toMajorBudget(node.lifetime_budget);
     const budgetRemaining = toMajorBudget(node.budget_remaining);
     const objective = this.deriveObjective(level, node, resolved);
-    // público só existe no nível adset (o targeting mora lá).
+    // público + destino WhatsApp CTWA só existem no nível adset (targeting + promoted_object moram lá).
     const audience = level === "adset" ? audienceFromTargeting(node.targeting) : undefined;
+    const waDigits = level === "adset" ? (node.promoted_object?.whatsapp_phone_number ?? "").replace(/\D+/g, "") : "";
     return {
       id: node.id ?? "",
       level,
@@ -311,6 +312,7 @@ export class MetaAdsAdapter implements AdsPlatformPort {
       ...(budgetRemaining !== undefined ? { budgetRemaining } : {}),
       ...(objective ? { objective } : {}),
       ...(audience ? { audience } : {}),
+      ...(waDigits.length > 0 ? { whatsappNumber: waDigits } : {}),
     };
   }
 

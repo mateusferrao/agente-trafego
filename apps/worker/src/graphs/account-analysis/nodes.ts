@@ -386,6 +386,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       // no chat). O tier `meta_page` (1 GET/Página) fica p/ o fallback ao vivo — não onera
       // o run. Cache DB-first; live é fallback.
       const adEntityById = new Map((state.entities ?? []).filter((e) => e.level === "ad").map((e) => [e.id, e]));
+      const adsetById = new Map((state.entities ?? []).filter((e) => e.level === "adset").map((e) => [e.id, e]));
       const campaignNameById = new Map(
         (state.entities ?? []).filter((e) => e.level === "campaign").map((e) => [e.id, e.name]),
       );
@@ -393,14 +394,19 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
         const perf = adPerfById.get(c.adId);
         const entity = adEntityById.get(c.adId);
         const campaignId = entity?.campaignId ?? null;
+        // destino CTWA do CONJUNTO (promoted_object) — a fonte autoritativa em click-to-WhatsApp,
+        // onde o CTA vem sem número. Cacheia aqui p/ o chat ler DB-first (sem GET ao vivo).
+        const fromPromoted = entity?.adsetId ? (adsetById.get(entity.adsetId)?.whatsappNumber ?? null) : null;
         const campaignName = campaignId ? campaignNameById.get(campaignId) : undefined;
         const fromName = campaignName ? extractPhoneFromName(campaignName) : null;
-        const whatsappNumber = c.whatsappNumber ?? fromName ?? null;
-        const whatsappSource: WhatsappSource | null = c.whatsappNumber
-          ? "meta_cta"
-          : fromName
-            ? "campaign_name"
-            : null;
+        const whatsappNumber = fromPromoted ?? c.whatsappNumber ?? fromName ?? null;
+        const whatsappSource: WhatsappSource | null = fromPromoted
+          ? "meta_promoted_object"
+          : c.whatsappNumber
+            ? "meta_cta"
+            : fromName
+              ? "campaign_name"
+              : null;
         return {
           adId: c.adId,
           creativeId: c.id ?? null,

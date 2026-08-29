@@ -41,6 +41,10 @@ export interface AdEntity {
   readonly objective?: EntityObjective;
   /** Perfil de público do adset (§Bloco 2) — presente só no nível adset, quando há targeting. */
   readonly audience?: AudienceProfile;
+  /** Número de WhatsApp de destino do conjunto (CTWA — `promoted_object.whatsapp_phone_number`),
+   *  só no nível adset. Fonte autoritativa do destino em campanha click-to-WhatsApp; o run cacheia
+   *  em `ad_creatives` (por ad, via o adset) → chat DB-first sem GET ao vivo. */
+  readonly whatsappNumber?: string;
 }
 
 /** Estágio do público: frio (prospecção) × quente (remarketing) × indeterminado. */

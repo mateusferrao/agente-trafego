@@ -125,6 +125,23 @@ describe("MetaAdsAdapter.listEntities", () => {
     expect(e?.audience).toMatchObject({ stage: "remarketing", customAudienceCount: 1, geo: ["BR"], ageMin: 25 });
   });
 
+  it("adset CTWA → whatsappNumber do promoted_object (cache do destino, dígitos)", async () => {
+    stub({
+      data: [
+        {
+          id: "AS3",
+          name: "Set CTWA",
+          effective_status: "ACTIVE",
+          campaign_id: "C1",
+          optimization_goal: "CONVERSATIONS",
+          promoted_object: { page_id: "P1", whatsapp_phone_number: "+55 31 95349-1398" },
+        },
+      ],
+    });
+    const [e] = await makeAdapter().listEntities(account, "adset");
+    expect(e?.whatsappNumber).toBe("5531953491398");
+  });
+
   it("ad → sem objetivo próprio (herda do adset no assemble), parentId = adset", async () => {
     stub({ data: [{ id: "AD1", name: "Ad", effective_status: "ACTIVE", adset_id: "AS1", campaign_id: "C1" }] });
     const [e] = await makeAdapter().listEntities(account, "ad");
