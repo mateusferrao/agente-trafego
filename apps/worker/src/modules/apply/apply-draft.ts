@@ -151,9 +151,11 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
   }
   const allowed = check.allowed;
 
-  // valida pré-requisitos do criar-do-zero (Page + criativo) — sem eles não dá pra criar.
+  // valida pré-requisitos do criar-do-zero: OU reuso de criativos por referência (cópia fiel,
+  // Fatia 7 — não precisa de Page/criativo, o creative_id já traz tudo), OU Page + criativo novo.
   if (allowed.kind === "from_scratch") {
-    if (!allowed.spec.pageId || !allowed.spec.creative) {
+    const hasRefs = (allowed.spec.creativeRefs?.length ?? 0) > 0;
+    if (!hasRefs && (!allowed.spec.pageId || !allowed.spec.creative)) {
       return { kind: "blocked", reason: "faltou a Página ou o criativo pra criar a campanha" };
     }
   }

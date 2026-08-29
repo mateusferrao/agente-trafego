@@ -896,6 +896,24 @@ export async function listAudiencesData(
 }
 
 /**
+ * Campanhas AO VIVO da Meta (id/nome/status) — fallback quando não há nada analisado ainda
+ * (conta nova / campanhas pausadas nunca analisadas). "Analisadas primeiro, ao vivo no
+ * fallback" (§Fatia 7): permite copiar/referenciar uma campanha mesmo sem run prévio.
+ */
+export async function listCampaignsLive(
+  deps: WorkerDeps,
+  ctx: ReadToolContext,
+): Promise<{ hasData: true; live: true; campaigns: Array<{ id: string; name: string; status: string }> } | NoData> {
+  const repo = createAnalysisRepo(deps.db);
+  const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
+  if (!account) return { hasData: false, note: "conta não encontrada" };
+  const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
+  const entities = await deps.ports.ads.listEntities(ref, "campaign");
+  if (entities.length === 0) return { hasData: false, note: "a conta não tem campanhas na Meta" };
+  return { hasData: true, live: true, campaigns: entities.map((e) => ({ id: e.id, name: e.name, status: e.status })) };
+}
+
+/**
  * Renderiza o número + origem de forma HONESTA e DETERMINÍSTICA (emitido verbatim pela
  * casca — o LLM não digita os dígitos, então não pode misatribuir). `meta_cta`/`meta_page`
  * = confiante; `campaign_name` = pede confirmação (o nome não é autoritativo); `none` =
@@ -1039,7 +1057,11 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
           ),
         );
       }
-      return asString(await listCampaignsData(db, ctx.agentId));
+      // analisadas primeiro (curadas, com tier/métrica); sem nenhuma analisada → ao vivo
+      // (id/nome/status) pra o agente ainda conseguir referenciar/copiar (Fatia 7).
+      const analyzed = await listCampaignsData(db, ctx.agentId);
+      if (analyzed.hasData) return asString(analyzed);
+      return asString(await listCampaignsLive(deps, ctx));
     },
     {
       name: "list_campaigns",
