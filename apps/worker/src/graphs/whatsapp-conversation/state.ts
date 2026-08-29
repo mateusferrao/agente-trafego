@@ -91,6 +91,18 @@ export interface PendingConfigChange {
   readonly runRelevantChanged: boolean;
 }
 
+/**
+ * Escolha numerada pendente (Fatia 7): desambiguação de campanha/público. Serializável
+ * (vai pro checkpointer). A resposta do usuário ("1") resolve pelo `id` da opção — a casca
+ * não deixa o LLM re-mapear nome→id (evita a misatribuição cross-entity do telefone).
+ */
+export interface PendingChoice {
+  readonly kind: "campaign" | "audience";
+  /** ISO — TTL (uma escolha tardia não resolve algo esquecido). */
+  readonly expiresAt: string;
+  readonly options: readonly { readonly n: number; readonly id: string; readonly name: string }[];
+}
+
 export const WhatsappConversationState = Annotation.Root({
   // histórico da conversa (reducer append padrão do LangGraph)
   messages: Annotation<BaseMessage[]>({
@@ -119,6 +131,12 @@ export const WhatsappConversationState = Annotation.Root({
   // eco+confirma de mudança de CONFIG do agente (S2.3): metas/autonomia/guardrails/
   // cadência/arquétipo/playbook/identidade. Config não toca a Meta (ramo próprio).
   pendingConfigChange: Annotation<PendingConfigChange | null>,
+
+  // âncora determinística de escolha numerada (Fatia 7): quando um nome fica ambíguo
+  // (campanha p/ copiar, público p/ segmentar), a casca lista opções numeradas COM id e
+  // grava aqui; "pode ser a 1" resolve 1→id SEM o LLM re-mapear nome→id (fecha a porta de
+  // misatribuição). Simétrico ao foco de conta determinístico (`resolveFocusMatch`).
+  pendingChoice: Annotation<PendingChoice | null>,
 });
 
 export type WhatsappConversationStateType = typeof WhatsappConversationState.State;

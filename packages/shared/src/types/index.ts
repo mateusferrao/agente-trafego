@@ -118,11 +118,45 @@ export interface Creative {
   readonly thumbnailUrl?: string;
   readonly videoId?: string;
   /**
+   * Número de WhatsApp de destino resolvido do CTA do criativo (Fatia 7): o adapter
+   * traversa o `object_story_spec…call_to_action.value` (vocabulário Meta só lá) e
+   * extrai o telefone via `extractPhoneFromUrl` (core puro). Campo NEUTRO — a mesma
+   * fonte alimenta o cache no run e o `getWhatsappDestination` ao vivo (sem divergir).
+   */
+  readonly whatsappNumber?: string;
+  /**
    * Frames-pôster p/ a visão (Fatia 6c): imagem estática = 1; vídeo = N frames HD
    * espaçados (Meta `/{video_id}?fields=thumbnails`, 1080p) em vez do selo pequeno.
    * O resolver manda todos como conteúdo multimodal. Ordem = abertura → fim.
    */
   readonly posterFrames?: readonly string[];
+}
+
+// ─── Destino de WhatsApp (Fatia 7, genérico) ─────────────────────────────
+// De onde veio o número (rótulo de honestidade): CTA do criativo (autoritativo) →
+// Página conectada → nome da campanha (convenção do cliente, pede confirmação) → nenhum.
+export const WHATSAPP_SOURCES = ["meta_cta", "meta_page", "campaign_name", "none"] as const;
+export type WhatsappSource = (typeof WHATSAPP_SOURCES)[number];
+
+/** Número de WhatsApp de destino de uma campanha + a origem de onde foi resolvido. */
+export interface WhatsappDestination {
+  /** telefone só-dígitos (E.164 sem "+") ou null quando `source==="none"`. */
+  readonly number: string | null;
+  readonly source: WhatsappSource;
+  /** nome da entidade de onde o número foi lido (quando `campaign_name`), p/ o eco. */
+  readonly entityName?: string;
+}
+
+// ─── Público salvo / custom audience (Fatia 7, genérico) ──────────────────
+/** Custom/saved audience da conta — taxonomia neutra (vocabulário Meta só no adapter). */
+export interface CustomAudience {
+  readonly id: string;
+  readonly name: string;
+  /** subtipo neutro do público (ex: "custom" | "lookalike" | "website" | "engagement"). */
+  readonly subtype?: string;
+  readonly approximateCount?: number;
+  /** heurística de nome (`LOOKALIKE_HINTS`) — lookalike × retarget quente. */
+  readonly isLookalike: boolean;
 }
 
 // ─── Conversão (genérico, agnóstico de plataforma) ───────────────────────
@@ -682,7 +716,18 @@ export interface CreativeAssetRef {
  */
 export type TargetingSpec =
   | { readonly kind: "reuse_adset"; readonly sourceAdsetId: string }
-  | { readonly kind: "advantage_plus" };
+  | { readonly kind: "advantage_plus" }
+  /**
+   * Remarketing/segmentado (Fatia 7): mantém geo/idade do adset-fonte e troca só o
+   * público — inclui `includeIds`, exclui `excludeIds` (custom audiences reais da BM),
+   * expansões (advantage/lookalike/geo) zeradas. Vocabulário Meta fica no adapter.
+   */
+  | {
+      readonly kind: "custom_audiences";
+      readonly sourceAdsetId: string;
+      readonly includeIds: readonly string[];
+      readonly excludeIds: readonly string[];
+    };
 
 /**
  * Estrutura proposta da campanha — NEUTRA + VERSIONADA (validada nas bordas por zod,
@@ -710,6 +755,43 @@ export interface CampaignDraftSpec {
   readonly pixelId?: string;
   /** URL de destino do anúncio (link_data.link) — inferida da conta. */
   readonly linkUrl?: string;
+  // ─── cópia fiel de campanha (Fatia 7, kind `copy`) ───
+  /** campanha-base copiada (leitura fiel escopada, NÃO account-wide). */
+  readonly sourceCampaignId?: string;
+  /** otimização de orçamento herdada da fonte (CBO = na campanha; ABO = no adset). */
+  readonly budgetMode?: BudgetMode;
+  /**
+   * Criativos da fonte REUSADOS por referência (`creative_id` da Meta) — 1 anúncio por
+   * ref, preservando `object_story_spec`/destino WhatsApp sem rebuild. Vazio → usa
+   * `creative`+`copyVariants` (criar-do-zero). `copy`+refs = cópia fiel dos N anúncios.
+   */
+  readonly creativeRefs?: readonly string[];
+}
+
+/** Otimização de orçamento (neutro): campanha (CBO) × conjunto (ABO). */
+export type BudgetMode = "cbo" | "abo";
+
+/**
+ * Estrutura NEUTRA lida de uma campanha existente p/ cópia fiel (Fatia 7). Só o adapter
+ * conhece o vocabulário Meta (ODAX/optimization_goal/promoted_object); aqui é taxonomia
+ * neutra. `readCampaignStructure` popula; o draft de cópia deriva daqui + overrides do dono.
+ */
+export interface CampaignStructure {
+  readonly campaignId: string;
+  readonly name: string;
+  readonly budgetMode: BudgetMode;
+  /** budget da fonte na unidade mínima (na campanha se CBO, no adset se ABO). */
+  readonly dailyBudgetMinor?: number;
+  readonly lifetimeBudgetMinor?: number;
+  readonly objective: ConversionGoal;
+  readonly specialAdCategories: readonly string[];
+  /** conjunto representativo (a cópia é 1-1-N): id + targeting neutro + destino WhatsApp. */
+  readonly sourceAdsetId: string;
+  readonly targeting: AudienceProfile;
+  /** destino de WhatsApp do conjunto/criativo (quando a base otimiza mensagens). */
+  readonly whatsappDestination?: WhatsappDestination;
+  /** `creative_id`s dos anúncios ativos da campanha — reusados por referência na cópia. */
+  readonly creativeRefs: readonly string[];
 }
 
 /** Entidade-origem de uma duplicação (o que foi copiado). */
