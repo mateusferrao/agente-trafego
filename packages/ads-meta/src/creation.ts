@@ -158,11 +158,15 @@ export class MetaCreationService {
       status: input.status === "active" ? "ACTIVE" : "PAUSED",
     };
     if (isCbo) {
+      // CBO (Advantage campaign budget): orçamento + lance na CAMPANHA. Basta o budget de
+      // campanha + bid_strategy — NÃO setar is_adset_budget_sharing_enabled (a Meta infere CBO
+      // do budget de campanha; declarar o flag junto é redundante/conflitante). Vitalício de
+      // campanha exigiria schedule (end_time) — hoje priorizamos diário (vitalício = fast-follow).
       if ((input.dailyBudgetMinor ?? 0) > 0) params["daily_budget"] = String(input.dailyBudgetMinor);
       else params["lifetime_budget"] = String(input.lifetimeBudgetMinor);
       params["bid_strategy"] = "LOWEST_COST_WITHOUT_CAP";
-      params["is_adset_budget_sharing_enabled"] = "true";
     } else {
+      // ABO: budget mora no ADSET → a Meta (v26) exige declarar que a campanha não compartilha.
       params["is_adset_budget_sharing_enabled"] = "false";
     }
     const campaignId = await this.createOnAccount(account, "campaigns", params);

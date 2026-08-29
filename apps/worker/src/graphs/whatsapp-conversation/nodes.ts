@@ -147,7 +147,9 @@ function guardFinalAnswer(text: string, systemPrompt: string, windowed: readonly
     else history.push(c);
   }
   const known = collectGroundedNumbers({ toolResults, configText: [systemPrompt], history });
-  const allowedPhones = new Set(toolResults.flatMap((t) => phoneTokensInText(t)));
+  // telefone ancorado = veio de tool NESTE turno OU já apareceu antes no fio (render verbatim /
+  // o próprio usuário) — repetir um número já dito no thread não é misatribuição.
+  const allowedPhones = new Set([...toolResults, ...history].flatMap((t) => phoneTokensInText(t)));
   const money = flagUngroundedNumbers(text, known);
   const phones = checkPhoneAttribution(text, allowedPhones);
   if (money.length === 0 && phones.length === 0) return text;

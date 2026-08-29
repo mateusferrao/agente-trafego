@@ -502,7 +502,7 @@ export async function listPendingData(
     const drafts = await db
       .select({ id: campaignDrafts.id, kind: campaignDrafts.kind, spec: campaignDrafts.spec })
       .from(campaignDrafts)
-      .where(inArray(campaignDrafts.id, draftIds));
+      .where(and(eq(campaignDrafts.orgId, orgId as OrgId), inArray(campaignDrafts.id, draftIds)));
     const byDraftId = new Map(drafts.map((d) => [d.id, d]));
     activationItems = activations.map((a) => {
       const draft = byDraftId.get(a.draftId);

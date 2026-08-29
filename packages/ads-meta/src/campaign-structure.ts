@@ -122,6 +122,8 @@ export class MetaCampaignStructureService {
       ...(isCbo ? (campDaily > 0 ? { dailyBudgetMinor: campDaily } : { lifetimeBudgetMinor: campLifetime }) : setDaily > 0 ? { dailyBudgetMinor: setDaily } : setLifetime > 0 ? { lifetimeBudgetMinor: setLifetime } : {}),
       objective,
       specialAdCategories: campaign.special_ad_categories ?? [],
+      // pixel da fonte → threaded no createAdSet da cópia (senão conversão falha sem promoted_object).
+      ...(source?.promoted_object?.pixel_id ? { pixelId: source.promoted_object.pixel_id } : {}),
       sourceAdsetId: source?.id ?? "",
       targeting,
       creativeRefs,

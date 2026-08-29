@@ -722,7 +722,7 @@ export async function buildCapabilitiesText(
       ...(canCreate ? ["copiar a estrutura de uma campanha sua pra outra (ex: remarketing), reusando os criativos e trocando só o público"] : []),
     ];
     parts.push(
-      `🚀 Também ${abilities.join(", ")}. Depois de eu propor, você ajusta tudo conversando (budget, ativar/pausar, público, nº de variações) — crio/escalo/copio sempre PAUSADO (a Meta revisa antes) e só ATIVO de verdade com um 2º OK seu, separado.`,
+      `🚀 Também ${abilities.join(", ")}. Depois de eu propor, você ajusta tudo conversando (budget, ativar/pausar, público, nº de variações) — tudo nasce PAUSADO; se você pedir pra já ativar, eu confirmo a ativação num 2º OK separado (a Meta revisa antes).`,
     );
     if (canCreate) {
       parts.push("🔢 Números que eu uso vêm sempre da conta/ferramenta — número de WhatsApp de destino eu confirmo pela campanha certa (nunca de outra), e público eu pego dos públicos reais da sua conta (não invento).");

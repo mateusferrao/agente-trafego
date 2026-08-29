@@ -31,8 +31,15 @@ export class MetaWhatsappDestinationService {
 
   async resolve(account: AdAccountRef, campaignId: string): Promise<WhatsappDestination> {
     const accountId = normalizeAdAccountId(account.adAccountId);
-    const adIds = await this.campaignAdIds(accountId, account.accessToken, campaignId);
-    const creatives = adIds.length > 0 ? await this.creatives.getCreatives(account, adIds) : [];
+    // CTA dos criativos (autoritativo). Falha (rate-limit/cooldown) NÃO derruba a resolução:
+    // cai pros tiers seguintes (página → nome), que são baratos e igualmente honestos.
+    let creatives: Awaited<ReturnType<MetaCreativesService["getCreatives"]>> = [];
+    try {
+      const adIds = await this.campaignAdIds(accountId, account.accessToken, campaignId);
+      if (adIds.length > 0) creatives = await this.creatives.getCreatives(account, adIds);
+    } catch {
+      creatives = [];
+    }
 
     const cta = creatives.find((c) => c.whatsappNumber);
     if (cta?.whatsappNumber) return { number: cta.whatsappNumber, source: "meta_cta" };

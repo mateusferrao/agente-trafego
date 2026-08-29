@@ -674,8 +674,12 @@ export async function proposeCopyCampaign(
       }
     : { kind: "reuse_adset", sourceAdsetId: structure.sourceAdsetId };
 
-  const sourceBudgetMinor = structure.dailyBudgetMinor ?? structure.lifetimeBudgetMinor ?? DEFAULT_STARTER_BUDGET_MINOR;
-  const requested = args.budgetReais ? Math.round(args.budgetReais * MINOR_PER_UNIT) : sourceBudgetMinor;
+  // Budget da cópia é sempre DIÁRIO (o create só escreve daily). Fonte com budget DIÁRIO →
+  // reusa; fonte VITALÍCIA → NÃO trata o total como diário (overspend); usa um diário inicial
+  // seguro e avisa. Override explícito do usuário sempre vence.
+  const sourceIsLifetime = structure.dailyBudgetMinor === undefined && structure.lifetimeBudgetMinor !== undefined;
+  const sourceDailyMinor = structure.dailyBudgetMinor ?? DEFAULT_STARTER_BUDGET_MINOR;
+  const requested = args.budgetReais ? Math.round(args.budgetReais * MINOR_PER_UNIT) : sourceDailyMinor;
   const cap = ac.cfg.maxNewDailyBudgetMinor;
   const dailyBudgetMinor = cap != null ? Math.min(requested, cap) : requested;
 
@@ -693,6 +697,8 @@ export async function proposeCopyCampaign(
     sourceCampaignId: args.sourceCampaignId,
     budgetMode: structure.budgetMode,
     specialAdCategories: structure.specialAdCategories,
+    // pixel da fonte → o createAdSet monta o promoted_object (conversão não falha). Mensagens não tem.
+    ...(structure.pixelId ? { pixelId: structure.pixelId } : {}),
     name,
   };
   const { draftId, approvalId } = await persistDraftAndApproval(deps, ctx, "from_scratch", spec, origin, {
@@ -703,9 +709,12 @@ export async function proposeCopyCampaign(
   const audienceLine = hasAudience
     ? `\n• *Público:* remarketing selecionado${args.excludeAudienceIds?.length ? " (com exclusões)" : ""}, mantendo geo/idade da original`
     : `\n• *Público:* o mesmo da campanha-base`;
+  const budgetLine = sourceIsLifetime
+    ? `• *Orçamento:* ${structure.budgetMode.toUpperCase()} · ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia (a original usa orçamento vitalício; comecei com um diário seguro — ajuste se quiser)`
+    : `• *Orçamento:* ${structure.budgetMode.toUpperCase()} · ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia`;
   const echo = [
     `Vou *copiar a estrutura* de "${baseName}" numa campanha nova:`,
-    `• *Orçamento:* ${structure.budgetMode.toUpperCase()} · ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia`,
+    budgetLine,
     `• *Anúncios:* ${structure.creativeRefs.length} da original, reusados (mantém o criativo e o destino/WhatsApp)${audienceLine}`,
     `• *Objetivo:* ${goalNounPt(goal)} · ${activationPhrase("paused")}.`,
     `Confirma? (dá pra ajustar orçamento/público antes)`,
