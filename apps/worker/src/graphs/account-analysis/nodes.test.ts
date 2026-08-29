@@ -106,6 +106,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
   const notify: NotifyRepo = {
     alreadyNotified: vi.fn(async () => true),
     loadTarget: vi.fn(async () => null),
+    focusForRef: vi.fn(async () => {}),
     resolveInboundContact: vi.fn(async () => null),
     alreadyProcessed: vi.fn(async () => false),
     lastInboundForQuote: vi.fn(async () => null),

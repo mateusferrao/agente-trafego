@@ -980,7 +980,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       const emptyDeliver = isWhatsapp || (state.trigger === "on_demand" && !runPushOff);
       if (state.account && emptyDeliver) {
         const offer = state.notifyPolicy?.reactivation?.enabled !== true;
-        return { outboundMessage: buildNoActivityMessage(state.account.name, offer), narrative: null };
+        return { outboundMessage: buildNoActivityMessage(state.account.name, offer), narrative: null, offersReactivation: offer };
       }
       return { outboundMessage: null, narrative: null }; // sem análise → nada a renderizar
     }
@@ -1091,6 +1091,15 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       meta: { runId: state.runId },
     });
     if (!sent) logger.warn({ runId: state.runId }, "notify:envio falhou/sem instância — sem push");
+    // Empty-state com oferta de reativação empurrado ao alvo ORG-LEVEL (não uma resposta de
+    // WhatsApp-origin): foca a conta-alvo na conversa, pra o "sim" do dono resolver naquela conta
+    // e conseguir ligar a reativação por chat — senão, em org multi-conta, cairia no concierge
+    // sem config ("é no site") e a oferta seria vazia (contradição achada no E2E ao vivo).
+    if (sent && state.offersReactivation && state.notifyTarget == null) {
+      await notifyRepo.focusForRef(state.orgId, ref, state.adAccountId).catch((err) =>
+        logger.warn({ runId: state.runId, err: String(err) }, "notify:focus-on-offer degradou"),
+      );
+    }
     return {};
   }
 

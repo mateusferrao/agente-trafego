@@ -58,6 +58,12 @@ export interface NotifyRepo {
   lastInboundForQuote(conversationId: string): Promise<OutboundQuote | null>;
   /** Garante a conversa (org/contato) e devolve seu id. */
   ensureConversation(orgId: string, contactId: string): Promise<string>;
+  /**
+   * Foca a conta-alvo na conversa de um push proativo org-level (DM), pra a resposta do dono
+   * resolver naquela conta (Fatia 7 — fecha a contradição oferta × concierge multi-conta).
+   * Grupo = foco por-participante (setado no reply), então no-op aqui.
+   */
+  focusForRef(orgId: string, ref: ConversationRef, adAccountUuid: string): Promise<void>;
   /** Grava uma mensagem na conversa (in/out) com meta opcional; devolve o id da linha. */
   recordMessage(
     conversationId: string,
@@ -231,6 +237,15 @@ export function createNotifyRepo(db: Database): NotifyRepo {
         .values({ orgId, contactId })
         .returning({ id: conversations.id });
       return created?.id ?? "";
+    },
+
+    async focusForRef(orgId, ref, adAccountUuid) {
+      if (ref.kind !== "contact") return; // grupo: foco por-participante (setado no reply)
+      const conversationId = await this.ensureConversation(orgId, ref.contactId);
+      await db
+        .update(conversations)
+        .set({ focusedAccountId: adAccountUuid, focusedAt: new Date() })
+        .where(and(eq(conversations.id, conversationId), eq(conversations.orgId, orgId)));
     },
 
     async recordMessage(conversationId, direction, body, meta) {

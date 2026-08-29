@@ -95,6 +95,10 @@ export const AccountAnalysisState = Annotation.Root({
   usage: Annotation<AccumulatedTokenUsage | null>,
   // mensagem de WhatsApp redigida (3b); null = nada acionável / não é cron → silêncio.
   outboundMessage: Annotation<string | null>,
+  // a msg carrega uma oferta de ligar a REATIVAÇÃO (empty-state, F4): o notify foca a conta-alvo
+  // na conversa org-level, pra a resposta ("sim") conseguir ligar por chat (fecha a contradição
+  // oferta-proativa × concierge multi-conta). Só o empty-state seta — blast radius mínimo.
+  offersReactivation: Annotation<boolean>,
   // narrativa voiceada (SEMPRE renderada quando há análise) — persistida no run p/ o
   // site exibir; independe da decisão de ENTREGA (outboundMessage). null = sem análise.
   narrative: Annotation<string | null>,
