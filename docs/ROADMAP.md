@@ -775,10 +775,13 @@ telefone, listar+usar custom audiences da BM, e **cópia fiel de campanha** via 
   (`pageId`/`pixelId`); resolver o nome legível da Página (viola §13 jargão) — fast-follow de UX.
 - **Reforçar `error_user_msg`/`error_user_title` da Meta** na mensagem de erro (cross-cutting, já
   anotado na Fatia 7) — continua valendo p/ a saga de cópia.
-- **`reuse_adset` cai em Advantage+ amplo quando a leitura do targeting da fonte falha** (403/erro
-  swallow → `broadTargeting`). Na cópia fiel isso é perda de fidelidade num caminho de gasto —
-  mitigado hoje por nascer PAUSADA + eco + 2º OK. Fast-follow: falhar honesto (ou sinalizar) em
-  vez de amplo silencioso. (`creation.ts` `resolveTargeting`/`sourceAdsetTargeting`.)
+- ✅ **`reuse_adset` cai em Advantage+ amplo quando a leitura do targeting da fonte falha —
+  RESOLVIDO (2026-08-30, commit `ede6898`).** `proposeCreateCampaign`/`proposeCopyCampaign` agora
+  resolvem+cacheiam o público real da fonte NO PROPOSE (`getAudienceProfile` + `ResolvedAudienceSnapshot`
+  gravado no rascunho); leitura falha → bloqueia honesto ("não consegui ler o público da fonte
+  agora — não vou herdar às cegas"), nunca mais cai em amplo silencioso. `resolveTargeting` usa o
+  snapshot quando presente (zero chamada no apply); o caminho antigo (reler ao vivo) só sobrevive
+  pra rascunhos já persistidos sem `resolved` (migração de graça).
 - **Orçamento VITALÍCIO na cópia/criação** — hoje o create só escreve `daily_budget`; fonte
   vitalícia vira diário seguro + aviso (não copia o total). Suportar vitalício exige `end_time`/
   schedule no create (campanha e adset). (`creation.ts` `createCampaign`/`createAdSet`.)
@@ -821,10 +824,47 @@ Decisões adiadas do plano aprovado (edição completa do rascunho pelo site + c
 - **Gerar copy por IA + adicionar anúncio (em branco) no painel do site** — a API **não roda LLM** por decisão de arquitetura (`composition.ts`: "worker roda o LLM; a API não", §14). Fazer certo = job assíncrono no worker (enfileira via `SchedulerPort`, gera com `generateCopy`, persiste no rascunho, o painel recarrega) + guard amigável no apply p/ anúncio sem texto (blank transitório). Hoje o painel já edita copy MANUALMENTE e o chat regenera; a geração no painel é enhancement, não bloqueio.
 - **Edição pesada pelo chat** (nomes de conjunto/anúncio, objetivo, copy campo-a-campo, add/remover anúncio) — decisão de produto: o chat fica **leve** (ajuste de intenção única) e redireciona pro painel do site; reavaliar se o ICP pedir.
 - **Delete permanente na reversão** — decidido ficar **de fora**; reverter pausa (default) ou **arquiva** (ARCHIVED, recuperável). Deletar de vez é destrutivo e a Meta recusa pós-gasto.
-- **Público/targeting customizado completo** no editor (idade/gênero/local/interesse) — novo `TargetingSpec` + UI; o painel só expõe reuse↔advantage por ora.
+- ✅ **Público/targeting customizado completo** no editor — **RESOLVIDO (2026-08-30, subfatias
+  3a/3b/4).** `TargetingSpec` ganhou o kind `explicit` (geo cidade/região/país + idade + gênero +
+  interesses, compõe com público salvo por nome quando os dois vêm juntos no mesmo pedido); chat
+  (`create_campaign`/`copy_campaign`/`adjust_draft`) e site (`GeoAudienceEditor`, autocomplete de
+  geo+interesse) resolvem por NOME com honestidade determinística (ambíguo → pergunta numerada,
+  nunca chuta). Segue **fora**: comportamentos (behaviors), narrowing fino (grupos AND/OR +
+  exclusões de interesse/comportamento) e raio/geocoding — ver os 3 itens novos abaixo.
 - **Paginação/busca server-side robusta no picker** — se a busca client-side sobre a página carregada não bastar em contas gigantes (o picker já ordena por data + trunca + "ver mais").
 - **Detecção proativa de escalar adset** (tierar/avaliar adsets na camada de qualidade 6c; hoje o brief/proposeDrafts só olham campanhas).
 - **Persistir frames HD** (`posterFrames`) p/ miniatura de vídeo melhor que o selo 64px do picker/card.
+
+### Targeting explícito — próximas fases (planejadas 2026-08-30, spike pendente)
+
+Continuação do targeting explícito por primitivos (subfatias 1-4 entregues: eco honesto, público
+real da fonte cacheado, geo/idade/gênero/interesses via chat+site). As 3 fases abaixo **não foram
+implementadas nesta rodada** porque o formato exato da Meta não pôde ser confirmado contra a doc
+oficial nem contra uma conta real no ambiente de planejamento — cada uma exige um **spike de
+descoberta primeiro** (1+ chamada real contra conta de teste, documentando request/response
+confirmado como comentário de fonte), não codar contra suposição:
+
+- **Comportamentos (behaviors)** — `/search?type=adTargetingCategory&class=behaviors` não tem
+  evidência de busca por texto livre nos exemplos encontrados (parece enumeração completa da
+  categoria, diferente de `adinterest`). Spike: confirmar formato de request/response contra conta
+  real antes de desenhar resolução (provável fetch+cache da lista completa no Redis + match local
+  fuzzy/substring, já que não dá pra buscar por termo no servidor). `TargetingSpec.explicit`
+  ganharia `behaviors?: readonly {id,name}[]`, mesmo padrão de `interests` no `flexible_spec`.
+- **Narrowing fino (grupos AND/OR + exclusões)** — `interests`/`behaviors` planos virariam
+  `interestGroups?: readonly (readonly {id;name}[])[]` (array de arrays — grupo interno = OR,
+  grupos entre si = AND, a Meta já suporta via múltiplos objetos em `flexible_spec`; `interests`
+  atual vira `interestGroups: [[...]]`, sem quebra). Exclusão de interesse/comportamento
+  (mirror de `flexible_spec` dentro de `targeting`) — formato exato (provável
+  `exclusions: {interests:[...], behaviors:[...]}`) **não confirmado**, spike necessário no início.
+  Reusaria o padrão já existente de exclusão de custom audience (`suggestConverterExclusions`,
+  commit `86c89cb`) pra interesse/comportamento.
+- **Raio (`custom_locations` + geocoding)** — dois motivos pra não desenhar ainda: (1) formato
+  exato de `custom_locations`/raio não confirmado (só descrição de produto — "draw shapes on a
+  map", "1 mile radius" — nenhum schema JSON encontrado); (2) precisa de **geocoding** (endereço →
+  lat/long) e não está claro se a Meta oferece isso nativamente ou se exige provedor externo
+  (Google Maps Geocoding API?) — decisão de produto/custo em aberto. Primeira entrega da fase =
+  spike de descoberta (schema de `custom_locations` + decisão de provedor de geocoding) antes de
+  qualquer linha de design/código.
 
 ## Fatia 8 — Orquestração multi-agente / qualidade (roadmap pós-MVP)
 
