@@ -432,6 +432,10 @@ export class MetaCreationService {
       ...(snapshot.ageMin !== undefined ? { age_min: snapshot.ageMin } : {}),
       ...(snapshot.ageMax !== undefined ? { age_max: snapshot.ageMax } : {}),
       ...(flexible_spec.length > 0 ? { flexible_spec } : {}),
+      // Slice 9: reemite os públicos salvos da fonte (cópia reuse_adset de remarketing preserva o
+      // público quente — antes o snapshot só tinha geo/idade/expansão/interesses e virava prospecção).
+      ...(snapshot.customAudienceIncludeIds && snapshot.customAudienceIncludeIds.length > 0 ? { custom_audiences: snapshot.customAudienceIncludeIds.map((id) => ({ id })) } : {}),
+      ...(snapshot.customAudienceExcludeIds && snapshot.customAudienceExcludeIds.length > 0 ? { excluded_custom_audiences: snapshot.customAudienceExcludeIds.map((id) => ({ id })) } : {}),
       targeting_automation: { advantage_audience: snapshot.expansionRaw.advantageAudience },
       targeting_relaxation_types: {
         custom_audience: snapshot.expansionRaw.relaxCustomAudience,
@@ -441,12 +445,12 @@ export class MetaCreationService {
   }
 
   /**
-   * Targeting neutro → Meta. `reuse_adset`: com `resolved` (snapshot do propose, subfatia 2) monta
-   * DIRETO sem reler a Meta; sem `resolved` (rascunho pré-adendo) cai no caminho antigo (lê a fonte
-   * ao vivo, `fallback:true` quando some — o caller avisa, nunca sai amplo silencioso). `custom_audiences`
-   * reusa geo/idade da fonte (`resolvedBase` cacheado OU leitura ao vivo, mesmo esquema de fallback)
-   * e TROCA o público (include/exclude), expansões SEMPRE zeradas (público novo, sem ambiguidade de
-   * "fonte não decidiu"). `advantage_plus` = amplo. SWITCH EXAUSTIVO (`never`).
+   * Targeting neutro → Meta. `reuse_adset`: com `resolved` (snapshot do propose) monta DIRETO sem
+   * reler a Meta — o snapshot já traz geo/idade/expansão/interesses/behaviors/públicos salvos (cópia
+   * fiel); sem `resolved` (rascunho LEGADO) lê a fonte ao vivo e NORMALIZA a expansão (nunca AS-IS).
+   * `explicit` = público por primitivos (geo+raio/idade/gênero/grupos de interesse/behavior/públicos
+   * salvos), expansão SEMPRE fechada. `advantage_plus` = amplo. O kind `custom_audiences` foi colapsado
+   * em `explicit` (Slice 1). SWITCH EXAUSTIVO (`never`).
    */
   private async resolveTargeting(
     account: AdAccountRef,
@@ -483,10 +487,12 @@ export class MetaCreationService {
         const countries = spec.geo.filter((g) => g.kind === "country").map((g) => g.key);
         const regions = spec.geo.filter((g) => g.kind === "region");
         const cities = spec.geo.filter((g) => g.kind === "city");
+        // RAIO é city-only na Meta (regions/countries só aceitam `{key}`/ISO). Strip defensivo: mesmo
+        // que um radius chegue numa region (input do site), NUNCA emitir radius fora de `cities`.
         const withRadius = (g: { key: string; radius?: number; distanceUnit?: "mile" | "kilometer" }) =>
           g.radius ? { key: g.key, radius: g.radius, distance_unit: g.distanceUnit ?? "kilometer" } : { key: g.key };
         if (countries.length) geoLocations["countries"] = countries;
-        if (regions.length) geoLocations["regions"] = regions.map(withRadius);
+        if (regions.length) geoLocations["regions"] = regions.map((g) => ({ key: g.key }));
         if (cities.length) geoLocations["cities"] = cities.map(withRadius);
         if (spec.radiusAreas && spec.radiusAreas.length > 0) {
           geoLocations["custom_locations"] = spec.radiusAreas.map((a) => ({ address_string: a.address, radius: a.radius, distance_unit: a.distanceUnit }));
@@ -513,8 +519,12 @@ export class MetaCreationService {
         return { targeting: out, fallback: false };
       }
       default: {
+        // Exaustivo em compile-time; em runtime um rascunho LEGADO no jsonb (ex: kind colapsado) NÃO
+        // pode devolver targeting undefined (adset sem targeting = erro cru da Meta) — cai em amplo
+        // com fallback:true (o caller sinaliza), nunca crasha.
         const _exhaustive: never = spec;
-        return _exhaustive;
+        void _exhaustive;
+        return { targeting: this.advantagePlusTargeting(), fallback: true };
       }
     }
   }

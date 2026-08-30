@@ -337,6 +337,8 @@ describe("MetaCreationService.createCampaign / createAdSet — contrato v26", ()
           ageMin: 35,
           ageMax: 64,
           interestGroups: [[{ id: "i1", name: "Estética" }]],
+          customAudienceIncludeIds: ["ca1"],
+          customAudienceExcludeIds: ["ca2"],
           expansionRaw: { advantageAudience: 0, relaxCustomAudience: 0, relaxLookalike: 0 },
         },
       },
@@ -349,9 +351,37 @@ describe("MetaCreationService.createCampaign / createAdSet — contrato v26", ()
     expect(decoded).toContain('"age_min":35');
     // Slice 6: o snapshot preserva os interesses da fonte → apply reemite flexible_spec (cópia fiel).
     expect(decoded).toContain('"flexible_spec":[{"interests":[{"id":"i1"}]}]');
+    // Slice 9: cópia reuse_adset de REMARKETING preserva os públicos salvos (antes virava frio).
+    expect(decoded).toContain('"custom_audiences":[{"id":"ca1"}]');
+    expect(decoded).toContain('"excluded_custom_audiences":[{"id":"ca2"}]');
     expect(decoded).toContain('"advantage_audience":0');
     expect(decoded).toContain('"custom_audience":0');
     expect(decoded).toContain('"lookalike":0');
+  });
+
+  it("explicit com RAIO em REGIÃO → adapter faz STRIP (regions só {key}; raio é city-only)", async () => {
+    const posts: Array<{ url: string }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        posts.push({ url: String(input) });
+        return new Response(JSON.stringify({ id: "AS_NEW" }), { status: 200, headers: { "content-type": "application/json" } });
+      }),
+    );
+    await svc().createAdSet(account, {
+      campaignId: "CAMP1",
+      name: "A",
+      dailyBudgetMinor: 1000,
+      goal: "purchase",
+      targeting: {
+        kind: "explicit",
+        geo: [{ key: "MG", name: "Minas Gerais", kind: "region", radius: 30, distanceUnit: "kilometer" }],
+      },
+      status: "paused",
+    });
+    const decoded = decodeURIComponent(posts.find((p) => p.url.includes("/adsets"))!.url);
+    expect(decoded).toContain('"regions":[{"key":"MG"}]'); // sem radius/distance_unit em região
+    expect(decoded).not.toContain('"regions":[{"key":"MG","radius"');
   });
 
   it("explicit (Fase 1, subfatia 3a): monta geo por kind (país/região/cidade) + idade + gênero, expansão SEMPRE fechada", async () => {

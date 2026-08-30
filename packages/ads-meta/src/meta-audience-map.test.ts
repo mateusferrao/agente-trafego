@@ -28,6 +28,15 @@ describe("audienceFromTargeting", () => {
     expect(a?.behaviorGroupRefs).toEqual([[{ id: "b1", name: "Compradores online" }]]);
   });
 
+  it("captura ids de público salvo incluído/excluído (Slice 9 — cópia fiel de remarketing)", () => {
+    const a = audienceFromTargeting({
+      custom_audiences: [{ id: "ca1", name: "Engajamento 90d" }],
+      excluded_custom_audiences: [{ id: "ca2", name: "Compradores" }],
+    });
+    expect(a?.customAudienceIncludeIds).toEqual(["ca1"]);
+    expect(a?.customAudienceExcludeIds).toEqual(["ca2"]);
+  });
+
   it("custom audience de inclusão não-lookalike → remarketing", () => {
     const a = audienceFromTargeting({
       custom_audiences: [{ id: "1", name: "Visitantes do site 30d" }],

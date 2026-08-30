@@ -160,6 +160,12 @@ export function audienceFromTargeting(t: RawTargeting | undefined): AudienceProf
     ...(interests.length > 0 ? { interests } : {}),
     ...(interestGroupRefs.length > 0 ? { interestGroupRefs } : {}),
     ...(behaviorGroupRefs.length > 0 ? { behaviorGroupRefs } : {}),
+    // ids dos públicos salvos (Slice 9) — pra a cópia reuse_adset de remarketing não virar frio.
+    ...(() => {
+      const inc = inclusion.filter((a): a is typeof a & { id: string } => !!a.id).map((a) => a.id);
+      const exc = exclusions.filter((a): a is typeof a & { id: string } => !!a.id).map((a) => a.id);
+      return { ...(inc.length > 0 ? { customAudienceIncludeIds: inc } : {}), ...(exc.length > 0 ? { customAudienceExcludeIds: exc } : {}) };
+    })(),
     expansion: expansionRead(t),
   };
 }

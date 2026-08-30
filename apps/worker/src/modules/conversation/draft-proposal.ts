@@ -169,7 +169,8 @@ export function describeExplicitAudience(targeting: Extract<TargetingSpec, { rea
   const interestsLabel = describeGroups(targeting.interestGroups, "interesses");
   const behaviorsLabel = describeGroups(targeting.behaviorGroups, "comportamentos");
   const audienceLabel = targeting.customAudienceIncludeIds && targeting.customAudienceIncludeIds.length > 0 ? "+ público salvo indicado" : null;
-  return [placesLabel, ageLabel, genderLabel, interestsLabel, behaviorsLabel, "sem expansão de público", audienceLabel].filter((s): s is string => Boolean(s)).join(", ");
+  const exclusionLabel = targeting.customAudienceExcludeIds && targeting.customAudienceExcludeIds.length > 0 ? "excluindo público salvo" : null;
+  return [placesLabel, ageLabel, genderLabel, interestsLabel, behaviorsLabel, "sem expansão de público", audienceLabel, exclusionLabel].filter((s): s is string => Boolean(s)).join(", ");
 }
 
 /** Máx. de cidades/regiões nomeadas no eco antes de resumir em "+N" (compacto, não despeja a lista). */
@@ -209,7 +210,10 @@ export function describeResolvedAudience(profile: AudienceProfile): string {
   const ageLabel = profile.ageMin !== undefined || profile.ageMax !== undefined ? `${profile.ageMin ?? "?"}-${profile.ageMax ?? "?"} anos` : null;
   const { summary } = resolveExpansion(profile.expansion);
   const expansionLabel = summary === "on" ? "expansão de público ligada" : "sem expansão de público";
-  return [placesLabel, ageLabel, expansionLabel].filter((s): s is string => Boolean(s)).join(", ");
+  // Slice 9: eco honesto — a cópia reuse_adset preserva os públicos salvos; anuncia quando houver.
+  const savedLabel = profile.customAudienceCount > 0 ? `${profile.customAudienceCount} público(s) salvo(s)` : null;
+  const exclLabel = profile.exclusionCount > 0 ? `${profile.exclusionCount} exclusão(ões)` : null;
+  return [placesLabel, ageLabel, savedLabel, exclLabel, expansionLabel].filter((s): s is string => Boolean(s)).join(", ");
 }
 
 /** Rótulo PT do formato não-reusável (o vocabulário neutro vem do adapter). */
@@ -481,12 +485,13 @@ async function prepareBehaviors(deps: WorkerDeps, ref: AdAccountRef, queries: re
 type ExplicitGeo = Extract<TargetingSpec, { readonly kind: "explicit" }>["geo"][number];
 type AddressArea = { readonly address: string; readonly radiusKm: number };
 
-/** Aplica um raio (km) às CIDADES/REGIÕES do geo resolvido (Slice 5) — clampa pro limite da Meta
- *  (cidade 17–80 km) + nota. País ignora raio. Puro (usa `clampRadius` do core). */
+/** Aplica um raio (km) às CIDADES do geo resolvido (Slice 5) — clampa pro limite da Meta (17–80 km)
+ *  + nota. A Meta só aceita raio em `cities` (e custom_locations), NUNCA em `regions`/`countries` —
+ *  aplicar em region gera payload inválido/eco enganoso. Puro (usa `clampRadius` do core). */
 function applyCityRadius(geo: readonly ExplicitGeo[], radiusKm: number | undefined): { geo: ExplicitGeo[]; notes: string[] } {
   if (!radiusKm) return { geo: [...geo], notes: [] };
   const { radius, note } = clampRadius(radiusKm, "kilometer", "city");
-  const next = geo.map((g) => (g.kind === "country" ? g : { ...g, radius, distanceUnit: "kilometer" as const }));
+  const next = geo.map((g) => (g.kind === "city" ? { ...g, radius, distanceUnit: "kilometer" as const } : g));
   return { geo: next, notes: note ? [note] : [] };
 }
 

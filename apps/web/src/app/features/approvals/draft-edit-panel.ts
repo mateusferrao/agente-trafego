@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { toast } from 'ngx-sonner';
 import { UiButton, UiInput, UiSelectBox, UiToggleGroup, UiToggleGroupItem, type UiSelectOptionItem } from '@ui';
 import { CreativePicker } from './creative-picker';
-import { GeoAudienceEditor, type ExplicitAudienceState } from './geo-audience-editor';
+import { GeoAudienceEditor, KM, type ExplicitAudienceState } from './geo-audience-editor';
 import { DraftsApiService } from '@core/api/drafts-api.service';
 import { CONVERSION_LABEL, conversionLabel } from '@app/shared/conversion-label';
 import type { DraftApprovalOutput, SetDraftCreativeInput, UpdateDraftInput } from '@core/api/generated';
@@ -245,8 +245,6 @@ export class DraftEditPanel implements OnInit {
   /** converter modo: o rascunho é reuse/broad (tem `convertibleAudience`) e o usuário abriu o editor
    *  pra personalizar à mão. Ao salvar vira explícito no backend. */
   protected readonly converting = signal(false);
-  /** já salvou uma conversão nesta sessão do painel (habilita "voltar ao herdado" a reverter). */
-  private readonly convertedSaved = signal(false);
   protected readonly copies = signal<CopyForm[]>([]);
   /** picker de criativo aberto dentro do painel + troca em voo. */
   protected readonly showPicker = signal(false);
@@ -328,15 +326,10 @@ export class DraftEditPanel implements OnInit {
     this.explicitAudienceState.set(this.convertibleInitial());
   }
 
-  /** Cancela o converter modo. Se uma conversão já foi salva nesta sessão, reverte pro herdado. */
+  /** Cancela o converter modo (fecha o editor e volta pro público herdado, sem salvar nada). */
   protected cancelConverting(): void {
     this.converting.set(false);
     this.explicitAudienceState.set(null);
-    if (this.convertedSaved()) {
-      const original = this.draft().audience;
-      this.convertedSaved.set(false);
-      if (original === 'reuse' || original === 'broad') this.persist({ audience: original }, 'Público voltou ao herdado.');
-    }
   }
 
   /** Toggle "Ao aprovar" (o grupo emite string[] no modo single) → normaliza pro signal. */
@@ -382,8 +375,6 @@ export class DraftEditPanel implements OnInit {
       this.close.emit();
       return;
     }
-    // converter modo: registra que a conversão foi salva (habilita reverter pro herdado se cancelar).
-    if (this.converting() && this.explicitAudienceState()) this.convertedSaved.set(true);
     this.persist(patch, 'Rascunho atualizado.');
   }
 
@@ -479,7 +470,7 @@ export class DraftEditPanel implements OnInit {
         key: g.key,
         name: g.name,
         kind: g.kind,
-        ...(g.radius != null ? { radius: g.radius, distanceUnit: g.distanceUnit ?? 'kilometer' } : {}),
+        ...(g.radius != null ? { radius: g.radius, distanceUnit: g.distanceUnit ?? KM } : {}),
       })),
       radiusAreas: s.radiusAreas.map((a) => ({ address: a.address, radius: a.radius, distanceUnit: a.distanceUnit })),
       ...(s.ageMin != null ? { ageMin: s.ageMin } : {}),

@@ -77,6 +77,11 @@ export interface AudienceProfile {
    *  targeting da fonte sem reler (o resumo `interests` só tem nomes). Cada grupo = OR; grupos = AND. */
   readonly interestGroupRefs?: readonly (readonly { readonly id: string; readonly name: string }[])[];
   readonly behaviorGroupRefs?: readonly (readonly { readonly id: string; readonly name: string }[])[];
+  /** ids dos públicos salvos (custom audiences) incluídos/excluídos na fonte (Slice 9 — cópia fiel de
+   *  REMARKETING; sem isso a cópia reuse_adset virava prospecção fria). `customAudienceCount` acima é só
+   *  contagem pro resumo; estes carregam os ids reais pro apply reemitir. */
+  readonly customAudienceIncludeIds?: readonly string[];
+  readonly customAudienceExcludeIds?: readonly string[];
   /** Expansão de público (3 flags Meta neutralizados: advantage_audience + targeting_relaxation_types
    *  custom_audience/lookalike) — `summary` pro eco/UI ("unknown" = a fonte não tinha NENHUM dos 3
    *  configurado; NÃO confundir com "off" — quem decide fechar por segurança é a camada de resolução,
@@ -822,6 +827,10 @@ export interface ResolvedAudienceSnapshot {
    *  targeting detalhado no apply (senão o snapshot só tinha geo/idade/expansão e perdia interesses). */
   readonly interestGroups?: readonly (readonly { readonly id: string; readonly name: string }[])[];
   readonly behaviorGroups?: readonly (readonly { readonly id: string; readonly name: string }[])[];
+  /** públicos salvos incluídos/excluídos na fonte (Slice 9) — a cópia reuse_adset de REMARKETING
+   *  precisa reemitir; sem isso virava prospecção fria (bug de fidelidade + gasto no público errado). */
+  readonly customAudienceIncludeIds?: readonly string[];
+  readonly customAudienceExcludeIds?: readonly string[];
   /** decidido por `resolveExpansion` (packages/ads-meta) — ausente na fonte já vira 0 explícito
    *  aqui, nunca chega "ausente" neste snapshot (P1: nunca herda expansão às cegas). */
   readonly expansionRaw: { readonly advantageAudience: 0 | 1; readonly relaxCustomAudience: 0 | 1; readonly relaxLookalike: 0 | 1 };
@@ -851,8 +860,9 @@ export type TargetingSpec =
    */
   | {
       readonly kind: "explicit";
-      /** geo por primitivo. `radius`/`distanceUnit` (Slice 5) só valem p/ city/region (a Meta ignora
-       *  em country) — raio EM TORNO da cidade (17–80 km). Ausente = a cidade inteira. */
+      /** geo por primitivo. `radius`/`distanceUnit` (Slice 5) só valem p/ CITY (a Meta aceita raio só
+       *  em `cities` + `custom_locations`; region/country ignoram → o adapter faz strip). 17–80 km.
+       *  Ausente = a cidade inteira. Raio em torno de endereço = `radiusAreas` abaixo. */
       readonly geo: readonly {
         readonly key: string;
         readonly name: string;

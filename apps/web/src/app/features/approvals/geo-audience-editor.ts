@@ -13,7 +13,7 @@ import {
 import { FormsModule } from '@angular/forms';
 import type { Observable } from 'rxjs';
 import { Subject } from 'rxjs';
-import { catchError, debounceTime, distinctUntilChanged, map, switchMap, of } from 'rxjs';
+import { catchError, debounceTime, distinctUntilChanged, groupBy, map, mergeMap, switchMap, of } from 'rxjs';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { UiBadge, UiButton, UiInput, UiToggleGroup, UiToggleGroupItem } from '@ui';
 import { DraftsApiService } from '@core/api/drafts-api.service';
@@ -24,8 +24,9 @@ import type {
   InterestSearchResultOutput,
 } from '@core/api/generated';
 
-/** Unidade de distância única do editor — o raio no site é sempre em km (a Meta aceita km). */
-const KM = 'kilometer' as const;
+/** Unidade de distância única do público — o raio no site é sempre em km (a Meta aceita km). Exportada
+ *  p/ o painel-pai reusar no mapeamento do PATCH (sem literal duplicado). */
+export const KM = 'kilometer' as const;
 const SEARCH_DEBOUNCE_MS = 300;
 /** Abaixo disso não busca (poupa chamada por cada tecla de 1-2 letras — sem resultado útil ainda). */
 const MIN_QUERY_LEN = 2;
@@ -86,21 +87,28 @@ class TermSection {
     private readonly onChange: () => void,
     destroyRef: DestroyRef,
   ) {
+    // um stream POR grupo (groupBy uid) — o switchMap só cancela buscas do MESMO grupo, então digitar
+    // no grupo B nunca deixa o spinner do grupo A preso (cada uid mantém seu próprio searching/searched).
     this.subject
       .pipe(
-        debounceTime(SEARCH_DEBOUNCE_MS),
-        distinctUntilChanged((a, b) => a.uid === b.uid && a.q === b.q),
-        switchMap(({ uid, q }) => {
-          if (q.trim().length < MIN_QUERY_LEN) {
-            this.set(this.searching, uid, false);
-            return of({ uid, r: [] as readonly InterestSearchResultOutput[] });
-          }
-          this.set(this.searching, uid, true);
-          return this.search(q.trim()).pipe(
-            map((r) => ({ uid, r })),
-            catchError(() => of({ uid, r: [] as readonly InterestSearchResultOutput[] })),
-          );
-        }),
+        groupBy((x) => x.uid),
+        mergeMap((byUid) =>
+          byUid.pipe(
+            debounceTime(SEARCH_DEBOUNCE_MS),
+            distinctUntilChanged((a, b) => a.q === b.q),
+            switchMap(({ uid, q }) => {
+              if (q.trim().length < MIN_QUERY_LEN) {
+                this.set(this.searching, uid, false);
+                return of({ uid, r: [] as readonly InterestSearchResultOutput[] });
+              }
+              this.set(this.searching, uid, true);
+              return this.search(q.trim()).pipe(
+                map((r) => ({ uid, r })),
+                catchError(() => of({ uid, r: [] as readonly InterestSearchResultOutput[] })),
+              );
+            }),
+          ),
+        ),
         takeUntilDestroyed(destroyRef),
       )
       .subscribe(({ uid, r }) => {
@@ -303,7 +311,7 @@ export class TermGroupsEditor {
                     ×
                   </button>
                 </span>
-                @if (g.kind !== 'country') {
+                @if (g.kind === 'city') {
                   <input
                     appInput
                     class="w-28"
@@ -572,8 +580,10 @@ export class GeoAudienceEditor {
   protected readonly excludeIds = signal<readonly string[]>([]);
   protected readonly includeFilter = signal('');
   protected readonly excludeFilter = signal('');
-  protected readonly includeMatches = computed(() => this.matchAudiences(this.includeFilter(), this.includeIds()));
-  protected readonly excludeMatches = computed(() => this.matchAudiences(this.excludeFilter(), this.excludeIds()));
+  // exclui do dropdown de cada lista os já escolhidos na lista OPOSTA — o mesmo público não pode estar
+  // em incluir E excluir (targeting contraditório).
+  protected readonly includeMatches = computed(() => this.matchAudiences(this.includeFilter(), this.includeIds(), this.excludeIds()));
+  protected readonly excludeMatches = computed(() => this.matchAudiences(this.excludeFilter(), this.excludeIds(), this.includeIds()));
 
   private seeded = false;
 
@@ -663,7 +673,7 @@ export class GeoAudienceEditor {
     this.emitState();
   }
 
-  /** Raio (km) por chip de cidade/região — número > 0 seta km; vazio/inválido limpa o raio. */
+  /** Raio (km) por chip de cidade (a Meta só aceita raio em cidade) — número > 0 seta km; vazio limpa. */
   protected setGeoRadius(key: string, value: number | null): void {
     const radius = typeof value === 'number' && value > 0 ? value : null;
     this.geo.update((list) =>
@@ -734,11 +744,11 @@ export class GeoAudienceEditor {
     return this.audiences().find((a) => a.id === id)?.name ?? id;
   }
 
-  private matchAudiences(filter: string, selected: readonly string[]): readonly AudienceOutput[] {
+  private matchAudiences(filter: string, selected: readonly string[], opposite: readonly string[]): readonly AudienceOutput[] {
     const q = filter.trim().toLowerCase();
     if (q.length === 0) return [];
     return this.audiences()
-      .filter((a) => !selected.includes(a.id) && a.name.toLowerCase().includes(q))
+      .filter((a) => !selected.includes(a.id) && !opposite.includes(a.id) && a.name.toLowerCase().includes(q))
       .slice(0, MAX_AUDIENCE_MATCHES);
   }
 
@@ -776,11 +786,14 @@ export class GeoAudienceEditor {
 
   private snapshot(): ExplicitAudienceState {
     const genders: (1 | 2)[] | null = this.gender() === 'men' ? [1] : this.gender() === 'women' ? [2] : null;
+    // idade inválida (mín > máx) NÃO vai pro backend — emite ambos como null e o hint pede o ajuste;
+    // assim nada inválido é criado, sem depender do 422.
+    const invalidAge = this.ageInvalid();
     return {
       geo: this.geo(),
       radiusAreas: this.radiusAreas(),
-      ageMin: this.ageMinInput(),
-      ageMax: this.ageMaxInput(),
+      ageMin: invalidAge ? null : this.ageMinInput(),
+      ageMax: invalidAge ? null : this.ageMaxInput(),
       genders,
       interestGroups: this.interest.value(),
       behaviorGroups: this.behavior.value(),

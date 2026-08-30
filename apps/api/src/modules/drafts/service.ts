@@ -11,7 +11,7 @@ import {
   platformConnections,
   type Database,
 } from "@trafego/db";
-import { applyDraftEdit, buildResolvedSnapshot, describeDeliveryEstimate, planScaleMove, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
+import { applyDraftEdit, buildResolvedSnapshot, clampRadius, describeDeliveryEstimate, planScaleMove, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
 import { applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import type { ToolBindingMode } from "@trafego/shared";
 import {
@@ -33,6 +33,7 @@ import type {
   AudienceOutput,
   CreativeAssetOutput,
   DeliveryEstimateInput,
+  ExplicitAudienceInput,
   DraftApprovalOutput,
   GeoSearchResultOutput,
   InterestSearchResultOutput,
@@ -68,6 +69,33 @@ const DRAFT_NOT_OPEN_MSG = "esse rascunho não está mais aberto pra ajuste.";
 const ACCOUNT_UNAVAILABLE_MSG = "não consegui acessar a conta agora";
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+
+/** Constrói o `TargetingSpec.explicit` a partir do input do site, CLAMPANDO o raio (Slice 9 — o chat
+ *  já clampava; o site mandava cru). Raio é city-only: só `city` recebe radius (region/country nunca).
+ *  Endereço (radiusAreas) clampado 1–80 km. Puro (usa `clampRadius` do core). */
+function buildExplicitFromInput(a: ExplicitAudienceInput): Extract<TargetingSpec, { kind: "explicit" }> {
+  const geo = a.geo.map((g) => {
+    if (g.kind !== "city" || g.radius == null) return { key: g.key, name: g.name, kind: g.kind };
+    const { radius } = clampRadius(g.radius, g.distanceUnit ?? "kilometer", "city");
+    return { key: g.key, name: g.name, kind: g.kind, radius, distanceUnit: g.distanceUnit ?? ("kilometer" as const) };
+  });
+  const radiusAreas = (a.radiusAreas ?? []).map((r) => {
+    const { radius } = clampRadius(r.radius, r.distanceUnit, "address");
+    return { address: r.address, radius, distanceUnit: r.distanceUnit };
+  });
+  return {
+    kind: "explicit",
+    geo,
+    ...(radiusAreas.length > 0 ? { radiusAreas } : {}),
+    ...(a.ageMin != null ? { ageMin: a.ageMin } : {}),
+    ...(a.ageMax != null ? { ageMax: a.ageMax } : {}),
+    ...(a.genders && a.genders.length > 0 ? { genders: a.genders } : {}),
+    ...(a.interestGroups && a.interestGroups.length > 0 ? { interestGroups: a.interestGroups } : {}),
+    ...(a.behaviorGroups && a.behaviorGroups.length > 0 ? { behaviorGroups: a.behaviorGroups } : {}),
+    ...(a.customAudienceIncludeIds && a.customAudienceIncludeIds.length > 0 ? { customAudienceIncludeIds: a.customAudienceIncludeIds } : {}),
+    ...(a.customAudienceExcludeIds && a.customAudienceExcludeIds.length > 0 ? { customAudienceExcludeIds: a.customAudienceExcludeIds } : {}),
+  };
+}
 
 /** Geo AGRUPADO do snapshot → lista plana `{key,name,kind}` (semente do converter modo, Slice 8).
  *  País usa o código como nome (o snapshot não guarda nome legível de país). */
@@ -284,19 +312,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     // (raio/behaviors/grupos/públicos salvos) e também CONVERTE reuse/broad → explicit. Quando presente,
     // vence os diffs abaixo (que são o caminho antigo de edição incremental).
     if (input.explicitAudience) {
-      const a = input.explicitAudience;
-      edit.targeting = {
-        kind: "explicit",
-        geo: a.geo.map((g) => ({ key: g.key, name: g.name, kind: g.kind, ...(g.radius != null ? { radius: g.radius, distanceUnit: g.distanceUnit ?? "kilometer" } : {}) })),
-        ...(a.radiusAreas && a.radiusAreas.length > 0 ? { radiusAreas: a.radiusAreas } : {}),
-        ...(a.ageMin != null ? { ageMin: a.ageMin } : {}),
-        ...(a.ageMax != null ? { ageMax: a.ageMax } : {}),
-        ...(a.genders && a.genders.length > 0 ? { genders: a.genders } : {}),
-        ...(a.interestGroups && a.interestGroups.length > 0 ? { interestGroups: a.interestGroups } : {}),
-        ...(a.behaviorGroups && a.behaviorGroups.length > 0 ? { behaviorGroups: a.behaviorGroups } : {}),
-        ...(a.customAudienceIncludeIds && a.customAudienceIncludeIds.length > 0 ? { customAudienceIncludeIds: a.customAudienceIncludeIds } : {}),
-        ...(a.customAudienceExcludeIds && a.customAudienceExcludeIds.length > 0 ? { customAudienceExcludeIds: a.customAudienceExcludeIds } : {}),
-      };
+      edit.targeting = buildExplicitFromInput(input.explicitAudience);
     }
 
     // público EXPLÍCITO (Fase 1, subfatia 3b) — remove/adiciona geo(s) já resolvido pelo
@@ -642,18 +658,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       if (!loaded) return { ok: false, message: DRAFT_NOT_OPEN_MSG };
       const ctx = await loadScaleContext(orgId, accountId);
       if (!ctx) return { ok: false, message: ACCOUNT_UNAVAILABLE_MSG };
-      const targeting: TargetingSpec = {
-        kind: "explicit",
-        geo: input.geo.map((g) => ({ key: g.key, name: g.name, kind: g.kind, ...(g.radius != null ? { radius: g.radius, distanceUnit: g.distanceUnit ?? "kilometer" } : {}) })),
-        ...(input.radiusAreas ? { radiusAreas: input.radiusAreas } : {}),
-        ...(input.ageMin != null ? { ageMin: input.ageMin } : {}),
-        ...(input.ageMax != null ? { ageMax: input.ageMax } : {}),
-        ...(input.genders ? { genders: input.genders } : {}),
-        ...(input.interestGroups ? { interestGroups: input.interestGroups } : {}),
-        ...(input.behaviorGroups ? { behaviorGroups: input.behaviorGroups } : {}),
-        ...(input.customAudienceIncludeIds ? { customAudienceIncludeIds: input.customAudienceIncludeIds } : {}),
-        ...(input.customAudienceExcludeIds ? { customAudienceExcludeIds: input.customAudienceExcludeIds } : {}),
-      };
+      const targeting: TargetingSpec = buildExplicitFromInput(input);
       const goal = loaded.spec.objective ?? "lead";
       try {
         const estimate = await deps.adsPlatform.getDeliveryEstimate(ctx.ref, { targeting, goal, ...(loaded.spec.pixelId ? { pixelId: loaded.spec.pixelId } : {}) });

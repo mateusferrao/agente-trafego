@@ -100,9 +100,10 @@ export class MetaBehaviorCatalogService {
 
   private async readCache(): Promise<InterestSearchResult[] | null> {
     if (!this.redis || this.ttlSec <= 0) return null;
-    const raw = await this.redis.get(this.cacheKey());
-    if (!raw) return null;
+    // Redis fora do ar (get lança) → trata como MISS e busca fresco, nunca sobe o erro pro caller.
     try {
+      const raw = await this.redis.get(this.cacheKey());
+      if (!raw) return null;
       return JSON.parse(raw) as InterestSearchResult[];
     } catch {
       return null;
@@ -111,6 +112,11 @@ export class MetaBehaviorCatalogService {
 
   private async writeCache(list: InterestSearchResult[]): Promise<void> {
     if (!this.redis || this.ttlSec <= 0 || list.length === 0) return;
-    await this.redis.set(this.cacheKey(), JSON.stringify(list), "EX", this.ttlSec);
+    // best-effort: falha de escrita no cache não pode derrubar a busca.
+    try {
+      await this.redis.set(this.cacheKey(), JSON.stringify(list), "EX", this.ttlSec);
+    } catch {
+      /* ignora — cache é otimização, não fonte da verdade */
+    }
   }
 }

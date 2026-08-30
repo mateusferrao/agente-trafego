@@ -130,6 +130,9 @@ export function buildResolvedSnapshot(profile: AudienceProfile): ResolvedAudienc
     // não perde mais o targeting detalhado no apply.
     ...(profile.interestGroupRefs && profile.interestGroupRefs.length > 0 ? { interestGroups: profile.interestGroupRefs } : {}),
     ...(profile.behaviorGroupRefs && profile.behaviorGroupRefs.length > 0 ? { behaviorGroups: profile.behaviorGroupRefs } : {}),
+    // Slice 9: preserva os públicos salvos da fonte → a cópia reuse_adset de remarketing não vira frio.
+    ...(profile.customAudienceIncludeIds && profile.customAudienceIncludeIds.length > 0 ? { customAudienceIncludeIds: profile.customAudienceIncludeIds } : {}),
+    ...(profile.customAudienceExcludeIds && profile.customAudienceExcludeIds.length > 0 ? { customAudienceExcludeIds: profile.customAudienceExcludeIds } : {}),
     expansionRaw,
   };
 }
