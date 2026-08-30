@@ -866,13 +866,21 @@ confirmado como comentário de fonte), não codar contra suposição:
   spike de descoberta (schema de `custom_locations` + decisão de provedor de geocoding) antes de
   qualquer linha de design/código.
 
-**Atualização (2026-08-30, fatia "Finalização do fluxo de públicos" — em andamento):** o grounding na
-doc oficial Meta destravou as 3 fases → **em implementação nesta fatia** (marcar RESOLVIDO ao fim):
-(a) behaviors = enumeração completa confirmada (`adTargetingCategory&class=behaviors`, sem busca por
-texto) → cache Redis **locale-scoped** + match local; (b) narrowing = `flexible_spec` (OR dentro / AND
-entre) + `exclusions:{interests,behaviors}` (confirmação final via `delivery_estimate` no spike);
-(c) raio = **`custom_locations` aceita `address_string` e a Meta geocodifica no servidor** (sem provedor
-externo — o bloqueio de geocoding some) + cidade aceita `radius`/`distance_unit` na própria entrada.
+**Atualização (2026-08-30, fatia "Finalização do fluxo de públicos" — em andamento):** grounding na doc
+oficial + **spike read-only/validate_only confirmado contra a BM Automato real** (v26):
+- (a) **behaviors** = enumeração completa (`adTargetingCategory&class=behaviors`, **sem busca por texto**,
+  285 itens `{id,name,path[],audience_size_lower_bound}`, `paging:false`, nomes pt_BR) → cache Redis
+  **locale-scoped** + match local. ✓ em implementação.
+- (b) **AND narrowing** = múltiplos objetos em `flexible_spec` (OR dentro / AND entre) → `delivery_estimate`
+  200 + adset `validate_only` 200. ✓ em implementação.
+- (b') **Exclusão de interesse/comportamento = REMOVIDA pela Meta.** `validate_only` de adset com
+  `exclusions:{interests,behaviors}` → 400 subcode **3858492** "As exclusões do direcionamento detalhado
+  não estão mais disponíveis". Capacidade descontinuada na plataforma — **fora do escopo** (não é
+  formato errado nem permissão). Exclusão só de **público salvo** (`excluded_custom_audiences`, já existe).
+- (c) **raio** = `custom_locations` aceita `address_string` e a Meta **geocodifica no servidor**
+  (`delivery_estimate` 200/ready) — sem provedor externo; cidade aceita `radius`/`distance_unit` na
+  própria entrada (200/ready). ✓ em implementação.
+
 `custom_audiences` colapsa em `explicit`; `interests`→`interestGroups`; nome neutro `radiusAreas`.
 
 **Fast-follows que PERMANECEM após esta fatia:**
@@ -883,7 +891,8 @@ externo — o bloqueio de geocoding some) + cidade aceita `radius`/`distance_uni
 - **Raio sem coords** — se o spike confirmar que `address_string` não devolve coords, `adradiussuggestion`
   não roda p/ endereço → raio omitido usa const default; geocoding próprio p/ raio sugerido = fast-follow.
 - **Behaviors:** hierarquia `path` na UI; tratamento de variação de mercado se o spike revelar.
-- **Exclusão em múltiplos grupos** de interesse/behavior (hoje exclusão plana, grupo OR único).
+- ~~Exclusão de interesse/behavior~~ — **removida pela Meta** (subcode 3858492); não é fast-follow, é
+  indisponível na plataforma. Só exclusão de público salvo.
 
 ## Fatia 8 — Orquestração multi-agente / qualidade (roadmap pós-MVP)
 
