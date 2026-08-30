@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { autoApplyProactiveDraft } from "./apply-draft.js";
 import type { WorkerDeps } from "../../composition.js";
 
-// applyActivation é mockado (não injetado) — o teste isola o wrapper `autoApplyProactiveDraft`
-// sem precisar simular a cadeia inteira de queries da ativação (guardrail + loadAccount/join).
-// vi.mock é hoisted pelo vitest — aplica mesmo com import estático acima.
+// act_full CRIA sozinho mas NUNCA veicula (invariante CLAUDE.md §7/§8): a campanha nasce PAUSADA e
+// a aprovação de ativação fica PENDENTE. `autoApplyProactiveDraft` não chama mais `applyActivation`
+// — o mock existe só pra provar que a ativação NÃO é disparada sozinha.
 const applyActivationMock = vi.fn();
 vi.mock("./apply-activation.js", () => ({ applyActivation: (...args: unknown[]) => applyActivationMock(...args) }));
 
@@ -48,22 +48,13 @@ describe("autoApplyProactiveDraft", () => {
     expect(applyActivationMock).not.toHaveBeenCalled();
   });
 
-  it("P1.3: com activation approval pendente → encadeia applyActivation e resolve AS DUAS approvals (act_full ativa sozinho)", async () => {
-    applyActivationMock.mockResolvedValueOnce({ kind: "activated", dryRun: false });
+  it("SEMPRE PAUSADA: com activation approval pendente → NÃO ativa sozinho; resolve só a de CRIAÇÃO, ativação fica pendente", async () => {
     const { deps, resolve } = fakeDeps([[CREATED_DRAFT], [{ id: "act-approval-1" }]]);
     const outcome = await autoApplyProactiveDraft(deps, { orgId: "o1", draftId: "d1", approvalId: "a1" });
     expect(outcome.kind).toBe("created");
-    expect(applyActivationMock).toHaveBeenCalledWith(deps, { orgId: "o1", draftId: "d1" });
-    expect(resolve).toHaveBeenCalledWith("a1", { status: "approved" });
-    expect(resolve).toHaveBeenCalledWith("act-approval-1", { status: "approved" });
-  });
-
-  it("P1.3: ativação barrada/falhou → approval de ATIVAÇÃO fica pendente (não resolve)", async () => {
-    applyActivationMock.mockResolvedValueOnce({ kind: "blocked", reason: "kill switch ativo" });
-    const { deps, resolve } = fakeDeps([[CREATED_DRAFT], [{ id: "act-approval-1" }]]);
-    await autoApplyProactiveDraft(deps, { orgId: "o1", draftId: "d1", approvalId: "a1" });
-    expect(resolve).toHaveBeenCalledWith("a1", { status: "approved" }); // criação segue aprovada
-    expect(resolve).not.toHaveBeenCalledWith("act-approval-1", expect.anything()); // ativação intocada
+    expect(applyActivationMock).not.toHaveBeenCalled(); // veiculação NUNCA é autônoma
+    expect(resolve).toHaveBeenCalledWith("a1", { status: "approved" }); // criação aprovada
+    expect(resolve).not.toHaveBeenCalledWith("act-approval-1", expect.anything()); // ativação pendente (OK humano)
   });
 
   it("mantém a approval pendente quando o rascunho não é encontrado (blocked)", async () => {

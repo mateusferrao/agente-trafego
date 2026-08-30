@@ -7,7 +7,7 @@ const baseInput = {
   rationale: "tem público de engajados + tráfego",
   model: "m",
   savedAudienceNames: ["Engajamento 90d", "Compradores"],
-  meta: { orgId: "org", adAccountId: "acc" },
+  meta: { orgId: "org", runId: "run-1" },
 };
 
 function llmReturning(output: unknown): { llm: LLMProviderPort; spy: ReturnType<typeof vi.fn> } {
@@ -35,6 +35,7 @@ describe("proposeTargetingForOpportunity", () => {
     expect(req.responseSchema).toBeTruthy();
     expect(req.responseSchemaName).toBe("proposed_targeting");
     expect(req.meta?.type).toBe("propose_targeting");
+    expect((req.meta as { runId?: string }).runId).toBe("run-1"); // custo atribuído ao run
   });
 
   it("output inválido (falta rationale) → null (caller cai no default)", async () => {

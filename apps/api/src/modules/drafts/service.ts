@@ -384,10 +384,12 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       if (input.removeAdIndex != null) variants = variants.filter((_, i) => i !== input.removeAdIndex);
       // adiciona 1 anúncio DUPLICANDO o último (copy + criativo próprio) — preserva os existentes;
       // o dono edita a partir dele. Cap de anúncios/rascunho (rede contra explosão de custo/UI).
+      // `adName` limpo no clone → cai no fallback indexado do apply (evita 2 anúncios com nome igual).
       if (input.addAd && variants.length > 0 && variants.length < MAX_ADS_PER_DRAFT) {
-        variants = [...variants, { ...variants[variants.length - 1]! }];
+        const { adName: _drop, ...last } = variants[variants.length - 1]!;
+        variants = [...variants, { ...last }];
       }
-      edit.copyVariants = variants;
+      edit.copyVariants = variants; // applyDraftEdit ressincroniza spec.variantsCount = copyVariants.length
     }
 
     const result = applyDraftEdit(kind, spec, edit, { budgetCapMinor, hasPixel });

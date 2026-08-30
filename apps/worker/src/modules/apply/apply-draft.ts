@@ -14,7 +14,6 @@ import { AdsPlatformError, type AdAccountRef } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../../composition.js";
 import { createAnalysisRepo } from "../analysis/repo.js";
 import { loadEnabledTools } from "../tools/enabled.js";
-import { applyActivation } from "./apply-activation.js";
 
 const ACTOR_AGENT = "agent";
 const USAGE_TYPE_CAMPAIGN_CREATED = "campaign_created";
@@ -327,17 +326,15 @@ export async function autoApplyProactiveDraft(
   const outcome = await applyDraft(deps, { orgId: input.orgId, draftId: input.draftId });
   const approvalId = input.approvalId as ApprovalId;
   if (outcome.kind === "created") {
+    // act_full CRIA sozinho, mas NUNCA veicula: a campanha nasce PAUSADA e a aprovação de ativação
+    // fica PENDENTE (o dono ativa no site/chat). Invariante CLAUDE.md §7/§8 — "age sozinho → SEMPRE
+    // PAUSED (não veicula)"; a veiculação (gasto real) sempre exige um OK humano. O nudge é honesto.
     await ports.approval.resolve(approvalId, { status: "approved" });
     if (outcome.activationApprovalId) {
-      const activation = await applyActivation(deps, { orgId: input.orgId, draftId: input.draftId });
-      if (activation.kind === "activated") {
-        await ports.approval.resolve(outcome.activationApprovalId as ApprovalId, { status: "approved" });
-      } else {
-        logger.warn(
-          { draftId: input.draftId, outcome: activation.kind },
-          "auto-create:auto-ativação não completou — approval de ativação mantida pendente",
-        );
-      }
+      logger.info(
+        { draftId: input.draftId },
+        "auto-create:criado PAUSADO — aprovação de ativação mantida pendente (veiculação exige OK humano)",
+      );
     }
   } else if (outcome.kind === "blocked" || outcome.kind === "unsupported") {
     await ports.approval.resolve(approvalId, { status: "blocked", resolvedReason: outcome.reason });

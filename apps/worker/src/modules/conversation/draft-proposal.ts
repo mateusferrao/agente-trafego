@@ -583,6 +583,10 @@ async function reachNoteFor(
  *  de proativo reconhece este sentinel e degrada pra recomendação humana em vez de criar. */
 export const PROACTIVE_REACH_FLOOR_REASON = "público estreito demais para veicular sozinho";
 
+/** Motivo do bloqueio quando o autônomo EXIGE público resolvido (ex: remarketing) mas nenhum
+ *  público de inclusão resolveu — degrada pra recomendação humana em vez de criar amplo às cegas. */
+export const PROACTIVE_AUDIENCE_UNRESOLVED_REASON = "não consegui resolver o público específico para criar sozinho";
+
 /**
  * Ajusta o nº de anúncios PRESERVANDO os existentes: aumentar duplica o último (copy + criativo
  * próprio); diminuir corta os últimos (mín 1). Clampado ao teto. Não regenera copy nem apaga edições.
@@ -894,8 +898,8 @@ export async function refineDraft(
   if (kind === "from_scratch" && patch.campaignName != null) edit.campaignName = patch.campaignName;
 
   // anúncios (só from_scratch): `regenerateCopy` re-aterra TUDO na copy que já performa (LLM na
-  // casca); mudar só o NÚMERO PRESERVA os existentes (aumenta duplicando o último, diminui cortando
-  // os últimos) — não apaga edições manuais nem criativo próprio de cada anúncio.
+  // casca) — descarta edições manuais E criativo próprio (intencional: "regenerar"). Já mudar só o
+  // NÚMERO PRESERVA os existentes (aumenta duplicando o último com seu criativo, diminui cortando).
   const currentVariants = [...(spec.copyVariants ?? [])];
   if (kind === "from_scratch" && patch.regenerateCopy === true) {
     const defaults = await deps.ports.ads.inferCreationDefaults(ac.ref);
@@ -1398,7 +1402,7 @@ export async function proposeCreateCampaign(
     readonly addressAreas?: readonly AddressArea[];
   },
   origin: DraftOrigin = "on_demand",
-  opts: { readonly autonomous?: boolean; readonly minMonthlyReach?: number } = {},
+  opts: { readonly autonomous?: boolean; readonly minMonthlyReach?: number; readonly requireResolvedAudience?: boolean } = {},
 ): Promise<ChatDraftProposal> {
   const ac = await loadAgentContext(deps, ctx);
   if (!ac) return { kind: "blocked", reason: "não consegui acessar a conta agora" };
@@ -1416,6 +1420,11 @@ export async function proposeCreateCampaign(
   const auto = opts.autonomous === true;
   const aud = await prepareAudiences(deps, ctx, ac.ref, args.includeAudiences ?? [], args.excludeAudiences ?? [], auto);
   if (aud.kind === "blocked") return { kind: "blocked", reason: aud.reason };
+  // Autônomo que EXIGE público específico (ex: remarketing): se nenhum público de inclusão resolveu,
+  // NÃO cria amplo às cegas (perderia a intenção + mentiria no nudge) — degrada pra recomendação humana.
+  if (auto && opts.requireResolvedAudience && aud.includeIds.length === 0) {
+    return { kind: "blocked", reason: PROACTIVE_AUDIENCE_UNRESOLVED_REASON };
+  }
   const geoPrep = await prepareGeo(deps, ac.ref, args.geo ?? [], auto);
   if (geoPrep.kind === "blocked") return { kind: "blocked", reason: geoPrep.reason };
   const interestPrep = await prepareInterests(deps, ac.ref, args.interests ?? [], auto);
@@ -1490,14 +1499,14 @@ export async function proposeCreateCampaign(
     : await chooseAdditionalCreatives(deps, ctx.orgId, ctx.adAccountId, ac.ref, ac.creativeSource, chosen, AGENT_MAX_CREATIVE_ADS - 1);
   const allCreatives: ChosenCreative[] = [chosen, ...extraCreatives];
   const multiCreative = allCreatives.length >= 2;
-  const variantsCount = multiCreative ? allCreatives.length : DEFAULT_VARIANTS;
+  const targetVariants = multiCreative ? allCreatives.length : DEFAULT_VARIANTS;
 
   const baseCopy: CopyVariant[] = await generateCopy(
     deps.ports.llm,
     {
       model: ac.model,
       goal,
-      variantsCount,
+      variantsCount: targetVariants,
       businessContext: ac.businessContext,
       guidance: ac.guidance,
       // aterramento no que já performa (§7): a copy dos melhores anúncios veiculando.
@@ -1509,6 +1518,9 @@ export async function proposeCreateCampaign(
   const copyVariants: CopyVariant[] = multiCreative
     ? baseCopy.map((cv, i) => (allCreatives[i] ? { ...cv, creative: creativeRefOf(allCreatives[i]!) } : cv))
     : baseCopy;
+  // RECONCILIA: generateCopy pode devolver MENOS que o pedido (filter/slice) → o nº real é o do
+  // array (evita spec.variantsCount ≠ copyVariants.length + eco prometendo variações que não existem).
+  const variantsCount = copyVariants.length;
 
   // VÍDEO se tem video_id (o imageHash acompanha como CAPA do vídeo, não descaracteriza). Anúncio de
   // imagem tem imageHash e NÃO tem videoId → o videoId é o discriminador correto.

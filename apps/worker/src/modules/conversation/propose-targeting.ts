@@ -59,7 +59,8 @@ export interface ProposeTargetingInput {
   readonly businessContext?: string | null;
   readonly guidance?: string | null;
   readonly conversionGoal?: ConversionGoal | undefined;
-  readonly meta: { readonly orgId: string; readonly adAccountId: string };
+  /** metering: atribui o custo do LLM à org/run (mesmo padrão dos outros nós do grafo). */
+  readonly meta: { readonly orgId: string; readonly runId?: string };
 }
 
 const SYSTEM = [
@@ -105,7 +106,7 @@ export async function proposeTargetingForOpportunity(llm: LLMProviderPort, input
       responseSchemaName: "proposed_targeting",
       temperature: 0.4,
       validate: (o) => proposedTargetingSchema.safeParse(o).success,
-      meta: { orgId: input.meta.orgId, type: "propose_targeting" },
+      meta: { orgId: input.meta.orgId, ...(input.meta.runId ? { runId: input.meta.runId } : {}), type: "propose_targeting" },
     });
     const parsed = proposedTargetingSchema.safeParse(output);
     return parsed.success ? parsed.data : null;

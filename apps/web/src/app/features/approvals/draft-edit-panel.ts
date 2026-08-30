@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input, type OnInit, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, input, type OnInit, output, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { toast } from 'ngx-sonner';
 import { UiButton, UiInput, UiSelectBox, UiToggleGroup, UiToggleGroupItem, type UiSelectOptionItem } from '@ui';
@@ -331,6 +331,39 @@ export class DraftEditPanel implements OnInit {
    *  instância — o estado já editado ganha da semente herdada). */
   protected readonly editorSeed = computed<ExplicitAudienceState>(() => this.explicitAudienceState() ?? this.customSeed());
 
+  /** nº de anúncios já semeado em copies() — detecta add/remove estrutural vindo do reload. */
+  private seededVariantCount = 0;
+  private initialized = false;
+
+  constructor() {
+    // Re-semeia copies() quando o Nº DE ANÚNCIOS muda no reload (add/remover via persist estrutural) —
+    // mantém o painel aberto e sincronizado sem clobbar edições em andamento nos outros casos (o
+    // reload de troca-de-criativo não muda o comprimento → não re-semeia). Edições pendentes já foram
+    // enviadas no mesmo PATCH do add/remove, então o draft() recarregado já as reflete.
+    effect(
+      () => {
+        const n = this.draft().copyVariants?.length ?? 0;
+        if (this.initialized && n !== this.seededVariantCount) {
+          this.seedCopies(this.draft());
+          this.seededVariantCount = n;
+        }
+      },
+      { allowSignalWrites: true },
+    );
+  }
+
+  /** Semeia copies() a partir do rascunho (usado no init e no re-seed pós add/remove). */
+  private seedCopies(d: DraftApprovalOutput): void {
+    this.copies.set(
+      (d.copyVariants ?? []).map((c) => ({
+        adName: c.adName ?? '',
+        headline: c.headline,
+        primaryText: c.primaryText,
+        description: c.description ?? '',
+      })),
+    );
+  }
+
   ngOnInit(): void {
     const d = this.draft();
     this.campaignName.set(d.campaignName ?? '');
@@ -341,16 +374,11 @@ export class DraftEditPanel implements OnInit {
     this.activation.set(d.activation);
     // modo do público: já explícito → custom; senão o herdado (reuse/broad).
     this.audienceMode.set(d.explicitAudience ? 'custom' : d.audience === 'broad' ? 'broad' : 'reuse');
-    this.copies.set(
-      (d.copyVariants ?? []).map((c) => ({
-        adName: c.adName ?? '',
-        headline: c.headline,
-        primaryText: c.primaryText,
-        description: c.description ?? '',
-      })),
-    );
+    this.seedCopies(d);
+    this.seededVariantCount = d.copyVariants?.length ?? 0;
     // rascunho já explícito → o estado nasce completo (Salvar re-envia como substituição total).
     this.explicitAudienceState.set(this.explicitInitial());
+    this.initialized = true;
   }
 
   /** Toggle "Ao aprovar" (o grupo emite string[] no modo single) → normaliza pro signal. */
@@ -386,16 +414,35 @@ export class DraftEditPanel implements OnInit {
     });
   }
 
-  /** Remove um anúncio (mín 1) — ação imediata (o backend re-indexa). */
+  /** Remove um anúncio (mín 1). Inclui as edições PENDENTES no mesmo PATCH (não perde nada) e mantém
+   *  o painel aberto (re-semeia via effect ao recarregar). */
   protected removeAd(index: number): void {
     if (this.copies().length <= 1) return;
-    this.persist({ removeAdIndex: index }, 'Anúncio removido.');
+    this.persistStructural({ ...this.buildPatch(), removeAdIndex: index }, 'Anúncio removido.');
   }
 
-  /** Adiciona um anúncio DUPLICANDO o último — ação imediata (o backend duplica copy + criativo). */
+  /** Adiciona um anúncio DUPLICANDO o último. Inclui as edições PENDENTES no mesmo PATCH e mantém o
+   *  painel aberto — o novo anúncio aparece pronto pra editar (fluxo "adiciona e continua"). */
   protected addAd(): void {
     if (this.copies().length >= MAX_ADS) return;
-    this.persist({ addAd: true }, 'Anúncio adicionado.');
+    this.persistStructural({ ...this.buildPatch(), addAd: true }, 'Anúncio adicionado.');
+  }
+
+  /** Persiste uma mudança ESTRUTURAL (add/remove anúncio) + edições pendentes, MANTENDO o painel
+   *  aberto (emite creativeChanged → o pai recarrega sem fechar; o effect re-semeia copies()). */
+  private persistStructural(patch: UpdateDraftInput, successMsg: string): void {
+    this.saving.set(true);
+    this.api.updateDraft(this.draft().accountId, this.draft().draftId, patch).subscribe({
+      next: () => {
+        this.saving.set(false);
+        toast.success(successMsg);
+        this.creativeChanged.emit();
+      },
+      error: (err: unknown) => {
+        this.saving.set(false);
+        toast.error(this.errorMessage(err));
+      },
+    });
   }
 
   /** Abre/fecha o picker de criativo de UM anúncio. */
@@ -469,11 +516,13 @@ export class DraftEditPanel implements OnInit {
     // explicit no backend). reuse/broad só entram no patch quando MUDAM do modo original (evita
     // clobber). Modo original: rascunho já explícito = `custom`; senão o `audience` herdado.
     const mode = this.audienceMode();
-    const originalMode = d.explicitAudience ? 'custom' : d.audience;
+    const originalMode = d.explicitAudience ? 'custom' : d.audience; // 'custom' | 'reuse' | 'broad' | null
     if (mode === 'custom') {
       const explicit = this.explicitAudienceState();
       if (explicit) patch['explicitAudience'] = this.toExplicitInput(explicit);
-    } else if (mode !== originalMode) {
+      // só envia audience quando há um modo original CONHECIDO e o usuário mudou (evita `audience`
+      // espúrio num rascunho sem targeting, onde originalMode é null e o signal cai no default).
+    } else if (originalMode !== null && mode !== originalMode) {
       patch['audience'] = mode;
     }
 

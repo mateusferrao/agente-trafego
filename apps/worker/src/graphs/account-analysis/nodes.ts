@@ -46,7 +46,7 @@ import {
 import { ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS, DEFAULT_CURRENCY, DEFAULT_POSTURE, extractPhoneFromName } from "@trafego/shared";
 import { recommendations } from "@trafego/db";
 import { funnelFromRawActions, mapStatus } from "@trafego/ads-meta";
-import { loadAccountAudiences, loadAgentContext, PROACTIVE_REACH_FLOOR_REASON, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner } from "../../modules/conversation/draft-proposal.js";
+import { loadAccountAudiences, loadAgentContext, PROACTIVE_AUDIENCE_UNRESOLVED_REASON, PROACTIVE_REACH_FLOOR_REASON, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner } from "../../modules/conversation/draft-proposal.js";
 import { proposeTargetingForOpportunity, type ProposedTargeting } from "../../modules/conversation/propose-targeting.js";
 import { autoApplyProactiveDraft, type DraftApplyOutcome } from "../../modules/apply/apply-draft.js";
 import { loadEnabledTools, enabledActionTypes } from "../../modules/tools/enabled.js";
@@ -753,7 +753,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     outcome: DraftApplyOutcome,
   ): Promise<void> {
     const isScale = toolKey === "duplicate_scale";
-    const what = isScale ? "dupliquei seu vencedor pra escalar" : "criei uma campanha nova reusando seu criativo";
+    const what = isScale ? "dupliquei seu vencedor pra escalar" : "criei uma campanha nova";
     const wouldHave = isScale ? "duplicar seu vencedor" : "criar uma campanha";
     let text: string;
     if (outcome.kind === "created") {
@@ -896,11 +896,13 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
             ...(state.goals?.conversionGoal ? { conversionGoal: state.goals.conversionGoal } : {}),
             savedAudienceNames,
             ...(top.entityId ? { winnerCampaignId: top.entityId } : {}),
-            meta: { orgId: state.orgId, adAccountId: state.adAccountId },
+            meta: { orgId: state.orgId, runId: state.runId },
           })
         : null;
       const args = proposedTargeting ? proposalToCreationArgs(proposedTargeting) : {};
-      const autoOpts = { autonomous: true, minMonthlyReach: PROACTIVE_MIN_MONTHLY_REACH };
+      // remarketing EXIGE público de convertidos/engajados resolvido — sem ele, não cria amplo às
+      // cegas (perderia a intenção): degrada pra recomendação humana (requireResolvedAudience).
+      const autoOpts = { autonomous: true, minMonthlyReach: PROACTIVE_MIN_MONTHLY_REACH, requireResolvedAudience: top.kind === "remarketing" };
       // replicate_winner COPIA a estrutura do vencedor (sourceCampaignId determinístico) + público
       // proposto; as demais (remarketing/prospecting/cold_start) criam do zero com o público proposto.
       const proposal =
@@ -908,17 +910,22 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           ? await proposeCopyCampaign(deps, dctx, { sourceCampaignId: top.entityId, ...(top.entityName ? { sourceName: top.entityName } : {}), ...args }, "proactive", autoOpts)
           : await proposeCreateCampaign(deps, dctx, args, "proactive", autoOpts);
 
-      // piso de alcance batido → não cria sozinho; vira recomendação humana (revisar/afrouxar público).
-      if (proposal.kind === "blocked" && proposal.reason === PROACTIVE_REACH_FLOOR_REASON) {
+      // Degradação honesta pra recomendação humana (não cria sozinho): público estreito (piso de
+      // alcance) OU público específico não-resolvido (ex: remarketing sem público de convertidos).
+      if (proposal.kind === "blocked" && (proposal.reason === PROACTIVE_REACH_FLOOR_REASON || proposal.reason === PROACTIVE_AUDIENCE_UNRESOLVED_REASON)) {
+        const why =
+          proposal.reason === PROACTIVE_REACH_FLOOR_REASON
+            ? "Mas o público ficou estreito demais pra eu criar sozinho — dá uma olhada e ajuste."
+            : "Mas não achei o público específico pra montar sozinho — dá uma olhada e me diga qual usar.";
         await deps.db.insert(recommendations).values({
           orgId: state.orgId,
           runId: state.runId,
           title: creationRecTitle(top.kind),
-          rationale: `${top.rationale} Mas o público ficou estreito demais pra eu criar sozinho — dá uma olhada e ajuste.`,
+          rationale: `${top.rationale} ${why}`,
           kind: "human_direction",
           riskLevel: "low",
         });
-        logger.info({ runId: state.runId, kind: top.kind }, "propose_drafts:reach_floor → recomendação");
+        logger.info({ runId: state.runId, kind: top.kind, reason: proposal.reason }, "propose_drafts:degrada → recomendação");
         return {};
       }
       if (proposal.kind !== "draft") return {};
