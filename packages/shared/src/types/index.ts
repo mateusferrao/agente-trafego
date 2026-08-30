@@ -766,7 +766,14 @@ export interface CreativeSourceStrategy {
 /** Default = comportamento de hoje (reusa o melhor veiculando, determinístico, sem LLM). */
 export const DEFAULT_CREATIVE_SOURCE_STRATEGY: CreativeSourceStrategy = { mode: "serving", servingPick: "best_performing" };
 
-export const CREATION_OPPORTUNITY_KINDS = ["scale_winner", "refresh_fatigued", "cold_start"] as const;
+export const CREATION_OPPORTUNITY_KINDS = [
+  "scale_winner",
+  "remarketing",
+  "replicate_winner",
+  "prospecting_expansion",
+  "refresh_fatigued",
+  "cold_start",
+] as const;
 export type CreationOpportunityKind = (typeof CREATION_OPPORTUNITY_KINDS)[number];
 
 export const CREATIVE_FORMATS = ["image", "video"] as const;

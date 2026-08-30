@@ -25,12 +25,33 @@ describe("detectCreationOpportunities", () => {
     expect(out[0]?.entityId).toBe("e1");
   });
 
-  it("não escala vencedor com folga de budget (atBudgetCeiling=false explícito)", () => {
+  it("vencedor com FOLGA de budget → replicate_winner (replicar pra público novo, não subir budget)", () => {
     const out = detectCreationOpportunities({
       hasActiveCampaigns: true,
       entities: [ent({ tier: "winner", atBudgetCeiling: false })],
     });
-    expect(out).toHaveLength(0);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.kind).toBe("replicate_winner");
+    expect(out[0]?.entityId).toBe("e1");
+  });
+
+  it("remarketing: conta com público de convertidos + tráfego ativo", () => {
+    const out = detectCreationOpportunities({ hasActiveCampaigns: true, hasConverterAudience: true, entities: [] });
+    expect(out.some((o) => o.kind === "remarketing")).toBe(true);
+  });
+
+  it("prospecting_expansion: público saturado ainda gastando", () => {
+    const out = detectCreationOpportunities({ hasActiveCampaigns: true, entities: [ent({ saturated: true, spending: true })] });
+    expect(out[0]?.kind).toBe("prospecting_expansion");
+  });
+
+  it("scale vence remarketing e replicate (prioridade top-1)", () => {
+    const out = detectCreationOpportunities({
+      hasActiveCampaigns: true,
+      hasConverterAudience: true,
+      entities: [ent({ tier: "winner", atBudgetCeiling: true })],
+    });
+    expect(out[0]?.kind).toBe("scale_winner");
   });
 
   it("escala vencedor provado quando o teto é desconhecido (atBudgetCeiling undefined → propõe pro humano)", () => {
