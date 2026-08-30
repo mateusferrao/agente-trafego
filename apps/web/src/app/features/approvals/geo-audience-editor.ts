@@ -239,8 +239,8 @@ class TermSection {
                       (click)="section().addItem(g.uid, r)"
                     >
                       <span>{{ r.name }}</span>
-                      @if (r.path && r.path.length > 0) {
-                        <span class="text-[11px] text-muted">{{ r.path.join(' > ') }}</span>
+                      @if (metaLine(r)) {
+                        <span class="text-[11px] text-muted">{{ metaLine(r) }}</span>
                       }
                     </button>
                   </li>
@@ -277,6 +277,27 @@ export class TermGroupsEditor {
   readonly placeholder = input.required<string>();
   readonly addLabel = input.required<string>();
   protected readonly MIN_QUERY_LEN = MIN_QUERY_LEN;
+
+  /** Linha secundária do resultado: tamanho de público + trilha da categoria (' · '), o que houver. */
+  protected metaLine(r: InterestSearchResultOutput): string {
+    const parts: string[] = [];
+    const size = this.audienceSizeLabel(r.audienceSize);
+    if (size) parts.push(size);
+    if (r.path && r.path.length > 0) parts.push(r.path.join(' > '));
+    return parts.join(' · ');
+  }
+
+  /** Tamanho de público humanizado em PT — mi/mil/pessoas; 1 casa só abaixo de 10 mi; 0/null → ''. */
+  private audienceSizeLabel(size: number | null): string {
+    if (!size || size <= 0) return '';
+    if (size >= 1_000_000) {
+      const mi = size / 1_000_000;
+      const value = mi < 10 ? mi.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) : String(Math.round(mi));
+      return `~${value} mi pessoas`;
+    }
+    if (size >= 1_000) return `~${Math.round(size / 1_000)} mil pessoas`;
+    return `~${Math.round(size)} pessoas`;
+  }
 }
 
 /**

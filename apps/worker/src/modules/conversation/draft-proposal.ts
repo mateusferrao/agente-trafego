@@ -446,54 +446,63 @@ type InterestPrep =
   | { readonly kind: "ok"; readonly interests: readonly { readonly id: string; readonly name: string }[] }
   | { readonly kind: "blocked"; readonly reason: string };
 
+/** normaliza termo p/ match tolerante (minúsculas, sem acento, sem espaço extra). */
+function normalizeTerm(s: string): string {
+  return [...s.toLowerCase().normalize("NFD")].filter((c) => { const cp = c.codePointAt(0) ?? 0; return cp < 0x300 || cp > 0x36f; }).join("").replace(/\s+/g, " ").trim();
+}
+/** tamanho de público humanizado pro dono escolher com confiança (~600M, ~48 mil). */
+function humanAudienceSize(n: number | undefined): string {
+  if (!n || n <= 0) return "";
+  if (n >= 1_000_000) return ` (~${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)} mi pessoas)`;
+  if (n >= 1_000) return ` (~${Math.round(n / 1_000)} mil pessoas)`;
+  return ` (~${n} pessoas)`;
+}
+
 /**
- * Resolve interesse pedido (por NOME) → interesse real na Meta (Fase 2, subfatia 4). Mesma
- * honestidade de `prepareGeo`/`prepareAudiences`: 1 match → resolve; 0 → honesto; 2+ → PERGUNTA
- * numerada — NUNCA pega o de maior audiência automaticamente (decisão do produto).
+ * Resolve uma opção de direcionamento detalhado (interesse/behavior) por NOME → id real. Honestidade
+ * (§8): match exato de nome → AUTO-escolhe (resolve o dono repetir a opção ofertada); 0 → tenta de
+ * novo SEM o parêntese (a busca da Meta quebra com "(...)" — evita beco sem saída), senão honesto;
+ * 2+ sem exato → PERGUNTA numerada COM tamanho de público (nunca chuta o de maior audiência).
  */
+async function resolveDetailedTargeting(
+  search: (q: string) => Promise<readonly { id: string; name: string; audienceSize?: number; path?: readonly string[] }[]>,
+  query: string,
+  labelSingular: string,
+): Promise<{ kind: "ok"; ref: { id: string; name: string } } | { kind: "blocked"; reason: string }> {
+  let matches = await search(query);
+  if (matches.length === 0) {
+    const stripped = query.replace(/\s*\([^)]*\)\s*/g, " ").replace(/\s+/g, " ").trim();
+    if (stripped && normalizeTerm(stripped) !== normalizeTerm(query)) matches = await search(stripped);
+  }
+  if (matches.length === 0) return { kind: "blocked", reason: `não achei ${labelSingular} "${query}" — confere o termo?` };
+  const exact = matches.find((m) => normalizeTerm(m.name) === normalizeTerm(query));
+  if (exact) return { kind: "ok", ref: { id: exact.id, name: exact.name } };
+  if (matches.length === 1) return { kind: "ok", ref: { id: matches[0]!.id, name: matches[0]!.name } };
+  const opts = matches
+    .slice(0, MAX_INTEREST_AMBIGUOUS_OPTIONS)
+    .map((m, i) => `${i + 1}. ${m.name}${humanAudienceSize(m.audienceSize)}${m.path && m.path.length > 0 ? ` — ${m.path.join(" > ")}` : ""}`)
+    .join("\n");
+  return { kind: "blocked", reason: `achei mais de um ${labelSingular} parecido com "${query}":\n${opts}\nQual desses? (me diz o nome exato da opção)` };
+}
+
+/** Resolve interesses pedidos (por NOME) → ids reais. Ver `resolveDetailedTargeting`. */
 async function prepareInterests(deps: WorkerDeps, ref: AdAccountRef, queries: readonly string[]): Promise<InterestPrep> {
-  if (queries.length === 0) return { kind: "ok", interests: [] };
   const resolved: { id: string; name: string }[] = [];
   for (const q of queries) {
-    const matches = await deps.ports.ads.searchInterests(ref, q);
-    if (matches.length === 0) {
-      return { kind: "blocked", reason: `não achei o interesse "${q}" na busca da Meta — confere o termo?` };
-    }
-    if (matches.length === 1) {
-      resolved.push({ id: matches[0]!.id, name: matches[0]!.name });
-      continue;
-    }
-    const opts = matches
-      .slice(0, MAX_INTEREST_AMBIGUOUS_OPTIONS)
-      .map((m, i) => `${i + 1}. ${m.name}${m.path && m.path.length > 0 ? ` (${m.path.join(" > ")})` : ""}`)
-      .join("\n");
-    return { kind: "blocked", reason: `achei mais de um interesse parecido com "${q}":\n${opts}\nQual desses? (me diz o nome exato)` };
+    const r = await resolveDetailedTargeting((s) => deps.ports.ads.searchInterests(ref, s), q, "o interesse");
+    if (r.kind === "blocked") return r;
+    resolved.push(r.ref);
   }
   return { kind: "ok", interests: resolved };
 }
 
-/**
- * Resolve comportamento (behavior) pedido (por NOME) → behavior real (Slice 4). Mesma honestidade
- * do interesse; usa `searchBehaviors` (a Meta não busca behavior no servidor → o adapter filtra a
- * enum cacheada). Reusa `InterestPrep` (opção de direcionamento detalhado, mesmo shape {id,name}).
- */
+/** Resolve comportamentos pedidos (por NOME) → ids reais (catálogo cacheado, match local). */
 async function prepareBehaviors(deps: WorkerDeps, ref: AdAccountRef, queries: readonly string[]): Promise<InterestPrep> {
-  if (queries.length === 0) return { kind: "ok", interests: [] };
   const resolved: { id: string; name: string }[] = [];
   for (const q of queries) {
-    const matches = await deps.ports.ads.searchBehaviors(ref, q);
-    if (matches.length === 0) {
-      return { kind: "blocked", reason: `não achei o comportamento "${q}" no catálogo da Meta — confere o termo?` };
-    }
-    if (matches.length === 1) {
-      resolved.push({ id: matches[0]!.id, name: matches[0]!.name });
-      continue;
-    }
-    const opts = matches
-      .slice(0, MAX_INTEREST_AMBIGUOUS_OPTIONS)
-      .map((m, i) => `${i + 1}. ${m.name}${m.path && m.path.length > 0 ? ` (${m.path.join(" > ")})` : ""}`)
-      .join("\n");
-    return { kind: "blocked", reason: `achei mais de um comportamento parecido com "${q}":\n${opts}\nQual desses? (me diz o nome exato)` };
+    const r = await resolveDetailedTargeting((s) => deps.ports.ads.searchBehaviors(ref, s), q, "o comportamento");
+    if (r.kind === "blocked") return r;
+    resolved.push(r.ref);
   }
   return { kind: "ok", interests: resolved };
 }
