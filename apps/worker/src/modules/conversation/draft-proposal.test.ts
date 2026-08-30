@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, creativeRefOf, distinctExtras, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fewCreativesNote, normalizeAdCount, recoverOpenDraft, resolveCreationTargeting } from "./draft-proposal.js";
+import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, creativeRefOf, distinctExtras, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fewCreativesNote, fillDistinctCreatives, normalizeAdCount, recoverOpenDraft, resolveCreationTargeting } from "./draft-proposal.js";
 import type { CopyVariant } from "@trafego/shared";
 import type { CampaignDraftSpec } from "@trafego/shared";
 import { creativeContentHash } from "../vision/resolver.js";
@@ -376,6 +376,35 @@ describe("assignCreativesToVariants (1:1 criativo↔anúncio, extras herdam o pa
     expect(out[0]!.creative?.metaImageHash).toBe("H1");
     expect(out[1]!.creative?.metaImageHash).toBe("H2");
     expect(out[2]!.creative).toBeUndefined(); // 3º anúncio herda o criativo padrão (o melhor)
+  });
+});
+
+describe("fillDistinctCreatives (aumento de contagem: preserva escolha do site, preenche distintos)", () => {
+  const cv = (h: string): CopyVariant => ({ primaryText: `p-${h}`, headline: h }) as CopyVariant;
+  const cvWith = (h: string, hash: string): CopyVariant => ({ primaryText: `p-${h}`, headline: h, creative: { assetId: `pin-${hash}`, format: "image", origin: "reuse", metaImageHash: hash } }) as CopyVariant;
+  const primary = { imageHash: "P", assetId: "a-P", origin: "reuse" as const, source: "serving" as const };
+  const pool = (hashes: string[]) => hashes.map((h) => ({ imageHash: h, assetId: `a-${h}`, origin: "reuse" as const, source: "serving" as const }));
+
+  it("preenche slots default com distintos, NUNCA sobrescreve criativo escolhido no site", () => {
+    // ad0 = escolhido no site (H_SITE); ad1/ad2 = default → recebem distintos do pool.
+    const { variants } = fillDistinctCreatives([cvWith("a", "H_SITE"), cv("b"), cv("c")], primary, pool(["H1", "H2"]));
+    expect(variants[0]!.creative?.metaImageHash).toBe("H_SITE"); // PRESERVADO (não clobber)
+    expect(variants[1]!.creative?.metaImageHash).toBe("H1");
+    expect(variants[2]!.creative?.metaImageHash).toBe("H2");
+  });
+
+  it("não repete o padrão nem o já-fixado no pool (dedupe por mídia)", () => {
+    // pool contém P (=primary) e H_SITE (=fixado) → ambos pulados; só H9 é novo.
+    const { variants, withoutDistinct } = fillDistinctCreatives([cvWith("a", "H_SITE"), cv("b"), cv("c")], primary, pool(["P", "H_SITE", "H9"]));
+    expect(variants[1]!.creative?.metaImageHash).toBe("H9");
+    expect(variants[2]!.creative).toBeUndefined(); // sem distinto sobrando → herda o padrão
+    expect(withoutDistinct).toBe(1);
+  });
+
+  it("pool vazio → todos os defaults herdam o padrão (withoutDistinct conta os repetidos)", () => {
+    const { variants, withoutDistinct } = fillDistinctCreatives([cv("a"), cv("b"), cv("c")], primary, []);
+    expect(variants.every((v) => v.creative === undefined)).toBe(true);
+    expect(withoutDistinct).toBe(3);
   });
 });
 

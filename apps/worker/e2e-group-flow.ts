@@ -133,21 +133,22 @@ async function main() {
 
     // ── B) INCIDENTE: default → expira → "5 criativos diferentes" → recupera + vira 5 distintos ──
     console.log("\n▶ B) incidente: default → estado expira → '5 criativos diferentes' (recupera do banco)");
-    const rB1 = await turn("e2e-B", "Quero criar uma campanha de leads do zero.");
+    const rB1 = await turn("e2e-B", "Quero criar uma campanha de leads do zero, com 2 anúncios.");
     console.log(`    Roy (propôs): ${rB1.replace(/\n/g, " ").slice(0, 180)}`);
     const dB1 = await latestDraft();
     if (dB1) createdDraftIds.add(dB1.id);
-    ok("B: propôs o rascunho default", Boolean(dB1), dB1?.id);
+    ok("B: propôs o rascunho com 2 anúncios", (dB1?.spec.copyVariants?.length ?? 0) === 2, { n: dB1?.spec.copyVariants?.length });
     await expirePendingDraft("e2e-B"); // simula os 91min do log (TTL do estado expira; DB segue aberto)
     const rB2 = await turn("e2e-B", "Quero 5 criativos diferentes nesse rascunho.");
     console.log(`    Roy (após expirar): ${rB2.replace(/\n/g, " ").slice(0, 220)}`);
     ok("B: NÃO deu dead-end ('não tenho rascunho aberto')", !/não tenho um rascunho aberto/i.test(rB2), rB2.slice(0, 160));
     const dB2 = await latestDraft();
     ok("B: rascunho recuperado e virou 5 anúncios", (dB2?.spec.copyVariants?.length ?? 0) === 5, { n: dB2?.spec.copyVariants?.length });
+    // aumento real 2→5: criativos distintos onde a conta permite, senão nota honesta no eco.
     ok(
-      "B: criativos DISTINTOS atribuídos (ou nota honesta se a conta tem <5)",
+      "B: distintos atribuídos OU nota honesta (conta com 1 criativo → repete + avisa)",
       nDistinct(dB2!.spec) >= 2 || /criativo/i.test(rB2),
-      { distinct: nDistinct(dB2!.spec) },
+      { distinct: nDistinct(dB2!.spec), reply: rB2.slice(0, 300) },
     );
 
     // ── C) "sim" COLD TARDIO (thread nova, sem re-eco recente) → re-ecoa, NÃO aplica às cegas ──

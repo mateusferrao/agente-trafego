@@ -965,12 +965,16 @@ export async function refineDraft(
     // entrega N mesmo assim (repete o melhor) + nota honesta. Diminuir = só corta.
     let variants = adjustAdCount(currentVariants, patch.variantsCount);
     if (variants.length > currentVariants.length && spec.creative) {
+      // preenche os slots default/novos com criativos DISTINTOS, PRESERVANDO os que o dono já trocou
+      // no site (por-anúncio) — nunca sobrescreve escolha explícita. Pool insuficiente → herda o padrão.
       const primary = chosenFromRef(spec.creative);
       const pool = await buildCreativePool(deps, ctx.orgId, ctx.adAccountId, ac.ref, ac.creativeSource);
-      const distinct = [primary, ...distinctExtras(pool.map((c) => c.ref), primary, variants.length - 1)];
-      variants = assignCreativesToVariants(variants, distinct);
-      const note = fewCreativesNote(variants.length, distinct.length);
-      if (note) refineNotes.push(note);
+      const filled = fillDistinctCreatives(variants, primary, pool.map((c) => c.ref));
+      variants = filled.variants;
+      // nota honesta (§8): ≥2 anúncios repetindo o melhor (sem distinto pra todos) → avisa no eco.
+      if (filled.withoutDistinct >= 2) {
+        refineNotes.push(`${filled.withoutDistinct} dos anúncios usam o melhor criativo (não achei criativos distintos pra todos) — dá pra trocar cada um no site.`);
+      }
     }
     edit.copyVariants = variants;
   }
@@ -1282,6 +1286,34 @@ export function assignCreativesToVariants(
 ): CopyVariant[] {
   if (creatives.length < 2) return [...baseCopy];
   return baseCopy.map((cv, i) => (creatives[i] ? { ...cv, creative: creativeRefOf(creatives[i]!) } : cv));
+}
+
+/**
+ * Preenche os slots SEM criativo próprio com criativos DISTINTOS do pool, PRESERVANDO os slots que já
+ * têm criativo escolhido explicitamente (ex: trocado no painel do site) e sem repetir mídia. Slot sem
+ * distinto disponível herda o criativo padrão do spec (fica sem `creative`). Usado no aumento de
+ * contagem por chat ("5 criativos diferentes"): o dono escolhe QUANTOS, a estratégia decide QUAIS, e
+ * uma edição por-anúncio feita no site NUNCA é sobrescrita. PURO. Devolve também quantos slots ficaram
+ * sem distinto próprio (usam o padrão) p/ a nota honesta. (§13 DRY — reusa creativeKey/creativeRefOf.)
+ */
+export function fillDistinctCreatives(
+  variants: readonly CopyVariant[],
+  primary: ChosenCreative,
+  poolRefs: readonly ChosenCreative[],
+): { readonly variants: CopyVariant[]; readonly withoutDistinct: number } {
+  const used = new Set<string>([creativeKey(primary)]);
+  for (const v of variants) if (v.creative) used.add(v.creative.metaVideoId ?? v.creative.metaImageHash ?? v.creative.assetId);
+  const queue: ChosenCreative[] = [];
+  for (const c of poolRefs) {
+    const k = creativeKey(c);
+    if (!used.has(k)) {
+      used.add(k);
+      queue.push(c);
+    }
+  }
+  let qi = 0;
+  const out = variants.map((v) => (v.creative ? v : queue[qi] ? { ...v, creative: creativeRefOf(queue[qi++]!) } : v));
+  return { variants: out, withoutDistinct: out.filter((v) => !v.creative).length };
 }
 
 /**
