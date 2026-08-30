@@ -3,6 +3,8 @@ import type { Observable } from 'rxjs';
 import { BaseApiService } from './base-api.service';
 import type {
   CreativeAssetOutput,
+  DeliveryEstimateInput,
+  DeliveryEstimateOutput,
   DraftApprovalOutput,
   GeoSearchResultOutput,
   InterestSearchResultOutput,
@@ -76,6 +78,15 @@ export class DraftsApiService extends BaseApiService {
   ): Observable<SetDraftTargetingOutput> {
     return this.post<SetDraftTargetingOutput, SetDraftTargetingInput>(
       ['/accounts', accountId, 'drafts', draftId, 'targeting'],
+      input,
+    );
+  }
+
+  /** `POST /api/accounts/:id/drafts/:draftId/delivery-estimate` — alcance do público em edição
+   *  (Slice 7). Debounce fica no componente. `note` null = Meta não estimou / abaixo do piso. */
+  estimateDelivery(accountId: string, draftId: string, input: DeliveryEstimateInput): Observable<DeliveryEstimateOutput> {
+    return this.post<DeliveryEstimateOutput, DeliveryEstimateInput>(
+      ['/accounts', accountId, 'drafts', draftId, 'delivery-estimate'],
       input,
     );
   }

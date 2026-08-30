@@ -7150,6 +7150,185 @@
           "audience"
         ]
       },
+      "DeliveryEstimateInput": {
+        "type": "object",
+        "properties": {
+          "geo": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "country",
+                    "region",
+                    "city"
+                  ]
+                },
+                "radius": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "distanceUnit": {
+                  "type": "string",
+                  "enum": [
+                    "mile",
+                    "kilometer"
+                  ]
+                }
+              },
+              "required": [
+                "key",
+                "name",
+                "kind"
+              ]
+            }
+          },
+          "radiusAreas": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "address": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "radius": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "distanceUnit": {
+                  "type": "string",
+                  "enum": [
+                    "mile",
+                    "kilometer"
+                  ]
+                }
+              },
+              "required": [
+                "address",
+                "radius",
+                "distanceUnit"
+              ]
+            }
+          },
+          "ageMin": {
+            "type": "integer",
+            "minimum": 13,
+            "maximum": 65
+          },
+          "ageMax": {
+            "type": "integer",
+            "minimum": 13,
+            "maximum": 65
+          },
+          "genders": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "enum": [
+                    1
+                  ]
+                },
+                {
+                  "type": "number",
+                  "enum": [
+                    2
+                  ]
+                }
+              ]
+            }
+          },
+          "interestGroups": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "id",
+                  "name"
+                ]
+              }
+            }
+          },
+          "behaviorGroups": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "id",
+                  "name"
+                ]
+              }
+            }
+          },
+          "customAudienceIncludeIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "customAudienceExcludeIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "geo"
+        ]
+      },
+      "DeliveryEstimateOutput": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "note"
+        ]
+      },
       "SetDraftCreativeInput": {
         "oneOf": [
           {
@@ -9665,6 +9844,52 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SetDraftTargetingOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/drafts/{draftId}/delivery-estimate": {
+      "post": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "draftId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeliveryEstimateInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "estimativa de alcance do público explícito em edição",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryEstimateOutput"
                 }
               }
             }

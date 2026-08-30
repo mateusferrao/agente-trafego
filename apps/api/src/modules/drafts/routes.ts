@@ -4,7 +4,7 @@ import { requireAuth } from "../../middleware/auth.js";
 import { requireActiveAccess } from "../../middleware/access-gate.js";
 import { requireOrgScope, orgIdOf } from "../../middleware/org-scope.js";
 import { env } from "../../env.js";
-import { geoSearchQuery, interestSearchQuery, scaleWinnerInput, setDraftCreativeInput, setDraftTargetingInput, updateDraftInput } from "./schema.js";
+import { deliveryEstimateInput, geoSearchQuery, interestSearchQuery, scaleWinnerInput, setDraftCreativeInput, setDraftTargetingInput, updateDraftInput } from "./schema.js";
 import { isAllowedCreativeType } from "./service.js";
 
 /** Slice de rascunhos de campanha (Fatia 7): listar pendentes + escalar vencedor pelo site. */
@@ -57,6 +57,15 @@ export const draftsRoutes: FastifyPluginAsync = async (app) => {
   app.get("/accounts/:id/serving-creatives", guard, async (request) => {
     const { id } = request.params as { id: string };
     return service.listServingCreatives(orgIdOf(request) as OrgId, id);
+  });
+
+  // Estimativa de alcance (Slice 7) — recalcula ao editar o público explícito no site.
+  app.post("/accounts/:id/drafts/:draftId/delivery-estimate", guard, async (request, reply) => {
+    const { id, draftId } = request.params as { id: string; draftId: string };
+    const input = deliveryEstimateInput.parse(request.body);
+    const result = await service.estimateDelivery(orgIdOf(request) as OrgId, id, draftId, input);
+    if (!result.ok) return reply.status(422).send({ message: result.message });
+    return { note: result.note };
   });
 
   // Busca de geo (Fase 1, subfatia 3b) — autocomplete de cidade/região/país no editor de rascunho.

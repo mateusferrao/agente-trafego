@@ -11,7 +11,7 @@ import {
   platformConnections,
   type Database,
 } from "@trafego/db";
-import { applyDraftEdit, buildResolvedSnapshot, planScaleMove, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
+import { applyDraftEdit, buildResolvedSnapshot, describeDeliveryEstimate, planScaleMove, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
 import { applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import type { ToolBindingMode } from "@trafego/shared";
 import {
@@ -31,6 +31,7 @@ import type { AdsPlatformPort } from "@trafego/shared/ports";
 import { ingestCreativeImage, ingestCreativeVideo } from "@trafego/creative-library";
 import type {
   CreativeAssetOutput,
+  DeliveryEstimateInput,
   DraftApprovalOutput,
   GeoSearchResultOutput,
   InterestSearchResultOutput,
@@ -582,6 +583,40 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     ): Promise<{ ok: true; audience: "reuse" | "broad" } | { ok: false; message: string }> {
       const r = await updateDraftImpl(orgId, accountId, draftId, { audience });
       return r.ok ? { ok: true, audience } : r;
+    },
+
+    /** Estimativa de alcance (Slice 7) — recalcula ao editar o público no site. Monta o targeting
+     *  EXPLÍCITO a partir do que o editor mandou (já resolvido) + objetivo/pixel do rascunho, e
+     *  devolve a nota legível (ou null quando a Meta não estimou / público abaixo do piso). */
+    async estimateDelivery(
+      orgId: OrgId,
+      accountId: string,
+      draftId: string,
+      input: DeliveryEstimateInput,
+    ): Promise<{ ok: true; note: string | null } | { ok: false; message: string }> {
+      const loaded = await loadDraftForEdit(deps.db, { orgId, draftId, adAccountId: accountId });
+      if (!loaded) return { ok: false, message: DRAFT_NOT_OPEN_MSG };
+      const ctx = await loadScaleContext(orgId, accountId);
+      if (!ctx) return { ok: false, message: ACCOUNT_UNAVAILABLE_MSG };
+      const targeting: TargetingSpec = {
+        kind: "explicit",
+        geo: input.geo.map((g) => ({ key: g.key, name: g.name, kind: g.kind, ...(g.radius != null ? { radius: g.radius, distanceUnit: g.distanceUnit ?? "kilometer" } : {}) })),
+        ...(input.radiusAreas ? { radiusAreas: input.radiusAreas } : {}),
+        ...(input.ageMin != null ? { ageMin: input.ageMin } : {}),
+        ...(input.ageMax != null ? { ageMax: input.ageMax } : {}),
+        ...(input.genders ? { genders: input.genders } : {}),
+        ...(input.interestGroups ? { interestGroups: input.interestGroups } : {}),
+        ...(input.behaviorGroups ? { behaviorGroups: input.behaviorGroups } : {}),
+        ...(input.customAudienceIncludeIds ? { customAudienceIncludeIds: input.customAudienceIncludeIds } : {}),
+        ...(input.customAudienceExcludeIds ? { customAudienceExcludeIds: input.customAudienceExcludeIds } : {}),
+      };
+      const goal = loaded.spec.objective ?? "lead";
+      try {
+        const estimate = await deps.adsPlatform.getDeliveryEstimate(ctx.ref, { targeting, goal, ...(loaded.spec.pixelId ? { pixelId: loaded.spec.pixelId } : {}) });
+        return { ok: true, note: describeDeliveryEstimate(estimate) };
+      } catch {
+        return { ok: true, note: null }; // estimativa é enriquecimento — nunca vira erro pro usuário
+      }
     },
 
     /** Busca de geo (Fase 1, subfatia 3b) — autocomplete de cidade/região/país no editor de

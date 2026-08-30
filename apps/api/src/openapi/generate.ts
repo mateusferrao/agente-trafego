@@ -86,6 +86,8 @@ import {
 } from "../modules/approvals/schema.js";
 import {
   creativeAssetOutput,
+  deliveryEstimateInput,
+  deliveryEstimateOutput,
   draftApprovalOutput,
   geoSearchResultOutput,
   interestSearchResultOutput,
@@ -186,6 +188,8 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const InterestSearchResultOutput = registry.register("InterestSearchResultOutput", interestSearchResultOutput);
   const SetDraftTargetingInput = registry.register("SetDraftTargetingInput", setDraftTargetingInput);
   const SetDraftTargetingOutput = registry.register("SetDraftTargetingOutput", setDraftTargetingOutput);
+  const DeliveryEstimateInput = registry.register("DeliveryEstimateInput", deliveryEstimateInput);
+  const DeliveryEstimateOutput = registry.register("DeliveryEstimateOutput", deliveryEstimateOutput);
   const SetDraftCreativeInput = registry.register("SetDraftCreativeInput", setDraftCreativeInput);
 const SetDraftCreativeOutput = registry.register("SetDraftCreativeOutput", setDraftCreativeOutput);
   const UpdateDraftInput = registry.register("UpdateDraftInput", updateDraftInput);
@@ -758,6 +762,16 @@ const SetDraftCreativeOutput = registry.register("SetDraftCreativeOutput", setDr
       ...jsonBody(SetDraftTargetingInput),
     },
     responses: { 200: jsonRes("público do rascunho alternado (reuse × amplo)", SetDraftTargetingOutput) },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/accounts/{id}/drafts/{draftId}/delivery-estimate",
+    tags: ["drafts"],
+    request: {
+      params: z.object({ id: z.string(), draftId: z.string() }),
+      ...jsonBody(DeliveryEstimateInput),
+    },
+    responses: { 200: jsonRes("estimativa de alcance do público explícito em edição", DeliveryEstimateOutput) },
   });
   registry.registerPath({
     method: "post",

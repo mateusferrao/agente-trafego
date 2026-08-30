@@ -175,6 +175,12 @@ const MIN_QUERY_LEN = 2;
       </div>
 
       <span class="text-[11px] text-muted">Sem expansão de público — a campanha mira só o que você escolheu aqui.</span>
+
+      @if (estimating()) {
+        <span class="text-[11px] text-muted">Estimando alcance…</span>
+      } @else if (reach()) {
+        <span class="text-[11px] text-ink">{{ reach() }}</span>
+      }
     </div>
   `,
 })
@@ -182,11 +188,17 @@ export class GeoAudienceEditor {
   private readonly api = inject(DraftsApiService);
   private readonly querySubject = new Subject<string>();
   private readonly interestQuerySubject = new Subject<string>();
+  private readonly reachSubject = new Subject<ExplicitAudienceState>();
 
   readonly accountId = input.required<string>();
+  /** id do rascunho — usado só p/ estimar o alcance (Slice 7); o objetivo/pixel vêm dele no servidor. */
+  readonly draftId = input.required<string>();
   readonly initial = input.required<ExplicitAudienceState>();
   /** emite o estado atual A CADA mudança — o pai lê no momento de montar o diff do Salvar. */
   readonly stateChange = output<ExplicitAudienceState>();
+  /** nota de alcance estimado (Slice 7) — recalcula debounced ao editar; null = sem estimativa. */
+  protected readonly reach = signal<string | null>(null);
+  protected readonly estimating = signal(false);
 
   protected readonly MIN_QUERY_LEN = MIN_QUERY_LEN;
   protected readonly geo = signal<ExplicitAudienceState['geo']>([]);
@@ -256,6 +268,34 @@ export class GeoAudienceEditor {
         this.interestSearched.set(true);
         this.interestResults.set(r);
       });
+
+    // alcance estimado (Slice 7): recalcula debounced a cada mudança do público. Erro/estimativa
+    // ausente → some a nota (enriquecimento, nunca bloqueia). interesses = 1 grupo OR no editor.
+    this.reachSubject
+      .pipe(
+        debounceTime(SEARCH_DEBOUNCE_MS),
+        switchMap((s) => {
+          if (s.geo.length === 0) {
+            this.estimating.set(false);
+            return of<{ note: string | null }>({ note: null });
+          }
+          this.estimating.set(true);
+          return this.api
+            .estimateDelivery(this.accountId(), this.draftId(), {
+              geo: s.geo.map((g) => ({ key: g.key, name: g.name, kind: g.kind })),
+              ...(s.ageMin != null ? { ageMin: s.ageMin } : {}),
+              ...(s.ageMax != null ? { ageMax: s.ageMax } : {}),
+              ...(s.genders ? { genders: [...s.genders] } : {}),
+              ...(s.interests.length > 0 ? { interestGroups: [s.interests.map((i) => ({ id: i.id, name: i.name }))] } : {}),
+            })
+            .pipe(catchError(() => of<{ note: string | null }>({ note: null })));
+        }),
+        takeUntilDestroyed(),
+      )
+      .subscribe((r) => {
+        this.estimating.set(false);
+        this.reach.set(r.note);
+      });
   }
 
   protected onQueryChange(q: string): void {
@@ -308,6 +348,14 @@ export class GeoAudienceEditor {
 
   protected emitState(): void {
     const genders: (1 | 2)[] | null = this.gender() === 'men' ? [1] : this.gender() === 'women' ? [2] : null;
+    const state: ExplicitAudienceState = {
+      geo: this.geo(),
+      ageMin: this.ageMinInput(),
+      ageMax: this.ageMaxInput(),
+      genders,
+      interests: this.interests(),
+    };
+    this.reachSubject.next(state);
     this.stateChange.emit({
       geo: this.geo(),
       ageMin: this.ageMinInput(),

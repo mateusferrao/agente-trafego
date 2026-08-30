@@ -193,6 +193,33 @@ export const geoSearchResultOutput = z.object({
 });
 export type GeoSearchResultOutput = z.infer<typeof geoSearchResultOutput>;
 
+/** Estimativa de alcance (Slice 7) — o editor manda o público EXPLÍCITO em edição (já resolvido:
+ *  keys/ids, o site nunca manda nome livre); o objetivo/pixel vêm do rascunho no servidor. */
+const refIdName = z.object({ id: z.string().min(1), name: z.string().min(1) });
+export const deliveryEstimateInput = z.object({
+  geo: z.array(
+    z.object({
+      key: z.string().min(1),
+      name: z.string().min(1),
+      kind: z.enum(["country", "region", "city"]),
+      radius: z.number().positive().optional(),
+      distanceUnit: z.enum(["mile", "kilometer"]).optional(),
+    }),
+  ),
+  radiusAreas: z.array(z.object({ address: z.string().min(1), radius: z.number().positive(), distanceUnit: z.enum(["mile", "kilometer"]) })).optional(),
+  ageMin: z.number().int().min(13).max(65).optional(),
+  ageMax: z.number().int().min(13).max(65).optional(),
+  genders: z.array(z.union([z.literal(1), z.literal(2)])).optional(),
+  interestGroups: z.array(z.array(refIdName)).optional(),
+  behaviorGroups: z.array(z.array(refIdName)).optional(),
+  customAudienceIncludeIds: z.array(z.string().min(1)).optional(),
+  customAudienceExcludeIds: z.array(z.string().min(1)).optional(),
+});
+export type DeliveryEstimateInput = z.infer<typeof deliveryEstimateInput>;
+/** `note` = alcance legível pro card, ou null quando a Meta não estimou / público abaixo do piso. */
+export const deliveryEstimateOutput = z.object({ note: z.string().nullable() });
+export type DeliveryEstimateOutput = z.infer<typeof deliveryEstimateOutput>;
+
 /** Busca de interesses (Fase 2, subfatia 4) — autocomplete no editor de rascunho. */
 export const interestSearchQuery = z.object({ q: z.string().min(1) });
 export type InterestSearchQuery = z.infer<typeof interestSearchQuery>;

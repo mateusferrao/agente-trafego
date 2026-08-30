@@ -119,6 +119,7 @@ type DraftCopy = NonNullable<DraftApprovalOutput['copyVariants']>[number];
       @if (draft().explicitAudience; as ea) {
         <app-geo-audience-editor
           [accountId]="draft().accountId"
+          [draftId]="draft().draftId"
           [initial]="{ geo: ea.geo, ageMin: ea.ageMin, ageMax: ea.ageMax, genders: ea.genders, interests: ea.interests }"
           (stateChange)="explicitAudienceState.set($event)"
         />
