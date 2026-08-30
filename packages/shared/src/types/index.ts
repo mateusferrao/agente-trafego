@@ -850,6 +850,9 @@ export type TargetingSpec =
       /** interesses em GRUPOS (Slice 3): cada grupo = OR interno; grupos entre si = AND (narrowing).
        *  A Meta realiza via múltiplos objetos em `flexible_spec`. 1 grupo = comportamento antigo. */
       readonly interestGroups?: readonly (readonly { readonly id: string; readonly name: string }[])[];
+      /** comportamentos (behaviors) em GRUPOS (Slice 4) — mesmo modelo dos interesses (cada grupo é
+       *  um objeto próprio no `flexible_spec` → AND com os demais). Exclusão não existe (Meta removeu). */
+      readonly behaviorGroups?: readonly (readonly { readonly id: string; readonly name: string }[])[];
     };
 
 /**

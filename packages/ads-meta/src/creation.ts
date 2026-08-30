@@ -483,12 +483,14 @@ export class MetaCreationService {
           ...(spec.genders && spec.genders.length > 0 ? { genders: spec.genders } : {}),
           ...(spec.customAudienceIncludeIds && spec.customAudienceIncludeIds.length > 0 ? { custom_audiences: spec.customAudienceIncludeIds.map((id) => ({ id })) } : {}),
           ...(spec.customAudienceExcludeIds && spec.customAudienceExcludeIds.length > 0 ? { excluded_custom_audiences: spec.customAudienceExcludeIds.map((id) => ({ id })) } : {}),
-          // interesses em GRUPOS (Slice 3): flexible_spec = 1 objeto por grupo → OR dentro do grupo,
-          // AND entre grupos (narrowing). Confirmado ao vivo (validate_only 200). Exclusão de interesse
-          // NÃO existe mais na Meta (spike: subcode 3858492) — só inclusão.
+          // interesses/behaviors em GRUPOS (Slices 3/4): flexible_spec = 1 objeto por grupo → OR dentro
+          // do grupo, AND entre grupos (narrowing). Confirmado ao vivo (validate_only 200). Exclusão de
+          // interesse/behavior NÃO existe mais na Meta (spike: subcode 3858492) — só inclusão.
           ...(() => {
-            const groups = (spec.interestGroups ?? []).filter((g) => g.length > 0);
-            return groups.length > 0 ? { flexible_spec: groups.map((g) => ({ interests: g.map((i) => ({ id: i.id })) })) } : {};
+            const iGroups = (spec.interestGroups ?? []).filter((g) => g.length > 0).map((g) => ({ interests: g.map((i) => ({ id: i.id })) }));
+            const bGroups = (spec.behaviorGroups ?? []).filter((g) => g.length > 0).map((g) => ({ behaviors: g.map((b) => ({ id: b.id })) }));
+            const flexible_spec = [...iGroups, ...bGroups];
+            return flexible_spec.length > 0 ? { flexible_spec } : {};
           })(),
           targeting_automation: { advantage_audience: 0 },
           targeting_relaxation_types: { custom_audience: 0, lookalike: 0 },

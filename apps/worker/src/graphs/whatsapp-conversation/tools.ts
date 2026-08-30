@@ -295,6 +295,7 @@ export function makeConversationTools(
       ageMax: z.number().int().min(13).max(65).nullable().optional().describe("idade máxima"),
       gender: z.enum(["all", "men", "women"]).nullable().optional().describe("gênero do público — 'all' (padrão) = todos"),
       interests: z.array(z.string()).nullable().optional().describe("interesses pelo NOME/termo que o usuário disse (ex: 'estética', 'pets') — eu busco na Meta e pergunto se ambíguo; nunca escolho o de maior audiência sozinho."),
+      behaviors: z.array(z.string()).nullable().optional().describe("comportamentos pelo NOME (ex: 'compradores online', 'viajantes frequentes') — eu resolvo no catálogo da Meta e pergunto se ambíguo. Diferente de interesse (é ação/hábito, não afinidade)."),
     }),
   });
 
@@ -315,6 +316,7 @@ export function makeConversationTools(
       ageMax: z.number().int().min(13).max(65).nullable().optional().describe("idade máxima pra TROCAR a da original"),
       gender: z.enum(["all", "men", "women"]).nullable().optional().describe("gênero pra TROCAR o da original"),
       interests: z.array(z.string()).nullable().optional().describe("interesses pelo NOME/termo pra TROCAR os da original (a cópia não herda interesses automaticamente) — eu busco na Meta e pergunto se ambíguo"),
+      behaviors: z.array(z.string()).nullable().optional().describe("comportamentos pelo NOME pra TROCAR os da original — eu resolvo no catálogo da Meta e pergunto se ambíguo"),
       budgetReais: z.number().positive().nullable().optional().describe("budget diário em reais (opcional; default = o da original)"),
       goal: z.string().nullable().optional().describe("objetivo — só se quiser MUDAR (o agente vai avisar que troca o mecanismo)"),
     }),
@@ -339,6 +341,9 @@ export function makeConversationTools(
       removeInterests: z.array(z.string()).nullable().optional().describe("nomes/termos de interesse a REMOVER do público explícito já resolvido (ex: ['pets'])"),
       addInterests: z.array(z.string()).nullable().optional().describe("interesse(s) a ADICIONAR alargando (OU) — quem curte X OU Y. Eu busco na Meta e pergunto se ambíguo"),
       narrowInterests: z.array(z.string()).nullable().optional().describe("interesse(s) a ESTREITAR (E) — 'e também/que também curtam Z': cria um grupo que soma por E aos existentes (público menor, mais qualificado)"),
+      removeBehaviors: z.array(z.string()).nullable().optional().describe("comportamento(s) a REMOVER do público explícito"),
+      addBehaviors: z.array(z.string()).nullable().optional().describe("comportamento(s) a ADICIONAR alargando (OU) — eu resolvo no catálogo e pergunto se ambíguo"),
+      narrowBehaviors: z.array(z.string()).nullable().optional().describe("comportamento(s) a ESTREITAR (E) — novo grupo AND"),
     }),
   });
   const regenerateCopy = tool(proposeOnly, {

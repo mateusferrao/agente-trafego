@@ -138,16 +138,19 @@ export function applyExplicitGeoEdit(
  * - `narrowInterests` (já RESOLVIDO): novo grupo AND ("e também/que também curtam" → estreita).
  * Exclusão de interesse NÃO existe (a Meta removeu — spike subcode 3858492). Pura.
  */
-export function applyExplicitInterestEdit(
-  current: Extract<TargetingSpec, { readonly kind: "explicit" }>,
-  patch: {
-    readonly removeInterests?: readonly string[];
-    readonly addInterests?: readonly { readonly id: string; readonly name: string }[];
-    readonly narrowInterests?: readonly { readonly id: string; readonly name: string }[];
-  },
-): { readonly kind: "ok"; readonly targeting: TargetingSpec } | { readonly kind: "blocked"; readonly reason: string } {
-  let groups: { readonly id: string; readonly name: string }[][] = (current.interestGroups ?? []).map((g) => [...g]);
-  for (const name of patch.removeInterests ?? []) {
+type Ref = { readonly id: string; readonly name: string };
+type GroupEdit = { readonly remove?: readonly string[] | undefined; readonly add?: readonly Ref[] | undefined; readonly narrow?: readonly Ref[] | undefined };
+
+/** Merge PURO de grupos de direcionamento detalhado (interesse/behavior) — mesma lógica pros dois
+ *  (§13 DRY). `remove` por nome entre grupos (drop de grupo vazio; nada casa → bloqueia); `add`
+ *  OR-widen no 1º grupo; `narrow` = novo grupo AND. `label` só compõe a mensagem de erro. */
+function mergeGroups(
+  currentGroups: readonly (readonly Ref[])[] | undefined,
+  edit: GroupEdit,
+  label: string,
+): { readonly ok: true; readonly groups: Ref[][] } | { readonly ok: false; readonly reason: string } {
+  let groups: Ref[][] = (currentGroups ?? []).map((g) => [...g]);
+  for (const name of edit.remove ?? []) {
     const lower = name.toLowerCase();
     let found = false;
     groups = groups
@@ -158,19 +161,44 @@ export function applyExplicitInterestEdit(
       })
       .filter((g) => g.length > 0);
     if (!found) {
-      const all = (current.interestGroups ?? []).flat().map((i) => i.name).join(", ") || "nenhum";
-      return { kind: "blocked", reason: `não achei "${name}" nos interesses atuais do rascunho — confere o nome? (hoje: ${all})` };
+      const all = (currentGroups ?? []).flat().map((i) => i.name).join(", ") || "nenhum";
+      return { ok: false, reason: `não achei "${name}" ${label} do rascunho — confere o nome? (hoje: ${all})` };
     }
   }
-  if (patch.addInterests && patch.addInterests.length > 0) {
+  if (edit.add && edit.add.length > 0) {
     if (groups.length === 0) groups = [[]];
     const existing = new Set(groups[0]!.map((i) => i.id));
-    groups[0] = [...groups[0]!, ...patch.addInterests.filter((i) => !existing.has(i.id))];
+    groups[0] = [...groups[0]!, ...edit.add.filter((i) => !existing.has(i.id))];
   }
-  if (patch.narrowInterests && patch.narrowInterests.length > 0) {
-    groups = [...groups, [...patch.narrowInterests]];
-  }
-  // destrutura a chave p/ poder LIMPAR (spread de `current` sozinho manteria o valor antigo).
+  if (edit.narrow && edit.narrow.length > 0) groups = [...groups, [...edit.narrow]];
+  return { ok: true, groups };
+}
+
+export function applyExplicitInterestEdit(
+  current: Extract<TargetingSpec, { readonly kind: "explicit" }>,
+  patch: {
+    readonly removeInterests?: readonly string[];
+    readonly addInterests?: readonly Ref[];
+    readonly narrowInterests?: readonly Ref[];
+  },
+): { readonly kind: "ok"; readonly targeting: TargetingSpec } | { readonly kind: "blocked"; readonly reason: string } {
+  const r = mergeGroups(current.interestGroups, { remove: patch.removeInterests, add: patch.addInterests, narrow: patch.narrowInterests }, "nos interesses atuais");
+  if (!r.ok) return { kind: "blocked", reason: r.reason };
   const { interestGroups: _drop, ...rest } = current;
-  return { kind: "ok", targeting: { ...rest, ...(groups.length > 0 ? { interestGroups: groups } : {}) } };
+  return { kind: "ok", targeting: { ...rest, ...(r.groups.length > 0 ? { interestGroups: r.groups } : {}) } };
+}
+
+/** Edição de COMPORTAMENTOS em grupos (Slice 4) — espelho do interesse, sobre `behaviorGroups`. Pura. */
+export function applyExplicitBehaviorEdit(
+  current: Extract<TargetingSpec, { readonly kind: "explicit" }>,
+  patch: {
+    readonly removeBehaviors?: readonly string[];
+    readonly addBehaviors?: readonly Ref[];
+    readonly narrowBehaviors?: readonly Ref[];
+  },
+): { readonly kind: "ok"; readonly targeting: TargetingSpec } | { readonly kind: "blocked"; readonly reason: string } {
+  const r = mergeGroups(current.behaviorGroups, { remove: patch.removeBehaviors, add: patch.addBehaviors, narrow: patch.narrowBehaviors }, "nos comportamentos atuais");
+  if (!r.ok) return { kind: "blocked", reason: r.reason };
+  const { behaviorGroups: _drop, ...rest } = current;
+  return { kind: "ok", targeting: { ...rest, ...(r.groups.length > 0 ? { behaviorGroups: r.groups } : {}) } };
 }

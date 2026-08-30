@@ -222,6 +222,10 @@ export interface AdsPlatformPort {
   /** Busca interesse por texto (Fase 2, subfatia 4) — `/search?type=adinterest`, busca livre no
    *  servidor. Query vazia → array vazio. */
   searchInterests(account: AdAccountRef, query: string): Promise<InterestSearchResult[]>;
+  /** Busca comportamento (behavior) por texto (Slice 4) — a Meta NÃO tem busca no servidor pra
+   *  behaviors (enumeração completa); o adapter cacheia a lista e filtra LOCAL. Mesma taxonomia
+   *  neutra do interesse (`InterestSearchResult` = opção de direcionamento detalhado). Vazio → []. */
+  searchBehaviors(account: AdAccountRef, query: string): Promise<InterestSearchResult[]>;
   /** Estima o alcance de um targeting COMBINADO (Fatia 7 — fast-follow), ao vivo no momento da
    *  proposta (depende do público/exclusões escolhidos → não cacheável no run). Best-effort:
    *  `ready:false` quando a plataforma ainda não estimou. */

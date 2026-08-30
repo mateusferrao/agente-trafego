@@ -1,6 +1,6 @@
 import type { CampaignDraftSpec, TargetingSpec } from "@trafego/shared";
 import { describe, expect, it, vi } from "vitest";
-import { applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "./index.js";
+import { applyExplicitBehaviorEdit, applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "./index.js";
 
 const SPEC: CampaignDraftSpec = { version: 1, currency: "BRL", dailyBudgetMinor: 5000, activation: "paused" };
 const REF = { draftId: "d1", orgId: "org-1" };
@@ -206,5 +206,28 @@ describe("applyExplicitInterestEdit (Slice 3 — grupos AND, editar sem recriar 
     const r = applyExplicitInterestEdit(none, { addInterests: [{ id: "i1", name: "Estética" }] });
     expect(r.kind).toBe("ok");
     if (r.kind === "ok") expect(names(r.targeting)).toEqual(["Estética"]);
+  });
+});
+
+describe("applyExplicitBehaviorEdit (Slice 4 — comportamentos em grupos, espelho do interesse)", () => {
+  const base = {
+    kind: "explicit" as const,
+    geo: [{ key: "1", name: "BH", kind: "city" as const }],
+    behaviorGroups: [[{ id: "b1", name: "Compradores online" }]],
+  };
+  it("addBehaviors → OR-widen no 1º grupo", () => {
+    const r = applyExplicitBehaviorEdit(base, { addBehaviors: [{ id: "b2", name: "Viajantes" }] });
+    expect(r.kind).toBe("ok");
+    if (r.kind === "ok" && r.targeting.kind === "explicit") expect(r.targeting.behaviorGroups?.[0]).toHaveLength(2);
+  });
+  it("narrowBehaviors → novo grupo AND", () => {
+    const r = applyExplicitBehaviorEdit(base, { narrowBehaviors: [{ id: "b9", name: "Alto valor" }] });
+    expect(r.kind).toBe("ok");
+    if (r.kind === "ok" && r.targeting.kind === "explicit") expect(r.targeting.behaviorGroups).toHaveLength(2);
+  });
+  it("remove o último → some behaviorGroups", () => {
+    const r = applyExplicitBehaviorEdit(base, { removeBehaviors: ["compradores"] });
+    expect(r.kind).toBe("ok");
+    if (r.kind === "ok" && r.targeting.kind === "explicit") expect(r.targeting.behaviorGroups).toBeUndefined();
   });
 });

@@ -38,6 +38,7 @@ import { MetaWhatsappDestinationService } from "./whatsapp-destination.js";
 import { MetaAudiencesService } from "./audiences.js";
 import { MetaGeoSearchService } from "./geo-search.js";
 import { MetaInterestSearchService } from "./interest-search.js";
+import { MetaBehaviorCatalogService } from "./behavior-catalog.js";
 import { MetaCampaignStructureService } from "./campaign-structure.js";
 import { MetaGovernor } from "./governor.js";
 import { MetaEntityCache } from "./entity-cache.js";
@@ -190,6 +191,9 @@ export interface MetaAdsAdapterDeps {
   readonly customConversions?: CustomConversionsResolver;
   /** Cache do catálogo de entidades entre runs (opcional; ausente = sempre lista fresco). */
   readonly entityCache?: MetaEntityCache;
+  /** Catálogo de comportamentos (behaviors) com cache Redis locale-scoped (opcional; ausente =
+   *  busca fresco a cada chamada). */
+  readonly behaviorCatalog?: MetaBehaviorCatalogService;
   /** Frames HD por criativo de vídeo p/ a visão (Fatia 6c; default do service). */
   readonly visionFrames?: number;
 }
@@ -210,6 +214,7 @@ export class MetaAdsAdapter implements AdsPlatformPort {
   private readonly audiences: MetaAudiencesService;
   private readonly geoSearch: MetaGeoSearchService;
   private readonly interestSearch: MetaInterestSearchService;
+  private readonly behaviorCatalog: MetaBehaviorCatalogService;
   private readonly campaignStructure: MetaCampaignStructureService;
   private readonly customConversions: CustomConversionsResolver | undefined;
   private readonly entityCache: MetaEntityCache | undefined;
@@ -225,6 +230,7 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     this.audiences = new MetaAudiencesService(deps.client, deps.governor);
     this.geoSearch = new MetaGeoSearchService(deps.client, deps.governor);
     this.interestSearch = new MetaInterestSearchService(deps.client, deps.governor);
+    this.behaviorCatalog = deps.behaviorCatalog ?? new MetaBehaviorCatalogService(deps.client, deps.governor);
     this.campaignStructure = new MetaCampaignStructureService(deps.client, deps.governor);
     this.customConversions = deps.customConversions;
     this.entityCache = deps.entityCache;
@@ -394,6 +400,14 @@ export class MetaAdsAdapter implements AdsPlatformPort {
   async searchInterests(account: AdAccountRef, query: string): Promise<InterestSearchResult[]> {
     try {
       return await this.interestSearch.search(account, query);
+    } catch (error) {
+      throw toAdsError(error);
+    }
+  }
+
+  async searchBehaviors(account: AdAccountRef, query: string): Promise<InterestSearchResult[]> {
+    try {
+      return await this.behaviorCatalog.search(account, query);
     } catch (error) {
       throw toAdsError(error);
     }

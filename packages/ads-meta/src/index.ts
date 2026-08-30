@@ -6,6 +6,7 @@ export * from "./mutations.js";
 export * from "./creation.js";
 export * from "./governor.js";
 export * from "./entity-cache.js";
+export * from "./behavior-catalog.js";
 export * from "./custom-conversions.js";
 export * from "./meta-conversion-map.js";
 export * from "./meta-funnel-map.js";

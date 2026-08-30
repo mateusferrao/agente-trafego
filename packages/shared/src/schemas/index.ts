@@ -129,6 +129,7 @@ export const targetingSpecSchema = z.discriminatedUnion("kind", [
     customAudienceIncludeIds: z.array(z.string().min(1)).optional(),
     customAudienceExcludeIds: z.array(z.string().min(1)).optional(),
     interestGroups: z.array(z.array(z.object({ id: z.string().min(1), name: z.string().min(1) }))).optional(),
+    behaviorGroups: z.array(z.array(z.object({ id: z.string().min(1), name: z.string().min(1) }))).optional(),
   }),
 ]);
 

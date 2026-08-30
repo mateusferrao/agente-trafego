@@ -23,7 +23,7 @@ import { createLocalStorage } from "@trafego/storage-local";
 import { createS3Storage } from "@trafego/storage-s3";
 import { Aes256CredentialVault } from "@trafego/credential-vault";
 import { BullmqScheduler } from "@trafego/scheduler-bullmq";
-import { CustomConversionsResolver, MetaAdsAdapter, MetaEntityCache, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta";
+import { CustomConversionsResolver, MetaAdsAdapter, MetaBehaviorCatalogService, MetaEntityCache, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta";
 import { EvolutionAdapter, EvolutionClient } from "@trafego/channel-evolution";
 import { OpenRouterAdapter, OpenRouterClient } from "@trafego/llm-openrouter";
 import { OpenRouterTranscriptionAdapter } from "@trafego/transcription-openrouter";
@@ -174,9 +174,10 @@ export async function buildComposition(): Promise<WorkerDeps> {
 
   const vault = new Aes256CredentialVault(env.CREDENTIAL_MASTER_KEY, env.CREDENTIAL_KEY_VERSION);
   const client = new MetaGraphClient({ timeoutMs: env.META_HTTP_TIMEOUT_MS });
+  const governor = new MetaGovernor({ redis });
   const ads = new MetaAdsAdapter({
     client,
-    governor: new MetaGovernor({ redis }),
+    governor,
     customConversions: new CustomConversionsResolver({
       client,
       redis,
@@ -184,6 +185,8 @@ export async function buildComposition(): Promise<WorkerDeps> {
     }),
     // cache do catálogo de entidades entre runs (corta o listEntities full = rate-limit).
     entityCache: new MetaEntityCache({ redis, ttlSec: env.META_ENTITY_CACHE_TTL_SEC }),
+    // catálogo de behaviors (enum global sem busca) cacheado locale-scoped no Redis.
+    behaviorCatalog: new MetaBehaviorCatalogService(client, governor, { redis, ttlSec: env.META_BEHAVIOR_CACHE_TTL_SEC }),
     visionFrames: env.ANALYSIS_VISION_FRAMES,
   });
   const insightsSync = createInsightsSyncService({

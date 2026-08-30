@@ -35,7 +35,7 @@ import { createBillingService } from "./modules/billing/service.js";
 import { createWebhooksService } from "./modules/webhooks/service.js";
 import { Aes256CredentialVault } from "@trafego/credential-vault";
 import { BullmqScheduler } from "@trafego/scheduler-bullmq";
-import { MetaAdsAdapter, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta";
+import { MetaAdsAdapter, MetaBehaviorCatalogService, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta";
 import { EvolutionAdapter, EvolutionClient } from "@trafego/channel-evolution";
 import { createPostgresApprovals } from "@trafego/approval-postgres";
 import { createPostgresMetering } from "@trafego/metering-postgres";
@@ -125,9 +125,13 @@ export function buildContainer(logger?: OnboardingLogger): Container {
 
   // Meta plugada na Fatia 1b (onboarding: validar token + listar/derivar contas).
   // Token-only (sem app id/secret): a checagem de escopos + appsecret_proof é fast-follow.
+  const adsMetaClient = new MetaGraphClient();
+  const adsMetaGovernor = new MetaGovernor({ redis });
   const adsPlatform: AdsPlatformPort = new MetaAdsAdapter({
-    client: new MetaGraphClient(),
-    governor: new MetaGovernor({ redis }),
+    client: adsMetaClient,
+    governor: adsMetaGovernor,
+    // catálogo de behaviors cacheado (a UI do site busca behaviors no editor de público).
+    behaviorCatalog: new MetaBehaviorCatalogService(adsMetaClient, adsMetaGovernor, { redis, ttlSec: env.META_BEHAVIOR_CACHE_TTL_SEC }),
   });
 
   // WhatsApp (Evolution) plugado na 3b: onboarding por QR + push proativo + código de opt-in.
