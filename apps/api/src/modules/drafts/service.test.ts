@@ -537,3 +537,46 @@ describe("setDraftTargeting (alterna público reuse × amplo)", () => {
     expect(out.message).toContain("escala"); // mensagem granular propagada (era 404 cego)
   });
 });
+
+/** db fake p/ listPendingDrafts: cada chain (select→from→where→limit) consome o próximo da fila
+ *  (draft, depois conta, por item pendente). */
+function fakeDbListQueue(queue: unknown[][]) {
+  return {
+    select: () => ({ from: () => ({ where: () => ({ limit: () => queue.shift() ?? [] }) }) }),
+  } as never;
+}
+
+describe("DraftsService.listPendingDrafts — convertibleAudience (tolerância de rascunho antigo)", () => {
+  function serviceWith(draftRow: unknown) {
+    return createDraftsService({
+      db: fakeDbListQueue([[draftRow], [{ name: "Conta X" }]]),
+      adsPlatform: {} as never,
+      vault: {} as never,
+      approvals: { listPendingByOrg: vi.fn(async () => [{ id: "ap1", kind: "draft", draftId: "d1", status: "proposed", expiresAt: null }]) } as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+  }
+  const baseSpec = { version: 1, currency: "BRL", dailyBudgetMinor: 5000, activation: "active" };
+
+  it("reuse_adset SEM resolved (worker pré-snapshot) → convertível com semente vazia (editor abre)", async () => {
+    const service = serviceWith({
+      id: "d1", kind: "from_scratch", origin: "proactive", sourceRef: null, accountId: "acc1", createdIds: null,
+      spec: { ...baseSpec, targeting: { kind: "reuse_adset", sourceAdsetId: "AS1" } },
+    });
+    const [out] = await service.listPendingDrafts(ORG);
+    expect(out?.audience).toBe("reuse");
+    expect(out?.convertibleAudience).toEqual({ geo: [], ageMin: null, ageMax: null });
+  });
+
+  it("reuse_adset COM resolved → semente herda geo/idade do retrato", async () => {
+    const service = serviceWith({
+      id: "d1", kind: "from_scratch", origin: "proactive", sourceRef: null, accountId: "acc1", createdIds: null,
+      spec: { ...baseSpec, targeting: { kind: "reuse_adset", sourceAdsetId: "AS1", resolved: { geo: { cities: [{ key: "BR:SP", name: "São Paulo" }] }, ageMin: 25, ageMax: 45 } } },
+    });
+    const [out] = await service.listPendingDrafts(ORG);
+    expect(out?.convertibleAudience?.ageMin).toBe(25);
+    expect(out?.convertibleAudience?.ageMax).toBe(45);
+    expect((out?.convertibleAudience?.geo ?? []).length).toBeGreaterThan(0);
+  });
+});

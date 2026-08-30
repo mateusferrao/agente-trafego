@@ -469,13 +469,19 @@ export function createDraftsService(deps: DraftsServiceDeps) {
                 }
               : null,
           // semente do CONVERTER MODO: rascunho reuse com retrato → geo/idade herdados; broad → vazio.
+          // TOLERÂNCIA (rascunho antigo): reuse SEM `resolved` (proposto por worker pré-snapshot)
+          // ainda vira convertível com semente vazia — o editor abre e o dono monta o público do
+          // zero. Não resolvemos ao vivo aqui de propósito: /approvals é lista (N chamadas Meta =
+          // latência + rate-limit); rascunho é transitório (24h) e o novo já nasce com `resolved`.
           convertibleAudience:
-            spec.targeting?.kind === "reuse_adset" && spec.targeting.resolved
-              ? {
-                  geo: flattenSnapshotGeoForOutput(spec.targeting.resolved.geo),
-                  ageMin: spec.targeting.resolved.ageMin ?? null,
-                  ageMax: spec.targeting.resolved.ageMax ?? null,
-                }
+            spec.targeting?.kind === "reuse_adset"
+              ? spec.targeting.resolved
+                ? {
+                    geo: flattenSnapshotGeoForOutput(spec.targeting.resolved.geo),
+                    ageMin: spec.targeting.resolved.ageMin ?? null,
+                    ageMax: spec.targeting.resolved.ageMax ?? null,
+                  }
+                : { geo: [], ageMin: null, ageMax: null }
               : spec.targeting?.kind === "advantage_plus"
                 ? { geo: [], ageMin: null, ageMax: null }
                 : null,
