@@ -110,34 +110,24 @@ describe("resolveCreationTargeting (público da campanha criada do zero)", () =>
 });
 
 describe("audienceEchoPhrase (P0: eco não pode contradizer o targeting real)", () => {
-  it("hasAudience=false + targetingKind=reuse_adset → NÃO diz 'amplo (Advantage+)' (bug fixado)", () => {
-    const phrase = audienceEchoPhrase({ hasAudience: false, hasExclusions: false, targetingKind: "reuse_adset" });
+  it("targetingKind=reuse_adset → NÃO diz 'amplo (Advantage+)' (bug fixado)", () => {
+    const phrase = audienceEchoPhrase({ targetingKind: "reuse_adset" });
     expect(phrase).not.toContain("amplo");
     expect(phrase).toBe("herdado do conjunto que já converte");
   });
 
-  it("hasAudience=false + targetingKind=advantage_plus → amplo (Advantage+)", () => {
-    expect(audienceEchoPhrase({ hasAudience: false, hasExclusions: false, targetingKind: "advantage_plus" })).toBe(
-      "amplo (Advantage+)",
-    );
+  it("targetingKind=advantage_plus → amplo (Advantage+)", () => {
+    expect(audienceEchoPhrase({ targetingKind: "advantage_plus" })).toBe("amplo (Advantage+)");
   });
 
-  it("hasAudience=true → sempre 'o que você indicou', independente do targetingKind", () => {
-    expect(audienceEchoPhrase({ hasAudience: true, hasExclusions: false, targetingKind: "custom_audiences" })).toBe(
-      "o que você indicou",
-    );
-  });
-
-  it("hasAudience=true + hasExclusions=true → menciona exclusões", () => {
-    expect(audienceEchoPhrase({ hasAudience: true, hasExclusions: true, targetingKind: "custom_audiences" })).toBe(
-      "o que você indicou (com exclusões)",
+  it("targetingKind=explicit → usa a descrição explícita (público salvo entra aqui pós-colapso)", () => {
+    expect(audienceEchoPhrase({ targetingKind: "explicit", explicitAudienceDescription: "Brasil, + público salvo indicado" })).toBe(
+      "Brasil, + público salvo indicado",
     );
   });
 
   it("reuse_adset COM resolvedAudienceDescription → mostra o público real, não o genérico", () => {
     const phrase = audienceEchoPhrase({
-      hasAudience: false,
-      hasExclusions: false,
       targetingKind: "reuse_adset",
       resolvedAudienceDescription: "Belo Horizonte, Contagem, Ibirité, 35-64 anos, sem expansão de público",
     });

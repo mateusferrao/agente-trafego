@@ -817,39 +817,26 @@ export interface ResolvedAudienceSnapshot {
 }
 
 /**
- * Targeting NEUTRO do rascunho. No MVP: reusar o público provado de um adset OU
- * amplo (Advantage+). Construir targeting novo por interesses = fast-follow.
+ * Targeting NEUTRO do rascunho: reusar o público provado de um adset (`reuse_adset`), amplo
+ * (`advantage_plus`) ou EXPLÍCITO por primitivos (`explicit`). O kind `custom_audiences` foi
+ * COLAPSADO em `explicit` (Fatia 7 — públicos salvos entram como `customAudienceInclude/ExcludeIds`;
+ * a base geo/idade da fonte vira chips na cópia) — uma representação só.
  */
 export type TargetingSpec =
   | {
       readonly kind: "reuse_adset";
       readonly sourceAdsetId: string;
-      /** snapshot resolvido no propose (subfatia 2) — ausente = rascunho pré-adendo, apply cai no
-       *  caminho antigo (lê a Meta ao vivo). Migração de graça, sem alterar dado já persistido. */
+      /** snapshot resolvido no propose — o `reuse_adset` SEMPRE nasce com retrato (Bug 3, Slice 0);
+       *  ausente só em rascunho LEGADO (apply normaliza a expansão, nunca lê AS-IS). */
       readonly resolved?: ResolvedAudienceSnapshot;
     }
   | { readonly kind: "advantage_plus" }
   /**
-   * Segmentado por público (Fatia 7): inclui `includeIds`, exclui `excludeIds` (custom
-   * audiences reais da BM), expansões (advantage/lookalike/geo) zeradas. `sourceAdsetId`
-   * (opcional) = herda geo/idade de um adset-fonte (CÓPIA); ausente = geo amplo + o público
-   * (CRIAR-DO-ZERO com público indicado). Vocabulário Meta fica no adapter.
-   */
-  | {
-      readonly kind: "custom_audiences";
-      readonly sourceAdsetId?: string;
-      readonly includeIds: readonly string[];
-      readonly excludeIds: readonly string[];
-      /** base de geo/idade herdada do `sourceAdsetId` (quando presente) — mesmo papel do
-       *  `resolved` acima, ausente = caminho antigo (lê ao vivo). */
-      readonly resolvedBase?: Pick<ResolvedAudienceSnapshot, "geo" | "ageMin" | "ageMax">;
-    }
-  /**
-   * Público EXPLÍCITO por primitivos (Fase 1 — geo/idade/gênero; interesses entram na Fase 2,
-   * mesmo kind). Expansão SEMPRE fechada (público novo, escolhido pelo dono — sem ambiguidade de
-   * "fonte não decidiu", diferente de `reuse_adset`). Kind SUPERSET: quando o dono também indica
-   * um público salvo (nome→id) na mesma frase, `customAudienceIncludeIds/ExcludeIds` entram AQUI
-   * (compõe geo+público, não escolhe um dos dois — decisão da subfatia 3).
+   * Público EXPLÍCITO por primitivos (Fatia 7). Expansão SEMPRE fechada (público escolhido pelo dono —
+   * sem ambiguidade de "fonte não decidiu", diferente de `reuse_adset`). Kind SUPERSET: geo/idade/
+   * gênero/interesses + público salvo (`customAudienceInclude/ExcludeIds`) compõem no MESMO targeting.
+   * Na CÓPIA, a geo/idade da fonte é reconstruída em `geo`/`ageMin`/`ageMax` (chips editáveis).
+   * Vocabulário Meta fica no adapter.
    */
   | {
       readonly kind: "explicit";

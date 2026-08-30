@@ -466,25 +466,6 @@ export class MetaCreationService {
           fallback: false,
         };
       }
-      case "custom_audiences": {
-        // público específico: base = geo/idade do adset-fonte quando há (CÓPIA — "7 cidades" reais);
-        // sem fonte (CRIAR-DO-ZERO com público) = geo amplo + o público. Em ambos zera expansões.
-        const base = spec.resolvedBase
-          ? { geo_locations: this.geoToRaw(spec.resolvedBase.geo), age_min: spec.resolvedBase.ageMin, age_max: spec.resolvedBase.ageMax }
-          : spec.sourceAdsetId
-            ? ((await this.sourceAdsetTargeting(account, spec.sourceAdsetId)) ?? {})
-            : {};
-        const out: Record<string, unknown> = {
-          ...(base["geo_locations"] ? { geo_locations: base["geo_locations"] } : { geo_locations: { countries: [DEFAULT_ADVANTAGE_GEO_COUNTRY] } }),
-          ...(base["age_min"] !== undefined ? { age_min: base["age_min"] } : {}),
-          ...(base["age_max"] !== undefined ? { age_max: base["age_max"] } : {}),
-          ...(spec.includeIds.length > 0 ? { custom_audiences: spec.includeIds.map((id) => ({ id })) } : {}),
-          ...(spec.excludeIds.length > 0 ? { excluded_custom_audiences: spec.excludeIds.map((id) => ({ id })) } : {}),
-          targeting_automation: { advantage_audience: 0 },
-          targeting_relaxation_types: { custom_audience: 0, lookalike: 0 },
-        };
-        return { targeting: out, fallback: false };
-      }
       case "advantage_plus":
         return { targeting: this.advantagePlusTargeting(), fallback: false };
       case "explicit": {

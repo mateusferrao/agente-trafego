@@ -70,12 +70,16 @@ describe("campaignDraftSpecSchema — shape-validation (não regra de negócio)"
     expect(campaignDraftSpecSchema.safeParse(bad).success).toBe(false);
   });
 
-  it("aceita targeting custom_audiences (kind que faltava no schema — bug pré-existente fechado)", () => {
-    const withCustomAudiences: CampaignDraftSpec = {
+  it("aceita explicit com público salvo (colapso de custom_audiences → explicit, Slice 1)", () => {
+    const withSavedAudience: CampaignDraftSpec = {
       ...fromScratch,
-      targeting: { kind: "custom_audiences", includeIds: ["ca_1"], excludeIds: [] },
+      targeting: { kind: "explicit", geo: [{ key: "BR", name: "Brasil", kind: "country" }], customAudienceIncludeIds: ["ca_1"], customAudienceExcludeIds: [] },
     };
-    expect(campaignDraftSpecSchema.safeParse(withCustomAudiences).success).toBe(true);
+    expect(campaignDraftSpecSchema.safeParse(withSavedAudience).success).toBe(true);
+  });
+
+  it("rejeita o kind removido custom_audiences (corte seco)", () => {
+    expect(campaignDraftSpecSchema.safeParse({ ...fromScratch, targeting: { kind: "custom_audiences", includeIds: ["ca_1"], excludeIds: [] } }).success).toBe(false);
   });
 
   it("aceita reuse_adset com snapshot resolvido (subfatia 2 — cache do público real)", () => {

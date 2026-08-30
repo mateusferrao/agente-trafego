@@ -193,7 +193,7 @@ describe("MetaCreationService.deliveryEstimate", () => {
     const { urls } = stubEstimate({ estimate_ready: true, estimate_dau: 5000 });
     await svc().deliveryEstimate(
       account,
-      { targeting: { kind: "custom_audiences", includeIds: ["AUD_IN"], excludeIds: ["AUD_OUT"] }, goal: "lead" },
+      { targeting: { kind: "explicit", geo: [{ key: "BR", name: "Brasil", kind: "country" }], customAudienceIncludeIds: ["AUD_IN"], customAudienceExcludeIds: ["AUD_OUT"] }, goal: "lead" },
       governor(),
     );
     const url = decodeURIComponent(urls()[0]!);

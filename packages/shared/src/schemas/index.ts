@@ -121,13 +121,6 @@ export const targetingSpecSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("reuse_adset"), sourceAdsetId: z.string().min(1), resolved: resolvedAudienceSnapshotSchema.optional() }),
   z.object({ kind: z.literal("advantage_plus") }),
   z.object({
-    kind: z.literal("custom_audiences"),
-    sourceAdsetId: z.string().min(1).optional(),
-    includeIds: z.array(z.string().min(1)),
-    excludeIds: z.array(z.string().min(1)),
-    resolvedBase: resolvedAudienceSnapshotSchema.pick({ geo: true, ageMin: true, ageMax: true }).optional(),
-  }),
-  z.object({
     kind: z.literal("explicit"),
     geo: z.array(geoRefSchema.extend({ kind: z.enum(["country", "region", "city"]) })),
     ageMin: z.number().int().optional(),
