@@ -30,6 +30,7 @@ import type { AdAccountRef, ApprovalPort, CredentialVaultPort, SchedulerPort, St
 import type { AdsPlatformPort } from "@trafego/shared/ports";
 import { ingestCreativeImage, ingestCreativeVideo } from "@trafego/creative-library";
 import type {
+  AudienceOutput,
   CreativeAssetOutput,
   DeliveryEstimateInput,
   DraftApprovalOutput,
@@ -67,6 +68,18 @@ const DRAFT_NOT_OPEN_MSG = "esse rascunho não está mais aberto pra ajuste.";
 const ACCOUNT_UNAVAILABLE_MSG = "não consegui acessar a conta agora";
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
+
+/** Geo AGRUPADO do snapshot → lista plana `{key,name,kind}` (semente do converter modo, Slice 8).
+ *  País usa o código como nome (o snapshot não guarda nome legível de país). */
+function flattenSnapshotGeoForOutput(
+  geo: { countries?: readonly string[]; regions?: readonly { key: string; name: string }[]; cities?: readonly { key: string; name: string }[] },
+): { key: string; name: string; kind: "country" | "region" | "city" }[] {
+  return [
+    ...(geo.countries ?? []).map((c) => ({ key: c, name: c, kind: "country" as const })),
+    ...(geo.regions ?? []).map((r) => ({ key: r.key, name: r.name, kind: "region" as const })),
+    ...(geo.cities ?? []).map((c) => ({ key: c.key, name: c.name, kind: "city" as const })),
+  ];
+}
 
 /** Traduz o erro TIPADO do núcleo de refino p/ mensagem amigável (§13 — o quê + o que fazer). */
 export function refineErrorMessage(error: RefineError): string {
@@ -267,9 +280,28 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       if (targeting) edit.targeting = targeting;
     }
 
+    // SUBSTITUIÇÃO TOTAL do público explícito (Slice 8) — o editor manda o estado COMPLETO resolvido
+    // (raio/behaviors/grupos/públicos salvos) e também CONVERTE reuse/broad → explicit. Quando presente,
+    // vence os diffs abaixo (que são o caminho antigo de edição incremental).
+    if (input.explicitAudience) {
+      const a = input.explicitAudience;
+      edit.targeting = {
+        kind: "explicit",
+        geo: a.geo.map((g) => ({ key: g.key, name: g.name, kind: g.kind, ...(g.radius != null ? { radius: g.radius, distanceUnit: g.distanceUnit ?? "kilometer" } : {}) })),
+        ...(a.radiusAreas && a.radiusAreas.length > 0 ? { radiusAreas: a.radiusAreas } : {}),
+        ...(a.ageMin != null ? { ageMin: a.ageMin } : {}),
+        ...(a.ageMax != null ? { ageMax: a.ageMax } : {}),
+        ...(a.genders && a.genders.length > 0 ? { genders: a.genders } : {}),
+        ...(a.interestGroups && a.interestGroups.length > 0 ? { interestGroups: a.interestGroups } : {}),
+        ...(a.behaviorGroups && a.behaviorGroups.length > 0 ? { behaviorGroups: a.behaviorGroups } : {}),
+        ...(a.customAudienceIncludeIds && a.customAudienceIncludeIds.length > 0 ? { customAudienceIncludeIds: a.customAudienceIncludeIds } : {}),
+        ...(a.customAudienceExcludeIds && a.customAudienceExcludeIds.length > 0 ? { customAudienceExcludeIds: a.customAudienceExcludeIds } : {}),
+      };
+    }
+
     // público EXPLÍCITO (Fase 1, subfatia 3b) — remove/adiciona geo(s) já resolvido pelo
     // autocomplete + estreita idade. Converge com o chat no mesmo núcleo (applyExplicitGeoEdit).
-    if (spec.targeting?.kind === "explicit" && (input.removeGeo?.length || input.addGeo?.length || input.ageMin != null || input.ageMax != null || input.genders != null)) {
+    if (!input.explicitAudience && spec.targeting?.kind === "explicit" && (input.removeGeo?.length || input.addGeo?.length || input.ageMin != null || input.ageMax != null || input.genders != null)) {
       const r = applyExplicitGeoEdit(spec.targeting, {
         ...(input.removeGeo ? { removeGeo: input.removeGeo } : {}),
         ...(input.addGeo ? { addGeo: input.addGeo } : {}),
@@ -284,7 +316,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     // interesses do público EXPLÍCITO (Fase 2, subfatia 4) — remove/adiciona já resolvido pelo
     // autocomplete. Converge com o chat no mesmo núcleo (applyExplicitInterestEdit). Lê de
     // `edit.targeting` quando a geo já foi editada NESTE mesmo patch (evita perder a edição).
-    if (input.removeInterests?.length || input.addInterests?.length) {
+    if (!input.explicitAudience && (input.removeInterests?.length || input.addInterests?.length)) {
       const targetingBefore = edit.targeting ?? spec.targeting;
       if (targetingBefore?.kind !== "explicit") {
         return { ok: false, message: "esse rascunho não tem um público explícito pra editar interesses." };
@@ -409,16 +441,28 @@ export function createDraftsService(deps: DraftsServiceDeps) {
           explicitAudience:
             spec.targeting?.kind === "explicit"
               ? {
-                  geo: spec.targeting.geo.map((g) => ({ key: g.key, name: g.name, kind: g.kind })),
+                  geo: spec.targeting.geo.map((g) => ({ key: g.key, name: g.name, kind: g.kind, radius: g.radius ?? null, distanceUnit: g.distanceUnit ?? null })),
+                  radiusAreas: (spec.targeting.radiusAreas ?? []).map((a) => ({ address: a.address, radius: a.radius, distanceUnit: a.distanceUnit })),
                   ageMin: spec.targeting.ageMin ?? null,
                   ageMax: spec.targeting.ageMax ?? null,
                   genders: spec.targeting.genders ? [...spec.targeting.genders] : null,
-                  // Slice 3: interestGroups (AND) achatado p/ o output flat atual — a UI de grupos é
-                  // Slice 8 (aí o output vira interestGroups). Flatten preserva os interesses (perde o
-                  // recorte de grupo temporariamente, só na exibição).
-                  interests: spec.targeting.interestGroups ? spec.targeting.interestGroups.flat().map((i) => ({ id: i.id, name: i.name })) : [],
+                  interestGroups: (spec.targeting.interestGroups ?? []).map((grp) => grp.map((i) => ({ id: i.id, name: i.name }))),
+                  behaviorGroups: (spec.targeting.behaviorGroups ?? []).map((grp) => grp.map((b) => ({ id: b.id, name: b.name }))),
+                  customAudienceIncludeIds: [...(spec.targeting.customAudienceIncludeIds ?? [])],
+                  customAudienceExcludeIds: [...(spec.targeting.customAudienceExcludeIds ?? [])],
                 }
               : null,
+          // semente do CONVERTER MODO: rascunho reuse com retrato → geo/idade herdados; broad → vazio.
+          convertibleAudience:
+            spec.targeting?.kind === "reuse_adset" && spec.targeting.resolved
+              ? {
+                  geo: flattenSnapshotGeoForOutput(spec.targeting.resolved.geo),
+                  ageMin: spec.targeting.resolved.ageMin ?? null,
+                  ageMax: spec.targeting.resolved.ageMax ?? null,
+                }
+              : spec.targeting?.kind === "advantage_plus"
+                ? { geo: [], ageMin: null, ageMax: null }
+                : null,
           createdIds: appr.kind === "activation" ? (d.createdIds as Record<string, unknown>) : null,
         });
       }
@@ -636,6 +680,22 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       if (!ctx) return [];
       const results = await deps.adsPlatform.searchInterests(ctx.ref, query);
       return results.map((r) => ({ id: r.id, name: r.name, audienceSize: r.audienceSize ?? null, path: r.path ? [...r.path] : null }));
+    },
+
+    /** Busca de comportamentos (Slice 8) — autocomplete no editor (filtro local sobre a enum cacheada). */
+    async searchBehaviors(orgId: OrgId, accountId: string, query: string): Promise<InterestSearchResultOutput[]> {
+      const ctx = await loadScaleContext(orgId, accountId);
+      if (!ctx) return [];
+      const results = await deps.adsPlatform.searchBehaviors(ctx.ref, query);
+      return results.map((r) => ({ id: r.id, name: r.name, audienceSize: r.audienceSize ?? null, path: r.path ? [...r.path] : null }));
+    },
+
+    /** Públicos salvos da conta (Slice 8) — o editor lista e filtra local (include/exclude). */
+    async listAudiences(orgId: OrgId, accountId: string): Promise<AudienceOutput[]> {
+      const ctx = await loadScaleContext(orgId, accountId);
+      if (!ctx) return [];
+      const results = await deps.adsPlatform.listCustomAudiences(ctx.ref);
+      return results.map((a) => ({ id: a.id, name: a.name, isLookalike: a.isLookalike ?? false, approximateCount: a.approximateCount ?? null }));
     },
 
     /** Anúncios AO VIVO da conta oferecidos como candidatos de reuse no picker (lê ad_creatives,

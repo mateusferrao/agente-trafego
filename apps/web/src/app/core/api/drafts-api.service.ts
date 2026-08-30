@@ -2,6 +2,7 @@ import { Injectable } from '@angular/core';
 import type { Observable } from 'rxjs';
 import { BaseApiService } from './base-api.service';
 import type {
+  AudienceOutput,
   CreativeAssetOutput,
   DeliveryEstimateInput,
   DeliveryEstimateOutput,
@@ -101,6 +102,16 @@ export class DraftsApiService extends BaseApiService {
    *  (Fase 2, subfatia 4). Debounce fica no componente; aqui é só a chamada tipada. */
   searchInterests(accountId: string, q: string): Observable<InterestSearchResultOutput[]> {
     return this.get<InterestSearchResultOutput[]>(['/accounts', accountId, 'targeting', 'interest-search'], { params: { q } });
+  }
+
+  /** `GET /api/accounts/:id/targeting/behavior-search?q=...` — autocomplete de comportamentos (Slice 8). */
+  searchBehaviors(accountId: string, q: string): Observable<InterestSearchResultOutput[]> {
+    return this.get<InterestSearchResultOutput[]>(['/accounts', accountId, 'targeting', 'behavior-search'], { params: { q } });
+  }
+
+  /** `GET /api/accounts/:id/audiences` — públicos salvos da conta (Slice 8, include/exclude no editor). */
+  listAudiences(accountId: string): Observable<AudienceOutput[]> {
+    return this.get<AudienceOutput[]>(['/accounts', accountId, 'audiences']);
   }
 
   /** URL da rota autenticada de blob (preview) — mesma origem/proxy da API. */

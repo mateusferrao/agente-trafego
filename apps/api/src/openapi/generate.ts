@@ -85,6 +85,7 @@ import {
   revertibleActionOutput,
 } from "../modules/approvals/schema.js";
 import {
+  audienceOutput,
   creativeAssetOutput,
   deliveryEstimateInput,
   deliveryEstimateOutput,
@@ -190,6 +191,7 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const SetDraftTargetingOutput = registry.register("SetDraftTargetingOutput", setDraftTargetingOutput);
   const DeliveryEstimateInput = registry.register("DeliveryEstimateInput", deliveryEstimateInput);
   const DeliveryEstimateOutput = registry.register("DeliveryEstimateOutput", deliveryEstimateOutput);
+  const AudienceOutput = registry.register("AudienceOutput", audienceOutput);
   const SetDraftCreativeInput = registry.register("SetDraftCreativeInput", setDraftCreativeInput);
 const SetDraftCreativeOutput = registry.register("SetDraftCreativeOutput", setDraftCreativeOutput);
   const UpdateDraftInput = registry.register("UpdateDraftInput", updateDraftInput);
@@ -752,6 +754,20 @@ const SetDraftCreativeOutput = registry.register("SetDraftCreativeOutput", setDr
     tags: ["drafts"],
     request: { params: z.object({ id: z.string() }), query: z.object({ q: z.string() }) },
     responses: { 200: jsonRes("busca de interesses pro editor de público explícito", z.array(InterestSearchResultOutput)) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts/{id}/targeting/behavior-search",
+    tags: ["drafts"],
+    request: { params: z.object({ id: z.string() }), query: z.object({ q: z.string() }) },
+    responses: { 200: jsonRes("busca de comportamentos pro editor de público explícito", z.array(InterestSearchResultOutput)) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts/{id}/audiences",
+    tags: ["drafts"],
+    request: { params: z.object({ id: z.string() }) },
+    responses: { 200: jsonRes("públicos salvos da conta pro editor (include/exclude)", z.array(AudienceOutput)) },
   });
   registry.registerPath({
     method: "post",

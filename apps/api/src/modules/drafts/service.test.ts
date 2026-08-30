@@ -263,7 +263,7 @@ describe("DraftsService.updateDraft — INTERESSES do público EXPLÍCITO (Fase 
     targeting: {
       kind: "explicit",
       geo: [{ key: "1", name: "Belo Horizonte", kind: "city" }],
-      interests: [{ id: "i1", name: "Estética" }, { id: "i2", name: "Pets" }],
+      interestGroups: [[{ id: "i1", name: "Estética" }, { id: "i2", name: "Pets" }]],
     },
   };
 
@@ -279,8 +279,8 @@ describe("DraftsService.updateDraft — INTERESSES do público EXPLÍCITO (Fase 
     });
     const out = await service.updateDraft(ORG, "acc", "d1", { removeInterests: ["Pets"] });
     expect(out.ok).toBe(true);
-    const targeting = (captured.spec as { targeting: { interests: { name: string }[] } }).targeting;
-    expect(targeting.interests.map((i) => i.name)).toEqual(["Estética"]);
+    const targeting = (captured.spec as { targeting: { interestGroups: { name: string }[][] } }).targeting;
+    expect(targeting.interestGroups.flat().map((i) => i.name)).toEqual(["Estética"]);
   });
 
   it("removeInterests com nome que não existe no rascunho → {ok:false}, NÃO persiste", async () => {
@@ -312,8 +312,8 @@ describe("DraftsService.updateDraft — INTERESSES do público EXPLÍCITO (Fase 
     const out = await service.updateDraft(ORG, "acc", "d1", { addInterests: [{ id: "i3", name: "Viagem" }] });
     expect(out.ok).toBe(true);
     expect(searchInterests).not.toHaveBeenCalled();
-    const targeting = (captured.spec as { targeting: { interests: { name: string }[] } }).targeting;
-    expect(targeting.interests.map((i) => i.name)).toContain("Viagem");
+    const targeting = (captured.spec as { targeting: { interestGroups: { name: string }[][] } }).targeting;
+    expect(targeting.interestGroups.flat().map((i) => i.name)).toContain("Viagem");
   });
 
   it("targeting não-explícito + removeInterests/addInterests → {ok:false} honesto", async () => {
@@ -481,12 +481,15 @@ describe("setDraftTargeting (alterna público reuse × amplo)", () => {
     } as never;
   }
 
-  it("reuse quando o spec JÁ herda um conjunto → mantém, sem chamar a Meta", async () => {
+  it("reuse quando o spec JÁ herda um conjunto COM retrato → mantém, sem chamar a Meta", async () => {
     const captured: { spec?: unknown } = {};
     const infer = vi.fn();
+    // Bug 3 (Slice 0): reuse_adset SEM retrato re-resolve; COM retrato (resolved) é mantido sem tocar a Meta.
+    const resolved = { geo: { countries: ["BR"] }, expansionRaw: { advantageAudience: 0, relaxCustomAudience: 0, relaxLookalike: 0 } };
+    const targetingIn = { kind: "reuse_adset", sourceAdsetId: "AS1", resolved };
     const service = createDraftsService({
       db: fakeDbSelUpd(
-        { spec: { version: 1, currency: "BRL", dailyBudgetMinor: 5000, activation: "active", targeting: { kind: "reuse_adset", sourceAdsetId: "AS1" } }, kind: "from_scratch", status: "proposed" },
+        { spec: { version: 1, currency: "BRL", dailyBudgetMinor: 5000, activation: "active", targeting: targetingIn }, kind: "from_scratch", status: "proposed" },
         captured,
       ),
       adsPlatform: { inferCreationDefaults: infer } as never,
@@ -497,8 +500,8 @@ describe("setDraftTargeting (alterna público reuse × amplo)", () => {
     });
     const out = await service.setDraftTargeting(ORG, "acc", "d1", "reuse");
     expect(out).toEqual({ ok: true, audience: "reuse" });
-    expect(infer).not.toHaveBeenCalled(); // já herda → não re-infere
-    expect((captured.spec as { targeting: unknown }).targeting).toEqual({ kind: "reuse_adset", sourceAdsetId: "AS1" });
+    expect(infer).not.toHaveBeenCalled(); // já tem retrato → não re-infere
+    expect((captured.spec as { targeting: unknown }).targeting).toEqual(targetingIn);
   });
 
   it("broad → Advantage+ (a Meta escolhe), sem tocar na Meta", async () => {

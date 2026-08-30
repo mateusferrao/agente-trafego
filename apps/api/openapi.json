@@ -6745,12 +6745,56 @@
                         "region",
                         "city"
                       ]
+                    },
+                    "radius": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "distanceUnit": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "enum": [
+                        "mile",
+                        "kilometer"
+                      ]
                     }
                   },
                   "required": [
                     "key",
                     "name",
-                    "kind"
+                    "kind",
+                    "radius",
+                    "distanceUnit"
+                  ]
+                }
+              },
+              "radiusAreas": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "address": {
+                      "type": "string"
+                    },
+                    "radius": {
+                      "type": "number"
+                    },
+                    "distanceUnit": {
+                      "type": "string",
+                      "enum": [
+                        "mile",
+                        "kilometer"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "address",
+                    "radius",
+                    "distanceUnit"
                   ]
                 }
               },
@@ -6788,31 +6832,123 @@
                   ]
                 }
               },
-              "interests": {
+              "interestGroups": {
                 "type": "array",
                 "items": {
-                  "type": "object",
-                  "properties": {
-                    "id": {
-                      "type": "string"
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
                     },
-                    "name": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "id",
-                    "name"
-                  ]
+                    "required": [
+                      "id",
+                      "name"
+                    ]
+                  }
+                }
+              },
+              "behaviorGroups": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name"
+                    ]
+                  }
+                }
+              },
+              "customAudienceIncludeIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "customAudienceExcludeIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
                 }
               }
             },
             "required": [
               "geo",
+              "radiusAreas",
               "ageMin",
               "ageMax",
               "genders",
-              "interests"
+              "interestGroups",
+              "behaviorGroups",
+              "customAudienceIncludeIds",
+              "customAudienceExcludeIds"
+            ]
+          },
+          "convertibleAudience": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "geo": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "country",
+                        "region",
+                        "city"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "name",
+                    "kind"
+                  ]
+                }
+              },
+              "ageMin": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "ageMax": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "geo",
+              "ageMin",
+              "ageMax"
             ]
           },
           "createdIds": {
@@ -6850,6 +6986,7 @@
           "creative",
           "audience",
           "explicitAudience",
+          "convertibleAudience",
           "createdIds"
         ]
       },
@@ -7329,6 +7466,32 @@
           "note"
         ]
       },
+      "AudienceOutput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "isLookalike": {
+            "type": "boolean"
+          },
+          "approximateCount": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "isLookalike",
+          "approximateCount"
+        ]
+      },
       "SetDraftCreativeInput": {
         "oneOf": [
           {
@@ -7623,6 +7786,171 @@
                 "name"
               ]
             }
+          },
+          "explicitAudience": {
+            "type": "object",
+            "properties": {
+              "geo": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "country",
+                        "region",
+                        "city"
+                      ]
+                    },
+                    "radius": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "distanceUnit": {
+                      "type": "string",
+                      "enum": [
+                        "mile",
+                        "kilometer"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "name",
+                    "kind"
+                  ]
+                }
+              },
+              "radiusAreas": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "address": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "radius": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "distanceUnit": {
+                      "type": "string",
+                      "enum": [
+                        "mile",
+                        "kilometer"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "address",
+                    "radius",
+                    "distanceUnit"
+                  ]
+                }
+              },
+              "ageMin": {
+                "type": "integer",
+                "minimum": 13,
+                "maximum": 65
+              },
+              "ageMax": {
+                "type": "integer",
+                "minimum": 13,
+                "maximum": 65
+              },
+              "genders": {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    {
+                      "type": "number",
+                      "enum": [
+                        2
+                      ]
+                    }
+                  ]
+                }
+              },
+              "interestGroups": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name"
+                    ]
+                  }
+                }
+              },
+              "behaviorGroups": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name"
+                    ]
+                  }
+                }
+              },
+              "customAudienceIncludeIds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "customAudienceExcludeIds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "geo"
+            ]
           }
         }
       },
@@ -9797,6 +10125,78 @@
                   "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/InterestSearchResultOutput"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/targeting/behavior-search": {
+      "get": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "q",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "busca de comportamentos pro editor de público explícito",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/InterestSearchResultOutput"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/audiences": {
+      "get": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "públicos salvos da conta pro editor (include/exclude)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AudienceOutput"
                   }
                 }
               }

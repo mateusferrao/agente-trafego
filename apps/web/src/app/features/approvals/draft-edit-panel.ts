@@ -114,15 +114,41 @@ type DraftCopy = NonNullable<DraftApprovalOutput['copyVariants']>[number];
         </div>
       }
 
-      <!-- Público EXPLÍCITO por primitivos (Fase 1, subfatia 3b) — geo/idade/gênero, só quando o
-           rascunho já nasceu assim (chat ou criação anterior); trocar de modo é fora do painel. -->
-      @if (draft().explicitAudience; as ea) {
-        <app-geo-audience-editor
-          [accountId]="draft().accountId"
-          [draftId]="draft().draftId"
-          [initial]="{ geo: ea.geo, ageMin: ea.ageMin, ageMax: ea.ageMax, genders: ea.genders, interests: ea.interests }"
-          (stateChange)="explicitAudienceState.set($event)"
-        />
+      <!-- Público EXPLÍCITO completo (Fatia 7, Slice 8) — geo/raio/idade/gênero/interesses/
+           comportamentos/públicos salvos. Editor único; o backend faz substituição total. -->
+      @if (draft().explicitAudience) {
+        <div class="flex flex-col gap-1">
+          <span class="text-xs font-medium text-ink">Público</span>
+          <app-geo-audience-editor
+            [accountId]="draft().accountId"
+            [draftId]="draft().draftId"
+            [initial]="explicitInitial()!"
+            (stateChange)="explicitAudienceState.set($event)"
+          />
+        </div>
+      } @else if (draft().convertibleAudience) {
+        <!-- Converter modo: rascunho reuse/broad — pode virar explícito, saindo do "segue o vencedor". -->
+        <div class="flex flex-col gap-2">
+          @if (!converting()) {
+            <p class="rounded-md border border-line bg-panel px-3 py-2 text-xs text-muted">
+              Ao personalizar, você edita o público à mão — o rascunho para de seguir o vencedor automaticamente.
+            </p>
+            <button appButton variant="secondary" size="sm" type="button" class="self-start" (click)="startConverting()">
+              Personalizar público
+            </button>
+          } @else {
+            <div class="flex items-center justify-between">
+              <span class="text-xs font-medium text-ink">Público personalizado</span>
+              <button type="button" class="text-xs text-muted hover:text-ink" (click)="cancelConverting()">Voltar ao herdado</button>
+            </div>
+            <app-geo-audience-editor
+              [accountId]="draft().accountId"
+              [draftId]="draft().draftId"
+              [initial]="convertibleInitial()!"
+              (stateChange)="explicitAudienceState.set($event)"
+            />
+          }
+        </div>
       }
 
       <!-- Criativo (troca imediata — biblioteca × anúncio ao vivo; só criação) -->
@@ -213,9 +239,14 @@ export class DraftEditPanel implements OnInit {
   protected readonly budget = signal(0);
   protected readonly activation = signal<'active' | 'paused'>('paused');
   protected readonly audience = signal<'reuse' | 'broad'>('reuse');
-  /** estado ATUAL do editor de público explícito (Fase 1, subfatia 3b) — atualizado a cada mudança
-   *  no filho; comparado com `draft().explicitAudience` no diff do Salvar. `null` = sem esse campo. */
+  /** estado COMPLETO do editor de público explícito (Slice 8) — atualizado a cada mudança no filho;
+   *  vai no PATCH como substituição total. `null` = editor não ativo (nada a substituir). */
   protected readonly explicitAudienceState = signal<ExplicitAudienceState | null>(null);
+  /** converter modo: o rascunho é reuse/broad (tem `convertibleAudience`) e o usuário abriu o editor
+   *  pra personalizar à mão. Ao salvar vira explícito no backend. */
+  protected readonly converting = signal(false);
+  /** já salvou uma conversão nesta sessão do painel (habilita "voltar ao herdado" a reverter). */
+  private readonly convertedSaved = signal(false);
   protected readonly copies = signal<CopyForm[]>([]);
   /** picker de criativo aberto dentro do painel + troca em voo. */
   protected readonly showPicker = signal(false);
@@ -236,6 +267,38 @@ export class DraftEditPanel implements OnInit {
     const o = this.draft().objective;
     return o ? `CaquiAI — ${conversionLabel(o)}` : 'CaquiAI';
   });
+  /** semente do editor pro rascunho já explícito — estado COMPLETO a partir do backend. */
+  protected readonly explicitInitial = computed<ExplicitAudienceState | null>(() => {
+    const ea = this.draft().explicitAudience;
+    if (!ea) return null;
+    return {
+      geo: ea.geo,
+      radiusAreas: ea.radiusAreas,
+      ageMin: ea.ageMin,
+      ageMax: ea.ageMax,
+      genders: ea.genders,
+      interestGroups: ea.interestGroups,
+      behaviorGroups: ea.behaviorGroups,
+      customAudienceIncludeIds: ea.customAudienceIncludeIds,
+      customAudienceExcludeIds: ea.customAudienceExcludeIds,
+    };
+  });
+  /** semente do editor no converter modo — só o geo/idade do `convertibleAudience`, resto vazio. */
+  protected readonly convertibleInitial = computed<ExplicitAudienceState | null>(() => {
+    const ca = this.draft().convertibleAudience;
+    if (!ca) return null;
+    return {
+      geo: ca.geo.map((g) => ({ key: g.key, name: g.name, kind: g.kind, radius: null, distanceUnit: null })),
+      radiusAreas: [],
+      ageMin: ca.ageMin,
+      ageMax: ca.ageMax,
+      genders: null,
+      interestGroups: [],
+      behaviorGroups: [],
+      customAudienceIncludeIds: [],
+      customAudienceExcludeIds: [],
+    };
+  });
 
   ngOnInit(): void {
     const d = this.draft();
@@ -254,6 +317,26 @@ export class DraftEditPanel implements OnInit {
         description: c.description ?? '',
       })),
     );
+    // rascunho já explícito → o estado nasce completo (Salvar re-envia como substituição total).
+    this.explicitAudienceState.set(this.explicitInitial());
+  }
+
+  /** Abre o editor pro converter modo, semeando o estado do `convertibleAudience` (pronto pra salvar
+   *  mesmo sem edição — o Salvar substitui o público pelo explícito). */
+  protected startConverting(): void {
+    this.converting.set(true);
+    this.explicitAudienceState.set(this.convertibleInitial());
+  }
+
+  /** Cancela o converter modo. Se uma conversão já foi salva nesta sessão, reverte pro herdado. */
+  protected cancelConverting(): void {
+    this.converting.set(false);
+    this.explicitAudienceState.set(null);
+    if (this.convertedSaved()) {
+      const original = this.draft().audience;
+      this.convertedSaved.set(false);
+      if (original === 'reuse' || original === 'broad') this.persist({ audience: original }, 'Público voltou ao herdado.');
+    }
   }
 
   /** Toggle "Ao aprovar" (o grupo emite string[] no modo single) → normaliza pro signal. */
@@ -299,6 +382,8 @@ export class DraftEditPanel implements OnInit {
       this.close.emit();
       return;
     }
+    // converter modo: registra que a conversão foi salva (habilita reverter pro herdado se cancelar).
+    if (this.converting() && this.explicitAudienceState()) this.convertedSaved.set(true);
     this.persist(patch, 'Rascunho atualizado.');
   }
 
@@ -347,8 +432,15 @@ export class DraftEditPanel implements OnInit {
       if (v) patch['adsetName'] = v;
     }
     if (this.objective() && this.objective() !== (d.objective ?? '')) patch['objective'] = this.objective();
-    if (d.audience && this.audience() !== d.audience) patch['audience'] = this.audience();
-    this.applyExplicitAudienceDiff(patch, d);
+
+    // público: quando o editor explícito está ativo (rascunho já explícito OU converter modo), manda
+    // o estado COMPLETO como SUBSTITUIÇÃO total. Senão, o toggle reuse/broad segue no diff normal.
+    const explicit = this.explicitAudienceState();
+    if (explicit) {
+      patch['explicitAudience'] = this.toExplicitInput(explicit);
+    } else if (d.audience && this.audience() !== d.audience) {
+      patch['audience'] = this.audience();
+    }
 
     const original = d.copyVariants ?? [];
     const edits = this.copies()
@@ -379,31 +471,24 @@ export class DraftEditPanel implements OnInit {
     return v.trim();
   }
 
-  /** Diff do público EXPLÍCITO (Fase 1, subfatia 3b) contra o que veio do backend — só manda o que
-   *  MUDOU (removeGeo/addGeo por diferença de key; idade só se editada). Sem edição → patch vazio. */
-  private applyExplicitAudienceDiff(patch: Record<string, unknown>, d: DraftApprovalOutput): void {
-    const original = d.explicitAudience;
-    const current = this.explicitAudienceState();
-    if (!original || !current) return;
-    const originalKeys = new Set(original.geo.map((g) => g.key));
-    const currentKeys = new Set(current.geo.map((g) => g.key));
-    const removeGeo = original.geo.filter((g) => !currentKeys.has(g.key)).map((g) => g.name);
-    const addGeo = current.geo.filter((g) => !originalKeys.has(g.key));
-    if (removeGeo.length > 0) patch['removeGeo'] = removeGeo;
-    if (addGeo.length > 0) patch['addGeo'] = addGeo;
-    if (current.ageMin != null && current.ageMin !== original.ageMin) patch['ageMin'] = current.ageMin;
-    if (current.ageMax != null && current.ageMax !== original.ageMax) patch['ageMax'] = current.ageMax;
-
-    // gênero (bug fix): o toggle era descartado — agora entra no patch. null (todos) → [] (limpa).
-    const origGenders = [...(original.genders ?? [])].sort();
-    const curGenders = [...(current.genders ?? [])].sort();
-    if (JSON.stringify(origGenders) !== JSON.stringify(curGenders)) patch['genders'] = curGenders;
-
-    const originalInterestIds = new Set(original.interests.map((i) => i.id));
-    const currentInterestIds = new Set(current.interests.map((i) => i.id));
-    const removeInterests = original.interests.filter((i) => !currentInterestIds.has(i.id)).map((i) => i.name);
-    const addInterests = current.interests.filter((i) => !originalInterestIds.has(i.id));
-    if (removeInterests.length > 0) patch['removeInterests'] = removeInterests;
-    if (addInterests.length > 0) patch['addInterests'] = addInterests;
+  /** Mapeia o estado COMPLETO do editor pro input de substituição total do público (Slice 8).
+   *  radius/distanceUnit só quando houver; grupos/públicos sempre presentes (podem ser vazios). */
+  private toExplicitInput(s: ExplicitAudienceState): NonNullable<UpdateDraftInput['explicitAudience']> {
+    return {
+      geo: s.geo.map((g) => ({
+        key: g.key,
+        name: g.name,
+        kind: g.kind,
+        ...(g.radius != null ? { radius: g.radius, distanceUnit: g.distanceUnit ?? 'kilometer' } : {}),
+      })),
+      radiusAreas: s.radiusAreas.map((a) => ({ address: a.address, radius: a.radius, distanceUnit: a.distanceUnit })),
+      ...(s.ageMin != null ? { ageMin: s.ageMin } : {}),
+      ...(s.ageMax != null ? { ageMax: s.ageMax } : {}),
+      ...(s.genders ? { genders: [...s.genders] } : {}),
+      interestGroups: s.interestGroups.map((g) => g.map((i) => ({ id: i.id, name: i.name }))),
+      behaviorGroups: s.behaviorGroups.map((g) => g.map((i) => ({ id: i.id, name: i.name }))),
+      customAudienceIncludeIds: [...s.customAudienceIncludeIds],
+      customAudienceExcludeIds: [...s.customAudienceExcludeIds],
+    };
   }
 }

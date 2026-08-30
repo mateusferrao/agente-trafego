@@ -71,12 +71,25 @@ export const draftApprovalOutput = z.object({
    *  targeting não é `explicit` (os outros modos usam `audience` acima). */
   explicitAudience: z
     .object({
-      geo: z.array(z.object({ key: z.string(), name: z.string(), kind: z.enum(["country", "region", "city"]) })),
+      geo: z.array(z.object({ key: z.string(), name: z.string(), kind: z.enum(["country", "region", "city"]), radius: z.number().nullable(), distanceUnit: z.enum(["mile", "kilometer"]).nullable() })),
+      radiusAreas: z.array(z.object({ address: z.string(), radius: z.number(), distanceUnit: z.enum(["mile", "kilometer"]) })),
       ageMin: z.number().nullable(),
       ageMax: z.number().nullable(),
       genders: z.array(z.union([z.literal(1), z.literal(2)])).nullable(),
-      /** interesses (Fase 2, subfatia 4). Vazio = nenhum interesse indicado. */
-      interests: z.array(z.object({ id: z.string(), name: z.string() })),
+      /** interesses/comportamentos em GRUPOS (Slice 3/4). Vazio = nenhum. */
+      interestGroups: z.array(z.array(z.object({ id: z.string(), name: z.string() }))),
+      behaviorGroups: z.array(z.array(z.object({ id: z.string(), name: z.string() }))),
+      customAudienceIncludeIds: z.array(z.string()),
+      customAudienceExcludeIds: z.array(z.string()),
+    })
+    .nullable(),
+  /** semente pro CONVERTER MODO (Slice 8): público herdado (geo/idade) de um rascunho reuse/broad,
+   *  pré-preenche o editor quando o dono clica "personalizar público". `null` quando já é explicit. */
+  convertibleAudience: z
+    .object({
+      geo: z.array(z.object({ key: z.string(), name: z.string(), kind: z.enum(["country", "region", "city"]) })),
+      ageMin: z.number().nullable(),
+      ageMax: z.number().nullable(),
     })
     .nullable(),
   /** ids reais criados na Meta — só presente em `approvalKind:"activation"` (já existe na Meta). */
@@ -139,6 +152,31 @@ export const draftCopyEditInput = z.object({
   cta: ctaTypeSchema.optional(),
 });
 
+/** Público EXPLÍCITO COMPLETO que o editor do site manda (Slice 7/8) — já resolvido (keys/ids, o
+ *  site nunca manda nome livre). Substituição total do targeting (não diff): cobre também o
+ *  CONVERTER MODO (reuse/broad → explicit) e a edição de raio/behaviors/grupos/públicos salvos. */
+const refIdName = z.object({ id: z.string().min(1), name: z.string().min(1) });
+export const explicitAudienceInput = z.object({
+  geo: z.array(
+    z.object({
+      key: z.string().min(1),
+      name: z.string().min(1),
+      kind: z.enum(["country", "region", "city"]),
+      radius: z.number().positive().optional(),
+      distanceUnit: z.enum(["mile", "kilometer"]).optional(),
+    }),
+  ),
+  radiusAreas: z.array(z.object({ address: z.string().min(1), radius: z.number().positive(), distanceUnit: z.enum(["mile", "kilometer"]) })).optional(),
+  ageMin: z.number().int().min(13).max(65).optional(),
+  ageMax: z.number().int().min(13).max(65).optional(),
+  genders: z.array(z.union([z.literal(1), z.literal(2)])).optional(),
+  interestGroups: z.array(z.array(refIdName)).optional(),
+  behaviorGroups: z.array(z.array(refIdName)).optional(),
+  customAudienceIncludeIds: z.array(z.string().min(1)).optional(),
+  customAudienceExcludeIds: z.array(z.string().min(1)).optional(),
+});
+export type ExplicitAudienceInput = z.infer<typeof explicitAudienceInput>;
+
 /**
  * Edição CONSOLIDADA de um rascunho (painel "Editar rascunho", Slice 7) — só os campos ALTERADOS.
  * Converge com o chat no núcleo `applyDraftEdit` (§13 DRY). `objective` + geração de copy por IA =
@@ -171,6 +209,10 @@ export const updateDraftInput = z.object({
   removeInterests: z.array(z.string().min(1)).optional(),
   /** já RESOLVIDO pelo autocomplete (interest-search) — o site nunca manda termo livre pro backend resolver. */
   addInterests: z.array(z.object({ id: z.string().min(1), name: z.string().min(1) })).optional(),
+  /** SUBSTITUIÇÃO TOTAL do público explícito (Slice 8) — o editor manda o estado COMPLETO resolvido
+   *  (raio/behaviors/grupos/públicos salvos). Também CONVERTE reuse/broad → explicit. Quando presente,
+   *  vence os diffs acima. "Voltar ao herdado" usa `audience:"reuse"`/`"broad"`. */
+  explicitAudience: explicitAudienceInput.optional(),
 });
 export type UpdateDraftInput = z.infer<typeof updateDraftInput>;
 export const updateDraftOutput = z.object({ ok: z.boolean() });
@@ -193,28 +235,8 @@ export const geoSearchResultOutput = z.object({
 });
 export type GeoSearchResultOutput = z.infer<typeof geoSearchResultOutput>;
 
-/** Estimativa de alcance (Slice 7) — o editor manda o público EXPLÍCITO em edição (já resolvido:
- *  keys/ids, o site nunca manda nome livre); o objetivo/pixel vêm do rascunho no servidor. */
-const refIdName = z.object({ id: z.string().min(1), name: z.string().min(1) });
-export const deliveryEstimateInput = z.object({
-  geo: z.array(
-    z.object({
-      key: z.string().min(1),
-      name: z.string().min(1),
-      kind: z.enum(["country", "region", "city"]),
-      radius: z.number().positive().optional(),
-      distanceUnit: z.enum(["mile", "kilometer"]).optional(),
-    }),
-  ),
-  radiusAreas: z.array(z.object({ address: z.string().min(1), radius: z.number().positive(), distanceUnit: z.enum(["mile", "kilometer"]) })).optional(),
-  ageMin: z.number().int().min(13).max(65).optional(),
-  ageMax: z.number().int().min(13).max(65).optional(),
-  genders: z.array(z.union([z.literal(1), z.literal(2)])).optional(),
-  interestGroups: z.array(z.array(refIdName)).optional(),
-  behaviorGroups: z.array(z.array(refIdName)).optional(),
-  customAudienceIncludeIds: z.array(z.string().min(1)).optional(),
-  customAudienceExcludeIds: z.array(z.string().min(1)).optional(),
-});
+/** Estimativa de alcance (Slice 7) usa o MESMO shape do público explícito em edição. */
+export const deliveryEstimateInput = explicitAudienceInput;
 export type DeliveryEstimateInput = z.infer<typeof deliveryEstimateInput>;
 /** `note` = alcance legível pro card, ou null quando a Meta não estimou / público abaixo do piso. */
 export const deliveryEstimateOutput = z.object({ note: z.string().nullable() });
@@ -230,6 +252,15 @@ export const interestSearchResultOutput = z.object({
   path: z.array(z.string()).nullable(),
 });
 export type InterestSearchResultOutput = z.infer<typeof interestSearchResultOutput>;
+
+/** Público salvo (custom audience) da conta (Slice 8) — o editor lista e filtra local. */
+export const audienceOutput = z.object({
+  id: z.string(),
+  name: z.string(),
+  isLookalike: z.boolean(),
+  approximateCount: z.number().nullable(),
+});
+export type AudienceOutput = z.infer<typeof audienceOutput>;
 
 /** Um anúncio AO VIVO da conta oferecido como candidato de reuse no picker (lê ad_creatives). */
 export const servingCreativeOutput = z.object({

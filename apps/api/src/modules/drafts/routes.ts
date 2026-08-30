@@ -82,6 +82,19 @@ export const draftsRoutes: FastifyPluginAsync = async (app) => {
     return service.searchInterests(orgIdOf(request) as OrgId, id, q);
   });
 
+  // Busca de comportamentos (Slice 8) — autocomplete no editor (filtro local sobre a enum cacheada).
+  app.get("/accounts/:id/targeting/behavior-search", guard, async (request) => {
+    const { id } = request.params as { id: string };
+    const { q } = interestSearchQuery.parse(request.query);
+    return service.searchBehaviors(orgIdOf(request) as OrgId, id, q);
+  });
+
+  // Públicos salvos da conta (Slice 8) — o editor lista e filtra local (include/exclude).
+  app.get("/accounts/:id/audiences", guard, async (request) => {
+    const { id } = request.params as { id: string };
+    return service.listAudiences(orgIdOf(request) as OrgId, id);
+  });
+
   // Miniatura do criativo do rascunho (card /approvals). Org-scoped pelo draftId. upload → blob
   // do StoragePort; reuse → busca fresco da Meta e faz stream (fbcdn expira → nunca URL crua).
   // ETag estável pelo id do criativo → browser cacheia + 304 na revalidação (sem tocar na Meta).
