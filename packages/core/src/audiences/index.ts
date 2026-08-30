@@ -2,7 +2,7 @@
 // aqui vai a heurística de EXCLUSÃO de convertidos (remarketing limpo) + a leitura da
 // estimativa de alcance combinado. Sem IO.
 
-import type { DeliveryEstimate } from "@trafego/shared/types";
+import type { DeliveryEstimate, ResolvedAudienceSnapshot } from "@trafego/shared/types";
 
 /** Nomes que denunciam um público de quem JÁ CONVERTEU — candidatos a exclusão no remarketing. */
 const CONVERTER_HINTS = ["lead", "compra", "comprad", "client", "agenda", "venda", "checkout", "purchase", "buyer"] as const;
@@ -53,6 +53,35 @@ function humanCount(n: number): string {
 /** Faixa "~X–Y" (ou "~X" quando min==max) já em formato PT compacto. */
 function reachRange(min: number, max: number): string {
   return min === max ? `~${humanCount(max)}` : `~${humanCount(min)}–${humanCount(max)}`;
+}
+
+/**
+ * Decide os 3 flags de expansão pra um targeting NOVO que herda de uma fonte (P0/P1 — honestidade +
+ * segurança de gasto). Ausente na fonte → fecha explícito (nunca herda expansão às cegas — a Meta
+ * default 1 na CRIAÇÃO de adset quando ausente, v23+, mas essa regra é neutra: qualquer plataforma
+ * futura com um flag de expansão análogo se comporta igual) + nota. Presente (0 ou 1) → respeita a
+ * escolha real do dono + nota quando ligado. Pura, testável sem mock.
+ */
+export function resolveExpansion(raw: {
+  readonly advantageAudience?: 0 | 1;
+  readonly relaxCustomAudience?: 0 | 1;
+  readonly relaxLookalike?: 0 | 1;
+}): {
+  readonly expansionRaw: ResolvedAudienceSnapshot["expansionRaw"];
+  readonly summary: "off" | "on";
+  readonly note?: string;
+} {
+  const advantageAudience = raw.advantageAudience ?? 0;
+  const relaxCustomAudience = raw.relaxCustomAudience ?? 0;
+  const relaxLookalike = raw.relaxLookalike ?? 0;
+  const anyOn = advantageAudience === 1 || relaxCustomAudience === 1 || relaxLookalike === 1;
+  const anyAbsent = raw.advantageAudience === undefined || raw.relaxCustomAudience === undefined || raw.relaxLookalike === undefined;
+  const note = anyOn
+    ? "a fonte já usa expansão de público ligada"
+    : anyAbsent
+      ? "a fonte não tinha expansão configurada — apliquei fechado por segurança"
+      : undefined;
+  return { expansionRaw: { advantageAudience, relaxCustomAudience, relaxLookalike }, summary: anyOn ? "on" : "off", ...(note ? { note } : {}) };
 }
 
 /**

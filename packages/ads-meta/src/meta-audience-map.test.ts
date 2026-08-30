@@ -54,4 +54,43 @@ describe("audienceFromTargeting", () => {
     expect(a?.interests).toEqual(["Estética", "Beleza"]);
     expect(a?.stage).toBe("prospecting");
   });
+
+  it("expansion: nenhum dos 3 flags presente → unknown (leitura honesta, não decide nada)", () => {
+    const a = audienceFromTargeting({ geo_locations: { countries: ["BR"] } });
+    expect(a?.expansion.summary).toBe("unknown");
+  });
+
+  it("expansion: advantage_audience=0 explícito e o resto ausente → off (0 explícito conta)", () => {
+    const a = audienceFromTargeting({
+      geo_locations: { countries: ["BR"] },
+      targeting_automation: { advantage_audience: 0 },
+    });
+    expect(a?.expansion.summary).toBe("off");
+  });
+
+  it("expansion: advantage_audience=1 → on", () => {
+    const a = audienceFromTargeting({
+      geo_locations: { countries: ["BR"] },
+      targeting_automation: { advantage_audience: 1 },
+    });
+    expect(a?.expansion.summary).toBe("on");
+  });
+
+  it("expansion: só targeting_relaxation_types.lookalike=1 (advantage_audience ausente) → on", () => {
+    const a = audienceFromTargeting({
+      geo_locations: { countries: ["BR"] },
+      targeting_relaxation_types: { lookalike: 1 },
+    });
+    expect(a?.expansion.summary).toBe("on");
+  });
+
+  it("geoEntries preserva key de cidade/região (nome sozinho não basta pra remontar geo_locations)", () => {
+    const a = audienceFromTargeting({
+      geo_locations: { cities: [{ key: "2430536", name: "Belo Horizonte" }], regions: [{ key: "3157", name: "Minas Gerais" }] },
+    });
+    expect(a?.geoEntries).toEqual([
+      { key: "3157", name: "Minas Gerais", kind: "region" },
+      { key: "2430536", name: "Belo Horizonte", kind: "city" },
+    ]);
+  });
 });

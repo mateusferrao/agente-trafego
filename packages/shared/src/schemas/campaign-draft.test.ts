@@ -69,4 +69,34 @@ describe("campaignDraftSpecSchema — shape-validation (não regra de negócio)"
     const bad = { ...fromScratch, copyVariants: [{ primaryText: "", headline: "h" }] };
     expect(campaignDraftSpecSchema.safeParse(bad).success).toBe(false);
   });
+
+  it("aceita targeting custom_audiences (kind que faltava no schema — bug pré-existente fechado)", () => {
+    const withCustomAudiences: CampaignDraftSpec = {
+      ...fromScratch,
+      targeting: { kind: "custom_audiences", includeIds: ["ca_1"], excludeIds: [] },
+    };
+    expect(campaignDraftSpecSchema.safeParse(withCustomAudiences).success).toBe(true);
+  });
+
+  it("aceita reuse_adset com snapshot resolvido (subfatia 2 — cache do público real)", () => {
+    const withResolved: CampaignDraftSpec = {
+      ...fromScratch,
+      targeting: {
+        kind: "reuse_adset",
+        sourceAdsetId: "as_1",
+        resolved: {
+          geo: { cities: [{ key: "2430536", name: "Belo Horizonte" }] },
+          ageMin: 35,
+          ageMax: 64,
+          expansionRaw: { advantageAudience: 0, relaxCustomAudience: 0, relaxLookalike: 0 },
+        },
+      },
+    };
+    expect(campaignDraftSpecSchema.safeParse(withResolved).success).toBe(true);
+  });
+
+  it("aceita reuse_adset SEM resolved (rascunho pré-adendo — migração de graça)", () => {
+    const legacyStillValid: CampaignDraftSpec = { ...fromScratch, targeting: { kind: "reuse_adset", sourceAdsetId: "as_1" } };
+    expect(campaignDraftSpecSchema.safeParse(legacyStillValid).success).toBe(true);
+  });
 });

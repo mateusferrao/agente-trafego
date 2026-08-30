@@ -6,7 +6,7 @@
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { adAccounts, adCreatives, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { applyDraftEdit, describeDeliveryEstimate, goalNounPt, planScaleMove, resolveCreativeSourceStrategy, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { applyDraftEdit, describeDeliveryEstimate, goalNounPt, planScaleMove, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
 import { loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
   ACTION_PARAM_MODE,
@@ -17,6 +17,7 @@ import {
   toGuardrailConfig,
   type Action,
   type AgentId,
+  type AudienceProfile,
   type CampaignDraftSpec,
   type ConversionGoal,
   type CopyVariant,
@@ -24,6 +25,7 @@ import {
   type CustomAudience,
   type CreativeSourceStrategy,
   type DraftId,
+  type ResolvedAudienceSnapshot,
   type TargetingSpec,
 } from "@trafego/shared";
 import type { AdAccountRef } from "@trafego/shared/ports";
@@ -134,10 +136,69 @@ export function audienceEchoPhrase(args: {
   readonly hasAudience: boolean;
   readonly hasExclusions: boolean;
   readonly targetingKind: TargetingSpec["kind"] | undefined;
+  /** descrição real (cidades/idade/expansão) do público herdado — quando disponível (subfatia 2),
+   *  substitui o genérico "herdado do conjunto que já converte" pelo público de verdade. */
+  readonly resolvedAudienceDescription?: string;
 }): string {
   if (args.hasAudience) return "o que você indicou" + (args.hasExclusions ? " (com exclusões)" : "");
-  if (args.targetingKind === "reuse_adset") return "herdado do conjunto que já converte";
+  if (args.targetingKind === "reuse_adset") {
+    return args.resolvedAudienceDescription
+      ? `herda o conjunto que já converte — ${args.resolvedAudienceDescription}`
+      : "herdado do conjunto que já converte";
+  }
   return "amplo (Advantage+)";
+}
+
+/** Máx. de cidades/regiões nomeadas no eco antes de resumir em "+N" (compacto, não despeja a lista). */
+const MAX_PLACES_IN_ECHO = 3;
+
+function summarizePlaces(names: readonly string[]): string {
+  if (names.length <= MAX_PLACES_IN_ECHO) return names.join(", ");
+  return `${names.slice(0, MAX_PLACES_IN_ECHO).join(", ")} (+${names.length - MAX_PLACES_IN_ECHO} cidades)`;
+}
+
+/**
+ * `geo` neutro (§shared) a partir do `AudienceProfile` lido (P0.2) — `geoEntries` cobre
+ * região/cidade (com `key`, necessário pro apply reconstruir sem reler); países não têm `key` na
+ * Meta, então só sobram em `profile.geo` quando NÃO há `geoEntries` (mesma prioridade de
+ * `geoLabels` no adapter: país presente nunca convive com região/cidade no mesmo targeting).
+ */
+function snapshotGeoFromProfile(profile: AudienceProfile): ResolvedAudienceSnapshot["geo"] {
+  const entries = profile.geoEntries ?? [];
+  if (entries.length > 0) {
+    const regions = entries.filter((e) => e.kind === "region").map((e) => ({ key: e.key, name: e.name }));
+    const cities = entries.filter((e) => e.kind === "city").map((e) => ({ key: e.key, name: e.name }));
+    return { ...(regions.length > 0 ? { regions } : {}), ...(cities.length > 0 ? { cities } : {}) };
+  }
+  return profile.geo && profile.geo.length > 0 ? { countries: [...profile.geo] } : {};
+}
+
+/** `AudienceProfile` lido (P0.2) → snapshot resolvido pra gravar no rascunho (subfatia 2) — a
+ *  expansão passa por `resolveExpansion` (nunca herda ausente às cegas). Pura. */
+export function buildResolvedSnapshot(profile: AudienceProfile): ResolvedAudienceSnapshot {
+  const { expansionRaw } = resolveExpansion(profile.expansion);
+  return {
+    geo: snapshotGeoFromProfile(profile),
+    ...(profile.ageMin !== undefined ? { ageMin: profile.ageMin } : {}),
+    ...(profile.ageMax !== undefined ? { ageMax: profile.ageMax } : {}),
+    expansionRaw,
+  };
+}
+
+/**
+ * Descrição HONESTA do público herdado pro eco (P0.2) — cidades/regiões (ou países, sem
+ * `geoEntries`), faixa etária, expansão (resumo neutro). Pura, sem jargão de campo Meta cru.
+ */
+export function describeResolvedAudience(profile: AudienceProfile): string {
+  const entries = profile.geoEntries ?? [];
+  const cityNames = entries.filter((e) => e.kind === "city").map((e) => e.name);
+  const regionNames = entries.filter((e) => e.kind === "region").map((e) => e.name);
+  const places = cityNames.length > 0 ? cityNames : regionNames.length > 0 ? regionNames : (profile.geo ?? []);
+  const placesLabel = places.length > 0 ? summarizePlaces(places) : null;
+  const ageLabel = profile.ageMin !== undefined || profile.ageMax !== undefined ? `${profile.ageMin ?? "?"}-${profile.ageMax ?? "?"} anos` : null;
+  const { summary } = resolveExpansion(profile.expansion);
+  const expansionLabel = summary === "on" ? "expansão de público ligada" : "sem expansão de público";
+  return [placesLabel, ageLabel, expansionLabel].filter((s): s is string => Boolean(s)).join(", ");
 }
 
 /** Rótulo PT do formato não-reusável (o vocabulário neutro vem do adapter). */
@@ -975,9 +1036,23 @@ export async function proposeCreateCampaign(
   const isVideo = Boolean(reuseVideoId);
   // público específico (sem fonte — geo amplo + o público) quando o dono indicou; senão a estratégia padrão.
   const hasAudience = aud.includeIds.length > 0 || aud.excludeIds.length > 0;
-  const targeting: NonNullable<CampaignDraftSpec["targeting"]> = hasAudience
-    ? { kind: "custom_audiences", includeIds: aud.includeIds, excludeIds: aud.excludeIds }
+  const baseTargeting = hasAudience
+    ? ({ kind: "custom_audiences", includeIds: aud.includeIds, excludeIds: aud.excludeIds } satisfies TargetingSpec)
     : resolveCreationTargeting(defaults);
+  // P0.2/P1: reuse_adset resolve+cacheia o público REAL da fonte AGORA (não só no apply) — o eco
+  // mostra cidades/idade/expansão de verdade, e a leitura falhar BLOQUEIA em vez de virar
+  // Advantage+ silencioso depois de já ter prometido "o público que já converte".
+  let audienceProfile: AudienceProfile | null = null;
+  if (baseTargeting.kind === "reuse_adset") {
+    audienceProfile = await deps.ports.ads.getAudienceProfile(ac.ref, baseTargeting.sourceAdsetId);
+    if (!audienceProfile) {
+      return { kind: "blocked", reason: "não consegui ler o público da fonte agora — não vou herdar às cegas. Tenta de novo em instantes." };
+    }
+  }
+  const targeting: NonNullable<CampaignDraftSpec["targeting"]> =
+    baseTargeting.kind === "reuse_adset" && audienceProfile
+      ? { ...baseTargeting, resolved: buildResolvedSnapshot(audienceProfile) }
+      : baseTargeting;
   const spec: CampaignDraftSpec = {
     version: 1,
     currency: ac.currency,
@@ -1022,6 +1097,7 @@ export async function proposeCreateCampaign(
     hasAudience,
     hasExclusions: aud.excludeIds.length > 0,
     targetingKind: spec.targeting?.kind,
+    ...(audienceProfile ? { resolvedAudienceDescription: describeResolvedAudience(audienceProfile) } : {}),
   });
   lines.push(
     `Público: ${audiencePhrase}.`,
@@ -1157,14 +1233,19 @@ export async function proposeCopyCampaign(
 
   const goal = structure.objective;
   const hasAudience = aud.includeIds.length > 0 || aud.excludeIds.length > 0;
+  // P0.2 (subfatia 2): structure.targeting JÁ é o AudienceProfile da fonte (readCampaignStructure
+  // leu — sem chamada extra); só falta cachear+ecoar. Diferente de proposeCreateCampaign, aqui a
+  // leitura já bloqueou lá em cima (try/catch de readCampaignStructure) se tivesse falhado.
+  const resolvedSnapshot = buildResolvedSnapshot(structure.targeting);
   const targeting: NonNullable<CampaignDraftSpec["targeting"]> = hasAudience
     ? {
         kind: "custom_audiences",
         sourceAdsetId: structure.sourceAdsetId,
         includeIds: aud.includeIds,
         excludeIds: aud.excludeIds,
+        resolvedBase: { geo: resolvedSnapshot.geo, ...(resolvedSnapshot.ageMin !== undefined ? { ageMin: resolvedSnapshot.ageMin } : {}), ...(resolvedSnapshot.ageMax !== undefined ? { ageMax: resolvedSnapshot.ageMax } : {}) },
       }
-    : { kind: "reuse_adset", sourceAdsetId: structure.sourceAdsetId };
+    : { kind: "reuse_adset", sourceAdsetId: structure.sourceAdsetId, resolved: resolvedSnapshot };
 
   // Budget da cópia é sempre DIÁRIO (o create só escreve daily). Fonte com budget DIÁRIO →
   // reusa; fonte VITALÍCIA → NÃO trata o total como diário (overspend); usa um diário inicial
@@ -1198,9 +1279,11 @@ export async function proposeCopyCampaign(
     id: args.sourceCampaignId,
   });
 
+  // P0.2: mostra o público REAL herdado (cidades/idade/expansão), não só "mantendo geo/idade" genérico.
+  const resolvedDescription = describeResolvedAudience(structure.targeting);
   const audienceLine = hasAudience
-    ? `\n• *Público:* remarketing selecionado${aud.excludeIds.length ? " (com exclusões)" : ""}, mantendo geo/idade da original`
-    : `\n• *Público:* o mesmo da campanha-base`;
+    ? `\n• *Público:* remarketing selecionado${aud.excludeIds.length ? " (com exclusões)" : ""} — ${resolvedDescription}`
+    : `\n• *Público:* o mesmo da campanha-base — ${resolvedDescription}`;
   const budgetLine = sourceIsLifetime
     ? `• *Orçamento:* ${structure.budgetMode.toUpperCase()} · ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia (a original usa orçamento vitalício; comecei com um diário seguro — ajuste se quiser)`
     : `• *Orçamento:* ${structure.budgetMode.toUpperCase()} · ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia`;

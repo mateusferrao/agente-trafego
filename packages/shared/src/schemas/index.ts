@@ -100,9 +100,33 @@ export const creativeAssetRefSchema = z.object({
   metaVideoId: z.string().optional(),
 });
 
+const geoRefSchema = z.object({ key: z.string().min(1), name: z.string().min(1) });
+
+const resolvedAudienceSnapshotSchema = z.object({
+  geo: z.object({
+    countries: z.array(z.string().min(1)).optional(),
+    regions: z.array(geoRefSchema).optional(),
+    cities: z.array(geoRefSchema).optional(),
+  }),
+  ageMin: z.number().int().optional(),
+  ageMax: z.number().int().optional(),
+  expansionRaw: z.object({
+    advantageAudience: z.union([z.literal(0), z.literal(1)]),
+    relaxCustomAudience: z.union([z.literal(0), z.literal(1)]),
+    relaxLookalike: z.union([z.literal(0), z.literal(1)]),
+  }),
+});
+
 export const targetingSpecSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("reuse_adset"), sourceAdsetId: z.string().min(1) }),
+  z.object({ kind: z.literal("reuse_adset"), sourceAdsetId: z.string().min(1), resolved: resolvedAudienceSnapshotSchema.optional() }),
   z.object({ kind: z.literal("advantage_plus") }),
+  z.object({
+    kind: z.literal("custom_audiences"),
+    sourceAdsetId: z.string().min(1).optional(),
+    includeIds: z.array(z.string().min(1)),
+    excludeIds: z.array(z.string().min(1)),
+    resolvedBase: resolvedAudienceSnapshotSchema.pick({ geo: true, ageMin: true, ageMax: true }).optional(),
+  }),
 ]);
 
 export const campaignDraftSpecSchema = z.object({

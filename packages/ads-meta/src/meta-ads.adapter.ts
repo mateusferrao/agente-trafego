@@ -2,6 +2,7 @@ import type {
   AccessibleAccount,
   Action,
   AdEntity,
+  AudienceProfile,
   CampaignStructure,
   Creative,
   CustomAudience,
@@ -385,6 +386,14 @@ export class MetaAdsAdapter implements AdsPlatformPort {
   async readCampaignStructure(account: AdAccountRef, campaignId: string): Promise<CampaignStructure> {
     try {
       return await this.campaignStructure.read(account, campaignId, normalizeAdAccountId(account.adAccountId));
+    } catch (error) {
+      throw toAdsError(error);
+    }
+  }
+
+  async getAudienceProfile(account: AdAccountRef, adsetId: string): Promise<AudienceProfile | null> {
+    try {
+      return await this.creation.getAudienceProfile(account, adsetId);
     } catch (error) {
       throw toAdsError(error);
     }

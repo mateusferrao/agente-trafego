@@ -311,6 +311,70 @@ describe("MetaCreationService.createCampaign / createAdSet — contrato v26", ()
     const adsetPost = posts().find((p) => p.url.includes("/adsets"))!;
     expect(decodeURIComponent(adsetPost.url)).toContain('"advantage_audience":1');
   });
+
+  it("reuse_adset COM snapshot resolvido (subfatia 2) → monta targeting DIRETO, ZERO chamada Graph pra fonte", async () => {
+    const posts: Array<{ url: string }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input);
+        posts.push({ url });
+        // se cair aqui pra ler a fonte, o teste falha (não deveria ter nenhum GET no sourceAdsetId).
+        if (url.includes("AS_WINNER")) throw new Error("não deveria reler a fonte — snapshot já resolvido");
+        return new Response(JSON.stringify({ id: "AS_NEW" }), { status: 200, headers: { "content-type": "application/json" } });
+      }),
+    );
+    const r = await svc().createAdSet(account, {
+      campaignId: "CAMP1",
+      name: "A",
+      dailyBudgetMinor: 1000,
+      goal: "purchase",
+      targeting: {
+        kind: "reuse_adset",
+        sourceAdsetId: "AS_WINNER",
+        resolved: {
+          geo: { cities: [{ key: "123", name: "Belo Horizonte" }] },
+          ageMin: 35,
+          ageMax: 64,
+          expansionRaw: { advantageAudience: 0, relaxCustomAudience: 0, relaxLookalike: 0 },
+        },
+      },
+      status: "paused",
+    });
+    expect(r.targetingFallback).toBe(false);
+    const adsetPost = posts.find((p) => p.url.includes("/adsets"))!;
+    const decoded = decodeURIComponent(adsetPost.url);
+    expect(decoded).toContain('"cities":[{"key":"123"}]'); // sem "name" — só o key vai pra Meta
+    expect(decoded).toContain('"age_min":35');
+    expect(decoded).toContain('"advantage_audience":0');
+    expect(decoded).toContain('"custom_audience":0');
+    expect(decoded).toContain('"lookalike":0');
+  });
+});
+
+describe("MetaCreationService.getAudienceProfile (P0.2/P1 — leitura isolada no propose)", () => {
+  it("adset lível → devolve o AudienceProfile mapeado (não Record cru)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ targeting: { geo_locations: { cities: [{ key: "123", name: "Belo Horizonte" }] }, age_min: 35, age_max: 64 } }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+      ),
+    );
+    const profile = await svc().getAudienceProfile(account, "AS_WINNER");
+    expect(profile).toMatchObject({ ageMin: 35, ageMax: 64, geoEntries: [{ key: "123", name: "Belo Horizonte", kind: "city" }] });
+  });
+
+  it("adset indisponível (erro/403/deletado) → null (caller decide bloquear, não herda às cegas)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ error: { message: "Unsupported get request", code: 100 } }), { status: 400, headers: { "content-type": "application/json" } })),
+    );
+    expect(await svc().getAudienceProfile(account, "AS_GONE")).toBeNull();
+  });
 });
 
 /** Stub do /ads: devolve uma lista fixa de candidatos pra inferCreationDefaults. */

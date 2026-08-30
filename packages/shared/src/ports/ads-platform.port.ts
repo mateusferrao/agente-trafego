@@ -2,6 +2,7 @@ import type {
   AccessibleAccount,
   Action,
   AdEntity,
+  AudienceProfile,
   CampaignStructure,
   ConversionGoal,
   Creative,
@@ -219,6 +220,11 @@ export interface AdsPlatformPort {
   getDeliveryEstimate(account: AdAccountRef, input: DeliveryEstimateInput): Promise<DeliveryEstimate>;
   /** Lê a estrutura NEUTRA de uma campanha existente p/ cópia fiel (Fatia 7) — escopado. */
   readCampaignStructure(account: AdAccountRef, campaignId: string): Promise<CampaignStructure>;
+  /** Lê o perfil de público de UM adset isolado (público/idade/expansão) — usado no PROPOSE pra
+   *  resolver+ecoar o público real de reuse_adset ANTES da confirmação (P0.2/P1), sem esperar o
+   *  fluxo de cópia completa. `null` quando o adset não existe/não é lível (o caller decide: bloquear
+   *  em vez de herdar às cegas). */
+  getAudienceProfile(account: AdAccountRef, adsetId: string): Promise<AudienceProfile | null>;
   /** Campanha-mãe de um adset + seu orçamento (diário E vitalício, minor) — p/ escalar vencedor
    *  sob CBO (orçamento na campanha, não no adset). `null` se a campanha não resolver. */
   getAdSetCampaignBudget(account: AdAccountRef, adsetId: string): Promise<{ campaignId: string; dailyBudgetMinor: number; lifetimeBudgetMinor: number } | null>;

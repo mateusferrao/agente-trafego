@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { audienceEchoPhrase, chooseCreative, clampNewBudget, resolveCreationTargeting } from "./draft-proposal.js";
+import { audienceEchoPhrase, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeResolvedAudience, resolveCreationTargeting } from "./draft-proposal.js";
 import { creativeContentHash } from "../vision/resolver.js";
 import type { WorkerDeps } from "../../composition.js";
+import type { AudienceProfile } from "@trafego/shared";
 
 const REF = { adAccountId: "act_1", accessToken: "tok" };
 /** Estratégia default = comportamento de hoje (reusa o melhor veiculando; senão biblioteca). */
@@ -130,6 +131,67 @@ describe("audienceEchoPhrase (P0: eco não pode contradizer o targeting real)", 
     expect(audienceEchoPhrase({ hasAudience: true, hasExclusions: true, targetingKind: "custom_audiences" })).toBe(
       "o que você indicou (com exclusões)",
     );
+  });
+
+  it("reuse_adset COM resolvedAudienceDescription → mostra o público real, não o genérico", () => {
+    const phrase = audienceEchoPhrase({
+      hasAudience: false,
+      hasExclusions: false,
+      targetingKind: "reuse_adset",
+      resolvedAudienceDescription: "Belo Horizonte, Contagem, Ibirité, 35-64 anos, sem expansão de público",
+    });
+    expect(phrase).toBe("herda o conjunto que já converte — Belo Horizonte, Contagem, Ibirité, 35-64 anos, sem expansão de público");
+  });
+});
+
+describe("buildResolvedSnapshot / describeResolvedAudience (P0.2/P1 — público real no propose)", () => {
+  const profileWith = (over: Partial<AudienceProfile>): AudienceProfile => ({
+    stage: "prospecting",
+    customAudienceCount: 0,
+    exclusionCount: 0,
+    expansion: { summary: "unknown" },
+    ...over,
+  });
+
+  it("expansão ausente na fonte → snapshot fecha os 3 flags em 0 (nunca herda expansão às cegas)", () => {
+    const snap = buildResolvedSnapshot(profileWith({}));
+    expect(snap.expansionRaw).toEqual({ advantageAudience: 0, relaxCustomAudience: 0, relaxLookalike: 0 });
+  });
+
+  it("expansão ligada explícita na fonte → snapshot respeita (não força pra 0)", () => {
+    const snap = buildResolvedSnapshot(profileWith({ expansion: { summary: "on", advantageAudience: 1, relaxCustomAudience: 0, relaxLookalike: 0 } }));
+    expect(snap.expansionRaw.advantageAudience).toBe(1);
+  });
+
+  it("geoEntries (cidades) → snapshot.geo.cities com key preservado", () => {
+    const snap = buildResolvedSnapshot(profileWith({ geoEntries: [{ key: "2430536", name: "Belo Horizonte", kind: "city" }] }));
+    expect(snap.geo).toEqual({ cities: [{ key: "2430536", name: "Belo Horizonte" }] });
+  });
+
+  it("sem geoEntries mas com geo (países) → snapshot.geo.countries", () => {
+    const snap = buildResolvedSnapshot(profileWith({ geo: ["BR"] }));
+    expect(snap.geo).toEqual({ countries: ["BR"] });
+  });
+
+  it("describeResolvedAudience: cidades + idade + expansão fechada — eco honesto (P0.2)", () => {
+    const desc = describeResolvedAudience(
+      profileWith({
+        geoEntries: [
+          { key: "1", name: "Belo Horizonte", kind: "city" },
+          { key: "2", name: "Contagem", kind: "city" },
+          { key: "3", name: "Ibirité", kind: "city" },
+          { key: "4", name: "Betim", kind: "city" },
+        ],
+        ageMin: 35,
+        ageMax: 64,
+      }),
+    );
+    expect(desc).toBe("Belo Horizonte, Contagem, Ibirité (+1 cidades), 35-64 anos, sem expansão de público");
+  });
+
+  it("describeResolvedAudience: expansão ligada explícita → avisa no texto", () => {
+    const desc = describeResolvedAudience(profileWith({ expansion: { summary: "on", advantageAudience: 1 } }));
+    expect(desc).toContain("expansão de público ligada");
   });
 });
 

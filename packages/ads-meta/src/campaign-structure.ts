@@ -113,7 +113,12 @@ export class MetaCampaignStructureService {
       })?.goal ??
       DEFAULT_CONVERSION_GOAL;
 
-    const targeting = audienceFromTargeting(source?.targeting) ?? { stage: "unknown", customAudienceCount: 0, exclusionCount: 0 };
+    const targeting = audienceFromTargeting(source?.targeting) ?? {
+      stage: "unknown" as const,
+      customAudienceCount: 0,
+      exclusionCount: 0,
+      expansion: { summary: "unknown" as const },
+    };
 
     return {
       campaignId,

@@ -19,6 +19,8 @@ const MAX_INTERESTS = 5;
 
 interface RawAudienceRef {
   readonly id?: string;
+  /** id de geo (cidade/região) da Meta — `id` é usado por custom audiences, `key` por geo. */
+  readonly key?: string;
   readonly name?: string;
 }
 interface RawInterestGroup {
@@ -38,6 +40,11 @@ export interface RawTargeting {
   readonly excluded_custom_audiences?: readonly RawAudienceRef[];
   readonly flexible_spec?: readonly RawInterestGroup[];
   readonly interests?: readonly RawAudienceRef[];
+  /** Advantage+ audience (expansão unificada, v23+; default 1 na CRIAÇÃO quando ausente — por
+   *  isso "ausente" NUNCA deve ser copiado cru pra um targeting novo, ver `resolveExpansion`). */
+  readonly targeting_automation?: { readonly advantage_audience?: 0 | 1 };
+  /** Relaxamento por-dimensão (legado, ainda válido) — independente do `targeting_automation`. */
+  readonly targeting_relaxation_types?: { readonly custom_audience?: 0 | 1; readonly lookalike?: 0 | 1 };
 }
 
 export function isLookalikeName(name: string | undefined): boolean {
@@ -69,6 +76,34 @@ function geoLabels(t: RawTargeting): string[] {
   return [...regions, ...cities];
 }
 
+/** Regiões/cidades com `key` preservado — necessário pra reconstruir `geo_locations` sem reler a
+ *  fonte (ex: remover 1 cidade do que já foi herdado). Países ficam de fora (usam ISO, sem `key`). */
+function geoEntries(t: RawTargeting): { key: string; name: string; kind: "city" | "region" }[] {
+  const geo = t.geo_locations;
+  if (!geo) return [];
+  const withKey = (r: RawAudienceRef): r is RawAudienceRef & { key: string; name: string } => !!r.key && !!r.name;
+  const regions = (geo.regions ?? []).filter(withKey).map((r) => ({ key: r.key, name: r.name, kind: "region" as const }));
+  const cities = (geo.cities ?? []).filter(withKey).map((c) => ({ key: c.key, name: c.name, kind: "city" as const }));
+  return [...regions, ...cities];
+}
+
+/** Leitura NEUTRA e honesta dos 3 flags de expansão — só descreve o que a fonte tem (`raw`, ausente
+ *  quando a fonte não configurou aquele flag) + `summary` pro eco/UI. Nunca decide nada (quem decide
+ *  fechar por ausência é `resolveExpansion`, na camada de resolução, com o `raw` daqui). */
+function expansionRead(t: RawTargeting): AudienceProfile["expansion"] {
+  const aa = t.targeting_automation?.advantage_audience;
+  const rc = t.targeting_relaxation_types?.custom_audience;
+  const rl = t.targeting_relaxation_types?.lookalike;
+  const summary: "off" | "on" | "unknown" =
+    aa === 1 || rc === 1 || rl === 1 ? "on" : aa === undefined && rc === undefined && rl === undefined ? "unknown" : "off";
+  return {
+    summary,
+    ...(aa !== undefined ? { advantageAudience: aa } : {}),
+    ...(rc !== undefined ? { relaxCustomAudience: rc } : {}),
+    ...(rl !== undefined ? { relaxLookalike: rl } : {}),
+  };
+}
+
 /**
  * Normaliza o `targeting` de UM adset. `undefined` quando não há sinal de
  * segmentação (nada a resumir). Estágio: `remarketing` se há ao menos um custom
@@ -93,14 +128,17 @@ export function audienceFromTargeting(t: RawTargeting | undefined): AudienceProf
 
   const hasWarm = inclusion.some((a) => !isLookalikeName(a.name));
   const stage: AudienceStage = hasWarm ? "remarketing" : "prospecting";
+  const entries = geoEntries(t);
 
   return {
     stage,
     customAudienceCount: inclusion.length,
     exclusionCount: exclusions.length,
     ...(geo.length > 0 ? { geo } : {}),
+    ...(entries.length > 0 ? { geoEntries: entries } : {}),
     ...(t.age_min !== undefined ? { ageMin: t.age_min } : {}),
     ...(t.age_max !== undefined ? { ageMax: t.age_max } : {}),
     ...(interests.length > 0 ? { interests } : {}),
+    expansion: expansionRead(t),
   };
 }

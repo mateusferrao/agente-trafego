@@ -9,13 +9,14 @@ import type {
   DuplicateEntityInput,
   DuplicateResult,
 } from "@trafego/shared/ports";
-import type { ConversionGoal, DeliveryEstimate } from "@trafego/shared/types";
+import type { AudienceProfile, ConversionGoal, DeliveryEstimate, ResolvedAudienceSnapshot } from "@trafego/shared/types";
 import type { UploadMediaInput, VideoStatus } from "@trafego/shared/ports";
 import { AdsPlatformError } from "@trafego/shared/ports";
 import { MetaGraphClient, MetaApiError, META_GRAPH_VERSION } from "./client.js";
 import { callWithGovernor } from "./call-with-governor.js";
 import type { MetaGovernor } from "./governor.js";
 import { normalizeAdAccountId } from "./ids.js";
+import { audienceFromTargeting, type RawTargeting } from "./meta-audience-map.js";
 import {
   objectiveFromCampaign,
   resolveAdSetConversion,
@@ -399,10 +400,47 @@ export class MetaCreationService {
   }
 
   /**
-   * Targeting neutro → Meta. `reuse_adset` lê o targeting da fonte (herda travas do dono; `fallback:true`
-   * quando a fonte sumiu → o caller avisa em vez de sair amplo silencioso); `custom_audiences` reusa
-   * geo/idade da fonte (quando há) e TROCA o público (include/exclude) com expansões zeradas; `advantage_plus`
-   * = amplo. SWITCH EXAUSTIVO (`never`) — kind não tratado é erro de compilação, não fall-through de gasto.
+   * Perfil de público NEUTRO de um adset isolado (P0.2/P1) — reusa a MESMA leitura de
+   * `sourceAdsetTargeting` (não duplica a chamada Graph), mapeada via `audienceFromTargeting`.
+   * `null` = leitura falhou/adset sumiu — o caller (propose) decide bloquear, nunca herda às cegas.
+   */
+  async getAudienceProfile(account: AdAccountRef, adsetId: string): Promise<AudienceProfile | null> {
+    const raw = await this.sourceAdsetTargeting(account, adsetId);
+    if (!raw) return null;
+    return audienceFromTargeting(raw as RawTargeting) ?? null;
+  }
+
+  /** `geo` neutro (§shared) → `geo_locations` cru da Meta — só `key` (nunca `name`, que é só p/ eco). */
+  private geoToRaw(geo: ResolvedAudienceSnapshot["geo"]): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    if (geo.countries?.length) out["countries"] = geo.countries;
+    if (geo.regions?.length) out["regions"] = geo.regions.map((r) => ({ key: r.key }));
+    if (geo.cities?.length) out["cities"] = geo.cities.map((c) => ({ key: c.key }));
+    return out;
+  }
+
+  /** Snapshot resolvido (P0.2/P1, subfatia 2) → `targeting` cru pronto pra Meta, SEM reler nada —
+   *  expansão sempre EXPLÍCITA (nunca ausente, nunca deixa a Meta aplicar o default 1 dela). */
+  private snapshotToRawTargeting(snapshot: ResolvedAudienceSnapshot): Record<string, unknown> {
+    return {
+      geo_locations: this.geoToRaw(snapshot.geo),
+      ...(snapshot.ageMin !== undefined ? { age_min: snapshot.ageMin } : {}),
+      ...(snapshot.ageMax !== undefined ? { age_max: snapshot.ageMax } : {}),
+      targeting_automation: { advantage_audience: snapshot.expansionRaw.advantageAudience },
+      targeting_relaxation_types: {
+        custom_audience: snapshot.expansionRaw.relaxCustomAudience,
+        lookalike: snapshot.expansionRaw.relaxLookalike,
+      },
+    };
+  }
+
+  /**
+   * Targeting neutro → Meta. `reuse_adset`: com `resolved` (snapshot do propose, subfatia 2) monta
+   * DIRETO sem reler a Meta; sem `resolved` (rascunho pré-adendo) cai no caminho antigo (lê a fonte
+   * ao vivo, `fallback:true` quando some — o caller avisa, nunca sai amplo silencioso). `custom_audiences`
+   * reusa geo/idade da fonte (`resolvedBase` cacheado OU leitura ao vivo, mesmo esquema de fallback)
+   * e TROCA o público (include/exclude), expansões SEMPRE zeradas (público novo, sem ambiguidade de
+   * "fonte não decidiu"). `advantage_plus` = amplo. SWITCH EXAUSTIVO (`never`).
    */
   private async resolveTargeting(
     account: AdAccountRef,
@@ -410,13 +448,18 @@ export class MetaCreationService {
   ): Promise<{ targeting: Record<string, unknown>; fallback: boolean }> {
     switch (spec.kind) {
       case "reuse_adset": {
+        if (spec.resolved) return { targeting: this.snapshotToRawTargeting(spec.resolved), fallback: false };
         const src = await this.sourceAdsetTargeting(account, spec.sourceAdsetId);
         return src ? { targeting: src, fallback: false } : { targeting: this.advantagePlusTargeting(), fallback: true };
       }
       case "custom_audiences": {
         // público específico: base = geo/idade do adset-fonte quando há (CÓPIA — "7 cidades" reais);
         // sem fonte (CRIAR-DO-ZERO com público) = geo amplo + o público. Em ambos zera expansões.
-        const base = spec.sourceAdsetId ? ((await this.sourceAdsetTargeting(account, spec.sourceAdsetId)) ?? {}) : {};
+        const base = spec.resolvedBase
+          ? { geo_locations: this.geoToRaw(spec.resolvedBase.geo), age_min: spec.resolvedBase.ageMin, age_max: spec.resolvedBase.ageMax }
+          : spec.sourceAdsetId
+            ? ((await this.sourceAdsetTargeting(account, spec.sourceAdsetId)) ?? {})
+            : {};
         const out: Record<string, unknown> = {
           ...(base["geo_locations"] ? { geo_locations: base["geo_locations"] } : { geo_locations: { countries: [DEFAULT_ADVANTAGE_GEO_COUNTRY] } }),
           ...(base["age_min"] !== undefined ? { age_min: base["age_min"] } : {}),
@@ -424,6 +467,7 @@ export class MetaCreationService {
           ...(spec.includeIds.length > 0 ? { custom_audiences: spec.includeIds.map((id) => ({ id })) } : {}),
           ...(spec.excludeIds.length > 0 ? { excluded_custom_audiences: spec.excludeIds.map((id) => ({ id })) } : {}),
           targeting_automation: { advantage_audience: 0 },
+          targeting_relaxation_types: { custom_audience: 0, lookalike: 0 },
         };
         return { targeting: out, fallback: false };
       }

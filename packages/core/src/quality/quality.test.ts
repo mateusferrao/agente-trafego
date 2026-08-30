@@ -102,12 +102,12 @@ describe("enrichEntitiesQuality (integração das peças)", () => {
   it("frequência por estágio: prospecção satura a 2,6; remarketing não", () => {
     const met = { spend: 100, impressions: 5000, clicks: 150, ctr: 2.5, cpc: 0.67, cpm: 20, frequency: 2.6, conversions: 30 };
     const [prospect] = enrichEntitiesQuality(
-      [summary({ id: "P", level: "adset", metrics: met, audience: { stage: "prospecting", customAudienceCount: 0, exclusionCount: 0 } })],
+      [summary({ id: "P", level: "adset", metrics: met, audience: { stage: "prospecting", customAudienceCount: 0, exclusionCount: 0, expansion: { summary: "unknown" } } })],
       {},
       { thresholds: T, hasTarget: false, currency: "BRL" },
     );
     const [remarket] = enrichEntitiesQuality(
-      [summary({ id: "R", level: "adset", metrics: met, audience: { stage: "remarketing", customAudienceCount: 1, exclusionCount: 0 } })],
+      [summary({ id: "R", level: "adset", metrics: met, audience: { stage: "remarketing", customAudienceCount: 1, exclusionCount: 0, expansion: { summary: "unknown" } } })],
       {},
       { thresholds: T, hasTarget: false, currency: "BRL" },
     );

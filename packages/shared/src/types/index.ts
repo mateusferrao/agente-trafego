@@ -65,10 +65,25 @@ export interface AudienceProfile {
   readonly exclusionCount: number;
   /** países/regiões resumidos (ex: ["BR"]). */
   readonly geo?: readonly string[];
+  /** regiões/cidades com `key` da Meta preservado (não só o nome) — necessário pra reconstruir um
+   *  `geo_locations` válido ao herdar/editar (ex: remover 1 cidade sem reler a fonte). Países não
+   *  entram aqui (usam o código ISO direto, sem `key`). */
+  readonly geoEntries?: readonly { readonly key: string; readonly name: string; readonly kind: "city" | "region" }[];
   readonly ageMin?: number;
   readonly ageMax?: number;
   /** principais interesses/comportamentos (top-N nomes), quando houver. */
   readonly interests?: readonly string[];
+  /** Expansão de público (3 flags Meta neutralizados: advantage_audience + targeting_relaxation_types
+   *  custom_audience/lookalike) — `summary` pro eco/UI ("unknown" = a fonte não tinha NENHUM dos 3
+   *  configurado; NÃO confundir com "off" — quem decide fechar por segurança é a camada de resolução,
+   *  não esta leitura). Os 3 campos `raw` (ausentes quando a fonte não configurou aquele flag) alimentam
+   *  `resolveExpansion` (packages/ads-meta) pra montar o snapshot herdado sem herdar expansão às cegas. */
+  readonly expansion: {
+    readonly summary: "off" | "on" | "unknown";
+    readonly advantageAudience?: 0 | 1;
+    readonly relaxCustomAudience?: 0 | 1;
+    readonly relaxLookalike?: 0 | 1;
+  };
 }
 
 export interface InsightMetrics {
@@ -757,11 +772,36 @@ export interface CreativeAssetRef {
 }
 
 /**
+ * Público/idade/expansão RESOLVIDOS de uma fonte, no momento do PROPOSE — gravado no rascunho
+ * pra o eco mostrar o público real (P0.2) e o APPLY reusar sem reler a Meta (P1, mata a corrida
+ * "fonte some entre eco e confirmação"). Shape PRÓPRIO e neutro — não importa `RawTargeting` do
+ * adapter (`packages/ads-meta`); `shared` não pode depender de um adapter.
+ */
+export interface ResolvedAudienceSnapshot {
+  readonly geo: {
+    readonly countries?: readonly string[];
+    readonly regions?: readonly { readonly key: string; readonly name: string }[];
+    readonly cities?: readonly { readonly key: string; readonly name: string }[];
+  };
+  readonly ageMin?: number;
+  readonly ageMax?: number;
+  /** decidido por `resolveExpansion` (packages/ads-meta) — ausente na fonte já vira 0 explícito
+   *  aqui, nunca chega "ausente" neste snapshot (P1: nunca herda expansão às cegas). */
+  readonly expansionRaw: { readonly advantageAudience: 0 | 1; readonly relaxCustomAudience: 0 | 1; readonly relaxLookalike: 0 | 1 };
+}
+
+/**
  * Targeting NEUTRO do rascunho. No MVP: reusar o público provado de um adset OU
  * amplo (Advantage+). Construir targeting novo por interesses = fast-follow.
  */
 export type TargetingSpec =
-  | { readonly kind: "reuse_adset"; readonly sourceAdsetId: string }
+  | {
+      readonly kind: "reuse_adset";
+      readonly sourceAdsetId: string;
+      /** snapshot resolvido no propose (subfatia 2) — ausente = rascunho pré-adendo, apply cai no
+       *  caminho antigo (lê a Meta ao vivo). Migração de graça, sem alterar dado já persistido. */
+      readonly resolved?: ResolvedAudienceSnapshot;
+    }
   | { readonly kind: "advantage_plus" }
   /**
    * Segmentado por público (Fatia 7): inclui `includeIds`, exclui `excludeIds` (custom
@@ -774,6 +814,9 @@ export type TargetingSpec =
       readonly sourceAdsetId?: string;
       readonly includeIds: readonly string[];
       readonly excludeIds: readonly string[];
+      /** base de geo/idade herdada do `sourceAdsetId` (quando presente) — mesmo papel do
+       *  `resolved` acima, ausente = caminho antigo (lê ao vivo). */
+      readonly resolvedBase?: Pick<ResolvedAudienceSnapshot, "geo" | "ageMin" | "ageMax">;
     };
 
 /**
