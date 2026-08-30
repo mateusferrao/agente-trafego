@@ -412,7 +412,10 @@ export function createDraftsService(deps: DraftsServiceDeps) {
                   ageMin: spec.targeting.ageMin ?? null,
                   ageMax: spec.targeting.ageMax ?? null,
                   genders: spec.targeting.genders ? [...spec.targeting.genders] : null,
-                  interests: spec.targeting.interests ? spec.targeting.interests.map((i) => ({ id: i.id, name: i.name })) : [],
+                  // Slice 3: interestGroups (AND) achatado p/ o output flat atual — a UI de grupos é
+                  // Slice 8 (aí o output vira interestGroups). Flatten preserva os interesses (perde o
+                  // recorte de grupo temporariamente, só na exibição).
+                  interests: spec.targeting.interestGroups ? spec.targeting.interestGroups.flat().map((i) => ({ id: i.id, name: i.name })) : [],
                 }
               : null,
           createdIds: appr.kind === "activation" ? (d.createdIds as Record<string, unknown>) : null,

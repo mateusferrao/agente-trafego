@@ -155,7 +155,9 @@ export function describeExplicitAudience(targeting: Extract<TargetingSpec, { rea
   const placesLabel = targeting.geo.length > 0 ? summarizePlaces(targeting.geo.map((g) => g.name)) : null;
   const ageLabel = targeting.ageMin !== undefined || targeting.ageMax !== undefined ? `${targeting.ageMin ?? "?"}-${targeting.ageMax ?? "?"} anos` : null;
   const genderLabel = targeting.genders?.includes(1) && !targeting.genders.includes(2) ? "homens" : targeting.genders?.includes(2) && !targeting.genders.includes(1) ? "mulheres" : null;
-  const interestsLabel = targeting.interests && targeting.interests.length > 0 ? `interesses: ${targeting.interests.map((i) => i.name).join(", ")}` : null;
+  // grupos (Slice 3): "A ou B" dentro do grupo, " e " entre grupos (AND narrowing).
+  const groups = (targeting.interestGroups ?? []).filter((g) => g.length > 0);
+  const interestsLabel = groups.length > 0 ? `interesses: ${groups.map((g) => g.map((i) => i.name).join(" ou ")).join(" e ")}` : null;
   const audienceLabel = targeting.customAudienceIncludeIds && targeting.customAudienceIncludeIds.length > 0 ? "+ público salvo indicado" : null;
   return [placesLabel, ageLabel, genderLabel, interestsLabel, "sem expansão de público", audienceLabel].filter((s): s is string => Boolean(s)).join(", ");
 }
@@ -676,9 +678,12 @@ export interface RefineDraftPatch {
   /** remove interesse(s) do público EXPLÍCITO já resolvido (Fase 2, subfatia 4) — por nome/trecho
    *  do nome. Sem chamada nova. Nome não encontrado → bloqueia. */
   readonly removeInterests?: readonly string[];
-  /** adiciona interesse(s) NOVO(s) ao público explícito, pelo NOME que o dono disse —
+  /** adiciona interesse(s) ao público explícito (OR-widen no 1º grupo), pelo NOME que o dono disse —
    *  `refineDraft` resolve via `prepareInterests` (ambíguo→pergunta) antes de fundir. */
   readonly addInterests?: readonly string[];
+  /** ESTREITA (AND narrowing, Slice 3): novo grupo "e também/que também curtam" — os interesses do
+   *  novo grupo ANDam com os existentes. Resolvido via `prepareInterests`. */
+  readonly narrowInterests?: readonly string[];
 }
 
 export type RefineResult = { readonly kind: "ok"; readonly echo: string } | { readonly kind: "blocked"; readonly reason: string };
@@ -772,16 +777,19 @@ export async function refineDraft(
   // editar (remover/adicionar) INTERESSES do público EXPLÍCITO já resolvido (Fase 2, subfatia 4).
   // Mesma honestidade: adicionar resolve na hora (ambíguo→pergunta); remover não chama a Meta.
   // Lê de `edit.targeting` quando a geo já foi editada NESTE mesmo patch (evita perder a edição).
-  if (kind === "from_scratch" && (patch.removeInterests?.length || patch.addInterests?.length)) {
+  if (kind === "from_scratch" && (patch.removeInterests?.length || patch.addInterests?.length || patch.narrowInterests?.length)) {
     const targetingBefore = edit.targeting ?? spec.targeting;
     if (targetingBefore?.kind !== "explicit") {
       return { kind: "blocked", reason: "esse rascunho não tem um público explícito pra editar interesses — crie mirando geo/idade/gênero primeiro." };
     }
     const addInterestPrep = patch.addInterests?.length ? await prepareInterests(deps, ac.ref, patch.addInterests) : { kind: "ok" as const, interests: [] };
     if (addInterestPrep.kind === "blocked") return { kind: "blocked", reason: addInterestPrep.reason };
+    const narrowPrep = patch.narrowInterests?.length ? await prepareInterests(deps, ac.ref, patch.narrowInterests) : { kind: "ok" as const, interests: [] };
+    if (narrowPrep.kind === "blocked") return { kind: "blocked", reason: narrowPrep.reason };
     const r = applyExplicitInterestEdit(targetingBefore, {
       ...(patch.removeInterests ? { removeInterests: patch.removeInterests } : {}),
       ...(addInterestPrep.interests.length > 0 ? { addInterests: addInterestPrep.interests } : {}),
+      ...(narrowPrep.interests.length > 0 ? { narrowInterests: narrowPrep.interests } : {}),
     });
     if (r.kind === "blocked") return { kind: "blocked", reason: r.reason };
     edit.targeting = r.targeting;
@@ -1202,7 +1210,7 @@ export async function proposeCreateCampaign(
       ...(args.ageMin !== undefined ? { ageMin: args.ageMin } : {}),
       ...(args.ageMax !== undefined ? { ageMax: args.ageMax } : {}),
       ...(args.gender === "men" ? { genders: [1] } : args.gender === "women" ? { genders: [2] } : {}),
-      ...(interestPrep.interests.length > 0 ? { interests: interestPrep.interests } : {}),
+      ...(interestPrep.interests.length > 0 ? { interestGroups: [interestPrep.interests] } : {}),
       ...(hasAudience ? { customAudienceIncludeIds: aud.includeIds, customAudienceExcludeIds: aud.excludeIds } : {}),
     };
   } else {
@@ -1431,7 +1439,7 @@ export async function proposeCopyCampaign(
           ...(args.ageMin !== undefined ? { ageMin: args.ageMin } : resolvedSnapshot.ageMin !== undefined ? { ageMin: resolvedSnapshot.ageMin } : {}),
           ...(args.ageMax !== undefined ? { ageMax: args.ageMax } : resolvedSnapshot.ageMax !== undefined ? { ageMax: resolvedSnapshot.ageMax } : {}),
           ...(args.gender === "men" ? { genders: [1] } : args.gender === "women" ? { genders: [2] } : {}),
-          ...(interestPrep.interests.length > 0 ? { interests: interestPrep.interests } : {}),
+          ...(interestPrep.interests.length > 0 ? { interestGroups: [interestPrep.interests] } : {}),
           ...(hasAudience ? { customAudienceIncludeIds: aud.includeIds, customAudienceExcludeIds: aud.excludeIds } : {}),
         }
       : { kind: "reuse_adset", sourceAdsetId: structure.sourceAdsetId, resolved: resolvedSnapshot };

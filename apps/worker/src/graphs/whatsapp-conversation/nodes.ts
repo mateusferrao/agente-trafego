@@ -620,6 +620,7 @@ export function makeConversationNodes(
               ...(a["gender"] === "men" || a["gender"] === "women" || a["gender"] === "all" ? { gender: a["gender"] as "men" | "women" | "all" } : {}),
               ...(Array.isArray(a["removeInterests"]) ? { removeInterests: a["removeInterests"].filter((x): x is string => typeof x === "string") } : {}),
               ...(Array.isArray(a["addInterests"]) ? { addInterests: a["addInterests"].filter((x): x is string => typeof x === "string") } : {}),
+              ...(Array.isArray(a["narrowInterests"]) ? { narrowInterests: a["narrowInterests"].filter((x): x is string => typeof x === "string") } : {}),
             };
       const res = await refineDraft(deps, { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, currency: DEFAULT_CURRENCY }, active.draftId, patch);
       if (res.kind === "blocked") {

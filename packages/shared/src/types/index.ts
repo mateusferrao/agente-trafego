@@ -847,9 +847,9 @@ export type TargetingSpec =
       readonly genders?: readonly (1 | 2)[];
       readonly customAudienceIncludeIds?: readonly string[];
       readonly customAudienceExcludeIds?: readonly string[];
-      /** interesses (Fase 2, subfatia 4) — 1 grupo OR (todos somados por "ou"). Narrowing por
-       *  múltiplos grupos AND = fast-follow (Fase 3). */
-      readonly interests?: readonly { readonly id: string; readonly name: string }[];
+      /** interesses em GRUPOS (Slice 3): cada grupo = OR interno; grupos entre si = AND (narrowing).
+       *  A Meta realiza via múltiplos objetos em `flexible_spec`. 1 grupo = comportamento antigo. */
+      readonly interestGroups?: readonly (readonly { readonly id: string; readonly name: string }[])[];
     };
 
 /**

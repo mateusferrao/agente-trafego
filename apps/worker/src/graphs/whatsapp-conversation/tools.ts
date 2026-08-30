@@ -337,7 +337,8 @@ export function makeConversationTools(
       ageMax: z.number().int().min(13).max(65).nullable().optional(),
       gender: z.enum(["men", "women", "all"]).nullable().optional().describe("gênero do público explícito: 'men'/'women' mira só um; 'all' volta a todos"),
       removeInterests: z.array(z.string()).nullable().optional().describe("nomes/termos de interesse a REMOVER do público explícito já resolvido (ex: ['pets'])"),
-      addInterests: z.array(z.string()).nullable().optional().describe("nomes/termos de interesse a ADICIONAR ao público explícito (eu busco na Meta e pergunto se ambíguo)"),
+      addInterests: z.array(z.string()).nullable().optional().describe("interesse(s) a ADICIONAR alargando (OU) — quem curte X OU Y. Eu busco na Meta e pergunto se ambíguo"),
+      narrowInterests: z.array(z.string()).nullable().optional().describe("interesse(s) a ESTREITAR (E) — 'e também/que também curtam Z': cria um grupo que soma por E aos existentes (público menor, mais qualificado)"),
     }),
   });
   const regenerateCopy = tool(proposeOnly, {

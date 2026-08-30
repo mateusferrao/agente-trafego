@@ -1,4 +1,4 @@
-import type { CampaignDraftSpec } from "@trafego/shared";
+import type { CampaignDraftSpec, TargetingSpec } from "@trafego/shared";
 import { describe, expect, it, vi } from "vitest";
 import { applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "./index.js";
 
@@ -152,54 +152,59 @@ describe("applyExplicitGeoEdit (Fase 1, subfatia 3a/3b — editar sem recriar o 
   });
 });
 
-describe("applyExplicitInterestEdit (Fase 2, subfatia 4 — editar interesses sem recriar o rascunho, chat+site)", () => {
+describe("applyExplicitInterestEdit (Slice 3 — grupos AND, editar sem recriar o rascunho, chat+site)", () => {
   const base = {
     kind: "explicit" as const,
     geo: [{ key: "1", name: "Belo Horizonte", kind: "city" as const }],
-    interests: [
+    interestGroups: [[
       { id: "i1", name: "Estética" },
       { id: "i2", name: "Pets" },
-    ],
+    ]],
   };
+  const names = (t: TargetingSpec) => (t.kind === "explicit" ? (t.interestGroups ?? []).flat().map((i) => i.name) : []);
 
-  it("remove por nome (match parcial, case-insensitive) — sem chamada nova", () => {
+  it("remove por nome (entre grupos, case-insensitive)", () => {
     const r = applyExplicitInterestEdit(base, { removeInterests: ["pets"] });
     expect(r.kind).toBe("ok");
-    if (r.kind === "ok" && r.targeting.kind === "explicit") {
-      expect(r.targeting.interests?.map((i) => i.name)).toEqual(["Estética"]);
-    }
+    if (r.kind === "ok") expect(names(r.targeting)).toEqual(["Estética"]);
   });
 
-  it("remove o ÚLTIMO interesse → some a chave do targeting (não fica array vazio pendurado)", () => {
-    const oneInterest = { ...base, interests: [{ id: "i1", name: "Estética" }] };
-    const r = applyExplicitInterestEdit(oneInterest, { removeInterests: ["estética"] });
+  it("remove o ÚLTIMO interesse → some a chave interestGroups", () => {
+    const one = { ...base, interestGroups: [[{ id: "i1", name: "Estética" }]] };
+    const r = applyExplicitInterestEdit(one, { removeInterests: ["estética"] });
     expect(r.kind).toBe("ok");
-    if (r.kind === "ok" && r.targeting.kind === "explicit") {
-      expect(r.targeting.interests).toBeUndefined();
-    }
+    if (r.kind === "ok" && r.targeting.kind === "explicit") expect(r.targeting.interestGroups).toBeUndefined();
   });
 
-  it("nome não encontrado → BLOQUEIA (nunca aplica em interpretação incerta)", () => {
+  it("nome não encontrado → BLOQUEIA", () => {
     const r = applyExplicitInterestEdit(base, { removeInterests: ["moda"] });
     expect(r.kind).toBe("blocked");
     if (r.kind === "blocked") expect(r.reason).toContain("moda");
   });
 
-  it("adiciona interesse já resolvido (dedupe por id)", () => {
+  it("addInterests → OR-widen no 1º grupo (dedupe por id)", () => {
     const r = applyExplicitInterestEdit(base, { addInterests: [{ id: "i3", name: "Viagem" }, { id: "i1", name: "Estética" }] });
     expect(r.kind).toBe("ok");
     if (r.kind === "ok" && r.targeting.kind === "explicit") {
-      expect(r.targeting.interests).toHaveLength(3);
-      expect(r.targeting.interests?.map((i) => i.name)).toContain("Viagem");
+      expect(r.targeting.interestGroups).toHaveLength(1);
+      expect(names(r.targeting)).toContain("Viagem");
+      expect(names(r.targeting)).toHaveLength(3);
     }
   });
 
-  it("adiciona interesse a um targeting SEM interesses ainda", () => {
-    const noInterests = { kind: "explicit" as const, geo: base.geo };
-    const r = applyExplicitInterestEdit(noInterests, { addInterests: [{ id: "i1", name: "Estética" }] });
+  it("narrowInterests → novo grupo AND (estreita)", () => {
+    const r = applyExplicitInterestEdit(base, { narrowInterests: [{ id: "i9", name: "Luxo" }] });
     expect(r.kind).toBe("ok");
     if (r.kind === "ok" && r.targeting.kind === "explicit") {
-      expect(r.targeting.interests?.map((i) => i.name)).toEqual(["Estética"]);
+      expect(r.targeting.interestGroups).toHaveLength(2);
+      expect(r.targeting.interestGroups?.[1]?.map((i) => i.name)).toEqual(["Luxo"]);
     }
+  });
+
+  it("addInterests num targeting SEM grupos ainda → cria o 1º grupo", () => {
+    const none = { kind: "explicit" as const, geo: base.geo };
+    const r = applyExplicitInterestEdit(none, { addInterests: [{ id: "i1", name: "Estética" }] });
+    expect(r.kind).toBe("ok");
+    if (r.kind === "ok") expect(names(r.targeting)).toEqual(["Estética"]);
   });
 });

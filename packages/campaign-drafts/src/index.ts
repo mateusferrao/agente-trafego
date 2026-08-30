@@ -130,36 +130,47 @@ export function applyExplicitGeoEdit(
 }
 
 /**
- * Edição de INTERESSES do público `explicit` já resolvido (Fase 2, subfatia 4) — mesmo padrão de
- * `applyExplicitGeoEdit` (§13 DRY): remover é por NOME (substring, sem chamada nova — o dono já viu
- * a lista no eco/painel); adicionar já vem RESOLVIDO (a busca aconteceu na casca — `prepareInterests`
- * no worker, `searchInterests` do adapter no site). Pura.
+ * Edição de INTERESSES em GRUPOS (Slice 3) do público `explicit` — compartilhada chat+site (§13 DRY).
+ * `interestGroups`: cada grupo = OR interno; grupos entre si = AND (narrowing). Operações:
+ * - `removeInterests` (por NOME/substring, sem chamada nova): remove entre TODOS os grupos; grupo que
+ *   esvazia some. Nenhum match → bloqueia (nunca aplica em interpretação incerta).
+ * - `addInterests` (já RESOLVIDO na casca): OR-widen — adiciona ao 1º grupo (cria um se não há).
+ * - `narrowInterests` (já RESOLVIDO): novo grupo AND ("e também/que também curtam" → estreita).
+ * Exclusão de interesse NÃO existe (a Meta removeu — spike subcode 3858492). Pura.
  */
 export function applyExplicitInterestEdit(
   current: Extract<TargetingSpec, { readonly kind: "explicit" }>,
   patch: {
     readonly removeInterests?: readonly string[];
     readonly addInterests?: readonly { readonly id: string; readonly name: string }[];
+    readonly narrowInterests?: readonly { readonly id: string; readonly name: string }[];
   },
 ): { readonly kind: "ok"; readonly targeting: TargetingSpec } | { readonly kind: "blocked"; readonly reason: string } {
-  let interests = current.interests ?? [];
+  let groups: { readonly id: string; readonly name: string }[][] = (current.interestGroups ?? []).map((g) => [...g]);
   for (const name of patch.removeInterests ?? []) {
-    const before = interests.length;
-    interests = interests.filter((i) => !i.name.toLowerCase().includes(name.toLowerCase()));
-    if (interests.length === before) {
-      return { kind: "blocked", reason: `não achei "${name}" nos interesses atuais do rascunho — confere o nome? (hoje: ${(current.interests ?? []).map((i) => i.name).join(", ") || "nenhum"})` };
+    const lower = name.toLowerCase();
+    let found = false;
+    groups = groups
+      .map((g) => {
+        const filtered = g.filter((i) => !i.name.toLowerCase().includes(lower));
+        if (filtered.length < g.length) found = true;
+        return filtered;
+      })
+      .filter((g) => g.length > 0);
+    if (!found) {
+      const all = (current.interestGroups ?? []).flat().map((i) => i.name).join(", ") || "nenhum";
+      return { kind: "blocked", reason: `não achei "${name}" nos interesses atuais do rascunho — confere o nome? (hoje: ${all})` };
     }
   }
   if (patch.addInterests && patch.addInterests.length > 0) {
-    const existingIds = new Set(interests.map((i) => i.id));
-    interests = [...interests, ...patch.addInterests.filter((i) => !existingIds.has(i.id))];
+    if (groups.length === 0) groups = [[]];
+    const existing = new Set(groups[0]!.map((i) => i.id));
+    groups[0] = [...groups[0]!, ...patch.addInterests.filter((i) => !existing.has(i.id))];
   }
-  // exclui a chave (em vez de sobrescrever com array vazio) quando o último interesse foi
-  // removido — `interests` é OPCIONAL no tipo; um spread de `current` sozinho manteria o valor
-  // antigo (interests não some do targeting mesmo depois de remover o último).
-  const { interests: _current, ...rest } = current;
-  return {
-    kind: "ok",
-    targeting: { ...rest, ...(interests.length > 0 ? { interests } : {}) },
-  };
+  if (patch.narrowInterests && patch.narrowInterests.length > 0) {
+    groups = [...groups, [...patch.narrowInterests]];
+  }
+  // destrutura a chave p/ poder LIMPAR (spread de `current` sozinho manteria o valor antigo).
+  const { interestGroups: _drop, ...rest } = current;
+  return { kind: "ok", targeting: { ...rest, ...(groups.length > 0 ? { interestGroups: groups } : {}) } };
 }
