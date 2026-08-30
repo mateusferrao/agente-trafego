@@ -16,6 +16,18 @@ describe("audienceFromTargeting", () => {
     expect(a).toMatchObject({ stage: "prospecting", customAudienceCount: 0, exclusionCount: 0, geo: ["BR"], ageMin: 25, ageMax: 54 });
   });
 
+  it("flexible_spec → interestGroupRefs/behaviorGroupRefs COM id (Slice 6 — cópia fiel)", () => {
+    const a = audienceFromTargeting({
+      geo_locations: { countries: ["BR"] },
+      flexible_spec: [
+        { interests: [{ id: "i1", name: "Estética" }, { id: "i2", name: "Beleza" }] },
+        { behaviors: [{ id: "b1", name: "Compradores online" }] },
+      ],
+    });
+    expect(a?.interestGroupRefs).toEqual([[{ id: "i1", name: "Estética" }, { id: "i2", name: "Beleza" }]]);
+    expect(a?.behaviorGroupRefs).toEqual([[{ id: "b1", name: "Compradores online" }]]);
+  });
+
   it("custom audience de inclusão não-lookalike → remarketing", () => {
     const a = audienceFromTargeting({
       custom_audiences: [{ id: "1", name: "Visitantes do site 30d" }],

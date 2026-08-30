@@ -71,8 +71,12 @@ export interface AudienceProfile {
   readonly geoEntries?: readonly { readonly key: string; readonly name: string; readonly kind: "city" | "region" }[];
   readonly ageMin?: number;
   readonly ageMax?: number;
-  /** principais interesses/comportamentos (top-N nomes), quando houver. */
+  /** principais interesses/comportamentos (top-N nomes), quando houver — resumo p/ eco/UI. */
   readonly interests?: readonly string[];
+  /** interesses/comportamentos COM id, agrupados (Slice 6) — necessário pra CÓPIA FIEL repassar o
+   *  targeting da fonte sem reler (o resumo `interests` só tem nomes). Cada grupo = OR; grupos = AND. */
+  readonly interestGroupRefs?: readonly (readonly { readonly id: string; readonly name: string }[])[];
+  readonly behaviorGroupRefs?: readonly (readonly { readonly id: string; readonly name: string }[])[];
   /** Expansão de público (3 flags Meta neutralizados: advantage_audience + targeting_relaxation_types
    *  custom_audience/lookalike) — `summary` pro eco/UI ("unknown" = a fonte não tinha NENHUM dos 3
    *  configurado; NÃO confundir com "off" — quem decide fechar por segurança é a camada de resolução,
@@ -814,6 +818,10 @@ export interface ResolvedAudienceSnapshot {
   };
   readonly ageMin?: number;
   readonly ageMax?: number;
+  /** interesses/comportamentos da fonte COM id (Slice 6) — pra a cópia `reuse_adset` preservar o
+   *  targeting detalhado no apply (senão o snapshot só tinha geo/idade/expansão e perdia interesses). */
+  readonly interestGroups?: readonly (readonly { readonly id: string; readonly name: string }[])[];
+  readonly behaviorGroups?: readonly (readonly { readonly id: string; readonly name: string }[])[];
   /** decidido por `resolveExpansion` (packages/ads-meta) — ausente na fonte já vira 0 explícito
    *  aqui, nunca chega "ausente" neste snapshot (P1: nunca herda expansão às cegas). */
   readonly expansionRaw: { readonly advantageAudience: 0 | 1; readonly relaxCustomAudience: 0 | 1; readonly relaxLookalike: 0 | 1 };

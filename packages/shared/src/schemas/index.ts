@@ -110,6 +110,8 @@ const resolvedAudienceSnapshotSchema = z.object({
   }),
   ageMin: z.number().int().optional(),
   ageMax: z.number().int().optional(),
+  interestGroups: z.array(z.array(z.object({ id: z.string().min(1), name: z.string().min(1) }))).optional(),
+  behaviorGroups: z.array(z.array(z.object({ id: z.string().min(1), name: z.string().min(1) }))).optional(),
   expansionRaw: z.object({
     advantageAudience: z.union([z.literal(0), z.literal(1)]),
     relaxCustomAudience: z.union([z.literal(0), z.literal(1)]),

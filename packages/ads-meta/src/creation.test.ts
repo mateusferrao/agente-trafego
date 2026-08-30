@@ -336,6 +336,7 @@ describe("MetaCreationService.createCampaign / createAdSet — contrato v26", ()
           geo: { cities: [{ key: "123", name: "Belo Horizonte" }] },
           ageMin: 35,
           ageMax: 64,
+          interestGroups: [[{ id: "i1", name: "Estética" }]],
           expansionRaw: { advantageAudience: 0, relaxCustomAudience: 0, relaxLookalike: 0 },
         },
       },
@@ -346,6 +347,8 @@ describe("MetaCreationService.createCampaign / createAdSet — contrato v26", ()
     const decoded = decodeURIComponent(adsetPost.url);
     expect(decoded).toContain('"cities":[{"key":"123"}]'); // sem "name" — só o key vai pra Meta
     expect(decoded).toContain('"age_min":35');
+    // Slice 6: o snapshot preserva os interesses da fonte → apply reemite flexible_spec (cópia fiel).
+    expect(decoded).toContain('"flexible_spec":[{"interests":[{"id":"i1"}]}]');
     expect(decoded).toContain('"advantage_audience":0');
     expect(decoded).toContain('"custom_audience":0');
     expect(decoded).toContain('"lookalike":0');

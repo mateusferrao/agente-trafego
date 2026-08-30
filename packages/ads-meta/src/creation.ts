@@ -422,10 +422,16 @@ export class MetaCreationService {
   /** Snapshot resolvido (P0.2/P1, subfatia 2) → `targeting` cru pronto pra Meta, SEM reler nada —
    *  expansão sempre EXPLÍCITA (nunca ausente, nunca deixa a Meta aplicar o default 1 dela). */
   private snapshotToRawTargeting(snapshot: ResolvedAudienceSnapshot): Record<string, unknown> {
+    // Slice 6: reconstrói o flexible_spec (interesses/comportamentos com id) preservado no snapshot →
+    // a cópia reuse_adset mantém o targeting detalhado da fonte (antes só geo/idade/expansão).
+    const iGroups = (snapshot.interestGroups ?? []).filter((g) => g.length > 0).map((g) => ({ interests: g.map((i) => ({ id: i.id })) }));
+    const bGroups = (snapshot.behaviorGroups ?? []).filter((g) => g.length > 0).map((g) => ({ behaviors: g.map((b) => ({ id: b.id })) }));
+    const flexible_spec = [...iGroups, ...bGroups];
     return {
       geo_locations: this.geoToRaw(snapshot.geo),
       ...(snapshot.ageMin !== undefined ? { age_min: snapshot.ageMin } : {}),
       ...(snapshot.ageMax !== undefined ? { age_max: snapshot.ageMax } : {}),
+      ...(flexible_spec.length > 0 ? { flexible_spec } : {}),
       targeting_automation: { advantage_audience: snapshot.expansionRaw.advantageAudience },
       targeting_relaxation_types: {
         custom_audience: snapshot.expansionRaw.relaxCustomAudience,

@@ -1477,10 +1477,8 @@ export async function proposeCopyCampaign(
     readonly ageMin?: number;
     readonly ageMax?: number;
     readonly gender?: "all" | "men" | "women";
-    /** interesses EXPLÍCITOS pra TROCAR os da original (Fase 2, subfatia 4) — quando ausentes,
-     *  a cópia fiel não herda interesses da fonte: `structure.targeting.interests` só traz NOMES
-     *  pra display (sem `id`), então não dá pra remontar um `flexible_spec` válido sem rebuscar —
-     *  ausência = sem interesses no rascunho, não "mantém os da original". */
+    /** interesses EXPLÍCITOS pra TROCAR os da original (Slice 6) — quando ausentes, a cópia HERDA os
+     *  interesses da fonte (com id, via `interestGroupRefs`/snapshot); passar aqui SUBSTITUI. */
     readonly interests?: readonly string[];
     /** comportamentos EXPLÍCITOS pra TROCAR (Slice 4) — mesma regra dos interesses na cópia. */
     readonly behaviors?: readonly string[];
@@ -1555,8 +1553,10 @@ export async function proposeCopyCampaign(
           ...(args.ageMin !== undefined ? { ageMin: args.ageMin } : resolvedSnapshot.ageMin !== undefined ? { ageMin: resolvedSnapshot.ageMin } : {}),
           ...(args.ageMax !== undefined ? { ageMax: args.ageMax } : resolvedSnapshot.ageMax !== undefined ? { ageMax: resolvedSnapshot.ageMax } : {}),
           ...(args.gender === "men" ? { genders: [1] } : args.gender === "women" ? { genders: [2] } : {}),
-          ...(interestPrep.interests.length > 0 ? { interestGroups: [interestPrep.interests] } : {}),
-          ...(behaviorPrep.interests.length > 0 ? { behaviorGroups: [behaviorPrep.interests] } : {}),
+          // Slice 6: sobrescreveu → usa o novo; senão HERDA os grupos da fonte (com id, do snapshot) —
+          // a cópia fiel não perde mais interesses/comportamentos ao virar explicit.
+          ...(interestPrep.interests.length > 0 ? { interestGroups: [interestPrep.interests] } : resolvedSnapshot.interestGroups && resolvedSnapshot.interestGroups.length > 0 ? { interestGroups: resolvedSnapshot.interestGroups } : {}),
+          ...(behaviorPrep.interests.length > 0 ? { behaviorGroups: [behaviorPrep.interests] } : resolvedSnapshot.behaviorGroups && resolvedSnapshot.behaviorGroups.length > 0 ? { behaviorGroups: resolvedSnapshot.behaviorGroups } : {}),
           ...(hasAudience ? { customAudienceIncludeIds: aud.includeIds, customAudienceExcludeIds: aud.excludeIds } : {}),
         }
       : { kind: "reuse_adset", sourceAdsetId: structure.sourceAdsetId, resolved: resolvedSnapshot };

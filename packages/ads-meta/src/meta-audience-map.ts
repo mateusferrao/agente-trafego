@@ -67,6 +67,23 @@ function collectInterests(t: RawTargeting): string[] {
   return [...new Set(names)].slice(0, MAX_INTERESTS);
 }
 
+/** Grupos de refs COM id (Slice 6 — cópia fiel). `pick` escolhe interests OU behaviors de cada grupo
+ *  do `flexible_spec`; grupo vazio é descartado. O `t.interests` legado (plano) vira 1 grupo. */
+function collectGroupRefs(t: RawTargeting, pick: "interests" | "behaviors"): { id: string; name: string }[][] {
+  const groups: { id: string; name: string }[][] = [];
+  const refsToGroup = (refs: readonly RawAudienceRef[] | undefined): { id: string; name: string }[] =>
+    (refs ?? []).filter((r): r is RawAudienceRef & { id: string; name: string } => !!r.id && !!r.name).map((r) => ({ id: r.id, name: r.name }));
+  for (const group of t.flexible_spec ?? []) {
+    const g = refsToGroup(group[pick]);
+    if (g.length > 0) groups.push(g);
+  }
+  if (pick === "interests") {
+    const legacy = refsToGroup(t.interests);
+    if (legacy.length > 0) groups.push(legacy);
+  }
+  return groups;
+}
+
 function geoLabels(t: RawTargeting): string[] {
   const geo = t.geo_locations;
   if (!geo) return [];
@@ -129,6 +146,8 @@ export function audienceFromTargeting(t: RawTargeting | undefined): AudienceProf
   const hasWarm = inclusion.some((a) => !isLookalikeName(a.name));
   const stage: AudienceStage = hasWarm ? "remarketing" : "prospecting";
   const entries = geoEntries(t);
+  const interestGroupRefs = collectGroupRefs(t, "interests");
+  const behaviorGroupRefs = collectGroupRefs(t, "behaviors");
 
   return {
     stage,
@@ -139,6 +158,8 @@ export function audienceFromTargeting(t: RawTargeting | undefined): AudienceProf
     ...(t.age_min !== undefined ? { ageMin: t.age_min } : {}),
     ...(t.age_max !== undefined ? { ageMax: t.age_max } : {}),
     ...(interests.length > 0 ? { interests } : {}),
+    ...(interestGroupRefs.length > 0 ? { interestGroupRefs } : {}),
+    ...(behaviorGroupRefs.length > 0 ? { behaviorGroupRefs } : {}),
     expansion: expansionRead(t),
   };
 }

@@ -126,6 +126,10 @@ export function buildResolvedSnapshot(profile: AudienceProfile): ResolvedAudienc
     geo: snapshotGeoFromProfile(profile),
     ...(profile.ageMin !== undefined ? { ageMin: profile.ageMin } : {}),
     ...(profile.ageMax !== undefined ? { ageMax: profile.ageMax } : {}),
+    // Slice 6: preserva interesses/comportamentos da fonte (com id) no snapshot → a cópia reuse_adset
+    // não perde mais o targeting detalhado no apply.
+    ...(profile.interestGroupRefs && profile.interestGroupRefs.length > 0 ? { interestGroups: profile.interestGroupRefs } : {}),
+    ...(profile.behaviorGroupRefs && profile.behaviorGroupRefs.length > 0 ? { behaviorGroups: profile.behaviorGroupRefs } : {}),
     expansionRaw,
   };
 }
