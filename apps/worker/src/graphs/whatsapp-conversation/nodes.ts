@@ -624,6 +624,11 @@ export function makeConversationNodes(
               ...(Array.isArray(a["removeBehaviors"]) ? { removeBehaviors: a["removeBehaviors"].filter((x): x is string => typeof x === "string") } : {}),
               ...(Array.isArray(a["addBehaviors"]) ? { addBehaviors: a["addBehaviors"].filter((x): x is string => typeof x === "string") } : {}),
               ...(Array.isArray(a["narrowBehaviors"]) ? { narrowBehaviors: a["narrowBehaviors"].filter((x): x is string => typeof x === "string") } : {}),
+              ...(typeof a["radiusKm"] === "number" ? { radiusKm: a["radiusKm"] as number } : {}),
+              ...(Array.isArray(a["addressAreas"]) ? { addressAreas: a["addressAreas"].filter((x): x is { address: string; radiusKm: number } => Boolean(x) && typeof (x as { address?: unknown }).address === "string" && typeof (x as { radiusKm?: unknown }).radiusKm === "number").map((x) => ({ address: x.address, radiusKm: x.radiusKm })) } : {}),
+              ...(Array.isArray(a["addAudiences"]) ? { addAudiences: a["addAudiences"].filter((x): x is string => typeof x === "string") } : {}),
+              ...(Array.isArray(a["excludeAudiences"]) ? { excludeAudiences: a["excludeAudiences"].filter((x): x is string => typeof x === "string") } : {}),
+              ...(Array.isArray(a["removeAudiences"]) ? { removeAudiences: a["removeAudiences"].filter((x): x is string => typeof x === "string") } : {}),
             };
       const res = await refineDraft(deps, { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, currency: DEFAULT_CURRENCY }, active.draftId, patch);
       if (res.kind === "blocked") {

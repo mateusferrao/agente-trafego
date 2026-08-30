@@ -192,6 +192,22 @@ function flattenSnapshotGeo(geo: ResolvedAudienceSnapshot["geo"]): { readonly ke
   return [...countries, ...regions, ...cities];
 }
 
+/** Snapshot resolvido → público `explicit` editável (Slice 9 — CONVERTER modo no chat, igual ao site).
+ *  Preserva geo (em chips)/idade/interesses/behaviors/públicos salvos herdados; a partir daí o dono
+ *  edita à mão. Puro. */
+function snapshotToExplicit(snapshot: ResolvedAudienceSnapshot): Extract<TargetingSpec, { readonly kind: "explicit" }> {
+  return {
+    kind: "explicit",
+    geo: flattenSnapshotGeo(snapshot.geo),
+    ...(snapshot.ageMin !== undefined ? { ageMin: snapshot.ageMin } : {}),
+    ...(snapshot.ageMax !== undefined ? { ageMax: snapshot.ageMax } : {}),
+    ...(snapshot.interestGroups && snapshot.interestGroups.length > 0 ? { interestGroups: snapshot.interestGroups } : {}),
+    ...(snapshot.behaviorGroups && snapshot.behaviorGroups.length > 0 ? { behaviorGroups: snapshot.behaviorGroups } : {}),
+    ...(snapshot.customAudienceIncludeIds && snapshot.customAudienceIncludeIds.length > 0 ? { customAudienceIncludeIds: snapshot.customAudienceIncludeIds } : {}),
+    ...(snapshot.customAudienceExcludeIds && snapshot.customAudienceExcludeIds.length > 0 ? { customAudienceExcludeIds: snapshot.customAudienceExcludeIds } : {}),
+  };
+}
+
 // `buildResolvedSnapshot` mora no core (`@trafego/core`) — fonte ÚNICA compartilhada por worker
 // (propose) e api (toggle reuse), pra o `reuse_adset` nascer SEMPRE com retrato. Re-exportado aqui
 // (binding importado acima) por conveniência dos testes/consumidores deste módulo.
@@ -753,6 +769,13 @@ export interface RefineDraftPatch {
   readonly removeBehaviors?: readonly string[];
   readonly addBehaviors?: readonly string[];
   readonly narrowBehaviors?: readonly string[];
+  /** raio (Slice 9 — paridade com site): aplica raio (km) às cidades do público; áreas por endereço. */
+  readonly radiusKm?: number;
+  readonly addressAreas?: readonly AddressArea[];
+  /** públicos salvos (Slice 9 — paridade): adiciona ao incluir / excluir / remove (por NOME → id). */
+  readonly addAudiences?: readonly string[];
+  readonly excludeAudiences?: readonly string[];
+  readonly removeAudiences?: readonly string[];
 }
 
 export type RefineResult = { readonly kind: "ok"; readonly echo: string } | { readonly kind: "blocked"; readonly reason: string };
@@ -794,6 +817,7 @@ export async function refineDraft(
   if (!ac) return { kind: "blocked", reason: "não consegui acessar a conta agora" };
 
   const edit: MutableEdit = {};
+  const refineNotes: string[] = []; // avisos (ex: clamp de raio) anexados ao eco
   if (patch.budgetReais != null) edit.budgetMinor = Math.round(patch.budgetReais * MINOR_PER_UNIT);
   if (patch.activation) edit.activation = patch.activation;
   if (kind === "from_scratch" && patch.campaignName != null) edit.campaignName = patch.campaignName;
@@ -828,58 +852,98 @@ export async function refineDraft(
     });
     if (targeting) edit.targeting = targeting;
   }
-  // editar (remover/adicionar geo, estreitar idade) o público EXPLÍCITO já resolvido (Fase 1,
-  // subfatia 3a). Adicionar resolve na hora (ambíguo→pergunta); remover/idade não chamam a Meta.
-  if (kind === "from_scratch" && spec.targeting?.kind === "explicit" && (patch.removeGeo?.length || patch.addGeo?.length || patch.ageMin != null || patch.ageMax != null || patch.gender != null)) {
-    const addGeoPrep = patch.addGeo?.length ? await prepareGeo(deps, ac.ref, patch.addGeo) : { kind: "ok" as const, geo: [] };
-    if (addGeoPrep.kind === "blocked") return { kind: "blocked", reason: addGeoPrep.reason };
-    const r = applyExplicitGeoEdit(spec.targeting, {
-      ...(patch.removeGeo ? { removeGeo: patch.removeGeo } : {}),
-      ...(addGeoPrep.geo.length > 0 ? { addGeo: addGeoPrep.geo } : {}),
-      ...(patch.ageMin != null ? { ageMin: patch.ageMin } : {}),
-      ...(patch.ageMax != null ? { ageMax: patch.ageMax } : {}),
-      ...(patch.gender != null ? { genders: patch.gender === "men" ? [1] : patch.gender === "women" ? [2] : [] } : {}),
-    });
-    if (r.kind === "blocked") return { kind: "blocked", reason: r.reason };
-    edit.targeting = r.targeting;
-  }
-  // editar (remover/adicionar) INTERESSES do público EXPLÍCITO já resolvido (Fase 2, subfatia 4).
-  // Mesma honestidade: adicionar resolve na hora (ambíguo→pergunta); remover não chama a Meta.
-  // Lê de `edit.targeting` quando a geo já foi editada NESTE mesmo patch (evita perder a edição).
-  if (kind === "from_scratch" && (patch.removeInterests?.length || patch.addInterests?.length || patch.narrowInterests?.length)) {
-    const targetingBefore = edit.targeting ?? spec.targeting;
-    if (targetingBefore?.kind !== "explicit") {
-      return { kind: "blocked", reason: "esse rascunho não tem um público explícito pra editar interesses — crie mirando geo/idade/gênero primeiro." };
+  // PÚBLICO EXPLÍCITO — edições (Slice 9, chat ⊇ site): CONVERTE reuse/broad→explicit se preciso e
+  // aplica geo/raio/idade/gênero/interesses/behaviors/públicos salvos — igual ao editor do site.
+  const wantsExplicit =
+    kind === "from_scratch" &&
+    Boolean(
+      patch.removeGeo?.length || patch.addGeo?.length || patch.ageMin != null || patch.ageMax != null || patch.gender != null ||
+        patch.radiusKm != null || patch.addressAreas?.length ||
+        patch.removeInterests?.length || patch.addInterests?.length || patch.narrowInterests?.length ||
+        patch.removeBehaviors?.length || patch.addBehaviors?.length || patch.narrowBehaviors?.length ||
+        patch.addAudiences?.length || patch.excludeAudiences?.length || patch.removeAudiences?.length,
+    );
+  if (wantsExplicit) {
+    // 1) base explícita — converte reuse/broad (mesmo "personalizar público" do site), preservando o herdado.
+    let base = edit.targeting ?? spec.targeting;
+    if (base?.kind !== "explicit") {
+      if (base?.kind === "reuse_adset") {
+        let snap = base.resolved;
+        if (!snap) {
+          const p = await deps.ports.ads.getAudienceProfile(ac.ref, base.sourceAdsetId);
+          if (!p) return { kind: "blocked", reason: "não consegui ler o público herdado agora pra personalizar — tenta de novo em instantes." };
+          snap = buildResolvedSnapshot(p);
+        }
+        base = snapshotToExplicit(snap);
+      } else {
+        base = { kind: "explicit", geo: [] }; // advantage_plus/ausente → começa do zero
+      }
     }
-    const addInterestPrep = patch.addInterests?.length ? await prepareInterests(deps, ac.ref, patch.addInterests) : { kind: "ok" as const, interests: [] };
-    if (addInterestPrep.kind === "blocked") return { kind: "blocked", reason: addInterestPrep.reason };
-    const narrowPrep = patch.narrowInterests?.length ? await prepareInterests(deps, ac.ref, patch.narrowInterests) : { kind: "ok" as const, interests: [] };
-    if (narrowPrep.kind === "blocked") return { kind: "blocked", reason: narrowPrep.reason };
-    const r = applyExplicitInterestEdit(targetingBefore, {
-      ...(patch.removeInterests ? { removeInterests: patch.removeInterests } : {}),
-      ...(addInterestPrep.interests.length > 0 ? { addInterests: addInterestPrep.interests } : {}),
-      ...(narrowPrep.interests.length > 0 ? { narrowInterests: narrowPrep.interests } : {}),
-    });
-    if (r.kind === "blocked") return { kind: "blocked", reason: r.reason };
-    edit.targeting = r.targeting;
-  }
-  // editar COMPORTAMENTOS (Slice 4) — espelho dos interesses (add via catálogo, remove sem chamada).
-  if (kind === "from_scratch" && (patch.removeBehaviors?.length || patch.addBehaviors?.length || patch.narrowBehaviors?.length)) {
-    const targetingBefore = edit.targeting ?? spec.targeting;
-    if (targetingBefore?.kind !== "explicit") {
-      return { kind: "blocked", reason: "esse rascunho não tem um público explícito pra editar comportamentos — crie mirando geo/idade/gênero primeiro." };
+    let expl: Extract<TargetingSpec, { readonly kind: "explicit" }> = base as Extract<TargetingSpec, { readonly kind: "explicit" }>;
+    // 2) geo (add/remove) + idade + gênero
+    if (patch.removeGeo?.length || patch.addGeo?.length || patch.ageMin != null || patch.ageMax != null || patch.gender != null) {
+      const addGeoPrep = patch.addGeo?.length ? await prepareGeo(deps, ac.ref, patch.addGeo) : { kind: "ok" as const, geo: [] };
+      if (addGeoPrep.kind === "blocked") return { kind: "blocked", reason: addGeoPrep.reason };
+      const r = applyExplicitGeoEdit(expl, {
+        ...(patch.removeGeo ? { removeGeo: patch.removeGeo } : {}),
+        ...(addGeoPrep.geo.length > 0 ? { addGeo: addGeoPrep.geo } : {}),
+        ...(patch.ageMin != null ? { ageMin: patch.ageMin } : {}),
+        ...(patch.ageMax != null ? { ageMax: patch.ageMax } : {}),
+        ...(patch.gender != null ? { genders: patch.gender === "men" ? [1] : patch.gender === "women" ? [2] : [] } : {}),
+      });
+      if (r.kind === "blocked") return { kind: "blocked", reason: r.reason };
+      expl = r.targeting as typeof expl;
     }
-    const addBehaviorPrep = patch.addBehaviors?.length ? await prepareBehaviors(deps, ac.ref, patch.addBehaviors) : { kind: "ok" as const, interests: [] };
-    if (addBehaviorPrep.kind === "blocked") return { kind: "blocked", reason: addBehaviorPrep.reason };
-    const narrowBehaviorPrep = patch.narrowBehaviors?.length ? await prepareBehaviors(deps, ac.ref, patch.narrowBehaviors) : { kind: "ok" as const, interests: [] };
-    if (narrowBehaviorPrep.kind === "blocked") return { kind: "blocked", reason: narrowBehaviorPrep.reason };
-    const r = applyExplicitBehaviorEdit(targetingBefore, {
-      ...(patch.removeBehaviors ? { removeBehaviors: patch.removeBehaviors } : {}),
-      ...(addBehaviorPrep.interests.length > 0 ? { addBehaviors: addBehaviorPrep.interests } : {}),
-      ...(narrowBehaviorPrep.interests.length > 0 ? { narrowBehaviors: narrowBehaviorPrep.interests } : {}),
-    });
-    if (r.kind === "blocked") return { kind: "blocked", reason: r.reason };
-    edit.targeting = r.targeting;
+    // 3) raio (cidade + endereço) — clampado, com aviso
+    if (patch.radiusKm != null || patch.addressAreas?.length) {
+      const gr = applyCityRadius(expl.geo, patch.radiusKm ?? undefined);
+      const areas = buildRadiusAreas(patch.addressAreas);
+      const mergedAreas = [...(expl.radiusAreas ?? []), ...areas.radiusAreas];
+      expl = { ...expl, geo: gr.geo, ...(mergedAreas.length > 0 ? { radiusAreas: mergedAreas } : {}) };
+      refineNotes.push(...gr.notes, ...areas.notes);
+    }
+    // 4) interesses (OR-widen / AND narrow / remove)
+    if (patch.removeInterests?.length || patch.addInterests?.length || patch.narrowInterests?.length) {
+      const addP = patch.addInterests?.length ? await prepareInterests(deps, ac.ref, patch.addInterests) : { kind: "ok" as const, interests: [] };
+      if (addP.kind === "blocked") return { kind: "blocked", reason: addP.reason };
+      const narrowP = patch.narrowInterests?.length ? await prepareInterests(deps, ac.ref, patch.narrowInterests) : { kind: "ok" as const, interests: [] };
+      if (narrowP.kind === "blocked") return { kind: "blocked", reason: narrowP.reason };
+      const r = applyExplicitInterestEdit(expl, {
+        ...(patch.removeInterests ? { removeInterests: patch.removeInterests } : {}),
+        ...(addP.interests.length > 0 ? { addInterests: addP.interests } : {}),
+        ...(narrowP.interests.length > 0 ? { narrowInterests: narrowP.interests } : {}),
+      });
+      if (r.kind === "blocked") return { kind: "blocked", reason: r.reason };
+      expl = r.targeting as typeof expl;
+    }
+    // 5) comportamentos
+    if (patch.removeBehaviors?.length || patch.addBehaviors?.length || patch.narrowBehaviors?.length) {
+      const addP = patch.addBehaviors?.length ? await prepareBehaviors(deps, ac.ref, patch.addBehaviors) : { kind: "ok" as const, interests: [] };
+      if (addP.kind === "blocked") return { kind: "blocked", reason: addP.reason };
+      const narrowP = patch.narrowBehaviors?.length ? await prepareBehaviors(deps, ac.ref, patch.narrowBehaviors) : { kind: "ok" as const, interests: [] };
+      if (narrowP.kind === "blocked") return { kind: "blocked", reason: narrowP.reason };
+      const r = applyExplicitBehaviorEdit(expl, {
+        ...(patch.removeBehaviors ? { removeBehaviors: patch.removeBehaviors } : {}),
+        ...(addP.interests.length > 0 ? { addBehaviors: addP.interests } : {}),
+        ...(narrowP.interests.length > 0 ? { narrowBehaviors: narrowP.interests } : {}),
+      });
+      if (r.kind === "blocked") return { kind: "blocked", reason: r.reason };
+      expl = r.targeting as typeof expl;
+    }
+    // 6) públicos salvos (incluir/excluir/remover, por NOME → id determinístico; ambíguo→pergunta)
+    if (patch.addAudiences?.length || patch.excludeAudiences?.length || patch.removeAudiences?.length) {
+      const add = await prepareAudiences(deps, ctx, ac.ref, patch.addAudiences ?? [], patch.excludeAudiences ?? []);
+      if (add.kind === "blocked") return { kind: "blocked", reason: add.reason };
+      const rem = patch.removeAudiences?.length ? await prepareAudiences(deps, ctx, ac.ref, patch.removeAudiences, []) : { kind: "ok" as const, includeIds: [], excludeIds: [], notes: [], sizeWarnings: [] };
+      if (rem.kind === "blocked") return { kind: "blocked", reason: rem.reason };
+      const rmSet = new Set(rem.includeIds);
+      const inc = [...new Set([...(expl.customAudienceIncludeIds ?? []), ...add.includeIds])].filter((id) => !rmSet.has(id));
+      const exc = [...new Set([...(expl.customAudienceExcludeIds ?? []), ...add.excludeIds])].filter((id) => !rmSet.has(id));
+      const { customAudienceIncludeIds: _i, customAudienceExcludeIds: _e, ...rest } = expl;
+      expl = { ...rest, ...(inc.length > 0 ? { customAudienceIncludeIds: inc } : {}), ...(exc.length > 0 ? { customAudienceExcludeIds: exc } : {}) };
+      refineNotes.push(...add.notes);
+    }
+    edit.targeting = expl;
   }
 
   const result = applyDraftEdit(kind, spec, edit, { budgetCapMinor: ac.cfg.maxNewDailyBudgetMinor ?? null, hasPixel: true });
@@ -887,7 +951,8 @@ export async function refineDraft(
 
   const persisted = await persistDraftSpec(deps.db, { orgId: ctx.orgId, draftId }, result.value.spec);
   if (!persisted) return { kind: "blocked", reason: NOT_OPEN_REASON };
-  return { kind: "ok", echo: buildRefineEcho(kind, result.value.spec) };
+  const echo = [buildRefineEcho(kind, result.value.spec), ...refineNotes].join(" ");
+  return { kind: "ok", echo };
 }
 
 /** Criativo escolhido pro rascunho + de onde veio (pro eco honesto). `source`: `serving` =

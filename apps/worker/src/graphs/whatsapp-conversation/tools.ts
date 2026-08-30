@@ -330,7 +330,7 @@ export function makeConversationTools(
   const adjustDraft = tool(proposeOnly, {
     name: "adjust_draft",
     description:
-      "Ajusta o rascunho de campanha JÁ PROPOSTO (só quando há um pendente): budget diário, ativação (ativa/pausada), nº de variações, PÚBLICO (audience: 'reuse' = herda o conjunto que já converte; 'broad' = deixa a Meta escolher, mais amplo) ou o NOME da campanha (campaignName). Se o público já é explícito (geo/idade/interesses), dá pra REMOVER (removeGeo/removeInterests, pelo nome — ex: 'tira Ibirité', 'tira o interesse de pets') ou ADICIONAR (addGeo/addInterests — eu resolvo pro lugar/interesse real e pergunto se ambíguo) localização/interesse, ESTREITAR idade (ageMin/ageMax) e ajustar GÊNERO (gender: 'men'/'women'/'all'), sem recriar o rascunho. Não cria rascunho novo. Edições pesadas (nomes de conjunto/anúncio, objetivo, copy campo-a-campo, adicionar/remover anúncio) NÃO aqui — ofereça o link do painel do site.",
+      "Ajusta o rascunho de campanha JÁ PROPOSTO (só quando há um pendente) — TUDO que o painel do site faz: budget, ativação, nº de variações, NOME (campaignName), e o PÚBLICO por completo. Público: geo (addGeo/removeGeo pelo nome), RAIO (radiusKm nas cidades, addressAreas em endereços), idade (ageMin/ageMax), gênero (gender), INTERESSES (addInterests=OU, narrowInterests=E, removeInterests), COMPORTAMENTOS (addBehaviors/narrowBehaviors/removeBehaviors), PÚBLICOS SALVOS (addAudiences/excludeAudiences/removeAudiences pelo nome). Se o rascunho ainda é 'herda o vencedor'/'amplo' e o dono pede um primitivo, eu CONVERTO pra público personalizado (mantendo o herdado) — igual ao 'personalizar público' do site. Também audience:'reuse'/'broad' pra alternar o modo. Não cria rascunho novo. Copy campo-a-campo / anúncio a anúncio = painel do site.",
     schema: z.object({
       budgetReais: z.number().positive().nullable().optional(),
       activation: z.enum(["active", "paused"]).nullable().optional(),
@@ -348,6 +348,11 @@ export function makeConversationTools(
       removeBehaviors: z.array(z.string()).nullable().optional().describe("comportamento(s) a REMOVER do público explícito"),
       addBehaviors: z.array(z.string()).nullable().optional().describe("comportamento(s) a ADICIONAR alargando (OU) — eu resolvo no catálogo e pergunto se ambíguo"),
       narrowBehaviors: z.array(z.string()).nullable().optional().describe("comportamento(s) a ESTREITAR (E) — novo grupo AND"),
+      radiusKm: z.number().positive().nullable().optional().describe("aplica raio (km) às CIDADES do público (clampo 17–80 km)"),
+      addressAreas: z.array(z.object({ address: z.string(), radiusKm: z.number().positive() })).nullable().optional().describe("adiciona raio em torno de ENDEREÇO(S) de rua (Meta geocodifica; clampo 1–80 km)"),
+      addAudiences: z.array(z.string()).nullable().optional().describe("público(s) salvo(s) a INCLUIR, pelo NOME — eu resolvo pro público real e pergunto se ambíguo"),
+      excludeAudiences: z.array(z.string()).nullable().optional().describe("público(s) salvo(s) a EXCLUIR, pelo NOME"),
+      removeAudiences: z.array(z.string()).nullable().optional().describe("público(s) salvo(s) a TIRAR do rascunho (incluir/excluir), pelo NOME"),
     }),
   });
   const regenerateCopy = tool(proposeOnly, {
