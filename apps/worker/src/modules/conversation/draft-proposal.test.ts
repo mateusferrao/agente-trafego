@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { audienceEchoPhrase, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, resolveCreationTargeting } from "./draft-proposal.js";
+import { adjustAdCount, audienceEchoPhrase, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, resolveCreationTargeting } from "./draft-proposal.js";
 import type { CampaignDraftSpec } from "@trafego/shared";
 import { creativeContentHash } from "../vision/resolver.js";
 import type { WorkerDeps } from "../../composition.js";
@@ -300,3 +300,26 @@ describe("buildRefineEcho — público (bug: refino não pode assumir 'amplo')",
   });
 });
 
+
+describe("adjustAdCount (nº de anúncios preservando os existentes)", () => {
+  const v = (h: string): { primaryText: string; headline: string } => ({ primaryText: `p-${h}`, headline: h });
+
+  it("aumentar DUPLICA o último (preserva os existentes)", () => {
+    const out = adjustAdCount([v("a"), v("b")], 4);
+    expect(out.map((x) => x.headline)).toEqual(["a", "b", "b", "b"]);
+  });
+
+  it("diminuir CORTA os últimos (mín 1)", () => {
+    expect(adjustAdCount([v("a"), v("b"), v("c")], 1).map((x) => x.headline)).toEqual(["a"]);
+    expect(adjustAdCount([v("a"), v("b")], 0)).toHaveLength(1);
+  });
+
+  it("clampa no teto (MAX_ADS_PER_DRAFT = 10)", () => {
+    expect(adjustAdCount([v("a")], 999)).toHaveLength(10);
+  });
+
+  it("igual → sem mudança", () => {
+    const src = [v("a"), v("b")];
+    expect(adjustAdCount(src, 2).map((x) => x.headline)).toEqual(["a", "b"]);
+  });
+});

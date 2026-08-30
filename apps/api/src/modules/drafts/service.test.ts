@@ -580,3 +580,44 @@ describe("DraftsService.listPendingDrafts — convertibleAudience (tolerância d
     expect((out?.convertibleAudience?.geo ?? []).length).toBeGreaterThan(0);
   });
 });
+
+describe("DraftsService.updateDraft — nº de anúncios (add/remove preservando existentes)", () => {
+  function fakeDbSelUpd(draftRow: unknown, captured: { spec?: unknown }) {
+    return {
+      select: () => ({ from: () => ({ where: () => ({ limit: () => (draftRow ? [draftRow] : []) }) }) }),
+      update: () => ({ set: (v: { spec: unknown }) => { captured.spec = v.spec; return { where: () => ({ returning: () => [{ id: "d1" }] }) }; } }),
+    } as never;
+  }
+  const specWithAds = {
+    version: 1, currency: "BRL", dailyBudgetMinor: 5000, activation: "active",
+    creative: { assetId: "def", format: "image", origin: "reuse", metaImageHash: "H" },
+    variantsCount: 2,
+    copyVariants: [
+      { primaryText: "p1", headline: "h1" },
+      { primaryText: "p2", headline: "h2", creative: { assetId: "own", format: "image", origin: "upload", metaImageHash: "H2" } },
+    ],
+  };
+  function svc(captured: { spec?: unknown }) {
+    return createDraftsService({
+      db: fakeDbSelUpd({ spec: specWithAds, kind: "from_scratch", status: "proposed" }, captured),
+      adsPlatform: {} as never, vault: {} as never, approvals: {} as never, storage: {} as never, scheduler: {} as never,
+    });
+  }
+
+  it("addAd → duplica o último anúncio (copy + criativo próprio), preserva os existentes", async () => {
+    const captured: { spec?: unknown } = {};
+    const out = await svc(captured).updateDraft(ORG, "acc", "d1", { addAd: true });
+    expect(out.ok).toBe(true);
+    const cv = (captured.spec as { copyVariants: { headline: string; creative?: { assetId: string } }[] }).copyVariants;
+    expect(cv.map((c) => c.headline)).toEqual(["h1", "h2", "h2"]);
+    expect(cv[2]?.creative?.assetId).toBe("own"); // duplicou o criativo próprio do último
+  });
+
+  it("removeAdIndex → remove o anúncio indicado, preserva os demais", async () => {
+    const captured: { spec?: unknown } = {};
+    const out = await svc(captured).updateDraft(ORG, "acc", "d1", { removeAdIndex: 0 });
+    expect(out.ok).toBe(true);
+    const cv = (captured.spec as { copyVariants: { headline: string }[] }).copyVariants;
+    expect(cv.map((c) => c.headline)).toEqual(["h2"]);
+  });
+});

@@ -20,6 +20,7 @@ import {
   APPROVAL_TTL_HOURS,
   BUDGET_MODE_INCREASE,
   DEFAULT_CURRENCY,
+  MAX_ADS_PER_DRAFT,
   buildCreativeAnalyzeJob,
   buildCreativeVideoPollJob,
   toGuardrailConfig,
@@ -354,7 +355,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       edit.creative = creative;
     }
 
-    if (input.copyEdits || input.removeAdIndex != null) {
+    if (input.copyEdits || input.removeAdIndex != null || input.addAd) {
       let variants = [...(spec.copyVariants ?? [])];
       for (const e of input.copyEdits ?? []) {
         const current = variants[e.index];
@@ -369,6 +370,11 @@ export function createDraftsService(deps: DraftsServiceDeps) {
         };
       }
       if (input.removeAdIndex != null) variants = variants.filter((_, i) => i !== input.removeAdIndex);
+      // adiciona 1 anúncio DUPLICANDO o último (copy + criativo próprio) — preserva os existentes;
+      // o dono edita a partir dele. Cap de anúncios/rascunho (rede contra explosão de custo/UI).
+      if (input.addAd && variants.length > 0 && variants.length < MAX_ADS_PER_DRAFT) {
+        variants = [...variants, { ...variants[variants.length - 1]! }];
+      }
       edit.copyVariants = variants;
     }
 

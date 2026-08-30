@@ -195,6 +195,8 @@ export const updateDraftInput = z.object({
   creative: setDraftCreativeInput.optional(),
   copyEdits: z.array(draftCopyEditInput).optional(),
   removeAdIndex: z.number().int().min(0).optional(),
+  /** adiciona 1 anúncio DUPLICANDO o último (copy + criativo próprio) — preserva os existentes. */
+  addAd: z.boolean().optional(),
   // ─── público EXPLÍCITO (Fase 1, subfatia 3b) — só quando o rascunho já é `kind:"explicit"` ───
   /** nomes EXATOS (como renderizados nos chips) a remover — sem ambiguidade (o usuário clicou o chip). */
   removeGeo: z.array(z.string().min(1)).optional(),

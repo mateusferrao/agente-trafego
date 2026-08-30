@@ -14,6 +14,8 @@ import {
   BUDGET_MODE_INCREASE,
   DEFAULT_CONVERSION_GOAL,
   DEFAULT_CURRENCY,
+  DEFAULT_VARIANTS,
+  MAX_ADS_PER_DRAFT,
   toGuardrailConfig,
   type Action,
   type AgentId,
@@ -40,7 +42,6 @@ import { withTimeout } from "./with-timeout.js";
 
 const MINOR_PER_UNIT = 100;
 const APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
-const DEFAULT_VARIANTS = 2;
 const DEFAULT_STARTER_BUDGET_MINOR = 3000;
 /** Quantos uploads recentes considerar no pick da biblioteca (ranqueados por score da visão). */
 const LIBRARY_PICK_CANDIDATES = 20;
@@ -580,6 +581,20 @@ async function reachNoteFor(
 export const PROACTIVE_REACH_FLOOR_REASON = "público estreito demais para veicular sozinho";
 
 /**
+ * Ajusta o nº de anúncios PRESERVANDO os existentes: aumentar duplica o último (copy + criativo
+ * próprio); diminuir corta os últimos (mín 1). Clampado ao teto. Não regenera copy nem apaga edições.
+ */
+export function adjustAdCount(variants: readonly CopyVariant[], target: number): CopyVariant[] {
+  const t = Math.max(1, Math.min(target, MAX_ADS_PER_DRAFT));
+  if (t <= variants.length) return variants.slice(0, t);
+  if (variants.length === 0) return [...variants]; // nada a duplicar (rascunho sempre nasce com ≥1)
+  const out = [...variants];
+  const last = variants[variants.length - 1]!;
+  while (out.length < t) out.push({ ...last });
+  return out;
+}
+
+/**
  * Piso de alcance (só autônomo): a faixa MENSAL estimada está abaixo do mínimo? Best-effort —
  * estimativa não-pronta/indisponível → `false` (não bloqueia: não inventa risco onde não há dado).
  */
@@ -875,23 +890,26 @@ export async function refineDraft(
   if (patch.activation) edit.activation = patch.activation;
   if (kind === "from_scratch" && patch.campaignName != null) edit.campaignName = patch.campaignName;
 
-  // copy (só from_scratch): regenerar re-aterra na copy que já performa (LLM na casca → fragmento).
-  const variantsCount = patch.variantsCount ?? spec.variantsCount ?? DEFAULT_VARIANTS;
-  const needCopy = kind === "from_scratch" && (patch.regenerateCopy === true || (patch.variantsCount != null && patch.variantsCount !== (spec.variantsCount ?? 0)));
-  if (needCopy) {
+  // anúncios (só from_scratch): `regenerateCopy` re-aterra TUDO na copy que já performa (LLM na
+  // casca); mudar só o NÚMERO PRESERVA os existentes (aumenta duplicando o último, diminui cortando
+  // os últimos) — não apaga edições manuais nem criativo próprio de cada anúncio.
+  const currentVariants = [...(spec.copyVariants ?? [])];
+  if (kind === "from_scratch" && patch.regenerateCopy === true) {
     const defaults = await deps.ports.ads.inferCreationDefaults(ac.ref);
     edit.copyVariants = await generateCopy(
       deps.ports.llm,
       {
         model: ac.model,
         goal: spec.objective ?? DEFAULT_CONVERSION_GOAL,
-        variantsCount,
+        variantsCount: Math.min(patch.variantsCount ?? spec.variantsCount ?? DEFAULT_VARIANTS, MAX_ADS_PER_DRAFT),
         businessContext: ac.businessContext,
         guidance: ac.guidance,
         ...(defaults.winnerCopy ? { winnerCopy: defaults.winnerCopy } : {}),
       },
       { orgId: ctx.orgId, adAccountId: ctx.adAccountId },
     );
+  } else if (kind === "from_scratch" && patch.variantsCount != null && patch.variantsCount !== currentVariants.length) {
+    edit.copyVariants = adjustAdCount(currentVariants, patch.variantsCount);
   }
 
   // público (só from_scratch): thunk lazy (broad/keep não tocam a conta). O reuse SEMPRE nasce com
