@@ -19,6 +19,19 @@ interface CopyForm {
 /** Um item de copy do rascunho (elemento do array de saída). */
 type DraftCopy = NonNullable<DraftApprovalOutput['copyVariants']>[number];
 
+/** Público explícito VAZIO — semente do modo `custom` quando não há nada legível a herdar. */
+const EMPTY_AUDIENCE_STATE: ExplicitAudienceState = {
+  geo: [],
+  radiusAreas: [],
+  ageMin: null,
+  ageMax: null,
+  genders: null,
+  interestGroups: [],
+  behaviorGroups: [],
+  customAudienceIncludeIds: [],
+  customAudienceExcludeIds: [],
+};
+
 /**
  * Painel "Editar rascunho" (Fatia 7, Slice 7) — o EDITOR COMPLETO no site. O card de /approvals
  * fica só-leitura + atalhos rápidos (público/criativo); tudo o mais mora aqui: nomes, gasto,
@@ -95,56 +108,33 @@ type DraftCopy = NonNullable<DraftApprovalOutput['copyVariants']>[number];
         </div>
       </div>
 
-      <!-- Público (só quando o rascunho carrega um público editável — some na escala) -->
-      @if (draft().audience) {
-        <div class="flex flex-col gap-1">
+      <!-- Público — 3 modos num único controle (Slice 8 unificado): herda o vencedor / a Meta
+           escolhe / personalizado. "Personalizado" revela o editor completo (geo/raio/idade/gênero/
+           interesses/comportamentos/públicos salvos) abaixo. Some na escala (mantém o vencedor). -->
+      @if (!isScale()) {
+        <div class="flex flex-col gap-2">
           <span class="text-xs font-medium text-ink">Público</span>
           <div
             appToggleGroup
             ngpToggleGroupType="single"
             layout="segmented"
-            [columns]="2"
+            [columns]="3"
             aria-label="Público"
-            [ngpToggleGroupValue]="[audience()]"
-            (ngpToggleGroupValueChange)="setAudience($event)"
+            [ngpToggleGroupValue]="[audienceMode()]"
+            (ngpToggleGroupValueChange)="setAudienceMode($event)"
           >
             <button appToggleGroupItem tone="accent" ngpToggleGroupItemValue="reuse">Herda o que já converte</button>
             <button appToggleGroupItem tone="accent" ngpToggleGroupItemValue="broad">Deixa a Meta escolher</button>
+            <button appToggleGroupItem tone="accent" ngpToggleGroupItemValue="custom">Personalizado</button>
           </div>
-        </div>
-      }
-
-      <!-- Público EXPLÍCITO completo (Fatia 7, Slice 8) — geo/raio/idade/gênero/interesses/
-           comportamentos/públicos salvos. Editor único; o backend faz substituição total. -->
-      @if (draft().explicitAudience) {
-        <div class="flex flex-col gap-1">
-          <span class="text-xs font-medium text-ink">Público</span>
-          <app-geo-audience-editor
-            [accountId]="draft().accountId"
-            [draftId]="draft().draftId"
-            [initial]="explicitInitial()!"
-            (stateChange)="explicitAudienceState.set($event)"
-          />
-        </div>
-      } @else if (draft().convertibleAudience) {
-        <!-- Converter modo: rascunho reuse/broad — pode virar explícito, saindo do "segue o vencedor". -->
-        <div class="flex flex-col gap-2">
-          @if (!converting()) {
+          @if (audienceMode() === 'custom') {
             <p class="rounded-md border border-line bg-panel px-3 py-2 text-xs text-muted">
-              Ao personalizar, você edita o público à mão — o rascunho para de seguir o vencedor automaticamente.
+              Você monta o público à mão — o rascunho para de seguir o vencedor automaticamente.
             </p>
-            <button appButton variant="secondary" size="sm" type="button" class="self-start" (click)="startConverting()">
-              Personalizar público
-            </button>
-          } @else {
-            <div class="flex items-center justify-between">
-              <span class="text-xs font-medium text-ink">Público personalizado</span>
-              <button type="button" class="text-xs text-muted hover:text-ink" (click)="cancelConverting()">Voltar ao herdado</button>
-            </div>
             <app-geo-audience-editor
               [accountId]="draft().accountId"
               [draftId]="draft().draftId"
-              [initial]="convertibleInitial()!"
+              [initial]="editorSeed()"
               (stateChange)="explicitAudienceState.set($event)"
             />
           }
@@ -238,13 +228,12 @@ export class DraftEditPanel implements OnInit {
     .map(([value, label]) => ({ value, label }));
   protected readonly budget = signal(0);
   protected readonly activation = signal<'active' | 'paused'>('paused');
-  protected readonly audience = signal<'reuse' | 'broad'>('reuse');
+  /** modo do público (controle único de 3 opções): `reuse`/`broad` = herdado; `custom` = revela o
+   *  editor completo abaixo (converte reuse/broad → explicit no Salvar). */
+  protected readonly audienceMode = signal<'reuse' | 'broad' | 'custom'>('reuse');
   /** estado COMPLETO do editor de público explícito (Slice 8) — atualizado a cada mudança no filho;
-   *  vai no PATCH como substituição total. `null` = editor não ativo (nada a substituir). */
+   *  vai no PATCH como substituição total quando o modo é `custom`. `null` = ainda não personalizado. */
   protected readonly explicitAudienceState = signal<ExplicitAudienceState | null>(null);
-  /** converter modo: o rascunho é reuse/broad (tem `convertibleAudience`) e o usuário abriu o editor
-   *  pra personalizar à mão. Ao salvar vira explícito no backend. */
-  protected readonly converting = signal(false);
   protected readonly copies = signal<CopyForm[]>([]);
   /** picker de criativo aberto dentro do painel + troca em voo. */
   protected readonly showPicker = signal(false);
@@ -297,6 +286,14 @@ export class DraftEditPanel implements OnInit {
       customAudienceExcludeIds: [],
     };
   });
+  /** semente do modo `custom`: já explícito → o estado atual; reuse/broad → geo/idade herdados;
+   *  nada legível → público vazio (o dono monta do zero). */
+  protected readonly customSeed = computed<ExplicitAudienceState>(
+    () => this.explicitInitial() ?? this.convertibleInitial() ?? EMPTY_AUDIENCE_STATE,
+  );
+  /** `[initial]` do editor: preserva edições ao alternar de modo e voltar (o filho semeia 1x por
+   *  instância — o estado já editado ganha da semente herdada). */
+  protected readonly editorSeed = computed<ExplicitAudienceState>(() => this.explicitAudienceState() ?? this.customSeed());
 
   ngOnInit(): void {
     const d = this.draft();
@@ -306,7 +303,8 @@ export class DraftEditPanel implements OnInit {
     this.suffixLabel.set(d.suffixLabel ?? '');
     this.budget.set(d.dailyBudgetMajor);
     this.activation.set(d.activation);
-    if (d.audience === 'reuse' || d.audience === 'broad') this.audience.set(d.audience);
+    // modo do público: já explícito → custom; senão o herdado (reuse/broad).
+    this.audienceMode.set(d.explicitAudience ? 'custom' : d.audience === 'broad' ? 'broad' : 'reuse');
     this.copies.set(
       (d.copyVariants ?? []).map((c) => ({
         adName: c.adName ?? '',
@@ -319,29 +317,19 @@ export class DraftEditPanel implements OnInit {
     this.explicitAudienceState.set(this.explicitInitial());
   }
 
-  /** Abre o editor pro converter modo, semeando o estado do `convertibleAudience` (pronto pra salvar
-   *  mesmo sem edição — o Salvar substitui o público pelo explícito). */
-  protected startConverting(): void {
-    this.converting.set(true);
-    this.explicitAudienceState.set(this.convertibleInitial());
-  }
-
-  /** Cancela o converter modo (fecha o editor e volta pro público herdado, sem salvar nada). */
-  protected cancelConverting(): void {
-    this.converting.set(false);
-    this.explicitAudienceState.set(null);
-  }
-
   /** Toggle "Ao aprovar" (o grupo emite string[] no modo single) → normaliza pro signal. */
   protected setActivation(value: string | string[]): void {
     const v = Array.isArray(value) ? value[0] : value;
     if (v === 'active' || v === 'paused') this.activation.set(v);
   }
 
-  /** Toggle "Público" (reuse × amplo) — vai no diff do Salvar (campo `audience` do PATCH). */
-  protected setAudience(value: string | string[]): void {
+  /** Toggle "Público" (herda / a Meta escolhe / personalizado). `custom` semeia o editor na hora
+   *  (salvável mesmo sem edição extra — converte o herdado em explícito). */
+  protected setAudienceMode(value: string | string[]): void {
     const v = Array.isArray(value) ? value[0] : value;
-    if (v === 'reuse' || v === 'broad') this.audience.set(v);
+    if (v !== 'reuse' && v !== 'broad' && v !== 'custom') return;
+    this.audienceMode.set(v);
+    if (v === 'custom' && !this.explicitAudienceState()) this.explicitAudienceState.set(this.customSeed());
   }
 
   /** Troca o criativo (ação imediata — endpoint próprio resolve o reuse ao vivo). Mantém o painel
@@ -424,13 +412,16 @@ export class DraftEditPanel implements OnInit {
     }
     if (this.objective() && this.objective() !== (d.objective ?? '')) patch['objective'] = this.objective();
 
-    // público: quando o editor explícito está ativo (rascunho já explícito OU converter modo), manda
-    // o estado COMPLETO como SUBSTITUIÇÃO total. Senão, o toggle reuse/broad segue no diff normal.
-    const explicit = this.explicitAudienceState();
-    if (explicit) {
-      patch['explicitAudience'] = this.toExplicitInput(explicit);
-    } else if (d.audience && this.audience() !== d.audience) {
-      patch['audience'] = this.audience();
+    // público: `custom` manda o estado COMPLETO como SUBSTITUIÇÃO total (converte reuse/broad →
+    // explicit no backend). reuse/broad só entram no patch quando MUDAM do modo original (evita
+    // clobber). Modo original: rascunho já explícito = `custom`; senão o `audience` herdado.
+    const mode = this.audienceMode();
+    const originalMode = d.explicitAudience ? 'custom' : d.audience;
+    if (mode === 'custom') {
+      const explicit = this.explicitAudienceState();
+      if (explicit) patch['explicitAudience'] = this.toExplicitInput(explicit);
+    } else if (mode !== originalMode) {
+      patch['audience'] = mode;
     }
 
     const original = d.copyVariants ?? [];
