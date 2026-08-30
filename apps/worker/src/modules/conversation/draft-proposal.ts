@@ -339,7 +339,7 @@ async function loadAccountAudiences(deps: WorkerDeps, ctx: DraftProposalContext,
 }
 
 type AudiencePrep =
-  | { readonly kind: "ok"; readonly includeIds: string[]; readonly excludeIds: string[]; readonly notes: string[]; readonly sizeWarnings: string[] }
+  | { readonly kind: "ok"; readonly includeIds: string[]; readonly excludeIds: string[]; readonly notes: string[]; readonly sizeWarnings: string[]; readonly dropped: string[] }
   | { readonly kind: "blocked"; readonly reason: string };
 
 /**
@@ -354,16 +354,22 @@ async function prepareAudiences(
   ref: AdAccountRef,
   includeQueries: readonly string[],
   excludeQueries: readonly string[],
+  autonomous = false,
 ): Promise<AudiencePrep> {
-  if (includeQueries.length === 0 && excludeQueries.length === 0) return { kind: "ok", includeIds: [], excludeIds: [], notes: [], sizeWarnings: [] };
+  if (includeQueries.length === 0 && excludeQueries.length === 0) return { kind: "ok", includeIds: [], excludeIds: [], notes: [], sizeWarnings: [], dropped: [] };
   const audiences = await loadAccountAudiences(deps, ctx, ref);
-  if (audiences.length === 0) return { kind: "blocked", reason: "não achei públicos salvos nessa conta — confere no Gerenciador ou rode uma análise que eu cacheio os públicos" };
+  if (audiences.length === 0) {
+    if (autonomous) return { kind: "ok", includeIds: [], excludeIds: [], notes: [], sizeWarnings: [], dropped: [...includeQueries, ...excludeQueries] };
+    return { kind: "blocked", reason: "não achei públicos salvos nessa conta — confere no Gerenciador ou rode uma análise que eu cacheio os públicos" };
+  }
   const byId = new Map(audiences.map((a) => [a.id, a]));
   const acc = { name: (a: CustomAudience) => a.name, keys: (a: CustomAudience) => [a.id] };
+  const dropped: string[] = [];
 
-  const resolve = (q: string): { id: string } | { blocked: string } => {
+  const resolve = (q: string): { id: string } | { blocked: string } | { drop: true } => {
     const m = resolveNamedMatch(audiences, q, acc);
     if (m.kind === "one") return { id: m.row.id };
+    if (autonomous) return { drop: true }; // proativo: ambíguo/inexistente → descarta
     if (m.kind === "none") return { blocked: `não achei um público chamado "${q}" na conta. Chega perto? me diga o nome exato (posso listar com "quais públicos eu tenho").` };
     const opts = m.rows.map((r, i) => `${i + 1}. ${r.name}`).join("\n");
     return { blocked: `achei mais de um público parecido com "${q}":\n${opts}\nQual desses? (me diz o nome exato)` };
@@ -373,12 +379,14 @@ async function prepareAudiences(
   for (const q of includeQueries) {
     const r = resolve(q);
     if ("blocked" in r) return { kind: "blocked", reason: r.blocked };
+    if ("drop" in r) { dropped.push(q); continue; }
     includeIds.push(r.id);
   }
   const excludeIds: string[] = [];
   for (const q of excludeQueries) {
     const r = resolve(q);
     if ("blocked" in r) return { kind: "blocked", reason: r.blocked };
+    if ("drop" in r) { dropped.push(q); continue; }
     excludeIds.push(r.id);
   }
 
@@ -401,7 +409,7 @@ async function prepareAudiences(
       sizeWarnings.push(`⚠️ o público *${a.name}* é pequeno (~${a.approximateCount} pessoas) — pode entregar pouco.`);
     }
   }
-  return { kind: "ok", includeIds, excludeIds, notes, sizeWarnings };
+  return { kind: "ok", includeIds, excludeIds, notes, sizeWarnings, dropped };
 }
 
 /** Rótulo PT do tipo de geo (vocabulário Meta fica no adapter — aqui só o kind neutro). */
@@ -412,38 +420,39 @@ function geoKindPt(kind: "country" | "region" | "city"): string {
 const MAX_GEO_AMBIGUOUS_OPTIONS = 5;
 
 type GeoPrep =
-  | { readonly kind: "ok"; readonly geo: readonly { readonly key: string; readonly name: string; readonly kind: "country" | "region" | "city" }[] }
+  | { readonly kind: "ok"; readonly geo: readonly { readonly key: string; readonly name: string; readonly kind: "country" | "region" | "city" }[]; readonly dropped: readonly string[] }
   | { readonly kind: "blocked"; readonly reason: string };
 
 /**
- * Resolve geo pedida (por NOME) → lugar real na Meta (Fase 1, subfatia 3a). Mesma honestidade de
- * `prepareAudiences`: 1 match → resolve; 0 → honesto; 2+ → PERGUNTA com opções numeradas, nunca chuta.
+ * Resolve geo pedida (por NOME) → lugar real na Meta. Honestidade: 1 match/exato → resolve; 0 →
+ * honesto; 2+ → PERGUNTA. `autonomous` (proativo) descarta o ambíguo/inexistente em `dropped`.
  */
-async function prepareGeo(deps: WorkerDeps, ref: AdAccountRef, queries: readonly string[]): Promise<GeoPrep> {
-  if (queries.length === 0) return { kind: "ok", geo: [] };
+async function prepareGeo(deps: WorkerDeps, ref: AdAccountRef, queries: readonly string[], autonomous = false): Promise<GeoPrep> {
   const resolved: { key: string; name: string; kind: "country" | "region" | "city" }[] = [];
+  const dropped: string[] = [];
   for (const q of queries) {
     const matches = await deps.ports.ads.searchGeo(ref, q, ["country", "region", "city"]);
-    if (matches.length === 0) {
-      return { kind: "blocked", reason: `não achei "${q}" na busca de localização da Meta — confere o nome? (cidade, região ou país)` };
-    }
-    if (matches.length === 1) {
-      resolved.push(matches[0]!);
+    const exact = matches.find((m) => normalizeTerm(m.name) === normalizeTerm(q));
+    const pick = exact ?? (matches.length === 1 ? matches[0] : undefined);
+    if (pick) {
+      resolved.push({ key: pick.key, name: pick.name, kind: pick.kind });
       continue;
     }
+    if (autonomous) { dropped.push(q); continue; }
+    if (matches.length === 0) return { kind: "blocked", reason: `não achei "${q}" na busca de localização da Meta — confere o nome? (cidade, região ou país)` };
     const opts = matches
       .slice(0, MAX_GEO_AMBIGUOUS_OPTIONS)
       .map((m, i) => `${i + 1}. ${m.name}${m.countryCode ? ` (${m.countryCode})` : ""} — ${geoKindPt(m.kind)}`)
       .join("\n");
     return { kind: "blocked", reason: `achei mais de um lugar parecido com "${q}":\n${opts}\nQual desses? (me diz mais específico, tipo "Belo Horizonte, MG")` };
   }
-  return { kind: "ok", geo: resolved };
+  return { kind: "ok", geo: resolved, dropped };
 }
 
 const MAX_INTEREST_AMBIGUOUS_OPTIONS = 5;
 
 type InterestPrep =
-  | { readonly kind: "ok"; readonly interests: readonly { readonly id: string; readonly name: string }[] }
+  | { readonly kind: "ok"; readonly interests: readonly { readonly id: string; readonly name: string }[]; readonly dropped: readonly string[] }
   | { readonly kind: "blocked"; readonly reason: string };
 
 /** normaliza termo p/ match tolerante (minúsculas, sem acento, sem espaço extra). */
@@ -468,16 +477,19 @@ async function resolveDetailedTargeting(
   search: (q: string) => Promise<readonly { id: string; name: string; audienceSize?: number; path?: readonly string[] }[]>,
   query: string,
   labelSingular: string,
-): Promise<{ kind: "ok"; ref: { id: string; name: string } } | { kind: "blocked"; reason: string }> {
+  autonomous = false,
+): Promise<{ kind: "ok"; ref: { id: string; name: string } } | { kind: "blocked"; reason: string } | { kind: "dropped" }> {
   let matches = await search(query);
   if (matches.length === 0) {
     const stripped = query.replace(/\s*\([^)]*\)\s*/g, " ").replace(/\s+/g, " ").trim();
     if (stripped && normalizeTerm(stripped) !== normalizeTerm(query)) matches = await search(stripped);
   }
-  if (matches.length === 0) return { kind: "blocked", reason: `não achei ${labelSingular} "${query}" — confere o termo?` };
   const exact = matches.find((m) => normalizeTerm(m.name) === normalizeTerm(query));
   if (exact) return { kind: "ok", ref: { id: exact.id, name: exact.name } };
   if (matches.length === 1) return { kind: "ok", ref: { id: matches[0]!.id, name: matches[0]!.name } };
+  // AUTÔNOMO (proativo, sem humano): ambíguo/inexistente → DESCARTA (nunca pergunta, nunca chuta).
+  if (autonomous) return { kind: "dropped" };
+  if (matches.length === 0) return { kind: "blocked", reason: `não achei ${labelSingular} "${query}" — confere o termo?` };
   const opts = matches
     .slice(0, MAX_INTEREST_AMBIGUOUS_OPTIONS)
     .map((m, i) => `${i + 1}. ${m.name}${humanAudienceSize(m.audienceSize)}${m.path && m.path.length > 0 ? ` — ${m.path.join(" > ")}` : ""}`)
@@ -485,26 +497,31 @@ async function resolveDetailedTargeting(
   return { kind: "blocked", reason: `achei mais de um ${labelSingular} parecido com "${query}":\n${opts}\nQual desses? (me diz o nome exato da opção)` };
 }
 
-/** Resolve interesses pedidos (por NOME) → ids reais. Ver `resolveDetailedTargeting`. */
-async function prepareInterests(deps: WorkerDeps, ref: AdAccountRef, queries: readonly string[]): Promise<InterestPrep> {
+/** Resolve interesses pedidos (por NOME) → ids reais. `autonomous` (proativo) descarta o não-resolvido
+ *  em `dropped` em vez de perguntar. Ver `resolveDetailedTargeting`. */
+async function prepareInterests(deps: WorkerDeps, ref: AdAccountRef, queries: readonly string[], autonomous = false): Promise<InterestPrep> {
   const resolved: { id: string; name: string }[] = [];
+  const dropped: string[] = [];
   for (const q of queries) {
-    const r = await resolveDetailedTargeting((s) => deps.ports.ads.searchInterests(ref, s), q, "o interesse");
+    const r = await resolveDetailedTargeting((s) => deps.ports.ads.searchInterests(ref, s), q, "o interesse", autonomous);
     if (r.kind === "blocked") return r;
-    resolved.push(r.ref);
+    if (r.kind === "dropped") dropped.push(q);
+    else resolved.push(r.ref);
   }
-  return { kind: "ok", interests: resolved };
+  return { kind: "ok", interests: resolved, dropped };
 }
 
 /** Resolve comportamentos pedidos (por NOME) → ids reais (catálogo cacheado, match local). */
-async function prepareBehaviors(deps: WorkerDeps, ref: AdAccountRef, queries: readonly string[]): Promise<InterestPrep> {
+async function prepareBehaviors(deps: WorkerDeps, ref: AdAccountRef, queries: readonly string[], autonomous = false): Promise<InterestPrep> {
   const resolved: { id: string; name: string }[] = [];
+  const dropped: string[] = [];
   for (const q of queries) {
-    const r = await resolveDetailedTargeting((s) => deps.ports.ads.searchBehaviors(ref, s), q, "o comportamento");
+    const r = await resolveDetailedTargeting((s) => deps.ports.ads.searchBehaviors(ref, s), q, "o comportamento", autonomous);
     if (r.kind === "blocked") return r;
-    resolved.push(r.ref);
+    if (r.kind === "dropped") dropped.push(q);
+    else resolved.push(r.ref);
   }
-  return { kind: "ok", interests: resolved };
+  return { kind: "ok", interests: resolved, dropped };
 }
 
 type ExplicitGeo = Extract<TargetingSpec, { readonly kind: "explicit" }>["geo"][number];
@@ -1267,6 +1284,7 @@ export async function proposeCreateCampaign(
     readonly addressAreas?: readonly AddressArea[];
   },
   origin: DraftOrigin = "on_demand",
+  opts: { readonly autonomous?: boolean } = {},
 ): Promise<ChatDraftProposal> {
   const ac = await loadAgentContext(deps, ctx);
   if (!ac) return { kind: "blocked", reason: "não consegui acessar a conta agora" };
@@ -1279,18 +1297,18 @@ export async function proposeCreateCampaign(
     return { kind: "blocked", reason: "criar campanha está desligado para este agente (ligue em ações permitidas)" };
   }
 
-  // resolve os públicos pedidos → ids (determinístico; ambíguo/inexistente → pergunta).
-  const aud = await prepareAudiences(deps, ctx, ac.ref, args.includeAudiences ?? [], args.excludeAudiences ?? []);
+  // AUTÔNOMO (proativo, Fatia 8): ambíguo/inexistente é DESCARTADO (nunca pergunta — não há humano
+  // no loop) e anotado no eco/rationale. Interativo (chat): ambíguo→pergunta, como sempre.
+  const auto = opts.autonomous === true;
+  const aud = await prepareAudiences(deps, ctx, ac.ref, args.includeAudiences ?? [], args.excludeAudiences ?? [], auto);
   if (aud.kind === "blocked") return { kind: "blocked", reason: aud.reason };
-  // geo explícita (Fase 1, subfatia 3a) — mesma honestidade (ambíguo→pergunta, nunca chuta).
-  const geoPrep = await prepareGeo(deps, ac.ref, args.geo ?? []);
+  const geoPrep = await prepareGeo(deps, ac.ref, args.geo ?? [], auto);
   if (geoPrep.kind === "blocked") return { kind: "blocked", reason: geoPrep.reason };
-  // interesses explícitos (Fase 2, subfatia 4) — mesma honestidade (ambíguo→pergunta, nunca chuta).
-  const interestPrep = await prepareInterests(deps, ac.ref, args.interests ?? []);
+  const interestPrep = await prepareInterests(deps, ac.ref, args.interests ?? [], auto);
   if (interestPrep.kind === "blocked") return { kind: "blocked", reason: interestPrep.reason };
-  // comportamentos explícitos (Slice 4) — mesma honestidade (ambíguo→pergunta).
-  const behaviorPrep = await prepareBehaviors(deps, ac.ref, args.behaviors ?? []);
+  const behaviorPrep = await prepareBehaviors(deps, ac.ref, args.behaviors ?? [], auto);
   if (behaviorPrep.kind === "blocked") return { kind: "blocked", reason: behaviorPrep.reason };
+  const droppedNames = [...aud.dropped, ...geoPrep.dropped, ...interestPrep.dropped, ...behaviorPrep.dropped];
   // raio (Slice 5): aplica às cidades resolvidas + monta áreas por endereço (clampado + notas).
   const geoRadius = applyCityRadius(geoPrep.geo, args.radiusKm);
   const areas = buildRadiusAreas(args.addressAreas);
@@ -1455,6 +1473,7 @@ export async function proposeCreateCampaign(
   );
   for (const n of aud.notes) lines.push(n);
   for (const n of [...geoRadius.notes, ...areas.notes]) lines.push(n);
+  if (droppedNames.length > 0) lines.push(`Deixei de fora (não achei ou ambíguo na conta): ${droppedNames.join(", ")}.`);
   // alcance combinado (delivery_estimate ao vivo) quando o dono indicou público; superior ao
   // por-público → substitui o `sizeWarnings`, que fica de fallback quando a estimativa não vem.
   const reachNote = hasAudience || hasExplicitPrimitive ? await reachNoteFor(deps, ac.ref, targeting, goal, defaults.pixelId) : null;
@@ -1566,6 +1585,7 @@ export async function proposeCopyCampaign(
     readonly addressAreas?: readonly AddressArea[];
   },
   origin: DraftOrigin = "on_demand",
+  opts: { readonly autonomous?: boolean } = {},
 ): Promise<ChatDraftProposal> {
   const ac = await loadAgentContext(deps, ctx);
   if (!ac) return { kind: "blocked", reason: "não consegui acessar a conta agora" };
@@ -1573,15 +1593,17 @@ export async function proposeCopyCampaign(
     return { kind: "blocked", reason: "criar/copiar campanha está desligado para este agente (ligue em ações permitidas)" };
   }
 
-  // resolve os públicos pedidos → ids (determinístico; ambíguo/inexistente → pergunta).
-  const aud = await prepareAudiences(deps, ctx, ac.ref, args.includeAudiences ?? [], args.excludeAudiences ?? []);
+  // AUTÔNOMO (proativo): descarta+anota o não-resolvido; interativo: ambíguo→pergunta.
+  const auto = opts.autonomous === true;
+  const aud = await prepareAudiences(deps, ctx, ac.ref, args.includeAudiences ?? [], args.excludeAudiences ?? [], auto);
   if (aud.kind === "blocked") return { kind: "blocked", reason: aud.reason };
-  const geoPrep = await prepareGeo(deps, ac.ref, args.geo ?? []);
+  const geoPrep = await prepareGeo(deps, ac.ref, args.geo ?? [], auto);
   if (geoPrep.kind === "blocked") return { kind: "blocked", reason: geoPrep.reason };
-  const interestPrep = await prepareInterests(deps, ac.ref, args.interests ?? []);
+  const interestPrep = await prepareInterests(deps, ac.ref, args.interests ?? [], auto);
   if (interestPrep.kind === "blocked") return { kind: "blocked", reason: interestPrep.reason };
-  const behaviorPrep = await prepareBehaviors(deps, ac.ref, args.behaviors ?? []);
+  const behaviorPrep = await prepareBehaviors(deps, ac.ref, args.behaviors ?? [], auto);
   if (behaviorPrep.kind === "blocked") return { kind: "blocked", reason: behaviorPrep.reason };
+  const droppedNames = [...aud.dropped, ...geoPrep.dropped, ...interestPrep.dropped, ...behaviorPrep.dropped];
   const areas = buildRadiusAreas(args.addressAreas);
   const hasExplicitPrimitive =
     geoPrep.geo.length > 0 ||
@@ -1694,6 +1716,7 @@ export async function proposeCopyCampaign(
     ...aud.notes,
     ...geoRadius.notes,
     ...areas.notes,
+    ...(droppedNames.length > 0 ? [`Deixei de fora (não achei ou ambíguo na conta): ${droppedNames.join(", ")}.`] : []),
     ...reachLines,
     `Confirma? (dá pra ajustar orçamento/público antes)`,
   ].join("\n");
