@@ -866,6 +866,25 @@ confirmado como comentário de fonte), não codar contra suposição:
   spike de descoberta (schema de `custom_locations` + decisão de provedor de geocoding) antes de
   qualquer linha de design/código.
 
+**Atualização (2026-08-30, fatia "Finalização do fluxo de públicos" — em andamento):** o grounding na
+doc oficial Meta destravou as 3 fases → **em implementação nesta fatia** (marcar RESOLVIDO ao fim):
+(a) behaviors = enumeração completa confirmada (`adTargetingCategory&class=behaviors`, sem busca por
+texto) → cache Redis **locale-scoped** + match local; (b) narrowing = `flexible_spec` (OR dentro / AND
+entre) + `exclusions:{interests,behaviors}` (confirmação final via `delivery_estimate` no spike);
+(c) raio = **`custom_locations` aceita `address_string` e a Meta geocodifica no servidor** (sem provedor
+externo — o bloqueio de geocoding some) + cidade aceita `radius`/`distance_unit` na própria entrada.
+`custom_audiences` colapsa em `explicit`; `interests`→`interestGroups`; nome neutro `radiusAreas`.
+
+**Fast-follows que PERMANECEM após esta fatia:**
+- **Geo exótico na cópia** (CEP/DMA) — hoje preservado read-only via `explicit.inheritedGeoRaw`; edição
+  fina por primitivos desses = fast-follow.
+- **Opt-in de expansão sobre público explícito** — hoje `explicit` sempre zera expansão (previsível);
+  permitir ligar Advantage audience sobre um público explícito = fast-follow.
+- **Raio sem coords** — se o spike confirmar que `address_string` não devolve coords, `adradiussuggestion`
+  não roda p/ endereço → raio omitido usa const default; geocoding próprio p/ raio sugerido = fast-follow.
+- **Behaviors:** hierarquia `path` na UI; tratamento de variação de mercado se o spike revelar.
+- **Exclusão em múltiplos grupos** de interesse/behavior (hoje exclusão plana, grupo OR único).
+
 ## Fatia 8 — Orquestração multi-agente / qualidade (roadmap pós-MVP)
 
 **Visão:** elevar a qualidade e a escala da análise com **mais papéis de agente** e **map-reduce por entidade** — sem reescrever o grafo. **Depende:** MVP validado (hipótese confirmada na 3a) + `5a` (write path, p/ o validador de segurança de ação). A costura já existe desde a 3a-2: o par **Analista→Revisor** é modelado como uma **lista de passes** (`reviewPasses`, default 1) — crescer = **registrar mais passes/papéis**, não reescrever nós.
