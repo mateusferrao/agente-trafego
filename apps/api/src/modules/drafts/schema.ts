@@ -11,6 +11,14 @@ export const draftCopyVariantOutput = z.object({
   cta: z.string().nullable(),
   /** nome editável do anúncio desta variação (painel "Editar rascunho"). `null` = derivado. */
   adName: z.string().nullable(),
+  /** criativo PRÓPRIO deste anúncio (Fatia 7). `null` = usa o criativo padrão do rascunho.
+   *  `hasOwn` distingue "sem próprio" de "próprio herdado do padrão" no card/miniatura. */
+  creative: z
+    .object({
+      format: z.enum(["image", "video"]),
+      origin: z.enum(["reuse", "upload"]),
+    })
+    .nullable(),
 });
 
 /**
@@ -150,6 +158,9 @@ export const draftCopyEditInput = z.object({
   headline: z.string().min(1).max(COPY_TEXT_MAX).optional(),
   description: z.string().max(COPY_TEXT_MAX).optional(),
   cta: ctaTypeSchema.optional(),
+  /** criativo PRÓPRIO deste anúncio (Fatia 7 — trocar criativo por anúncio). Resolvido no backend
+   *  (biblioteca ou anúncio ao vivo) → CreativeAssetRef; ausente = mantém o criativo atual do anúncio. */
+  creative: setDraftCreativeInput.optional(),
 });
 
 /** Público EXPLÍCITO COMPLETO que o editor do site manda (Slice 7/8) — já resolvido (keys/ids, o

@@ -621,3 +621,49 @@ describe("DraftsService.updateDraft — nº de anúncios (add/remove preservando
     expect(cv.map((c) => c.headline)).toEqual(["h2"]);
   });
 });
+
+describe("DraftsService.updateDraft — criativo POR ANÚNCIO (Fatia 7, só site)", () => {
+  /** fila de resultados de `.limit(1)`: 1º = rascunho, 2º = asset da biblioteca (resolveLibraryCreative). */
+  function fakeDbQueue(rows: unknown[][], captured: { spec?: unknown }) {
+    const q = [...rows];
+    return {
+      select: () => ({ from: () => ({ where: () => ({ limit: () => q.shift() ?? [] }) }) }),
+      update: () => ({ set: (v: { spec: unknown }) => { captured.spec = v.spec; return { where: () => ({ returning: () => [{ id: "d1" }] }) }; } }),
+    } as never;
+  }
+  const spec = {
+    version: 1, currency: "BRL", dailyBudgetMinor: 5000, activation: "active",
+    creative: { assetId: "def", format: "image", origin: "reuse", metaImageHash: "H" },
+    copyVariants: [{ primaryText: "p1", headline: "h1" }, { primaryText: "p2", headline: "h2" }],
+  };
+
+  it("copyEdits com creative asset → resolve e grava o criativo próprio SÓ nesse anúncio", async () => {
+    const captured: { spec?: unknown } = {};
+    const service = createDraftsService({
+      db: fakeDbQueue(
+        [
+          [{ spec, kind: "from_scratch", status: "proposed" }], // load do rascunho
+          [{ format: "video", origin: "upload", status: "ready", metaImageHash: null, metaVideoId: "VID9" }], // asset
+        ],
+        captured,
+      ),
+      adsPlatform: {} as never, vault: {} as never, approvals: {} as never, storage: {} as never, scheduler: {} as never,
+    });
+    const out = await service.updateDraft(ORG, "acc", "d1", { copyEdits: [{ index: 1, creative: { kind: "asset", assetId: "asset-x" } }] });
+    expect(out.ok).toBe(true);
+    const cv = (captured.spec as { copyVariants: { creative?: { metaVideoId?: string } }[] }).copyVariants;
+    expect(cv[0]?.creative).toBeUndefined(); // anúncio 0 intacto (sem próprio)
+    expect(cv[1]?.creative?.metaVideoId).toBe("VID9"); // anúncio 1 ganhou o criativo próprio
+  });
+
+  it("asset inexistente/arquivado → {ok:false} amigável, NÃO persiste", async () => {
+    const captured: { spec?: unknown } = {};
+    const service = createDraftsService({
+      db: fakeDbQueue([[{ spec, kind: "from_scratch", status: "proposed" }], []], captured),
+      adsPlatform: {} as never, vault: {} as never, approvals: {} as never, storage: {} as never, scheduler: {} as never,
+    });
+    const out = await service.updateDraft(ORG, "acc", "d1", { copyEdits: [{ index: 0, creative: { kind: "asset", assetId: "gone" } }] });
+    expect(out.ok).toBe(false);
+    expect(captured.spec).toBeUndefined();
+  });
+});

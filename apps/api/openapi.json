@@ -6674,6 +6674,32 @@
                     "string",
                     "null"
                   ]
+                },
+                "creative": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "format": {
+                      "type": "string",
+                      "enum": [
+                        "image",
+                        "video"
+                      ]
+                    },
+                    "origin": {
+                      "type": "string",
+                      "enum": [
+                        "reuse",
+                        "upload"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "format",
+                    "origin"
+                  ]
                 }
               },
               "required": [
@@ -6681,7 +6707,8 @@
                 "headline",
                 "description",
                 "cta",
-                "adName"
+                "adName",
+                "creative"
               ]
             }
           },
@@ -7684,6 +7711,48 @@
                     "send_message",
                     "download"
                   ]
+                },
+                "creative": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "asset"
+                          ]
+                        },
+                        "assetId": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "assetId"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "serving"
+                          ]
+                        },
+                        "adId": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "adId"
+                      ]
+                    }
+                  ]
                 }
               },
               "required": [
@@ -7694,6 +7763,9 @@
           "removeAdIndex": {
             "type": "integer",
             "minimum": 0
+          },
+          "addAd": {
+            "type": "boolean"
           },
           "removeGeo": {
             "type": "array",

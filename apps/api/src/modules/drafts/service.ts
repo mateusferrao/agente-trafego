@@ -360,6 +360,17 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       for (const e of input.copyEdits ?? []) {
         const current = variants[e.index];
         if (!current) continue;
+        // criativo PRÓPRIO do anúncio (Fatia 7): resolve biblioteca/ao-vivo → CreativeAssetRef; falha
+        // = mantém o atual (não quebra a edição de copy). Só site (o chat não mexe em criativo).
+        let ownCreative = current.creative;
+        if (e.creative) {
+          const resolved =
+            e.creative.kind === "asset"
+              ? await resolveLibraryCreative(orgId, accountId, e.creative.assetId)
+              : await resolveServingCreative(orgId, accountId, e.creative.adId);
+          if (!resolved) return { ok: false, message: "não consegui usar esse criativo — tente outro." };
+          ownCreative = resolved;
+        }
         variants[e.index] = {
           ...current,
           ...(e.primaryText !== undefined ? { primaryText: e.primaryText } : {}),
@@ -367,6 +378,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
           ...(e.description !== undefined ? { description: e.description } : {}),
           ...(e.cta !== undefined ? { cta: e.cta } : {}),
           ...(e.adName !== undefined ? { adName: e.adName } : {}),
+          ...(ownCreative ? { creative: ownCreative } : {}),
         };
       }
       if (input.removeAdIndex != null) variants = variants.filter((_, i) => i !== input.removeAdIndex);
@@ -455,6 +467,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
                 description: c.description ?? null,
                 cta: c.cta ?? null,
                 adName: c.adName ?? null,
+                creative: c.creative ? { format: c.creative.format, origin: c.creative.origin } : null,
               }))
             : null,
           creative: spec.creative ? { format: spec.creative.format, origin: spec.creative.origin } : null,
