@@ -427,8 +427,13 @@ export class MetaCreationService {
     const iGroups = (snapshot.interestGroups ?? []).filter((g) => g.length > 0).map((g) => ({ interests: g.map((i) => ({ id: i.id })) }));
     const bGroups = (snapshot.behaviorGroups ?? []).filter((g) => g.length > 0).map((g) => ({ behaviors: g.map((b) => ({ id: b.id })) }));
     const flexible_spec = [...iGroups, ...bGroups];
+    // geo do snapshot pode sair VAZIO quando a fonte usa geo NÃO-capturável (Advantage geo /
+    // custom_locations / clusters) — a Meta rejeita `geo_locations` vazio ("Falta uma localização").
+    // Fallback seguro: país padrão (a cópia fica válida; fidelidade fina de geo exótico = fast-follow).
+    const geoRaw = this.geoToRaw(snapshot.geo);
+    const geo_locations = Object.keys(geoRaw).length > 0 ? geoRaw : { countries: [DEFAULT_ADVANTAGE_GEO_COUNTRY] };
     return {
-      geo_locations: this.geoToRaw(snapshot.geo),
+      geo_locations,
       ...(snapshot.ageMin !== undefined ? { age_min: snapshot.ageMin } : {}),
       ...(snapshot.ageMax !== undefined ? { age_max: snapshot.ageMax } : {}),
       ...(flexible_spec.length > 0 ? { flexible_spec } : {}),
@@ -497,6 +502,8 @@ export class MetaCreationService {
         if (spec.radiusAreas && spec.radiusAreas.length > 0) {
           geoLocations["custom_locations"] = spec.radiusAreas.map((a) => ({ address_string: a.address, radius: a.radius, distance_unit: a.distanceUnit }));
         }
+        // geo_locations NUNCA pode sair vazio (a Meta rejeita "Falta uma localização") — fallback país.
+        if (Object.keys(geoLocations).length === 0) geoLocations["countries"] = [DEFAULT_ADVANTAGE_GEO_COUNTRY];
         const out: Record<string, unknown> = {
           geo_locations: geoLocations,
           ...(spec.ageMin !== undefined ? { age_min: spec.ageMin } : {}),

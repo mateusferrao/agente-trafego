@@ -359,6 +359,19 @@ describe("MetaCreationService.createCampaign / createAdSet — contrato v26", ()
     expect(decoded).toContain('"lookalike":0');
   });
 
+  it("geo VAZIO nunca vira geo_locations vazio → fallback país (Meta rejeita 'Falta uma localização')", async () => {
+    const posts: Array<{ url: string }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => { posts.push({ url: String(input) }); return new Response(JSON.stringify({ id: "AS_NEW" }), { status: 200, headers: { "content-type": "application/json" } }); }));
+    // explicit só com público salvo, sem geo → não pode sair geo_locations:{}
+    await svc().createAdSet(account, { campaignId: "C", name: "A", dailyBudgetMinor: 1000, goal: "purchase", status: "paused", targeting: { kind: "explicit", geo: [], customAudienceIncludeIds: ["ca1"] } });
+    // reuse com snapshot de geo NÃO-capturável (Advantage/custom_locations) → geo vazio no snapshot
+    await svc().createAdSet(account, { campaignId: "C", name: "B", dailyBudgetMinor: 1000, goal: "purchase", status: "paused", targeting: { kind: "reuse_adset", sourceAdsetId: "AS", resolved: { geo: {}, expansionRaw: { advantageAudience: 0, relaxCustomAudience: 0, relaxLookalike: 0 } } } });
+    const explicitPost = decodeURIComponent(posts.filter((p) => p.url.includes("/adsets"))[0]!.url);
+    const reusePost = decodeURIComponent(posts.filter((p) => p.url.includes("/adsets"))[1]!.url);
+    expect(explicitPost).toContain('"geo_locations":{"countries":["BR"]}');
+    expect(reusePost).toContain('"geo_locations":{"countries":["BR"]}');
+  });
+
   it("explicit com RAIO em REGIÃO → adapter faz STRIP (regions só {key}; raio é city-only)", async () => {
     const posts: Array<{ url: string }> = [];
     vi.stubGlobal(
