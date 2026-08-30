@@ -617,6 +617,8 @@ export function makeConversationNodes(
               ...(Array.isArray(a["addGeo"]) ? { addGeo: a["addGeo"].filter((x): x is string => typeof x === "string") } : {}),
               ...(typeof a["ageMin"] === "number" ? { ageMin: a["ageMin"] as number } : {}),
               ...(typeof a["ageMax"] === "number" ? { ageMax: a["ageMax"] as number } : {}),
+              ...(Array.isArray(a["removeInterests"]) ? { removeInterests: a["removeInterests"].filter((x): x is string => typeof x === "string") } : {}),
+              ...(Array.isArray(a["addInterests"]) ? { addInterests: a["addInterests"].filter((x): x is string => typeof x === "string") } : {}),
             };
       const res = await refineDraft(deps, { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, currency: DEFAULT_CURRENCY }, active.draftId, patch);
       if (res.kind === "blocked") {
@@ -653,6 +655,7 @@ export function makeConversationNodes(
                 const inc = strList(args["includeAudiences"]);
                 const exc = strList(args["excludeAudiences"]);
                 const geo = strList(args["geo"]);
+                const interests = strList(args["interests"]);
                 return proposeCopyCampaign(deps, dctx, {
                   sourceCampaignId: String(args["campaignId"] ?? ""),
                   ...(typeof args["campaignName"] === "string" ? { sourceName: args["campaignName"] as string } : {}),
@@ -664,12 +667,14 @@ export function makeConversationNodes(
                   ...(typeof args["ageMin"] === "number" ? { ageMin: args["ageMin"] as number } : {}),
                   ...(typeof args["ageMax"] === "number" ? { ageMax: args["ageMax"] as number } : {}),
                   ...(isGender(args["gender"]) ? { gender: args["gender"] } : {}),
+                  ...(interests ? { interests } : {}),
                 });
               })()
           : await (async () => {
               const inc = strList(args["includeAudiences"]);
               const exc = strList(args["excludeAudiences"]);
               const geo = strList(args["geo"]);
+              const interests = strList(args["interests"]);
               return proposeCreateCampaign(deps, dctx, {
                 // valida o goal contra a taxonomia neutra ANTES de propor: goal inválido (o LLM
                 // manda texto livre) descartado → o propose infere da meta/conta, e o eco mostra
@@ -683,6 +688,7 @@ export function makeConversationNodes(
                 ...(typeof args["ageMin"] === "number" ? { ageMin: args["ageMin"] as number } : {}),
                 ...(typeof args["ageMax"] === "number" ? { ageMax: args["ageMax"] as number } : {}),
                 ...(isGender(args["gender"]) ? { gender: args["gender"] } : {}),
+                ...(interests ? { interests } : {}),
               });
             })();
       const expiresAt = new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString();

@@ -6787,13 +6787,32 @@
                     }
                   ]
                 }
+              },
+              "interests": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "name"
+                  ]
+                }
               }
             },
             "required": [
               "geo",
               "ageMin",
               "ageMax",
-              "genders"
+              "genders",
+              "interests"
             ]
           },
           "createdIds": {
@@ -7063,6 +7082,38 @@
           "name",
           "kind",
           "countryCode"
+        ]
+      },
+      "InterestSearchResultOutput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "audienceSize": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "path": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "audienceSize",
+          "path"
         ]
       },
       "SetDraftTargetingInput": {
@@ -7347,6 +7398,33 @@
             "type": "integer",
             "minimum": 13,
             "maximum": 65
+          },
+          "removeInterests": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "addInterests": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "id",
+                "name"
+              ]
+            }
           }
         }
       },
@@ -9481,6 +9559,46 @@
                   "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/GeoSearchResultOutput"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/targeting/interest-search": {
+      "get": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "q",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "busca de interesses pro editor de público explícito",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/InterestSearchResultOutput"
                   }
                 }
               }

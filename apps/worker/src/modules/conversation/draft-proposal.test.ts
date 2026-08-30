@@ -250,5 +250,19 @@ describe("describeExplicitAudience (Fase 1, subfatia 3a)", () => {
     expect(desc).not.toContain("homens");
     expect(desc).not.toContain("mulheres");
   });
+
+  it("com interesses (Fase 2, subfatia 4) → lista os nomes no eco", () => {
+    const desc = describeExplicitAudience({
+      kind: "explicit",
+      geo: [{ key: "BR", name: "Brasil", kind: "country" }],
+      interests: [{ id: "i1", name: "Estética" }, { id: "i2", name: "Pets" }],
+    });
+    expect(desc).toContain("interesses: Estética, Pets");
+  });
+
+  it("sem interesses → não menciona 'interesses' no eco", () => {
+    const desc = describeExplicitAudience({ kind: "explicit", geo: [{ key: "BR", name: "Brasil", kind: "country" }] });
+    expect(desc).not.toContain("interesses");
+  });
 });
 

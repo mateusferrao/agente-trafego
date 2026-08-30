@@ -284,7 +284,7 @@ export function makeConversationTools(
   const createCampaign = tool(proposeOnly, {
     name: "create_campaign",
     description:
-      "Propõe CRIAR uma campanha nova reusando o criativo/página/pixel da conta + copy gerada. Pode mirar um PÚBLICO específico (passe includeAudienceIds/excludeAudienceIds — use list_audiences pra achar os ids) e/ou GEO/IDADE/GÊNERO explícitos (geo/ageMin/ageMax/gender); sem nenhum = amplo (Advantage+). Os dois se COMBINAM se o usuário pedir os dois juntos (ex: 'pra SP e pro público X'). Requer eco+confirma.",
+      "Propõe CRIAR uma campanha nova reusando o criativo/página/pixel da conta + copy gerada. Pode mirar um PÚBLICO específico (passe includeAudienceIds/excludeAudienceIds — use list_audiences pra achar os ids) e/ou GEO/IDADE/GÊNERO/INTERESSES explícitos (geo/ageMin/ageMax/gender/interests); sem nenhum = amplo (Advantage+). Todos se COMBINAM se o usuário pedir juntos (ex: 'pra SP, mulheres, interessadas em estética e pro público X'). Requer eco+confirma.",
     schema: z.object({
       goal: z.string().nullable().optional().describe("objetivo de negócio (ex: purchase, lead)"),
       budgetReais: z.number().positive().nullable().optional().describe("budget diário em reais (opcional)"),
@@ -294,6 +294,7 @@ export function makeConversationTools(
       ageMin: z.number().int().min(13).max(65).nullable().optional().describe("idade mínima"),
       ageMax: z.number().int().min(13).max(65).nullable().optional().describe("idade máxima"),
       gender: z.enum(["all", "men", "women"]).nullable().optional().describe("gênero do público — 'all' (padrão) = todos"),
+      interests: z.array(z.string()).nullable().optional().describe("interesses pelo NOME/termo que o usuário disse (ex: 'estética', 'pets') — eu busco na Meta e pergunto se ambíguo; nunca escolho o de maior audiência sozinho."),
     }),
   });
 
@@ -313,6 +314,7 @@ export function makeConversationTools(
       ageMin: z.number().int().min(13).max(65).nullable().optional().describe("idade mínima pra TROCAR a da original"),
       ageMax: z.number().int().min(13).max(65).nullable().optional().describe("idade máxima pra TROCAR a da original"),
       gender: z.enum(["all", "men", "women"]).nullable().optional().describe("gênero pra TROCAR o da original"),
+      interests: z.array(z.string()).nullable().optional().describe("interesses pelo NOME/termo pra TROCAR os da original (a cópia não herda interesses automaticamente) — eu busco na Meta e pergunto se ambíguo"),
       budgetReais: z.number().positive().nullable().optional().describe("budget diário em reais (opcional; default = o da original)"),
       goal: z.string().nullable().optional().describe("objetivo — só se quiser MUDAR (o agente vai avisar que troca o mecanismo)"),
     }),
@@ -322,7 +324,7 @@ export function makeConversationTools(
   const adjustDraft = tool(proposeOnly, {
     name: "adjust_draft",
     description:
-      "Ajusta o rascunho de campanha JÁ PROPOSTO (só quando há um pendente): budget diário, ativação (ativa/pausada), nº de variações, PÚBLICO (audience: 'reuse' = herda o conjunto que já converte; 'broad' = deixa a Meta escolher, mais amplo) ou o NOME da campanha (campaignName). Se o público já é explícito (geo/idade), dá pra REMOVER (removeGeo, pelo nome — ex: 'tira Ibirité') ou ADICIONAR (addGeo — eu resolvo pro lugar real e pergunto se ambíguo) localização, e ESTREITAR idade (ageMin/ageMax), sem recriar o rascunho. Não cria rascunho novo. Edições pesadas (nomes de conjunto/anúncio, objetivo, copy campo-a-campo, adicionar/remover anúncio) NÃO aqui — ofereça o link do painel do site.",
+      "Ajusta o rascunho de campanha JÁ PROPOSTO (só quando há um pendente): budget diário, ativação (ativa/pausada), nº de variações, PÚBLICO (audience: 'reuse' = herda o conjunto que já converte; 'broad' = deixa a Meta escolher, mais amplo) ou o NOME da campanha (campaignName). Se o público já é explícito (geo/idade/interesses), dá pra REMOVER (removeGeo/removeInterests, pelo nome — ex: 'tira Ibirité', 'tira o interesse de pets') ou ADICIONAR (addGeo/addInterests — eu resolvo pro lugar/interesse real e pergunto se ambíguo) localização/interesse, e ESTREITAR idade (ageMin/ageMax), sem recriar o rascunho. Não cria rascunho novo. Edições pesadas (nomes de conjunto/anúncio, objetivo, copy campo-a-campo, adicionar/remover anúncio) NÃO aqui — ofereça o link do painel do site.",
     schema: z.object({
       budgetReais: z.number().positive().nullable().optional(),
       activation: z.enum(["active", "paused"]).nullable().optional(),
@@ -333,6 +335,8 @@ export function makeConversationTools(
       addGeo: z.array(z.string()).nullable().optional().describe("nomes de cidade/região/país a ADICIONAR ao público explícito (eu resolvo pro lugar real e pergunto se ambíguo)"),
       ageMin: z.number().int().min(13).max(65).nullable().optional(),
       ageMax: z.number().int().min(13).max(65).nullable().optional(),
+      removeInterests: z.array(z.string()).nullable().optional().describe("nomes/termos de interesse a REMOVER do público explícito já resolvido (ex: ['pets'])"),
+      addInterests: z.array(z.string()).nullable().optional().describe("nomes/termos de interesse a ADICIONAR ao público explícito (eu busco na Meta e pergunto se ambíguo)"),
     }),
   });
   const regenerateCopy = tool(proposeOnly, {

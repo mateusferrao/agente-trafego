@@ -197,6 +197,20 @@ export interface GeoSearchResult {
 }
 
 /**
+ * Resultado de busca de interesse (Fase 2, subfatia 4) — vocabulário Meta (`adinterest`) isolado
+ * no adapter. `id` é o identificador a passar de volta pro `TargetingSpec.explicit.interests`.
+ */
+export interface InterestSearchResult {
+  readonly id: string;
+  readonly name: string;
+  /** tamanho aproximado de audiência (quando a Meta devolve) — informativo, NUNCA usado pra
+   *  auto-escolher entre ambíguos (decisão do produto: sempre pergunta, nunca o de maior audiência). */
+  readonly audienceSize?: number;
+  /** categoria/caminho do interesse (quando a Meta devolve) — contexto pro dono escolher certo. */
+  readonly path?: readonly string[];
+}
+
+/**
  * Estimativa de alcance/entrega de um targeting COMBINADO (Fatia 7 — fast-follow) — taxonomia
  * neutra (vocabulário Meta `estimate_dau`/`estimate_mau`/`delivery_estimate` só no adapter). É a
  * previsão de quantas pessoas o público proposto (includes − excludes + geo/idade) atinge; superior
@@ -846,6 +860,9 @@ export type TargetingSpec =
       readonly genders?: readonly (1 | 2)[];
       readonly customAudienceIncludeIds?: readonly string[];
       readonly customAudienceExcludeIds?: readonly string[];
+      /** interesses (Fase 2, subfatia 4) — 1 grupo OR (todos somados por "ou"). Narrowing por
+       *  múltiplos grupos AND = fast-follow (Fase 3). */
+      readonly interests?: readonly { readonly id: string; readonly name: string }[];
     };
 
 /**

@@ -122,6 +122,21 @@ describe("DraftsService.searchGeo (Fase 1, subfatia 3b — autocomplete de geo)"
   });
 });
 
+describe("DraftsService.searchInterests (Fase 2, subfatia 4 — autocomplete de interesse)", () => {
+  it("conta/agente não resolve (loadScaleContext null) → array vazio, honesto, sem erro", async () => {
+    const service = createDraftsService({
+      db: fakeScaleContextDb([]),
+      adsPlatform: {} as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    const out = await service.searchInterests(ORG, "acc", "estetica");
+    expect(out).toEqual([]);
+  });
+});
+
 describe("DraftsService.updateDraft (edição consolidada — Slice 7)", () => {
   it("rascunho não-aberto (load vazio) → {ok:false} com mensagem amigável, sem persistir", async () => {
     const { service } = makeService([]); // loadDraftForEdit não acha linha proposed
@@ -224,6 +239,97 @@ describe("DraftsService.updateDraft — público EXPLÍCITO (Fase 1, subfatia 3b
     expect(targeting.ageMin).toBe(30);
     expect(targeting.ageMax).toBe(40);
     expect(targeting.geo).toHaveLength(2);
+  });
+});
+
+describe("DraftsService.updateDraft — INTERESSES do público EXPLÍCITO (Fase 2, subfatia 4)", () => {
+  function fakeDbSelUpd(draftRow: unknown, captured: { spec?: unknown }) {
+    return {
+      select: () => ({ from: () => ({ where: () => ({ limit: () => (draftRow ? [draftRow] : []) }) }) }),
+      update: () => ({
+        set: (v: { spec: unknown }) => {
+          captured.spec = v.spec;
+          return { where: () => ({ returning: () => [{ id: "d1" }] }) };
+        },
+      }),
+    } as never;
+  }
+
+  const explicitSpecWithInterests = {
+    version: 1,
+    currency: "BRL",
+    dailyBudgetMinor: 5000,
+    activation: "active",
+    targeting: {
+      kind: "explicit",
+      geo: [{ key: "1", name: "Belo Horizonte", kind: "city" }],
+      interests: [{ id: "i1", name: "Estética" }, { id: "i2", name: "Pets" }],
+    },
+  };
+
+  it("removeInterests (nome exato do chip) → some do targeting, sem chamar a Meta", async () => {
+    const captured: { spec?: unknown } = {};
+    const service = createDraftsService({
+      db: fakeDbSelUpd({ spec: explicitSpecWithInterests, kind: "from_scratch", status: "proposed" }, captured),
+      adsPlatform: {} as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    const out = await service.updateDraft(ORG, "acc", "d1", { removeInterests: ["Pets"] });
+    expect(out.ok).toBe(true);
+    const targeting = (captured.spec as { targeting: { interests: { name: string }[] } }).targeting;
+    expect(targeting.interests.map((i) => i.name)).toEqual(["Estética"]);
+  });
+
+  it("removeInterests com nome que não existe no rascunho → {ok:false}, NÃO persiste", async () => {
+    const captured: { spec?: unknown } = {};
+    const service = createDraftsService({
+      db: fakeDbSelUpd({ spec: explicitSpecWithInterests, kind: "from_scratch", status: "proposed" }, captured),
+      adsPlatform: {} as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    const out = await service.updateDraft(ORG, "acc", "d1", { removeInterests: ["Moda"] });
+    expect(out.ok).toBe(false);
+    expect(captured.spec).toBeUndefined();
+  });
+
+  it("addInterests (já resolvido pelo autocomplete) → entra no targeting, sem chamar searchInterests de novo", async () => {
+    const captured: { spec?: unknown } = {};
+    const searchInterests = vi.fn();
+    const service = createDraftsService({
+      db: fakeDbSelUpd({ spec: explicitSpecWithInterests, kind: "from_scratch", status: "proposed" }, captured),
+      adsPlatform: { searchInterests } as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    const out = await service.updateDraft(ORG, "acc", "d1", { addInterests: [{ id: "i3", name: "Viagem" }] });
+    expect(out.ok).toBe(true);
+    expect(searchInterests).not.toHaveBeenCalled();
+    const targeting = (captured.spec as { targeting: { interests: { name: string }[] } }).targeting;
+    expect(targeting.interests.map((i) => i.name)).toContain("Viagem");
+  });
+
+  it("targeting não-explícito + removeInterests/addInterests → {ok:false} honesto", async () => {
+    const captured: { spec?: unknown } = {};
+    const nonExplicitSpec = { version: 1, currency: "BRL", dailyBudgetMinor: 5000, activation: "active", targeting: { kind: "advantage_plus" } };
+    const service = createDraftsService({
+      db: fakeDbSelUpd({ spec: nonExplicitSpec, kind: "from_scratch", status: "proposed" }, captured),
+      adsPlatform: {} as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    const out = await service.updateDraft(ORG, "acc", "d1", { addInterests: [{ id: "i1", name: "Estética" }] });
+    expect(out.ok).toBe(false);
+    expect(captured.spec).toBeUndefined();
   });
 });
 

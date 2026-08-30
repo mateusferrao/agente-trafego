@@ -7,7 +7,7 @@
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { adAccounts, adCreatives, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, guardrailConfigs } from "@trafego/db";
 import { applyDraftEdit, describeDeliveryEstimate, goalNounPt, planScaleMove, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
-import { applyExplicitGeoEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
+import { applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
   ACTION_PARAM_MODE,
   ACTION_PARAM_PCT,
@@ -157,8 +157,9 @@ export function describeExplicitAudience(targeting: Extract<TargetingSpec, { rea
   const placesLabel = targeting.geo.length > 0 ? summarizePlaces(targeting.geo.map((g) => g.name)) : null;
   const ageLabel = targeting.ageMin !== undefined || targeting.ageMax !== undefined ? `${targeting.ageMin ?? "?"}-${targeting.ageMax ?? "?"} anos` : null;
   const genderLabel = targeting.genders?.includes(1) && !targeting.genders.includes(2) ? "homens" : targeting.genders?.includes(2) && !targeting.genders.includes(1) ? "mulheres" : null;
+  const interestsLabel = targeting.interests && targeting.interests.length > 0 ? `interesses: ${targeting.interests.map((i) => i.name).join(", ")}` : null;
   const audienceLabel = targeting.customAudienceIncludeIds && targeting.customAudienceIncludeIds.length > 0 ? "+ público salvo indicado" : null;
-  return [placesLabel, ageLabel, genderLabel, "sem expansão de público", audienceLabel].filter((s): s is string => Boolean(s)).join(", ");
+  return [placesLabel, ageLabel, genderLabel, interestsLabel, "sem expansão de público", audienceLabel].filter((s): s is string => Boolean(s)).join(", ");
 }
 
 /** Máx. de cidades/regiões nomeadas no eco antes de resumir em "+N" (compacto, não despeja a lista). */
@@ -425,6 +426,38 @@ async function prepareGeo(deps: WorkerDeps, ref: AdAccountRef, queries: readonly
   return { kind: "ok", geo: resolved };
 }
 
+const MAX_INTEREST_AMBIGUOUS_OPTIONS = 5;
+
+type InterestPrep =
+  | { readonly kind: "ok"; readonly interests: readonly { readonly id: string; readonly name: string }[] }
+  | { readonly kind: "blocked"; readonly reason: string };
+
+/**
+ * Resolve interesse pedido (por NOME) → interesse real na Meta (Fase 2, subfatia 4). Mesma
+ * honestidade de `prepareGeo`/`prepareAudiences`: 1 match → resolve; 0 → honesto; 2+ → PERGUNTA
+ * numerada — NUNCA pega o de maior audiência automaticamente (decisão do produto).
+ */
+async function prepareInterests(deps: WorkerDeps, ref: AdAccountRef, queries: readonly string[]): Promise<InterestPrep> {
+  if (queries.length === 0) return { kind: "ok", interests: [] };
+  const resolved: { id: string; name: string }[] = [];
+  for (const q of queries) {
+    const matches = await deps.ports.ads.searchInterests(ref, q);
+    if (matches.length === 0) {
+      return { kind: "blocked", reason: `não achei o interesse "${q}" na busca da Meta — confere o termo?` };
+    }
+    if (matches.length === 1) {
+      resolved.push({ id: matches[0]!.id, name: matches[0]!.name });
+      continue;
+    }
+    const opts = matches
+      .slice(0, MAX_INTEREST_AMBIGUOUS_OPTIONS)
+      .map((m, i) => `${i + 1}. ${m.name}${m.path && m.path.length > 0 ? ` (${m.path.join(" > ")})` : ""}`)
+      .join("\n");
+    return { kind: "blocked", reason: `achei mais de um interesse parecido com "${q}":\n${opts}\nQual desses? (me diz o nome exato)` };
+  }
+  return { kind: "ok", interests: resolved };
+}
+
 /**
  * Estima o alcance do targeting COMBINADO ao vivo (Fatia 7 — fast-follow) → nota pro eco. Best-effort:
  * qualquer erro/indisponibilidade da plataforma vira `null` e o caller degrada pro sinal por-público
@@ -652,6 +685,12 @@ export interface RefineDraftPatch {
   readonly addGeo?: readonly string[];
   readonly ageMin?: number;
   readonly ageMax?: number;
+  /** remove interesse(s) do público EXPLÍCITO já resolvido (Fase 2, subfatia 4) — por nome/trecho
+   *  do nome. Sem chamada nova. Nome não encontrado → bloqueia. */
+  readonly removeInterests?: readonly string[];
+  /** adiciona interesse(s) NOVO(s) ao público explícito, pelo NOME que o dono disse —
+   *  `refineDraft` resolve via `prepareInterests` (ambíguo→pergunta) antes de fundir. */
+  readonly addInterests?: readonly string[];
 }
 
 export type RefineResult = { readonly kind: "ok"; readonly echo: string } | { readonly kind: "blocked"; readonly reason: string };
@@ -731,6 +770,23 @@ export async function refineDraft(
       ...(addGeoPrep.geo.length > 0 ? { addGeo: addGeoPrep.geo } : {}),
       ...(patch.ageMin != null ? { ageMin: patch.ageMin } : {}),
       ...(patch.ageMax != null ? { ageMax: patch.ageMax } : {}),
+    });
+    if (r.kind === "blocked") return { kind: "blocked", reason: r.reason };
+    edit.targeting = r.targeting;
+  }
+  // editar (remover/adicionar) INTERESSES do público EXPLÍCITO já resolvido (Fase 2, subfatia 4).
+  // Mesma honestidade: adicionar resolve na hora (ambíguo→pergunta); remover não chama a Meta.
+  // Lê de `edit.targeting` quando a geo já foi editada NESTE mesmo patch (evita perder a edição).
+  if (kind === "from_scratch" && (patch.removeInterests?.length || patch.addInterests?.length)) {
+    const targetingBefore = edit.targeting ?? spec.targeting;
+    if (targetingBefore?.kind !== "explicit") {
+      return { kind: "blocked", reason: "esse rascunho não tem um público explícito pra editar interesses — crie mirando geo/idade/gênero primeiro." };
+    }
+    const addInterestPrep = patch.addInterests?.length ? await prepareInterests(deps, ac.ref, patch.addInterests) : { kind: "ok" as const, interests: [] };
+    if (addInterestPrep.kind === "blocked") return { kind: "blocked", reason: addInterestPrep.reason };
+    const r = applyExplicitInterestEdit(targetingBefore, {
+      ...(patch.removeInterests ? { removeInterests: patch.removeInterests } : {}),
+      ...(addInterestPrep.interests.length > 0 ? { addInterests: addInterestPrep.interests } : {}),
     });
     if (r.kind === "blocked") return { kind: "blocked", reason: r.reason };
     edit.targeting = r.targeting;
@@ -1037,6 +1093,8 @@ export async function proposeCreateCampaign(
     readonly ageMin?: number;
     readonly ageMax?: number;
     readonly gender?: "all" | "men" | "women";
+    /** interesses EXPLÍCITOS (Fase 2, subfatia 4) — nomes/termos resolvidos p/ id real na Meta. */
+    readonly interests?: readonly string[];
   },
   origin: DraftOrigin = "on_demand",
 ): Promise<ChatDraftProposal> {
@@ -1057,7 +1115,15 @@ export async function proposeCreateCampaign(
   // geo explícita (Fase 1, subfatia 3a) — mesma honestidade (ambíguo→pergunta, nunca chuta).
   const geoPrep = await prepareGeo(deps, ac.ref, args.geo ?? []);
   if (geoPrep.kind === "blocked") return { kind: "blocked", reason: geoPrep.reason };
-  const hasExplicitPrimitive = geoPrep.geo.length > 0 || args.ageMin !== undefined || args.ageMax !== undefined || (args.gender && args.gender !== "all");
+  // interesses explícitos (Fase 2, subfatia 4) — mesma honestidade (ambíguo→pergunta, nunca chuta).
+  const interestPrep = await prepareInterests(deps, ac.ref, args.interests ?? []);
+  if (interestPrep.kind === "blocked") return { kind: "blocked", reason: interestPrep.reason };
+  const hasExplicitPrimitive =
+    geoPrep.geo.length > 0 ||
+    args.ageMin !== undefined ||
+    args.ageMax !== undefined ||
+    (args.gender && args.gender !== "all") ||
+    interestPrep.interests.length > 0;
 
   const defaults = await deps.ports.ads.inferCreationDefaults(ac.ref);
   const goal = args.goal ?? defaults.objectiveGoal ?? DEFAULT_CONVERSION_GOAL;
@@ -1141,6 +1207,7 @@ export async function proposeCreateCampaign(
       ...(args.ageMin !== undefined ? { ageMin: args.ageMin } : {}),
       ...(args.ageMax !== undefined ? { ageMax: args.ageMax } : {}),
       ...(args.gender === "men" ? { genders: [1] } : args.gender === "women" ? { genders: [2] } : {}),
+      ...(interestPrep.interests.length > 0 ? { interests: interestPrep.interests } : {}),
       ...(hasAudience ? { customAudienceIncludeIds: aud.includeIds, customAudienceExcludeIds: aud.excludeIds } : {}),
     };
   } else {
@@ -1309,6 +1376,11 @@ export async function proposeCopyCampaign(
     readonly ageMin?: number;
     readonly ageMax?: number;
     readonly gender?: "all" | "men" | "women";
+    /** interesses EXPLÍCITOS pra TROCAR os da original (Fase 2, subfatia 4) — quando ausentes,
+     *  a cópia fiel não herda interesses da fonte: `structure.targeting.interests` só traz NOMES
+     *  pra display (sem `id`), então não dá pra remontar um `flexible_spec` válido sem rebuscar —
+     *  ausência = sem interesses no rascunho, não "mantém os da original". */
+    readonly interests?: readonly string[];
   },
   origin: DraftOrigin = "on_demand",
 ): Promise<ChatDraftProposal> {
@@ -1323,7 +1395,14 @@ export async function proposeCopyCampaign(
   if (aud.kind === "blocked") return { kind: "blocked", reason: aud.reason };
   const geoPrep = await prepareGeo(deps, ac.ref, args.geo ?? []);
   if (geoPrep.kind === "blocked") return { kind: "blocked", reason: geoPrep.reason };
-  const hasExplicitPrimitive = geoPrep.geo.length > 0 || args.ageMin !== undefined || args.ageMax !== undefined || (args.gender && args.gender !== "all");
+  const interestPrep = await prepareInterests(deps, ac.ref, args.interests ?? []);
+  if (interestPrep.kind === "blocked") return { kind: "blocked", reason: interestPrep.reason };
+  const hasExplicitPrimitive =
+    geoPrep.geo.length > 0 ||
+    args.ageMin !== undefined ||
+    args.ageMax !== undefined ||
+    (args.gender && args.gender !== "all") ||
+    interestPrep.interests.length > 0;
 
   let structure;
   try {
@@ -1357,6 +1436,7 @@ export async function proposeCopyCampaign(
         ...(args.ageMin !== undefined ? { ageMin: args.ageMin } : resolvedSnapshot.ageMin !== undefined ? { ageMin: resolvedSnapshot.ageMin } : {}),
         ...(args.ageMax !== undefined ? { ageMax: args.ageMax } : resolvedSnapshot.ageMax !== undefined ? { ageMax: resolvedSnapshot.ageMax } : {}),
         ...(args.gender === "men" ? { genders: [1] } : args.gender === "women" ? { genders: [2] } : {}),
+        ...(interestPrep.interests.length > 0 ? { interests: interestPrep.interests } : {}),
         ...(hasAudience ? { customAudienceIncludeIds: aud.includeIds, customAudienceExcludeIds: aud.excludeIds } : {}),
       }
     : hasAudience

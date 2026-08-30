@@ -119,7 +119,7 @@ type DraftCopy = NonNullable<DraftApprovalOutput['copyVariants']>[number];
       @if (draft().explicitAudience; as ea) {
         <app-geo-audience-editor
           [accountId]="draft().accountId"
-          [initial]="{ geo: ea.geo, ageMin: ea.ageMin, ageMax: ea.ageMax, genders: ea.genders }"
+          [initial]="{ geo: ea.geo, ageMin: ea.ageMin, ageMax: ea.ageMax, genders: ea.genders, interests: ea.interests }"
           (stateChange)="explicitAudienceState.set($event)"
         />
       }
@@ -392,5 +392,12 @@ export class DraftEditPanel implements OnInit {
     if (addGeo.length > 0) patch['addGeo'] = addGeo;
     if (current.ageMin != null && current.ageMin !== original.ageMin) patch['ageMin'] = current.ageMin;
     if (current.ageMax != null && current.ageMax !== original.ageMax) patch['ageMax'] = current.ageMax;
+
+    const originalInterestIds = new Set(original.interests.map((i) => i.id));
+    const currentInterestIds = new Set(current.interests.map((i) => i.id));
+    const removeInterests = original.interests.filter((i) => !currentInterestIds.has(i.id)).map((i) => i.name);
+    const addInterests = current.interests.filter((i) => !originalInterestIds.has(i.id));
+    if (removeInterests.length > 0) patch['removeInterests'] = removeInterests;
+    if (addInterests.length > 0) patch['addInterests'] = addInterests;
   }
 }

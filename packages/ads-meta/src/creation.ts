@@ -488,6 +488,9 @@ export class MetaCreationService {
           ...(spec.genders && spec.genders.length > 0 ? { genders: spec.genders } : {}),
           ...(spec.customAudienceIncludeIds && spec.customAudienceIncludeIds.length > 0 ? { custom_audiences: spec.customAudienceIncludeIds.map((id) => ({ id })) } : {}),
           ...(spec.customAudienceExcludeIds && spec.customAudienceExcludeIds.length > 0 ? { excluded_custom_audiences: spec.customAudienceExcludeIds.map((id) => ({ id })) } : {}),
+          // interesses (Fase 2): 1 grupo OR — flexible_spec É um array de grupos (AND entre eles);
+          // com só 1 grupo, os interesses dentro dele se somam por OR. Narrowing (grupos AND) = Fase 3.
+          ...(spec.interests && spec.interests.length > 0 ? { flexible_spec: [{ interests: spec.interests.map((i) => ({ id: i.id })) }] } : {}),
           targeting_automation: { advantage_audience: 0 },
           targeting_relaxation_types: { custom_audience: 0, lookalike: 0 },
         };

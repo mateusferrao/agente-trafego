@@ -5,6 +5,7 @@ import type {
   CreativeAssetOutput,
   DraftApprovalOutput,
   GeoSearchResultOutput,
+  InterestSearchResultOutput,
   ScaleWinnerInput,
   ScaleWinnerOutput,
   ServingCreativeOutput,
@@ -83,6 +84,12 @@ export class DraftsApiService extends BaseApiService {
    *  (Fase 1, subfatia 3b). Debounce fica no componente; aqui é só a chamada tipada. */
   searchGeo(accountId: string, q: string): Observable<GeoSearchResultOutput[]> {
     return this.get<GeoSearchResultOutput[]>(['/accounts', accountId, 'targeting', 'geo-search'], { params: { q } });
+  }
+
+  /** `GET /api/accounts/:id/targeting/interest-search?q=...` — autocomplete de interesses
+   *  (Fase 2, subfatia 4). Debounce fica no componente; aqui é só a chamada tipada. */
+  searchInterests(accountId: string, q: string): Observable<InterestSearchResultOutput[]> {
+    return this.get<InterestSearchResultOutput[]>(['/accounts', accountId, 'targeting', 'interest-search'], { params: { q } });
   }
 
   /** URL da rota autenticada de blob (preview) — mesma origem/proxy da API. */

@@ -12,7 +12,7 @@ import {
   type Database,
 } from "@trafego/db";
 import { applyDraftEdit, planScaleMove, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
-import { applyExplicitGeoEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
+import { applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import type { ToolBindingMode } from "@trafego/shared";
 import {
   ACTION_PARAM_MODE,
@@ -33,6 +33,7 @@ import type {
   CreativeAssetOutput,
   DraftApprovalOutput,
   GeoSearchResultOutput,
+  InterestSearchResultOutput,
   ScaleWinnerInput,
   ScaleWinnerOutput,
   ServingCreativeOutput,
@@ -272,6 +273,22 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       edit.targeting = r.targeting;
     }
 
+    // interesses do público EXPLÍCITO (Fase 2, subfatia 4) — remove/adiciona já resolvido pelo
+    // autocomplete. Converge com o chat no mesmo núcleo (applyExplicitInterestEdit). Lê de
+    // `edit.targeting` quando a geo já foi editada NESTE mesmo patch (evita perder a edição).
+    if (input.removeInterests?.length || input.addInterests?.length) {
+      const targetingBefore = edit.targeting ?? spec.targeting;
+      if (targetingBefore?.kind !== "explicit") {
+        return { ok: false, message: "esse rascunho não tem um público explícito pra editar interesses." };
+      }
+      const r = applyExplicitInterestEdit(targetingBefore, {
+        ...(input.removeInterests ? { removeInterests: input.removeInterests } : {}),
+        ...(input.addInterests ? { addInterests: input.addInterests } : {}),
+      });
+      if (r.kind === "blocked") return { ok: false, message: r.reason };
+      edit.targeting = r.targeting;
+    }
+
     if (input.creative) {
       const creative =
         input.creative.kind === "asset"
@@ -388,6 +405,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
                   ageMin: spec.targeting.ageMin ?? null,
                   ageMax: spec.targeting.ageMax ?? null,
                   genders: spec.targeting.genders ? [...spec.targeting.genders] : null,
+                  interests: spec.targeting.interests ? spec.targeting.interests.map((i) => ({ id: i.id, name: i.name })) : [],
                 }
               : null,
           createdIds: appr.kind === "activation" ? (d.createdIds as Record<string, unknown>) : null,
@@ -564,6 +582,15 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       if (!ctx) return [];
       const results = await deps.adsPlatform.searchGeo(ctx.ref, query, ["country", "region", "city"]);
       return results.map((r) => ({ key: r.key, name: r.name, kind: r.kind, countryCode: r.countryCode ?? null }));
+    },
+
+    /** Busca de interesses (Fase 2, subfatia 4) — autocomplete no editor de rascunho. Mesma
+     *  honestidade do `searchGeo`: conta/agente inexistente → array vazio, não erro. */
+    async searchInterests(orgId: OrgId, accountId: string, query: string): Promise<InterestSearchResultOutput[]> {
+      const ctx = await loadScaleContext(orgId, accountId);
+      if (!ctx) return [];
+      const results = await deps.adsPlatform.searchInterests(ctx.ref, query);
+      return results.map((r) => ({ id: r.id, name: r.name, audienceSize: r.audienceSize ?? null, path: r.path ? [...r.path] : null }));
     },
 
     /** Anúncios AO VIVO da conta oferecidos como candidatos de reuse no picker (lê ad_creatives,

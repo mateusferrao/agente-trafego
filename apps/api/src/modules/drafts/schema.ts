@@ -75,6 +75,8 @@ export const draftApprovalOutput = z.object({
       ageMin: z.number().nullable(),
       ageMax: z.number().nullable(),
       genders: z.array(z.union([z.literal(1), z.literal(2)])).nullable(),
+      /** interesses (Fase 2, subfatia 4). Vazio = nenhum interesse indicado. */
+      interests: z.array(z.object({ id: z.string(), name: z.string() })),
     })
     .nullable(),
   /** ids reais criados na Meta — só presente em `approvalKind:"activation"` (já existe na Meta). */
@@ -162,6 +164,11 @@ export const updateDraftInput = z.object({
   addGeo: z.array(z.object({ key: z.string().min(1), name: z.string().min(1), kind: z.enum(["country", "region", "city"]) })).optional(),
   ageMin: z.number().int().min(13).max(65).optional(),
   ageMax: z.number().int().min(13).max(65).optional(),
+  // ─── interesses do público EXPLÍCITO (Fase 2, subfatia 4) ───
+  /** nomes EXATOS (como renderizados nos chips) a remover — sem ambiguidade (o usuário clicou o chip). */
+  removeInterests: z.array(z.string().min(1)).optional(),
+  /** já RESOLVIDO pelo autocomplete (interest-search) — o site nunca manda termo livre pro backend resolver. */
+  addInterests: z.array(z.object({ id: z.string().min(1), name: z.string().min(1) })).optional(),
 });
 export type UpdateDraftInput = z.infer<typeof updateDraftInput>;
 export const updateDraftOutput = z.object({ ok: z.boolean() });
@@ -183,6 +190,17 @@ export const geoSearchResultOutput = z.object({
   countryCode: z.string().nullable(),
 });
 export type GeoSearchResultOutput = z.infer<typeof geoSearchResultOutput>;
+
+/** Busca de interesses (Fase 2, subfatia 4) — autocomplete no editor de rascunho. */
+export const interestSearchQuery = z.object({ q: z.string().min(1) });
+export type InterestSearchQuery = z.infer<typeof interestSearchQuery>;
+export const interestSearchResultOutput = z.object({
+  id: z.string(),
+  name: z.string(),
+  audienceSize: z.number().nullable(),
+  path: z.array(z.string()).nullable(),
+});
+export type InterestSearchResultOutput = z.infer<typeof interestSearchResultOutput>;
 
 /** Um anúncio AO VIVO da conta oferecido como candidato de reuse no picker (lê ad_creatives). */
 export const servingCreativeOutput = z.object({

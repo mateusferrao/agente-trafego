@@ -415,6 +415,31 @@ describe("MetaCreationService.createCampaign / createAdSet — contrato v26", ()
     expect(decoded).toContain('"excluded_custom_audiences":[{"id":"ca_2"}]');
     expect(decoded).toContain('"cities":[{"key":"123"}]');
   });
+
+  it("explicit com interesses (Fase 2, subfatia 4) → 1 grupo OR em flexible_spec", async () => {
+    const posts: Array<{ url: string }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        posts.push({ url: String(input) });
+        return new Response(JSON.stringify({ id: "AS_NEW" }), { status: 200, headers: { "content-type": "application/json" } });
+      }),
+    );
+    await svc().createAdSet(account, {
+      campaignId: "CAMP1",
+      name: "A",
+      dailyBudgetMinor: 1000,
+      goal: "purchase",
+      targeting: {
+        kind: "explicit",
+        geo: [{ key: "BR", name: "Brasil", kind: "country" }],
+        interests: [{ id: "i1", name: "Estética" }, { id: "i2", name: "Beleza" }],
+      },
+      status: "paused",
+    });
+    const decoded = decodeURIComponent(posts.find((p) => p.url.includes("/adsets"))!.url);
+    expect(decoded).toContain('"flexible_spec":[{"interests":[{"id":"i1"},{"id":"i2"}]}]');
+  });
 });
 
 describe("MetaCreationService.getAudienceProfile (P0.2/P1 — leitura isolada no propose)", () => {

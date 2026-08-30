@@ -115,3 +115,38 @@ export function applyExplicitGeoEdit(
     targeting: { ...current, geo, ...(patch.ageMin !== undefined ? { ageMin: patch.ageMin } : {}), ...(patch.ageMax !== undefined ? { ageMax: patch.ageMax } : {}) },
   };
 }
+
+/**
+ * Edição de INTERESSES do público `explicit` já resolvido (Fase 2, subfatia 4) — mesmo padrão de
+ * `applyExplicitGeoEdit` (§13 DRY): remover é por NOME (substring, sem chamada nova — o dono já viu
+ * a lista no eco/painel); adicionar já vem RESOLVIDO (a busca aconteceu na casca — `prepareInterests`
+ * no worker, `searchInterests` do adapter no site). Pura.
+ */
+export function applyExplicitInterestEdit(
+  current: Extract<TargetingSpec, { readonly kind: "explicit" }>,
+  patch: {
+    readonly removeInterests?: readonly string[];
+    readonly addInterests?: readonly { readonly id: string; readonly name: string }[];
+  },
+): { readonly kind: "ok"; readonly targeting: TargetingSpec } | { readonly kind: "blocked"; readonly reason: string } {
+  let interests = current.interests ?? [];
+  for (const name of patch.removeInterests ?? []) {
+    const before = interests.length;
+    interests = interests.filter((i) => !i.name.toLowerCase().includes(name.toLowerCase()));
+    if (interests.length === before) {
+      return { kind: "blocked", reason: `não achei "${name}" nos interesses atuais do rascunho — confere o nome? (hoje: ${(current.interests ?? []).map((i) => i.name).join(", ") || "nenhum"})` };
+    }
+  }
+  if (patch.addInterests && patch.addInterests.length > 0) {
+    const existingIds = new Set(interests.map((i) => i.id));
+    interests = [...interests, ...patch.addInterests.filter((i) => !existingIds.has(i.id))];
+  }
+  // exclui a chave (em vez de sobrescrever com array vazio) quando o último interesse foi
+  // removido — `interests` é OPCIONAL no tipo; um spread de `current` sozinho manteria o valor
+  // antigo (interests não some do targeting mesmo depois de remover o último).
+  const { interests: _current, ...rest } = current;
+  return {
+    kind: "ok",
+    targeting: { ...rest, ...(interests.length > 0 ? { interests } : {}) },
+  };
+}

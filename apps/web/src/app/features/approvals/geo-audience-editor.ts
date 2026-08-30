@@ -5,14 +5,15 @@ import { catchError, debounceTime, distinctUntilChanged, switchMap, of } from 'r
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { UiBadge, UiInput, UiToggleGroup, UiToggleGroupItem } from '@ui';
 import { DraftsApiService } from '@core/api/drafts-api.service';
-import type { GeoSearchResultOutput } from '@core/api/generated';
+import type { GeoSearchResultOutput, InterestSearchResultOutput } from '@core/api/generated';
 
-/** Entrada neutra do público explícito (Fase 1) — espelha `TargetingSpec.explicit` do backend. */
+/** Entrada neutra do público explícito (Fase 1 + Fase 2) — espelha `TargetingSpec.explicit`. */
 export interface ExplicitAudienceState {
   geo: readonly { key: string; name: string; kind: 'country' | 'region' | 'city' }[];
   ageMin: number | null;
   ageMax: number | null;
   genders: readonly (1 | 2)[] | null;
+  interests: readonly { id: string; name: string }[];
 }
 
 const SEARCH_DEBOUNCE_MS = 300;
@@ -115,6 +116,64 @@ const MIN_QUERY_LEN = 2;
           </div>
         </div>
       </div>
+      <div class="flex flex-col gap-1.5">
+        <span class="text-xs font-medium text-ink">Interesses</span>
+        @if (interests().length > 0) {
+          <ul class="flex flex-wrap gap-1.5">
+            @for (i of interests(); track i.id) {
+              <li>
+                <span appBadge tone="accent" class="pr-1">
+                  {{ i.name }}
+                  <button
+                    type="button"
+                    class="ml-0.5 rounded-full px-1 text-accent-strong/70 hover:text-accent-strong"
+                    [attr.aria-label]="'Remover ' + i.name"
+                    (click)="removeInterest(i.id)"
+                  >
+                    ×
+                  </button>
+                </span>
+              </li>
+            }
+          </ul>
+        } @else {
+          <span class="text-[11px] text-muted">Nenhum interesse escolhido ainda.</span>
+        }
+        <div class="relative">
+          <input
+            appInput
+            class="w-full"
+            type="search"
+            placeholder="Adicionar interesse (ex: estética, pets)…"
+            [(ngModel)]="interestQuery"
+            (ngModelChange)="onInterestQueryChange($event)"
+          />
+          @if (interestSearching()) {
+            <span class="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-muted">buscando…</span>
+          }
+          @if (interestResults().length > 0) {
+            <ul class="absolute z-10 mt-1 w-full overflow-hidden rounded-md border border-line bg-app shadow-md">
+              @for (r of interestResults(); track r.id) {
+                <li>
+                  <button
+                    type="button"
+                    class="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-ink hover:bg-soft"
+                    (click)="addInterest(r)"
+                  >
+                    <span>{{ r.name }}</span>
+                    @if (r.path && r.path.length > 0) {
+                      <span class="text-[11px] text-muted">{{ r.path.join(' > ') }}</span>
+                    }
+                  </button>
+                </li>
+              }
+            </ul>
+          } @else if (interestQuery().trim().length >= MIN_QUERY_LEN && interestSearched() && !interestSearching()) {
+            <span class="mt-1 block text-[11px] text-muted">Nenhum interesse encontrado pra “{{ interestQuery() }}”.</span>
+          }
+        </div>
+      </div>
+
       <span class="text-[11px] text-muted">Sem expansão de público — a campanha mira só o que você escolheu aqui.</span>
     </div>
   `,
@@ -122,6 +181,7 @@ const MIN_QUERY_LEN = 2;
 export class GeoAudienceEditor {
   private readonly api = inject(DraftsApiService);
   private readonly querySubject = new Subject<string>();
+  private readonly interestQuerySubject = new Subject<string>();
 
   readonly accountId = input.required<string>();
   readonly initial = input.required<ExplicitAudienceState>();
@@ -137,6 +197,11 @@ export class GeoAudienceEditor {
   protected readonly results = signal<readonly GeoSearchResultOutput[]>([]);
   protected readonly searching = signal(false);
   protected readonly searched = signal(false);
+  protected readonly interests = signal<ExplicitAudienceState['interests']>([]);
+  protected readonly interestQuery = signal('');
+  protected readonly interestResults = signal<readonly InterestSearchResultOutput[]>([]);
+  protected readonly interestSearching = signal(false);
+  protected readonly interestSearched = signal(false);
 
   constructor() {
     // inicializa do `initial()` UMA vez (o painel-pai não re-emite depois de montado).
@@ -147,6 +212,7 @@ export class GeoAudienceEditor {
         this.ageMinInput.set(init.ageMin);
         this.ageMaxInput.set(init.ageMax);
         this.gender.set(init.genders?.includes(1) && !init.genders.includes(2) ? 'men' : init.genders?.includes(2) && !init.genders.includes(1) ? 'women' : 'all');
+        this.interests.set([...init.interests]);
       },
       { allowSignalWrites: true },
     );
@@ -169,6 +235,26 @@ export class GeoAudienceEditor {
         this.searching.set(false);
         this.searched.set(true);
         this.results.set(r);
+      });
+
+    this.interestQuerySubject
+      .pipe(
+        debounceTime(SEARCH_DEBOUNCE_MS),
+        distinctUntilChanged(),
+        switchMap((q) => {
+          if (q.trim().length < MIN_QUERY_LEN) {
+            this.interestSearching.set(false);
+            return of<readonly InterestSearchResultOutput[]>([]);
+          }
+          this.interestSearching.set(true);
+          return this.api.searchInterests(this.accountId(), q.trim()).pipe(catchError(() => of<readonly InterestSearchResultOutput[]>([])));
+        }),
+        takeUntilDestroyed(),
+      )
+      .subscribe((r) => {
+        this.interestSearching.set(false);
+        this.interestSearched.set(true);
+        this.interestResults.set(r);
       });
   }
 
@@ -202,6 +288,24 @@ export class GeoAudienceEditor {
     return kind === 'country' ? 'país' : kind === 'region' ? 'região' : 'cidade';
   }
 
+  protected onInterestQueryChange(q: string): void {
+    this.interestQuerySubject.next(q);
+  }
+
+  protected addInterest(r: InterestSearchResultOutput): void {
+    if (this.interests().some((i) => i.id === r.id)) return;
+    this.interests.update((list) => [...list, { id: r.id, name: r.name }]);
+    this.interestQuery.set('');
+    this.interestResults.set([]);
+    this.interestSearched.set(false);
+    this.emitState();
+  }
+
+  protected removeInterest(id: string): void {
+    this.interests.update((list) => list.filter((i) => i.id !== id));
+    this.emitState();
+  }
+
   protected emitState(): void {
     const genders: (1 | 2)[] | null = this.gender() === 'men' ? [1] : this.gender() === 'women' ? [2] : null;
     this.stateChange.emit({
@@ -209,6 +313,7 @@ export class GeoAudienceEditor {
       ageMin: this.ageMinInput(),
       ageMax: this.ageMaxInput(),
       genders,
+      interests: this.interests(),
     });
   }
 }

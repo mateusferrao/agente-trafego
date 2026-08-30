@@ -11,6 +11,7 @@ import type {
   EntityLevel,
   GeoSearchResult,
   InsightRow,
+  InterestSearchResult,
   TargetingSpec,
   WhatsappDestination,
 } from "../types/index.js";
@@ -218,6 +219,9 @@ export interface AdsPlatformPort {
   /** Busca geo (país/região/cidade) por texto — Fase 1 (subfatia 3), targeting explícito por
    *  primitivos. Query vazia ou sem match → array vazio (o caller decide pergunta/honesto). */
   searchGeo(account: AdAccountRef, query: string, locationTypes: readonly ("country" | "region" | "city")[]): Promise<GeoSearchResult[]>;
+  /** Busca interesse por texto (Fase 2, subfatia 4) — `/search?type=adinterest`, busca livre no
+   *  servidor. Query vazia → array vazio. */
+  searchInterests(account: AdAccountRef, query: string): Promise<InterestSearchResult[]>;
   /** Estima o alcance de um targeting COMBINADO (Fatia 7 — fast-follow), ao vivo no momento da
    *  proposta (depende do público/exclusões escolhidos → não cacheável no run). Best-effort:
    *  `ready:false` quando a plataforma ainda não estimou. */

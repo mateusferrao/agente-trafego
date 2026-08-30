@@ -1,6 +1,6 @@
 import type { CampaignDraftSpec } from "@trafego/shared";
 import { describe, expect, it, vi } from "vitest";
-import { applyExplicitGeoEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "./index.js";
+import { applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "./index.js";
 
 const SPEC: CampaignDraftSpec = { version: 1, currency: "BRL", dailyBudgetMinor: 5000, activation: "paused" };
 const REF = { draftId: "d1", orgId: "org-1" };
@@ -120,6 +120,58 @@ describe("applyExplicitGeoEdit (Fase 1, subfatia 3a/3b — editar sem recriar o 
       expect(r.targeting.ageMin).toBe(30);
       expect(r.targeting.ageMax).toBe(40);
       expect(r.targeting.geo).toHaveLength(3);
+    }
+  });
+});
+
+describe("applyExplicitInterestEdit (Fase 2, subfatia 4 — editar interesses sem recriar o rascunho, chat+site)", () => {
+  const base = {
+    kind: "explicit" as const,
+    geo: [{ key: "1", name: "Belo Horizonte", kind: "city" as const }],
+    interests: [
+      { id: "i1", name: "Estética" },
+      { id: "i2", name: "Pets" },
+    ],
+  };
+
+  it("remove por nome (match parcial, case-insensitive) — sem chamada nova", () => {
+    const r = applyExplicitInterestEdit(base, { removeInterests: ["pets"] });
+    expect(r.kind).toBe("ok");
+    if (r.kind === "ok" && r.targeting.kind === "explicit") {
+      expect(r.targeting.interests?.map((i) => i.name)).toEqual(["Estética"]);
+    }
+  });
+
+  it("remove o ÚLTIMO interesse → some a chave do targeting (não fica array vazio pendurado)", () => {
+    const oneInterest = { ...base, interests: [{ id: "i1", name: "Estética" }] };
+    const r = applyExplicitInterestEdit(oneInterest, { removeInterests: ["estética"] });
+    expect(r.kind).toBe("ok");
+    if (r.kind === "ok" && r.targeting.kind === "explicit") {
+      expect(r.targeting.interests).toBeUndefined();
+    }
+  });
+
+  it("nome não encontrado → BLOQUEIA (nunca aplica em interpretação incerta)", () => {
+    const r = applyExplicitInterestEdit(base, { removeInterests: ["moda"] });
+    expect(r.kind).toBe("blocked");
+    if (r.kind === "blocked") expect(r.reason).toContain("moda");
+  });
+
+  it("adiciona interesse já resolvido (dedupe por id)", () => {
+    const r = applyExplicitInterestEdit(base, { addInterests: [{ id: "i3", name: "Viagem" }, { id: "i1", name: "Estética" }] });
+    expect(r.kind).toBe("ok");
+    if (r.kind === "ok" && r.targeting.kind === "explicit") {
+      expect(r.targeting.interests).toHaveLength(3);
+      expect(r.targeting.interests?.map((i) => i.name)).toContain("Viagem");
+    }
+  });
+
+  it("adiciona interesse a um targeting SEM interesses ainda", () => {
+    const noInterests = { kind: "explicit" as const, geo: base.geo };
+    const r = applyExplicitInterestEdit(noInterests, { addInterests: [{ id: "i1", name: "Estética" }] });
+    expect(r.kind).toBe("ok");
+    if (r.kind === "ok" && r.targeting.kind === "explicit") {
+      expect(r.targeting.interests?.map((i) => i.name)).toEqual(["Estética"]);
     }
   });
 });
