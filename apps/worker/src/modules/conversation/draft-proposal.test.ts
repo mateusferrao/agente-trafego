@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { chooseCreative, clampNewBudget, resolveCreationTargeting } from "./draft-proposal.js";
+import { audienceEchoPhrase, chooseCreative, clampNewBudget, resolveCreationTargeting } from "./draft-proposal.js";
 import { creativeContentHash } from "../vision/resolver.js";
 import type { WorkerDeps } from "../../composition.js";
 
@@ -104,6 +104,32 @@ describe("resolveCreationTargeting (público da campanha criada do zero)", () =>
 
   it("cold-start (sem adset vencedor) → cai em Advantage+ (não há público provado pra herdar)", () => {
     expect(resolveCreationTargeting({})).toEqual({ kind: "advantage_plus" });
+  });
+});
+
+describe("audienceEchoPhrase (P0: eco não pode contradizer o targeting real)", () => {
+  it("hasAudience=false + targetingKind=reuse_adset → NÃO diz 'amplo (Advantage+)' (bug fixado)", () => {
+    const phrase = audienceEchoPhrase({ hasAudience: false, hasExclusions: false, targetingKind: "reuse_adset" });
+    expect(phrase).not.toContain("amplo");
+    expect(phrase).toBe("herdado do conjunto que já converte");
+  });
+
+  it("hasAudience=false + targetingKind=advantage_plus → amplo (Advantage+)", () => {
+    expect(audienceEchoPhrase({ hasAudience: false, hasExclusions: false, targetingKind: "advantage_plus" })).toBe(
+      "amplo (Advantage+)",
+    );
+  });
+
+  it("hasAudience=true → sempre 'o que você indicou', independente do targetingKind", () => {
+    expect(audienceEchoPhrase({ hasAudience: true, hasExclusions: false, targetingKind: "custom_audiences" })).toBe(
+      "o que você indicou",
+    );
+  });
+
+  it("hasAudience=true + hasExclusions=true → menciona exclusões", () => {
+    expect(audienceEchoPhrase({ hasAudience: true, hasExclusions: true, targetingKind: "custom_audiences" })).toBe(
+      "o que você indicou (com exclusões)",
+    );
   });
 });
 

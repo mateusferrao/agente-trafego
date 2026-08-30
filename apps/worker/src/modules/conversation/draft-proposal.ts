@@ -125,6 +125,21 @@ export function resolveCreationTargeting(defaults: { readonly sourceAdsetId?: st
   return defaults.sourceAdsetId ? { kind: "reuse_adset", sourceAdsetId: defaults.sourceAdsetId } : { kind: "advantage_plus" };
 }
 
+/**
+ * Frase de "Público: ..." do eco de criar-do-zero — PURA, deriva do `targetingKind` real (nunca
+ * só de `hasAudience`). Bug fixado (P0): antes o `else` assumia "amplo (Advantage+)" mesmo quando
+ * o targeting resolvido era `reuse_adset` (herda da fonte) — as duas linhas do eco se contradiziam.
+ */
+export function audienceEchoPhrase(args: {
+  readonly hasAudience: boolean;
+  readonly hasExclusions: boolean;
+  readonly targetingKind: TargetingSpec["kind"] | undefined;
+}): string {
+  if (args.hasAudience) return "o que você indicou" + (args.hasExclusions ? " (com exclusões)" : "");
+  if (args.targetingKind === "reuse_adset") return "herdado do conjunto que já converte";
+  return "amplo (Advantage+)";
+}
+
 /** Rótulo PT do formato não-reusável (o vocabulário neutro vem do adapter). */
 function unsupportedFormatPt(f: "carousel" | "catalog" | "other"): string {
   return f === "carousel" ? "carrossel" : f === "catalog" ? "anúncio de catálogo" : "formato que ainda não sei clonar";
@@ -1003,8 +1018,13 @@ export async function proposeCreateCampaign(
   const budgetPhrase = clampedByCap
     ? `${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia (você pediu ${money(requested / MINOR_PER_UNIT, ac.currency)}, mas seu teto de gasto novo é ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)})`
     : `${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia`;
+  const audiencePhrase = audienceEchoPhrase({
+    hasAudience,
+    hasExclusions: aud.excludeIds.length > 0,
+    targetingKind: spec.targeting?.kind,
+  });
   lines.push(
-    `Público: ${hasAudience ? "o que você indicou" + (aud.excludeIds.length ? " (com exclusões)" : "") : "amplo (Advantage+)"}.`,
+    `Público: ${audiencePhrase}.`,
     `Gasto novo: ${budgetPhrase} · Página: ${defaults.pageId}${defaults.pixelId ? ` · Pixel: ${defaults.pixelId}` : ""} · ${activationPhrase("active")}.`,
   );
   for (const n of aud.notes) lines.push(n);
