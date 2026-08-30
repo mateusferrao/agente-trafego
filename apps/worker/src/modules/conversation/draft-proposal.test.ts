@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { adjustAdCount, audienceEchoPhrase, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, resolveCreationTargeting } from "./draft-proposal.js";
+import { adjustAdCount, audienceEchoPhrase, creativeRefOf, distinctExtras, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, resolveCreationTargeting } from "./draft-proposal.js";
 import type { CampaignDraftSpec } from "@trafego/shared";
 import { creativeContentHash } from "../vision/resolver.js";
 import type { WorkerDeps } from "../../composition.js";
@@ -321,5 +321,29 @@ describe("adjustAdCount (nº de anúncios preservando os existentes)", () => {
   it("igual → sem mudança", () => {
     const src = [v("a"), v("b")];
     expect(adjustAdCount(src, 2).map((x) => x.headline)).toEqual(["a", "b"]);
+  });
+});
+
+describe("distinctExtras / creativeRefOf (multi-criativo do agente)", () => {
+  const img = (h: string): { imageHash: string; assetId: string; origin: "reuse" | "upload"; source: "serving" | "library" } => ({ imageHash: h, assetId: `a-${h}`, origin: "reuse", source: "serving" });
+  const vid = (v: string): { videoId: string; assetId: string; origin: "reuse" | "upload"; source: "serving" | "library" } => ({ videoId: v, assetId: `a-${v}`, origin: "upload", source: "library" });
+
+  it("dedupe por mídia (ignora o principal) + preserva ordem + respeita o teto", () => {
+    const primary = img("H1");
+    const out = distinctExtras([img("H1"), img("H2"), vid("V1"), img("H2")], primary, 5);
+    expect(out.map((c) => c.imageHash ?? c.videoId)).toEqual(["H2", "V1"]); // H1 (principal) e H2 dup fora
+  });
+
+  it("maxExtra corta o excedente", () => {
+    expect(distinctExtras([img("A"), img("B"), img("C")], img("Z"), 2)).toHaveLength(2);
+  });
+
+  it("maxExtra 0 → vazio", () => {
+    expect(distinctExtras([img("A")], img("Z"), 0)).toEqual([]);
+  });
+
+  it("creativeRefOf: vídeo → format video + metaVideoId; imagem → format image + metaImageHash", () => {
+    expect(creativeRefOf(vid("V9"))).toEqual({ assetId: "a-V9", format: "video", origin: "upload", metaVideoId: "V9" });
+    expect(creativeRefOf(img("H9"))).toEqual({ assetId: "a-H9", format: "image", origin: "reuse", metaImageHash: "H9" });
   });
 });

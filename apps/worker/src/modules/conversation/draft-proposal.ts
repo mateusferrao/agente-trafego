@@ -43,6 +43,9 @@ import { withTimeout } from "./with-timeout.js";
 const MINOR_PER_UNIT = 100;
 const APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_STARTER_BUDGET_MINOR = 3000;
+/** Máx. de anúncios com criativos DISTINTOS que o agente monta sozinho ao criar (1 por criativo).
+ *  Só usa mais de 1 quando há criativos distintos disponíveis na estratégia; senão cai no padrão. */
+const AGENT_MAX_CREATIVE_ADS = 3;
 /** Quantos uploads recentes considerar no pick da biblioteca (ranqueados por score da visão). */
 const LIBRARY_PICK_CANDIDATES = 20;
 /** Quantos anúncios veiculando (mais recentes) descrever por visão no pick por-contexto (Slice 10).
@@ -1164,6 +1167,72 @@ async function chooseLibraryByContext(
   return chosen.ref;
 }
 
+/** Chave de identidade de um criativo p/ dedupe entre anúncios (mídia distinta). */
+function creativeKey(c: ChosenCreative): string {
+  return c.videoId ?? c.imageHash ?? c.assetId;
+}
+
+/** Extras DISTINTOS (dedupe por mídia) além do principal, até `maxExtra`, preservando a ordem. PURO. */
+export function distinctExtras(candidates: readonly ChosenCreative[], primary: ChosenCreative, maxExtra: number): ChosenCreative[] {
+  if (maxExtra <= 0) return [];
+  const out: ChosenCreative[] = [];
+  const seen = new Set<string>([creativeKey(primary)]);
+  for (const c of candidates) {
+    if (out.length >= maxExtra) break;
+    const k = creativeKey(c);
+    if (!seen.has(k)) {
+      seen.add(k);
+      out.push(c);
+    }
+  }
+  return out;
+}
+
+/** ChosenCreative → CreativeAssetRef (criativo próprio de um anúncio no spec). */
+export function creativeRefOf(c: ChosenCreative): CreativeAssetRef {
+  return {
+    assetId: c.assetId,
+    format: c.videoId ? "video" : "image",
+    origin: c.origin,
+    ...(c.imageHash ? { metaImageHash: c.imageHash } : {}),
+    ...(c.videoId ? { metaVideoId: c.videoId } : {}),
+  };
+}
+
+/** Pool de candidatos (veiculando + biblioteca) conforme a ESTRATÉGIA do agente — mesma fonte de
+ *  chooseCreative (números ao vivo + visão), reusada p/ pegar criativos DISTINTOS adicionais. */
+async function buildCreativePool(
+  deps: WorkerDeps,
+  orgId: string,
+  accountId: string,
+  ref: AdAccountRef,
+  strategy: CreativeSourceStrategy,
+): Promise<DescribedCandidate[]> {
+  const pool: DescribedCandidate[] = [];
+  if (strategy.mode !== "library") pool.push(...(await describeServingCandidates(deps, orgId, accountId, ref)));
+  if (strategy.mode !== "serving" || pool.length === 0) pool.push(...(await describeLibraryCandidates(deps, orgId, accountId)));
+  return pool;
+}
+
+/**
+ * Criativos DISTINTOS adicionais (além do principal) que o agente usa pra montar N anúncios sozinho
+ * — 1 por criativo, mesma estratégia (o principal já veio de chooseCreative, com LLM/desempenho).
+ * Ordem do pool (veiculando primeiro). Vazio quando não há distintos → cai no anúncio único.
+ */
+async function chooseAdditionalCreatives(
+  deps: WorkerDeps,
+  orgId: string,
+  accountId: string,
+  ref: AdAccountRef,
+  strategy: CreativeSourceStrategy,
+  primary: ChosenCreative,
+  maxExtra: number,
+): Promise<ChosenCreative[]> {
+  if (maxExtra <= 0) return [];
+  const pool = await buildCreativePool(deps, orgId, accountId, ref, strategy);
+  return distinctExtras(pool.map((c) => c.ref), primary, maxExtra);
+}
+
 /** Candidatos da BIBLIOTECA (uploads `ready`) com a DESCRIÇÃO de visão CACHEADA (feita no upload). */
 async function describeLibraryCandidates(deps: WorkerDeps, orgId: string, accountId: string): Promise<DescribedCandidate[]> {
   const libs = await deps.db
@@ -1412,9 +1481,18 @@ export async function proposeCreateCampaign(
   // Transparência do teto (§8 clareza pro dono): pediu mais que o teto de gasto novo →
   // o eco/card mostram "pediu X, virou Y" (mesmo helper/campo do escalar).
   const { dailyBudgetMinor, clampedByCap } = clampNewBudget(requested, ac.cfg.maxNewDailyBudgetMinor);
-  const variantsCount = DEFAULT_VARIANTS;
 
-  const copyVariants: CopyVariant[] = await generateCopy(
+  // Multi-criativo (Fatia 7): o agente monta N anúncios com criativos DISTINTOS quando os tem (mesma
+  // estratégia — números ao vivo + visão), 1 por criativo; senão, 1 criativo + variações de copy
+  // (padrão). Criativo forçado (WhatsApp) = anúncio único. O dono ajusta tudo depois pelo site.
+  const extraCreatives = args.forcedCreativeAssetId
+    ? []
+    : await chooseAdditionalCreatives(deps, ctx.orgId, ctx.adAccountId, ac.ref, ac.creativeSource, chosen, AGENT_MAX_CREATIVE_ADS - 1);
+  const allCreatives: ChosenCreative[] = [chosen, ...extraCreatives];
+  const multiCreative = allCreatives.length >= 2;
+  const variantsCount = multiCreative ? allCreatives.length : DEFAULT_VARIANTS;
+
+  const baseCopy: CopyVariant[] = await generateCopy(
     deps.ports.llm,
     {
       model: ac.model,
@@ -1427,6 +1505,10 @@ export async function proposeCreateCampaign(
     },
     { orgId: ctx.orgId, adAccountId: ctx.adAccountId },
   );
+  // multi-criativo → cada anúncio ganha SEU criativo (1:1 com a copy); senão todos usam o padrão.
+  const copyVariants: CopyVariant[] = multiCreative
+    ? baseCopy.map((cv, i) => (allCreatives[i] ? { ...cv, creative: creativeRefOf(allCreatives[i]!) } : cv))
+    : baseCopy;
 
   // VÍDEO se tem video_id (o imageHash acompanha como CAPA do vídeo, não descaracteriza). Anúncio de
   // imagem tem imageHash e NÃO tem videoId → o videoId é o discriminador correto.
