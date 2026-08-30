@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { audienceEchoPhrase, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, resolveCreationTargeting } from "./draft-proposal.js";
+import { audienceEchoPhrase, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, resolveCreationTargeting } from "./draft-proposal.js";
+import type { CampaignDraftSpec } from "@trafego/shared";
 import { creativeContentHash } from "../vision/resolver.js";
 import type { WorkerDeps } from "../../composition.js";
 import type { AudienceProfile } from "@trafego/shared";
@@ -263,6 +264,40 @@ describe("describeExplicitAudience (Fase 1, subfatia 3a)", () => {
   it("sem interesses → não menciona 'interesses' no eco", () => {
     const desc = describeExplicitAudience({ kind: "explicit", geo: [{ key: "BR", name: "Brasil", kind: "country" }] });
     expect(desc).not.toContain("interesses");
+  });
+});
+
+describe("buildRefineEcho — público (bug: refino não pode assumir 'amplo')", () => {
+  const base: CampaignDraftSpec = {
+    version: 1,
+    currency: "BRL",
+    dailyBudgetMinor: 5000,
+    activation: "active",
+    objective: "lead",
+    variantsCount: 1,
+    copyVariants: [],
+    creative: { assetId: "a1", format: "image", origin: "reuse" },
+    pageId: "P1",
+  };
+
+  it("rascunho EXPLICIT → descreve o público real (não 'amplo')", () => {
+    const echo = buildRefineEcho("from_scratch", {
+      ...base,
+      targeting: { kind: "explicit", geo: [{ key: "1", name: "Belo Horizonte", kind: "city" }], ageMin: 25, ageMax: 45 },
+    });
+    expect(echo).toContain("Belo Horizonte");
+    expect(echo).not.toContain("a Meta escolhe (mais amplo)");
+  });
+
+  it("rascunho ADVANTAGE_PLUS → aí sim 'amplo'", () => {
+    const echo = buildRefineEcho("from_scratch", { ...base, targeting: { kind: "advantage_plus" } });
+    expect(echo).toContain("amplo (Advantage+)");
+  });
+
+  it("rascunho REUSE_ADSET → 'herda o que já converte', nunca 'amplo'", () => {
+    const echo = buildRefineEcho("from_scratch", { ...base, targeting: { kind: "reuse_adset", sourceAdsetId: "as_1" } });
+    expect(echo).toContain("herda");
+    expect(echo).not.toContain("amplo");
   });
 });
 

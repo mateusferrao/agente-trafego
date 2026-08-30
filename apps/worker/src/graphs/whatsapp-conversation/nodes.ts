@@ -617,6 +617,7 @@ export function makeConversationNodes(
               ...(Array.isArray(a["addGeo"]) ? { addGeo: a["addGeo"].filter((x): x is string => typeof x === "string") } : {}),
               ...(typeof a["ageMin"] === "number" ? { ageMin: a["ageMin"] as number } : {}),
               ...(typeof a["ageMax"] === "number" ? { ageMax: a["ageMax"] as number } : {}),
+              ...(a["gender"] === "men" || a["gender"] === "women" || a["gender"] === "all" ? { gender: a["gender"] as "men" | "women" | "all" } : {}),
               ...(Array.isArray(a["removeInterests"]) ? { removeInterests: a["removeInterests"].filter((x): x is string => typeof x === "string") } : {}),
               ...(Array.isArray(a["addInterests"]) ? { addInterests: a["addInterests"].filter((x): x is string => typeof x === "string") } : {}),
             };

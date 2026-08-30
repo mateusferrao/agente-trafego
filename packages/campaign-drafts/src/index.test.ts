@@ -54,22 +54,32 @@ describe("persistDraftSpec — UPDATE guardado por status", () => {
 });
 
 describe("resolveAudienceTargeting", () => {
+  const snapshot = { geo: { countries: ["BR"] }, expansionRaw: { advantageAudience: 0 as const, relaxCustomAudience: 0 as const, relaxLookalike: 0 as const } };
+  const resolvedReuse = { kind: "reuse_adset" as const, sourceAdsetId: "as_9", resolved: snapshot };
+
   it("broad → advantage_plus (sem chamar o thunk de inferência)", async () => {
     const infer = vi.fn();
     expect(await resolveAudienceTargeting("broad", undefined, infer)).toEqual({ kind: "advantage_plus" });
     expect(infer).not.toHaveBeenCalled();
   });
 
-  it("reuse com reuse_adset já no spec → mantém (sem chamar o thunk)", async () => {
+  it("reuse com reuse_adset JÁ COM retrato → mantém (sem chamar o thunk)", async () => {
     const infer = vi.fn();
-    const current = { kind: "reuse_adset", sourceAdsetId: "as_1" } as const;
+    const current = { kind: "reuse_adset", sourceAdsetId: "as_1", resolved: snapshot } as const;
     expect(await resolveAudienceTargeting("reuse", current, infer)).toEqual(current);
     expect(infer).not.toHaveBeenCalled();
   });
 
-  it("reuse sem herança → infere (thunk lazy)", async () => {
-    const infer = vi.fn().mockResolvedValue("as_9");
-    expect(await resolveAudienceTargeting("reuse", undefined, infer)).toEqual({ kind: "reuse_adset", sourceAdsetId: "as_9" });
+  it("reuse com reuse_adset SEM retrato → RE-resolve (nunca aplica cru → expansão AS-IS)", async () => {
+    const infer = vi.fn().mockResolvedValue(resolvedReuse);
+    const current = { kind: "reuse_adset", sourceAdsetId: "as_1" } as const;
+    expect(await resolveAudienceTargeting("reuse", current, infer)).toEqual(resolvedReuse);
+    expect(infer).toHaveBeenCalledOnce();
+  });
+
+  it("reuse sem herança → resolve com retrato (thunk lazy)", async () => {
+    const infer = vi.fn().mockResolvedValue(resolvedReuse);
+    expect(await resolveAudienceTargeting("reuse", undefined, infer)).toEqual(resolvedReuse);
   });
 
   it("reuse sem herança e sem fonte → mantém o atual (não força)", async () => {
@@ -121,6 +131,24 @@ describe("applyExplicitGeoEdit (Fase 1, subfatia 3a/3b — editar sem recriar o 
       expect(r.targeting.ageMax).toBe(40);
       expect(r.targeting.geo).toHaveLength(3);
     }
+  });
+
+  it("define gênero (bug e2e: antes o site descartava o toggle)", () => {
+    const r = applyExplicitGeoEdit(base, { genders: [2] });
+    expect(r.kind).toBe("ok");
+    if (r.kind === "ok" && r.targeting.kind === "explicit") expect(r.targeting.genders).toEqual([2]);
+  });
+
+  it("limpa gênero com [] (volta a 'todos' — some do targeting)", () => {
+    const r = applyExplicitGeoEdit({ ...base, genders: [1] }, { genders: [] });
+    expect(r.kind).toBe("ok");
+    if (r.kind === "ok" && r.targeting.kind === "explicit") expect(r.targeting.genders).toBeUndefined();
+  });
+
+  it("gênero ausente no patch → mantém o atual", () => {
+    const r = applyExplicitGeoEdit({ ...base, genders: [1] }, { ageMin: 30 });
+    expect(r.kind).toBe("ok");
+    if (r.kind === "ok" && r.targeting.kind === "explicit") expect(r.targeting.genders).toEqual([1]);
   });
 });
 

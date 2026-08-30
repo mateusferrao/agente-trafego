@@ -65,29 +65,31 @@ export async function persistDraftSpec(
 
 /**
  * Resolve o modo de PÚBLICO (neutro) → `TargetingSpec` — lógica compartilhada por chat e site.
- * `broad` = Advantage+ amplo; `reuse` = herda o conjunto provado (mantém o que o spec já tinha,
- * ou re-infere ao vivo se ainda não havia). Nada pra herdar → mantém o atual (não força).
+ * `broad` = Advantage+ amplo; `reuse` = herda o conjunto provado — SEMPRE com retrato (`resolved`),
+ * nunca um `reuse_adset` cru (senão o apply leria a fonte AS-IS e a Meta ligaria expansão no default).
+ * Já tem retrato → mantém; senão (re)resolve pelo thunk. Nada pra herdar → mantém o atual (não força).
  *
- * `inferSourceAdset` é um THUNK LAZY: só é chamado quando de fato precisa inferir (reuse SEM
- * herança) — assim broad/keep não carregam contexto de conta/token à toa (a casca resolve o
- * token e chama a plataforma dentro do thunk).
+ * `resolveReuse` é um THUNK LAZY que devolve o `reuse_adset` JÁ COM `resolved` (a casca lê o público
+ * da fonte + `buildResolvedSnapshot`) — só chamado quando precisa (reuse sem retrato); broad/keep não
+ * tocam a conta/token à toa.
  */
 export async function resolveAudienceTargeting(
   audience: "reuse" | "broad",
   current: TargetingSpec | undefined,
-  inferSourceAdset: () => Promise<string | undefined>,
+  resolveReuse: () => Promise<Extract<TargetingSpec, { readonly kind: "reuse_adset" }> | undefined>,
 ): Promise<TargetingSpec | undefined> {
   if (audience === "broad") return { kind: "advantage_plus" };
-  if (current?.kind === "reuse_adset") return current;
-  const sourceAdsetId = await inferSourceAdset();
-  return sourceAdsetId ? { kind: "reuse_adset", sourceAdsetId } : current;
+  if (current?.kind === "reuse_adset" && current.resolved) return current;
+  const resolved = await resolveReuse();
+  return resolved ?? current;
 }
 
 /**
  * Edição do público `explicit` já resolvido (Fase 1, subfatia 3a/3b) — lógica compartilhada por
- * chat e site (§13 DRY). Remove/adiciona geo(s) e/ou estreita idade. Remover é SEM chamada nova (o
- * dono já viu essa lista no eco/painel); adicionar já vem RESOLVIDO (a busca aconteceu na casca —
- * `prepareGeo` no worker, `searchGeo` do adapter no site — esta função só funde). Pura.
+ * chat e site (§13 DRY). Remove/adiciona geo(s), estreita idade e/ou ajusta gênero. Remover é SEM
+ * chamada nova (o dono já viu essa lista no eco/painel); adicionar já vem RESOLVIDO (a busca
+ * aconteceu na casca — `prepareGeo` no worker, `searchGeo` do adapter no site — esta função só funde).
+ * `genders`: ausente = mantém; `[]` = limpa (todos); `[1]`/`[2]` = define. Pura.
  */
 export function applyExplicitGeoEdit(
   current: Extract<TargetingSpec, { readonly kind: "explicit" }>,
@@ -96,6 +98,7 @@ export function applyExplicitGeoEdit(
     readonly addGeo?: readonly { readonly key: string; readonly name: string; readonly kind: "country" | "region" | "city" }[];
     readonly ageMin?: number;
     readonly ageMax?: number;
+    readonly genders?: readonly (1 | 2)[];
   },
 ): { readonly kind: "ok"; readonly targeting: TargetingSpec } | { readonly kind: "blocked"; readonly reason: string } {
   let geo = current.geo;
@@ -110,9 +113,19 @@ export function applyExplicitGeoEdit(
     const existingKeys = new Set(geo.map((g) => g.key));
     geo = [...geo, ...patch.addGeo.filter((g) => !existingKeys.has(g.key))];
   }
+  // gênero: destrutura a chave p/ poder LIMPAR (spread de `current` sozinho manteria o valor antigo —
+  // `genders` é opcional; array vazio no patch = "todos" e some do targeting).
+  const genders = patch.genders === undefined ? current.genders : patch.genders.length > 0 ? patch.genders : undefined;
+  const { genders: _drop, ...rest } = current;
   return {
     kind: "ok",
-    targeting: { ...current, geo, ...(patch.ageMin !== undefined ? { ageMin: patch.ageMin } : {}), ...(patch.ageMax !== undefined ? { ageMax: patch.ageMax } : {}) },
+    targeting: {
+      ...rest,
+      geo,
+      ...(patch.ageMin !== undefined ? { ageMin: patch.ageMin } : {}),
+      ...(patch.ageMax !== undefined ? { ageMax: patch.ageMax } : {}),
+      ...(genders && genders.length > 0 ? { genders } : {}),
+    },
   };
 }
 

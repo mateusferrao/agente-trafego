@@ -324,7 +324,7 @@ export function makeConversationTools(
   const adjustDraft = tool(proposeOnly, {
     name: "adjust_draft",
     description:
-      "Ajusta o rascunho de campanha JÁ PROPOSTO (só quando há um pendente): budget diário, ativação (ativa/pausada), nº de variações, PÚBLICO (audience: 'reuse' = herda o conjunto que já converte; 'broad' = deixa a Meta escolher, mais amplo) ou o NOME da campanha (campaignName). Se o público já é explícito (geo/idade/interesses), dá pra REMOVER (removeGeo/removeInterests, pelo nome — ex: 'tira Ibirité', 'tira o interesse de pets') ou ADICIONAR (addGeo/addInterests — eu resolvo pro lugar/interesse real e pergunto se ambíguo) localização/interesse, e ESTREITAR idade (ageMin/ageMax), sem recriar o rascunho. Não cria rascunho novo. Edições pesadas (nomes de conjunto/anúncio, objetivo, copy campo-a-campo, adicionar/remover anúncio) NÃO aqui — ofereça o link do painel do site.",
+      "Ajusta o rascunho de campanha JÁ PROPOSTO (só quando há um pendente): budget diário, ativação (ativa/pausada), nº de variações, PÚBLICO (audience: 'reuse' = herda o conjunto que já converte; 'broad' = deixa a Meta escolher, mais amplo) ou o NOME da campanha (campaignName). Se o público já é explícito (geo/idade/interesses), dá pra REMOVER (removeGeo/removeInterests, pelo nome — ex: 'tira Ibirité', 'tira o interesse de pets') ou ADICIONAR (addGeo/addInterests — eu resolvo pro lugar/interesse real e pergunto se ambíguo) localização/interesse, ESTREITAR idade (ageMin/ageMax) e ajustar GÊNERO (gender: 'men'/'women'/'all'), sem recriar o rascunho. Não cria rascunho novo. Edições pesadas (nomes de conjunto/anúncio, objetivo, copy campo-a-campo, adicionar/remover anúncio) NÃO aqui — ofereça o link do painel do site.",
     schema: z.object({
       budgetReais: z.number().positive().nullable().optional(),
       activation: z.enum(["active", "paused"]).nullable().optional(),
@@ -335,6 +335,7 @@ export function makeConversationTools(
       addGeo: z.array(z.string()).nullable().optional().describe("nomes de cidade/região/país a ADICIONAR ao público explícito (eu resolvo pro lugar real e pergunto se ambíguo)"),
       ageMin: z.number().int().min(13).max(65).nullable().optional(),
       ageMax: z.number().int().min(13).max(65).nullable().optional(),
+      gender: z.enum(["men", "women", "all"]).nullable().optional().describe("gênero do público explícito: 'men'/'women' mira só um; 'all' volta a todos"),
       removeInterests: z.array(z.string()).nullable().optional().describe("nomes/termos de interesse a REMOVER do público explícito já resolvido (ex: ['pets'])"),
       addInterests: z.array(z.string()).nullable().optional().describe("nomes/termos de interesse a ADICIONAR ao público explícito (eu busco na Meta e pergunto se ambíguo)"),
     }),

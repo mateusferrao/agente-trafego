@@ -2,7 +2,7 @@
 // aqui vai a heurística de EXCLUSÃO de convertidos (remarketing limpo) + a leitura da
 // estimativa de alcance combinado. Sem IO.
 
-import type { DeliveryEstimate, ResolvedAudienceSnapshot } from "@trafego/shared/types";
+import type { AudienceProfile, DeliveryEstimate, ResolvedAudienceSnapshot } from "@trafego/shared/types";
 
 /** Nomes que denunciam um público de quem JÁ CONVERTEU — candidatos a exclusão no remarketing. */
 const CONVERTER_HINTS = ["lead", "compra", "comprad", "client", "agenda", "venda", "checkout", "purchase", "buyer"] as const;
@@ -82,6 +82,30 @@ export function resolveExpansion(raw: {
       ? "a fonte não tinha expansão configurada — apliquei fechado por segurança"
       : undefined;
   return { expansionRaw: { advantageAudience, relaxCustomAudience, relaxLookalike }, summary: anyOn ? "on" : "off", ...(note ? { note } : {}) };
+}
+
+/** Geo do `AudienceProfile` lido → shape AGRUPADO do snapshot (país nunca convive com região/cidade). */
+function snapshotGeoFromProfile(profile: AudienceProfile): ResolvedAudienceSnapshot["geo"] {
+  const entries = profile.geoEntries ?? [];
+  if (entries.length > 0) {
+    const regions = entries.filter((e) => e.kind === "region").map((e) => ({ key: e.key, name: e.name }));
+    const cities = entries.filter((e) => e.kind === "city").map((e) => ({ key: e.key, name: e.name }));
+    return { ...(regions.length > 0 ? { regions } : {}), ...(cities.length > 0 ? { cities } : {}) };
+  }
+  return profile.geo && profile.geo.length > 0 ? { countries: [...profile.geo] } : {};
+}
+
+/** `AudienceProfile` lido → snapshot resolvido pra gravar no rascunho — a expansão passa por
+ *  `resolveExpansion` (NUNCA herda ausente às cegas; congela OFF quando desconhecida). Pura. Fonte
+ *  ÚNICA usada por worker (propose) E api (toggle reuse) → o `reuse_adset` nasce SEMPRE com retrato. */
+export function buildResolvedSnapshot(profile: AudienceProfile): ResolvedAudienceSnapshot {
+  const { expansionRaw } = resolveExpansion(profile.expansion);
+  return {
+    geo: snapshotGeoFromProfile(profile),
+    ...(profile.ageMin !== undefined ? { ageMin: profile.ageMin } : {}),
+    ...(profile.ageMax !== undefined ? { ageMax: profile.ageMax } : {}),
+    expansionRaw,
+  };
 }
 
 /**

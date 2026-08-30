@@ -448,9 +448,23 @@ export class MetaCreationService {
   ): Promise<{ targeting: Record<string, unknown>; fallback: boolean }> {
     switch (spec.kind) {
       case "reuse_adset": {
+        // caminho normal: o rascunho SEMPRE nasce com retrato (Bug 3 — propose/toggle snapshotam).
         if (spec.resolved) return { targeting: this.snapshotToRawTargeting(spec.resolved), fallback: false };
+        // belt-and-suspenders p/ rascunho LEGADO sem retrato: NUNCA devolve AS-IS — a Meta liga
+        // advantage_audience no default (v23+) quando os flags vêm ausentes. Normaliza a expansão
+        // (preserva o que a fonte trazia, fecha o que estava ausente).
         const src = await this.sourceAdsetTargeting(account, spec.sourceAdsetId);
-        return src ? { targeting: src, fallback: false } : { targeting: this.advantagePlusTargeting(), fallback: true };
+        if (!src) return { targeting: this.advantagePlusTargeting(), fallback: true };
+        const ta = (src["targeting_automation"] ?? {}) as { advantage_audience?: 0 | 1 };
+        const tr = (src["targeting_relaxation_types"] ?? {}) as { custom_audience?: 0 | 1; lookalike?: 0 | 1 };
+        return {
+          targeting: {
+            ...src,
+            targeting_automation: { advantage_audience: ta.advantage_audience ?? 0 },
+            targeting_relaxation_types: { custom_audience: tr.custom_audience ?? 0, lookalike: tr.lookalike ?? 0 },
+          },
+          fallback: false,
+        };
       }
       case "custom_audiences": {
         // público específico: base = geo/idade do adset-fonte quando há (CÓPIA — "7 cidades" reais);

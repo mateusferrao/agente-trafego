@@ -11,7 +11,7 @@ import {
   platformConnections,
   type Database,
 } from "@trafego/db";
-import { applyDraftEdit, planScaleMove, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
+import { applyDraftEdit, buildResolvedSnapshot, planScaleMove, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
 import { applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import type { ToolBindingMode } from "@trafego/shared";
 import {
@@ -250,9 +250,15 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     }
 
     if (input.audience) {
+      // reuse SEMPRE nasce com retrato (lê o público da fonte + buildResolvedSnapshot) — nunca um
+      // reuse_adset cru (senão o apply leria AS-IS e a Meta ligaria expansão no default). Bug 3.
       const targeting = await resolveAudienceTargeting(input.audience, spec.targeting, async () => {
         const defaults = await getDefaults();
-        return defaults?.sourceAdsetId;
+        const sourceAdsetId = defaults?.sourceAdsetId;
+        const ctx = await getCtx();
+        if (!sourceAdsetId || !ctx) return undefined;
+        const profile = await deps.adsPlatform.getAudienceProfile(ctx.ref, sourceAdsetId);
+        return profile ? { kind: "reuse_adset", sourceAdsetId, resolved: buildResolvedSnapshot(profile) } : undefined;
       });
       if (input.audience === "reuse" && targeting?.kind !== "reuse_adset") {
         return { ok: false, message: "não achei um público provado pra herdar nesta conta." };
@@ -262,12 +268,13 @@ export function createDraftsService(deps: DraftsServiceDeps) {
 
     // público EXPLÍCITO (Fase 1, subfatia 3b) — remove/adiciona geo(s) já resolvido pelo
     // autocomplete + estreita idade. Converge com o chat no mesmo núcleo (applyExplicitGeoEdit).
-    if (spec.targeting?.kind === "explicit" && (input.removeGeo?.length || input.addGeo?.length || input.ageMin != null || input.ageMax != null)) {
+    if (spec.targeting?.kind === "explicit" && (input.removeGeo?.length || input.addGeo?.length || input.ageMin != null || input.ageMax != null || input.genders != null)) {
       const r = applyExplicitGeoEdit(spec.targeting, {
         ...(input.removeGeo ? { removeGeo: input.removeGeo } : {}),
         ...(input.addGeo ? { addGeo: input.addGeo } : {}),
         ...(input.ageMin != null ? { ageMin: input.ageMin } : {}),
         ...(input.ageMax != null ? { ageMax: input.ageMax } : {}),
+        ...(input.genders != null ? { genders: input.genders } : {}),
       });
       if (r.kind === "blocked") return { ok: false, message: r.reason };
       edit.targeting = r.targeting;

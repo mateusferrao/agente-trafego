@@ -393,6 +393,11 @@ export class DraftEditPanel implements OnInit {
     if (current.ageMin != null && current.ageMin !== original.ageMin) patch['ageMin'] = current.ageMin;
     if (current.ageMax != null && current.ageMax !== original.ageMax) patch['ageMax'] = current.ageMax;
 
+    // gênero (bug fix): o toggle era descartado — agora entra no patch. null (todos) → [] (limpa).
+    const origGenders = [...(original.genders ?? [])].sort();
+    const curGenders = [...(current.genders ?? [])].sort();
+    if (JSON.stringify(origGenders) !== JSON.stringify(curGenders)) patch['genders'] = curGenders;
+
     const originalInterestIds = new Set(original.interests.map((i) => i.id));
     const currentInterestIds = new Set(current.interests.map((i) => i.id));
     const removeInterests = original.interests.filter((i) => !currentInterestIds.has(i.id)).map((i) => i.name);

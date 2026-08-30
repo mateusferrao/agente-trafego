@@ -6,7 +6,7 @@
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { adAccounts, adCreatives, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { applyDraftEdit, describeDeliveryEstimate, goalNounPt, planScaleMove, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { applyDraftEdit, buildResolvedSnapshot, describeDeliveryEstimate, goalNounPt, planScaleMove, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
 import { applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
   ACTION_PARAM_MODE,
@@ -170,23 +170,7 @@ function summarizePlaces(names: readonly string[]): string {
   return `${names.slice(0, MAX_PLACES_IN_ECHO).join(", ")} (+${names.length - MAX_PLACES_IN_ECHO} cidades)`;
 }
 
-/**
- * `geo` neutro (§shared) a partir do `AudienceProfile` lido (P0.2) — `geoEntries` cobre
- * região/cidade (com `key`, necessário pro apply reconstruir sem reler); países não têm `key` na
- * Meta, então só sobram em `profile.geo` quando NÃO há `geoEntries` (mesma prioridade de
- * `geoLabels` no adapter: país presente nunca convive com região/cidade no mesmo targeting).
- */
-function snapshotGeoFromProfile(profile: AudienceProfile): ResolvedAudienceSnapshot["geo"] {
-  const entries = profile.geoEntries ?? [];
-  if (entries.length > 0) {
-    const regions = entries.filter((e) => e.kind === "region").map((e) => ({ key: e.key, name: e.name }));
-    const cities = entries.filter((e) => e.kind === "city").map((e) => ({ key: e.key, name: e.name }));
-    return { ...(regions.length > 0 ? { regions } : {}), ...(cities.length > 0 ? { cities } : {}) };
-  }
-  return profile.geo && profile.geo.length > 0 ? { countries: [...profile.geo] } : {};
-}
-
-/** Inverso de `snapshotGeoFromProfile` — geo AGRUPADO (snapshot) → lista PLANA `{key,name,kind}[]`
+/** geo AGRUPADO (snapshot) → lista PLANA `{key,name,kind}[]`
  *  (shape do `TargetingSpec.explicit.geo`). Usado quando o dono troca idade/gênero na CÓPIA sem
  *  trocar a geo — mantém a geo original em vez de defaultar pra um país. País usa o código como
  *  nome (sem round-trip de nome legível — `resolvedSnapshot` não guarda o nome do país). */
@@ -197,17 +181,10 @@ function flattenSnapshotGeo(geo: ResolvedAudienceSnapshot["geo"]): { readonly ke
   return [...countries, ...regions, ...cities];
 }
 
-/** `AudienceProfile` lido (P0.2) → snapshot resolvido pra gravar no rascunho (subfatia 2) — a
- *  expansão passa por `resolveExpansion` (nunca herda ausente às cegas). Pura. */
-export function buildResolvedSnapshot(profile: AudienceProfile): ResolvedAudienceSnapshot {
-  const { expansionRaw } = resolveExpansion(profile.expansion);
-  return {
-    geo: snapshotGeoFromProfile(profile),
-    ...(profile.ageMin !== undefined ? { ageMin: profile.ageMin } : {}),
-    ...(profile.ageMax !== undefined ? { ageMax: profile.ageMax } : {}),
-    expansionRaw,
-  };
-}
+// `buildResolvedSnapshot` mora no core (`@trafego/core`) — fonte ÚNICA compartilhada por worker
+// (propose) e api (toggle reuse), pra o `reuse_adset` nascer SEMPRE com retrato. Re-exportado aqui
+// (binding importado acima) por conveniência dos testes/consumidores deste módulo.
+export { buildResolvedSnapshot };
 
 /**
  * Descrição HONESTA do público herdado pro eco (P0.2) — cidades/regiões (ou países, sem
@@ -319,7 +296,14 @@ async function loadAccountAudiences(deps: WorkerDeps, ctx: DraftProposalContext,
   if (rows.length > 0) {
     return rows.map((r) => ({ id: r.id, name: r.name, ...(r.subtype ? { subtype: r.subtype } : {}), ...(r.approximateCount != null ? { approximateCount: r.approximateCount } : {}), isLookalike: r.isLookalike }));
   }
-  const live = await deps.ports.ads.listCustomAudiences(ref);
+  // fallback ao vivo BOUNDED pelo mesmo teto dos outros fetches do chat (igual `listAudiencesData`) —
+  // Meta lenta na resolução de público não pode travar o propose até o teto do turno; degrada p/ [].
+  let live: CustomAudience[];
+  try {
+    live = await withTimeout(deps.ports.ads.listCustomAudiences(ref), deps.conversation.liveFetchTimeoutMs);
+  } catch {
+    return [];
+  }
   if (live.length > 0) await createAnalysisRepo(deps.db).saveCustomAudiences(ctx.orgId, ctx.adAccountId, live);
   return live;
 }
@@ -648,8 +632,8 @@ export async function proposeScaleWinner(
   return { kind: "draft", echo, approvalId, draftId };
 }
 
-/** Eco genérico de um rascunho (após refino) — o quê/quanto/ativação/copy. */
-function buildRefineEcho(kind: string, spec: CampaignDraftSpec): string {
+/** Eco genérico de um rascunho (após refino) — o quê/quanto/ativação/copy. Exportado p/ teste. */
+export function buildRefineEcho(kind: string, spec: CampaignDraftSpec): string {
   const head = kind === "duplicate" ? "Rascunho de escala atualizado" : "Rascunho de campanha atualizado";
   const lines = [
     `${head}: gasto novo ${money(spec.dailyBudgetMinor / MINOR_PER_UNIT, spec.currency)}/dia · ${activationPhrase(spec.activation)}.`,
@@ -657,11 +641,22 @@ function buildRefineEcho(kind: string, spec: CampaignDraftSpec): string {
   if (spec.copyVariants && spec.copyVariants.length > 0) {
     lines.push(`${spec.copyVariants.length} variação(ões) de copy. Ex: "${spec.copyVariants[0]!.headline}".`);
   }
-  if (kind === "from_scratch" && spec.targeting) {
+  const t = spec.targeting;
+  if (kind === "from_scratch" && t) {
+    // fonte ÚNICA do eco de público (§13 reuso): antes duplicava a lógica aqui e assumia "amplo"
+    // p/ explicit/custom_audiences — mesma classe do bug já corrigido em `audienceEchoPhrase`.
     lines.push(
-      spec.targeting.kind === "reuse_adset"
-        ? "Público: herda o que já converte."
-        : "Público: a Meta escolhe (mais amplo).",
+      `Público: ${audienceEchoPhrase({
+        hasAudience: t.kind === "custom_audiences",
+        hasExclusions:
+          t.kind === "custom_audiences"
+            ? t.excludeIds.length > 0
+            : t.kind === "explicit"
+              ? Boolean(t.customAudienceExcludeIds?.length)
+              : false,
+        targetingKind: t.kind,
+        ...(t.kind === "explicit" ? { explicitAudienceDescription: describeExplicitAudience(t) } : {}),
+      })}.`,
     );
   }
   lines.push("Confirma agora ou quer ajustar mais?");
@@ -685,6 +680,8 @@ export interface RefineDraftPatch {
   readonly addGeo?: readonly string[];
   readonly ageMin?: number;
   readonly ageMax?: number;
+  /** gênero do público EXPLÍCITO: "men"/"women" define; "all" limpa (todos). Ausente = mantém. */
+  readonly gender?: "men" | "women" | "all";
   /** remove interesse(s) do público EXPLÍCITO já resolvido (Fase 2, subfatia 4) — por nome/trecho
    *  do nome. Sem chamada nova. Nome não encontrado → bloqueia. */
   readonly removeInterests?: readonly string[];
@@ -755,14 +752,20 @@ export async function refineDraft(
     );
   }
 
-  // público (só from_scratch): thunk lazy (broad/keep não tocam a conta).
+  // público (só from_scratch): thunk lazy (broad/keep não tocam a conta). O reuse SEMPRE nasce com
+  // retrato (lê o público da fonte + buildResolvedSnapshot) — nunca um reuse_adset cru (Bug 3).
   if (kind === "from_scratch" && patch.audience) {
-    const targeting = await resolveAudienceTargeting(patch.audience, spec.targeting, async () => (await deps.ports.ads.inferCreationDefaults(ac.ref)).sourceAdsetId);
+    const targeting = await resolveAudienceTargeting(patch.audience, spec.targeting, async () => {
+      const sourceAdsetId = (await deps.ports.ads.inferCreationDefaults(ac.ref)).sourceAdsetId;
+      if (!sourceAdsetId) return undefined;
+      const profile = await deps.ports.ads.getAudienceProfile(ac.ref, sourceAdsetId);
+      return profile ? { kind: "reuse_adset", sourceAdsetId, resolved: buildResolvedSnapshot(profile) } : undefined;
+    });
     if (targeting) edit.targeting = targeting;
   }
   // editar (remover/adicionar geo, estreitar idade) o público EXPLÍCITO já resolvido (Fase 1,
   // subfatia 3a). Adicionar resolve na hora (ambíguo→pergunta); remover/idade não chamam a Meta.
-  if (kind === "from_scratch" && spec.targeting?.kind === "explicit" && (patch.removeGeo?.length || patch.addGeo?.length || patch.ageMin != null || patch.ageMax != null)) {
+  if (kind === "from_scratch" && spec.targeting?.kind === "explicit" && (patch.removeGeo?.length || patch.addGeo?.length || patch.ageMin != null || patch.ageMax != null || patch.gender != null)) {
     const addGeoPrep = patch.addGeo?.length ? await prepareGeo(deps, ac.ref, patch.addGeo) : { kind: "ok" as const, geo: [] };
     if (addGeoPrep.kind === "blocked") return { kind: "blocked", reason: addGeoPrep.reason };
     const r = applyExplicitGeoEdit(spec.targeting, {
@@ -770,6 +773,7 @@ export async function refineDraft(
       ...(addGeoPrep.geo.length > 0 ? { addGeo: addGeoPrep.geo } : {}),
       ...(patch.ageMin != null ? { ageMin: patch.ageMin } : {}),
       ...(patch.ageMax != null ? { ageMax: patch.ageMax } : {}),
+      ...(patch.gender != null ? { genders: patch.gender === "men" ? [1] : patch.gender === "women" ? [2] : [] } : {}),
     });
     if (r.kind === "blocked") return { kind: "blocked", reason: r.reason };
     edit.targeting = r.targeting;

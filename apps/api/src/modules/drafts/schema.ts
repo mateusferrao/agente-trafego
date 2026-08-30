@@ -164,6 +164,8 @@ export const updateDraftInput = z.object({
   addGeo: z.array(z.object({ key: z.string().min(1), name: z.string().min(1), kind: z.enum(["country", "region", "city"]) })).optional(),
   ageMin: z.number().int().min(13).max(65).optional(),
   ageMax: z.number().int().min(13).max(65).optional(),
+  /** gênero do público EXPLÍCITO: `[1]`=homens, `[2]`=mulheres, `[]`=todos (limpa). Ausente = mantém. */
+  genders: z.array(z.union([z.literal(1), z.literal(2)])).optional(),
   // ─── interesses do público EXPLÍCITO (Fase 2, subfatia 4) ───
   /** nomes EXATOS (como renderizados nos chips) a remover — sem ambiguidade (o usuário clicou o chip). */
   removeInterests: z.array(z.string().min(1)).optional(),
