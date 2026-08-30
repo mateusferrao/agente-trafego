@@ -84,20 +84,22 @@ export const COPY_TEXT_MAX = 3000;
 export const ctaTypeSchema = z.enum(CTA_TYPES);
 export const creativeFormatSchema = z.enum(CREATIVE_FORMATS);
 
-export const copyVariantSchema = z.object({
-  primaryText: z.string().min(1).max(COPY_TEXT_MAX),
-  headline: z.string().min(1).max(COPY_TEXT_MAX),
-  description: z.string().max(COPY_TEXT_MAX).optional(),
-  cta: ctaTypeSchema.optional(),
-  adName: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
-});
-
 export const creativeAssetRefSchema = z.object({
   assetId: z.string().min(1),
   format: creativeFormatSchema,
   origin: z.enum(["reuse", "upload"]),
   metaImageHash: z.string().optional(),
   metaVideoId: z.string().optional(),
+});
+
+export const copyVariantSchema = z.object({
+  primaryText: z.string().min(1).max(COPY_TEXT_MAX),
+  headline: z.string().min(1).max(COPY_TEXT_MAX),
+  description: z.string().max(COPY_TEXT_MAX).optional(),
+  cta: ctaTypeSchema.optional(),
+  adName: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+  // criativo próprio do anúncio (Fatia 7); ausente → usa o criativo padrão do rascunho.
+  creative: creativeAssetRefSchema.optional(),
 });
 
 const geoRefSchema = z.object({ key: z.string().min(1), name: z.string().min(1) });

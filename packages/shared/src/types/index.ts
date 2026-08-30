@@ -793,7 +793,7 @@ export const CTA_TYPES = [
 ] as const;
 export type CtaType = (typeof CTA_TYPES)[number];
 
-/** Uma variação de copy (as N variações compartilham a mesma mídia). */
+/** Uma variação de copy = um anúncio (1:1). */
 export interface CopyVariant {
   readonly primaryText: string;
   readonly headline: string;
@@ -801,6 +801,9 @@ export interface CopyVariant {
   readonly cta?: CtaType;
   /** nome do anúncio desta variação (a variação É o anúncio, 1:1). Ausente → derivado no apply. */
   readonly adName?: string;
+  /** criativo PRÓPRIO deste anúncio (Fatia 7 — criativo por anúncio). Ausente → usa o criativo
+   *  padrão do rascunho (`CampaignDraftSpec.creative`), preservando o comportamento antigo. */
+  readonly creative?: CreativeAssetRef;
 }
 
 /** Referência a um asset da biblioteca de criativos (mídia já existente). */
@@ -914,9 +917,11 @@ export interface CampaignDraftSpec {
   /** conversão de negócio → o adapter deriva o objetivo ODAX. */
   readonly objective?: ConversionGoal;
   readonly targeting?: TargetingSpec;
-  /** nº de variações de copy num adset (mesma mídia). */
+  /** nº de anúncios do adset (= nº de variações de copy; cada uma vira 1 anúncio). */
   readonly variantsCount?: number;
   readonly copyVariants?: readonly CopyVariant[];
+  /** criativo PADRÃO do rascunho — usado por qualquer anúncio sem criativo próprio
+   *  (`CopyVariant.creative`). Continua sendo a mídia única quando ninguém sobrescreve. */
   readonly creative?: CreativeAssetRef;
   /** Page/Pixel inferidos (display/confirmação no eco). */
   readonly pageId?: string;

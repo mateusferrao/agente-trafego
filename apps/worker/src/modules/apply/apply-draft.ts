@@ -419,10 +419,11 @@ async function runFromScratchSaga(
   const variants = spec.copyVariants ?? [];
   const creativeIds = [...((state["creativeIds"] as string[] | undefined) ?? [])];
   const adIds = [...((state["adIds"] as string[] | undefined) ?? [])];
-  const creative = spec.creative;
   for (let i = 0; i < variants.length; i++) {
     if (adIds[i]) continue; // variação já completa (retomada)
     const v = variants[i]!;
+    // criativo POR ANÚNCIO (Fatia 7): o do próprio anúncio vence; ausente → o padrão do rascunho.
+    const creative = v.creative ?? spec.creative;
     if (!creativeIds[i]) {
       const { creativeId } = await ads.createAdCreative(ref, {
         name: `${derived} — criativo ${i + 1}`,
