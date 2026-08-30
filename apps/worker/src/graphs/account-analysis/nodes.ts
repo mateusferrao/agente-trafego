@@ -28,6 +28,7 @@ import {
   basisByEntity,
   annotateFreedSpend,
   detectCreationOpportunities,
+  isConverterAudienceName,
   evaluatePlaybook,
   flagUnsupportedFindings,
   entityKeyOf,
@@ -45,7 +46,8 @@ import {
 import { ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS, DEFAULT_CURRENCY, DEFAULT_POSTURE, extractPhoneFromName } from "@trafego/shared";
 import { recommendations } from "@trafego/db";
 import { funnelFromRawActions, mapStatus } from "@trafego/ads-meta";
-import { proposeCreateCampaign, proposeScaleWinner } from "../../modules/conversation/draft-proposal.js";
+import { loadAccountAudiences, loadAgentContext, PROACTIVE_REACH_FLOOR_REASON, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner } from "../../modules/conversation/draft-proposal.js";
+import { proposeTargetingForOpportunity, type ProposedTargeting } from "../../modules/conversation/propose-targeting.js";
 import { autoApplyProactiveDraft, type DraftApplyOutcome } from "../../modules/apply/apply-draft.js";
 import { loadEnabledTools, enabledActionTypes } from "../../modules/tools/enabled.js";
 import {
@@ -121,6 +123,52 @@ import type { AccountAnalysisStateType, AccountAnalysisUpdate } from "./state.js
 
 /** Nº de dias sem análise que dispara um run DEEP (reanalisa tudo). */
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Piso de alcance mensal (Fatia 8) pra o AUTÔNOMO criar/replicar sozinho — abaixo disso a proposta
+ *  degrada pra recomendação humana em vez de criar. Fast-follow: tornar configurável por-agente. */
+const PROACTIVE_MIN_MONTHLY_REACH = 5000;
+
+/** Título da recomendação PROATIVA por tipo de oportunidade de criação (Fatia 8). */
+function creationRecTitle(kind: string): string {
+  switch (kind) {
+    case "remarketing":
+      return "Criar um remarketing";
+    case "replicate_winner":
+      return "Replicar seu vencedor pra um público novo";
+    case "prospecting_expansion":
+      return "Abrir uma nova prospecção";
+    case "cold_start":
+      return "Criar uma campanha inicial";
+    default:
+      return "Criar uma campanha nova";
+  }
+}
+
+/** Mapeia o público proposto pela LLM (por NOME) → args de create/copy (resolvidos determinístico
+ *  depois, autônomo-safe). Só inclui o que a LLM realmente propôs (campos vazios ficam de fora). */
+function proposalToCreationArgs(p: ProposedTargeting): {
+  geo?: readonly string[];
+  radiusKm?: number;
+  ageMin?: number;
+  ageMax?: number;
+  gender?: "all" | "men" | "women";
+  interests?: readonly string[];
+  behaviors?: readonly string[];
+  includeAudiences?: readonly string[];
+  excludeAudiences?: readonly string[];
+} {
+  return {
+    ...(p.geoNames.length > 0 ? { geo: p.geoNames } : {}),
+    ...(p.radiusKm != null ? { radiusKm: p.radiusKm } : {}),
+    ...(p.ageMin != null ? { ageMin: p.ageMin } : {}),
+    ...(p.ageMax != null ? { ageMax: p.ageMax } : {}),
+    ...(p.gender ? { gender: p.gender } : {}),
+    ...(p.interestNames.length > 0 ? { interests: p.interestNames } : {}),
+    ...(p.behaviorNames.length > 0 ? { behaviors: p.behaviorNames } : {}),
+    ...(p.includeAudienceNames.length > 0 ? { includeAudiences: p.includeAudienceNames } : {}),
+    ...(p.excludeAudienceNames.length > 0 ? { excludeAudiences: p.excludeAudienceNames } : {}),
+  };
+}
 
 const SEGMENT_LEVELS: readonly EntityLevel[] = ["campaign", "adset", "ad"];
 const ANALYSIS_TEMPERATURE = 0.2;
@@ -740,11 +788,37 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       // quando genuinamente indeterminável (sem budget em lugar nenhum); nesse caso um vencedor
       // provado ainda é proposto pro humano revisar (§8), mas o AUTO-apply exige `true` confirmado.
       ...(c.atBudgetCeiling !== undefined ? { atBudgetCeiling: c.atBudgetCeiling } : {}),
-      fatigued: (c.healthSignals ?? []).some((h) => h === "creative_fatigue" || h === "audience_saturation"),
+      // fadiga de CRIATIVO × saturação de PÚBLICO são sinais distintos (Fatia 8): a 1ª vira
+      // refresh_fatigued (só recomendação), a 2ª vira prospecting_expansion (público novo, acionável).
+      fatigued: (c.healthSignals ?? []).some((h) => h === "creative_fatigue"),
+      saturated: (c.healthSignals ?? []).some((h) => h === "audience_saturation"),
       spending: (c.metrics?.spend ?? 0) > 0,
     }));
     const hasActive = campaigns.some((c) => c.status === "active");
-    const top = detectCreationOpportunities({ hasActiveCampaigns: hasActive, entities })[0];
+
+    const dctx = {
+      orgId: state.orgId,
+      agentId: state.agentId,
+      adAccountId: state.adAccountId,
+      currency: state.brief.account?.currency ?? DEFAULT_CURRENCY,
+    };
+    // públicos salvos da conta (cache do run, DB-first) → habilita remarketing + alimenta a LLM.
+    // Best-effort: qualquer falha degrada (sem contexto/públicos) — nunca quebra o proativo.
+    let ac: Awaited<ReturnType<typeof loadAgentContext>> = null;
+    let savedAudienceNames: string[] = [];
+    let hasConverterAudience = false;
+    try {
+      ac = await loadAgentContext(deps, dctx);
+      if (ac) {
+        const saved = await loadAccountAudiences(deps, dctx, ac.ref);
+        savedAudienceNames = saved.map((a) => a.name);
+        hasConverterAudience = saved.some((a) => !a.isLookalike && isConverterAudienceName(a.name));
+      }
+    } catch (err) {
+      logger.debug({ runId: state.runId, err: String(err) }, "propose_drafts:contexto/audiences degradou");
+    }
+
+    const top = detectCreationOpportunities({ hasActiveCampaigns: hasActive, hasConverterAudience, entities })[0];
     if (!top) return {};
 
     // P1.1: `refresh_fatigued` vira SÓ recomendação (human_direction) — sem rascunho/approval/
@@ -764,51 +838,96 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       return {};
     }
 
-    const dctx = {
-      orgId: state.orgId,
-      agentId: state.agentId,
-      adAccountId: state.adAccountId,
-      currency: state.brief.account?.currency ?? DEFAULT_CURRENCY,
-    };
     try {
-      const proposal =
-        top.kind === "scale_winner"
-          ? await proposeScaleWinner(deps, dctx, top.entityName, "proactive")
-          : await proposeCreateCampaign(deps, dctx, {}, "proactive");
-
-      // 5.1: vencedor no teto sob CBO/ABO-pequeno → a decisão é SUBIR BUDGET (ação adjust_budget),
-      // não duplicar. Antes o proativo só seguia no ramo `draft` (duplicate) e IGNORAVA o `action`
-      // → o vencedor CBO no teto nunca era escalado sozinho. Agora cria a aprovação + a recomendação
-      // (HITL — o humano aprova; auto-apply da subida proativa = fast-follow).
-      if (top.kind === "scale_winner" && proposal.kind === "action") {
-        await deps.ports.approval.upsertPending({
-          orgId: state.orgId as OrgId,
-          agentId: state.agentId as AgentId,
-          runId: state.runId as RunId,
-          action: proposal.action,
-          expiresAt: new Date(Date.now() + APPROVAL_TTL_HOURS * 3_600_000),
-        });
+      // ── SCALE: escala o vencedor as-is (não usa LLM de público) ──────────────────────────────
+      if (top.kind === "scale_winner") {
+        const proposal = await proposeScaleWinner(deps, dctx, top.entityName, "proactive");
+        // vencedor no teto sob CBO/ABO-pequeno → a decisão é SUBIR BUDGET (adjust_budget), não duplicar.
+        if (proposal.kind === "action") {
+          await deps.ports.approval.upsertPending({
+            orgId: state.orgId as OrgId,
+            agentId: state.agentId as AgentId,
+            runId: state.runId as RunId,
+            action: proposal.action,
+            expiresAt: new Date(Date.now() + APPROVAL_TTL_HOURS * 3_600_000),
+          });
+          await deps.db.insert(recommendations).values({
+            orgId: state.orgId,
+            runId: state.runId,
+            title: "Escalar seu vencedor (subir orçamento)",
+            rationale: top.rationale,
+            kind: "platform_action",
+            toolKey: "adjust_budget",
+            riskLevel: "medium",
+          });
+          logger.info({ runId: state.runId }, "propose_drafts:scale_raise proposto");
+          return {};
+        }
+        if (proposal.kind !== "draft") return {};
         await deps.db.insert(recommendations).values({
           orgId: state.orgId,
           runId: state.runId,
-          title: "Escalar seu vencedor (subir orçamento)",
+          title: "Escalar seu vencedor",
           rationale: top.rationale,
           kind: "platform_action",
-          toolKey: "adjust_budget",
-          // alinha com o riskLevel da própria ação adjust_budget (medium) — subir orçamento é
-          // menos arriscado que duplicar (que cria campanha nova = high).
-          riskLevel: "medium",
+          toolKey: "duplicate_scale",
+          draftId: proposal.draftId,
+          riskLevel: "high",
         });
-        logger.info({ runId: state.runId }, "propose_drafts:scale_raise proposto");
+        logger.info({ runId: state.runId, kind: top.kind }, "propose_drafts:proposto");
+        if (state.autonomyPolicy?.byAction?.["duplicate_scale"] === "act_full") {
+          const outcome = await autoApplyProactiveDraft(deps, { orgId: state.orgId, draftId: proposal.draftId, approvalId: proposal.approvalId });
+          await pushCreationNudge(state, "duplicate_scale", top.rationale, outcome);
+          logger.info({ runId: state.runId, kind: top.kind, outcome: outcome.kind }, "propose_drafts:auto");
+        }
+        return {};
+      }
+
+      // ── CRIAÇÃO SEGMENTADA (Fatia 8): a LLM propõe o PÚBLICO por NOME (o QUÊ é determinístico, o
+      // COMO é a LLM); a resolução na casca descarta o inexistente (autônomo-safe) e o piso de
+      // alcance evita criar estreito sozinho (degrada pra recomendação humana). ────────────────
+      const proposedTargeting = ac
+        ? await proposeTargetingForOpportunity(deps.ports.llm, {
+            kind: top.kind,
+            rationale: top.rationale,
+            model: ac.model,
+            businessContext: ac.businessContext,
+            guidance: ac.guidance,
+            ...(state.goals?.conversionGoal ? { conversionGoal: state.goals.conversionGoal } : {}),
+            savedAudienceNames,
+            ...(top.entityId ? { winnerCampaignId: top.entityId } : {}),
+            meta: { orgId: state.orgId, adAccountId: state.adAccountId },
+          })
+        : null;
+      const args = proposedTargeting ? proposalToCreationArgs(proposedTargeting) : {};
+      const autoOpts = { autonomous: true, minMonthlyReach: PROACTIVE_MIN_MONTHLY_REACH };
+      // replicate_winner COPIA a estrutura do vencedor (sourceCampaignId determinístico) + público
+      // proposto; as demais (remarketing/prospecting/cold_start) criam do zero com o público proposto.
+      const proposal =
+        top.kind === "replicate_winner" && top.entityId
+          ? await proposeCopyCampaign(deps, dctx, { sourceCampaignId: top.entityId, ...(top.entityName ? { sourceName: top.entityName } : {}), ...args }, "proactive", autoOpts)
+          : await proposeCreateCampaign(deps, dctx, args, "proactive", autoOpts);
+
+      // piso de alcance batido → não cria sozinho; vira recomendação humana (revisar/afrouxar público).
+      if (proposal.kind === "blocked" && proposal.reason === PROACTIVE_REACH_FLOOR_REASON) {
+        await deps.db.insert(recommendations).values({
+          orgId: state.orgId,
+          runId: state.runId,
+          title: creationRecTitle(top.kind),
+          rationale: `${top.rationale} Mas o público ficou estreito demais pra eu criar sozinho — dá uma olhada e ajuste.`,
+          kind: "human_direction",
+          riskLevel: "low",
+        });
+        logger.info({ runId: state.runId, kind: top.kind }, "propose_drafts:reach_floor → recomendação");
         return {};
       }
       if (proposal.kind !== "draft") return {};
-      const toolKey = top.kind === "scale_winner" ? "duplicate_scale" : "create_campaign";
-      // recomendação ligada ao rascunho — renderiza na lista + reusa feedback/outcome.
+
+      const toolKey = "create_campaign";
       await deps.db.insert(recommendations).values({
         orgId: state.orgId,
         runId: state.runId,
-        title: top.kind === "scale_winner" ? "Escalar seu vencedor" : "Criar uma campanha nova",
+        title: creationRecTitle(top.kind),
         rationale: top.rationale,
         kind: "platform_action",
         toolKey,
@@ -817,16 +936,11 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       });
       logger.info({ runId: state.runId, kind: top.kind }, "propose_drafts:proposto");
 
-      // C: auto-criação PROATIVA. A autonomia da CRIAÇÃO (byAction[toolKey]) VENCE; fallback
-      // conservador = "sempre pede" (ausente → só a proposta acima). "age sozinho" → aplica JÁ,
-      // mas SEMPRE PAUSED (não veicula) + guardrail de gasto novo (rede) + nudge transparente.
+      // auto-criação PROATIVA (byAction[create_campaign] === act_full): aplica JÁ, mas SEMPRE PAUSED
+      // (não veicula) + guardrail de gasto novo + nudge transparente. Fallback = só a proposta acima.
       if (state.autonomyPolicy?.byAction?.[toolKey] === "act_full") {
-        const outcome = await autoApplyProactiveDraft(deps, {
-          orgId: state.orgId,
-          draftId: proposal.draftId,
-          approvalId: proposal.approvalId,
-        });
-        await pushCreationNudge(state, toolKey, top.rationale, outcome);
+        const outcome = await autoApplyProactiveDraft(deps, { orgId: state.orgId, draftId: proposal.draftId, approvalId: proposal.approvalId });
+        await pushCreationNudge(state, "create_campaign", top.rationale, outcome);
         logger.info({ runId: state.runId, kind: top.kind, outcome: outcome.kind }, "propose_drafts:auto");
       }
     } catch (err) {

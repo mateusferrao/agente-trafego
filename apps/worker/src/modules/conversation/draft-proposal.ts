@@ -237,7 +237,7 @@ function unsupportedFormatPt(f: "carousel" | "catalog" | "other"): string {
   return f === "carousel" ? "carrossel" : f === "catalog" ? "anúncio de catálogo" : "formato que ainda não sei clonar";
 }
 
-async function loadAgentContext(deps: WorkerDeps, ctx: DraftProposalContext): Promise<AgentContext | null> {
+export async function loadAgentContext(deps: WorkerDeps, ctx: DraftProposalContext): Promise<AgentContext | null> {
   const repo = createAnalysisRepo(deps.db);
   const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
   if (!account) return null;
@@ -318,7 +318,7 @@ async function persistDraftAndApproval(
 const MIN_DELIVERABLE_AUDIENCE = 1000;
 
 /** Públicos da conta — DB-first (cache do run), Meta ao vivo no fallback (+ re-cacheia). */
-async function loadAccountAudiences(deps: WorkerDeps, ctx: DraftProposalContext, ref: AdAccountRef): Promise<CustomAudience[]> {
+export async function loadAccountAudiences(deps: WorkerDeps, ctx: DraftProposalContext, ref: AdAccountRef): Promise<CustomAudience[]> {
   const rows = await deps.db
     .select({ id: customAudiences.externalId, name: customAudiences.name, subtype: customAudiences.subtype, approximateCount: customAudiences.approximateCount, isLookalike: customAudiences.isLookalike })
     .from(customAudiences)
@@ -572,6 +572,33 @@ async function reachNoteFor(
     return describeDeliveryEstimate(estimate);
   } catch {
     return null; // estimativa é enriquecimento, nunca bloqueia a proposta
+  }
+}
+
+/** Motivo do bloqueio quando o público autônomo fica abaixo do piso de alcance (Fatia 8) — o nó
+ *  de proativo reconhece este sentinel e degrada pra recomendação humana em vez de criar. */
+export const PROACTIVE_REACH_FLOOR_REASON = "público estreito demais para veicular sozinho";
+
+/**
+ * Piso de alcance (só autônomo): a faixa MENSAL estimada está abaixo do mínimo? Best-effort —
+ * estimativa não-pronta/indisponível → `false` (não bloqueia: não inventa risco onde não há dado).
+ */
+async function reachBelowFloor(
+  deps: WorkerDeps,
+  ref: AdAccountRef,
+  targeting: TargetingSpec,
+  goal: ConversionGoal,
+  minMonthlyReach: number,
+  pixelId?: string,
+): Promise<boolean> {
+  try {
+    const estimate = await withTimeout(
+      deps.ports.ads.getDeliveryEstimate(ref, { targeting, goal, ...(pixelId ? { pixelId } : {}) }),
+      deps.conversation.liveFetchTimeoutMs,
+    );
+    return estimate.ready && estimate.monthlyReachMax != null && estimate.monthlyReachMax < minMonthlyReach;
+  } catch {
+    return false;
   }
 }
 
@@ -1284,7 +1311,7 @@ export async function proposeCreateCampaign(
     readonly addressAreas?: readonly AddressArea[];
   },
   origin: DraftOrigin = "on_demand",
-  opts: { readonly autonomous?: boolean } = {},
+  opts: { readonly autonomous?: boolean; readonly minMonthlyReach?: number } = {},
 ): Promise<ChatDraftProposal> {
   const ac = await loadAgentContext(deps, ctx);
   if (!ac) return { kind: "blocked", reason: "não consegui acessar a conta agora" };
@@ -1442,6 +1469,11 @@ export async function proposeCreateCampaign(
     ...(defaults.pixelId ? { pixelId: defaults.pixelId } : {}),
     ...(defaults.linkUrl ? { linkUrl: defaults.linkUrl } : {}),
   };
+  // Piso de alcance (Fatia 8): no AUTÔNOMO, não cria (nem propõe) público estreito demais — degrada
+  // honesto pra revisão humana. Best-effort: estimativa indisponível NÃO bloqueia (não inventa risco).
+  if (auto && opts.minMonthlyReach != null && (await reachBelowFloor(deps, ac.ref, targeting, goal, opts.minMonthlyReach, defaults.pixelId))) {
+    return { kind: "blocked", reason: PROACTIVE_REACH_FLOOR_REASON };
+  }
   const { draftId, approvalId } = await persistDraftAndApproval(deps, ctx, "from_scratch", spec, origin);
   // eco honesto sobre a FONTE do criativo (veiculando/provado × biblioteca) e do PÚBLICO
   // (herdado de um adset provado × amplo/Advantage+ no cold-start).
@@ -1585,7 +1617,7 @@ export async function proposeCopyCampaign(
     readonly addressAreas?: readonly AddressArea[];
   },
   origin: DraftOrigin = "on_demand",
-  opts: { readonly autonomous?: boolean } = {},
+  opts: { readonly autonomous?: boolean; readonly minMonthlyReach?: number } = {},
 ): Promise<ChatDraftProposal> {
   const ac = await loadAgentContext(deps, ctx);
   if (!ac) return { kind: "blocked", reason: "não consegui acessar a conta agora" };
@@ -1689,6 +1721,10 @@ export async function proposeCopyCampaign(
     ...(structure.pixelId ? { pixelId: structure.pixelId } : {}),
     name,
   };
+  // Piso de alcance (Fatia 8) — igual ao create: autônomo não replica pra público estreito demais.
+  if (auto && opts.minMonthlyReach != null && (await reachBelowFloor(deps, ac.ref, targeting, goal, opts.minMonthlyReach, structure.pixelId))) {
+    return { kind: "blocked", reason: PROACTIVE_REACH_FLOOR_REASON };
+  }
   const { draftId, approvalId } = await persistDraftAndApproval(deps, ctx, "from_scratch", spec, origin, {
     level: "campaign",
     id: args.sourceCampaignId,

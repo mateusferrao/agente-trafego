@@ -524,7 +524,10 @@ describe("account-analysis read-only nodes", () => {
       expect(debug).toHaveBeenCalledWith(expect.anything(), "propose_drafts:pulado");
     });
 
-    it("P1.2: vencedor com FOLGA de budget CONFIRMADA (atBudgetCeiling=false) → nem gera a oportunidade, não tenta escalar", async () => {
+    it("vencedor com FOLGA de budget (atBudgetCeiling=false) → replicate_winner (Fatia 8): tenta replicar pra público novo, não escala budget", async () => {
+      // Slice 1 (Fatia 8): antes folga confirmada = nenhuma oportunidade; AGORA vira replicate_winner
+      // (replicar a oferta provada pra um público novo). O nó entra na criação segmentada (proposeCopy);
+      // com o harness mínimo isso degrada best-effort ("pulado") em vez de virar scale-raise.
       const h = makeHarness();
       const repos = (h.deps as unknown as { _repos: Parameters<typeof makeAccountAnalysisNodes>[1] })._repos;
       const n = makeAccountAnalysisNodes(h.deps, repos);
@@ -537,15 +540,16 @@ describe("account-analysis read-only nodes", () => {
         eligibility: { hasSignificance: true },
         healthSignals: [],
         metrics: { spend: 100 },
-        atBudgetCeiling: false, // sinal REAL confirmado (P1.2) — folga de orçamento
+        atBudgetCeiling: false, // folga de orçamento confirmada → replicar, não subir budget
       });
 
       await n.proposeDrafts(state);
 
-      expect(h.insertedRecommendations).toHaveLength(0);
-      // NÃO tentou escalar (early-return por falta de oportunidade — nem chega no try/catch).
+      // NÃO gerou a ação de subir orçamento (adjust_budget) — folga não escala budget.
+      expect(h.insertedRecommendations.some((r) => r["toolKey"] === "adjust_budget")).toBe(false);
+      // entrou na tentativa de criação segmentada (replicate) — degrada best-effort no harness mínimo.
       const debug = (h.deps as unknown as { logger: { debug: ReturnType<typeof vi.fn> } }).logger.debug;
-      expect(debug).not.toHaveBeenCalledWith(expect.anything(), "propose_drafts:pulado");
+      expect(debug).toHaveBeenCalledWith(expect.anything(), "propose_drafts:pulado");
     });
   });
 });
