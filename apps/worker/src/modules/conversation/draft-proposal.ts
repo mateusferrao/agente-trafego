@@ -1215,7 +1215,11 @@ async function buildCreativePool(
   const pool: DescribedCandidate[] = [];
   if (strategy.mode !== "library") pool.push(...(await describeServingCandidates(deps, orgId, accountId, ref)));
   if (strategy.mode !== "serving" || pool.length === 0) pool.push(...(await describeLibraryCandidates(deps, orgId, accountId)));
-  return pool;
+  // ENTREGÁVEL: um anúncio de VÍDEO exige capa (image_hash) no video_data — e ler o thumbnail do
+  // vídeo pode falhar com o token (#10). Sem capa conhecida, o anúncio extra falharia no apply; então
+  // o agente só ADICIONA extras que sabe montar: imagem sempre, vídeo só com capa. (O criativo
+  // principal vem de chooseCreative, cuja capa é resolvida ao vivo em inferCreationDefaults.)
+  return pool.filter((c) => !c.ref.videoId || Boolean(c.ref.imageHash));
 }
 
 /**
