@@ -14,10 +14,16 @@ interface CopyForm {
   headline: string;
   primaryText: string;
   description: string;
+  /** troca de criativo PRÓPRIO deste anúncio, pendente até Salvar (Fatia 7). `undefined` = mantém. */
+  creativeChoice?: SetDraftCreativeInput;
 }
 
 /** Um item de copy do rascunho (elemento do array de saída). */
 type DraftCopy = NonNullable<DraftApprovalOutput['copyVariants']>[number];
+
+/** Teto de anúncios por rascunho — espelha MAX_ADS_PER_DRAFT de @trafego/shared (backend é a
+ *  fonte da verdade; aqui só desabilita o "adicionar" na UI). */
+const MAX_ADS = 10;
 
 /** Público explícito VAZIO — semente do modo `custom` quando não há nada legível a herdar. */
 const EMPTY_AUDIENCE_STATE: ExplicitAudienceState = {
@@ -141,10 +147,11 @@ const EMPTY_AUDIENCE_STATE: ExplicitAudienceState = {
         </div>
       }
 
-      <!-- Criativo (troca imediata — biblioteca × anúncio ao vivo; só criação) -->
+      <!-- Criativo PADRÃO do rascunho (troca imediata — biblioteca × anúncio ao vivo; só criação).
+           Usado pelos anúncios sem criativo próprio. -->
       @if (!isScale()) {
         <div class="flex flex-col gap-2">
-          <span class="text-xs font-medium text-ink">Criativo</span>
+          <span class="text-xs font-medium text-ink">Criativo padrão</span>
           <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <span class="text-sm text-ink"><span class="text-muted">Atual: </span>{{ creativeLabel() }}</span>
             <button
@@ -170,7 +177,7 @@ const EMPTY_AUDIENCE_STATE: ExplicitAudienceState = {
         </div>
       }
 
-      <!-- Copy por anúncio (só criação) -->
+      <!-- Anúncios (só criação): copy + criativo POR ANÚNCIO + adicionar/remover. -->
       @if (!isScale() && copies().length > 0) {
         <div class="flex flex-col gap-3">
           <span class="text-xs font-medium text-ink">Anúncios</span>
@@ -191,8 +198,26 @@ const EMPTY_AUDIENCE_STATE: ExplicitAudienceState = {
               <input appInput class="w-full" [(ngModel)]="c.headline" placeholder="Título" />
               <textarea [class]="fieldClasses" rows="2" [(ngModel)]="c.primaryText" placeholder="Texto principal"></textarea>
               <input appInput class="w-full" [(ngModel)]="c.description" placeholder="Descrição (opcional)" />
+              <!-- criativo POR ANÚNCIO: próprio × padrão do rascunho; troca pendente até Salvar. -->
+              <div class="flex flex-col gap-2 border-t border-line pt-2 sm:flex-row sm:items-center sm:justify-between">
+                <span class="text-xs text-ink"><span class="text-muted">Criativo: </span>{{ adCreativeLabel($index) }}</span>
+                <button appButton variant="ghost" size="sm" type="button" class="shrink-0 self-start sm:self-auto" [disabled]="saving()" (click)="toggleAdPicker($index)">
+                  {{ pickingAdIndex() === $index ? 'Cancelar troca' : 'Trocar criativo deste anúncio' }}
+                </button>
+              </div>
+              @if (pickingAdIndex() === $index) {
+                <app-creative-picker
+                  [accountId]="draft().accountId"
+                  [picking]="false"
+                  (pick)="onPickAd($index, $event)"
+                  (cancel)="pickingAdIndex.set(null)"
+                />
+              }
             </div>
           }
+          <button appButton variant="secondary" size="sm" type="button" class="self-start" [disabled]="saving() || copies().length >= MAX_ADS" (click)="addAd()">
+            + Adicionar anúncio
+          </button>
         </div>
       }
 
@@ -238,15 +263,26 @@ export class DraftEditPanel implements OnInit {
   /** picker de criativo aberto dentro do painel + troca em voo. */
   protected readonly showPicker = signal(false);
   protected readonly picking = signal(false);
+  /** índice do anúncio cujo picker de criativo está aberto (null = nenhum). */
+  protected readonly pickingAdIndex = signal<number | null>(null);
+  /** teto de anúncios (exposto ao template). */
+  protected readonly MAX_ADS = MAX_ADS;
 
   protected readonly isScale = computed(() => this.draft().kind === 'duplicate');
-  /** rótulo do criativo atual (formato + origem) — sem jargão, sem id técnico. */
-  protected readonly creativeLabel = computed(() => {
-    const cr = this.draft().creative;
+  /** rótulo do criativo PADRÃO do rascunho (formato + origem) — sem jargão, sem id técnico. */
+  protected readonly creativeLabel = computed(() => this.formatCreative(this.draft().creative));
+  /** formata um criativo (formato + origem) em linguagem de gente; `null` → sem criativo. */
+  private formatCreative(cr: { format: 'image' | 'video'; origin: 'reuse' | 'upload' } | null | undefined): string {
     if (!cr) return 'nenhum criativo escolhido';
     const fmt = cr.format === 'video' ? 'vídeo' : 'imagem';
     return `${fmt} · ${cr.origin === 'reuse' ? 'reusado de um anúncio da conta' : 'da sua biblioteca'}`;
-  });
+  }
+  /** rótulo do criativo de UM anúncio: troca pendente > próprio salvo > "usa o criativo padrão". */
+  protected adCreativeLabel(index: number): string {
+    if (this.copies()[index]?.creativeChoice) return 'novo criativo escolhido (salve pra aplicar)';
+    const own = this.draft().copyVariants?.[index]?.creative;
+    return own ? `próprio — ${this.formatCreative(own)}` : 'usa o criativo padrão';
+  }
   /** nome legível do vencedor (pro preview do sufixo na escala). */
   protected readonly sourceLabel = computed(() => this.draft().sourceName ?? 'vencedor');
   /** placeholder do nome derivado (o que o agente usa se você deixar em branco). */
@@ -356,6 +392,23 @@ export class DraftEditPanel implements OnInit {
     this.persist({ removeAdIndex: index }, 'Anúncio removido.');
   }
 
+  /** Adiciona um anúncio DUPLICANDO o último — ação imediata (o backend duplica copy + criativo). */
+  protected addAd(): void {
+    if (this.copies().length >= MAX_ADS) return;
+    this.persist({ addAd: true }, 'Anúncio adicionado.');
+  }
+
+  /** Abre/fecha o picker de criativo de UM anúncio. */
+  protected toggleAdPicker(index: number): void {
+    this.pickingAdIndex.update((cur) => (cur === index ? null : index));
+  }
+
+  /** Escolhe o criativo de UM anúncio (pendente até Salvar — vai no `copyEdits[index].creative`). */
+  protected onPickAd(index: number, choice: SetDraftCreativeInput): void {
+    this.copies.update((list) => list.map((c, i) => (i === index ? { ...c, creativeChoice: choice } : c)));
+    this.pickingAdIndex.set(null);
+  }
+
   /** Salva os campos alterados (diff contra o rascunho original) num único PATCH. */
   protected save(): void {
     const patch = this.buildPatch();
@@ -446,6 +499,8 @@ export class DraftEditPanel implements OnInit {
     if (primaryText && primaryText !== original.primaryText) { edit['primaryText'] = primaryText; changed = true; }
     const description = this.trimmed(c.description);
     if (description !== (original.description ?? '')) { edit['description'] = description; changed = true; }
+    // troca de criativo próprio deste anúncio (pendente) → vai no PATCH; o backend resolve→CreativeAssetRef.
+    if (c.creativeChoice) { edit['creative'] = c.creativeChoice; changed = true; }
     return changed ? edit : null;
   }
 
