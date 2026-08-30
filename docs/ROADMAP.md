@@ -894,6 +894,26 @@ oficial + **spike read-only/validate_only confirmado contra a BM Automato real**
 - ~~Exclusão de interesse/behavior~~ — **removida pela Meta** (subcode 3858492); não é fast-follow, é
   indisponível na plataforma. Só exclusão de público salvo.
 
+**Fast-follows — anúncios múltiplos + criativo por anúncio (Fatia 7, entregue):**
+- **Criativo pelo chat.** Edição de criativo é **100% site** por decisão de produto — o chat não escolhe
+  nem edita criativo (nunca teve seletor). Um seletor de criativo no chat (draft-level e por-anúncio) =
+  fast-follow (precisa de UX de listagem/escolha de criativo por texto no WhatsApp).
+- **Miniatura por anúncio no site.** O card mostra rótulo do criativo por anúncio (próprio × padrão); a
+  miniatura (thumb) segue sendo a do criativo PADRÃO do rascunho. Thumb por índice de anúncio = fast-follow
+  (rota de thumb com `adIndex`).
+- **Ranqueamento dos criativos extras (multi-criativo do agente).** O principal vem de `chooseCreative`
+  (desempenho/LLM); os DISTINTOS adicionais entram por ordem do pool (veiculando primeiro). Ranquear/
+  selecionar os extras por LLM/desempenho = fast-follow. `AGENT_MAX_CREATIVE_ADS` e `MAX_ADS_PER_DRAFT`
+  são const — torná-los configuráveis por-agente = fast-follow.
+
+**Fast-follows — recomendação proativa de criação segmentada (análise → cria/replica com público):**
+- **Enriquecer a proposta de público com o público do vencedor.** `proposeTargetingForOpportunity` hoje
+  não recebe `winnerAudience` (o adset do vencedor exigiria `getAudienceProfile`); a LLM propõe do
+  contexto (negócio/orientações/goal + públicos salvos). Passar o retrato do vencedor = fast-follow.
+- **Piso de alcance configurável.** `PROACTIVE_MIN_MONTHLY_REACH` é const; por-agente = fast-follow.
+- **Multi-criativo também na cópia fiel (`copy`/creativeRefs).** Hoje o multi-criativo do agente é só
+  `from_scratch`; na cópia fiel do vencedor (reusa criativos por referência) = fast-follow.
+
 ## Fatia 8 — Orquestração multi-agente / qualidade (roadmap pós-MVP)
 
 **Visão:** elevar a qualidade e a escala da análise com **mais papéis de agente** e **map-reduce por entidade** — sem reescrever o grafo. **Depende:** MVP validado (hipótese confirmada na 3a) + `5a` (write path, p/ o validador de segurança de ação). A costura já existe desde a 3a-2: o par **Analista→Revisor** é modelado como uma **lista de passes** (`reviewPasses`, default 1) — crescer = **registrar mais passes/papéis**, não reescrever nós.
