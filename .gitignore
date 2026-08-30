@@ -25,3 +25,6 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# git worktrees usados por subagentes (tooling local, efêmero)
+.claude/worktrees/
