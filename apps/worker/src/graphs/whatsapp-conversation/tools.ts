@@ -298,6 +298,7 @@ export function makeConversationTools(
       behaviors: z.array(z.string()).nullable().optional().describe("comportamentos pelo NOME (ex: 'compradores online', 'viajantes frequentes') — eu resolvo no catálogo da Meta e pergunto se ambíguo. Diferente de interesse (é ação/hábito, não afinidade)."),
       radiusKm: z.number().positive().nullable().optional().describe("raio em KM em torno das CIDADES indicadas em geo (ex: 'raio de 20 km de BH'). Clampo pro limite da Meta (17–80 km)."),
       addressAreas: z.array(z.object({ address: z.string(), radiusKm: z.number().positive() })).nullable().optional().describe("raio em torno de ENDEREÇOS de rua (ex: '5 km da Av. Afonso Pena 1500'). A Meta geocodifica; clampo 1–80 km."),
+      adCount: z.number().int().positive().nullable().optional().describe("nº de ANÚNCIOS a criar (ex: 'cria 5 anúncios', estrutura '1-1-5' = 5 anúncios). EU escolho os N criativos pela estratégia do agente (melhor veiculando / biblioteca / a LLM escolhe) — o usuário NÃO escolhe/edita criativo pelo chat (isso é no site). Sem isso = 1 criativo + variações de copy. Teto 10."),
     }),
   });
 
@@ -323,6 +324,7 @@ export function makeConversationTools(
       addressAreas: z.array(z.object({ address: z.string(), radiusKm: z.number().positive() })).nullable().optional().describe("raio em torno de endereços de rua (Meta geocodifica; clampo 1–80 km)"),
       budgetReais: z.number().positive().nullable().optional().describe("budget diário em reais (opcional; default = o da original)"),
       goal: z.string().nullable().optional().describe("objetivo — só se quiser MUDAR (o agente vai avisar que troca o mecanismo)"),
+      adCount: z.number().int().positive().nullable().optional().describe("nº de ANÚNCIOS a reusar da base (a cópia reusa os anúncios originais; isto RECORTA quantos — não inventa criativo novo). Sem isso = todos os anúncios da base. Pra somar MAIS que a base tem, é criar do zero."),
     }),
   });
 
@@ -760,12 +762,12 @@ export async function buildCapabilitiesText(
   if (canScale || canCreate) {
     const abilities = [
       ...(canScale ? ["escalar seu vencedor (mais budget ou duplicar)"] : []),
-      ...(canCreate ? ["criar campanhas novas reusando seu criativo + copy que eu gero"] : []),
+      ...(canCreate ? ["criar campanhas novas reusando seu criativo + copy que eu gero (e você escolhe quantos anúncios — eu monto com criativos diferentes quando você tem)"] : []),
       // copy_campaign ri no mesmo gate de create_campaign (turn.ts).
       ...(canCreate ? ["copiar a estrutura de uma campanha sua pra outra (ex: remarketing), reusando os criativos e trocando só o público"] : []),
     ];
     parts.push(
-      `🚀 Também ${abilities.join(" e ")}. Depois de eu propor, você ajusta por aqui o que é leve (budget, ativar/pausar, nº de variações, público, nome, regerar a copy) — crio/escalo/copio sempre PAUSADO (a Meta revisa antes) e só ATIVO de verdade com um 2º OK seu, separado. Pra TROCAR o criativo ou editar o TEXTO da copy, é no painel "Editar" do rascunho no site (te passo o link).`,
+      `🚀 Também ${abilities.join(" e ")}. Depois de eu propor, você ajusta por aqui o que é leve (budget, ativar/pausar, nº de anúncios, público, nome, regerar a copy) — crio/escalo/copio sempre PAUSADO (a Meta revisa antes) e só ATIVO de verdade com um 2º OK seu, separado. Pra ESCOLHER/TROCAR qual criativo em cada anúncio ou editar o TEXTO da copy, é no painel "Editar" do rascunho no site (te passo o link).`,
     );
     if (canCreate) {
       parts.push("🔢 Números que eu uso vêm sempre da conta/ferramenta — número de WhatsApp de destino eu confirmo pela campanha certa (nunca de outra), e público eu pego dos públicos reais da sua conta (não invento). Quando você escolhe um público, eu ainda te digo o alcance estimado dele (pra você saber se entrega bem).");

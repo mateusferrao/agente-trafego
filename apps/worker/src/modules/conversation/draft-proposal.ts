@@ -30,7 +30,8 @@ import {
   type ResolvedAudienceSnapshot,
   type TargetingSpec,
 } from "@trafego/shared";
-import type { AdAccountRef } from "@trafego/shared/ports";
+import type { AdAccountRef, DraftApproval } from "@trafego/shared/ports";
+import type { DraftKind } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
 import { createAnalysisRepo } from "../analysis/repo.js";
 import { loadEnabledTools } from "../tools/enabled.js";
@@ -812,6 +813,48 @@ export function buildRefineEcho(kind: string, spec: CampaignDraftSpec): string {
   return joinBalloons(lines);
 }
 
+/** Rascunho aberto recuperado do BANCO (fonte da verdade) quando o estado efêmero da conversa
+ *  expirou — o suficiente pra refinar (draftId), aplicar/recusar (approvalId) e re-ecoar (kind+spec). */
+export interface RecoveredDraft {
+  readonly draftId: string;
+  readonly approvalId: string;
+  readonly kind: DraftKind;
+  readonly spec: CampaignDraftSpec;
+}
+
+/**
+ * Recupera o rascunho de campanha AINDA ABERTO (`proposed`) do banco quando o `pendingDraft` do
+ * estado da conversa expirou (TTL 30min) — a fonte da verdade das pendências é a tabela (§ Regras de
+ * negócio, igual às approvals). Junta a aprovação de rascunho PENDENTE (id p/ aplicar/recusar) com o
+ * `campaign_drafts` mais recente. Sem pendência aberta → null. Org + conta-scoped.
+ */
+export async function recoverOpenDraft(deps: WorkerDeps, ctx: DraftProposalContext): Promise<RecoveredDraft | null> {
+  const pending = (await deps.ports.approval.listPendingByAgent(ctx.agentId as AgentId)).filter(
+    (a): a is DraftApproval => a.kind === "draft",
+  );
+  if (pending.length === 0) return null;
+  const [row] = await deps.db
+    .select({ id: campaignDrafts.id, kind: campaignDrafts.kind, spec: campaignDrafts.spec })
+    .from(campaignDrafts)
+    .where(
+      and(
+        inArray(
+          campaignDrafts.id,
+          pending.map((a) => a.draftId),
+        ),
+        eq(campaignDrafts.orgId, ctx.orgId),
+        eq(campaignDrafts.adAccountId, ctx.adAccountId),
+        eq(campaignDrafts.status, "proposed"),
+      ),
+    )
+    .orderBy(desc(campaignDrafts.createdAt))
+    .limit(1);
+  if (!row) return null;
+  const appr = pending.find((a) => a.draftId === row.id);
+  if (!appr) return null;
+  return { draftId: row.id, approvalId: appr.id, kind: row.kind, spec: row.spec as CampaignDraftSpec };
+}
+
 export interface RefineDraftPatch {
   readonly budgetReais?: number;
   readonly activation?: "active" | "paused";
@@ -916,7 +959,20 @@ export async function refineDraft(
       { orgId: ctx.orgId, adAccountId: ctx.adAccountId },
     );
   } else if (kind === "from_scratch" && patch.variantsCount != null && patch.variantsCount !== currentVariants.length) {
-    edit.copyVariants = adjustAdCount(currentVariants, patch.variantsCount);
+    // muda SÓ o nº: preserva os existentes (adjustAdCount). AUMENTAR ("quero 5 criativos diferentes")
+    // tenta dar criativos DISTINTOS aos novos slots pela MESMA estratégia do create (o chat não edita
+    // criativo por-anúncio, mas escolhe quantos + a estratégia decide quais); pool insuficiente →
+    // entrega N mesmo assim (repete o melhor) + nota honesta. Diminuir = só corta.
+    let variants = adjustAdCount(currentVariants, patch.variantsCount);
+    if (variants.length > currentVariants.length && spec.creative) {
+      const primary = chosenFromRef(spec.creative);
+      const pool = await buildCreativePool(deps, ctx.orgId, ctx.adAccountId, ac.ref, ac.creativeSource);
+      const distinct = [primary, ...distinctExtras(pool.map((c) => c.ref), primary, variants.length - 1)];
+      variants = assignCreativesToVariants(variants, distinct);
+      const note = fewCreativesNote(variants.length, distinct.length);
+      if (note) refineNotes.push(note);
+    }
+    edit.copyVariants = variants;
   }
 
   // público (só from_scratch): thunk lazy (broad/keep não tocam a conta). O reuse SEMPRE nasce com
@@ -1192,6 +1248,17 @@ export function distinctExtras(candidates: readonly ChosenCreative[], primary: C
   return out;
 }
 
+/** CreativeAssetRef (do spec) → ChosenCreative (pra semear o pool de distintos no refino de contagem). */
+function chosenFromRef(ref: CreativeAssetRef): ChosenCreative {
+  return {
+    assetId: ref.assetId,
+    origin: ref.origin,
+    source: ref.origin === "reuse" ? "serving" : "library",
+    ...(ref.metaImageHash ? { imageHash: ref.metaImageHash } : {}),
+    ...(ref.metaVideoId ? { videoId: ref.metaVideoId } : {}),
+  };
+}
+
 /** ChosenCreative → CreativeAssetRef (criativo próprio de um anúncio no spec). */
 export function creativeRefOf(c: ChosenCreative): CreativeAssetRef {
   return {
@@ -1201,6 +1268,39 @@ export function creativeRefOf(c: ChosenCreative): CreativeAssetRef {
     ...(c.imageHash ? { metaImageHash: c.imageHash } : {}),
     ...(c.videoId ? { metaVideoId: c.videoId } : {}),
   };
+}
+
+/**
+ * Monta as variações de copy com criativos DISTINTOS 1:1 (multi-criativo) — cada anúncio ganha o
+ * SEU criativo enquanto houver distinto; os slots ALÉM dos distintos ficam sem `creative` próprio e
+ * herdam o `creative` padrão do spec (o melhor) no apply. Com <2 criativos distintos, nenhum ganha
+ * ref própria (todos usam o padrão). PURO. (§13 DRY — mesma regra no create e no refino de contagem.)
+ */
+export function assignCreativesToVariants(
+  baseCopy: readonly CopyVariant[],
+  creatives: readonly ChosenCreative[],
+): CopyVariant[] {
+  if (creatives.length < 2) return [...baseCopy];
+  return baseCopy.map((cv, i) => (creatives[i] ? { ...cv, creative: creativeRefOf(creatives[i]!) } : cv));
+}
+
+/**
+ * Nota HONESTA (§8) quando o dono pediu N anúncios mas a conta só tem `distinctCount` criativos
+ * distintos reusáveis — os extras repetem o melhor com variação de copy. `null` = pedido cabe (ou
+ * nenhuma contagem pedida). PURO.
+ */
+export function fewCreativesNote(requestedAdCount: number | undefined, distinctCount: number): string | null {
+  if (requestedAdCount == null || distinctCount >= requestedAdCount) return null;
+  const rest = requestedAdCount - distinctCount;
+  const s = distinctCount > 1 ? "s" : "";
+  const restWord = rest > 1 ? `os outros ${rest}` : "o outro";
+  return `Você pediu ${requestedAdCount} anúncios, mas só achei ${distinctCount} criativo${s} distinto${s} pra reusar — ${restWord} repete${rest > 1 ? "m" : ""} o melhor (com variação de copy). Você troca cada um no site.`;
+}
+
+/** Contagem de anúncios pedida pelo dono, normalizada ao intervalo válido (1..MAX_ADS_PER_DRAFT). PURO. */
+export function normalizeAdCount(adCount: number | undefined): number | undefined {
+  if (adCount == null || !Number.isFinite(adCount)) return undefined;
+  return Math.max(1, Math.min(Math.round(adCount), MAX_ADS_PER_DRAFT));
 }
 
 /** Pool de candidatos (veiculando + biblioteca) conforme a ESTRATÉGIA do agente — mesma fonte de
@@ -1404,6 +1504,9 @@ export async function proposeCreateCampaign(
     readonly radiusKm?: number;
     /** raio em torno de ENDEREÇOS de rua (Slice 5) — a Meta geocodifica; clampado 1–80 km. */
     readonly addressAreas?: readonly AddressArea[];
+    /** nº de ANÚNCIOS pedido pelo dono (chat/site) — o agente escolhe N criativos distintos pela
+     *  estratégia; extras (sem distinto) repetem o melhor. Clampado 1..MAX_ADS_PER_DRAFT. */
+    readonly adCount?: number;
   },
   origin: DraftOrigin = "on_demand",
   opts: { readonly autonomous?: boolean; readonly minMonthlyReach?: number; readonly requireResolvedAudience?: boolean } = {},
@@ -1495,15 +1598,19 @@ export async function proposeCreateCampaign(
   // o eco/card mostram "pediu X, virou Y" (mesmo helper/campo do escalar).
   const { dailyBudgetMinor, clampedByCap } = clampNewBudget(requested, ac.cfg.maxNewDailyBudgetMinor);
 
-  // Multi-criativo (Fatia 7): o agente monta N anúncios com criativos DISTINTOS quando os tem (mesma
-  // estratégia — números ao vivo + visão), 1 por criativo; senão, 1 criativo + variações de copy
-  // (padrão). Criativo forçado (WhatsApp) = anúncio único. O dono ajusta tudo depois pelo site.
+  // Multi-criativo (Fatia 7 + adCount): o agente monta N anúncios com criativos DISTINTOS quando os
+  // tem (mesma estratégia — números ao vivo + visão), 1 por criativo; senão, 1 criativo + variações
+  // de copy. Criativo forçado (WhatsApp) = anúncio único. O dono AJUSTA o nº pelo chat (adCount) ou
+  // pelo site. Sem adCount: default conservador (AGENT_MAX_CREATIVE_ADS). Com adCount: honra até o teto
+  // (MAX_ADS_PER_DRAFT); se faltar criativo distinto, entrega N mesmo assim (extras repetem o melhor,
+  // com nota honesta). O dono troca cada criativo depois pelo site.
+  const requestedAdCount = args.forcedCreativeAssetId ? undefined : normalizeAdCount(args.adCount);
+  const maxAds = requestedAdCount ?? AGENT_MAX_CREATIVE_ADS;
   const extraCreatives = args.forcedCreativeAssetId
     ? []
-    : await chooseAdditionalCreatives(deps, ctx.orgId, ctx.adAccountId, ac.ref, ac.creativeSource, chosen, AGENT_MAX_CREATIVE_ADS - 1);
+    : await chooseAdditionalCreatives(deps, ctx.orgId, ctx.adAccountId, ac.ref, ac.creativeSource, chosen, maxAds - 1);
   const allCreatives: ChosenCreative[] = [chosen, ...extraCreatives];
-  const multiCreative = allCreatives.length >= 2;
-  const targetVariants = multiCreative ? allCreatives.length : DEFAULT_VARIANTS;
+  const targetVariants = requestedAdCount ?? (allCreatives.length >= 2 ? allCreatives.length : DEFAULT_VARIANTS);
 
   const baseCopy: CopyVariant[] = await generateCopy(
     deps.ports.llm,
@@ -1518,10 +1625,9 @@ export async function proposeCreateCampaign(
     },
     { orgId: ctx.orgId, adAccountId: ctx.adAccountId },
   );
-  // multi-criativo → cada anúncio ganha SEU criativo (1:1 com a copy); senão todos usam o padrão.
-  const copyVariants: CopyVariant[] = multiCreative
-    ? baseCopy.map((cv, i) => (allCreatives[i] ? { ...cv, creative: creativeRefOf(allCreatives[i]!) } : cv))
-    : baseCopy;
+  // multi-criativo → cada anúncio ganha SEU criativo (1:1 com a copy); slots além dos distintos
+  // herdam o criativo padrão (o melhor). Fonte única da regra (§13): `assignCreativesToVariants`.
+  const copyVariants: CopyVariant[] = assignCreativesToVariants(baseCopy, allCreatives);
   // RECONCILIA: generateCopy pode devolver MENOS que o pedido (filter/slice) → o nº real é o do
   // array (evita spec.variantsCount ≠ copyVariants.length + eco prometendo variações que não existem).
   const variantsCount = copyVariants.length;
@@ -1601,9 +1707,17 @@ export async function proposeCreateCampaign(
     spec.targeting?.kind === "reuse_adset" ? " e o público que já converte" : spec.targeting?.kind === "explicit" ? " pro público que você indicou" : "";
   // Transparência (§clareza pro dono): se o #1 por desempenho for um formato que ainda não sei
   // clonar (carrossel/catálogo), avisa que peguei o melhor de imagem/vídeo no lugar.
+  // eco do nº de anúncios: ≥2 criativos distintos → "N anúncios (criativos distintos)"; senão as
+  // clássicas variações de copy sobre 1 criativo.
+  const adsPhrase =
+    allCreatives.length >= 2
+      ? `montando **${variantsCount} anúncios** (criativos distintos + copy própria)`
+      : `e ${variantsCount} variações de copy novas (baseadas no que já converte)`;
   const lines = [
-    `Vou **criar uma campanha de ${goal}** ${creativeSourcePhrase}${audienceSourcePhrase} e ${variantsCount} variações de copy novas (baseadas no que já converte).`,
+    `Vou **criar uma campanha de ${goal}** ${creativeSourcePhrase}${audienceSourcePhrase}, ${adsPhrase}.`,
   ];
+  const fewNote = fewCreativesNote(requestedAdCount, allCreatives.length);
+  if (fewNote) lines.push(fewNote);
   if (defaults.unsupportedTopFormat) {
     lines.push(`Obs: seu anúncio de melhor desempenho é um **${unsupportedFormatPt(defaults.unsupportedTopFormat)}**, que eu ainda não sei clonar — então usei o melhor criativo de imagem/vídeo que você tem.`);
   }
@@ -1731,6 +1845,9 @@ export async function proposeCopyCampaign(
     /** raio (km) nas cidades (Slice 5) + raio por endereço (clampados). */
     readonly radiusKm?: number;
     readonly addressAreas?: readonly AddressArea[];
+    /** nº de ANÚNCIOS pedido — a cópia reusa os anúncios da base; adCount RECORTA quantos reusar
+     *  (não inventa além do que a base tem). Clampado 1..(nº de anúncios da base). */
+    readonly adCount?: number;
   },
   origin: DraftOrigin = "on_demand",
   opts: { readonly autonomous?: boolean; readonly minMonthlyReach?: number } = {},
@@ -1772,6 +1889,15 @@ export async function proposeCopyCampaign(
   if (structure.creativeRefs.length === 0) {
     return { kind: "blocked", reason: "essa campanha não tem anúncios que eu consiga reusar pra copiar — confere se ela tem anúncios ativos" };
   }
+  // adCount na cópia = RECORTE (a cópia reusa os anúncios da base; não inventa criativo novo). Pediu
+  // menos → recorta; pediu mais que a base tem → copia todos + nota honesta (§8).
+  const requestedAdCount = normalizeAdCount(args.adCount);
+  const creativeRefs =
+    requestedAdCount != null ? structure.creativeRefs.slice(0, Math.min(requestedAdCount, structure.creativeRefs.length)) : structure.creativeRefs;
+  const adCountNote =
+    requestedAdCount != null && requestedAdCount > structure.creativeRefs.length
+      ? `Você pediu ${requestedAdCount} anúncios, mas "${args.sourceName ?? structure.name}" só tem ${structure.creativeRefs.length} — copiei os ${structure.creativeRefs.length}. Pra somar mais, dá pra criar do zero (aí eu escolho criativos da conta).`
+      : null;
 
   // Parar e explicar (§7): trocar o objetivo muda o mecanismo (pode perder o destino WhatsApp
   // / exigir formulário). Não cria silenciosamente o oposto.
@@ -1829,7 +1955,7 @@ export async function proposeCopyCampaign(
     activation: "paused",
     objective: goal,
     targeting,
-    creativeRefs: structure.creativeRefs,
+    creativeRefs,
     sourceCampaignId: args.sourceCampaignId,
     budgetMode: structure.budgetMode,
     specialAdCategories: structure.specialAdCategories,
@@ -1863,8 +1989,9 @@ export async function proposeCopyCampaign(
   const echo = [
     `Vou *copiar a estrutura* de "${baseName}" numa campanha nova:`,
     budgetLine,
-    `• *Anúncios:* ${structure.creativeRefs.length} da original, reusados (mantém o criativo e o destino/WhatsApp)${audienceLine}`,
+    `• *Anúncios:* ${creativeRefs.length} da original, reusados (mantém o criativo e o destino/WhatsApp)${audienceLine}`,
     `• *Objetivo:* ${goalNounPt(goal)} · ${activationPhrase("paused")}.`,
+    ...(adCountNote ? [adCountNote] : []),
     ...aud.notes,
     ...geoRadius.notes,
     ...areas.notes,

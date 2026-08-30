@@ -60,7 +60,7 @@ import {
 import { renderWhatsappNumber, resolveWhatsappNumber } from "./read-data.js";
 import { makeMetaToolExecutor } from "../../executors/meta-tools.js";
 import { applyCheckedAction, type ApplyOutcome } from "../../modules/apply/apply-confirmed-action.js";
-import { proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner, refineDraft } from "../../modules/conversation/draft-proposal.js";
+import { buildRefineEcho, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner, recoverOpenDraft, refineDraft, type DraftProposalContext, type RecoveredDraft } from "../../modules/conversation/draft-proposal.js";
 import { loadWriteContext } from "../../modules/apply/write-context.js";
 import { revertActionById } from "../../modules/apply/revert-action.js";
 import { actorLabel } from "../../modules/conversation/actor.js";
@@ -174,6 +174,22 @@ function activePendingRevert(pr: PendingRevert | null): PendingRevert | null {
 /** pendingDraft ainda válido (não expirado)? */
 function activePendingDraft(pd: PendingDraft | null): PendingDraft | null {
   return pd && Date.parse(pd.expiresAt) > Date.now() ? pd : null;
+}
+
+/** RecoveredDraft (banco) → PendingDraft (estado): eco fresco do spec + TTL renovado. */
+function recoveredToPending(rec: RecoveredDraft): PendingDraft {
+  return {
+    draftId: rec.draftId,
+    approvalId: rec.approvalId,
+    echo: buildRefineEcho(rec.kind, rec.spec),
+    expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString(),
+  };
+}
+
+/** Recupera o rascunho aberto do banco como PendingDraft (estado), ou null. */
+async function recoverOrNull(deps: WorkerDeps, dctx: DraftProposalContext): Promise<PendingDraft | null> {
+  const rec = await recoverOpenDraft(deps, dctx);
+  return rec ? recoveredToPending(rec) : null;
 }
 
 /** pendingConfigChange ainda válido (não expirado)? */
@@ -599,9 +615,17 @@ export function makeConversationNodes(
     // outro — muta o campaign_drafts + re-ecoa; o "sim" segue aplicando o MESMO rascunho.
     const refineCall = allCalls.find((c) => REFINE_TOOL_NAMES.has(c.name));
     if (refineCall) {
-      const active = activePendingDraft(state.pendingDraft);
+      const dctxRefine = { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, currency: DEFAULT_CURRENCY };
+      // estado efêmero expirou (TTL 30min)? o rascunho pode seguir ABERTO no banco (fonte da verdade)
+      // → recupera em vez de dar dead-end (o incidente do grupo: "5 criativos diferentes" 91min depois).
+      let active = activePendingDraft(state.pendingDraft) ?? (await recoverOrNull(deps, dctxRefine));
       if (!active) {
-        return { messages: [...answerToolCalls(allCalls, "sem rascunho"), new AIMessage("Não tenho um rascunho aberto pra ajustar. Me diz o que quer criar/escalar primeiro.")] };
+        return {
+          messages: [
+            ...answerToolCalls(allCalls, "sem rascunho"),
+            new AIMessage("Não tenho um rascunho de campanha aberto pra ajustar agora. Quer que eu monte um? É só dizer o que criar ou escalar (ex: \"cria uma campanha de leads\")."),
+          ],
+        };
       }
       const a = (refineCall.args ?? {}) as Record<string, unknown>;
       const patch =
@@ -630,7 +654,7 @@ export function makeConversationNodes(
               ...(Array.isArray(a["excludeAudiences"]) ? { excludeAudiences: a["excludeAudiences"].filter((x): x is string => typeof x === "string") } : {}),
               ...(Array.isArray(a["removeAudiences"]) ? { removeAudiences: a["removeAudiences"].filter((x): x is string => typeof x === "string") } : {}),
             };
-      const res = await refineDraft(deps, { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, currency: DEFAULT_CURRENCY }, active.draftId, patch);
+      const res = await refineDraft(deps, dctxRefine, active.draftId, patch);
       if (res.kind === "blocked") {
         return { messages: [...answerToolCalls(allCalls, "não deu"), new AIMessage(res.reason)] };
       }
@@ -689,6 +713,7 @@ export function makeConversationNodes(
                   ...(behaviors ? { behaviors } : {}),
                   ...(typeof args["radiusKm"] === "number" ? { radiusKm: args["radiusKm"] as number } : {}),
                   ...(addressAreas ? { addressAreas } : {}),
+                  ...(typeof args["adCount"] === "number" ? { adCount: args["adCount"] as number } : {}),
                 });
               })()
           : await (async () => {
@@ -715,6 +740,7 @@ export function makeConversationNodes(
                 ...(behaviors ? { behaviors } : {}),
                 ...(typeof args["radiusKm"] === "number" ? { radiusKm: args["radiusKm"] as number } : {}),
                 ...(addressAreas ? { addressAreas } : {}),
+                ...(typeof args["adCount"] === "number" ? { adCount: args["adCount"] as number } : {}),
               });
             })();
       const expiresAt = new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString();
@@ -978,12 +1004,18 @@ export function makeConversationNodes(
     const last = state.messages.at(-1) as AIMessage | undefined;
     const calls = last?.tool_calls ?? [];
     const isConfirm = calls.some((c) => c.name === "confirm_write");
+    const dctx = { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, currency: DEFAULT_CURRENCY };
+    // nada mais pendente no estado → a única pendência possível é um rascunho aberto no banco (TTL
+    // expirou); usado por reject/confirm p/ recuperar sem shadowear write/revert/config ativos.
+    const noOtherPending =
+      !activePendingWrite(state.pendingWrite) && !activePendingRevert(state.pendingRevert) && !activePendingConfig(state.pendingConfigChange);
 
     if (!isConfirm) {
       // recusa em-turno de um RASCUNHO → resolve a approval no BANCO (some do site também),
       // não só limpa o estado efêmero (senão o rascunho seguia pendente 24h no card). As demais
-      // pendências (write/revert/config) não têm approval persistida aqui.
-      const rejectedDraft = activePendingDraft(state.pendingDraft);
+      // pendências (write/revert/config) não têm approval persistida aqui. Estado expirou mas o
+      // rascunho segue aberto no banco → recupera p/ "descarta" funcionar mesmo depois de 30min.
+      const rejectedDraft = activePendingDraft(state.pendingDraft) ?? (noOtherPending ? await recoverOrNull(deps, dctx) : null);
       if (rejectedDraft) {
         // só recusa se AINDA pendente: o rascunho pode ter sido aprovado por id nesse meio-tempo
         // (apply-service já criou a campanha) → não reverter approved→rejected com a campanha viva.
@@ -1054,6 +1086,19 @@ export function makeConversationNodes(
         );
       }
       return { messages: [...answerToolCalls(calls, "revert"), new AIMessage(lines.join("\n"))], pendingRevert: null, pendingWrite: null };
+    }
+
+    // "sim" TARDIO (estado expirou) mas o rascunho segue aberto no banco → NÃO aplica às cegas:
+    // re-ecoa o que está proposto (passou muito tempo) e pede confirmação de novo (§8 eco+confirma).
+    const recovered = noOtherPending ? await recoverOrNull(deps, dctx) : null;
+    if (recovered) {
+      return {
+        messages: [
+          ...answerToolCalls(calls, "reconfirmar"),
+          new AIMessage(`Esse rascunho ficou um tempo esperando, então confiro com você antes de criar:\n\n${recovered.echo}`),
+        ],
+        pendingDraft: recovered,
+      };
     }
 
     const pending = activePendingWrite(state.pendingWrite);

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { adjustAdCount, audienceEchoPhrase, creativeRefOf, distinctExtras, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, resolveCreationTargeting } from "./draft-proposal.js";
+import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, creativeRefOf, distinctExtras, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fewCreativesNote, normalizeAdCount, recoverOpenDraft, resolveCreationTargeting } from "./draft-proposal.js";
+import type { CopyVariant } from "@trafego/shared";
 import type { CampaignDraftSpec } from "@trafego/shared";
 import { creativeContentHash } from "../vision/resolver.js";
 import type { WorkerDeps } from "../../composition.js";
@@ -345,5 +346,77 @@ describe("distinctExtras / creativeRefOf (multi-criativo do agente)", () => {
   it("creativeRefOf: vídeo → format video + metaVideoId; imagem → format image + metaImageHash", () => {
     expect(creativeRefOf(vid("V9"))).toEqual({ assetId: "a-V9", format: "video", origin: "upload", metaVideoId: "V9" });
     expect(creativeRefOf(img("H9"))).toEqual({ assetId: "a-H9", format: "image", origin: "reuse", metaImageHash: "H9" });
+  });
+});
+
+describe("normalizeAdCount (contagem pedida pelo dono, clampada)", () => {
+  it("clampa 1..MAX_ADS_PER_DRAFT e arredonda", () => {
+    expect(normalizeAdCount(5)).toBe(5);
+    expect(normalizeAdCount(0)).toBe(1);
+    expect(normalizeAdCount(999)).toBe(10);
+    expect(normalizeAdCount(2.6)).toBe(3);
+  });
+  it("ausente/inválido → undefined (caller usa o default)", () => {
+    expect(normalizeAdCount(undefined)).toBeUndefined();
+    expect(normalizeAdCount(Number.NaN)).toBeUndefined();
+  });
+});
+
+describe("assignCreativesToVariants (1:1 criativo↔anúncio, extras herdam o padrão)", () => {
+  const cv = (h: string): CopyVariant => ({ primaryText: `p-${h}`, headline: h }) as CopyVariant;
+  const img = (h: string) => ({ imageHash: h, assetId: `a-${h}`, origin: "reuse" as const, source: "serving" as const });
+
+  it("<2 criativos → nenhum ganha ref própria (todos usam o padrão do spec)", () => {
+    const out = assignCreativesToVariants([cv("a"), cv("b")], [img("H1")]);
+    expect(out.every((v) => v.creative === undefined)).toBe(true);
+  });
+
+  it("≥2 criativos → 1:1 nos primeiros; slots além dos distintos ficam sem ref (herdam o padrão)", () => {
+    const out = assignCreativesToVariants([cv("a"), cv("b"), cv("c")], [img("H1"), img("H2")]);
+    expect(out[0]!.creative?.metaImageHash).toBe("H1");
+    expect(out[1]!.creative?.metaImageHash).toBe("H2");
+    expect(out[2]!.creative).toBeUndefined(); // 3º anúncio herda o criativo padrão (o melhor)
+  });
+});
+
+describe("fewCreativesNote (honestidade §8: pediu N, achou menos distintos)", () => {
+  it("distintos < pedido → nota honesta", () => {
+    expect(fewCreativesNote(5, 3)).toContain("5 anúncios");
+    expect(fewCreativesNote(5, 3)).toContain("3 criativos distintos");
+    expect(fewCreativesNote(2, 1)).toContain("1 criativo distinto"); // singular
+  });
+  it("cabe (ou sem pedido) → null", () => {
+    expect(fewCreativesNote(3, 3)).toBeNull();
+    expect(fewCreativesNote(undefined, 1)).toBeNull();
+  });
+});
+
+describe("recoverOpenDraft (fonte da verdade = banco quando o estado efêmero expira)", () => {
+  const CTX = { orgId: "o1", agentId: "ag1", adAccountId: "acc1", currency: "BRL" };
+  function depsWith(pending: unknown[], draftRows: unknown[]) {
+    const listPendingByAgent = vi.fn(async () => pending);
+    const db = {
+      select: () => ({ from: () => ({ where: () => ({ orderBy: () => ({ limit: () => draftRows }) }) }) }),
+    };
+    return { db, ports: { approval: { listPendingByAgent } } } as unknown as WorkerDeps;
+  }
+
+  it("acha o rascunho aberto + junta o approvalId da pendência de rascunho", async () => {
+    const deps = depsWith(
+      [{ kind: "draft", id: "appr1", draftId: "d1" }],
+      [{ id: "d1", kind: "from_scratch", spec: { version: 1 } }],
+    );
+    const out = await recoverOpenDraft(deps, CTX);
+    expect(out).toEqual({ draftId: "d1", approvalId: "appr1", kind: "from_scratch", spec: { version: 1 } });
+  });
+
+  it("sem pendência de rascunho → null (não recupera ação/ativação)", async () => {
+    const deps = depsWith([{ kind: "action", id: "a1" }], []);
+    expect(await recoverOpenDraft(deps, CTX)).toBeNull();
+  });
+
+  it("pendência existe mas o draft não está mais 'proposed' (0 linhas) → null", async () => {
+    const deps = depsWith([{ kind: "draft", id: "appr1", draftId: "d1" }], []);
+    expect(await recoverOpenDraft(deps, CTX)).toBeNull();
   });
 });
