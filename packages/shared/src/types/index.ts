@@ -803,6 +803,9 @@ export interface CreativeAssetRef {
  * "fonte some entre eco e confirmação"). Shape PRÓPRIO e neutro — não importa `RawTargeting` do
  * adapter (`packages/ads-meta`); `shared` não pode depender de um adapter.
  */
+/** Unidade de distância do raio de geo (Slice 7 — vocabulário neutro; o adapter mapeia p/ a Meta). */
+export type DistanceUnit = "mile" | "kilometer";
+
 export interface ResolvedAudienceSnapshot {
   readonly geo: {
     readonly countries?: readonly string[];
@@ -840,7 +843,18 @@ export type TargetingSpec =
    */
   | {
       readonly kind: "explicit";
-      readonly geo: readonly { readonly key: string; readonly name: string; readonly kind: "country" | "region" | "city" }[];
+      /** geo por primitivo. `radius`/`distanceUnit` (Slice 5) só valem p/ city/region (a Meta ignora
+       *  em country) — raio EM TORNO da cidade (17–80 km). Ausente = a cidade inteira. */
+      readonly geo: readonly {
+        readonly key: string;
+        readonly name: string;
+        readonly kind: "country" | "region" | "city";
+        readonly radius?: number;
+        readonly distanceUnit?: DistanceUnit;
+      }[];
+      /** raio em torno de um ENDEREÇO (Slice 5) — a Meta geocodifica `address` no servidor (sem
+       *  provedor externo). Raio 1–80 km. Nome neutro (`custom_locations` fica no adapter). */
+      readonly radiusAreas?: readonly { readonly address: string; readonly radius: number; readonly distanceUnit: DistanceUnit }[];
       readonly ageMin?: number;
       readonly ageMax?: number;
       /** 1 = homens, 2 = mulheres — ausente/vazio = todos. */

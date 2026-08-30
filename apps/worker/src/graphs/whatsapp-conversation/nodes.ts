@@ -646,6 +646,12 @@ export function makeConversationNodes(
       const strList = (v: unknown): string[] | undefined =>
         Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : undefined;
       const isGender = (v: unknown): v is "all" | "men" | "women" => v === "all" || v === "men" || v === "women";
+      const areaList = (v: unknown): { address: string; radiusKm: number }[] | undefined =>
+        Array.isArray(v)
+          ? v
+              .filter((x): x is { address: string; radiusKm: number } => Boolean(x) && typeof (x as { address?: unknown }).address === "string" && typeof (x as { radiusKm?: unknown }).radiusKm === "number")
+              .map((x) => ({ address: x.address, radiusKm: x.radiusKm }))
+          : undefined;
       const proposal =
         createCall.name === "scale_winner"
           ? await proposeScaleWinner(
@@ -662,6 +668,7 @@ export function makeConversationNodes(
                 const geo = strList(args["geo"]);
                 const interests = strList(args["interests"]);
                 const behaviors = strList(args["behaviors"]);
+                const addressAreas = areaList(args["addressAreas"]);
                 return proposeCopyCampaign(deps, dctx, {
                   sourceCampaignId: String(args["campaignId"] ?? ""),
                   ...(typeof args["campaignName"] === "string" ? { sourceName: args["campaignName"] as string } : {}),
@@ -675,6 +682,8 @@ export function makeConversationNodes(
                   ...(isGender(args["gender"]) ? { gender: args["gender"] } : {}),
                   ...(interests ? { interests } : {}),
                   ...(behaviors ? { behaviors } : {}),
+                  ...(typeof args["radiusKm"] === "number" ? { radiusKm: args["radiusKm"] as number } : {}),
+                  ...(addressAreas ? { addressAreas } : {}),
                 });
               })()
           : await (async () => {
@@ -683,6 +692,7 @@ export function makeConversationNodes(
               const geo = strList(args["geo"]);
               const interests = strList(args["interests"]);
               const behaviors = strList(args["behaviors"]);
+              const addressAreas = areaList(args["addressAreas"]);
               return proposeCreateCampaign(deps, dctx, {
                 // valida o goal contra a taxonomia neutra ANTES de propor: goal inválido (o LLM
                 // manda texto livre) descartado → o propose infere da meta/conta, e o eco mostra
@@ -698,6 +708,8 @@ export function makeConversationNodes(
                 ...(isGender(args["gender"]) ? { gender: args["gender"] } : {}),
                 ...(interests ? { interests } : {}),
                 ...(behaviors ? { behaviors } : {}),
+                ...(typeof args["radiusKm"] === "number" ? { radiusKm: args["radiusKm"] as number } : {}),
+                ...(addressAreas ? { addressAreas } : {}),
               });
             })();
       const expiresAt = new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString();

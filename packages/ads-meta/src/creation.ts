@@ -471,13 +471,22 @@ export class MetaCreationService {
       case "explicit": {
         // público NOVO por primitivos (Fase 1) — expansão SEMPRE fechada (público escolhido pelo
         // dono, sem ambiguidade de "fonte não decidiu" — diferente de reuse_adset).
-        const geo: ResolvedAudienceSnapshot["geo"] = {
-          countries: spec.geo.filter((g) => g.kind === "country").map((g) => g.key),
-          regions: spec.geo.filter((g) => g.kind === "region").map((g) => ({ key: g.key, name: g.name })),
-          cities: spec.geo.filter((g) => g.kind === "city").map((g) => ({ key: g.key, name: g.name })),
-        };
+        // geo_locations montado direto (não via geoToRaw) p/ carregar RAIO por cidade/região +
+        // custom_locations (raio em torno de endereço, Slice 5). `address_string` = a Meta geocodifica.
+        const geoLocations: Record<string, unknown> = {};
+        const countries = spec.geo.filter((g) => g.kind === "country").map((g) => g.key);
+        const regions = spec.geo.filter((g) => g.kind === "region");
+        const cities = spec.geo.filter((g) => g.kind === "city");
+        const withRadius = (g: { key: string; radius?: number; distanceUnit?: "mile" | "kilometer" }) =>
+          g.radius ? { key: g.key, radius: g.radius, distance_unit: g.distanceUnit ?? "kilometer" } : { key: g.key };
+        if (countries.length) geoLocations["countries"] = countries;
+        if (regions.length) geoLocations["regions"] = regions.map(withRadius);
+        if (cities.length) geoLocations["cities"] = cities.map(withRadius);
+        if (spec.radiusAreas && spec.radiusAreas.length > 0) {
+          geoLocations["custom_locations"] = spec.radiusAreas.map((a) => ({ address_string: a.address, radius: a.radius, distance_unit: a.distanceUnit }));
+        }
         const out: Record<string, unknown> = {
-          geo_locations: this.geoToRaw(geo),
+          geo_locations: geoLocations,
           ...(spec.ageMin !== undefined ? { age_min: spec.ageMin } : {}),
           ...(spec.ageMax !== undefined ? { age_max: spec.ageMax } : {}),
           ...(spec.genders && spec.genders.length > 0 ? { genders: spec.genders } : {}),

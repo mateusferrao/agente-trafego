@@ -296,6 +296,8 @@ export function makeConversationTools(
       gender: z.enum(["all", "men", "women"]).nullable().optional().describe("gênero do público — 'all' (padrão) = todos"),
       interests: z.array(z.string()).nullable().optional().describe("interesses pelo NOME/termo que o usuário disse (ex: 'estética', 'pets') — eu busco na Meta e pergunto se ambíguo; nunca escolho o de maior audiência sozinho."),
       behaviors: z.array(z.string()).nullable().optional().describe("comportamentos pelo NOME (ex: 'compradores online', 'viajantes frequentes') — eu resolvo no catálogo da Meta e pergunto se ambíguo. Diferente de interesse (é ação/hábito, não afinidade)."),
+      radiusKm: z.number().positive().nullable().optional().describe("raio em KM em torno das CIDADES indicadas em geo (ex: 'raio de 20 km de BH'). Clampo pro limite da Meta (17–80 km)."),
+      addressAreas: z.array(z.object({ address: z.string(), radiusKm: z.number().positive() })).nullable().optional().describe("raio em torno de ENDEREÇOS de rua (ex: '5 km da Av. Afonso Pena 1500'). A Meta geocodifica; clampo 1–80 km."),
     }),
   });
 
@@ -317,6 +319,8 @@ export function makeConversationTools(
       gender: z.enum(["all", "men", "women"]).nullable().optional().describe("gênero pra TROCAR o da original"),
       interests: z.array(z.string()).nullable().optional().describe("interesses pelo NOME/termo pra TROCAR os da original (a cópia não herda interesses automaticamente) — eu busco na Meta e pergunto se ambíguo"),
       behaviors: z.array(z.string()).nullable().optional().describe("comportamentos pelo NOME pra TROCAR os da original — eu resolvo no catálogo da Meta e pergunto se ambíguo"),
+      radiusKm: z.number().positive().nullable().optional().describe("raio em KM nas cidades (clampo 17–80 km)"),
+      addressAreas: z.array(z.object({ address: z.string(), radiusKm: z.number().positive() })).nullable().optional().describe("raio em torno de endereços de rua (Meta geocodifica; clampo 1–80 km)"),
       budgetReais: z.number().positive().nullable().optional().describe("budget diário em reais (opcional; default = o da original)"),
       goal: z.string().nullable().optional().describe("objetivo — só se quiser MUDAR (o agente vai avisar que troca o mecanismo)"),
     }),

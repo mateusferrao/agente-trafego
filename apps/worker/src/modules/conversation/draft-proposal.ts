@@ -6,7 +6,7 @@
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { adAccounts, adCreatives, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { applyDraftEdit, buildResolvedSnapshot, describeDeliveryEstimate, goalNounPt, planScaleMove, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { applyDraftEdit, buildResolvedSnapshot, clampRadius, describeDeliveryEstimate, goalNounPt, planScaleMove, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
 import { applyExplicitBehaviorEdit, applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
   ACTION_PARAM_MODE,
@@ -152,7 +152,13 @@ export function audienceEchoPhrase(args: {
 
 /** Descrição HONESTA do público EXPLÍCITO (Fase 1, subfatia 3a) — geo/idade/gênero pro eco. Pura. */
 export function describeExplicitAudience(targeting: Extract<TargetingSpec, { readonly kind: "explicit" }>): string {
-  const placesLabel = targeting.geo.length > 0 ? summarizePlaces(targeting.geo.map((g) => g.name)) : null;
+  // raio (Slice 5): cidade com raio → "BH (raio 20 km)"; senão só o nome.
+  const placeName = (g: Extract<TargetingSpec, { readonly kind: "explicit" }>["geo"][number]): string =>
+    g.radius ? `${g.name} (raio ${g.radius} ${g.distanceUnit === "mile" ? "mi" : "km"})` : g.name;
+  const geoNames = targeting.geo.map(placeName);
+  const areaNames = (targeting.radiusAreas ?? []).map((a) => `${a.address} (raio ${a.radius} ${a.distanceUnit === "mile" ? "mi" : "km"})`);
+  const allPlaces = [...geoNames, ...areaNames];
+  const placesLabel = allPlaces.length > 0 ? summarizePlaces(allPlaces) : null;
   const ageLabel = targeting.ageMin !== undefined || targeting.ageMax !== undefined ? `${targeting.ageMin ?? "?"}-${targeting.ageMax ?? "?"} anos` : null;
   const genderLabel = targeting.genders?.includes(1) && !targeting.genders.includes(2) ? "homens" : targeting.genders?.includes(2) && !targeting.genders.includes(1) ? "mulheres" : null;
   // grupos (Slice 3/4): "A ou B" dentro do grupo, " e " entre grupos (AND narrowing).
@@ -470,6 +476,30 @@ async function prepareBehaviors(deps: WorkerDeps, ref: AdAccountRef, queries: re
     return { kind: "blocked", reason: `achei mais de um comportamento parecido com "${q}":\n${opts}\nQual desses? (me diz o nome exato)` };
   }
   return { kind: "ok", interests: resolved };
+}
+
+type ExplicitGeo = Extract<TargetingSpec, { readonly kind: "explicit" }>["geo"][number];
+type AddressArea = { readonly address: string; readonly radiusKm: number };
+
+/** Aplica um raio (km) às CIDADES/REGIÕES do geo resolvido (Slice 5) — clampa pro limite da Meta
+ *  (cidade 17–80 km) + nota. País ignora raio. Puro (usa `clampRadius` do core). */
+function applyCityRadius(geo: readonly ExplicitGeo[], radiusKm: number | undefined): { geo: ExplicitGeo[]; notes: string[] } {
+  if (!radiusKm) return { geo: [...geo], notes: [] };
+  const { radius, note } = clampRadius(radiusKm, "kilometer", "city");
+  const next = geo.map((g) => (g.kind === "country" ? g : { ...g, radius, distanceUnit: "kilometer" as const }));
+  return { geo: next, notes: note ? [note] : [] };
+}
+
+/** Constrói `radiusAreas` (raio em torno de endereço) já clampado (endereço 1–80 km) + notas. Puro. */
+function buildRadiusAreas(areas: readonly AddressArea[] | undefined): { radiusAreas: { address: string; radius: number; distanceUnit: "kilometer" }[]; notes: string[] } {
+  const out: { address: string; radius: number; distanceUnit: "kilometer" }[] = [];
+  const notes: string[] = [];
+  for (const a of areas ?? []) {
+    const { radius, note } = clampRadius(a.radiusKm, "kilometer", "address");
+    if (note) notes.push(note);
+    out.push({ address: a.address, radius, distanceUnit: "kilometer" });
+  }
+  return { radiusAreas: out, notes };
 }
 
 /**
@@ -1152,6 +1182,10 @@ export async function proposeCreateCampaign(
     readonly interests?: readonly string[];
     /** comportamentos EXPLÍCITOS (Slice 4) — nomes resolvidos p/ id real (catálogo da Meta). */
     readonly behaviors?: readonly string[];
+    /** raio (km) em torno das CIDADES indicadas (Slice 5) — clampado 17–80 km. */
+    readonly radiusKm?: number;
+    /** raio em torno de ENDEREÇOS de rua (Slice 5) — a Meta geocodifica; clampado 1–80 km. */
+    readonly addressAreas?: readonly AddressArea[];
   },
   origin: DraftOrigin = "on_demand",
 ): Promise<ChatDraftProposal> {
@@ -1178,13 +1212,17 @@ export async function proposeCreateCampaign(
   // comportamentos explícitos (Slice 4) — mesma honestidade (ambíguo→pergunta).
   const behaviorPrep = await prepareBehaviors(deps, ac.ref, args.behaviors ?? []);
   if (behaviorPrep.kind === "blocked") return { kind: "blocked", reason: behaviorPrep.reason };
+  // raio (Slice 5): aplica às cidades resolvidas + monta áreas por endereço (clampado + notas).
+  const geoRadius = applyCityRadius(geoPrep.geo, args.radiusKm);
+  const areas = buildRadiusAreas(args.addressAreas);
   const hasExplicitPrimitive =
     geoPrep.geo.length > 0 ||
     args.ageMin !== undefined ||
     args.ageMax !== undefined ||
     (args.gender && args.gender !== "all") ||
     interestPrep.interests.length > 0 ||
-    behaviorPrep.interests.length > 0;
+    behaviorPrep.interests.length > 0 ||
+    areas.radiusAreas.length > 0;
 
   const defaults = await deps.ports.ads.inferCreationDefaults(ac.ref);
   const goal = args.goal ?? defaults.objectiveGoal ?? DEFAULT_CONVERSION_GOAL;
@@ -1262,9 +1300,13 @@ export async function proposeCreateCampaign(
     // COMPÕE, não escolhe (reanálise crítica do plano): geo/idade/gênero/interesses explícitos +
     // público salvo (quando indicado) entram no MESMO `explicit` (kind SUPERSET — colapso do antigo
     // `custom_audiences`). Só público salvo (sem primitivo) = geo amplo (BR) + o público.
+    // geo default (BR) só quando NÃO há cidade NEM área por endereço (senão a Meta uniria BR ∪ raio,
+    // ampliando o público) — com áreas por endereço, geo fica vazio e `radiusAreas` carrega o alvo.
+    const geoBase = geoRadius.geo.length > 0 ? geoRadius.geo : areas.radiusAreas.length > 0 ? [] : [{ key: "BR", name: "Brasil", kind: "country" as const }];
     targeting = {
       kind: "explicit",
-      geo: geoPrep.geo.length > 0 ? geoPrep.geo : [{ key: "BR", name: "Brasil", kind: "country" }],
+      geo: geoBase,
+      ...(areas.radiusAreas.length > 0 ? { radiusAreas: areas.radiusAreas } : {}),
       ...(args.ageMin !== undefined ? { ageMin: args.ageMin } : {}),
       ...(args.ageMax !== undefined ? { ageMax: args.ageMax } : {}),
       ...(args.gender === "men" ? { genders: [1] } : args.gender === "women" ? { genders: [2] } : {}),
@@ -1333,6 +1375,7 @@ export async function proposeCreateCampaign(
     `Gasto novo: ${budgetPhrase} · Página: ${defaults.pageId}${defaults.pixelId ? ` · Pixel: ${defaults.pixelId}` : ""} · ${activationPhrase("active")}.`,
   );
   for (const n of aud.notes) lines.push(n);
+  for (const n of [...geoRadius.notes, ...areas.notes]) lines.push(n);
   // alcance combinado (delivery_estimate ao vivo) quando o dono indicou público; superior ao
   // por-público → substitui o `sizeWarnings`, que fica de fallback quando a estimativa não vem.
   const reachNote = hasAudience || hasExplicitPrimitive ? await reachNoteFor(deps, ac.ref, targeting, goal, defaults.pixelId) : null;
@@ -1441,6 +1484,9 @@ export async function proposeCopyCampaign(
     readonly interests?: readonly string[];
     /** comportamentos EXPLÍCITOS pra TROCAR (Slice 4) — mesma regra dos interesses na cópia. */
     readonly behaviors?: readonly string[];
+    /** raio (km) nas cidades (Slice 5) + raio por endereço (clampados). */
+    readonly radiusKm?: number;
+    readonly addressAreas?: readonly AddressArea[];
   },
   origin: DraftOrigin = "on_demand",
 ): Promise<ChatDraftProposal> {
@@ -1459,13 +1505,16 @@ export async function proposeCopyCampaign(
   if (interestPrep.kind === "blocked") return { kind: "blocked", reason: interestPrep.reason };
   const behaviorPrep = await prepareBehaviors(deps, ac.ref, args.behaviors ?? []);
   if (behaviorPrep.kind === "blocked") return { kind: "blocked", reason: behaviorPrep.reason };
+  const areas = buildRadiusAreas(args.addressAreas);
   const hasExplicitPrimitive =
     geoPrep.geo.length > 0 ||
     args.ageMin !== undefined ||
     args.ageMax !== undefined ||
     (args.gender && args.gender !== "all") ||
     interestPrep.interests.length > 0 ||
-    behaviorPrep.interests.length > 0;
+    behaviorPrep.interests.length > 0 ||
+    args.radiusKm !== undefined ||
+    areas.radiusAreas.length > 0;
 
   let structure;
   try {
@@ -1494,12 +1543,15 @@ export async function proposeCopyCampaign(
   const resolvedSnapshot = buildResolvedSnapshot(structure.targeting);
   // Colapso (Slice 1): trocar o público na cópia = `explicit` com a geo/idade da fonte reconstruída
   // em chips (flattenSnapshotGeo — representável: países/regiões/cidades) + o público salvo trocado.
-  // Sem troca de público = reuse_adset fiel (com retrato). Geo exótico (raio/CEP) = Slice 5.
+  // Sem troca de público = reuse_adset fiel (com retrato). Raio (Slice 5) aplica ao geo escolhido.
+  const geoBase = geoPrep.geo.length > 0 ? geoPrep.geo : flattenSnapshotGeo(resolvedSnapshot.geo);
+  const geoRadius = applyCityRadius(geoBase, args.radiusKm);
   const targeting: NonNullable<CampaignDraftSpec["targeting"]> =
     hasExplicitPrimitive || hasAudience
       ? {
           kind: "explicit",
-          geo: geoPrep.geo.length > 0 ? geoPrep.geo : flattenSnapshotGeo(resolvedSnapshot.geo),
+          geo: geoRadius.geo,
+          ...(areas.radiusAreas.length > 0 ? { radiusAreas: areas.radiusAreas } : {}),
           ...(args.ageMin !== undefined ? { ageMin: args.ageMin } : resolvedSnapshot.ageMin !== undefined ? { ageMin: resolvedSnapshot.ageMin } : {}),
           ...(args.ageMax !== undefined ? { ageMax: args.ageMax } : resolvedSnapshot.ageMax !== undefined ? { ageMax: resolvedSnapshot.ageMax } : {}),
           ...(args.gender === "men" ? { genders: [1] } : args.gender === "women" ? { genders: [2] } : {}),
@@ -1561,6 +1613,8 @@ export async function proposeCopyCampaign(
     `• *Anúncios:* ${structure.creativeRefs.length} da original, reusados (mantém o criativo e o destino/WhatsApp)${audienceLine}`,
     `• *Objetivo:* ${goalNounPt(goal)} · ${activationPhrase("paused")}.`,
     ...aud.notes,
+    ...geoRadius.notes,
+    ...areas.notes,
     ...reachLines,
     `Confirma? (dá pra ajustar orçamento/público antes)`,
   ].join("\n");

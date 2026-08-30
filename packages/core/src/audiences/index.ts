@@ -2,7 +2,29 @@
 // aqui vai a heurística de EXCLUSÃO de convertidos (remarketing limpo) + a leitura da
 // estimativa de alcance combinado. Sem IO.
 
-import type { AudienceProfile, DeliveryEstimate, ResolvedAudienceSnapshot } from "@trafego/shared/types";
+import type { AudienceProfile, DeliveryEstimate, DistanceUnit, ResolvedAudienceSnapshot } from "@trafego/shared/types";
+
+/**
+ * Limites de RAIO da Meta por âncora (Slice 5, confirmados na doc + spike): cidade 17–80 km
+ * (10–50 mi); endereço 1–80 km (0.63–50 mi). Fora do limite → CLAMPA pro mais próximo + nota
+ * (estilo guardrail de budget), nunca trava. Pura.
+ */
+const RADIUS_LIMITS: Record<"city" | "address", Record<DistanceUnit, { readonly min: number; readonly max: number }>> = {
+  city: { kilometer: { min: 17, max: 80 }, mile: { min: 10, max: 50 } },
+  address: { kilometer: { min: 1, max: 80 }, mile: { min: 0.63, max: 50 } },
+};
+
+export function clampRadius(
+  radius: number,
+  unit: DistanceUnit,
+  anchor: "city" | "address",
+): { readonly radius: number; readonly note?: string } {
+  const { min, max } = RADIUS_LIMITS[anchor][unit];
+  const unitLabel = unit === "kilometer" ? "km" : "mi";
+  if (radius < min) return { radius: min, note: `ajustei o raio pra ${min} ${unitLabel} (mínimo da Meta pra ${anchor === "city" ? "cidade" : "endereço"})` };
+  if (radius > max) return { radius: max, note: `ajustei o raio pra ${max} ${unitLabel} (máximo da Meta)` };
+  return { radius };
+}
 
 /** Nomes que denunciam um público de quem JÁ CONVERTEU — candidatos a exclusão no remarketing. */
 const CONVERTER_HINTS = ["lead", "compra", "comprad", "client", "agenda", "venda", "checkout", "purchase", "buyer"] as const;

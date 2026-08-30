@@ -1,5 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { describeDeliveryEstimate, isConverterAudienceName, resolveExpansion, suggestConverterExclusions } from "./index.js";
+import { clampRadius, describeDeliveryEstimate, isConverterAudienceName, resolveExpansion, suggestConverterExclusions } from "./index.js";
+
+describe("clampRadius (Slice 5 — limites da Meta por âncora)", () => {
+  it("cidade dentro do limite (17-80 km) → mantém, sem nota", () => {
+    expect(clampRadius(20, "kilometer", "city")).toEqual({ radius: 20 });
+  });
+  it("cidade abaixo do mínimo → clampa p/ 17 km + nota", () => {
+    const r = clampRadius(5, "kilometer", "city");
+    expect(r.radius).toBe(17);
+    expect(r.note).toContain("17");
+  });
+  it("endereço acima do máximo → clampa p/ 80 km + nota", () => {
+    const r = clampRadius(200, "kilometer", "address");
+    expect(r.radius).toBe(80);
+    expect(r.note).toContain("80");
+  });
+  it("endereço aceita raio pequeno (1 km) que a cidade não aceitaria", () => {
+    expect(clampRadius(1, "kilometer", "address")).toEqual({ radius: 1 });
+  });
+});
 
 describe("isConverterAudienceName", () => {
   it("detecta convertidos por nome", () => {

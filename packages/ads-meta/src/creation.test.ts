@@ -465,6 +465,32 @@ describe("MetaCreationService.createCampaign / createAdSet — contrato v26", ()
     const decoded = decodeURIComponent(posts.find((p) => p.url.includes("/adsets"))!.url);
     expect(decoded).toContain('"flexible_spec":[{"interests":[{"id":"i1"}]},{"interests":[{"id":"i2"}]}]');
   });
+
+  it("explicit com RAIO de cidade + área por endereço → cities[radius] + custom_locations", async () => {
+    const posts: Array<{ url: string }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        posts.push({ url: String(input) });
+        return new Response(JSON.stringify({ id: "AS_NEW" }), { status: 200, headers: { "content-type": "application/json" } });
+      }),
+    );
+    await svc().createAdSet(account, {
+      campaignId: "CAMP1",
+      name: "A",
+      dailyBudgetMinor: 1000,
+      goal: "purchase",
+      targeting: {
+        kind: "explicit",
+        geo: [{ key: "244661", name: "Belo Horizonte", kind: "city", radius: 25, distanceUnit: "kilometer" }],
+        radiusAreas: [{ address: "Av. Afonso Pena 1500, BH", radius: 5, distanceUnit: "kilometer" }],
+      },
+      status: "paused",
+    });
+    const decoded = decodeURIComponent(posts.find((p) => p.url.includes("/adsets"))!.url).replace(/\+/g, " ");
+    expect(decoded).toContain('"cities":[{"key":"244661","radius":25,"distance_unit":"kilometer"}]');
+    expect(decoded).toContain('"custom_locations":[{"address_string":"Av. Afonso Pena 1500, BH","radius":5,"distance_unit":"kilometer"}]');
+  });
 });
 
 describe("MetaCreationService.getAudienceProfile (P0.2/P1 — leitura isolada no propose)", () => {

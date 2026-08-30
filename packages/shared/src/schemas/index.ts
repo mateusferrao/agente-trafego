@@ -122,7 +122,14 @@ export const targetingSpecSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("advantage_plus") }),
   z.object({
     kind: z.literal("explicit"),
-    geo: z.array(geoRefSchema.extend({ kind: z.enum(["country", "region", "city"]) })),
+    geo: z.array(
+      geoRefSchema.extend({
+        kind: z.enum(["country", "region", "city"]),
+        radius: z.number().positive().optional(),
+        distanceUnit: z.enum(["mile", "kilometer"]).optional(),
+      }),
+    ),
+    radiusAreas: z.array(z.object({ address: z.string().min(1), radius: z.number().positive(), distanceUnit: z.enum(["mile", "kilometer"]) })).optional(),
     ageMin: z.number().int().optional(),
     ageMax: z.number().int().optional(),
     genders: z.array(z.union([z.literal(1), z.literal(2)])).optional(),
