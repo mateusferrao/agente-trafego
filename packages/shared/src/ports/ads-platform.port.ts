@@ -9,6 +9,7 @@ import type {
   CustomAudience,
   DeliveryEstimate,
   EntityLevel,
+  GeoSearchResult,
   InsightRow,
   TargetingSpec,
   WhatsappDestination,
@@ -214,6 +215,9 @@ export interface AdsPlatformPort {
   getWhatsappDestination(account: AdAccountRef, campaignId: string): Promise<WhatsappDestination>;
   /** Lista os custom/saved audiences da conta (Fatia 7) — remarketing/exclusões reais. */
   listCustomAudiences(account: AdAccountRef): Promise<CustomAudience[]>;
+  /** Busca geo (país/região/cidade) por texto — Fase 1 (subfatia 3), targeting explícito por
+   *  primitivos. Query vazia ou sem match → array vazio (o caller decide pergunta/honesto). */
+  searchGeo(account: AdAccountRef, query: string, locationTypes: readonly ("country" | "region" | "city")[]): Promise<GeoSearchResult[]>;
   /** Estima o alcance de um targeting COMBINADO (Fatia 7 — fast-follow), ao vivo no momento da
    *  proposta (depende do público/exclusões escolhidos → não cacheável no run). Best-effort:
    *  `ready:false` quando a plataforma ainda não estimou. */

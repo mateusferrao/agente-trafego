@@ -473,6 +473,26 @@ export class MetaCreationService {
       }
       case "advantage_plus":
         return { targeting: this.advantagePlusTargeting(), fallback: false };
+      case "explicit": {
+        // público NOVO por primitivos (Fase 1) — expansão SEMPRE fechada (público escolhido pelo
+        // dono, sem ambiguidade de "fonte não decidiu" — diferente de reuse_adset).
+        const geo: ResolvedAudienceSnapshot["geo"] = {
+          countries: spec.geo.filter((g) => g.kind === "country").map((g) => g.key),
+          regions: spec.geo.filter((g) => g.kind === "region").map((g) => ({ key: g.key, name: g.name })),
+          cities: spec.geo.filter((g) => g.kind === "city").map((g) => ({ key: g.key, name: g.name })),
+        };
+        const out: Record<string, unknown> = {
+          geo_locations: this.geoToRaw(geo),
+          ...(spec.ageMin !== undefined ? { age_min: spec.ageMin } : {}),
+          ...(spec.ageMax !== undefined ? { age_max: spec.ageMax } : {}),
+          ...(spec.genders && spec.genders.length > 0 ? { genders: spec.genders } : {}),
+          ...(spec.customAudienceIncludeIds && spec.customAudienceIncludeIds.length > 0 ? { custom_audiences: spec.customAudienceIncludeIds.map((id) => ({ id })) } : {}),
+          ...(spec.customAudienceExcludeIds && spec.customAudienceExcludeIds.length > 0 ? { excluded_custom_audiences: spec.customAudienceExcludeIds.map((id) => ({ id })) } : {}),
+          targeting_automation: { advantage_audience: 0 },
+          targeting_relaxation_types: { custom_audience: 0, lookalike: 0 },
+        };
+        return { targeting: out, fallback: false };
+      }
       default: {
         const _exhaustive: never = spec;
         return _exhaustive;

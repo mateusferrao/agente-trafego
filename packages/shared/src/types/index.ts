@@ -185,6 +185,18 @@ export interface CustomAudience {
 }
 
 /**
+ * Resultado de busca de geo (Fase 1, subfatia 3) — vocabulário Meta (`adgeolocation`) isolado no
+ * adapter. `key` é o identificador a passar de volta pro `TargetingSpec.explicit.geo`.
+ */
+export interface GeoSearchResult {
+  readonly key: string;
+  readonly name: string;
+  readonly kind: "country" | "region" | "city";
+  /** país-mãe (cidades/regiões) — desambiguação quando o nome é homônimo entre países. */
+  readonly countryCode?: string;
+}
+
+/**
  * Estimativa de alcance/entrega de um targeting COMBINADO (Fatia 7 — fast-follow) — taxonomia
  * neutra (vocabulário Meta `estimate_dau`/`estimate_mau`/`delivery_estimate` só no adapter). É a
  * previsão de quantas pessoas o público proposto (includes − excludes + geo/idade) atinge; superior
@@ -817,6 +829,23 @@ export type TargetingSpec =
       /** base de geo/idade herdada do `sourceAdsetId` (quando presente) — mesmo papel do
        *  `resolved` acima, ausente = caminho antigo (lê ao vivo). */
       readonly resolvedBase?: Pick<ResolvedAudienceSnapshot, "geo" | "ageMin" | "ageMax">;
+    }
+  /**
+   * Público EXPLÍCITO por primitivos (Fase 1 — geo/idade/gênero; interesses entram na Fase 2,
+   * mesmo kind). Expansão SEMPRE fechada (público novo, escolhido pelo dono — sem ambiguidade de
+   * "fonte não decidiu", diferente de `reuse_adset`). Kind SUPERSET: quando o dono também indica
+   * um público salvo (nome→id) na mesma frase, `customAudienceIncludeIds/ExcludeIds` entram AQUI
+   * (compõe geo+público, não escolhe um dos dois — decisão da subfatia 3).
+   */
+  | {
+      readonly kind: "explicit";
+      readonly geo: readonly { readonly key: string; readonly name: string; readonly kind: "country" | "region" | "city" }[];
+      readonly ageMin?: number;
+      readonly ageMax?: number;
+      /** 1 = homens, 2 = mulheres — ausente/vazio = todos. */
+      readonly genders?: readonly (1 | 2)[];
+      readonly customAudienceIncludeIds?: readonly string[];
+      readonly customAudienceExcludeIds?: readonly string[];
     };
 
 /**

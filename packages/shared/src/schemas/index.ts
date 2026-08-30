@@ -127,6 +127,15 @@ export const targetingSpecSchema = z.discriminatedUnion("kind", [
     excludeIds: z.array(z.string().min(1)),
     resolvedBase: resolvedAudienceSnapshotSchema.pick({ geo: true, ageMin: true, ageMax: true }).optional(),
   }),
+  z.object({
+    kind: z.literal("explicit"),
+    geo: z.array(geoRefSchema.extend({ kind: z.enum(["country", "region", "city"]) })),
+    ageMin: z.number().int().optional(),
+    ageMax: z.number().int().optional(),
+    genders: z.array(z.union([z.literal(1), z.literal(2)])).optional(),
+    customAudienceIncludeIds: z.array(z.string().min(1)).optional(),
+    customAudienceExcludeIds: z.array(z.string().min(1)).optional(),
+  }),
 ]);
 
 export const campaignDraftSpecSchema = z.object({

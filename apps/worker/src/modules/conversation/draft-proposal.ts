@@ -139,7 +139,10 @@ export function audienceEchoPhrase(args: {
   /** descrição real (cidades/idade/expansão) do público herdado — quando disponível (subfatia 2),
    *  substitui o genérico "herdado do conjunto que já converte" pelo público de verdade. */
   readonly resolvedAudienceDescription?: string;
+  /** descrição do público EXPLÍCITO (Fase 1, subfatia 3a) — geo/idade/gênero indicados pelo dono. */
+  readonly explicitAudienceDescription?: string;
 }): string {
+  if (args.targetingKind === "explicit" && args.explicitAudienceDescription) return args.explicitAudienceDescription;
   if (args.hasAudience) return "o que você indicou" + (args.hasExclusions ? " (com exclusões)" : "");
   if (args.targetingKind === "reuse_adset") {
     return args.resolvedAudienceDescription
@@ -147,6 +150,15 @@ export function audienceEchoPhrase(args: {
       : "herdado do conjunto que já converte";
   }
   return "amplo (Advantage+)";
+}
+
+/** Descrição HONESTA do público EXPLÍCITO (Fase 1, subfatia 3a) — geo/idade/gênero pro eco. Pura. */
+export function describeExplicitAudience(targeting: Extract<TargetingSpec, { readonly kind: "explicit" }>): string {
+  const placesLabel = targeting.geo.length > 0 ? summarizePlaces(targeting.geo.map((g) => g.name)) : null;
+  const ageLabel = targeting.ageMin !== undefined || targeting.ageMax !== undefined ? `${targeting.ageMin ?? "?"}-${targeting.ageMax ?? "?"} anos` : null;
+  const genderLabel = targeting.genders?.includes(1) && !targeting.genders.includes(2) ? "homens" : targeting.genders?.includes(2) && !targeting.genders.includes(1) ? "mulheres" : null;
+  const audienceLabel = targeting.customAudienceIncludeIds && targeting.customAudienceIncludeIds.length > 0 ? "+ público salvo indicado" : null;
+  return [placesLabel, ageLabel, genderLabel, "sem expansão de público", audienceLabel].filter((s): s is string => Boolean(s)).join(", ");
 }
 
 /** Máx. de cidades/regiões nomeadas no eco antes de resumir em "+N" (compacto, não despeja a lista). */
@@ -171,6 +183,17 @@ function snapshotGeoFromProfile(profile: AudienceProfile): ResolvedAudienceSnaps
     return { ...(regions.length > 0 ? { regions } : {}), ...(cities.length > 0 ? { cities } : {}) };
   }
   return profile.geo && profile.geo.length > 0 ? { countries: [...profile.geo] } : {};
+}
+
+/** Inverso de `snapshotGeoFromProfile` — geo AGRUPADO (snapshot) → lista PLANA `{key,name,kind}[]`
+ *  (shape do `TargetingSpec.explicit.geo`). Usado quando o dono troca idade/gênero na CÓPIA sem
+ *  trocar a geo — mantém a geo original em vez de defaultar pra um país. País usa o código como
+ *  nome (sem round-trip de nome legível — `resolvedSnapshot` não guarda o nome do país). */
+function flattenSnapshotGeo(geo: ResolvedAudienceSnapshot["geo"]): { readonly key: string; readonly name: string; readonly kind: "country" | "region" | "city" }[] {
+  const countries = (geo.countries ?? []).map((c) => ({ key: c, name: c, kind: "country" as const }));
+  const regions = (geo.regions ?? []).map((r) => ({ key: r.key, name: r.name, kind: "region" as const }));
+  const cities = (geo.cities ?? []).map((c) => ({ key: c.key, name: c.name, kind: "city" as const }));
+  return [...countries, ...regions, ...cities];
 }
 
 /** `AudienceProfile` lido (P0.2) → snapshot resolvido pra gravar no rascunho (subfatia 2) — a
@@ -364,6 +387,42 @@ async function prepareAudiences(
     }
   }
   return { kind: "ok", includeIds, excludeIds, notes, sizeWarnings };
+}
+
+/** Rótulo PT do tipo de geo (vocabulário Meta fica no adapter — aqui só o kind neutro). */
+function geoKindPt(kind: "country" | "region" | "city"): string {
+  return kind === "country" ? "país" : kind === "region" ? "região" : "cidade";
+}
+
+const MAX_GEO_AMBIGUOUS_OPTIONS = 5;
+
+type GeoPrep =
+  | { readonly kind: "ok"; readonly geo: readonly { readonly key: string; readonly name: string; readonly kind: "country" | "region" | "city" }[] }
+  | { readonly kind: "blocked"; readonly reason: string };
+
+/**
+ * Resolve geo pedida (por NOME) → lugar real na Meta (Fase 1, subfatia 3a). Mesma honestidade de
+ * `prepareAudiences`: 1 match → resolve; 0 → honesto; 2+ → PERGUNTA com opções numeradas, nunca chuta.
+ */
+async function prepareGeo(deps: WorkerDeps, ref: AdAccountRef, queries: readonly string[]): Promise<GeoPrep> {
+  if (queries.length === 0) return { kind: "ok", geo: [] };
+  const resolved: { key: string; name: string; kind: "country" | "region" | "city" }[] = [];
+  for (const q of queries) {
+    const matches = await deps.ports.ads.searchGeo(ref, q, ["country", "region", "city"]);
+    if (matches.length === 0) {
+      return { kind: "blocked", reason: `não achei "${q}" na busca de localização da Meta — confere o nome? (cidade, região ou país)` };
+    }
+    if (matches.length === 1) {
+      resolved.push(matches[0]!);
+      continue;
+    }
+    const opts = matches
+      .slice(0, MAX_GEO_AMBIGUOUS_OPTIONS)
+      .map((m, i) => `${i + 1}. ${m.name}${m.countryCode ? ` (${m.countryCode})` : ""} — ${geoKindPt(m.kind)}`)
+      .join("\n");
+    return { kind: "blocked", reason: `achei mais de um lugar parecido com "${q}":\n${opts}\nQual desses? (me diz mais específico, tipo "Belo Horizonte, MG")` };
+  }
+  return { kind: "ok", geo: resolved };
 }
 
 /**
@@ -585,6 +644,46 @@ export interface RefineDraftPatch {
   readonly audience?: "reuse" | "broad";
   /** nome da campanha (chat leve — ajuste de intenção única, só from_scratch). */
   readonly campaignName?: string;
+  /** remove geo(s) do público EXPLÍCITO já resolvido (Fase 1, subfatia 3a) — por nome/trecho do
+   *  nome (ex: "Ibirité"). Sem chamada nova (já está no rascunho). Nome não encontrado → bloqueia. */
+  readonly removeGeo?: readonly string[];
+  /** adiciona geo(s) NOVA(s) ao público explícito, pelo NOME que o dono disse — `refineDraft`
+   *  resolve via `prepareGeo` (ambíguo→pergunta) antes de fundir. */
+  readonly addGeo?: readonly string[];
+  readonly ageMin?: number;
+  readonly ageMax?: number;
+}
+
+/**
+ * Edição do público `explicit` já resolvido (Fase 1, subfatia 3a) — remove/adiciona geo(s) e/ou
+ * estreita idade. Remover é SEM chamada nova (o dono já viu essa lista no eco); adicionar já vem
+ * RESOLVIDO (a busca aconteceu na casca, esta função só funde). Pura.
+ */
+export function applyExplicitGeoEdit(
+  current: Extract<TargetingSpec, { readonly kind: "explicit" }>,
+  patch: {
+    readonly removeGeo?: readonly string[];
+    readonly addGeo?: readonly { readonly key: string; readonly name: string; readonly kind: "country" | "region" | "city" }[];
+    readonly ageMin?: number;
+    readonly ageMax?: number;
+  },
+): { readonly kind: "ok"; readonly targeting: TargetingSpec } | { readonly kind: "blocked"; readonly reason: string } {
+  let geo = current.geo;
+  for (const name of patch.removeGeo ?? []) {
+    const before = geo.length;
+    geo = geo.filter((g) => !g.name.toLowerCase().includes(name.toLowerCase()));
+    if (geo.length === before) {
+      return { kind: "blocked", reason: `não achei "${name}" no público atual do rascunho — confere o nome? (hoje: ${current.geo.map((g) => g.name).join(", ")})` };
+    }
+  }
+  if (patch.addGeo && patch.addGeo.length > 0) {
+    const existingKeys = new Set(geo.map((g) => g.key));
+    geo = [...geo, ...patch.addGeo.filter((g) => !existingKeys.has(g.key))];
+  }
+  return {
+    kind: "ok",
+    targeting: { ...current, geo, ...(patch.ageMin !== undefined ? { ageMin: patch.ageMin } : {}), ...(patch.ageMax !== undefined ? { ageMax: patch.ageMax } : {}) },
+  };
 }
 
 export type RefineResult = { readonly kind: "ok"; readonly echo: string } | { readonly kind: "blocked"; readonly reason: string };
@@ -653,6 +752,20 @@ export async function refineDraft(
   if (kind === "from_scratch" && patch.audience) {
     const targeting = await resolveAudienceTargeting(patch.audience, spec.targeting, async () => (await deps.ports.ads.inferCreationDefaults(ac.ref)).sourceAdsetId);
     if (targeting) edit.targeting = targeting;
+  }
+  // editar (remover/adicionar geo, estreitar idade) o público EXPLÍCITO já resolvido (Fase 1,
+  // subfatia 3a). Adicionar resolve na hora (ambíguo→pergunta); remover/idade não chamam a Meta.
+  if (kind === "from_scratch" && spec.targeting?.kind === "explicit" && (patch.removeGeo?.length || patch.addGeo?.length || patch.ageMin != null || patch.ageMax != null)) {
+    const addGeoPrep = patch.addGeo?.length ? await prepareGeo(deps, ac.ref, patch.addGeo) : { kind: "ok" as const, geo: [] };
+    if (addGeoPrep.kind === "blocked") return { kind: "blocked", reason: addGeoPrep.reason };
+    const r = applyExplicitGeoEdit(spec.targeting, {
+      ...(patch.removeGeo ? { removeGeo: patch.removeGeo } : {}),
+      ...(addGeoPrep.geo.length > 0 ? { addGeo: addGeoPrep.geo } : {}),
+      ...(patch.ageMin != null ? { ageMin: patch.ageMin } : {}),
+      ...(patch.ageMax != null ? { ageMax: patch.ageMax } : {}),
+    });
+    if (r.kind === "blocked") return { kind: "blocked", reason: r.reason };
+    edit.targeting = r.targeting;
   }
 
   const result = applyDraftEdit(kind, spec, edit, { budgetCapMinor: ac.cfg.maxNewDailyBudgetMinor ?? null, hasPixel: true });
@@ -951,6 +1064,11 @@ export async function proposeCreateCampaign(
     /** públicos DESCRITOS pelo dono (nome/descrição) — resolvidos determinístico p/ id. */
     readonly includeAudiences?: readonly string[];
     readonly excludeAudiences?: readonly string[];
+    /** geo/idade/gênero EXPLÍCITOS (Fase 1, subfatia 3a) — nomes de lugar resolvidos p/ id real. */
+    readonly geo?: readonly string[];
+    readonly ageMin?: number;
+    readonly ageMax?: number;
+    readonly gender?: "all" | "men" | "women";
   },
   origin: DraftOrigin = "on_demand",
 ): Promise<ChatDraftProposal> {
@@ -968,6 +1086,10 @@ export async function proposeCreateCampaign(
   // resolve os públicos pedidos → ids (determinístico; ambíguo/inexistente → pergunta).
   const aud = await prepareAudiences(deps, ctx, ac.ref, args.includeAudiences ?? [], args.excludeAudiences ?? []);
   if (aud.kind === "blocked") return { kind: "blocked", reason: aud.reason };
+  // geo explícita (Fase 1, subfatia 3a) — mesma honestidade (ambíguo→pergunta, nunca chuta).
+  const geoPrep = await prepareGeo(deps, ac.ref, args.geo ?? []);
+  if (geoPrep.kind === "blocked") return { kind: "blocked", reason: geoPrep.reason };
+  const hasExplicitPrimitive = geoPrep.geo.length > 0 || args.ageMin !== undefined || args.ageMax !== undefined || (args.gender && args.gender !== "all");
 
   const defaults = await deps.ports.ads.inferCreationDefaults(ac.ref);
   const goal = args.goal ?? defaults.objectiveGoal ?? DEFAULT_CONVERSION_GOAL;
@@ -1036,23 +1158,35 @@ export async function proposeCreateCampaign(
   const isVideo = Boolean(reuseVideoId);
   // público específico (sem fonte — geo amplo + o público) quando o dono indicou; senão a estratégia padrão.
   const hasAudience = aud.includeIds.length > 0 || aud.excludeIds.length > 0;
-  const baseTargeting = hasAudience
-    ? ({ kind: "custom_audiences", includeIds: aud.includeIds, excludeIds: aud.excludeIds } satisfies TargetingSpec)
-    : resolveCreationTargeting(defaults);
   // P0.2/P1: reuse_adset resolve+cacheia o público REAL da fonte AGORA (não só no apply) — o eco
   // mostra cidades/idade/expansão de verdade, e a leitura falhar BLOQUEIA em vez de virar
   // Advantage+ silencioso depois de já ter prometido "o público que já converte".
   let audienceProfile: AudienceProfile | null = null;
-  if (baseTargeting.kind === "reuse_adset") {
-    audienceProfile = await deps.ports.ads.getAudienceProfile(ac.ref, baseTargeting.sourceAdsetId);
-    if (!audienceProfile) {
-      return { kind: "blocked", reason: "não consegui ler o público da fonte agora — não vou herdar às cegas. Tenta de novo em instantes." };
+  let targeting: NonNullable<CampaignDraftSpec["targeting"]>;
+  if (hasExplicitPrimitive) {
+    // COMPÕE, não escolhe (reanálise crítica do plano): geo/idade/gênero explícitos viram o kind
+    // SUPERSET — público salvo por nome (quando também indicado) entra no MESMO targeting, não
+    // um escolhendo o outro (ex: "cria pra SP e pro público X" monta os dois juntos).
+    targeting = {
+      kind: "explicit",
+      geo: geoPrep.geo.length > 0 ? geoPrep.geo : [{ key: "BR", name: "Brasil", kind: "country" }],
+      ...(args.ageMin !== undefined ? { ageMin: args.ageMin } : {}),
+      ...(args.ageMax !== undefined ? { ageMax: args.ageMax } : {}),
+      ...(args.gender === "men" ? { genders: [1] } : args.gender === "women" ? { genders: [2] } : {}),
+      ...(hasAudience ? { customAudienceIncludeIds: aud.includeIds, customAudienceExcludeIds: aud.excludeIds } : {}),
+    };
+  } else {
+    const baseTargeting = hasAudience
+      ? ({ kind: "custom_audiences", includeIds: aud.includeIds, excludeIds: aud.excludeIds } satisfies TargetingSpec)
+      : resolveCreationTargeting(defaults);
+    if (baseTargeting.kind === "reuse_adset") {
+      audienceProfile = await deps.ports.ads.getAudienceProfile(ac.ref, baseTargeting.sourceAdsetId);
+      if (!audienceProfile) {
+        return { kind: "blocked", reason: "não consegui ler o público da fonte agora — não vou herdar às cegas. Tenta de novo em instantes." };
+      }
     }
+    targeting = baseTargeting.kind === "reuse_adset" && audienceProfile ? { ...baseTargeting, resolved: buildResolvedSnapshot(audienceProfile) } : baseTargeting;
   }
-  const targeting: NonNullable<CampaignDraftSpec["targeting"]> =
-    baseTargeting.kind === "reuse_adset" && audienceProfile
-      ? { ...baseTargeting, resolved: buildResolvedSnapshot(audienceProfile) }
-      : baseTargeting;
   const spec: CampaignDraftSpec = {
     version: 1,
     currency: ac.currency,
@@ -1081,7 +1215,8 @@ export async function proposeCreateCampaign(
     chosen.source === "serving"
       ? "reusando o criativo que melhor performa na sua conta"
       : "reusando um criativo da sua biblioteca (você não tem anúncio ativo pra eu comparar desempenho)";
-  const audienceSourcePhrase = spec.targeting?.kind === "reuse_adset" ? " e o público que já converte" : "";
+  const audienceSourcePhrase =
+    spec.targeting?.kind === "reuse_adset" ? " e o público que já converte" : spec.targeting?.kind === "explicit" ? " pro público que você indicou" : "";
   // Transparência (§clareza pro dono): se o #1 por desempenho for um formato que ainda não sei
   // clonar (carrossel/catálogo), avisa que peguei o melhor de imagem/vídeo no lugar.
   const lines = [
@@ -1098,6 +1233,7 @@ export async function proposeCreateCampaign(
     hasExclusions: aud.excludeIds.length > 0,
     targetingKind: spec.targeting?.kind,
     ...(audienceProfile ? { resolvedAudienceDescription: describeResolvedAudience(audienceProfile) } : {}),
+    ...(spec.targeting?.kind === "explicit" ? { explicitAudienceDescription: describeExplicitAudience(spec.targeting) } : {}),
   });
   lines.push(
     `Público: ${audiencePhrase}.`,
@@ -1106,7 +1242,7 @@ export async function proposeCreateCampaign(
   for (const n of aud.notes) lines.push(n);
   // alcance combinado (delivery_estimate ao vivo) quando o dono indicou público; superior ao
   // por-público → substitui o `sizeWarnings`, que fica de fallback quando a estimativa não vem.
-  const reachNote = hasAudience ? await reachNoteFor(deps, ac.ref, targeting, goal, defaults.pixelId) : null;
+  const reachNote = hasAudience || hasExplicitPrimitive ? await reachNoteFor(deps, ac.ref, targeting, goal, defaults.pixelId) : null;
   if (reachNote) lines.push(reachNote);
   else for (const w of aud.sizeWarnings) lines.push(w);
   lines.push(`Confirma? (você pode trocar o criativo no site antes de aprovar)`);
@@ -1199,6 +1335,12 @@ export async function proposeCopyCampaign(
     readonly excludeAudiences?: readonly string[];
     readonly budgetReais?: number;
     readonly goal?: ConversionGoal;
+    /** geo/idade/gênero EXPLÍCITOS pra TROCAR os da original (Fase 1, subfatia 3a) — quando
+     *  ausentes, mantém o da campanha-base. */
+    readonly geo?: readonly string[];
+    readonly ageMin?: number;
+    readonly ageMax?: number;
+    readonly gender?: "all" | "men" | "women";
   },
   origin: DraftOrigin = "on_demand",
 ): Promise<ChatDraftProposal> {
@@ -1211,6 +1353,9 @@ export async function proposeCopyCampaign(
   // resolve os públicos pedidos → ids (determinístico; ambíguo/inexistente → pergunta).
   const aud = await prepareAudiences(deps, ctx, ac.ref, args.includeAudiences ?? [], args.excludeAudiences ?? []);
   if (aud.kind === "blocked") return { kind: "blocked", reason: aud.reason };
+  const geoPrep = await prepareGeo(deps, ac.ref, args.geo ?? []);
+  if (geoPrep.kind === "blocked") return { kind: "blocked", reason: geoPrep.reason };
+  const hasExplicitPrimitive = geoPrep.geo.length > 0 || args.ageMin !== undefined || args.ageMax !== undefined || (args.gender && args.gender !== "all");
 
   let structure;
   try {
@@ -1237,15 +1382,24 @@ export async function proposeCopyCampaign(
   // leu — sem chamada extra); só falta cachear+ecoar. Diferente de proposeCreateCampaign, aqui a
   // leitura já bloqueou lá em cima (try/catch de readCampaignStructure) se tivesse falhado.
   const resolvedSnapshot = buildResolvedSnapshot(structure.targeting);
-  const targeting: NonNullable<CampaignDraftSpec["targeting"]> = hasAudience
+  const targeting: NonNullable<CampaignDraftSpec["targeting"]> = hasExplicitPrimitive
     ? {
-        kind: "custom_audiences",
-        sourceAdsetId: structure.sourceAdsetId,
-        includeIds: aud.includeIds,
-        excludeIds: aud.excludeIds,
-        resolvedBase: { geo: resolvedSnapshot.geo, ...(resolvedSnapshot.ageMin !== undefined ? { ageMin: resolvedSnapshot.ageMin } : {}), ...(resolvedSnapshot.ageMax !== undefined ? { ageMax: resolvedSnapshot.ageMax } : {}) },
+        kind: "explicit",
+        geo: geoPrep.geo.length > 0 ? geoPrep.geo : flattenSnapshotGeo(resolvedSnapshot.geo),
+        ...(args.ageMin !== undefined ? { ageMin: args.ageMin } : resolvedSnapshot.ageMin !== undefined ? { ageMin: resolvedSnapshot.ageMin } : {}),
+        ...(args.ageMax !== undefined ? { ageMax: args.ageMax } : resolvedSnapshot.ageMax !== undefined ? { ageMax: resolvedSnapshot.ageMax } : {}),
+        ...(args.gender === "men" ? { genders: [1] } : args.gender === "women" ? { genders: [2] } : {}),
+        ...(hasAudience ? { customAudienceIncludeIds: aud.includeIds, customAudienceExcludeIds: aud.excludeIds } : {}),
       }
-    : { kind: "reuse_adset", sourceAdsetId: structure.sourceAdsetId, resolved: resolvedSnapshot };
+    : hasAudience
+      ? {
+          kind: "custom_audiences",
+          sourceAdsetId: structure.sourceAdsetId,
+          includeIds: aud.includeIds,
+          excludeIds: aud.excludeIds,
+          resolvedBase: { geo: resolvedSnapshot.geo, ...(resolvedSnapshot.ageMin !== undefined ? { ageMin: resolvedSnapshot.ageMin } : {}), ...(resolvedSnapshot.ageMax !== undefined ? { ageMax: resolvedSnapshot.ageMax } : {}) },
+        }
+      : { kind: "reuse_adset", sourceAdsetId: structure.sourceAdsetId, resolved: resolvedSnapshot };
 
   // Budget da cópia é sempre DIÁRIO (o create só escreve daily). Fonte com budget DIÁRIO →
   // reusa; fonte VITALÍCIA → NÃO trata o total como diário (overspend); usa um diário inicial
@@ -1280,16 +1434,18 @@ export async function proposeCopyCampaign(
   });
 
   // P0.2: mostra o público REAL herdado (cidades/idade/expansão), não só "mantendo geo/idade" genérico.
-  const resolvedDescription = describeResolvedAudience(structure.targeting);
-  const audienceLine = hasAudience
-    ? `\n• *Público:* remarketing selecionado${aud.excludeIds.length ? " (com exclusões)" : ""} — ${resolvedDescription}`
-    : `\n• *Público:* o mesmo da campanha-base — ${resolvedDescription}`;
+  const audienceLine =
+    targeting.kind === "explicit"
+      ? `\n• *Público:* ${describeExplicitAudience(targeting)}`
+      : hasAudience
+        ? `\n• *Público:* remarketing selecionado${aud.excludeIds.length ? " (com exclusões)" : ""} — ${describeResolvedAudience(structure.targeting)}`
+        : `\n• *Público:* o mesmo da campanha-base — ${describeResolvedAudience(structure.targeting)}`;
   const budgetLine = sourceIsLifetime
     ? `• *Orçamento:* ${structure.budgetMode.toUpperCase()} · ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia (a original usa orçamento vitalício; comecei com um diário seguro — ajuste se quiser)`
     : `• *Orçamento:* ${structure.budgetMode.toUpperCase()} · ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia`;
   // alcance combinado (delivery_estimate ao vivo) só quando o dono trocou o público (senão o
   // targeting é o mesmo da base, alcance já conhecido). Superior ao por-público (`sizeWarnings`).
-  const reachNote = hasAudience ? await reachNoteFor(deps, ac.ref, targeting, goal, structure.pixelId) : null;
+  const reachNote = hasAudience || hasExplicitPrimitive ? await reachNoteFor(deps, ac.ref, targeting, goal, structure.pixelId) : null;
   const reachLines = reachNote ? [reachNote] : aud.sizeWarnings;
   const echo = [
     `Vou *copiar a estrutura* de "${baseName}" numa campanha nova:`,

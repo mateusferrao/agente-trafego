@@ -9,6 +9,7 @@ import type {
   DeliveryEstimate,
   EntityLevel,
   EntityStatus,
+  GeoSearchResult,
   InsightRow,
   WhatsappDestination,
 } from "@trafego/shared/types";
@@ -34,6 +35,7 @@ import { MetaMutationsService } from "./mutations.js";
 import { MetaCreationService } from "./creation.js";
 import { MetaWhatsappDestinationService } from "./whatsapp-destination.js";
 import { MetaAudiencesService } from "./audiences.js";
+import { MetaGeoSearchService } from "./geo-search.js";
 import { MetaCampaignStructureService } from "./campaign-structure.js";
 import { MetaGovernor } from "./governor.js";
 import { MetaEntityCache } from "./entity-cache.js";
@@ -204,6 +206,7 @@ export class MetaAdsAdapter implements AdsPlatformPort {
   private readonly creation: MetaCreationService;
   private readonly whatsapp: MetaWhatsappDestinationService;
   private readonly audiences: MetaAudiencesService;
+  private readonly geoSearch: MetaGeoSearchService;
   private readonly campaignStructure: MetaCampaignStructureService;
   private readonly customConversions: CustomConversionsResolver | undefined;
   private readonly entityCache: MetaEntityCache | undefined;
@@ -217,6 +220,7 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     this.creation = deps.creation ?? new MetaCreationService(deps.client);
     this.whatsapp = new MetaWhatsappDestinationService(deps.client, deps.governor, this.creatives);
     this.audiences = new MetaAudiencesService(deps.client, deps.governor);
+    this.geoSearch = new MetaGeoSearchService(deps.client, deps.governor);
     this.campaignStructure = new MetaCampaignStructureService(deps.client, deps.governor);
     this.customConversions = deps.customConversions;
     this.entityCache = deps.entityCache;
@@ -370,6 +374,14 @@ export class MetaAdsAdapter implements AdsPlatformPort {
   async listCustomAudiences(account: AdAccountRef): Promise<CustomAudience[]> {
     try {
       return await this.audiences.list(account);
+    } catch (error) {
+      throw toAdsError(error);
+    }
+  }
+
+  async searchGeo(account: AdAccountRef, query: string, locationTypes: readonly ("country" | "region" | "city")[]): Promise<GeoSearchResult[]> {
+    try {
+      return await this.geoSearch.search(account, query, locationTypes);
     } catch (error) {
       throw toAdsError(error);
     }

@@ -284,12 +284,16 @@ export function makeConversationTools(
   const createCampaign = tool(proposeOnly, {
     name: "create_campaign",
     description:
-      "Propõe CRIAR uma campanha nova reusando o criativo/página/pixel da conta + copy gerada. Pode mirar um PÚBLICO específico (passe includeAudienceIds/excludeAudienceIds — use list_audiences pra achar os ids); sem público = amplo (Advantage+). Requer eco+confirma.",
+      "Propõe CRIAR uma campanha nova reusando o criativo/página/pixel da conta + copy gerada. Pode mirar um PÚBLICO específico (passe includeAudienceIds/excludeAudienceIds — use list_audiences pra achar os ids) e/ou GEO/IDADE/GÊNERO explícitos (geo/ageMin/ageMax/gender); sem nenhum = amplo (Advantage+). Os dois se COMBINAM se o usuário pedir os dois juntos (ex: 'pra SP e pro público X'). Requer eco+confirma.",
     schema: z.object({
       goal: z.string().nullable().optional().describe("objetivo de negócio (ex: purchase, lead)"),
       budgetReais: z.number().positive().nullable().optional().describe("budget diário em reais (opcional)"),
       includeAudiences: z.array(z.string()).nullable().optional().describe("públicos a INCLUIR, pelo NOME/descrição que o usuário disse (ex: 'engajamento 90 dias') — eu resolvo pro público real e pergunto se ambíguo. Mira esse público em vez de amplo."),
       excludeAudiences: z.array(z.string()).nullable().optional().describe("públicos a EXCLUIR, pelo nome/descrição"),
+      geo: z.array(z.string()).nullable().optional().describe("localizações pelo NOME que o usuário disse (cidade/região/país, ex: 'BH', 'Contagem', 'Minas Gerais') — eu resolvo pro lugar real na Meta e pergunto se ambíguo."),
+      ageMin: z.number().int().min(13).max(65).nullable().optional().describe("idade mínima"),
+      ageMax: z.number().int().min(13).max(65).nullable().optional().describe("idade máxima"),
+      gender: z.enum(["all", "men", "women"]).nullable().optional().describe("gênero do público — 'all' (padrão) = todos"),
     }),
   });
 
@@ -305,6 +309,10 @@ export function makeConversationTools(
       campaignName: z.string().nullable().optional().describe("nome da campanha-base, só p/ rotular"),
       includeAudiences: z.array(z.string()).nullable().optional().describe("públicos a INCLUIR (remarketing), pelo NOME/descrição que o usuário disse — eu resolvo pro público real e pergunto se ambíguo"),
       excludeAudiences: z.array(z.string()).nullable().optional().describe("públicos a EXCLUIR, pelo nome/descrição (ex: 'leads', 'compradores')"),
+      geo: z.array(z.string()).nullable().optional().describe("localizações pelo NOME pra TROCAR a geo da original (cidade/região/país) — eu resolvo e pergunto se ambíguo"),
+      ageMin: z.number().int().min(13).max(65).nullable().optional().describe("idade mínima pra TROCAR a da original"),
+      ageMax: z.number().int().min(13).max(65).nullable().optional().describe("idade máxima pra TROCAR a da original"),
+      gender: z.enum(["all", "men", "women"]).nullable().optional().describe("gênero pra TROCAR o da original"),
       budgetReais: z.number().positive().nullable().optional().describe("budget diário em reais (opcional; default = o da original)"),
       goal: z.string().nullable().optional().describe("objetivo — só se quiser MUDAR (o agente vai avisar que troca o mecanismo)"),
     }),
@@ -314,13 +322,17 @@ export function makeConversationTools(
   const adjustDraft = tool(proposeOnly, {
     name: "adjust_draft",
     description:
-      "Ajusta o rascunho de campanha JÁ PROPOSTO (só quando há um pendente): budget diário, ativação (ativa/pausada), nº de variações, PÚBLICO (audience: 'reuse' = herda o conjunto que já converte; 'broad' = deixa a Meta escolher, mais amplo) ou o NOME da campanha (campaignName). Não cria rascunho novo. Edições pesadas (nomes de conjunto/anúncio, objetivo, copy campo-a-campo, adicionar/remover anúncio) NÃO aqui — ofereça o link do painel do site.",
+      "Ajusta o rascunho de campanha JÁ PROPOSTO (só quando há um pendente): budget diário, ativação (ativa/pausada), nº de variações, PÚBLICO (audience: 'reuse' = herda o conjunto que já converte; 'broad' = deixa a Meta escolher, mais amplo) ou o NOME da campanha (campaignName). Se o público já é explícito (geo/idade), dá pra REMOVER (removeGeo, pelo nome — ex: 'tira Ibirité') ou ADICIONAR (addGeo — eu resolvo pro lugar real e pergunto se ambíguo) localização, e ESTREITAR idade (ageMin/ageMax), sem recriar o rascunho. Não cria rascunho novo. Edições pesadas (nomes de conjunto/anúncio, objetivo, copy campo-a-campo, adicionar/remover anúncio) NÃO aqui — ofereça o link do painel do site.",
     schema: z.object({
       budgetReais: z.number().positive().nullable().optional(),
       activation: z.enum(["active", "paused"]).nullable().optional(),
       variantsCount: z.number().int().positive().nullable().optional(),
       audience: z.enum(["reuse", "broad"]).nullable().optional(),
       campaignName: z.string().min(1).nullable().optional(),
+      removeGeo: z.array(z.string()).nullable().optional().describe("nomes de cidade/região/país a REMOVER do público explícito já resolvido (ex: ['Ibirité'])"),
+      addGeo: z.array(z.string()).nullable().optional().describe("nomes de cidade/região/país a ADICIONAR ao público explícito (eu resolvo pro lugar real e pergunto se ambíguo)"),
+      ageMin: z.number().int().min(13).max(65).nullable().optional(),
+      ageMax: z.number().int().min(13).max(65).nullable().optional(),
     }),
   });
   const regenerateCopy = tool(proposeOnly, {

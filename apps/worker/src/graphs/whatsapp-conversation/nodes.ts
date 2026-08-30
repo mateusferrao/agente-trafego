@@ -613,6 +613,10 @@ export function makeConversationNodes(
               ...(typeof a["variantsCount"] === "number" ? { variantsCount: a["variantsCount"] as number } : {}),
               ...(a["audience"] === "reuse" || a["audience"] === "broad" ? { audience: a["audience"] as "reuse" | "broad" } : {}),
               ...(typeof a["campaignName"] === "string" && a["campaignName"] ? { campaignName: a["campaignName"] as string } : {}),
+              ...(Array.isArray(a["removeGeo"]) ? { removeGeo: a["removeGeo"].filter((x): x is string => typeof x === "string") } : {}),
+              ...(Array.isArray(a["addGeo"]) ? { addGeo: a["addGeo"].filter((x): x is string => typeof x === "string") } : {}),
+              ...(typeof a["ageMin"] === "number" ? { ageMin: a["ageMin"] as number } : {}),
+              ...(typeof a["ageMax"] === "number" ? { ageMax: a["ageMax"] as number } : {}),
             };
       const res = await refineDraft(deps, { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, currency: DEFAULT_CURRENCY }, active.draftId, patch);
       if (res.kind === "blocked") {
@@ -634,6 +638,7 @@ export function makeConversationNodes(
       const scaleChoice = args["choice"] === "raise" || args["choice"] === "duplicate" ? (args["choice"] as "raise" | "duplicate") : undefined;
       const strList = (v: unknown): string[] | undefined =>
         Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : undefined;
+      const isGender = (v: unknown): v is "all" | "men" | "women" => v === "all" || v === "men" || v === "women";
       const proposal =
         createCall.name === "scale_winner"
           ? await proposeScaleWinner(
@@ -647,6 +652,7 @@ export function makeConversationNodes(
             ? await (async () => {
                 const inc = strList(args["includeAudiences"]);
                 const exc = strList(args["excludeAudiences"]);
+                const geo = strList(args["geo"]);
                 return proposeCopyCampaign(deps, dctx, {
                   sourceCampaignId: String(args["campaignId"] ?? ""),
                   ...(typeof args["campaignName"] === "string" ? { sourceName: args["campaignName"] as string } : {}),
@@ -654,11 +660,16 @@ export function makeConversationNodes(
                   ...(exc ? { excludeAudiences: exc } : {}),
                   ...(typeof args["budgetReais"] === "number" ? { budgetReais: args["budgetReais"] as number } : {}),
                   ...(isConversionGoal(args["goal"]) ? { goal: args["goal"] } : {}),
+                  ...(geo ? { geo } : {}),
+                  ...(typeof args["ageMin"] === "number" ? { ageMin: args["ageMin"] as number } : {}),
+                  ...(typeof args["ageMax"] === "number" ? { ageMax: args["ageMax"] as number } : {}),
+                  ...(isGender(args["gender"]) ? { gender: args["gender"] } : {}),
                 });
               })()
           : await (async () => {
               const inc = strList(args["includeAudiences"]);
               const exc = strList(args["excludeAudiences"]);
+              const geo = strList(args["geo"]);
               return proposeCreateCampaign(deps, dctx, {
                 // valida o goal contra a taxonomia neutra ANTES de propor: goal inválido (o LLM
                 // manda texto livre) descartado → o propose infere da meta/conta, e o eco mostra
@@ -668,6 +679,10 @@ export function makeConversationNodes(
                 ...(typeof args["budgetReais"] === "number" ? { budgetReais: args["budgetReais"] as number } : {}),
                 ...(inc ? { includeAudiences: inc } : {}),
                 ...(exc ? { excludeAudiences: exc } : {}),
+                ...(geo ? { geo } : {}),
+                ...(typeof args["ageMin"] === "number" ? { ageMin: args["ageMin"] as number } : {}),
+                ...(typeof args["ageMax"] === "number" ? { ageMax: args["ageMax"] as number } : {}),
+                ...(isGender(args["gender"]) ? { gender: args["gender"] } : {}),
               });
             })();
       const expiresAt = new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString();
