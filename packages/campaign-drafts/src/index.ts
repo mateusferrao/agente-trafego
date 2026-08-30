@@ -82,3 +82,36 @@ export async function resolveAudienceTargeting(
   const sourceAdsetId = await inferSourceAdset();
   return sourceAdsetId ? { kind: "reuse_adset", sourceAdsetId } : current;
 }
+
+/**
+ * Edição do público `explicit` já resolvido (Fase 1, subfatia 3a/3b) — lógica compartilhada por
+ * chat e site (§13 DRY). Remove/adiciona geo(s) e/ou estreita idade. Remover é SEM chamada nova (o
+ * dono já viu essa lista no eco/painel); adicionar já vem RESOLVIDO (a busca aconteceu na casca —
+ * `prepareGeo` no worker, `searchGeo` do adapter no site — esta função só funde). Pura.
+ */
+export function applyExplicitGeoEdit(
+  current: Extract<TargetingSpec, { readonly kind: "explicit" }>,
+  patch: {
+    readonly removeGeo?: readonly string[];
+    readonly addGeo?: readonly { readonly key: string; readonly name: string; readonly kind: "country" | "region" | "city" }[];
+    readonly ageMin?: number;
+    readonly ageMax?: number;
+  },
+): { readonly kind: "ok"; readonly targeting: TargetingSpec } | { readonly kind: "blocked"; readonly reason: string } {
+  let geo = current.geo;
+  for (const name of patch.removeGeo ?? []) {
+    const before = geo.length;
+    geo = geo.filter((g) => !g.name.toLowerCase().includes(name.toLowerCase()));
+    if (geo.length === before) {
+      return { kind: "blocked", reason: `não achei "${name}" no público atual do rascunho — confere o nome? (hoje: ${current.geo.map((g) => g.name).join(", ")})` };
+    }
+  }
+  if (patch.addGeo && patch.addGeo.length > 0) {
+    const existingKeys = new Set(geo.map((g) => g.key));
+    geo = [...geo, ...patch.addGeo.filter((g) => !existingKeys.has(g.key))];
+  }
+  return {
+    kind: "ok",
+    targeting: { ...current, geo, ...(patch.ageMin !== undefined ? { ageMin: patch.ageMin } : {}), ...(patch.ageMax !== undefined ? { ageMax: patch.ageMax } : {}) },
+  };
+}

@@ -93,6 +93,35 @@ describe("DraftsService.deleteCreative (híbrido: arquiva se em uso, apaga se li
   });
 });
 
+/** db fake p/ `loadScaleContext`: 1º select = adAccounts + 2 leftJoin → `.limit()` devolve `accRows`
+ *  (vazio = ctx null, sem tocar Meta). Demais selects não são exercidos quando `accRows` é vazio. */
+function fakeScaleContextDb(accRows: unknown[]) {
+  return {
+    select: () => ({
+      from: () => ({
+        leftJoin: () => ({
+          leftJoin: () => ({ where: () => ({ limit: () => accRows }) }),
+        }),
+      }),
+    }),
+  } as never;
+}
+
+describe("DraftsService.searchGeo (Fase 1, subfatia 3b — autocomplete de geo)", () => {
+  it("conta/agente não resolve (loadScaleContext null) → array vazio, honesto, sem erro", async () => {
+    const service = createDraftsService({
+      db: fakeScaleContextDb([]),
+      adsPlatform: {} as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    const out = await service.searchGeo(ORG, "acc", "Belo Horizonte");
+    expect(out).toEqual([]);
+  });
+});
+
 describe("DraftsService.updateDraft (edição consolidada — Slice 7)", () => {
   it("rascunho não-aberto (load vazio) → {ok:false} com mensagem amigável, sem persistir", async () => {
     const { service } = makeService([]); // loadDraftForEdit não acha linha proposed
@@ -100,6 +129,101 @@ describe("DraftsService.updateDraft (edição consolidada — Slice 7)", () => {
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.message).toMatch(/não está mais aberto/i);
+  });
+});
+
+describe("DraftsService.updateDraft — público EXPLÍCITO (Fase 1, subfatia 3b)", () => {
+  /** select (draft) + update guardado, mesma forma de `fakeDbSelUpd` (setDraftTargeting). */
+  function fakeDbSelUpd(draftRow: unknown, captured: { spec?: unknown }) {
+    return {
+      select: () => ({ from: () => ({ where: () => ({ limit: () => (draftRow ? [draftRow] : []) }) }) }),
+      update: () => ({
+        set: (v: { spec: unknown }) => {
+          captured.spec = v.spec;
+          return { where: () => ({ returning: () => [{ id: "d1" }] }) };
+        },
+      }),
+    } as never;
+  }
+
+  const explicitSpec = {
+    version: 1,
+    currency: "BRL",
+    dailyBudgetMinor: 5000,
+    activation: "active",
+    targeting: {
+      kind: "explicit",
+      geo: [{ key: "1", name: "Belo Horizonte", kind: "city" }, { key: "2", name: "Ibirité", kind: "city" }],
+      ageMin: 25,
+      ageMax: 45,
+    },
+  };
+
+  it("removeGeo (nome exato do chip) → some do targeting, sem chamar a Meta", async () => {
+    const captured: { spec?: unknown } = {};
+    const service = createDraftsService({
+      db: fakeDbSelUpd({ spec: explicitSpec, kind: "from_scratch", status: "proposed" }, captured),
+      adsPlatform: {} as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    const out = await service.updateDraft(ORG, "acc", "d1", { removeGeo: ["Ibirité"] });
+    expect(out.ok).toBe(true);
+    const targeting = (captured.spec as { targeting: { geo: { name: string }[] } }).targeting;
+    expect(targeting.geo.map((g) => g.name)).toEqual(["Belo Horizonte"]);
+  });
+
+  it("removeGeo com nome que não existe no rascunho → {ok:false}, NÃO persiste", async () => {
+    const captured: { spec?: unknown } = {};
+    const service = createDraftsService({
+      db: fakeDbSelUpd({ spec: explicitSpec, kind: "from_scratch", status: "proposed" }, captured),
+      adsPlatform: {} as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    const out = await service.updateDraft(ORG, "acc", "d1", { removeGeo: ["Betim"] });
+    expect(out.ok).toBe(false);
+    expect(captured.spec).toBeUndefined();
+  });
+
+  it("addGeo (já resolvido pelo autocomplete) → entra no targeting, sem chamar searchGeo de novo", async () => {
+    const captured: { spec?: unknown } = {};
+    const searchGeo = vi.fn();
+    const service = createDraftsService({
+      db: fakeDbSelUpd({ spec: explicitSpec, kind: "from_scratch", status: "proposed" }, captured),
+      adsPlatform: { searchGeo } as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    const out = await service.updateDraft(ORG, "acc", "d1", { addGeo: [{ key: "3", name: "Contagem", kind: "city" }] });
+    expect(out.ok).toBe(true);
+    expect(searchGeo).not.toHaveBeenCalled();
+    const targeting = (captured.spec as { targeting: { geo: { name: string }[] } }).targeting;
+    expect(targeting.geo.map((g) => g.name)).toContain("Contagem");
+  });
+
+  it("ageMin/ageMax estreitam sem mexer na geo", async () => {
+    const captured: { spec?: unknown } = {};
+    const service = createDraftsService({
+      db: fakeDbSelUpd({ spec: explicitSpec, kind: "from_scratch", status: "proposed" }, captured),
+      adsPlatform: {} as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    const out = await service.updateDraft(ORG, "acc", "d1", { ageMin: 30, ageMax: 40 });
+    expect(out.ok).toBe(true);
+    const targeting = (captured.spec as { targeting: { ageMin: number; ageMax: number; geo: unknown[] } }).targeting;
+    expect(targeting.ageMin).toBe(30);
+    expect(targeting.ageMax).toBe(40);
+    expect(targeting.geo).toHaveLength(2);
   });
 });
 

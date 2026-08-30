@@ -7,7 +7,7 @@
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { adAccounts, adCreatives, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, guardrailConfigs } from "@trafego/db";
 import { applyDraftEdit, describeDeliveryEstimate, goalNounPt, planScaleMove, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
-import { loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
+import { applyExplicitGeoEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
   ACTION_PARAM_MODE,
   ACTION_PARAM_PCT,
@@ -652,38 +652,6 @@ export interface RefineDraftPatch {
   readonly addGeo?: readonly string[];
   readonly ageMin?: number;
   readonly ageMax?: number;
-}
-
-/**
- * Edição do público `explicit` já resolvido (Fase 1, subfatia 3a) — remove/adiciona geo(s) e/ou
- * estreita idade. Remover é SEM chamada nova (o dono já viu essa lista no eco); adicionar já vem
- * RESOLVIDO (a busca aconteceu na casca, esta função só funde). Pura.
- */
-export function applyExplicitGeoEdit(
-  current: Extract<TargetingSpec, { readonly kind: "explicit" }>,
-  patch: {
-    readonly removeGeo?: readonly string[];
-    readonly addGeo?: readonly { readonly key: string; readonly name: string; readonly kind: "country" | "region" | "city" }[];
-    readonly ageMin?: number;
-    readonly ageMax?: number;
-  },
-): { readonly kind: "ok"; readonly targeting: TargetingSpec } | { readonly kind: "blocked"; readonly reason: string } {
-  let geo = current.geo;
-  for (const name of patch.removeGeo ?? []) {
-    const before = geo.length;
-    geo = geo.filter((g) => !g.name.toLowerCase().includes(name.toLowerCase()));
-    if (geo.length === before) {
-      return { kind: "blocked", reason: `não achei "${name}" no público atual do rascunho — confere o nome? (hoje: ${current.geo.map((g) => g.name).join(", ")})` };
-    }
-  }
-  if (patch.addGeo && patch.addGeo.length > 0) {
-    const existingKeys = new Set(geo.map((g) => g.key));
-    geo = [...geo, ...patch.addGeo.filter((g) => !existingKeys.has(g.key))];
-  }
-  return {
-    kind: "ok",
-    targeting: { ...current, geo, ...(patch.ageMin !== undefined ? { ageMin: patch.ageMin } : {}), ...(patch.ageMax !== undefined ? { ageMax: patch.ageMax } : {}) },
-  };
 }
 
 export type RefineResult = { readonly kind: "ok"; readonly echo: string } | { readonly kind: "blocked"; readonly reason: string };

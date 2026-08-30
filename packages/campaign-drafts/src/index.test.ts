@@ -1,6 +1,6 @@
 import type { CampaignDraftSpec } from "@trafego/shared";
 import { describe, expect, it, vi } from "vitest";
-import { loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "./index.js";
+import { applyExplicitGeoEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "./index.js";
 
 const SPEC: CampaignDraftSpec = { version: 1, currency: "BRL", dailyBudgetMinor: 5000, activation: "paused" };
 const REF = { draftId: "d1", orgId: "org-1" };
@@ -75,5 +75,51 @@ describe("resolveAudienceTargeting", () => {
   it("reuse sem herança e sem fonte → mantém o atual (não força)", async () => {
     const infer = vi.fn().mockResolvedValue(undefined);
     expect(await resolveAudienceTargeting("reuse", undefined, infer)).toBeUndefined();
+  });
+});
+
+describe("applyExplicitGeoEdit (Fase 1, subfatia 3a/3b — editar sem recriar o rascunho, chat+site)", () => {
+  const base = {
+    kind: "explicit" as const,
+    geo: [
+      { key: "1", name: "Belo Horizonte", kind: "city" as const },
+      { key: "2", name: "Ibirité", kind: "city" as const },
+      { key: "3", name: "Contagem", kind: "city" as const },
+    ],
+    ageMin: 25,
+    ageMax: 45,
+  };
+
+  it("remove por nome (match parcial, case-insensitive) — sem chamada nova", () => {
+    const r = applyExplicitGeoEdit(base, { removeGeo: ["ibirité"] });
+    expect(r.kind).toBe("ok");
+    if (r.kind === "ok" && r.targeting.kind === "explicit") {
+      expect(r.targeting.geo.map((g) => g.name)).toEqual(["Belo Horizonte", "Contagem"]);
+    }
+  });
+
+  it("nome não encontrado → BLOQUEIA (nunca aplica em interpretação incerta)", () => {
+    const r = applyExplicitGeoEdit(base, { removeGeo: ["Betim"] });
+    expect(r.kind).toBe("blocked");
+    if (r.kind === "blocked") expect(r.reason).toContain("Betim");
+  });
+
+  it("adiciona geo já resolvida (dedupe por key)", () => {
+    const r = applyExplicitGeoEdit(base, { addGeo: [{ key: "4", name: "Betim", kind: "city" }, { key: "1", name: "Belo Horizonte", kind: "city" }] });
+    expect(r.kind).toBe("ok");
+    if (r.kind === "ok" && r.targeting.kind === "explicit") {
+      expect(r.targeting.geo).toHaveLength(4);
+      expect(r.targeting.geo.map((g) => g.name)).toContain("Betim");
+    }
+  });
+
+  it("estreita idade sem mexer em geo", () => {
+    const r = applyExplicitGeoEdit(base, { ageMin: 30, ageMax: 40 });
+    expect(r.kind).toBe("ok");
+    if (r.kind === "ok" && r.targeting.kind === "explicit") {
+      expect(r.targeting.ageMin).toBe(30);
+      expect(r.targeting.ageMax).toBe(40);
+      expect(r.targeting.geo).toHaveLength(3);
+    }
   });
 });

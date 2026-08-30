@@ -12,7 +12,7 @@ import {
   type Database,
 } from "@trafego/db";
 import { applyDraftEdit, planScaleMove, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
-import { loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
+import { applyExplicitGeoEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import type { ToolBindingMode } from "@trafego/shared";
 import {
   ACTION_PARAM_MODE,
@@ -32,6 +32,7 @@ import { ingestCreativeImage, ingestCreativeVideo } from "@trafego/creative-libr
 import type {
   CreativeAssetOutput,
   DraftApprovalOutput,
+  GeoSearchResultOutput,
   ScaleWinnerInput,
   ScaleWinnerOutput,
   ServingCreativeOutput,
@@ -258,6 +259,19 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       if (targeting) edit.targeting = targeting;
     }
 
+    // público EXPLÍCITO (Fase 1, subfatia 3b) — remove/adiciona geo(s) já resolvido pelo
+    // autocomplete + estreita idade. Converge com o chat no mesmo núcleo (applyExplicitGeoEdit).
+    if (spec.targeting?.kind === "explicit" && (input.removeGeo?.length || input.addGeo?.length || input.ageMin != null || input.ageMax != null)) {
+      const r = applyExplicitGeoEdit(spec.targeting, {
+        ...(input.removeGeo ? { removeGeo: input.removeGeo } : {}),
+        ...(input.addGeo ? { addGeo: input.addGeo } : {}),
+        ...(input.ageMin != null ? { ageMin: input.ageMin } : {}),
+        ...(input.ageMax != null ? { ageMax: input.ageMax } : {}),
+      });
+      if (r.kind === "blocked") return { ok: false, message: r.reason };
+      edit.targeting = r.targeting;
+    }
+
     if (input.creative) {
       const creative =
         input.creative.kind === "asset"
@@ -367,6 +381,15 @@ export function createDraftsService(deps: DraftsServiceDeps) {
           creative: spec.creative ? { format: spec.creative.format, origin: spec.creative.origin } : null,
           audience:
             spec.targeting?.kind === "reuse_adset" ? "reuse" : spec.targeting?.kind === "advantage_plus" ? "broad" : null,
+          explicitAudience:
+            spec.targeting?.kind === "explicit"
+              ? {
+                  geo: spec.targeting.geo.map((g) => ({ key: g.key, name: g.name, kind: g.kind })),
+                  ageMin: spec.targeting.ageMin ?? null,
+                  ageMax: spec.targeting.ageMax ?? null,
+                  genders: spec.targeting.genders ? [...spec.targeting.genders] : null,
+                }
+              : null,
           createdIds: appr.kind === "activation" ? (d.createdIds as Record<string, unknown>) : null,
         });
       }
@@ -531,6 +554,16 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     ): Promise<{ ok: true; audience: "reuse" | "broad" } | { ok: false; message: string }> {
       const r = await updateDraftImpl(orgId, accountId, draftId, { audience });
       return r.ok ? { ok: true, audience } : r;
+    },
+
+    /** Busca de geo (Fase 1, subfatia 3b) — autocomplete de cidade/região/país no editor de
+     *  rascunho. Conta/agente inexistente → array vazio (o front trata como "sem resultado",
+     *  não erro — mesma honestidade do fluxo por chat, sem vazar detalhe técnico). */
+    async searchGeo(orgId: OrgId, accountId: string, query: string): Promise<GeoSearchResultOutput[]> {
+      const ctx = await loadScaleContext(orgId, accountId);
+      if (!ctx) return [];
+      const results = await deps.adsPlatform.searchGeo(ctx.ref, query, ["country", "region", "city"]);
+      return results.map((r) => ({ key: r.key, name: r.name, kind: r.kind, countryCode: r.countryCode ?? null }));
     },
 
     /** Anúncios AO VIVO da conta oferecidos como candidatos de reuse no picker (lê ad_creatives,

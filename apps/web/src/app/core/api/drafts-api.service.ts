@@ -4,6 +4,7 @@ import { BaseApiService } from './base-api.service';
 import type {
   CreativeAssetOutput,
   DraftApprovalOutput,
+  GeoSearchResultOutput,
   ScaleWinnerInput,
   ScaleWinnerOutput,
   ServingCreativeOutput,
@@ -76,6 +77,12 @@ export class DraftsApiService extends BaseApiService {
       ['/accounts', accountId, 'drafts', draftId, 'targeting'],
       input,
     );
+  }
+
+  /** `GET /api/accounts/:id/targeting/geo-search?q=...` — autocomplete de cidade/região/país
+   *  (Fase 1, subfatia 3b). Debounce fica no componente; aqui é só a chamada tipada. */
+  searchGeo(accountId: string, q: string): Observable<GeoSearchResultOutput[]> {
+    return this.get<GeoSearchResultOutput[]>(['/accounts', accountId, 'targeting', 'geo-search'], { params: { q } });
   }
 
   /** URL da rota autenticada de blob (preview) — mesma origem/proxy da API. */

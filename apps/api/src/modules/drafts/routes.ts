@@ -4,7 +4,7 @@ import { requireAuth } from "../../middleware/auth.js";
 import { requireActiveAccess } from "../../middleware/access-gate.js";
 import { requireOrgScope, orgIdOf } from "../../middleware/org-scope.js";
 import { env } from "../../env.js";
-import { scaleWinnerInput, setDraftCreativeInput, setDraftTargetingInput, updateDraftInput } from "./schema.js";
+import { geoSearchQuery, scaleWinnerInput, setDraftCreativeInput, setDraftTargetingInput, updateDraftInput } from "./schema.js";
 import { isAllowedCreativeType } from "./service.js";
 
 /** Slice de rascunhos de campanha (Fatia 7): listar pendentes + escalar vencedor pelo site. */
@@ -57,6 +57,13 @@ export const draftsRoutes: FastifyPluginAsync = async (app) => {
   app.get("/accounts/:id/serving-creatives", guard, async (request) => {
     const { id } = request.params as { id: string };
     return service.listServingCreatives(orgIdOf(request) as OrgId, id);
+  });
+
+  // Busca de geo (Fase 1, subfatia 3b) — autocomplete de cidade/região/país no editor de rascunho.
+  app.get("/accounts/:id/targeting/geo-search", guard, async (request) => {
+    const { id } = request.params as { id: string };
+    const { q } = geoSearchQuery.parse(request.query);
+    return service.searchGeo(orgIdOf(request) as OrgId, id, q);
   });
 
   // Miniatura do criativo do rascunho (card /approvals). Org-scoped pelo draftId. upload → blob

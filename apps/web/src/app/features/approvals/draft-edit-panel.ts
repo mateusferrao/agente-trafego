@@ -3,6 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { toast } from 'ngx-sonner';
 import { UiButton, UiInput, UiSelectBox, UiToggleGroup, UiToggleGroupItem, type UiSelectOptionItem } from '@ui';
 import { CreativePicker } from './creative-picker';
+import { GeoAudienceEditor, type ExplicitAudienceState } from './geo-audience-editor';
 import { DraftsApiService } from '@core/api/drafts-api.service';
 import { CONVERSION_LABEL, conversionLabel } from '@app/shared/conversion-label';
 import type { DraftApprovalOutput, SetDraftCreativeInput, UpdateDraftInput } from '@core/api/generated';
@@ -27,7 +28,7 @@ type DraftCopy = NonNullable<DraftApprovalOutput['copyVariants']>[number];
 @Component({
   selector: 'app-draft-edit-panel',
   standalone: true,
-  imports: [FormsModule, UiButton, UiInput, UiSelectBox, UiToggleGroup, UiToggleGroupItem, CreativePicker],
+  imports: [FormsModule, UiButton, UiInput, UiSelectBox, UiToggleGroup, UiToggleGroupItem, CreativePicker, GeoAudienceEditor],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="flex flex-col gap-4 rounded-md border border-line bg-soft p-4">
@@ -111,6 +112,16 @@ type DraftCopy = NonNullable<DraftApprovalOutput['copyVariants']>[number];
             <button appToggleGroupItem tone="accent" ngpToggleGroupItemValue="broad">Deixa a Meta escolher</button>
           </div>
         </div>
+      }
+
+      <!-- Público EXPLÍCITO por primitivos (Fase 1, subfatia 3b) — geo/idade/gênero, só quando o
+           rascunho já nasceu assim (chat ou criação anterior); trocar de modo é fora do painel. -->
+      @if (draft().explicitAudience; as ea) {
+        <app-geo-audience-editor
+          [accountId]="draft().accountId"
+          [initial]="{ geo: ea.geo, ageMin: ea.ageMin, ageMax: ea.ageMax, genders: ea.genders }"
+          (stateChange)="explicitAudienceState.set($event)"
+        />
       }
 
       <!-- Criativo (troca imediata — biblioteca × anúncio ao vivo; só criação) -->
@@ -201,6 +212,9 @@ export class DraftEditPanel implements OnInit {
   protected readonly budget = signal(0);
   protected readonly activation = signal<'active' | 'paused'>('paused');
   protected readonly audience = signal<'reuse' | 'broad'>('reuse');
+  /** estado ATUAL do editor de público explícito (Fase 1, subfatia 3b) — atualizado a cada mudança
+   *  no filho; comparado com `draft().explicitAudience` no diff do Salvar. `null` = sem esse campo. */
+  protected readonly explicitAudienceState = signal<ExplicitAudienceState | null>(null);
   protected readonly copies = signal<CopyForm[]>([]);
   /** picker de criativo aberto dentro do painel + troca em voo. */
   protected readonly showPicker = signal(false);
@@ -333,6 +347,7 @@ export class DraftEditPanel implements OnInit {
     }
     if (this.objective() && this.objective() !== (d.objective ?? '')) patch['objective'] = this.objective();
     if (d.audience && this.audience() !== d.audience) patch['audience'] = this.audience();
+    this.applyExplicitAudienceDiff(patch, d);
 
     const original = d.copyVariants ?? [];
     const edits = this.copies()
@@ -361,5 +376,21 @@ export class DraftEditPanel implements OnInit {
 
   private trimmed(v: string): string {
     return v.trim();
+  }
+
+  /** Diff do público EXPLÍCITO (Fase 1, subfatia 3b) contra o que veio do backend — só manda o que
+   *  MUDOU (removeGeo/addGeo por diferença de key; idade só se editada). Sem edição → patch vazio. */
+  private applyExplicitAudienceDiff(patch: Record<string, unknown>, d: DraftApprovalOutput): void {
+    const original = d.explicitAudience;
+    const current = this.explicitAudienceState();
+    if (!original || !current) return;
+    const originalKeys = new Set(original.geo.map((g) => g.key));
+    const currentKeys = new Set(current.geo.map((g) => g.key));
+    const removeGeo = original.geo.filter((g) => !currentKeys.has(g.key)).map((g) => g.name);
+    const addGeo = current.geo.filter((g) => !originalKeys.has(g.key));
+    if (removeGeo.length > 0) patch['removeGeo'] = removeGeo;
+    if (addGeo.length > 0) patch['addGeo'] = addGeo;
+    if (current.ageMin != null && current.ageMin !== original.ageMin) patch['ageMin'] = current.ageMin;
+    if (current.ageMax != null && current.ageMax !== original.ageMax) patch['ageMax'] = current.ageMax;
   }
 }

@@ -6721,6 +6721,81 @@
               "broad"
             ]
           },
+          "explicitAudience": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "geo": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "country",
+                        "region",
+                        "city"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "name",
+                    "kind"
+                  ]
+                }
+              },
+              "ageMin": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "ageMax": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "genders": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    {
+                      "type": "number",
+                      "enum": [
+                        2
+                      ]
+                    }
+                  ]
+                }
+              }
+            },
+            "required": [
+              "geo",
+              "ageMin",
+              "ageMax",
+              "genders"
+            ]
+          },
           "createdIds": {
             "type": [
               "object",
@@ -6755,6 +6830,7 @@
           "copyVariants",
           "creative",
           "audience",
+          "explicitAudience",
           "createdIds"
         ]
       },
@@ -6956,6 +7032,37 @@
           "tier",
           "format",
           "thumbnailUrl"
+        ]
+      },
+      "GeoSearchResultOutput": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "country",
+              "region",
+              "city"
+            ]
+          },
+          "countryCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "kind",
+          "countryCode"
         ]
       },
       "SetDraftTargetingInput": {
@@ -7194,6 +7301,52 @@
           "removeAdIndex": {
             "type": "integer",
             "minimum": 0
+          },
+          "removeGeo": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "addGeo": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "country",
+                    "region",
+                    "city"
+                  ]
+                }
+              },
+              "required": [
+                "key",
+                "name",
+                "kind"
+              ]
+            }
+          },
+          "ageMin": {
+            "type": "integer",
+            "minimum": 13,
+            "maximum": 65
+          },
+          "ageMax": {
+            "type": "integer",
+            "minimum": 13,
+            "maximum": 65
           }
         }
       },
@@ -9288,6 +9441,46 @@
                   "type": "array",
                   "items": {
                     "$ref": "#/components/schemas/ServingCreativeOutput"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/targeting/geo-search": {
+      "get": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "q",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "busca de geo (cidade/região/país) pro editor de público explícito",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GeoSearchResultOutput"
                   }
                 }
               }

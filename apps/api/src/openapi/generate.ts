@@ -87,6 +87,7 @@ import {
 import {
   creativeAssetOutput,
   draftApprovalOutput,
+  geoSearchResultOutput,
   scaleWinnerInput,
   scaleWinnerOutput,
   servingCreativeOutput,
@@ -180,6 +181,7 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const ScaleWinnerOutput = registry.register("ScaleWinnerOutput", scaleWinnerOutput);
   const CreativeAssetOutput = registry.register("CreativeAssetOutput", creativeAssetOutput);
   const ServingCreativeOutput = registry.register("ServingCreativeOutput", servingCreativeOutput);
+  const GeoSearchResultOutput = registry.register("GeoSearchResultOutput", geoSearchResultOutput);
   const SetDraftTargetingInput = registry.register("SetDraftTargetingInput", setDraftTargetingInput);
   const SetDraftTargetingOutput = registry.register("SetDraftTargetingOutput", setDraftTargetingOutput);
   const SetDraftCreativeInput = registry.register("SetDraftCreativeInput", setDraftCreativeInput);
@@ -730,6 +732,13 @@ const SetDraftCreativeOutput = registry.register("SetDraftCreativeOutput", setDr
     tags: ["drafts"],
     request: { params: z.object({ id: z.string() }) },
     responses: { 200: jsonRes("anúncios ao vivo da conta oferecidos como reuse (só vídeo)", z.array(ServingCreativeOutput)) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts/{id}/targeting/geo-search",
+    tags: ["drafts"],
+    request: { params: z.object({ id: z.string() }), query: z.object({ q: z.string() }) },
+    responses: { 200: jsonRes("busca de geo (cidade/região/país) pro editor de público explícito", z.array(GeoSearchResultOutput)) },
   });
   registry.registerPath({
     method: "post",

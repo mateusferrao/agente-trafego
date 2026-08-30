@@ -64,8 +64,19 @@ export const draftApprovalOutput = z.object({
     })
     .nullable(),
   /** público do rascunho pelo MODO: `reuse` = herda o conjunto que já converte; `broad` = a Meta
-   *  escolhe (amplo). `null` em duplicate/activation. O card oferece alternar entre os dois. */
+   *  escolhe (amplo). `null` em duplicate/activation E quando o público é explícito/salvo (ver
+   *  `explicitAudience` abaixo) — o card oferece alternar entre reuse/broad só nesse caso. */
   audience: z.enum(["reuse", "broad"]).nullable(),
+  /** público EXPLÍCITO por primitivos (Fase 1, subfatia 3b) — geo/idade/gênero. `null` quando o
+   *  targeting não é `explicit` (os outros modos usam `audience` acima). */
+  explicitAudience: z
+    .object({
+      geo: z.array(z.object({ key: z.string(), name: z.string(), kind: z.enum(["country", "region", "city"]) })),
+      ageMin: z.number().nullable(),
+      ageMax: z.number().nullable(),
+      genders: z.array(z.union([z.literal(1), z.literal(2)])).nullable(),
+    })
+    .nullable(),
   /** ids reais criados na Meta — só presente em `approvalKind:"activation"` (já existe na Meta). */
   createdIds: z.record(z.string(), z.unknown()).nullable(),
 });
@@ -144,6 +155,13 @@ export const updateDraftInput = z.object({
   creative: setDraftCreativeInput.optional(),
   copyEdits: z.array(draftCopyEditInput).optional(),
   removeAdIndex: z.number().int().min(0).optional(),
+  // ─── público EXPLÍCITO (Fase 1, subfatia 3b) — só quando o rascunho já é `kind:"explicit"` ───
+  /** nomes EXATOS (como renderizados nos chips) a remover — sem ambiguidade (o usuário clicou o chip). */
+  removeGeo: z.array(z.string().min(1)).optional(),
+  /** já RESOLVIDO pelo autocomplete (geo-search) — o site nunca manda nome livre pro backend resolver. */
+  addGeo: z.array(z.object({ key: z.string().min(1), name: z.string().min(1), kind: z.enum(["country", "region", "city"]) })).optional(),
+  ageMin: z.number().int().min(13).max(65).optional(),
+  ageMax: z.number().int().min(13).max(65).optional(),
 });
 export type UpdateDraftInput = z.infer<typeof updateDraftInput>;
 export const updateDraftOutput = z.object({ ok: z.boolean() });
@@ -154,6 +172,17 @@ export const setDraftTargetingInput = z.object({ audience: z.enum(["reuse", "bro
 export type SetDraftTargetingInput = z.infer<typeof setDraftTargetingInput>;
 export const setDraftTargetingOutput = z.object({ ok: z.boolean(), audience: z.enum(["reuse", "broad"]) });
 export type SetDraftTargetingOutput = z.infer<typeof setDraftTargetingOutput>;
+
+/** Busca de geo (Fase 1, subfatia 3b) — autocomplete de cidade/região/país no editor de rascunho. */
+export const geoSearchQuery = z.object({ q: z.string().min(1) });
+export type GeoSearchQuery = z.infer<typeof geoSearchQuery>;
+export const geoSearchResultOutput = z.object({
+  key: z.string(),
+  name: z.string(),
+  kind: z.enum(["country", "region", "city"]),
+  countryCode: z.string().nullable(),
+});
+export type GeoSearchResultOutput = z.infer<typeof geoSearchResultOutput>;
 
 /** Um anúncio AO VIVO da conta oferecido como candidato de reuse no picker (lê ad_creatives). */
 export const servingCreativeOutput = z.object({
