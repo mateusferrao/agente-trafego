@@ -191,7 +191,7 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                         <span class="text-[11px] text-muted">· {{ stageLabel(c.stage) }}</span>
                       }
                       @if (c.isCBO === false) {
-                        <span class="text-[11px] text-muted">· orçamento por conjunto (ABO)</span>
+                        <span class="text-[11px] text-muted">· orçamento por conjunto de anúncios</span>
                       }
                       @if (c.muted) {
                         <span class="text-[11px] text-muted">· silenciada</span>

@@ -407,6 +407,29 @@ describe("getCampaignAnalysisData", () => {
     expect((res as { adsets?: unknown[] }).adsets).toBeUndefined();
   });
 
+  it("achado da revisão (Fase 3) — adset com nome PARECIDO ao de uma campanha nunca entra no matcher de campanha", async () => {
+    const withLookalikeAdset = [
+      { ...rows[0], entityId: "c1" }, // campanha "Lançamento Black Friday"
+      // nome do adset CONTÉM o texto buscado — não pode ser confundido com campanha nem gerar ambiguidade.
+      { entityLevel: "adset" as const, entityId: "as1", entityName: "Lançamento Black Friday — Conjunto 1", unitJson: {}, metricsJson: {}, flags: [], curatedJson: {}, analyzedAt: new Date("2026-08-20T08:00:00.000Z") },
+    ];
+    const db = fakeDb(new Map<unknown, unknown[]>([[entityAnalyses, withLookalikeAdset]]));
+    const res = await getCampaignAnalysisData(db, AGENT, "black friday");
+    expect(res).toMatchObject({ id: "c1", name: "Lançamento Black Friday" }); // achou a campanha, sem ambiguidade
+  });
+
+  it("achado da revisão (Fase 3) — adset LEGADO (curatedJson sem campaignId, de antes do S8) some do breakdown sem erro", async () => {
+    const legacyAdset = [
+      { ...rows[0], entityId: "c1", curatedJson: { isCBO: false, tier: "performer" } },
+      // 2 adsets qualificariam o breakdown, mas nenhum tem campaignId (linha persistida antes do S8).
+      { entityLevel: "adset" as const, entityId: "as1", entityName: "Conjunto legado 1", unitJson: {}, metricsJson: {}, flags: [], curatedJson: { isCBO: true, tier: "winner" }, analyzedAt: new Date("2026-08-20T08:00:00.000Z") },
+      { entityLevel: "adset" as const, entityId: "as2", entityName: "Conjunto legado 2", unitJson: {}, metricsJson: {}, flags: [], curatedJson: { isCBO: true, tier: "zombie" }, analyzedAt: new Date("2026-08-20T08:00:00.000Z") },
+    ];
+    const db = fakeDb(new Map<unknown, unknown[]>([[entityAnalyses, legacyAdset]]));
+    const res = await getCampaignAnalysisData(db, AGENT, "black friday");
+    expect((res as { adsets?: unknown[] }).adsets).toBeUndefined(); // degrada com honestidade, não quebra
+  });
+
   it("nenhuma casa → hasData:false", async () => {
     const db = fakeDb(new Map<unknown, unknown[]>([[entityAnalyses, rows]]));
     const res = await getCampaignAnalysisData(db, AGENT, "inexistente");
