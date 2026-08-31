@@ -795,6 +795,7 @@ export function buildRefineEcho(kind: string, spec: CampaignDraftSpec): string {
   const lines = [
     `${head}: gasto novo ${money(spec.dailyBudgetMinor / MINOR_PER_UNIT, spec.currency)}/dia · ${activationPhrase(spec.activation)}.`,
   ];
+  if (kind === "from_scratch" && spec.objective) lines.push(`Objetivo: ${goalNounPt(spec.objective)}.`);
   if (spec.copyVariants && spec.copyVariants.length > 0) {
     lines.push(`${spec.copyVariants.length} variação(ões) de copy. Ex: "${spec.copyVariants[0]!.headline}".`);
   }
@@ -864,6 +865,11 @@ export interface RefineDraftPatch {
   readonly audience?: "reuse" | "broad";
   /** nome da campanha (chat leve — ajuste de intenção única, só from_scratch). */
   readonly campaignName?: string;
+  /** nome do conjunto de anúncios (só from_scratch) — paridade com o painel do site. */
+  readonly adsetName?: string;
+  /** objetivo/conversão de negócio (só from_scratch) — paridade com o site: o refino re-resolve o
+   *  pixel DA CONTA; o core bloqueia objetivo que exige pixel quando a conta não tem. */
+  readonly objective?: ConversionGoal;
   /** remove geo(s) do público EXPLÍCITO já resolvido (Fase 1, subfatia 3a) — por nome/trecho do
    *  nome (ex: "Ibirité"). Sem chamada nova (já está no rascunho). Nome não encontrado → bloqueia. */
   readonly removeGeo?: readonly string[];
@@ -939,6 +945,17 @@ export async function refineDraft(
   if (patch.budgetReais != null) edit.budgetMinor = Math.round(patch.budgetReais * MINOR_PER_UNIT);
   if (patch.activation) edit.activation = patch.activation;
   if (kind === "from_scratch" && patch.campaignName != null) edit.campaignName = patch.campaignName;
+  if (kind === "from_scratch" && patch.adsetName != null) edit.adsetName = patch.adsetName;
+  // OBJETIVO (só from_scratch, paridade com o site §13): re-resolve o pixel DA CONTA (não de
+  // spec.pixelId). O guard do core (`objective_requires_pixel`) bloqueia objetivo que exige pixel
+  // quando a conta não tem; quando há, grava o pixel no spec junto.
+  let hasPixel = true;
+  if (kind === "from_scratch" && patch.objective) {
+    const defaults = await deps.ports.ads.inferCreationDefaults(ac.ref);
+    hasPixel = Boolean(defaults.pixelId);
+    edit.objective = patch.objective;
+    if (defaults.pixelId) edit.pixelId = defaults.pixelId;
+  }
 
   // anúncios (só from_scratch): `regenerateCopy` re-aterra TUDO na copy que já performa (LLM na
   // casca) — descarta edições manuais E criativo próprio (intencional: "regenerar"). Já mudar só o
@@ -1084,7 +1101,7 @@ export async function refineDraft(
     edit.targeting = expl;
   }
 
-  const result = applyDraftEdit(kind, spec, edit, { budgetCapMinor: ac.cfg.maxNewDailyBudgetMinor ?? null, hasPixel: true });
+  const result = applyDraftEdit(kind, spec, edit, { budgetCapMinor: ac.cfg.maxNewDailyBudgetMinor ?? null, hasPixel });
   if (!result.ok) return { kind: "blocked", reason: refineErrorReason(result.error) };
 
   const persisted = await persistDraftSpec(deps.db, { orgId: ctx.orgId, draftId }, result.value.spec);

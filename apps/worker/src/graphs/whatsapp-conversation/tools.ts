@@ -332,13 +332,15 @@ export function makeConversationTools(
   const adjustDraft = tool(proposeOnly, {
     name: "adjust_draft",
     description:
-      "Ajusta o rascunho de campanha JÁ PROPOSTO (só quando há um pendente) — TUDO que o painel do site faz: budget, ativação, nº de variações, NOME (campaignName), e o PÚBLICO por completo. Público: geo (addGeo/removeGeo pelo nome), RAIO (radiusKm nas cidades, addressAreas em endereços), idade (ageMin/ageMax), gênero (gender), INTERESSES (addInterests=OU, narrowInterests=E, removeInterests), COMPORTAMENTOS (addBehaviors/narrowBehaviors/removeBehaviors), PÚBLICOS SALVOS (addAudiences/excludeAudiences/removeAudiences pelo nome). Se o rascunho ainda é 'herda o vencedor'/'amplo' e o dono pede um primitivo, eu CONVERTO pra público personalizado (mantendo o herdado) — igual ao 'personalizar público' do site. Também audience:'reuse'/'broad' pra alternar o modo. Não cria rascunho novo. Copy campo-a-campo / anúncio a anúncio = painel do site.",
+      "Ajusta o rascunho de campanha JÁ PROPOSTO (só quando há um pendente) — TUDO que o painel do site faz, EXCETO escolher/editar o criativo em si: budget, ativação, nº de anúncios (variantsCount), OBJETIVO (objective — ex: trocar de lead pra 'conversas iniciadas'/messaging_started; eu re-resolvo o pixel da conta e aviso se o objetivo exigir pixel que a conta não tem), NOME da campanha (campaignName) e do conjunto (adsetName), e o PÚBLICO por completo. Público: geo (addGeo/removeGeo pelo nome), RAIO (radiusKm nas cidades, addressAreas em endereços), idade (ageMin/ageMax), gênero (gender), INTERESSES (addInterests=OU, narrowInterests=E, removeInterests), COMPORTAMENTOS (addBehaviors/narrowBehaviors/removeBehaviors), PÚBLICOS SALVOS (addAudiences/excludeAudiences/removeAudiences pelo nome). Se o rascunho ainda é 'herda o vencedor'/'amplo' e o dono pede um primitivo, eu CONVERTO pra público personalizado (mantendo o herdado) — igual ao 'personalizar público' do site. Também audience:'reuse'/'broad' pra alternar o modo. Não cria rascunho novo. Só ESCOLHER/TROCAR o criativo específico de cada anúncio e editar o TEXTO da copy campo-a-campo = painel do site.",
     schema: z.object({
       budgetReais: z.number().positive().nullable().optional(),
       activation: z.enum(["active", "paused"]).nullable().optional(),
       variantsCount: z.number().int().positive().nullable().optional(),
+      objective: z.enum(CONVERSION_GOALS as unknown as [string, ...string[]]).nullable().optional().describe("novo objetivo/conversão de negócio (ex: 'messaging_started' pra conversas iniciadas, 'lead', 'purchase'). Só rascunho criado do zero. Eu re-resolvo o pixel da conta e bloqueio com aviso amigável se o objetivo exigir pixel e a conta não tiver."),
       audience: z.enum(["reuse", "broad"]).nullable().optional(),
       campaignName: z.string().min(1).nullable().optional(),
+      adsetName: z.string().min(1).nullable().optional().describe("novo nome do conjunto de anúncios"),
       removeGeo: z.array(z.string()).nullable().optional().describe("nomes de cidade/região/país a REMOVER do público explícito já resolvido (ex: ['Ibirité'])"),
       addGeo: z.array(z.string()).nullable().optional().describe("nomes de cidade/região/país a ADICIONAR ao público explícito (eu resolvo pro lugar real e pergunto se ambíguo)"),
       ageMin: z.number().int().min(13).max(65).nullable().optional(),
@@ -767,7 +769,7 @@ export async function buildCapabilitiesText(
       ...(canCreate ? ["copiar a estrutura de uma campanha sua pra outra (ex: remarketing), reusando os criativos e trocando só o público"] : []),
     ];
     parts.push(
-      `🚀 Também ${abilities.join(" e ")}. Depois de eu propor, você ajusta por aqui o que é leve (budget, ativar/pausar, nº de anúncios, público, nome, regerar a copy) — crio/escalo/copio sempre PAUSADO (a Meta revisa antes) e só ATIVO de verdade com um 2º OK seu, separado. Pra ESCOLHER/TROCAR qual criativo em cada anúncio ou editar o TEXTO da copy, é no painel "Editar" do rascunho no site (te passo o link).`,
+      `🚀 Também ${abilities.join(" e ")}. Depois de eu propor, você ajusta TUDO por aqui (objetivo, budget, ativar/pausar, nº de anúncios, público inteiro, nomes, regerar a copy) — crio/escalo/copio sempre PAUSADO (a Meta revisa antes) e só ATIVO de verdade com um 2º OK seu, separado. A ÚNICA coisa que fica no painel "Editar" do rascunho no site é escolher/trocar qual criativo vai em cada anúncio e editar o TEXTO da copy campo-a-campo (te passo o link).`,
     );
     if (canCreate) {
       parts.push("🔢 Números que eu uso vêm sempre da conta/ferramenta — número de WhatsApp de destino eu confirmo pela campanha certa (nunca de outra), e público eu pego dos públicos reais da sua conta (não invento). Quando você escolhe um público, eu ainda te digo o alcance estimado dele (pra você saber se entrega bem).");

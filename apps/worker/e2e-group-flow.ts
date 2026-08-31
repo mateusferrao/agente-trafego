@@ -107,6 +107,10 @@ async function main() {
       .limit(1);
     return d ? { id: d.id, spec: d.spec as CampaignDraftSpec } : null;
   };
+  const draftById = async (id: string): Promise<CampaignDraftSpec | null> => {
+    const [d] = await deps.db.select({ spec: campaignDrafts.spec }).from(campaignDrafts).where(eq(campaignDrafts.id, id)).limit(1);
+    return d ? (d.spec as CampaignDraftSpec) : null;
+  };
   const nDistinct = (spec: CampaignDraftSpec): number =>
     new Set((spec.copyVariants ?? []).map((v) => v.creative?.metaVideoId ?? v.creative?.metaImageHash ?? "default")).size;
   const expirePendingDraft = async (threadId: string): Promise<void> => {
@@ -167,6 +171,18 @@ async function main() {
     ok("C: tratou o 'sim' tardio (não deu 'nada pendente'/dead-end)", !/não tenho nada pendente|não tenho um rascunho/i.test(rC), rC.slice(0, 200));
     const reEchoed = /confiro com você|rascunho de campanha atualizado|antes de criar|confirma/i.test(rC);
     console.log(`    → caminho: ${reEchoed ? "re-eco (pediu OK de novo)" : "approve deliberado (detalhes já frescos)"}`);
+
+    // ── E) OBJETIVO editável pelo chat (paridade com o site) — "troca pra conversas iniciadas" ──
+    console.log("\n▶ E) objetivo editável pelo chat (adjust_draft objective)");
+    const bId = dB1!.id; // o rascunho do thread e2e-B (não o mais recente de outro thread)
+    const objBefore = (await draftById(bId))?.objective;
+    const rE = await turn("e2e-B", "Troca o objetivo desse rascunho pra conversas iniciadas.");
+    console.log(`    Roy: ${rE.replace(/\n/g, " ").slice(0, 240)}`);
+    const objAfter = (await draftById(bId))?.objective;
+    // sucesso = virou messaging_started; OU bloqueio honesto (objetivo exige pixel e a conta não tem)
+    const changed = objAfter === "messaging_started";
+    const honestBlock = /pixel|não consigo|conta não tem/i.test(rE) && objAfter === objBefore;
+    ok("E: objetivo trocado pelo chat OU bloqueio honesto de pixel (não deu 'só pelo site')", (changed || honestBlock) && !/só pelo site|edite o rascunho no painel/i.test(rE), { before: objBefore, after: objAfter });
 
     // ── D) APPLY real na Meta (PAUSED) + verify + delete ── (usa o rascunho de A, com 5 anúncios)
     console.log("\n▶ D) APPLY real (PAUSED) do rascunho de 5 anúncios + verify + delete");
