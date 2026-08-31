@@ -13,8 +13,10 @@ import {
   budgetDirection,
   kindForRecommendation,
   buildAccountBrief,
+  buildCuratedEntitySnapshot,
   buildEntityConversionMap,
   buildMessageFallback,
+  campaignsAtBudgetCeiling,
   composeAgentVoice,
   costSnapshotFromUsage,
   creativePosterFrames,
@@ -571,6 +573,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           metrics: unit.campaign.metrics,
           flags: [...unit.campaign.flags],
           ...(unit.campaign.tier ? { tier: unit.campaign.tier } : {}),
+          curated: buildCuratedEntitySnapshot(unit.campaign),
         };
         return { unit: parsed.data, fresh, usage: completion.usage, partial: false };
       } catch (err) {
@@ -1192,6 +1195,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           messages: buildMessageMessages(state.systemPrompt, state.account.name, out, posture, {
             ...(state.brief?.waste ? { waste: state.brief.waste } : {}),
             ...(state.brief?.trackingHealth?.suspect ? { trackingSuspect: true } : {}),
+            atBudgetCeilingCampaigns: campaignsAtBudgetCeiling(state.brief?.segments.campaigns ?? []),
           }),
           responseSchema: MESSAGE_OUTPUT_JSON_SCHEMA,
           responseSchemaName: MESSAGE_OUTPUT_SCHEMA_NAME,

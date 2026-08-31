@@ -26,6 +26,7 @@ const VOICE_RULES = [
   "Não invente números nem ações: use SOMENTE o que está no resultado fornecido.",
   "Se houver 'waste' (wastedSpend > 0 ou 'misallocated'), ABRA pela mensagem em reais (o dono quer ver o dinheiro primeiro): quanto está parado e onde está mal alocado.",
   "Se 'trackingSuspect' for true, ressalve que a medição de vendas pode estar incompleta antes de sugerir cortes por CPA de venda.",
+  "Se 'atBudgetCeilingCampaigns' vier preenchido, mencione que essas campanhas estão SEM FOLGA de orçamento — subir o orçamento é o próximo passo pra elas continuarem escalando (não invente valor de aumento, só sinalize a falta de folga).",
 ].join(" ");
 
 /** Resumo compacto do desperdício p/ o redator (não despeja o Pareto inteiro). */
@@ -48,7 +49,12 @@ export function buildMessageMessages(
   accountName: string,
   output: AnalysisOutput,
   posture: Posture,
-  extras?: { readonly waste?: WasteReport; readonly trackingSuspect?: boolean },
+  extras?: {
+    readonly waste?: WasteReport;
+    readonly trackingSuspect?: boolean;
+    /** nomes de campanhas ATIVAS sem folga de orçamento (S1) — `campaignsAtBudgetCeiling`. */
+    readonly atBudgetCeilingCampaigns?: readonly string[];
+  },
 ): LLMMessage[] {
   const system = [systemPrompt, composePostureBlock(posture), VOICE_RULES, GROUNDING_RULE].join("\n\n");
   const waste = curateWaste(extras?.waste);
@@ -58,6 +64,9 @@ export function buildMessageMessages(
     summary: output.summary,
     ...(waste ? { waste } : {}),
     ...(extras?.trackingSuspect ? { trackingSuspect: true } : {}),
+    ...(extras?.atBudgetCeilingCampaigns && extras.atBudgetCeilingCampaigns.length > 0
+      ? { atBudgetCeilingCampaigns: extras.atBudgetCeilingCampaigns }
+      : {}),
     // Fix fadiga (S3): insight puro NÃO entra no push proativo (fica na visão de
     // análise). Reusa a fonte única kindForRecommendation (não re-deriva 'keep' à mão).
     // Volume (postura) determina quantas liderar.

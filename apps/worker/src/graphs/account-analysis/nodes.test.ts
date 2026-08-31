@@ -352,9 +352,16 @@ describe("account-analysis read-only nodes", () => {
     expect(modelByType("review")).toBe("review-m");
     // a análise por-campanha reanalisada é persistida (base do incremental), chaveada por id de campanha
     expect(repos.entityAnalyses.saveMany).toHaveBeenCalledTimes(1);
-    const savedUnits = (repos.entityAnalyses.saveMany as ReturnType<typeof vi.fn>).mock.calls[0]?.[2] as { entityId: string }[];
+    const savedUnits = (repos.entityAnalyses.saveMany as ReturnType<typeof vi.fn>).mock.calls[0]?.[2] as {
+      entityId: string;
+      curated?: { isCBO: boolean; tier?: string };
+    }[];
     expect(savedUnits).toHaveLength(1);
     expect(savedUnits[0]?.entityId).toBe("c1");
+    // S1: snapshot curado (budget/isCBO/tier/eligibility/etc, já enriquecido por enrichEntitiesQuality
+    // antes do mapa) vai junto — sem budget na fixture → isCBO=false.
+    expect(savedUnits[0]?.curated?.isCBO).toBe(false);
+    expect(savedUnits[0]?.curated?.tier).toBeDefined();
     // recomendações da síntese persistidas
     expect(h.saved.length).toBeGreaterThan(0);
     expect(h.closed[0]?.status).toBe("succeeded");
@@ -385,6 +392,7 @@ describe("account-analysis read-only nodes", () => {
         metrics: { spend: 300, cpa: 100, roas: 1, ctr: 5 },
         flags: ["cpa_acima_da_meta"],
         tier: null,
+        curated: null,
         analyzedAt: new Date(), // recente → não dispara o deep por intervalo
       }],
     ]);
@@ -401,6 +409,7 @@ describe("account-analysis read-only nodes", () => {
         metrics: { spend: 300, cpa: 100, roas: 1, ctr: 5 },
         flags: ["cpa_acima_da_meta"],
         tier: null,
+        curated: null,
         analyzedAt: new Date(Date.now() - 60_000), // 1 min atrás
       }],
     ]);

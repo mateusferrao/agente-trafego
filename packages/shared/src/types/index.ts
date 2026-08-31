@@ -545,6 +545,25 @@ export interface EntitySummary {
   readonly benchmarkRef?: BenchmarkRef;
 }
 
+/**
+ * Snapshot curado de UMA entidade (S1, pivô saúde) — projeção estável de `EntitySummary`
+ * persistida em `entity_analyses.curated_json`, pra chat/UI/redator lerem sem reler o
+ * brief inteiro do run (que não sobrevive além do run em memória). Builder puro em
+ * `packages/core/src/curated-entity` (`buildCuratedEntitySnapshot`).
+ */
+export interface CuratedEntitySnapshot {
+  readonly budget?: EntityBudget;
+  readonly atBudgetCeiling?: boolean;
+  /** true = orçamento na PRÓPRIA campanha (CBO); false = por conjunto/adset (ABO). */
+  readonly isCBO: boolean;
+  readonly tier?: PerformanceTier;
+  readonly audience?: AudienceProfile;
+  readonly funnel?: FunnelSummary;
+  readonly conversionBasis?: ConversionBasis;
+  readonly healthSignals?: readonly HealthSignal[];
+  readonly eligibility?: DecisionEligibility;
+}
+
 export interface Anomaly {
   readonly entityId: string;
   readonly metric: string;

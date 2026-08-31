@@ -1,0 +1,1 @@
+ALTER TABLE "entity_analyses" ADD COLUMN "curated_json" jsonb;

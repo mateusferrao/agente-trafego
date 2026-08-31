@@ -31,7 +31,7 @@ import {
 import { describeCreatedDraft } from "../../modules/apply/draft-summary.js";
 import type { ActivationApproval, Approval, ApprovalPort } from "@trafego/shared/ports";
 import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY } from "@trafego/shared";
-import type { AgentId, CampaignDraftSpec, CreativeAssetRef, CustomAudience, DraftKind, EntityLevel, InsightMetrics, OrgId, TargetingSpec, UnitAnalysis, WhatsappDestination } from "@trafego/shared";
+import type { AgentId, CampaignDraftSpec, CreativeAssetRef, CuratedEntitySnapshot, CustomAudience, DraftKind, EntityLevel, InsightMetrics, OrgId, TargetingSpec, UnitAnalysis, WhatsappDestination } from "@trafego/shared";
 import type { DraftApproval } from "@trafego/shared/ports";
 import type { StoredInsightMetrics } from "@trafego/shared/types";
 import type { WorkerDeps } from "../../composition.js";
@@ -105,7 +105,29 @@ interface NoAccountMetrics {
   readonly hasData: false;
 }
 
-interface CampaignAnalysis {
+/**
+ * Orçamento curado exposto ao chat (S1 — fecha o bug de o agente não saber informar
+ * orçamento por campanha, embora o dado já fosse buscado). Projeção mínima de
+ * `CuratedEntitySnapshot`; null nas linhas de antes desta fase (backfill não retroativo).
+ */
+interface BudgetView {
+  readonly tier: string | null;
+  readonly budget: CuratedEntitySnapshot["budget"] | null;
+  /** true = sem folga pra gastar mais sem subir o orçamento; false = tem folga; null = sem dado. */
+  readonly atBudgetCeiling: boolean | null;
+  /** true = orçamento na PRÓPRIA campanha (CBO); false = por conjunto/adset (ABO); null = sem dado. */
+  readonly isCBO: boolean | null;
+}
+function budgetViewOf(curated: CuratedEntitySnapshot | null): BudgetView {
+  return {
+    tier: curated?.tier ?? null,
+    budget: curated?.budget ?? null,
+    atBudgetCeiling: curated?.atBudgetCeiling ?? null,
+    isCBO: curated?.isCBO ?? null,
+  };
+}
+
+interface CampaignAnalysis extends BudgetView {
   /** id da campanha na plataforma — o agente usa p/ agir (pausar/budget) no chat (5c). */
   readonly id: string;
   readonly name: string | null;
@@ -366,6 +388,7 @@ export async function getCampaignAnalysisData(
       unitJson: entityAnalyses.unitJson,
       metricsJson: entityAnalyses.metricsJson,
       flags: entityAnalyses.flags,
+      curatedJson: entityAnalyses.curatedJson,
       analyzedAt: entityAnalyses.analyzedAt,
     })
     .from(entityAnalyses)
@@ -400,6 +423,7 @@ export async function getCampaignAnalysisData(
     summary: unit.summary ?? null,
     topFinding: top ? { title: top.title, severity: top.severity } : null,
     flags: row.flags ?? [],
+    ...budgetViewOf(row.curatedJson ?? null),
     asOf: row.analyzedAt.toISOString(),
   };
 }
@@ -416,16 +440,17 @@ export async function listCampaignsData(
   | {
       hasData: true;
       asOf: string;
-      campaigns: Array<{
-        id: string;
-        name: string | null;
-        spend: number | null;
-        conversions: number | null;
-        cpa: number | null;
-        roas: number | null;
-        revenue: number | null;
-        tier: string | null;
-      }>;
+      campaigns: Array<
+        {
+          id: string;
+          name: string | null;
+          spend: number | null;
+          conversions: number | null;
+          cpa: number | null;
+          roas: number | null;
+          revenue: number | null;
+        } & BudgetView
+      >;
     }
   | NoData
 > {
@@ -435,6 +460,7 @@ export async function listCampaignsData(
       entityName: entityAnalyses.entityName,
       metricsJson: entityAnalyses.metricsJson,
       tier: entityAnalyses.tier,
+      curatedJson: entityAnalyses.curatedJson,
       analyzedAt: entityAnalyses.analyzedAt,
     })
     .from(entityAnalyses)
@@ -451,6 +477,7 @@ export async function listCampaignsData(
     campaigns.push({
       id: r.entityId,
       name: r.entityName ?? null,
+      ...budgetViewOf(r.curatedJson ?? null),
       spend: typeof m.spend === "number" ? m.spend : null,
       conversions: typeof m.conversions === "number" ? m.conversions : null,
       cpa: typeof m.cpa === "number" ? m.cpa : null,
@@ -742,7 +769,7 @@ export async function getEntityDetailData(
   periodDays = ENTITY_TREND_DAYS,
   now: () => Date = () => new Date(),
 ): Promise<
-  | { name: string | null; id: string; trend: { date: string; spend: number }[]; totalSpend: number; flags: readonly string[] }
+  | ({ name: string | null; id: string; trend: { date: string; spend: number }[]; totalSpend: number; flags: readonly string[] } & BudgetView)
   | NoData
   | AmbiguousCampaign
 > {
@@ -764,7 +791,17 @@ export async function getEntityDetailData(
     .orderBy(insightsSnapshots.date);
   const trend = rows.map((r) => ({ date: r.date, spend: spendOf(r.metricsJson) }));
   const totalSpend = trend.reduce((s, t) => s + t.spend, 0);
-  return { name: analysis.name, id: analysis.id, trend, totalSpend, flags: analysis.flags };
+  return {
+    name: analysis.name,
+    id: analysis.id,
+    trend,
+    totalSpend,
+    flags: analysis.flags,
+    tier: analysis.tier,
+    budget: analysis.budget,
+    atBudgetCeiling: analysis.atBudgetCeiling,
+    isCBO: analysis.isCBO,
+  };
 }
 
 /** Config atual do agente (só leitura) — "como você tá configurado?". Mudar = pelo site. */
@@ -1351,7 +1388,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     {
       name: "get_campaign_analysis",
       description:
-        "Última análise de uma campanha pelo nome (busca por trecho, sem diferenciar maiúsculas). Devolve o id (use-o para agir), resumo, métricas curadas e o maior gargalo.",
+        "Última análise de uma campanha pelo nome (busca por trecho, sem diferenciar maiúsculas). Devolve o id (use-o para agir), resumo, métricas curadas, o maior gargalo, o tier (winner/performer/underperformer/zombie) e o ORÇAMENTO (budget: diário ou vitalício; atBudgetCeiling: true = sem folga pra gastar mais sem subir o orçamento; isCBO: true = orçamento na própria campanha, false = por conjunto/adset — nesse caso qualquer mudança é POR CONJUNTO). Campos de orçamento vêm null quando a conta não foi reanalisada desde que esse dado passou a ser coletado — nesse caso, não afirme 'sem orçamento', diga que precisa rodar uma nova análise.",
       schema: z.object({ name: z.string() }),
     },
   );
@@ -1406,7 +1443,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     {
       name: "list_campaigns",
       description:
-        "TODAS as campanhas da conta com métricas por campanha (gasto, conversões, CPA, ROAS, receita), ordenadas por gasto — pra COMPARAR/ALOCAR verba ('quais gastam mais e convertem pior', 'onde cortar/proteger', 'valores por campanha'). SEM args = última análise curada (inclui tier/diagnóstico). COM recorte de período (mesmo formato do get_fresh_metrics: periodDays, ou sinceDaysAgo+untilDaysAgo em dias atrás, 0=hoje/1=ontem, ≤7d) = dados FRESH agregados por campanha na janela. É a divisão por campanha que o get_fresh_metrics (agregado da conta) não dá.",
+        "TODAS as campanhas da conta com métricas por campanha (gasto, conversões, CPA, ROAS, receita), ordenadas por gasto — pra COMPARAR/ALOCAR verba ('quais gastam mais e convertem pior', 'onde cortar/proteger', 'valores por campanha', 'qual o orçamento de cada campanha'). SEM args = última análise curada (inclui tier/diagnóstico e o ORÇAMENTO de cada campanha: budget/atBudgetCeiling/isCBO — mesmos campos de get_campaign_analysis; null quando a conta não foi reanalisada desde que esse dado passou a ser coletado, nesse caso ofereça rodar uma análise em vez de dizer 'sem orçamento'). COM recorte de período (mesmo formato do get_fresh_metrics: periodDays, ou sinceDaysAgo+untilDaysAgo em dias atrás, 0=hoje/1=ontem, ≤7d) = dados FRESH agregados por campanha na janela (SEM orçamento — isso só vem da análise curada, sem args). É a divisão por campanha que o get_fresh_metrics (agregado da conta) não dá.",
       schema: z.object({
         periodDays: z.number().int().positive().nullable().optional(),
         sinceDaysAgo: z.number().int().min(0).nullable().optional(),

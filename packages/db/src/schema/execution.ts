@@ -16,6 +16,7 @@ import type {
   Action,
   CampaignDraftSpec,
   CreativeVisionResult,
+  CuratedEntitySnapshot,
   DraftSourceRef,
   PartialReason,
 } from "@trafego/shared";
@@ -265,6 +266,10 @@ export const entityAnalyses = pgTable(
     flags: jsonb("flags").$type<string[]>().notNull().default([]),
     // tier de desempenho (6c): winner|performer|underperformer|zombie — histórico coerente.
     tier: text("tier"),
+    // snapshot curado (S1, pivô saúde): budget/atBudgetCeiling/isCBO/audience/funnel/
+    // conversionBasis/healthSignals/eligibility — o que chat/UI/redator leem sem reler o
+    // brief do run (que não sobrevive além da memória do run).
+    curatedJson: jsonb("curated_json").$type<CuratedEntitySnapshot>(),
     analyzedAt: timestamp("analyzed_at", { withTimezone: true }).notNull().defaultNow(),
     ...timestamps,
   },

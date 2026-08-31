@@ -5,7 +5,7 @@
 
 import { eq, sql } from "drizzle-orm";
 import { entityAnalyses, type Database } from "@trafego/db";
-import type { EntityLevel, InsightMetrics, PerformanceTier } from "@trafego/shared";
+import type { CuratedEntitySnapshot, EntityLevel, InsightMetrics, PerformanceTier } from "@trafego/shared";
 import type { UnitAnalysis } from "@trafego/shared";
 
 export interface LastEntityAnalysis {
@@ -13,6 +13,8 @@ export interface LastEntityAnalysis {
   readonly metrics: Partial<InsightMetrics>;
   readonly flags: string[];
   readonly tier: PerformanceTier | null;
+  /** snapshot curado (S1) — null nas linhas de antes desta fase (backfill não retroativo). */
+  readonly curated: CuratedEntitySnapshot | null;
   readonly analyzedAt: Date;
 }
 
@@ -25,6 +27,8 @@ export interface SaveEntityAnalysis {
   readonly flags: string[];
   /** tier de desempenho (6c) — persistido p/ o histórico. */
   readonly tier?: PerformanceTier;
+  /** snapshot curado (S1) — budget/audience/funil/basis/healthSignals/eligibility. */
+  readonly curated?: CuratedEntitySnapshot;
 }
 
 export interface EntityAnalysesRepo {
@@ -42,6 +46,7 @@ export function createEntityAnalysesRepo(db: Database): EntityAnalysesRepo {
           metricsJson: entityAnalyses.metricsJson,
           flags: entityAnalyses.flags,
           tier: entityAnalyses.tier,
+          curatedJson: entityAnalyses.curatedJson,
           analyzedAt: entityAnalyses.analyzedAt,
         })
         .from(entityAnalyses)
@@ -53,6 +58,7 @@ export function createEntityAnalysesRepo(db: Database): EntityAnalysesRepo {
           metrics: r.metricsJson as Partial<InsightMetrics>,
           flags: r.flags,
           tier: (r.tier as PerformanceTier | null) ?? null,
+          curated: r.curatedJson ?? null,
           analyzedAt: r.analyzedAt,
         });
       }
@@ -75,6 +81,7 @@ export function createEntityAnalysesRepo(db: Database): EntityAnalysesRepo {
             metricsJson: e.metrics as Record<string, unknown>,
             flags: e.flags,
             tier: e.tier ?? null,
+            curatedJson: e.curated ?? null,
             analyzedAt: sql`now()`,
           })),
         )
@@ -88,6 +95,7 @@ export function createEntityAnalysesRepo(db: Database): EntityAnalysesRepo {
             metricsJson: sql`excluded.metrics_json`,
             flags: sql`excluded.flags`,
             tier: sql`excluded.tier`,
+            curatedJson: sql`excluded.curated_json`,
             analyzedAt: sql`now()`,
             updatedAt: sql`now()`,
           },

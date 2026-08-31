@@ -352,8 +352,25 @@ describe("getCampaignAnalysisData", () => {
       summary: "escala bem",
       topFinding: { title: "CTR caindo", severity: "warning" },
       flags: ["scaling"],
+      // S1: linha sem curatedJson (de antes da fase) → campos de orçamento null, não omitidos.
+      tier: null,
+      budget: null,
+      atBudgetCeiling: null,
+      isCBO: null,
       asOf: "2026-08-20T08:00:00.000Z",
     });
+  });
+
+  it("S1: com curatedJson → expõe tier/budget/atBudgetCeiling/isCBO (fecha o bug do orçamento no chat)", async () => {
+    const withCurated = [
+      {
+        ...rows[0],
+        curatedJson: { isCBO: true, tier: "winner", budget: { dailyMajor: 150 }, atBudgetCeiling: true },
+      },
+    ];
+    const db = fakeDb(new Map<unknown, unknown[]>([[entityAnalyses, withCurated]]));
+    const res = await getCampaignAnalysisData(db, AGENT, "black friday");
+    expect(res).toMatchObject({ tier: "winner", budget: { dailyMajor: 150 }, atBudgetCeiling: true, isCBO: true });
   });
 
   it("nenhuma casa → hasData:false", async () => {
@@ -406,7 +423,7 @@ describe("listCampaignsData", () => {
     const db = fakeDb(new Map<unknown, unknown[]>([[entityAnalyses, rows]]));
     const res = await listCampaignsData(db, AGENT);
     expect(res).toMatchObject({ hasData: true });
-    const r = res as { hasData: true; campaigns: Array<Record<string, unknown>> };
+    const r = res as unknown as { hasData: true; campaigns: Array<Record<string, unknown>> };
     expect(r.campaigns.map((c) => c.id)).toEqual(["c-big", "c-small"]); // gasto 500 > 100; c-big só 1x
     expect(r.campaigns[0]).toMatchObject({ name: "Prospecção", spend: 500, conversions: 40, cpa: 12.5, tier: "underperformer" });
     expect(r.campaigns[1]).toMatchObject({ name: "Remarketing", spend: 100, roas: 4, revenue: 400 });
@@ -416,6 +433,14 @@ describe("listCampaignsData", () => {
     const db = fakeDb(new Map<unknown, unknown[]>([[entityAnalyses, []]]));
     const res = await listCampaignsData(db, AGENT);
     expect(res).toMatchObject({ hasData: false });
+  });
+
+  it("S1: expõe budget/atBudgetCeiling/isCBO por campanha (curatedJson)", async () => {
+    const withCurated = [{ ...rows[1], curatedJson: { isCBO: false, tier: "underperformer" } }];
+    const db = fakeDb(new Map<unknown, unknown[]>([[entityAnalyses, withCurated]]));
+    const res = await listCampaignsData(db, AGENT);
+    const r = res as unknown as { hasData: true; campaigns: Array<Record<string, unknown>> };
+    expect(r.campaigns[0]).toMatchObject({ isCBO: false, budget: null, atBudgetCeiling: null });
   });
 });
 

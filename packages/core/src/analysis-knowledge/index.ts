@@ -20,10 +20,12 @@ export interface AnalysisKnowledgeContext {
   readonly trackingSuspect: boolean;
   readonly hasRevenue: boolean;
   readonly hasBenchmarkRef: boolean;
+  /** alguma entidade no escopo (conta ou campanha) traz `budget`/`atBudgetCeiling` (S1). */
+  readonly hasBudgetData: boolean;
 }
 
 /** Agrupamento temático (G2) — ordena a montagem do texto, não a lista de blocos. */
-export type AnalysisKnowledgeTheme = "conversao" | "qualidade" | "criativo" | "desperdicio" | "benchmark";
+export type AnalysisKnowledgeTheme = "conversao" | "qualidade" | "criativo" | "desperdicio" | "orcamento" | "benchmark";
 
 export interface AnalysisKnowledgeBlock {
   readonly key: string;
@@ -144,6 +146,22 @@ const BENCHMARK_TEXT =
   "como REFERÊNCIA DE MERCADO direcional — nunca como a meta do dono e nunca declare sucesso por ele. " +
   "Sempre convide o dono a definir a meta (CPA/ROAS/custo por conversa) pra uma leitura precisa.";
 
+/**
+ * Orçamento + realocação (S1 — fecha o bug do chat não saber informar orçamento por
+ * campanha). CBO×ABO (decisão do plano) + faseamento e CPA marginal como critério de
+ * até-onde-escalar (decisão 4 — sem os 3 cenários explícitos, ver ROADMAP).
+ */
+const BUDGET_TEXT =
+  "Cada entidade pode trazer 'budget' (orçamento resolvido: diário ou vitalício), 'atBudgetCeiling' " +
+  "(true = sem folga pra gastar mais sem subir o orçamento; false = tem folga; ausente = sem dado " +
+  "de orçamento em lugar nenhum) e 'isCBO' (true = orçamento na PRÓPRIA campanha; false = por " +
+  "conjunto/adset — ABO). Numa campanha ABO ('isCBO': false), qualquer mudança de orçamento é POR " +
+  "CONJUNTO, não um número único da campanha — deixe isso claro na recomendação. Para realocar verba " +
+  "entre campanhas: proponha em FASES (nunca mover tudo de uma vez — ex.: metade agora, avalie o " +
+  "resultado antes de mover o resto) e use o CPA MARGINAL (o custo do ÚLTIMO incremento de orçamento, " +
+  "não a média histórica) como critério de até onde vale escalar — pare de recomendar mais orçamento " +
+  "ali quando o marginal estiver piorando, mesmo que a média ainda pareça boa.";
+
 export const ANALYSIS_KNOWLEDGE_BLOCKS: readonly AnalysisKnowledgeBlock[] = [
   { key: "funnel", theme: "conversao", text: FUNNEL_TEXT, relevant: isAnalysisRole },
   { key: "mismatch", theme: "conversao", text: MISMATCH_TEXT, relevant: isAnalysisRole },
@@ -156,16 +174,18 @@ export const ANALYSIS_KNOWLEDGE_BLOCKS: readonly AnalysisKnowledgeBlock[] = [
   { key: "waste", theme: "desperdicio", text: WASTE_TEXT, relevant: (ctx) => ctx.role === "synthesis" && ctx.hasWaste },
   { key: "tracking", theme: "desperdicio", text: TRACKING_TEXT, relevant: (ctx) => ctx.role === "synthesis" && ctx.trackingSuspect },
   { key: "benchmark", theme: "benchmark", text: BENCHMARK_TEXT, relevant: (ctx) => isMapOrSynthesis(ctx) && ctx.hasBenchmarkRef },
+  { key: "budget", theme: "orcamento", text: BUDGET_TEXT, relevant: (ctx) => isMapOrSynthesis(ctx) && ctx.hasBudgetData },
 ];
 
 /** Contexto do REVISOR (G7) — nenhum bloco condicional se aplica (correção não reporta
- *  desperdício/receita/benchmark novos); só os blocos-base de leitura de dado entram. */
+ *  desperdício/receita/benchmark/orçamento novos); só os blocos-base de leitura de dado entram. */
 export const REVIEW_KNOWLEDGE_CONTEXT: AnalysisKnowledgeContext = {
   role: "review",
   hasWaste: false,
   trackingSuspect: false,
   hasRevenue: false,
   hasBenchmarkRef: false,
+  hasBudgetData: false,
 };
 
 function anyEntityHasRevenue(entities: readonly EntitySummary[]): boolean {
@@ -173,6 +193,9 @@ function anyEntityHasRevenue(entities: readonly EntitySummary[]): boolean {
 }
 function anyEntityHasBenchmarkRef(entities: readonly EntitySummary[]): boolean {
   return entities.some((e) => e.benchmarkRef != null);
+}
+function anyEntityHasBudgetData(entities: readonly EntitySummary[]): boolean {
+  return entities.some((e) => e.budget != null || e.atBudgetCeiling !== undefined);
 }
 
 /** Contexto da SÍNTESE (reduce, nível conta) — a partir do `AccountBrief`. */
@@ -185,6 +208,7 @@ export function buildSynthesisKnowledgeContext(brief: AccountBrief): AnalysisKno
     trackingSuspect: brief.trackingHealth?.suspect === true,
     hasRevenue: (brief.totals.revenue ?? 0) > 0 || anyEntityHasRevenue(allEntities),
     hasBenchmarkRef: anyEntityHasBenchmarkRef(allEntities),
+    hasBudgetData: anyEntityHasBudgetData(allEntities),
   };
 }
 
@@ -198,6 +222,7 @@ export function buildCampaignKnowledgeContext(unit: CampaignUnit): AnalysisKnowl
     trackingSuspect: false,
     hasRevenue: anyEntityHasRevenue(entities),
     hasBenchmarkRef: anyEntityHasBenchmarkRef(entities),
+    hasBudgetData: anyEntityHasBudgetData(entities),
   };
 }
 
@@ -206,12 +231,13 @@ export function selectAnalysisKnowledge(ctx: AnalysisKnowledgeContext): readonly
   return ANALYSIS_KNOWLEDGE_BLOCKS.filter((b) => b.relevant(ctx));
 }
 
-const THEME_ORDER: readonly AnalysisKnowledgeTheme[] = ["conversao", "qualidade", "criativo", "desperdicio", "benchmark"];
+const THEME_ORDER: readonly AnalysisKnowledgeTheme[] = ["conversao", "qualidade", "criativo", "desperdicio", "orcamento", "benchmark"];
 const THEME_LABEL_PT: Readonly<Record<AnalysisKnowledgeTheme, string>> = {
   conversao: "Conversão e honestidade de medição",
   qualidade: "Qualidade e priorização de ação",
   criativo: "Direção de criativo e público",
   desperdicio: "Desperdício e alocação de verba",
+  orcamento: "Orçamento e realocação de verba",
   benchmark: "Referência de mercado",
 };
 const KNOWLEDGE_PREAMBLE =
