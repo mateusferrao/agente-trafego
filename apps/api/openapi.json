@@ -3539,7 +3539,10 @@
                   "type": "string",
                   "enum": [
                     "applicable",
-                    "not_yet_applicable"
+                    "applied",
+                    "dismissed",
+                    "expired",
+                    "not_applicable"
                   ]
                 },
                 "proposedAction": {
@@ -3595,6 +3598,29 @@
                     "null"
                   ]
                 },
+                "draftId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "approvalId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "approvalKind": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "action",
+                    "draft",
+                    "activation"
+                  ]
+                },
                 "vote": {
                   "type": [
                     "string",
@@ -3615,6 +3641,9 @@
                 "applicability",
                 "proposedAction",
                 "toolKey",
+                "draftId",
+                "approvalId",
+                "approvalKind",
                 "vote"
               ]
             }
@@ -5364,7 +5393,10 @@
                   "type": "string",
                   "enum": [
                     "applicable",
-                    "not_yet_applicable"
+                    "applied",
+                    "dismissed",
+                    "expired",
+                    "not_applicable"
                   ]
                 },
                 "proposedAction": {
@@ -5420,6 +5452,29 @@
                     "null"
                   ]
                 },
+                "draftId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "approvalId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "approvalKind": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "action",
+                    "draft",
+                    "activation"
+                  ]
+                },
                 "vote": {
                   "type": [
                     "string",
@@ -5440,6 +5495,9 @@
                 "applicability",
                 "proposedAction",
                 "toolKey",
+                "draftId",
+                "approvalId",
+                "approvalKind",
                 "vote"
               ]
             }

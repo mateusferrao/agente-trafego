@@ -33,11 +33,20 @@ export const recommendationOutput = z.object({
   /** formato (S2): platform_action (com ação) | human_direction | insight. */
   kind: recommendationKindSchema,
   riskLevel,
-  /** aplicabilidade da sugestão — em 3a nada é aplicável (aplicação = Fatia 5). */
-  applicability: z.enum(["applicable", "not_yet_applicable"]),
+  /**
+   * Aplicabilidade REAL (B): "applicable" = há aprovação/rascunho pendente pra agir agora;
+   * "applied" = já aplicada; "dismissed"/"expired" = resolvida; "not_applicable" = direção/insight
+   * (sem ação executável). O card decide o CTA por aqui.
+   */
+  applicability: z.enum(["applicable", "applied", "dismissed", "expired", "not_applicable"]),
   proposedAction: proposedActionOutput.nullable(),
   /** capacidade do catálogo proposta — só em platform_action. */
   toolKey: z.string().nullable(),
+  /** rascunho de campanha ligado (criação) — abre o editor no site. */
+  draftId: z.string().nullable(),
+  /** aprovação acionável ligada (ação OU rascunho/ativação pendente) — aprovar/rejeitar/editar. */
+  approvalId: z.string().nullable(),
+  approvalKind: z.enum(["action", "draft", "activation"]).nullable(),
   /** voto do dono (👍/👎), quando houver — o card do site reflete o estado. */
   vote: z.enum(["up", "down"]).nullable(),
 });

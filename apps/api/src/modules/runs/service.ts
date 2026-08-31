@@ -3,6 +3,7 @@ import {
   agentMutedEntities,
   agentRuns,
   agents,
+  approvals,
   entityAnalyses,
   guardrailConfigs,
   isUniqueViolation,
@@ -11,7 +12,7 @@ import {
   type Database,
 } from "@trafego/db";
 import type { InsightMetrics, UnitAnalysis } from "@trafego/shared";
-import { cpaLabelFor, isOverCostCap, partialNote, partialSeverity, READ_ONLY_APPLICABILITY, resolveCostCapUsd, usagePeriod } from "@trafego/core";
+import { cpaLabelFor, isOverCostCap, partialNote, partialSeverity, resolveCostCapUsd, usagePeriod } from "@trafego/core";
 import {
   AGENT_RUNS_QUEUE,
   AGENT_RUN_JOB,
@@ -198,7 +199,39 @@ export function createRunsService(deps: RunsDeps) {
         if (row.vote && !votes.has(row.recommendationId)) votes.set(row.recommendationId, row.vote);
       }
     }
-    return recs.map((r) => toRecommendationOutput(r, votes.get(r.id) ?? null));
+    // Index das aprovações PENDENTES do agente do run (B): liga cada recomendação executável ao
+    // item acionável (rascunho/ativação por draftId; ação por entidade+tipo) → o card mostra
+    // aplicabilidade real + CTA. Uma consulta por run.
+    const [runRow] = await deps.db
+      .select({ agentId: agentRuns.agentId })
+      .from(agentRuns)
+      .where(and(eq(agentRuns.id, runId), eq(agentRuns.orgId, orgId)))
+      .limit(1);
+    const idx = await buildPendingIndex(runRow?.agentId ?? null);
+    return recs.map((r) => toRecommendationOutput(r, votes.get(r.id) ?? null, idx));
+  }
+
+  /** Mapa das pendentes do agente: rascunho/ativação por draftId; ação por `${level}:${id}:${type}`. */
+  async function buildPendingIndex(agentId: string | null): Promise<PendingApprovalIndex> {
+    const draftApproval = new Map<string, { approvalId: string; kind: "draft" | "activation" }>();
+    const actionApproval = new Map<string, string>();
+    if (!agentId) return { draftApproval, actionApproval };
+    const pend = await deps.db
+      .select({
+        id: approvals.id,
+        kind: approvals.kind,
+        draftId: approvals.draftId,
+        entityLevel: approvals.entityLevel,
+        entityId: approvals.entityId,
+        actionType: approvals.actionType,
+      })
+      .from(approvals)
+      .where(and(eq(approvals.agentId, agentId), eq(approvals.status, "pending")));
+    for (const p of pend) {
+      if (p.draftId) draftApproval.set(p.draftId, { approvalId: p.id, kind: p.kind === "activation" ? "activation" : "draft" });
+      else if (p.entityLevel && p.entityId && p.actionType) actionApproval.set(`${p.entityLevel}:${p.entityId}:${p.actionType}`, p.id);
+    }
+    return { draftApproval, actionApproval };
   }
 
   /**
@@ -530,19 +563,61 @@ function toRunOutput(run: AgentRunRow): RunOutput {
   };
 }
 
-function toRecommendationOutput(rec: RecommendationRow, vote: "up" | "down" | null): RecommendationOutput {
+interface PendingApprovalIndex {
+  readonly draftApproval: Map<string, { approvalId: string; kind: "draft" | "activation" }>;
+  readonly actionApproval: Map<string, string>;
+}
+
+/**
+ * Recomendação → output do site (B): aplicabilidade REAL + link acionável. resolvida (status) vence;
+ * senão direção/insight = not_applicable (sem CTA); criação liga ao rascunho/ativação pendente por
+ * draftId; ação direta liga à aprovação pendente por entidade+tipo. Sem pendente → not_applicable
+ * (auto-aplicada/barrada/já criada — nada a fazer no card agora).
+ */
+function toRecommendationOutput(
+  rec: RecommendationRow,
+  vote: "up" | "down" | null,
+  idx: PendingApprovalIndex,
+): RecommendationOutput {
   const action = rec.proposedAction as Action | null;
+  const draftId = rec.draftId ?? null;
+  let applicability: RecommendationOutput["applicability"] = "not_applicable";
+  let approvalId: string | null = null;
+  let approvalKind: RecommendationOutput["approvalKind"] = null;
+  if (rec.status === "applied") applicability = "applied";
+  else if (rec.status === "dismissed") applicability = "dismissed";
+  else if (rec.status === "expired") applicability = "expired";
+  else if (rec.kind === "platform_action") {
+    if (draftId) {
+      const da = idx.draftApproval.get(draftId);
+      if (da) {
+        applicability = "applicable";
+        approvalId = da.approvalId;
+        approvalKind = da.kind;
+      }
+    } else if (action) {
+      const aid = idx.actionApproval.get(`${action.target.level}:${action.target.id}:${action.type}`);
+      if (aid) {
+        applicability = "applicable";
+        approvalId = aid;
+        approvalKind = "action";
+      }
+    }
+  }
   return {
     id: rec.id,
     title: rec.title,
     rationale: rec.rationale ?? null,
     kind: rec.kind,
     riskLevel: rec.riskLevel,
-    applicability: READ_ONLY_APPLICABILITY,
+    applicability,
     proposedAction: action
       ? { type: action.type, target: { level: action.target.level, id: action.target.id }, params: action.params }
       : null,
     toolKey: rec.toolKey ?? null,
+    draftId,
+    approvalId,
+    approvalKind,
     vote,
   };
 }
