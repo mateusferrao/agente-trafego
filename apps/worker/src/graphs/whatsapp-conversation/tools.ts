@@ -228,7 +228,9 @@ export function makeConversationTools(
     description:
       "Propõe ajustar o budget diário: por % (mode increase/decrease + pct) OU valor absoluto (mode set + amountReais). " +
       "USE ISTO quando o usuário der um NÚMERO explícito de orçamento — inclusive 'escala em 30%' ou 'aumenta o orçamento em 20%' " +
-      "(intenção de budget = sobe direto, NUNCA duplica). Só use scale_winner quando NÃO houver número. Requer eco+confirma.",
+      "(intenção de budget = sobe direto, NUNCA duplica). Só use scale_winner quando NÃO houver número. " +
+      "Se a intenção for de orçamento mas faltar A CAMPANHA ou O VALOR/%, NÃO chame ainda — pergunte concretamente o que falta " +
+      "('de qual campanha? e pra quanto — valor por dia ou %?'); list_campaigns ajuda a oferecer as opções. Requer eco+confirma.",
     schema: z.object({
       ...writeSchema,
       mode: z.enum(["increase", "decrease", "set"]),
@@ -289,7 +291,8 @@ export function makeConversationTools(
   const createCampaign = tool(proposeOnly, {
     name: "create_campaign",
     description:
-      "Propõe CRIAR uma campanha nova reusando o criativo/página/pixel da conta + copy gerada. Pode mirar um PÚBLICO específico (passe includeAudienceIds/excludeAudienceIds — use list_audiences pra achar os ids) e/ou GEO/IDADE/GÊNERO/INTERESSES explícitos (geo/ageMin/ageMax/gender/interests); sem nenhum = amplo (Advantage+). Todos se COMBINAM se o usuário pedir juntos (ex: 'pra SP, mulheres, interessadas em estética e pro público X'). Requer eco+confirma.",
+      "Propõe CRIAR uma campanha nova reusando o criativo/página/pixel da conta + copy gerada. Pode mirar um PÚBLICO específico (passe includeAudienceIds/excludeAudienceIds — use list_audiences pra achar os ids) e/ou GEO/IDADE/GÊNERO/INTERESSES explícitos (geo/ageMin/ageMax/gender/interests); sem nenhum = amplo (Advantage+). Todos se COMBINAM se o usuário pedir juntos (ex: 'pra SP, mulheres, interessadas em estética e pro público X'). " +
+      "Pedido de RECOMENDAÇÃO de campanha nova ('recomenda uma campanha pra gente criar', 'que campanha eu deveria criar') é o MESMO gatilho — chame esta tool (ela nunca aplica sozinha, sempre para no eco+confirma); não responda em texto livre inventando a estrutura, e não confunda com pedido de recomendação GENÉRICA da conta (aí é análise normal, sem chamar esta tool). NÃO mande o usuário criar no Gerenciador Meta nem peça pra 'analisar antes' — você cria por aqui. As copies geradas aparecem no ECO antes de aplicar; editar depois é adjust_draft. Se o usuário mudar de ideia no meio (ex: 'quero do zero' em vez de copiar uma base), mantenha o que ele já pediu de estrutura (nº de anúncios/objetivo) — 'do zero' descarta só a cópia de uma campanha-base, não o resto do pedido. Requer eco+confirma.",
     schema: z.object({
       goal: z.string().nullable().optional().describe("objetivo de negócio (ex: purchase, lead)"),
       budgetReais: z.number().positive().nullable().optional().describe("budget diário em reais (opcional)"),
@@ -315,7 +318,7 @@ export function makeConversationTools(
   const copyCampaign = tool(proposeOnly, {
     name: "copy_campaign",
     description:
-      "Propõe COPIAR a estrutura de uma campanha existente (ex: 'copia a campanha X pra remarketing'). Recebe o id da campanha-base (descubra antes com get_campaign_analysis/list_campaigns). Reusa os criativos da original (mantém o destino/WhatsApp), preserva CBO/ABO e objetivo; troca o público se você passar públicos (use list_audiences pra achar os ids). Requer eco+confirma; nasce pausada.",
+      "Propõe COPIAR a estrutura de uma campanha existente (ex: 'copia a campanha X pra remarketing'). Recebe o id da campanha-base (descubra antes com get_campaign_analysis/list_campaigns; se o nome for ambíguo, mostre as opções numeradas com id e aja pela escolhida). Reusa os criativos da original (mantém o destino/WhatsApp), preserva CBO/ABO e objetivo; troca o público se você passar públicos (use list_audiences pra achar os ids). Ao trocar público pra remarketing, SUGIRA excluir quem já converteu (leads/compradores) quando o usuário não indicar exclusões — a decisão final é dele, confirmada no eco. Requer eco+confirma; nasce pausada.",
     schema: z.object({
       campaignId: z.string().describe("id da campanha-base (não o nome)"),
       campaignName: z.string().nullable().optional().describe("nome da campanha-base, só p/ rotular"),
@@ -383,7 +386,9 @@ export function makeConversationTools(
   });
   const regenerateCopy = tool(proposeOnly, {
     name: "regenerate_copy",
-    description: "Gera NOVAS variações de copy pro rascunho de campanha já proposto (só quando há um pendente).",
+    description:
+      "Gera NOVAS variações de copy pro rascunho de campanha já proposto (só quando há um pendente), regenerando TODAS de uma vez. " +
+      "Pra editar o texto de UM anúncio específico sem regenerar os demais, use adjust_draft (copyEdits).",
     schema: z.object({}),
   });
 

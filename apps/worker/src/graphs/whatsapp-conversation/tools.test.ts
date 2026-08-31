@@ -553,6 +553,33 @@ describe("list_accounts (allowlist wiring)", () => {
   });
 });
 
+describe("descriptions de escrita/criação — S0a: procedimento-por-tool migrou do system prompt", () => {
+  const WRITE_CREATE_TOOL_NAMES = new Set(["adjust_budget", "scale_winner", "create_campaign", "copy_campaign", "adjust_draft", "regenerate_copy"]);
+  function descriptionOf(name: string): string {
+    const { deps } = makeDeps(() => null);
+    const found = makeConversationTools(deps, CTX, WRITE_CREATE_TOOL_NAMES).find((t) => t.name === name)!;
+    return (found as unknown as { description: string }).description;
+  }
+
+  it("adjust_budget: orienta perguntar campanha/valor quando a intenção de orçamento vier incompleta", () => {
+    expect(descriptionOf("adjust_budget")).toContain("NÃO chame ainda — pergunte concretamente o que falta");
+  });
+
+  it("create_campaign: pedido de recomendação é o mesmo gatilho, e não confundir com recomendação genérica", () => {
+    const d = descriptionOf("create_campaign");
+    expect(d).toContain("Pedido de RECOMENDAÇÃO de campanha nova");
+    expect(d).toContain("recomendação GENÉRICA da conta");
+  });
+
+  it("copy_campaign: sugere excluir quem já converteu ao trocar público pra remarketing", () => {
+    expect(descriptionOf("copy_campaign")).toContain("SUGIRA excluir quem já converteu");
+  });
+
+  it("regenerate_copy: distingue de adjust_draft (regenera tudo × edita 1 anúncio)", () => {
+    expect(descriptionOf("regenerate_copy")).toContain("adjust_draft (copyEdits)");
+  });
+});
+
 describe("mergeConfigUpdatePatches", () => {
   it("mescla set_goal + set_cadence num único patch (multi-campo no mesmo turno)", () => {
     const cur = state({ goals: { targetCPA: 50 } });
