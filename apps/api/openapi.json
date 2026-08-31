@@ -1366,6 +1366,13 @@
                   "duplicate"
                 ]
               },
+              "creationActivation": {
+                "type": "string",
+                "enum": [
+                  "paused",
+                  "active"
+                ]
+              },
               "byAction": {
                 "type": "object",
                 "properties": {
@@ -2463,6 +2470,13 @@
                   "ask",
                   "raise",
                   "duplicate"
+                ]
+              },
+              "creationActivation": {
+                "type": "string",
+                "enum": [
+                  "paused",
+                  "active"
                 ]
               },
               "byAction": {
@@ -6512,6 +6526,30 @@
           "status"
         ]
       },
+      "EditApprovalActionInput": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "increase",
+              "decrease",
+              "set"
+            ]
+          },
+          "pct": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "budgetReais": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      },
       "DraftApprovalOutput": {
         "type": "object",
         "properties": {
@@ -9893,6 +9931,50 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "aprovação não encontrada"
+          }
+        }
+      }
+    },
+    "/api/approvals/{id}/action": {
+      "patch": {
+        "tags": [
+          "approvals"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditApprovalActionInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "valor da ação editado (segue pendente até aprovar)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveApprovalOutput"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "ação não editável ou valor inválido"
           },
           "404": {
             "description": "aprovação não encontrada"

@@ -4,14 +4,19 @@ import type { ApprovalId, OrgId } from "@trafego/shared/types";
 import type { Approval, ApprovalPort } from "@trafego/shared/ports";
 import type { SchedulerPort } from "@trafego/shared/ports";
 import { APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE } from "@trafego/shared";
+import { editBudgetActionValue } from "@trafego/core";
 import { badRequest, notFound } from "../../middleware/error-handler.js";
 import { computeAppliedActions, DAY_MS } from "../../lib/applied-actions.js";
 import type {
   ApprovalOutput,
+  EditApprovalActionInput,
   ResolveApprovalInput,
   ResolveApprovalOutput,
   RevertibleActionOutput,
 } from "./schema.js";
+
+/** Unidade mínima por unidade monetária (reais → centavos) — igual ao drafts/service. */
+const MINOR_PER_UNIT = 100;
 
 export interface ApprovalsDeps {
   readonly db: Database;
@@ -91,6 +96,33 @@ export function createApprovalsService(deps: ApprovalsDeps) {
         payload: { orgId, approvalId },
       });
       return { id: approval.id, status: "pending" };
+    },
+
+    /**
+     * Edita o VALOR de uma ação `adjust_budget` pendente ANTES de aprovar (C, v1). Núcleo puro
+     * `editBudgetActionValue` valida/monta os params; persiste via porta. Só ajuste de orçamento
+     * tem valor (pausar/retomar/status = aprovar/rejeitar). Clamp do blast-radius = rede do apply.
+     */
+    async editAction(
+      orgId: OrgId,
+      approvalId: ApprovalId,
+      input: EditApprovalActionInput,
+    ): Promise<ResolveApprovalOutput> {
+      const approval = await deps.approvals.getById(approvalId);
+      if (!approval || approval.orgId !== orgId) throw notFound("Aprovação não encontrada.");
+      if (approval.status !== "pending") throw badRequest("Essa aprovação já foi resolvida.");
+      if (approval.kind !== "action") throw badRequest("Só dá pra editar o valor de uma ação.");
+      if (approval.actionType !== "adjust_budget") {
+        throw badRequest("Só o ajuste de orçamento tem valor editável; pausar/retomar/status é aprovar ou rejeitar.");
+      }
+      const edit =
+        input.mode === "set"
+          ? { kind: "absolute" as const, amountMinor: Math.round((input.budgetReais ?? 0) * MINOR_PER_UNIT) }
+          : { kind: "pct" as const, mode: input.mode, pct: input.pct ?? 0 };
+      const r = editBudgetActionValue(approval.action, edit);
+      if (!r.ok) throw badRequest(r.error);
+      const updated = await deps.approvals.updatePendingAction(approvalId, r.action);
+      return { id: updated.id, status: updated.status };
     },
 
     /**

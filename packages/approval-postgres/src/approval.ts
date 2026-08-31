@@ -153,6 +153,25 @@ export function createPostgresApprovals(db: Database): ApprovalPort {
       return rows.map(toPendingApproval);
     },
 
+    async updatePendingAction(id: ApprovalId, action: Action): Promise<PendingApproval> {
+      // Só ação PENDENTE (draft_id null). Atualiza action + colunas derivadas (entidade/tipo) p/
+      // o inbox e o índice único parcial continuarem consistentes. Params já validados no core;
+      // o clamp do blast-radius é rede do apply.
+      const [row] = await db
+        .update(approvals)
+        .set({
+          action,
+          actionType: action.type,
+          entityLevel: action.target.level,
+          entityId: action.target.id,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(approvals.id, id), eq(approvals.status, "pending"), sql`draft_id is null`))
+        .returning();
+      if (!row) throw new Error("updatePendingAction: aprovação não encontrada, não pendente ou não é ação");
+      return toPendingApproval(row as Row);
+    },
+
     async getById(id: ApprovalId): Promise<PendingApproval | null> {
       const [row] = await db.select().from(approvals).where(eq(approvals.id, id)).limit(1);
       return row ? toPendingApproval(row) : null;

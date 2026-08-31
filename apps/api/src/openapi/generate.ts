@@ -80,6 +80,7 @@ import {
 } from "../modules/contacts/schema.js";
 import {
   approvalOutput,
+  editApprovalActionInput,
   resolveApprovalInput,
   resolveApprovalOutput,
   revertibleActionOutput,
@@ -180,6 +181,7 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const ApprovalOutput = registry.register("ApprovalOutput", approvalOutput);
   const ResolveApprovalInput = registry.register("ResolveApprovalInput", resolveApprovalInput);
   const ResolveApprovalOutput = registry.register("ResolveApprovalOutput", resolveApprovalOutput);
+  const EditApprovalActionInput = registry.register("EditApprovalActionInput", editApprovalActionInput);
   const DraftApprovalOutput = registry.register("DraftApprovalOutput", draftApprovalOutput);
   const ScaleWinnerInput = registry.register("ScaleWinnerInput", scaleWinnerInput);
   const ScaleWinnerOutput = registry.register("ScaleWinnerOutput", scaleWinnerOutput);
@@ -682,6 +684,17 @@ const SetDraftCreativeOutput = registry.register("SetDraftCreativeOutput", setDr
     request: { params: z.object({ id: z.string() }), ...jsonBody(ResolveApprovalInput) },
     responses: {
       200: jsonRes("aprovação resolvida (aprovada = enfileirada; rejeitada = direto)", ResolveApprovalOutput),
+      404: { description: "aprovação não encontrada" },
+    },
+  });
+  registry.registerPath({
+    method: "patch",
+    path: "/api/approvals/{id}/action",
+    tags: ["approvals"],
+    request: { params: z.object({ id: z.string() }), ...jsonBody(EditApprovalActionInput) },
+    responses: {
+      200: jsonRes("valor da ação editado (segue pendente até aprovar)", ResolveApprovalOutput),
+      400: { description: "ação não editável ou valor inválido" },
       404: { description: "aprovação não encontrada" },
     },
   });

@@ -116,6 +116,12 @@ export interface ApprovalPort {
   getById(id: ApprovalId): Promise<PendingApproval | null>;
   /** Resolve UMA aprovação (approved/rejected/blocked + motivo). */
   resolve(id: ApprovalId, input: ResolveApprovalInput): Promise<PendingApproval>;
+  /**
+   * Atualiza os PARÂMETROS da ação de uma aprovação PENDENTE de `kind:"action"` (C — editar o
+   * valor antes de aprovar). Só mexe no `action` (params já validados pelo core); o clamp do
+   * blast-radius é rede do apply. Retorna a aprovação atualizada; erro se não for pendente/ação.
+   */
+  updatePendingAction(id: ApprovalId, action: Action): Promise<PendingApproval>;
   /** Pendente por contato (corte 2 — aprovação conversacional). */
   getPendingByContact(contactId: ContactId): Promise<PendingApproval | null>;
   /** Expira as pendentes vencidas (job periódico). Retorna quantas expiraram. */
