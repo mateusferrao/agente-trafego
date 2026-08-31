@@ -92,7 +92,7 @@ function parseCopyEdits(v: unknown): { index: number; headline?: string; primary
   if (!Array.isArray(v)) return [];
   const out: { index: number; headline?: string; primaryText?: string; description?: string; adName?: string }[] = [];
   for (const e of v) {
-    if (!e || typeof (e as { index?: unknown }).index !== "number") continue;
+    if (!e || !Number.isInteger((e as { index?: unknown }).index)) continue;
     const o = e as Record<string, unknown>;
     out.push({
       index: o["index"] as number,

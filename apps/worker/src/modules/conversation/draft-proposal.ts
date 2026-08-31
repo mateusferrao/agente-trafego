@@ -796,12 +796,10 @@ export function buildRefineEcho(kind: string, spec: CampaignDraftSpec): string {
     `${head}: gasto novo ${money(spec.dailyBudgetMinor / MINOR_PER_UNIT, spec.currency)}/dia · ${activationPhrase(spec.activation)}.`,
   ];
   if (kind === "from_scratch" && spec.objective) lines.push(`Objetivo: ${goalNounPt(spec.objective)}.`);
-  if (spec.copyVariants && spec.copyVariants.length > 0) {
-    // nº de criativos distintos entre os anúncios (composição) + as copies (o dono vê o que aprova).
+  // copies/composição só no rascunho de criação (escala/duplicate não tem copyVariants próprios).
+  if (kind === "from_scratch" && spec.copyVariants && spec.copyVariants.length > 0) {
     const distinct = new Set(spec.copyVariants.map((v) => v.creative?.metaVideoId ?? v.creative?.metaImageHash ?? "default")).size;
-    if (kind === "from_scratch" && spec.copyVariants.length >= 2) {
-      lines.push(`${spec.copyVariants.length} anúncios · ${distinct} criativo(s) distinto(s).`);
-    }
+    if (spec.copyVariants.length >= 2) lines.push(`${spec.copyVariants.length} anúncios · ${distinct} criativo(s) distinto(s).`);
     lines.push(describeCopiesBlock(spec.copyVariants));
   }
   const t = spec.targeting;
@@ -951,12 +949,17 @@ export async function refineDraft(
   draftId: string,
   patch: RefineDraftPatch,
 ): Promise<RefineResult> {
-  const loaded = await loadDraftForEdit(deps.db, { orgId: ctx.orgId, draftId });
+  const loaded = await loadDraftForEdit(deps.db, { orgId: ctx.orgId, draftId, adAccountId: ctx.adAccountId });
   if (!loaded) return { kind: "blocked", reason: NOT_OPEN_REASON };
   const { kind, spec } = loaded;
 
   const ac = await loadAgentContext(deps, ctx);
   if (!ac) return { kind: "blocked", reason: "não consegui acessar a conta agora" };
+
+  // `inferCreationDefaults` (ida à Meta) memoizado — o refino pode tocar objetivo + regenerar copy +
+  // público no mesmo turno; sem o memo seriam 3 idas. Lazy: só resolve se algum ramo precisar.
+  let defaultsCache: Awaited<ReturnType<typeof deps.ports.ads.inferCreationDefaults>> | undefined;
+  const defaultsOnce = async () => (defaultsCache ??= await deps.ports.ads.inferCreationDefaults(ac.ref));
 
   const edit: MutableEdit = {};
   const refineNotes: string[] = []; // avisos (ex: clamp de raio) anexados ao eco
@@ -969,7 +972,7 @@ export async function refineDraft(
   // quando a conta não tem; quando há, grava o pixel no spec junto.
   let hasPixel = true;
   if (kind === "from_scratch" && patch.objective) {
-    const defaults = await deps.ports.ads.inferCreationDefaults(ac.ref);
+    const defaults = await defaultsOnce();
     hasPixel = Boolean(defaults.pixelId);
     edit.objective = patch.objective;
     if (defaults.pixelId) edit.pixelId = defaults.pixelId;
@@ -980,7 +983,7 @@ export async function refineDraft(
   // NÚMERO PRESERVA os existentes (aumenta duplicando o último com seu criativo, diminui cortando).
   const currentVariants = [...(spec.copyVariants ?? [])];
   if (kind === "from_scratch" && patch.regenerateCopy === true) {
-    const defaults = await deps.ports.ads.inferCreationDefaults(ac.ref);
+    const defaults = await defaultsOnce();
     edit.copyVariants = await generateCopy(
       deps.ports.llm,
       {
@@ -1018,7 +1021,7 @@ export async function refineDraft(
   // retrato (lê o público da fonte + buildResolvedSnapshot) — nunca um reuse_adset cru (Bug 3).
   if (kind === "from_scratch" && patch.audience) {
     const targeting = await resolveAudienceTargeting(patch.audience, spec.targeting, async () => {
-      const sourceAdsetId = (await deps.ports.ads.inferCreationDefaults(ac.ref)).sourceAdsetId;
+      const sourceAdsetId = (await defaultsOnce()).sourceAdsetId;
       if (!sourceAdsetId) return undefined;
       const profile = await deps.ports.ads.getAudienceProfile(ac.ref, sourceAdsetId);
       return profile ? { kind: "reuse_adset", sourceAdsetId, resolved: buildResolvedSnapshot(profile) } : undefined;
@@ -1165,7 +1168,7 @@ export async function refineDraft(
   const result = applyDraftEdit(kind, spec, edit, { budgetCapMinor: ac.cfg.maxNewDailyBudgetMinor ?? null, hasPixel });
   if (!result.ok) return { kind: "blocked", reason: refineErrorReason(result.error) };
 
-  const persisted = await persistDraftSpec(deps.db, { orgId: ctx.orgId, draftId }, result.value.spec);
+  const persisted = await persistDraftSpec(deps.db, { orgId: ctx.orgId, draftId, adAccountId: ctx.adAccountId }, result.value.spec);
   if (!persisted) return { kind: "blocked", reason: NOT_OPEN_REASON };
   const echo = [buildRefineEcho(kind, result.value.spec), ...refineNotes].join(" ");
   return { kind: "ok", echo };
@@ -1314,22 +1317,6 @@ function creativeKey(c: ChosenCreative): string {
   return c.videoId ?? c.imageHash ?? c.assetId;
 }
 
-/** Extras DISTINTOS (dedupe por mídia) além do principal, até `maxExtra`, preservando a ordem. PURO. */
-export function distinctExtras(candidates: readonly ChosenCreative[], primary: ChosenCreative, maxExtra: number): ChosenCreative[] {
-  if (maxExtra <= 0) return [];
-  const out: ChosenCreative[] = [];
-  const seen = new Set<string>([creativeKey(primary)]);
-  for (const c of candidates) {
-    if (out.length >= maxExtra) break;
-    const k = creativeKey(c);
-    if (!seen.has(k)) {
-      seen.add(k);
-      out.push(c);
-    }
-  }
-  return out;
-}
-
 /** CreativeAssetRef (do spec) → ChosenCreative (pra semear o pool de distintos no refino de contagem). */
 function chosenFromRef(ref: CreativeAssetRef): ChosenCreative {
   return {
@@ -1392,19 +1379,6 @@ export function fillDistinctCreatives(
   let qi = 0;
   const out = variants.map((v) => (v.creative ? v : queue[qi] ? { ...v, creative: creativeRefOf(queue[qi++]!) } : v));
   return { variants: out, withoutDistinct: out.filter((v) => !v.creative).length };
-}
-
-/**
- * Nota HONESTA (§8) quando o dono pediu N anúncios mas a conta só tem `distinctCount` criativos
- * distintos reusáveis — os extras repetem o melhor com variação de copy. `null` = pedido cabe (ou
- * nenhuma contagem pedida). PURO.
- */
-export function fewCreativesNote(requestedAdCount: number | undefined, distinctCount: number): string | null {
-  if (requestedAdCount == null || distinctCount >= requestedAdCount) return null;
-  const rest = requestedAdCount - distinctCount;
-  const s = distinctCount > 1 ? "s" : "";
-  const restWord = rest > 1 ? `os outros ${rest}` : "o outro";
-  return `Você pediu ${requestedAdCount} anúncios, mas só achei ${distinctCount} criativo${s} distinto${s} pra reusar — ${restWord} repete${rest > 1 ? "m" : ""} o melhor (com variação de copy). Você troca cada um no site.`;
 }
 
 /** Contagem de anúncios pedida pelo dono, normalizada ao intervalo válido (1..MAX_ADS_PER_DRAFT). PURO. */
@@ -1715,8 +1689,6 @@ export async function proposeCreateCampaign(
         ac.creativeSource,
         { goal, businessContext: ac.businessContext, guidance: ac.guidance, model: ac.model },
       );
-  const reuseImageHash = chosen?.imageHash;
-  const reuseVideoId = chosen?.videoId;
   // Página é obrigatória (object_story_spec). Vem do anúncio veiculando; conta sem NENHUM
   // anúncio não tem página inferível — nesse caso nem um upload da biblioteca cria (falta a Page).
   if (!defaults.pageId || !chosen) {
@@ -1793,6 +1765,13 @@ export async function proposeCreateCampaign(
   // nº de criativos DISTINTOS de fato entre os anúncios (pro eco honesto de composição).
   const distinctUsed = new Set(copyVariants.map((v) => v.creative?.metaVideoId ?? v.creative?.metaImageHash ?? "default")).size;
 
+  // Criativo LÍDER (padrão do rascunho) = 1º da composição — RESPEITA mediaPreference (que pode ter
+  // filtrado o `chosen` cross-mídia); anúncio ÚNICO herda este padrão em vez do `chosen` da mídia
+  // errada (correção do achado do reviewer §8: pediu vídeo, não recebe imagem em silêncio). Forced/
+  // sem pool → perAd vazio → cai no `chosen`.
+  const leadCreative = perAd[0] ?? chosen;
+  const reuseImageHash = leadCreative.imageHash;
+  const reuseVideoId = leadCreative.videoId;
   // VÍDEO se tem video_id (o imageHash acompanha como CAPA do vídeo, não descaracteriza). Anúncio de
   // imagem tem imageHash e NÃO tem videoId → o videoId é o discriminador correto.
   const isVideo = Boolean(reuseVideoId);
@@ -1842,9 +1821,9 @@ export async function proposeCreateCampaign(
     variantsCount,
     copyVariants,
     creative: {
-      assetId: chosen.assetId,
+      assetId: leadCreative.assetId,
       format: isVideo ? "video" : "image",
-      origin: chosen.origin,
+      origin: leadCreative.origin,
       ...(reuseImageHash ? { metaImageHash: reuseImageHash } : {}),
       ...(reuseVideoId ? { metaVideoId: reuseVideoId } : {}),
     },
@@ -1861,7 +1840,7 @@ export async function proposeCreateCampaign(
   // eco honesto sobre a FONTE do criativo (veiculando/provado × biblioteca) e do PÚBLICO
   // (herdado de um adset provado × amplo/Advantage+ no cold-start).
   const creativeSourcePhrase =
-    chosen.source === "serving"
+    leadCreative.source === "serving"
       ? "reusando o criativo que melhor performa na sua conta"
       : "reusando um criativo da sua biblioteca (você não tem anúncio ativo pra eu comparar desempenho)";
   const audienceSourcePhrase =

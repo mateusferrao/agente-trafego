@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, composeCreatives, creativeRefOf, describeCopiesBlock, distinctExtras, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fewCreativesNote, fillDistinctCreatives, filterByMedia, normalizeAdCount, recoverOpenDraft, resolveCreationTargeting } from "./draft-proposal.js";
+import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, normalizeAdCount, recoverOpenDraft, resolveCreationTargeting } from "./draft-proposal.js";
 import type { CopyVariant } from "@trafego/shared";
 import type { CampaignDraftSpec } from "@trafego/shared";
 import { creativeContentHash } from "../vision/resolver.js";
@@ -325,23 +325,9 @@ describe("adjustAdCount (nº de anúncios preservando os existentes)", () => {
   });
 });
 
-describe("distinctExtras / creativeRefOf (multi-criativo do agente)", () => {
+describe("creativeRefOf (ChosenCreative → CreativeAssetRef)", () => {
   const img = (h: string): { imageHash: string; assetId: string; origin: "reuse" | "upload"; source: "serving" | "library" } => ({ imageHash: h, assetId: `a-${h}`, origin: "reuse", source: "serving" });
   const vid = (v: string): { videoId: string; assetId: string; origin: "reuse" | "upload"; source: "serving" | "library" } => ({ videoId: v, assetId: `a-${v}`, origin: "upload", source: "library" });
-
-  it("dedupe por mídia (ignora o principal) + preserva ordem + respeita o teto", () => {
-    const primary = img("H1");
-    const out = distinctExtras([img("H1"), img("H2"), vid("V1"), img("H2")], primary, 5);
-    expect(out.map((c) => c.imageHash ?? c.videoId)).toEqual(["H2", "V1"]); // H1 (principal) e H2 dup fora
-  });
-
-  it("maxExtra corta o excedente", () => {
-    expect(distinctExtras([img("A"), img("B"), img("C")], img("Z"), 2)).toHaveLength(2);
-  });
-
-  it("maxExtra 0 → vazio", () => {
-    expect(distinctExtras([img("A")], img("Z"), 0)).toEqual([]);
-  });
 
   it("creativeRefOf: vídeo → format video + metaVideoId; imagem → format image + metaImageHash", () => {
     expect(creativeRefOf(vid("V9"))).toEqual({ assetId: "a-V9", format: "video", origin: "upload", metaVideoId: "V9" });
@@ -462,18 +448,6 @@ describe("describeCopiesBlock (mostra as copies no eco — §8)", () => {
     expect(block).toContain("1. *Título A* — Linha um.");
     expect(block).toContain("2. *Título B* — Outro texto");
     expect(block).not.toContain("Linha dois"); // só a 1ª linha
-  });
-});
-
-describe("fewCreativesNote (honestidade §8: pediu N, achou menos distintos)", () => {
-  it("distintos < pedido → nota honesta", () => {
-    expect(fewCreativesNote(5, 3)).toContain("5 anúncios");
-    expect(fewCreativesNote(5, 3)).toContain("3 criativos distintos");
-    expect(fewCreativesNote(2, 1)).toContain("1 criativo distinto"); // singular
-  });
-  it("cabe (ou sem pedido) → null", () => {
-    expect(fewCreativesNote(3, 3)).toBeNull();
-    expect(fewCreativesNote(undefined, 1)).toBeNull();
   });
 });
 

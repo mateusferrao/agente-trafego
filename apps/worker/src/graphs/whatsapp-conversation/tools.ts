@@ -16,6 +16,8 @@ import {
   APPROVAL_APPLY_QUEUE,
   BUDGET_MODE_SET,
   CONVERSION_GOALS,
+  COPY_TEXT_MAX,
+  ENTITY_NAME_MAX,
   DEFAULT_CURRENCY,
   DEFAULT_POSTURE,
   DIDACTIC_DEPTH_LEVELS,
@@ -341,8 +343,8 @@ export function makeConversationTools(
       variantsCount: z.number().int().positive().nullable().optional(),
       objective: z.enum(CONVERSION_GOALS as unknown as [string, ...string[]]).nullable().optional().describe("novo objetivo/conversão de negócio (ex: 'messaging_started' pra conversas iniciadas, 'lead', 'purchase'). Só rascunho criado do zero. Eu re-resolvo o pixel da conta e bloqueio com aviso amigável se o objetivo exigir pixel e a conta não tiver."),
       audience: z.enum(["reuse", "broad"]).nullable().optional(),
-      campaignName: z.string().min(1).nullable().optional(),
-      adsetName: z.string().min(1).nullable().optional().describe("novo nome do conjunto de anúncios"),
+      campaignName: z.string().min(1).max(ENTITY_NAME_MAX).nullable().optional(),
+      adsetName: z.string().min(1).max(ENTITY_NAME_MAX).nullable().optional().describe("novo nome do conjunto de anúncios"),
       removeGeo: z.array(z.string()).nullable().optional().describe("nomes de cidade/região/país a REMOVER do público explícito já resolvido (ex: ['Ibirité'])"),
       addGeo: z.array(z.string()).nullable().optional().describe("nomes de cidade/região/país a ADICIONAR ao público explícito (eu resolvo pro lugar real e pergunto se ambíguo)"),
       ageMin: z.number().int().min(13).max(65).nullable().optional(),
@@ -365,10 +367,10 @@ export function makeConversationTools(
         .array(
           z.object({
             index: z.number().int().min(0).describe("nº do anúncio começando em 0 (o 1º anúncio = 0)"),
-            headline: z.string().min(1).nullable().optional().describe("novo título"),
-            primaryText: z.string().min(1).nullable().optional().describe("novo texto principal"),
-            description: z.string().nullable().optional(),
-            adName: z.string().min(1).nullable().optional(),
+            headline: z.string().min(1).max(COPY_TEXT_MAX).nullable().optional().describe("novo título"),
+            primaryText: z.string().min(1).max(COPY_TEXT_MAX).nullable().optional().describe("novo texto principal"),
+            description: z.string().max(COPY_TEXT_MAX).nullable().optional(),
+            adName: z.string().min(1).max(ENTITY_NAME_MAX).nullable().optional(),
           }),
         )
         .nullable()
