@@ -582,6 +582,11 @@ interface FormState {
                     <input type="number" appNumberStepper min="1" step="0.5" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.relativeEligibilitySpendMultiplier ?? ''" [value]="mcRelativeEligibilitySpendMultiplier()" (input)="onMcText(mcRelativeEligibilitySpendMultiplier, $event)" />
                     <span class="text-xs text-muted">Gastou esse múltiplo da meta de custo (ex: 2× R$7 = R$14) já conta como volume suficiente pra julgar, mesmo com poucas conversões.</span>
                   </label>
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Alta do custo por resultado (%) a partir da qual o agente para de recomendar escalar orçamento, mesmo que a média ainda pareça boa.">
+                    Alta de CPA p/ parar de escalar (%)
+                    <input type="number" appNumberStepper min="1" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.marginalCpaWorsenPct ?? ''" [value]="mcMarginalCpaWorsenPct()" (input)="onMcText(mcMarginalCpaWorsenPct, $event)" />
+                    <span class="text-xs text-muted">O custo médio pode parecer bom, mas se o incremento mais recente já subiu esse tanto, o agente sugere investigar em vez de continuar aumentando.</span>
+                  </label>
                 </div>
 
                 <!-- Referência de mercado desta conta (override do padrão da org) -->
@@ -689,6 +694,7 @@ export class AgentConfigPage {
   protected readonly mcTrackingBrokenRatio = signal('');
   protected readonly mcTrackingBrokenMinFunnel = signal('');
   protected readonly mcRelativeEligibilitySpendMultiplier = signal('');
+  protected readonly mcMarginalCpaWorsenPct = signal('');
   // referência de mercado desta conta (override do padrão da org) — pivô.
   // moeda = a da conta (fixa no editor). null = herda da org.
   protected readonly accountCurrency = signal('BRL');
@@ -956,6 +962,7 @@ export class AgentConfigPage {
       ...numField('trackingBrokenRatio', this.mcTrackingBrokenRatio()),
       ...numField('trackingBrokenMinFunnel', this.mcTrackingBrokenMinFunnel()),
       ...numField('relativeEligibilitySpendMultiplier', this.mcRelativeEligibilitySpendMultiplier()),
+      ...numField('marginalCpaWorsenPct', this.mcMarginalCpaWorsenPct()),
       ...(this.marketRefOverride() ? { marketReference: this.marketRefOverride()! } : {}),
     };
     // fonte do criativo: mapeia o RESULTADO escolhido → {mode, servingPick}. "serving" carrega
@@ -1042,6 +1049,7 @@ export class AgentConfigPage {
     this.mcTrackingBrokenRatio.set(numToStr(q.trackingBrokenRatio));
     this.mcTrackingBrokenMinFunnel.set(numToStr(q.trackingBrokenMinFunnel));
     this.mcRelativeEligibilitySpendMultiplier.set(numToStr(q.relativeEligibilitySpendMultiplier));
+    this.mcMarginalCpaWorsenPct.set(numToStr(q.marginalCpaWorsenPct));
     this.marketRefOverride.set(q.marketReference ?? null);
     // fonte do criativo: `both`/`library` explícitos; qualquer serving.* → o resultado "reaproveitar".
     const cs = c.creativeSource?.mode;

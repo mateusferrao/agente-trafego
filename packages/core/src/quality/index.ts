@@ -50,6 +50,12 @@ export interface QualityThresholds {
    * contas de baixo volume mas gasto relativo já significativo, ex: saúde).
    */
   readonly relativeEligibilitySpendMultiplier: number;
+  /**
+   * CPA marginal (pivô saúde, squad): alta (%) do CPA vs baseline a partir da qual rebaixa
+   * escalar → investigar, mesmo pra quem ainda bate a meta em média ("CPA médio mente, o
+   * marginal conta a verdade"). Ver `guardScaleWithWorseningMarginalCpa`.
+   */
+  readonly marginalCpaWorsenPct: number;
 }
 
 export const DEFAULT_QUALITY_THRESHOLDS: QualityThresholds = {
@@ -64,6 +70,7 @@ export const DEFAULT_QUALITY_THRESHOLDS: QualityThresholds = {
   trackingBrokenRatio: 50,
   trackingBrokenMinFunnel: 50,
   relativeEligibilitySpendMultiplier: 2,
+  marginalCpaWorsenPct: 20,
 };
 
 // ─── Elegibilidade de decisão ─────────────────────────────────────────────

@@ -205,6 +205,7 @@ export function buildContainer(logger?: OnboardingLogger): Container {
       trackingBrokenRatio: env.ANALYSIS_QUALITY_TRACKING_BROKEN_RATIO,
       trackingBrokenMinFunnel: env.ANALYSIS_QUALITY_TRACKING_BROKEN_MIN_FUNNEL,
       relativeEligibilitySpendMultiplier: env.ANALYSIS_QUALITY_RELATIVE_ELIGIBILITY_SPEND_MULTIPLIER,
+      marginalCpaWorsenPct: env.ANALYSIS_QUALITY_MARGINAL_CPA_WORSEN_PCT,
     },
   });
   // runs antes do literal: connections reusa `triggerOnboarding` (1ª análise + schedule no connect).

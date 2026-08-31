@@ -137,5 +137,6 @@ function resolveQuality(raw: unknown, defaults: QualityThresholds | undefined): 
     trackingBrokenRatio: pos(mc.trackingBrokenRatio) ?? d.trackingBrokenRatio,
     trackingBrokenMinFunnel: nonNeg(mc.trackingBrokenMinFunnel) ?? d.trackingBrokenMinFunnel,
     relativeEligibilitySpendMultiplier: pos(mc.relativeEligibilitySpendMultiplier) ?? d.relativeEligibilitySpendMultiplier,
+    marginalCpaWorsenPct: pos(mc.marginalCpaWorsenPct) ?? d.marginalCpaWorsenPct,
   };
 }

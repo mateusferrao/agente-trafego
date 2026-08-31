@@ -236,6 +236,9 @@ export const envSchema = z.object({
   // Piso de elegibilidade RELATIVO (playbook real, pivô saúde): gasto ≥ este múltiplo
   // do CPA-alvo já basta como volume, mesmo com poucas conversões/cliques absolutos.
   ANALYSIS_QUALITY_RELATIVE_ELIGIBILITY_SPEND_MULTIPLIER: z.coerce.number().positive().default(2),
+  // CPA marginal (pivô saúde, squad): alta (%) do CPA vs baseline a partir da qual rebaixa
+  // escalar → investigar, mesmo pra quem ainda bate a meta em média.
+  ANALYSIS_QUALITY_MARGINAL_CPA_WORSEN_PCT: z.coerce.number().positive().default(20),
 
   // ─── Cadência (cron por conta — 3b) ────────────────────────────────────
   // Default global da cadência (a UI de edição por-conta = Fatia 4). Cron 5-campos.

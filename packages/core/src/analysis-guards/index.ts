@@ -237,6 +237,70 @@ export function guardTrackingCaveat(
   return { ...output, recommendations };
 }
 
+// ─── Guard de CPA marginal (pivô saúde, squad traffic-masters) ────────────
+// "CPA médio mente. CPA marginal conta a verdade": o CPA médio/atual de uma entidade
+// pode ainda bater a meta enquanto o incremento MAIS RECENTE já está mais caro — CPA
+// médio dilui a piora recente. Aproximação disponível hoje: CPA da janela atual vs CPA
+// da janela-baseline (a mesma comparação que já alimenta `deltaVsBaseline` no brief) —
+// não ancorada ao instante exato da última mudança REAL de orçamento (isso exigiria
+// cruzar `agent_tool_calls`/`insights_snapshots` por entidade; fast-follow quando essa
+// precisão se justificar). Mesmo assim já pega o caso central: CPA piorando MESMO pra
+// quem ainda bate a meta (`beatsTarget`), que os demais guards não cobrem (eles olham
+// significância/learning, não tendência).
+
+export interface MarginalCpaThresholds {
+  /** alta (%) do CPA vs baseline a partir da qual rebaixa escalar → investigar. */
+  readonly worsenPct: number;
+}
+
+export const DEFAULT_MARGINAL_CPA_THRESHOLDS: MarginalCpaThresholds = { worsenPct: 20 };
+
+/** `%` de alta do CPA (atual vs baseline; positivo = piorou) por `externalId`. `undefined`
+ *  quando falta CPA atual ou delta (não penaliza por falta de dado — mesmo espírito de
+ *  `eligibilityByEntity`/`basisByEntity`). */
+export function marginalCpaRiseByEntity(brief: AccountBrief): Map<string, number | undefined> {
+  const map = new Map<string, number | undefined>();
+  for (const level of [brief.segments.campaigns, brief.segments.adsets, brief.segments.ads]) {
+    for (const e of level) {
+      const cpa = e.metrics.cpa;
+      const delta = e.deltaVsBaseline.cpa;
+      if (typeof cpa !== "number" || typeof delta !== "number") {
+        map.set(e.id, undefined);
+        continue;
+      }
+      const baseline = cpa - delta;
+      map.set(e.id, baseline > 0 ? ((cpa - baseline) / baseline) * 100 : undefined);
+    }
+  }
+  return map;
+}
+
+/**
+ * Rebaixa recomendações de ESCALAR quando o CPA marginal da entidade-alvo piorou acima
+ * do limiar — mesmo que o CPA médio/atual ainda pareça bom o suficiente pra bater a meta
+ * (é exatamente esse caso que o guard de significância não pega). Puro: não remove, só
+ * troca a ordem de ação + anota o porquê. Sem sinal (undefined) → passa direto.
+ */
+export function guardScaleWithWorseningMarginalCpa(
+  output: AnalysisOutput,
+  marginalRisePct: ReadonlyMap<string, number | undefined>,
+  t: MarginalCpaThresholds,
+): AnalysisOutput {
+  const recommendations = output.recommendations.map((r) => {
+    if (!SCALE_ACTIONS.has(r.actionType)) return r;
+    const id = r.targetEntity?.externalId;
+    const rise = id ? marginalRisePct.get(id) : undefined;
+    if (rise === undefined || rise < t.worsenPct) return r;
+    return {
+      ...r,
+      actionType: "investigate" as RecommendationActionType,
+      rationale: `${r.rationale}\n[guard] escalar → investigar: CPA marginal piorando (+${rise.toFixed(0)}% vs período anterior) — o CPA médio pode parecer bom, mas o incremento mais recente já está mais caro.`,
+      budgetChangePct: null,
+    };
+  });
+  return { ...output, recommendations };
+}
+
 function addNumber(set: Set<number>, value: number): void {
   set.add(round2(value));
   // inteiro só p/ magnitudes >= 1 (simétrico ao isVerifiable — não polui o gabarito

@@ -25,6 +25,8 @@ import {
   guardScaleWithoutSignificance,
   guardKillWithoutMaturity,
   guardTrackingCaveat,
+  guardScaleWithWorseningMarginalCpa,
+  marginalCpaRiseByEntity,
   basisByEntity,
   annotateFreedSpend,
   detectCreationOpportunities,
@@ -704,12 +706,20 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     // quando a medição da conta parece incompleta (antes só anexava caveat; ver
     // ROADMAP `[ALTO]` "guard de tracking mais forte no caminho autônomo").
     const caveated = guardTrackingCaveat(guarded, basisByEntity(state.brief), state.brief.trackingHealth);
+    // CPA marginal (pivô saúde, squad traffic-masters): rebaixa escalar → investigar quando
+    // o CPA piorou vs baseline acima do limiar, mesmo pra quem ainda bate a meta em média
+    // ("CPA médio mente, o marginal conta a verdade") — guard de significância não pega esse caso.
+    const marginalGuarded = guardScaleWithWorseningMarginalCpa(
+      caveated,
+      marginalCpaRiseByEntity(state.brief),
+      { worsenPct: cfg.quality.marginalCpaWorsenPct },
+    );
     // impacto (Bloco 2): anexa o gasto liberado a cada recomendação de pausa.
     const spendById = new Map<string, number>();
     for (const level of [state.brief.segments.campaigns, state.brief.segments.adsets, state.brief.segments.ads]) {
       for (const e of level) spendById.set(e.id, e.metrics.spend ?? 0);
     }
-    const final = annotateFreedSpend(caveated, spendById, state.brief.account.currency);
+    const final = annotateFreedSpend(marginalGuarded, spendById, state.brief.account.currency);
     const findings: Finding[] = final.findings.map((f) => ({
       title: f.title,
       detail: f.detail,

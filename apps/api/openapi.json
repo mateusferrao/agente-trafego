@@ -1605,6 +1605,10 @@
                     "type": "number",
                     "exclusiveMinimum": 0
                   },
+                  "marginalCpaWorsenPct": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
                   "marketReference": {
                     "type": "object",
                     "properties": {
@@ -1809,6 +1813,9 @@
               },
               "relativeEligibilitySpendMultiplier": {
                 "type": "number"
+              },
+              "marginalCpaWorsenPct": {
+                "type": "number"
               }
             },
             "required": [
@@ -1822,7 +1829,8 @@
               "coldStartReference",
               "trackingBrokenRatio",
               "trackingBrokenMinFunnel",
-              "relativeEligibilitySpendMultiplier"
+              "relativeEligibilitySpendMultiplier",
+              "marginalCpaWorsenPct"
             ]
           },
           "notifyPolicy": {
@@ -2708,6 +2716,10 @@
                     "minimum": 0
                   },
                   "relativeEligibilitySpendMultiplier": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "marginalCpaWorsenPct": {
                     "type": "number",
                     "exclusiveMinimum": 0
                   },

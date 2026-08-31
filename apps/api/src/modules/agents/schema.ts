@@ -60,6 +60,9 @@ export const qualityConfigInput = z.object({
   /** piso de elegibilidade RELATIVO (playbook real, pivô saúde): gasto ≥ este múltiplo
    *  do CPA-alvo já basta como volume, mesmo com poucas conversões/cliques absolutos. */
   relativeEligibilitySpendMultiplier: z.number().positive().optional(),
+  /** CPA marginal (pivô saúde, squad): alta (%) do CPA vs baseline a partir da qual
+   *  rebaixa escalar → investigar, mesmo pra quem ainda bate a meta em média. */
+  marginalCpaWorsenPct: z.number().positive().optional(),
   /** override por agente da referência de mercado (pivô), na moeda da conta. Merge por
    *  campo sobre o org-default; campo em dinheiro só aplica se a moeda bate. */
   marketReference: marketReferenceSchema.optional(),
@@ -79,6 +82,7 @@ export const qualityDefaultsOutput = z.object({
   trackingBrokenRatio: z.number(),
   trackingBrokenMinFunnel: z.number(),
   relativeEligibilitySpendMultiplier: z.number(),
+  marginalCpaWorsenPct: z.number(),
 });
 export type QualityDefaultsOutput = z.infer<typeof qualityDefaultsOutput>;
 
