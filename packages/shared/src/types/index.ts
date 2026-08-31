@@ -1034,6 +1034,12 @@ export interface AutonomyPolicy {
    * sem migração.
    */
   readonly scaleAggressivePreference?: "ask" | "raise" | "duplicate";
+  /**
+   * Ativação da CRIAÇÃO (v1): "paused" (default — nasce pausada + cria a aprovação de ativação, o
+   * 2º OK pra ativar depois) × "active" (nasce ATIVA direto, sem 2º OK). Os dois SEMPRE avisam no
+   * WhatsApp. Escolha do dono na UI do agente; jsonb `autonomy_policy` — sem migração.
+   */
+  readonly creationActivation?: "paused" | "active";
 }
 
 // ─── Sinais de mudança material (F4 — alerta proativo dirigido) ─────────────

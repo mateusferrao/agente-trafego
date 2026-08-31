@@ -183,6 +183,8 @@ export const autonomyPolicySchema = z.object({
   /** kill-switch da auto-config por chat (S2.3) — ausente/true = ON; false = OFF. */
   autoConfigViaChat: z.boolean().optional(),
   scaleAggressivePreference: scaleAggressivePreference.optional(),
+  /** ativação da criação (v1): "paused" (default — nasce pausada + 2º OK) × "active" (nasce ativa). */
+  creationActivation: z.enum(["paused", "active"]).optional(),
   /** autonomia POR-AÇÃO (B): por tool-key, VENCE o `bySource`; ausente = herda a origem. */
   byAction: z.record(z.enum([...GATEABLE_TOOL_KEYS] as [string, ...string[]]), autonomyLevel).optional(),
 });

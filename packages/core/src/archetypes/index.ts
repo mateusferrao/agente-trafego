@@ -69,7 +69,9 @@ const CONSERVADOR: ArchetypeDefaults = {
     "- Se os dados forem insuficientes, diga isso em vez de forçar uma conclusão.",
   ].join("\n"),
   goals: {},
-  autonomyPolicy: { bySource: { playbook: "suggest", llm: "suggest" } },
+  // conservador: nada sozinho + criação nasce PAUSADA (o dono revisa e ativa). creationActivation
+  // default "paused" nos três (v1); o dono muda pra "active" na UI se quiser criar já no ar.
+  autonomyPolicy: { bySource: { playbook: "suggest", llm: "suggest" }, creationActivation: "paused" },
   // conservador: só o push do cron; sem pulso/alerta proativos (o dono liga quando quiser).
   defaultNotifyPolicy: DEFAULT_NOTIFY_POLICY,
   // cauteloso: consultivo, equilibrado e didático (ensina o dono não-técnico).
@@ -113,8 +115,9 @@ const OTIMIZADOR: ArchetypeDefaults = {
     "- Escreva para uma pessoa não-técnica: traduza termos quando usar.",
   ].join("\n"),
   goals: {},
-  // playbook age no seguro (pausar zumbi/corte pequeno); LLM e escala pedem OK.
-  autonomyPolicy: { bySource: { playbook: "act_safe", llm: "suggest" } },
+  // playbook age no seguro (pausar zumbi/corte pequeno — os `low` de riskForAction, que economizam);
+  // LLM e escala pedem OK; criação nasce PAUSADA (o dono revisa e ativa).
+  autonomyPolicy: { bySource: { playbook: "act_safe", llm: "suggest" }, creationActivation: "paused" },
   defaultCadence: { kind: "daily", hour: 8 },
   // otimizador: pulso diário (o dono acompanha o desperdício) + alerta normal.
   defaultNotifyPolicy: {
@@ -167,7 +170,8 @@ const VIGIA_INTENSIVO: ArchetypeDefaults = {
   ].join("\n"),
   goals: {},
   // momento crítico é alto risco → sugere+OK em tudo; a velocidade vem da cadência curta + alerta.
-  autonomyPolicy: { bySource: { playbook: "suggest", llm: "suggest" } },
+  // criação nasce PAUSADA (no pico, ativar é decisão do dono).
+  autonomyPolicy: { bySource: { playbook: "suggest", llm: "suggest" }, creationActivation: "paused" },
   defaultCadence: { kind: "twice_daily", hours: [8, 18] },
   // vigia intensivo: vigília de perto — pulso 2×/dia + alerta sensível e mais frequente.
   defaultNotifyPolicy: {
