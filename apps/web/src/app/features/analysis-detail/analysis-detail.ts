@@ -306,22 +306,29 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                 }
                 <!-- CTA inline (B): aplicável → aprovar/rejeitar aqui mesmo (+ editar valor do orçamento). -->
                 @if (doneAction()[rec.id]; as done) {
-                  <span class="text-xs text-success-strong">{{ done === 'approved' ? '✓ enviado pra aplicar' : 'recusada' }}</span>
+                  <span class="text-xs" [class.text-success-strong]="done === 'approved'" [class.text-muted]="done === 'rejected'">
+                    {{ done === 'approved' ? '✓ enviado pra aplicar' : 'recusada' }}
+                  </span>
                 } @else if (rec.applicability === 'applicable' && rec.approvalId) {
                   <div class="flex flex-col gap-2 pt-1">
                     <div class="flex flex-wrap items-center gap-2">
-                      @if (rec.approvalKind === 'action' && rec.proposedAction?.type === 'adjust_budget') {
-                        <button appButton variant="ghost" size="sm" [disabled]="actioning().has(rec.id)" (click)="toggleEditRec(rec)">
-                          {{ editingRecId() === rec.id ? 'Cancelar' : 'Editar valor' }}
+                      @if (rec.approvalKind === 'action') {
+                        <!-- ação (pausar/orçamento): eco é o próprio texto → aprovar/rejeitar/editar inline. -->
+                        @if (rec.proposedAction?.type === 'adjust_budget') {
+                          <button appButton variant="ghost" size="sm" [disabled]="actioning().has(rec.id)" (click)="toggleEditRec(rec)">
+                            {{ editingRecId() === rec.id ? 'Cancelar' : 'Editar valor' }}
+                          </button>
+                        }
+                        <button appButton variant="secondary" size="sm" [disabled]="actioning().has(rec.id)" (click)="rejectRec(rec)">Rejeitar</button>
+                        <button appButton size="sm" [disabled]="actioning().has(rec.id)" (click)="approveRec(rec)">
+                          {{ actioning().has(rec.id) ? 'Enviando…' : 'Aprovar' }}
                         </button>
+                      } @else {
+                        <!-- criação (gasta): a aprovação passa pelo painel com o eco completo (orçamento/
+                             pausada/prévias por anúncio). Rejeitar é seguro e fica inline. -->
+                        <a appButton variant="primary" size="sm" routerLink="/approvals">Revisar e aprovar no painel</a>
+                        <button appButton variant="secondary" size="sm" [disabled]="actioning().has(rec.id)" (click)="rejectRec(rec)">Rejeitar</button>
                       }
-                      @if (rec.approvalKind !== 'action') {
-                        <a appButton variant="ghost" size="sm" routerLink="/approvals">Editar no painel</a>
-                      }
-                      <button appButton variant="secondary" size="sm" [disabled]="actioning().has(rec.id)" (click)="rejectRec(rec)">Rejeitar</button>
-                      <button appButton size="sm" [disabled]="actioning().has(rec.id)" (click)="approveRec(rec)">
-                        {{ actioning().has(rec.id) ? 'Enviando…' : 'Aprovar' }}
-                      </button>
                     </div>
                     @if (editingRecId() === rec.id) {
                       <div class="flex flex-col gap-2 sm:flex-row sm:items-end">

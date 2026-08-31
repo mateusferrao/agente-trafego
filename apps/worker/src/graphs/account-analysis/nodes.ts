@@ -963,8 +963,10 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       });
       logger.info({ runId: state.runId, kind: top.kind }, "propose_drafts:proposto");
 
-      // auto-criação PROATIVA (byAction[create_campaign] === act_full): aplica JÁ, mas SEMPRE PAUSED
-      // (não veicula) + guardrail de gasto novo + nudge transparente. Fallback = só a proposta acima.
+      // auto-criação PROATIVA (byAction[create_campaign] === act_full): cria JÁ + guardrail de gasto
+      // novo + nudge transparente. Nasce pausada e veicula conforme o creationActivation do agente
+      // (v1): "active" ATIVA já (opt-in explícito); "paused" fica pausada + 2º OK. Fallback (não
+      // act_full) = só a proposta acima (aprovação humana).
       if (state.autonomyPolicy?.byAction?.[toolKey] === "act_full") {
         const outcome = await autoApplyProactiveDraft(deps, { orgId: state.orgId, draftId: proposal.draftId, approvalId: proposal.approvalId });
         await pushCreationNudge(state, "create_campaign", top.rationale, outcome);

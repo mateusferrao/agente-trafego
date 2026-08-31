@@ -119,17 +119,10 @@ export class DraftsApiService extends BaseApiService {
     return this.resolveUrl(['/accounts', accountId, 'creatives', assetId, 'blob']);
   }
 
-  /** URL da miniatura do criativo do rascunho (card de aprovação) — proxy autenticado; reuse
-   *  busca fresco da Meta, upload serve o blob. Cacheada por ETag no browser. `version` (opcional)
-   *  = cache-buster: a URL é estável por rascunho, então trocar o criativo não re-buscaria a img
-   *  sozinho; bumpar a versão muda a URL e força o refetch. */
-  draftCreativeThumbUrl(accountId: string, draftId: string, version = 0): string {
-    const url = this.resolveUrl(['/accounts', accountId, 'drafts', draftId, 'creative', 'thumb']);
-    return version > 0 ? `${url}?v=${version}` : url;
-  }
-
-  /** URL da miniatura do criativo de UM anúncio do rascunho (G) — resolve o criativo próprio do
-   *  anúncio `index`, caindo no padrão do rascunho. Mesmo proxy/ETag/cache-buster. */
+  /** URL da miniatura do criativo de UM anúncio do rascunho (G — o card mostra 1 preview por
+   *  anúncio, não o geral) — resolve o criativo próprio do anúncio `index`, caindo no padrão do
+   *  rascunho. Proxy autenticado; reuse busca fresco da Meta, upload serve o blob; ETag no browser.
+   *  `version` (opcional) = cache-buster após trocar o criativo (a URL é estável por anúncio). */
   draftAdCreativeThumbUrl(accountId: string, draftId: string, index: number, version = 0): string {
     const url = this.resolveUrl(['/accounts', accountId, 'drafts', draftId, 'ads', String(index), 'creative', 'thumb']);
     return version > 0 ? `${url}?v=${version}` : url;

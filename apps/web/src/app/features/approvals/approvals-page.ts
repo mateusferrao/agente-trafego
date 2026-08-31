@@ -384,11 +384,10 @@ export class ApprovalsPage implements OnInit {
     this.thumbVersion.update((m) => new Map(m).set(id, (m.get(id) ?? 0) + 1));
   }
   private clearThumbBroken(id: string): void {
-    this.thumbBroken.update((s) => {
-      const next = new Set(s);
-      next.delete(id);
-      return next;
-    });
+    // as chaves de miniatura quebrada são POR ANÚNCIO (`${draftId}:${index}`) — limpa TODAS as do
+    // rascunho pra o refetch (após trocar criativo) reatentar cada anúncio.
+    const prefix = `${id}:`;
+    this.thumbBroken.update((s) => new Set([...s].filter((k) => !k.startsWith(prefix))));
   }
   /** Abre/fecha o painel de edição do rascunho (fecha o picker se estava aberto). */
   protected toggleEdit(d: DraftApprovalOutput): void {

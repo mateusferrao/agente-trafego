@@ -108,7 +108,7 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
           case "created": {
             await ports.approval.resolve(approval.id, { status: "approved" });
             if (outcome.dryRun) {
-              await pushRealApplied("🧪 Simulei a criação (dry-run).");
+              await pushOutcome("🧪 Simulei a criação (dry-run).");
               return;
             }
             const [draftRow] = await deps.db

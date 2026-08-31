@@ -207,12 +207,13 @@ export function createRunsService(deps: RunsDeps) {
       .from(agentRuns)
       .where(and(eq(agentRuns.id, runId), eq(agentRuns.orgId, orgId)))
       .limit(1);
-    const idx = await buildPendingIndex(runRow?.agentId ?? null);
+    const idx = await buildPendingIndex(orgId, runRow?.agentId ?? null);
     return recs.map((r) => toRecommendationOutput(r, votes.get(r.id) ?? null, idx));
   }
 
-  /** Mapa das pendentes do agente: rascunho/ativação por draftId; ação por `${level}:${id}:${type}`. */
-  async function buildPendingIndex(agentId: string | null): Promise<PendingApprovalIndex> {
+  /** Mapa das pendentes do agente: rascunho/ativação por draftId; ação por `${level}:${id}:${type}`.
+   *  Org-scoped (defense-in-depth — o agentId já vem de um run org-scoped, §12). */
+  async function buildPendingIndex(orgId: OrgId, agentId: string | null): Promise<PendingApprovalIndex> {
     const draftApproval = new Map<string, { approvalId: string; kind: "draft" | "activation" }>();
     const actionApproval = new Map<string, string>();
     if (!agentId) return { draftApproval, actionApproval };
@@ -226,7 +227,7 @@ export function createRunsService(deps: RunsDeps) {
         actionType: approvals.actionType,
       })
       .from(approvals)
-      .where(and(eq(approvals.agentId, agentId), eq(approvals.status, "pending")));
+      .where(and(eq(approvals.orgId, orgId), eq(approvals.agentId, agentId), eq(approvals.status, "pending")));
     for (const p of pend) {
       if (p.draftId) draftApproval.set(p.draftId, { approvalId: p.id, kind: p.kind === "activation" ? "activation" : "draft" });
       else if (p.entityLevel && p.entityId && p.actionType) actionApproval.set(`${p.entityLevel}:${p.entityId}:${p.actionType}`, p.id);

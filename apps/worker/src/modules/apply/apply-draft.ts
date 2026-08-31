@@ -299,28 +299,33 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     .where(and(eq(campaignDrafts.id, row.id), eq(campaignDrafts.orgId, input.orgId)));
 
   // Ativação (v1) — a saga SEMPRE criou PAUSADA (crash-safe); aqui decide o que fazer com isso:
-  //  · creationActivation="active" → ATIVA a árvore JÁ (sem 2º OK): o dono optou por criar no ar,
-  //    e o resumo no WhatsApp (S7) é o aviso. Cria pausada→ativa no fim = mantém a segurança de
-  //    crash E entrega "nasce ativa" (era o fast-follow do ROADMAP). Ativação falha → fica pausada
-  //    (segura); reportamos activated:false.
+  //  · creationActivation="active" → ATIVA a árvore JÁ (sem 2º OK): o dono optou por criar no ar
+  //    (opt-in explícito: autonomia act_full E creationActivation=active, ambos default OFF/paused),
+  //    e o resumo no WhatsApp (S7) é o aviso. Cria pausada→ativa no fim = mantém a segurança de crash
+  //    E entrega "nasce ativa". Se a ativação NÃO vier (kill-switch/bloqueio/falha), NÃO deixa a
+  //    campanha num beco pausado sem saída: cai no fallback abaixo (cria a approval de ativação).
   //  · creationActivation="paused" → cria a approval de ATIVAÇÃO (o 2º OK pra ativar depois, chat
   //    ou site). Idempotente (unique draftId+kind). Dry-run: nem ativa nem cria approval (simulado).
   let activationApprovalId: string | null = null;
   let activated = false;
-  if (!dryRun && requestedActivation === "active") {
-    const act = await applyActivation(deps, { orgId: input.orgId, draftId: row.id });
-    activated = act.kind === "activated" && !act.dryRun;
-    if (act.kind === "failed") logger.warn({ draftId: row.id }, "apply-draft:ativação falhou — fica pausada");
-  } else if (!dryRun) {
-    const appr = await ports.approval.upsertActivationPending({
-      orgId: input.orgId as OrgId,
-      agentId: row.agentId as AgentId,
-      runId: row.runId as RunId | null,
-      contactId: null,
-      draftId: row.id as DraftId,
-      expiresAt: new Date(Date.now() + ACTIVATION_APPROVAL_TTL_MS),
-    });
-    activationApprovalId = appr.id;
+  if (!dryRun) {
+    if (requestedActivation === "active") {
+      const act = await applyActivation(deps, { orgId: input.orgId, draftId: row.id });
+      activated = act.kind === "activated" && !act.dryRun;
+      if (act.kind === "failed") logger.warn({ draftId: row.id }, "apply-draft:ativação falhou — fallback p/ approval de ativação");
+    }
+    // "paused" desde o início, OU "active" que não ativou (fallback) → cria o 2º OK de ativação.
+    if (!activated) {
+      const appr = await ports.approval.upsertActivationPending({
+        orgId: input.orgId as OrgId,
+        agentId: row.agentId as AgentId,
+        runId: row.runId as RunId | null,
+        contactId: null,
+        draftId: row.id as DraftId,
+        expiresAt: new Date(Date.now() + ACTIVATION_APPROVAL_TTL_MS),
+      });
+      activationApprovalId = appr.id;
+    }
   }
 
   logger.info({ draftId: row.id, dryRun, activationApprovalId, activated }, "apply-draft:created");
@@ -332,10 +337,11 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
  * (1) aplica a saga — `applyDraft` já força PAUSADO internamente nos dois ramos (P0.1), sem
  * trava externa aqui; o guardrail de gasto novo é re-checado = rede; criar-do-zero sem criativo
  * é barrado lá dentro. (2) resolve a approval de CRIAÇÃO conforme o desfecho (some do inbox).
- * (3) P1.3 — autonomia "age sozinho" ATIVA o que acabou de criar (mantém o sentido de "agiu
- * sozinho"); falhar/barrar na ativação mantém a approval de ATIVAÇÃO pendente (humano decide) —
- * `failed` na CRIAÇÃO mantém a approval de criação pendente (a promessa não some; humano reaprova).
- * O nudge transparente fica no chamador.
+ * (3) O desfecho da ATIVAÇÃO segue o `creationActivation` do agente (v1, resolvido no `applyDraft`):
+ * "active" → nasce ATIVA (veicula) já, sem 2º OK — opt-in explícito (act_full + creationActivation
+ * =active, ambos default OFF/paused); "paused" (ou "active" que barrou) → nasce PAUSADA + approval
+ * de ATIVAÇÃO pendente (o dono ativa no site/chat). `failed` na CRIAÇÃO mantém a approval de criação
+ * pendente (a promessa não some; humano reaprova). O nudge transparente (ativou × pausou) fica no chamador.
  */
 export async function autoApplyProactiveDraft(
   deps: WorkerDeps,
@@ -345,15 +351,14 @@ export async function autoApplyProactiveDraft(
   const outcome = await applyDraft(deps, { orgId: input.orgId, draftId: input.draftId });
   const approvalId = input.approvalId as ApprovalId;
   if (outcome.kind === "created") {
-    // act_full CRIA sozinho, mas NUNCA veicula: a campanha nasce PAUSADA e a aprovação de ativação
-    // fica PENDENTE (o dono ativa no site/chat). Invariante CLAUDE.md §7/§8 — "age sozinho → SEMPRE
-    // PAUSED (não veicula)"; a veiculação (gasto real) sempre exige um OK humano. O nudge é honesto.
+    // Desfecho da ativação = creationActivation do agente (v1): "active" (opt-in) → veicula já
+    // (outcome.activated); senão nasce PAUSADA com approval de ativação pendente (o dono ativa
+    // no site/chat). O nudge do chamador reflete os dois casos com honestidade.
     await ports.approval.resolve(approvalId, { status: "approved" });
     if (outcome.activationApprovalId) {
-      logger.info(
-        { draftId: input.draftId },
-        "auto-create:criado PAUSADO — aprovação de ativação mantida pendente (veiculação exige OK humano)",
-      );
+      logger.info({ draftId: input.draftId }, "auto-create:criado PAUSADO — aprovação de ativação pendente");
+    } else if (outcome.activated) {
+      logger.info({ draftId: input.draftId }, "auto-create:criado e ATIVADO (creationActivation=active)");
     }
   } else if (outcome.kind === "blocked" || outcome.kind === "unsupported") {
     await ports.approval.resolve(approvalId, { status: "blocked", resolvedReason: outcome.reason });
