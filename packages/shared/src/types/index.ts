@@ -125,7 +125,34 @@ export interface InsightMetrics {
   /** Receita rastreada TOTAL (soma de todo `value` das conversões, ex.: compras) — surfaça
    *  o retorno mesmo quando o goal de negócio é conversa/lead (sem valor). Undefined = sem receita. */
   readonly revenue?: number;
+  /** Alcance (pessoas ÚNICAS, S6) — NUNCA some entre dias (dedup); o adapter usa o valor do
+   *  ÚLTIMO dia da janela como proxy (aproximação documentada, mesmo rigor do `deliveryEstimate`). */
+  readonly reach?: number;
+  /** Cliques no LINK do anúncio (S6) — subconjunto de `clicks` (que inclui engajamento genérico
+   *  no post: like/coment/share). Distingue "clicou no link de verdade" de engajamento social. */
+  readonly inlineLinkClicks?: number;
+  /** Contagem de reproduções de vídeo que chegaram a 25% (S6, soma entre dias — evento discreto). */
+  readonly videoP25WatchedCount?: number;
+  /** Derivado (não vem da Meta): `videoP25WatchedCount / impressions * 100`, aproximação do
+   *  "gancho segura a atenção nos primeiros segundos" (impressão ≈ tentativa de reprodução em
+   *  anúncio de vídeo). Ausente quando não há reprodução de vídeo reportada. */
+  readonly videoHookRetentionPct?: number;
   readonly [key: string]: number | undefined;
+}
+
+/** Classificação de ranking da Meta, neutralizada (S6) — o vocabulário original
+ *  (`ABOVE_AVERAGE`/`BELOW_AVERAGE_35`/`BELOW_AVERAGE_20`/`BELOW_AVERAGE_10`/`UNKNOWN`)
+ *  vive só no adapter; os 3 níveis de "abaixo da média" colapsam em `below_average`
+ *  (o core só precisa saber SE está abaixo, não a granularidade do tier). */
+export type PlatformQualityRating = "above_average" | "average" | "below_average" | "unknown";
+
+/** Rankings de qualidade/engajamento/conversão que a própria Meta calcula por anúncio
+ *  (S6, só disponível a partir de ~500 impressões) — opinião independente da plataforma,
+ *  separada do `HealthSignal` já testado no dado da conta. */
+export interface PlatformQualityRankings {
+  readonly quality?: PlatformQualityRating;
+  readonly engagement?: PlatformQualityRating;
+  readonly conversion?: PlatformQualityRating;
 }
 
 export interface InsightRow {
@@ -139,6 +166,8 @@ export interface InsightRow {
   readonly rawActions?: Readonly<Record<string, number>>;
   /** Funil neutro derivado do `rawActions` pela casca (adapter mapper) — não persistido. */
   readonly funnel?: FunnelBreakdown;
+  /** Rankings de qualidade da Meta (S6) — fato do dia da linha, não some entre dias. */
+  readonly qualityRankings?: PlatformQualityRankings;
 }
 
 /**
@@ -149,6 +178,7 @@ export interface StoredInsightMetrics {
   readonly metrics: InsightMetrics;
   readonly conversions?: ConversionBreakdown;
   readonly rawActions?: Readonly<Record<string, number>>;
+  readonly qualityRankings?: PlatformQualityRankings;
 }
 
 export interface Creative {
@@ -479,8 +509,18 @@ export type PerformanceTier = "winner" | "performer" | "underperformer" | "zombi
 
 /** Sinais de saúde nomeados (estende a detecção de anomalias com semântica de tráfego).
  *  `weak_creative` (S4b): prova fraca + baixa densidade persuasiva (visão) — NUNCA vira
- *  critério de guard (é score de LLM, soft); só informa NOTE/matcher. */
-export type HealthSignal = "creative_fatigue" | "audience_saturation" | "low_volume" | "weak_creative";
+ *  critério de guard (é score de LLM, soft); só informa NOTE/matcher. `platform_quality_below_average`
+ *  (S6): a própria Meta classifica o anúncio abaixo da média (qualidade/engajamento/conversão) —
+ *  opinião independente da plataforma, mesma regra de NOTE-só. `weak_hook_retention` (S6): retenção
+ *  de vídeo nos primeiros 25% baixa — métrica DURA (não score de LLM), mas ainda assim só informa
+ *  NOTE/direção de criativo, nunca guard (é sinal de qualidade de criativo, não de economia da ação). */
+export type HealthSignal =
+  | "creative_fatigue"
+  | "audience_saturation"
+  | "low_volume"
+  | "weak_creative"
+  | "platform_quality_below_average"
+  | "weak_hook_retention";
 
 /**
  * Elegibilidade de DECISÃO da entidade — se dá pra concluir/agir sobre a conversão.
@@ -558,6 +598,8 @@ export interface EntitySummary {
   readonly proxy?: ConversionProxy;
   /** Funil de messaging da entidade (só quando há dado) — qualidade do lead. */
   readonly funnel?: FunnelSummary;
+  /** Rankings de qualidade da Meta (S6) — só presente com dado real reportado pela plataforma. */
+  readonly qualityRankings?: PlatformQualityRankings;
   /** Classe de desempenho relativa à meta + à conta (Fatia 6c). */
   readonly tier?: PerformanceTier;
   /** Sinais de saúde detectados (fadiga/saturação/baixo volume) — Fatia 6c. */

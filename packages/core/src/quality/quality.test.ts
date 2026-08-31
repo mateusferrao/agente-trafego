@@ -78,6 +78,39 @@ describe("detectHealthSignals", () => {
       detectHealthSignals({ frequency: 2.6, ctrDropPct: 0, costRisePct: 0, hasSignificance: true, frequencyCap: 8 }, T),
     ).not.toContain("audience_saturation");
   });
+
+  it("S6: videoHookRetentionPct abaixo do limiar → weak_hook_retention", () => {
+    expect(
+      detectHealthSignals({ ctrDropPct: 0, costRisePct: 0, hasSignificance: true, videoHookRetentionPct: 10 }, T),
+    ).toContain("weak_hook_retention");
+  });
+  it("S6: videoHookRetentionPct acima do limiar → sem sinal", () => {
+    expect(
+      detectHealthSignals({ ctrDropPct: 0, costRisePct: 0, hasSignificance: true, videoHookRetentionPct: 90 }, T),
+    ).not.toContain("weak_hook_retention");
+  });
+  it("S6: sem videoHookRetentionPct (ad sem vídeo) → sem sinal (honesto, não assume fraco)", () => {
+    expect(detectHealthSignals({ ctrDropPct: 0, costRisePct: 0, hasSignificance: true }, T)).not.toContain(
+      "weak_hook_retention",
+    );
+  });
+
+  it("S6: qualityRankings com QUALQUER ranking below_average → platform_quality_below_average", () => {
+    expect(
+      detectHealthSignals(
+        { ctrDropPct: 0, costRisePct: 0, hasSignificance: true, qualityRankings: { engagement: "below_average" } },
+        T,
+      ),
+    ).toContain("platform_quality_below_average");
+  });
+  it("S6: qualityRankings todos average/above/unknown → sem sinal", () => {
+    expect(
+      detectHealthSignals(
+        { ctrDropPct: 0, costRisePct: 0, hasSignificance: true, qualityRankings: { quality: "average", engagement: "above_average", conversion: "unknown" } },
+        T,
+      ),
+    ).not.toContain("platform_quality_below_average");
+  });
 });
 
 describe("detectCreativeWeakness (S4b — prova fraca + baixa densidade persuasiva)", () => {
@@ -200,5 +233,21 @@ describe("enrichEntitiesQuality (integração das peças)", () => {
     );
     expect(prospect!.healthSignals ?? []).toContain("audience_saturation");
     expect(remarket!.healthSignals ?? []).not.toContain("audience_saturation");
+  });
+
+  it("S6: repassa videoHookRetentionPct (metrics) e qualityRankings (entidade) pro detector", () => {
+    const out = enrichEntitiesQuality(
+      [
+        summary({
+          id: "V",
+          metrics: { spend: 100, impressions: 5000, clicks: 150, ctr: 2.5, cpc: 0.67, cpm: 20, videoHookRetentionPct: 5 },
+          qualityRankings: { quality: "below_average" },
+        }),
+      ],
+      {},
+      { thresholds: T, hasTarget: false, currency: "BRL" },
+    );
+    expect(out[0]!.healthSignals ?? []).toContain("weak_hook_retention");
+    expect(out[0]!.healthSignals ?? []).toContain("platform_quality_below_average");
   });
 });

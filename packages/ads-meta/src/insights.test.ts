@@ -126,6 +126,55 @@ describe("MetaInsightsService — async report jobs", () => {
     expect(row.rawActions).toMatchObject({ link_click: 180, "offsite_conversion.custom.777": 12 });
   });
 
+  it("S6: reach/inline_link_clicks/vídeo escalares + rankings normalizados (neutro, colapsa BELOW_AVERAGE_*)", async () => {
+    installFetch((m, u) => {
+      if (isSubmit(m, u)) return json({ report_run_id: RUN_ID });
+      if (isPoll(m, u)) return json({ async_status: "Job Completed", async_percent_completion: 100 });
+      if (isFetch(m, u))
+        return json({
+          data: [
+            {
+              ad_id: "AD9",
+              reach: "800",
+              inline_link_clicks: "37",
+              video_p25_watched_actions: [{ action_type: "video_view", value: "120" }],
+              quality_ranking: "BELOW_AVERAGE_20",
+              engagement_rate_ranking: "ABOVE_AVERAGE",
+              conversion_rate_ranking: "UNKNOWN",
+            },
+          ],
+        });
+      return json({});
+    });
+
+    const rows = await makeService().getInsights(makeQuery({ level: "ad" }));
+
+    expect(rows[0]!.metrics.reach).toBe(800);
+    expect(rows[0]!.metrics.inlineLinkClicks).toBe(37);
+    expect(rows[0]!.metrics.videoP25WatchedCount).toBe(120);
+    expect(rows[0]!.qualityRankings).toEqual({
+      quality: "below_average",
+      engagement: "above_average",
+      conversion: "unknown",
+    });
+  });
+
+  it("S6: sem rankings/vídeo reportados → campos ausentes (nunca zero forçado)", async () => {
+    installFetch((m, u) => {
+      if (isSubmit(m, u)) return json({ report_run_id: RUN_ID });
+      if (isPoll(m, u)) return json({ async_status: "Job Completed", async_percent_completion: 100 });
+      if (isFetch(m, u)) return json({ data: [{ account_id: "123456", spend: "1" }] });
+      return json({});
+    });
+
+    const rows = await makeService().getInsights(makeQuery());
+
+    expect(rows[0]!.metrics.reach).toBeUndefined();
+    expect(rows[0]!.metrics.inlineLinkClicks).toBeUndefined();
+    expect(rows[0]!.metrics.videoP25WatchedCount).toBeUndefined();
+    expect(rows[0]!.qualityRankings).toBeUndefined();
+  });
+
   it("Job Failed → re-submete fresh e conclui", async () => {
     let pollN = 0;
     const { calls } = installFetch((m, u) => {

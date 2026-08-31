@@ -188,6 +188,12 @@ describe("buildCampaignKnowledgeContext (map)", () => {
 describe("selectAnalysisKnowledge — relevância por papel e por dado", () => {
   const baseSynthesisCtx = { role: "synthesis" as const, hasWaste: false, trackingSuspect: false, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: false, bidStrategyMismatch: false };
 
+  it("S6: bloco 'quality' explica weak_hook_retention e platform_quality_below_average (sempre-on, sem bloco novo)", () => {
+    const block = ANALYSIS_KNOWLEDGE_BLOCKS.find((b) => b.key === "quality")!;
+    expect(block.text).toContain("weak_hook_retention");
+    expect(block.text).toContain("platform_quality_below_average");
+  });
+
   it("synthesis sem waste/tracking/revenue/benchmark/budget/bid_strategy: só os blocos-base de domínio (nunca inventa relevância)", () => {
     const keys = selectAnalysisKnowledge(baseSynthesisCtx).map((b) => b.key);
     expect(keys).toEqual(expect.arrayContaining(["funnel", "mismatch", "quality", "incrementality", "recency", "diagnosis"]));

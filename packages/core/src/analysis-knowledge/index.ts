@@ -84,12 +84,18 @@ const QUALITY_TEXT =
   "Cada entidade pode trazer 'tier' (winner/performer/underperformer/zombie), 'healthSignals' " +
   "(creative_fatigue = fadiga de criativo; audience_saturation = público saturado; low_volume = " +
   "pouco dado; weak_creative = prova fraca + baixa densidade persuasiva no criativo, S4b — sinal " +
-  "PURO de direção, use pra 'review_creative', nunca pra pausar/cortar orçamento sozinho) e " +
-  "'eligibility' (hasSignificance, inLearning). Aja assim: proteja os WINNERS (não mexa no que vai " +
-  "bem — winner com weak_creative é candidato a TESTAR uma variação nova, não a pausar), priorize " +
-  "PAUSAR os ZOMBIES (gasto sem conversão = desperdício), conserte os UNDERPERFORMERS. NUNCA " +
-  "recomende ESCALAR (aumentar orçamento / reativar) uma entidade sem hasSignificance ou em " +
-  "inLearning — nesse caso recomende investigar ou aguardar mais dados.";
+  "PURO de direção, use pra 'review_creative', nunca pra pausar/cortar orçamento sozinho; " +
+  "weak_hook_retention = retenção de vídeo baixa nos primeiros ~25% (S6, o gancho falha na largada) " +
+  "— mesma direção do weak_creative (review_creative, nunca guard de economia); " +
+  "platform_quality_below_average = a própria Meta classifica o anúncio abaixo da média em " +
+  "qualidade/engajamento/conversão (S6, opinião independente da plataforma) — trate como mais um " +
+  "indício de criativo fraco, some com weak_creative/weak_hook_retention na mesma direção, nunca " +
+  "sozinho como motivo de pausar) e 'eligibility' (hasSignificance, inLearning). Aja assim: proteja " +
+  "os WINNERS (não mexa no que vai bem — winner com weak_creative é candidato a TESTAR uma " +
+  "variação nova, não a pausar), priorize PAUSAR os ZOMBIES (gasto sem conversão = desperdício), " +
+  "conserte os UNDERPERFORMERS. NUNCA recomende ESCALAR (aumentar orçamento / reativar) uma " +
+  "entidade sem hasSignificance ou em inLearning — nesse caso recomende investigar ou aguardar " +
+  "mais dados.";
 
 /**
  * Atribuição × incrementalidade — freia recomendação de pausa por CPA atribuído.

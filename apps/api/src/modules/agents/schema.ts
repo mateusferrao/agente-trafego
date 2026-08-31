@@ -63,6 +63,8 @@ export const qualityConfigInput = z.object({
   /** CPA marginal (pivô saúde, squad): alta (%) do CPA vs baseline a partir da qual
    *  rebaixa escalar → investigar, mesmo pra quem ainda bate a meta em média. */
   marginalCpaWorsenPct: z.number().positive().optional(),
+  /** retenção de vídeo (S6) abaixo disso = gancho fraco na largada (25% do vídeo). */
+  weakHookRetentionMaxPct: z.number().positive().optional(),
   /** override por agente da referência de mercado (pivô), na moeda da conta. Merge por
    *  campo sobre o org-default; campo em dinheiro só aplica se a moeda bate. */
   marketReference: marketReferenceSchema.optional(),
@@ -83,6 +85,7 @@ export const qualityDefaultsOutput = z.object({
   trackingBrokenMinFunnel: z.number(),
   relativeEligibilitySpendMultiplier: z.number(),
   marginalCpaWorsenPct: z.number(),
+  weakHookRetentionMaxPct: z.number(),
 });
 export type QualityDefaultsOutput = z.infer<typeof qualityDefaultsOutput>;
 

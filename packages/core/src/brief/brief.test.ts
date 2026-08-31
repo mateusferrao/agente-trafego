@@ -32,6 +32,36 @@ describe("normalize", () => {
   });
 });
 
+describe("normalize — S6 (reach/vídeo/rankings)", () => {
+  it("reach usa o ÚLTIMO dia (nunca soma — alcance é dedup); vídeo/inlineLinkClicks somam; rankings do último dia", () => {
+    const day1: InsightRow = {
+      entityId: "AD1",
+      level: "ad",
+      date: "2026-08-01",
+      metrics: { spend: 10, impressions: 100, clicks: 2, ctr: 0, cpc: 0, cpm: 0, reach: 80, inlineLinkClicks: 5, videoP25WatchedCount: 20 },
+      qualityRankings: { quality: "average" },
+    };
+    const day2: InsightRow = {
+      entityId: "AD1",
+      level: "ad",
+      date: "2026-08-02",
+      metrics: { spend: 10, impressions: 100, clicks: 2, ctr: 0, cpc: 0, cpm: 0, reach: 95, inlineLinkClicks: 3, videoP25WatchedCount: 15 },
+      qualityRankings: { quality: "below_average" },
+    };
+    const [e] = normalize([day1, day2]);
+    expect(e!.reach).toBe(95); // último dia, não 80+95
+    expect(e!.inlineLinkClicks).toBe(8); // soma (evento discreto)
+    expect(e!.videoP25WatchedCount).toBe(35); // soma (evento discreto)
+    expect(e!.qualityRankings).toEqual({ quality: "below_average" }); // do último dia
+  });
+
+  it("sem esses campos em nenhuma linha → tudo ausente (nunca zero forçado)", () => {
+    const [e] = normalize([dailyRow("2026-08-01", 100)]);
+    expect(e!.reach).toBeUndefined();
+    expect(e!.qualityRankings).toBeUndefined();
+  });
+});
+
 describe("computeDerived — conversão por objetivo", () => {
   const [entity] = normalize([dailyRow("2026-08-01", 100), dailyRow("2026-08-02", 100)]);
 
@@ -54,6 +84,20 @@ describe("computeDerived — conversão por objetivo", () => {
     expect(m.conversions).toBeUndefined();
     expect(m.cpc).toBe(5); // 200 / 40 cliques
     expect(m.revenue).toBe(1000);
+  });
+
+  it("S6: reach passa direto; videoHookRetentionPct deriva de videoP25WatchedCount/impressions", () => {
+    const [withVideo] = normalize([
+      { ...dailyRow("2026-08-01", 100), metrics: { ...dailyRow("2026-08-01", 100).metrics, reach: 900, videoP25WatchedCount: 300 } },
+    ]);
+    const m = computeDerived(withVideo!);
+    expect(m.reach).toBe(900);
+    expect(m.videoHookRetentionPct).toBe(30); // 300/1000*100
+  });
+
+  it("S6: sem vídeo reportado → videoHookRetentionPct ausente (nunca 0 forçado)", () => {
+    const m = computeDerived(entity!);
+    expect(m.videoHookRetentionPct).toBeUndefined();
   });
 });
 

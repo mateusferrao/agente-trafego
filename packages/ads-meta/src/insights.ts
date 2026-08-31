@@ -3,6 +3,8 @@ import type {
   EntityLevel,
   InsightMetrics,
   InsightRow,
+  PlatformQualityRankings,
+  PlatformQualityRating,
 } from "@trafego/shared/types";
 import type { InsightsQuery } from "@trafego/shared/ports";
 import {
@@ -55,6 +57,12 @@ interface MetaInsightRow {
   readonly frequency?: string;
   readonly actions?: MetaActionStat[];
   readonly action_values?: MetaActionStat[];
+  readonly reach?: string;
+  readonly inline_link_clicks?: string;
+  readonly video_p25_watched_actions?: MetaActionStat[];
+  readonly quality_ranking?: string;
+  readonly engagement_rate_ranking?: string;
+  readonly conversion_rate_ranking?: string;
   readonly [key: string]: unknown;
 }
 
@@ -119,7 +127,39 @@ function buildConversions(row: MetaInsightRow): {
   };
 }
 
+/** Soma um array de `AdsActionStats` (mesmo shape de `actions`) — usado pelos campos de
+ *  vídeo (`video_pXX_watched_actions`), que costumam trazer 1 entrada (action_type "video_view"). */
+function sumActionStats(stats: MetaActionStat[] | undefined): number | undefined {
+  if (!stats || stats.length === 0) return undefined;
+  return stats.reduce((sum, s) => sum + toNumber(s.value), 0);
+}
+
+/** Meta reporta 3 tiers de "abaixo da média" (`BELOW_AVERAGE_35/20/10`) — o core só precisa
+ *  saber SE está abaixo, então os 3 colapsam em `below_average` (vocabulário Meta fica aqui). */
+function mapQualityRating(raw: string | undefined): PlatformQualityRating | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === "ABOVE_AVERAGE") return "above_average";
+  if (raw === "AVERAGE") return "average";
+  if (raw.startsWith("BELOW_AVERAGE")) return "below_average";
+  return "unknown";
+}
+
+function buildQualityRankings(row: MetaInsightRow): PlatformQualityRankings | undefined {
+  const quality = mapQualityRating(row.quality_ranking);
+  const engagement = mapQualityRating(row.engagement_rate_ranking);
+  const conversion = mapQualityRating(row.conversion_rate_ranking);
+  if (quality === undefined && engagement === undefined && conversion === undefined) return undefined;
+  return {
+    ...(quality !== undefined ? { quality } : {}),
+    ...(engagement !== undefined ? { engagement } : {}),
+    ...(conversion !== undefined ? { conversion } : {}),
+  };
+}
+
 function mapRow(level: EntityLevel, row: MetaInsightRow, accountFallback: string): InsightRow {
+  const reach = row.reach !== undefined ? toNumber(row.reach) : undefined;
+  const inlineLinkClicks = row.inline_link_clicks !== undefined ? toNumber(row.inline_link_clicks) : undefined;
+  const videoP25WatchedCount = sumActionStats(row.video_p25_watched_actions);
   const metrics: InsightMetrics = {
     spend: toNumber(row.spend),
     impressions: toNumber(row.impressions),
@@ -128,13 +168,18 @@ function mapRow(level: EntityLevel, row: MetaInsightRow, accountFallback: string
     cpc: toNumber(row.cpc),
     cpm: toNumber(row.cpm),
     ...(row.frequency !== undefined ? { frequency: toNumber(row.frequency) } : {}),
+    ...(reach !== undefined ? { reach } : {}),
+    ...(inlineLinkClicks !== undefined ? { inlineLinkClicks } : {}),
+    ...(videoP25WatchedCount !== undefined ? { videoP25WatchedCount } : {}),
   };
+  const qualityRankings = buildQualityRankings(row);
   return {
     entityId: entityIdForLevel(row, level, accountFallback),
     level,
     ...(row.date_start ? { date: row.date_start } : {}),
     metrics,
     ...buildConversions(row),
+    ...(qualityRankings ? { qualityRankings } : {}),
   };
 }
 

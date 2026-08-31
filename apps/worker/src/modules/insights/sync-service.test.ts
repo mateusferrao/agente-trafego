@@ -54,6 +54,38 @@ describe("createInsightsSyncService.sync", () => {
     expect(upserts.map((r) => r.entityLevel)).toEqual(["account", "campaign", "adset", "ad"]);
   });
 
+  it("S6: pede reach/inline_link_clicks/vídeo/rankings + persiste qualityRankings quando presente", async () => {
+    const { repo, upserts } = makeRepo();
+    let queriedFields: readonly string[] = [];
+    const getInsights = vi.fn(async (q: InsightsQuery) => {
+      queriedFields = q.fields;
+      return [{ ...datedRow(q.level), qualityRankings: { quality: "below_average" as const } }];
+    });
+
+    await makeService(getInsights, repo).sync(input);
+
+    expect(queriedFields).toEqual(
+      expect.arrayContaining([
+        "reach",
+        "inline_link_clicks",
+        "video_p25_watched_actions",
+        "quality_ranking",
+        "engagement_rate_ranking",
+        "conversion_rate_ranking",
+      ]),
+    );
+    expect(upserts[0]!.metrics.qualityRankings).toEqual({ quality: "below_average" });
+  });
+
+  it("S6: sem qualityRankings na linha → campo ausente no snapshot (nunca objeto vazio)", async () => {
+    const { repo, upserts } = makeRepo();
+    const getInsights = vi.fn(async (q: InsightsQuery) => [datedRow(q.level)]);
+
+    await makeService(getInsights, repo).sync(input);
+
+    expect(upserts[0]!.metrics.qualityRankings).toBeUndefined();
+  });
+
   it("upstream num nível → partial=true e segue os demais", async () => {
     const { repo } = makeRepo();
     const getInsights = vi.fn(async (q: InsightsQuery) => {

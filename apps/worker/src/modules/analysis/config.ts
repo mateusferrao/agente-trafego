@@ -138,5 +138,6 @@ function resolveQuality(raw: unknown, defaults: QualityThresholds | undefined): 
     trackingBrokenMinFunnel: nonNeg(mc.trackingBrokenMinFunnel) ?? d.trackingBrokenMinFunnel,
     relativeEligibilitySpendMultiplier: pos(mc.relativeEligibilitySpendMultiplier) ?? d.relativeEligibilitySpendMultiplier,
     marginalCpaWorsenPct: pos(mc.marginalCpaWorsenPct) ?? d.marginalCpaWorsenPct,
+    weakHookRetentionMaxPct: pos(mc.weakHookRetentionMaxPct) ?? d.weakHookRetentionMaxPct,
   };
 }

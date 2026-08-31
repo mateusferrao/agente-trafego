@@ -241,6 +241,8 @@ export const envSchema = z.object({
   // CPA marginal (pivô saúde, squad): alta (%) do CPA vs baseline a partir da qual rebaixa
   // escalar → investigar, mesmo pra quem ainda bate a meta em média.
   ANALYSIS_QUALITY_MARGINAL_CPA_WORSEN_PCT: z.coerce.number().positive().default(20),
+  // Retenção de vídeo (S6, %) abaixo disso = gancho fraco na largada (25% do vídeo).
+  ANALYSIS_QUALITY_WEAK_HOOK_RETENTION_MAX_PCT: z.coerce.number().positive().default(50),
 
   // ─── Cadência (cron por conta — 3b) ────────────────────────────────────
   // Default global da cadência (a UI de edição por-conta = Fatia 4). Cron 5-campos.

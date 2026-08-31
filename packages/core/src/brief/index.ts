@@ -17,6 +17,7 @@ import type {
   InsightMetrics,
   InsightRow,
   OutcomeKind,
+  PlatformQualityRankings,
   RangeBand,
   TrackingHealth,
   TrendPoint,
@@ -57,6 +58,17 @@ export interface NormalizedEntity {
    * Guardamos o MÁXIMO por entidade na janela: sinal honesto de "chegou a saturar".
    */
   readonly frequency?: number;
+  /** Alcance (S6) — mesma razão de não-somável que frequência (pessoas ÚNICAS, dedup
+   *  entre dias): guardamos o do ÚLTIMO dia da janela (proxy do alcance atual, não o
+   *  acumulado do período — documentado como aproximação, CLAUDE.md §7). */
+  readonly reach?: number;
+  /** Cliques no link (S6) — evento discreto por dia, soma normalmente (como `clicks`). */
+  readonly inlineLinkClicks?: number;
+  /** Reproduções de vídeo a 25% (S6) — evento discreto por dia, soma normalmente. */
+  readonly videoP25WatchedCount?: number;
+  /** Rankings de qualidade da Meta (S6) — fato do dia, não somável; guardamos o do
+   *  ÚLTIMO dia com dado reportado (mesma razão de `reach`). */
+  readonly qualityRankings?: PlatformQualityRankings;
 }
 
 /**
@@ -71,6 +83,13 @@ export function normalize(rows: readonly InsightRow[]): NormalizedEntity[] {
     impressions: number;
     clicks: number;
     frequency: number;
+    inlineLinkClicks: number;
+    videoP25WatchedCount: number;
+    /** último dia visto com `reach`/`qualityRankings` — reach e rankings não são somáveis. */
+    reachDate?: string;
+    reach?: number;
+    qualityRankingsDate?: string;
+    qualityRankings?: PlatformQualityRankings;
     conv: Map<
       string,
       { goal: ConversionBreakdown[number]["goal"]; customConversionId?: string; count: number; value: number; hasValue: boolean }
@@ -80,14 +99,34 @@ export function normalize(rows: readonly InsightRow[]): NormalizedEntity[] {
 
   for (const row of rows) {
     const key = `${row.level}:${row.entityId}`;
-    const acc =
+    const acc: Acc =
       byKey.get(key) ??
-      { entityId: row.entityId, level: row.level, spend: 0, impressions: 0, clicks: 0, frequency: 0, conv: new Map() };
+      {
+        entityId: row.entityId,
+        level: row.level,
+        spend: 0,
+        impressions: 0,
+        clicks: 0,
+        frequency: 0,
+        inlineLinkClicks: 0,
+        videoP25WatchedCount: 0,
+        conv: new Map(),
+      };
     acc.spend += row.metrics.spend ?? 0;
     acc.impressions += row.metrics.impressions ?? 0;
     acc.clicks += row.metrics.clicks ?? 0;
+    acc.inlineLinkClicks += row.metrics.inlineLinkClicks ?? 0;
+    acc.videoP25WatchedCount += row.metrics.videoP25WatchedCount ?? 0;
     if (typeof row.metrics.frequency === "number") {
       acc.frequency = Math.max(acc.frequency, row.metrics.frequency);
+    }
+    if (row.date !== undefined && row.metrics.reach !== undefined && (acc.reachDate === undefined || row.date >= acc.reachDate)) {
+      acc.reachDate = row.date;
+      acc.reach = row.metrics.reach;
+    }
+    if (row.date !== undefined && row.qualityRankings !== undefined && (acc.qualityRankingsDate === undefined || row.date >= acc.qualityRankingsDate)) {
+      acc.qualityRankingsDate = row.date;
+      acc.qualityRankings = row.qualityRankings;
     }
     for (const c of row.conversions ?? []) {
       const ck = `${c.goal}:${c.customConversionId ?? ""}`;
@@ -113,6 +152,12 @@ export function normalize(rows: readonly InsightRow[]): NormalizedEntity[] {
     impressions: a.impressions,
     clicks: a.clicks,
     ...(a.frequency > 0 ? { frequency: a.frequency } : {}),
+    // mesma convenção de `frequency` acima (>0 como proxy de presença — evento discreto,
+    // zero genuíno é indistinguível de "campo não reportado" nesta agregação simples).
+    ...(a.inlineLinkClicks > 0 ? { inlineLinkClicks: a.inlineLinkClicks } : {}),
+    ...(a.videoP25WatchedCount > 0 ? { videoP25WatchedCount: a.videoP25WatchedCount } : {}),
+    ...(a.reach !== undefined ? { reach: a.reach } : {}),
+    ...(a.qualityRankings !== undefined ? { qualityRankings: a.qualityRankings } : {}),
     conversions: [...a.conv.values()].map((v) => ({
       goal: v.goal,
       ...(v.customConversionId ? { customConversionId: v.customConversionId } : {}),
@@ -163,6 +208,13 @@ export function computeDerived(
   const revenueTotal = entity.conversions.reduce((s, c) => s + (c.value ?? 0), 0);
   const revenue = entity.conversions.some((c) => c.value !== undefined) ? round(revenueTotal, 4) : undefined;
 
+  // S6: retenção de vídeo nos primeiros 25% — aproximação (impressão ≈ tentativa de
+  // reprodução em anúncio de vídeo; documentado, mesmo rigor do `deliveryEstimate`).
+  const videoHookRetentionPct =
+    entity.videoP25WatchedCount !== undefined && impressions > 0
+      ? round((entity.videoP25WatchedCount / impressions) * 100, 4)
+      : undefined;
+
   return {
     spend,
     impressions,
@@ -171,6 +223,10 @@ export function computeDerived(
     cpc,
     cpm,
     ...(entity.frequency !== undefined ? { frequency: entity.frequency } : {}),
+    ...(entity.reach !== undefined ? { reach: entity.reach } : {}),
+    ...(entity.inlineLinkClicks !== undefined ? { inlineLinkClicks: entity.inlineLinkClicks } : {}),
+    ...(entity.videoP25WatchedCount !== undefined ? { videoP25WatchedCount: entity.videoP25WatchedCount } : {}),
+    ...(videoHookRetentionPct !== undefined ? { videoHookRetentionPct } : {}),
     ...(conversions !== undefined ? { conversions } : {}),
     ...(cpa !== undefined ? { cpa } : {}),
     ...(roas !== undefined ? { roas } : {}),
@@ -659,6 +715,7 @@ function toEntitySummary(
     ...(budget ? { budget } : {}),
     ...(entity?.bidStrategy ? { bidStrategy: entity.bidStrategy } : {}),
     ...(entity?.bidCapMajor !== undefined ? { bidCapMajor: entity.bidCapMajor } : {}),
+    ...(n.qualityRankings ? { qualityRankings: n.qualityRankings } : {}),
   };
 }
 

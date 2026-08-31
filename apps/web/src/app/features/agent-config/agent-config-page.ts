@@ -587,6 +587,11 @@ interface FormState {
                     <input type="number" appNumberStepper min="1" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.marginalCpaWorsenPct ?? ''" [value]="mcMarginalCpaWorsenPct()" (input)="onMcText(mcMarginalCpaWorsenPct, $event)" />
                     <span class="text-xs text-muted">O custo médio pode parecer bom, mas se o incremento mais recente já subiu esse tanto, o agente sugere investigar em vez de continuar aumentando.</span>
                   </label>
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Retenção de vídeo (%) abaixo da qual o agente considera que o vídeo não segura a atenção nos primeiros segundos.">
+                    Retenção mínima de vídeo (%)
+                    <input type="number" appNumberStepper min="1" max="100" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.weakHookRetentionMaxPct ?? ''" [value]="mcWeakHookRetentionMaxPct()" (input)="onMcText(mcWeakHookRetentionMaxPct, $event)" />
+                    <span class="text-xs text-muted">Se menos que essa % das pessoas continua assistindo o vídeo além do início, o agente aponta o gancho como fraco (direção de criativo, nunca pausa sozinho).</span>
+                  </label>
                 </div>
 
                 <!-- Referência de mercado desta conta (override do padrão da org) -->
@@ -695,6 +700,7 @@ export class AgentConfigPage {
   protected readonly mcTrackingBrokenMinFunnel = signal('');
   protected readonly mcRelativeEligibilitySpendMultiplier = signal('');
   protected readonly mcMarginalCpaWorsenPct = signal('');
+  protected readonly mcWeakHookRetentionMaxPct = signal('');
   // referência de mercado desta conta (override do padrão da org) — pivô.
   // moeda = a da conta (fixa no editor). null = herda da org.
   protected readonly accountCurrency = signal('BRL');
@@ -963,6 +969,7 @@ export class AgentConfigPage {
       ...numField('trackingBrokenMinFunnel', this.mcTrackingBrokenMinFunnel()),
       ...numField('relativeEligibilitySpendMultiplier', this.mcRelativeEligibilitySpendMultiplier()),
       ...numField('marginalCpaWorsenPct', this.mcMarginalCpaWorsenPct()),
+      ...numField('weakHookRetentionMaxPct', this.mcWeakHookRetentionMaxPct()),
       ...(this.marketRefOverride() ? { marketReference: this.marketRefOverride()! } : {}),
     };
     // fonte do criativo: mapeia o RESULTADO escolhido → {mode, servingPick}. "serving" carrega
@@ -1050,6 +1057,7 @@ export class AgentConfigPage {
     this.mcTrackingBrokenMinFunnel.set(numToStr(q.trackingBrokenMinFunnel));
     this.mcRelativeEligibilitySpendMultiplier.set(numToStr(q.relativeEligibilitySpendMultiplier));
     this.mcMarginalCpaWorsenPct.set(numToStr(q.marginalCpaWorsenPct));
+    this.mcWeakHookRetentionMaxPct.set(numToStr(q.weakHookRetentionMaxPct));
     this.marketRefOverride.set(q.marketReference ?? null);
     // fonte do criativo: `both`/`library` explícitos; qualquer serving.* → o resultado "reaproveitar".
     const cs = c.creativeSource?.mode;

@@ -311,6 +311,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
         trackingBrokenMinFunnel: env.ANALYSIS_QUALITY_TRACKING_BROKEN_MIN_FUNNEL,
         relativeEligibilitySpendMultiplier: env.ANALYSIS_QUALITY_RELATIVE_ELIGIBILITY_SPEND_MULTIPLIER,
         marginalCpaWorsenPct: env.ANALYSIS_QUALITY_MARGINAL_CPA_WORSEN_PCT,
+        weakHookRetentionMaxPct: env.ANALYSIS_QUALITY_WEAK_HOOK_RETENTION_MAX_PCT,
       },
     },
     insights: {

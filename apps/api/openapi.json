@@ -1609,6 +1609,10 @@
                     "type": "number",
                     "exclusiveMinimum": 0
                   },
+                  "weakHookRetentionMaxPct": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
                   "marketReference": {
                     "type": "object",
                     "properties": {
@@ -1816,6 +1820,9 @@
               },
               "marginalCpaWorsenPct": {
                 "type": "number"
+              },
+              "weakHookRetentionMaxPct": {
+                "type": "number"
               }
             },
             "required": [
@@ -1830,7 +1837,8 @@
               "trackingBrokenRatio",
               "trackingBrokenMinFunnel",
               "relativeEligibilitySpendMultiplier",
-              "marginalCpaWorsenPct"
+              "marginalCpaWorsenPct",
+              "weakHookRetentionMaxPct"
             ]
           },
           "notifyPolicy": {
@@ -2720,6 +2728,10 @@
                     "exclusiveMinimum": 0
                   },
                   "marginalCpaWorsenPct": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "weakHookRetentionMaxPct": {
                     "type": "number",
                     "exclusiveMinimum": 0
                   },

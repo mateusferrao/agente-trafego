@@ -22,6 +22,15 @@ const BASE_FIELDS = [
   "frequency",
   "actions",
   "action_values",
+  // S6 — campos ricos: alcance (pessoas únicas), clique-no-link real (vs engajamento
+  // genérico), retenção de vídeo nos primeiros 25% (gancho) e os 3 rankings de
+  // qualidade que a própria Meta calcula por anúncio (a partir de ~500 impressões).
+  "reach",
+  "inline_link_clicks",
+  "video_p25_watched_actions",
+  "quality_ranking",
+  "engagement_rate_ranking",
+  "conversion_rate_ranking",
 ] as const;
 const LEVEL_ID_FIELD: Readonly<Record<EntityLevel, string>> = {
   account: "account_id",
@@ -102,6 +111,7 @@ export function createInsightsSyncService(deps: InsightsSyncServiceDeps): Insigh
                 metrics: r.metrics,
                 ...(r.conversions ? { conversions: r.conversions } : {}),
                 ...(r.rawActions ? { rawActions: r.rawActions } : {}),
+                ...(r.qualityRankings ? { qualityRankings: r.qualityRankings } : {}),
               },
             }));
           if (snapshots.length > 0) {

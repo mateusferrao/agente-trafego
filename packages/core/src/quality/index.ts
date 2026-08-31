@@ -14,6 +14,7 @@ import type {
   InsightMetrics,
   OutcomeKind,
   PerformanceTier,
+  PlatformQualityRankings,
   RangeBand,
 } from "@trafego/shared";
 import { type CtrBands, benchmarkFor } from "../benchmarks/index.js";
@@ -57,6 +58,10 @@ export interface QualityThresholds {
    * marginal conta a verdade"). Ver `guardScaleWithWorseningMarginalCpa`.
    */
   readonly marginalCpaWorsenPct: number;
+  /** S6: retenção de vídeo (`videoHookRetentionPct`) abaixo disso = gancho fraco na largada
+   *  (não segura atenção nos primeiros ~25% do vídeo). Métrica DURA, mas nunca vira guard
+   *  (é sinal de qualidade de criativo, não de economia da ação — CLAUDE.md §7). */
+  readonly weakHookRetentionMaxPct: number;
 }
 
 export const DEFAULT_QUALITY_THRESHOLDS: QualityThresholds = {
@@ -72,6 +77,7 @@ export const DEFAULT_QUALITY_THRESHOLDS: QualityThresholds = {
   trackingBrokenMinFunnel: 50,
   relativeEligibilitySpendMultiplier: 2,
   marginalCpaWorsenPct: 20,
+  weakHookRetentionMaxPct: 50,
 };
 
 // ─── Elegibilidade de decisão ─────────────────────────────────────────────
@@ -142,12 +148,25 @@ export interface HealthInput {
   readonly hasSignificance: boolean;
   /** teto de frequência resolvido por estágio (§Bloco 2); ausente → `fatigueFrequency`. */
   readonly frequencyCap?: number;
+  /** S6: retenção de vídeo nos primeiros 25% (%). Ausente = sem vídeo reportado — nunca
+   *  assume fraco por omissão (honesto: sem dado suficiente). */
+  readonly videoHookRetentionPct?: number;
+  /** S6: rankings de qualidade que a própria Meta calcula (opinião independente). */
+  readonly qualityRankings?: PlatformQualityRankings;
+}
+
+function hasBelowAverageRanking(rankings: PlatformQualityRankings | undefined): boolean {
+  if (!rankings) return false;
+  return rankings.quality === "below_average" || rankings.engagement === "below_average" || rankings.conversion === "below_average";
 }
 
 /**
  * Sinais nomeados: fadiga (2+ de {CTR caiu, freq alta, custo subiu}), saturação
  * de público (freq alta isolada) e baixo volume (sem significância). O teto de
  * frequência vem do estágio quando resolvido (`frequencyCap`), senão do geral.
+ * S6: `weak_hook_retention` (retenção de vídeo baixa) e `platform_quality_below_average`
+ * (a Meta classifica abaixo da média em qualidade/engajamento/conversão) — ambos métrica
+ * DURA (não score de LLM), mas nunca viram guard (CLAUDE.md §7): só informam NOTE/direção.
  */
 export function detectHealthSignals(input: HealthInput, t: QualityThresholds): HealthSignal[] {
   const signals: HealthSignal[] = [];
@@ -160,6 +179,10 @@ export function detectHealthSignals(input: HealthInput, t: QualityThresholds): H
   if (fatigueHits >= 2) signals.push("creative_fatigue");
   if (freqHigh) signals.push("audience_saturation");
   if (!input.hasSignificance) signals.push("low_volume");
+  if (input.videoHookRetentionPct !== undefined && input.videoHookRetentionPct < t.weakHookRetentionMaxPct) {
+    signals.push("weak_hook_retention");
+  }
+  if (hasBelowAverageRanking(input.qualityRankings)) signals.push("platform_quality_below_average");
   return signals;
 }
 
@@ -319,6 +342,8 @@ export function enrichEntitiesQuality(
         costRisePct,
         hasSignificance: eligibility.hasSignificance,
         ...(frequencyCap !== undefined ? { frequencyCap } : {}),
+        ...(e.metrics.videoHookRetentionPct !== undefined ? { videoHookRetentionPct: e.metrics.videoHookRetentionPct } : {}),
+        ...(e.qualityRankings ? { qualityRankings: e.qualityRankings } : {}),
       },
       t,
     );
