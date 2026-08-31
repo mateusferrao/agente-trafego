@@ -42,31 +42,68 @@ function fakeDepsWithMatch(libRows: unknown[], visionRows: unknown[], pickIndex:
 
 const ORG = "o1";
 const ACC = "a1";
+const AGENT = "ag1";
 const MATCH = { goal: "lead", businessContext: "clínica", guidance: null, model: "m" };
 
+/** deps.db falso encadeado por PASSO (cada chamada `select()` consome o próximo passo):
+ *  `limit` = query `.where().limit(n)` (ex: lookup de ad_creatives); `orderByLimit` = query
+ *  `.where().orderBy().limit(n)` (ex: biblioteca por recência); `direct` = query awaitada sem
+ *  limit/orderBy (ex: entity_analyses/visão cacheada). */
+function fakeDepsSeq(steps: ReadonlyArray<{ limit?: unknown[]; orderByLimit?: unknown[]; direct?: unknown[] }>) {
+  let call = 0;
+  const db = {
+    select: () => {
+      const step = steps[call] ?? {};
+      call += 1;
+      return {
+        from: () => ({
+          where: () => {
+            if (step.orderByLimit !== undefined) return { orderBy: () => ({ limit: () => step.orderByLimit }) };
+            if (step.limit !== undefined) return { limit: () => step.limit };
+            return step.direct ?? [];
+          },
+        }),
+      };
+    },
+  };
+  return { db, visionAnalyzerVersion: 1 } as unknown as WorkerDeps;
+}
+
 describe("chooseCreative (pool único: veiculando + biblioteca)", () => {
-  it("criativo VEICULANDO presente → escolhe o veiculado (provado), NÃO consulta biblioteca", async () => {
-    const select = vi.fn();
-    const deps = { db: { select } } as unknown as WorkerDeps;
-    const out = await chooseCreative(deps, ORG, ACC, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING);
+  it("criativo VEICULANDO presente, sem sinal de fadiga → escolhe o veiculado (provado)", async () => {
+    const deps = fakeDepsSeq([
+      { limit: [{ campaignId: "C1", adsetId: "AS1" }] }, // ad_creatives: campanha/adset do anúncio-fonte
+      { direct: [{ flags: [] }] }, // entity_analyses: sem creative_fatigue
+    ]);
+    const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING);
     expect(out).toEqual({ imageHash: "H", assetId: "ad_1", origin: "reuse", source: "serving" });
-    expect(select).not.toHaveBeenCalled();
+  });
+
+  it("criativo VEICULANDO fatigado (campanha/adset com creative_fatigue) → NÃO reusa, cai pra biblioteca (gap real corrigido)", async () => {
+    const deps = fakeDepsSeq([
+      { limit: [{ campaignId: "C1", adsetId: "AS1" }] },
+      { direct: [{ flags: ["creative_fatigue"] }] },
+      { orderByLimit: [{ id: "asset_9", imageHash: "HLIB", videoId: null }] }, // biblioteca por recência
+      { direct: [] }, // visão cacheada (vazia)
+    ]);
+    const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING);
+    expect(out).toEqual({ imageHash: "HLIB", assetId: "asset_9", origin: "upload", source: "library" });
   });
 
   it("SEM veiculando, sem match → biblioteca por recência (mais recente)", async () => {
     const deps = fakeDeps([{ id: "asset_9", imageHash: "HLIB", videoId: null }]);
-    const out = await chooseCreative(deps, ORG, ACC, REF, {}, BEST_PERFORMING);
+    const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, {}, BEST_PERFORMING);
     expect(out).toEqual({ imageHash: "HLIB", assetId: "asset_9", origin: "upload", source: "library" });
   });
 
   it("SEM veiculando + vídeo na biblioteca → usa metaVideoId", async () => {
     const deps = fakeDeps([{ id: "asset_v", imageHash: null, videoId: "VID1" }]);
-    const out = await chooseCreative(deps, ORG, ACC, REF, {}, BEST_PERFORMING);
+    const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, {}, BEST_PERFORMING);
     expect(out).toEqual({ videoId: "VID1", assetId: "asset_v", origin: "upload", source: "library" });
   });
 
   it("SEM veiculando + biblioteca vazia → null", async () => {
-    expect(await chooseCreative(fakeDeps([]), ORG, ACC, REF, {}, BEST_PERFORMING)).toBeNull();
+    expect(await chooseCreative(fakeDeps([]), ORG, ACC, AGENT, REF, {}, BEST_PERFORMING)).toBeNull();
   });
 
   it("CONTEXT-AWARE: com match + descrições, o matcher escolhe pelo CONTEXTO (não recência)", async () => {
@@ -84,15 +121,15 @@ describe("chooseCreative (pool único: veiculando + biblioteca)", () => {
       ],
       1,
     );
-    const out = await chooseCreative(deps, ORG, ACC, REF, {}, BEST_PERFORMING, MATCH);
+    const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, {}, BEST_PERFORMING, MATCH);
     expect(llm.completeStructured).toHaveBeenCalledOnce(); // consultou o contexto
     expect(out?.assetId).toBe("b"); // escolheu pelo contexto (index 1), não a recência (a)
     expect(out?.source).toBe("library");
   });
 
-  it("veiculando em vídeo → escolhe o vídeo veiculado", async () => {
-    const deps = { db: { select: vi.fn() } } as unknown as WorkerDeps;
-    const out = await chooseCreative(deps, ORG, ACC, REF, { videoId: "SVID", sourceAdId: "ad_2" }, BEST_PERFORMING);
+  it("veiculando em vídeo, sem fadiga → escolhe o vídeo veiculado", async () => {
+    const deps = fakeDepsSeq([{ limit: [{ campaignId: "C2", adsetId: "AS2" }] }, { direct: [{ flags: [] }] }]);
+    const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, { videoId: "SVID", sourceAdId: "ad_2" }, BEST_PERFORMING);
     expect(out).toEqual({ videoId: "SVID", assetId: "ad_2", origin: "reuse", source: "serving" });
   });
 });

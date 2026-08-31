@@ -74,6 +74,23 @@ describe("detectCreationOpportunities", () => {
     expect(out).toEqual([{ kind: "cold_start", rationale: expect.any(String) }]);
   });
 
+  it("vencedor FATIGADO no teto → NÃO propõe scale_winner (criativo cansado); refresh_fatigued vira o top (gap real corrigido)", () => {
+    const out = detectCreationOpportunities({
+      hasActiveCampaigns: true,
+      entities: [ent({ tier: "winner", atBudgetCeiling: true, fatigued: true })],
+    });
+    expect(out.some((o) => o.kind === "scale_winner")).toBe(false);
+    expect(out[0]?.kind).toBe("refresh_fatigued");
+  });
+
+  it("vencedor fatigado COM FOLGA de budget → replicate_winner ainda vale (público novo, criativo provado, não é 'mais do mesmo cansado')", () => {
+    const out = detectCreationOpportunities({
+      hasActiveCampaigns: true,
+      entities: [ent({ tier: "winner", atBudgetCeiling: false, fatigued: true })],
+    });
+    expect(out.some((o) => o.kind === "replicate_winner")).toBe(true);
+  });
+
   it("prioridade: scale > refresh > cold_start", () => {
     const out = detectCreationOpportunities({
       hasActiveCampaigns: false,

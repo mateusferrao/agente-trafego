@@ -61,7 +61,11 @@ export function detectCreationOpportunities(input: DetectOpportunitiesInput): Cr
   const out: CreationOpportunity[] = [];
   const winner = input.entities.find((e) => e.tier === "winner" && e.significant);
 
-  if (winner && winner.atBudgetCeiling !== false) {
+  // gap real corrigido (pivô saúde): um vencedor FATIGADO não pode virar `scale_winner`
+  // (subir budget no MESMO criativo já cansado) — isso é "escalar sem pipeline de criativo
+  // pronto" (veto do squad traffic-masters). `refresh_fatigued` (abaixo, no loop) já cobre
+  // essa entidade com prioridade menor, então some do topo sem sumir da lista.
+  if (winner && !winner.fatigued && winner.atBudgetCeiling !== false) {
     out.push({
       kind: "scale_winner",
       entityLevel: winner.level,

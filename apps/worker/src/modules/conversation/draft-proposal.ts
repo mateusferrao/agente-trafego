@@ -1230,8 +1230,38 @@ async function loadForcedCreative(
 }
 
 /**
+ * O anúncio-fonte "provado" (melhor por desempenho) está com o criativo fatigado? Fadiga é
+ * detectada por CAMPANHA/ADSET (`entity_analyses.flags`), não por anúncio individual — então
+ * resolve a campanha/adset do anúncio (`ad_creatives`) e checa se algum dos dois tem o sinal
+ * `creative_fatigue` na última análise. Sem dado nenhum (nunca analisado) → assume não-fatigado
+ * (nunca bloqueia por ausência de sinal).
+ */
+async function isSourceFatigued(
+  deps: WorkerDeps,
+  orgId: string,
+  accountId: string,
+  agentId: string,
+  sourceAdId: string,
+): Promise<boolean> {
+  const [ad] = await deps.db
+    .select({ campaignId: adCreatives.campaignId, adsetId: adCreatives.adsetId })
+    .from(adCreatives)
+    .where(and(eq(adCreatives.orgId, orgId), eq(adCreatives.adAccountId, accountId), eq(adCreatives.adId, sourceAdId)))
+    .limit(1);
+  const ids = [ad?.adsetId, ad?.campaignId].filter((id): id is string => Boolean(id));
+  if (ids.length === 0) return false;
+  const rows = await deps.db
+    .select({ flags: entityAnalyses.flags })
+    .from(entityAnalyses)
+    .where(and(eq(entityAnalyses.agentId, agentId), inArray(entityAnalyses.entityId, ids)));
+  return rows.some((r) => (r.flags ?? []).includes("creative_fatigue"));
+}
+
+/**
  * Pool ÚNICO de candidatos a criativo (decisão do dono): anúncios VEICULANDO + biblioteca.
- * Rank: o melhor VEICULANDO (provado por desempenho, via `inferCreationDefaults`) vence; sem
+ * Rank: o melhor VEICULANDO (provado por desempenho, via `inferCreationDefaults`) vence — SALVO
+ * se estiver com o criativo fatigado (`isSourceFatigued`, pivô saúde), caso em que cai na
+ * biblioteca por contexto (não reusa automaticamente um anúncio provado mas já cansado). Sem
  * criativo veiculando, cai no upload mais recente da biblioteca (`ready`, não-arquivado). Assim
  * um criativo que você subiu mas nunca veiculou também é candidato (antes era ignorado). O
  * picker manual segue podendo forçar qualquer asset. `null` = nenhum criativo em lugar nenhum.
@@ -1240,26 +1270,34 @@ export async function chooseCreative(
   deps: WorkerDeps,
   orgId: string,
   accountId: string,
+  agentId: string,
   ref: AdAccountRef,
   serving: { imageHash?: string; videoId?: string; sourceAdId?: string },
   strategy: CreativeSourceStrategy,
   match?: MatchContext & { readonly model: string },
 ): Promise<ChosenCreative | null> {
-  const servingRef = (): ChosenCreative | null =>
-    serving.imageHash || serving.videoId
-      ? {
-          ...(serving.imageHash ? { imageHash: serving.imageHash } : {}),
-          ...(serving.videoId ? { videoId: serving.videoId } : {}),
-          assetId: serving.sourceAdId ?? "reuse",
-          origin: "reuse",
-          source: "serving",
-        }
-      : null;
+  const servingRef = async (): Promise<ChosenCreative | null> => {
+    if (!serving.imageHash && !serving.videoId) return null;
+    // gap real corrigido (pivô saúde): não reusar automaticamente um anúncio "provado" cujo
+    // criativo já está fatigado (mesmo princípio de `rankCreatives.excludeFatigued`, adaptado
+    // à granularidade real disponível — fadiga é sinal de campanha/adset, não de anúncio
+    // individual). Sem sourceAdId (ex: picker manual) → nada pra checar, segue.
+    if (serving.sourceAdId && (await isSourceFatigued(deps, orgId, accountId, agentId, serving.sourceAdId))) {
+      return null;
+    }
+    return {
+      ...(serving.imageHash ? { imageHash: serving.imageHash } : {}),
+      ...(serving.videoId ? { videoId: serving.videoId } : {}),
+      assetId: serving.sourceAdId ?? "reuse",
+      origin: "reuse",
+      source: "serving",
+    };
+  };
 
   // MODO PADRÃO (serving.best_performing = comportamento de hoje): reusa o melhor veiculando (provado
-  // por desempenho, determinístico, SEM LLM); sem veiculando, cai na biblioteca por contexto.
+  // por desempenho, determinístico, SEM LLM); sem veiculando (ou fatigado), cai na biblioteca por contexto.
   if (strategy.mode === "serving" && (strategy.servingPick ?? "best_performing") === "best_performing") {
-    return servingRef() ?? (await chooseLibraryByContext(deps, orgId, accountId, match));
+    return (await servingRef()) ?? (await chooseLibraryByContext(deps, orgId, accountId, match));
   }
 
   // MODOS COM LLM (serving.agent / library / both): monta o POOL de candidatos DESCRITOS por visão
@@ -1274,7 +1312,7 @@ export async function chooseCreative(
   }
   if (pool.length === 0) {
     // pediu veiculando mas não há candidato descrito → cai no melhor veiculando; senão nada.
-    return strategy.mode === "library" ? null : servingRef();
+    return strategy.mode === "library" ? null : await servingRef();
   }
 
   let chosen = pool[0]!; // fallback: ordem (veiculando recentes primeiro, depois biblioteca)
@@ -1705,6 +1743,7 @@ export async function proposeCreateCampaign(
         deps,
         ctx.orgId,
         ctx.adAccountId,
+        ctx.agentId,
         ac.ref,
         {
           ...(defaults.imageHash ? { imageHash: defaults.imageHash } : {}),
