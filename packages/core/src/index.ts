@@ -35,3 +35,4 @@ export * from "./password/index.js";
 export * from "./agent-config/index.js";
 export * from "./creation/index.js";
 export * from "./audiences/index.js";
+export * from "./analysis-knowledge/index.js";

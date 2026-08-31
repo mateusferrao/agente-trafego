@@ -5,7 +5,13 @@
 import type { AccountBrief, CampaignUnit, CreativeVisionResult } from "@trafego/shared";
 import type { AnalysisOutput, UnitAnalysis } from "@trafego/shared/schemas";
 import type { LLMMessage } from "@trafego/shared/ports";
-import type { FindingIssue } from "@trafego/core";
+import {
+  REVIEW_KNOWLEDGE_CONTEXT,
+  buildAnalysisKnowledgeText,
+  buildCampaignKnowledgeContext,
+  buildSynthesisKnowledgeContext,
+  type FindingIssue,
+} from "@trafego/core";
 
 /** Anti-alucinação (adotado do automato). */
 export const GROUNDING_RULE =
@@ -35,132 +41,8 @@ const OUTPUT_SHAPE = `{
   ]
 }`;
 
-const FUNNEL_NOTE =
-  "O briefing pode trazer 'funnel' (funil de messaging): conversas iniciadas, 1ª resposta e " +
-  "profundidade, com taxas. Trate como QUALIDADE do lead (não só volume): taxa de resposta/" +
-  "profundidade baixa é problema mesmo com muitas conversas.";
-
-const WASTE_NOTE =
-  "Se o briefing trouxer 'waste', LIDERE por ele (o 'money shot'): diga em reais quanto está sendo " +
-  "queimado ('wastedSpend' = campanhas paradas/sem resultado, com % do total) e onde o gasto está " +
-  "MAL ALOCADO ('pareto.misallocated' = leva muito gasto e entrega pouco resultado). Fale em dinheiro " +
-  "e ação (pausar libera <valor> no período, na moeda da conta; realocar de A p/ B), não só em 'vai mal'.";
-
-const TRACKING_NOTE =
-  "Se o briefing trouxer 'trackingHealth' (suspect=true), a MEDIÇÃO de venda/lead da conta parece " +
-  "incompleta: há muita conversa e pouquíssima conversão de negócio rastreada. Trate como HIPÓTESE " +
-  "(nunca veredito): provavelmente as vendas fecham fora do rastreio (ex: atendimento no WhatsApp) e " +
-  "não voltam pro pixel/CAPI. NÃO conclua que os anúncios vão mal só pelo CPA de venda; recomende " +
-  "conferir pixel/CAPI antes de pausar/cortar por CPA de venda, e apoie-se no funil como qualidade.";
-
-/** Honestidade do descasamento meta-de-negócio × objetivo da entidade (Fatia 4). */
-const MISMATCH_NOTE =
-  "Cada entidade traz 'conversionBasis': 'target' = o CPA/ROAS mostrado É a conversão de " +
-  "negócio do agente (pode comparar com a meta); 'proxy' = a conversão de negócio (ex: venda) " +
-  "NÃO é mensurável nessa entidade porque ela otimiza outra coisa — o campo 'proxy' traz o custo " +
-  "do objetivo próprio da entidade (ex: custo por conversa) apenas como REFERÊNCIA, NUNCA como " +
-  "venda: não declare meta batida, deixe explícito que a venda não é rastreada ali e use o funil " +
-  "como sinal de qualidade; 'none' = sem conversão, julgue por CPC/CPM. Nunca trate custo de " +
-  "proxy barato como sucesso de negócio.";
-
-/** Receita rastreada além do goal de negócio (§7 — não esconder). */
-const REVENUE_NOTE =
-  "Se a entidade trouxer 'revenue' (receita rastreada TOTAL, ex.: valor de compras), SEMPRE " +
-  "mencione — mesmo quando o goal de negócio é conversa/lead (sem valor). Reporte a receita e o " +
-  "ROAS de retorno (revenue/gasto) como CONTEXTO adicional, deixando claro que vem de compras " +
-  "rastreadas (secundário ao objetivo principal, que segue medido pelo CPA do goal). NUNCA diga " +
-  "que 'não há ROAS/receita' quando 'revenue' está preenchido — o objetivo não muda, mas o dono " +
-  "precisa ver todo o retorno.";
-
-/** Tiers + sinais + elegibilidade (Fatia 6c) — como o LLM deve ler e agir. */
-const QUALITY_NOTE =
-  "Cada entidade pode trazer 'tier' (winner/performer/underperformer/zombie), 'healthSignals' " +
-  "(creative_fatigue = fadiga de criativo; audience_saturation = público saturado; low_volume = " +
-  "pouco dado) e 'eligibility' (hasSignificance, inLearning). Aja assim: proteja os WINNERS (não " +
-  "mexa no que vai bem), priorize PAUSAR os ZOMBIES (gasto sem conversão = desperdício), conserte os " +
-  "UNDERPERFORMERS. NUNCA recomende ESCALAR (aumentar orçamento / reativar) uma entidade sem " +
-  "hasSignificance ou em inLearning — nesse caso recomende investigar ou aguardar mais dados.";
-
-/**
- * Atribuição × incrementalidade — freia recomendação de pausa por CPA atribuído.
- * O CPA/ROAS da Meta é ATRIBUÍDO (último clique/visualização numa janela), não medida de
- * INCREMENTALIDADE: subestima o valor de topo de funil (prospecção), que gera demanda
- * captada depois por remarketing/marca/direto (efeito halo). Nuança o "pausar" da QUALITY_NOTE.
- */
-const INCREMENTALITY_NOTE =
-  "Atribuição NÃO é incrementalidade: o CPA/ROAS que a Meta reporta é ATRIBUÍDO (último clique/" +
-  "visualização dentro de uma janela) e SUBESTIMA o valor de campanhas de TOPO DE FUNIL " +
-  "(prospecção/reconhecimento), que geram demanda captada depois por remarketing/marca/direto " +
-  "(efeito halo). Isto rebaixa a AÇÃO, NUNCA a VISIBILIDADE: SEMPRE reporte o ponto de atenção " +
-  "(CPA atribuído alto / baixo desempenho) como finding, com o caveat de atribuição, e deixe a " +
-  "decisão de pausar com o dono — não omita nem minimize o achado. Antes de recomendar a AÇÃO de " +
-  "PAUSAR: (1) não pause prospecção/aquisição só pelo CPA atribuído alto — ela alimenta as campanhas " +
-  "de conversão; pausá-la pode secar o remarketing (pense no efeito na conta TODA, não na campanha " +
-  "isolada); (2) reserve a PAUSA para ZUMBI real (gasto sem resultado em lugar nenhum), não para " +
-  "underperformer que ainda pode ser incremental; (3) na dúvida, prefira 'investigate'/monitorar ou " +
-  "ajustar orçamento em vez de pausar — mas explicando o achado, não escondendo. Pausa de campanha " +
-  "ativa exige evidência clara de desperdício, não atribuição isolada.";
-
-/**
- * Direção acionável-por-humano + conselho (S3). Agora que a COPY real chega ao
- * prompt, o analista dá direção concreta de criativo/público e ACONSELHA escalar/
- * criar (texto, o humano executa) — sem inventar ação de plataforma p/ isso.
- */
-const ADVICE_NOTE =
-  "O briefing pode trazer a COPY real dos anúncios (bloco 'Copy real...'). Use-a para DIREÇÃO DE " +
-  "CRIATIVO concreta (ex: 'seu ângulo campeão é prova social; teste uma variação com depoimento') " +
-  "— actionType 'review_creative'. Para PÚBLICO, dê direção de teste (ampliar/estreitar/novo " +
-  "lookalike) — actionType 'review_audience'. Você pode ACONSELHAR em texto (o humano executa, " +
-  "você NÃO aplica): ESCALAR um vencedor com significância (subir orçamento / duplicar) ou CRIAR " +
-  "uma campanha (ex: manutenção entre campanhas) — use actionType 'investigate' (próximo passo " +
-  "claro) ou 'keep' (leitura estratégica). NUNCA proponha ação de plataforma para escalar/criar " +
-  "(não são aplicáveis agora). Seja SELETIVO: só direções/insights materiais, priorizados por impacto.";
-
-/** Diagnóstico por padrão de métrica (causa provável, não só sintoma) — squad. */
-const DIAGNOSIS_NOTE =
-  "Ao explicar um problema, aponte a CAUSA provável pelo padrão das métricas: CTR baixo → gancho/" +
-  "criativo fraco ou segmentação errada; CTR ok mas pouca conversa/conversão → página/oferta ou " +
-  "qualificação do lead; conversão ok mas CPA alto → lance/orçamento ou concorrência; alcance baixo " +
-  "→ público estreito ou orçamento baixo; frequência alta + CTR caindo → fadiga de criativo (renove).";
-
-/**
- * Peso na RECÊNCIA (foco nos resultados mais recentes). O briefing traz 'trends' (recente vs
- * anterior) e a janela do período; dentro dela, o que aconteceu nos ÚLTIMOS DIAS pesa mais que
- * a média antiga acumulada. Sem virar gatilho de ruído de 1 dia.
- */
-const RECENCY_NOTE =
-  "Dê MAIS PESO aos resultados RECENTES: use 'trends' (recente vs anterior) e a janela do período — " +
-  "o desempenho dos últimos dias importa mais que a média acumulada. Uma entidade com boa média mas " +
-  "PIORANDO nos últimos dias é risco (sinalize mesmo que o acumulado ainda pareça bom); uma que MELHOROU " +
-  "recentemente merece o benefício da dúvida antes de cortar. Priorize achados e ações pela FOTO ATUAL + " +
-  "direção recente, não só pelo acumulado do período. Mas NÃO reaja a um único dia (ruído): leia a " +
-  "tendência dos últimos dias, não o pico/vale isolado, e prefira 'investigate' quando o recente for curto demais pra concluir.";
-
-/** Referência de plataforma (cold-start) — direcional, nunca a meta. */
-const BENCHMARK_NOTE =
-  "Se uma entidade trouxer 'benchmarkRef' (cold-start: conta sem meta e sem histórico), trate-o só " +
-  "como REFERÊNCIA DE MERCADO direcional — nunca como a meta do dono e nunca declare sucesso por ele. " +
-  "Sempre convide o dono a definir a meta (CPA/ROAS/custo por conversa) pra uma leitura precisa.";
-
 const jsonBlock = (label: string, value: unknown): string =>
   `${label}:\n\`\`\`json\n${JSON.stringify(value)}\n\`\`\``;
-
-/** Mensagens do ANALISTA (system = metodologia; user = brief + shape). */
-export function buildAnalysisMessages(systemPrompt: string, brief: AccountBrief): LLMMessage[] {
-  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, MISMATCH_NOTE, REVENUE_NOTE, QUALITY_NOTE, INCREMENTALITY_NOTE, RECENCY_NOTE, DIAGNOSIS_NOTE, BENCHMARK_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
-  const user = [
-    jsonBlock("Briefing curado da conta (analise SOMENTE com base nele)", brief),
-    "",
-    "Responda SOMENTE com JSON válido (sem markdown), no formato:",
-    OUTPUT_SHAPE,
-    "",
-    "targetEntity: use apenas ids que aparecem em `segments` do briefing; senão null.",
-  ].join("\n");
-  return [
-    { role: "system", content: system },
-    { role: "user", content: user },
-  ];
-}
 
 /** Shape do JSON por-campanha (map) — sem scorecard (é da conta, na síntese). */
 const CAMPAIGN_OUTPUT_SHAPE = `{
@@ -190,7 +72,9 @@ export function buildCampaignMessages(
   accountContext: { readonly currency: string; readonly window: string; readonly businessGoal?: string },
   copyByAdId: ReadonlyMap<string, AdCopy> = new Map(),
 ): LLMMessage[] {
-  const system = [systemPrompt, GROUNDING_RULE, FUNNEL_NOTE, MISMATCH_NOTE, REVENUE_NOTE, QUALITY_NOTE, INCREMENTALITY_NOTE, RECENCY_NOTE, DIAGNOSIS_NOTE, BENCHMARK_NOTE, ADVICE_NOTE, FINDINGS_METRIC_INSTRUCTION].join("\n\n");
+  const system = [systemPrompt, GROUNDING_RULE, buildAnalysisKnowledgeText(buildCampaignKnowledgeContext(unit)), FINDINGS_METRIC_INSTRUCTION]
+    .filter(Boolean)
+    .join("\n\n");
   const notableAdIds = unit.adsets.flatMap((g) => g.notableAds.map((a) => a.id));
   const vision = notableAdIds
     .map((adId) => ({ adId, vision: visionByAdId.get(adId) ?? [] }))
@@ -238,18 +122,11 @@ export function buildSynthesisMessages(
     "Você recebe análises por-campanha + o contexto da conta. Consolide numa visão ÚNICA da conta: " +
       "priorize o que mais importa, agrupe temas repetidos e proponha as recomendações de maior impacto.",
     GROUNDING_RULE,
-    FUNNEL_NOTE,
-    WASTE_NOTE,
-    TRACKING_NOTE,
-    MISMATCH_NOTE,
-    REVENUE_NOTE,
-    QUALITY_NOTE,
-    INCREMENTALITY_NOTE,
-    RECENCY_NOTE,
-    DIAGNOSIS_NOTE,
-    BENCHMARK_NOTE,
+    buildAnalysisKnowledgeText(buildSynthesisKnowledgeContext(brief)),
     FINDINGS_METRIC_INSTRUCTION,
-  ].join("\n\n");
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   const user = [
     jsonBlock("Contexto da conta (totais, funil, tendências, anomalias)", brief),
     jsonBlock("Análises por-campanha (mapa)", units),
@@ -277,8 +154,14 @@ export function buildReviewMessages(
       "recomendações inseguras, sem base no dado, ou que escalem o que não provou resultado; (3) ajuste " +
       "severidade/prioridade ao que o dado sustenta; (4) NÃO invente achados novos nem números.",
     GROUNDING_RULE,
+    // G7: o revisor corrige contra a MESMA régua de domínio que o analista usou (não só
+    // confere número) — sem isso, ele podia manter uma recomendação numericamente certa
+    // mas que viola a leitura de qualidade/incrementalidade/tracking do domínio.
+    buildAnalysisKnowledgeText(REVIEW_KNOWLEDGE_CONTEXT),
     "Devolva a análise corrigida no MESMO formato JSON (sem markdown).",
-  ].join("\n\n");
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   const flagText = issues.length > 0
     ? issues.map((i) => `- ${i.findingId}: ${i.detail} (${i.reason})`).join("\n")
     : "(nenhum problema pré-detectado)";
