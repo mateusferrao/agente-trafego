@@ -309,6 +309,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
         coldStartReference: env.ANALYSIS_QUALITY_COLD_START_REFERENCE,
         trackingBrokenRatio: env.ANALYSIS_QUALITY_TRACKING_BROKEN_RATIO,
         trackingBrokenMinFunnel: env.ANALYSIS_QUALITY_TRACKING_BROKEN_MIN_FUNNEL,
+        relativeEligibilitySpendMultiplier: env.ANALYSIS_QUALITY_RELATIVE_ELIGIBILITY_SPEND_MULTIPLIER,
       },
     },
     insights: {

@@ -18,6 +18,42 @@ describe("computeEligibility", () => {
     expect(computeEligibility({ conversions: 0, clicks: 0, hasBaseline: false }, T).inLearning).toBe(true);
     expect(computeEligibility({ conversions: 30, clicks: 0, hasBaseline: true }, T).inLearning).toBe(false);
   });
+
+  it("conversation_started conta como volume quando basis=proxy (S3)", () => {
+    expect(
+      computeEligibility(
+        { conversions: 0, clicks: 5, hasBaseline: true, conversationStarted: 25, conversionBasis: "proxy" },
+        T,
+      ).hasSignificance,
+    ).toBe(true);
+  });
+  it("conversation_started NÃO conta quando basis=target (conversão de negócio é mensurável ali)", () => {
+    expect(
+      computeEligibility(
+        { conversions: 0, clicks: 5, hasBaseline: true, conversationStarted: 25, conversionBasis: "target" },
+        T,
+      ).hasSignificance,
+    ).toBe(false);
+  });
+
+  it("piso relativo: gasto ≥ 2×targetCPA conta como volume mesmo com poucas conversões (playbook real)", () => {
+    expect(
+      computeEligibility({ conversions: 2, clicks: 10, hasBaseline: true, targetCPA: 7, spend: 14 }, T)
+        .hasSignificance,
+    ).toBe(true);
+  });
+  it("piso relativo: abaixo de 2×targetCPA não basta", () => {
+    expect(
+      computeEligibility({ conversions: 2, clicks: 10, hasBaseline: true, targetCPA: 7, spend: 13.99 }, T)
+        .hasSignificance,
+    ).toBe(false);
+  });
+  it("piso relativo ainda exige hasBaseline (nunca dá significância a entidade em learning)", () => {
+    expect(
+      computeEligibility({ conversions: 2, clicks: 10, hasBaseline: false, targetCPA: 7, spend: 100 }, T)
+        .hasSignificance,
+    ).toBe(false);
+  });
 });
 
 describe("detectHealthSignals", () => {
@@ -97,6 +133,36 @@ describe("enrichEntitiesQuality (integração das peças)", () => {
       { thresholds: T, hasTarget: true, currency: "BRL" },
     );
     expect(out[0]!.tier).toBe("winner");
+  });
+
+  it("conta de mensagem vira significante/winner por conversas (basis=proxy) mesmo com poucas conversões absolutas (S3)", () => {
+    const out = enrichEntitiesQuality(
+      [
+        summary({
+          id: "MSG",
+          metrics: { spend: 200, impressions: 10000, clicks: 300, ctr: 3, cpc: 0.67, cpm: 20, conversions: 0 },
+          conversionBasis: "proxy",
+          funnel: { counts: { conversation_started: 30 } },
+        }),
+      ],
+      {},
+      { thresholds: T, hasTarget: false, currency: "BRL" },
+    );
+    expect(out[0]!.eligibility?.hasSignificance).toBe(true);
+  });
+
+  it("piso relativo integrado: gasto ≥ 2×targetCPA vira significante mesmo com poucas conversões", () => {
+    const out = enrichEntitiesQuality(
+      [
+        summary({
+          id: "REL",
+          metrics: { spend: 14, impressions: 2000, clicks: 12, ctr: 0.6, cpc: 1.17, cpm: 7, conversions: 1, cpa: 14 },
+        }),
+      ],
+      { targetCPA: 7 },
+      { thresholds: T, hasTarget: true, currency: "BRL" },
+    );
+    expect(out[0]!.eligibility?.hasSignificance).toBe(true);
   });
 
   it("frequência por estágio: prospecção satura a 2,6; remarketing não", () => {

@@ -233,6 +233,9 @@ export const envSchema = z.object({
   // Tracking furado (§Bloco 2): conversas/max(conversões,1) acima da razão + piso de conversas.
   ANALYSIS_QUALITY_TRACKING_BROKEN_RATIO: z.coerce.number().positive().default(50),
   ANALYSIS_QUALITY_TRACKING_BROKEN_MIN_FUNNEL: z.coerce.number().nonnegative().default(50),
+  // Piso de elegibilidade RELATIVO (playbook real, pivô saúde): gasto ≥ este múltiplo
+  // do CPA-alvo já basta como volume, mesmo com poucas conversões/cliques absolutos.
+  ANALYSIS_QUALITY_RELATIVE_ELIGIBILITY_SPEND_MULTIPLIER: z.coerce.number().positive().default(2),
 
   // ─── Cadência (cron por conta — 3b) ────────────────────────────────────
   // Default global da cadência (a UI de edição por-conta = Fatia 4). Cron 5-campos.

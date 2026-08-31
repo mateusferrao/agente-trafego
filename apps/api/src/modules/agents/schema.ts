@@ -57,6 +57,9 @@ export const qualityConfigInput = z.object({
   trackingBrokenRatio: z.number().positive().optional(),
   /** tracking furado: volume mínimo de conversas p/ sequer considerar a suspeita. */
   trackingBrokenMinFunnel: z.number().nonnegative().optional(),
+  /** piso de elegibilidade RELATIVO (playbook real, pivô saúde): gasto ≥ este múltiplo
+   *  do CPA-alvo já basta como volume, mesmo com poucas conversões/cliques absolutos. */
+  relativeEligibilitySpendMultiplier: z.number().positive().optional(),
   /** override por agente da referência de mercado (pivô), na moeda da conta. Merge por
    *  campo sobre o org-default; campo em dinheiro só aplica se a moeda bate. */
   marketReference: marketReferenceSchema.optional(),
@@ -75,6 +78,7 @@ export const qualityDefaultsOutput = z.object({
   coldStartReference: z.boolean(),
   trackingBrokenRatio: z.number(),
   trackingBrokenMinFunnel: z.number(),
+  relativeEligibilitySpendMultiplier: z.number(),
 });
 export type QualityDefaultsOutput = z.infer<typeof qualityDefaultsOutput>;
 

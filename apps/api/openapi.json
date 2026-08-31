@@ -1601,6 +1601,10 @@
                     "type": "number",
                     "minimum": 0
                   },
+                  "relativeEligibilitySpendMultiplier": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
                   "marketReference": {
                     "type": "object",
                     "properties": {
@@ -1802,6 +1806,9 @@
               },
               "trackingBrokenMinFunnel": {
                 "type": "number"
+              },
+              "relativeEligibilitySpendMultiplier": {
+                "type": "number"
               }
             },
             "required": [
@@ -1814,7 +1821,8 @@
               "zombieMinSpend",
               "coldStartReference",
               "trackingBrokenRatio",
-              "trackingBrokenMinFunnel"
+              "trackingBrokenMinFunnel",
+              "relativeEligibilitySpendMultiplier"
             ]
           },
           "notifyPolicy": {
@@ -2698,6 +2706,10 @@
                   "trackingBrokenMinFunnel": {
                     "type": "number",
                     "minimum": 0
+                  },
+                  "relativeEligibilitySpendMultiplier": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
                   },
                   "marketReference": {
                     "type": "object",

@@ -136,5 +136,6 @@ function resolveQuality(raw: unknown, defaults: QualityThresholds | undefined): 
     coldStartReference: typeof mc.coldStartReference === "boolean" ? mc.coldStartReference : d.coldStartReference,
     trackingBrokenRatio: pos(mc.trackingBrokenRatio) ?? d.trackingBrokenRatio,
     trackingBrokenMinFunnel: nonNeg(mc.trackingBrokenMinFunnel) ?? d.trackingBrokenMinFunnel,
+    relativeEligibilitySpendMultiplier: pos(mc.relativeEligibilitySpendMultiplier) ?? d.relativeEligibilitySpendMultiplier,
   };
 }

@@ -5,6 +5,7 @@
 // ranqueamento relativo + rede de segurança que alimenta prompt, guard e UI.
 
 import type {
+  ConversionBasis,
   ConversionGoal,
   DecisionEligibility,
   EntitySummary,
@@ -42,6 +43,13 @@ export interface QualityThresholds {
   readonly trackingBrokenRatio: number;
   /** tracking furado: volume mínimo de conversas p/ sequer considerar a suspeita. */
   readonly trackingBrokenMinFunnel: number;
+  /**
+   * Piso de elegibilidade RELATIVO (playbook real, complementar ao absoluto acima):
+   * gasto ≥ este múltiplo do CPA-alvo já basta como volume, mesmo com poucas
+   * conversões/cliques absolutos — escala com a economia da própria conta (útil pra
+   * contas de baixo volume mas gasto relativo já significativo, ex: saúde).
+   */
+  readonly relativeEligibilitySpendMultiplier: number;
 }
 
 export const DEFAULT_QUALITY_THRESHOLDS: QualityThresholds = {
@@ -55,6 +63,7 @@ export const DEFAULT_QUALITY_THRESHOLDS: QualityThresholds = {
   coldStartReference: true,
   trackingBrokenRatio: 50,
   trackingBrokenMinFunnel: 50,
+  relativeEligibilitySpendMultiplier: 2,
 };
 
 // ─── Elegibilidade de decisão ─────────────────────────────────────────────
@@ -67,17 +76,47 @@ export interface EligibilityInput {
    * que hoje não sincronizamos. Entidade sem baseline = nova ⇒ em learning.
    */
   readonly hasBaseline: boolean;
+  /**
+   * Conversas iniciadas no funil (WhatsApp/Messenger). Conta como volume quando
+   * `conversionBasis === "proxy"` — a conversão de negócio não é mensurável nesta
+   * entidade, então a conversa (objetivo próprio dela) é o sinal de volume real.
+   * Evita que conta de mensagem nunca tenha significância só por não rastrear
+   * venda ali (playbook real de saúde; `[ALTO]` do ROADMAP).
+   */
+  readonly conversationStarted?: number;
+  /** basis da conversão nesta entidade — ver `conversationStarted`. */
+  readonly conversionBasis?: ConversionBasis;
+  /** gasto acumulado na janela (moeda da conta) — p/ piso relativo (ver `targetCPA`). */
+  readonly spend?: number;
+  /**
+   * CPA-alvo do dono, se definido — base do piso relativo (`spend ≥
+   * relativeEligibilitySpendMultiplier × targetCPA`). Sem alvo definido, o piso
+   * relativo não se aplica (nada pra escalar).
+   */
+  readonly targetCPA?: number;
 }
 
 /**
- * Elegibilidade de DECISÃO. Significância = volume suficiente (conversões OU
- * cliques) E já rodava na janela anterior (`hasBaseline`, proxy de ≥7 dias).
- * Learning ≈ entidade nova (sem baseline) → Meta ainda re-otimizando.
+ * Elegibilidade de DECISÃO. Significância = volume suficiente E já rodava na
+ * janela anterior (`hasBaseline`, proxy de ≥ janela — cobre também o piso de
+ * "dias mínimos de veiculação" do playbook real: sem `daysActive` preciso no
+ * pipeline hoje, `hasBaseline` é o gate de tempo mais conservador disponível,
+ * nunca deixa passar algo mais novo do que a própria janela).
+ *
+ * Volume = (conversões OU cliques OU conversas-proxy, piso absoluto) OU (gasto
+ * ≥ 2×CPA-alvo, piso relativo — playbook real, escala com a economia da conta).
  */
 export function computeEligibility(input: EligibilityInput, t: QualityThresholds): DecisionEligibility {
-  const enoughVolume = input.conversions >= t.minConversions || input.clicks >= t.minClicks;
+  const messagingVolume = input.conversionBasis === "proxy" ? (input.conversationStarted ?? 0) : 0;
+  const enoughVolumeAbsolute =
+    input.conversions >= t.minConversions || input.clicks >= t.minClicks || messagingVolume >= t.minConversions;
+  const enoughVolumeRelative =
+    input.targetCPA !== undefined &&
+    input.targetCPA > 0 &&
+    input.spend !== undefined &&
+    input.spend >= t.relativeEligibilitySpendMultiplier * input.targetCPA;
   return {
-    hasSignificance: enoughVolume && input.hasBaseline,
+    hasSignificance: (enoughVolumeAbsolute || enoughVolumeRelative) && input.hasBaseline,
     inLearning: !input.hasBaseline,
     conversions: input.conversions,
     clicks: input.clicks,
@@ -219,7 +258,19 @@ export function enrichEntitiesQuality(
     const conversions = typeof e.metrics.conversions === "number" ? e.metrics.conversions : 0;
     const clicks = e.metrics.clicks;
     const hasBaseline = Object.keys(e.deltaVsBaseline).length > 0;
-    const eligibility = computeEligibility({ conversions, clicks, hasBaseline }, t);
+    const conversationStarted = e.funnel?.counts?.conversation_started ?? 0;
+    const eligibility = computeEligibility(
+      {
+        conversions,
+        clicks,
+        hasBaseline,
+        conversationStarted,
+        ...(e.conversionBasis ? { conversionBasis: e.conversionBasis } : {}),
+        spend: e.metrics.spend,
+        ...(goals.targetCPA !== undefined ? { targetCPA: goals.targetCPA } : {}),
+      },
+      t,
+    );
 
     const ctrDropPct = dropPct(e.metrics.ctr, e.deltaVsBaseline.ctr);
     const costMetric = typeof e.metrics.cpa === "number" ? "cpa" : "cpc";
@@ -248,7 +299,6 @@ export function enrichEntitiesQuality(
     const cpa = typeof e.metrics.cpa === "number" && e.metrics.cpa > 0 ? e.metrics.cpa : undefined;
     // sinal de vida: conversão de negócio, OU conversão-proxy (objetivo próprio), OU
     // conversas no funil. Ausência total (com gasto, fora de learning) = zumbi.
-    const conversationStarted = e.funnel?.counts?.conversation_started ?? 0;
     const hasSignOfLife = conversions > 0 || typeof e.proxy?.cpa === "number" || conversationStarted > 0;
     const tier = classifyTier(
       {
