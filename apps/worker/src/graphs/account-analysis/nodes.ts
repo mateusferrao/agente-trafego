@@ -1577,6 +1577,11 @@ function toRecommendationRow(
     // risco atrelado ao KIND: só platform_action (com ação real) carrega risco; direção/
     // insight (sem CTA de aplicar) são sempre "low" — o rótulo não pode sugerir perigo.
     riskLevel: kind === "platform_action" && actionType ? riskForAction(actionType, params) : "low",
+    // taxonomia de saída (S0b/G4) — repassa verbatim (já validado pelo zod: null quando o
+    // LLM não conseguiu ancorar em dado real).
+    expectedImpact: rec.expectedImpact,
+    whatToMonitor: rec.whatToMonitor,
+    findingRefs: rec.findingRefs,
   };
 }
 

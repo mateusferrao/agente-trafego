@@ -84,9 +84,15 @@ function isVerifiable(value: number, known: ReadonlySet<number>): boolean {
   return Math.abs(value) >= 1 && known.has(Math.round(value));
 }
 
-/** Finding sustentado? tem metricRefs e (nenhum número OU ≥1 número que confere). */
+/**
+ * Finding sustentado? tem metricRefs e (nenhum número OU ≥1 número que confere).
+ * EXCEÇÃO (G4): `caveat=true` carve-out do requisito de metricRefs — achado QUALITATIVO/
+ * compliance sem número que o sustente (ex: risco de linguagem regulada). NUNCA afrouxa a
+ * verificação de número quando `metricRefs` está preenchido (com caveat ou sem).
+ */
 function findingIssue(finding: AnalysisFinding, known: ReadonlySet<number>): FindingIssue | null {
   if (finding.metricRefs.length === 0) {
+    if (finding.caveat) return null;
     return { findingId: finding.id, reason: "no_metric_ref", detail: "sem métrica de suporte" };
   }
   const numeric = finding.metricRefs.filter((r): r is { label: string; value: number } => typeof r.value === "number");

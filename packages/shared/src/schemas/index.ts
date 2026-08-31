@@ -346,6 +346,10 @@ export const analysisFindingSchema = z.object({
   detail: z.string(),
   severity: findingSeverity,
   metricRefs: z.array(z.object({ label: z.string(), value: z.union([z.number(), z.string()]) })),
+  /** G4: achado QUALITATIVO/compliance sem número que o sustente (ex: risco de linguagem
+   *  regulada) — carve-out do drop por falta de `metricRefs` (analysis-guards). NUNCA afrouxa
+   *  a verificação de número quando `metricRefs` está preenchido (com caveat ou sem). */
+  caveat: z.boolean().nullable(),
 });
 
 export const analysisRecommendationSchema = z.object({
@@ -356,6 +360,13 @@ export const analysisRecommendationSchema = z.object({
   actionType: recommendationActionType,
   targetEntity: z.object({ level: entityLevel, externalId: z.string() }).nullable(),
   budgetChangePct: z.number().nullable(),
+  /** G4: impacto em R$ (texto curto) — só quando ancorável em número real do brief
+   *  (GROUNDING_RULE); null quando não há base pra estimar (a maioria fora de pause/scale). */
+  expectedImpact: z.string().nullable(),
+  /** G4: métrica/sinal a acompanhar depois de aplicar (o "próximo olhar" do dono). */
+  whatToMonitor: z.string().nullable(),
+  /** G4: liga a recomendação ao(s) finding(s) que a motivaram (ids de `findings[].id`). */
+  findingRefs: z.array(z.string()).nullable(),
 });
 
 export const analysisOutputSchema = z.object({

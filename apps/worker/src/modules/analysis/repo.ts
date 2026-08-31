@@ -77,6 +77,11 @@ export interface RecommendationRow {
   /** Capacidade do catálogo proposta — só em platform_action. */
   readonly toolKey: string | null;
   readonly riskLevel: RiskLevel;
+  /** Taxonomia de saída (S0b/G4) — só populados no caminho LLM (`toRecommendationRow`);
+   *  demais origens (tracking/human_direction/criação proativa) ficam null. */
+  readonly expectedImpact: string | null;
+  readonly whatToMonitor: string | null;
+  readonly findingRefs: readonly string[] | null;
 }
 
 /** Copy + desempenho denormalizado de um anúncio, persistido do run (S1). */
@@ -328,6 +333,9 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
           proposedAction: r.proposedAction ?? null,
           toolKey: r.toolKey ?? null,
           riskLevel: r.riskLevel,
+          expectedImpact: r.expectedImpact,
+          whatToMonitor: r.whatToMonitor,
+          findingRefs: r.findingRefs ? [...r.findingRefs] : null,
         })),
       );
     },

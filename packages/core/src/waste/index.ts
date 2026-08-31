@@ -83,7 +83,9 @@ export function computeWasteReport(campaigns: readonly EntitySummary[]): WasteRe
 
 /**
  * Anexa o impacto (gasto liberado no período) às recomendações de PAUSA — o dono vê
- * o valor concreto de cada ação. Determinístico; puro; só acrescenta ao rationale.
+ * o valor concreto de cada ação. Determinístico; puro. Acrescenta ao `rationale` (o redator
+ * hoje lê só esse campo) E preenche `expectedImpact` (G4, campo estruturado) — mais confiável
+ * que um valor gerado pelo LLM, então SOBRESCREVE o que o analista tenha proposto pra pause.
  */
 export function annotateFreedSpend(
   output: AnalysisOutput,
@@ -95,7 +97,8 @@ export function annotateFreedSpend(
     const id = r.targetEntity?.externalId;
     const spend = id ? spendById.get(id) : undefined;
     if (spend === undefined || spend <= 0) return r;
-    return { ...r, rationale: `${r.rationale}\n[impacto] pausar libera ~${formatMoney(round2(spend), currency)} no período.` };
+    const freed = formatMoney(round2(spend), currency);
+    return { ...r, rationale: `${r.rationale}\n[impacto] pausar libera ~${freed} no período.`, expectedImpact: `libera ~${freed} no período` };
   });
   return { ...output, recommendations };
 }

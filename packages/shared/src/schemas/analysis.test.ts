@@ -5,10 +5,21 @@ const valid = {
   scorecard: { grade: "B", headline: "Boa entrega, conversão abaixo do potencial.", biggestLeak: "conversao" },
   summary: "Conta gastou R$300 nos últimos 7 dias.",
   findings: [
-    { id: "f1", title: "CPA alto", detail: "Campanha B a R$100/venda", severity: "warning", metricRefs: [{ label: "CPA", value: 100 }] },
+    { id: "f1", title: "CPA alto", detail: "Campanha B a R$100/venda", severity: "warning", metricRefs: [{ label: "CPA", value: 100 }], caveat: null },
   ],
   recommendations: [
-    { id: "r1", title: "Pausar B", rationale: "CPA 2x a meta", priority: "high", actionType: "pause", targetEntity: { level: "campaign", externalId: "c2" }, budgetChangePct: null },
+    {
+      id: "r1",
+      title: "Pausar B",
+      rationale: "CPA 2x a meta",
+      priority: "high",
+      actionType: "pause",
+      targetEntity: { level: "campaign", externalId: "c2" },
+      budgetChangePct: null,
+      expectedImpact: "libera ~R$100/semana",
+      whatToMonitor: "CPA nos próximos 3 dias",
+      findingRefs: ["f1"],
+    },
   ],
 };
 
@@ -24,6 +35,21 @@ describe("analysisOutputSchema", () => {
       recommendations: [{ ...valid.recommendations[0], actionType: "investigate", targetEntity: null, budgetChangePct: null }],
     });
     expect(parsed.success).toBe(true);
+  });
+
+  it("G4: aceita expectedImpact/whatToMonitor/findingRefs/caveat nulos", () => {
+    const parsed = analysisOutputSchema.safeParse({
+      ...valid,
+      findings: [{ ...valid.findings[0], caveat: null }],
+      recommendations: [{ ...valid.recommendations[0], expectedImpact: null, whatToMonitor: null, findingRefs: null }],
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("G4: rejeita finding sem a chave caveat (campo obrigatório, ainda que nullable)", () => {
+    const { caveat: _drop, ...findingWithoutCaveat } = valid.findings[0]!;
+    const parsed = analysisOutputSchema.safeParse({ ...valid, findings: [findingWithoutCaveat] });
+    expect(parsed.success).toBe(false);
   });
 
   it("rejeita output sem findings/recommendations", () => {

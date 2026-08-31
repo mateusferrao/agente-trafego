@@ -21,7 +21,18 @@ export const GROUNDING_RULE =
 export const FINDINGS_METRIC_INSTRUCTION =
   'Todo item de "findings" DEVE ter ao menos 1 "metricRefs" (label + value) do briefing que o ' +
   "sustente — inclusive achados qualitativos (ancore na métrica mais próxima: CTR, CPA, gasto, taxa " +
-  "de resposta etc.). Findings sem metricRefs são descartados.";
+  "de resposta etc.). Findings sem metricRefs são descartados. EXCEÇÃO: um achado QUALITATIVO/de " +
+  'compliance sem número que o sustente (ex: linguagem de criativo que pode violar diretriz do ' +
+  'nicho) pode vir com "caveat": true e "metricRefs": [] em vez de ser descartado — mas se você ' +
+  "citar um número, ele TEM que bater com o briefing (o caveat não afrouxa a verificação numérica).";
+
+/** Taxonomia da recomendação (G4): impacto em R$, o que monitorar, e o link ao finding. */
+export const RECOMMENDATION_TAXONOMY_INSTRUCTION =
+  '"expectedImpact" (texto curto, ex: "libera ~R$450/semana") só quando você conseguir ancorar num ' +
+  "número REAL do briefing (mesma regra do GROUNDING_RULE) — na dúvida, deixe null; NÃO estime um " +
+  'valor em R$ sem base no dado. "whatToMonitor" (texto curto) diz qual métrica/sinal acompanhar ' +
+  'depois de aplicar (ex: "CPA nos próximos 3 dias"). "findingRefs" lista os "id" de "findings" que ' +
+  "motivaram esta recomendação (vazio se nenhum finding específico a sustenta).";
 
 /** Forma esperada do JSON (espelha analysisOutputSchema) — PT-BR, conciso. */
 const OUTPUT_SHAPE = `{
@@ -30,14 +41,18 @@ const OUTPUT_SHAPE = `{
   "findings": [
     { "id": "string", "title": "string", "detail": "string",
       "severity": "info|warning|critical",
-      "metricRefs": [{ "label": "string", "value": number|string }] }
+      "metricRefs": [{ "label": "string", "value": number|string }],
+      "caveat": boolean | null }
   ],
   "recommendations": [
     { "id": "string", "title": "string", "rationale": "string",
       "priority": "high|medium|low",
       "actionType": "pause|resume|increase_budget|decrease_budget|review_creative|review_audience|investigate|keep",
       "targetEntity": { "level": "account|campaign|adset|ad", "externalId": "string" } | null,
-      "budgetChangePct": number | null }
+      "budgetChangePct": number | null,
+      "expectedImpact": string | null,
+      "whatToMonitor": string | null,
+      "findingRefs": string[] | null }
   ]
 }`;
 
@@ -47,8 +62,8 @@ const jsonBlock = (label: string, value: unknown): string =>
 /** Shape do JSON por-campanha (map) — sem scorecard (é da conta, na síntese). */
 const CAMPAIGN_OUTPUT_SHAPE = `{
   "summary": "string (1-2 frases sobre esta campanha, cite números)",
-  "findings": [ { "id": "string", "title": "string", "detail": "string", "severity": "info|warning|critical", "metricRefs": [{ "label": "string", "value": number|string }] } ],
-  "recommendations": [ { "id": "string", "title": "string", "rationale": "string", "priority": "high|medium|low", "actionType": "pause|resume|increase_budget|decrease_budget|review_creative|review_audience|investigate|keep", "targetEntity": { "level": "campaign|adset|ad", "externalId": "string" } | null, "budgetChangePct": number | null } ],
+  "findings": [ { "id": "string", "title": "string", "detail": "string", "severity": "info|warning|critical", "metricRefs": [{ "label": "string", "value": number|string }], "caveat": boolean | null } ],
+  "recommendations": [ { "id": "string", "title": "string", "rationale": "string", "priority": "high|medium|low", "actionType": "pause|resume|increase_budget|decrease_budget|review_creative|review_audience|investigate|keep", "targetEntity": { "level": "campaign|adset|ad", "externalId": "string" } | null, "budgetChangePct": number | null, "expectedImpact": string | null, "whatToMonitor": string | null, "findingRefs": string[] | null } ],
   "flags": ["string"]
 }`;
 
@@ -72,7 +87,13 @@ export function buildCampaignMessages(
   accountContext: { readonly currency: string; readonly window: string; readonly businessGoal?: string },
   copyByAdId: ReadonlyMap<string, AdCopy> = new Map(),
 ): LLMMessage[] {
-  const system = [systemPrompt, GROUNDING_RULE, buildAnalysisKnowledgeText(buildCampaignKnowledgeContext(unit)), FINDINGS_METRIC_INSTRUCTION]
+  const system = [
+    systemPrompt,
+    GROUNDING_RULE,
+    buildAnalysisKnowledgeText(buildCampaignKnowledgeContext(unit)),
+    FINDINGS_METRIC_INSTRUCTION,
+    RECOMMENDATION_TAXONOMY_INSTRUCTION,
+  ]
     .filter(Boolean)
     .join("\n\n");
   const notableAdIds = unit.adsets.flatMap((g) => g.notableAds.map((a) => a.id));
@@ -124,6 +145,7 @@ export function buildSynthesisMessages(
     GROUNDING_RULE,
     buildAnalysisKnowledgeText(buildSynthesisKnowledgeContext(brief)),
     FINDINGS_METRIC_INSTRUCTION,
+    RECOMMENDATION_TAXONOMY_INSTRUCTION,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -158,6 +180,7 @@ export function buildReviewMessages(
     // confere número) — sem isso, ele podia manter uma recomendação numericamente certa
     // mas que viola a leitura de qualidade/incrementalidade/tracking do domínio.
     buildAnalysisKnowledgeText(REVIEW_KNOWLEDGE_CONTEXT),
+    RECOMMENDATION_TAXONOMY_INSTRUCTION,
     "Devolva a análise corrigida no MESMO formato JSON (sem markdown).",
   ]
     .filter(Boolean)

@@ -10,6 +10,9 @@ const rec = (over: Partial<AnalysisOutput["recommendations"][number]>): Analysis
   actionType: "pause",
   targetEntity: { level: "campaign", externalId: "C1" },
   budgetChangePct: null,
+  expectedImpact: null,
+  whatToMonitor: null,
+  findingRefs: null,
   ...over,
 });
 

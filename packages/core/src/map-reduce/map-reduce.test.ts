@@ -92,8 +92,8 @@ describe("selectCreatives", () => {
 describe("mergeUnitAnalyses", () => {
   it("deduplica por título e deriva a nota pela pior severidade", () => {
     const units: UnitAnalysis[] = [
-      { summary: "u1", flags: [], findings: [{ id: "f1", title: "CPA alto", detail: "x", severity: "critical", metricRefs: [] }], recommendations: [{ id: "r1", title: "Pausar", rationale: "x", priority: "high", actionType: "pause", targetEntity: null, budgetChangePct: null }] },
-      { summary: "u2", flags: [], findings: [{ id: "f2", title: "CPA alto", detail: "y", severity: "warning", metricRefs: [] }], recommendations: [{ id: "r2", title: "Pausar", rationale: "y", priority: "high", actionType: "pause", targetEntity: null, budgetChangePct: null }] },
+      { summary: "u1", flags: [], findings: [{ id: "f1", title: "CPA alto", detail: "x", severity: "critical", metricRefs: [], caveat: null }], recommendations: [{ id: "r1", title: "Pausar", rationale: "x", priority: "high", actionType: "pause", targetEntity: null, budgetChangePct: null, expectedImpact: null, whatToMonitor: null, findingRefs: null }] },
+      { summary: "u2", flags: [], findings: [{ id: "f2", title: "CPA alto", detail: "y", severity: "warning", metricRefs: [], caveat: null }], recommendations: [{ id: "r2", title: "Pausar", rationale: "y", priority: "high", actionType: "pause", targetEntity: null, budgetChangePct: null, expectedImpact: null, whatToMonitor: null, findingRefs: null }] },
     ];
     const out = mergeUnitAnalyses(units);
     expect(out.findings).toHaveLength(1); // dedupe por título

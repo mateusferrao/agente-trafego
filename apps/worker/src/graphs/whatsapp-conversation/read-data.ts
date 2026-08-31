@@ -790,23 +790,39 @@ export async function getAgentConfigData(
   };
 }
 
-/** Explica uma recomendação da última análise (por trecho do título) — motivo + risco. */
+/** Explica uma recomendação da última análise (por trecho do título) — motivo + risco +
+ *  impacto/monitoramento (S0b/G4, quando o analista conseguiu ancorar em dado real). */
 export async function explainRecommendationData(
   db: Database,
   agentId: string,
   orgId: string,
   title: string,
-): Promise<{ title: string; rationale: string | null; riskLevel: string } | NoData> {
+): Promise<
+  | { title: string; rationale: string | null; riskLevel: string; expectedImpact: string | null; whatToMonitor: string | null }
+  | NoData
+> {
   const run = await latestFinishedRun(db, agentId, orgId);
   if (!run) return { hasData: false, note: "sem análise concluída ainda" };
   const recs = await db
-    .select({ title: recommendations.title, rationale: recommendations.rationale, riskLevel: recommendations.riskLevel })
+    .select({
+      title: recommendations.title,
+      rationale: recommendations.rationale,
+      riskLevel: recommendations.riskLevel,
+      expectedImpact: recommendations.expectedImpact,
+      whatToMonitor: recommendations.whatToMonitor,
+    })
     .from(recommendations)
     .where(and(eq(recommendations.runId, run.id), eq(recommendations.orgId, orgId)));
   const needle = title.trim().toLowerCase();
   const match = recs.find((r) => r.title.toLowerCase().includes(needle)) ?? (recs.length === 1 ? recs[0] : undefined);
   if (!match) return { hasData: false, note: `não achei uma recomendação com "${title}"` };
-  return { title: match.title, rationale: match.rationale ?? null, riskLevel: match.riskLevel };
+  return {
+    title: match.title,
+    rationale: match.rationale ?? null,
+    riskLevel: match.riskLevel,
+    expectedImpact: match.expectedImpact ?? null,
+    whatToMonitor: match.whatToMonitor ?? null,
+  };
 }
 
 // ─── Helpers internos ────────────────────────────────────────────────────────
@@ -1504,7 +1520,8 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     },
     {
       name: "explain_recommendation",
-      description: "Explica uma recomendação da última análise (por trecho do título): motivo e nível de risco.",
+      description:
+        "Explica uma recomendação da última análise (por trecho do título): motivo e nível de risco, e quando disponível o impacto esperado em R$ (expectedImpact) e o que acompanhar depois de aplicar (whatToMonitor) — ambos vêm null quando o analista não tinha dado suficiente pra estimar; não invente um valor quando vier null.",
       schema: z.object({ title: z.string() }),
     },
   );

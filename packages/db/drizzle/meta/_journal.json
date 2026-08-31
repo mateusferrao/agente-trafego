@@ -316,6 +316,13 @@
       "when": 1788033222772,
       "tag": "0044_curious_kronos",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1788202213433,
+      "tag": "0045_high_fixer",
+      "breakpoints": true
     }
   ]
 }

@@ -223,6 +223,14 @@ export const recommendations = pgTable(
     draftId: uuid("draft_id").references(() => campaignDrafts.id, { onDelete: "set null" }),
     riskLevel: riskLevel("risk_level").notNull().default("low"),
     status: recommendationStatus("status").notNull().default("open"),
+    // Taxonomia de saída (S0b/G4): impacto em R$ (texto, só quando o LLM consegue ancorar
+    // em número real do brief — GROUNDING_RULE; null na maioria fora de pause/scale), o que
+    // acompanhar depois de aplicar, e os findings que motivaram a recomendação (ids). Só
+    // populado no caminho LLM (`toRecommendationRow`) — demais origens (tracking/human_direction/
+    // criação proativa) ficam null.
+    expectedImpact: text("expected_impact"),
+    whatToMonitor: text("what_to_monitor"),
+    findingRefs: jsonb("finding_refs").$type<string[]>(),
     ...timestamps,
   },
   (t) => [

@@ -10,6 +10,9 @@ const rec = (over: Partial<AnalysisOutput["recommendations"][number]>): Analysis
   actionType: "increase_budget",
   targetEntity: { level: "campaign", externalId: "C1" },
   budgetChangePct: 20,
+  expectedImpact: null,
+  whatToMonitor: null,
+  findingRefs: null,
   ...over,
 });
 
