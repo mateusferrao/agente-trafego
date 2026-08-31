@@ -124,6 +124,9 @@ export interface WorkerDeps {
     readonly fetchGenerationCost: (generationId: string) => Promise<number | undefined>;
     /** Kill-switch de plataforma do ingest de contexto de grupo (default: ligado). */
     readonly groupIngestContext: boolean;
+    /** Kill-switch de plataforma da escrita conversacional de ads pelo chat (v1: default OFF).
+     *  OFF → o chat não autora/edita/muta a Meta; consulta/aprovação/config seguem. */
+    readonly chatAdsWrites: boolean;
     /** Retenção (dias) do dado ambiente de grupo (purge job diário). */
     readonly groupContextRetentionDays: number;
     /** Transcript ambiente injetado no prompt: teto de mensagens / janela (h) / teto de tokens. */
@@ -348,6 +351,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
       copyModel: env.COPY_MODEL,
       fetchGenerationCost: (id) => openRouterClient.getGenerationCost(id),
       groupIngestContext: env.TRAFEGO_GROUP_INGEST_CONTEXT,
+      chatAdsWrites: env.TRAFEGO_CHAT_ADS_WRITES,
       groupContextRetentionDays: env.GROUP_CONTEXT_RETENTION_DAYS,
       groupContextMaxMessages: env.GROUP_CONTEXT_MAX_MESSAGES,
       groupContextWindowHours: env.GROUP_CONTEXT_WINDOW_HOURS,
