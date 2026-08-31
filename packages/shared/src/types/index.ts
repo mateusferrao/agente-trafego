@@ -1042,6 +1042,15 @@ export interface AutonomyPolicy {
   readonly creationActivation?: "paused" | "active";
 }
 
+/** Como a criação nasce (v1). "paused" = pausada + 2º OK de ativação; "active" = ativa direto. */
+export type CreationActivation = "paused" | "active";
+/** Default conservador (v1): nasce pausada, o dono revisa e ativa. */
+export const DEFAULT_CREATION_ACTIVATION: CreationActivation = "paused";
+/** Resolve a ativação da criação da política do agente (ausente = default "paused"). PURO. */
+export function resolveCreationActivation(policy?: Pick<AutonomyPolicy, "creationActivation">): CreationActivation {
+  return policy?.creationActivation ?? DEFAULT_CREATION_ACTIVATION;
+}
+
 // ─── Sinais de mudança material (F4 — alerta proativo dirigido) ─────────────
 // Taxonomia NEUTRA de um sinal temporal que DIRIGE a análise (não é veredito): a
 // detecção determinística barata (D-1 fechado vs baseline) o produz, o run de

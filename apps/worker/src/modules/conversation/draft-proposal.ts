@@ -16,9 +16,11 @@ import {
   DEFAULT_CURRENCY,
   DEFAULT_VARIANTS,
   MAX_ADS_PER_DRAFT,
+  resolveCreationActivation,
   toGuardrailConfig,
   type Action,
   type AgentId,
+  type CreationActivation,
   type AudienceProfile,
   type CampaignDraftSpec,
   type ConversionGoal,
@@ -104,6 +106,8 @@ interface AgentContext {
   readonly creativeSource: CreativeSourceStrategy;
   /** Preferência do passo agressivo (autonomy_policy) — default "ask". */
   readonly scaleAggressivePreference: ScaleAggressivePreference;
+  /** Ativação da criação (autonomy_policy, v1) — "paused" (default) × "active". */
+  readonly creationActivation: CreationActivation;
   /** Tool-keys habilitadas (bindings, mesma fonte do chat/apply) — gate da escala. */
   readonly enabled: ReadonlySet<string>;
 }
@@ -117,8 +121,8 @@ function money(reais: number, currency: string): string {
  *  (§8) mentiria sobre o que vai acontecer ANTES do usuário dizer sim. */
 function activationPhrase(activation: "active" | "paused"): string {
   return activation === "active"
-    ? "nasce PAUSADA (a Meta revisa antes) — te aviso separado pra confirmar a ativação"
-    : "fica pausada, do jeito que você pediu";
+    ? "nasce ATIVA (vai ao ar assim que a Meta revisar) — te aviso aqui quando subir"
+    : "nasce PAUSADA — te aviso pra você revisar e ativar quando quiser";
 }
 
 /**
@@ -277,6 +281,7 @@ export async function loadAgentContext(deps: WorkerDeps, ctx: DraftProposalConte
     guidance: ag?.guidance ?? null,
     creativeSource: resolveCreativeSourceStrategy(mc),
     scaleAggressivePreference: ag?.autonomyPolicy?.scaleAggressivePreference ?? "ask",
+    creationActivation: resolveCreationActivation(ag?.autonomyPolicy ?? undefined),
     enabled,
   };
 }
@@ -771,7 +776,7 @@ export async function proposeScaleWinner(
     currency: ac.currency,
     dailyBudgetMinor: newDailyMinor,
     ...(clampedByCap ? { requestedDailyBudgetMinor: requested } : {}),
-    activation: "active",
+    activation: ac.creationActivation,
   };
   const { draftId, approvalId } = await persistDraftAndApproval(deps, ctx, "duplicate", spec, origin, {
     level,
@@ -779,8 +784,8 @@ export async function proposeScaleWinner(
     name: label, // nome do vencedor → card mostra "Duplicar conjunto <nome>" (não o id cru)
   });
   const budgetLine = clampedByCap
-    ? `Gasto novo: ${money(newDailyMinor / MINOR_PER_UNIT, ac.currency)}/dia (você pediu ${money(requested / MINOR_PER_UNIT, ac.currency)}, mas seu teto de gasto novo é ${money(newDailyMinor / MINOR_PER_UNIT, ac.currency)}) · ${activationPhrase("active")}.`
-    : `Gasto novo: ${money(newDailyMinor / MINOR_PER_UNIT, ac.currency)}/dia · ${activationPhrase("active")}.`;
+    ? `Gasto novo: ${money(newDailyMinor / MINOR_PER_UNIT, ac.currency)}/dia (você pediu ${money(requested / MINOR_PER_UNIT, ac.currency)}, mas seu teto de gasto novo é ${money(newDailyMinor / MINOR_PER_UNIT, ac.currency)}) · ${activationPhrase(ac.creationActivation)}.`
+    : `Gasto novo: ${money(newDailyMinor / MINOR_PER_UNIT, ac.currency)}/dia · ${activationPhrase(ac.creationActivation)}.`;
   const echo = joinBalloons([
     `Vou **duplicar o vencedor "${label}"** com mais budget pra escalar sem estourar o aprendizado do original.`,
     budgetLine,
@@ -1840,7 +1845,7 @@ export async function proposeCreateCampaign(
     currency: ac.currency,
     dailyBudgetMinor,
     ...(clampedByCap ? { requestedDailyBudgetMinor: requested } : {}),
-    activation: "active",
+    activation: ac.creationActivation,
     objective: goal,
     targeting,
     variantsCount,
@@ -1899,7 +1904,7 @@ export async function proposeCreateCampaign(
   });
   lines.push(
     `Público: ${audiencePhrase}.`,
-    `Gasto novo: ${budgetPhrase} · Página: ${defaults.pageId}${defaults.pixelId ? ` · Pixel: ${defaults.pixelId}` : ""} · ${activationPhrase("active")}.`,
+    `Gasto novo: ${budgetPhrase} · Página: ${defaults.pageId}${defaults.pixelId ? ` · Pixel: ${defaults.pixelId}` : ""} · ${activationPhrase(spec.activation)}.`,
   );
   for (const n of aud.notes) lines.push(n);
   for (const n of [...geoRadius.notes, ...areas.notes]) lines.push(n);
@@ -2120,7 +2125,7 @@ export async function proposeCopyCampaign(
     version: 1,
     currency: ac.currency,
     dailyBudgetMinor,
-    activation: "paused",
+    activation: ac.creationActivation,
     objective: goal,
     targeting,
     creativeRefs,
@@ -2158,7 +2163,7 @@ export async function proposeCopyCampaign(
     `Vou *copiar a estrutura* de "${baseName}" numa campanha nova:`,
     budgetLine,
     `• *Anúncios:* ${creativeRefs.length} da original, reusados (mantém o criativo e o destino/WhatsApp)${audienceLine}`,
-    `• *Objetivo:* ${goalNounPt(goal)} · ${activationPhrase("paused")}.`,
+    `• *Objetivo:* ${goalNounPt(goal)} · ${activationPhrase(spec.activation)}.`,
     ...(adCountNote ? [adCountNote] : []),
     ...aud.notes,
     ...geoRadius.notes,

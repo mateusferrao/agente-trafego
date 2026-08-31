@@ -14,6 +14,7 @@ import { AdsPlatformError, type AdAccountRef } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../../composition.js";
 import { createAnalysisRepo } from "../analysis/repo.js";
 import { loadEnabledTools } from "../tools/enabled.js";
+import { applyActivation } from "./apply-activation.js";
 
 const ACTOR_AGENT = "agent";
 const USAGE_TYPE_CAMPAIGN_CREATED = "campaign_created";
@@ -65,11 +66,21 @@ export async function countCreationsLast24h(
 /** Aprovação TTL — reusa a mesma janela da aprovação de criação (24h, §8). */
 const ACTIVATION_APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
 
-/** Desfecho tipado (o chamador mapeia p/ resolver a approval + push). `activationApprovalId`
- *  (P0.1) presente quando a criação pediu `activation:"active"` — a criação SEMPRE nasce pausada
- *  (fecha o risco de órfão em crash), então esse é o 2º passo HITL que falta pra veicular. */
+/**
+ * Desfecho tipado (o chamador mapeia p/ resolver a approval + push). Ativação (v1):
+ * `creationActivation="active"` → a árvore é ATIVADA já no fim do create (`activated:true`),
+ * sem 2º OK; `="paused"` → nasce pausada + `activationApprovalId` (o 2º OK pra ativar depois).
+ * A saga SEMPRE cria pausada primeiro (fecha o risco de órfão em crash); "active" só resume no fim.
+ */
 export type DraftApplyOutcome =
-  | { readonly kind: "created"; readonly dryRun: boolean; readonly createdIds: Record<string, unknown>; readonly activationApprovalId: string | null }
+  | {
+      readonly kind: "created";
+      readonly dryRun: boolean;
+      readonly createdIds: Record<string, unknown>;
+      readonly activationApprovalId: string | null;
+      /** true quando nasceu ativa (creationActivation="active" e a ativação foi aplicada). */
+      readonly activated: boolean;
+    }
   | { readonly kind: "blocked"; readonly reason: string }
   | { readonly kind: "failed"; readonly error: unknown }
   | { readonly kind: "unsupported"; readonly reason: string };
@@ -108,6 +119,7 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
       dryRun: false,
       createdIds: row.createdIds as Record<string, unknown>,
       activationApprovalId: pendingActivation?.id ?? null,
+      activated: false, // replay: não re-ativa nem re-avisa (o desfecho já saiu no 1º apply).
     };
   }
 
@@ -159,11 +171,11 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     }
   }
 
-  // P0.1: a criação SEMPRE nasce PAUSADA nos dois ramos (fecha o risco de órfão em crash — um
-  // crash na janela entre a Meta retornar o create e o persist deixaria um órfão que o retry
-  // re-cria; pausado, esse órfão não gasta). `requestedActivation` (o que o usuário PEDIU)
-  // decide, no FIM, se nasce uma approval de ATIVAÇÃO (2º passo HITL) — pedido "paused" desde
-  // o início não precisa de segundo OK, fica pausado e pronto.
+  // P0.1: a criação SEMPRE nasce PAUSADA na saga (fecha o risco de órfão em crash — um crash na
+  // janela entre a Meta retornar o create e o persist deixaria um órfão que o retry re-cria;
+  // pausado, esse órfão não gasta). `requestedActivation` (v1 — vem do creationActivation do
+  // agente, gravado no spec) decide NO FIM: "active" → ATIVA a árvore já (sem 2º OK); "paused" →
+  // cria a approval de ATIVAÇÃO (o 2º OK pra ativar depois). Os dois avisam no WhatsApp (S7).
   const requestedActivation = allowed.spec.activation;
   const pausedDraft: CampaignDraft = { ...allowed, spec: { ...allowed.spec, activation: "paused" } };
 
@@ -286,13 +298,20 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     .set({ status: "created", createdIds })
     .where(and(eq(campaignDrafts.id, row.id), eq(campaignDrafts.orgId, input.orgId)));
 
-  // P0.1: pedido "active" (o comum) → nasce PAUSADA na Meta + approval de ATIVAÇÃO pendente
-  // (2º passo HITL, mesmo TTL da criação). Pedido "paused" desde o início → fica pausada, sem
-  // pedir 2º OK (o usuário já não queria veicular). Dry-run não cria approval (nada foi criado de
-  // verdade). `upsertActivationPending` é idempotente (onConflict no unique draftId+kind) —
-  // um retry deste apply (replay já tratado acima) não duplicaria a approval de qualquer forma.
+  // Ativação (v1) — a saga SEMPRE criou PAUSADA (crash-safe); aqui decide o que fazer com isso:
+  //  · creationActivation="active" → ATIVA a árvore JÁ (sem 2º OK): o dono optou por criar no ar,
+  //    e o resumo no WhatsApp (S7) é o aviso. Cria pausada→ativa no fim = mantém a segurança de
+  //    crash E entrega "nasce ativa" (era o fast-follow do ROADMAP). Ativação falha → fica pausada
+  //    (segura); reportamos activated:false.
+  //  · creationActivation="paused" → cria a approval de ATIVAÇÃO (o 2º OK pra ativar depois, chat
+  //    ou site). Idempotente (unique draftId+kind). Dry-run: nem ativa nem cria approval (simulado).
   let activationApprovalId: string | null = null;
+  let activated = false;
   if (!dryRun && requestedActivation === "active") {
+    const act = await applyActivation(deps, { orgId: input.orgId, draftId: row.id });
+    activated = act.kind === "activated" && !act.dryRun;
+    if (act.kind === "failed") logger.warn({ draftId: row.id }, "apply-draft:ativação falhou — fica pausada");
+  } else if (!dryRun) {
     const appr = await ports.approval.upsertActivationPending({
       orgId: input.orgId as OrgId,
       agentId: row.agentId as AgentId,
@@ -304,8 +323,8 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     activationApprovalId = appr.id;
   }
 
-  logger.info({ draftId: row.id, dryRun, activationApprovalId }, "apply-draft:created");
-  return { kind: "created", dryRun, createdIds, activationApprovalId };
+  logger.info({ draftId: row.id, dryRun, activationApprovalId, activated }, "apply-draft:created");
+  return { kind: "created", dryRun, createdIds, activationApprovalId, activated };
 }
 
 /**

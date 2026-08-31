@@ -8,7 +8,7 @@ import { Worker } from "bullmq";
 import { eq } from "drizzle-orm";
 import type { Redis } from "ioredis";
 import { campaignDrafts } from "@trafego/db";
-import { APPROVAL_APPLY_QUEUE, type ApprovalApplyPayload, type ApprovalId, type CampaignDraftSpec } from "@trafego/shared";
+import { APPROVAL_APPLY_QUEUE, type Action, type ApprovalApplyPayload, type ApprovalId, type CampaignDraftSpec } from "@trafego/shared";
 import { AdsPlatformError } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../composition.js";
 import { applyActivation } from "../modules/apply/apply-activation.js";
@@ -27,9 +27,27 @@ function metaFailureLine(error: unknown, fallback: string): string {
   return fallback;
 }
 
+/** Resumo BREVE (1ª pessoa) do que foi aplicado — p/ o aviso de mudança real (S7). */
+function appliedActionLine(action: Action): string {
+  const name = action.target?.name ?? "a entidade";
+  switch (action.type) {
+    case "pause_entity":
+      return `Pausei ${name}`;
+    case "resume_entity":
+      return `Reativei ${name}`;
+    case "set_status":
+      return `Mudei o status de ${name}`;
+    case "adjust_budget":
+      return `Ajustei o orçamento de ${name}`;
+    default:
+      return `Apliquei a ação em ${name}`;
+  }
+}
+
 export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): Worker<ApprovalApplyPayload> {
   const { logger, ports } = deps;
-  const sendToConversation = createSendToConversation({ messaging: ports.messaging, repo: createNotifyRepo(deps.db) });
+  const notifyRepo = createNotifyRepo(deps.db);
+  const sendToConversation = createSendToConversation({ messaging: ports.messaging, repo: notifyRepo });
 
   return new Worker<ApprovalApplyPayload>(
     APPROVAL_APPLY_QUEUE,
@@ -42,6 +60,20 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
           await sendToConversation(notifyRef, text, { split: false });
         } catch (err) {
           logger.warn({ err, approvalId }, "approval-apply:push do desfecho falhou");
+        }
+      };
+      // Aviso de MUDANÇA REAL (S7, geral): SEMPRE avisa no WhatsApp quando algo foi de fato
+      // aplicado na Meta (criação/ativação/ação) — inclusive aprovado pelo SITE (sem notifyRef)
+      // → resolve o alvo org (grupo ativo, senão DM). Transparência: nenhuma mudança real fica
+      // silenciosa. Dry-run/falha/no-op NÃO usam isto (não houve mudança real → só o chat que
+      // pediu, via pushOutcome). Best-effort (Evolution fora não quebra o apply).
+      const pushRealApplied = async (text: string): Promise<void> => {
+        const ref = notifyRef ?? (await notifyRepo.loadTarget(orgId));
+        if (!ref) return;
+        try {
+          await sendToConversation(ref, text, { split: false });
+        } catch (err) {
+          logger.warn({ err, approvalId }, "approval-apply:push do resumo de aplicação falhou");
         }
       };
 
@@ -76,27 +108,28 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
           case "created": {
             await ports.approval.resolve(approval.id, { status: "approved" });
             if (outcome.dryRun) {
-              await pushOutcome("🧪 Simulei a criação (dry-run).");
+              await pushRealApplied("🧪 Simulei a criação (dry-run).");
               return;
             }
-            // P0.1: nasce SEMPRE pausada — o resumo diz O QUÊ pro usuário decidir sobre ativar.
             const [draftRow] = await deps.db
               .select({ kind: campaignDrafts.kind, spec: campaignDrafts.spec })
               .from(campaignDrafts)
               .where(eq(campaignDrafts.id, approval.draftId))
               .limit(1);
             const summary = draftRow ? describeCreatedDraft(draftRow.kind, draftRow.spec as CampaignDraftSpec) : "sua campanha";
+            // v1: creationActivation decide o desfecho — nasceu ATIVA (no ar) × PAUSADA (revisar +
+            // ativar). Os DOIS avisam aqui (aviso-sempre, inclusive site).
             const lines = [
-              outcome.activationApprovalId
-                ? `✅ Criei ${summary} — nasceu PAUSADA (a Meta ainda vai revisar o criativo). Quer que eu ATIVE agora? Me diz, ou aprova no site quando quiser.`
-                : `✅ Criei ${summary} — ficou pausada, do jeito que você pediu.`,
+              outcome.activated
+                ? `✅ Criei ${summary} e já ATIVEI — está no ar (a Meta ainda revisa o criativo). Se precisar, dá pra pausar na plataforma.`
+                : `✅ Criei ${summary} — nasceu PAUSADA. Revise e ative na plataforma quando quiser${notifyRef ? " (ou me diz aqui que eu ativo)" : ""}.`,
             ];
             // honestidade (§eco+confirma): eu tinha prometido herdar o público que já converte,
             // mas a fonte não estava mais disponível na hora de criar — nunca fica silencioso.
             if (outcome.createdIds["targetingFallback"] === true) {
               lines.push("Obs: não consegui herdar o público que eu tinha prometido (a fonte não estava mais disponível) — usei um público amplo (Advantage+). Revise o público antes de ativar.");
             }
-            await pushOutcome(lines.join("\n\n"));
+            await pushRealApplied(lines.join("\n\n"));
             return;
           }
         }
@@ -119,7 +152,8 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
             return;
           case "activated":
             await ports.approval.resolve(approval.id, { status: "approved" });
-            await pushOutcome(outcome.dryRun ? "🧪 Simulei a ativação (dry-run)." : "✅ Ativado! Já está veiculando.");
+            if (outcome.dryRun) await pushOutcome("🧪 Simulei a ativação (dry-run).");
+            else await pushRealApplied("✅ Ativei sua campanha — já está veiculando.");
             return;
         }
         return;
@@ -167,7 +201,8 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
         case "applied":
           await ports.approval.resolve(approval.id, { status: "approved" });
           logger.info({ approvalId, dryRun: outcome.dryRun }, "approval-apply:aplicada");
-          await pushOutcome(outcome.dryRun ? `🧪 Simulei a ação${suffix} (dry-run).` : `✅ Apliquei${suffix}.`);
+          if (outcome.dryRun) await pushOutcome(`🧪 Simulei a ação${suffix} (dry-run).`);
+          else await pushRealApplied(`✅ ${appliedActionLine(approval.action)}.`);
           return;
       }
     },

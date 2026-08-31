@@ -773,9 +773,13 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const wouldHave = isScale ? "duplicar seu vencedor" : "criar uma campanha";
     let text: string;
     if (outcome.kind === "created") {
+      // v1: creationActivation decide se nasceu ativa (no ar) ou pausada (revisar+ativar). Aviso
+      // honesto do que o agente fez sozinho, nos dois casos.
       text = outcome.dryRun
         ? `🧪 Simulei uma criação automática (dry-run): ${what}. Por quê: ${rationale}.`
-        : `🤖 Agi sozinho e ${what} — mas deixei **pausada**, esperando seu OK (não veicula até você ativar). Por quê: ${rationale}. Dá uma olhada no site e ative quando quiser.`;
+        : outcome.activated
+          ? `🤖 Agi sozinho e ${what} — e já ATIVEI (está no ar). Por quê: ${rationale}. Se precisar, dá pra pausar na plataforma.`
+          : `🤖 Agi sozinho e ${what} — deixei **pausada**, esperando seu OK (não veicula até você ativar). Por quê: ${rationale}. Dá uma olhada na plataforma e ative quando quiser.`;
     } else if (outcome.kind === "blocked" || outcome.kind === "unsupported") {
       text = `Ia ${wouldHave} sozinho, mas parei: ${outcome.reason}.`;
     } else {
@@ -1143,7 +1147,11 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       state.trigger === "cron" || state.trigger === "signal" || state.trigger === "on_demand";
     // runPush (F4) desliga o push de RUN (cron/on-demand); signal tem gate próprio (alerts).
     const isRunPush = state.trigger === "cron" || state.trigger === "on_demand";
-    const runPushOff = isRunPush && state.notifyPolicy?.runPush.enabled === false;
+    // Transparência (S7, geral): se o run APLICOU ação REAL sozinho (autonomia), o aviso NÃO pode
+    // sumir mesmo com runPush OFF — a mensagem do run já resume as aplicadas. runPush governa o
+    // resumo da ANÁLISE, não a transparência de mudança real na conta.
+    const appliedRealActions = !state.guardrailConfig.dryRun && (state.results?.length ?? 0) > 0;
+    const runPushOff = isRunPush && state.notifyPolicy?.runPush.enabled === false && !appliedRealActions;
     const out = state.analysisOutput;
     if (!out || !state.account) {
       // conta zerada (brief vazio): cron/signal = silêncio; on-demand/chat = empty-state
