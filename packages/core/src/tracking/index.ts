@@ -56,3 +56,26 @@ export function detectTrackingHealth(input: DetectTrackingInput): TrackingHealth
   if (!suspect) return undefined;
   return { suspect: true, funnelStarted, trackedConversions, ratio: Math.round(ratio * 10) / 10 };
 }
+
+/** Título/racional de uma recomendação de medição furada (rendered ao dono). Copy determinística. */
+export interface TrackingRecommendation {
+  readonly title: string;
+  readonly rationale: string;
+}
+
+/**
+ * Recomendação `human_direction` de medição furada (v1) — PURA. Vira card de topo quando o sinal
+ * é suspeito: otimizar em cima de dado furado (pausar o que converte / escalar o que não) é o pior
+ * erro, então vale avisar ANTES de agir por CPA de venda. Não é executável (o fix é no pixel/Meta).
+ * `null` quando não há suspeita (nada a recomendar).
+ */
+export function buildTrackingRecommendation(health: TrackingHealth | undefined): TrackingRecommendation | null {
+  if (!health?.suspect) return null;
+  return {
+    title: "Confira sua medição de conversões",
+    rationale:
+      `Registrei ${health.funnelStarted} conversas, mas só ${health.trackedConversions} conversões de negócio rastreadas ` +
+      `(${health.ratio}× mais funil que resultado). A medição pode estar incompleta — vale conferir o pixel/eventos ` +
+      `antes de pausar ou escalar por custo de venda, pra não decidir em cima de dado furado.`,
+  };
+}

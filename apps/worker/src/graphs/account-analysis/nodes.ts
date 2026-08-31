@@ -35,6 +35,7 @@ import {
   mergeUnitAnalyses,
   agentMarketReferenceFromModelConfig,
   resolveActionConflicts,
+  buildTrackingRecommendation,
   resolveMarketReference,
   riskForAction,
   selectCampaignsToAnalyze,
@@ -724,6 +725,21 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     state: AccountAnalysisStateType,
   ): Promise<AccountAnalysisUpdate> {
     logger.debug({ runId: state.runId }, "build_recommendations");
+    // Medição furada (Bloco 2/D): recomendação human_direction de TOPO — emitida ANTES das do LLM
+    // (createdAt mais cedo) e independente da análise do LLM ter degradado. Alto valor, risco zero
+    // (não executável; o fix é no pixel/Meta). O sinal já foi computado determinísticamente no brief.
+    const trackingRec = buildTrackingRecommendation(state.brief?.trackingHealth);
+    if (trackingRec) {
+      await deps.db.insert(recommendations).values({
+        orgId: state.orgId,
+        runId: state.runId,
+        title: trackingRec.title,
+        rationale: trackingRec.rationale,
+        kind: "human_direction",
+        riskLevel: "low",
+      });
+      logger.info({ runId: state.runId }, "build_recommendations:tracking suspeito → recomendação");
+    }
     if (!state.analysisOutput) return {};
     const knownIds = new Set(state.entities.map((e) => e.id));
     const rows = state.analysisOutput.recommendations.map((rec) =>
