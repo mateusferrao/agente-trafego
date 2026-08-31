@@ -3,6 +3,7 @@ import type { Observable } from 'rxjs';
 import { BaseApiService } from './base-api.service';
 import type {
   ApprovalOutput,
+  EditApprovalActionInput,
   ResolveApprovalInput,
   ResolveApprovalOutput,
   RevertibleActionOutput,
@@ -30,5 +31,10 @@ export class ApprovalsApiService extends BaseApiService {
   /** `GET /api/approvals/revertible` — ações aplicadas ainda acionáveis (cross-conta). */
   listRevertible(): Observable<RevertibleActionOutput[]> {
     return this.get<RevertibleActionOutput[]>(['/approvals', 'revertible']);
+  }
+
+  /** `PATCH /api/approvals/:id/action` — edita o VALOR de um adjust_budget pendente antes de aprovar (C). */
+  editAction(id: string, input: EditApprovalActionInput): Observable<ResolveApprovalOutput> {
+    return this.patch<ResolveApprovalOutput, EditApprovalActionInput>(['/approvals', id, 'action'], input);
   }
 }

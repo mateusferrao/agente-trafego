@@ -128,6 +128,13 @@ export class DraftsApiService extends BaseApiService {
     return version > 0 ? `${url}?v=${version}` : url;
   }
 
+  /** URL da miniatura do criativo de UM anúncio do rascunho (G) — resolve o criativo próprio do
+   *  anúncio `index`, caindo no padrão do rascunho. Mesmo proxy/ETag/cache-buster. */
+  draftAdCreativeThumbUrl(accountId: string, draftId: string, index: number, version = 0): string {
+    const url = this.resolveUrl(['/accounts', accountId, 'drafts', draftId, 'ads', String(index), 'creative', 'thumb']);
+    return version > 0 ? `${url}?v=${version}` : url;
+  }
+
   /** `DELETE /api/accounts/:id/creatives/:assetId` — exclui um criativo (híbrido): em uso →
    *  ARQUIVA (`archived:true`, some da biblioteca, não quebra Meta/rascunho); livre → apaga
    *  (`archived:false`). Nunca 409. O componente troca o toast conforme `archived`. */

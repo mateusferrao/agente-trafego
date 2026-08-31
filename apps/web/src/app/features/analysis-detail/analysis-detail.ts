@@ -1,5 +1,9 @@
-import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
-import { UiEyebrow, UiStat, UiEvidence, UiMeter } from '@ui';
+import { ChangeDetectionStrategy, Component, computed, inject, input, output, signal } from '@angular/core';
+import { FormsModule } from '@angular/forms';
+import { RouterLink } from '@angular/router';
+import { toast } from 'ngx-sonner';
+import { UiButton, UiEyebrow, UiStat, UiEvidence, UiMeter } from '@ui';
+import { ApprovalsApiService } from '@core/api/approvals-api.service';
 import { AGENT_NAME } from '@core/brand';
 import type { RunDetailOutput } from '@core/api/generated';
 
@@ -55,7 +59,7 @@ const LEVEL_LABEL: Record<string, string> = {
   adset: 'conjunto',
   ad: 'anúncio',
 };
-const APPLICABILITY_NOTE = 'Sugestão — a aplicação automática chega em breve.';
+const APPLICABILITY_NOTE = 'As que dá pra aplicar têm botão aqui; direções você aplica na plataforma.';
 const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
   consciencia: 'alcançar as pessoas certas',
   engajamento: 'engajamento com os anúncios',
@@ -72,7 +76,7 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
 @Component({
   selector: 'app-analysis-detail',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiEyebrow, UiStat, UiEvidence, UiMeter],
+  imports: [FormsModule, RouterLink, UiButton, UiEyebrow, UiStat, UiEvidence, UiMeter],
   template: `
     <section class="flex flex-col gap-5">
       @if (hasResults()) {
@@ -300,6 +304,47 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                 } @else if (rec.kind === 'human_direction') {
                   <span class="text-xs text-muted">Direção — você aplica. Peça ao {{ agentName }} no WhatsApp se quiser ajuda.</span>
                 }
+                <!-- CTA inline (B): aplicável → aprovar/rejeitar aqui mesmo (+ editar valor do orçamento). -->
+                @if (doneAction()[rec.id]; as done) {
+                  <span class="text-xs text-success-strong">{{ done === 'approved' ? '✓ enviado pra aplicar' : 'recusada' }}</span>
+                } @else if (rec.applicability === 'applicable' && rec.approvalId) {
+                  <div class="flex flex-col gap-2 pt-1">
+                    <div class="flex flex-wrap items-center gap-2">
+                      @if (rec.approvalKind === 'action' && rec.proposedAction?.type === 'adjust_budget') {
+                        <button appButton variant="ghost" size="sm" [disabled]="actioning().has(rec.id)" (click)="toggleEditRec(rec)">
+                          {{ editingRecId() === rec.id ? 'Cancelar' : 'Editar valor' }}
+                        </button>
+                      }
+                      @if (rec.approvalKind !== 'action') {
+                        <a appButton variant="ghost" size="sm" routerLink="/approvals">Editar no painel</a>
+                      }
+                      <button appButton variant="secondary" size="sm" [disabled]="actioning().has(rec.id)" (click)="rejectRec(rec)">Rejeitar</button>
+                      <button appButton size="sm" [disabled]="actioning().has(rec.id)" (click)="approveRec(rec)">
+                        {{ actioning().has(rec.id) ? 'Enviando…' : 'Aprovar' }}
+                      </button>
+                    </div>
+                    @if (editingRecId() === rec.id) {
+                      <div class="flex flex-col gap-2 sm:flex-row sm:items-end">
+                        <label class="flex flex-1 flex-col gap-1 text-sm">
+                          <span class="text-muted">Novo orçamento diário (R$)</span>
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            [ngModel]="editBudgetReais()"
+                            (ngModelChange)="editBudgetReais.set($event)"
+                            class="rounded-md border border-line bg-panel px-3 py-2 text-ink"
+                          />
+                        </label>
+                        <button appButton size="sm" [disabled]="savingEdit()" (click)="saveRecEdit(rec)">
+                          {{ savingEdit() ? 'Salvando…' : 'Salvar valor' }}
+                        </button>
+                      </div>
+                    }
+                  </div>
+                } @else if (rec.applicability === 'applied') {
+                  <span class="text-xs text-success-strong">✓ já apliquei isso.</span>
+                }
                 <div class="flex items-center gap-2 pt-1">
                   <span class="text-xs text-muted">Faz sentido?</span>
                   <button
@@ -360,6 +405,80 @@ export class AnalysisDetail {
 
   protected readonly applicabilityNote = APPLICABILITY_NOTE;
   protected readonly agentName = AGENT_NAME;
+
+  // CTA inline das recomendações aplicáveis (B) — aprovar/rejeitar/editar-valor no próprio card.
+  private readonly approvalsApi = inject(ApprovalsApiService);
+  protected readonly actioning = signal<ReadonlySet<string>>(new Set());
+  protected readonly doneAction = signal<Record<string, 'approved' | 'rejected'>>({});
+  protected readonly editingRecId = signal<string | null>(null);
+  protected readonly editBudgetReais = signal<number | null>(null);
+  protected readonly savingEdit = signal(false);
+
+  /** Aprovar a recomendação aplicável direto do card (enfileira o apply-service). Otimista local. */
+  protected approveRec(rec: Recommendation): void {
+    if (!rec.approvalId) return;
+    this.markActioning(rec.id);
+    this.approvalsApi.resolve(rec.approvalId, 'approve').subscribe({
+      next: () => {
+        this.finishActioning(rec.id, 'approved');
+        toast.success('Enviado pra aplicar. O agente aplica em instantes.');
+      },
+      error: () => this.unmarkActioning(rec.id),
+    });
+  }
+
+  /** Rejeitar a recomendação aplicável direto do card (nada é aplicado na Meta). */
+  protected rejectRec(rec: Recommendation): void {
+    if (!rec.approvalId) return;
+    this.markActioning(rec.id);
+    this.approvalsApi.resolve(rec.approvalId, 'reject').subscribe({
+      next: () => {
+        this.finishActioning(rec.id, 'rejected');
+        toast.success('Recusada.');
+      },
+      error: () => this.unmarkActioning(rec.id),
+    });
+  }
+
+  /** Abre/fecha o editor de valor do orçamento (só ação adjust_budget) — reseta o campo. */
+  protected toggleEditRec(rec: Recommendation): void {
+    this.editingRecId.update((cur) => (cur === rec.id ? null : rec.id));
+    this.editBudgetReais.set(null);
+  }
+
+  /** Salva o novo valor (R$/dia) da ação antes de aprovar (C). A ação segue aplicável; aprovar aplica. */
+  protected saveRecEdit(rec: Recommendation): void {
+    if (!rec.approvalId) return;
+    const reais = this.editBudgetReais();
+    if (reais == null || !(reais > 0)) {
+      toast.error('Informe um valor maior que zero.');
+      return;
+    }
+    this.savingEdit.set(true);
+    this.approvalsApi.editAction(rec.approvalId, { mode: 'set', budgetReais: reais }).subscribe({
+      next: () => {
+        this.savingEdit.set(false);
+        this.editingRecId.set(null);
+        toast.success('Valor atualizado. Agora é só aprovar.');
+      },
+      error: () => this.savingEdit.set(false),
+    });
+  }
+
+  private markActioning(id: string): void {
+    this.actioning.update((s) => new Set(s).add(id));
+  }
+  private unmarkActioning(id: string): void {
+    this.actioning.update((s) => {
+      const next = new Set(s);
+      next.delete(id);
+      return next;
+    });
+  }
+  private finishActioning(id: string, result: 'approved' | 'rejected'): void {
+    this.unmarkActioning(id);
+    this.doneAction.update((m) => ({ ...m, [id]: result }));
+  }
 
   protected readonly scorecard = computed<Scorecard | null>(() => this.run()?.metrics?.scorecard ?? null);
   protected readonly waste = computed<Waste | null>(() => {

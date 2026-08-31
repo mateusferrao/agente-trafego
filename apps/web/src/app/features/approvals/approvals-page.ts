@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, type OnInit, computed, inject, signal } from '@angular/core';
+import { FormsModule } from '@angular/forms';
 import { toast } from 'ngx-sonner';
 import { UiButton, UiConfirmDialogService, UiEmptyState, UiEyebrow, UiPageHeader } from '@ui';
 import { DraftEditPanel } from './draft-edit-panel';
@@ -39,7 +40,7 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
 @Component({
   selector: 'app-approvals-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiEmptyState, UiPageHeader, UiButton, UiEyebrow, DraftEditPanel],
+  imports: [FormsModule, UiEmptyState, UiPageHeader, UiButton, UiEyebrow, DraftEditPanel],
   template: `
     <div class="flex flex-col gap-8">
       <app-ui-page-header
@@ -77,21 +78,6 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                         @if (d.objective) { <div><dt class="inline text-muted">Objetivo: </dt><dd class="inline">{{ objectiveLabel(d.objective) }}</dd></div> }
                         @if (d.sourceLevel) { <div><dt class="inline text-muted">Origem: </dt><dd class="inline">{{ sourceName(d) }}</dd></div> }
                       </dl>
-                      @if (d.creative; as cr) {
-                        <div class="flex items-center gap-3">
-                          @if (!thumbBroken().has(d.id)) {
-                            <img
-                              [src]="thumbUrl(d)"
-                              (error)="onThumbError(d.id)"
-                              alt="Prévia do criativo"
-                              class="h-16 w-16 shrink-0 rounded-lg border border-line object-cover"
-                            />
-                          } @else {
-                            <span class="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg border border-line text-xs text-muted">sem prévia</span>
-                          }
-                          <span class="text-sm text-ink"><span class="text-muted">Criativo: </span>{{ creativeLabel(cr) }}</span>
-                        </div>
-                      }
                       @if (d.audience; as aud) {
                         <div class="text-sm text-ink">
                           <span class="text-muted">Público: </span>{{ aud === 'reuse' ? 'herda o que já converte' : 'a Meta escolhe (mais amplo)' }}
@@ -100,9 +86,22 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                       @if (d.copyVariants && d.copyVariants.length > 0) {
                         <ul class="flex flex-col gap-2">
                           @for (c of d.copyVariants; track $index) {
-                            <li class="rounded-lg border border-line bg-panel px-3 py-2 text-sm">
-                              <span class="block font-semibold text-ink">{{ c.headline }}</span>
-                              <span class="block text-muted">{{ c.primaryText }}</span>
+                            <li class="flex gap-3 rounded-lg border border-line bg-panel px-3 py-2 text-sm">
+                              @if (!thumbBroken().has(adKey(d.id, $index))) {
+                                <img
+                                  [src]="adThumbUrl(d, $index)"
+                                  (error)="onAdThumbError(d.id, $index)"
+                                  alt="Prévia do criativo do anúncio"
+                                  class="h-14 w-14 shrink-0 rounded-md border border-line object-cover"
+                                />
+                              } @else {
+                                <span class="flex h-14 w-14 shrink-0 items-center justify-center rounded-md border border-line text-center text-xs text-muted">sem prévia</span>
+                              }
+                              <span class="min-w-0 flex-1">
+                                <span class="block font-semibold text-ink">{{ c.headline }}</span>
+                                <span class="block text-muted">{{ c.primaryText }}</span>
+                                @if (c.creative; as cr) { <span class="block text-xs text-muted">{{ creativeLabel(cr) }}</span> }
+                              </span>
                             </li>
                           }
                         </ul>
@@ -148,22 +147,50 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                 <h2 class="font-brand text-sm font-semibold text-ink">{{ group.accountName }}</h2>
                 <ul class="flex flex-col gap-2">
                   @for (a of group.items; track a.id) {
-                    <li class="ui-panel-card--brand flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <span class="flex min-w-0 flex-col gap-1">
-                        <app-ui-eyebrow>Aguardando seu OK@if (deadline(a.expiresAt); as d) { · {{ d }}}</app-ui-eyebrow>
-                        <span class="font-semibold text-ink">
-                          {{ typeLabel(a.type) }} {{ pendingTargetOf(a) }}
+                    <li class="ui-panel-card--brand flex flex-col gap-3">
+                      <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <span class="flex min-w-0 flex-col gap-1">
+                          <app-ui-eyebrow>Aguardando seu OK@if (deadline(a.expiresAt); as d) { · {{ d }}}</app-ui-eyebrow>
+                          <span class="font-semibold text-ink">
+                            {{ typeLabel(a.type) }} {{ pendingTargetOf(a) }}
+                          </span>
+                          <span class="text-xs text-muted">{{ a.reason }}</span>
                         </span>
-                        <span class="text-xs text-muted">{{ a.reason }}</span>
-                      </span>
-                      <span class="flex shrink-0 gap-2">
-                        <button appButton variant="secondary" size="sm" [disabled]="resolving().has(a.id)" (click)="reject(a)">
-                          Rejeitar
-                        </button>
-                        <button appButton size="sm" [disabled]="resolving().has(a.id)" (click)="approve(a)">
-                          {{ resolving().has(a.id) ? 'Enviando…' : 'Aprovar' }}
-                        </button>
-                      </span>
+                        <span class="flex shrink-0 gap-2">
+                          @if (a.type === 'adjust_budget') {
+                            <button appButton variant="ghost" size="sm" [disabled]="resolving().has(a.id)" (click)="toggleEditAction(a)">
+                              {{ editingActionId() === a.id ? 'Cancelar' : 'Editar valor' }}
+                            </button>
+                          }
+                          <button appButton variant="secondary" size="sm" [disabled]="resolving().has(a.id)" (click)="reject(a)">
+                            Rejeitar
+                          </button>
+                          <button appButton size="sm" [disabled]="resolving().has(a.id)" (click)="approve(a)">
+                            {{ resolving().has(a.id) ? 'Enviando…' : 'Aprovar' }}
+                          </button>
+                        </span>
+                      </div>
+                      @if (editingActionId() === a.id) {
+                        <div class="flex flex-col gap-2 border-t border-line pt-3">
+                          <div class="flex flex-col gap-2 sm:flex-row sm:items-end">
+                            <label class="flex flex-1 flex-col gap-1 text-sm">
+                              <span class="text-muted">Novo orçamento diário (R$)</span>
+                              <input
+                                type="number"
+                                min="1"
+                                step="1"
+                                [ngModel]="editBudgetReais()"
+                                (ngModelChange)="editBudgetReais.set($event)"
+                                class="rounded-md border border-line bg-panel px-3 py-2 text-ink"
+                              />
+                            </label>
+                            <button appButton size="sm" [disabled]="savingAction()" (click)="saveActionEdit(a)">
+                              {{ savingAction() ? 'Salvando…' : 'Salvar valor' }}
+                            </button>
+                          </div>
+                          <p class="text-xs text-muted">Ajusto o valor; aprovar em seguida aplica com o número novo (respeitando seu teto).</p>
+                        </div>
+                      }
                     </li>
                   }
                 </ul>
@@ -240,6 +267,10 @@ export class ApprovalsPage implements OnInit {
   );
   protected readonly resolving = signal<ReadonlySet<string>>(new Set());
   protected readonly reverting = signal<ReadonlySet<string>>(new Set());
+  /** id da ação com o editor de valor aberto (C — só adjust_budget, 1 por vez) + estado do form. */
+  protected readonly editingActionId = signal<string | null>(null);
+  protected readonly editBudgetReais = signal<number | null>(null);
+  protected readonly savingAction = signal(false);
   /** id do rascunho com o painel "Editar rascunho" aberto (só 1 por vez). */
   protected readonly editingFor = signal<string | null>(null);
   /** ids de rascunho cuja miniatura falhou (reuse fbcdn/Meta indisponível) → placeholder. */
@@ -247,10 +278,12 @@ export class ApprovalsPage implements OnInit {
   /** versão da miniatura por rascunho — bumpa após trocar o criativo (cache-buster da img). */
   protected readonly thumbVersion = signal<ReadonlyMap<string, number>>(new Map());
 
-  protected thumbUrl = (d: DraftApprovalOutput): string =>
-    this.draftsApi.draftCreativeThumbUrl(d.accountId, d.draftId, this.thumbVersion().get(d.id) ?? 0);
-  protected onThumbError(id: string): void {
-    this.thumbBroken.update((s) => new Set(s).add(id));
+  /** chave da miniatura POR ANÚNCIO (G) — o card mostra 1 preview por anúncio, não o geral. */
+  protected adKey = (draftId: string, index: number): string => `${draftId}:${index}`;
+  protected adThumbUrl = (d: DraftApprovalOutput, index: number): string =>
+    this.draftsApi.draftAdCreativeThumbUrl(d.accountId, d.draftId, index, this.thumbVersion().get(d.id) ?? 0);
+  protected onAdThumbError(draftId: string, index: number): void {
+    this.thumbBroken.update((s) => new Set(s).add(this.adKey(draftId, index)));
   }
   /** rótulo do criativo (formato + origem) — sem jargão, sem citar id técnico. */
   protected creativeLabel = (cr: NonNullable<DraftApprovalOutput['creative']>): string => {
@@ -402,6 +435,31 @@ export class ApprovalsPage implements OnInit {
         toast.success('Sugestão descartada');
       },
       error: () => this.clearResolving(a.id),
+    });
+  }
+
+  /** Abre/fecha o editor de valor de uma ação adjust_budget (C) — reseta o campo ao alternar. */
+  protected toggleEditAction(a: ApprovalOutput): void {
+    this.editingActionId.update((cur) => (cur === a.id ? null : a.id));
+    this.editBudgetReais.set(null);
+  }
+
+  /** Salva o novo VALOR (R$/dia, mode "set") da ação pendente antes de aprovar (C). A ação segue
+   *  pendente; aprovar em seguida aplica com o valor novo (o guardrail fresco clampa se estourar). */
+  protected saveActionEdit(a: ApprovalOutput): void {
+    const reais = this.editBudgetReais();
+    if (reais == null || !(reais > 0)) {
+      toast.error('Informe um valor maior que zero.');
+      return;
+    }
+    this.savingAction.set(true);
+    this.api.editAction(a.id, { mode: 'set', budgetReais: reais }).subscribe({
+      next: () => {
+        this.savingAction.set(false);
+        this.editingActionId.set(null);
+        toast.success('Valor atualizado. Agora é só aprovar.');
+      },
+      error: () => this.savingAction.set(false),
     });
   }
 
