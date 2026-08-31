@@ -68,4 +68,17 @@ describe("annotateFreedSpend", () => {
     expect(out.recommendations[0]!.expectedImpact).toContain("$ 700,00");
     expect(out.recommendations[1]!.expectedImpact).toBeNull();
   });
+
+  it("G4: pausa SEM spend disponível preserva o expectedImpact que o LLM já tinha proposto (não zera)", () => {
+    const withLlmImpact: AnalysisOutput = {
+      ...output(),
+      recommendations: [
+        { ...output().recommendations[0]!, expectedImpact: "estimativa do analista" },
+        output().recommendations[1]!,
+      ],
+    };
+    const out = annotateFreedSpend(withLlmImpact, new Map(), "USD"); // sem Z1 no mapa → spend undefined
+    expect(out.recommendations[0]!.expectedImpact).toBe("estimativa do analista");
+    expect(out.recommendations[0]!.rationale).toBe("zumbi"); // rationale também intacto
+  });
 });

@@ -53,6 +53,26 @@ describe("buildCampaignMessages (S0b — kernel de conhecimento condicionado por
     expect(system).not.toContain("money shot");
     expect(system).not.toContain("trackingHealth");
   });
+
+  it("sem revenue/benchmarkRef na campanha: omite os blocos condicionais (integração ponta-a-ponta)", () => {
+    const system = systemOf(buildCampaignMessages("persona", campaignUnit(), new Map(), { currency: "BRL", window: "7d" }));
+    expect(system).not.toContain("receita rastreada TOTAL");
+    expect(system).not.toContain("benchmarkRef");
+  });
+
+  it("com revenue na campanha: inclui o bloco de receita rastreada (integração ponta-a-ponta)", () => {
+    const unit = campaignUnit();
+    const withRevenue = { ...unit, campaign: entity({ metrics: { spend: 1, impressions: 1, clicks: 1, ctr: 1, cpc: 1, cpm: 1, revenue: 500 } }) };
+    const system = systemOf(buildCampaignMessages("persona", withRevenue, new Map(), { currency: "BRL", window: "7d" }));
+    expect(system).toContain("receita rastreada TOTAL");
+  });
+
+  it("com benchmarkRef na campanha: inclui o bloco de referência de plataforma (integração ponta-a-ponta)", () => {
+    const unit = campaignUnit();
+    const withBenchmark = { ...unit, campaign: entity({ benchmarkRef: { coldStart: true } }) };
+    const system = systemOf(buildCampaignMessages("persona", withBenchmark, new Map(), { currency: "BRL", window: "7d" }));
+    expect(system).toContain("benchmarkRef");
+  });
 });
 
 describe("buildSynthesisMessages (S0b)", () => {

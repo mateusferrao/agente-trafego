@@ -578,6 +578,25 @@ describe("descriptions de escrita/criação — S0a: procedimento-por-tool migro
   it("regenerate_copy: distingue de adjust_draft (regenera tudo × edita 1 anúncio)", () => {
     expect(descriptionOf("regenerate_copy")).toContain("adjust_draft (copyEdits)");
   });
+
+  function schemaFieldDescriptionOf(toolName: string, field: string): string | undefined {
+    const { deps } = makeDeps(() => null);
+    const found = makeConversationTools(deps, CTX, WRITE_CREATE_TOOL_NAMES).find((t) => t.name === toolName)! as unknown as {
+      schema: { shape: Record<string, { description?: string }> };
+    };
+    return found.schema.shape[field]?.description;
+  }
+
+  it("copy_campaign.interests: NÃO afirma mais que a cópia não herda (achado da revisão da Fase 1 — o código herda por padrão)", () => {
+    const d = schemaFieldDescriptionOf("copy_campaign", "interests")!;
+    expect(d).not.toContain("não herda");
+    expect(d).toContain("JÁ HERDA");
+  });
+
+  it("adjust_draft.variantsCount: description migrada do system prompt removido (S0a) — comportamento de aumentar nº de anúncios", () => {
+    const d = schemaFieldDescriptionOf("adjust_draft", "variantsCount")!;
+    expect(d).toContain("AUMENTAR faz EU escolher criativos distintos");
+  });
 });
 
 describe("mergeConfigUpdatePatches", () => {

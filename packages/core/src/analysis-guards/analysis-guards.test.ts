@@ -91,4 +91,16 @@ describe("analysis-guards", () => {
     expect(flagUnsupportedFindings(out, brief)[0]?.reason).toBe("unverifiable_number");
     expect(dropUnsupportedFindings(out, brief).findings).toHaveLength(0);
   });
+
+  it("G4: caveat=true NÃO é free-pass pra um R$/% inventado escondido em PROSA (title/detail), sem metricRefs", () => {
+    const out = output([{ id: "f1", title: "compliance", detail: "essa copy pode gerar CPA de R$999 e não compensa", severity: "warning", metricRefs: [], caveat: true }]);
+    expect(flagUnsupportedFindings(out, brief)[0]?.reason).toBe("unverifiable_number");
+    expect(dropUnsupportedFindings(out, brief).findings).toHaveLength(0);
+  });
+
+  it("G4: caveat=true com R$/% em prosa que BATE com o brief continua sustentado", () => {
+    const out = output([{ id: "f1", title: "compliance", detail: "a conta gastou R$300 nesta janela e a copy do criativo pode violar diretriz", severity: "warning", metricRefs: [], caveat: true }]);
+    expect(flagUnsupportedFindings(out, brief)).toHaveLength(0);
+    expect(dropUnsupportedFindings(out, brief).findings).toHaveLength(1);
+  });
 });

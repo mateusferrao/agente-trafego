@@ -1,5 +1,6 @@
 import type { AccountBrief, ConversionBasis, DecisionEligibility, EntitySummary, FunnelSummary, InsightMetrics, TrackingHealth } from "@trafego/shared";
 import type { AnalysisFinding, AnalysisOutput, RecommendationActionType } from "@trafego/shared";
+import { flagUngroundedNumbers } from "../chat-guards/index.js";
 
 /**
  * Guards determinísticos sobre a saída do LLM (§ princípio-guia: rede que não
@@ -88,11 +89,19 @@ function isVerifiable(value: number, known: ReadonlySet<number>): boolean {
  * Finding sustentado? tem metricRefs e (nenhum número OU ≥1 número que confere).
  * EXCEÇÃO (G4): `caveat=true` carve-out do requisito de metricRefs — achado QUALITATIVO/
  * compliance sem número que o sustente (ex: risco de linguagem regulada). NUNCA afrouxa a
- * verificação de número quando `metricRefs` está preenchido (com caveat ou sem).
+ * verificação de número quando `metricRefs` está preenchido (com caveat ou sem) — E o carve-out
+ * em si não é um free-pass pra "esconder" um número inventado em PROSA (title/detail): reusa o
+ * scanner de dinheiro/% do chat (`flagUngroundedNumbers`, packages/core/src/chat-guards) contra
+ * o mesmo gabarito, mesma classe de menor falso-positivo já validada nesse guard.
  */
 function findingIssue(finding: AnalysisFinding, known: ReadonlySet<number>): FindingIssue | null {
   if (finding.metricRefs.length === 0) {
-    if (finding.caveat) return null;
+    if (finding.caveat) {
+      const ungrounded = flagUngroundedNumbers(`${finding.title} ${finding.detail}`, known);
+      if (ungrounded.length === 0) return null;
+      const kind = ungrounded[0]!.kind === "money" ? "valor" : "percentual";
+      return { findingId: finding.id, reason: "unverifiable_number", detail: `caveat cita ${kind} que não bate com o brief` };
+    }
     return { findingId: finding.id, reason: "no_metric_ref", detail: "sem métrica de suporte" };
   }
   const numeric = finding.metricRefs.filter((r): r is { label: string; value: number } => typeof r.value === "number");
