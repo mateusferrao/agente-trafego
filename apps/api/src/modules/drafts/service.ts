@@ -802,6 +802,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       accountId: string,
       draftId: string,
       ifNoneMatch?: string,
+      adIndex?: number,
     ): Promise<{ notModified: true; etag: string } | { bytes: Uint8Array; contentType: string; etag: string } | null> {
       const [draft] = await deps.db
         .select({ spec: campaignDrafts.spec })
@@ -809,7 +810,11 @@ export function createDraftsService(deps: DraftsServiceDeps) {
         .where(and(eq(campaignDrafts.id, draftId), eq(campaignDrafts.orgId, orgId), eq(campaignDrafts.adAccountId, accountId)))
         .limit(1);
       if (!draft) return null;
-      const creative = (draft.spec as CampaignDraftSpec).creative;
+      const spec = draft.spec as CampaignDraftSpec;
+      // Preview POR ANÚNCIO (G): resolve o criativo próprio do anúncio, caindo no criativo padrão do
+      // rascunho quando o anúncio não tem um seu (ou quando `adIndex` ausente = thumb geral).
+      const creative =
+        (adIndex !== undefined ? spec.copyVariants?.[adIndex]?.creative : undefined) ?? spec.creative;
       if (!creative) return null;
 
       // upload → blob do StoragePort (content-addressed; ETag do próprio blob).

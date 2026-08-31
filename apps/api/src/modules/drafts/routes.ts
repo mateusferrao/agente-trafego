@@ -118,6 +118,31 @@ export const draftsRoutes: FastifyPluginAsync = async (app) => {
       .send(Buffer.from(thumb.bytes));
   });
 
+  // Preview do criativo POR ANÚNCIO (G): resolve o criativo do anúncio `index` (cai no padrão do
+  // rascunho quando o anúncio não tem um seu). Mesmo ETag/304; o card mostra 1 preview por anúncio.
+  app.get("/accounts/:id/drafts/:draftId/ads/:index/creative/thumb", guard, async (request, reply) => {
+    const { id, draftId, index } = request.params as { id: string; draftId: string; index: string };
+    const adIndex = Number.parseInt(index, 10);
+    if (!Number.isInteger(adIndex) || adIndex < 0) return reply.status(400).send({ message: "índice de anúncio inválido" });
+    const inm = request.headers["if-none-match"];
+    const thumb = await service.getDraftCreativeThumb(
+      orgIdOf(request) as OrgId,
+      id,
+      draftId,
+      typeof inm === "string" ? inm : undefined,
+      adIndex,
+    );
+    if (!thumb) return reply.status(404).send({ message: "miniatura indisponível" });
+    const etag = `"${thumb.etag}"`;
+    if ("notModified" in thumb) return reply.status(304).header("ETag", etag).send();
+    return reply
+      .header("Content-Type", thumb.contentType)
+      .header("Cache-Control", "private, max-age=86400")
+      .header("ETag", etag)
+      .header("Content-Disposition", "inline")
+      .send(Buffer.from(thumb.bytes));
+  });
+
   app.get("/accounts/:id/creatives", guard, async (request) => {
     const { id } = request.params as { id: string };
     return service.listCreatives(orgIdOf(request) as OrgId, id);
