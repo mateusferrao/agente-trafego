@@ -55,3 +55,31 @@ describe("buildMessageMessages (redator) — comportamento existente (waste/trac
     expect(user).toContain("trackingSuspect");
   });
 });
+
+describe("buildMessageMessages (redator) — S8: lidera por qualidade do lead (vertical=health) antes de métrica de vaidade", () => {
+  const COLD_FUNNEL = { counts: { conversation_started: 30 }, replyRate: 0.2 };
+  const HEALTHY_FUNNEL = { counts: { conversation_started: 30 }, replyRate: 0.7 };
+
+  it("vertical=health + funil frio (replyRate baixa, volume suficiente) → injeta leadQualityCaveat + regra de ordenação", () => {
+    const messages = buildMessageMessages("persona", "Clínica X", output(), DEFAULT_POSTURE, { funnel: COLD_FUNNEL }, "health");
+    expect(userOf(messages)).toContain("leadQualityCaveat");
+    const system = messages[0]!.content as string;
+    expect(system).toMatch(/leadQualityCaveat/);
+    expect(system).toMatch(/antes/i); // ordenação: caveat ANTES do CPL/CPA bom
+  });
+
+  it("vertical=health + funil saudável (replyRate boa) → NÃO injeta leadQualityCaveat", () => {
+    const user = userOf(buildMessageMessages("persona", "Clínica X", output(), DEFAULT_POSTURE, { funnel: HEALTHY_FUNNEL }, "health"));
+    expect(user).not.toContain("leadQualityCaveat");
+  });
+
+  it("funil frio mas vertical != health → NÃO injeta (regra é escopada à saúde pelo plano)", () => {
+    const user = userOf(buildMessageMessages("persona", "Clínica X", output(), DEFAULT_POSTURE, { funnel: COLD_FUNNEL }, "generico"));
+    expect(user).not.toContain("leadQualityCaveat");
+  });
+
+  it("sem vertical informado → NÃO injeta (default seguro, não assume saúde)", () => {
+    const user = userOf(buildMessageMessages("persona", "Clínica X", output(), DEFAULT_POSTURE, { funnel: COLD_FUNNEL }));
+    expect(user).not.toContain("leadQualityCaveat");
+  });
+});

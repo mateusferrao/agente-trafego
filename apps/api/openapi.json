@@ -3799,6 +3799,35 @@
                 },
                 "muted": {
                   "type": "boolean"
+                },
+                "budget": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "dailyMajor": {
+                      "type": "number"
+                    },
+                    "lifetimeMajor": {
+                      "type": "number"
+                    },
+                    "lifetimeRemainingMajor": {
+                      "type": "number"
+                    }
+                  }
+                },
+                "atBudgetCeiling": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "isCBO": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
                 }
               },
               "required": [
@@ -3810,7 +3839,10 @@
                 "flags",
                 "tier",
                 "stage",
-                "muted"
+                "muted",
+                "budget",
+                "atBudgetCeiling",
+                "isCBO"
               ]
             }
           }
@@ -5644,6 +5676,35 @@
                 },
                 "muted": {
                   "type": "boolean"
+                },
+                "budget": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "dailyMajor": {
+                      "type": "number"
+                    },
+                    "lifetimeMajor": {
+                      "type": "number"
+                    },
+                    "lifetimeRemainingMajor": {
+                      "type": "number"
+                    }
+                  }
+                },
+                "atBudgetCeiling": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "isCBO": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
                 }
               },
               "required": [
@@ -5655,7 +5716,10 @@
                 "flags",
                 "tier",
                 "stage",
-                "muted"
+                "muted",
+                "budget",
+                "atBudgetCeiling",
+                "isCBO"
               ]
             }
           },

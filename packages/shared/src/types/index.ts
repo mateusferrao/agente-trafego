@@ -575,6 +575,9 @@ export interface EntitySummary {
  * `packages/core/src/curated-entity` (`buildCuratedEntitySnapshot`).
  */
 export interface CuratedEntitySnapshot {
+  /** Campanha-mãe (só adset, S8) — liga o diagnóstico do conjunto de volta à campanha ABO
+   *  (a assimetria CBO×ABO precisa ser rotulável no chat: CLAUDE.md §13). */
+  readonly campaignId?: string;
   readonly budget?: EntityBudget;
   readonly atBudgetCeiling?: boolean;
   /** true = orçamento na PRÓPRIA campanha (CBO); false = por conjunto/adset (ABO). */
@@ -585,6 +588,8 @@ export interface CuratedEntitySnapshot {
   readonly conversionBasis?: ConversionBasis;
   readonly healthSignals?: readonly HealthSignal[];
   readonly eligibility?: DecisionEligibility;
+  /** referência de plataforma no cold-start (S8) — direcional, nunca a meta do dono. */
+  readonly benchmarkRef?: BenchmarkRef;
 }
 
 export interface Anomaly {
@@ -641,6 +646,11 @@ export interface RunCampaignCard {
   readonly tier?: PerformanceTier | null;
   /** estágio de público DOMINANTE da campanha (§Bloco 2) — do adset de maior gasto. */
   readonly stage?: AudienceStage | null;
+  /** orçamento congelado no run (S8) — mesmo campo de `CuratedEntitySnapshot`. */
+  readonly budget?: EntityBudget;
+  readonly atBudgetCeiling?: boolean;
+  /** true = orçamento na PRÓPRIA campanha (CBO); false = por conjunto/adset (ABO). */
+  readonly isCBO?: boolean;
 }
 
 export interface AgentGoals {

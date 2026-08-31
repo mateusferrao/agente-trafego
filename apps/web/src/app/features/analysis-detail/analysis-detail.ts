@@ -190,6 +190,9 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                       @if (c.stage) {
                         <span class="text-[11px] text-muted">· {{ stageLabel(c.stage) }}</span>
                       }
+                      @if (c.isCBO === false) {
+                        <span class="text-[11px] text-muted">· orçamento por conjunto (ABO)</span>
+                      }
                       @if (c.muted) {
                         <span class="text-[11px] text-muted">· silenciada</span>
                       }
@@ -229,6 +232,15 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                   }
                   @if (c.metrics.ctr !== undefined) {
                     <span class="flex items-baseline gap-1.5"><app-ui-eyebrow>CTR</app-ui-eyebrow><b class="ui-stat__value text-sm text-ink">{{ pctRatio(c.metrics.ctr) }}</b></span>
+                  }
+                  @if (campaignBudget(c); as budgetText) {
+                    <span class="flex items-baseline gap-1.5">
+                      <app-ui-eyebrow>Orçamento</app-ui-eyebrow>
+                      <b class="ui-stat__value text-sm text-ink">{{ budgetText }}</b>
+                      @if (c.atBudgetCeiling) {
+                        <span class="text-[11px] text-danger-strong">sem folga</span>
+                      }
+                    </span>
                   }
                 </div>
 
@@ -654,6 +666,14 @@ export class AnalysisDetail {
   }
   protected campaignCpa(c: Campaign): string {
     return formatCurrency(c.metrics.cpa ?? 0, this.currency());
+  }
+  /** Orçamento curado (S8) — diário tem prioridade de leitura (mais comum); vitalício rotulado. */
+  protected campaignBudget(c: Campaign): string | null {
+    const b = c.budget;
+    if (!b) return null;
+    if (b.dailyMajor !== undefined) return `${formatCurrency(b.dailyMajor, this.currency())}/dia`;
+    if (b.lifetimeMajor !== undefined) return `${formatCurrency(b.lifetimeMajor, this.currency())} vitalício`;
+    return null;
   }
   protected leakLabel(leak: Scorecard['biggestLeak']): string {
     return LEAK_LABEL[leak];

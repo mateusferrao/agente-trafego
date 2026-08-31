@@ -326,6 +326,7 @@ describe("getMetricsData", () => {
 describe("getCampaignAnalysisData", () => {
   const rows = [
     {
+      entityLevel: "campaign" as const,
       entityName: "Lançamento Black Friday",
       unitJson: { summary: "escala bem", findings: [{ title: "CTR caindo", severity: "warning" }], flags: [] },
       metricsJson: { spend: 500, cpa: 12, roas: 3 },
@@ -333,6 +334,7 @@ describe("getCampaignAnalysisData", () => {
       analyzedAt: new Date("2026-08-20T08:00:00.000Z"),
     },
     {
+      entityLevel: "campaign" as const,
       entityName: "Remarketing geral",
       unitJson: { summary: "estável", findings: [], flags: [] },
       metricsJson: { spend: 100 },
@@ -371,6 +373,38 @@ describe("getCampaignAnalysisData", () => {
     const db = fakeDb(new Map<unknown, unknown[]>([[entityAnalyses, withCurated]]));
     const res = await getCampaignAnalysisData(db, AGENT, "black friday");
     expect(res).toMatchObject({ tier: "winner", budget: { dailyMajor: 150 }, atBudgetCeiling: true, isCBO: true });
+  });
+
+  it("S8/S8b: campanha ABO (isCBO=false) com 2+ conjuntos com diagnóstico próprio → expõe adsets + adsetsNote (assimetria CBO×ABO rotulada)", async () => {
+    const withAdsets = [
+      { ...rows[0], entityId: "c1", curatedJson: { isCBO: false, tier: "performer" } },
+      { entityLevel: "adset" as const, entityId: "as1", entityName: "Conjunto quente", unitJson: {}, metricsJson: {}, flags: [], curatedJson: { isCBO: true, tier: "winner", campaignId: "c1" }, analyzedAt: new Date("2026-08-20T08:00:00.000Z") },
+      { entityLevel: "adset" as const, entityId: "as2", entityName: "Conjunto frio", unitJson: {}, metricsJson: {}, flags: [], curatedJson: { isCBO: true, tier: "zombie", campaignId: "c1" }, analyzedAt: new Date("2026-08-20T08:00:00.000Z") },
+      // adset de OUTRA campanha — não pode vazar pro breakdown de c1.
+      { entityLevel: "adset" as const, entityId: "as3", entityName: "Conjunto de outra campanha", unitJson: {}, metricsJson: {}, flags: [], curatedJson: { isCBO: true, tier: "performer", campaignId: "c-outra" }, analyzedAt: new Date("2026-08-20T08:00:00.000Z") },
+    ];
+    const db = fakeDb(new Map<unknown, unknown[]>([[entityAnalyses, withAdsets]]));
+    const res = await getCampaignAnalysisData(db, AGENT, "black friday");
+    expect(res).toMatchObject({
+      isCBO: false,
+      adsets: expect.arrayContaining([
+        { id: "as1", name: "Conjunto quente", tier: "winner" },
+        { id: "as2", name: "Conjunto frio", tier: "zombie" },
+      ]),
+    });
+    const withAdsetsRes = res as unknown as { adsets: unknown[]; adsetsNote: string };
+    expect(withAdsetsRes.adsets).toHaveLength(2); // não inclui as3 (outra campanha)
+    expect(withAdsetsRes.adsetsNote).toMatch(/ABO|orçamento por conjunto/i);
+  });
+
+  it("campanha CBO (isCBO=true) → NUNCA expõe adsets, mesmo com conjuntos na tabela", async () => {
+    const cboWithAdsets = [
+      { ...rows[0], entityId: "c1", curatedJson: { isCBO: true, tier: "winner" } },
+      { entityLevel: "adset" as const, entityId: "as1", entityName: "Conjunto", unitJson: {}, metricsJson: {}, flags: [], curatedJson: { isCBO: false, campaignId: "c1" }, analyzedAt: new Date("2026-08-20T08:00:00.000Z") },
+    ];
+    const db = fakeDb(new Map<unknown, unknown[]>([[entityAnalyses, cboWithAdsets]]));
+    const res = await getCampaignAnalysisData(db, AGENT, "black friday");
+    expect((res as { adsets?: unknown[] }).adsets).toBeUndefined();
   });
 
   it("nenhuma casa → hasData:false", async () => {

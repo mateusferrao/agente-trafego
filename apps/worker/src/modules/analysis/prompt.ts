@@ -90,7 +90,7 @@ export function buildCampaignMessages(
   systemPrompt: string,
   unit: CampaignUnit,
   visionByAdId: ReadonlyMap<string, readonly CreativeVisionResult[]>,
-  accountContext: { readonly currency: string; readonly window: string; readonly businessGoal?: string },
+  accountContext: { readonly currency: string; readonly window: string; readonly businessGoal?: string; readonly trackingSuspect?: boolean },
   copyByAdId: ReadonlyMap<string, AdCopy> = new Map(),
   vertical?: string,
 ): LLMMessage[] {
@@ -98,7 +98,9 @@ export function buildCampaignMessages(
     systemPrompt,
     GROUNDING_RULE,
     verticalText(vertical),
-    buildAnalysisKnowledgeText(buildCampaignKnowledgeContext(unit)),
+    // S8: medição suspeita (trackingHealth) é injetada da CONTA — vale pra cada campanha
+    // dela, não só na síntese (ver comentário em buildCampaignKnowledgeContext).
+    buildAnalysisKnowledgeText(buildCampaignKnowledgeContext(unit, accountContext.trackingSuspect ?? false)),
     FINDINGS_METRIC_INSTRUCTION,
     RECOMMENDATION_TAXONOMY_INSTRUCTION,
   ]

@@ -161,11 +161,16 @@ describe("buildSynthesisKnowledgeContext", () => {
 });
 
 describe("buildCampaignKnowledgeContext (map)", () => {
-  it("role='map' e hasWaste/trackingSuspect SEMPRE false (conta-level, não computado por campanha)", () => {
+  it("role='map' e hasWaste SEMPRE false (conta-level, não computado por campanha)", () => {
     const ctx = buildCampaignKnowledgeContext(campaignUnit(entity()));
     expect(ctx.role).toBe("map");
     expect(ctx.hasWaste).toBe(false);
-    expect(ctx.trackingSuspect).toBe(false);
+  });
+
+  it("trackingSuspect: false por padrão (sem 2º argumento); repassa o valor da CONTA quando informado (S8 — injeta trackingHealth no mapa)", () => {
+    expect(buildCampaignKnowledgeContext(campaignUnit(entity())).trackingSuspect).toBe(false);
+    expect(buildCampaignKnowledgeContext(campaignUnit(entity()), false).trackingSuspect).toBe(false);
+    expect(buildCampaignKnowledgeContext(campaignUnit(entity()), true).trackingSuspect).toBe(true);
   });
 
   it("hasRevenue/hasBenchmarkRef derivados dos anúncios notáveis da unidade", () => {
@@ -228,13 +233,18 @@ describe("selectAnalysisKnowledge — relevância por papel e por dado", () => {
     ).not.toContain("bid_strategy");
   });
 
-  it("map SEMPRE inclui advice (direção de criativo/público), nunca waste/tracking mesmo se o ctx mentir", () => {
+  it("map SEMPRE inclui advice (direção de criativo/público), NUNCA waste (é sinal de conta, não computado por campanha)", () => {
     const keys = selectAnalysisKnowledge({ role: "map", hasWaste: true, trackingSuspect: true, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: false, bidStrategyMismatch: false }).map(
       (b) => b.key,
     );
     expect(keys).toContain("advice");
     expect(keys).not.toContain("waste");
-    expect(keys).not.toContain("tracking");
+  });
+
+  it("map com trackingSuspect (S8 — injetado da conta) → TAMBÉM inclui o bloco tracking; sem suspeita, não inclui", () => {
+    const suspectMap = { role: "map" as const, hasWaste: false, trackingSuspect: true, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: false, bidStrategyMismatch: false };
+    expect(selectAnalysisKnowledge(suspectMap).map((b) => b.key)).toContain("tracking");
+    expect(selectAnalysisKnowledge({ ...suspectMap, trackingSuspect: false }).map((b) => b.key)).not.toContain("tracking");
   });
 
   it("review: só os blocos-base de domínio (G7) — nunca advice/waste/tracking/revenue/benchmark/budget/bid_strategy", () => {

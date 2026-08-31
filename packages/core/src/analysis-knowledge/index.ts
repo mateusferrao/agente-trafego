@@ -198,7 +198,7 @@ export const ANALYSIS_KNOWLEDGE_BLOCKS: readonly AnalysisKnowledgeBlock[] = [
   { key: "diagnosis", theme: "qualidade", text: DIAGNOSIS_TEXT, relevant: isAnalysisRole },
   { key: "advice", theme: "criativo", text: ADVICE_TEXT, relevant: (ctx) => ctx.role === "map" },
   { key: "waste", theme: "desperdicio", text: WASTE_TEXT, relevant: (ctx) => ctx.role === "synthesis" && ctx.hasWaste },
-  { key: "tracking", theme: "desperdicio", text: TRACKING_TEXT, relevant: (ctx) => ctx.role === "synthesis" && ctx.trackingSuspect },
+  { key: "tracking", theme: "desperdicio", text: TRACKING_TEXT, relevant: (ctx) => isMapOrSynthesis(ctx) && ctx.trackingSuspect },
   { key: "benchmark", theme: "benchmark", text: BENCHMARK_TEXT, relevant: (ctx) => isMapOrSynthesis(ctx) && ctx.hasBenchmarkRef },
   { key: "budget", theme: "orcamento", text: BUDGET_TEXT, relevant: (ctx) => isMapOrSynthesis(ctx) && ctx.hasBudgetData },
   { key: "bid_strategy", theme: "orcamento", text: BID_STRATEGY_TEXT, relevant: (ctx) => ctx.role === "synthesis" && ctx.bidStrategyMismatch },
@@ -263,13 +263,16 @@ export function buildSynthesisKnowledgeContext(brief: AccountBrief): AnalysisKno
 }
 
 /** Contexto do MAPA (por-campanha) — a partir da árvore curada `CampaignUnit`. Desperdício/
- *  tracking/lance são sinais de CONTA (não computados por campanha) — sempre `false` aqui. */
-export function buildCampaignKnowledgeContext(unit: CampaignUnit): AnalysisKnowledgeContext {
+ *  lance são sinais de CONTA (não computados por campanha) — sempre `false` aqui. `trackingSuspect`
+ *  (S8) é a ÚNICA exceção: o caller repassa `brief.trackingHealth?.suspect` — a medição suspeita
+ *  vale pra CADA campanha da conta (não é um agregado que só faz sentido na síntese), então o
+ *  mapa também precisa do caveat ao propor pausar/cortar por CPA de venda. */
+export function buildCampaignKnowledgeContext(unit: CampaignUnit, trackingSuspect = false): AnalysisKnowledgeContext {
   const entities = [unit.campaign, ...unit.adsets.flatMap((g) => [g.adset, ...g.notableAds])];
   return {
     role: "map",
     hasWaste: false,
-    trackingSuspect: false,
+    trackingSuspect,
     bidStrategyMismatch: false,
     hasRevenue: anyEntityHasRevenue(entities),
     hasBenchmarkRef: anyEntityHasBenchmarkRef(entities),

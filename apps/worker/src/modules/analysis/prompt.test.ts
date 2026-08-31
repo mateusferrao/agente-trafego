@@ -48,10 +48,18 @@ describe("buildCampaignMessages (S0b — kernel de conhecimento condicionado por
     expect(system).toContain("Copy real"); // advice — só no papel map
   });
 
-  it("NUNCA inclui os blocos de conta (waste/tracking são desperdício/tracking — não computados por campanha)", () => {
+  it("NUNCA inclui o bloco de waste (desperdício é sinal de conta, não computado por campanha)", () => {
     const system = systemOf(buildCampaignMessages("persona", campaignUnit(), new Map(), { currency: "BRL", window: "7d" }));
     expect(system).not.toContain("money shot");
-    expect(system).not.toContain("trackingHealth");
+  });
+
+  it("trackingSuspect ausente/false no accountContext → sem o bloco de tracking; true → INJETA (S8, achado do plano: caveat de medição também vale por-campanha)", () => {
+    const noSignal = systemOf(buildCampaignMessages("persona", campaignUnit(), new Map(), { currency: "BRL", window: "7d" }));
+    expect(noSignal).not.toContain("trackingHealth");
+    const withSignal = systemOf(
+      buildCampaignMessages("persona", campaignUnit(), new Map(), { currency: "BRL", window: "7d", trackingSuspect: true }),
+    );
+    expect(withSignal).toContain("trackingHealth");
   });
 
   it("sem revenue/benchmarkRef na campanha: omite os blocos condicionais (integração ponta-a-ponta)", () => {

@@ -3,10 +3,15 @@
 // (só números da síntese), voz do arquétipo, WhatsApp-first. Saída {text} mínima.
 
 import type { AnalysisOutput } from "@trafego/shared/schemas";
-import type { Posture, WasteReport } from "@trafego/shared";
+import type { FunnelSummary, Posture, WasteReport } from "@trafego/shared";
 import type { LLMMessage } from "@trafego/shared/ports";
-import { composePostureBlock, kindForRecommendation, volumeToRecCount } from "@trafego/core";
+import { composePostureBlock, hasLeadQualityCaveat, kindForRecommendation, volumeToRecCount } from "@trafego/core";
 import { GROUNDING_RULE } from "../analysis/prompt.js";
+
+/** Vertical em que o caveat de qualidade do lead lidera a mensagem (S8) — CPL bom com lead
+ *  frio é a armadilha clássica de saúde (Playbook Steticos, item 5); fora dela, fica de fora
+ *  por ora (escopo do plano do pivô saúde). */
+const LEAD_QUALITY_CAVEAT_VERTICAL = "health";
 
 /** Structured output do redator — um único campo de texto. */
 export const MESSAGE_OUTPUT_JSON_SCHEMA: Readonly<Record<string, unknown>> = {
@@ -27,6 +32,7 @@ const VOICE_RULES = [
   "Se houver 'waste' (wastedSpend > 0 ou 'misallocated'), ABRA pela mensagem em reais (o dono quer ver o dinheiro primeiro): quanto está parado e onde está mal alocado.",
   "Se 'trackingSuspect' for true, ressalve que a medição de vendas pode estar incompleta antes de sugerir cortes por CPA de venda.",
   "Se 'atBudgetCeilingCampaigns' vier preenchido, mencione que essas campanhas estão SEM FOLGA de orçamento — subir o orçamento é o próximo passo pra elas continuarem escalando (não invente valor de aumento, só sinalize a falta de folga).",
+  "Se 'leadQualityCaveat' for true, ressalve ANTES de qualquer CPL/CPA/custo bom: a taxa de resposta dos leads está baixa — comemorar custo baixo com lead frio é a armadilha clássica. Diga isso primeiro, depois o resto.",
 ].join(" ");
 
 /** Resumo compacto do desperdício p/ o redator (não despeja o Pareto inteiro). */
@@ -54,10 +60,15 @@ export function buildMessageMessages(
     readonly trackingSuspect?: boolean;
     /** nomes de campanhas ATIVAS sem folga de orçamento (S1) — `campaignsAtBudgetCeiling`. */
     readonly atBudgetCeilingCampaigns?: readonly string[];
+    /** funil de messaging da CONTA (S8) — insumo do caveat de qualidade do lead. */
+    readonly funnel?: FunnelSummary;
   },
+  /** perfil vertical do agente (S4) — só liga o caveat de lead frio em `health` (ver constante). */
+  vertical?: string,
 ): LLMMessage[] {
   const system = [systemPrompt, composePostureBlock(posture), VOICE_RULES, GROUNDING_RULE].join("\n\n");
   const waste = curateWaste(extras?.waste);
+  const leadQualityCaveat = vertical === LEAD_QUALITY_CAVEAT_VERTICAL && hasLeadQualityCaveat(extras?.funnel);
   const curated = {
     accountName,
     scorecard: output.scorecard,
@@ -67,6 +78,7 @@ export function buildMessageMessages(
     ...(extras?.atBudgetCeilingCampaigns && extras.atBudgetCeilingCampaigns.length > 0
       ? { atBudgetCeilingCampaigns: extras.atBudgetCeilingCampaigns }
       : {}),
+    ...(leadQualityCaveat ? { leadQualityCaveat: true } : {}),
     // Fix fadiga (S3): insight puro NÃO entra no push proativo (fica na visão de
     // análise). Reusa a fonte única kindForRecommendation (não re-deriva 'keep' à mão).
     // Volume (postura) determina quantas liderar.

@@ -504,6 +504,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const accountCurrency = state.account.currency;
     const windowLabel = state.window.label;
     const businessGoal = state.goals.conversionGoal;
+    // S8: medição suspeita é sinal de CONTA (built.brief.trackingHealth) — repassada a
+    // CADA campanha do mapa, não só na síntese (o caveat vale por-campanha).
+    const trackingSuspect = built.brief.trackingHealth?.suspect === true;
     const outcomes = await mapWithConcurrency(selection.toAnalyze, cfg.mapConcurrency, async (unit) => {
       // visão dos criativos dos anúncios notáveis DESTA campanha (teto por campanha).
       const notableAdIds = unit.adsets.flatMap((g) => g.notableAds.map((a) => a.id));
@@ -548,6 +551,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
             currency: accountCurrency,
             window: windowLabel,
             ...(businessGoal ? { businessGoal } : {}),
+            trackingSuspect,
           }, copyByAdId, state.vertical),
           responseSchema: UNIT_ANALYSIS_JSON_SCHEMA,
           responseSchemaName: UNIT_ANALYSIS_SCHEMA_NAME,
@@ -1215,7 +1219,8 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
             ...(state.brief?.waste ? { waste: state.brief.waste } : {}),
             ...(state.brief?.trackingHealth?.suspect ? { trackingSuspect: true } : {}),
             atBudgetCeilingCampaigns: campaignsAtBudgetCeiling(state.brief?.segments.campaigns ?? []),
-          }),
+            ...(state.brief?.funnel ? { funnel: state.brief.funnel } : {}),
+          }, state.vertical),
           responseSchema: MESSAGE_OUTPUT_JSON_SCHEMA,
           responseSchemaName: MESSAGE_OUTPUT_SCHEMA_NAME,
           temperature: ANALYSIS_TEMPERATURE,
@@ -1511,6 +1516,9 @@ function buildCampaignCards(
       flags: [...u.campaign.flags],
       ...(u.campaign.tier ? { tier: u.campaign.tier } : {}),
       ...(stage ? { stage } : {}),
+      ...(u.campaign.budget ? { budget: u.campaign.budget } : {}),
+      ...(u.campaign.atBudgetCeiling !== undefined ? { atBudgetCeiling: u.campaign.atBudgetCeiling } : {}),
+      isCBO: u.campaign.budget != null,
     });
   }
   return cards;

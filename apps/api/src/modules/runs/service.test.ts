@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Database } from "@trafego/db";
 import type { OrgId } from "@trafego/shared/types";
 import { AGENT_RUNS_QUEUE } from "@trafego/shared";
-import { createRunsService } from "./service.js";
+import { createRunsService, toCampaignAnalysisOutput } from "./service.js";
 
 const ORG = "org-1" as OrgId;
 
@@ -57,5 +57,32 @@ describe("runs.trigger", () => {
 
     await expect(service.trigger(ORG, "acc-1")).rejects.toMatchObject({ statusCode: 409 });
     expect(scheduler.enqueue).not.toHaveBeenCalled();
+  });
+});
+
+describe("toCampaignAnalysisOutput (S8 — orçamento curado no cartão da campanha)", () => {
+  const BASE_ROW = { entityId: "c1", name: "Campanha X", unitJson: {}, metricsJson: {}, flags: [], tier: null };
+
+  it("sem curatedJson (linha de antes da fase) → budget/atBudgetCeiling/isCBO null, não omitidos", () => {
+    const out = toCampaignAnalysisOutput(BASE_ROW, false);
+    expect(out.budget).toBeNull();
+    expect(out.atBudgetCeiling).toBeNull();
+    expect(out.isCBO).toBeNull();
+  });
+
+  it("com curatedJson (CBO) → expõe budget/atBudgetCeiling/isCBO", () => {
+    const out = toCampaignAnalysisOutput(
+      { ...BASE_ROW, curatedJson: { isCBO: true, budget: { dailyMajor: 150 }, atBudgetCeiling: true } },
+      false,
+    );
+    expect(out.budget).toEqual({ dailyMajor: 150 });
+    expect(out.atBudgetCeiling).toBe(true);
+    expect(out.isCBO).toBe(true);
+  });
+
+  it("com curatedJson (ABO, sem budget próprio) → isCBO false, budget null", () => {
+    const out = toCampaignAnalysisOutput({ ...BASE_ROW, curatedJson: { isCBO: false } }, false);
+    expect(out.isCBO).toBe(false);
+    expect(out.budget).toBeNull();
   });
 });

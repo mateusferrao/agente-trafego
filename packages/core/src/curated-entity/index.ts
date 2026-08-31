@@ -14,6 +14,7 @@ export type { CuratedEntitySnapshot };
  */
 export function buildCuratedEntitySnapshot(entity: EntitySummary): CuratedEntitySnapshot {
   return {
+    ...(entity.campaignId ? { campaignId: entity.campaignId } : {}),
     ...(entity.budget ? { budget: entity.budget } : {}),
     ...(entity.atBudgetCeiling !== undefined ? { atBudgetCeiling: entity.atBudgetCeiling } : {}),
     isCBO: entity.budget != null,
@@ -23,6 +24,7 @@ export function buildCuratedEntitySnapshot(entity: EntitySummary): CuratedEntity
     ...(entity.conversionBasis ? { conversionBasis: entity.conversionBasis } : {}),
     ...(entity.healthSignals && entity.healthSignals.length > 0 ? { healthSignals: entity.healthSignals } : {}),
     ...(entity.eligibility ? { eligibility: entity.eligibility } : {}),
+    ...(entity.benchmarkRef ? { benchmarkRef: entity.benchmarkRef } : {}),
   };
 }
 

@@ -49,6 +49,16 @@ describe("buildCuratedEntitySnapshot (S1 — persistência do que o chat/redator
     expect(snap.healthSignals).toBeUndefined();
   });
 
+  it("carrega campaignId quando presente (S8 — liga o adset de volta à campanha-mãe ABO)", () => {
+    const snap = buildCuratedEntitySnapshot(entity({ campaignId: "c1" }));
+    expect(snap.campaignId).toBe("c1");
+  });
+
+  it("carrega benchmarkRef quando presente (S8 — cold-start visível no chat/redator)", () => {
+    const snap = buildCuratedEntitySnapshot(entity({ benchmarkRef: { coldStart: true, ctrRating: "ok" } }));
+    expect(snap.benchmarkRef).toEqual({ coldStart: true, ctrRating: "ok" });
+  });
+
   it("carrega audience/funnel quando presentes", () => {
     const snap = buildCuratedEntitySnapshot(
       entity({

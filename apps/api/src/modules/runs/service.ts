@@ -11,7 +11,7 @@ import {
   recommendations,
   type Database,
 } from "@trafego/db";
-import type { InsightMetrics, UnitAnalysis } from "@trafego/shared";
+import type { CuratedEntitySnapshot, InsightMetrics, UnitAnalysis } from "@trafego/shared";
 import { cpaLabelFor, isOverCostCap, partialNote, partialSeverity, resolveCostCapUsd, usagePeriod } from "@trafego/core";
 import {
   AGENT_RUNS_QUEUE,
@@ -309,6 +309,7 @@ export function createRunsService(deps: RunsDeps) {
         metricsJson: entityAnalyses.metricsJson,
         flags: entityAnalyses.flags,
         tier: entityAnalyses.tier,
+        curatedJson: entityAnalyses.curatedJson,
         analyzedAt: entityAnalyses.analyzedAt,
       })
       .from(entityAnalyses)
@@ -434,6 +435,9 @@ export function createRunsService(deps: RunsDeps) {
       tier: c.tier ?? null,
       stage: c.stage ?? null,
       muted: muted.has(c.externalId),
+      budget: c.budget ?? null,
+      atBudgetCeiling: c.atBudgetCeiling ?? null,
+      isCBO: c.isCBO ?? null,
     }));
 
     // "mais recente" = último run FINALIZADO (ignora in-flight; casa com o que o
@@ -458,7 +462,7 @@ export function createRunsService(deps: RunsDeps) {
 }
 
 /** Linha de `entity_analyses` (campanha) → output do cartão (métrica + gargalo curados). */
-function toCampaignAnalysisOutput(
+export function toCampaignAnalysisOutput(
   row: {
     entityId: string;
     name: string | null;
@@ -466,12 +470,14 @@ function toCampaignAnalysisOutput(
     metricsJson: Record<string, unknown>;
     flags: string[];
     tier: string | null;
+    curatedJson?: CuratedEntitySnapshot | null;
   },
   muted: boolean,
 ): CampaignAnalysisOutput {
   const unit = row.unitJson as unknown as Partial<UnitAnalysis>;
   const m = row.metricsJson as Partial<InsightMetrics>;
   const top = unit.findings?.[0];
+  const curated = row.curatedJson ?? null;
   return {
     externalId: row.entityId,
     name: row.name ?? null,
@@ -496,6 +502,10 @@ function toCampaignAnalysisOutput(
     // `entity_analyses`, que não guarda o público → null aqui (aparece no histórico).
     stage: null,
     muted,
+    // S8: orçamento curado (S1) — null quando a linha é de antes da fase (backfill não retroativo).
+    budget: curated?.budget ?? null,
+    atBudgetCeiling: curated?.atBudgetCeiling ?? null,
+    isCBO: curated?.isCBO ?? null,
   };
 }
 

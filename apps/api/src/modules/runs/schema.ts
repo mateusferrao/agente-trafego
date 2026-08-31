@@ -189,6 +189,14 @@ export const campaignTopFinding = z.object({
   metricRefs: z.array(findingMetricRef).optional(),
 });
 
+/** Orçamento da campanha (S8 — fecha o bug do site não mostrar orçamento por campanha,
+ *  mesmo caso original do chat, S1). Diário OU vitalício (a Meta usa um ou outro). */
+export const campaignBudgetOutput = z.object({
+  dailyMajor: z.number().optional(),
+  lifetimeMajor: z.number().optional(),
+  lifetimeRemainingMajor: z.number().optional(),
+});
+
 /** Uma campanha analisada: métrica + resumo + gargalo + flags + estado silenciado. */
 export const campaignAnalysisOutput = z.object({
   externalId: z.string(),
@@ -203,6 +211,12 @@ export const campaignAnalysisOutput = z.object({
   stage: z.enum(["prospecting", "remarketing", "unknown"]).nullable(),
   /** campanha silenciada pelo dono (opt-out da análise). */
   muted: z.boolean(),
+  /** orçamento curado (S8); null = sem dado (conta não reanalisada desde que isso passou a ser coletado). */
+  budget: campaignBudgetOutput.nullable(),
+  /** true = sem folga pra gastar mais sem subir o orçamento; false = tem folga; null = sem dado. */
+  atBudgetCeiling: z.boolean().nullable(),
+  /** true = orçamento na PRÓPRIA campanha (CBO); false = por conjunto/adset (ABO); null = sem dado. */
+  isCBO: z.boolean().nullable(),
 });
 export type CampaignAnalysisOutput = z.infer<typeof campaignAnalysisOutput>;
 

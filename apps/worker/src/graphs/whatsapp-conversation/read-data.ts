@@ -52,6 +52,14 @@ const FINISHED_RUN_STATUSES = ["succeeded", "failed"] as const;
 /** Nível mais alto do gasto agregado; cai p/ campanha quando não há linha de conta. */
 const ACCOUNT_LEVEL: EntityLevel = "account";
 const CAMPAIGN_LEVEL: EntityLevel = "campaign";
+const ADSET_LEVEL: EntityLevel = "adset";
+/** Mínimo de conjuntos com diagnóstico próprio pra expor a quebra por-adset (espelha S8b —
+ *  só ABO com 2+ adsets ativos ganha achado por-adset; 0/1 não vale a pena expor separado). */
+const MIN_ADSETS_FOR_BREAKDOWN = 2;
+/** Explica a assimetria CBO×ABO no chat (CLAUDE.md §13 — nunca deixar parecer inconsistência). */
+const ADSET_BREAKDOWN_NOTE =
+  "esta campanha usa orçamento por conjunto de anúncios (ABO), não um orçamento único — por isso " +
+  "cada conjunto tem diagnóstico e tier próprios, em vez de um só pra campanha inteira.";
 /** Marcador de frescor quando não há nenhum snapshot no período. */
 const ASOF_NONE = "sem dados";
 /** Janela e teto do "desfaz isso" (ações recentes revertíveis). */
@@ -106,28 +114,48 @@ interface NoAccountMetrics {
 }
 
 /**
- * Orçamento curado exposto ao chat (S1 — fecha o bug de o agente não saber informar
- * orçamento por campanha, embora o dado já fosse buscado). Projeção mínima de
- * `CuratedEntitySnapshot`; null nas linhas de antes desta fase (backfill não retroativo).
+ * Snapshot curado exposto ao chat (S1: budget/tier/isCBO — fecha o bug de o agente não saber
+ * informar orçamento por campanha; S8: resto do `CuratedEntitySnapshot` — healthSignals/
+ * audience/funnel/basis/benchmarkRef, o que faltava pro agente citar o MESMO diagnóstico que
+ * o run já produziu, sem reler o brief). Projeção de `CuratedEntitySnapshot`; tudo null/undefined
+ * nas linhas de antes de cada fase (backfill não retroativo).
  */
-interface BudgetView {
+interface CuratedView {
   readonly tier: string | null;
   readonly budget: CuratedEntitySnapshot["budget"] | null;
   /** true = sem folga pra gastar mais sem subir o orçamento; false = tem folga; null = sem dado. */
   readonly atBudgetCeiling: boolean | null;
   /** true = orçamento na PRÓPRIA campanha (CBO); false = por conjunto/adset (ABO); null = sem dado. */
   readonly isCBO: boolean | null;
+  readonly healthSignals: CuratedEntitySnapshot["healthSignals"];
+  readonly audience: CuratedEntitySnapshot["audience"];
+  readonly funnel: CuratedEntitySnapshot["funnel"];
+  /** honestidade da conversão (Fatia 4) — 'target'/'proxy'/'none', ver `MISMATCH_TEXT`. */
+  readonly conversionBasis: CuratedEntitySnapshot["conversionBasis"];
+  readonly benchmarkRef: CuratedEntitySnapshot["benchmarkRef"];
 }
-function budgetViewOf(curated: CuratedEntitySnapshot | null): BudgetView {
+function curatedViewOf(curated: CuratedEntitySnapshot | null): CuratedView {
   return {
     tier: curated?.tier ?? null,
     budget: curated?.budget ?? null,
     atBudgetCeiling: curated?.atBudgetCeiling ?? null,
     isCBO: curated?.isCBO ?? null,
+    healthSignals: curated?.healthSignals,
+    audience: curated?.audience,
+    funnel: curated?.funnel,
+    conversionBasis: curated?.conversionBasis,
+    benchmarkRef: curated?.benchmarkRef,
   };
 }
 
-interface CampaignAnalysis extends BudgetView {
+/** Diagnóstico de UM conjunto (adset) dentro de uma campanha ABO multi-adset (S8b/S8). */
+interface AdsetBreakdownItem {
+  readonly id: string;
+  readonly name: string | null;
+  readonly tier: string | null;
+}
+
+interface CampaignAnalysis extends CuratedView {
   /** id da campanha na plataforma — o agente usa p/ agir (pausar/budget) no chat (5c). */
   readonly id: string;
   readonly name: string | null;
@@ -137,6 +165,10 @@ interface CampaignAnalysis extends BudgetView {
   readonly summary: string | null;
   readonly topFinding: { readonly title: string; readonly severity: string } | null;
   readonly flags: readonly string[];
+  /** SÓ presente quando a campanha é ABO com 2+ conjuntos com diagnóstico próprio (S8b) —
+   *  cada conjunto tem seu tier; ausência = campanha CBO ou ABO com 1 conjunto só. */
+  readonly adsets?: readonly AdsetBreakdownItem[];
+  readonly adsetsNote?: string;
   readonly asOf: string;
 }
 
@@ -381,9 +413,12 @@ export async function getCampaignAnalysisData(
   agentId: string,
   name: string,
 ): Promise<CampaignAnalysis | NoData | AmbiguousCampaign> {
-  const rows = await db
+  // 1 query, TODOS os níveis (não só campanha): a quebra por-adset (S8b/S8) precisa dos
+  // conjuntos da MESMA campanha, já disponíveis na mesma tabela — evita uma 2ª ida ao DB.
+  const allRows = await db
     .select({
       entityId: entityAnalyses.entityId,
+      entityLevel: entityAnalyses.entityLevel,
       entityName: entityAnalyses.entityName,
       unitJson: entityAnalyses.unitJson,
       metricsJson: entityAnalyses.metricsJson,
@@ -392,8 +427,9 @@ export async function getCampaignAnalysisData(
       analyzedAt: entityAnalyses.analyzedAt,
     })
     .from(entityAnalyses)
-    .where(and(eq(entityAnalyses.agentId, agentId), eq(entityAnalyses.entityLevel, CAMPAIGN_LEVEL)))
+    .where(eq(entityAnalyses.agentId, agentId))
     .orderBy(desc(entityAnalyses.analyzedAt));
+  const rows = allRows.filter((r) => r.entityLevel === CAMPAIGN_LEVEL);
 
   // Match determinístico (Dice + contenção + margem) — mesmo matcher do foco de conta
   // (`resolveNamedMatch`), tolera typo/acento/ordem e só autoescolhe com folga clara.
@@ -414,6 +450,13 @@ export async function getCampaignAnalysisData(
   const unit = row.unitJson as Partial<UnitAnalysis>;
   const m = row.metricsJson as Partial<InsightMetrics>;
   const top = unit.findings?.[0];
+  const curated = row.curatedJson ?? null;
+  const adsets =
+    curated?.isCBO === false
+      ? allRows
+          .filter((r) => r.entityLevel === ADSET_LEVEL && r.curatedJson?.campaignId === row.entityId)
+          .map((r) => ({ id: r.entityId, name: r.entityName ?? null, tier: r.curatedJson?.tier ?? null }))
+      : [];
   return {
     id: row.entityId,
     name: row.entityName ?? null,
@@ -423,7 +466,8 @@ export async function getCampaignAnalysisData(
     summary: unit.summary ?? null,
     topFinding: top ? { title: top.title, severity: top.severity } : null,
     flags: row.flags ?? [],
-    ...budgetViewOf(row.curatedJson ?? null),
+    ...curatedViewOf(curated),
+    ...(adsets.length >= MIN_ADSETS_FOR_BREAKDOWN ? { adsets, adsetsNote: ADSET_BREAKDOWN_NOTE } : {}),
     asOf: row.analyzedAt.toISOString(),
   };
 }
@@ -449,7 +493,7 @@ export async function listCampaignsData(
           cpa: number | null;
           roas: number | null;
           revenue: number | null;
-        } & BudgetView
+        } & CuratedView
       >;
     }
   | NoData
@@ -477,7 +521,7 @@ export async function listCampaignsData(
     campaigns.push({
       id: r.entityId,
       name: r.entityName ?? null,
-      ...budgetViewOf(r.curatedJson ?? null),
+      ...curatedViewOf(r.curatedJson ?? null),
       spend: typeof m.spend === "number" ? m.spend : null,
       conversions: typeof m.conversions === "number" ? m.conversions : null,
       cpa: typeof m.cpa === "number" ? m.cpa : null,
@@ -769,7 +813,7 @@ export async function getEntityDetailData(
   periodDays = ENTITY_TREND_DAYS,
   now: () => Date = () => new Date(),
 ): Promise<
-  | ({ name: string | null; id: string; trend: { date: string; spend: number }[]; totalSpend: number; flags: readonly string[] } & BudgetView)
+  | ({ name: string | null; id: string; trend: { date: string; spend: number }[]; totalSpend: number; flags: readonly string[]; adsets?: readonly AdsetBreakdownItem[]; adsetsNote?: string } & CuratedView)
   | NoData
   | AmbiguousCampaign
 > {
@@ -801,6 +845,12 @@ export async function getEntityDetailData(
     budget: analysis.budget,
     atBudgetCeiling: analysis.atBudgetCeiling,
     isCBO: analysis.isCBO,
+    healthSignals: analysis.healthSignals,
+    audience: analysis.audience,
+    funnel: analysis.funnel,
+    conversionBasis: analysis.conversionBasis,
+    benchmarkRef: analysis.benchmarkRef,
+    ...(analysis.adsets ? { adsets: analysis.adsets, adsetsNote: analysis.adsetsNote } : {}),
   };
 }
 
@@ -1388,7 +1438,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     {
       name: "get_campaign_analysis",
       description:
-        "Última análise de uma campanha pelo nome (busca por trecho, sem diferenciar maiúsculas). Devolve o id (use-o para agir), resumo, métricas curadas, o maior gargalo, o tier (winner/performer/underperformer/zombie) e o ORÇAMENTO (budget: diário ou vitalício; atBudgetCeiling: true = sem folga pra gastar mais sem subir o orçamento; isCBO: true = orçamento na própria campanha, false = por conjunto/adset — nesse caso qualquer mudança é POR CONJUNTO). Campos de orçamento vêm null quando a conta não foi reanalisada desde que esse dado passou a ser coletado — nesse caso, não afirme 'sem orçamento', diga que precisa rodar uma nova análise.",
+        "Última análise de uma campanha pelo nome (busca por trecho, sem diferenciar maiúsculas). Devolve o id (use-o para agir), resumo, métricas curadas, o maior gargalo, o tier (winner/performer/underperformer/zombie), healthSignals (fadiga/saturação/pouco dado/criativo fraco), audience (estágio: prospecção/remarketing), funnel (conversas/1ª resposta/profundidade — qualidade do lead), conversionBasis ('target' = a conversão mostrada É a de negócio; 'proxy' = referência, a venda não é rastreada ali; 'none' = sem conversão), benchmarkRef (referência de plataforma, só cold-start) e o ORÇAMENTO (budget: diário ou vitalício; atBudgetCeiling: true = sem folga pra gastar mais sem subir o orçamento; isCBO: true = orçamento na própria campanha, false = por conjunto/adset — nesse caso qualquer mudança é POR CONJUNTO). Campanha ABO (isCBO=false) com 2+ conjuntos com diagnóstico próprio também traz 'adsets' (id/nome/tier de cada conjunto) + 'adsetsNote' explicando por que a campanha não tem um tier único — cite os dois ao comentar o desempenho dela, não silencie a diferença. Campos vêm null/ausentes quando a conta não foi reanalisada desde que esse dado passou a ser coletado — nesse caso, não afirme 'sem dado', diga que precisa rodar uma nova análise.",
       schema: z.object({ name: z.string() }),
     },
   );
@@ -1531,7 +1581,8 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     },
     {
       name: "get_entity_detail",
-      description: "Detalha uma campanha pelo nome: tendência diária de gasto + flags. Use para 'como o gasto da X evoluiu'.",
+      description:
+        "Detalha uma campanha pelo nome: tendência diária de gasto + flags + o MESMO diagnóstico curado de get_campaign_analysis (tier/budget/healthSignals/audience/funnel/conversionBasis/benchmarkRef; ABO multi-adset também traz 'adsets'/'adsetsNote'). Use para 'como o gasto da X evoluiu' e pra aprofundar num diagnóstico já citado.",
       schema: z.object({ name: z.string() }),
     },
   );

@@ -509,7 +509,12 @@ export function buildAccountBrief(input: BuildAccountBriefInput): BuildAccountBr
     ...(accountFunnel ? { funnel: accountFunnel } : {}),
     ...(trackingHealth ? { trackingHealth } : {}),
     ...(waste ? { waste } : {}),
-    creatives: [], // visão entra por-unidade no map-reduce (3b-2), não no brief da conta
+    // visão entra por-unidade no map-reduce (3b-2), não no brief da conta. Reconsiderado no
+    // pivô saúde (S8, "síntese ganha creatives agregados"): o campo é `Creative[]` (asset cru,
+    // sem tier/score) — não existe hoje um agregado estruturado que caiba aqui sem duplicar
+    // o que as narrativas por-campanha (unitAnalyses) já carregam pra síntese. Fica [] até
+    // haver um agregado real de criativo pra propor (fast-follow, não confirmado ainda).
+    creatives: [],
     playbookCandidates: input.playbookCandidates,
     memory: input.memory ?? EMPTY_MEMORY,
     aggregatesRest,
