@@ -298,7 +298,9 @@ export function makeConversationTools(
       behaviors: z.array(z.string()).nullable().optional().describe("comportamentos pelo NOME (ex: 'compradores online', 'viajantes frequentes') — eu resolvo no catálogo da Meta e pergunto se ambíguo. Diferente de interesse (é ação/hábito, não afinidade)."),
       radiusKm: z.number().positive().nullable().optional().describe("raio em KM em torno das CIDADES indicadas em geo (ex: 'raio de 20 km de BH'). Clampo pro limite da Meta (17–80 km)."),
       addressAreas: z.array(z.object({ address: z.string(), radiusKm: z.number().positive() })).nullable().optional().describe("raio em torno de ENDEREÇOS de rua (ex: '5 km da Av. Afonso Pena 1500'). A Meta geocodifica; clampo 1–80 km."),
-      adCount: z.number().int().positive().nullable().optional().describe("nº de ANÚNCIOS a criar (ex: 'cria 5 anúncios', estrutura '1-1-5' = 5 anúncios). EU escolho os N criativos pela estratégia do agente (melhor veiculando / biblioteca / a LLM escolhe) — o usuário NÃO escolhe/edita criativo pelo chat (isso é no site). Sem isso = 1 criativo + variações de copy. Teto 10."),
+      adCount: z.number().int().positive().nullable().optional().describe("nº de ANÚNCIOS a criar (ex: 'cria 5 anúncios', estrutura '1-1-5' = 5 anúncios; '1-1-4' = 4). EU escolho os N criativos pela estratégia do agente. O usuário NÃO escolhe o asset específico pelo chat (isso é no site). Teto 10."),
+      distinctCreatives: z.number().int().positive().nullable().optional().describe("quantos criativos DIFERENTES entre os anúncios; o resto REPETE. Ex: '2 criativos iguais e 2 diferentes' com 4 anúncios = adCount 4 + distinctCreatives 3 (um criativo repetido em 2 anúncios + 2 criativos únicos). 'todos diferentes' = distinctCreatives = adCount (ou omita). EU escolho QUAIS."),
+      mediaPreference: z.enum(["video", "image", "mixed"]).nullable().optional().describe("tipo de mídia dos criativos: 'video', 'image' (imagem estática) ou 'mixed' (vídeos E imagens). Ex: 'use vídeos e imagens' = mixed. EU escolho quais assets desse tipo."),
     }),
   });
 
@@ -357,6 +359,21 @@ export function makeConversationTools(
       addAudiences: z.array(z.string()).nullable().optional().describe("público(s) salvo(s) a INCLUIR, pelo NOME — eu resolvo pro público real e pergunto se ambíguo"),
       excludeAudiences: z.array(z.string()).nullable().optional().describe("público(s) salvo(s) a EXCLUIR, pelo NOME"),
       removeAudiences: z.array(z.string()).nullable().optional().describe("público(s) salvo(s) a TIRAR do rascunho (incluir/excluir), pelo NOME"),
+      distinctCreatives: z.number().int().positive().nullable().optional().describe("RECOMPOR a distribuição de criativos: quantos DIFERENTES entre os anúncios (o resto repete). Ex: 'deixa 2 iguais e 2 diferentes' num rascunho de 4 = distinctCreatives 3. EU escolho quais."),
+      mediaPreference: z.enum(["video", "image", "mixed"]).nullable().optional().describe("recompor com mídia 'video'/'image'/'mixed'. EU escolho quais assets."),
+      copyEdits: z
+        .array(
+          z.object({
+            index: z.number().int().min(0).describe("nº do anúncio começando em 0 (o 1º anúncio = 0)"),
+            headline: z.string().min(1).nullable().optional().describe("novo título"),
+            primaryText: z.string().min(1).nullable().optional().describe("novo texto principal"),
+            description: z.string().nullable().optional(),
+            adName: z.string().min(1).nullable().optional(),
+          }),
+        )
+        .nullable()
+        .optional()
+        .describe("editar o TEXTO da copy de anúncios específicos (headline/primaryText/description) — o usuário dita o texto. NÃO troca o criativo (isso é composição ou site)."),
     }),
   });
   const regenerateCopy = tool(proposeOnly, {
@@ -769,7 +786,7 @@ export async function buildCapabilitiesText(
       ...(canCreate ? ["copiar a estrutura de uma campanha sua pra outra (ex: remarketing), reusando os criativos e trocando só o público"] : []),
     ];
     parts.push(
-      `🚀 Também ${abilities.join(" e ")}. Depois de eu propor, você ajusta TUDO por aqui (objetivo, budget, ativar/pausar, nº de anúncios, público inteiro, nomes, regerar a copy) — crio/escalo/copio sempre PAUSADO (a Meta revisa antes) e só ATIVO de verdade com um 2º OK seu, separado. A ÚNICA coisa que fica no painel "Editar" do rascunho no site é escolher/trocar qual criativo vai em cada anúncio e editar o TEXTO da copy campo-a-campo (te passo o link).`,
+      `🚀 Também ${abilities.join(" e ")}. Depois de eu propor, você ajusta TUDO por aqui (objetivo, budget, ativar/pausar, nº e composição de anúncios — quantos iguais/diferentes, vídeo/imagem —, texto das copies, público inteiro, nomes) — crio/escalo/copio sempre PAUSADO (a Meta revisa antes) e só ATIVO de verdade com um 2º OK seu, separado. A ÚNICA coisa que fica no painel "Editar" do site é escolher o ASSET de criativo exato de cada anúncio (te passo o link).`,
     );
     if (canCreate) {
       parts.push("🔢 Números que eu uso vêm sempre da conta/ferramenta — número de WhatsApp de destino eu confirmo pela campanha certa (nunca de outra), e público eu pego dos públicos reais da sua conta (não invento). Quando você escolhe um público, eu ainda te digo o alcance estimado dele (pra você saber se entrega bem).");

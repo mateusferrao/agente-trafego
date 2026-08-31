@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, creativeRefOf, distinctExtras, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fewCreativesNote, fillDistinctCreatives, normalizeAdCount, recoverOpenDraft, resolveCreationTargeting } from "./draft-proposal.js";
+import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, composeCreatives, creativeRefOf, describeCopiesBlock, distinctExtras, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fewCreativesNote, fillDistinctCreatives, filterByMedia, normalizeAdCount, recoverOpenDraft, resolveCreationTargeting } from "./draft-proposal.js";
 import type { CopyVariant } from "@trafego/shared";
 import type { CampaignDraftSpec } from "@trafego/shared";
 import { creativeContentHash } from "../vision/resolver.js";
@@ -405,6 +405,63 @@ describe("fillDistinctCreatives (aumento de contagem: preserva escolha do site, 
     const { variants, withoutDistinct } = fillDistinctCreatives([cv("a"), cv("b"), cv("c")], primary, []);
     expect(variants.every((v) => v.creative === undefined)).toBe(true);
     expect(withoutDistinct).toBe(3);
+  });
+});
+
+describe("composeCreatives (composição: N anúncios, K distintos, resto repete)", () => {
+  const c = (h: string) => ({ imageHash: h, assetId: `a-${h}`, origin: "reuse" as const, source: "serving" as const });
+  const keys = (arr: ReturnType<typeof composeCreatives>) => arr.map((x) => x.imageHash ?? x.videoId);
+
+  it("'2 iguais + 2 diferentes' = 4 anúncios, 3 distintos → um repetido", () => {
+    const out = composeCreatives(4, 3, [c("A"), c("B"), c("C"), c("D")]);
+    expect(keys(out)).toEqual(["A", "B", "C", "A"]); // A repetido (2 iguais), B e C únicos
+    expect(new Set(keys(out)).size).toBe(3);
+  });
+
+  it("distinctCount 1 → todos iguais", () => {
+    expect(keys(composeCreatives(4, 1, [c("A"), c("B")]))).toEqual(["A", "A", "A", "A"]);
+  });
+
+  it("distinctCount = adCount → todos diferentes (cap no pool)", () => {
+    expect(keys(composeCreatives(3, 3, [c("A"), c("B"), c("C")]))).toEqual(["A", "B", "C"]);
+  });
+
+  it("pool insuficiente → usa os que há, cicla o resto", () => {
+    expect(keys(composeCreatives(4, 4, [c("A"), c("B")]))).toEqual(["A", "B", "A", "B"]);
+  });
+
+  it("pool vazio → vazio (caller cai no criativo padrão)", () => {
+    expect(composeCreatives(3, 2, [])).toEqual([]);
+  });
+});
+
+describe("filterByMedia (preferência de mídia)", () => {
+  const img = (h: string) => ({ imageHash: h, assetId: h, origin: "reuse" as const, source: "serving" as const });
+  const vid = (v: string) => ({ videoId: v, imageHash: "cover", assetId: v, origin: "reuse" as const, source: "serving" as const });
+  const pool = [img("I1"), vid("V1"), img("I2")];
+
+  it("video → só vídeos", () => {
+    expect(filterByMedia(pool, "video").map((c) => c.videoId)).toEqual(["V1"]);
+  });
+  it("image → só imagem estática (sem videoId)", () => {
+    expect(filterByMedia(pool, "image").map((c) => c.imageHash)).toEqual(["I1", "I2"]);
+  });
+  it("mixed/undefined → todos", () => {
+    expect(filterByMedia(pool, "mixed")).toHaveLength(3);
+    expect(filterByMedia(pool, undefined)).toHaveLength(3);
+  });
+});
+
+describe("describeCopiesBlock (mostra as copies no eco — §8)", () => {
+  it("lista headline + 1ª linha do texto, numerado", () => {
+    const block = describeCopiesBlock([
+      { primaryText: "Linha um.\nLinha dois", headline: "Título A" },
+      { primaryText: "Outro texto", headline: "Título B" },
+    ] as never);
+    expect(block).toContain("Copies (2)");
+    expect(block).toContain("1. *Título A* — Linha um.");
+    expect(block).toContain("2. *Título B* — Outro texto");
+    expect(block).not.toContain("Linha dois"); // só a 1ª linha
   });
 });
 

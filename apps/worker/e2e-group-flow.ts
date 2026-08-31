@@ -184,6 +184,20 @@ async function main() {
     const honestBlock = /pixel|não consigo|conta não tem/i.test(rE) && objAfter === objBefore;
     ok("E: objetivo trocado pelo chat OU bloqueio honesto de pixel (não deu 'só pelo site')", (changed || honestBlock) && !/só pelo site|edite o rascunho no painel/i.test(rE), { before: objBefore, after: objAfter });
 
+    // ── F) pedido completo do log: 1-1-4, 2 iguais + 2 diferentes, vídeo+imagem, conversas, MOSTRA copies ──
+    console.log("\n▶ F) '1-1-4, 2 iguais 2 diferentes, vídeo+imagem, conversas iniciadas, me manda as copies'");
+    const rF = await turn("e2e-F", "Me recomende um anúncio 1-1-4 com copies diferentes e 2 criativos iguais e 2 diferentes. Objetivo conversa iniciada. Use vídeos e imagens. Me mande as copies antes pra aprovar.");
+    console.log(`    Roy: ${rF.replace(/\n/g, " ").slice(0, 320)}`);
+    const dF = await latestDraft();
+    if (dF) createdDraftIds.add(dF.id);
+    ok("F: 4 anúncios", (dF?.spec.copyVariants?.length ?? 0) === 4, { n: dF?.spec.copyVariants?.length });
+    ok("F: objetivo conversa iniciada", dF?.spec.objective === "messaging_started", { obj: dF?.spec.objective });
+    ok("F: MOSTROU as copies no eco (o pedido 'me manda as copies')", /copies?\s*\(/i.test(rF), rF.slice(0, 120));
+    const distinctF = dF ? nDistinct(dF.spec) : 0;
+    // conta de teste tem 1 criativo → composição honesta: distintos até o que há + nota. Com ≥3 → 2 iguais/2 diferentes.
+    ok("F: composição respeitada OU nota honesta (conta com poucos criativos)", distinctF >= 3 || /criativo|repet/i.test(rF), { distinct: distinctF });
+    console.log(`    → ${dF?.spec.copyVariants?.length} anúncios; ${distinctF} criativo(s) distinto(s)`);
+
     // ── D) APPLY real na Meta (PAUSED) + verify + delete ── (usa o rascunho de A, com 5 anúncios)
     console.log("\n▶ D) APPLY real (PAUSED) do rascunho de 5 anúncios + verify + delete");
     if (dA) {

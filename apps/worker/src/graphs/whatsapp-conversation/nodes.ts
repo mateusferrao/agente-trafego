@@ -60,7 +60,7 @@ import {
 import { renderWhatsappNumber, resolveWhatsappNumber } from "./read-data.js";
 import { makeMetaToolExecutor } from "../../executors/meta-tools.js";
 import { applyCheckedAction, type ApplyOutcome } from "../../modules/apply/apply-confirmed-action.js";
-import { buildRefineEcho, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner, recoverOpenDraft, refineDraft, type DraftProposalContext, type RecoveredDraft } from "../../modules/conversation/draft-proposal.js";
+import { buildRefineEcho, MEDIA_PREFERENCES, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner, recoverOpenDraft, refineDraft, type DraftProposalContext, type MediaPreference, type RecoveredDraft } from "../../modules/conversation/draft-proposal.js";
 import { loadWriteContext } from "../../modules/apply/write-context.js";
 import { revertActionById } from "../../modules/apply/revert-action.js";
 import { actorLabel } from "../../modules/conversation/actor.js";
@@ -80,6 +80,29 @@ const CONVERSATION_TEMPERATURE = 0.3;
 /** Guard: `v` é um ConversionGoal da taxonomia neutra (o LLM manda goal como texto livre). */
 function isConversionGoal(v: unknown): v is ConversionGoal {
   return typeof v === "string" && (CONVERSION_GOALS as readonly string[]).includes(v);
+}
+
+/** Guard: `v` é uma preferência de mídia válida (video/image/mixed). */
+function isMediaPreference(v: unknown): v is MediaPreference {
+  return typeof v === "string" && (MEDIA_PREFERENCES as readonly string[]).includes(v);
+}
+
+/** Normaliza os copyEdits vindos do LLM (índice + campos de texto), filtrando entradas inválidas. */
+function parseCopyEdits(v: unknown): { index: number; headline?: string; primaryText?: string; description?: string; adName?: string }[] {
+  if (!Array.isArray(v)) return [];
+  const out: { index: number; headline?: string; primaryText?: string; description?: string; adName?: string }[] = [];
+  for (const e of v) {
+    if (!e || typeof (e as { index?: unknown }).index !== "number") continue;
+    const o = e as Record<string, unknown>;
+    out.push({
+      index: o["index"] as number,
+      ...(typeof o["headline"] === "string" && o["headline"] ? { headline: o["headline"] } : {}),
+      ...(typeof o["primaryText"] === "string" && o["primaryText"] ? { primaryText: o["primaryText"] } : {}),
+      ...(typeof o["description"] === "string" ? { description: o["description"] } : {}),
+      ...(typeof o["adName"] === "string" && o["adName"] ? { adName: o["adName"] } : {}),
+    });
+  }
+  return out;
 }
 
 const MS_PER_HOUR = 60 * 60 * 1000;
@@ -655,6 +678,12 @@ export function makeConversationNodes(
               ...(Array.isArray(a["addAudiences"]) ? { addAudiences: a["addAudiences"].filter((x): x is string => typeof x === "string") } : {}),
               ...(Array.isArray(a["excludeAudiences"]) ? { excludeAudiences: a["excludeAudiences"].filter((x): x is string => typeof x === "string") } : {}),
               ...(Array.isArray(a["removeAudiences"]) ? { removeAudiences: a["removeAudiences"].filter((x): x is string => typeof x === "string") } : {}),
+              ...(typeof a["distinctCreatives"] === "number" ? { distinctCreatives: a["distinctCreatives"] as number } : {}),
+              ...(isMediaPreference(a["mediaPreference"]) ? { mediaPreference: a["mediaPreference"] } : {}),
+              ...((): { copyEdits?: ReturnType<typeof parseCopyEdits> } => {
+                const edits = parseCopyEdits(a["copyEdits"]);
+                return edits.length > 0 ? { copyEdits: edits } : {};
+              })(),
             };
       const res = await refineDraft(deps, dctxRefine, active.draftId, patch);
       if (res.kind === "blocked") {
@@ -743,6 +772,8 @@ export function makeConversationNodes(
                 ...(typeof args["radiusKm"] === "number" ? { radiusKm: args["radiusKm"] as number } : {}),
                 ...(addressAreas ? { addressAreas } : {}),
                 ...(typeof args["adCount"] === "number" ? { adCount: args["adCount"] as number } : {}),
+                ...(typeof args["distinctCreatives"] === "number" ? { distinctCreatives: args["distinctCreatives"] as number } : {}),
+                ...(isMediaPreference(args["mediaPreference"]) ? { mediaPreference: args["mediaPreference"] } : {}),
               });
             })();
       const expiresAt = new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString();

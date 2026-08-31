@@ -797,7 +797,12 @@ export function buildRefineEcho(kind: string, spec: CampaignDraftSpec): string {
   ];
   if (kind === "from_scratch" && spec.objective) lines.push(`Objetivo: ${goalNounPt(spec.objective)}.`);
   if (spec.copyVariants && spec.copyVariants.length > 0) {
-    lines.push(`${spec.copyVariants.length} variação(ões) de copy. Ex: "${spec.copyVariants[0]!.headline}".`);
+    // nº de criativos distintos entre os anúncios (composição) + as copies (o dono vê o que aprova).
+    const distinct = new Set(spec.copyVariants.map((v) => v.creative?.metaVideoId ?? v.creative?.metaImageHash ?? "default")).size;
+    if (kind === "from_scratch" && spec.copyVariants.length >= 2) {
+      lines.push(`${spec.copyVariants.length} anúncios · ${distinct} criativo(s) distinto(s).`);
+    }
+    lines.push(describeCopiesBlock(spec.copyVariants));
   }
   const t = spec.targeting;
   if (kind === "from_scratch" && t) {
@@ -900,6 +905,19 @@ export interface RefineDraftPatch {
   readonly addAudiences?: readonly string[];
   readonly excludeAudiences?: readonly string[];
   readonly removeAudiences?: readonly string[];
+  /** COMPOSIÇÃO de criativo (recompor o rascunho existente): quantos distintos + mídia. O agente
+   *  escolhe QUAIS; troca do asset específico segue no site. */
+  readonly distinctCreatives?: number;
+  readonly mediaPreference?: MediaPreference;
+  /** edição do TEXTO da copy por anúncio (índice) — headline/primaryText/description/adName. NÃO
+   *  toca o criativo (composição/site cuidam disso). */
+  readonly copyEdits?: readonly {
+    readonly index: number;
+    readonly headline?: string;
+    readonly primaryText?: string;
+    readonly description?: string;
+    readonly adName?: string;
+  }[];
 }
 
 export type RefineResult = { readonly kind: "ok"; readonly echo: string } | { readonly kind: "blocked"; readonly reason: string };
@@ -1099,6 +1117,49 @@ export async function refineDraft(
       refineNotes.push(...add.notes);
     }
     edit.targeting = expl;
+  }
+
+  // COMPOSIÇÃO de criativo (recompor o rascunho existente): "deixa 2 iguais e 2 diferentes", "usa só
+  // vídeo". O agente escolhe QUAIS; recompõe sobre o nº atual de anúncios. Sobrescreve os criativos
+  // por-anúncio (é um pedido EXPLÍCITO de recomposição — diferente do aumento de contagem, que preserva).
+  if (kind === "from_scratch" && spec.creative && (patch.distinctCreatives != null || patch.mediaPreference)) {
+    const variants0 = edit.copyVariants ?? currentVariants;
+    const primary = chosenFromRef(spec.creative);
+    const seen = new Set<string>();
+    let distinctList = [primary, ...(await buildCreativePool(deps, ctx.orgId, ctx.adAccountId, ac.ref, ac.creativeSource)).map((c) => c.ref)].filter(
+      (c) => (seen.has(creativeKey(c)) ? false : (seen.add(creativeKey(c)), true)),
+    );
+    if (patch.mediaPreference && patch.mediaPreference !== "mixed") {
+      const filtered = filterByMedia(distinctList, patch.mediaPreference);
+      if (filtered.length === 0) refineNotes.push(`Não achei criativo ${mediaLabelPt(patch.mediaPreference)} pra reusar — mantive os criativos que a conta tem.`);
+      else distinctList = filtered;
+    }
+    const target = variants0.length;
+    const distinctWanted = patch.distinctCreatives != null ? Math.max(1, Math.min(patch.distinctCreatives, target)) : target;
+    const perAd = composeCreatives(target, distinctWanted, distinctList);
+    edit.copyVariants = variants0.map((v, i) => (perAd[i] ? { ...v, creative: creativeRefOf(perAd[i]!) } : v));
+    if (patch.distinctCreatives != null && distinctList.length < distinctWanted) {
+      refineNotes.push(`Você pediu ${distinctWanted} criativos distintos, mas a conta só tem ${distinctList.length} — repeti pra completar os ${target} anúncios. Troque cada um no site.`);
+    }
+  }
+
+  // EDIÇÃO do TEXTO da copy por anúncio (índice) — headline/primaryText/description/adName. Não toca
+  // o criativo. Índice fora do rascunho → bloqueia honesto (nunca edita o anúncio errado).
+  if (kind === "from_scratch" && patch.copyEdits?.length) {
+    const arr = [...(edit.copyVariants ?? currentVariants)];
+    for (const e of patch.copyEdits) {
+      if (e.index < 0 || e.index >= arr.length) {
+        return { kind: "blocked", reason: `esse rascunho tem ${arr.length} anúncio(s) — não achei o anúncio nº ${e.index + 1} pra editar a copy.` };
+      }
+      arr[e.index] = {
+        ...arr[e.index]!,
+        ...(e.headline != null ? { headline: e.headline } : {}),
+        ...(e.primaryText != null ? { primaryText: e.primaryText } : {}),
+        ...(e.description != null ? { description: e.description } : {}),
+        ...(e.adName != null ? { adName: e.adName } : {}),
+      };
+    }
+    edit.copyVariants = arr;
   }
 
   const result = applyDraftEdit(kind, spec, edit, { budgetCapMinor: ac.cfg.maxNewDailyBudgetMinor ?? null, hasPixel });
@@ -1352,6 +1413,53 @@ export function normalizeAdCount(adCount: number | undefined): number | undefine
   return Math.max(1, Math.min(Math.round(adCount), MAX_ADS_PER_DRAFT));
 }
 
+/** Preferência de MÍDIA que o dono pode pedir pra composição (o adapter/estratégia escolhe QUAIS). */
+export const MEDIA_PREFERENCES = ["video", "image", "mixed"] as const;
+export type MediaPreference = (typeof MEDIA_PREFERENCES)[number];
+
+/** Lista compacta das copies pro eco (§8: o dono vê o que vai aprovar). Headline + 1ª linha do texto.
+ *  Um bloco só (1 balão). PURO. */
+export function describeCopiesBlock(variants: readonly CopyVariant[]): string {
+  const lines = variants.map((v, i) => {
+    const first = (v.primaryText ?? "").split("\n")[0]!.trim();
+    const body = first.length > 90 ? `${first.slice(0, 90)}…` : first;
+    return `${i + 1}. *${v.headline}*${body ? ` — ${body}` : ""}`;
+  });
+  return `Copies (${variants.length}):\n${lines.join("\n")}`;
+}
+
+/** Filtra o pool de criativos pela preferência de mídia. `video` = só vídeo (com capa); `image` =
+ *  só imagem estática; `mixed`/ausente = todos. `mixed` NÃO filtra (a composição naturalmente mistura
+ *  se o pool tem os dois). PURO. */
+export function filterByMedia(refs: readonly ChosenCreative[], pref: MediaPreference | undefined): ChosenCreative[] {
+  if (!pref || pref === "mixed") return [...refs];
+  if (pref === "video") return refs.filter((c) => Boolean(c.videoId));
+  return refs.filter((c) => Boolean(c.imageHash) && !c.videoId); // image estática
+}
+
+/**
+ * Compõe a lista de criativos por-anúncio HONRANDO a composição pedida: `adCount` anúncios com
+ * `distinctCount` criativos DISTINTOS (o resto REPETE, ciclando os distintos) — é o "2 iguais + 2
+ * diferentes" (adCount 4, distinctCount 3 → [d0,d1,d2,d0], d0 repetido). `distinctList` já vem
+ * deduplicado por mídia e priorizado (melhor primeiro). Distintos disponíveis < pedido → usa os que
+ * há. Lista vazia → vazio (o caller cai no criativo padrão). PURO.
+ */
+export function composeCreatives(
+  adCount: number,
+  distinctCount: number,
+  distinctList: readonly ChosenCreative[],
+): ChosenCreative[] {
+  if (distinctList.length === 0 || adCount <= 0) return [];
+  const k = Math.max(1, Math.min(distinctCount, distinctList.length, adCount));
+  const distinct = distinctList.slice(0, k);
+  return Array.from({ length: adCount }, (_, i) => distinct[i < k ? i : i % k]!);
+}
+
+/** Rótulo PT da preferência de mídia (pro eco/nota). */
+function mediaLabelPt(pref: MediaPreference): string {
+  return pref === "video" ? "de vídeo" : pref === "image" ? "de imagem" : "de vídeo/imagem";
+}
+
 /** Pool de candidatos (veiculando + biblioteca) conforme a ESTRATÉGIA do agente — mesma fonte de
  *  chooseCreative (números ao vivo + visão), reusada p/ pegar criativos DISTINTOS adicionais. */
 async function buildCreativePool(
@@ -1371,24 +1479,6 @@ async function buildCreativePool(
   return pool.filter((c) => !c.ref.videoId || Boolean(c.ref.imageHash));
 }
 
-/**
- * Criativos DISTINTOS adicionais (além do principal) que o agente usa pra montar N anúncios sozinho
- * — 1 por criativo, mesma estratégia (o principal já veio de chooseCreative, com LLM/desempenho).
- * Ordem do pool (veiculando primeiro). Vazio quando não há distintos → cai no anúncio único.
- */
-async function chooseAdditionalCreatives(
-  deps: WorkerDeps,
-  orgId: string,
-  accountId: string,
-  ref: AdAccountRef,
-  strategy: CreativeSourceStrategy,
-  primary: ChosenCreative,
-  maxExtra: number,
-): Promise<ChosenCreative[]> {
-  if (maxExtra <= 0) return [];
-  const pool = await buildCreativePool(deps, orgId, accountId, ref, strategy);
-  return distinctExtras(pool.map((c) => c.ref), primary, maxExtra);
-}
 
 /** Candidatos da BIBLIOTECA (uploads `ready`) com a DESCRIÇÃO de visão CACHEADA (feita no upload). */
 async function describeLibraryCandidates(deps: WorkerDeps, orgId: string, accountId: string): Promise<DescribedCandidate[]> {
@@ -1556,6 +1646,11 @@ export async function proposeCreateCampaign(
     /** nº de ANÚNCIOS pedido pelo dono (chat/site) — o agente escolhe N criativos distintos pela
      *  estratégia; extras (sem distinto) repetem o melhor. Clampado 1..MAX_ADS_PER_DRAFT. */
     readonly adCount?: number;
+    /** COMPOSIÇÃO de criativo (Fatia 8): quantos criativos DISTINTOS entre os anúncios (o resto
+     *  repete). Ex: 4 anúncios com 3 distintos = "2 iguais + 2 diferentes". O agente escolhe QUAIS. */
+    readonly distinctCreatives?: number;
+    /** preferência de MÍDIA da composição — "video" | "image" | "mixed". O agente escolhe os assets. */
+    readonly mediaPreference?: MediaPreference;
   },
   origin: DraftOrigin = "on_demand",
   opts: { readonly autonomous?: boolean; readonly minMonthlyReach?: number; readonly requireResolvedAudience?: boolean } = {},
@@ -1647,19 +1742,34 @@ export async function proposeCreateCampaign(
   // o eco/card mostram "pediu X, virou Y" (mesmo helper/campo do escalar).
   const { dailyBudgetMinor, clampedByCap } = clampNewBudget(requested, ac.cfg.maxNewDailyBudgetMinor);
 
-  // Multi-criativo (Fatia 7 + adCount): o agente monta N anúncios com criativos DISTINTOS quando os
-  // tem (mesma estratégia — números ao vivo + visão), 1 por criativo; senão, 1 criativo + variações
-  // de copy. Criativo forçado (WhatsApp) = anúncio único. O dono AJUSTA o nº pelo chat (adCount) ou
-  // pelo site. Sem adCount: default conservador (AGENT_MAX_CREATIVE_ADS). Com adCount: honra até o teto
-  // (MAX_ADS_PER_DRAFT); se faltar criativo distinto, entrega N mesmo assim (extras repetem o melhor,
-  // com nota honesta). O dono troca cada criativo depois pelo site.
+  // COMPOSIÇÃO de criativo (Fatia 7/8): o agente monta N anúncios (adCount) com uma COMPOSIÇÃO pedida
+  // — quantos DISTINTOS vs repetidos (distinctCreatives, ex: "2 iguais + 2 diferentes") e a mídia
+  // (mediaPreference: vídeo/imagem/misto). O agente escolhe QUAIS criativos (estratégia); o usuário
+  // troca o asset específico no site. Criativo forçado (WhatsApp) = anúncio único (comportamento antigo).
   const requestedAdCount = args.forcedCreativeAssetId ? undefined : normalizeAdCount(args.adCount);
-  const maxAds = requestedAdCount ?? AGENT_MAX_CREATIVE_ADS;
-  const extraCreatives = args.forcedCreativeAssetId
+  const compositionNotes: string[] = [];
+  // pool DISTINTO priorizado (o melhor `chosen` primeiro), deduplicado por mídia, filtrado por preferência.
+  const poolRefs = args.forcedCreativeAssetId
     ? []
-    : await chooseAdditionalCreatives(deps, ctx.orgId, ctx.adAccountId, ac.ref, ac.creativeSource, chosen, maxAds - 1);
-  const allCreatives: ChosenCreative[] = [chosen, ...extraCreatives];
-  const targetVariants = requestedAdCount ?? (allCreatives.length >= 2 ? allCreatives.length : DEFAULT_VARIANTS);
+    : (await buildCreativePool(deps, ctx.orgId, ctx.adAccountId, ac.ref, ac.creativeSource)).map((c) => c.ref);
+  const seenKey = new Set<string>();
+  let distinctList = [chosen, ...poolRefs].filter((c) => (seenKey.has(creativeKey(c)) ? false : (seenKey.add(creativeKey(c)), true)));
+  if (args.mediaPreference && args.mediaPreference !== "mixed") {
+    const filtered = filterByMedia(distinctList, args.mediaPreference);
+    if (filtered.length === 0) compositionNotes.push(`Não achei criativo ${mediaLabelPt(args.mediaPreference)} pra reusar — usei os criativos que a conta tem. Você troca cada um no site.`);
+    else distinctList = filtered;
+  }
+  // targetVariants: adCount pedido vence; senão, multi só quando há ≥2 distintos (senão o padrão de copy).
+  const targetVariants = args.forcedCreativeAssetId
+    ? DEFAULT_VARIANTS
+    : (requestedAdCount ?? (distinctList.length >= 2 ? Math.min(distinctList.length, AGENT_MAX_CREATIVE_ADS) : DEFAULT_VARIANTS));
+  // distintos desejados: pedido explícito (clampado) OU todos distintos (padrão).
+  const distinctWanted = args.distinctCreatives != null ? Math.max(1, Math.min(args.distinctCreatives, targetVariants)) : targetVariants;
+  const perAd = args.forcedCreativeAssetId ? [] : composeCreatives(targetVariants, distinctWanted, distinctList);
+  // nota honesta (§8) quando não há criativos distintos suficientes pra composição pedida.
+  if (args.distinctCreatives != null && distinctList.length < distinctWanted) {
+    compositionNotes.push(`Você pediu ${distinctWanted} criativos distintos, mas a conta só tem ${distinctList.length}${args.mediaPreference && args.mediaPreference !== "mixed" ? ` de ${mediaLabelPt(args.mediaPreference)}` : ""} — repeti pra completar os ${targetVariants} anúncios. Você troca cada um no site.`);
+  }
 
   const baseCopy: CopyVariant[] = await generateCopy(
     deps.ports.llm,
@@ -1674,12 +1784,14 @@ export async function proposeCreateCampaign(
     },
     { orgId: ctx.orgId, adAccountId: ctx.adAccountId },
   );
-  // multi-criativo → cada anúncio ganha SEU criativo (1:1 com a copy); slots além dos distintos
-  // herdam o criativo padrão (o melhor). Fonte única da regra (§13): `assignCreativesToVariants`.
-  const copyVariants: CopyVariant[] = assignCreativesToVariants(baseCopy, allCreatives);
+  // cada anúncio ganha SEU criativo (1:1 com a copy), honrando a composição; forced/1-criativo →
+  // herdam o padrão. Fonte única da regra (§13): `assignCreativesToVariants`.
+  const copyVariants: CopyVariant[] = assignCreativesToVariants(baseCopy, perAd);
   // RECONCILIA: generateCopy pode devolver MENOS que o pedido (filter/slice) → o nº real é o do
   // array (evita spec.variantsCount ≠ copyVariants.length + eco prometendo variações que não existem).
   const variantsCount = copyVariants.length;
+  // nº de criativos DISTINTOS de fato entre os anúncios (pro eco honesto de composição).
+  const distinctUsed = new Set(copyVariants.map((v) => v.creative?.metaVideoId ?? v.creative?.metaImageHash ?? "default")).size;
 
   // VÍDEO se tem video_id (o imageHash acompanha como CAPA do vídeo, não descaracteriza). Anúncio de
   // imagem tem imageHash e NÃO tem videoId → o videoId é o discriminador correto.
@@ -1756,17 +1868,20 @@ export async function proposeCreateCampaign(
     spec.targeting?.kind === "reuse_adset" ? " e o público que já converte" : spec.targeting?.kind === "explicit" ? " pro público que você indicou" : "";
   // Transparência (§clareza pro dono): se o #1 por desempenho for um formato que ainda não sei
   // clonar (carrossel/catálogo), avisa que peguei o melhor de imagem/vídeo no lugar.
-  // eco do nº de anúncios: ≥2 criativos distintos → "N anúncios (criativos distintos)"; senão as
-  // clássicas variações de copy sobre 1 criativo.
+  // eco do nº de anúncios + COMPOSIÇÃO real (§8): descreve distintos vs repetidos de fato, não uma
+  // promessa genérica ("criativos distintos") que pode não bater com o que o dono pediu.
+  const repeats = variantsCount - distinctUsed;
   const adsPhrase =
-    allCreatives.length >= 2
-      ? `montando **${variantsCount} anúncios** (criativos distintos + copy própria)`
-      : `e ${variantsCount} variações de copy novas (baseadas no que já converte)`;
+    variantsCount >= 2 && distinctUsed >= 2
+      ? `montando **${variantsCount} anúncios** (${distinctUsed} criativo(s) distinto(s)${repeats > 0 ? `, ${repeats} repetido(s)` : ""} + copy própria)`
+      : variantsCount >= 2
+        ? `montando **${variantsCount} anúncios** (mesmo criativo, copy própria em cada)`
+        : `e ${variantsCount} variações de copy novas (baseadas no que já converte)`;
   const lines = [
     `Vou **criar uma campanha de ${goal}** ${creativeSourcePhrase}${audienceSourcePhrase}, ${adsPhrase}.`,
   ];
-  const fewNote = fewCreativesNote(requestedAdCount, allCreatives.length);
-  if (fewNote) lines.push(fewNote);
+  for (const n of compositionNotes) lines.push(n);
+  lines.push(describeCopiesBlock(copyVariants));
   if (defaults.unsupportedTopFormat) {
     lines.push(`Obs: seu anúncio de melhor desempenho é um **${unsupportedFormatPt(defaults.unsupportedTopFormat)}**, que eu ainda não sei clonar — então usei o melhor criativo de imagem/vídeo que você tem.`);
   }
