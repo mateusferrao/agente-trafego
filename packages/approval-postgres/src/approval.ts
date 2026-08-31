@@ -1,4 +1,4 @@
-import { and, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { approvals, campaignDrafts, type Database } from "@trafego/db";
 import type {
   ActivationApproval,
@@ -140,7 +140,7 @@ export function createPostgresApprovals(db: Database): ApprovalPort {
         .select()
         .from(approvals)
         .where(and(eq(approvals.orgId, orgId), eq(approvals.status, "pending")))
-        .orderBy(approvals.createdAt);
+        .orderBy(desc(approvals.createdAt)); // mais novo primeiro — a pendência recém-criada no topo
       return rows.map(toPendingApproval);
     },
 
@@ -149,7 +149,7 @@ export function createPostgresApprovals(db: Database): ApprovalPort {
         .select()
         .from(approvals)
         .where(and(eq(approvals.agentId, agentId), eq(approvals.status, "pending")))
-        .orderBy(approvals.createdAt);
+        .orderBy(desc(approvals.createdAt)); // mais novo primeiro
       return rows.map(toPendingApproval);
     },
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, normalizeAdCount, recoverOpenDraft, resolveCreationTargeting } from "./draft-proposal.js";
+import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, interleaveMedia, normalizeAdCount, recoverOpenDraft, resolveCreationTargeting } from "./draft-proposal.js";
 import type { CopyVariant } from "@trafego/shared";
 import type { CampaignDraftSpec } from "@trafego/shared";
 import { creativeContentHash } from "../vision/resolver.js";
@@ -435,6 +435,23 @@ describe("filterByMedia (preferência de mídia)", () => {
   it("mixed/undefined → todos", () => {
     expect(filterByMedia(pool, "mixed")).toHaveLength(3);
     expect(filterByMedia(pool, undefined)).toHaveLength(3);
+  });
+});
+
+describe("interleaveMedia (mixed GARANTE vídeo+imagem entre os distintos)", () => {
+  const img = (h: string) => ({ imageHash: h, assetId: h, origin: "reuse" as const, source: "serving" as const });
+  const vid = (v: string) => ({ videoId: v, imageHash: "cover", assetId: v, origin: "reuse" as const, source: "serving" as const });
+
+  it("alterna v,i,v,i → os 1ºs distintos pegam os dois tipos (não 3 vídeos seguidos)", () => {
+    // pool com vídeos na frente (como veiculando) → sem interleave, os 3 1ºs seriam vídeo.
+    const out = interleaveMedia([vid("V1"), vid("V2"), vid("V3"), img("I1")]);
+    expect(out.ordered.map((c) => c.videoId ?? c.imageHash)).toEqual(["V1", "I1", "V2", "V3"]);
+    expect(out.hasVideo && out.hasImage).toBe(true);
+  });
+
+  it("só um tipo → flag indica o que falta", () => {
+    expect(interleaveMedia([vid("V1"), vid("V2")])).toMatchObject({ hasVideo: true, hasImage: false });
+    expect(interleaveMedia([img("I1")])).toMatchObject({ hasVideo: false, hasImage: true });
   });
 });
 

@@ -1132,10 +1132,14 @@ export async function refineDraft(
     let distinctList = [primary, ...(await buildCreativePool(deps, ctx.orgId, ctx.adAccountId, ac.ref, ac.creativeSource)).map((c) => c.ref)].filter(
       (c) => (seen.has(creativeKey(c)) ? false : (seen.add(creativeKey(c)), true)),
     );
-    if (patch.mediaPreference && patch.mediaPreference !== "mixed") {
+    if (patch.mediaPreference === "video" || patch.mediaPreference === "image") {
       const filtered = filterByMedia(distinctList, patch.mediaPreference);
       if (filtered.length === 0) refineNotes.push(`Não achei criativo ${mediaLabelPt(patch.mediaPreference)} pra reusar — mantive os criativos que a conta tem.`);
       else distinctList = filtered;
+    } else if (patch.mediaPreference === "mixed") {
+      const mixed = interleaveMedia(distinctList);
+      distinctList = mixed.ordered;
+      if (!(mixed.hasVideo && mixed.hasImage)) refineNotes.push(`Você pediu vídeos e imagens, mas a conta só tem ${mixed.hasVideo ? "vídeos" : "imagens"} reusáveis — usei o que há.`);
     }
     const target = variants0.length;
     const distinctWanted = patch.distinctCreatives != null ? Math.max(1, Math.min(patch.distinctCreatives, target)) : target;
@@ -1434,6 +1438,22 @@ function mediaLabelPt(pref: MediaPreference): string {
   return pref === "video" ? "de vídeo" : pref === "image" ? "de imagem" : "de vídeo/imagem";
 }
 
+/**
+ * Reordena o pool ALTERNANDO vídeo/imagem (v,i,v,i…) pra que os primeiros K distintos GARANTAM os dois
+ * tipos quando ambos existem — "use vídeos E imagens" (mixed). Só reordenar (mixed=não-filtra) pegava os
+ * K primeiros, que podiam ser todos do mesmo tipo. Devolve também se cada tipo existe (pra nota honesta). PURO.
+ */
+export function interleaveMedia(refs: readonly ChosenCreative[]): { ordered: ChosenCreative[]; hasVideo: boolean; hasImage: boolean } {
+  const videos = refs.filter((c) => Boolean(c.videoId));
+  const images = refs.filter((c) => Boolean(c.imageHash) && !c.videoId);
+  const ordered: ChosenCreative[] = [];
+  for (let i = 0; i < Math.max(videos.length, images.length); i++) {
+    if (videos[i]) ordered.push(videos[i]!);
+    if (images[i]) ordered.push(images[i]!);
+  }
+  return { ordered, hasVideo: videos.length > 0, hasImage: images.length > 0 };
+}
+
 /** Pool de candidatos (veiculando + biblioteca) conforme a ESTRATÉGIA do agente — mesma fonte de
  *  chooseCreative (números ao vivo + visão), reusada p/ pegar criativos DISTINTOS adicionais. */
 async function buildCreativePool(
@@ -1726,10 +1746,15 @@ export async function proposeCreateCampaign(
     : (await buildCreativePool(deps, ctx.orgId, ctx.adAccountId, ac.ref, ac.creativeSource)).map((c) => c.ref);
   const seenKey = new Set<string>();
   let distinctList = [chosen, ...poolRefs].filter((c) => (seenKey.has(creativeKey(c)) ? false : (seenKey.add(creativeKey(c)), true)));
-  if (args.mediaPreference && args.mediaPreference !== "mixed") {
+  if (args.mediaPreference === "video" || args.mediaPreference === "image") {
     const filtered = filterByMedia(distinctList, args.mediaPreference);
     if (filtered.length === 0) compositionNotes.push(`Não achei criativo ${mediaLabelPt(args.mediaPreference)} pra reusar — usei os criativos que a conta tem. Você troca cada um no site.`);
     else distinctList = filtered;
+  } else if (args.mediaPreference === "mixed") {
+    // "vídeos E imagens" → GARANTE os dois tipos entre os distintos (alterna); avisa se só há um tipo.
+    const mixed = interleaveMedia(distinctList);
+    distinctList = mixed.ordered;
+    if (!(mixed.hasVideo && mixed.hasImage)) compositionNotes.push(`Você pediu vídeos e imagens, mas a conta só tem ${mixed.hasVideo ? "vídeos" : "imagens"} reusáveis — usei o que há. Você troca cada um no site.`);
   }
   // targetVariants: adCount pedido vence; senão, multi só quando há ≥2 distintos (senão o padrão de copy).
   const targetVariants = args.forcedCreativeAssetId
