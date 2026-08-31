@@ -2,8 +2,11 @@
 // (política por-agente) e reduz as análises por-unidade num resultado da conta.
 // Testável sem mock; o grafo (casca) só chama + faz o IO (LLM/DB).
 
-import type { Creative, EntitySummary, InsightMetrics } from "@trafego/shared";
+import type { CampaignUnit, Creative, EntitySummary, InsightMetrics } from "@trafego/shared";
 import type { AnalysisOutput, UnitAnalysis } from "@trafego/shared";
+
+/** Mínimo de adsets ATIVOS pra uma campanha ABO ganhar diagnóstico por-adset (S8b). */
+const MIN_ADSETS_FOR_ADSET_TIERING = 2;
 
 export type ExecutionPolicy = "deep_periodic_incremental" | "full_every_run" | "budget_scaled";
 
@@ -141,6 +144,37 @@ export function mergeUnitAnalyses(units: readonly UnitAnalysis[]): AnalysisOutpu
     findings,
     recommendations,
   };
+}
+
+/**
+ * Diagnóstico por-adset (S8b) DERIVADO da MESMA call de campanha já feita — zero LLM extra.
+ * Só campanhas ABO (sem budget próprio) com 2+ adsets ATIVOS ganham entrada por-adset (CBO/
+ * 1-adset continuam só por campanha — a assimetria é intencional: quem controla o próprio
+ * budget é o adset, então só ele merece diagnóstico próprio). Cada entrada carrega SÓ as
+ * recomendações cujo `targetEntity` mira aquele adset + os findings referenciados por elas
+ * (`findingRefs`) — o analista já pode apontar `targetEntity: {level: "adset"}` na call
+ * existente (schema já suporta), então filtrar o já-produzido é honesto e não inventa nada.
+ * Puro.
+ */
+export function deriveAdsetUnits(
+  unit: CampaignUnit,
+  analysis: UnitAnalysis,
+): ReadonlyArray<{ readonly adset: EntitySummary; readonly unit: UnitAnalysis }> {
+  const isABO = unit.campaign.budget == null;
+  if (!isABO || unit.adsets.length < MIN_ADSETS_FOR_ADSET_TIERING) return [];
+
+  return unit.adsets.map((group) => {
+    const recommendations = analysis.recommendations.filter(
+      (r) => r.targetEntity?.level === "adset" && r.targetEntity.externalId === group.adset.id,
+    );
+    const refIds = new Set(recommendations.flatMap((r) => r.findingRefs ?? []));
+    const findings = analysis.findings.filter((f) => refIds.has(f.id));
+    const summary =
+      recommendations.length > 0
+        ? `Conjunto dentro de campanha com orçamento por conjunto (ABO) — ${recommendations.length} recomendação(ões) específica(s) deste conjunto.`
+        : "Conjunto dentro de campanha com orçamento por conjunto (ABO) — sem recomendação específica deste conjunto nesta análise.";
+    return { adset: group.adset, unit: { summary, findings, recommendations, flags: [...group.adset.flags] } };
+  });
 }
 
 function dedupeByTitle<T extends { readonly title: string }>(items: readonly T[]): T[] {

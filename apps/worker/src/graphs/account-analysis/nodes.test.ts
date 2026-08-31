@@ -400,6 +400,53 @@ describe("account-analysis read-only nodes", () => {
     expect(userMsg?.content).toContain("weak_creative");
   });
 
+  it("S8b: campanha ABO com 2+ adsets ativos ganha diagnóstico por-adset DERIVADO (sem LLM extra) — CBO/1-adset continuam só por campanha", async () => {
+    const entities: AdEntity[] = [
+      { id: "c1", level: "campaign", name: "Campanha 1", status: "active", objective: { goal: "purchase" } },
+      { id: "as1", level: "adset", name: "Conjunto 1", status: "active", campaignId: "c1", dailyBudget: 50 },
+      { id: "as2", level: "adset", name: "Conjunto 2", status: "active", campaignId: "c1", dailyBudget: 50 },
+    ];
+    const rows = [
+      row("act_1", "account", 300, 5),
+      row("c1", "campaign", 300, 3),
+      row("as1", "adset", 200, 2),
+      row("as2", "adset", 100, 1),
+    ];
+    const h = makeHarness({ entities, rows });
+    const ABO_OUTPUT = {
+      scorecard: { grade: "C", headline: "h", biggestLeak: "conversao" },
+      summary: "s",
+      flags: [],
+      findings: [{ id: "f-as1", title: "CPA alto no as1", detail: "d", severity: "warning", metricRefs: [{ label: "CPA", value: 80 }], caveat: null }],
+      recommendations: [
+        { id: "r-as1", title: "Aumentar orçamento do as1", rationale: "r", priority: "high", actionType: "increase_budget", targetEntity: { level: "adset", externalId: "as1" }, budgetChangePct: 10, expectedImpact: null, whatToMonitor: null, findingRefs: ["f-as1"] },
+      ],
+    };
+    h.llm.mockImplementation(async () => ({ output: ABO_OUTPUT, usage: { inputTokens: 100, outputTokens: 20, costUsd: 0.001 } }));
+
+    await runChain(h);
+
+    const repos = (h.deps as unknown as { _repos: { entityAnalyses: EntityAnalysesRepo } })._repos;
+    const savedUnits = (repos.entityAnalyses.saveMany as ReturnType<typeof vi.fn>).mock.calls[0]?.[2] as {
+      entityId: string;
+      entityLevel: string;
+      unit: { recommendations: { id: string }[]; findings: { id: string }[] };
+      curated?: { isCBO: boolean };
+    }[];
+    // campanha (ABO, sem budget próprio) + 2 adsets (cada um com o SEU budget) = 3 linhas.
+    expect(savedUnits.map((u) => u.entityId).sort()).toEqual(["as1", "as2", "c1"]);
+    const campaignRow = savedUnits.find((u) => u.entityId === "c1")!;
+    expect(campaignRow.entityLevel).toBe("campaign");
+    expect(campaignRow.curated?.isCBO).toBe(false); // ABO confirmado
+    const as1Row = savedUnits.find((u) => u.entityId === "as1")!;
+    expect(as1Row.entityLevel).toBe("adset");
+    expect(as1Row.curated?.isCBO).toBe(true); // controla o próprio budget
+    expect(as1Row.unit.recommendations.map((r) => r.id)).toEqual(["r-as1"]);
+    expect(as1Row.unit.findings.map((f) => f.id)).toEqual(["f-as1"]);
+    const as2Row = savedUnits.find((u) => u.entityId === "as2")!;
+    expect(as2Row.unit.recommendations).toEqual([]); // nenhuma recomendação mirou as2
+  });
+
   it("conta parada: pula o LLM e conclui com nota 'sem atividade'", async () => {
     const h = makeHarness({ rows: [] });
     const state = await runChain(h);

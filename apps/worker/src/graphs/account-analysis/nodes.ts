@@ -22,6 +22,7 @@ import {
   costSnapshotFromUsage,
   creativePosterFrames,
   decideActions,
+  deriveAdsetUnits,
   describeSignal,
   dropUnsupportedFindings,
   eligibilityByEntity,
@@ -569,9 +570,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
             { runId: state.runId, campaign: unit.campaign.id, issues: parsed.error.issues.slice(0, 5) },
             "map_units:output do modelo unit não passou no schema — campanha descartada",
           );
-          return { unit: null, fresh: null, usage: completion.usage, partial: true };
+          return { unit: null, fresh: [], usage: completion.usage, partial: true };
         }
-        const fresh: FreshUnit = {
+        const campaignFresh: FreshUnit = {
           entityId: unit.campaign.id,
           entityLevel: "campaign",
           entityName: unit.campaign.name,
@@ -581,11 +582,23 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           ...(unit.campaign.tier ? { tier: unit.campaign.tier } : {}),
           curated: buildCuratedEntitySnapshot(unit.campaign),
         };
-        return { unit: parsed.data, fresh, usage: completion.usage, partial: false };
+        // S8b: campanha ABO com 2+ adsets ativos ganha diagnóstico próprio POR ADSET —
+        // DERIVADO da mesma call já feita (zero LLM extra, ver deriveAdsetUnits).
+        const adsetFresh: FreshUnit[] = deriveAdsetUnits(enrichedUnit, parsed.data).map(({ adset, unit: adsetUnit }) => ({
+          entityId: adset.id,
+          entityLevel: "adset",
+          entityName: adset.name,
+          unit: adsetUnit,
+          metrics: adset.metrics,
+          flags: [...adset.flags],
+          ...(adset.tier ? { tier: adset.tier } : {}),
+          curated: buildCuratedEntitySnapshot(adset),
+        }));
+        return { unit: parsed.data, fresh: [campaignFresh, ...adsetFresh], usage: completion.usage, partial: false };
       } catch (err) {
         if (!(err instanceof LLMProviderError)) throw err;
         logger.warn({ runId: state.runId, campaign: unit.campaign.id, err }, "map_units:campanha falhou");
-        return { unit: null, fresh: null, usage: null, partial: true };
+        return { unit: null, fresh: [], usage: null, partial: true };
       }
     });
 
@@ -599,7 +612,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       if (o.usage) usage = addTokenUsage(usage ?? undefined, o.usage);
       if (o.partial) { partial = true; campaignPartial = true; }
       if (o.unit) unitAnalyses.push(o.unit);
-      if (o.fresh) freshUnits.push(o.fresh);
+      freshUnits.push(...o.fresh);
     }
     // herança: campanhas sem mudança material reusam a última análise.
     for (const unit of selection.toInherit) {
