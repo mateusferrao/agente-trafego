@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { AccountBrief, CampaignUnit, EntitySummary } from "@trafego/shared";
 import {
+  ANALYSIS_KNOWLEDGE_BLOCKS,
   REVIEW_KNOWLEDGE_CONTEXT,
+  THEME_ORDER,
   buildAnalysisKnowledgeText,
   buildCampaignKnowledgeContext,
   buildSynthesisKnowledgeContext,
@@ -102,23 +104,59 @@ describe("buildSynthesisKnowledgeContext", () => {
     expect(buildSynthesisKnowledgeContext(brief()).hasBudgetData).toBe(false);
   });
 
-  it("bidStrategyMismatch: true quando há estratégia agressiva E a conta NÃO tem conversões acumuladas suficientes", () => {
+  it("bidStrategyMismatch: true quando há estratégia agressiva E a conta NÃO tem conversões de negócio acumuladas suficientes", () => {
     const b = brief({
-      totals: { spend: 1, impressions: 1, clicks: 1, ctr: 1, cpc: 1, cpm: 1, conversions: 10, delta: {} } as AccountBrief["totals"],
-      segments: { campaigns: [entity({ bidStrategy: "bid_cap" })], adsets: [], ads: [] },
+      segments: {
+        campaigns: [entity({ bidStrategy: "bid_cap", conversionBasis: "target", metrics: { spend: 1, impressions: 1, clicks: 1, ctr: 1, cpc: 1, cpm: 1, conversions: 10 } })],
+        adsets: [],
+        ads: [],
+      },
     });
     expect(buildSynthesisKnowledgeContext(b).bidStrategyMismatch).toBe(true);
   });
-  it("bidStrategyMismatch: false quando a conta JÁ tem conversões acumuladas suficientes", () => {
+  it("bidStrategyMismatch: false quando a conta JÁ tem conversões de negócio acumuladas suficientes (soma entre campanhas)", () => {
     const b = brief({
-      totals: { spend: 1, impressions: 1, clicks: 1, ctr: 1, cpc: 1, cpm: 1, conversions: 100, delta: {} } as AccountBrief["totals"],
-      segments: { campaigns: [entity({ bidStrategy: "bid_cap" })], adsets: [], ads: [] },
+      segments: {
+        campaigns: [
+          entity({ id: "c1", bidStrategy: "bid_cap", conversionBasis: "target", metrics: { spend: 1, impressions: 1, clicks: 1, ctr: 1, cpc: 1, cpm: 1, conversions: 30 } }),
+          entity({ id: "c2", conversionBasis: "target", metrics: { spend: 1, impressions: 1, clicks: 1, ctr: 1, cpc: 1, cpm: 1, conversions: 25 } }),
+        ],
+        adsets: [],
+        ads: [],
+      },
     });
     expect(buildSynthesisKnowledgeContext(b).bidStrategyMismatch).toBe(false);
   });
   it("bidStrategyMismatch: false quando toda entidade usa lowest_cost (padrão esperado)", () => {
     const b = brief({ segments: { campaigns: [entity({ bidStrategy: "lowest_cost" })], adsets: [], ads: [] } });
     expect(buildSynthesisKnowledgeContext(b).bidStrategyMismatch).toBe(false);
+  });
+
+  it("REGRESSÃO (achado da revisão): conta ZERO-CONFIG (totals.conversions sempre undefined, sem goals.conversionGoal) com conversões REAIS na campanha não dispara o guard indevidamente", () => {
+    const b = brief({
+      // totals.conversions fica ausente em zero-config (resolveConversion exige override
+      // ou objetivo de entidade — conta não tem objetivo próprio) — o campo NÃO é setado
+      // de propósito aqui, simulando o `computeAccountTotals` real numa conta zero-config.
+      segments: {
+        campaigns: [entity({ bidStrategy: "bid_cap", conversionBasis: "target", metrics: { spend: 1, impressions: 1, clicks: 1, ctr: 1, cpc: 1, cpm: 1, conversions: 80 } })],
+        adsets: [],
+        ads: [],
+      },
+    });
+    expect(b.totals.conversions).toBeUndefined();
+    expect(buildSynthesisKnowledgeContext(b).bidStrategyMismatch).toBe(false);
+  });
+
+  it("ignora conversões de entidades com conversionBasis 'proxy'/'none' (não é a conversão de NEGÓCIO)", () => {
+    const b = brief({
+      segments: {
+        campaigns: [entity({ bidStrategy: "bid_cap", conversionBasis: "proxy", metrics: { spend: 1, impressions: 1, clicks: 1, ctr: 1, cpc: 1, cpm: 1, conversions: 500 } })],
+        adsets: [],
+        ads: [],
+      },
+    });
+    // 500 conversas (proxy) não contam como maturidade de conversão de NEGÓCIO.
+    expect(buildSynthesisKnowledgeContext(b).bidStrategyMismatch).toBe(true);
   });
 });
 
@@ -248,5 +286,14 @@ describe("buildAnalysisKnowledgeText — montagem agrupada por tema, ordem está
     const text = buildAnalysisKnowledgeText({ role: "synthesis", hasWaste: false, trackingSuspect: false, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: false, bidStrategyMismatch: true });
     expect(text).toContain("lowest_cost");
     expect(text).toContain("50");
+  });
+});
+
+describe("invariante — todo tema usado em ANALYSIS_KNOWLEDGE_BLOCKS está em THEME_ORDER (achado da revisão)", () => {
+  it("nenhum bloco tem tema fora de THEME_ORDER (senão o bloco nunca sairia no texto, mesmo com relevant()=true)", () => {
+    const usedThemes = new Set(ANALYSIS_KNOWLEDGE_BLOCKS.map((b) => b.theme));
+    for (const theme of usedThemes) {
+      expect(THEME_ORDER).toContain(theme);
+    }
   });
 });

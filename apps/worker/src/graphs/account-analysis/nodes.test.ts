@@ -369,6 +369,37 @@ describe("account-analysis read-only nodes", () => {
     expect(h.closed[0]?.status).toBe("succeeded");
   });
 
+  it("S4b (achado da revisão — trava o wiring ponta a ponta): visão fraca+baixa persuasão chega no prompt do mapa como weak_creative", async () => {
+    const entities: AdEntity[] = [
+      { id: "c1", level: "campaign", name: "Campanha 1", status: "active", objective: { goal: "purchase" } },
+      { id: "as1", level: "adset", name: "Conjunto 1", status: "active", campaignId: "c1" },
+      { id: "a1", level: "ad", name: "Anúncio 1", status: "active", campaignId: "c1", adsetId: "as1" },
+    ];
+    const rows = [
+      row("act_1", "account", 300, 5),
+      row("c1", "campaign", 300, 3),
+      row("as1", "adset", 300, 3),
+      row("a1", "ad", 300, 3),
+    ];
+    const h = makeHarness({ entities, rows });
+    // criativo com imagem (senão creativePosterFrames() fica vazio e a visão nem é chamada).
+    (h.deps.ports.ads as unknown as { getCreatives: ReturnType<typeof vi.fn> }).getCreatives = vi.fn(async () => [
+      { id: "cr1", adId: "a1", imageUrl: "https://img/1.jpg" },
+    ]);
+    const repos = (h.deps as unknown as { _repos: Record<string, unknown> })._repos;
+    repos.vision = { resolve: vi.fn(async () => ({ summary: "s", strengths: [], weaknesses: [], proofStrength: "weak", persuasionSignals: 1 })) };
+
+    await runChain(h);
+
+    const mapCall = h.llm.mock.calls.find((c) => (c[0] as { meta?: { type?: string } })?.meta?.type === "unit");
+    // o array real de healthSignals do anúncio notável fica no USER message (a árvore
+    // curada serializada) — checar aí (não o system, onde QUALITY_TEXT já MENCIONA
+    // "weak_creative" incondicionalmente pra explicar o vocabulário, o que faria esta
+    // asserção passar mesmo se o wiring estivesse quebrado).
+    const userMsg = (mapCall?.[0] as { messages: { role: string; content: string }[] }).messages.find((m) => m.role === "user");
+    expect(userMsg?.content).toContain("weak_creative");
+  });
+
   it("conta parada: pula o LLM e conclui com nota 'sem atividade'", async () => {
     const h = makeHarness({ rows: [] });
     const state = await runChain(h);

@@ -173,6 +173,15 @@ describe("MetaAdsAdapter.listEntities (governor)", () => {
     expect(entities[0]).not.toHaveProperty("bidStrategy");
   });
 
+  it("S2 (achado da revisão): bid_amount SEM bidStrategy reconhecido/≠lowest_cost → bidCapMajor omitido (nunca solto/contraditório)", async () => {
+    stubFetchSequence([
+      { body: { data: [{ id: "c1", name: "Camp enum futuro", status: "ACTIVE", objective: "OUTCOME_SALES", bid_strategy: "SOME_FUTURE_ENUM", bid_amount: "500" }] } },
+    ]);
+    const { adapter } = makeAdapterWithGov();
+    const entities = await adapter.listEntities(ref, "campaign");
+    expect(entities[0]).not.toHaveProperty("bidCapMajor");
+  });
+
   it("rate-limit transitório (code 17) → retry inline → completa", async () => {
     const { calls } = stubFetchSequence([
       { body: { error: { message: "throttled", code: 17 } }, status: 400 },

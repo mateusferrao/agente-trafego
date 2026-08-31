@@ -325,7 +325,10 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     const lifetimeBudget = toMajorBudget(node.lifetime_budget);
     const budgetRemaining = toMajorBudget(node.budget_remaining);
     const bidStrategy = node.bid_strategy ? BID_STRATEGY_MAP[node.bid_strategy] : undefined;
-    const bidCapMajor = toMajorBudget(node.bid_amount);
+    // cap só faz sentido junto de uma estratégia RECONHECIDA e ≠ lowest_cost (sem cap por
+    // definição) — evita um bidCapMajor "solto" sem bidStrategy correspondente, ou
+    // contraditório com lowest_cost, se a Meta um dia devolver bid_amount fora desse caso.
+    const bidCapMajor = bidStrategy && bidStrategy !== "lowest_cost" ? toMajorBudget(node.bid_amount) : undefined;
     const objective = this.deriveObjective(level, node, resolved);
     // público + destino WhatsApp CTWA só existem no nível adset (targeting + promoted_object moram lá).
     const audience = level === "adset" ? audienceFromTargeting(node.targeting) : undefined;

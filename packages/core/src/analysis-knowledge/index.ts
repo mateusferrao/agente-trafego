@@ -229,11 +229,28 @@ function hasAggressiveBidStrategy(entities: readonly EntitySummary[]): boolean {
   return entities.some((e) => e.bidStrategy != null && e.bidStrategy !== "lowest_cost");
 }
 
+/**
+ * Conversões de NEGÓCIO acumuladas (S2, maturidade de bid strategy) — soma só CAMPANHAS
+ * com `conversionBasis === "target"` (a conversão de negócio É mensurável ali; soma por
+ * CAMPANHA evita dupla-contagem entre níveis, já que account/campaign/adset/ad são
+ * linhas de insight independentes na Meta, não uma soma dos filhos).
+ *
+ * NÃO usa `brief.totals.conversions`: esse total só resolve quando `goals.conversionGoal`
+ * está configurado (override explícito) OU a entidade "account" teria objetivo próprio —
+ * mas conta NÃO TEM objetivo (só campanha/adset/ad têm), então em qualquer conta ZERO-
+ * CONFIG (o caminho default, CLAUDE.md §10) `totals.conversions` fica sempre undefined,
+ * mesmo com milhares de conversões reais nas campanhas — faria este guard disparar
+ * sempre, o oposto do pretendido.
+ */
+function businessConversionsAccumulated(campaigns: readonly EntitySummary[]): number {
+  return campaigns.filter((c) => c.conversionBasis === "target").reduce((sum, c) => sum + (c.metrics.conversions ?? 0), 0);
+}
+
 /** Contexto da SÍNTESE (reduce, nível conta) — a partir do `AccountBrief`. */
 export function buildSynthesisKnowledgeContext(brief: AccountBrief): AnalysisKnowledgeContext {
   const allEntities = [...brief.segments.campaigns, ...brief.segments.adsets, ...brief.segments.ads];
   const waste = brief.waste;
-  const accountConversions = brief.totals.conversions ?? 0;
+  const accountConversions = businessConversionsAccumulated(brief.segments.campaigns);
   return {
     role: "synthesis",
     hasWaste: (waste?.wastedSpend ?? 0) > 0 || (waste?.pareto?.misallocated.length ?? 0) > 0,
@@ -265,7 +282,11 @@ export function selectAnalysisKnowledge(ctx: AnalysisKnowledgeContext): readonly
   return ANALYSIS_KNOWLEDGE_BLOCKS.filter((b) => b.relevant(ctx));
 }
 
-const THEME_ORDER: readonly AnalysisKnowledgeTheme[] = ["conversao", "qualidade", "criativo", "desperdicio", "orcamento", "benchmark"];
+// Exportado só pra teste de invariante (achado da revisão): todo tema usado em algum bloco
+// de ANALYSIS_KNOWLEDGE_BLOCKS precisa aparecer aqui, senão o bloco NUNCA sai no texto final
+// mesmo com `relevant()` true — bug silencioso (THEME_LABEL_PT é `Record` exaustivo, o TS
+// já pega esquecimento ali; este array não tem essa rede, por isso o teste).
+export const THEME_ORDER: readonly AnalysisKnowledgeTheme[] = ["conversao", "qualidade", "criativo", "desperdicio", "orcamento", "benchmark"];
 const THEME_LABEL_PT: Readonly<Record<AnalysisKnowledgeTheme, string>> = {
   conversao: "Conversão e honestidade de medição",
   qualidade: "Qualidade e priorização de ação",
