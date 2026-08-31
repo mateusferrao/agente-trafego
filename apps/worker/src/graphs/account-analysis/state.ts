@@ -13,6 +13,7 @@ import type {
   AutonomyPolicy,
   CandidateAction,
   Creative,
+  EntityBreakdown,
   Finding,
   GuardrailConfig,
   InsightRow,
@@ -85,6 +86,11 @@ export const AccountAnalysisState = Annotation.Root({
   insights: Annotation<readonly InsightRow[]>,
   baselineInsights: Annotation<readonly InsightRow[]>,
   creatives: Annotation<readonly Creative[]>,
+  // Breakdown demográfico/posicionamento da CONTA (S7) — cru, sem gate de materialidade
+  // ainda (aplicado dentro de `buildAccountBrief`); null = sem dado (nunca sincronizado
+  // ainda, ou cadência própria não venceu neste ciclo).
+  demographics: Annotation<EntityBreakdown | null>,
+  placements: Annotation<EntityBreakdown | null>,
   brief: Annotation<AccountBrief | null>,
   findings: Annotation<readonly Finding[]>,
   // map-reduce (3b-2): análises por-anúncio (novas + herdadas) + as a persistir.

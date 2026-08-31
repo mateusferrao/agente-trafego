@@ -175,6 +175,69 @@ describe("MetaInsightsService — async report jobs", () => {
     expect(rows[0]!.qualityRankings).toBeUndefined();
   });
 
+  it("S7: getBreakdownInsights (demographic) — agrupa linhas cruas por entidade, monta segmentos com label PT", async () => {
+    let submitUrl: URL | undefined;
+    installFetch((m, u) => {
+      if (isSubmit(m, u)) {
+        submitUrl = u;
+        return json({ report_run_id: RUN_ID });
+      }
+      if (isPoll(m, u)) return json({ async_status: "Job Completed", async_percent_completion: 100 });
+      if (isFetch(m, u))
+        return json({
+          data: [
+            { campaign_id: "C1", age: "35-44", gender: "female", spend: "100", impressions: "1000", clicks: "20", ctr: "2", cpc: "5", cpm: "100" },
+            { campaign_id: "C1", age: "25-34", gender: "male", spend: "50", impressions: "500", clicks: "10", ctr: "2", cpc: "5", cpm: "100" },
+          ],
+        });
+      return json({});
+    });
+
+    const rows = await makeService().getBreakdownInsights({
+      account: { adAccountId: "123456", accessToken: TOKEN },
+      level: "campaign",
+      window: "last_30d",
+      dimension: "demographic",
+    });
+
+    expect(submitUrl!.searchParams.get("breakdowns")).toBe("age,gender");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ entityId: "C1", level: "campaign" });
+    expect(rows[0]!.segments).toHaveLength(2);
+    expect(rows[0]!.segments.find((s) => s.key === "35-44:female")).toMatchObject({
+      metrics: { spend: 100 },
+    });
+    expect(rows[0]!.segments[0]!.label).not.toBe(""); // label PT resolvido, não vazio
+  });
+
+  it("S7: getBreakdownInsights (placement) — pede publisher_platform/platform_position", async () => {
+    let submitUrl: URL | undefined;
+    installFetch((m, u) => {
+      if (isSubmit(m, u)) {
+        submitUrl = u;
+        return json({ report_run_id: RUN_ID });
+      }
+      if (isPoll(m, u)) return json({ async_status: "Job Completed", async_percent_completion: 100 });
+      if (isFetch(m, u))
+        return json({
+          data: [
+            { account_id: "123456", publisher_platform: "instagram", platform_position: "story", spend: "10", impressions: "100", clicks: "2", ctr: "2", cpc: "5", cpm: "100" },
+          ],
+        });
+      return json({});
+    });
+
+    const rows = await makeService().getBreakdownInsights({
+      account: { adAccountId: "123456", accessToken: TOKEN },
+      level: "account",
+      window: "last_30d",
+      dimension: "placement",
+    });
+
+    expect(submitUrl!.searchParams.get("breakdowns")).toBe("publisher_platform,platform_position");
+    expect(rows[0]!.segments[0]!.key).toBe("instagram:story");
+  });
+
   it("Job Failed → re-submete fresh e conclui", async () => {
     let pollN = 0;
     const { calls } = installFetch((m, u) => {

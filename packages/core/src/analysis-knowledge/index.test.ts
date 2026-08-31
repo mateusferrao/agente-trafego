@@ -186,7 +186,28 @@ describe("buildCampaignKnowledgeContext (map)", () => {
 });
 
 describe("selectAnalysisKnowledge — relevância por papel e por dado", () => {
-  const baseSynthesisCtx = { role: "synthesis" as const, hasWaste: false, trackingSuspect: false, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: false, bidStrategyMismatch: false };
+  const baseSynthesisCtx = { role: "synthesis" as const, hasWaste: false, trackingSuspect: false, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: false, bidStrategyMismatch: false, hasDemographics: false, hasPlacements: false };
+
+  it("S7: bloco 'demographics_placement' só entra quando hasDemographics OU hasPlacements (bloco NOVO, tema NOVO 'segmentacao')", () => {
+    const neither = buildSynthesisKnowledgeContext(brief());
+    expect(selectAnalysisKnowledge(neither).map((b) => b.key)).not.toContain("demographics_placement");
+
+    const onlyDemo = buildSynthesisKnowledgeContext(
+      brief({ demographics: { dimension: "demographic", asOf: "2026-08-24", segments: [] } }),
+    );
+    expect(selectAnalysisKnowledge(onlyDemo).map((b) => b.key)).toContain("demographics_placement");
+
+    const onlyPlacement = buildSynthesisKnowledgeContext(
+      brief({ placements: { dimension: "placement", asOf: "2026-08-24", segments: [] } }),
+    );
+    expect(selectAnalysisKnowledge(onlyPlacement).map((b) => b.key)).toContain("demographics_placement");
+  });
+
+  it("S7: bloco de segmentação menciona o carimbo de frescor ('asOf') — nunca implica frescor do dia", () => {
+    const block = ANALYSIS_KNOWLEDGE_BLOCKS.find((b) => b.key === "demographics_placement")!;
+    expect(block.text).toContain("asOf");
+    expect(block.theme).toBe("segmentacao");
+  });
 
   it("S6: bloco 'quality' explica weak_hook_retention e platform_quality_below_average (sempre-on, sem bloco novo)", () => {
     const block = ANALYSIS_KNOWLEDGE_BLOCKS.find((b) => b.key === "quality")!;
@@ -223,7 +244,7 @@ describe("selectAnalysisKnowledge — relevância por papel e por dado", () => {
   });
   it("map com dado de budget → TAMBÉM inclui o bloco budget (útil por-campanha, não só conta)", () => {
     expect(
-      selectAnalysisKnowledge({ role: "map", hasWaste: false, trackingSuspect: false, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: true, bidStrategyMismatch: false }).map(
+      selectAnalysisKnowledge({ role: "map", hasWaste: false, trackingSuspect: false, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: true, bidStrategyMismatch: false, hasDemographics: false, hasPlacements: false }).map(
         (b) => b.key,
       ),
     ).toContain("budget");
@@ -233,14 +254,14 @@ describe("selectAnalysisKnowledge — relevância por papel e por dado", () => {
   });
   it("map NUNCA inclui bid_strategy (é sinal de CONTA — maturidade de dado agregada)", () => {
     expect(
-      selectAnalysisKnowledge({ role: "map", hasWaste: false, trackingSuspect: false, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: false, bidStrategyMismatch: true }).map(
+      selectAnalysisKnowledge({ role: "map", hasWaste: false, trackingSuspect: false, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: false, bidStrategyMismatch: true, hasDemographics: false, hasPlacements: false }).map(
         (b) => b.key,
       ),
     ).not.toContain("bid_strategy");
   });
 
   it("map SEMPRE inclui advice (direção de criativo/público), NUNCA waste (é sinal de conta, não computado por campanha)", () => {
-    const keys = selectAnalysisKnowledge({ role: "map", hasWaste: true, trackingSuspect: true, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: false, bidStrategyMismatch: false }).map(
+    const keys = selectAnalysisKnowledge({ role: "map", hasWaste: true, trackingSuspect: true, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: false, bidStrategyMismatch: false, hasDemographics: false, hasPlacements: false }).map(
       (b) => b.key,
     );
     expect(keys).toContain("advice");
@@ -248,7 +269,7 @@ describe("selectAnalysisKnowledge — relevância por papel e por dado", () => {
   });
 
   it("map com trackingSuspect (S8 — injetado da conta) → TAMBÉM inclui o bloco tracking; sem suspeita, não inclui", () => {
-    const suspectMap = { role: "map" as const, hasWaste: false, trackingSuspect: true, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: false, bidStrategyMismatch: false };
+    const suspectMap = { role: "map" as const, hasWaste: false, trackingSuspect: true, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: false, bidStrategyMismatch: false, hasDemographics: false, hasPlacements: false };
     expect(selectAnalysisKnowledge(suspectMap).map((b) => b.key)).toContain("tracking");
     expect(selectAnalysisKnowledge({ ...suspectMap, trackingSuspect: false }).map((b) => b.key)).not.toContain("tracking");
   });
@@ -268,7 +289,7 @@ describe("selectAnalysisKnowledge — relevância por papel e por dado", () => {
 
 describe("buildAnalysisKnowledgeText — montagem agrupada por tema, ordem estável", () => {
   it("agrupa por tema com o mesmo texto das notas originais, e a seção 'conversão' vem antes de 'qualidade', que vem antes de 'desperdício', que vem antes de 'orçamento'", () => {
-    const text = buildAnalysisKnowledgeText({ role: "synthesis", hasWaste: true, trackingSuspect: false, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: true, bidStrategyMismatch: false });
+    const text = buildAnalysisKnowledgeText({ role: "synthesis", hasWaste: true, trackingSuspect: false, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: true, bidStrategyMismatch: false , hasDemographics: false, hasPlacements: false });
     expect(text.indexOf("Conversão")).toBeGreaterThanOrEqual(0);
     expect(text.indexOf("Conversão")).toBeLessThan(text.indexOf("Qualidade"));
     expect(text.indexOf("Qualidade")).toBeLessThan(text.indexOf("Desperdício"));
@@ -276,30 +297,30 @@ describe("buildAnalysisKnowledgeText — montagem agrupada por tema, ordem está
   });
 
   it("não injeta o tema desperdício quando nenhum bloco dele é relevante", () => {
-    const text = buildAnalysisKnowledgeText({ role: "map", hasWaste: false, trackingSuspect: false, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: false, bidStrategyMismatch: false });
+    const text = buildAnalysisKnowledgeText({ role: "map", hasWaste: false, trackingSuspect: false, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: false, bidStrategyMismatch: false , hasDemographics: false, hasPlacements: false });
     expect(text).not.toContain("Desperdício");
   });
 
   it("não injeta o tema orçamento quando não há dado de budget nem descasamento de lance", () => {
-    const text = buildAnalysisKnowledgeText({ role: "synthesis", hasWaste: false, trackingSuspect: false, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: false, bidStrategyMismatch: false });
+    const text = buildAnalysisKnowledgeText({ role: "synthesis", hasWaste: false, trackingSuspect: false, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: false, bidStrategyMismatch: false , hasDemographics: false, hasPlacements: false });
     expect(text).not.toContain("Orçamento");
   });
 
   it("bloco de orçamento cita CBO×ABO e CPA marginal + faseamento (decisão 4 do plano)", () => {
-    const text = buildAnalysisKnowledgeText({ role: "synthesis", hasWaste: false, trackingSuspect: false, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: true, bidStrategyMismatch: false });
+    const text = buildAnalysisKnowledgeText({ role: "synthesis", hasWaste: false, trackingSuspect: false, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: true, bidStrategyMismatch: false , hasDemographics: false, hasPlacements: false });
     expect(text).toContain("isCBO");
     expect(text.toUpperCase()).toContain("FASES");
     expect(text.toUpperCase()).toContain("MARGINAL");
   });
 
   it("bloco de qualidade cita weak_creative (S4b) e orienta testar variação, não pausar winner", () => {
-    const text = buildAnalysisKnowledgeText({ role: "synthesis", hasWaste: false, trackingSuspect: false, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: false, bidStrategyMismatch: false });
+    const text = buildAnalysisKnowledgeText({ role: "synthesis", hasWaste: false, trackingSuspect: false, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: false, bidStrategyMismatch: false , hasDemographics: false, hasPlacements: false });
     expect(text).toContain("weak_creative");
     expect(text.toLowerCase()).toContain("testar");
   });
 
   it("bloco de bid strategy cita lowest_cost como padrão e ~50 conversões como maturidade (decisão 13)", () => {
-    const text = buildAnalysisKnowledgeText({ role: "synthesis", hasWaste: false, trackingSuspect: false, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: false, bidStrategyMismatch: true });
+    const text = buildAnalysisKnowledgeText({ role: "synthesis", hasWaste: false, trackingSuspect: false, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: false, bidStrategyMismatch: true , hasDemographics: false, hasPlacements: false });
     expect(text).toContain("lowest_cost");
     expect(text).toContain("50");
   });

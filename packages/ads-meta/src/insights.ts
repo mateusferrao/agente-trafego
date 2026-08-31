@@ -1,4 +1,6 @@
 import type {
+  BreakdownDimension,
+  BreakdownSegment,
   ConversionCount,
   EntityLevel,
   InsightMetrics,
@@ -6,7 +8,7 @@ import type {
   PlatformQualityRankings,
   PlatformQualityRating,
 } from "@trafego/shared/types";
-import type { InsightsQuery } from "@trafego/shared/ports";
+import type { BreakdownInsightsQuery, EntityBreakdownRow, InsightsQuery } from "@trafego/shared/ports";
 import {
   META_TRANSIENT_CODES,
   MetaApiError,
@@ -69,6 +71,76 @@ interface MetaInsightRow {
 interface ReportResultPage {
   readonly data?: MetaInsightRow[];
   readonly paging?: { readonly next?: string; readonly cursors?: { readonly after?: string } };
+}
+
+// ─── Breakdown demográfico/posicionamento (S7, pivô saúde) ───────────────
+// Vocabulário Meta (age/gender/publisher_platform/platform_position) fica só aqui —
+// o core/worker falam por `key`/`label` neutros (BreakdownSegment).
+const BREAKDOWN_FIELDS: Readonly<Record<BreakdownDimension, readonly string[]>> = {
+  demographic: ["age", "gender"],
+  placement: ["publisher_platform", "platform_position"],
+};
+const BREAKDOWN_METRIC_FIELDS = ["spend", "impressions", "clicks", "ctr", "cpc", "cpm", "actions", "action_values"] as const;
+const BREAKDOWN_LEVEL_ID_FIELD: Readonly<Record<"account" | "campaign", string>> = {
+  account: "account_id",
+  campaign: "campaign_id",
+};
+
+const PLACEMENT_LABELS: Readonly<Record<string, string>> = {
+  facebook: "Facebook",
+  instagram: "Instagram",
+  audience_network: "Audience Network",
+  messenger: "Messenger",
+  feed: "feed",
+  story: "Stories",
+  reels: "Reels",
+  video_feeds: "feed de vídeos",
+  marketplace: "Marketplace",
+  search: "busca",
+  instream_video: "vídeo in-stream",
+};
+
+function placementLabel(platform: string | undefined, position: string | undefined): string {
+  const p = platform ? (PLACEMENT_LABELS[platform] ?? platform) : "plataforma desconhecida";
+  const pos = position ? (PLACEMENT_LABELS[position] ?? position) : "posição desconhecida";
+  return `${p} · ${pos}`;
+}
+
+function demographicLabel(age: string | undefined, gender: string | undefined): string {
+  const genderLabel = gender === "female" ? "mulheres" : gender === "male" ? "homens" : "gênero desconhecido";
+  return `${age ?? "idade desconhecida"} · ${genderLabel}`;
+}
+
+/** Linha crua de breakdown — mesmos campos de `MetaInsightRow` + as dimensões pedidas. */
+interface MetaBreakdownRow extends MetaInsightRow {
+  readonly age?: string;
+  readonly gender?: string;
+  readonly publisher_platform?: string;
+  readonly platform_position?: string;
+}
+
+/** Mapeia 1 linha crua (já um segmento) → `{entityId, segment}` na dimensão pedida. */
+function mapBreakdownRow(
+  level: EntityLevel,
+  row: MetaBreakdownRow,
+  accountFallback: string,
+  dimension: BreakdownDimension,
+): { entityId: string; segment: BreakdownSegment } {
+  const metrics: InsightMetrics = {
+    spend: toNumber(row.spend),
+    impressions: toNumber(row.impressions),
+    clicks: toNumber(row.clicks),
+    ctr: toNumber(row.ctr),
+    cpc: toNumber(row.cpc),
+    cpm: toNumber(row.cpm),
+  };
+  const { conversions } = buildConversions(row);
+  const entityId = entityIdForLevel(row, level, accountFallback);
+  const key =
+    dimension === "demographic" ? `${row.age ?? "unknown"}:${row.gender ?? "unknown"}` : `${row.publisher_platform ?? "unknown"}:${row.platform_position ?? "unknown"}`;
+  const label =
+    dimension === "demographic" ? demographicLabel(row.age, row.gender) : placementLabel(row.publisher_platform, row.platform_position);
+  return { entityId, segment: { key, label, metrics, ...(conversions ? { conversions } : {}) } };
 }
 
 function toNumber(value: unknown): number {
@@ -231,6 +303,57 @@ export class MetaInsightsService {
     return this.runReport(query, 0);
   }
 
+  /**
+   * Breakdown demográfico/posicionamento (S7) — agregado da janela inteira (sem
+   * time_increment diário; cadência própria, mais lenta). Sem retry/split-too-large
+   * (simplificação aceitável: cadência baixa, falha só adia p/ o próximo ciclo — mesma
+   * filosofia de degradação graciosa do sync principal).
+   */
+  async getBreakdownInsights(query: BreakdownInsightsQuery): Promise<EntityBreakdownRow[]> {
+    const accountId = normalizeAdAccountId(query.account.adAccountId);
+    const acquired = await this.governor.acquire(accountId);
+    if (!acquired.granted) throw cooldownError();
+
+    const insightsQuery: InsightsQuery = {
+      account: query.account,
+      level: query.level,
+      window: query.window,
+      fields: [...BREAKDOWN_METRIC_FIELDS, BREAKDOWN_LEVEL_ID_FIELD[query.level]],
+      breakdowns: BREAKDOWN_FIELDS[query.dimension],
+    };
+    const runId = await this.submitReport(insightsQuery);
+    await this.pollReport(runId, query.account.accessToken, accountId);
+    return this.fetchBreakdownRows(runId, insightsQuery, query.dimension);
+  }
+
+  /** Busca + agrupa por entidade (paginado) — cada linha crua já é 1 segmento. */
+  private async fetchBreakdownRows(
+    reportRunId: string,
+    query: InsightsQuery,
+    dimension: BreakdownDimension,
+  ): Promise<EntityBreakdownRow[]> {
+    const accountId = normalizeAdAccountId(query.account.adAccountId);
+    const byEntity = new Map<string, BreakdownSegment[]>();
+    let after: string | undefined;
+    for (let page = 0; page < MAX_REPORT_PAGES; page++) {
+      const res = await this.requestObserving<ReportResultPage>(accountId, {
+        method: "GET",
+        path: `${reportRunId}/insights`,
+        accessToken: query.account.accessToken,
+        params: { limit: REPORT_PAGE_LIMIT, ...(after ? { after } : {}) },
+      });
+      for (const raw of res.data.data ?? []) {
+        const { entityId, segment } = mapBreakdownRow(query.level, raw, accountId, dimension);
+        const list = byEntity.get(entityId) ?? [];
+        list.push(segment);
+        byEntity.set(entityId, list);
+      }
+      after = res.data.paging?.next ? res.data.paging.cursors?.after : undefined;
+      if (!after) break;
+    }
+    return [...byEntity.entries()].map(([entityId, segments]) => ({ entityId, level: query.level, segments }));
+  }
+
   /** submit → poll → fetch, com re-submissão fresh em falha transitória. */
   private async runReport(query: InsightsQuery, resubmit: number): Promise<InsightRow[]> {
     const accountId = normalizeAdAccountId(query.account.adAccountId);
@@ -279,6 +402,7 @@ export class MetaInsightsService {
         fields: query.fields.join(","),
         time_increment: query.timeIncrement ?? "1",
         use_unified_attribution_setting: true,
+        ...(query.breakdowns ? { breakdowns: query.breakdowns.join(",") } : {}),
         ...windowParams(query.window),
       },
     });

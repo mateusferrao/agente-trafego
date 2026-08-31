@@ -9,6 +9,7 @@ import type {
   ConversionBreakdown,
   ConversionProxy,
   Creative,
+  EntityBreakdown,
   EntityLevel,
   EntityObjective,
   EntitySummary,
@@ -26,6 +27,7 @@ import type {
 import { classifyBasis, resolveConversion, type ResolvedConversion } from "../conversion/index.js";
 import { computeFunnelSummary, mergeFunnel } from "../funnel/index.js";
 import type { CtrBands } from "../benchmarks/index.js";
+import { DEFAULT_BREAKDOWN_THRESHOLDS, type BreakdownThresholds, hasMaterialSpread } from "../breakdown/index.js";
 import { DEFAULT_QUALITY_THRESHOLDS, type QualityThresholds, enrichEntitiesQuality } from "../quality/index.js";
 import { detectTrackingHealth } from "../tracking/index.js";
 import { computeWasteReport } from "../waste/index.js";
@@ -392,6 +394,10 @@ export interface AssembleBriefInput {
   readonly playbookCandidates: readonly CandidateAction[];
   readonly memory: AccountBrief["memory"];
   readonly aggregatesRest: AccountBrief["aggregatesRest"];
+  /** Breakdown demográfico/posicionamento da conta (S7) — já filtrado por materialidade
+   *  pelo caller (worker), este passo só compõe. */
+  readonly demographics?: EntityBreakdown;
+  readonly placements?: EntityBreakdown;
 }
 
 /**
@@ -415,6 +421,8 @@ export function assembleBrief(input: AssembleBriefInput): AccountBrief {
     ...(input.funnel ? { funnel: input.funnel } : {}),
     ...(input.trackingHealth ? { trackingHealth: input.trackingHealth } : {}),
     ...(input.waste ? { waste: input.waste } : {}),
+    ...(input.demographics ? { demographics: input.demographics } : {}),
+    ...(input.placements ? { placements: input.placements } : {}),
     creatives: input.creatives,
     playbookCandidates: input.playbookCandidates,
     memory: input.memory,
@@ -455,6 +463,12 @@ export interface BuildAccountBriefInput {
   readonly frequencyAlert?: number;
   /** Limiares do sinal de teto de budget (P1.2) — default do sistema se ausente. */
   readonly budgetCeilingThresholds?: BudgetCeilingThresholds;
+  /** Breakdown demográfico/posicionamento da CONTA (S7) — cru (o gate de materialidade
+   *  roda aqui dentro; só entra no brief final quando o spread for acionável). */
+  readonly demographics?: EntityBreakdown;
+  readonly placements?: EntityBreakdown;
+  /** Limiares de materialidade do breakdown (S7) — default do sistema se ausente. */
+  readonly breakdownThresholds?: BreakdownThresholds;
 }
 
 export type BuildAccountBriefResult =
@@ -550,6 +564,14 @@ export function buildAccountBrief(input: BuildAccountBriefInput): BuildAccountBr
   // Desperdício + Pareto (§Bloco 2) sobre o conjunto COMPLETO de campanhas.
   const waste = computeWasteReport(allByLevel.get("campaign") ?? []);
 
+  // Breakdown demográfico/posicionamento (S7) — gate de materialidade: só entra no brief
+  // (e no prompt) quando o spread entre segmentos é acionável, não ruído.
+  const breakdownThresholds = input.breakdownThresholds ?? DEFAULT_BREAKDOWN_THRESHOLDS;
+  const demographics =
+    input.demographics && hasMaterialSpread(input.demographics.segments, breakdownThresholds) ? input.demographics : undefined;
+  const placements =
+    input.placements && hasMaterialSpread(input.placements.segments, breakdownThresholds) ? input.placements : undefined;
+
   const brief = assembleBrief({
     account: { ...input.account, window: input.window, baselineWindow: input.baselineWindow },
     goals: input.goals,
@@ -565,6 +587,8 @@ export function buildAccountBrief(input: BuildAccountBriefInput): BuildAccountBr
     ...(accountFunnel ? { funnel: accountFunnel } : {}),
     ...(trackingHealth ? { trackingHealth } : {}),
     ...(waste ? { waste } : {}),
+    ...(demographics ? { demographics } : {}),
+    ...(placements ? { placements } : {}),
     // visão entra por-unidade no map-reduce (3b-2), não no brief da conta. Reconsiderado no
     // pivô saúde (S8, "síntese ganha creatives agregados"): o campo é `Creative[]` (asset cru,
     // sem tier/score) — não existe hoje um agregado estruturado que caiba aqui sem duplicar

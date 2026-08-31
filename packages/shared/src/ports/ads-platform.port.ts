@@ -3,6 +3,8 @@ import type {
   Action,
   AdEntity,
   AudienceProfile,
+  BreakdownDimension,
+  BreakdownSegment,
   CampaignStructure,
   ConversionGoal,
   Creative,
@@ -29,6 +31,30 @@ export interface InsightsQuery {
   readonly window: string; // ex: "last_7d" | "2026-08-01..2026-08-15"
   readonly fields: readonly string[];
   readonly timeIncrement?: "1" | "7" | "all_days";
+  /** breakdowns da Graph API (ex: ["age","gender"]) — usado só por `getBreakdownInsights`
+   *  internamente no adapter (S7); ausente no sync diário normal. */
+  readonly breakdowns?: readonly string[];
+}
+
+/** Consulta de breakdown demográfico/posicionamento (S7, pivô saúde) — só conta+campanha
+ *  (adset/ad é fast-follow). Sem `timeIncrement`: agregado da janela inteira (cadência
+ *  própria, mais lenta — não precisa de granularidade diária). */
+export interface BreakdownInsightsQuery {
+  readonly account: AdAccountRef;
+  readonly level: "account" | "campaign";
+  readonly window: string;
+  readonly dimension: BreakdownDimension;
+}
+
+/** Uma entidade com seu breakdown já agrupado por segmento (o adapter esconde o shape
+ *  flat da resposta da plataforma — cada linha crua vira 1 segmento dentro da entidade).
+ *  `resolvedAt`-style de CPA/ROAS fica a cargo do worker (o adapter não conhece a
+ *  conversão de NEGÓCIO do agente) — `metrics` chega com escalares base + `conversions`
+ *  cru p/ o worker resolver, mesmo padrão de `InsightRow`. */
+export interface EntityBreakdownRow {
+  readonly entityId: string;
+  readonly level: EntityLevel;
+  readonly segments: readonly BreakdownSegment[];
 }
 
 export interface MutationResult {
@@ -205,6 +231,9 @@ export class AdsPlatformError extends Error {
 export interface AdsPlatformPort {
   listEntities(account: AdAccountRef, level: EntityLevel): Promise<AdEntity[]>;
   getInsights(query: InsightsQuery): Promise<InsightRow[]>;
+  /** Breakdown demográfico/posicionamento (S7) — 1 entrada por entidade, segmentos já
+   *  agrupados. Cadência própria (mais lenta que `getInsights`), chamado pela casca. */
+  getBreakdownInsights(query: BreakdownInsightsQuery): Promise<EntityBreakdownRow[]>;
   getCreatives(account: AdAccountRef, adIds: readonly string[]): Promise<Creative[]>;
   /** Frames HD (URLs) de um vídeo por `video_id` — p/ a visão de criativo da biblioteca. */
   getVideoFrames(account: AdAccountRef, videoId: string): Promise<string[]>;

@@ -284,6 +284,34 @@ export interface DeliveryEstimate {
   readonly dailyActiveUsers?: number;
 }
 
+// ─── Breakdown demográfico/posicionamento (S7, pivô saúde) ───────────────
+// Vocabulário Meta (age/gender/publisher_platform/platform_position) fica só no
+// adapter — o core/worker falam por `key`/`label` neutros. Só conta+campanha
+// (adset/ad é fast-follow, ver ROADMAP). Cadência própria (mais lenta que o sync
+// diário) — `asOf` é o carimbo de frescor explícito (nunca implica frescor do dia).
+export type BreakdownDimension = "demographic" | "placement";
+
+/** Um segmento do breakdown (ex: "35-44 · mulheres" ou "Instagram Stories") com suas
+ *  métricas agregadas na janela usada pelo sync de breakdown (não diário). `metrics.cpa`
+ *  só existe DEPOIS do worker resolver a conversão de negócio do agente (o adapter não
+ *  conhece o objetivo); `conversions` cru fica p/ fidelidade de re-derivação (mesmo
+ *  padrão de `StoredInsightMetrics`). */
+export interface BreakdownSegment {
+  readonly key: string;
+  readonly label: string;
+  readonly metrics: InsightMetrics;
+  readonly conversions?: ConversionBreakdown;
+}
+
+/** Breakdown de UMA entidade (conta ou campanha) numa dimensão — o que o adapter
+ *  devolve e o que fica persistido (upsert, só o mais recente por entidade+dimensão). */
+export interface EntityBreakdown {
+  readonly dimension: BreakdownDimension;
+  readonly segments: readonly BreakdownSegment[];
+  /** YYYY-MM-DD — quando este breakdown foi sincronizado (cadência própria, mais lenta). */
+  readonly asOf: string;
+}
+
 // ─── Conversão (genérico, agnóstico de plataforma) ───────────────────────
 // O vocabulário/mapeamento específico de cada plataforma (Meta action_type,
 // optimization_goal, etc.) vive SÓ no adapter. O core e o restante do sistema
@@ -788,6 +816,12 @@ export interface AccountBrief {
   readonly trackingHealth?: TrackingHealth;
   /** Desperdício + concentração 80/20 (§Bloco 2) — o "money shot". */
   readonly waste?: WasteReport;
+  /** Breakdown demográfico da conta (S7) — só presente quando o spread é MATERIAL
+   *  (`hasMaterialSpread`, gate de relevância). `asOf` nunca implica frescor do dia
+   *  (cadência própria, mais lenta). */
+  readonly demographics?: EntityBreakdown;
+  /** Breakdown de posicionamento da conta (S7) — mesma regra de materialidade. */
+  readonly placements?: EntityBreakdown;
   readonly creatives: readonly Creative[]; // só flagados (com imagem p/ visão)
   readonly playbookCandidates: readonly CandidateAction[];
   readonly memory: {

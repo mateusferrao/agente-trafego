@@ -77,6 +77,7 @@ import type {
   AgentId,
   Creative,
   CreativeVisionResult,
+  EntityBreakdown,
   EntityLevel,
   EntityStatus,
   EntitySummary,
@@ -95,6 +96,10 @@ import {
   createDrizzleInsightsSnapshotsRepo,
   type InsightsSnapshotsRepo,
 } from "../../modules/insights/repo.js";
+import {
+  createDrizzleInsightsBreakdownsRepo,
+  type InsightsBreakdownsRepo,
+} from "../../modules/insights/breakdown-repo.js";
 import {
   createAnalysisRepo,
   type AdCreativeRow,
@@ -193,6 +198,8 @@ function buildNoActivityMessage(accountName: string, offerReactivation: boolean)
 export interface AnalysisNodeRepos {
   readonly repo: AnalysisRepo;
   readonly snapshots: InsightsSnapshotsRepo;
+  /** Breakdown demográfico/posicionamento (S7) — cadência própria. */
+  readonly breakdowns: InsightsBreakdownsRepo;
   readonly notify: NotifyRepo;
   readonly entityAnalyses: EntityAnalysesRepo;
   /** resolver de visão — injetável p/ teste; default cria por-run (com meta). */
@@ -206,6 +213,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
   const { logger } = deps;
   const repo = repos?.repo ?? createAnalysisRepo(deps.db);
   const snapshots = repos?.snapshots ?? createDrizzleInsightsSnapshotsRepo(deps.db);
+  const breakdowns = repos?.breakdowns ?? createDrizzleInsightsBreakdownsRepo(deps.db);
   const notifyRepo = repos?.notify ?? createNotifyRepo(deps.db);
   const entityAnalysesRepo = repos?.entityAnalyses ?? createEntityAnalysesRepo(deps.db);
   const executor = repos?.executor ?? makeMetaToolExecutor(deps);
@@ -294,6 +302,36 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     }
 
     const { entities, entitiesPartial } = await fetchEntities(deps.ports.ads, ref, logger);
+    // Breakdown demográfico/posicionamento (S7) — cadência PRÓPRIA (auto-throttle interno),
+    // best-effort: nunca aborta o run (mesma filosofia de `listCustomAudiences` abaixo).
+    try {
+      const activeCampaignIds = entities.filter((e) => e.level === "campaign" && e.status === "active").map((e) => e.id);
+      await deps.breakdownSync.sync({
+        orgId: state.orgId,
+        adAccountUuid: state.adAccountId,
+        metaAdAccountId: account.metaAdAccountId,
+        accessToken,
+        campaignIds: activeCampaignIds,
+        goals: state.goals,
+        now: Date.now(),
+      });
+    } catch (err) {
+      logger.warn({ runId: state.runId, err: String(err) }, "fetch_data:breakdown_sync degradou");
+    }
+    // Lê o breakdown de CONTA já sincronizado (gate de materialidade roda em
+    // `buildAccountBrief`, não aqui — este passo só carrega o cru).
+    let demographics: EntityBreakdown | null = null;
+    let placements: EntityBreakdown | null = null;
+    try {
+      const stored = await breakdowns.listByAccount(state.adAccountId);
+      const accountRows = stored.filter((r) => r.entityLevel === "account");
+      const demo = accountRows.find((r) => r.dimension === "demographic");
+      const place = accountRows.find((r) => r.dimension === "placement");
+      demographics = demo ? { dimension: "demographic", segments: demo.segments, asOf: demo.date } : null;
+      placements = place ? { dimension: "placement", segments: place.segments, asOf: place.date } : null;
+    } catch (err) {
+      logger.warn({ runId: state.runId, err: String(err) }, "fetch_data:load_breakdowns degradou");
+    }
     // persiste os rótulos de conversão resolvidos (id→nome) p/ a config ler do banco
     // sem falar com a plataforma (Fatia 4). Genérico: platform como coluna.
     await repo.saveConversionLabels(state.orgId, state.adAccountId, ADS_PLATFORM, collectConversionLabels(entities));
@@ -343,6 +381,8 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       insights,
       baselineInsights,
       creatives,
+      demographics,
+      placements,
       partial: sync.partial || entitiesPartial || creativesPartial,
       partialReasons: [
         ...(sync.partial ? ["metrics" as const] : []),
@@ -405,6 +445,8 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       ...(market.ctrBands ? { ctrBands: market.ctrBands } : {}),
       ...(market.frequencyAlert !== undefined ? { frequencyAlert: market.frequencyAlert } : {}),
       ...(state.mutedCampaignIds ? { mutedCampaignIds: new Set(state.mutedCampaignIds) } : {}),
+      ...(state.demographics ? { demographics: state.demographics } : {}),
+      ...(state.placements ? { placements: state.placements } : {}),
       memory: { objectives: [], pastActions: [], rejected: [...(state.rejectedMemory ?? [])] },
     });
     if (built.status === "empty") {

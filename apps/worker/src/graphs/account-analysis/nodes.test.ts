@@ -156,6 +156,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
       approval: {} as never,
     },
     insightsSync: { sync: vi.fn(async () => ({ partial: false, tokenInvalid: opts.tokenInvalid ?? false, snapshotsWritten: rows.length })) } as never,
+    breakdownSync: { sync: vi.fn(async () => ({ synced: false })) } as never,
     analysis: {
       model: "m",
       reviewModel: "review-m",

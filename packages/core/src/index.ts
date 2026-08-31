@@ -26,6 +26,7 @@ export * from "./dormancy/index.js";
 export * from "./map-reduce/index.js";
 export * from "./benchmarks/index.js";
 export * from "./market-reference/index.js";
+export * from "./breakdown/index.js";
 export * from "./quality/index.js";
 export * from "./tracking/index.js";
 export * from "./waste/index.js";

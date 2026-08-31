@@ -188,6 +188,9 @@ export const envSchema = z.object({
   // (porta `shouldSync`, compartilhada por sweep/lazy/análise/botão). Também = intervalo
   // do sweep periódico. ~2-3h de default (equilíbrio frescura × chamadas Meta).
   INSIGHTS_FRESH_THRESHOLD_MIN: z.coerce.number().int().positive().default(120),
+  // Breakdown demográfico/posicionamento (S7, pivô saúde) — cadência PRÓPRIA, bem mais
+  // lenta que o sync diário (o spread muda devagar): default 7 dias.
+  ANALYSIS_BREAKDOWN_STALE_THRESHOLD_MIN: z.coerce.number().int().positive().default(7 * 24 * 60),
   // Dormância (pivô): dias sem atividade (spend/impressões) p/ a conta virar dormante
   // (backoff do cron); e o intervalo LENTO de varredura do sweep p/ contas dormantes
   // (detecta a reativação em ~1 dia sem queimar chamadas Meta à toa).

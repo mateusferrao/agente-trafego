@@ -171,6 +171,42 @@ describe("buildAccountBrief", () => {
     expect(c1?.metrics.roas).toBe(0);
   });
 
+  describe("breakdown demográfico/posicionamento (S7 — gate de materialidade)", () => {
+    it("spread material → entra no brief", () => {
+      const result = buildAccountBrief(
+        baseInput({
+          demographics: {
+            dimension: "demographic",
+            asOf: "2026-08-24",
+            segments: [
+              { key: "a", label: "a", metrics: { spend: 100, impressions: 1000, clicks: 20, ctr: 2, cpc: 5, cpm: 10 } },
+              { key: "b", label: "b", metrics: { spend: 100, impressions: 1000, clicks: 20, ctr: 2, cpc: 10, cpm: 10 } },
+            ],
+          },
+        }),
+      );
+      if (result.status !== "ok") return;
+      expect(result.brief.demographics?.segments).toHaveLength(2);
+    });
+
+    it("spread NÃO material → fica ausente do brief (nunca entra ruído)", () => {
+      const result = buildAccountBrief(
+        baseInput({
+          placements: {
+            dimension: "placement",
+            asOf: "2026-08-24",
+            segments: [
+              { key: "a", label: "a", metrics: { spend: 100, impressions: 1000, clicks: 20, ctr: 2, cpc: 5, cpm: 10 } },
+              { key: "b", label: "b", metrics: { spend: 100, impressions: 1000, clicks: 20, ctr: 2, cpc: 5.2, cpm: 10 } },
+            ],
+          },
+        }),
+      );
+      if (result.status !== "ok") return;
+      expect(result.brief.placements).toBeUndefined();
+    });
+  });
+
   describe("conversão de negócio (override / basis / proxy)", () => {
     // Conta que otimiza CONVERSAS (messaging); agente com meta de VENDA (purchase).
     const msgEntities: AdEntity[] = [

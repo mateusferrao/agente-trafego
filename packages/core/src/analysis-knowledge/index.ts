@@ -25,10 +25,24 @@ export interface AnalysisKnowledgeContext {
   /** alguma entidade usa lance agressivo (≠ lowest_cost) E a CONTA não tem conversões
    *  acumuladas suficientes pra justificar (S2) — sinal de CONTA, só synthesis. */
   readonly bidStrategyMismatch: boolean;
+  /** `brief.demographics` presente (S7) — já filtrado por materialidade (`hasMaterialSpread`)
+   *  antes de chegar aqui; a NOTE só decide se EXPLICA o campo, não se ele é relevante. */
+  readonly hasDemographics: boolean;
+  /** `brief.placements` presente (S7) — mesma regra de `hasDemographics`. */
+  readonly hasPlacements: boolean;
 }
 
-/** Agrupamento temático (G2) — ordena a montagem do texto, não a lista de blocos. */
-export type AnalysisKnowledgeTheme = "conversao" | "qualidade" | "criativo" | "desperdicio" | "orcamento" | "benchmark";
+/** Agrupamento temático (G2) — ordena a montagem do texto, não a lista de blocos.
+ *  `segmentacao` (S7) é tema NOVO (não refinamento de tema existente) — breakdown
+ *  demográfico/posicionamento é capacidade nova, não extensão de algo já coberto. */
+export type AnalysisKnowledgeTheme =
+  | "conversao"
+  | "qualidade"
+  | "criativo"
+  | "desperdicio"
+  | "orcamento"
+  | "benchmark"
+  | "segmentacao";
 
 export interface AnalysisKnowledgeBlock {
   readonly key: string;
@@ -194,6 +208,24 @@ const BID_STRATEGY_TEXT =
   "voltar para 'lowest_cost' até acumular mais dado — não é uma AÇÃO de plataforma (você não aplica), " +
   "é orientação em texto.";
 
+/**
+ * Breakdown demográfico/posicionamento (S7, pivô saúde — a alavanca #1 de saúde, antes
+ * invisível). Já chega FILTRADO por materialidade (só spread acionável); a NOTE existe
+ * pra orientar AÇÃO de baixo risco, nunca só constatar a diferença.
+ */
+const DEMOGRAPHICS_PLACEMENT_TEXT =
+  "Se o briefing trouxer 'demographics' (idade+gênero) e/ou 'placements' (posicionamento), " +
+  "cada um já foi filtrado por materialidade — só aparece quando o spread entre segmentos é " +
+  "grande o bastante pra valer ação (nunca ruído estatístico). Cada segmento tem 'metrics' " +
+  "(custo comparável) e um 'asOf' (data em que este breakdown foi sincronizado — CADÊNCIA " +
+  "PRÓPRIA, mais lenta que o resto do dado; NUNCA trate como frescor do dia, sempre cite a " +
+  "data quando mencionar o padrão). SEMPRE prescreva uma AÇÃO concreta de baixo risco a partir " +
+  "do spread — nunca só constate a diferença: se um segmento (idade/gênero ou posicionamento) " +
+  "custa muito mais que outro, recomende ABRIR a segmentação pro segmento barato (ex: incluir a " +
+  "faixa etária que hoje está de fora) ou REDUZIR peso no segmento caro em favor do barato — " +
+  "sem mexer no que já funciona. Use actionType 'review_audience' (idade/gênero, é público) ou " +
+  "'investigate' (posicionamento, ainda não é uma ação de plataforma aplicável).";
+
 export const ANALYSIS_KNOWLEDGE_BLOCKS: readonly AnalysisKnowledgeBlock[] = [
   { key: "funnel", theme: "conversao", text: FUNNEL_TEXT, relevant: isAnalysisRole },
   { key: "mismatch", theme: "conversao", text: MISMATCH_TEXT, relevant: isAnalysisRole },
@@ -208,6 +240,12 @@ export const ANALYSIS_KNOWLEDGE_BLOCKS: readonly AnalysisKnowledgeBlock[] = [
   { key: "benchmark", theme: "benchmark", text: BENCHMARK_TEXT, relevant: (ctx) => isMapOrSynthesis(ctx) && ctx.hasBenchmarkRef },
   { key: "budget", theme: "orcamento", text: BUDGET_TEXT, relevant: (ctx) => isMapOrSynthesis(ctx) && ctx.hasBudgetData },
   { key: "bid_strategy", theme: "orcamento", text: BID_STRATEGY_TEXT, relevant: (ctx) => ctx.role === "synthesis" && ctx.bidStrategyMismatch },
+  {
+    key: "demographics_placement",
+    theme: "segmentacao",
+    text: DEMOGRAPHICS_PLACEMENT_TEXT,
+    relevant: (ctx) => ctx.role === "synthesis" && (ctx.hasDemographics || ctx.hasPlacements),
+  },
 ];
 
 /** Contexto do REVISOR (G7) — nenhum bloco condicional se aplica (correção não reporta
@@ -220,6 +258,8 @@ export const REVIEW_KNOWLEDGE_CONTEXT: AnalysisKnowledgeContext = {
   hasBenchmarkRef: false,
   hasBudgetData: false,
   bidStrategyMismatch: false,
+  hasDemographics: false,
+  hasPlacements: false,
 };
 
 function anyEntityHasRevenue(entities: readonly EntitySummary[]): boolean {
@@ -265,6 +305,8 @@ export function buildSynthesisKnowledgeContext(brief: AccountBrief): AnalysisKno
     hasBenchmarkRef: anyEntityHasBenchmarkRef(allEntities),
     hasBudgetData: anyEntityHasBudgetData(allEntities),
     bidStrategyMismatch: hasAggressiveBidStrategy(allEntities) && accountConversions < BID_STRATEGY_MATURITY_CONVERSIONS,
+    hasDemographics: brief.demographics != null,
+    hasPlacements: brief.placements != null,
   };
 }
 
@@ -283,6 +325,10 @@ export function buildCampaignKnowledgeContext(unit: CampaignUnit, trackingSuspec
     hasRevenue: anyEntityHasRevenue(entities),
     hasBenchmarkRef: anyEntityHasBenchmarkRef(entities),
     hasBudgetData: anyEntityHasBudgetData(entities),
+    // breakdown demográfico/posicionamento (S7) é sinal de CONTA hoje (fast-follow:
+    // breakdown por-campanha no mapa, ver ROADMAP) — sempre `false` aqui.
+    hasDemographics: false,
+    hasPlacements: false,
   };
 }
 
@@ -295,13 +341,14 @@ export function selectAnalysisKnowledge(ctx: AnalysisKnowledgeContext): readonly
 // de ANALYSIS_KNOWLEDGE_BLOCKS precisa aparecer aqui, senão o bloco NUNCA sai no texto final
 // mesmo com `relevant()` true — bug silencioso (THEME_LABEL_PT é `Record` exaustivo, o TS
 // já pega esquecimento ali; este array não tem essa rede, por isso o teste).
-export const THEME_ORDER: readonly AnalysisKnowledgeTheme[] = ["conversao", "qualidade", "criativo", "desperdicio", "orcamento", "benchmark"];
+export const THEME_ORDER: readonly AnalysisKnowledgeTheme[] = ["conversao", "qualidade", "criativo", "desperdicio", "orcamento", "segmentacao", "benchmark"];
 const THEME_LABEL_PT: Readonly<Record<AnalysisKnowledgeTheme, string>> = {
   conversao: "Conversão e honestidade de medição",
   qualidade: "Qualidade e priorização de ação",
   criativo: "Direção de criativo e público",
   desperdicio: "Desperdício e alocação de verba",
   orcamento: "Orçamento e realocação de verba",
+  segmentacao: "Segmentação por audiência e posicionamento",
   benchmark: "Referência de mercado",
 };
 const KNOWLEDGE_PREAMBLE =

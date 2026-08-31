@@ -36,6 +36,8 @@ import { Redis } from "ioredis";
 import { pino, type Logger } from "pino";
 import { createDrizzleInsightsSnapshotsRepo } from "./modules/insights/repo.js";
 import { createInsightsSyncService, type InsightsSyncService } from "./modules/insights/sync-service.js";
+import { createDrizzleInsightsBreakdownsRepo } from "./modules/insights/breakdown-repo.js";
+import { createBreakdownSyncService, type BreakdownSyncService } from "./modules/insights/breakdown-sync-service.js";
 
 /**
  * Container de dependências resolvidas. Passado por injeção para grafos,
@@ -63,6 +65,8 @@ export interface WorkerDeps {
   };
   /** Sync de insights (2a): coleta a série temporal Meta → insights_snapshots. */
   readonly insightsSync: InsightsSyncService;
+  /** Sync de breakdown demográfico/posicionamento (S7, pivô saúde) — cadência própria. */
+  readonly breakdownSync: BreakdownSyncService;
   /** Config da análise (3a/3b) — defaults globais de produto (env; override por-agente). */
   readonly analysis: import("./modules/analysis/config.js").AnalysisDefaults;
   /** Frescura (6a): limite de staleness (min) do sync-only + intervalo do sweep. */
@@ -198,6 +202,11 @@ export async function buildComposition(): Promise<WorkerDeps> {
     refetchWindowDays: env.INSIGHTS_REFETCH_WINDOW_DAYS,
     retentionDays: env.INSIGHTS_RETENTION_DAYS,
   });
+  const breakdownSync = createBreakdownSyncService({
+    ads,
+    repo: createDrizzleInsightsBreakdownsRepo(db),
+    staleThresholdMin: env.ANALYSIS_BREAKDOWN_STALE_THRESHOLD_MIN,
+  });
   const messaging = new EvolutionAdapter({
     client: new EvolutionClient({
       baseUrl: env.EVOLUTION_BASE_URL,
@@ -275,6 +284,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
           : createLocalStorage({ baseDir: resolveDataDir(env.CREATIVE_STORAGE_DIR), urlBase: env.CREATIVE_ASSET_URL_BASE }),
     },
     insightsSync,
+    breakdownSync,
     analysis: {
       model: env.OPENROUTER_MODEL,
       reviewModel: env.OPENROUTER_REVIEW_MODEL,

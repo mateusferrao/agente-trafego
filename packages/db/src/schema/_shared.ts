@@ -82,6 +82,11 @@ export const toolApprovalPolicy = pgEnum("tool_approval_policy", [
 export const memoryType = pgEnum("memory_type", ["objective", "past_action", "rejected", "fact"]);
 export const memoryLifecycle = pgEnum("memory_lifecycle", ["active", "stale", "archived"]);
 
+// Dimensão de breakdown (S7, pivô saúde): idade+gênero combinados (Meta devolve juntos
+// quando ambos os breakdowns são pedidos) e posicionamento (plataforma+posição). Só
+// conta+campanha (S7 — adset/ad é fast-follow, ver ROADMAP).
+export const breakdownDimension = pgEnum("breakdown_dimension", ["demographic", "placement"]);
+
 export const runTrigger = pgEnum("run_trigger", ["cron", "on_demand", "conversation", "signal", "onboarding"]);
 export const runStatus = pgEnum("run_status", [
   "pending",

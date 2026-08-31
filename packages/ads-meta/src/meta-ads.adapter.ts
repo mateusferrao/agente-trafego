@@ -18,9 +18,11 @@ import type {
 import type {
   AdAccountRef,
   AdsPlatformPort,
+  BreakdownInsightsQuery,
   DeliveryEstimateInput,
   DuplicateEntityInput,
   DuplicateResult,
+  EntityBreakdownRow,
   InsightsQuery,
   MutateOptions,
   MutationResult,
@@ -373,6 +375,14 @@ export class MetaAdsAdapter implements AdsPlatformPort {
   async getInsights(query: InsightsQuery): Promise<InsightRow[]> {
     try {
       return await this.insights.getInsights(query);
+    } catch (error) {
+      throw toAdsError(error);
+    }
+  }
+
+  async getBreakdownInsights(query: BreakdownInsightsQuery): Promise<EntityBreakdownRow[]> {
+    try {
+      return await this.insights.getBreakdownInsights(query);
     } catch (error) {
       throw toAdsError(error);
     }
