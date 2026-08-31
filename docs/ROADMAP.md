@@ -64,6 +64,15 @@ Plano de construção em fatias. Decisões de arquitetura/produto = [`../CLAUDE.
 
 ## Pós-MVP — fast-follows e decisões adiadas
 
+### Fast-follows do MVP v1 (chat sem escrita conversacional na Meta — `TRAFEGO_CHAT_ADS_WRITES`)
+- **[MÉDIO] Reativar a escrita de ads pelo chat** (flip da flag) quando a qualidade da interpretação/eco estiver provada com usuários — retomar a visão do gestor completo no WhatsApp (autoria + edição + criativo por conversa). Todo o código fica pendente atrás da flag.
+- **[MÉDIO] Gerar copy por IA no site** (`regenerate_copy`): existe só no chat (desligado); o painel do site edita texto à mão. Botão "gerar copy por IA" no `draft-edit-panel`.
+- **[MÉDIO] Editar o ALVO de uma ação pendente no site** (repontar entidade): hoje o site edita só o VALOR do `adjust_budget` antes de aprovar (C). Trocar a entidade da ação = picker + re-validação + guardrail no novo alvo.
+- **[BAIXO] `review_creative` executável** (renovar criativo) — espera geração de criativo por IA; hoje fica direção.
+- **[BAIXO] `review_audience` executável** (editar targeting de campanha VIVA) — nova mutação; hoje fica direção.
+- **[BAIXO] Recompor mídia/criativos distintos no site** (`distinctCreatives`/`mediaPreference` auto): hoje só troca manual por anúncio (workaround existe).
+- **[BAIXO] Batch-approve de recomendações no site** (aprovar várias de uma vez).
+
 Consolidação de tudo que **decidimos adiar** para depois do MVP. (Deferrals que já têm
 fatia MVP agendada **não** entram aqui — ficam na sua fatia: retenção/prune → `6b`;
 `selectCreatives` + visão de criativo → `3b`; override de conversão por agente → `4`;
