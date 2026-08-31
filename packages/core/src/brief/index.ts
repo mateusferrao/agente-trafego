@@ -31,7 +31,7 @@ import { computeWasteReport } from "../waste/index.js";
 import { buildCampaignUnits } from "./campaign-units.js";
 import { attachBudgetCeiling, type BudgetCeilingThresholds } from "../creation/budget-ceiling.js";
 
-export { buildCampaignUnits, type BuildCampaignUnitsInput } from "./campaign-units.js";
+export { attachCreativeWeaknessSignals, buildCampaignUnits, type BuildCampaignUnitsInput } from "./campaign-units.js";
 
 /**
  * Curadoria determinística PURA entre a Meta e o LLM (§7). O LLM nunca vê o

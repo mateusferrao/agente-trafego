@@ -69,6 +69,15 @@ describe("createVisionResolver", () => {
     expect(out2!.proofStrength).toBeUndefined();
   });
 
+  it("S4b: mapeia persuasionSignals (densidade de gatilhos de Cialdini)", async () => {
+    const raw = { ...RESULT, proofStrength: "weak", persuasionSignals: 2 };
+    const { db } = fakeDb(false);
+    const llm = { complete: vi.fn(), completeStructured: vi.fn(async () => ({ output: raw, usage: {} })) } as unknown as LLMProviderPort;
+    const resolver = createVisionResolver({ db: db as never, llm, model: "m", analyzerVersion: 4, logger });
+    const out = await resolver.resolve(input());
+    expect(out).toMatchObject({ proofStrength: "weak", persuasionSignals: 2 });
+  });
+
   it("erro do LLM (borda) degrada a null (não quebra a análise)", async () => {
     const { db } = fakeDb(false);
     const llm = {

@@ -238,6 +238,12 @@ describe("buildAnalysisKnowledgeText — montagem agrupada por tema, ordem está
     expect(text.toUpperCase()).toContain("MARGINAL");
   });
 
+  it("bloco de qualidade cita weak_creative (S4b) e orienta testar variação, não pausar winner", () => {
+    const text = buildAnalysisKnowledgeText({ role: "synthesis", hasWaste: false, trackingSuspect: false, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: false, bidStrategyMismatch: false });
+    expect(text).toContain("weak_creative");
+    expect(text.toLowerCase()).toContain("testar");
+  });
+
   it("bloco de bid strategy cita lowest_cost como padrão e ~50 conversões como maturidade (decisão 13)", () => {
     const text = buildAnalysisKnowledgeText({ role: "synthesis", hasWaste: false, trackingSuspect: false, hasRevenue: false, hasBenchmarkRef: false, hasBudgetData: false, bidStrategyMismatch: true });
     expect(text).toContain("lowest_cost");

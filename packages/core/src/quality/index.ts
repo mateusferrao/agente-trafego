@@ -7,6 +7,7 @@
 import type {
   ConversionBasis,
   ConversionGoal,
+  CreativeProofStrength,
   DecisionEligibility,
   EntitySummary,
   HealthSignal,
@@ -160,6 +161,26 @@ export function detectHealthSignals(input: HealthInput, t: QualityThresholds): H
   if (freqHigh) signals.push("audience_saturation");
   if (!input.hasSignificance) signals.push("low_volume");
   return signals;
+}
+
+/** Limiar de Cialdini: "menos de 3 de 7 gatilhos de persuasão presentes = deixando
+ *  persuasão na mesa" (squad, robert-cialdini.md) — não é um número arbitrário. */
+const WEAK_CREATIVE_MIN_PERSUASION_SIGNALS = 3;
+
+/**
+ * Sinal de criativo fraco (S4b, decisão 6): prova fraca (`proofStrength: 'weak'`) E baixa
+ * densidade persuasiva (`persuasionSignals` < 3/7). Puro score de visão (LLM soft) — NUNCA
+ * vira critério de guard determinístico (CLAUDE.md §7); só informa NOTE/matcher. Ausência de
+ * qualquer um dos dois insumos → sem sinal (honesto: sem dado suficiente, não assume fraco).
+ */
+export function detectCreativeWeakness(
+  proofStrength: CreativeProofStrength | undefined,
+  persuasionSignals: number | undefined,
+): readonly HealthSignal[] {
+  if (proofStrength === "weak" && persuasionSignals !== undefined && persuasionSignals < WEAK_CREATIVE_MIN_PERSUASION_SIGNALS) {
+    return ["weak_creative"];
+  }
+  return [];
 }
 
 // ─── Tiers ────────────────────────────────────────────────────────────────

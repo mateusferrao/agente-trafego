@@ -83,10 +83,13 @@ const REVENUE_TEXT =
 const QUALITY_TEXT =
   "Cada entidade pode trazer 'tier' (winner/performer/underperformer/zombie), 'healthSignals' " +
   "(creative_fatigue = fadiga de criativo; audience_saturation = público saturado; low_volume = " +
-  "pouco dado) e 'eligibility' (hasSignificance, inLearning). Aja assim: proteja os WINNERS (não " +
-  "mexa no que vai bem), priorize PAUSAR os ZOMBIES (gasto sem conversão = desperdício), conserte os " +
-  "UNDERPERFORMERS. NUNCA recomende ESCALAR (aumentar orçamento / reativar) uma entidade sem " +
-  "hasSignificance ou em inLearning — nesse caso recomende investigar ou aguardar mais dados.";
+  "pouco dado; weak_creative = prova fraca + baixa densidade persuasiva no criativo, S4b — sinal " +
+  "PURO de direção, use pra 'review_creative', nunca pra pausar/cortar orçamento sozinho) e " +
+  "'eligibility' (hasSignificance, inLearning). Aja assim: proteja os WINNERS (não mexa no que vai " +
+  "bem — winner com weak_creative é candidato a TESTAR uma variação nova, não a pausar), priorize " +
+  "PAUSAR os ZOMBIES (gasto sem conversão = desperdício), conserte os UNDERPERFORMERS. NUNCA " +
+  "recomende ESCALAR (aumentar orçamento / reativar) uma entidade sem hasSignificance ou em " +
+  "inLearning — nesse caso recomende investigar ou aguardar mais dados.";
 
 /**
  * Atribuição × incrementalidade — freia recomendação de pausa por CPA atribuído.

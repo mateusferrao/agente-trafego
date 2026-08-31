@@ -106,7 +106,9 @@ export const envSchema = z.object({
   // Versão do analisador de visão — bumpar invalida o cache de análises de criativo.
   // 2 (Fatia 6c): multi-frame HD + decomposição hook/angle/format/cta.
   // 3 (Bloco 2): decomposição ganha body + proofStrength → invalida o cache antigo uma vez.
-  CREATIVE_VISION_ANALYZER_VERSION: z.coerce.number().int().positive().default(3),
+  // 4 (S4b, pivô saúde): ganha persuasionSignals (densidade de gatilhos de Cialdini, 0-7) →
+  // invalida de novo (cache antigo não tem o campo pro guard de weak_creative funcionar).
+  CREATIVE_VISION_ANALYZER_VERSION: z.coerce.number().int().positive().default(4),
   // Frames HD por criativo de vídeo enviados à visão (espaçados; imagem = 1). Fatia 6c.
   ANALYSIS_VISION_FRAMES: z.coerce.number().int().positive().default(4),
   LLM_COST_CAP_USD_PER_PERIOD: z.coerce.number().min(0).default(0),

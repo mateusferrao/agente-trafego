@@ -39,11 +39,12 @@ const VISION_JSON_SCHEMA: Readonly<Record<string, unknown>> = {
     cta: { type: "string" },
     body: { type: "string" },
     proofStrength: { type: "string", enum: ["weak", "medium", "strong"] },
+    persuasionSignals: { type: "integer", minimum: 0, maximum: 7 },
     strengths: { type: "array", items: { type: "string" } },
     weaknesses: { type: "array", items: { type: "string" } },
     score: { type: "number" },
   },
-  required: ["summary", "hook", "angle", "format", "cta", "body", "proofStrength", "strengths", "weaknesses", "score"],
+  required: ["summary", "hook", "angle", "format", "cta", "body", "proofStrength", "persuasionSignals", "strengths", "weaknesses", "score"],
   additionalProperties: false,
 };
 
@@ -58,6 +59,7 @@ interface RawVision {
   cta: string;
   body: string;
   proofStrength: string;
+  persuasionSignals: number;
   strengths: string[];
   weaknesses: string[];
   score: number;
@@ -81,6 +83,13 @@ export function servingVisionKey(creativeId: string, videoId: string | undefined
   return creativeContentHash(`${creativeId}:${videoId ?? ""}`, copy);
 }
 
+/** Os 7 gatilhos de persuasão de Cialdini — contados em `persuasionSignals`. */
+const CIALDINI_TRIGGERS =
+  "reciprocidade (oferece algo antes de pedir), compromisso/coerência (pequeno passo que leva ao " +
+  "maior), prova social (outros já fizeram/aprovam), autoridade (credencial/especialista), afinidade " +
+  "(semelhança/simpatia com quem assiste), escassez (limitado/urgente) e unidade (faz parte do mesmo " +
+  "grupo/identidade)";
+
 function buildVisionMessages(input: CreativeVisionInput): LLMMessage[] {
   const system =
     "Você analisa criativos de anúncio (imagem/vídeo + copy) para tráfego pago. Quando houver vários " +
@@ -89,7 +98,9 @@ function buildVisionMessages(input: CreativeVisionInput): LLMMessage[] {
     "central (angle), o formato (format: antes-depois/depoimento/UGC/talking-head/oferta), o corpo/" +
     "argumento central (body), a chamada pra ação (cta), a FORÇA DE PROVA (proofStrength: weak/medium/" +
     "strong — antes-depois real, autoridade/credencial, depoimento verificável elevam; promessa sem prova " +
-    "é weak), pontos fortes/fracos e uma nota 0-10 (score). Baseie-se SÓ no que vê e no texto dado; " +
+    `é weak), a DENSIDADE PERSUASIVA (persuasionSignals: 0-7, contagem de quantos dos 7 gatilhos de ` +
+    `Cialdini estão presentes no criativo — ${CIALDINI_TRIGGERS}; conte só o que está CLARAMENTE presente, ` +
+    "não force), pontos fortes/fracos e uma nota 0-10 (score). Baseie-se SÓ no que vê e no texto dado; " +
     "não invente métricas.";
   const frames = input.imageUrls.map((url) => ({ type: "image_url" as const, imageUrl: url }));
   const parts = [
@@ -97,7 +108,7 @@ function buildVisionMessages(input: CreativeVisionInput): LLMMessage[] {
     ...frames,
     {
       type: "text" as const,
-      text: 'Responda SOMENTE JSON: { "summary": "...", "hook": "...", "angle": "...", "format": "...", "body": "...", "cta": "...", "proofStrength": "weak|medium|strong", "strengths": ["..."], "weaknesses": ["..."], "score": 0 }',
+      text: 'Responda SOMENTE JSON: { "summary": "...", "hook": "...", "angle": "...", "format": "...", "body": "...", "cta": "...", "proofStrength": "weak|medium|strong", "persuasionSignals": 0, "strengths": ["..."], "weaknesses": ["..."], "score": 0 }',
     },
   ];
   return [
@@ -120,6 +131,7 @@ function toResult(raw: RawVision): CreativeVisionResult {
     ...(opt(raw.body) ? { body: raw.body } : {}),
     ...(opt(raw.cta) ? { cta: raw.cta } : {}),
     ...(proof ? { proofStrength: proof } : {}),
+    ...(typeof raw.persuasionSignals === "number" ? { persuasionSignals: raw.persuasionSignals } : {}),
     strengths: raw.strengths,
     weaknesses: raw.weaknesses,
     ...(typeof raw.score === "number" ? { score: raw.score } : {}),

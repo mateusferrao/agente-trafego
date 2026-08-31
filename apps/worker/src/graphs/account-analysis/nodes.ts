@@ -10,6 +10,7 @@ import {
   addTokenUsage,
   applicableActionType,
   applyGuardrails,
+  attachCreativeWeaknessSignals,
   budgetDirection,
   kindForRecommendation,
   buildAccountBrief,
@@ -520,6 +521,10 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
         });
         if (result) push(visionByAdId, c.adId, result);
       }
+      // S4b: anexa weak_creative aos anúncios notáveis cuja visão indica prova fraca +
+      // baixa persuasão — o analista lê o sinal nomeado (QUALITY_TEXT), não precisa
+      // re-inferir de proofStrength/persuasionSignals crus a cada vez.
+      const enrichedUnit = attachCreativeWeaknessSignals(unit, visionByAdId);
 
       // copy VERBATIM dos anúncios notáveis (texto real, complementa a visão).
       const copyByAdId = new Map<string, AdCopy>();
@@ -537,7 +542,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       try {
         const completion = await deps.ports.llm.completeStructured<UnitAnalysis>({
           model: cfg.unitModel,
-          messages: buildCampaignMessages(analystPrompt(state), unit, visionByAdId, {
+          messages: buildCampaignMessages(analystPrompt(state), enrichedUnit, visionByAdId, {
             currency: accountCurrency,
             window: windowLabel,
             ...(businessGoal ? { businessGoal } : {}),

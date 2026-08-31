@@ -4,6 +4,7 @@ import {
   DEFAULT_QUALITY_THRESHOLDS as T,
   classifyTier,
   computeEligibility,
+  detectCreativeWeakness,
   detectHealthSignals,
   enrichEntitiesQuality,
 } from "./index.js";
@@ -76,6 +77,26 @@ describe("detectHealthSignals", () => {
     expect(
       detectHealthSignals({ frequency: 2.6, ctrDropPct: 0, costRisePct: 0, hasSignificance: true, frequencyCap: 8 }, T),
     ).not.toContain("audience_saturation");
+  });
+});
+
+describe("detectCreativeWeakness (S4b — prova fraca + baixa densidade persuasiva)", () => {
+  it("weak_creative: proofStrength=weak E persuasionSignals<3 (limiar do próprio Cialdini)", () => {
+    expect(detectCreativeWeakness("weak", 2)).toEqual(["weak_creative"]);
+    expect(detectCreativeWeakness("weak", 0)).toEqual(["weak_creative"]);
+  });
+  it("proofStrength=weak mas persuasionSignals>=3 → sem sinal (persuasão presente compensa)", () => {
+    expect(detectCreativeWeakness("weak", 3)).toEqual([]);
+  });
+  it("proofStrength medium/strong → nunca weak_creative, mesmo com persuasionSignals baixo", () => {
+    expect(detectCreativeWeakness("medium", 0)).toEqual([]);
+    expect(detectCreativeWeakness("strong", 0)).toEqual([]);
+  });
+  it("persuasionSignals ausente → sem sinal (honesto: sem dado suficiente, não assume fraco)", () => {
+    expect(detectCreativeWeakness("weak", undefined)).toEqual([]);
+  });
+  it("proofStrength ausente → sem sinal", () => {
+    expect(detectCreativeWeakness(undefined, 0)).toEqual([]);
   });
 });
 

@@ -477,8 +477,10 @@ export interface ConversionProxy {
 /** Classe de desempenho relativa à meta + à conta. Rótulo amigável fica na UI. */
 export type PerformanceTier = "winner" | "performer" | "underperformer" | "zombie";
 
-/** Sinais de saúde nomeados (estende a detecção de anomalias com semântica de tráfego). */
-export type HealthSignal = "creative_fatigue" | "audience_saturation" | "low_volume";
+/** Sinais de saúde nomeados (estende a detecção de anomalias com semântica de tráfego).
+ *  `weak_creative` (S4b): prova fraca + baixa densidade persuasiva (visão) — NUNCA vira
+ *  critério de guard (é score de LLM, soft); só informa NOTE/matcher. */
+export type HealthSignal = "creative_fatigue" | "audience_saturation" | "low_volume" | "weak_creative";
 
 /**
  * Elegibilidade de DECISÃO da entidade — se dá pra concluir/agir sobre a conversão.
@@ -1131,6 +1133,10 @@ export interface CreativeVisionResult {
   readonly body?: string;
   /** força de prova percebida (§Bloco 2): antes/depois, autoridade médica, depoimento. */
   readonly proofStrength?: CreativeProofStrength;
+  /** nº de gatilhos de persuasão de Cialdini presentes (0-7): reciprocidade, compromisso/
+   *  coerência, prova social, autoridade, afinidade, escassez, unidade (S4b). Extraível do
+   *  próprio criativo, sem dado externo. */
+  readonly persuasionSignals?: number;
   readonly strengths: readonly string[];
   readonly weaknesses: readonly string[];
   /** qualidade geral 0-10 (heurística do modelo). */
