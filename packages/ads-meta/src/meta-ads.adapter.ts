@@ -3,6 +3,7 @@ import type {
   Action,
   AdEntity,
   AudienceProfile,
+  BidStrategy,
   CampaignStructure,
   Creative,
   CustomAudience,
@@ -70,10 +71,12 @@ const ENTITY_EDGE: Readonly<Record<ListableLevel, string>> = {
 /** Campos pedidos por nível (adset traz optimization_goal + promoted_object). */
 // `budget_remaining` (P1.2): a Meta já contabiliza o saldo restante do lifetime_budget — dá o
 // sinal de teto de vitalício sem precisar de pacing por data nem de query de gasto all-time.
+// bid_strategy/bid_amount (S2): a Meta expõe na campanha (CBO) OU no adset (ABO) — nunca
+// os dois pra uma mesma decisão de lance; pedimos nos dois níveis e o mapper resolve o que veio.
 const ENTITY_FIELDS: Readonly<Record<ListableLevel, string>> = {
-  campaign: "id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,objective",
+  campaign: "id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,objective,bid_strategy,bid_amount",
   adset:
-    "id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,campaign_id,optimization_goal,promoted_object{pixel_id,custom_event_type,custom_conversion_id,page_id,whatsapp_phone_number},targeting{geo_locations,age_min,age_max,custom_audiences,excluded_custom_audiences,flexible_spec,interests}",
+    "id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,campaign_id,optimization_goal,bid_strategy,bid_amount,promoted_object{pixel_id,custom_event_type,custom_conversion_id,page_id,whatsapp_phone_number},targeting{geo_locations,age_min,age_max,custom_audiences,excluded_custom_audiences,flexible_spec,interests}",
   ad: "id,name,status,effective_status,adset_id,campaign_id",
 };
 
@@ -85,6 +88,15 @@ const STATUS_MAP: Readonly<Record<string, EntityStatus>> = {
   ARCHIVED: "archived",
   CAMPAIGN_PAUSED: "paused",
   ADSET_PAUSED: "paused",
+};
+
+/** `bid_strategy` cru da Meta → `BidStrategy` neutra (S2). Enum indocumentado/novo → undefined
+ *  (honesto; nunca inventa um valor neutro pra algo que não reconhecemos). */
+const BID_STRATEGY_MAP: Readonly<Record<string, BidStrategy>> = {
+  LOWEST_COST_WITHOUT_CAP: "lowest_cost",
+  LOWEST_COST_WITH_BID_CAP: "bid_cap",
+  COST_CAP: "cost_cap",
+  LOWEST_COST_WITH_MIN_ROAS: "min_roas",
 };
 
 interface RawEntityNode {
@@ -99,6 +111,8 @@ interface RawEntityNode {
   readonly adset_id?: string;
   readonly objective?: string;
   readonly optimization_goal?: string;
+  readonly bid_strategy?: string;
+  readonly bid_amount?: string;
   readonly promoted_object?: RawPromotedObject;
   readonly targeting?: RawTargeting;
 }
@@ -310,6 +324,8 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     const dailyBudget = toMajorBudget(node.daily_budget);
     const lifetimeBudget = toMajorBudget(node.lifetime_budget);
     const budgetRemaining = toMajorBudget(node.budget_remaining);
+    const bidStrategy = node.bid_strategy ? BID_STRATEGY_MAP[node.bid_strategy] : undefined;
+    const bidCapMajor = toMajorBudget(node.bid_amount);
     const objective = this.deriveObjective(level, node, resolved);
     // público + destino WhatsApp CTWA só existem no nível adset (targeting + promoted_object moram lá).
     const audience = level === "adset" ? audienceFromTargeting(node.targeting) : undefined;
@@ -325,6 +341,8 @@ export class MetaAdsAdapter implements AdsPlatformPort {
       ...(dailyBudget !== undefined ? { dailyBudget } : {}),
       ...(lifetimeBudget !== undefined ? { lifetimeBudget } : {}),
       ...(budgetRemaining !== undefined ? { budgetRemaining } : {}),
+      ...(bidStrategy ? { bidStrategy } : {}),
+      ...(bidCapMajor !== undefined ? { bidCapMajor } : {}),
       ...(objective ? { objective } : {}),
       ...(audience ? { audience } : {}),
       ...(waDigits.length > 0 ? { whatsappNumber: waDigits } : {}),

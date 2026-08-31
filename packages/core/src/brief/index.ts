@@ -652,6 +652,8 @@ function toEntitySummary(
     ...(funnel ? { funnel } : {}),
     ...(entity?.campaignId ? { campaignId: entity.campaignId } : {}),
     ...(budget ? { budget } : {}),
+    ...(entity?.bidStrategy ? { bidStrategy: entity.bidStrategy } : {}),
+    ...(entity?.bidCapMajor !== undefined ? { bidCapMajor: entity.bidCapMajor } : {}),
   };
 }
 

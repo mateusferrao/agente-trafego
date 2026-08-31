@@ -19,6 +19,15 @@ export const err = <E>(error: E): Result<never, E> => ({ ok: false, error });
 export type EntityLevel = "account" | "campaign" | "adset" | "ad";
 export type EntityStatus = "active" | "paused" | "deleted" | "archived";
 
+/**
+ * Estratégia de lance NEUTRA (S2) — mapeia o enum `bid_strategy` da Meta (vocabulário
+ * Meta fica só no adapter, `mapBidStrategy`). `lowest_cost` é o padrão esperado (sem
+ * cap); os outros 3 são formas de CAP/meta explícita, só recomendáveis com dado
+ * acumulado suficiente (ver `BID_STRATEGY_TEXT`, packages/core/src/analysis-knowledge).
+ */
+export const BID_STRATEGIES = ["lowest_cost", "bid_cap", "cost_cap", "min_roas"] as const;
+export type BidStrategy = (typeof BID_STRATEGIES)[number];
+
 export interface AdEntity {
   readonly id: string;
   readonly level: EntityLevel;
@@ -45,6 +54,13 @@ export interface AdEntity {
    *  só no nível adset. Fonte autoritativa do destino em campanha click-to-WhatsApp; o run cacheia
    *  em `ad_creatives` (por ad, via o adset) → chat DB-first sem GET ao vivo. */
   readonly whatsappNumber?: string;
+  /**
+   * Estratégia de lance (S2) — a Meta expõe `bid_strategy` na campanha (CBO) OU no adset
+   * (ABO), nunca nos dois ao mesmo tempo pra uma mesma decisão de lance.
+   */
+  readonly bidStrategy?: BidStrategy;
+  /** Cap/meta de lance (major currency), quando `bidStrategy` != 'lowest_cost'. */
+  readonly bidCapMajor?: number;
 }
 
 /** Estágio do público: frio (prospecção) × quente (remarketing) × indeterminado. */
@@ -527,6 +543,11 @@ export interface EntitySummary {
    *  ausente = sem dado de budget em lugar nenhum (nem próprio, nem dos adsets ABO). Tri-estado
    *  honesto: só `true` confirmado autoriza o AUTO-apply autônomo a duplicar/escalar sozinho. */
   readonly atBudgetCeiling?: boolean;
+  /** Estratégia de lance (S2) — 'lowest_cost' é o padrão esperado; os demais só fazem sentido
+   *  com dado acumulado suficiente (ver BID_STRATEGY_TEXT). */
+  readonly bidStrategy?: BidStrategy;
+  /** Cap/meta de lance (major currency), quando `bidStrategy` != 'lowest_cost'. */
+  readonly bidCapMajor?: number;
   /** Perfil de público do adset (§Bloco 2) — estágio + resumo compacto do targeting. */
   readonly audience?: AudienceProfile;
   /** Base de medição vs a conversão de negócio do agente (§Fatia 4). */

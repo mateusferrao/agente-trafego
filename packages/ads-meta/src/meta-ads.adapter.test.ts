@@ -148,6 +148,31 @@ describe("MetaAdsAdapter.listEntities (governor)", () => {
   const ref = { adAccountId: "1", accessToken: "tok" };
   const usageHeader = JSON.stringify({ act_1: [{ call_count: 30, total_cputime: 10, total_time: 10 }] });
 
+  it("S2: mapeia bid_strategy/bid_amount (cru da Meta → BidStrategy neutra + major currency)", async () => {
+    stubFetchSequence([
+      {
+        body: {
+          data: [
+            { id: "c1", name: "Camp CBO", status: "ACTIVE", objective: "OUTCOME_SALES", bid_strategy: "LOWEST_COST_WITH_BID_CAP", bid_amount: "500" },
+            { id: "c2", name: "Camp sem cap", status: "ACTIVE", objective: "OUTCOME_SALES", bid_strategy: "LOWEST_COST_WITHOUT_CAP" },
+          ],
+        },
+      },
+    ]);
+    const { adapter } = makeAdapterWithGov();
+    const entities = await adapter.listEntities(ref, "campaign");
+    expect(entities.find((e) => e.id === "c1")).toMatchObject({ bidStrategy: "bid_cap", bidCapMajor: 5 });
+    expect(entities.find((e) => e.id === "c2")).toMatchObject({ bidStrategy: "lowest_cost" });
+    expect(entities.find((e) => e.id === "c2")).not.toHaveProperty("bidCapMajor");
+  });
+
+  it("S2: bid_strategy desconhecido/ausente → bidStrategy undefined (honesto, não inventa)", async () => {
+    stubFetchSequence([{ body: { data: [{ id: "c1", name: "Camp", status: "ACTIVE", objective: "OUTCOME_SALES", bid_strategy: "SOME_FUTURE_ENUM" }] } }]);
+    const { adapter } = makeAdapterWithGov();
+    const entities = await adapter.listEntities(ref, "campaign");
+    expect(entities[0]).not.toHaveProperty("bidStrategy");
+  });
+
   it("rate-limit transitório (code 17) → retry inline → completa", async () => {
     const { calls } = stubFetchSequence([
       { body: { error: { message: "throttled", code: 17 } }, status: 400 },

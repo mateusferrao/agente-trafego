@@ -73,6 +73,20 @@ describe("buildAccountBrief", () => {
     expect(c1?.flags).not.toContain("cpa_acima_da_meta");
   });
 
+  it("S2: repassa bidStrategy/bidCapMajor da AdEntity pro EntitySummary (raciocínio de lance)", () => {
+    const withBidStrategy: AdEntity[] = [
+      { ...entities[0]!, bidStrategy: "bid_cap", bidCapMajor: 5 },
+      entities[1]!,
+    ];
+    const result = buildAccountBrief(baseInput({ entities: withBidStrategy }));
+    if (result.status !== "ok") return;
+    const c1 = result.brief.segments.campaigns.find((c) => c.id === "c1");
+    expect(c1?.bidStrategy).toBe("bid_cap");
+    expect(c1?.bidCapMajor).toBe(5);
+    const c2 = result.brief.segments.campaigns.find((c) => c.id === "c2");
+    expect(c2?.bidStrategy).toBeUndefined();
+  });
+
   it("calcula deltaVsBaseline quando há linha na janela-baseline", () => {
     const result = buildAccountBrief(baseInput());
     if (result.status !== "ok") return;

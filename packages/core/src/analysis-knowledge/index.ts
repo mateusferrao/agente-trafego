@@ -22,6 +22,9 @@ export interface AnalysisKnowledgeContext {
   readonly hasBenchmarkRef: boolean;
   /** alguma entidade no escopo (conta ou campanha) traz `budget`/`atBudgetCeiling` (S1). */
   readonly hasBudgetData: boolean;
+  /** alguma entidade usa lance agressivo (≠ lowest_cost) E a CONTA não tem conversões
+   *  acumuladas suficientes pra justificar (S2) — sinal de CONTA, só synthesis. */
+  readonly bidStrategyMismatch: boolean;
 }
 
 /** Agrupamento temático (G2) — ordena a montagem do texto, não a lista de blocos. */
@@ -162,6 +165,26 @@ const BUDGET_TEXT =
   "não a média histórica) como critério de até onde vale escalar — pare de recomendar mais orçamento " +
   "ali quando o marginal estiver piorando, mesmo que a média ainda pareça boa.";
 
+/** Maturidade de dado (squad Media Buyer) pra uma estratégia de lance agressiva fazer sentido
+ *  — nº de conversões de negócio ACUMULADAS na conta. Abaixo disso, um cap/meta de lance é
+ *  aposta cega (dado insuficiente pra calibrar). Gatilho do texto, não guard/guardrail — nunca
+ *  bloqueia a conta de usar a estratégia, só orienta a recomendação. */
+export const BID_STRATEGY_MATURITY_CONVERSIONS = 50;
+
+/**
+ * Estratégia de lance (S2, decisão 13) — fecha o gap de `bid_strategy` ser buscado e nunca
+ * usado pra raciocínio. Só dispara quando a estratégia atual parece descasada da maturidade
+ * de dado da conta (não é sempre-on — não teria ação nenhuma numa conta já madura).
+ */
+const BID_STRATEGY_TEXT =
+  "Cada entidade pode trazer 'bidStrategy' ('lowest_cost' = padrão esperado, sem cap; " +
+  "'bid_cap'/'cost_cap'/'min_roas' = lance com cap/meta explícita, com 'bidCapMajor' quando houver). " +
+  `Uma estratégia com cap só faz sentido com a conta já tendo ~${BID_STRATEGY_MATURITY_CONVERSIONS} conversões de negócio ` +
+  "acumuladas (dado suficiente pra calibrar o cap, não é aposta cega). Se a conta ainda não tem esse " +
+  "volume E alguma entidade usa uma estratégia com cap, aponte o descasamento como achado e recomende " +
+  "voltar para 'lowest_cost' até acumular mais dado — não é uma AÇÃO de plataforma (você não aplica), " +
+  "é orientação em texto.";
+
 export const ANALYSIS_KNOWLEDGE_BLOCKS: readonly AnalysisKnowledgeBlock[] = [
   { key: "funnel", theme: "conversao", text: FUNNEL_TEXT, relevant: isAnalysisRole },
   { key: "mismatch", theme: "conversao", text: MISMATCH_TEXT, relevant: isAnalysisRole },
@@ -175,10 +198,11 @@ export const ANALYSIS_KNOWLEDGE_BLOCKS: readonly AnalysisKnowledgeBlock[] = [
   { key: "tracking", theme: "desperdicio", text: TRACKING_TEXT, relevant: (ctx) => ctx.role === "synthesis" && ctx.trackingSuspect },
   { key: "benchmark", theme: "benchmark", text: BENCHMARK_TEXT, relevant: (ctx) => isMapOrSynthesis(ctx) && ctx.hasBenchmarkRef },
   { key: "budget", theme: "orcamento", text: BUDGET_TEXT, relevant: (ctx) => isMapOrSynthesis(ctx) && ctx.hasBudgetData },
+  { key: "bid_strategy", theme: "orcamento", text: BID_STRATEGY_TEXT, relevant: (ctx) => ctx.role === "synthesis" && ctx.bidStrategyMismatch },
 ];
 
 /** Contexto do REVISOR (G7) — nenhum bloco condicional se aplica (correção não reporta
- *  desperdício/receita/benchmark/orçamento novos); só os blocos-base de leitura de dado entram. */
+ *  desperdício/receita/benchmark/orçamento/lance novos); só os blocos-base de leitura de dado entram. */
 export const REVIEW_KNOWLEDGE_CONTEXT: AnalysisKnowledgeContext = {
   role: "review",
   hasWaste: false,
@@ -186,6 +210,7 @@ export const REVIEW_KNOWLEDGE_CONTEXT: AnalysisKnowledgeContext = {
   hasRevenue: false,
   hasBenchmarkRef: false,
   hasBudgetData: false,
+  bidStrategyMismatch: false,
 };
 
 function anyEntityHasRevenue(entities: readonly EntitySummary[]): boolean {
@@ -197,11 +222,15 @@ function anyEntityHasBenchmarkRef(entities: readonly EntitySummary[]): boolean {
 function anyEntityHasBudgetData(entities: readonly EntitySummary[]): boolean {
   return entities.some((e) => e.budget != null || e.atBudgetCeiling !== undefined);
 }
+function hasAggressiveBidStrategy(entities: readonly EntitySummary[]): boolean {
+  return entities.some((e) => e.bidStrategy != null && e.bidStrategy !== "lowest_cost");
+}
 
 /** Contexto da SÍNTESE (reduce, nível conta) — a partir do `AccountBrief`. */
 export function buildSynthesisKnowledgeContext(brief: AccountBrief): AnalysisKnowledgeContext {
   const allEntities = [...brief.segments.campaigns, ...brief.segments.adsets, ...brief.segments.ads];
   const waste = brief.waste;
+  const accountConversions = brief.totals.conversions ?? 0;
   return {
     role: "synthesis",
     hasWaste: (waste?.wastedSpend ?? 0) > 0 || (waste?.pareto?.misallocated.length ?? 0) > 0,
@@ -209,17 +238,19 @@ export function buildSynthesisKnowledgeContext(brief: AccountBrief): AnalysisKno
     hasRevenue: (brief.totals.revenue ?? 0) > 0 || anyEntityHasRevenue(allEntities),
     hasBenchmarkRef: anyEntityHasBenchmarkRef(allEntities),
     hasBudgetData: anyEntityHasBudgetData(allEntities),
+    bidStrategyMismatch: hasAggressiveBidStrategy(allEntities) && accountConversions < BID_STRATEGY_MATURITY_CONVERSIONS,
   };
 }
 
 /** Contexto do MAPA (por-campanha) — a partir da árvore curada `CampaignUnit`. Desperdício/
- *  tracking são sinais de CONTA (não computados por campanha) — sempre `false` aqui. */
+ *  tracking/lance são sinais de CONTA (não computados por campanha) — sempre `false` aqui. */
 export function buildCampaignKnowledgeContext(unit: CampaignUnit): AnalysisKnowledgeContext {
   const entities = [unit.campaign, ...unit.adsets.flatMap((g) => [g.adset, ...g.notableAds])];
   return {
     role: "map",
     hasWaste: false,
     trackingSuspect: false,
+    bidStrategyMismatch: false,
     hasRevenue: anyEntityHasRevenue(entities),
     hasBenchmarkRef: anyEntityHasBenchmarkRef(entities),
     hasBudgetData: anyEntityHasBudgetData(entities),
