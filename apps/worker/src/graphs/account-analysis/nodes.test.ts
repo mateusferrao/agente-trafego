@@ -448,6 +448,77 @@ describe("account-analysis read-only nodes", () => {
     expect(as2Row.unit.recommendations).toEqual([]); // nenhuma recomendação mirou as2
   });
 
+  describe("Fase 4 — teto de escala por audiência (reativo)", () => {
+    const entities: AdEntity[] = [
+      { id: "c1", level: "campaign", name: "Campanha 1", status: "active", objective: { goal: "purchase" } },
+      { id: "as1", level: "adset", name: "Conjunto 1", status: "active", campaignId: "c1", dailyBudget: 50 },
+      { id: "as2", level: "adset", name: "Conjunto 2", status: "active", campaignId: "c1", dailyBudget: 50 },
+    ];
+    const rows = [
+      row("act_1", "account", 300, 5),
+      row("c1", "campaign", 300, 3),
+      row("as1", "adset", 200, 2),
+      row("as2", "adset", 100, 1),
+    ];
+    const SCALE_OUTPUT = {
+      scorecard: { grade: "C", headline: "h", biggestLeak: "conversao" },
+      summary: "s",
+      flags: [],
+      findings: [{ id: "f-as1", title: "vencedor", detail: "d", severity: "info", metricRefs: [{ label: "CPA", value: 80 }], caveat: null }],
+      recommendations: [
+        { id: "r-as1", title: "Aumentar orçamento do as1", rationale: "r", priority: "high", actionType: "increase_budget", targetEntity: { level: "adset", externalId: "as1" }, budgetChangePct: 10, expectedImpact: null, whatToMonitor: null, findingRefs: ["f-as1"] },
+      ],
+    };
+
+    it("público perto do teto (delivery_estimate saturado) → rebaixa increase_budget pra investigate", async () => {
+      const h = makeHarness({ entities, rows });
+      h.llm.mockImplementation(async () => ({ output: SCALE_OUTPUT, usage: { inputTokens: 100, outputTokens: 20, costUsd: 0.001 } }));
+      const getDeliveryEstimateForAdSet = vi.fn(async () => ({ ready: true, monthlyReachMin: 100, monthlyReachMax: 100 }));
+      (h.deps.ports.ads as unknown as { getDeliveryEstimateForAdSet: typeof getDeliveryEstimateForAdSet }).getDeliveryEstimateForAdSet = getDeliveryEstimateForAdSet;
+
+      const state = await runChain(h);
+
+      expect(getDeliveryEstimateForAdSet).toHaveBeenCalledWith(expect.anything(), "as1");
+      const rec = state.analysisOutput?.recommendations.find((r) => r.id === "r-as1");
+      expect(rec?.actionType).toBe("investigate");
+      expect(rec?.rationale).toContain("[guard]");
+    });
+
+    it("público com folga (delivery_estimate grande) → mantém increase_budget", async () => {
+      const h = makeHarness({ entities, rows });
+      h.llm.mockImplementation(async () => ({ output: SCALE_OUTPUT, usage: { inputTokens: 100, outputTokens: 20, costUsd: 0.001 } }));
+      const getDeliveryEstimateForAdSet = vi.fn(async () => ({ ready: true, monthlyReachMin: 100000, monthlyReachMax: 100000 }));
+      (h.deps.ports.ads as unknown as { getDeliveryEstimateForAdSet: typeof getDeliveryEstimateForAdSet }).getDeliveryEstimateForAdSet = getDeliveryEstimateForAdSet;
+
+      const state = await runChain(h);
+
+      const rec = state.analysisOutput?.recommendations.find((r) => r.id === "r-as1");
+      expect(rec?.actionType).toBe("increase_budget");
+    });
+
+    it("sem proposta de escalar neste run → NUNCA chama delivery_estimate (reativo, custo zero)", async () => {
+      const h = makeHarness({ entities, rows }); // ANALYSIS_OUTPUT padrão não escala adset nenhum
+      const getDeliveryEstimateForAdSet = vi.fn(async () => ({ ready: true, monthlyReachMin: 1, monthlyReachMax: 1 }));
+      (h.deps.ports.ads as unknown as { getDeliveryEstimateForAdSet: typeof getDeliveryEstimateForAdSet }).getDeliveryEstimateForAdSet = getDeliveryEstimateForAdSet;
+
+      await runChain(h);
+
+      expect(getDeliveryEstimateForAdSet).not.toHaveBeenCalled();
+    });
+
+    it("delivery_estimate falha (upstream) → degrada graciosamente, mantém a recomendação original", async () => {
+      const h = makeHarness({ entities, rows });
+      h.llm.mockImplementation(async () => ({ output: SCALE_OUTPUT, usage: { inputTokens: 100, outputTokens: 20, costUsd: 0.001 } }));
+      const getDeliveryEstimateForAdSet = vi.fn(async () => { throw new Error("upstream"); });
+      (h.deps.ports.ads as unknown as { getDeliveryEstimateForAdSet: typeof getDeliveryEstimateForAdSet }).getDeliveryEstimateForAdSet = getDeliveryEstimateForAdSet;
+
+      const state = await runChain(h);
+
+      const rec = state.analysisOutput?.recommendations.find((r) => r.id === "r-as1");
+      expect(rec?.actionType).toBe("increase_budget");
+    });
+  });
+
   it("conta parada: pula o LLM e conclui com nota 'sem atividade'", async () => {
     const h = makeHarness({ rows: [] });
     const state = await runChain(h);

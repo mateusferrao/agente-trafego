@@ -452,6 +452,14 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     }
   }
 
+  async getDeliveryEstimateForAdSet(account: AdAccountRef, adsetId: string): Promise<DeliveryEstimate> {
+    try {
+      return await this.creation.deliveryEstimateForAdSet(account, adsetId, this.governor);
+    } catch (error) {
+      throw toAdsError(error);
+    }
+  }
+
   async readCampaignStructure(account: AdAccountRef, campaignId: string): Promise<CampaignStructure> {
     try {
       return await this.campaignStructure.read(account, campaignId, normalizeAdAccountId(account.adAccountId));

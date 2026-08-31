@@ -259,6 +259,10 @@ export interface AdsPlatformPort {
    *  proposta (depende do público/exclusões escolhidos → não cacheável no run). Best-effort:
    *  `ready:false` quando a plataforma ainda não estimou. */
   getDeliveryEstimate(account: AdAccountRef, input: DeliveryEstimateInput): Promise<DeliveryEstimate>;
+  /** Estima o alcance de um adset EXISTENTE (teto de escala por audiência, Fase 4) — usa a
+   *  config ATUAL do próprio adset (sem reconstruir targeting). Reativo: só chamado quando
+   *  já há proposta de escalar aquela entidade neste run. */
+  getDeliveryEstimateForAdSet(account: AdAccountRef, adsetId: string): Promise<DeliveryEstimate>;
   /** Lê a estrutura NEUTRA de uma campanha existente p/ cópia fiel (Fatia 7) — escopado. */
   readCampaignStructure(account: AdAccountRef, campaignId: string): Promise<CampaignStructure>;
   /** Lê o perfil de público de UM adset isolado (público/idade/expansão) — usado no PROPOSE pra

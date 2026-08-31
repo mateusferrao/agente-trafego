@@ -323,6 +323,61 @@ export function guardScaleWithWorseningMarginalCpa(
   return { ...output, recommendations };
 }
 
+// ─── Guard de teto de escala por audiência (Fase 4, pivô saúde) ───────────
+// "Antes de recomendar aumentar orçamento, checa se a AUDIÊNCIA aguenta mais gasto sem
+// saturar." Reativo e com IO (chamada à Meta) FORA deste guard — o worker resolve
+// `deliveryEstimate` só p/ as entidades que JÁ têm proposta de escalar NESTE run (nunca
+// varre a conta à toa) e monta o mapa abaixo; o guard em si é PURO, só decide.
+
+/** Insumo já resolvido por entidade (IO já feito pelo worker). */
+export interface AudienceHeadroom {
+  /** alcance mensal (MAU) — ausente = a plataforma ainda não estimou (público novo/lookalike);
+   *  guard passa direto (honesto: sem dado, não assume saturado). */
+  readonly monthlyReach?: number;
+  /** impressões mensais no ritmo ATUAL (extrapolado da janela de análise). */
+  readonly currentMonthlyImpressions: number;
+  /** teto de frequência saudável resolvido (mesmo cálculo por-estágio de `enrichEntitiesQuality`). */
+  readonly frequencyCap: number;
+}
+
+export interface AudienceCeilingThresholds {
+  /** fração do teto (MAU × frequencyCap) considerada "perto de saturar" — a partir daqui rebaixa. */
+  readonly nearSaturationRatio: number;
+}
+
+export const DEFAULT_AUDIENCE_CEILING_THRESHOLDS: AudienceCeilingThresholds = { nearSaturationRatio: 0.8 };
+
+/**
+ * Rebaixa ESCALAR (aumentar orçamento / reativar) → `investigate` quando o público
+ * (MAU × teto de frequência saudável) já está perto do limite de impressões sustentáveis —
+ * mais orçamento tenderia a aumentar FREQUÊNCIA (mesma gente vendo mais vezes), não
+ * alcançar gente nova. Puro: não remove, só troca a ordem de ação + anota o porquê.
+ */
+export function guardAudienceScaleCeiling(
+  output: AnalysisOutput,
+  headroomByEntity: ReadonlyMap<string, AudienceHeadroom>,
+  t: AudienceCeilingThresholds,
+): AnalysisOutput {
+  const recommendations = output.recommendations.map((r) => {
+    if (!SCALE_ACTIONS.has(r.actionType)) return r;
+    const id = r.targetEntity?.externalId;
+    const headroom = id ? headroomByEntity.get(id) : undefined;
+    if (!headroom || headroom.monthlyReach === undefined) return r;
+    const cap = headroom.monthlyReach * headroom.frequencyCap;
+    if (cap <= 0) return r;
+    const ratio = headroom.currentMonthlyImpressions / cap;
+    if (ratio < t.nearSaturationRatio) return r;
+    return {
+      ...r,
+      title: demotedTitle(r.title),
+      actionType: "investigate" as RecommendationActionType,
+      rationale: `${r.rationale}\n[guard] escalar → investigar: o público (~${Math.round(headroom.monthlyReach)} pessoas/mês) já está perto do teto de frequência saudável — mais orçamento tende a aumentar FREQUÊNCIA (mesma gente vendo mais vezes), não alcançar gente nova.`,
+      budgetChangePct: null,
+    };
+  });
+  return { ...output, recommendations };
+}
+
 // ─── Helpers compartilhados pelos guards acima ────────────────────────────
 
 /** Itera as 3 camadas do brief (campanha/adset/anúncio) — evita repetir o `for`

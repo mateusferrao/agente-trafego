@@ -312,6 +312,32 @@ export class MetaCreationService {
     };
   }
 
+  /**
+   * Estima o alcance de um adset EXISTENTE (teto de escala por audiência, Fase 4) — chama
+   * `GET /{adsetId}/delivery_estimate` SEM `targeting_spec`/`optimization_goal` (a Meta usa
+   * a config ATUAL do próprio adset como default — não precisamos reconstruir o targeting).
+   * Reusado pelo guard reativo de `scale_winner`/`increase_budget`: chamado só quando já há
+   * uma proposta de escalar aquela entidade neste run (nunca varre a conta à toa).
+   */
+  async deliveryEstimateForAdSet(account: AdAccountRef, adsetId: string, governor: MetaGovernor): Promise<DeliveryEstimate> {
+    const body = await callWithGovernor<RawDeliveryEstimatePage>(
+      normalizeAdAccountId(account.adAccountId),
+      () => this.client.request<RawDeliveryEstimatePage>({ method: "GET", path: `${adsetId}/delivery_estimate`, accessToken: account.accessToken }),
+      { governor },
+    );
+    const row = body.data?.[0];
+    if (!row || row.estimate_ready !== true) return { ready: false };
+    const dau = positiveCount(row.estimate_dau);
+    const mauMin = positiveCount(row.estimate_mau_lower_bound);
+    const mauMax = positiveCount(row.estimate_mau_upper_bound);
+    return {
+      ready: true,
+      ...(dau !== undefined ? { dailyActiveUsers: dau } : {}),
+      ...(mauMin !== undefined ? { monthlyReachMin: mauMin } : {}),
+      ...(mauMax !== undefined ? { monthlyReachMax: mauMax } : {}),
+    };
+  }
+
   /** Capa (thumbnail) de um vídeo — a preferida da Meta, senão a 1ª. Usada como `image_url`
    *  obrigatório no `video_data`. Falha → undefined (o caller decide se ainda tenta criar). */
   private async fetchVideoThumbnailUrl(account: AdAccountRef, videoId: string): Promise<string | undefined> {

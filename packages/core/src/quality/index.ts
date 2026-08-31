@@ -5,6 +5,7 @@
 // ranqueamento relativo + rede de segurança que alimenta prompt, guard e UI.
 
 import type {
+  AudienceStage,
   ConversionBasis,
   ConversionGoal,
   CreativeProofStrength,
@@ -275,6 +276,15 @@ function risePct(current: number | undefined, deltaAbs: number | undefined): num
   return baseline > 0 ? ((current - baseline) / baseline) * 100 : 0;
 }
 
+/** Teto de frequência saudável por estágio de público — SEMPRE concreto (nunca undefined,
+ *  ao contrário do cálculo inline de `enrichEntitiesQuality`): sem estágio, cai no teto
+ *  geral (`fatigueFrequency`). Reusado pelo guard de teto de escala por audiência (Fase 4). */
+export function resolveFrequencyCap(stage: AudienceStage | undefined, t: QualityThresholds): number {
+  if (stage === "remarketing") return t.frequencyCapByStage.remarketing;
+  if (stage === "prospecting" || stage === "unknown") return t.frequencyCapByStage.prospecting;
+  return t.fatigueFrequency;
+}
+
 function beatsTargetFor(e: EntitySummary, goals: { targetCPA?: number; targetROAS?: number }): boolean {
   if (e.conversionBasis !== "target") return false;
   const cpaOk = goals.targetCPA !== undefined && typeof e.metrics.cpa === "number" && e.metrics.cpa <= goals.targetCPA;
@@ -326,8 +336,8 @@ export function enrichEntitiesQuality(
     const ctrDropPct = dropPct(e.metrics.ctr, e.deltaVsBaseline.ctr);
     const costMetric = typeof e.metrics.cpa === "number" ? "cpa" : "cpc";
     const costRisePct = risePct(e.metrics[costMetric], e.deltaVsBaseline[costMetric]);
-    // teto de frequência por estágio (adset com público); sem estágio → teto geral.
-    // "unknown" cai no teto conservador de prospecção.
+    // teto de frequência por estágio (adset com público); sem estágio → teto geral
+    // (detectHealthSignals cai em t.fatigueFrequency quando frequencyCap é ausente aqui).
     const stage = e.audience?.stage;
     const frequencyCap =
       stage === "remarketing"

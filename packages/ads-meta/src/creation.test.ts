@@ -204,6 +204,23 @@ describe("MetaCreationService.deliveryEstimate", () => {
   });
 });
 
+describe("MetaCreationService.deliveryEstimateForAdSet (teto de escala por audiência, Fase 4)", () => {
+  it("chama GET /{adsetId}/delivery_estimate SEM targeting_spec (usa a config atual do próprio adset)", async () => {
+    const { urls } = stubEstimate({ estimate_ready: true, estimate_dau: 1000, estimate_mau_lower_bound: 20000, estimate_mau_upper_bound: 30000 });
+    const est = await svc().deliveryEstimateForAdSet(account, "AS1", governor());
+    expect(est).toEqual({ ready: true, dailyActiveUsers: 1000, monthlyReachMin: 20000, monthlyReachMax: 30000 });
+    const url = decodeURIComponent(urls()[0]!);
+    expect(url).toContain("/AS1/delivery_estimate");
+    expect(url).not.toContain("targeting_spec");
+  });
+
+  it("ready false (público novo/lookalike ainda sem estimativa) → { ready: false }", async () => {
+    stubEstimate({ estimate_ready: false });
+    const est = await svc().deliveryEstimateForAdSet(account, "AS1", governor());
+    expect(est).toEqual({ ready: false });
+  });
+});
+
 /** Stub que devolve {id} em TODO POST (create* espera id). */
 function stubCreate(id: string) {
   const posts: Array<{ url: string }> = [];

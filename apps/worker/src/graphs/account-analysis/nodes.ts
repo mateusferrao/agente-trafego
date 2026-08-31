@@ -31,6 +31,10 @@ import {
   guardTrackingCaveat,
   guardScaleWithWorseningMarginalCpa,
   marginalCpaRiseByEntity,
+  guardAudienceScaleCeiling,
+  DEFAULT_AUDIENCE_CEILING_THRESHOLDS,
+  resolveFrequencyCap,
+  type AudienceHeadroom,
   basisByEntity,
   annotateFreedSpend,
   detectCreationOpportunities,
@@ -118,7 +122,7 @@ import { createVisionResolver, servingVisionKey } from "../../modules/vision/res
 import { makeMetaToolExecutor, type MetaToolExecutor } from "../../executors/meta-tools.js";
 import { AnalysisError } from "../../modules/analysis/errors.js";
 import { mapWithConcurrency } from "../../lib/concurrency.js";
-import { resolveAnalysisConfig } from "../../modules/analysis/config.js";
+import { resolveAnalysisConfig, type ResolvedAnalysisConfig } from "../../modules/analysis/config.js";
 import {
   buildCampaignMessages,
   buildReviewMessages,
@@ -782,12 +786,22 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       marginalCpaRiseByEntity(state.brief),
       { worsenPct: cfg.quality.marginalCpaWorsenPct },
     );
+    // Teto de escala por audiência (Fase 4): reativo (só as entidades que sobreviveram
+    // com proposta de escalar até aqui) — rebaixa escalar → investigar quando o público
+    // (MAU × teto de frequência saudável) já está perto do limite de impressões sustentáveis.
+    const audienceHeadroom = await resolveAudienceHeadroomByEntity(
+      { repo, ads: deps.ports.ads, vault: deps.ports.vault, logger },
+      state,
+      marginalGuarded,
+      cfg,
+    );
+    const audienceGuarded = guardAudienceScaleCeiling(marginalGuarded, audienceHeadroom, DEFAULT_AUDIENCE_CEILING_THRESHOLDS);
     // impacto (Bloco 2): anexa o gasto liberado a cada recomendação de pausa.
     const spendById = new Map<string, number>();
     for (const level of [state.brief.segments.campaigns, state.brief.segments.adsets, state.brief.segments.ads]) {
       for (const e of level) spendById.set(e.id, e.metrics.spend ?? 0);
     }
-    const final = annotateFreedSpend(marginalGuarded, spendById, state.brief.account.currency);
+    const final = annotateFreedSpend(audienceGuarded, spendById, state.brief.account.currency);
     const findings: Finding[] = final.findings.map((f) => ({
       title: f.title,
       detail: f.detail,
@@ -1742,6 +1756,59 @@ async function refreshStatusByEntity(
     }
   }
   return corrected;
+}
+
+/** Ações que ADICIONAM investimento/exposição (mesmo Set de `SCALE_ACTIONS` em analysis-guards). */
+const SCALE_ACTION_TYPES = new Set(["increase_budget", "resume"]);
+
+/**
+ * Resolve o teto de escala por audiência (Fase 4) — REATIVO: só chama `deliveryEstimate`
+ * pros adsets que JÁ têm proposta de escalar SOBREVIVENDO aos guards anteriores neste run
+ * (nunca varre a conta à toa). Escopo restrito a `targetEntity.level === "adset"` (campanha
+ * CBO pode ter N adsets com públicos distintos — ambíguo demais pra 1 estimativa só).
+ * Melhor esforço: falha por entidade → fica de fora do mapa (guard passa direto, honesto).
+ */
+async function resolveAudienceHeadroomByEntity(
+  ioDeps: { repo: AnalysisRepo; ads: AdsPlatformPort; vault: WorkerDeps["ports"]["vault"]; logger: WorkerDeps["logger"] },
+  state: AccountAnalysisStateType,
+  output: AnalysisOutput,
+  cfg: ResolvedAnalysisConfig,
+): Promise<Map<string, AudienceHeadroom>> {
+  const headroomByEntity = new Map<string, AudienceHeadroom>();
+  const targetIds = new Set(
+    output.recommendations
+      .filter((r) => SCALE_ACTION_TYPES.has(r.actionType) && r.targetEntity?.level === "adset")
+      .map((r) => r.targetEntity!.externalId),
+  );
+  if (targetIds.size === 0 || !state.brief) return headroomByEntity;
+
+  const account = await ioDeps.repo.loadAccount(state.orgId, state.adAccountId);
+  if (!account) return headroomByEntity;
+  const accessToken = ioDeps.vault.decrypt(account.tokenCripto);
+  const ref = { adAccountId: account.metaAdAccountId, accessToken };
+  const adsetById = new Map(state.brief.segments.adsets.map((e) => [e.id, e]));
+
+  for (const entityId of targetIds) {
+    const entity = adsetById.get(entityId);
+    if (!entity) continue;
+    try {
+      const estimate = await ioDeps.ads.getDeliveryEstimateForAdSet(ref, entityId);
+      if (!estimate.ready) continue;
+      const monthlyReach =
+        estimate.monthlyReachMin !== undefined && estimate.monthlyReachMax !== undefined
+          ? (estimate.monthlyReachMin + estimate.monthlyReachMax) / 2
+          : (estimate.monthlyReachMax ?? estimate.monthlyReachMin ?? estimate.dailyActiveUsers);
+      if (monthlyReach === undefined) continue;
+      headroomByEntity.set(entityId, {
+        monthlyReach,
+        currentMonthlyImpressions: (entity.metrics.impressions / cfg.windowDays) * 30,
+        frequencyCap: resolveFrequencyCap(entity.audience?.stage, cfg.quality),
+      });
+    } catch (err) {
+      ioDeps.logger.warn({ runId: state.runId, entityId, err: String(err) }, "review_analysis:delivery_estimate degradou (guard passa direto)");
+    }
+  }
+  return headroomByEntity;
 }
 
 /** Params da ação de budget (direção + magnitude), quando for o caso. `pct` sempre ≥0. */

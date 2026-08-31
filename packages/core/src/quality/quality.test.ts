@@ -7,7 +7,17 @@ import {
   detectCreativeWeakness,
   detectHealthSignals,
   enrichEntitiesQuality,
+  resolveFrequencyCap,
 } from "./index.js";
+
+describe("resolveFrequencyCap (Fase 4 — teto de escala por audiência)", () => {
+  it("remarketing → teto de remarketing; prospecting/unknown → teto de prospecção; sem estágio → teto geral", () => {
+    expect(resolveFrequencyCap("remarketing", T)).toBe(T.frequencyCapByStage.remarketing);
+    expect(resolveFrequencyCap("prospecting", T)).toBe(T.frequencyCapByStage.prospecting);
+    expect(resolveFrequencyCap("unknown", T)).toBe(T.frequencyCapByStage.prospecting);
+    expect(resolveFrequencyCap(undefined, T)).toBe(T.fatigueFrequency);
+  });
+});
 
 describe("computeEligibility", () => {
   it("significância exige volume E baseline (proxy de ≥ janela)", () => {
