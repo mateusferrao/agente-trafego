@@ -1,8 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { agents, type Database } from "@trafego/db";
-import { configToolsFor, deliverReply, resolveFocusedAgent } from "./turn.js";
+import { buildInContextAllow, configToolsFor, deliverReply, resolveFocusedAgent } from "./turn.js";
 import type { SendToConversation } from "../notify/send-to-contact.js";
-import { CONFIG_CHAT_TOOL_NAMES } from "../../graphs/whatsapp-conversation/tools.js";
+import {
+  AGENT_TOOL_NAMES,
+  CONFIG_CHAT_TOOL_NAMES,
+  REFINE_TOOL_NAMES,
+  WRITE_TOOL_NAMES,
+} from "../../graphs/whatsapp-conversation/tools.js";
 
 const REF = { kind: "contact" as const, contactId: "contact-1" };
 
@@ -34,6 +39,35 @@ describe("configToolsFor (kill-switch da auto-config por chat, S2.3)", () => {
     const r = await configToolsFor(fakeDb({ bySource: { playbook: "suggest", llm: "suggest" }, autoConfigViaChat: false }), "o", "a");
     expect(r.enabled).toBe(false);
     expect(r.tools).toEqual([]);
+  });
+});
+
+describe("buildInContextAllow (kill-switch da escrita conversacional de ads, v1)", () => {
+  const writeTools = [...WRITE_TOOL_NAMES, "create_campaign", "copy_campaign", "scale_winner"];
+  const configTools = [...CONFIG_CHAT_TOOL_NAMES];
+
+  it("chatAdsWrites OFF (default v1) → NENHUMA tool de escrita/criação/refino entra", () => {
+    const allow = buildInContextAllow({ writeTools, configTools, chatAdsWrites: false });
+    // escrita Meta + criação + refino fora
+    for (const t of [...writeTools, ...REFINE_TOOL_NAMES]) expect(allow.has(t)).toBe(false);
+    // base (leitura + approve/reject + revert + confirm/cancel) e config seguem
+    expect(allow.has("approve")).toBe(true);
+    expect(allow.has("reject")).toBe(true);
+    expect(allow.has("revert_action")).toBe(true);
+    expect(allow.has("confirm_write")).toBe(true);
+    expect(allow.has("get_account_status")).toBe(true);
+    expect(allow.has("set_goal")).toBe(true);
+  });
+
+  it("chatAdsWrites ON → escrita/criação/refino voltam ao toolset (reverso da flag)", () => {
+    const allow = buildInContextAllow({ writeTools, configTools, chatAdsWrites: true });
+    for (const t of [...writeTools, ...REFINE_TOOL_NAMES]) expect(allow.has(t)).toBe(true);
+    expect(allow.has("approve")).toBe(true);
+  });
+
+  it("base sempre-ligada = AGENT_TOOL_NAMES, independente da flag", () => {
+    const off = buildInContextAllow({ writeTools, configTools: [], chatAdsWrites: false });
+    for (const t of AGENT_TOOL_NAMES) expect(off.has(t)).toBe(true);
   });
 });
 

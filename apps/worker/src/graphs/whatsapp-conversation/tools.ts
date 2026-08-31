@@ -73,6 +73,9 @@ export interface ConversationToolContext extends ReadToolContext {
   readonly accountName?: string;
   /** kill-switch da auto-config por chat ON (S2.3) — molda o system-prompt (chat × site). */
   readonly configViaChat?: boolean;
+  /** escrita conversacional de ads ligada (v1 MVP: default OFF). OFF → o chat não autora/edita/
+   *  muta a Meta; autoria/edição/ação vivem na plataforma. Molda prompt + copy de capacidades. */
+  readonly chatAdsWrites?: boolean;
 }
 
 // ── Vocabulário das tools de config (sem string mágica; espelham os enums do site).
@@ -745,6 +748,9 @@ export async function buildCapabilitiesText(
   const writeVerbs = [...WRITE_TOOL_NAMES].filter((n) => allow.has(n)).map((n) => WRITE_VERB_PT[n]).filter(Boolean);
   if (writeVerbs.length > 0) {
     parts.push(`✏️ Mexer nas campanhas (sempre te mostro e confirmo antes): ${writeVerbs.join(", ")}. Também dá pra desfazer o que apliquei.`);
+  } else if (ctx.chatAdsWrites === false) {
+    // v1: escrita conversacional desligada por plataforma — mexer é no site; aqui é recomendar+aprovar.
+    parts.push("✏️ Mexer nas campanhas (pausar, ajustar orçamento) é na plataforma — por aqui eu recomendo e você aprova/rejeita. Também dá pra desfazer o que apliquei.");
   } else {
     parts.push("✏️ Mexer nas campanhas: hoje está desligado nos guardrails — dá pra liberar nas configurações.");
   }
@@ -793,6 +799,9 @@ export async function buildCapabilitiesText(
     if (canCreate) {
       parts.push("🔢 Números que eu uso vêm sempre da conta/ferramenta — número de WhatsApp de destino eu confirmo pela campanha certa (nunca de outra), e público eu pego dos públicos reais da sua conta (não invento). Quando você escolhe um público, eu ainda te digo o alcance estimado dele (pra você saber se entrega bem).");
     }
+  } else if (ctx.chatAdsWrites === false) {
+    // v1: criação/escala/edição de campanha vivem na plataforma; o chat recomenda e aprova.
+    parts.push('🚀 Criar, copiar, escalar e EDITAR campanha é na plataforma (site) — por aqui eu levanto recomendações (inclusive de criar/escalar), você revisa e edita no site e aprova aqui ou lá. Peça "analisa agora" que eu trago o que dá pra fazer.');
   } else {
     parts.push("🚀 Criar, copiar ou escalar campanha: hoje está desligado nas ações permitidas — dá pra liberar nas configurações (pelo site).");
   }

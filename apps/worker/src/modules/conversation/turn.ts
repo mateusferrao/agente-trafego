@@ -142,6 +142,25 @@ async function allowedChatWriteTools(db: Database, orgId: string, agentId: strin
 }
 
 /**
+ * Allowlist do turno COM agente em contexto (5b-2). Base sempre-ligada (leitura + approve/reject +
+ * revert + confirm/cancel) ∪ config ∪ (escrita/refino SÓ com `chatAdsWrites`). v1 (kill-switch de
+ * plataforma): escrita conversacional OFF → NENHUMA tool de escrita Meta/refino entra (autoria/
+ * edição/ação vivem na plataforma). Puro/testável — a fonte da flag (env→deps) fica na casca.
+ */
+export function buildInContextAllow(opts: {
+  readonly writeTools: readonly string[];
+  readonly configTools: readonly string[];
+  readonly chatAdsWrites: boolean;
+}): Set<string> {
+  return new Set<string>([
+    ...AGENT_TOOL_NAMES,
+    ...(opts.chatAdsWrites ? opts.writeTools : []),
+    ...(opts.chatAdsWrites ? REFINE_TOOL_NAMES : []),
+    ...opts.configTools,
+  ]);
+}
+
+/**
  * Kill-switch da auto-config por chat (S2.3): a config só entra na allowlist quando
  * `autonomy_policy.autoConfigViaChat !== false` (ausente/true = ON; default). Desligado
  * → as tools de config NEM CHEGAM ao LLM (config passa a ser pelo site). NÃO passam por
@@ -199,6 +218,8 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
     multiAccount,
     // config-por-chat ligada? (molda o system-prompt: por chat × pelo site).
     configViaChat: config.enabled,
+    // escrita conversacional de ads (v1: default OFF) — molda toolset + prompt + capacidades.
+    chatAdsWrites: deps.conversation.chatAdsWrites,
     ...(inContext?.accountName ? { accountName: inContext.accountName } : {}),
   };
   // sem agente em contexto: concierge. Em GRUPO multi-conta, always-bind de LEITURA (S6) →
@@ -207,9 +228,13 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
     input.ref.kind === "group" && multiAccount ? GROUP_CONCIERGE_TOOL_NAMES : CONCIERGE_TOOL_NAMES;
   // escrita + criação resolvidas da MESMA fonte (bindings) que o apply usa (A2). Criação
   // desligada nos bindings → tool fora do toolset (recusa honesta), sem re-checar no apply.
-  const writeTools = inContext ? await allowedChatWriteTools(deps.db, input.orgId, inContext.agentId) : [];
+  // v1 (kill-switch de plataforma): escrita conversacional de ads OFF → NENHUMA tool de escrita/
+  // criação/refino entra no toolset (autoria/edição/ação vivem na plataforma). Consulta +
+  // approve/reject + revert + config seguem (vêm de AGENT_TOOL_NAMES/config, não daqui).
+  const chatAdsWrites = deps.conversation.chatAdsWrites;
+  const writeTools = inContext && chatAdsWrites ? await allowedChatWriteTools(deps.db, input.orgId, inContext.agentId) : [];
   const allow = inContext
-    ? new Set<string>([...AGENT_TOOL_NAMES, ...writeTools, ...REFINE_TOOL_NAMES, ...config.tools])
+    ? buildInContextAllow({ writeTools, configTools: config.tools, chatAdsWrites })
     : conciergeAllow;
 
   // Slice 7 (ponte estado→turno): o usuário mandou um criativo no WhatsApp (o intake guardou uma

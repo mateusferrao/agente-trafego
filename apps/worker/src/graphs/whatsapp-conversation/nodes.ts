@@ -515,6 +515,7 @@ export function makeConversationNodes(
       ctx.agentId.length > 0 ? ctx.agentId : null,
       deps.conversation.model,
       ctx.configViaChat ?? false,
+      ctx.chatAdsWrites ?? false,
     );
 
     // eco+confirma (5c): se há ação/reversão pendente válida, oriente o LLM a só
