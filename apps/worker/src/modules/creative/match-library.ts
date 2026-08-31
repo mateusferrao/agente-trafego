@@ -10,6 +10,12 @@ export interface LibraryCandidate {
   readonly assetId: string;
   /** descrição cacheada da visão (summary + gancho/ângulo/formato) — o que o criativo comunica. */
   readonly description: string;
+  /** força de prova percebida (S4c) — contexto extra, nunca critério sozinho (fit continua liderando). */
+  readonly proofStrength?: "weak" | "medium" | "strong";
+  /** nº de gatilhos de persuasão de Cialdini presentes, 0-7 (S4c). */
+  readonly persuasionSignals?: number;
+  /** fraquezas notadas pela visão (S4c) — ex: "CTA fraco". */
+  readonly weaknesses?: readonly string[];
 }
 
 export interface MatchContext {
@@ -36,8 +42,10 @@ function buildMessages(ctx: MatchContext, candidates: readonly LibraryCandidate[
     "Você escolhe qual criativo da BIBLIOTECA melhor se encaixa numa NOVA campanha, pelo CONTEXTO " +
     "(objetivo de negócio, contexto do negócio, orientações) e pela descrição de cada criativo. " +
     "Não escolha por 'qualidade genérica' — escolha o que mais CASA com o objetivo/negócio desta " +
-    "campanha (mensagem, ângulo e formato alinhados). Responda só o índice (0-based) do melhor.";
-  const list = candidates.map((c, i) => `[${i}] ${c.description}`).join("\n");
+    "campanha (mensagem, ângulo e formato alinhados). Prova/persuasão/fraquezas (quando presentes) são " +
+    "sinal extra, não critério sozinho: só desempatam entre candidatos de fit equivalente — nunca vencem " +
+    "um encaixe melhor. Responda só o índice (0-based) do melhor.";
+  const list = candidates.map((c, i) => `[${i}] ${describeCandidateForPrompt(c)}`).join("\n");
   const parts = [
     `Objetivo da campanha: ${ctx.goal}.`,
     ctx.businessContext ? `Contexto do negócio: ${ctx.businessContext}` : "",
@@ -52,6 +60,16 @@ function buildMessages(ctx: MatchContext, candidates: readonly LibraryCandidate[
     { role: "system", content: system },
     { role: "user", content: parts.join("\n") },
   ];
+}
+
+/** Descrição + sinais de qualidade (S4c), quando presentes — omite o que não veio (nunca inventa placeholder). */
+function describeCandidateForPrompt(c: LibraryCandidate): string {
+  const signals = [
+    c.proofStrength ? `prova: ${c.proofStrength}` : "",
+    typeof c.persuasionSignals === "number" ? `persuasão: ${c.persuasionSignals}/7` : "",
+    c.weaknesses && c.weaknesses.length > 0 ? `fraquezas: ${c.weaknesses.join(", ")}` : "",
+  ].filter(Boolean);
+  return signals.length > 0 ? `${c.description} (${signals.join(" · ")})` : c.description;
 }
 
 /**

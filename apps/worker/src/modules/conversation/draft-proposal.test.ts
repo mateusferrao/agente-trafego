@@ -36,7 +36,12 @@ function fakeDepsWithMatch(libRows: unknown[], visionRows: unknown[], pickIndex:
       return { from: () => ({ where: () => visionRows }) }; // vision query (await direto)
     },
   };
-  const llm = { completeStructured: vi.fn(async () => ({ output: { index: pickIndex }, usage: { inputTokens: 0, outputTokens: 0 } })) };
+  const llm = {
+    completeStructured: vi.fn(async (_req: { messages: Array<{ role: string; content: string }> }) => ({
+      output: { index: pickIndex },
+      usage: { inputTokens: 0, outputTokens: 0 },
+    })),
+  };
   return { deps: { db, visionAnalyzerVersion: 1, ports: { llm } } as unknown as WorkerDeps, llm };
 }
 
@@ -125,6 +130,28 @@ describe("chooseCreative (pool único: veiculando + biblioteca)", () => {
     expect(llm.completeStructured).toHaveBeenCalledOnce(); // consultou o contexto
     expect(out?.assetId).toBe("b"); // escolheu pelo contexto (index 1), não a recência (a)
     expect(out?.source).toBe("library");
+  });
+
+  it("S4c — sinais de qualidade da visão (proofStrength/persuasionSignals/weaknesses) chegam ao matcher", async () => {
+    const { deps, llm } = fakeDepsWithMatch(
+      [
+        { id: "a", imageHash: "HA", videoId: null },
+        { id: "b", imageHash: "HB", videoId: null },
+      ],
+      [
+        { hash: creativeContentHash("a", undefined), result: { summary: "desc a" } },
+        {
+          hash: creativeContentHash("b", undefined),
+          result: { summary: "desc b", proofStrength: "strong", persuasionSignals: 5, weaknesses: ["CTA fraco"] },
+        },
+      ],
+      1,
+    );
+    await chooseCreative(deps, ORG, ACC, AGENT, REF, {}, BEST_PERFORMING, MATCH);
+    const sent = llm.completeStructured.mock.calls[0]![0].messages[1]!.content;
+    expect(sent).toContain("prova: strong");
+    expect(sent).toContain("persuasão: 5/7");
+    expect(sent).toContain("CTA fraco");
   });
 
   it("veiculando em vídeo, sem fadiga → escolhe o vídeo veiculado", async () => {

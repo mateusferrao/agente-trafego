@@ -1322,18 +1322,33 @@ export async function chooseCreative(
       deps.ports.llm,
       match.model,
       match,
-      described.map((c) => ({ assetId: c.key, description: c.description })),
+      described.map(toLibraryCandidate),
     );
     if (picked) chosen = pool.find((c) => c.key === picked) ?? chosen;
   }
   return chosen.ref;
 }
 
-/** Um candidato a criativo com descrição (pro matcher) + a ref concreta (pro spec). */
+/** Um candidato a criativo com descrição (pro matcher) + a ref concreta (pro spec). Sinais de
+ *  qualidade (S4c) são opcionais — vêm da visão cacheada, quando disponível. */
 interface DescribedCandidate {
   readonly key: string;
   readonly description: string;
   readonly ref: ChosenCreative;
+  readonly proofStrength?: "weak" | "medium" | "strong";
+  readonly persuasionSignals?: number;
+  readonly weaknesses?: readonly string[];
+}
+
+/** `DescribedCandidate` → `LibraryCandidate` (repassa os sinais de qualidade quando presentes, S4c). */
+function toLibraryCandidate(c: DescribedCandidate): { assetId: string; description: string; proofStrength?: "weak" | "medium" | "strong"; persuasionSignals?: number; weaknesses?: readonly string[] } {
+  return {
+    assetId: c.key,
+    description: c.description,
+    ...(c.proofStrength ? { proofStrength: c.proofStrength } : {}),
+    ...(c.persuasionSignals != null ? { persuasionSignals: c.persuasionSignals } : {}),
+    ...(c.weaknesses && c.weaknesses.length > 0 ? { weaknesses: c.weaknesses } : {}),
+  };
 }
 
 /** Escolha na BIBLIOTECA por contexto (o caminho de hoje quando não há veiculando). `null` = vazia. */
@@ -1352,7 +1367,7 @@ async function chooseLibraryByContext(
       deps.ports.llm,
       match.model,
       match,
-      described.map((c) => ({ assetId: c.key, description: c.description })),
+      described.map(toLibraryCandidate),
     );
     if (picked) chosen = pool.find((c) => c.key === picked) ?? chosen;
   }
@@ -1544,18 +1559,22 @@ async function describeLibraryCandidates(deps: WorkerDeps, orgId: string, accoun
         eq(creativeVisionAnalyses.analyzerVersion, deps.visionAnalyzerVersion),
       ),
     );
-  const descByHash = new Map(visions.map((v) => [v.hash, describeVision(v.result)]));
-  return withMedia.map((l) => ({
-    key: `lib:${l.id}`,
-    description: descByHash.get(hashOf.get(l.id)!) ?? "",
-    ref: {
-      ...(l.imageHash ? { imageHash: l.imageHash } : {}),
-      ...(l.videoId ? { videoId: l.videoId } : {}),
-      assetId: l.id,
-      origin: "upload",
-      source: "library",
-    },
-  }));
+  const resultByHash = new Map(visions.map((v) => [v.hash, v.result]));
+  return withMedia.map((l) => {
+    const result = resultByHash.get(hashOf.get(l.id)!);
+    return {
+      key: `lib:${l.id}`,
+      description: describeVision(result),
+      ...visionSignalsOf(result),
+      ref: {
+        ...(l.imageHash ? { imageHash: l.imageHash } : {}),
+        ...(l.videoId ? { videoId: l.videoId } : {}),
+        assetId: l.id,
+        origin: "upload",
+        source: "library",
+      },
+    };
+  });
 }
 
 /** Candidatos VEICULANDO (X mais recentes de `ad_creatives`) com DESCRIÇÃO de visão cache-read-through:
@@ -1615,7 +1634,8 @@ async function describeServingCandidates(deps: WorkerDeps, orgId: string, accoun
   const out: DescribedCandidate[] = [];
   for (const { r, copy, contentHash } of keyed) {
     const wasCached = cachedByHash.has(contentHash);
-    let description = wasCached ? describeVision(cachedByHash.get(contentHash)) : "";
+    let visionResult: unknown = wasCached ? cachedByHash.get(contentHash) : undefined;
+    let description = wasCached ? describeVision(visionResult) : "";
     if (!wasCached) {
       // MISS: monta a mídia e computa fresh (auto-cacheia). Imagem = url guardado; vídeo = frames ao vivo.
       let imageUrls: string[] = [];
@@ -1630,13 +1650,17 @@ async function describeServingCandidates(deps: WorkerDeps, orgId: string, accoun
       }
       if (imageUrls.length > 0) {
         const result = await vision.resolve({ creativeId: r.creativeId!, imageUrls, contentHash, ...(copy ? { copy } : {}) });
-        if (result) description = describeVision(result);
+        if (result) {
+          description = describeVision(result);
+          visionResult = result;
+        }
       }
     }
     if (!description) description = copy ? `Anúncio que já veicula. Texto: ${copy}` : "Anúncio que já veicula.";
     out.push({
       key: `srv:${r.adId}`,
       description,
+      ...visionSignalsOf(visionResult),
       ref: {
         ...(r.imageHash ? { imageHash: r.imageHash } : {}),
         ...(r.videoId ? { videoId: r.videoId } : {}),
@@ -1660,6 +1684,20 @@ function describeVision(result: unknown): string {
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+/** Sinais de qualidade da visão cacheada (S4c) — contexto extra pro matcher, nunca critério sozinho. */
+function visionSignalsOf(result: unknown): {
+  proofStrength?: "weak" | "medium" | "strong";
+  persuasionSignals?: number;
+  weaknesses?: readonly string[];
+} {
+  const r = (result ?? {}) as { proofStrength?: "weak" | "medium" | "strong"; persuasionSignals?: number; weaknesses?: readonly string[] };
+  return {
+    ...(r.proofStrength ? { proofStrength: r.proofStrength } : {}),
+    ...(typeof r.persuasionSignals === "number" ? { persuasionSignals: r.persuasionSignals } : {}),
+    ...(r.weaknesses && r.weaknesses.length > 0 ? { weaknesses: r.weaknesses } : {}),
+  };
 }
 
 /** Criar do zero reusando o criativo/página/pixel da conta + copy gerada. */
