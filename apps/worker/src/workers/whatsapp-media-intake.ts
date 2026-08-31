@@ -49,6 +49,10 @@ const NOTICE = {
     `esse vídeo é grande demais pra eu receber por aqui (limite ${maxMb}MB) — sobe ele pela biblioteca de criativos no site.`,
   saved: (accountName: string) =>
     `imagem guardada na biblioteca de criativos${accountName ? ` da ${accountName}` : ""} — já dá pra usar num rascunho de campanha.`,
+  // v1 (escrita conversacional OFF): salva na biblioteca, sem oferta de criar/trocar por chat —
+  // o uso do criativo num rascunho é na plataforma (site).
+  savedLibraryOnly: (accountName: string) =>
+    `imagem guardada na biblioteca de criativos${accountName ? ` da ${accountName}` : ""} — dá pra usar num rascunho de campanha pela plataforma (site).`,
   savedOfferUse: () =>
     `imagem guardada! quer que eu use ela no rascunho de campanha que te propus? Responde *sim* que eu troco o criativo.`,
   savedOfferCreate: (accountName: string) =>
@@ -85,6 +89,9 @@ export interface MediaIntakeDeps {
   readonly sendToConversation: SendToConversation;
   /** guarda a OFERTA (usar no rascunho / criar) pro próximo turno resolver (ponte estado→turno). */
   readonly redis: Redis;
+  /** escrita conversacional de ads (v1: default OFF). OFF → salva na biblioteca SEM oferta de
+   *  criar/trocar por chat (usar o criativo num rascunho é na plataforma). */
+  readonly chatAdsWrites: boolean;
   readonly logger: Pick<Logger, "debug" | "warn">;
 }
 
@@ -186,9 +193,14 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
       );
       // imagem `ready` → analisa a visão 1x (cache) pra biblioteca (mesmo pipeline do web).
       await d.ports.scheduler.enqueue(buildCreativeAnalyzeJob({ orgId, adAccountId: adAccountUuid, assetId }));
-      // fecha o loop (Slice 7): guarda uma OFERTA pro próximo turno resolver no "sim" — usar o
-      // criativo no rascunho pendente, ou criar uma campanha com ele. (Vídeo = fast-follow: nasce
-      // `pending`, não dá pra usar até o poll flipar ready.)
+      // v1 (kill-switch): usar o criativo enviado = autoria/edição por chat. OFF → salva na
+      // biblioteca e NÃO guarda oferta (o uso num rascunho é na plataforma). ON → fecha o loop
+      // (Slice 7): guarda uma OFERTA pro próximo turno resolver no "sim". (Vídeo = fast-follow.)
+      if (!d.chatAdsWrites) {
+        await d.sendToConversation(ref, NOTICE.savedLibraryOnly(account.name), { split: true, quoteLastInbound: true });
+        d.logger.debug({ conversationId, metaImageHash }, "intake:saved (writes off — sem oferta)");
+        return;
+      }
       const draftId = await pendingFromScratchDraftId(d.db, orgId, adAccountUuid);
       await setCreativeOffer(d.redis, conversationId, { assetId, ...(draftId ? { draftId } : {}) });
       await d.sendToConversation(ref, draftId ? NOTICE.savedOfferUse() : NOTICE.savedOfferCreate(account.name), {
@@ -218,6 +230,7 @@ export function startWhatsappMediaIntakeWorker(deps: WorkerDeps, connection: Red
     maxWhatsappVideoBytes: deps.creative.maxWhatsappVideoBytes,
     sendToConversation: createSendToConversation({ messaging: ports.messaging, repo }),
     redis: deps.redis,
+    chatAdsWrites: deps.conversation.chatAdsWrites,
     logger,
   });
 

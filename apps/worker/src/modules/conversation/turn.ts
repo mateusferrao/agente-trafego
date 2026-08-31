@@ -241,7 +241,10 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
   // OFERTA no Redis) e agora respondeu. Só um "sim" CLARO resolve — usar o criativo no rascunho
   // pendente ou criar uma campanha com ele — ANTES do grafo. Ambíguo/composto → segue pro turno
   // normal (a oferta fica no TTL; o usuário pode confirmar depois). Precisa de agente em contexto.
-  if (inContext) {
+  // v1 (kill-switch): usar o criativo enviado = autoria/edição de campanha por chat → só com
+  // chatAdsWrites ON. OFF → o intake nem guarda oferta (media-intake); a imagem fica na biblioteca
+  // pro usuário usar num rascunho no site.
+  if (inContext && chatAdsWrites) {
     const offer = await getCreativeOffer(deps.redis, input.conversationId);
     if (offer && isSimpleAffirmation(input.text)) {
       try {

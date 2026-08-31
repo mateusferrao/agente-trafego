@@ -1,178 +1,78 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Database } from "@trafego/db/client";
 import type { WhatsappMediaIntakePayload } from "@trafego/shared";
-import { makeMediaIntake, type MediaIntakeDeps } from "./whatsapp-media-intake.js";
 
-const REF = { kind: "contact", contactId: "c1" } as const;
-const MESSAGE_KEY = { id: "m1", remoteJid: "5511@s.whatsapp.net", fromMe: false };
+// ── mocks de módulo: ingestão (biblioteca) + oferta (Redis) ─────────────────────────────────
+const setCreativeOffer = vi.fn(async () => {});
+vi.mock("../modules/conversation/creative-offer.js", () => ({ setCreativeOffer }));
+const ingestCreativeImage = vi.fn(async () => ({ assetId: "asset-1", metaImageHash: "hash-1" }));
+const ingestCreativeVideo = vi.fn();
+vi.mock("@trafego/creative-library", () => ({ ingestCreativeImage, ingestCreativeVideo }));
 
-const IMAGE_PAYLOAD: WhatsappMediaIntakePayload = {
+const { makeMediaIntake } = await import("./whatsapp-media-intake.js");
+
+const REF = { kind: "contact" as const, contactId: "c-1" };
+const PAYLOAD: WhatsappMediaIntakePayload = {
   orgId: "org-1",
+  conversationId: "cv-1",
   ref: REF,
-  conversationId: "conv-1",
   instanceId: "inst-1",
   mediaType: "image",
-  media: { base64: Buffer.from([1, 2, 3]).toString("base64"), mimetype: "image/png", caption: "logo", messageKey: MESSAGE_KEY },
-};
+  media: { base64: "QUFBQQ==", mimetype: "image/jpeg", messageKey: {}, caption: undefined },
+} as unknown as WhatsappMediaIntakePayload;
 
-const VIDEO_PAYLOAD: WhatsappMediaIntakePayload = {
-  orgId: "org-1",
-  ref: REF,
-  conversationId: "conv-1",
-  instanceId: "inst-1",
-  mediaType: "video",
-  media: { mimetype: "video/mp4", caption: "promo", messageKey: MESSAGE_KEY }, // sem base64 inline
-};
+/** db falso: pendingFromScratchDraftId → nenhuma pendência (draftId null). */
+function fakeDb(): Database {
+  return {
+    select: () => ({ from: () => ({ where: () => ({ orderBy: () => ({ limit: async () => [] }) }) }) }),
+  } as unknown as Database;
+}
 
-const ACCOUNT = { metaAdAccountId: "act_123", name: "Loja X", currency: "BRL", tokenCripto: { v: 1 } as never };
-
-/** db fake encadeável: select→from→where→limit devolve `selectRows`; insert→values→
- *  onConflictDoNothing→returning devolve `insertReturns` (dedup real, P0.2). */
-function fakeDb(selectRows: unknown[] = [], insertReturns: unknown[] = [{ id: "new-id" }]) {
-  const inserted: unknown[] = [];
-  const db = {
-    select: () => ({
-      from: () => ({ where: () => ({ orderBy: () => ({ limit: () => selectRows }), limit: () => selectRows }) }),
-    }),
-    insert: () => ({
-      values: (v: unknown) => {
-        inserted.push(v);
-        return { onConflictDoNothing: () => ({ returning: () => insertReturns }) };
+function makeDeps(chatAdsWrites: boolean) {
+  const sendToConversation = vi.fn(async (_ref: unknown, _msg: string, _opts?: unknown) => true);
+  return {
+    deps: {
+      db: fakeDb(),
+      repo: { contextAdAccountId: vi.fn(async () => "acc-uuid") },
+      analysisRepo: { loadAccount: vi.fn(async () => ({ metaAdAccountId: "act_1", tokenCripto: "enc", name: "Loja" })) },
+      ports: {
+        ads: { uploadImage: vi.fn(), uploadVideo: vi.fn() },
+        messaging: { fetchMediaBase64: vi.fn(async () => "") },
+        vault: { decrypt: vi.fn(() => "token") },
+        storage: {} as never,
+        scheduler: { enqueue: vi.fn(async () => {}) },
       },
-    }),
-    update: () => ({ set: () => ({ where: () => Promise.resolve() }) }),
-    delete: () => ({ where: () => Promise.resolve() }),
-  };
-  return { db: db as unknown as MediaIntakeDeps["db"], inserted };
-}
-
-const TEN_MB = 10 * 1024 * 1024;
-
-function makeDeps(over: Partial<MediaIntakeDeps> = {}, selectRows: unknown[] = []): {
-  deps: MediaIntakeDeps;
-  send: ReturnType<typeof vi.fn>;
-  uploadImage: ReturnType<typeof vi.fn>;
-  uploadVideo: ReturnType<typeof vi.fn>;
-  enqueue: ReturnType<typeof vi.fn>;
-  put: ReturnType<typeof vi.fn>;
-  inserted: unknown[];
-} {
-  const send = vi.fn().mockResolvedValue(true);
-  const uploadImage = vi.fn().mockResolvedValue({ imageHash: "HASH1" });
-  const uploadVideo = vi.fn().mockResolvedValue({ videoId: "VID1" });
-  const enqueue = vi.fn().mockResolvedValue(undefined);
-  const put = vi.fn().mockResolvedValue({ ref: "org/org-1/creatives/x", contentType: "image/png", sizeBytes: 3 });
-  const fetchMediaBase64 = vi.fn().mockResolvedValue(Buffer.from([9, 9]).toString("base64"));
-  const { db, inserted } = fakeDb(selectRows);
-  const deps: MediaIntakeDeps = {
-    db,
-    repo: { contextAdAccountId: vi.fn().mockResolvedValue("acct-uuid") },
-    analysisRepo: { loadAccount: vi.fn().mockResolvedValue(ACCOUNT) },
-    ports: {
-      ads: { uploadImage, uploadVideo },
-      messaging: { fetchMediaBase64 },
-      vault: { decrypt: vi.fn().mockReturnValue("tok") },
-      storage: { put, get: vi.fn(), delete: vi.fn(), signedUrl: vi.fn() },
-      scheduler: { enqueue },
+      maxWhatsappVideoBytes: 50 * 1024 * 1024,
+      sendToConversation,
+      redis: {} as never,
+      chatAdsWrites,
+      logger: { debug: vi.fn(), warn: vi.fn() },
     },
-    maxWhatsappVideoBytes: TEN_MB,
-    sendToConversation: send,
-    redis: { set: vi.fn().mockResolvedValue("OK"), get: vi.fn(), del: vi.fn() } as unknown as MediaIntakeDeps["redis"],
-    logger: { debug: vi.fn(), warn: vi.fn() },
-    ...over,
+    sendToConversation,
   };
-  return { deps, send, uploadImage, uploadVideo, enqueue, put, inserted };
 }
 
-describe("makeMediaIntake — imagem", () => {
-  it("happy: grava blob, sobe pra Meta, insere asset e confirma", async () => {
-    const { deps, send, uploadImage, inserted } = makeDeps();
-    await makeMediaIntake(deps)(IMAGE_PAYLOAD);
-    expect(uploadImage).toHaveBeenCalledWith({ adAccountId: "act_123", accessToken: "tok" }, expect.objectContaining({ filename: "logo.png" }));
-    expect(inserted).toHaveLength(1);
-    expect(inserted[0]).toMatchObject({ origin: "upload", format: "image", metaImageHash: "HASH1" });
-    expect(send).toHaveBeenCalledWith(REF, expect.stringContaining("Loja X"), expect.anything());
+describe("makeMediaIntake — imagem × kill-switch da escrita conversacional (v1)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("chatAdsWrites OFF → salva na biblioteca, NÃO guarda oferta, aponta a plataforma", async () => {
+    const { deps, sendToConversation } = makeDeps(false);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await makeMediaIntake(deps as any)(PAYLOAD);
+    expect(ingestCreativeImage).toHaveBeenCalledOnce(); // biblioteca preservada
+    expect(setCreativeOffer).not.toHaveBeenCalled(); // sem oferta de criar/trocar
+    const msg = sendToConversation.mock.calls[0]?.[1] as string;
+    expect(msg).toContain("biblioteca");
+    expect(msg).toContain("site");
   });
 
-  it("sem conta em foco → pede a conta, não sobe nada", async () => {
-    const { deps, send, uploadImage } = makeDeps({ repo: { contextAdAccountId: vi.fn().mockResolvedValue(null) } });
-    await makeMediaIntake(deps)(IMAGE_PAYLOAD);
-    expect(uploadImage).not.toHaveBeenCalled();
-    expect(send).toHaveBeenCalledWith(REF, expect.stringContaining("de qual conta"), expect.anything());
-  });
-
-  it("idempotente: asset já existe (mesmo conteúdo) → não re-insere", async () => {
-    const { deps, inserted, send } = makeDeps({}, [{ id: "existing", status: "ready", metaImageHash: "HASH1", metaVideoId: null, archivedAt: null }]);
-    await makeMediaIntake(deps)(IMAGE_PAYLOAD);
-    expect(inserted).toHaveLength(0);
-    expect(send).toHaveBeenCalledWith(REF, expect.stringContaining("guardada"), expect.anything());
-  });
-
-  it("imagem sem rascunho pendente → guarda OFERTA de criar (redis) + convida a criar campanha", async () => {
-    const { deps, send } = makeDeps({}, []); // selectRows=[] → sem asset existente, sem rascunho pendente
-    await makeMediaIntake(deps)(IMAGE_PAYLOAD);
-    expect(deps.redis.set as ReturnType<typeof vi.fn>).toHaveBeenCalled(); // oferta guardada pro próximo turno
-    expect(send).toHaveBeenCalledWith(REF, expect.stringContaining("campanha com ela"), expect.anything());
-  });
-
-  it("falha de upload → avisa e re-lança (BullMQ re-tenta)", async () => {
-    const boom = new Error("meta 500");
-    const { deps, send } = makeDeps();
-    (deps.ports.ads.uploadImage as ReturnType<typeof vi.fn>).mockRejectedValue(boom);
-    await expect(makeMediaIntake(deps)(IMAGE_PAYLOAD)).rejects.toThrow("meta 500");
-    expect(send).toHaveBeenCalledWith(REF, expect.stringContaining("problema pra guardar"), expect.anything());
-  });
-});
-
-describe("makeMediaIntake — vídeo", () => {
-  it("busca bytes por messageKey (sem base64 inline), sobe pending e enfileira o poll", async () => {
-    const { deps, uploadVideo, enqueue, inserted } = makeDeps();
-    await makeMediaIntake(deps)(VIDEO_PAYLOAD);
-    expect(uploadVideo).toHaveBeenCalled();
-    expect(inserted[0]).toMatchObject({ format: "video", status: "pending", metaVideoId: "VID1" });
-    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ queue: "creative-video-poll" }));
-  });
-
-  it("vídeo grande demais (> cap WhatsApp, checado PÓS-decode) → avisa e NÃO sobe", async () => {
-    const big = Buffer.alloc(TEN_MB + 1).toString("base64");
-    const { deps, send, uploadVideo, enqueue } = makeDeps();
-    (deps.ports.messaging.fetchMediaBase64 as ReturnType<typeof vi.fn>).mockResolvedValue(big);
-    await makeMediaIntake(deps)(VIDEO_PAYLOAD); // sem fileLength na metadata → fallback pós-decode
-    expect(uploadVideo).not.toHaveBeenCalled();
-    expect(enqueue).not.toHaveBeenCalled();
-    expect(send).toHaveBeenCalledWith(REF, expect.stringContaining("grande demais"), expect.anything());
-  });
-
-  it("P0.3: vídeo grande demais por fileLength da METADATA → recusa SEM baixar os bytes", async () => {
-    const { deps, send, uploadVideo, enqueue } = makeDeps();
-    const fetchMediaBase64 = deps.ports.messaging.fetchMediaBase64 as ReturnType<typeof vi.fn>;
-    const payload: WhatsappMediaIntakePayload = {
-      ...VIDEO_PAYLOAD,
-      media: { ...VIDEO_PAYLOAD.media, fileLength: TEN_MB + 1 },
-    };
-    await makeMediaIntake(deps)(payload);
-    expect(fetchMediaBase64).not.toHaveBeenCalled(); // nem tentou buscar os bytes
-    expect(uploadVideo).not.toHaveBeenCalled();
-    expect(enqueue).not.toHaveBeenCalled();
-    expect(send).toHaveBeenCalledWith(REF, expect.stringContaining("grande demais"), expect.anything());
-  });
-
-  it("P0.3: fileLength dentro do cap → segue normal (busca os bytes)", async () => {
-    const { deps, uploadVideo } = makeDeps();
-    const fetchMediaBase64 = deps.ports.messaging.fetchMediaBase64 as ReturnType<typeof vi.fn>;
-    const payload: WhatsappMediaIntakePayload = {
-      ...VIDEO_PAYLOAD,
-      media: { ...VIDEO_PAYLOAD.media, fileLength: 1024 },
-    };
-    await makeMediaIntake(deps)(payload);
-    expect(fetchMediaBase64).toHaveBeenCalled();
-    expect(uploadVideo).toHaveBeenCalled();
-  });
-
-  it("sem bytes (fetch falhou) → avisa e encerra", async () => {
-    const { deps, send, uploadVideo } = makeDeps();
-    (deps.ports.messaging.fetchMediaBase64 as ReturnType<typeof vi.fn>).mockResolvedValue(null);
-    await makeMediaIntake(deps)(VIDEO_PAYLOAD);
-    expect(uploadVideo).not.toHaveBeenCalled();
-    expect(send).toHaveBeenCalledWith(REF, expect.stringContaining("não consegui baixar"), expect.anything());
+  it("chatAdsWrites ON → guarda a oferta (fecha o loop do Slice 7)", async () => {
+    const { deps, sendToConversation } = makeDeps(true);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await makeMediaIntake(deps as any)(PAYLOAD);
+    expect(ingestCreativeImage).toHaveBeenCalledOnce();
+    expect(setCreativeOffer).toHaveBeenCalledOnce();
+    const msg = sendToConversation.mock.calls[0]?.[1] as string;
+    expect(msg.toLowerCase()).toContain("sim"); // oferta pede um "sim"
   });
 });
