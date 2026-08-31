@@ -801,7 +801,7 @@ export async function buildCapabilitiesText(
     }
   } else if (ctx.chatAdsWrites === false) {
     // v1: criação/escala/edição de campanha vivem na plataforma; o chat recomenda e aprova.
-    parts.push('🚀 Criar, copiar, escalar e EDITAR campanha é na plataforma (site) — por aqui eu levanto recomendações (inclusive de criar/escalar), você revisa e edita no site e aprova aqui ou lá. Peça "analisa agora" que eu trago o que dá pra fazer.');
+    parts.push('🚀 Criar/escalar campanha aqui é por RECOMENDAÇÃO (o site não cria do zero): eu proponho uma campanha — proativamente ou quando você pede "analisa agora" — com criativo e público; você revisa, edita os detalhes (edição fina + escolha do criativo no site) e aprova (aqui ou lá). Não crio/edito campanha ad-hoc por conversa.');
   } else {
     parts.push("🚀 Criar, copiar ou escalar campanha: hoje está desligado nas ações permitidas — dá pra liberar nas configurações (pelo site).");
   }
@@ -873,6 +873,7 @@ export const AGENT_TOOL_NAMES: ReadonlySet<string> = new Set([
   "get_metrics",
   "get_fresh_metrics",
   "get_campaign_analysis",
+  "get_campaign_status",
   "list_campaigns",
   "get_entity_detail",
   "compare_periods",
@@ -922,6 +923,7 @@ export const GROUP_CONCIERGE_TOOL_NAMES: ReadonlySet<string> = new Set([
   "get_metrics",
   "get_fresh_metrics",
   "get_campaign_analysis",
+  "get_campaign_status",
   "list_campaigns",
   "get_entity_detail",
   "compare_periods",

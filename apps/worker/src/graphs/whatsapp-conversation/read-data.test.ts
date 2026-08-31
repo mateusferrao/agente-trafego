@@ -429,7 +429,8 @@ describe("listRecommendationsData", () => {
       ]),
     );
     const res = await listRecommendationsData(db, AGENT, ORG);
-    expect(res).toEqual([{ title: "Pausar ad X", rationale: "sem venda", riskLevel: "low" }]);
+    expect(res).toMatchObject({ hasData: true, recommendations: [{ title: "Pausar ad X", rationale: "sem venda", riskLevel: "low" }] });
+    expect((res as { asOf: string }).asOf).toBeTypeOf("string");
   });
 
   it("run sem recomendações → hasData:false", async () => {

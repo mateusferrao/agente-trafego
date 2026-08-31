@@ -15,6 +15,7 @@ import { z } from "zod";
 import { adAccounts, adCreatives, agentRuns, agentToolCalls, agents, campaignDrafts, customAudiences, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
 import { daysAgoInTz, rankAdCreatives, resolveNamedMatch, todayInTz, type RankableCreative } from "@trafego/core";
+import { mapStatus } from "@trafego/ads-meta";
 import { createAnalysisRepo, type AdCreativeCopyRow } from "../../modules/analysis/repo.js";
 import { withTimeout } from "../../modules/conversation/with-timeout.js";
 import {
@@ -457,12 +458,14 @@ export async function listCampaignsData(
   return { hasData: true, asOf: rows[0]!.analyzedAt.toISOString(), campaigns };
 }
 
-/** Recomendações do último run finalizado do agente. Vazio → `hasData:false`. */
+/** Recomendações do último run finalizado do agente + `asOf` (frescor — QUANDO a análise rodou).
+ *  Vazio → `hasData:false`. O `asOf` é o carimbo: recs dependentes de status (reativar/pausar) podem
+ *  ter horas → o agente confirma ao vivo (get_campaign_status) antes de agir/afirmar. */
 export async function listRecommendationsData(
   db: Database,
   agentId: string,
   orgId: string,
-): Promise<RecommendationItem[] | NoData> {
+): Promise<{ hasData: true; asOf: string; recommendations: RecommendationItem[] } | NoData> {
   const run = await latestFinishedRun(db, agentId, orgId);
   if (!run) return { hasData: false, note: "sem análise concluída ainda" };
 
@@ -476,7 +479,8 @@ export async function listRecommendationsData(
     .where(and(eq(recommendations.runId, run.id), eq(recommendations.orgId, orgId)));
 
   if (recs.length === 0) return { hasData: false, note: "a última análise não gerou recomendações" };
-  return recs.map((r) => ({ title: r.title, rationale: r.rationale ?? null, riskLevel: r.riskLevel }));
+  const asOf = (run.finishedAt ?? run.createdAt).toISOString();
+  return { hasData: true, asOf, recommendations: recs.map((r) => ({ title: r.title, rationale: r.rationale ?? null, riskLevel: r.riskLevel })) };
 }
 
 /** Aprovações pendentes da org (cross-conta por design). Vazio → `hasData:false`. `action` +
@@ -1067,6 +1071,48 @@ export async function listCampaignsLive(
 }
 
 /**
+ * Status AO VIVO de UMA campanha (fresco — via `readEntityState`, que BATE na Meta e NÃO usa o
+ * cache de entidades; o cache não invalida numa mudança feita direto no Ads Manager). Resolve por
+ * id ou por nome (fuzzy). É a fonte da verdade pra "está ativa/pausada?" — o agente NUNCA deve
+ * inferir status pelo GASTO (0 gasto ≠ pausada). Bounded: Meta lenta degrada honesto.
+ */
+export async function campaignStatusData(
+  deps: WorkerDeps,
+  ctx: ReadToolContext,
+  input: { campaignId?: string; name?: string },
+): Promise<{ hasData: true; id: string; name: string | null; status: string; source: "live" } | NoData> {
+  const repo = createAnalysisRepo(deps.db);
+  const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
+  if (!account) return { hasData: false, note: "conta não encontrada" };
+  const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
+
+  let id = input.campaignId?.trim();
+  let name: string | null = null;
+  if (!id) {
+    if (!input.name?.trim()) return { hasData: false, note: "me diga o id ou o nome da campanha" };
+    let live;
+    try {
+      live = await withTimeout(deps.ports.ads.listEntities(ref, "campaign"), deps.conversation.liveFetchTimeoutMs);
+    } catch {
+      return { hasData: false, note: "não consegui buscar a campanha agora — tenta de novo em instantes" };
+    }
+    const m = resolveNamedMatch(live, input.name, { name: (e) => e.name, keys: (e) => [e.id] });
+    if (m.kind === "none") return { hasData: false, note: `não achei uma campanha com "${input.name}"` };
+    if (m.kind === "ambiguous") return { hasData: false, note: `tem mais de uma campanha parecida com "${input.name}" — me passe o id` };
+    id = m.row.id;
+    name = m.row.name;
+  }
+  // STATUS FRESCO: readEntityState não passa pelo cache (reflete reativação/pausa externa AGORA).
+  try {
+    const raw = await withTimeout(deps.ports.ads.readEntityState(ref, id), deps.conversation.liveFetchTimeoutMs);
+    const status = mapStatus(raw["effective_status"] as string | undefined, raw["status"] as string | undefined);
+    return { hasData: true, id, name, status, source: "live" };
+  } catch {
+    return { hasData: false, note: "não consegui confirmar o status ao vivo agora — tenta de novo em instantes" };
+  }
+}
+
+/**
  * Renderiza o número + origem de forma HONESTA e DETERMINÍSTICA (emitido verbatim pela
  * casca — o LLM não digita os dígitos, então não pode misatribuir). `meta_promoted_object`/
  * `meta_cta`/`meta_page` = confiante; `campaign_name` = pede confirmação (o nome não é
@@ -1183,6 +1229,23 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
       description:
         "Última análise de uma campanha pelo nome (busca por trecho, sem diferenciar maiúsculas). Devolve o id (use-o para agir), resumo, métricas curadas e o maior gargalo.",
       schema: z.object({ name: z.string() }),
+    },
+  );
+
+  const getCampaignStatus = tool(
+    async ({ campaignId, name }: { campaignId?: string; name?: string }) => {
+      if (noFocus()) return NEEDS_FOCUS;
+      logger.debug({ agentId: ctx.agentId, campaignId, name }, "tool:get_campaign_status");
+      return asString(await campaignStatusData(deps, ctx, { ...(campaignId ? { campaignId } : {}), ...(name ? { name } : {}) }));
+    },
+    {
+      name: "get_campaign_status",
+      description:
+        "Status AO VIVO de uma campanha (ativa/pausada) direto da Meta AGORA — por id ou nome. É a ÚNICA fonte confiável de ativa/pausada: NUNCA deduza status pelo gasto (0 de gasto NÃO quer dizer pausada). Use SEMPRE antes de recomendar reativar/pausar/substituir uma campanha (a análise pode ter horas) e quando o usuário disser que uma campanha está ativa/pausada (confirme ao vivo em vez de só concordar).",
+      schema: z.object({
+        campaignId: z.string().nullable().optional().describe("id da campanha (preferido; use get_campaign_analysis/list_campaigns pra achar)"),
+        name: z.string().nullable().optional().describe("nome (ou trecho) da campanha — usado se não tiver o id; ambíguo → peço o id"),
+      }),
     },
   );
 
@@ -1430,6 +1493,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     getMetrics,
     getFreshMetrics,
     getCampaignAnalysis,
+    getCampaignStatus,
     listCampaigns,
     getEntityDetail,
     comparePeriods,
