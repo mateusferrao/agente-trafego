@@ -14,6 +14,7 @@ import {
   listPendingData,
   listRecommendationsData,
   enrichRecommendationsLiveStatus,
+  campaignStatusData,
   renderWhatsappNumber,
   resolveWhatsappNumber,
   pickAdIdsToRefresh,
@@ -701,6 +702,41 @@ describe("renderWhatsappNumber (verbatim, honesto)", () => {
     const t = renderWhatsappNumber({ number: null, source: "none" }, "Y");
     expect(t.toLowerCase()).toContain("não achei");
     expect(t.toLowerCase()).toContain("gerenciador");
+  });
+});
+
+describe("campaignStatusData (ambíguo → LISTA com status ao vivo, NÃO pede id)", () => {
+  const ctx = { orgId: "o1", agentId: "ag1", adAccountId: "acc1" } as never;
+  const account = [{ metaAdAccountId: "act_1", name: "X", currency: "BRL", accountToken: "tok", connToken: null }];
+  function deps(listEntities: () => Promise<unknown>, readEntityState: (ref: unknown, id: string) => Promise<unknown>) {
+    return {
+      db: fakeDb(new Map<unknown, unknown[]>([[adAccounts, account]])),
+      ports: { ads: { listEntities: vi.fn(listEntities), readEntityState: vi.fn(readEntityState) }, vault: { decrypt: (t: string) => t } },
+      conversation: { liveFetchTimeoutMs: 1000 },
+    } as never;
+  }
+
+  it("nome ambíguo → devolve TODAS as campanhas que casaram, com status ao vivo de cada", async () => {
+    const cats = [{ id: "c1", name: "TESTE - Melhores numeros" }, { id: "c2", name: "TESTE Initiate Checkout" }];
+    const st: Record<string, string> = { c1: "ACTIVE", c2: "PAUSED" };
+    const d = deps(async () => cats, async (_ref, id) => ({ status: st[id] }));
+    const out = await campaignStatusData(d, ctx, { name: "TESTE" });
+    expect(out).toMatchObject({ hasData: true });
+    const c = (out as { campaigns: { id: string; status: string }[] }).campaigns;
+    expect(c.length).toBe(2);
+    expect(c.map((x) => x.status).sort()).toEqual(["active", "paused"]);
+  });
+
+  it("id explícito → 1 campanha com status ao vivo", async () => {
+    const d = deps(async () => [], async () => ({ status: "ACTIVE" }));
+    const out = await campaignStatusData(d, ctx, { campaignId: "c9" });
+    expect(out).toMatchObject({ hasData: true, campaigns: [{ id: "c9", status: "active" }] });
+  });
+
+  it("nome sem match → hasData:false (não achei)", async () => {
+    const d = deps(async () => [{ id: "c1", name: "Outra campanha" }], async () => ({ status: "ACTIVE" }));
+    const out = await campaignStatusData(d, ctx, { name: "ZZZ inexistente" });
+    expect(out).toMatchObject({ hasData: false });
   });
 });
 

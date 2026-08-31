@@ -1180,15 +1180,19 @@ export async function campaignStatusData(
   deps: WorkerDeps,
   ctx: ReadToolContext,
   input: { campaignId?: string; name?: string },
-): Promise<{ hasData: true; id: string; name: string | null; status: string; source: "live" } | NoData> {
+): Promise<{ hasData: true; campaigns: Array<{ id: string; name: string | null; status: string }>; source: "live" } | NoData> {
   const repo = createAnalysisRepo(deps.db);
   const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
   if (!account) return { hasData: false, note: "conta não encontrada" };
   const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
 
-  let id = input.campaignId?.trim();
-  let name: string | null = null;
-  if (!id) {
+  // alvos a consultar: id explícito (1) OU as campanhas que casam com o nome. Ambíguo NÃO pede id —
+  // devolve TODAS as que casaram (com o status ao vivo de cada) pro usuário escolher.
+  let targets: Array<{ id: string; name: string | null }>;
+  const explicitId = input.campaignId?.trim();
+  if (explicitId) {
+    targets = [{ id: explicitId, name: null }];
+  } else {
     if (!input.name?.trim()) return { hasData: false, note: "me diga o id ou o nome da campanha" };
     let live;
     try {
@@ -1198,18 +1202,22 @@ export async function campaignStatusData(
     }
     const m = resolveNamedMatch(live, input.name, { name: (e) => e.name, keys: (e) => [e.id] });
     if (m.kind === "none") return { hasData: false, note: `não achei uma campanha com "${input.name}"` };
-    if (m.kind === "ambiguous") return { hasData: false, note: `tem mais de uma campanha parecida com "${input.name}" — me passe o id` };
-    id = m.row.id;
-    name = m.row.name;
+    targets = m.kind === "one" ? [{ id: m.row.id, name: m.row.name }] : m.rows.map((e) => ({ id: e.id, name: e.name }));
   }
-  // STATUS FRESCO: readEntityState não passa pelo cache (reflete reativação/pausa externa AGORA).
-  try {
-    const raw = await withTimeout(deps.ports.ads.readEntityState(ref, id), deps.conversation.liveFetchTimeoutMs);
-    const status = mapStatus(raw["effective_status"] as string | undefined, raw["status"] as string | undefined);
-    return { hasData: true, id, name, status, source: "live" };
-  } catch {
-    return { hasData: false, note: "não consegui confirmar o status ao vivo agora — tenta de novo em instantes" };
+
+  // STATUS FRESCO de cada alvo (readEntityState não passa pelo cache → reflete reativação/pausa
+  // externa AGORA). Bounded (resolveNamedMatch já capa a lista). Falha numa → pula só ela.
+  const campaigns: Array<{ id: string; name: string | null; status: string }> = [];
+  for (const t of targets) {
+    try {
+      const raw = await withTimeout(deps.ports.ads.readEntityState(ref, t.id), deps.conversation.liveFetchTimeoutMs);
+      campaigns.push({ id: t.id, name: t.name, status: mapStatus(raw["effective_status"] as string | undefined, raw["status"] as string | undefined) });
+    } catch {
+      /* pula essa — best-effort */
+    }
   }
+  if (campaigns.length === 0) return { hasData: false, note: "não consegui confirmar o status ao vivo agora — tenta de novo em instantes" };
+  return { hasData: true, campaigns, source: "live" };
 }
 
 /**
@@ -1341,7 +1349,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     {
       name: "get_campaign_status",
       description:
-        "Status AO VIVO de uma campanha (ativa/pausada) direto da Meta AGORA — por id ou nome. É a ÚNICA fonte confiável de ativa/pausada: NUNCA deduza status pelo gasto (0 de gasto NÃO quer dizer pausada). Use SEMPRE antes de recomendar reativar/pausar/substituir uma campanha (a análise pode ter horas) e quando o usuário disser que uma campanha está ativa/pausada (confirme ao vivo em vez de só concordar).",
+        "Status AO VIVO (ativa/pausada) direto da Meta AGORA — por id ou nome. Devolve uma LISTA de campanhas que casaram (com o status de cada): nome único → 1; nome ambíguo → TODAS as parecidas com o status — MOSTRE a lista pro usuário (não peça o id de volta). É a ÚNICA fonte confiável de ativa/pausada: NUNCA deduza por gasto (0 gasto ≠ pausada). Use SEMPRE antes de recomendar reativar/pausar/substituir (a análise pode ter horas) e quando o usuário afirmar que uma campanha está ativa/pausada (confirme ao vivo, não só concorde).",
       schema: z.object({
         campaignId: z.string().nullable().optional().describe("id da campanha (preferido; use get_campaign_analysis/list_campaigns pra achar)"),
         name: z.string().nullable().optional().describe("nome (ou trecho) da campanha — usado se não tiver o id; ambíguo → peço o id"),
