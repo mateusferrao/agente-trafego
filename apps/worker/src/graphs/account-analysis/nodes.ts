@@ -700,8 +700,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     // não-matar-em-learning (Bloco 2): rebaixa pausar → investigar em entidade nova
     // (não descarta o aprendizado). LLM-origin; playbook/guardrail não passam por aqui.
     const guarded = guardKillWithoutMaturity(scaled, eligibility);
-    // guard de tracking (Bloco 2): caveat nas pausas por CPA de venda quando a
-    // medição da conta parece incompleta (não rebaixa; só anexa ao rationale).
+    // guard de tracking (Bloco 2 → pivô saúde): rebaixa pausar/cortar → investigar
+    // quando a medição da conta parece incompleta (antes só anexava caveat; ver
+    // ROADMAP `[ALTO]` "guard de tracking mais forte no caminho autônomo").
     const caveated = guardTrackingCaveat(guarded, basisByEntity(state.brief), state.brief.trackingHealth);
     // impacto (Bloco 2): anexa o gasto liberado a cada recomendação de pausa.
     const spendById = new Map<string, number>();

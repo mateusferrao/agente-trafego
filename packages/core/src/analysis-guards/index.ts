@@ -186,11 +186,18 @@ export function guardKillWithoutMaturity(
   return { ...output, recommendations };
 }
 
-// ─── Guard de tracking furado (Fatia Bloco 2) ─────────────────────────────
+// ─── Guard de tracking furado (Fatia Bloco 2 → pivô saúde) ────────────────
 // Sobre o sinal de conta `detectTrackingHealth`: quando a medição de venda parece
-// incompleta, anexa um CAVEAT (não rebaixa) às recomendações que MATARIAM uma
-// entidade por CPA de venda — mas só nas de base `target` (a venda É o objetivo
-// medido ali); `proxy` já não é julgada por venda, então não recebe caveat.
+// incompleta, REBAIXA (não só comenta) as recomendações que MATARIAM/CORTARIAM
+// uma entidade por CPA de venda — mas só nas de base `target` (a venda É o
+// objetivo medido ali); `proxy` já não é julgada por venda, então não é tocada.
+// Decisão revista (ROADMAP `[ALTO]` "guard de tracking mais forte no caminho
+// autônomo"): antes só anexava caveat (o dono decidia); numa conta que fecha
+// fora da Meta (típico saúde) e opera em autonomia alta, um corte por CPA de
+// venda catastrófico-mas-não-confiável passava sem barreira nenhuma — diferente
+// dos guards de significância/learning acima, que sempre rebaixam. Vale sempre
+// (não só no caminho autônomo — eco+confirma também se beneficia de ver
+// `investigate` em vez de uma ação concreta já formada).
 
 /** Ações que reduzem/matam investimento (onde o CPA de venda inflado engana). */
 const KILL_ACTIONS: ReadonlySet<RecommendationActionType> = new Set(["pause", "decrease_budget"]);
@@ -205,9 +212,10 @@ export function basisByEntity(brief: AccountBrief): Map<string, ConversionBasis>
 }
 
 /**
- * Anexa caveat de medição às pausas/cortes por CPA de venda em entidades base
- * `target`, quando o sinal de conta é suspeito. Puro: só acrescenta ao `rationale`
- * (o dono decide); não remove nem rebaixa. Sem sinal → passa direto.
+ * Rebaixa pausar/cortar → `investigate` nas entidades base `target` quando o
+ * sinal de conta é suspeito, anexando a razão ao `rationale` (mesmo padrão dos
+ * guards de significância/learning acima — nunca remove, o dono ainda vê o
+ * sinal). Sem sinal suspeito → passa direto.
  */
 export function guardTrackingCaveat(
   output: AnalysisOutput,
@@ -221,7 +229,9 @@ export function guardTrackingCaveat(
     if (!id || basis.get(id) !== "target") return r;
     return {
       ...r,
-      rationale: `${r.rationale}\n[tracking] a medição de vendas parece incompleta (${tracking.funnelStarted} conversas × ${tracking.trackedConversions} vendas rastreadas) — confirme pixel/CAPI antes de pausar por CPA de venda.`,
+      actionType: "investigate" as RecommendationActionType,
+      rationale: `${r.rationale}\n[guard] pausar/cortar → investigar: a medição de vendas parece incompleta (${tracking.funnelStarted} conversas × ${tracking.trackedConversions} vendas rastreadas) — confirme pixel/CAPI antes de agir por CPA de venda.`,
+      budgetChangePct: null,
     };
   });
   return { ...output, recommendations };
