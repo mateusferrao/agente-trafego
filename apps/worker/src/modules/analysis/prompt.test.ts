@@ -105,3 +105,28 @@ describe("buildReviewMessages (G7 — revisor corrige contra a régua de domíni
     expect(system).not.toContain("money shot"); // waste — só synthesis
   });
 });
+
+describe("perfil vertical (S4, G6) — anexado PROGRAMATICAMENTE nos 3 papéis", () => {
+  it("vertical='health': map/synthesis/review carregam o raciocínio de saúde (funil real, não só CPL)", () => {
+    const map = systemOf(buildCampaignMessages("persona", campaignUnit(), new Map(), { currency: "BRL", window: "7d" }, new Map(), "health"));
+    const synthesis = systemOf(buildSynthesisMessages("persona", brief(), [], "health"));
+    const draft: AnalysisOutput = { scorecard: { grade: "B", headline: "ok", biggestLeak: "conversao" }, summary: "s", findings: [], recommendations: [] };
+    const review = systemOf(buildReviewMessages(brief(), draft, [], "health"));
+    for (const system of [map, synthesis, review]) {
+      expect(system.toUpperCase()).toContain("DIAGNÓSTICO");
+      expect(system.toLowerCase()).toContain("fim de semana");
+    }
+  });
+
+  it("vertical ausente/desconhecida: NÃO injeta raciocínio de nicho (honesto — nunca inventa perfil)", () => {
+    const semVertical = systemOf(buildSynthesisMessages("persona", brief(), []));
+    const desconhecida = systemOf(buildSynthesisMessages("persona", brief(), [], "automotive"));
+    expect(semVertical.toLowerCase()).not.toContain("fim de semana");
+    expect(desconhecida.toLowerCase()).not.toContain("fim de semana");
+  });
+
+  it("G6: o texto vertical NÃO depende do systemPrompt (persona) recebido — sobrevive a qualquer override", () => {
+    const system = systemOf(buildSynthesisMessages("persona customizada e completamente diferente do padrão", brief(), [], "health"));
+    expect(system.toLowerCase()).toContain("fim de semana");
+  });
+});

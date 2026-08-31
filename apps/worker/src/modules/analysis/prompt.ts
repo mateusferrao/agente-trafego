@@ -10,6 +10,8 @@ import {
   buildAnalysisKnowledgeText,
   buildCampaignKnowledgeContext,
   buildSynthesisKnowledgeContext,
+  buildVerticalKnowledgeText,
+  resolveVerticalProfile,
   type FindingIssue,
 } from "@trafego/core";
 
@@ -56,6 +58,10 @@ const OUTPUT_SHAPE = `{
   ]
 }`;
 
+/** Texto do perfil vertical (S4, G6) — anexado PROGRAMATICAMENTE, nunca embutido no
+ *  `systemPrompt` editável; sobrevive a qualquer override de persona/orientações. */
+const verticalText = (vertical: string | undefined): string => buildVerticalKnowledgeText(resolveVerticalProfile(vertical));
+
 const jsonBlock = (label: string, value: unknown): string =>
   `${label}:\n\`\`\`json\n${JSON.stringify(value)}\n\`\`\``;
 
@@ -86,10 +92,12 @@ export function buildCampaignMessages(
   visionByAdId: ReadonlyMap<string, readonly CreativeVisionResult[]>,
   accountContext: { readonly currency: string; readonly window: string; readonly businessGoal?: string },
   copyByAdId: ReadonlyMap<string, AdCopy> = new Map(),
+  vertical?: string,
 ): LLMMessage[] {
   const system = [
     systemPrompt,
     GROUNDING_RULE,
+    verticalText(vertical),
     buildAnalysisKnowledgeText(buildCampaignKnowledgeContext(unit)),
     FINDINGS_METRIC_INSTRUCTION,
     RECOMMENDATION_TAXONOMY_INSTRUCTION,
@@ -137,12 +145,14 @@ export function buildSynthesisMessages(
   systemPrompt: string,
   brief: AccountBrief,
   units: readonly UnitAnalysis[],
+  vertical?: string,
 ): LLMMessage[] {
   const system = [
     systemPrompt,
     "Você recebe análises por-campanha + o contexto da conta. Consolide numa visão ÚNICA da conta: " +
       "priorize o que mais importa, agrupe temas repetidos e proponha as recomendações de maior impacto.",
     GROUNDING_RULE,
+    verticalText(vertical),
     buildAnalysisKnowledgeText(buildSynthesisKnowledgeContext(brief)),
     FINDINGS_METRIC_INSTRUCTION,
     RECOMMENDATION_TAXONOMY_INSTRUCTION,
@@ -169,6 +179,7 @@ export function buildReviewMessages(
   brief: AccountBrief,
   draft: AnalysisOutput,
   issues: readonly FindingIssue[],
+  vertical?: string,
 ): LLMMessage[] {
   const system = [
     "Você é um revisor sênior de análise de tráfego. Sua tarefa é CORRIGIR a análise de outro agente.",
@@ -176,6 +187,7 @@ export function buildReviewMessages(
       "recomendações inseguras, sem base no dado, ou que escalem o que não provou resultado; (3) ajuste " +
       "severidade/prioridade ao que o dado sustenta; (4) NÃO invente achados novos nem números.",
     GROUNDING_RULE,
+    verticalText(vertical),
     // G7: o revisor corrige contra a MESMA régua de domínio que o analista usou (não só
     // confere número) — sem isso, ele podia manter uma recomendação numericamente certa
     // mas que viola a leitura de qualidade/incrementalidade/tracking do domínio.

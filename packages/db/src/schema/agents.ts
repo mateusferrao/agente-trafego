@@ -51,6 +51,10 @@ export const agents = pgTable(
       .notNull()
       .references(() => adAccounts.id, { onDelete: "cascade" }),
     archetype: text("archetype").notNull().default("conservador"),
+    // Perfil vertical (S4, pivô saúde) — resolve pra packages/core/src/verticals. Default
+    // "health": confirmado seguro nesta sessão (todo o beta hoje é saúde). Vertical
+    // desconhecida (fora do registry) → sem perfil aplicado (resolveVerticalProfile honesto).
+    vertical: text("vertical").notNull().default("health"),
     persona: text("persona"),
     systemPrompt: text("system_prompt"),
     // Personalização por texto (Fatia 4) — camada ADITIVA sobre o arquétipo:

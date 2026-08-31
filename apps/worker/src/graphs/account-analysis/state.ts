@@ -66,6 +66,8 @@ export const AccountAnalysisState = Annotation.Root({
   // ── contexto carregado (loadContext) ───────────────────────────────────
   account: Annotation<AnalysisAccount | null>,
   systemPrompt: Annotation<string>,
+  // perfil vertical do agente (S4) — resolve pra packages/core/src/verticals no prompt.
+  vertical: Annotation<string>,
   // epoch ms de quando a config relevante à análise mudou (força 1 deep — Fatia 4); null se nunca.
   configChangedAt: Annotation<number | null>,
   analysisConfig: Annotation<ResolvedAnalysisConfig | null>,

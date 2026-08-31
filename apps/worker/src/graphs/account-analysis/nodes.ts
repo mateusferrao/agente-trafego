@@ -259,6 +259,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       orgMarketReference: ctx.orgMarketReference,
       agentMarketReference: agentMarketReferenceFromModelConfig(ctx.modelConfig),
       systemPrompt,
+      vertical: ctx.vertical,
       configChangedAt: ctx.configChangedAt ? ctx.configChangedAt.getTime() : null,
       analysisConfig: cfg,
       window: { label: windowLabel, ...window },
@@ -546,7 +547,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
             currency: accountCurrency,
             window: windowLabel,
             ...(businessGoal ? { businessGoal } : {}),
-          }, copyByAdId),
+          }, copyByAdId, state.vertical),
           responseSchema: UNIT_ANALYSIS_JSON_SCHEMA,
           responseSchemaName: UNIT_ANALYSIS_SCHEMA_NAME,
           temperature: ANALYSIS_TEMPERATURE,
@@ -633,7 +634,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     try {
       const completion = await deps.ports.llm.completeStructured<AnalysisOutput>({
         model: cfg.model,
-        messages: buildSynthesisMessages(analystPrompt(state), state.brief, units),
+        messages: buildSynthesisMessages(analystPrompt(state), state.brief, units, state.vertical),
         responseSchema: ANALYSIS_OUTPUT_JSON_SCHEMA,
         responseSchemaName: ANALYSIS_OUTPUT_SCHEMA_NAME,
         temperature: ANALYSIS_TEMPERATURE,
@@ -677,7 +678,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       try {
         const completion = await deps.ports.llm.completeStructured<AnalysisOutput>({
           model: cfg.reviewModel,
-          messages: buildReviewMessages(state.brief, draft, issues),
+          messages: buildReviewMessages(state.brief, draft, issues, state.vertical),
           responseSchema: ANALYSIS_OUTPUT_JSON_SCHEMA,
           responseSchemaName: ANALYSIS_OUTPUT_SCHEMA_NAME,
           temperature: ANALYSIS_TEMPERATURE,

@@ -66,6 +66,8 @@ interface HarnessOpts {
   freshEntityState?: Record<string, unknown>;
   /** F4 runPush: desliga o push de run (cron/on-demand). Default ON. */
   runPushEnabled?: boolean;
+  /** S4: perfil vertical do agente. Default "health" (todo o beta hoje é saúde). */
+  vertical?: string;
 }
 
 function makeHarness(opts: HarnessOpts = {}): Harness {
@@ -77,7 +79,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
   const byLevel = (level: string) => entities.filter((e) => e.level === level);
 
   const repo: AnalysisRepo = {
-    loadAgentContext: vi.fn(async () => ({ goals: opts.goals ?? { targetCPA: 50 }, archetype: "conservador", timezone: "America/Sao_Paulo", systemPrompt: null, persona: null, tone: null, businessContext: null, guidance: null, configChangedAt: opts.configChangedAt ?? null, modelConfig: {}, autonomyPolicy: opts.autonomy ?? { bySource: { playbook: "suggest" as const, llm: "suggest" as const } }, notifyPolicy: { pulse: { enabled: false, cadence: { kind: "daily" as const, hour: 8 } }, alerts: { enabled: false, sensitivity: "normal" as const, throttleHours: 6 }, runPush: { enabled: opts.runPushEnabled ?? true }, reactivation: { enabled: false } }, posture: { directiveness: "consultative" as const, volume: "balanced" as const, didacticDepth: "explanatory" as const, experienceLevel: null }, guardrailConfig: opts.guardrail ?? { maxBudgetChangePct: 20, maxEntitiesPerDay: 3, allowedActions: ["pause_entity" as const], dryRun: true, killSwitch: false }, playbook: [], rejectedMemory: [], mutedCampaignIds: [], orgMarketReference: null })),
+    loadAgentContext: vi.fn(async () => ({ goals: opts.goals ?? { targetCPA: 50 }, archetype: "conservador", vertical: opts.vertical ?? "health", timezone: "America/Sao_Paulo", systemPrompt: null, persona: null, tone: null, businessContext: null, guidance: null, configChangedAt: opts.configChangedAt ?? null, modelConfig: {}, autonomyPolicy: opts.autonomy ?? { bySource: { playbook: "suggest" as const, llm: "suggest" as const } }, notifyPolicy: { pulse: { enabled: false, cadence: { kind: "daily" as const, hour: 8 } }, alerts: { enabled: false, sensitivity: "normal" as const, throttleHours: 6 }, runPush: { enabled: opts.runPushEnabled ?? true }, reactivation: { enabled: false } }, posture: { directiveness: "consultative" as const, volume: "balanced" as const, didacticDepth: "explanatory" as const, experienceLevel: null }, guardrailConfig: opts.guardrail ?? { maxBudgetChangePct: 20, maxEntitiesPerDay: 3, allowedActions: ["pause_entity" as const], dryRun: true, killSwitch: false }, playbook: [], rejectedMemory: [], mutedCampaignIds: [], orgMarketReference: null })),
     loadAccount: vi.fn(async () => ({ metaAdAccountId: "act_1", name: "Conta", currency: "BRL", tokenCripto: TOKEN })),
     openRun: vi.fn(async () => {}),
     markTokenInvalid: vi.fn(async () => {}),

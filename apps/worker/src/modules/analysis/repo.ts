@@ -13,6 +13,9 @@ import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
 export interface AgentContext {
   readonly goals: AgentGoals;
   readonly archetype: string;
+  /** Perfil vertical do negócio (S4) — resolve via `resolveVerticalProfile` (packages/core/
+   *  src/verticals). Vertical fora do registry → sem perfil aplicado (honesto). */
+  readonly vertical: string;
   /** Fuso da org (orgs.timezone) — datas de "hoje"/janela nele, não UTC. */
   readonly timezone: string;
   readonly systemPrompt: string | null;
@@ -176,6 +179,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
         .select({
           goals: agents.goals,
           archetype: agents.archetype,
+          vertical: agents.vertical,
           systemPrompt: agents.systemPrompt,
           persona: agents.persona,
           tone: agents.tone,
@@ -249,6 +253,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
       return {
         goals: agent.goals,
         archetype: agent.archetype,
+        vertical: agent.vertical,
         timezone: agent.timezone,
         // valor semeado igual ao default do arquétipo = "não configurado" (null) →
         // usa a metodologia composta completa (não o systemPrompt cru semeado).

@@ -37,3 +37,4 @@ export * from "./creation/index.js";
 export * from "./audiences/index.js";
 export * from "./analysis-knowledge/index.js";
 export * from "./curated-entity/index.js";
+export * from "./verticals/index.js";

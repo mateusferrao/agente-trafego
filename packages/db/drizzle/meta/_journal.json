@@ -330,6 +330,13 @@
       "when": 1788204892958,
       "tag": "0046_normal_terrax",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1788207837743,
+      "tag": "0047_right_toro",
+      "breakpoints": true
     }
   ]
 }
