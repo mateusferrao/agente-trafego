@@ -13,6 +13,7 @@ import {
   describeDraftCreative,
   listPendingData,
   listRecommendationsData,
+  enrichRecommendationsLiveStatus,
   renderWhatsappNumber,
   resolveWhatsappNumber,
   pickAdIdsToRefresh,
@@ -700,6 +701,46 @@ describe("renderWhatsappNumber (verbatim, honesto)", () => {
     const t = renderWhatsappNumber({ number: null, source: "none" }, "Y");
     expect(t.toLowerCase()).toContain("não achei");
     expect(t.toLowerCase()).toContain("gerenciador");
+  });
+});
+
+describe("enrichRecommendationsLiveStatus (re-check DETERMINÍSTICO de status — incidente Dani)", () => {
+  const ctx = { orgId: "o1", agentId: "ag1", adAccountId: "acc1" } as never;
+  const account = [{ metaAdAccountId: "act_1", name: "X", currency: "BRL", accountToken: "tok", connToken: null }];
+  const base = (recs: unknown[]) => ({ hasData: true as const, asOf: "2026-08-31T05:00:00Z", recommendations: recs as never });
+  function deps(listEntities: () => Promise<unknown>, readEntityState: () => Promise<unknown>) {
+    return {
+      db: fakeDb(new Map<unknown, unknown[]>([[adAccounts, account]])),
+      ports: { ads: { listEntities: vi.fn(listEntities), readEntityState: vi.fn(readEntityState) }, vault: { decrypt: (t: string) => t } },
+      conversation: { liveFetchTimeoutMs: 1000 },
+    } as never;
+  }
+
+  it("'Reativar X' (id citado no rationale) + campanha ATIVA ao vivo → anexa liveStatus.status='active'", async () => {
+    const d = deps(
+      async () => [{ id: "52637228752692", name: "TESTE - Melhores numeros" }],
+      async () => ({ status: "ACTIVE", effective_status: "ACTIVE" }),
+    );
+    const out = await enrichRecommendationsLiveStatus(d, ctx, base([{ title: "Reativar TESTE Melhores numeros", rationale: "A campanha 52637228752692 gerou 93 conversas a CPL R$5,69, hoje pausada.", riskLevel: "low" }]));
+    expect(out.recommendations[0]!.liveStatus).toMatchObject({ campaignId: "52637228752692", status: "active" });
+  });
+
+  it("resolve por ALVO estruturado (platform_action) quando presente", async () => {
+    const d = deps(async () => [{ id: "c1", name: "Escala" }], async () => ({ status: "PAUSED" }));
+    const out = await enrichRecommendationsLiveStatus(d, ctx, base([{ title: "Retomar a Escala", rationale: "parou", riskLevel: "medium", proposedAction: { type: "resume_entity", target: { level: "campaign", id: "c1" } } }]));
+    expect(out.recommendations[0]!.liveStatus).toMatchObject({ campaignId: "c1", status: "paused" });
+  });
+
+  it("rec NÃO dependente de status → sem liveStatus (não gasta leitura)", async () => {
+    const d = deps(async () => [{ id: "c1", name: "TESTE" }], async () => ({ status: "ACTIVE" }));
+    const out = await enrichRecommendationsLiveStatus(d, ctx, base([{ title: "Revisar criativo do TESTE", rationale: "CTR caindo", riskLevel: "low" }]));
+    expect(out.recommendations[0]!.liveStatus).toBeUndefined();
+  });
+
+  it("Meta LANÇANDO no status → degrada (sem liveStatus, não quebra)", async () => {
+    const d = deps(async () => [{ id: "52637228752692", name: "TESTE" }], () => Promise.reject(new Error("meta 500")));
+    const out = await enrichRecommendationsLiveStatus(d, ctx, base([{ title: "Reativar TESTE", rationale: "campanha 52637228752692", riskLevel: "low" }]));
+    expect(out.recommendations[0]!.liveStatus).toBeUndefined();
   });
 });
 

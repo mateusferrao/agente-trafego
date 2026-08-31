@@ -131,6 +131,11 @@ interface RecommendationItem {
   readonly title: string;
   readonly rationale: string | null;
   readonly riskLevel: string;
+  /** ação estruturada (só platform_action) — alvo p/ resolver a campanha no enriquecimento de status. */
+  readonly proposedAction?: { readonly type: string; readonly target: { readonly level: string; readonly id: string } } | null;
+  /** status AO VIVO (ativa/pausada) da campanha referenciada — anexado deterministicamente (não
+   *  depende do LLM chamar tool). Ausente = não resolveu a campanha ou a Meta não respondeu. */
+  readonly liveStatus?: { readonly campaignId: string; readonly name: string | null; readonly status: string } | null;
 }
 
 /** Aprovação de AÇÃO de otimização (a maioria das pendentes). */
@@ -474,13 +479,108 @@ export async function listRecommendationsData(
       title: recommendations.title,
       rationale: recommendations.rationale,
       riskLevel: recommendations.riskLevel,
+      proposedAction: recommendations.proposedAction,
     })
     .from(recommendations)
     .where(and(eq(recommendations.runId, run.id), eq(recommendations.orgId, orgId)));
 
   if (recs.length === 0) return { hasData: false, note: "a última análise não gerou recomendações" };
   const asOf = (run.finishedAt ?? run.createdAt).toISOString();
-  return { hasData: true, asOf, recommendations: recs.map((r) => ({ title: r.title, rationale: r.rationale ?? null, riskLevel: r.riskLevel })) };
+  return {
+    hasData: true,
+    asOf,
+    recommendations: recs.map((r) => {
+      const a = r.proposedAction as { type: string; target: { level: string; id: string } } | null;
+      return {
+        title: r.title,
+        rationale: r.rationale ?? null,
+        riskLevel: r.riskLevel,
+        proposedAction: a ? { type: a.type, target: { level: a.target.level, id: a.target.id } } : null,
+      };
+    }),
+  };
+}
+
+/** Palavras que marcam uma recomendação DEPENDENTE DE STATUS (reativar/pausar/substituir/ligar/
+ *  desligar/escalar) — só nessas vale gastar uma leitura ao vivo do status (bounded). */
+const STATUS_REC_RE = /reativ|reative|pausa|despausa|ligar|desligar|substitu|ativa|inativ|escala|retom/i;
+/** Teto de leituras de status ao vivo por chamada (bounded — não reintroduz rate-limit). */
+const LIVE_STATUS_MAX = 6;
+
+/**
+ * Enriquecimento DETERMINÍSTICO (não depende do LLM chamar tool): para cada recomendação
+ * dependente de status, resolve a campanha (alvo estruturado OU nome no título/rationale via
+ * catálogo ao vivo) e anexa o STATUS FRESCO (readEntityState — bypassa o cache). Assim o modelo
+ * sempre VÊ "está ativa/pausada AGORA" ao lado da rec — matando a inferência-por-gasto e o repasse
+ * de rec stale (ex: "reativar X" quando X já está ativa). Best-effort/bounded: sem token/Meta lenta
+ * → apenas não anexa (a rec segue com o carimbo asOf). PURO de decisão; IO via ports.
+ */
+export async function enrichRecommendationsLiveStatus(
+  deps: WorkerDeps,
+  ctx: ReadToolContext,
+  data: { hasData: true; asOf: string; recommendations: RecommendationItem[] },
+): Promise<{ hasData: true; asOf: string; recommendations: RecommendationItem[] }> {
+  const repo = createAnalysisRepo(deps.db);
+  const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
+  if (!account) return data;
+  const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
+
+  // catálogo (todas as campanhas, inclusive PAUSADAS) p/ resolver nome→id da rec. Cacheável (só
+  // resolução; o STATUS vem fresco do readEntityState abaixo). Meta lenta → segue sem enriquecer.
+  let catalog: Array<{ id: string; name: string }> = [];
+  try {
+    const ents = await withTimeout(deps.ports.ads.listEntities(ref, "campaign"), deps.conversation.liveFetchTimeoutMs);
+    catalog = ents.map((e) => ({ id: e.id, name: e.name }));
+  } catch {
+    return data; // sem catálogo não dá pra resolver com segurança
+  }
+  const nameById = new Map(catalog.map((e) => [e.id, e.name]));
+
+  // resolve a campanha de cada rec dependente de status → ids únicos (bounded).
+  const idByRec = new Map<number, string>();
+  const ids = new Set<string>();
+  data.recommendations.forEach((r, i) => {
+    const text = `${r.title} ${r.rationale ?? ""}`;
+    if (!STATUS_REC_RE.test(text)) return;
+    // 1) alvo estruturado (platform_action). 2) id numérico CITADO no texto que existe no catálogo
+    // (o analista cita o id — robusto p/ "Reativar X"). 3) fuzzy pelo nome, sem o verbo inicial.
+    let id: string | null = r.proposedAction?.target.level === "campaign" ? r.proposedAction.target.id : null;
+    if (!id) {
+      for (const m of text.matchAll(/\b(\d{8,})\b/g)) {
+        if (nameById.has(m[1]!)) {
+          id = m[1]!;
+          break;
+        }
+      }
+    }
+    if (!id) {
+      const q = r.title.replace(/^\s*(reativ\w*|pausa\w*|despausa\w*|substitu\w*|escala\w*|retom\w*|ligar|desligar|ativa\w*)\s*/i, "");
+      const m = resolveNamedMatch(catalog, q, { name: (e) => e.name, keys: (e) => [e.id] });
+      if (m.kind === "one") id = m.row.id;
+    }
+    if (id && ids.size < LIVE_STATUS_MAX) {
+      idByRec.set(i, id);
+      ids.add(id);
+    }
+  });
+  if (ids.size === 0) return data;
+
+  // STATUS FRESCO por id (bounded, best-effort). Falha numa → só não anexa aquela.
+  const statusById = new Map<string, string>();
+  for (const id of ids) {
+    try {
+      const raw = await withTimeout(deps.ports.ads.readEntityState(ref, id), deps.conversation.liveFetchTimeoutMs);
+      statusById.set(id, mapStatus(raw["effective_status"] as string | undefined, raw["status"] as string | undefined));
+    } catch {
+      /* segue sem essa */
+    }
+  }
+  const recommendations = data.recommendations.map((r, i) => {
+    const id = idByRec.get(i);
+    const status = id ? statusById.get(id) : undefined;
+    return id && status ? { ...r, liveStatus: { campaignId: id, name: nameById.get(id) ?? null, status } } : r;
+  });
+  return { ...data, recommendations };
 }
 
 /** Aprovações pendentes da org (cross-conta por design). Vazio → `hasData:false`. `action` +
@@ -1309,11 +1409,16 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     async () => {
       if (noFocus()) return NEEDS_FOCUS;
       logger.debug({ agentId: ctx.agentId }, "tool:list_recommendations");
-      return asString(await listRecommendationsData(db, ctx.agentId, ctx.orgId));
+      const base = await listRecommendationsData(db, ctx.agentId, ctx.orgId);
+      // enriquecimento DETERMINÍSTICO: anexa o status AO VIVO das campanhas das recs dependentes de
+      // status (não depende do LLM chamar get_campaign_status). Best-effort/bounded.
+      const data = base.hasData ? await enrichRecommendationsLiveStatus(deps, ctx, base) : base;
+      return asString(data);
     },
     {
       name: "list_recommendations",
-      description: "Recomendações da última análise concluída (título, motivo e nível de risco).",
+      description:
+        "Recomendações da última análise concluída (título, motivo, risco) + asOf (quando rodou). Recs dependentes de status (reativar/pausar/substituir) já vêm com liveStatus (ativa/pausada AO VIVO) da campanha — use SEMPRE o liveStatus, não o texto, pra dizer se está ativa/pausada.",
       schema: z.object({}),
     },
   );
