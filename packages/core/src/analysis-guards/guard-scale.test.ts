@@ -57,4 +57,12 @@ describe("guardScaleWithoutSignificance", () => {
     const out = guardScaleWithoutSignificance(output([rec({})]), new Map());
     expect(out.recommendations[0]!.actionType).toBe("increase_budget");
   });
+
+  it("título ganha prefixo 'Investigar: ' quando rebaixa (headline não fica desalinhado da ação real)", () => {
+    const out = guardScaleWithoutSignificance(
+      output([rec({ title: "Escalar campanha X" })]),
+      new Map([["C1", elig({ hasSignificance: false, conversions: 3 })]]),
+    );
+    expect(out.recommendations[0]!.title).toBe("Investigar: Escalar campanha X");
+  });
 });

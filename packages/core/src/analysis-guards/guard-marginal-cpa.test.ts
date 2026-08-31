@@ -77,4 +77,27 @@ describe("guardScaleWithWorseningMarginalCpa", () => {
     const out = guardScaleWithWorseningMarginalCpa(output([rec({ actionType: "pause" })]), new Map([["C1", 90]]), DEFAULT_MARGINAL_CPA_THRESHOLDS);
     expect(out.recommendations[0]!.actionType).toBe("pause");
   });
+
+  it("no limiar exato (rise === worsenPct) já rebaixa", () => {
+    const out = guardScaleWithWorseningMarginalCpa(output([rec({})]), new Map([["C1", 20]]), DEFAULT_MARGINAL_CPA_THRESHOLDS);
+    expect(out.recommendations[0]!.actionType).toBe("investigate");
+  });
+
+  it("threshold malformado (não-finito/≤0) nunca rebaixa — não confia cegamente em config quebrada", () => {
+    const badThresholds = [{ worsenPct: NaN }, { worsenPct: 0 }, { worsenPct: -5 }];
+    for (const t of badThresholds) {
+      const out = guardScaleWithWorseningMarginalCpa(output([rec({})]), new Map([["C1", 30]]), t);
+      expect(out.recommendations[0]!.actionType).toBe("increase_budget");
+    }
+  });
+
+  it("CPA que MELHOROU (rise negativo) nunca dispara, mesmo com threshold malformado", () => {
+    const out = guardScaleWithWorseningMarginalCpa(output([rec({})]), new Map([["C1", -10]]), { worsenPct: NaN });
+    expect(out.recommendations[0]!.actionType).toBe("increase_budget");
+  });
+
+  it("título ganha prefixo 'Investigar: ' quando rebaixa", () => {
+    const out = guardScaleWithWorseningMarginalCpa(output([rec({ title: "Escalar campanha X" })]), new Map([["C1", 30]]), DEFAULT_MARGINAL_CPA_THRESHOLDS);
+    expect(out.recommendations[0]!.title).toBe("Investigar: Escalar campanha X");
+  });
 });

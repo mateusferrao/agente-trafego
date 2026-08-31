@@ -119,9 +119,9 @@ const SCALE_ACTIONS: ReadonlySet<RecommendationActionType> = new Set(["increase_
 /** Constrói o mapa `externalId → eligibility` a partir dos segmentos do brief. */
 export function eligibilityByEntity(brief: AccountBrief): Map<string, DecisionEligibility> {
   const map = new Map<string, DecisionEligibility>();
-  for (const level of [brief.segments.campaigns, brief.segments.adsets, brief.segments.ads]) {
-    for (const e of level) if (e.eligibility) map.set(e.id, e.eligibility);
-  }
+  forEachEntity(brief, (e) => {
+    if (e.eligibility) map.set(e.id, e.eligibility);
+  });
   return map;
 }
 
@@ -144,6 +144,7 @@ export function guardScaleWithoutSignificance(
       : `sem base estatística ainda (${elig.conversions} conversões)`;
     return {
       ...r,
+      title: demotedTitle(r.title),
       actionType: "investigate" as RecommendationActionType,
       rationale: `${r.rationale}\n[guard] escalar → investigar: ${why}.`,
       budgetChangePct: null,
@@ -179,8 +180,10 @@ export function guardKillWithoutMaturity(
     if (!elig?.inLearning) return r;
     return {
       ...r,
+      title: demotedTitle(r.title),
       actionType: "investigate" as RecommendationActionType,
       rationale: `${r.rationale}\n[guard] pausar → investigar: em aprendizado (editada há pouco) — dar tempo antes de matar (não descartar o aprendizado).`,
+      budgetChangePct: null,
     };
   });
   return { ...output, recommendations };
@@ -205,9 +208,9 @@ const KILL_ACTIONS: ReadonlySet<RecommendationActionType> = new Set(["pause", "d
 /** Mapa `externalId → conversionBasis` a partir dos segmentos do brief. */
 export function basisByEntity(brief: AccountBrief): Map<string, ConversionBasis> {
   const map = new Map<string, ConversionBasis>();
-  for (const level of [brief.segments.campaigns, brief.segments.adsets, brief.segments.ads]) {
-    for (const e of level) if (e.conversionBasis) map.set(e.id, e.conversionBasis);
-  }
+  forEachEntity(brief, (e) => {
+    if (e.conversionBasis) map.set(e.id, e.conversionBasis);
+  });
   return map;
 }
 
@@ -229,6 +232,7 @@ export function guardTrackingCaveat(
     if (!id || basis.get(id) !== "target") return r;
     return {
       ...r,
+      title: demotedTitle(r.title),
       actionType: "investigate" as RecommendationActionType,
       rationale: `${r.rationale}\n[guard] pausar/cortar → investigar: a medição de vendas parece incompleta (${tracking.funnelStarted} conversas × ${tracking.trackedConversions} vendas rastreadas) — confirme pixel/CAPI antes de agir por CPA de venda.`,
       budgetChangePct: null,
@@ -260,18 +264,16 @@ export const DEFAULT_MARGINAL_CPA_THRESHOLDS: MarginalCpaThresholds = { worsenPc
  *  `eligibilityByEntity`/`basisByEntity`). */
 export function marginalCpaRiseByEntity(brief: AccountBrief): Map<string, number | undefined> {
   const map = new Map<string, number | undefined>();
-  for (const level of [brief.segments.campaigns, brief.segments.adsets, brief.segments.ads]) {
-    for (const e of level) {
-      const cpa = e.metrics.cpa;
-      const delta = e.deltaVsBaseline.cpa;
-      if (typeof cpa !== "number" || typeof delta !== "number") {
-        map.set(e.id, undefined);
-        continue;
-      }
-      const baseline = cpa - delta;
-      map.set(e.id, baseline > 0 ? ((cpa - baseline) / baseline) * 100 : undefined);
+  forEachEntity(brief, (e) => {
+    const cpa = e.metrics.cpa;
+    const delta = e.deltaVsBaseline.cpa;
+    if (typeof cpa !== "number" || typeof delta !== "number") {
+      map.set(e.id, undefined);
+      return;
     }
-  }
+    const baseline = cpa - delta;
+    map.set(e.id, baseline > 0 ? ((cpa - baseline) / baseline) * 100 : undefined);
+  });
   return map;
 }
 
@@ -286,6 +288,10 @@ export function guardScaleWithWorseningMarginalCpa(
   marginalRisePct: ReadonlyMap<string, number | undefined>,
   t: MarginalCpaThresholds,
 ): AnalysisOutput {
+  // config malformada (worsenPct não-finito/≤0) → guard inerte: nunca rebaixa (nunca
+  // confia cegamente num limiar quebrado, já que este guard barra escrita autônoma de
+  // budget). Sem esta guarda, `rise < NaN` seria sempre false → rebaixaria QUALQUER escala.
+  if (!Number.isFinite(t.worsenPct) || t.worsenPct <= 0) return output;
   const recommendations = output.recommendations.map((r) => {
     if (!SCALE_ACTIONS.has(r.actionType)) return r;
     const id = r.targetEntity?.externalId;
@@ -293,12 +299,35 @@ export function guardScaleWithWorseningMarginalCpa(
     if (rise === undefined || rise < t.worsenPct) return r;
     return {
       ...r,
+      title: demotedTitle(r.title),
       actionType: "investigate" as RecommendationActionType,
       rationale: `${r.rationale}\n[guard] escalar → investigar: CPA marginal piorando (+${rise.toFixed(0)}% vs período anterior) — o CPA médio pode parecer bom, mas o incremento mais recente já está mais caro.`,
       budgetChangePct: null,
     };
   });
   return { ...output, recommendations };
+}
+
+// ─── Helpers compartilhados pelos guards acima ────────────────────────────
+
+/** Itera as 3 camadas do brief (campanha/adset/anúncio) — evita repetir o `for`
+ *  triplo em cada `xByEntity` (CLAUDE.md §13 "duplicou 3x → extrai"). */
+function forEachEntity(brief: AccountBrief, fn: (e: EntitySummary) => void): void {
+  for (const level of [brief.segments.campaigns, brief.segments.adsets, brief.segments.ads]) {
+    for (const e of level) fn(e);
+  }
+}
+
+const INVESTIGATE_TITLE_PREFIX = "Investigar: ";
+
+/** Prefixa o título quando um guard rebaixa a ação pra `investigate` — sem isso o card
+ *  mostraria um headline ("Escalar campanha X") desalinhado da ação real (CLAUDE.md
+ *  §13 UX: "erro/decisão = o que aconteceu + o que fazer"). Idempotente por construção:
+ *  cada guard só entra nesse ramo quando `actionType` AINDA está no seu Set de ações-alvo
+ *  (`SCALE_ACTIONS`/`KILL_ACTIONS`/`KILL_IN_LEARNING_ACTIONS`) — uma vez rebaixado por um
+ *  guard anterior, os seguintes já retornam cedo e nunca reprocessam o título. */
+function demotedTitle(title: string): string {
+  return title.startsWith(INVESTIGATE_TITLE_PREFIX) ? title : `${INVESTIGATE_TITLE_PREFIX}${title}`;
 }
 
 function addNumber(set: Set<number>, value: number): void {

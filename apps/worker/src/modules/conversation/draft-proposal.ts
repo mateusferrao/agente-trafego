@@ -1560,7 +1560,13 @@ async function describeLibraryCandidates(deps: WorkerDeps, orgId: string, accoun
 
 /** Candidatos VEICULANDO (X mais recentes de `ad_creatives`) com DESCRIÇÃO de visão cache-read-through:
  *  hit reusa o cache dos runs; MISS computa fresh (auto-cacheia) — imagem usa o url guardado, vídeo
- *  busca frames ao vivo (só o que falta, teto `SERVING_PICK_CANDIDATES`). Sem visão → copy (nunca mudo). */
+ *  busca frames ao vivo (só o que falta, teto `SERVING_PICK_CANDIDATES`). Sem visão → copy (nunca mudo).
+ *  ESCOPO (pivô saúde): ao contrário do caminho determinístico `best_performing` (`isSourceFatigued`
+ *  em `chooseCreative`), este pool NÃO filtra criativo fatigado — o matcher LLM (`serving.agent`/
+ *  `library`/`both`) ainda pode escolher um anúncio cansado. Não é esquecimento: é o próximo passo já
+ *  planejado (plano do pivô saúde, decisão 7/S4c — "matcher recebe sinais de qualidade como contexto"),
+ *  que depende do vision schema ganhar `persuasionSignals`/`weak_creative` antes de estender o filtro
+ *  pra cá. */
 async function describeServingCandidates(deps: WorkerDeps, orgId: string, accountId: string, ref: AdAccountRef): Promise<DescribedCandidate[]> {
   const rows = await deps.db
     .select({

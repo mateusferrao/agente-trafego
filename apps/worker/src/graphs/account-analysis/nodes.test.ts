@@ -185,6 +185,8 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
         coldStartReference: true,
         trackingBrokenRatio: 50,
         trackingBrokenMinFunnel: 50,
+        relativeEligibilitySpendMultiplier: 2,
+        marginalCpaWorsenPct: 20,
       },
     },
     webOrigin: "https://app.example.com",

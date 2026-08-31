@@ -39,6 +39,15 @@ describe("guardTrackingCaveat", () => {
     expect(out.recommendations[0]!.actionType).toBe("investigate");
   });
 
+  it("título ganha prefixo 'Investigar: ' quando rebaixa", () => {
+    const out = guardTrackingCaveat(
+      output([rec({ title: "Pausar campanha X" })]),
+      new Map<string, ConversionBasis>([["C1", "target"]]),
+      suspect,
+    );
+    expect(out.recommendations[0]!.title).toBe("Investigar: Pausar campanha X");
+  });
+
   it("não toca entidade base proxy (já não é julgada por venda)", () => {
     const out = guardTrackingCaveat(output([rec({})]), new Map<string, ConversionBasis>([["C1", "proxy"]]), suspect);
     expect(out.recommendations[0]!.rationale).toBe("CPA de venda muito alto");
