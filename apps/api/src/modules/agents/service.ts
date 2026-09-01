@@ -118,11 +118,14 @@ export function createAgentsService(deps: AgentsDeps) {
    */
   async function getOrCreateForAccount(orgId: OrgId, accountId: string): Promise<AgentSummary> {
     const [account] = await deps.db
-      .select({ id: adAccounts.id, currency: adAccounts.currency })
+      .select({ id: adAccounts.id, currency: adAccounts.currency, fundingType: adAccounts.metaFundingType })
       .from(adAccounts)
       .where(and(eq(adAccounts.id, accountId), eq(adAccounts.orgId, orgId)))
       .limit(1);
     if (!account) throw notFound("Conta não encontrada.");
+    // coluna text livre → estreita p/ o enum do contrato (valor desconhecido/legado → null, honesto).
+    const fundingType: AgentSummary["fundingType"] =
+      account.fundingType === "stored_balance" || account.fundingType === "other" ? account.fundingType : null;
 
     const [existing] = await deps.db
       .select({
@@ -171,6 +174,7 @@ export function createAgentsService(deps: AgentsDeps) {
         posture: existing.posture ?? DEFAULT_POSTURE,
         postureIsCustom: experienceLevelIsCustom(existing.posture ?? DEFAULT_POSTURE),
         currency: account.currency ?? null,
+        fundingType,
       };
     }
 
@@ -221,6 +225,7 @@ export function createAgentsService(deps: AgentsDeps) {
       posture: defaults.defaultPosture,
       postureIsCustom: false,
       currency: account.currency ?? null,
+      fundingType,
     };
   }
 

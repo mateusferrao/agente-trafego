@@ -296,19 +296,45 @@ describe("getAccountHealthData (S5 — saúde da conta Meta no chat)", () => {
     expect(res).toMatchObject({ hasData: true, tokenExpired: true });
   });
 
-  it("conta ativa e saudável → status active + rótulo amigável", async () => {
+  it("conta ativa e saudável → status active + rótulo amigável + saldo/gasto expostos (opção a)", async () => {
     const checkedAt = new Date("2026-09-01T10:00:00.000Z");
-    const db = fakeDb(new Map<unknown, unknown[]>([[adAccounts, [{ tokenStatus: "valid", metaAccountStatus: "active", metaSpendCap: null, metaHealthCheckedAt: checkedAt }]]]));
+    const db = fakeDb(
+      new Map<unknown, unknown[]>([
+        [
+          adAccounts,
+          [
+            {
+              tokenStatus: "valid",
+              metaAccountStatus: "active",
+              currency: "BRL",
+              metaBalance: "42.5000",
+              metaAmountSpent: "1000.0000",
+              metaSpendCap: null,
+              metaHealthCheckedAt: checkedAt,
+            },
+          ],
+        ],
+      ]),
+    );
     const res = await getAccountHealthData(db, "acc-1", ORG);
-    expect(res).toMatchObject({ hasData: true, status: "active", tokenExpired: false, hasSpendCap: false });
+    // saldo/gasto vêm no payload (dado do dono) — teto null = sem teto na Meta (nunca "0" enganoso).
+    expect(res).toMatchObject({
+      hasData: true,
+      status: "active",
+      tokenExpired: false,
+      currency: "BRL",
+      balanceMajor: 42.5,
+      amountSpentMajor: 1000,
+      spendCapMajor: null,
+    });
     expect((res as { statusLabel: string }).statusLabel).toContain("ativa");
     expect((res as { checkedAt: string }).checkedAt).toBe(checkedAt.toISOString());
   });
 
-  it("conta desativada → status disabled + rótulo do status (copy do resto do app)", async () => {
+  it("conta desativada → status disabled + rótulo do status + teto exposto como número", async () => {
     const db = fakeDb(new Map<unknown, unknown[]>([[adAccounts, [{ tokenStatus: "valid", metaAccountStatus: "disabled", metaSpendCap: "500.0000", metaHealthCheckedAt: new Date() }]]]));
     const res = await getAccountHealthData(db, "acc-1", ORG);
-    expect(res).toMatchObject({ hasData: true, status: "disabled", hasSpendCap: true });
+    expect(res).toMatchObject({ hasData: true, status: "disabled", spendCapMajor: 500 });
     expect((res as { statusLabel: string }).statusLabel).toBe("Conta desativada, parou de veicular anúncios");
   });
 

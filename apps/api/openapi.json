@@ -2146,6 +2146,16 @@
               "string",
               "null"
             ]
+          },
+          "fundingType": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "stored_balance",
+              "other"
+            ]
           }
         },
         "required": [
@@ -2169,7 +2179,8 @@
           "notifyPolicy",
           "posture",
           "postureIsCustom",
-          "currency"
+          "currency",
+          "fundingType"
         ]
       },
       "ArchetypeCatalogOutput": {

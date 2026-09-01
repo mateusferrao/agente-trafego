@@ -217,6 +217,9 @@ export const agentSummary = z.object({
   postureIsCustom: z.boolean(),
   /** moeda da conta (ISO) — rótulo do override da referência de mercado. Null se ainda não sincronizada. */
   currency: z.string().nullable(),
+  /** financiamento da conta Meta (pré-pago × cartão/fatura) — orienta a ressalva do aviso de
+   *  saldo na UI (a ressalva é só informativa; nunca desabilita o toggle). Null se ainda não sincronizada. */
+  fundingType: z.enum(["stored_balance", "other"]).nullable(),
 });
 export type AgentSummary = z.infer<typeof agentSummary>;
 

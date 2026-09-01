@@ -1159,16 +1159,21 @@ async function getTopCreativesData(
   return { hasData: true, creatives };
 }
 
-/** Saúde da conta Meta pro chat (S5) — persistido pelo sync, sem saldo/pagamento exatos
- *  no texto do WhatsApp (`hasPaymentIssue` booleano; detalhe fica só no site, atrás de
- *  login). `tokenExpired` é checado ANTES de qualquer round-trip (sem token, nada
- *  funciona — responde direto sem tentar a Meta). */
+/** Saúde da conta Meta pro chat (S5) — persistido pelo sync. Expõe saldo/gasto/teto
+ *  (dado da própria conta do dono, contato verificado) pra responder "qual meu saldo";
+ *  só o RÓTULO do cartão/pagamento fica no site, atrás de login (nunca por aqui).
+ *  `tokenExpired` é checado ANTES de qualquer round-trip (sem token, nada funciona —
+ *  responde direto sem tentar a Meta). Valores em unidade MAIOR; `null` = sem o dado
+ *  (teto null = sem teto definido na Meta). */
 interface AccountHealthView {
   readonly hasData: true;
   readonly status: string;
   readonly statusLabel: string;
   readonly tokenExpired: boolean;
-  readonly hasSpendCap: boolean;
+  readonly currency: string | null;
+  readonly balanceMajor: number | null;
+  readonly amountSpentMajor: number | null;
+  readonly spendCapMajor: number | null;
   readonly checkedAt: string | null;
 }
 
@@ -1183,12 +1188,25 @@ export async function getAccountHealthData(
   orgId: string,
   logger?: WorkerDeps["logger"],
 ): Promise<AccountHealthView | NoData> {
-  let row: { tokenStatus: string; metaAccountStatus: string | null; metaSpendCap: string | null; metaHealthCheckedAt: Date | null } | undefined;
+  let row:
+    | {
+        tokenStatus: string;
+        metaAccountStatus: string | null;
+        currency: string | null;
+        metaBalance: string | null;
+        metaAmountSpent: string | null;
+        metaSpendCap: string | null;
+        metaHealthCheckedAt: Date | null;
+      }
+    | undefined;
   try {
     [row] = await db
       .select({
         tokenStatus: adAccounts.tokenStatus,
         metaAccountStatus: adAccounts.metaAccountStatus,
+        currency: adAccounts.currency,
+        metaBalance: adAccounts.metaBalance,
+        metaAmountSpent: adAccounts.metaAmountSpent,
         metaSpendCap: adAccounts.metaSpendCap,
         metaHealthCheckedAt: adAccounts.metaHealthCheckedAt,
       })
@@ -1213,9 +1231,19 @@ export async function getAccountHealthData(
     status,
     statusLabel,
     tokenExpired,
-    hasSpendCap: row.metaSpendCap !== null,
+    currency: row.currency ?? null,
+    balanceMajor: toMajorNumber(row.metaBalance),
+    amountSpentMajor: toMajorNumber(row.metaAmountSpent),
+    spendCapMajor: toMajorNumber(row.metaSpendCap),
     checkedAt: row.metaHealthCheckedAt ? row.metaHealthCheckedAt.toISOString() : null,
   };
+}
+
+/** Coluna numeric (text) → number em unidade maior; vazio/NaN → null (nunca "0" enganoso). */
+function toMajorNumber(v: string | null): number | null {
+  if (v === null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
 /**
@@ -1515,7 +1543,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     {
       name: "get_account_status",
       description:
-        "Status atual da conta pela última análise concluída: nota, resumo, gasto, DESPERDÍCIO (waste: quanto está queimando em campanhas paradas e onde o gasto está mal alocado — lidere por isso quando houver), nº de recomendações e de aprovações pendentes. Quando vier 'partialNote', essa análise ficou INCOMPLETA (a Meta limitou temporariamente ou uma parte degradou) — sempre repasse esse aviso ao dono, nunca omita.",
+        "DESEMPENHO da conta pela última análise concluída: nota, resumo, gasto, DESPERDÍCIO (waste: quanto está queimando em campanhas paradas e onde o gasto está mal alocado — lidere por isso quando houver), nº de recomendações e de aprovações pendentes. Esta é a tool PADRÃO pra perguntas genéricas de 'como está a conta?' / 'como estamos indo?' (é sobre resultado, NÃO a situação administrativa na Meta — pra desativação/saldo/pagamento use get_account_health). Quando vier 'partialNote', essa análise ficou INCOMPLETA (a Meta limitou temporariamente ou uma parte degradou) — sempre repasse esse aviso ao dono, nunca omita.",
       schema: z.object({}),
     },
   );
@@ -1834,7 +1862,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     {
       name: "get_account_health",
       description:
-        "Saúde da conta NA PRÓPRIA META (status/token/teto de gasto) — DIFERENTE de get_account_status (que é sobre a ÚLTIMA ANÁLISE nossa: nota/resumo/desperdício). Use SÓ quando o dono perguntar especificamente se a conta está ok, por que parou de rodar, ou sobre pagamento/saldo. NÃO chame por padrão em toda pergunta — problemas críticos já chegam via alerta automático, não precisa checar 'por garantia'. Passe fresh=true pra buscar o estado ATUAL na Meta; senão usa o último sincronizado. Se 'tokenExpired' vier true, o acesso à conta expirou — oriente reconectar no site. Saldo/pagamento detalhado fica só no site (atrás de login), não repasse números de pagamento por aqui.",
+        "Situação ADMINISTRATIVA da conta NA PRÓPRIA META: se foi desativada, token de acesso, saldo, teto de gasto e pagamento. NÃO é desempenho. Pergunta genérica como 'como está a conta?' / 'como estamos indo?' é DESEMPENHO → use get_account_status, NÃO esta. Use esta SÓ quando o dono perguntar especificamente: a conta foi desativada?, por que os anúncios pararam de rodar?, qual meu saldo/teto?, tem problema de pagamento?. NÃO chame 'por garantia' — problema crítico já chega por alerta automático. fresh=true busca o estado ATUAL na Meta; senão usa o último sincronizado. Se 'tokenExpired' vier true, o acesso expirou — oriente reconectar no site. Saldo/gasto/teto (quando vierem) você PODE repassar; só o rótulo do cartão/pagamento fica no site (atrás de login), nunca por aqui.",
       schema: z.object({ fresh: z.boolean().nullable() }),
     },
   );
