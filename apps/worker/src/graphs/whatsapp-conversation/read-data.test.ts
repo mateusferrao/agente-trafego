@@ -323,6 +323,17 @@ describe("getAccountHealthData (S5 — saúde da conta Meta no chat)", () => {
     const res = await getAccountHealthData(db, "acc-x", ORG);
     expect(res).toMatchObject({ hasData: false });
   });
+
+  it("erro de DB (ex: coluna nova ausente na janela de migration) → nota amigável, NUNCA vaza detalhe técnico (achado do E2E)", async () => {
+    const throwingDb = {
+      select: () => ({ from: () => ({ where: () => ({ limit: () => Promise.reject(new Error('column "meta_account_status" does not exist')) }) }) }),
+    } as never;
+    const res = await getAccountHealthData(throwingDb, "acc-1", ORG);
+    expect(res).toMatchObject({ hasData: false });
+    const note = (res as { note: string }).note;
+    expect(note).not.toContain("meta_account_status"); // nome de coluna nunca vaza
+    expect(note.toLowerCase()).toContain("não consegui");
+  });
 });
 
 describe("getMetricsData", () => {

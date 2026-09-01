@@ -1181,17 +1181,25 @@ export async function getAccountHealthData(
   db: Database,
   adAccountUuid: string,
   orgId: string,
+  logger?: WorkerDeps["logger"],
 ): Promise<AccountHealthView | NoData> {
-  const [row] = await db
-    .select({
-      tokenStatus: adAccounts.tokenStatus,
-      metaAccountStatus: adAccounts.metaAccountStatus,
-      metaSpendCap: adAccounts.metaSpendCap,
-      metaHealthCheckedAt: adAccounts.metaHealthCheckedAt,
-    })
-    .from(adAccounts)
-    .where(and(eq(adAccounts.id, adAccountUuid), eq(adAccounts.orgId, orgId)))
-    .limit(1);
+  let row: { tokenStatus: string; metaAccountStatus: string | null; metaSpendCap: string | null; metaHealthCheckedAt: Date | null } | undefined;
+  try {
+    [row] = await db
+      .select({
+        tokenStatus: adAccounts.tokenStatus,
+        metaAccountStatus: adAccounts.metaAccountStatus,
+        metaSpendCap: adAccounts.metaSpendCap,
+        metaHealthCheckedAt: adAccounts.metaHealthCheckedAt,
+      })
+      .from(adAccounts)
+      .where(and(eq(adAccounts.id, adAccountUuid), eq(adAccounts.orgId, orgId)))
+      .limit(1);
+  } catch (err) {
+    // nunca vaza detalhe técnico (nome de coluna/stack) pro chat (§13) — nota amigável.
+    logger?.warn({ err: String(err) }, "get_account_health:leitura degradou");
+    return { hasData: false, note: "não consegui checar a saúde da conta agora. Tenta de novo em instantes." };
+  }
   if (!row) return { hasData: false, note: "conta não encontrada." };
 
   const tokenExpired = row.tokenStatus === "invalid";
@@ -1821,7 +1829,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
           logger.warn({ err: String(err) }, "get_account_health:refresh live degradou (usa persistido)"),
         );
       }
-      return asString(await getAccountHealthData(db, ctx.adAccountId, ctx.orgId));
+      return asString(await getAccountHealthData(db, ctx.adAccountId, ctx.orgId, logger));
     },
     {
       name: "get_account_health",
