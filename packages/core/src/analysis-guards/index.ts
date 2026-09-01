@@ -1,4 +1,4 @@
-import type { AccountBrief, ConversionBasis, DecisionEligibility, EntitySummary, FunnelSummary, InsightMetrics, TrackingHealth } from "@trafego/shared";
+import type { AccountBrief, ConversionBasis, DecisionEligibility, EntitySummary, FunnelSummary, HealthSignal, InsightMetrics, TrackingHealth } from "@trafego/shared";
 import type { AnalysisFinding, AnalysisOutput, RecommendationActionType } from "@trafego/shared";
 import { flagUngroundedNumbers } from "../chat-guards/index.js";
 import { DEFAULT_QUALITY_THRESHOLDS } from "../quality/index.js";
@@ -383,6 +383,54 @@ export function guardAudienceScaleCeiling(
       title: demotedTitle(r.title),
       actionType: "investigate" as RecommendationActionType,
       rationale: `${r.rationale}\n[guard] escalar → investigar: o público (~${Math.round(headroom.monthlyReach)} pessoas/mês) já está perto do teto de frequência saudável — mais orçamento tende a aumentar FREQUÊNCIA (mesma gente vendo mais vezes), não alcançar gente nova.`,
+      budgetChangePct: null,
+    };
+  });
+  return { ...output, recommendations };
+}
+
+// ─── Guard de fadiga vs escala (achado do A/B real grok-4.5 × gemini-3.7-flash) ──
+// A/B com dados reais de produção (mesmo brief, mesmo prompt — incluindo a NOTE que já
+// explica `weak_hook_retention`) mostrou o analista propor `increase_budget` numa entidade
+// com retenção de gancho quase zero: a NOTE sozinha não foi rede suficiente pra essa classe
+// de erro. `creative_fatigue`/`weak_hook_retention` são sinais DUROS (métrica, não score de
+// LLM) — revisa a decisão anterior de deixar `weak_hook_retention` só em NOTE
+// (packages/core/src/quality/index.ts) especificamente pro gate de escala: o guard
+// COMPLEMENTA a NOTE (que continua explicando o "porquê" pro raciocínio), não a substitui.
+// `weak_creative` (score de visão, LLM soft) fica de fora — nunca vira critério de guard.
+
+const FATIGUE_SIGNALS: ReadonlySet<HealthSignal> = new Set(["creative_fatigue", "weak_hook_retention"]);
+
+/** Mapa `externalId → healthSignals` a partir dos segmentos do brief. */
+export function healthSignalsByEntity(brief: AccountBrief): Map<string, readonly HealthSignal[]> {
+  const map = new Map<string, readonly HealthSignal[]>();
+  forEachEntity(brief, (e) => {
+    if (e.healthSignals) map.set(e.id, e.healthSignals);
+  });
+  return map;
+}
+
+/**
+ * Rebaixa recomendações de ESCALAR (aumentar budget / reativar) → `investigate` quando a
+ * entidade-alvo tem sinal duro de fadiga de criativo (`creative_fatigue`/`weak_hook_retention`)
+ * — escalar sem renovar o gancho tende a piorar CPA/CPM, não a crescer alcance de verdade.
+ * Puro: não remove (o dono ainda vê o sinal), só troca a ordem de ação + anota o porquê.
+ */
+export function guardScaleWithoutFreshCreative(
+  output: AnalysisOutput,
+  signalsByEntity: ReadonlyMap<string, readonly HealthSignal[]>,
+): AnalysisOutput {
+  const recommendations = output.recommendations.map((r) => {
+    if (!SCALE_ACTIONS.has(r.actionType)) return r;
+    const id = r.targetEntity?.externalId;
+    const signals = id ? signalsByEntity.get(id) : undefined;
+    const hit = signals?.find((s) => FATIGUE_SIGNALS.has(s));
+    if (!hit) return r;
+    return {
+      ...r,
+      title: demotedTitle(r.title),
+      actionType: "investigate" as RecommendationActionType,
+      rationale: `${r.rationale}\n[guard] escalar → investigar: sinal de fadiga de criativo (${hit}) — renove o gancho/criativo antes de aumentar orçamento, senão o incremento tende a piorar CPA/CPM em vez de alcançar gente nova.`,
       budgetChangePct: null,
     };
   });

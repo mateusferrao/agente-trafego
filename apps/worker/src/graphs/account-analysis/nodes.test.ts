@@ -184,6 +184,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
       reviewEnabled: true,
       maxOutputTokens: 4000,
       reasoningEffort: "medium",
+      reviewReasoningEffort: "off",
       maxCreativesVision: 8,
       notableAdsPerCampaign: 5,
       maxCreativesVisionPerCampaign: 3,

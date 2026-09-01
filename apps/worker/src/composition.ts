@@ -298,6 +298,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
       reviewEnabled: env.ANALYSIS_REVIEW_ENABLED,
       maxOutputTokens: env.ANALYSIS_MAX_OUTPUT_TOKENS,
       reasoningEffort: env.ANALYSIS_REASONING_EFFORT,
+      reviewReasoningEffort: env.ANALYSIS_REVIEW_REASONING_EFFORT,
       maxCreativesVision: env.ANALYSIS_MAX_CREATIVES_VISION,
       notableAdsPerCampaign: env.ANALYSIS_NOTABLE_ADS_PER_CAMPAIGN,
       maxCreativesVisionPerCampaign: env.ANALYSIS_MAX_CREATIVES_VISION_PER_CAMPAIGN,

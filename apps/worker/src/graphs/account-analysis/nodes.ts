@@ -32,6 +32,8 @@ import {
   guardTrackingCaveat,
   guardScaleWithWorseningMarginalCpa,
   marginalCpaRiseByEntity,
+  guardScaleWithoutFreshCreative,
+  healthSignalsByEntity,
   guardAudienceScaleCeiling,
   DEFAULT_AUDIENCE_CEILING_THRESHOLDS,
   resolveFrequencyCap,
@@ -749,7 +751,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           responseSchemaName: ANALYSIS_OUTPUT_SCHEMA_NAME,
           temperature: ANALYSIS_TEMPERATURE,
           maxTokens: cfg.maxOutputTokens,
-          reasoning: { effort: cfg.reasoningEffort },
+          // separado do reasoning da síntese (achado do A/B: revisor refina/corta, não
+          // gera do zero — não precisa do mesmo orçamento de raciocínio).
+          reasoning: { effort: cfg.reviewReasoningEffort },
           // D1 (6c): emite usage_event `review` (antes a chamada não passava meta).
           meta: { orgId: state.orgId, runId: state.runId, type: "review" },
         });
@@ -789,16 +793,20 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       marginalCpaRiseByEntity(state.brief),
       { worsenPct: cfg.quality.marginalCpaWorsenPct },
     );
+    // Fadiga vs escala (achado do A/B real grok×gemini — NOTE sozinha não bastou): rebaixa
+    // escalar → investigar quando o alvo tem sinal DURO de fadiga de criativo. Roda ANTES do
+    // teto de audiência (IO/Meta) pra não gastar a chamada numa entidade que já vai ser rebaixada.
+    const freshCreativeGuarded = guardScaleWithoutFreshCreative(marginalGuarded, healthSignalsByEntity(state.brief));
     // Teto de escala por audiência (Fase 4): reativo (só as entidades que sobreviveram
     // com proposta de escalar até aqui) — rebaixa escalar → investigar quando o público
     // (MAU × teto de frequência saudável) já está perto do limite de impressões sustentáveis.
     const audienceHeadroom = await resolveAudienceHeadroomByEntity(
       { repo, ads: deps.ports.ads, vault: deps.ports.vault, logger },
       state,
-      marginalGuarded,
+      freshCreativeGuarded,
       cfg,
     );
-    const audienceGuarded = guardAudienceScaleCeiling(marginalGuarded, audienceHeadroom, DEFAULT_AUDIENCE_CEILING_THRESHOLDS);
+    const audienceGuarded = guardAudienceScaleCeiling(freshCreativeGuarded, audienceHeadroom, DEFAULT_AUDIENCE_CEILING_THRESHOLDS);
     // impacto (Bloco 2): anexa o gasto liberado a cada recomendação de pausa.
     const spendById = new Map<string, number>();
     for (const level of [state.brief.segments.campaigns, state.brief.segments.adsets, state.brief.segments.ads]) {
