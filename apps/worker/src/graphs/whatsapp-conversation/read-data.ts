@@ -891,7 +891,7 @@ export async function getAgentConfigData(
   db: Database,
   orgId: string,
   agentId: string,
-): Promise<{ goals: unknown; autonomy: unknown; guardrails: unknown; archetype: string } | NoData> {
+): Promise<{ goals: unknown; autonomy: unknown; guardrails: unknown; notifications: unknown; archetype: string } | NoData> {
   const ctx = await createAnalysisRepo(db).loadAgentContext(orgId, agentId);
   if (!ctx) return { hasData: false, note: "não achei a configuração deste agente" };
   const g = ctx.guardrailConfig;
@@ -906,6 +906,9 @@ export async function getAgentConfigData(
       dryRun: g.dryRun,
       killSwitch: g.killSwitch,
     },
+    // avisos proativos REAIS (pulso/alerta/reativação/saúde da conta com limiares de teto e
+    // saldo) — pro agente citar o valor CERTO ("seu alerta de saldo é R$50"), nunca inventar.
+    notifications: ctx.notifyPolicy,
   };
 }
 
@@ -1807,7 +1810,8 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     },
     {
       name: "get_agent_config",
-      description: "Como o agente está configurado hoje (objetivo/meta, autonomia, guardrails). Só leitura — mudar é pelo site.",
+      description:
+        "Como o agente está configurado hoje: objetivo/meta, autonomia, guardrails e AVISOS proativos (pulso, alerta, reativação, saúde da conta — incluindo quais estados avisam, o teto de gasto e o limiar de SALDO baixo, com os valores reais). Use pra responder sobre a configuração atual (ex: 'qual meu alerta de saldo?') — cite o valor REAL daqui, nunca invente. Mudar = por conversa (set_notifications e afins) ou pelo site.",
       schema: z.object({}),
     },
   );

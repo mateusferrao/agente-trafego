@@ -272,6 +272,25 @@ describe("resolveAgentConfigChange — notifyPolicy (F4d)", () => {
     const r = resolve(baseState(), { notifyPolicy: { accountHealthSpendThresholdMajor: 5000 } });
     expect(r.next.notifyPolicy.accountHealthAlert?.spendThreshold).toEqual({ source: "custom", customValueMajor: 5000 });
   });
+
+  it("saúde da conta: liga o aviso de SALDO baixo + valor (chat) — paridade com o site", () => {
+    const r = resolve(baseState(), {
+      notifyPolicy: { accountHealthBalanceEnabled: true, accountHealthBalanceThresholdMajor: 100 },
+    });
+    expect(r.next.notifyPolicy.accountHealthAlert?.balanceThreshold).toEqual({ enabled: true, customValueMajor: 100 });
+  });
+
+  it("saúde da conta: substitui o checklist de status (chat) — 'só me avise se for desativada'", () => {
+    const r = resolve(baseState(), { notifyPolicy: { accountHealthStatusTriggers: ["disabled"] } });
+    expect(r.next.notifyPolicy.accountHealthAlert?.statusTriggers).toEqual(["disabled"]);
+  });
+
+  it("saúde da conta: fonte 'meta_cap' volta pro teto da Meta (vence o valor no mesmo patch)", () => {
+    const r = resolve(baseState(), {
+      notifyPolicy: { accountHealthSpendSource: "meta_cap", accountHealthSpendThresholdMajor: 5000 },
+    });
+    expect(r.next.notifyPolicy.accountHealthAlert?.spendThreshold).toEqual({ source: "meta_cap" });
+  });
 });
 
 describe("resolveAgentConfigChange — postura (voz)", () => {

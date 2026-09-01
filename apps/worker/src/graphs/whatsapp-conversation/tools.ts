@@ -18,6 +18,7 @@ import {
   CONVERSION_GOALS,
   COPY_TEXT_MAX,
   ENTITY_NAME_MAX,
+  ALERTABLE_ACCOUNT_HEALTH_STATUSES,
   DEFAULT_CURRENCY,
   DEFAULT_POSTURE,
   DIDACTIC_DEPTH_LEVELS,
@@ -526,7 +527,7 @@ export function makeConversationTools(
   const setNotifications = tool(proposeOnly, {
     name: "set_notifications",
     description:
-      "Configura o que o agente manda SEM ser perguntado: o PULSO (resumo do dia — retrato de ontem fechado + hoje até agora, na cadência que você definir; mesmo sem recomendação nova), o ALERTA (aviso automático quando algo muda materialmente na conta, com sensibilidade e intervalo mínimo entre alertas em horas), o AVISO APÓS ANÁLISE (mensagem depois de cada análise agendada com recomendação), a REATIVAÇÃO (avisa quando uma conta que estava PARADA volta a rodar — gasto/impressões de novo — e já roda a 1ª análise), a SAÚDE DA CONTA NA META (avisa na hora se a conta for desativada, bater o teto de gasto ou tiver o pagamento recusado — dá pra definir um teto de gasto próprio) e a PROPOSTA DE CAMPANHA por conta própria (o agente sugere escalar um vencedor ou criar uma campanha quando faz sentido, sempre como proposta — nunca gasta sem sua aprovação). Só troca os campos enviados. Requer eco+confirma.",
+      "Configura o que o agente manda SEM ser perguntado: o PULSO (resumo do dia — retrato de ontem fechado + hoje até agora, na cadência que você definir; mesmo sem recomendação nova), o ALERTA (aviso automático quando algo muda materialmente na conta, com sensibilidade e intervalo mínimo entre alertas em horas), o AVISO APÓS ANÁLISE (mensagem depois de cada análise agendada com recomendação), a REATIVAÇÃO (avisa quando uma conta que estava PARADA volta a rodar — gasto/impressões de novo — e já roda a 1ª análise), a SAÚDE DA CONTA NA META (avisa na hora se a conta for desativada ou tiver pagamento recusado; dá pra escolher QUAIS estados avisam, um TETO de gasto — teto da Meta ou valor próprio — e um aviso de SALDO baixo separado, com valor próprio) e a PROPOSTA DE CAMPANHA por conta própria (o agente sugere escalar um vencedor ou criar uma campanha quando faz sentido, sempre como proposta — nunca gasta sem sua aprovação). TETO de gasto (gasto total batendo um limite) e SALDO baixo (dinheiro acabando) são coisas DIFERENTES — não confunda. Só troca os campos enviados. Requer eco+confirma.",
     schema: z.object({
       pulseEnabled: z.boolean().nullable().optional().describe("liga/desliga o resumo do dia (pulso)"),
       pulseCadence: z
@@ -558,13 +559,36 @@ export function makeConversationTools(
         .boolean()
         .nullable()
         .optional()
-        .describe("liga/desliga o aviso na hora quando a conta na Meta tem problema (desativada, teto de gasto batido ou pagamento recusado)"),
+        .describe("liga/desliga TODO o aviso de saúde da conta na Meta (desativada, teto batido, pagamento recusado, saldo baixo)"),
+      accountHealthStatusTriggers: z
+        .array(z.enum(ALERTABLE_ACCOUNT_HEALTH_STATUSES))
+        .nullable()
+        .optional()
+        .describe(
+          "lista COMPLETA dos estados da conta que devem disparar aviso (substitui a atual): disabled (desativada), unsettled (pagamento pendente), pending_settlement (cobrança pendente), grace_period (carência), pending_review (revisão de segurança), pending_closure (em encerramento), closed (encerrada), unknown (status novo). Ex: 'só me avise se for desativada' → ['disabled']",
+        ),
+      accountHealthSpendSource: z
+        .enum(["meta_cap", "custom"])
+        .nullable()
+        .optional()
+        .describe("fonte do TETO de gasto: 'meta_cap' usa o teto configurado na Meta; 'custom' usa accountHealthSpendThreshold. Use 'meta_cap' pra voltar ao teto da Meta"),
       accountHealthSpendThreshold: z
         .number()
         .positive()
         .nullable()
         .optional()
-        .describe("teto de gasto total (na moeda da conta) que dispara aviso — definir troca a comparação do teto da Meta pra esse valor; o dono decide"),
+        .describe("valor do TETO de gasto TOTAL (na moeda da conta) — gasto acumulado batendo esse teto dispara aviso. Definir troca a fonte pra 'custom'. NÃO é o saldo"),
+      accountHealthBalanceEnabled: z
+        .boolean()
+        .nullable()
+        .optional()
+        .describe("liga/desliga o aviso de SALDO baixo (dinheiro acabando na conta) — separado do teto de gasto"),
+      accountHealthBalanceThreshold: z
+        .number()
+        .positive()
+        .nullable()
+        .optional()
+        .describe("valor de SALDO (na moeda da conta) abaixo do qual avisa que o dinheiro está acabando. É o SALDO/base, NÃO o teto de gasto. Ex: 'muda o saldo base pra 100' → 100"),
     }),
   });
   const reseedArchetype = tool(proposeOnly, {
@@ -1139,7 +1163,13 @@ export function configPatchFromToolCall(
         ...(args["runPushEnabled"] != null ? { runPushEnabled: args["runPushEnabled"] as boolean } : {}),
         ...(args["reactivationEnabled"] != null ? { reactivationEnabled: args["reactivationEnabled"] as boolean } : {}),
         ...(args["accountHealthEnabled"] != null ? { accountHealthEnabled: args["accountHealthEnabled"] as boolean } : {}),
+        ...(args["accountHealthStatusTriggers"] != null
+          ? { accountHealthStatusTriggers: args["accountHealthStatusTriggers"] as NotifyPolicyPatch["accountHealthStatusTriggers"] }
+          : {}),
+        ...(args["accountHealthSpendSource"] != null ? { accountHealthSpendSource: args["accountHealthSpendSource"] as "meta_cap" | "custom" } : {}),
         ...(args["accountHealthSpendThreshold"] != null ? { accountHealthSpendThresholdMajor: args["accountHealthSpendThreshold"] as number } : {}),
+        ...(args["accountHealthBalanceEnabled"] != null ? { accountHealthBalanceEnabled: args["accountHealthBalanceEnabled"] as boolean } : {}),
+        ...(args["accountHealthBalanceThreshold"] != null ? { accountHealthBalanceThresholdMajor: args["accountHealthBalanceThreshold"] as number } : {}),
         ...(args["proactiveDraftsEnabled"] != null ? { proactiveDraftsEnabled: args["proactiveDraftsEnabled"] as boolean } : {}),
       };
       return { notifyPolicy };

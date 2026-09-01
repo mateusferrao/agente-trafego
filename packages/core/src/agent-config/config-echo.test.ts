@@ -174,6 +174,22 @@ describe("buildConfigChangeEcho", () => {
     expect(echo).toContain("teto de gasto que avisa: teto da Meta → $ 5000,00");
     expect(echo).not.toContain("R$ 5000,00");
   });
+
+  it("saúde da conta: liga o aviso de SALDO baixo com valor → eco na moeda (bug 'muda o saldo base')", () => {
+    const echo = echoFor(baseState(), {
+      notifyPolicy: { accountHealthBalanceEnabled: true, accountHealthBalanceThresholdMajor: 100 },
+    });
+    expect(echo).toContain("aviso de saldo baixo: desligado → R$ 100,00");
+    // nunca confunde com o teto: a linha de teto não aparece nessa mudança.
+    expect(echo).not.toContain("teto de gasto que avisa");
+  });
+
+  it("saúde da conta: reduz o checklist p/ só 'desativada' → eco lista o que deixou de avisar", () => {
+    const echo = echoFor(baseState(), { notifyPolicy: { accountHealthStatusTriggers: ["disabled"] } });
+    expect(echo).toContain("estados que disparam aviso");
+    expect(echo).toContain("deixa de avisar em:");
+    expect(echo).toContain("Pagamento pendente");
+  });
 });
 
 describe("describePlaybookRule", () => {

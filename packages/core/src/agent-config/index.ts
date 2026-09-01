@@ -15,11 +15,13 @@ import type {
   Directiveness,
   ExperienceLevel,
   GuardrailConfig,
+  MetaAccountHealthStatus,
   NotifyPolicy,
   Posture,
   Volume,
 } from "@trafego/shared";
 import {
+  ACCOUNT_HEALTH_STATUS_LABELS,
   AGENT_IDENTITY_FIELD_MAX,
   AGENT_PROMPT_FIELD_MAX,
   AGENT_TEXT_FIELD_MAX,
@@ -122,11 +124,19 @@ export interface NotifyPolicyPatch {
   readonly proactiveDraftsEnabled?: boolean | undefined;
   /** liga/desliga o alerta de saúde da conta Meta (desativada/teto/pagamento) — via chat. */
   readonly accountHealthEnabled?: boolean | undefined;
-  /** teto de gasto CUSTOMIZADO (moeda da conta) — definir troca a fonte pra "custom" — via chat.
-   *  O checklist de status e o gatilho de saldo ficam só no site (granular demais p/ chat). */
+  /** checklist de status que dispara aviso — lista COMPLETA que substitui a atual (via chat).
+   *  Subconjunto alertável (exclui "active"), igual ao schema. */
+  readonly accountHealthStatusTriggers?: NonNullable<NotifyPolicy["accountHealthAlert"]>["statusTriggers"] | undefined;
+  /** fonte do teto: "meta_cap" (usa o da Meta) ou "custom" — via chat (permite voltar pra meta_cap). */
+  readonly accountHealthSpendSource?: "meta_cap" | "custom" | undefined;
+  /** teto de gasto CUSTOMIZADO (moeda da conta) — definir também troca a fonte pra "custom" — via chat. */
   readonly accountHealthSpendThresholdMajor?: number | undefined;
-  /** objeto COMPLETO (site) — o site edita o checklist/saldo e salva tudo; usado como base
-   *  do merge. Os campos flat acima (chat) sobrepõem por cima quando presentes. */
+  /** liga/desliga o aviso de SALDO baixo (dinheiro acabando) — via chat. */
+  readonly accountHealthBalanceEnabled?: boolean | undefined;
+  /** limiar de SALDO baixo CUSTOMIZADO (moeda da conta) — via chat. */
+  readonly accountHealthBalanceThresholdMajor?: number | undefined;
+  /** objeto COMPLETO (site) — o site edita tudo de uma vez; usado como base do merge.
+   *  Os campos flat acima (chat) sobrepõem por cima quando presentes. */
   readonly accountHealthAlert?: NotifyPolicy["accountHealthAlert"] | undefined;
 }
 
@@ -390,9 +400,33 @@ function describeSpendThreshold(alert: NotifyPolicy["accountHealthAlert"], curre
     : "teto da Meta";
 }
 
-/** Merge do alerta de saúde de conta (chat só mexe em enabled + teto customizado; o
- *  checklist de status e o saldo ficam no site). Linha pré-fatia sem o objeto → default
- *  seguro (ON + todos os status marcados). */
+/** Descreve o aviso de saldo baixo (chat/eco): valor na moeda da conta, "ligado" (sem valor) ou "desligado". */
+function describeBalanceThreshold(alert: NotifyPolicy["accountHealthAlert"], currency: string): string {
+  const b = alert?.balanceThreshold;
+  if (!b?.enabled) return "desligado";
+  return b.customValueMajor !== undefined ? formatMoney(b.customValueMajor, currency) : "ligado";
+}
+
+/** Eco da mudança no checklist de status: descreve os estados que passaram/deixaram de avisar. */
+function describeStatusTriggerChange(
+  cur: NotifyPolicy["accountHealthAlert"],
+  next: NotifyPolicy["accountHealthAlert"],
+): string | null {
+  const c = new Set(cur?.statusTriggers ?? ALERTABLE_ACCOUNT_HEALTH_STATUSES);
+  const n = new Set(next?.statusTriggers ?? ALERTABLE_ACCOUNT_HEALTH_STATUSES);
+  const label = (s: MetaAccountHealthStatus) => ACCOUNT_HEALTH_STATUS_LABELS[s as Exclude<MetaAccountHealthStatus, "active">];
+  const added = [...n].filter((s) => !c.has(s)).map(label);
+  const removed = [...c].filter((s) => !n.has(s)).map(label);
+  if (added.length === 0 && removed.length === 0) return null;
+  const parts: string[] = [];
+  if (added.length > 0) parts.push(`passa a avisar em: ${added.join(", ")}`);
+  if (removed.length > 0) parts.push(`deixa de avisar em: ${removed.join(", ")}`);
+  return `estados que disparam aviso — ${parts.join("; ")}`;
+}
+
+/** Merge do alerta de saúde de conta. O chat mexe em TODOS os campos (paridade com o site):
+ *  enabled, checklist de status, fonte+valor do teto e saldo (on/off + valor). Linha
+ *  pré-fatia sem o objeto → default seguro (ON + todos os status marcados). */
 function mergeAccountHealthAlert(
   cur: NotifyPolicy["accountHealthAlert"],
   patch: NotifyPolicyPatch,
@@ -405,15 +439,29 @@ function mergeAccountHealthAlert(
       spendThreshold: { source: "meta_cap" as const },
       balanceThreshold: { enabled: false },
     };
-  // campos FLAT do chat sobrepõem por cima (leaf-merge só do que o chat sabe mexer).
+  // campos FLAT do chat sobrepõem por cima (leaf-merge só do que o chat mandou).
+  const statusTriggers =
+    patch.accountHealthStatusTriggers !== undefined ? [...patch.accountHealthStatusTriggers] : base.statusTriggers;
+  // teto: "meta_cap" explícito volta pra Meta (sem valor); senão valor definido → custom; senão preserva.
   const spendThreshold =
-    patch.accountHealthSpendThresholdMajor !== undefined
-      ? { source: "custom" as const, customValueMajor: patch.accountHealthSpendThresholdMajor }
-      : base.spendThreshold;
+    patch.accountHealthSpendSource === "meta_cap"
+      ? { source: "meta_cap" as const }
+      : patch.accountHealthSpendThresholdMajor !== undefined
+        ? { source: "custom" as const, customValueMajor: patch.accountHealthSpendThresholdMajor }
+        : base.spendThreshold;
+  // saldo: on/off e valor leaf-merge (exactOptional → só inclui customValueMajor quando existe).
+  const balanceEnabled = patch.accountHealthBalanceEnabled ?? base.balanceThreshold.enabled;
+  const balanceValue = patch.accountHealthBalanceThresholdMajor ?? base.balanceThreshold.customValueMajor;
+  const balanceThreshold = {
+    enabled: balanceEnabled,
+    ...(balanceValue !== undefined ? { customValueMajor: balanceValue } : {}),
+  };
   return {
     ...base,
     enabled: patch.accountHealthEnabled ?? base.enabled,
+    statusTriggers,
     spendThreshold,
+    balanceThreshold,
   };
 }
 
@@ -755,6 +803,10 @@ function configDetailLines(
       // teto da Meta" quando o estado legado não tinha o campo e o merge só o backfillou.
       if (describeSpendThreshold(cah, currency) !== describeSpendThreshold(nah, currency))
         lines.push(`teto de gasto que avisa: ${describeSpendThreshold(cah, currency)} → ${describeSpendThreshold(nah, currency)}`);
+      if (describeBalanceThreshold(cah, currency) !== describeBalanceThreshold(nah, currency))
+        lines.push(`aviso de saldo baixo: ${describeBalanceThreshold(cah, currency)} → ${describeBalanceThreshold(nah, currency)}`);
+      const statusChange = describeStatusTriggerChange(cah, nah);
+      if (statusChange) lines.push(statusChange);
       return lines;
     }
     default:

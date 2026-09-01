@@ -400,6 +400,28 @@ describe("configPatchFromToolCall", () => {
     expect(patch).toEqual({ notifyPolicy: {} });
   });
 
+  it("set_notifications: 'muda o saldo base pra 100' → limiar de SALDO, NUNCA o teto (bug)", () => {
+    const patch = configPatchFromToolCall(
+      "set_notifications",
+      { accountHealthBalanceEnabled: true, accountHealthBalanceThreshold: 100 },
+      state(),
+    );
+    expect(patch).toEqual({
+      notifyPolicy: { accountHealthBalanceEnabled: true, accountHealthBalanceThresholdMajor: 100 },
+    });
+  });
+
+  it("set_notifications: checklist de status + fonte do teto viram patch (paridade com o site)", () => {
+    const patch = configPatchFromToolCall(
+      "set_notifications",
+      { accountHealthStatusTriggers: ["disabled", "closed"], accountHealthSpendSource: "meta_cap" },
+      state(),
+    );
+    expect(patch).toEqual({
+      notifyPolicy: { accountHealthStatusTriggers: ["disabled", "closed"], accountHealthSpendSource: "meta_cap" },
+    });
+  });
+
   it("set_persona: texto vira patch; identidade não é goal/guardrail", () => {
     const patch = configPatchFromToolCall("set_persona", { text: "vendedor consultivo" }, state());
     expect(patch).toEqual({ persona: "vendedor consultivo" });
