@@ -9,7 +9,7 @@
 // curado" (§7) — o usuário PEDE dado atualizado; fica atrás desta tool opt-in.
 
 import { and, desc, eq, gte, lte } from "drizzle-orm";
-import { addDays, todayInTz } from "@trafego/core";
+import { addDays, reduceFrequencyAndReach, todayInTz } from "@trafego/core";
 import { adAccounts, agents, entityAnalyses, insightsSnapshots, platformConnections, type Database } from "@trafego/db";
 import type { AdsPlatformPort, CredentialVaultPort } from "@trafego/shared/ports";
 import type { AgentGoals, EntityLevel, StoredInsightMetrics } from "@trafego/shared/types";
@@ -44,6 +44,12 @@ export interface FreshKpis {
   readonly revenue: number | null;
   /** TODAS as conversões da janela (goal→contagem/receita) — o agente enumera sem esconder nada. */
   readonly breakdown: ReadonlyArray<{ readonly goal: string; readonly count: number; readonly value: number | null }>;
+  /** Frequência (impressões/alcance) — NÃO somável entre dias (alcance é dedup); MÁXIMO da janela
+   *  (mesma lógica não-somável do brief, `reduceFrequencyAndReach`). Undefined = a Meta não reportou. */
+  readonly frequency?: number;
+  /** Alcance (pessoas ÚNICAS) — mesma razão de não-somável; valor do ÚLTIMO dia da janela
+   *  (mesma lógica não-somável do brief, `reduceFrequencyAndReach`). Undefined = a Meta não reportou. */
+  readonly reach?: number;
 }
 
 /** Conversão de NEGÓCIO do agente p/ contar CPA/ROAS (vence o objetivo da entidade, §7). */
@@ -107,7 +113,7 @@ export function attributionCaveat(until: string, today: string): string | undefi
  * Nenhuma conversão reportada → conversions/cpa/roas null (aí sim "a Meta não retornou").
  */
 export function aggregateKpis(
-  rows: readonly StoredInsightMetrics[],
+  rows: readonly { date?: string; metricsJson: StoredInsightMetrics }[],
   businessGoal?: BusinessGoal | null,
 ): FreshKpis {
   let spend = 0;
@@ -115,7 +121,16 @@ export function aggregateKpis(
   let clicks = 0;
   // agrega o breakdown por (goal, customConversionId) — mesma semântica do brief.
   const conv = new Map<string, { goal: string; customConversionId?: string; count: number; value: number; hasValue: boolean }>();
-  for (const r of rows) {
+  // frequency (máximo)/reach (último dia) — mesma lógica não-somável do brief (S6),
+  // reusada aqui em vez de duplicada (§13 reuso-primeiro).
+  const nonAdditive = reduceFrequencyAndReach(
+    rows.map((r) => ({
+      ...(r.date !== undefined ? { date: r.date } : {}),
+      ...(r.metricsJson?.metrics?.frequency !== undefined ? { frequency: r.metricsJson.metrics.frequency } : {}),
+      ...(r.metricsJson?.metrics?.reach !== undefined ? { reach: r.metricsJson.metrics.reach } : {}),
+    })),
+  );
+  for (const { metricsJson: r } of rows) {
     const m = r?.metrics;
     if (!m) continue;
     spend += m.spend ?? 0;
@@ -159,6 +174,8 @@ export function aggregateKpis(
     conversionGoal: match?.goal ?? null,
     revenue: hasRevenue ? revenueTotal : null,
     breakdown: entries.map((e) => ({ goal: e.goal, count: e.count, value: e.hasValue ? e.value : null })),
+    ...(nonAdditive.frequency !== undefined ? { frequency: nonAdditive.frequency } : {}),
+    ...(nonAdditive.reach !== undefined ? { reach: nonAdditive.reach } : {}),
   };
 }
 
@@ -378,7 +395,7 @@ async function getFreshMetricsDataInner(
     until,
     asOf,
     updated,
-    kpis: aggregateKpis(rows.map((r) => r.metricsJson), businessGoal),
+    kpis: aggregateKpis(rows, businessGoal),
     ...(note ? { attributionNote: note } : {}),
   };
 }
@@ -450,9 +467,10 @@ export async function getCampaignsBreakdownData(
       deps.logger.warn({ err: String(err) }, "campaigns-breakdown:sync falhou (fallback ao snapshot)");
     }
 
-    // snapshots campaign-level da janela COM o id (readSnapshotRows não devolve entityId).
+    // snapshots campaign-level da janela COM id+data (readSnapshotRows não devolve entityId;
+    // `date` é necessária pro reach — não somável, só o valor do ÚLTIMO dia vale).
     const rows = await deps.db
-      .select({ entityId: insightsSnapshots.entityId, metricsJson: insightsSnapshots.metricsJson })
+      .select({ entityId: insightsSnapshots.entityId, date: insightsSnapshots.date, metricsJson: insightsSnapshots.metricsJson })
       .from(insightsSnapshots)
       .where(
         and(
@@ -469,10 +487,10 @@ export async function getCampaignsBreakdownData(
     const businessGoal = await loadBusinessGoal(deps.db, ctx.orgId, ctx.agentId);
 
     // agrupa por campanha e re-deriva os KPIs da janela por grupo.
-    const byId = new Map<string, StoredInsightMetrics[]>();
+    const byId = new Map<string, Array<{ date: string; metricsJson: StoredInsightMetrics }>>();
     for (const r of rows) {
       const list = byId.get(r.entityId) ?? [];
-      list.push(r.metricsJson as StoredInsightMetrics);
+      list.push({ date: r.date, metricsJson: r.metricsJson as StoredInsightMetrics });
       byId.set(r.entityId, list);
     }
 
@@ -558,7 +576,7 @@ export async function getAdsBreakdownData(
     }
 
     const rows = await deps.db
-      .select({ entityId: insightsSnapshots.entityId, metricsJson: insightsSnapshots.metricsJson })
+      .select({ entityId: insightsSnapshots.entityId, date: insightsSnapshots.date, metricsJson: insightsSnapshots.metricsJson })
       .from(insightsSnapshots)
       .where(
         and(
@@ -574,10 +592,10 @@ export async function getAdsBreakdownData(
 
     const businessGoal = await loadBusinessGoal(deps.db, ctx.orgId, ctx.agentId);
 
-    const byId = new Map<string, StoredInsightMetrics[]>();
+    const byId = new Map<string, Array<{ date: string; metricsJson: StoredInsightMetrics }>>();
     for (const r of rows) {
       const list = byId.get(r.entityId) ?? [];
-      list.push(r.metricsJson as StoredInsightMetrics);
+      list.push({ date: r.date, metricsJson: r.metricsJson as StoredInsightMetrics });
       byId.set(r.entityId, list);
     }
 

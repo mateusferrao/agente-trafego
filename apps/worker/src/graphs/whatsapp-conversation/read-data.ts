@@ -429,7 +429,7 @@ export async function getMetricsData(
 
   const asOf = rows.reduce((latest, r) => (r.date > latest ? r.date : latest), rows[0]!.date);
   const businessGoal = await loadBusinessGoal(db, orgId, agentId);
-  const kpis = aggregateKpis(rows.map((r) => r.metricsJson as StoredInsightMetrics), businessGoal);
+  const kpis = aggregateKpis(rows as Array<{ date: string; metricsJson: StoredInsightMetrics }>, businessGoal);
   const note = attributionCaveat(asOf, todayInTz(now(), tz));
   return { periodDays, asOf, hasData: true, ...kpis, ...(note ? { attributionNote: note } : {}) };
 }

@@ -74,6 +74,54 @@ export interface NormalizedEntity {
 }
 
 /**
+ * Ponto bruto (por dia) das métricas NÃO-somáveis frequency/reach — entrada de
+ * `reduceFrequencyAndReach`. Genérico o bastante p/ ser reusado fora do brief
+ * (ex.: chat, que lê `insights_snapshots` direto sem passar por `InsightRow`).
+ */
+export interface NonAdditivePoint {
+  readonly date?: string;
+  readonly frequency?: number;
+  readonly reach?: number;
+}
+
+/** Resultado agregado de `reduceFrequencyAndReach` — ausente (não zero) quando nenhum ponto reportou o campo. */
+export interface NonAdditiveAggregate {
+  frequency?: number;
+  reach?: number;
+}
+
+/**
+ * Reduz uma série de pontos diários de frequency/reach pra um único valor por
+ * entidade — a MESMA lógica que `normalize()` usa internamente, extraída p/ ser
+ * reusada por qualquer consumidor que agregue `insights_snapshots` (ex.: chat).
+ *
+ * `frequency` (impressões/alcance) NÃO é somável entre dias (alcance é dedup) →
+ * guardamos o MÁXIMO na janela: sinal honesto de "chegou a saturar".
+ * `reach` (pessoas ÚNICAS) tem a mesma razão de não-somável → guardamos o valor
+ * do ÚLTIMO dia da janela (por `date`, não pela ordem do array).
+ */
+export function reduceFrequencyAndReach(points: readonly NonAdditivePoint[]): NonAdditiveAggregate {
+  let frequency = 0;
+  let reachDate: string | undefined;
+  let reach: number | undefined;
+  for (const p of points) {
+    if (typeof p.frequency === "number") {
+      frequency = Math.max(frequency, p.frequency);
+    }
+    if (p.date !== undefined && p.reach !== undefined && (reachDate === undefined || p.date >= reachDate)) {
+      reachDate = p.date;
+      reach = p.reach;
+    }
+  }
+  return {
+    // mesma convenção usada no resto do arquivo: >0 como proxy de presença (evento
+    // discreto, zero genuíno é indistinguível de "campo não reportado" aqui).
+    ...(frequency > 0 ? { frequency } : {}),
+    ...(reach !== undefined ? { reach } : {}),
+  };
+}
+
+/**
  * Agrega as linhas diárias por (nível, entidade), somando escalares e o breakdown
  * de conversões (por goal + id da personalizada). Forma canônica p/ computeDerived.
  */
@@ -84,12 +132,11 @@ export function normalize(rows: readonly InsightRow[]): NormalizedEntity[] {
     spend: number;
     impressions: number;
     clicks: number;
-    frequency: number;
+    /** pontos brutos (por dia) de frequency/reach — reduzidos no final via `reduceFrequencyAndReach`. */
+    nonAdditivePoints: NonAdditivePoint[];
     inlineLinkClicks: number;
     videoP25WatchedCount: number;
-    /** último dia visto com `reach`/`qualityRankings` — reach e rankings não são somáveis. */
-    reachDate?: string;
-    reach?: number;
+    /** último dia visto com `qualityRankings` — rankings não são somáveis. */
     qualityRankingsDate?: string;
     qualityRankings?: PlatformQualityRankings;
     conv: Map<
@@ -109,7 +156,7 @@ export function normalize(rows: readonly InsightRow[]): NormalizedEntity[] {
         spend: 0,
         impressions: 0,
         clicks: 0,
-        frequency: 0,
+        nonAdditivePoints: [],
         inlineLinkClicks: 0,
         videoP25WatchedCount: 0,
         conv: new Map(),
@@ -119,13 +166,11 @@ export function normalize(rows: readonly InsightRow[]): NormalizedEntity[] {
     acc.clicks += row.metrics.clicks ?? 0;
     acc.inlineLinkClicks += row.metrics.inlineLinkClicks ?? 0;
     acc.videoP25WatchedCount += row.metrics.videoP25WatchedCount ?? 0;
-    if (typeof row.metrics.frequency === "number") {
-      acc.frequency = Math.max(acc.frequency, row.metrics.frequency);
-    }
-    if (row.date !== undefined && row.metrics.reach !== undefined && (acc.reachDate === undefined || row.date >= acc.reachDate)) {
-      acc.reachDate = row.date;
-      acc.reach = row.metrics.reach;
-    }
+    acc.nonAdditivePoints.push({
+      ...(row.date !== undefined ? { date: row.date } : {}),
+      ...(row.metrics.frequency !== undefined ? { frequency: row.metrics.frequency } : {}),
+      ...(row.metrics.reach !== undefined ? { reach: row.metrics.reach } : {}),
+    });
     if (row.date !== undefined && row.qualityRankings !== undefined && (acc.qualityRankingsDate === undefined || row.date >= acc.qualityRankingsDate)) {
       acc.qualityRankingsDate = row.date;
       acc.qualityRankings = row.qualityRankings;
@@ -147,28 +192,29 @@ export function normalize(rows: readonly InsightRow[]): NormalizedEntity[] {
     byKey.set(key, acc);
   }
 
-  return [...byKey.values()].map((a) => ({
-    entityId: a.entityId,
-    level: a.level,
-    spend: a.spend,
-    impressions: a.impressions,
-    clicks: a.clicks,
-    ...(a.frequency > 0 ? { frequency: a.frequency } : {}),
-    // mesma convenção de `frequency` acima (>0 como proxy de presença — evento discreto,
-    // zero genuíno é indistinguível de "campo não reportado" nesta agregação simples).
-    ...(a.inlineLinkClicks > 0 ? { inlineLinkClicks: a.inlineLinkClicks } : {}),
-    ...(a.videoP25WatchedCount > 0 ? { videoP25WatchedCount: a.videoP25WatchedCount } : {}),
-    ...(a.reach !== undefined ? { reach: a.reach } : {}),
-    ...(a.qualityRankings !== undefined ? { qualityRankings: a.qualityRankings } : {}),
-    conversions: [...a.conv.values()].map((v) => ({
-      goal: v.goal,
-      ...(v.customConversionId ? { customConversionId: v.customConversionId } : {}),
-      count: v.count,
-      // preserva value=0 quando um valor FOI reportado (gasto com receita zero é sinal:
-      // "gastando, sem retorno" → roas 0); omite quando a conversão não tem valor.
-      ...(v.hasValue ? { value: v.value } : {}),
-    })),
-  }));
+  return [...byKey.values()].map((a) => {
+    const nonAdditive = reduceFrequencyAndReach(a.nonAdditivePoints);
+    return {
+      entityId: a.entityId,
+      level: a.level,
+      spend: a.spend,
+      impressions: a.impressions,
+      clicks: a.clicks,
+      ...(nonAdditive.frequency !== undefined ? { frequency: nonAdditive.frequency } : {}),
+      ...(a.inlineLinkClicks > 0 ? { inlineLinkClicks: a.inlineLinkClicks } : {}),
+      ...(a.videoP25WatchedCount > 0 ? { videoP25WatchedCount: a.videoP25WatchedCount } : {}),
+      ...(nonAdditive.reach !== undefined ? { reach: nonAdditive.reach } : {}),
+      ...(a.qualityRankings !== undefined ? { qualityRankings: a.qualityRankings } : {}),
+      conversions: [...a.conv.values()].map((v) => ({
+        goal: v.goal,
+        ...(v.customConversionId ? { customConversionId: v.customConversionId } : {}),
+        count: v.count,
+        // preserva value=0 quando um valor FOI reportado (gasto com receita zero é sinal:
+        // "gastando, sem retorno" → roas 0); omite quando a conversão não tem valor.
+        ...(v.hasValue ? { value: v.value } : {}),
+      })),
+    };
+  });
 }
 
 // ─── computeDerived ───────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ import {
   computeDerived,
   computeTrends,
   normalize,
+  reduceFrequencyAndReach,
   summarizeRest,
 } from "./index.js";
 
@@ -59,6 +60,36 @@ describe("normalize — S6 (reach/vídeo/rankings)", () => {
     const [e] = normalize([dailyRow("2026-08-01", 100)]);
     expect(e!.reach).toBeUndefined();
     expect(e!.qualityRankings).toBeUndefined();
+  });
+});
+
+describe("reduceFrequencyAndReach (S6, extraído de normalize p/ reuso no chat)", () => {
+  it("frequência usa o MÁXIMO entre os pontos; alcance usa o valor do ÚLTIMO dia (por `date`)", () => {
+    const agg = reduceFrequencyAndReach([
+      { date: "2026-08-01", frequency: 1.2, reach: 80 },
+      { date: "2026-08-02", frequency: 2.5, reach: 95 },
+    ]);
+    expect(agg.frequency).toBe(2.5); // máximo, não soma
+    expect(agg.reach).toBe(95); // último dia, não 80+95
+  });
+
+  it("ordem dos pontos não importa pro reach — decide pela `date`, não pela posição no array", () => {
+    const agg = reduceFrequencyAndReach([
+      { date: "2026-08-02", frequency: 1, reach: 95 },
+      { date: "2026-08-01", frequency: 3, reach: 80 },
+    ]);
+    expect(agg.frequency).toBe(3);
+    expect(agg.reach).toBe(95); // 08-02 ainda é o último dia mesmo vindo primeiro no array
+  });
+
+  it("sem o campo em nenhum ponto → ausente (nunca zero forçado)", () => {
+    const agg = reduceFrequencyAndReach([{ date: "2026-08-01" }]);
+    expect(agg.frequency).toBeUndefined();
+    expect(agg.reach).toBeUndefined();
+  });
+
+  it("array vazio → aggregate vazio", () => {
+    expect(reduceFrequencyAndReach([])).toEqual({});
   });
 });
 

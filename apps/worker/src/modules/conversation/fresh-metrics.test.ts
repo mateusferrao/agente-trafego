@@ -23,12 +23,22 @@ function m(
   };
 }
 
+/** Envelope `{date?, metricsJson}` que `aggregateKpis` espera (data é necessária pro `reach`,
+ *  não somável — só o valor do ÚLTIMO dia vale). */
+function row(
+  partial: Partial<StoredInsightMetrics["metrics"]>,
+  conversions?: StoredInsightMetrics["conversions"],
+  date?: string,
+): { date?: string; metricsJson: StoredInsightMetrics } {
+  return { ...(date !== undefined ? { date } : {}), metricsJson: m(partial, conversions) };
+}
+
 describe("aggregateKpis", () => {
   it("soma a janela e re-deriva CPA/ROAS do ARRAY de conversões (goal de negócio)", () => {
     const k = aggregateKpis(
       [
-        m({ spend: 100, impressions: 1000, clicks: 50 }, [{ goal: "purchase", count: 5, value: 200 }]),
-        m({ spend: 100, impressions: 3000, clicks: 50 }, [{ goal: "purchase", count: 5, value: 400 }]),
+        row({ spend: 100, impressions: 1000, clicks: 50 }, [{ goal: "purchase", count: 5, value: 200 }]),
+        row({ spend: 100, impressions: 3000, clicks: 50 }, [{ goal: "purchase", count: 5, value: 400 }]),
       ],
       { goal: "purchase" },
     );
@@ -43,12 +53,12 @@ describe("aggregateKpis", () => {
   });
 
   it("goal de conversa (sem valor) AINDA mostra receita/ROAS das compras (não esconde)", () => {
-    const row = m({ spend: 300, impressions: 10000, clicks: 200 }, [
+    const r = row({ spend: 300, impressions: 10000, clicks: 200 }, [
       { goal: "purchase", count: 3, value: 14900 },
       { goal: "messaging_started", count: 115 },
     ]);
     // business goal = conversa: CPA na conversa, MAS roas/revenue da receita rastreada (compras).
-    const msg = aggregateKpis([row], { goal: "messaging_started" });
+    const msg = aggregateKpis([r], { goal: "messaging_started" });
     expect(msg.conversions).toBe(115);
     expect(msg.conversionGoal).toBe("messaging_started");
     expect(msg.cpa).toBeCloseTo(300 / 115);
@@ -62,7 +72,7 @@ describe("aggregateKpis", () => {
 
   it("sem businessGoal → usa a conversão de MAIOR volume (default sensato)", () => {
     const k = aggregateKpis([
-      m({ spend: 300, impressions: 10000, clicks: 200 }, [
+      row({ spend: 300, impressions: 10000, clicks: 200 }, [
         { goal: "purchase", count: 3 },
         { goal: "messaging_started", count: 115 },
       ]),
@@ -72,7 +82,7 @@ describe("aggregateKpis", () => {
   });
 
   it("sem conversão reportada → conversions/cpa/roas/revenue null (aí sim 'Meta não retornou')", () => {
-    const k = aggregateKpis([m({ spend: 50, impressions: 500, clicks: 10 })], { goal: "purchase" });
+    const k = aggregateKpis([row({ spend: 50, impressions: 500, clicks: 10 })], { goal: "purchase" });
     expect(k.conversions).toBeNull();
     expect(k.cpa).toBeNull();
     expect(k.roas).toBeNull();
@@ -83,10 +93,25 @@ describe("aggregateKpis", () => {
   });
 
   it("divisões por zero → null", () => {
-    const k = aggregateKpis([m({ spend: 0, impressions: 0, clicks: 0 })]);
+    const k = aggregateKpis([row({ spend: 0, impressions: 0, clicks: 0 })]);
     expect(k.cpc).toBeNull();
     expect(k.cpm).toBeNull();
     expect(k.ctr).toBeNull();
+  });
+
+  it("frequency (máximo) e reach (último dia) aparecem quando a janela tem 2+ dias com valores diferentes", () => {
+    const k = aggregateKpis([
+      row({ spend: 100, impressions: 1000, clicks: 50, frequency: 1.2, reach: 800 }, undefined, "2026-08-20"),
+      row({ spend: 100, impressions: 1000, clicks: 50, frequency: 2.1, reach: 950 }, undefined, "2026-08-21"),
+    ]);
+    expect(k.frequency).toBe(2.1); // máximo da janela, não soma
+    expect(k.reach).toBe(950); // último dia (21/08), não 800+950
+  });
+
+  it("sem frequency/reach reportado em nenhuma linha → ambos undefined (nunca zero forçado)", () => {
+    const k = aggregateKpis([row({ spend: 50, impressions: 500, clicks: 10 })]);
+    expect(k.frequency).toBeUndefined();
+    expect(k.reach).toBeUndefined();
   });
 });
 
