@@ -28,5 +28,6 @@ function toOutput(row: AdAccountRow): AdAccountOutput {
     status: row.status,
     tokenStatus: row.tokenStatus,
     lastValidatedAt: row.lastValidatedAt ? row.lastValidatedAt.toISOString() : null,
+    accountHealthStatus: row.accountHealthStatus,
   };
 }

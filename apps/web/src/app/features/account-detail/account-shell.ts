@@ -7,6 +7,7 @@ import { ChangeDetectionStrategy, Component, inject } from "@angular/core";
 import { RouterLink, RouterLinkActive, RouterOutlet } from "@angular/router";
 import { UiAgentIdentity, UiButton, UiPageHeader, UiRouteTabLink, UiRouteTabPanel, UiRouteTabs } from "@ui";
 import { AccountContextStore } from "./account-context.store";
+import { accountHealthLabel } from "../../shared/account-health-labels";
 
 @Component({
   selector: "app-account-shell",
@@ -69,6 +70,12 @@ import { AccountContextStore } from "./account-context.store";
         </div>
       }
 
+      @if (accountHealthBanner(); as label) {
+        <div class="rounded-lg border border-line bg-panel p-4 text-sm text-danger-strong">
+          Conta na Meta: {{ label }}. Suas campanhas podem ter parado de rodar — veja os detalhes na Visão geral ou no Gerenciador de Anúncios.
+        </div>
+      }
+
       <nav appRouteTabs aria-label="Seções da conta">
         <a
           appRouteTabLink
@@ -92,4 +99,9 @@ import { AccountContextStore } from "./account-context.store";
 })
 export class AccountShell {
   protected readonly store = inject(AccountContextStore);
+
+  /** Rótulo do banner de saúde da conta Meta quando NÃO-ativa; null = ok/sem dado. */
+  protected accountHealthBanner(): string | null {
+    return accountHealthLabel(this.store.account()?.accountHealthStatus);
+  }
 }

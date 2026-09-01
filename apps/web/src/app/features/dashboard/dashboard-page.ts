@@ -25,6 +25,7 @@ const RELOAD_MS = 5000;
 const PANORAMA_TOP_N = 6;
 
 const REASON_LABEL: Record<Reason, string> = {
+  account_unhealthy: "conta com problema na Meta",
   token_invalid: "token inválido",
   no_recent_run: "sem análise recente",
   bad_grade: "nota baixa",

@@ -21,6 +21,7 @@ function sampleRow(): AdAccountRow {
     status: "active",
     tokenStatus: "valid",
     lastValidatedAt: new Date("2026-08-18T00:00:00.000Z"),
+    accountHealthStatus: null,
   };
 }
 
@@ -40,6 +41,7 @@ describe("accountsService.list", () => {
         status: "active",
         tokenStatus: "valid",
         lastValidatedAt: "2026-08-18T00:00:00.000Z",
+        accountHealthStatus: null,
       },
     ]);
   });
