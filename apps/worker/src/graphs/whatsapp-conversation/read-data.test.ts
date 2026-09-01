@@ -5,6 +5,7 @@ import type { PerformanceTier } from "@trafego/shared";
 import {
   comparePeriodsData,
   getAccountStatusData,
+  getAccountHealthData,
   getCampaignAnalysisData,
   getMetricsData,
   listAccountsData,
@@ -285,6 +286,42 @@ describe("getAccountStatusData", () => {
     );
     const res = await getAccountStatusData(db, AGENT, ORG, fakeApprovals([]));
     expect(res).not.toHaveProperty("waste");
+  });
+});
+
+describe("getAccountHealthData (S5 — saúde da conta Meta no chat)", () => {
+  it("token inválido → tokenExpired true, sem depender de status persistido", async () => {
+    const db = fakeDb(new Map<unknown, unknown[]>([[adAccounts, [{ tokenStatus: "invalid", metaAccountStatus: null, metaSpendCap: null, metaHealthCheckedAt: null }]]]));
+    const res = await getAccountHealthData(db, "acc-1", ORG);
+    expect(res).toMatchObject({ hasData: true, tokenExpired: true });
+  });
+
+  it("conta ativa e saudável → status active + rótulo amigável", async () => {
+    const checkedAt = new Date("2026-09-01T10:00:00.000Z");
+    const db = fakeDb(new Map<unknown, unknown[]>([[adAccounts, [{ tokenStatus: "valid", metaAccountStatus: "active", metaSpendCap: null, metaHealthCheckedAt: checkedAt }]]]));
+    const res = await getAccountHealthData(db, "acc-1", ORG);
+    expect(res).toMatchObject({ hasData: true, status: "active", tokenExpired: false, hasSpendCap: false });
+    expect((res as { statusLabel: string }).statusLabel).toContain("ativa");
+    expect((res as { checkedAt: string }).checkedAt).toBe(checkedAt.toISOString());
+  });
+
+  it("conta desativada → status disabled + rótulo do status (copy do resto do app)", async () => {
+    const db = fakeDb(new Map<unknown, unknown[]>([[adAccounts, [{ tokenStatus: "valid", metaAccountStatus: "disabled", metaSpendCap: "500.0000", metaHealthCheckedAt: new Date() }]]]));
+    const res = await getAccountHealthData(db, "acc-1", ORG);
+    expect(res).toMatchObject({ hasData: true, status: "disabled", hasSpendCap: true });
+    expect((res as { statusLabel: string }).statusLabel).toBe("Conta desativada, parou de veicular anúncios");
+  });
+
+  it("conta ainda não checada (sync nunca rodou a saúde) → assume active, checkedAt null", async () => {
+    const db = fakeDb(new Map<unknown, unknown[]>([[adAccounts, [{ tokenStatus: "valid", metaAccountStatus: null, metaSpendCap: null, metaHealthCheckedAt: null }]]]));
+    const res = await getAccountHealthData(db, "acc-1", ORG);
+    expect(res).toMatchObject({ hasData: true, status: "active", checkedAt: null });
+  });
+
+  it("conta não encontrada → hasData:false", async () => {
+    const db = fakeDb(new Map<unknown, unknown[]>([[adAccounts, []]]));
+    const res = await getAccountHealthData(db, "acc-x", ORG);
+    expect(res).toMatchObject({ hasData: false });
   });
 });
 

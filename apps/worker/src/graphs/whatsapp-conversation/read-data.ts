@@ -30,7 +30,8 @@ import {
 import { describeCreatedDraft } from "../../modules/apply/draft-summary.js";
 import type { ActivationApproval, Approval, ApprovalPort } from "@trafego/shared/ports";
 import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY, withTimeout } from "@trafego/shared";
-import type { AgentId, CampaignDraftSpec, CreativeAssetRef, CuratedEntitySnapshot, CustomAudience, DraftKind, EntityLevel, InsightMetrics, OrgId, PartialReason, TargetingSpec, UnitAnalysis, WhatsappDestination } from "@trafego/shared";
+import { ACCOUNT_HEALTH_STATUS_LABELS } from "@trafego/shared";
+import type { AgentId, CampaignDraftSpec, CreativeAssetRef, CuratedEntitySnapshot, CustomAudience, DraftKind, EntityLevel, InsightMetrics, MetaAccountHealthStatus, OrgId, PartialReason, TargetingSpec, UnitAnalysis, WhatsappDestination } from "@trafego/shared";
 import type { DraftApproval } from "@trafego/shared/ports";
 import type { StoredInsightMetrics } from "@trafego/shared/types";
 import type { WorkerDeps } from "../../composition.js";
@@ -1158,6 +1159,84 @@ async function getTopCreativesData(
   return { hasData: true, creatives };
 }
 
+/** Saúde da conta Meta pro chat (S5) — persistido pelo sync, sem saldo/pagamento exatos
+ *  no texto do WhatsApp (`hasPaymentIssue` booleano; detalhe fica só no site, atrás de
+ *  login). `tokenExpired` é checado ANTES de qualquer round-trip (sem token, nada
+ *  funciona — responde direto sem tentar a Meta). */
+interface AccountHealthView {
+  readonly hasData: true;
+  readonly status: string;
+  readonly statusLabel: string;
+  readonly tokenExpired: boolean;
+  readonly hasSpendCap: boolean;
+  readonly checkedAt: string | null;
+}
+
+/**
+ * Saúde da conta Meta (S5): lê as colunas persistidas de `ad_accounts` (Fatia 2).
+ * Checa `tokenStatus` PRIMEIRO — inválido → responde direto ("reconecte") sem
+ * round-trip (achado: hoje NENHUMA tool de chat olha tokenStatus). Org-scoped.
+ */
+export async function getAccountHealthData(
+  db: Database,
+  adAccountUuid: string,
+  orgId: string,
+): Promise<AccountHealthView | NoData> {
+  const [row] = await db
+    .select({
+      tokenStatus: adAccounts.tokenStatus,
+      metaAccountStatus: adAccounts.metaAccountStatus,
+      metaSpendCap: adAccounts.metaSpendCap,
+      metaHealthCheckedAt: adAccounts.metaHealthCheckedAt,
+    })
+    .from(adAccounts)
+    .where(and(eq(adAccounts.id, adAccountUuid), eq(adAccounts.orgId, orgId)))
+    .limit(1);
+  if (!row) return { hasData: false, note: "conta não encontrada." };
+
+  const tokenExpired = row.tokenStatus === "invalid";
+  const status = (row.metaAccountStatus as MetaAccountHealthStatus | null) ?? (tokenExpired ? "unknown" : "active");
+  const statusLabel =
+    status === "active"
+      ? "conta ativa e funcionando normalmente"
+      : ACCOUNT_HEALTH_STATUS_LABELS[status as Exclude<MetaAccountHealthStatus, "active">];
+  return {
+    hasData: true,
+    status,
+    statusLabel,
+    tokenExpired,
+    hasSpendCap: row.metaSpendCap !== null,
+    checkedAt: row.metaHealthCheckedAt ? row.metaHealthCheckedAt.toISOString() : null,
+  };
+}
+
+/**
+ * Refresh ao vivo da saúde da conta (S5, `fresh=true`) — mesmo padrão de
+ * `refreshCreativeCopiesLive`: carrega a conta, decripta o token, chama
+ * `getAccountHealth` e faz upsert das MESMAS colunas de `ad_accounts` (reusa a
+ * persistência da Fatia 2). Best-effort — o chamador degrada pro persistido.
+ */
+async function refreshAccountHealthLive(deps: WorkerDeps, ctx: ReadToolContext): Promise<void> {
+  const repo = createAnalysisRepo(deps.db);
+  const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
+  if (!account) return;
+  const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
+  const health = await deps.ports.ads.getAccountHealth(ref);
+  await deps.db
+    .update(adAccounts)
+    .set({
+      metaAccountStatus: health.status,
+      metaDisableReason: health.disableReason ?? null,
+      metaBalance: health.balanceMajor !== undefined ? String(health.balanceMajor) : null,
+      metaAmountSpent: health.amountSpentMajor !== undefined ? String(health.amountSpentMajor) : null,
+      metaSpendCap: health.spendCapMajor !== undefined ? String(health.spendCapMajor) : null,
+      metaPaymentMethodLabel: health.paymentMethodLabel ?? null,
+      metaFundingType: health.fundingType ?? null,
+      metaHealthCheckedAt: new Date(health.checkedAt),
+    })
+    .where(and(eq(adAccounts.id, ctx.adAccountId), eq(adAccounts.orgId, ctx.orgId)));
+}
+
 /**
  * Busca em TEMPO REAL na Meta (S1.5): puxa os criativos ao vivo (`getCreatives`)
  * e faz upsert SÓ da copy (preserva o desempenho do último run). Best-effort —
@@ -1733,6 +1812,25 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     },
   );
 
+  const getAccountHealth = tool(
+    async ({ fresh }: { fresh?: boolean | null }) => {
+      if (noFocus()) return NEEDS_FOCUS;
+      logger.debug({ agentId: ctx.agentId, fresh: Boolean(fresh) }, "tool:get_account_health");
+      if (fresh) {
+        await withTimeout(refreshAccountHealthLive(deps, ctx), deps.conversation.liveFetchTimeoutMs).catch((err) =>
+          logger.warn({ err: String(err) }, "get_account_health:refresh live degradou (usa persistido)"),
+        );
+      }
+      return asString(await getAccountHealthData(db, ctx.adAccountId, ctx.orgId));
+    },
+    {
+      name: "get_account_health",
+      description:
+        "Saúde da conta NA PRÓPRIA META (status/token/teto de gasto) — DIFERENTE de get_account_status (que é sobre a ÚLTIMA ANÁLISE nossa: nota/resumo/desperdício). Use SÓ quando o dono perguntar especificamente se a conta está ok, por que parou de rodar, ou sobre pagamento/saldo. NÃO chame por padrão em toda pergunta — problemas críticos já chegam via alerta automático, não precisa checar 'por garantia'. Passe fresh=true pra buscar o estado ATUAL na Meta; senão usa o último sincronizado. Se 'tokenExpired' vier true, o acesso à conta expirou — oriente reconectar no site. Saldo/pagamento detalhado fica só no site (atrás de login), não repasse números de pagamento por aqui.",
+      schema: z.object({ fresh: z.boolean().nullable() }),
+    },
+  );
+
   const listAudiences = tool(
     async () => {
       if (noFocus()) return NEEDS_FOCUS;
@@ -1820,6 +1918,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     getAgentConfig,
     explainRecommendation,
     getTopCreatives,
+    getAccountHealth,
     getAdsBreakdown,
     listAudiences,
   ];
