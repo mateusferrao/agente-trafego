@@ -1,5 +1,6 @@
 import type {
   AccessibleAccount,
+  AccountHealth,
   Action,
   AdEntity,
   AudienceProfile,
@@ -328,4 +329,10 @@ export interface AdsPlatformPort {
    * token não tem posse da conta — valida acesso sem re-baixar a lista inteira.
    */
   getAdAccount(accessToken: string, adAccountId: string): Promise<AccessibleAccount>;
+  /**
+   * Saúde da conta NA PRÓPRIA META (status/saldo/gasto/pagamento) — chamada dedicada,
+   * separada do listing de onboarding (campos diferentes, cadência diferente: 1x por
+   * sync, não paginado). Nunca lança por status não-ativo (isso É o dado, não um erro).
+   */
+  getAccountHealth(account: AdAccountRef): Promise<AccountHealth>;
 }

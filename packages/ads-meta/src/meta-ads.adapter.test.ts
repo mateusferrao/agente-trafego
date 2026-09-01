@@ -144,6 +144,88 @@ describe("MetaAdsAdapter.getAdAccount", () => {
   });
 });
 
+describe("MetaAdsAdapter.getAccountHealth (achado real, S — saúde da conta Meta)", () => {
+  const ref = { adAccountId: "3218136031666639", accessToken: "tok" };
+
+  it("mapeia a resposta real testada ao vivo contra a Meta (conta ativa, cartão de crédito)", async () => {
+    const { calls } = stubFetchSequence([
+      {
+        body: {
+          account_status: 1,
+          disable_reason: 0,
+          balance: "24432",
+          amount_spent: "11311335",
+          spend_cap: "0",
+          funding_source_details: { display_string: "VISA *0835", type: 1, id: "26365591723126533" },
+        },
+      },
+    ]);
+    const { adapter } = makeAdapterWithGov();
+    const health = await adapter.getAccountHealth(ref);
+    expect(health.status).toBe("active");
+    expect(health.balanceMajor).toBe(244.32);
+    expect(health.amountSpentMajor).toBe(113113.35);
+    expect(health.paymentMethodLabel).toBe("VISA *0835");
+    expect(health.fundingType).toBe("other"); // cartão (type 1) — nunca stored_balance
+    expect(health).not.toHaveProperty("disableReason");
+    expect(health).not.toHaveProperty("spendCapMajor"); // "0" = sem teto, não R$ 0,00
+    expect(calls()[0]).toContain("act_3218136031666639");
+  });
+
+  it("account_status desconhecido (código novo/indocumentado) → \"unknown\", nunca inventa", async () => {
+    stubFetchSequence([{ body: { account_status: 999 } }]);
+    const { adapter } = makeAdapterWithGov();
+    const health = await adapter.getAccountHealth(ref);
+    expect(health.status).toBe("unknown");
+  });
+
+  it("account_status desativada + disable_reason presente → status disabled, motivo honesto (não inventa o texto)", async () => {
+    stubFetchSequence([{ body: { account_status: 2, disable_reason: 3 } }]);
+    const { adapter } = makeAdapterWithGov();
+    const health = await adapter.getAccountHealth(ref);
+    expect(health.status).toBe("disabled");
+    expect(health.disableReason).toBe("unknown_reason"); // só o código 0 (NONE) é conhecido com confiança
+  });
+
+  it("spend_cap real (> 0) → spendCapMajor preenchido", async () => {
+    stubFetchSequence([{ body: { account_status: 1, spend_cap: "50000" } }]);
+    const { adapter } = makeAdapterWithGov();
+    const health = await adapter.getAccountHealth(ref);
+    expect(health.spendCapMajor).toBe(500);
+  });
+
+  it("funding_source_details.type === 20 (STORED_BALANCE) → fundingType stored_balance", async () => {
+    stubFetchSequence([{ body: { account_status: 1, funding_source_details: { type: 20 } } }]);
+    const { adapter } = makeAdapterWithGov();
+    const health = await adapter.getAccountHealth(ref);
+    expect(health.fundingType).toBe("stored_balance");
+  });
+
+  it("sem funding_source_details → paymentMethodLabel/fundingType ausentes (não força null)", async () => {
+    stubFetchSequence([{ body: { account_status: 1 } }]);
+    const { adapter } = makeAdapterWithGov();
+    const health = await adapter.getAccountHealth(ref);
+    expect(health).not.toHaveProperty("paymentMethodLabel");
+    expect(health).not.toHaveProperty("fundingType");
+  });
+
+  it("cooldown ativo → degrada (rate_limited) sem bater na Meta", async () => {
+    const { adapter, gov } = makeAdapterWithGov();
+    await gov.observeUsage("act_3218136031666639", {
+      callCountPct: 100,
+      totalCputimePct: 50,
+      totalTimePct: 50,
+      estimatedTimeToRegainAccessMin: 5,
+    });
+    const { calls } = stubFetchSequence([{ body: { account_status: 1 } }]);
+    await expect(adapter.getAccountHealth(ref)).rejects.toMatchObject({
+      name: "AdsPlatformError",
+      kind: "rate_limited",
+    });
+    expect(calls().length).toBe(0);
+  });
+});
+
 describe("MetaAdsAdapter.listEntities (governor)", () => {
   const ref = { adAccountId: "1", accessToken: "tok" };
   const usageHeader = JSON.stringify({ act_1: [{ call_count: 30, total_cputime: 10, total_time: 10 }] });

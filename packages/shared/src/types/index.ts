@@ -429,6 +429,55 @@ export interface AccessibleAccount {
   readonly businessId?: string;
 }
 
+/**
+ * Status de saúde da conta NA PRÓPRIA META (`account_status`), neutro — vocabulário
+ * Meta (códigos numéricos) só existe dentro do adapter. Código não reconhecido pela
+ * Meta (enum novo/indocumentado) → `"unknown"`, nunca inventa um valor (mesmo espírito
+ * de `BID_STRATEGY_MAP`).
+ */
+export const META_ACCOUNT_HEALTH_STATUSES = [
+  "active",
+  "disabled",
+  "unsettled",
+  "pending_review",
+  "pending_settlement",
+  "grace_period",
+  "pending_closure",
+  "closed",
+  "unknown",
+] as const;
+export type MetaAccountHealthStatus = (typeof META_ACCOUNT_HEALTH_STATUSES)[number];
+
+/**
+ * Saúde da conta na própria Meta (status/saldo/gasto/pagamento) — DIFERENTE do nosso
+ * lifecycle interno (`ad_accounts.status`) e do `token_status`. Vem de `GET
+ * /act_{id}?fields=account_status,disable_reason,balance,amount_spent,spend_cap,
+ * funding_source_details` (chamada dedicada, 1x por sync — ver `getAccountHealth`).
+ */
+export interface AccountHealth {
+  readonly status: MetaAccountHealthStatus;
+  /** motivo da desativação, neutro — presente só quando status != active. Código
+   *  não reconhecido → "unknown_reason" (honesto, nunca inventa). */
+  readonly disableReason?: string;
+  /** saldo/gasto total, já em unidade MAIOR (reuso de `toMajorBudget`). Pra
+   *  `funding_source_details.type !== STORED_BALANCE` (cartão/fatura), `balanceMajor`
+   *  é valor acumulado-não-cobrado, não "saldo disponível" — ver `fundingType`. */
+  readonly balanceMajor?: number;
+  readonly amountSpentMajor?: number;
+  /** ausente = SEM teto definido — a Meta usa `spend_cap: "0"` pra "sem teto"; nunca
+   *  mapeado como "teto de R$ 0,00" (achado confirmado ao vivo contra conta real). */
+  readonly spendCapMajor?: number;
+  /** já vem legível da própria Meta (`funding_source_details.display_string`, ex:
+   *  "VISA *0835") — nunca o número completo do cartão, a Meta já mascara. */
+  readonly paymentMethodLabel?: string;
+  /** `"stored_balance"` = pré-pago genuíno (balanceMajor É saldo disponível de
+   *  verdade); qualquer outro valor (cartão/fatura/etc) = balanceMajor é valor
+   *  acumulado-não-cobrado, não confiável como "saldo caindo". */
+  readonly fundingType?: "stored_balance" | "other";
+  /** ISO — carimbo de frescor (mesmo padrão de `get_campaign_status`). */
+  readonly checkedAt: string;
+}
+
 // ─── Ações do agente ─────────────────────────────────────────────────────
 export type ActionType =
   | "pause_entity"

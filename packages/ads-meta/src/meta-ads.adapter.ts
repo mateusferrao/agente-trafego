@@ -1,5 +1,6 @@
 import type {
   AccessibleAccount,
+  AccountHealth,
   Action,
   AdEntity,
   AudienceProfile,
@@ -13,6 +14,7 @@ import type {
   GeoSearchResult,
   InsightRow,
   InterestSearchResult,
+  MetaAccountHealthStatus,
   WhatsappDestination,
 } from "@trafego/shared/types";
 import type {
@@ -51,6 +53,10 @@ import type { CustomConversionsResolver, CustomConversionInfo } from "./custom-c
 
 /** Campos de conta pedidos à Graph (id sem prefixo via `account_id`). */
 const AD_ACCOUNT_FIELDS = "account_id,name,currency,business{id}";
+/** Campos de SAÚDE da conta (status/saldo/gasto/pagamento) — chamada dedicada
+ *  (`getAccountHealth`), separada de `AD_ACCOUNT_FIELDS` (onboarding, paginado). */
+const ACCOUNT_HEALTH_FIELDS =
+  "account_status,disable_reason,balance,amount_spent,spend_cap,funding_source_details{display_string,type}";
 /** Página grande p/ minimizar round-trips no onboarding. */
 const ACCOUNTS_PAGE_LIMIT = 200;
 /** Trava de segurança contra loop de paginação. */
@@ -100,6 +106,26 @@ const BID_STRATEGY_MAP: Readonly<Record<string, BidStrategy>> = {
   COST_CAP: "cost_cap",
   LOWEST_COST_WITH_MIN_ROAS: "min_roas",
 };
+
+/** `account_status` cru da Meta (inteiro) → `MetaAccountHealthStatus` neutro. Verificado
+ *  ao vivo contra a doc oficial (achado da fatia de saúde de conta) — código não
+ *  reconhecido (enum novo/indocumentado) → "unknown", nunca inventa. */
+const ACCOUNT_STATUS_MAP: Readonly<Record<number, MetaAccountHealthStatus>> = {
+  1: "active",
+  2: "disabled",
+  3: "unsettled",
+  7: "pending_review",
+  8: "pending_settlement",
+  9: "grace_period",
+  100: "pending_closure",
+  101: "closed",
+};
+
+/** `funding_source_details.type` cru (inteiro) → `stored_balance` (pré-pago genuíno,
+ *  saldo É o dado confiável) ou `other` (cartão/fatura/etc — saldo é valor
+ *  acumulado-não-cobrado, não confiável como "saldo caindo"). Confirmado ao vivo na doc
+ *  oficial da Meta: 20 = STORED_BALANCE; todo o resto tratado como "other". */
+const FUNDING_TYPE_STORED_BALANCE = 20;
 
 interface RawEntityNode {
   readonly id?: string;
@@ -172,6 +198,54 @@ function mapAccount(node: MetaAdAccountNode): AccessibleAccount {
     name: node.name ?? id,
     ...(node.currency ? { currency: node.currency } : {}),
     ...(node.business?.id ? { businessId: node.business.id } : {}),
+  };
+}
+
+interface MetaAccountHealthNode {
+  readonly account_status?: number;
+  readonly disable_reason?: number;
+  readonly balance?: string;
+  readonly amount_spent?: string;
+  readonly spend_cap?: string;
+  readonly funding_source_details?: { readonly display_string?: string; readonly type?: number };
+}
+
+/** `account_status` cru → neutro. Código não reconhecido → "unknown" (nunca inventa). */
+function mapAccountStatus(raw?: number): MetaAccountHealthStatus {
+  return (raw !== undefined && ACCOUNT_STATUS_MAP[raw]) || "unknown";
+}
+
+/** `disable_reason` cru → neutro. Só `0` (NONE) é confiavelmente conhecido; qualquer outro
+ *  valor não-zero vira "unknown_reason" honesto (a Meta não documenta o enum completo). */
+function mapDisableReason(raw?: number): string | undefined {
+  if (raw === undefined || raw === 0) return undefined;
+  return "unknown_reason";
+}
+
+/** `spend_cap: "0"` = SEM teto definido (achado ao vivo) — nunca vira "teto de R$ 0,00". */
+function mapSpendCap(raw?: string): number | undefined {
+  const major = toMajorBudget(raw);
+  return major !== undefined && major > 0 ? major : undefined;
+}
+
+function mapAccountHealth(node: MetaAccountHealthNode): AccountHealth {
+  const disableReason = mapDisableReason(node.disable_reason);
+  const balanceMajor = toMajorBudget(node.balance);
+  const amountSpentMajor = toMajorBudget(node.amount_spent);
+  const spendCapMajor = mapSpendCap(node.spend_cap);
+  const paymentMethodLabel = node.funding_source_details?.display_string;
+  const rawFundingType = node.funding_source_details?.type;
+  return {
+    status: mapAccountStatus(node.account_status),
+    ...(disableReason !== undefined ? { disableReason } : {}),
+    ...(balanceMajor !== undefined ? { balanceMajor } : {}),
+    ...(amountSpentMajor !== undefined ? { amountSpentMajor } : {}),
+    ...(spendCapMajor !== undefined ? { spendCapMajor } : {}),
+    ...(paymentMethodLabel ? { paymentMethodLabel } : {}),
+    ...(rawFundingType !== undefined
+      ? { fundingType: rawFundingType === FUNDING_TYPE_STORED_BALANCE ? ("stored_balance" as const) : ("other" as const) }
+      : {}),
+    checkedAt: new Date().toISOString(),
   };
 }
 
@@ -643,6 +717,23 @@ export class MetaAdsAdapter implements AdsPlatformPort {
         params: { fields: AD_ACCOUNT_FIELDS },
       });
       return mapAccount(res.data);
+    } catch (error) {
+      throw toAdsError(error);
+    }
+  }
+
+  async getAccountHealth(account: AdAccountRef): Promise<AccountHealth> {
+    try {
+      const accountId = normalizeAdAccountId(account.adAccountId);
+      const acquired = await this.governor.acquire(accountId);
+      if (!acquired.granted) throw cooldownError();
+      const res = await this.client.request<MetaAccountHealthNode>({
+        method: "GET",
+        path: accountId,
+        accessToken: account.accessToken,
+        params: { fields: ACCOUNT_HEALTH_FIELDS },
+      });
+      return mapAccountHealth(res.data);
     } catch (error) {
       throw toAdsError(error);
     }
