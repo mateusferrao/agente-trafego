@@ -9,7 +9,7 @@
 > **[Fixture]** = coberto por teste automatizado existente (arquivo citado), condição real não
 > reproduzível com segurança/praticidade contra a conta viva (ver §8).
 
-**Execução real desta sessão (2026-08-31):** script `apps/worker/e2e-pivo-saude.ts`, LLM real
+**Execução real desta sessão — PARTE 1 (2026-08-31):** script `apps/worker/e2e-pivo-saude.ts`, LLM real
 (`x-ai/grok-4.5` análise, `google/gemini-3.7-flash` revisor, `openai/gpt-5.6-luna` chat) + Meta
 real (`act_1423420276172802`, BM Automato), org de teste `e87fb1fb-6ce9-46fa-af92-354a814b6285`
 ("Org de Teste 366"), agente `ba2b9542-cbbc-4795-8ac5-c73ed5cf34ad` (arquétipo conservador,
@@ -198,7 +198,8 @@ guards quando não há gatilho.
 
 | Caminho | Esperado | Cobertura |
 |---|---|---|
-| ✅/⛔ ver Fase 0, item 5 (mesma guard) | | **[Fixture]** `guard-audience-ceiling.test.ts` — não reproduzível ao vivo sem campanha ativa com proposta de escalar |
+| ✅ saturado (ratio ≥ limiar) → rebaixa | usando alcance MENSAL REAL devolvido pela Meta (não estimado) | **[Real, Parte 2]** §10b — `getDeliveryEstimateForAdSet` real (197,1M de alcance) + `guardAudienceScaleCeiling` real: ratio=5,0 → `investigate` |
+| ✅ com folga (ratio < limiar) → passa direto | mesmo alcance real, ritmo de entrega baixo | **[Real, Parte 2]** §10b — ratio=0,01 → mantém `increase_budget` |
 
 ---
 
@@ -228,7 +229,7 @@ determinística equivalente (fixture puro, sem mock de rede, testado no CI):
 - **Conta 100% zumbi** (todas as entidades zumbi) — `packages/core/src/quality/quality.test.ts`.
   *(A conta real de teste chegou perto disso organicamente — Q2 confirmou a degradação honesta.)*
 - **Campanha CBO com exatamente 1 adset** — `packages/core/src/curated-entity/index.test.ts`.
-- **ABO multi-adset (2+ adsets ativos)** — `packages/core/src/map-reduce/map-reduce.test.ts`.
+- **ABO multi-adset (2+ adsets ativos) com MEDIÇÃO real (S8b completo)** — `packages/core/src/map-reduce/map-reduce.test.ts`. A Parte 2 (§10b) criou uma estrutura ABO 2-adsets 100% real na Meta, mas descobriu (achado documentado, não bug) que `normalize()` só constrói entidade a partir de linha de INSIGHT — uma campanha ativa sem NENHUMA impressão (garantido pelos anúncios ficarem sempre pausados, pré-requisito de risco-zero) fica invisível ao brief inteiro, então S8b não chegou a rodar sobre ela. Provar isso com medição real exigiria aceitar alguma veiculação real (fora do escopo aprovado desta rodada).
 - **Criativo sem visão disponível** (falha de download/decomposição) — degradação graciosa
   documentada no resolver de visão (`apps/worker/src/modules/vision/resolver.ts`), testada em
   `packages/core/src/quality/quality.test.ts`.
@@ -274,10 +275,122 @@ educadamente e explicam o motivo ("é preciso retomar o agente nas configuraçõ
 de falhar silenciosamente ou inventar dado. Não estava no roteiro original — é uma consequência
 real do estado da conta de teste, e o comportamento observado é o correto.
 
-**Conclusão:** com a cobertura combinada — fixtures puros (`packages/core`, zero mock, cobrem
-TODAS as condições estruturais que a conta de teste não tinha no momento) + este E2E real (prova a
-integração ponta-a-ponta com LLM/Meta de verdade nos caminhos que a conta atual permite) — a fatia
-inteira do pivô saúde (Fases 0-4) está validada. Não há achado pendente de correção.
+**Conclusão da Parte 1:** com a cobertura combinada — fixtures puros (`packages/core`, zero mock,
+cobrem TODAS as condições estruturais que a conta de teste não tinha no momento) + este E2E real
+(prova a integração ponta-a-ponta com LLM/Meta de verdade nos caminhos que a conta atual permite)
+— a "casca" (plumbing/roteamento/honestidade/tenancy) está validada. A camada "músculo"
+(guards/kernel/curadoria de fato disparando com dado real) foi completada na Parte 2 (§10b), que
+também revelou 3 gaps de sincronização pré-existentes ao pivô saúde (§10c). Ver §10b para o
+resultado combinado final.
+
+---
+
+## 10b. Execução real — PARTE 2 (2026-08-31, "músculo": guards/kernel/S8b com dado real)
+
+Pedido do dono após revisar a Parte 1: provar também a camada que só dispara com dado real
+disparando o comportamento (guards de fato rebaixando, kernel de fato injetando bloco, S8b de
+fato derivando adset). Estratégia HÍBRIDA aprovada explicitamente pelo dono (AskUserQuestion):
+
+- **Parte A — Meta REAL, risco de gasto ZERO por construção:** criei 1 campanha ABO real + 2
+  conjuntos REALMENTE ativos na Meta (status `ACTIVE` — exigido por `buildCampaignUnits` pra
+  entrar na árvore), mas os ANÚNCIOS dentro ficaram SEMPRE `paused` — sem anúncio ativo a Meta
+  não entrega/gasta nada (impossível haver impressão), então a estrutura é "ativa" o suficiente
+  pro pipeline enxergar mas fisicamente incapaz de gastar 1 centavo.
+- **Parte B — funções puras do core**, fixtures realistas, zero IO.
+- **Parte C — seleção de blocos do kernel** com contexto rico vs pobre.
+- **Parte D — seed de `curated_json` realista + pergunta ao chat com LLM real.**
+
+Script: `apps/worker/e2e-pivo-saude-parte2.ts`.
+
+**Resultado: 17/19 ✅ na 1ª rodada** (2 falhas, ambas do PRÓPRIO script — nenhuma de produto):
+
+| # | O que rodou | Resultado |
+|---|---|---|
+| A1 | Pergunta ao chat por uma campanha nova ANTES de reanalisar ("tem uma campanha que eu não estou vendo") | ✅ o agente reconheceu a possível defasagem ("o que aparece aqui é o último retrato analisado... essa campanha nova pode ainda não ter entrado na sincronização") e propôs reanalisar — endereça diretamente a preocupação levantada pelo dono |
+| A2 | Análise real sobre a estrutura ABO real (S8b esperado: 2 `entity_analyses` por-adset) | **Achado, não bug:** a campanha REAL não apareceu na análise — `normalize()` (`packages/core/src/brief/index.ts:80`) só constrói entidade a partir de linha de INSIGHT da Meta; zero impressões (garantido pelos anúncios pausados) = zero linha = invisível ao brief inteiro, não só ao S8b. A mesma trava que garante risco-zero de gasto impede provar S8b com estrutura 100% real sem aceitar alguma veiculação de verdade |
+| A3 | `getDeliveryEstimateForAdSet` REAL (Meta) → alimenta `guardAudienceScaleCeiling` real, 2 cenários | A Meta respondeu de verdade (alcance mensal real: 167,5M–197,1M) — ✅. Os 2 cenários do guard falharam na 1ª rodada por um **bug no script de teste** (o `targetEntity.externalId` do fixture usava um id de exemplo "AS1" em vez do id REAL do adset criado, então o guard corretamente não achava o headroom e passava direto) — corrigido e reverificado num script isolado (`verify-guard-fix.ts`, mesmo número real de alcance): saturado → `investigate` ✅, com folga → mantém `increase_budget` ✅ |
+| B1-B3 | Guards puros (tracking/CPA-marginal/fadiga×escala), positivo+negativo cada | ✅ 6/6 — todos corretos nos dois lados |
+| C1 | `selectAnalysisKnowledge` — contexto rico (13 blocos) vs pobre (6 blocos) | ✅ 3/3 — as NOTES condicionais realmente ligam/desligam por contexto, incluindo o bloco `segmentacao` (S7) |
+| D1 | Seed de campanha fatigada+teto+funil frio + pergunta ao chat (LLM real) | ✅ 3/3 — o modelo mencionou fadiga de criativo, teto de orçamento E qualidade do funil/conversa, todos os 3 sinais semeados, na mesma resposta |
+
+**Correção de rumo:** os 2 achados foram diagnosticados como bugs do PRÓPRIO script (mismatch de
+id no fixture do guard; expectativa errada sobre S8b dado o design de zero-risco escolhido) — o
+script foi corrigido (`e2e-pivo-saude-parte2.ts`) para reuso futuro; **nenhuma correção em código
+de produto foi necessária** nesta parte.
+
+**Erro cometido e assumido:** a 1ª versão do `finally` de limpeza tinha uma linha
+`delete entityAnalyses where agentId=AGENT` **sem escopo** (deveria filtrar só as entidades
+temporárias criadas neste teste) — isso apagou de verdade a linha de cache pré-existente da
+campanha real "[01][ABO][Leads][Advtg][Whatsapp]" (análise de 20/08/2026, dado legítimo desta
+sessão, não artefato deste teste). Impacto: só cache derivado (`entity_analyses`), regenerável no
+próximo run real contra a conta — nenhum dado da Meta foi afetado, e nenhuma config de agente
+ficou alterada. Corrigido no script para escopo exato (só a campanha/adset temporários).
+
+**Conclusão da Parte 2:** a camada "músculo" (guards, kernel, curadoria) foi provada disparando de
+verdade — parte com dado 100% real da Meta (delivery_estimate), parte com fixtures realistas +
+LLM real sobre elas (guards puros, kernel, chat). A única coisa que ficou genuinamente fora de
+alcance sem aceitar gasto real foi a medição (spend/conversões/fadiga) — que exige impressão de
+verdade por definição, não uma limitação deste teste.
+
+## 10c. Três gaps de sincronização (achado, mesma causa-raiz, levantado em conversa com o dono)
+
+Durante a Parte 2, o dono levantou 3 perguntas seguidas que se revelaram a MESMA causa-raiz —
+documentado aqui porque não é específico do pivô saúde (é um comportamento pré-existente do
+sistema, exposto por este teste):
+
+1. **Campanha NOVA que o dono acabou de ativar não aparece pro agente.** Confirmado ao vivo (A1
+   acima) — mas o mecanismo de recuperação (chat propõe reanalisar) já funciona bem.
+2. **Campanha que ficou INATIVA desde a última análise continua aparecendo como se nada tivesse
+   mudado.** `record` (`apps/worker/src/graphs/account-analysis/nodes.ts:1091`) só faz UPSERT de
+   `state.freshUnits` — nunca marca/remove uma linha de `entity_analyses` cuja entidade saiu do
+   conjunto ativo. `list_campaigns`/`get_campaign_analysis` (`read-data.ts:483-534`) leem esse
+   cache sem NENHUMA checagem de status ao vivo (isso só existe hoje para `get_campaign_status`
+   e o `liveStatus` de `list_recommendations`, ambos pontuais).
+3. **Campanha ativa sem NENHUMA impressão é invisível à análise inteira**, não só resumida —
+   confirmado empiricamente na Parte A (achado A2 acima). `normalize()` só constrói entidade a
+   partir de linha de insight; sem insight, sem entidade, sem cobertura de nenhum tipo (nem
+   "resto agregado").
+
+**Causa-raiz única:** o sistema só "enxerga" uma campanha quando ela tem pelo menos algum dado
+MEDIDO — fora isso, ele não sabe que ela existe (2), não sabe que ela mudou (3) e não se
+autocorrige entre análises (todas). Isso é **pré-existente ao pivô saúde** (a arquitetura
+insights-first já era assim antes desta frente) — não é um bug introduzido por nenhuma das 5
+fases, mas ficou mais visível testando cenários de fronteira que o dia-a-dia raramente força.
+
+**Atualização — itens 1 e (parcialmente) 3 CORRIGIDOS nesta sessão**, a pedido explícito do dono,
+via reconciliação leve no CHAT (não na pipeline de análise/LLM — decisão deliberada de escopo,
+ver abaixo):
+
+- **`liveActiveCampaignsNotCached`** (novo, `apps/worker/src/graphs/whatsapp-conversation/read-data.ts`)
+  — chamada bounded/best-effort a `listEntities` que acha campanhas ATIVAS na Meta ainda sem
+  NENHUMA linha em `entity_analyses`. Ligada em `list_campaigns` (soma essas campanhas à lista,
+  marcadas `noDataYet:true` + `syncNote` explicando) e `get_campaign_analysis` (antes de dizer
+  "não achei", checa se existe ATIVA na Meta e responde honesto em vez de "não existe"). Resolve
+  o item 1 (campanha nova aparece pro agente) de ponta a ponta — a reconciliação é AO VIVO a cada
+  pergunta, então também cobre o item 2 (nenhum agendamento/sync separado é necessário: a próxima
+  pergunta já reflete o estado atual da Meta).
+- **System prompt** (`system-prompt.ts`, bloco "Sincronização e cache") — regra nova: se o dono
+  insistir que existe algo na Meta que o agente não está vendo, ou perguntar a mesma coisa mais de
+  uma vez, o agente reconhece que sua visão é uma FOTO (cita o `asOf`) e OFERECE reanalisar — nunca
+  nega genericamente. Endereça o item 1 (parte da conversa, não código) e o item 3 ("informar a
+  condição real").
+- Testado: 4 testes novos (`liveActiveCampaignsNotCached`, positivo/negativo/degradação/conta
+  ausente) + `pnpm typecheck`/`pnpm test` verdes no monorepo inteiro (528 worker + 138 api + core).
+
+**Escopo deliberadamente NÃO alterado** (para não confundir com o item 3 pedido):
+- **Item 2 do achado original** ("campanha ficou INATIVA e o cache não percebe") — permanece
+  como fast-follow `[MÉDIO]` no ROADMAP. Não foi um dos 3 itens que o dono pediu para implementar
+  nesta rodada; corrigir exigiria o `record` marcar/podar entidades que saíram do conjunto ativo,
+  mudança maior que a reconciliação ao vivo usada acima (que só resolve "apareceu", não "sumiu").
+- **A versão PROFUNDA do item 3** (fazer `buildAccountBrief`/a análise INTEIRA enxergar entidades
+  sem insight, não só o chat) foi considerada e descartada nesta rodada: exigiria mudar a semântica
+  de `status:"empty"` (quebraria o teste existente `build-account-brief.test.ts:108-111`, que
+  espera "empty" mesmo com entidades ativas listadas) e arriscaria rodar o pipeline de LLM inteiro
+  sobre uma conta sem NENHUM dado real (custo sem benefício claro). A reconciliação no CHAT entrega
+  o mesmo valor pro usuário (ver a campanha, saber que ainda não tem dado) a um custo muito menor e
+  sem tocar nesse contrato. Documentado como decisão, não esquecido — reabrir se o uso real mostrar
+  que o chat sozinho não basta (ex: precisar que a campanha nova apareça também no `list_campaigns`
+  agregado por-período, ou nas recomendações automáticas do run).
 
 ---
 

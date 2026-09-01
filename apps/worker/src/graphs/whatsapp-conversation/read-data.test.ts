@@ -15,6 +15,7 @@ import {
   listRecommendationsData,
   enrichRecommendationsLiveStatus,
   campaignStatusData,
+  liveActiveCampaignsNotCached,
   renderWhatsappNumber,
   resolveWhatsappNumber,
   pickAdIdsToRefresh,
@@ -819,6 +820,45 @@ describe("campaignStatusData (ambíguo → LISTA com status ao vivo, NÃO pede i
     const d = deps(async () => [{ id: "c1", name: "Outra campanha" }], async () => ({ status: "ACTIVE" }));
     const out = await campaignStatusData(d, ctx, { name: "ZZZ inexistente" });
     expect(out).toMatchObject({ hasData: false });
+  });
+});
+
+describe("liveActiveCampaignsNotCached (gap de sincronização — pivô saúde)", () => {
+  const ctx = { orgId: "o1", agentId: "ag1", adAccountId: "acc1" } as never;
+  const account = [{ metaAdAccountId: "act_1", name: "X", currency: "BRL", accountToken: "tok", connToken: null }];
+  function deps(listEntities: () => Promise<unknown>) {
+    return {
+      db: fakeDb(new Map<unknown, unknown[]>([[adAccounts, account]])),
+      ports: { ads: { listEntities: vi.fn(listEntities) }, vault: { decrypt: (t: string) => t } },
+      conversation: { liveFetchTimeoutMs: 1000 },
+    } as never;
+  }
+
+  it("campanha ATIVA na Meta sem estar no cache → aparece na lista de gaps", async () => {
+    const d = deps(async () => [
+      { id: "c1", name: "Já cacheada", status: "active" },
+      { id: "c2", name: "Campanha nova", status: "active" },
+      { id: "c3", name: "Pausada, nunca cacheada", status: "paused" },
+    ]);
+    const gaps = await liveActiveCampaignsNotCached(d, ctx, new Set(["c1"]));
+    expect(gaps).toEqual([{ id: "c2", name: "Campanha nova" }]);
+  });
+
+  it("nada de novo (tudo já cacheado ou inativo) → lista vazia", async () => {
+    const d = deps(async () => [{ id: "c1", name: "Já cacheada", status: "active" }]);
+    expect(await liveActiveCampaignsNotCached(d, ctx, new Set(["c1"]))).toEqual([]);
+  });
+
+  it("Meta indisponível/lenta → degrada em lista vazia (best-effort, não derruba o turno)", async () => {
+    const d = deps(async () => {
+      throw new Error("timeout");
+    });
+    expect(await liveActiveCampaignsNotCached(d, ctx, new Set())).toEqual([]);
+  });
+
+  it("conta não encontrada → lista vazia", async () => {
+    const d = { db: fakeDb(new Map()), ports: { ads: { listEntities: vi.fn() }, vault: { decrypt: (t: string) => t } }, conversation: { liveFetchTimeoutMs: 1000 } } as never;
+    expect(await liveActiveCampaignsNotCached(d, ctx, new Set())).toEqual([]);
   });
 });
 

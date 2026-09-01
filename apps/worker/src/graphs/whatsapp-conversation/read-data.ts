@@ -1250,6 +1250,31 @@ export async function listAudiencesData(
 }
 
 /**
+ * Campanhas ATIVAS na Meta que ainda NÃO têm nenhuma linha em `entity_analyses` — o gap de
+ * sincronização (pivô saúde): uma campanha recém-criada/ativada existe de verdade na Meta mas
+ * só entra no cache curado na PRÓXIMA análise. Sem isso, list_campaigns/get_campaign_analysis
+ * diriam "não existe"/omitiriam ela, quando na verdade só "ainda não foi medida". Bounded +
+ * best-effort (mesmo padrão de `listCampaignsLive`): Meta lenta/indisponível degrada em lista
+ * vazia — a resposta principal (do cache) já tinha o que tinha, isto é só um adendo honesto.
+ */
+export async function liveActiveCampaignsNotCached(
+  deps: WorkerDeps,
+  ctx: ReadToolContext,
+  cachedIds: ReadonlySet<string>,
+): Promise<Array<{ id: string; name: string }>> {
+  const repo = createAnalysisRepo(deps.db);
+  const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
+  if (!account) return [];
+  const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
+  try {
+    const entities = await withTimeout(deps.ports.ads.listEntities(ref, "campaign"), deps.conversation.liveFetchTimeoutMs);
+    return entities.filter((e) => e.status === "active" && !cachedIds.has(e.id)).map((e) => ({ id: e.id, name: e.name }));
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Campanhas AO VIVO da Meta (id/nome/status) — fallback quando não há nada analisado ainda
  * (conta nova / campanhas pausadas nunca analisadas). "Analisadas primeiro, ao vivo no
  * fallback" (§Fatia 7): permite copiar/referenciar uma campanha mesmo sem run prévio.
@@ -1433,12 +1458,30 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     async ({ name }: { name: string }) => {
       if (noFocus()) return NEEDS_FOCUS;
       logger.debug({ agentId: ctx.agentId, name }, "tool:get_campaign_analysis");
-      return asString(await getCampaignAnalysisData(db, ctx.agentId, name));
+      const result = await getCampaignAnalysisData(db, ctx.agentId, name);
+      // "não achei" pode ser "não existe" OU "existe e está ATIVA na Meta, só nunca foi
+      // analisada" (gap de sincronização) — nunca dizer a 1ª sem checar a 2ª. `hasData` só
+      // existe em NoData/AmbiguousCampaign (CampaignAnalysis não tem o campo) — combinado com
+      // "sem ambiguous" isola exatamente o caso NoData (várias casando já é tratado à parte).
+      if ("hasData" in result && !("ambiguous" in result)) {
+        const gaps = await liveActiveCampaignsNotCached(deps, ctx, new Set());
+        const match = resolveNamedMatch(gaps, name, { name: (g) => g.name, keys: (g) => [g.id] });
+        if (match.kind === "one") {
+          return asString({
+            hasData: true,
+            id: match.row.id,
+            name: match.row.name,
+            noDataYet: true,
+            note: "Essa campanha existe e está ATIVA na Meta agora, mas ainda não tem NENHUMA análise — nenhum tier/orçamento/métrica disponível. Diga que ela existe/está ativa e ofereça rodar uma análise; nunca invente um número pra ela.",
+          });
+        }
+      }
+      return asString(result);
     },
     {
       name: "get_campaign_analysis",
       description:
-        "Última análise de uma campanha pelo nome (busca por trecho, sem diferenciar maiúsculas). Devolve o id (use-o para agir), resumo, métricas curadas, o maior gargalo, o tier (winner/performer/underperformer/zombie), healthSignals (fadiga/saturação/pouco dado/criativo fraco), audience (estágio: prospecção/remarketing), funnel (conversas/1ª resposta/profundidade — qualidade do lead), conversionBasis ('target' = a conversão mostrada É a de negócio; 'proxy' = referência, a venda não é rastreada ali; 'none' = sem conversão), benchmarkRef (referência de plataforma, só cold-start) e o ORÇAMENTO (budget: diário ou vitalício; atBudgetCeiling: true = sem folga pra gastar mais sem subir o orçamento; isCBO: true = orçamento na própria campanha, false = por conjunto/adset — nesse caso qualquer mudança é POR CONJUNTO). Campanha ABO (isCBO=false) com 2+ conjuntos com diagnóstico próprio também traz 'adsets' (id/nome/tier de cada conjunto) + 'adsetsNote' explicando por que a campanha não tem um tier único — cite os dois ao comentar o desempenho dela, não silencie a diferença. Campos vêm null/ausentes quando a conta não foi reanalisada desde que esse dado passou a ser coletado — nesse caso, não afirme 'sem dado', diga que precisa rodar uma nova análise.",
+        "Última análise de uma campanha pelo nome (busca por trecho, sem diferenciar maiúsculas). Devolve o id (use-o para agir), resumo, métricas curadas, o maior gargalo, o tier (winner/performer/underperformer/zombie), healthSignals (fadiga/saturação/pouco dado/criativo fraco), audience (estágio: prospecção/remarketing), funnel (conversas/1ª resposta/profundidade — qualidade do lead), conversionBasis ('target' = a conversão mostrada É a de negócio; 'proxy' = referência, a venda não é rastreada ali; 'none' = sem conversão), benchmarkRef (referência de plataforma, só cold-start) e o ORÇAMENTO (budget: diário ou vitalício; atBudgetCeiling: true = sem folga pra gastar mais sem subir o orçamento; isCBO: true = orçamento na própria campanha, false = por conjunto/adset — nesse caso qualquer mudança é POR CONJUNTO). Campanha ABO (isCBO=false) com 2+ conjuntos com diagnóstico próprio também traz 'adsets' (id/nome/tier de cada conjunto) + 'adsetsNote' explicando por que a campanha não tem um tier único — cite os dois ao comentar o desempenho dela, não silencie a diferença. Campos vêm null/ausentes quando a conta não foi reanalisada desde que esse dado passou a ser coletado — nesse caso, não afirme 'sem dado', diga que precisa rodar uma nova análise. Sem nenhuma análise casando o nome, verifica AO VIVO se a campanha existe ATIVA na Meta (noDataYet:true) antes de dizer que não existe.",
       schema: z.object({ name: z.string() }),
     },
   );
@@ -1487,13 +1530,29 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
       // analisadas primeiro (curadas, com tier/métrica); sem nenhuma analisada → ao vivo
       // (id/nome/status) pra o agente ainda conseguir referenciar/copiar (Fatia 7).
       const analyzed = await listCampaignsData(db, ctx.agentId);
-      if (analyzed.hasData) return asString(analyzed);
+      if (analyzed.hasData) {
+        // gap de sincronização (pivô saúde): campanha ATIVA na Meta sem NENHUMA análise ainda —
+        // nunca omitir, nunca inventar número; entra na lista marcada "sem dado ainda".
+        const knownIds = new Set(analyzed.campaigns.map((c) => c.id));
+        const gaps = await liveActiveCampaignsNotCached(deps, ctx, knownIds);
+        if (gaps.length > 0) {
+          return asString({
+            ...analyzed,
+            campaigns: [
+              ...analyzed.campaigns,
+              ...gaps.map((g) => ({ id: g.id, name: g.name, spend: null, conversions: null, cpa: null, roas: null, revenue: null, ...curatedViewOf(null), noDataYet: true })),
+            ],
+            syncNote: `${gaps.length} campanha(s) ativa(s) na Meta (${gaps.map((g) => g.name).join(", ")}) ainda NÃO têm nenhuma análise — os campos delas vêm vazios (noDataYet:true) até rodar uma análise nova; cite explicitamente que elas existem e estão ativas, sem inventar número.`,
+          });
+        }
+        return asString(analyzed);
+      }
       return asString(await listCampaignsLive(deps, ctx));
     },
     {
       name: "list_campaigns",
       description:
-        "TODAS as campanhas da conta com métricas por campanha (gasto, conversões, CPA, ROAS, receita), ordenadas por gasto — pra COMPARAR/ALOCAR verba ('quais gastam mais e convertem pior', 'onde cortar/proteger', 'valores por campanha', 'qual o orçamento de cada campanha'). SEM args = última análise curada (inclui tier/diagnóstico e o ORÇAMENTO de cada campanha: budget/atBudgetCeiling/isCBO — mesmos campos de get_campaign_analysis; null quando a conta não foi reanalisada desde que esse dado passou a ser coletado, nesse caso ofereça rodar uma análise em vez de dizer 'sem orçamento'). COM recorte de período (mesmo formato do get_fresh_metrics: periodDays, ou sinceDaysAgo+untilDaysAgo em dias atrás, 0=hoje/1=ontem, ≤7d) = dados FRESH agregados por campanha na janela (SEM orçamento — isso só vem da análise curada, sem args). É a divisão por campanha que o get_fresh_metrics (agregado da conta) não dá.",
+        "TODAS as campanhas da conta com métricas por campanha (gasto, conversões, CPA, ROAS, receita), ordenadas por gasto — pra COMPARAR/ALOCAR verba ('quais gastam mais e convertem pior', 'onde cortar/proteger', 'valores por campanha', 'qual o orçamento de cada campanha'). SEM args = última análise curada (inclui tier/diagnóstico e o ORÇAMENTO de cada campanha: budget/atBudgetCeiling/isCBO — mesmos campos de get_campaign_analysis; null quando a conta não foi reanalisada desde que esse dado passou a ser coletado, nesse caso ofereça rodar uma análise em vez de dizer 'sem orçamento'). Também verifica AO VIVO se existe campanha ATIVA na Meta ainda sem nenhuma análise — vem marcada noDataYet:true + 'syncNote'; cite que ela existe/está ativa, nunca invente número pra ela. COM recorte de período (mesmo formato do get_fresh_metrics: periodDays, ou sinceDaysAgo+untilDaysAgo em dias atrás, 0=hoje/1=ontem, ≤7d) = dados FRESH agregados por campanha na janela (SEM orçamento — isso só vem da análise curada, sem args). É a divisão por campanha que o get_fresh_metrics (agregado da conta) não dá.",
       schema: z.object({
         periodDays: z.number().int().positive().nullable().optional(),
         sinceDaysAgo: z.number().int().min(0).nullable().optional(),
