@@ -68,7 +68,7 @@ export function createBreakdownSyncService(deps: BreakdownSyncServiceDeps): Brea
     async sync(input) {
       // watermark representativo (dimensão "demographic", nível conta) — conta+campanhas
       // E as 2 dimensões sincronizam juntas no mesmo ciclo, então 1 watermark basta.
-      const latestDate = await deps.repo.latestDate(input.adAccountUuid, "demographic");
+      const latestDate = await deps.repo.latestDate(input.orgId, input.adAccountUuid, "demographic");
       const latestSnapshotAt = latestDate ? Date.parse(`${latestDate}T00:00:00Z`) : null;
       if (!shouldSync({ latestSnapshotAt, now: input.now, thresholdMin: deps.staleThresholdMin })) {
         return { synced: false };

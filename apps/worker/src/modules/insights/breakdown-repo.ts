@@ -30,9 +30,9 @@ export interface InsightsBreakdownsRepo {
   upsertMany(rows: readonly BreakdownRow[]): Promise<void>;
   /** Última data sincronizada p/ (conta, dimensão) — watermark da cadência própria
    *  (representada pelo nível `account`; conta+campanhas sincronizam no mesmo ciclo). */
-  latestDate(adAccountId: string, dimension: BreakdownDimension): Promise<string | null>;
+  latestDate(orgId: string, adAccountId: string, dimension: BreakdownDimension): Promise<string | null>;
   /** Lê todos os breakdowns já sincronizados da conta (p/ montar o brief). */
-  listByAccount(adAccountId: string): Promise<readonly StoredBreakdown[]>;
+  listByAccount(orgId: string, adAccountId: string): Promise<readonly StoredBreakdown[]>;
 }
 
 export function createDrizzleInsightsBreakdownsRepo(db: Database): InsightsBreakdownsRepo {
@@ -58,12 +58,13 @@ export function createDrizzleInsightsBreakdownsRepo(db: Database): InsightsBreak
         });
     },
 
-    async latestDate(adAccountId, dimension) {
+    async latestDate(orgId, adAccountId, dimension) {
       const [row] = await db
         .select({ latest: max(insightsBreakdowns.date) })
         .from(insightsBreakdowns)
         .where(
           and(
+            eq(insightsBreakdowns.orgId, orgId),
             eq(insightsBreakdowns.adAccountId, adAccountId),
             eq(insightsBreakdowns.entityLevel, "account"),
             eq(insightsBreakdowns.dimension, dimension),
@@ -72,8 +73,11 @@ export function createDrizzleInsightsBreakdownsRepo(db: Database): InsightsBreak
       return row?.latest ?? null;
     },
 
-    async listByAccount(adAccountId) {
-      const rows = await db.select().from(insightsBreakdowns).where(eq(insightsBreakdowns.adAccountId, adAccountId));
+    async listByAccount(orgId, adAccountId) {
+      const rows = await db
+        .select()
+        .from(insightsBreakdowns)
+        .where(and(eq(insightsBreakdowns.orgId, orgId), eq(insightsBreakdowns.adAccountId, adAccountId)));
       return rows.map((r) => ({
         entityId: r.entityId,
         entityLevel: r.entityLevel,

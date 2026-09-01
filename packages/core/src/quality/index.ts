@@ -336,22 +336,15 @@ export function enrichEntitiesQuality(
     const ctrDropPct = dropPct(e.metrics.ctr, e.deltaVsBaseline.ctr);
     const costMetric = typeof e.metrics.cpa === "number" ? "cpa" : "cpc";
     const costRisePct = risePct(e.metrics[costMetric], e.deltaVsBaseline[costMetric]);
-    // teto de frequência por estágio (adset com público); sem estágio → teto geral
-    // (detectHealthSignals cai em t.fatigueFrequency quando frequencyCap é ausente aqui).
-    const stage = e.audience?.stage;
-    const frequencyCap =
-      stage === "remarketing"
-        ? t.frequencyCapByStage.remarketing
-        : stage === "prospecting" || stage === "unknown"
-          ? t.frequencyCapByStage.prospecting
-          : undefined;
+    // teto de frequência por estágio (adset com público); sem estágio → teto geral.
+    const frequencyCap = resolveFrequencyCap(e.audience?.stage, t);
     const healthSignals = detectHealthSignals(
       {
         ...(e.metrics.frequency !== undefined ? { frequency: e.metrics.frequency } : {}),
         ctrDropPct,
         costRisePct,
         hasSignificance: eligibility.hasSignificance,
-        ...(frequencyCap !== undefined ? { frequencyCap } : {}),
+        frequencyCap,
         ...(e.metrics.videoHookRetentionPct !== undefined ? { videoHookRetentionPct: e.metrics.videoHookRetentionPct } : {}),
         ...(e.qualityRankings ? { qualityRankings: e.qualityRankings } : {}),
       },

@@ -205,7 +205,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
   const breakdownSync = createBreakdownSyncService({
     ads,
     repo: createDrizzleInsightsBreakdownsRepo(db),
-    staleThresholdMin: env.ANALYSIS_BREAKDOWN_STALE_THRESHOLD_MIN,
+    staleThresholdMin: env.INSIGHTS_BREAKDOWN_STALE_THRESHOLD_MIN,
   });
   const messaging = new EvolutionAdapter({
     client: new EvolutionClient({

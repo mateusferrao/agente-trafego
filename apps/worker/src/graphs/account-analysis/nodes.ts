@@ -327,7 +327,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     let demographics: EntityBreakdown | null = null;
     let placements: EntityBreakdown | null = null;
     try {
-      const stored = await breakdowns.listByAccount(state.adAccountId);
+      const stored = await breakdowns.listByAccount(state.orgId, state.adAccountId);
       const accountRows = stored.filter((r) => r.entityLevel === "account");
       const demo = accountRows.find((r) => r.dimension === "demographic");
       const place = accountRows.find((r) => r.dimension === "placement");
@@ -1788,17 +1788,17 @@ async function resolveAudienceHeadroomByEntity(
   const ref = { adAccountId: account.metaAdAccountId, accessToken };
   const adsetById = new Map(state.brief.segments.adsets.map((e) => [e.id, e]));
 
-  for (const entityId of targetIds) {
+  await mapWithConcurrency([...targetIds], cfg.mapConcurrency, async (entityId) => {
     const entity = adsetById.get(entityId);
-    if (!entity) continue;
+    if (!entity) return;
     try {
       const estimate = await ioDeps.ads.getDeliveryEstimateForAdSet(ref, entityId);
-      if (!estimate.ready) continue;
+      if (!estimate.ready) return;
       const monthlyReach =
         estimate.monthlyReachMin !== undefined && estimate.monthlyReachMax !== undefined
           ? (estimate.monthlyReachMin + estimate.monthlyReachMax) / 2
           : (estimate.monthlyReachMax ?? estimate.monthlyReachMin ?? estimate.dailyActiveUsers);
-      if (monthlyReach === undefined) continue;
+      if (monthlyReach === undefined) return;
       headroomByEntity.set(entityId, {
         monthlyReach,
         currentMonthlyImpressions: (entity.metrics.impressions / cfg.windowDays) * 30,
@@ -1807,7 +1807,7 @@ async function resolveAudienceHeadroomByEntity(
     } catch (err) {
       ioDeps.logger.warn({ runId: state.runId, entityId, err: String(err) }, "review_analysis:delivery_estimate degradou (guard passa direto)");
     }
-  }
+  });
   return headroomByEntity;
 }
 
