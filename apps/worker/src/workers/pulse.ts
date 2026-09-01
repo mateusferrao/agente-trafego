@@ -17,7 +17,13 @@ import {
   recommendations,
 } from "@trafego/db";
 import { composeAgentVoice, cpaLabelFor, volumeToRecCount } from "@trafego/core";
-import { AGENT_PULSE_QUEUE, type AgentCronDispatchPayload, type NotifyPolicy } from "@trafego/shared";
+import {
+  ACCOUNT_HEALTH_STATUS_LABELS,
+  AGENT_PULSE_QUEUE,
+  type AgentCronDispatchPayload,
+  type MetaAccountHealthStatus,
+  type NotifyPolicy,
+} from "@trafego/shared";
 import { LLMProviderError } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../composition.js";
 import { ownerAccessActive } from "../modules/access/owner-gate.js";
@@ -56,7 +62,14 @@ export async function runPulse(deps: WorkerDeps, payload: AgentCronDispatchPaylo
 
   // agente + conta ativos + política + nome da conta.
   const [row] = await db
-    .select({ notifyPolicy: agents.notifyPolicy, accountName: adAccounts.name, currency: adAccounts.currency, accountStatus: adAccounts.status, agentStatus: agents.status })
+    .select({
+      notifyPolicy: agents.notifyPolicy,
+      accountName: adAccounts.name,
+      currency: adAccounts.currency,
+      accountStatus: adAccounts.status,
+      agentStatus: agents.status,
+      metaAccountStatus: adAccounts.metaAccountStatus,
+    })
     .from(agents)
     .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
     .where(and(eq(agents.id, payload.agentId), eq(agents.orgId, payload.orgId)))
@@ -134,6 +147,12 @@ export async function runPulse(deps: WorkerDeps, payload: AgentCronDispatchPaylo
 
   const cmp = await comparePeriodsData(db, payload.adAccountId, payload.orgId, PULSE_WINDOW_DAYS, ctx.timezone);
 
+  // saúde de conta Meta (S4): só sinaliza o rótulo quando não-ativa — nunca bloqueia
+  // o pulso (o dono precisa saber), o texto lidera por isso em vez de silenciar.
+  const metaStatus = row.metaAccountStatus as MetaAccountHealthStatus | null;
+  const accountHealthLabel =
+    metaStatus && metaStatus !== "active" ? ACCOUNT_HEALTH_STATUS_LABELS[metaStatus] : undefined;
+
   const pulseInput: PulseInput = {
     accountName,
     currency: row.currency ?? "BRL",
@@ -143,6 +162,7 @@ export async function runPulse(deps: WorkerDeps, payload: AgentCronDispatchPaylo
     cpaLabel: cpaLabelFor(ctx.goals.conversionGoal ?? null),
     standingRecs,
     noAnalysisYet: !runFresh,
+    ...(accountHealthLabel ? { accountHealthLabel } : {}),
   };
 
   // redator leve voiceado (voz + postura); fallback determinístico em erro/JSON.

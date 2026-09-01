@@ -51,6 +51,20 @@ describe("buildPulseFallback", () => {
     const t = buildPulseFallback(input({ updated: false }));
     expect(t.toLowerCase()).toContain("último dado sincronizado");
   });
+
+  it("saúde de conta (S4): lidera pelo rótulo do problema antes das métricas (nunca silencia)", () => {
+    const label = "Conta desativada, parou de veicular anúncios";
+    const t = buildPulseFallback(input({ accountHealthLabel: label }));
+    expect(t).toContain(label);
+    // aparece ANTES da linha de gasto (lidera por isso, não perde no meio)
+    expect(t.indexOf(label)).toBeLessThan(t.indexOf("gasto"));
+  });
+
+  it("saúde de conta ausente (conta saudável) → nada extra, sem ruído", () => {
+    const t = buildPulseFallback(input());
+    expect(t).not.toContain("desativada");
+    expect(t).not.toContain("período de carência");
+  });
 });
 
 describe("buildPulseMessages", () => {
