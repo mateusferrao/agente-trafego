@@ -49,6 +49,22 @@ describe("analysis-guards", () => {
     expect(dropUnsupportedFindings(out, brief).findings).toHaveLength(0);
   });
 
+  it("S7: mantém finding que cita número de um segmento de breakdown (demographics/placements) — sem isso, o drop comeria a feature-carro-chefe da Fase 4", () => {
+    const briefWithBreakdown = {
+      ...brief,
+      demographics: {
+        dimension: "demographic",
+        asOf: "2026-08-24",
+        segments: [{ key: "a", label: "35-44 · mulheres", metrics: { spend: 100, impressions: 1000, clicks: 20, ctr: 2, cpc: 12, cpm: 10 } }],
+      },
+    } as unknown as AccountBrief;
+    const out = output([
+      { id: "f1", title: "spread demográfico", detail: "R$12/clique em 35-44 mulheres", severity: "info", metricRefs: [{ label: "cpc", value: 12 }], caveat: null },
+    ]);
+    expect(flagUnsupportedFindings(out, briefWithBreakdown)).toHaveLength(0);
+    expect(dropUnsupportedFindings(out, briefWithBreakdown).findings).toHaveLength(1);
+  });
+
   it("mantém se ≥1 métrica confere (leniente) e ignora rótulos textuais", () => {
     const out = output([
       { id: "f1", title: "misto", detail: "x", severity: "info", metricRefs: [{ label: "inventado", value: 777 }, { label: "spend", value: 300 }], caveat: null },

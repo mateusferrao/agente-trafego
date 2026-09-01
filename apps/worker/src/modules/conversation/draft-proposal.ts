@@ -1251,10 +1251,12 @@ async function isSourceFatigued(
   const ids = [ad?.adsetId, ad?.campaignId].filter((id): id is string => Boolean(id));
   if (ids.length === 0) return false;
   const rows = await deps.db
-    .select({ flags: entityAnalyses.flags })
+    .select({ curatedJson: entityAnalyses.curatedJson })
     .from(entityAnalyses)
     .where(and(eq(entityAnalyses.agentId, agentId), inArray(entityAnalyses.entityId, ids)));
-  return rows.some((r) => (r.flags ?? []).includes("creative_fatigue"));
+  // `creative_fatigue` é um healthSignal (curated_json), NÃO uma flag (flags é
+  // cpa_acima_da_meta/roas_abaixo_da_meta/anomalia:* — outro conjunto, bug corrigido).
+  return rows.some((r) => (r.curatedJson?.healthSignals ?? []).includes("creative_fatigue"));
 }
 
 /**

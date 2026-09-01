@@ -115,15 +115,22 @@ describe("buildReviewMessages (G7 — revisor corrige contra a régua de domíni
 });
 
 describe("perfil vertical (S4, G6) — anexado PROGRAMATICAMENTE nos 3 papéis", () => {
-  it("vertical='health': map/synthesis/review carregam o raciocínio de saúde (funil real, não só CPL)", () => {
+  it("vertical='health': map/synthesis/review carregam o raciocínio de LEITURA de saúde (funil real, não só CPL)", () => {
     const map = systemOf(buildCampaignMessages("persona", campaignUnit(), new Map(), { currency: "BRL", window: "7d" }, new Map(), "health"));
     const synthesis = systemOf(buildSynthesisMessages("persona", brief(), [], "health"));
     const draft: AnalysisOutput = { scorecard: { grade: "B", headline: "ok", biggestLeak: "conversao" }, summary: "s", findings: [], recommendations: [] };
     const review = systemOf(buildReviewMessages(brief(), draft, [], "health"));
     for (const system of [map, synthesis, review]) {
       expect(system.toUpperCase()).toContain("DIAGNÓSTICO");
-      expect(system.toLowerCase()).toContain("fim de semana");
     }
+  });
+
+  it("BUG corrigido: notas PRESCRITIVAS (fim de semana/overlap) vão pra map/synthesis, NUNCA pro revisor (ele só corrige, nunca inventa recomendação nova)", () => {
+    const synthesis = systemOf(buildSynthesisMessages("persona", brief(), [], "health"));
+    const draft: AnalysisOutput = { scorecard: { grade: "B", headline: "ok", biggestLeak: "conversao" }, summary: "s", findings: [], recommendations: [] };
+    const review = systemOf(buildReviewMessages(brief(), draft, [], "health"));
+    expect(synthesis.toLowerCase()).toContain("fim de semana");
+    expect(review.toLowerCase()).not.toContain("fim de semana");
   });
 
   it("vertical ausente/desconhecida: NÃO injeta raciocínio de nicho (honesto — nunca inventa perfil)", () => {

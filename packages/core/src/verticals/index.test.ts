@@ -47,4 +47,17 @@ describe("buildVerticalKnowledgeText (G6 — kernel sempre anexado, independente
     expect(text.toLowerCase()).toContain("teto");
     expect(text).not.toMatch(/R\$\s*\d/); // nenhum valor em reais hardcoded
   });
+
+  it("BUG corrigido: papel 'review' NUNCA recebe notas prescritivas (fim de semana/overlap) nem template — revisor só corrige, nunca inventa recomendação nova", () => {
+    const text = buildVerticalKnowledgeText(HEALTH_VERTICAL_PROFILE, "review");
+    expect(text.toLowerCase()).toContain("diagnóstico"); // leitura (FUNNEL_NOTE) continua
+    expect(text.toLowerCase()).not.toContain("fim de semana"); // prescritiva (actionNotes) — fora
+    expect(text.toLowerCase()).not.toContain("consolidar");
+    expect(text.toLowerCase()).not.toContain("teto"); // template também é prescritivo — fora
+  });
+
+  it("papéis 'map'/'synthesis' continuam recebendo tudo (default = map)", () => {
+    expect(buildVerticalKnowledgeText(HEALTH_VERTICAL_PROFILE, "map")).toBe(buildVerticalKnowledgeText(HEALTH_VERTICAL_PROFILE));
+    expect(buildVerticalKnowledgeText(HEALTH_VERTICAL_PROFILE, "synthesis").toLowerCase()).toContain("fim de semana");
+  });
 });

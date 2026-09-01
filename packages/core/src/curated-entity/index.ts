@@ -7,17 +7,20 @@ import type { CuratedEntitySnapshot, EntitySummary } from "@trafego/shared";
 export type { CuratedEntitySnapshot };
 
 /**
- * `isCBO` = true quando a entidade tem orçamento PRÓPRIO (CBO); false = por conjunto/adset
- * (ABO, o budget mora nos adsets filhos). Inferido da presença de `budget` no nível campanha
- * — o mapper (packages/core/src/brief/index.ts) só popula `budget` com o `dailyBudget`/
- * `lifetimeBudget` que a própria entidade tem na Meta; ABO nunca tem esse campo na campanha.
+ * `isCBO` = true quando a CAMPANHA tem orçamento PRÓPRIO (CBO); false = por conjunto/adset
+ * (ABO, o budget mora nos adsets filhos). É um conceito de CAMPANHA — pra uma entidade
+ * `campaign`, inferido da presença de `budget` (ABO nunca tem esse campo na campanha).
+ * Pra uma entidade `adset` (S8b — diagnóstico por-adset SÓ existe em campanha ABO,
+ * `deriveAdsetUnits` já garante isso), `isCBO` é SEMPRE `false`: usar `adset.budget != null`
+ * aqui daria `true` (todo adset ABO tem orçamento próprio), o oposto do que o campo
+ * significa — a campanha-mãe (não o adset) é quem nunca é CBO nesse cenário.
  */
 export function buildCuratedEntitySnapshot(entity: EntitySummary): CuratedEntitySnapshot {
   return {
     ...(entity.campaignId ? { campaignId: entity.campaignId } : {}),
     ...(entity.budget ? { budget: entity.budget } : {}),
     ...(entity.atBudgetCeiling !== undefined ? { atBudgetCeiling: entity.atBudgetCeiling } : {}),
-    isCBO: entity.budget != null,
+    isCBO: entity.level === "campaign" ? entity.budget != null : false,
     ...(entity.tier ? { tier: entity.tier } : {}),
     ...(entity.audience ? { audience: entity.audience } : {}),
     ...(entity.funnel ? { funnel: entity.funnel } : {}),

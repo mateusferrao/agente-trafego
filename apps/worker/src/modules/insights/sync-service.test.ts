@@ -77,6 +77,24 @@ describe("createInsightsSyncService.sync", () => {
     expect(upserts[0]!.metrics.qualityRankings).toEqual({ quality: "below_average" });
   });
 
+  it("BUG corrigido (revisão final): rankings de qualidade só são pedidos no nível AD — account/campaign/adset arriscariam o report inteiro falhar (campo só existe pro anúncio)", async () => {
+    const { repo } = makeRepo();
+    const fieldsByLevel = new Map<string, readonly string[]>();
+    const getInsights = vi.fn(async (q: InsightsQuery) => {
+      fieldsByLevel.set(q.level, q.fields);
+      return [datedRow(q.level)];
+    });
+
+    await makeService(getInsights, repo).sync(input);
+
+    for (const level of ["account", "campaign", "adset"] as const) {
+      expect(fieldsByLevel.get(level)).not.toContain("quality_ranking");
+      expect(fieldsByLevel.get(level)).not.toContain("engagement_rate_ranking");
+      expect(fieldsByLevel.get(level)).not.toContain("conversion_rate_ranking");
+    }
+    expect(fieldsByLevel.get("ad")).toContain("quality_ranking");
+  });
+
   it("S6: sem qualityRankings na linha → campo ausente no snapshot (nunca objeto vazio)", async () => {
     const { repo, upserts } = makeRepo();
     const getInsights = vi.fn(async (q: InsightsQuery) => [datedRow(q.level)]);

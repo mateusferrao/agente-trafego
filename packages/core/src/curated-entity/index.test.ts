@@ -29,6 +29,15 @@ describe("buildCuratedEntitySnapshot (S1 — persistência do que o chat/redator
     expect(snap.budget).toBeUndefined();
   });
 
+  it("BUG corrigido (S8b): adset com budget PRÓPRIO → isCBO SEMPRE false (é a campanha-mãe que nunca é CBO nesse cenário, nunca o adset)", () => {
+    // deriveAdsetUnits só chama isto pra adsets de campanha ABO — todo adset ABO tem
+    // budget próprio (`entity.budget != null`), então a fórmula ingênua (mesma do nível
+    // campanha) daria isCBO=true, o oposto do que o campo documenta.
+    const snap = buildCuratedEntitySnapshot(entity({ level: "adset", budget: { dailyMajor: 50 } }));
+    expect(snap.isCBO).toBe(false);
+    expect(snap.budget).toEqual({ dailyMajor: 50 }); // o budget em si continua correto, só isCBO muda
+  });
+
   it("carrega tier/conversionBasis/healthSignals/eligibility quando presentes", () => {
     const snap = buildCuratedEntitySnapshot(
       entity({

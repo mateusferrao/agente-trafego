@@ -577,13 +577,13 @@ interface FormState {
                     <input type="number" appNumberStepper min="0" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.trackingBrokenMinFunnel ?? ''" [value]="mcTrackingBrokenMinFunnel()" (input)="onMcText(mcTrackingBrokenMinFunnel, $event)" />
                     <span class="text-xs text-muted">Abaixo desse volume de conversas, o agente não levanta a suspeita.</span>
                   </label>
-                  <label class="flex flex-col gap-1 text-xs text-muted" title="Gasto mínimo (em múltiplo do CPA/CPL meta) para julgar uma campanha, mesmo com poucas conversões registradas.">
-                    Múltiplo do CPA-meta p/ piso de gasto
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Gasto mínimo (em múltiplo da meta de custo) para julgar uma campanha, mesmo com poucas conversões registradas.">
+                    Múltiplo da meta de custo p/ piso de gasto
                     <input type="number" appNumberStepper min="1" step="0.5" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.relativeEligibilitySpendMultiplier ?? ''" [value]="mcRelativeEligibilitySpendMultiplier()" (input)="onMcText(mcRelativeEligibilitySpendMultiplier, $event)" />
                     <span class="text-xs text-muted">Gastou esse múltiplo da meta de custo (ex: 2× R$7 = R$14) já conta como volume suficiente pra julgar, mesmo com poucas conversões.</span>
                   </label>
                   <label class="flex flex-col gap-1 text-xs text-muted" title="Alta do custo por resultado (%) a partir da qual o agente para de recomendar escalar orçamento, mesmo que a média ainda pareça boa.">
-                    Alta de CPA p/ parar de escalar (%)
+                    Alta de custo p/ parar de escalar (%)
                     <input type="number" appNumberStepper min="1" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.marginalCpaWorsenPct ?? ''" [value]="mcMarginalCpaWorsenPct()" (input)="onMcText(mcMarginalCpaWorsenPct, $event)" />
                     <span class="text-xs text-muted">O custo médio pode parecer bom, mas se o incremento mais recente já subiu esse tanto, o agente sugere investigar em vez de continuar aumentando.</span>
                   </label>

@@ -54,21 +54,17 @@ describe("createBreakdownSyncService.sync", () => {
     expect(upserts).toHaveLength(0);
   });
 
-  it("nunca sincronizado (null) → sincroniza; account+campanha × 2 dimensões; filtra campanhas fora do escopo", async () => {
+  it("nunca sincronizado (null) → sincroniza; só nível CONTA × 2 dimensões (campanha ainda sem consumidor — ver ROADMAP)", async () => {
     const { repo, upserts } = makeRepo(null);
-    const getBreakdownInsights = vi.fn(async (q: BreakdownInsightsQuery) => {
-      if (q.level === "account") return [segmentRow("123", "account", "k1", 50)];
-      return [segmentRow("C1", "campaign", "k1", 30), segmentRow("C2-fora-do-escopo", "campaign", "k1", 30)];
-    });
+    const getBreakdownInsights = vi.fn(async (q: BreakdownInsightsQuery) => [segmentRow("123", "account", "k1", 50)]);
 
     const res = await makeService(getBreakdownInsights, repo).sync(input);
 
     expect(res).toEqual({ synced: true });
-    expect(getBreakdownInsights).toHaveBeenCalledTimes(4); // 2 níveis × 2 dimensões
+    expect(getBreakdownInsights).toHaveBeenCalledTimes(2); // 1 nível (account) × 2 dimensões
+    expect(getBreakdownInsights.mock.calls.every(([q]: [BreakdownInsightsQuery]) => q.level === "account")).toBe(true);
     const entityIds = upserts.map((r: any) => r.entityId);
     expect(entityIds).toContain("123");
-    expect(entityIds).toContain("C1");
-    expect(entityIds).not.toContain("C2-fora-do-escopo");
   });
 
   it("goals.conversionGoal definido → resolve cpa/conversions por segmento", async () => {

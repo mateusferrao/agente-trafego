@@ -134,17 +134,25 @@ const INCREMENTALITY_TEXT =
 /**
  * Direção acionável-por-humano + conselho (S3). Só no MAPA (por-campanha): a COPY real
  * chega ao prompt nesse papel, e é lá que o analista dá direção concreta de criativo/
- * público e ACONSELHA escalar/criar (texto, o humano executa).
+ * público e ACONSELHA criar campanha (texto, o humano executa — criação ainda não é
+ * ação de plataforma aplicável). ESCALAR orçamento, por outro lado, JÁ é ação de
+ * plataforma de 1ª classe (actionType 'increase_budget'/'resume', com guardrail/
+ * aprovação/guard de significância e teto de audiência — Fase 4): a decisão de
+ * QUANTO escalar cabe à síntese (cross-campanha), mas o MAPA pode e deve PROPOR a
+ * ação de escalar aqui quando a campanha for vencedora com significância — nunca
+ * banir escalar do mapa (isso esterilizaria o insumo que a síntese precisa pra decidir).
  */
 const ADVICE_TEXT =
   "O briefing pode trazer a COPY real dos anúncios (bloco 'Copy real...'). Use-a para DIREÇÃO DE " +
   "CRIATIVO concreta (ex: 'seu ângulo campeão é prova social; teste uma variação com depoimento') " +
   "— actionType 'review_creative'. Para PÚBLICO, dê direção de teste (ampliar/estreitar/novo " +
-  "lookalike) — actionType 'review_audience'. Você pode ACONSELHAR em texto (o humano executa, " +
-  "você NÃO aplica): ESCALAR um vencedor com significância (subir orçamento / duplicar) ou CRIAR " +
-  "uma campanha (ex: manutenção entre campanhas) — use actionType 'investigate' (próximo passo " +
-  "claro) ou 'keep' (leitura estratégica). NUNCA proponha ação de plataforma para escalar/criar " +
-  "(não são aplicáveis agora). Seja SELETIVO: só direções/insights materiais, priorizados por impacto.";
+  "lookalike) — actionType 'review_audience'. Para ESCALAR um vencedor com significância (subir " +
+  "orçamento), proponha a AÇÃO de plataforma de verdade (actionType 'increase_budget', seguindo o " +
+  "faseamento/CPA-marginal do bloco de Orçamento quando presente) — a síntese decide a versão final " +
+  "cross-campanha, mas o mapa não deve esconder a oportunidade. Para CRIAR uma campanha nova (ex: " +
+  "manutenção entre campanhas), isso AINDA não é ação de plataforma aplicável — só ACONSELHE em " +
+  "texto (o humano executa), com actionType 'investigate' (próximo passo claro) ou 'keep' (leitura " +
+  "estratégica). Seja SELETIVO: só direções/insights materiais, priorizados por impacto.";
 
 /** Diagnóstico por padrão de métrica (causa provável, não só sintoma) — squad. */
 const DIAGNOSIS_TEXT =

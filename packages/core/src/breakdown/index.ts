@@ -21,27 +21,47 @@ export const DEFAULT_BREAKDOWN_THRESHOLDS: BreakdownThresholds = {
   minSpreadPct: 30,
 };
 
-/** Custo comparável do segmento: CPA quando há conversão; senão CPC. Mesmo padrão de
- *  `enrichEntitiesQuality` (packages/core/src/quality) — nunca mistura CPA com CPC no
- *  mesmo pool, mas aqui cada segmento decide sozinho (não há pool cross-segmento). */
-function comparableCost(segment: BreakdownSegment): number | undefined {
-  const { cpa, cpc } = segment.metrics;
-  if (typeof cpa === "number" && cpa > 0) return cpa;
-  if (typeof cpc === "number" && cpc > 0) return cpc;
-  return undefined;
+/** Segmentos com gasto ≥ piso — evita que um segmento com gasto irrisório (custo
+ *  instável) produza um spread falso-positivo. Exportado: o caller (brief) anexa só
+ *  estes ao `AccountBrief` — a NOTE do kernel afirma "já filtrado por materialidade",
+ *  então os segmentos abaixo do piso nunca podem chegar ao LLM. */
+export function eligibleBreakdownSegments(
+  segments: readonly BreakdownSegment[],
+  t: BreakdownThresholds = DEFAULT_BREAKDOWN_THRESHOLDS,
+): readonly BreakdownSegment[] {
+  return segments.filter((s) => s.metrics.spend >= t.minSpendPerSegment);
+}
+
+function costOf(segment: BreakdownSegment, basis: "cpa" | "cpc"): number | undefined {
+  const v = segment.metrics[basis];
+  return typeof v === "number" && v > 0 ? v : undefined;
+}
+
+/**
+ * Custos comparáveis dos segmentos elegíveis, NUMA ÚNICA base — CPA quando ≥2
+ * segmentos têm conversão de negócio (mesma base); senão CPC quando ≥2 têm clique.
+ * NUNCA mistura as duas no mesmo pool: CPA e CPC medem coisas diferentes — comparar
+ * entre bases infla o spread artificialmente e pode apontar pro segmento ERRADO (ex:
+ * segmento sem conversão nenhuma parecendo "mais barato" só por medir CPC, não CPA).
+ */
+function costsForComparison(eligible: readonly BreakdownSegment[]): readonly number[] {
+  const cpaCosts = eligible.map((s) => costOf(s, "cpa")).filter((c): c is number => c !== undefined);
+  if (cpaCosts.length >= 2) return cpaCosts;
+  const cpcCosts = eligible.map((s) => costOf(s, "cpc")).filter((c): c is number => c !== undefined);
+  return cpcCosts.length >= 2 ? cpcCosts : [];
 }
 
 /**
  * Há spread MATERIAL (acionável) entre os segmentos do breakdown? Só considera
- * segmentos com gasto ≥ `minSpendPerSegment` (piso, evita outlier); precisa de pelo
- * menos 2 custos comparáveis; material quando `(max-min)/min*100 >= minSpreadPct`.
+ * segmentos com gasto ≥ `minSpendPerSegment` (piso, evita outlier), comparados
+ * NUMA ÚNICA base (CPA ou CPC, nunca as duas); material quando
+ * `(max-min)/min*100 >= minSpreadPct`.
  */
 export function hasMaterialSpread(
   segments: readonly BreakdownSegment[],
   t: BreakdownThresholds = DEFAULT_BREAKDOWN_THRESHOLDS,
 ): boolean {
-  const eligible = segments.filter((s) => s.metrics.spend >= t.minSpendPerSegment);
-  const costs = eligible.map(comparableCost).filter((c): c is number => c !== undefined);
+  const costs = costsForComparison(eligibleBreakdownSegments(segments, t));
   if (costs.length < 2) return false;
   const min = Math.min(...costs);
   const max = Math.max(...costs);

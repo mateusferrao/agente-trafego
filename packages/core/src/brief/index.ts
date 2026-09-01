@@ -27,7 +27,7 @@ import type {
 import { classifyBasis, resolveConversion, type ResolvedConversion } from "../conversion/index.js";
 import { computeFunnelSummary, mergeFunnel } from "../funnel/index.js";
 import type { CtrBands } from "../benchmarks/index.js";
-import { DEFAULT_BREAKDOWN_THRESHOLDS, type BreakdownThresholds, hasMaterialSpread } from "../breakdown/index.js";
+import { DEFAULT_BREAKDOWN_THRESHOLDS, type BreakdownThresholds, eligibleBreakdownSegments, hasMaterialSpread } from "../breakdown/index.js";
 import { DEFAULT_QUALITY_THRESHOLDS, type QualityThresholds, enrichEntitiesQuality } from "../quality/index.js";
 import { detectTrackingHealth } from "../tracking/index.js";
 import { computeWasteReport } from "../waste/index.js";
@@ -565,12 +565,18 @@ export function buildAccountBrief(input: BuildAccountBriefInput): BuildAccountBr
   const waste = computeWasteReport(allByLevel.get("campaign") ?? []);
 
   // Breakdown demográfico/posicionamento (S7) — gate de materialidade: só entra no brief
-  // (e no prompt) quando o spread entre segmentos é acionável, não ruído.
+  // (e no prompt) quando o spread entre segmentos é acionável, não ruído. Anexa só os
+  // segmentos ELEGÍVEIS (acima do piso de gasto) — a NOTE do kernel afirma "já filtrado
+  // por materialidade", então um segmento de gasto irrisório nunca pode chegar ao LLM.
   const breakdownThresholds = input.breakdownThresholds ?? DEFAULT_BREAKDOWN_THRESHOLDS;
   const demographics =
-    input.demographics && hasMaterialSpread(input.demographics.segments, breakdownThresholds) ? input.demographics : undefined;
+    input.demographics && hasMaterialSpread(input.demographics.segments, breakdownThresholds)
+      ? { ...input.demographics, segments: eligibleBreakdownSegments(input.demographics.segments, breakdownThresholds) }
+      : undefined;
   const placements =
-    input.placements && hasMaterialSpread(input.placements.segments, breakdownThresholds) ? input.placements : undefined;
+    input.placements && hasMaterialSpread(input.placements.segments, breakdownThresholds)
+      ? { ...input.placements, segments: eligibleBreakdownSegments(input.placements.segments, breakdownThresholds) }
+      : undefined;
 
   const brief = assembleBrief({
     account: { ...input.account, window: input.window, baselineWindow: input.baselineWindow },

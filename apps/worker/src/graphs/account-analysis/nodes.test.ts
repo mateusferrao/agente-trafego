@@ -441,7 +441,10 @@ describe("account-analysis read-only nodes", () => {
     expect(campaignRow.curated?.isCBO).toBe(false); // ABO confirmado
     const as1Row = savedUnits.find((u) => u.entityId === "as1")!;
     expect(as1Row.entityLevel).toBe("adset");
-    expect(as1Row.curated?.isCBO).toBe(true); // controla o próprio budget
+    // bug corrigido (revisão final): isCBO é conceito de CAMPANHA — mesmo o adset tendo
+    // budget próprio (todo adset ABO tem), isCBO nunca é true num adset (é a campanha-mãe
+    // que nunca é CBO nesse cenário, não o adset).
+    expect(as1Row.curated?.isCBO).toBe(false);
     expect(as1Row.unit.recommendations.map((r) => r.id)).toEqual(["r-as1"]);
     expect(as1Row.unit.findings.map((f) => f.id)).toEqual(["f-as1"]);
     const as2Row = savedUnits.find((u) => u.entityId === "as2")!;

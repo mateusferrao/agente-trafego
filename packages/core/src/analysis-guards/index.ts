@@ -1,6 +1,7 @@
 import type { AccountBrief, ConversionBasis, DecisionEligibility, EntitySummary, FunnelSummary, InsightMetrics, TrackingHealth } from "@trafego/shared";
 import type { AnalysisFinding, AnalysisOutput, RecommendationActionType } from "@trafego/shared";
 import { flagUngroundedNumbers } from "../chat-guards/index.js";
+import { DEFAULT_QUALITY_THRESHOLDS } from "../quality/index.js";
 
 /**
  * Guards determinísticos sobre a saída do LLM (§ princípio-guia: rede que não
@@ -67,6 +68,11 @@ export function collectBriefNumbers(brief: AccountBrief): Set<number> {
   for (const e of brief.segments.campaigns) addEntity(e);
   for (const e of brief.segments.adsets) addEntity(e);
   for (const e of brief.segments.ads) addEntity(e);
+  // breakdown demográfico/posicionamento (S7) — a NOTE `demographics_placement` MANDA o
+  // analista citar os números do spread entre segmentos; sem eles no gabarito, o drop
+  // comeria o próprio finding (mesmo motivo do waste/trackingHealth acima).
+  for (const s of brief.demographics?.segments ?? []) addMetrics(s.metrics);
+  for (const s of brief.placements?.segments ?? []) addMetrics(s.metrics);
   // trends fazem parte do brief mostrado ao LLM → seus números são citáveis (senão
   // um finding que cita corretamente um ponto da série seria descartado por engano).
   for (const t of brief.trends) addMetrics(t.metrics);
@@ -128,8 +134,10 @@ export function dropUnsupportedFindings(output: AnalysisOutput, brief: AccountBr
 // phase"): NÃO manda escalar/reativar sem base estatística. Ações defensivas
 // (pausar/reduzir) nunca são barradas — reduzir risco é sempre seguro.
 
-/** Ações que ADICIONAM investimento/exposição — só com base estatística. */
-const SCALE_ACTIONS: ReadonlySet<RecommendationActionType> = new Set(["increase_budget", "resume"]);
+/** Ações que ADICIONAM investimento/exposição — só com base estatística. Exportado: o
+ *  worker reusa o MESMO conjunto (ex: `resolveAudienceHeadroomByEntity`) em vez de
+ *  reimplementar — uma 3ª ação de escala futura não pode ficar esquecida em 2 lugares. */
+export const SCALE_ACTIONS: ReadonlySet<RecommendationActionType> = new Set(["increase_budget", "resume"]);
 
 /** Constrói o mapa `externalId → eligibility` a partir dos segmentos do brief. */
 export function eligibilityByEntity(brief: AccountBrief): Map<string, DecisionEligibility> {
@@ -155,7 +163,7 @@ export function guardScaleWithoutSignificance(
     const elig = id ? eligibility.get(id) : undefined;
     if (!elig || (elig.hasSignificance && !elig.inLearning)) return r;
     const why = elig.inLearning
-      ? "em aprendizado (editada há pouco)"
+      ? "em aprendizado (sem dado comparável no período anterior — nova ou retomando)"
       : `sem base estatística ainda (${elig.conversions} conversões)`;
     return {
       ...r,
@@ -197,7 +205,7 @@ export function guardKillWithoutMaturity(
       ...r,
       title: demotedTitle(r.title),
       actionType: "investigate" as RecommendationActionType,
-      rationale: `${r.rationale}\n[guard] pausar → investigar: em aprendizado (editada há pouco) — dar tempo antes de matar (não descartar o aprendizado).`,
+      rationale: `${r.rationale}\n[guard] pausar → investigar: em aprendizado (sem dado comparável no período anterior — nova ou retomando) — dar tempo antes de matar (não descartar o aprendizado).`,
       budgetChangePct: null,
     };
   });
@@ -272,7 +280,10 @@ export interface MarginalCpaThresholds {
   readonly worsenPct: number;
 }
 
-export const DEFAULT_MARGINAL_CPA_THRESHOLDS: MarginalCpaThresholds = { worsenPct: 20 };
+// Deriva de DEFAULT_QUALITY_THRESHOLDS (fonte única) — produção nunca usa esta constante
+// (sempre passa cfg.quality.marginalCpaWorsenPct); só testes a usam. Sem a derivação, os
+// dois "20" podiam divergir silenciosamente numa mudança futura do default de qualidade.
+export const DEFAULT_MARGINAL_CPA_THRESHOLDS: MarginalCpaThresholds = { worsenPct: DEFAULT_QUALITY_THRESHOLDS.marginalCpaWorsenPct };
 
 /** `%` de alta do CPA (atual vs baseline; positivo = piorou) por `externalId`. `undefined`
  *  quando falta CPA atual ou delta (não penaliza por falta de dado — mesmo espírito de

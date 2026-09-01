@@ -11,7 +11,11 @@ import { computeDerived, shouldSync, type NormalizedEntity } from "@trafego/core
 import type { BreakdownRow, InsightsBreakdownsRepo } from "./breakdown-repo.js";
 
 const DIMENSIONS: readonly BreakdownDimension[] = ["demographic", "placement"];
-const LEVELS = ["account", "campaign"] as const;
+// Só CONTA por ora: o breakdown por-CAMPANHA ainda não tem consumidor (o kernel só lê
+// `brief.demographics`/`placements`, nível conta — ver ROADMAP "injetado no mapa
+// por-campanha"). Sincronizar campanha hoje seria chamada Meta + escrita em banco sem
+// benefício nenhum. Reabrir junto do fast-follow (plumbing de CampaignUnit).
+const LEVELS = ["account"] as const;
 // Agregado da janela inteira — sem granularidade diária (o spread muda devagar).
 const BREAKDOWN_WINDOW = "last_30d";
 
@@ -76,7 +80,6 @@ export function createBreakdownSyncService(deps: BreakdownSyncServiceDeps): Brea
 
       const today = new Date(input.now).toISOString().slice(0, 10);
       const account = { adAccountId: input.metaAdAccountId, accessToken: input.accessToken };
-      const scopeIds = new Set(input.campaignIds);
       const rows: BreakdownRow[] = [];
 
       for (const dimension of DIMENSIONS) {
@@ -84,7 +87,6 @@ export function createBreakdownSyncService(deps: BreakdownSyncServiceDeps): Brea
           try {
             const entityRows = await deps.ads.getBreakdownInsights({ account, level, window: BREAKDOWN_WINDOW, dimension });
             for (const er of entityRows) {
-              if (level === "campaign" && !scopeIds.has(er.entityId)) continue; // só o escopo ativo desta análise
               rows.push({
                 orgId: input.orgId,
                 adAccountId: input.adAccountUuid,

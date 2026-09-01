@@ -78,7 +78,7 @@ describe("chooseCreative (pool único: veiculando + biblioteca)", () => {
   it("criativo VEICULANDO presente, sem sinal de fadiga → escolhe o veiculado (provado)", async () => {
     const deps = fakeDepsSeq([
       { limit: [{ campaignId: "C1", adsetId: "AS1" }] }, // ad_creatives: campanha/adset do anúncio-fonte
-      { direct: [{ flags: [] }] }, // entity_analyses: sem creative_fatigue
+      { direct: [{ curatedJson: { isCBO: true, healthSignals: [] } }] }, // entity_analyses: sem creative_fatigue
     ]);
     const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, { imageHash: "H", sourceAdId: "ad_1" }, BEST_PERFORMING);
     expect(out).toEqual({ imageHash: "H", assetId: "ad_1", origin: "reuse", source: "serving" });
@@ -87,7 +87,7 @@ describe("chooseCreative (pool único: veiculando + biblioteca)", () => {
   it("criativo VEICULANDO fatigado (campanha/adset com creative_fatigue) → NÃO reusa, cai pra biblioteca (gap real corrigido)", async () => {
     const deps = fakeDepsSeq([
       { limit: [{ campaignId: "C1", adsetId: "AS1" }] },
-      { direct: [{ flags: ["creative_fatigue"] }] },
+      { direct: [{ curatedJson: { isCBO: true, healthSignals: ["creative_fatigue"] } }] },
       { orderByLimit: [{ id: "asset_9", imageHash: "HLIB", videoId: null }] }, // biblioteca por recência
       { direct: [] }, // visão cacheada (vazia)
     ]);
@@ -155,7 +155,7 @@ describe("chooseCreative (pool único: veiculando + biblioteca)", () => {
   });
 
   it("veiculando em vídeo, sem fadiga → escolhe o vídeo veiculado", async () => {
-    const deps = fakeDepsSeq([{ limit: [{ campaignId: "C2", adsetId: "AS2" }] }, { direct: [{ flags: [] }] }]);
+    const deps = fakeDepsSeq([{ limit: [{ campaignId: "C2", adsetId: "AS2" }] }, { direct: [{ curatedJson: { isCBO: true, healthSignals: [] } }] }]);
     const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, { videoId: "SVID", sourceAdId: "ad_2" }, BEST_PERFORMING);
     expect(out).toEqual({ videoId: "SVID", assetId: "ad_2", origin: "reuse", source: "serving" });
   });

@@ -34,6 +34,7 @@ import {
   guardAudienceScaleCeiling,
   DEFAULT_AUDIENCE_CEILING_THRESHOLDS,
   resolveFrequencyCap,
+  SCALE_ACTIONS,
   type AudienceHeadroom,
   basisByEntity,
   annotateFreedSpend,
@@ -1758,8 +1759,6 @@ async function refreshStatusByEntity(
   return corrected;
 }
 
-/** Ações que ADICIONAM investimento/exposição (mesmo Set de `SCALE_ACTIONS` em analysis-guards). */
-const SCALE_ACTION_TYPES = new Set(["increase_budget", "resume"]);
 
 /**
  * Resolve o teto de escala por audiência (Fase 4) — REATIVO: só chama `deliveryEstimate`
@@ -1777,7 +1776,7 @@ async function resolveAudienceHeadroomByEntity(
   const headroomByEntity = new Map<string, AudienceHeadroom>();
   const targetIds = new Set(
     output.recommendations
-      .filter((r) => SCALE_ACTION_TYPES.has(r.actionType) && r.targetEntity?.level === "adset")
+      .filter((r) => SCALE_ACTIONS.has(r.actionType) && r.targetEntity?.level === "adset")
       .map((r) => r.targetEntity!.externalId),
   );
   if (targetIds.size === 0 || !state.brief) return headroomByEntity;
