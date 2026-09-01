@@ -181,6 +181,10 @@ export interface StoredInsightMetrics {
   readonly qualityRankings?: PlatformQualityRankings;
 }
 
+/** Formato do objeto Meta veiculado (imagem/vídeo/carrossel/catálogo/outro) — NÃO confundir com
+ *  `CreativeVisionResult.format` (estilo visual inferido pela visão, ex: "UGC"/"antes-depois"). */
+export type AdFormat = "image" | "video" | "carousel" | "catalog" | "other";
+
 export interface Creative {
   readonly id: string;
   readonly adId: string;
@@ -189,6 +193,8 @@ export interface Creative {
   readonly title?: string;
   readonly callToAction?: string;
   readonly imageUrl?: string;
+  /** Formato do objeto Meta (imagem/vídeo/carrossel/catálogo) — S. */
+  readonly adFormat?: AdFormat;
   /** hash estável da imagem (reusável em `object_story_spec.link_data.image_hash`) — permite
    *  reusar um anúncio de IMAGEM ao vivo na criação (Fatia 7, Slice 12). */
   readonly imageHash?: string;

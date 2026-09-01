@@ -588,8 +588,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           ...(c.body ? { body: c.body } : {}),
           ...(c.title ? { title: c.title } : {}),
           ...(c.callToAction ? { callToAction: c.callToAction } : {}),
+          ...(c.adFormat ? { adFormat: c.adFormat } : {}),
         };
-        if (entry.body || entry.title || entry.callToAction) copyByAdId.set(adId, entry);
+        if (entry.body || entry.title || entry.callToAction || entry.adFormat) copyByAdId.set(adId, entry);
       }
 
       try {

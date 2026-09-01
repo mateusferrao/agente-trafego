@@ -4,6 +4,9 @@
 // maior gasto = investimento provado). Vocabulário Meta (action_type/effective_status) vive
 // SÓ aqui no adapter; o core recebe defaults neutros. Testável sem rede.
 
+import type { AdFormat } from "@trafego/shared/types";
+import { classifyAdFormat } from "./creative-format.js";
+
 /** Ação de insight crua da Graph (action_type + value acumulado). */
 export interface RawInsightAction {
   readonly action_type?: string;
@@ -40,16 +43,17 @@ export interface RawObjectStorySpec {
 }
 
 /** Formato do criativo veiculado. `image`/`video` = REUSÁVEIS hoje; os outros = não. */
-export type ServingCreativeFormat = "image" | "video" | "carousel" | "catalog" | "other";
+export type ServingCreativeFormat = AdFormat;
 
 /** Classifica o formato pelo object_story_spec (neutro; o vocabulário PT fica na casca). */
 export function creativeFormatOf(ad: RawAdCandidate): ServingCreativeFormat {
   const spec = ad.creative?.object_story_spec;
-  if (spec?.link_data?.image_hash) return "image";
-  if (spec?.video_data?.video_id) return "video";
-  if ((spec?.link_data?.child_attachments?.length ?? 0) > 0) return "carousel";
-  if (spec?.template_data !== undefined || spec?.product_set_id !== undefined) return "catalog";
-  return "other";
+  return classifyAdFormat({
+    hasImage: Boolean(spec?.link_data?.image_hash),
+    hasVideo: Boolean(spec?.video_data?.video_id),
+    carouselItemCount: spec?.link_data?.child_attachments?.length ?? 0,
+    isCatalog: spec?.template_data !== undefined || spec?.product_set_id !== undefined,
+  });
 }
 
 /** Reusável hoje = imagem única OU vídeo único (o create* só monta esses). */

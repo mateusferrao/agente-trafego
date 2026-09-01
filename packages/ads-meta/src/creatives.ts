@@ -3,6 +3,7 @@ import type { AdAccountRef } from "@trafego/shared/ports";
 import { extractPhoneFromUrl } from "@trafego/shared";
 import type { BatchSubRequest, BatchSubResponse, MetaGraphClient } from "./client.js";
 import { callWithGovernor } from "./call-with-governor.js";
+import { classifyAdFormat } from "./creative-format.js";
 import type { MetaGovernor } from "./governor.js";
 import { normalizeAdAccountId } from "./ids.js";
 
@@ -14,7 +15,7 @@ import { normalizeAdAccountId } from "./ids.js";
  */
 
 export const CREATIVE_FIELDS =
-  "creative{id,name,image_url,thumbnail_url,object_story_spec{page_id,link_data{message,name,image_hash,call_to_action{type,value{link,app_destination}}},video_data{message,title,image_hash,call_to_action{type,value{link,app_destination}}}},body,title,call_to_action_type,video_id}";
+  "creative{id,name,image_url,thumbnail_url,object_story_spec{page_id,link_data{message,name,image_hash,call_to_action{type,value{link,app_destination}},child_attachments},video_data{message,title,image_hash,call_to_action{type,value{link,app_destination}}},template_data,product_set_id},body,title,call_to_action_type,video_id}";
 
 /** Frames HD do vídeo (Fatia 6c): a Meta entrega ~10 thumbnails 1080p ao longo do vídeo. */
 export const VIDEO_THUMBNAILS_FIELDS = "thumbnails{uri,width,height,is_preferred}";
@@ -48,8 +49,16 @@ interface RawCallToAction {
 }
 interface RawObjectStorySpec {
   readonly page_id?: string;
-  readonly link_data?: { readonly message?: string; readonly name?: string; readonly image_hash?: string; readonly call_to_action?: RawCallToAction };
+  readonly link_data?: {
+    readonly message?: string;
+    readonly name?: string;
+    readonly image_hash?: string;
+    readonly call_to_action?: RawCallToAction;
+    readonly child_attachments?: readonly unknown[];
+  };
   readonly video_data?: { readonly message?: string; readonly title?: string; readonly image_hash?: string; readonly call_to_action?: RawCallToAction };
+  readonly template_data?: unknown;
+  readonly product_set_id?: string;
 }
 
 interface RawCreative {
@@ -172,6 +181,12 @@ export class MetaCreativesService {
     // capa: imagem → link_data.image_hash; VÍDEO → video_data.image_hash (a capa do anúncio-fonte).
     // Reusar essa capa é robusto — ler os thumbnails do vídeo pode dar #10 conforme a origem do vídeo.
     const imageHash = c.object_story_spec?.link_data?.image_hash ?? c.object_story_spec?.video_data?.image_hash;
+    const adFormat = classifyAdFormat({
+      hasImage: Boolean(c.object_story_spec?.link_data?.image_hash),
+      hasVideo: Boolean(c.video_id),
+      carouselItemCount: c.object_story_spec?.link_data?.child_attachments?.length ?? 0,
+      isCatalog: c.object_story_spec?.template_data !== undefined || c.object_story_spec?.product_set_id !== undefined,
+    });
     return {
       id: c.id ?? adId,
       adId,
@@ -185,6 +200,7 @@ export class MetaCreativesService {
       ...(imageHash ? { imageHash } : {}),
       ...(c.thumbnail_url ? { thumbnailUrl: c.thumbnail_url } : {}),
       ...(c.video_id ? { videoId: c.video_id } : {}),
+      ...(adFormat ? { adFormat } : {}),
     };
   }
 }

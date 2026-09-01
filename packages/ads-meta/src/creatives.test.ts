@@ -129,6 +129,21 @@ describe("MetaCreativesService.getCreatives", () => {
     const [c] = await makeService().getCreatives(account, ["ADV"]);
     expect(c!.videoId).toBe("VID9");
     expect(c!.imageHash).toBe("COVER9");
+    expect(c!.adFormat).toBe("video");
+  });
+
+  it("adFormat: imagem simples classificada como image", async () => {
+    stubBatch([{ id: "ADIMG", creative: { object_story_spec: { link_data: { image_hash: "IMGX" } } } }]);
+    const [c] = await makeService().getCreatives(account, ["ADIMG"]);
+    expect(c!.adFormat).toBe("image");
+  });
+
+  it("adFormat: carrossel (link_data.child_attachments) classificado como carousel", async () => {
+    stubBatch([
+      { id: "ADCAR", creative: { object_story_spec: { link_data: { child_attachments: [{ name: "a" }, { name: "b" }] } } } },
+    ]);
+    const [c] = await makeService().getCreatives(account, ["ADCAR"]);
+    expect(c!.adFormat).toBe("carousel");
   });
 
   it("sub-request que falhou (code != 200 ou null) é pulada, não derruba o lote", async () => {

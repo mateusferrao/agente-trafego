@@ -2,7 +2,7 @@
 // output (json_schema), o formato JSON vai como TEXTO no prompt. Padrões adotados
 // do automato-api: GROUNDING_RULE + FINDINGS_METRIC_INSTRUCTION.
 
-import type { AccountBrief, CampaignUnit, CreativeVisionResult } from "@trafego/shared";
+import type { AccountBrief, AdFormat, CampaignUnit, CreativeVisionResult } from "@trafego/shared";
 import type { AnalysisOutput, UnitAnalysis } from "@trafego/shared/schemas";
 import type { LLMMessage } from "@trafego/shared/ports";
 import {
@@ -86,6 +86,7 @@ export interface AdCopy {
   readonly body?: string;
   readonly title?: string;
   readonly callToAction?: string;
+  readonly adFormat?: AdFormat;
 }
 
 export function buildCampaignMessages(
@@ -118,7 +119,7 @@ export function buildCampaignMessages(
     .map((adId) => ({ adId, copy: copyByAdId.get(adId) }))
     .filter((c): c is { adId: string; copy: AdCopy } => {
       const k = c.copy;
-      return k != null && Boolean(k.body || k.title || k.callToAction);
+      return k != null && Boolean(k.body || k.title || k.callToAction || k.adFormat);
     });
   const user = [
     jsonBlock(
