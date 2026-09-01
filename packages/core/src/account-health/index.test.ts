@@ -100,13 +100,13 @@ describe("detectAccountHealthTriggers", () => {
     expect(events).toEqual([{ kind: "balance", balanceMajor: 40 }]);
   });
 
-  it("saldo baixo: fundingType \"other\" (cartão/fatura) → NUNCA dispara, mesmo com threshold ligado e cruzado", () => {
+  it("saldo baixo: fundingType \"other\" (cartão/fatura) TAMBÉM dispara — honra o toggle do dono (liberdade total)", () => {
     const events = detectAccountHealthTriggers(
       prev({ balanceMajor: 100 }),
       health({ balanceMajor: 40, fundingType: "other" }),
       policy({ balanceThreshold: { enabled: true, customValueMajor: 50 } }),
     );
-    expect(events).toEqual([]);
+    expect(events).toEqual([{ kind: "balance", balanceMajor: 40 }]);
   });
 
   it("saldo baixo: threshold desligado → não dispara mesmo em stored_balance cruzando", () => {

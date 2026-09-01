@@ -257,7 +257,7 @@ type SpendSource = 'meta_cap' | 'custom';
               <label class="flex items-center justify-between gap-3">
                 <span class="flex flex-col">
                   <span class="text-sm text-ink">Avisar quando o saldo estiver acabando</span>
-                  <span class="text-xs text-muted">Só vale para contas pré-pagas. Se a sua é cobrada por cartão ou fatura, esse aviso não dispara (o saldo ali não indica problema real).</span>
+                  <span class="text-xs text-muted">Funciona melhor em contas pré-pagas. Se a sua é cobrada por cartão ou fatura, o saldo mostrado é o gasto ainda não cobrado (não o disponível), então o aviso pode chegar logo depois de você pagar a fatura — mas se quiser, é você quem decide.</span>
                 </span>
                 <button appSwitch [ngpSwitchChecked]="balanceEnabled()" (ngpSwitchCheckedChange)="balanceEnabled.set($event)">
                   <span appSwitchThumb></span>

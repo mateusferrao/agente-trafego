@@ -57,15 +57,12 @@ export function detectAccountHealthTriggers(
     if (isOver && !wasOver) events.push({ kind: "spend_cap", spendCapMajor: capThreshold });
   }
 
-  // 3) saldo baixo: só quando pré-pago genuíno (fundingType stored_balance) — pra
-  // cartão/fatura o dado é valor acumulado-não-cobrado, não confiável (achado ao vivo).
+  // 3) saldo baixo: honra o toggle do dono em QUALQUER tipo de conta (decisão do dono —
+  // "liberdade total"). Pra cartão/fatura o `balance` é gasto-acumulado-não-cobrado (não
+  // saldo disponível), então o aviso pode não fazer sentido lá; a UI avisa disso, mas o
+  // dono decide. Só transição de cruzar pra baixo (nunca redispara persistente).
   const balanceThreshold = policy.balanceThreshold.customValueMajor;
-  if (
-    policy.balanceThreshold.enabled &&
-    current.fundingType === "stored_balance" &&
-    balanceThreshold !== undefined &&
-    current.balanceMajor !== undefined
-  ) {
+  if (policy.balanceThreshold.enabled && balanceThreshold !== undefined && current.balanceMajor !== undefined) {
     const wasUnder = previous.balanceMajor !== null && previous.balanceMajor <= balanceThreshold;
     const isUnder = current.balanceMajor <= balanceThreshold;
     if (isUnder && !wasUnder) events.push({ kind: "balance", balanceMajor: current.balanceMajor });

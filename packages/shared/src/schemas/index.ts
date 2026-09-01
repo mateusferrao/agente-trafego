@@ -228,9 +228,9 @@ export type AlertSensitivity = z.infer<typeof alertSensitivity>;
 // do pulso. `statusTriggers` = checklist configurável (o dono decide relevância, não o
 // sistema — a doc da Meta não distingue gravidade com confiança suficiente pra isso ser
 // decidido por nós). `spendThreshold`/`balanceThreshold` sempre na moeda da CONTA (nunca
-// campo de moeda próprio, nunca desalinha). `balanceThreshold` fica sempre presente no
-// schema mesmo só sendo relevante pra conta `funding_source_details.type=STORED_BALANCE`
-// (o site mostra a ressalva quando não se aplica, não esconde o campo).
+// campo de moeda próprio, nunca desalinha). `balanceThreshold` honra o toggle do dono em
+// QUALQUER tipo de conta (decisão: liberdade total); o site mostra a ressalva de que em
+// cartão/fatura o saldo é gasto-não-cobrado (o aviso pode não fazer sentido), mas o dono decide.
 export const accountHealthSpendThresholdSchema = z.object({
   source: z.enum(["meta_cap", "custom"]),
   customValueMajor: z.number().positive().optional(),
