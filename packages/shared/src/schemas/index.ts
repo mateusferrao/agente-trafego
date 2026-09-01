@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import {
+  ALERTABLE_ACCOUNT_HEALTH_STATUSES,
   CONVERSION_GOALS,
   CREATIVE_FORMATS,
   CREATIVE_SOURCE_MODES,
@@ -223,6 +224,33 @@ export type CadenceSpec = z.infer<typeof cadenceSpecSchema>;
 export const alertSensitivity = z.enum(["low", "normal", "high"]);
 export type AlertSensitivity = z.infer<typeof alertSensitivity>;
 
+// Saúde da conta Meta (status/teto de gasto/saldo) — alerta IMEDIATO, fora da cadência
+// do pulso. `statusTriggers` = checklist configurável (o dono decide relevância, não o
+// sistema — a doc da Meta não distingue gravidade com confiança suficiente pra isso ser
+// decidido por nós). `spendThreshold`/`balanceThreshold` sempre na moeda da CONTA (nunca
+// campo de moeda próprio, nunca desalinha). `balanceThreshold` fica sempre presente no
+// schema mesmo só sendo relevante pra conta `funding_source_details.type=STORED_BALANCE`
+// (o site mostra a ressalva quando não se aplica, não esconde o campo).
+export const accountHealthSpendThresholdSchema = z.object({
+  source: z.enum(["meta_cap", "custom"]),
+  customValueMajor: z.number().positive().optional(),
+});
+export type AccountHealthSpendThreshold = z.infer<typeof accountHealthSpendThresholdSchema>;
+
+export const accountHealthBalanceThresholdSchema = z.object({
+  enabled: z.boolean(),
+  customValueMajor: z.number().positive().optional(),
+});
+export type AccountHealthBalanceThreshold = z.infer<typeof accountHealthBalanceThresholdSchema>;
+
+export const accountHealthAlertSchema = z.object({
+  enabled: z.boolean(),
+  statusTriggers: z.array(z.enum(ALERTABLE_ACCOUNT_HEALTH_STATUSES)),
+  spendThreshold: accountHealthSpendThresholdSchema,
+  balanceThreshold: accountHealthBalanceThresholdSchema,
+});
+export type AccountHealthAlertPolicy = z.infer<typeof accountHealthAlertSchema>;
+
 export const notifyPolicySchema = z.object({
   pulse: z.object({ enabled: z.boolean(), cadence: cadenceSpecSchema }),
   alerts: z.object({
@@ -237,6 +265,9 @@ export const notifyPolicySchema = z.object({
   // Proatividade de CRIAÇÃO (Fatia 7): o agente PROPÕE escalar/criar campanhas pelo que
   // observou (nunca auto-aplica — sempre aprovação). Default OFF; ON em Otimizador/Vigia.
   proactiveDrafts: z.object({ enabled: z.boolean() }).optional(),
+  // Saúde da conta Meta — ver schema acima. Default ON em TODOS os arquétipos (mais
+  // urgente que reativação: isso aqui é dinheiro parado, não uma boa notícia opcional).
+  accountHealthAlert: accountHealthAlertSchema.optional(),
 });
 export type NotifyPolicy = z.infer<typeof notifyPolicySchema>;
 
@@ -247,6 +278,12 @@ export const DEFAULT_NOTIFY_POLICY: NotifyPolicy = {
   runPush: { enabled: true },
   reactivation: { enabled: false },
   proactiveDrafts: { enabled: false },
+  accountHealthAlert: {
+    enabled: true,
+    statusTriggers: [...ALERTABLE_ACCOUNT_HEALTH_STATUSES],
+    spendThreshold: { source: "meta_cap" },
+    balanceThreshold: { enabled: false },
+  },
 };
 
 // ─── Referência de mercado configurável (pivô — currency-aware) ───────────

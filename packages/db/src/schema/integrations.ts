@@ -1,4 +1,4 @@
-import { boolean, index, integer, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { boolean, index, integer, jsonb, numeric, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import type { EncryptedPayload } from "@trafego/shared";
 import {
   accountLifecycle,
@@ -74,6 +74,23 @@ export const adAccounts = pgTable(
     tokenCripto: jsonb("token_cripto").$type<EncryptedPayload>().notNull(),
     tokenStatus: tokenStatus("token_status").notNull().default("unchecked"),
     lastValidatedAt: timestamp("last_validated_at", { withTimezone: true }),
+    // Saúde da conta NA PRÓPRIA META (status/saldo/gasto/pagamento) — diferente do
+    // `status`/lifecycle acima e do `tokenStatus`. Persistido pelo sync periódico
+    // (`runInsightsSync`), lido pelo pulso/chat/site sem round-trip à Meta. Nullable:
+    // nunca bloqueia conta que ainda não teve essa checagem. Valores monetários já em
+    // unidade MAIOR (mesma convenção de `agent_runs.cost_snapshot`).
+    metaAccountStatus: text("meta_account_status"),
+    metaDisableReason: text("meta_disable_reason"),
+    metaBalance: numeric("meta_balance", { precision: 12, scale: 4 }),
+    metaAmountSpent: numeric("meta_amount_spent", { precision: 12, scale: 4 }),
+    // ausente = SEM teto definido (a Meta usa "0" pra "sem teto" — o adapter já
+    // resolve isso antes de persistir, nunca grava 0 aqui como se fosse um teto real).
+    metaSpendCap: numeric("meta_spend_cap", { precision: 12, scale: 4 }),
+    metaPaymentMethodLabel: text("meta_payment_method_label"),
+    // "stored_balance" (pré-pago genuíno) | "other" (cartão/fatura/etc) — gate do
+    // gatilho de saldo baixo na UI (Fatia 3).
+    metaFundingType: text("meta_funding_type"),
+    metaHealthCheckedAt: timestamp("meta_health_checked_at", { withTimezone: true }),
     ...timestamps,
   },
   (t) => [

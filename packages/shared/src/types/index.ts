@@ -448,6 +448,34 @@ export const META_ACCOUNT_HEALTH_STATUSES = [
 ] as const;
 export type MetaAccountHealthStatus = (typeof META_ACCOUNT_HEALTH_STATUSES)[number];
 
+/** Subconjunto "alertável" — exclui `active` (nunca é um problema, não faz sentido no
+ *  checklist de config). Inclui `unknown` de propósito: um código novo/indocumentado
+ *  da Meta é exatamente o tipo de coisa que vale avisar, não silenciar. */
+export const ALERTABLE_ACCOUNT_HEALTH_STATUSES = [
+  "disabled",
+  "unsettled",
+  "pending_review",
+  "pending_settlement",
+  "grace_period",
+  "pending_closure",
+  "closed",
+  "unknown",
+] as const satisfies readonly Exclude<MetaAccountHealthStatus, "active">[];
+
+/** Copy PT-BR de cada status alertável — tom do resto do app (impacto + sem jargão,
+ *  validado nesta sessão). Usada no checklist de config (site) e na mensagem do
+ *  alerta imediato (worker). */
+export const ACCOUNT_HEALTH_STATUS_LABELS: Readonly<Record<Exclude<MetaAccountHealthStatus, "active">, string>> = {
+  disabled: "Conta desativada, parou de veicular anúncios",
+  closed: "Conta encerrada",
+  pending_closure: "Conta em processo de encerramento",
+  unsettled: "Pagamento pendente",
+  pending_settlement: "Cobrança pendente",
+  grace_period: "Pagamento atrasado, conta em período de carência",
+  pending_review: "Conta em revisão de segurança pela Meta",
+  unknown: "Status não reconhecido (novo código da Meta)",
+};
+
 /**
  * Saúde da conta na própria Meta (status/saldo/gasto/pagamento) — DIFERENTE do nosso
  * lifecycle interno (`ad_accounts.status`) e do `token_status`. Vem de `GET
