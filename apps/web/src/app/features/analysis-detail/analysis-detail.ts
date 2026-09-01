@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, output, signal } from '@angular/core';
+import { NgTemplateOutlet } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { toast } from 'ngx-sonner';
@@ -76,7 +77,7 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
 @Component({
   selector: 'app-analysis-detail',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, RouterLink, UiButton, UiEyebrow, UiStat, UiEvidence, UiMeter],
+  imports: [FormsModule, NgTemplateOutlet, RouterLink, UiButton, UiEyebrow, UiStat, UiEvidence, UiMeter],
   template: `
     <section class="flex flex-col gap-5">
       @if (hasResults()) {
@@ -174,8 +175,7 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
             <h2 class="font-brand text-sm font-semibold text-ink">Campanhas</h2>
             <p class="text-xs text-muted">Análise de cada campanha ativa. Silencie as que o {{ agentName }} não deve acompanhar.</p>
           </div>
-          <div class="flex flex-col gap-3">
-            @for (c of campaigns(); track c.externalId) {
+          <ng-template #campaignCard let-c="c">
               <article
                 class="flex flex-col gap-3 rounded-lg border border-line border-l-4 bg-panel p-4"
                 [class]="tierBorder(c)"
@@ -294,8 +294,28 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                   </div>
                 }
               </article>
+          </ng-template>
+          <div class="flex flex-col gap-3">
+            @for (c of activeCampaigns(); track c.externalId) {
+              <ng-container *ngTemplateOutlet="campaignCard; context: { c: c }"></ng-container>
             }
           </div>
+          @if (inactiveCampaigns().length > 0) {
+            <button
+              type="button"
+              class="self-start text-xs text-muted hover:text-ink underline"
+              (click)="toggleInactive()"
+            >
+              {{ inactiveExpanded() ? 'Ocultar' : 'Ver' }} {{ inactiveCampaigns().length }} campanha{{ inactiveCampaigns().length === 1 ? '' : 's' }} inativa{{ inactiveCampaigns().length === 1 ? '' : 's' }}
+            </button>
+            @if (inactiveExpanded()) {
+              <div class="flex flex-col gap-3">
+                @for (c of inactiveCampaigns(); track c.externalId) {
+                  <ng-container *ngTemplateOutlet="campaignCard; context: { c: c }"></ng-container>
+                }
+              </div>
+            }
+          }
         }
 
         <!-- Recomendações -->
@@ -509,6 +529,13 @@ export class AnalysisDetail {
     return w.wastedSpend > 0 || (w.pareto?.misallocated.length ?? 0) > 0 ? w : null;
   });
   protected readonly misallocated = computed(() => this.waste()?.pareto?.misallocated ?? []);
+  /** Campanhas ainda ativas na Meta (lista principal) vs. desativadas (seção recolhida). */
+  protected readonly activeCampaigns = computed(() => this.campaigns().filter((c) => !c.deactivatedSince));
+  protected readonly inactiveCampaigns = computed(() => this.campaigns().filter((c) => !!c.deactivatedSince));
+  protected readonly inactiveExpanded = signal(false);
+  protected toggleInactive(): void {
+    this.inactiveExpanded.update((v) => !v);
+  }
   protected readonly tracking = computed<Tracking | null>(() => {
     const t = this.run()?.metrics?.trackingHealth;
     return t?.suspect ? t : null;
