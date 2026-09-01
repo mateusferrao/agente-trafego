@@ -168,6 +168,12 @@ describe("buildConfigChangeEcho", () => {
     const echo = echoFor(baseState(), { notifyPolicy: { accountHealthSpendThresholdMajor: 5000 } });
     expect(echo).toContain("teto de gasto que avisa: teto da Meta → R$ 5000,00");
   });
+
+  it("saúde da conta: teto customizado usa a moeda da CONTA, não BRL hardcoded (achado da revisão)", () => {
+    const echo = echoFor(baseState(), { notifyPolicy: { accountHealthSpendThresholdMajor: 5000 } }, "USD");
+    expect(echo).toContain("teto de gasto que avisa: teto da Meta → $ 5000,00");
+    expect(echo).not.toContain("R$ 5000,00");
+  });
 });
 
 describe("describePlaybookRule", () => {

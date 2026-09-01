@@ -381,11 +381,12 @@ function mergeNotifyPolicy(cur: NotifyPolicy, patch: NotifyPolicyPatch | undefin
   };
 }
 
-/** Descreve o teto de gasto do alerta de saúde (chat/eco): valor customizado ou "teto da Meta". */
-function describeSpendThreshold(alert: NotifyPolicy["accountHealthAlert"]): string {
+/** Descreve o teto de gasto do alerta de saúde (chat/eco): valor customizado (na moeda da
+ *  CONTA — o threshold é sempre nela) ou "teto da Meta". */
+function describeSpendThreshold(alert: NotifyPolicy["accountHealthAlert"], currency: string): string {
   const t = alert?.spendThreshold;
   return t?.source === "custom" && t.customValueMajor !== undefined
-    ? formatMoney(t.customValueMajor, DEFAULT_CURRENCY)
+    ? formatMoney(t.customValueMajor, currency)
     : "teto da Meta";
 }
 
@@ -752,8 +753,8 @@ function configDetailLines(
         lines.push(`aviso de problema na conta Meta: ${onOff(cah?.enabled ?? true)} → ${onOff(nah?.enabled ?? true)}`);
       // compara o texto descrito (não o objeto cru) — evita linha espúria "teto da Meta →
       // teto da Meta" quando o estado legado não tinha o campo e o merge só o backfillou.
-      if (describeSpendThreshold(cah) !== describeSpendThreshold(nah))
-        lines.push(`teto de gasto que avisa: ${describeSpendThreshold(cah)} → ${describeSpendThreshold(nah)}`);
+      if (describeSpendThreshold(cah, currency) !== describeSpendThreshold(nah, currency))
+        lines.push(`teto de gasto que avisa: ${describeSpendThreshold(cah, currency)} → ${describeSpendThreshold(nah, currency)}`);
       return lines;
     }
     default:

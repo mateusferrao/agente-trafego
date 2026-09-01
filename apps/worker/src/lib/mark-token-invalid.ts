@@ -2,7 +2,7 @@
 // token inválido na CONEXÃO dona da conta (recolar 1x recupera todas as contas
 // dela); conta legada sem conexão cai no status da própria conta. Usado pelo
 // insights-sync e pelo grafo de análise.
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 import { adAccounts, platformConnections, type Database } from "@trafego/db";
 
 /** `wasNewTransition` = true quando o token ESTAVA válido/não-checado e passou a
@@ -18,26 +18,28 @@ export async function markConnectionTokenInvalid(
     .from(adAccounts)
     .where(and(eq(adAccounts.id, adAccountUuid), eq(adAccounts.orgId, orgId)))
     .limit(1);
+  // Transição ATÔMICA (read-then-write num só UPDATE ... WHERE != 'invalid' RETURNING):
+  // duas syncs concorrentes de contas da MESMA conexão não podem ambas "ver válido" e
+  // ambas disparar o alerta — só a 1ª atualiza uma linha (transição real). `wasNewTransition`
+  // = houve linha afetada (achado da revisão; sem isso o read-then-write racearia).
   if (account?.connectionId) {
-    const [prevConn] = await db
-      .select({ tokenStatus: platformConnections.tokenStatus })
-      .from(platformConnections)
-      .where(and(eq(platformConnections.id, account.connectionId), eq(platformConnections.orgId, orgId)))
-      .limit(1);
-    await db
+    const updated = await db
       .update(platformConnections)
       .set({ tokenStatus: "invalid", updatedAt: sql`now()` })
-      .where(and(eq(platformConnections.id, account.connectionId), eq(platformConnections.orgId, orgId)));
-    return { wasNewTransition: prevConn?.tokenStatus !== "invalid" };
+      .where(
+        and(
+          eq(platformConnections.id, account.connectionId),
+          eq(platformConnections.orgId, orgId),
+          ne(platformConnections.tokenStatus, "invalid"),
+        ),
+      )
+      .returning({ id: platformConnections.id });
+    return { wasNewTransition: updated.length > 0 };
   }
-  const [prevAccount] = await db
-    .select({ tokenStatus: adAccounts.tokenStatus })
-    .from(adAccounts)
-    .where(and(eq(adAccounts.id, adAccountUuid), eq(adAccounts.orgId, orgId)))
-    .limit(1);
-  await db
+  const updated = await db
     .update(adAccounts)
     .set({ tokenStatus: "invalid", updatedAt: sql`now()` })
-    .where(and(eq(adAccounts.id, adAccountUuid), eq(adAccounts.orgId, orgId)));
-  return { wasNewTransition: prevAccount?.tokenStatus !== "invalid" };
+    .where(and(eq(adAccounts.id, adAccountUuid), eq(adAccounts.orgId, orgId), ne(adAccounts.tokenStatus, "invalid")))
+    .returning({ id: adAccounts.id });
+  return { wasNewTransition: updated.length > 0 };
 }

@@ -248,6 +248,9 @@ type SpendSource = 'meta_cap' | 'custom';
                 <label class="flex items-center gap-1 text-sm text-ink">{{ currencySymbol() }}
                   <input appInput type="number" inputmode="numeric" min="1" class="w-28" [value]="customSpendThreshold()" (input)="onCustomSpend($event)" />
                 </label>
+                @if (spendInvalid()) {
+                  <span class="text-xs text-muted">Informe um valor maior que zero pra poder salvar.</span>
+                }
               }
             </div>
             <div class="flex flex-col gap-2 border-t border-line pt-3">
@@ -264,6 +267,9 @@ type SpendSource = 'meta_cap' | 'custom';
                 <label class="flex items-center gap-1 text-sm text-ink">Avisar quando ficar abaixo de {{ currencySymbol() }}
                   <input appInput type="number" inputmode="numeric" min="1" class="w-28" [value]="customBalanceThreshold()" (input)="onCustomBalance($event)" />
                 </label>
+                @if (balanceInvalid()) {
+                  <span class="text-xs text-muted">Informe um valor maior que zero pra poder salvar.</span>
+                }
               }
             </div>
           </div>
@@ -323,7 +329,12 @@ export class AgentNotifications implements OnInit {
   protected readonly balanceEnabled = signal(false);
   protected readonly customBalanceThreshold = signal('');
   private readonly accountCurrency = signal<string | null>(null);
-  protected readonly currencySymbol = computed(() => CURRENCY_SYMBOLS[this.accountCurrency() ?? 'BRL'] ?? this.accountCurrency() ?? 'R$');
+  // toUpperCase espelha currencySymbol de @trafego/shared (código ISO pode vir minúsculo);
+  // fallback = o próprio código (honesto), igual ao shared.
+  protected readonly currencySymbol = computed(() => {
+    const cur = (this.accountCurrency() ?? 'BRL').toUpperCase();
+    return CURRENCY_SYMBOLS[cur] ?? cur;
+  });
 
   protected toggleStatusTrigger(s: HealthStatus): void {
     const next = new Set(this.statusTriggers());
@@ -387,12 +398,17 @@ export class AgentNotifications implements OnInit {
     () =>
       `${this.pulseEnabled()}|${JSON.stringify(this.pulseCadenceSpec())}|${this.alertsEnabled()}|${this.sensitivity()}|${this.throttleHours()}|${this.runPushEnabled()}|${this.reactivationEnabled()}|${this.proactiveDraftsEnabled()}|${this.accountHealthEnabled()}|${[...this.statusTriggers()].sort().join(',')}|${this.spendSource()}|${this.customSpendThreshold()}|${this.balanceEnabled()}|${this.customBalanceThreshold()}`,
   );
-  /** teto/saldo customizado ligado exige valor > 0 (nunca inventa limiar). */
-  private readonly healthInvalid = computed(
-    () =>
-      (this.spendSource() === 'custom' && !(Number(this.customSpendThreshold()) > 0)) ||
-      (this.balanceEnabled() && !(Number(this.customBalanceThreshold()) > 0)),
+  /** teto customizado exige valor > 0 (nunca inventa limiar) — só quando o campo está VISÍVEL. */
+  protected readonly spendInvalid = computed(
+    () => this.accountHealthEnabled() && this.spendSource() === 'custom' && !(Number(this.customSpendThreshold()) > 0),
   );
+  /** saldo customizado idem — só conta quando o toggle de saldo está ligado E visível. */
+  protected readonly balanceInvalid = computed(
+    () => this.accountHealthEnabled() && this.balanceEnabled() && !(Number(this.customBalanceThreshold()) > 0),
+  );
+  // gate no accountHealthEnabled: com a saúde DESLIGADA, os limiares custom ficam ocultos e
+  // NÃO devem travar o save (senão o usuário não consegue nem desligar — achado da revisão).
+  private readonly healthInvalid = computed(() => this.spendInvalid() || this.balanceInvalid());
   readonly dirty = computed(() => this.sig() !== this.baseline() && !this.pulseCronInvalid() && !this.healthInvalid());
 
   constructor() {

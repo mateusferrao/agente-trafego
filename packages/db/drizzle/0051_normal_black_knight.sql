@@ -1,0 +1,4 @@
+ALTER TABLE "ad_accounts" ALTER COLUMN "meta_balance" SET DATA TYPE numeric(16, 4);--> statement-breakpoint
+ALTER TABLE "ad_accounts" ALTER COLUMN "meta_amount_spent" SET DATA TYPE numeric(16, 4);--> statement-breakpoint
+ALTER TABLE "ad_accounts" ALTER COLUMN "meta_spend_cap" SET DATA TYPE numeric(16, 4);--> statement-breakpoint
+ALTER TABLE "agents" ALTER COLUMN "notify_policy" SET DEFAULT '{"pulse":{"enabled":false,"cadence":{"kind":"weekly","weekday":1,"hour":8}},"alerts":{"enabled":false,"sensitivity":"normal","throttleHours":6},"runPush":{"enabled":true},"reactivation":{"enabled":false},"proactiveDrafts":{"enabled":false},"accountHealthAlert":{"enabled":true,"statusTriggers":["disabled","unsettled","pending_review","pending_settlement","grace_period","pending_closure","closed","unknown"],"spendThreshold":{"source":"meta_cap"},"balanceThreshold":{"enabled":false}}}'::jsonb;
