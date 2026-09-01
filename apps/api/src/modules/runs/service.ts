@@ -1,5 +1,6 @@
 import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import {
+  adAccounts,
   agentMutedEntities,
   agentRuns,
   agents,
@@ -7,6 +8,7 @@ import {
   entityAnalyses,
   guardrailConfigs,
   isUniqueViolation,
+  platformConnections,
   recommendationFeedback,
   recommendations,
   type Database,
@@ -18,10 +20,11 @@ import {
   AGENT_RUN_JOB,
   SCHEDULE_RESYNC_QUEUE,
   SCHEDULE_RESYNC_JOB,
+  withTimeout,
   type AgentRunExecutePayload,
 } from "@trafego/shared";
 import type { Action, OrgId, RunCampaignCard } from "@trafego/shared/types";
-import type { MeteringPort, SchedulerPort } from "@trafego/shared/ports";
+import type { AdsPlatformPort, CredentialVaultPort, MeteringPort, SchedulerPort } from "@trafego/shared/ports";
 import { badRequest, conflict, notFound } from "../../middleware/error-handler.js";
 import {
   runMetrics,
@@ -70,6 +73,12 @@ export interface RunsDeps {
   readonly costCapUsd: number;
   /** relógio injetável (casca) — período do cap. */
   readonly now?: () => Date;
+  /** checagem AO VIVO (achado real, gap irmão do `deactivatedSince`) de campanha ativa na Meta
+   *  ainda sem análise em `campaignAnalyses`. */
+  readonly adsPlatform: AdsPlatformPort;
+  readonly vault: CredentialVaultPort;
+  /** teto (ms) desse fetch ao vivo — best-effort, degrada em silêncio (RUNS_LIVE_GAP_CHECK_TIMEOUT_MS). */
+  readonly liveGapCheckTimeoutMs: number;
 }
 
 const IN_FLIGHT_STATUSES = ["pending", "running", "waiting_approval"] as const;
@@ -328,7 +337,41 @@ export function createRunsService(deps: RunsDeps) {
       );
     const muted = new Set(mutedRows.map((m) => m.externalId));
 
-    return rows.map((r) => toCampaignAnalysisOutput(r, muted.has(r.entityId)));
+    const cached = rows.map((r) => toCampaignAnalysisOutput(r, muted.has(r.entityId)));
+
+    // gap irmão do `deactivatedSince` (achado real): campanha ativa na Meta agora, criada
+    // depois do último run, sem NENHUMA linha em entity_analyses ainda. Best-effort — Meta
+    // lenta/indisponível não derruba a resposta, só não soma o adendo (a lista cacheada já
+    // tinha o resto). Mesmo padrão do chat (`liveActiveCampaignsNotCached`, read-data.ts).
+    const cachedIds = new Set(rows.map((r) => r.entityId));
+    const gaps = await liveActiveCampaignsNotCached(orgId, accountId, cachedIds);
+
+    return [...cached, ...gaps.map((g) => toGapCampaignOutput(g, muted.has(g.id)))];
+  }
+
+  /**
+   * Campanhas ATIVAS na Meta agora que ainda não têm nenhuma análise (`cachedIds`) —
+   * mesma lógica/limite do chat (read-data.ts `liveActiveCampaignsNotCached`), duplicada
+   * aqui de propósito: api e worker são processos separados, e a conta+token já se carrega
+   * diferente em cada um (o worker usa `createAnalysisRepo`; a api já tem o join direto
+   * pra token em `drafts/service.ts` — este helper segue o mesmo padrão local).
+   */
+  async function liveActiveCampaignsNotCached(
+    orgId: OrgId,
+    accountId: string,
+    cachedIds: ReadonlySet<string>,
+  ): Promise<Array<{ id: string; name: string }>> {
+    const ref = await loadAccountRef(deps.db, deps.vault, orgId, accountId);
+    if (!ref) return [];
+    try {
+      const entities = await withTimeout(
+        deps.adsPlatform.listEntities({ adAccountId: ref.metaAdAccountId, accessToken: ref.accessToken }, "campaign"),
+        deps.liveGapCheckTimeoutMs,
+      );
+      return entities.filter((e) => e.status === "active" && !cachedIds.has(e.id)).map((e) => ({ id: e.id, name: e.name }));
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -441,6 +484,8 @@ export function createRunsService(deps: RunsDeps) {
       // histórico congelado (snapshot do run) — não faz sentido "desde quando desativou"
       // aqui, isso só existe na visão AO VIVO (`toCampaignAnalysisOutput`, lê entity_analyses).
       deactivatedSince: null,
+      // idem: campanha nova sem análise nunca entraria no snapshot de um run já concluído.
+      noDataYet: false,
     }));
 
     // "mais recente" = último run FINALIZADO (ignora in-flight; casa com o que o
@@ -512,7 +557,57 @@ export function toCampaignAnalysisOutput(
     // sincronização (achado real): a UI precisa saber que este cartão é histórico/desatualizado,
     // não "está rodando agora" — mesmo dado que o chat já usa (list_campaigns/get_campaign_analysis).
     deactivatedSince: curated?.deactivatedSince ?? null,
+    // esta linha veio de `entity_analyses` → sempre já tem alguma análise.
+    noDataYet: false,
   };
+}
+
+/**
+ * Cartão de campanha ATIVA na Meta agora mas ainda SEM nenhuma análise (gap irmão do
+ * `deactivatedSince` — achado real, mesma sessão): criada/ativada depois do último run,
+ * `entity_analyses` não tem linha nenhuma dela ainda. Nunca inventa métrica/tier/resumo —
+ * tudo vazio + `noDataYet:true`, mesma honestidade que o chat já usa (`list_campaigns`).
+ */
+export function toGapCampaignOutput(entity: { id: string; name: string }, muted: boolean): CampaignAnalysisOutput {
+  return {
+    externalId: entity.id,
+    name: entity.name,
+    metrics: { spend: 0 },
+    summary: null,
+    topFinding: null,
+    flags: [],
+    tier: null,
+    stage: null,
+    muted,
+    budget: null,
+    atBudgetCeiling: null,
+    isCBO: null,
+    deactivatedSince: null,
+    noDataYet: true,
+  };
+}
+
+/** Conta ativa + token descriptografado (conexão dona vence; fallback = token legado da conta —
+ *  mesmo padrão de `drafts/service.ts`/`fresh-metrics.ts`). Null se conta ausente ou sem token. */
+async function loadAccountRef(
+  db: Database,
+  vault: CredentialVaultPort,
+  orgId: OrgId,
+  accountId: string,
+): Promise<{ metaAdAccountId: string; accessToken: string } | null> {
+  const [row] = await db
+    .select({
+      metaAdAccountId: adAccounts.adAccountId,
+      accountToken: adAccounts.tokenCripto,
+      connToken: platformConnections.tokenCripto,
+    })
+    .from(adAccounts)
+    .leftJoin(platformConnections, eq(adAccounts.connectionId, platformConnections.id))
+    .where(and(eq(adAccounts.id, accountId), eq(adAccounts.orgId, orgId)))
+    .limit(1);
+  const encrypted = row?.connToken ?? row?.accountToken;
+  if (!row || !encrypted) return null;
+  return { metaAdAccountId: row.metaAdAccountId, accessToken: vault.decrypt(encrypted) };
 }
 
 type AgentRunRow = typeof agentRuns.$inferSelect;

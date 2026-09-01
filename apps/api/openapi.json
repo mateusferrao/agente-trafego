@@ -3846,6 +3846,9 @@
                     "string",
                     "null"
                   ]
+                },
+                "noDataYet": {
+                  "type": "boolean"
                 }
               },
               "required": [
@@ -3861,7 +3864,8 @@
                 "budget",
                 "atBudgetCeiling",
                 "isCBO",
-                "deactivatedSince"
+                "deactivatedSince",
+                "noDataYet"
               ]
             }
           }
@@ -5730,6 +5734,9 @@
                     "string",
                     "null"
                   ]
+                },
+                "noDataYet": {
+                  "type": "boolean"
                 }
               },
               "required": [
@@ -5745,7 +5752,8 @@
                 "budget",
                 "atBudgetCeiling",
                 "isCBO",
-                "deactivatedSince"
+                "deactivatedSince",
+                "noDataYet"
               ]
             }
           },

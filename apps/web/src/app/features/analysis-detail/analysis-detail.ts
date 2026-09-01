@@ -199,6 +199,9 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                       @if (c.deactivatedSince) {
                         <span class="text-[11px] text-warning-strong">· não está mais ativa desde {{ deactivatedLabel(c) }} — dado abaixo é de quando ainda rodava</span>
                       }
+                      @if (c.noDataYet) {
+                        <span class="text-[11px] text-info-strong">· ativa, ainda sem análise</span>
+                      }
                     </div>
                     <h3 class="font-semibold text-ink">{{ campaignName(c) }}</h3>
                   </div>
@@ -224,41 +227,50 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                   </div>
                 </div>
 
-                <!-- métricas inline em mono -->
-                <div class="flex flex-wrap gap-x-6 gap-y-1">
-                  <span class="flex items-baseline gap-1.5"><app-ui-eyebrow>Gasto</app-ui-eyebrow><b class="ui-stat__value text-sm text-ink">{{ campaignSpend(c) }}</b></span>
-                  @if (c.metrics.roas !== undefined) {
-                    <span class="flex items-baseline gap-1.5"><app-ui-eyebrow>ROAS</app-ui-eyebrow><b class="ui-stat__value text-sm text-success-strong">{{ c.metrics.roas.toFixed(2) }}x</b></span>
-                  }
-                  @if (c.metrics.cpa !== undefined) {
-                    <span class="flex items-baseline gap-1.5"><app-ui-eyebrow>{{ cpaLabel() }}</app-ui-eyebrow><b class="ui-stat__value text-sm text-ink">{{ campaignCpa(c) }}</b></span>
-                  }
-                  @if (c.metrics.ctr !== undefined) {
-                    <span class="flex items-baseline gap-1.5"><app-ui-eyebrow>CTR</app-ui-eyebrow><b class="ui-stat__value text-sm text-ink">{{ pctRatio(c.metrics.ctr) }}</b></span>
-                  }
-                  @if (campaignBudget(c); as budgetText) {
-                    <span class="flex items-baseline gap-1.5">
-                      <app-ui-eyebrow>Orçamento</app-ui-eyebrow>
-                      <b class="ui-stat__value text-sm text-ink">{{ budgetText }}</b>
-                      @if (c.atBudgetCeiling) {
-                        <span class="text-[11px] text-danger-strong">sem folga</span>
-                      }
-                    </span>
-                  }
-                </div>
-
-                @if (c.summary) {
-                  <p class="text-sm text-ink">{{ c.summary }}</p>
-                }
-                @if (c.topFinding?.detail) {
-                  <p class="text-sm text-muted">{{ c.topFinding?.detail }}</p>
-                }
-                @if (findingRefs(c).length > 0) {
-                  <div class="flex flex-wrap gap-2">
-                    @for (r of findingRefs(c); track $index) {
-                      <app-ui-evidence [tone]="evidenceTone(c)">{{ r }}</app-ui-evidence>
+                @if (c.noDataYet) {
+                  <!-- gap irmão do deactivatedSince (achado real): campanha ativa criada depois
+                       do último run — nunca inventa métrica/tier, só avisa e aponta o próximo passo. -->
+                  <p class="text-sm text-muted">
+                    Essa campanha já está ativa na Meta, mas a próxima análise ainda não rodou pra ela —
+                    sem gasto/resultado pra mostrar por enquanto.
+                  </p>
+                } @else {
+                  <!-- métricas inline em mono -->
+                  <div class="flex flex-wrap gap-x-6 gap-y-1">
+                    <span class="flex items-baseline gap-1.5"><app-ui-eyebrow>Gasto</app-ui-eyebrow><b class="ui-stat__value text-sm text-ink">{{ campaignSpend(c) }}</b></span>
+                    @if (c.metrics.roas !== undefined) {
+                      <span class="flex items-baseline gap-1.5"><app-ui-eyebrow>ROAS</app-ui-eyebrow><b class="ui-stat__value text-sm text-success-strong">{{ c.metrics.roas.toFixed(2) }}x</b></span>
+                    }
+                    @if (c.metrics.cpa !== undefined) {
+                      <span class="flex items-baseline gap-1.5"><app-ui-eyebrow>{{ cpaLabel() }}</app-ui-eyebrow><b class="ui-stat__value text-sm text-ink">{{ campaignCpa(c) }}</b></span>
+                    }
+                    @if (c.metrics.ctr !== undefined) {
+                      <span class="flex items-baseline gap-1.5"><app-ui-eyebrow>CTR</app-ui-eyebrow><b class="ui-stat__value text-sm text-ink">{{ pctRatio(c.metrics.ctr) }}</b></span>
+                    }
+                    @if (campaignBudget(c); as budgetText) {
+                      <span class="flex items-baseline gap-1.5">
+                        <app-ui-eyebrow>Orçamento</app-ui-eyebrow>
+                        <b class="ui-stat__value text-sm text-ink">{{ budgetText }}</b>
+                        @if (c.atBudgetCeiling) {
+                          <span class="text-[11px] text-danger-strong">sem folga</span>
+                        }
+                      </span>
                     }
                   </div>
+
+                  @if (c.summary) {
+                    <p class="text-sm text-ink">{{ c.summary }}</p>
+                  }
+                  @if (c.topFinding?.detail) {
+                    <p class="text-sm text-muted">{{ c.topFinding?.detail }}</p>
+                  }
+                  @if (findingRefs(c).length > 0) {
+                    <div class="flex flex-wrap gap-2">
+                      @for (r of findingRefs(c); track $index) {
+                        <app-ui-evidence [tone]="evidenceTone(c)">{{ r }}</app-ui-evidence>
+                      }
+                    </div>
+                  }
                 }
 
                 <!-- passo agressivo: o backend pergunta subir seguro vs duplicar (§eco+confirma) -->

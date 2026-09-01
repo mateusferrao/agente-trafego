@@ -300,6 +300,11 @@ export const envSchema = z.object({
   // tool degrada pro dado persistido em vez de estourar o turno inteiro (a causa do fallback
   // genérico quando o refresh de todos os criativos levava minutos).
   CHAT_LIVE_FETCH_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+  // Teto (ms) do fetch AO VIVO da Meta na leitura de campanhas da API (site) — achado real:
+  // campanha nova/ativa criada depois do último run não aparecia na lista (só entity_analyses,
+  // que só atualiza em run). Curto de propósito: é dentro de uma resposta HTTP síncrona, não de
+  // um turno de chat — timeout/erro degrada em silêncio (a lista cacheada já tinha o resto).
+  RUNS_LIVE_GAP_CHECK_TIMEOUT_MS: z.coerce.number().int().positive().default(4_000),
   // Modelo default da geração de COPY do rascunho (Fatia 7) quando o agente não tem modelo
   // próprio (model_config.messageModel/model). Env em vez de hardcoded — mesmo padrão dos
   // modelos de análise. Tarefa de escrita curta e barata.

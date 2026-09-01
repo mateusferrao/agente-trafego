@@ -216,6 +216,9 @@ export function buildContainer(logger?: OnboardingLogger): Container {
     metering,
     ensureAgent: (orgId, accountId) => agents.getOrCreateForAccount(orgId, accountId),
     costCapUsd: env.LLM_COST_CAP_USD_PER_PERIOD,
+    adsPlatform,
+    vault,
+    liveGapCheckTimeoutMs: env.RUNS_LIVE_GAP_CHECK_TIMEOUT_MS,
     ...(logger ? { logger } : {}),
   });
   const services: Services = {

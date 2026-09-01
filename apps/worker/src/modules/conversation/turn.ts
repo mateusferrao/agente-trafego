@@ -23,10 +23,9 @@ import {
 import { loadEnabledTools } from "../tools/enabled.js";
 import { createNotifyRepo } from "../notify/repo.js";
 import { createSendToConversation, type SendToConversation } from "../notify/send-to-contact.js";
-import { withTimeout } from "./with-timeout.js";
 import { applyOfferedCreative } from "./draft-proposal.js";
 import { clearCreativeOffer, getCreativeOffer, isSimpleAffirmation } from "./creative-offer.js";
-import { DEFAULT_CURRENCY } from "@trafego/shared";
+import { DEFAULT_CURRENCY, withTimeout } from "@trafego/shared";
 
 /** Erro amigável se o turno falhar (LLM/infra) — nunca vaza stack pro usuário (§UX). */
 const FALLBACK_REPLY = "Não consegui processar agora. Tenta de novo em instantes.";

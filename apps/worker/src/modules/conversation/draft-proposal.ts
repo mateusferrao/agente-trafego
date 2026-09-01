@@ -31,6 +31,7 @@ import {
   type DraftId,
   type ResolvedAudienceSnapshot,
   type TargetingSpec,
+  withTimeout,
 } from "@trafego/shared";
 import type { AdAccountRef, DraftApproval } from "@trafego/shared/ports";
 import type { DraftKind } from "@trafego/shared";
@@ -41,7 +42,6 @@ import { generateCopy } from "../copy/generate-copy.js";
 import { createVisionResolver, creativeContentHash, servingVisionKey } from "../vision/resolver.js";
 import { pickLibraryCreativeByContext, type MatchContext } from "../creative/match-library.js";
 import { joinBalloons } from "../notify/split.js";
-import { withTimeout } from "./with-timeout.js";
 
 const MINOR_PER_UNIT = 100;
 const APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
