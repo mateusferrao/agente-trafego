@@ -91,6 +91,8 @@ export interface RecommendationRow {
 export interface AdCreativeRow {
   readonly adId: string;
   readonly creativeId: string | null;
+  /** nome do ANÚNCIO no Ads Manager — diferente de `title` (headline da copy). */
+  readonly name: string | null;
   readonly body: string | null;
   readonly title: string | null;
   readonly callToAction: string | null;
@@ -357,6 +359,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
             adAccountId: adAccountUuid,
             adId: r.adId,
             creativeId: r.creativeId,
+            name: r.name,
             body: r.body,
             title: r.title,
             callToAction: r.callToAction,
@@ -380,6 +383,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
           target: [adCreatives.adAccountId, adCreatives.adId],
           set: {
             creativeId: sql`excluded.creative_id`,
+            name: sql`excluded.name`,
             body: sql`excluded.body`,
             title: sql`excluded.title`,
             callToAction: sql`excluded.call_to_action`,
@@ -418,6 +422,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
             adAccountId: adAccountUuid,
             adId: r.adId,
             creativeId: r.creativeId,
+            name: r.name,
             body: r.body,
             title: r.title,
             callToAction: r.callToAction,
@@ -436,6 +441,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
           target: [adCreatives.adAccountId, adCreatives.adId],
           set: {
             creativeId: sql`excluded.creative_id`,
+            name: sql`excluded.name`,
             body: sql`excluded.body`,
             title: sql`excluded.title`,
             callToAction: sql`excluded.call_to_action`,

@@ -1123,6 +1123,7 @@ async function getTopCreativesData(
   const rows = await db
     .select({
       adId: adCreatives.adId,
+      name: adCreatives.name,
       tier: adCreatives.tier,
       spend: adCreatives.spend,
       cpa: adCreatives.cpa,
@@ -1143,6 +1144,9 @@ async function getTopCreativesData(
     .slice(0, TOP_CREATIVES_LIMIT)
     .map((r) => ({
       adId: r.adId,
+      // nome do ANÚNCIO no Ads Manager — diferente de `title` (headline da copy).
+      // Ausente = a Meta não retornou nome nesse anúncio (não inventar).
+      ...(r.name ? { name: r.name } : {}),
       ...(r.tier ? { tier: r.tier } : {}),
       ...(r.roas != null ? { roas: r.roas } : {}),
       ...(r.cpa != null ? { cpa: r.cpa } : {}),
@@ -1177,6 +1181,7 @@ async function refreshCreativeCopiesLive(deps: WorkerDeps, ctx: ReadToolContext)
   const rows: AdCreativeCopyRow[] = creatives.map((c) => ({
     adId: c.adId,
     creativeId: c.id ?? null,
+    name: c.name ?? null,
     body: c.body ?? null,
     title: c.title ?? null,
     callToAction: c.callToAction ?? null,

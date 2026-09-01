@@ -516,6 +516,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
         return {
           adId: c.adId,
           creativeId: c.id ?? null,
+          name: c.name ?? null,
           body: c.body ?? null,
           title: c.title ?? null,
           callToAction: c.callToAction ?? null,

@@ -25,6 +25,9 @@ export const adCreatives = pgTable(
       .references(() => adAccounts.id, { onDelete: "cascade" }),
     adId: text("ad_id").notNull(),
     creativeId: text("creative_id"),
+    // nome do ANÚNCIO no Ads Manager (ex: "TESTE Videos 2 - v3") — DIFERENTE de `title`
+    // (headline da copy). Já vinha da Meta (`Creative.name`) e era descartado.
+    name: text("name"),
     // copy real (o que faltava): texto principal, título/headline, CTA.
     body: text("body"),
     title: text("title"),
