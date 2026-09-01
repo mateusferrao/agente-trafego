@@ -34,6 +34,23 @@ const SENSITIVITIES: readonly { value: Sensitivity; label: string }[] = [
   { value: 'high', label: 'alta' },
 ];
 
+/** Símbolo por moeda (espelha currencySymbol de @trafego/shared — web não importa runtime de shared). */
+const CURRENCY_SYMBOLS: Readonly<Record<string, string>> = { BRL: 'R$', USD: '$', EUR: '€', GBP: '£' };
+
+/** Status alertáveis da conta Meta + copy pt-BR (checklist; espelha ACCOUNT_HEALTH_STATUS_LABELS). */
+type HealthStatus = NonNullable<NonNullable<AgentSummary['notifyPolicy']['accountHealthAlert']>['statusTriggers']>[number];
+const HEALTH_STATUS_OPTIONS: readonly { value: HealthStatus; label: string }[] = [
+  { value: 'disabled', label: 'Conta desativada, parou de veicular anúncios' },
+  { value: 'unsettled', label: 'Pagamento pendente' },
+  { value: 'pending_settlement', label: 'Cobrança pendente' },
+  { value: 'grace_period', label: 'Pagamento atrasado, conta em período de carência' },
+  { value: 'pending_review', label: 'Conta em revisão de segurança pela Meta' },
+  { value: 'pending_closure', label: 'Conta em processo de encerramento' },
+  { value: 'closed', label: 'Conta encerrada' },
+  { value: 'unknown', label: 'Status não reconhecido (novo código da Meta)' },
+];
+type SpendSource = 'meta_cap' | 'custom';
+
 /**
  * Proatividade (F4d): o que o agente manda SEM ser perguntado. Pulso (resumo do dia —
  * ontem + hoje até agora —, cadência própria — mesmo editor da cadência da análise), alerta (aviso de mudança
@@ -185,6 +202,74 @@ const SENSITIVITIES: readonly { value: Sensitivity; label: string }[] = [
         </label>
       </div>
 
+      <!-- Saúde da conta Meta: desativação / teto de gasto / saldo / pagamento -->
+      <div class="flex flex-col gap-3 border-t border-line pt-4">
+        <label class="flex items-center justify-between gap-3">
+          <span class="flex flex-col">
+            <span class="text-sm font-medium text-ink">Avisar se a conta Meta tiver problema</span>
+            <span class="text-xs text-muted">Conta desativada, teto de gasto batido ou pagamento recusado, avisa na hora, sem esperar o resumo do dia.</span>
+          </span>
+          <button appSwitch [ngpSwitchChecked]="accountHealthEnabled()" (ngpSwitchCheckedChange)="accountHealthEnabled.set($event)">
+            <span appSwitchThumb></span>
+          </button>
+        </label>
+        @if (accountHealthEnabled()) {
+          <div class="flex flex-col gap-4 pl-1">
+            <div class="flex flex-col gap-1.5">
+              <span class="text-xs text-muted">Avisar quando a conta ficar assim</span>
+              @for (s of HEALTH_STATUS_OPTIONS; track s.value) {
+                <label class="flex items-center gap-2 text-sm text-ink">
+                  <input type="checkbox" [checked]="statusTriggers().has(s.value)" (change)="toggleStatusTrigger(s.value)" />
+                  {{ s.label }}
+                </label>
+              }
+            </div>
+            <div class="flex flex-col gap-2 border-t border-line pt-3">
+              <span class="text-xs text-muted">Comparar gasto total com</span>
+              <div class="flex flex-wrap gap-2" role="radiogroup" aria-label="Fonte do teto de gasto">
+                @for (opt of SPEND_SOURCES; track opt.value) {
+                  <button
+                    type="button"
+                    role="radio"
+                    [attr.aria-checked]="spendSource() === opt.value"
+                    (click)="spendSource.set(opt.value)"
+                    class="rounded-md border px-3 py-1.5 text-sm font-medium transition hover:border-accent/40"
+                    [class.border-accent]="spendSource() === opt.value"
+                    [class.bg-accent-soft]="spendSource() === opt.value"
+                    [class.text-ink]="spendSource() === opt.value"
+                    [class.border-line]="spendSource() !== opt.value"
+                    [class.text-muted]="spendSource() !== opt.value"
+                  >
+                    {{ opt.label }}
+                  </button>
+                }
+              </div>
+              @if (spendSource() === 'custom') {
+                <label class="flex items-center gap-1 text-sm text-ink">{{ currencySymbol() }}
+                  <input appInput type="number" inputmode="numeric" min="1" class="w-28" [value]="customSpendThreshold()" (input)="onCustomSpend($event)" />
+                </label>
+              }
+            </div>
+            <div class="flex flex-col gap-2 border-t border-line pt-3">
+              <label class="flex items-center justify-between gap-3">
+                <span class="flex flex-col">
+                  <span class="text-sm text-ink">Avisar quando o saldo estiver acabando</span>
+                  <span class="text-xs text-muted">Só vale para contas pré-pagas. Se a sua é cobrada por cartão ou fatura, esse aviso não dispara (o saldo ali não indica problema real).</span>
+                </span>
+                <button appSwitch [ngpSwitchChecked]="balanceEnabled()" (ngpSwitchCheckedChange)="balanceEnabled.set($event)">
+                  <span appSwitchThumb></span>
+                </button>
+              </label>
+              @if (balanceEnabled()) {
+                <label class="flex items-center gap-1 text-sm text-ink">Avisar quando ficar abaixo de {{ currencySymbol() }}
+                  <input appInput type="number" inputmode="numeric" min="1" class="w-28" [value]="customBalanceThreshold()" (input)="onCustomBalance($event)" />
+                </label>
+              }
+            </div>
+          </div>
+        }
+      </div>
+
       <!-- Proatividade de criação (Fatia 7): propõe escalar/criar campanhas -->
       <div class="border-t border-line pt-4">
         <label class="flex items-center justify-between gap-3">
@@ -225,6 +310,33 @@ export class AgentNotifications implements OnInit {
   protected readonly runPushEnabled = signal(true);
   protected readonly reactivationEnabled = signal(false);
   protected readonly proactiveDraftsEnabled = signal(false);
+
+  protected readonly HEALTH_STATUS_OPTIONS = HEALTH_STATUS_OPTIONS;
+  protected readonly SPEND_SOURCES: readonly { value: SpendSource; label: string }[] = [
+    { value: 'meta_cap', label: 'Teto da Meta' },
+    { value: 'custom', label: 'Valor que eu defino' },
+  ];
+  protected readonly accountHealthEnabled = signal(true);
+  protected readonly statusTriggers = signal<Set<HealthStatus>>(new Set(HEALTH_STATUS_OPTIONS.map((o) => o.value)));
+  protected readonly spendSource = signal<SpendSource>('meta_cap');
+  protected readonly customSpendThreshold = signal('');
+  protected readonly balanceEnabled = signal(false);
+  protected readonly customBalanceThreshold = signal('');
+  private readonly accountCurrency = signal<string | null>(null);
+  protected readonly currencySymbol = computed(() => CURRENCY_SYMBOLS[this.accountCurrency() ?? 'BRL'] ?? this.accountCurrency() ?? 'R$');
+
+  protected toggleStatusTrigger(s: HealthStatus): void {
+    const next = new Set(this.statusTriggers());
+    if (next.has(s)) next.delete(s);
+    else next.add(s);
+    this.statusTriggers.set(next);
+  }
+  protected onCustomSpend(e: Event): void {
+    this.customSpendThreshold.set((e.target as HTMLInputElement).value);
+  }
+  protected onCustomBalance(e: Event): void {
+    this.customBalanceThreshold.set((e.target as HTMLInputElement).value);
+  }
 
   protected readonly pulseHourStr = computed(() => String(this.pulseHour()));
   protected readonly pulseHour2Str = computed(() => String(this.pulseHour2()));
@@ -273,9 +385,15 @@ export class AgentNotifications implements OnInit {
   private readonly baseline = signal('');
   private readonly sig = computed(
     () =>
-      `${this.pulseEnabled()}|${JSON.stringify(this.pulseCadenceSpec())}|${this.alertsEnabled()}|${this.sensitivity()}|${this.throttleHours()}|${this.runPushEnabled()}|${this.reactivationEnabled()}|${this.proactiveDraftsEnabled()}`,
+      `${this.pulseEnabled()}|${JSON.stringify(this.pulseCadenceSpec())}|${this.alertsEnabled()}|${this.sensitivity()}|${this.throttleHours()}|${this.runPushEnabled()}|${this.reactivationEnabled()}|${this.proactiveDraftsEnabled()}|${this.accountHealthEnabled()}|${[...this.statusTriggers()].sort().join(',')}|${this.spendSource()}|${this.customSpendThreshold()}|${this.balanceEnabled()}|${this.customBalanceThreshold()}`,
   );
-  readonly dirty = computed(() => this.sig() !== this.baseline() && !this.pulseCronInvalid());
+  /** teto/saldo customizado ligado exige valor > 0 (nunca inventa limiar). */
+  private readonly healthInvalid = computed(
+    () =>
+      (this.spendSource() === 'custom' && !(Number(this.customSpendThreshold()) > 0)) ||
+      (this.balanceEnabled() && !(Number(this.customBalanceThreshold()) > 0)),
+  );
+  readonly dirty = computed(() => this.sig() !== this.baseline() && !this.pulseCronInvalid() && !this.healthInvalid());
 
   constructor() {
     // baseline = estado inicial → dirty começa false (Save só habilita após mudança).
@@ -298,6 +416,14 @@ export class AgentNotifications implements OnInit {
     this.runPushEnabled.set(n.runPush.enabled);
     this.reactivationEnabled.set(n.reactivation?.enabled ?? false);
     this.proactiveDraftsEnabled.set(n.proactiveDrafts?.enabled ?? false);
+    this.accountCurrency.set(a.currency);
+    const ah = n.accountHealthAlert;
+    this.accountHealthEnabled.set(ah?.enabled ?? true);
+    this.statusTriggers.set(new Set((ah?.statusTriggers ?? HEALTH_STATUS_OPTIONS.map((o) => o.value)) as HealthStatus[]));
+    this.spendSource.set((ah?.spendThreshold?.source ?? 'meta_cap') as SpendSource);
+    this.customSpendThreshold.set(ah?.spendThreshold?.customValueMajor != null ? String(ah.spendThreshold.customValueMajor) : '');
+    this.balanceEnabled.set(ah?.balanceThreshold?.enabled ?? false);
+    this.customBalanceThreshold.set(ah?.balanceThreshold?.customValueMajor != null ? String(ah.balanceThreshold.customValueMajor) : '');
     this.baseline.set(this.sig());
     this.loaded.set(true);
   }
@@ -334,6 +460,17 @@ export class AgentNotifications implements OnInit {
             runPush: { enabled: this.runPushEnabled() },
             reactivation: { enabled: this.reactivationEnabled() },
             proactiveDrafts: { enabled: this.proactiveDraftsEnabled() },
+            accountHealthAlert: {
+              enabled: this.accountHealthEnabled(),
+              statusTriggers: [...this.statusTriggers()],
+              spendThreshold:
+                this.spendSource() === 'custom'
+                  ? { source: 'custom', customValueMajor: Number(this.customSpendThreshold()) }
+                  : { source: 'meta_cap' },
+              balanceThreshold: this.balanceEnabled()
+                ? { enabled: true, customValueMajor: Number(this.customBalanceThreshold()) }
+                : { enabled: false },
+            },
           },
         }),
       );

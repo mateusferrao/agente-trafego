@@ -3134,6 +3134,70 @@
                 "required": [
                   "enabled"
                 ]
+              },
+              "accountHealthAlert": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "statusTriggers": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "disabled",
+                        "unsettled",
+                        "pending_review",
+                        "pending_settlement",
+                        "grace_period",
+                        "pending_closure",
+                        "closed",
+                        "unknown"
+                      ]
+                    }
+                  },
+                  "spendThreshold": {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "enum": [
+                          "meta_cap",
+                          "custom"
+                        ]
+                      },
+                      "customValueMajor": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      }
+                    },
+                    "required": [
+                      "source"
+                    ]
+                  },
+                  "balanceThreshold": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "customValueMajor": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      }
+                    },
+                    "required": [
+                      "enabled"
+                    ]
+                  }
+                },
+                "required": [
+                  "enabled",
+                  "statusTriggers",
+                  "spendThreshold",
+                  "balanceThreshold"
+                ]
               }
             }
           },

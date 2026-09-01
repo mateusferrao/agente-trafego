@@ -228,7 +228,7 @@ describe("resolveAgentConfigChange — notifyPolicy (F4d)", () => {
 
   it("liga o pulso preservando a cadência e os demais campos (leaf-merge)", () => {
     const r = resolve(baseState(), { notifyPolicy: { pulseEnabled: true } });
-    expect(r.next.notifyPolicy).toEqual({
+    expect(r.next.notifyPolicy).toMatchObject({
       pulse: { enabled: true, cadence: NOTIFY_POLICY.pulse.cadence },
       alerts: NOTIFY_POLICY.alerts,
       runPush: NOTIFY_POLICY.runPush,
@@ -257,6 +257,20 @@ describe("resolveAgentConfigChange — notifyPolicy (F4d)", () => {
   it("notifyPolicy NÃO enfraquece a segurança (weakensSafety)", () => {
     const r = resolve(baseState(), { notifyPolicy: { alertsEnabled: true, pulseEnabled: true } });
     expect(r.weakensSafety).toBe(false);
+  });
+
+  it("saúde da conta: desliga o aviso (chat) — backfilla o objeto e marca changed", () => {
+    const r = resolve(baseState(), { notifyPolicy: { accountHealthEnabled: false } });
+    expect(r.next.notifyPolicy.accountHealthAlert?.enabled).toBe(false);
+    expect(r.notifyPolicyChanged).toBe(true);
+    // não enfraquece segurança nem força deep run (é notificação, não guardrail).
+    expect(r.weakensSafety).toBe(false);
+    expect(r.runRelevantChanged).toBe(false);
+  });
+
+  it("saúde da conta: define teto de gasto customizado → troca a fonte pra custom + valor", () => {
+    const r = resolve(baseState(), { notifyPolicy: { accountHealthSpendThresholdMajor: 5000 } });
+    expect(r.next.notifyPolicy.accountHealthAlert?.spendThreshold).toEqual({ source: "custom", customValueMajor: 5000 });
   });
 });
 

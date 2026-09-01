@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  accountHealthAlertSchema,
   actionType,
   alertSensitivity,
   autonomyPolicySchema,
@@ -129,6 +130,7 @@ export const notifyPolicyInput = z.object({
   runPush: z.object({ enabled: z.boolean() }).optional(),
   reactivation: z.object({ enabled: z.boolean() }).optional(),
   proactiveDrafts: z.object({ enabled: z.boolean() }).optional(),
+  accountHealthAlert: accountHealthAlertSchema.optional(),
 });
 export type NotifyPolicyInput = z.infer<typeof notifyPolicyInput>;
 

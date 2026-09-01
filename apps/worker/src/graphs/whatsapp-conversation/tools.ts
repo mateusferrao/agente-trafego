@@ -526,7 +526,7 @@ export function makeConversationTools(
   const setNotifications = tool(proposeOnly, {
     name: "set_notifications",
     description:
-      "Configura o que o agente manda SEM ser perguntado: o PULSO (resumo do dia — retrato de ontem fechado + hoje até agora, na cadência que você definir; mesmo sem recomendação nova), o ALERTA (aviso automático quando algo muda materialmente na conta, com sensibilidade e intervalo mínimo entre alertas em horas), o AVISO APÓS ANÁLISE (mensagem depois de cada análise agendada com recomendação), a REATIVAÇÃO (avisa quando uma conta que estava PARADA volta a rodar — gasto/impressões de novo — e já roda a 1ª análise) e a PROPOSTA DE CAMPANHA por conta própria (o agente sugere escalar um vencedor ou criar uma campanha quando faz sentido, sempre como proposta — nunca gasta sem sua aprovação). Só troca os campos enviados. Requer eco+confirma.",
+      "Configura o que o agente manda SEM ser perguntado: o PULSO (resumo do dia — retrato de ontem fechado + hoje até agora, na cadência que você definir; mesmo sem recomendação nova), o ALERTA (aviso automático quando algo muda materialmente na conta, com sensibilidade e intervalo mínimo entre alertas em horas), o AVISO APÓS ANÁLISE (mensagem depois de cada análise agendada com recomendação), a REATIVAÇÃO (avisa quando uma conta que estava PARADA volta a rodar — gasto/impressões de novo — e já roda a 1ª análise), a SAÚDE DA CONTA NA META (avisa na hora se a conta for desativada, bater o teto de gasto ou tiver o pagamento recusado — dá pra definir um teto de gasto próprio) e a PROPOSTA DE CAMPANHA por conta própria (o agente sugere escalar um vencedor ou criar uma campanha quando faz sentido, sempre como proposta — nunca gasta sem sua aprovação). Só troca os campos enviados. Requer eco+confirma.",
     schema: z.object({
       pulseEnabled: z.boolean().nullable().optional().describe("liga/desliga o resumo do dia (pulso)"),
       pulseCadence: z
@@ -554,6 +554,17 @@ export function makeConversationTools(
         .nullable()
         .optional()
         .describe("liga/desliga o agente propor escalar vencedor ou criar campanha por conta própria (sempre como proposta, nunca gasta sozinho)"),
+      accountHealthEnabled: z
+        .boolean()
+        .nullable()
+        .optional()
+        .describe("liga/desliga o aviso na hora quando a conta na Meta tem problema (desativada, teto de gasto batido ou pagamento recusado)"),
+      accountHealthSpendThreshold: z
+        .number()
+        .positive()
+        .nullable()
+        .optional()
+        .describe("teto de gasto total (na moeda da conta) que dispara aviso — definir troca a comparação do teto da Meta pra esse valor; o dono decide"),
     }),
   });
   const reseedArchetype = tool(proposeOnly, {
@@ -1127,6 +1138,8 @@ export function configPatchFromToolCall(
         ...(args["alertsThrottleHours"] != null ? { alertsThrottleHours: args["alertsThrottleHours"] as number } : {}),
         ...(args["runPushEnabled"] != null ? { runPushEnabled: args["runPushEnabled"] as boolean } : {}),
         ...(args["reactivationEnabled"] != null ? { reactivationEnabled: args["reactivationEnabled"] as boolean } : {}),
+        ...(args["accountHealthEnabled"] != null ? { accountHealthEnabled: args["accountHealthEnabled"] as boolean } : {}),
+        ...(args["accountHealthSpendThreshold"] != null ? { accountHealthSpendThresholdMajor: args["accountHealthSpendThreshold"] as number } : {}),
         ...(args["proactiveDraftsEnabled"] != null ? { proactiveDraftsEnabled: args["proactiveDraftsEnabled"] as boolean } : {}),
       };
       return { notifyPolicy };

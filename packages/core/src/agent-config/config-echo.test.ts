@@ -158,6 +158,16 @@ describe("buildConfigChangeEcho", () => {
     expect(echo).toContain("sensibilidade do alerta: normal → alta");
     expect(echo).toContain("aviso após cada análise: ligado → desligado");
   });
+
+  it("saúde da conta: desliga o aviso → eco em PT (default era ligado)", () => {
+    const echo = echoFor(baseState(), { notifyPolicy: { accountHealthEnabled: false } });
+    expect(echo).toContain("aviso de problema na conta Meta: ligado → desligado");
+  });
+
+  it("saúde da conta: define teto de gasto customizado → eco mostra o valor na moeda", () => {
+    const echo = echoFor(baseState(), { notifyPolicy: { accountHealthSpendThresholdMajor: 5000 } });
+    expect(echo).toContain("teto de gasto que avisa: teto da Meta → R$ 5000,00");
+  });
 });
 
 describe("describePlaybookRule", () => {

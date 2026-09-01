@@ -23,6 +23,7 @@ import {
   AGENT_IDENTITY_FIELD_MAX,
   AGENT_PROMPT_FIELD_MAX,
   AGENT_TEXT_FIELD_MAX,
+  ALERTABLE_ACCOUNT_HEALTH_STATUSES,
   ANALYSIS_WINDOW_DEFAULT_DAYS,
   ANALYSIS_WINDOW_MAX_DAYS,
   ANALYSIS_WINDOW_MIN_DAYS,
@@ -119,6 +120,14 @@ export interface NotifyPolicyPatch {
   readonly runPushEnabled?: boolean | undefined;
   readonly reactivationEnabled?: boolean | undefined;
   readonly proactiveDraftsEnabled?: boolean | undefined;
+  /** liga/desliga o alerta de saúde da conta Meta (desativada/teto/pagamento) — via chat. */
+  readonly accountHealthEnabled?: boolean | undefined;
+  /** teto de gasto CUSTOMIZADO (moeda da conta) — definir troca a fonte pra "custom" — via chat.
+   *  O checklist de status e o gatilho de saldo ficam só no site (granular demais p/ chat). */
+  readonly accountHealthSpendThresholdMajor?: number | undefined;
+  /** objeto COMPLETO (site) — o site edita o checklist/saldo e salva tudo; usado como base
+   *  do merge. Os campos flat acima (chat) sobrepõem por cima quando presentes. */
+  readonly accountHealthAlert?: NotifyPolicy["accountHealthAlert"] | undefined;
 }
 
 /**
@@ -368,6 +377,42 @@ function mergeNotifyPolicy(cur: NotifyPolicy, patch: NotifyPolicyPatch | undefin
     // defensivo: linhas pré-pivô podem não ter `reactivation` no jsonb → default off.
     reactivation: { enabled: patch.reactivationEnabled ?? cur.reactivation?.enabled ?? false },
     proactiveDrafts: { enabled: patch.proactiveDraftsEnabled ?? cur.proactiveDrafts?.enabled ?? false },
+    accountHealthAlert: mergeAccountHealthAlert(cur.accountHealthAlert, patch),
+  };
+}
+
+/** Descreve o teto de gasto do alerta de saúde (chat/eco): valor customizado ou "teto da Meta". */
+function describeSpendThreshold(alert: NotifyPolicy["accountHealthAlert"]): string {
+  const t = alert?.spendThreshold;
+  return t?.source === "custom" && t.customValueMajor !== undefined
+    ? formatMoney(t.customValueMajor, DEFAULT_CURRENCY)
+    : "teto da Meta";
+}
+
+/** Merge do alerta de saúde de conta (chat só mexe em enabled + teto customizado; o
+ *  checklist de status e o saldo ficam no site). Linha pré-fatia sem o objeto → default
+ *  seguro (ON + todos os status marcados). */
+function mergeAccountHealthAlert(
+  cur: NotifyPolicy["accountHealthAlert"],
+  patch: NotifyPolicyPatch,
+): NotifyPolicy["accountHealthAlert"] {
+  // base = objeto COMPLETO do site (patch.accountHealthAlert) › estado atual › default seguro.
+  const base = patch.accountHealthAlert ??
+    cur ?? {
+      enabled: true,
+      statusTriggers: [...ALERTABLE_ACCOUNT_HEALTH_STATUSES],
+      spendThreshold: { source: "meta_cap" as const },
+      balanceThreshold: { enabled: false },
+    };
+  // campos FLAT do chat sobrepõem por cima (leaf-merge só do que o chat sabe mexer).
+  const spendThreshold =
+    patch.accountHealthSpendThresholdMajor !== undefined
+      ? { source: "custom" as const, customValueMajor: patch.accountHealthSpendThresholdMajor }
+      : base.spendThreshold;
+  return {
+    ...base,
+    enabled: patch.accountHealthEnabled ?? base.enabled,
+    spendThreshold,
   };
 }
 
@@ -701,6 +746,14 @@ function configDetailLines(
         lines.push(
           `aviso quando a conta voltar a rodar: ${onOff(c.reactivation?.enabled ?? false)} → ${onOff(n.reactivation?.enabled ?? false)}`,
         );
+      const cah = c.accountHealthAlert;
+      const nah = n.accountHealthAlert;
+      if ((cah?.enabled ?? true) !== (nah?.enabled ?? true))
+        lines.push(`aviso de problema na conta Meta: ${onOff(cah?.enabled ?? true)} → ${onOff(nah?.enabled ?? true)}`);
+      // compara o texto descrito (não o objeto cru) — evita linha espúria "teto da Meta →
+      // teto da Meta" quando o estado legado não tinha o campo e o merge só o backfillou.
+      if (describeSpendThreshold(cah) !== describeSpendThreshold(nah))
+        lines.push(`teto de gasto que avisa: ${describeSpendThreshold(cah)} → ${describeSpendThreshold(nah)}`);
       return lines;
     }
     default:
