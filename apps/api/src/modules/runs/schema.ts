@@ -217,6 +217,9 @@ export const campaignAnalysisOutput = z.object({
   atBudgetCeiling: z.boolean().nullable(),
   /** true = orçamento na PRÓPRIA campanha (CBO); false = por conjunto/adset (ABO); null = sem dado. */
   isCBO: z.boolean().nullable(),
+  /** sincronização (achado real): presente = a Meta não lista mais como ativa desde esta data
+   *  (ISO) — o resto dos campos é da ÚLTIMA vez que ela esteve ativa. null = ainda ativa. */
+  deactivatedSince: z.string().nullable(),
 });
 export type CampaignAnalysisOutput = z.infer<typeof campaignAnalysisOutput>;
 

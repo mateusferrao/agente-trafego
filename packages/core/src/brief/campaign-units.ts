@@ -26,6 +26,17 @@ export interface BuildCampaignUnitsInput {
  * inclusive flagado, cai na cauda (senão uma campanha toda fora da meta estouraria
  * o contexto do LLM). Ordena por gasto (maior primeiro) p/ leitura estável.
  */
+/**
+ * Ids de campanha (sincronização, achado real) que ESTAVAM cacheadas de análises
+ * anteriores e SUMIRAM do conjunto ATIVO atual — candidatas a `deactivatedSince`.
+ * Puro: nunca decide POR QUÊ sumiram (pausada/arquivada/deletada — tanto faz aqui,
+ * `entity_analyses` só precisa saber que não é mais "ativa agora"). Vazio quando nada
+ * mudou (a maioria dos runs).
+ */
+export function computeDeactivatedCampaignIds(previouslyCachedIds: ReadonlySet<string>, currentlyActiveIds: ReadonlySet<string>): readonly string[] {
+  return [...previouslyCachedIds].filter((id) => !currentlyActiveIds.has(id));
+}
+
 export function buildCampaignUnits(input: BuildCampaignUnitsInput): CampaignUnit[] {
   const muted = input.mutedCampaignIds ?? new Set<string>();
   const activeCampaigns = input.campaigns

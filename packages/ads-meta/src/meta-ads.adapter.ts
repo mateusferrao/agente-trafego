@@ -252,17 +252,23 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     this.entityCache = deps.entityCache;
   }
 
-  async listEntities(account: AdAccountRef, level: EntityLevel): Promise<AdEntity[]> {
+  async listEntities(account: AdAccountRef, level: EntityLevel, opts?: { readonly statusFilter?: "active" }): Promise<AdEntity[]> {
     if (level === "account") return []; // conta não é um edge listável (metadados via getAdAccount)
     try {
       const accountId = normalizeAdAccountId(account.adAccountId);
-      // reusa o catálogo entre runs (a maior fonte de rate-limit); miss → lista fresco.
-      const cached = await this.entityCache?.get(accountId, level);
-      if (cached) return cached;
-      const nodes = await this.fetchEntities(accountId, level, account.accessToken);
+      const statusFilter = opts?.statusFilter;
+      // Filtrado NUNCA usa o cache do catálogo completo (chave conta+nível, sem dimensão de
+      // filtro) — um resultado menor sob a mesma chave contaminaria o chat, que depende do
+      // catálogo COMPLETO pra resolver nome→id de campanha pausada. Sem filtro → comportamento
+      // de sempre (cache-first).
+      if (!statusFilter) {
+        const cached = await this.entityCache?.get(accountId, level);
+        if (cached) return cached;
+      }
+      const nodes = await this.fetchEntities(accountId, level, account.accessToken, statusFilter);
       const resolved = await this.resolveCustomLabels(account, level, nodes);
       const entities = nodes.map((node) => this.mapEntity(level, node, resolved));
-      await this.entityCache?.set(accountId, level, entities);
+      if (!statusFilter) await this.entityCache?.set(accountId, level, entities);
       return entities;
     } catch (error) {
       throw toAdsError(error);
@@ -273,6 +279,7 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     accountId: string,
     level: ListableLevel,
     accessToken: string,
+    statusFilter?: "active",
   ): Promise<RawEntityNode[]> {
     const out: RawEntityNode[] = [];
     let after: string | undefined;
@@ -288,7 +295,14 @@ export class MetaAdsAdapter implements AdsPlatformPort {
             method: "GET",
             path: `${accountId}/${ENTITY_EDGE[level]}`,
             accessToken,
-            params: { fields: ENTITY_FIELDS[level], limit: ENTITY_PAGE_LIMIT, ...(after ? { after } : {}) },
+            params: {
+              fields: ENTITY_FIELDS[level],
+              limit: ENTITY_PAGE_LIMIT,
+              ...(after ? { after } : {}),
+              // filtro NA ORIGEM (S7-sync) — corta a paginação em contas com muito histórico
+              // pausado/arquivado; só quando o caller pede (o catálogo do chat nunca filtra).
+              ...(statusFilter === "active" ? { effective_status: JSON.stringify(["ACTIVE"]) } : {}),
+            },
           }),
         { governor: this.governor },
       );

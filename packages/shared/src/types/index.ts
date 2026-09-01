@@ -660,6 +660,15 @@ export interface CuratedEntitySnapshot {
   readonly eligibility?: DecisionEligibility;
   /** referência de plataforma no cold-start (S8) — direcional, nunca a meta do dono. */
   readonly benchmarkRef?: BenchmarkRef;
+  /**
+   * Sincronização (achado real): quando esta entidade estava no conjunto ATIVO da Meta
+   * numa análise anterior e sumiu de lá (pausada/arquivada fora daqui — ex: direto no Ads
+   * Manager), `record` marca a data da detecção aqui — ISO. Nunca sobrescrito enquanto
+   * continuar ausente (preserva "desde quando"); some sozinho (rebuild do zero) se a
+   * entidade voltar a ficar ativa e for reanalisada. `entity_analyses.metrics/tier/etc`
+   * continuam sendo os da ÚLTIMA vez que ela esteve ativa — não confundir com dado atual.
+   */
+  readonly deactivatedSince?: string;
 }
 
 export interface Anomaly {

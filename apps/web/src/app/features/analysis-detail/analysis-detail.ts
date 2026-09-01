@@ -196,6 +196,9 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                       @if (c.muted) {
                         <span class="text-[11px] text-muted">· silenciada</span>
                       }
+                      @if (c.deactivatedSince) {
+                        <span class="text-[11px] text-warning-strong">· não está mais ativa desde {{ deactivatedLabel(c) }} — dado abaixo é de quando ainda rodava</span>
+                      }
                     </div>
                     <h3 class="font-semibold text-ink">{{ campaignName(c) }}</h3>
                   </div>
@@ -594,6 +597,12 @@ export class AnalysisDetail {
   }
   protected stageLabel(stage: Stage): string {
     return STAGE_LABEL[stage];
+  }
+  /** Sincronização (achado real): data (dd/mm) desde quando a campanha saiu do conjunto
+   *  ativo da Meta — `c.deactivatedSince` é ISO, sempre presente quando chamado (o template
+   *  só invoca dentro de `@if (c.deactivatedSince)`). */
+  protected deactivatedLabel(c: Campaign): string {
+    return new Date(c.deactivatedSince!).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
   }
   /**
    * metricRefs do achado principal (evidência) — vazio se ausente (histórico).

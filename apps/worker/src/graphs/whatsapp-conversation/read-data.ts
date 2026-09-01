@@ -31,7 +31,7 @@ import {
 import { describeCreatedDraft } from "../../modules/apply/draft-summary.js";
 import type { ActivationApproval, Approval, ApprovalPort } from "@trafego/shared/ports";
 import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY } from "@trafego/shared";
-import type { AgentId, CampaignDraftSpec, CreativeAssetRef, CuratedEntitySnapshot, CustomAudience, DraftKind, EntityLevel, InsightMetrics, OrgId, TargetingSpec, UnitAnalysis, WhatsappDestination } from "@trafego/shared";
+import type { AgentId, CampaignDraftSpec, CreativeAssetRef, CuratedEntitySnapshot, CustomAudience, DraftKind, EntityLevel, InsightMetrics, OrgId, PartialReason, TargetingSpec, UnitAnalysis, WhatsappDestination } from "@trafego/shared";
 import type { DraftApproval } from "@trafego/shared/ports";
 import type { StoredInsightMetrics } from "@trafego/shared/types";
 import type { WorkerDeps } from "../../composition.js";
@@ -95,6 +95,8 @@ interface AccountStatus {
   readonly recommendationCount: number;
   readonly pendingCount: number;
   readonly asOf: string;
+  /** honestidade sobre completude (sincronização/rate-limit) — ausente = análise íntegra. */
+  readonly partialNote?: string;
 }
 
 interface AccountMetrics extends FreshKpis {
@@ -133,7 +135,33 @@ interface CuratedView {
   /** honestidade da conversão (Fatia 4) — 'target'/'proxy'/'none', ver `MISMATCH_TEXT`. */
   readonly conversionBasis: CuratedEntitySnapshot["conversionBasis"];
   readonly benchmarkRef: CuratedEntitySnapshot["benchmarkRef"];
+  /** sincronização (achado real): presente = a Meta não lista mais esta campanha como ativa
+   *  desde esta data (ISO) — o resto do curado (tier/métricas) é da ÚLTIMA vez que ela esteve
+   *  ativa, NÃO reflete o estado atual. null = ainda ativa (ou nunca esteve, backfill). */
+  readonly deactivatedSince: string | null;
 }
+/** Reasons que tornam o DADO da análise incompleto (grave — o dono precisa saber que os
+ *  números podem estar sub-representados), vs. enriquecimento degradado (menos grave). */
+const SEVERE_PARTIAL_REASONS = new Set<PartialReason>(["metrics", "entities"]);
+
+/**
+ * Traduz `agent_runs.partial_reasons` numa frase honesta pro chat (sincero sobre
+ * sincronização/completude — mesmo princípio do `asOf`/cache: o dono nunca deve achar que
+ * viu tudo quando na verdade a Meta limitou/uma parte degradou). `null` = análise íntegra,
+ * nada a avisar. Pura — sem IO, testável direto.
+ */
+export function describePartialRun(reasons: readonly PartialReason[]): string | null {
+  if (reasons.length === 0) return null;
+  const severe = reasons.some((r) => SEVERE_PARTIAL_REASONS.has(r));
+  if (severe) {
+    return "Essa análise ficou INCOMPLETA — a Meta limitou temporariamente (rate-limit) e nem todas as campanhas/métricas entraram nela. Os números podem estar sub-representados; se algo parecer estranho ou faltando, ofereça rodar uma análise nova.";
+  }
+  if (reasons.includes("action_apply")) {
+    return "Uma das ações desta análise falhou ao aplicar — o resto da análise (métricas/recomendações) está íntegro.";
+  }
+  return "Essa análise teve uma parte do enriquecimento degradada (ex: revisão automática ou leitura de criativo) — as métricas e recomendações principais estão íntegras, mas alguns detalhes podem faltar.";
+}
+
 function curatedViewOf(curated: CuratedEntitySnapshot | null): CuratedView {
   return {
     tier: curated?.tier ?? null,
@@ -145,6 +173,7 @@ function curatedViewOf(curated: CuratedEntitySnapshot | null): CuratedView {
     funnel: curated?.funnel,
     conversionBasis: curated?.conversionBasis,
     benchmarkRef: curated?.benchmarkRef,
+    deactivatedSince: curated?.deactivatedSince ?? null,
   };
 }
 
@@ -283,6 +312,7 @@ export async function getAccountStatusData(
   const snap = (run.metricsSnapshot ?? null) as RunMetricsSnapshot | null;
   const spend = snap?.kpis?.spend;
   const waste = curateWasteForChat(snap?.waste);
+  const partialNote = run.partial ? describePartialRun((run.partialReasons ?? []) as PartialReason[]) : null;
   return {
     grade: snap?.scorecard?.grade ?? null,
     headline: snap?.scorecard?.headline ?? null,
@@ -292,6 +322,7 @@ export async function getAccountStatusData(
     recommendationCount: recIds.length,
     pendingCount: pending.length,
     asOf: (run.finishedAt ?? run.createdAt).toISOString(),
+    ...(partialNote ? { partialNote } : {}),
   };
 }
 
@@ -850,6 +881,7 @@ export async function getEntityDetailData(
     funnel: analysis.funnel,
     conversionBasis: analysis.conversionBasis,
     benchmarkRef: analysis.benchmarkRef,
+    deactivatedSince: analysis.deactivatedSince,
     ...(analysis.adsets ? { adsets: analysis.adsets, adsetsNote: analysis.adsetsNote } : {}),
   };
 }
@@ -923,6 +955,8 @@ async function latestFinishedRun(db: Database, agentId: string, orgId: string) {
       metricsSnapshot: agentRuns.metricsSnapshot,
       createdAt: agentRuns.createdAt,
       finishedAt: agentRuns.finishedAt,
+      partial: agentRuns.partial,
+      partialReasons: agentRuns.partialReasons,
     })
     .from(agentRuns)
     .where(
@@ -1390,7 +1424,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     {
       name: "get_account_status",
       description:
-        "Status atual da conta pela última análise concluída: nota, resumo, gasto, DESPERDÍCIO (waste: quanto está queimando em campanhas paradas e onde o gasto está mal alocado — lidere por isso quando houver), nº de recomendações e de aprovações pendentes.",
+        "Status atual da conta pela última análise concluída: nota, resumo, gasto, DESPERDÍCIO (waste: quanto está queimando em campanhas paradas e onde o gasto está mal alocado — lidere por isso quando houver), nº de recomendações e de aprovações pendentes. Quando vier 'partialNote', essa análise ficou INCOMPLETA (a Meta limitou temporariamente ou uma parte degradou) — sempre repasse esse aviso ao dono, nunca omita.",
       schema: z.object({}),
     },
   );
@@ -1481,7 +1515,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     {
       name: "get_campaign_analysis",
       description:
-        "Última análise de uma campanha pelo nome (busca por trecho, sem diferenciar maiúsculas). Devolve o id (use-o para agir), resumo, métricas curadas, o maior gargalo, o tier (winner/performer/underperformer/zombie), healthSignals (fadiga/saturação/pouco dado/criativo fraco), audience (estágio: prospecção/remarketing), funnel (conversas/1ª resposta/profundidade — qualidade do lead), conversionBasis ('target' = a conversão mostrada É a de negócio; 'proxy' = referência, a venda não é rastreada ali; 'none' = sem conversão), benchmarkRef (referência de plataforma, só cold-start) e o ORÇAMENTO (budget: diário ou vitalício; atBudgetCeiling: true = sem folga pra gastar mais sem subir o orçamento; isCBO: true = orçamento na própria campanha, false = por conjunto/adset — nesse caso qualquer mudança é POR CONJUNTO). Campanha ABO (isCBO=false) com 2+ conjuntos com diagnóstico próprio também traz 'adsets' (id/nome/tier de cada conjunto) + 'adsetsNote' explicando por que a campanha não tem um tier único — cite os dois ao comentar o desempenho dela, não silencie a diferença. Campos vêm null/ausentes quando a conta não foi reanalisada desde que esse dado passou a ser coletado — nesse caso, não afirme 'sem dado', diga que precisa rodar uma nova análise. Sem nenhuma análise casando o nome, verifica AO VIVO se a campanha existe ATIVA na Meta (noDataYet:true) antes de dizer que não existe.",
+        "Última análise de uma campanha pelo nome (busca por trecho, sem diferenciar maiúsculas). Devolve o id (use-o para agir), resumo, métricas curadas, o maior gargalo, o tier (winner/performer/underperformer/zombie), healthSignals (fadiga/saturação/pouco dado/criativo fraco), audience (estágio: prospecção/remarketing), funnel (conversas/1ª resposta/profundidade — qualidade do lead), conversionBasis ('target' = a conversão mostrada É a de negócio; 'proxy' = referência, a venda não é rastreada ali; 'none' = sem conversão), benchmarkRef (referência de plataforma, só cold-start) e o ORÇAMENTO (budget: diário ou vitalício; atBudgetCeiling: true = sem folga pra gastar mais sem subir o orçamento; isCBO: true = orçamento na própria campanha, false = por conjunto/adset — nesse caso qualquer mudança é POR CONJUNTO). Campanha ABO (isCBO=false) com 2+ conjuntos com diagnóstico próprio também traz 'adsets' (id/nome/tier de cada conjunto) + 'adsetsNote' explicando por que a campanha não tem um tier único — cite os dois ao comentar o desempenho dela, não silencie a diferença. Campos vêm null/ausentes quando a conta não foi reanalisada desde que esse dado passou a ser coletado — nesse caso, não afirme 'sem dado', diga que precisa rodar uma nova análise. Sem nenhuma análise casando o nome, verifica AO VIVO se a campanha existe ATIVA na Meta (noDataYet:true) antes de dizer que não existe. 'deactivatedSince' presente = a Meta não lista mais essa campanha como ativa desde essa data — o resto do curado (tier/métricas) é da ÚLTIMA vez que ela esteve ativa, NÃO é o estado atual; avise isso sempre que citar dado dela, nunca apresente como se estivesse rodando agora.",
       schema: z.object({ name: z.string() }),
     },
   );
@@ -1552,7 +1586,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     {
       name: "list_campaigns",
       description:
-        "TODAS as campanhas da conta com métricas por campanha (gasto, conversões, CPA, ROAS, receita), ordenadas por gasto — pra COMPARAR/ALOCAR verba ('quais gastam mais e convertem pior', 'onde cortar/proteger', 'valores por campanha', 'qual o orçamento de cada campanha'). SEM args = última análise curada (inclui tier/diagnóstico e o ORÇAMENTO de cada campanha: budget/atBudgetCeiling/isCBO — mesmos campos de get_campaign_analysis; null quando a conta não foi reanalisada desde que esse dado passou a ser coletado, nesse caso ofereça rodar uma análise em vez de dizer 'sem orçamento'). Também verifica AO VIVO se existe campanha ATIVA na Meta ainda sem nenhuma análise — vem marcada noDataYet:true + 'syncNote'; cite que ela existe/está ativa, nunca invente número pra ela. COM recorte de período (mesmo formato do get_fresh_metrics: periodDays, ou sinceDaysAgo+untilDaysAgo em dias atrás, 0=hoje/1=ontem, ≤7d) = dados FRESH agregados por campanha na janela (SEM orçamento — isso só vem da análise curada, sem args). É a divisão por campanha que o get_fresh_metrics (agregado da conta) não dá.",
+        "TODAS as campanhas da conta com métricas por campanha (gasto, conversões, CPA, ROAS, receita), ordenadas por gasto — pra COMPARAR/ALOCAR verba ('quais gastam mais e convertem pior', 'onde cortar/proteger', 'valores por campanha', 'qual o orçamento de cada campanha'). SEM args = última análise curada (inclui tier/diagnóstico e o ORÇAMENTO de cada campanha: budget/atBudgetCeiling/isCBO — mesmos campos de get_campaign_analysis; null quando a conta não foi reanalisada desde que esse dado passou a ser coletado, nesse caso ofereça rodar uma análise em vez de dizer 'sem orçamento'). Também verifica AO VIVO se existe campanha ATIVA na Meta ainda sem nenhuma análise — vem marcada noDataYet:true + 'syncNote'; cite que ela existe/está ativa, nunca invente número pra ela. Uma campanha com 'deactivatedSince' preenchido saiu do conjunto ativo desde essa data — mencione isso, nunca trate o tier/métricas dela como situação atual. COM recorte de período (mesmo formato do get_fresh_metrics: periodDays, ou sinceDaysAgo+untilDaysAgo em dias atrás, 0=hoje/1=ontem, ≤7d) = dados FRESH agregados por campanha na janela (SEM orçamento — isso só vem da análise curada, sem args). É a divisão por campanha que o get_fresh_metrics (agregado da conta) não dá.",
       schema: z.object({
         periodDays: z.number().int().positive().nullable().optional(),
         sinceDaysAgo: z.number().int().min(0).nullable().optional(),
@@ -1641,7 +1675,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     {
       name: "get_entity_detail",
       description:
-        "Detalha uma campanha pelo nome: tendência diária de gasto + flags + o MESMO diagnóstico curado de get_campaign_analysis (tier/budget/healthSignals/audience/funnel/conversionBasis/benchmarkRef; ABO multi-adset também traz 'adsets'/'adsetsNote'). Use para 'como o gasto da X evoluiu' e pra aprofundar num diagnóstico já citado.",
+        "Detalha uma campanha pelo nome: tendência diária de gasto + flags + o MESMO diagnóstico curado de get_campaign_analysis (tier/budget/healthSignals/audience/funnel/conversionBasis/benchmarkRef/deactivatedSince; ABO multi-adset também traz 'adsets'/'adsetsNote'). Use para 'como o gasto da X evoluiu' e pra aprofundar num diagnóstico já citado.",
       schema: z.object({ name: z.string() }),
     },
   );

@@ -438,6 +438,9 @@ export function createRunsService(deps: RunsDeps) {
       budget: c.budget ?? null,
       atBudgetCeiling: c.atBudgetCeiling ?? null,
       isCBO: c.isCBO ?? null,
+      // histórico congelado (snapshot do run) — não faz sentido "desde quando desativou"
+      // aqui, isso só existe na visão AO VIVO (`toCampaignAnalysisOutput`, lê entity_analyses).
+      deactivatedSince: null,
     }));
 
     // "mais recente" = último run FINALIZADO (ignora in-flight; casa com o que o
@@ -506,6 +509,9 @@ export function toCampaignAnalysisOutput(
     budget: curated?.budget ?? null,
     atBudgetCeiling: curated?.atBudgetCeiling ?? null,
     isCBO: curated?.isCBO ?? null,
+    // sincronização (achado real): a UI precisa saber que este cartão é histórico/desatualizado,
+    // não "está rodando agora" — mesmo dado que o chat já usa (list_campaigns/get_campaign_analysis).
+    deactivatedSince: curated?.deactivatedSince ?? null,
   };
 }
 

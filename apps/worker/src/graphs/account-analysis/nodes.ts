@@ -18,6 +18,7 @@ import {
   buildEntityConversionMap,
   buildMessageFallback,
   campaignsAtBudgetCeiling,
+  computeDeactivatedCampaignIds,
   composeAgentVoice,
   costSnapshotFromUsage,
   creativePosterFrames,
@@ -1089,6 +1090,22 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     });
     // persiste as análises por-unidade REANALISADAS (base do incremental/herança).
     await entityAnalysesRepo.saveMany(state.agentId, state.runId, state.freshUnits ?? []);
+    // Sincronização (achado real): campanha que ESTAVA no cache e SUMIU do conjunto ativo
+    // (pausada/arquivada fora daqui) — marca `deactivatedSince` pra chat/site pararem de
+    // tratá-la como se nada tivesse mudado. SÓ quando a listagem deste run foi ÍNTEGRA
+    // (`!partialReasons.includes("entities")`) — listagem degradada pode ter perdido
+    // campanhas que CONTINUAM ativas de verdade; marcar aí seria falso-positivo.
+    if (!(state.partialReasons ?? []).includes("entities")) {
+      const currentlyActiveCampaignIds = new Set(
+        (state.entities ?? []).filter((e) => e.level === "campaign" && e.status === "active").map((e) => e.id),
+      );
+      const previouslyCachedIds = await entityAnalysesRepo.loadCampaignIds(state.agentId);
+      const deactivated = computeDeactivatedCampaignIds(previouslyCachedIds, currentlyActiveCampaignIds);
+      if (deactivated.length > 0) {
+        await entityAnalysesRepo.markDeactivated(state.agentId, deactivated, new Date());
+        logger.info({ runId: state.runId, count: deactivated.length }, "record:campanhas marcadas como desativadas (sincronização)");
+      }
+    }
     // consome o marcador de config (one-shot): este run já aplicou a nova config
     // num deep; sem isso, contas com mais campanhas que o top-N ficariam em deep
     // permanente (o analyzedAt só avança nas reanalisadas).
@@ -1599,6 +1616,17 @@ function dominantStage(u: CampaignUnit): AudienceStage | undefined {
 }
 
 /** Busca entidades por nível (degrada em `partial` se um nível falhar). */
+// Níveis onde o filtro na origem (S7-sync) é seguro: `decideActionsNode`/`guardrailCheck`
+// (mais abaixo, neste arquivo) dependem do catálogo de CAMPANHA completo (todos os status)
+// pra resolver NOME de candidatas mirando algo pausado (ex: "reativar X" — X nunca passa
+// pelo mapa/LLM, então o nome só existe ali); campanha também é barata (tipicamente 1
+// página) — não vale o risco ali. Conjunto/anúncio são o volume real (centenas/milhares,
+// muitas páginas) e SEM esse mesmo risco de nome: o pior caso de filtrar é uma candidata
+// rara mirando um CONJUNTO/ANÚNCIO pausado ficar sem nome legível (cosmético — o id
+// continua correto); o no-op de STATUS já tem rede própria (`refreshStatusByEntity`, releitura
+// fresca por-alvo, ignora o catálogo) e a mutação real sempre relê o estado antes de escrever.
+const STATUS_FILTERED_LEVELS = new Set<EntityLevel>(["adset", "ad"]);
+
 async function fetchEntities(
   ads: AdsPlatformPort,
   ref: { adAccountId: string; accessToken: string },
@@ -1608,7 +1636,8 @@ async function fetchEntities(
   let entitiesPartial = false;
   for (const level of SEGMENT_LEVELS) {
     try {
-      entities.push(...(await ads.listEntities(ref, level)));
+      const opts = STATUS_FILTERED_LEVELS.has(level) ? { statusFilter: "active" as const } : undefined;
+      entities.push(...(await ads.listEntities(ref, level, opts)));
     } catch (error) {
       if (error instanceof AdsPlatformError && error.kind === "invalid_credential") throw error;
       entitiesPartial = true;

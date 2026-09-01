@@ -229,7 +229,19 @@ export class AdsPlatformError extends Error {
  * O adapter é responsável por rate-limit/governor, async insight jobs e batch.
  */
 export interface AdsPlatformPort {
-  listEntities(account: AdAccountRef, level: EntityLevel): Promise<AdEntity[]>;
+  /**
+   * `opts.statusFilter: "active"` (S7-sync) pede à META, na ORIGEM, só entidades com
+   * `effective_status=ACTIVE` — corta a paginação de conjunto/anúncio em contas com muito
+   * histórico pausado/arquivado (achado real: conta com 139 campanhas cacheadas, só ~13
+   * ativas — paginar tudo pra descartar depois é o que estoura o rate-limit no meio do
+   * caminho e vira análise parcial). Sem `opts` = catálogo COMPLETO (todo status) — o chat
+   * (get_campaign_status/list_campaigns/liveActiveCampaignsNotCached) PRECISA disso pra
+   * resolver nome→id de campanha PAUSADA (ex: "reativa a campanha X"); nunca filtrar esse
+   * caminho. Filtrado NÃO usa o cache de catálogo (`MetaEntityCache`) — o catálogo completo
+   * já é a fonte cacheada; um 2º resultado (menor) sob a MESMA chave (conta,nível)
+   * contaminaria o cache que o chat depende ser completo.
+   */
+  listEntities(account: AdAccountRef, level: EntityLevel, opts?: { readonly statusFilter?: "active" }): Promise<AdEntity[]>;
   getInsights(query: InsightsQuery): Promise<InsightRow[]>;
   /** Breakdown demográfico/posicionamento (S7) — 1 entrada por entidade, segmentos já
    *  agrupados. Cadência própria (mais lenta que `getInsights`), chamado pela casca. */

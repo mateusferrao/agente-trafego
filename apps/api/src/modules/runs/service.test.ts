@@ -85,4 +85,14 @@ describe("toCampaignAnalysisOutput (S8 — orçamento curado no cartão da campa
     expect(out.isCBO).toBe(false);
     expect(out.budget).toBeNull();
   });
+
+  it("sincronização: sem deactivatedSince → null (ainda ativa ou nunca marcada)", () => {
+    const out = toCampaignAnalysisOutput({ ...BASE_ROW, curatedJson: { isCBO: true } }, false);
+    expect(out.deactivatedSince).toBeNull();
+  });
+
+  it("sincronização: curatedJson.deactivatedSince presente → propaga pro cartão da UI", () => {
+    const out = toCampaignAnalysisOutput({ ...BASE_ROW, curatedJson: { isCBO: true, deactivatedSince: "2026-08-25T00:00:00.000Z" } }, false);
+    expect(out.deactivatedSince).toBe("2026-08-25T00:00:00.000Z");
+  });
 });

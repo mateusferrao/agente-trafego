@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AdEntity, CampaignUnit, CreativeVisionResult, EntitySummary, InsightMetrics } from "@trafego/shared";
-import { attachCreativeWeaknessSignals, buildCampaignUnits } from "./campaign-units.js";
+import { attachCreativeWeaknessSignals, buildCampaignUnits, computeDeactivatedCampaignIds } from "./campaign-units.js";
 
 function metrics(spend: number): InsightMetrics {
   return { spend, impressions: 1000, clicks: 50, ctr: 5, cpc: 1, cpm: 1 };
@@ -159,5 +159,24 @@ describe("attachCreativeWeaknessSignals (S4b)", () => {
     const unit = unitWithNotableAd("AD1");
     const out = attachCreativeWeaknessSignals(unit, new Map());
     expect(out.adsets[0]!.notableAds[0]!.healthSignals).toBeUndefined();
+  });
+});
+
+describe("computeDeactivatedCampaignIds (sincronização — achado real de campanha que some do cache)", () => {
+  it("id cacheado que NÃO está mais no conjunto ativo → candidato a desativada", () => {
+    const out = computeDeactivatedCampaignIds(new Set(["c1", "c2"]), new Set(["c1"]));
+    expect(out).toEqual(["c2"]);
+  });
+
+  it("tudo ainda ativo → vazio (nada mudou, o caso comum)", () => {
+    expect(computeDeactivatedCampaignIds(new Set(["c1", "c2"]), new Set(["c1", "c2"]))).toEqual([]);
+  });
+
+  it("nunca cacheado antes → nada a marcar (não é 'desativação', é ausência normal)", () => {
+    expect(computeDeactivatedCampaignIds(new Set(), new Set(["c1"]))).toEqual([]);
+  });
+
+  it("campanha reativada (estava marcada, voltou a ativa) → não aparece mais como candidata", () => {
+    expect(computeDeactivatedCampaignIds(new Set(["c1"]), new Set(["c1"]))).toEqual([]);
   });
 });

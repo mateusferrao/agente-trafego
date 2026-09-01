@@ -223,6 +223,44 @@ describe("MetaAdsAdapter.listEntities (governor)", () => {
   });
 });
 
+describe("MetaAdsAdapter.listEntities (statusFilter — S7-sync, achado real: rate-limit em conta grande)", () => {
+  const ref = { adAccountId: "1", accessToken: "tok" };
+
+  it("sem opts → NÃO manda o PARÂMETRO effective_status (o campo 'effective_status' em fields= é outra coisa; catálogo completo, o chat depende disso)", async () => {
+    const { calls } = stubFetchSequence([{ body: { data: [{ id: "c1", name: "Camp", status: "PAUSED", objective: "OUTCOME_SALES" }] } }]);
+    const { adapter } = makeAdapterWithGov();
+    await adapter.listEntities(ref, "adset");
+    const params = new URL(calls()[0]!).searchParams;
+    expect(params.has("effective_status")).toBe(false);
+  });
+
+  it("statusFilter:'active' → manda o parâmetro effective_status=[\"ACTIVE\"] na chamada", async () => {
+    const { calls } = stubFetchSequence([{ body: { data: [] } }]);
+    const { adapter } = makeAdapterWithGov();
+    await adapter.listEntities(ref, "adset", { statusFilter: "active" });
+    const params = new URL(calls()[0]!).searchParams;
+    expect(params.get("effective_status")).toBe('["ACTIVE"]');
+  });
+
+  it("statusFilter:'active' NÃO usa nem alimenta o cache de catálogo (não contamina o completo que o chat lê)", async () => {
+    const client = new MetaGraphClient({ graphVersion: "v26.0" });
+    const redis = new FakeRedis() as unknown as Redis;
+    const gov = new MetaGovernor({ redis, rng: () => 0 });
+    const entityCache = new MetaEntityCache({ redis, ttlSec: 600 });
+    const adapter = new MetaAdsAdapter({ client, governor: gov, entityCache });
+
+    stubFetchSequence([{ body: { data: [{ id: "a1", name: "Adset ativo", status: "ACTIVE", objective: "OUTCOME_SALES" }] } }]);
+    await adapter.listEntities(ref, "adset", { statusFilter: "active" }); // não deve cachear
+    expect(await entityCache.get("act_1", "adset")).toBeNull();
+
+    // chamada seguinte SEM filtro é um MISS de verdade (bateu na Meta de novo, não leu um cache poluído)
+    const { calls } = stubFetchSequence([{ body: { data: [{ id: "a1", name: "Adset (completo)", status: "ACTIVE", objective: "OUTCOME_SALES" }, { id: "a2", name: "Adset pausado", status: "PAUSED", objective: "OUTCOME_SALES" }] } }]);
+    const full = await adapter.listEntities(ref, "adset");
+    expect(calls().length).toBe(1);
+    expect(full.map((e) => e.id).sort()).toEqual(["a1", "a2"]);
+  });
+});
+
 describe("MetaAdsAdapter.listEntities (cache de catálogo)", () => {
   const ref = { adAccountId: "1", accessToken: "tok" };
 

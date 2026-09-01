@@ -50,6 +50,8 @@ interface Harness {
   readEntityState: ReturnType<typeof vi.fn>;
   /** inserts CRUS via `deps.db.insert(recommendations).values(v)` (fora do repo — proposeDrafts). */
   insertedRecommendations: Record<string, unknown>[];
+  /** ids marcados via `entityAnalysesRepo.markDeactivated` (sincronização — achado real). */
+  markedDeactivated: string[];
 }
 
 interface HarnessOpts {
@@ -68,6 +70,10 @@ interface HarnessOpts {
   runPushEnabled?: boolean;
   /** S4: perfil vertical do agente. Default "health" (todo o beta hoje é saúde). */
   vertical?: string;
+  /** sincronização (achado real): ids de campanha já cacheados ANTES deste run. */
+  previouslyCachedCampaignIds?: string[];
+  /** simula `listEntities` falhando pra esses níveis (→ partialReasons inclui "entities"). */
+  entitiesThrowLevels?: string[];
 }
 
 function makeHarness(opts: HarnessOpts = {}): Harness {
@@ -100,9 +106,14 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
     latestSyncedAtByAccounts: vi.fn(async () => new Map()),
     accountActivitySince: vi.fn(async () => false),
   };
+  const markedDeactivated: string[] = [];
   const entityAnalyses: EntityAnalysesRepo = {
     loadByAgent: vi.fn(async () => opts.last ?? new Map<string, LastEntityAnalysis>()),
     saveMany: vi.fn(async () => {}),
+    loadCampaignIds: vi.fn(async () => new Set(opts.previouslyCachedCampaignIds ?? [])),
+    markDeactivated: vi.fn(async (_agentId: string, ids: readonly string[]) => {
+      markedDeactivated.push(...ids);
+    }),
   };
   // no cron o chain chega ao notify (usa db real) — fake short-circuita o envio.
   const notify: NotifyRepo = {
@@ -144,7 +155,10 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
     redis: {} as never,
     ports: {
       ads: {
-        listEntities: vi.fn(async (_ref, level) => byLevel(level)),
+        listEntities: vi.fn(async (_ref, level) => {
+          if (opts.entitiesThrowLevels?.includes(level)) throw new Error("Meta indisponível (simulado)");
+          return byLevel(level);
+        }),
         getCreatives: vi.fn(async () => []),
         readEntityState,
       } as never,
@@ -199,7 +213,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
   const nodesWithFakes = { repo, snapshots, entityAnalyses, notify, ...(opts.executor ? { executor: opts.executor } : {}) };
   // guarda os fakes p/ o teste montar os nós
   (deps as unknown as { _repos: typeof nodesWithFakes })._repos = nodesWithFakes;
-  return { deps, saved, savedLabels, closed, llm, readEntityState, insertedRecommendations };
+  return { deps, saved, savedLabels, closed, llm, readEntityState, insertedRecommendations, markedDeactivated };
 }
 
 /** Nº de chamadas de LLM do MAPA (por-campanha) — identificadas por meta.type "unit". */
@@ -266,6 +280,27 @@ describe("account-analysis read-only nodes", () => {
     // mock devolve o objeto de análise (sem .text) → cai no fallback e NÃO soma usage
     // (usage só entra com texto válido). Em produção o redator retorna texto e somaria.
     expect(h.closed[0]).toMatchObject({ status: "succeeded", costSnapshot: 0.003 });
+  });
+
+  it("sincronização: campanha cacheada que sumiu do conjunto ativo → marcada como desativada", async () => {
+    const h = makeHarness({ previouslyCachedCampaignIds: ["c1", "c-fantasma"] });
+    await runChain(h);
+    // c1 continua ativa (está em ENTITIES) → não marcada; c-fantasma sumiu → marcada.
+    expect(h.markedDeactivated).toEqual(["c-fantasma"]);
+  });
+
+  it("sincronização: nada sumiu (só o que já era esperado) → não marca nada", async () => {
+    const h = makeHarness({ previouslyCachedCampaignIds: ["c1"] });
+    await runChain(h);
+    expect(h.markedDeactivated).toEqual([]);
+  });
+
+  it("sincronização: listagem de campanha PARCIAL (Meta falhou) → NUNCA marca (evita falso-positivo)", async () => {
+    const h = makeHarness({ previouslyCachedCampaignIds: ["c1", "c-fantasma"], entitiesThrowLevels: ["campaign"] });
+    await runChain(h);
+    // c1 "sumiria" do catálogo (fetch falhou), mas como a listagem foi parcial, nada é marcado —
+    // marcar aqui arriscaria dizer que uma campanha ainda ativa "desativou" só por falha de rede.
+    expect(h.markedDeactivated).toEqual([]);
   });
 
   it("on_demand (site): compõe push pro WhatsApp — honra 'te aviso quando terminar'", async () => {

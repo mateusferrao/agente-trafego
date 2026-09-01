@@ -16,6 +16,7 @@ import {
   enrichRecommendationsLiveStatus,
   campaignStatusData,
   liveActiveCampaignsNotCached,
+  describePartialRun,
   renderWhatsappNumber,
   resolveWhatsappNumber,
   pickAdIdsToRefresh,
@@ -182,6 +183,43 @@ describe("getAccountStatusData", () => {
       pendingCount: 2,
       asOf: finishedAt.toISOString(),
     });
+  });
+
+  it("run PARCIAL por 'entities' (rate-limit da Meta) → partialNote grave", async () => {
+    const finishedAt2 = new Date("2026-08-20T10:00:00.000Z");
+    const db = fakeDb(
+      new Map<unknown, unknown[]>([
+        [
+          agentRuns,
+          [
+            {
+              id: "run-1",
+              summary: "conta saudável",
+              metricsSnapshot: { kpis: { spend: 100 }, scorecard: { grade: "B", headline: "vai bem" } },
+              createdAt: new Date("2026-08-20T09:00:00.000Z"),
+              finishedAt: finishedAt2,
+              partial: true,
+              partialReasons: ["entities"],
+            },
+          ],
+        ],
+        [recommendations, []],
+      ]),
+    );
+    const res = await getAccountStatusData(db, AGENT, ORG, fakeApprovals([]));
+    expect((res as { partialNote?: string }).partialNote).toContain("INCOMPLETA");
+  });
+
+  it("run partial:false → sem partialNote (não polui a resposta íntegra)", async () => {
+    const finishedAt3 = new Date("2026-08-20T10:00:00.000Z");
+    const db = fakeDb(
+      new Map<unknown, unknown[]>([
+        [agentRuns, [{ id: "run-1", summary: "s", metricsSnapshot: null, createdAt: finishedAt3, finishedAt: finishedAt3, partial: false, partialReasons: [] }]],
+        [recommendations, []],
+      ]),
+    );
+    const res = await getAccountStatusData(db, AGENT, ORG, fakeApprovals([]));
+    expect((res as { partialNote?: string }).partialNote).toBeUndefined();
   });
 
   it("sem run → hasData:false", async () => {
@@ -360,6 +398,7 @@ describe("getCampaignAnalysisData", () => {
       budget: null,
       atBudgetCeiling: null,
       isCBO: null,
+      deactivatedSince: null,
       asOf: "2026-08-20T08:00:00.000Z",
     });
   });
@@ -374,6 +413,13 @@ describe("getCampaignAnalysisData", () => {
     const db = fakeDb(new Map<unknown, unknown[]>([[entityAnalyses, withCurated]]));
     const res = await getCampaignAnalysisData(db, AGENT, "black friday");
     expect(res).toMatchObject({ tier: "winner", budget: { dailyMajor: 150 }, atBudgetCeiling: true, isCBO: true });
+  });
+
+  it("sincronização: curatedJson.deactivatedSince presente → propaga no cartão (chat sabe que não é mais atual)", async () => {
+    const withDeactivated = [{ ...rows[0], curatedJson: { isCBO: true, tier: "winner", deactivatedSince: "2026-08-25T00:00:00.000Z" } }];
+    const db = fakeDb(new Map<unknown, unknown[]>([[entityAnalyses, withDeactivated]]));
+    const res = await getCampaignAnalysisData(db, AGENT, "black friday");
+    expect(res).toMatchObject({ deactivatedSince: "2026-08-25T00:00:00.000Z" });
   });
 
   it("S8/S8b: campanha ABO (isCBO=false) com 2+ conjuntos com diagnóstico próprio → expõe adsets + adsetsNote (assimetria CBO×ABO rotulada)", async () => {
@@ -820,6 +866,34 @@ describe("campaignStatusData (ambíguo → LISTA com status ao vivo, NÃO pede i
     const d = deps(async () => [{ id: "c1", name: "Outra campanha" }], async () => ({ status: "ACTIVE" }));
     const out = await campaignStatusData(d, ctx, { name: "ZZZ inexistente" });
     expect(out).toMatchObject({ hasData: false });
+  });
+});
+
+describe("describePartialRun (honestidade sobre completude — achado do run parcial real)", () => {
+  it("sem motivos → íntegra, null", () => {
+    expect(describePartialRun([])).toBeNull();
+  });
+
+  it("'entities' (rate-limit no meio da paginação) → aviso GRAVE de dado incompleto", () => {
+    expect(describePartialRun(["entities"])).toContain("INCOMPLETA");
+  });
+
+  it("'metrics' → mesmo aviso grave (sync de insights degradou)", () => {
+    expect(describePartialRun(["metrics"])).toContain("INCOMPLETA");
+  });
+
+  it("só 'campaign_analysis'/'review'/'creative_vision' → aviso mais brando (enriquecimento, não o dado em si)", () => {
+    const msg = describePartialRun(["review"]);
+    expect(msg).not.toContain("INCOMPLETA");
+    expect(msg).toContain("enriquecimento");
+  });
+
+  it("'action_apply' sozinho → aviso específico de escrita, análise íntegra", () => {
+    expect(describePartialRun(["action_apply"])).toContain("falhou ao aplicar");
+  });
+
+  it("misto grave + enriquecimento → prioriza o aviso grave", () => {
+    expect(describePartialRun(["review", "entities"])).toContain("INCOMPLETA");
   });
 });
 

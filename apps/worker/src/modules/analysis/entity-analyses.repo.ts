@@ -3,7 +3,7 @@
 // só avança quando a unidade é REALMENTE reanalisada (não no inherit) — assim o
 // deep periódico dispara quando a mais antiga passa do intervalo.
 
-import { eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { entityAnalyses, type Database } from "@trafego/db";
 import type { CuratedEntitySnapshot, EntityLevel, InsightMetrics, PerformanceTier } from "@trafego/shared";
 import type { UnitAnalysis } from "@trafego/shared";
@@ -34,6 +34,17 @@ export interface SaveEntityAnalysis {
 export interface EntityAnalysesRepo {
   loadByAgent(agentId: string): Promise<Map<string, LastEntityAnalysis>>;
   saveMany(agentId: string, runId: string, entries: readonly SaveEntityAnalysis[]): Promise<void>;
+  /** Ids de CAMPANHA já cacheados pro agente (qualquer análise anterior) — base pra
+   *  detectar quem saiu do conjunto ativo (sincronização, achado real). */
+  loadCampaignIds(agentId: string): Promise<Set<string>>;
+  /**
+   * Marca `curatedJson.deactivatedSince` (ISO) nas campanhas que saíram do conjunto ativo —
+   * só nas que AINDA não têm o campo (nunca sobrescreve a 1ª detecção; preserva "desde
+   * quando"). No-op se `entityIds` vazio. Reativação se autocorrige sozinha: quando a
+   * campanha volta a ativar e é reanalisada, `saveMany` reconstrói `curatedJson` do zero
+   * (sem este campo) — não precisa "desmarcar" aqui.
+   */
+  markDeactivated(agentId: string, entityIds: readonly string[], deactivatedAt: Date): Promise<void>;
 }
 
 export function createEntityAnalysesRepo(db: Database): EntityAnalysesRepo {
@@ -63,6 +74,33 @@ export function createEntityAnalysesRepo(db: Database): EntityAnalysesRepo {
         });
       }
       return map;
+    },
+
+    async loadCampaignIds(agentId) {
+      const rows = await db
+        .select({ entityId: entityAnalyses.entityId })
+        .from(entityAnalyses)
+        .where(and(eq(entityAnalyses.agentId, agentId), eq(entityAnalyses.entityLevel, "campaign")));
+      return new Set(rows.map((r) => r.entityId));
+    },
+
+    async markDeactivated(agentId, entityIds, deactivatedAt) {
+      if (entityIds.length === 0) return;
+      await db
+        .update(entityAnalyses)
+        .set({
+          // merge JSONB — preserva o resto do curated_json já gravado; nunca sobrescreve
+          // uma detecção anterior (o WHERE abaixo só pega linhas ainda sem o campo).
+          curatedJson: sql`coalesce(${entityAnalyses.curatedJson}, '{}'::jsonb) || jsonb_build_object('deactivatedSince', ${deactivatedAt.toISOString()}::text)`,
+          updatedAt: sql`now()`,
+        })
+        .where(
+          and(
+            eq(entityAnalyses.agentId, agentId),
+            inArray(entityAnalyses.entityId, [...entityIds]),
+            sql`(${entityAnalyses.curatedJson} ->> 'deactivatedSince') IS NULL`,
+          ),
+        );
     },
 
     async saveMany(agentId, runId, entries) {
