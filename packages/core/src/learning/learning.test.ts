@@ -44,6 +44,19 @@ describe("lessonKeyOf", () => {
     const lower = lessonKeyOf({ scope: "account", dimension: "pacing", direction: "lower" });
     expect(raise).not.toBe(lower);
   });
+
+  it("Fase 2: inclui o PADRÃO — mesmo (dim,dir) com padrões diferentes → chaves DISTINTAS (N por dimensão)", () => {
+    const fatigue = lessonKeyOf({ scope: "account", dimension: "creative", direction: "neutral", pattern: "account_fatigue_timing" });
+    const weakHook = lessonKeyOf({ scope: "account", dimension: "creative", direction: "neutral", pattern: "weak_hook" as never });
+    expect(fatigue).toBe("account:creative:neutral:account_fatigue_timing");
+    expect(fatigue).not.toBe(weakHook); // não colidem mais numa vaga só
+  });
+
+  it("Fase 2: ordem scope:dim:dir:padrão:subjectId (padrão antes do subjectId)", () => {
+    expect(lessonKeyOf({ scope: "entity", dimension: "creative", direction: "neutral", pattern: "account_fatigue_timing", subjectId: "ad1" })).toBe(
+      "entity:creative:neutral:account_fatigue_timing:ad1",
+    );
+  });
 });
 
 // ─── computeConfidence ────────────────────────────────────────────────────
@@ -373,6 +386,17 @@ describe("selectLessonsForBrief", () => {
     const { prompt, guards } = selectLessonsForBrief([tracking], 10);
     expect(prompt.map((p) => p.id)).toEqual(["t"]); // apareceria "explorando", mas aparece
     expect(guards).toEqual([]); // neutral não alimenta o guard
+  });
+
+  it("Fase 2 (cota por dimensão): uma dimensão forte NÃO crowda outra (diversidade)", () => {
+    const budget = (id: string, confidence: number) => lesson({ id, confidence, key: { scope: "account", dimension: "budget", direction: "lower", pattern: "account_cut_pays" } });
+    const creative = lesson({ id: "cr", confidence: 0.72, key: { scope: "account", dimension: "creative", direction: "neutral", pattern: "account_fatigue_timing" } });
+    // 3 budget fortes + 1 criativo mais fraco, topK=2: top-confiança puro pegaria 2 budget e sumiria
+    // com o criativo; a cota pega 1 de cada dimensão.
+    const { prompt } = selectLessonsForBrief([budget("b1", 0.9), budget("b2", 0.85), budget("b3", 0.8), creative], 2);
+    expect(prompt).toHaveLength(2);
+    expect(prompt.map((p) => p.id)).toContain("cr"); // criativo preservado pela cota
+    expect(prompt.map((p) => p.id)).toContain("b1"); // + o budget mais forte
   });
 
   it("respeita o teto top-K no prompt (ordena por confiança)", () => {

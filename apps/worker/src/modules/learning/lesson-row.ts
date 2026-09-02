@@ -28,6 +28,8 @@ export function buildLessonRow(candidate: LessonCandidate, opts: LessonRowOpts) 
     scope: candidate.key.scope,
     dimension: candidate.key.dimension,
     direction: candidate.key.direction,
+    // padrão do detector — coluna + segmento da chave (dedup por padrão → N por dimensão).
+    pattern: candidate.evidence.pattern,
     ...(candidate.key.subjectId ? { subjectId: candidate.key.subjectId } : {}),
     origin: candidate.origin,
     semanticKey: lessonKeyOf(candidate.key),

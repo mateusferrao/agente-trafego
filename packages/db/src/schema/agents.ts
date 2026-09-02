@@ -213,6 +213,9 @@ export const agentMemory = pgTable(
     scope: memoryScope("scope").notNull().default("account"),
     dimension: lessonDimension("dimension"),
     direction: memoryDirection("direction"),
+    // PADRÃO do detector (fatigue_timing, weak_hook, account_cut_pays…) — discrimina N lições da
+    // MESMA (dimensão,direção) na chave semântica. Null em linhas legadas antes do backfill.
+    pattern: text("pattern"),
     // id externo da entidade quando `scope='entity'`.
     subjectId: text("subject_id"),
     origin: memoryOrigin("origin").notNull().default("human_feedback"),

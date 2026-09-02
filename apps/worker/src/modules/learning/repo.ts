@@ -56,10 +56,14 @@ export interface LearningRepo {
    *  limiar quando fornecida (opt-in, pendente). Idempotente — o serviço só chama quando S
    *  cresceu (evidência de entidade NOVA). */
   refreshAccountPrior(input: RefreshAccountPriorInput): Promise<void>;
-  /** Decaimento (curadoria anti-pilha): sem reforço → `active→stale→archived`. Um degrau
-   *  por sweep (varre arquiváveis ANTES de rebaixar ativas). Global (sweep de manutenção,
-   *  como o reaper). Só toca linhas de aprendizado (fact/past_action com chave). */
-  applyDecaySweep(now: Date, cfg: DecayConfig): Promise<{ staled: number; archived: number }>;
+  /** Decaimento (curadoria anti-pilha): sem reforço → `active→stale→archived`. Um degrau por
+   *  sweep (varre arquiváveis ANTES de rebaixar ativas). Global (sweep de manutenção). Só toca
+   *  linhas de aprendizado (fact/past_action com chave). O CONFIRMADO também decai, mas num
+   *  relógio LONGO (`confirmed*Days`): o dono endossou, mas a conta muda — não fica pra sempre. */
+  applyDecaySweep(
+    now: Date,
+    cfg: DecayConfig & { readonly confirmedStaleDays: number; readonly confirmedArchiveDays: number },
+  ): Promise<{ staled: number; archived: number }>;
   /** Snapshot da config (orçamento/status) das entidades no dia — upsert por (conta,entidade,dia).
    *  Escrito no `record` da análise; base p/ detectar mudança manual do gestor (S4). */
   saveEntityConfigSnapshots(input: SaveConfigInput): Promise<void>;
@@ -248,28 +252,29 @@ export function createLearningRepo(db: Database): LearningRepo {
     },
 
     async applyDecaySweep(now, cfg) {
-      const { staleBefore, archiveBefore } = decayCutoffs(now, cfg);
       // só linhas de aprendizado com chave (não toca o `rejected`/`objective` legado).
-      // Lição CONFIRMADA pelo humano NUNCA decai — o dono endossou explicitamente.
-      const learningRows = and(
-        inArray(agentMemory.type, [...LEARNING_TYPES]),
-        isNotNull(agentMemory.semanticKey),
-        isNotNull(agentMemory.lastReinforcedAt),
-        eq(agentMemory.confirmedByHuman, false),
-      );
-      // 1) arquiva as `stale` velhas ANTES de rebaixar ativas (um degrau por sweep).
-      const archived = await db
-        .update(agentMemory)
-        .set({ lifecycle: "archived", updatedAt: sql`now()` })
-        .where(and(learningRows, eq(agentMemory.lifecycle, "stale"), lt(agentMemory.lastReinforcedAt, archiveBefore)))
-        .returning({ id: agentMemory.id });
-      // 2) rebaixa `active` sem reforço além do prazo → `stale`.
-      const staled = await db
-        .update(agentMemory)
-        .set({ lifecycle: "stale", updatedAt: sql`now()` })
-        .where(and(learningRows, eq(agentMemory.lifecycle, "active"), lt(agentMemory.lastReinforcedAt, staleBefore)))
-        .returning({ id: agentMemory.id });
-      return { staled: staled.length, archived: archived.length };
+      const learningRows = and(inArray(agentMemory.type, [...LEARNING_TYPES]), isNotNull(agentMemory.semanticKey), isNotNull(agentMemory.lastReinforcedAt));
+      // um sweep de 2 degraus (arquiva stale velhas ANTES de rebaixar ativas) p/ um conjunto:
+      // NÃO-confirmadas no relógio curto; CONFIRMADAS no relógio longo (aposentadoria por evidência
+      // — o dono endossou, mas se a conta parar de reforçar por muito tempo, cede).
+      const sweep = async (confirmed: boolean, staleDays: number, archiveDays: number) => {
+        const { staleBefore, archiveBefore } = decayCutoffs(now, { staleDays, archiveDays });
+        const rows = and(learningRows, eq(agentMemory.confirmedByHuman, confirmed));
+        const archived = await db
+          .update(agentMemory)
+          .set({ lifecycle: "archived", updatedAt: sql`now()` })
+          .where(and(rows, eq(agentMemory.lifecycle, "stale"), lt(agentMemory.lastReinforcedAt, archiveBefore)))
+          .returning({ id: agentMemory.id });
+        const staled = await db
+          .update(agentMemory)
+          .set({ lifecycle: "stale", updatedAt: sql`now()` })
+          .where(and(rows, eq(agentMemory.lifecycle, "active"), lt(agentMemory.lastReinforcedAt, staleBefore)))
+          .returning({ id: agentMemory.id });
+        return { staled: staled.length, archived: archived.length };
+      };
+      const nonConfirmed = await sweep(false, cfg.staleDays, cfg.archiveDays);
+      const confirmed = await sweep(true, cfg.confirmedStaleDays, cfg.confirmedArchiveDays);
+      return { staled: nonConfirmed.staled + confirmed.staled, archived: nonConfirmed.archived + confirmed.archived };
     },
 
     async saveEntityConfigSnapshots({ orgId, adAccountId, date, entities }) {
@@ -345,6 +350,7 @@ function rowToStoredLesson(row: typeof agentMemory.$inferSelect): StoredLesson {
       scope: row.scope,
       dimension: row.dimension ?? "other",
       direction: row.direction ?? "neutral",
+      ...(row.pattern ? { pattern: row.pattern as NonNullable<LessonCandidate["key"]["pattern"]> } : {}),
       ...(row.subjectId ? { subjectId: row.subjectId } : {}),
     },
     content: row.content,

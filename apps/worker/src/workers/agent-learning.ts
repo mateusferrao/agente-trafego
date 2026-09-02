@@ -46,6 +46,8 @@ export function startAgentLearningWorker(deps: WorkerDeps, connection: Redis): W
       maxNewLessonsPerTick: deps.learning.maxNewLessonsPerTick,
       decayStaleDays: deps.learning.decayStaleDays,
       decayArchiveDays: deps.learning.decayArchiveDays,
+      confirmedStaleDays: deps.learning.confirmedStaleDays,
+      confirmedArchiveDays: deps.learning.confirmedArchiveDays,
       phaseBufferDays: deps.learning.phaseBufferDays,
       outcomeWindowDays: deps.learning.outcomeWindowDays,
       accountMinEntities: deps.learning.accountMinEntities,

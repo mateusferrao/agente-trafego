@@ -32,6 +32,17 @@ const ORIGIN_LABEL: Record<Learning['origin'], string> = {
   human_feedback: 'do seu feedback',
   human_manual: 'de uma mudança que você fez',
 };
+/** Dimensão → tema (agrupa a zona "já sabe"; cabeçalho só aparece quando a dimensão tem >1). */
+const DIMENSION_LABEL: Record<string, string> = {
+  budget: 'Orçamento',
+  pacing: 'Ritmo de escala',
+  creative: 'Criativo',
+  conversion: 'Conversão',
+  tracking: 'Medição',
+  audience: 'Público',
+  significance: 'Significância',
+  other: 'Outros',
+};
 
 /**
  * Aba "Aprendizados" — aba própria do detalhe da conta (entre "Agente" e "Criativos"). Quatro
@@ -127,7 +138,11 @@ const ORIGIN_LABEL: Record<Learning['origin'], string> = {
             />
           } @else {
             <ul class="flex flex-col gap-3">
-              @for (l of knows(); track l.id) {
+              @for (g of knowsGroups(); track g.dimension) {
+                @if (g.items.length > 1) {
+                  <li><app-ui-eyebrow>{{ g.label }}</app-ui-eyebrow></li>
+                }
+                @for (l of g.items; track l.id) {
                 <li class="flex flex-col gap-2 rounded-md border border-line/60 bg-soft/40 p-4">
                   @if (editingId() === l.id) {
                     <textarea
@@ -168,6 +183,7 @@ const ORIGIN_LABEL: Record<Learning['origin'], string> = {
                     </div>
                   }
                 </li>
+                }
               }
             </ul>
           }
@@ -232,6 +248,24 @@ export class AgentLearnings implements OnInit {
   // Zona 1 = priors com proposta pendente; zona 3 = os demais (priors ativos).
   protected readonly needsYou = computed(() => this.items().filter((l) => !!l.proposedBehavior));
   protected readonly knows = computed(() => this.items().filter((l) => !l.proposedBehavior));
+  /** Zona "já sabe" agrupada por dimensão (preserva a ordem de prioridade da API dentro de cada
+   *  grupo). Com poucos itens fica quase flat; o cabeçalho do grupo só aparece quando a dimensão
+   *  tem >1 item — pronto pra crescer quando os padrões por dimensão se multiplicarem (fast-follow). */
+  protected readonly knowsGroups = computed(() => {
+    const groups: { dimension: string; label: string; items: Learning[] }[] = [];
+    const byDim = new Map<string, Learning[]>();
+    for (const l of this.knows()) {
+      const dim = l.dimension ?? 'other';
+      let arr = byDim.get(dim);
+      if (!arr) {
+        arr = [];
+        byDim.set(dim, arr);
+        groups.push({ dimension: dim, label: DIMENSION_LABEL[dim] ?? DIMENSION_LABEL['other']!, items: arr });
+      }
+      arr.push(l);
+    }
+    return groups;
+  });
   protected readonly filteredArchived = computed(() => {
     const q = this.archivedQuery().trim().toLowerCase();
     return q ? this.archived().filter((l) => l.content.toLowerCase().includes(q)) : this.archived();

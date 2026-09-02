@@ -36,6 +36,9 @@ export interface LearningServiceConfig {
   /** decaimento (curadoria): dias sem reforço p/ stale → archived. */
   readonly decayStaleDays: number;
   readonly decayArchiveDays: number;
+  /** decaimento do CONFIRMADO — relógio LONGO (aposentadoria por evidência; não fica pra sempre). */
+  readonly confirmedStaleDays: number;
+  readonly confirmedArchiveDays: number;
   /** medição de outcome (Sinal A): buffer da learning phase + janela de medição. */
   readonly phaseBufferDays: number;
   readonly outcomeWindowDays: number;
@@ -427,6 +430,8 @@ export function createLearningService(deps: LearningServiceDeps) {
     const decay = await repo.applyDecaySweep(clock(), {
       staleDays: config.decayStaleDays,
       archiveDays: config.decayArchiveDays,
+      confirmedStaleDays: config.confirmedStaleDays,
+      confirmedArchiveDays: config.confirmedArchiveDays,
     });
     return { agents: agentsList.length, measured, manualEvidence, created, reinforced, ...decay };
   }

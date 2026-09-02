@@ -299,6 +299,10 @@ export const envSchema = z.object({
   // Dias sem reforço p/ uma lição virar `stale` e depois `archived` (S2 decay).
   LEARNING_DECAY_STALE_DAYS: z.coerce.number().int().positive().default(30),
   LEARNING_DECAY_ARCHIVE_DAYS: z.coerce.number().int().positive().default(60),
+  // Decaimento do CONFIRMADO — relógio LONGO (aposentadoria por evidência): o dono endossou, mas
+  // se a conta parar de reforçar por muito tempo, a lição cede em vez de acumular pra sempre.
+  LEARNING_CONFIRMED_STALE_DAYS: z.coerce.number().int().positive().default(90),
+  LEARNING_CONFIRMED_ARCHIVE_DAYS: z.coerce.number().int().positive().default(180),
   // Mínimo de ENTIDADES DISTINTAS que precisam sustentar um par (dimensão,direção) p/
   // nascer um prior de CONTA (v3 — destilação cross-seccional; repetir a mesma não conta).
   LEARNING_ACCOUNT_MIN_ENTITIES: z.coerce.number().int().positive().default(3),

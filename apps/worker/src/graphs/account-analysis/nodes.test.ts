@@ -219,6 +219,8 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
       outcomeWindowDays: 7,
       decayStaleDays: 30,
       decayArchiveDays: 60,
+      confirmedStaleDays: 90,
+      confirmedArchiveDays: 180,
     },
     checkpointer: undefined as never, // grafo A é linear (sem checkpointer)
   } as unknown as WorkerDeps;

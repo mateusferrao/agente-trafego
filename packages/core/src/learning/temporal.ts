@@ -95,7 +95,7 @@ export function detectFatigueTimingPrior(
   const strength = clamp01(1 - cv / cfg.maxCoefVariation); // 1 = perfeitamente apertado
   return {
     kind: "fact",
-    key: { scope: "account", dimension: "creative", direction: "neutral" },
+    key: { scope: "account", dimension: "creative", direction: "neutral", pattern: "account_fatigue_timing" },
     origin: "observational",
     confidence: temporalConfidence(days.length, strength),
     evidence: { pattern: "account_fatigue_timing", occurrences: days.length, totalRuns: days.length, days: Math.round(mean) },
@@ -181,7 +181,7 @@ export function detectConversionLagPrior(
   // 3 "passos" (equivalente a K campanhas): correlação forte → ~0,70 (alcança o prompt).
   return {
     kind: "fact",
-    key: { scope: "account", dimension: "conversion", direction: "neutral" },
+    key: { scope: "account", dimension: "conversion", direction: "neutral", pattern: "account_conversion_lag" },
     origin: "observational",
     confidence: temporalConfidence(CONVERSION_LAG_CONFIDENCE_STEPS, strength),
     evidence: { pattern: "account_conversion_lag", occurrences: 1, totalRuns: 1, days: bestLag },

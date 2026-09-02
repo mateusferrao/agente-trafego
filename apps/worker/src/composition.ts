@@ -113,6 +113,8 @@ export interface WorkerDeps {
     readonly outcomeWindowDays: number;
     readonly decayStaleDays: number;
     readonly decayArchiveDays: number;
+    readonly confirmedStaleDays: number;
+    readonly confirmedArchiveDays: number;
     readonly accountMinEntities: number;
     readonly temporalLookbackDays: number;
     readonly opportunityMinMaterialMinor: number;
@@ -378,6 +380,8 @@ export async function buildComposition(): Promise<WorkerDeps> {
       outcomeWindowDays: env.LEARNING_OUTCOME_WINDOW_DAYS,
       decayStaleDays: env.LEARNING_DECAY_STALE_DAYS,
       decayArchiveDays: env.LEARNING_DECAY_ARCHIVE_DAYS,
+      confirmedStaleDays: env.LEARNING_CONFIRMED_STALE_DAYS,
+      confirmedArchiveDays: env.LEARNING_CONFIRMED_ARCHIVE_DAYS,
       accountMinEntities: env.LEARNING_ACCOUNT_MIN_ENTITIES,
       temporalLookbackDays: env.LEARNING_TEMPORAL_LOOKBACK_DAYS,
       opportunityMinMaterialMinor: env.LEARNING_OPPORTUNITY_MIN_MATERIAL_MINOR,

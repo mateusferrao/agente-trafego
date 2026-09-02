@@ -26,6 +26,7 @@
     "backfill:archetype": "tsx --env-file=.env apps/api/src/scripts/backfill-archetype.ts",
     "backfill:notify-reactivation": "tsx --env-file=.env apps/api/src/scripts/backfill-notify-reactivation.ts",
     "backfill:identity-seeds": "tsx --env-file=.env apps/api/src/scripts/backfill-identity-seeds.ts",
+    "backfill:learning-pattern": "tsx --env-file=.env apps/api/src/scripts/backfill-learning-pattern.ts",
     "resync:webhooks": "tsx --env-file=.env apps/api/src/scripts/resync-webhooks.ts",
     "api:generate": "pnpm --filter @trafego/api openapi && pnpm --filter web api:generate",
     "e2e:learning": "bash apps/worker/e2e-learning.sh",

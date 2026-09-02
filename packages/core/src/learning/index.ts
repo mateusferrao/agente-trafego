@@ -58,14 +58,20 @@ export interface SemanticKey {
   readonly scope: LessonScope;
   readonly dimension: LessonDimension;
   readonly direction: LessonDirection;
+  /** PADRÃO do detector (ex: fatigue_timing vs weak_hook) — discrimina N lições da MESMA
+   *  (dimensão,direção). Sem ele, dois padrões de criativo colidiriam numa vaga só. */
+  readonly pattern?: LessonPattern;
   /** id externo da entidade quando `scope === "entity"`. */
   readonly subjectId?: string;
 }
 
-/** String canônica determinística da chave (materializada em `agent_memory.semantic_key`). */
+/** String canônica determinística da chave (materializada em `agent_memory.semantic_key`).
+ *  Formato: `scope:dimensão:direção[:padrão][:subjectId]` — o padrão (quando presente) permite
+ *  N lições por (dimensão,direção); retrocompatível com chaves antigas de 3 segmentos. */
 export function lessonKeyOf(key: SemanticKey): string {
   const base = `${key.scope}:${key.dimension}:${key.direction}`;
-  return key.subjectId ? `${base}:${key.subjectId}` : base;
+  const withPattern = key.pattern ? `${base}:${key.pattern}` : base;
+  return key.subjectId ? `${withPattern}:${key.subjectId}` : withPattern;
 }
 
 // ─── Confiança ────────────────────────────────────────────────────────────
@@ -240,7 +246,7 @@ export function detectFactCandidates(input: DetectFactInput): LessonCandidate[] 
   if (suspectRuns / runs.length >= cfg.minOccurrenceRatio) {
     out.push({
       kind: "fact",
-      key: { scope: "account", dimension: "tracking", direction: "neutral" },
+      key: { scope: "account", dimension: "tracking", direction: "neutral", pattern: "recurring_tracking_suspect" },
       origin: "observational",
       confidence: observe(suspectRuns / runs.length),
       evidence: { pattern: "recurring_tracking_suspect", occurrences: suspectRuns, totalRuns: runs.length },
@@ -485,7 +491,7 @@ export function distillAccountPriors(rows: readonly AccountEvidenceRow[], cfg: D
     for (let i = 0; i < S; i++) confidence = computeConfidence(confidence, { type: "measured", positive: true });
     out.push({
       kind: "calibration",
-      key: { scope: "account", dimension, direction },
+      key: { scope: "account", dimension, direction, pattern },
       origin: "our_action",
       confidence,
       evidence: { pattern, occurrences: S, totalRuns: S + O },
@@ -725,11 +731,41 @@ function isAccountLowerHypothesis(l: StoredLesson): boolean {
 }
 
 /**
+ * COTA POR DIMENSÃO (salência): dado o prompt JÁ ordenado por prioridade (confirmado→confiança→
+ * reforço), faz round-robin pelas dimensões — na ordem em que a mais forte aparece — pegando o
+ * melhor de cada dimensão a cada rodada, até `topK`. Garante DIVERSIDADE: com N lições por
+ * dimensão, nunca 5 de budget crowdam 0 de criativo. Determinístico, sem LLM.
+ */
+function pickWithDimensionQuota(sortedByPriority: readonly StoredLesson[], topK: number): StoredLesson[] {
+  const byDim = new Map<LessonDimension, StoredLesson[]>();
+  for (const l of sortedByPriority) {
+    const q = byDim.get(l.key.dimension) ?? [];
+    q.push(l);
+    byDim.set(l.key.dimension, q);
+  }
+  const queues = [...byDim.values()];
+  const out: StoredLesson[] = [];
+  for (let round = 0; out.length < topK; round++) {
+    let added = false;
+    for (const q of queues) {
+      const item = q[round];
+      if (item) {
+        out.push(item);
+        added = true;
+        if (out.length >= topK) break;
+      }
+    }
+    if (!added) break; // esgotou todas as filas
+  }
+  return out;
+}
+
+/**
  * Divide as lições ativas em: `prompt` (confirmadas, confiança ≥ limiar OU ressalva observacional
- * — entram no texto do analista, rotuladas, com teto top-K) e `guards` (hipótese de conta lower
- * não-confirmada — rede assimétrica determinística contra escalar). Uma lição pode ir aos DOIS
- * (prior forte de conta = texto + guard, reforço conservador coerente). Disciplina do brief:
- * nunca despeja o firehose.
+ * — entram no texto do analista, rotuladas) e `guards` (hipótese de conta lower não-confirmada —
+ * rede assimétrica determinística contra escalar). Uma lição pode ir aos DOIS (prior forte de
+ * conta = texto + guard). O `prompt` respeita o teto `topK` com COTA POR DIMENSÃO (diversidade —
+ * ver `pickWithDimensionQuota`), não top-confiança puro. Disciplina do brief: nunca o firehose.
  */
 export function selectLessonsForBrief(lessons: readonly StoredLesson[], topK: number): SelectedLessons {
   const active = lessons.filter((l) => l.lifecycle === "active");
@@ -745,7 +781,7 @@ export function selectLessonsForBrief(lessons: readonly StoredLesson[], topK: nu
     return b.reinforceCount - a.reinforceCount;
   });
   return {
-    prompt: prompt.slice(0, topK).map((l) => ({
+    prompt: pickWithDimensionQuota(prompt, topK).map((l) => ({
       id: l.id,
       content: l.content,
       tier: confidenceTier(l.confidence, l.confirmedByHuman),

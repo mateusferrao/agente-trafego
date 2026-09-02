@@ -13,6 +13,8 @@ const CONFIG: LearningServiceConfig = {
   maxNewLessonsPerTick: 20,
   decayStaleDays: 30,
   decayArchiveDays: 60,
+  confirmedStaleDays: 90,
+  confirmedArchiveDays: 180,
   phaseBufferDays: 7,
   outcomeWindowDays: 7,
   accountMinEntities: 3,
