@@ -1,9 +1,9 @@
 import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { agentMemory, agents, type Database } from "@trafego/db";
-import { confidenceTier, lessonKindFromMemoryType } from "@trafego/core";
+import { computeConfidence, confidenceTier, lessonKindFromMemoryType } from "@trafego/core";
 import type { OrgId } from "@trafego/shared/types";
 import { notFound } from "../../middleware/error-handler.js";
-import type { LearningItem, LearningsList } from "./schema.js";
+import type { LearningItem, LearningOk, LearningsList } from "./schema.js";
 
 export interface LearningsDeps {
   readonly db: Database;
@@ -60,5 +60,49 @@ export function createLearningsService(deps: LearningsDeps) {
     return { items };
   }
 
-  return { list };
+  /** Verifica que a lição é do agente/org e não está arquivada (404 amigável). Retorna a confiança atual. */
+  async function requireLesson(orgId: OrgId, agentId: string, lessonId: string): Promise<{ confidence: number | null }> {
+    const [row] = await deps.db
+      .select({ confidence: agentMemory.confidence })
+      .from(agentMemory)
+      .where(
+        and(
+          eq(agentMemory.id, lessonId),
+          eq(agentMemory.orgId, orgId),
+          eq(agentMemory.agentId, agentId),
+          inArray(agentMemory.type, [...LEARNING_TYPES]),
+          sql`${agentMemory.lifecycle} <> 'archived'`,
+        ),
+      )
+      .limit(1);
+    if (!row) throw notFound("Aprendizado não encontrado.");
+    return row;
+  }
+
+  /** Reescreve a frase do aprendizado (o usuário corrige com as próprias palavras). */
+  async function edit(orgId: OrgId, agentId: string, lessonId: string, content: string): Promise<LearningOk> {
+    await requireLesson(orgId, agentId, lessonId);
+    await deps.db.update(agentMemory).set({ content, updatedAt: sql`now()` }).where(eq(agentMemory.id, lessonId));
+    return { ok: true };
+  }
+
+  /** Confirma o aprendizado → marca `confirmedByHuman` + salto de confiança (só então pesa no prompt). */
+  async function confirm(orgId: OrgId, agentId: string, lessonId: string): Promise<LearningOk> {
+    const lesson = await requireLesson(orgId, agentId, lessonId);
+    const confidence = computeConfidence(lesson.confidence, { type: "confirm" });
+    await deps.db
+      .update(agentMemory)
+      .set({ confirmedByHuman: true, confidence, updatedAt: sql`now()` })
+      .where(eq(agentMemory.id, lessonId));
+    return { ok: true };
+  }
+
+  /** Esquece o aprendizado → soft-archive (nunca hard-delete; preserva trilha). */
+  async function forget(orgId: OrgId, agentId: string, lessonId: string): Promise<LearningOk> {
+    await requireLesson(orgId, agentId, lessonId);
+    await deps.db.update(agentMemory).set({ lifecycle: "archived", updatedAt: sql`now()` }).where(eq(agentMemory.id, lessonId));
+    return { ok: true };
+  }
+
+  return { list, edit, confirm, forget };
 }

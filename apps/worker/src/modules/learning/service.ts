@@ -169,6 +169,8 @@ export function createLearningService(deps: LearningServiceDeps) {
     const today = clock();
     // rec madura = criada há >= buffer+window (a janela pós-ação já fechou); graça = +1 janela.
     const notAfter = addDays(today, -(buffer + window));
+    // graça de +1 janela no limite inferior cobre o atraso entre criar a rec e aplicar a ação
+    // (aprovação expira em 24h → atraso « janela); a maturidade real é re-checada por appliedAt.
     const notBefore = addDays(today, -(buffer + window + window));
     const recs = await outcomeRepo.loadMeasurableRecs(agent.orgId, agent.agentId, notBefore, notAfter);
     let measured = 0;

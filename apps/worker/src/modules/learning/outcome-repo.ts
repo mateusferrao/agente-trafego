@@ -18,7 +18,7 @@ import {
   type Database,
 } from "@trafego/db";
 import type { Action, ActionType, EntityConfigSnapshot, EntityLevel } from "@trafego/shared";
-import { lessonKeyOf, type EntityConfigDelta, type LessonCandidate, type MeasuredOutcome, type OutcomeWindow } from "@trafego/core";
+import { computeConfidence, lessonKeyOf, type EntityConfigDelta, type LessonCandidate, type MeasuredOutcome, type OutcomeWindow } from "@trafego/core";
 import { buildLessonRow } from "./lesson-row.js";
 
 const CAMPAIGN_LEVEL: EntityLevel = "campaign";
@@ -204,9 +204,13 @@ export function createOutcomeRepo(db: Database): OutcomeRepo {
             .where(and(eq(agentMemory.agentId, agentId), eq(agentMemory.semanticKey, key), sql`${agentMemory.lifecycle} <> 'archived'`))
             .limit(1);
           if (existing) {
+            // reforço = a medição SUSTENTOU a cautela → sobe da confiança ATUAL rumo ao teto
+            // medido (não sobrescreve com um valor fixo, que não subiria nem rebaixaria uma
+            // lição já mais forte — ex: confirmada).
+            const next = computeConfidence(existing.confidence, { type: "measured", positive: true });
             await tx
               .update(agentMemory)
-              .set({ confidence: calibration.candidate.confidence, reinforceCount: sql`${agentMemory.reinforceCount} + 1`, lastReinforcedAt: sql`now()`, lifecycle: "active", updatedAt: sql`now()` })
+              .set({ confidence: next, reinforceCount: sql`${agentMemory.reinforceCount} + 1`, lastReinforcedAt: sql`now()`, lifecycle: "active", updatedAt: sql`now()` })
               .where(eq(agentMemory.id, existing.id));
           } else {
             await tx.insert(agentMemory).values(

@@ -2,11 +2,11 @@ import { Injectable } from '@angular/core';
 import type { Observable } from 'rxjs';
 import { BaseApiService } from './base-api.service';
 import { silentApiContext } from './api-request.interceptor';
-import type { LearningsList } from './generated';
+import type { EditLearningInput, LearningOk, LearningsList } from './generated';
 
 /**
- * Endpoints do aprendizado contínuo (aba "Aprendizados"). Read-only na S1
- * (editar/confirmar/esquecer = S5). Keyed por agentId (a página resolve pelo agente da conta).
+ * Endpoints do aprendizado contínuo (aba "Aprendizados"). Listar + editar/confirmar/
+ * esquecer (S5). Keyed por agentId (a página resolve pelo agente da conta).
  */
 @Injectable({ providedIn: 'root' })
 export class LearningsApiService extends BaseApiService {
@@ -16,5 +16,20 @@ export class LearningsApiService extends BaseApiService {
       ['/agents', agentId, 'learnings'],
       opts?.silent ? { context: silentApiContext() } : undefined,
     );
+  }
+
+  /** `PATCH /api/agents/:agentId/learnings/:id` — reescreve a frase. */
+  edit(agentId: string, id: string, input: EditLearningInput): Observable<LearningOk> {
+    return this.patch<LearningOk, EditLearningInput>(['/agents', agentId, 'learnings', id], input);
+  }
+
+  /** `POST /api/agents/:agentId/learnings/:id/confirm` — confirma (sobe confiança). */
+  confirm(agentId: string, id: string): Observable<LearningOk> {
+    return this.post<LearningOk, undefined>(['/agents', agentId, 'learnings', id, 'confirm'], undefined);
+  }
+
+  /** `DELETE /api/agents/:agentId/learnings/:id` — esquece (arquiva). */
+  forget(agentId: string, id: string): Observable<LearningOk> {
+    return this.delete<LearningOk>(['/agents', agentId, 'learnings', id]);
   }
 }

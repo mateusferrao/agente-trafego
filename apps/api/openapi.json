@@ -6932,6 +6932,30 @@
           "items"
         ]
       },
+      "EditLearningInput": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "content"
+        ]
+      },
+      "LearningOk": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ]
+      },
       "ApprovalOutput": {
         "type": "object",
         "properties": {
@@ -10387,6 +10411,133 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/agents/{agentId}/learnings/{id}": {
+      "patch": {
+        "tags": [
+          "learnings"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "agentId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditLearningInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "aprendizado editado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningOk"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "não encontrado"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "learnings"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "agentId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "aprendizado esquecido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningOk"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "não encontrado"
+          }
+        }
+      }
+    },
+    "/api/agents/{agentId}/learnings/{id}/confirm": {
+      "post": {
+        "tags": [
+          "learnings"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "agentId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "aprendizado confirmado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningOk"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "não encontrado"
           }
         }
       }

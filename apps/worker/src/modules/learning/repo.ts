@@ -156,10 +156,12 @@ export function createLearningRepo(db: Database): LearningRepo {
     async applyDecaySweep(now, cfg) {
       const { staleBefore, archiveBefore } = decayCutoffs(now, cfg);
       // só linhas de aprendizado com chave (não toca o `rejected`/`objective` legado).
+      // Lição CONFIRMADA pelo humano NUNCA decai — o dono endossou explicitamente.
       const learningRows = and(
         inArray(agentMemory.type, [...LEARNING_TYPES]),
         isNotNull(agentMemory.semanticKey),
         isNotNull(agentMemory.lastReinforcedAt),
+        eq(agentMemory.confirmedByHuman, false),
       );
       // 1) arquiva as `stale` velhas ANTES de rebaixar ativas (um degrau por sweep).
       const archived = await db

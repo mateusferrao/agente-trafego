@@ -183,6 +183,23 @@ describe("computeOutcome", () => {
     expect(computeOutcome({ actionType: "resume_entity", entityPre: { spend: 0, results: 0 }, entityPost: { spend: 80, results: 8 } })).toBe("positive");
     expect(computeOutcome({ actionType: "resume_entity", entityPre: { spend: 0, results: 0 }, entityPost: { spend: 80, results: 0 } })).toBe("negative");
   });
+  it("set_status → active é reativação (mesma medição do resume)", () => {
+    expect(computeOutcome({ actionType: "set_status", params: { status: "active" }, entityPre: { spend: 0, results: 0 }, entityPost: { spend: 80, results: 8 } })).toBe("positive");
+  });
+  it("set_status → paused mede a CONTA (como pausa)", () => {
+    const out = computeOutcome({
+      actionType: "set_status",
+      params: { status: "paused" },
+      entityPre: { spend: 50, results: 0 },
+      entityPost: { spend: 0, results: 0 },
+      accountPre: { spend: 500, results: 40 },
+      accountPost: { spend: 500, results: 50 },
+    });
+    expect(out).toBe("positive");
+  });
+  it("adjust_budget mode 'set' (absoluto) → neutral (direção indeterminável)", () => {
+    expect(computeOutcome({ actionType: "adjust_budget", params: { mode: "set" }, entityPre: { spend: 100, results: 10 }, entityPost: { spend: 100, results: 5 } })).toBe("neutral");
+  });
 });
 
 describe("detectCalibrationCandidate / contradictedLessonKey", () => {

@@ -70,7 +70,7 @@ import { timelineOutput } from "../modules/timeline/schema.js";
 import { channelStateOutput } from "../modules/channels/schema.js";
 import { channelGroupStateOutput, groupsListOutput, setGroupInput } from "../modules/groups/schema.js";
 import { feedbackInput, feedbackOutput } from "../modules/recommendations/schema.js";
-import { learningsList } from "../modules/learnings/schema.js";
+import { learningsList, editLearningInput, learningOk } from "../modules/learnings/schema.js";
 import {
   startVerificationInput,
   startVerificationOutput,
@@ -180,6 +180,8 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const FeedbackInput = registry.register("FeedbackInput", feedbackInput);
   const FeedbackOutput = registry.register("FeedbackOutput", feedbackOutput);
   const LearningsList = registry.register("LearningsList", learningsList);
+  const EditLearningInput = registry.register("EditLearningInput", editLearningInput);
+  const LearningOk = registry.register("LearningOk", learningOk);
   const ApprovalOutput = registry.register("ApprovalOutput", approvalOutput);
   const ResolveApprovalInput = registry.register("ResolveApprovalInput", resolveApprovalInput);
   const ResolveApprovalOutput = registry.register("ResolveApprovalOutput", resolveApprovalOutput);
@@ -671,6 +673,27 @@ const SetDraftCreativeOutput = registry.register("SetDraftCreativeOutput", setDr
     tags: ["learnings"],
     request: { params: z.object({ agentId: z.string() }) },
     responses: { 200: jsonRes("aprendizados curados do agente", LearningsList) },
+  });
+  registry.registerPath({
+    method: "patch",
+    path: "/api/agents/{agentId}/learnings/{id}",
+    tags: ["learnings"],
+    request: { params: z.object({ agentId: z.string(), id: z.string() }), ...jsonBody(EditLearningInput) },
+    responses: { 200: jsonRes("aprendizado editado", LearningOk), 404: { description: "não encontrado" } },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/agents/{agentId}/learnings/{id}/confirm",
+    tags: ["learnings"],
+    request: { params: z.object({ agentId: z.string(), id: z.string() }) },
+    responses: { 200: jsonRes("aprendizado confirmado", LearningOk), 404: { description: "não encontrado" } },
+  });
+  registry.registerPath({
+    method: "delete",
+    path: "/api/agents/{agentId}/learnings/{id}",
+    tags: ["learnings"],
+    request: { params: z.object({ agentId: z.string(), id: z.string() }) },
+    responses: { 200: jsonRes("aprendizado esquecido", LearningOk), 404: { description: "não encontrado" } },
   });
   registry.registerPath({
     method: "get",

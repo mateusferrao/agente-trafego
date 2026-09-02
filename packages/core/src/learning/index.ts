@@ -327,6 +327,27 @@ function cpaOf(w: OutcomeWindow): number | undefined {
   return w.results > 0 ? w.spend / w.results : undefined;
 }
 
+/** Efeito da ação p/ a medição — normaliza os vários jeitos de expressar a mesma coisa. */
+type ActionEffect = "pause" | "resume" | "budget_up" | "budget_down" | "other";
+
+function actionEffect(actionType: ActionType, params?: Readonly<Record<string, unknown>>): ActionEffect {
+  if (actionType === "pause_entity") return "pause";
+  if (actionType === "resume_entity") return "resume";
+  if (actionType === "set_status") {
+    const s = params?.status;
+    if (s === "paused" || s === "PAUSED" || s === "archived" || s === "ARCHIVED") return "pause";
+    if (s === "active" || s === "ACTIVE") return "resume";
+    return "other";
+  }
+  if (actionType === "adjust_budget") {
+    const mode = params?.mode;
+    if (mode === "increase") return "budget_up";
+    if (mode === "decrease") return "budget_down";
+    return "other"; // 'set' (absoluto) — sem o orçamento anterior não dá p/ inferir direção.
+  }
+  return "other";
+}
+
 /** Compara CPA de duas janelas → melhora/mantém = positivo; piora = negativo; sem base = neutro. */
 function cpaVerdict(pre: OutcomeWindow, post: OutcomeWindow, t: OutcomeThresholds): MeasuredOutcome {
   if (pre.results < t.minResults || post.results < t.minResults) return "neutral";
@@ -338,15 +359,13 @@ function cpaVerdict(pre: OutcomeWindow, post: OutcomeWindow, t: OutcomeThreshold
   return "positive"; // melhorou ou manteve dentro da tolerância
 }
 
-/** É uma pausa? (`pause_entity`, ou `set_status` com alvo pausado). */
+/** É uma ação que zera a entidade (mede-se no nível da CONTA)? */
 function isPause(actionType: ActionType, params?: Readonly<Record<string, unknown>>): boolean {
-  if (actionType === "pause_entity") return true;
-  if (actionType === "set_status") return params?.status === "paused" || params?.status === "PAUSED";
-  return false;
+  return actionEffect(actionType, params) === "pause";
 }
 
 /**
- * Outcome MEDIDO de uma ação nossa — POR TIPO DE AÇÃO, no NÍVEL certo. Honesto:
+ * Outcome MEDIDO de uma ação nossa — pelo EFEITO da ação, no NÍVEL certo. Honesto:
  * `neutral` (indeterminado) quando não dá p/ concluir (nunca declara sucesso que não mede).
  *  - pausa → mede a CONTA (a entidade zera; o efeito é a verba realocada);
  *  - ajuste de orçamento → mede o CPA da PRÓPRIA entidade;
@@ -354,14 +373,15 @@ function isPause(actionType: ActionType, params?: Readonly<Record<string, unknow
  */
 export function computeOutcome(input: ComputeOutcomeInput): MeasuredOutcome {
   const t = input.thresholds ?? DEFAULT_OUTCOME_THRESHOLDS;
-  if (isPause(input.actionType, input.params)) {
+  const effect = actionEffect(input.actionType, input.params);
+  if (effect === "pause") {
     if (!input.accountPre || !input.accountPost) return "neutral";
     return cpaVerdict(input.accountPre, input.accountPost, t);
   }
-  if (input.actionType === "adjust_budget") {
+  if (effect === "budget_up" || effect === "budget_down") {
     return cpaVerdict(input.entityPre, input.entityPost, t);
   }
-  if (input.actionType === "resume_entity") {
+  if (effect === "resume") {
     if (input.entityPost.results >= t.minResults) return "positive";
     if (input.entityPost.spend > 0 && input.entityPost.results === 0) return "negative";
     return "neutral";
@@ -371,9 +391,8 @@ export function computeOutcome(input: ComputeOutcomeInput): MeasuredOutcome {
 
 /** Ações que ADICIONAM investimento/exposição (escala) — espelha SCALE_ACTIONS do guard. */
 function isScaleAction(actionType: ActionType, params?: Readonly<Record<string, unknown>>): boolean {
-  if (actionType === "resume_entity") return true;
-  if (actionType === "adjust_budget") return params?.mode === "increase" || params?.mode === "up";
-  return false;
+  const effect = actionEffect(actionType, params);
+  return effect === "resume" || effect === "budget_up";
 }
 
 export interface CalibrationInput {
@@ -395,7 +414,7 @@ export interface CalibrationInput {
 export function detectCalibrationCandidate(input: CalibrationInput): LessonCandidate | null {
   const measuredConfidence = computeConfidence(null, { type: "measured", positive: true });
   const scale = isScaleAction(input.actionType, input.params);
-  const cut = isPause(input.actionType, input.params) || (input.actionType === "adjust_budget" && input.params?.mode === "decrease");
+  const cut = isPause(input.actionType, input.params) || actionEffect(input.actionType, input.params) === "budget_down";
 
   if (scale && input.outcome === "negative") {
     return {
@@ -462,7 +481,7 @@ export function manualChangeToAction(
  */
 export function contradictedLessonKey(input: CalibrationInput): SemanticKey | null {
   const scale = isScaleAction(input.actionType, input.params);
-  const cut = isPause(input.actionType, input.params) || (input.actionType === "adjust_budget" && input.params?.mode === "decrease");
+  const cut = isPause(input.actionType, input.params) || actionEffect(input.actionType, input.params) === "budget_down";
   if (scale && input.outcome === "positive") {
     // escalar deu certo → enfraquece uma eventual "não escale aqui".
     return { scope: "entity", dimension: "pacing", direction: "lower", subjectId: input.subjectId };
