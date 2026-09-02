@@ -261,11 +261,17 @@ describe("parseInbound — grupo", () => {
       expect(parseInbound(groupUpsert({}))).toMatchObject({ group: { quotedStanzaId: null, quotedKind: null, quotedSnippet: null } });
     });
 
-    it("texto citado longo → trunca com reticências", () => {
-      const long = "a".repeat(250);
-      const msg = parseInbound(groupUpsert({ contextInfo: { stanzaId: "Q4", quotedMessage: { conversation: long } } })) as { group: { quotedSnippet: string } };
-      expect(msg.group.quotedSnippet.length).toBeLessThan(long.length);
+    it("texto citado > teto → trunca com reticências (trilho de sanidade)", () => {
+      const huge = "a".repeat(5000); // acima do teto generoso (4000)
+      const msg = parseInbound(groupUpsert({ contextInfo: { stanzaId: "Q4", quotedMessage: { conversation: huge } } })) as { group: { quotedSnippet: string } };
+      expect(msg.group.quotedSnippet.length).toBeLessThan(huge.length);
       expect(msg.group.quotedSnippet.endsWith("…")).toBe(true);
+    });
+
+    it("texto citado comum (> antigo 200, < teto) → chega INTEIRO (referente do reply preservado)", () => {
+      const referente = "a".repeat(800); // acima do antigo cap de 200, abaixo do novo teto
+      const msg = parseInbound(groupUpsert({ contextInfo: { stanzaId: "Q5", quotedMessage: { conversation: referente } } })) as { group: { quotedSnippet: string } };
+      expect(msg.group.quotedSnippet).toBe(referente); // sem truncar, sem "…"
     });
   });
 
