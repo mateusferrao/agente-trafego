@@ -24,6 +24,12 @@ export const proposedActionOutput = z.object({
   type: actionType,
   target: z.object({ level: entityLevel, id: z.string() }),
   params: z.record(z.unknown()),
+  /** Orçamento ATUAL da entidade (unidade MAIOR, ex reais) na proposta — só `adjust_budget`
+   *  com atual conhecido; o editor inline mostra "atual → proposto". Null nos demais casos. */
+  currentBudgetMajor: z.number().nullable(),
+  /** Orçamento PROPOSTO resultante (unidade MAIOR) — projeção p/ exibição (pré-clamp). Null
+   *  quando não dá pra projetar ou a ação não é de orçamento. */
+  targetBudgetMajor: z.number().nullable(),
 });
 
 export const recommendationOutput = z.object({

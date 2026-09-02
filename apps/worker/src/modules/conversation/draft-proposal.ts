@@ -9,6 +9,7 @@ import { adAccounts, adCreatives, agents, campaignDrafts, creativeAssets, creati
 import { applyDraftEdit, buildResolvedSnapshot, clampRadius, describeDeliveryEstimate, goalNounPt, planScaleMove, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
 import { applyExplicitBehaviorEdit, applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
+  ACTION_PARAM_CURRENT_MINOR,
   ACTION_PARAM_MODE,
   ACTION_PARAM_PCT,
   BUDGET_MODE_INCREASE,
@@ -680,13 +681,18 @@ export async function proposeScaleWinner(
       return { kind: "blocked", reason: "escalar esse vencedor exige subir o orçamento — ligue 'ajustar orçamento' nas ações permitidas, ou ajuste no gerenciador." };
     }
     const pct = Math.min(scalePct, ac.cfg.maxBudgetChangePct);
-    const raise = (targetLevel: "adset" | "campaign", targetId: string, reason: string): ChatDraftProposal => ({
+    const raise = (targetLevel: "adset" | "campaign", targetId: string, currentMinor: number, reason: string): ChatDraftProposal => ({
       kind: "action",
       action: {
         id: `scale:${targetId}`,
         type: "adjust_budget",
         target: { level: targetLevel, id: targetId, name: label },
-        params: { [ACTION_PARAM_MODE]: BUDGET_MODE_INCREASE, [ACTION_PARAM_PCT]: pct },
+        // `currentMinor` (contexto de exibição): o card mostra "atual → proposto".
+        params: {
+          [ACTION_PARAM_MODE]: BUDGET_MODE_INCREASE,
+          [ACTION_PARAM_PCT]: pct,
+          ...(currentMinor > 0 ? { [ACTION_PARAM_CURRENT_MINOR]: currentMinor } : {}),
+        },
         source: "llm",
         riskLevel: "medium",
         reason,
@@ -694,7 +700,7 @@ export async function proposeScaleWinner(
     });
     // (a) adset com orçamento VITALÍCIO próprio → sobe o vitalício do conjunto.
     if (sourceLifetimeMinor > 0) {
-      return raise("adset", chosen.entityId, `seu vencedor "${label}" usa orçamento vitalício no conjunto, então subo +${pct}% no orçamento vitalício dele`);
+      return raise("adset", chosen.entityId, sourceLifetimeMinor, `seu vencedor "${label}" usa orçamento vitalício no conjunto, então subo +${pct}% no orçamento vitalício dele`);
     }
     // (b) sem orçamento no adset → CBO: sobe o da CAMPANHA-mãe (diário ou vitalício).
     const parent = await deps.ports.ads.getAdSetCampaignBudget(ac.ref, chosen.entityId);
@@ -703,9 +709,11 @@ export async function proposeScaleWinner(
     }
     const isLifetime = parent.dailyBudgetMinor <= 0;
     const kindTxt = isLifetime ? "vitalício" : "diário";
+    const parentMinor = isLifetime ? parent.lifetimeBudgetMinor : parent.dailyBudgetMinor;
     return raise(
       "campaign",
       parent.campaignId,
+      parentMinor,
       `seu vencedor "${label}" está sob orçamento de campanha (CBO), então subo +${pct}% no orçamento ${kindTxt} da CAMPANHA (o conjunto não tem orçamento próprio pra mexer)`,
     );
   }
@@ -759,7 +767,17 @@ export async function proposeScaleWinner(
       // target = a entidade REAL (nível dela + id dela). budgetLevel só decidiu raise-vs-ask;
       // usar budgetLevel no target casaria nível "campaign" com id de adset (CBO) — mismatch.
       target: { level, id: chosen.entityId, name: label },
-      params: { [ACTION_PARAM_MODE]: BUDGET_MODE_INCREASE, [ACTION_PARAM_PCT]: move.pct },
+      // `currentMinor` (contexto de exibição): o card mostra "atual → proposto". Diário
+      // preferido; adset sob orçamento vitalício usa o vitalício do próprio conjunto.
+      params: {
+        [ACTION_PARAM_MODE]: BUDGET_MODE_INCREASE,
+        [ACTION_PARAM_PCT]: move.pct,
+        ...(sourceDailyMinor > 0
+          ? { [ACTION_PARAM_CURRENT_MINOR]: sourceDailyMinor }
+          : sourceLifetimeMinor > 0
+            ? { [ACTION_PARAM_CURRENT_MINOR]: sourceLifetimeMinor }
+            : {}),
+      },
       source: "llm",
       riskLevel: "medium",
       reason: `escalar o vencedor "${label}": +${move.pct}% de budget`,

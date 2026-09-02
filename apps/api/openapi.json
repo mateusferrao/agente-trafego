@@ -3766,12 +3766,26 @@
                     "params": {
                       "type": "object",
                       "additionalProperties": {}
+                    },
+                    "currentBudgetMajor": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "targetBudgetMajor": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
                     "type",
                     "target",
-                    "params"
+                    "params",
+                    "currentBudgetMajor",
+                    "targetBudgetMajor"
                   ]
                 },
                 "toolKey": {
@@ -5748,12 +5762,26 @@
                     "params": {
                       "type": "object",
                       "additionalProperties": {}
+                    },
+                    "currentBudgetMajor": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "targetBudgetMajor": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
                     "type",
                     "target",
-                    "params"
+                    "params",
+                    "currentBudgetMajor",
+                    "targetBudgetMajor"
                   ]
                 },
                 "toolKey": {
@@ -7014,6 +7042,24 @@
               "string",
               "null"
             ]
+          },
+          "currency": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "currentBudgetMajor": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "targetBudgetMajor": {
+            "type": [
+              "number",
+              "null"
+            ]
           }
         },
         "required": [
@@ -7026,7 +7072,10 @@
           "type",
           "reason",
           "status",
-          "expiresAt"
+          "expiresAt",
+          "currency",
+          "currentBudgetMajor",
+          "targetBudgetMajor"
         ]
       },
       "ResolveApprovalInput": {

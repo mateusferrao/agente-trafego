@@ -3,9 +3,10 @@ import { NgTemplateOutlet } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { toast } from 'ngx-sonner';
-import { UiButton, UiEyebrow, UiStat, UiEvidence, UiMeter } from '@ui';
+import { NumberStepper, UiButton, UiEyebrow, UiInput, UiStat, UiEvidence, UiMeter } from '@ui';
 import { ApprovalsApiService } from '@core/api/approvals-api.service';
 import { AGENT_NAME } from '@core/brand';
+import { currencySymbol } from '@app/shared/format';
 import type { RunDetailOutput } from '@core/api/generated';
 
 type RunView = RunDetailOutput['run'];
@@ -77,7 +78,7 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
 @Component({
   selector: 'app-analysis-detail',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, NgTemplateOutlet, RouterLink, UiButton, UiEyebrow, UiStat, UiEvidence, UiMeter],
+  imports: [FormsModule, NgTemplateOutlet, RouterLink, UiButton, UiInput, NumberStepper, UiEyebrow, UiStat, UiEvidence, UiMeter],
   template: `
     <section class="flex flex-col gap-5">
       @if (hasResults()) {
@@ -348,6 +349,9 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                 }
                 @if (rec.kind === 'platform_action' && rec.proposedAction) {
                   <span class="ui-tag-mint w-fit">Ação: {{ actionText(rec) }}</span>
+                  @if (recBudgetLine(rec); as bl) {
+                    <span class="text-xs font-medium text-ink">{{ bl }}</span>
+                  }
                 } @else if (rec.kind === 'human_direction') {
                   <span class="text-xs text-muted">Direção — você aplica. Peça ao {{ agentName }} no WhatsApp se quiser ajuda.</span>
                 }
@@ -380,14 +384,16 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                     @if (editingRecId() === rec.id) {
                       <div class="flex flex-col gap-2 sm:flex-row sm:items-end">
                         <label class="flex flex-1 flex-col gap-1 text-sm">
-                          <span class="text-muted">Novo orçamento diário (R$)</span>
+                          <span class="text-muted">Novo orçamento diário ({{ currencySymbol(currency()) }})</span>
                           <input
+                            appInput
+                            appNumberStepper
                             type="number"
+                            inputmode="decimal"
                             min="1"
                             step="1"
                             [ngModel]="editBudgetReais()"
                             (ngModelChange)="editBudgetReais.set($event)"
-                            class="rounded-md border border-line bg-panel px-3 py-2 text-ink"
                           />
                         </label>
                         <button appButton size="sm" [disabled]="savingEdit()" (click)="saveRecEdit(rec)">
@@ -494,10 +500,25 @@ export class AnalysisDetail {
     });
   }
 
-  /** Abre/fecha o editor de valor do orçamento (só ação adjust_budget) — reseta o campo. */
+  protected currencySymbol = currencySymbol;
+
+  /** Contexto de orçamento da recomendação (só adjust_budget com atual conhecido): "atual X →
+   *  proposto Y" — mesma informação que a análise já traz, estruturada pro card. */
+  protected recBudgetLine(rec: Recommendation): string | null {
+    const pa = rec.proposedAction;
+    if (!pa || pa.type !== 'adjust_budget' || pa.currentBudgetMajor == null) return null;
+    const atual = `orçamento atual ${this.money(pa.currentBudgetMajor)}`;
+    if (pa.targetBudgetMajor == null) return atual;
+    return `${atual} → proposto ${this.money(pa.targetBudgetMajor)}`;
+  }
+
+  /** Abre/fecha o editor de valor do orçamento (só ação adjust_budget). Ao abrir, pré-preenche
+   *  com o valor PROPOSTO (senão o atual) — parte do número sugerido em vez de um campo vazio. */
   protected toggleEditRec(rec: Recommendation): void {
-    this.editingRecId.update((cur) => (cur === rec.id ? null : rec.id));
-    this.editBudgetReais.set(null);
+    const opening = this.editingRecId() !== rec.id;
+    this.editingRecId.set(opening ? rec.id : null);
+    const pa = rec.proposedAction;
+    this.editBudgetReais.set(opening ? (pa?.targetBudgetMajor ?? pa?.currentBudgetMajor ?? null) : null);
   }
 
   /** Salva o novo valor (R$/dia) da ação antes de aprovar (C). A ação segue aplicável; aprovar aplica. */

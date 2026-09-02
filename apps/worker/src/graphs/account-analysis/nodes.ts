@@ -61,7 +61,7 @@ import {
   selectLessonsForBrief,
   type LastUnit,
 } from "@trafego/core";
-import { ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS, DEFAULT_CURRENCY, DEFAULT_POSTURE, extractPhoneFromName, plural } from "@trafego/shared";
+import { ACTION_PARAM_CURRENT_MINOR, ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS, DEFAULT_CURRENCY, DEFAULT_POSTURE, extractPhoneFromName, plural } from "@trafego/shared";
 import { recommendations } from "@trafego/db";
 import { funnelFromRawActions, mapStatus } from "@trafego/ads-meta";
 import { loadAccountAudiences, loadAgentContext, PROACTIVE_AUDIENCE_UNRESOLVED_REASON, PROACTIVE_REACH_FLOOR_REASON, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner } from "../../modules/conversation/draft-proposal.js";
@@ -875,8 +875,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     }
     if (!state.analysisOutput) return {};
     const knownIds = new Set(state.entities.map((e) => e.id));
+    const budgetMinorById = buildCurrentBudgetMinorById(state.entities);
     const rows = state.analysisOutput.recommendations.map((rec) =>
-      toRecommendationRow(rec, state.orgId, state.runId, knownIds),
+      toRecommendationRow(rec, state.orgId, state.runId, knownIds, budgetMinorById),
     );
     await repo.saveRecommendations(rows);
     // ações propostas pelo LLM (com alvo válido) → candidatas do caminho de escrita.
@@ -1178,10 +1179,18 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     // rótulo legível vem do catálogo cru (`state.entities`, todos os status) — cobre
     // entidades pausadas que nunca passam pelo mapa/LLM (não têm `entity_analyses`).
     const nameById = new Map((state.entities ?? []).map((e) => [e.id, e.name]));
+    // orçamento atual da entidade-alvo → contexto de exibição em adjust_budget (card mostra
+    // "atual → proposto"). Enriquece aqui, no mesmo ponto do nome, cobrindo playbook + LLM.
+    const budgetMinorById = buildCurrentBudgetMinorById(state.entities ?? []);
     const merged = [...(state.playbookCandidates ?? []), ...(state.llmCandidates ?? [])].map((a) => {
       const name = nameById.get(a.target.id);
       // `name` opcional (exactOptionalPropertyTypes): só inclui quando conhecido.
-      return name !== undefined ? { ...a, target: { ...a.target, name } } : a;
+      const withName = name !== undefined ? { ...a, target: { ...a.target, name } } : a;
+      const currentMinor = budgetMinorById.get(a.target.id);
+      // só adjust_budget SEM atual já capturado ganha o contexto (não sobrescreve o do propose).
+      if (withName.type !== "adjust_budget" || currentMinor === undefined) return withName;
+      if (ACTION_PARAM_CURRENT_MINOR in withName.params) return withName;
+      return { ...withName, params: { ...withName.params, [ACTION_PARAM_CURRENT_MINOR]: currentMinor } };
     });
     const { kept, dropped } = resolveActionConflicts(merged);
     if (dropped.length > 0) logger.debug({ runId: state.runId, dropped: dropped.length }, "decide:conflitos resolvidos");
@@ -1718,10 +1727,12 @@ function toRecommendationRow(
   orgId: string,
   runId: string,
   knownIds: ReadonlySet<string>,
+  budgetMinorById: ReadonlyMap<string, number>,
 ): RecommendationRow {
   const actionType = applicableActionType(rec.actionType);
   const hasValidTarget = rec.targetEntity !== null && knownIds.has(rec.targetEntity.externalId);
-  const params = budgetParams(rec);
+  const currentMinor = rec.targetEntity ? budgetMinorById.get(rec.targetEntity.externalId) : undefined;
+  const params = budgetParams(rec, currentMinor);
   // budget sem pct válido → NÃO vira ação (evitaria daily_budget=NaN na Meta); fica consultiva.
   const budgetOk = actionType !== "adjust_budget" || ACTION_PARAM_PCT in params;
   const proposedAction: Action | null =
@@ -1786,6 +1797,21 @@ function buildBudgetByEntity(entities: readonly AdEntity[]): Map<string, boolean
   const map = new Map<string, boolean>();
   for (const e of entities) {
     map.set(entityKeyOf({ level: e.level, id: e.id }), e.dailyBudget !== undefined || e.lifetimeBudget !== undefined);
+  }
+  return map;
+}
+
+/**
+ * Mapa `id → orçamento atual (unidade mínima)` da entidade (diário preferido, senão vitalício).
+ * Enriquece a ação `adjust_budget` com o atual (`ACTION_PARAM_CURRENT_MINOR`) p/ o card de
+ * aprovação mostrar "atual → proposto" — mesma fonte curada, sem bater na Meta. Keyed por id
+ * (ids da Meta são globais; casa com o `nameById` do decide). Só entidades COM orçamento entram.
+ */
+function buildCurrentBudgetMinorById(entities: readonly AdEntity[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const e of entities) {
+    const minor = e.dailyBudget ?? e.lifetimeBudget;
+    if (minor !== undefined) map.set(e.id, minor);
   }
   return map;
 }
@@ -1896,11 +1922,16 @@ async function resolveAudienceHeadroomByEntity(
   return headroomByEntity;
 }
 
-/** Params da ação de budget (direção + magnitude), quando for o caso. `pct` sempre ≥0. */
-function budgetParams(rec: AnalysisRecommendation): Record<string, unknown> {
+/** Params da ação de budget (direção + magnitude), quando for o caso. `pct` sempre ≥0.
+ *  `currentMinor` (contexto de exibição, opcional) = orçamento atual da entidade-alvo. */
+function budgetParams(rec: AnalysisRecommendation, currentMinor?: number): Record<string, unknown> {
   const dir = budgetDirection(rec.actionType);
   if (dir && typeof rec.budgetChangePct === "number" && Number.isFinite(rec.budgetChangePct)) {
-    return { [ACTION_PARAM_MODE]: dir, [ACTION_PARAM_PCT]: Math.abs(rec.budgetChangePct) };
+    return {
+      [ACTION_PARAM_MODE]: dir,
+      [ACTION_PARAM_PCT]: Math.abs(rec.budgetChangePct),
+      ...(currentMinor !== undefined ? { [ACTION_PARAM_CURRENT_MINOR]: currentMinor } : {}),
+    };
   }
   return {};
 }

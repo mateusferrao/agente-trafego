@@ -4,9 +4,35 @@ import {
   ACTION_PARAM_MODE,
   ACTION_PARAM_PCT,
   BUDGET_MODE_DECREASE,
+  BUDGET_MODE_INCREASE,
   BUDGET_MODE_SET,
 } from "@trafego/shared";
 import { type DroppedAction, entityKeyOf } from "../guardrails/index.js";
+
+/**
+ * Projeta o orçamento RESULTANTE (unidade mínima) de uma ação `adjust_budget` dado o
+ * orçamento ATUAL, só para EXIBIÇÃO (card de aprovação / detalhe mostram "atual → proposto").
+ * Espelha a matemática do apply SEM o clamp do blast-radius (o clamp fresco é rede do apply;
+ * o card mostra o proposto + a ressalva do teto, como o eco). `set` → o valor absoluto pedido
+ * (independe do atual); `increase`/`decrease` → atual ±pct%. Retorna null quando não dá pra
+ * projetar (pct sem atual conhecido, sem pct/valor, modo desconhecido). PURA.
+ */
+export function projectBudgetTargetMinor(
+  currentMinor: number | null,
+  params: Readonly<Record<string, unknown>>,
+): number | null {
+  const mode = params[ACTION_PARAM_MODE];
+  if (mode === BUDGET_MODE_SET) {
+    const amount = Number(params[ACTION_PARAM_AMOUNT_MINOR]);
+    return Number.isFinite(amount) && amount > 0 ? Math.round(amount) : null;
+  }
+  if (mode !== BUDGET_MODE_INCREASE && mode !== BUDGET_MODE_DECREASE) return null;
+  if (currentMinor == null || !(currentMinor > 0)) return null;
+  const pct = Number(params[ACTION_PARAM_PCT]);
+  if (!Number.isFinite(pct) || pct < 0) return null;
+  const sign = mode === BUDGET_MODE_DECREASE ? -1 : 1;
+  return Math.round(currentMinor * (1 + (sign * pct) / 100));
+}
 
 /**
  * Edição do VALOR de uma ação `adjust_budget` pendente ANTES de aprovar (C, v1) — PURA. O dono

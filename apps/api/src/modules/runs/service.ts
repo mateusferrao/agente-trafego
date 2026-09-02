@@ -14,7 +14,8 @@ import {
   type Database,
 } from "@trafego/db";
 import type { CuratedEntitySnapshot, InsightMetrics, UnitAnalysis } from "@trafego/shared";
-import { cpaLabelFor, isOverCostCap, partialNote, partialSeverity, resolveCostCapUsd, usagePeriod } from "@trafego/core";
+import { cpaLabelFor, isOverCostCap, partialNote, partialSeverity, projectBudgetTargetMinor, resolveCostCapUsd, usagePeriod } from "@trafego/core";
+import { ACTION_PARAM_CURRENT_MINOR } from "@trafego/shared";
 import {
   AGENT_RUNS_QUEUE,
   AGENT_RUN_JOB,
@@ -686,6 +687,21 @@ interface PendingApprovalIndex {
  * draftId; ação direta liga à aprovação pendente por entidade+tipo. Sem pendente → not_applicable
  * (auto-aplicada/barrada/já criada — nada a fazer no card agora).
  */
+/** Unidade mínima por unidade maior (centavos → reais) — igual ao approvals/drafts service. */
+const MINOR_PER_UNIT = 100;
+
+/** Orçamento atual (unidade mínima) capturado na ação `adjust_budget` — só quando conhecido/>0. */
+function proposedCurrentMinor(action: Action): number | null {
+  if (action.type !== "adjust_budget") return null;
+  const raw = Number(action.params[ACTION_PARAM_CURRENT_MINOR]);
+  return Number.isFinite(raw) && raw > 0 ? raw : null;
+}
+
+/** Minor → unidade maior (reais) para exibição; null preserva. */
+function toMajor(minor: number | null): number | null {
+  return minor != null ? minor / MINOR_PER_UNIT : null;
+}
+
 function toRecommendationOutput(
   rec: RecommendationRow,
   vote: "up" | "down" | null,
@@ -724,7 +740,14 @@ function toRecommendationOutput(
     riskLevel: rec.riskLevel,
     applicability,
     proposedAction: action
-      ? { type: action.type, target: { level: action.target.level, id: action.target.id }, params: action.params }
+      ? {
+          type: action.type,
+          target: { level: action.target.level, id: action.target.id },
+          params: action.params,
+          currentBudgetMajor: toMajor(proposedCurrentMinor(action)),
+          targetBudgetMajor:
+            action.type === "adjust_budget" ? toMajor(projectBudgetTargetMinor(proposedCurrentMinor(action), action.params)) : null,
+        }
       : null,
     toolKey: rec.toolKey ?? null,
     draftId,

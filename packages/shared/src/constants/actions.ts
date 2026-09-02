@@ -7,6 +7,12 @@ export const ACTION_PARAM_MODE = "mode";
 export const ACTION_PARAM_PCT = "pct";
 /** Valor ABSOLUTO alvo do budget (unidade mínima/centavos), usado com `mode:'set'`. */
 export const ACTION_PARAM_AMOUNT_MINOR = "amountMinor";
+/**
+ * Orçamento ATUAL da entidade (unidade mínima) no momento da proposta — CONTEXTO de
+ * exibição/eco (card de aprovação mostra "atual → proposto"), NÃO input da mutação. A casca
+ * enriquece a ação com isto antes de persistir (igual ao `target.name`); ausente = desconhecido.
+ */
+export const ACTION_PARAM_CURRENT_MINOR = "currentMinor";
 /** Chave do status-alvo em `set_status.params` — valor no vocabulário neutro (EntityStatus). */
 export const ACTION_PARAM_STATUS = "status";
 export const BUDGET_MODE_DECREASE = "decrease";
