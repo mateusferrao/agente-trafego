@@ -10,7 +10,9 @@ import {
   computeConfidence,
   computeOutcome,
   describeLessonForRedactor,
+  detectConversionLagPrior,
   detectFactCandidates,
+  detectFatigueTimingPrior,
   distillAccountPriors,
   fallbackLessonText,
   lessonKeyOf,
@@ -41,6 +43,8 @@ export interface LearningServiceConfig {
   readonly outcomeWindowDays: number;
   /** mínimo de entidades DISTINTAS p/ nascer um prior de conta (destilação cross-seccional). */
   readonly accountMinEntities: number;
+  /** janela (dias) da série de insights lida pelos detectores temporais (fadiga/lag). */
+  readonly temporalLookbackDays: number;
 }
 
 export interface LearningServiceDeps {
@@ -359,6 +363,44 @@ export function createLearningService(deps: LearningServiceDeps) {
     return { created, reinforced };
   }
 
+  /**
+   * Destila os priors TEMPORAIS (Classe B) da série de insights: timing de fadiga de criativo
+   * e lag de conversão. Ambos são prior de PROMPT (ressalva conservadora). Recomputados a cada
+   * tick da série (mantém o prior fresco enquanto o padrão persiste); não tocam guardrail/autonomia.
+   */
+  async function distillTemporal(agent: LearnableAgent, redactBudget: { remaining: number }): Promise<DistillResult> {
+    const since = dateStr(addDays(clock(), -config.temporalLookbackDays));
+    const [ctrSeries, convSeries] = await Promise.all([
+      repo.loadCampaignCtrSeries(agent.adAccountId, since),
+      repo.loadAccountConversionSeries(agent.adAccountId, since),
+    ]);
+    const candidates = [detectFatigueTimingPrior(ctrSeries), detectConversionLagPrior(convSeries)].filter(
+      (c): c is LessonCandidate => c !== null,
+    );
+    let created = 0;
+    let reinforced = 0;
+    for (const candidate of candidates) {
+      const key = lessonKeyOf(candidate.key);
+      const existing = await repo.findLessonByKey(agent.orgId, agent.agentId, key);
+      if (existing) {
+        // padrão redetectado → mantém vivo (evita decay) e sobe a confiança se ela cresceu.
+        await repo.refreshAccountPrior({
+          id: existing.id,
+          confidence: Math.max(existing.confidence ?? 0, candidate.confidence),
+          supportCount: existing.reinforceCount,
+          evidenceAt: clock(),
+        });
+        reinforced += 1;
+        continue;
+      }
+      if (redactBudget.remaining <= 0) continue;
+      const content = await redactWithBudget(candidate, agent.orgId, undefined, redactBudget);
+      await repo.insertLesson({ orgId: agent.orgId, agentId: agent.agentId, candidate, content, evidenceAt: clock() });
+      created += 1;
+    }
+    return { created, reinforced };
+  }
+
   /** Roda a medição + destilação em todos os agentes elegíveis + a curadoria — tick do job. */
   async function runTick(): Promise<{ agents: number; measured: number; manualEvidence: number; created: number; reinforced: number; staled: number; archived: number }> {
     const agentsList = await repo.listLearnableAgents();
@@ -377,8 +419,9 @@ export function createLearningService(deps: LearningServiceDeps) {
         manualEvidence += mc.evidence;
         const acc = await distillAccount(agent, redactBudget);
         const track = await distillAgent(agent, redactBudget);
-        created += acc.created + track.created;
-        reinforced += acc.reinforced + track.reinforced;
+        const temporal = await distillTemporal(agent, redactBudget);
+        created += acc.created + track.created + temporal.created;
+        reinforced += acc.reinforced + track.reinforced + temporal.reinforced;
       } catch (err) {
         logger.error({ err, agentId: agent.agentId }, "learning:agente falhou");
       }
@@ -391,7 +434,7 @@ export function createLearningService(deps: LearningServiceDeps) {
     return { agents: agentsList.length, measured, manualEvidence, created, reinforced, ...decay };
   }
 
-  return { distillAgent, distillAccount, measureOutcomes, measureManualChanges, runTick };
+  return { distillAgent, distillAccount, distillTemporal, measureOutcomes, measureManualChanges, runTick };
 }
 
 /** Monta o `outcomeMetrics` gravado em recommendation_feedback (antes/depois, entidade+conta). */

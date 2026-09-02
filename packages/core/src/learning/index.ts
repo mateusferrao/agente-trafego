@@ -152,8 +152,12 @@ export type CalibrationPattern = "scale_backfired" | "cut_worked";
 /** Padrão de PRIOR DE CONTA (v3) — destilado de outcome medido em ≥K entidades distintas. */
 export type AccountPriorPattern = "account_cut_pays" | "account_scale_backfires" | "account_scale_pays";
 
-/** Qualquer padrão de lição (observacional + calibração + prior de conta). */
-export type LessonPattern = FactPattern | CalibrationPattern | AccountPriorPattern;
+/** Padrão TEMPORAL da conta (Classe B, v3) — regularidade dinâmica que só sai da série de
+ *  vários runs (não é "estado atual"). Timing de fadiga + lag de conversão. */
+export type TemporalPattern = "account_fatigue_timing" | "account_conversion_lag";
+
+/** Qualquer padrão de lição (observacional + calibração + prior de conta + temporal). */
+export type LessonPattern = FactPattern | CalibrationPattern | AccountPriorPattern | TemporalPattern;
 
 export interface LessonEvidence {
   readonly pattern: LessonPattern;
@@ -163,6 +167,8 @@ export interface LessonEvidence {
   readonly subjectName?: string;
   /** sinal de saúde recorrente, quando `pattern === "recurring_health_signal"`. */
   readonly healthSignal?: HealthSignal;
+  /** nº de DIAS do padrão temporal (fadiga ~Nd / lag de conversão ~Dd). */
+  readonly days?: number;
 }
 
 /** Candidata a lição — estruturada; o `content` (frase PT) é preenchido pelo redator depois. */
@@ -597,6 +603,7 @@ export interface RedactorInput {
   readonly totalRuns: number;
   readonly subjectName?: string;
   readonly healthSignal?: HealthSignal;
+  readonly days?: number;
 }
 
 export function describeLessonForRedactor(candidate: LessonCandidate): RedactorInput {
@@ -610,6 +617,7 @@ export function describeLessonForRedactor(candidate: LessonCandidate): RedactorI
     totalRuns: candidate.evidence.totalRuns,
     ...(candidate.evidence.subjectName ? { subjectName: candidate.evidence.subjectName } : {}),
     ...(candidate.evidence.healthSignal ? { healthSignal: candidate.evidence.healthSignal } : {}),
+    ...(typeof candidate.evidence.days === "number" ? { days: candidate.evidence.days } : {}),
   };
 }
 
@@ -647,6 +655,10 @@ export function fallbackLessonText(r: RedactorInput): string {
       return `Nesta conta, escalar sem base sólida tende a piorar o custo — visto em ${r.occurrences} campanhas diferentes.`;
     case "account_scale_pays":
       return `Nesta conta, escalar o que já tem base tende a compensar — foi o que aconteceu em ${r.occurrences} campanhas diferentes.`;
+    case "account_fatigue_timing":
+      return `Nesta conta, os criativos tendem a cansar por volta de ${r.days} dias após o lançamento — vale preparar renovação antes disso.`;
+    case "account_conversion_lag":
+      return `Nesta conta, a conversão costuma aparecer com ~${r.days} dias de atraso em relação ao gasto — não trate uma campanha nova como sem resultado cedo demais.`;
   }
 }
 
@@ -762,3 +774,6 @@ export function selectLessonsForBrief(lessons: readonly StoredLesson[], topK: nu
     guards,
   };
 }
+
+// ─── Detectores temporais (Classe B, v3) — arquivo separado, re-exportado aqui ─────
+export * from "./temporal.js";

@@ -17,6 +17,7 @@ const CONFIG: LearningServiceConfig = {
   phaseBufferDays: 7,
   outcomeWindowDays: 7,
   accountMinEntities: 3,
+  temporalLookbackDays: 60,
 };
 
 /** OutcomeRepo stub: sem recs medíveis por padrão (destilação observacional isolada). */
@@ -74,6 +75,8 @@ function fakeRepo(
     refreshAccountPrior: async ({ id, confidence, supportCount, proposedThresholdPatch }) => {
       state.refreshes.push({ id, confidence, supportCount, ...(proposedThresholdPatch ? { proposedThresholdPatch } : {}) });
     },
+    loadCampaignCtrSeries: async () => [],
+    loadAccountConversionSeries: async () => [],
     applyDecaySweep: async () => ({ staled: 0, archived: 0 }),
     saveEntityConfigSnapshots: async () => {},
   };
@@ -331,6 +334,39 @@ describe("learning service — distillAccount (prior de conta do ledger)", () =>
     const r = await svc.distillAccount(AGENT, { remaining: 20 });
     expect(r.reinforced).toBe(0);
     expect(state.refreshes).toHaveLength(0);
+  });
+});
+
+describe("learning service — distillTemporal (padrões temporais, Classe B)", () => {
+  function fatiguingCtr(fatigueDay: number, length = 12): number[] {
+    return Array.from({ length }, (_, day) => (day < fatigueDay ? 5 : 1));
+  }
+
+  it("materializa o prior de timing de fadiga quando o padrão é apertado em >= K campanhas", async () => {
+    const state: FakeRepoState = { inserts: [], reinforces: [], refreshes: [] };
+    const base = fakeRepo(null, [], state);
+    const repo = {
+      ...base,
+      loadCampaignCtrSeries: async () => [
+        { campaignId: "c1", ctrByDay: fatiguingCtr(6) },
+        { campaignId: "c2", ctrByDay: fatiguingCtr(6) },
+        { campaignId: "c3", ctrByDay: fatiguingCtr(7) },
+      ],
+      loadAccountConversionSeries: async () => [],
+    };
+    const svc = createLearningService({ repo: repo as never, llm: llmStub("Criativos cansam ~6 dias.") as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
+    const r = await svc.distillTemporal(AGENT, { remaining: 20 });
+    expect(r.created).toBe(1);
+    expect(state.inserts[0]?.candidate.key).toMatchObject({ scope: "account", dimension: "creative", direction: "neutral" });
+    expect(state.inserts[0]?.candidate.evidence.pattern).toBe("account_fatigue_timing");
+  });
+
+  it("sem série suficiente → nenhum prior temporal (empty state honesto)", async () => {
+    const state: FakeRepoState = { inserts: [], reinforces: [], refreshes: [] };
+    const svc = createLearningService({ repo: fakeRepo(null, [], state), llm: llmStub("x") as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
+    const r = await svc.distillTemporal(AGENT, { remaining: 20 });
+    expect(r.created).toBe(0);
+    expect(state.inserts).toHaveLength(0);
   });
 });
 

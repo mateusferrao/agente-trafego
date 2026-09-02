@@ -3,14 +3,16 @@
 // learning) decide/calcula; aqui só há IO. A curadoria transacional (merge/decay/
 // contradição) e a medição de outcome entram nas subfatias seguintes reusando este repo.
 
-import { and, desc, eq, inArray, isNotNull, lt, sql } from "drizzle-orm";
-import { adAccounts, agentMemory, agentRuns, agents, entityConfigSnapshots, learningEvidence, type Database } from "@trafego/db";
-import type { AdEntity, EntityConfigSnapshot, HealthSignal, PerformanceTier, RunCampaignCard, TrackingHealth, WasteReport } from "@trafego/shared";
+import { and, desc, eq, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
+import { adAccounts, agentMemory, agentRuns, agents, entityConfigSnapshots, insightsSnapshots, learningEvidence, type Database } from "@trafego/db";
+import type { AdEntity, EntityConfigSnapshot, EntityLevel, HealthSignal, PerformanceTier, RunCampaignCard, TrackingHealth, WasteReport } from "@trafego/shared";
 import {
   decayCutoffs,
   LEARNING_MEMORY_TYPES,
   lessonKindFromMemoryType,
+  type AccountConversionDay,
   type AccountEvidenceRow,
+  type CampaignFatigueSeries,
   type DecayConfig,
   type LessonCandidate,
   type RunLearningSnapshot,
@@ -27,6 +29,7 @@ export interface LearnableAgent {
 
 // fonte única em @trafego/core (derivado de MEMORY_TYPE_BY_KIND) — sem repetir o literal (§13).
 const LEARNING_TYPES = LEARNING_MEMORY_TYPES;
+const CAMPAIGN_LEVEL: EntityLevel = "campaign";
 
 export interface LearningRepo {
   listLearnableAgents(): Promise<LearnableAgent[]>;
@@ -43,6 +46,10 @@ export interface LearningRepo {
   reinforceLesson(id: string, confidence: number, evidenceAt: Date): Promise<void>;
   /** Ledger de evidência (v3): linhas medidas do agente, base da destilação cross-seccional. */
   loadEvidence(orgId: string, agentId: string): Promise<AccountEvidenceRow[]>;
+  /** Série de CTR por-campanha (>= `sinceDate`, cronológica) p/ o detector de timing de fadiga. */
+  loadCampaignCtrSeries(adAccountId: string, sinceDate: string): Promise<CampaignFatigueSeries[]>;
+  /** Série diária da CONTA (gasto + conversões, cronológica) p/ o detector de lag de conversão. */
+  loadAccountConversionSeries(adAccountId: string, sinceDate: string): Promise<AccountConversionDay[]>;
   /** Atualiza um prior de CONTA já materializado: fixa a confiança destilada + a contagem de
    *  entidades de suporte (`reinforceCount` = S, não incrementa) e reativa. Anexa a proposta de
    *  limiar quando fornecida (opt-in, pendente). Idempotente — o serviço só chama quando S
@@ -158,6 +165,41 @@ export function createLearningRepo(db: Database): LearningRepo {
         .from(learningEvidence)
         .where(and(eq(learningEvidence.orgId, orgId), eq(learningEvidence.agentId, agentId)));
       return rows;
+    },
+
+    async loadCampaignCtrSeries(adAccountId, sinceDate) {
+      const rows = await db
+        .select({ entityId: insightsSnapshots.entityId, date: insightsSnapshots.date, metrics: insightsSnapshots.metricsJson })
+        .from(insightsSnapshots)
+        .where(and(eq(insightsSnapshots.adAccountId, adAccountId), eq(insightsSnapshots.entityLevel, CAMPAIGN_LEVEL), gte(insightsSnapshots.date, sinceDate)))
+        .orderBy(insightsSnapshots.entityId, insightsSnapshots.date);
+      const byCampaign = new Map<string, number[]>();
+      for (const r of rows) {
+        const ctr = (r.metrics as { metrics?: { ctr?: number } } | null)?.metrics?.ctr;
+        if (typeof ctr !== "number") continue;
+        const list = byCampaign.get(r.entityId) ?? [];
+        list.push(ctr);
+        byCampaign.set(r.entityId, list);
+      }
+      return [...byCampaign.entries()].map(([campaignId, ctrByDay]) => ({ campaignId, ctrByDay }));
+    },
+
+    async loadAccountConversionSeries(adAccountId, sinceDate) {
+      const rows = await db
+        .select({ date: insightsSnapshots.date, metrics: insightsSnapshots.metricsJson })
+        .from(insightsSnapshots)
+        .where(and(eq(insightsSnapshots.adAccountId, adAccountId), eq(insightsSnapshots.entityLevel, CAMPAIGN_LEVEL), gte(insightsSnapshots.date, sinceDate)))
+        .orderBy(insightsSnapshots.date);
+      // conta = soma das campanhas por dia (a série da conta não é persistida à parte).
+      const byDay = new Map<string, { spend: number; conversions: number }>();
+      for (const r of rows) {
+        const m = (r.metrics as { metrics?: { spend?: number; conversions?: number } } | null)?.metrics ?? {};
+        const agg = byDay.get(r.date) ?? { spend: 0, conversions: 0 };
+        if (typeof m.spend === "number") agg.spend += m.spend;
+        if (typeof m.conversions === "number") agg.conversions += m.conversions;
+        byDay.set(r.date, agg);
+      }
+      return [...byDay.keys()].sort().map((d) => byDay.get(d)!);
     },
 
     async refreshAccountPrior({ id, confidence, supportCount, evidenceAt, proposedThresholdPatch }) {

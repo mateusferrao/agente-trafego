@@ -28,6 +28,7 @@ export function startAgentLearningWorker(deps: WorkerDeps, connection: Redis): W
       phaseBufferDays: deps.learning.phaseBufferDays,
       outcomeWindowDays: deps.learning.outcomeWindowDays,
       accountMinEntities: deps.learning.accountMinEntities,
+      temporalLookbackDays: deps.learning.temporalLookbackDays,
     },
   });
   return new Worker<AgentLearningTickPayload>(
