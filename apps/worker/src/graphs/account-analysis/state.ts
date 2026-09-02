@@ -2,7 +2,7 @@
 // O estado é serializável (persiste no checkpointer Postgres p/ interrupt/resume).
 
 import { Annotation } from "@langchain/langgraph";
-import type { AccumulatedTokenUsage, DecisionResult, DroppedAction, GuardrailResult } from "@trafego/core";
+import type { AccumulatedTokenUsage, DecisionResult, DroppedAction, GuardrailResult, LessonBrief, LessonGuard } from "@trafego/core";
 import type { AgentRunTrigger, MarketReference, NotifyPolicy, PartialReason, Posture, RunNotifyTarget, SignalFinding } from "@trafego/shared";
 import type { MutationResult } from "@trafego/shared/ports";
 import type {
@@ -57,6 +57,10 @@ export const AccountAnalysisState = Annotation.Root({
   playbookRules: Annotation<readonly PlaybookRule[]>,
   // memória "rejeitado" (loop de feedback) — injetada no brief p/ não repetir vetos.
   rejectedMemory: Annotation<readonly string[]>,
+  // aprendizado contínuo: lições confirmadas/alta confiança → texto do analista (rotuladas).
+  lessons: Annotation<readonly LessonBrief[]>,
+  // hipóteses não-confirmadas → guard assimétrico (S3); nunca entram no texto do prompt.
+  lessonGuards: Annotation<readonly LessonGuard[]>,
   guardrailConfig: Annotation<GuardrailConfig>,
   autonomyPolicy: Annotation<AutonomyPolicy>,
   // política de notificação (F4): governa o push do cron (runPush) no writeMessage.

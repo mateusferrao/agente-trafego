@@ -6834,6 +6834,104 @@
           "ok"
         ]
       },
+      "LearningsList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "fact",
+                    "calibration"
+                  ]
+                },
+                "content": {
+                  "type": "string"
+                },
+                "tier": {
+                  "type": "string",
+                  "enum": [
+                    "explorando",
+                    "provavel",
+                    "confirmado"
+                  ]
+                },
+                "origin": {
+                  "type": "string",
+                  "enum": [
+                    "our_action",
+                    "observational",
+                    "human_feedback",
+                    "human_manual"
+                  ]
+                },
+                "scope": {
+                  "type": "string",
+                  "enum": [
+                    "entity",
+                    "account",
+                    "org",
+                    "global"
+                  ]
+                },
+                "dimension": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "confirmedByHuman": {
+                  "type": "boolean"
+                },
+                "lifecycle": {
+                  "type": "string",
+                  "enum": [
+                    "active",
+                    "stale",
+                    "archived"
+                  ]
+                },
+                "reinforceCount": {
+                  "type": "integer"
+                },
+                "sourceRunId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "createdAt": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "content",
+                "tier",
+                "origin",
+                "scope",
+                "dimension",
+                "confirmedByHuman",
+                "lifecycle",
+                "reinforceCount",
+                "sourceRunId",
+                "createdAt"
+              ]
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
       "ApprovalOutput": {
         "type": "object",
         "properties": {
@@ -10257,6 +10355,35 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/FeedbackOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agents/{agentId}/learnings": {
+      "get": {
+        "tags": [
+          "learnings"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "agentId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "aprendizados curados do agente",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningsList"
                 }
               }
             }

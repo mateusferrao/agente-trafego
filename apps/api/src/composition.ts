@@ -28,6 +28,7 @@ import { createAgentsService } from "./modules/agents/service.js";
 import { createApprovalsService } from "./modules/approvals/service.js";
 import { createDraftsService } from "./modules/drafts/service.js";
 import { createRecommendationsService } from "./modules/recommendations/service.js";
+import { createLearningsService } from "./modules/learnings/service.js";
 import { createRunsService, type OnboardingLogger } from "./modules/runs/service.js";
 import { createDashboardService } from "./modules/dashboard/service.js";
 import { createTimelineService } from "./modules/timeline/service.js";
@@ -81,6 +82,7 @@ export interface Services {
   readonly approvals: ReturnType<typeof createApprovalsService>;
   readonly drafts: ReturnType<typeof createDraftsService>;
   readonly recommendations: ReturnType<typeof createRecommendationsService>;
+  readonly learnings: ReturnType<typeof createLearningsService>;
   readonly runs: ReturnType<typeof createRunsService>;
   readonly dashboard: ReturnType<typeof createDashboardService>;
   readonly timeline: ReturnType<typeof createTimelineService>;
@@ -249,6 +251,7 @@ export function buildContainer(logger?: OnboardingLogger): Container {
     approvals: createApprovalsService({ db, approvals, scheduler, revertTtlDays: env.REVERT_TTL_DAYS }),
     drafts: createDraftsService({ db, adsPlatform, vault, approvals, storage, scheduler }),
     recommendations: createRecommendationsService({ db }),
+    learnings: createLearningsService({ db }),
     runs,
     dashboard: createDashboardService({
       db,

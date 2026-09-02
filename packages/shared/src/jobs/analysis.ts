@@ -47,6 +47,16 @@ export const APPROVAL_EXPIRY_SCHEDULE_KEY = "expiry:approvals";
 export type ApprovalExpiryTickPayload = Record<string, never>;
 
 /**
+ * Fila do JOB DE APRENDIZADO (aprendizado contínuo): um Job Scheduler recorrente (diário)
+ * enfileira aqui; o worker destila padrões do histórico de análise em lições, mede o
+ * outcome de ações aplicadas (S4) e faz a curadoria (decaimento). Nome durável — não
+ * nomeado por um mecanismo (§13). Chave estável (singleton, varre todos os agentes ativos).
+ */
+export const AGENT_LEARNING_QUEUE = "agent-learning";
+export const AGENT_LEARNING_SCHEDULE_KEY = "learning:agents";
+export type AgentLearningTickPayload = Record<string, never>;
+
+/**
  * Fila de PURGE do contexto de grupo (retenção/LGPD): um Job Scheduler recorrente (diário)
  * enfileira aqui; o worker apaga as mensagens ambiente de grupo além da janela de retenção.
  */

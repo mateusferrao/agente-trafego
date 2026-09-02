@@ -41,3 +41,4 @@ export * from "./analysis-knowledge/index.js";
 export * from "./curated-entity/index.js";
 export * from "./verticals/index.js";
 export * from "./voice/index.js";
+export * from "./learning/index.js";

@@ -70,6 +70,7 @@ import { timelineOutput } from "../modules/timeline/schema.js";
 import { channelStateOutput } from "../modules/channels/schema.js";
 import { channelGroupStateOutput, groupsListOutput, setGroupInput } from "../modules/groups/schema.js";
 import { feedbackInput, feedbackOutput } from "../modules/recommendations/schema.js";
+import { learningsList } from "../modules/learnings/schema.js";
 import {
   startVerificationInput,
   startVerificationOutput,
@@ -178,6 +179,7 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const RemoveRecipientOutput = registry.register("RemoveRecipientOutput", removeRecipientOutput);
   const FeedbackInput = registry.register("FeedbackInput", feedbackInput);
   const FeedbackOutput = registry.register("FeedbackOutput", feedbackOutput);
+  const LearningsList = registry.register("LearningsList", learningsList);
   const ApprovalOutput = registry.register("ApprovalOutput", approvalOutput);
   const ResolveApprovalInput = registry.register("ResolveApprovalInput", resolveApprovalInput);
   const ResolveApprovalOutput = registry.register("ResolveApprovalOutput", resolveApprovalOutput);
@@ -662,6 +664,13 @@ const SetDraftCreativeOutput = registry.register("SetDraftCreativeOutput", setDr
     tags: ["recommendations"],
     request: { params: z.object({ id: z.string() }), ...jsonBody(FeedbackInput) },
     responses: { 200: jsonRes("feedback registrado", FeedbackOutput) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/agents/{agentId}/learnings",
+    tags: ["learnings"],
+    request: { params: z.object({ agentId: z.string() }) },
+    responses: { 200: jsonRes("aprendizados curados do agente", LearningsList) },
   });
   registry.registerPath({
     method: "get",

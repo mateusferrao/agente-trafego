@@ -57,7 +57,10 @@ import {
   selectCreatives,
   targetStatusOf,
   volumeToRecCount,
+  selectLessonsForBrief,
   type LastUnit,
+  type LessonBrief,
+  type LessonGuard,
 } from "@trafego/core";
 import { ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS, DEFAULT_CURRENCY, DEFAULT_POSTURE, extractPhoneFromName, plural } from "@trafego/shared";
 import { recommendations } from "@trafego/db";
@@ -122,6 +125,7 @@ import {
   type LastEntityAnalysis,
 } from "../../modules/analysis/entity-analyses.repo.js";
 import { createNotifyRepo, type NotifyRepo } from "../../modules/notify/repo.js";
+import { createLearningRepo, type LearningRepo } from "../../modules/learning/repo.js";
 import { createSendToConversation } from "../../modules/notify/send-to-contact.js";
 import { createVisionResolver, servingVisionKey } from "../../modules/vision/resolver.js";
 import { makeMetaToolExecutor, type MetaToolExecutor } from "../../executors/meta-tools.js";
@@ -211,6 +215,8 @@ export interface AnalysisNodeRepos {
   readonly breakdowns: InsightsBreakdownsRepo;
   readonly notify: NotifyRepo;
   readonly entityAnalyses: EntityAnalysesRepo;
+  /** aprendizado contínuo — lê as lições ativas p/ injetar no brief (S1). */
+  readonly learning: LearningRepo;
   /** resolver de visão — injetável p/ teste; default cria por-run (com meta). */
   readonly vision?: CreativeVisionPort;
   /** executor de escrita — injetável p/ teste; default = Meta via ports. */
@@ -225,6 +231,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
   const breakdowns = repos?.breakdowns ?? createDrizzleInsightsBreakdownsRepo(deps.db);
   const notifyRepo = repos?.notify ?? createNotifyRepo(deps.db);
   const entityAnalysesRepo = repos?.entityAnalyses ?? createEntityAnalysesRepo(deps.db);
+  const learningRepo = repos?.learning ?? createLearningRepo(deps.db);
   const executor = repos?.executor ?? makeMetaToolExecutor(deps);
   const sendToConversation = createSendToConversation({ messaging: deps.ports.messaging, repo: notifyRepo });
 
@@ -257,6 +264,11 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const windowLabel = `últimos ${cfg.windowDays} dias`;
     const baselineLabel = `${cfg.baselineDays} dias anteriores`;
 
+    // aprendizado contínuo: divide as lições ativas em confirmadas/alta (→ prompt do
+    // analista, rotuladas) e hipóteses (→ guard assimétrico silencioso, S3). Teto top-K.
+    const activeLessons = await learningRepo.loadActiveLessons(state.orgId, state.agentId);
+    const selectedLessons = selectLessonsForBrief(activeLessons, deps.learning.briefTopK);
+
     await repo.openRun(state.orgId, state.runId, {
       goals: ctx.goals,
       model: cfg.model,
@@ -276,6 +288,8 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       posture: ctx.posture,
       guardrailConfig,
       rejectedMemory: ctx.rejectedMemory,
+      lessons: [...selectedLessons.prompt],
+      lessonGuards: [...selectedLessons.guards],
       mutedCampaignIds: ctx.mutedCampaignIds,
       orgMarketReference: ctx.orgMarketReference,
       agentMarketReference: agentMarketReferenceFromModelConfig(ctx.modelConfig),
@@ -460,7 +474,13 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       ...(state.mutedCampaignIds ? { mutedCampaignIds: new Set(state.mutedCampaignIds) } : {}),
       ...(state.demographics ? { demographics: state.demographics } : {}),
       ...(state.placements ? { placements: state.placements } : {}),
-      memory: { objectives: [], pastActions: [], rejected: [...(state.rejectedMemory ?? [])] },
+      memory: {
+        objectives: [],
+        pastActions: [],
+        rejected: [...(state.rejectedMemory ?? [])],
+        // aprendizados curados desta conta (confirmados/alta confiança) — rotulados no prompt.
+        lessons: (state.lessons ?? []).map((l) => ({ content: l.content, tier: l.tier, origin: l.origin })),
+      },
     });
     if (built.status === "empty") {
       return { brief: null, analysisOutput: null, findings: [], summary: NO_ACTIVITY_SUMMARY, unitAnalyses: [], freshUnits: [], campaignCards: [] };
@@ -1604,6 +1624,9 @@ function buildCampaignCards(
       topFinding: top ? { title: top.title, severity: top.severity } : null,
       flags: [...u.campaign.flags],
       ...(u.campaign.tier ? { tier: u.campaign.tier } : {}),
+      ...(u.campaign.healthSignals && u.campaign.healthSignals.length > 0
+        ? { healthSignals: [...u.campaign.healthSignals] }
+        : {}),
       ...(stage ? { stage } : {}),
       ...(u.campaign.budget ? { budget: u.campaign.budget } : {}),
       ...(u.campaign.atBudgetCeiling !== undefined ? { atBudgetCeiling: u.campaign.atBudgetCeiling } : {}),

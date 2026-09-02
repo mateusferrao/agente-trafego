@@ -36,6 +36,22 @@ export const RECOMMENDATION_TAXONOMY_INSTRUCTION =
   'depois de aplicar (ex: "CPA nos próximos 3 dias"). "findingRefs" lista os "id" de "findings" que ' +
   "motivaram esta recomendação (vazio se nenhum finding específico a sustenta).";
 
+/**
+ * Bloco de APRENDIZADOS da conta — contexto curado de runs anteriores (confirmados/alta
+ * confiança), rotulado por selo e origem. O analista trata como CONTEXTO (o que já se sabe
+ * desta conta), NUNCA como número a verificar. Vazio → string vazia (não entra no prompt).
+ */
+function lessonsBlock(brief: AccountBrief): string {
+  const lessons = brief.memory.lessons ?? [];
+  if (lessons.length === 0) return "";
+  const lines = lessons.map((l) => `- [${l.tier}] ${l.content}`).join("\n");
+  return (
+    "APRENDIZADOS DESTA CONTA (de análises anteriores — contexto, não números a verificar; " +
+    "considere-os mas confie no dado atual se ele contradisser):\n" +
+    lines
+  );
+}
+
 /** Forma esperada do JSON (espelha analysisOutputSchema) — PT-BR, conciso. */
 const OUTPUT_SHAPE = `{
   "scorecard": { "grade": "A|B|C|D", "headline": "string (1 frase: onde a conta está vs onde deveria)", "biggestLeak": "consciencia|engajamento|conversao|receita" },
@@ -159,6 +175,7 @@ export function buildSynthesisMessages(
     GROUNDING_RULE,
     verticalText(vertical, "synthesis"),
     buildAnalysisKnowledgeText(buildSynthesisKnowledgeContext(brief)),
+    lessonsBlock(brief),
     FINDINGS_METRIC_INSTRUCTION,
     RECOMMENDATION_TAXONOMY_INSTRUCTION,
   ]

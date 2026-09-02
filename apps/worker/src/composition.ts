@@ -100,6 +100,21 @@ export interface WorkerDeps {
   /** Cadência da expiração de aprovações (5b) — varre pendentes vencidas (24h). */
   readonly approvalExpiryCron: string;
   readonly groupContextPurgeCron: string;
+  /** Cadência do job de aprendizado (cron) — destila/mede/cura 1x/dia. */
+  readonly agentLearningCron: string;
+  /** Aprendizado contínuo — parâmetros globais (env; overrides por-agente em fatias seguintes). */
+  readonly learning: {
+    readonly historyRuns: number;
+    readonly minRuns: number;
+    readonly minOccurrenceRatio: number;
+    readonly briefTopK: number;
+    readonly redactorModel: string;
+    readonly redactorMaxPerTick: number;
+    readonly phaseBufferDays: number;
+    readonly outcomeWindowDays: number;
+    readonly decayStaleDays: number;
+    readonly decayArchiveDays: number;
+  };
   /** Cap default global de custo LLM por org/período (env). Cap por-org = guardrail_configs. */
   readonly costCapUsd: number;
   /** Config do chat do WhatsApp (Grafo B ReAct, 5b-2). Modelo = fallback (agente vence). */
@@ -348,6 +363,20 @@ export async function buildComposition(): Promise<WorkerDeps> {
     },
     approvalExpiryCron: env.APPROVAL_EXPIRY_CRON,
     groupContextPurgeCron: env.GROUP_CONTEXT_PURGE_CRON,
+    agentLearningCron: env.AGENT_LEARNING_CRON,
+    learning: {
+      historyRuns: env.LEARNING_HISTORY_RUNS,
+      minRuns: env.LEARNING_MIN_RUNS,
+      minOccurrenceRatio: env.LEARNING_MIN_OCCURRENCE_RATIO,
+      briefTopK: env.LEARNING_BRIEF_TOP_K,
+      // redator = modelo barato de mensagem (mesma classe do redator do push).
+      redactorModel: env.OPENROUTER_MESSAGE_MODEL,
+      redactorMaxPerTick: env.LEARNING_REDACTOR_MAX_PER_TICK,
+      phaseBufferDays: env.LEARNING_PHASE_BUFFER_DAYS,
+      outcomeWindowDays: env.LEARNING_OUTCOME_WINDOW_DAYS,
+      decayStaleDays: env.LEARNING_DECAY_STALE_DAYS,
+      decayArchiveDays: env.LEARNING_DECAY_ARCHIVE_DAYS,
+    },
     costCapUsd: env.LLM_COST_CAP_USD_PER_PERIOD,
     conversation: {
       model: env.CONVERSATION_MODEL,

@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
   index,
@@ -31,7 +32,11 @@ import {
   actionType,
   agentStatus,
   entityLevel,
+  lessonDimension,
+  memoryDirection,
   memoryLifecycle,
+  memoryOrigin,
+  memoryScope,
   memoryType,
   pk,
   timestamps,
@@ -179,7 +184,16 @@ export const agentMutedEntities = pgTable(
   ],
 );
 
-/** Memória do agente (objetivos, ações passadas, rejeições, fatos). */
+/**
+ * Memória do agente (objetivos, ações passadas, rejeições, fatos) + aprendizado contínuo.
+ * `type='rejected'` = o loop barato legado (grava no 👎, lê no brief). `type='fact'` =
+ * padrão-da-conta aprendido; `type='past_action'` = calibração (nossas recs acertaram?).
+ * As colunas de aprendizado (`scope`/`dimension`/`direction`/`origin`/`semanticKey`/
+ * `confidence`/`reinforceCount`/…) nascem com defaults seguros p/ as linhas legadas; o
+ * produtor de lição sempre as preenche. `sourceRunId`/`sourceRecommendationId` são
+ * soft-refs (uuid sem FK) — `agent_runs`/`recommendations` vivem em execution.ts e
+ * importá-los aqui fecharia um ciclo de schema.
+ */
 export const agentMemory = pgTable(
   "agent_memory",
   {
@@ -194,7 +208,33 @@ export const agentMemory = pgTable(
     content: text("content").notNull(),
     confidence: real("confidence"),
     lifecycle: memoryLifecycle("lifecycle").notNull().default("active"),
+    // ── Aprendizado contínuo ──
+    scope: memoryScope("scope").notNull().default("account"),
+    dimension: lessonDimension("dimension"),
+    direction: memoryDirection("direction"),
+    // id externo da entidade quando `scope='entity'`.
+    subjectId: text("subject_id"),
+    origin: memoryOrigin("origin").notNull().default("human_feedback"),
+    // string canônica da chave semântica (lessonKeyOf) — dedupe/merge. Null em linhas legadas
+    // ainda não backfillpadas (excluídas do unique index por serem NULL).
+    semanticKey: text("semantic_key"),
+    reinforceCount: integer("reinforce_count").notNull().default(0),
+    lastReinforcedAt: timestamp("last_reinforced_at", { withTimezone: true }),
+    lastContradictedAt: timestamp("last_contradicted_at", { withTimezone: true }),
+    confirmedByHuman: boolean("confirmed_by_human").notNull().default(false),
+    // proveniência (soft-ref, sem FK — ver docstring).
+    sourceRunId: uuid("source_run_id"),
+    sourceRecommendationId: uuid("source_recommendation_id"),
+    // patch proposto de `model_config.quality` (calibração paramétrica, S6) — null na maioria.
+    proposedThresholdPatch: jsonb("proposed_threshold_patch").$type<Record<string, unknown>>(),
     ...timestamps,
   },
-  (t) => [index("agent_memory_agent_idx").on(t.agentId)],
+  (t) => [
+    index("agent_memory_agent_idx").on(t.agentId),
+    index("agent_memory_agent_type_lifecycle_idx").on(t.agentId, t.type, t.lifecycle),
+    // dedupe/merge: no máximo 1 lição viva por (agente, chave semântica). NULL (legado) fora.
+    uniqueIndex("agent_memory_agent_semantic_key_uq")
+      .on(t.agentId, t.semanticKey)
+      .where(sql`${t.semanticKey} is not null and ${t.lifecycle} <> 'archived'`),
+  ],
 );

@@ -29,6 +29,7 @@ import { AgentAutonomy } from './agent-autonomy';
 import { AgentGuardrails } from './agent-guardrails';
 import { AgentNotifications } from './agent-notifications';
 import { AgentPosture } from './agent-posture';
+import { AgentLearnings } from './agent-learnings';
 
 type Conversion = AvailableConversionsOutput['conversions'][number];
 /** Um arquétipo do catálogo (chave + rótulo + descrição + quando usar). */
@@ -102,7 +103,7 @@ interface FormState {
 @Component({
   selector: 'app-agent-config-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, UiButton, UiPageHeader, UiSpinner, UiSelectBox, NumberStepper, AgentPlaybook, AgentAutonomy, AgentGuardrails, AgentNotifications, AgentPosture, MarketReferenceEditor],
+  imports: [RouterLink, UiButton, UiPageHeader, UiSpinner, UiSelectBox, NumberStepper, AgentPlaybook, AgentAutonomy, AgentGuardrails, AgentNotifications, AgentPosture, AgentLearnings, MarketReferenceEditor],
   template: `
     <div class="flex flex-col gap-8">
       <div class="flex flex-col gap-1">
@@ -393,6 +394,9 @@ interface FormState {
 
         <!-- Postura de comunicação (como o agente FALA) — componente próprio -->
         <app-agent-posture [accountId]="accountId" (dirtyChange)="onChildDirty('posture', $event)" />
+
+        <!-- Aprendizados (o que o agente aprendeu observando a conta) — read-only (S1) -->
+        <app-agent-learnings [accountId]="accountId" />
 
         <!-- Arquétipo (preset base) — logo abaixo da cadência -->
         <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">

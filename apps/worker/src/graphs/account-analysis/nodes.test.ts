@@ -208,10 +208,23 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
       },
     },
     webOrigin: "https://app.example.com",
+    learning: {
+      historyRuns: 10,
+      minRuns: 3,
+      minOccurrenceRatio: 0.6,
+      briefTopK: 5,
+      redactorModel: "m",
+      redactorMaxPerTick: 20,
+      phaseBufferDays: 7,
+      outcomeWindowDays: 7,
+      decayStaleDays: 30,
+      decayArchiveDays: 60,
+    },
     checkpointer: undefined as never, // grafo A é linear (sem checkpointer)
   } as unknown as WorkerDeps;
 
-  const nodesWithFakes = { repo, snapshots, entityAnalyses, notify, ...(opts.executor ? { executor: opts.executor } : {}) };
+  const learning = { loadActiveLessons: vi.fn(async () => []) };
+  const nodesWithFakes = { repo, snapshots, entityAnalyses, notify, learning, ...(opts.executor ? { executor: opts.executor } : {}) };
   // guarda os fakes p/ o teste montar os nós
   (deps as unknown as { _repos: typeof nodesWithFakes })._repos = nodesWithFakes;
   return { deps, saved, savedLabels, closed, llm, readEntityState, insertedRecommendations, markedDeactivated };

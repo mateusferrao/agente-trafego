@@ -279,6 +279,27 @@ export const envSchema = z.object({
   // Janela (dias) em que "reverter" uma ação segue disponível — depois some/API recusa.
   REVERT_TTL_DAYS: z.coerce.number().int().positive().default(7),
 
+  // ─── Aprendizado contínuo ──────────────────────────────────────────────
+  // Cadência do job de aprendizado (cron 5-campos) — destila/mede/cura 1x/dia.
+  AGENT_LEARNING_CRON: z.string().min(1).default("0 6 * * *"), // 06:00 diário
+  // Quantos runs recentes do agente entram na destilação observacional (histórico).
+  LEARNING_HISTORY_RUNS: z.coerce.number().int().positive().default(10),
+  // Mínimo de runs no histórico p/ arriscar um padrão (evita ruído de 1-2 análises).
+  LEARNING_MIN_RUNS: z.coerce.number().int().positive().default(3),
+  // Fração dos runs que precisa exibir o padrão p/ ele valer (0-1).
+  LEARNING_MIN_OCCURRENCE_RATIO: z.coerce.number().min(0).max(1).default(0.6),
+  // Teto de lições ATIVAS injetadas no brief (disciplina do brief — nunca o firehose).
+  LEARNING_BRIEF_TOP_K: z.coerce.number().int().positive().default(5),
+  // Buffer (dias) da learning phase da Meta antes de medir outcome de uma ação (S4).
+  LEARNING_PHASE_BUFFER_DAYS: z.coerce.number().int().nonnegative().default(7),
+  // Janela (dias) de medição do outcome depois do buffer (S4).
+  LEARNING_OUTCOME_WINDOW_DAYS: z.coerce.number().int().positive().default(7),
+  // Teto de chamadas ao redator LLM por tick do job (protege custo/margem).
+  LEARNING_REDACTOR_MAX_PER_TICK: z.coerce.number().int().positive().default(20),
+  // Dias sem reforço p/ uma lição virar `stale` e depois `archived` (S2 decay).
+  LEARNING_DECAY_STALE_DAYS: z.coerce.number().int().positive().default(30),
+  LEARNING_DECAY_ARCHIVE_DAYS: z.coerce.number().int().positive().default(60),
+
   // ─── Conversa (WhatsApp — Grafo B ReAct, 5b-2) ─────────────────────────
   // Modelo do chat: fallback quando o agente não tem `model_config.messageModel`.
   // Chat = alto volume + tarefa simples → default barato com bom tool-calling. First-party
