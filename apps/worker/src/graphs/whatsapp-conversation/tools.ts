@@ -9,6 +9,7 @@ import { z } from "zod";
 import { adAccounts, agents, conversations, playbookRules } from "@trafego/db";
 import {
   ACTION_PARAM_AMOUNT_MINOR,
+  AGENT_NAME,
   ACTION_PARAM_MODE,
   ACTION_PARAM_PCT,
   ACTION_PARAM_STATUS,
@@ -768,7 +769,7 @@ export async function buildCapabilitiesText(
 ): Promise<string> {
   if (!ctx.agentId) {
     const lines = [
-      "Sou seu gestor de tráfego aqui no WhatsApp. Sem uma conta em foco, posso:",
+      `Sou o ${AGENT_NAME}, seu gestor de tráfego aqui no WhatsApp. Sem uma conta em foco, posso:`,
       "• ver e resolver pendências de aprovação (de todas as suas contas);",
       "• te dar um panorama de todas as contas (nota e gasto da última análise de cada uma);",
       '• focar numa conta (ex: "foca na Loja X") pra ler, analisar e agir nela.',
@@ -782,7 +783,7 @@ export async function buildCapabilitiesText(
   // Resumo CURTO e humano (não um manual): as capacidades principais em uma linha cada,
   // honesto na fronteira, com oferta de detalhar. A postura de verbosidade não chega aqui
   // (texto verbatim), então a concisão é embutida na própria redação.
-  const parts: string[] = ["Sou o seu gestor de tráfego aqui no WhatsApp. No dia a dia eu:"];
+  const parts: string[] = [`Sou o ${AGENT_NAME}, seu gestor de tráfego aqui no WhatsApp. No dia a dia eu:`];
   parts.push("• Leio sua conta e te mostro onde tem dinheiro parado, o que vai bem e o que dá pra melhorar — no período que você quiser.");
   parts.push('• Rodo uma análise na hora quando você pede ("analisa agora").');
 

@@ -745,6 +745,7 @@ describe("buildCapabilitiesText — resumo curto e humano (não um manual)", () 
 
   it("abre pela leitura da conta e é enxuto (poucas linhas, com oferta de detalhar)", async () => {
     const text = await buildCapabilitiesText(fakeCapabilitiesDeps(), CTX, new Set());
+    expect(text).toContain("Roy"); // se apresenta pelo nome (DESIGN §5)
     expect(text).toContain("Leio sua conta");
     expect(text).toContain("período que você quiser");
     expect(text).toContain("Quer que eu entre em detalhe");
