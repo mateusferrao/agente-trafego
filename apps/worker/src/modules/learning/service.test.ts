@@ -68,7 +68,7 @@ function fakeRepo(
     insertLesson: async (i) => {
       state.inserts.push(i);
     },
-    reinforceLesson: async (id, confidence, evidenceAt) => {
+    reinforceLesson: async (_orgId, _agentId, id, confidence, evidenceAt) => {
       state.reinforces.push({ id, confidence, evidenceAt });
     },
     loadEvidence: async () => evidence,

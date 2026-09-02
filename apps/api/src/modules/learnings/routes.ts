@@ -1,4 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
+import { ADVISORY_DISMISS_COOLDOWN_DAYS } from "@trafego/agent-config";
 import { requireAuth } from "../../middleware/auth.js";
 import { requireActiveAccess } from "../../middleware/access-gate.js";
 import { requireOrgScope, orgIdOf } from "../../middleware/org-scope.js";
@@ -56,6 +57,3 @@ export const learningsRoutes: FastifyPluginAsync = async (app) => {
     return service.dismissOpportunity(orgIdOf(request), agentId, ADVISORY_DISMISS_COOLDOWN_DAYS);
   });
 };
-
-/** Cooldown (dias) da dispensa de um aviso — reaparece depois disso (ou se piorar materialmente). */
-const ADVISORY_DISMISS_COOLDOWN_DAYS = 14;

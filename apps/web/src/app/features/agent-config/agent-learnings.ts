@@ -128,6 +128,7 @@ const ORIGIN_LABEL: Record<Learning['origin'], string> = {
                     <textarea
                       class="w-full rounded-md border border-line bg-panel p-2 text-sm text-ink"
                       rows="2"
+                      aria-label="Editar aprendizado"
                       [value]="editText()"
                       (input)="editText.set($any($event.target).value)"
                     ></textarea>
@@ -170,7 +171,7 @@ const ORIGIN_LABEL: Record<Learning['origin'], string> = {
         <!-- (4) Arquivados: recolhido, com busca + restaurar -->
         @if (archived().length > 0) {
           <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
-            <button type="button" class="flex items-center justify-between text-left" (click)="showArchived.set(!showArchived())">
+            <button type="button" class="flex items-center justify-between text-left" [attr.aria-expanded]="showArchived()" (click)="showArchived.set(!showArchived())">
               <h2 class="font-brand text-base font-semibold text-ink">Arquivados ({{ archived().length }})</h2>
               <span class="text-xs text-muted">{{ showArchived() ? 'ocultar' : 'mostrar' }}</span>
             </button>
@@ -179,6 +180,7 @@ const ORIGIN_LABEL: Record<Learning['origin'], string> = {
                 type="search"
                 class="w-full rounded-md border border-line bg-soft/40 p-2 text-sm text-ink"
                 placeholder="Buscar nos arquivados…"
+                aria-label="Buscar nos arquivados"
                 [value]="archivedQuery()"
                 (input)="archivedQuery.set($any($event.target).value)"
               />
@@ -263,7 +265,8 @@ export class AgentLearnings implements OnInit {
     this.loading.set(false);
   }
 
-  /** Envolve uma mutação: guarda `busy`, toast, recarrega. */
+  /** Envolve uma mutação: guarda `busy`, toast, recarrega. Erro de API já vira toast amigável
+   *  no interceptor — aqui só engolimos a rejeição já tratada (sem unhandled rejection). */
   private async run(action: (id: string) => Promise<unknown>, okMsg: string): Promise<void> {
     const id = this.agentId();
     if (!id || this.busy()) return;
@@ -272,6 +275,8 @@ export class AgentLearnings implements OnInit {
       await action(id);
       toast.success(okMsg);
       this.loadLessons(id);
+    } catch {
+      // o interceptor não-silent já mostrou a mensagem amigável; nada a fazer aqui.
     } finally {
       this.busy.set(false);
     }

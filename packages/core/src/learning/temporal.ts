@@ -22,8 +22,9 @@ function clamp01(n: number): number {
 
 /**
  * Confiança do prior temporal: aproxima do teto `count` vezes com ganho decrescente,
- * proporcional à FORÇA `strength` (0..1). count=3 & strength=1 → 0,70 (alcança o prompt);
- * strength menor (padrão mais frouxo) → fica abaixo (só guard/explorando). Pura.
+ * proporcional à FORÇA `strength` (0..1). Com cap 0,85 e rate 0,6, count=3 & strength=1 → ~0,80
+ * (acima do limiar do prompt, 0,70); um padrão APERTADO mas não perfeito (strength ~0,8) ainda
+ * cruza 0,70, enquanto um disperso (strength baixa) fica abaixo (só guard/explorando). Pura.
  */
 export function temporalConfidence(count: number, strength: number): number {
   const s = clamp01(strength);

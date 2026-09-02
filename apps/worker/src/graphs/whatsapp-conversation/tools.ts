@@ -57,17 +57,15 @@ import {
   type PosturePatch,
 } from "@trafego/core";
 import type { Action, OrgId } from "@trafego/shared/types";
-import { acceptThreshold, dismissAdvisory, forgetLesson, rejectProposal as rejectProposalAction } from "@trafego/agent-config";
+import { acceptThreshold, dismissAdvisory, forgetLesson, rejectProposal as rejectProposalAction, ADVISORY_DISMISS_COOLDOWN_DAYS, GUARDRAIL_OPPORTUNITY_KEY } from "@trafego/agent-config";
 import type { WorkerDeps } from "../../composition.js";
 import { createRunDispatcher } from "../../modules/dispatch/run-dispatcher.js";
 import { actorLabel } from "../../modules/conversation/actor.js";
 import { makeReadTools, type ReadToolContext } from "./read-data.js";
 import type { PendingPlaybookOp } from "./state.js";
 
-/** Chave genérica do aviso de teto (dispensa por-agente) — espelha o slice de learnings da API. */
-const GUARDRAIL_OPPORTUNITY_KEY = "guardrail_opportunity:maxBudgetChangePct";
-/** Cooldown (ms) da dispensa de um aviso por chat — casa com o cooldown do site (14 dias). */
-const ADVISORY_DISMISS_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
+/** Cooldown (ms) da dispensa por chat — derivado da fonte única de dias (@trafego/agent-config). */
+const ADVISORY_DISMISS_COOLDOWN_MS = ADVISORY_DISMISS_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
 
 export interface ConversationToolContext extends ReadToolContext {
   /** quem fala no turno — DM (contato verificado) ou grupo (participante). Alvo do

@@ -119,7 +119,7 @@ export function createLearningService(deps: LearningServiceDeps) {
           occurrenceRatio: occurrenceRatioOf(candidate),
           origin: candidate.origin,
         });
-        await repo.reinforceLesson(existing.id, next, evidenceAt);
+        await repo.reinforceLesson(agent.orgId, agent.agentId, existing.id, next, evidenceAt);
         reinforced += 1;
         continue;
       }
@@ -357,6 +357,8 @@ export function createLearningService(deps: LearningServiceDeps) {
         // re-anexa a proposta só se o dono ainda não a confirmou nem a resolveu (rejeitou/reverteu).
         const attachProposal = proposal && !existing.confirmedByHuman && existing.thresholdResolvedAt === null;
         await repo.refreshAccountPrior({
+          orgId: agent.orgId,
+          agentId: agent.agentId,
           id: existing.id,
           confidence: candidate.confidence,
           supportCount,
@@ -404,6 +406,8 @@ export function createLearningService(deps: LearningServiceDeps) {
       if (existing) {
         // padrão redetectado → mantém vivo (evita decay) e sobe a confiança se ela cresceu.
         await repo.refreshAccountPrior({
+          orgId: agent.orgId,
+          agentId: agent.agentId,
           id: existing.id,
           confidence: Math.max(existing.confidence ?? 0, candidate.confidence),
           supportCount: existing.reinforceCount,

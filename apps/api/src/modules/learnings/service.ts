@@ -9,6 +9,8 @@ import {
   rejectProposal as rejectProposalAction,
   restoreLesson,
   revertThreshold as revertThresholdAction,
+  ADVISORY_DISMISS_COOLDOWN_DAYS,
+  GUARDRAIL_OPPORTUNITY_KEY,
   type LearningActionResult,
 } from "@trafego/agent-config";
 import type { SchedulerPort } from "@trafego/shared/ports";
@@ -33,9 +35,6 @@ interface AppliedThresholdPatch {
   readonly previousValue: number;
   readonly behaviorLabel: string;
 }
-
-/** Chave genérica do aviso de teto (dispensa por-agente). */
-const GUARDRAIL_OPPORTUNITY_KEY = "guardrail_opportunity:maxBudgetChangePct";
 
 /** Mapeia o Result tipado das ações compartilhadas → exceção HTTP amigável. */
 function unwrap(result: LearningActionResult): LearningOk {

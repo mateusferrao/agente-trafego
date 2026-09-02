@@ -42,8 +42,9 @@ export interface LearningRepo {
   ): Promise<{ id: string; confidence: number | null; lastReinforcedAt: Date | null; reinforceCount: number; confirmedByHuman: boolean; thresholdResolvedAt: Date | null } | null>;
   insertLesson(input: InsertLessonInput): Promise<void>;
   /** Reforça: sobe confiança, incrementa contagem, marca o tempo da evidência e
-   *  REATIVA a lição (stale→active) — um padrão reobservado volta a valer. */
-  reinforceLesson(id: string, confidence: number, evidenceAt: Date): Promise<void>;
+   *  REATIVA a lição (stale→active) — um padrão reobservado volta a valer. Org+agente no WHERE
+   *  (defesa em profundidade §12 — mesmo padrão da casca compartilhada). */
+  reinforceLesson(orgId: string, agentId: string, id: string, confidence: number, evidenceAt: Date): Promise<void>;
   /** Ledger de evidência (v3): linhas medidas do agente, base da destilação cross-seccional. */
   loadEvidence(orgId: string, agentId: string): Promise<AccountEvidenceRow[]>;
   /** Série de CTR por-campanha (>= `sinceDate`, cronológica) p/ o detector de timing de fadiga. */
@@ -84,6 +85,8 @@ export interface InsertLessonInput {
 }
 
 export interface RefreshAccountPriorInput {
+  readonly orgId: string;
+  readonly agentId: string;
   readonly id: string;
   readonly confidence: number;
   readonly supportCount: number;
@@ -204,7 +207,7 @@ export function createLearningRepo(db: Database): LearningRepo {
       return [...byDay.keys()].sort().map((d) => byDay.get(d)!);
     },
 
-    async refreshAccountPrior({ id, confidence, supportCount, evidenceAt, proposedThresholdPatch }) {
+    async refreshAccountPrior({ orgId, agentId, id, confidence, supportCount, evidenceAt, proposedThresholdPatch }) {
       await db
         .update(agentMemory)
         .set({
@@ -217,7 +220,7 @@ export function createLearningRepo(db: Database): LearningRepo {
           ...(proposedThresholdPatch ? { proposedThresholdPatch } : {}),
           updatedAt: sql`now()`,
         })
-        .where(eq(agentMemory.id, id));
+        .where(and(eq(agentMemory.id, id), eq(agentMemory.orgId, orgId), eq(agentMemory.agentId, agentId)));
     },
 
     async insertLesson({ orgId, agentId, candidate, content, evidenceAt, sourceRunId, proposedThresholdPatch }) {
@@ -228,7 +231,7 @@ export function createLearningRepo(db: Database): LearningRepo {
       );
     },
 
-    async reinforceLesson(id, confidence, evidenceAt) {
+    async reinforceLesson(orgId, agentId, id, confidence, evidenceAt) {
       await db
         .update(agentMemory)
         .set({
@@ -239,7 +242,7 @@ export function createLearningRepo(db: Database): LearningRepo {
           lifecycle: "active",
           updatedAt: sql`now()`,
         })
-        .where(eq(agentMemory.id, id));
+        .where(and(eq(agentMemory.id, id), eq(agentMemory.orgId, orgId), eq(agentMemory.agentId, agentId)));
     },
 
     async applyDecaySweep(now, cfg) {
