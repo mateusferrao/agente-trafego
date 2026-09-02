@@ -8,6 +8,7 @@ import { adAccounts, agentMemory, agentRuns, agents, entityConfigSnapshots, type
 import type { AdEntity, EntityConfigSnapshot, HealthSignal, PerformanceTier, RunCampaignCard, TrackingHealth, WasteReport } from "@trafego/shared";
 import {
   decayCutoffs,
+  LEARNING_MEMORY_TYPES,
   lessonKindFromMemoryType,
   type DecayConfig,
   type LessonCandidate,
@@ -23,7 +24,8 @@ export interface LearnableAgent {
   readonly adAccountId: string;
 }
 
-const LEARNING_TYPES = ["fact", "past_action"] as const;
+// fonte única em @trafego/core (derivado de MEMORY_TYPE_BY_KIND) — sem repetir o literal (§13).
+const LEARNING_TYPES = LEARNING_MEMORY_TYPES;
 
 export interface LearningRepo {
   listLearnableAgents(): Promise<LearnableAgent[]>;

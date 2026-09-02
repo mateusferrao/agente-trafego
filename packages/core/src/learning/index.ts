@@ -14,6 +14,10 @@ export type LessonKind = "fact" | "calibration";
 
 /** Mapa único LessonKind ↔ `memory_type` do DB (fonte única — evita drift em 3 lugares). */
 export const MEMORY_TYPE_BY_KIND: Record<LessonKind, "fact" | "past_action"> = { fact: "fact", calibration: "past_action" };
+/** Os `memory_type`s que são LIÇÕES de aprendizado (fact/past_action) — derivado da fonte
+ *  única acima. Reusado por todo filtro `type in (...)` de aprendizado (casca api/worker),
+ *  em vez de repetir o literal `["fact","past_action"]` (§13 sem string mágica / reuso-1º). */
+export const LEARNING_MEMORY_TYPES = Object.values(MEMORY_TYPE_BY_KIND) as readonly ("fact" | "past_action")[];
 export function lessonKindFromMemoryType(type: string): LessonKind {
   return type === "past_action" ? "calibration" : "fact";
 }

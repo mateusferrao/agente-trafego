@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { agentMemory, agents, type Database } from "@trafego/db";
-import { computeConfidence, confidenceTier, lessonKindFromMemoryType, nextThresholdValue, type ThresholdProposal } from "@trafego/core";
+import { computeConfidence, confidenceTier, LEARNING_MEMORY_TYPES, lessonKindFromMemoryType, nextThresholdValue, type ThresholdProposal } from "@trafego/core";
 import { applyAgentConfigChange } from "@trafego/agent-config";
 import type { SchedulerPort } from "@trafego/shared/ports";
 import type { OrgId } from "@trafego/shared/types";
@@ -14,8 +14,9 @@ export interface LearningsDeps {
   readonly qualityDefaults: Readonly<Record<string, unknown>>;
 }
 
-// só os tipos de APRENDIZADO (o `rejected`/`objective` legado não aparece na aba).
-const LEARNING_TYPES = ["fact", "past_action"] as const;
+// só os tipos de APRENDIZADO (o `rejected`/`objective` legado não aparece na aba) —
+// fonte única em @trafego/core (LEARNING_MEMORY_TYPES, derivado de MEMORY_TYPE_BY_KIND).
+const LEARNING_TYPES = LEARNING_MEMORY_TYPES;
 
 /**
  * Slice de aprendizados (S1, read-only): lista as lições curadas de um agente para a
