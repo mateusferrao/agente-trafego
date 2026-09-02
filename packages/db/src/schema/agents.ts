@@ -285,3 +285,26 @@ export const learningEvidence = pgTable(
     uniqueIndex("learning_evidence_dedupe_uq").on(t.agentId, t.dedupeRef),
   ],
 );
+
+/**
+ * Dispensas de AVISO (v3) — o dono dispensou uma oportunidade (ex: aviso de teto de guardrail).
+ * `key` identifica o aviso (genérico: `guardrail_opportunity:<threshold>`); `dismissed_until`
+ * é o cooldown (o aviso, "sinal vivo", só reaparece depois disso ou se piorar materialmente).
+ * 1 linha viva por (agente, key) — upsert.
+ */
+export const advisoryDismissals = pgTable(
+  "advisory_dismissals",
+  {
+    id: pk(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    dismissedUntil: timestamp("dismissed_until", { withTimezone: true }).notNull(),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex("advisory_dismissals_agent_key_uq").on(t.agentId, t.key)],
+);

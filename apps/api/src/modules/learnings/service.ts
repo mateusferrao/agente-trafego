@@ -1,11 +1,19 @@
-import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
-import { agentMemory, agents, type Database } from "@trafego/db";
-import { computeConfidence, confidenceTier, LEARNING_MEMORY_TYPES, lessonKindFromMemoryType, nextThresholdValue, type ThresholdProposal } from "@trafego/core";
-import { applyAgentConfigChange } from "@trafego/agent-config";
+import { and, desc, eq, gt, inArray, isNotNull, sql } from "drizzle-orm";
+import { advisoryDismissals, agentMemory, agentRuns, agents, type Database } from "@trafego/db";
+import { confidenceTier, LEARNING_MEMORY_TYPES, lessonKindFromMemoryType, type GuardrailOpportunity, type ThresholdProposal } from "@trafego/core";
+import {
+  acceptThreshold as acceptThresholdAction,
+  confirmLesson,
+  dismissAdvisory,
+  forgetLesson,
+  rejectProposal as rejectProposalAction,
+  revertThreshold as revertThresholdAction,
+  type LearningActionResult,
+} from "@trafego/agent-config";
 import type { SchedulerPort } from "@trafego/shared/ports";
 import type { OrgId } from "@trafego/shared/types";
 import { notFound, badRequest } from "../../middleware/error-handler.js";
-import type { LearningItem, LearningOk, LearningsList } from "./schema.js";
+import type { LearningItem, LearningOk, LearningOpportunity, LearningsList } from "./schema.js";
 
 export interface LearningsDeps {
   readonly db: Database;
@@ -25,10 +33,20 @@ interface AppliedThresholdPatch {
   readonly behaviorLabel: string;
 }
 
+/** Chave genérica do aviso de teto (dispensa por-agente). */
+const GUARDRAIL_OPPORTUNITY_KEY = "guardrail_opportunity:maxBudgetChangePct";
+
+/** Mapeia o Result tipado das ações compartilhadas → exceção HTTP amigável. */
+function unwrap(result: LearningActionResult): LearningOk {
+  if (result.ok) return { ok: true };
+  throw result.code === "not_found" ? notFound(result.error) : badRequest(result.error);
+}
+
 /**
- * Slice de aprendizados (S1, read-only): lista as lições curadas de um agente para a
- * aba "Aprendizados". Org-scoped (filtra por orgId — sem vazamento cross-tenant, mesmo
- * com agentId adivinhado). Edição/confirmação/esquecer = S5.
+ * Slice de aprendizados (aba "Aprendizados"): lista (priors + propostas + oportunidades +
+ * arquivados) e as mutações (confirmar/esquecer/aprovar/rejeitar/reverter/dispensar). As
+ * mutações delegam à casca ÚNICA em @trafego/agent-config (reusada pelo chat do worker).
+ * Org-scoped (sem vazamento cross-tenant).
  */
 export function createLearningsService(deps: LearningsDeps) {
   async function list(orgId: OrgId, agentId: string): Promise<LearningsList> {
@@ -48,8 +66,6 @@ export function createLearningsService(deps: LearningsDeps) {
           eq(agentMemory.orgId, orgId),
           eq(agentMemory.agentId, agentId),
           inArray(agentMemory.type, [...LEARNING_TYPES]),
-          // só lições reais (chave semântica) — mesma fronteira do worker; não vaza
-          // eventual linha legada fact/past_action sem chave para a aba.
           isNotNull(agentMemory.semanticKey),
           sql`${agentMemory.lifecycle} <> 'archived'`,
         ),
@@ -70,16 +86,36 @@ export function createLearningsService(deps: LearningsDeps) {
       sourceRunId: r.sourceRunId ?? null,
       createdAt: r.createdAt.toISOString(),
       proposedBehavior: (r.proposedThresholdPatch as ThresholdProposal | null)?.behaviorLabel ?? null,
-      // limiar já aceito → a UI mostra "aplicado · Reverter" (v3).
       appliedBehavior: (r.appliedThresholdPatch as AppliedThresholdPatch | null)?.behaviorLabel ?? null,
     }));
-    return { items };
+    const opportunities = await loadOpportunities(orgId, agentId);
+    return { items, opportunities };
   }
 
-  /** Verifica que a lição é do agente/org e não está arquivada (404 amigável). Retorna a confiança atual. */
-  async function requireLesson(orgId: OrgId, agentId: string, lessonId: string): Promise<{ confidence: number | null }> {
+  /** Zona "Oportunidades": deriva o aviso de teto vivo do ÚLTIMO run, menos dispensas em cooldown. */
+  async function loadOpportunities(orgId: OrgId, agentId: string): Promise<LearningOpportunity[]> {
+    const [run] = await deps.db
+      .select({ snapshot: agentRuns.metricsSnapshot })
+      .from(agentRuns)
+      .where(and(eq(agentRuns.orgId, orgId), eq(agentRuns.agentId, agentId), isNotNull(agentRuns.metricsSnapshot)))
+      .orderBy(desc(agentRuns.createdAt))
+      .limit(1);
+    const op = (run?.snapshot as { guardrailOpportunity?: GuardrailOpportunity } | null)?.guardrailOpportunity;
+    if (!op) return [];
+    // dispensado e ainda em cooldown? some da lista (sinal vivo respeita a dispensa).
+    const [dismissed] = await deps.db
+      .select({ id: advisoryDismissals.id })
+      .from(advisoryDismissals)
+      .where(and(eq(advisoryDismissals.agentId, agentId), eq(advisoryDismissals.key, GUARDRAIL_OPPORTUNITY_KEY), gt(advisoryDismissals.dismissedUntil, sql`now()`)))
+      .limit(1);
+    if (dismissed) return [];
+    return [{ key: GUARDRAIL_OPPORTUNITY_KEY, threshold: op.threshold, wantedPct: op.wantedPct, cappedPct: op.cappedPct, foregoneMinor: op.foregoneMinor }];
+  }
+
+  /** Verifica que a lição é do agente/org e não está arquivada (404 amigável). */
+  async function requireLesson(orgId: OrgId, agentId: string, lessonId: string): Promise<void> {
     const [row] = await deps.db
-      .select({ confidence: agentMemory.confidence })
+      .select({ id: agentMemory.id })
       .from(agentMemory)
       .where(
         and(
@@ -92,144 +128,45 @@ export function createLearningsService(deps: LearningsDeps) {
       )
       .limit(1);
     if (!row) throw notFound("Aprendizado não encontrado.");
-    return row;
   }
 
   /** Reescreve a frase do aprendizado (o usuário corrige com as próprias palavras). */
   async function edit(orgId: OrgId, agentId: string, lessonId: string, content: string): Promise<LearningOk> {
     await requireLesson(orgId, agentId, lessonId);
-    await deps.db.update(agentMemory).set({ content, updatedAt: sql`now()` }).where(scopedLesson(orgId, agentId, lessonId));
+    await deps.db
+      .update(agentMemory)
+      .set({ content, updatedAt: sql`now()` })
+      .where(and(eq(agentMemory.id, lessonId), eq(agentMemory.orgId, orgId), eq(agentMemory.agentId, agentId)));
     return { ok: true };
   }
 
-  /** Confirma o aprendizado → marca `confirmedByHuman` + salto de confiança (só então pesa no prompt). */
+  const ACTOR = { label: "user" } as const;
+
   async function confirm(orgId: OrgId, agentId: string, lessonId: string): Promise<LearningOk> {
-    const lesson = await requireLesson(orgId, agentId, lessonId);
-    const confidence = computeConfidence(lesson.confidence, { type: "confirm" });
-    await deps.db
-      .update(agentMemory)
-      .set({ confirmedByHuman: true, confidence, updatedAt: sql`now()` })
-      .where(scopedLesson(orgId, agentId, lessonId));
-    return { ok: true };
+    return unwrap(await confirmLesson(deps.db, { orgId, agentId, lessonId }));
   }
 
-  /** Esquece o aprendizado → soft-archive (nunca hard-delete; preserva trilha). */
   async function forget(orgId: OrgId, agentId: string, lessonId: string): Promise<LearningOk> {
-    await requireLesson(orgId, agentId, lessonId);
-    await deps.db.update(agentMemory).set({ lifecycle: "archived", updatedAt: sql`now()` }).where(scopedLesson(orgId, agentId, lessonId));
-    return { ok: true };
+    return unwrap(await forgetLesson(deps.db, { orgId, agentId, lessonId }));
   }
 
-  /**
-   * Aceita a proposta de ajuste de comportamento (calibração paramétrica, S6): calcula o novo
-   * limiar a partir do valor ATUAL do agente e aplica em `model_config.quality` via
-   * `@trafego/agent-config` (auditado). NUNCA toca guardrail/autonomia (o patch só carrega
-   * `modelConfig.quality`). Depois: limpa a proposta e confirma a lição.
-   */
   async function acceptThreshold(orgId: OrgId, agentId: string, lessonId: string): Promise<LearningOk> {
-    const [row] = await deps.db
-      .select({ patch: agentMemory.proposedThresholdPatch, confidence: agentMemory.confidence, adAccountId: agents.adAccountId, modelConfig: agents.modelConfig })
-      .from(agentMemory)
-      .innerJoin(agents, eq(agentMemory.agentId, agents.id))
-      .where(and(eq(agentMemory.id, lessonId), eq(agentMemory.orgId, orgId), eq(agentMemory.agentId, agentId), sql`${agentMemory.lifecycle} <> 'archived'`))
-      .limit(1);
-    if (!row) throw notFound("Aprendizado não encontrado.");
-    const proposal = row.patch as ThresholdProposal | null;
-    if (!proposal) throw badRequest("Este aprendizado não tem uma proposta de ajuste.");
-
-    const quality = (row.modelConfig?.quality as Record<string, unknown> | undefined) ?? {};
-    const currentRaw = quality[proposal.threshold] ?? deps.qualityDefaults[proposal.threshold];
-    if (typeof currentRaw !== "number") throw badRequest("Não consegui ler o limiar atual para ajustar.");
-    const newValue = nextThresholdValue(currentRaw, proposal);
-
-    const result = await applyAgentConfigChange(
-      { db: deps.db, scheduler: deps.scheduler },
-      {
-        orgId,
-        agentId,
-        accountId: row.adAccountId,
-        // patch SÓ com modelConfig.quality → nunca toca guardrail_configs/autonomy_policy.
-        patch: { modelConfig: { quality: { [proposal.threshold]: newValue } } },
-        audit: { actor: { label: "user" }, metadata: { source: "learning_threshold_accept", lessonId } },
-      },
-    );
-    if (!result.ok) throw badRequest(result.error);
-
-    // proposta consumida + lição confirmada (o dono endossou a mudança de comportamento).
-    // Guarda o valor ANTERIOR em applied_threshold_patch → o Reverter restaura sem re-consultar.
-    const applied: AppliedThresholdPatch = { threshold: proposal.threshold, previousValue: currentRaw, behaviorLabel: proposal.behaviorLabel };
-    const confidence = computeConfidence(row.confidence, { type: "confirm" });
-    await deps.db
-      .update(agentMemory)
-      .set({ proposedThresholdPatch: null, appliedThresholdPatch: { ...applied }, confirmedByHuman: true, confidence, thresholdResolvedAt: null, updatedAt: sql`now()` })
-      .where(scopedLesson(orgId, agentId, lessonId));
-    return { ok: true };
+    return unwrap(await acceptThresholdAction(deps, { orgId, agentId, lessonId }, ACTOR));
   }
 
-  /**
-   * Rejeita a proposta de ajuste (opt-in): descarta o patch pendente SEM tocar em config e
-   * marca a proposta como resolvida (trava a re-oferta até evidência substancialmente nova). A
-   * lição/prior continua vivo (segue afiando o julgamento via prompt/guard) — só o ajuste
-   * automático de limiar foi recusado.
-   */
   async function rejectProposal(orgId: OrgId, agentId: string, lessonId: string): Promise<LearningOk> {
-    const [row] = await deps.db
-      .select({ patch: agentMemory.proposedThresholdPatch })
-      .from(agentMemory)
-      .where(and(eq(agentMemory.id, lessonId), eq(agentMemory.orgId, orgId), eq(agentMemory.agentId, agentId), sql`${agentMemory.lifecycle} <> 'archived'`))
-      .limit(1);
-    if (!row) throw notFound("Aprendizado não encontrado.");
-    if (!row.patch) throw badRequest("Este aprendizado não tem uma proposta de ajuste.");
-    await deps.db
-      .update(agentMemory)
-      .set({ proposedThresholdPatch: null, thresholdResolvedAt: sql`now()`, updatedAt: sql`now()` })
-      .where(scopedLesson(orgId, agentId, lessonId));
-    return { ok: true };
+    return unwrap(await rejectProposalAction(deps.db, { orgId, agentId, lessonId }));
   }
 
-  /**
-   * Reverte um limiar já aceito: restaura o valor ANTERIOR (guardado em applied_threshold_patch)
-   * em `model_config.quality` via `@trafego/agent-config` (auditado) e marca como resolvido. NUNCA
-   * toca guardrail/autonomia. A lição continua endossada (o insight vale); só o efeito mecânico
-   * do limiar foi desfeito.
-   */
   async function revertThreshold(orgId: OrgId, agentId: string, lessonId: string): Promise<LearningOk> {
-    const [row] = await deps.db
-      .select({ applied: agentMemory.appliedThresholdPatch, adAccountId: agents.adAccountId })
-      .from(agentMemory)
-      .innerJoin(agents, eq(agentMemory.agentId, agents.id))
-      .where(and(eq(agentMemory.id, lessonId), eq(agentMemory.orgId, orgId), eq(agentMemory.agentId, agentId), sql`${agentMemory.lifecycle} <> 'archived'`))
-      .limit(1);
-    if (!row) throw notFound("Aprendizado não encontrado.");
-    const applied = row.applied as AppliedThresholdPatch | null;
-    if (!applied) throw badRequest("Este aprendizado não tem um ajuste aplicado para reverter.");
-
-    const result = await applyAgentConfigChange(
-      { db: deps.db, scheduler: deps.scheduler },
-      {
-        orgId,
-        agentId,
-        accountId: row.adAccountId,
-        // restaura SÓ o limiar de qualidade ao valor anterior → nunca toca guardrail/autonomia.
-        patch: { modelConfig: { quality: { [applied.threshold]: applied.previousValue } } },
-        audit: { actor: { label: "user" }, metadata: { source: "learning_threshold_revert", lessonId } },
-      },
-    );
-    if (!result.ok) throw badRequest(result.error);
-
-    await deps.db
-      .update(agentMemory)
-      .set({ appliedThresholdPatch: null, thresholdResolvedAt: sql`now()`, updatedAt: sql`now()` })
-      .where(scopedLesson(orgId, agentId, lessonId));
-    return { ok: true };
+    return unwrap(await revertThresholdAction(deps, { orgId, agentId, lessonId }, ACTOR));
   }
 
-  return { list, edit, confirm, forget, acceptThreshold, rejectProposal, revertThreshold };
-}
+  /** Dispensa o aviso de teto por um cooldown (a UI/chat oferece "Dispensar"). */
+  async function dismissOpportunity(orgId: OrgId, agentId: string, cooldownDays: number): Promise<LearningOk> {
+    const until = new Date(Date.now() + cooldownDays * 24 * 60 * 60 * 1000);
+    return unwrap(await dismissAdvisory(deps.db, { orgId, agentId, key: GUARDRAIL_OPPORTUNITY_KEY, dismissedUntil: until }));
+  }
 
-/** Predicado org+agente+id da lição — fecha o check-then-act do UPDATE (defesa em profundidade,
- *  §12): o `requireLesson` valida antes, mas escrever com o org+agente no WHERE garante que a
- *  mutação NUNCA toque a linha de outro tenant, mesmo sob corrida. */
-function scopedLesson(orgId: OrgId, agentId: string, lessonId: string) {
-  return and(eq(agentMemory.id, lessonId), eq(agentMemory.orgId, orgId), eq(agentMemory.agentId, agentId));
+  return { list, edit, confirm, forget, acceptThreshold, rejectProposal, revertThreshold, dismissOpportunity };
 }

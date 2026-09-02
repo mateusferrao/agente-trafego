@@ -44,4 +44,13 @@ export const learningsRoutes: FastifyPluginAsync = async (app) => {
     const { agentId, id } = request.params as { agentId: string; id: string };
     return service.revertThreshold(orgIdOf(request), agentId, id);
   });
+
+  // dispensa o aviso de OPORTUNIDADE de teto (não é por-lição — é por-agente, chave fixa).
+  app.post("/agents/:agentId/learnings/dismiss-opportunity", guard, async (request) => {
+    const { agentId } = request.params as { agentId: string };
+    return service.dismissOpportunity(orgIdOf(request), agentId, ADVISORY_DISMISS_COOLDOWN_DAYS);
+  });
 };
+
+/** Cooldown (dias) da dispensa de um aviso — reaparece depois disso (ou se piorar materialmente). */
+const ADVISORY_DISMISS_COOLDOWN_DAYS = 14;

@@ -283,6 +283,23 @@ describe("learning service — distillAccount (prior de conta do ledger)", () =>
     expect(state.inserts[0]?.proposedThresholdPatch).toMatchObject({ threshold: "zombieMinSpend" });
   });
 
+  it("dispara alerta (onNewLearning) quando um prior de conta NOVO nasce", async () => {
+    const state: FakeRepoState = { inserts: [], reinforces: [], refreshes: [] };
+    const alerts: { kind: string; content: string }[] = [];
+    const svc = createLearningService({
+      repo: fakeRepo(null, [], state, evidence("cut", ["c1", "c2", "c3"])),
+      llm: llmStub("Cortar cedo compensa.") as never,
+      logger,
+      config: CONFIG,
+      outcomeRepo: emptyOutcomeRepo(),
+      onNewLearning: async (_agent, e) => { alerts.push(e); },
+    });
+    await svc.distillAccount(AGENT, { remaining: 20 });
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]?.kind).toBe("prior");
+    expect(alerts[0]?.content).toBe("Cortar cedo compensa.");
+  });
+
   it("prior AGRESSIVO (escala compensa, direção raise) NUNCA nasce com proposta", async () => {
     const state: FakeRepoState = { inserts: [], reinforces: [], refreshes: [] };
     const svc = createLearningService({

@@ -385,3 +385,6 @@ async function writeAudit(
     ...(audit.metadata ? { metadata: audit.metadata } : {}),
   });
 }
+
+// Ações de mutação de aprendizado (v3) — reusadas por site + chat.
+export * from "./learning-actions.js";

@@ -32,7 +32,18 @@ export const learningItem = z.object({
 });
 export type LearningItem = z.infer<typeof learningItem>;
 
-export const learningsList = z.object({ items: z.array(learningItem) });
+/** Aviso de OPORTUNIDADE de teto (v3, "sinal vivo") — derivado do último run; não é aprendizado. */
+export const learningOpportunity = z.object({
+  key: z.string(),
+  threshold: z.string(),
+  wantedPct: z.number(),
+  cappedPct: z.number(),
+  /** R$ (unidade menor da moeda) que o teto está deixando na mesa por dia. */
+  foregoneMinor: z.number(),
+});
+export type LearningOpportunity = z.infer<typeof learningOpportunity>;
+
+export const learningsList = z.object({ items: z.array(learningItem), opportunities: z.array(learningOpportunity) });
 export type LearningsList = z.infer<typeof learningsList>;
 
 /** Editar a frase de um aprendizado (o usuário reescreve com as próprias palavras). */

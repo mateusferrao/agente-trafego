@@ -47,6 +47,12 @@ export interface LearningServiceConfig {
   readonly temporalLookbackDays: number;
 }
 
+/** Um aprendizado NOVO nascido no tick — a casca decide se/como avisar no WhatsApp (F4/v3). */
+export interface NewLearningEvent {
+  readonly kind: "prior" | "proposal";
+  readonly content: string;
+}
+
 export interface LearningServiceDeps {
   readonly repo: LearningRepo;
   readonly outcomeRepo: OutcomeRepo;
@@ -55,6 +61,8 @@ export interface LearningServiceDeps {
   readonly config: LearningServiceConfig;
   /** relógio injetável (testes determinísticos). Default = Date.now. */
   readonly now?: () => Date;
+  /** avisa a casca que nasceu um aprendizado novo (alerta WhatsApp gated por notify_policy). */
+  readonly onNewLearning?: (agent: LearnableAgent, event: NewLearningEvent) => Promise<void>;
 }
 
 export interface DistillResult {
@@ -73,6 +81,16 @@ function dateStr(d: Date): string {
 export function createLearningService(deps: LearningServiceDeps) {
   const { repo, outcomeRepo, logger, config } = deps;
   const clock = deps.now ?? (() => new Date());
+
+  /** Dispara o alerta de aprendizado novo (best-effort — falha de aviso nunca derruba o tick). */
+  async function alertNew(agent: LearnableAgent, event: NewLearningEvent): Promise<void> {
+    if (!deps.onNewLearning) return;
+    try {
+      await deps.onNewLearning(agent, event);
+    } catch (err) {
+      logger.warn({ err, agentId: agent.agentId }, "learning:alerta de aprendizado falhou");
+    }
+  }
 
   /** Destila lições observacionais de UM agente. Retorna quantas criou/reforçou. */
   async function distillAgent(agent: LearnableAgent, redactBudget: { remaining: number }): Promise<DistillResult> {
@@ -358,6 +376,7 @@ export function createLearningService(deps: LearningServiceDeps) {
         evidenceAt: clock(),
         ...(proposal ? { proposedThresholdPatch: { ...proposal } } : {}),
       });
+      await alertNew(agent, { kind: proposal ? "proposal" : "prior", content });
       created += 1;
     }
     return { created, reinforced };
@@ -396,6 +415,7 @@ export function createLearningService(deps: LearningServiceDeps) {
       if (redactBudget.remaining <= 0) continue;
       const content = await redactWithBudget(candidate, agent.orgId, undefined, redactBudget);
       await repo.insertLesson({ orgId: agent.orgId, agentId: agent.agentId, candidate, content, evidenceAt: clock() });
+      await alertNew(agent, { kind: "prior", content });
       created += 1;
     }
     return { created, reinforced };

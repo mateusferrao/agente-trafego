@@ -104,6 +104,8 @@ export function createLearningRepo(db: Database): LearningRepo {
             eq(agents.status, "active"),
             eq(adAccounts.status, "active"),
             eq(adAccounts.activityState, "active"),
+            // kill-switch do aprendizado (v3, default ON): só desliga quando explicitamente false.
+            sql`coalesce((${agents.modelConfig} -> 'learning' ->> 'enabled')::boolean, true) = true`,
           ),
         );
       return rows;
