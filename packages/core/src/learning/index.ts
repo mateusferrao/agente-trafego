@@ -149,8 +149,11 @@ export type FactPattern = "persistent_zombie" | "persistent_underperformer" | "r
 /** Padrão de CALIBRAÇÃO (S4) — o que a medição de outcome de uma ação NOSSA ensinou. */
 export type CalibrationPattern = "scale_backfired" | "cut_worked";
 
-/** Qualquer padrão de lição (observacional + calibração). */
-export type LessonPattern = FactPattern | CalibrationPattern;
+/** Padrão de PRIOR DE CONTA (v3) — destilado de outcome medido em ≥K entidades distintas. */
+export type AccountPriorPattern = "account_cut_pays" | "account_scale_backfires" | "account_scale_pays";
+
+/** Qualquer padrão de lição (observacional + calibração + prior de conta). */
+export type LessonPattern = FactPattern | CalibrationPattern | AccountPriorPattern;
 
 export interface LessonEvidence {
   readonly pattern: LessonPattern;
@@ -205,17 +208,13 @@ export interface DetectFactInput {
   readonly config?: Partial<FactDetectionConfig>;
 }
 
-const HEALTH_SIGNAL_DIMENSION: Partial<Record<HealthSignal, LessonDimension>> = {
-  creative_fatigue: "creative",
-  weak_creative: "creative",
-  weak_hook_retention: "creative",
-  audience_saturation: "audience",
-};
-
 /**
- * Destila padrões RECORRENTES do histórico de análise → candidatas `fact`. Puro.
- * Só emite quando o padrão persiste (≥ ratio dos runs) e há runs suficientes.
- * Confiança nasce baixa (teto observacional) — vira acionável só com reforço/confirmação.
+ * Destila padrões RECORRENTES de CONTA do histórico de análise → candidatas `fact`. Puro.
+ * v3: só o **tracking-suspeito recorrente** (nível conta) — os padrões por-ENTIDADE
+ * (zumbi/underperformer/fadiga) foram removidos por serem redundantes com a análise stateless
+ * (que já recalcula e recomenda a cada run) e inertes (saturam abaixo do limiar do prompt). O
+ * aprendizado de conta que vale vem de outcome MEDIDO (`distillAccountPriors`) e de padrão
+ * TEMPORAL do histórico (detectores temporais) — não de re-observar o estado atual por campanha.
  */
 export function detectFactCandidates(input: DetectFactInput): LessonCandidate[] {
   const cfg = { ...DEFAULT_FACT_DETECTION, ...input.config };
@@ -226,58 +225,7 @@ export function detectFactCandidates(input: DetectFactInput): LessonCandidate[] 
   const observe = (occurrenceRatio: number): number =>
     computeConfidence(null, { type: "observe", occurrenceRatio, origin: "observational" });
 
-  // ── Padrões por campanha (tier persistente + sinais de saúde recorrentes) ──
-  const byCampaign = new Map<string, { name: string; appearances: number; zombie: number; under: number; signals: Map<HealthSignal, number> }>();
-  for (const run of runs) {
-    for (const c of run.campaigns) {
-      const agg = byCampaign.get(c.externalId) ?? { name: c.name, appearances: 0, zombie: 0, under: 0, signals: new Map() };
-      agg.name = c.name;
-      agg.appearances += 1;
-      if (c.tier === "zombie") agg.zombie += 1;
-      if (c.tier === "underperformer") agg.under += 1;
-      for (const s of c.healthSignals ?? []) agg.signals.set(s, (agg.signals.get(s) ?? 0) + 1);
-      byCampaign.set(c.externalId, agg);
-    }
-  }
-
-  for (const [externalId, agg] of byCampaign) {
-    if (agg.appearances < cfg.minRuns) continue;
-    const ratioOf = (n: number): number => n / agg.appearances;
-
-    if (ratioOf(agg.zombie) >= cfg.minOccurrenceRatio) {
-      const ratio = ratioOf(agg.zombie);
-      out.push({
-        kind: "fact",
-        key: { scope: "entity", dimension: "budget", direction: "lower", subjectId: externalId },
-        origin: "observational",
-        confidence: observe(ratio),
-        evidence: { pattern: "persistent_zombie", occurrences: agg.zombie, totalRuns: agg.appearances, subjectName: agg.name },
-      });
-    } else if (ratioOf(agg.under) >= cfg.minOccurrenceRatio) {
-      const ratio = ratioOf(agg.under);
-      out.push({
-        kind: "fact",
-        key: { scope: "entity", dimension: "pacing", direction: "lower", subjectId: externalId },
-        origin: "observational",
-        confidence: observe(ratio),
-        evidence: { pattern: "persistent_underperformer", occurrences: agg.under, totalRuns: agg.appearances, subjectName: agg.name },
-      });
-    }
-
-    for (const [signal, count] of agg.signals) {
-      const dimension = HEALTH_SIGNAL_DIMENSION[signal];
-      if (!dimension || ratioOf(count) < cfg.minOccurrenceRatio) continue;
-      out.push({
-        kind: "fact",
-        key: { scope: "entity", dimension, direction: "lower", subjectId: externalId },
-        origin: "observational",
-        confidence: observe(ratioOf(count)),
-        evidence: { pattern: "recurring_health_signal", occurrences: count, totalRuns: agg.appearances, subjectName: agg.name, healthSignal: signal },
-      });
-    }
-  }
-
-  // ── Tracking suspeito recorrente (nível conta) ──
+  // ── Tracking suspeito recorrente (nível CONTA) — a ressalva de medição que persiste ──
   const suspectRuns = runs.filter((r) => r.trackingSuspect === true).length;
   if (suspectRuns / runs.length >= cfg.minOccurrenceRatio) {
     out.push({
@@ -502,6 +450,87 @@ export function contradictedLessonKey(input: CalibrationInput): SemanticKey | nu
   return null;
 }
 
+// ─── Prior de CONTA: classificação de evidência + destilação cross-seccional (v3) ─────
+
+/** Entrada de evidência: a (dimensão, direção) do prior de conta que o outcome SUSTENTA
+ *  (supports=true) ou CONTRADIZ (supports=false). */
+export interface AccountEvidenceEntry {
+  readonly dimension: LessonDimension;
+  readonly direction: LessonDirection;
+  readonly supports: boolean;
+}
+
+/**
+ * Classifica um outcome MEDIDO de (ação, resultado) nas entradas de evidência que gera — a
+ * (dimensão, direção) do prior de conta que sustenta e a que contradiz. Vazio quando neutro/
+ * indeterminado (nunca vira evidência). Puro. É o que popula o ledger `learning_evidence`.
+ */
+export function classifyOutcomeEvidence(input: CalibrationInput): AccountEvidenceEntry[] {
+  if (input.outcome === "neutral") return [];
+  const scale = isScaleAction(input.actionType, input.params);
+  const cut = isPause(input.actionType, input.params) || actionEffect(input.actionType, input.params) === "budget_down";
+  const positive = input.outcome === "positive";
+  if (cut) return [{ dimension: "budget", direction: "lower", supports: positive }]; // corte: positivo sustenta "cortar compensa"
+  if (scale) {
+    // escala: positivo sustenta "escalar compensa" (raise) e contradiz "escalar piora" (lower); negativo o inverso.
+    return positive
+      ? [{ dimension: "pacing", direction: "raise", supports: true }, { dimension: "pacing", direction: "lower", supports: false }]
+      : [{ dimension: "pacing", direction: "lower", supports: true }, { dimension: "pacing", direction: "raise", supports: false }];
+  }
+  return [];
+}
+
+/** Uma linha do ledger de evidência (o que o repo entrega à destilação). */
+export interface AccountEvidenceRow extends AccountEvidenceEntry {
+  readonly entityId: string;
+}
+
+export interface DistillAccountConfig {
+  /** mínimo de entidades DISTINTAS sustentando p/ nascer um prior de conta. */
+  readonly minEntities: number;
+}
+export const DEFAULT_ACCOUNT_MIN_ENTITIES = 3;
+
+const ACCOUNT_PATTERN: Partial<Record<string, AccountPriorPattern>> = {
+  "budget:lower": "account_cut_pays",
+  "pacing:lower": "account_scale_backfires",
+  "pacing:raise": "account_scale_pays",
+};
+
+/**
+ * Destila priors de CONTA do ledger (cross-seccional): por (dimensão, direção), conta
+ * ENTIDADES DISTINTAS que sustentam (S) e que contradizem (O); emite o prior quando
+ * `S ≥ minEntities` **E** `S > O` (direção domina). Confiança escala com S (teto medido 0,85 —
+ * um prior de ≥3 entidades nasce ≥0,7, forte o bastante p/ o prompt). Puro.
+ */
+export function distillAccountPriors(rows: readonly AccountEvidenceRow[], cfg: DistillAccountConfig): LessonCandidate[] {
+  const groups = new Map<string, { support: Set<string>; oppose: Set<string> }>();
+  for (const r of rows) {
+    const key = `${r.dimension}:${r.direction}`;
+    const g = groups.get(key) ?? { support: new Set<string>(), oppose: new Set<string>() };
+    (r.supports ? g.support : g.oppose).add(r.entityId);
+    groups.set(key, g);
+  }
+  const out: LessonCandidate[] = [];
+  for (const [key, g] of groups) {
+    const S = g.support.size;
+    const O = g.oppose.size;
+    const pattern = ACCOUNT_PATTERN[key];
+    if (!pattern || S < cfg.minEntities || S <= O) continue;
+    const [dimension, direction] = key.split(":") as [LessonDimension, LessonDirection];
+    let confidence = 0;
+    for (let i = 0; i < S; i++) confidence = computeConfidence(confidence, { type: "measured", positive: true });
+    out.push({
+      kind: "calibration",
+      key: { scope: "account", dimension, direction },
+      origin: "our_action",
+      confidence,
+      evidence: { pattern, occurrences: S, totalRuns: S + O },
+    });
+  }
+  return out;
+}
+
 // ─── Calibração paramétrica: proposta de limiar (S6) ──────────────────────
 
 /** A partir desta confiança uma lição de calibração pode PROPOR ajustar um limiar. */
@@ -606,6 +635,12 @@ export function fallbackLessonText(r: RedactorInput): string {
       return `Escalar ${alvo} já piorou o resultado antes — vale cautela antes de aumentar de novo por aqui.`;
     case "cut_worked":
       return `Cortar/pausar ${alvo} melhorou o resultado antes — foi uma boa jogada nesta conta.`;
+    case "account_cut_pays":
+      return `Nesta conta, cortar desperdício cedo tende a compensar — foi o que aconteceu em ${r.occurrences} campanhas diferentes.`;
+    case "account_scale_backfires":
+      return `Nesta conta, escalar sem base sólida tende a piorar o custo — visto em ${r.occurrences} campanhas diferentes.`;
+    case "account_scale_pays":
+      return `Nesta conta, escalar o que já tem base tende a compensar — foi o que aconteceu em ${r.occurrences} campanhas diferentes.`;
   }
 }
 

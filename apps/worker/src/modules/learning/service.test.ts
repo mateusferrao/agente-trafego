@@ -33,13 +33,13 @@ function emptyOutcomeRepo(over: Partial<OutcomeRepo> = {}): OutcomeRepo {
 
 const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as Logger;
 
-/** 3 runs com a mesma campanha zumbi → 1 candidata fact/budget/lower/entity. */
-function zombieRuns(): RunLearningSnapshot[] {
-  const camp = [{ externalId: "c1", name: "Institucional", tier: "zombie" as const }];
+/** 3 runs com tracking suspeito recorrente → 1 candidata fact/tracking/account (v3: o
+ *  observacional por-entidade foi removido; o único fact observacional é o de conta). */
+function trackingRuns(): RunLearningSnapshot[] {
   return [
-    { runId: "r1", at: "2026-01-01T00:00:00.000Z", campaigns: camp },
-    { runId: "r2", at: "2026-01-02T00:00:00.000Z", campaigns: camp },
-    { runId: "r3", at: "2026-01-03T00:00:00.000Z", campaigns: camp },
+    { runId: "r1", at: "2026-01-01T00:00:00.000Z", campaigns: [], trackingSuspect: true },
+    { runId: "r2", at: "2026-01-02T00:00:00.000Z", campaigns: [], trackingSuspect: true },
+    { runId: "r3", at: "2026-01-03T00:00:00.000Z", campaigns: [], trackingSuspect: true },
   ];
 }
 
@@ -83,7 +83,7 @@ describe("learning service — distillAgent", () => {
   it("cria lição nova com o texto do redator + marca a evidência (dedup) na criação", async () => {
     const state: FakeRepoState = { inserts: [], reinforces: [] };
     const llm = llmStub("Frase do redator.");
-    const svc = createLearningService({ repo: fakeRepo(null, zombieRuns(), state), llm: llm as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
+    const svc = createLearningService({ repo: fakeRepo(null, trackingRuns(), state), llm: llm as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
     const r = await svc.distillAgent(AGENT, { remaining: 20 });
     expect(r.created).toBe(1);
     expect(r.reinforced).toBe(0);
@@ -96,15 +96,15 @@ describe("learning service — distillAgent", () => {
   it("cai no fallback determinístico quando o redator LLM falha (loop funciona sem LLM)", async () => {
     const state: FakeRepoState = { inserts: [], reinforces: [] };
     const llm = llmStub(new Error("llm down"));
-    const svc = createLearningService({ repo: fakeRepo(null, zombieRuns(), state), llm: llm as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
+    const svc = createLearningService({ repo: fakeRepo(null, trackingRuns(), state), llm: llm as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
     await svc.distillAgent(AGENT, { remaining: 20 });
-    expect(state.inserts[0]?.content).toContain("Institucional");
+    expect(state.inserts[0]?.content).toContain("medição");
   });
 
   it("reforça quando há evidência MAIS NOVA que a última incorporada", async () => {
     const state: FakeRepoState = { inserts: [], reinforces: [] };
     const existing = { id: "l1", confidence: 0.2, lastReinforcedAt: new Date("2026-01-02T00:00:00.000Z") };
-    const svc = createLearningService({ repo: fakeRepo(existing, zombieRuns(), state), llm: llmStub("x") as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
+    const svc = createLearningService({ repo: fakeRepo(existing, trackingRuns(), state), llm: llmStub("x") as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
     const r = await svc.distillAgent(AGENT, { remaining: 20 });
     expect(r.reinforced).toBe(1);
     expect(r.created).toBe(0);
@@ -115,7 +115,7 @@ describe("learning service — distillAgent", () => {
     const state: FakeRepoState = { inserts: [], reinforces: [] };
     // já reforçamos até o run mais novo (r3) — um novo tick sobre a mesma janela é no-op.
     const existing = { id: "l1", confidence: 0.4, lastReinforcedAt: new Date("2026-01-03T00:00:00.000Z") };
-    const svc = createLearningService({ repo: fakeRepo(existing, zombieRuns(), state), llm: llmStub("x") as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
+    const svc = createLearningService({ repo: fakeRepo(existing, trackingRuns(), state), llm: llmStub("x") as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
     const r = await svc.distillAgent(AGENT, { remaining: 20 });
     expect(r.reinforced).toBe(0);
     expect(r.created).toBe(0);
@@ -174,7 +174,7 @@ describe("learning service — distillAgent", () => {
   it("ADIA a criação quando o teto do redator esgotou (não grava texto genérico permanente)", async () => {
     const state: FakeRepoState = { inserts: [], reinforces: [] };
     const llm = llmStub("nunca usado");
-    const svc = createLearningService({ repo: fakeRepo(null, zombieRuns(), state), llm: llm as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
+    const svc = createLearningService({ repo: fakeRepo(null, trackingRuns(), state), llm: llm as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
     const r = await svc.distillAgent(AGENT, { remaining: 0 });
     expect(llm.complete).not.toHaveBeenCalled();
     expect(r.created).toBe(0); // adiado — vira candidata no próximo tick com orçamento
@@ -184,7 +184,7 @@ describe("learning service — distillAgent", () => {
   it("passa runId (run mais novo) ao redator p/ o metering atribuir à conta", async () => {
     const state: FakeRepoState = { inserts: [], reinforces: [] };
     const llm = llmStub("Frase.");
-    const svc = createLearningService({ repo: fakeRepo(null, zombieRuns(), state), llm: llm as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
+    const svc = createLearningService({ repo: fakeRepo(null, trackingRuns(), state), llm: llm as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
     await svc.distillAgent(AGENT, { remaining: 20 });
     expect(llm.complete).toHaveBeenCalledWith(
       expect.objectContaining({ meta: expect.objectContaining({ orgId: "org-1", type: "learning", runId: "r3" }) }),

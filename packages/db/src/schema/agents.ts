@@ -38,6 +38,7 @@ import {
   memoryOrigin,
   memoryScope,
   memoryType,
+  outcomeStatus,
   pk,
   timestamps,
 } from "./_shared.js";
@@ -236,5 +237,45 @@ export const agentMemory = pgTable(
     uniqueIndex("agent_memory_agent_semantic_key_uq")
       .on(t.agentId, t.semanticKey)
       .where(sql`${t.semanticKey} is not null and ${t.lifecycle} <> 'archived'`),
+  ],
+);
+
+/**
+ * Ledger de EVIDÊNCIA do aprendizado (v3) — fonte única da destilação de priors de CONTA.
+ * Cada linha = 1 outcome MEDIDO (ação nossa OU mudança manual do gestor) classificado na
+ * (dimensão, direção) do prior que ele sustenta, com `supports` = a medição confirma essa
+ * direção (true) ou a contradiz (false). `distillAccountPriors` (core puro) agrega por
+ * (dimensão, direção), conta ENTIDADES DISTINTAS que sustentam, e cria o prior quando
+ * ≥ K distintas e a direção domina. Sem lição por-entidade: a evidência é atômica aqui, o
+ * aprendizado é account-level. `dedupe_ref` idempotentiza (1 evidência por evento medido).
+ */
+export const learningEvidence = pgTable(
+  "learning_evidence",
+  {
+    id: pk(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    dimension: lessonDimension("dimension").notNull(),
+    direction: memoryDirection("direction").notNull(),
+    // id externo da entidade onde o outcome foi medido (base da contagem cross-seccional).
+    entityId: text("entity_id").notNull(),
+    // a medição SUSTENTA a direção do prior (true) ou a contradiz (false)?
+    supports: boolean("supports").notNull(),
+    outcome: outcomeStatus("outcome").notNull(),
+    // origem do outcome (our_action | human_manual) — genérico, sem vazar provider.
+    source: memoryOrigin("source").notNull(),
+    // âncora do evento medido (id da rec p/ ação nossa; `entity:data` p/ mudança manual) —
+    // idempotência: nunca conta a mesma medição 2x.
+    dedupeRef: text("dedupe_ref").notNull(),
+    measuredAt: timestamp("measured_at", { withTimezone: true }).notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    index("learning_evidence_agent_idx").on(t.agentId, t.dimension, t.direction),
+    uniqueIndex("learning_evidence_dedupe_uq").on(t.agentId, t.dedupeRef),
   ],
 );

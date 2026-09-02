@@ -5,7 +5,9 @@ import {
   PROMPT_CONFIDENCE_THRESHOLD,
   applyContradiction,
   applyDecay,
+  classifyOutcomeEvidence,
   computeConfidence,
+  distillAccountPriors,
   computeOutcome,
   confidenceTier,
   contradictedLessonKey,
@@ -106,39 +108,12 @@ describe("detectFactCandidates", () => {
     expect(detectFactCandidates({ runs })).toEqual([]);
   });
 
-  it("detecta zumbi persistente numa campanha e emite lição fact/budget/lower/entity", () => {
-    const zombie = [{ externalId: "c1", name: "Institucional", tier: "zombie" as const }];
-    const runs = [
-      runWith(zombie, "2026-01-01"),
-      runWith(zombie, "2026-01-02"),
-      runWith(zombie, "2026-01-03"),
-      runWith(zombie, "2026-01-04"),
-    ];
-    const out = detectFactCandidates({ runs });
-    const zombieLesson = out.find((c) => c.key.subjectId === "c1");
-    expect(zombieLesson).toBeDefined();
-    expect(zombieLesson?.kind).toBe("fact");
-    expect(zombieLesson?.key.scope).toBe("entity");
-    expect(zombieLesson?.key.dimension).toBe("budget");
-    expect(zombieLesson?.key.direction).toBe("lower");
-    expect(zombieLesson?.origin).toBe("observational");
-    expect(zombieLesson?.confidence).toBeGreaterThan(0);
-    expect(zombieLesson?.confidence).toBeLessThan(PROMPT_CONFIDENCE_THRESHOLD);
-  });
-
-  it("não emite quando o padrão é esporádico (abaixo do ratio)", () => {
-    const zombie = [{ externalId: "c1", name: "Camp 1", tier: "zombie" as const }];
-    const ok = [{ externalId: "c1", name: "Camp 1", tier: "performer" as const }];
-    const runs = [runWith(zombie, "d1"), runWith(ok, "d2"), runWith(ok, "d3"), runWith(ok, "d4")];
-    expect(detectFactCandidates({ runs }).find((c) => c.key.subjectId === "c1")).toBeUndefined();
-  });
-
-  it("detecta fadiga de criativo recorrente → dimensão creative", () => {
-    const fatigued = [{ externalId: "c2", name: "Promo", tier: "performer" as const, healthSignals: ["creative_fatigue" as const] }];
-    const runs = [runWith(fatigued, "d1"), runWith(fatigued, "d2"), runWith(fatigued, "d3")];
-    const lesson = detectFactCandidates({ runs }).find((c) => c.key.dimension === "creative");
-    expect(lesson).toBeDefined();
-    expect(lesson?.key.subjectId).toBe("c2");
+  it("NÃO emite padrão por-entidade (zumbi/fadiga são redundantes com a análise stateless)", () => {
+    // v3: os padrões observacionais por-campanha foram removidos — a análise já os recalcula
+    // e recomenda a cada run. Aprendizado de entidade não é mais criado aqui.
+    const zombie = [{ externalId: "c1", name: "Institucional", tier: "zombie" as const, healthSignals: ["creative_fatigue" as const] }];
+    const runs = [runWith(zombie, "d1"), runWith(zombie, "d2"), runWith(zombie, "d3"), runWith(zombie, "d4")];
+    expect(detectFactCandidates({ runs }).every((c) => c.key.scope !== "entity")).toBe(true);
   });
 
   it("detecta tracking suspeito recorrente → dimensão tracking, escopo conta", () => {
@@ -147,6 +122,50 @@ describe("detectFactCandidates", () => {
     const lesson = detectFactCandidates({ runs }).find((x) => x.key.dimension === "tracking");
     expect(lesson).toBeDefined();
     expect(lesson?.key.scope).toBe("account");
+  });
+});
+
+// ─── classifyOutcomeEvidence + distillAccountPriors (v3, cross-seccional) ──
+describe("classifyOutcomeEvidence", () => {
+  it("corte positivo sustenta budget/lower; negativo contradiz", () => {
+    expect(classifyOutcomeEvidence({ actionType: "pause_entity", outcome: "positive", subjectId: "c1" })).toEqual([
+      { dimension: "budget", direction: "lower", supports: true },
+    ]);
+    expect(classifyOutcomeEvidence({ actionType: "pause_entity", outcome: "negative", subjectId: "c1" })[0]?.supports).toBe(false);
+  });
+  it("escala positiva sustenta pacing/raise e contradiz pacing/lower", () => {
+    const e = classifyOutcomeEvidence({ actionType: "adjust_budget", params: { mode: "increase" }, outcome: "positive", subjectId: "c1" });
+    expect(e).toContainEqual({ dimension: "pacing", direction: "raise", supports: true });
+    expect(e).toContainEqual({ dimension: "pacing", direction: "lower", supports: false });
+  });
+  it("neutro não vira evidência", () => {
+    expect(classifyOutcomeEvidence({ actionType: "pause_entity", outcome: "neutral", subjectId: "c1" })).toEqual([]);
+  });
+});
+
+describe("distillAccountPriors", () => {
+  const cfg = { minEntities: 3 };
+  const cutPays = (entityId: string) => ({ dimension: "budget" as const, direction: "lower" as const, supports: true, entityId });
+
+  it("≥3 entidades DISTINTAS sustentando → nasce prior de conta (budget/lower)", () => {
+    const priors = distillAccountPriors([cutPays("a"), cutPays("b"), cutPays("c")], cfg);
+    const p = priors.find((x) => x.key.dimension === "budget");
+    expect(p).toBeDefined();
+    expect(p?.key.scope).toBe("account");
+    expect(p?.key.subjectId).toBeUndefined();
+    expect(p?.evidence.occurrences).toBe(3);
+    expect(p?.confidence).toBeGreaterThanOrEqual(0.7); // 3 entidades → ≥ limiar do prompt
+  });
+  it("a MESMA entidade repetida não conta (distintas=1) → não nasce", () => {
+    expect(distillAccountPriors([cutPays("a"), cutPays("a"), cutPays("a")], cfg)).toEqual([]);
+  });
+  it("<K entidades distintas → não nasce", () => {
+    expect(distillAccountPriors([cutPays("a"), cutPays("b")], cfg)).toEqual([]);
+  });
+  it("oposição domina (O ≥ S) → não nasce", () => {
+    const oppose = (entityId: string) => ({ dimension: "budget" as const, direction: "lower" as const, supports: false, entityId });
+    const rows = [cutPays("a"), cutPays("b"), cutPays("c"), oppose("d"), oppose("e"), oppose("f")];
+    expect(distillAccountPriors(rows, cfg).find((x) => x.key.dimension === "budget")).toBeUndefined();
   });
 });
 
@@ -272,22 +291,16 @@ describe("proposalForCalibration / nextThresholdValue", () => {
 
 // ─── redator ──────────────────────────────────────────────────────────────
 describe("describeLessonForRedactor / fallbackLessonText", () => {
-  it("monta payload estruturado e um texto de fallback determinístico em PT", () => {
-    const cands = detectFactCandidates({
-      runs: [
-        runWith([{ externalId: "c1", name: "Institucional", tier: "zombie" }], "d1"),
-        runWith([{ externalId: "c1", name: "Institucional", tier: "zombie" }], "d2"),
-        runWith([{ externalId: "c1", name: "Institucional", tier: "zombie" }], "d3"),
-      ],
-    });
-    const cand = cands[0];
+  it("monta payload estruturado e um texto de fallback determinístico em PT (prior de conta)", () => {
+    const c = [{ externalId: "c1", name: "Camp", tier: "performer" as const }];
+    const cands = detectFactCandidates({ runs: [runWith(c, "d1", true), runWith(c, "d2", true), runWith(c, "d3", true)] });
+    const cand = cands.find((x) => x.key.dimension === "tracking");
     expect(cand).toBeDefined();
     if (!cand) return;
     const payload = describeLessonForRedactor(cand);
-    expect(payload.subjectName).toBe("Institucional");
-    expect(payload.dimension).toBe("budget");
+    expect(payload.dimension).toBe("tracking");
+    expect(payload.scope).toBe("account");
     const text = fallbackLessonText(payload);
-    expect(text).toContain("Institucional");
     expect(text.length).toBeGreaterThan(0);
   });
 });

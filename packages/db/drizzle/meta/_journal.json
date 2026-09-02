@@ -379,6 +379,13 @@
       "when": 1788333206634,
       "tag": "0053_lethal_molten_man",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1788367589196,
+      "tag": "0054_lumpy_shiver_man",
+      "breakpoints": true
     }
   ]
 }
