@@ -58,9 +58,9 @@ export function startAgentLearningWorker(deps: WorkerDeps, connection: Redis): W
     AGENT_LEARNING_QUEUE,
     async () => {
       const r = await service.runTick();
-      if (r.measured > 0 || r.manualEvidence > 0 || r.created > 0 || r.reinforced > 0 || r.staled > 0 || r.archived > 0) {
-        deps.logger.info(r, "agent-learning:tick");
-      }
+      // sempre loga o resultado (o tick é diário + on-demand): confirma que rodou mesmo quando é
+      // no-op (tudo zero) — senão um disparo manual não dá NENHUM feedback. 1 linha/tick não polui.
+      deps.logger.info(r, "agent-learning:tick");
     },
     { connection },
   );

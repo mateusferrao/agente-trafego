@@ -102,7 +102,7 @@ async function main(): Promise<void> {
   await reapStalePendingVideos(deps.db, logger).catch((err: unknown) =>
     logger.error({ err }, "creative-video-poll:reaper boot falhou"),
   );
-  logger.info("worker up: agent-runs + cron-dispatch + reaper + insights-sync + insights-sweep + schedule-resync + action-undo + approval-apply + approval-expiry + group-context-purge + whatsapp-inbound + whatsapp-transcription + whatsapp-media-intake + mail");
+  logger.info("worker up: agent-runs + agent-learning + cron-dispatch + reaper + insights-sync + insights-sweep + schedule-resync + action-undo + approval-apply + approval-expiry + group-context-purge + whatsapp-inbound + whatsapp-transcription + whatsapp-media-intake + mail");
 
   // shutdown gracioso (drena jobs em andamento antes de sair)
   const shutdown = async (signal: string): Promise<void> => {
