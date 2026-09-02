@@ -4,12 +4,13 @@
 // contradição) e a medição de outcome entram nas subfatias seguintes reusando este repo.
 
 import { and, desc, eq, inArray, isNotNull, lt, sql } from "drizzle-orm";
-import { adAccounts, agentMemory, agentRuns, agents, entityConfigSnapshots, type Database } from "@trafego/db";
+import { adAccounts, agentMemory, agentRuns, agents, entityConfigSnapshots, learningEvidence, type Database } from "@trafego/db";
 import type { AdEntity, EntityConfigSnapshot, HealthSignal, PerformanceTier, RunCampaignCard, TrackingHealth, WasteReport } from "@trafego/shared";
 import {
   decayCutoffs,
   LEARNING_MEMORY_TYPES,
   lessonKindFromMemoryType,
+  type AccountEvidenceRow,
   type DecayConfig,
   type LessonCandidate,
   type RunLearningSnapshot,
@@ -35,11 +36,17 @@ export interface LearningRepo {
     orgId: string,
     agentId: string,
     semanticKey: string,
-  ): Promise<{ id: string; confidence: number | null; lastReinforcedAt: Date | null } | null>;
+  ): Promise<{ id: string; confidence: number | null; lastReinforcedAt: Date | null; reinforceCount: number } | null>;
   insertLesson(input: InsertLessonInput): Promise<void>;
   /** Reforça: sobe confiança, incrementa contagem, marca o tempo da evidência e
    *  REATIVA a lição (stale→active) — um padrão reobservado volta a valer. */
   reinforceLesson(id: string, confidence: number, evidenceAt: Date): Promise<void>;
+  /** Ledger de evidência (v3): linhas medidas do agente, base da destilação cross-seccional. */
+  loadEvidence(orgId: string, agentId: string): Promise<AccountEvidenceRow[]>;
+  /** Atualiza um prior de CONTA já materializado: fixa a confiança destilada + a contagem de
+   *  entidades de suporte (`reinforceCount` = S, não incrementa) e reativa. Idempotente — o
+   *  serviço só chama quando S cresceu (evidência de entidade NOVA). */
+  refreshAccountPrior(id: string, confidence: number, supportCount: number, evidenceAt: Date): Promise<void>;
   /** Decaimento (curadoria anti-pilha): sem reforço → `active→stale→archived`. Um degrau
    *  por sweep (varre arquiváveis ANTES de rebaixar ativas). Global (sweep de manutenção,
    *  como o reaper). Só toca linhas de aprendizado (fact/past_action com chave). */
@@ -119,7 +126,7 @@ export function createLearningRepo(db: Database): LearningRepo {
 
     async findLessonByKey(orgId, agentId, semanticKey) {
       const [row] = await db
-        .select({ id: agentMemory.id, confidence: agentMemory.confidence, lastReinforcedAt: agentMemory.lastReinforcedAt })
+        .select({ id: agentMemory.id, confidence: agentMemory.confidence, lastReinforcedAt: agentMemory.lastReinforcedAt, reinforceCount: agentMemory.reinforceCount })
         .from(agentMemory)
         .where(
           and(
@@ -131,6 +138,29 @@ export function createLearningRepo(db: Database): LearningRepo {
         )
         .limit(1);
       return row ?? null;
+    },
+
+    async loadEvidence(orgId, agentId) {
+      const rows = await db
+        .select({ dimension: learningEvidence.dimension, direction: learningEvidence.direction, entityId: learningEvidence.entityId, supports: learningEvidence.supports })
+        .from(learningEvidence)
+        .where(and(eq(learningEvidence.orgId, orgId), eq(learningEvidence.agentId, agentId)));
+      return rows;
+    },
+
+    async refreshAccountPrior(id, confidence, supportCount, evidenceAt) {
+      await db
+        .update(agentMemory)
+        .set({
+          confidence,
+          // reinforceCount = nº de entidades DISTINTAS de suporte (destilação recomputa do
+          // ledger inteiro; não incrementa — senão o tick diário inflaria a contagem).
+          reinforceCount: supportCount,
+          lastReinforcedAt: evidenceAt,
+          lifecycle: "active",
+          updatedAt: sql`now()`,
+        })
+        .where(eq(agentMemory.id, id));
     },
 
     async insertLesson({ orgId, agentId, candidate, content, evidenceAt, sourceRunId }) {

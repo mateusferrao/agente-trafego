@@ -27,13 +27,14 @@ export function startAgentLearningWorker(deps: WorkerDeps, connection: Redis): W
       decayArchiveDays: deps.learning.decayArchiveDays,
       phaseBufferDays: deps.learning.phaseBufferDays,
       outcomeWindowDays: deps.learning.outcomeWindowDays,
+      accountMinEntities: deps.learning.accountMinEntities,
     },
   });
   return new Worker<AgentLearningTickPayload>(
     AGENT_LEARNING_QUEUE,
     async () => {
       const r = await service.runTick();
-      if (r.measured > 0 || r.manualLearned > 0 || r.created > 0 || r.reinforced > 0 || r.staled > 0 || r.archived > 0) {
+      if (r.measured > 0 || r.manualEvidence > 0 || r.created > 0 || r.reinforced > 0 || r.staled > 0 || r.archived > 0) {
         deps.logger.info(r, "agent-learning:tick");
       }
     },

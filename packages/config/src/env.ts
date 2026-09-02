@@ -299,6 +299,9 @@ export const envSchema = z.object({
   // Dias sem reforço p/ uma lição virar `stale` e depois `archived` (S2 decay).
   LEARNING_DECAY_STALE_DAYS: z.coerce.number().int().positive().default(30),
   LEARNING_DECAY_ARCHIVE_DAYS: z.coerce.number().int().positive().default(60),
+  // Mínimo de ENTIDADES DISTINTAS que precisam sustentar um par (dimensão,direção) p/
+  // nascer um prior de CONTA (v3 — destilação cross-seccional; repetir a mesma não conta).
+  LEARNING_ACCOUNT_MIN_ENTITIES: z.coerce.number().int().positive().default(3),
 
   // ─── Conversa (WhatsApp — Grafo B ReAct, 5b-2) ─────────────────────────
   // Modelo do chat: fallback quando o agente não tem `model_config.messageModel`.

@@ -6,23 +6,24 @@
 
 import type { LLMProviderPort } from "@trafego/shared/ports";
 import {
-  applyContradiction,
+  classifyOutcomeEvidence,
   computeConfidence,
   computeOutcome,
-  contradictedLessonKey,
   describeLessonForRedactor,
-  detectCalibrationCandidate,
   detectFactCandidates,
+  distillAccountPriors,
   fallbackLessonText,
   lessonKeyOf,
   manualChangeToAction,
+  type AccountEvidenceEntry,
   type LessonCandidate,
+  type MeasuredOutcome,
   type OutcomeWindow,
   type RedactorInput,
 } from "@trafego/core";
 import type { Logger } from "pino";
 import type { LearnableAgent, LearningRepo } from "./repo.js";
-import type { MeasurableRec, OutcomeRepo } from "./outcome-repo.js";
+import type { LearningEvidenceInsert, MeasurableRec, OutcomeRepo } from "./outcome-repo.js";
 
 export interface LearningServiceConfig {
   readonly historyRuns: number;
@@ -36,6 +37,8 @@ export interface LearningServiceConfig {
   /** medição de outcome (Sinal A): buffer da learning phase + janela de medição. */
   readonly phaseBufferDays: number;
   readonly outcomeWindowDays: number;
+  /** mínimo de entidades DISTINTAS p/ nascer um prior de conta (destilação cross-seccional). */
+  readonly accountMinEntities: number;
 }
 
 export interface LearningServiceDeps {
@@ -160,7 +163,7 @@ export function createLearningService(deps: LearningServiceDeps) {
    * (before_state) cuja janela madurou (buffer da learning phase + janela), e ainda dentro
    * da graça (não re-varre recs antigas). Redação da lição respeita o teto por tick.
    */
-  async function measureOutcomes(agent: LearnableAgent, redactBudget: { remaining: number }): Promise<{ measured: number }> {
+  async function measureOutcomes(agent: LearnableAgent): Promise<{ measured: number }> {
     const buffer = config.phaseBufferDays;
     const window = config.outcomeWindowDays;
     const today = clock();
@@ -173,7 +176,7 @@ export function createLearningService(deps: LearningServiceDeps) {
     let measured = 0;
     for (const rec of recs) {
       try {
-        if (await measureOne(agent, rec, redactBudget)) measured += 1;
+        if (await measureOne(agent, rec)) measured += 1;
       } catch (err) {
         logger.error({ err, recId: rec.recId }, "learning:medição de outcome falhou");
       }
@@ -181,7 +184,7 @@ export function createLearningService(deps: LearningServiceDeps) {
     return { measured };
   }
 
-  async function measureOne(agent: LearnableAgent, rec: MeasurableRec, redactBudget: { remaining: number }): Promise<boolean> {
+  async function measureOne(agent: LearnableAgent, rec: MeasurableRec): Promise<boolean> {
     const appliedAt = await outcomeRepo.findAppliedInstant(rec.runId, rec.entityId);
     if (!appliedAt) return false; // não aplicada por nós → sem Sinal A a medir
 
@@ -212,28 +215,13 @@ export function createLearningService(deps: LearningServiceDeps) {
     });
     const metrics = windowMetrics(entityPre, entityPost, accountPre, accountPost);
 
-    // calibração: cautela acionável (escala que deu errado / corte que deu certo).
-    const candidate = detectCalibrationCandidate({ actionType: rec.actionType, params: rec.params, outcome, subjectId: rec.entityId });
-    let calibration: { candidate: LessonCandidate; content: string; runId?: string } | undefined;
-    if (candidate) {
-      const content =
-        redactBudget.remaining > 0
-          ? await redactWithBudget(candidate, agent.orgId, rec.runId, redactBudget)
-          : fallbackLessonText(describeLessonForRedactor(candidate));
-      calibration = { candidate, content, runId: rec.runId };
-    }
-
-    // contradição: o outcome contradiz a conclusão de uma lição existente → enfraquece.
-    const contraKey = contradictedLessonKey({ actionType: rec.actionType, params: rec.params, outcome, subjectId: rec.entityId });
-    let contradiction: { semanticKey: string; confidence: number; demoteToStale: boolean } | undefined;
-    if (contraKey) {
-      const key = lessonKeyOf(contraKey);
-      const existing = await repo.findLessonByKey(agent.orgId, agent.agentId, key);
-      if (existing) {
-        const r = applyContradiction(existing.confidence);
-        contradiction = { semanticKey: key, confidence: r.confidence, demoteToStale: r.demoteToStale };
-      }
-    }
+    // evidência (v3): o outcome medido vira linhas de ledger (dimensão/direção que sustenta OU
+    // contradiz um prior de conta). A destilação cross-seccional (≥K entidades) roda à parte —
+    // uma medição não cria mais lição por-entidade. `entityId` é a base da contagem distinta.
+    const evidence = evidenceRowsFor(agent, rec.entityId, "our_action", `rec:${rec.recId}`, outcome, appliedAt, {
+      actionType: rec.actionType,
+      params: rec.params,
+    });
 
     await outcomeRepo.commitOutcome({
       orgId: agent.orgId,
@@ -241,29 +229,55 @@ export function createLearningService(deps: LearningServiceDeps) {
       recId: rec.recId,
       outcome,
       metrics,
-      ...(calibration ? { calibration } : {}),
-      ...(contradiction ? { contradiction } : {}),
+      evidence,
     });
     return true;
+  }
+
+  /** Traduz um outcome medido nas linhas de evidência do ledger (idempotentes por dedupeRef). */
+  function evidenceRowsFor(
+    agent: LearnableAgent,
+    entityId: string,
+    source: LearningEvidenceInsert["source"],
+    dedupeBase: string,
+    outcome: MeasuredOutcome,
+    measuredAt: Date,
+    action: { actionType: MeasurableRec["actionType"]; params: Readonly<Record<string, unknown>> },
+  ): LearningEvidenceInsert[] {
+    const entries: AccountEvidenceEntry[] = classifyOutcomeEvidence({ actionType: action.actionType, params: action.params, outcome, subjectId: entityId });
+    return entries.map((e) => ({
+      orgId: agent.orgId,
+      agentId: agent.agentId,
+      dimension: e.dimension,
+      direction: e.direction,
+      entityId,
+      supports: e.supports,
+      outcome,
+      source,
+      // dedupeRef inclui (dimensão,direção) → o par de linhas de uma escala (sustenta+contradiz)
+      // não colide entre si; nunca conta a mesma medição 2x.
+      dedupeRef: `${dedupeBase}:${e.dimension}:${e.direction}`,
+      measuredAt,
+    }));
   }
 
   /**
    * Aprende com mudanças que o GESTOR fez na mão na Meta (Sinal B — atribuição por
    * config-snapshot). Detecta a mudança madura, exclui as nossas ações, mede o outcome
-   * (mesmo computeOutcome) e grava uma lição `fact`/`human_manual` de confiança BAIXA
-   * (atribuição fraca: timing aproximado — cadência da análise). Sem recommendation_feedback.
+   * (mesmo computeOutcome) e grava linhas de EVIDÊNCIA no ledger (não uma lição por-entidade).
+   * É assim que a conta "só análise" alimenta o prior de conta: o gestor age, nós medimos.
    */
-  async function measureManualChanges(agent: LearnableAgent, redactBudget: { remaining: number }): Promise<{ learned: number }> {
+  async function measureManualChanges(agent: LearnableAgent): Promise<{ evidence: number }> {
     const buffer = config.phaseBufferDays;
     const window = config.outcomeWindowDays;
     const today = clock();
     const notAfter = dateStr(addDays(today, -(buffer + window)));
     // graça = 1 janela cheia (como o Sinal A) → robusto a ticks perdidos (worker fora do ar /
     // deploy). Config-snapshots são esparsos (cadência da análise) → poucas mudanças por janela,
-    // e o dedup por evidenceAt evita reaprender a mesma (o custo de re-scan é baixo).
+    // e o dedup por dedupeRef evita re-contar a mesma (o custo de re-scan é baixo).
     const notBefore = dateStr(addDays(today, -(buffer + window + window)));
     const changes = await outcomeRepo.loadMaturedConfigChanges(agent.adAccountId, notBefore, notAfter);
-    let learned = 0;
+    const rows: LearningEvidenceInsert[] = [];
     for (const change of changes) {
       try {
         const action = manualChangeToAction(change.prev, change.curr);
@@ -283,55 +297,66 @@ export function createLearningService(deps: LearningServiceDeps) {
         const accountPost = isPauseLike ? await outcomeRepo.loadWindow(agent.adAccountId, null, postFrom, postTo) : undefined;
         const outcome = computeOutcome({ actionType: action.actionType, params: action.params, entityPre, entityPost, ...(accountPre ? { accountPre } : {}), ...(accountPost ? { accountPost } : {}) });
 
-        const base = detectCalibrationCandidate({ actionType: action.actionType, params: action.params, outcome, subjectId: change.entityId });
-        if (!base) continue;
-        // mudança do gestor = observação (atribuição fraca por timing aproximado): fact +
-        // human_manual + confiança OBSERVACIONAL (nunca a de ação nossa medida).
-        const candidate: LessonCandidate = {
-          ...base,
-          kind: "fact",
-          origin: "human_manual",
-          confidence: computeConfidence(null, { type: "observe", occurrenceRatio: 1, origin: "observational" }),
-        };
-        const key = lessonKeyOf(candidate.key);
-        const existing = await repo.findLessonByKey(agent.orgId, agent.agentId, key);
-        if (existing) {
-          if (existing.lastReinforcedAt && existing.lastReinforcedAt.getTime() >= changeAt.getTime()) continue;
-          const next = computeConfidence(existing.confidence, { type: "observe", occurrenceRatio: 1, origin: "observational" });
-          await repo.reinforceLesson(existing.id, next, changeAt);
-        } else {
-          const content =
-            redactBudget.remaining > 0
-              ? await redactWithBudget(candidate, agent.orgId, undefined, redactBudget)
-              : fallbackLessonText(describeLessonForRedactor(candidate));
-          await repo.insertLesson({ orgId: agent.orgId, agentId: agent.agentId, candidate, content, evidenceAt: changeAt });
-        }
-        learned += 1;
+        rows.push(...evidenceRowsFor(agent, change.entityId, "human_manual", `manual:${change.entityId}:${change.changeDate}`, outcome, changeAt, action));
       } catch (err) {
         logger.error({ err, entityId: change.entityId }, "learning:mudança manual falhou");
       }
     }
-    return { learned };
+    await outcomeRepo.insertEvidence(rows);
+    return { evidence: rows.length };
   }
 
-  /** Roda a destilação em todos os agentes elegíveis + a curadoria (decaimento) — tick do job. */
-  async function runTick(): Promise<{ agents: number; measured: number; manualLearned: number; created: number; reinforced: number; staled: number; archived: number }> {
+  /**
+   * Destila os priors de CONTA do ledger de evidência (cross-seccional, ≥K entidades DISTINTAS).
+   * Recomputa do ledger INTEIRO a cada tick (idempotente): materializa uma lição nova (redator)
+   * ou atualiza a confiança/contagem de suporte de uma já existente quando entrou evidência de
+   * uma entidade NOVA. Não toca guardrail/autonomia — só afia o julgamento (prior de prompt).
+   */
+  async function distillAccount(agent: LearnableAgent, redactBudget: { remaining: number }): Promise<DistillResult> {
+    const rows = await repo.loadEvidence(agent.orgId, agent.agentId);
+    const candidates = distillAccountPriors(rows, { minEntities: config.accountMinEntities });
+    let created = 0;
+    let reinforced = 0;
+    for (const candidate of candidates) {
+      const key = lessonKeyOf(candidate.key);
+      const supportCount = candidate.evidence.occurrences; // entidades distintas de suporte (S).
+      const existing = await repo.findLessonByKey(agent.orgId, agent.agentId, key);
+      if (existing) {
+        // dedup: só atualiza quando o suporte CRESCEU (entidade nova) — senão o tick diário
+        // reescreveria o mesmo prior à toa.
+        if (supportCount <= existing.reinforceCount) continue;
+        await repo.refreshAccountPrior(existing.id, candidate.confidence, supportCount, clock());
+        reinforced += 1;
+        continue;
+      }
+      if (redactBudget.remaining <= 0) continue; // sem orçamento de redator → adia p/ o próximo tick.
+      const content = await redactWithBudget(candidate, agent.orgId, undefined, redactBudget);
+      await repo.insertLesson({ orgId: agent.orgId, agentId: agent.agentId, candidate, content, evidenceAt: clock() });
+      created += 1;
+    }
+    return { created, reinforced };
+  }
+
+  /** Roda a medição + destilação em todos os agentes elegíveis + a curadoria — tick do job. */
+  async function runTick(): Promise<{ agents: number; measured: number; manualEvidence: number; created: number; reinforced: number; staled: number; archived: number }> {
     const agentsList = await repo.listLearnableAgents();
     const redactBudget = { remaining: config.redactorMaxPerTick };
     let created = 0;
     let reinforced = 0;
     let measured = 0;
-    let manualLearned = 0;
+    let manualEvidence = 0;
     for (const agent of agentsList) {
       try {
-        // Sinal A (ações nossas) → mudanças manuais do gestor → observacional do histórico.
-        const m = await measureOutcomes(agent, redactBudget);
+        // Medir (ações nossas + mudanças manuais → ledger) → destilar (prior de conta do ledger
+        // + prior de tracking do histórico). A ordem garante que a evidência deste tick já conta.
+        const m = await measureOutcomes(agent);
         measured += m.measured;
-        const mc = await measureManualChanges(agent, redactBudget);
-        manualLearned += mc.learned;
-        const r = await distillAgent(agent, redactBudget);
-        created += r.created;
-        reinforced += r.reinforced;
+        const mc = await measureManualChanges(agent);
+        manualEvidence += mc.evidence;
+        const acc = await distillAccount(agent, redactBudget);
+        const track = await distillAgent(agent, redactBudget);
+        created += acc.created + track.created;
+        reinforced += acc.reinforced + track.reinforced;
       } catch (err) {
         logger.error({ err, agentId: agent.agentId }, "learning:agente falhou");
       }
@@ -341,10 +366,10 @@ export function createLearningService(deps: LearningServiceDeps) {
       staleDays: config.decayStaleDays,
       archiveDays: config.decayArchiveDays,
     });
-    return { agents: agentsList.length, measured, manualLearned, created, reinforced, ...decay };
+    return { agents: agentsList.length, measured, manualEvidence, created, reinforced, ...decay };
   }
 
-  return { distillAgent, measureOutcomes, measureManualChanges, runTick };
+  return { distillAgent, distillAccount, measureOutcomes, measureManualChanges, runTick };
 }
 
 /** Monta o `outcomeMetrics` gravado em recommendation_feedback (antes/depois, entidade+conta). */

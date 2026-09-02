@@ -1,25 +1,25 @@
 // Medição de outcome de AÇÕES NOSSAS (Sinal A, S4) — casca org-scoped. Liga uma
 // recomendação (proposedAction) à ação REALMENTE aplicada (agent_tool_calls com
 // before_state, não dry-run) no mesmo run, agrega as janelas antes/depois de
-// insights_snapshots e grava o desfecho + a lição de calibração ATOMICAMENTE (uma
-// transação por recomendação — crash não mede-sem-aprender). O core decide (computeOutcome/
-// detectCalibrationCandidate); aqui só há IO.
+// insights_snapshots e grava o desfecho + as linhas de EVIDÊNCIA (ledger) ATOMICAMENTE
+// (uma transação por recomendação — crash não mede-sem-aprender). O core decide
+// (computeOutcome/classifyOutcomeEvidence); aqui só há IO. O prior de CONTA é destilado
+// do ledger num passo à parte (não mais uma lição por-entidade por medição — v3).
 
 import { and, between, eq, gte, isNotNull, lte, sql } from "drizzle-orm";
 import {
-  agentMemory,
   agentRuns,
   agentToolCalls,
   agents,
   entityConfigSnapshots,
   insightsSnapshots,
+  learningEvidence,
   recommendationFeedback,
   recommendations,
   type Database,
 } from "@trafego/db";
-import type { Action, ActionType, EntityConfigSnapshot, EntityLevel } from "@trafego/shared";
-import { THRESHOLD_PROPOSAL_CONFIDENCE, computeConfidence, lessonKeyOf, proposalForCalibration, type EntityConfigDelta, type LessonCandidate, type MeasuredOutcome, type OutcomeWindow } from "@trafego/core";
-import { buildLessonRow } from "./lesson-row.js";
+import type { Action, ActionType, EntityConfigSnapshot, EntityLevel, LessonOrigin } from "@trafego/shared";
+import type { EntityConfigDelta, LessonDimension, LessonDirection, MeasuredOutcome, OutcomeWindow } from "@trafego/core";
 
 const CAMPAIGN_LEVEL: EntityLevel = "campaign";
 
@@ -34,16 +34,28 @@ export interface MeasurableRec {
   readonly entityLevel: EntityLevel;
 }
 
+/** Uma linha do ledger `learning_evidence` a gravar (idempotente por `dedupeRef`). */
+export interface LearningEvidenceInsert {
+  readonly orgId: string;
+  readonly agentId: string;
+  readonly dimension: LessonDimension;
+  readonly direction: LessonDirection;
+  readonly entityId: string;
+  readonly supports: boolean;
+  readonly outcome: MeasuredOutcome;
+  readonly source: LessonOrigin;
+  readonly dedupeRef: string;
+  readonly measuredAt: Date;
+}
+
 export interface CommitOutcomeInput {
   readonly orgId: string;
   readonly agentId: string;
   readonly recId: string;
   readonly outcome: MeasuredOutcome;
   readonly metrics: Record<string, unknown>;
-  /** lição de calibração a criar/reforçar (quando o outcome vira cautela acionável). */
-  readonly calibration?: { readonly candidate: LessonCandidate; readonly content: string; readonly runId?: string };
-  /** lição existente a enfraquecer (o outcome contradiz a conclusão dela). */
-  readonly contradiction?: { readonly semanticKey: string; readonly confidence: number; readonly demoteToStale: boolean };
+  /** linhas de evidência (o outcome sustenta/contradiz priors de conta) — o ledger. */
+  readonly evidence: readonly LearningEvidenceInsert[];
 }
 
 /** Mudança de config detectada (prev→curr) cuja janela pós-mudança já fechou. */
@@ -66,6 +78,8 @@ export interface OutcomeRepo {
   /** janela agregada (spend + conversões de negócio) de uma entidade OU da conta (entityId null). */
   loadWindow(adAccountId: string, entityId: string | null, from: string, to: string): Promise<OutcomeWindow>;
   commitOutcome(input: CommitOutcomeInput): Promise<void>;
+  /** grava linhas de evidência do ledger (mudança manual do gestor — sem recommendation_feedback). */
+  insertEvidence(rows: readonly LearningEvidenceInsert[]): Promise<void>;
 }
 
 export function createOutcomeRepo(db: Database): OutcomeRepo {
@@ -188,7 +202,10 @@ export function createOutcomeRepo(db: Database): OutcomeRepo {
       return { spend, results, ...(results > 0 ? { cpa: spend / results } : {}) };
     },
 
-    async commitOutcome({ orgId, agentId, recId, outcome, metrics, calibration, contradiction }) {
+    async commitOutcome({ recId, outcome, metrics, evidence }) {
+      // recommendation_feedback (métrica de validação do beta) + ledger de evidência na MESMA
+      // transação: uma medição que grava feedback mas perde a evidência ficaria muda p/ sempre
+      // (measured_at barra re-medir). Evidência é idempotente por (agent, dedupeRef).
       await db.transaction(async (tx) => {
         await tx.insert(recommendationFeedback).values({
           recommendationId: recId,
@@ -196,61 +213,37 @@ export function createOutcomeRepo(db: Database): OutcomeRepo {
           outcomeMetrics: metrics,
           measuredAt: sql`now()`,
         });
-        if (calibration) {
-          const key = lessonKeyOf(calibration.candidate.key);
-          const [existing] = await tx
-            .select({ id: agentMemory.id, confidence: agentMemory.confidence, confirmedByHuman: agentMemory.confirmedByHuman })
-            .from(agentMemory)
-            .where(and(eq(agentMemory.agentId, agentId), eq(agentMemory.semanticKey, key), sql`${agentMemory.lifecycle} <> 'archived'`))
-            .limit(1);
-          if (existing) {
-            // reforço = a medição SUSTENTOU a cautela → sobe da confiança ATUAL rumo ao teto
-            // medido (não sobrescreve com um valor fixo, que não subiria nem rebaixaria uma
-            // lição já mais forte — ex: confirmada).
-            const next = computeConfidence(existing.confidence, { type: "measured", positive: true });
-            // calibração de ALTA confiança e AINDA NÃO confirmada pode PROPOR ajustar um limiar
-            // (S6) — só o intent. Se o dono já confirmou/aceitou, NÃO re-oferece (senão o aceite
-            // repetido apertaria o limiar de novo). A UI mostra em linguagem de comportamento.
-            const proposal =
-              next >= THRESHOLD_PROPOSAL_CONFIDENCE && !existing.confirmedByHuman
-                ? proposalForCalibration(calibration.candidate.kind, calibration.candidate.key.dimension)
-                : null;
-            await tx
-              .update(agentMemory)
-              .set({
-                confidence: next,
-                reinforceCount: sql`${agentMemory.reinforceCount} + 1`,
-                lastReinforcedAt: sql`now()`,
-                lifecycle: "active",
-                ...(proposal ? { proposedThresholdPatch: { ...proposal } as Record<string, unknown> } : {}),
-                updatedAt: sql`now()`,
-              })
-              .where(eq(agentMemory.id, existing.id));
-          } else {
-            await tx.insert(agentMemory).values(
-              buildLessonRow(calibration.candidate, {
-                orgId,
-                agentId,
-                content: calibration.content,
-                evidenceAt: new Date(),
-                sourceRecommendationId: recId,
-                ...(calibration.runId ? { sourceRunId: calibration.runId } : {}),
-              }),
-            );
-          }
-        }
-        if (contradiction) {
+        if (evidence.length > 0) {
           await tx
-            .update(agentMemory)
-            .set({
-              confidence: contradiction.confidence,
-              lastContradictedAt: sql`now()`,
-              updatedAt: sql`now()`,
-              ...(contradiction.demoteToStale ? { lifecycle: "stale" as const } : {}),
-            })
-            .where(and(eq(agentMemory.agentId, agentId), eq(agentMemory.semanticKey, contradiction.semanticKey), sql`${agentMemory.lifecycle} <> 'archived'`));
+            .insert(learningEvidence)
+            .values(evidence.map(evidenceRow))
+            .onConflictDoNothing({ target: [learningEvidence.agentId, learningEvidence.dedupeRef] });
         }
       });
     },
+
+    async insertEvidence(rows) {
+      if (rows.length === 0) return;
+      await db
+        .insert(learningEvidence)
+        .values(rows.map(evidenceRow))
+        .onConflictDoNothing({ target: [learningEvidence.agentId, learningEvidence.dedupeRef] });
+    },
+  };
+}
+
+/** Value-object de INSERT em learning_evidence a partir da entrada tipada. */
+function evidenceRow(e: LearningEvidenceInsert) {
+  return {
+    orgId: e.orgId,
+    agentId: e.agentId,
+    dimension: e.dimension,
+    direction: e.direction,
+    entityId: e.entityId,
+    supports: e.supports,
+    outcome: e.outcome,
+    source: e.source,
+    dedupeRef: e.dedupeRef,
+    measuredAt: e.measuredAt,
   };
 }
