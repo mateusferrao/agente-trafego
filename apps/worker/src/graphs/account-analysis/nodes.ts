@@ -29,6 +29,7 @@ import {
   dropUnsupportedFindings,
   eligibilityByEntity,
   guardScaleWithoutSignificance,
+  guardUnconfirmedHypothesis,
   guardKillWithoutMaturity,
   guardTrackingCaveat,
   guardScaleWithWorseningMarginalCpa,
@@ -59,8 +60,6 @@ import {
   volumeToRecCount,
   selectLessonsForBrief,
   type LastUnit,
-  type LessonBrief,
-  type LessonGuard,
 } from "@trafego/core";
 import { ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS, DEFAULT_CURRENCY, DEFAULT_POSTURE, extractPhoneFromName, plural } from "@trafego/shared";
 import { recommendations } from "@trafego/db";
@@ -833,12 +832,16 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       cfg,
     );
     const audienceGuarded = guardAudienceScaleCeiling(freshCreativeGuarded, audienceHeadroom, DEFAULT_AUDIENCE_CEILING_THRESHOLDS);
+    // influência assimétrica do aprendizado (S3): uma hipótese NÃO confirmada de direção
+    // `lower` só rebaixa ESCALA → investigar (nunca promove) — aprende cedo sem nunca ficar
+    // mais arriscado. Lições confirmadas não vêm aqui (influenciam via prompt do analista).
+    const hypothesisGuarded = guardUnconfirmedHypothesis(audienceGuarded, state.lessonGuards ?? []);
     // impacto (Bloco 2): anexa o gasto liberado a cada recomendação de pausa.
     const spendById = new Map<string, number>();
     for (const level of [state.brief.segments.campaigns, state.brief.segments.adsets, state.brief.segments.ads]) {
       for (const e of level) spendById.set(e.id, e.metrics.spend ?? 0);
     }
-    const final = annotateFreedSpend(audienceGuarded, spendById, state.brief.account.currency);
+    const final = annotateFreedSpend(hypothesisGuarded, spendById, state.brief.account.currency);
     const findings: Finding[] = final.findings.map((f) => ({
       title: f.title,
       detail: f.detail,

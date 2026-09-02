@@ -2,6 +2,7 @@ import type { AccountBrief, ConversionBasis, DecisionEligibility, EntitySummary,
 import type { AnalysisFinding, AnalysisOutput, RecommendationActionType } from "@trafego/shared";
 import { flagUngroundedNumbers } from "../chat-guards/index.js";
 import { DEFAULT_QUALITY_THRESHOLDS } from "../quality/index.js";
+import type { LessonGuard } from "../learning/index.js";
 
 /**
  * Guards determinísticos sobre a saída do LLM (§ princípio-guia: rede que não
@@ -457,6 +458,49 @@ const INVESTIGATE_TITLE_PREFIX = "Investigar: ";
  *  guard anterior, os seguintes já retornam cedo e nunca reprocessam o título. */
 function demotedTitle(title: string): string {
   return title.startsWith(INVESTIGATE_TITLE_PREFIX) ? title : `${INVESTIGATE_TITLE_PREFIX}${title}`;
+}
+
+// ─── Guard de hipótese não-confirmada (aprendizado, S3) ───────────────────
+// Influência ASSIMÉTRICA das lições: uma hipótese ainda NÃO confirmada (atribuição
+// fraca) só pode puxar a análise p/ o lado MAIS conservador — rebaixa uma ESCALA
+// (`increase_budget`/`resume`) → `investigate` quando um aprendizado de direção `lower`
+// aponta cautela naquela entidade (ou na conta). NUNCA promove/libera nada mais
+// arriscado. Casa com a filosofia dos demais guards (que só rebaixam). Lições
+// CONFIRMADAS não passam por aqui — elas influenciam via texto do prompt do analista.
+
+/**
+ * Rebaixa escala → investigar quando uma lição-guia NÃO confirmada de direção `lower`
+ * casa com a ENTIDADE-alvo (escopo `entity` via `subjectId`). Puro. Só rebaixa; hipóteses
+ * `raise`/`neutral` não agem. Escopo deliberadamente restrito a `entity`: uma hipótese fraca
+ * (baixa confiança, não confirmada) só pode restringir a PRÓPRIA entidade — nunca ter raio
+ * de conta inteira. Padrões de conta só restringem escala amplamente DEPOIS de confirmados
+ * (aí influenciam via texto do prompt do analista, não por este guard).
+ */
+export function guardUnconfirmedHypothesis(
+  output: AnalysisOutput,
+  guards: readonly LessonGuard[],
+): AnalysisOutput {
+  const entityCaution = new Set(
+    guards
+      .filter((g) => g.key.scope === "entity" && g.key.direction === "lower" && g.key.subjectId)
+      .map((g) => g.key.subjectId as string),
+  );
+  if (entityCaution.size === 0) return output;
+
+  const recommendations = output.recommendations.map((r) => {
+    if (!SCALE_ACTIONS.has(r.actionType)) return r;
+    const id = r.targetEntity?.externalId;
+    const matched = id ? entityCaution.has(id) : false;
+    if (!matched) return r;
+    return {
+      ...r,
+      title: demotedTitle(r.title),
+      actionType: "investigate" as RecommendationActionType,
+      rationale: `${r.rationale}\n[guard] escalar → investigar: um aprendizado desta conta (hipótese ainda não confirmada) sugere cautela aqui.`,
+      budgetChangePct: null,
+    };
+  });
+  return { ...output, recommendations };
 }
 
 function addNumber(set: Set<number>, value: number): void {

@@ -105,12 +105,23 @@ describe("learning service — distillAgent", () => {
     expect(state.reinforces).toHaveLength(0);
   });
 
-  it("não chama o redator quando o teto por tick esgotou (usa fallback)", async () => {
+  it("ADIA a criação quando o teto do redator esgotou (não grava texto genérico permanente)", async () => {
     const state: FakeRepoState = { inserts: [], reinforces: [] };
     const llm = llmStub("nunca usado");
     const svc = createLearningService({ repo: fakeRepo(null, zombieRuns(), state), llm: llm as never, logger, config: CONFIG });
-    await svc.distillAgent(AGENT, { remaining: 0 });
+    const r = await svc.distillAgent(AGENT, { remaining: 0 });
     expect(llm.complete).not.toHaveBeenCalled();
-    expect(state.inserts[0]?.content).toContain("Institucional");
+    expect(r.created).toBe(0); // adiado — vira candidata no próximo tick com orçamento
+    expect(state.inserts).toHaveLength(0);
+  });
+
+  it("passa runId (run mais novo) ao redator p/ o metering atribuir à conta", async () => {
+    const state: FakeRepoState = { inserts: [], reinforces: [] };
+    const llm = llmStub("Frase.");
+    const svc = createLearningService({ repo: fakeRepo(null, zombieRuns(), state), llm: llm as never, logger, config: CONFIG });
+    await svc.distillAgent(AGENT, { remaining: 20 });
+    expect(llm.complete).toHaveBeenCalledWith(
+      expect.objectContaining({ meta: expect.objectContaining({ orgId: "org-1", type: "learning", runId: "r3" }) }),
+    );
   });
 });

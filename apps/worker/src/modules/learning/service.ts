@@ -74,11 +74,12 @@ export function createLearningService(deps: LearningServiceDeps) {
         reinforced += 1;
         continue;
       }
-      // lição NOVA → precisa de texto legível (redator). Respeita o teto por tick.
-      const content =
-        redactBudget.remaining > 0
-          ? await redactWithBudget(candidate, agent.orgId, redactBudget)
-          : fallbackLessonText(describeLessonForRedactor(candidate));
+      // lição NOVA precisa de texto legível (redator). Sem orçamento de redator neste tick,
+      // ADIA a criação (o padrão persiste → vira candidata no próximo tick com orçamento) em
+      // vez de gravar texto genérico permanente. O fallback determinístico vale só p/ FALHA
+      // do LLM (dentro do redator), não p/ orçamento esgotado.
+      if (redactBudget.remaining <= 0) continue;
+      const content = await redactWithBudget(candidate, agent.orgId, newestRun?.runId, redactBudget);
       await repo.insertLesson({
         orgId: agent.orgId,
         agentId: agent.agentId,
@@ -95,12 +96,13 @@ export function createLearningService(deps: LearningServiceDeps) {
   async function redactWithBudget(
     candidate: LessonCandidate,
     orgId: string,
+    runId: string | undefined,
     budget: { remaining: number },
   ): Promise<string> {
     budget.remaining -= 1;
     const payload = describeLessonForRedactor(candidate);
     try {
-      return await redactLesson(payload, orgId);
+      return await redactLesson(payload, orgId, runId);
     } catch (err) {
       logger.warn({ err }, "learning:redator falhou → fallback determinístico");
       return fallbackLessonText(payload);
@@ -108,7 +110,7 @@ export function createLearningService(deps: LearningServiceDeps) {
   }
 
   /** O redator LLM traduz a candidata ESTRUTURADA numa frase PT. Não decide nada. */
-  async function redactLesson(payload: RedactorInput, orgId: string): Promise<string> {
+  async function redactLesson(payload: RedactorInput, orgId: string, runId: string | undefined): Promise<string> {
     const system = [
       "Você escreve UMA frase curta, em português do Brasil, descrevendo um PADRÃO observado numa conta de anúncios.",
       "Regras: trate como observação/hipótese (nunca afirme causa nem sucesso); sem markdown; sem emoji;",
@@ -122,7 +124,9 @@ export function createLearningService(deps: LearningServiceDeps) {
         { role: "user", content: user },
       ],
       temperature: 0.3,
-      meta: { orgId, type: "learning" },
+      // runId (run mais novo) → o metering atribui o custo à conta via o join ad_account←run
+      // (§11); sem ele o custo do redator ficaria só org-level.
+      meta: { orgId, type: "learning", ...(runId ? { runId } : {}) },
     });
     const text = res.output.trim();
     return text.length > 0 ? text : fallbackLessonText(payload);
