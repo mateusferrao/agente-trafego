@@ -1526,12 +1526,13 @@ export function renderWhatsappNumber(dest: WhatsappDestination, campaignLabel: s
  * DB curado). Seguro executar direto — não há escrita nem chamada à plataforma.
  */
 /** Aprendizados curados do agente (não arquivados) — transparência conversacional (S7). */
-async function getLearningsData(db: WorkerDeps["db"], agentId: string) {
+async function getLearningsData(db: WorkerDeps["db"], orgId: string, agentId: string) {
   const rows = await db
     .select({ content: agentMemory.content, confidence: agentMemory.confidence, origin: agentMemory.origin, confirmedByHuman: agentMemory.confirmedByHuman })
     .from(agentMemory)
     .where(
       and(
+        eq(agentMemory.orgId, orgId),
         eq(agentMemory.agentId, agentId),
         inArray(agentMemory.type, [...LEARNING_MEMORY_TYPES]),
         isNotNull(agentMemory.semanticKey),
@@ -1568,7 +1569,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     async () => {
       if (noFocus()) return NEEDS_FOCUS;
       logger.debug({ agentId: ctx.agentId }, "tool:list_learnings");
-      return asString(await getLearningsData(db, ctx.agentId));
+      return asString(await getLearningsData(db, ctx.orgId, ctx.agentId));
     },
     {
       name: "list_learnings",

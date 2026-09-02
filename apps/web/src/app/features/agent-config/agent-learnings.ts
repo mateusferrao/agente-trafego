@@ -53,7 +53,7 @@ const ORIGIN_LABEL: Record<Learning['origin'], string> = {
       } @else if (failed()) {
         <p class="text-sm text-muted">
           Não consegui carregar os aprendizados agora.
-          <button type="button" class="text-accent-strong underline" (click)="reload()">Tentar de novo</button>
+          <button type="button" appButton size="sm" variant="secondary" (click)="reload()">Tentar de novo</button>
         </p>
       } @else if (items().length === 0) {
         <app-ui-empty-state
@@ -97,7 +97,7 @@ const ORIGIN_LABEL: Record<Learning['origin'], string> = {
                 </div>
                 @if (l.proposedBehavior && !dismissed().has(l.id)) {
                   <div class="mt-1 flex flex-col gap-2 rounded-md border border-accent/40 bg-accent-soft/40 p-3">
-                    <p class="text-xs text-ink">Quer que o agente {{ l.proposedBehavior }}?</p>
+                    <p class="text-xs text-ink">O agente pode {{ l.proposedBehavior }}?</p>
                     <div class="flex gap-2">
                       <button type="button" appButton size="sm" variant="primary" [disabled]="busy()" (click)="acceptThreshold(l)">Sim, ajustar</button>
                       <button type="button" appButton size="sm" variant="ghost" [disabled]="busy()" (click)="dismissProposal(l)">Agora não</button>

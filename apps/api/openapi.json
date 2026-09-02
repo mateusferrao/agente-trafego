@@ -10418,6 +10418,9 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "agente não encontrado"
           }
         }
       }

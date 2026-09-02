@@ -89,7 +89,7 @@ export function createLearningsService(deps: LearningsDeps) {
   /** Reescreve a frase do aprendizado (o usuário corrige com as próprias palavras). */
   async function edit(orgId: OrgId, agentId: string, lessonId: string, content: string): Promise<LearningOk> {
     await requireLesson(orgId, agentId, lessonId);
-    await deps.db.update(agentMemory).set({ content, updatedAt: sql`now()` }).where(eq(agentMemory.id, lessonId));
+    await deps.db.update(agentMemory).set({ content, updatedAt: sql`now()` }).where(scopedLesson(orgId, agentId, lessonId));
     return { ok: true };
   }
 
@@ -100,14 +100,14 @@ export function createLearningsService(deps: LearningsDeps) {
     await deps.db
       .update(agentMemory)
       .set({ confirmedByHuman: true, confidence, updatedAt: sql`now()` })
-      .where(eq(agentMemory.id, lessonId));
+      .where(scopedLesson(orgId, agentId, lessonId));
     return { ok: true };
   }
 
   /** Esquece o aprendizado → soft-archive (nunca hard-delete; preserva trilha). */
   async function forget(orgId: OrgId, agentId: string, lessonId: string): Promise<LearningOk> {
     await requireLesson(orgId, agentId, lessonId);
-    await deps.db.update(agentMemory).set({ lifecycle: "archived", updatedAt: sql`now()` }).where(eq(agentMemory.id, lessonId));
+    await deps.db.update(agentMemory).set({ lifecycle: "archived", updatedAt: sql`now()` }).where(scopedLesson(orgId, agentId, lessonId));
     return { ok: true };
   }
 
@@ -151,9 +151,16 @@ export function createLearningsService(deps: LearningsDeps) {
     await deps.db
       .update(agentMemory)
       .set({ proposedThresholdPatch: null, confirmedByHuman: true, confidence, updatedAt: sql`now()` })
-      .where(eq(agentMemory.id, lessonId));
+      .where(scopedLesson(orgId, agentId, lessonId));
     return { ok: true };
   }
 
   return { list, edit, confirm, forget, acceptThreshold };
+}
+
+/** Predicado org+agente+id da lição — fecha o check-then-act do UPDATE (defesa em profundidade,
+ *  §12): o `requireLesson` valida antes, mas escrever com o org+agente no WHERE garante que a
+ *  mutação NUNCA toque a linha de outro tenant, mesmo sob corrida. */
+function scopedLesson(orgId: OrgId, agentId: string, lessonId: string) {
+  return and(eq(agentMemory.id, lessonId), eq(agentMemory.orgId, orgId), eq(agentMemory.agentId, agentId));
 }

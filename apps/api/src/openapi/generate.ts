@@ -672,7 +672,7 @@ const SetDraftCreativeOutput = registry.register("SetDraftCreativeOutput", setDr
     path: "/api/agents/{agentId}/learnings",
     tags: ["learnings"],
     request: { params: z.object({ agentId: z.string() }) },
-    responses: { 200: jsonRes("aprendizados curados do agente", LearningsList) },
+    responses: { 200: jsonRes("aprendizados curados do agente", LearningsList), 404: { description: "agente não encontrado" } },
   });
   registry.registerPath({
     method: "patch",

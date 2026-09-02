@@ -1,13 +1,16 @@
 import { z } from "zod";
+import { LESSON_CONFIDENCE_TIERS, LESSON_ORIGINS, LESSON_SCOPES } from "@trafego/core";
 
 // Aprendizado contínuo — contrato de leitura da aba "Aprendizados" (S1, read-only).
 // A UI mostra a frase, o selo de confiança (tier), a origem e o escopo; edição/
 // confirmação/esquecer entram na S5.
+// Tier/origem/escopo reusam as tuplas canônicas de @trafego/core (§13 fonte única — sem
+// re-declarar os literais, que sairiam do sincronismo se a tupla do core mudasse).
 
-export const lessonTier = z.enum(["explorando", "provavel", "confirmado"]);
-export const lessonOrigin = z.enum(["our_action", "observational", "human_feedback", "human_manual"]);
+export const lessonTier = z.enum(LESSON_CONFIDENCE_TIERS);
+export const lessonOrigin = z.enum(LESSON_ORIGINS);
 export const lessonKindSchema = z.enum(["fact", "calibration"]);
-export const lessonScope = z.enum(["entity", "account", "org", "global"]);
+export const lessonScope = z.enum(LESSON_SCOPES);
 
 export const learningItem = z.object({
   id: z.string(),
