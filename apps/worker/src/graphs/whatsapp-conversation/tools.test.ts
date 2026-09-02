@@ -176,9 +176,7 @@ describe("describe_capabilities tool", () => {
 
     const on = await capTool(deps, { ...CTX, configViaChat: true }, new Set(["describe_capabilities", "pause_entity"])).invoke({});
     expect(on).toContain("pausar");
-    expect(on).toContain("Mudar a config");
-    expect(on).toContain("sugiro e peço seu OK"); // autonomia playbook em PT
-    expect(on.toLowerCase()).toContain("panorama");
+    expect(on).toContain("Mudo minha configuração"); // config-por-chat ligada
 
     const off = await capTool(deps, { ...CTX, configViaChat: false }, new Set(["describe_capabilities"])).invoke({});
     expect(off).toContain("desligado nos guardrails"); // sem write tool habilitada
@@ -712,43 +710,45 @@ describe("buildCapabilitiesText — criação (fix: honesto, condicional às bin
     } as never;
   }
 
-  it("scale_winner E create_campaign habilitados → menciona os dois + o 2º OK de ativação", async () => {
+  it("scale_winner E create_campaign habilitados → menciona os dois + o OK antes de ir ao ar", async () => {
     const text = await buildCapabilitiesText(fakeCapabilitiesDeps(), CTX, new Set(["scale_winner", "create_campaign"]));
-    expect(text).toContain("escalar seu vencedor");
-    expect(text).toContain("criar campanhas novas");
-    expect(text).toContain("2º OK");
+    expect(text).toContain("campanhas novas");
+    expect(text).toContain("o que já vai bem");
+    expect(text).toContain("antes de qualquer coisa ir ao ar");
   });
 
-  it("NENHUM habilitado → NÃO afirma que cria/escala (honestidade — antes era incondicional)", async () => {
+  it("NENHUM habilitado → NÃO afirma que cria/escala (honestidade — só menciona o habilitado)", async () => {
     const text = await buildCapabilitiesText(fakeCapabilitiesDeps(), CTX, new Set());
-    expect(text).not.toContain("escalar seu vencedor");
-    expect(text).not.toContain("criar campanhas novas");
-    expect(text).toContain("desligado nas ações permitidas");
+    expect(text).not.toContain("campanhas novas");
+    expect(text).not.toContain("o que já vai bem");
   });
 
-  it("só scale_winner habilitado (duplicate_scale/adjust_budget ligado, create_campaign não) → menciona só escalar", async () => {
+  it("só scale_winner habilitado → menciona só escalar", async () => {
     const text = await buildCapabilitiesText(fakeCapabilitiesDeps(), CTX, new Set(["scale_winner"]));
-    expect(text).toContain("escalar seu vencedor");
-    expect(text).not.toContain("criar campanhas novas");
+    expect(text).toContain("o que já vai bem");
+    expect(text).not.toContain("campanhas novas");
   });
 
   it("só create_campaign habilitado → menciona só criar", async () => {
     const text = await buildCapabilitiesText(fakeCapabilitiesDeps(), CTX, new Set(["create_campaign"]));
-    expect(text).not.toContain("escalar seu vencedor");
-    expect(text).toContain("criar campanhas novas");
+    expect(text).not.toContain("o que já vai bem");
+    expect(text).toContain("campanhas novas");
   });
 });
 
-describe("buildCapabilitiesText — leitura de métricas (honesto sobre período >7d e receita por anúncio)", () => {
+describe("buildCapabilitiesText — resumo curto e humano (não um manual)", () => {
   function fakeCapabilitiesDeps() {
     return {
       db: { select: () => ({ from: () => ({ where: () => ({ limit: async () => [{}] }) }) }) },
     } as never;
   }
 
-  it("menciona período SEM limite de 7 dias e receita por anúncio (não só o dado ao vivo capado)", async () => {
+  it("abre pela leitura da conta e é enxuto (poucas linhas, com oferta de detalhar)", async () => {
     const text = await buildCapabilitiesText(fakeCapabilitiesDeps(), CTX, new Set());
-    expect(text).toContain("sem limite de 7 dias");
-    expect(text).toContain("POR ANÚNCIO");
+    expect(text).toContain("Leio sua conta");
+    expect(text).toContain("período que você quiser");
+    expect(text).toContain("Quer que eu entre em detalhe");
+    // enxuto: não é a parede antiga de 10+ blocos
+    expect(text.split("\n").length).toBeLessThanOrEqual(9);
   });
 });
