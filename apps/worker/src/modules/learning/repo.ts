@@ -3,11 +3,13 @@
 // learning) decide/calcula; aqui só há IO. A curadoria transacional (merge/decay/
 // contradição) e a medição de outcome entram nas subfatias seguintes reusando este repo.
 
-import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import { adAccounts, agentMemory, agentRuns, agents, type Database } from "@trafego/db";
-import type { PerformanceTier, RunCampaignCard, TrackingHealth } from "@trafego/shared";
+import type { HealthSignal, PerformanceTier, RunCampaignCard, TrackingHealth, WasteReport } from "@trafego/shared";
 import {
+  decayCutoffs,
   lessonKeyOf,
+  type DecayConfig,
   type LessonCandidate,
   type LessonKind,
   type RunLearningSnapshot,
@@ -42,6 +44,10 @@ export interface LearningRepo {
   /** Reforça: sobe confiança, incrementa contagem, marca o tempo da evidência e
    *  REATIVA a lição (stale→active) — um padrão reobservado volta a valer. */
   reinforceLesson(id: string, confidence: number, evidenceAt: Date): Promise<void>;
+  /** Decaimento (curadoria anti-pilha): sem reforço → `active→stale→archived`. Um degrau
+   *  por sweep (varre arquiváveis ANTES de rebaixar ativas). Global (sweep de manutenção,
+   *  como o reaper). Só toca linhas de aprendizado (fact/past_action com chave). */
+  applyDecaySweep(now: Date, cfg: DecayConfig): Promise<{ staled: number; archived: number }>;
 }
 
 export interface InsertLessonInput {
@@ -156,30 +162,65 @@ export function createLearningRepo(db: Database): LearningRepo {
         })
         .where(eq(agentMemory.id, id));
     },
+
+    async applyDecaySweep(now, cfg) {
+      const { staleBefore, archiveBefore } = decayCutoffs(now, cfg);
+      // só linhas de aprendizado com chave (não toca o `rejected`/`objective` legado).
+      const learningRows = and(
+        inArray(agentMemory.type, [...LEARNING_TYPES]),
+        isNotNull(agentMemory.semanticKey),
+        isNotNull(agentMemory.lastReinforcedAt),
+      );
+      // 1) arquiva as `stale` velhas ANTES de rebaixar ativas (um degrau por sweep).
+      const archived = await db
+        .update(agentMemory)
+        .set({ lifecycle: "archived", updatedAt: sql`now()` })
+        .where(and(learningRows, eq(agentMemory.lifecycle, "stale"), lt(agentMemory.lastReinforcedAt, archiveBefore)))
+        .returning({ id: agentMemory.id });
+      // 2) rebaixa `active` sem reforço além do prazo → `stale`.
+      const staled = await db
+        .update(agentMemory)
+        .set({ lifecycle: "stale", updatedAt: sql`now()` })
+        .where(and(learningRows, eq(agentMemory.lifecycle, "active"), lt(agentMemory.lastReinforcedAt, staleBefore)))
+        .returning({ id: agentMemory.id });
+      return { staled: staled.length, archived: archived.length };
+    },
   };
 }
 
 // ─── mapeamento snapshot → RunLearningSnapshot ─────────────────────────────
 
-function snapshotToRunLearning(
+/** Mapeia um `agent_runs.metrics_snapshot` p/ o formato de aprendizado. Exportado p/ teste. */
+export function snapshotToRunLearning(
   runId: string,
   at: Date,
   snapshot: Record<string, unknown> | null,
 ): RunLearningSnapshot {
-  const campaigns = Array.isArray(snapshot?.campaigns) ? (snapshot.campaigns as RunCampaignCard[]) : [];
-  // trackingHealth só está presente no snapshot QUANDO suspeito (ver buildMetricsSnapshot).
-  const trackingSuspect = (snapshot?.trackingHealth as TrackingHealth | undefined)?.suspect === true;
-  return {
-    runId,
-    at: at.toISOString(),
-    campaigns: campaigns.map((c) => ({
+  const cards = Array.isArray(snapshot?.campaigns) ? (snapshot.campaigns as RunCampaignCard[]) : [];
+  const byId = new Map<string, { externalId: string; name: string; tier?: PerformanceTier; healthSignals?: readonly HealthSignal[] }>();
+  for (const c of cards) {
+    byId.set(c.externalId, {
       externalId: c.externalId,
       name: c.name ?? c.externalId,
       ...(c.tier ? { tier: c.tier as PerformanceTier } : {}),
       ...(c.healthSignals && c.healthSignals.length > 0 ? { healthSignals: c.healthSignals } : {}),
-    })),
-    trackingSuspect,
-  };
+    });
+  }
+  // `waste.zombies` cobre o conjunto COMPLETO (não só as campanhas com análise profunda) —
+  // é a fonte do desperdício CRÔNICO SILENCIOSO (campanha zumbi que nunca entra no top-N e
+  // só é "resumida", logo ausente dos cards). Marca essas como zumbi p/ o detector observacional.
+  const waste = snapshot?.waste as WasteReport | undefined;
+  for (const z of waste?.zombies ?? []) {
+    const existing = byId.get(z.id);
+    if (existing) {
+      if (!existing.tier) byId.set(z.id, { ...existing, tier: "zombie" });
+    } else {
+      byId.set(z.id, { externalId: z.id, name: z.name, tier: "zombie" });
+    }
+  }
+  // trackingHealth só está presente no snapshot QUANDO suspeito (ver buildMetricsSnapshot).
+  const trackingSuspect = (snapshot?.trackingHealth as TrackingHealth | undefined)?.suspect === true;
+  return { runId, at: at.toISOString(), campaigns: [...byId.values()], trackingSuspect };
 }
 
 function rowToStoredLesson(row: typeof agentMemory.$inferSelect): StoredLesson {

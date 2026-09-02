@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  CONTRADICTION_STALE_FLOOR,
   OBSERVATIONAL_CONFIDENCE_CAP,
   PROMPT_CONFIDENCE_THRESHOLD,
+  applyContradiction,
+  applyDecay,
   computeConfidence,
   confidenceTier,
+  decayCutoffs,
   describeLessonForRedactor,
   detectFactCandidates,
   fallbackLessonText,
@@ -158,6 +162,51 @@ describe("describeLessonForRedactor / fallbackLessonText", () => {
     const text = fallbackLessonText(payload);
     expect(text).toContain("Institucional");
     expect(text.length).toBeGreaterThan(0);
+  });
+});
+
+// ─── applyDecay / applyContradiction ──────────────────────────────────────
+describe("applyDecay", () => {
+  const cfg = { staleDays: 30, archiveDays: 60 };
+  const now = new Date("2026-03-01T00:00:00.000Z");
+  const daysAgo = (n: number): Date => new Date(now.getTime() - n * 24 * 60 * 60 * 1000);
+
+  it("ativa sem reforço além do prazo → stale", () => {
+    expect(applyDecay({ lifecycle: "active", lastReinforcedAt: daysAgo(31) }, now, cfg)).toBe("stale");
+  });
+  it("ativa recente → não muda", () => {
+    expect(applyDecay({ lifecycle: "active", lastReinforcedAt: daysAgo(10) }, now, cfg)).toBeNull();
+  });
+  it("stale além do prazo de arquivo → archived", () => {
+    expect(applyDecay({ lifecycle: "stale", lastReinforcedAt: daysAgo(61) }, now, cfg)).toBe("archived");
+  });
+  it("nunca pula ativa → archived num passo só", () => {
+    // ativa há 61 dias: vira stale primeiro (um degrau por vez), não archived.
+    expect(applyDecay({ lifecycle: "active", lastReinforcedAt: daysAgo(61) }, now, cfg)).toBe("stale");
+  });
+  it("sem carimbo de evidência → não decai (seguro)", () => {
+    expect(applyDecay({ lifecycle: "active", lastReinforcedAt: null }, now, cfg)).toBeNull();
+  });
+  it("decayCutoffs deriva as datas de corte", () => {
+    const { staleBefore, archiveBefore } = decayCutoffs(now, cfg);
+    expect(staleBefore.toISOString()).toBe("2026-01-30T00:00:00.000Z");
+    expect(archiveBefore.toISOString()).toBe("2025-12-31T00:00:00.000Z");
+  });
+});
+
+describe("applyContradiction", () => {
+  it("derruba a confiança", () => {
+    const r = applyContradiction(0.5);
+    expect(r.confidence).toBeLessThan(0.5);
+  });
+  it("rebaixa p/ stale quando cai abaixo do piso", () => {
+    const r = applyContradiction(0.2);
+    expect(r.confidence).toBeLessThan(CONTRADICTION_STALE_FLOOR);
+    expect(r.demoteToStale).toBe(true);
+  });
+  it("confiança alta contradita cai mas não rebaixa ainda", () => {
+    const r = applyContradiction(0.8);
+    expect(r.demoteToStale).toBe(false);
   });
 });
 

@@ -330,6 +330,59 @@ export function fallbackLessonText(r: RedactorInput): string {
   }
 }
 
+// ─── Curadoria: decaimento + contradição ──────────────────────────────────
+
+export interface DecayConfig {
+  /** dias sem reforço p/ uma lição ATIVA virar `stale` (some do prompt/UI ativa). */
+  readonly staleDays: number;
+  /** dias sem reforço p/ uma lição `stale` virar `archived` (some de vez). */
+  readonly archiveDays: number;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Datas de corte do decaimento a partir de `now` — fonte única (repo e testes usam). */
+export function decayCutoffs(now: Date, cfg: DecayConfig): { staleBefore: Date; archiveBefore: Date } {
+  return {
+    staleBefore: new Date(now.getTime() - cfg.staleDays * DAY_MS),
+    archiveBefore: new Date(now.getTime() - cfg.archiveDays * DAY_MS),
+  };
+}
+
+export interface DecayableLesson {
+  readonly lifecycle: "active" | "stale" | "archived";
+  readonly lastReinforcedAt: Date | null;
+}
+
+/**
+ * Próximo lifecycle de uma lição pelo tempo sem reforço (contexto muda; lição velha não
+ * cala pra sempre). Retorna `null` quando nada muda. Só avança um degrau por vez
+ * (`active→stale→archived`) — nunca pula de ativa direto p/ arquivada.
+ */
+export function applyDecay(lesson: DecayableLesson, now: Date, cfg: DecayConfig): "stale" | "archived" | null {
+  if (!lesson.lastReinforcedAt) return null; // sem carimbo de evidência → não decai (seguro)
+  const { staleBefore, archiveBefore } = decayCutoffs(now, cfg);
+  const at = lesson.lastReinforcedAt.getTime();
+  if (lesson.lifecycle === "active" && at < staleBefore.getTime()) return "stale";
+  if (lesson.lifecycle === "stale" && at < archiveBefore.getTime()) return "archived";
+  return null;
+}
+
+/** Abaixo disso, uma contradição além de derrubar a confiança também rebaixa p/ `stale`. */
+export const CONTRADICTION_STALE_FLOOR = 0.15;
+
+export interface ContradictionResult {
+  readonly confidence: number;
+  /** true → a lição deve ser rebaixada a `stale` (confiança caiu demais). */
+  readonly demoteToStale: boolean;
+}
+
+/** Aplica a queda de confiança de uma contradição (outcome recente contradiz a lição). */
+export function applyContradiction(confidence: number | null): ContradictionResult {
+  const next = computeConfidence(confidence, { type: "contradict" });
+  return { confidence: next, demoteToStale: next < CONTRADICTION_STALE_FLOOR };
+}
+
 // ─── Seleção para o brief (teto top-K) ─────────────────────────────────────
 
 /** Lição persistida (projeção que o repo devolve / a seleção consome). */

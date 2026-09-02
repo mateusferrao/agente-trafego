@@ -11,6 +11,8 @@ const CONFIG: LearningServiceConfig = {
   minOccurrenceRatio: 0.6,
   redactorModel: "m",
   redactorMaxPerTick: 20,
+  decayStaleDays: 30,
+  decayArchiveDays: 60,
 };
 
 const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as Logger;
@@ -46,6 +48,7 @@ function fakeRepo(
     reinforceLesson: async (id, confidence, evidenceAt) => {
       state.reinforces.push({ id, confidence, evidenceAt });
     },
+    applyDecaySweep: async () => ({ staled: 0, archived: 0 }),
   };
 }
 

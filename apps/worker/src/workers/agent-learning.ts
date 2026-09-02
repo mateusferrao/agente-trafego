@@ -21,13 +21,15 @@ export function startAgentLearningWorker(deps: WorkerDeps, connection: Redis): W
       minOccurrenceRatio: deps.learning.minOccurrenceRatio,
       redactorModel: deps.learning.redactorModel,
       redactorMaxPerTick: deps.learning.redactorMaxPerTick,
+      decayStaleDays: deps.learning.decayStaleDays,
+      decayArchiveDays: deps.learning.decayArchiveDays,
     },
   });
   return new Worker<AgentLearningTickPayload>(
     AGENT_LEARNING_QUEUE,
     async () => {
       const r = await service.runTick();
-      if (r.created > 0 || r.reinforced > 0) {
+      if (r.created > 0 || r.reinforced > 0 || r.staled > 0 || r.archived > 0) {
         deps.logger.info(r, "agent-learning:tick");
       }
     },

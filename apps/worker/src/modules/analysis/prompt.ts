@@ -52,6 +52,17 @@ function lessonsBlock(brief: AccountBrief): string {
   );
 }
 
+/**
+ * Brief sem `memory.lessons` para o dump JSON cru — os aprendizados entram UMA vez, via
+ * `lessonsBlock` (com o enquadramento "contexto, não números"). Sem isto, o dump do brief
+ * repetiria as lições cruas (tokens desperdiçados + sem o enquadramento de segurança).
+ */
+function briefForDump(brief: AccountBrief): AccountBrief {
+  if (!brief.memory.lessons) return brief;
+  const { lessons: _omit, ...memoryRest } = brief.memory;
+  return { ...brief, memory: memoryRest };
+}
+
 /** Forma esperada do JSON (espelha analysisOutputSchema) — PT-BR, conciso. */
 const OUTPUT_SHAPE = `{
   "scorecard": { "grade": "A|B|C|D", "headline": "string (1 frase: onde a conta está vs onde deveria)", "biggestLeak": "consciencia|engajamento|conversao|receita" },
@@ -182,7 +193,7 @@ export function buildSynthesisMessages(
     .filter(Boolean)
     .join("\n\n");
   const user = [
-    jsonBlock("Contexto da conta (totais, funil, tendências, anomalias)", brief),
+    jsonBlock("Contexto da conta (totais, funil, tendências, anomalias)", briefForDump(brief)),
     jsonBlock("Análises por-campanha (mapa)", units),
     "",
     "Responda SOMENTE com JSON válido (sem markdown), no formato:",
@@ -223,7 +234,7 @@ export function buildReviewMessages(
     ? issues.map((i) => `- ${i.findingId}: ${i.detail} (${i.reason})`).join("\n")
     : "(nenhum problema pré-detectado)";
   const user = [
-    jsonBlock("Briefing (gabarito dos números)", brief),
+    jsonBlock("Briefing (gabarito dos números)", briefForDump(brief)),
     "",
     jsonBlock("Análise a revisar", draft),
     "",

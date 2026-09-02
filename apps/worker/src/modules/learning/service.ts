@@ -23,6 +23,9 @@ export interface LearningServiceConfig {
   readonly minOccurrenceRatio: number;
   readonly redactorModel: string;
   readonly redactorMaxPerTick: number;
+  /** decaimento (curadoria): dias sem reforço p/ stale → archived. */
+  readonly decayStaleDays: number;
+  readonly decayArchiveDays: number;
 }
 
 export interface LearningServiceDeps {
@@ -125,8 +128,8 @@ export function createLearningService(deps: LearningServiceDeps) {
     return text.length > 0 ? text : fallbackLessonText(payload);
   }
 
-  /** Roda a destilação em todos os agentes elegíveis (tick do job). */
-  async function runTick(): Promise<{ agents: number; created: number; reinforced: number }> {
+  /** Roda a destilação em todos os agentes elegíveis + a curadoria (decaimento) — tick do job. */
+  async function runTick(): Promise<{ agents: number; created: number; reinforced: number; staled: number; archived: number }> {
     const agentsList = await repo.listLearnableAgents();
     const redactBudget = { remaining: config.redactorMaxPerTick };
     let created = 0;
@@ -140,7 +143,12 @@ export function createLearningService(deps: LearningServiceDeps) {
         logger.error({ err, agentId: agent.agentId }, "learning:destilação do agente falhou");
       }
     }
-    return { agents: agentsList.length, created, reinforced };
+    // curadoria anti-pilha: decaimento global (sem reforço → stale → archived).
+    const decay = await repo.applyDecaySweep(new Date(), {
+      staleDays: config.decayStaleDays,
+      archiveDays: config.decayArchiveDays,
+    });
+    return { agents: agentsList.length, created, reinforced, ...decay };
   }
 
   return { distillAgent, runTick };

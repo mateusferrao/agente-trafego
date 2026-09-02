@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, type OnInit, computed, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, type OnInit, inject, input, signal } from '@angular/core';
 import { UiBadge, UiEmptyState, UiSpinner } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import { LearningsApiService } from '@core/api/learnings-api.service';
@@ -40,8 +40,9 @@ const ORIGIN_LABEL: Record<Learning['origin'], string> = {
       <div>
         <h2 class="font-brand text-base font-semibold text-ink">O que o agente aprendeu</h2>
         <p class="mt-1 text-xs text-muted">
-          Padrões que {{ agentName }} vem notando nesta conta ao longo das análises. Ele considera isso no diagnóstico —
-          e confia no dado atual se ele contradisser.
+          Padrões que {{ agentName }} vem notando nesta conta ao longo das análises. Os
+          <span class="text-ink">confirmados</span> já pesam no diagnóstico; os que ainda estão
+          <span class="text-ink">em teste</span> ele acompanha com cautela até se confirmarem.
         </p>
       </div>
 
@@ -89,9 +90,8 @@ export class AgentLearnings implements OnInit {
   protected readonly agentName = AGENT_NAME;
   protected readonly loading = signal(true);
   protected readonly failed = signal(false);
-  private readonly all = signal<Learning[]>([]);
-  // não mostra arquivados (esquecidos) — só o que ainda vale.
-  protected readonly items = computed(() => this.all().filter((l) => l.lifecycle !== 'archived'));
+  // a API já exclui arquivados (fonte única da regra) — aqui é só o que ela devolve.
+  protected readonly items = signal<Learning[]>([]);
 
   ngOnInit(): void {
     this.reload();
@@ -110,7 +110,7 @@ export class AgentLearnings implements OnInit {
   private loadLessons(agentId: string): void {
     this.learningsApi.list(agentId, { silent: true }).subscribe({
       next: (out) => {
-        this.all.set(out.items);
+        this.items.set(out.items);
         this.loading.set(false);
       },
       error: () => this.fail(),
