@@ -23,6 +23,7 @@ import {
   resolveAgentConfigChange,
   type EchoItem,
   type RevertEchoItem,
+  type UngroundedNumber,
 } from "@trafego/core";
 import { applyAgentConfigChange, loadAgentConfigState, reseedArchetypeChange } from "@trafego/agent-config";
 import { sleep, phoneTokensInText, APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE } from "@trafego/shared";
@@ -155,12 +156,19 @@ function answerToolCalls(calls: readonly { id?: string }[], text: string): ToolM
   return calls.map((c, i) => new ToolMessage({ content: i === 0 ? text : "(ver acima)", tool_call_id: c.id ?? "" }));
 }
 
+/** Achados da detecção SOFT de honestidade (só reportados, sem eco ao usuário). */
+interface UngroundedFinalAnswer {
+  readonly money: readonly UngroundedNumber[];
+  readonly phones: readonly string[];
+}
+
 /**
- * Backstop SOFT de honestidade (Fatia 7): anexa um caveat quando a resposta cita DINHEIRO/%
- * ausente das fontes (tools + config no system-prompt + histórico) ou um TELEFONE que não veio
- * de tool (misatribuição). NUNCA remove/reescreve o texto — só acrescenta o aviso. Puro.
+ * Detecção SOFT de honestidade (Fatia 7): identifica na resposta final DINHEIRO/% ausente
+ * das fontes (tools + config no system-prompt + histórico) ou um TELEFONE que não veio de tool
+ * (misatribuição). NÃO altera o texto e NÃO anexa mais o caveat visível — por decisão de produto
+ * o aviso ao usuário foi removido; a detecção segue rodando só para observabilidade (log). Pura.
  */
-function guardFinalAnswer(text: string, systemPrompt: string, windowed: readonly BaseMessage[]): string {
+function detectUngroundedFinalAnswer(text: string, systemPrompt: string, windowed: readonly BaseMessage[]): UngroundedFinalAnswer {
   const toolResults: string[] = [];
   const history: string[] = [];
   for (const m of windowed) {
@@ -173,15 +181,10 @@ function guardFinalAnswer(text: string, systemPrompt: string, windowed: readonly
   // telefone ancorado = veio de tool NESTE turno OU já apareceu antes no fio (render verbatim /
   // o próprio usuário) — repetir um número já dito no thread não é misatribuição.
   const allowedPhones = new Set([...toolResults, ...history].flatMap((t) => phoneTokensInText(t)));
-  const money = flagUngroundedNumbers(text, known);
-  const phones = checkPhoneAttribution(text, allowedPhones);
-  if (money.length === 0 && phones.length === 0) return text;
-  const notes: string[] = [];
-  if (phones.length > 0) {
-    notes.push("não vou garantir número de telefone que não veio da ferramenta — me pergunta o número da campanha específica que eu confirmo.");
-  }
-  if (money.length > 0) notes.push("alguns valores acima eu não consegui confirmar nos dados — trate com cautela.");
-  return `${text}\n\n_⚠️ ${notes.join(" ")}_`;
+  return {
+    money: flagUngroundedNumbers(text, known),
+    phones: checkPhoneAttribution(text, allowedPhones),
+  };
 }
 
 /** pendingWrite ainda válido (não expirado)? */
@@ -571,13 +574,20 @@ export function makeConversationNodes(
     }
     await recordConversationUsage(deps, ctx, usedModel, response);
 
-    // BACKSTOP SOFT de honestidade (Fatia 7): só na resposta FINAL (sem tool call — o que
-    // vai ao usuário). Nunca dropa; no máximo anexa caveat. Answer-key = system-prompt (tem
-    // config: guidance/metas/guardrails) + resultados de tool + histórico do turno. Telefone
-    // tem checagem estrutural própria (a raiz do bug foi misatribuição cross-entity).
+    // DETECÇÃO SOFT de honestidade (Fatia 7): só na resposta FINAL (sem tool call — o que vai
+    // ao usuário). O caveat visível foi removido por decisão de produto; a detecção segue só
+    // para observabilidade (log) — nunca altera o texto. Answer-key = system-prompt (config:
+    // guidance/metas/guardrails) + resultados de tool + histórico do turno. Telefone tem
+    // checagem estrutural própria (a raiz do bug foi misatribuição cross-entity). Sem número
+    // de telefone no log (PII/LGPD): só a contagem.
     if ((response.tool_calls?.length ?? 0) === 0 && typeof response.content === "string") {
-      const guarded = guardFinalAnswer(response.content, sys, windowed);
-      if (guarded !== response.content) response = new AIMessage(guarded);
+      const flagged = detectUngroundedFinalAnswer(response.content, sys, windowed);
+      if (flagged.money.length > 0 || flagged.phones.length > 0) {
+        logger.warn(
+          { actor: actorLabel(ctx.ref), money: flagged.money.map((m) => m.raw), phoneCount: flagged.phones.length },
+          "conversation:resposta com valores não ancorados (caveat suprimido por config)",
+        );
+      }
     }
 
     // limpa pendências expiradas (o "sim" tardio não aplica algo esquecido).
