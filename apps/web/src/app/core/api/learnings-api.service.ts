@@ -32,4 +32,9 @@ export class LearningsApiService extends BaseApiService {
   forget(agentId: string, id: string): Observable<LearningOk> {
     return this.delete<LearningOk>(['/agents', agentId, 'learnings', id]);
   }
+
+  /** `POST /api/agents/:agentId/learnings/:id/accept-threshold` — aplica o ajuste de comportamento. */
+  acceptThreshold(agentId: string, id: string): Observable<LearningOk> {
+    return this.post<LearningOk, undefined>(['/agents', agentId, 'learnings', id, 'accept-threshold'], undefined);
+  }
 }

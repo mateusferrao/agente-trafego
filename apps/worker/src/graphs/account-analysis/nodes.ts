@@ -1131,12 +1131,15 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     // snapshot da config (orçamento/status) das entidades no dia — base p/ detectar mudança
     // manual do gestor (aprendizado S4). Cadência da análise; sem chamada Meta extra (a
     // config já veio em state.entities). Falha aqui NÃO derruba o run (best-effort).
-    if ((state.entities ?? []).length > 0) {
+    // só campanha/conjunto: o orçamento/status vivem aí; ad-level nunca vira mudança manual
+    // aprendível (sem orçamento próprio) → seria só volume de escrita/scan sem payoff.
+    const configEntities = (state.entities ?? []).filter((e) => e.level === "campaign" || e.level === "adset");
+    if (configEntities.length > 0) {
       try {
         // dia da análise no fuso da ORG (mesmo carimbo dos insights_snapshots dated-Meta) —
         // `window.until`; fallback ao tz global só se a janela não resolveu.
         const today = state.window?.until ?? todayInTz(new Date(), deps.cron.tz);
-        await learningRepo.saveEntityConfigSnapshots({ orgId: state.orgId, adAccountId: state.adAccountId, date: today, entities: state.entities });
+        await learningRepo.saveEntityConfigSnapshots({ orgId: state.orgId, adAccountId: state.adAccountId, date: today, entities: configEntities });
       } catch (err) {
         logger.warn({ err, runId: state.runId }, "record:config-snapshot falhou");
       }

@@ -95,6 +95,15 @@ const ORIGIN_LABEL: Record<Learning['origin'], string> = {
                   <button type="button" appButton size="sm" variant="ghost" [disabled]="busy()" (click)="startEdit(l)">Editar</button>
                   <button type="button" appButton size="sm" variant="ghost" [disabled]="busy()" (click)="forget(l)">Esquecer</button>
                 </div>
+                @if (l.proposedBehavior && !dismissed().has(l.id)) {
+                  <div class="mt-1 flex flex-col gap-2 rounded-md border border-accent/40 bg-accent-soft/40 p-3">
+                    <p class="text-xs text-ink">Quer que o agente {{ l.proposedBehavior }}?</p>
+                    <div class="flex gap-2">
+                      <button type="button" appButton size="sm" variant="primary" [disabled]="busy()" (click)="acceptThreshold(l)">Sim, ajustar</button>
+                      <button type="button" appButton size="sm" variant="ghost" [disabled]="busy()" (click)="dismissProposal(l)">Agora não</button>
+                    </div>
+                  </div>
+                }
               }
             </li>
           }
@@ -119,6 +128,8 @@ export class AgentLearnings implements OnInit {
   private readonly agentId = signal<string | null>(null);
   protected readonly editingId = signal<string | null>(null);
   protected readonly editText = signal('');
+  // propostas de ajuste dispensadas nesta sessão ("agora não") — não arquiva a lição.
+  protected readonly dismissed = signal<ReadonlySet<string>>(new Set());
 
   ngOnInit(): void {
     this.reload();
@@ -184,6 +195,23 @@ export class AgentLearnings implements OnInit {
     } finally {
       this.busy.set(false);
     }
+  }
+
+  protected async acceptThreshold(l: Learning): Promise<void> {
+    const id = this.agentId();
+    if (!id || this.busy()) return;
+    this.busy.set(true);
+    try {
+      await firstValueFrom(this.learningsApi.acceptThreshold(id, l.id));
+      toast.success('comportamento ajustado');
+      this.loadLessons(id);
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  protected dismissProposal(l: Learning): void {
+    this.dismissed.update((s) => new Set(s).add(l.id));
   }
 
   protected startEdit(l: Learning): void {

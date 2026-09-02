@@ -22,6 +22,8 @@ export const learningItem = z.object({
   reinforceCount: z.number().int(),
   sourceRunId: z.string().nullable(),
   createdAt: z.string(),
+  /** proposta de ajuste de comportamento (calibração paramétrica, S6) — null quando não há. */
+  proposedBehavior: z.string().nullable(),
 });
 export type LearningItem = z.infer<typeof learningItem>;
 

@@ -54,9 +54,6 @@ export interface DistillResult {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-/** Graça (dias) da varredura de mudança manual — pequena p/ não reprocessar a mesma
- *  mudança em muitos ticks (dedup já protege o dado; isto corta SQL redundante). */
-const MANUAL_CHANGE_GRACE_DAYS = 3;
 function addDays(d: Date, n: number): Date {
   return new Date(d.getTime() + n * DAY_MS);
 }
@@ -261,7 +258,10 @@ export function createLearningService(deps: LearningServiceDeps) {
     const window = config.outcomeWindowDays;
     const today = clock();
     const notAfter = dateStr(addDays(today, -(buffer + window)));
-    const notBefore = dateStr(addDays(today, -(buffer + window + MANUAL_CHANGE_GRACE_DAYS)));
+    // graça = 1 janela cheia (como o Sinal A) → robusto a ticks perdidos (worker fora do ar /
+    // deploy). Config-snapshots são esparsos (cadência da análise) → poucas mudanças por janela,
+    // e o dedup por evidenceAt evita reaprender a mesma (o custo de re-scan é baixo).
+    const notBefore = dateStr(addDays(today, -(buffer + window + window)));
     const changes = await outcomeRepo.loadMaturedConfigChanges(agent.adAccountId, notBefore, notAfter);
     let learned = 0;
     for (const change of changes) {

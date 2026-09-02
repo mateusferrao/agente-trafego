@@ -30,7 +30,7 @@ const ORG = "org-1" as never;
 describe("createLearningsService", () => {
   it("confirm → marca confirmedByHuman e sobe a confiança", async () => {
     const { db, updates } = fakeDb([{ confidence: 0.3 }]);
-    const svc = createLearningsService({ db });
+    const svc = createLearningsService({ db, scheduler: {} as never, qualityDefaults: {} });
     const out = await svc.confirm(ORG, "agent-1", "lesson-1");
     expect(out).toEqual({ ok: true });
     expect(updates[0]?.confirmedByHuman).toBe(true);
@@ -39,21 +39,21 @@ describe("createLearningsService", () => {
 
   it("forget → arquiva (soft)", async () => {
     const { db, updates } = fakeDb([{ confidence: 0.5 }]);
-    const svc = createLearningsService({ db });
+    const svc = createLearningsService({ db, scheduler: {} as never, qualityDefaults: {} });
     await svc.forget(ORG, "agent-1", "lesson-1");
     expect(updates[0]?.lifecycle).toBe("archived");
   });
 
   it("edit → atualiza o conteúdo", async () => {
     const { db, updates } = fakeDb([{ confidence: 0.5 }]);
-    const svc = createLearningsService({ db });
+    const svc = createLearningsService({ db, scheduler: {} as never, qualityDefaults: {} });
     await svc.edit(ORG, "agent-1", "lesson-1", "novo texto");
     expect(updates[0]?.content).toBe("novo texto");
   });
 
   it("lição inexistente → 404 (não faz update)", async () => {
     const { db, updates } = fakeDb([]); // select vazio
-    const svc = createLearningsService({ db });
+    const svc = createLearningsService({ db, scheduler: {} as never, qualityDefaults: {} });
     await expect(svc.confirm(ORG, "agent-1", "x")).rejects.toThrow();
     expect(updates).toHaveLength(0);
   });

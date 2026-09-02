@@ -16,6 +16,8 @@ import {
   fallbackLessonText,
   lessonKeyOf,
   manualChangeToAction,
+  nextThresholdValue,
+  proposalForCalibration,
   selectLessonsForBrief,
   type ComputeOutcomeInput,
   type RunLearningSnapshot,
@@ -250,6 +252,21 @@ describe("manualChangeToAction", () => {
   });
   it("sem mudança → null", () => {
     expect(manualChangeToAction({ status: "active", dailyBudgetMinor: 100 }, { status: "active", dailyBudgetMinor: 100 })).toBeNull();
+  });
+});
+
+// ─── calibração paramétrica (S6) ──────────────────────────────────────────
+describe("proposalForCalibration / nextThresholdValue", () => {
+  it("só calibração propõe limiar; fact não", () => {
+    expect(proposalForCalibration("calibration", "pacing")?.threshold).toBe("marginalCpaWorsenPct");
+    expect(proposalForCalibration("calibration", "budget")?.threshold).toBe("zombieMinSpend");
+    expect(proposalForCalibration("fact", "pacing")).toBeNull();
+    expect(proposalForCalibration("calibration", "tracking")).toBeNull();
+  });
+  it("aperta o limiar reduzindo do valor atual, respeitando o piso", () => {
+    const p = proposalForCalibration("calibration", "pacing")!;
+    expect(nextThresholdValue(20, p)).toBe(15); // 20 * 0.75
+    expect(nextThresholdValue(6, p)).toBe(5); // piso 5
   });
 });
 

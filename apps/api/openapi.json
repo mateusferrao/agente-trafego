@@ -6909,6 +6909,12 @@
                 },
                 "createdAt": {
                   "type": "string"
+                },
+                "proposedBehavior": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               },
               "required": [
@@ -6923,7 +6929,8 @@
                 "lifecycle",
                 "reinforceCount",
                 "sourceRunId",
-                "createdAt"
+                "createdAt",
+                "proposedBehavior"
               ]
             }
           }
@@ -10535,6 +10542,49 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "não encontrado"
+          }
+        }
+      }
+    },
+    "/api/agents/{agentId}/learnings/{id}/accept-threshold": {
+      "post": {
+        "tags": [
+          "learnings"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "agentId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ajuste de comportamento aplicado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningOk"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "sem proposta / limiar ilegível"
           },
           "404": {
             "description": "não encontrado"

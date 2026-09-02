@@ -304,10 +304,14 @@ export interface OutcomeWindow {
 export interface OutcomeThresholds {
   /** variação de CPA (fração) dentro disso = "manteve" (nem melhora nem piora). */
   readonly cpaTolerance: number;
+  /** tolerância MAIOR p/ o veredito no nível da CONTA (pausa): o CPA da conta soma
+   *  conversões de metas heterogêneas (campanhas com objetivos diferentes) → só um efeito
+   *  GRANDE conta, senão neutro (evita lição espúria de um total apples-and-oranges). */
+  readonly accountCpaTolerance: number;
   /** resultados mínimos numa janela p/ o CPA valer (senão neutro/indeterminado). */
   readonly minResults: number;
 }
-export const DEFAULT_OUTCOME_THRESHOLDS: OutcomeThresholds = { cpaTolerance: 0.15, minResults: 3 };
+export const DEFAULT_OUTCOME_THRESHOLDS: OutcomeThresholds = { cpaTolerance: 0.15, accountCpaTolerance: 0.4, minResults: 3 };
 
 export interface ComputeOutcomeInput {
   readonly actionType: ActionType;
@@ -376,7 +380,8 @@ export function computeOutcome(input: ComputeOutcomeInput): MeasuredOutcome {
   const effect = actionEffect(input.actionType, input.params);
   if (effect === "pause") {
     if (!input.accountPre || !input.accountPost) return "neutral";
-    return cpaVerdict(input.accountPre, input.accountPost, t);
+    // veredito no nível da conta usa a tolerância MAIOR (metas mistas → só efeito grande conta).
+    return cpaVerdict(input.accountPre, input.accountPost, { ...t, cpaTolerance: t.accountCpaTolerance });
   }
   if (effect === "budget_up" || effect === "budget_down") {
     return cpaVerdict(input.entityPre, input.entityPost, t);
@@ -491,6 +496,54 @@ export function contradictedLessonKey(input: CalibrationInput): SemanticKey | nu
     return { scope: "entity", dimension: "budget", direction: "lower", subjectId: input.subjectId };
   }
   return null;
+}
+
+// ─── Calibração paramétrica: proposta de limiar (S6) ──────────────────────
+
+/** A partir desta confiança uma lição de calibração pode PROPOR ajustar um limiar. */
+export const THRESHOLD_PROPOSAL_CONFIDENCE = 0.8;
+
+/**
+ * Proposta de ajuste de UM limiar de `model_config.quality` — o INTENT (qual limiar, quanto
+ * apertar, piso) + a frase de COMPORTAMENTO mostrada ao usuário (nunca jargão de limiar). O
+ * valor concreto é calculado no aceite a partir do limiar ATUAL do agente (`nextThresholdValue`).
+ */
+export interface ThresholdProposal {
+  readonly threshold: string;
+  /** fração de redução aplicada ao valor atual (aperta o limiar). */
+  readonly stepPct: number;
+  readonly minValue: number;
+  /** frase em linguagem de comportamento p/ o card da UI (não fala em "limiar"). */
+  readonly behaviorLabel: string;
+}
+
+// mapeia a DIMENSÃO da lição de calibração → limiar de qualidade a propor. Só calibração
+// (past_action); só estas duas dimensões têm um limiar de comportamento claro hoje.
+const CALIBRATION_THRESHOLD_PROPOSAL: Partial<Record<LessonDimension, ThresholdProposal>> = {
+  pacing: {
+    threshold: "marginalCpaWorsenPct",
+    stepPct: 0.25,
+    minValue: 5,
+    behaviorLabel: "passar a ser mais rigoroso com a piora de custo antes de escalar aqui",
+  },
+  budget: {
+    threshold: "zombieMinSpend",
+    stepPct: 0.25,
+    minValue: 1,
+    behaviorLabel: "passar a cortar desperdício mais cedo nesta conta",
+  },
+};
+
+/** Proposta de limiar para uma lição de calibração (ou null). Só `calibration`. */
+export function proposalForCalibration(kind: LessonKind, dimension: LessonDimension): ThresholdProposal | null {
+  if (kind !== "calibration") return null;
+  return CALIBRATION_THRESHOLD_PROPOSAL[dimension] ?? null;
+}
+
+/** Novo valor do limiar no aceite: reduz `current` por `stepPct`, respeitando o piso. Puro. */
+export function nextThresholdValue(current: number, proposal: ThresholdProposal): number {
+  const reduced = current * (1 - proposal.stepPct);
+  return Math.max(proposal.minValue, Math.round(reduced * 100) / 100);
 }
 
 // ─── Redator (LLM só traduz a candidata; fallback determinístico) ──────────

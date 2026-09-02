@@ -251,7 +251,18 @@ export function buildContainer(logger?: OnboardingLogger): Container {
     approvals: createApprovalsService({ db, approvals, scheduler, revertTtlDays: env.REVERT_TTL_DAYS }),
     drafts: createDraftsService({ db, adsPlatform, vault, approvals, storage, scheduler }),
     recommendations: createRecommendationsService({ db }),
-    learnings: createLearningsService({ db }),
+    learnings: createLearningsService({
+      db,
+      scheduler,
+      qualityDefaults: {
+        minConversions: env.ANALYSIS_QUALITY_MIN_CONVERSIONS,
+        minClicks: env.ANALYSIS_QUALITY_MIN_CLICKS,
+        fatigueCtrDropPct: env.ANALYSIS_QUALITY_FATIGUE_CTR_DROP_PCT,
+        fatigueFrequency: env.ANALYSIS_QUALITY_FATIGUE_FREQUENCY,
+        zombieMinSpend: env.ANALYSIS_QUALITY_ZOMBIE_MIN_SPEND,
+        marginalCpaWorsenPct: env.ANALYSIS_QUALITY_MARGINAL_CPA_WORSEN_PCT,
+      },
+    }),
     runs,
     dashboard: createDashboardService({
       db,

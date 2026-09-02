@@ -696,6 +696,13 @@ const SetDraftCreativeOutput = registry.register("SetDraftCreativeOutput", setDr
     responses: { 200: jsonRes("aprendizado esquecido", LearningOk), 404: { description: "não encontrado" } },
   });
   registry.registerPath({
+    method: "post",
+    path: "/api/agents/{agentId}/learnings/{id}/accept-threshold",
+    tags: ["learnings"],
+    request: { params: z.object({ agentId: z.string(), id: z.string() }) },
+    responses: { 200: jsonRes("ajuste de comportamento aplicado", LearningOk), 400: { description: "sem proposta / limiar ilegível" }, 404: { description: "não encontrado" } },
+  });
+  registry.registerPath({
     method: "get",
     path: "/api/approvals",
     tags: ["approvals"],

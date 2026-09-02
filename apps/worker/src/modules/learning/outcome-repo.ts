@@ -18,7 +18,7 @@ import {
   type Database,
 } from "@trafego/db";
 import type { Action, ActionType, EntityConfigSnapshot, EntityLevel } from "@trafego/shared";
-import { computeConfidence, lessonKeyOf, type EntityConfigDelta, type LessonCandidate, type MeasuredOutcome, type OutcomeWindow } from "@trafego/core";
+import { THRESHOLD_PROPOSAL_CONFIDENCE, computeConfidence, lessonKeyOf, proposalForCalibration, type EntityConfigDelta, type LessonCandidate, type MeasuredOutcome, type OutcomeWindow } from "@trafego/core";
 import { buildLessonRow } from "./lesson-row.js";
 
 const CAMPAIGN_LEVEL: EntityLevel = "campaign";
@@ -199,7 +199,7 @@ export function createOutcomeRepo(db: Database): OutcomeRepo {
         if (calibration) {
           const key = lessonKeyOf(calibration.candidate.key);
           const [existing] = await tx
-            .select({ id: agentMemory.id, confidence: agentMemory.confidence })
+            .select({ id: agentMemory.id, confidence: agentMemory.confidence, confirmedByHuman: agentMemory.confirmedByHuman })
             .from(agentMemory)
             .where(and(eq(agentMemory.agentId, agentId), eq(agentMemory.semanticKey, key), sql`${agentMemory.lifecycle} <> 'archived'`))
             .limit(1);
@@ -208,9 +208,23 @@ export function createOutcomeRepo(db: Database): OutcomeRepo {
             // medido (não sobrescreve com um valor fixo, que não subiria nem rebaixaria uma
             // lição já mais forte — ex: confirmada).
             const next = computeConfidence(existing.confidence, { type: "measured", positive: true });
+            // calibração de ALTA confiança e AINDA NÃO confirmada pode PROPOR ajustar um limiar
+            // (S6) — só o intent. Se o dono já confirmou/aceitou, NÃO re-oferece (senão o aceite
+            // repetido apertaria o limiar de novo). A UI mostra em linguagem de comportamento.
+            const proposal =
+              next >= THRESHOLD_PROPOSAL_CONFIDENCE && !existing.confirmedByHuman
+                ? proposalForCalibration(calibration.candidate.kind, calibration.candidate.key.dimension)
+                : null;
             await tx
               .update(agentMemory)
-              .set({ confidence: next, reinforceCount: sql`${agentMemory.reinforceCount} + 1`, lastReinforcedAt: sql`now()`, lifecycle: "active", updatedAt: sql`now()` })
+              .set({
+                confidence: next,
+                reinforceCount: sql`${agentMemory.reinforceCount} + 1`,
+                lastReinforcedAt: sql`now()`,
+                lifecycle: "active",
+                ...(proposal ? { proposedThresholdPatch: { ...proposal } as Record<string, unknown> } : {}),
+                updatedAt: sql`now()`,
+              })
               .where(eq(agentMemory.id, existing.id));
           } else {
             await tx.insert(agentMemory).values(

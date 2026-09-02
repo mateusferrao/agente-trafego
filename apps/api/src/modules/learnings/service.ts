@@ -1,12 +1,17 @@
 import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { agentMemory, agents, type Database } from "@trafego/db";
-import { computeConfidence, confidenceTier, lessonKindFromMemoryType } from "@trafego/core";
+import { computeConfidence, confidenceTier, lessonKindFromMemoryType, nextThresholdValue, type ThresholdProposal } from "@trafego/core";
+import { applyAgentConfigChange } from "@trafego/agent-config";
+import type { SchedulerPort } from "@trafego/shared/ports";
 import type { OrgId } from "@trafego/shared/types";
-import { notFound } from "../../middleware/error-handler.js";
+import { notFound, badRequest } from "../../middleware/error-handler.js";
 import type { LearningItem, LearningOk, LearningsList } from "./schema.js";
 
 export interface LearningsDeps {
   readonly db: Database;
+  readonly scheduler: SchedulerPort;
+  /** defaults globais dos limiares de qualidade (fallback quando o agente não tem override). */
+  readonly qualityDefaults: Readonly<Record<string, unknown>>;
 }
 
 // só os tipos de APRENDIZADO (o `rejected`/`objective` legado não aparece na aba).
@@ -56,6 +61,7 @@ export function createLearningsService(deps: LearningsDeps) {
       reinforceCount: r.reinforceCount,
       sourceRunId: r.sourceRunId ?? null,
       createdAt: r.createdAt.toISOString(),
+      proposedBehavior: (r.proposedThresholdPatch as ThresholdProposal | null)?.behaviorLabel ?? null,
     }));
     return { items };
   }
@@ -104,5 +110,49 @@ export function createLearningsService(deps: LearningsDeps) {
     return { ok: true };
   }
 
-  return { list, edit, confirm, forget };
+  /**
+   * Aceita a proposta de ajuste de comportamento (calibração paramétrica, S6): calcula o novo
+   * limiar a partir do valor ATUAL do agente e aplica em `model_config.quality` via
+   * `@trafego/agent-config` (auditado). NUNCA toca guardrail/autonomia (o patch só carrega
+   * `modelConfig.quality`). Depois: limpa a proposta e confirma a lição.
+   */
+  async function acceptThreshold(orgId: OrgId, agentId: string, lessonId: string): Promise<LearningOk> {
+    const [row] = await deps.db
+      .select({ patch: agentMemory.proposedThresholdPatch, confidence: agentMemory.confidence, adAccountId: agents.adAccountId, modelConfig: agents.modelConfig })
+      .from(agentMemory)
+      .innerJoin(agents, eq(agentMemory.agentId, agents.id))
+      .where(and(eq(agentMemory.id, lessonId), eq(agentMemory.orgId, orgId), eq(agentMemory.agentId, agentId), sql`${agentMemory.lifecycle} <> 'archived'`))
+      .limit(1);
+    if (!row) throw notFound("Aprendizado não encontrado.");
+    const proposal = row.patch as ThresholdProposal | null;
+    if (!proposal) throw badRequest("Este aprendizado não tem uma proposta de ajuste.");
+
+    const quality = (row.modelConfig?.quality as Record<string, unknown> | undefined) ?? {};
+    const currentRaw = quality[proposal.threshold] ?? deps.qualityDefaults[proposal.threshold];
+    if (typeof currentRaw !== "number") throw badRequest("Não consegui ler o limiar atual para ajustar.");
+    const newValue = nextThresholdValue(currentRaw, proposal);
+
+    const result = await applyAgentConfigChange(
+      { db: deps.db, scheduler: deps.scheduler },
+      {
+        orgId,
+        agentId,
+        accountId: row.adAccountId,
+        // patch SÓ com modelConfig.quality → nunca toca guardrail_configs/autonomy_policy.
+        patch: { modelConfig: { quality: { [proposal.threshold]: newValue } } },
+        audit: { actor: { label: "user" }, metadata: { source: "learning_threshold_accept", lessonId } },
+      },
+    );
+    if (!result.ok) throw badRequest(result.error);
+
+    // proposta consumida + lição confirmada (o dono endossou a mudança de comportamento).
+    const confidence = computeConfidence(row.confidence, { type: "confirm" });
+    await deps.db
+      .update(agentMemory)
+      .set({ proposedThresholdPatch: null, confirmedByHuman: true, confidence, updatedAt: sql`now()` })
+      .where(eq(agentMemory.id, lessonId));
+    return { ok: true };
+  }
+
+  return { list, edit, confirm, forget, acceptThreshold };
 }
