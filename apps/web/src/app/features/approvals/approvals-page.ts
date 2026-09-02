@@ -475,8 +475,17 @@ export class ApprovalsPage implements OnInit {
         this.savingAction.set(false);
         this.editingActionId.set(null);
         toast.success('Valor atualizado. Agora é só aprovar.');
+        // recarrega pra o card refletir o novo "proposto" (senão fica o valor velho até dar F5).
+        this.reloadPending();
       },
       error: () => this.savingAction.set(false),
+    });
+  }
+
+  /** Recarrega as pendentes (reflete o novo valor proposto no card após editar). */
+  private reloadPending(): void {
+    this.api.listPending().subscribe({
+      next: (rows) => this.pendingGroups.set(groupByAccount(rows)),
     });
   }
 
