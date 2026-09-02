@@ -1,4 +1,5 @@
-import { ChangeDetectionStrategy, Component, type OnInit, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, type OnInit, inject, signal } from '@angular/core';
+import { ActivatedRoute } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { toast } from 'ngx-sonner';
 import { UiBadge, UiButton, UiConfirmDialogService, UiEmptyState, UiSpinner } from '@ui';
@@ -29,9 +30,11 @@ const ORIGIN_LABEL: Record<Learning['origin'], string> = {
 };
 
 /**
- * Aba "Aprendizados" (S1, read-only): o que o agente aprendeu observando esta conta.
- * Pull, não empurra. Cada lição mostra a frase, o selo de confiança (tom+texto) e a
- * origem. Editar/confirmar/esquecer entram na S5.
+ * Aba "Aprendizados" — aba própria do detalhe da conta (entre "Agente" e "Criativos"):
+ * o que o agente aprendeu observando esta conta. Pull, não empurra. Cada lição mostra a
+ * frase, o selo de confiança (tom+texto) e a origem, com editar/confirmar/esquecer.
+ * Rota `accounts/:id/aprendizados` — o `accountId` vem do snapshot da rota (mesmo padrão
+ * das abas irmãs); o agente é resolvido a partir dele (getAgent), como as demais.
  */
 @Component({
   selector: 'app-agent-learnings',
@@ -116,8 +119,11 @@ export class AgentLearnings implements OnInit {
   private readonly analysisApi = inject(AnalysisApiService);
   private readonly learningsApi = inject(LearningsApiService);
   private readonly confirmDialog = inject(UiConfirmDialogService);
+  private readonly route = inject(ActivatedRoute);
 
-  readonly accountId = input.required<string>();
+  // accountId da rota (herdado do pai `accounts/:id`) — mesmo padrão das abas irmãs
+  // (creative-library, account-timeline), não `input`.
+  protected readonly accountId = this.route.snapshot.paramMap.get('id') ?? '';
 
   protected readonly agentName = AGENT_NAME;
   protected readonly loading = signal(true);
@@ -139,7 +145,7 @@ export class AgentLearnings implements OnInit {
     this.loading.set(true);
     this.failed.set(false);
     // resolve o agente da conta (silencioso — a página-mãe já busca), depois as lições.
-    this.analysisApi.getAgent(this.accountId(), { silent: true }).subscribe({
+    this.analysisApi.getAgent(this.accountId, { silent: true }).subscribe({
       next: (agent) => {
         this.agentId.set(agent.agentId);
         this.loadLessons(agent.agentId);

@@ -63,6 +63,12 @@ export const routes: Routes = [
               import('./features/agent-config/agent-config-page').then((m) => m.AgentConfigPage),
           },
           {
+            path: 'aprendizados',
+            title: 'Aprendizados',
+            loadComponent: () =>
+              import('./features/agent-config/agent-learnings').then((m) => m.AgentLearnings),
+          },
+          {
             path: 'criativos',
             title: 'Criativos',
             loadComponent: () =>
