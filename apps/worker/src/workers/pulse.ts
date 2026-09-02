@@ -16,7 +16,7 @@ import {
   messages,
   recommendations,
 } from "@trafego/db";
-import { composeAgentVoice, cpaLabelFor, volumeToRecCount } from "@trafego/core";
+import { composeSpeakingVoice, cpaLabelFor, volumeToRecCount } from "@trafego/core";
 import {
   ACCOUNT_HEALTH_STATUS_LABELS,
   AGENT_PULSE_QUEUE,
@@ -166,14 +166,14 @@ export async function runPulse(deps: WorkerDeps, payload: AgentCronDispatchPaylo
   };
 
   // redator leve voiceado (voz + postura); fallback determinístico em erro/JSON.
-  const voice = composeAgentVoice(ctx);
+  const voice = composeSpeakingVoice(ctx);
   const mm = ctx.modelConfig?.["messageModel"];
   const messageModel = typeof mm === "string" && mm.length > 0 ? mm : deps.analysis.messageModel;
   let text: string | null = null;
   try {
     const completion = await deps.ports.llm.completeStructured<{ text: string }>({
       model: messageModel,
-      messages: buildPulseMessages(voice, ctx.posture, pulseInput),
+      messages: buildPulseMessages(voice, pulseInput),
       responseSchema: PULSE_OUTPUT_JSON_SCHEMA,
       responseSchemaName: PULSE_OUTPUT_SCHEMA_NAME,
       temperature: PULSE_TEMPERATURE,

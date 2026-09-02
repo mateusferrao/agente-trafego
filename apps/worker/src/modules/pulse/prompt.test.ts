@@ -68,15 +68,11 @@ describe("buildPulseFallback", () => {
 });
 
 describe("buildPulseMessages", () => {
-  it("injeta a postura e a instrução de período/ressalva no system", () => {
-    const msgs = buildPulseMessages(
-      "VOZ",
-      { directiveness: "directive", volume: "concise", didacticDepth: "explanatory", experienceLevel: "beginner" },
-      input(),
-    );
+  it("injeta a voz de fala e a instrução de período/ressalva no system", () => {
+    // speakingPrompt = voz completa (voz-base + kernel + postura) — já montada a montante.
+    const msgs = buildPulseMessages("VOZ DE FALA (com postura)", input());
     const system = msgs[0]!.content as string;
-    expect(system).toContain("VOZ");
-    expect(system.toLowerCase()).toContain("postura");
+    expect(system).toContain("VOZ DE FALA (com postura)");
     expect(system).toContain(PULSE_PERIOD_LABEL);
     // o retrato curado vai no user message como JSON.
     expect(msgs[1]!.content as string).toContain("standingRecommendations");

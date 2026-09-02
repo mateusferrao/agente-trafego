@@ -18,6 +18,7 @@ import {
   CONVERSION_GOALS,
   COPY_TEXT_MAX,
   ENTITY_NAME_MAX,
+  plural,
   ALERTABLE_ACCOUNT_HEALTH_STATUSES,
   DEFAULT_CURRENCY,
   DEFAULT_POSTURE,
@@ -164,7 +165,7 @@ export function makeConversationTools(
       }
       const tail = skipped > 0 ? ` (${skipped} já não estava(m) pendente(s).)` : "";
       return ok > 0
-        ? `Tô aplicando ${ok} ação(ões) — te aviso o resultado de cada uma.${tail}`
+        ? `Tô aplicando ${plural(ok, "ação", "ações")} — te aviso o resultado de cada uma.${tail}`
         : `Nada pra aplicar${tail}`;
     },
     {
@@ -189,7 +190,7 @@ export function makeConversationTools(
         ok += 1;
       }
       const tail = skipped > 0 ? ` (${skipped} já não estava(m) pendente(s).)` : "";
-      return `Rejeitei ${ok} ação(ões).${tail}`;
+      return `Rejeitei ${plural(ok, "ação", "ações")}.${tail}`;
     },
     {
       name: "reject",
@@ -602,12 +603,12 @@ export function makeConversationTools(
   //    arquétipo). Reusa o fluxo de `update` do pendingConfigChange (é AgentConfigPatch).
   const setPersona = tool(proposeOnly, {
     name: "set_persona",
-    description: "Define a PERSONA do agente (papel/postura em 1 linha). Texto vazio limpa (volta ao arquétipo). Requer eco+confirma.",
+    description: "Define a PERSONA do agente — o PAPEL/caráter em 1 linha (ex: 'gestor sênior de e-commerce'). NÃO é o quanto ele é direto/explica (isso é postura: set_directiveness/set_didactic_depth). Texto vazio limpa (volta ao arquétipo). Requer eco+confirma.",
     schema: z.object({ text: z.string() }),
   });
   const setTone = tool(proposeOnly, {
     name: "set_tone",
-    description: "Define o TOM da comunicação do agente. Texto vazio limpa (volta ao arquétipo). Requer eco+confirma.",
+    description: "Define o TOM/JEITO afetivo do agente (ex: 'acolhedor e paciente', 'firme e objetivo'). É o registro/calor, NÃO o quanto ele é direto, o volume de sugestões ou o quanto explica jargão — isso é POSTURA (set_directiveness/set_volume/set_didactic_depth). Texto vazio limpa (volta ao arquétipo). Requer eco+confirma.",
     schema: z.object({ text: z.string() }),
   });
   const setBusinessContext = tool(proposeOnly, {
@@ -777,28 +778,28 @@ export async function buildCapabilitiesText(
       "Pode me mandar áudio também — eu transcrevo e entendo. Me diz em qual conta você quer trabalhar.",
     ];
     if (ctx.ref.kind === "group") {
-      lines.push("👥 Aqui no grupo eu acompanho a conversa recente de vocês pra ter contexto — mas só respondo quando me chamam (menção ou resposta).");
+      lines.push("• Aqui no grupo eu acompanho a conversa recente de vocês pra ter contexto — mas só respondo quando me chamam (menção ou resposta).");
     }
     return lines.join("\n");
   }
   const parts: string[] = ["Aqui no WhatsApp eu consigo:"];
   parts.push(
-    "📊 Ler: status da conta, dados ATUALIZADOS direto da Meta (hoje até 7 dias atrás, conta ou campanha), gasto/conversões/receita em QUALQUER período já sincronizado (sem limite de 7 dias), receita separada POR ANÚNCIO/criativo, análise por campanha, recomendações, desperdício, comparar períodos, ver pendências e o panorama de todas as contas da organização.",
+    "• Ler: status da conta, dados ATUALIZADOS direto da Meta (hoje até 7 dias atrás, conta ou campanha), gasto/conversões/receita em QUALQUER período já sincronizado (sem limite de 7 dias), receita separada POR ANÚNCIO/criativo, análise por campanha, recomendações, desperdício, comparar períodos, ver pendências e o panorama de todas as contas da organização.",
   );
   const writeVerbs = [...WRITE_TOOL_NAMES].filter((n) => allow.has(n)).map((n) => WRITE_VERB_PT[n]).filter(Boolean);
   if (writeVerbs.length > 0) {
-    parts.push(`✏️ Mexer nas campanhas (sempre te mostro e confirmo antes): ${writeVerbs.join(", ")}. Também dá pra desfazer o que apliquei.`);
+    parts.push(`• Mexer nas campanhas (sempre te mostro e confirmo antes): ${writeVerbs.join(", ")}. Também dá pra desfazer o que apliquei.`);
   } else if (ctx.chatAdsWrites === false) {
     // v1: escrita conversacional desligada por plataforma — mexer é no site; aqui é recomendar+aprovar.
-    parts.push("✏️ Mexer nas campanhas (pausar, ajustar orçamento) é na plataforma — por aqui eu recomendo e você aprova/rejeita. Também dá pra desfazer o que apliquei.");
+    parts.push("• Mexer nas campanhas (pausar, ajustar orçamento) é na plataforma — por aqui eu recomendo e você aprova/rejeita. Também dá pra desfazer o que apliquei.");
   } else {
-    parts.push("✏️ Mexer nas campanhas: hoje está desligado nos guardrails — dá pra liberar nas configurações.");
+    parts.push("• Mexer nas campanhas: hoje está desligado nos guardrails — dá pra liberar nas configurações.");
   }
-  parts.push("⚡ Analisar agora e aprovar/rejeitar ações pendentes.");
+  parts.push("• Analisar agora e aprovar/rejeitar ações pendentes.");
   if (ctx.configViaChat) {
-    parts.push("⚙️ Mudar a config do agente conversando (sempre com sua confirmação): meta, autonomia (por origem OU por ação específica, inclusive criar/duplicar), quais ações estão LIGADAS, guardrails, cadência, notificações proativas (pulso = resumo do dia / alerta / proposta de campanha por conta própria), arquétipo, playbook, identidade (persona/tom/metodologia), contexto do negócio, orientações e como eu FALO com você (diretividade, volume de sugestões e o quanto explico — ou um perfil pronto: iniciante/intermediário/avançado).");
+    parts.push("• Mudar a config do agente conversando (sempre com sua confirmação): meta, autonomia (por origem OU por ação específica, inclusive criar/duplicar), quais ações estão LIGADAS, guardrails, cadência, notificações proativas (pulso = resumo do dia / alerta / proposta de campanha por conta própria), arquétipo, playbook, identidade (persona/tom/metodologia), contexto do negócio, orientações e como eu FALO com você (diretividade, volume de sugestões e o quanto explico — ou um perfil pronto: iniciante/intermediário/avançado).");
   } else {
-    parts.push("⚙️ Config do agente: por aqui está desligada — mudanças de config são pelo site.");
+    parts.push("• Config do agente: por aqui está desligada — mudanças de config são pelo site.");
   }
   const [row] = await deps.db
     .select({ autonomyPolicy: agents.autonomyPolicy, posture: agents.posture })
@@ -808,7 +809,7 @@ export async function buildCapabilitiesText(
   const pol = row?.autonomyPolicy as AutonomyPolicy | undefined;
   if (pol?.bySource) {
     const lbl = (l: string) => AUTONOMY_LABEL_CHAT[l] ?? l;
-    parts.push(`🤖 Nas análises automáticas (sem você pedir): com o playbook eu ${lbl(pol.bySource.playbook)}; com sugestões de IA eu ${lbl(pol.bySource.llm)}.`);
+    parts.push(`• Nas análises automáticas (sem você pedir): com o playbook eu ${lbl(pol.bySource.playbook)}; com sugestões de IA eu ${lbl(pol.bySource.llm)}.`);
   }
   // como o agente FALA hoje (postura) — reflete o estado real p/ ele explicar/orientar.
   const posture = (row?.posture as Posture | undefined) ?? DEFAULT_POSTURE;
@@ -816,11 +817,11 @@ export async function buildCapabilitiesText(
     ? `perfil ${experienceLabel(posture.experienceLevel)}${experienceLevelIsCustom(posture) ? " (com ajustes)" : ""}`
     : "sem perfil definido (ajuste fino)";
   parts.push(
-    `🗣️ Como eu falo com você agora (${profile}): ${POSTURE_AXIS_PT.directiveness} ${postureLevelLabel("directiveness", posture.directiveness)}, ${POSTURE_AXIS_PT.volume} ${postureLevelLabel("volume", posture.volume)}, ${POSTURE_AXIS_PT.didacticDepth} ${postureLevelLabel("didacticDepth", posture.didacticDepth)}. É só pedir p/ ajustar (ex: "me dá menos sugestão", "seja mais direto", "explica mais").`,
+    `• Como eu falo com você agora (${profile}): ${POSTURE_AXIS_PT.directiveness} ${postureLevelLabel("directiveness", posture.directiveness)}, ${POSTURE_AXIS_PT.volume} ${postureLevelLabel("volume", posture.volume)}, ${POSTURE_AXIS_PT.didacticDepth} ${postureLevelLabel("didacticDepth", posture.didacticDepth)}. É só pedir p/ ajustar (ex: "me dá menos sugestão", "seja mais direto", "explica mais").`,
   );
-  parts.push("🎙️ Pode falar por áudio — eu transcrevo e respondo pelo conteúdo.");
+  parts.push("• Pode falar por áudio — eu transcrevo e respondo pelo conteúdo.");
   if (ctx.ref.kind === "group") {
-    parts.push("👥 Aqui no grupo eu acompanho a conversa recente de vocês pra ter contexto — mas só respondo quando me chamam (menção ou resposta).");
+    parts.push("• Aqui no grupo eu acompanho a conversa recente de vocês pra ter contexto — mas só respondo quando me chamam (menção ou resposta).");
   }
   // Criação (Fatia 7) — CONDICIONAL às bindings reais (`allow`), como o resto da função:
   // nunca afirma o que está desligado (o mesmo cuidado de `writeVerbs` acima).
@@ -834,19 +835,19 @@ export async function buildCapabilitiesText(
       ...(canCreate ? ["copiar a estrutura de uma campanha sua pra outra (ex: remarketing), reusando os criativos e trocando só o público"] : []),
     ];
     parts.push(
-      `🚀 Também ${abilities.join(" e ")}. Depois de eu propor, você ajusta TUDO por aqui (objetivo, budget, ativar/pausar, nº e composição de anúncios — quantos iguais/diferentes, vídeo/imagem —, texto das copies, público inteiro, nomes) — crio/escalo/copio sempre PAUSADO (a Meta revisa antes) e só ATIVO de verdade com um 2º OK seu, separado. A ÚNICA coisa que fica no painel "Editar" do site é escolher o ASSET de criativo exato de cada anúncio (te passo o link).`,
+      `• Também ${abilities.join(" e ")}. Depois de eu propor, você ajusta TUDO por aqui (objetivo, budget, ativar/pausar, nº e composição de anúncios — quantos iguais/diferentes, vídeo/imagem —, texto das copies, público inteiro, nomes) — crio/escalo/copio sempre PAUSADO (a Meta revisa antes) e só ATIVO de verdade com um 2º OK seu, separado. A ÚNICA coisa que fica no painel "Editar" do site é escolher o ASSET de criativo exato de cada anúncio (te passo o link).`,
     );
     if (canCreate) {
-      parts.push("🔢 Números que eu uso vêm sempre da conta/ferramenta — número de WhatsApp de destino eu confirmo pela campanha certa (nunca de outra), e público eu pego dos públicos reais da sua conta (não invento). Quando você escolhe um público, eu ainda te digo o alcance estimado dele (pra você saber se entrega bem).");
+      parts.push("• Números que eu uso vêm sempre da conta/ferramenta — número de WhatsApp de destino eu confirmo pela campanha certa (nunca de outra), e público eu pego dos públicos reais da sua conta (não invento). Quando você escolhe um público, eu ainda te digo o alcance estimado dele (pra você saber se entrega bem).");
     }
   } else if (ctx.chatAdsWrites === false) {
     // v1: criação/escala/edição de campanha vivem na plataforma; o chat recomenda e aprova.
-    parts.push('🚀 Criar/escalar campanha aqui é por RECOMENDAÇÃO (o site não cria do zero): eu proponho uma campanha — proativamente ou quando você pede "analisa agora" — com criativo e público; você revisa, edita os detalhes (edição fina + escolha do criativo no site) e aprova (aqui ou lá). Não crio/edito campanha ad-hoc por conversa.');
+    parts.push('• Criar/escalar campanha aqui é por RECOMENDAÇÃO (o site não cria do zero): eu proponho uma campanha — proativamente ou quando você pede "analisa agora" — com criativo e público; você revisa, edita os detalhes (edição fina + escolha do criativo no site) e aprova (aqui ou lá). Não crio/edito campanha ad-hoc por conversa.');
   } else {
-    parts.push("🚀 Criar, copiar ou escalar campanha: hoje está desligado nas ações permitidas — dá pra liberar nas configurações (pelo site).");
+    parts.push("• Criar, copiar ou escalar campanha: hoje está desligado nas ações permitidas — dá pra liberar nas configurações (pelo site).");
   }
-  parts.push("🚧 Ainda não: editar criativos nem gerar imagens/vídeos. Roteiro de conversa nomeado (ex: um 'modelo de mensagem' seu) eu referencio pelo nome — quem escreve/mantém é você.");
-  parts.push("É só pedir. 🙂");
+  parts.push("• Ainda não: editar criativos nem gerar imagens/vídeos. Roteiro de conversa nomeado (ex: um 'modelo de mensagem' seu) eu referencio pelo nome — quem escreve/mantém é você.");
+  parts.push("É só pedir.");
   return parts.join("\n");
 }
 

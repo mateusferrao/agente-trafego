@@ -20,6 +20,7 @@ import {
   campaignsAtBudgetCeiling,
   computeDeactivatedCampaignIds,
   composeAgentVoice,
+  composeSpeakingVoice,
   costSnapshotFromUsage,
   creativePosterFrames,
   decideActions,
@@ -58,7 +59,7 @@ import {
   volumeToRecCount,
   type LastUnit,
 } from "@trafego/core";
-import { ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS, DEFAULT_CURRENCY, DEFAULT_POSTURE, extractPhoneFromName } from "@trafego/shared";
+import { ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS, DEFAULT_CURRENCY, DEFAULT_POSTURE, extractPhoneFromName, plural } from "@trafego/shared";
 import { recommendations } from "@trafego/db";
 import { funnelFromRawActions, mapStatus } from "@trafego/ads-meta";
 import { loadAccountAudiences, loadAgentContext, PROACTIVE_AUDIENCE_UNRESOLVED_REASON, PROACTIVE_REACH_FLOOR_REASON, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner } from "../../modules/conversation/draft-proposal.js";
@@ -248,6 +249,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     // que FALAM (redator). A nota do sinal (F4) idem — só no ANALISTA (via analystPrompt),
     // NUNCA no redator (que redige ao usuário, sem diretiva de investigação em 2ª pessoa).
     const systemPrompt = composeAgentVoice(ctx);
+    // voz de FALA do redator (voz-base + kernel de marca + postura) — fonte única com
+    // o chat/pulso; separada do systemPrompt do analista (que emite JSON).
+    const speakingPrompt = composeSpeakingVoice(ctx);
     // "hoje" no fuso da org (não UTC) — casa o dia civil dos snapshots (fuso da conta Meta).
     const { window, baseline } = resolveWindows(todayInTz(new Date(), ctx.timezone), cfg.windowDays, cfg.baselineDays);
     const windowLabel = `últimos ${cfg.windowDays} dias`;
@@ -276,6 +280,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       orgMarketReference: ctx.orgMarketReference,
       agentMarketReference: agentMarketReferenceFromModelConfig(ctx.modelConfig),
       systemPrompt,
+      speakingPrompt,
       vertical: ctx.vertical,
       configChangedAt: ctx.configChangedAt ? ctx.configChangedAt.getTime() : null,
       analysisConfig: cfg,
@@ -881,10 +886,10 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       // v1: creationActivation decide se nasceu ativa (no ar) ou pausada (revisar+ativar). Aviso
       // honesto do que o agente fez sozinho, nos dois casos.
       text = outcome.dryRun
-        ? `🧪 Simulei uma criação automática (dry-run): ${what}. Por quê: ${rationale}.`
+        ? `Simulei uma criação automática (dry-run): ${what}. Por quê: ${rationale}.`
         : outcome.activated
-          ? `🤖 Agi sozinho e ${what} — e já ATIVEI (está no ar). Por quê: ${rationale}. Se precisar, dá pra pausar na plataforma.`
-          : `🤖 Agi sozinho e ${what} — deixei **pausada**, esperando seu OK (não veicula até você ativar). Por quê: ${rationale}. Dá uma olhada na plataforma e ative quando quiser.`;
+          ? `Agi sozinho e ${what} — e já ATIVEI (está no ar). Por quê: ${rationale}. Se precisar, dá pra pausar na plataforma.`
+          : `Agi sozinho e ${what} — deixei *pausada*, esperando seu OK (não veicula até você ativar). Por quê: ${rationale}. Dá uma olhada na plataforma e ative quando quiser.`;
     } else if (outcome.kind === "blocked" || outcome.kind === "unsupported") {
       text = `Ia ${wouldHave} sozinho, mas parei: ${outcome.reason}.`;
     } else {
@@ -1299,7 +1304,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       try {
         const completion = await deps.ports.llm.completeStructured<{ text: string }>({
           model: cfg.messageModel,
-          messages: buildMessageMessages(state.systemPrompt, state.account.name, out, posture, {
+          messages: buildMessageMessages(state.speakingPrompt, state.account.name, out, posture, {
             ...(state.brief?.waste ? { waste: state.brief.waste } : {}),
             ...(state.brief?.trackingHealth?.suspect ? { trackingSuspect: true } : {}),
             atBudgetCeilingCampaigns: campaignsAtBudgetCeiling(state.brief?.segments.campaigns ?? []),
@@ -1353,7 +1358,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       if (hasRecs) {
         const surfaceable = out.recommendations.filter((r) => kindForRecommendation(r.actionType) !== "insight");
         const more = surfaceable.length - volumeToRecCount(posture.volume);
-        if (more > 0) outbound = `${outbound}\n\nTem mais ${more} sugestão(ões) — quer ver?`;
+        if (more > 0) outbound = `${outbound}\n\nTem mais ${plural(more, "sugestão", "sugestões")} — quer ver?`;
       }
       // nota honesta do que o agente FEZ neste run (aplicou/simulou) — determinística.
       const attempted = state.guardrail?.allowed.length ?? 0;
@@ -1362,7 +1367,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       // bridge do HITL (5b-2): avisa que há pendentes + dá pra aprovar por aqui/site.
       const pending = state.approvalCandidates?.length ?? 0;
       if (pending > 0) {
-        outbound = `${outbound}\n\n🔔 ${pending} ação(ões) aguardando seu OK. Responda por aqui pra aprovar/rejeitar, ou veja no site.`;
+        outbound = `${outbound}\n\n${plural(pending, "ação aguardando", "ações aguardando")} seu OK. Responda por aqui pra aprovar ou rejeitar, ou veja no site.`;
       }
     }
     return { outboundMessage: outbound, narrative, usage };
@@ -1388,7 +1393,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     }
 
     const link = `${deps.webOrigin}/accounts/${state.adAccountId}`;
-    const text = `${body}\n\nVer no site: ${link}`;
+    const text = `${body}\n\nDetalhe completo no site: ${link}`;
     // chat (push do WhatsApp) quebra em blocos; cron enxuto (1 msg) — ban-safety §9.
     const sent = await sendToConversation(ref, text, {
       split: state.notifyTarget != null,
@@ -1726,9 +1731,9 @@ function appliedSummary(applied: number, attempted: number, dryRun: boolean): st
   if (attempted === 0) return null;
   const failed = attempted - applied;
   const head = dryRun
-    ? `🧪 Simulei ${applied} ação(ões) (dry-run) — libere a escrita pra aplicar de verdade.`
-    : `✅ Apliquei ${applied} ação(ões) automaticamente.`;
-  return failed > 0 ? `${head} ${failed} não deu(ram) certo agora — veja no site.` : head;
+    ? `Simulei ${plural(applied, "ação", "ações")} (dry-run) — libere a escrita pra aplicar de verdade.`
+    : `Apliquei ${plural(applied, "ação", "ações")} automaticamente.`;
+  return failed > 0 ? `${head} ${plural(failed, "ação não deu certo", "ações não deram certo")} agora — veja no site.` : head;
 }
 
 /**

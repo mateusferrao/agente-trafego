@@ -66,7 +66,12 @@ export const AccountAnalysisState = Annotation.Root({
 
   // ── contexto carregado (loadContext) ───────────────────────────────────
   account: Annotation<AnalysisAccount | null>,
+  // voz do ANALISTA (composeAgentVoice: metodologia/override + identidade + personalização),
+  // SEM kernel/postura (emite JSON, não fala com o dono).
   systemPrompt: Annotation<string>,
+  // voz de FALA do redator (composeSpeakingVoice: voz-base + kernel de marca + postura) —
+  // fonte única com o chat/pulso. Separada do systemPrompt do analista.
+  speakingPrompt: Annotation<string>,
   // perfil vertical do agente (S4) — resolve pra packages/core/src/verticals no prompt.
   vertical: Annotation<string>,
   // epoch ms de quando a config relevante à análise mudou (força 1 deep — Fatia 4); null se nunca.

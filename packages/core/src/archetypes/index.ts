@@ -40,7 +40,9 @@ export interface ArchetypeDefaults {
    * a partir daqui. Extensível: nova regra = 1 entrada.
    */
   readonly methodology: {
-    readonly tonePosture: string;
+    /** Prioridade/postura ANALÍTICA (como o Roy pensa e prioriza) — NÃO tom de voz
+     *  (que vive no kernel + persona/tom + postura). Vai só pro prompt do analista. */
+    readonly stance: string;
     readonly evidenceRules: readonly string[];
     readonly actionRules: readonly string[];
     readonly antiPatterns: readonly string[];
@@ -51,8 +53,8 @@ export const DEFAULT_ARCHETYPE_KEY = "conservador";
 
 const CONSERVADOR: ArchetypeDefaults = {
   key: "conservador",
-  persona: "Gestor de tráfego pago que analisa a conta e sugere melhorias com cautela.",
-  tone: "consultivo, claro e sem jargão",
+  persona: "Gestor de tráfego sênior, cauteloso e didático.",
+  tone: "acolhedor e paciente",
   label: "Conservador",
   description: "Cauteloso: só sugere melhorias, nunca aplica nada sozinho.",
   whenToUse: "Pra começar com segurança ou quando você quer aprovar tudo manualmente.",
@@ -77,7 +79,7 @@ const CONSERVADOR: ArchetypeDefaults = {
   // cauteloso: consultivo, equilibrado e didático (ensina o dono não-técnico).
   defaultPosture: { directiveness: "consultative", volume: "balanced", didacticDepth: "explanatory", experienceLevel: null },
   methodology: {
-    tonePosture: "Consultivo, direto e sem jargão; explica o porquê em linguagem de dono do negócio.",
+    stance: "Cautela primeiro: a ação de menor risco que resolve; na dúvida, investigar.",
     evidenceRules: [
       "Use só números do briefing; cite o valor real ao lado de cada afirmação.",
       "Compare com a meta e com o período anterior quando existir.",
@@ -98,8 +100,8 @@ const CONSERVADOR: ArchetypeDefaults = {
 
 const OTIMIZADOR: ArchetypeDefaults = {
   key: "otimizador",
-  persona: "Gestor de tráfego focado em eficiência: protege o que converte e corta o desperdício.",
-  tone: "direto, orientado a número, sem rodeio",
+  persona: "Gestor de tráfego sênior, obcecado por eficiência.",
+  tone: "firme e objetivo",
   label: "Otimizador de Performance",
   description: "Foca em eficiência: corta desperdício, protege o que converte e sugere escalas com base.",
   whenToUse: "Conta em operação contínua, quando o objetivo é melhorar CPA/ROAS e cortar gasto ruim.",
@@ -130,7 +132,7 @@ const OTIMIZADOR: ArchetypeDefaults = {
   // eficiência: diretivo e enxuto; profundidade equilibrada (não `direct` — ICP não-técnico).
   defaultPosture: { directiveness: "directive", volume: "concise", didacticDepth: "balanced", experienceLevel: null },
   methodology: {
-    tonePosture: "Eficiência primeiro: cada real tem que trabalhar. Explica o porquê em linguagem de dono.",
+    stance: "Eficiência primeiro: cada real tem que trabalhar; corta o desperdício, protege o que converte.",
     evidenceRules: [
       "Use só números do briefing; cite o valor real ao lado de cada afirmação.",
       "Classifique cada entidade por tier (vs meta + vs conta) e só afirme CPA/qualidade com significância.",
@@ -152,8 +154,8 @@ const OTIMIZADOR: ArchetypeDefaults = {
 
 const VIGIA_INTENSIVO: ArchetypeDefaults = {
   key: "vigia_intensivo",
-  persona: "Vigia intensivo: monitora de perto e alerta cedo pra não perder o timing em momento crítico.",
-  tone: "atento, ágil, direto ao ponto; alerta cedo sem alarmismo",
+  persona: "Gestor de tráfego sênior em modo vigília de campanha quente.",
+  tone: "atento e ágil, sem alarmismo",
   label: "Vigia Intensivo",
   description: "Vigilância de perto e alertas rápidos pra você não perder o timing em campanha quente.",
   whenToUse: "Em momentos críticos (lançamento, promo, sazonalidade), quando cada hora conta.",
@@ -184,7 +186,7 @@ const VIGIA_INTENSIVO: ArchetypeDefaults = {
   // momento crítico: diretivo e cobre tudo; profundidade equilibrada (não `direct`).
   defaultPosture: { directiveness: "directive", volume: "comprehensive", didacticDepth: "balanced", experienceLevel: null },
   methodology: {
-    tonePosture: "Velocidade e vigilância: em campanha quente, melhor avisar cedo que tarde — sem alarmismo.",
+    stance: "Velocidade e vigilância: melhor cedo que tarde; protege o investimento antes de escalar.",
     evidenceRules: [
       "Use só números do briefing; cite o valor real ao lado de cada afirmação.",
       "Vigie de perto fadiga (CTR caindo + frequência alta + custo subindo) e saturação de público.",
@@ -252,7 +254,7 @@ export function composeMethodologyPrompt(d: ArchetypeDefaults): string {
     items.length > 0 ? `${label}:\n${items.map((i) => `- ${i}`).join("\n")}` : "";
   return [
     d.systemPrompt,
-    `Postura: ${d.methodology.tonePosture}`,
+    `Prioridade analítica: ${d.methodology.stance}`,
     bullets("Regras de evidência", d.methodology.evidenceRules),
     bullets("Regras para ações", d.methodology.actionRules),
     bullets("Evite", d.methodology.antiPatterns),

@@ -4,9 +4,7 @@
 // fallback determinístico. Distinto do redator de análise (não recebe AnalysisOutput).
 
 import type { LLMMessage } from "@trafego/shared/ports";
-import type { Posture } from "@trafego/shared";
 import { formatMoney } from "@trafego/shared";
-import { composePostureBlock } from "@trafego/core";
 import { GROUNDING_RULE } from "../analysis/prompt.js";
 import type { FreshKpis } from "../conversation/fresh-metrics.js";
 
@@ -70,9 +68,10 @@ function curateKpis(k: FreshKpis): Record<string, unknown> {
   };
 }
 
-/** Monta as mensagens do redator do pulso. `systemPrompt` = voz do agente (composeAgentVoice). */
-export function buildPulseMessages(systemPrompt: string, posture: Posture, input: PulseInput): LLMMessage[] {
-  const system = [systemPrompt, composePostureBlock(posture), PULSE_VOICE_RULES, GROUNDING_RULE].join("\n\n");
+/** Monta as mensagens do redator do pulso. `speakingPrompt` = voz de fala completa
+ *  (voz-base + kernel de marca + postura), fonte única com o chat/redator. */
+export function buildPulseMessages(speakingPrompt: string, input: PulseInput): LLMMessage[] {
+  const system = [speakingPrompt, PULSE_VOICE_RULES, GROUNDING_RULE].join("\n\n");
   const curated = {
     accountName: input.accountName,
     currency: input.currency,
@@ -101,7 +100,7 @@ export function buildPulseMessages(systemPrompt: string, posture: Posture, input
 
 /** Fallback determinístico do pulso (LLM fora / erro) — período + números + próximos passos. */
 export function buildPulseFallback(input: PulseInput): string {
-  const lines: string[] = [`📊 ${input.accountName} — resumo do dia (${PULSE_PERIOD_LABEL})`];
+  const lines: string[] = [`${input.accountName} — resumo do dia (${PULSE_PERIOD_LABEL})`];
   // lidera por isso — é mais importante que qualquer métrica (mesmo caminho sem LLM
   // não pode silenciar o aviso; achado do redator "lidera por caveat antes de vaidade").
   if (input.accountHealthLabel) lines.push(input.accountHealthLabel);

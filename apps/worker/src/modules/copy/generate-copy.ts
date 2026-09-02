@@ -3,6 +3,7 @@
 // contexto/orientações do agente. N variações compartilham a mesma mídia (teste de copy).
 // Fallback determinístico quando o LLM falha (nunca deixa o rascunho sem copy).
 
+import { AI_JARGON_BLOCKLIST } from "@trafego/core";
 import { CTA_TYPES, type ConversionGoal, type CopyVariant } from "@trafego/shared";
 import type { LLMProviderPort } from "@trafego/shared/ports";
 import { LLMProviderError } from "@trafego/shared/ports";
@@ -63,6 +64,8 @@ function systemPrompt(): string {
     "Você escreve copy de anúncio para o Meta Ads, em português do Brasil.",
     "Tom SÓBRIO e profissional (B2B): o texto pode ser encaminhado ao cliente do gestor —",
     "sem sensacionalismo, sem promessas exageradas, sem emoji em excesso.",
+    // audiência = cliente final; não é a voz do Roy, mas o anti-jargão-de-IA vale igual.
+    `Nunca use jargão de IA nem clichê de marketing vazio (ex: ${AI_JARGON_BLOCKLIST.join(", ")}).`,
     "Cada variação: texto principal curto, título objetivo, descrição opcional e um CTA.",
     "As variações compartilham a mesma mídia — varie o ângulo da copy, não a oferta.",
   ].join(" ");

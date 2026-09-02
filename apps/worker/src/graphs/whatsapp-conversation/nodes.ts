@@ -244,8 +244,8 @@ function outcomeLine(action: Action, outcome: ApplyOutcome): string {
   switch (outcome.kind) {
     case "applied":
       return outcome.dryRun
-        ? `🧪 Simulei em ${name} (dry-run, não apliquei de verdade).`
-        : `✅ ${(PAST_PHRASE[action.type] ?? ((x: string) => `Mexi em ${x}`))(name)}.`;
+        ? `Simulei em ${name} (dry-run, não apliquei de verdade).`
+        : `${(PAST_PHRASE[action.type] ?? ((x: string) => `Mexi em ${x}`))(name)}.`;
     case "noop":
       return `Não precisei mexer em ${name} — já estava assim.`;
     case "blocked":
@@ -1014,7 +1014,7 @@ export function makeConversationNodes(
 
     const parts: string[] = [];
     // shadow (dry_run): o eco avisa que vai SIMULAR — senão "vou pausar" soa como escrita real.
-    if (wctx.cfg.dryRun && echoItems.length > 0) parts.push("🧪 Modo simulação (não aplico de verdade):");
+    if (wctx.cfg.dryRun && echoItems.length > 0) parts.push("Modo simulação (não aplico de verdade):");
     if (echoItems.length > 0) parts.push(buildWriteEcho(echoItems));
     if (blocked.length > 0) parts.push(`Não consigo:\n${blocked.map((b, i) => `${i + 1}. ${b}`).join("\n")}`);
     const echo = parts.join("\n\n") || "Não consegui preparar essa ação.";
@@ -1081,7 +1081,7 @@ export function makeConversationNodes(
         payload: { orgId: ctx.orgId, approvalId: pendingDraft.approvalId, notifyRef: ctx.ref },
       });
       return {
-        messages: [...answerToolCalls(calls, "criando"), new AIMessage("Beleza, tô criando — te aviso quando ficar pronto. 🚀")],
+        messages: [...answerToolCalls(calls, "criando"), new AIMessage("Beleza, tô criando — te aviso quando ficar pronto.")],
         pendingDraft: null,
         pendingWrite: null,
         pendingRevert: null,
@@ -1112,8 +1112,8 @@ export function makeConversationNodes(
         lines.push(
           res.reverted
             ? mode === "archive"
-              ? "✅ Arquivada."
-              : "✅ Desfeito."
+              ? "Arquivada."
+              : "Desfeito."
             : res.blockedByDrift
               ? `Não desfiz: ${res.reason ?? "a entidade mudou desde a ação"}. Se quiser desfazer mesmo assim, me avise.`
               : `Não consegui desfazer: ${res.reason ?? "ação não encontrada"}.`,

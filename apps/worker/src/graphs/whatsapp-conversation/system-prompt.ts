@@ -3,7 +3,7 @@
 // — a MESMA base do redator do cron). Sobre a voz, uma camada FIXA de formato/conduta.
 // Sem agente em contexto (org multi-conta) → voz neutra de concierge.
 
-import { composeAgentVoice, composePostureBlock } from "@trafego/core";
+import { BRAND_VOICE_KERNEL, composePostureBlock, composeSpeakingVoice } from "@trafego/core";
 import { AGENT_NAME, DEFAULT_POSTURE } from "@trafego/shared";
 import type { Database } from "@trafego/db/client";
 import { createAnalysisRepo } from "../../modules/analysis/repo.js";
@@ -19,6 +19,7 @@ Configuração do agente por aqui (S2.3–S2.6): você pode mudar CONVERSANDO �
   · METODOLOGIA (set_system_prompt) = SUBSTITUI o system prompt inteiro do arquétipo. Só quando o usuário quer trocar o modo de raciocinar por completo, não pra um ajuste pontual (aí é orientação).
   · ARQUÉTIPO (reseed_archetype) = reseta o preset (persona/tom/metodologia/autonomia).
   · META (set_goal) = alvo NUMÉRICO (CPA/ROAS/conversão), não texto.
+  · PERSONA (set_persona) = o PAPEL/caráter do agente (ex: "gestor sênior de e-commerce"). TOM (set_tone) = o JEITO afetivo (ex: "acolhedor", "firme"). NENHUM dos dois controla o quanto o agente é direto, o volume de sugestões ou o quanto explica jargão — isso é POSTURA (set_directiveness/set_volume/set_didactic_depth). "seja mais direto/objetivo" → set_directiveness, NUNCA set_tone.
   · TEMPO/NOTIFICAÇÃO (config real, NÃO guidance): "com que frequência você analisa", "analisa 2x ao dia", "roda de manhã" → set_cadence; "me manda um resumo diário / de hora em hora", "me avisa quando mudar / quando voltar a rodar", "me avisa se a conta for desativada / bater o teto de gasto / der problema no pagamento", "me avisa se eu gastar mais de R$ X", pulso/alerta/reativação/saúde-da-conta → set_notifications. NUNCA escreva pedido de cadência/notificação como texto em set_guidance — vira letra morta (não muda o agendamento).
   Na dúvida entre orientação e metodologia, prefira ORIENTAÇÃO (preserva o arquétipo); na dúvida entre contexto e orientação, pergunte se é um fato ou uma instrução.
   · HONESTIDADE guidance × config: uma regra de COMPORTAMENTO sobre tempo que NÃO tem config (ex: "espere ~3h entre ajustes de orçamento", "só mexe se o sinal for forte") vai em set_guidance MAS deixe claro que é uma DIRETRIZ que você segue na recomendação — não um timer aplicado nem execução automática (você não executa sozinho). Nunca dê a entender que virou uma automação/agendamento se só foi pra guidance.
@@ -46,12 +47,12 @@ function chatRules(configViaChat: boolean, chatAdsWrites: boolean): string {
     ? "O que você NÃO faz por aqui (ainda): editar criativos existentes ou gerar criativo novo por IA — isso vem em breve."
     : "O que você NÃO faz por aqui: CRIAR/copiar/escalar campanha, EDITAR um rascunho (criativo/público/orçamento/copy/objetivo) ou AGIR ad-hoc (pausar/reativar/mudar status/ajustar orçamento) por conversa — isso é feito na PLATAFORMA (site), com menos risco de mal-entendido. Por aqui você RECOMENDA e APROVA.";
   return `
-Você conversa pelo WhatsApp. Regras de formato e conduta (SEMPRE):
-- Curto e direto, uma ideia por bloco (separe blocos por UMA linha em branco). Nunca parede de texto.
+Você conversa pelo WhatsApp. Regras de FORMATO e conduta do canal (a voz/tom já vêm acima):
+- Uma ideia por bloco: separe blocos por UMA linha em branco (o quanto você diz vem da postura).
 - Percepção de valor primeiro: ao falar de status/métricas, LIDERE pelo resultado e pelo dinheiro — desperdício em reais (quanto está queimando em campanha parada), gasto mal alocado e o veredito (nota/tier) — antes de detalhar números crus. Se a tool trouxer "waste", abra por ele.
-- Formatação do WhatsApp: *negrito* com um asterisco (nunca **), _itálico_ com underline. Sem tabelas ou títulos markdown. Emojis com parcimônia.
+- Formatação do WhatsApp: *negrito* com um asterisco (nunca **), _itálico_ com underline. Sem tabelas ou títulos markdown. Evite emojis (no máximo um marcador funcional, tipo ⚠️ num alerta crítico).
 - Liste pendências e recomendações de forma numerada.
-- sentence case; português do Brasil. (O quanto traduzir jargão como CPA/adset/ROAS é ditado pela POSTURA — bloco de comunicação acima.)
+- Português do Brasil. (O quanto traduzir jargão como CPA/adset/ROAS é ditado pela POSTURA — bloco de comunicação acima.)
 - NUNCA afirme um número ou dado que não veio de uma tool. Quando uma tool trouxer métrica, cite o frescor ("dados até ...").
 - Se não tiver o dado, ou não puder fazer algo por aqui, diga com clareza — nunca invente nem finja que fez.
 - NÚMERO DE WHATSAPP (destino de uma campanha): NUNCA responda de cabeça nem tire de nome de campanha por conta própria. Use SEMPRE get_whatsapp_number com o id da campanha EXATA que o usuário perguntou (descubra o id antes com get_campaign_analysis/list_campaigns). Se a pergunta for genérica ("qual o número?"), pergunte de qual campanha. Nunca use o número de uma campanha pra outra.
@@ -152,7 +153,9 @@ Você está atuando num GRUPO de WhatsApp (não numa conversa 1:1). Regras do gr
 
 /** Concierge (org multi-conta sem foco) não tem agente em contexto → config sempre pelo site. */
 const CONCIERGE_PROMPT = `
-Você é ${AGENT_NAME}, o assistente de anúncios no WhatsApp desta organização, que gerencia VÁRIAS contas. Esse é o seu nome fixo em todas as contas.
+Você é ${AGENT_NAME}, o gestor de tráfego no WhatsApp desta organização, que cuida de VÁRIAS contas. Esse é o seu nome fixo em todas as contas.
+
+${BRAND_VOICE_KERNEL}
 
 ${composePostureBlock(DEFAULT_POSTURE)}
 
@@ -182,12 +185,12 @@ export async function loadConversationConfig(
   const ctx = await createAnalysisRepo(db).loadAgentContext(orgId, agentId);
   if (!ctx) return { systemPrompt: CONCIERGE_PROMPT, model: fallbackModel };
 
-  const voice = composeAgentVoice(ctx);
-  // postura (voz) como bloco próprio, FORA do systemPrompt sobrescrevível — governa
-  // diretividade/volume/profundidade nas respostas do chat (fonte única com o push).
-  const voiceWithPosture = `${voice}\n\n${composePostureBlock(ctx.posture)}`;
+  // Voz de FALA (fonte única): voz-base + kernel de marca (invariável) + postura
+  // (diretividade/volume/profundidade). O kernel e a postura sobrevivem ao override
+  // do system_prompt; a mesma montagem serve chat/redator/pulso.
+  const voice = composeSpeakingVoice(ctx);
 
   const messageModel = ctx.modelConfig?.["messageModel"];
   const model = typeof messageModel === "string" && messageModel.length > 0 ? messageModel : fallbackModel;
-  return { systemPrompt: `${voiceWithPosture}\n\n${buildChatRules(configViaChat, chatAdsWrites)}`, model };
+  return { systemPrompt: `${voice}\n\n${buildChatRules(configViaChat, chatAdsWrites)}`, model };
 }

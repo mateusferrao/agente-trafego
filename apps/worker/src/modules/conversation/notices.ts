@@ -15,11 +15,11 @@ const MEDIA_TYPE_FALLBACK_PT = "esse tipo de arquivo";
 
 /** Áudio recebido mas a transcrição falhou (rede/provider/formato). */
 export const AUDIO_FAILED_NOTICE =
-  "recebi seu áudio, mas não consegui ouvir agora. Pode escrever ou reenviar?";
+  "Recebi seu áudio, mas não consegui ouvir agora. Pode escrever ou reenviar?";
 
 /** Áudio recebido mas sem fala reconhecível (transcript vazio). */
 export const AUDIO_EMPTY_NOTICE =
-  "recebi seu áudio, mas não consegui ouvir nada. Pode reenviar ou escrever?";
+  "Recebi seu áudio, mas não consegui ouvir nada. Pode reenviar ou escrever?";
 
 // ── Áudio CITADO (reply a um áudio marcando o bot): a transcrição do citado entra no
 //    próprio turno (não é aviso avulso) — copy centralizada aqui junto das irmãs (§13). ──
@@ -47,5 +47,5 @@ export const QUOTED_AUDIO_EMPTY_NOTE = "[o áudio que você respondeu veio sem f
 /** Aviso p/ mídia reconhecida mas ainda não suportada (imagem/vídeo/doc/figurinha). */
 export function unsupportedMediaNotice(mediaType: string): string {
   const label = MEDIA_TYPE_LABELS_PT[mediaType] ?? MEDIA_TYPE_FALLBACK_PT;
-  return `por aqui eu ainda só entendo texto e áudio — ${label} eu ainda não consigo ler. Me manda por texto ou áudio?`;
+  return `Por aqui eu ainda só entendo texto e áudio — ${label} eu ainda não consigo ler. Me manda por texto ou áudio?`;
 }

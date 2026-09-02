@@ -50,13 +50,13 @@ describe("sendToConversation — contato (DM)", () => {
   it("sanitiza o texto do LLM antes de enviar (** → *)", async () => {
     const { deps, sent } = makeDeps();
     await createSendToConversation(deps)(CONTACT_REF, "isto é **importante**");
-    expect(sent[0]!.text).toBe("isto é *importante*");
+    expect(sent[0]!.text).toBe("Isto é *importante*"); // enforceVoice: sentence case
   });
 
   it("split:true quebra em balões, cada um com typingHint proporcional", async () => {
     const { deps, sent } = makeDeps();
     await createSendToConversation(deps)(CONTACT_REF, "primeiro bloco\n\nsegundo bloco", { split: true });
-    expect(sent.map((m) => m.text)).toEqual(["primeiro bloco", "segundo bloco"]);
+    expect(sent.map((m) => m.text)).toEqual(["Primeiro bloco", "segundo bloco"]); // só o 1º balão capitaliza
     for (const m of sent) expect(m.typingHintMs).toBeGreaterThanOrEqual(TYPING_MIN_MS);
   });
 
@@ -64,7 +64,7 @@ describe("sendToConversation — contato (DM)", () => {
     const { deps, sent } = makeDeps();
     await createSendToConversation(deps)(CONTACT_REF, "linha um\n\nlinha dois", { split: false });
     expect(sent).toHaveLength(1);
-    expect(sent[0]!.text).toBe("linha um\n\nlinha dois");
+    expect(sent[0]!.text).toBe("Linha um\n\nlinha dois");
     expect(sent[0]!.typingHintMs).toBeGreaterThanOrEqual(TYPING_MIN_MS);
   });
 
@@ -72,7 +72,7 @@ describe("sendToConversation — contato (DM)", () => {
     const { deps, recorded } = makeDeps();
     await createSendToConversation(deps)(CONTACT_REF, "a\n\nb", { split: true });
     expect(recorded).toEqual([
-      { direction: "outbound", body: "a" },
+      { direction: "outbound", body: "A" },
       { direction: "outbound", body: "b" },
     ]);
   });
@@ -119,7 +119,7 @@ describe("sendToConversation — grupo", () => {
     expect(ok).toBe(true);
     expect(sent[0]).toMatchObject({ to: GROUP_TARGET.groupJid, toIsGroup: true });
     expect(deps.repo.ensureGroupConversation).toHaveBeenCalledWith("org-1", "grp-1", "+5511999999999");
-    expect(recorded).toEqual([{ direction: "outbound", body: "oi" }]);
+    expect(recorded).toEqual([{ direction: "outbound", body: "Oi" }]);
   });
 
   it("proativo/broadcast (participantPhone null): thread de broadcast do grupo", async () => {

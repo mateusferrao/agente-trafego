@@ -108,7 +108,7 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
           case "created": {
             await ports.approval.resolve(approval.id, { status: "approved" });
             if (outcome.dryRun) {
-              await pushOutcome("🧪 Simulei a criação (dry-run).");
+              await pushOutcome("Simulei a criação (dry-run).");
               return;
             }
             const [draftRow] = await deps.db
@@ -121,8 +121,8 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
             // ativar). Os DOIS avisam aqui (aviso-sempre, inclusive site).
             const lines = [
               outcome.activated
-                ? `✅ Criei ${summary} e já ATIVEI — está no ar (a Meta ainda revisa o criativo). Se precisar, dá pra pausar na plataforma.`
-                : `✅ Criei ${summary} — nasceu PAUSADA. Revise e ative na plataforma quando quiser${notifyRef ? " (ou me diz aqui que eu ativo)" : ""}.`,
+                ? `Criei ${summary} e já ATIVEI — está no ar (a Meta ainda revisa o criativo). Se precisar, dá pra pausar na plataforma.`
+                : `Criei ${summary} — nasceu PAUSADA. Revise e ative na plataforma quando quiser${notifyRef ? " (ou me diz aqui que eu ativo)" : ""}.`,
             ];
             // honestidade (§eco+confirma): eu tinha prometido herdar o público que já converte,
             // mas a fonte não estava mais disponível na hora de criar — nunca fica silencioso.
@@ -152,8 +152,8 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
             return;
           case "activated":
             await ports.approval.resolve(approval.id, { status: "approved" });
-            if (outcome.dryRun) await pushOutcome("🧪 Simulei a ativação (dry-run).");
-            else await pushRealApplied("✅ Ativei sua campanha — já está veiculando.");
+            if (outcome.dryRun) await pushOutcome("Simulei a ativação (dry-run).");
+            else await pushRealApplied("Ativei sua campanha — já está veiculando.");
             return;
         }
         return;
@@ -201,8 +201,8 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
         case "applied":
           await ports.approval.resolve(approval.id, { status: "approved" });
           logger.info({ approvalId, dryRun: outcome.dryRun }, "approval-apply:aplicada");
-          if (outcome.dryRun) await pushOutcome(`🧪 Simulei a ação${suffix} (dry-run).`);
-          else await pushRealApplied(`✅ ${appliedActionLine(approval.action)}.`);
+          if (outcome.dryRun) await pushOutcome(`Simulei a ação${suffix} (dry-run).`);
+          else await pushRealApplied(`${appliedActionLine(approval.action)}.`);
           return;
       }
     },

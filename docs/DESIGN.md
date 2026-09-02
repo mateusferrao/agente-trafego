@@ -81,6 +81,7 @@ Tipos de evento: `analysis_started` · `analysis_completed` · `recommendation_c
 - **Sempre o próximo passo:** empty states e confirmações apontam a ação.
 - **Voz:** sentence case; sem "please"; status = tom+texto. **Voz própria, sem cara de IA** (sem travessão dramático, "não é só X, é Y", hype, confete de "!", jargão de IA). **Tom por zona:** Marca lúdico (voz própria, ex.: *"Bora conectar sua conta Meta?"*), Operacional neutro (*"Configuração salva"*), Crítica preciso (*"Não consegui validar seu token da Meta. Confira se ele está ativo e cole novamente."*). Guardrail B2B: nada lúdico no que o gestor mostra ao cliente dele.
 - **Agente = Roy** (nome de marca fixo em toda a org — contas + concierge; persona/tom customizável por conta, só o nome é fixo). 1ª menção numa tela qualifica (*"o Roy, seu agente de tráfego"*), depois só *"Roy"*; identidade visual persistente (símbolo caqui + "Roy").
+- **Voz no WhatsApp (runtime):** estas regras têm um espelho executável em `packages/core/src/voice` (`BRAND_VOICE_KERNEL` + `AI_JARGON_BLOCKLIST`), o **kernel invariável** injetado em toda superfície que fala com o dono (chat/push/pulso/concierge) via `composeSpeakingVoice`, ACIMA de persona/tom/postura. Um pós-processador determinístico (`enforceVoice`, `packages/core/src/message`) conserta o que o modelo escorrega (bullets inline, abertura de assistente, sentence case) no ponto único `sendToConversation`. Emoji no canal = allowlist `WHATSAPP_ALLOWED_EMOJI` (só `⚠️` alerta + `💸` money-shot).
 
 ## Mapa de reuso (Automato → nosso)
 

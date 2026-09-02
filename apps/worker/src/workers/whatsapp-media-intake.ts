@@ -41,24 +41,24 @@ import { setCreativeOffer } from "../modules/conversation/creative-offer.js";
 
 /** Mensagens de cortesia do intake — sempre o que aconteceu + próximo passo (§13 UX). */
 const NOTICE = {
-  noAccount: "recebi seu criativo! só me diz de qual conta ele é (você tem mais de uma) que eu guardo na biblioteca de criativos.",
-  accountUnavailable: "recebi seu criativo, mas não consegui acessar essa conta agora — tenta de novo daqui a pouco?",
-  noBytes: "não consegui baixar o arquivo — pode mandar de novo?",
-  failed: "recebi o arquivo mas tive um problema pra guardar — pode tentar de novo em instantes?",
+  noAccount: "Recebi seu criativo! Só me diz de qual conta ele é (você tem mais de uma) que eu guardo na biblioteca de criativos.",
+  accountUnavailable: "Recebi seu criativo, mas não consegui acessar essa conta agora — tenta de novo daqui a pouco?",
+  noBytes: "Não consegui baixar o arquivo — pode mandar de novo?",
+  failed: "Recebi o arquivo mas tive um problema pra guardar — pode tentar de novo em instantes?",
   videoTooLarge: (maxMb: number) =>
-    `esse vídeo é grande demais pra eu receber por aqui (limite ${maxMb}MB) — sobe ele pela biblioteca de criativos no site.`,
+    `Esse vídeo é grande demais pra eu receber por aqui (limite ${maxMb}MB) — sobe ele pela biblioteca de criativos no site.`,
   saved: (accountName: string) =>
-    `imagem guardada na biblioteca de criativos${accountName ? ` da ${accountName}` : ""} — já dá pra usar num rascunho de campanha.`,
+    `Imagem guardada na biblioteca de criativos${accountName ? ` da ${accountName}` : ""} — já dá pra usar num rascunho de campanha.`,
   // v1 (escrita conversacional OFF): salva na biblioteca, sem oferta de criar/trocar por chat —
   // o uso do criativo num rascunho é na plataforma (site).
   savedLibraryOnly: (accountName: string) =>
-    `imagem guardada na biblioteca de criativos${accountName ? ` da ${accountName}` : ""} — dá pra usar num rascunho de campanha pela plataforma (site).`,
+    `Imagem guardada na biblioteca de criativos${accountName ? ` da ${accountName}` : ""} — dá pra usar num rascunho de campanha pela plataforma (site).`,
   savedOfferUse: () =>
-    `imagem guardada! quer que eu use ela no rascunho de campanha que te propus? Responde *sim* que eu troco o criativo.`,
+    `Imagem guardada! Quer que eu use ela no rascunho de campanha que te propus? Responde *sim* que eu troco o criativo.`,
   savedOfferCreate: (accountName: string) =>
-    `imagem guardada${accountName ? ` na ${accountName}` : ""}! quer que eu crie uma campanha com ela? Responde *sim* que eu monto o rascunho.`,
+    `Imagem guardada${accountName ? ` na ${accountName}` : ""}! Quer que eu crie uma campanha com ela? Responde *sim* que eu monto o rascunho.`,
   videoSaved: (accountName: string) =>
-    `vídeo recebido${accountName ? ` na ${accountName}` : ""} — tô processando; ele fica pronto pra usar num rascunho em instantes.`,
+    `Vídeo recebido${accountName ? ` na ${accountName}` : ""} — tô processando; ele fica pronto pra usar num rascunho em instantes.`,
 } as const;
 
 /** Extensão default por content-type (nomeia o arquivo no upload pra Meta). */

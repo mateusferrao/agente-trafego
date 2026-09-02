@@ -422,18 +422,18 @@ interface FormState {
           <div class="flex flex-col gap-1">
             <span class="text-xs font-medium uppercase tracking-wide text-muted">Identidade</span>
             <h2 class="font-brand text-base font-semibold text-ink">Como o agente se apresenta</h2>
-            <p class="text-xs text-muted">Persona e tom da comunicação. Opcional — o arquétipo já traz um padrão.</p>
+            <p class="text-xs text-muted">Persona (papel) e tom (jeito) do agente. Opcional — o arquétipo já traz um padrão. O quanto ele é direto, o volume de sugestões e o quanto explica os termos ficam em “Como o agente se comunica”.</p>
           </div>
           <div class="flex flex-col gap-3">
             <label class="flex flex-col gap-1 text-xs text-muted">Persona (papel em 1 linha)
-              <input type="text" [class.border-line]="persona().length <= identityMax" [class.border-danger-strong]="persona().length > identityMax" class="w-full rounded-md border bg-app px-3 py-2 text-sm text-ink" placeholder="Ex: gestor de tráfego sênior, cauteloso" [value]="persona()" (input)="onPersona($event)" />
+              <input type="text" [class.border-line]="persona().length <= identityMax" [class.border-danger-strong]="persona().length > identityMax" class="w-full rounded-md border bg-app px-3 py-2 text-sm text-ink" placeholder="Ex: gestor de tráfego sênior, especialista em e-commerce" [value]="persona()" (input)="onPersona($event)" />
               <span class="flex justify-end gap-1" [class.text-muted]="persona().length <= identityMax" [class.text-danger-strong]="persona().length > identityMax">
                 @if (persona().length > identityMax) { <span>acima do limite ·</span> }
                 <span>{{ count(persona().length) }} / {{ count(identityMax) }}</span>
               </span>
             </label>
-            <label class="flex flex-col gap-1 text-xs text-muted">Tom
-              <input type="text" [class.border-line]="tone().length <= identityMax" [class.border-danger-strong]="tone().length > identityMax" class="w-full rounded-md border bg-app px-3 py-2 text-sm text-ink" placeholder="Ex: consultivo, claro e sem jargão" [value]="tone()" (input)="onTone($event)" />
+            <label class="flex flex-col gap-1 text-xs text-muted">Tom (jeito de falar)
+              <input type="text" [class.border-line]="tone().length <= identityMax" [class.border-danger-strong]="tone().length > identityMax" class="w-full rounded-md border bg-app px-3 py-2 text-sm text-ink" placeholder="Ex: acolhedor e paciente" [value]="tone()" (input)="onTone($event)" />
               <span class="flex justify-end gap-1" [class.text-muted]="tone().length <= identityMax" [class.text-danger-strong]="tone().length > identityMax">
                 @if (tone().length > identityMax) { <span>acima do limite ·</span> }
                 <span>{{ count(tone().length) }} / {{ count(identityMax) }}</span>

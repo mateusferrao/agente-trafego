@@ -5,6 +5,7 @@
 import { formatMoney } from "@trafego/shared";
 
 export * from "./whatsapp-format.js";
+export * from "./enforce-voice.js";
 
 export interface MessageOverview {
   readonly accountName: string;
@@ -29,7 +30,7 @@ const DEFAULT_MAX_RECS = 3;
  */
 export function buildMessageFallback(overview: MessageOverview, maxRecs = DEFAULT_MAX_RECS): string {
   const lines: string[] = [];
-  lines.push(`📊 ${overview.accountName}`);
+  lines.push(overview.accountName);
   // money shot primeiro (§Bloco 2): o dono quer ver o dinheiro antes do diagnóstico.
   if (overview.money && overview.money.wastedSpend > 0) {
     lines.push(`💸 ${formatMoney(overview.money.wastedSpend, overview.currency)} (${overview.money.wastedPct}%) em campanhas paradas — pausar libera esse valor.`);
