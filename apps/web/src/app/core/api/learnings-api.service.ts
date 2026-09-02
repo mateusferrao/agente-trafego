@@ -33,8 +33,28 @@ export class LearningsApiService extends BaseApiService {
     return this.delete<LearningOk>(['/agents', agentId, 'learnings', id]);
   }
 
+  /** `POST /api/agents/:agentId/learnings/:id/restore` — restaura um arquivado. */
+  restore(agentId: string, id: string): Observable<LearningOk> {
+    return this.post<LearningOk, undefined>(['/agents', agentId, 'learnings', id, 'restore'], undefined);
+  }
+
   /** `POST /api/agents/:agentId/learnings/:id/accept-threshold` — aplica o ajuste de comportamento. */
   acceptThreshold(agentId: string, id: string): Observable<LearningOk> {
     return this.post<LearningOk, undefined>(['/agents', agentId, 'learnings', id, 'accept-threshold'], undefined);
+  }
+
+  /** `POST /api/agents/:agentId/learnings/:id/reject-proposal` — descarta a proposta de ajuste. */
+  rejectProposal(agentId: string, id: string): Observable<LearningOk> {
+    return this.post<LearningOk, undefined>(['/agents', agentId, 'learnings', id, 'reject-proposal'], undefined);
+  }
+
+  /** `POST /api/agents/:agentId/learnings/:id/revert-threshold` — restaura o valor anterior do ajuste. */
+  revertThreshold(agentId: string, id: string): Observable<LearningOk> {
+    return this.post<LearningOk, undefined>(['/agents', agentId, 'learnings', id, 'revert-threshold'], undefined);
+  }
+
+  /** `POST /api/agents/:agentId/learnings/dismiss-opportunity` — dispensa o aviso de teto (cooldown). */
+  dismissOpportunity(agentId: string): Observable<LearningOk> {
+    return this.post<LearningOk, undefined>(['/agents', agentId, 'learnings', 'dismiss-opportunity'], undefined);
   }
 }

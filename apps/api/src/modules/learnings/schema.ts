@@ -43,7 +43,12 @@ export const learningOpportunity = z.object({
 });
 export type LearningOpportunity = z.infer<typeof learningOpportunity>;
 
-export const learningsList = z.object({ items: z.array(learningItem), opportunities: z.array(learningOpportunity) });
+export const learningsList = z.object({
+  items: z.array(learningItem),
+  opportunities: z.array(learningOpportunity),
+  /** aprendizados arquivados (zona recolhida — filtro/busca + restaurar). */
+  archived: z.array(learningItem),
+});
 export type LearningsList = z.infer<typeof learningsList>;
 
 /** Editar a frase de um aprendizado (o usuário reescreve com as próprias palavras). */

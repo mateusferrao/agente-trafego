@@ -30,6 +30,11 @@ export const learningsRoutes: FastifyPluginAsync = async (app) => {
     return service.forget(orgIdOf(request), agentId, id);
   });
 
+  app.post("/agents/:agentId/learnings/:id/restore", guard, async (request) => {
+    const { agentId, id } = request.params as { agentId: string; id: string };
+    return service.restore(orgIdOf(request), agentId, id);
+  });
+
   app.post("/agents/:agentId/learnings/:id/accept-threshold", guard, async (request) => {
     const { agentId, id } = request.params as { agentId: string; id: string };
     return service.acceptThreshold(orgIdOf(request), agentId, id);

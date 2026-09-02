@@ -59,6 +59,18 @@ export async function forgetLesson(db: Database, ref: LessonRef): Promise<Learni
   return ok;
 }
 
+/** Restaura um aprendizado ARQUIVADO → volta a ativo (desfaz o "esquecer"). */
+export async function restoreLesson(db: Database, ref: LessonRef): Promise<LearningActionResult> {
+  const [row] = await db
+    .select({ id: agentMemory.id })
+    .from(agentMemory)
+    .where(and(eq(agentMemory.id, ref.lessonId), eq(agentMemory.orgId, ref.orgId), eq(agentMemory.agentId, ref.agentId), eq(agentMemory.lifecycle, "archived")))
+    .limit(1);
+  if (!row) return notFound("Aprendizado arquivado não encontrado.");
+  await db.update(agentMemory).set({ lifecycle: "active", updatedAt: sql`now()` }).where(scoped(ref));
+  return ok;
+}
+
 /** Confirma um aprendizado (o dono endossa) → confirmedByHuman + salto de confiança. */
 export async function confirmLesson(db: Database, ref: LessonRef): Promise<LearningActionResult> {
   const [row] = await db.select({ confidence: agentMemory.confidence }).from(agentMemory).where(and(scoped(ref), notArchived)).limit(1);

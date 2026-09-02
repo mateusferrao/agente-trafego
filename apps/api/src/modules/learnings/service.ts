@@ -7,6 +7,7 @@ import {
   dismissAdvisory,
   forgetLesson,
   rejectProposal as rejectProposalAction,
+  restoreLesson,
   revertThreshold as revertThresholdAction,
   type LearningActionResult,
 } from "@trafego/agent-config";
@@ -67,29 +68,19 @@ export function createLearningsService(deps: LearningsDeps) {
           eq(agentMemory.agentId, agentId),
           inArray(agentMemory.type, [...LEARNING_TYPES]),
           isNotNull(agentMemory.semanticKey),
-          sql`${agentMemory.lifecycle} <> 'archived'`,
         ),
       )
       .orderBy(desc(agentMemory.confirmedByHuman), desc(agentMemory.confidence));
 
-    const items: LearningItem[] = rows.map((r) => ({
-      id: r.id,
-      kind: lessonKindFromMemoryType(r.type),
-      content: r.content,
-      tier: confidenceTier(r.confidence ?? 0, r.confirmedByHuman),
-      origin: r.origin,
-      scope: r.scope,
-      dimension: r.dimension ?? null,
-      confirmedByHuman: r.confirmedByHuman,
-      lifecycle: r.lifecycle,
-      reinforceCount: r.reinforceCount,
-      sourceRunId: r.sourceRunId ?? null,
-      createdAt: r.createdAt.toISOString(),
-      proposedBehavior: (r.proposedThresholdPatch as ThresholdProposal | null)?.behaviorLabel ?? null,
-      appliedBehavior: (r.appliedThresholdPatch as AppliedThresholdPatch | null)?.behaviorLabel ?? null,
-    }));
+    // ativos/stale = a aba viva; arquivados = zona recolhida (filtro/busca + restaurar).
+    const items: LearningItem[] = [];
+    const archived: LearningItem[] = [];
+    for (const r of rows) {
+      const item = toItem(r);
+      (r.lifecycle === "archived" ? archived : items).push(item);
+    }
     const opportunities = await loadOpportunities(orgId, agentId);
-    return { items, opportunities };
+    return { items, opportunities, archived };
   }
 
   /** Zona "Oportunidades": deriva o aviso de teto vivo do ÚLTIMO run, menos dispensas em cooldown. */
@@ -150,6 +141,10 @@ export function createLearningsService(deps: LearningsDeps) {
     return unwrap(await forgetLesson(deps.db, { orgId, agentId, lessonId }));
   }
 
+  async function restore(orgId: OrgId, agentId: string, lessonId: string): Promise<LearningOk> {
+    return unwrap(await restoreLesson(deps.db, { orgId, agentId, lessonId }));
+  }
+
   async function acceptThreshold(orgId: OrgId, agentId: string, lessonId: string): Promise<LearningOk> {
     return unwrap(await acceptThresholdAction(deps, { orgId, agentId, lessonId }, ACTOR));
   }
@@ -168,5 +163,25 @@ export function createLearningsService(deps: LearningsDeps) {
     return unwrap(await dismissAdvisory(deps.db, { orgId, agentId, key: GUARDRAIL_OPPORTUNITY_KEY, dismissedUntil: until }));
   }
 
-  return { list, edit, confirm, forget, acceptThreshold, rejectProposal, revertThreshold, dismissOpportunity };
+  return { list, edit, confirm, forget, restore, acceptThreshold, rejectProposal, revertThreshold, dismissOpportunity };
+}
+
+/** Projeta uma linha de agent_memory no item da aba (mesma forma p/ ativos e arquivados). */
+function toItem(r: typeof agentMemory.$inferSelect): LearningItem {
+  return {
+    id: r.id,
+    kind: lessonKindFromMemoryType(r.type),
+    content: r.content,
+    tier: confidenceTier(r.confidence ?? 0, r.confirmedByHuman),
+    origin: r.origin,
+    scope: r.scope,
+    dimension: r.dimension ?? null,
+    confirmedByHuman: r.confirmedByHuman,
+    lifecycle: r.lifecycle,
+    reinforceCount: r.reinforceCount,
+    sourceRunId: r.sourceRunId ?? null,
+    createdAt: r.createdAt.toISOString(),
+    proposedBehavior: (r.proposedThresholdPatch as ThresholdProposal | null)?.behaviorLabel ?? null,
+    appliedBehavior: (r.appliedThresholdPatch as AppliedThresholdPatch | null)?.behaviorLabel ?? null,
+  };
 }
