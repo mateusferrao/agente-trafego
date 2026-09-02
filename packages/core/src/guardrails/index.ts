@@ -186,6 +186,59 @@ function clampBudgetChange(action: Action, maxPct: number): Action {
   };
 }
 
+// ─── Aviso de OPORTUNIDADE de guardrail (v3, "sinal vivo") ────────────────
+// NÃO é aprendizado — é oportunidade. Detectado no momento da ANÁLISE: quando a magnitude que
+// o analista QUIS propor excede o teto do guardrail (o clamp deixou R$ na mesa) E há um prior
+// MEDIDO de que escalar compensa nesta conta E o R$ bloqueado é material → emite um flag. Só
+// APONTA pra config (a UI faz o deep-link); NUNCA muta o guardrail (hard-wall). Detecção PURA
+// (proposto vs teto), sem instrumentar o apply-service.
+
+/** Uma escala de budget que o guardrail clampou (o analista queria mais que o teto). */
+export interface ClampedBudgetRaise {
+  /** magnitude % que o analista PEDIU (antes do clamp). */
+  readonly wantedPct: number;
+  /** teto de blast-radius do guardrail (%). */
+  readonly cappedPct: number;
+  /** budget diário atual da entidade (unidade mínima) — base do R$ bloqueado. */
+  readonly currentBudgetMinor: number;
+}
+
+export interface GuardrailOpportunityInput {
+  readonly clampedRaises: readonly ClampedBudgetRaise[];
+  /** há prior MEDIDO de que escalar o que tem base compensa nesta conta (`account_scale_pays`)? */
+  readonly hasScalePaysPrior: boolean;
+  /** R$ mínimo (unidade mínima) bloqueado p/ valer o aviso (materialidade). */
+  readonly minMaterialMinor: number;
+}
+
+export interface GuardrailOpportunity {
+  readonly threshold: "maxBudgetChangePct";
+  readonly wantedPct: number;
+  readonly cappedPct: number;
+  /** R$ (unidade mínima) que o teto está deixando na mesa (estimativa por dia). */
+  readonly foregoneMinor: number;
+}
+
+/**
+ * Detecta a oportunidade de afrouxar o teto de budget do guardrail (só APONTA — nunca muta).
+ * Só nasce com as TRÊS condições: (1) o guardrail clampou uma escala real (proposto > teto);
+ * (2) há prior medido de que escalar compensa nesta conta; (3) o R$ bloqueado é material.
+ * Escolhe a maior oportunidade (mais R$ na mesa). Pura. `null` = nada a sinalizar.
+ */
+export function detectGuardrailOpportunity(input: GuardrailOpportunityInput): GuardrailOpportunity | null {
+  if (!input.hasScalePaysPrior) return null;
+  let best: GuardrailOpportunity | null = null;
+  for (const c of input.clampedRaises) {
+    if (c.wantedPct <= c.cappedPct || c.currentBudgetMinor <= 0) continue;
+    const foregoneMinor = Math.round(c.currentBudgetMinor * ((c.wantedPct - c.cappedPct) / 100));
+    if (foregoneMinor < input.minMaterialMinor) continue;
+    if (!best || foregoneMinor > best.foregoneMinor) {
+      best = { threshold: "maxBudgetChangePct", wantedPct: c.wantedPct, cappedPct: c.cappedPct, foregoneMinor };
+    }
+  }
+  return best;
+}
+
 // ─── Guardrail de GASTO NOVO (Fatia 7 — criação) ─────────────────────────
 // Rede de segurança sobre a CRIAÇÃO (rascunho), irmã de `applyGuardrails` (que age
 // sobre `Action[]`). Criação não é `Action` → função separada. PURA; o contexto

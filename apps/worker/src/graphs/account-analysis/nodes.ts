@@ -26,6 +26,9 @@ import {
   decideActions,
   deriveAdsetUnits,
   describeSignal,
+  detectGuardrailOpportunity,
+  PROMPT_CONFIDENCE_THRESHOLD,
+  type ClampedBudgetRaise,
   dropUnsupportedFindings,
   eligibilityByEntity,
   guardScaleWithoutSignificance,
@@ -61,7 +64,7 @@ import {
   selectLessonsForBrief,
   type LastUnit,
 } from "@trafego/core";
-import { ACTION_PARAM_CURRENT_MINOR, ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS, DEFAULT_CURRENCY, DEFAULT_POSTURE, extractPhoneFromName, plural } from "@trafego/shared";
+import { ACTION_PARAM_CURRENT_MINOR, ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS, BUDGET_MODE_INCREASE, DEFAULT_CURRENCY, DEFAULT_POSTURE, extractPhoneFromName, plural } from "@trafego/shared";
 import { recommendations } from "@trafego/db";
 import { funnelFromRawActions, mapStatus } from "@trafego/ads-meta";
 import { loadAccountAudiences, loadAgentContext, PROACTIVE_AUDIENCE_UNRESOLVED_REASON, PROACTIVE_REACH_FLOOR_REASON, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner } from "../../modules/conversation/draft-proposal.js";
@@ -267,6 +270,15 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     // analista, rotuladas) e hipóteses (→ guard assimétrico silencioso, S3). Teto top-K.
     const activeLessons = await learningRepo.loadActiveLessons(state.orgId, state.agentId);
     const selectedLessons = selectLessonsForBrief(activeLessons, deps.learning.briefTopK);
+    // condição do aviso de oportunidade de guardrail (v3): há prior MEDIDO de que escalar o que
+    // tem base compensa nesta conta (account_scale_pays = pacing/raise, forte o bastante p/ o prompt).
+    const hasScalePaysPrior = activeLessons.some(
+      (l) =>
+        l.key.scope === "account" &&
+        l.key.dimension === "pacing" &&
+        l.key.direction === "raise" &&
+        (l.confirmedByHuman || l.confidence >= PROMPT_CONFIDENCE_THRESHOLD),
+    );
 
     await repo.openRun(state.orgId, state.runId, {
       goals: ctx.goals,
@@ -289,6 +301,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       rejectedMemory: ctx.rejectedMemory,
       lessons: [...selectedLessons.prompt],
       lessonGuards: [...selectedLessons.guards],
+      hasScalePaysPrior,
       mutedCampaignIds: ctx.mutedCampaignIds,
       orgMarketReference: ctx.orgMarketReference,
       agentMarketReference: agentMarketReferenceFromModelConfig(ctx.modelConfig),
@@ -1234,7 +1247,18 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const pending = applyGuardrails(state.decision?.needApproval ?? [], state.guardrailConfig, ctx);
     const dropped = [...auto.dropped, ...pending.dropped];
     if (dropped.length > 0) logger.info({ runId: state.runId, dropped: dropped.length }, "guardrail:ações barradas");
-    return { guardrail: auto, approvalCandidates: pending.allowed, droppedActions: dropped };
+
+    // Aviso de OPORTUNIDADE de guardrail (v3): o teto de budget clampou uma escala que um prior
+    // MEDIDO diz compensar → só APONTA pra config (nunca muta o guardrail — hard-wall).
+    const clampedRaises = extractClampedRaises([...auto.allowed, ...pending.allowed], state.entities);
+    const guardrailOpportunity = detectGuardrailOpportunity({
+      clampedRaises,
+      hasScalePaysPrior: state.hasScalePaysPrior ?? false,
+      minMaterialMinor: deps.learning.opportunityMinMaterialMinor,
+    });
+    if (guardrailOpportunity) logger.info({ runId: state.runId, foregoneMinor: guardrailOpportunity.foregoneMinor }, "guardrail:oportunidade de afrouxar teto");
+
+    return { guardrail: auto, approvalCandidates: pending.allowed, droppedActions: dropped, guardrailOpportunity };
   }
 
   /**
@@ -1619,6 +1643,9 @@ function buildMetricsSnapshot(state: AccountAnalysisStateType): Record<string, u
       : {}),
     // ações barradas pelo guardrail (motivo) — a mini-surface mostra como "barradas".
     ...((state.droppedActions ?? []).length > 0 ? { droppedActions: state.droppedActions } : {}),
+    // aviso de oportunidade de guardrail (v3) — a aba Aprendizados deriva a zona "Oportunidades"
+    // do ÚLTIMO run (sinal vivo, recomputado a cada run; some sozinho quando não reaparece).
+    ...(state.guardrailOpportunity ? { guardrailOpportunity: state.guardrailOpportunity } : {}),
   };
 }
 
@@ -1814,6 +1841,29 @@ function buildCurrentBudgetMinorById(entities: readonly AdEntity[]): Map<string,
     if (minor !== undefined) map.set(e.id, minor);
   }
   return map;
+}
+
+/**
+ * Extrai as escalas de budget que o guardrail CLAMPOU (o analista queria mais que o teto) — o
+ * `clampedFrom` (pct original) marca o clamp. Só `adjust_budget` de AUMENTO com budget diário
+ * conhecido (base do R$ bloqueado). Alimenta o aviso de oportunidade (v3).
+ */
+function extractClampedRaises(actions: readonly Action[], entities: readonly AdEntity[]): ClampedBudgetRaise[] {
+  const budgetMinorByEntity = new Map<string, number>();
+  for (const e of entities) {
+    if (typeof e.dailyBudget === "number") budgetMinorByEntity.set(entityKeyOf({ level: e.level, id: e.id }), e.dailyBudget);
+  }
+  const out: ClampedBudgetRaise[] = [];
+  for (const a of actions) {
+    if (a.type !== "adjust_budget" || a.params[ACTION_PARAM_MODE] !== BUDGET_MODE_INCREASE) continue;
+    const wantedPct = a.params.clampedFrom;
+    const cappedPct = a.params[ACTION_PARAM_PCT];
+    if (typeof wantedPct !== "number" || typeof cappedPct !== "number") continue;
+    const currentBudgetMinor = budgetMinorByEntity.get(entityKeyOf(a.target));
+    if (typeof currentBudgetMinor !== "number") continue;
+    out.push({ wantedPct: Math.abs(wantedPct), cappedPct: Math.abs(cappedPct), currentBudgetMinor });
+  }
+  return out;
 }
 
 /**

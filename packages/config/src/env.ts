@@ -304,6 +304,9 @@ export const envSchema = z.object({
   LEARNING_ACCOUNT_MIN_ENTITIES: z.coerce.number().int().positive().default(3),
   // Janela (dias) da série de insights lida pelos detectores TEMPORAIS (fadiga/lag, Classe B).
   LEARNING_TEMPORAL_LOOKBACK_DAYS: z.coerce.number().int().positive().default(60),
+  // R$ mínimo/dia (unidade MENOR da moeda) bloqueado pelo teto de budget p/ valer o aviso de
+  // oportunidade de guardrail (v3) — abaixo disso não incomoda o usuário. Default: R$10/dia.
+  LEARNING_OPPORTUNITY_MIN_MATERIAL_MINOR: z.coerce.number().int().nonnegative().default(1000),
 
   // ─── Conversa (WhatsApp — Grafo B ReAct, 5b-2) ─────────────────────────
   // Modelo do chat: fallback quando o agente não tem `model_config.messageModel`.

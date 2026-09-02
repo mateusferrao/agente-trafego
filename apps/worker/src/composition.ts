@@ -116,6 +116,7 @@ export interface WorkerDeps {
     readonly decayArchiveDays: number;
     readonly accountMinEntities: number;
     readonly temporalLookbackDays: number;
+    readonly opportunityMinMaterialMinor: number;
   };
   /** Cap default global de custo LLM por org/período (env). Cap por-org = guardrail_configs. */
   readonly costCapUsd: number;
@@ -380,6 +381,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
       decayArchiveDays: env.LEARNING_DECAY_ARCHIVE_DAYS,
       accountMinEntities: env.LEARNING_ACCOUNT_MIN_ENTITIES,
       temporalLookbackDays: env.LEARNING_TEMPORAL_LOOKBACK_DAYS,
+      opportunityMinMaterialMinor: env.LEARNING_OPPORTUNITY_MIN_MATERIAL_MINOR,
     },
     costCapUsd: env.LLM_COST_CAP_USD_PER_PERIOD,
     conversation: {
