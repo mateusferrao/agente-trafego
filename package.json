@@ -28,7 +28,8 @@
     "backfill:identity-seeds": "tsx --env-file=.env apps/api/src/scripts/backfill-identity-seeds.ts",
     "resync:webhooks": "tsx --env-file=.env apps/api/src/scripts/resync-webhooks.ts",
     "api:generate": "pnpm --filter @trafego/api openapi && pnpm --filter web api:generate",
-    "e2e:learning": "bash apps/worker/e2e-learning.sh"
+    "e2e:learning": "bash apps/worker/e2e-learning.sh",
+    "learning:tick": "tsx --env-file=.env apps/worker/scripts/learning-tick.ts"
   },
   "dependencies": {
     "tsx": "^4.19.0"
@@ -38,6 +39,8 @@
     "vitest": "^2.1.0"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   }
 }
