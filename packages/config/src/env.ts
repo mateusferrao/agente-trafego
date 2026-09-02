@@ -294,8 +294,8 @@ export const envSchema = z.object({
   LEARNING_PHASE_BUFFER_DAYS: z.coerce.number().int().nonnegative().default(7),
   // Janela (dias) de medição do outcome depois do buffer (S4).
   LEARNING_OUTCOME_WINDOW_DAYS: z.coerce.number().int().positive().default(7),
-  // Teto de chamadas ao redator LLM por tick do job (protege custo/margem).
-  LEARNING_REDACTOR_MAX_PER_TICK: z.coerce.number().int().positive().default(20),
+  // Teto de CRIAÇÃO de lições por tick do job (throttle a rajadas; o texto é determinístico).
+  LEARNING_MAX_NEW_LESSONS_PER_TICK: z.coerce.number().int().positive().default(20),
   // Dias sem reforço p/ uma lição virar `stale` e depois `archived` (S2 decay).
   LEARNING_DECAY_STALE_DAYS: z.coerce.number().int().positive().default(30),
   LEARNING_DECAY_ARCHIVE_DAYS: z.coerce.number().int().positive().default(60),

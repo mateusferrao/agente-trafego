@@ -591,34 +591,36 @@ const HEALTH_SIGNAL_LABEL: Record<HealthSignal, string> = {
 };
 
 /**
- * Texto de fallback determinístico (PT) — usado quando o redator LLM está indisponível
- * ou falha. Garante que o loop de aprendizado funciona mesmo sem LLM (E2E determinístico).
+ * Texto da lição (PT) — FONTE ÚNICA. Determinístico, na voz do Roy (kernel de marca):
+ * sóbrio (conteúdo de dinheiro), sem travessão dramático, sentence case, uma ideia por frase.
+ * O v3 não usa mais redator LLM aqui — a lição é estruturada e o template cobre tudo, sem risco
+ * de inverter/alucinar (achado F2). `{n}` (occurrences) nasce ≥3 (plural seguro).
  */
 export function fallbackLessonText(r: RedactorInput): string {
   const alvo = r.subjectName ? `"${r.subjectName}"` : "esta conta";
   switch (r.pattern) {
     case "persistent_zombie":
-      return `A campanha ${alvo} aparece como desperdício (gasta sem resultado) na maioria das análises recentes — candidata a cortar verba.`;
+      return `A campanha ${alvo} gasta sem resultado na maioria das análises recentes. Candidata a cortar verba.`;
     case "persistent_underperformer":
-      return `A campanha ${alvo} vem entregando abaixo do esperado de forma consistente nas análises recentes.`;
+      return `A campanha ${alvo} vem entregando abaixo do esperado de forma consistente.`;
     case "recurring_health_signal":
-      return `A campanha ${alvo} mostra ${r.healthSignal ? HEALTH_SIGNAL_LABEL[r.healthSignal] : "um sinal de saúde"} de forma recorrente nas análises recentes.`;
+      return `A campanha ${alvo} mostra ${r.healthSignal ? HEALTH_SIGNAL_LABEL[r.healthSignal] : "um sinal de saúde"} de forma recorrente.`;
     case "recurring_tracking_suspect":
-      return `A medição de conversão desta conta aparece suspeita de forma recorrente — trate os números de conversão com cautela.`;
+      return `A medição de conversão desta conta anda suspeita. Leia os números de conversão com cautela.`;
     case "scale_backfired":
-      return `Escalar ${alvo} já piorou o resultado antes — vale cautela antes de aumentar de novo por aqui.`;
+      return `Escalar ${alvo} já piorou o resultado antes. Vale cautela antes de aumentar de novo.`;
     case "cut_worked":
-      return `Cortar/pausar ${alvo} melhorou o resultado antes — foi uma boa jogada nesta conta.`;
+      return `Cortar ${alvo} melhorou o resultado antes. Foi uma boa jogada aqui.`;
     case "account_cut_pays":
-      return `Nesta conta, cortar desperdício cedo tende a compensar — foi o que aconteceu em ${r.occurrences} campanhas diferentes.`;
+      return `Cortar desperdício cedo tem valido a pena aqui. Vi isso em ${r.occurrences} campanhas.`;
     case "account_scale_backfires":
-      return `Nesta conta, escalar sem base sólida tende a piorar o custo — visto em ${r.occurrences} campanhas diferentes.`;
+      return `Escalar sem base sólida piorou o custo em ${r.occurrences} campanhas desta conta.`;
     case "account_scale_pays":
-      return `Nesta conta, escalar o que já tem base tende a compensar — foi o que aconteceu em ${r.occurrences} campanhas diferentes.`;
+      return `Escalar o que já tem base tem compensado aqui. Vi isso em ${r.occurrences} campanhas.`;
     case "account_fatigue_timing":
-      return `Nesta conta, os criativos tendem a cansar por volta de ${r.days} dias após o lançamento — vale preparar renovação antes disso.`;
+      return `Os criativos daqui costumam cansar por volta do ${r.days}º dia. Vale preparar a renovação antes.`;
     case "account_conversion_lag":
-      return `Nesta conta, a conversão costuma aparecer com ~${r.days} dias de atraso em relação ao gasto — não trate uma campanha nova como sem resultado cedo demais.`;
+      return `A conversão desta conta costuma aparecer uns ${r.days} dias depois do gasto. Não trate campanha nova como parada cedo demais.`;
   }
 }
 

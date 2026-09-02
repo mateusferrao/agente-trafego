@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, type OnInit, computed, inject, sign
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { toast } from 'ngx-sonner';
-import { UiBadge, UiButton, UiConfirmDialogService, UiEmptyState, UiSpinner } from '@ui';
+import { UiBadge, UiButton, UiConfirmDialogService, UiEmptyState, UiEyebrow, UiSpinner } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import { LearningsApiService } from '@core/api/learnings-api.service';
 import { AGENT_NAME } from '@core/brand';
@@ -12,11 +12,13 @@ import type { LearningsList } from '@core/api/generated';
 type Learning = LearningsList['items'][number];
 type Opportunity = LearningsList['opportunities'][number];
 
-/** Selo de confiança → tom+texto (nunca só cor — §UX). */
-const TIER_TONE: Record<Learning['tier'], 'neutral' | 'info' | 'success'> = {
-  explorando: 'neutral',
-  provavel: 'info',
-  confirmado: 'success',
+/** Confiança → eyebrow (cor=tom, texto=rótulo; §UX tom+texto, nunca só cor). Confiança NÃO é status
+ *  bom/ruim: explorando/provável ficam muted (o default do eyebrow; o RÓTULO diferencia), e só o
+ *  CONFIRMADO ganha o caqui de marca (endosso do dono). Mesmo padrão do tier de campanha (analysis-detail). */
+const TIER_TEXT: Record<Learning['tier'], string> = {
+  explorando: '',
+  provavel: '',
+  confirmado: 'text-accent-strong',
 };
 const TIER_LABEL: Record<Learning['tier'], string> = {
   explorando: 'Explorando',
@@ -44,7 +46,7 @@ const ORIGIN_LABEL: Record<Learning['origin'], string> = {
 @Component({
   selector: 'app-agent-learnings',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiBadge, UiButton, UiEmptyState, UiSpinner, RouterLink],
+  imports: [UiBadge, UiButton, UiEmptyState, UiEyebrow, UiSpinner, RouterLink],
   template: `
     <div class="flex flex-col gap-4">
       @if (loading()) {
@@ -88,7 +90,7 @@ const ORIGIN_LABEL: Record<Learning['origin'], string> = {
             <div>
               <h2 class="font-brand text-base font-semibold text-ink">Oportunidades</h2>
               <p class="mt-1 text-xs text-muted">
-                Um limite de segurança pode estar segurando ganho. {{ agentName }} só aponta — quem decide é você,
+                Um limite de segurança pode estar segurando ganho. {{ agentName }} só aponta; quem decide é você,
                 nas configurações.
               </p>
             </div>
@@ -96,7 +98,7 @@ const ORIGIN_LABEL: Record<Learning['origin'], string> = {
               <div class="flex flex-col gap-2 rounded-md border border-line/60 bg-soft/40 p-4">
                 <p class="text-sm text-ink">
                   Seu teto de aumento de verba hoje é {{ o.cappedPct }}%, mas a análise quis {{ o.wantedPct }}% numa
-                  campanha que a conta indica que compensaria — cerca de {{ major(o) }} por dia segurados.
+                  campanha que a conta indica que compensaria. São cerca de {{ major(o) }} por dia segurados.
                 </p>
                 <div class="flex flex-wrap gap-2 pt-1">
                   <a appButton size="sm" variant="secondary" [routerLink]="['/accounts', accountId, 'agente']">Ajustar nas configurações →</a>
@@ -121,7 +123,7 @@ const ORIGIN_LABEL: Record<Learning['origin'], string> = {
             <app-ui-empty-state
               brand
               title="Ainda estou conhecendo esta conta"
-              [description]="'Conforme ' + agentName + ' acompanha os resultados, os padrões que ele perceber aparecem aqui. Não precisa fazer nada — é automático.'"
+              [description]="'Conforme ' + agentName + ' acompanha os resultados, os padrões que ele perceber aparecem aqui. Não precisa fazer nada, é automático.'"
             />
           } @else {
             <ul class="flex flex-col gap-3">
@@ -140,9 +142,9 @@ const ORIGIN_LABEL: Record<Learning['origin'], string> = {
                       <button type="button" appButton size="sm" variant="ghost" [disabled]="busy()" (click)="cancelEdit()">Cancelar</button>
                     </div>
                   } @else {
+                    <app-ui-eyebrow [class]="tierText(l)">{{ tierLabel(l) }}</app-ui-eyebrow>
                     <p class="text-sm text-ink">{{ l.content }}</p>
                     <div class="flex flex-wrap items-center gap-2 text-[11px] text-muted">
-                      <span appBadge [tone]="tierTone(l)" size="xs">{{ tierLabel(l) }}</span>
                       <span>{{ originLabel(l) }}</span>
                       @if (l.reinforceCount > 0) {
                         <span>· visto {{ l.reinforceCount + 1 }}×</span>
@@ -342,8 +344,8 @@ export class AgentLearnings implements OnInit {
     return money(o.foregoneMajor, o.currency);
   }
 
-  protected tierTone(l: Learning): 'neutral' | 'info' | 'success' {
-    return TIER_TONE[l.tier];
+  protected tierText(l: Learning): string {
+    return TIER_TEXT[l.tier];
   }
   protected tierLabel(l: Learning): string {
     return TIER_LABEL[l.tier];

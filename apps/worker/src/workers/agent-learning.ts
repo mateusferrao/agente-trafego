@@ -37,15 +37,13 @@ export function startAgentLearningWorker(deps: WorkerDeps, connection: Redis): W
   const service = createLearningService({
     repo: createLearningRepo(deps.db),
     outcomeRepo: createOutcomeRepo(deps.db),
-    llm: deps.ports.llm,
     logger: deps.logger,
     onNewLearning,
     config: {
       historyRuns: deps.learning.historyRuns,
       minRuns: deps.learning.minRuns,
       minOccurrenceRatio: deps.learning.minOccurrenceRatio,
-      redactorModel: deps.learning.redactorModel,
-      redactorMaxPerTick: deps.learning.redactorMaxPerTick,
+      maxNewLessonsPerTick: deps.learning.maxNewLessonsPerTick,
       decayStaleDays: deps.learning.decayStaleDays,
       decayArchiveDays: deps.learning.decayArchiveDays,
       phaseBufferDays: deps.learning.phaseBufferDays,

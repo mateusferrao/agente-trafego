@@ -108,8 +108,7 @@ export interface WorkerDeps {
     readonly minRuns: number;
     readonly minOccurrenceRatio: number;
     readonly briefTopK: number;
-    readonly redactorModel: string;
-    readonly redactorMaxPerTick: number;
+    readonly maxNewLessonsPerTick: number;
     readonly phaseBufferDays: number;
     readonly outcomeWindowDays: number;
     readonly decayStaleDays: number;
@@ -373,9 +372,8 @@ export async function buildComposition(): Promise<WorkerDeps> {
       minRuns: env.LEARNING_MIN_RUNS,
       minOccurrenceRatio: env.LEARNING_MIN_OCCURRENCE_RATIO,
       briefTopK: env.LEARNING_BRIEF_TOP_K,
-      // redator = modelo barato de mensagem (mesma classe do redator do push).
-      redactorModel: env.OPENROUTER_MESSAGE_MODEL,
-      redactorMaxPerTick: env.LEARNING_REDACTOR_MAX_PER_TICK,
+      // teto de criação de lições por tick (texto é determinístico; sem LLM).
+      maxNewLessonsPerTick: env.LEARNING_MAX_NEW_LESSONS_PER_TICK,
       phaseBufferDays: env.LEARNING_PHASE_BUFFER_DAYS,
       outcomeWindowDays: env.LEARNING_OUTCOME_WINDOW_DAYS,
       decayStaleDays: env.LEARNING_DECAY_STALE_DAYS,

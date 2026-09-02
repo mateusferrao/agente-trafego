@@ -1,10 +1,9 @@
 // Serviço de aprendizado (S1): destila lições observacionais do histórico de análise.
 // Fluxo por agente: lê o histórico por-run → `detectFactCandidates` (core, puro) →
-// para cada candidata: se já existe (mesma chave) REFORÇA a confiança; se é nova,
-// o REDATOR LLM traduz a candidata estruturada numa frase PT (com fallback determinístico
-// — o loop funciona sem LLM) e persiste. O LLM só redige, nunca inventa a lição.
+// para cada candidata: se já existe (mesma chave) REFORÇA a confiança; se é nova, monta o texto
+// DETERMINÍSTICO (`fallbackLessonText`, na voz do Roy — sem LLM) e persiste. O v3 não usa mais
+// redator LLM aqui (lição estruturada → template cobre tudo, sem risco de inverter/alucinar).
 
-import type { LLMProviderPort } from "@trafego/shared/ports";
 import {
   classifyOutcomeEvidence,
   computeConfidence,
@@ -23,7 +22,6 @@ import {
   type LessonCandidate,
   type MeasuredOutcome,
   type OutcomeWindow,
-  type RedactorInput,
 } from "@trafego/core";
 import type { Logger } from "pino";
 import type { LearnableAgent, LearningRepo } from "./repo.js";
@@ -33,8 +31,8 @@ export interface LearningServiceConfig {
   readonly historyRuns: number;
   readonly minRuns: number;
   readonly minOccurrenceRatio: number;
-  readonly redactorModel: string;
-  readonly redactorMaxPerTick: number;
+  /** teto de CRIAÇÃO de lições por tick (throttle a rajadas). */
+  readonly maxNewLessonsPerTick: number;
   /** decaimento (curadoria): dias sem reforço p/ stale → archived. */
   readonly decayStaleDays: number;
   readonly decayArchiveDays: number;
@@ -56,7 +54,6 @@ export interface NewLearningEvent {
 export interface LearningServiceDeps {
   readonly repo: LearningRepo;
   readonly outcomeRepo: OutcomeRepo;
-  readonly llm: LLMProviderPort;
   readonly logger: Logger;
   readonly config: LearningServiceConfig;
   /** relógio injetável (testes determinísticos). Default = Date.now. */
@@ -93,7 +90,7 @@ export function createLearningService(deps: LearningServiceDeps) {
   }
 
   /** Destila lições observacionais de UM agente. Retorna quantas criou/reforçou. */
-  async function distillAgent(agent: LearnableAgent, redactBudget: { remaining: number }): Promise<DistillResult> {
+  async function distillAgent(agent: LearnableAgent, createBudget: { remaining: number }): Promise<DistillResult> {
     const runs = await repo.loadRunHistory(agent.orgId, agent.agentId, config.historyRuns);
     const candidates = detectFactCandidates({
       runs,
@@ -127,8 +124,8 @@ export function createLearningService(deps: LearningServiceDeps) {
       // ADIA a criação (o padrão persiste → vira candidata no próximo tick com orçamento) em
       // vez de gravar texto genérico permanente. O fallback determinístico vale só p/ FALHA
       // do LLM (dentro do redator), não p/ orçamento esgotado.
-      if (redactBudget.remaining <= 0) continue;
-      const content = await redactWithBudget(candidate, agent.orgId, newestRun?.runId, redactBudget);
+      if (createBudget.remaining <= 0) continue;
+      const content = composeLessonText(candidate, createBudget);
       await repo.insertLesson({
         orgId: agent.orgId,
         agentId: agent.agentId,
@@ -142,57 +139,14 @@ export function createLearningService(deps: LearningServiceDeps) {
     return { created, reinforced };
   }
 
-  async function redactWithBudget(
-    candidate: LessonCandidate,
-    orgId: string,
-    runId: string | undefined,
-    budget: { remaining: number },
-  ): Promise<string> {
-    budget.remaining -= 1;
-    const payload = describeLessonForRedactor(candidate);
-    try {
-      return await redactLesson(payload, orgId, runId);
-    } catch (err) {
-      logger.warn({ err }, "learning:redator falhou → fallback determinístico");
-      return fallbackLessonText(payload);
-    }
-  }
-
   /**
-   * O redator LLM só dá FLUÊNCIA à lição — não a RE-DERIVA. Ele reescreve o sentido
-   * determinístico (`fallbackLessonText`) em linguagem natural de conta, SEM mudar o
-   * significado. Sem esta âncora, um modelo barato narra os campos crus do payload
-   * (ex.: "o orçamento foi reduzido 3 vezes") e perde — ou inverte — o desfecho aprendido
-   * (que cortar/escalar COMPENSOU); o padrão medido entra no prompt do analista acima do
-   * dado atual, então uma inversão é ativamente nociva.
+   * Texto da lição — DETERMINÍSTICO, na voz do Roy (`fallbackLessonText`), sem LLM. O v3 largou
+   * o redator LLM aqui: a lição é estruturada, o template cobre tudo e não há risco de inverter/
+   * alucinar (achado F2). Consome 1 do orçamento de CRIAÇÃO por tick (throttle `maxNewLessonsPerTick`).
    */
-  async function redactLesson(payload: RedactorInput, orgId: string, runId: string | undefined): Promise<string> {
-    const meaning = fallbackLessonText(payload);
-    const system = [
-      "Você reescreve, em português do Brasil, UMA frase que descreve um PADRÃO observado numa conta de anúncios,",
-      "deixando-a natural e clara para um leitor NÃO técnico.",
-      "Regras invioláveis: NÃO mude o sentido; NÃO inverta a direção (o que compensa vs. o que piora);",
-      "trate como observação/hipótese (nunca afirme causa nem sucesso garantido); NÃO invente dados;",
-      "sem markdown; sem emoji; no máximo uma frase.",
-    ].join(" ");
-    const user = [
-      `Sentido a transmitir (preserve o significado, só melhore a redação): "${meaning}"`,
-      `Dados de apoio (não contradiga): ${JSON.stringify(payload)}`,
-      "Reescreva só a frase.",
-    ].join("\n\n");
-    const res = await deps.llm.complete({
-      model: config.redactorModel,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-      temperature: 0.3,
-      // runId (run mais novo) → o metering atribui o custo à conta via o join ad_account←run
-      // (§11); sem ele o custo do redator ficaria só org-level.
-      meta: { orgId, type: "learning", ...(runId ? { runId } : {}) },
-    });
-    const text = res.output.trim();
-    return text.length > 0 ? text : fallbackLessonText(payload);
+  function composeLessonText(candidate: LessonCandidate, budget: { remaining: number }): string {
+    budget.remaining -= 1;
+    return fallbackLessonText(describeLessonForRedactor(candidate));
   }
 
   /**
@@ -355,7 +309,7 @@ export function createLearningService(deps: LearningServiceDeps) {
    * ou atualiza a confiança/contagem de suporte de uma já existente quando entrou evidência de
    * uma entidade NOVA. Não toca guardrail/autonomia — só afia o julgamento (prior de prompt).
    */
-  async function distillAccount(agent: LearnableAgent, redactBudget: { remaining: number }): Promise<DistillResult> {
+  async function distillAccount(agent: LearnableAgent, createBudget: { remaining: number }): Promise<DistillResult> {
     const rows = await repo.loadEvidence(agent.orgId, agent.agentId);
     const candidates = distillAccountPriors(rows, { minEntities: config.accountMinEntities });
     let created = 0;
@@ -387,8 +341,8 @@ export function createLearningService(deps: LearningServiceDeps) {
         reinforced += 1;
         continue;
       }
-      if (redactBudget.remaining <= 0) continue; // sem orçamento de redator → adia p/ o próximo tick.
-      const content = await redactWithBudget(candidate, agent.orgId, undefined, redactBudget);
+      if (createBudget.remaining <= 0) continue; // sem orçamento de criação → adia p/ o próximo tick.
+      const content = composeLessonText(candidate, createBudget);
       await repo.insertLesson({
         orgId: agent.orgId,
         agentId: agent.agentId,
@@ -408,7 +362,7 @@ export function createLearningService(deps: LearningServiceDeps) {
    * e lag de conversão. Ambos são prior de PROMPT (ressalva conservadora). Recomputados a cada
    * tick da série (mantém o prior fresco enquanto o padrão persiste); não tocam guardrail/autonomia.
    */
-  async function distillTemporal(agent: LearnableAgent, redactBudget: { remaining: number }): Promise<DistillResult> {
+  async function distillTemporal(agent: LearnableAgent, createBudget: { remaining: number }): Promise<DistillResult> {
     const since = dateStr(addDays(clock(), -config.temporalLookbackDays));
     const [ctrSeries, convSeries] = await Promise.all([
       repo.loadCampaignCtrSeries(agent.orgId, agent.adAccountId, since),
@@ -435,8 +389,8 @@ export function createLearningService(deps: LearningServiceDeps) {
         reinforced += 1;
         continue;
       }
-      if (redactBudget.remaining <= 0) continue;
-      const content = await redactWithBudget(candidate, agent.orgId, undefined, redactBudget);
+      if (createBudget.remaining <= 0) continue;
+      const content = composeLessonText(candidate, createBudget);
       await repo.insertLesson({ orgId: agent.orgId, agentId: agent.agentId, candidate, content, evidenceAt: clock() });
       await alertNew(agent, { kind: "prior", content });
       created += 1;
@@ -447,7 +401,7 @@ export function createLearningService(deps: LearningServiceDeps) {
   /** Roda a medição + destilação em todos os agentes elegíveis + a curadoria — tick do job. */
   async function runTick(): Promise<{ agents: number; measured: number; manualEvidence: number; created: number; reinforced: number; staled: number; archived: number }> {
     const agentsList = await repo.listLearnableAgents();
-    const redactBudget = { remaining: config.redactorMaxPerTick };
+    const createBudget = { remaining: config.maxNewLessonsPerTick };
     let created = 0;
     let reinforced = 0;
     let measured = 0;
@@ -460,9 +414,9 @@ export function createLearningService(deps: LearningServiceDeps) {
         measured += m.measured;
         const mc = await measureManualChanges(agent);
         manualEvidence += mc.evidence;
-        const acc = await distillAccount(agent, redactBudget);
-        const track = await distillAgent(agent, redactBudget);
-        const temporal = await distillTemporal(agent, redactBudget);
+        const acc = await distillAccount(agent, createBudget);
+        const track = await distillAgent(agent, createBudget);
+        const temporal = await distillTemporal(agent, createBudget);
         created += acc.created + track.created + temporal.created;
         reinforced += acc.reinforced + track.reinforced + temporal.reinforced;
       } catch (err) {

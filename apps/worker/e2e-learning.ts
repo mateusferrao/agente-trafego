@@ -45,7 +45,7 @@ import {
 } from "@trafego/db";
 import type { Action, EncryptedPayload, InsightMetrics, OrgId, StoredInsightMetrics } from "@trafego/shared";
 import type { AnalysisOutput } from "@trafego/shared/schemas";
-import type { LLMProviderPort, SchedulerPort } from "@trafego/shared/ports";
+import type { SchedulerPort } from "@trafego/shared/ports";
 import {
   detectGuardrailOpportunity,
   guardUnconfirmedHypothesis,
@@ -70,14 +70,6 @@ const db = createDb(DATABASE_URL);
 const logger = pino({ level: "silent" });
 
 const NOW = new Date("2026-09-02T12:00:00.000Z");
-const REDACTOR_STUB_TEXT = "Padrão observado nesta conta (stub determinístico do redator).";
-
-const stubLlm = {
-  async complete() {
-    return { output: REDACTOR_STUB_TEXT, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 }, cost: 0 };
-  },
-} as unknown as LLMProviderPort;
-
 /** Scheduler stub (o accept de limiar reagenda cron; aqui é no-op determinístico). */
 const stubScheduler = { enqueue: async () => {}, schedule: async () => {}, remove: async () => {}, removeSchedule: async () => {} } as unknown as SchedulerPort;
 const QUALITY_DEFAULTS: Record<string, unknown> = { zombieMinSpend: 50, marginalCpaWorsenPct: 20 };
@@ -86,8 +78,7 @@ const CONFIG: LearningServiceConfig = {
   historyRuns: 20,
   minRuns: 3,
   minOccurrenceRatio: 0.5,
-  redactorModel: "stub-model",
-  redactorMaxPerTick: 100,
+  maxNewLessonsPerTick: 100,
   decayStaleDays: 14,
   decayArchiveDays: 30,
   phaseBufferDays: 1,
@@ -98,7 +89,7 @@ const CONFIG: LearningServiceConfig = {
 
 const repo = createLearningRepo(db);
 const outcomeRepo = createOutcomeRepo(db);
-const service = createLearningService({ repo, outcomeRepo, llm: stubLlm, logger, config: CONFIG, now: () => NOW });
+const service = createLearningService({ repo, outcomeRepo, logger, config: CONFIG, now: () => NOW });
 
 // ─── asserção ────────────────────────────────────────────────────────────────
 

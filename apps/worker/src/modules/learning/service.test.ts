@@ -10,8 +10,7 @@ const CONFIG: LearningServiceConfig = {
   historyRuns: 10,
   minRuns: 3,
   minOccurrenceRatio: 0.6,
-  redactorModel: "m",
-  redactorMaxPerTick: 20,
+  maxNewLessonsPerTick: 20,
   decayStaleDays: 30,
   decayArchiveDays: 60,
   phaseBufferDays: 7,
@@ -82,42 +81,25 @@ function fakeRepo(
   };
 }
 
-function llmStub(text: string | Error) {
-  return {
-    complete: vi.fn(async () => {
-      if (text instanceof Error) throw text;
-      return { output: text, usage: { inputTokens: 1, outputTokens: 1 } };
-    }),
-    completeStructured: vi.fn(),
-  };
-}
-
 describe("learning service — distillAgent", () => {
-  it("cria lição nova com o texto do redator + marca a evidência (dedup) na criação", async () => {
+  it("cria lição nova com o texto DETERMINÍSTICO (na voz, sem travessão) + marca a evidência (dedup)", async () => {
     const state: FakeRepoState = { inserts: [], reinforces: [], refreshes: [] };
-    const llm = llmStub("Frase do redator.");
-    const svc = createLearningService({ repo: fakeRepo(null, trackingRuns(), state), llm: llm as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
+    const svc = createLearningService({ repo: fakeRepo(null, trackingRuns(), state), logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
     const r = await svc.distillAgent(AGENT, { remaining: 20 });
     expect(r.created).toBe(1);
     expect(r.reinforced).toBe(0);
-    expect(state.inserts[0]?.content).toBe("Frase do redator.");
+    // texto = template determinístico do tracking (sem LLM), sóbrio e sem travessão dramático.
+    expect(state.inserts[0]?.content).toContain("medição de conversão");
+    expect(state.inserts[0]?.content).not.toContain("—");
     // evidência = run mais novo (dedup).
     expect(state.inserts[0]?.evidenceAt.toISOString()).toBe("2026-01-03T00:00:00.000Z");
     expect(state.inserts[0]?.sourceRunId).toBe("r3");
   });
 
-  it("cai no fallback determinístico quando o redator LLM falha (loop funciona sem LLM)", async () => {
-    const state: FakeRepoState = { inserts: [], reinforces: [], refreshes: [] };
-    const llm = llmStub(new Error("llm down"));
-    const svc = createLearningService({ repo: fakeRepo(null, trackingRuns(), state), llm: llm as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
-    await svc.distillAgent(AGENT, { remaining: 20 });
-    expect(state.inserts[0]?.content).toContain("medição");
-  });
-
   it("reforça quando há evidência MAIS NOVA que a última incorporada", async () => {
     const state: FakeRepoState = { inserts: [], reinforces: [], refreshes: [] };
     const existing = { id: "l1", confidence: 0.2, lastReinforcedAt: new Date("2026-01-02T00:00:00.000Z"), reinforceCount: 1, confirmedByHuman: false, thresholdResolvedAt: null };
-    const svc = createLearningService({ repo: fakeRepo(existing, trackingRuns(), state), llm: llmStub("x") as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
+    const svc = createLearningService({ repo: fakeRepo(existing, trackingRuns(), state), logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
     const r = await svc.distillAgent(AGENT, { remaining: 20 });
     expect(r.reinforced).toBe(1);
     expect(r.created).toBe(0);
@@ -128,7 +110,7 @@ describe("learning service — distillAgent", () => {
     const state: FakeRepoState = { inserts: [], reinforces: [], refreshes: [] };
     // já reforçamos até o run mais novo (r3) — um novo tick sobre a mesma janela é no-op.
     const existing = { id: "l1", confidence: 0.4, lastReinforcedAt: new Date("2026-01-03T00:00:00.000Z"), reinforceCount: 1, confirmedByHuman: false, thresholdResolvedAt: null };
-    const svc = createLearningService({ repo: fakeRepo(existing, trackingRuns(), state), llm: llmStub("x") as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
+    const svc = createLearningService({ repo: fakeRepo(existing, trackingRuns(), state), logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
     const r = await svc.distillAgent(AGENT, { remaining: 20 });
     expect(r.reinforced).toBe(0);
     expect(r.created).toBe(0);
@@ -160,7 +142,6 @@ describe("learning service — distillAgent", () => {
     const svc = createLearningService({
       repo: fakeRepo(null, [], state),
       outcomeRepo,
-      llm: llmStub("x") as never,
       logger,
       config: CONFIG,
       now: () => new Date("2026-03-01T00:00:00.000Z"),
@@ -183,29 +164,17 @@ describe("learning service — distillAgent", () => {
       findAppliedInstant: async () => null, // nunca aplicada
       commitOutcome: async () => { throw new Error("não deveria commitar"); },
     });
-    const svc = createLearningService({ repo: fakeRepo(null, [], state), outcomeRepo, llm: llmStub("x") as never, logger, config: CONFIG });
+    const svc = createLearningService({ repo: fakeRepo(null, [], state), outcomeRepo, logger, config: CONFIG });
     const r = await svc.measureOutcomes(AGENT);
     expect(r.measured).toBe(0);
   });
 
-  it("ADIA a criação quando o teto do redator esgotou (não grava texto genérico permanente)", async () => {
+  it("ADIA a criação quando o teto de criação esgotou (não grava lição sem orçamento)", async () => {
     const state: FakeRepoState = { inserts: [], reinforces: [], refreshes: [] };
-    const llm = llmStub("nunca usado");
-    const svc = createLearningService({ repo: fakeRepo(null, trackingRuns(), state), llm: llm as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
+    const svc = createLearningService({ repo: fakeRepo(null, trackingRuns(), state), logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
     const r = await svc.distillAgent(AGENT, { remaining: 0 });
-    expect(llm.complete).not.toHaveBeenCalled();
     expect(r.created).toBe(0); // adiado — vira candidata no próximo tick com orçamento
     expect(state.inserts).toHaveLength(0);
-  });
-
-  it("passa runId (run mais novo) ao redator p/ o metering atribuir à conta", async () => {
-    const state: FakeRepoState = { inserts: [], reinforces: [], refreshes: [] };
-    const llm = llmStub("Frase.");
-    const svc = createLearningService({ repo: fakeRepo(null, trackingRuns(), state), llm: llm as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
-    await svc.distillAgent(AGENT, { remaining: 20 });
-    expect(llm.complete).toHaveBeenCalledWith(
-      expect.objectContaining({ meta: expect.objectContaining({ orgId: "org-1", type: "learning", runId: "r3" }) }),
-    );
   });
 });
 
@@ -225,7 +194,6 @@ describe("learning service — distillAccount (prior de conta do ledger)", () =>
     const state: FakeRepoState = { inserts: [], reinforces: [], refreshes: [] };
     const svc = createLearningService({
       repo: fakeRepo(null, [], state, evidence("cut", ["c1", "c2", "c3"])),
-      llm: llmStub("Cortar cedo compensa nesta conta.") as never,
       logger,
       config: CONFIG,
       outcomeRepo: emptyOutcomeRepo(),
@@ -233,7 +201,8 @@ describe("learning service — distillAccount (prior de conta do ledger)", () =>
     const r = await svc.distillAccount(AGENT, { remaining: 20 });
     expect(r.created).toBe(1);
     expect(state.inserts[0]?.candidate.key).toMatchObject({ scope: "account", dimension: "budget", direction: "lower" });
-    expect(state.inserts[0]?.content).toBe("Cortar cedo compensa nesta conta.");
+    // texto determinístico (template account_cut_pays, na voz) — 3 entidades distintas.
+    expect(state.inserts[0]?.content).toBe("Cortar desperdício cedo tem valido a pena aqui. Vi isso em 3 campanhas.");
   });
 
   it("NÃO nasce prior com < K entidades distintas (nem repetindo a mesma)", async () => {
@@ -241,7 +210,6 @@ describe("learning service — distillAccount (prior de conta do ledger)", () =>
     // 2 distintas + 1 repetida de c1 → só 2 distintas → abaixo de K.
     const svc = createLearningService({
       repo: fakeRepo(null, [], state, evidence("cut", ["c1", "c2", "c1"])),
-      llm: llmStub("x") as never,
       logger,
       config: CONFIG,
       outcomeRepo: emptyOutcomeRepo(),
@@ -262,7 +230,7 @@ describe("learning service — distillAccount (prior de conta do ledger)", () =>
     const state: FakeRepoState = { inserts: [], reinforces: [], refreshes: [] };
     // reusa o mesmo ledger/existing via um repo dedicado (o state acima é descartado).
     const repo = { ...grown, refreshAccountPrior: async ({ id, confidence, supportCount }: { id: string; confidence: number; supportCount: number }) => { state.refreshes.push({ id, confidence, supportCount }); } };
-    const svc = createLearningService({ repo: repo as never, llm: llmStub("x") as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
+    const svc = createLearningService({ repo: repo as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
     const r = await svc.distillAccount(AGENT, { remaining: 20 });
     expect(r.reinforced).toBe(1);
     expect(state.refreshes[0]?.supportCount).toBe(4);
@@ -272,7 +240,6 @@ describe("learning service — distillAccount (prior de conta do ledger)", () =>
     const state: FakeRepoState = { inserts: [], reinforces: [], refreshes: [] };
     const svc = createLearningService({
       repo: fakeRepo(null, [], state, evidence("cut", ["c1", "c2", "c3", "c4", "c5"])),
-      llm: llmStub("Cortar cedo compensa.") as never,
       logger,
       config: CONFIG,
       outcomeRepo: emptyOutcomeRepo(),
@@ -288,7 +255,6 @@ describe("learning service — distillAccount (prior de conta do ledger)", () =>
     const alerts: { kind: string; content: string }[] = [];
     const svc = createLearningService({
       repo: fakeRepo(null, [], state, evidence("cut", ["c1", "c2", "c3"])),
-      llm: llmStub("Cortar cedo compensa.") as never,
       logger,
       config: CONFIG,
       outcomeRepo: emptyOutcomeRepo(),
@@ -297,14 +263,13 @@ describe("learning service — distillAccount (prior de conta do ledger)", () =>
     await svc.distillAccount(AGENT, { remaining: 20 });
     expect(alerts).toHaveLength(1);
     expect(alerts[0]?.kind).toBe("prior");
-    expect(alerts[0]?.content).toBe("Cortar cedo compensa.");
+    expect(alerts[0]?.content).toBe("Cortar desperdício cedo tem valido a pena aqui. Vi isso em 3 campanhas.");
   });
 
   it("prior AGRESSIVO (escala compensa, direção raise) NUNCA nasce com proposta", async () => {
     const state: FakeRepoState = { inserts: [], reinforces: [], refreshes: [] };
     const svc = createLearningService({
       repo: fakeRepo(null, [], state, evidence("scaleGood", ["c1", "c2", "c3", "c4", "c5"])),
-      llm: llmStub("Escalar o que tem base compensa.") as never,
       logger,
       config: CONFIG,
       outcomeRepo: emptyOutcomeRepo(),
@@ -324,7 +289,6 @@ describe("learning service — distillAccount (prior de conta do ledger)", () =>
         state,
         evidence("cut", ["c1", "c2", "c3", "c4", "c5", "c6"]),
       ),
-      llm: llmStub("x") as never,
       logger,
       config: CONFIG,
       outcomeRepo: emptyOutcomeRepo(),
@@ -343,7 +307,6 @@ describe("learning service — distillAccount (prior de conta do ledger)", () =>
         state,
         evidence("cut", ["c1", "c2", "c3"]),
       ),
-      llm: llmStub("x") as never,
       logger,
       config: CONFIG,
       outcomeRepo: emptyOutcomeRepo(),
@@ -371,7 +334,7 @@ describe("learning service — distillTemporal (padrões temporais, Classe B)", 
       ],
       loadAccountConversionSeries: async () => [],
     };
-    const svc = createLearningService({ repo: repo as never, llm: llmStub("Criativos cansam ~6 dias.") as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
+    const svc = createLearningService({ repo: repo as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
     const r = await svc.distillTemporal(AGENT, { remaining: 20 });
     expect(r.created).toBe(1);
     expect(state.inserts[0]?.candidate.key).toMatchObject({ scope: "account", dimension: "creative", direction: "neutral" });
@@ -380,7 +343,7 @@ describe("learning service — distillTemporal (padrões temporais, Classe B)", 
 
   it("sem série suficiente → nenhum prior temporal (empty state honesto)", async () => {
     const state: FakeRepoState = { inserts: [], reinforces: [], refreshes: [] };
-    const svc = createLearningService({ repo: fakeRepo(null, [], state), llm: llmStub("x") as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
+    const svc = createLearningService({ repo: fakeRepo(null, [], state), logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
     const r = await svc.distillTemporal(AGENT, { remaining: 20 });
     expect(r.created).toBe(0);
     expect(state.inserts).toHaveLength(0);
@@ -400,7 +363,7 @@ describe("learning service — measureManualChanges (mudança do gestor → ledg
       loadWindow: async (_org, _acc, _entityId, from) => (from < "2026-02-01" ? { spend: 100, results: 10 } : { spend: 40, results: 10 }),
       insertEvidence: async (rows) => { evidenceRows.push(...rows); },
     });
-    const svc = createLearningService({ repo: fakeRepo(null, [], state), outcomeRepo, llm: llmStub("x") as never, logger, config: CONFIG, now: () => new Date("2026-03-01T00:00:00.000Z") });
+    const svc = createLearningService({ repo: fakeRepo(null, [], state), outcomeRepo, logger, config: CONFIG, now: () => new Date("2026-03-01T00:00:00.000Z") });
     const r = await svc.measureManualChanges(AGENT);
     expect(r.evidence).toBeGreaterThan(0);
     expect(evidenceRows[0]).toMatchObject({ dimension: "budget", direction: "lower", entityId: "c1", source: "human_manual" });
@@ -416,7 +379,7 @@ describe("learning service — measureManualChanges (mudança do gestor → ledg
       hasAppliedActionInRange: async () => true, // ação NOSSA na janela → exclui
       insertEvidence: async (rows) => { evidenceRows.push(...rows); },
     });
-    const svc = createLearningService({ repo: fakeRepo(null, [], state), outcomeRepo, llm: llmStub("x") as never, logger, config: CONFIG, now: () => new Date("2026-03-01T00:00:00.000Z") });
+    const svc = createLearningService({ repo: fakeRepo(null, [], state), outcomeRepo, logger, config: CONFIG, now: () => new Date("2026-03-01T00:00:00.000Z") });
     const r = await svc.measureManualChanges(AGENT);
     expect(r.evidence).toBe(0);
     expect(evidenceRows).toHaveLength(0);
