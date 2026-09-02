@@ -1,5 +1,5 @@
 import { date, index, jsonb, pgTable, text, uniqueIndex, uuid } from "drizzle-orm/pg-core";
-import type { BreakdownSegment, ConversionGoal, StoredInsightMetrics } from "@trafego/shared";
+import type { BreakdownSegment, ConversionGoal, EntityConfigSnapshot, StoredInsightMetrics } from "@trafego/shared";
 import { breakdownDimension, entityLevel, pk, timestamps } from "./_shared.js";
 import { adAccounts } from "./integrations.js";
 import { orgs } from "./tenancy.js";
@@ -94,5 +94,35 @@ export const conversionLabels = pgTable(
   (t) => [
     index("conversion_labels_account_idx").on(t.adAccountId),
     uniqueIndex("conversion_labels_unique_idx").on(t.adAccountId, t.goal, t.customConversionId),
+  ],
+);
+
+/**
+ * Snapshot da CONFIG de uma entidade por dia (aprendizado contínuo, S4) — orçamento/status.
+ * `insights_snapshots` guarda MÉTRICA, não config; esta série é o que permite detectar
+ * mudança de config feita pela org na mão na Meta (fora das nossas ações), pra atribuir
+ * outcome a ela. Escrita no `record` da análise (cadência da análise; sem chamada Meta
+ * extra — a config já vem em `state.entities`). Upsert 1 linha por (conta, entidade, dia).
+ */
+export const entityConfigSnapshots = pgTable(
+  "entity_config_snapshots",
+  {
+    id: pk(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    adAccountId: uuid("ad_account_id")
+      .notNull()
+      .references(() => adAccounts.id, { onDelete: "cascade" }),
+    entityLevel: entityLevel("entity_level").notNull(),
+    entityId: text("entity_id").notNull(),
+    date: date("date").notNull(),
+    // { status, dailyBudgetMinor?, lifetimeBudgetMinor? } — unidade MENOR da moeda.
+    configJson: jsonb("config_json").$type<EntityConfigSnapshot>().notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    index("entity_config_snapshots_account_idx").on(t.adAccountId),
+    uniqueIndex("entity_config_snapshots_unique_idx").on(t.adAccountId, t.entityId, t.date),
   ],
 );

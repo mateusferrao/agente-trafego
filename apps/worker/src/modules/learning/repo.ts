@@ -4,17 +4,17 @@
 // contradição) e a medição de outcome entram nas subfatias seguintes reusando este repo.
 
 import { and, desc, eq, inArray, isNotNull, lt, sql } from "drizzle-orm";
-import { adAccounts, agentMemory, agentRuns, agents, type Database } from "@trafego/db";
-import type { HealthSignal, PerformanceTier, RunCampaignCard, TrackingHealth, WasteReport } from "@trafego/shared";
+import { adAccounts, agentMemory, agentRuns, agents, entityConfigSnapshots, type Database } from "@trafego/db";
+import type { AdEntity, EntityConfigSnapshot, HealthSignal, PerformanceTier, RunCampaignCard, TrackingHealth, WasteReport } from "@trafego/shared";
 import {
   decayCutoffs,
-  lessonKeyOf,
+  lessonKindFromMemoryType,
   type DecayConfig,
   type LessonCandidate,
-  type LessonKind,
   type RunLearningSnapshot,
   type StoredLesson,
 } from "@trafego/core";
+import { buildLessonRow } from "./lesson-row.js";
 
 /** Agente elegível ao aprendizado: ativo, conta ativa e NÃO dormante (não aprende de conta parada). */
 export interface LearnableAgent {
@@ -23,13 +23,7 @@ export interface LearnableAgent {
   readonly adAccountId: string;
 }
 
-/** map memoryType ↔ LessonKind (fact↔fact; past_action↔calibration). */
-const KIND_TO_TYPE: Record<LessonKind, "fact" | "past_action"> = { fact: "fact", calibration: "past_action" };
 const LEARNING_TYPES = ["fact", "past_action"] as const;
-
-function typeToKind(type: string): LessonKind {
-  return type === "past_action" ? "calibration" : "fact";
-}
 
 export interface LearningRepo {
   listLearnableAgents(): Promise<LearnableAgent[]>;
@@ -48,6 +42,16 @@ export interface LearningRepo {
    *  por sweep (varre arquiváveis ANTES de rebaixar ativas). Global (sweep de manutenção,
    *  como o reaper). Só toca linhas de aprendizado (fact/past_action com chave). */
   applyDecaySweep(now: Date, cfg: DecayConfig): Promise<{ staled: number; archived: number }>;
+  /** Snapshot da config (orçamento/status) das entidades no dia — upsert por (conta,entidade,dia).
+   *  Escrito no `record` da análise; base p/ detectar mudança manual do gestor (S4). */
+  saveEntityConfigSnapshots(input: SaveConfigInput): Promise<void>;
+}
+
+export interface SaveConfigInput {
+  readonly orgId: string;
+  readonly adAccountId: string;
+  readonly date: string;
+  readonly entities: readonly AdEntity[];
 }
 
 export interface InsertLessonInput {
@@ -128,25 +132,11 @@ export function createLearningRepo(db: Database): LearningRepo {
     },
 
     async insertLesson({ orgId, agentId, candidate, content, evidenceAt, sourceRunId }) {
-      await db.insert(agentMemory).values({
-        orgId,
-        agentId,
-        type: KIND_TO_TYPE[candidate.kind],
-        content,
-        confidence: candidate.confidence,
-        lifecycle: "active",
-        scope: candidate.key.scope,
-        dimension: candidate.key.dimension,
-        direction: candidate.key.direction,
-        ...(candidate.key.subjectId ? { subjectId: candidate.key.subjectId } : {}),
-        origin: candidate.origin,
-        semanticKey: lessonKeyOf(candidate.key),
-        confirmedByHuman: false,
-        // marca a evidência incorporada já na criação → o próximo tick sobre a MESMA
-        // janela não reforça (dedup); só evidência mais nova conta.
-        lastReinforcedAt: evidenceAt,
-        ...(sourceRunId ? { sourceRunId } : {}),
-      });
+      // `evidenceAt` marca a evidência incorporada já na criação → o próximo tick sobre a
+      // MESMA janela não reforça (dedup); só evidência mais nova conta.
+      await db.insert(agentMemory).values(
+        buildLessonRow(candidate, { orgId, agentId, content, evidenceAt, ...(sourceRunId ? { sourceRunId } : {}) }),
+      );
     },
 
     async reinforceLesson(id, confidence, evidenceAt) {
@@ -185,6 +175,34 @@ export function createLearningRepo(db: Database): LearningRepo {
         .returning({ id: agentMemory.id });
       return { staled: staled.length, archived: archived.length };
     },
+
+    async saveEntityConfigSnapshots({ orgId, adAccountId, date, entities }) {
+      if (entities.length === 0) return;
+      const rows = entities.map((e) => ({
+        orgId,
+        adAccountId,
+        entityLevel: e.level,
+        entityId: e.id,
+        date,
+        configJson: entityConfigOf(e),
+      }));
+      await db
+        .insert(entityConfigSnapshots)
+        .values(rows)
+        .onConflictDoUpdate({
+          target: [entityConfigSnapshots.adAccountId, entityConfigSnapshots.entityId, entityConfigSnapshots.date],
+          set: { configJson: sql`excluded.config_json`, updatedAt: sql`now()` },
+        });
+    },
+  };
+}
+
+/** Projeta a config aprendível de uma AdEntity (orçamento/status; unidade menor da moeda). */
+function entityConfigOf(e: AdEntity): EntityConfigSnapshot {
+  return {
+    status: e.status,
+    ...(typeof e.dailyBudget === "number" ? { dailyBudgetMinor: e.dailyBudget } : {}),
+    ...(typeof e.lifetimeBudget === "number" ? { lifetimeBudgetMinor: e.lifetimeBudget } : {}),
   };
 }
 
@@ -226,7 +244,7 @@ export function snapshotToRunLearning(
 function rowToStoredLesson(row: typeof agentMemory.$inferSelect): StoredLesson {
   return {
     id: row.id,
-    kind: typeToKind(row.type),
+    kind: lessonKindFromMemoryType(row.type),
     key: {
       scope: row.scope,
       dimension: row.dimension ?? "other",

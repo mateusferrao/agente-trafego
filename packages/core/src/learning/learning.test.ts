@@ -6,13 +6,18 @@ import {
   applyContradiction,
   applyDecay,
   computeConfidence,
+  computeOutcome,
   confidenceTier,
+  contradictedLessonKey,
   decayCutoffs,
   describeLessonForRedactor,
+  detectCalibrationCandidate,
   detectFactCandidates,
   fallbackLessonText,
   lessonKeyOf,
+  manualChangeToAction,
   selectLessonsForBrief,
+  type ComputeOutcomeInput,
   type RunLearningSnapshot,
   type StoredLesson,
 } from "./index.js";
@@ -140,6 +145,94 @@ describe("detectFactCandidates", () => {
     const lesson = detectFactCandidates({ runs }).find((x) => x.key.dimension === "tracking");
     expect(lesson).toBeDefined();
     expect(lesson?.key.scope).toBe("account");
+  });
+});
+
+// ─── computeOutcome (Sinal A) ─────────────────────────────────────────────
+describe("computeOutcome", () => {
+  const base = (over: Partial<ComputeOutcomeInput>): ComputeOutcomeInput => ({
+    actionType: "adjust_budget",
+    entityPre: { spend: 100, results: 10, cpa: 10 },
+    entityPost: { spend: 150, results: 15, cpa: 10 },
+    ...over,
+  });
+
+  it("ajuste de orçamento: CPA da entidade manteve → positive", () => {
+    expect(computeOutcome(base({ params: { mode: "increase" } }))).toBe("positive");
+  });
+  it("ajuste de orçamento: CPA da entidade piorou além da tolerância → negative", () => {
+    expect(computeOutcome(base({ params: { mode: "increase" }, entityPost: { spend: 200, results: 10, cpa: 20 } }))).toBe("negative");
+  });
+  it("ajuste de orçamento: sem resultados suficientes → neutral (não declara o que não mede)", () => {
+    expect(computeOutcome(base({ entityPre: { spend: 5, results: 1 }, entityPost: { spend: 6, results: 1 } }))).toBe("neutral");
+  });
+  it("pausa: mede a CONTA (a entidade zera) — conta melhorou → positive", () => {
+    const out = computeOutcome({
+      actionType: "pause_entity",
+      entityPre: { spend: 50, results: 0 },
+      entityPost: { spend: 0, results: 0 },
+      accountPre: { spend: 500, results: 40, cpa: 12.5 },
+      accountPost: { spend: 500, results: 50, cpa: 10 },
+    });
+    expect(out).toBe("positive");
+  });
+  it("pausa sem dado de conta → neutral", () => {
+    expect(computeOutcome({ actionType: "pause_entity", entityPre: { spend: 50, results: 0 }, entityPost: { spend: 0, results: 0 } })).toBe("neutral");
+  });
+  it("reativação que passou a entregar → positive; gastou sem converter → negative", () => {
+    expect(computeOutcome({ actionType: "resume_entity", entityPre: { spend: 0, results: 0 }, entityPost: { spend: 80, results: 8 } })).toBe("positive");
+    expect(computeOutcome({ actionType: "resume_entity", entityPre: { spend: 0, results: 0 }, entityPost: { spend: 80, results: 0 } })).toBe("negative");
+  });
+});
+
+describe("detectCalibrationCandidate / contradictedLessonKey", () => {
+  it("escala que deu errado → lição de cautela (pacing/lower, confiança forte)", () => {
+    const c = detectCalibrationCandidate({ actionType: "adjust_budget", params: { mode: "increase" }, outcome: "negative", subjectId: "c1", subjectName: "X" });
+    expect(c?.kind).toBe("calibration");
+    expect(c?.key).toMatchObject({ scope: "entity", dimension: "pacing", direction: "lower", subjectId: "c1" });
+    expect(c?.origin).toBe("our_action");
+    // uma medição de ação nossa começa mais forte que uma observação única (atribuição),
+    // mas só reforço repetido cruza o teto observacional / o limiar do prompt.
+    const singleObservational = computeConfidence(null, { type: "observe", occurrenceRatio: 1, origin: "observational" });
+    expect(c?.confidence ?? 0).toBeGreaterThan(singleObservational);
+  });
+  it("corte que deu certo → lição budget/lower", () => {
+    const c = detectCalibrationCandidate({ actionType: "pause_entity", outcome: "positive", subjectId: "c1" });
+    expect(c?.key.dimension).toBe("budget");
+    expect(c?.evidence.pattern).toBe("cut_worked");
+  });
+  it("combinações neutras/positivas de escala → sem lição de calibração", () => {
+    expect(detectCalibrationCandidate({ actionType: "adjust_budget", params: { mode: "increase" }, outcome: "positive", subjectId: "c1" })).toBeNull();
+    expect(detectCalibrationCandidate({ actionType: "adjust_budget", params: { mode: "increase" }, outcome: "neutral", subjectId: "c1" })).toBeNull();
+  });
+  it("escalar deu certo → chave a contradizer 'não escale aqui'", () => {
+    const k = contradictedLessonKey({ actionType: "resume_entity", outcome: "positive", subjectId: "c1" });
+    expect(k).toMatchObject({ scope: "entity", dimension: "pacing", direction: "lower", subjectId: "c1" });
+  });
+  it("cortar piorou → chave a contradizer 'cortar aqui ajuda'", () => {
+    const k = contradictedLessonKey({ actionType: "pause_entity", outcome: "negative", subjectId: "c1" });
+    expect(k).toMatchObject({ scope: "entity", dimension: "budget", direction: "lower", subjectId: "c1" });
+  });
+});
+
+describe("manualChangeToAction", () => {
+  it("ativo → pausado = pausa", () => {
+    expect(manualChangeToAction({ status: "active" }, { status: "paused" })).toEqual({ actionType: "pause_entity", params: {} });
+  });
+  it("pausado → ativo = reativação", () => {
+    expect(manualChangeToAction({ status: "paused" }, { status: "active" })).toEqual({ actionType: "resume_entity", params: {} });
+  });
+  it("orçamento subiu materialmente = escalar", () => {
+    expect(manualChangeToAction({ status: "active", dailyBudgetMinor: 100 }, { status: "active", dailyBudgetMinor: 200 })).toEqual({ actionType: "adjust_budget", params: { mode: "increase" } });
+  });
+  it("orçamento caiu materialmente = reduzir", () => {
+    expect(manualChangeToAction({ status: "active", dailyBudgetMinor: 200 }, { status: "active", dailyBudgetMinor: 100 })).toEqual({ actionType: "adjust_budget", params: { mode: "decrease" } });
+  });
+  it("variação pequena de orçamento → null (não material)", () => {
+    expect(manualChangeToAction({ status: "active", dailyBudgetMinor: 100 }, { status: "active", dailyBudgetMinor: 105 })).toBeNull();
+  });
+  it("sem mudança → null", () => {
+    expect(manualChangeToAction({ status: "active", dailyBudgetMinor: 100 }, { status: "active", dailyBudgetMinor: 100 })).toBeNull();
   });
 });
 

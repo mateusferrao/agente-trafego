@@ -1128,6 +1128,19 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     });
     // persiste as análises por-unidade REANALISADAS (base do incremental/herança).
     await entityAnalysesRepo.saveMany(state.agentId, state.runId, state.freshUnits ?? []);
+    // snapshot da config (orçamento/status) das entidades no dia — base p/ detectar mudança
+    // manual do gestor (aprendizado S4). Cadência da análise; sem chamada Meta extra (a
+    // config já veio em state.entities). Falha aqui NÃO derruba o run (best-effort).
+    if ((state.entities ?? []).length > 0) {
+      try {
+        // dia da análise no fuso da ORG (mesmo carimbo dos insights_snapshots dated-Meta) —
+        // `window.until`; fallback ao tz global só se a janela não resolveu.
+        const today = state.window?.until ?? todayInTz(new Date(), deps.cron.tz);
+        await learningRepo.saveEntityConfigSnapshots({ orgId: state.orgId, adAccountId: state.adAccountId, date: today, entities: state.entities });
+      } catch (err) {
+        logger.warn({ err, runId: state.runId }, "record:config-snapshot falhou");
+      }
+    }
     // Sincronização (achado real): campanha que ESTAVA no cache e SUMIU do conjunto ativo
     // (pausada/arquivada fora daqui) — marca `deactivatedSince` pra chat/site pararem de
     // tratá-la como se nada tivesse mudado. SÓ quando a listagem deste run foi ÍNTEGRA

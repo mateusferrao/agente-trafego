@@ -592,6 +592,14 @@ export type LessonConfidenceTier = "explorando" | "provavel" | "confirmado";
 /** De onde veio o aprendizado — a UI mostra a proveniência ao usuário. */
 export type LessonOrigin = "our_action" | "observational" | "human_feedback" | "human_manual";
 
+/** Snapshot da config de uma entidade num dia (aprendizado, S4) — orçamento/status. */
+export interface EntityConfigSnapshot {
+  readonly status: EntityStatus;
+  /** orçamento diário (unidade MENOR da moeda). */
+  readonly dailyBudgetMinor?: number;
+  readonly lifetimeBudgetMinor?: number;
+}
+
 /** Aprendizado pronto para o prompt do analista / cartão da UI (projeção legível). */
 export interface BriefLesson {
   readonly content: string;

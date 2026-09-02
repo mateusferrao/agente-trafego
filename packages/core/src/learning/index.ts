@@ -5,12 +5,18 @@
 // SÓ traduz — nunca inventa lição). A curadoria (dedupe/merge/decay/contradição) e a
 // medição de outcome de ações nossas entram nas subfatias seguintes reusando estes tipos.
 
-import type { BriefLesson, HealthSignal, LessonConfidenceTier, LessonOrigin, PerformanceTier } from "@trafego/shared";
+import type { ActionType, BriefLesson, HealthSignal, LessonConfidenceTier, LessonOrigin, PerformanceTier } from "@trafego/shared";
 
 // ─── Taxonomia (fonte única do tipo) ──────────────────────────────────────
 
 /** Tipo de lição. Mapeia para `memoryType` do DB: `fact`→`fact`, `calibration`→`past_action`. */
 export type LessonKind = "fact" | "calibration";
+
+/** Mapa único LessonKind ↔ `memory_type` do DB (fonte única — evita drift em 3 lugares). */
+export const MEMORY_TYPE_BY_KIND: Record<LessonKind, "fact" | "past_action"> = { fact: "fact", calibration: "past_action" };
+export function lessonKindFromMemoryType(type: string): LessonKind {
+  return type === "past_action" ? "calibration" : "fact";
+}
 
 /** Escopo hierárquico — a fundação usa só `entity`/`account`; `org`/`global` já ficam
  *  no tipo para subir a cross-conta/cross-org depois sem reescrever. */
@@ -136,8 +142,15 @@ export function confidenceTier(confidence: number, confirmedByHuman: boolean): L
 /** Rótulo de máquina do padrão detectado — o redator traduz, nunca inventa. */
 export type FactPattern = "persistent_zombie" | "persistent_underperformer" | "recurring_health_signal" | "recurring_tracking_suspect";
 
+/** Padrão de CALIBRAÇÃO (S4) — o que a medição de outcome de uma ação NOSSA ensinou. */
+export type CalibrationPattern = "scale_backfired" | "cut_worked";
+
+/** Qualquer padrão de lição (observacional + calibração). */
+export type LessonPattern = FactPattern | CalibrationPattern;
+
 export interface LessonEvidence {
-  readonly pattern: FactPattern;
+  readonly pattern: LessonPattern;
+  /** nº de runs/observações que corroboram (observacional) ou 1 (calibração medida). */
   readonly occurrences: number;
   readonly totalRuns: number;
   readonly subjectName?: string;
@@ -275,6 +288,192 @@ export function detectFactCandidates(input: DetectFactInput): LessonCandidate[] 
   return out;
 }
 
+// ─── Sinal A: medição de outcome de ação NOSSA + calibração (S4) ───────────
+
+export type MeasuredOutcome = "positive" | "negative" | "neutral";
+
+/** Janela agregada de métricas (entidade ou conta) antes/depois de uma ação. */
+export interface OutcomeWindow {
+  readonly spend: number;
+  /** conversões de negócio/entidade — o "resultado" que importa. */
+  readonly results: number;
+  /** CPA medido (opcional; derivado de spend/results quando ausente). */
+  readonly cpa?: number;
+}
+
+export interface OutcomeThresholds {
+  /** variação de CPA (fração) dentro disso = "manteve" (nem melhora nem piora). */
+  readonly cpaTolerance: number;
+  /** resultados mínimos numa janela p/ o CPA valer (senão neutro/indeterminado). */
+  readonly minResults: number;
+}
+export const DEFAULT_OUTCOME_THRESHOLDS: OutcomeThresholds = { cpaTolerance: 0.15, minResults: 3 };
+
+export interface ComputeOutcomeInput {
+  readonly actionType: ActionType;
+  /** params da ação (ex: adjust_budget `mode`, set_status `status`). */
+  readonly params?: Readonly<Record<string, unknown>>;
+  /** janela da ENTIDADE antes/depois da ação. */
+  readonly entityPre: OutcomeWindow;
+  readonly entityPost: OutcomeWindow;
+  /** janela da CONTA antes/depois — necessária p/ medir PAUSA (a entidade zera). */
+  readonly accountPre?: OutcomeWindow;
+  readonly accountPost?: OutcomeWindow;
+  readonly thresholds?: OutcomeThresholds;
+}
+
+function cpaOf(w: OutcomeWindow): number | undefined {
+  if (typeof w.cpa === "number" && w.cpa > 0) return w.cpa;
+  return w.results > 0 ? w.spend / w.results : undefined;
+}
+
+/** Compara CPA de duas janelas → melhora/mantém = positivo; piora = negativo; sem base = neutro. */
+function cpaVerdict(pre: OutcomeWindow, post: OutcomeWindow, t: OutcomeThresholds): MeasuredOutcome {
+  if (pre.results < t.minResults || post.results < t.minResults) return "neutral";
+  const cpaPre = cpaOf(pre);
+  const cpaPost = cpaOf(post);
+  if (cpaPre === undefined || cpaPost === undefined) return "neutral";
+  const delta = (cpaPost - cpaPre) / cpaPre;
+  if (delta > t.cpaTolerance) return "negative";
+  return "positive"; // melhorou ou manteve dentro da tolerância
+}
+
+/** É uma pausa? (`pause_entity`, ou `set_status` com alvo pausado). */
+function isPause(actionType: ActionType, params?: Readonly<Record<string, unknown>>): boolean {
+  if (actionType === "pause_entity") return true;
+  if (actionType === "set_status") return params?.status === "paused" || params?.status === "PAUSED";
+  return false;
+}
+
+/**
+ * Outcome MEDIDO de uma ação nossa — POR TIPO DE AÇÃO, no NÍVEL certo. Honesto:
+ * `neutral` (indeterminado) quando não dá p/ concluir (nunca declara sucesso que não mede).
+ *  - pausa → mede a CONTA (a entidade zera; o efeito é a verba realocada);
+ *  - ajuste de orçamento → mede o CPA da PRÓPRIA entidade;
+ *  - reativação → a entidade voltou a entregar resultado?
+ */
+export function computeOutcome(input: ComputeOutcomeInput): MeasuredOutcome {
+  const t = input.thresholds ?? DEFAULT_OUTCOME_THRESHOLDS;
+  if (isPause(input.actionType, input.params)) {
+    if (!input.accountPre || !input.accountPost) return "neutral";
+    return cpaVerdict(input.accountPre, input.accountPost, t);
+  }
+  if (input.actionType === "adjust_budget") {
+    return cpaVerdict(input.entityPre, input.entityPost, t);
+  }
+  if (input.actionType === "resume_entity") {
+    if (input.entityPost.results >= t.minResults) return "positive";
+    if (input.entityPost.spend > 0 && input.entityPost.results === 0) return "negative";
+    return "neutral";
+  }
+  return "neutral";
+}
+
+/** Ações que ADICIONAM investimento/exposição (escala) — espelha SCALE_ACTIONS do guard. */
+function isScaleAction(actionType: ActionType, params?: Readonly<Record<string, unknown>>): boolean {
+  if (actionType === "resume_entity") return true;
+  if (actionType === "adjust_budget") return params?.mode === "increase" || params?.mode === "up";
+  return false;
+}
+
+export interface CalibrationInput {
+  readonly actionType: ActionType;
+  readonly params?: Readonly<Record<string, unknown>>;
+  readonly outcome: MeasuredOutcome;
+  readonly subjectId: string;
+  readonly subjectName?: string;
+}
+
+/**
+ * Traduz um outcome medido numa candidata de CALIBRAÇÃO (só os casos que viram CAUTELA
+ * acionável — casam com o guard assimétrico e o prompt):
+ *  - ESCALA que deu errado → "escalar aqui piora" (pacing/lower);
+ *  - CORTE (pausa/reduzir) que deu certo → "cortar aqui ajuda" (budget/lower).
+ * Confiança nasce forte (atribuição de ação nossa). Demais combinações → null (o outcome
+ * pode CONTRADIZER uma lição existente — isso é tratado fora, no serviço).
+ */
+export function detectCalibrationCandidate(input: CalibrationInput): LessonCandidate | null {
+  const measuredConfidence = computeConfidence(null, { type: "measured", positive: true });
+  const scale = isScaleAction(input.actionType, input.params);
+  const cut = isPause(input.actionType, input.params) || (input.actionType === "adjust_budget" && input.params?.mode === "decrease");
+
+  if (scale && input.outcome === "negative") {
+    return {
+      kind: "calibration",
+      key: { scope: "entity", dimension: "pacing", direction: "lower", subjectId: input.subjectId },
+      origin: "our_action",
+      confidence: measuredConfidence,
+      evidence: { pattern: "scale_backfired", occurrences: 1, totalRuns: 1, ...(input.subjectName ? { subjectName: input.subjectName } : {}) },
+    };
+  }
+  if (cut && input.outcome === "positive") {
+    return {
+      kind: "calibration",
+      key: { scope: "entity", dimension: "budget", direction: "lower", subjectId: input.subjectId },
+      origin: "our_action",
+      confidence: measuredConfidence,
+      evidence: { pattern: "cut_worked", occurrences: 1, totalRuns: 1, ...(input.subjectName ? { subjectName: input.subjectName } : {}) },
+    };
+  }
+  return null;
+}
+
+/** Config mínima de uma entidade num instante — p/ detectar mudança manual (S4). */
+export interface EntityConfigDelta {
+  readonly status: string;
+  readonly dailyBudgetMinor?: number;
+  readonly lifetimeBudgetMinor?: number;
+}
+
+/** Variação mínima de orçamento (fração) p/ contar como mudança MATERIAL. */
+export const MANUAL_BUDGET_CHANGE_MIN_PCT = 0.15;
+
+// Todo status inativo (espelha EntityStatus não-active): pausado/arquivado/DELETADO.
+const INACTIVE_STATUSES = new Set(["paused", "archived", "deleted", "PAUSED", "ARCHIVED", "DELETED"]);
+function isActive(status: string): boolean {
+  return !INACTIVE_STATUSES.has(status);
+}
+
+/**
+ * Traduz uma mudança de config (prev→curr) numa AÇÃO sintética, p/ medir o outcome de uma
+ * mudança que o gestor fez NA MÃO na Meta (fora das nossas ações). Null = sem mudança
+ * material. Pausa/reativação por status; escalar/reduzir por orçamento diário.
+ */
+export function manualChangeToAction(
+  prev: EntityConfigDelta,
+  curr: EntityConfigDelta,
+): { actionType: ActionType; params: Record<string, unknown> } | null {
+  if (isActive(prev.status) && !isActive(curr.status)) return { actionType: "pause_entity", params: {} };
+  if (!isActive(prev.status) && isActive(curr.status)) return { actionType: "resume_entity", params: {} };
+  const pb = prev.dailyBudgetMinor;
+  const cb = curr.dailyBudgetMinor;
+  if (typeof pb === "number" && pb > 0 && typeof cb === "number") {
+    const delta = (cb - pb) / pb;
+    if (delta >= MANUAL_BUDGET_CHANGE_MIN_PCT) return { actionType: "adjust_budget", params: { mode: "increase" } };
+    if (delta <= -MANUAL_BUDGET_CHANGE_MIN_PCT) return { actionType: "adjust_budget", params: { mode: "decrease" } };
+  }
+  return null;
+}
+
+/**
+ * Quando um outcome CONTRADIZ a conclusão de uma lição existente (ex: escalamos e deu
+ * CERTO, apesar de uma lição dizer "não escale aqui"; ou cortamos e piorou, apesar de
+ * "cortar aqui ajuda") — a chave da lição a enfraquecer. Null = nada a contradizer.
+ */
+export function contradictedLessonKey(input: CalibrationInput): SemanticKey | null {
+  const scale = isScaleAction(input.actionType, input.params);
+  const cut = isPause(input.actionType, input.params) || (input.actionType === "adjust_budget" && input.params?.mode === "decrease");
+  if (scale && input.outcome === "positive") {
+    // escalar deu certo → enfraquece uma eventual "não escale aqui".
+    return { scope: "entity", dimension: "pacing", direction: "lower", subjectId: input.subjectId };
+  }
+  if (cut && input.outcome === "negative") {
+    // cortar piorou → enfraquece uma eventual "cortar aqui ajuda".
+    return { scope: "entity", dimension: "budget", direction: "lower", subjectId: input.subjectId };
+  }
+  return null;
+}
+
 // ─── Redator (LLM só traduz a candidata; fallback determinístico) ──────────
 
 export interface RedactorInput {
@@ -282,7 +481,7 @@ export interface RedactorInput {
   readonly dimension: LessonDimension;
   readonly direction: LessonDirection;
   readonly scope: LessonScope;
-  readonly pattern: FactPattern;
+  readonly pattern: LessonPattern;
   readonly occurrences: number;
   readonly totalRuns: number;
   readonly subjectName?: string;
@@ -327,6 +526,10 @@ export function fallbackLessonText(r: RedactorInput): string {
       return `A campanha ${alvo} mostra ${r.healthSignal ? HEALTH_SIGNAL_LABEL[r.healthSignal] : "um sinal de saúde"} de forma recorrente nas análises recentes.`;
     case "recurring_tracking_suspect":
       return `A medição de conversão desta conta aparece suspeita de forma recorrente — trate os números de conversão com cautela.`;
+    case "scale_backfired":
+      return `Escalar ${alvo} já piorou o resultado antes — vale cautela antes de aumentar de novo por aqui.`;
+    case "cut_worked":
+      return `Cortar/pausar ${alvo} melhorou o resultado antes — foi uma boa jogada nesta conta.`;
   }
 }
 

@@ -372,6 +372,13 @@
       "when": 1788328989375,
       "tag": "0052_smiling_toad_men",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1788333206634,
+      "tag": "0053_lethal_molten_man",
+      "breakpoints": true
     }
   ]
 }

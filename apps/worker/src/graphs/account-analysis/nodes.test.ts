@@ -208,6 +208,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
       },
     },
     webOrigin: "https://app.example.com",
+    cron: { defaultCron: "0 8 * * *", tz: "America/Sao_Paulo", jitterMs: 0 },
     learning: {
       historyRuns: 10,
       minRuns: 3,
@@ -223,7 +224,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
     checkpointer: undefined as never, // grafo A é linear (sem checkpointer)
   } as unknown as WorkerDeps;
 
-  const learning = { loadActiveLessons: vi.fn(async () => []) };
+  const learning = { loadActiveLessons: vi.fn(async () => []), saveEntityConfigSnapshots: vi.fn(async () => {}) };
   const nodesWithFakes = { repo, snapshots, entityAnalyses, notify, learning, ...(opts.executor ? { executor: opts.executor } : {}) };
   // guarda os fakes p/ o teste montar os nós
   (deps as unknown as { _repos: typeof nodesWithFakes })._repos = nodesWithFakes;

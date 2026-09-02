@@ -3,6 +3,7 @@ import type { Logger } from "pino";
 import type { RunLearningSnapshot } from "@trafego/core";
 import { createLearningService, type LearningServiceConfig } from "./service.js";
 import type { InsertLessonInput, LearnableAgent, LearningRepo } from "./repo.js";
+import type { CommitOutcomeInput, MeasurableRec, OutcomeRepo } from "./outcome-repo.js";
 
 const AGENT: LearnableAgent = { orgId: "org-1", agentId: "agent-1", adAccountId: "acc-1" };
 const CONFIG: LearningServiceConfig = {
@@ -13,7 +14,22 @@ const CONFIG: LearningServiceConfig = {
   redactorMaxPerTick: 20,
   decayStaleDays: 30,
   decayArchiveDays: 60,
+  phaseBufferDays: 7,
+  outcomeWindowDays: 7,
 };
+
+/** OutcomeRepo stub: sem recs medíveis por padrão (destilação observacional isolada). */
+function emptyOutcomeRepo(over: Partial<OutcomeRepo> = {}): OutcomeRepo {
+  return {
+    loadMeasurableRecs: async () => [],
+    loadMaturedConfigChanges: async () => [],
+    hasAppliedActionInRange: async () => false,
+    findAppliedInstant: async () => null,
+    loadWindow: async () => ({ spend: 0, results: 0 }),
+    commitOutcome: async () => {},
+    ...over,
+  };
+}
 
 const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as Logger;
 
@@ -49,6 +65,7 @@ function fakeRepo(
       state.reinforces.push({ id, confidence, evidenceAt });
     },
     applyDecaySweep: async () => ({ staled: 0, archived: 0 }),
+    saveEntityConfigSnapshots: async () => {},
   };
 }
 
@@ -66,7 +83,7 @@ describe("learning service — distillAgent", () => {
   it("cria lição nova com o texto do redator + marca a evidência (dedup) na criação", async () => {
     const state: FakeRepoState = { inserts: [], reinforces: [] };
     const llm = llmStub("Frase do redator.");
-    const svc = createLearningService({ repo: fakeRepo(null, zombieRuns(), state), llm: llm as never, logger, config: CONFIG });
+    const svc = createLearningService({ repo: fakeRepo(null, zombieRuns(), state), llm: llm as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
     const r = await svc.distillAgent(AGENT, { remaining: 20 });
     expect(r.created).toBe(1);
     expect(r.reinforced).toBe(0);
@@ -79,7 +96,7 @@ describe("learning service — distillAgent", () => {
   it("cai no fallback determinístico quando o redator LLM falha (loop funciona sem LLM)", async () => {
     const state: FakeRepoState = { inserts: [], reinforces: [] };
     const llm = llmStub(new Error("llm down"));
-    const svc = createLearningService({ repo: fakeRepo(null, zombieRuns(), state), llm: llm as never, logger, config: CONFIG });
+    const svc = createLearningService({ repo: fakeRepo(null, zombieRuns(), state), llm: llm as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
     await svc.distillAgent(AGENT, { remaining: 20 });
     expect(state.inserts[0]?.content).toContain("Institucional");
   });
@@ -87,7 +104,7 @@ describe("learning service — distillAgent", () => {
   it("reforça quando há evidência MAIS NOVA que a última incorporada", async () => {
     const state: FakeRepoState = { inserts: [], reinforces: [] };
     const existing = { id: "l1", confidence: 0.2, lastReinforcedAt: new Date("2026-01-02T00:00:00.000Z") };
-    const svc = createLearningService({ repo: fakeRepo(existing, zombieRuns(), state), llm: llmStub("x") as never, logger, config: CONFIG });
+    const svc = createLearningService({ repo: fakeRepo(existing, zombieRuns(), state), llm: llmStub("x") as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
     const r = await svc.distillAgent(AGENT, { remaining: 20 });
     expect(r.reinforced).toBe(1);
     expect(r.created).toBe(0);
@@ -98,17 +115,66 @@ describe("learning service — distillAgent", () => {
     const state: FakeRepoState = { inserts: [], reinforces: [] };
     // já reforçamos até o run mais novo (r3) — um novo tick sobre a mesma janela é no-op.
     const existing = { id: "l1", confidence: 0.4, lastReinforcedAt: new Date("2026-01-03T00:00:00.000Z") };
-    const svc = createLearningService({ repo: fakeRepo(existing, zombieRuns(), state), llm: llmStub("x") as never, logger, config: CONFIG });
+    const svc = createLearningService({ repo: fakeRepo(existing, zombieRuns(), state), llm: llmStub("x") as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
     const r = await svc.distillAgent(AGENT, { remaining: 20 });
     expect(r.reinforced).toBe(0);
     expect(r.created).toBe(0);
     expect(state.reinforces).toHaveLength(0);
   });
 
+  it("mede outcome de ação aplicada → grava feedback + lição de calibração (escala que deu errado)", async () => {
+    const state: FakeRepoState = { inserts: [], reinforces: [] };
+    const commits: CommitOutcomeInput[] = [];
+    const rec: MeasurableRec = {
+      recId: "rec-1",
+      runId: "run-1",
+      adAccountId: "acc-1",
+      actionType: "adjust_budget",
+      params: { mode: "increase" },
+      entityId: "c1",
+      entityLevel: "campaign",
+    };
+    const outcomeRepo = emptyOutcomeRepo({
+      loadMeasurableRecs: async () => [rec],
+      findAppliedInstant: async () => new Date("2026-02-01T12:00:00.000Z"),
+      // pré CPA 10 (100/10), pós CPA 20 (200/10) → piorou → negative → escala deu errado.
+      loadWindow: async (_acc, entityId, from) => {
+        if (entityId !== "c1") return { spend: 0, results: 0 };
+        return from < "2026-02-01" ? { spend: 100, results: 10 } : { spend: 200, results: 10 };
+      },
+      commitOutcome: async (i) => { commits.push(i); },
+    });
+    const svc = createLearningService({
+      repo: fakeRepo(null, [], state),
+      outcomeRepo,
+      llm: llmStub("Escalar aqui piorou.") as never,
+      logger,
+      config: CONFIG,
+      now: () => new Date("2026-03-01T00:00:00.000Z"),
+    });
+    const r = await svc.measureOutcomes(AGENT, { remaining: 20 });
+    expect(r.measured).toBe(1);
+    expect(commits[0]?.outcome).toBe("negative");
+    expect(commits[0]?.calibration?.candidate.key).toMatchObject({ dimension: "pacing", direction: "lower", subjectId: "c1" });
+    expect(commits[0]?.calibration?.content).toBe("Escalar aqui piorou.");
+  });
+
+  it("recomendação NÃO aplicada por nós → não mede (sem Sinal A)", async () => {
+    const state: FakeRepoState = { inserts: [], reinforces: [] };
+    const outcomeRepo = emptyOutcomeRepo({
+      loadMeasurableRecs: async () => [{ recId: "rec-1", runId: "run-1", adAccountId: "acc-1", actionType: "pause_entity", params: {}, entityId: "c1", entityLevel: "campaign" }],
+      findAppliedInstant: async () => null, // nunca aplicada
+      commitOutcome: async () => { throw new Error("não deveria commitar"); },
+    });
+    const svc = createLearningService({ repo: fakeRepo(null, [], state), outcomeRepo, llm: llmStub("x") as never, logger, config: CONFIG });
+    const r = await svc.measureOutcomes(AGENT, { remaining: 20 });
+    expect(r.measured).toBe(0);
+  });
+
   it("ADIA a criação quando o teto do redator esgotou (não grava texto genérico permanente)", async () => {
     const state: FakeRepoState = { inserts: [], reinforces: [] };
     const llm = llmStub("nunca usado");
-    const svc = createLearningService({ repo: fakeRepo(null, zombieRuns(), state), llm: llm as never, logger, config: CONFIG });
+    const svc = createLearningService({ repo: fakeRepo(null, zombieRuns(), state), llm: llm as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
     const r = await svc.distillAgent(AGENT, { remaining: 0 });
     expect(llm.complete).not.toHaveBeenCalled();
     expect(r.created).toBe(0); // adiado — vira candidata no próximo tick com orçamento
@@ -118,7 +184,7 @@ describe("learning service — distillAgent", () => {
   it("passa runId (run mais novo) ao redator p/ o metering atribuir à conta", async () => {
     const state: FakeRepoState = { inserts: [], reinforces: [] };
     const llm = llmStub("Frase.");
-    const svc = createLearningService({ repo: fakeRepo(null, zombieRuns(), state), llm: llm as never, logger, config: CONFIG });
+    const svc = createLearningService({ repo: fakeRepo(null, zombieRuns(), state), llm: llm as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
     await svc.distillAgent(AGENT, { remaining: 20 });
     expect(llm.complete).toHaveBeenCalledWith(
       expect.objectContaining({ meta: expect.objectContaining({ orgId: "org-1", type: "learning", runId: "r3" }) }),

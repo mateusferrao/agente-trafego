@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { agentMemory, agents, type Database } from "@trafego/db";
-import { confidenceTier } from "@trafego/core";
+import { confidenceTier, lessonKindFromMemoryType } from "@trafego/core";
 import type { OrgId } from "@trafego/shared/types";
 import { notFound } from "../../middleware/error-handler.js";
 import type { LearningItem, LearningsList } from "./schema.js";
@@ -45,7 +45,7 @@ export function createLearningsService(deps: LearningsDeps) {
 
     const items: LearningItem[] = rows.map((r) => ({
       id: r.id,
-      kind: r.type === "past_action" ? "calibration" : "fact",
+      kind: lessonKindFromMemoryType(r.type),
       content: r.content,
       tier: confidenceTier(r.confidence ?? 0, r.confirmedByHuman),
       origin: r.origin,
