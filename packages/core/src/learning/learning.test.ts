@@ -276,14 +276,18 @@ describe("manualChangeToAction", () => {
 
 // ─── calibração paramétrica (S6) ──────────────────────────────────────────
 describe("proposalForCalibration / nextThresholdValue", () => {
-  it("só calibração propõe limiar; fact não", () => {
-    expect(proposalForCalibration("calibration", "pacing")?.threshold).toBe("marginalCpaWorsenPct");
-    expect(proposalForCalibration("calibration", "budget")?.threshold).toBe("zombieMinSpend");
-    expect(proposalForCalibration("fact", "pacing")).toBeNull();
-    expect(proposalForCalibration("calibration", "tracking")).toBeNull();
+  it("só calibração conservadora (direção lower) propõe limiar", () => {
+    expect(proposalForCalibration("calibration", "pacing", "lower")?.threshold).toBe("marginalCpaWorsenPct");
+    expect(proposalForCalibration("calibration", "budget", "lower")?.threshold).toBe("zombieMinSpend");
+    expect(proposalForCalibration("fact", "pacing", "lower")).toBeNull();
+    expect(proposalForCalibration("calibration", "tracking", "lower")).toBeNull();
+  });
+  it("prior AGRESSIVO (direção raise = escalar compensa) NUNCA propõe limiar", () => {
+    expect(proposalForCalibration("calibration", "pacing", "raise")).toBeNull();
+    expect(proposalForCalibration("calibration", "budget", "raise")).toBeNull();
   });
   it("aperta o limiar reduzindo do valor atual, respeitando o piso", () => {
-    const p = proposalForCalibration("calibration", "pacing")!;
+    const p = proposalForCalibration("calibration", "pacing", "lower")!;
     expect(nextThresholdValue(20, p)).toBe(15); // 20 * 0.75
     expect(nextThresholdValue(6, p)).toBe(5); // piso 5
   });

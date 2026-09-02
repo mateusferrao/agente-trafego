@@ -18,6 +18,13 @@ export interface LearningsDeps {
 // fonte única em @trafego/core (LEARNING_MEMORY_TYPES, derivado de MEMORY_TYPE_BY_KIND).
 const LEARNING_TYPES = LEARNING_MEMORY_TYPES;
 
+/** Patch de limiar APLICADO — guarda o valor anterior p/ o Reverter (v3) restaurar. */
+interface AppliedThresholdPatch {
+  readonly threshold: string;
+  readonly previousValue: number;
+  readonly behaviorLabel: string;
+}
+
 /**
  * Slice de aprendizados (S1, read-only): lista as lições curadas de um agente para a
  * aba "Aprendizados". Org-scoped (filtra por orgId — sem vazamento cross-tenant, mesmo
@@ -63,6 +70,8 @@ export function createLearningsService(deps: LearningsDeps) {
       sourceRunId: r.sourceRunId ?? null,
       createdAt: r.createdAt.toISOString(),
       proposedBehavior: (r.proposedThresholdPatch as ThresholdProposal | null)?.behaviorLabel ?? null,
+      // limiar já aceito → a UI mostra "aplicado · Reverter" (v3).
+      appliedBehavior: (r.appliedThresholdPatch as AppliedThresholdPatch | null)?.behaviorLabel ?? null,
     }));
     return { items };
   }
@@ -147,15 +156,75 @@ export function createLearningsService(deps: LearningsDeps) {
     if (!result.ok) throw badRequest(result.error);
 
     // proposta consumida + lição confirmada (o dono endossou a mudança de comportamento).
+    // Guarda o valor ANTERIOR em applied_threshold_patch → o Reverter restaura sem re-consultar.
+    const applied: AppliedThresholdPatch = { threshold: proposal.threshold, previousValue: currentRaw, behaviorLabel: proposal.behaviorLabel };
     const confidence = computeConfidence(row.confidence, { type: "confirm" });
     await deps.db
       .update(agentMemory)
-      .set({ proposedThresholdPatch: null, confirmedByHuman: true, confidence, updatedAt: sql`now()` })
+      .set({ proposedThresholdPatch: null, appliedThresholdPatch: { ...applied }, confirmedByHuman: true, confidence, thresholdResolvedAt: null, updatedAt: sql`now()` })
       .where(scopedLesson(orgId, agentId, lessonId));
     return { ok: true };
   }
 
-  return { list, edit, confirm, forget, acceptThreshold };
+  /**
+   * Rejeita a proposta de ajuste (opt-in): descarta o patch pendente SEM tocar em config e
+   * marca a proposta como resolvida (trava a re-oferta até evidência substancialmente nova). A
+   * lição/prior continua vivo (segue afiando o julgamento via prompt/guard) — só o ajuste
+   * automático de limiar foi recusado.
+   */
+  async function rejectProposal(orgId: OrgId, agentId: string, lessonId: string): Promise<LearningOk> {
+    const [row] = await deps.db
+      .select({ patch: agentMemory.proposedThresholdPatch })
+      .from(agentMemory)
+      .where(and(eq(agentMemory.id, lessonId), eq(agentMemory.orgId, orgId), eq(agentMemory.agentId, agentId), sql`${agentMemory.lifecycle} <> 'archived'`))
+      .limit(1);
+    if (!row) throw notFound("Aprendizado não encontrado.");
+    if (!row.patch) throw badRequest("Este aprendizado não tem uma proposta de ajuste.");
+    await deps.db
+      .update(agentMemory)
+      .set({ proposedThresholdPatch: null, thresholdResolvedAt: sql`now()`, updatedAt: sql`now()` })
+      .where(scopedLesson(orgId, agentId, lessonId));
+    return { ok: true };
+  }
+
+  /**
+   * Reverte um limiar já aceito: restaura o valor ANTERIOR (guardado em applied_threshold_patch)
+   * em `model_config.quality` via `@trafego/agent-config` (auditado) e marca como resolvido. NUNCA
+   * toca guardrail/autonomia. A lição continua endossada (o insight vale); só o efeito mecânico
+   * do limiar foi desfeito.
+   */
+  async function revertThreshold(orgId: OrgId, agentId: string, lessonId: string): Promise<LearningOk> {
+    const [row] = await deps.db
+      .select({ applied: agentMemory.appliedThresholdPatch, adAccountId: agents.adAccountId })
+      .from(agentMemory)
+      .innerJoin(agents, eq(agentMemory.agentId, agents.id))
+      .where(and(eq(agentMemory.id, lessonId), eq(agentMemory.orgId, orgId), eq(agentMemory.agentId, agentId), sql`${agentMemory.lifecycle} <> 'archived'`))
+      .limit(1);
+    if (!row) throw notFound("Aprendizado não encontrado.");
+    const applied = row.applied as AppliedThresholdPatch | null;
+    if (!applied) throw badRequest("Este aprendizado não tem um ajuste aplicado para reverter.");
+
+    const result = await applyAgentConfigChange(
+      { db: deps.db, scheduler: deps.scheduler },
+      {
+        orgId,
+        agentId,
+        accountId: row.adAccountId,
+        // restaura SÓ o limiar de qualidade ao valor anterior → nunca toca guardrail/autonomia.
+        patch: { modelConfig: { quality: { [applied.threshold]: applied.previousValue } } },
+        audit: { actor: { label: "user" }, metadata: { source: "learning_threshold_revert", lessonId } },
+      },
+    );
+    if (!result.ok) throw badRequest(result.error);
+
+    await deps.db
+      .update(agentMemory)
+      .set({ appliedThresholdPatch: null, thresholdResolvedAt: sql`now()`, updatedAt: sql`now()` })
+      .where(scopedLesson(orgId, agentId, lessonId));
+    return { ok: true };
+  }
+
+  return { list, edit, confirm, forget, acceptThreshold, rejectProposal, revertThreshold };
 }
 
 /** Predicado org+agente+id da lição — fecha o check-then-act do UPDATE (defesa em profundidade,

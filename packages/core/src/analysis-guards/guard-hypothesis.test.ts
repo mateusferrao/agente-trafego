@@ -32,9 +32,15 @@ describe("guardUnconfirmedHypothesis", () => {
     expect(out.recommendations[0]?.actionType).toBe("increase_budget");
   });
 
-  it("hipótese de CONTA não-confirmada NÃO rebaixa amplamente (raio restrito a entity)", () => {
+  it("hipótese de CONTA (lower) não-confirmada rebaixa TODA escala da conta (v3)", () => {
     const out = guardUnconfirmedHypothesis(output([rec("resume", "cX")]), [guard("account", "lower")]);
-    expect(out.recommendations[0]?.actionType).toBe("resume"); // intocado
+    expect(out.recommendations[0]?.actionType).toBe("investigate");
+    expect(out.recommendations[0]?.rationale).toContain("cautela ao escalar");
+  });
+
+  it("hipótese de CONTA 'raise' NÃO age (só rebaixa, nunca promove)", () => {
+    const out = guardUnconfirmedHypothesis(output([rec("increase_budget", "cX")]), [guard("account", "raise")]);
+    expect(out.recommendations[0]?.actionType).toBe("increase_budget");
   });
 
   it("NUNCA promove: uma hipótese 'raise' não torna a ação mais arriscada", () => {

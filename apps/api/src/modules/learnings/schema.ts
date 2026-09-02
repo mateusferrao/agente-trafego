@@ -27,6 +27,8 @@ export const learningItem = z.object({
   createdAt: z.string(),
   /** proposta de ajuste de comportamento (calibração paramétrica, S6) — null quando não há. */
   proposedBehavior: z.string().nullable(),
+  /** ajuste de comportamento já APLICADO (revertível, v3) — null quando não há. */
+  appliedBehavior: z.string().nullable(),
 });
 export type LearningItem = z.infer<typeof learningItem>;
 

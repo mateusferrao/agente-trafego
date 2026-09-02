@@ -36,7 +36,7 @@ export interface LearningRepo {
     orgId: string,
     agentId: string,
     semanticKey: string,
-  ): Promise<{ id: string; confidence: number | null; lastReinforcedAt: Date | null; reinforceCount: number } | null>;
+  ): Promise<{ id: string; confidence: number | null; lastReinforcedAt: Date | null; reinforceCount: number; confirmedByHuman: boolean; thresholdResolvedAt: Date | null } | null>;
   insertLesson(input: InsertLessonInput): Promise<void>;
   /** Reforça: sobe confiança, incrementa contagem, marca o tempo da evidência e
    *  REATIVA a lição (stale→active) — um padrão reobservado volta a valer. */
@@ -44,9 +44,10 @@ export interface LearningRepo {
   /** Ledger de evidência (v3): linhas medidas do agente, base da destilação cross-seccional. */
   loadEvidence(orgId: string, agentId: string): Promise<AccountEvidenceRow[]>;
   /** Atualiza um prior de CONTA já materializado: fixa a confiança destilada + a contagem de
-   *  entidades de suporte (`reinforceCount` = S, não incrementa) e reativa. Idempotente — o
-   *  serviço só chama quando S cresceu (evidência de entidade NOVA). */
-  refreshAccountPrior(id: string, confidence: number, supportCount: number, evidenceAt: Date): Promise<void>;
+   *  entidades de suporte (`reinforceCount` = S, não incrementa) e reativa. Anexa a proposta de
+   *  limiar quando fornecida (opt-in, pendente). Idempotente — o serviço só chama quando S
+   *  cresceu (evidência de entidade NOVA). */
+  refreshAccountPrior(input: RefreshAccountPriorInput): Promise<void>;
   /** Decaimento (curadoria anti-pilha): sem reforço → `active→stale→archived`. Um degrau
    *  por sweep (varre arquiváveis ANTES de rebaixar ativas). Global (sweep de manutenção,
    *  como o reaper). Só toca linhas de aprendizado (fact/past_action com chave). */
@@ -71,6 +72,17 @@ export interface InsertLessonInput {
   /** tempo da evidência mais recente incorporada (o run mais novo da janela) — dedup do tick. */
   readonly evidenceAt: Date;
   readonly sourceRunId?: string;
+  /** proposta de limiar a nascer PENDENTE junto do prior (opt-in HITL, v3) — null na maioria. */
+  readonly proposedThresholdPatch?: Record<string, unknown>;
+}
+
+export interface RefreshAccountPriorInput {
+  readonly id: string;
+  readonly confidence: number;
+  readonly supportCount: number;
+  readonly evidenceAt: Date;
+  /** anexa/atualiza a proposta de limiar pendente (só quando fornecida). */
+  readonly proposedThresholdPatch?: Record<string, unknown>;
 }
 
 export function createLearningRepo(db: Database): LearningRepo {
@@ -126,7 +138,7 @@ export function createLearningRepo(db: Database): LearningRepo {
 
     async findLessonByKey(orgId, agentId, semanticKey) {
       const [row] = await db
-        .select({ id: agentMemory.id, confidence: agentMemory.confidence, lastReinforcedAt: agentMemory.lastReinforcedAt, reinforceCount: agentMemory.reinforceCount })
+        .select({ id: agentMemory.id, confidence: agentMemory.confidence, lastReinforcedAt: agentMemory.lastReinforcedAt, reinforceCount: agentMemory.reinforceCount, confirmedByHuman: agentMemory.confirmedByHuman, thresholdResolvedAt: agentMemory.thresholdResolvedAt })
         .from(agentMemory)
         .where(
           and(
@@ -148,7 +160,7 @@ export function createLearningRepo(db: Database): LearningRepo {
       return rows;
     },
 
-    async refreshAccountPrior(id, confidence, supportCount, evidenceAt) {
+    async refreshAccountPrior({ id, confidence, supportCount, evidenceAt, proposedThresholdPatch }) {
       await db
         .update(agentMemory)
         .set({
@@ -158,16 +170,17 @@ export function createLearningRepo(db: Database): LearningRepo {
           reinforceCount: supportCount,
           lastReinforcedAt: evidenceAt,
           lifecycle: "active",
+          ...(proposedThresholdPatch ? { proposedThresholdPatch } : {}),
           updatedAt: sql`now()`,
         })
         .where(eq(agentMemory.id, id));
     },
 
-    async insertLesson({ orgId, agentId, candidate, content, evidenceAt, sourceRunId }) {
+    async insertLesson({ orgId, agentId, candidate, content, evidenceAt, sourceRunId, proposedThresholdPatch }) {
       // `evidenceAt` marca a evidência incorporada já na criação → o próximo tick sobre a
       // MESMA janela não reforça (dedup); só evidência mais nova conta.
       await db.insert(agentMemory).values(
-        buildLessonRow(candidate, { orgId, agentId, content, evidenceAt, ...(sourceRunId ? { sourceRunId } : {}) }),
+        buildLessonRow(candidate, { orgId, agentId, content, evidenceAt, ...(sourceRunId ? { sourceRunId } : {}), ...(proposedThresholdPatch ? { proposedThresholdPatch } : {}) }),
       );
     },
 

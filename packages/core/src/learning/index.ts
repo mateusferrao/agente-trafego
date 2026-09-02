@@ -550,8 +550,9 @@ export interface ThresholdProposal {
   readonly behaviorLabel: string;
 }
 
-// mapeia a DIMENSÃO da lição de calibração → limiar de qualidade a propor. Só calibração
-// (past_action); só estas duas dimensões têm um limiar de comportamento claro hoje.
+// mapeia a DIMENSÃO da lição de calibração → limiar de qualidade a propor. Só calibração;
+// só estas duas dimensões têm um limiar de comportamento claro hoje. Ambas na direção `lower`
+// (mais conservador): cortar desperdício mais cedo / ser mais rigoroso antes de escalar.
 const CALIBRATION_THRESHOLD_PROPOSAL: Partial<Record<LessonDimension, ThresholdProposal>> = {
   pacing: {
     threshold: "marginalCpaWorsenPct",
@@ -567,9 +568,14 @@ const CALIBRATION_THRESHOLD_PROPOSAL: Partial<Record<LessonDimension, ThresholdP
   },
 };
 
-/** Proposta de limiar para uma lição de calibração (ou null). Só `calibration`. */
-export function proposalForCalibration(kind: LessonKind, dimension: LessonDimension): ThresholdProposal | null {
-  if (kind !== "calibration") return null;
+/**
+ * Proposta de limiar para uma lição de calibração (ou null). **Só conservador:** propõe apenas
+ * na direção `lower` (apertar = mais cauteloso). Um prior AGRESSIVO (`account_scale_pays`,
+ * direção `raise`) NUNCA vira proposta de limiar — a agressividade influencia só via prompt,
+ * limitada pelo guardrail (que o aprendizado nunca toca). Só `calibration`.
+ */
+export function proposalForCalibration(kind: LessonKind, dimension: LessonDimension, direction: LessonDirection): ThresholdProposal | null {
+  if (kind !== "calibration" || direction !== "lower") return null;
   return CALIBRATION_THRESHOLD_PROPOSAL[dimension] ?? null;
 }
 

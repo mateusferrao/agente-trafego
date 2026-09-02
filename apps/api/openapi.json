@@ -6943,6 +6943,12 @@
                     "string",
                     "null"
                   ]
+                },
+                "appliedBehavior": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 }
               },
               "required": [
@@ -6958,7 +6964,8 @@
                 "reinforceCount",
                 "sourceRunId",
                 "createdAt",
-                "proposedBehavior"
+                "proposedBehavior",
+                "appliedBehavior"
               ]
             }
           }

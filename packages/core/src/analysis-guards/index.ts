@@ -460,43 +460,47 @@ function demotedTitle(title: string): string {
   return title.startsWith(INVESTIGATE_TITLE_PREFIX) ? title : `${INVESTIGATE_TITLE_PREFIX}${title}`;
 }
 
-// ─── Guard de hipótese não-confirmada (aprendizado, S3) ───────────────────
+// ─── Guard de hipótese não-confirmada (aprendizado, S3 + v3) ──────────────
 // Influência ASSIMÉTRICA das lições: uma hipótese ainda NÃO confirmada (atribuição
 // fraca) só pode puxar a análise p/ o lado MAIS conservador — rebaixa uma ESCALA
 // (`increase_budget`/`resume`) → `investigate` quando um aprendizado de direção `lower`
-// aponta cautela naquela entidade (ou na conta). NUNCA promove/libera nada mais
-// arriscado. Casa com a filosofia dos demais guards (que só rebaixam). Lições
-// CONFIRMADAS não passam por aqui — elas influenciam via texto do prompt do analista.
+// aponta cautela naquela entidade OU na conta. NUNCA promove/libera nada mais arriscado.
+// Casa com a filosofia dos demais guards (que só rebaixam). Lições CONFIRMADAS (ou já
+// fortes, ≥ limiar de prompt) não passam por aqui — elas influenciam via texto do prompt.
 
 /**
- * Rebaixa escala → investigar quando uma lição-guia NÃO confirmada de direção `lower`
- * casa com a ENTIDADE-alvo (escopo `entity` via `subjectId`). Puro. Só rebaixa; hipóteses
- * `raise`/`neutral` não agem. Escopo deliberadamente restrito a `entity`: uma hipótese fraca
- * (baixa confiança, não confirmada) só pode restringir a PRÓPRIA entidade — nunca ter raio
- * de conta inteira. Padrões de conta só restringem escala amplamente DEPOIS de confirmados
- * (aí influenciam via texto do prompt do analista, não por este guard).
+ * Rebaixa escala → investigar sob uma lição-guia NÃO confirmada de direção `lower`:
+ *  - escopo `account` → rebaixa TODA escala da conta (o prior de conta ainda fraco restringe
+ *    amplamente, conservador — a assimetria da v3: hipótese não-confirmada só endurece);
+ *  - escopo `entity` → rebaixa só a entidade-alvo (`subjectId`).
+ * Puro. Só rebaixa; hipóteses `raise`/`neutral` não agem. Priors de conta ≥ limiar/confirmados
+ * já saem daqui (viram texto do prompt) — este guard é a rede da hipótese ainda fraca.
  */
 export function guardUnconfirmedHypothesis(
   output: AnalysisOutput,
   guards: readonly LessonGuard[],
 ): AnalysisOutput {
+  const lower = guards.filter((g) => g.key.direction === "lower");
+  const accountCaution = lower.some((g) => g.key.scope === "account");
   const entityCaution = new Set(
-    guards
-      .filter((g) => g.key.scope === "entity" && g.key.direction === "lower" && g.key.subjectId)
-      .map((g) => g.key.subjectId as string),
+    lower.filter((g) => g.key.scope === "entity" && g.key.subjectId).map((g) => g.key.subjectId as string),
   );
-  if (entityCaution.size === 0) return output;
+  if (!accountCaution && entityCaution.size === 0) return output;
 
   const recommendations = output.recommendations.map((r) => {
     if (!SCALE_ACTIONS.has(r.actionType)) return r;
     const id = r.targetEntity?.externalId;
-    const matched = id ? entityCaution.has(id) : false;
+    // conta em cautela → toda escala; senão, só a entidade que casa com uma hipótese de entidade.
+    const matched = accountCaution || (id ? entityCaution.has(id) : false);
     if (!matched) return r;
+    const scopeNote = accountCaution
+      ? "um aprendizado desta conta (hipótese ainda não confirmada) sugere cautela ao escalar por aqui."
+      : "um aprendizado desta conta (hipótese ainda não confirmada) sugere cautela nesta entidade.";
     return {
       ...r,
       title: demotedTitle(r.title),
       actionType: "investigate" as RecommendationActionType,
-      rationale: `${r.rationale}\n[guard] escalar → investigar: um aprendizado desta conta (hipótese ainda não confirmada) sugere cautela aqui.`,
+      rationale: `${r.rationale}\n[guard] escalar → investigar: ${scopeNote}`,
       budgetChangePct: null,
     };
   });

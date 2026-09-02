@@ -15,6 +15,8 @@ import {
   fallbackLessonText,
   lessonKeyOf,
   manualChangeToAction,
+  proposalForCalibration,
+  THRESHOLD_PROPOSAL_CONFIDENCE,
   type AccountEvidenceEntry,
   type LessonCandidate,
   type MeasuredOutcome,
@@ -320,18 +322,38 @@ export function createLearningService(deps: LearningServiceDeps) {
     for (const candidate of candidates) {
       const key = lessonKeyOf(candidate.key);
       const supportCount = candidate.evidence.occurrences; // entidades distintas de suporte (S).
+      // proposta de limiar (opt-in, só conservador) nasce quando o prior é forte o bastante.
+      const proposal =
+        candidate.confidence >= THRESHOLD_PROPOSAL_CONFIDENCE
+          ? proposalForCalibration(candidate.kind, candidate.key.dimension, candidate.key.direction)
+          : null;
       const existing = await repo.findLessonByKey(agent.orgId, agent.agentId, key);
       if (existing) {
         // dedup: só atualiza quando o suporte CRESCEU (entidade nova) — senão o tick diário
         // reescreveria o mesmo prior à toa.
         if (supportCount <= existing.reinforceCount) continue;
-        await repo.refreshAccountPrior(existing.id, candidate.confidence, supportCount, clock());
+        // re-anexa a proposta só se o dono ainda não a confirmou nem a resolveu (rejeitou/reverteu).
+        const attachProposal = proposal && !existing.confirmedByHuman && existing.thresholdResolvedAt === null;
+        await repo.refreshAccountPrior({
+          id: existing.id,
+          confidence: candidate.confidence,
+          supportCount,
+          evidenceAt: clock(),
+          ...(attachProposal ? { proposedThresholdPatch: { ...proposal } } : {}),
+        });
         reinforced += 1;
         continue;
       }
       if (redactBudget.remaining <= 0) continue; // sem orçamento de redator → adia p/ o próximo tick.
       const content = await redactWithBudget(candidate, agent.orgId, undefined, redactBudget);
-      await repo.insertLesson({ orgId: agent.orgId, agentId: agent.agentId, candidate, content, evidenceAt: clock() });
+      await repo.insertLesson({
+        orgId: agent.orgId,
+        agentId: agent.agentId,
+        candidate,
+        content,
+        evidenceAt: clock(),
+        ...(proposal ? { proposedThresholdPatch: { ...proposal } } : {}),
+      });
       created += 1;
     }
     return { created, reinforced };

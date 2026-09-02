@@ -228,6 +228,12 @@ export const agentMemory = pgTable(
     sourceRecommendationId: uuid("source_recommendation_id"),
     // patch proposto de `model_config.quality` (calibração paramétrica, S6) — null na maioria.
     proposedThresholdPatch: jsonb("proposed_threshold_patch").$type<Record<string, unknown>>(),
+    // patch APLICADO (limiar aceito) — guarda `{ threshold, previousValue }` p/ o Reverter (v3)
+    // restaurar o valor anterior. Null enquanto não aceito ou já revertido.
+    appliedThresholdPatch: jsonb("applied_threshold_patch").$type<Record<string, unknown>>(),
+    // marca quando o dono resolveu a proposta de limiar (rejeitou/reverteu) — trava a
+    // re-oferta até entrar evidência substancialmente nova (re-oferta = fast-follow R7).
+    thresholdResolvedAt: timestamp("threshold_resolved_at", { withTimezone: true }),
     ...timestamps,
   },
   (t) => [

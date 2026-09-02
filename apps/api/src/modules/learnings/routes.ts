@@ -34,4 +34,14 @@ export const learningsRoutes: FastifyPluginAsync = async (app) => {
     const { agentId, id } = request.params as { agentId: string; id: string };
     return service.acceptThreshold(orgIdOf(request), agentId, id);
   });
+
+  app.post("/agents/:agentId/learnings/:id/reject-proposal", guard, async (request) => {
+    const { agentId, id } = request.params as { agentId: string; id: string };
+    return service.rejectProposal(orgIdOf(request), agentId, id);
+  });
+
+  app.post("/agents/:agentId/learnings/:id/revert-threshold", guard, async (request) => {
+    const { agentId, id } = request.params as { agentId: string; id: string };
+    return service.revertThreshold(orgIdOf(request), agentId, id);
+  });
 };

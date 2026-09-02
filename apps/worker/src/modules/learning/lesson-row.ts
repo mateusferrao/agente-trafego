@@ -12,6 +12,8 @@ export interface LessonRowOpts {
   readonly evidenceAt: Date;
   readonly sourceRunId?: string;
   readonly sourceRecommendationId?: string;
+  /** proposta de limiar pendente (opt-in HITL) — só nos priors de conta que a merecem. */
+  readonly proposedThresholdPatch?: Record<string, unknown>;
 }
 
 /** Monta o value-object de INSERT em agent_memory (lifecycle=active, não confirmada). */
@@ -33,5 +35,6 @@ export function buildLessonRow(candidate: LessonCandidate, opts: LessonRowOpts) 
     lastReinforcedAt: opts.evidenceAt,
     ...(opts.sourceRunId ? { sourceRunId: opts.sourceRunId } : {}),
     ...(opts.sourceRecommendationId ? { sourceRecommendationId: opts.sourceRecommendationId } : {}),
+    ...(opts.proposedThresholdPatch ? { proposedThresholdPatch: opts.proposedThresholdPatch } : {}),
   };
 }

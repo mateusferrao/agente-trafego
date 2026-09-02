@@ -48,10 +48,10 @@ function trackingRuns(): RunLearningSnapshot[] {
 interface FakeRepoState {
   inserts: InsertLessonInput[];
   reinforces: { id: string; confidence: number; evidenceAt: Date }[];
-  refreshes: { id: string; confidence: number; supportCount: number }[];
+  refreshes: { id: string; confidence: number; supportCount: number; proposedThresholdPatch?: Record<string, unknown> }[];
 }
 
-type ExistingLesson = { id: string; confidence: number | null; lastReinforcedAt: Date | null; reinforceCount: number };
+type ExistingLesson = { id: string; confidence: number | null; lastReinforcedAt: Date | null; reinforceCount: number; confirmedByHuman: boolean; thresholdResolvedAt: Date | null };
 
 function fakeRepo(
   existing: ExistingLesson | null,
@@ -71,8 +71,8 @@ function fakeRepo(
       state.reinforces.push({ id, confidence, evidenceAt });
     },
     loadEvidence: async () => evidence,
-    refreshAccountPrior: async (id, confidence, supportCount) => {
-      state.refreshes.push({ id, confidence, supportCount });
+    refreshAccountPrior: async ({ id, confidence, supportCount, proposedThresholdPatch }) => {
+      state.refreshes.push({ id, confidence, supportCount, ...(proposedThresholdPatch ? { proposedThresholdPatch } : {}) });
     },
     applyDecaySweep: async () => ({ staled: 0, archived: 0 }),
     saveEntityConfigSnapshots: async () => {},
@@ -113,7 +113,7 @@ describe("learning service — distillAgent", () => {
 
   it("reforça quando há evidência MAIS NOVA que a última incorporada", async () => {
     const state: FakeRepoState = { inserts: [], reinforces: [], refreshes: [] };
-    const existing = { id: "l1", confidence: 0.2, lastReinforcedAt: new Date("2026-01-02T00:00:00.000Z"), reinforceCount: 1 };
+    const existing = { id: "l1", confidence: 0.2, lastReinforcedAt: new Date("2026-01-02T00:00:00.000Z"), reinforceCount: 1, confirmedByHuman: false, thresholdResolvedAt: null };
     const svc = createLearningService({ repo: fakeRepo(existing, trackingRuns(), state), llm: llmStub("x") as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
     const r = await svc.distillAgent(AGENT, { remaining: 20 });
     expect(r.reinforced).toBe(1);
@@ -124,7 +124,7 @@ describe("learning service — distillAgent", () => {
   it("NÃO reforça sobre a mesma janela já incorporada (dedup do cron diário)", async () => {
     const state: FakeRepoState = { inserts: [], reinforces: [], refreshes: [] };
     // já reforçamos até o run mais novo (r3) — um novo tick sobre a mesma janela é no-op.
-    const existing = { id: "l1", confidence: 0.4, lastReinforcedAt: new Date("2026-01-03T00:00:00.000Z"), reinforceCount: 1 };
+    const existing = { id: "l1", confidence: 0.4, lastReinforcedAt: new Date("2026-01-03T00:00:00.000Z"), reinforceCount: 1, confirmedByHuman: false, thresholdResolvedAt: null };
     const svc = createLearningService({ repo: fakeRepo(existing, trackingRuns(), state), llm: llmStub("x") as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
     const r = await svc.distillAgent(AGENT, { remaining: 20 });
     expect(r.reinforced).toBe(0);
@@ -208,12 +208,14 @@ describe("learning service — distillAgent", () => {
 
 describe("learning service — distillAccount (prior de conta do ledger)", () => {
   /** ledger com N entidades DISTINTAS sustentando o mesmo par (dimensão,direção). */
-  function evidence(pattern: "cut" | "scaleBad", entityIds: string[]): AccountEvidenceRow[] {
-    return entityIds.map((entityId) =>
+  function evidence(pattern: "cut" | "scaleBad" | "scaleGood", entityIds: string[]): AccountEvidenceRow[] {
+    const key =
       pattern === "cut"
-        ? { dimension: "budget", direction: "lower", entityId, supports: true }
-        : { dimension: "pacing", direction: "lower", entityId, supports: true },
-    );
+        ? { dimension: "budget" as const, direction: "lower" as const }
+        : pattern === "scaleBad"
+          ? { dimension: "pacing" as const, direction: "lower" as const }
+          : { dimension: "pacing" as const, direction: "raise" as const };
+    return entityIds.map((entityId) => ({ ...key, entityId, supports: true }));
   }
 
   it("materializa 1 prior de conta quando >= K (3) entidades distintas sustentam", async () => {
@@ -249,25 +251,74 @@ describe("learning service — distillAccount (prior de conta do ledger)", () =>
   it("prior já existente: só atualiza quando o suporte CRESCEU (dedup do tick diário)", async () => {
     // já materializado com suporte 3; ledger agora tem 4 distintas → refresh com S=4.
     const grown = fakeRepo(
-      { id: "l1", confidence: 0.7, lastReinforcedAt: new Date("2026-01-01T00:00:00.000Z"), reinforceCount: 3 },
+      { id: "l1", confidence: 0.7, lastReinforcedAt: new Date("2026-01-01T00:00:00.000Z"), reinforceCount: 3, confirmedByHuman: false, thresholdResolvedAt: null },
       [],
       { inserts: [], reinforces: [], refreshes: [] } as FakeRepoState,
       evidence("cut", ["c1", "c2", "c3", "c4"]),
     );
     const state: FakeRepoState = { inserts: [], reinforces: [], refreshes: [] };
     // reusa o mesmo ledger/existing via um repo dedicado (o state acima é descartado).
-    const repo = { ...grown, refreshAccountPrior: async (id: string, confidence: number, supportCount: number) => { state.refreshes.push({ id, confidence, supportCount }); } };
+    const repo = { ...grown, refreshAccountPrior: async ({ id, confidence, supportCount }: { id: string; confidence: number; supportCount: number }) => { state.refreshes.push({ id, confidence, supportCount }); } };
     const svc = createLearningService({ repo: repo as never, llm: llmStub("x") as never, logger, config: CONFIG, outcomeRepo: emptyOutcomeRepo() });
     const r = await svc.distillAccount(AGENT, { remaining: 20 });
     expect(r.reinforced).toBe(1);
     expect(state.refreshes[0]?.supportCount).toBe(4);
   });
 
+  it("prior FORTE (>= 5 entidades, direção lower) nasce com proposta de limiar (opt-in)", async () => {
+    const state: FakeRepoState = { inserts: [], reinforces: [], refreshes: [] };
+    const svc = createLearningService({
+      repo: fakeRepo(null, [], state, evidence("cut", ["c1", "c2", "c3", "c4", "c5"])),
+      llm: llmStub("Cortar cedo compensa.") as never,
+      logger,
+      config: CONFIG,
+      outcomeRepo: emptyOutcomeRepo(),
+    });
+    const r = await svc.distillAccount(AGENT, { remaining: 20 });
+    expect(r.created).toBe(1);
+    // conservador: budget/lower → propõe apertar zombieMinSpend (cortar desperdício mais cedo).
+    expect(state.inserts[0]?.proposedThresholdPatch).toMatchObject({ threshold: "zombieMinSpend" });
+  });
+
+  it("prior AGRESSIVO (escala compensa, direção raise) NUNCA nasce com proposta", async () => {
+    const state: FakeRepoState = { inserts: [], reinforces: [], refreshes: [] };
+    const svc = createLearningService({
+      repo: fakeRepo(null, [], state, evidence("scaleGood", ["c1", "c2", "c3", "c4", "c5"])),
+      llm: llmStub("Escalar o que tem base compensa.") as never,
+      logger,
+      config: CONFIG,
+      outcomeRepo: emptyOutcomeRepo(),
+    });
+    const r = await svc.distillAccount(AGENT, { remaining: 20 });
+    expect(r.created).toBe(1);
+    expect(state.inserts[0]?.candidate.key).toMatchObject({ dimension: "pacing", direction: "raise" });
+    expect(state.inserts[0]?.proposedThresholdPatch).toBeUndefined();
+  });
+
+  it("prior forte já resolvido (rejeitado/revertido) NÃO re-anexa proposta no refresh", async () => {
+    const state: FakeRepoState = { inserts: [], reinforces: [], refreshes: [] };
+    const svc = createLearningService({
+      repo: fakeRepo(
+        { id: "l1", confidence: 0.82, lastReinforcedAt: new Date("2026-01-01T00:00:00.000Z"), reinforceCount: 5, confirmedByHuman: false, thresholdResolvedAt: new Date("2026-01-05T00:00:00.000Z") },
+        [],
+        state,
+        evidence("cut", ["c1", "c2", "c3", "c4", "c5", "c6"]),
+      ),
+      llm: llmStub("x") as never,
+      logger,
+      config: CONFIG,
+      outcomeRepo: emptyOutcomeRepo(),
+    });
+    const r = await svc.distillAccount(AGENT, { remaining: 20 });
+    expect(r.reinforced).toBe(1); // suporte cresceu 5→6 → atualiza confiança
+    expect(state.refreshes[0]?.proposedThresholdPatch).toBeUndefined(); // mas sem re-oferta
+  });
+
   it("prior já existente e suporte IGUAL → no-op (não reescreve)", async () => {
     const state: FakeRepoState = { inserts: [], reinforces: [], refreshes: [] };
     const svc = createLearningService({
       repo: fakeRepo(
-        { id: "l1", confidence: 0.7, lastReinforcedAt: new Date("2026-01-01T00:00:00.000Z"), reinforceCount: 3 },
+        { id: "l1", confidence: 0.7, lastReinforcedAt: new Date("2026-01-01T00:00:00.000Z"), reinforceCount: 3, confirmedByHuman: false, thresholdResolvedAt: null },
         [],
         state,
         evidence("cut", ["c1", "c2", "c3"]),

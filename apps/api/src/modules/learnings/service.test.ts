@@ -57,4 +57,26 @@ describe("createLearningsService", () => {
     await expect(svc.confirm(ORG, "agent-1", "x")).rejects.toThrow();
     expect(updates).toHaveLength(0);
   });
+
+  it("rejectProposal → descarta o patch e marca resolvido (sem tocar config)", async () => {
+    const { db, updates } = fakeDb([{ patch: { threshold: "zombieMinSpend" } }]);
+    const svc = createLearningsService({ db, scheduler: {} as never, qualityDefaults: {} });
+    await svc.rejectProposal(ORG, "agent-1", "lesson-1");
+    expect(updates[0]?.proposedThresholdPatch).toBeNull();
+    expect(updates[0]?.thresholdResolvedAt).toBeDefined();
+  });
+
+  it("rejectProposal sem proposta pendente → erro (não faz update)", async () => {
+    const { db, updates } = fakeDb([{ patch: null }]);
+    const svc = createLearningsService({ db, scheduler: {} as never, qualityDefaults: {} });
+    await expect(svc.rejectProposal(ORG, "agent-1", "lesson-1")).rejects.toThrow();
+    expect(updates).toHaveLength(0);
+  });
+
+  it("revertThreshold sem ajuste aplicado → erro (não toca config)", async () => {
+    const { db, updates } = fakeDb([{ applied: null, adAccountId: "acc-1" }]);
+    const svc = createLearningsService({ db, scheduler: {} as never, qualityDefaults: {} });
+    await expect(svc.revertThreshold(ORG, "agent-1", "lesson-1")).rejects.toThrow();
+    expect(updates).toHaveLength(0);
+  });
 });
