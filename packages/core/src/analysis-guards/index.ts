@@ -473,8 +473,10 @@ function demotedTitle(title: string): string {
  *  - escopo `account` → rebaixa TODA escala da conta (o prior de conta ainda fraco restringe
  *    amplamente, conservador — a assimetria da v3: hipótese não-confirmada só endurece);
  *  - escopo `entity` → rebaixa só a entidade-alvo (`subjectId`).
- * Puro. Só rebaixa; hipóteses `raise`/`neutral` não agem. Priors de conta ≥ limiar/confirmados
- * já saem daqui (viram texto do prompt) — este guard é a rede da hipótese ainda fraca.
+ * Puro. Só rebaixa; hipóteses `raise`/`neutral` não agem. Priors de conta `lower` NÃO-confirmados
+ * chegam aqui INDEPENDENTE da confiança (inclusive o prior medido forte recém-nascido, ≥ 0,744) —
+ * é a rede determinística contra escalar sob um aprendizado conservador. Só os CONFIRMADOS saem
+ * (viram só texto do prompt; o dono endossou, não travamos escala pra sempre).
  */
 export function guardUnconfirmedHypothesis(
   output: AnalysisOutput,

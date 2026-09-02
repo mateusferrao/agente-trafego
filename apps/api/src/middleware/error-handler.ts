@@ -1,5 +1,6 @@
 import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { ZodError } from "zod";
+import { isInvalidTextRepresentation } from "@trafego/db";
 import { AdsPlatformError, MessagingChannelError, type AdsPlatformErrorKind } from "@trafego/shared/ports";
 
 /**
@@ -108,6 +109,16 @@ export function registerErrorHandler(app: FastifyInstance): void {
       return reply.status(503).send({
         code: "channel_unavailable",
         message: "Não consegui falar com o WhatsApp agora. Tente de novo em instantes.",
+      });
+    }
+    // Identificador malformado (uuid inválido num :id de rota → SQLSTATE 22P02): erro de
+    // CLIENTE (link quebrado/desatualizado), não bug de servidor. Vira 400 amigável +
+    // próximo passo, em vez de 500 genérico. Log em warn (não polui o error).
+    if (isInvalidTextRepresentation(error)) {
+      request.log.warn({ err: error }, "identificador malformado na rota");
+      return reply.status(400).send({
+        code: "invalid_identifier",
+        message: "Esse link parece inválido ou desatualizado. Atualize a página e tente de novo.",
       });
     }
     // Erros da casca com status próprio de cliente (Fastify: 4xx como 415/405/400)

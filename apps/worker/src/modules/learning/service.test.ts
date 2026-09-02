@@ -151,7 +151,7 @@ describe("learning service — distillAgent", () => {
       loadMeasurableRecs: async () => [rec],
       findAppliedInstant: async () => new Date("2026-02-01T12:00:00.000Z"),
       // pré CPA 10 (100/10), pós CPA 20 (200/10) → piorou → negative → escala deu errado.
-      loadWindow: async (_acc, entityId, from) => {
+      loadWindow: async (_org, _acc, entityId, from) => {
         if (entityId !== "c1") return { spend: 0, results: 0 };
         return from < "2026-02-01" ? { spend: 100, results: 10 } : { spend: 200, results: 10 };
       },
@@ -397,7 +397,7 @@ describe("learning service — measureManualChanges (mudança do gestor → ledg
       ],
       hasAppliedActionInRange: async () => false, // foi do gestor, não nossa
       // corte que deu certo: pré CPA 10, pós melhor (menos gasto, mesmos resultados).
-      loadWindow: async (_acc, _entityId, from) => (from < "2026-02-01" ? { spend: 100, results: 10 } : { spend: 40, results: 10 }),
+      loadWindow: async (_org, _acc, _entityId, from) => (from < "2026-02-01" ? { spend: 100, results: 10 } : { spend: 40, results: 10 }),
       insertEvidence: async (rows) => { evidenceRows.push(...rows); },
     });
     const svc = createLearningService({ repo: fakeRepo(null, [], state), outcomeRepo, llm: llmStub("x") as never, logger, config: CONFIG, now: () => new Date("2026-03-01T00:00:00.000Z") });

@@ -19,7 +19,7 @@ o usuário faz**. Os números de confiança seguem exatamente `computeConfidence
 
 - **Teto observacional** = `0,60` · **teto medido (ação nossa)** = `0,85` · **confirmação humana** = `0,90`.
 - **Selo (tier):** `< 0,5` → **explorando** · `0,5–0,85` → **provável** · `≥ 0,85` ou confirmado por humano → **confirmado**.
-- **Entra no texto do analista (prompt)** só com `≥ 0,70` **ou** confirmado; abaixo disso influencia em silêncio pelo *guard*.
+- **Entra no texto do analista (prompt)** com `≥ 0,70`, confirmado, **ou** sendo uma **ressalva observacional** de tracking (que entra como contexto mesmo com confiança baixa — F-core-4). **Além** disso, todo prior de conta `:lower` **não-confirmado** alimenta o *guard* determinístico (rebaixa escala) **independente da confiança** — inclusive o forte recém-nascido (F-core-3): um prior medido de corte vai a prompt **e** guard.
 - **Prior de conta MEDIDO** (destilado do ledger): a confiança é dobrada uma vez **por entidade distinta** de suporte (força 1, teto 0,85). Com **3** entidades → `0,744` (entra no prompt); com **5** → `0,823` (cruza `THRESHOLD_PROPOSAL_CONFIDENCE = 0,80` e dispara a proposta de limiar).
 - **Prior TEMPORAL** (`temporalConfidence`, teto `0,85`, ganho `0,6`): pontuado pela **força estatística** — um padrão apertado em 3 campanhas alcança `~0,80`; disperso fica baixo (só guard/explorando).
 
@@ -213,8 +213,10 @@ proposta mecânica seria inerte).
 **Lição gerada.** `scope='account'`, `dimension='tracking'`, `direction='neutral'`,
 `origin='observational'`, confiança **0,30** (explorando, teto 0,60). Frase (ex.): *"A medição de
 conversão desta conta aparece suspeita de forma recorrente — trate os números de conversão com
-cautela."* Por ser `neutral`, **não** aciona o guard de escala; serve de contexto e, confirmada,
-informa o analista.
+cautela."* Por ser `neutral`, **não** aciona o guard de escala; mas entra no prompt como
+**ressalva observada** (seção "Ressalvas observadas" do bloco) já com confiança baixa — F-core-4:
+antes, o teto 0,30 a mantinha fora do prompt (< 0,70) e ela só informava se confirmada, o que a
+deixava efetivamente inerte.
 
 ---
 
@@ -328,3 +330,59 @@ a linha da outra.
 | 11 Prompt + guard | prior ativo na análise | `lessonsBlock`/`guardUnconfirmedHypothesis` | prompt / rebaixa escala | — |
 | 12 Chat + alertas | mensagem / prior novo | `list/confirm/forget/approve/reject/dismiss` + `onNewLearning` | site+chat / WhatsApp | 0,90 (confirm) |
 | 13 Segurança | qualquer caminho | hard-wall + org-scoping | — | — |
+
+---
+
+## Conjunto GERÁVEL de aprendizado (hoje) — o "rótulo" dos tipos possíveis
+
+Hoje **não existe um catálogo/rótulo servido ao usuário** ("estes são os aprendizados que uma
+conta pode ter"), como existe o `archetypeCatalog` para arquétipos. A UI/chat só rotulam o que
+**já existe**, por **tier** (`explorando`/`provável`/`confirmado`) e **origem**. A **única**
+enumeração dos tipos possíveis vive no código: a união `LessonPattern`
+(`packages/core/src/learning/index.ts`) + o switch `fallbackLessonText`.
+
+**Atenção:** nem todo item do enum é produzido no v3. O conjunto **realmente gerável hoje** para
+uma conta é:
+
+| Tipo (pattern) | Chave (`semantic_key`) | O que diz | Como nasce | Destino |
+|---|---|---|---|---|
+| `account_cut_pays` | `account:budget:lower` | cortar desperdício cedo compensa | outcome MEDIDO (ação nossa OU mudança manual) em ≥ K entidades distintas | prompt **+ guard** |
+| `account_scale_backfires` | `account:pacing:lower` | escalar sem base piora o custo | idem (escala nossa negativa) | prompt **+ guard** |
+| `account_scale_pays` | `account:pacing:raise` | escalar o que já tem base compensa | idem (escala nossa positiva) | prompt (nunca vira proposta) + habilita o aviso de oportunidade |
+| `account_fatigue_timing` | `account:creative:neutral` | os criativos cansam ~N dias após lançar | padrão temporal (≥ K campanhas, variância baixa) | prompt |
+| `account_conversion_lag` | `account:conversion:neutral` | a conversão atrasa ~D dias vs. o gasto | cross-correlação gasto×conversão | prompt |
+| `recurring_tracking_suspect` | `account:tracking:neutral` | a medição de conversão aparece suspeita | `trackingHealth.suspect` em ≥ 60% dos runs | prompt (ressalva observada) |
+
+Padrões do enum que são **legado/inertes no v3** (não nascem): `persistent_zombie`,
+`persistent_underperformer`, `recurring_health_signal` (eram por-ENTIDADE — cortados, pois a
+análise já recalcula zumbi/fadiga a cada run) e `scale_backfired`/`cut_worked` (calibração
+por-entidade — funções removidas).
+
+## Fast-follows para AMPLIAR o conjunto gerável
+
+Extensões naturais, em ordem aproximada de valor/esforço:
+
+1. **Catálogo/tela "o que o Roy é capaz de aprender"** — expor o conjunto acima ao usuário (tela +
+   endpoint), com exemplo e status ("já observei / ainda não"). Transparência real; resolve a
+   confusão sobre o que é possível. Reusaria o mesmo padrão do `archetypeCatalog`.
+2. **Evidência independente para prior de corte (F-core-1)** — hoje um `pause` é medido a NÍVEL
+   DE CONTA; K pausas na mesma "boa fase" podem nascer um `account_cut_pays` de sinal correlacionado
+   (K entidades distintas, mas um sinal só). Fast-follow: carimbar a evidência com a **janela de
+   medição** e, na destilação, exigir **spread temporal** (ou de-duplicar evidência de janelas
+   sobrepostas) antes da contagem de entidades distintas. Barra anti-coincidência mais honesta.
+3. **Aprendizado por CRIATIVO/ângulo** — "vídeo curto com prova social converte melhor nesta
+   conta", "gancho de dor cansa mais rápido". Precisa de decomposição de criativo persistida +
+   dimensão `creative` com direção. Alto valor de negócio.
+4. **Aprendizado de PÚBLICO/segmento** — "remarketing satura em X dias aqui", "público frio de
+   interesse Y não performa". Reusa o `AudienceProfile` (já normalizado) como dimensão.
+5. **Sazonalidade / janela do dia-da-semana** — "fim de semana rende mais barato", "segunda de manhã
+   é cara". Detector temporal sobre a série por dia-da-semana/hora.
+6. **Lag de conversão vira LIMIAR proposto** — hoje o `account_conversion_lag` só afia o texto
+   (não há limiar em dias a mover). Fast-follow: uma proposta que **estende a janela de maturidade**
+   (`inLearning`) da conta, conservadora, sob o mesmo eco+confirma/hard-wall das outras propostas.
+7. **Prior de conta CROSS-ACCOUNT (org)** — padrões que se repetem em várias contas da mesma org
+   (`scope='org'`), com cautela de generalização. O `memory_scope` já prevê `org`/`global`.
+8. **Reintroduzir o por-ENTIDADE como CONTEXTO efêmero** (não como lição persistida) — se um dia a
+   análise quiser "memória curta" de uma campanha entre runs, fazê-lo fora do ledger de conta.
+9. **Ampliar a ressalva de tracking** — de `neutral` inerte para uma ressalva que, confirmada,
+   ajusta o peso das conversões rastreadas na análise (hoje ela só informa o texto).

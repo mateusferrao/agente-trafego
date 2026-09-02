@@ -124,7 +124,9 @@ describe("agents.updateConfig", () => {
     expect(result.analysisWindowDays).toBe(30);
     expect(captured.updateSet?.goals).toEqual({ targetCPA: 150, conversionGoal: "purchase" });
     expect(captured.updateSet?.businessContext).toBe("Lançamento até 30/08");
-    expect(captured.updateSet?.guidance).toBeNull();
+    // guidance já era vazio (null) e o patch manda "" → limpar um campo já vazio é NO-OP: com o
+    // UPDATE cirúrgico (F-worker-1) ele NÃO entra no set (a limpeza real é provada por `result.guidance`).
+    expect(captured.updateSet).not.toHaveProperty("guidance");
     // merge no model_config preserva as outras chaves e grava a janela.
     expect(captured.updateSet?.modelConfig).toEqual({ model: "x", windowDays: 30 });
     expect(captured.updateSet?.configChangedAt).toBeDefined(); // marca p/ o deep no próximo run

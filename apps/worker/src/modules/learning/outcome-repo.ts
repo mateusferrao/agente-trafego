@@ -70,13 +70,16 @@ export interface MaturedConfigChange {
 export interface OutcomeRepo {
   loadMeasurableRecs(orgId: string, agentId: string, notBefore: Date, notAfter: Date): Promise<MeasurableRec[]>;
   /** Mudanças de config (prev→curr) do gestor cuja data está na janela madura [from,to]. */
-  loadMaturedConfigChanges(adAccountId: string, from: string, to: string): Promise<MaturedConfigChange[]>;
-  /** Houve ação NOSSA aplicada nessa entidade no intervalo? (exclui nossa mudança da "manual"). */
+  loadMaturedConfigChanges(orgId: string, adAccountId: string, from: string, to: string): Promise<MaturedConfigChange[]>;
+  /** Houve ação NOSSA aplicada nessa entidade no intervalo? (exclui nossa mudança da "manual").
+   *  Escopo por `agentId` (FK globalmente único e org-owned) — `agent_tool_calls` não tem coluna
+   *  org_id, então o filtro org é implícito no agente (§12: leak cross-tenant impossível aqui). */
   hasAppliedActionInRange(agentId: string, entityId: string, from: Date, to: Date): Promise<boolean>;
-  /** instante da 1ª aplicação REAL da ação naquela entidade (não dry-run, com before_state). */
+  /** instante da 1ª aplicação REAL da ação naquela entidade (não dry-run, com before_state).
+   *  Escopo por `runId` (FK globalmente único e org-owned) — ver nota de `hasAppliedActionInRange`. */
   findAppliedInstant(runId: string, entityId: string): Promise<Date | null>;
   /** janela agregada (spend + conversões de negócio) de uma entidade OU da conta (entityId null). */
-  loadWindow(adAccountId: string, entityId: string | null, from: string, to: string): Promise<OutcomeWindow>;
+  loadWindow(orgId: string, adAccountId: string, entityId: string | null, from: string, to: string): Promise<OutcomeWindow>;
   commitOutcome(input: CommitOutcomeInput): Promise<void>;
   /** grava linhas de evidência do ledger (mudança manual do gestor — sem recommendation_feedback). */
   insertEvidence(rows: readonly LearningEvidenceInsert[]): Promise<void>;
@@ -117,13 +120,13 @@ export function createOutcomeRepo(db: Database): OutcomeRepo {
       return out;
     },
 
-    async loadMaturedConfigChanges(adAccountId, from, to) {
+    async loadMaturedConfigChanges(orgId, adAccountId, from, to) {
       // carrega snapshots até `to` (com folga p/ ter o "prev"), pareia por entidade e emite
       // a mudança cuja data (curr) cai em [from,to] (janela madura). Cadência = análise.
       const rows = await db
         .select({ entityId: entityConfigSnapshots.entityId, level: entityConfigSnapshots.entityLevel, date: entityConfigSnapshots.date, config: entityConfigSnapshots.configJson })
         .from(entityConfigSnapshots)
-        .where(and(eq(entityConfigSnapshots.adAccountId, adAccountId), lte(entityConfigSnapshots.date, to)))
+        .where(and(eq(entityConfigSnapshots.orgId, orgId), eq(entityConfigSnapshots.adAccountId, adAccountId), lte(entityConfigSnapshots.date, to)))
         .orderBy(entityConfigSnapshots.entityId, entityConfigSnapshots.date);
       const byEntity = new Map<string, { level: EntityLevel; date: string; config: EntityConfigSnapshot }[]>();
       for (const r of rows) {
@@ -178,12 +181,13 @@ export function createOutcomeRepo(db: Database): OutcomeRepo {
       return row?.at ?? null;
     },
 
-    async loadWindow(adAccountId, entityId, from, to) {
+    async loadWindow(orgId, adAccountId, entityId, from, to) {
       const rows = await db
         .select({ metrics: insightsSnapshots.metricsJson })
         .from(insightsSnapshots)
         .where(
           and(
+            eq(insightsSnapshots.orgId, orgId),
             eq(insightsSnapshots.adAccountId, adAccountId),
             entityId
               ? eq(insightsSnapshots.entityId, entityId)

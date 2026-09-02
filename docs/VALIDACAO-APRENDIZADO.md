@@ -261,13 +261,16 @@ separa **evidência medida** (padrão repetido em ≥K campanhas) de **ressalva 
 com hierarquia explícita: *orientação do dono > aprendizado medido > dado atual*. Rode uma análise
 com um prior de conta ativo e confira que o bloco entra (via log/trace do prompt).
 
-**Guard assimétrico de conta.** Um prior de conta **não-confirmado** de direção `lower` (confiança
-< 0,70) rebaixa **TODA** escala da conta → `investigate` (título com prefixo de investigação;
-rationale "[guard] escalar → investigar"). Garantias:
+**Guard assimétrico de conta.** Um prior de conta **não-confirmado** de direção `lower` rebaixa
+**TODA** escala da conta → `investigate` (título com prefixo de investigação; rationale "[guard]
+escalar → investigar"). Garantias:
+- **Independe da confiança** — inclusive o prior medido **forte recém-nascido** (nasce ≥ 0,744):
+  ele entra no **prompt** (texto) **e** no **guard** (rede determinística) ao mesmo tempo. *(Antes
+  o prior forte ia só pro prompt, deixando a escala sem rede determinística — corrigido, F-core-3.)*
 - Só **rebaixa** escala; `raise`/`neutral` **nunca** agem (nunca libera risco).
 - Uma rec de **pausar/cortar** **não é tocada**.
-- Priors **confirmados / ≥ 0,70** saem do guard → influenciam pelo **texto** do prompt (não
-  duplicam efeito). Provado no §0 (cenário 9).
+- Priors **confirmados** saem do guard → influenciam só pelo **texto** do prompt (o dono endossou;
+  não travamos escala pra sempre). Provado no §0 (cenário 9) + `learning.test.ts` (roteamento).
 
 ---
 

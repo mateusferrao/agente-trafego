@@ -30,7 +30,7 @@ const ORG = "org-1" as never;
 describe("createLearningsService", () => {
   it("confirm → marca confirmedByHuman e sobe a confiança", async () => {
     const { db, updates } = fakeDb([{ confidence: 0.3 }]);
-    const svc = createLearningsService({ db, scheduler: {} as never, qualityDefaults: {} });
+    const svc = createLearningsService({ db, scheduler: {} as never, qualityDefaults: {}, advisoryDismissCooldownDays: 14 });
     const out = await svc.confirm(ORG, "agent-1", "lesson-1");
     expect(out).toEqual({ ok: true });
     expect(updates[0]?.confirmedByHuman).toBe(true);
@@ -39,28 +39,28 @@ describe("createLearningsService", () => {
 
   it("forget → arquiva (soft)", async () => {
     const { db, updates } = fakeDb([{ confidence: 0.5 }]);
-    const svc = createLearningsService({ db, scheduler: {} as never, qualityDefaults: {} });
+    const svc = createLearningsService({ db, scheduler: {} as never, qualityDefaults: {}, advisoryDismissCooldownDays: 14 });
     await svc.forget(ORG, "agent-1", "lesson-1");
     expect(updates[0]?.lifecycle).toBe("archived");
   });
 
   it("edit → atualiza o conteúdo", async () => {
     const { db, updates } = fakeDb([{ confidence: 0.5 }]);
-    const svc = createLearningsService({ db, scheduler: {} as never, qualityDefaults: {} });
+    const svc = createLearningsService({ db, scheduler: {} as never, qualityDefaults: {}, advisoryDismissCooldownDays: 14 });
     await svc.edit(ORG, "agent-1", "lesson-1", "novo texto");
     expect(updates[0]?.content).toBe("novo texto");
   });
 
   it("lição inexistente → 404 (não faz update)", async () => {
     const { db, updates } = fakeDb([]); // select vazio
-    const svc = createLearningsService({ db, scheduler: {} as never, qualityDefaults: {} });
+    const svc = createLearningsService({ db, scheduler: {} as never, qualityDefaults: {}, advisoryDismissCooldownDays: 14 });
     await expect(svc.confirm(ORG, "agent-1", "x")).rejects.toThrow();
     expect(updates).toHaveLength(0);
   });
 
   it("rejectProposal → descarta o patch e marca resolvido (sem tocar config)", async () => {
     const { db, updates } = fakeDb([{ patch: { threshold: "zombieMinSpend" } }]);
-    const svc = createLearningsService({ db, scheduler: {} as never, qualityDefaults: {} });
+    const svc = createLearningsService({ db, scheduler: {} as never, qualityDefaults: {}, advisoryDismissCooldownDays: 14 });
     await svc.rejectProposal(ORG, "agent-1", "lesson-1");
     expect(updates[0]?.proposedThresholdPatch).toBeNull();
     expect(updates[0]?.thresholdResolvedAt).toBeDefined();
@@ -68,14 +68,14 @@ describe("createLearningsService", () => {
 
   it("rejectProposal sem proposta pendente → erro (não faz update)", async () => {
     const { db, updates } = fakeDb([{ patch: null }]);
-    const svc = createLearningsService({ db, scheduler: {} as never, qualityDefaults: {} });
+    const svc = createLearningsService({ db, scheduler: {} as never, qualityDefaults: {}, advisoryDismissCooldownDays: 14 });
     await expect(svc.rejectProposal(ORG, "agent-1", "lesson-1")).rejects.toThrow();
     expect(updates).toHaveLength(0);
   });
 
   it("revertThreshold sem ajuste aplicado → erro (não toca config)", async () => {
     const { db, updates } = fakeDb([{ applied: null, adAccountId: "acc-1" }]);
-    const svc = createLearningsService({ db, scheduler: {} as never, qualityDefaults: {} });
+    const svc = createLearningsService({ db, scheduler: {} as never, qualityDefaults: {}, advisoryDismissCooldownDays: 14 });
     await expect(svc.revertThreshold(ORG, "agent-1", "lesson-1")).rejects.toThrow();
     expect(updates).toHaveLength(0);
   });

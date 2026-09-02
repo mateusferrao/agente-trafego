@@ -38,8 +38,12 @@ export const learningOpportunity = z.object({
   threshold: z.string(),
   wantedPct: z.number(),
   cappedPct: z.number(),
-  /** R$ (unidade menor da moeda) que o teto está deixando na mesa por dia. */
+  /** unidade menor da moeda que o teto está deixando na mesa por dia. */
   foregoneMinor: z.number(),
+  /** já em unidade MAIOR (o front formata com `money()` + `currency` — sem hardcodar R$ nem /100). */
+  foregoneMajor: z.number(),
+  /** moeda da conta (ISO) — o símbolo/locale certo vem daqui, não de "R$" fixo. */
+  currency: z.string(),
 });
 export type LearningOpportunity = z.infer<typeof learningOpportunity>;
 

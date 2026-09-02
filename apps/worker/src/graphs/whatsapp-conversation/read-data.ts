@@ -1526,9 +1526,9 @@ export function renderWhatsappNumber(dest: WhatsappDestination, campaignLabel: s
  * DB curado). Seguro executar direto — não há escrita nem chamada à plataforma.
  */
 /** Aprendizados curados do agente (não arquivados) — transparência conversacional (S7). */
-async function getLearningsData(db: WorkerDeps["db"], orgId: string, agentId: string) {
+export async function getLearningsData(db: WorkerDeps["db"], orgId: string, agentId: string) {
   const rows = await db
-    .select({ content: agentMemory.content, confidence: agentMemory.confidence, origin: agentMemory.origin, confirmedByHuman: agentMemory.confirmedByHuman })
+    .select({ id: agentMemory.id, content: agentMemory.content, confidence: agentMemory.confidence, origin: agentMemory.origin, confirmedByHuman: agentMemory.confirmedByHuman, proposedThresholdPatch: agentMemory.proposedThresholdPatch })
     .from(agentMemory)
     .where(
       and(
@@ -1544,11 +1544,16 @@ async function getLearningsData(db: WorkerDeps["db"], orgId: string, agentId: st
   if (rows.length === 0) return { hasData: false, note: "ainda não aprendi nada específico desta conta" };
   return {
     hasData: true,
+    // `id` é a referência que as tools de controle (confirm/forget/approve/reject) consomem —
+    // sem ele o LLM não tem como agir sobre um aprendizado específico. `hasProposal` diz quais
+    // têm proposta de ajuste pendente (alvo do approve_proposal/reject_proposal).
     learnings: rows.map((r) => ({
+      id: r.id,
       content: r.content,
       confidence: confidenceTier(r.confidence ?? 0, r.confirmedByHuman),
       origin: r.origin,
       confirmed: r.confirmedByHuman,
+      hasProposal: r.proposedThresholdPatch != null,
     })),
   };
 }

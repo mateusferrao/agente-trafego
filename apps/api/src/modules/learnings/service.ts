@@ -1,5 +1,5 @@
 import { and, desc, eq, gt, inArray, isNotNull, sql } from "drizzle-orm";
-import { advisoryDismissals, agentMemory, agentRuns, agents, type Database } from "@trafego/db";
+import { adAccounts, advisoryDismissals, agentMemory, agentRuns, agents, type Database } from "@trafego/db";
 import { confidenceTier, LEARNING_MEMORY_TYPES, lessonKindFromMemoryType, type GuardrailOpportunity, type ThresholdProposal } from "@trafego/core";
 import {
   acceptThreshold as acceptThresholdAction,
@@ -9,10 +9,10 @@ import {
   rejectProposal as rejectProposalAction,
   restoreLesson,
   revertThreshold as revertThresholdAction,
-  ADVISORY_DISMISS_COOLDOWN_DAYS,
   GUARDRAIL_OPPORTUNITY_KEY,
   type LearningActionResult,
 } from "@trafego/agent-config";
+import { DEFAULT_CURRENCY } from "@trafego/shared";
 import type { SchedulerPort } from "@trafego/shared/ports";
 import type { OrgId } from "@trafego/shared/types";
 import { notFound, badRequest } from "../../middleware/error-handler.js";
@@ -23,7 +23,14 @@ export interface LearningsDeps {
   readonly scheduler: SchedulerPort;
   /** defaults globais dos limiares de qualidade (fallback quando o agente não tem override). */
   readonly qualityDefaults: Readonly<Record<string, unknown>>;
+  /** cooldown (dias) da dispensa do aviso de oportunidade — configurável por env. */
+  readonly advisoryDismissCooldownDays: number;
 }
+
+/** ms por dia — deriva o cooldown (dias) em milissegundos. */
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+/** unidade menor → maior da moeda (convenção do monorepo). */
+const MINOR_PER_UNIT = 100;
 
 // só os tipos de APRENDIZADO (o `rejected`/`objective` legado não aparece na aba) —
 // fonte única em @trafego/core (LEARNING_MEMORY_TYPES, derivado de MEMORY_TYPE_BY_KIND).
@@ -99,7 +106,24 @@ export function createLearningsService(deps: LearningsDeps) {
       .where(and(eq(advisoryDismissals.agentId, agentId), eq(advisoryDismissals.key, GUARDRAIL_OPPORTUNITY_KEY), gt(advisoryDismissals.dismissedUntil, sql`now()`)))
       .limit(1);
     if (dismissed) return [];
-    return [{ key: GUARDRAIL_OPPORTUNITY_KEY, threshold: op.threshold, wantedPct: op.wantedPct, cappedPct: op.cappedPct, foregoneMinor: op.foregoneMinor }];
+    // moeda da conta → o front formata o valor com `money()` (símbolo/locale certos), sem "R$" fixo.
+    const [acc] = await deps.db
+      .select({ currency: adAccounts.currency })
+      .from(agents)
+      .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
+      .where(and(eq(agents.id, agentId), eq(agents.orgId, orgId)))
+      .limit(1);
+    return [
+      {
+        key: GUARDRAIL_OPPORTUNITY_KEY,
+        threshold: op.threshold,
+        wantedPct: op.wantedPct,
+        cappedPct: op.cappedPct,
+        foregoneMinor: op.foregoneMinor,
+        foregoneMajor: op.foregoneMinor / MINOR_PER_UNIT,
+        currency: acc?.currency ?? DEFAULT_CURRENCY,
+      },
+    ];
   }
 
   /** Verifica que a lição é do agente/org e não está arquivada (404 amigável). */
@@ -156,9 +180,9 @@ export function createLearningsService(deps: LearningsDeps) {
     return unwrap(await revertThresholdAction(deps, { orgId, agentId, lessonId }, ACTOR));
   }
 
-  /** Dispensa o aviso de teto por um cooldown (a UI/chat oferece "Dispensar"). */
-  async function dismissOpportunity(orgId: OrgId, agentId: string, cooldownDays: number): Promise<LearningOk> {
-    const until = new Date(Date.now() + cooldownDays * 24 * 60 * 60 * 1000);
+  /** Dispensa o aviso de teto por um cooldown (a UI/chat oferece "Dispensar"). Cooldown = env. */
+  async function dismissOpportunity(orgId: OrgId, agentId: string): Promise<LearningOk> {
+    const until = new Date(Date.now() + deps.advisoryDismissCooldownDays * MS_PER_DAY);
     return unwrap(await dismissAdvisory(deps.db, { orgId, agentId, key: GUARDRAIL_OPPORTUNITY_KEY, dismissedUntil: until }));
   }
 

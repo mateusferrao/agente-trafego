@@ -133,7 +133,11 @@ export const LESSON_CONFIDENCE_TIERS = [
 ] as const satisfies readonly LessonConfidenceTier[];
 
 const PROVAVEL_THRESHOLD = 0.5;
-const CONFIRMADO_THRESHOLD = 0.85;
+/** Selo "confirmado" por confiança. Ancorado no teto MEDIDO (`MEASURED_CONFIDENCE_CAP=0,85`) DE
+ *  PROPÓSITO e por igualdade: a confiança medida só se APROXIMA de 0,85 (nunca alcança — `approach`
+ *  é estritamente `<`), então um prior puramente medido nunca vira "confirmado" sozinho — só a
+ *  confirmação humana (0,90) chega lá. Se `MEASURED_CONFIDENCE_CAP` mudar, este limiar acompanha. */
+const CONFIRMADO_THRESHOLD = MEASURED_CONFIDENCE_CAP;
 
 export function confidenceTier(confidence: number, confirmedByHuman: boolean): LessonConfidenceTier {
   if (confirmedByHuman || confidence >= CONFIRMADO_THRESHOLD) return "confirmado";
@@ -366,39 +370,11 @@ export interface CalibrationInput {
   readonly subjectName?: string;
 }
 
-/**
- * Traduz um outcome medido numa candidata de CALIBRAÇÃO (só os casos que viram CAUTELA
- * acionável — casam com o guard assimétrico e o prompt):
- *  - ESCALA que deu errado → "escalar aqui piora" (pacing/lower);
- *  - CORTE (pausa/reduzir) que deu certo → "cortar aqui ajuda" (budget/lower).
- * Confiança nasce forte (atribuição de ação nossa). Demais combinações → null (o outcome
- * pode CONTRADIZER uma lição existente — isso é tratado fora, no serviço).
- */
-export function detectCalibrationCandidate(input: CalibrationInput): LessonCandidate | null {
-  const measuredConfidence = computeConfidence(null, { type: "measured", positive: true });
-  const scale = isScaleAction(input.actionType, input.params);
-  const cut = isPause(input.actionType, input.params) || actionEffect(input.actionType, input.params) === "budget_down";
-
-  if (scale && input.outcome === "negative") {
-    return {
-      kind: "calibration",
-      key: { scope: "entity", dimension: "pacing", direction: "lower", subjectId: input.subjectId },
-      origin: "our_action",
-      confidence: measuredConfidence,
-      evidence: { pattern: "scale_backfired", occurrences: 1, totalRuns: 1, ...(input.subjectName ? { subjectName: input.subjectName } : {}) },
-    };
-  }
-  if (cut && input.outcome === "positive") {
-    return {
-      kind: "calibration",
-      key: { scope: "entity", dimension: "budget", direction: "lower", subjectId: input.subjectId },
-      origin: "our_action",
-      confidence: measuredConfidence,
-      evidence: { pattern: "cut_worked", occurrences: 1, totalRuns: 1, ...(input.subjectName ? { subjectName: input.subjectName } : {}) },
-    };
-  }
-  return null;
-}
+// NOTA (v3): o aprendizado por-ENTIDADE foi cortado — não há mais lição de calibração
+// entity-scope (`detectCalibrationCandidate`/`contradictedLessonKey`, removidos). Todo outcome
+// medido vira EVIDÊNCIA no ledger (`classifyOutcomeEvidence`) e a lição nasce a nível de CONTA
+// (`distillAccountPriors`, ≥ K entidades). `CalibrationInput` sobrevive como input dessa
+// classificação.
 
 /** Config mínima de uma entidade num instante — p/ detectar mudança manual (S4). */
 export interface EntityConfigDelta {
@@ -433,25 +409,6 @@ export function manualChangeToAction(
     const delta = (cb - pb) / pb;
     if (delta >= MANUAL_BUDGET_CHANGE_MIN_PCT) return { actionType: "adjust_budget", params: { mode: "increase" } };
     if (delta <= -MANUAL_BUDGET_CHANGE_MIN_PCT) return { actionType: "adjust_budget", params: { mode: "decrease" } };
-  }
-  return null;
-}
-
-/**
- * Quando um outcome CONTRADIZ a conclusão de uma lição existente (ex: escalamos e deu
- * CERTO, apesar de uma lição dizer "não escale aqui"; ou cortamos e piorou, apesar de
- * "cortar aqui ajuda") — a chave da lição a enfraquecer. Null = nada a contradizer.
- */
-export function contradictedLessonKey(input: CalibrationInput): SemanticKey | null {
-  const scale = isScaleAction(input.actionType, input.params);
-  const cut = isPause(input.actionType, input.params) || actionEffect(input.actionType, input.params) === "budget_down";
-  if (scale && input.outcome === "positive") {
-    // escalar deu certo → enfraquece uma eventual "não escale aqui".
-    return { scope: "entity", dimension: "pacing", direction: "lower", subjectId: input.subjectId };
-  }
-  if (cut && input.outcome === "negative") {
-    // cortar piorou → enfraquece uma eventual "cortar aqui ajuda".
-    return { scope: "entity", dimension: "budget", direction: "lower", subjectId: input.subjectId };
   }
   return null;
 }
@@ -585,10 +542,13 @@ export function proposalForCalibration(kind: LessonKind, dimension: LessonDimens
   return CALIBRATION_THRESHOLD_PROPOSAL[dimension] ?? null;
 }
 
+/** Fator de arredondamento a 2 casas decimais (sem número mágico solto — §13). */
+const ROUND_2DP_FACTOR = 100;
+
 /** Novo valor do limiar no aceite: reduz `current` por `stepPct`, respeitando o piso. Puro. */
 export function nextThresholdValue(current: number, proposal: ThresholdProposal): number {
   const reduced = current * (1 - proposal.stepPct);
-  return Math.max(proposal.minValue, Math.round(reduced * 100) / 100);
+  return Math.max(proposal.minValue, Math.round(reduced * ROUND_2DP_FACTOR) / ROUND_2DP_FACTOR);
 }
 
 // ─── Redator (LLM só traduz a candidata; fallback determinístico) ──────────
@@ -746,18 +706,36 @@ export interface SelectedLessons {
   readonly guards: readonly LessonGuard[];
 }
 
+/** Ressalva observacional (ex: tracking suspeito) — entra no prompt como CONTEXTO mesmo com
+ *  confiança baixa (teto observacional 0,60 < limiar do prompt). Sem isto a seção "Ressalvas
+ *  observadas" do bloco nunca teria conteúdo (o detector só produz confiança ≤ 0,30). */
+function isObservationalCaveat(l: StoredLesson): boolean {
+  return l.origin === "observational" && l.key.dimension === "tracking";
+}
+
+/** Hipótese de CONTA na direção conservadora (lower) ainda NÃO confirmada. Alimenta o guard
+ *  determinístico (rebaixa escala → investigar) INDEPENDENTE da confiança: um prior medido forte
+ *  já nasce ≥ 0,744 e antes ia só pro prompt (influência mediada pelo LLM), deixando a escala sem
+ *  rede determinística. Confirmada sai do guard — o dono endossou, então o texto do prompt basta
+ *  (não travamos escala pra sempre). */
+function isAccountLowerHypothesis(l: StoredLesson): boolean {
+  return !l.confirmedByHuman && l.key.scope === "account" && l.key.direction === "lower";
+}
+
 /**
- * Divide as lições ativas em: `prompt` (confirmadas OU confiança ≥ limiar — entram no
- * texto do analista, rotuladas, com teto top-K) e `guards` (hipóteses não-confirmadas —
- * só influência assimétrica/silenciosa). Disciplina do brief: nunca despeja o firehose.
+ * Divide as lições ativas em: `prompt` (confirmadas, confiança ≥ limiar OU ressalva observacional
+ * — entram no texto do analista, rotuladas, com teto top-K) e `guards` (hipótese de conta lower
+ * não-confirmada — rede assimétrica determinística contra escalar). Uma lição pode ir aos DOIS
+ * (prior forte de conta = texto + guard, reforço conservador coerente). Disciplina do brief:
+ * nunca despeja o firehose.
  */
 export function selectLessonsForBrief(lessons: readonly StoredLesson[], topK: number): SelectedLessons {
   const active = lessons.filter((l) => l.lifecycle === "active");
   const prompt: StoredLesson[] = [];
   const guards: LessonGuard[] = [];
   for (const l of active) {
-    if (l.confirmedByHuman || l.confidence >= PROMPT_CONFIDENCE_THRESHOLD) prompt.push(l);
-    else guards.push({ id: l.id, key: l.key });
+    if (l.confirmedByHuman || l.confidence >= PROMPT_CONFIDENCE_THRESHOLD || isObservationalCaveat(l)) prompt.push(l);
+    if (isAccountLowerHypothesis(l)) guards.push({ id: l.id, key: l.key });
   }
   prompt.sort((a, b) => {
     if (a.confirmedByHuman !== b.confirmedByHuman) return a.confirmedByHuman ? -1 : 1;

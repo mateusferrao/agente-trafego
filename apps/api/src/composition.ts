@@ -262,6 +262,7 @@ export function buildContainer(logger?: OnboardingLogger): Container {
         zombieMinSpend: env.ANALYSIS_QUALITY_ZOMBIE_MIN_SPEND,
         marginalCpaWorsenPct: env.ANALYSIS_QUALITY_MARGINAL_CPA_WORSEN_PCT,
       },
+      advisoryDismissCooldownDays: env.LEARNING_ADVISORY_DISMISS_COOLDOWN_DAYS,
     }),
     runs,
     dashboard: createDashboardService({

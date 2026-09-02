@@ -6,6 +6,7 @@ import { UiBadge, UiButton, UiConfirmDialogService, UiEmptyState, UiSpinner } fr
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import { LearningsApiService } from '@core/api/learnings-api.service';
 import { AGENT_NAME } from '@core/brand';
+import { money } from '@app/shared/format';
 import type { LearningsList } from '@core/api/generated';
 
 type Learning = LearningsList['items'][number];
@@ -32,10 +33,12 @@ const ORIGIN_LABEL: Record<Learning['origin'], string> = {
 
 /**
  * Aba "Aprendizados" — aba própria do detalhe da conta (entre "Agente" e "Criativos"). Quatro
- * zonas CONDICIONAIS (só aparece o que existe): (1) "Precisam de você" = propostas de ajuste
- * (aprovar/rejeitar); (2) "Oportunidades" = aviso de teto (ajustar nas config / dispensar);
- * (3) "O que o agente já sabe" = priors ativos (confirmar/esquecer; ajuste aplicado → reverter);
- * (4) "Arquivados" = recolhido, com busca + restaurar. Cópia didática distingue os 3 tipos.
+ * zonas: (1) "Precisam de você" = propostas de ajuste (aprovar/rejeitar); (2) "Oportunidades" =
+ * aviso de teto (ajustar nas config / dispensar); (3) "O que o agente já sabe" = priors ativos
+ * (confirmar/esquecer; ajuste aplicado → reverter); (4) "Arquivados" = recolhido, com busca +
+ * restaurar. As zonas 1, 2 e 4 são CONDICIONAIS (só aparecem com conteúdo); a zona 3 renderiza
+ * SEMPRE — é ela que hospeda o empty-state global ("Ainda estou conhecendo esta conta…"). Cópia
+ * didática distingue os 3 tipos de aprendizado.
  * Rota `accounts/:id/aprendizados` — o agente é resolvido do accountId (mesmo padrão das abas irmãs).
  */
 @Component({
@@ -93,7 +96,7 @@ const ORIGIN_LABEL: Record<Learning['origin'], string> = {
               <div class="flex flex-col gap-2 rounded-md border border-line/60 bg-soft/40 p-4">
                 <p class="text-sm text-ink">
                   Seu teto de aumento de verba hoje é {{ o.cappedPct }}%, mas a análise quis {{ o.wantedPct }}% numa
-                  campanha que a conta indica que compensaria — cerca de R$ {{ major(o) }} por dia segurados.
+                  campanha que a conta indica que compensaria — cerca de {{ major(o) }} por dia segurados.
                 </p>
                 <div class="flex flex-wrap gap-2 pt-1">
                   <a appButton size="sm" variant="secondary" [routerLink]="['/accounts', accountId, 'agente']">Ajustar nas configurações →</a>
@@ -334,9 +337,9 @@ export class AgentLearnings implements OnInit {
     }, 'aprendizado atualizado');
   }
 
-  /** R$ (major) do valor bloqueado pelo teto — foregoneMinor é a unidade MENOR da moeda. */
+  /** Valor/dia bloqueado pelo teto, formatado na MOEDA da conta (símbolo/locale via money()) — sem R$ fixo. */
   protected major(o: Opportunity): string {
-    return (o.foregoneMinor / 100).toLocaleString('pt-BR', { maximumFractionDigits: 0 });
+    return money(o.foregoneMajor, o.currency);
   }
 
   protected tierTone(l: Learning): 'neutral' | 'info' | 'success' {

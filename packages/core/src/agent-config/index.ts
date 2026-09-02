@@ -210,12 +210,36 @@ export const AUTONOMY_RANK: Readonly<Record<AutonomyLevel, number>> = {
 export const CUSTOM_CONVERSION_REQUIRED_ERROR =
   "Escolha qual conversão personalizada usar como resultado do negócio.";
 
+/** Nenhuma coluna mudou (casos de erro/no-op — o estado volta inalterado). */
+const NO_COLUMNS_CHANGED: AgentColumnsChanged = {
+  goals: false, businessContext: false, guidance: false, persona: false, tone: false,
+  systemPrompt: false, cadence: false, modelConfig: false, autonomyPolicy: false,
+  notifyPolicy: false, posture: false,
+};
+
+/** Quais COLUNAS de `agents` mudaram — a casca faz UPDATE só das true (cirúrgico, F-worker-1). */
+export interface AgentColumnsChanged {
+  readonly goals: boolean;
+  readonly businessContext: boolean;
+  readonly guidance: boolean;
+  readonly persona: boolean;
+  readonly tone: boolean;
+  readonly systemPrompt: boolean;
+  readonly cadence: boolean;
+  readonly modelConfig: boolean;
+  readonly autonomyPolicy: boolean;
+  readonly notifyPolicy: boolean;
+  readonly posture: boolean;
+}
+
 /** Resultado do resolver — decisão tipada (§13: sem exceção no core). */
 export interface AgentConfigResolution {
   /** próximo estado (mesclado). Em caso de `error`, é o `state` inalterado. */
   readonly next: AgentConfigState;
   /** rótulos dos campos que mudaram (p/ o eco do chat). */
   readonly changed: readonly string[];
+  /** colunas de `agents` que mudaram (a casca escreve só essas — UPDATE cirúrgico). */
+  readonly columnsChanged: AgentColumnsChanged;
   /** algum campo relevante à ANÁLISE mudou → força 1 deep run (cadência NÃO conta). */
   readonly runRelevantChanged: boolean;
   /** a cadência mudou → re-sincronizar o schedule. */
@@ -245,6 +269,7 @@ export function resolveAgentConfigChange(
     return {
       next: state,
       changed: [],
+      columnsChanged: NO_COLUMNS_CHANGED,
       runRelevantChanged: false,
       cadenceChanged: false,
       notifyPolicyChanged: false,
@@ -276,6 +301,7 @@ export function resolveAgentConfigChange(
     return {
       next: state,
       changed: [],
+      columnsChanged: NO_COLUMNS_CHANGED,
       runRelevantChanged: false,
       cadenceChanged: false,
       notifyPolicyChanged: false,
@@ -367,7 +393,25 @@ export function resolveAgentConfigChange(
     guardrailsWeaken(state.guardrails, nextGuardrails) ||
     autonomyPolicyWeakens(state.autonomyPolicy, nextAutonomy);
 
-  return { next, changed, runRelevantChanged, cadenceChanged, notifyPolicyChanged, toolBindingsChanged, weakensSafety };
+  // colunas de `agents` que REALMENTE mudaram — a casca escreve só essas (UPDATE cirúrgico),
+  // em vez de reescrever a linha inteira (que tocava autonomy_policy/goals mesmo num patch só de
+  // quality e abria janela de lost-update com edições concorrentes). (F-worker-1)
+  const columnsChanged: AgentColumnsChanged = {
+    goals: goalsChanged,
+    businessContext: businessContextChanged,
+    guidance: guidanceChanged,
+    persona: personaChanged,
+    tone: toneChanged,
+    systemPrompt: systemPromptChanged,
+    cadence: cadenceChanged,
+    // a janela de análise mora DENTRO do model_config (windowDays) → mudou a janela = mudou a coluna.
+    modelConfig: modelConfigTouched || windowChanged,
+    autonomyPolicy: autonomyChanged,
+    notifyPolicy: notifyPolicyChanged,
+    posture: postureChanged,
+  };
+
+  return { next, changed, columnsChanged, runRelevantChanged, cadenceChanged, notifyPolicyChanged, toolBindingsChanged, weakensSafety };
 }
 
 /** Mescla o patch de notificação (leaf-a-leaf) no estado atual. Sempre retorna o shape cheio. */

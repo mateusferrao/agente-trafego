@@ -822,12 +822,13 @@ describe("aprendizado no chat (S7): list_learnings sempre; confirm_learning gate
     expect(out.toLowerCase()).toContain("confirmado");
   });
 
-  it("kill-switch ON + não achou → orienta list_learnings, sem update", async () => {
+  it("kill-switch ON + não achou → erro amigável da casca compartilhada, sem update (F-chat-3)", async () => {
     const { deps } = makeDeps(() => null);
     const update = vi.fn();
     (deps as { db: unknown }).db = learningDb(null, update);
     const out = await confirmTool(deps, { ...CTX, configViaChat: true }).invoke({ learningId: "nope" });
     expect(update).not.toHaveBeenCalled();
-    expect(out).toContain("list_learnings");
+    // agora reusa @trafego/agent-config (mesma mensagem do site) em vez de texto inline do chat.
+    expect(out.toLowerCase()).toContain("não encontrado");
   });
 });

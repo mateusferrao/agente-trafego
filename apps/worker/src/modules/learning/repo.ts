@@ -48,9 +48,9 @@ export interface LearningRepo {
   /** Ledger de evidência (v3): linhas medidas do agente, base da destilação cross-seccional. */
   loadEvidence(orgId: string, agentId: string): Promise<AccountEvidenceRow[]>;
   /** Série de CTR por-campanha (>= `sinceDate`, cronológica) p/ o detector de timing de fadiga. */
-  loadCampaignCtrSeries(adAccountId: string, sinceDate: string): Promise<CampaignFatigueSeries[]>;
+  loadCampaignCtrSeries(orgId: string, adAccountId: string, sinceDate: string): Promise<CampaignFatigueSeries[]>;
   /** Série diária da CONTA (gasto + conversões, cronológica) p/ o detector de lag de conversão. */
-  loadAccountConversionSeries(adAccountId: string, sinceDate: string): Promise<AccountConversionDay[]>;
+  loadAccountConversionSeries(orgId: string, adAccountId: string, sinceDate: string): Promise<AccountConversionDay[]>;
   /** Atualiza um prior de CONTA já materializado: fixa a confiança destilada + a contagem de
    *  entidades de suporte (`reinforceCount` = S, não incrementa) e reativa. Anexa a proposta de
    *  limiar quando fornecida (opt-in, pendente). Idempotente — o serviço só chama quando S
@@ -108,7 +108,9 @@ export function createLearningRepo(db: Database): LearningRepo {
             eq(adAccounts.status, "active"),
             eq(adAccounts.activityState, "active"),
             // kill-switch do aprendizado (v3, default ON): só desliga quando explicitamente false.
-            sql`coalesce((${agents.modelConfig} -> 'learning' ->> 'enabled')::boolean, true) = true`,
+            // Comparação jsonb (sem cast ::boolean) — um valor não-booleano ("on", 1) NÃO derruba a
+            // query org-wide; só o literal false desativa (ausência/qualquer outro = ligado).
+            sql`(${agents.modelConfig} -> 'learning' -> 'enabled') is distinct from 'false'::jsonb`,
           ),
         );
       return rows;
@@ -172,11 +174,11 @@ export function createLearningRepo(db: Database): LearningRepo {
       return rows;
     },
 
-    async loadCampaignCtrSeries(adAccountId, sinceDate) {
+    async loadCampaignCtrSeries(orgId, adAccountId, sinceDate) {
       const rows = await db
         .select({ entityId: insightsSnapshots.entityId, date: insightsSnapshots.date, metrics: insightsSnapshots.metricsJson })
         .from(insightsSnapshots)
-        .where(and(eq(insightsSnapshots.adAccountId, adAccountId), eq(insightsSnapshots.entityLevel, CAMPAIGN_LEVEL), gte(insightsSnapshots.date, sinceDate)))
+        .where(and(eq(insightsSnapshots.orgId, orgId), eq(insightsSnapshots.adAccountId, adAccountId), eq(insightsSnapshots.entityLevel, CAMPAIGN_LEVEL), gte(insightsSnapshots.date, sinceDate)))
         .orderBy(insightsSnapshots.entityId, insightsSnapshots.date);
       const byCampaign = new Map<string, number[]>();
       for (const r of rows) {
@@ -189,11 +191,11 @@ export function createLearningRepo(db: Database): LearningRepo {
       return [...byCampaign.entries()].map(([campaignId, ctrByDay]) => ({ campaignId, ctrByDay }));
     },
 
-    async loadAccountConversionSeries(adAccountId, sinceDate) {
+    async loadAccountConversionSeries(orgId, adAccountId, sinceDate) {
       const rows = await db
         .select({ date: insightsSnapshots.date, metrics: insightsSnapshots.metricsJson })
         .from(insightsSnapshots)
-        .where(and(eq(insightsSnapshots.adAccountId, adAccountId), eq(insightsSnapshots.entityLevel, CAMPAIGN_LEVEL), gte(insightsSnapshots.date, sinceDate)))
+        .where(and(eq(insightsSnapshots.orgId, orgId), eq(insightsSnapshots.adAccountId, adAccountId), eq(insightsSnapshots.entityLevel, CAMPAIGN_LEVEL), gte(insightsSnapshots.date, sinceDate)))
         .orderBy(insightsSnapshots.date);
       // conta = soma das campanhas por dia (a série da conta não é persistida à parte).
       const byDay = new Map<string, { spend: number; conversions: number }>();

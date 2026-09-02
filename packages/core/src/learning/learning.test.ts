@@ -10,10 +10,8 @@ import {
   distillAccountPriors,
   computeOutcome,
   confidenceTier,
-  contradictedLessonKey,
   decayCutoffs,
   describeLessonForRedactor,
-  detectCalibrationCandidate,
   detectFactCandidates,
   fallbackLessonText,
   lessonKeyOf,
@@ -223,36 +221,6 @@ describe("computeOutcome", () => {
   });
 });
 
-describe("detectCalibrationCandidate / contradictedLessonKey", () => {
-  it("escala que deu errado → lição de cautela (pacing/lower, confiança forte)", () => {
-    const c = detectCalibrationCandidate({ actionType: "adjust_budget", params: { mode: "increase" }, outcome: "negative", subjectId: "c1", subjectName: "X" });
-    expect(c?.kind).toBe("calibration");
-    expect(c?.key).toMatchObject({ scope: "entity", dimension: "pacing", direction: "lower", subjectId: "c1" });
-    expect(c?.origin).toBe("our_action");
-    // uma medição de ação nossa começa mais forte que uma observação única (atribuição),
-    // mas só reforço repetido cruza o teto observacional / o limiar do prompt.
-    const singleObservational = computeConfidence(null, { type: "observe", occurrenceRatio: 1, origin: "observational" });
-    expect(c?.confidence ?? 0).toBeGreaterThan(singleObservational);
-  });
-  it("corte que deu certo → lição budget/lower", () => {
-    const c = detectCalibrationCandidate({ actionType: "pause_entity", outcome: "positive", subjectId: "c1" });
-    expect(c?.key.dimension).toBe("budget");
-    expect(c?.evidence.pattern).toBe("cut_worked");
-  });
-  it("combinações neutras/positivas de escala → sem lição de calibração", () => {
-    expect(detectCalibrationCandidate({ actionType: "adjust_budget", params: { mode: "increase" }, outcome: "positive", subjectId: "c1" })).toBeNull();
-    expect(detectCalibrationCandidate({ actionType: "adjust_budget", params: { mode: "increase" }, outcome: "neutral", subjectId: "c1" })).toBeNull();
-  });
-  it("escalar deu certo → chave a contradizer 'não escale aqui'", () => {
-    const k = contradictedLessonKey({ actionType: "resume_entity", outcome: "positive", subjectId: "c1" });
-    expect(k).toMatchObject({ scope: "entity", dimension: "pacing", direction: "lower", subjectId: "c1" });
-  });
-  it("cortar piorou → chave a contradizer 'cortar aqui ajuda'", () => {
-    const k = contradictedLessonKey({ actionType: "pause_entity", outcome: "negative", subjectId: "c1" });
-    expect(k).toMatchObject({ scope: "entity", dimension: "budget", direction: "lower", subjectId: "c1" });
-  });
-});
-
 describe("manualChangeToAction", () => {
   it("ativo → pausado = pausa", () => {
     expect(manualChangeToAction({ status: "active" }, { status: "paused" })).toEqual({ actionType: "pause_entity", params: {} });
@@ -369,13 +337,42 @@ function lesson(partial: Partial<StoredLesson> & Pick<StoredLesson, "id" | "conf
 }
 
 describe("selectLessonsForBrief", () => {
-  it("confirmada/alta confiança vai pro prompt; baixa vira guard", () => {
+  it("confirmada/alta confiança vai pro prompt; hipótese de conta lower vira guard (mesmo forte)", () => {
     const confirmed = lesson({ id: "a", confidence: 0.4, confirmedByHuman: true });
-    const highConf = lesson({ id: "b", confidence: 0.8 });
+    const highConf = lesson({ id: "b", confidence: 0.8 }); // account:pacing:lower não-confirmada
     const lowHyp = lesson({ id: "c", confidence: 0.3 });
     const { prompt, guards } = selectLessonsForBrief([confirmed, highConf, lowHyp], 10);
     expect(prompt.map((p) => p.id).sort()).toEqual(["a", "b"]);
-    expect(guards.map((g) => g.id)).toEqual(["c"]);
+    // F-core-3: prior de conta lower não-confirmado alimenta o guard SEM depender da confiança —
+    // o forte (b, 0,8) também, não só o fraco (c, 0,3). Confirmado (a) NÃO vira guard.
+    expect(guards.map((g) => g.id).sort()).toEqual(["b", "c"]);
+  });
+
+  it("F-core-3: prior de conta lower forte recém-nascido (0,744) vai a prompt E guard", () => {
+    const fresh = lesson({ id: "f", confidence: 0.74375, key: { scope: "account", dimension: "budget", direction: "lower" } });
+    const { prompt, guards } = selectLessonsForBrief([fresh], 10);
+    expect(prompt.map((p) => p.id)).toEqual(["f"]);
+    expect(guards.map((g) => g.id)).toEqual(["f"]);
+  });
+
+  it("F-core-3: prior de conta lower CONFIRMADO sai do guard (só prompt)", () => {
+    const conf = lesson({ id: "k", confidence: 0.9, confirmedByHuman: true, key: { scope: "account", dimension: "budget", direction: "lower" } });
+    const { prompt, guards } = selectLessonsForBrief([conf], 10);
+    expect(prompt.map((p) => p.id)).toEqual(["k"]);
+    expect(guards).toEqual([]);
+  });
+
+  it("F-core-3: prior de conta RAISE (agressivo) nunca vira guard", () => {
+    const raise = lesson({ id: "r", confidence: 0.3, key: { scope: "account", dimension: "pacing", direction: "raise" } });
+    const { guards } = selectLessonsForBrief([raise], 10);
+    expect(guards).toEqual([]);
+  });
+
+  it("F-core-4: ressalva de tracking observacional (0,30) entra no prompt como contexto, não vira guard", () => {
+    const tracking = lesson({ id: "t", confidence: 0.3, origin: "observational", key: { scope: "account", dimension: "tracking", direction: "neutral" } });
+    const { prompt, guards } = selectLessonsForBrief([tracking], 10);
+    expect(prompt.map((p) => p.id)).toEqual(["t"]); // apareceria "explorando", mas aparece
+    expect(guards).toEqual([]); // neutral não alimenta o guard
   });
 
   it("respeita o teto top-K no prompt (ordena por confiança)", () => {

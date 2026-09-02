@@ -158,14 +158,28 @@ export function createLearningService(deps: LearningServiceDeps) {
     }
   }
 
-  /** O redator LLM traduz a candidata ESTRUTURADA numa frase PT. Não decide nada. */
+  /**
+   * O redator LLM só dá FLUÊNCIA à lição — não a RE-DERIVA. Ele reescreve o sentido
+   * determinístico (`fallbackLessonText`) em linguagem natural de conta, SEM mudar o
+   * significado. Sem esta âncora, um modelo barato narra os campos crus do payload
+   * (ex.: "o orçamento foi reduzido 3 vezes") e perde — ou inverte — o desfecho aprendido
+   * (que cortar/escalar COMPENSOU); o padrão medido entra no prompt do analista acima do
+   * dado atual, então uma inversão é ativamente nociva.
+   */
   async function redactLesson(payload: RedactorInput, orgId: string, runId: string | undefined): Promise<string> {
+    const meaning = fallbackLessonText(payload);
     const system = [
-      "Você escreve UMA frase curta, em português do Brasil, descrevendo um PADRÃO observado numa conta de anúncios.",
-      "Regras: trate como observação/hipótese (nunca afirme causa nem sucesso); sem markdown; sem emoji;",
-      "linguagem simples (o leitor não é técnico); no máximo uma frase. NÃO invente dados além do payload.",
+      "Você reescreve, em português do Brasil, UMA frase que descreve um PADRÃO observado numa conta de anúncios,",
+      "deixando-a natural e clara para um leitor NÃO técnico.",
+      "Regras invioláveis: NÃO mude o sentido; NÃO inverta a direção (o que compensa vs. o que piora);",
+      "trate como observação/hipótese (nunca afirme causa nem sucesso garantido); NÃO invente dados;",
+      "sem markdown; sem emoji; no máximo uma frase.",
     ].join(" ");
-    const user = `Payload (dados do padrão):\n${JSON.stringify(payload)}\n\nEscreva só a frase.`;
+    const user = [
+      `Sentido a transmitir (preserve o significado, só melhore a redação): "${meaning}"`,
+      `Dados de apoio (não contradiga): ${JSON.stringify(payload)}`,
+      "Reescreva só a frase.",
+    ].join("\n\n");
     const res = await deps.llm.complete({
       model: config.redactorModel,
       messages: [
@@ -224,10 +238,10 @@ export function createLearningService(deps: LearningServiceDeps) {
     if (postTo >= dateStr(clock())) return false;
     const isPauseLike = rec.actionType === "pause_entity" || rec.actionType === "set_status";
 
-    const entityPre = await outcomeRepo.loadWindow(rec.adAccountId, rec.entityId, preFrom, preTo);
-    const entityPost = await outcomeRepo.loadWindow(rec.adAccountId, rec.entityId, postFrom, postTo);
-    const accountPre = isPauseLike ? await outcomeRepo.loadWindow(rec.adAccountId, null, preFrom, preTo) : undefined;
-    const accountPost = isPauseLike ? await outcomeRepo.loadWindow(rec.adAccountId, null, postFrom, postTo) : undefined;
+    const entityPre = await outcomeRepo.loadWindow(agent.orgId, rec.adAccountId, rec.entityId, preFrom, preTo);
+    const entityPost = await outcomeRepo.loadWindow(agent.orgId, rec.adAccountId, rec.entityId, postFrom, postTo);
+    const accountPre = isPauseLike ? await outcomeRepo.loadWindow(agent.orgId, rec.adAccountId, null, preFrom, preTo) : undefined;
+    const accountPost = isPauseLike ? await outcomeRepo.loadWindow(agent.orgId, rec.adAccountId, null, postFrom, postTo) : undefined;
 
     const outcome = computeOutcome({
       actionType: rec.actionType,
@@ -300,14 +314,19 @@ export function createLearningService(deps: LearningServiceDeps) {
     // deploy). Config-snapshots são esparsos (cadência da análise) → poucas mudanças por janela,
     // e o dedup por dedupeRef evita re-contar a mesma (o custo de re-scan é baixo).
     const notBefore = dateStr(addDays(today, -(buffer + window + window)));
-    const changes = await outcomeRepo.loadMaturedConfigChanges(agent.adAccountId, notBefore, notAfter);
+    const changes = await outcomeRepo.loadMaturedConfigChanges(agent.orgId, agent.adAccountId, notBefore, notAfter);
     const rows: LearningEvidenceInsert[] = [];
     for (const change of changes) {
       try {
         const action = manualChangeToAction(change.prev, change.curr);
         if (!action) continue;
         const changeAt = new Date(`${change.changeDate}T00:00:00.000Z`);
-        // foi mudança NOSSA? então não é do gestor — pula (não dupla-conta com o Sinal A).
+        // foi mudança NOSSA? então não é do gestor — pula (não dupla-conta com o Sinal A). Janela
+        // de exclusão = cadência do snapshot (±1 dia): casa o instante da nossa tool_call com a data
+        // do snapshot que capturou a mudança. NÃO alargamos de propósito (F-core-10): uma janela
+        // maior arriscaria atribuir a NÓS uma mudança manual legítima só por termos agido na mesma
+        // entidade dias antes; o pior caso hoje (nossa ação ≥2d antes) gera só UMA linha de ledger
+        // duplicada por entidade — inócua (não infla a contagem de entidades distintas do prior).
         if (await outcomeRepo.hasAppliedActionInRange(agent.agentId, change.entityId, addDays(changeAt, -1), addDays(changeAt, 1))) continue;
 
         const preFrom = dateStr(addDays(changeAt, -window));
@@ -315,10 +334,10 @@ export function createLearningService(deps: LearningServiceDeps) {
         const postFrom = dateStr(addDays(changeAt, buffer));
         const postTo = dateStr(addDays(changeAt, buffer + window - 1));
         const isPauseLike = action.actionType === "pause_entity" || action.actionType === "set_status";
-        const entityPre = await outcomeRepo.loadWindow(agent.adAccountId, change.entityId, preFrom, preTo);
-        const entityPost = await outcomeRepo.loadWindow(agent.adAccountId, change.entityId, postFrom, postTo);
-        const accountPre = isPauseLike ? await outcomeRepo.loadWindow(agent.adAccountId, null, preFrom, preTo) : undefined;
-        const accountPost = isPauseLike ? await outcomeRepo.loadWindow(agent.adAccountId, null, postFrom, postTo) : undefined;
+        const entityPre = await outcomeRepo.loadWindow(agent.orgId, agent.adAccountId, change.entityId, preFrom, preTo);
+        const entityPost = await outcomeRepo.loadWindow(agent.orgId, agent.adAccountId, change.entityId, postFrom, postTo);
+        const accountPre = isPauseLike ? await outcomeRepo.loadWindow(agent.orgId, agent.adAccountId, null, preFrom, preTo) : undefined;
+        const accountPost = isPauseLike ? await outcomeRepo.loadWindow(agent.orgId, agent.adAccountId, null, postFrom, postTo) : undefined;
         const outcome = computeOutcome({ actionType: action.actionType, params: action.params, entityPre, entityPost, ...(accountPre ? { accountPre } : {}), ...(accountPost ? { accountPost } : {}) });
 
         rows.push(...evidenceRowsFor(agent, change.entityId, "human_manual", `manual:${change.entityId}:${change.changeDate}`, outcome, changeAt, action));
@@ -392,8 +411,8 @@ export function createLearningService(deps: LearningServiceDeps) {
   async function distillTemporal(agent: LearnableAgent, redactBudget: { remaining: number }): Promise<DistillResult> {
     const since = dateStr(addDays(clock(), -config.temporalLookbackDays));
     const [ctrSeries, convSeries] = await Promise.all([
-      repo.loadCampaignCtrSeries(agent.adAccountId, since),
-      repo.loadAccountConversionSeries(agent.adAccountId, since),
+      repo.loadCampaignCtrSeries(agent.orgId, agent.adAccountId, since),
+      repo.loadAccountConversionSeries(agent.orgId, agent.adAccountId, since),
     ]);
     const candidates = [detectFatigueTimingPrior(ctrSeries), detectConversionLagPrior(convSeries)].filter(
       (c): c is LessonCandidate => c !== null,

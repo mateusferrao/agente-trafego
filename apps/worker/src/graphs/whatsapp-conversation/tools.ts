@@ -6,8 +6,7 @@
 import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { adAccounts, agentMemory, agents, conversations, playbookRules } from "@trafego/db";
-import { computeConfidence, LEARNING_MEMORY_TYPES } from "@trafego/core";
+import { adAccounts, agents, conversations, playbookRules } from "@trafego/db";
 import {
   ACTION_PARAM_AMOUNT_MINOR,
   AGENT_NAME,
@@ -57,15 +56,15 @@ import {
   type PosturePatch,
 } from "@trafego/core";
 import type { Action, OrgId } from "@trafego/shared/types";
-import { acceptThreshold, dismissAdvisory, forgetLesson, rejectProposal as rejectProposalAction, ADVISORY_DISMISS_COOLDOWN_DAYS, GUARDRAIL_OPPORTUNITY_KEY } from "@trafego/agent-config";
+import { acceptThreshold, confirmLesson, dismissAdvisory, forgetLesson, rejectProposal as rejectProposalAction, GUARDRAIL_OPPORTUNITY_KEY } from "@trafego/agent-config";
 import type { WorkerDeps } from "../../composition.js";
 import { createRunDispatcher } from "../../modules/dispatch/run-dispatcher.js";
 import { actorLabel } from "../../modules/conversation/actor.js";
 import { makeReadTools, type ReadToolContext } from "./read-data.js";
 import type { PendingPlaybookOp } from "./state.js";
 
-/** Cooldown (ms) da dispensa por chat — derivado da fonte única de dias (@trafego/agent-config). */
-const ADVISORY_DISMISS_COOLDOWN_MS = ADVISORY_DISMISS_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
+/** ms por dia — deriva o cooldown (dias configuráveis via env) em milissegundos. */
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 export interface ConversationToolContext extends ReadToolContext {
   /** quem fala no turno — DM (contato verificado) ou grupo (participante). Alvo do
@@ -209,30 +208,13 @@ export function makeConversationTools(
   //    eco+confirma acontece na conversa (o Roy propõe em texto, o dono diz "sim", o Roy
   //    chama). Gated pelo kill-switch de auto-config por chat (OFF → confirma pelo site).
   const confirmLearning = tool(
+    // reusa a casca ÚNICA @trafego/agent-config (mesma do site) — sem duplicar a lógica de
+    // confiança/lifecycle (F-chat-3). Só o texto amigável do chat fica aqui.
     async (input: { learningId: string }) => {
       if (!ctx.configViaChat) return "A confirmação de aprendizado é pelo site por enquanto (ajuste de config por chat está desligado).";
-      const [row] = await deps.db
-        .select({ id: agentMemory.id, confidence: agentMemory.confidence, content: agentMemory.content })
-        .from(agentMemory)
-        .where(
-          and(
-            eq(agentMemory.id, input.learningId),
-            eq(agentMemory.orgId, ctx.orgId),
-            eq(agentMemory.agentId, ctx.agentId),
-            inArray(agentMemory.type, [...LEARNING_MEMORY_TYPES]),
-            isNotNull(agentMemory.semanticKey),
-            sql`${agentMemory.lifecycle} <> 'archived'`,
-          ),
-        )
-        .limit(1);
-      if (!row) return "Não achei esse aprendizado. Use list_learnings pra ver os ids atuais.";
-      const confidence = computeConfidence(row.confidence, { type: "confirm" });
-      await deps.db
-        .update(agentMemory)
-        .set({ confirmedByHuman: true, confidence, lifecycle: "active", updatedAt: sql`now()` })
-        .where(eq(agentMemory.id, row.id));
-      logger.debug({ agentId: ctx.agentId, learningId: row.id }, "tool:confirm_learning");
-      return "Beleza, guardei isso como confirmado — vou levar em conta nas próximas análises.";
+      const r = await confirmLesson(deps.db, { orgId: ctx.orgId as OrgId, agentId: ctx.agentId, lessonId: input.learningId });
+      if (r.ok) logger.debug({ agentId: ctx.agentId, learningId: input.learningId }, "tool:confirm_learning");
+      return r.ok ? "Beleza, guardei isso como confirmado — vou levar em conta nas próximas análises." : r.error;
     },
     {
       name: "confirm_learning",
@@ -300,7 +282,7 @@ export function makeConversationTools(
   const dismissAdvisoryTool = tool(
     async () => {
       if (!ctx.configViaChat) return gatedOffMsg;
-      const until = new Date(Date.now() + ADVISORY_DISMISS_COOLDOWN_MS);
+      const until = new Date(Date.now() + deps.learning.advisoryDismissCooldownDays * MS_PER_DAY);
       const r = await dismissAdvisory(deps.db, { orgId: ctx.orgId as OrgId, agentId: ctx.agentId, key: GUARDRAIL_OPPORTUNITY_KEY, dismissedUntil: until });
       if (r.ok) logger.debug({ agentId: ctx.agentId }, "tool:dismiss_advisory");
       return r.ok ? "Ok, dispenso esse aviso por enquanto. Se voltar a valer a pena, eu te aviso de novo." : r.error;

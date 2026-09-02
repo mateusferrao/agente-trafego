@@ -32,6 +32,9 @@ export function buildLessonRow(candidate: LessonCandidate, opts: LessonRowOpts) 
     origin: candidate.origin,
     semanticKey: lessonKeyOf(candidate.key),
     confirmedByHuman: false,
+    // reinforceCount já nasce = nº de evidências de suporte (S p/ prior de conta) — senão o prior
+    // de conta insere com 0 e o PRÓXIMO tick sempre re-escreve 1x (S>0) sem suporte novo. (F-core-8)
+    reinforceCount: candidate.evidence.occurrences,
     lastReinforcedAt: opts.evidenceAt,
     ...(opts.sourceRunId ? { sourceRunId: opts.sourceRunId } : {}),
     ...(opts.sourceRecommendationId ? { sourceRecommendationId: opts.sourceRecommendationId } : {}),

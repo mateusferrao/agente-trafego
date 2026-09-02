@@ -13,8 +13,8 @@ import { applyAgentConfigChange } from "./index.js";
 
 /** Chave genérica do aviso de teto (dispensa por-agente) — fonte ÚNICA p/ site + chat (§13). */
 export const GUARDRAIL_OPPORTUNITY_KEY = "guardrail_opportunity:maxBudgetChangePct";
-/** Cooldown (dias) da dispensa de um aviso — reaparece depois disso (ou se piorar materialmente). */
-export const ADVISORY_DISMISS_COOLDOWN_DAYS = 14;
+// Cooldown (dias) da dispensa do aviso = configurável por env (LEARNING_ADVISORY_DISMISS_COOLDOWN_DAYS),
+// injetado pelos consumidores (api service / worker chat) — não mais um literal aqui (§13).
 
 /** Resultado tipado de uma ação — `code` deixa o consumidor mapear pra HTTP/texto. */
 export type LearningActionResult = { readonly ok: true } | { readonly ok: false; readonly code: "not_found" | "bad_request"; readonly error: string };

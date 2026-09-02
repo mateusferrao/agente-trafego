@@ -6999,6 +6999,12 @@
                 },
                 "foregoneMinor": {
                   "type": "number"
+                },
+                "foregoneMajor": {
+                  "type": "number"
+                },
+                "currency": {
+                  "type": "string"
                 }
               },
               "required": [
@@ -7006,7 +7012,9 @@
                 "threshold",
                 "wantedPct",
                 "cappedPct",
-                "foregoneMinor"
+                "foregoneMinor",
+                "foregoneMajor",
+                "currency"
               ]
             }
           },

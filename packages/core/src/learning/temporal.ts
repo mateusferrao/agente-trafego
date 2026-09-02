@@ -174,7 +174,10 @@ export function detectConversionLagPrior(
     }
   }
   if (bestLag < 1 || bestCorr < cfg.minCorrelation || bestCorr <= base) return null;
-  const strength = clamp01((bestCorr - cfg.minCorrelation) / (1 - cfg.minCorrelation));
+  // denom guardado: se `minCorrelation` for configurado como 1, a divisão seria 0/0=NaN quando
+  // bestCorr===1 (correlação perfeita passa o gate). Sem correlação acima do mínimo p/ graduar → força máxima.
+  const denom = 1 - cfg.minCorrelation;
+  const strength = denom > 0 ? clamp01((bestCorr - cfg.minCorrelation) / denom) : 1;
   // 3 "passos" (equivalente a K campanhas): correlação forte → ~0,70 (alcança o prompt).
   return {
     kind: "fact",
