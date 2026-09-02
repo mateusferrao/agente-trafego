@@ -74,7 +74,8 @@ export abstract class BaseApiService {
     });
   }
 
-  private resolveUrl(path: ApiPath): string {
+  /** URL absoluta (base + resource + path) — pública p/ casos fora do HttpClient (ex: `<img src>`). */
+  protected resolveUrl(path: ApiPath): string {
     const normalized = typeof path === 'string' ? path : this.joinPath(path);
     const withResource = normalized.startsWith('/')
       ? normalized

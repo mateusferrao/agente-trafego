@@ -1,24 +1,19 @@
 import { ChangeDetectionStrategy, Component, type OnInit, type WritableSignal, effect, inject, input, output, signal, computed } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
-import { NumberStepper, UiInput, UiSwitch, UiSwitchThumb, UiCheckbox } from '@ui';
+import { NumberStepper, UiInput, UiSwitch, UiSwitchThumb } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import type { AgentSummary } from '@core/api/generated';
+import { currencySymbol } from '@app/shared/format';
 
 type ActionType = 'pause_entity' | 'resume_entity' | 'adjust_budget' | 'set_status';
 
-const ACTION_LABEL: Record<ActionType, string> = {
-  pause_entity: 'pausar',
-  resume_entity: 'retomar',
-  adjust_budget: 'ajustar orçamento',
-  set_status: 'mudar status',
-};
-const ACTIONS: readonly ActionType[] = ['pause_entity', 'resume_entity', 'adjust_budget', 'set_status'];
-
-/** Guardrails (5a): rede de segurança independente da autonomia — sempre vale na escrita. */
+/** Guardrails (5a): rede de segurança independente da autonomia — sempre vale na escrita.
+ *  As "ações permitidas" (on/off por tipo) migraram p/ a lista única em "Até onde o agente
+ *  pode ir" (A3, bindings) — aqui o allowedActions é só preservado no save (coluna estável). */
 @Component({
   selector: 'app-agent-guardrails',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [NumberStepper, UiInput, UiSwitch, UiSwitchThumb, UiCheckbox],
+  imports: [NumberStepper, UiInput, UiSwitch, UiSwitchThumb],
   template: `
     <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
       <div>
@@ -69,20 +64,28 @@ const ACTIONS: readonly ActionType[] = ['pause_entity', 'resume_entity', 'adjust
         </label>
       </div>
 
-      <div class="flex flex-col gap-2">
-        <span class="text-sm font-medium text-ink">Ações permitidas</span>
-        <span class="text-xs text-muted">Além de subir a autonomia, o tipo precisa estar liberado aqui.</span>
-        <div class="flex flex-wrap gap-4">
-          @for (a of ACTIONS; track a) {
-            <label class="flex items-center gap-2 text-sm text-ink">
-              <button appCheckbox [ngpCheckboxChecked]="isAllowed(a)" (ngpCheckboxCheckedChange)="toggleAllowed(a, $event)">
-                <svg viewBox="0 0 12 12" fill="none" class="hidden size-3 stroke-panel group-data-[checked]:block">
-                  <path d="M2.5 6.5 5 9l4.5-5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-              </button>
-              {{ ACTION_LABEL[a] }}
-            </label>
-          }
+      <div class="flex flex-col gap-3 rounded-lg border border-line p-4">
+        <span class="text-sm font-medium text-ink">Limites de criação (gasto novo)</span>
+        <span class="text-xs text-muted">Teto de segurança quando o agente cria ou escala campanhas.</span>
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <label class="flex flex-col gap-1">
+            <span class="text-sm font-medium text-ink">Orçamento novo máx./dia</span>
+            <span class="flex items-center gap-1">
+              <span class="text-xs text-muted">{{ currencySymbol(currency()) }}</span>
+              <input appInput type="number" appNumberStepper inputmode="decimal" min="0" class="w-24" [value]="maxNewDaily()" (input)="onNum(maxNewDaily, $event)" />
+            </span>
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="text-sm font-medium text-ink">Máx. campanhas novas/dia</span>
+            <input appInput type="number" appNumberStepper inputmode="numeric" min="0" class="w-20" [value]="maxNewCampaigns()" (input)="onNum(maxNewCampaigns, $event)" />
+          </label>
+          <label class="flex flex-col gap-1">
+            <span class="text-sm font-medium text-ink">Passo de escala</span>
+            <span class="flex items-center gap-1">
+              <input appInput type="number" appNumberStepper inputmode="numeric" min="0" class="w-20" [value]="scalePct()" (input)="onNum(scalePct, $event)" />
+              <span class="text-xs text-muted">% a mais</span>
+            </span>
+          </label>
         </div>
       </div>
     </section>
@@ -92,23 +95,29 @@ export class AgentGuardrails implements OnInit {
   private readonly api = inject(AnalysisApiService);
 
   readonly accountId = input.required<string>();
+  readonly currency = input('BRL');
   readonly dirtyChange = output<boolean>();
 
-  protected readonly ACTIONS = ACTIONS;
-  protected readonly ACTION_LABEL = ACTION_LABEL;
+  protected readonly currencySymbol = currencySymbol;
 
   protected readonly dryRun = signal(true);
   protected readonly killSwitch = signal(false);
   protected readonly maxPct = signal('20');
   protected readonly maxEntities = signal('3');
   protected readonly llmCap = signal('');
+  protected readonly maxNewDaily = signal('50');
+  protected readonly maxNewCampaigns = signal('1');
+  protected readonly scalePct = signal('50');
+  // preservado (não editável aqui — migrou p/ a lista única): reenviado no save p/ manter
+  // a coluna estável (bindings são a fonte autoritativa; allowedActions = fallback vestigial).
   private readonly allowed = signal<ReadonlySet<ActionType>>(new Set(['pause_entity']));
 
   protected readonly saving = signal(false);
   protected readonly loaded = signal(false);
   private readonly baseline = signal('');
   private readonly sig = computed(
-    () => `${this.dryRun()}|${this.killSwitch()}|${this.maxPct()}|${this.maxEntities()}|${this.llmCap()}|${[...this.allowed()].sort().join(',')}`,
+    () =>
+      `${this.dryRun()}|${this.killSwitch()}|${this.maxPct()}|${this.maxEntities()}|${this.llmCap()}|${this.maxNewDaily()}|${this.maxNewCampaigns()}|${this.scalePct()}`,
   );
   readonly dirty = computed(() => this.sig() !== this.baseline());
 
@@ -120,15 +129,6 @@ export class AgentGuardrails implements OnInit {
 
   protected onNum(sig: WritableSignal<string>, e: Event): void {
     sig.set((e.target as HTMLInputElement).value);
-  }
-  protected isAllowed(a: ActionType): boolean {
-    return this.allowed().has(a);
-  }
-  protected toggleAllowed(a: ActionType, on: boolean): void {
-    const next = new Set(this.allowed());
-    if (on) next.add(a);
-    else next.delete(a);
-    this.allowed.set(next);
   }
 
   ngOnInit(): void {
@@ -143,6 +143,9 @@ export class AgentGuardrails implements OnInit {
     this.maxPct.set(String(g.maxBudgetChangePct));
     this.maxEntities.set(String(g.maxEntitiesPerDay));
     this.llmCap.set(g.llmCostCapUsd != null ? String(g.llmCostCapUsd) : '');
+    if (g.maxNewDailyBudgetMinor != null) this.maxNewDaily.set(String(g.maxNewDailyBudgetMinor / 100));
+    if (g.maxNewCampaignsPerDay != null) this.maxNewCampaigns.set(String(g.maxNewCampaignsPerDay));
+    if (g.scalePct != null) this.scalePct.set(String(g.scalePct));
     this.allowed.set(new Set(g.allowedActions as ActionType[]));
     this.baseline.set(this.sig());
     this.loaded.set(true);
@@ -153,9 +156,12 @@ export class AgentGuardrails implements OnInit {
     return Number.isFinite(n) ? Math.trunc(n) : fallback;
   }
 
-  /** Salva a fatia (chamada pela save-bar única da página). No-op se não há mudança. */
-  async save(): Promise<void> {
-    if (!this.dirty()) return;
+  /** Salva a fatia (chamada pela save-bar única da página). No-op se não há mudança.
+   *  Gate em loaded(): sem o seed, `allowed` (allowedActions, não editável aqui) está no
+   *  default pause-only — salvar sobrescreveria o real com esse default (perda de dado). */
+  async save(): Promise<boolean> {
+    if (!this.dirty()) return true;
+    if (!this.loaded()) return false; // dirty mas sem seed → não persiste (a página avisa).
     this.saving.set(true);
     const cap = this.llmCap().trim();
     const capNum = Number(cap);
@@ -169,6 +175,9 @@ export class AgentGuardrails implements OnInit {
             dryRun: this.dryRun(),
             killSwitch: this.killSwitch(),
             ...(cap.length > 0 && Number.isFinite(capNum) ? { llmCostCapUsd: Math.max(0, capNum) } : {}),
+            maxNewDailyBudgetMinor: Math.max(0, Math.round((Number(this.maxNewDaily()) || 0) * 100)),
+            maxNewCampaignsPerDay: Math.max(0, this.parseInt0(this.maxNewCampaigns(), 1)),
+            scalePct: Math.max(0, this.parseInt0(this.scalePct(), 50)),
           },
         }),
       );
@@ -176,5 +185,6 @@ export class AgentGuardrails implements OnInit {
     } finally {
       this.saving.set(false);
     }
+    return true;
   }
 }

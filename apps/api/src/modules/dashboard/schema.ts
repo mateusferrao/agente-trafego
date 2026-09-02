@@ -20,6 +20,25 @@ export const liveKpis = z.object({
 });
 export type LiveKpis = z.infer<typeof liveKpis>;
 
+/**
+ * Saúde da conta NA PRÓPRIA META (status/saldo/gasto/pagamento) — detalhe completo
+ * pro card SEMPRE visível na Visão geral (atrás de login). Diferente do nosso
+ * lifecycle (`status`) e do `tokenStatus`. `status` neutro (vocabulário Meta fica no
+ * adapter); `statusLabel` é a copy pt-BR pronta pra UI. Valores monetários já em
+ * unidade MAIOR; `spendCapMajor` ausente = SEM teto (nunca "R$ 0,00").
+ */
+export const accountHealthOutput = z.object({
+  status: z.string(),
+  statusLabel: z.string(),
+  disableReason: z.string().nullable(),
+  balanceMajor: z.number().nullable(),
+  amountSpentMajor: z.number().nullable(),
+  spendCapMajor: z.number().nullable(),
+  paymentMethodLabel: z.string().nullable(),
+  checkedAt: z.string().nullable(),
+});
+export type AccountHealthOutput = z.infer<typeof accountHealthOutput>;
+
 /** KPIs ao vivo de UMA conta + frescura (as-of) + janela. */
 export const liveMetricsOutput = z.object({
   currency: z.string().nullable(),
@@ -30,6 +49,8 @@ export const liveMetricsOutput = z.object({
   window: z.object({ since: z.string(), until: z.string() }),
   /** null = conta sem atividade na janela. */
   totals: liveKpis.nullable(),
+  /** saúde da conta na Meta — null quando o sync ainda não checou (conta nova). */
+  accountHealth: accountHealthOutput.nullable(),
 });
 export type LiveMetricsOutput = z.infer<typeof liveMetricsOutput>;
 
@@ -38,7 +59,7 @@ export const refreshDataOutput = z.object({ enqueued: z.boolean() });
 export type RefreshDataOutput = z.infer<typeof refreshDataOutput>;
 
 /** Motivos de uma conta pedir atenção (ordem de severidade na UI). */
-export const attentionReason = z.enum(["token_invalid", "no_recent_run", "bad_grade", "pending"]);
+export const attentionReason = z.enum(["account_unhealthy", "token_invalid", "no_recent_run", "bad_grade", "pending"]);
 
 /** Card de decisão por conta (panorama + faixa de atenção). */
 export const panoramaCard = z.object({
@@ -52,6 +73,9 @@ export const panoramaCard = z.object({
   gradeAsOf: z.string().nullable(),
   /** conta parada (activity_state=dormant) — o agente vigia o retorno (backoff). */
   dormant: z.boolean(),
+  /** status da conta na Meta (neutro) — null/"active" = ok; qualquer outro dispara o
+   *  badge de saúde no roster. Diferente do nosso lifecycle e do tokenStatus. */
+  accountHealthStatus: z.string().nullable(),
   /** KPIs AO VIVO (insights_snapshots) — null se sem atividade. */
   live: liveKpis.nullable(),
   asOf: z.string().nullable(),
@@ -70,6 +94,7 @@ export const activityEvent = z.object({
   type: z.enum(["action_applied", "action_rolled_back"]),
   toolKey: z.string(),
   entityName: z.string().nullable(),
+  entityLevel: z.string().nullable(),
   at: z.string(),
   fromChat: z.boolean(),
 });

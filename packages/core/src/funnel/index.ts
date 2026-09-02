@@ -43,3 +43,21 @@ export function computeFunnelSummary(breakdown: FunnelBreakdown): FunnelSummary 
 function round(x: number): number {
   return Math.round(x * 10000) / 10000;
 }
+
+/** Abaixo disso, a 1ª resposta é rara demais — lead frio mesmo com CPL/CPA aparentemente bom. */
+const LOW_REPLY_RATE_THRESHOLD = 0.5;
+/** Amostra mínima de conversas pra o sinal não ser ruído estatístico. */
+const MIN_CONVERSATIONS_FOR_LEAD_QUALITY_SIGNAL = 10;
+
+/**
+ * A qualidade do lead (taxa de 1ª resposta) está ruim o bastante pra merecer ressalva ANTES
+ * de qualquer métrica de vaidade (CPL/CPA aparentemente bom) — a armadilha clássica de saúde
+ * (Playbook Steticos, item 5): CPL ótimo não significa nada se o lead nem responde. Usado pelo
+ * redator (`notify/prompt.ts`) pra ordenar a mensagem quando `vertical === "health"`. PURO.
+ */
+export function hasLeadQualityCaveat(funnel: FunnelSummary | undefined): boolean {
+  if (!funnel || funnel.replyRate === undefined) return false;
+  const started = funnel.counts.conversation_started ?? 0;
+  if (started < MIN_CONVERSATIONS_FOR_LEAD_QUALITY_SIGNAL) return false;
+  return funnel.replyRate < LOW_REPLY_RATE_THRESHOLD;
+}

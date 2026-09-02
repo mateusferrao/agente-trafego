@@ -4,8 +4,8 @@
 
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import type { Database } from "@trafego/db/client";
-import { adAccounts, adCreatives, agentMemory, agentMutedEntities, agentRunSteps, agentRuns, agentToolCalls, agents, conversionLabels, guardrailConfigs, orgs, platformConnections, playbookRules, recommendations } from "@trafego/db";
-import type { Action, ActionTarget, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, MarketReference, NotifyPolicy, PartialReason, PerformanceTier, PlaybookRule, Posture, RecommendationKind, RiskLevel } from "@trafego/shared";
+import { adAccounts, adCreatives, agentMemory, agentMutedEntities, agentRunSteps, agentRuns, agentToolCalls, agents, conversionLabels, customAudiences, guardrailConfigs, orgs, platformConnections, playbookRules, recommendations } from "@trafego/db";
+import type { Action, ActionTarget, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, MarketReference, NotifyPolicy, CustomAudience, PartialReason, PerformanceTier, PlaybookRule, Posture, RecommendationKind, RiskLevel, WhatsappSource } from "@trafego/shared";
 import { DEFAULT_POSTURE, GUARDRAIL_DEFAULTS, toGuardrailConfig, UNDO_TOOL_KEY } from "@trafego/shared";
 import { entityKeyOf, unseedIdentity } from "@trafego/core";
 import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
@@ -13,6 +13,9 @@ import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
 export interface AgentContext {
   readonly goals: AgentGoals;
   readonly archetype: string;
+  /** Perfil vertical do negócio (S4) — resolve via `resolveVerticalProfile` (packages/core/
+   *  src/verticals). Vertical fora do registry → sem perfil aplicado (honesto). */
+  readonly vertical: string;
   /** Fuso da org (orgs.timezone) — datas de "hoje"/janela nele, não UTC. */
   readonly timezone: string;
   readonly systemPrompt: string | null;
@@ -77,18 +80,31 @@ export interface RecommendationRow {
   /** Capacidade do catálogo proposta — só em platform_action. */
   readonly toolKey: string | null;
   readonly riskLevel: RiskLevel;
+  /** Taxonomia de saída (S0b/G4) — só populados no caminho LLM (`toRecommendationRow`);
+   *  demais origens (tracking/human_direction/criação proativa) ficam null. */
+  readonly expectedImpact: string | null;
+  readonly whatToMonitor: string | null;
+  readonly findingRefs: readonly string[] | null;
 }
 
 /** Copy + desempenho denormalizado de um anúncio, persistido do run (S1). */
 export interface AdCreativeRow {
   readonly adId: string;
   readonly creativeId: string | null;
+  /** nome do ANÚNCIO no Ads Manager — diferente de `title` (headline da copy). */
+  readonly name: string | null;
   readonly body: string | null;
   readonly title: string | null;
   readonly callToAction: string | null;
   readonly imageUrl: string | null;
+  readonly imageHash: string | null;
   readonly thumbnailUrl: string | null;
   readonly videoId: string | null;
+  /** destino WhatsApp do CTA (Fatia 7) + hierarquia p/ resolver por-campanha no chat (cache). */
+  readonly whatsappNumber: string | null;
+  readonly whatsappSource: WhatsappSource | null;
+  readonly campaignId: string | null;
+  readonly adsetId: string | null;
   readonly tier: PerformanceTier | null;
   readonly spend: number | null;
   readonly cpa: number | null;
@@ -133,6 +149,12 @@ export interface AnalysisRepo {
     adAccountUuid: string,
     rows: readonly AdCreativeCopyRow[],
   ): Promise<void>;
+  /** Upsert do cache de custom audiences da conta (Fatia 7) — populado no run, lido DB-first. */
+  saveCustomAudiences(
+    orgId: string,
+    adAccountUuid: string,
+    rows: readonly CustomAudience[],
+  ): Promise<void>;
   /** Upsert dos rótulos de conversão resolvidos no run (id→nome), p/ a config ler do banco. */
   saveConversionLabels(
     orgId: string,
@@ -159,6 +181,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
         .select({
           goals: agents.goals,
           archetype: agents.archetype,
+          vertical: agents.vertical,
           systemPrompt: agents.systemPrompt,
           persona: agents.persona,
           tone: agents.tone,
@@ -232,6 +255,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
       return {
         goals: agent.goals,
         archetype: agent.archetype,
+        vertical: agent.vertical,
         timezone: agent.timezone,
         // valor semeado igual ao default do arquétipo = "não configurado" (null) →
         // usa a metodologia composta completa (não o systemPrompt cru semeado).
@@ -254,6 +278,9 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
     },
 
     async loadAccount(orgId, adAccountUuid) {
+      // Sem conta resolvida (ex: grupo com FOCO EXPIRADO → adAccountId "") NÃO consulta: um uuid
+      // vazio faz o Postgres lançar 22P02 (invalid input syntax for type uuid) e derruba o turno.
+      if (!orgId || !adAccountUuid) return null;
       // Token vem da CONEXÃO dona (fonte da verdade); cai no legado da conta se
       // ainda não houver conexão (contas pré-migração — o backfill preenche).
       const [row] = await db
@@ -313,6 +340,9 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
           proposedAction: r.proposedAction ?? null,
           toolKey: r.toolKey ?? null,
           riskLevel: r.riskLevel,
+          expectedImpact: r.expectedImpact,
+          whatToMonitor: r.whatToMonitor,
+          findingRefs: r.findingRefs ? [...r.findingRefs] : null,
         })),
       );
     },
@@ -329,12 +359,18 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
             adAccountId: adAccountUuid,
             adId: r.adId,
             creativeId: r.creativeId,
+            name: r.name,
             body: r.body,
             title: r.title,
             callToAction: r.callToAction,
             imageUrl: r.imageUrl,
+            imageHash: r.imageHash,
             thumbnailUrl: r.thumbnailUrl,
             videoId: r.videoId,
+            whatsappNumber: r.whatsappNumber,
+            whatsappSource: r.whatsappSource,
+            campaignId: r.campaignId,
+            adsetId: r.adsetId,
             tier: r.tier,
             spend: r.spend,
             cpa: r.cpa,
@@ -347,12 +383,20 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
           target: [adCreatives.adAccountId, adCreatives.adId],
           set: {
             creativeId: sql`excluded.creative_id`,
+            name: sql`excluded.name`,
             body: sql`excluded.body`,
             title: sql`excluded.title`,
             callToAction: sql`excluded.call_to_action`,
             imageUrl: sql`excluded.image_url`,
+            imageHash: sql`excluded.image_hash`,
             thumbnailUrl: sql`excluded.thumbnail_url`,
             videoId: sql`excluded.video_id`,
+            // WhatsApp/hierarquia: COALESCE preserva o número/campanha de um run anterior
+            // quando o run atual não resolveu (anúncio sem CTA de mensagem neste ciclo).
+            whatsappNumber: sql`coalesce(excluded.whatsapp_number, ${adCreatives.whatsappNumber})`,
+            whatsappSource: sql`coalesce(excluded.whatsapp_source, ${adCreatives.whatsappSource})`,
+            campaignId: sql`coalesce(excluded.campaign_id, ${adCreatives.campaignId})`,
+            adsetId: sql`coalesce(excluded.adset_id, ${adCreatives.adsetId})`,
             // perf: anúncio fora do brief (não-notável) vem com perf null neste run —
             // COALESCE preserva a perf boa do run anterior em vez de zerá-la (senão o
             // anúncio despencaria no ranking por perda de tier).
@@ -378,12 +422,18 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
             adAccountId: adAccountUuid,
             adId: r.adId,
             creativeId: r.creativeId,
+            name: r.name,
             body: r.body,
             title: r.title,
             callToAction: r.callToAction,
             imageUrl: r.imageUrl,
+            imageHash: r.imageHash,
             thumbnailUrl: r.thumbnailUrl,
             videoId: r.videoId,
+            whatsappNumber: r.whatsappNumber,
+            whatsappSource: r.whatsappSource,
+            campaignId: r.campaignId,
+            adsetId: r.adsetId,
             capturedAt: sql`now()`,
           })),
         )
@@ -391,12 +441,48 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
           target: [adCreatives.adAccountId, adCreatives.adId],
           set: {
             creativeId: sql`excluded.creative_id`,
+            name: sql`excluded.name`,
             body: sql`excluded.body`,
             title: sql`excluded.title`,
             callToAction: sql`excluded.call_to_action`,
             imageUrl: sql`excluded.image_url`,
+            imageHash: sql`excluded.image_hash`,
             thumbnailUrl: sql`excluded.thumbnail_url`,
             videoId: sql`excluded.video_id`,
+            whatsappNumber: sql`coalesce(excluded.whatsapp_number, ${adCreatives.whatsappNumber})`,
+            whatsappSource: sql`coalesce(excluded.whatsapp_source, ${adCreatives.whatsappSource})`,
+            campaignId: sql`coalesce(excluded.campaign_id, ${adCreatives.campaignId})`,
+            adsetId: sql`coalesce(excluded.adset_id, ${adCreatives.adsetId})`,
+            capturedAt: sql`excluded.captured_at`,
+            updatedAt: sql`now()`,
+          },
+        });
+    },
+
+    async saveCustomAudiences(orgId, adAccountUuid, rows) {
+      if (rows.length === 0) return;
+      // upsert por (conta, público externo) — 1 linha viva; dados do run mais recente vencem.
+      await db
+        .insert(customAudiences)
+        .values(
+          rows.map((a) => ({
+            orgId,
+            adAccountId: adAccountUuid,
+            externalId: a.id,
+            name: a.name,
+            subtype: a.subtype ?? null,
+            approximateCount: a.approximateCount ?? null,
+            isLookalike: a.isLookalike,
+            capturedAt: sql`now()`,
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [customAudiences.adAccountId, customAudiences.externalId],
+          set: {
+            name: sql`excluded.name`,
+            subtype: sql`excluded.subtype`,
+            approximateCount: sql`excluded.approximate_count`,
+            isLookalike: sql`excluded.is_lookalike`,
             capturedAt: sql`excluded.captured_at`,
             updatedAt: sql`now()`,
           },

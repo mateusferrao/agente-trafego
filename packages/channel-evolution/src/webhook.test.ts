@@ -135,10 +135,46 @@ describe("parseInbound", () => {
     });
   });
 
+  // ─── Imagem → kind:"image" (F7 intake: vira asset de criativo, não aviso) ───
+  it("imageMessage (base64 inline) → kind image com bytes + caption", () => {
+    const msg = parseInbound(
+      upsert({ message: { imageMessage: { mimetype: "image/png", caption: "  logo nova  " }, base64: "IMG64" } }),
+    );
+    expect(msg).toMatchObject({
+      kind: "image",
+      image: { base64: "IMG64", mimetype: "image/png" },
+      caption: "logo nova",
+    });
+  });
+
+  it("imageMessage sem mimetype/caption → default image/jpeg + caption null", () => {
+    const msg = parseInbound(upsert({ message: { imageMessage: { url: "x" }, base64: "Z" } }));
+    expect(msg).toMatchObject({ kind: "image", image: { base64: "Z", mimetype: "image/jpeg" }, caption: null });
+  });
+
+  it("imagem carrega messageKey p/ o fallback fetchMediaBase64 (sem base64 inline)", () => {
+    const msg = parseInbound(
+      upsert({ remoteJid: "5531988887777@s.whatsapp.net", id: "IMG-KEY", message: { imageMessage: { url: "x" } } }),
+    );
+    expect(msg).toMatchObject({
+      kind: "image",
+      image: { base64: "" },
+      messageKey: { id: "IMG-KEY", remoteJid: "5531988887777@s.whatsapp.net", fromMe: false },
+    });
+  });
+
+  // ─── Vídeo → kind:"video" (F7 intake; sem base64 inline — busca por messageKey) ───
+  it("videoMessage → kind video (mimetype + caption + messageKey; sem base64)", () => {
+    const msg = parseInbound(
+      upsert({ message: { videoMessage: { url: "x", mimetype: "video/mp4", caption: "promo" } } }),
+    );
+    expect(msg).toMatchObject({ kind: "video", video: { mimetype: "video/mp4" }, caption: "promo" });
+    expect(msg).toHaveProperty("messageKey");
+    expect(msg).not.toHaveProperty("video.base64");
+  });
+
   // ─── Mídia reconhecida não-suportada → kind:"unsupported" (vira aviso) ───
   it.each([
-    ["imageMessage", "image"],
-    ["videoMessage", "video"],
     ["documentMessage", "document"],
     ["stickerMessage", "sticker"],
   ])("%s → kind unsupported (%s)", (node, mediaType) => {
@@ -342,6 +378,30 @@ describe("parseInbound — grupo", () => {
       );
       expect(msg).toMatchObject({ group: { mentionedPhones: [] } });
     });
+  });
+});
+
+// ─── Vídeo (F7 intake) → kind:"video" + fileLength (P0.3: cap sem baixar) ───
+describe("parseInbound — vídeo", () => {
+  it("carrega fileLength da metadata (probe de tamanho antes do fetch)", () => {
+    const msg = parseInbound(upsert({ message: { videoMessage: { mimetype: "video/mp4", fileLength: "52428800" } } }));
+    expect(msg).toMatchObject({ kind: "video", video: { mimetype: "video/mp4", fileLength: 52428800 } });
+  });
+
+  it("fileLength ausente → undefined (worker cai no fallback pós-decode)", () => {
+    const msg = parseInbound(upsert({ message: { videoMessage: { mimetype: "video/mp4" } } }));
+    expect(msg).toMatchObject({ kind: "video", video: { mimetype: "video/mp4" } });
+    expect((msg as { video: { fileLength?: number } })?.video.fileLength).toBeUndefined();
+  });
+
+  it("fileLength não-numérico → undefined (defensivo)", () => {
+    const msg = parseInbound(upsert({ message: { videoMessage: { mimetype: "video/mp4", fileLength: "abc" } } }));
+    expect((msg as { video: { fileLength?: number } })?.video.fileLength).toBeUndefined();
+  });
+
+  it("sem mimetype → default video/mp4", () => {
+    const msg = parseInbound(upsert({ message: { videoMessage: { fileLength: "1000" } } }));
+    expect(msg).toMatchObject({ kind: "video", video: { mimetype: "video/mp4", fileLength: 1000 } });
   });
 });
 

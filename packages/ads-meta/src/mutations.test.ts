@@ -62,6 +62,38 @@ describe("MetaMutationsService", () => {
     expect(posts()[0]!.url).toContain("status=ACTIVE");
   });
 
+  it("resume de ANÚNCIO: before-read NÃO pede budget (ad não tem → evita Meta #100)", async () => {
+    const gets: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if ((init?.method ?? "GET") === "GET") gets.push(url);
+        return new Response(JSON.stringify({ status: "PAUSED", effective_status: "PAUSED" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+    await svc().mutate(account, act("resume_entity", { target: { level: "ad", id: "AD1" } }));
+    expect(gets[0]).toContain("fields=status%2Ceffective_status"); // sem daily_budget/lifetime_budget
+    expect(gets[0]).not.toContain("daily_budget");
+  });
+
+  it("resume de CAMPANHA: before-read ainda pede budget (drift de CBO)", async () => {
+    const gets: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = String(input);
+        if ((init?.method ?? "GET") === "GET") gets.push(url);
+        return new Response(JSON.stringify({ status: "PAUSED" }), { status: 200, headers: { "content-type": "application/json" } });
+      }),
+    );
+    await svc().mutate(account, act("resume_entity", { target: { level: "campaign", id: "C1" } }));
+    expect(gets[0]).toContain("daily_budget");
+  });
+
   it("adjust_budget decrease 20%: aplica sobre o daily_budget (minor units)", async () => {
     const { posts } = stubGraph({ status: "ACTIVE", daily_budget: "10000" }); // R$100,00
     const res = await svc().mutate(

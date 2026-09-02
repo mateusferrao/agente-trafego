@@ -186,8 +186,8 @@ export class AgentPosture implements OnInit {
 
   /** Salva a fatia (chamada pela save-bar única da página). No-op se não há mudança.
    *  Envia o experienceLevel junto (o resolver semeia; eixos explícitos sobrepõem). */
-  async save(): Promise<void> {
-    if (!this.dirty()) return;
+  async save(): Promise<boolean> {
+    if (!this.dirty()) return true;
     this.saving.set(true);
     const lvl = this.experienceLevel();
     // valores vêm do catálogo (level: string), mas o contrato tipa os enums — cast seguro.
@@ -203,6 +203,7 @@ export class AgentPosture implements OnInit {
     } finally {
       this.saving.set(false);
     }
+    return true;
   }
 
   private seed(a: AgentSummary): void {

@@ -33,11 +33,20 @@ export const recommendationOutput = z.object({
   /** formato (S2): platform_action (com ação) | human_direction | insight. */
   kind: recommendationKindSchema,
   riskLevel,
-  /** aplicabilidade da sugestão — em 3a nada é aplicável (aplicação = Fatia 5). */
-  applicability: z.enum(["applicable", "not_yet_applicable"]),
+  /**
+   * Aplicabilidade REAL (B): "applicable" = há aprovação/rascunho pendente pra agir agora;
+   * "applied" = já aplicada; "dismissed"/"expired" = resolvida; "not_applicable" = direção/insight
+   * (sem ação executável). O card decide o CTA por aqui.
+   */
+  applicability: z.enum(["applicable", "applied", "dismissed", "expired", "not_applicable"]),
   proposedAction: proposedActionOutput.nullable(),
   /** capacidade do catálogo proposta — só em platform_action. */
   toolKey: z.string().nullable(),
+  /** rascunho de campanha ligado (criação) — abre o editor no site. */
+  draftId: z.string().nullable(),
+  /** aprovação acionável ligada (ação OU rascunho/ativação pendente) — aprovar/rejeitar/editar. */
+  approvalId: z.string().nullable(),
+  approvalKind: z.enum(["action", "draft", "activation"]).nullable(),
   /** voto do dono (👍/👎), quando houver — o card do site reflete o estado. */
   vote: z.enum(["up", "down"]).nullable(),
 });
@@ -180,6 +189,14 @@ export const campaignTopFinding = z.object({
   metricRefs: z.array(findingMetricRef).optional(),
 });
 
+/** Orçamento da campanha (S8 — fecha o bug do site não mostrar orçamento por campanha,
+ *  mesmo caso original do chat, S1). Diário OU vitalício (a Meta usa um ou outro). */
+export const campaignBudgetOutput = z.object({
+  dailyMajor: z.number().optional(),
+  lifetimeMajor: z.number().optional(),
+  lifetimeRemainingMajor: z.number().optional(),
+});
+
 /** Uma campanha analisada: métrica + resumo + gargalo + flags + estado silenciado. */
 export const campaignAnalysisOutput = z.object({
   externalId: z.string(),
@@ -194,6 +211,19 @@ export const campaignAnalysisOutput = z.object({
   stage: z.enum(["prospecting", "remarketing", "unknown"]).nullable(),
   /** campanha silenciada pelo dono (opt-out da análise). */
   muted: z.boolean(),
+  /** orçamento curado (S8); null = sem dado (conta não reanalisada desde que isso passou a ser coletado). */
+  budget: campaignBudgetOutput.nullable(),
+  /** true = sem folga pra gastar mais sem subir o orçamento; false = tem folga; null = sem dado. */
+  atBudgetCeiling: z.boolean().nullable(),
+  /** true = orçamento na PRÓPRIA campanha (CBO); false = por conjunto/adset (ABO); null = sem dado. */
+  isCBO: z.boolean().nullable(),
+  /** sincronização (achado real): presente = a Meta não lista mais como ativa desde esta data
+   *  (ISO) — o resto dos campos é da ÚLTIMA vez que ela esteve ativa. null = ainda ativa. */
+  deactivatedSince: z.string().nullable(),
+  /** sincronização (achado real, gap irmão do `deactivatedSince`): true = campanha ATIVA na Meta
+   *  agora mas ainda sem NENHUMA análise (criada depois do último run) — todos os outros campos
+   *  vêm vazios/null, nunca inventados. false = campanha já tem análise (fluxo normal). */
+  noDataYet: z.boolean(),
 });
 export type CampaignAnalysisOutput = z.infer<typeof campaignAnalysisOutput>;
 

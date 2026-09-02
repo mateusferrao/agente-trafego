@@ -14,6 +14,7 @@ import { toast } from 'ngx-sonner';
 import { NumberStepper, UiButton, UiConfirmDialogService, UiPageHeader, UiSelectBox, UiSpinner, type UiSelectOptionItem } from '@ui';
 import { AccountsApiService } from '@core/api/accounts-api.service';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
+import { AGENT_NAME } from '@core/brand';
 import type {
   AgentConfigInput,
   AgentSummary,
@@ -22,6 +23,7 @@ import type {
   MarketReference,
 } from '@core/api/generated';
 import { MarketReferenceEditor } from '@app/shared/market-reference-editor';
+import { AccountContextStore } from '@app/features/account-detail/account-context.store';
 import { AgentPlaybook } from './agent-playbook';
 import { AgentAutonomy } from './agent-autonomy';
 import { AgentGuardrails } from './agent-guardrails';
@@ -65,24 +67,7 @@ const TRISTATE_OPTIONS: readonly UiSelectOptionItem[] = [
   { value: TRISTATE_OFF, label: 'Desligado' },
 ];
 
-/** Rótulos amigáveis PT-BR da taxonomia neutra (custom cai no nome real do backend). */
-const CONVERSION_LABEL: Record<string, string> = {
-  purchase: 'Venda',
-  lead: 'Lead',
-  registration: 'Cadastro',
-  initiate_checkout: 'Início de checkout',
-  add_to_cart: 'Adição ao carrinho',
-  view_content: 'Visualização de conteúdo',
-  add_payment_info: 'Adição de pagamento',
-  search: 'Busca',
-  contact: 'Contato',
-  subscribe: 'Assinatura',
-  start_trial: 'Início de teste',
-  submit_application: 'Envio de inscrição',
-  messaging_started: 'Conversa iniciada',
-  app_install: 'Instalação de app',
-  custom: 'Conversão personalizada',
-};
+import { CONVERSION_LABEL } from '@app/shared/conversion-label';
 
 /** Uma opção do select de conversão de negócio (chave + rótulo + anotação de dado). */
 interface ConversionOption {
@@ -336,7 +321,7 @@ interface FormState {
 
         <app-agent-autonomy [accountId]="accountId" (dirtyChange)="onChildDirty('autonomy', $event)" />
 
-        <app-agent-guardrails [accountId]="accountId" (dirtyChange)="onChildDirty('guardrails', $event)" />
+        <app-agent-guardrails [accountId]="accountId" [currency]="accountCurrency()" (dirtyChange)="onChildDirty('guardrails', $event)" />
 
         <!-- Cadência (ritmo da análise automática) -->
         <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
@@ -437,18 +422,18 @@ interface FormState {
           <div class="flex flex-col gap-1">
             <span class="text-xs font-medium uppercase tracking-wide text-muted">Identidade</span>
             <h2 class="font-brand text-base font-semibold text-ink">Como o agente se apresenta</h2>
-            <p class="text-xs text-muted">Persona e tom da comunicação. Opcional — o arquétipo já traz um padrão.</p>
+            <p class="text-xs text-muted">Persona (papel) e tom (jeito) do agente. Opcional — o arquétipo já traz um padrão. O quanto ele é direto, o volume de sugestões e o quanto explica os termos ficam em “Como o agente se comunica”.</p>
           </div>
           <div class="flex flex-col gap-3">
             <label class="flex flex-col gap-1 text-xs text-muted">Persona (papel em 1 linha)
-              <input type="text" [class.border-line]="persona().length <= identityMax" [class.border-danger-strong]="persona().length > identityMax" class="w-full rounded-md border bg-app px-3 py-2 text-sm text-ink" placeholder="Ex: gestor de tráfego sênior, cauteloso" [value]="persona()" (input)="onPersona($event)" />
+              <input type="text" [class.border-line]="persona().length <= identityMax" [class.border-danger-strong]="persona().length > identityMax" class="w-full rounded-md border bg-app px-3 py-2 text-sm text-ink" placeholder="Ex: gestor de tráfego sênior, especialista em e-commerce" [value]="persona()" (input)="onPersona($event)" />
               <span class="flex justify-end gap-1" [class.text-muted]="persona().length <= identityMax" [class.text-danger-strong]="persona().length > identityMax">
                 @if (persona().length > identityMax) { <span>acima do limite ·</span> }
                 <span>{{ count(persona().length) }} / {{ count(identityMax) }}</span>
               </span>
             </label>
-            <label class="flex flex-col gap-1 text-xs text-muted">Tom
-              <input type="text" [class.border-line]="tone().length <= identityMax" [class.border-danger-strong]="tone().length > identityMax" class="w-full rounded-md border bg-app px-3 py-2 text-sm text-ink" placeholder="Ex: consultivo, claro e sem jargão" [value]="tone()" (input)="onTone($event)" />
+            <label class="flex flex-col gap-1 text-xs text-muted">Tom (jeito de falar)
+              <input type="text" [class.border-line]="tone().length <= identityMax" [class.border-danger-strong]="tone().length > identityMax" class="w-full rounded-md border bg-app px-3 py-2 text-sm text-ink" placeholder="Ex: acolhedor e paciente" [value]="tone()" (input)="onTone($event)" />
               <span class="flex justify-end gap-1" [class.text-muted]="tone().length <= identityMax" [class.text-danger-strong]="tone().length > identityMax">
                 @if (tone().length > identityMax) { <span>acima do limite ·</span> }
                 <span>{{ count(tone().length) }} / {{ count(identityMax) }}</span>
@@ -486,6 +471,43 @@ interface FormState {
               </details>
             </div>
           </details>
+        </section>
+
+        <!-- Fonte do criativo na criação (Slice 10) — resultado, sem jargão -->
+        <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
+          <div class="flex flex-col gap-1">
+            <span class="text-xs font-medium uppercase tracking-wide text-muted">Criativo</span>
+            <h2 class="font-brand text-base font-semibold text-ink">De onde o {{ agentName }} tira o criativo?</h2>
+            <p class="text-xs text-muted">Quando ele cria uma campanha nova, qual criativo usar.</p>
+          </div>
+          <div class="flex flex-col gap-2" role="radiogroup" aria-label="Fonte do criativo">
+            @for (o of creativeSourceOptions; track o.value) {
+              <button
+                type="button"
+                role="radio"
+                [attr.aria-checked]="creativeSourceMode() === o.value"
+                (click)="creativeSourceMode.set(o.value)"
+                class="flex items-center justify-between gap-3 rounded-md border px-4 py-3 text-left transition hover:border-accent/40"
+                [class.border-accent]="creativeSourceMode() === o.value"
+                [class.bg-accent-soft]="creativeSourceMode() === o.value"
+                [class.border-line]="creativeSourceMode() !== o.value"
+              >
+                <span class="flex min-w-0 flex-col gap-0.5">
+                  <span class="text-sm font-semibold text-ink"
+                    >{{ o.label }}@if (o.recommended) {<span class="ml-1 text-xs font-normal text-muted">recomendado</span>}</span
+                  >
+                  <span class="text-xs text-muted">{{ o.hint }}</span>
+                </span>
+                <span
+                  class="size-4 shrink-0 rounded-full border transition"
+                  [class.border-accent]="creativeSourceMode() === o.value"
+                  [class.bg-accent]="creativeSourceMode() === o.value"
+                  [class.border-line]="creativeSourceMode() !== o.value"
+                  aria-hidden="true"
+                ></span>
+              </button>
+            }
+          </div>
         </section>
 
         <!-- Opções avançadas (divulgação progressiva) — overrides do pipeline por-agente -->
@@ -555,6 +577,21 @@ interface FormState {
                     <input type="number" appNumberStepper min="0" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.trackingBrokenMinFunnel ?? ''" [value]="mcTrackingBrokenMinFunnel()" (input)="onMcText(mcTrackingBrokenMinFunnel, $event)" />
                     <span class="text-xs text-muted">Abaixo desse volume de conversas, o agente não levanta a suspeita.</span>
                   </label>
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Gasto mínimo (em múltiplo da meta de custo) para julgar uma campanha, mesmo com poucas conversões registradas.">
+                    Múltiplo da meta de custo p/ piso de gasto
+                    <input type="number" appNumberStepper min="1" step="0.5" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.relativeEligibilitySpendMultiplier ?? ''" [value]="mcRelativeEligibilitySpendMultiplier()" (input)="onMcText(mcRelativeEligibilitySpendMultiplier, $event)" />
+                    <span class="text-xs text-muted">Gastou esse múltiplo da meta de custo (ex: 2× R$7 = R$14) já conta como volume suficiente pra julgar, mesmo com poucas conversões.</span>
+                  </label>
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Alta do custo por resultado (%) a partir da qual o agente para de recomendar escalar orçamento, mesmo que a média ainda pareça boa.">
+                    Alta de custo p/ parar de escalar (%)
+                    <input type="number" appNumberStepper min="1" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.marginalCpaWorsenPct ?? ''" [value]="mcMarginalCpaWorsenPct()" (input)="onMcText(mcMarginalCpaWorsenPct, $event)" />
+                    <span class="text-xs text-muted">O custo médio pode parecer bom, mas se o incremento mais recente já subiu esse tanto, o agente sugere investigar em vez de continuar aumentando.</span>
+                  </label>
+                  <label class="flex flex-col gap-1 text-xs text-muted" title="Retenção de vídeo (%) abaixo da qual o agente considera que o vídeo não segura a atenção nos primeiros segundos.">
+                    Retenção mínima de vídeo (%)
+                    <input type="number" appNumberStepper min="1" max="100" step="1" class="w-full rounded-md border border-line bg-app px-3 py-2 text-sm text-ink" [placeholder]="qualityDefaults()?.weakHookRetentionMaxPct ?? ''" [value]="mcWeakHookRetentionMaxPct()" (input)="onMcText(mcWeakHookRetentionMaxPct, $event)" />
+                    <span class="text-xs text-muted">Se menos que essa % das pessoas continua assistindo o vídeo além do início, o agente aponta o gancho como fraco (direção de criativo, nunca pausa sozinho).</span>
+                  </label>
                 </div>
 
                 <!-- Referência de mercado desta conta (override do padrão da org) -->
@@ -599,6 +636,9 @@ export class AgentConfigPage {
   private readonly analysisApi = inject(AnalysisApiService);
   private readonly confirmDialog = inject(UiConfirmDialogService);
   private readonly destroyRef = inject(DestroyRef);
+  /** Store da conta (provido pelo AccountShell; a aba de config é rota-filha). Opcional —
+   *  se a config for aberta fora do shell, segue sem o refresh do gate. */
+  private readonly accountStore = inject(AccountContextStore, { optional: true });
 
   protected readonly accountId = this.route.snapshot.paramMap.get('id') ?? '';
   private destroyed = false;
@@ -639,6 +679,14 @@ export class AgentConfigPage {
   protected readonly tristateOptions = TRISTATE_OPTIONS;
   /** defaults do sistema (env) — placeholder real dos campos vazios. */
   protected readonly qualityDefaults = signal<AgentSummary['qualityDefaults'] | null>(null);
+  protected readonly agentName = AGENT_NAME;
+  /** De onde o Roy tira o criativo pra campanhas novas (Slice 10) — 3 resultados claros. */
+  protected readonly creativeSourceMode = signal<'serving' | 'both' | 'library'>('serving');
+  protected readonly creativeSourceOptions = [
+    { value: 'serving' as const, label: 'Reaproveitar o que já está funcionando', recommended: true, hint: 'Usa um anúncio que já roda bem na sua conta.' },
+    { value: 'both' as const, label: `Deixar o ${AGENT_NAME} escolher`, recommended: false, hint: 'Ele compara os anúncios no ar e os da sua biblioteca e escolhe o que mais combina com a campanha.' },
+    { value: 'library' as const, label: 'Usar só a minha biblioteca', recommended: false, hint: 'Escolhe entre os criativos que você subiu.' },
+  ];
   protected readonly mcMinConversions = signal('');
   protected readonly mcMinClicks = signal('');
   protected readonly mcFatigueCtrDropPct = signal('');
@@ -650,6 +698,9 @@ export class AgentConfigPage {
   protected readonly mcColdStartReference = signal(''); // '' | 'on' | 'off'
   protected readonly mcTrackingBrokenRatio = signal('');
   protected readonly mcTrackingBrokenMinFunnel = signal('');
+  protected readonly mcRelativeEligibilitySpendMultiplier = signal('');
+  protected readonly mcMarginalCpaWorsenPct = signal('');
+  protected readonly mcWeakHookRetentionMaxPct = signal('');
   // referência de mercado desta conta (override do padrão da org) — pivô.
   // moeda = a da conta (fixa no editor). null = herda da org.
   protected readonly accountCurrency = signal('BRL');
@@ -849,15 +900,26 @@ export class AgentConfigPage {
     if (!this.combinedDirty() || this.textOverLimit()) return;
     this.saving.set(true);
     try {
-      await this.autonomy?.save();
-      await this.guardrails?.save();
-      await this.notifications?.save();
-      await this.posture?.save();
+      // cada seção devolve se REALMENTE persistiu: `false` = tinha mudança mas a seção não
+      // carregou (seed falhou) e foi pulada — sem isto o toast mentia "salvo" (F-FALSE-SAVE).
+      // `undefined` = a seção nem existe no DOM (ViewChild ausente) → não conta como falha.
+      const persisted = [
+        await this.autonomy?.save(),
+        await this.guardrails?.save(),
+        await this.notifications?.save(),
+        await this.posture?.save(),
+      ];
       if (this.dirty()) {
         const agent = await firstValueFrom(this.analysisApi.saveConfig(this.accountId, this.buildInput()));
         this.applyAgent(agent); // reseed dos campos + baseline (limpa o dirty da página)
       }
-      toast.success('Configuração salva');
+      // gate de escala (bindings) pode ter mudado na aba de autonomia → re-lê no shell.
+      this.accountStore?.refreshGate();
+      if (persisted.some((ok) => ok === false)) {
+        toast.warning('Salvei o que deu, mas uma seção não tinha carregado. Recarregue a página e revise.');
+      } else {
+        toast.success('Configuração salva');
+      }
     } catch {
       // interceptor global já mostrou o erro amigável.
     } finally {
@@ -905,9 +967,18 @@ export class AgentConfigPage {
       ...boolField('coldStartReference', this.mcColdStartReference()),
       ...numField('trackingBrokenRatio', this.mcTrackingBrokenRatio()),
       ...numField('trackingBrokenMinFunnel', this.mcTrackingBrokenMinFunnel()),
+      ...numField('relativeEligibilitySpendMultiplier', this.mcRelativeEligibilitySpendMultiplier()),
+      ...numField('marginalCpaWorsenPct', this.mcMarginalCpaWorsenPct()),
+      ...numField('weakHookRetentionMaxPct', this.mcWeakHookRetentionMaxPct()),
       ...(this.marketRefOverride() ? { marketReference: this.marketRefOverride()! } : {}),
     };
+    // fonte do criativo: mapeia o RESULTADO escolhido → {mode, servingPick}. "serving" carrega
+    // servingPick=best_performing (determinístico, sem LLM = default de hoje); "both" = o Roy
+    // escolhe entre no ar + biblioteca; "library" = só a biblioteca.
+    const mode = this.creativeSourceMode();
+    const creativeSource = mode === 'serving' ? { mode, servingPick: 'best_performing' as const } : { mode };
     return {
+      creativeSource,
       ...(Object.keys(quality).length > 0 ? { quality } : {}),
     };
   }
@@ -984,7 +1055,13 @@ export class AgentConfigPage {
     this.mcColdStartReference.set(triFrom(q.coldStartReference));
     this.mcTrackingBrokenRatio.set(numToStr(q.trackingBrokenRatio));
     this.mcTrackingBrokenMinFunnel.set(numToStr(q.trackingBrokenMinFunnel));
+    this.mcRelativeEligibilitySpendMultiplier.set(numToStr(q.relativeEligibilitySpendMultiplier));
+    this.mcMarginalCpaWorsenPct.set(numToStr(q.marginalCpaWorsenPct));
+    this.mcWeakHookRetentionMaxPct.set(numToStr(q.weakHookRetentionMaxPct));
     this.marketRefOverride.set(q.marketReference ?? null);
+    // fonte do criativo: `both`/`library` explícitos; qualquer serving.* → o resultado "reaproveitar".
+    const cs = c.creativeSource?.mode;
+    this.creativeSourceMode.set(cs === 'both' ? 'both' : cs === 'library' ? 'library' : 'serving');
   }
 
   /** Decompõe o `CadenceSpec` salvo no sub-estado do editor. */

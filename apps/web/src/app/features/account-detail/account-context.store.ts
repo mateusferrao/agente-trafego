@@ -3,11 +3,12 @@
 // último run + recomendações + campanhas + pausa. Sinais + métodos; sem template.
 // Portado do antigo account-detail-page (que virou shell + abas na Fatia 6a).
 
-import { DestroyRef, Injectable, inject, signal } from "@angular/core";
+import { DestroyRef, Injectable, computed, inject, signal } from "@angular/core";
 import { ActivatedRoute } from "@angular/router";
 import { toast } from "ngx-sonner";
 import { AccountsApiService } from "@core/api/accounts-api.service";
 import { AnalysisApiService } from "@core/api/analysis-api.service";
+import { DraftsApiService } from "@core/api/drafts-api.service";
 import type { AdAccountOutput, CampaignAnalysesOutput, LatestRunOutput } from "@core/api/generated";
 
 type Recommendation = LatestRunOutput["recommendations"][number];
@@ -22,6 +23,7 @@ export class AccountContextStore {
   private readonly route = inject(ActivatedRoute);
   private readonly accountsApi = inject(AccountsApiService);
   private readonly analysisApi = inject(AnalysisApiService);
+  private readonly draftsApi = inject(DraftsApiService);
 
   readonly accountId = this.route.snapshot.paramMap.get("id") ?? "";
   private destroyed = false;
@@ -36,6 +38,20 @@ export class AccountContextStore {
   readonly pausing = signal(false);
   readonly votingId = signal<string | null>(null);
   readonly mutingId = signal<string | null>(null);
+  /** id da campanha em processo de escala (CTA "escalar este vencedor"). */
+  readonly scalingId = signal<string | null>(null);
+  /** escala habilitada (A3): duplicar OU subir orçamento ligado nos bindings. Off → CTA some.
+   *  Default FALSE (default-safe): se o agente não carregar, não oferecemos uma ação que o
+   *  backend recusaria (404 + toast de erro). Ligado só quando os bindings confirmam. */
+  readonly canScale = signal(false);
+  /** passo agressivo → o backend PERGUNTA: subir seguro (raisePct) vs duplicar (duplicatePct).
+   *  Quando setado, a UI mostra a escolha; a resposta re-chama scaleWinner com `choice`. */
+  readonly scaleAsk = signal<{ campaign: Campaign; raisePct: number; duplicatePct: number } | null>(null);
+  /** view enxuta do ASK p/ o analysis-detail (IO-free — só o id + as % das 2 saídas). */
+  readonly scaleAskView = computed(() => {
+    const a = this.scaleAsk();
+    return a ? { externalId: a.campaign.externalId, raisePct: a.raisePct, duplicatePct: a.duplicatePct } : null;
+  });
 
   constructor() {
     inject(DestroyRef).onDestroy(() => {
@@ -105,15 +121,65 @@ export class AccountContextStore {
     });
   }
 
+  /** CTA "escalar este vencedor". Passo pequeno vira aprovação direta; passo agressivo com
+   *  intent aberto → o backend devolve `ask` e a UI mostra as 2 saídas (subir vs duplicar). */
+  scaleWinner(c: Campaign): void {
+    this.scalingId.set(c.externalId);
+    this.draftsApi.scaleWinner(this.accountId, { entityLevel: "campaign", entityId: c.externalId, ...(c.name ? { entityName: c.name } : {}) }).subscribe({
+      next: (out) => {
+        this.scalingId.set(null);
+        if (out.move === "ask") {
+          this.scaleAsk.set({ campaign: c, raisePct: out.raisePct, duplicatePct: out.duplicatePct });
+          return;
+        }
+        this.notifyScaleProposed(out.move);
+      },
+      error: () => {
+        this.scalingId.set(null);
+        toast.error("Não consegui propor a escala agora. Tente de novo em instantes.");
+      },
+    });
+  }
+
+  /** Resposta do usuário ao ASK do passo agressivo (subir seguro vs duplicar). */
+  scaleChoose(choice: "raise" | "duplicate"): void {
+    const ask = this.scaleAsk();
+    if (!ask) return;
+    const c = ask.campaign;
+    this.scaleAsk.set(null);
+    this.scalingId.set(c.externalId);
+    this.draftsApi
+      .scaleWinner(this.accountId, { entityLevel: "campaign", entityId: c.externalId, ...(c.name ? { entityName: c.name } : {}), choice })
+      .subscribe({
+        next: (out) => {
+          this.scalingId.set(null);
+          if (out.move !== "ask") this.notifyScaleProposed(out.move);
+        },
+        error: () => {
+          this.scalingId.set(null);
+          toast.error("Não consegui propor a escala agora. Tente de novo em instantes.");
+        },
+      });
+  }
+
+  scaleCancel(): void {
+    this.scaleAsk.set(null);
+  }
+
+  private notifyScaleProposed(move: "raise_budget" | "duplicate"): void {
+    toast.success(
+      move === "raise_budget"
+        ? "Proposta de escala criada: subir o orçamento. Aprove em Sugeridas."
+        : "Proposta de escala criada: duplicar o vencedor. Aprove em Sugeridas.",
+    );
+  }
+
   private loadAll(): void {
     this.accountsApi.list().subscribe({
       next: (rows) => this.account.set(rows.find((r) => r.id === this.accountId) ?? null),
       error: () => this.account.set(null),
     });
-    this.analysisApi.getAgent(this.accountId, { silent: true }).subscribe({
-      next: (agent) => this.paused.set(agent.paused),
-      error: () => {},
-    });
+    this.refreshGate();
     this.analysisApi.latestRun(this.accountId).subscribe({
       next: (latest) => {
         this.applyLatest(latest);
@@ -126,6 +192,23 @@ export class AccountContextStore {
         }
       },
       error: () => this.loading.set(false),
+    });
+  }
+
+  /**
+   * Re-lê o gate de escala + estado de pausa a partir dos bindings do agente. A aba "Agente"
+   * é rota-FILHA do shell e o store vive a visita inteira → sem re-ler após salvar a config,
+   * `canScale` ficaria stale (CTA aparecendo pra ação desligada, ou some até dar reload). A
+   * página de config chama isto no sucesso do save. `silent` (sem toast do interceptor).
+   */
+  refreshGate(): void {
+    this.analysisApi.getAgent(this.accountId, { silent: true }).subscribe({
+      next: (agent) => {
+        this.paused.set(agent.paused);
+        // escalar = duplicar OU subir orçamento (mesmo gate do backend scaleWinner).
+        this.canScale.set(agent.toolBindings.duplicate_scale || agent.toolBindings.adjust_budget);
+      },
+      error: () => {},
     });
   }
 

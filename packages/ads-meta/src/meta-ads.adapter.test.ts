@@ -128,11 +128,141 @@ describe("MetaAdsAdapter.getAdAccount", () => {
       kind: "rate_limited",
     });
   });
+
+  it("erro com error_user_msg → AdsPlatformError carrega userMessage (mensagem legível repassada)", async () => {
+    stubFetchSequence([
+      {
+        body: { error: { message: "Invalid parameter", code: 100, error_user_msg: "explicação legível pro usuário" } },
+        status: 400,
+      },
+    ]);
+    await expect(makeAdapter().getAdAccount("tok", "9")).rejects.toMatchObject({
+      name: "AdsPlatformError",
+      kind: "not_accessible",
+      userMessage: "explicação legível pro usuário",
+    });
+  });
+});
+
+describe("MetaAdsAdapter.getAccountHealth (achado real, S — saúde da conta Meta)", () => {
+  const ref = { adAccountId: "3218136031666639", accessToken: "tok" };
+
+  it("mapeia a resposta real testada ao vivo contra a Meta (conta ativa, cartão de crédito)", async () => {
+    const { calls } = stubFetchSequence([
+      {
+        body: {
+          account_status: 1,
+          disable_reason: 0,
+          balance: "24432",
+          amount_spent: "11311335",
+          spend_cap: "0",
+          funding_source_details: { display_string: "VISA *0835", type: 1, id: "26365591723126533" },
+        },
+      },
+    ]);
+    const { adapter } = makeAdapterWithGov();
+    const health = await adapter.getAccountHealth(ref);
+    expect(health.status).toBe("active");
+    expect(health.balanceMajor).toBe(244.32);
+    expect(health.amountSpentMajor).toBe(113113.35);
+    expect(health.paymentMethodLabel).toBe("VISA *0835");
+    expect(health.fundingType).toBe("other"); // cartão (type 1) — nunca stored_balance
+    expect(health).not.toHaveProperty("disableReason");
+    expect(health).not.toHaveProperty("spendCapMajor"); // "0" = sem teto, não R$ 0,00
+    expect(calls()[0]).toContain("act_3218136031666639");
+  });
+
+  it("account_status desconhecido (código novo/indocumentado) → \"unknown\", nunca inventa", async () => {
+    stubFetchSequence([{ body: { account_status: 999 } }]);
+    const { adapter } = makeAdapterWithGov();
+    const health = await adapter.getAccountHealth(ref);
+    expect(health.status).toBe("unknown");
+  });
+
+  it("account_status desativada + disable_reason presente → status disabled, motivo honesto (não inventa o texto)", async () => {
+    stubFetchSequence([{ body: { account_status: 2, disable_reason: 3 } }]);
+    const { adapter } = makeAdapterWithGov();
+    const health = await adapter.getAccountHealth(ref);
+    expect(health.status).toBe("disabled");
+    expect(health.disableReason).toBe("unknown_reason"); // só o código 0 (NONE) é conhecido com confiança
+  });
+
+  it("spend_cap real (> 0) → spendCapMajor preenchido", async () => {
+    stubFetchSequence([{ body: { account_status: 1, spend_cap: "50000" } }]);
+    const { adapter } = makeAdapterWithGov();
+    const health = await adapter.getAccountHealth(ref);
+    expect(health.spendCapMajor).toBe(500);
+  });
+
+  it("funding_source_details.type === 20 (STORED_BALANCE) → fundingType stored_balance", async () => {
+    stubFetchSequence([{ body: { account_status: 1, funding_source_details: { type: 20 } } }]);
+    const { adapter } = makeAdapterWithGov();
+    const health = await adapter.getAccountHealth(ref);
+    expect(health.fundingType).toBe("stored_balance");
+  });
+
+  it("sem funding_source_details → paymentMethodLabel/fundingType ausentes (não força null)", async () => {
+    stubFetchSequence([{ body: { account_status: 1 } }]);
+    const { adapter } = makeAdapterWithGov();
+    const health = await adapter.getAccountHealth(ref);
+    expect(health).not.toHaveProperty("paymentMethodLabel");
+    expect(health).not.toHaveProperty("fundingType");
+  });
+
+  it("cooldown ativo → degrada (rate_limited) sem bater na Meta", async () => {
+    const { adapter, gov } = makeAdapterWithGov();
+    await gov.observeUsage("act_3218136031666639", {
+      callCountPct: 100,
+      totalCputimePct: 50,
+      totalTimePct: 50,
+      estimatedTimeToRegainAccessMin: 5,
+    });
+    const { calls } = stubFetchSequence([{ body: { account_status: 1 } }]);
+    await expect(adapter.getAccountHealth(ref)).rejects.toMatchObject({
+      name: "AdsPlatformError",
+      kind: "rate_limited",
+    });
+    expect(calls().length).toBe(0);
+  });
 });
 
 describe("MetaAdsAdapter.listEntities (governor)", () => {
   const ref = { adAccountId: "1", accessToken: "tok" };
   const usageHeader = JSON.stringify({ act_1: [{ call_count: 30, total_cputime: 10, total_time: 10 }] });
+
+  it("S2: mapeia bid_strategy/bid_amount (cru da Meta → BidStrategy neutra + major currency)", async () => {
+    stubFetchSequence([
+      {
+        body: {
+          data: [
+            { id: "c1", name: "Camp CBO", status: "ACTIVE", objective: "OUTCOME_SALES", bid_strategy: "LOWEST_COST_WITH_BID_CAP", bid_amount: "500" },
+            { id: "c2", name: "Camp sem cap", status: "ACTIVE", objective: "OUTCOME_SALES", bid_strategy: "LOWEST_COST_WITHOUT_CAP" },
+          ],
+        },
+      },
+    ]);
+    const { adapter } = makeAdapterWithGov();
+    const entities = await adapter.listEntities(ref, "campaign");
+    expect(entities.find((e) => e.id === "c1")).toMatchObject({ bidStrategy: "bid_cap", bidCapMajor: 5 });
+    expect(entities.find((e) => e.id === "c2")).toMatchObject({ bidStrategy: "lowest_cost" });
+    expect(entities.find((e) => e.id === "c2")).not.toHaveProperty("bidCapMajor");
+  });
+
+  it("S2: bid_strategy desconhecido/ausente → bidStrategy undefined (honesto, não inventa)", async () => {
+    stubFetchSequence([{ body: { data: [{ id: "c1", name: "Camp", status: "ACTIVE", objective: "OUTCOME_SALES", bid_strategy: "SOME_FUTURE_ENUM" }] } }]);
+    const { adapter } = makeAdapterWithGov();
+    const entities = await adapter.listEntities(ref, "campaign");
+    expect(entities[0]).not.toHaveProperty("bidStrategy");
+  });
+
+  it("S2 (achado da revisão): bid_amount SEM bidStrategy reconhecido/≠lowest_cost → bidCapMajor omitido (nunca solto/contraditório)", async () => {
+    stubFetchSequence([
+      { body: { data: [{ id: "c1", name: "Camp enum futuro", status: "ACTIVE", objective: "OUTCOME_SALES", bid_strategy: "SOME_FUTURE_ENUM", bid_amount: "500" }] } },
+    ]);
+    const { adapter } = makeAdapterWithGov();
+    const entities = await adapter.listEntities(ref, "campaign");
+    expect(entities[0]).not.toHaveProperty("bidCapMajor");
+  });
 
   it("rate-limit transitório (code 17) → retry inline → completa", async () => {
     const { calls } = stubFetchSequence([
@@ -172,6 +302,44 @@ describe("MetaAdsAdapter.listEntities (governor)", () => {
     ]);
     await adapter.listEntities(ref, "campaign");
     expect(spy).toHaveBeenCalledWith("act_1", expect.objectContaining({ callCountPct: 30 }));
+  });
+});
+
+describe("MetaAdsAdapter.listEntities (statusFilter — S7-sync, achado real: rate-limit em conta grande)", () => {
+  const ref = { adAccountId: "1", accessToken: "tok" };
+
+  it("sem opts → NÃO manda o PARÂMETRO effective_status (o campo 'effective_status' em fields= é outra coisa; catálogo completo, o chat depende disso)", async () => {
+    const { calls } = stubFetchSequence([{ body: { data: [{ id: "c1", name: "Camp", status: "PAUSED", objective: "OUTCOME_SALES" }] } }]);
+    const { adapter } = makeAdapterWithGov();
+    await adapter.listEntities(ref, "adset");
+    const params = new URL(calls()[0]!).searchParams;
+    expect(params.has("effective_status")).toBe(false);
+  });
+
+  it("statusFilter:'active' → manda o parâmetro effective_status=[\"ACTIVE\"] na chamada", async () => {
+    const { calls } = stubFetchSequence([{ body: { data: [] } }]);
+    const { adapter } = makeAdapterWithGov();
+    await adapter.listEntities(ref, "adset", { statusFilter: "active" });
+    const params = new URL(calls()[0]!).searchParams;
+    expect(params.get("effective_status")).toBe('["ACTIVE"]');
+  });
+
+  it("statusFilter:'active' NÃO usa nem alimenta o cache de catálogo (não contamina o completo que o chat lê)", async () => {
+    const client = new MetaGraphClient({ graphVersion: "v26.0" });
+    const redis = new FakeRedis() as unknown as Redis;
+    const gov = new MetaGovernor({ redis, rng: () => 0 });
+    const entityCache = new MetaEntityCache({ redis, ttlSec: 600 });
+    const adapter = new MetaAdsAdapter({ client, governor: gov, entityCache });
+
+    stubFetchSequence([{ body: { data: [{ id: "a1", name: "Adset ativo", status: "ACTIVE", objective: "OUTCOME_SALES" }] } }]);
+    await adapter.listEntities(ref, "adset", { statusFilter: "active" }); // não deve cachear
+    expect(await entityCache.get("act_1", "adset")).toBeNull();
+
+    // chamada seguinte SEM filtro é um MISS de verdade (bateu na Meta de novo, não leu um cache poluído)
+    const { calls } = stubFetchSequence([{ body: { data: [{ id: "a1", name: "Adset (completo)", status: "ACTIVE", objective: "OUTCOME_SALES" }, { id: "a2", name: "Adset pausado", status: "PAUSED", objective: "OUTCOME_SALES" }] } }]);
+    const full = await adapter.listEntities(ref, "adset");
+    expect(calls().length).toBe(1);
+    expect(full.map((e) => e.id).sort()).toEqual(["a1", "a2"]);
   });
 });
 

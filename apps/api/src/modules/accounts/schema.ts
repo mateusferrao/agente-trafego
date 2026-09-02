@@ -10,5 +10,7 @@ export const adAccountOutput = z.object({
   /** Token status efetivo (o da conexão dona do token). */
   tokenStatus: z.enum(["valid", "invalid", "unchecked"]),
   lastValidatedAt: z.string().nullable(),
+  /** status da conta NA META (neutro; null/"active" = ok) — banner de saúde no shell. */
+  accountHealthStatus: z.string().nullable(),
 });
 export type AdAccountOutput = z.infer<typeof adAccountOutput>;

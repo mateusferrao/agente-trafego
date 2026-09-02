@@ -16,7 +16,7 @@ export class UiHint {
     return this.tone !== 'warning';
   }
 
-  @HostBinding('class.text-tomato')
+  @HostBinding('class.text-warning')
   get isWarning(): boolean {
     return this.tone === 'warning';
   }

@@ -3,19 +3,27 @@
 // ÚNICA reusada pela API (hoje) e pelo chat do worker (depois). §4: IO na borda.
 
 import { and, eq, sql } from "drizzle-orm";
-import { agents, auditLog, guardrailConfigs, type Database } from "@trafego/db";
+import { agents, agentToolBindings, auditLog, guardrailConfigs, type Database } from "@trafego/db";
 import {
   archetypeDefaults,
   autonomyPolicyWeakens,
   resolveAgentConfigChange,
+  resolveEnabledTools,
   unseedIdentity,
   windowFromModelConfig,
   CONFIG_CHANGE_LABELS,
   type AgentConfigPatch,
   type AgentConfigState,
 } from "@trafego/core";
-import { DEFAULT_NOTIFY_POLICY, DEFAULT_POSTURE, SCHEDULE_RESYNC_JOB, SCHEDULE_RESYNC_QUEUE, toGuardrailConfig } from "@trafego/shared";
-import type { AutonomyPolicy, CadenceSpec, NotifyPolicy, OrgId, Posture } from "@trafego/shared";
+import {
+  DEFAULT_NOTIFY_POLICY,
+  DEFAULT_POSTURE,
+  GATEABLE_TOOL_KEYS,
+  SCHEDULE_RESYNC_JOB,
+  SCHEDULE_RESYNC_QUEUE,
+  toGuardrailConfig,
+} from "@trafego/shared";
+import type { AutonomyPolicy, CadenceSpec, NotifyPolicy, OrgId, Posture, ToolBindingMode } from "@trafego/shared";
 import type { SchedulerPort } from "@trafego/shared/ports";
 
 /** Dependências de infra da camada (composition root injeta). */
@@ -37,6 +45,43 @@ export interface AgentConfigAudit {
   };
   /** contexto extra da trilha (ex: `{ channel: "whatsapp" }` p/ escrita por chat). */
   readonly metadata?: Record<string, unknown>;
+}
+
+/**
+ * Persiste o patch de on/off das tools em `agent_tool_bindings` (A3): cada chave presente
+ * vira uma linha explícita (enabled|disabled) por (agente, tool) — upsert idempotente. Chaves
+ * ausentes seguem no fallback (allowedActions/default). Fonte ÚNICA — a API (site) e o chat
+ * (auto-config) escrevem pela MESMA função (antes só a API tinha isso, cópia local).
+ */
+export async function applyToolBindingsChange(
+  db: Database,
+  input: { readonly orgId: OrgId; readonly agentId: string; readonly patch: Partial<Record<string, boolean>> },
+): Promise<void> {
+  const entries = Object.entries(input.patch).filter((e): e is [string, boolean] => typeof e[1] === "boolean");
+  for (const [toolKey, enabled] of entries) {
+    const mode: ToolBindingMode = enabled ? "enabled" : "disabled";
+    await db
+      .insert(agentToolBindings)
+      .values({ orgId: input.orgId, agentId: input.agentId, toolKey, mode })
+      .onConflictDoUpdate({ target: [agentToolBindings.agentId, agentToolBindings.toolKey], set: { mode } });
+  }
+}
+
+/** Resolve o on/off por-ação ATUAL (A3) — as 6 capacidades gateáveis, já resolvidas (fallback
+ *  allowedActions/default aplicado). Usado por `loadAgentConfigState` (chat) e reusável pela API. */
+export async function loadToolBindingsState(
+  db: Database,
+  orgId: OrgId,
+  agentId: string,
+  allowedActionsFallback: readonly string[],
+): Promise<Readonly<Record<string, boolean>>> {
+  const rows = await db
+    .select({ toolKey: agentToolBindings.toolKey, mode: agentToolBindings.mode })
+    .from(agentToolBindings)
+    .where(and(eq(agentToolBindings.agentId, agentId), eq(agentToolBindings.orgId, orgId)));
+  const map = new Map<string, ToolBindingMode>(rows.map((r) => [r.toolKey, r.mode as ToolBindingMode]));
+  const enabled = resolveEnabledTools(map, new Set(allowedActionsFallback));
+  return Object.fromEntries(GATEABLE_TOOL_KEYS.map((k) => [k, enabled.has(k)]));
 }
 
 /** Ação de auditoria da escrita de config (durável — não vaza fase). */
@@ -112,12 +157,21 @@ export async function applyAgentConfigChange(
       dryRun: g.dryRun,
       killSwitch: g.killSwitch,
       llmCostCap: g.llmCostCapUsd != null ? String(g.llmCostCapUsd) : null,
+      // limites de gasto novo (Fatia 7) — só sobrescreve quando vierem (mantém default de coluna).
+      ...(g.maxNewDailyBudgetMinor != null ? { maxNewDailyBudgetMinor: g.maxNewDailyBudgetMinor } : {}),
+      ...(g.maxNewCampaignsPerDay != null ? { maxNewCampaignsPerDay: g.maxNewCampaignsPerDay } : {}),
+      ...(g.scalePct != null ? { scalePct: g.scalePct } : {}),
     };
     await db
       .insert(guardrailConfigs)
       .values({ orgId, agentId, ...gValues })
       .onConflictDoUpdate({ target: guardrailConfigs.agentId, set: { ...gValues, updatedAt: sql`now()` } });
   }
+
+  // on/off por-ação (A3) — tabela à parte, não é coluna de `agents`/`guardrail_configs`.
+  // Só as chaves ENVIADAS no patch (leaf-merge já resolvido no `next.toolBindings` pelo core,
+  // mas a PERSISTÊNCIA usa o patch cru — não reescreve as 6 chaves toda vez).
+  if (patch.toolBindings) await applyToolBindingsChange(db, { orgId, agentId, patch: patch.toolBindings });
 
   // cadência da análise OU da proatividade (F4d: o pulso tem scheduler próprio) mudou
   // → re-sincroniza (worker é o dono; aqui só enfileira). resyncAccountSchedule relê
@@ -285,6 +339,10 @@ export async function loadAgentConfigState(
     .from(guardrailConfigs)
     .where(and(eq(guardrailConfigs.agentId, agentId), eq(guardrailConfigs.orgId, orgId)))
     .limit(1);
+  const guardrails = toGuardrailConfig(gRow);
+  // on/off por-ação (A3) — mesma fonte/lógica que o apply/chat/site já leem (resolveEnabledTools),
+  // pra o resolver poder ecoar/diffar sem drift de outra fonte.
+  const toolBindings = await loadToolBindingsState(db, orgId, agentId, guardrails.allowedActions);
 
   return {
     goals: row.goals ?? {},
@@ -296,12 +354,13 @@ export async function loadAgentConfigState(
     cadence: row.cadence ?? null,
     analysisWindowDays: windowFromModelConfig(row.modelConfig),
     autonomyPolicy: row.autonomyPolicy,
-    guardrails: toGuardrailConfig(gRow),
+    guardrails,
     modelConfig: row.modelConfig ?? {},
     // fallback defensivo (linha pré-migração/fake de teste); a coluna real tem
     // default NOT NULL (backfill automático), então isto é só uma rede de segurança.
     notifyPolicy: row.notifyPolicy ?? DEFAULT_NOTIFY_POLICY,
     posture: row.posture ?? DEFAULT_POSTURE,
+    toolBindings,
   };
 }
 

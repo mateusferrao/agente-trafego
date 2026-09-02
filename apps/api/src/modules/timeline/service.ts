@@ -9,9 +9,11 @@ import {
   agentToolCalls,
   agents,
   approvals,
+  campaignDrafts,
   recommendations,
   type Database,
 } from "@trafego/db";
+import type { CampaignDraftSpec } from "@trafego/shared";
 import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY } from "@trafego/shared";
 import type { OrgId } from "@trafego/shared";
 import type { TimelineEvent, TimelineOutput, TimelineRecommendation } from "./schema.js";
@@ -32,6 +34,8 @@ const PAGE_DEFAULT = 30;
 const PAGE_MAX = 100;
 /** Teto por fonte antes do merge (paginação profunda real via UNION = fast-follow). */
 const SOURCE_CAP = 300;
+/** unidade menor → maior (2 casas; JPY/CLP = fast-follow). */
+const MINOR_PER_UNIT = 100;
 
 export function createTimelineService(deps: TimelineDeps) {
   return {
@@ -119,7 +123,7 @@ export function createTimelineService(deps: TimelineDeps) {
         .limit(SOURCE_CAP);
 
       for (const r of tcRows) {
-        const args = r.args as { target?: { name?: string; id?: string }; dryRun?: boolean };
+        const args = r.args as { target?: { name?: string; id?: string; level?: string }; dryRun?: boolean };
         events.push({
           id: `tc:${r.id}`,
           at: r.at.toISOString(),
@@ -127,6 +131,7 @@ export function createTimelineService(deps: TimelineDeps) {
           toolCallId: r.id,
           toolKey: r.toolKey,
           entityName: args.target?.name ?? args.target?.id ?? null,
+          entityLevel: args.target?.level ?? null,
           fromChat: r.runId === null,
           simulated: args.dryRun === true,
         });
@@ -150,8 +155,11 @@ export function createTimelineService(deps: TimelineDeps) {
       for (const r of apprRows) {
         const type = APPROVAL_EVENT_BY_STATUS[r.status];
         if (!type) continue;
+        // rascunhos de campanha (Fatia 7) têm eventos próprios (campaign_draft_*); aqui
+        // só entram aprovações de AÇÃO (actionType set).
+        if (r.actionType === null) continue;
         const at = (r.resolvedAt ?? r.createdAt).toISOString();
-        const action = r.action as { target?: { name?: string; id?: string } } | null;
+        const action = r.action as { target?: { name?: string; id?: string; level?: string } } | null;
         events.push({
           id: `ap:${r.id}`,
           at,
@@ -159,7 +167,50 @@ export function createTimelineService(deps: TimelineDeps) {
           approvalId: r.id,
           actionType: r.actionType,
           entityName: action?.target?.name ?? action?.target?.id ?? null,
+          entityLevel: action?.target?.level ?? null,
         });
+      }
+
+      // 4) rascunhos de campanha (Fatia 7) → proposto (createdAt) + criado (updatedAt quando created).
+      const draftRows = await deps.db
+        .select({
+          id: campaignDrafts.id,
+          kind: campaignDrafts.kind,
+          status: campaignDrafts.status,
+          spec: campaignDrafts.spec,
+          createdAt: campaignDrafts.createdAt,
+          updatedAt: campaignDrafts.updatedAt,
+        })
+        .from(campaignDrafts)
+        .where(eq(campaignDrafts.agentId, agentId))
+        .orderBy(desc(campaignDrafts.createdAt))
+        .limit(SOURCE_CAP);
+
+      for (const d of draftRows) {
+        const spec = d.spec as CampaignDraftSpec;
+        // 2 casas (BRL/USD/EUR); moeda sem centavos (JPY/CLP) = fast-follow. `currency` vai
+        // junto p/ o front formatar com o símbolo certo (nunca hardcodar).
+        const budgetMajor = spec.dailyBudgetMinor / MINOR_PER_UNIT;
+        events.push({
+          id: `dp:${d.id}`,
+          at: d.createdAt.toISOString(),
+          type: "campaign_draft_proposed",
+          draftId: d.id,
+          kind: d.kind,
+          dailyBudgetMajor: budgetMajor,
+          currency: spec.currency,
+        });
+        if (d.status === "created") {
+          events.push({
+            id: `dc:${d.id}`,
+            at: d.updatedAt.toISOString(),
+            type: "campaign_created",
+            draftId: d.id,
+            kind: d.kind,
+            dailyBudgetMajor: budgetMajor,
+            currency: spec.currency,
+          });
+        }
       }
 
       // merge → filtro (tipo/período) → ordena desc → pagina.

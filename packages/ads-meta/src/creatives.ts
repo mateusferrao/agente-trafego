@@ -1,7 +1,9 @@
 import type { Creative } from "@trafego/shared/types";
 import type { AdAccountRef } from "@trafego/shared/ports";
+import { extractPhoneFromUrl } from "@trafego/shared";
 import type { BatchSubRequest, BatchSubResponse, MetaGraphClient } from "./client.js";
 import { callWithGovernor } from "./call-with-governor.js";
+import { classifyAdFormat } from "./creative-format.js";
 import type { MetaGovernor } from "./governor.js";
 import { normalizeAdAccountId } from "./ids.js";
 
@@ -13,7 +15,7 @@ import { normalizeAdAccountId } from "./ids.js";
  */
 
 export const CREATIVE_FIELDS =
-  "creative{id,name,image_url,thumbnail_url,object_story_spec,body,title,call_to_action_type,video_id}";
+  "creative{id,name,image_url,thumbnail_url,object_story_spec{page_id,link_data{message,name,image_hash,call_to_action{type,value{link,app_destination}},child_attachments},video_data{message,title,image_hash,call_to_action{type,value{link,app_destination}}},template_data,product_set_id},body,title,call_to_action_type,video_id}";
 
 /** Frames HD do vídeo (Fatia 6c): a Meta entrega ~10 thumbnails 1080p ao longo do vídeo. */
 export const VIDEO_THUMBNAILS_FIELDS = "thumbnails{uri,width,height,is_preferred}";
@@ -40,9 +42,23 @@ export function pickSpacedFrames(thumbs: readonly RawVideoThumb[], n: number): s
   return [...picked];
 }
 
+interface RawCallToAction {
+  readonly type?: string;
+  /** valor do CTA (Fatia 7): link de destino (`wa.me`/`api.whatsapp.com`) + app_destination. */
+  readonly value?: { readonly link?: string; readonly app_destination?: string };
+}
 interface RawObjectStorySpec {
-  readonly link_data?: { readonly message?: string; readonly name?: string; readonly call_to_action?: { readonly type?: string } };
-  readonly video_data?: { readonly message?: string; readonly title?: string; readonly call_to_action?: { readonly type?: string } };
+  readonly page_id?: string;
+  readonly link_data?: {
+    readonly message?: string;
+    readonly name?: string;
+    readonly image_hash?: string;
+    readonly call_to_action?: RawCallToAction;
+    readonly child_attachments?: readonly unknown[];
+  };
+  readonly video_data?: { readonly message?: string; readonly title?: string; readonly image_hash?: string; readonly call_to_action?: RawCallToAction };
+  readonly template_data?: unknown;
+  readonly product_set_id?: string;
 }
 
 interface RawCreative {
@@ -70,6 +86,13 @@ export class MetaCreativesService {
     this.client = client;
     this.governor = governor;
     this.framesPerVideo = Math.max(1, framesPerVideo);
+  }
+
+  /** Frames HD de UM vídeo (por video_id) — reuso da biblioteca p/ a visão de criativo. */
+  async videoFrames(account: AdAccountRef, videoId: string): Promise<string[]> {
+    const accountId = normalizeAdAccountId(account.adAccountId);
+    const byVideo = await this.fetchVideoFrames(account, accountId, [videoId]);
+    return byVideo.get(videoId) ?? [];
   }
 
   /** Resolve os criativos dos ads via Batch API (1 sub-GET por ad, ≤50 por HTTP). */
@@ -149,6 +172,21 @@ export class MetaCreativesService {
     const body = c.body ?? story?.message;
     const title = c.title ?? (c.object_story_spec?.link_data?.name || c.object_story_spec?.video_data?.title);
     const callToAction = c.call_to_action_type ?? story?.call_to_action?.type;
+    // Destino WhatsApp (Fatia 7): o CTA de click-to-WhatsApp carrega o número no
+    // `value.link` (wa.me/api.whatsapp.com). Extração pura em `@trafego/shared` (formato
+    // de deep-link é público); o vocabulário Meta (`object_story_spec.value`) fica aqui.
+    const ctaLink = story?.call_to_action?.value?.link;
+    const whatsappNumber = ctaLink ? extractPhoneFromUrl(ctaLink) : null;
+    const pageId = c.object_story_spec?.page_id;
+    // capa: imagem → link_data.image_hash; VÍDEO → video_data.image_hash (a capa do anúncio-fonte).
+    // Reusar essa capa é robusto — ler os thumbnails do vídeo pode dar #10 conforme a origem do vídeo.
+    const imageHash = c.object_story_spec?.link_data?.image_hash ?? c.object_story_spec?.video_data?.image_hash;
+    const adFormat = classifyAdFormat({
+      hasImage: Boolean(c.object_story_spec?.link_data?.image_hash),
+      hasVideo: Boolean(c.video_id),
+      carouselItemCount: c.object_story_spec?.link_data?.child_attachments?.length ?? 0,
+      isCatalog: c.object_story_spec?.template_data !== undefined || c.object_story_spec?.product_set_id !== undefined,
+    });
     return {
       id: c.id ?? adId,
       adId,
@@ -156,9 +194,13 @@ export class MetaCreativesService {
       ...(body ? { body } : {}),
       ...(title ? { title } : {}),
       ...(callToAction ? { callToAction } : {}),
+      ...(pageId ? { pageId } : {}),
+      ...(whatsappNumber ? { whatsappNumber } : {}),
       ...(c.image_url ? { imageUrl: c.image_url } : {}),
+      ...(imageHash ? { imageHash } : {}),
       ...(c.thumbnail_url ? { thumbnailUrl: c.thumbnail_url } : {}),
       ...(c.video_id ? { videoId: c.video_id } : {}),
+      ...(adFormat ? { adFormat } : {}),
     };
   }
 }

@@ -13,6 +13,7 @@ import type {
   AutonomyPolicy,
   CandidateAction,
   Creative,
+  EntityBreakdown,
   Finding,
   GuardrailConfig,
   InsightRow,
@@ -65,7 +66,14 @@ export const AccountAnalysisState = Annotation.Root({
 
   // ── contexto carregado (loadContext) ───────────────────────────────────
   account: Annotation<AnalysisAccount | null>,
+  // voz do ANALISTA (composeAgentVoice: metodologia/override + identidade + personalização),
+  // SEM kernel/postura (emite JSON, não fala com o dono).
   systemPrompt: Annotation<string>,
+  // voz de FALA do redator (composeSpeakingVoice: voz-base + kernel de marca + postura) —
+  // fonte única com o chat/pulso. Separada do systemPrompt do analista.
+  speakingPrompt: Annotation<string>,
+  // perfil vertical do agente (S4) — resolve pra packages/core/src/verticals no prompt.
+  vertical: Annotation<string>,
   // epoch ms de quando a config relevante à análise mudou (força 1 deep — Fatia 4); null se nunca.
   configChangedAt: Annotation<number | null>,
   analysisConfig: Annotation<ResolvedAnalysisConfig | null>,
@@ -83,6 +91,11 @@ export const AccountAnalysisState = Annotation.Root({
   insights: Annotation<readonly InsightRow[]>,
   baselineInsights: Annotation<readonly InsightRow[]>,
   creatives: Annotation<readonly Creative[]>,
+  // Breakdown demográfico/posicionamento da CONTA (S7) — cru, sem gate de materialidade
+  // ainda (aplicado dentro de `buildAccountBrief`); null = sem dado (nunca sincronizado
+  // ainda, ou cadência própria não venceu neste ciclo).
+  demographics: Annotation<EntityBreakdown | null>,
+  placements: Annotation<EntityBreakdown | null>,
   brief: Annotation<AccountBrief | null>,
   findings: Annotation<readonly Finding[]>,
   // map-reduce (3b-2): análises por-anúncio (novas + herdadas) + as a persistir.
@@ -95,6 +108,10 @@ export const AccountAnalysisState = Annotation.Root({
   usage: Annotation<AccumulatedTokenUsage | null>,
   // mensagem de WhatsApp redigida (3b); null = nada acionável / não é cron → silêncio.
   outboundMessage: Annotation<string | null>,
+  // a msg carrega uma oferta de ligar a REATIVAÇÃO (empty-state, F4): o notify foca a conta-alvo
+  // na conversa org-level, pra a resposta ("sim") conseguir ligar por chat (fecha a contradição
+  // oferta-proativa × concierge multi-conta). Só o empty-state seta — blast radius mínimo.
+  offersReactivation: Annotation<boolean>,
   // narrativa voiceada (SEMPRE renderada quando há análise) — persistida no run p/ o
   // site exibir; independe da decisão de ENTREGA (outboundMessage). null = sem análise.
   narrative: Annotation<string | null>,

@@ -1,6 +1,6 @@
 import { date, index, jsonb, pgTable, text, uniqueIndex, uuid } from "drizzle-orm/pg-core";
-import type { ConversionGoal, StoredInsightMetrics } from "@trafego/shared";
-import { entityLevel, pk, timestamps } from "./_shared.js";
+import type { BreakdownSegment, ConversionGoal, StoredInsightMetrics } from "@trafego/shared";
+import { breakdownDimension, entityLevel, pk, timestamps } from "./_shared.js";
 import { adAccounts } from "./integrations.js";
 import { orgs } from "./tenancy.js";
 
@@ -32,6 +32,39 @@ export const insightsSnapshots = pgTable(
       t.entityId,
       t.date,
     ),
+  ],
+);
+
+/**
+ * Breakdown demográfico/posicionamento (S7, pivô saúde) — cadência PRÓPRIA, mais lenta
+ * que o sync diário (`insights_snapshots`): guarda só o MAIS RECENTE por (conta, entidade,
+ * dimensão), upsert (nunca historiza por dia — o spread demográfico muda devagar). `date`
+ * é o carimbo de frescor explícito (nunca implica frescor do dia — a NOTE do kernel precisa
+ * dele, senão o LLM citaria um padrão de N dias atrás como se fosse de hoje).
+ */
+export const insightsBreakdowns = pgTable(
+  "insights_breakdowns",
+  {
+    id: pk(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    adAccountId: uuid("ad_account_id")
+      .notNull()
+      .references(() => adAccounts.id, { onDelete: "cascade" }),
+    // S7: só "account"|"campaign" (adset/ad é fast-follow, ver ROADMAP) — reusa o enum
+    // genérico de 4 níveis (sem enum próprio de 2 valores).
+    entityLevel: entityLevel("entity_level").notNull(),
+    entityId: text("entity_id").notNull(),
+    dimension: breakdownDimension("dimension").notNull(),
+    segments: jsonb("segments").$type<readonly BreakdownSegment[]>().notNull(),
+    date: date("date").notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    index("insights_breakdowns_account_idx").on(t.adAccountId),
+    // upsert: 1 linha por (conta, entidade, dimensão) — só o mais recente sobrevive.
+    uniqueIndex("insights_breakdowns_unique_idx").on(t.adAccountId, t.entityId, t.dimension),
   ],
 );
 

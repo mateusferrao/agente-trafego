@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -11,10 +12,24 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import type { Action, CreativeVisionResult, PartialReason } from "@trafego/shared";
+import type {
+  Action,
+  CampaignDraftSpec,
+  CreativeVisionResult,
+  CuratedEntitySnapshot,
+  DraftSourceRef,
+  PartialReason,
+} from "@trafego/shared";
 import {
   actionType,
+  approvalKind,
   approvalStatus,
+  creativeAssetOrigin,
+  creativeAssetStatus,
+  creativeFormat,
+  draftKind,
+  draftOrigin,
+  draftStatus,
   entityLevel,
   feedbackVote,
   outcomeStatus,
@@ -28,7 +43,7 @@ import {
 } from "./_shared.js";
 import { agents } from "./agents.js";
 import { orgs } from "./tenancy.js";
-import { contacts } from "./integrations.js";
+import { adAccounts, contacts } from "./integrations.js";
 
 /** Execução do agente (análise). Congela config + custo p/ reprodutibilidade. */
 export const agentRuns = pgTable(
@@ -140,12 +155,20 @@ export const approvals = pgTable(
     runId: uuid("run_id").references(() => agentRuns.id, { onDelete: "cascade" }),
     contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
     status: approvalStatus("status").notNull().default("pending"),
+    // discrimina a FORMA (P0.1): `action`/`draft` (como antes) + `activation` (NOVO — 2º
+    // passo HITL, ativa o que já foi criado PAUSADO; reusa `draft_id`, não dá pra distinguir
+    // de `draft` só pela nulidade). Default `action` cobre o grosso das linhas legadas; o
+    // backfill da migração corrige as `draft` existentes (ver 00xx_....sql).
+    kind: approvalKind("kind").notNull().default("action"),
     // chave granular (a ação proposta vive inteira em `action`; estas colunas chaveiam
-    // o upsert + índices, sem espalhar params).
-    entityLevel: entityLevel("entity_level").notNull(),
-    entityId: text("entity_id").notNull(),
-    actionType: actionType("action_type").notNull(),
-    action: jsonb("action").$type<Action>().notNull(),
+    // o upsert + índices, sem espalhar params). NULL nas aprovações de RASCUNHO/ATIVAÇÃO
+    // (Fatia 7): a proposta vive em `campaign_drafts` (via `draft_id`), não em `action`.
+    entityLevel: entityLevel("entity_level"),
+    entityId: text("entity_id"),
+    actionType: actionType("action_type"),
+    action: jsonb("action").$type<Action>(),
+    // Aprovação de rascunho OU ativação de campanha (Fatia 7) — exclui `action` (check por-kind).
+    draftId: uuid("draft_id").references(() => campaignDrafts.id, { onDelete: "cascade" }),
     // motivo quando resolvida sem aplicar (rejeitada pelo usuário ou `blocked` no re-check).
     resolvedReason: text("resolved_reason"),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
@@ -156,10 +179,24 @@ export const approvals = pgTable(
     index("approvals_org_idx").on(t.orgId),
     index("approvals_run_idx").on(t.runId),
     index("approvals_agent_status_idx").on(t.agentId, t.status),
-    // no máx. 1 pendente por (agente, entidade, tipo de ação) → upsert atômico.
+    index("approvals_draft_idx").on(t.draftId),
+    // no máx. 1 pendente por (agente, entidade, tipo de ação) → upsert atômico. Rascunhos/
+    // ativações (entity/actionType NULL) ficam FORA daqui — a unicidade deles é por draftId+kind.
     uniqueIndex("approvals_pending_uq")
       .on(t.agentId, t.entityLevel, t.entityId, t.actionType)
       .where(sql`status = 'pending'`),
+    // no máx. 1 pendente por (rascunho, kind) — evita 2 aprovações de ATIVAÇÃO (ou de CRIAÇÃO)
+    // simultâneas pro MESMO draft_id (P0.1).
+    uniqueIndex("approvals_pending_draft_uq")
+      .on(t.draftId, t.kind)
+      .where(sql`status = 'pending' and draft_id is not null`),
+    // exatamente um formato por `kind`: AÇÃO (action set, draft null) OU RASCUNHO/ATIVAÇÃO
+    // (draft set, action null).
+    check(
+      "approvals_action_xor_draft",
+      sql`(${t.kind} = 'action' and ${t.action} is not null and ${t.draftId} is null)
+          or (${t.kind} in ('draft', 'activation') and ${t.action} is null and ${t.draftId} is not null)`,
+    ),
   ],
 );
 
@@ -182,11 +219,25 @@ export const recommendations = pgTable(
     proposedAction: jsonb("proposed_action").$type<Action>(),
     // Capacidade do catálogo (S4) que esta recomendação propõe — só em platform_action.
     toolKey: text("tool_key"),
+    // Rascunho de campanha semeado por esta recomendação (Fatia 7, proativo) — o card
+    // rico abre a partir daqui e reusa o outcome tracking da recomendação.
+    draftId: uuid("draft_id").references(() => campaignDrafts.id, { onDelete: "set null" }),
     riskLevel: riskLevel("risk_level").notNull().default("low"),
     status: recommendationStatus("status").notNull().default("open"),
+    // Taxonomia de saída (S0b/G4): impacto em R$ (texto, só quando o LLM consegue ancorar
+    // em número real do brief — GROUNDING_RULE; null na maioria fora de pause/scale), o que
+    // acompanhar depois de aplicar, e os findings que motivaram a recomendação (ids). Só
+    // populado no caminho LLM (`toRecommendationRow`) — demais origens (tracking/human_direction/
+    // criação proativa) ficam null.
+    expectedImpact: text("expected_impact"),
+    whatToMonitor: text("what_to_monitor"),
+    findingRefs: jsonb("finding_refs").$type<string[]>(),
     ...timestamps,
   },
-  (t) => [index("recommendations_run_idx").on(t.runId)],
+  (t) => [
+    index("recommendations_run_idx").on(t.runId),
+    index("recommendations_draft_idx").on(t.draftId),
+  ],
 );
 
 /**
@@ -215,6 +266,10 @@ export const entityAnalyses = pgTable(
     flags: jsonb("flags").$type<string[]>().notNull().default([]),
     // tier de desempenho (6c): winner|performer|underperformer|zombie — histórico coerente.
     tier: text("tier"),
+    // snapshot curado (S1, pivô saúde): budget/atBudgetCeiling/isCBO/audience/funnel/
+    // conversionBasis/healthSignals/eligibility — o que chat/UI/redator leem sem reler o
+    // brief do run (que não sobrevive além da memória do run).
+    curatedJson: jsonb("curated_json").$type<CuratedEntitySnapshot>(),
     analyzedAt: timestamp("analyzed_at", { withTimezone: true }).notNull().defaultNow(),
     ...timestamps,
   },
@@ -256,4 +311,85 @@ export const recommendationFeedback = pgTable(
     ...timestamps,
   },
   (t) => [index("recommendation_feedback_rec_idx").on(t.recommendationId)],
+);
+
+/**
+ * Rascunho de campanha (Fatia 7) — ENTIDADE CENTRAL da criação. `from_scratch` ou
+ * `duplicate`. Fonte única da verdade em qualquer gatilho (chat/site/proativo):
+ * `approvals.draft_id` e `recommendations.draft_id` apontam pra cá. `spec` = contrato
+ * NEUTRO versionado (Meta só no adapter). `created_ids` = ids parciais da saga p/
+ * retomada idempotente. Nunca deletar (histórico) — status `reverted` desfaz.
+ */
+export const campaignDrafts = pgTable(
+  "campaign_drafts",
+  {
+    id: pk(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    adAccountId: uuid("ad_account_id")
+      .notNull()
+      .references(() => adAccounts.id, { onDelete: "cascade" }),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    runId: uuid("run_id").references(() => agentRuns.id, { onDelete: "set null" }),
+    kind: draftKind("kind").notNull(),
+    status: draftStatus("status").notNull().default("proposed"),
+    origin: draftOrigin("origin").notNull(),
+    spec: jsonb("spec").$type<CampaignDraftSpec>().notNull(),
+    // entidade-origem quando `duplicate` (o que foi copiado).
+    sourceRef: jsonb("source_ref").$type<DraftSourceRef>(),
+    // ids parciais criados na Meta (saga) p/ dedupe/retomada idempotente.
+    createdIds: jsonb("created_ids").$type<Record<string, unknown>>().notNull().default({}),
+    ...timestamps,
+  },
+  (t) => [
+    index("campaign_drafts_account_idx").on(t.adAccountId),
+    index("campaign_drafts_agent_idx").on(t.agentId),
+    // throttle do PROATIVO: no máx. 1 rascunho proposto por conta (não pega chat/site).
+    uniqueIndex("campaign_drafts_proactive_pending_uq")
+      .on(t.adAccountId)
+      .where(sql`status = 'proposed' and origin = 'proactive'`),
+  ],
+);
+
+/**
+ * Biblioteca de criativos por conta (Fatia 7). `reuse` = auto-populado dos anúncios
+ * existentes (mídia já provada); `upload` = fornecido pelo usuário (web/WhatsApp). O
+ * agente NUNCA inventa mídia — só reusa/recebe. `storage_ref` = blob no StoragePort;
+ * `meta_image_hash`/`meta_video_id` = ids resolvidos na plataforma.
+ */
+export const creativeAssets = pgTable(
+  "creative_assets",
+  {
+    id: pk(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    adAccountId: uuid("ad_account_id")
+      .notNull()
+      .references(() => adAccounts.id, { onDelete: "cascade" }),
+    origin: creativeAssetOrigin("origin").notNull(),
+    format: creativeFormat("format").notNull(),
+    status: creativeAssetStatus("status").notNull().default("ready"),
+    storageRef: text("storage_ref"),
+    metaImageHash: text("meta_image_hash"),
+    metaVideoId: text("meta_video_id"),
+    // anúncio de origem quando `reuse` (liga o asset ao desempenho em ad_creatives).
+    sourceAdId: text("source_ad_id"),
+    // Arquivamento (soft-delete híbrido): excluir um asset EM USO (rascunho/campanha o
+    // referencia) só ARQUIVA — some da biblioteca e do picker, mas a linha+blob ficam
+    // (preview/histórico não quebram, Meta é independente). Asset livre é apagado de vez.
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (t) => [
+    index("creative_assets_account_idx").on(t.adAccountId),
+    // dedup determinístico (P0.2, review Fatia 7): dois uploads CONCORRENTES do mesmo
+    // conteúdo (mesma conta+storageRef) não duplicam a linha — o insert usa
+    // onConflictDoNothing + re-select. Parcial (storage_ref pode ser null em rows legadas
+    // sem blob) — nunca colide nessas.
+    uniqueIndex("creative_assets_account_storage_uq").on(t.adAccountId, t.storageRef).where(sql`storage_ref is not null`),
+  ],
 );

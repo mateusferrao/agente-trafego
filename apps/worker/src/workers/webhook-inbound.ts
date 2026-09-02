@@ -16,6 +16,10 @@ import { Queue, Worker } from "bullmq";
 import {
   WHATSAPP_FLUSH_QUEUE,
   WHATSAPP_INBOUND_QUEUE,
+  WHATSAPP_MEDIA_INTAKE_ATTEMPTS,
+  WHATSAPP_MEDIA_INTAKE_BACKOFF_MS,
+  WHATSAPP_MEDIA_INTAKE_JOB,
+  WHATSAPP_MEDIA_INTAKE_QUEUE,
   WHATSAPP_TRANSCRIPTION_ATTEMPTS,
   WHATSAPP_TRANSCRIPTION_BACKOFF_MS,
   WHATSAPP_TRANSCRIPTION_JOB,
@@ -23,6 +27,7 @@ import {
   type ConversationRef,
   type WhatsappFlushPayload,
   type WhatsappInboundPayload,
+  type WhatsappMediaIntakePayload,
   type WhatsappTranscriptionPayload,
 } from "@trafego/shared";
 import type { InboundMessage, MessagingChannelPort } from "@trafego/shared/ports";
@@ -44,13 +49,15 @@ const UNSUPPORTED_NOTICE_BUCKET = "unsupported";
 
 /** Placeholder de mídia no contexto ambiente de grupo (não transcreve; dá continuidade). */
 const AMBIENT_AUDIO_PLACEHOLDER = "[áudio]";
-const AMBIENT_MEDIA_PLACEHOLDER: Readonly<Record<string, string>> = { image: "[imagem]" };
+const AMBIENT_MEDIA_PLACEHOLDER: Readonly<Record<string, string>> = { image: "[imagem]", video: "[vídeo]" };
 const AMBIENT_MEDIA_DEFAULT = "[mídia]";
 
 /** Corpo a guardar de uma mensagem AMBIENTE de grupo: texto cru ou placeholder de mídia. */
 function ambientBody(inbound: InboundMessage): string {
   if (inbound.kind === "text") return inbound.text;
   if (inbound.kind === "audio") return AMBIENT_AUDIO_PLACEHOLDER;
+  if (inbound.kind === "image") return AMBIENT_MEDIA_PLACEHOLDER["image"] ?? AMBIENT_MEDIA_DEFAULT;
+  if (inbound.kind === "video") return AMBIENT_MEDIA_PLACEHOLDER["video"] ?? AMBIENT_MEDIA_DEFAULT;
   return AMBIENT_MEDIA_PLACEHOLDER[inbound.mediaType] ?? AMBIENT_MEDIA_DEFAULT;
 }
 
@@ -80,6 +87,7 @@ export interface InboundRouterDeps {
   readonly redis: Redis;
   readonly flushQueue: Pick<Queue<WhatsappFlushPayload>, "add" | "remove">;
   readonly transcriptionQueue: Pick<Queue<WhatsappTranscriptionPayload>, "add">;
+  readonly mediaIntakeQueue: Pick<Queue<WhatsappMediaIntakePayload>, "add">;
   readonly sendToConversation: SendToConversation;
   readonly logger: Pick<Logger, "debug">;
   readonly debounceMs: number;
@@ -114,6 +122,38 @@ async function routeMessage(
     await pushInbound(d.redis, conversationId, turnText ?? inbound.text, d.bufferTtlSec);
     await scheduleConversationFlush(d.flushQueue, flushPayload, d.debounceMs);
     d.logger.debug({ conversationId }, "inbound:buffered");
+    return;
+  }
+
+  if (inbound.kind === "image" || inbound.kind === "video") {
+    // Mídia → asset de criativo (F7): registra a linha + enfileira o intake (grava, sobe pra
+    // Meta, confirma). NÃO dispara turno do Grafo B (side-effect + cortesia). Imagem carrega
+    // base64 inline; VÍDEO não (grande demais p/ o Redis) → o intake busca por messageKey.
+    await d.repo.recordMessage(conversationId, "inbound", inbound.caption, {
+      messageId: inbound.messageId,
+      kind: inbound.kind,
+      ...extraMeta,
+    });
+    const media =
+      inbound.kind === "image"
+        ? { mimetype: inbound.image.mimetype, base64: inbound.image.base64, caption: inbound.caption, messageKey: inbound.messageKey }
+        : {
+            mimetype: inbound.video.mimetype,
+            caption: inbound.caption,
+            messageKey: inbound.messageKey,
+            ...(inbound.video.fileLength !== undefined ? { fileLength: inbound.video.fileLength } : {}),
+          };
+    await d.mediaIntakeQueue.add(
+      WHATSAPP_MEDIA_INTAKE_JOB,
+      { orgId, ref, conversationId, instanceId, mediaType: inbound.kind, media },
+      {
+        attempts: WHATSAPP_MEDIA_INTAKE_ATTEMPTS,
+        backoff: { type: "exponential", delay: WHATSAPP_MEDIA_INTAKE_BACKOFF_MS },
+        removeOnComplete: true,
+        removeOnFail: true,
+      },
+    );
+    d.logger.debug({ conversationId, kind: inbound.kind }, "inbound:media_enqueued");
     return;
   }
 
@@ -332,12 +372,14 @@ export function startWebhookInboundWorker(deps: WorkerDeps, connection: Redis): 
   const repo = createNotifyRepo(deps.db);
   const flushQueue = new Queue<WhatsappFlushPayload>(WHATSAPP_FLUSH_QUEUE, { connection });
   const transcriptionQueue = new Queue<WhatsappTranscriptionPayload>(WHATSAPP_TRANSCRIPTION_QUEUE, { connection });
+  const mediaIntakeQueue = new Queue<WhatsappMediaIntakePayload>(WHATSAPP_MEDIA_INTAKE_QUEUE, { connection });
   const route = makeInboundRouter({
     repo,
     messaging: ports.messaging,
     redis,
     flushQueue,
     transcriptionQueue,
+    mediaIntakeQueue,
     sendToConversation: createSendToConversation({ messaging: ports.messaging, repo }),
     logger,
     debounceMs: deps.conversation.debounceSeconds * 1000,

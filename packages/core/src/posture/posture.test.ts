@@ -38,9 +38,9 @@ describe("experiencePresetDefaults", () => {
       didacticDepth: "balanced",
     });
   });
-  it("avançado = consultivo + enxuto + direto (radar, não ser mandado)", () => {
+  it("avançado = diretivo + enxuto + direto (gestor sem tempo: curto + plano de ação)", () => {
     expect(experiencePresetDefaults("advanced")).toEqual({
-      directiveness: "consultative",
+      directiveness: "directive",
       volume: "concise",
       didacticDepth: "direct",
     });

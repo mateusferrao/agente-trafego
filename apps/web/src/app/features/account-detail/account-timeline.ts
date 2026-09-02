@@ -7,16 +7,23 @@ import { ActivatedRoute } from "@angular/router";
 import { UiButton, UiSpinner, UiTimeline, type TimelineEventVm } from "@ui";
 import { DashboardApiService } from "@core/api/dashboard-api.service";
 import type { TimelineOutput } from "@core/api/generated";
-import { actionTypeLabel } from "../../shared/action-format";
-import { gradeTone } from "../../shared/format";
+import { actionTypeLabel, entityDisplay } from "../../shared/action-format";
+import { gradeTone, money } from "../../shared/format";
 
 type ApiEvent = TimelineOutput["items"][number];
+
+/** " · nome" (nome amigável, ou o tipo da entidade — nunca um id cru da Meta), senão "". */
+function nameSuffix(name: string | null | undefined, level: string | null | undefined): string {
+  const label = entityDisplay(name, level);
+  return label ? ` · ${label}` : "";
+}
 
 /** Grupos de filtro → tipos de evento da API. */
 const GROUPS: readonly { key: string; label: string; types: readonly string[] }[] = [
   { key: "analises", label: "Análises", types: ["analysis_completed", "error"] },
   { key: "acoes", label: "Ações", types: ["action_applied", "action_rolled_back"] },
   { key: "aprovacoes", label: "Aprovações", types: ["approval_requested", "approval_approved", "approval_rejected", "approval_expired"] },
+  { key: "campanhas", label: "Campanhas", types: ["campaign_draft_proposed", "campaign_created"] },
 ];
 const PERIODS: readonly { days: number | null; label: string }[] = [
   { days: 7, label: "7 dias" },
@@ -187,21 +194,41 @@ function toVm(e: ApiEvent): TimelineEventVm {
         id: e.id,
         at: e.at,
         icon: "lucideZap",
-        title: `${actionTypeLabel(e.toolKey)}${e.entityName ? ` · ${e.entityName}` : ""}`,
+        title: `${actionTypeLabel(e.toolKey)}${nameSuffix(e.entityName, e.entityLevel)}`,
         detail: e.fromChat ? "via WhatsApp" : null,
         badge: e.simulated ? "simulado" : e.fromChat ? "chat" : null,
         tone: e.simulated ? "neutral" : "accent",
       };
     case "action_rolled_back":
-      return { id: e.id, at: e.at, icon: "lucideUndo2", title: `Ação revertida${e.entityName ? ` · ${e.entityName}` : ""}`, badge: "revertido", tone: "neutral" };
+      return { id: e.id, at: e.at, icon: "lucideUndo2", title: `Ação revertida${nameSuffix(e.entityName, e.entityLevel)}`, badge: "revertido", tone: "neutral" };
     case "approval_requested":
-      return { id: e.id, at: e.at, icon: "lucideClock", title: `Aprovação pedida · ${actionTypeLabel(e.actionType)}${e.entityName ? ` · ${e.entityName}` : ""}`, badge: "aguardando", tone: "warning" };
+      return { id: e.id, at: e.at, icon: "lucideClock", title: `Aprovação pedida · ${actionTypeLabel(e.actionType)}${nameSuffix(e.entityName, e.entityLevel)}`, badge: "aguardando", tone: "warning" };
     case "approval_approved":
-      return { id: e.id, at: e.at, icon: "lucideCircleCheck", title: `Aprovada · ${actionTypeLabel(e.actionType)}${e.entityName ? ` · ${e.entityName}` : ""}`, badge: "aprovada", tone: "success" };
+      return { id: e.id, at: e.at, icon: "lucideCircleCheck", title: `Aprovada · ${actionTypeLabel(e.actionType)}${nameSuffix(e.entityName, e.entityLevel)}`, badge: "aprovada", tone: "success" };
     case "approval_rejected":
-      return { id: e.id, at: e.at, icon: "lucideCircleX", title: `Rejeitada · ${actionTypeLabel(e.actionType)}${e.entityName ? ` · ${e.entityName}` : ""}`, badge: "rejeitada", tone: "neutral" };
+      return { id: e.id, at: e.at, icon: "lucideCircleX", title: `Rejeitada · ${actionTypeLabel(e.actionType)}${nameSuffix(e.entityName, e.entityLevel)}`, badge: "rejeitada", tone: "neutral" };
     case "approval_expired":
-      return { id: e.id, at: e.at, icon: "lucideClock", title: `Expirada · ${actionTypeLabel(e.actionType)}${e.entityName ? ` · ${e.entityName}` : ""}`, badge: "expirada", tone: "neutral" };
+      return { id: e.id, at: e.at, icon: "lucideClock", title: `Expirada · ${actionTypeLabel(e.actionType)}${nameSuffix(e.entityName, e.entityLevel)}`, badge: "expirada", tone: "neutral" };
+    case "campaign_draft_proposed":
+      return {
+        id: e.id,
+        at: e.at,
+        icon: "lucideClock",
+        title: e.kind === "duplicate" ? "Escala de vencedor proposta" : "Nova campanha proposta",
+        detail: `${money(e.dailyBudgetMajor, e.currency)}/dia`,
+        badge: "rascunho",
+        tone: "warning",
+      };
+    case "campaign_created":
+      return {
+        id: e.id,
+        at: e.at,
+        icon: "lucideZap",
+        title: e.kind === "duplicate" ? "Escala criada" : "Campanha criada",
+        detail: `${money(e.dailyBudgetMajor, e.currency)}/dia`,
+        badge: "criada",
+        tone: "success",
+      };
     default:
       return { id: (e as { id: string }).id, at: (e as { at: string }).at, icon: "lucideActivity", title: "Evento", tone: "neutral" };
   }

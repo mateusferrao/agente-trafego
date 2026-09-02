@@ -14,7 +14,7 @@ import { RouterOutlet } from '@angular/router';
     <main class="flex min-h-dvh flex-col items-center justify-center gap-8 px-4 py-10">
       <div class="brand-lockup">
         <span class="brand-mark" aria-hidden="true"></span>
-        <span class="brand-wordmark text-lg">AutoTraffic</span>
+        <span class="brand-wordmark text-lg">Caqui<span class="text-accent">AI</span></span>
       </div>
 
       <div class="w-full max-w-sm">

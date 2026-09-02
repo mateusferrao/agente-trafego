@@ -16,6 +16,27 @@ describe("audienceFromTargeting", () => {
     expect(a).toMatchObject({ stage: "prospecting", customAudienceCount: 0, exclusionCount: 0, geo: ["BR"], ageMin: 25, ageMax: 54 });
   });
 
+  it("flexible_spec → interestGroupRefs/behaviorGroupRefs COM id (Slice 6 — cópia fiel)", () => {
+    const a = audienceFromTargeting({
+      geo_locations: { countries: ["BR"] },
+      flexible_spec: [
+        { interests: [{ id: "i1", name: "Estética" }, { id: "i2", name: "Beleza" }] },
+        { behaviors: [{ id: "b1", name: "Compradores online" }] },
+      ],
+    });
+    expect(a?.interestGroupRefs).toEqual([[{ id: "i1", name: "Estética" }, { id: "i2", name: "Beleza" }]]);
+    expect(a?.behaviorGroupRefs).toEqual([[{ id: "b1", name: "Compradores online" }]]);
+  });
+
+  it("captura ids de público salvo incluído/excluído (Slice 9 — cópia fiel de remarketing)", () => {
+    const a = audienceFromTargeting({
+      custom_audiences: [{ id: "ca1", name: "Engajamento 90d" }],
+      excluded_custom_audiences: [{ id: "ca2", name: "Compradores" }],
+    });
+    expect(a?.customAudienceIncludeIds).toEqual(["ca1"]);
+    expect(a?.customAudienceExcludeIds).toEqual(["ca2"]);
+  });
+
   it("custom audience de inclusão não-lookalike → remarketing", () => {
     const a = audienceFromTargeting({
       custom_audiences: [{ id: "1", name: "Visitantes do site 30d" }],
@@ -53,5 +74,44 @@ describe("audienceFromTargeting", () => {
     expect(a?.exclusionCount).toBe(1);
     expect(a?.interests).toEqual(["Estética", "Beleza"]);
     expect(a?.stage).toBe("prospecting");
+  });
+
+  it("expansion: nenhum dos 3 flags presente → unknown (leitura honesta, não decide nada)", () => {
+    const a = audienceFromTargeting({ geo_locations: { countries: ["BR"] } });
+    expect(a?.expansion.summary).toBe("unknown");
+  });
+
+  it("expansion: advantage_audience=0 explícito e o resto ausente → off (0 explícito conta)", () => {
+    const a = audienceFromTargeting({
+      geo_locations: { countries: ["BR"] },
+      targeting_automation: { advantage_audience: 0 },
+    });
+    expect(a?.expansion.summary).toBe("off");
+  });
+
+  it("expansion: advantage_audience=1 → on", () => {
+    const a = audienceFromTargeting({
+      geo_locations: { countries: ["BR"] },
+      targeting_automation: { advantage_audience: 1 },
+    });
+    expect(a?.expansion.summary).toBe("on");
+  });
+
+  it("expansion: só targeting_relaxation_types.lookalike=1 (advantage_audience ausente) → on", () => {
+    const a = audienceFromTargeting({
+      geo_locations: { countries: ["BR"] },
+      targeting_relaxation_types: { lookalike: 1 },
+    });
+    expect(a?.expansion.summary).toBe("on");
+  });
+
+  it("geoEntries preserva key de cidade/região (nome sozinho não basta pra remontar geo_locations)", () => {
+    const a = audienceFromTargeting({
+      geo_locations: { cities: [{ key: "2430536", name: "Belo Horizonte" }], regions: [{ key: "3157", name: "Minas Gerais" }] },
+    });
+    expect(a?.geoEntries).toEqual([
+      { key: "3157", name: "Minas Gerais", kind: "region" },
+      { key: "2430536", name: "Belo Horizonte", kind: "city" },
+    ]);
   });
 });

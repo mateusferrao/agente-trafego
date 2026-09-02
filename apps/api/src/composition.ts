@@ -26,6 +26,7 @@ import { createGroupsService } from "./modules/groups/service.js";
 import { createContactsService } from "./modules/contacts/service.js";
 import { createAgentsService } from "./modules/agents/service.js";
 import { createApprovalsService } from "./modules/approvals/service.js";
+import { createDraftsService } from "./modules/drafts/service.js";
 import { createRecommendationsService } from "./modules/recommendations/service.js";
 import { createRunsService, type OnboardingLogger } from "./modules/runs/service.js";
 import { createDashboardService } from "./modules/dashboard/service.js";
@@ -34,10 +35,13 @@ import { createBillingService } from "./modules/billing/service.js";
 import { createWebhooksService } from "./modules/webhooks/service.js";
 import { Aes256CredentialVault } from "@trafego/credential-vault";
 import { BullmqScheduler } from "@trafego/scheduler-bullmq";
-import { MetaAdsAdapter, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta";
+import { MetaAdsAdapter, MetaBehaviorCatalogService, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta";
 import { EvolutionAdapter, EvolutionClient } from "@trafego/channel-evolution";
 import { createPostgresApprovals } from "@trafego/approval-postgres";
 import { createPostgresMetering } from "@trafego/metering-postgres";
+import { createLocalStorage } from "@trafego/storage-local";
+import { resolveDataDir } from "@trafego/config";
+import { createS3Storage } from "@trafego/storage-s3";
 import { Redis } from "ioredis";
 
 // ─── Adapters de saída (portas) ──────────────────────────────────────────
@@ -75,6 +79,7 @@ export interface Services {
   readonly contacts: ReturnType<typeof createContactsService>;
   readonly agents: ReturnType<typeof createAgentsService>;
   readonly approvals: ReturnType<typeof createApprovalsService>;
+  readonly drafts: ReturnType<typeof createDraftsService>;
   readonly recommendations: ReturnType<typeof createRecommendationsService>;
   readonly runs: ReturnType<typeof createRunsService>;
   readonly dashboard: ReturnType<typeof createDashboardService>;
@@ -120,9 +125,13 @@ export function buildContainer(logger?: OnboardingLogger): Container {
 
   // Meta plugada na Fatia 1b (onboarding: validar token + listar/derivar contas).
   // Token-only (sem app id/secret): a checagem de escopos + appsecret_proof é fast-follow.
+  const adsMetaClient = new MetaGraphClient();
+  const adsMetaGovernor = new MetaGovernor({ redis });
   const adsPlatform: AdsPlatformPort = new MetaAdsAdapter({
-    client: new MetaGraphClient(),
-    governor: new MetaGovernor({ redis }),
+    client: adsMetaClient,
+    governor: adsMetaGovernor,
+    // catálogo de behaviors cacheado (a UI do site busca behaviors no editor de público).
+    behaviorCatalog: new MetaBehaviorCatalogService(adsMetaClient, adsMetaGovernor, { redis, ttlSec: env.META_BEHAVIOR_CACHE_TTL_SEC }),
   });
 
   // WhatsApp (Evolution) plugado na 3b: onboarding por QR + push proativo + código de opt-in.
@@ -134,6 +143,20 @@ export function buildContainer(logger?: OnboardingLogger): Container {
     }),
     apiOrigin: env.API_ORIGIN, // registra o webhook no connect (§9)
   });
+
+  // Storage do blob de criativo (F7) — mesma porta do intake WhatsApp (worker). Driver por env:
+  // local-fs (dev) ou s3-compat (prod). Trocar = só o env; core/casca/ingest intocados (§5).
+  const storage =
+    env.STORAGE_DRIVER === "s3"
+      ? createS3Storage({
+          region: env.STORAGE_REGION,
+          bucket: env.STORAGE_BUCKET!, // garantido pelo refine (STORAGE_DRIVER=s3)
+          accessKeyId: env.STORAGE_ACCESS_KEY!,
+          secretAccessKey: env.STORAGE_SECRET_KEY!,
+          forcePathStyle: env.STORAGE_FORCE_PATH_STYLE,
+          ...(env.STORAGE_ENDPOINT ? { endpoint: env.STORAGE_ENDPOINT } : {}),
+        })
+      : createLocalStorage({ baseDir: resolveDataDir(env.CREATIVE_STORAGE_DIR), urlBase: env.CREATIVE_ASSET_URL_BASE });
 
   // Metering (3b): Postgres usage_events — o billing/usage lê daqui.
   const metering = createPostgresMetering(db);
@@ -181,6 +204,9 @@ export function buildContainer(logger?: OnboardingLogger): Container {
       coldStartReference: env.ANALYSIS_QUALITY_COLD_START_REFERENCE,
       trackingBrokenRatio: env.ANALYSIS_QUALITY_TRACKING_BROKEN_RATIO,
       trackingBrokenMinFunnel: env.ANALYSIS_QUALITY_TRACKING_BROKEN_MIN_FUNNEL,
+      relativeEligibilitySpendMultiplier: env.ANALYSIS_QUALITY_RELATIVE_ELIGIBILITY_SPEND_MULTIPLIER,
+      marginalCpaWorsenPct: env.ANALYSIS_QUALITY_MARGINAL_CPA_WORSEN_PCT,
+      weakHookRetentionMaxPct: env.ANALYSIS_QUALITY_WEAK_HOOK_RETENTION_MAX_PCT,
     },
   });
   // runs antes do literal: connections reusa `triggerOnboarding` (1ª análise + schedule no connect).
@@ -190,6 +216,9 @@ export function buildContainer(logger?: OnboardingLogger): Container {
     metering,
     ensureAgent: (orgId, accountId) => agents.getOrCreateForAccount(orgId, accountId),
     costCapUsd: env.LLM_COST_CAP_USD_PER_PERIOD,
+    adsPlatform,
+    vault,
+    liveGapCheckTimeoutMs: env.RUNS_LIVE_GAP_CHECK_TIMEOUT_MS,
     ...(logger ? { logger } : {}),
   });
   const services: Services = {
@@ -218,6 +247,7 @@ export function buildContainer(logger?: OnboardingLogger): Container {
     contacts: createContactsService({ db, messaging }),
     agents,
     approvals: createApprovalsService({ db, approvals, scheduler, revertTtlDays: env.REVERT_TTL_DAYS }),
+    drafts: createDraftsService({ db, adsPlatform, vault, approvals, storage, scheduler }),
     recommendations: createRecommendationsService({ db }),
     runs,
     dashboard: createDashboardService({

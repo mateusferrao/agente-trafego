@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  accountHealthAlertSchema,
   actionType,
   alertSensitivity,
   autonomyPolicySchema,
@@ -9,6 +10,7 @@ import {
   marketReferenceSchema,
   notifyPolicySchema,
   postureSchema,
+  toolBindingsSchema,
 } from "@trafego/shared/schemas";
 import {
   AGENT_IDENTITY_FIELD_MAX,
@@ -20,6 +22,7 @@ import {
   DIRECTIVENESS_LEVELS,
   EXPERIENCE_LEVELS,
   VOLUME_LEVELS,
+  creativeSourceStrategySchema,
 } from "@trafego/shared";
 
 // Fatia 4: meta + conversão + personalização + janela (corte 1) · identidade/voz +
@@ -55,6 +58,14 @@ export const qualityConfigInput = z.object({
   trackingBrokenRatio: z.number().positive().optional(),
   /** tracking furado: volume mínimo de conversas p/ sequer considerar a suspeita. */
   trackingBrokenMinFunnel: z.number().nonnegative().optional(),
+  /** piso de elegibilidade RELATIVO (playbook real, pivô saúde): gasto ≥ este múltiplo
+   *  do CPA-alvo já basta como volume, mesmo com poucas conversões/cliques absolutos. */
+  relativeEligibilitySpendMultiplier: z.number().positive().optional(),
+  /** CPA marginal (pivô saúde, squad): alta (%) do CPA vs baseline a partir da qual
+   *  rebaixa escalar → investigar, mesmo pra quem ainda bate a meta em média. */
+  marginalCpaWorsenPct: z.number().positive().optional(),
+  /** retenção de vídeo (S6) abaixo disso = gancho fraco na largada (25% do vídeo). */
+  weakHookRetentionMaxPct: z.number().positive().optional(),
   /** override por agente da referência de mercado (pivô), na moeda da conta. Merge por
    *  campo sobre o org-default; campo em dinheiro só aplica se a moeda bate. */
   marketReference: marketReferenceSchema.optional(),
@@ -73,6 +84,9 @@ export const qualityDefaultsOutput = z.object({
   coldStartReference: z.boolean(),
   trackingBrokenRatio: z.number(),
   trackingBrokenMinFunnel: z.number(),
+  relativeEligibilitySpendMultiplier: z.number(),
+  marginalCpaWorsenPct: z.number(),
+  weakHookRetentionMaxPct: z.number(),
 });
 export type QualityDefaultsOutput = z.infer<typeof qualityDefaultsOutput>;
 
@@ -86,6 +100,8 @@ export const modelConfigInput = z.object({
   topN: z.number().int().positive().optional(),
   maxOutputTokens: z.number().int().positive().optional(),
   quality: qualityConfigInput.optional(),
+  /** estratégia de fonte do criativo na criação (Slice 10) — default serving.best_performing. */
+  creativeSource: creativeSourceStrategySchema.optional(),
 });
 export type ModelConfigInput = z.infer<typeof modelConfigInput>;
 
@@ -113,6 +129,8 @@ export const notifyPolicyInput = z.object({
   }).optional(),
   runPush: z.object({ enabled: z.boolean() }).optional(),
   reactivation: z.object({ enabled: z.boolean() }).optional(),
+  proactiveDrafts: z.object({ enabled: z.boolean() }).optional(),
+  accountHealthAlert: accountHealthAlertSchema.optional(),
 });
 export type NotifyPolicyInput = z.infer<typeof notifyPolicyInput>;
 
@@ -140,6 +158,8 @@ export const agentConfigInput = z.object({
     .optional(),
   /** autonomia por origem (playbook×llm) — só morde na escrita (5a). */
   autonomyPolicy: autonomyPolicySchema.optional(),
+  /** on/off por-ação das 6 tools (A3) — patch parcial; grava agent_tool_bindings. */
+  toolBindings: toolBindingsSchema.partial().optional(),
   /** guardrails (rede independente) — blast radius, cap, kill-switch, dry-run (5a). */
   guardrails: guardrailConfigSchema.optional(),
   /** "Opções avançadas" (6c) — override do model_config (modelos/revisão/limiares). */
@@ -181,6 +201,8 @@ export const agentSummary = z.object({
   paused: z.boolean(),
   /** autonomia por origem (5a) — semeada pelo arquétipo. */
   autonomyPolicy: autonomyPolicySchema,
+  /** on/off por-ação das 6 tools (A3) — estado RESOLVIDO (bindings + fallback allowedActions). */
+  toolBindings: toolBindingsSchema,
   /** guardrails (5a) — semeados na criação do agente. */
   guardrails: guardrailConfigSchema,
   /** "Opções avançadas" (6c) — overrides atuais do model_config (vazio = padrão do sistema). */
@@ -195,6 +217,9 @@ export const agentSummary = z.object({
   postureIsCustom: z.boolean(),
   /** moeda da conta (ISO) — rótulo do override da referência de mercado. Null se ainda não sincronizada. */
   currency: z.string().nullable(),
+  /** financiamento da conta Meta (pré-pago × cartão/fatura) — orienta a ressalva do aviso de
+   *  saldo na UI (a ressalva é só informativa; nunca desabilita o toggle). Null se ainda não sincronizada. */
+  fundingType: z.enum(["stored_balance", "other"]).nullable(),
 });
 export type AgentSummary = z.infer<typeof agentSummary>;
 
@@ -347,6 +372,8 @@ export const appliedActionOutput = z.object({
 /** Body do undo — `force` = reverter mesmo com drift ("mesmo assim"). */
 export const undoActionInput = z.object({
   force: z.boolean().default(false),
+  /** reversão de CRIAÇÃO/escala (Slice 11): pausar (default) ou arquivar a árvore criada. */
+  mode: z.enum(["pause", "archive"]).optional(),
 });
 export type UndoActionInput = z.infer<typeof undoActionInput>;
 /**

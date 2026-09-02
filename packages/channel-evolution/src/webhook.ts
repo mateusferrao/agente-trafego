@@ -180,15 +180,18 @@ export function parseConnectionUpdate(payload: unknown): ConnectionStatus | null
 /** Mime default de nota de voz do WhatsApp (ogg/opus) quando o payload não traz. */
 const DEFAULT_AUDIO_MIME = "audio/ogg";
 
-/** Nós de mídia reconhecidos mas NÃO suportados (não-texto, não-áudio) → rótulo neutro. */
+/** Nós de mídia reconhecidos mas NÃO suportados (não-texto/áudio/imagem/vídeo) → rótulo neutro. */
 const UNSUPPORTED_MEDIA_NODES: ReadonlyArray<readonly [string, string]> = [
-  ["imageMessage", "image"],
-  ["videoMessage", "video"],
   ["documentMessage", "document"],
   ["stickerMessage", "sticker"],
   ["contactMessage", "contact"],
   ["locationMessage", "location"],
 ];
+
+/** Mime default de imagem quando o payload não traz o mimetype. */
+const DEFAULT_IMAGE_MIME = "image/jpeg";
+/** Mime default de vídeo quando o payload não traz o mimetype. */
+const DEFAULT_VIDEO_MIME = "video/mp4";
 
 /** Primeiro base64 não-vazio entre os candidatos (ou "" se nenhum). */
 function firstBase64(...candidates: readonly unknown[]): string {
@@ -211,6 +214,56 @@ function extractAudio(data: Record<string, unknown>): { base64: string; mimetype
   const mimetype = typeof rawMime === "string" && rawMime.length > 0 ? rawMime : DEFAULT_AUDIO_MIME;
   const base64 = firstBase64(message?.["base64"], data["base64"], audio["base64"]);
   return { base64, mimetype };
+}
+
+/**
+ * Imagem (imageMessage) com bytes inline (webhook `base64:true`). Mesmo quirk do
+ * áudio: o caminho do base64 varia por versão → procura em candidatos; ausente →
+ * base64 vazio (o worker de intake busca por `fetchMediaBase64`, nunca crash).
+ */
+function extractImage(data: Record<string, unknown>): { base64: string; mimetype: string; caption: string | null } | null {
+  const message = asRecord(data["message"]);
+  const image = asRecord(message?.["imageMessage"]);
+  if (!image) return null;
+  const rawMime = image["mimetype"];
+  const mimetype = typeof rawMime === "string" && rawMime.length > 0 ? rawMime : DEFAULT_IMAGE_MIME;
+  const base64 = firstBase64(message?.["base64"], data["base64"], image["base64"]);
+  const rawCaption = image["caption"];
+  const caption = typeof rawCaption === "string" && rawCaption.trim().length > 0 ? rawCaption.trim() : null;
+  return { base64, mimetype, caption };
+}
+
+/**
+ * Vídeo (videoMessage) — F7 intake. NÃO extrai base64 (vídeo é grande demais p/ o payload da
+ * fila): só detecta o nó + mimetype + legenda + `fileLength`; o worker de intake busca os bytes
+ * por `messageKey`. `fileLength` (P0.3) é o TAMANHO do arquivo que o WhatsApp já entrega na
+ * metadata — dá pro intake recusar vídeo grande demais ANTES de baixar/decodificar os bytes
+ * (HTTP HEAD é inviável: a Evolution só entrega mídia por base64, nunca por URL).
+ */
+function extractVideo(
+  data: Record<string, unknown>,
+): { mimetype: string; caption: string | null; fileLength?: number } | null {
+  const message = asRecord(data["message"]);
+  const video = asRecord(message?.["videoMessage"]);
+  if (!video) return null;
+  const rawMime = video["mimetype"];
+  const mimetype = typeof rawMime === "string" && rawMime.length > 0 ? rawMime : DEFAULT_VIDEO_MIME;
+  const rawCaption = video["caption"];
+  const caption = typeof rawCaption === "string" && rawCaption.trim().length > 0 ? rawCaption.trim() : null;
+  const fileLength = parseFileLength(video["fileLength"]);
+  return { mimetype, caption, ...(fileLength !== undefined ? { fileLength } : {}) };
+}
+
+/** `fileLength` chega como string decimal (protobuf int64) na maioria das versões da Evolution;
+ *  aceita number também (defensivo). Não-numérico/ausente → `undefined` (o intake cai no fallback
+ *  pós-decode, nunca crasha por metadata estranha). */
+function parseFileLength(raw: unknown): number | undefined {
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw === "string" && raw.trim().length > 0) {
+    const n = Number(raw);
+    if (Number.isFinite(n)) return n;
+  }
+  return undefined;
 }
 
 /** Mídia reconhecida mas não-suportada → rótulo neutro (ou null se não for). */
@@ -267,18 +320,36 @@ export function parseInbound(payload: unknown): InboundMessage | null {
   const text = extractText(message);
   if (text) return { ...base, kind: "text", text };
 
-  const audio = extractAudio(data);
-  if (audio) {
-    // Mídia de grupo: a Evolution exige `participant` (JID de quem mandou dentro do
-    // grupo) na key p/ o fallback `getBase64FromMediaMessage` — doc oficial.
+  // Chave crua p/ re-buscar mídia por fora do webhook (áudio ptt / imagem sem base64 inline).
+  // Grupo: a Evolution exige `participant` (JID de quem mandou dentro do grupo) — doc oficial.
+  const buildMediaKey = (): MediaMessageKey => {
     const participant = group && typeof key["participant"] === "string" ? (key["participant"] as string) : undefined;
-    const messageKey: MediaMessageKey = {
+    return {
       id: messageId,
       remoteJid: key["remoteJid"] as string,
       fromMe: false,
       ...(participant ? { participant } : {}),
     };
-    return { ...base, kind: "audio", audio, messageKey };
+  };
+
+  const audio = extractAudio(data);
+  if (audio) return { ...base, kind: "audio", audio, messageKey: buildMediaKey() };
+
+  const image = extractImage(data);
+  if (image) {
+    const { caption, ...bytes } = image;
+    return { ...base, kind: "image", image: bytes, caption, messageKey: buildMediaKey() };
+  }
+
+  const video = extractVideo(data);
+  if (video) {
+    return {
+      ...base,
+      kind: "video",
+      video: { mimetype: video.mimetype, ...(video.fileLength !== undefined ? { fileLength: video.fileLength } : {}) },
+      caption: video.caption,
+      messageKey: buildMediaKey(),
+    };
   }
 
   const mediaType = detectMediaType(message);

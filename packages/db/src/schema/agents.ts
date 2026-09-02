@@ -11,7 +11,13 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
-import { DEFAULT_NOTIFY_POLICY, DEFAULT_POSTURE } from "@trafego/shared";
+import {
+  DEFAULT_MAX_NEW_CAMPAIGNS_PER_DAY,
+  DEFAULT_MAX_NEW_DAILY_BUDGET_MINOR,
+  DEFAULT_NOTIFY_POLICY,
+  DEFAULT_POSTURE,
+  DEFAULT_SCALE_PCT,
+} from "@trafego/shared";
 import type {
   ActionType,
   AgentGoals,
@@ -45,6 +51,10 @@ export const agents = pgTable(
       .notNull()
       .references(() => adAccounts.id, { onDelete: "cascade" }),
     archetype: text("archetype").notNull().default("conservador"),
+    // Perfil vertical (S4, pivô saúde) — resolve pra packages/core/src/verticals. Default
+    // "health": confirmado seguro nesta sessão (todo o beta hoje é saúde). Vertical
+    // desconhecida (fora do registry) → sem perfil aplicado (resolveVerticalProfile honesto).
+    vertical: text("vertical").notNull().default("health"),
     persona: text("persona"),
     systemPrompt: text("system_prompt"),
     // Personalização por texto (Fatia 4) — camada ADITIVA sobre o arquétipo:
@@ -102,6 +112,14 @@ export const guardrailConfigs = pgTable(
     killSwitch: boolean("kill_switch").notNull().default(false),
     // cap de custo LLM por org/período (protege margem)
     llmCostCap: numeric("llm_cost_cap", { precision: 12, scale: 4 }),
+    // ─── Limites de GASTO NOVO (Fatia 7 — criação) ───
+    maxNewDailyBudgetMinor: integer("max_new_daily_budget_minor")
+      .notNull()
+      .default(DEFAULT_MAX_NEW_DAILY_BUDGET_MINOR),
+    maxNewCampaignsPerDay: integer("max_new_campaigns_per_day")
+      .notNull()
+      .default(DEFAULT_MAX_NEW_CAMPAIGNS_PER_DAY),
+    scalePct: integer("scale_pct").notNull().default(DEFAULT_SCALE_PCT),
     ...timestamps,
   },
   // 1 linha de guardrail por agente (rede única): sem isso duplicatas fariam a leitura

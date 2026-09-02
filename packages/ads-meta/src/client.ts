@@ -19,6 +19,10 @@ export interface MetaErrorBody {
   readonly code?: number;
   readonly error_subcode?: number;
   readonly fbtrace_id?: string;
+  /** Título e mensagem que a Meta escreve PRO USUÁRIO FINAL (legível, sem jargão de dev).
+   *  Só presente em erros "acionáveis" — a casca prefere-os ao `message` técnico (UX §13). */
+  readonly error_user_title?: string;
+  readonly error_user_msg?: string;
 }
 
 /**
@@ -32,6 +36,10 @@ export class MetaApiError extends Error {
   /** Uso reportado no header BUC junto do erro (429 carrega throttle) — p/ o governor
    *  aprender mesmo no path de falha. */
   readonly usage: Readonly<Record<string, BusinessUseCaseUsage>> | undefined;
+  /** Mensagem/título que a Meta escreveu pro usuário final (`error_user_msg`/`error_user_title`).
+   *  A casca prefere-os ao `message` técnico. `subcode` fica INTERNO ao adapter (não vaza pro port). */
+  readonly userMessage: string | undefined;
+  readonly userTitle: string | undefined;
 
   constructor(
     message: string,
@@ -39,6 +47,8 @@ export class MetaApiError extends Error {
     subcode: number | undefined,
     httpStatus: number,
     usage?: Readonly<Record<string, BusinessUseCaseUsage>>,
+    userMessage?: string,
+    userTitle?: string,
   ) {
     super(message);
     this.name = "MetaApiError";
@@ -46,6 +56,8 @@ export class MetaApiError extends Error {
     this.subcode = subcode;
     this.httpStatus = httpStatus;
     this.usage = usage;
+    this.userMessage = userMessage;
+    this.userTitle = userTitle;
   }
 }
 
@@ -196,6 +208,8 @@ export class MetaGraphClient {
         error?.error_subcode,
         res.status,
         this.parseUsageHeader(res.headers.get("x-business-use-case-usage")),
+        error?.error_user_msg,
+        error?.error_user_title,
       );
     }
     const body = (text ? JSON.parse(text) : {}) as T;

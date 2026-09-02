@@ -52,8 +52,8 @@ describe("annotateFreedSpend", () => {
     summary: "s",
     findings: [],
     recommendations: [
-      { id: "r1", title: "pausar Z", rationale: "zumbi", priority: "high", actionType: "pause", targetEntity: { level: "campaign", externalId: "Z1" }, budgetChangePct: null },
-      { id: "r2", title: "escalar B", rationale: "boa", priority: "medium", actionType: "increase_budget", targetEntity: { level: "campaign", externalId: "B" }, budgetChangePct: 20 },
+      { id: "r1", title: "pausar Z", rationale: "zumbi", priority: "high", actionType: "pause", targetEntity: { level: "campaign", externalId: "Z1" }, budgetChangePct: null, expectedImpact: null, whatToMonitor: null, findingRefs: null },
+      { id: "r2", title: "escalar B", rationale: "boa", priority: "medium", actionType: "increase_budget", targetEntity: { level: "campaign", externalId: "B" }, budgetChangePct: 20, expectedImpact: null, whatToMonitor: null, findingRefs: null },
     ],
   });
 
@@ -61,5 +61,24 @@ describe("annotateFreedSpend", () => {
     const out = annotateFreedSpend(output(), new Map([["Z1", 700], ["B", 800]]), "USD");
     expect(out.recommendations[0]!.rationale).toContain("libera ~$ 700,00");
     expect(out.recommendations[1]!.rationale).toBe("boa");
+  });
+
+  it("G4: preenche expectedImpact (estruturado) na pausa, deixa null nas demais", () => {
+    const out = annotateFreedSpend(output(), new Map([["Z1", 700], ["B", 800]]), "USD");
+    expect(out.recommendations[0]!.expectedImpact).toContain("$ 700,00");
+    expect(out.recommendations[1]!.expectedImpact).toBeNull();
+  });
+
+  it("G4: pausa SEM spend disponível preserva o expectedImpact que o LLM já tinha proposto (não zera)", () => {
+    const withLlmImpact: AnalysisOutput = {
+      ...output(),
+      recommendations: [
+        { ...output().recommendations[0]!, expectedImpact: "estimativa do analista" },
+        output().recommendations[1]!,
+      ],
+    };
+    const out = annotateFreedSpend(withLlmImpact, new Map(), "USD"); // sem Z1 no mapa → spend undefined
+    expect(out.recommendations[0]!.expectedImpact).toBe("estimativa do analista");
+    expect(out.recommendations[0]!.rationale).toBe("zumbi"); // rationale também intacto
   });
 });

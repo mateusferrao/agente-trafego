@@ -103,17 +103,42 @@ const UNDO_WHAT: Record<string, string> = {
   adjust_budget: "o ajuste de budget",
 };
 
-/** Uma reversão a ecoar: rótulo da entidade + tipo da ação original. */
+/** Uma reversão a ecoar: rótulo da entidade + tipo da ação original. `mode` só afeta CRIAÇÕES
+ *  (create_campaign/duplicate_scale): pausar (padrão) × arquivar. */
 export interface RevertEchoItem {
   readonly label: string;
   readonly actionType: string;
+  readonly mode?: "pause" | "archive";
 }
 
-/** Eco de confirmação de reversão (chat, 5c-4). Volta a entidade ao estado anterior. */
+const CREATION_UNDO_KEYS: ReadonlySet<string> = new Set(["create_campaign", "duplicate_scale"]);
+
+/** Cláusula por item: criação reverte pausando/arquivando a campanha criada; ação normal desfaz. */
+function revertClause(it: RevertEchoItem): string {
+  if (CREATION_UNDO_KEYS.has(it.actionType)) {
+    return it.mode === "archive"
+      ? `arquivar a campanha criada *${it.label}*`
+      : `pausar a campanha criada *${it.label}*`;
+  }
+  return `desfazer ${UNDO_WHAT[it.actionType] ?? "a última ação"} de *${it.label}*`;
+}
+
+/** Linha de consequência p/ criações — igual ao site (pausar mantém na conta; arquivar tira da lista ativa). */
+function creationConsequence(items: readonly RevertEchoItem[]): string {
+  const anyArchive = items.some((it) => CREATION_UNDO_KEYS.has(it.actionType) && it.mode === "archive");
+  const anyPause = items.some((it) => CREATION_UNDO_KEYS.has(it.actionType) && it.mode !== "archive");
+  const parts: string[] = [];
+  if (anyPause) parts.push("Pausar mantém a campanha na conta (não gasta, dá pra reativar).");
+  if (anyArchive) parts.push("Arquivar tira da lista ativa na Meta (não apaga, dá pra recuperar).");
+  return parts.length > 0 ? `\n${parts.join(" ")}` : "";
+}
+
+/** Eco de confirmação de reversão (chat, 5c-4). Volta a entidade ao estado anterior; criações
+ *  pausam ou arquivam a campanha criada (paridade com o site) + linha de consequência. */
 export function buildRevertEcho(items: readonly RevertEchoItem[]): string {
-  const clause = (it: RevertEchoItem) => `desfazer ${UNDO_WHAT[it.actionType] ?? "a última ação"} de *${it.label}*`;
   if (items.length === 0) return "";
-  if (items.length === 1) return `Vou ${clause(items[0]!)} (volta ao estado anterior). Confirma?`;
-  const lines = items.map((it, i) => `${i + 1}. ${clause(it)}`);
-  return `Vou desfazer:\n${lines.join("\n")}\n\nConfirma as ${items.length}?`;
+  const consequence = creationConsequence(items);
+  if (items.length === 1) return `Vou ${revertClause(items[0]!)}.${consequence} Confirma?`;
+  const lines = items.map((it, i) => `${i + 1}. ${revertClause(it)}`);
+  return `Vou:\n${lines.join("\n")}${consequence}\n\nConfirma as ${items.length}?`;
 }

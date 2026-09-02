@@ -13,7 +13,7 @@ describe("buildMessageFallback", () => {
       },
       3,
     );
-    expect(msg).toContain("📊 Loja X");
+    expect(msg).toContain("Loja X");
     expect(msg).toContain("CPA acima da meta na campanha principal.");
     expect(msg).toContain("• Pausar Campanha A");
     expect(msg).toContain("• Subir budget C");

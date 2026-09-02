@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FunnelBreakdown } from "@trafego/shared";
-import { computeFunnelSummary, mergeFunnel } from "./index.js";
+import { computeFunnelSummary, hasLeadQualityCaveat, mergeFunnel } from "./index.js";
 
 describe("mergeFunnel", () => {
   it("soma por estágio entre breakdowns", () => {
@@ -39,5 +39,24 @@ describe("computeFunnelSummary", () => {
 
   it("breakdown vazio → undefined (entidade sem messaging não tem funil)", () => {
     expect(computeFunnelSummary([])).toBeUndefined();
+  });
+});
+
+describe("hasLeadQualityCaveat (S8 — redator lidera pelo caveat de lead frio antes do CPL/CPA bom)", () => {
+  it("replyRate baixa (<0.5) com volume suficiente → true", () => {
+    expect(hasLeadQualityCaveat({ counts: { conversation_started: 20 }, replyRate: 0.3 })).toBe(true);
+  });
+
+  it("replyRate boa (≥0.5) → false", () => {
+    expect(hasLeadQualityCaveat({ counts: { conversation_started: 20 }, replyRate: 0.6 })).toBe(false);
+  });
+
+  it("replyRate baixa mas volume pequeno (<10 conversas) → false (amostra pequena demais)", () => {
+    expect(hasLeadQualityCaveat({ counts: { conversation_started: 5 }, replyRate: 0.2 })).toBe(false);
+  });
+
+  it("sem funil / sem replyRate → false (nada a ressalvar)", () => {
+    expect(hasLeadQualityCaveat(undefined)).toBe(false);
+    expect(hasLeadQualityCaveat({ counts: { conversation_started: 20 } })).toBe(false);
   });
 });

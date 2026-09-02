@@ -1,5 +1,10 @@
-import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
-import { UiEyebrow, UiStat, UiEvidence, UiMeter } from '@ui';
+import { ChangeDetectionStrategy, Component, computed, inject, input, output, signal } from '@angular/core';
+import { NgTemplateOutlet } from '@angular/common';
+import { FormsModule } from '@angular/forms';
+import { RouterLink } from '@angular/router';
+import { toast } from 'ngx-sonner';
+import { UiButton, UiEyebrow, UiStat, UiEvidence, UiMeter } from '@ui';
+import { ApprovalsApiService } from '@core/api/approvals-api.service';
 import { AGENT_NAME } from '@core/brand';
 import type { RunDetailOutput } from '@core/api/generated';
 
@@ -55,7 +60,7 @@ const LEVEL_LABEL: Record<string, string> = {
   adset: 'conjunto',
   ad: 'anúncio',
 };
-const APPLICABILITY_NOTE = 'Sugestão — a aplicação automática chega em breve.';
+const APPLICABILITY_NOTE = 'As que dá pra aplicar têm botão aqui; direções você aplica na plataforma.';
 const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
   consciencia: 'alcançar as pessoas certas',
   engajamento: 'engajamento com os anúncios',
@@ -72,7 +77,7 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
 @Component({
   selector: 'app-analysis-detail',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiEyebrow, UiStat, UiEvidence, UiMeter],
+  imports: [FormsModule, NgTemplateOutlet, RouterLink, UiButton, UiEyebrow, UiStat, UiEvidence, UiMeter],
   template: `
     <section class="flex flex-col gap-5">
       @if (hasResults()) {
@@ -170,8 +175,7 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
             <h2 class="font-brand text-sm font-semibold text-ink">Campanhas</h2>
             <p class="text-xs text-muted">Análise de cada campanha ativa. Silencie as que o {{ agentName }} não deve acompanhar.</p>
           </div>
-          <div class="flex flex-col gap-3">
-            @for (c of campaigns(); track c.externalId) {
+          <ng-template #campaignCard let-c="c">
               <article
                 class="flex flex-col gap-3 rounded-lg border border-line border-l-4 bg-panel p-4"
                 [class]="tierBorder(c)"
@@ -186,52 +190,144 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                       @if (c.stage) {
                         <span class="text-[11px] text-muted">· {{ stageLabel(c.stage) }}</span>
                       }
+                      @if (c.isCBO === false) {
+                        <span class="text-[11px] text-muted">· orçamento por conjunto de anúncios</span>
+                      }
                       @if (c.muted) {
                         <span class="text-[11px] text-muted">· silenciada</span>
+                      }
+                      @if (c.deactivatedSince) {
+                        <span class="text-[11px] text-warning-strong">· não está mais ativa desde {{ deactivatedLabel(c) }} — dado abaixo é de quando ainda rodava</span>
+                      }
+                      @if (c.noDataYet) {
+                        <span class="text-[11px] text-info-strong">· ativa, ainda sem análise</span>
                       }
                     </div>
                     <h3 class="font-semibold text-ink">{{ campaignName(c) }}</h3>
                   </div>
-                  <button
-                    type="button"
-                    class="shrink-0 rounded-md border border-line px-2 py-1 text-xs text-muted hover:text-ink"
-                    [disabled]="mutingId() === c.externalId"
-                    (click)="onToggleMute(c)"
-                  >
-                    {{ mutingId() === c.externalId ? 'Salvando…' : c.muted ? 'Reativar' : 'Silenciar' }}
-                  </button>
-                </div>
-
-                <!-- métricas inline em mono -->
-                <div class="flex flex-wrap gap-x-6 gap-y-1">
-                  <span class="flex items-baseline gap-1.5"><app-ui-eyebrow>Gasto</app-ui-eyebrow><b class="ui-stat__value text-sm text-ink">{{ campaignSpend(c) }}</b></span>
-                  @if (c.metrics.roas !== undefined) {
-                    <span class="flex items-baseline gap-1.5"><app-ui-eyebrow>ROAS</app-ui-eyebrow><b class="ui-stat__value text-sm text-success-strong">{{ c.metrics.roas.toFixed(2) }}x</b></span>
-                  }
-                  @if (c.metrics.cpa !== undefined) {
-                    <span class="flex items-baseline gap-1.5"><app-ui-eyebrow>{{ cpaLabel() }}</app-ui-eyebrow><b class="ui-stat__value text-sm text-ink">{{ campaignCpa(c) }}</b></span>
-                  }
-                  @if (c.metrics.ctr !== undefined) {
-                    <span class="flex items-baseline gap-1.5"><app-ui-eyebrow>CTR</app-ui-eyebrow><b class="ui-stat__value text-sm text-ink">{{ pctRatio(c.metrics.ctr) }}</b></span>
-                  }
-                </div>
-
-                @if (c.summary) {
-                  <p class="text-sm text-ink">{{ c.summary }}</p>
-                }
-                @if (c.topFinding?.detail) {
-                  <p class="text-sm text-muted">{{ c.topFinding?.detail }}</p>
-                }
-                @if (findingRefs(c).length > 0) {
-                  <div class="flex flex-wrap gap-2">
-                    @for (r of findingRefs(c); track $index) {
-                      <app-ui-evidence [tone]="evidenceTone(c)">{{ r }}</app-ui-evidence>
+                  <div class="flex shrink-0 items-center gap-2">
+                    @if (c.tier === 'winner' && !c.muted && canScale()) {
+                      <button
+                        type="button"
+                        class="rounded-md border border-accent px-2 py-1 text-xs text-accent-strong hover:bg-accent-soft"
+                        [disabled]="scalingId() === c.externalId"
+                        (click)="onScale(c)"
+                      >
+                        {{ scalingId() === c.externalId ? 'Propondo…' : 'Escalar' }}
+                      </button>
                     }
+                    <button
+                      type="button"
+                      class="rounded-md border border-line px-2 py-1 text-xs text-muted hover:text-ink"
+                      [disabled]="mutingId() === c.externalId"
+                      (click)="onToggleMute(c)"
+                    >
+                      {{ mutingId() === c.externalId ? 'Salvando…' : c.muted ? 'Reativar' : 'Silenciar' }}
+                    </button>
+                  </div>
+                </div>
+
+                @if (c.noDataYet) {
+                  <!-- gap irmão do deactivatedSince (achado real): campanha ativa criada depois
+                       do último run — nunca inventa métrica/tier, só avisa e aponta o próximo passo. -->
+                  <p class="text-sm text-muted">
+                    Essa campanha já está ativa na Meta, mas a próxima análise ainda não rodou pra ela —
+                    sem gasto/resultado pra mostrar por enquanto.
+                  </p>
+                } @else {
+                  <!-- métricas inline em mono -->
+                  <div class="flex flex-wrap gap-x-6 gap-y-1">
+                    <span class="flex items-baseline gap-1.5"><app-ui-eyebrow>Gasto</app-ui-eyebrow><b class="ui-stat__value text-sm text-ink">{{ campaignSpend(c) }}</b></span>
+                    @if (c.metrics.roas !== undefined) {
+                      <span class="flex items-baseline gap-1.5"><app-ui-eyebrow>ROAS</app-ui-eyebrow><b class="ui-stat__value text-sm text-success-strong">{{ c.metrics.roas.toFixed(2) }}x</b></span>
+                    }
+                    @if (c.metrics.cpa !== undefined) {
+                      <span class="flex items-baseline gap-1.5"><app-ui-eyebrow>{{ cpaLabel() }}</app-ui-eyebrow><b class="ui-stat__value text-sm text-ink">{{ campaignCpa(c) }}</b></span>
+                    }
+                    @if (c.metrics.ctr !== undefined) {
+                      <span class="flex items-baseline gap-1.5"><app-ui-eyebrow>CTR</app-ui-eyebrow><b class="ui-stat__value text-sm text-ink">{{ pctRatio(c.metrics.ctr) }}</b></span>
+                    }
+                    @if (campaignBudget(c); as budgetText) {
+                      <span class="flex items-baseline gap-1.5">
+                        <app-ui-eyebrow>Orçamento</app-ui-eyebrow>
+                        <b class="ui-stat__value text-sm text-ink">{{ budgetText }}</b>
+                        @if (c.atBudgetCeiling) {
+                          <span class="text-[11px] text-danger-strong">sem folga</span>
+                        }
+                      </span>
+                    }
+                  </div>
+
+                  @if (c.summary) {
+                    <p class="text-sm text-ink">{{ c.summary }}</p>
+                  }
+                  @if (c.topFinding?.detail) {
+                    <p class="text-sm text-muted">{{ c.topFinding?.detail }}</p>
+                  }
+                  @if (findingRefs(c).length > 0) {
+                    <div class="flex flex-wrap gap-2">
+                      @for (r of findingRefs(c); track $index) {
+                        <app-ui-evidence [tone]="evidenceTone(c)">{{ r }}</app-ui-evidence>
+                      }
+                    </div>
+                  }
+                }
+
+                <!-- passo agressivo: o backend pergunta subir seguro vs duplicar (§eco+confirma) -->
+                @if (scaleAsk()?.externalId === c.externalId) {
+                  <div class="flex flex-col gap-2 rounded-md border border-accent-soft bg-accent-soft p-3">
+                    <p class="text-sm text-ink">
+                      Esse aumento é grande. Prefere subir o orçamento no limite seguro, ou criar uma cópia
+                      separada pra crescer sem arriscar a que já funciona?
+                    </p>
+                    <div class="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        class="rounded-md border border-accent bg-accent px-3 py-1.5 text-xs font-medium text-primary-ink hover:bg-accent-strong"
+                        (click)="onScaleChoose('raise')"
+                      >
+                        Subir orçamento +{{ scaleAsk()?.raisePct }}%
+                      </button>
+                      <button
+                        type="button"
+                        class="rounded-md border border-line px-3 py-1.5 text-xs text-ink hover:bg-soft"
+                        (click)="onScaleChoose('duplicate')"
+                      >
+                        Duplicar (crescer +{{ scaleAsk()?.duplicatePct }}%)
+                      </button>
+                      <button
+                        type="button"
+                        class="rounded-md px-3 py-1.5 text-xs text-muted hover:text-ink"
+                        (click)="onScaleCancel()"
+                      >
+                        Agora não
+                      </button>
+                    </div>
                   </div>
                 }
               </article>
+          </ng-template>
+          <div class="flex flex-col gap-3">
+            @for (c of activeCampaigns(); track c.externalId) {
+              <ng-container *ngTemplateOutlet="campaignCard; context: { c: c }"></ng-container>
             }
           </div>
+          @if (inactiveCampaigns().length > 0) {
+            <button
+              type="button"
+              class="self-start text-xs text-muted hover:text-ink underline"
+              (click)="toggleInactive()"
+            >
+              {{ inactiveExpanded() ? 'Ocultar' : 'Ver' }} {{ inactiveCampaigns().length }} campanha{{ inactiveCampaigns().length === 1 ? '' : 's' }} inativa{{ inactiveCampaigns().length === 1 ? '' : 's' }}
+            </button>
+            @if (inactiveExpanded()) {
+              <div class="flex flex-col gap-3">
+                @for (c of inactiveCampaigns(); track c.externalId) {
+                  <ng-container *ngTemplateOutlet="campaignCard; context: { c: c }"></ng-container>
+                }
+              </div>
+            }
+          }
         }
 
         <!-- Recomendações -->
@@ -254,6 +350,54 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                   <span class="ui-tag-mint w-fit">Ação: {{ actionText(rec) }}</span>
                 } @else if (rec.kind === 'human_direction') {
                   <span class="text-xs text-muted">Direção — você aplica. Peça ao {{ agentName }} no WhatsApp se quiser ajuda.</span>
+                }
+                <!-- CTA inline (B): aplicável → aprovar/rejeitar aqui mesmo (+ editar valor do orçamento). -->
+                @if (doneAction()[rec.id]; as done) {
+                  <span class="text-xs" [class.text-success-strong]="done === 'approved'" [class.text-muted]="done === 'rejected'">
+                    {{ done === 'approved' ? '✓ enviado pra aplicar' : 'recusada' }}
+                  </span>
+                } @else if (rec.applicability === 'applicable' && rec.approvalId) {
+                  <div class="flex flex-col gap-2 pt-1">
+                    <div class="flex flex-wrap items-center gap-2">
+                      @if (rec.approvalKind === 'action') {
+                        <!-- ação (pausar/orçamento): eco é o próprio texto → aprovar/rejeitar/editar inline. -->
+                        @if (rec.proposedAction?.type === 'adjust_budget') {
+                          <button appButton variant="ghost" size="sm" [disabled]="actioning().has(rec.id)" (click)="toggleEditRec(rec)">
+                            {{ editingRecId() === rec.id ? 'Cancelar' : 'Editar valor' }}
+                          </button>
+                        }
+                        <button appButton variant="secondary" size="sm" [disabled]="actioning().has(rec.id)" (click)="rejectRec(rec)">Rejeitar</button>
+                        <button appButton size="sm" [disabled]="actioning().has(rec.id)" (click)="approveRec(rec)">
+                          {{ actioning().has(rec.id) ? 'Enviando…' : 'Aprovar' }}
+                        </button>
+                      } @else {
+                        <!-- criação (gasta): a aprovação passa pelo painel com o eco completo (orçamento/
+                             pausada/prévias por anúncio). Rejeitar é seguro e fica inline. -->
+                        <a appButton variant="primary" size="sm" routerLink="/approvals">Revisar e aprovar no painel</a>
+                        <button appButton variant="secondary" size="sm" [disabled]="actioning().has(rec.id)" (click)="rejectRec(rec)">Rejeitar</button>
+                      }
+                    </div>
+                    @if (editingRecId() === rec.id) {
+                      <div class="flex flex-col gap-2 sm:flex-row sm:items-end">
+                        <label class="flex flex-1 flex-col gap-1 text-sm">
+                          <span class="text-muted">Novo orçamento diário (R$)</span>
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            [ngModel]="editBudgetReais()"
+                            (ngModelChange)="editBudgetReais.set($event)"
+                            class="rounded-md border border-line bg-panel px-3 py-2 text-ink"
+                          />
+                        </label>
+                        <button appButton size="sm" [disabled]="savingEdit()" (click)="saveRecEdit(rec)">
+                          {{ savingEdit() ? 'Salvando…' : 'Salvar valor' }}
+                        </button>
+                      </div>
+                    }
+                  </div>
+                } @else if (rec.applicability === 'applied') {
+                  <span class="text-xs text-success-strong">✓ já apliquei isso.</span>
                 }
                 <div class="flex items-center gap-2 pt-1">
                   <span class="text-xs text-muted">Faz sentido?</span>
@@ -300,12 +444,95 @@ export class AnalysisDetail {
   readonly currency = input<string>(DEFAULT_CURRENCY);
   readonly votingId = input<string | null>(null);
   readonly mutingId = input<string | null>(null);
+  /** id da campanha em escala (CTA "escalar este vencedor"). */
+  readonly scalingId = input<string | null>(null);
+  /** escala habilitada (A3): duplicar OU subir orçamento ligado nos bindings. Off → CTA some. */
+  readonly canScale = input<boolean>(true);
+  /** passo agressivo → escolha inline (subir seguro vs duplicar) no card desta campanha. */
+  readonly scaleAsk = input<{ externalId: string; raisePct: number; duplicatePct: number } | null>(null);
 
   readonly vote = output<{ id: string; vote: 'up' | 'down' }>();
   readonly toggleMute = output<Campaign>();
+  readonly scale = output<Campaign>();
+  readonly scaleChoose = output<'raise' | 'duplicate'>();
+  readonly scaleCancel = output<void>();
 
   protected readonly applicabilityNote = APPLICABILITY_NOTE;
   protected readonly agentName = AGENT_NAME;
+
+  // CTA inline das recomendações aplicáveis (B) — aprovar/rejeitar/editar-valor no próprio card.
+  private readonly approvalsApi = inject(ApprovalsApiService);
+  protected readonly actioning = signal<ReadonlySet<string>>(new Set());
+  protected readonly doneAction = signal<Record<string, 'approved' | 'rejected'>>({});
+  protected readonly editingRecId = signal<string | null>(null);
+  protected readonly editBudgetReais = signal<number | null>(null);
+  protected readonly savingEdit = signal(false);
+
+  /** Aprovar a recomendação aplicável direto do card (enfileira o apply-service). Otimista local. */
+  protected approveRec(rec: Recommendation): void {
+    if (!rec.approvalId) return;
+    this.markActioning(rec.id);
+    this.approvalsApi.resolve(rec.approvalId, 'approve').subscribe({
+      next: () => {
+        this.finishActioning(rec.id, 'approved');
+        toast.success('Enviado pra aplicar. O agente aplica em instantes.');
+      },
+      error: () => this.unmarkActioning(rec.id),
+    });
+  }
+
+  /** Rejeitar a recomendação aplicável direto do card (nada é aplicado na Meta). */
+  protected rejectRec(rec: Recommendation): void {
+    if (!rec.approvalId) return;
+    this.markActioning(rec.id);
+    this.approvalsApi.resolve(rec.approvalId, 'reject').subscribe({
+      next: () => {
+        this.finishActioning(rec.id, 'rejected');
+        toast.success('Recusada.');
+      },
+      error: () => this.unmarkActioning(rec.id),
+    });
+  }
+
+  /** Abre/fecha o editor de valor do orçamento (só ação adjust_budget) — reseta o campo. */
+  protected toggleEditRec(rec: Recommendation): void {
+    this.editingRecId.update((cur) => (cur === rec.id ? null : rec.id));
+    this.editBudgetReais.set(null);
+  }
+
+  /** Salva o novo valor (R$/dia) da ação antes de aprovar (C). A ação segue aplicável; aprovar aplica. */
+  protected saveRecEdit(rec: Recommendation): void {
+    if (!rec.approvalId) return;
+    const reais = this.editBudgetReais();
+    if (reais == null || !(reais > 0)) {
+      toast.error('Informe um valor maior que zero.');
+      return;
+    }
+    this.savingEdit.set(true);
+    this.approvalsApi.editAction(rec.approvalId, { mode: 'set', budgetReais: reais }).subscribe({
+      next: () => {
+        this.savingEdit.set(false);
+        this.editingRecId.set(null);
+        toast.success('Valor atualizado. Agora é só aprovar.');
+      },
+      error: () => this.savingEdit.set(false),
+    });
+  }
+
+  private markActioning(id: string): void {
+    this.actioning.update((s) => new Set(s).add(id));
+  }
+  private unmarkActioning(id: string): void {
+    this.actioning.update((s) => {
+      const next = new Set(s);
+      next.delete(id);
+      return next;
+    });
+  }
+  private finishActioning(id: string, result: 'approved' | 'rejected'): void {
+    this.unmarkActioning(id);
+    this.doneAction.update((m) => ({ ...m, [id]: result }));
+  }
 
   protected readonly scorecard = computed<Scorecard | null>(() => this.run()?.metrics?.scorecard ?? null);
   protected readonly waste = computed<Waste | null>(() => {
@@ -314,6 +541,13 @@ export class AnalysisDetail {
     return w.wastedSpend > 0 || (w.pareto?.misallocated.length ?? 0) > 0 ? w : null;
   });
   protected readonly misallocated = computed(() => this.waste()?.pareto?.misallocated ?? []);
+  /** Campanhas ainda ativas na Meta (lista principal) vs. desativadas (seção recolhida). */
+  protected readonly activeCampaigns = computed(() => this.campaigns().filter((c) => !c.deactivatedSince));
+  protected readonly inactiveCampaigns = computed(() => this.campaigns().filter((c) => !!c.deactivatedSince));
+  protected readonly inactiveExpanded = signal(false);
+  protected toggleInactive(): void {
+    this.inactiveExpanded.update((v) => !v);
+  }
   protected readonly tracking = computed<Tracking | null>(() => {
     const t = this.run()?.metrics?.trackingHealth;
     return t?.suspect ? t : null;
@@ -358,6 +592,15 @@ export class AnalysisDetail {
   protected onToggleMute(c: Campaign): void {
     this.toggleMute.emit(c);
   }
+  protected onScale(c: Campaign): void {
+    this.scale.emit(c);
+  }
+  protected onScaleChoose(choice: 'raise' | 'duplicate'): void {
+    this.scaleChoose.emit(choice);
+  }
+  protected onScaleCancel(): void {
+    this.scaleCancel.emit();
+  }
 
   protected kindLabel(kind: Recommendation['kind']): string {
     return KIND_LABEL[kind];
@@ -393,6 +636,12 @@ export class AnalysisDetail {
   }
   protected stageLabel(stage: Stage): string {
     return STAGE_LABEL[stage];
+  }
+  /** Sincronização (achado real): data (dd/mm) desde quando a campanha saiu do conjunto
+   *  ativo da Meta — `c.deactivatedSince` é ISO, sempre presente quando chamado (o template
+   *  só invoca dentro de `@if (c.deactivatedSince)`). */
+  protected deactivatedLabel(c: Campaign): string {
+    return new Date(c.deactivatedSince!).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
   }
   /**
    * metricRefs do achado principal (evidência) — vazio se ausente (histórico).
@@ -465,6 +714,14 @@ export class AnalysisDetail {
   }
   protected campaignCpa(c: Campaign): string {
     return formatCurrency(c.metrics.cpa ?? 0, this.currency());
+  }
+  /** Orçamento curado (S8) — diário tem prioridade de leitura (mais comum); vitalício rotulado. */
+  protected campaignBudget(c: Campaign): string | null {
+    const b = c.budget;
+    if (!b) return null;
+    if (b.dailyMajor !== undefined) return `${formatCurrency(b.dailyMajor, this.currency())}/dia`;
+    if (b.lifetimeMajor !== undefined) return `${formatCurrency(b.lifetimeMajor, this.currency())} vitalício`;
+    return null;
   }
   protected leakLabel(leak: Scorecard['biggestLeak']): string {
     return LEAK_LABEL[leak];

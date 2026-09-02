@@ -23,12 +23,12 @@ let uid = 0;
       @if (label) {
         <span class="text-xs font-medium text-muted">
           {{ label }}
-          @if (required) { <span class="text-tomato">*</span> }
+          @if (required) { <span class="text-danger">*</span> }
         </span>
       }
       <ng-content />
       @if (error) {
-        <span class="text-xs text-tomato">{{ error }}</span>
+        <span class="text-xs text-danger">{{ error }}</span>
       } @else if (hint) {
         <span class="text-xs text-muted/80">{{ hint }}</span>
       }

@@ -1,13 +1,19 @@
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import {
+  ALERTABLE_ACCOUNT_HEALTH_STATUSES,
   CONVERSION_GOALS,
+  CREATIVE_FORMATS,
+  CREATIVE_SOURCE_MODES,
+  CTA_TYPES,
+  SERVING_PICKS,
   DIDACTIC_DEPTH_LEVELS,
   DIRECTIVENESS_LEVELS,
   EXPERIENCE_LEVELS,
   RECOMMENDATION_KINDS,
   VOLUME_LEVELS,
 } from "../types/index.js";
+import { GATEABLE_TOOL_KEYS } from "../constants/tools.js";
 
 // Fonte da verdade dos contratos (zod → OpenAPI → kubb). Expandir por feature.
 
@@ -59,14 +65,139 @@ export const guardrailConfigSchema = z.object({
   dryRun: z.boolean(),
   killSwitch: z.boolean(),
   llmCostCapUsd: z.number().min(0).optional(),
+  // Limites de GASTO NOVO (Fatia 7) — currency-aware refinement (market reference) = fast-follow.
+  maxNewDailyBudgetMinor: z.number().int().min(0).optional(),
+  maxNewCampaignsPerDay: z.number().int().min(0).optional(),
+  scalePct: z.number().int().min(0).max(1000).optional(),
+});
+
+// ─── Rascunho de campanha (Fatia 7 — shape-validation, NÃO regra de negócio) ──
+// Valida a FORMA + limites de campo do `CampaignDraftSpec` (nomes/objetivo/copy/budget).
+// Refine-by-kind é DELIBERADAMENTE leniente: os campos de `from_scratch` ficam opcionais
+// pra o read-back do apply (`parse`) NUNCA rejeitar um rascunho em voo — os pré-requisitos
+// (page/creative) têm guard próprio com mensagem amigável no apply. A regra de negócio da
+// edição (pixel/clamp/derivados) vive no core (`applyDraftEdit`), não aqui.
+/** cap de nome de entidade na Meta (~400 chars). */
+export const ENTITY_NAME_MAX = 400;
+/** cap generoso de texto de copy (o Meta não rejeita a maioria; evita abuso). */
+export const COPY_TEXT_MAX = 3000;
+
+export const ctaTypeSchema = z.enum(CTA_TYPES);
+export const creativeFormatSchema = z.enum(CREATIVE_FORMATS);
+
+export const creativeAssetRefSchema = z.object({
+  assetId: z.string().min(1),
+  format: creativeFormatSchema,
+  origin: z.enum(["reuse", "upload"]),
+  metaImageHash: z.string().optional(),
+  metaVideoId: z.string().optional(),
+});
+
+export const copyVariantSchema = z.object({
+  primaryText: z.string().min(1).max(COPY_TEXT_MAX),
+  headline: z.string().min(1).max(COPY_TEXT_MAX),
+  description: z.string().max(COPY_TEXT_MAX).optional(),
+  cta: ctaTypeSchema.optional(),
+  adName: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+  // criativo próprio do anúncio (Fatia 7); ausente → usa o criativo padrão do rascunho.
+  creative: creativeAssetRefSchema.optional(),
+});
+
+const geoRefSchema = z.object({ key: z.string().min(1), name: z.string().min(1) });
+
+const resolvedAudienceSnapshotSchema = z.object({
+  geo: z.object({
+    countries: z.array(z.string().min(1)).optional(),
+    regions: z.array(geoRefSchema).optional(),
+    cities: z.array(geoRefSchema).optional(),
+  }),
+  ageMin: z.number().int().optional(),
+  ageMax: z.number().int().optional(),
+  interestGroups: z.array(z.array(z.object({ id: z.string().min(1), name: z.string().min(1) }))).optional(),
+  behaviorGroups: z.array(z.array(z.object({ id: z.string().min(1), name: z.string().min(1) }))).optional(),
+  customAudienceIncludeIds: z.array(z.string().min(1)).optional(),
+  customAudienceExcludeIds: z.array(z.string().min(1)).optional(),
+  expansionRaw: z.object({
+    advantageAudience: z.union([z.literal(0), z.literal(1)]),
+    relaxCustomAudience: z.union([z.literal(0), z.literal(1)]),
+    relaxLookalike: z.union([z.literal(0), z.literal(1)]),
+  }),
+});
+
+export const targetingSpecSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("reuse_adset"), sourceAdsetId: z.string().min(1), resolved: resolvedAudienceSnapshotSchema.optional() }),
+  z.object({ kind: z.literal("advantage_plus") }),
+  z.object({
+    kind: z.literal("explicit"),
+    geo: z.array(
+      geoRefSchema.extend({
+        kind: z.enum(["country", "region", "city"]),
+        radius: z.number().positive().optional(),
+        distanceUnit: z.enum(["mile", "kilometer"]).optional(),
+      }),
+    ),
+    radiusAreas: z.array(z.object({ address: z.string().min(1), radius: z.number().positive(), distanceUnit: z.enum(["mile", "kilometer"]) })).optional(),
+    ageMin: z.number().int().optional(),
+    ageMax: z.number().int().optional(),
+    genders: z.array(z.union([z.literal(1), z.literal(2)])).optional(),
+    customAudienceIncludeIds: z.array(z.string().min(1)).optional(),
+    customAudienceExcludeIds: z.array(z.string().min(1)).optional(),
+    interestGroups: z.array(z.array(z.object({ id: z.string().min(1), name: z.string().min(1) }))).optional(),
+    behaviorGroups: z.array(z.array(z.object({ id: z.string().min(1), name: z.string().min(1) }))).optional(),
+  }),
+]);
+
+export const campaignDraftSpecSchema = z.object({
+  version: z.literal(1),
+  currency: z.string().min(1),
+  dailyBudgetMinor: z.number().int().positive(),
+  requestedDailyBudgetMinor: z.number().int().positive().optional(),
+  activation: z.enum(["active", "paused"]),
+  // ─── só `from_scratch` (opcionais p/ read-back seguro) ───
+  objective: conversionGoalSchema.optional(),
+  targeting: targetingSpecSchema.optional(),
+  variantsCount: z.number().int().positive().optional(),
+  copyVariants: z.array(copyVariantSchema).optional(),
+  creative: creativeAssetRefSchema.optional(),
+  pageId: z.string().optional(),
+  pixelId: z.string().optional(),
+  linkUrl: z.string().optional(),
+  campaignName: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+  adsetName: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+  // ─── só `duplicate` (escala) ───
+  suffixLabel: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+});
+
+/** Estratégia de fonte do criativo (Slice 10) — deriva das tuplas fonte-única. */
+export const creativeSourceStrategySchema = z.object({
+  mode: z.enum(CREATIVE_SOURCE_MODES),
+  servingPick: z.enum(SERVING_PICKS).optional(),
 });
 
 export const autonomyLevel = z.enum(["notify", "suggest", "act_safe", "act_full"]);
+/** Preferência do passo AGRESSIVO da escala (Fatia 7): perguntar (default) / sempre subir budget /
+ *  sempre duplicar. Tira a fricção do "perguntar toda vez" pro power-user. Ausente = "ask". */
+export const scaleAggressivePreference = z.enum(["ask", "raise", "duplicate"]);
+export type ScaleAggressivePreference = z.infer<typeof scaleAggressivePreference>;
 export const autonomyPolicySchema = z.object({
   bySource: z.object({ playbook: autonomyLevel, llm: autonomyLevel }),
   /** kill-switch da auto-config por chat (S2.3) — ausente/true = ON; false = OFF. */
   autoConfigViaChat: z.boolean().optional(),
+  scaleAggressivePreference: scaleAggressivePreference.optional(),
+  /** ativação da criação (v1): "paused" (default — nasce pausada + 2º OK) × "active" (nasce ativa). */
+  creationActivation: z.enum(["paused", "active"]).optional(),
+  /** autonomia POR-AÇÃO (B): por tool-key, VENCE o `bySource`; ausente = herda a origem. */
+  byAction: z.record(z.enum([...GATEABLE_TOOL_KEYS] as [string, ...string[]]), autonomyLevel).optional(),
 });
+
+/** On/off das 6 tools gateáveis (A3) — estado resolvido (read) ou patch (write parcial).
+ *  Deriva de GATEABLE_TOOL_KEYS (fonte única): as 4 de escrita + as 2 de criação. */
+export const toolBindingsSchema = z.object(
+  Object.fromEntries(GATEABLE_TOOL_KEYS.map((k) => [k, z.boolean()])) as Record<
+    (typeof GATEABLE_TOOL_KEYS)[number],
+    z.ZodBoolean
+  >,
+);
 
 // ─── Cadência (Fatia 4 corte 2) ──────────────────────────────────────────
 // `CadenceSpec` = FONTE ÚNICA do ritmo da análise automática; o cron 5-campos é
@@ -93,6 +224,33 @@ export type CadenceSpec = z.infer<typeof cadenceSpecSchema>;
 export const alertSensitivity = z.enum(["low", "normal", "high"]);
 export type AlertSensitivity = z.infer<typeof alertSensitivity>;
 
+// Saúde da conta Meta (status/teto de gasto/saldo) — alerta IMEDIATO, fora da cadência
+// do pulso. `statusTriggers` = checklist configurável (o dono decide relevância, não o
+// sistema — a doc da Meta não distingue gravidade com confiança suficiente pra isso ser
+// decidido por nós). `spendThreshold`/`balanceThreshold` sempre na moeda da CONTA (nunca
+// campo de moeda próprio, nunca desalinha). `balanceThreshold` honra o toggle do dono em
+// QUALQUER tipo de conta (decisão: liberdade total); o site mostra a ressalva de que em
+// cartão/fatura o saldo é gasto-não-cobrado (o aviso pode não fazer sentido), mas o dono decide.
+export const accountHealthSpendThresholdSchema = z.object({
+  source: z.enum(["meta_cap", "custom"]),
+  customValueMajor: z.number().positive().optional(),
+});
+export type AccountHealthSpendThreshold = z.infer<typeof accountHealthSpendThresholdSchema>;
+
+export const accountHealthBalanceThresholdSchema = z.object({
+  enabled: z.boolean(),
+  customValueMajor: z.number().positive().optional(),
+});
+export type AccountHealthBalanceThreshold = z.infer<typeof accountHealthBalanceThresholdSchema>;
+
+export const accountHealthAlertSchema = z.object({
+  enabled: z.boolean(),
+  statusTriggers: z.array(z.enum(ALERTABLE_ACCOUNT_HEALTH_STATUSES)),
+  spendThreshold: accountHealthSpendThresholdSchema,
+  balanceThreshold: accountHealthBalanceThresholdSchema,
+});
+export type AccountHealthAlertPolicy = z.infer<typeof accountHealthAlertSchema>;
+
 export const notifyPolicySchema = z.object({
   pulse: z.object({ enabled: z.boolean(), cadence: cadenceSpecSchema }),
   alerts: z.object({
@@ -104,6 +262,12 @@ export const notifyPolicySchema = z.object({
   // Reativação (pivô): avisa quando uma conta PARADA volta a rodar (gasto/impressões).
   // Baixo ruído (só na transição dormant→active). Default off no conservador.
   reactivation: z.object({ enabled: z.boolean() }),
+  // Proatividade de CRIAÇÃO (Fatia 7): o agente PROPÕE escalar/criar campanhas pelo que
+  // observou (nunca auto-aplica — sempre aprovação). Default OFF; ON em Otimizador/Vigia.
+  proactiveDrafts: z.object({ enabled: z.boolean() }).optional(),
+  // Saúde da conta Meta — ver schema acima. Default ON em TODOS os arquétipos (mais
+  // urgente que reativação: isso aqui é dinheiro parado, não uma boa notícia opcional).
+  accountHealthAlert: accountHealthAlertSchema.optional(),
 });
 export type NotifyPolicy = z.infer<typeof notifyPolicySchema>;
 
@@ -113,6 +277,13 @@ export const DEFAULT_NOTIFY_POLICY: NotifyPolicy = {
   alerts: { enabled: false, sensitivity: "normal", throttleHours: 6 },
   runPush: { enabled: true },
   reactivation: { enabled: false },
+  proactiveDrafts: { enabled: false },
+  accountHealthAlert: {
+    enabled: true,
+    statusTriggers: [...ALERTABLE_ACCOUNT_HEALTH_STATUSES],
+    spendThreshold: { source: "meta_cap" },
+    balanceThreshold: { enabled: false },
+  },
 };
 
 // ─── Referência de mercado configurável (pivô — currency-aware) ───────────
@@ -212,6 +383,10 @@ export const analysisFindingSchema = z.object({
   detail: z.string(),
   severity: findingSeverity,
   metricRefs: z.array(z.object({ label: z.string(), value: z.union([z.number(), z.string()]) })),
+  /** G4: achado QUALITATIVO/compliance sem número que o sustente (ex: risco de linguagem
+   *  regulada) — carve-out do drop por falta de `metricRefs` (analysis-guards). NUNCA afrouxa
+   *  a verificação de número quando `metricRefs` está preenchido (com caveat ou sem). */
+  caveat: z.boolean().nullable(),
 });
 
 export const analysisRecommendationSchema = z.object({
@@ -222,6 +397,13 @@ export const analysisRecommendationSchema = z.object({
   actionType: recommendationActionType,
   targetEntity: z.object({ level: entityLevel, externalId: z.string() }).nullable(),
   budgetChangePct: z.number().nullable(),
+  /** G4: impacto em R$ (texto curto) — só quando ancorável em número real do brief
+   *  (GROUNDING_RULE); null quando não há base pra estimar (a maioria fora de pause/scale). */
+  expectedImpact: z.string().nullable(),
+  /** G4: métrica/sinal a acompanhar depois de aplicar (o "próximo olhar" do dono). */
+  whatToMonitor: z.string().nullable(),
+  /** G4: liga a recomendação ao(s) finding(s) que a motivaram (ids de `findings[].id`). */
+  findingRefs: z.array(z.string()).nullable(),
 });
 
 export const analysisOutputSchema = z.object({

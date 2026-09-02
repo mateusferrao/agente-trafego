@@ -14,6 +14,7 @@ import type { AdAccountRef } from "@trafego/shared/ports";
 import { mapStatus } from "@trafego/ads-meta";
 import type { WorkerDeps } from "../../composition.js";
 import { createAnalysisRepo, loadDailyToolContext } from "../analysis/repo.js";
+import { loadEnabledTools, enabledActionTypes } from "../tools/enabled.js";
 
 export interface WriteContext {
   readonly account: AdAccountRef;
@@ -61,7 +62,11 @@ export async function loadWriteContext(
     .from(guardrailConfigs)
     .where(and(eq(guardrailConfigs.agentId, agentId), eq(guardrailConfigs.orgId, orgId)))
     .limit(1);
-  const cfg = toGuardrailConfig(guardrailRow);
+  // A2: allowedActions do guardrail vem AUTORITATIVA dos bindings (mesma fonte do gate do chat) —
+  // senão a tool passa no chat e barra aqui (ou vice-versa). Fallback preserva o comportamento.
+  const baseCfg = toGuardrailConfig(guardrailRow);
+  const enabled = await loadEnabledTools(db, orgId, agentId, baseCfg.allowedActions);
+  const cfg: GuardrailConfig = { ...baseCfg, allowedActions: enabledActionTypes(enabled) };
   const daily = await loadDailyToolContext(db, agentId);
 
   const statusByEntity = new Map<string, EntityStatus>();

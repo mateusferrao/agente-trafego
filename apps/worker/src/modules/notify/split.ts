@@ -11,6 +11,19 @@ export const WHATSAPP_SPLIT_MAX_PARTS = 5;
 /** Alvo de tamanho por balão: acima disso o bloco é subdividido por fronteira natural. */
 export const WHATSAPP_SOFT_MAX_CHARS = 600;
 
+/**
+ * Junta parágrafos numa mensagem cujos balões o `splitMessage` separa (fronteira `\n\n`).
+ * Fonte única do contrato de "balão" para os ecos (eco+confirma) — usar isto em vez de
+ * `.join("\n")` (que vira UM balão) ou `.join("\n\n")` solto. Descarta vazios (linhas
+ * opcionais condicionais) e faz trim de cada um.
+ */
+export function joinBalloons(paragraphs: readonly string[]): string {
+  return paragraphs
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0)
+    .join("\n\n");
+}
+
 /** Empacota unidades (linhas/frases) em partes, juntando por `sep` até o alvo. */
 function packUnits(units: readonly string[], sep: string, softMax: number): string[] {
   const parts: string[] = [];
@@ -67,8 +80,15 @@ export function splitMessage(text: string, maxParts = WHATSAPP_SPLIT_MAX_PARTS):
     .filter((b) => b.length > 0);
   const expanded = blocks.flatMap((b) => splitParagraph(b, WHATSAPP_SOFT_MAX_CHARS));
   if (expanded.length <= maxParts) return expanded;
-  // excedente juntado no último bloco (mantém o cap sem perder conteúdo).
-  const head = expanded.slice(0, maxParts - 1);
-  const tail = expanded.slice(maxParts - 1).join("\n\n");
+  // Acima do cap: empacota parágrafos curtos vizinhos até o alvo ANTES de aplicar o
+  // corte — sem isso, um texto com vários parágrafos curtos (título, cabeçalhos de
+  // seção) vira 1 balão por parágrafo até o 4º, e TUDO que sobra (o resto do relatório
+  // inteiro) cai cru, sem repacotar, no último balão (achado real: WhatsApp).
+  const packed = packUnits(expanded, "\n\n", WHATSAPP_SOFT_MAX_CHARS);
+  if (packed.length <= maxParts) return packed;
+  // ainda acima do cap mesmo empacotado: excedente juntado no último bloco (mantém o
+  // cap sem perder conteúdo).
+  const head = packed.slice(0, maxParts - 1);
+  const tail = packed.slice(maxParts - 1).join("\n\n");
   return [...head, tail];
 }

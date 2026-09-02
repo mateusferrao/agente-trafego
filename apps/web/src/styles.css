@@ -2,9 +2,9 @@
 @source './app';
 
 @theme {
-  /* Identidade AutoTraffic (neobrutalismo refinado). Mapa old→new:
-     accent emerald→tomate · tomato (era vermelho de perigo)→tomate de marca · assistant verde-antigo→menta ·
-     danger ganha vermelho profundo distinto do tomate · primary novo = navy (ação). */
+  /* Identidade CaquiAI (neobrutalismo refinado). Mapa old→new:
+     accent emerald→tomate→caqui (laranja) · assistant verde-antigo→menta ·
+     danger = vermelho profundo, distinto do caqui de marca · primary novo = navy (ação). */
   --color-bg: #fbf9f4;
   --color-app: #fbf9f4;
   --color-panel: #ffffff;
@@ -23,10 +23,10 @@
   --color-primary: #0c1134;
   --color-primary-strong: #070a27;
   --color-primary-ink: #fbf9f4;
-  /* Accent raro de marca = tomate (seleção/ativo/marca) */
-  --color-accent: #e00202;
-  --color-accent-strong: #b00202;
-  --color-accent-soft: #ffe3dc;
+  /* Accent raro de marca = caqui (seleção/ativo/marca) */
+  --color-accent: #e8720d;
+  --color-accent-strong: #b3560a;
+  --color-accent-soft: #ffe8d1;
   /* Sucesso/agente = menta */
   --color-success: #047a4d;
   --color-success-strong: #035c3a;
@@ -37,16 +37,13 @@
   --color-info: #2563eb;
   --color-info-strong: #1d4ed8;
   --color-info-soft: #dbeafe;
-  /* Perigo = vermelho profundo, distinto do tomate de marca */
+  /* Perigo = vermelho profundo, distinto do caqui de marca */
   --color-danger: #b3241c;
   --color-danger-strong: #8f1a14;
   --color-danger-soft: #f7dcd7;
   --color-overlay: rgb(7 10 39 / 0.28);
   --color-assistant: #047a4d;
   --color-assistant-strong: #035c3a;
-  /* Tomate de marca (símbolo/lockup do Roy) = accent */
-  --color-tomato: #e00202;
-  --color-tomato-soft: #ffe3dc;
   /* Paleta categórica (não-semântica): distinção de séries/segmentos. Não usar para status. */
   --color-cat-1: #0ea5e9;
   --color-cat-2: #8b5cf6;
@@ -63,11 +60,11 @@
   --shadow-float: 0 4px 10px rgb(7 10 39 / 0.12);
   --shadow-lift: 0 8px 14px rgb(7 10 39 / 0.16);
   --shadow-panel: 0 18px 44px rgb(7 10 39 / 0.18);
-  /* Assinatura neobrutalista: sombra sólida offset (sem blur). Bold genérico (navy) + pop de marca (tomate). */
+  /* Assinatura neobrutalista: sombra sólida offset (sem blur). Bold genérico (navy) + pop de marca (caqui). */
   --shadow-offset: 3px 3px 0 #070a27;
   --shadow-offset-press: 1px 1px 0 #070a27;
-  --shadow-offset-accent: 3px 3px 0 #e00202;
-  --shadow-offset-accent-press: 1px 1px 0 #e00202;
+  --shadow-offset-accent: 3px 3px 0 #e8720d;
+  --shadow-offset-accent-press: 1px 1px 0 #e8720d;
   --radius-xs: 0.375rem;
   --radius-sm: 0.5rem;
   --radius-md: 0.75rem;
@@ -75,7 +72,7 @@
   --radius-xl: 1.25rem;
   --radius-pill: 999px;
   --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
-  --font-brand: 'Archivo', ui-sans-serif, system-ui, sans-serif;
+  --font-brand: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
   --font-serif: 'Noto Serif', Georgia, ui-serif, serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
 }
@@ -97,9 +94,9 @@
   --color-primary: #0c1134;
   --color-primary-strong: #070a27;
   --color-primary-ink: #fbf9f4;
-  --color-accent: #e00202;
-  --color-accent-strong: #b00202;
-  --color-accent-soft: #ffe3dc;
+  --color-accent: #e8720d;
+  --color-accent-strong: #b3560a;
+  --color-accent-soft: #ffe8d1;
   --color-success: #047a4d;
   --color-success-strong: #035c3a;
   --color-success-soft: #c9f3e1;
@@ -115,8 +112,6 @@
   --color-overlay: rgb(7 10 39 / 0.28);
   --color-assistant: #047a4d;
   --color-assistant-strong: #035c3a;
-  --color-tomato: #e00202;
-  --color-tomato-soft: #ffe3dc;
   --color-cat-1: #0ea5e9;
   --color-cat-2: #8b5cf6;
   --color-cat-3: #f59e0b;
@@ -130,8 +125,8 @@
   --shadow-panel: 0 18px 44px rgb(7 10 39 / 0.18);
   --shadow-offset: 3px 3px 0 #070a27;
   --shadow-offset-press: 1px 1px 0 #070a27;
-  --shadow-offset-accent: 3px 3px 0 #e00202;
-  --shadow-offset-accent-press: 1px 1px 0 #e00202;
+  --shadow-offset-accent: 3px 3px 0 #e8720d;
+  --shadow-offset-accent-press: 1px 1px 0 #e8720d;
   --radius-xs: 0.375rem;
   --radius-sm: 0.5rem;
   --radius-md: 0.75rem;
@@ -139,7 +134,7 @@
   --radius-xl: 1.25rem;
   --radius-pill: 999px;
   --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
-  --font-brand: 'Archivo', ui-sans-serif, system-ui, sans-serif;
+  --font-brand: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
   --font-serif: 'Noto Serif', Georgia, ui-serif, serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
   --grain-texture: url("data:image/svg+xml,%3Csvg viewBox='0 0 120 120' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='grain'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.28' numOctaves='5' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.06 0 0 0 0 0.08 0 0 0 0 0.07 0 0 0 0.72 0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23grain)'/%3E%3C/svg%3E");
@@ -163,9 +158,9 @@
   --color-primary: #2c3572;
   --color-primary-strong: #3a4488;
   --color-primary-ink: #fbf9f4;
-  --color-accent: #ff7a6b;
-  --color-accent-strong: #ffb0a5;
-  --color-accent-soft: #3a1512;
+  --color-accent: #ff9d4d;
+  --color-accent-strong: #ffc184;
+  --color-accent-soft: #3a2410;
   --color-success: #34d399;
   --color-success-strong: #6ee7b7;
   --color-success-soft: #0d2a21;
@@ -181,8 +176,6 @@
   --color-overlay: rgb(0 0 0 / 0.5);
   --color-assistant: #34d399;
   --color-assistant-strong: #6ee7b7;
-  --color-tomato: #ff7a6b;
-  --color-tomato-soft: #3a1512;
   --color-cat-1: #38bdf8;
   --color-cat-2: #a78bfa;
   --color-cat-3: #fbbf24;
@@ -229,7 +222,7 @@ body {
   min-height: 100%;
   background:
     radial-gradient(circle at 10% -10%, rgb(7 10 39 / 0.05), transparent 24rem),
-    radial-gradient(circle at 88% 4%, rgb(224 2 2 / 0.05), transparent 20rem), var(--color-app);
+    radial-gradient(circle at 88% 4%, rgb(232 114 13 / 0.05), transparent 20rem), var(--color-app);
 }
 
 body {
@@ -530,8 +523,8 @@ textarea[appTextarea][surface='transparent']:focus-visible {
 .workflow-rail {
   background:
     radial-gradient(circle at 12% 18%, rgb(7 10 39 / 0.16), transparent 19rem),
-    radial-gradient(circle at 92% 12%, rgb(224 2 2 / 0.12), transparent 17rem),
-    linear-gradient(90deg, rgb(7 10 39 / 0.1), rgb(224 2 2 / 0.08)), var(--color-soft);
+    radial-gradient(circle at 92% 12%, rgb(232 114 13 / 0.12), transparent 17rem),
+    linear-gradient(90deg, rgb(7 10 39 / 0.1), rgb(232 114 13 / 0.08)), var(--color-soft);
 }
 
 .workflow-rail::before {
@@ -575,7 +568,7 @@ textarea[appTextarea][surface='transparent']:focus-visible {
   }
 
   .domain-card:hover {
-    border-color: rgb(224 2 2 / 0.32);
+    border-color: rgb(232 114 13 / 0.32);
     box-shadow: var(--shadow-panel);
     transform: translateY(-0.125rem);
   }
@@ -591,8 +584,8 @@ textarea[appTextarea][surface='transparent']:focus-visible {
   width: 1.5rem;
   height: 1.5rem;
   flex: 0 0 auto;
-  /* Logo oficial do tomate (silhueta real: corpo + folha) — asset em public/. */
-  background: url('/brand-tomato.svg') center / contain no-repeat;
+  /* Logo oficial do caqui (silhueta real: corpo + folhas) — asset em public/. */
+  background: url('/brand-caqui.svg') center / contain no-repeat;
 }
 
 .brand-wordmark {
@@ -602,13 +595,46 @@ textarea[appTextarea][surface='transparent']:focus-visible {
   letter-spacing: 0;
 }
 
-/* Tomate grande como símbolo de empty-state (marca no lugar do ícone genérico). */
+/* Cartão de perfil do agente (vibe Instagram/WhatsApp): anel de status sólido ao redor
+   do símbolo — verde = ativo, âmbar = pausado — com um respiro (padding + superfície do
+   painel) entre o anel e o símbolo, no mesmo espírito das bordas 2px sólidas da marca. */
+.brand-lockup--profile {
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.brand-mark-ring {
+  display: inline-flex;
+  flex: 0 0 auto;
+  padding: 2px;
+  border: 2px solid var(--color-success);
+  border-radius: var(--radius-pill);
+  background: var(--color-panel);
+}
+
+.brand-mark-ring--paused {
+  border-color: var(--color-warning);
+}
+
+.brand-profile-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  line-height: 1.15;
+}
+
+.brand-profile-status {
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+
+/* Caqui grande como símbolo de empty-state (marca no lugar do ícone genérico). */
 .brand-mark--empty {
   width: 2.75rem;
   height: 2.75rem;
 }
 
-/* Roy que reage: leve "wobble" do tomate ao passar o mouse no lockup (âncora de
+/* Roy que reage: leve "wobble" do caqui ao passar o mouse no lockup (âncora de
    marca — sidebar/login). Pop de sucesso: entrada com pulinho de confirmação.
    Ambos motion-safe (sem movimento em prefers-reduced-motion, item fica visível). */
 @keyframes brand-wobble {
@@ -1237,7 +1263,7 @@ table[appUiResizableColumns] > tbody > tr > td {
 .ui-typing-dots > span:nth-child(2) { animation-delay: 0.2s; }
 .ui-typing-dots > span:nth-child(3) { animation-delay: 0.4s; }
 
-/* Pulso da marca (símbolo tomate respirando) — âncora do loading, nunca gira. */
+/* Pulso da marca (símbolo caqui respirando) — âncora do loading, nunca gira. */
 @keyframes ui-brand-pulse {
   0%, 100% { transform: scale(1); opacity: 0.85; }
   50% { transform: scale(1.12); opacity: 1; }

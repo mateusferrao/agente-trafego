@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, type OnInit, inject, input, signal } from '@angular/core';
 import { toast } from 'ngx-sonner';
-import { NumberStepper, UiButton, UiSelectBox, type UiSelectOptionItem } from '@ui';
+import { NumberStepper, UiButton, UiCheckbox, UiSelectBox, type UiSelectOptionItem } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import type { PlaybookRuleInput, PlaybookRuleOutput } from '@core/api/generated';
 
@@ -69,7 +69,7 @@ const STATUS_OPTIONS: readonly UiSelectOptionItem[] = [
 @Component({
   selector: 'app-agent-playbook',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [NumberStepper, UiButton, UiSelectBox],
+  imports: [NumberStepper, UiButton, UiCheckbox, UiSelectBox],
   template: `
     <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
       <div class="flex items-start justify-between gap-3">
@@ -81,7 +81,7 @@ const STATUS_OPTIONS: readonly UiSelectOptionItem[] = [
             quando você liberar a ação. Opcional.
           </p>
         </div>
-        <button appButton variant="secondary" type="button" (click)="addRule()">+ Nova regra</button>
+        <button appButton variant="secondary" type="button" class="shrink-0 whitespace-nowrap" (click)="addRule()">+ Nova regra</button>
       </div>
 
       @if (loading()) {
@@ -123,10 +123,15 @@ const STATUS_OPTIONS: readonly UiSelectOptionItem[] = [
               </div>
 
               <div class="flex items-center justify-between gap-2 border-t border-line pt-2">
-                <label class="flex items-center gap-2 text-xs text-muted">
-                  <input type="checkbox" [checked]="r.enabled" (change)="toggleEnabled(i)" />
+                <span class="flex items-center gap-2 text-xs text-muted">
+                  <button
+                    appCheckbox
+                    [ngpCheckboxChecked]="r.enabled"
+                    (ngpCheckboxCheckedChange)="toggleEnabled(i)"
+                    [attr.aria-label]="r.enabled ? 'Regra ativa' : 'Regra desligada'"
+                  ></button>
                   {{ r.enabled ? 'ativa' : 'desligada' }}
-                </label>
+                </span>
                 <div class="flex items-center gap-2">
                   <button type="button" class="text-xs text-muted hover:text-ink disabled:opacity-40" [disabled]="i === 0" (click)="move(i, -1)" title="subir prioridade">↑</button>
                   <button type="button" class="text-xs text-muted hover:text-ink disabled:opacity-40" [disabled]="i === rows().length - 1" (click)="move(i, 1)" title="descer prioridade">↓</button>

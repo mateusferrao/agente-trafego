@@ -34,6 +34,22 @@ export const resolveApprovalOutput = z.object({
 export type ResolveApprovalOutput = z.infer<typeof resolveApprovalOutput>;
 
 /**
+ * Editar o VALOR de uma ação `adjust_budget` pendente ANTES de aprovar (C, v1). `pct`
+ * (increase/decrease em %) OU `budgetReais` (valor/dia absoluto, mode "set"). Só o valor —
+ * pausar/retomar/status não têm número. O clamp do blast-radius é rede do apply.
+ */
+export const editApprovalActionInput = z
+  .object({
+    mode: z.enum(["increase", "decrease", "set"]),
+    pct: z.number().positive().optional(),
+    budgetReais: z.number().positive().optional(),
+  })
+  .refine((v) => (v.mode === "set" ? v.budgetReais !== undefined : v.pct !== undefined), {
+    message: "informe pct (increase/decrease) ou budgetReais (set)",
+  });
+export type EditApprovalActionInput = z.infer<typeof editApprovalActionInput>;
+
+/**
  * Uma ação aplicada ainda ACIONÁVEL quanto a reverter, cross-conta (dentro do TTL —
  * `undoable` ou `revertBlocked`, nunca as duas false). O revert em si usa a rota
  * por-conta (`POST /accounts/:accountId/agent/actions/:toolCallId/undo`).

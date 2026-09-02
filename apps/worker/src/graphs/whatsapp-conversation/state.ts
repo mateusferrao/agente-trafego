@@ -17,12 +17,29 @@ export interface PendingWrite {
   readonly actions: readonly Action[];
 }
 
+/**
+ * Rascunho de campanha aguardando confirmação (eco+confirma, Fatia 7). Já persistido em
+ * `campaign_drafts(proposed)` + `approvals(pending)` no gate (fonte única visível no site);
+ * o "sim" só enfileira a saga de criação (mesmo apply-service do site). Serializável.
+ */
+export interface PendingDraft {
+  readonly echo: string;
+  readonly expiresAt: string;
+  /** id da aprovação de rascunho a resolver (enfileira apply-draft). */
+  readonly approvalId: string;
+  /** id do rascunho (campaign_drafts) — alvo do refinamento conversacional (ajustar/regenerar). */
+  readonly draftId: string;
+}
+
 /** Reversão(ões) aguardando confirmação (eco+confirma, 5c-4). */
 export interface PendingRevert {
   readonly echo: string;
   readonly expiresAt: string;
   /** ids de agent_tool_calls a reverter quando o usuário confirmar. */
   readonly toolCallIds: readonly string[];
+  /** modo por id (paralelo a `toolCallIds`) — só afeta CRIAÇÕES: pausar (padrão) × arquivar.
+   *  Ausente (estado antigo) → pausar em tudo (mesmo comportamento de antes). */
+  readonly modes?: readonly ("pause" | "archive")[];
 }
 
 /**
@@ -98,6 +115,9 @@ export const WhatsappConversationState = Annotation.Root({
 
   // eco+confirma de REVERSÃO (5c-4) — desfazer também é escrita.
   pendingRevert: Annotation<PendingRevert | null>,
+
+  // eco+confirma de RASCUNHO de campanha (Fatia 7) — criar/escalar (gasto novo).
+  pendingDraft: Annotation<PendingDraft | null>,
 
   // eco+confirma de mudança de CONFIG do agente (S2.3): metas/autonomia/guardrails/
   // cadência/arquétipo/playbook/identidade. Config não toca a Meta (ramo próprio).

@@ -33,11 +33,11 @@ const ANALYSIS_OUTPUT = {
   scorecard: { grade: "C", headline: "CPA acima da meta na campanha principal.", biggestLeak: "conversao" },
   summary: "Conta gastou R$300; CPA acima da meta na Campanha 1.",
   flags: [],
-  findings: [{ id: "f1", title: "CPA alto", detail: "R$100/venda", severity: "warning", metricRefs: [{ label: "CPA", value: 100 }] }],
+  findings: [{ id: "f1", title: "CPA alto", detail: "R$100/venda", severity: "warning", metricRefs: [{ label: "CPA", value: 100 }], caveat: null }],
   recommendations: [
-    { id: "r1", title: "Pausar Campanha 1", rationale: "CPA 2x a meta", priority: "high", actionType: "pause", targetEntity: { level: "campaign", externalId: "c1" }, budgetChangePct: null },
-    { id: "r2", title: "Revisar criativo", rationale: "Fadiga", priority: "medium", actionType: "review_creative", targetEntity: null, budgetChangePct: null },
-    { id: "r3", title: "Pausar fantasma", rationale: "id inexistente", priority: "low", actionType: "pause", targetEntity: { level: "ad", externalId: "ZZZ" }, budgetChangePct: null },
+    { id: "r1", title: "Pausar Campanha 1", rationale: "CPA 2x a meta", priority: "high", actionType: "pause", targetEntity: { level: "campaign", externalId: "c1" }, budgetChangePct: null, expectedImpact: null, whatToMonitor: null, findingRefs: null },
+    { id: "r2", title: "Revisar criativo", rationale: "Fadiga", priority: "medium", actionType: "review_creative", targetEntity: null, budgetChangePct: null, expectedImpact: null, whatToMonitor: null, findingRefs: null },
+    { id: "r3", title: "Pausar fantasma", rationale: "id inexistente", priority: "low", actionType: "pause", targetEntity: { level: "ad", externalId: "ZZZ" }, budgetChangePct: null, expectedImpact: null, whatToMonitor: null, findingRefs: null },
   ],
 };
 
@@ -48,6 +48,10 @@ interface Harness {
   closed: { status: string; summary: string | null; narrative: string | null; costSnapshot: number | null }[];
   llm: ReturnType<typeof vi.fn>;
   readEntityState: ReturnType<typeof vi.fn>;
+  /** inserts CRUS via `deps.db.insert(recommendations).values(v)` (fora do repo — proposeDrafts). */
+  insertedRecommendations: Record<string, unknown>[];
+  /** ids marcados via `entityAnalysesRepo.markDeactivated` (sincronização — achado real). */
+  markedDeactivated: string[];
 }
 
 interface HarnessOpts {
@@ -64,6 +68,12 @@ interface HarnessOpts {
   freshEntityState?: Record<string, unknown>;
   /** F4 runPush: desliga o push de run (cron/on-demand). Default ON. */
   runPushEnabled?: boolean;
+  /** S4: perfil vertical do agente. Default "health" (todo o beta hoje é saúde). */
+  vertical?: string;
+  /** sincronização (achado real): ids de campanha já cacheados ANTES deste run. */
+  previouslyCachedCampaignIds?: string[];
+  /** simula `listEntities` falhando pra esses níveis (→ partialReasons inclui "entities"). */
+  entitiesThrowLevels?: string[];
 }
 
 function makeHarness(opts: HarnessOpts = {}): Harness {
@@ -75,13 +85,14 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
   const byLevel = (level: string) => entities.filter((e) => e.level === level);
 
   const repo: AnalysisRepo = {
-    loadAgentContext: vi.fn(async () => ({ goals: opts.goals ?? { targetCPA: 50 }, archetype: "conservador", timezone: "America/Sao_Paulo", systemPrompt: null, persona: null, tone: null, businessContext: null, guidance: null, configChangedAt: opts.configChangedAt ?? null, modelConfig: {}, autonomyPolicy: opts.autonomy ?? { bySource: { playbook: "suggest" as const, llm: "suggest" as const } }, notifyPolicy: { pulse: { enabled: false, cadence: { kind: "daily" as const, hour: 8 } }, alerts: { enabled: false, sensitivity: "normal" as const, throttleHours: 6 }, runPush: { enabled: opts.runPushEnabled ?? true }, reactivation: { enabled: false } }, posture: { directiveness: "consultative" as const, volume: "balanced" as const, didacticDepth: "explanatory" as const, experienceLevel: null }, guardrailConfig: opts.guardrail ?? { maxBudgetChangePct: 20, maxEntitiesPerDay: 3, allowedActions: ["pause_entity" as const], dryRun: true, killSwitch: false }, playbook: [], rejectedMemory: [], mutedCampaignIds: [], orgMarketReference: null })),
+    loadAgentContext: vi.fn(async () => ({ goals: opts.goals ?? { targetCPA: 50 }, archetype: "conservador", vertical: opts.vertical ?? "health", timezone: "America/Sao_Paulo", systemPrompt: null, persona: null, tone: null, businessContext: null, guidance: null, configChangedAt: opts.configChangedAt ?? null, modelConfig: {}, autonomyPolicy: opts.autonomy ?? { bySource: { playbook: "suggest" as const, llm: "suggest" as const } }, notifyPolicy: { pulse: { enabled: false, cadence: { kind: "daily" as const, hour: 8 } }, alerts: { enabled: false, sensitivity: "normal" as const, throttleHours: 6 }, runPush: { enabled: opts.runPushEnabled ?? true }, reactivation: { enabled: false } }, posture: { directiveness: "consultative" as const, volume: "balanced" as const, didacticDepth: "explanatory" as const, experienceLevel: null }, guardrailConfig: opts.guardrail ?? { maxBudgetChangePct: 20, maxEntitiesPerDay: 3, allowedActions: ["pause_entity" as const], dryRun: true, killSwitch: false }, playbook: [], rejectedMemory: [], mutedCampaignIds: [], orgMarketReference: null })),
     loadAccount: vi.fn(async () => ({ metaAdAccountId: "act_1", name: "Conta", currency: "BRL", tokenCripto: TOKEN })),
     openRun: vi.fn(async () => {}),
     markTokenInvalid: vi.fn(async () => {}),
     saveRecommendations: vi.fn(async (r: readonly RecommendationRow[]) => { saved.push(...r); }),
     saveAdCreatives: vi.fn(async () => {}),
     saveAdCreativeCopies: vi.fn(async () => {}),
+    saveCustomAudiences: vi.fn(async () => {}),
     saveConversionLabels: vi.fn(async (_o, _a, _p, labels: readonly ConversionLabelRow[]) => { savedLabels.push(...labels); }),
     consumeConfigChanged: vi.fn(async () => {}),
     loadDailyToolContext: vi.fn(async () => ({ touchedToday: new Set<string>(), budgetChangedToday: new Set<string>() })),
@@ -95,14 +106,20 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
     latestSyncedAtByAccounts: vi.fn(async () => new Map()),
     accountActivitySince: vi.fn(async () => false),
   };
+  const markedDeactivated: string[] = [];
   const entityAnalyses: EntityAnalysesRepo = {
     loadByAgent: vi.fn(async () => opts.last ?? new Map<string, LastEntityAnalysis>()),
     saveMany: vi.fn(async () => {}),
+    loadCampaignIds: vi.fn(async () => new Set(opts.previouslyCachedCampaignIds ?? [])),
+    markDeactivated: vi.fn(async (_agentId: string, ids: readonly string[]) => {
+      markedDeactivated.push(...ids);
+    }),
   };
   // no cron o chain chega ao notify (usa db real) — fake short-circuita o envio.
   const notify: NotifyRepo = {
     alreadyNotified: vi.fn(async () => true),
     loadTarget: vi.fn(async () => null),
+    focusForRef: vi.fn(async () => {}),
     resolveInboundContact: vi.fn(async () => null),
     alreadyProcessed: vi.fn(async () => false),
     lastInboundForQuote: vi.fn(async () => null),
@@ -123,13 +140,25 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
   const llm = vi.fn(async () => ({ output: ANALYSIS_OUTPUT, usage: { inputTokens: 100, outputTokens: 20, costUsd: 0.001 } }));
   const readEntityState = vi.fn(async () => opts.freshEntityState ?? { status: "ACTIVE", effective_status: "ACTIVE" });
 
+  // db falso mínimo: loadEnabledTools (load_context) faz 1 select em agent_tool_bindings —
+  // sem bindings → resolveEnabledTools cai no fallback (allowedActions do guardrailConfig).
+  // `insert` cobre o insert CRU de `proposeDrafts` (recommendations `human_direction`, P1.1) —
+  // fora do repo (o resto do harness passa pelo AnalysisRepo acima).
+  const emptySelect = { from: () => ({ where: async () => [] }) };
+  const insertedRecommendations: Record<string, unknown>[] = [];
   const deps = {
-    db: {} as never,
+    db: {
+      select: () => emptySelect,
+      insert: () => ({ values: async (v: Record<string, unknown>) => { insertedRecommendations.push(v); } }),
+    } as never,
     logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
     redis: {} as never,
     ports: {
       ads: {
-        listEntities: vi.fn(async (_ref, level) => byLevel(level)),
+        listEntities: vi.fn(async (_ref, level) => {
+          if (opts.entitiesThrowLevels?.includes(level)) throw new Error("Meta indisponível (simulado)");
+          return byLevel(level);
+        }),
         getCreatives: vi.fn(async () => []),
         readEntityState,
       } as never,
@@ -141,6 +170,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
       approval: {} as never,
     },
     insightsSync: { sync: vi.fn(async () => ({ partial: false, tokenInvalid: opts.tokenInvalid ?? false, snapshotsWritten: rows.length })) } as never,
+    breakdownSync: { sync: vi.fn(async () => ({ synced: false })) } as never,
     analysis: {
       model: "m",
       reviewModel: "review-m",
@@ -154,6 +184,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
       reviewEnabled: true,
       maxOutputTokens: 4000,
       reasoningEffort: "medium",
+      reviewReasoningEffort: "off",
       maxCreativesVision: 8,
       notableAdsPerCampaign: 5,
       maxCreativesVisionPerCampaign: 3,
@@ -172,6 +203,8 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
         coldStartReference: true,
         trackingBrokenRatio: 50,
         trackingBrokenMinFunnel: 50,
+        relativeEligibilitySpendMultiplier: 2,
+        marginalCpaWorsenPct: 20,
       },
     },
     webOrigin: "https://app.example.com",
@@ -181,7 +214,7 @@ function makeHarness(opts: HarnessOpts = {}): Harness {
   const nodesWithFakes = { repo, snapshots, entityAnalyses, notify, ...(opts.executor ? { executor: opts.executor } : {}) };
   // guarda os fakes p/ o teste montar os nós
   (deps as unknown as { _repos: typeof nodesWithFakes })._repos = nodesWithFakes;
-  return { deps, saved, savedLabels, closed, llm, readEntityState };
+  return { deps, saved, savedLabels, closed, llm, readEntityState, insertedRecommendations, markedDeactivated };
 }
 
 /** Nº de chamadas de LLM do MAPA (por-campanha) — identificadas por meta.type "unit". */
@@ -248,6 +281,27 @@ describe("account-analysis read-only nodes", () => {
     // mock devolve o objeto de análise (sem .text) → cai no fallback e NÃO soma usage
     // (usage só entra com texto válido). Em produção o redator retorna texto e somaria.
     expect(h.closed[0]).toMatchObject({ status: "succeeded", costSnapshot: 0.003 });
+  });
+
+  it("sincronização: campanha cacheada que sumiu do conjunto ativo → marcada como desativada", async () => {
+    const h = makeHarness({ previouslyCachedCampaignIds: ["c1", "c-fantasma"] });
+    await runChain(h);
+    // c1 continua ativa (está em ENTITIES) → não marcada; c-fantasma sumiu → marcada.
+    expect(h.markedDeactivated).toEqual(["c-fantasma"]);
+  });
+
+  it("sincronização: nada sumiu (só o que já era esperado) → não marca nada", async () => {
+    const h = makeHarness({ previouslyCachedCampaignIds: ["c1"] });
+    await runChain(h);
+    expect(h.markedDeactivated).toEqual([]);
+  });
+
+  it("sincronização: listagem de campanha PARCIAL (Meta falhou) → NUNCA marca (evita falso-positivo)", async () => {
+    const h = makeHarness({ previouslyCachedCampaignIds: ["c1", "c-fantasma"], entitiesThrowLevels: ["campaign"] });
+    await runChain(h);
+    // c1 "sumiria" do catálogo (fetch falhou), mas como a listagem foi parcial, nada é marcado —
+    // marcar aqui arriscaria dizer que uma campanha ainda ativa "desativou" só por falha de rede.
+    expect(h.markedDeactivated).toEqual([]);
   });
 
   it("on_demand (site): compõe push pro WhatsApp — honra 'te aviso quando terminar'", async () => {
@@ -337,12 +391,171 @@ describe("account-analysis read-only nodes", () => {
     expect(modelByType("review")).toBe("review-m");
     // a análise por-campanha reanalisada é persistida (base do incremental), chaveada por id de campanha
     expect(repos.entityAnalyses.saveMany).toHaveBeenCalledTimes(1);
-    const savedUnits = (repos.entityAnalyses.saveMany as ReturnType<typeof vi.fn>).mock.calls[0]?.[2] as { entityId: string }[];
+    const savedUnits = (repos.entityAnalyses.saveMany as ReturnType<typeof vi.fn>).mock.calls[0]?.[2] as {
+      entityId: string;
+      curated?: { isCBO: boolean; tier?: string };
+    }[];
     expect(savedUnits).toHaveLength(1);
     expect(savedUnits[0]?.entityId).toBe("c1");
+    // S1: snapshot curado (budget/isCBO/tier/eligibility/etc, já enriquecido por enrichEntitiesQuality
+    // antes do mapa) vai junto — sem budget na fixture → isCBO=false.
+    expect(savedUnits[0]?.curated?.isCBO).toBe(false);
+    expect(savedUnits[0]?.curated?.tier).toBeDefined();
     // recomendações da síntese persistidas
     expect(h.saved.length).toBeGreaterThan(0);
     expect(h.closed[0]?.status).toBe("succeeded");
+  });
+
+  it("S4b (achado da revisão — trava o wiring ponta a ponta): visão fraca+baixa persuasão chega no prompt do mapa como weak_creative", async () => {
+    const entities: AdEntity[] = [
+      { id: "c1", level: "campaign", name: "Campanha 1", status: "active", objective: { goal: "purchase" } },
+      { id: "as1", level: "adset", name: "Conjunto 1", status: "active", campaignId: "c1" },
+      { id: "a1", level: "ad", name: "Anúncio 1", status: "active", campaignId: "c1", adsetId: "as1" },
+    ];
+    const rows = [
+      row("act_1", "account", 300, 5),
+      row("c1", "campaign", 300, 3),
+      row("as1", "adset", 300, 3),
+      row("a1", "ad", 300, 3),
+    ];
+    const h = makeHarness({ entities, rows });
+    // criativo com imagem (senão creativePosterFrames() fica vazio e a visão nem é chamada).
+    (h.deps.ports.ads as unknown as { getCreatives: ReturnType<typeof vi.fn> }).getCreatives = vi.fn(async () => [
+      { id: "cr1", adId: "a1", imageUrl: "https://img/1.jpg" },
+    ]);
+    const repos = (h.deps as unknown as { _repos: Record<string, unknown> })._repos;
+    repos.vision = { resolve: vi.fn(async () => ({ summary: "s", strengths: [], weaknesses: [], proofStrength: "weak", persuasionSignals: 1 })) };
+
+    await runChain(h);
+
+    const mapCall = h.llm.mock.calls.find((c) => (c[0] as { meta?: { type?: string } })?.meta?.type === "unit");
+    // o array real de healthSignals do anúncio notável fica no USER message (a árvore
+    // curada serializada) — checar aí (não o system, onde QUALITY_TEXT já MENCIONA
+    // "weak_creative" incondicionalmente pra explicar o vocabulário, o que faria esta
+    // asserção passar mesmo se o wiring estivesse quebrado).
+    const userMsg = (mapCall?.[0] as { messages: { role: string; content: string }[] }).messages.find((m) => m.role === "user");
+    expect(userMsg?.content).toContain("weak_creative");
+  });
+
+  it("S8b: campanha ABO com 2+ adsets ativos ganha diagnóstico por-adset DERIVADO (sem LLM extra) — CBO/1-adset continuam só por campanha", async () => {
+    const entities: AdEntity[] = [
+      { id: "c1", level: "campaign", name: "Campanha 1", status: "active", objective: { goal: "purchase" } },
+      { id: "as1", level: "adset", name: "Conjunto 1", status: "active", campaignId: "c1", dailyBudget: 50 },
+      { id: "as2", level: "adset", name: "Conjunto 2", status: "active", campaignId: "c1", dailyBudget: 50 },
+    ];
+    const rows = [
+      row("act_1", "account", 300, 5),
+      row("c1", "campaign", 300, 3),
+      row("as1", "adset", 200, 2),
+      row("as2", "adset", 100, 1),
+    ];
+    const h = makeHarness({ entities, rows });
+    const ABO_OUTPUT = {
+      scorecard: { grade: "C", headline: "h", biggestLeak: "conversao" },
+      summary: "s",
+      flags: [],
+      findings: [{ id: "f-as1", title: "CPA alto no as1", detail: "d", severity: "warning", metricRefs: [{ label: "CPA", value: 80 }], caveat: null }],
+      recommendations: [
+        { id: "r-as1", title: "Aumentar orçamento do as1", rationale: "r", priority: "high", actionType: "increase_budget", targetEntity: { level: "adset", externalId: "as1" }, budgetChangePct: 10, expectedImpact: null, whatToMonitor: null, findingRefs: ["f-as1"] },
+      ],
+    };
+    h.llm.mockImplementation(async () => ({ output: ABO_OUTPUT, usage: { inputTokens: 100, outputTokens: 20, costUsd: 0.001 } }));
+
+    await runChain(h);
+
+    const repos = (h.deps as unknown as { _repos: { entityAnalyses: EntityAnalysesRepo } })._repos;
+    const savedUnits = (repos.entityAnalyses.saveMany as ReturnType<typeof vi.fn>).mock.calls[0]?.[2] as {
+      entityId: string;
+      entityLevel: string;
+      unit: { recommendations: { id: string }[]; findings: { id: string }[] };
+      curated?: { isCBO: boolean };
+    }[];
+    // campanha (ABO, sem budget próprio) + 2 adsets (cada um com o SEU budget) = 3 linhas.
+    expect(savedUnits.map((u) => u.entityId).sort()).toEqual(["as1", "as2", "c1"]);
+    const campaignRow = savedUnits.find((u) => u.entityId === "c1")!;
+    expect(campaignRow.entityLevel).toBe("campaign");
+    expect(campaignRow.curated?.isCBO).toBe(false); // ABO confirmado
+    const as1Row = savedUnits.find((u) => u.entityId === "as1")!;
+    expect(as1Row.entityLevel).toBe("adset");
+    // bug corrigido (revisão final): isCBO é conceito de CAMPANHA — mesmo o adset tendo
+    // budget próprio (todo adset ABO tem), isCBO nunca é true num adset (é a campanha-mãe
+    // que nunca é CBO nesse cenário, não o adset).
+    expect(as1Row.curated?.isCBO).toBe(false);
+    expect(as1Row.unit.recommendations.map((r) => r.id)).toEqual(["r-as1"]);
+    expect(as1Row.unit.findings.map((f) => f.id)).toEqual(["f-as1"]);
+    const as2Row = savedUnits.find((u) => u.entityId === "as2")!;
+    expect(as2Row.unit.recommendations).toEqual([]); // nenhuma recomendação mirou as2
+  });
+
+  describe("Fase 4 — teto de escala por audiência (reativo)", () => {
+    const entities: AdEntity[] = [
+      { id: "c1", level: "campaign", name: "Campanha 1", status: "active", objective: { goal: "purchase" } },
+      { id: "as1", level: "adset", name: "Conjunto 1", status: "active", campaignId: "c1", dailyBudget: 50 },
+      { id: "as2", level: "adset", name: "Conjunto 2", status: "active", campaignId: "c1", dailyBudget: 50 },
+    ];
+    const rows = [
+      row("act_1", "account", 300, 5),
+      row("c1", "campaign", 300, 3),
+      row("as1", "adset", 200, 2),
+      row("as2", "adset", 100, 1),
+    ];
+    const SCALE_OUTPUT = {
+      scorecard: { grade: "C", headline: "h", biggestLeak: "conversao" },
+      summary: "s",
+      flags: [],
+      findings: [{ id: "f-as1", title: "vencedor", detail: "d", severity: "info", metricRefs: [{ label: "CPA", value: 80 }], caveat: null }],
+      recommendations: [
+        { id: "r-as1", title: "Aumentar orçamento do as1", rationale: "r", priority: "high", actionType: "increase_budget", targetEntity: { level: "adset", externalId: "as1" }, budgetChangePct: 10, expectedImpact: null, whatToMonitor: null, findingRefs: ["f-as1"] },
+      ],
+    };
+
+    it("público perto do teto (delivery_estimate saturado) → rebaixa increase_budget pra investigate", async () => {
+      const h = makeHarness({ entities, rows });
+      h.llm.mockImplementation(async () => ({ output: SCALE_OUTPUT, usage: { inputTokens: 100, outputTokens: 20, costUsd: 0.001 } }));
+      const getDeliveryEstimateForAdSet = vi.fn(async () => ({ ready: true, monthlyReachMin: 100, monthlyReachMax: 100 }));
+      (h.deps.ports.ads as unknown as { getDeliveryEstimateForAdSet: typeof getDeliveryEstimateForAdSet }).getDeliveryEstimateForAdSet = getDeliveryEstimateForAdSet;
+
+      const state = await runChain(h);
+
+      expect(getDeliveryEstimateForAdSet).toHaveBeenCalledWith(expect.anything(), "as1");
+      const rec = state.analysisOutput?.recommendations.find((r) => r.id === "r-as1");
+      expect(rec?.actionType).toBe("investigate");
+      expect(rec?.rationale).toContain("[guard]");
+    });
+
+    it("público com folga (delivery_estimate grande) → mantém increase_budget", async () => {
+      const h = makeHarness({ entities, rows });
+      h.llm.mockImplementation(async () => ({ output: SCALE_OUTPUT, usage: { inputTokens: 100, outputTokens: 20, costUsd: 0.001 } }));
+      const getDeliveryEstimateForAdSet = vi.fn(async () => ({ ready: true, monthlyReachMin: 100000, monthlyReachMax: 100000 }));
+      (h.deps.ports.ads as unknown as { getDeliveryEstimateForAdSet: typeof getDeliveryEstimateForAdSet }).getDeliveryEstimateForAdSet = getDeliveryEstimateForAdSet;
+
+      const state = await runChain(h);
+
+      const rec = state.analysisOutput?.recommendations.find((r) => r.id === "r-as1");
+      expect(rec?.actionType).toBe("increase_budget");
+    });
+
+    it("sem proposta de escalar neste run → NUNCA chama delivery_estimate (reativo, custo zero)", async () => {
+      const h = makeHarness({ entities, rows }); // ANALYSIS_OUTPUT padrão não escala adset nenhum
+      const getDeliveryEstimateForAdSet = vi.fn(async () => ({ ready: true, monthlyReachMin: 1, monthlyReachMax: 1 }));
+      (h.deps.ports.ads as unknown as { getDeliveryEstimateForAdSet: typeof getDeliveryEstimateForAdSet }).getDeliveryEstimateForAdSet = getDeliveryEstimateForAdSet;
+
+      await runChain(h);
+
+      expect(getDeliveryEstimateForAdSet).not.toHaveBeenCalled();
+    });
+
+    it("delivery_estimate falha (upstream) → degrada graciosamente, mantém a recomendação original", async () => {
+      const h = makeHarness({ entities, rows });
+      h.llm.mockImplementation(async () => ({ output: SCALE_OUTPUT, usage: { inputTokens: 100, outputTokens: 20, costUsd: 0.001 } }));
+      const getDeliveryEstimateForAdSet = vi.fn(async () => { throw new Error("upstream"); });
+      (h.deps.ports.ads as unknown as { getDeliveryEstimateForAdSet: typeof getDeliveryEstimateForAdSet }).getDeliveryEstimateForAdSet = getDeliveryEstimateForAdSet;
+
+      const state = await runChain(h);
+
+      const rec = state.analysisOutput?.recommendations.find((r) => r.id === "r-as1");
+      expect(rec?.actionType).toBe("increase_budget");
+    });
   });
 
   it("conta parada: pula o LLM e conclui com nota 'sem atividade'", async () => {
@@ -370,6 +583,7 @@ describe("account-analysis read-only nodes", () => {
         metrics: { spend: 300, cpa: 100, roas: 1, ctr: 5 },
         flags: ["cpa_acima_da_meta"],
         tier: null,
+        curated: null,
         analyzedAt: new Date(), // recente → não dispara o deep por intervalo
       }],
     ]);
@@ -386,6 +600,7 @@ describe("account-analysis read-only nodes", () => {
         metrics: { spend: 300, cpa: 100, roas: 1, ctr: 5 },
         flags: ["cpa_acima_da_meta"],
         tier: null,
+        curated: null,
         analyzedAt: new Date(Date.now() - 60_000), // 1 min atrás
       }],
     ]);
@@ -447,5 +662,96 @@ describe("account-analysis read-only nodes", () => {
     const afterLoad = { ...base, ...(await n.loadContext(base)) } as AccountAnalysisStateType;
     await expect(n.fetchData(afterLoad)).rejects.toBeInstanceOf(AnalysisError);
     expect(repos.repo.markTokenInvalid).toHaveBeenCalled();
+  });
+
+  describe("proposeDrafts (P1.1 — refresh_fatigued vira recomendação-only)", () => {
+    function stateWithCampaign(campaign: Record<string, unknown>): AccountAnalysisStateType {
+      return {
+        runId: "run-1",
+        orgId: "org-1",
+        agentId: "agent-1",
+        adAccountId: "acc-uuid",
+        notifyPolicy: { proactiveDrafts: { enabled: true } },
+        brief: { account: { currency: "BRL" }, segments: { campaigns: [campaign] } },
+      } as unknown as AccountAnalysisStateType;
+    }
+
+    it("campanha FATIGADA (sem vencedor) → só insere recommendation human_direction, sem draft/approval", async () => {
+      const h = makeHarness();
+      const repos = (h.deps as unknown as { _repos: Parameters<typeof makeAccountAnalysisNodes>[1] })._repos;
+      const n = makeAccountAnalysisNodes(h.deps, repos);
+      const state = stateWithCampaign({
+        id: "c1",
+        level: "campaign",
+        name: "Campanha Fatigada",
+        status: "active",
+        eligibility: { hasSignificance: true },
+        healthSignals: ["creative_fatigue"],
+        metrics: { spend: 100 },
+      });
+
+      await n.proposeDrafts(state);
+
+      expect(h.insertedRecommendations).toHaveLength(1);
+      expect(h.insertedRecommendations[0]).toMatchObject({ kind: "human_direction", title: "Testar um ângulo novo" });
+      expect(h.insertedRecommendations[0]?.["toolKey"]).toBeUndefined();
+      expect(h.insertedRecommendations[0]?.["draftId"]).toBeUndefined();
+    });
+
+    it("vencedor claro (scale_winner) NÃO entra no ramo human_direction do P1.1", async () => {
+      // mock de db/ads aqui é mínimo (não simula a saga inteira de proposeScaleWinner) — este
+      // teste prova só o ROTEAMENTO: uma oportunidade `scale_winner` nunca cai no atalho
+      // `human_direction` (exclusivo de `refresh_fatigued`). O caminho normal segue seu try/catch
+      // próprio (best-effort), coberto por outros testes/roteiro manual.
+      const h = makeHarness();
+      const repos = (h.deps as unknown as { _repos: Parameters<typeof makeAccountAnalysisNodes>[1] })._repos;
+      const n = makeAccountAnalysisNodes(h.deps, repos);
+      const state = stateWithCampaign({
+        id: "c1",
+        level: "campaign",
+        name: "Campanha Vencedora",
+        status: "active",
+        tier: "winner",
+        eligibility: { hasSignificance: true },
+        healthSignals: [],
+        metrics: { spend: 100 },
+      });
+
+      await n.proposeDrafts(state);
+
+      expect(h.insertedRecommendations).toHaveLength(0);
+      // chegou a TENTAR escalar (entrou no try/catch best-effort) — distingue do próximo teste,
+      // onde o sinal de budget barra a oportunidade ANTES de qualquer tentativa.
+      const debug = (h.deps as unknown as { logger: { debug: ReturnType<typeof vi.fn> } }).logger.debug;
+      expect(debug).toHaveBeenCalledWith(expect.anything(), "propose_drafts:pulado");
+    });
+
+    it("vencedor com FOLGA de budget (atBudgetCeiling=false) → replicate_winner (Fatia 8): tenta replicar pra público novo, não escala budget", async () => {
+      // Slice 1 (Fatia 8): antes folga confirmada = nenhuma oportunidade; AGORA vira replicate_winner
+      // (replicar a oferta provada pra um público novo). O nó entra na criação segmentada (proposeCopy);
+      // com o harness mínimo isso degrada best-effort ("pulado") em vez de virar scale-raise.
+      const h = makeHarness();
+      const repos = (h.deps as unknown as { _repos: Parameters<typeof makeAccountAnalysisNodes>[1] })._repos;
+      const n = makeAccountAnalysisNodes(h.deps, repos);
+      const state = stateWithCampaign({
+        id: "c1",
+        level: "campaign",
+        name: "Campanha com Folga",
+        status: "active",
+        tier: "winner",
+        eligibility: { hasSignificance: true },
+        healthSignals: [],
+        metrics: { spend: 100 },
+        atBudgetCeiling: false, // folga de orçamento confirmada → replicar, não subir budget
+      });
+
+      await n.proposeDrafts(state);
+
+      // NÃO gerou a ação de subir orçamento (adjust_budget) — folga não escala budget.
+      expect(h.insertedRecommendations.some((r) => r["toolKey"] === "adjust_budget")).toBe(false);
+      // entrou na tentativa de criação segmentada (replicate) — degrada best-effort no harness mínimo.
+      const debug = (h.deps as unknown as { logger: { debug: ReturnType<typeof vi.fn> } }).logger.debug;
+      expect(debug).toHaveBeenCalledWith(expect.anything(), "propose_drafts:pulado");
+    });
   });
 });

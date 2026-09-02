@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "AutoTraffic API",
+    "title": "CaquiAI API",
     "version": "0.1.0"
   },
   "servers": [
@@ -823,6 +823,12 @@
               "string",
               "null"
             ]
+          },
+          "accountHealthStatus": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -832,7 +838,8 @@
           "currency",
           "status",
           "tokenStatus",
-          "lastValidatedAt"
+          "lastValidatedAt",
+          "accountHealthStatus"
         ]
       },
       "CreateConnectionInput": {
@@ -1357,10 +1364,115 @@
               },
               "autoConfigViaChat": {
                 "type": "boolean"
+              },
+              "scaleAggressivePreference": {
+                "type": "string",
+                "enum": [
+                  "ask",
+                  "raise",
+                  "duplicate"
+                ]
+              },
+              "creationActivation": {
+                "type": "string",
+                "enum": [
+                  "paused",
+                  "active"
+                ]
+              },
+              "byAction": {
+                "type": "object",
+                "properties": {
+                  "pause_entity": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  },
+                  "resume_entity": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  },
+                  "set_status": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  },
+                  "adjust_budget": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  },
+                  "create_campaign": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  },
+                  "duplicate_scale": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  }
+                }
               }
             },
             "required": [
               "bySource"
+            ]
+          },
+          "toolBindings": {
+            "type": "object",
+            "properties": {
+              "pause_entity": {
+                "type": "boolean"
+              },
+              "resume_entity": {
+                "type": "boolean"
+              },
+              "set_status": {
+                "type": "boolean"
+              },
+              "adjust_budget": {
+                "type": "boolean"
+              },
+              "create_campaign": {
+                "type": "boolean"
+              },
+              "duplicate_scale": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "pause_entity",
+              "resume_entity",
+              "set_status",
+              "adjust_budget",
+              "create_campaign",
+              "duplicate_scale"
             ]
           },
           "guardrails": {
@@ -1396,6 +1508,19 @@
               "llmCostCapUsd": {
                 "type": "number",
                 "minimum": 0
+              },
+              "maxNewDailyBudgetMinor": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "maxNewCampaignsPerDay": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "scalePct": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1000
               }
             },
             "required": [
@@ -1482,6 +1607,18 @@
                   "trackingBrokenMinFunnel": {
                     "type": "number",
                     "minimum": 0
+                  },
+                  "relativeEligibilitySpendMultiplier": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "marginalCpaWorsenPct": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "weakHookRetentionMaxPct": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
                   },
                   "marketReference": {
                     "type": "object",
@@ -1614,6 +1751,29 @@
                     ]
                   }
                 }
+              },
+              "creativeSource": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "serving",
+                      "library",
+                      "both"
+                    ]
+                  },
+                  "servingPick": {
+                    "type": "string",
+                    "enum": [
+                      "best_performing",
+                      "agent"
+                    ]
+                  }
+                },
+                "required": [
+                  "mode"
+                ]
               }
             }
           },
@@ -1661,6 +1821,15 @@
               },
               "trackingBrokenMinFunnel": {
                 "type": "number"
+              },
+              "relativeEligibilitySpendMultiplier": {
+                "type": "number"
+              },
+              "marginalCpaWorsenPct": {
+                "type": "number"
+              },
+              "weakHookRetentionMaxPct": {
+                "type": "number"
               }
             },
             "required": [
@@ -1673,7 +1842,10 @@
               "zombieMinSpend",
               "coldStartReference",
               "trackingBrokenRatio",
-              "trackingBrokenMinFunnel"
+              "trackingBrokenMinFunnel",
+              "relativeEligibilitySpendMultiplier",
+              "marginalCpaWorsenPct",
+              "weakHookRetentionMaxPct"
             ]
           },
           "notifyPolicy": {
@@ -1836,6 +2008,81 @@
                 "required": [
                   "enabled"
                 ]
+              },
+              "proactiveDrafts": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "enabled"
+                ]
+              },
+              "accountHealthAlert": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "statusTriggers": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "disabled",
+                        "unsettled",
+                        "pending_review",
+                        "pending_settlement",
+                        "grace_period",
+                        "pending_closure",
+                        "closed",
+                        "unknown"
+                      ]
+                    }
+                  },
+                  "spendThreshold": {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "enum": [
+                          "meta_cap",
+                          "custom"
+                        ]
+                      },
+                      "customValueMajor": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      }
+                    },
+                    "required": [
+                      "source"
+                    ]
+                  },
+                  "balanceThreshold": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "customValueMajor": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      }
+                    },
+                    "required": [
+                      "enabled"
+                    ]
+                  }
+                },
+                "required": [
+                  "enabled",
+                  "statusTriggers",
+                  "spendThreshold",
+                  "balanceThreshold"
+                ]
               }
             },
             "required": [
@@ -1899,6 +2146,16 @@
               "string",
               "null"
             ]
+          },
+          "fundingType": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "stored_balance",
+              "other"
+            ]
           }
         },
         "required": [
@@ -1915,13 +2172,15 @@
           "analysisWindowDays",
           "paused",
           "autonomyPolicy",
+          "toolBindings",
           "guardrails",
           "modelConfig",
           "qualityDefaults",
           "notifyPolicy",
           "posture",
           "postureIsCustom",
-          "currency"
+          "currency",
+          "fundingType"
         ]
       },
       "ArchetypeCatalogOutput": {
@@ -2153,11 +2412,11 @@
           },
           "businessContext": {
             "type": "string",
-            "maxLength": 2000
+            "maxLength": 8000
           },
           "guidance": {
             "type": "string",
-            "maxLength": 2000
+            "maxLength": 8000
           },
           "persona": {
             "type": "string",
@@ -2310,11 +2569,108 @@
               },
               "autoConfigViaChat": {
                 "type": "boolean"
+              },
+              "scaleAggressivePreference": {
+                "type": "string",
+                "enum": [
+                  "ask",
+                  "raise",
+                  "duplicate"
+                ]
+              },
+              "creationActivation": {
+                "type": "string",
+                "enum": [
+                  "paused",
+                  "active"
+                ]
+              },
+              "byAction": {
+                "type": "object",
+                "properties": {
+                  "pause_entity": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  },
+                  "resume_entity": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  },
+                  "set_status": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  },
+                  "adjust_budget": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  },
+                  "create_campaign": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  },
+                  "duplicate_scale": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  }
+                }
               }
             },
             "required": [
               "bySource"
             ]
+          },
+          "toolBindings": {
+            "type": "object",
+            "properties": {
+              "pause_entity": {
+                "type": "boolean"
+              },
+              "resume_entity": {
+                "type": "boolean"
+              },
+              "set_status": {
+                "type": "boolean"
+              },
+              "adjust_budget": {
+                "type": "boolean"
+              },
+              "create_campaign": {
+                "type": "boolean"
+              },
+              "duplicate_scale": {
+                "type": "boolean"
+              }
+            }
           },
           "guardrails": {
             "type": "object",
@@ -2349,6 +2705,19 @@
               "llmCostCapUsd": {
                 "type": "number",
                 "minimum": 0
+              },
+              "maxNewDailyBudgetMinor": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "maxNewCampaignsPerDay": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "scalePct": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 1000
               }
             },
             "required": [
@@ -2435,6 +2804,18 @@
                   "trackingBrokenMinFunnel": {
                     "type": "number",
                     "minimum": 0
+                  },
+                  "relativeEligibilitySpendMultiplier": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "marginalCpaWorsenPct": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "weakHookRetentionMaxPct": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
                   },
                   "marketReference": {
                     "type": "object",
@@ -2567,6 +2948,29 @@
                     ]
                   }
                 }
+              },
+              "creativeSource": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "serving",
+                      "library",
+                      "both"
+                    ]
+                  },
+                  "servingPick": {
+                    "type": "string",
+                    "enum": [
+                      "best_performing",
+                      "agent"
+                    ]
+                  }
+                },
+                "required": [
+                  "mode"
+                ]
               }
             }
           },
@@ -2729,6 +3133,81 @@
                 },
                 "required": [
                   "enabled"
+                ]
+              },
+              "proactiveDrafts": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "enabled"
+                ]
+              },
+              "accountHealthAlert": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "statusTriggers": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "disabled",
+                        "unsettled",
+                        "pending_review",
+                        "pending_settlement",
+                        "grace_period",
+                        "pending_closure",
+                        "closed",
+                        "unknown"
+                      ]
+                    }
+                  },
+                  "spendThreshold": {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "enum": [
+                          "meta_cap",
+                          "custom"
+                        ]
+                      },
+                      "customValueMajor": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      }
+                    },
+                    "required": [
+                      "source"
+                    ]
+                  },
+                  "balanceThreshold": {
+                    "type": "object",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "customValueMajor": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      }
+                    },
+                    "required": [
+                      "enabled"
+                    ]
+                  }
+                },
+                "required": [
+                  "enabled",
+                  "statusTriggers",
+                  "spendThreshold",
+                  "balanceThreshold"
                 ]
               }
             }
@@ -3242,7 +3721,10 @@
                   "type": "string",
                   "enum": [
                     "applicable",
-                    "not_yet_applicable"
+                    "applied",
+                    "dismissed",
+                    "expired",
+                    "not_applicable"
                   ]
                 },
                 "proposedAction": {
@@ -3298,6 +3780,29 @@
                     "null"
                   ]
                 },
+                "draftId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "approvalId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "approvalKind": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "action",
+                    "draft",
+                    "activation"
+                  ]
+                },
                 "vote": {
                   "type": [
                     "string",
@@ -3318,6 +3823,9 @@
                 "applicability",
                 "proposedAction",
                 "toolKey",
+                "draftId",
+                "approvalId",
+                "approvalKind",
                 "vote"
               ]
             }
@@ -3449,6 +3957,44 @@
                 },
                 "muted": {
                   "type": "boolean"
+                },
+                "budget": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "dailyMajor": {
+                      "type": "number"
+                    },
+                    "lifetimeMajor": {
+                      "type": "number"
+                    },
+                    "lifetimeRemainingMajor": {
+                      "type": "number"
+                    }
+                  }
+                },
+                "atBudgetCeiling": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "isCBO": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "deactivatedSince": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "noDataYet": {
+                  "type": "boolean"
                 }
               },
               "required": [
@@ -3460,7 +4006,12 @@
                 "flags",
                 "tier",
                 "stage",
-                "muted"
+                "muted",
+                "budget",
+                "atBudgetCeiling",
+                "isCBO",
+                "deactivatedSince",
+                "noDataYet"
               ]
             }
           }
@@ -3637,6 +4188,66 @@
               "ctr",
               "delta"
             ]
+          },
+          "accountHealth": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "status": {
+                "type": "string"
+              },
+              "statusLabel": {
+                "type": "string"
+              },
+              "disableReason": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "balanceMajor": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "amountSpentMajor": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "spendCapMajor": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "paymentMethodLabel": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "checkedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "status",
+              "statusLabel",
+              "disableReason",
+              "balanceMajor",
+              "amountSpentMajor",
+              "spendCapMajor",
+              "paymentMethodLabel",
+              "checkedAt"
+            ]
           }
         },
         "required": [
@@ -3644,7 +4255,8 @@
           "asOf",
           "stale",
           "window",
-          "totals"
+          "totals",
+          "accountHealth"
         ]
       },
       "RefreshDataOutput": {
@@ -3702,6 +4314,12 @@
                 "dormant": {
                   "type": "boolean"
                 },
+                "accountHealthStatus": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "live": {
                   "type": [
                     "object",
@@ -3767,6 +4385,7 @@
                   "items": {
                     "type": "string",
                     "enum": [
+                      "account_unhealthy",
                       "token_invalid",
                       "no_recent_run",
                       "bad_grade",
@@ -3784,6 +4403,7 @@
                 "grade",
                 "gradeAsOf",
                 "dormant",
+                "accountHealthStatus",
                 "live",
                 "asOf",
                 "stale",
@@ -3822,6 +4442,12 @@
                     "null"
                   ]
                 },
+                "entityLevel": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "at": {
                   "type": "string"
                 },
@@ -3836,6 +4462,7 @@
                 "type",
                 "toolKey",
                 "entityName",
+                "entityLevel",
                 "at",
                 "fromChat"
               ]
@@ -3879,6 +4506,12 @@
                 "dormant": {
                   "type": "boolean"
                 },
+                "accountHealthStatus": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "live": {
                   "type": [
                     "object",
@@ -3944,6 +4577,7 @@
                   "items": {
                     "type": "string",
                     "enum": [
+                      "account_unhealthy",
                       "token_invalid",
                       "no_recent_run",
                       "bad_grade",
@@ -3961,6 +4595,7 @@
                 "grade",
                 "gradeAsOf",
                 "dormant",
+                "accountHealthStatus",
                 "live",
                 "asOf",
                 "stale",
@@ -4082,6 +4717,12 @@
                 "dormant": {
                   "type": "boolean"
                 },
+                "accountHealthStatus": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
                 "live": {
                   "type": [
                     "object",
@@ -4147,6 +4788,7 @@
                   "items": {
                     "type": "string",
                     "enum": [
+                      "account_unhealthy",
                       "token_invalid",
                       "no_recent_run",
                       "bad_grade",
@@ -4164,6 +4806,7 @@
                 "grade",
                 "gradeAsOf",
                 "dormant",
+                "accountHealthStatus",
                 "live",
                 "asOf",
                 "stale",
@@ -4315,6 +4958,12 @@
                         "null"
                       ]
                     },
+                    "entityLevel": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "fromChat": {
                       "type": "boolean"
                     },
@@ -4329,6 +4978,7 @@
                     "toolCallId",
                     "toolKey",
                     "entityName",
+                    "entityLevel",
                     "fromChat",
                     "simulated"
                   ]
@@ -4360,6 +5010,12 @@
                         "null"
                       ]
                     },
+                    "entityLevel": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
                     "fromChat": {
                       "type": "boolean"
                     },
@@ -4374,6 +5030,7 @@
                     "toolCallId",
                     "toolKey",
                     "entityName",
+                    "entityLevel",
                     "fromChat",
                     "simulated"
                   ]
@@ -4404,6 +5061,12 @@
                         "string",
                         "null"
                       ]
+                    },
+                    "entityLevel": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
@@ -4412,7 +5075,8 @@
                     "type",
                     "approvalId",
                     "actionType",
-                    "entityName"
+                    "entityName",
+                    "entityLevel"
                   ]
                 },
                 {
@@ -4441,6 +5105,12 @@
                         "string",
                         "null"
                       ]
+                    },
+                    "entityLevel": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
@@ -4449,7 +5119,8 @@
                     "type",
                     "approvalId",
                     "actionType",
-                    "entityName"
+                    "entityName",
+                    "entityLevel"
                   ]
                 },
                 {
@@ -4478,6 +5149,12 @@
                         "string",
                         "null"
                       ]
+                    },
+                    "entityLevel": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
@@ -4486,7 +5163,8 @@
                     "type",
                     "approvalId",
                     "actionType",
-                    "entityName"
+                    "entityName",
+                    "entityLevel"
                   ]
                 },
                 {
@@ -4515,6 +5193,12 @@
                         "string",
                         "null"
                       ]
+                    },
+                    "entityLevel": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
@@ -4523,7 +5207,84 @@
                     "type",
                     "approvalId",
                     "actionType",
-                    "entityName"
+                    "entityName",
+                    "entityLevel"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "campaign_draft_proposed"
+                      ]
+                    },
+                    "draftId": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "dailyBudgetMajor": {
+                      "type": "number"
+                    },
+                    "currency": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "at",
+                    "type",
+                    "draftId",
+                    "kind",
+                    "dailyBudgetMajor",
+                    "currency"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "at": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "campaign_created"
+                      ]
+                    },
+                    "draftId": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string"
+                    },
+                    "dailyBudgetMajor": {
+                      "type": "number"
+                    },
+                    "currency": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "at",
+                    "type",
+                    "draftId",
+                    "kind",
+                    "dailyBudgetMajor",
+                    "currency"
                   ]
                 }
               ]
@@ -4942,7 +5703,10 @@
                   "type": "string",
                   "enum": [
                     "applicable",
-                    "not_yet_applicable"
+                    "applied",
+                    "dismissed",
+                    "expired",
+                    "not_applicable"
                   ]
                 },
                 "proposedAction": {
@@ -4998,6 +5762,29 @@
                     "null"
                   ]
                 },
+                "draftId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "approvalId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "approvalKind": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "action",
+                    "draft",
+                    "activation"
+                  ]
+                },
                 "vote": {
                   "type": [
                     "string",
@@ -5018,6 +5805,9 @@
                 "applicability",
                 "proposedAction",
                 "toolKey",
+                "draftId",
+                "approvalId",
+                "approvalKind",
                 "vote"
               ]
             }
@@ -5140,6 +5930,44 @@
                 },
                 "muted": {
                   "type": "boolean"
+                },
+                "budget": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "dailyMajor": {
+                      "type": "number"
+                    },
+                    "lifetimeMajor": {
+                      "type": "number"
+                    },
+                    "lifetimeRemainingMajor": {
+                      "type": "number"
+                    }
+                  }
+                },
+                "atBudgetCeiling": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "isCBO": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "deactivatedSince": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "noDataYet": {
+                  "type": "boolean"
                 }
               },
               "required": [
@@ -5151,7 +5979,12 @@
                 "flags",
                 "tier",
                 "stage",
-                "muted"
+                "muted",
+                "budget",
+                "atBudgetCeiling",
+                "isCBO",
+                "deactivatedSince",
+                "noDataYet"
               ]
             }
           },
@@ -5759,6 +6592,13 @@
           "force": {
             "type": "boolean",
             "default": false
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "pause",
+              "archive"
+            ]
           }
         }
       },
@@ -6095,6 +6935,1597 @@
         "required": [
           "id",
           "status"
+        ]
+      },
+      "EditApprovalActionInput": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "increase",
+              "decrease",
+              "set"
+            ]
+          },
+          "pct": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "budgetReais": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      },
+      "DraftApprovalOutput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "approvalKind": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "activation"
+            ]
+          },
+          "accountId": {
+            "type": "string"
+          },
+          "accountName": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "rejected",
+              "expired",
+              "blocked"
+            ]
+          },
+          "expiresAt": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "draftId": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "from_scratch",
+              "duplicate"
+            ]
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "on_demand",
+              "proactive"
+            ]
+          },
+          "objective": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "dailyBudgetMajor": {
+            "type": "number"
+          },
+          "clampedFromMajor": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "currency": {
+            "type": "string"
+          },
+          "activation": {
+            "type": "string",
+            "enum": [
+              "active",
+              "paused"
+            ]
+          },
+          "sourceLevel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "account",
+              "campaign",
+              "adset",
+              "ad"
+            ]
+          },
+          "sourceName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pageId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pixelId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "campaignName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "adsetName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "suffixLabel": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "variantsCount": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "copyVariants": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "object",
+              "properties": {
+                "primaryText": {
+                  "type": "string"
+                },
+                "headline": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "cta": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "adName": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "creative": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "format": {
+                      "type": "string",
+                      "enum": [
+                        "image",
+                        "video"
+                      ]
+                    },
+                    "origin": {
+                      "type": "string",
+                      "enum": [
+                        "reuse",
+                        "upload"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "format",
+                    "origin"
+                  ]
+                }
+              },
+              "required": [
+                "primaryText",
+                "headline",
+                "description",
+                "cta",
+                "adName",
+                "creative"
+              ]
+            }
+          },
+          "creative": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "format": {
+                "type": "string",
+                "enum": [
+                  "image",
+                  "video"
+                ]
+              },
+              "origin": {
+                "type": "string",
+                "enum": [
+                  "reuse",
+                  "upload"
+                ]
+              }
+            },
+            "required": [
+              "format",
+              "origin"
+            ]
+          },
+          "audience": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "reuse",
+              "broad"
+            ]
+          },
+          "explicitAudience": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "geo": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "country",
+                        "region",
+                        "city"
+                      ]
+                    },
+                    "radius": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "distanceUnit": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "enum": [
+                        "mile",
+                        "kilometer"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "name",
+                    "kind",
+                    "radius",
+                    "distanceUnit"
+                  ]
+                }
+              },
+              "radiusAreas": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "address": {
+                      "type": "string"
+                    },
+                    "radius": {
+                      "type": "number"
+                    },
+                    "distanceUnit": {
+                      "type": "string",
+                      "enum": [
+                        "mile",
+                        "kilometer"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "address",
+                    "radius",
+                    "distanceUnit"
+                  ]
+                }
+              },
+              "ageMin": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "ageMax": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "genders": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    {
+                      "type": "number",
+                      "enum": [
+                        2
+                      ]
+                    }
+                  ]
+                }
+              },
+              "interestGroups": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name"
+                    ]
+                  }
+                }
+              },
+              "behaviorGroups": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name"
+                    ]
+                  }
+                }
+              },
+              "customAudienceIncludeIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "customAudienceExcludeIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "geo",
+              "radiusAreas",
+              "ageMin",
+              "ageMax",
+              "genders",
+              "interestGroups",
+              "behaviorGroups",
+              "customAudienceIncludeIds",
+              "customAudienceExcludeIds"
+            ]
+          },
+          "convertibleAudience": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "geo": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "country",
+                        "region",
+                        "city"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "name",
+                    "kind"
+                  ]
+                }
+              },
+              "ageMin": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "ageMax": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "geo",
+              "ageMin",
+              "ageMax"
+            ]
+          },
+          "createdIds": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": {}
+          }
+        },
+        "required": [
+          "id",
+          "approvalKind",
+          "accountId",
+          "accountName",
+          "status",
+          "expiresAt",
+          "draftId",
+          "kind",
+          "origin",
+          "objective",
+          "dailyBudgetMajor",
+          "clampedFromMajor",
+          "currency",
+          "activation",
+          "sourceLevel",
+          "sourceName",
+          "pageId",
+          "pixelId",
+          "campaignName",
+          "adsetName",
+          "suffixLabel",
+          "variantsCount",
+          "copyVariants",
+          "creative",
+          "audience",
+          "explicitAudience",
+          "convertibleAudience",
+          "createdIds"
+        ]
+      },
+      "ScaleWinnerInput": {
+        "type": "object",
+        "properties": {
+          "entityLevel": {
+            "type": "string",
+            "enum": [
+              "campaign",
+              "adset"
+            ]
+          },
+          "entityId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "entityName": {
+            "type": "string"
+          },
+          "choice": {
+            "type": "string",
+            "enum": [
+              "raise",
+              "duplicate"
+            ]
+          }
+        },
+        "required": [
+          "entityLevel",
+          "entityId"
+        ]
+      },
+      "ScaleWinnerOutput": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "move": {
+                "type": "string",
+                "enum": [
+                  "raise_budget"
+                ]
+              },
+              "approvalId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "move",
+              "approvalId"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "move": {
+                "type": "string",
+                "enum": [
+                  "duplicate"
+                ]
+              },
+              "approvalId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "move",
+              "approvalId"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "move": {
+                "type": "string",
+                "enum": [
+                  "ask"
+                ]
+              },
+              "raisePct": {
+                "type": "number"
+              },
+              "duplicatePct": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "move",
+              "raisePct",
+              "duplicatePct"
+            ]
+          }
+        ]
+      },
+      "CreativeAssetOutput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "reuse",
+              "upload"
+            ]
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "image",
+              "video"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "ready",
+              "error"
+            ]
+          },
+          "metaImageHash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metaVideoId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "origin",
+          "format",
+          "status",
+          "metaImageHash",
+          "metaVideoId",
+          "createdAt"
+        ]
+      },
+      "ServingCreativeOutput": {
+        "type": "object",
+        "properties": {
+          "adId": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "copy": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cta": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tier": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "image",
+              "video"
+            ]
+          },
+          "thumbnailUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "adId",
+          "title",
+          "copy",
+          "cta",
+          "tier",
+          "format",
+          "thumbnailUrl"
+        ]
+      },
+      "GeoSearchResultOutput": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "country",
+              "region",
+              "city"
+            ]
+          },
+          "countryCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "kind",
+          "countryCode"
+        ]
+      },
+      "InterestSearchResultOutput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "audienceSize": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "path": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "audienceSize",
+          "path"
+        ]
+      },
+      "SetDraftTargetingInput": {
+        "type": "object",
+        "properties": {
+          "audience": {
+            "type": "string",
+            "enum": [
+              "reuse",
+              "broad"
+            ]
+          }
+        },
+        "required": [
+          "audience"
+        ]
+      },
+      "SetDraftTargetingOutput": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "audience": {
+            "type": "string",
+            "enum": [
+              "reuse",
+              "broad"
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "audience"
+        ]
+      },
+      "DeliveryEstimateInput": {
+        "type": "object",
+        "properties": {
+          "geo": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "country",
+                    "region",
+                    "city"
+                  ]
+                },
+                "radius": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "distanceUnit": {
+                  "type": "string",
+                  "enum": [
+                    "mile",
+                    "kilometer"
+                  ]
+                }
+              },
+              "required": [
+                "key",
+                "name",
+                "kind"
+              ]
+            }
+          },
+          "radiusAreas": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "address": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "radius": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "distanceUnit": {
+                  "type": "string",
+                  "enum": [
+                    "mile",
+                    "kilometer"
+                  ]
+                }
+              },
+              "required": [
+                "address",
+                "radius",
+                "distanceUnit"
+              ]
+            }
+          },
+          "ageMin": {
+            "type": "integer",
+            "minimum": 13,
+            "maximum": 65
+          },
+          "ageMax": {
+            "type": "integer",
+            "minimum": 13,
+            "maximum": 65
+          },
+          "genders": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "enum": [
+                    1
+                  ]
+                },
+                {
+                  "type": "number",
+                  "enum": [
+                    2
+                  ]
+                }
+              ]
+            }
+          },
+          "interestGroups": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "id",
+                  "name"
+                ]
+              }
+            }
+          },
+          "behaviorGroups": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "id",
+                  "name"
+                ]
+              }
+            }
+          },
+          "customAudienceIncludeIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "customAudienceExcludeIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "geo"
+        ]
+      },
+      "DeliveryEstimateOutput": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "note"
+        ]
+      },
+      "AudienceOutput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "isLookalike": {
+            "type": "boolean"
+          },
+          "approximateCount": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "isLookalike",
+          "approximateCount"
+        ]
+      },
+      "SetDraftCreativeInput": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "asset"
+                ]
+              },
+              "assetId": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "kind",
+              "assetId"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "serving"
+                ]
+              },
+              "adId": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "kind",
+              "adId"
+            ]
+          }
+        ]
+      },
+      "SetDraftCreativeOutput": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ]
+      },
+      "UpdateDraftInput": {
+        "type": "object",
+        "properties": {
+          "budgetReais": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "activation": {
+            "type": "string",
+            "enum": [
+              "active",
+              "paused"
+            ]
+          },
+          "campaignName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400
+          },
+          "adsetName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400
+          },
+          "objective": {
+            "type": "string",
+            "enum": [
+              "purchase",
+              "lead",
+              "registration",
+              "initiate_checkout",
+              "add_to_cart",
+              "view_content",
+              "add_payment_info",
+              "search",
+              "contact",
+              "subscribe",
+              "start_trial",
+              "submit_application",
+              "messaging_started",
+              "app_install",
+              "custom"
+            ]
+          },
+          "suffixLabel": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 400
+          },
+          "audience": {
+            "type": "string",
+            "enum": [
+              "reuse",
+              "broad"
+            ]
+          },
+          "creative": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "asset"
+                    ]
+                  },
+                  "assetId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "kind",
+                  "assetId"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "serving"
+                    ]
+                  },
+                  "adId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "kind",
+                  "adId"
+                ]
+              }
+            ]
+          },
+          "copyEdits": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "index": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "adName": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 400
+                },
+                "primaryText": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 3000
+                },
+                "headline": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 3000
+                },
+                "description": {
+                  "type": "string",
+                  "maxLength": 3000
+                },
+                "cta": {
+                  "type": "string",
+                  "enum": [
+                    "shop_now",
+                    "learn_more",
+                    "sign_up",
+                    "subscribe",
+                    "contact_us",
+                    "book_now",
+                    "get_offer",
+                    "send_message",
+                    "download"
+                  ]
+                },
+                "creative": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "asset"
+                          ]
+                        },
+                        "assetId": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "assetId"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "serving"
+                          ]
+                        },
+                        "adId": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "adId"
+                      ]
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "index"
+              ]
+            }
+          },
+          "removeAdIndex": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "addAd": {
+            "type": "boolean"
+          },
+          "removeGeo": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "addGeo": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "country",
+                    "region",
+                    "city"
+                  ]
+                }
+              },
+              "required": [
+                "key",
+                "name",
+                "kind"
+              ]
+            }
+          },
+          "ageMin": {
+            "type": "integer",
+            "minimum": 13,
+            "maximum": 65
+          },
+          "ageMax": {
+            "type": "integer",
+            "minimum": 13,
+            "maximum": 65
+          },
+          "genders": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "enum": [
+                    1
+                  ]
+                },
+                {
+                  "type": "number",
+                  "enum": [
+                    2
+                  ]
+                }
+              ]
+            }
+          },
+          "removeInterests": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "addInterests": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "id",
+                "name"
+              ]
+            }
+          },
+          "explicitAudience": {
+            "type": "object",
+            "properties": {
+              "geo": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "country",
+                        "region",
+                        "city"
+                      ]
+                    },
+                    "radius": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "distanceUnit": {
+                      "type": "string",
+                      "enum": [
+                        "mile",
+                        "kilometer"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "name",
+                    "kind"
+                  ]
+                }
+              },
+              "radiusAreas": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "address": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "radius": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "distanceUnit": {
+                      "type": "string",
+                      "enum": [
+                        "mile",
+                        "kilometer"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "address",
+                    "radius",
+                    "distanceUnit"
+                  ]
+                }
+              },
+              "ageMin": {
+                "type": "integer",
+                "minimum": 13,
+                "maximum": 65
+              },
+              "ageMax": {
+                "type": "integer",
+                "minimum": 13,
+                "maximum": 65
+              },
+              "genders": {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    {
+                      "type": "number",
+                      "enum": [
+                        2
+                      ]
+                    }
+                  ]
+                }
+              },
+              "interestGroups": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name"
+                    ]
+                  }
+                }
+              },
+              "behaviorGroups": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name"
+                    ]
+                  }
+                }
+              },
+              "customAudienceIncludeIds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "customAudienceExcludeIds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "geo"
+            ]
+          }
+        }
+      },
+      "UpdateDraftOutput": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ]
+      },
+      "UploadCreativeOutput": {
+        "type": "object",
+        "properties": {
+          "assetId": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "image",
+              "video"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "ready",
+              "error"
+            ]
+          },
+          "metaImageHash": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "metaVideoId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "assetId",
+          "format",
+          "status",
+          "metaImageHash",
+          "metaVideoId"
         ]
       },
       "RevertibleActionOutput": {
@@ -7914,6 +10345,551 @@
           },
           "404": {
             "description": "aprovação não encontrada"
+          }
+        }
+      }
+    },
+    "/api/approvals/{id}/action": {
+      "patch": {
+        "tags": [
+          "approvals"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditApprovalActionInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "valor da ação editado (segue pendente até aprovar)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveApprovalOutput"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "ação não editável ou valor inválido"
+          },
+          "404": {
+            "description": "aprovação não encontrada"
+          }
+        }
+      }
+    },
+    "/api/drafts/pending": {
+      "get": {
+        "tags": [
+          "drafts"
+        ],
+        "responses": {
+          "200": {
+            "description": "rascunhos de campanha aguardando aprovação (cross-conta)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/DraftApprovalOutput"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/drafts/scale": {
+      "post": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScaleWinnerInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "escala proposta (rascunho de duplicação ou ação de budget)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScaleWinnerOutput"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "conta ou agente não encontrado"
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/drafts/{draftId}": {
+      "patch": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "draftId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateDraftInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "rascunho editado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateDraftOutput"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "edição inválida (mensagem amigável)"
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/drafts/{draftId}/creative": {
+      "post": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "draftId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetDraftCreativeInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "criativo do rascunho trocado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetDraftCreativeOutput"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "rascunho não encontrado ou não editável"
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/creatives": {
+      "get": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "biblioteca de criativos da conta",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CreativeAssetOutput"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/serving-creatives": {
+      "get": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "anúncios ao vivo da conta oferecidos como reuse (só vídeo)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ServingCreativeOutput"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/targeting/geo-search": {
+      "get": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "q",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "busca de geo (cidade/região/país) pro editor de público explícito",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/GeoSearchResultOutput"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/targeting/interest-search": {
+      "get": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "q",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "busca de interesses pro editor de público explícito",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/InterestSearchResultOutput"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/targeting/behavior-search": {
+      "get": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "q",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "busca de comportamentos pro editor de público explícito",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/InterestSearchResultOutput"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/audiences": {
+      "get": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "públicos salvos da conta pro editor (include/exclude)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AudienceOutput"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/drafts/{draftId}/targeting": {
+      "post": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "draftId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetDraftTargetingInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "público do rascunho alternado (reuse × amplo)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetDraftTargetingOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/drafts/{draftId}/delivery-estimate": {
+      "post": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "draftId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeliveryEstimateInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "estimativa de alcance do público explícito em edição",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryEstimateOutput"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/accounts/{id}/creatives/upload": {
+      "post": {
+        "tags": [
+          "drafts"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "criativo subido (imagem=ready/image_hash; vídeo=pending/video_id)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadCreativeOutput"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "conta ou agente não encontrado"
           }
         }
       }

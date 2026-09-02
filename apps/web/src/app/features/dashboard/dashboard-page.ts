@@ -11,7 +11,7 @@ import { UiButton, UiEmptyState, UiEyebrow, UiPageHeader, UiSpinner } from "@ui"
 import { DashboardApiService } from "@core/api/dashboard-api.service";
 import { AGENT_NAME } from "@core/brand";
 import type { DashboardOutput } from "@core/api/generated";
-import { actionTypeLabel } from "../../shared/action-format";
+import { actionTypeLabel, entityDisplay } from "../../shared/action-format";
 import { money, timeLabel } from "../../shared/format";
 import { AccountPanoramaCard } from "../../shared/account-panorama-card";
 
@@ -25,6 +25,7 @@ const RELOAD_MS = 5000;
 const PANORAMA_TOP_N = 6;
 
 const REASON_LABEL: Record<Reason, string> = {
+  account_unhealthy: "conta com problema na Meta",
   token_invalid: "token inválido",
   no_recent_run: "sem análise recente",
   bad_grade: "nota baixa",
@@ -266,6 +267,7 @@ export class DashboardPage {
 
   protected activityLabel(a: Activity): string {
     const action = a.type === "action_rolled_back" ? "reverteu" : actionTypeLabel(a.toolKey);
-    return a.entityName ? `${action} · ${a.entityName}` : action;
+    const name = entityDisplay(a.entityName, a.entityLevel);
+    return name ? `${action} · ${name}` : action;
   }
 }

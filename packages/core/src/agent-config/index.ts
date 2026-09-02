@@ -15,14 +15,17 @@ import type {
   Directiveness,
   ExperienceLevel,
   GuardrailConfig,
+  MetaAccountHealthStatus,
   NotifyPolicy,
   Posture,
   Volume,
 } from "@trafego/shared";
 import {
+  ACCOUNT_HEALTH_STATUS_LABELS,
   AGENT_IDENTITY_FIELD_MAX,
   AGENT_PROMPT_FIELD_MAX,
   AGENT_TEXT_FIELD_MAX,
+  ALERTABLE_ACCOUNT_HEALTH_STATUSES,
   ANALYSIS_WINDOW_DEFAULT_DAYS,
   ANALYSIS_WINDOW_MAX_DAYS,
   ANALYSIS_WINDOW_MIN_DAYS,
@@ -58,6 +61,11 @@ export interface AgentConfigState {
   readonly notifyPolicy: NotifyPolicy;
   /** Postura de comunicação (voz) — diretividade/volume/profundidade + preset. */
   readonly posture: Posture;
+  /** On/off por-ação (A3, `agent_tool_bindings` já resolvido) — as 6 capacidades gateáveis
+   *  (pause_entity/resume_entity/set_status/adjust_budget/create_campaign/duplicate_scale). A
+   *  casca resolve via `resolveEnabledTools` (fallback allowedActions/default) antes de montar
+   *  o estado — o resolver aqui só enxerga o booleano final. */
+  readonly toolBindings: Readonly<Record<string, boolean>>;
 }
 
 // Nota: os leaves aceitam `| undefined` de propósito — os patches vêm de DTOs
@@ -80,6 +88,10 @@ export interface GuardrailConfigPatch {
   readonly dryRun: boolean;
   readonly killSwitch: boolean;
   readonly llmCostCapUsd?: number | undefined;
+  // limites de gasto novo (Fatia 7).
+  readonly maxNewDailyBudgetMinor?: number | undefined;
+  readonly maxNewCampaignsPerDay?: number | undefined;
+  readonly scalePct?: number | undefined;
 }
 
 /** Knobs de "Opções avançadas" (6c) — patch parcial do model_config (fora `quality`). */
@@ -93,6 +105,8 @@ export interface ModelConfigPatch {
   readonly maxOutputTokens?: number | undefined;
   /** limiares de qualidade (merge campo-a-campo). */
   readonly quality?: Record<string, unknown> | undefined;
+  /** estratégia de fonte do criativo na criação (Slice 10) — objeto pequeno, trocado como unidade. */
+  readonly creativeSource?: { readonly mode: string; readonly servingPick?: string | undefined } | undefined;
 }
 
 /**
@@ -107,6 +121,23 @@ export interface NotifyPolicyPatch {
   readonly alertsThrottleHours?: number | undefined;
   readonly runPushEnabled?: boolean | undefined;
   readonly reactivationEnabled?: boolean | undefined;
+  readonly proactiveDraftsEnabled?: boolean | undefined;
+  /** liga/desliga o alerta de saúde da conta Meta (desativada/teto/pagamento) — via chat. */
+  readonly accountHealthEnabled?: boolean | undefined;
+  /** checklist de status que dispara aviso — lista COMPLETA que substitui a atual (via chat).
+   *  Subconjunto alertável (exclui "active"), igual ao schema. */
+  readonly accountHealthStatusTriggers?: NonNullable<NotifyPolicy["accountHealthAlert"]>["statusTriggers"] | undefined;
+  /** fonte do teto: "meta_cap" (usa o da Meta) ou "custom" — via chat (permite voltar pra meta_cap). */
+  readonly accountHealthSpendSource?: "meta_cap" | "custom" | undefined;
+  /** teto de gasto CUSTOMIZADO (moeda da conta) — definir também troca a fonte pra "custom" — via chat. */
+  readonly accountHealthSpendThresholdMajor?: number | undefined;
+  /** liga/desliga o aviso de SALDO baixo (dinheiro acabando) — via chat. */
+  readonly accountHealthBalanceEnabled?: boolean | undefined;
+  /** limiar de SALDO baixo CUSTOMIZADO (moeda da conta) — via chat. */
+  readonly accountHealthBalanceThresholdMajor?: number | undefined;
+  /** objeto COMPLETO (site) — o site edita tudo de uma vez; usado como base do merge.
+   *  Os campos flat acima (chat) sobrepõem por cima quando presentes. */
+  readonly accountHealthAlert?: NotifyPolicy["accountHealthAlert"] | undefined;
 }
 
 /**
@@ -141,6 +172,9 @@ export interface AgentConfigPatch {
   readonly notifyPolicy?: NotifyPolicyPatch | undefined;
   /** postura (voz): diretividade/volume/profundidade + preset. Leaf-merge. */
   readonly posture?: PosturePatch | undefined;
+  /** on/off por-ação (A3) — só as chaves ENVIADAS mudam (leaf-merge); ausentes preservam o
+   *  estado atual. Persistido à parte (agent_tool_bindings, não é coluna de `agents`). */
+  readonly toolBindings?: Partial<Record<string, boolean>> | undefined;
 }
 
 /**
@@ -161,6 +195,7 @@ export const CONFIG_CHANGE_LABELS = {
   modelConfig: "limiares",
   notifyPolicy: "notificações",
   posture: "postura",
+  toolBindings: "ações permitidas",
 } as const;
 
 /** Ranking de autonomia (menor = mais seguro) — base do "enfraqueceu a segurança?". */
@@ -187,6 +222,9 @@ export interface AgentConfigResolution {
   readonly cadenceChanged: boolean;
   /** a proatividade (F4d) mudou → o pulso tem scheduler próprio, também re-sincroniza. */
   readonly notifyPolicyChanged: boolean;
+  /** o on/off por-ação (A3) mudou → a casca persiste em `agent_tool_bindings` (tabela à
+   *  parte, não é coluna de `agents`/`guardrail_configs`). */
+  readonly toolBindingsChanged: boolean;
   /** a mudança ENFRAQUECE a segurança (guardrail afrouxado / autonomia subiu). */
   readonly weakensSafety: boolean;
   /** validação falhou (PT) — não persistir. */
@@ -210,6 +248,7 @@ export function resolveAgentConfigChange(
       runRelevantChanged: false,
       cadenceChanged: false,
       notifyPolicyChanged: false,
+      toolBindingsChanged: false,
       weakensSafety: false,
       error: CUSTOM_CONVERSION_REQUIRED_ERROR,
     };
@@ -240,6 +279,7 @@ export function resolveAgentConfigChange(
       runRelevantChanged: false,
       cadenceChanged: false,
       notifyPolicyChanged: false,
+      toolBindingsChanged: false,
       weakensSafety: false,
       error: tooLong,
     };
@@ -251,6 +291,11 @@ export function resolveAgentConfigChange(
   const nextGuardrails = cleanGuardrails(patch.guardrails ?? state.guardrails);
   const nextNotifyPolicy = mergeNotifyPolicy(state.notifyPolicy, patch.notifyPolicy);
   const nextPosture = mergePosture(state.posture, patch.posture);
+  const toolBindingsEntries = patch.toolBindings
+    ? Object.entries(patch.toolBindings).filter((e): e is [string, boolean] => typeof e[1] === "boolean")
+    : [];
+  const nextToolBindings: Readonly<Record<string, boolean>> =
+    toolBindingsEntries.length > 0 ? { ...state.toolBindings, ...Object.fromEntries(toolBindingsEntries) } : state.toolBindings;
 
   const next: AgentConfigState = {
     goals: nextGoals,
@@ -266,6 +311,7 @@ export function resolveAgentConfigChange(
     modelConfig: nextModelConfig,
     notifyPolicy: nextNotifyPolicy,
     posture: nextPosture,
+    toolBindings: nextToolBindings,
   };
 
   // diffs por campo (json estável p/ objetos).
@@ -288,6 +334,7 @@ export function resolveAgentConfigChange(
   // postura é VOZ (render) — não afeta a ANÁLISE (fora de runRelevantChanged); o
   // próximo run relê a config no redator, como cadência/notify.
   const postureChanged = jsonEq(nextPosture, state.posture) === false;
+  const toolBindingsChanged = jsonEq(nextToolBindings, state.toolBindings) === false;
 
   // cadência NÃO entra: muda só a agenda, não a análise.
   const runRelevantChanged =
@@ -314,12 +361,13 @@ export function resolveAgentConfigChange(
   if (modelConfigTouched) changed.push(CONFIG_CHANGE_LABELS.modelConfig);
   if (notifyPolicyChanged) changed.push(CONFIG_CHANGE_LABELS.notifyPolicy);
   if (postureChanged) changed.push(CONFIG_CHANGE_LABELS.posture);
+  if (toolBindingsChanged) changed.push(CONFIG_CHANGE_LABELS.toolBindings);
 
   const weakensSafety =
     guardrailsWeaken(state.guardrails, nextGuardrails) ||
     autonomyPolicyWeakens(state.autonomyPolicy, nextAutonomy);
 
-  return { next, changed, runRelevantChanged, cadenceChanged, notifyPolicyChanged, weakensSafety };
+  return { next, changed, runRelevantChanged, cadenceChanged, notifyPolicyChanged, toolBindingsChanged, weakensSafety };
 }
 
 /** Mescla o patch de notificação (leaf-a-leaf) no estado atual. Sempre retorna o shape cheio. */
@@ -338,6 +386,82 @@ function mergeNotifyPolicy(cur: NotifyPolicy, patch: NotifyPolicyPatch | undefin
     runPush: { enabled: patch.runPushEnabled ?? cur.runPush.enabled },
     // defensivo: linhas pré-pivô podem não ter `reactivation` no jsonb → default off.
     reactivation: { enabled: patch.reactivationEnabled ?? cur.reactivation?.enabled ?? false },
+    proactiveDrafts: { enabled: patch.proactiveDraftsEnabled ?? cur.proactiveDrafts?.enabled ?? false },
+    accountHealthAlert: mergeAccountHealthAlert(cur.accountHealthAlert, patch),
+  };
+}
+
+/** Descreve o teto de gasto do alerta de saúde (chat/eco): valor customizado (na moeda da
+ *  CONTA — o threshold é sempre nela) ou "teto da Meta". */
+function describeSpendThreshold(alert: NotifyPolicy["accountHealthAlert"], currency: string): string {
+  const t = alert?.spendThreshold;
+  return t?.source === "custom" && t.customValueMajor !== undefined
+    ? formatMoney(t.customValueMajor, currency)
+    : "teto da Meta";
+}
+
+/** Descreve o aviso de saldo baixo (chat/eco): valor na moeda da conta, "ligado" (sem valor) ou "desligado". */
+function describeBalanceThreshold(alert: NotifyPolicy["accountHealthAlert"], currency: string): string {
+  const b = alert?.balanceThreshold;
+  if (!b?.enabled) return "desligado";
+  return b.customValueMajor !== undefined ? formatMoney(b.customValueMajor, currency) : "ligado";
+}
+
+/** Eco da mudança no checklist de status: descreve os estados que passaram/deixaram de avisar. */
+function describeStatusTriggerChange(
+  cur: NotifyPolicy["accountHealthAlert"],
+  next: NotifyPolicy["accountHealthAlert"],
+): string | null {
+  const c = new Set(cur?.statusTriggers ?? ALERTABLE_ACCOUNT_HEALTH_STATUSES);
+  const n = new Set(next?.statusTriggers ?? ALERTABLE_ACCOUNT_HEALTH_STATUSES);
+  const label = (s: MetaAccountHealthStatus) => ACCOUNT_HEALTH_STATUS_LABELS[s as Exclude<MetaAccountHealthStatus, "active">];
+  const added = [...n].filter((s) => !c.has(s)).map(label);
+  const removed = [...c].filter((s) => !n.has(s)).map(label);
+  if (added.length === 0 && removed.length === 0) return null;
+  const parts: string[] = [];
+  if (added.length > 0) parts.push(`passa a avisar em: ${added.join(", ")}`);
+  if (removed.length > 0) parts.push(`deixa de avisar em: ${removed.join(", ")}`);
+  return `estados que disparam aviso — ${parts.join("; ")}`;
+}
+
+/** Merge do alerta de saúde de conta. O chat mexe em TODOS os campos (paridade com o site):
+ *  enabled, checklist de status, fonte+valor do teto e saldo (on/off + valor). Linha
+ *  pré-fatia sem o objeto → default seguro (ON + todos os status marcados). */
+function mergeAccountHealthAlert(
+  cur: NotifyPolicy["accountHealthAlert"],
+  patch: NotifyPolicyPatch,
+): NotifyPolicy["accountHealthAlert"] {
+  // base = objeto COMPLETO do site (patch.accountHealthAlert) › estado atual › default seguro.
+  const base = patch.accountHealthAlert ??
+    cur ?? {
+      enabled: true,
+      statusTriggers: [...ALERTABLE_ACCOUNT_HEALTH_STATUSES],
+      spendThreshold: { source: "meta_cap" as const },
+      balanceThreshold: { enabled: false },
+    };
+  // campos FLAT do chat sobrepõem por cima (leaf-merge só do que o chat mandou).
+  const statusTriggers =
+    patch.accountHealthStatusTriggers !== undefined ? [...patch.accountHealthStatusTriggers] : base.statusTriggers;
+  // teto: "meta_cap" explícito volta pra Meta (sem valor); senão valor definido → custom; senão preserva.
+  const spendThreshold =
+    patch.accountHealthSpendSource === "meta_cap"
+      ? { source: "meta_cap" as const }
+      : patch.accountHealthSpendThresholdMajor !== undefined
+        ? { source: "custom" as const, customValueMajor: patch.accountHealthSpendThresholdMajor }
+        : base.spendThreshold;
+  // saldo: on/off e valor leaf-merge (exactOptional → só inclui customValueMajor quando existe).
+  const balanceEnabled = patch.accountHealthBalanceEnabled ?? base.balanceThreshold.enabled;
+  const balanceValue = patch.accountHealthBalanceThresholdMajor ?? base.balanceThreshold.customValueMajor;
+  const balanceThreshold = {
+    enabled: balanceEnabled,
+    ...(balanceValue !== undefined ? { customValueMajor: balanceValue } : {}),
+  };
+  return {
+    ...base,
+    enabled: patch.accountHealthEnabled ?? base.enabled,
+    statusTriggers,
+    spendThreshold,
+    balanceThreshold,
   };
 }
 
@@ -402,6 +526,9 @@ export function cleanGuardrails(g: GuardrailConfigPatch): GuardrailConfig {
     dryRun: g.dryRun,
     killSwitch: g.killSwitch,
     ...(g.llmCostCapUsd !== undefined ? { llmCostCapUsd: g.llmCostCapUsd } : {}),
+    ...(g.maxNewDailyBudgetMinor !== undefined ? { maxNewDailyBudgetMinor: g.maxNewDailyBudgetMinor } : {}),
+    ...(g.maxNewCampaignsPerDay !== undefined ? { maxNewCampaignsPerDay: g.maxNewCampaignsPerDay } : {}),
+    ...(g.scalePct !== undefined ? { scalePct: g.scalePct } : {}),
   };
 }
 
@@ -462,6 +589,9 @@ export function mergeAdvancedConfig(
     for (const [qk, qv] of Object.entries(patch.quality)) if (qv !== undefined) nextQ[qk] = qv;
     out.quality = nextQ;
   }
+  // estratégia de criativo = objeto pequeno (mode + servingPick), trocado como unidade (trocar
+  // pra `library` não deve preservar um `servingPick` obsoleto).
+  if (patch.creativeSource !== undefined) out.creativeSource = patch.creativeSource;
   return out;
 }
 
@@ -665,6 +795,18 @@ function configDetailLines(
         lines.push(
           `aviso quando a conta voltar a rodar: ${onOff(c.reactivation?.enabled ?? false)} → ${onOff(n.reactivation?.enabled ?? false)}`,
         );
+      const cah = c.accountHealthAlert;
+      const nah = n.accountHealthAlert;
+      if ((cah?.enabled ?? true) !== (nah?.enabled ?? true))
+        lines.push(`aviso de problema na conta Meta: ${onOff(cah?.enabled ?? true)} → ${onOff(nah?.enabled ?? true)}`);
+      // compara o texto descrito (não o objeto cru) — evita linha espúria "teto da Meta →
+      // teto da Meta" quando o estado legado não tinha o campo e o merge só o backfillou.
+      if (describeSpendThreshold(cah, currency) !== describeSpendThreshold(nah, currency))
+        lines.push(`teto de gasto que avisa: ${describeSpendThreshold(cah, currency)} → ${describeSpendThreshold(nah, currency)}`);
+      if (describeBalanceThreshold(cah, currency) !== describeBalanceThreshold(nah, currency))
+        lines.push(`aviso de saldo baixo: ${describeBalanceThreshold(cah, currency)} → ${describeBalanceThreshold(nah, currency)}`);
+      const statusChange = describeStatusTriggerChange(cah, nah);
+      if (statusChange) lines.push(statusChange);
       return lines;
     }
     default:

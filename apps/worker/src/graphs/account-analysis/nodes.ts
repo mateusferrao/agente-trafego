@@ -10,29 +10,47 @@ import {
   addTokenUsage,
   applicableActionType,
   applyGuardrails,
+  attachCreativeWeaknessSignals,
   budgetDirection,
   kindForRecommendation,
   buildAccountBrief,
+  buildCuratedEntitySnapshot,
   buildEntityConversionMap,
   buildMessageFallback,
+  campaignsAtBudgetCeiling,
+  computeDeactivatedCampaignIds,
   composeAgentVoice,
+  composeSpeakingVoice,
   costSnapshotFromUsage,
   creativePosterFrames,
   decideActions,
+  deriveAdsetUnits,
   describeSignal,
   dropUnsupportedFindings,
   eligibilityByEntity,
   guardScaleWithoutSignificance,
   guardKillWithoutMaturity,
   guardTrackingCaveat,
+  guardScaleWithWorseningMarginalCpa,
+  marginalCpaRiseByEntity,
+  guardScaleWithoutFreshCreative,
+  healthSignalsByEntity,
+  guardAudienceScaleCeiling,
+  DEFAULT_AUDIENCE_CEILING_THRESHOLDS,
+  resolveFrequencyCap,
+  SCALE_ACTIONS,
+  type AudienceHeadroom,
   basisByEntity,
   annotateFreedSpend,
+  detectCreationOpportunities,
+  isConverterAudienceName,
   evaluatePlaybook,
   flagUnsupportedFindings,
   entityKeyOf,
   mergeUnitAnalyses,
   agentMarketReferenceFromModelConfig,
   resolveActionConflicts,
+  buildTrackingRecommendation,
   resolveMarketReference,
   riskForAction,
   selectCampaignsToAnalyze,
@@ -41,8 +59,13 @@ import {
   volumeToRecCount,
   type LastUnit,
 } from "@trafego/core";
-import { ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS, DEFAULT_POSTURE } from "@trafego/shared";
+import { ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS, DEFAULT_CURRENCY, DEFAULT_POSTURE, extractPhoneFromName, plural } from "@trafego/shared";
+import { recommendations } from "@trafego/db";
 import { funnelFromRawActions, mapStatus } from "@trafego/ads-meta";
+import { loadAccountAudiences, loadAgentContext, PROACTIVE_AUDIENCE_UNRESOLVED_REASON, PROACTIVE_REACH_FLOOR_REASON, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner } from "../../modules/conversation/draft-proposal.js";
+import { proposeTargetingForOpportunity, type ProposedTargeting } from "../../modules/conversation/propose-targeting.js";
+import { autoApplyProactiveDraft, type DraftApplyOutcome } from "../../modules/apply/apply-draft.js";
+import { loadEnabledTools, enabledActionTypes } from "../../modules/tools/enabled.js";
 import {
   analysisOutputSchema,
   ANALYSIS_OUTPUT_JSON_SCHEMA,
@@ -63,6 +86,7 @@ import type {
   AgentId,
   Creative,
   CreativeVisionResult,
+  EntityBreakdown,
   EntityLevel,
   EntityStatus,
   EntitySummary,
@@ -72,6 +96,7 @@ import type {
   OrgId,
   RunCampaignCard,
   RunId,
+  WhatsappSource,
 } from "@trafego/shared";
 import type { AdsPlatformPort, CreativeVisionPort, MutationResult } from "@trafego/shared/ports";
 import { AdsPlatformError, LLMProviderError } from "@trafego/shared/ports";
@@ -80,6 +105,10 @@ import {
   createDrizzleInsightsSnapshotsRepo,
   type InsightsSnapshotsRepo,
 } from "../../modules/insights/repo.js";
+import {
+  createDrizzleInsightsBreakdownsRepo,
+  type InsightsBreakdownsRepo,
+} from "../../modules/insights/breakdown-repo.js";
 import {
   createAnalysisRepo,
   type AdCreativeRow,
@@ -94,11 +123,11 @@ import {
 } from "../../modules/analysis/entity-analyses.repo.js";
 import { createNotifyRepo, type NotifyRepo } from "../../modules/notify/repo.js";
 import { createSendToConversation } from "../../modules/notify/send-to-contact.js";
-import { createVisionResolver, creativeContentHash } from "../../modules/vision/resolver.js";
+import { createVisionResolver, servingVisionKey } from "../../modules/vision/resolver.js";
 import { makeMetaToolExecutor, type MetaToolExecutor } from "../../executors/meta-tools.js";
 import { AnalysisError } from "../../modules/analysis/errors.js";
 import { mapWithConcurrency } from "../../lib/concurrency.js";
-import { resolveAnalysisConfig } from "../../modules/analysis/config.js";
+import { resolveAnalysisConfig, type ResolvedAnalysisConfig } from "../../modules/analysis/config.js";
 import {
   buildCampaignMessages,
   buildReviewMessages,
@@ -116,6 +145,52 @@ import type { AccountAnalysisStateType, AccountAnalysisUpdate } from "./state.js
 /** Nº de dias sem análise que dispara um run DEEP (reanalisa tudo). */
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** Piso de alcance mensal (Fatia 8) pra o AUTÔNOMO criar/replicar sozinho — abaixo disso a proposta
+ *  degrada pra recomendação humana em vez de criar. Fast-follow: tornar configurável por-agente. */
+const PROACTIVE_MIN_MONTHLY_REACH = 5000;
+
+/** Título da recomendação PROATIVA por tipo de oportunidade de criação (Fatia 8). */
+function creationRecTitle(kind: string): string {
+  switch (kind) {
+    case "remarketing":
+      return "Criar um remarketing";
+    case "replicate_winner":
+      return "Replicar seu vencedor pra um público novo";
+    case "prospecting_expansion":
+      return "Abrir uma nova prospecção";
+    case "cold_start":
+      return "Criar uma campanha inicial";
+    default:
+      return "Criar uma campanha nova";
+  }
+}
+
+/** Mapeia o público proposto pela LLM (por NOME) → args de create/copy (resolvidos determinístico
+ *  depois, autônomo-safe). Só inclui o que a LLM realmente propôs (campos vazios ficam de fora). */
+function proposalToCreationArgs(p: ProposedTargeting): {
+  geo?: readonly string[];
+  radiusKm?: number;
+  ageMin?: number;
+  ageMax?: number;
+  gender?: "all" | "men" | "women";
+  interests?: readonly string[];
+  behaviors?: readonly string[];
+  includeAudiences?: readonly string[];
+  excludeAudiences?: readonly string[];
+} {
+  return {
+    ...(p.geoNames.length > 0 ? { geo: p.geoNames } : {}),
+    ...(p.radiusKm != null ? { radiusKm: p.radiusKm } : {}),
+    ...(p.ageMin != null ? { ageMin: p.ageMin } : {}),
+    ...(p.ageMax != null ? { ageMax: p.ageMax } : {}),
+    ...(p.gender ? { gender: p.gender } : {}),
+    ...(p.interestNames.length > 0 ? { interests: p.interestNames } : {}),
+    ...(p.behaviorNames.length > 0 ? { behaviors: p.behaviorNames } : {}),
+    ...(p.includeAudienceNames.length > 0 ? { includeAudiences: p.includeAudienceNames } : {}),
+    ...(p.excludeAudienceNames.length > 0 ? { excludeAudiences: p.excludeAudienceNames } : {}),
+  };
+}
+
 const SEGMENT_LEVELS: readonly EntityLevel[] = ["campaign", "adset", "ad"];
 const ANALYSIS_TEMPERATURE = 0.2;
 const NO_ACTIVITY_SUMMARY =
@@ -132,6 +207,8 @@ function buildNoActivityMessage(accountName: string, offerReactivation: boolean)
 export interface AnalysisNodeRepos {
   readonly repo: AnalysisRepo;
   readonly snapshots: InsightsSnapshotsRepo;
+  /** Breakdown demográfico/posicionamento (S7) — cadência própria. */
+  readonly breakdowns: InsightsBreakdownsRepo;
   readonly notify: NotifyRepo;
   readonly entityAnalyses: EntityAnalysesRepo;
   /** resolver de visão — injetável p/ teste; default cria por-run (com meta). */
@@ -145,6 +222,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
   const { logger } = deps;
   const repo = repos?.repo ?? createAnalysisRepo(deps.db);
   const snapshots = repos?.snapshots ?? createDrizzleInsightsSnapshotsRepo(deps.db);
+  const breakdowns = repos?.breakdowns ?? createDrizzleInsightsBreakdownsRepo(deps.db);
   const notifyRepo = repos?.notify ?? createNotifyRepo(deps.db);
   const entityAnalysesRepo = repos?.entityAnalyses ?? createEntityAnalysesRepo(deps.db);
   const executor = repos?.executor ?? makeMetaToolExecutor(deps);
@@ -156,6 +234,14 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const ctx = await repo.loadAgentContext(state.orgId, state.agentId);
     if (!ctx) throw new AnalysisError("agent_missing", "agente não encontrado");
 
+    // Bindings AUTORITATIVOS também no caminho AUTÔNOMO (3ª superfície de escrita): resolve
+    // allowedActions dos bindings (mesma fonte do chat/apply) e CONGELA no snapshot do run
+    // (reprodutibilidade — travado no início, refletindo a capacidade atual). Sem isto, desligar
+    // uma ação nos bindings não impediria o agente de aplicá-la sozinho (o guardrail leria a
+    // coluna allowedActions, hoje vestigial). Fallback preserva o comportamento.
+    const enabledTools = await loadEnabledTools(deps.db, state.orgId, state.agentId, ctx.guardrailConfig.allowedActions);
+    const guardrailConfig = { ...ctx.guardrailConfig, allowedActions: enabledActionTypes(enabledTools) };
+
     // config resolvida por-agente (model_config) com fallback nos defaults globais.
     const cfg = resolveAnalysisConfig(ctx.modelConfig, deps.analysis);
     // systemPrompt LIMPO (voz base) = metodologia/override + identidade + personalização
@@ -163,6 +249,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     // que FALAM (redator). A nota do sinal (F4) idem — só no ANALISTA (via analystPrompt),
     // NUNCA no redator (que redige ao usuário, sem diretiva de investigação em 2ª pessoa).
     const systemPrompt = composeAgentVoice(ctx);
+    // voz de FALA do redator (voz-base + kernel de marca + postura) — fonte única com
+    // o chat/pulso; separada do systemPrompt do analista (que emite JSON).
+    const speakingPrompt = composeSpeakingVoice(ctx);
     // "hoje" no fuso da org (não UTC) — casa o dia civil dos snapshots (fuso da conta Meta).
     const { window, baseline } = resolveWindows(todayInTz(new Date(), ctx.timezone), cfg.windowDays, cfg.baselineDays);
     const windowLabel = `últimos ${cfg.windowDays} dias`;
@@ -185,12 +274,14 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       autonomyPolicy: ctx.autonomyPolicy,
       notifyPolicy: ctx.notifyPolicy,
       posture: ctx.posture,
-      guardrailConfig: ctx.guardrailConfig,
+      guardrailConfig,
       rejectedMemory: ctx.rejectedMemory,
       mutedCampaignIds: ctx.mutedCampaignIds,
       orgMarketReference: ctx.orgMarketReference,
       agentMarketReference: agentMarketReferenceFromModelConfig(ctx.modelConfig),
       systemPrompt,
+      speakingPrompt,
+      vertical: ctx.vertical,
       configChangedAt: ctx.configChangedAt ? ctx.configChangedAt.getTime() : null,
       analysisConfig: cfg,
       window: { label: windowLabel, ...window },
@@ -224,9 +315,47 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     }
 
     const { entities, entitiesPartial } = await fetchEntities(deps.ports.ads, ref, logger);
+    // Breakdown demográfico/posicionamento (S7) — cadência PRÓPRIA (auto-throttle interno),
+    // best-effort: nunca aborta o run (mesma filosofia de `listCustomAudiences` abaixo).
+    try {
+      const activeCampaignIds = entities.filter((e) => e.level === "campaign" && e.status === "active").map((e) => e.id);
+      await deps.breakdownSync.sync({
+        orgId: state.orgId,
+        adAccountUuid: state.adAccountId,
+        metaAdAccountId: account.metaAdAccountId,
+        accessToken,
+        campaignIds: activeCampaignIds,
+        goals: state.goals,
+        now: Date.now(),
+      });
+    } catch (err) {
+      logger.warn({ runId: state.runId, err: String(err) }, "fetch_data:breakdown_sync degradou");
+    }
+    // Lê o breakdown de CONTA já sincronizado (gate de materialidade roda em
+    // `buildAccountBrief`, não aqui — este passo só carrega o cru).
+    let demographics: EntityBreakdown | null = null;
+    let placements: EntityBreakdown | null = null;
+    try {
+      const stored = await breakdowns.listByAccount(state.orgId, state.adAccountId);
+      const accountRows = stored.filter((r) => r.entityLevel === "account");
+      const demo = accountRows.find((r) => r.dimension === "demographic");
+      const place = accountRows.find((r) => r.dimension === "placement");
+      demographics = demo ? { dimension: "demographic", segments: demo.segments, asOf: demo.date } : null;
+      placements = place ? { dimension: "placement", segments: place.segments, asOf: place.date } : null;
+    } catch (err) {
+      logger.warn({ runId: state.runId, err: String(err) }, "fetch_data:load_breakdowns degradou");
+    }
     // persiste os rótulos de conversão resolvidos (id→nome) p/ a config ler do banco
     // sem falar com a plataforma (Fatia 4). Genérico: platform como coluna.
     await repo.saveConversionLabels(state.orgId, state.adAccountId, ADS_PLATFORM, collectConversionLabels(entities));
+    // Cache dos custom audiences da conta (Fatia 7): a análise completa busca 1x + persiste;
+    // o chat lê DB-first (Meta só no fallback, evita rate limit). Best-effort — nunca aborta o run.
+    try {
+      const audiences = await deps.ports.ads.listCustomAudiences(ref);
+      await repo.saveCustomAudiences(state.orgId, state.adAccountId, audiences);
+    } catch (err) {
+      logger.warn({ runId: state.runId, err: String(err) }, "fetch_data:cache_audiences degradou");
+    }
     const rawInsights = await snapshots.listWindow(
       state.orgId,
       state.adAccountId,
@@ -265,6 +394,8 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       insights,
       baselineInsights,
       creatives,
+      demographics,
+      placements,
       partial: sync.partial || entitiesPartial || creativesPartial,
       partialReasons: [
         ...(sync.partial ? ["metrics" as const] : []),
@@ -313,6 +444,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const built = buildAccountBrief({
       account: { id: state.account.metaAdAccountId, name: state.account.name, currency: state.account.currency },
       window: state.window.label,
+      windowDays: cfg.windowDays,
       baselineWindow: state.baseline.label,
       goals: state.goals,
       entities: state.entities,
@@ -326,6 +458,8 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       ...(market.ctrBands ? { ctrBands: market.ctrBands } : {}),
       ...(market.frequencyAlert !== undefined ? { frequencyAlert: market.frequencyAlert } : {}),
       ...(state.mutedCampaignIds ? { mutedCampaignIds: new Set(state.mutedCampaignIds) } : {}),
+      ...(state.demographics ? { demographics: state.demographics } : {}),
+      ...(state.placements ? { placements: state.placements } : {}),
       memory: { objectives: [], pastActions: [], rejected: [...(state.rejectedMemory ?? [])] },
     });
     if (built.status === "empty") {
@@ -357,17 +491,48 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     // `copyByAdId` da análise, sem re-baixar da Meta. Perf vem do brief (tier/métricas).
     try {
       const adPerfById = new Map(built.brief.segments.ads.map((e) => [e.id, e]));
+      // hierarquia anúncio→campanha/adset + nome da campanha, dos ENTITIES já listados
+      // (Fatia 7). Resolve o destino WhatsApp SEM chamada extra à Meta: CTA do criativo
+      // (`meta_cta`) ou, na ausência, o nome da campanha (`campaign_name`, pede confirmação
+      // no chat). O tier `meta_page` (1 GET/Página) fica p/ o fallback ao vivo — não onera
+      // o run. Cache DB-first; live é fallback.
+      const adEntityById = new Map((state.entities ?? []).filter((e) => e.level === "ad").map((e) => [e.id, e]));
+      const adsetById = new Map((state.entities ?? []).filter((e) => e.level === "adset").map((e) => [e.id, e]));
+      const campaignNameById = new Map(
+        (state.entities ?? []).filter((e) => e.level === "campaign").map((e) => [e.id, e.name]),
+      );
       const creativeRows: AdCreativeRow[] = (state.creatives ?? []).map((c) => {
         const perf = adPerfById.get(c.adId);
+        const entity = adEntityById.get(c.adId);
+        const campaignId = entity?.campaignId ?? null;
+        // destino CTWA do CONJUNTO (promoted_object) — a fonte autoritativa em click-to-WhatsApp,
+        // onde o CTA vem sem número. Cacheia aqui p/ o chat ler DB-first (sem GET ao vivo).
+        const fromPromoted = entity?.adsetId ? (adsetById.get(entity.adsetId)?.whatsappNumber ?? null) : null;
+        const campaignName = campaignId ? campaignNameById.get(campaignId) : undefined;
+        const fromName = campaignName ? extractPhoneFromName(campaignName) : null;
+        const whatsappNumber = fromPromoted ?? c.whatsappNumber ?? fromName ?? null;
+        const whatsappSource: WhatsappSource | null = fromPromoted
+          ? "meta_promoted_object"
+          : c.whatsappNumber
+            ? "meta_cta"
+            : fromName
+              ? "campaign_name"
+              : null;
         return {
           adId: c.adId,
           creativeId: c.id ?? null,
+          name: c.name ?? null,
           body: c.body ?? null,
           title: c.title ?? null,
           callToAction: c.callToAction ?? null,
           imageUrl: c.imageUrl ?? null,
+          imageHash: c.imageHash ?? null,
           thumbnailUrl: c.thumbnailUrl ?? null,
           videoId: c.videoId ?? null,
+          whatsappNumber,
+          whatsappSource,
+          campaignId,
+          adsetId: entity?.adsetId ?? null,
           tier: perf?.tier ?? null,
           spend: perf?.metrics.spend ?? null,
           cpa: perf?.metrics.cpa ?? null,
@@ -395,6 +560,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const accountCurrency = state.account.currency;
     const windowLabel = state.window.label;
     const businessGoal = state.goals.conversionGoal;
+    // S8: medição suspeita é sinal de CONTA (built.brief.trackingHealth) — repassada a
+    // CADA campanha do mapa, não só na síntese (o caveat vale por-campanha).
+    const trackingSuspect = built.brief.trackingHealth?.suspect === true;
     const outcomes = await mapWithConcurrency(selection.toAnalyze, cfg.mapConcurrency, async (unit) => {
       // visão dos criativos dos anúncios notáveis DESTA campanha (teto por campanha).
       const notableAdIds = unit.adsets.flatMap((g) => g.notableAds.map((a) => a.id));
@@ -404,16 +572,20 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
         const frames = creativePosterFrames(c);
         if (frames.length === 0) continue;
         const copy = creativeCopy(c);
-        // chave de cache ESTÁVEL (id do criativo + vídeo), não a URL do fbcdn (rotaciona).
-        const stableKey = `${c.id}:${c.videoId ?? ""}`;
+        // chave de cache ESTÁVEL (fonte única `servingVisionKey`) — reusada pela criação de
+        // campanha p/ o cache-hit ser consistente (id do criativo + vídeo + copy).
         const result = await vision.resolve({
           creativeId: c.id,
           imageUrls: frames,
-          contentHash: creativeContentHash(stableKey, copy),
+          contentHash: servingVisionKey(c.id, c.videoId, copy),
           ...(copy ? { copy } : {}),
         });
         if (result) push(visionByAdId, c.adId, result);
       }
+      // S4b: anexa weak_creative aos anúncios notáveis cuja visão indica prova fraca +
+      // baixa persuasão — o analista lê o sinal nomeado (QUALITY_TEXT), não precisa
+      // re-inferir de proofStrength/persuasionSignals crus a cada vez.
+      const enrichedUnit = attachCreativeWeaknessSignals(unit, visionByAdId);
 
       // copy VERBATIM dos anúncios notáveis (texto real, complementa a visão).
       const copyByAdId = new Map<string, AdCopy>();
@@ -424,18 +596,20 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           ...(c.body ? { body: c.body } : {}),
           ...(c.title ? { title: c.title } : {}),
           ...(c.callToAction ? { callToAction: c.callToAction } : {}),
+          ...(c.adFormat ? { adFormat: c.adFormat } : {}),
         };
-        if (entry.body || entry.title || entry.callToAction) copyByAdId.set(adId, entry);
+        if (entry.body || entry.title || entry.callToAction || entry.adFormat) copyByAdId.set(adId, entry);
       }
 
       try {
         const completion = await deps.ports.llm.completeStructured<UnitAnalysis>({
           model: cfg.unitModel,
-          messages: buildCampaignMessages(analystPrompt(state), unit, visionByAdId, {
+          messages: buildCampaignMessages(analystPrompt(state), enrichedUnit, visionByAdId, {
             currency: accountCurrency,
             window: windowLabel,
             ...(businessGoal ? { businessGoal } : {}),
-          }, copyByAdId),
+            trackingSuspect,
+          }, copyByAdId, state.vertical),
           responseSchema: UNIT_ANALYSIS_JSON_SCHEMA,
           responseSchemaName: UNIT_ANALYSIS_SCHEMA_NAME,
           temperature: ANALYSIS_TEMPERATURE,
@@ -457,9 +631,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
             { runId: state.runId, campaign: unit.campaign.id, issues: parsed.error.issues.slice(0, 5) },
             "map_units:output do modelo unit não passou no schema — campanha descartada",
           );
-          return { unit: null, fresh: null, usage: completion.usage, partial: true };
+          return { unit: null, fresh: [], usage: completion.usage, partial: true };
         }
-        const fresh: FreshUnit = {
+        const campaignFresh: FreshUnit = {
           entityId: unit.campaign.id,
           entityLevel: "campaign",
           entityName: unit.campaign.name,
@@ -467,12 +641,25 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           metrics: unit.campaign.metrics,
           flags: [...unit.campaign.flags],
           ...(unit.campaign.tier ? { tier: unit.campaign.tier } : {}),
+          curated: buildCuratedEntitySnapshot(unit.campaign),
         };
-        return { unit: parsed.data, fresh, usage: completion.usage, partial: false };
+        // S8b: campanha ABO com 2+ adsets ativos ganha diagnóstico próprio POR ADSET —
+        // DERIVADO da mesma call já feita (zero LLM extra, ver deriveAdsetUnits).
+        const adsetFresh: FreshUnit[] = deriveAdsetUnits(enrichedUnit, parsed.data).map(({ adset, unit: adsetUnit }) => ({
+          entityId: adset.id,
+          entityLevel: "adset",
+          entityName: adset.name,
+          unit: adsetUnit,
+          metrics: adset.metrics,
+          flags: [...adset.flags],
+          ...(adset.tier ? { tier: adset.tier } : {}),
+          curated: buildCuratedEntitySnapshot(adset),
+        }));
+        return { unit: parsed.data, fresh: [campaignFresh, ...adsetFresh], usage: completion.usage, partial: false };
       } catch (err) {
         if (!(err instanceof LLMProviderError)) throw err;
         logger.warn({ runId: state.runId, campaign: unit.campaign.id, err }, "map_units:campanha falhou");
-        return { unit: null, fresh: null, usage: null, partial: true };
+        return { unit: null, fresh: [], usage: null, partial: true };
       }
     });
 
@@ -486,7 +673,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       if (o.usage) usage = addTokenUsage(usage ?? undefined, o.usage);
       if (o.partial) { partial = true; campaignPartial = true; }
       if (o.unit) unitAnalyses.push(o.unit);
-      if (o.fresh) freshUnits.push(o.fresh);
+      freshUnits.push(...o.fresh);
     }
     // herança: campanhas sem mudança material reusam a última análise.
     for (const unit of selection.toInherit) {
@@ -521,7 +708,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     try {
       const completion = await deps.ports.llm.completeStructured<AnalysisOutput>({
         model: cfg.model,
-        messages: buildSynthesisMessages(analystPrompt(state), state.brief, units),
+        messages: buildSynthesisMessages(analystPrompt(state), state.brief, units, state.vertical),
         responseSchema: ANALYSIS_OUTPUT_JSON_SCHEMA,
         responseSchemaName: ANALYSIS_OUTPUT_SCHEMA_NAME,
         temperature: ANALYSIS_TEMPERATURE,
@@ -565,12 +752,14 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       try {
         const completion = await deps.ports.llm.completeStructured<AnalysisOutput>({
           model: cfg.reviewModel,
-          messages: buildReviewMessages(state.brief, draft, issues),
+          messages: buildReviewMessages(state.brief, draft, issues, state.vertical),
           responseSchema: ANALYSIS_OUTPUT_JSON_SCHEMA,
           responseSchemaName: ANALYSIS_OUTPUT_SCHEMA_NAME,
           temperature: ANALYSIS_TEMPERATURE,
           maxTokens: cfg.maxOutputTokens,
-          reasoning: { effort: cfg.reasoningEffort },
+          // separado do reasoning da síntese (achado do A/B: revisor refina/corta, não
+          // gera do zero — não precisa do mesmo orçamento de raciocínio).
+          reasoning: { effort: cfg.reviewReasoningEffort },
           // D1 (6c): emite usage_event `review` (antes a chamada não passava meta).
           meta: { orgId: state.orgId, runId: state.runId, type: "review" },
         });
@@ -598,15 +787,38 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     // não-matar-em-learning (Bloco 2): rebaixa pausar → investigar em entidade nova
     // (não descarta o aprendizado). LLM-origin; playbook/guardrail não passam por aqui.
     const guarded = guardKillWithoutMaturity(scaled, eligibility);
-    // guard de tracking (Bloco 2): caveat nas pausas por CPA de venda quando a
-    // medição da conta parece incompleta (não rebaixa; só anexa ao rationale).
+    // guard de tracking (Bloco 2 → pivô saúde): rebaixa pausar/cortar → investigar
+    // quando a medição da conta parece incompleta (antes só anexava caveat; ver
+    // ROADMAP `[ALTO]` "guard de tracking mais forte no caminho autônomo").
     const caveated = guardTrackingCaveat(guarded, basisByEntity(state.brief), state.brief.trackingHealth);
+    // CPA marginal (pivô saúde, squad traffic-masters): rebaixa escalar → investigar quando
+    // o CPA piorou vs baseline acima do limiar, mesmo pra quem ainda bate a meta em média
+    // ("CPA médio mente, o marginal conta a verdade") — guard de significância não pega esse caso.
+    const marginalGuarded = guardScaleWithWorseningMarginalCpa(
+      caveated,
+      marginalCpaRiseByEntity(state.brief),
+      { worsenPct: cfg.quality.marginalCpaWorsenPct },
+    );
+    // Fadiga vs escala (achado do A/B real grok×gemini — NOTE sozinha não bastou): rebaixa
+    // escalar → investigar quando o alvo tem sinal DURO de fadiga de criativo. Roda ANTES do
+    // teto de audiência (IO/Meta) pra não gastar a chamada numa entidade que já vai ser rebaixada.
+    const freshCreativeGuarded = guardScaleWithoutFreshCreative(marginalGuarded, healthSignalsByEntity(state.brief));
+    // Teto de escala por audiência (Fase 4): reativo (só as entidades que sobreviveram
+    // com proposta de escalar até aqui) — rebaixa escalar → investigar quando o público
+    // (MAU × teto de frequência saudável) já está perto do limite de impressões sustentáveis.
+    const audienceHeadroom = await resolveAudienceHeadroomByEntity(
+      { repo, ads: deps.ports.ads, vault: deps.ports.vault, logger },
+      state,
+      freshCreativeGuarded,
+      cfg,
+    );
+    const audienceGuarded = guardAudienceScaleCeiling(freshCreativeGuarded, audienceHeadroom, DEFAULT_AUDIENCE_CEILING_THRESHOLDS);
     // impacto (Bloco 2): anexa o gasto liberado a cada recomendação de pausa.
     const spendById = new Map<string, number>();
     for (const level of [state.brief.segments.campaigns, state.brief.segments.adsets, state.brief.segments.ads]) {
       for (const e of level) spendById.set(e.id, e.metrics.spend ?? 0);
     }
-    const final = annotateFreedSpend(caveated, spendById, state.brief.account.currency);
+    const final = annotateFreedSpend(audienceGuarded, spendById, state.brief.account.currency);
     const findings: Finding[] = final.findings.map((f) => ({
       title: f.title,
       detail: f.detail,
@@ -623,6 +835,21 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     state: AccountAnalysisStateType,
   ): Promise<AccountAnalysisUpdate> {
     logger.debug({ runId: state.runId }, "build_recommendations");
+    // Medição furada (Bloco 2/D): recomendação human_direction de TOPO — emitida ANTES das do LLM
+    // (createdAt mais cedo) e independente da análise do LLM ter degradado. Alto valor, risco zero
+    // (não executável; o fix é no pixel/Meta). O sinal já foi computado determinísticamente no brief.
+    const trackingRec = buildTrackingRecommendation(state.brief?.trackingHealth);
+    if (trackingRec) {
+      await deps.db.insert(recommendations).values({
+        orgId: state.orgId,
+        runId: state.runId,
+        title: trackingRec.title,
+        rationale: trackingRec.rationale,
+        kind: "human_direction",
+        riskLevel: "low",
+      });
+      logger.info({ runId: state.runId }, "build_recommendations:tracking suspeito → recomendação");
+    }
     if (!state.analysisOutput) return {};
     const knownIds = new Set(state.entities.map((e) => e.id));
     const rows = state.analysisOutput.recommendations.map((rec) =>
@@ -632,6 +859,234 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     // ações propostas pelo LLM (com alvo válido) → candidatas do caminho de escrita.
     const llmCandidates = rows.map((r) => r.proposedAction).filter((a): a is Action => a !== null);
     return { llmCandidates };
+  }
+
+  /**
+   * PROATIVO de criação (Fatia 7): detecta oportunidade (determinístico) + propõe rascunho
+   * (scale/create) → campaign_drafts(proposed) + approval + recommendation (draftId, reusa
+   * outcome tracking). Gated por notifyPolicy.proactiveDrafts; throttle = partial-unique
+   * (1 proposto proativo/conta) → conflito é engolido. NUNCA auto-aplica (sempre aprovação).
+   */
+  /**
+   * Nudge TRANSPARENTE da auto-criação (C): o quê + porquê + que nasceu PAUSADA + próximo passo.
+   * Honestidade obrigatória — o agente agiu sozinho, o dono precisa saber e poder ativar/desfazer.
+   * Best-effort (Evolution fora não quebra o run). Alvo org-level (grupo ativo, senão DM).
+   */
+  async function pushCreationNudge(
+    state: AccountAnalysisStateType,
+    toolKey: "duplicate_scale" | "create_campaign",
+    rationale: string,
+    outcome: DraftApplyOutcome,
+  ): Promise<void> {
+    const isScale = toolKey === "duplicate_scale";
+    const what = isScale ? "dupliquei seu vencedor pra escalar" : "criei uma campanha nova";
+    const wouldHave = isScale ? "duplicar seu vencedor" : "criar uma campanha";
+    let text: string;
+    if (outcome.kind === "created") {
+      // v1: creationActivation decide se nasceu ativa (no ar) ou pausada (revisar+ativar). Aviso
+      // honesto do que o agente fez sozinho, nos dois casos.
+      text = outcome.dryRun
+        ? `Simulei uma criação automática (dry-run): ${what}. Por quê: ${rationale}.`
+        : outcome.activated
+          ? `Agi sozinho e ${what} — e já ATIVEI (está no ar). Por quê: ${rationale}. Se precisar, dá pra pausar na plataforma.`
+          : `Agi sozinho e ${what} — deixei *pausada*, esperando seu OK (não veicula até você ativar). Por quê: ${rationale}. Dá uma olhada na plataforma e ative quando quiser.`;
+    } else if (outcome.kind === "blocked" || outcome.kind === "unsupported") {
+      text = `Ia ${wouldHave} sozinho, mas parei: ${outcome.reason}.`;
+    } else {
+      text = `Tentei ${wouldHave} sozinho, mas não consegui agora — deixei pendente pra você revisar.`;
+    }
+    const ref = await notifyRepo.loadTarget(state.orgId);
+    if (!ref) return;
+    try {
+      await sendToConversation(ref, text, { split: false });
+    } catch (err) {
+      logger.warn({ runId: state.runId, err: String(err) }, "propose_drafts:nudge de auto-criação falhou");
+    }
+  }
+
+  async function proposeDrafts(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
+    const enabled = state.notifyPolicy?.proactiveDrafts?.enabled === true;
+    if (!enabled || !state.brief) return {};
+    const campaigns = state.brief.segments?.campaigns ?? [];
+    const entities = campaigns.map((c) => ({
+      id: c.id,
+      level: c.level,
+      name: c.name,
+      ...(c.tier ? { tier: c.tier } : {}),
+      significant: c.eligibility?.hasSignificance ?? false,
+      // P1.2: sinal REAL (CBO/ABO/vitalício, attachBudgetCeiling no brief) — `undefined` só
+      // quando genuinamente indeterminável (sem budget em lugar nenhum); nesse caso um vencedor
+      // provado ainda é proposto pro humano revisar (§8), mas o AUTO-apply exige `true` confirmado.
+      ...(c.atBudgetCeiling !== undefined ? { atBudgetCeiling: c.atBudgetCeiling } : {}),
+      // fadiga de CRIATIVO × saturação de PÚBLICO são sinais distintos (Fatia 8): a 1ª vira
+      // refresh_fatigued (só recomendação), a 2ª vira prospecting_expansion (público novo, acionável).
+      fatigued: (c.healthSignals ?? []).some((h) => h === "creative_fatigue"),
+      saturated: (c.healthSignals ?? []).some((h) => h === "audience_saturation"),
+      spending: (c.metrics?.spend ?? 0) > 0,
+    }));
+    const hasActive = campaigns.some((c) => c.status === "active");
+
+    const dctx = {
+      orgId: state.orgId,
+      agentId: state.agentId,
+      adAccountId: state.adAccountId,
+      currency: state.brief.account?.currency ?? DEFAULT_CURRENCY,
+    };
+    // públicos salvos da conta (cache do run, DB-first) → habilita remarketing + alimenta a LLM.
+    // Best-effort: qualquer falha degrada (sem contexto/públicos) — nunca quebra o proativo.
+    let ac: Awaited<ReturnType<typeof loadAgentContext>> = null;
+    let savedAudienceNames: string[] = [];
+    let hasConverterAudience = false;
+    try {
+      ac = await loadAgentContext(deps, dctx);
+      if (ac) {
+        const saved = await loadAccountAudiences(deps, dctx, ac.ref);
+        savedAudienceNames = saved.map((a) => a.name);
+        hasConverterAudience = saved.some((a) => !a.isLookalike && isConverterAudienceName(a.name));
+      }
+    } catch (err) {
+      logger.debug({ runId: state.runId, err: String(err) }, "propose_drafts:contexto/audiences degradou");
+    }
+
+    const top = detectCreationOpportunities({ hasActiveCampaigns: hasActive, hasConverterAudience, entities })[0];
+    if (!top) return {};
+
+    // P1.1: `refresh_fatigued` vira SÓ recomendação (human_direction) — sem rascunho/approval/
+    // auto-apply. `proposeCreateCampaign` reusaria o MESMO criativo já fatigado (não temos
+    // geração de criativo por IA ainda), o que contradiria o rationale "teste um ângulo novo".
+    // O agente não promete o que não entrega — nunca chega no ramo `byAction[...] === "act_full"`.
+    if (top.kind === "refresh_fatigued") {
+      await deps.db.insert(recommendations).values({
+        orgId: state.orgId,
+        runId: state.runId,
+        title: "Testar um ângulo novo",
+        rationale: top.rationale,
+        kind: "human_direction",
+        riskLevel: "low",
+      });
+      logger.info({ runId: state.runId, kind: top.kind }, "propose_drafts:recomendação (sem draft)");
+      return {};
+    }
+
+    try {
+      // ── SCALE: escala o vencedor as-is (não usa LLM de público) ──────────────────────────────
+      if (top.kind === "scale_winner") {
+        const proposal = await proposeScaleWinner(deps, dctx, top.entityName, "proactive");
+        // vencedor no teto sob CBO/ABO-pequeno → a decisão é SUBIR BUDGET (adjust_budget), não duplicar.
+        if (proposal.kind === "action") {
+          await deps.ports.approval.upsertPending({
+            orgId: state.orgId as OrgId,
+            agentId: state.agentId as AgentId,
+            runId: state.runId as RunId,
+            action: proposal.action,
+            expiresAt: new Date(Date.now() + APPROVAL_TTL_HOURS * 3_600_000),
+          });
+          await deps.db.insert(recommendations).values({
+            orgId: state.orgId,
+            runId: state.runId,
+            title: "Escalar seu vencedor (subir orçamento)",
+            rationale: top.rationale,
+            kind: "platform_action",
+            toolKey: "adjust_budget",
+            riskLevel: "medium",
+          });
+          logger.info({ runId: state.runId }, "propose_drafts:scale_raise proposto");
+          return {};
+        }
+        if (proposal.kind !== "draft") return {};
+        await deps.db.insert(recommendations).values({
+          orgId: state.orgId,
+          runId: state.runId,
+          title: "Escalar seu vencedor",
+          rationale: top.rationale,
+          kind: "platform_action",
+          toolKey: "duplicate_scale",
+          draftId: proposal.draftId,
+          riskLevel: "high",
+        });
+        logger.info({ runId: state.runId, kind: top.kind }, "propose_drafts:proposto");
+        if (state.autonomyPolicy?.byAction?.["duplicate_scale"] === "act_full") {
+          const outcome = await autoApplyProactiveDraft(deps, { orgId: state.orgId, draftId: proposal.draftId, approvalId: proposal.approvalId });
+          await pushCreationNudge(state, "duplicate_scale", top.rationale, outcome);
+          logger.info({ runId: state.runId, kind: top.kind, outcome: outcome.kind }, "propose_drafts:auto");
+        }
+        return {};
+      }
+
+      // ── CRIAÇÃO SEGMENTADA (Fatia 8): a LLM propõe o PÚBLICO por NOME (o QUÊ é determinístico, o
+      // COMO é a LLM); a resolução na casca descarta o inexistente (autônomo-safe) e o piso de
+      // alcance evita criar estreito sozinho (degrada pra recomendação humana). ────────────────
+      const proposedTargeting = ac
+        ? await proposeTargetingForOpportunity(deps.ports.llm, {
+            kind: top.kind,
+            rationale: top.rationale,
+            model: ac.model,
+            businessContext: ac.businessContext,
+            guidance: ac.guidance,
+            ...(state.goals?.conversionGoal ? { conversionGoal: state.goals.conversionGoal } : {}),
+            savedAudienceNames,
+            ...(top.entityId ? { winnerCampaignId: top.entityId } : {}),
+            meta: { orgId: state.orgId, runId: state.runId },
+          })
+        : null;
+      const args = proposedTargeting ? proposalToCreationArgs(proposedTargeting) : {};
+      // remarketing EXIGE público de convertidos/engajados resolvido — sem ele, não cria amplo às
+      // cegas (perderia a intenção): degrada pra recomendação humana (requireResolvedAudience).
+      const autoOpts = { autonomous: true, minMonthlyReach: PROACTIVE_MIN_MONTHLY_REACH, requireResolvedAudience: top.kind === "remarketing" };
+      // replicate_winner COPIA a estrutura do vencedor (sourceCampaignId determinístico) + público
+      // proposto; as demais (remarketing/prospecting/cold_start) criam do zero com o público proposto.
+      const proposal =
+        top.kind === "replicate_winner" && top.entityId
+          ? await proposeCopyCampaign(deps, dctx, { sourceCampaignId: top.entityId, ...(top.entityName ? { sourceName: top.entityName } : {}), ...args }, "proactive", autoOpts)
+          : await proposeCreateCampaign(deps, dctx, args, "proactive", autoOpts);
+
+      // Degradação honesta pra recomendação humana (não cria sozinho): público estreito (piso de
+      // alcance) OU público específico não-resolvido (ex: remarketing sem público de convertidos).
+      if (proposal.kind === "blocked" && (proposal.reason === PROACTIVE_REACH_FLOOR_REASON || proposal.reason === PROACTIVE_AUDIENCE_UNRESOLVED_REASON)) {
+        const why =
+          proposal.reason === PROACTIVE_REACH_FLOOR_REASON
+            ? "Mas o público ficou estreito demais pra eu criar sozinho — dá uma olhada e ajuste."
+            : "Mas não achei o público específico pra montar sozinho — dá uma olhada e me diga qual usar.";
+        await deps.db.insert(recommendations).values({
+          orgId: state.orgId,
+          runId: state.runId,
+          title: creationRecTitle(top.kind),
+          rationale: `${top.rationale} ${why}`,
+          kind: "human_direction",
+          riskLevel: "low",
+        });
+        logger.info({ runId: state.runId, kind: top.kind, reason: proposal.reason }, "propose_drafts:degrada → recomendação");
+        return {};
+      }
+      if (proposal.kind !== "draft") return {};
+
+      const toolKey = "create_campaign";
+      await deps.db.insert(recommendations).values({
+        orgId: state.orgId,
+        runId: state.runId,
+        title: creationRecTitle(top.kind),
+        rationale: top.rationale,
+        kind: "platform_action",
+        toolKey,
+        draftId: proposal.draftId,
+        riskLevel: "high",
+      });
+      logger.info({ runId: state.runId, kind: top.kind }, "propose_drafts:proposto");
+
+      // auto-criação PROATIVA (byAction[create_campaign] === act_full): cria JÁ + guardrail de gasto
+      // novo + nudge transparente. Nasce pausada e veicula conforme o creationActivation do agente
+      // (v1): "active" ATIVA já (opt-in explícito); "paused" fica pausada + 2º OK. Fallback (não
+      // act_full) = só a proposta acima (aprovação humana).
+      if (state.autonomyPolicy?.byAction?.[toolKey] === "act_full") {
+        const outcome = await autoApplyProactiveDraft(deps, { orgId: state.orgId, draftId: proposal.draftId, approvalId: proposal.approvalId });
+        await pushCreationNudge(state, "create_campaign", top.rationale, outcome);
+        logger.info({ runId: state.runId, kind: top.kind, outcome: outcome.kind }, "propose_drafts:auto");
+      }
+    } catch (err) {
+      // conflito de throttle (1 proposto proativo/conta) ou falha best-effort → não quebra o run.
+      logger.debug({ runId: state.runId, err: String(err) }, "propose_drafts:pulado");
+    }
+    return {};
   }
 
   /** Fecha o run (status, summary, partial, custo/usage, metrics_snapshot p/ o site). */
@@ -650,6 +1105,22 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     });
     // persiste as análises por-unidade REANALISADAS (base do incremental/herança).
     await entityAnalysesRepo.saveMany(state.agentId, state.runId, state.freshUnits ?? []);
+    // Sincronização (achado real): campanha que ESTAVA no cache e SUMIU do conjunto ativo
+    // (pausada/arquivada fora daqui) — marca `deactivatedSince` pra chat/site pararem de
+    // tratá-la como se nada tivesse mudado. SÓ quando a listagem deste run foi ÍNTEGRA
+    // (`!partialReasons.includes("entities")`) — listagem degradada pode ter perdido
+    // campanhas que CONTINUAM ativas de verdade; marcar aí seria falso-positivo.
+    if (!(state.partialReasons ?? []).includes("entities")) {
+      const currentlyActiveCampaignIds = new Set(
+        (state.entities ?? []).filter((e) => e.level === "campaign" && e.status === "active").map((e) => e.id),
+      );
+      const previouslyCachedIds = await entityAnalysesRepo.loadCampaignIds(state.agentId);
+      const deactivated = computeDeactivatedCampaignIds(previouslyCachedIds, currentlyActiveCampaignIds);
+      if (deactivated.length > 0) {
+        await entityAnalysesRepo.markDeactivated(state.agentId, deactivated, new Date());
+        logger.info({ runId: state.runId, count: deactivated.length }, "record:campanhas marcadas como desativadas (sincronização)");
+      }
+    }
     // consome o marcador de config (one-shot): este run já aplicou a nova config
     // num deep; sem isso, contas com mais campanhas que o top-N ficariam em deep
     // permanente (o analyzedAt só avança nas reanalisadas).
@@ -804,7 +1275,11 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       state.trigger === "cron" || state.trigger === "signal" || state.trigger === "on_demand";
     // runPush (F4) desliga o push de RUN (cron/on-demand); signal tem gate próprio (alerts).
     const isRunPush = state.trigger === "cron" || state.trigger === "on_demand";
-    const runPushOff = isRunPush && state.notifyPolicy?.runPush.enabled === false;
+    // Transparência (S7, geral): se o run APLICOU ação REAL sozinho (autonomia), o aviso NÃO pode
+    // sumir mesmo com runPush OFF — a mensagem do run já resume as aplicadas. runPush governa o
+    // resumo da ANÁLISE, não a transparência de mudança real na conta.
+    const appliedRealActions = !state.guardrailConfig.dryRun && (state.results?.length ?? 0) > 0;
+    const runPushOff = isRunPush && state.notifyPolicy?.runPush.enabled === false && !appliedRealActions;
     const out = state.analysisOutput;
     if (!out || !state.account) {
       // conta zerada (brief vazio): cron/signal = silêncio; on-demand/chat = empty-state
@@ -812,7 +1287,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       const emptyDeliver = isWhatsapp || (state.trigger === "on_demand" && !runPushOff);
       if (state.account && emptyDeliver) {
         const offer = state.notifyPolicy?.reactivation?.enabled !== true;
-        return { outboundMessage: buildNoActivityMessage(state.account.name, offer), narrative: null };
+        return { outboundMessage: buildNoActivityMessage(state.account.name, offer), narrative: null, offersReactivation: offer };
       }
       return { outboundMessage: null, narrative: null }; // sem análise → nada a renderizar
     }
@@ -829,10 +1304,12 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       try {
         const completion = await deps.ports.llm.completeStructured<{ text: string }>({
           model: cfg.messageModel,
-          messages: buildMessageMessages(state.systemPrompt, state.account.name, out, posture, {
+          messages: buildMessageMessages(state.speakingPrompt, state.account.name, out, posture, {
             ...(state.brief?.waste ? { waste: state.brief.waste } : {}),
             ...(state.brief?.trackingHealth?.suspect ? { trackingSuspect: true } : {}),
-          }),
+            atBudgetCeilingCampaigns: campaignsAtBudgetCeiling(state.brief?.segments.campaigns ?? []),
+            ...(state.brief?.funnel ? { funnel: state.brief.funnel } : {}),
+          }, state.vertical),
           responseSchema: MESSAGE_OUTPUT_JSON_SCHEMA,
           responseSchemaName: MESSAGE_OUTPUT_SCHEMA_NAME,
           temperature: ANALYSIS_TEMPERATURE,
@@ -881,7 +1358,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       if (hasRecs) {
         const surfaceable = out.recommendations.filter((r) => kindForRecommendation(r.actionType) !== "insight");
         const more = surfaceable.length - volumeToRecCount(posture.volume);
-        if (more > 0) outbound = `${outbound}\n\nTem mais ${more} sugestão(ões) — quer ver?`;
+        if (more > 0) outbound = `${outbound}\n\nTem mais ${plural(more, "sugestão", "sugestões")} — quer ver?`;
       }
       // nota honesta do que o agente FEZ neste run (aplicou/simulou) — determinística.
       const attempted = state.guardrail?.allowed.length ?? 0;
@@ -890,7 +1367,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       // bridge do HITL (5b-2): avisa que há pendentes + dá pra aprovar por aqui/site.
       const pending = state.approvalCandidates?.length ?? 0;
       if (pending > 0) {
-        outbound = `${outbound}\n\n🔔 ${pending} ação(ões) aguardando seu OK. Responda por aqui pra aprovar/rejeitar, ou veja no site.`;
+        outbound = `${outbound}\n\n${plural(pending, "ação aguardando", "ações aguardando")} seu OK. Responda por aqui pra aprovar ou rejeitar, ou veja no site.`;
       }
     }
     return { outboundMessage: outbound, narrative, usage };
@@ -916,13 +1393,22 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     }
 
     const link = `${deps.webOrigin}/accounts/${state.adAccountId}`;
-    const text = `${body}\n\nVer no site: ${link}`;
+    const text = `${body}\n\nDetalhe completo no site: ${link}`;
     // chat (push do WhatsApp) quebra em blocos; cron enxuto (1 msg) — ban-safety §9.
     const sent = await sendToConversation(ref, text, {
       split: state.notifyTarget != null,
       meta: { runId: state.runId },
     });
     if (!sent) logger.warn({ runId: state.runId }, "notify:envio falhou/sem instância — sem push");
+    // Empty-state com oferta de reativação empurrado ao alvo ORG-LEVEL (não uma resposta de
+    // WhatsApp-origin): foca a conta-alvo na conversa, pra o "sim" do dono resolver naquela conta
+    // e conseguir ligar a reativação por chat — senão, em org multi-conta, cairia no concierge
+    // sem config ("é no site") e a oferta seria vazia (contradição achada no E2E ao vivo).
+    if (sent && state.offersReactivation && state.notifyTarget == null) {
+      await notifyRepo.focusForRef(state.orgId, ref, state.adAccountId).catch((err) =>
+        logger.warn({ runId: state.runId, err: String(err) }, "notify:focus-on-offer degradou"),
+      );
+    }
     return {};
   }
 
@@ -951,6 +1437,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     synthesize: step("synthesize", synthesize),
     reviewAnalysis: step("review_analysis", reviewAnalysis),
     buildRecommendations: step("build_recommendations", buildRecommendations),
+    proposeDrafts: step("propose_drafts", proposeDrafts),
     writeMessage: step("write_message", writeMessage),
     record: step("record", record),
     notify: step("notify", notify),
@@ -1118,6 +1605,9 @@ function buildCampaignCards(
       flags: [...u.campaign.flags],
       ...(u.campaign.tier ? { tier: u.campaign.tier } : {}),
       ...(stage ? { stage } : {}),
+      ...(u.campaign.budget ? { budget: u.campaign.budget } : {}),
+      ...(u.campaign.atBudgetCeiling !== undefined ? { atBudgetCeiling: u.campaign.atBudgetCeiling } : {}),
+      isCBO: u.campaign.budget != null,
     });
   }
   return cards;
@@ -1141,6 +1631,17 @@ function dominantStage(u: CampaignUnit): AudienceStage | undefined {
 }
 
 /** Busca entidades por nível (degrada em `partial` se um nível falhar). */
+// Níveis onde o filtro na origem (S7-sync) é seguro: `decideActionsNode`/`guardrailCheck`
+// (mais abaixo, neste arquivo) dependem do catálogo de CAMPANHA completo (todos os status)
+// pra resolver NOME de candidatas mirando algo pausado (ex: "reativar X" — X nunca passa
+// pelo mapa/LLM, então o nome só existe ali); campanha também é barata (tipicamente 1
+// página) — não vale o risco ali. Conjunto/anúncio são o volume real (centenas/milhares,
+// muitas páginas) e SEM esse mesmo risco de nome: o pior caso de filtrar é uma candidata
+// rara mirando um CONJUNTO/ANÚNCIO pausado ficar sem nome legível (cosmético — o id
+// continua correto); o no-op de STATUS já tem rede própria (`refreshStatusByEntity`, releitura
+// fresca por-alvo, ignora o catálogo) e a mutação real sempre relê o estado antes de escrever.
+const STATUS_FILTERED_LEVELS = new Set<EntityLevel>(["adset", "ad"]);
+
 async function fetchEntities(
   ads: AdsPlatformPort,
   ref: { adAccountId: string; accessToken: string },
@@ -1150,7 +1651,8 @@ async function fetchEntities(
   let entitiesPartial = false;
   for (const level of SEGMENT_LEVELS) {
     try {
-      entities.push(...(await ads.listEntities(ref, level)));
+      const opts = STATUS_FILTERED_LEVELS.has(level) ? { statusFilter: "active" as const } : undefined;
+      entities.push(...(await ads.listEntities(ref, level, opts)));
     } catch (error) {
       if (error instanceof AdsPlatformError && error.kind === "invalid_credential") throw error;
       entitiesPartial = true;
@@ -1207,6 +1709,11 @@ function toRecommendationRow(
     // risco atrelado ao KIND: só platform_action (com ação real) carrega risco; direção/
     // insight (sem CTA de aplicar) são sempre "low" — o rótulo não pode sugerir perigo.
     riskLevel: kind === "platform_action" && actionType ? riskForAction(actionType, params) : "low",
+    // taxonomia de saída (S0b/G4) — repassa verbatim (já validado pelo zod: null quando o
+    // LLM não conseguiu ancorar em dado real).
+    expectedImpact: rec.expectedImpact,
+    whatToMonitor: rec.whatToMonitor,
+    findingRefs: rec.findingRefs,
   };
 }
 
@@ -1224,9 +1731,9 @@ function appliedSummary(applied: number, attempted: number, dryRun: boolean): st
   if (attempted === 0) return null;
   const failed = attempted - applied;
   const head = dryRun
-    ? `🧪 Simulei ${applied} ação(ões) (dry-run) — libere a escrita pra aplicar de verdade.`
-    : `✅ Apliquei ${applied} ação(ões) automaticamente.`;
-  return failed > 0 ? `${head} ${failed} não deu(ram) certo agora — veja no site.` : head;
+    ? `Simulei ${plural(applied, "ação", "ações")} (dry-run) — libere a escrita pra aplicar de verdade.`
+    : `Apliquei ${plural(applied, "ação", "ações")} automaticamente.`;
+  return failed > 0 ? `${head} ${plural(failed, "ação não deu certo", "ações não deram certo")} agora — veja no site.` : head;
 }
 
 /**
@@ -1294,6 +1801,57 @@ async function refreshStatusByEntity(
     }
   }
   return corrected;
+}
+
+
+/**
+ * Resolve o teto de escala por audiência (Fase 4) — REATIVO: só chama `deliveryEstimate`
+ * pros adsets que JÁ têm proposta de escalar SOBREVIVENDO aos guards anteriores neste run
+ * (nunca varre a conta à toa). Escopo restrito a `targetEntity.level === "adset"` (campanha
+ * CBO pode ter N adsets com públicos distintos — ambíguo demais pra 1 estimativa só).
+ * Melhor esforço: falha por entidade → fica de fora do mapa (guard passa direto, honesto).
+ */
+async function resolveAudienceHeadroomByEntity(
+  ioDeps: { repo: AnalysisRepo; ads: AdsPlatformPort; vault: WorkerDeps["ports"]["vault"]; logger: WorkerDeps["logger"] },
+  state: AccountAnalysisStateType,
+  output: AnalysisOutput,
+  cfg: ResolvedAnalysisConfig,
+): Promise<Map<string, AudienceHeadroom>> {
+  const headroomByEntity = new Map<string, AudienceHeadroom>();
+  const targetIds = new Set(
+    output.recommendations
+      .filter((r) => SCALE_ACTIONS.has(r.actionType) && r.targetEntity?.level === "adset")
+      .map((r) => r.targetEntity!.externalId),
+  );
+  if (targetIds.size === 0 || !state.brief) return headroomByEntity;
+
+  const account = await ioDeps.repo.loadAccount(state.orgId, state.adAccountId);
+  if (!account) return headroomByEntity;
+  const accessToken = ioDeps.vault.decrypt(account.tokenCripto);
+  const ref = { adAccountId: account.metaAdAccountId, accessToken };
+  const adsetById = new Map(state.brief.segments.adsets.map((e) => [e.id, e]));
+
+  await mapWithConcurrency([...targetIds], cfg.mapConcurrency, async (entityId) => {
+    const entity = adsetById.get(entityId);
+    if (!entity) return;
+    try {
+      const estimate = await ioDeps.ads.getDeliveryEstimateForAdSet(ref, entityId);
+      if (!estimate.ready) return;
+      const monthlyReach =
+        estimate.monthlyReachMin !== undefined && estimate.monthlyReachMax !== undefined
+          ? (estimate.monthlyReachMin + estimate.monthlyReachMax) / 2
+          : (estimate.monthlyReachMax ?? estimate.monthlyReachMin ?? estimate.dailyActiveUsers);
+      if (monthlyReach === undefined) return;
+      headroomByEntity.set(entityId, {
+        monthlyReach,
+        currentMonthlyImpressions: (entity.metrics.impressions / cfg.windowDays) * 30,
+        frequencyCap: resolveFrequencyCap(entity.audience?.stage, cfg.quality),
+      });
+    } catch (err) {
+      ioDeps.logger.warn({ runId: state.runId, entityId, err: String(err) }, "review_analysis:delivery_estimate degradou (guard passa direto)");
+    }
+  });
+  return headroomByEntity;
 }
 
 /** Params da ação de budget (direção + magnitude), quando for o caso. `pct` sempre ≥0. */

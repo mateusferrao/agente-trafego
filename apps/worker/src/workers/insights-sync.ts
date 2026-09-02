@@ -6,14 +6,56 @@ import { Worker } from "bullmq";
 import type { Redis } from "ioredis";
 import { and, eq } from "drizzle-orm";
 import { adAccounts, agents, loadOrgTimezone, platformConnections } from "@trafego/db";
-import { addDays, evaluateDormancy, reactivationSignal, todayInTz } from "@trafego/core";
-import { INSIGHTS_SYNC_JOB, SYNC_QUEUE, type InsightsSyncPayload, type NotifyPolicy } from "@trafego/shared";
+import {
+  addDays,
+  detectAccountHealthTriggers,
+  describeAccountHealthAlert,
+  evaluateDormancy,
+  reactivationSignal,
+  todayInTz,
+  type AccountHealthTriggerEvent,
+  type PreviousAccountHealthSnapshot,
+} from "@trafego/core";
+import {
+  DEFAULT_NOTIFY_POLICY,
+  INSIGHTS_SYNC_JOB,
+  SYNC_QUEUE,
+  type InsightsSyncPayload,
+  type MetaAccountHealthStatus,
+  type NotifyPolicy,
+} from "@trafego/shared";
+import type { AdAccountRef } from "@trafego/shared/ports";
 import type { WorkerDeps } from "../composition.js";
 import { markConnectionTokenInvalid } from "../lib/mark-token-invalid.js";
 import { createRunDispatcher } from "../modules/dispatch/run-dispatcher.js";
 import { runAlertGate } from "../modules/alerts/gate.js";
 import { makeAccountCron } from "../schedulers/account-cron.js";
 import { createDrizzleInsightsSnapshotsRepo } from "../modules/insights/repo.js";
+import { createNotifyRepo } from "../modules/notify/repo.js";
+import { createSendToConversation } from "../modules/notify/send-to-contact.js";
+
+/** Envia o alerta imediato de saúde de conta (determinístico, sem LLM) pelo mesmo
+ *  roteamento de destino do pulso/análise — best-effort, nunca lança. */
+async function sendAccountHealthAlert(
+  deps: WorkerDeps,
+  orgId: string,
+  agentId: string,
+  event: AccountHealthTriggerEvent,
+  accountName: string,
+  currency: string,
+): Promise<void> {
+  try {
+    const repo = createNotifyRepo(deps.db);
+    const ref = await repo.loadTarget(orgId);
+    if (!ref) return;
+    const sendToConversation = createSendToConversation({ messaging: deps.ports.messaging, repo });
+    const text = describeAccountHealthAlert(event, accountName, currency);
+    await sendToConversation(ref, text, { split: false, meta: { accountHealthAlert: event.kind } });
+    deps.logger.info({ orgId, agentId, kind: event.kind }, "account-health:alerta enviado");
+  } catch (err) {
+    deps.logger.warn({ orgId, agentId, kind: event.kind, err }, "account-health:falha ao enviar alerta (ignorado)");
+  }
+}
 
 export async function runInsightsSync(deps: WorkerDeps, payload: InsightsSyncPayload): Promise<void> {
   const { db, ports, logger, insightsSync } = deps;
@@ -25,6 +67,7 @@ export async function runInsightsSync(deps: WorkerDeps, payload: InsightsSyncPay
       id: adAccounts.id,
       adAccountId: adAccounts.adAccountId,
       name: adAccounts.name,
+      currency: adAccounts.currency,
       status: adAccounts.status,
       tokenStatus: adAccounts.tokenStatus,
       lastActivityAt: adAccounts.lastActivityAt,
@@ -32,6 +75,10 @@ export async function runInsightsSync(deps: WorkerDeps, payload: InsightsSyncPay
       connectedAt: adAccounts.createdAt,
       accountToken: adAccounts.tokenCripto,
       connToken: platformConnections.tokenCripto,
+      // saúde de conta persistida no sync ANTERIOR — base de comparação (Fatia 3).
+      metaAccountStatus: adAccounts.metaAccountStatus,
+      metaAmountSpent: adAccounts.metaAmountSpent,
+      metaBalance: adAccounts.metaBalance,
     })
     .from(adAccounts)
     // join também reafirma a org na conexão (defense-in-depth na joia da coroa).
@@ -68,8 +115,27 @@ export async function runInsightsSync(deps: WorkerDeps, payload: InsightsSyncPay
   if (result.tokenInvalid) {
     // token não se resolve com retry — marca inválido na CONEXÃO dona (recolar 1x
     // recupera todas as contas dela); conta legada sem conexão cai na própria conta.
-    await markConnectionTokenInvalid(db, payload.orgId, account.id);
+    const { wasNewTransition } = await markConnectionTokenInvalid(db, payload.orgId, account.id);
     logger.warn({ accountId: account.id }, "sync:token inválido (190) — marcado p/ recolar");
+    // achado (Fatia 3, saúde de conta): sem acesso, nada mais funciona — alerta SEM
+    // toggle, sempre ligado, só na transição (nunca redispara em todo sync de 2h).
+    if (wasNewTransition) {
+      const [agent] = await db
+        .select({ id: agents.id })
+        .from(agents)
+        .where(and(eq(agents.adAccountId, account.id), eq(agents.orgId, payload.orgId), eq(agents.status, "active")))
+        .limit(1);
+      if (agent) {
+        await sendAccountHealthAlert(
+          deps,
+          payload.orgId,
+          agent.id,
+          { kind: "token_invalid" },
+          account.name ?? "sua conta",
+          account.currency ?? "BRL",
+        );
+      }
+    }
     return;
   }
 
@@ -87,6 +153,49 @@ export async function runInsightsSync(deps: WorkerDeps, payload: InsightsSyncPay
       .where(and(eq(agents.adAccountId, account.id), eq(agents.orgId, payload.orgId), eq(agents.status, "active")))
       .limit(1);
     if (!agent) return;
+
+    // Saúde da conta Meta (status/teto de gasto/saldo) — Fatia 2 (persistência) + 3
+    // (alerta imediato). Best-effort dentro do try já existente: falha aqui não
+    // invalida dormância/alerta normal (mesmo espírito de listCustomAudiences/breakdown).
+    try {
+      const ref: AdAccountRef = { adAccountId: account.adAccountId, accessToken };
+      const health = await ports.ads.getAccountHealth(ref);
+      const previousHealth: PreviousAccountHealthSnapshot = {
+        status: (account.metaAccountStatus as MetaAccountHealthStatus | null) ?? null,
+        amountSpentMajor: account.metaAmountSpent !== null ? Number(account.metaAmountSpent) : null,
+        balanceMajor: account.metaBalance !== null ? Number(account.metaBalance) : null,
+      };
+      await db
+        .update(adAccounts)
+        .set({
+          metaAccountStatus: health.status,
+          metaDisableReason: health.disableReason ?? null,
+          metaBalance: health.balanceMajor !== undefined ? String(health.balanceMajor) : null,
+          metaAmountSpent: health.amountSpentMajor !== undefined ? String(health.amountSpentMajor) : null,
+          metaSpendCap: health.spendCapMajor !== undefined ? String(health.spendCapMajor) : null,
+          metaPaymentMethodLabel: health.paymentMethodLabel ?? null,
+          metaFundingType: health.fundingType ?? null,
+          metaHealthCheckedAt: new Date(health.checkedAt),
+        })
+        .where(eq(adAccounts.id, account.id));
+
+      const healthPolicy =
+        (agent.notifyPolicy as NotifyPolicy | undefined)?.accountHealthAlert ??
+        DEFAULT_NOTIFY_POLICY.accountHealthAlert!;
+      const healthEvents = detectAccountHealthTriggers(previousHealth, health, healthPolicy);
+      for (const event of healthEvents) {
+        await sendAccountHealthAlert(
+          deps,
+          payload.orgId,
+          agent.id,
+          event,
+          account.name ?? "sua conta",
+          account.currency ?? "BRL",
+        );
+      }
+    } catch (err) {
+      logger.warn({ accountId: account.id, err }, "account-health:checagem falhou (ignorado)");
+    }
 
     const dispatcher = createRunDispatcher({
       db,

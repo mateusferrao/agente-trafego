@@ -1,5 +1,7 @@
-import type { AccountBrief, ConversionBasis, DecisionEligibility, EntitySummary, FunnelSummary, InsightMetrics, TrackingHealth } from "@trafego/shared";
+import type { AccountBrief, ConversionBasis, DecisionEligibility, EntitySummary, FunnelSummary, HealthSignal, InsightMetrics, TrackingHealth } from "@trafego/shared";
 import type { AnalysisFinding, AnalysisOutput, RecommendationActionType } from "@trafego/shared";
+import { flagUngroundedNumbers } from "../chat-guards/index.js";
+import { DEFAULT_QUALITY_THRESHOLDS } from "../quality/index.js";
 
 /**
  * Guards determinísticos sobre a saída do LLM (§ princípio-guia: rede que não
@@ -66,6 +68,11 @@ export function collectBriefNumbers(brief: AccountBrief): Set<number> {
   for (const e of brief.segments.campaigns) addEntity(e);
   for (const e of brief.segments.adsets) addEntity(e);
   for (const e of brief.segments.ads) addEntity(e);
+  // breakdown demográfico/posicionamento (S7) — a NOTE `demographics_placement` MANDA o
+  // analista citar os números do spread entre segmentos; sem eles no gabarito, o drop
+  // comeria o próprio finding (mesmo motivo do waste/trackingHealth acima).
+  for (const s of brief.demographics?.segments ?? []) addMetrics(s.metrics);
+  for (const s of brief.placements?.segments ?? []) addMetrics(s.metrics);
   // trends fazem parte do brief mostrado ao LLM → seus números são citáveis (senão
   // um finding que cita corretamente um ponto da série seria descartado por engano).
   for (const t of brief.trends) addMetrics(t.metrics);
@@ -84,9 +91,23 @@ function isVerifiable(value: number, known: ReadonlySet<number>): boolean {
   return Math.abs(value) >= 1 && known.has(Math.round(value));
 }
 
-/** Finding sustentado? tem metricRefs e (nenhum número OU ≥1 número que confere). */
+/**
+ * Finding sustentado? tem metricRefs e (nenhum número OU ≥1 número que confere).
+ * EXCEÇÃO (G4): `caveat=true` carve-out do requisito de metricRefs — achado QUALITATIVO/
+ * compliance sem número que o sustente (ex: risco de linguagem regulada). NUNCA afrouxa a
+ * verificação de número quando `metricRefs` está preenchido (com caveat ou sem) — E o carve-out
+ * em si não é um free-pass pra "esconder" um número inventado em PROSA (title/detail): reusa o
+ * scanner de dinheiro/% do chat (`flagUngroundedNumbers`, packages/core/src/chat-guards) contra
+ * o mesmo gabarito, mesma classe de menor falso-positivo já validada nesse guard.
+ */
 function findingIssue(finding: AnalysisFinding, known: ReadonlySet<number>): FindingIssue | null {
   if (finding.metricRefs.length === 0) {
+    if (finding.caveat) {
+      const ungrounded = flagUngroundedNumbers(`${finding.title} ${finding.detail}`, known);
+      if (ungrounded.length === 0) return null;
+      const kind = ungrounded[0]!.kind === "money" ? "valor" : "percentual";
+      return { findingId: finding.id, reason: "unverifiable_number", detail: `caveat cita ${kind} que não bate com o brief` };
+    }
     return { findingId: finding.id, reason: "no_metric_ref", detail: "sem métrica de suporte" };
   }
   const numeric = finding.metricRefs.filter((r): r is { label: string; value: number } => typeof r.value === "number");
@@ -113,15 +134,17 @@ export function dropUnsupportedFindings(output: AnalysisOutput, brief: AccountBr
 // phase"): NÃO manda escalar/reativar sem base estatística. Ações defensivas
 // (pausar/reduzir) nunca são barradas — reduzir risco é sempre seguro.
 
-/** Ações que ADICIONAM investimento/exposição — só com base estatística. */
-const SCALE_ACTIONS: ReadonlySet<RecommendationActionType> = new Set(["increase_budget", "resume"]);
+/** Ações que ADICIONAM investimento/exposição — só com base estatística. Exportado: o
+ *  worker reusa o MESMO conjunto (ex: `resolveAudienceHeadroomByEntity`) em vez de
+ *  reimplementar — uma 3ª ação de escala futura não pode ficar esquecida em 2 lugares. */
+export const SCALE_ACTIONS: ReadonlySet<RecommendationActionType> = new Set(["increase_budget", "resume"]);
 
 /** Constrói o mapa `externalId → eligibility` a partir dos segmentos do brief. */
 export function eligibilityByEntity(brief: AccountBrief): Map<string, DecisionEligibility> {
   const map = new Map<string, DecisionEligibility>();
-  for (const level of [brief.segments.campaigns, brief.segments.adsets, brief.segments.ads]) {
-    for (const e of level) if (e.eligibility) map.set(e.id, e.eligibility);
-  }
+  forEachEntity(brief, (e) => {
+    if (e.eligibility) map.set(e.id, e.eligibility);
+  });
   return map;
 }
 
@@ -140,10 +163,11 @@ export function guardScaleWithoutSignificance(
     const elig = id ? eligibility.get(id) : undefined;
     if (!elig || (elig.hasSignificance && !elig.inLearning)) return r;
     const why = elig.inLearning
-      ? "em aprendizado (editada há pouco)"
+      ? "em aprendizado (sem dado comparável no período anterior — nova ou retomando)"
       : `sem base estatística ainda (${elig.conversions} conversões)`;
     return {
       ...r,
+      title: demotedTitle(r.title),
       actionType: "investigate" as RecommendationActionType,
       rationale: `${r.rationale}\n[guard] escalar → investigar: ${why}.`,
       budgetChangePct: null,
@@ -179,18 +203,27 @@ export function guardKillWithoutMaturity(
     if (!elig?.inLearning) return r;
     return {
       ...r,
+      title: demotedTitle(r.title),
       actionType: "investigate" as RecommendationActionType,
-      rationale: `${r.rationale}\n[guard] pausar → investigar: em aprendizado (editada há pouco) — dar tempo antes de matar (não descartar o aprendizado).`,
+      rationale: `${r.rationale}\n[guard] pausar → investigar: em aprendizado (sem dado comparável no período anterior — nova ou retomando) — dar tempo antes de matar (não descartar o aprendizado).`,
+      budgetChangePct: null,
     };
   });
   return { ...output, recommendations };
 }
 
-// ─── Guard de tracking furado (Fatia Bloco 2) ─────────────────────────────
+// ─── Guard de tracking furado (Fatia Bloco 2 → pivô saúde) ────────────────
 // Sobre o sinal de conta `detectTrackingHealth`: quando a medição de venda parece
-// incompleta, anexa um CAVEAT (não rebaixa) às recomendações que MATARIAM uma
-// entidade por CPA de venda — mas só nas de base `target` (a venda É o objetivo
-// medido ali); `proxy` já não é julgada por venda, então não recebe caveat.
+// incompleta, REBAIXA (não só comenta) as recomendações que MATARIAM/CORTARIAM
+// uma entidade por CPA de venda — mas só nas de base `target` (a venda É o
+// objetivo medido ali); `proxy` já não é julgada por venda, então não é tocada.
+// Decisão revista (ROADMAP `[ALTO]` "guard de tracking mais forte no caminho
+// autônomo"): antes só anexava caveat (o dono decidia); numa conta que fecha
+// fora da Meta (típico saúde) e opera em autonomia alta, um corte por CPA de
+// venda catastrófico-mas-não-confiável passava sem barreira nenhuma — diferente
+// dos guards de significância/learning acima, que sempre rebaixam. Vale sempre
+// (não só no caminho autônomo — eco+confirma também se beneficia de ver
+// `investigate` em vez de uma ação concreta já formada).
 
 /** Ações que reduzem/matam investimento (onde o CPA de venda inflado engana). */
 const KILL_ACTIONS: ReadonlySet<RecommendationActionType> = new Set(["pause", "decrease_budget"]);
@@ -198,16 +231,17 @@ const KILL_ACTIONS: ReadonlySet<RecommendationActionType> = new Set(["pause", "d
 /** Mapa `externalId → conversionBasis` a partir dos segmentos do brief. */
 export function basisByEntity(brief: AccountBrief): Map<string, ConversionBasis> {
   const map = new Map<string, ConversionBasis>();
-  for (const level of [brief.segments.campaigns, brief.segments.adsets, brief.segments.ads]) {
-    for (const e of level) if (e.conversionBasis) map.set(e.id, e.conversionBasis);
-  }
+  forEachEntity(brief, (e) => {
+    if (e.conversionBasis) map.set(e.id, e.conversionBasis);
+  });
   return map;
 }
 
 /**
- * Anexa caveat de medição às pausas/cortes por CPA de venda em entidades base
- * `target`, quando o sinal de conta é suspeito. Puro: só acrescenta ao `rationale`
- * (o dono decide); não remove nem rebaixa. Sem sinal → passa direto.
+ * Rebaixa pausar/cortar → `investigate` nas entidades base `target` quando o
+ * sinal de conta é suspeito, anexando a razão ao `rationale` (mesmo padrão dos
+ * guards de significância/learning acima — nunca remove, o dono ainda vê o
+ * sinal). Sem sinal suspeito → passa direto.
  */
 export function guardTrackingCaveat(
   output: AnalysisOutput,
@@ -221,10 +255,208 @@ export function guardTrackingCaveat(
     if (!id || basis.get(id) !== "target") return r;
     return {
       ...r,
-      rationale: `${r.rationale}\n[tracking] a medição de vendas parece incompleta (${tracking.funnelStarted} conversas × ${tracking.trackedConversions} vendas rastreadas) — confirme pixel/CAPI antes de pausar por CPA de venda.`,
+      title: demotedTitle(r.title),
+      actionType: "investigate" as RecommendationActionType,
+      rationale: `${r.rationale}\n[guard] pausar/cortar → investigar: a medição de vendas parece incompleta (${tracking.funnelStarted} conversas × ${tracking.trackedConversions} vendas rastreadas) — confirme pixel/CAPI antes de agir por CPA de venda.`,
+      budgetChangePct: null,
     };
   });
   return { ...output, recommendations };
+}
+
+// ─── Guard de CPA marginal (pivô saúde, squad traffic-masters) ────────────
+// "CPA médio mente. CPA marginal conta a verdade": o CPA médio/atual de uma entidade
+// pode ainda bater a meta enquanto o incremento MAIS RECENTE já está mais caro — CPA
+// médio dilui a piora recente. Aproximação disponível hoje: CPA da janela atual vs CPA
+// da janela-baseline (a mesma comparação que já alimenta `deltaVsBaseline` no brief) —
+// não ancorada ao instante exato da última mudança REAL de orçamento (isso exigiria
+// cruzar `agent_tool_calls`/`insights_snapshots` por entidade; fast-follow quando essa
+// precisão se justificar). Mesmo assim já pega o caso central: CPA piorando MESMO pra
+// quem ainda bate a meta (`beatsTarget`), que os demais guards não cobrem (eles olham
+// significância/learning, não tendência).
+
+export interface MarginalCpaThresholds {
+  /** alta (%) do CPA vs baseline a partir da qual rebaixa escalar → investigar. */
+  readonly worsenPct: number;
+}
+
+// Deriva de DEFAULT_QUALITY_THRESHOLDS (fonte única) — produção nunca usa esta constante
+// (sempre passa cfg.quality.marginalCpaWorsenPct); só testes a usam. Sem a derivação, os
+// dois "20" podiam divergir silenciosamente numa mudança futura do default de qualidade.
+export const DEFAULT_MARGINAL_CPA_THRESHOLDS: MarginalCpaThresholds = { worsenPct: DEFAULT_QUALITY_THRESHOLDS.marginalCpaWorsenPct };
+
+/** `%` de alta do CPA (atual vs baseline; positivo = piorou) por `externalId`. `undefined`
+ *  quando falta CPA atual ou delta (não penaliza por falta de dado — mesmo espírito de
+ *  `eligibilityByEntity`/`basisByEntity`). */
+export function marginalCpaRiseByEntity(brief: AccountBrief): Map<string, number | undefined> {
+  const map = new Map<string, number | undefined>();
+  forEachEntity(brief, (e) => {
+    const cpa = e.metrics.cpa;
+    const delta = e.deltaVsBaseline.cpa;
+    if (typeof cpa !== "number" || typeof delta !== "number") {
+      map.set(e.id, undefined);
+      return;
+    }
+    const baseline = cpa - delta;
+    map.set(e.id, baseline > 0 ? ((cpa - baseline) / baseline) * 100 : undefined);
+  });
+  return map;
+}
+
+/**
+ * Rebaixa recomendações de ESCALAR quando o CPA marginal da entidade-alvo piorou acima
+ * do limiar — mesmo que o CPA médio/atual ainda pareça bom o suficiente pra bater a meta
+ * (é exatamente esse caso que o guard de significância não pega). Puro: não remove, só
+ * troca a ordem de ação + anota o porquê. Sem sinal (undefined) → passa direto.
+ */
+export function guardScaleWithWorseningMarginalCpa(
+  output: AnalysisOutput,
+  marginalRisePct: ReadonlyMap<string, number | undefined>,
+  t: MarginalCpaThresholds,
+): AnalysisOutput {
+  // config malformada (worsenPct não-finito/≤0) → guard inerte: nunca rebaixa (nunca
+  // confia cegamente num limiar quebrado, já que este guard barra escrita autônoma de
+  // budget). Sem esta guarda, `rise < NaN` seria sempre false → rebaixaria QUALQUER escala.
+  if (!Number.isFinite(t.worsenPct) || t.worsenPct <= 0) return output;
+  const recommendations = output.recommendations.map((r) => {
+    if (!SCALE_ACTIONS.has(r.actionType)) return r;
+    const id = r.targetEntity?.externalId;
+    const rise = id ? marginalRisePct.get(id) : undefined;
+    if (rise === undefined || rise < t.worsenPct) return r;
+    return {
+      ...r,
+      title: demotedTitle(r.title),
+      actionType: "investigate" as RecommendationActionType,
+      rationale: `${r.rationale}\n[guard] escalar → investigar: CPA marginal piorando (+${rise.toFixed(0)}% vs período anterior) — o CPA médio pode parecer bom, mas o incremento mais recente já está mais caro.`,
+      budgetChangePct: null,
+    };
+  });
+  return { ...output, recommendations };
+}
+
+// ─── Guard de teto de escala por audiência (Fase 4, pivô saúde) ───────────
+// "Antes de recomendar aumentar orçamento, checa se a AUDIÊNCIA aguenta mais gasto sem
+// saturar." Reativo e com IO (chamada à Meta) FORA deste guard — o worker resolve
+// `deliveryEstimate` só p/ as entidades que JÁ têm proposta de escalar NESTE run (nunca
+// varre a conta à toa) e monta o mapa abaixo; o guard em si é PURO, só decide.
+
+/** Insumo já resolvido por entidade (IO já feito pelo worker). */
+export interface AudienceHeadroom {
+  /** alcance mensal (MAU) — ausente = a plataforma ainda não estimou (público novo/lookalike);
+   *  guard passa direto (honesto: sem dado, não assume saturado). */
+  readonly monthlyReach?: number;
+  /** impressões mensais no ritmo ATUAL (extrapolado da janela de análise). */
+  readonly currentMonthlyImpressions: number;
+  /** teto de frequência saudável resolvido (mesmo cálculo por-estágio de `enrichEntitiesQuality`). */
+  readonly frequencyCap: number;
+}
+
+export interface AudienceCeilingThresholds {
+  /** fração do teto (MAU × frequencyCap) considerada "perto de saturar" — a partir daqui rebaixa. */
+  readonly nearSaturationRatio: number;
+}
+
+export const DEFAULT_AUDIENCE_CEILING_THRESHOLDS: AudienceCeilingThresholds = { nearSaturationRatio: 0.8 };
+
+/**
+ * Rebaixa ESCALAR (aumentar orçamento / reativar) → `investigate` quando o público
+ * (MAU × teto de frequência saudável) já está perto do limite de impressões sustentáveis —
+ * mais orçamento tenderia a aumentar FREQUÊNCIA (mesma gente vendo mais vezes), não
+ * alcançar gente nova. Puro: não remove, só troca a ordem de ação + anota o porquê.
+ */
+export function guardAudienceScaleCeiling(
+  output: AnalysisOutput,
+  headroomByEntity: ReadonlyMap<string, AudienceHeadroom>,
+  t: AudienceCeilingThresholds,
+): AnalysisOutput {
+  const recommendations = output.recommendations.map((r) => {
+    if (!SCALE_ACTIONS.has(r.actionType)) return r;
+    const id = r.targetEntity?.externalId;
+    const headroom = id ? headroomByEntity.get(id) : undefined;
+    if (!headroom || headroom.monthlyReach === undefined) return r;
+    const cap = headroom.monthlyReach * headroom.frequencyCap;
+    if (cap <= 0) return r;
+    const ratio = headroom.currentMonthlyImpressions / cap;
+    if (ratio < t.nearSaturationRatio) return r;
+    return {
+      ...r,
+      title: demotedTitle(r.title),
+      actionType: "investigate" as RecommendationActionType,
+      rationale: `${r.rationale}\n[guard] escalar → investigar: o público (~${Math.round(headroom.monthlyReach)} pessoas/mês) já está perto do teto de frequência saudável — mais orçamento tende a aumentar FREQUÊNCIA (mesma gente vendo mais vezes), não alcançar gente nova.`,
+      budgetChangePct: null,
+    };
+  });
+  return { ...output, recommendations };
+}
+
+// ─── Guard de fadiga vs escala (achado do A/B real grok-4.5 × gemini-3.7-flash) ──
+// A/B com dados reais de produção (mesmo brief, mesmo prompt — incluindo a NOTE que já
+// explica `weak_hook_retention`) mostrou o analista propor `increase_budget` numa entidade
+// com retenção de gancho quase zero: a NOTE sozinha não foi rede suficiente pra essa classe
+// de erro. `creative_fatigue`/`weak_hook_retention` são sinais DUROS (métrica, não score de
+// LLM) — revisa a decisão anterior de deixar `weak_hook_retention` só em NOTE
+// (packages/core/src/quality/index.ts) especificamente pro gate de escala: o guard
+// COMPLEMENTA a NOTE (que continua explicando o "porquê" pro raciocínio), não a substitui.
+// `weak_creative` (score de visão, LLM soft) fica de fora — nunca vira critério de guard.
+
+const FATIGUE_SIGNALS: ReadonlySet<HealthSignal> = new Set(["creative_fatigue", "weak_hook_retention"]);
+
+/** Mapa `externalId → healthSignals` a partir dos segmentos do brief. */
+export function healthSignalsByEntity(brief: AccountBrief): Map<string, readonly HealthSignal[]> {
+  const map = new Map<string, readonly HealthSignal[]>();
+  forEachEntity(brief, (e) => {
+    if (e.healthSignals) map.set(e.id, e.healthSignals);
+  });
+  return map;
+}
+
+/**
+ * Rebaixa recomendações de ESCALAR (aumentar budget / reativar) → `investigate` quando a
+ * entidade-alvo tem sinal duro de fadiga de criativo (`creative_fatigue`/`weak_hook_retention`)
+ * — escalar sem renovar o gancho tende a piorar CPA/CPM, não a crescer alcance de verdade.
+ * Puro: não remove (o dono ainda vê o sinal), só troca a ordem de ação + anota o porquê.
+ */
+export function guardScaleWithoutFreshCreative(
+  output: AnalysisOutput,
+  signalsByEntity: ReadonlyMap<string, readonly HealthSignal[]>,
+): AnalysisOutput {
+  const recommendations = output.recommendations.map((r) => {
+    if (!SCALE_ACTIONS.has(r.actionType)) return r;
+    const id = r.targetEntity?.externalId;
+    const signals = id ? signalsByEntity.get(id) : undefined;
+    const hit = signals?.find((s) => FATIGUE_SIGNALS.has(s));
+    if (!hit) return r;
+    return {
+      ...r,
+      title: demotedTitle(r.title),
+      actionType: "investigate" as RecommendationActionType,
+      rationale: `${r.rationale}\n[guard] escalar → investigar: sinal de fadiga de criativo (${hit}) — renove o gancho/criativo antes de aumentar orçamento, senão o incremento tende a piorar CPA/CPM em vez de alcançar gente nova.`,
+      budgetChangePct: null,
+    };
+  });
+  return { ...output, recommendations };
+}
+
+// ─── Helpers compartilhados pelos guards acima ────────────────────────────
+
+/** Itera as 3 camadas do brief (campanha/adset/anúncio) — evita repetir o `for`
+ *  triplo em cada `xByEntity` (CLAUDE.md §13 "duplicou 3x → extrai"). */
+function forEachEntity(brief: AccountBrief, fn: (e: EntitySummary) => void): void {
+  for (const level of [brief.segments.campaigns, brief.segments.adsets, brief.segments.ads]) {
+    for (const e of level) fn(e);
+  }
+}
+
+const INVESTIGATE_TITLE_PREFIX = "Investigar: ";
+
+/** Prefixa o título quando um guard rebaixa a ação pra `investigate` — sem isso o card
+ *  mostraria um headline ("Escalar campanha X") desalinhado da ação real (CLAUDE.md
+ *  §13 UX: "erro/decisão = o que aconteceu + o que fazer"). Idempotente por construção:
+ *  cada guard só entra nesse ramo quando `actionType` AINDA está no seu Set de ações-alvo
+ *  (`SCALE_ACTIONS`/`KILL_ACTIONS`/`KILL_IN_LEARNING_ACTIONS`) — uma vez rebaixado por um
+ *  guard anterior, os seguintes já retornam cedo e nunca reprocessam o título. */
+function demotedTitle(title: string): string {
+  return title.startsWith(INVESTIGATE_TITLE_PREFIX) ? title : `${INVESTIGATE_TITLE_PREFIX}${title}`;
 }
 
 function addNumber(set: Set<number>, value: number): void {

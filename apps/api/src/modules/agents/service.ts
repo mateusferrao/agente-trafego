@@ -29,7 +29,7 @@ import {
   type AgentConfigPatch,
   type NotifyPolicyPatch,
 } from "@trafego/core";
-import { applyAgentConfigChange, reseedArchetypeChange } from "@trafego/agent-config";
+import { applyAgentConfigChange, applyToolBindingsChange, loadToolBindingsState, reseedArchetypeChange } from "@trafego/agent-config";
 import {
   ACTION_UNDO_QUEUE,
   ACTION_UNDO_JOB,
@@ -41,7 +41,7 @@ import {
   UNDO_TOOL_KEY,
 } from "@trafego/shared";
 import type { Action, AgentId, AutonomyPolicy, OrgId, StoredInsightMetrics } from "@trafego/shared/types";
-import type { ApprovalPort, SchedulerPort } from "@trafego/shared/ports";
+import type { Approval, ApprovalPort, SchedulerPort } from "@trafego/shared/ports";
 import { ANALYSIS_WINDOW_DEFAULT_DAYS } from "@trafego/shared";
 import { badRequest, notFound } from "../../middleware/error-handler.js";
 import {
@@ -91,16 +91,41 @@ export function createAgentsService(deps: AgentsDeps) {
   }
 
   /**
+   * On/off RESOLVIDO das 6 tools (A3) + persistência do patch — delegam pro `@trafego/agent-config`
+   * (fonte ÚNICA reusada pelo chat, que precisa da MESMA lógica pro auto-config por WhatsApp;
+   * antes esta era uma cópia local só da API). `allowedActions` vem do guardrail já carregado
+   * (evita re-query).
+   */
+  async function loadToolBindings(
+    orgId: OrgId,
+    agentId: string,
+    allowedActions: readonly string[],
+  ): Promise<AgentSummary["toolBindings"]> {
+    return (await loadToolBindingsState(deps.db, orgId, agentId, allowedActions)) as AgentSummary["toolBindings"];
+  }
+
+  async function persistToolBindings(
+    orgId: OrgId,
+    agentId: string,
+    patch: Partial<Record<string, boolean>>,
+  ): Promise<void> {
+    await applyToolBindingsChange(deps.db, { orgId, agentId, patch });
+  }
+
+  /**
    * Garante 1 agente p/ a conta (org-scoped). Não existe → cria com os defaults
    * do arquétipo default (fonte única em @trafego/core). Idempotente.
    */
   async function getOrCreateForAccount(orgId: OrgId, accountId: string): Promise<AgentSummary> {
     const [account] = await deps.db
-      .select({ id: adAccounts.id, currency: adAccounts.currency })
+      .select({ id: adAccounts.id, currency: adAccounts.currency, fundingType: adAccounts.metaFundingType })
       .from(adAccounts)
       .where(and(eq(adAccounts.id, accountId), eq(adAccounts.orgId, orgId)))
       .limit(1);
     if (!account) throw notFound("Conta não encontrada.");
+    // coluna text livre → estreita p/ o enum do contrato (valor desconhecido/legado → null, honesto).
+    const fundingType: AgentSummary["fundingType"] =
+      account.fundingType === "stored_balance" || account.fundingType === "other" ? account.fundingType : null;
 
     const [existing] = await deps.db
       .select({
@@ -123,6 +148,7 @@ export function createAgentsService(deps: AgentsDeps) {
       .where(and(eq(agents.adAccountId, accountId), eq(agents.orgId, orgId)))
       .limit(1);
     if (existing) {
+      const guardrails = await loadGuardrails(orgId, existing.id);
       return {
         agentId: existing.id,
         archetype: existing.archetype,
@@ -139,7 +165,8 @@ export function createAgentsService(deps: AgentsDeps) {
         analysisWindowDays: windowFromModelConfig(existing.modelConfig),
         paused: existing.status === "paused",
         autonomyPolicy: existing.autonomyPolicy,
-        guardrails: await loadGuardrails(orgId, existing.id),
+        guardrails,
+        toolBindings: await loadToolBindings(orgId, existing.id, guardrails.allowedActions),
         modelConfig: projectModelConfig(existing.modelConfig),
         qualityDefaults: deps.qualityDefaults,
         notifyPolicy: existing.notifyPolicy,
@@ -147,6 +174,7 @@ export function createAgentsService(deps: AgentsDeps) {
         posture: existing.posture ?? DEFAULT_POSTURE,
         postureIsCustom: experienceLevelIsCustom(existing.posture ?? DEFAULT_POSTURE),
         currency: account.currency ?? null,
+        fundingType,
       };
     }
 
@@ -189,12 +217,15 @@ export function createAgentsService(deps: AgentsDeps) {
       paused: false,
       autonomyPolicy: defaults.autonomyPolicy,
       guardrails: GUARDRAIL_DEFAULTS as AgentSummary["guardrails"],
+      // agente recém-criado: sem bindings → tudo cai no fallback (allowedActions default + criação on).
+      toolBindings: await loadToolBindings(orgId, row.id, GUARDRAIL_DEFAULTS.allowedActions),
       modelConfig: {},
       qualityDefaults: deps.qualityDefaults,
       notifyPolicy: defaults.defaultNotifyPolicy,
       posture: defaults.defaultPosture,
       postureIsCustom: false,
       currency: account.currency ?? null,
+      fundingType,
     };
   }
 
@@ -219,6 +250,10 @@ export function createAgentsService(deps: AgentsDeps) {
     // erro tipado do core → exceção só aqui, na casca (mesma mensagem de antes).
     if (!result.ok) throw badRequest(result.error);
 
+    // bindings (A3) vivem em tabela à parte (fora do applyAgentConfigChange) — persiste o patch
+    // e re-resolve o estado cheio p/ o retorno refletir a edição na mesma resposta.
+    if (input.toolBindings) await persistToolBindings(orgId, summary.agentId, input.toolBindings);
+
     // projeta o AgentSummary a partir do estado resolvido — idêntico ao de antes.
     const { next } = result;
     return {
@@ -233,6 +268,7 @@ export function createAgentsService(deps: AgentsDeps) {
       analysisWindowDays: next.analysisWindowDays,
       autonomyPolicy: next.autonomyPolicy,
       guardrails: next.guardrails as AgentSummary["guardrails"],
+      toolBindings: await loadToolBindings(orgId, summary.agentId, next.guardrails.allowedActions),
       modelConfig: projectModelConfig(next.modelConfig),
       qualityDefaults: deps.qualityDefaults,
       notifyPolicy: next.notifyPolicy,
@@ -531,7 +567,9 @@ export function createAgentsService(deps: AgentsDeps) {
     const droppedActions = snapshot?.droppedActions ?? [];
     // Sugeridas = pendentes de OK (fonte da verdade: `approvals`), TODAS do agente
     // (cross-run), não só as do último run. `barradas` (dropped) seguem do snapshot.
-    const pendingApprovals = await deps.approvals.listPendingByAgent(summary.agentId as AgentId);
+    const pendingApprovals = (
+      await deps.approvals.listPendingByAgent(summary.agentId as AgentId)
+    ).filter((a): a is Approval => a.kind === "action");
     // fallback p/ tool_calls antigos (gravados antes do target carregar `name`) — os
     // novos já vêm com o nome embutido (decide_actions enriquece via `state.entities`,
     // cobre inclusive entidade pausada que nunca passa pelo mapa/LLM).
@@ -592,8 +630,14 @@ export function createAgentsService(deps: AgentsDeps) {
     accountId: string,
     toolCallId: string,
     force = false,
+    mode?: "pause" | "archive",
   ): Promise<void> {
     const summary = await getOrCreateForAccount(orgId, accountId);
+    // dono via run→agente (análise) OU agentId direto (criação/escrita por chat, runId null) —
+    // `coalesce` p/ criações via chat (runId null) também listarem/reverterem (Slice 11.4).
+    // Escopo de tenant: `summary.agentId` vem de getOrCreateForAccount(orgId, accountId) — UUID
+    // globalmente único e org-bound; casar por ele já amarra à org (dispensa predicado de org_id
+    // explícito, que não caberia no ramo runId-null). O worker re-escopa por orgId antes de mutar.
     const [tc] = await deps.db
       .select({
         id: agentToolCalls.id,
@@ -602,8 +646,13 @@ export function createAgentsService(deps: AgentsDeps) {
         createdAt: agentToolCalls.createdAt,
       })
       .from(agentToolCalls)
-      .innerJoin(agentRuns, eq(agentToolCalls.runId, agentRuns.id))
-      .where(and(eq(agentToolCalls.id, toolCallId), eq(agentRuns.orgId, orgId), eq(agentRuns.agentId, summary.agentId)))
+      .leftJoin(agentRuns, eq(agentToolCalls.runId, agentRuns.id))
+      .where(
+        and(
+          eq(agentToolCalls.id, toolCallId),
+          eq(sql`coalesce(${agentToolCalls.agentId}, ${agentRuns.agentId})`, summary.agentId),
+        ),
+      )
       .limit(1);
     if (!tc) throw notFound("Ação não encontrada.");
     if (tc.toolKey === UNDO_TOOL_KEY || tc.toolKey === UNDO_BLOCKED_TOOL_KEY)
@@ -614,7 +663,7 @@ export function createAgentsService(deps: AgentsDeps) {
     await deps.scheduler.enqueue({
       queue: ACTION_UNDO_QUEUE,
       name: ACTION_UNDO_JOB,
-      payload: { orgId, adAccountId: accountId, toolCallId, force },
+      payload: { orgId, adAccountId: accountId, toolCallId, force, ...(mode ? { mode } : {}) },
     });
   }
 
@@ -722,6 +771,9 @@ function toNotifyPolicyPatch(n: NotifyPolicyInput): NotifyPolicyPatch {
       : {}),
     ...(n.runPush !== undefined ? { runPushEnabled: n.runPush.enabled } : {}),
     ...(n.reactivation !== undefined ? { reactivationEnabled: n.reactivation.enabled } : {}),
+    ...(n.proactiveDrafts !== undefined ? { proactiveDraftsEnabled: n.proactiveDrafts.enabled } : {}),
+    // site salva o objeto COMPLETO (checklist/teto/saldo) — vai como base do merge.
+    ...(n.accountHealthAlert !== undefined ? { accountHealthAlert: n.accountHealthAlert } : {}),
   };
 }
 
@@ -733,6 +785,9 @@ function cleanAutonomy(p: NonNullable<AgentConfigInput["autonomyPolicy"]>): Auto
   return {
     bySource: p.bySource,
     ...(p.autoConfigViaChat !== undefined ? { autoConfigViaChat: p.autoConfigViaChat } : {}),
+    ...(p.scaleAggressivePreference !== undefined ? { scaleAggressivePreference: p.scaleAggressivePreference } : {}),
+    // autonomia por-ação (B) — persiste o override por tool-key ({} limpa todos = tudo herda).
+    ...(p.byAction !== undefined ? { byAction: p.byAction } : {}),
   };
 }
 
@@ -742,5 +797,6 @@ function projectModelConfig(mc: Readonly<Record<string, unknown>> | null | undef
   const out: Record<string, unknown> = {};
   for (const k of ADVANCED_SCALAR_KEYS) if (src[k] !== undefined) out[k] = src[k];
   if (src.quality && typeof src.quality === "object") out.quality = src.quality;
+  if (src.creativeSource && typeof src.creativeSource === "object") out.creativeSource = src.creativeSource;
   return out as ModelConfigInput;
 }

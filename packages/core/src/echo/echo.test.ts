@@ -106,4 +106,24 @@ describe("buildRevertEcho", () => {
     expect(echo).toContain("o ajuste de budget");
     expect(echo).toContain("Confirma as 2");
   });
+
+  it("criação, modo pausar → pausa a campanha criada + consequência (paridade com o site)", () => {
+    const echo = buildRevertEcho([{ label: "Nova campanha", actionType: "create_campaign", mode: "pause" }]);
+    expect(echo).toContain("pausar a campanha criada");
+    expect(echo).toContain("*Nova campanha*");
+    expect(echo).toContain("mantém a campanha na conta");
+    expect(echo.toLowerCase()).toContain("confirma?");
+  });
+
+  it("criação, modo arquivar → arquiva a campanha criada + consequência", () => {
+    const echo = buildRevertEcho([{ label: "Escala 2", actionType: "duplicate_scale", mode: "archive" }]);
+    expect(echo).toContain("arquivar a campanha criada");
+    expect(echo).toContain("tira da lista ativa");
+    expect(echo).not.toContain("mantém a campanha na conta"); // só a consequência do modo escolhido
+  });
+
+  it("criação sem mode → default pausar (estado antigo compatível)", () => {
+    const echo = buildRevertEcho([{ label: "X", actionType: "create_campaign" }]);
+    expect(echo).toContain("pausar a campanha criada");
+  });
 });

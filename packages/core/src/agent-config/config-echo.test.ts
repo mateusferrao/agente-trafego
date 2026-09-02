@@ -47,6 +47,7 @@ function baseState(over: Partial<AgentConfigState> = {}): AgentConfigState {
     modelConfig: {},
     notifyPolicy: NOTIFY_POLICY,
     posture: POSTURE,
+    toolBindings: {},
     ...over,
   };
 }
@@ -156,6 +157,38 @@ describe("buildConfigChangeEcho", () => {
     expect(echo).toContain("alerta automático: desligado → ligado");
     expect(echo).toContain("sensibilidade do alerta: normal → alta");
     expect(echo).toContain("aviso após cada análise: ligado → desligado");
+  });
+
+  it("saúde da conta: desliga o aviso → eco em PT (default era ligado)", () => {
+    const echo = echoFor(baseState(), { notifyPolicy: { accountHealthEnabled: false } });
+    expect(echo).toContain("aviso de problema na conta Meta: ligado → desligado");
+  });
+
+  it("saúde da conta: define teto de gasto customizado → eco mostra o valor na moeda", () => {
+    const echo = echoFor(baseState(), { notifyPolicy: { accountHealthSpendThresholdMajor: 5000 } });
+    expect(echo).toContain("teto de gasto que avisa: teto da Meta → R$ 5000,00");
+  });
+
+  it("saúde da conta: teto customizado usa a moeda da CONTA, não BRL hardcoded (achado da revisão)", () => {
+    const echo = echoFor(baseState(), { notifyPolicy: { accountHealthSpendThresholdMajor: 5000 } }, "USD");
+    expect(echo).toContain("teto de gasto que avisa: teto da Meta → $ 5000,00");
+    expect(echo).not.toContain("R$ 5000,00");
+  });
+
+  it("saúde da conta: liga o aviso de SALDO baixo com valor → eco na moeda (bug 'muda o saldo base')", () => {
+    const echo = echoFor(baseState(), {
+      notifyPolicy: { accountHealthBalanceEnabled: true, accountHealthBalanceThresholdMajor: 100 },
+    });
+    expect(echo).toContain("aviso de saldo baixo: desligado → R$ 100,00");
+    // nunca confunde com o teto: a linha de teto não aparece nessa mudança.
+    expect(echo).not.toContain("teto de gasto que avisa");
+  });
+
+  it("saúde da conta: reduz o checklist p/ só 'desativada' → eco lista o que deixou de avisar", () => {
+    const echo = echoFor(baseState(), { notifyPolicy: { accountHealthStatusTriggers: ["disabled"] } });
+    expect(echo).toContain("estados que disparam aviso");
+    expect(echo).toContain("deixa de avisar em:");
+    expect(echo).toContain("Pagamento pendente");
   });
 });
 

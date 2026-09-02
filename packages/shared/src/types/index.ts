@@ -5,6 +5,7 @@ export type AgentId = string & { readonly __brand: "AgentId" };
 export type RunId = string & { readonly __brand: "RunId" };
 export type ContactId = string & { readonly __brand: "ContactId" };
 export type ApprovalId = string & { readonly __brand: "ApprovalId" };
+export type DraftId = string & { readonly __brand: "DraftId" };
 
 // ─── Result (core usa isto; casca usa exceções) ──────────────────────────
 export type Result<T, E = Error> =
@@ -17,6 +18,15 @@ export const err = <E>(error: E): Result<never, E> => ({ ok: false, error });
 // ─── Ads domain ──────────────────────────────────────────────────────────
 export type EntityLevel = "account" | "campaign" | "adset" | "ad";
 export type EntityStatus = "active" | "paused" | "deleted" | "archived";
+
+/**
+ * Estratégia de lance NEUTRA (S2) — mapeia o enum `bid_strategy` da Meta (vocabulário
+ * Meta fica só no adapter, `mapBidStrategy`). `lowest_cost` é o padrão esperado (sem
+ * cap); os outros 3 são formas de CAP/meta explícita, só recomendáveis com dado
+ * acumulado suficiente (ver `BID_STRATEGY_TEXT`, packages/core/src/analysis-knowledge).
+ */
+export const BID_STRATEGIES = ["lowest_cost", "bid_cap", "cost_cap", "min_roas"] as const;
+export type BidStrategy = (typeof BID_STRATEGIES)[number];
 
 export interface AdEntity {
   readonly id: string;
@@ -31,10 +41,26 @@ export interface AdEntity {
   readonly adsetId?: string;
   readonly dailyBudget?: number;
   readonly lifetimeBudget?: number;
+  /** Saldo restante do `lifetimeBudget` (P1.2) — a Meta já contabiliza (campo `budget_remaining`
+   *  da Graph API); dá o sinal de teto de vitalício SEM precisar de pacing por data (start/stop_time)
+   *  nem de uma query de gasto all-time. Só tem sentido junto de `lifetimeBudget` (budget diário
+   *  não tem "restante" — reseta todo dia). */
+  readonly budgetRemaining?: number;
   /** Objetivo próprio da entidade (o que ela otimiza) — base do CPA/ROAS + intenção p/ análise. */
   readonly objective?: EntityObjective;
   /** Perfil de público do adset (§Bloco 2) — presente só no nível adset, quando há targeting. */
   readonly audience?: AudienceProfile;
+  /** Número de WhatsApp de destino do conjunto (CTWA — `promoted_object.whatsapp_phone_number`),
+   *  só no nível adset. Fonte autoritativa do destino em campanha click-to-WhatsApp; o run cacheia
+   *  em `ad_creatives` (por ad, via o adset) → chat DB-first sem GET ao vivo. */
+  readonly whatsappNumber?: string;
+  /**
+   * Estratégia de lance (S2) — a Meta expõe `bid_strategy` na campanha (CBO) OU no adset
+   * (ABO), nunca nos dois ao mesmo tempo pra uma mesma decisão de lance.
+   */
+  readonly bidStrategy?: BidStrategy;
+  /** Cap/meta de lance (major currency), quando `bidStrategy` != 'lowest_cost'. */
+  readonly bidCapMajor?: number;
 }
 
 /** Estágio do público: frio (prospecção) × quente (remarketing) × indeterminado. */
@@ -55,10 +81,34 @@ export interface AudienceProfile {
   readonly exclusionCount: number;
   /** países/regiões resumidos (ex: ["BR"]). */
   readonly geo?: readonly string[];
+  /** regiões/cidades com `key` da Meta preservado (não só o nome) — necessário pra reconstruir um
+   *  `geo_locations` válido ao herdar/editar (ex: remover 1 cidade sem reler a fonte). Países não
+   *  entram aqui (usam o código ISO direto, sem `key`). */
+  readonly geoEntries?: readonly { readonly key: string; readonly name: string; readonly kind: "city" | "region" }[];
   readonly ageMin?: number;
   readonly ageMax?: number;
-  /** principais interesses/comportamentos (top-N nomes), quando houver. */
+  /** principais interesses/comportamentos (top-N nomes), quando houver — resumo p/ eco/UI. */
   readonly interests?: readonly string[];
+  /** interesses/comportamentos COM id, agrupados (Slice 6) — necessário pra CÓPIA FIEL repassar o
+   *  targeting da fonte sem reler (o resumo `interests` só tem nomes). Cada grupo = OR; grupos = AND. */
+  readonly interestGroupRefs?: readonly (readonly { readonly id: string; readonly name: string }[])[];
+  readonly behaviorGroupRefs?: readonly (readonly { readonly id: string; readonly name: string }[])[];
+  /** ids dos públicos salvos (custom audiences) incluídos/excluídos na fonte (Slice 9 — cópia fiel de
+   *  REMARKETING; sem isso a cópia reuse_adset virava prospecção fria). `customAudienceCount` acima é só
+   *  contagem pro resumo; estes carregam os ids reais pro apply reemitir. */
+  readonly customAudienceIncludeIds?: readonly string[];
+  readonly customAudienceExcludeIds?: readonly string[];
+  /** Expansão de público (3 flags Meta neutralizados: advantage_audience + targeting_relaxation_types
+   *  custom_audience/lookalike) — `summary` pro eco/UI ("unknown" = a fonte não tinha NENHUM dos 3
+   *  configurado; NÃO confundir com "off" — quem decide fechar por segurança é a camada de resolução,
+   *  não esta leitura). Os 3 campos `raw` (ausentes quando a fonte não configurou aquele flag) alimentam
+   *  `resolveExpansion` (packages/ads-meta) pra montar o snapshot herdado sem herdar expansão às cegas. */
+  readonly expansion: {
+    readonly summary: "off" | "on" | "unknown";
+    readonly advantageAudience?: 0 | 1;
+    readonly relaxCustomAudience?: 0 | 1;
+    readonly relaxLookalike?: 0 | 1;
+  };
 }
 
 export interface InsightMetrics {
@@ -75,7 +125,34 @@ export interface InsightMetrics {
   /** Receita rastreada TOTAL (soma de todo `value` das conversões, ex.: compras) — surfaça
    *  o retorno mesmo quando o goal de negócio é conversa/lead (sem valor). Undefined = sem receita. */
   readonly revenue?: number;
+  /** Alcance (pessoas ÚNICAS, S6) — NUNCA some entre dias (dedup); o adapter usa o valor do
+   *  ÚLTIMO dia da janela como proxy (aproximação documentada, mesmo rigor do `deliveryEstimate`). */
+  readonly reach?: number;
+  /** Cliques no LINK do anúncio (S6) — subconjunto de `clicks` (que inclui engajamento genérico
+   *  no post: like/coment/share). Distingue "clicou no link de verdade" de engajamento social. */
+  readonly inlineLinkClicks?: number;
+  /** Contagem de reproduções de vídeo que chegaram a 25% (S6, soma entre dias — evento discreto). */
+  readonly videoP25WatchedCount?: number;
+  /** Derivado (não vem da Meta): `videoP25WatchedCount / impressions * 100`, aproximação do
+   *  "gancho segura a atenção nos primeiros segundos" (impressão ≈ tentativa de reprodução em
+   *  anúncio de vídeo). Ausente quando não há reprodução de vídeo reportada. */
+  readonly videoHookRetentionPct?: number;
   readonly [key: string]: number | undefined;
+}
+
+/** Classificação de ranking da Meta, neutralizada (S6) — o vocabulário original
+ *  (`ABOVE_AVERAGE`/`BELOW_AVERAGE_35`/`BELOW_AVERAGE_20`/`BELOW_AVERAGE_10`/`UNKNOWN`)
+ *  vive só no adapter; os 3 níveis de "abaixo da média" colapsam em `below_average`
+ *  (o core só precisa saber SE está abaixo, não a granularidade do tier). */
+export type PlatformQualityRating = "above_average" | "average" | "below_average" | "unknown";
+
+/** Rankings de qualidade/engajamento/conversão que a própria Meta calcula por anúncio
+ *  (S6, só disponível a partir de ~500 impressões) — opinião independente da plataforma,
+ *  separada do `HealthSignal` já testado no dado da conta. */
+export interface PlatformQualityRankings {
+  readonly quality?: PlatformQualityRating;
+  readonly engagement?: PlatformQualityRating;
+  readonly conversion?: PlatformQualityRating;
 }
 
 export interface InsightRow {
@@ -89,6 +166,8 @@ export interface InsightRow {
   readonly rawActions?: Readonly<Record<string, number>>;
   /** Funil neutro derivado do `rawActions` pela casca (adapter mapper) — não persistido. */
   readonly funnel?: FunnelBreakdown;
+  /** Rankings de qualidade da Meta (S6) — fato do dia da linha, não some entre dias. */
+  readonly qualityRankings?: PlatformQualityRankings;
 }
 
 /**
@@ -99,7 +178,12 @@ export interface StoredInsightMetrics {
   readonly metrics: InsightMetrics;
   readonly conversions?: ConversionBreakdown;
   readonly rawActions?: Readonly<Record<string, number>>;
+  readonly qualityRankings?: PlatformQualityRankings;
 }
+
+/** Formato do objeto Meta veiculado (imagem/vídeo/carrossel/catálogo/outro) — NÃO confundir com
+ *  `CreativeVisionResult.format` (estilo visual inferido pela visão, ex: "UGC"/"antes-depois"). */
+export type AdFormat = "image" | "video" | "carousel" | "catalog" | "other";
 
 export interface Creative {
   readonly id: string;
@@ -109,14 +193,129 @@ export interface Creative {
   readonly title?: string;
   readonly callToAction?: string;
   readonly imageUrl?: string;
+  /** Formato do objeto Meta (imagem/vídeo/carrossel/catálogo) — S. */
+  readonly adFormat?: AdFormat;
+  /** hash estável da imagem (reusável em `object_story_spec.link_data.image_hash`) — permite
+   *  reusar um anúncio de IMAGEM ao vivo na criação (Fatia 7, Slice 12). */
+  readonly imageHash?: string;
   readonly thumbnailUrl?: string;
   readonly videoId?: string;
+  /** Page do `object_story_spec` (Fatia 7) — p/ lookup do WhatsApp na Página + reuso na criação. */
+  readonly pageId?: string;
+  /**
+   * Número de WhatsApp de destino resolvido do CTA do criativo (Fatia 7): o adapter
+   * traversa o `object_story_spec…call_to_action.value` (vocabulário Meta só lá) e
+   * extrai o telefone via `extractPhoneFromUrl` (core puro). Campo NEUTRO — a mesma
+   * fonte alimenta o cache no run e o `getWhatsappDestination` ao vivo (sem divergir).
+   */
+  readonly whatsappNumber?: string;
   /**
    * Frames-pôster p/ a visão (Fatia 6c): imagem estática = 1; vídeo = N frames HD
    * espaçados (Meta `/{video_id}?fields=thumbnails`, 1080p) em vez do selo pequeno.
    * O resolver manda todos como conteúdo multimodal. Ordem = abertura → fim.
    */
   readonly posterFrames?: readonly string[];
+}
+
+// ─── Destino de WhatsApp (Fatia 7, genérico) ─────────────────────────────
+// De onde veio o número (rótulo de honestidade): promoted_object do conjunto (destino CTWA REAL,
+// autoritativo) → CTA do criativo (quando o número está no wa.me) → Página conectada → nome da
+// campanha (convenção do cliente, pede confirmação) → nenhum.
+export const WHATSAPP_SOURCES = ["meta_promoted_object", "meta_cta", "meta_page", "campaign_name", "none"] as const;
+export type WhatsappSource = (typeof WHATSAPP_SOURCES)[number];
+
+/** Número de WhatsApp de destino de uma campanha + a origem de onde foi resolvido. */
+export interface WhatsappDestination {
+  /** telefone só-dígitos (E.164 sem "+") ou null quando `source==="none"`. */
+  readonly number: string | null;
+  readonly source: WhatsappSource;
+  /** nome da entidade de onde o número foi lido (quando `campaign_name`), p/ o eco. */
+  readonly entityName?: string;
+}
+
+// ─── Público salvo / custom audience (Fatia 7, genérico) ──────────────────
+/** Custom/saved audience da conta — taxonomia neutra (vocabulário Meta só no adapter). */
+export interface CustomAudience {
+  readonly id: string;
+  readonly name: string;
+  /** subtipo neutro do público (ex: "custom" | "lookalike" | "website" | "engagement"). */
+  readonly subtype?: string;
+  readonly approximateCount?: number;
+  /** heurística de nome (`LOOKALIKE_HINTS`) — lookalike × retarget quente. */
+  readonly isLookalike: boolean;
+}
+
+/**
+ * Resultado de busca de geo (Fase 1, subfatia 3) — vocabulário Meta (`adgeolocation`) isolado no
+ * adapter. `key` é o identificador a passar de volta pro `TargetingSpec.explicit.geo`.
+ */
+export interface GeoSearchResult {
+  readonly key: string;
+  readonly name: string;
+  readonly kind: "country" | "region" | "city";
+  /** país-mãe (cidades/regiões) — desambiguação quando o nome é homônimo entre países. */
+  readonly countryCode?: string;
+}
+
+/**
+ * Resultado de busca de interesse (Fase 2, subfatia 4) — vocabulário Meta (`adinterest`) isolado
+ * no adapter. `id` é o identificador a passar de volta pro `TargetingSpec.explicit.interests`.
+ */
+export interface InterestSearchResult {
+  readonly id: string;
+  readonly name: string;
+  /** tamanho aproximado de audiência (quando a Meta devolve) — informativo, NUNCA usado pra
+   *  auto-escolher entre ambíguos (decisão do produto: sempre pergunta, nunca o de maior audiência). */
+  readonly audienceSize?: number;
+  /** categoria/caminho do interesse (quando a Meta devolve) — contexto pro dono escolher certo. */
+  readonly path?: readonly string[];
+}
+
+/**
+ * Estimativa de alcance/entrega de um targeting COMBINADO (Fatia 7 — fast-follow) — taxonomia
+ * neutra (vocabulário Meta `estimate_dau`/`estimate_mau`/`delivery_estimate` só no adapter). É a
+ * previsão de quantas pessoas o público proposto (includes − excludes + geo/idade) atinge; superior
+ * ao `approximateCount` por-público (que ignora exclusões/combinação). `ready:false` = a plataforma
+ * ainda não conseguiu estimar (público novo/lookalike) → o caller degrada pro sinal por-público.
+ * A Meta (v26) devolve o alcance MENSAL como faixa (`monthlyReach*`, sinal principal); `dailyActiveUsers`
+ * (o antigo `estimate_dau`) vem raro → fallback. Custom audiences pequenas/privadas voltam achatadas no
+ * piso de 1000 (a plataforma esconde o tamanho real) → o caller trata como não-informativo.
+ */
+export interface DeliveryEstimate {
+  readonly ready: boolean;
+  /** faixa de alcance MENSAL (limite inferior/superior) — o que a Meta v26 devolve. */
+  readonly monthlyReachMin?: number;
+  readonly monthlyReachMax?: number;
+  /** pessoas ativas/dia (antigo `estimate_dau`, raro) — fallback quando não há faixa mensal. */
+  readonly dailyActiveUsers?: number;
+}
+
+// ─── Breakdown demográfico/posicionamento (S7, pivô saúde) ───────────────
+// Vocabulário Meta (age/gender/publisher_platform/platform_position) fica só no
+// adapter — o core/worker falam por `key`/`label` neutros. Só conta+campanha
+// (adset/ad é fast-follow, ver ROADMAP). Cadência própria (mais lenta que o sync
+// diário) — `asOf` é o carimbo de frescor explícito (nunca implica frescor do dia).
+export type BreakdownDimension = "demographic" | "placement";
+
+/** Um segmento do breakdown (ex: "35-44 · mulheres" ou "Instagram Stories") com suas
+ *  métricas agregadas na janela usada pelo sync de breakdown (não diário). `metrics.cpa`
+ *  só existe DEPOIS do worker resolver a conversão de negócio do agente (o adapter não
+ *  conhece o objetivo); `conversions` cru fica p/ fidelidade de re-derivação (mesmo
+ *  padrão de `StoredInsightMetrics`). */
+export interface BreakdownSegment {
+  readonly key: string;
+  readonly label: string;
+  readonly metrics: InsightMetrics;
+  readonly conversions?: ConversionBreakdown;
+}
+
+/** Breakdown de UMA entidade (conta ou campanha) numa dimensão — o que o adapter
+ *  devolve e o que fica persistido (upsert, só o mais recente por entidade+dimensão). */
+export interface EntityBreakdown {
+  readonly dimension: BreakdownDimension;
+  readonly segments: readonly BreakdownSegment[];
+  /** YYYY-MM-DD — quando este breakdown foi sincronizado (cadência própria, mais lenta). */
+  readonly asOf: string;
 }
 
 // ─── Conversão (genérico, agnóstico de plataforma) ───────────────────────
@@ -144,6 +343,9 @@ export const CONVERSION_GOALS = [
 ] as const;
 
 export type ConversionGoal = (typeof CONVERSION_GOALS)[number];
+
+/** Objetivo default quando não há meta de negócio nem conversão dominante inferível (criação F7). */
+export const DEFAULT_CONVERSION_GOAL: ConversionGoal = "purchase";
 
 // ─── Postura de comunicação do agente (como ele FALA — não o que a análise decide) ──
 // Três eixos ORTOGONAIS que governam a VOZ do agente em toda superfície de fala
@@ -225,6 +427,83 @@ export interface AccessibleAccount {
   readonly name: string;
   readonly currency?: string;
   readonly businessId?: string;
+}
+
+/**
+ * Status de saúde da conta NA PRÓPRIA META (`account_status`), neutro — vocabulário
+ * Meta (códigos numéricos) só existe dentro do adapter. Código não reconhecido pela
+ * Meta (enum novo/indocumentado) → `"unknown"`, nunca inventa um valor (mesmo espírito
+ * de `BID_STRATEGY_MAP`).
+ */
+export const META_ACCOUNT_HEALTH_STATUSES = [
+  "active",
+  "disabled",
+  "unsettled",
+  "pending_review",
+  "pending_settlement",
+  "grace_period",
+  "pending_closure",
+  "closed",
+  "unknown",
+] as const;
+export type MetaAccountHealthStatus = (typeof META_ACCOUNT_HEALTH_STATUSES)[number];
+
+/** Subconjunto "alertável" — exclui `active` (nunca é um problema, não faz sentido no
+ *  checklist de config). Inclui `unknown` de propósito: um código novo/indocumentado
+ *  da Meta é exatamente o tipo de coisa que vale avisar, não silenciar. */
+export const ALERTABLE_ACCOUNT_HEALTH_STATUSES = [
+  "disabled",
+  "unsettled",
+  "pending_review",
+  "pending_settlement",
+  "grace_period",
+  "pending_closure",
+  "closed",
+  "unknown",
+] as const satisfies readonly Exclude<MetaAccountHealthStatus, "active">[];
+
+/** Copy PT-BR de cada status alertável — tom do resto do app (impacto + sem jargão,
+ *  validado nesta sessão). Usada no checklist de config (site) e na mensagem do
+ *  alerta imediato (worker). */
+export const ACCOUNT_HEALTH_STATUS_LABELS: Readonly<Record<Exclude<MetaAccountHealthStatus, "active">, string>> = {
+  disabled: "Conta desativada, parou de veicular anúncios",
+  closed: "Conta encerrada",
+  pending_closure: "Conta em processo de encerramento",
+  unsettled: "Pagamento pendente",
+  pending_settlement: "Cobrança pendente",
+  grace_period: "Pagamento atrasado, conta em período de carência",
+  pending_review: "Conta em revisão de segurança pela Meta",
+  unknown: "Status não reconhecido (novo código da Meta)",
+};
+
+/**
+ * Saúde da conta na própria Meta (status/saldo/gasto/pagamento) — DIFERENTE do nosso
+ * lifecycle interno (`ad_accounts.status`) e do `token_status`. Vem de `GET
+ * /act_{id}?fields=account_status,disable_reason,balance,amount_spent,spend_cap,
+ * funding_source_details` (chamada dedicada, 1x por sync — ver `getAccountHealth`).
+ */
+export interface AccountHealth {
+  readonly status: MetaAccountHealthStatus;
+  /** motivo da desativação, neutro — presente só quando status != active. Código
+   *  não reconhecido → "unknown_reason" (honesto, nunca inventa). */
+  readonly disableReason?: string;
+  /** saldo/gasto total, já em unidade MAIOR (reuso de `toMajorBudget`). Pra
+   *  `funding_source_details.type !== STORED_BALANCE` (cartão/fatura), `balanceMajor`
+   *  é valor acumulado-não-cobrado, não "saldo disponível" — ver `fundingType`. */
+  readonly balanceMajor?: number;
+  readonly amountSpentMajor?: number;
+  /** ausente = SEM teto definido — a Meta usa `spend_cap: "0"` pra "sem teto"; nunca
+   *  mapeado como "teto de R$ 0,00" (achado confirmado ao vivo contra conta real). */
+  readonly spendCapMajor?: number;
+  /** já vem legível da própria Meta (`funding_source_details.display_string`, ex:
+   *  "VISA *0835") — nunca o número completo do cartão, a Meta já mascara. */
+  readonly paymentMethodLabel?: string;
+  /** `"stored_balance"` = pré-pago genuíno (balanceMajor É saldo disponível de
+   *  verdade); qualquer outro valor (cartão/fatura/etc) = balanceMajor é valor
+   *  acumulado-não-cobrado, não confiável como "saldo caindo". */
+  readonly fundingType?: "stored_balance" | "other";
+  /** ISO — carimbo de frescor (mesmo padrão de `get_campaign_status`). */
+  readonly checkedAt: string;
 }
 
 // ─── Ações do agente ─────────────────────────────────────────────────────
@@ -339,8 +618,20 @@ export interface ConversionProxy {
 /** Classe de desempenho relativa à meta + à conta. Rótulo amigável fica na UI. */
 export type PerformanceTier = "winner" | "performer" | "underperformer" | "zombie";
 
-/** Sinais de saúde nomeados (estende a detecção de anomalias com semântica de tráfego). */
-export type HealthSignal = "creative_fatigue" | "audience_saturation" | "low_volume";
+/** Sinais de saúde nomeados (estende a detecção de anomalias com semântica de tráfego).
+ *  `weak_creative` (S4b): prova fraca + baixa densidade persuasiva (visão) — NUNCA vira
+ *  critério de guard (é score de LLM, soft); só informa NOTE/matcher. `platform_quality_below_average`
+ *  (S6): a própria Meta classifica o anúncio abaixo da média (qualidade/engajamento/conversão) —
+ *  opinião independente da plataforma, mesma regra de NOTE-só. `weak_hook_retention` (S6): retenção
+ *  de vídeo nos primeiros 25% baixa — métrica DURA (não score de LLM), mas ainda assim só informa
+ *  NOTE/direção de criativo, nunca guard (é sinal de qualidade de criativo, não de economia da ação). */
+export type HealthSignal =
+  | "creative_fatigue"
+  | "audience_saturation"
+  | "low_volume"
+  | "weak_creative"
+  | "platform_quality_below_average"
+  | "weak_hook_retention";
 
 /**
  * Elegibilidade de DECISÃO da entidade — se dá pra concluir/agir sobre a conversão.
@@ -377,6 +668,15 @@ export interface BenchmarkRef {
 export const OUTCOME_KINDS = ["conversation", "lead", "sale"] as const;
 export type OutcomeKind = (typeof OUTCOME_KINDS)[number];
 
+/** Budget resolvido de uma entidade (P1.2 — sinal de teto de gasto p/ criação proativa). Unidade
+ *  MAIOR da moeda (major), mesma convenção de `AdEntity.dailyBudget`/`lifetimeBudget`. */
+export interface EntityBudget {
+  readonly dailyMajor?: number;
+  readonly lifetimeMajor?: number;
+  /** só presente junto de `lifetimeMajor` — ver `AdEntity.budgetRemaining`. */
+  readonly lifetimeRemainingMajor?: number;
+}
+
 export interface EntitySummary {
   readonly id: string;
   readonly level: EntityLevel;
@@ -387,6 +687,20 @@ export interface EntitySummary {
   readonly flags: readonly string[];
   /** Objetivo da entidade — intenção que conduz a análise (o que "bom" significa aqui). */
   readonly objective?: EntityObjective;
+  /** Campanha-mãe (só adset) — P1.2 agrega budget ABO por-campanha a partir daqui. */
+  readonly campaignId?: string;
+  /** Budget resolvido (P1.2) — CBO: da própria campanha; ABO: ausente aqui (agregado dos
+   *  adsets filhos via `campaignId` em `attachBudgetCeiling`). */
+  readonly budget?: EntityBudget;
+  /** Sinal de teto de gasto (P1.2, só em campanhas) — `true` no teto, `false` com folga,
+   *  ausente = sem dado de budget em lugar nenhum (nem próprio, nem dos adsets ABO). Tri-estado
+   *  honesto: só `true` confirmado autoriza o AUTO-apply autônomo a duplicar/escalar sozinho. */
+  readonly atBudgetCeiling?: boolean;
+  /** Estratégia de lance (S2) — 'lowest_cost' é o padrão esperado; os demais só fazem sentido
+   *  com dado acumulado suficiente (ver BID_STRATEGY_TEXT). */
+  readonly bidStrategy?: BidStrategy;
+  /** Cap/meta de lance (major currency), quando `bidStrategy` != 'lowest_cost'. */
+  readonly bidCapMajor?: number;
   /** Perfil de público do adset (§Bloco 2) — estágio + resumo compacto do targeting. */
   readonly audience?: AudienceProfile;
   /** Base de medição vs a conversão de negócio do agente (§Fatia 4). */
@@ -395,6 +709,8 @@ export interface EntitySummary {
   readonly proxy?: ConversionProxy;
   /** Funil de messaging da entidade (só quando há dado) — qualidade do lead. */
   readonly funnel?: FunnelSummary;
+  /** Rankings de qualidade da Meta (S6) — só presente com dado real reportado pela plataforma. */
+  readonly qualityRankings?: PlatformQualityRankings;
   /** Classe de desempenho relativa à meta + à conta (Fatia 6c). */
   readonly tier?: PerformanceTier;
   /** Sinais de saúde detectados (fadiga/saturação/baixo volume) — Fatia 6c. */
@@ -403,6 +719,39 @@ export interface EntitySummary {
   readonly eligibility?: DecisionEligibility;
   /** Referência de plataforma no cold-start (sem meta e sem histórico) — Fatia 6c. */
   readonly benchmarkRef?: BenchmarkRef;
+}
+
+/**
+ * Snapshot curado de UMA entidade (S1, pivô saúde) — projeção estável de `EntitySummary`
+ * persistida em `entity_analyses.curated_json`, pra chat/UI/redator lerem sem reler o
+ * brief inteiro do run (que não sobrevive além do run em memória). Builder puro em
+ * `packages/core/src/curated-entity` (`buildCuratedEntitySnapshot`).
+ */
+export interface CuratedEntitySnapshot {
+  /** Campanha-mãe (só adset, S8) — liga o diagnóstico do conjunto de volta à campanha ABO
+   *  (a assimetria CBO×ABO precisa ser rotulável no chat: CLAUDE.md §13). */
+  readonly campaignId?: string;
+  readonly budget?: EntityBudget;
+  readonly atBudgetCeiling?: boolean;
+  /** true = orçamento na PRÓPRIA campanha (CBO); false = por conjunto/adset (ABO). */
+  readonly isCBO: boolean;
+  readonly tier?: PerformanceTier;
+  readonly audience?: AudienceProfile;
+  readonly funnel?: FunnelSummary;
+  readonly conversionBasis?: ConversionBasis;
+  readonly healthSignals?: readonly HealthSignal[];
+  readonly eligibility?: DecisionEligibility;
+  /** referência de plataforma no cold-start (S8) — direcional, nunca a meta do dono. */
+  readonly benchmarkRef?: BenchmarkRef;
+  /**
+   * Sincronização (achado real): quando esta entidade estava no conjunto ATIVO da Meta
+   * numa análise anterior e sumiu de lá (pausada/arquivada fora daqui — ex: direto no Ads
+   * Manager), `record` marca a data da detecção aqui — ISO. Nunca sobrescrito enquanto
+   * continuar ausente (preserva "desde quando"); some sozinho (rebuild do zero) se a
+   * entidade voltar a ficar ativa e for reanalisada. `entity_analyses.metrics/tier/etc`
+   * continuam sendo os da ÚLTIMA vez que ela esteve ativa — não confundir com dado atual.
+   */
+  readonly deactivatedSince?: string;
 }
 
 export interface Anomaly {
@@ -459,6 +808,11 @@ export interface RunCampaignCard {
   readonly tier?: PerformanceTier | null;
   /** estágio de público DOMINANTE da campanha (§Bloco 2) — do adset de maior gasto. */
   readonly stage?: AudienceStage | null;
+  /** orçamento congelado no run (S8) — mesmo campo de `CuratedEntitySnapshot`. */
+  readonly budget?: EntityBudget;
+  readonly atBudgetCeiling?: boolean;
+  /** true = orçamento na PRÓPRIA campanha (CBO); false = por conjunto/adset (ABO). */
+  readonly isCBO?: boolean;
 }
 
 export interface AgentGoals {
@@ -554,6 +908,12 @@ export interface AccountBrief {
   readonly trackingHealth?: TrackingHealth;
   /** Desperdício + concentração 80/20 (§Bloco 2) — o "money shot". */
   readonly waste?: WasteReport;
+  /** Breakdown demográfico da conta (S7) — só presente quando o spread é MATERIAL
+   *  (`hasMaterialSpread`, gate de relevância). `asOf` nunca implica frescor do dia
+   *  (cadência própria, mais lenta). */
+  readonly demographics?: EntityBreakdown;
+  /** Breakdown de posicionamento da conta (S7) — mesma regra de materialidade. */
+  readonly placements?: EntityBreakdown;
   readonly creatives: readonly Creative[]; // só flagados (com imagem p/ visão)
   readonly playbookCandidates: readonly CandidateAction[];
   readonly memory: {
@@ -594,6 +954,277 @@ export interface GuardrailConfig {
   readonly dryRun: boolean;
   readonly killSwitch: boolean;
   readonly llmCostCapUsd?: number;
+  // ─── Limites de GASTO NOVO (Fatia 7 — criação) ───
+  /** teto do budget diário (unidade mínima) de uma campanha/entidade NOVA. */
+  readonly maxNewDailyBudgetMinor?: number;
+  /** nº máx. de campanhas novas criadas por dia. */
+  readonly maxNewCampaignsPerDay?: number;
+  /** passo de escala (%) ao subir budget do vencedor / duplicar. */
+  readonly scalePct?: number;
+}
+
+// ─── Criação de campanhas (Fatia 7) ──────────────────────────────────────
+// Contrato NEUTRO — o vocabulário Meta (ODAX, object_story_spec, call_to_action_type,
+// targeting) fica isolado no adapter (`meta-conversion-map`). Trocar de plataforma =
+// novo adapter mapeando este mesmo contrato.
+
+export const DRAFT_KINDS = ["from_scratch", "duplicate"] as const;
+export type DraftKind = (typeof DRAFT_KINDS)[number];
+
+// ─── Estratégia de fonte do criativo na criação (config por-agente, Fatia 7 Slice 10) ──
+// De onde o agente tira o criativo pra uma campanha nova: reusar um que já veicula, escolher
+// na biblioteca, ou o pool único (ambos). Vocabulário NEUTRO (nada de Meta).
+export const CREATIVE_SOURCE_MODES = ["serving", "library", "both"] as const;
+export type CreativeSourceMode = (typeof CREATIVE_SOURCE_MODES)[number];
+/** sub-opção do modo `serving`: determinístico (melhor desempenho) OU o LLM escolhe por encaixe. */
+export const SERVING_PICKS = ["best_performing", "agent"] as const;
+export type ServingPick = (typeof SERVING_PICKS)[number];
+export interface CreativeSourceStrategy {
+  readonly mode: CreativeSourceMode;
+  readonly servingPick?: ServingPick;
+}
+/** Default = comportamento de hoje (reusa o melhor veiculando, determinístico, sem LLM). */
+export const DEFAULT_CREATIVE_SOURCE_STRATEGY: CreativeSourceStrategy = { mode: "serving", servingPick: "best_performing" };
+
+export const CREATION_OPPORTUNITY_KINDS = [
+  "scale_winner",
+  "remarketing",
+  "replicate_winner",
+  "prospecting_expansion",
+  "refresh_fatigued",
+  "cold_start",
+] as const;
+export type CreationOpportunityKind = (typeof CREATION_OPPORTUNITY_KINDS)[number];
+
+export const CREATIVE_FORMATS = ["image", "video"] as const;
+export type CreativeFormat = (typeof CREATIVE_FORMATS)[number];
+
+/** CTA neutro; o adapter mapeia p/ `call_to_action_type` da plataforma. */
+export const CTA_TYPES = [
+  "shop_now",
+  "learn_more",
+  "sign_up",
+  "subscribe",
+  "contact_us",
+  "book_now",
+  "get_offer",
+  "send_message",
+  "download",
+] as const;
+export type CtaType = (typeof CTA_TYPES)[number];
+
+/** Uma variação de copy = um anúncio (1:1). */
+export interface CopyVariant {
+  readonly primaryText: string;
+  readonly headline: string;
+  readonly description?: string;
+  readonly cta?: CtaType;
+  /** nome do anúncio desta variação (a variação É o anúncio, 1:1). Ausente → derivado no apply. */
+  readonly adName?: string;
+  /** criativo PRÓPRIO deste anúncio (Fatia 7 — criativo por anúncio). Ausente → usa o criativo
+   *  padrão do rascunho (`CampaignDraftSpec.creative`), preservando o comportamento antigo. */
+  readonly creative?: CreativeAssetRef;
+}
+
+/** Referência a um asset da biblioteca de criativos (mídia já existente). */
+export interface CreativeAssetRef {
+  readonly assetId: string;
+  readonly format: CreativeFormat;
+  readonly origin: "reuse" | "upload";
+  /** ids da plataforma resolvidos (quando já subidos). */
+  readonly metaImageHash?: string;
+  readonly metaVideoId?: string;
+}
+
+/**
+ * Público/idade/expansão RESOLVIDOS de uma fonte, no momento do PROPOSE — gravado no rascunho
+ * pra o eco mostrar o público real (P0.2) e o APPLY reusar sem reler a Meta (P1, mata a corrida
+ * "fonte some entre eco e confirmação"). Shape PRÓPRIO e neutro — não importa `RawTargeting` do
+ * adapter (`packages/ads-meta`); `shared` não pode depender de um adapter.
+ */
+/** Unidade de distância do raio de geo (Slice 7 — vocabulário neutro; o adapter mapeia p/ a Meta). */
+export type DistanceUnit = "mile" | "kilometer";
+
+export interface ResolvedAudienceSnapshot {
+  readonly geo: {
+    readonly countries?: readonly string[];
+    readonly regions?: readonly { readonly key: string; readonly name: string }[];
+    readonly cities?: readonly { readonly key: string; readonly name: string }[];
+  };
+  readonly ageMin?: number;
+  readonly ageMax?: number;
+  /** interesses/comportamentos da fonte COM id (Slice 6) — pra a cópia `reuse_adset` preservar o
+   *  targeting detalhado no apply (senão o snapshot só tinha geo/idade/expansão e perdia interesses). */
+  readonly interestGroups?: readonly (readonly { readonly id: string; readonly name: string }[])[];
+  readonly behaviorGroups?: readonly (readonly { readonly id: string; readonly name: string }[])[];
+  /** públicos salvos incluídos/excluídos na fonte (Slice 9) — a cópia reuse_adset de REMARKETING
+   *  precisa reemitir; sem isso virava prospecção fria (bug de fidelidade + gasto no público errado). */
+  readonly customAudienceIncludeIds?: readonly string[];
+  readonly customAudienceExcludeIds?: readonly string[];
+  /** decidido por `resolveExpansion` (packages/ads-meta) — ausente na fonte já vira 0 explícito
+   *  aqui, nunca chega "ausente" neste snapshot (P1: nunca herda expansão às cegas). */
+  readonly expansionRaw: { readonly advantageAudience: 0 | 1; readonly relaxCustomAudience: 0 | 1; readonly relaxLookalike: 0 | 1 };
+}
+
+/**
+ * Targeting NEUTRO do rascunho: reusar o público provado de um adset (`reuse_adset`), amplo
+ * (`advantage_plus`) ou EXPLÍCITO por primitivos (`explicit`). O kind `custom_audiences` foi
+ * COLAPSADO em `explicit` (Fatia 7 — públicos salvos entram como `customAudienceInclude/ExcludeIds`;
+ * a base geo/idade da fonte vira chips na cópia) — uma representação só.
+ */
+export type TargetingSpec =
+  | {
+      readonly kind: "reuse_adset";
+      readonly sourceAdsetId: string;
+      /** snapshot resolvido no propose — o `reuse_adset` SEMPRE nasce com retrato (Bug 3, Slice 0);
+       *  ausente só em rascunho LEGADO (apply normaliza a expansão, nunca lê AS-IS). */
+      readonly resolved?: ResolvedAudienceSnapshot;
+    }
+  | { readonly kind: "advantage_plus" }
+  /**
+   * Público EXPLÍCITO por primitivos (Fatia 7). Expansão SEMPRE fechada (público escolhido pelo dono —
+   * sem ambiguidade de "fonte não decidiu", diferente de `reuse_adset`). Kind SUPERSET: geo/idade/
+   * gênero/interesses + público salvo (`customAudienceInclude/ExcludeIds`) compõem no MESMO targeting.
+   * Na CÓPIA, a geo/idade da fonte é reconstruída em `geo`/`ageMin`/`ageMax` (chips editáveis).
+   * Vocabulário Meta fica no adapter.
+   */
+  | {
+      readonly kind: "explicit";
+      /** geo por primitivo. `radius`/`distanceUnit` (Slice 5) só valem p/ CITY (a Meta aceita raio só
+       *  em `cities` + `custom_locations`; region/country ignoram → o adapter faz strip). 17–80 km.
+       *  Ausente = a cidade inteira. Raio em torno de endereço = `radiusAreas` abaixo. */
+      readonly geo: readonly {
+        readonly key: string;
+        readonly name: string;
+        readonly kind: "country" | "region" | "city";
+        readonly radius?: number;
+        readonly distanceUnit?: DistanceUnit;
+      }[];
+      /** raio em torno de um ENDEREÇO (Slice 5) — a Meta geocodifica `address` no servidor (sem
+       *  provedor externo). Raio 1–80 km. Nome neutro (`custom_locations` fica no adapter). */
+      readonly radiusAreas?: readonly { readonly address: string; readonly radius: number; readonly distanceUnit: DistanceUnit }[];
+      readonly ageMin?: number;
+      readonly ageMax?: number;
+      /** 1 = homens, 2 = mulheres — ausente/vazio = todos. */
+      readonly genders?: readonly (1 | 2)[];
+      readonly customAudienceIncludeIds?: readonly string[];
+      readonly customAudienceExcludeIds?: readonly string[];
+      /** interesses em GRUPOS (Slice 3): cada grupo = OR interno; grupos entre si = AND (narrowing).
+       *  A Meta realiza via múltiplos objetos em `flexible_spec`. 1 grupo = comportamento antigo. */
+      readonly interestGroups?: readonly (readonly { readonly id: string; readonly name: string }[])[];
+      /** comportamentos (behaviors) em GRUPOS (Slice 4) — mesmo modelo dos interesses (cada grupo é
+       *  um objeto próprio no `flexible_spec` → AND com os demais). Exclusão não existe (Meta removeu). */
+      readonly behaviorGroups?: readonly (readonly { readonly id: string; readonly name: string }[])[];
+    };
+
+/**
+ * Estrutura proposta da campanha — NEUTRA + VERSIONADA (validada nas bordas por zod,
+ * com refine por `kind`). Campos comuns são obrigatórios; os de `from_scratch`
+ * (objetivo/targeting/copy/criativo/página/pixel) são opcionais — no `duplicate` a
+ * estrutura é herdada do source via `/copies`, só o budget/ativação variam.
+ */
+export interface CampaignDraftSpec {
+  readonly version: 1;
+  readonly currency: string;
+  /** budget diário proposto (unidade mínima). */
+  readonly dailyBudgetMinor: number;
+  /** budget PEDIDO antes do clamp pelo teto de gasto novo — só quando cortado (`dailyBudgetMinor`
+   *  ficou abaixo do pedido). Transparência §8: o eco/card mostram "pedi X, virou Y". */
+  readonly requestedDailyBudgetMinor?: number;
+  /** nasce ACTIVE ou PAUSED (activationPolicy do agente / override no eco). */
+  readonly activation: "active" | "paused";
+  // ─── só `from_scratch` (herdados no `duplicate`) ───
+  /** conversão de negócio → o adapter deriva o objetivo ODAX. */
+  readonly objective?: ConversionGoal;
+  readonly targeting?: TargetingSpec;
+  /** nº de anúncios do adset (= nº de variações de copy; cada uma vira 1 anúncio). */
+  readonly variantsCount?: number;
+  readonly copyVariants?: readonly CopyVariant[];
+  /** criativo PADRÃO do rascunho — usado por qualquer anúncio sem criativo próprio
+   *  (`CopyVariant.creative`). Continua sendo a mídia única quando ninguém sobrescreve. */
+  readonly creative?: CreativeAssetRef;
+  /** Page/Pixel inferidos (display/confirmação no eco). */
+  readonly pageId?: string;
+  readonly pixelId?: string;
+  /** URL de destino do anúncio (link_data.link) — inferida da conta. */
+  readonly linkUrl?: string;
+  // ─── cópia fiel de campanha (Fatia 7, kind `copy`) ───
+  /** campanha-base copiada (leitura fiel escopada, NÃO account-wide). */
+  readonly sourceCampaignId?: string;
+  /** nome proposto da campanha (preserva a convenção do cliente; fallback derivado no apply). */
+  readonly name?: string;
+  /** categorias especiais herdadas da fonte (habitação/emprego/crédito) — Meta exige preservar. */
+  readonly specialAdCategories?: readonly string[];
+  /** otimização de orçamento herdada da fonte (CBO = na campanha; ABO = no adset). */
+  readonly budgetMode?: BudgetMode;
+  /**
+   * Criativos da fonte REUSADOS por referência (`creative_id` da Meta) — 1 anúncio por
+   * ref, preservando `object_story_spec`/destino WhatsApp sem rebuild. Vazio → usa
+   * `creative`+`copyVariants` (criar-do-zero). `copy`+refs = cópia fiel dos N anúncios.
+   */
+  readonly creativeRefs?: readonly string[];
+  // ─── edição (Fatia 7 — nome editável no site/chat) ───
+  /** nome editável da campanha / do conjunto (Fatia 7 — edição). Ausente → derivado no apply. */
+  readonly campaignName?: string;
+  readonly adsetName?: string;
+  // ─── só `duplicate` (escala) ───
+  /** rótulo do sufixo aplicado ao nome do vencedor no `/copies` (`<vencedor> — <rótulo>`).
+   *  Ausente → "escala". NÃO é o nome inteiro (o `/copies` só ANEXA). */
+  readonly suffixLabel?: string;
+}
+
+/** Otimização de orçamento (neutro): campanha (CBO) × conjunto (ABO). */
+export type BudgetMode = "cbo" | "abo";
+
+/**
+ * Estrutura NEUTRA lida de uma campanha existente p/ cópia fiel (Fatia 7). Só o adapter
+ * conhece o vocabulário Meta (ODAX/optimization_goal/promoted_object); aqui é taxonomia
+ * neutra. `readCampaignStructure` popula; o draft de cópia deriva daqui + overrides do dono.
+ */
+export interface CampaignStructure {
+  readonly campaignId: string;
+  readonly name: string;
+  readonly budgetMode: BudgetMode;
+  /** budget da fonte na unidade mínima (na campanha se CBO, no adset se ABO). */
+  readonly dailyBudgetMinor?: number;
+  readonly lifetimeBudgetMinor?: number;
+  readonly objective: ConversionGoal;
+  readonly specialAdCategories: readonly string[];
+  /** pixel do promoted_object da fonte (Fatia 7) — sem ele, copiar campanha de conversão
+   *  falha no createAdSet (OFFSITE_CONVERSIONS sem promoted_object). Ausente em mensagens. */
+  readonly pixelId?: string;
+  /** conjunto representativo (a cópia é 1-1-N): id + targeting neutro + destino WhatsApp. */
+  readonly sourceAdsetId: string;
+  readonly targeting: AudienceProfile;
+  /** destino de WhatsApp do conjunto/criativo (quando a base otimiza mensagens). */
+  readonly whatsappDestination?: WhatsappDestination;
+  /** `creative_id`s dos anúncios ativos da campanha — reusados por referência na cópia. */
+  readonly creativeRefs: readonly string[];
+}
+
+/** Entidade-origem de uma duplicação (o que foi copiado). `name` = rótulo legível do vencedor
+ *  (pro card mostrar "Duplicar conjunto <nome>" em vez do id cru); ausente em rascunhos antigos. */
+export interface DraftSourceRef {
+  readonly level: EntityLevel;
+  readonly id: string;
+  readonly name?: string;
+}
+
+/** Rascunho de campanha (domínio) — `from_scratch` ou `duplicate`. */
+export interface CampaignDraft {
+  readonly kind: DraftKind;
+  readonly spec: CampaignDraftSpec;
+  readonly sourceRef?: DraftSourceRef;
+}
+
+/** Oportunidade de criação detectada (determinística) — semeia o proativo (Fatia 7). */
+export interface CreationOpportunity {
+  readonly kind: CreationOpportunityKind;
+  readonly entityLevel?: EntityLevel;
+  readonly entityId?: string;
+  readonly entityName?: string;
+  /** por que o Roi propôs (rótulo honesto no card/nudge). */
+  readonly rationale: string;
 }
 
 // ─── Autonomia ───────────────────────────────────────────────────────────
@@ -603,12 +1234,41 @@ export interface AutonomyPolicy {
   /** decisão por origem da ação */
   readonly bySource: Readonly<Record<ActionSource, AutonomyLevel>>;
   /**
+   * Autonomia POR-AÇÃO (B): por tool-key (as 6 gateáveis), VENCE o `bySource`; ausente =
+   * herda a origem. O toolKey das 4 de escrita == o `Action.type`. Vive aqui (jsonb) — sem
+   * migração. As 2 de criação (`create_campaign`/`duplicate_scale`) governam o proativo (C).
+   * Mapa ESPARSO em runtime (chaves ausentes = herda); leia sempre com `byAction?.[k] ?? …`.
+   */
+  readonly byAction?: Readonly<Record<string, AutonomyLevel>>;
+  /**
    * Kill-switch da AUTO-CONFIG POR CHAT (Bloco 2, S2.3): o dono muda a config do
    * agente conversando no WhatsApp (sob eco+confirma). Ausente OU true = habilitado
    * (default ON); false = desligado (a config passa a ser só pelo site). Vive aqui
    * (jsonb `autonomy_policy`) por ser uma política de autonomia — sem migração.
    */
   readonly autoConfigViaChat?: boolean;
+  /**
+   * Preferência do passo AGRESSIVO da escala (Fatia 7): "ask" (default — pergunta subir vs
+   * duplicar), "raise" (sempre sobe o budget no limite seguro) ou "duplicate" (sempre duplica).
+   * Tira a fricção do perguntar-toda-vez pro power-user. Ausente = "ask". Vive aqui (jsonb) —
+   * sem migração.
+   */
+  readonly scaleAggressivePreference?: "ask" | "raise" | "duplicate";
+  /**
+   * Ativação da CRIAÇÃO (v1): "paused" (default — nasce pausada + cria a aprovação de ativação, o
+   * 2º OK pra ativar depois) × "active" (nasce ATIVA direto, sem 2º OK). Os dois SEMPRE avisam no
+   * WhatsApp. Escolha do dono na UI do agente; jsonb `autonomy_policy` — sem migração.
+   */
+  readonly creationActivation?: "paused" | "active";
+}
+
+/** Como a criação nasce (v1). "paused" = pausada + 2º OK de ativação; "active" = ativa direto. */
+export type CreationActivation = "paused" | "active";
+/** Default conservador (v1): nasce pausada, o dono revisa e ativa. */
+export const DEFAULT_CREATION_ACTIVATION: CreationActivation = "paused";
+/** Resolve a ativação da criação da política do agente (ausente = default "paused"). PURO. */
+export function resolveCreationActivation(policy?: Pick<AutonomyPolicy, "creationActivation">): CreationActivation {
+  return policy?.creationActivation ?? DEFAULT_CREATION_ACTIVATION;
 }
 
 // ─── Sinais de mudança material (F4 — alerta proativo dirigido) ─────────────
@@ -651,6 +1311,10 @@ export interface CreativeVisionResult {
   readonly body?: string;
   /** força de prova percebida (§Bloco 2): antes/depois, autoridade médica, depoimento. */
   readonly proofStrength?: CreativeProofStrength;
+  /** nº de gatilhos de persuasão de Cialdini presentes (0-7): reciprocidade, compromisso/
+   *  coerência, prova social, autoridade, afinidade, escassez, unidade (S4b). Extraível do
+   *  próprio criativo, sem dado externo. */
+  readonly persuasionSignals?: number;
   readonly strengths: readonly string[];
   readonly weaknesses: readonly string[];
   /** qualidade geral 0-10 (heurística do modelo). */

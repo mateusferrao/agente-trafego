@@ -49,6 +49,7 @@ function baseState(over: Partial<AgentConfigState> = {}): AgentConfigState {
     modelConfig: {},
     notifyPolicy: NOTIFY_POLICY,
     posture: POSTURE,
+    toolBindings: {},
     ...over,
   };
 }
@@ -227,11 +228,12 @@ describe("resolveAgentConfigChange — notifyPolicy (F4d)", () => {
 
   it("liga o pulso preservando a cadência e os demais campos (leaf-merge)", () => {
     const r = resolve(baseState(), { notifyPolicy: { pulseEnabled: true } });
-    expect(r.next.notifyPolicy).toEqual({
+    expect(r.next.notifyPolicy).toMatchObject({
       pulse: { enabled: true, cadence: NOTIFY_POLICY.pulse.cadence },
       alerts: NOTIFY_POLICY.alerts,
       runPush: NOTIFY_POLICY.runPush,
       reactivation: NOTIFY_POLICY.reactivation,
+      proactiveDrafts: { enabled: NOTIFY_POLICY.proactiveDrafts?.enabled ?? false },
     });
     expect(r.changed).toContain(CONFIG_CHANGE_LABELS.notifyPolicy);
     expect(r.notifyPolicyChanged).toBe(true);
@@ -255,6 +257,39 @@ describe("resolveAgentConfigChange — notifyPolicy (F4d)", () => {
   it("notifyPolicy NÃO enfraquece a segurança (weakensSafety)", () => {
     const r = resolve(baseState(), { notifyPolicy: { alertsEnabled: true, pulseEnabled: true } });
     expect(r.weakensSafety).toBe(false);
+  });
+
+  it("saúde da conta: desliga o aviso (chat) — backfilla o objeto e marca changed", () => {
+    const r = resolve(baseState(), { notifyPolicy: { accountHealthEnabled: false } });
+    expect(r.next.notifyPolicy.accountHealthAlert?.enabled).toBe(false);
+    expect(r.notifyPolicyChanged).toBe(true);
+    // não enfraquece segurança nem força deep run (é notificação, não guardrail).
+    expect(r.weakensSafety).toBe(false);
+    expect(r.runRelevantChanged).toBe(false);
+  });
+
+  it("saúde da conta: define teto de gasto customizado → troca a fonte pra custom + valor", () => {
+    const r = resolve(baseState(), { notifyPolicy: { accountHealthSpendThresholdMajor: 5000 } });
+    expect(r.next.notifyPolicy.accountHealthAlert?.spendThreshold).toEqual({ source: "custom", customValueMajor: 5000 });
+  });
+
+  it("saúde da conta: liga o aviso de SALDO baixo + valor (chat) — paridade com o site", () => {
+    const r = resolve(baseState(), {
+      notifyPolicy: { accountHealthBalanceEnabled: true, accountHealthBalanceThresholdMajor: 100 },
+    });
+    expect(r.next.notifyPolicy.accountHealthAlert?.balanceThreshold).toEqual({ enabled: true, customValueMajor: 100 });
+  });
+
+  it("saúde da conta: substitui o checklist de status (chat) — 'só me avise se for desativada'", () => {
+    const r = resolve(baseState(), { notifyPolicy: { accountHealthStatusTriggers: ["disabled"] } });
+    expect(r.next.notifyPolicy.accountHealthAlert?.statusTriggers).toEqual(["disabled"]);
+  });
+
+  it("saúde da conta: fonte 'meta_cap' volta pro teto da Meta (vence o valor no mesmo patch)", () => {
+    const r = resolve(baseState(), {
+      notifyPolicy: { accountHealthSpendSource: "meta_cap", accountHealthSpendThresholdMajor: 5000 },
+    });
+    expect(r.next.notifyPolicy.accountHealthAlert?.spendThreshold).toEqual({ source: "meta_cap" });
   });
 });
 
@@ -309,5 +344,33 @@ describe("resolveAgentConfigChange — postura (voz)", () => {
     expect(echo.toLowerCase()).toContain("diretividade");
     expect(echo).toContain("Consultivo");
     expect(echo).toContain("Diretivo");
+  });
+});
+
+describe("toolBindings (A3 — on/off por-ação, gap de auto-config por chat)", () => {
+  it("leaf-merge: só a chave ENVIADA muda, o resto preserva", () => {
+    const r = resolve(baseState({ toolBindings: { create_campaign: true, adjust_budget: true } }), {
+      toolBindings: { create_campaign: false },
+    });
+    expect(r.next.toolBindings).toEqual({ create_campaign: false, adjust_budget: true });
+    expect(r.toolBindingsChanged).toBe(true);
+    expect(r.changed).toContain(CONFIG_CHANGE_LABELS.toolBindings);
+  });
+
+  it("patch ausente → não mexe (toolBindingsChanged=false)", () => {
+    const r = resolve(baseState({ toolBindings: { create_campaign: true } }), {});
+    expect(r.next.toolBindings).toEqual({ create_campaign: true });
+    expect(r.toolBindingsChanged).toBe(false);
+    expect(r.changed).not.toContain(CONFIG_CHANGE_LABELS.toolBindings);
+  });
+
+  it("patch com o MESMO valor já vigente → sem mudança real", () => {
+    const r = resolve(baseState({ toolBindings: { pause_entity: true } }), { toolBindings: { pause_entity: true } });
+    expect(r.toolBindingsChanged).toBe(false);
+  });
+
+  it("liga uma capacidade nova (chave ausente antes) e mantém as demais", () => {
+    const r = resolve(baseState({ toolBindings: { pause_entity: true } }), { toolBindings: { duplicate_scale: true } });
+    expect(r.next.toolBindings).toEqual({ pause_entity: true, duplicate_scale: true });
   });
 });

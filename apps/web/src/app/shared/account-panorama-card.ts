@@ -9,6 +9,7 @@ import { lucideRefreshCw } from "@ng-icons/lucide";
 import { UiButton, UiEyebrow } from "@ui";
 import type { PanoramaListOutput } from "@core/api/generated";
 import { asOfLabel, dateTimeLabel, money } from "./format";
+import { accountHealthLabel } from "./account-health-labels";
 
 export type PanoramaCardVm = PanoramaListOutput["accounts"][number];
 
@@ -65,6 +66,9 @@ const GRADE_TEXT: Record<Grade, string> = {
       } @else {
         <span class="text-xs text-muted">sem gasto no período</span>
       }
+      @if (accountHealthLabel(c); as label) {
+        <span class="text-xs text-danger-strong">Conta Meta: {{ label }}.</span>
+      }
       @if (c.tokenStatus === 'invalid') {
         <span class="text-xs text-danger-strong">Token expirado — reconecte em Integrações.</span>
       } @else if (c.agentPaused) {
@@ -98,5 +102,9 @@ export class AccountPanoramaCard {
   }
   protected gradeText(g: Grade): string {
     return GRADE_TEXT[g];
+  }
+  /** Rótulo da saúde da conta Meta quando NÃO-ativa (badge no roster); null = ok/sem dado. */
+  protected accountHealthLabel(c: PanoramaCardVm): string | null {
+    return accountHealthLabel(c.accountHealthStatus);
   }
 }

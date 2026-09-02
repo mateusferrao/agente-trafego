@@ -16,6 +16,8 @@ export interface AdAccountRow {
   /** Token status efetivo: o da conexão (fonte da verdade) ou o legado da conta. */
   readonly tokenStatus: AccountTokenStatus;
   readonly lastValidatedAt: Date | null;
+  /** Status da conta NA META (neutro; null/"active" = ok) — banner de saúde no shell. */
+  readonly accountHealthStatus: string | null;
 }
 
 /**
@@ -44,6 +46,7 @@ export function createDrizzleAccountsRepo(db: Database): AccountsRepo {
           status: adAccounts.status,
           accountTokenStatus: adAccounts.tokenStatus,
           accountValidatedAt: adAccounts.lastValidatedAt,
+          metaAccountStatus: adAccounts.metaAccountStatus,
           connTokenStatus: platformConnections.tokenStatus,
           connValidatedAt: platformConnections.lastValidatedAt,
         })
@@ -65,6 +68,7 @@ export function createDrizzleAccountsRepo(db: Database): AccountsRepo {
         status: r.status,
         tokenStatus: r.connTokenStatus ?? r.accountTokenStatus,
         lastValidatedAt: r.connValidatedAt ?? r.accountValidatedAt,
+        accountHealthStatus: r.metaAccountStatus,
       }));
     },
   };

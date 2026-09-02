@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { AdEntity, EntitySummary, InsightMetrics } from "@trafego/shared";
-import { buildCampaignUnits } from "./campaign-units.js";
+import type { AdEntity, CampaignUnit, CreativeVisionResult, EntitySummary, InsightMetrics } from "@trafego/shared";
+import { attachCreativeWeaknessSignals, buildCampaignUnits, computeDeactivatedCampaignIds } from "./campaign-units.js";
 
 function metrics(spend: number): InsightMetrics {
   return { spend, impressions: 1000, clicks: 50, ctr: 5, cpc: 1, cpm: 1 };
@@ -120,5 +120,63 @@ describe("buildCampaignUnits", () => {
     });
     expect(units).toHaveLength(1);
     expect(units[0]!.adsets).toHaveLength(0);
+  });
+});
+
+describe("attachCreativeWeaknessSignals (S4b)", () => {
+  function unitWithNotableAd(adId: string, extra: Partial<EntitySummary> = {}): CampaignUnit {
+    return {
+      campaign: summary("C1", "campaign", 100),
+      adsets: [{ adset: summary("AS1", "adset", 100), notableAds: [{ ...summary(adId, "ad", 100), ...extra }], tail: { count: 0, spend: 0, allWithinTarget: true } }],
+    };
+  }
+  function vision(overrides: Partial<CreativeVisionResult> = {}): CreativeVisionResult {
+    return { summary: "s", strengths: [], weaknesses: [], ...overrides };
+  }
+
+  it("prova fraca + baixa persuasão → adiciona weak_creative ao healthSignals do anúncio notável", () => {
+    const unit = unitWithNotableAd("AD1");
+    const visionByAdId = new Map([["AD1", [vision({ proofStrength: "weak", persuasionSignals: 1 })]]]);
+    const out = attachCreativeWeaknessSignals(unit, visionByAdId);
+    expect(out.adsets[0]!.notableAds[0]!.healthSignals).toEqual(["weak_creative"]);
+  });
+
+  it("preserva healthSignals já existentes (dedup, não substitui)", () => {
+    const unit = unitWithNotableAd("AD1", { healthSignals: ["creative_fatigue"] });
+    const visionByAdId = new Map([["AD1", [vision({ proofStrength: "weak", persuasionSignals: 1 })]]]);
+    const out = attachCreativeWeaknessSignals(unit, visionByAdId);
+    expect(out.adsets[0]!.notableAds[0]!.healthSignals).toEqual(["creative_fatigue", "weak_creative"]);
+  });
+
+  it("visão forte → não adiciona nada, healthSignals ausente continua ausente", () => {
+    const unit = unitWithNotableAd("AD1");
+    const visionByAdId = new Map([["AD1", [vision({ proofStrength: "strong", persuasionSignals: 6 })]]]);
+    const out = attachCreativeWeaknessSignals(unit, visionByAdId);
+    expect(out.adsets[0]!.notableAds[0]!.healthSignals).toBeUndefined();
+  });
+
+  it("sem visão pro adId → unidade sai intacta (mesma referência de conteúdo)", () => {
+    const unit = unitWithNotableAd("AD1");
+    const out = attachCreativeWeaknessSignals(unit, new Map());
+    expect(out.adsets[0]!.notableAds[0]!.healthSignals).toBeUndefined();
+  });
+});
+
+describe("computeDeactivatedCampaignIds (sincronização — achado real de campanha que some do cache)", () => {
+  it("id cacheado que NÃO está mais no conjunto ativo → candidato a desativada", () => {
+    const out = computeDeactivatedCampaignIds(new Set(["c1", "c2"]), new Set(["c1"]));
+    expect(out).toEqual(["c2"]);
+  });
+
+  it("tudo ainda ativo → vazio (nada mudou, o caso comum)", () => {
+    expect(computeDeactivatedCampaignIds(new Set(["c1", "c2"]), new Set(["c1", "c2"]))).toEqual([]);
+  });
+
+  it("nunca cacheado antes → nada a marcar (não é 'desativação', é ausência normal)", () => {
+    expect(computeDeactivatedCampaignIds(new Set(), new Set(["c1"]))).toEqual([]);
+  });
+
+  it("campanha reativada (estava marcada, voltou a ativa) → não aparece mais como candidata", () => {
+    expect(computeDeactivatedCampaignIds(new Set(["c1"]), new Set(["c1"]))).toEqual([]);
   });
 });

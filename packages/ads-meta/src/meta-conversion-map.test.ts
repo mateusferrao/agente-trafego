@@ -3,7 +3,41 @@ import {
   objectiveFromAdSet,
   objectiveFromCampaign,
   parseActionType,
+  resolveAdSetConversion,
+  resolveMetaCta,
+  resolveMetaObjective,
 } from "./meta-conversion-map.js";
+
+describe("mapa inverso (criação)", () => {
+  it("goal → objetivo ODAX", () => {
+    expect(resolveMetaObjective("purchase")).toBe("OUTCOME_SALES");
+    expect(resolveMetaObjective("lead")).toBe("OUTCOME_LEADS");
+    expect(resolveMetaObjective("app_install")).toBe("OUTCOME_APP_PROMOTION");
+  });
+
+  it("com pixel + evento → OFFSITE_CONVERSIONS + promoted_object", () => {
+    const c = resolveAdSetConversion("purchase", "PX1");
+    expect(c.optimizationGoal).toBe("OFFSITE_CONVERSIONS");
+    expect(c.promotedObject).toEqual({ pixel_id: "PX1", custom_event_type: "PURCHASE" });
+    expect(c.billingEvent).toBe("IMPRESSIONS");
+  });
+
+  it("messaging → CONVERSATIONS (sem promoted_object)", () => {
+    const c = resolveAdSetConversion("messaging_started", "PX1");
+    expect(c.optimizationGoal).toBe("CONVERSATIONS");
+    expect(c.promotedObject).toBeUndefined();
+  });
+
+  it("lead sem pixel → LEAD_GENERATION", () => {
+    expect(resolveAdSetConversion("lead").optimizationGoal).toBe("LEAD_GENERATION");
+  });
+
+  it("CTA neutro → Meta (fallback LEARN_MORE)", () => {
+    expect(resolveMetaCta("shop_now")).toBe("SHOP_NOW");
+    expect(resolveMetaCta(undefined)).toBe("LEARN_MORE");
+    expect(resolveMetaCta("inexistente")).toBe("LEARN_MORE");
+  });
+});
 
 describe("parseActionType", () => {
   it("evento padrão de pixel → goal genérico", () => {

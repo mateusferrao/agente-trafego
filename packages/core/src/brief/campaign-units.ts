@@ -2,7 +2,8 @@
 // Reduz a campanha a: adsets ativos + anúncios NOTÁVEIS (top-N por gasto/flag) +
 // cauda agregada por adset. Sem IO; testável sem mock. Reusa `rankAndSelect`.
 
-import type { AdEntity, CampaignAdsetGroup, CampaignUnit, EntitySummary } from "@trafego/shared";
+import type { AdEntity, CampaignAdsetGroup, CampaignUnit, CreativeVisionResult, EntitySummary } from "@trafego/shared";
+import { detectCreativeWeakness } from "../quality/index.js";
 
 export interface BuildCampaignUnitsInput {
   /** Summaries por nível (já com flags de meta/anomalia aplicadas). */
@@ -25,6 +26,17 @@ export interface BuildCampaignUnitsInput {
  * inclusive flagado, cai na cauda (senão uma campanha toda fora da meta estouraria
  * o contexto do LLM). Ordena por gasto (maior primeiro) p/ leitura estável.
  */
+/**
+ * Ids de campanha (sincronização, achado real) que ESTAVAM cacheadas de análises
+ * anteriores e SUMIRAM do conjunto ATIVO atual — candidatas a `deactivatedSince`.
+ * Puro: nunca decide POR QUÊ sumiram (pausada/arquivada/deletada — tanto faz aqui,
+ * `entity_analyses` só precisa saber que não é mais "ativa agora"). Vazio quando nada
+ * mudou (a maioria dos runs).
+ */
+export function computeDeactivatedCampaignIds(previouslyCachedIds: ReadonlySet<string>, currentlyActiveIds: ReadonlySet<string>): readonly string[] {
+  return [...previouslyCachedIds].filter((id) => !currentlyActiveIds.has(id));
+}
+
 export function buildCampaignUnits(input: BuildCampaignUnitsInput): CampaignUnit[] {
   const muted = input.mutedCampaignIds ?? new Set<string>();
   const activeCampaigns = input.campaigns
@@ -86,6 +98,31 @@ function buildAdsetGroup(
       spend: round2(tailAds.reduce((s, ad) => s + (ad.metrics.spend ?? 0), 0)),
       allWithinTarget: tailAds.every((ad) => ad.flags.length === 0),
     },
+  };
+}
+
+/**
+ * Anexa `weak_creative` (S4b) aos anúncios NOTÁVEIS cuja visão resolvida indica prova fraca +
+ * baixa persuasão (`detectCreativeWeakness`). Roda DEPOIS da visão resolver (a unidade já está
+ * montada) — só enriquece `healthSignals`, dedup, preserva sinais já existentes. Ads sem visão
+ * resolvida (miss/falha) saem intactos. Puro; nova árvore (não muta a `unit` recebida).
+ */
+export function attachCreativeWeaknessSignals(
+  unit: CampaignUnit,
+  visionByAdId: ReadonlyMap<string, readonly CreativeVisionResult[]>,
+): CampaignUnit {
+  const withWeakness = (ad: EntitySummary): EntitySummary => {
+    const vision = visionByAdId.get(ad.id)?.[0];
+    if (!vision) return ad;
+    const weakness = detectCreativeWeakness(vision.proofStrength, vision.persuasionSignals);
+    if (weakness.length === 0) return ad;
+    const existing = ad.healthSignals ?? [];
+    const merged = [...existing, ...weakness.filter((s) => !existing.includes(s))];
+    return { ...ad, healthSignals: merged };
+  };
+  return {
+    ...unit,
+    adsets: unit.adsets.map((g) => ({ ...g, notableAds: g.notableAds.map(withWeakness) })),
   };
 }
 

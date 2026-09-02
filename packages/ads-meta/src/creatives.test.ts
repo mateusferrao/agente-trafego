@@ -90,6 +90,62 @@ describe("MetaCreativesService.getCreatives", () => {
     expect(c).toMatchObject({ adId: "AD3", body: "corpo do anúncio", title: "manchete", callToAction: "LEARN_MORE" });
   });
 
+  it("extrai o número de WhatsApp do CTA (click-to-WhatsApp) via value.link", async () => {
+    stubBatch([
+      {
+        id: "AD4",
+        creative: {
+          object_story_spec: {
+            page_id: "PAGE1",
+            link_data: {
+              message: "fale conosco",
+              call_to_action: { type: "WHATSAPP_MESSAGE", value: { link: "https://wa.me/5531953491166", app_destination: "WHATSAPP" } },
+            },
+          },
+        },
+      },
+    ]);
+    const [c] = await makeService().getCreatives(account, ["AD4"]);
+    expect(c).toMatchObject({ adId: "AD4", whatsappNumber: "5531953491166", pageId: "PAGE1", callToAction: "WHATSAPP_MESSAGE" });
+  });
+
+  it("CTA sem link de WhatsApp → sem whatsappNumber (não inventa)", async () => {
+    stubBatch([
+      { id: "AD5", creative: { object_story_spec: { page_id: "P2", link_data: { call_to_action: { type: "LEARN_MORE", value: { link: "https://site.com/x" } } } } } },
+    ]);
+    const [c] = await makeService().getCreatives(account, ["AD5"]);
+    expect(c!.whatsappNumber).toBeUndefined();
+    expect(c!.pageId).toBe("P2");
+  });
+
+  it("extrai o image_hash do link_data (reuse de imagem ao vivo — Slice 12)", async () => {
+    stubBatch([{ id: "AD9", creative: { object_story_spec: { link_data: { image_hash: "IMGHASH9" } } } }]);
+    const [c] = await makeService().getCreatives(account, ["AD9"]);
+    expect(c!.imageHash).toBe("IMGHASH9");
+  });
+
+  it("VÍDEO: extrai a CAPA (video_data.image_hash) como imageHash — reusar a capa do anúncio-fonte evita o #10 ao ler thumbnails", async () => {
+    stubBatch([{ id: "ADV", creative: { video_id: "VID9", object_story_spec: { video_data: { image_hash: "COVER9", title: "t" } } } }]);
+    const [c] = await makeService().getCreatives(account, ["ADV"]);
+    expect(c!.videoId).toBe("VID9");
+    expect(c!.imageHash).toBe("COVER9");
+    expect(c!.adFormat).toBe("video");
+  });
+
+  it("adFormat: imagem simples classificada como image", async () => {
+    stubBatch([{ id: "ADIMG", creative: { object_story_spec: { link_data: { image_hash: "IMGX" } } } }]);
+    const [c] = await makeService().getCreatives(account, ["ADIMG"]);
+    expect(c!.adFormat).toBe("image");
+  });
+
+  it("adFormat: carrossel (link_data.child_attachments) classificado como carousel", async () => {
+    stubBatch([
+      { id: "ADCAR", creative: { object_story_spec: { link_data: { child_attachments: [{ name: "a" }, { name: "b" }] } } } },
+    ]);
+    const [c] = await makeService().getCreatives(account, ["ADCAR"]);
+    expect(c!.adFormat).toBe("carousel");
+  });
+
   it("sub-request que falhou (code != 200 ou null) é pulada, não derruba o lote", async () => {
     stubBatch([
       { id: "AD1", creative: { image_url: "http://img" } },
@@ -120,5 +176,20 @@ describe("MetaCreativesService.getCreatives", () => {
     const spy = stubBatch([{ id: "AD1", creative: { image_url: "http://img" } }]);
     await expect(svc.getCreatives(account, ["AD1"])).rejects.toMatchObject({ name: "MetaApiError" });
     expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe("MetaCreativesService.videoFrames (visão da biblioteca)", () => {
+  it("devolve frames HD espaçados de um vídeo por id", async () => {
+    const svc = makeService();
+    stubBatch([{ thumbnails: { data: [{ uri: "f1", is_preferred: true }, { uri: "f2" }, { uri: "f3" }] } }]);
+    const frames = await svc.videoFrames(account, "VID1");
+    expect(frames.length).toBeGreaterThan(0);
+    expect(frames).toContain("f1");
+  });
+  it("vídeo sem thumbnails → []", async () => {
+    const svc = makeService();
+    stubBatch([{ thumbnails: { data: [] } }]);
+    expect(await svc.videoFrames(account, "VID2")).toEqual([]);
   });
 });

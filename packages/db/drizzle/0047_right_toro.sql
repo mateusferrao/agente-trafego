@@ -1,0 +1,1 @@
+ALTER TABLE "agents" ADD COLUMN "vertical" text DEFAULT 'health' NOT NULL;

@@ -1,6 +1,8 @@
 import { ChangeDetectionStrategy, Component, type OnInit, effect, inject, input, output, signal, computed } from '@angular/core';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import { lucideChevronDown } from '@ng-icons/lucide';
 import { firstValueFrom } from 'rxjs';
-import { NumberStepper, UiInput, UiSelectBox, UiSwitch, UiSwitchThumb, UiToggleGroup, UiToggleGroupItem, type UiSelectOptionItem } from '@ui';
+import { NumberStepper, UiCheckbox, UiInput, UiSelectBox, UiSwitch, UiSwitchThumb, UiToggleGroup, UiToggleGroupItem, type UiSelectOptionItem } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import type { AgentSummary } from '@core/api/generated';
 
@@ -34,6 +36,23 @@ const SENSITIVITIES: readonly { value: Sensitivity; label: string }[] = [
   { value: 'high', label: 'alta' },
 ];
 
+/** Símbolo por moeda (espelha currencySymbol de @trafego/shared — web não importa runtime de shared). */
+const CURRENCY_SYMBOLS: Readonly<Record<string, string>> = { BRL: 'R$', USD: '$', EUR: '€', GBP: '£' };
+
+/** Status alertáveis da conta Meta + copy pt-BR (checklist; espelha ACCOUNT_HEALTH_STATUS_LABELS). */
+type HealthStatus = NonNullable<NonNullable<AgentSummary['notifyPolicy']['accountHealthAlert']>['statusTriggers']>[number];
+const HEALTH_STATUS_OPTIONS: readonly { value: HealthStatus; label: string }[] = [
+  { value: 'disabled', label: 'Conta desativada, parou de veicular anúncios' },
+  { value: 'unsettled', label: 'Pagamento pendente' },
+  { value: 'pending_settlement', label: 'Cobrança pendente' },
+  { value: 'grace_period', label: 'Pagamento atrasado, conta em período de carência' },
+  { value: 'pending_review', label: 'Conta em revisão de segurança pela Meta' },
+  { value: 'pending_closure', label: 'Conta em processo de encerramento' },
+  { value: 'closed', label: 'Conta encerrada' },
+  { value: 'unknown', label: 'Status não reconhecido (novo código da Meta)' },
+];
+type SpendSource = 'meta_cap' | 'custom';
+
 /**
  * Proatividade (F4d): o que o agente manda SEM ser perguntado. Pulso (resumo do dia —
  * ontem + hoje até agora —, cadência própria — mesmo editor da cadência da análise), alerta (aviso de mudança
@@ -43,7 +62,8 @@ const SENSITIVITIES: readonly { value: Sensitivity; label: string }[] = [
 @Component({
   selector: 'app-agent-notifications',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [NumberStepper, UiInput, UiSelectBox, UiSwitch, UiSwitchThumb, UiToggleGroup, UiToggleGroupItem],
+  imports: [NgIcon, NumberStepper, UiCheckbox, UiInput, UiSelectBox, UiSwitch, UiSwitchThumb, UiToggleGroup, UiToggleGroupItem],
+  providers: [provideIcons({ lucideChevronDown })],
   template: `
     <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
       <div>
@@ -184,6 +204,137 @@ const SENSITIVITIES: readonly { value: Sensitivity; label: string }[] = [
           </button>
         </label>
       </div>
+
+      <!-- Saúde da conta Meta: desativação / teto de gasto / saldo / pagamento -->
+      <div class="flex flex-col gap-3 border-t border-line pt-4">
+        <label class="flex items-center justify-between gap-3">
+          <span class="flex flex-col">
+            <span class="text-sm font-medium text-ink">Avisar se a conta Meta tiver problema</span>
+            <span class="text-xs text-muted">Conta desativada, teto de gasto batido ou pagamento recusado, avisa na hora, sem esperar o resumo do dia.</span>
+          </span>
+          <button appSwitch [ngpSwitchChecked]="accountHealthEnabled()" (ngpSwitchCheckedChange)="accountHealthEnabled.set($event)">
+            <span appSwitchThumb></span>
+          </button>
+        </label>
+        @if (accountHealthEnabled()) {
+          <div class="flex flex-col gap-4 pl-1">
+            <!-- status: por padrão avisa em qualquer estado ruim; escolha fina em divulgação progressiva (fechada) -->
+            <div class="flex flex-col gap-2">
+              <span class="text-xs text-muted">Avisa em qualquer estado ruim da conta.</span>
+              <button
+                type="button"
+                class="flex w-fit items-center gap-1.5 text-xs font-medium text-accent-strong transition hover:text-accent"
+                [attr.aria-expanded]="advancedStatusOpen()"
+                (click)="advancedStatusOpen.set(!advancedStatusOpen())"
+              >
+                Escolher exatamente quais
+                <ng-icon
+                  name="lucideChevronDown"
+                  size="14"
+                  class="transition-transform motion-safe:duration-200"
+                  [class.rotate-180]="advancedStatusOpen()"
+                  aria-hidden="true"
+                />
+              </button>
+              @if (advancedStatusOpen()) {
+                <div class="flex flex-col gap-1 pt-1">
+                  @for (s of HEALTH_STATUS_OPTIONS; track s.value) {
+                    <label class="flex items-center gap-2.5 text-sm text-ink">
+                      <button
+                        appCheckbox
+                        [ngpCheckboxChecked]="statusTriggers().has(s.value)"
+                        (ngpCheckboxCheckedChange)="toggleStatusTrigger(s.value)"
+                        [attr.aria-label]="s.label"
+                      ></button>
+                      {{ s.label }}
+                    </label>
+                  }
+                </div>
+              }
+            </div>
+
+            <!-- teto de gasto + saldo lado a lado (dois limites de verba, destaque igual) -->
+            <div class="grid grid-cols-1 gap-3 border-t border-line pt-3 sm:grid-cols-2">
+              <!-- teto de gasto -->
+              <div class="flex flex-col gap-2 rounded-md border border-line p-3">
+                <span class="text-sm font-medium text-ink">Teto de gasto</span>
+                <span class="text-xs text-muted">A Meta para de veicular quando o gasto total da conta chega no teto. Te aviso antes de chegar lá.</span>
+                <div class="flex flex-wrap gap-2 pt-1" role="radiogroup" aria-label="Fonte do teto de gasto">
+                  @for (opt of SPEND_SOURCES; track opt.value) {
+                    <button
+                      type="button"
+                      role="radio"
+                      [attr.aria-checked]="spendSource() === opt.value"
+                      (click)="spendSource.set(opt.value)"
+                      class="rounded-md border px-3 py-1.5 text-sm font-medium transition hover:border-accent/40"
+                      [class.border-accent]="spendSource() === opt.value"
+                      [class.bg-accent-soft]="spendSource() === opt.value"
+                      [class.text-ink]="spendSource() === opt.value"
+                      [class.border-line]="spendSource() !== opt.value"
+                      [class.text-muted]="spendSource() !== opt.value"
+                    >
+                      {{ opt.label }}
+                    </button>
+                  }
+                </div>
+                @if (spendSource() === 'custom') {
+                  <label class="flex flex-col gap-1 pt-1">
+                    <span class="text-xs text-muted">Avisar quando o gasto total passar de</span>
+                    <span class="flex items-center gap-1 text-sm text-ink">
+                      {{ currencySymbol() }}
+                      <input appInput type="number" appNumberStepper inputmode="numeric" min="1" class="w-28" [value]="customSpendThreshold()" (input)="onCustomSpend($event)" />
+                    </span>
+                  </label>
+                  @if (spendInvalid()) {
+                    <span class="text-xs text-muted">Informe um valor maior que zero pra poder salvar.</span>
+                  }
+                }
+              </div>
+
+              <!-- saldo acabando: toggle sempre operável (liberdade total); ressalva contextual do cartão -->
+              <div class="flex flex-col gap-2 rounded-md border border-line p-3">
+                <label class="flex items-center justify-between gap-3">
+                  <span class="flex flex-col">
+                    <span class="text-sm font-medium text-ink">Saldo acabando</span>
+                    <span class="text-xs text-muted">Quando o saldo chega perto do fim, os anúncios param até você recarregar.</span>
+                  </span>
+                  <button appSwitch [ngpSwitchChecked]="balanceEnabled()" (ngpSwitchCheckedChange)="balanceEnabled.set($event)">
+                    <span appSwitchThumb></span>
+                  </button>
+                </label>
+                @if (balanceCaveat()) {
+                  <span class="text-xs text-muted">{{ balanceCaveat() }}</span>
+                }
+                @if (balanceEnabled()) {
+                  <label class="flex flex-col gap-1 pt-1">
+                    <span class="text-xs text-muted">Avisar quando ficar abaixo de</span>
+                    <span class="flex items-center gap-1 text-sm text-ink">
+                      {{ currencySymbol() }}
+                      <input appInput type="number" appNumberStepper inputmode="numeric" min="1" class="w-28" [value]="customBalanceThreshold()" (input)="onCustomBalance($event)" />
+                    </span>
+                  </label>
+                  @if (balanceInvalid()) {
+                    <span class="text-xs text-muted">Informe um valor maior que zero pra poder salvar.</span>
+                  }
+                }
+              </div>
+            </div>
+          </div>
+        }
+      </div>
+
+      <!-- Proatividade de criação (Fatia 7): propõe escalar/criar campanhas -->
+      <div class="border-t border-line pt-4">
+        <label class="flex items-center justify-between gap-3">
+          <span class="flex flex-col">
+            <span class="text-sm font-medium text-ink">Propor campanhas por conta própria</span>
+            <span class="text-xs text-muted">O agente sugere escalar um vencedor ou criar uma campanha quando faz sentido — sempre como proposta, nunca gasta sem sua aprovação.</span>
+          </span>
+          <button appSwitch [ngpSwitchChecked]="proactiveDraftsEnabled()" (ngpSwitchCheckedChange)="proactiveDraftsEnabled.set($event)">
+            <span appSwitchThumb></span>
+          </button>
+        </label>
+      </div>
     </section>
   `,
 })
@@ -211,6 +362,51 @@ export class AgentNotifications implements OnInit {
 
   protected readonly runPushEnabled = signal(true);
   protected readonly reactivationEnabled = signal(false);
+  protected readonly proactiveDraftsEnabled = signal(false);
+
+  protected readonly HEALTH_STATUS_OPTIONS = HEALTH_STATUS_OPTIONS;
+  protected readonly SPEND_SOURCES: readonly { value: SpendSource; label: string }[] = [
+    { value: 'meta_cap', label: 'Teto da Meta' },
+    { value: 'custom', label: 'Valor que eu defino' },
+  ];
+  protected readonly accountHealthEnabled = signal(true);
+  // divulgação progressiva: fechada por padrão (quase ninguém edita os 8 status).
+  protected readonly advancedStatusOpen = signal(false);
+  protected readonly statusTriggers = signal<Set<HealthStatus>>(new Set(HEALTH_STATUS_OPTIONS.map((o) => o.value)));
+  protected readonly spendSource = signal<SpendSource>('meta_cap');
+  protected readonly customSpendThreshold = signal('');
+  protected readonly balanceEnabled = signal(false);
+  protected readonly customBalanceThreshold = signal('');
+  private readonly accountCurrency = signal<string | null>(null);
+  // pré-pago × cartão/fatura — só orienta a ressalva do saldo (nunca desabilita o toggle).
+  private readonly fundingType = signal<'stored_balance' | 'other' | null>(null);
+  // ressalva do saldo é CONTEXTUAL: só aparece em conta de cartão/fatura, onde o saldo
+  // mostrado é gasto-não-cobrado (não disponível) e o aviso costuma não fazer sentido. Em
+  // pré-pago (ou ainda não sincronizada) não há ressalva. O toggle segue operável nos dois.
+  protected readonly balanceCaveat = computed(() =>
+    this.fundingType() === 'other'
+      ? 'Sua conta é cobrada por cartão ou fatura, então esse saldo varia entre as cobranças e o aviso pode não fazer sentido. Você decide se quer ligar mesmo assim.'
+      : '',
+  );
+  // toUpperCase espelha currencySymbol de @trafego/shared (código ISO pode vir minúsculo);
+  // fallback = o próprio código (honesto), igual ao shared.
+  protected readonly currencySymbol = computed(() => {
+    const cur = (this.accountCurrency() ?? 'BRL').toUpperCase();
+    return CURRENCY_SYMBOLS[cur] ?? cur;
+  });
+
+  protected toggleStatusTrigger(s: HealthStatus): void {
+    const next = new Set(this.statusTriggers());
+    if (next.has(s)) next.delete(s);
+    else next.add(s);
+    this.statusTriggers.set(next);
+  }
+  protected onCustomSpend(e: Event): void {
+    this.customSpendThreshold.set((e.target as HTMLInputElement).value);
+  }
+  protected onCustomBalance(e: Event): void {
+    this.customBalanceThreshold.set((e.target as HTMLInputElement).value);
+  }
 
   protected readonly pulseHourStr = computed(() => String(this.pulseHour()));
   protected readonly pulseHour2Str = computed(() => String(this.pulseHour2()));
@@ -259,9 +455,20 @@ export class AgentNotifications implements OnInit {
   private readonly baseline = signal('');
   private readonly sig = computed(
     () =>
-      `${this.pulseEnabled()}|${JSON.stringify(this.pulseCadenceSpec())}|${this.alertsEnabled()}|${this.sensitivity()}|${this.throttleHours()}|${this.runPushEnabled()}|${this.reactivationEnabled()}`,
+      `${this.pulseEnabled()}|${JSON.stringify(this.pulseCadenceSpec())}|${this.alertsEnabled()}|${this.sensitivity()}|${this.throttleHours()}|${this.runPushEnabled()}|${this.reactivationEnabled()}|${this.proactiveDraftsEnabled()}|${this.accountHealthEnabled()}|${[...this.statusTriggers()].sort().join(',')}|${this.spendSource()}|${this.customSpendThreshold()}|${this.balanceEnabled()}|${this.customBalanceThreshold()}`,
   );
-  readonly dirty = computed(() => this.sig() !== this.baseline() && !this.pulseCronInvalid());
+  /** teto customizado exige valor > 0 (nunca inventa limiar) — só quando o campo está VISÍVEL. */
+  protected readonly spendInvalid = computed(
+    () => this.accountHealthEnabled() && this.spendSource() === 'custom' && !(Number(this.customSpendThreshold()) > 0),
+  );
+  /** saldo customizado idem — só conta quando o toggle de saldo está ligado E visível. */
+  protected readonly balanceInvalid = computed(
+    () => this.accountHealthEnabled() && this.balanceEnabled() && !(Number(this.customBalanceThreshold()) > 0),
+  );
+  // gate no accountHealthEnabled: com a saúde DESLIGADA, os limiares custom ficam ocultos e
+  // NÃO devem travar o save (senão o usuário não consegue nem desligar — achado da revisão).
+  private readonly healthInvalid = computed(() => this.spendInvalid() || this.balanceInvalid());
+  readonly dirty = computed(() => this.sig() !== this.baseline() && !this.pulseCronInvalid() && !this.healthInvalid());
 
   constructor() {
     // baseline = estado inicial → dirty começa false (Save só habilita após mudança).
@@ -283,6 +490,16 @@ export class AgentNotifications implements OnInit {
     this.throttleHours.set(String(n.alerts.throttleHours));
     this.runPushEnabled.set(n.runPush.enabled);
     this.reactivationEnabled.set(n.reactivation?.enabled ?? false);
+    this.proactiveDraftsEnabled.set(n.proactiveDrafts?.enabled ?? false);
+    this.accountCurrency.set(a.currency);
+    this.fundingType.set(a.fundingType);
+    const ah = n.accountHealthAlert;
+    this.accountHealthEnabled.set(ah?.enabled ?? true);
+    this.statusTriggers.set(new Set((ah?.statusTriggers ?? HEALTH_STATUS_OPTIONS.map((o) => o.value)) as HealthStatus[]));
+    this.spendSource.set((ah?.spendThreshold?.source ?? 'meta_cap') as SpendSource);
+    this.customSpendThreshold.set(ah?.spendThreshold?.customValueMajor != null ? String(ah.spendThreshold.customValueMajor) : '');
+    this.balanceEnabled.set(ah?.balanceThreshold?.enabled ?? false);
+    this.customBalanceThreshold.set(ah?.balanceThreshold?.customValueMajor != null ? String(ah.balanceThreshold.customValueMajor) : '');
     this.baseline.set(this.sig());
     this.loaded.set(true);
   }
@@ -303,8 +520,8 @@ export class AgentNotifications implements OnInit {
   }
 
   /** Salva a fatia (chamada pela save-bar única da página). No-op se não há mudança. */
-  async save(): Promise<void> {
-    if (!this.dirty()) return;
+  async save(): Promise<boolean> {
+    if (!this.dirty()) return true;
     this.saving.set(true);
     try {
       const a = await firstValueFrom(
@@ -318,6 +535,18 @@ export class AgentNotifications implements OnInit {
             },
             runPush: { enabled: this.runPushEnabled() },
             reactivation: { enabled: this.reactivationEnabled() },
+            proactiveDrafts: { enabled: this.proactiveDraftsEnabled() },
+            accountHealthAlert: {
+              enabled: this.accountHealthEnabled(),
+              statusTriggers: [...this.statusTriggers()],
+              spendThreshold:
+                this.spendSource() === 'custom'
+                  ? { source: 'custom', customValueMajor: Number(this.customSpendThreshold()) }
+                  : { source: 'meta_cap' },
+              balanceThreshold: this.balanceEnabled()
+                ? { enabled: true, customValueMajor: Number(this.customBalanceThreshold()) }
+                : { enabled: false },
+            },
           },
         }),
       );
@@ -325,5 +554,6 @@ export class AgentNotifications implements OnInit {
     } finally {
       this.saving.set(false);
     }
+    return true;
   }
 }

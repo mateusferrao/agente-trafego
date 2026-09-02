@@ -1,4 +1,4 @@
-// Corrida contra um teto de tempo — nunca deixa o turno do chat esperar pra sempre
+// Corrida contra um teto de tempo — nunca deixa o chamador esperar pra sempre
 // se alguma chamada externa (Meta, LLM, DB) travar sem dar erro. `Promise.race` não
 // cancela a operação original (ela segue rodando em background até resolver/rejeitar
 // por conta própria — limitação do JS sem AbortController threado pelo grafo inteiro),

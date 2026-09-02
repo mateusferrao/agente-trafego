@@ -7,6 +7,7 @@ import {
   archetypeDefaults,
   composeAgentPrompt,
   composeAgentVoice,
+  composeMethodologyPrompt,
 } from "./index.js";
 
 describe("archetypeDefaults", () => {
@@ -70,6 +71,36 @@ describe("archetypeDefaults", () => {
       expect(c.description.length).toBeGreaterThan(0);
       expect(c.whenToUse.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("identidade: persona = papel, tom = afeto, stance = prioridade (sem overlap com postura)", () => {
+  it("persona é papel/caráter, não método", () => {
+    expect(archetypeDefaults("conservador").persona).toBe("Gestor de tráfego sênior, cauteloso e didático.");
+    expect(archetypeDefaults("otimizador").persona).toBe("Gestor de tráfego sênior, obcecado por eficiência.");
+  });
+
+  it("tom é afeto/registro — não codifica diretividade/jargão (isso é postura)", () => {
+    expect(archetypeDefaults("conservador").tone).toBe("acolhedor e paciente");
+    expect(archetypeDefaults("otimizador").tone).toBe("firme e objetivo");
+    // o afeto não deve reproduzir os termos da postura (consultivo/direto/sem jargão)
+    for (const key of ["conservador", "otimizador", "vigia_intensivo"]) {
+      const tone = archetypeDefaults(key).tone.toLowerCase();
+      expect(tone).not.toContain("jargão");
+      expect(tone).not.toContain("consultivo");
+    }
+  });
+
+  it("methodology.stance é prioridade analítica, sem prosa de tom", () => {
+    const s = archetypeDefaults("otimizador").methodology.stance;
+    expect(s).toContain("Eficiência primeiro");
+    expect(s.toLowerCase()).not.toContain("linguagem de dono");
+  });
+
+  it("composeMethodologyPrompt emite 'Prioridade analítica', não 'Postura:'", () => {
+    const out = composeMethodologyPrompt(archetypeDefaults("conservador"));
+    expect(out).toContain("Prioridade analítica:");
+    expect(out).not.toContain("Postura:");
   });
 });
 

@@ -57,6 +57,48 @@ const MAX_POLLS = 6;
             </div>
           </div>
         }
+        <!-- Saúde da conta NA META (status/saldo/gasto total/pagamento) — SEMPRE visível,
+             informação de rotina, não só estado de erro. Detalhe de pagamento fica só aqui
+             (atrás de login), nunca no WhatsApp. -->
+        @if (m.accountHealth; as h) {
+          <div class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-4">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-sm font-semibold text-ink">Conta na Meta</span>
+              <span class="text-xs" [class.text-success-strong]="h.status === 'active'" [class.text-danger-strong]="h.status !== 'active'">
+                {{ h.statusLabel }}
+              </span>
+            </div>
+            @if (h.disableReason && h.status !== 'active') {
+              <span class="text-xs text-muted">A Meta não detalhou o motivo específico. Cheque o Gerenciador de Anúncios para mais informações.</span>
+            }
+            <div class="flex flex-wrap gap-x-6 gap-y-2">
+              @if (h.amountSpentMajor !== null) {
+                <div class="flex flex-col">
+                  <span class="text-xs text-muted">Total já gasto na conta</span>
+                  <span class="text-sm font-semibold text-ink">{{ money(h.amountSpentMajor, m.currency) }}</span>
+                </div>
+              }
+              @if (h.spendCapMajor !== null) {
+                <div class="flex flex-col">
+                  <span class="text-xs text-muted">Teto de gasto</span>
+                  <span class="text-sm font-semibold text-ink">{{ money(h.spendCapMajor, m.currency) }}</span>
+                </div>
+              }
+              @if (h.balanceMajor !== null) {
+                <div class="flex flex-col">
+                  <span class="text-xs text-muted">Saldo</span>
+                  <span class="text-sm font-semibold text-ink">{{ money(h.balanceMajor, m.currency) }}</span>
+                </div>
+              }
+              @if (h.paymentMethodLabel) {
+                <div class="flex flex-col">
+                  <span class="text-xs text-muted">Forma de pagamento</span>
+                  <span class="text-sm font-semibold text-ink">{{ h.paymentMethodLabel }}</span>
+                </div>
+              }
+            </div>
+          </div>
+        }
       }
 
       <!-- Resultado da análise (avaliação do agente — datada). -->
@@ -113,8 +155,14 @@ const MAX_POLLS = 6;
           [currency]="store.account()?.currency ?? defaultCurrency"
           [votingId]="store.votingId()"
           [mutingId]="store.mutingId()"
+          [scalingId]="store.scalingId()"
+          [canScale]="store.canScale()"
+          [scaleAsk]="store.scaleAskView()"
           (vote)="store.vote($event)"
           (toggleMute)="store.toggleMuted($event)"
+          (scale)="store.scaleWinner($event)"
+          (scaleChoose)="store.scaleChoose($event)"
+          (scaleCancel)="store.scaleCancel()"
         />
         <app-agent-actions [accountId]="store.accountId" />
       }

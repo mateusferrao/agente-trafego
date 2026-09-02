@@ -80,10 +80,30 @@ import {
 } from "../modules/contacts/schema.js";
 import {
   approvalOutput,
+  editApprovalActionInput,
   resolveApprovalInput,
   resolveApprovalOutput,
   revertibleActionOutput,
 } from "../modules/approvals/schema.js";
+import {
+  audienceOutput,
+  creativeAssetOutput,
+  deliveryEstimateInput,
+  deliveryEstimateOutput,
+  draftApprovalOutput,
+  geoSearchResultOutput,
+  interestSearchResultOutput,
+  scaleWinnerInput,
+  scaleWinnerOutput,
+  servingCreativeOutput,
+  uploadCreativeOutput,
+  setDraftCreativeInput,
+  setDraftCreativeOutput,
+  setDraftTargetingInput,
+  setDraftTargetingOutput,
+  updateDraftInput,
+  updateDraftOutput,
+} from "../modules/drafts/schema.js";
 
 extendZodWithOpenApi(z);
 
@@ -161,6 +181,24 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const ApprovalOutput = registry.register("ApprovalOutput", approvalOutput);
   const ResolveApprovalInput = registry.register("ResolveApprovalInput", resolveApprovalInput);
   const ResolveApprovalOutput = registry.register("ResolveApprovalOutput", resolveApprovalOutput);
+  const EditApprovalActionInput = registry.register("EditApprovalActionInput", editApprovalActionInput);
+  const DraftApprovalOutput = registry.register("DraftApprovalOutput", draftApprovalOutput);
+  const ScaleWinnerInput = registry.register("ScaleWinnerInput", scaleWinnerInput);
+  const ScaleWinnerOutput = registry.register("ScaleWinnerOutput", scaleWinnerOutput);
+  const CreativeAssetOutput = registry.register("CreativeAssetOutput", creativeAssetOutput);
+  const ServingCreativeOutput = registry.register("ServingCreativeOutput", servingCreativeOutput);
+  const GeoSearchResultOutput = registry.register("GeoSearchResultOutput", geoSearchResultOutput);
+  const InterestSearchResultOutput = registry.register("InterestSearchResultOutput", interestSearchResultOutput);
+  const SetDraftTargetingInput = registry.register("SetDraftTargetingInput", setDraftTargetingInput);
+  const SetDraftTargetingOutput = registry.register("SetDraftTargetingOutput", setDraftTargetingOutput);
+  const DeliveryEstimateInput = registry.register("DeliveryEstimateInput", deliveryEstimateInput);
+  const DeliveryEstimateOutput = registry.register("DeliveryEstimateOutput", deliveryEstimateOutput);
+  const AudienceOutput = registry.register("AudienceOutput", audienceOutput);
+  const SetDraftCreativeInput = registry.register("SetDraftCreativeInput", setDraftCreativeInput);
+const SetDraftCreativeOutput = registry.register("SetDraftCreativeOutput", setDraftCreativeOutput);
+  const UpdateDraftInput = registry.register("UpdateDraftInput", updateDraftInput);
+  const UpdateDraftOutput = registry.register("UpdateDraftOutput", updateDraftOutput);
+  const UploadCreativeOutput = registry.register("UploadCreativeOutput", uploadCreativeOutput);
   const RevertibleActionOutput = registry.register("RevertibleActionOutput", revertibleActionOutput);
 
   const accountParams = z.object({ id: z.string() });
@@ -650,6 +688,132 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
     },
   });
   registry.registerPath({
+    method: "patch",
+    path: "/api/approvals/{id}/action",
+    tags: ["approvals"],
+    request: { params: z.object({ id: z.string() }), ...jsonBody(EditApprovalActionInput) },
+    responses: {
+      200: jsonRes("valor da ação editado (segue pendente até aprovar)", ResolveApprovalOutput),
+      400: { description: "ação não editável ou valor inválido" },
+      404: { description: "aprovação não encontrada" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/drafts/pending",
+    tags: ["drafts"],
+    responses: { 200: jsonRes("rascunhos de campanha aguardando aprovação (cross-conta)", z.array(DraftApprovalOutput)) },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/accounts/{id}/drafts/scale",
+    tags: ["drafts"],
+    request: { params: z.object({ id: z.string() }), ...jsonBody(ScaleWinnerInput) },
+    responses: {
+      200: jsonRes("escala proposta (rascunho de duplicação ou ação de budget)", ScaleWinnerOutput),
+      404: { description: "conta ou agente não encontrado" },
+    },
+  });
+  registry.registerPath({
+    method: "patch",
+    path: "/api/accounts/{id}/drafts/{draftId}",
+    tags: ["drafts"],
+    request: {
+      params: z.object({ id: z.string(), draftId: z.string() }),
+      ...jsonBody(UpdateDraftInput),
+    },
+    responses: {
+      200: jsonRes("rascunho editado", UpdateDraftOutput),
+      422: { description: "edição inválida (mensagem amigável)" },
+    },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/accounts/{id}/drafts/{draftId}/creative",
+    tags: ["drafts"],
+    request: {
+      params: z.object({ id: z.string(), draftId: z.string() }),
+      ...jsonBody(SetDraftCreativeInput),
+    },
+    responses: {
+      200: jsonRes("criativo do rascunho trocado", SetDraftCreativeOutput),
+      404: { description: "rascunho não encontrado ou não editável" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts/{id}/creatives",
+    tags: ["drafts"],
+    request: { params: z.object({ id: z.string() }) },
+    responses: { 200: jsonRes("biblioteca de criativos da conta", z.array(CreativeAssetOutput)) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts/{id}/serving-creatives",
+    tags: ["drafts"],
+    request: { params: z.object({ id: z.string() }) },
+    responses: { 200: jsonRes("anúncios ao vivo da conta oferecidos como reuse (só vídeo)", z.array(ServingCreativeOutput)) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts/{id}/targeting/geo-search",
+    tags: ["drafts"],
+    request: { params: z.object({ id: z.string() }), query: z.object({ q: z.string() }) },
+    responses: { 200: jsonRes("busca de geo (cidade/região/país) pro editor de público explícito", z.array(GeoSearchResultOutput)) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts/{id}/targeting/interest-search",
+    tags: ["drafts"],
+    request: { params: z.object({ id: z.string() }), query: z.object({ q: z.string() }) },
+    responses: { 200: jsonRes("busca de interesses pro editor de público explícito", z.array(InterestSearchResultOutput)) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts/{id}/targeting/behavior-search",
+    tags: ["drafts"],
+    request: { params: z.object({ id: z.string() }), query: z.object({ q: z.string() }) },
+    responses: { 200: jsonRes("busca de comportamentos pro editor de público explícito", z.array(InterestSearchResultOutput)) },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/accounts/{id}/audiences",
+    tags: ["drafts"],
+    request: { params: z.object({ id: z.string() }) },
+    responses: { 200: jsonRes("públicos salvos da conta pro editor (include/exclude)", z.array(AudienceOutput)) },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/accounts/{id}/drafts/{draftId}/targeting",
+    tags: ["drafts"],
+    request: {
+      params: z.object({ id: z.string(), draftId: z.string() }),
+      ...jsonBody(SetDraftTargetingInput),
+    },
+    responses: { 200: jsonRes("público do rascunho alternado (reuse × amplo)", SetDraftTargetingOutput) },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/accounts/{id}/drafts/{draftId}/delivery-estimate",
+    tags: ["drafts"],
+    request: {
+      params: z.object({ id: z.string(), draftId: z.string() }),
+      ...jsonBody(DeliveryEstimateInput),
+    },
+    responses: { 200: jsonRes("estimativa de alcance do público explícito em edição", DeliveryEstimateOutput) },
+  });
+  registry.registerPath({
+    method: "post",
+    path: "/api/accounts/{id}/creatives/upload",
+    tags: ["drafts"],
+    // request = multipart/form-data (arquivo) — fora do contrato JSON; a web posta FormData.
+    request: { params: z.object({ id: z.string() }) },
+    responses: {
+      200: jsonRes("criativo subido (imagem=ready/image_hash; vídeo=pending/video_id)", UploadCreativeOutput),
+      404: { description: "conta ou agente não encontrado" },
+    },
+  });
+  registry.registerPath({
     method: "get",
     path: "/api/billing/access-status",
     tags: ["billing"],
@@ -673,7 +837,7 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const generator = new OpenApiGeneratorV31(registry.definitions);
   return generator.generateDocument({
     openapi: "3.1.0",
-    info: { title: "AutoTraffic API", version: "0.1.0" },
+    info: { title: "CaquiAI API", version: "0.1.0" },
     servers: [{ url: "/" }],
   });
 }

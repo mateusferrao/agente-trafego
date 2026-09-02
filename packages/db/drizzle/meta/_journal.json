@@ -253,6 +253,118 @@
       "when": 1787776212705,
       "tag": "0035_public_colossus",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1787809909204,
+      "tag": "0036_needy_iron_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1787810343362,
+      "tag": "0037_magenta_venus",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1787855574740,
+      "tag": "0038_smiling_excalibur",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1787863492945,
+      "tag": "0039_nasty_mystique",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1787880567284,
+      "tag": "0040_talented_wendell_vaughn",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1787889917566,
+      "tag": "0041_superb_leopardon",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1787891463163,
+      "tag": "0042_loose_multiple_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1787957407475,
+      "tag": "0043_strange_skin",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1788033222772,
+      "tag": "0044_curious_kronos",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1788202213433,
+      "tag": "0045_high_fixer",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1788204892958,
+      "tag": "0046_normal_terrax",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1788207837743,
+      "tag": "0047_right_toro",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1788217237059,
+      "tag": "0048_broken_xorn",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1788280111635,
+      "tag": "0049_living_machine_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1788285787037,
+      "tag": "0050_solid_metal_master",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1788289871902,
+      "tag": "0051_normal_black_knight",
+      "breakpoints": true
     }
   ]
 }

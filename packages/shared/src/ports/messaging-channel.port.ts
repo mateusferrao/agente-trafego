@@ -101,18 +101,53 @@ export interface InboundAudioMessage extends InboundMessageBase {
   readonly messageKey: MediaMessageKey;
 }
 
-/** Mídia reconhecida mas não-suportada (imagem/vídeo/doc/figurinha) — vira aviso, não drop. */
+/**
+ * Imagem inbound (F7 intake) — vira asset de criativo na biblioteca da conta, não turno.
+ * Bytes inline (base64) quando o webhook entrega; ausente → `fetchMediaBase64` pela `messageKey`.
+ */
+export interface InboundImageMessage extends InboundMessageBase {
+  readonly kind: "image";
+  readonly image: { readonly base64: string; readonly mimetype: string };
+  /** legenda que veio junto da imagem (nomeia o criativo), ou null. */
+  readonly caption: string | null;
+  /** p/ `fetchMediaBase64` quando o base64 não vem inline no webhook. */
+  readonly messageKey: MediaMessageKey;
+}
+
+/**
+ * Vídeo inbound (F7 intake) — vira asset de criativo de vídeo. DIVERGE da imagem: NÃO carrega
+ * `base64` inline (vídeo é grande demais p/ o payload da fila/Redis) — o intake busca os bytes
+ * por `messageKey` (fetchMediaBase64) em memória do worker, sob cap de tamanho. Documentado p/ o
+ * próximo leitor não "consertar" a assimetria.
+ */
+export interface InboundVideoMessage extends InboundMessageBase {
+  readonly kind: "video";
+  /** `fileLength` (P0.3) = tamanho em bytes que o WhatsApp já entrega na metadata — dá pro
+   *  intake recusar vídeo grande demais ANTES de baixar/decodificar (HTTP HEAD é inviável: a
+   *  Evolution só entrega mídia por base64, nunca por URL). Ausente → fallback pós-decode. */
+  readonly video: { readonly mimetype: string; readonly fileLength?: number };
+  readonly caption: string | null;
+  readonly messageKey: MediaMessageKey;
+}
+
+/** Mídia reconhecida mas não-suportada (doc/figurinha) — vira aviso, não drop. */
 export interface InboundUnsupportedMessage extends InboundMessageBase {
   readonly kind: "unsupported";
-  readonly mediaType: string; // rótulo neutro: "image" | "video" | "document" | "sticker" | ...
+  readonly mediaType: string; // rótulo neutro: "document" | "sticker" | ...
 }
 
 /**
  * Mensagem inbound normalizada (união discriminada por `kind`). Áudio é
- * transcrito → texto na borda; mídia não-suportada vira aviso amigável; o resto
- * (fromMe/grupo/ACK/sem conteúdo) o parser devolve como `null` (silêncio).
+ * transcrito → texto na borda; imagem vira asset de criativo (F7); mídia não-
+ * suportada vira aviso amigável; o resto (fromMe/grupo/ACK/sem conteúdo) o parser
+ * devolve como `null` (silêncio).
  */
-export type InboundMessage = InboundTextMessage | InboundAudioMessage | InboundUnsupportedMessage;
+export type InboundMessage =
+  | InboundTextMessage
+  | InboundAudioMessage
+  | InboundImageMessage
+  | InboundVideoMessage
+  | InboundUnsupportedMessage;
 
 /** Grupo do WhatsApp em que o número da org já está (registro — G4). */
 export interface GroupSummary {

@@ -1,17 +1,22 @@
-import { and, eq, gte, inArray } from "drizzle-orm";
+import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import { adAccounts, agentRuns, agentToolCalls, agents, type Database } from "@trafego/db";
 import type { ApprovalId, OrgId } from "@trafego/shared/types";
-import type { ApprovalPort } from "@trafego/shared/ports";
+import type { Approval, ApprovalPort } from "@trafego/shared/ports";
 import type { SchedulerPort } from "@trafego/shared/ports";
 import { APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE } from "@trafego/shared";
+import { editBudgetActionValue } from "@trafego/core";
 import { badRequest, notFound } from "../../middleware/error-handler.js";
 import { computeAppliedActions, DAY_MS } from "../../lib/applied-actions.js";
 import type {
   ApprovalOutput,
+  EditApprovalActionInput,
   ResolveApprovalInput,
   ResolveApprovalOutput,
   RevertibleActionOutput,
 } from "./schema.js";
+
+/** Unidade mínima por unidade monetária (reais → centavos) — igual ao drafts/service. */
+const MINOR_PER_UNIT = 100;
 
 export interface ApprovalsDeps {
   readonly db: Database;
@@ -47,7 +52,11 @@ export function createApprovalsService(deps: ApprovalsDeps) {
 
   return {
     async listPending(orgId: OrgId): Promise<ApprovalOutput[]> {
-      const pending = await deps.approvals.listPendingByOrg(orgId);
+      // Rascunhos de campanha (Fatia 7) têm sua própria superfície (card de rascunho);
+      // este inbox de AÇÕES lista só as aprovações de ação.
+      const pending = (await deps.approvals.listPendingByOrg(orgId)).filter(
+        (a): a is Approval => a.kind === "action",
+      );
       const accounts = await accountByAgent([...new Set(pending.map((a) => a.agentId))]);
       return pending.map((a) => {
         const acc = accounts.get(a.agentId);
@@ -90,6 +99,33 @@ export function createApprovalsService(deps: ApprovalsDeps) {
     },
 
     /**
+     * Edita o VALOR de uma ação `adjust_budget` pendente ANTES de aprovar (C, v1). Núcleo puro
+     * `editBudgetActionValue` valida/monta os params; persiste via porta. Só ajuste de orçamento
+     * tem valor (pausar/retomar/status = aprovar/rejeitar). Clamp do blast-radius = rede do apply.
+     */
+    async editAction(
+      orgId: OrgId,
+      approvalId: ApprovalId,
+      input: EditApprovalActionInput,
+    ): Promise<ResolveApprovalOutput> {
+      const approval = await deps.approvals.getById(approvalId);
+      if (!approval || approval.orgId !== orgId) throw notFound("Aprovação não encontrada.");
+      if (approval.status !== "pending") throw badRequest("Essa aprovação já foi resolvida.");
+      if (approval.kind !== "action") throw badRequest("Só dá pra editar o valor de uma ação.");
+      if (approval.actionType !== "adjust_budget") {
+        throw badRequest("Só o ajuste de orçamento tem valor editável; pausar/retomar/status é aprovar ou rejeitar.");
+      }
+      const edit =
+        input.mode === "set"
+          ? { kind: "absolute" as const, amountMinor: Math.round((input.budgetReais ?? 0) * MINOR_PER_UNIT) }
+          : { kind: "pct" as const, mode: input.mode, pct: input.pct ?? 0 };
+      const r = editBudgetActionValue(approval.action, edit);
+      if (!r.ok) throw badRequest(r.error);
+      const updated = await deps.approvals.updatePendingAction(approvalId, r.action);
+      return { id: updated.id, status: updated.status };
+    },
+
+    /**
      * Ações ainda ACIONÁVEIS quanto a reverter, cross-conta (dentro do TTL): as que
      * podem reverter agora + as barradas por drift aguardando "reverter mesmo assim".
      * Já revertidas/simuladas/fora do TTL não aparecem aqui (nada a fazer com elas) —
@@ -112,10 +148,12 @@ export function createApprovalsService(deps: ApprovalsDeps) {
           accountName: adAccounts.name,
         })
         .from(agentToolCalls)
-        .innerJoin(agentRuns, eq(agentToolCalls.runId, agentRuns.id))
-        .innerJoin(agents, eq(agentRuns.agentId, agents.id))
+        // dono via run→agente (análise) OU agentId direto (criação/escrita por chat, runId null) —
+        // `coalesce` p/ criações via chat (runId null) também aparecerem nos reversíveis (Slice 11.4).
+        .leftJoin(agentRuns, eq(agentToolCalls.runId, agentRuns.id))
+        .innerJoin(agents, eq(sql`coalesce(${agentToolCalls.agentId}, ${agentRuns.agentId})`, agents.id))
         .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
-        .where(and(eq(agentRuns.orgId, orgId), gte(agentToolCalls.createdAt, since)));
+        .where(and(eq(agents.orgId, orgId), gte(agentToolCalls.createdAt, since)));
 
       const accountByToolCallId = new Map(rows.map((r) => [r.id, { accountId: r.accountId, accountName: r.accountName ?? r.accountId }]));
       const actions = computeAppliedActions(rows, deps.revertTtlDays, new Map());

@@ -7,21 +7,25 @@
 import { and, eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import { HumanMessage, type AIMessage } from "@langchain/core/messages";
-import { adAccounts, agentToolBindings, agentToolDefinitions, agents, conversations, guardrailConfigs, loadOrgTimezone, type Database } from "@trafego/db";
-import type { ActionType, AutonomyPolicy, ConversationRef } from "@trafego/shared";
+import { adAccounts, agents, conversations, loadOrgTimezone, type Database } from "@trafego/db";
+import type { AutonomyPolicy, ConversationRef } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
 import { buildWhatsappConversationGraph } from "../../graphs/whatsapp-conversation/graph.js";
 import {
   AGENT_TOOL_NAMES,
+  REFINE_TOOL_NAMES,
   CONCIERGE_TOOL_NAMES,
   CONFIG_CHAT_TOOL_NAMES,
   GROUP_CONCIERGE_TOOL_NAMES,
-  WRITE_TOOL_TO_ACTION,
+  WRITE_TOOL_NAMES,
   type ConversationToolContext,
 } from "../../graphs/whatsapp-conversation/tools.js";
+import { loadEnabledTools } from "../tools/enabled.js";
 import { createNotifyRepo } from "../notify/repo.js";
 import { createSendToConversation, type SendToConversation } from "../notify/send-to-contact.js";
-import { withTimeout } from "./with-timeout.js";
+import { applyOfferedCreative } from "./draft-proposal.js";
+import { clearCreativeOffer, getCreativeOffer, isSimpleAffirmation } from "./creative-offer.js";
+import { DEFAULT_CURRENCY, withTimeout } from "@trafego/shared";
 
 /** Erro amigável se o turno falhar (LLM/infra) — nunca vaza stack pro usuário (§UX). */
 const FALLBACK_REPLY = "Não consegui processar agora. Tenta de novo em instantes.";
@@ -118,71 +122,41 @@ export async function resolveFocusedAgent(
 }
 
 /**
- * Nomes das tools de ESCRITA livre habilitadas p/ o agente = as cujo tipo de ação está em
- * `allowedActions` (guardrail). É o "enforcement" do chat (5c): tool não permitida nem chega
- * ao LLM → recusa honesta na hora. O guardrail re-checa no apply como 2ª rede.
+ * Tools de ESCRITA/CRIAÇÃO habilitadas p/ o chat (A2) — AUTORITATIVO por `agent_tool_bindings`
+ * (fallback = allowedActions p/ as 4, default-on p/ criação; ver `loadEnabledTools`). Tool não
+ * habilitada nem chega ao LLM → recusa honesta. O apply re-checa da MESMA fonte (consistência).
+ * Mapeamento tool-de-chat → binding: as 4 mutações têm nome == binding-key; `create_campaign` ↔
+ * binding homônimo; `scale_winner` (faz raise OU duplicate) habilita se `duplicate_scale` OU
+ * `adjust_budget` (o raise) estiver ligado.
  */
-async function allowedWriteTools(db: Database, orgId: string, agentId: string): Promise<string[]> {
-  const [row] = await db
-    .select({ allowedActions: guardrailConfigs.allowedActions })
-    .from(guardrailConfigs)
-    .where(and(eq(guardrailConfigs.agentId, agentId), eq(guardrailConfigs.orgId, orgId)))
-    .limit(1);
-  const allowed = new Set<ActionType>((row?.allowedActions ?? []) as ActionType[]);
-  return [...WRITE_TOOL_TO_ACTION.entries()].filter(([, action]) => allowed.has(action)).map(([tool]) => tool);
+async function allowedChatWriteTools(db: Database, orgId: string, agentId: string): Promise<string[]> {
+  const enabled = await loadEnabledTools(db, orgId, agentId);
+  const tools: string[] = [];
+  for (const t of WRITE_TOOL_NAMES) if (enabled.has(t)) tools.push(t);
+  if (enabled.has("create_campaign")) tools.push("create_campaign");
+  // copiar campanha (Fatia 7) reusa o mesmo gate de criação (gasto novo, mesma saga).
+  if (enabled.has("create_campaign")) tools.push("copy_campaign");
+  if (enabled.has("duplicate_scale") || enabled.has("adjust_budget")) tools.push("scale_winner");
+  return tools;
 }
 
 /**
- * S4 (shadow-first) — resolve as write-tools a partir do CATÁLOGO∩bindings (fonte única):
- * tool executável no chat + binding do agente (enabled/shadow contam; disabled não;
- * ausência de binding = HERDA o comportamento atual via `fallback`). Interseção
- * conservadora com o `fallback` (allowedActions): nunca habilita mais do que hoje.
- * NÃO muda comportamento — usado só p/ logar divergência e validar a costura antes da virada.
+ * Allowlist do turno COM agente em contexto (5b-2). Base sempre-ligada (leitura + approve/reject +
+ * revert + confirm/cancel) ∪ config ∪ (escrita/refino SÓ com `chatAdsWrites`). v1 (kill-switch de
+ * plataforma): escrita conversacional OFF → NENHUMA tool de escrita Meta/refino entra (autoria/
+ * edição/ação vivem na plataforma). Puro/testável — a fonte da flag (env→deps) fica na casca.
  */
-async function catalogWriteToolsShadow(
-  db: Database,
-  orgId: string,
-  agentId: string,
-  fallback: readonly string[],
-): Promise<string[]> {
-  const fallbackSet = new Set(fallback);
-  const defs = await db
-    .select({ key: agentToolDefinitions.key, executableInChat: agentToolDefinitions.executableInChat })
-    .from(agentToolDefinitions);
-  const bindings = await db
-    .select({ toolKey: agentToolBindings.toolKey, mode: agentToolBindings.mode })
-    .from(agentToolBindings)
-    .where(and(eq(agentToolBindings.agentId, agentId), eq(agentToolBindings.orgId, orgId)));
-  const modeByKey = new Map(bindings.map((b) => [b.toolKey, b.mode]));
-  const result: string[] = [];
-  for (const d of defs) {
-    if (!d.executableInChat) continue;
-    const mode = modeByKey.get(d.key);
-    const enabled = mode === undefined ? fallbackSet.has(d.key) : mode !== "disabled";
-    // interseção conservadora: só entra se também estava no fallback (allowedActions).
-    if (enabled && fallbackSet.has(d.key)) result.push(d.key);
-  }
-  return result;
-}
-
-/** Loga divergência catálogo↔allowedActions (shadow). Fire-and-forget; nunca lança. */
-async function logCatalogShadow(
-  db: Database,
-  orgId: string,
-  agentId: string,
-  current: readonly string[],
-  logger: Pick<Logger, "debug" | "warn">,
-): Promise<void> {
-  try {
-    const fromCatalog = await catalogWriteToolsShadow(db, orgId, agentId, current);
-    const a = new Set(current);
-    const b = new Set(fromCatalog);
-    const diverges = a.size !== b.size || [...a].some((k) => !b.has(k));
-    if (diverges) logger.warn({ agentId, current: [...a], fromCatalog: [...b] }, "catalog-shadow:divergência");
-    else logger.debug({ agentId }, "catalog-shadow:coerente");
-  } catch (err) {
-    logger.warn({ agentId, err: String(err) }, "catalog-shadow:falhou");
-  }
+export function buildInContextAllow(opts: {
+  readonly writeTools: readonly string[];
+  readonly configTools: readonly string[];
+  readonly chatAdsWrites: boolean;
+}): Set<string> {
+  return new Set<string>([
+    ...AGENT_TOOL_NAMES,
+    ...(opts.chatAdsWrites ? opts.writeTools : []),
+    ...(opts.chatAdsWrites ? REFINE_TOOL_NAMES : []),
+    ...opts.configTools,
+  ]);
 }
 
 /**
@@ -243,19 +217,52 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
     multiAccount,
     // config-por-chat ligada? (molda o system-prompt: por chat × pelo site).
     configViaChat: config.enabled,
+    // escrita conversacional de ads (v1: default OFF) — molda toolset + prompt + capacidades.
+    chatAdsWrites: deps.conversation.chatAdsWrites,
     ...(inContext?.accountName ? { accountName: inContext.accountName } : {}),
   };
   // sem agente em contexto: concierge. Em GRUPO multi-conta, always-bind de LEITURA (S6) →
   // a 1ª pergunta resolve num turno (set_focus muta o ctx; reads self-guardam sem foco).
   const conciergeAllow =
     input.ref.kind === "group" && multiAccount ? GROUP_CONCIERGE_TOOL_NAMES : CONCIERGE_TOOL_NAMES;
-  const writeTools = inContext ? await allowedWriteTools(deps.db, input.orgId, inContext.agentId) : [];
-  // S4 shadow: valida a costura catálogo↔allowedActions sem mudar comportamento
-  // (fire-and-forget, fora do caminho crítico). Vira fonte da verdade numa fatia futura.
-  if (inContext) void logCatalogShadow(deps.db, input.orgId, inContext.agentId, writeTools, logger);
+  // escrita + criação resolvidas da MESMA fonte (bindings) que o apply usa (A2). Criação
+  // desligada nos bindings → tool fora do toolset (recusa honesta), sem re-checar no apply.
+  // v1 (kill-switch de plataforma): escrita conversacional de ads OFF → NENHUMA tool de escrita/
+  // criação/refino entra no toolset (autoria/edição/ação vivem na plataforma). Consulta +
+  // approve/reject + revert + config seguem (vêm de AGENT_TOOL_NAMES/config, não daqui).
+  const chatAdsWrites = deps.conversation.chatAdsWrites;
+  const writeTools = inContext && chatAdsWrites ? await allowedChatWriteTools(deps.db, input.orgId, inContext.agentId) : [];
   const allow = inContext
-    ? new Set<string>([...AGENT_TOOL_NAMES, ...writeTools, ...config.tools])
+    ? buildInContextAllow({ writeTools, configTools: config.tools, chatAdsWrites })
     : conciergeAllow;
+
+  // Slice 7 (ponte estado→turno): o usuário mandou um criativo no WhatsApp (o intake guardou uma
+  // OFERTA no Redis) e agora respondeu. Só um "sim" CLARO resolve — usar o criativo no rascunho
+  // pendente ou criar uma campanha com ele — ANTES do grafo. Ambíguo/composto → segue pro turno
+  // normal (a oferta fica no TTL; o usuário pode confirmar depois). Precisa de agente em contexto.
+  // v1 (kill-switch): usar o criativo enviado = autoria/edição de campanha por chat → só com
+  // chatAdsWrites ON. OFF → o intake nem guarda oferta (media-intake); a imagem fica na biblioteca
+  // pro usuário usar num rascunho no site.
+  if (inContext && chatAdsWrites) {
+    const offer = await getCreativeOffer(deps.redis, input.conversationId);
+    if (offer && isSimpleAffirmation(input.text)) {
+      try {
+        const offerReply = await applyOfferedCreative(
+          deps,
+          { orgId: input.orgId, agentId: inContext.agentId, adAccountId: inContext.adAccountId, currency: DEFAULT_CURRENCY },
+          offer,
+        );
+        // limpa a oferta só APÓS o sucesso: se applyOfferedCreative falhar (Meta/LLM), a oferta
+        // fica no TTL e o usuário pode tentar de novo — sem sumir silenciosamente.
+        await clearCreativeOffer(deps.redis, input.conversationId);
+        await deliverReply(sendToConversation, input.ref, offerReply, logger, input.orgId);
+      } catch (err) {
+        logger.error({ err, orgId: input.orgId }, "conversation:oferta de criativo falhou");
+        await deliverReply(sendToConversation, input.ref, FALLBACK_REPLY, logger, input.orgId);
+      }
+      return;
+    }
+  }
 
   let reply = FALLBACK_REPLY;
   try {

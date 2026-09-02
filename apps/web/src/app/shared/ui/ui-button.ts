@@ -9,8 +9,8 @@ const BASE_CLASSES =
   'focus-visible:outline focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-accent/30 ' +
   'disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50';
 
-// Primário = assinatura neobrutalista: navy sólido + sombra offset tomate + "afundar" no hover
-// (translate só com motion-safe). Danger = vermelho profundo distinto do tomate de marca.
+// Primário = assinatura neobrutalista: navy sólido + sombra offset caqui + "afundar" no hover
+// (translate só com motion-safe). Danger = vermelho profundo distinto do caqui de marca.
 // Secondary/ghost seguem calmos (nível Workspace): a marca vem do primário e dos cards.
 const VARIANT_CLASSES: Record<UiButtonVariant, string> = {
   primary:

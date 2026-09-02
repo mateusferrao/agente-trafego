@@ -82,6 +82,11 @@ export const toolApprovalPolicy = pgEnum("tool_approval_policy", [
 export const memoryType = pgEnum("memory_type", ["objective", "past_action", "rejected", "fact"]);
 export const memoryLifecycle = pgEnum("memory_lifecycle", ["active", "stale", "archived"]);
 
+// Dimensão de breakdown (S7, pivô saúde): idade+gênero combinados (Meta devolve juntos
+// quando ambos os breakdowns são pedidos) e posicionamento (plataforma+posição). Só
+// conta+campanha (S7 — adset/ad é fast-follow, ver ROADMAP).
+export const breakdownDimension = pgEnum("breakdown_dimension", ["demographic", "placement"]);
+
 export const runTrigger = pgEnum("run_trigger", ["cron", "on_demand", "conversation", "signal", "onboarding"]);
 export const runStatus = pgEnum("run_status", [
   "pending",
@@ -118,3 +123,29 @@ export const feedbackVote = pgEnum("feedback_vote", ["up", "down"]);
 export const outcomeStatus = pgEnum("outcome_status", ["pending", "positive", "negative", "neutral"]);
 
 export const messageDirection = pgEnum("message_direction", ["inbound", "outbound"]);
+
+// ─── Criação de campanhas (Fatia 7) ──────────────────────────────────────
+// `from_scratch` = campanha do zero; `duplicate` = cópia/escala de um vencedor.
+export const draftKind = pgEnum("draft_kind", ["from_scratch", "duplicate"]);
+// Discrimina a FORMA da aprovação (P0.1): `action` = ação de otimização (`action` set);
+// `draft` = aprovação de CRIAR o rascunho (gasto novo, `draft_id` set); `activation` =
+// aprovação de ATIVAR o que já foi criado (nasce sempre PAUSADO — 2º passo HITL, mesmo
+// `draft_id`). Antes só existia `action`×`draft`, discriminado pela nulidade de `draft_id`;
+// `activation` reusa o mesmo `draft_id`, então precisa de um discriminador explícito.
+export const approvalKind = pgEnum("approval_kind", ["action", "draft", "activation"]);
+// Ciclo de vida do rascunho: proposto → aprovado → criando → criado (ou falhou/revertido).
+export const draftStatus = pgEnum("draft_status", [
+  "proposed",
+  "approved",
+  "creating",
+  "created",
+  "failed",
+  "reverted",
+]);
+// Origem do rascunho: pedido no chat/site (`on_demand`) ou proposto pelo agente (`proactive`).
+export const draftOrigin = pgEnum("draft_origin", ["on_demand", "proactive"]);
+// Origem do asset da biblioteca: reuso da conta ou upload do usuário.
+export const creativeAssetOrigin = pgEnum("creative_asset_origin", ["reuse", "upload"]);
+// Estado do asset (upload de vídeo processa async na plataforma).
+export const creativeAssetStatus = pgEnum("creative_asset_status", ["pending", "ready", "error"]);
+export const creativeFormat = pgEnum("creative_format", ["image", "video"]);

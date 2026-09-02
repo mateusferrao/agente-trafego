@@ -121,6 +121,7 @@ export function createDrizzleInsightsSnapshotsRepo(db: Database): InsightsSnapsh
         metrics: r.metricsJson.metrics,
         ...(r.metricsJson.conversions ? { conversions: r.metricsJson.conversions } : {}),
         ...(r.metricsJson.rawActions ? { rawActions: r.metricsJson.rawActions } : {}),
+        ...(r.metricsJson.qualityRankings ? { qualityRankings: r.metricsJson.qualityRankings } : {}),
       }));
     },
   };

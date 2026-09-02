@@ -15,11 +15,12 @@ import {
   type Database,
 } from "@trafego/db";
 import { computeLiveTotals, cpaLabelFor, resolveWindows, todayInTz } from "@trafego/core";
-import { buildInsightsSyncJob, DEFAULT_TIMEZONE, UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY } from "@trafego/shared";
-import type { AgentGoals, InsightRow, OrgId, StoredInsightMetrics } from "@trafego/shared";
+import { ACCOUNT_HEALTH_STATUS_LABELS, buildInsightsSyncJob, DEFAULT_TIMEZONE, UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY } from "@trafego/shared";
+import type { AgentGoals, InsightRow, MetaAccountHealthStatus, OrgId, StoredInsightMetrics } from "@trafego/shared";
 import type { SchedulerPort } from "@trafego/shared/ports";
 import { notFound } from "../../middleware/error-handler.js";
 import type {
+  AccountHealthOutput,
   ActivityEvent,
   DashboardOutput,
   LiveKpis,
@@ -28,6 +29,35 @@ import type {
   RefreshDataOutput,
   WasteSummary,
 } from "./schema.js";
+
+/** Projeta as colunas de saúde persistidas de `ad_accounts` → shape da API (com a copy
+ *  pt-BR do status). Vocabulário Meta já foi traduzido no worker (só persiste neutro). */
+function toAccountHealthOutput(row: {
+  metaAccountStatus: string | null;
+  metaDisableReason: string | null;
+  metaBalance: string | null;
+  metaAmountSpent: string | null;
+  metaSpendCap: string | null;
+  metaPaymentMethodLabel: string | null;
+  metaHealthCheckedAt: Date | null;
+}): AccountHealthOutput | null {
+  if (!row.metaAccountStatus && !row.metaHealthCheckedAt) return null; // sync nunca checou
+  const status = (row.metaAccountStatus as MetaAccountHealthStatus | null) ?? "active";
+  const statusLabel =
+    status === "active"
+      ? "conta ativa e funcionando normalmente"
+      : ACCOUNT_HEALTH_STATUS_LABELS[status as Exclude<MetaAccountHealthStatus, "active">];
+  return {
+    status,
+    statusLabel,
+    disableReason: row.metaDisableReason,
+    balanceMajor: row.metaBalance !== null ? Number(row.metaBalance) : null,
+    amountSpentMajor: row.metaAmountSpent !== null ? Number(row.metaAmountSpent) : null,
+    spendCapMajor: row.metaSpendCap !== null ? Number(row.metaSpendCap) : null,
+    paymentMethodLabel: row.metaPaymentMethodLabel,
+    checkedAt: row.metaHealthCheckedAt ? row.metaHealthCheckedAt.toISOString() : null,
+  };
+}
 
 /** Sem análise há mais que isso (conta ativa) → sinal de atenção. 2× cadência = fast-follow. */
 const STALE_RUN_MS = 48 * 60 * 60 * 1000;
@@ -75,7 +105,16 @@ export function createDashboardService(deps: DashboardDeps) {
     /** KPIs ao vivo de UMA conta (org-scoped) + as-of. */
     async liveMetrics(orgId: OrgId, accountId: string): Promise<LiveMetricsOutput> {
       const [account] = await deps.db
-        .select({ currency: adAccounts.currency })
+        .select({
+          currency: adAccounts.currency,
+          metaAccountStatus: adAccounts.metaAccountStatus,
+          metaDisableReason: adAccounts.metaDisableReason,
+          metaBalance: adAccounts.metaBalance,
+          metaAmountSpent: adAccounts.metaAmountSpent,
+          metaSpendCap: adAccounts.metaSpendCap,
+          metaPaymentMethodLabel: adAccounts.metaPaymentMethodLabel,
+          metaHealthCheckedAt: adAccounts.metaHealthCheckedAt,
+        })
         .from(adAccounts)
         .where(and(eq(adAccounts.id, accountId), eq(adAccounts.orgId, orgId)))
         .limit(1);
@@ -129,6 +168,7 @@ export function createDashboardService(deps: DashboardDeps) {
         // rótulo do CPA derivado da conversão de negócio (fonte única @trafego/core) —
         // corrige o "Custo por venda" hardcoded quando o objetivo é conversa/lead/etc.
         totals: totals ? { ...pickKpis(totals), cpaLabel: cpaLabelFor(goals.conversionGoal ?? null) } : null,
+        accountHealth: toAccountHealthOutput(account),
       };
     },
 
@@ -189,6 +229,7 @@ export function createDashboardService(deps: DashboardDeps) {
         dormant: sql<boolean>`${adAccounts.activityState} = 'dormant'`,
         goals: agents.goals,
         tokenStatus: sql<string>`coalesce(${platformConnections.tokenStatus}, ${adAccounts.tokenStatus}, 'unchecked')`,
+        metaAccountStatus: adAccounts.metaAccountStatus,
       })
       .from(agents)
       .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
@@ -229,6 +270,8 @@ export function createDashboardService(deps: DashboardDeps) {
       const pendingCount = pendingByAccount.get(a.accountId) ?? 0;
       const l = live.get(a.accountId);
       const reasons: PanoramaCard["reasons"] = [];
+      const accountUnhealthy = Boolean(a.metaAccountStatus) && a.metaAccountStatus !== "active";
+      if (accountUnhealthy) reasons.push("account_unhealthy");
       if (a.tokenStatus === "invalid") reasons.push("token_invalid");
       // "sem análise recente" só p/ agente ATIVO (pausado é esperado ficar parado).
       if (!a.agentPaused && (!finishedAt || now - finishedAt.getTime() > STALE_RUN_MS)) {
@@ -243,6 +286,7 @@ export function createDashboardService(deps: DashboardDeps) {
         agentPaused: a.agentPaused,
         tokenStatus: a.tokenStatus,
         dormant: a.dormant,
+        accountHealthStatus: a.metaAccountStatus ?? null,
         grade,
         gradeAsOf: finishedAt ? finishedAt.toISOString() : null,
         live: l?.totals ?? null,
@@ -378,7 +422,7 @@ export function createDashboardService(deps: DashboardDeps) {
 
       const events: ActivityEvent[] = [];
       for (const r of rows) {
-        const args = r.args as { target?: { name?: string; id?: string }; dryRun?: boolean };
+        const args = r.args as { target?: { name?: string; id?: string; level?: string }; dryRun?: boolean };
         if (args.dryRun === true) continue; // simulado não é mudança real
         events.push({
           id: r.id,
@@ -386,7 +430,9 @@ export function createDashboardService(deps: DashboardDeps) {
           accountName: r.accountName ?? r.accountId,
           type: r.toolKey === UNDO_TOOL_KEY ? "action_rolled_back" : "action_applied",
           toolKey: r.toolKey,
+          // nome AMIGÁVEL só (o front cai pro tipo de entidade quando é um id cru).
           entityName: args.target?.name ?? args.target?.id ?? null,
+          entityLevel: args.target?.level ?? null,
           at: r.at.toISOString(),
           fromChat: r.runId === null,
         });

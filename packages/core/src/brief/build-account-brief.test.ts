@@ -32,6 +32,7 @@ function baseInput(overrides: Partial<BuildAccountBriefInput> = {}): BuildAccoun
   return {
     account: { id: "act_1", name: "Conta Teste", currency: "BRL" },
     window: "últimos 7 dias",
+    windowDays: 7,
     baselineWindow: "7 dias anteriores",
     goals: { targetCPA: 50 },
     entities,
@@ -70,6 +71,20 @@ describe("buildAccountBrief", () => {
     const c1 = brief.segments.campaigns.find((c) => c.id === "c1");
     expect(c1?.metrics.cpa).toBe(25);
     expect(c1?.flags).not.toContain("cpa_acima_da_meta");
+  });
+
+  it("S2: repassa bidStrategy/bidCapMajor da AdEntity pro EntitySummary (raciocínio de lance)", () => {
+    const withBidStrategy: AdEntity[] = [
+      { ...entities[0]!, bidStrategy: "bid_cap", bidCapMajor: 5 },
+      entities[1]!,
+    ];
+    const result = buildAccountBrief(baseInput({ entities: withBidStrategy }));
+    if (result.status !== "ok") return;
+    const c1 = result.brief.segments.campaigns.find((c) => c.id === "c1");
+    expect(c1?.bidStrategy).toBe("bid_cap");
+    expect(c1?.bidCapMajor).toBe(5);
+    const c2 = result.brief.segments.campaigns.find((c) => c.id === "c2");
+    expect(c2?.bidStrategy).toBeUndefined();
   });
 
   it("calcula deltaVsBaseline quando há linha na janela-baseline", () => {
@@ -156,6 +171,42 @@ describe("buildAccountBrief", () => {
     expect(c1?.metrics.roas).toBe(0);
   });
 
+  describe("breakdown demográfico/posicionamento (S7 — gate de materialidade)", () => {
+    it("spread material → entra no brief", () => {
+      const result = buildAccountBrief(
+        baseInput({
+          demographics: {
+            dimension: "demographic",
+            asOf: "2026-08-24",
+            segments: [
+              { key: "a", label: "a", metrics: { spend: 100, impressions: 1000, clicks: 20, ctr: 2, cpc: 5, cpm: 10 } },
+              { key: "b", label: "b", metrics: { spend: 100, impressions: 1000, clicks: 20, ctr: 2, cpc: 10, cpm: 10 } },
+            ],
+          },
+        }),
+      );
+      if (result.status !== "ok") return;
+      expect(result.brief.demographics?.segments).toHaveLength(2);
+    });
+
+    it("spread NÃO material → fica ausente do brief (nunca entra ruído)", () => {
+      const result = buildAccountBrief(
+        baseInput({
+          placements: {
+            dimension: "placement",
+            asOf: "2026-08-24",
+            segments: [
+              { key: "a", label: "a", metrics: { spend: 100, impressions: 1000, clicks: 20, ctr: 2, cpc: 5, cpm: 10 } },
+              { key: "b", label: "b", metrics: { spend: 100, impressions: 1000, clicks: 20, ctr: 2, cpc: 5.2, cpm: 10 } },
+            ],
+          },
+        }),
+      );
+      if (result.status !== "ok") return;
+      expect(result.brief.placements).toBeUndefined();
+    });
+  });
+
   describe("conversão de negócio (override / basis / proxy)", () => {
     // Conta que otimiza CONVERSAS (messaging); agente com meta de VENDA (purchase).
     const msgEntities: AdEntity[] = [
@@ -174,6 +225,7 @@ describe("buildAccountBrief", () => {
       return {
         account: { id: "act_1", name: "Conta", currency: "BRL" },
         window: "últimos 7 dias",
+        windowDays: 7,
         baselineWindow: "7 dias anteriores",
         goals: { targetCPA: 150, conversionGoal: "purchase" }, // meta de VENDA
         entities: msgEntities,

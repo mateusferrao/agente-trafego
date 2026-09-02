@@ -2,14 +2,14 @@
 name: implementing-trafego-feature
 description: >-
   Use when writing code for a planned feature, slice, endpoint, graph node,
-  adapter, or Angular component in the AutoTraffic monorepo — triggers on
+  adapter, or Angular component in the CaquiAI monorepo — triggers on
   "implementar", "implementar feature", "codar", "codar o plano", "escrever o
   slice", "implement the plan", "build the feature". Assumes a plan/design
   already exists. Not for planning (use planning-trafego-feature) or reviewing a
   diff (use reviewing-trafego-changes).
 ---
 
-# Implementar feature — AutoTraffic
+# Implementar feature — CaquiAI
 
 Implementa uma mudança já planejada, seguindo TDD e os invariantes do `CLAUDE.md`. Um plano/design deve existir antes (senão, use `planning-trafego-feature`).
 

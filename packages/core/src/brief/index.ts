@@ -9,6 +9,7 @@ import type {
   ConversionBreakdown,
   ConversionProxy,
   Creative,
+  EntityBreakdown,
   EntityLevel,
   EntityObjective,
   EntitySummary,
@@ -17,6 +18,7 @@ import type {
   InsightMetrics,
   InsightRow,
   OutcomeKind,
+  PlatformQualityRankings,
   RangeBand,
   TrackingHealth,
   TrendPoint,
@@ -25,12 +27,14 @@ import type {
 import { classifyBasis, resolveConversion, type ResolvedConversion } from "../conversion/index.js";
 import { computeFunnelSummary, mergeFunnel } from "../funnel/index.js";
 import type { CtrBands } from "../benchmarks/index.js";
+import { DEFAULT_BREAKDOWN_THRESHOLDS, type BreakdownThresholds, eligibleBreakdownSegments, hasMaterialSpread } from "../breakdown/index.js";
 import { DEFAULT_QUALITY_THRESHOLDS, type QualityThresholds, enrichEntitiesQuality } from "../quality/index.js";
 import { detectTrackingHealth } from "../tracking/index.js";
 import { computeWasteReport } from "../waste/index.js";
 import { buildCampaignUnits } from "./campaign-units.js";
+import { attachBudgetCeiling, type BudgetCeilingThresholds } from "../creation/budget-ceiling.js";
 
-export { buildCampaignUnits, type BuildCampaignUnitsInput } from "./campaign-units.js";
+export { attachCreativeWeaknessSignals, buildCampaignUnits, computeDeactivatedCampaignIds, type BuildCampaignUnitsInput } from "./campaign-units.js";
 
 /**
  * Curadoria determinística PURA entre a Meta e o LLM (§7). O LLM nunca vê o
@@ -56,6 +60,65 @@ export interface NormalizedEntity {
    * Guardamos o MÁXIMO por entidade na janela: sinal honesto de "chegou a saturar".
    */
   readonly frequency?: number;
+  /** Alcance (S6) — mesma razão de não-somável que frequência (pessoas ÚNICAS, dedup
+   *  entre dias): guardamos o do ÚLTIMO dia da janela (proxy do alcance atual, não o
+   *  acumulado do período — documentado como aproximação, CLAUDE.md §7). */
+  readonly reach?: number;
+  /** Cliques no link (S6) — evento discreto por dia, soma normalmente (como `clicks`). */
+  readonly inlineLinkClicks?: number;
+  /** Reproduções de vídeo a 25% (S6) — evento discreto por dia, soma normalmente. */
+  readonly videoP25WatchedCount?: number;
+  /** Rankings de qualidade da Meta (S6) — fato do dia, não somável; guardamos o do
+   *  ÚLTIMO dia com dado reportado (mesma razão de `reach`). */
+  readonly qualityRankings?: PlatformQualityRankings;
+}
+
+/**
+ * Ponto bruto (por dia) das métricas NÃO-somáveis frequency/reach — entrada de
+ * `reduceFrequencyAndReach`. Genérico o bastante p/ ser reusado fora do brief
+ * (ex.: chat, que lê `insights_snapshots` direto sem passar por `InsightRow`).
+ */
+export interface NonAdditivePoint {
+  readonly date?: string;
+  readonly frequency?: number;
+  readonly reach?: number;
+}
+
+/** Resultado agregado de `reduceFrequencyAndReach` — ausente (não zero) quando nenhum ponto reportou o campo. */
+export interface NonAdditiveAggregate {
+  frequency?: number;
+  reach?: number;
+}
+
+/**
+ * Reduz uma série de pontos diários de frequency/reach pra um único valor por
+ * entidade — a MESMA lógica que `normalize()` usa internamente, extraída p/ ser
+ * reusada por qualquer consumidor que agregue `insights_snapshots` (ex.: chat).
+ *
+ * `frequency` (impressões/alcance) NÃO é somável entre dias (alcance é dedup) →
+ * guardamos o MÁXIMO na janela: sinal honesto de "chegou a saturar".
+ * `reach` (pessoas ÚNICAS) tem a mesma razão de não-somável → guardamos o valor
+ * do ÚLTIMO dia da janela (por `date`, não pela ordem do array).
+ */
+export function reduceFrequencyAndReach(points: readonly NonAdditivePoint[]): NonAdditiveAggregate {
+  let frequency = 0;
+  let reachDate: string | undefined;
+  let reach: number | undefined;
+  for (const p of points) {
+    if (typeof p.frequency === "number") {
+      frequency = Math.max(frequency, p.frequency);
+    }
+    if (p.date !== undefined && p.reach !== undefined && (reachDate === undefined || p.date >= reachDate)) {
+      reachDate = p.date;
+      reach = p.reach;
+    }
+  }
+  return {
+    // mesma convenção usada no resto do arquivo: >0 como proxy de presença (evento
+    // discreto, zero genuíno é indistinguível de "campo não reportado" aqui).
+    ...(frequency > 0 ? { frequency } : {}),
+    ...(reach !== undefined ? { reach } : {}),
+  };
 }
 
 /**
@@ -69,7 +132,13 @@ export function normalize(rows: readonly InsightRow[]): NormalizedEntity[] {
     spend: number;
     impressions: number;
     clicks: number;
-    frequency: number;
+    /** pontos brutos (por dia) de frequency/reach — reduzidos no final via `reduceFrequencyAndReach`. */
+    nonAdditivePoints: NonAdditivePoint[];
+    inlineLinkClicks: number;
+    videoP25WatchedCount: number;
+    /** último dia visto com `qualityRankings` — rankings não são somáveis. */
+    qualityRankingsDate?: string;
+    qualityRankings?: PlatformQualityRankings;
     conv: Map<
       string,
       { goal: ConversionBreakdown[number]["goal"]; customConversionId?: string; count: number; value: number; hasValue: boolean }
@@ -79,14 +148,32 @@ export function normalize(rows: readonly InsightRow[]): NormalizedEntity[] {
 
   for (const row of rows) {
     const key = `${row.level}:${row.entityId}`;
-    const acc =
+    const acc: Acc =
       byKey.get(key) ??
-      { entityId: row.entityId, level: row.level, spend: 0, impressions: 0, clicks: 0, frequency: 0, conv: new Map() };
+      {
+        entityId: row.entityId,
+        level: row.level,
+        spend: 0,
+        impressions: 0,
+        clicks: 0,
+        nonAdditivePoints: [],
+        inlineLinkClicks: 0,
+        videoP25WatchedCount: 0,
+        conv: new Map(),
+      };
     acc.spend += row.metrics.spend ?? 0;
     acc.impressions += row.metrics.impressions ?? 0;
     acc.clicks += row.metrics.clicks ?? 0;
-    if (typeof row.metrics.frequency === "number") {
-      acc.frequency = Math.max(acc.frequency, row.metrics.frequency);
+    acc.inlineLinkClicks += row.metrics.inlineLinkClicks ?? 0;
+    acc.videoP25WatchedCount += row.metrics.videoP25WatchedCount ?? 0;
+    acc.nonAdditivePoints.push({
+      ...(row.date !== undefined ? { date: row.date } : {}),
+      ...(row.metrics.frequency !== undefined ? { frequency: row.metrics.frequency } : {}),
+      ...(row.metrics.reach !== undefined ? { reach: row.metrics.reach } : {}),
+    });
+    if (row.date !== undefined && row.qualityRankings !== undefined && (acc.qualityRankingsDate === undefined || row.date >= acc.qualityRankingsDate)) {
+      acc.qualityRankingsDate = row.date;
+      acc.qualityRankings = row.qualityRankings;
     }
     for (const c of row.conversions ?? []) {
       const ck = `${c.goal}:${c.customConversionId ?? ""}`;
@@ -105,22 +192,29 @@ export function normalize(rows: readonly InsightRow[]): NormalizedEntity[] {
     byKey.set(key, acc);
   }
 
-  return [...byKey.values()].map((a) => ({
-    entityId: a.entityId,
-    level: a.level,
-    spend: a.spend,
-    impressions: a.impressions,
-    clicks: a.clicks,
-    ...(a.frequency > 0 ? { frequency: a.frequency } : {}),
-    conversions: [...a.conv.values()].map((v) => ({
-      goal: v.goal,
-      ...(v.customConversionId ? { customConversionId: v.customConversionId } : {}),
-      count: v.count,
-      // preserva value=0 quando um valor FOI reportado (gasto com receita zero é sinal:
-      // "gastando, sem retorno" → roas 0); omite quando a conversão não tem valor.
-      ...(v.hasValue ? { value: v.value } : {}),
-    })),
-  }));
+  return [...byKey.values()].map((a) => {
+    const nonAdditive = reduceFrequencyAndReach(a.nonAdditivePoints);
+    return {
+      entityId: a.entityId,
+      level: a.level,
+      spend: a.spend,
+      impressions: a.impressions,
+      clicks: a.clicks,
+      ...(nonAdditive.frequency !== undefined ? { frequency: nonAdditive.frequency } : {}),
+      ...(a.inlineLinkClicks > 0 ? { inlineLinkClicks: a.inlineLinkClicks } : {}),
+      ...(a.videoP25WatchedCount > 0 ? { videoP25WatchedCount: a.videoP25WatchedCount } : {}),
+      ...(nonAdditive.reach !== undefined ? { reach: nonAdditive.reach } : {}),
+      ...(a.qualityRankings !== undefined ? { qualityRankings: a.qualityRankings } : {}),
+      conversions: [...a.conv.values()].map((v) => ({
+        goal: v.goal,
+        ...(v.customConversionId ? { customConversionId: v.customConversionId } : {}),
+        count: v.count,
+        // preserva value=0 quando um valor FOI reportado (gasto com receita zero é sinal:
+        // "gastando, sem retorno" → roas 0); omite quando a conversão não tem valor.
+        ...(v.hasValue ? { value: v.value } : {}),
+      })),
+    };
+  });
 }
 
 // ─── computeDerived ───────────────────────────────────────────────────────
@@ -162,6 +256,13 @@ export function computeDerived(
   const revenueTotal = entity.conversions.reduce((s, c) => s + (c.value ?? 0), 0);
   const revenue = entity.conversions.some((c) => c.value !== undefined) ? round(revenueTotal, 4) : undefined;
 
+  // S6: retenção de vídeo nos primeiros 25% — aproximação (impressão ≈ tentativa de
+  // reprodução em anúncio de vídeo; documentado, mesmo rigor do `deliveryEstimate`).
+  const videoHookRetentionPct =
+    entity.videoP25WatchedCount !== undefined && impressions > 0
+      ? round((entity.videoP25WatchedCount / impressions) * 100, 4)
+      : undefined;
+
   return {
     spend,
     impressions,
@@ -170,6 +271,10 @@ export function computeDerived(
     cpc,
     cpm,
     ...(entity.frequency !== undefined ? { frequency: entity.frequency } : {}),
+    ...(entity.reach !== undefined ? { reach: entity.reach } : {}),
+    ...(entity.inlineLinkClicks !== undefined ? { inlineLinkClicks: entity.inlineLinkClicks } : {}),
+    ...(entity.videoP25WatchedCount !== undefined ? { videoP25WatchedCount: entity.videoP25WatchedCount } : {}),
+    ...(videoHookRetentionPct !== undefined ? { videoHookRetentionPct } : {}),
     ...(conversions !== undefined ? { conversions } : {}),
     ...(cpa !== undefined ? { cpa } : {}),
     ...(roas !== undefined ? { roas } : {}),
@@ -335,6 +440,10 @@ export interface AssembleBriefInput {
   readonly playbookCandidates: readonly CandidateAction[];
   readonly memory: AccountBrief["memory"];
   readonly aggregatesRest: AccountBrief["aggregatesRest"];
+  /** Breakdown demográfico/posicionamento da conta (S7) — já filtrado por materialidade
+   *  pelo caller (worker), este passo só compõe. */
+  readonly demographics?: EntityBreakdown;
+  readonly placements?: EntityBreakdown;
 }
 
 /**
@@ -358,6 +467,8 @@ export function assembleBrief(input: AssembleBriefInput): AccountBrief {
     ...(input.funnel ? { funnel: input.funnel } : {}),
     ...(input.trackingHealth ? { trackingHealth: input.trackingHealth } : {}),
     ...(input.waste ? { waste: input.waste } : {}),
+    ...(input.demographics ? { demographics: input.demographics } : {}),
+    ...(input.placements ? { placements: input.placements } : {}),
     creatives: input.creatives,
     playbookCandidates: input.playbookCandidates,
     memory: input.memory,
@@ -373,6 +484,9 @@ export function assembleBrief(input: AssembleBriefInput): AccountBrief {
 export interface BuildAccountBriefInput {
   readonly account: { readonly id: string; readonly name: string; readonly currency: string };
   readonly window: string;
+  /** tamanho da janela em dias (P1.2) — normaliza `metrics.spend` (somado na janela) pra gasto
+   *  médio/dia no sinal de teto de budget. Mesmo valor que gerou `window`/`rows`. */
+  readonly windowDays: number;
   readonly baselineWindow: string;
   readonly goals: AgentGoals;
   readonly entities: readonly AdEntity[];
@@ -393,6 +507,14 @@ export interface BuildAccountBriefInput {
   readonly ctrBands?: CtrBands;
   /** Frequência de alerta override (senão default de plataforma). */
   readonly frequencyAlert?: number;
+  /** Limiares do sinal de teto de budget (P1.2) — default do sistema se ausente. */
+  readonly budgetCeilingThresholds?: BudgetCeilingThresholds;
+  /** Breakdown demográfico/posicionamento da CONTA (S7) — cru (o gate de materialidade
+   *  roda aqui dentro; só entra no brief final quando o spread for acionável). */
+  readonly demographics?: EntityBreakdown;
+  readonly placements?: EntityBreakdown;
+  /** Limiares de materialidade do breakdown (S7) — default do sistema se ausente. */
+  readonly breakdownThresholds?: BreakdownThresholds;
 }
 
 export type BuildAccountBriefResult =
@@ -453,6 +575,18 @@ export function buildAccountBrief(input: BuildAccountBriefInput): BuildAccountBr
     selectedByLevel.set(level, rankAndSelect(summaries, input.topN));
   }
 
+  // Sinal de teto de budget (P1.2) — pós-loop porque agrega CAMPANHA×ADSET (ABO), então
+  // precisa dos DOIS níveis já prontos. Re-deriva a seleção de campanha (o topN roda de novo
+  // sobre a lista com `atBudgetCeiling` anexado — ranking em si não muda, o campo é aditivo).
+  const campaignsWithCeiling = attachBudgetCeiling({
+    campaigns: allByLevel.get("campaign") ?? [],
+    adsets: allByLevel.get("adset") ?? [],
+    windowDays: input.windowDays,
+    ...(input.budgetCeilingThresholds ? { thresholds: input.budgetCeilingThresholds } : {}),
+  });
+  allByLevel.set("campaign", campaignsWithCeiling);
+  selectedByLevel.set("campaign", rankAndSelect(campaignsWithCeiling, input.topN));
+
   // Cauda = campanhas não selecionadas (nível primário; evita dupla-contagem entre níveis).
   const aggregatesRest = summarizeRest(
     allByLevel.get("campaign") ?? [],
@@ -476,6 +610,20 @@ export function buildAccountBrief(input: BuildAccountBriefInput): BuildAccountBr
   // Desperdício + Pareto (§Bloco 2) sobre o conjunto COMPLETO de campanhas.
   const waste = computeWasteReport(allByLevel.get("campaign") ?? []);
 
+  // Breakdown demográfico/posicionamento (S7) — gate de materialidade: só entra no brief
+  // (e no prompt) quando o spread entre segmentos é acionável, não ruído. Anexa só os
+  // segmentos ELEGÍVEIS (acima do piso de gasto) — a NOTE do kernel afirma "já filtrado
+  // por materialidade", então um segmento de gasto irrisório nunca pode chegar ao LLM.
+  const breakdownThresholds = input.breakdownThresholds ?? DEFAULT_BREAKDOWN_THRESHOLDS;
+  const demographics =
+    input.demographics && hasMaterialSpread(input.demographics.segments, breakdownThresholds)
+      ? { ...input.demographics, segments: eligibleBreakdownSegments(input.demographics.segments, breakdownThresholds) }
+      : undefined;
+  const placements =
+    input.placements && hasMaterialSpread(input.placements.segments, breakdownThresholds)
+      ? { ...input.placements, segments: eligibleBreakdownSegments(input.placements.segments, breakdownThresholds) }
+      : undefined;
+
   const brief = assembleBrief({
     account: { ...input.account, window: input.window, baselineWindow: input.baselineWindow },
     goals: input.goals,
@@ -491,7 +639,14 @@ export function buildAccountBrief(input: BuildAccountBriefInput): BuildAccountBr
     ...(accountFunnel ? { funnel: accountFunnel } : {}),
     ...(trackingHealth ? { trackingHealth } : {}),
     ...(waste ? { waste } : {}),
-    creatives: [], // visão entra por-unidade no map-reduce (3b-2), não no brief da conta
+    ...(demographics ? { demographics } : {}),
+    ...(placements ? { placements } : {}),
+    // visão entra por-unidade no map-reduce (3b-2), não no brief da conta. Reconsiderado no
+    // pivô saúde (S8, "síntese ganha creatives agregados"): o campo é `Creative[]` (asset cru,
+    // sem tier/score) — não existe hoje um agregado estruturado que caiba aqui sem duplicar
+    // o que as narrativas por-campanha (unitAnalyses) já carregam pra síntese. Fica [] até
+    // haver um agregado real de criativo pra propor (fast-follow, não confirmado ainda).
+    creatives: [],
     playbookCandidates: input.playbookCandidates,
     memory: input.memory ?? EMPTY_MEMORY,
     aggregatesRest,
@@ -610,6 +765,15 @@ function toEntitySummary(
   const baseMetrics = base ? computeDerived(base, objective, override) : undefined;
   const funnel = computeFunnelSummary(funnelByKey.get(`${n.level}:${n.entityId}`) ?? []);
   const { basis, proxy } = resolveBasis(n, objective, override, metrics);
+  // budget resolvido (P1.2) — CBO/próprio; ABO agrega via `campaignId` em `attachBudgetCeiling`.
+  const hasBudget = entity?.dailyBudget !== undefined || entity?.lifetimeBudget !== undefined;
+  const budget = hasBudget
+    ? {
+        ...(entity?.dailyBudget !== undefined ? { dailyMajor: entity.dailyBudget } : {}),
+        ...(entity?.lifetimeBudget !== undefined ? { lifetimeMajor: entity.lifetimeBudget } : {}),
+        ...(entity?.budgetRemaining !== undefined ? { lifetimeRemainingMajor: entity.budgetRemaining } : {}),
+      }
+    : undefined;
   return {
     id: n.entityId,
     level: n.level,
@@ -623,6 +787,11 @@ function toEntitySummary(
     ...(entity?.audience ? { audience: entity.audience } : {}),
     ...(proxy ? { proxy } : {}),
     ...(funnel ? { funnel } : {}),
+    ...(entity?.campaignId ? { campaignId: entity.campaignId } : {}),
+    ...(budget ? { budget } : {}),
+    ...(entity?.bidStrategy ? { bidStrategy: entity.bidStrategy } : {}),
+    ...(entity?.bidCapMajor !== undefined ? { bidCapMajor: entity.bidCapMajor } : {}),
+    ...(n.qualityRankings ? { qualityRankings: n.qualityRankings } : {}),
   };
 }
 

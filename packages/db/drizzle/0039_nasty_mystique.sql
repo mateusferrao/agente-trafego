@@ -1,0 +1,1 @@
+ALTER TABLE "agent_tool_bindings" ADD CONSTRAINT "agent_tool_bindings_agent_tool_uq" UNIQUE("agent_id","tool_key");

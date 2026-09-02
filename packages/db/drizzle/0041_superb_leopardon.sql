@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "creative_assets_account_storage_uq" ON "creative_assets" USING btree ("ad_account_id","storage_ref") WHERE storage_ref is not null;

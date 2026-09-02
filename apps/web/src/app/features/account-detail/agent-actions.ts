@@ -28,7 +28,7 @@ type Dropped = LastRunActionsOutput['dropped'][number];
             <h2 class="font-brand text-sm font-semibold text-ink">O que o agente fez</h2>
             <ul class="flex flex-col gap-2">
               @for (a of applied(); track a.toolCallId) {
-                <li class="flex items-start justify-between gap-3 rounded-md border border-line bg-soft px-3 py-2">
+                <li class="flex flex-col gap-2 rounded-md border border-line bg-soft px-3 py-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
                   <span class="flex min-w-0 flex-col gap-0.5">
                     <span class="flex flex-wrap items-center gap-2 text-sm text-ink">
                       <span class="font-medium">{{ typeLabel(a.type) }}</span>
@@ -66,7 +66,7 @@ type Dropped = LastRunActionsOutput['dropped'][number];
             <h2 class="font-brand text-sm font-semibold text-ink">Sugeridas — precisam do seu OK</h2>
             <ul class="flex flex-col gap-2">
               @for (s of suggested(); track s.approvalId) {
-                <li class="flex items-start justify-between gap-3 rounded-md border border-line bg-soft px-3 py-2">
+                <li class="flex flex-col gap-2 rounded-md border border-line bg-soft px-3 py-2 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
                   <span class="flex min-w-0 flex-col gap-0.5">
                     <span class="flex flex-wrap items-center gap-2 text-sm text-ink">
                       <span class="font-medium">{{ typeLabel(s.type) }}</span>
@@ -80,11 +80,11 @@ type Dropped = LastRunActionsOutput['dropped'][number];
                       <app-ui-eyebrow>{{ d }}</app-ui-eyebrow>
                     }
                   </span>
-                  <span class="flex shrink-0 gap-2">
-                    <button appButton variant="secondary" size="sm" [disabled]="resolving().has(s.approvalId)" (click)="reject(s)">
+                  <span class="flex gap-2 sm:shrink-0">
+                    <button appButton variant="secondary" size="sm" class="flex-1 sm:flex-none" [disabled]="resolving().has(s.approvalId)" (click)="reject(s)">
                       Rejeitar
                     </button>
-                    <button appButton size="sm" [disabled]="resolving().has(s.approvalId)" (click)="approve(s)">
+                    <button appButton size="sm" class="flex-1 sm:flex-none" [disabled]="resolving().has(s.approvalId)" (click)="approve(s)">
                       {{ resolving().has(s.approvalId) ? 'Enviando…' : 'Aprovar' }}
                     </button>
                   </span>

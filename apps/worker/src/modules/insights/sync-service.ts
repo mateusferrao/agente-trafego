@@ -22,7 +22,18 @@ const BASE_FIELDS = [
   "frequency",
   "actions",
   "action_values",
+  // S6 — campos ricos que a Meta agrega em QUALQUER nível (como `actions`): alcance
+  // (pessoas únicas), clique-no-link real (vs engajamento genérico) e retenção de
+  // vídeo nos primeiros 25% (gancho).
+  "reach",
+  "inline_link_clicks",
+  "video_p25_watched_actions",
 ] as const;
+// S6 — os 3 rankings de qualidade só existem no nível ANÚNCIO (Meta Ad Relevance
+// Diagnostics, a partir de ~500 impressões) — diferente de `actions`/vídeo acima, que
+// a Meta agrega em qualquer nível. Pedi-los em account/campaign/adset arriscaria o
+// report rejeitar o campo (falha o nível inteiro, não só o campo).
+const AD_ONLY_FIELDS = ["quality_ranking", "engagement_rate_ranking", "conversion_rate_ranking"] as const;
 const LEVEL_ID_FIELD: Readonly<Record<EntityLevel, string>> = {
   account: "account_id",
   campaign: "campaign_id",
@@ -88,7 +99,7 @@ export function createInsightsSyncService(deps: InsightsSyncServiceDeps): Insigh
             level,
             window: `${window.since}..${window.until}`,
             timeIncrement: DAILY,
-            fields: [...BASE_FIELDS, LEVEL_ID_FIELD[level]],
+            fields: [...BASE_FIELDS, ...(level === "ad" ? AD_ONLY_FIELDS : []), LEVEL_ID_FIELD[level]],
           });
           const snapshots: SnapshotRow[] = rows
             .filter((r) => r.date)
@@ -102,6 +113,7 @@ export function createInsightsSyncService(deps: InsightsSyncServiceDeps): Insigh
                 metrics: r.metrics,
                 ...(r.conversions ? { conversions: r.conversions } : {}),
                 ...(r.rawActions ? { rawActions: r.rawActions } : {}),
+                ...(r.qualityRankings ? { qualityRankings: r.qualityRankings } : {}),
               },
             }));
           if (snapshots.length > 0) {

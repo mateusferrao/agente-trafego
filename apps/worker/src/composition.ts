@@ -12,15 +12,18 @@ import type {
   MeteringPort,
   SchedulerPort,
   TranscriptionPort,
+  StoragePort,
 } from "@trafego/shared/ports";
 import { WHATSAPP_TRANSCRIPTION_ATTEMPTS, WHATSAPP_TRANSCRIPTION_BACKOFF_MS } from "@trafego/shared";
 import type { Database } from "@trafego/db/client";
 import { createDb } from "@trafego/db";
-import { loadEnv } from "@trafego/config";
+import { loadEnv, resolveDataDir } from "@trafego/config";
 import { BUFFER_TTL_MARGIN_SEC } from "./modules/conversation/buffer.js";
+import { createLocalStorage } from "@trafego/storage-local";
+import { createS3Storage } from "@trafego/storage-s3";
 import { Aes256CredentialVault } from "@trafego/credential-vault";
 import { BullmqScheduler } from "@trafego/scheduler-bullmq";
-import { CustomConversionsResolver, MetaAdsAdapter, MetaEntityCache, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta";
+import { CustomConversionsResolver, MetaAdsAdapter, MetaBehaviorCatalogService, MetaEntityCache, MetaGraphClient, MetaGovernor } from "@trafego/ads-meta";
 import { EvolutionAdapter, EvolutionClient } from "@trafego/channel-evolution";
 import { OpenRouterAdapter, OpenRouterClient } from "@trafego/llm-openrouter";
 import { OpenRouterTranscriptionAdapter } from "@trafego/transcription-openrouter";
@@ -33,6 +36,8 @@ import { Redis } from "ioredis";
 import { pino, type Logger } from "pino";
 import { createDrizzleInsightsSnapshotsRepo } from "./modules/insights/repo.js";
 import { createInsightsSyncService, type InsightsSyncService } from "./modules/insights/sync-service.js";
+import { createDrizzleInsightsBreakdownsRepo } from "./modules/insights/breakdown-repo.js";
+import { createBreakdownSyncService, type BreakdownSyncService } from "./modules/insights/breakdown-sync-service.js";
 
 /**
  * Container de dependências resolvidas. Passado por injeção para grafos,
@@ -55,9 +60,13 @@ export interface WorkerDeps {
     readonly mailer: MailerPort;
     /** Transcrição de nota de voz inbound (STT) — worker é o dono (API stuba o LLM). */
     readonly transcription: TranscriptionPort;
+    /** Storage do blob original de criativo (F7 intake) — local-fs no MVP, S3-compat depois. */
+    readonly storage: StoragePort;
   };
   /** Sync de insights (2a): coleta a série temporal Meta → insights_snapshots. */
   readonly insightsSync: InsightsSyncService;
+  /** Sync de breakdown demográfico/posicionamento (S7, pivô saúde) — cadência própria. */
+  readonly breakdownSync: BreakdownSyncService;
   /** Config da análise (3a/3b) — defaults globais de produto (env; override por-agente). */
   readonly analysis: import("./modules/analysis/config.js").AnalysisDefaults;
   /** Frescura (6a): limite de staleness (min) do sync-only + intervalo do sweep. */
@@ -68,6 +77,10 @@ export interface WorkerDeps {
   readonly dormancy: {
     readonly afterDays: number;
     readonly sweepIntervalMin: number;
+  };
+  /** Intake de criativo (F7): teto de vídeo no WhatsApp (bytes → memória do worker). */
+  readonly creative: {
+    readonly maxWhatsappVideoBytes: number;
   };
   /** Origem do site p/ deep-link nas mensagens de WhatsApp. */
   readonly webOrigin: string;
@@ -101,16 +114,23 @@ export interface WorkerDeps {
     readonly noticeThrottleSec: number;
     /** Teto (ms) do turno inteiro (ReAct) — travamento sem erro cai no fallback. */
     readonly turnTimeoutMs: number;
+    /** Teto (ms) do fetch ao vivo da Meta numa read-tool — degrada pro persistido (< turnTimeout). */
+    readonly liveFetchTimeoutMs: number;
     /** Timeout por chamada HTTP ao LLM (ms) — evita hang no provider até o teto do turno. */
     readonly httpTimeoutMs: number;
     /** Retentativas por chamada de LLM (rede/429/5xx) — reroteia o provider ruim. */
     readonly maxRetries: number;
     /** modelo de RESERVA do chat — se o primário esgotar o retry, tenta este (também com retry). */
     readonly fallbackModel: string;
+    /** modelo default da geração de copy do rascunho (Fatia 7) — override por-agente no model_config. */
+    readonly copyModel: string;
     /** Fallback de custo (bug do bindTools suprimindo usage.cost — ver nodes.ts). */
     readonly fetchGenerationCost: (generationId: string) => Promise<number | undefined>;
     /** Kill-switch de plataforma do ingest de contexto de grupo (default: ligado). */
     readonly groupIngestContext: boolean;
+    /** Kill-switch de plataforma da escrita conversacional de ads pelo chat (v1: default OFF).
+     *  OFF → o chat não autora/edita/muta a Meta; consulta/aprovação/config seguem. */
+    readonly chatAdsWrites: boolean;
     /** Retenção (dias) do dado ambiente de grupo (purge job diário). */
     readonly groupContextRetentionDays: number;
     /** Transcript ambiente injetado no prompt: teto de mensagens / janela (h) / teto de tokens. */
@@ -161,9 +181,10 @@ export async function buildComposition(): Promise<WorkerDeps> {
 
   const vault = new Aes256CredentialVault(env.CREDENTIAL_MASTER_KEY, env.CREDENTIAL_KEY_VERSION);
   const client = new MetaGraphClient({ timeoutMs: env.META_HTTP_TIMEOUT_MS });
+  const governor = new MetaGovernor({ redis });
   const ads = new MetaAdsAdapter({
     client,
-    governor: new MetaGovernor({ redis }),
+    governor,
     customConversions: new CustomConversionsResolver({
       client,
       redis,
@@ -171,6 +192,8 @@ export async function buildComposition(): Promise<WorkerDeps> {
     }),
     // cache do catálogo de entidades entre runs (corta o listEntities full = rate-limit).
     entityCache: new MetaEntityCache({ redis, ttlSec: env.META_ENTITY_CACHE_TTL_SEC }),
+    // catálogo de behaviors (enum global sem busca) cacheado locale-scoped no Redis.
+    behaviorCatalog: new MetaBehaviorCatalogService(client, governor, { redis, ttlSec: env.META_BEHAVIOR_CACHE_TTL_SEC }),
     visionFrames: env.ANALYSIS_VISION_FRAMES,
   });
   const insightsSync = createInsightsSyncService({
@@ -178,6 +201,11 @@ export async function buildComposition(): Promise<WorkerDeps> {
     repo: createDrizzleInsightsSnapshotsRepo(db),
     refetchWindowDays: env.INSIGHTS_REFETCH_WINDOW_DAYS,
     retentionDays: env.INSIGHTS_RETENTION_DAYS,
+  });
+  const breakdownSync = createBreakdownSyncService({
+    ads,
+    repo: createDrizzleInsightsBreakdownsRepo(db),
+    staleThresholdMin: env.INSIGHTS_BREAKDOWN_STALE_THRESHOLD_MIN,
   });
   const messaging = new EvolutionAdapter({
     client: new EvolutionClient({
@@ -197,7 +225,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
     requestTimeoutMs: env.LLM_HTTP_TIMEOUT_MS,
     logger, // observa retries + troca de modelo (pontos de falha)
     referer: env.WEB_ORIGIN,
-    title: "AutoTraffic",
+    title: "CaquiAI",
   });
   const llm = withLlmMetering(
     new OpenRouterAdapter({ client: openRouterClient, structuredMaxRetries: env.LLM_STRUCTURED_MAX_RETRIES, logger }),
@@ -242,8 +270,21 @@ export async function buildComposition(): Promise<WorkerDeps> {
         log: (m) => logger.info(m),
       }),
       transcription, // STT da nota de voz inbound (S3)
+      // driver por env: local-fs (dev) ou s3-compat (prod) — mesma porta, core/ingest intocados (§5).
+      storage:
+        env.STORAGE_DRIVER === "s3"
+          ? createS3Storage({
+              region: env.STORAGE_REGION,
+              bucket: env.STORAGE_BUCKET!, // garantido pelo refine (STORAGE_DRIVER=s3)
+              accessKeyId: env.STORAGE_ACCESS_KEY!,
+              secretAccessKey: env.STORAGE_SECRET_KEY!,
+              forcePathStyle: env.STORAGE_FORCE_PATH_STYLE,
+              ...(env.STORAGE_ENDPOINT ? { endpoint: env.STORAGE_ENDPOINT } : {}),
+            })
+          : createLocalStorage({ baseDir: resolveDataDir(env.CREATIVE_STORAGE_DIR), urlBase: env.CREATIVE_ASSET_URL_BASE }),
     },
     insightsSync,
+    breakdownSync,
     analysis: {
       model: env.OPENROUTER_MODEL,
       reviewModel: env.OPENROUTER_REVIEW_MODEL,
@@ -257,6 +298,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
       reviewEnabled: env.ANALYSIS_REVIEW_ENABLED,
       maxOutputTokens: env.ANALYSIS_MAX_OUTPUT_TOKENS,
       reasoningEffort: env.ANALYSIS_REASONING_EFFORT,
+      reviewReasoningEffort: env.ANALYSIS_REVIEW_REASONING_EFFORT,
       maxCreativesVision: env.ANALYSIS_MAX_CREATIVES_VISION,
       notableAdsPerCampaign: env.ANALYSIS_NOTABLE_ADS_PER_CAMPAIGN,
       maxCreativesVisionPerCampaign: env.ANALYSIS_MAX_CREATIVES_VISION_PER_CAMPAIGN,
@@ -278,6 +320,9 @@ export async function buildComposition(): Promise<WorkerDeps> {
         coldStartReference: env.ANALYSIS_QUALITY_COLD_START_REFERENCE,
         trackingBrokenRatio: env.ANALYSIS_QUALITY_TRACKING_BROKEN_RATIO,
         trackingBrokenMinFunnel: env.ANALYSIS_QUALITY_TRACKING_BROKEN_MIN_FUNNEL,
+        relativeEligibilitySpendMultiplier: env.ANALYSIS_QUALITY_RELATIVE_ELIGIBILITY_SPEND_MULTIPLIER,
+        marginalCpaWorsenPct: env.ANALYSIS_QUALITY_MARGINAL_CPA_WORSEN_PCT,
+        weakHookRetentionMaxPct: env.ANALYSIS_QUALITY_WEAK_HOOK_RETENTION_MAX_PCT,
       },
     },
     insights: {
@@ -286,6 +331,9 @@ export async function buildComposition(): Promise<WorkerDeps> {
     dormancy: {
       afterDays: env.DORMANT_AFTER_DAYS,
       sweepIntervalMin: env.DORMANT_SWEEP_INTERVAL_MIN,
+    },
+    creative: {
+      maxWhatsappVideoBytes: env.CREATIVE_MAX_WHATSAPP_VIDEO_MB * 1024 * 1024,
     },
     webOrigin: env.WEB_ORIGIN,
     visionAnalyzerVersion: env.CREATIVE_VISION_ANALYZER_VERSION,
@@ -310,11 +358,14 @@ export async function buildComposition(): Promise<WorkerDeps> {
       debounceSeconds: env.CONVERSATION_DEBOUNCE_SECONDS,
       noticeThrottleSec: env.NOTICE_THROTTLE_SECONDS,
       turnTimeoutMs: env.CONVERSATION_TURN_TIMEOUT_MS,
+      liveFetchTimeoutMs: env.CHAT_LIVE_FETCH_TIMEOUT_MS,
       httpTimeoutMs: env.CONVERSATION_HTTP_TIMEOUT_MS,
       maxRetries: env.LLM_MAX_RETRIES,
       fallbackModel: env.CONVERSATION_FALLBACK_MODEL,
+      copyModel: env.COPY_MODEL,
       fetchGenerationCost: (id) => openRouterClient.getGenerationCost(id),
       groupIngestContext: env.TRAFEGO_GROUP_INGEST_CONTEXT,
+      chatAdsWrites: env.TRAFEGO_CHAT_ADS_WRITES,
       groupContextRetentionDays: env.GROUP_CONTEXT_RETENTION_DAYS,
       groupContextMaxMessages: env.GROUP_CONTEXT_MAX_MESSAGES,
       groupContextWindowHours: env.GROUP_CONTEXT_WINDOW_HOURS,

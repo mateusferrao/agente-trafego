@@ -10,6 +10,9 @@ const rec = (over: Partial<AnalysisOutput["recommendations"][number]>): Analysis
   actionType: "pause",
   targetEntity: { level: "campaign", externalId: "C1" },
   budgetChangePct: null,
+  expectedImpact: null,
+  whatToMonitor: null,
+  findingRefs: null,
   ...over,
 });
 
@@ -51,5 +54,14 @@ describe("guardKillWithoutMaturity", () => {
   it("sem eligibility conhecida → não mexe", () => {
     const out = guardKillWithoutMaturity(output([rec({})]), new Map());
     expect(out.recommendations[0]!.actionType).toBe("pause");
+  });
+
+  it("título ganha prefixo 'Investigar: ' quando rebaixa; budgetChangePct zera (consistente com os demais guards)", () => {
+    const out = guardKillWithoutMaturity(
+      output([rec({ title: "Pausar campanha X", budgetChangePct: -50 })]),
+      new Map([["C1", elig({ inLearning: true })]]),
+    );
+    expect(out.recommendations[0]!.title).toBe("Investigar: Pausar campanha X");
+    expect(out.recommendations[0]!.budgetChangePct).toBeNull();
   });
 });

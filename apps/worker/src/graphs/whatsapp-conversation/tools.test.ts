@@ -8,6 +8,7 @@ import {
   CONCIERGE_TOOL_NAMES,
   GROUP_CONCIERGE_TOOL_NAMES,
   actionFromToolCall,
+  buildCapabilitiesText,
   configPatchFromToolCall,
   diceSimilarity,
   makeConversationTools,
@@ -175,9 +176,7 @@ describe("describe_capabilities tool", () => {
 
     const on = await capTool(deps, { ...CTX, configViaChat: true }, new Set(["describe_capabilities", "pause_entity"])).invoke({});
     expect(on).toContain("pausar");
-    expect(on).toContain("Mudar a config");
-    expect(on).toContain("sugiro e peço seu OK"); // autonomia playbook em PT
-    expect(on.toLowerCase()).toContain("panorama");
+    expect(on).toContain("Mudo minha configuração"); // config-por-chat ligada
 
     const off = await capTool(deps, { ...CTX, configViaChat: false }, new Set(["describe_capabilities"])).invoke({});
     expect(off).toContain("desligado nos guardrails"); // sem write tool habilitada
@@ -269,6 +268,7 @@ function state(over: Partial<AgentConfigState> = {}): AgentConfigState {
     modelConfig: {},
     notifyPolicy: NOTIFY_POLICY,
     posture: { directiveness: "consultative", volume: "balanced", didacticDepth: "explanatory", experienceLevel: null },
+    toolBindings: {},
     ...over,
   };
 }
@@ -303,6 +303,48 @@ describe("configPatchFromToolCall", () => {
       bySource: { playbook: "act_safe", llm: "suggest" },
       autoConfigViaChat: true,
     });
+  });
+
+  it("set_autonomy: byAction liga act_full pra create_campaign (gap #2 — antes só existia via site)", () => {
+    const patch = configPatchFromToolCall(
+      "set_autonomy",
+      { byAction: [{ toolKey: "create_campaign", level: "act_full" }] },
+      state(),
+    );
+    expect(patch?.autonomyPolicy?.byAction).toEqual({ create_campaign: "act_full" });
+    expect(patch?.autonomyPolicy?.bySource).toEqual({ playbook: "suggest", llm: "suggest" }); // preservado
+  });
+
+  it("set_autonomy: byAction level=null remove a chave (volta a herdar a origem)", () => {
+    const cur = state({ autonomyPolicy: { ...AUTONOMY, byAction: { create_campaign: "act_full", adjust_budget: "act_safe" } } });
+    const patch = configPatchFromToolCall("set_autonomy", { byAction: [{ toolKey: "create_campaign", level: null }] }, cur);
+    expect(patch?.autonomyPolicy?.byAction).toEqual({ adjust_budget: "act_safe" });
+  });
+
+  it("set_autonomy: byAction zerando a ÚLTIMA chave limpa byAction (undefined, não objeto vazio)", () => {
+    const cur = state({ autonomyPolicy: { ...AUTONOMY, byAction: { create_campaign: "act_full" } } });
+    const patch = configPatchFromToolCall("set_autonomy", { byAction: [{ toolKey: "create_campaign", level: null }] }, cur);
+    expect(patch?.autonomyPolicy?.byAction).toBeUndefined();
+  });
+
+  it("set_autonomy: byAction ausente NÃO mexe no byAction atual", () => {
+    const cur = state({ autonomyPolicy: { ...AUTONOMY, byAction: { create_campaign: "act_full" } } });
+    const patch = configPatchFromToolCall("set_autonomy", { playbook: "act_safe" }, cur);
+    expect(patch?.autonomyPolicy?.byAction).toEqual({ create_campaign: "act_full" });
+  });
+
+  it("set_autonomy: scaleAggressivePreference (gap #4 — antes só existia via site)", () => {
+    const patch = configPatchFromToolCall("set_autonomy", { scaleAggressivePreference: "duplicate" }, state());
+    expect(patch?.autonomyPolicy?.scaleAggressivePreference).toBe("duplicate");
+  });
+
+  it("set_action_access: liga/desliga ações específicas (gap #3 — mesma fonte da tela 'Ações permitidas')", () => {
+    const patch = configPatchFromToolCall(
+      "set_action_access",
+      { actions: [{ toolKey: "create_campaign", enabled: false }, { toolKey: "adjust_budget", enabled: true }] },
+      state(),
+    );
+    expect(patch?.toolBindings).toEqual({ create_campaign: false, adjust_budget: true });
   });
 
   it("set_guardrail: dryRun=false é aplicado (não confundido com 'manter')", () => {
@@ -354,6 +396,28 @@ describe("configPatchFromToolCall", () => {
   it("set_notifications: sem nenhum campo enviado → patch de notifyPolicy vazio", () => {
     const patch = configPatchFromToolCall("set_notifications", {}, state());
     expect(patch).toEqual({ notifyPolicy: {} });
+  });
+
+  it("set_notifications: 'muda o saldo base pra 100' → limiar de SALDO, NUNCA o teto (bug)", () => {
+    const patch = configPatchFromToolCall(
+      "set_notifications",
+      { accountHealthBalanceEnabled: true, accountHealthBalanceThreshold: 100 },
+      state(),
+    );
+    expect(patch).toEqual({
+      notifyPolicy: { accountHealthBalanceEnabled: true, accountHealthBalanceThresholdMajor: 100 },
+    });
+  });
+
+  it("set_notifications: checklist de status + fonte do teto viram patch (paridade com o site)", () => {
+    const patch = configPatchFromToolCall(
+      "set_notifications",
+      { accountHealthStatusTriggers: ["disabled", "closed"], accountHealthSpendSource: "meta_cap" },
+      state(),
+    );
+    expect(patch).toEqual({
+      notifyPolicy: { accountHealthStatusTriggers: ["disabled", "closed"], accountHealthSpendSource: "meta_cap" },
+    });
   });
 
   it("set_persona: texto vira patch; identidade não é goal/guardrail", () => {
@@ -509,6 +573,52 @@ describe("list_accounts (allowlist wiring)", () => {
   });
 });
 
+describe("descriptions de escrita/criação — S0a: procedimento-por-tool migrou do system prompt", () => {
+  const WRITE_CREATE_TOOL_NAMES = new Set(["adjust_budget", "scale_winner", "create_campaign", "copy_campaign", "adjust_draft", "regenerate_copy"]);
+  function descriptionOf(name: string): string {
+    const { deps } = makeDeps(() => null);
+    const found = makeConversationTools(deps, CTX, WRITE_CREATE_TOOL_NAMES).find((t) => t.name === name)!;
+    return (found as unknown as { description: string }).description;
+  }
+
+  it("adjust_budget: orienta perguntar campanha/valor quando a intenção de orçamento vier incompleta", () => {
+    expect(descriptionOf("adjust_budget")).toContain("NÃO chame ainda — pergunte concretamente o que falta");
+  });
+
+  it("create_campaign: pedido de recomendação é o mesmo gatilho, e não confundir com recomendação genérica", () => {
+    const d = descriptionOf("create_campaign");
+    expect(d).toContain("Pedido de RECOMENDAÇÃO de campanha nova");
+    expect(d).toContain("recomendação GENÉRICA da conta");
+  });
+
+  it("copy_campaign: sugere excluir quem já converteu ao trocar público pra remarketing", () => {
+    expect(descriptionOf("copy_campaign")).toContain("SUGIRA excluir quem já converteu");
+  });
+
+  it("regenerate_copy: distingue de adjust_draft (regenera tudo × edita 1 anúncio)", () => {
+    expect(descriptionOf("regenerate_copy")).toContain("adjust_draft (copyEdits)");
+  });
+
+  function schemaFieldDescriptionOf(toolName: string, field: string): string | undefined {
+    const { deps } = makeDeps(() => null);
+    const found = makeConversationTools(deps, CTX, WRITE_CREATE_TOOL_NAMES).find((t) => t.name === toolName)! as unknown as {
+      schema: { shape: Record<string, { description?: string }> };
+    };
+    return found.schema.shape[field]?.description;
+  }
+
+  it("copy_campaign.interests: NÃO afirma mais que a cópia não herda (achado da revisão da Fase 1 — o código herda por padrão)", () => {
+    const d = schemaFieldDescriptionOf("copy_campaign", "interests")!;
+    expect(d).not.toContain("não herda");
+    expect(d).toContain("JÁ HERDA");
+  });
+
+  it("adjust_draft.variantsCount: description migrada do system prompt removido (S0a) — comportamento de aumentar nº de anúncios", () => {
+    const d = schemaFieldDescriptionOf("adjust_draft", "variantsCount")!;
+    expect(d).toContain("AUMENTAR faz EU escolher criativos distintos");
+  });
+});
+
 describe("mergeConfigUpdatePatches", () => {
   it("mescla set_goal + set_cadence num único patch (multi-campo no mesmo turno)", () => {
     const cur = state({ goals: { targetCPA: 50 } });
@@ -590,5 +700,56 @@ describe("reject tool", () => {
     const { deps, resolve } = makeDeps(() => ({ id: "ap-1", orgId: "org-1", status: "approved" }));
     await toolOf(deps, "reject").invoke({ approvalIds: ["ap-1"] });
     expect(resolve).not.toHaveBeenCalled();
+  });
+});
+
+describe("buildCapabilitiesText — criação (fix: honesto, condicional às bindings reais)", () => {
+  function fakeCapabilitiesDeps() {
+    return {
+      db: { select: () => ({ from: () => ({ where: () => ({ limit: async () => [{ autonomyPolicy: { bySource: { playbook: "suggest", llm: "suggest" } } }] }) }) }) },
+    } as never;
+  }
+
+  it("scale_winner E create_campaign habilitados → menciona os dois + o OK antes de ir ao ar", async () => {
+    const text = await buildCapabilitiesText(fakeCapabilitiesDeps(), CTX, new Set(["scale_winner", "create_campaign"]));
+    expect(text).toContain("campanhas novas");
+    expect(text).toContain("o que já vai bem");
+    expect(text).toContain("antes de qualquer coisa ir ao ar");
+  });
+
+  it("NENHUM habilitado → NÃO afirma que cria/escala (honestidade — só menciona o habilitado)", async () => {
+    const text = await buildCapabilitiesText(fakeCapabilitiesDeps(), CTX, new Set());
+    expect(text).not.toContain("campanhas novas");
+    expect(text).not.toContain("o que já vai bem");
+  });
+
+  it("só scale_winner habilitado → menciona só escalar", async () => {
+    const text = await buildCapabilitiesText(fakeCapabilitiesDeps(), CTX, new Set(["scale_winner"]));
+    expect(text).toContain("o que já vai bem");
+    expect(text).not.toContain("campanhas novas");
+  });
+
+  it("só create_campaign habilitado → menciona só criar", async () => {
+    const text = await buildCapabilitiesText(fakeCapabilitiesDeps(), CTX, new Set(["create_campaign"]));
+    expect(text).not.toContain("o que já vai bem");
+    expect(text).toContain("campanhas novas");
+  });
+});
+
+describe("buildCapabilitiesText — resumo curto e humano (não um manual)", () => {
+  function fakeCapabilitiesDeps() {
+    return {
+      db: { select: () => ({ from: () => ({ where: () => ({ limit: async () => [{}] }) }) }) },
+    } as never;
+  }
+
+  it("abre pela leitura da conta e é enxuto (poucas linhas, com oferta de detalhar)", async () => {
+    const text = await buildCapabilitiesText(fakeCapabilitiesDeps(), CTX, new Set());
+    expect(text).toContain("Roy"); // se apresenta pelo nome (DESIGN §5)
+    expect(text).toContain("Leio sua conta");
+    expect(text).toContain("período que você quiser");
+    expect(text).toContain("Quer que eu entre em detalhe");
+    // enxuto: não é a parede antiga de 10+ blocos
+    expect(text.split("\n").length).toBeLessThanOrEqual(9);
   });
 });

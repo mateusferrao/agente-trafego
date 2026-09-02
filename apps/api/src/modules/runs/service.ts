@@ -1,26 +1,30 @@
 import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import {
+  adAccounts,
   agentMutedEntities,
   agentRuns,
   agents,
+  approvals,
   entityAnalyses,
   guardrailConfigs,
   isUniqueViolation,
+  platformConnections,
   recommendationFeedback,
   recommendations,
   type Database,
 } from "@trafego/db";
-import type { InsightMetrics, UnitAnalysis } from "@trafego/shared";
-import { cpaLabelFor, isOverCostCap, partialNote, partialSeverity, READ_ONLY_APPLICABILITY, resolveCostCapUsd, usagePeriod } from "@trafego/core";
+import type { CuratedEntitySnapshot, InsightMetrics, UnitAnalysis } from "@trafego/shared";
+import { cpaLabelFor, isOverCostCap, partialNote, partialSeverity, resolveCostCapUsd, usagePeriod } from "@trafego/core";
 import {
   AGENT_RUNS_QUEUE,
   AGENT_RUN_JOB,
   SCHEDULE_RESYNC_QUEUE,
   SCHEDULE_RESYNC_JOB,
+  withTimeout,
   type AgentRunExecutePayload,
 } from "@trafego/shared";
 import type { Action, OrgId, RunCampaignCard } from "@trafego/shared/types";
-import type { MeteringPort, SchedulerPort } from "@trafego/shared/ports";
+import type { AdsPlatformPort, CredentialVaultPort, MeteringPort, SchedulerPort } from "@trafego/shared/ports";
 import { badRequest, conflict, notFound } from "../../middleware/error-handler.js";
 import {
   runMetrics,
@@ -69,6 +73,12 @@ export interface RunsDeps {
   readonly costCapUsd: number;
   /** relógio injetável (casca) — período do cap. */
   readonly now?: () => Date;
+  /** checagem AO VIVO (achado real, gap irmão do `deactivatedSince`) de campanha ativa na Meta
+   *  ainda sem análise em `campaignAnalyses`. */
+  readonly adsPlatform: AdsPlatformPort;
+  readonly vault: CredentialVaultPort;
+  /** teto (ms) desse fetch ao vivo — best-effort, degrada em silêncio (RUNS_LIVE_GAP_CHECK_TIMEOUT_MS). */
+  readonly liveGapCheckTimeoutMs: number;
 }
 
 const IN_FLIGHT_STATUSES = ["pending", "running", "waiting_approval"] as const;
@@ -198,7 +208,40 @@ export function createRunsService(deps: RunsDeps) {
         if (row.vote && !votes.has(row.recommendationId)) votes.set(row.recommendationId, row.vote);
       }
     }
-    return recs.map((r) => toRecommendationOutput(r, votes.get(r.id) ?? null));
+    // Index das aprovações PENDENTES do agente do run (B): liga cada recomendação executável ao
+    // item acionável (rascunho/ativação por draftId; ação por entidade+tipo) → o card mostra
+    // aplicabilidade real + CTA. Uma consulta por run.
+    const [runRow] = await deps.db
+      .select({ agentId: agentRuns.agentId })
+      .from(agentRuns)
+      .where(and(eq(agentRuns.id, runId), eq(agentRuns.orgId, orgId)))
+      .limit(1);
+    const idx = await buildPendingIndex(orgId, runRow?.agentId ?? null);
+    return recs.map((r) => toRecommendationOutput(r, votes.get(r.id) ?? null, idx));
+  }
+
+  /** Mapa das pendentes do agente: rascunho/ativação por draftId; ação por `${level}:${id}:${type}`.
+   *  Org-scoped (defense-in-depth — o agentId já vem de um run org-scoped, §12). */
+  async function buildPendingIndex(orgId: OrgId, agentId: string | null): Promise<PendingApprovalIndex> {
+    const draftApproval = new Map<string, { approvalId: string; kind: "draft" | "activation" }>();
+    const actionApproval = new Map<string, string>();
+    if (!agentId) return { draftApproval, actionApproval };
+    const pend = await deps.db
+      .select({
+        id: approvals.id,
+        kind: approvals.kind,
+        draftId: approvals.draftId,
+        entityLevel: approvals.entityLevel,
+        entityId: approvals.entityId,
+        actionType: approvals.actionType,
+      })
+      .from(approvals)
+      .where(and(eq(approvals.orgId, orgId), eq(approvals.agentId, agentId), eq(approvals.status, "pending")));
+    for (const p of pend) {
+      if (p.draftId) draftApproval.set(p.draftId, { approvalId: p.id, kind: p.kind === "activation" ? "activation" : "draft" });
+      else if (p.entityLevel && p.entityId && p.actionType) actionApproval.set(`${p.entityLevel}:${p.entityId}:${p.actionType}`, p.id);
+    }
+    return { draftApproval, actionApproval };
   }
 
   /**
@@ -275,6 +318,7 @@ export function createRunsService(deps: RunsDeps) {
         metricsJson: entityAnalyses.metricsJson,
         flags: entityAnalyses.flags,
         tier: entityAnalyses.tier,
+        curatedJson: entityAnalyses.curatedJson,
         analyzedAt: entityAnalyses.analyzedAt,
       })
       .from(entityAnalyses)
@@ -293,7 +337,41 @@ export function createRunsService(deps: RunsDeps) {
       );
     const muted = new Set(mutedRows.map((m) => m.externalId));
 
-    return rows.map((r) => toCampaignAnalysisOutput(r, muted.has(r.entityId)));
+    const cached = rows.map((r) => toCampaignAnalysisOutput(r, muted.has(r.entityId)));
+
+    // gap irmão do `deactivatedSince` (achado real): campanha ativa na Meta agora, criada
+    // depois do último run, sem NENHUMA linha em entity_analyses ainda. Best-effort — Meta
+    // lenta/indisponível não derruba a resposta, só não soma o adendo (a lista cacheada já
+    // tinha o resto). Mesmo padrão do chat (`liveActiveCampaignsNotCached`, read-data.ts).
+    const cachedIds = new Set(rows.map((r) => r.entityId));
+    const gaps = await liveActiveCampaignsNotCached(orgId, accountId, cachedIds);
+
+    return [...cached, ...gaps.map((g) => toGapCampaignOutput(g, muted.has(g.id)))];
+  }
+
+  /**
+   * Campanhas ATIVAS na Meta agora que ainda não têm nenhuma análise (`cachedIds`) —
+   * mesma lógica/limite do chat (read-data.ts `liveActiveCampaignsNotCached`), duplicada
+   * aqui de propósito: api e worker são processos separados, e a conta+token já se carrega
+   * diferente em cada um (o worker usa `createAnalysisRepo`; a api já tem o join direto
+   * pra token em `drafts/service.ts` — este helper segue o mesmo padrão local).
+   */
+  async function liveActiveCampaignsNotCached(
+    orgId: OrgId,
+    accountId: string,
+    cachedIds: ReadonlySet<string>,
+  ): Promise<Array<{ id: string; name: string }>> {
+    const ref = await loadAccountRef(deps.db, deps.vault, orgId, accountId);
+    if (!ref) return [];
+    try {
+      const entities = await withTimeout(
+        deps.adsPlatform.listEntities({ adAccountId: ref.metaAdAccountId, accessToken: ref.accessToken }, "campaign"),
+        deps.liveGapCheckTimeoutMs,
+      );
+      return entities.filter((e) => e.status === "active" && !cachedIds.has(e.id)).map((e) => ({ id: e.id, name: e.name }));
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -400,6 +478,14 @@ export function createRunsService(deps: RunsDeps) {
       tier: c.tier ?? null,
       stage: c.stage ?? null,
       muted: muted.has(c.externalId),
+      budget: c.budget ?? null,
+      atBudgetCeiling: c.atBudgetCeiling ?? null,
+      isCBO: c.isCBO ?? null,
+      // histórico congelado (snapshot do run) — não faz sentido "desde quando desativou"
+      // aqui, isso só existe na visão AO VIVO (`toCampaignAnalysisOutput`, lê entity_analyses).
+      deactivatedSince: null,
+      // idem: campanha nova sem análise nunca entraria no snapshot de um run já concluído.
+      noDataYet: false,
     }));
 
     // "mais recente" = último run FINALIZADO (ignora in-flight; casa com o que o
@@ -424,7 +510,7 @@ export function createRunsService(deps: RunsDeps) {
 }
 
 /** Linha de `entity_analyses` (campanha) → output do cartão (métrica + gargalo curados). */
-function toCampaignAnalysisOutput(
+export function toCampaignAnalysisOutput(
   row: {
     entityId: string;
     name: string | null;
@@ -432,12 +518,14 @@ function toCampaignAnalysisOutput(
     metricsJson: Record<string, unknown>;
     flags: string[];
     tier: string | null;
+    curatedJson?: CuratedEntitySnapshot | null;
   },
   muted: boolean,
 ): CampaignAnalysisOutput {
   const unit = row.unitJson as unknown as Partial<UnitAnalysis>;
   const m = row.metricsJson as Partial<InsightMetrics>;
   const top = unit.findings?.[0];
+  const curated = row.curatedJson ?? null;
   return {
     externalId: row.entityId,
     name: row.name ?? null,
@@ -462,7 +550,64 @@ function toCampaignAnalysisOutput(
     // `entity_analyses`, que não guarda o público → null aqui (aparece no histórico).
     stage: null,
     muted,
+    // S8: orçamento curado (S1) — null quando a linha é de antes da fase (backfill não retroativo).
+    budget: curated?.budget ?? null,
+    atBudgetCeiling: curated?.atBudgetCeiling ?? null,
+    isCBO: curated?.isCBO ?? null,
+    // sincronização (achado real): a UI precisa saber que este cartão é histórico/desatualizado,
+    // não "está rodando agora" — mesmo dado que o chat já usa (list_campaigns/get_campaign_analysis).
+    deactivatedSince: curated?.deactivatedSince ?? null,
+    // esta linha veio de `entity_analyses` → sempre já tem alguma análise.
+    noDataYet: false,
   };
+}
+
+/**
+ * Cartão de campanha ATIVA na Meta agora mas ainda SEM nenhuma análise (gap irmão do
+ * `deactivatedSince` — achado real, mesma sessão): criada/ativada depois do último run,
+ * `entity_analyses` não tem linha nenhuma dela ainda. Nunca inventa métrica/tier/resumo —
+ * tudo vazio + `noDataYet:true`, mesma honestidade que o chat já usa (`list_campaigns`).
+ */
+export function toGapCampaignOutput(entity: { id: string; name: string }, muted: boolean): CampaignAnalysisOutput {
+  return {
+    externalId: entity.id,
+    name: entity.name,
+    metrics: { spend: 0 },
+    summary: null,
+    topFinding: null,
+    flags: [],
+    tier: null,
+    stage: null,
+    muted,
+    budget: null,
+    atBudgetCeiling: null,
+    isCBO: null,
+    deactivatedSince: null,
+    noDataYet: true,
+  };
+}
+
+/** Conta ativa + token descriptografado (conexão dona vence; fallback = token legado da conta —
+ *  mesmo padrão de `drafts/service.ts`/`fresh-metrics.ts`). Null se conta ausente ou sem token. */
+async function loadAccountRef(
+  db: Database,
+  vault: CredentialVaultPort,
+  orgId: OrgId,
+  accountId: string,
+): Promise<{ metaAdAccountId: string; accessToken: string } | null> {
+  const [row] = await db
+    .select({
+      metaAdAccountId: adAccounts.adAccountId,
+      accountToken: adAccounts.tokenCripto,
+      connToken: platformConnections.tokenCripto,
+    })
+    .from(adAccounts)
+    .leftJoin(platformConnections, eq(adAccounts.connectionId, platformConnections.id))
+    .where(and(eq(adAccounts.id, accountId), eq(adAccounts.orgId, orgId)))
+    .limit(1);
+  const encrypted = row?.connToken ?? row?.accountToken;
+  if (!row || !encrypted) return null;
+  return { metaAdAccountId: row.metaAdAccountId, accessToken: vault.decrypt(encrypted) };
 }
 
 type AgentRunRow = typeof agentRuns.$inferSelect;
@@ -530,19 +675,61 @@ function toRunOutput(run: AgentRunRow): RunOutput {
   };
 }
 
-function toRecommendationOutput(rec: RecommendationRow, vote: "up" | "down" | null): RecommendationOutput {
+interface PendingApprovalIndex {
+  readonly draftApproval: Map<string, { approvalId: string; kind: "draft" | "activation" }>;
+  readonly actionApproval: Map<string, string>;
+}
+
+/**
+ * Recomendação → output do site (B): aplicabilidade REAL + link acionável. resolvida (status) vence;
+ * senão direção/insight = not_applicable (sem CTA); criação liga ao rascunho/ativação pendente por
+ * draftId; ação direta liga à aprovação pendente por entidade+tipo. Sem pendente → not_applicable
+ * (auto-aplicada/barrada/já criada — nada a fazer no card agora).
+ */
+function toRecommendationOutput(
+  rec: RecommendationRow,
+  vote: "up" | "down" | null,
+  idx: PendingApprovalIndex,
+): RecommendationOutput {
   const action = rec.proposedAction as Action | null;
+  const draftId = rec.draftId ?? null;
+  let applicability: RecommendationOutput["applicability"] = "not_applicable";
+  let approvalId: string | null = null;
+  let approvalKind: RecommendationOutput["approvalKind"] = null;
+  if (rec.status === "applied") applicability = "applied";
+  else if (rec.status === "dismissed") applicability = "dismissed";
+  else if (rec.status === "expired") applicability = "expired";
+  else if (rec.kind === "platform_action") {
+    if (draftId) {
+      const da = idx.draftApproval.get(draftId);
+      if (da) {
+        applicability = "applicable";
+        approvalId = da.approvalId;
+        approvalKind = da.kind;
+      }
+    } else if (action) {
+      const aid = idx.actionApproval.get(`${action.target.level}:${action.target.id}:${action.type}`);
+      if (aid) {
+        applicability = "applicable";
+        approvalId = aid;
+        approvalKind = "action";
+      }
+    }
+  }
   return {
     id: rec.id,
     title: rec.title,
     rationale: rec.rationale ?? null,
     kind: rec.kind,
     riskLevel: rec.riskLevel,
-    applicability: READ_ONLY_APPLICABILITY,
+    applicability,
     proposedAction: action
       ? { type: action.type, target: { level: action.target.level, id: action.target.id }, params: action.params }
       : null,
     toolKey: rec.toolKey ?? null,
+    draftId,
+    approvalId,
+    approvalKind,
     vote,
   };
 }

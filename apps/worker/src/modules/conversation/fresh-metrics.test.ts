@@ -2,8 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import type { StoredInsightMetrics } from "@trafego/shared/types";
 import {
   aggregateKpis,
+  attributionCaveat,
+  getAdsBreakdownData,
   getCampaignsBreakdownData,
   getFreshMetricsData,
+  type FreshAdsBreakdown,
   type FreshCampaignsBreakdown,
   type FreshMetricsCtx,
   type FreshMetricsDeps,
@@ -20,12 +23,22 @@ function m(
   };
 }
 
+/** Envelope `{date?, metricsJson}` que `aggregateKpis` espera (data é necessária pro `reach`,
+ *  não somável — só o valor do ÚLTIMO dia vale). */
+function row(
+  partial: Partial<StoredInsightMetrics["metrics"]>,
+  conversions?: StoredInsightMetrics["conversions"],
+  date?: string,
+): { date?: string; metricsJson: StoredInsightMetrics } {
+  return { ...(date !== undefined ? { date } : {}), metricsJson: m(partial, conversions) };
+}
+
 describe("aggregateKpis", () => {
   it("soma a janela e re-deriva CPA/ROAS do ARRAY de conversões (goal de negócio)", () => {
     const k = aggregateKpis(
       [
-        m({ spend: 100, impressions: 1000, clicks: 50 }, [{ goal: "purchase", count: 5, value: 200 }]),
-        m({ spend: 100, impressions: 3000, clicks: 50 }, [{ goal: "purchase", count: 5, value: 400 }]),
+        row({ spend: 100, impressions: 1000, clicks: 50 }, [{ goal: "purchase", count: 5, value: 200 }]),
+        row({ spend: 100, impressions: 3000, clicks: 50 }, [{ goal: "purchase", count: 5, value: 400 }]),
       ],
       { goal: "purchase" },
     );
@@ -40,12 +53,12 @@ describe("aggregateKpis", () => {
   });
 
   it("goal de conversa (sem valor) AINDA mostra receita/ROAS das compras (não esconde)", () => {
-    const row = m({ spend: 300, impressions: 10000, clicks: 200 }, [
+    const r = row({ spend: 300, impressions: 10000, clicks: 200 }, [
       { goal: "purchase", count: 3, value: 14900 },
       { goal: "messaging_started", count: 115 },
     ]);
     // business goal = conversa: CPA na conversa, MAS roas/revenue da receita rastreada (compras).
-    const msg = aggregateKpis([row], { goal: "messaging_started" });
+    const msg = aggregateKpis([r], { goal: "messaging_started" });
     expect(msg.conversions).toBe(115);
     expect(msg.conversionGoal).toBe("messaging_started");
     expect(msg.cpa).toBeCloseTo(300 / 115);
@@ -59,7 +72,7 @@ describe("aggregateKpis", () => {
 
   it("sem businessGoal → usa a conversão de MAIOR volume (default sensato)", () => {
     const k = aggregateKpis([
-      m({ spend: 300, impressions: 10000, clicks: 200 }, [
+      row({ spend: 300, impressions: 10000, clicks: 200 }, [
         { goal: "purchase", count: 3 },
         { goal: "messaging_started", count: 115 },
       ]),
@@ -69,7 +82,7 @@ describe("aggregateKpis", () => {
   });
 
   it("sem conversão reportada → conversions/cpa/roas/revenue null (aí sim 'Meta não retornou')", () => {
-    const k = aggregateKpis([m({ spend: 50, impressions: 500, clicks: 10 })], { goal: "purchase" });
+    const k = aggregateKpis([row({ spend: 50, impressions: 500, clicks: 10 })], { goal: "purchase" });
     expect(k.conversions).toBeNull();
     expect(k.cpa).toBeNull();
     expect(k.roas).toBeNull();
@@ -80,10 +93,25 @@ describe("aggregateKpis", () => {
   });
 
   it("divisões por zero → null", () => {
-    const k = aggregateKpis([m({ spend: 0, impressions: 0, clicks: 0 })]);
+    const k = aggregateKpis([row({ spend: 0, impressions: 0, clicks: 0 })]);
     expect(k.cpc).toBeNull();
     expect(k.cpm).toBeNull();
     expect(k.ctr).toBeNull();
+  });
+
+  it("frequency (máximo) e reach (último dia) aparecem quando a janela tem 2+ dias com valores diferentes", () => {
+    const k = aggregateKpis([
+      row({ spend: 100, impressions: 1000, clicks: 50, frequency: 1.2, reach: 800 }, undefined, "2026-08-20"),
+      row({ spend: 100, impressions: 1000, clicks: 50, frequency: 2.1, reach: 950 }, undefined, "2026-08-21"),
+    ]);
+    expect(k.frequency).toBe(2.1); // máximo da janela, não soma
+    expect(k.reach).toBe(950); // último dia (21/08), não 800+950
+  });
+
+  it("sem frequency/reach reportado em nenhuma linha → ambos undefined (nunca zero forçado)", () => {
+    const k = aggregateKpis([row({ spend: 50, impressions: 500, clicks: 10 })]);
+    expect(k.frequency).toBeUndefined();
+    expect(k.reach).toBeUndefined();
   });
 });
 
@@ -105,7 +133,7 @@ function seqDb(results: unknown[][]) {
 function makeDeps(
   results: unknown[][],
   syncResult = { partial: false, tokenInvalid: false, snapshotsWritten: 1 },
-  entities: Array<{ id: string; name: string; status: string }> = [],
+  entities: Array<{ id: string; name: string; status?: string; campaignId?: string }> = [],
 ) {
   const insightsSync = { sync: vi.fn(async () => syncResult) };
   const ads = { listEntities: vi.fn(async () => entities) };
@@ -265,5 +293,108 @@ describe("getCampaignsBreakdownData (fresh por campanha, por período)", () => {
     const { deps } = makeDeps([[ACCOUNT_ROW], [], []]);
     const res = (await getCampaignsBreakdownData(deps, CTX, {})) as FreshCampaignsBreakdown;
     expect(res.campaigns).toEqual([]);
+  });
+});
+
+describe("attributionCaveat", () => {
+  it("until dentro dos últimos 7 dias → avisa que ainda pode subir", () => {
+    expect(attributionCaveat("2026-08-20", "2026-08-20")).toBeDefined(); // hoje
+    expect(attributionCaveat("2026-08-13", "2026-08-20")).toBeDefined(); // exatamente 7d atrás (borda)
+  });
+
+  it("until há mais de 7 dias → sem aviso (já fechado)", () => {
+    expect(attributionCaveat("2026-08-12", "2026-08-20")).toBeUndefined(); // 8d atrás
+    expect(attributionCaveat("2026-07-01", "2026-08-20")).toBeUndefined();
+  });
+});
+
+describe("getAdsBreakdownData (histórico por anúncio, sem cap de 7d, sem sync)", () => {
+  it("sem filtro → agrega por anúncio, resolve nome via listEntities, ordena por gasto desc", async () => {
+    const snaps = [
+      { entityId: "ad1", metricsJson: m({ spend: 300, impressions: 5000, clicks: 100 }, [{ goal: "purchase", count: 3, value: 900 }]) },
+      { entityId: "ad2", metricsJson: m({ spend: 500, impressions: 8000, clicks: 200 }, [{ goal: "purchase", count: 5, value: 1500 }]) },
+    ];
+    const { deps, insightsSync, ads } = makeDeps([[ACCOUNT_ROW], snaps, [{ goals: null }]], undefined, [
+      { id: "ad1", name: "Criativo A" },
+      { id: "ad2", name: "Criativo B" },
+    ]);
+    (deps as { now?: () => Date }).now = () => new Date("2026-09-15T12:00:00Z");
+    // untilDaysAgo:10 → janela termina há 10 dias (fechada, sem caveat de atribuição).
+    const res = (await getAdsBreakdownData(deps, CTX, { periodDays: 30, untilDaysAgo: 10 })) as FreshAdsBreakdown;
+    expect(insightsSync.sync).not.toHaveBeenCalled(); // histórico puro, nunca chama a Meta pra métrica
+    expect(ads.listEntities).toHaveBeenCalled(); // só pra nome
+    expect(res.ads.map((a) => a.id)).toEqual(["ad2", "ad1"]); // 500 > 300
+    expect(res.ads[0]).toMatchObject({ name: "Criativo B" });
+    expect(res.ads[0]!.kpis.revenue).toBe(1500);
+    expect(res.attributionNote).toBeUndefined(); // janela terminando há 10 dias → já fechado
+  });
+
+  it("corta em 10 SEM filtro de campanha (conta toda)", async () => {
+    const snaps = Array.from({ length: 12 }, (_, i) => ({
+      entityId: `ad${i}`,
+      metricsJson: m({ spend: 100 - i, impressions: 1000, clicks: 10 }),
+    }));
+    const { deps } = makeDeps([[ACCOUNT_ROW], snaps, [{ goals: null }]]);
+    const res = (await getAdsBreakdownData(deps, CTX, { periodDays: 30 })) as FreshAdsBreakdown;
+    expect(res.ads).toHaveLength(10);
+    expect(res.ads[0]!.id).toBe("ad0"); // maior spend
+  });
+
+  it("com campaign resolvida → filtra pelos ads daquela campanha (via AdEntity.campaignId), SEM cortar em 10", async () => {
+    const snaps = Array.from({ length: 3 }, (_, i) => ({ entityId: `ad${i}`, metricsJson: m({ spend: 10, impressions: 100, clicks: 5 }) }));
+    const campaignRows = [{ id: "camp-1", name: "Black Friday", at: new Date() }];
+    const { deps } = makeDeps([[ACCOUNT_ROW], campaignRows, snaps, [{ goals: null }]], undefined, [
+      { id: "ad0", name: "A0", campaignId: "camp-1" },
+      { id: "ad1", name: "A1", campaignId: "camp-1" },
+      { id: "ad2", name: "A2", campaignId: "camp-OUTRA" },
+    ]);
+    const res = (await getAdsBreakdownData(deps, CTX, { periodDays: 30, campaign: "black" })) as FreshAdsBreakdown;
+    expect(res.ads.map((a) => a.id).sort()).toEqual(["ad0", "ad1"]);
+  });
+
+  it("campanha não encontrada → erro pedindo o nome", async () => {
+    const { deps } = makeDeps([[ACCOUNT_ROW], []]);
+    const res = await getAdsBreakdownData(deps, CTX, { campaign: "inexistente" });
+    expect((res as { error: string }).error).toContain("não achei a campanha");
+  });
+
+  it("com filtro de campanha + listEntities falha → erro claro (não confirma pertencimento às cegas)", async () => {
+    const campaignRows = [{ id: "camp-1", name: "Black Friday", at: new Date() }];
+    const snaps = [{ entityId: "ad0", metricsJson: m({ spend: 10, impressions: 100, clicks: 5 }) }];
+    const { deps } = makeDeps([[ACCOUNT_ROW], campaignRows, snaps]);
+    (deps.ads.listEntities as ReturnType<typeof vi.fn>) = vi.fn(async () => {
+      throw new Error("meta down");
+    });
+    const res = await getAdsBreakdownData(deps, CTX, { campaign: "black" });
+    expect(res).toHaveProperty("error");
+    expect((res as { error: string }).error).toContain("não consegui confirmar");
+  });
+
+  it("SEM filtro de campanha + listEntities falha → degrada pro id como nome (não quebra)", async () => {
+    const snaps = [{ entityId: "adX", metricsJson: m({ spend: 10, impressions: 100, clicks: 5 }) }];
+    const { deps } = makeDeps([[ACCOUNT_ROW], snaps, [{ goals: null }]]);
+    (deps.ads.listEntities as ReturnType<typeof vi.fn>) = vi.fn(async () => {
+      throw new Error("meta down");
+    });
+    const res = (await getAdsBreakdownData(deps, CTX, {})) as FreshAdsBreakdown;
+    expect(res.ads[0]!.name).toBe("adX");
+  });
+
+  it("sem snapshot ad-level no período → ads vazio (não erro)", async () => {
+    const { deps } = makeDeps([[ACCOUNT_ROW], []]);
+    const res = (await getAdsBreakdownData(deps, CTX, {})) as FreshAdsBreakdown;
+    expect(res.ads).toEqual([]);
+  });
+
+  it("conta não encontrada/ativa → erro", async () => {
+    const { deps } = makeDeps([[]]);
+    const res = await getAdsBreakdownData(deps, CTX, {});
+    expect(res).toHaveProperty("error");
+  });
+
+  it("periodDays acima de 90 é limitado a 90 (teto de retenção, não 7 como o fresh)", async () => {
+    const { deps } = makeDeps([[ACCOUNT_ROW], [], [{ goals: null }]]);
+    const res = (await getAdsBreakdownData(deps, CTX, { periodDays: 500 })) as FreshAdsBreakdown;
+    expect(res.periodDays).toBe(90);
   });
 });

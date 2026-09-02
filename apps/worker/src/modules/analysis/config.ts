@@ -39,8 +39,12 @@ export interface AnalysisDefaults {
   readonly reviewEnabled: boolean;
   readonly topN: number;
   readonly maxOutputTokens: number;
-  /** esforço de reasoning nos passos de LLM (unit/síntese/revisão). */
+  /** esforço de reasoning da SÍNTESE (unit é sempre `off`, hardcoded — extração JSON estrita). */
   readonly reasoningEffort: ReasoningEffort;
+  /** esforço de reasoning do REVISOR — separado da síntese (achado do A/B: revisor é
+   *  refina/corta, não geração; `medium` compartilhado com a síntese pagava reasoning
+   *  desproporcional pro escopo da tarefa). Default `off`. */
+  readonly reviewReasoningEffort: ReasoningEffort;
   readonly maxCreativesVision: number;
   /** anúncios detalhados por campanha na árvore curada (resto vira cauda agregada). */
   readonly notableAdsPerCampaign: number;
@@ -96,6 +100,7 @@ export function resolveAnalysisConfig(
     topN: posInt(mc.topN) ?? defaults.topN,
     maxOutputTokens: posInt(mc.maxOutputTokens) ?? defaults.maxOutputTokens,
     reasoningEffort: effort(mc.reasoningEffort) ?? defaults.reasoningEffort,
+    reviewReasoningEffort: effort(mc.reviewReasoningEffort) ?? defaults.reviewReasoningEffort,
     maxCreativesVision: nonNeg(mc.maxCreativesVision) ?? defaults.maxCreativesVision,
     notableAdsPerCampaign: posInt(mc.notableAdsPerCampaign) ?? defaults.notableAdsPerCampaign,
     maxCreativesVisionPerCampaign:
@@ -136,5 +141,8 @@ function resolveQuality(raw: unknown, defaults: QualityThresholds | undefined): 
     coldStartReference: typeof mc.coldStartReference === "boolean" ? mc.coldStartReference : d.coldStartReference,
     trackingBrokenRatio: pos(mc.trackingBrokenRatio) ?? d.trackingBrokenRatio,
     trackingBrokenMinFunnel: nonNeg(mc.trackingBrokenMinFunnel) ?? d.trackingBrokenMinFunnel,
+    relativeEligibilitySpendMultiplier: pos(mc.relativeEligibilitySpendMultiplier) ?? d.relativeEligibilitySpendMultiplier,
+    marginalCpaWorsenPct: pos(mc.marginalCpaWorsenPct) ?? d.marginalCpaWorsenPct,
+    weakHookRetentionMaxPct: pos(mc.weakHookRetentionMaxPct) ?? d.weakHookRetentionMaxPct,
   };
 }

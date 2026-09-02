@@ -86,3 +86,38 @@ describe("MetaGraphClient.request — erro não-JSON", () => {
     ).rejects.toBeInstanceOf(MetaApiError);
   });
 });
+
+describe("MetaGraphClient.request — error_user_msg (mensagem legível da Meta)", () => {
+  it("erro JSON com error_user_msg/error_user_title → MetaApiError carrega userMessage/userTitle + subcode", async () => {
+    stubFetch(
+      JSON.stringify({
+        error: {
+          message: "Invalid parameter",
+          code: 100,
+          error_subcode: 3858504,
+          error_user_title: "Recurso descontinuado",
+          error_user_msg: "O criativo não deve incluir aprimoramentos padrão.",
+        },
+      }),
+      false,
+      400,
+    );
+    const c = new MetaGraphClient({ graphVersion: GRAPH_VERSION });
+    await expect(c.request({ method: "GET", path: "x", accessToken: "t" })).rejects.toMatchObject({
+      name: "MetaApiError",
+      subcode: 3858504,
+      userTitle: "Recurso descontinuado",
+      userMessage: "O criativo não deve incluir aprimoramentos padrão.",
+    });
+  });
+
+  it("erro sem error_user_msg → userMessage/userTitle undefined (não inventa)", async () => {
+    stubFetch(JSON.stringify({ error: { message: "boom", code: 100 } }), false, 400);
+    const c = new MetaGraphClient({ graphVersion: GRAPH_VERSION });
+    await expect(c.request({ method: "GET", path: "x", accessToken: "t" })).rejects.toMatchObject({
+      name: "MetaApiError",
+      userMessage: undefined,
+      userTitle: undefined,
+    });
+  });
+});

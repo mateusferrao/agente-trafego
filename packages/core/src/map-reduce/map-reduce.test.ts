@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { EntitySummary } from "@trafego/shared";
+import type { CampaignAdsetGroup, CampaignUnit, EntitySummary } from "@trafego/shared";
 import type { UnitAnalysis } from "@trafego/shared";
-import { isMateriallyChanged, mergeUnitAnalyses, selectCreatives, selectUnitsToAnalyze, type LastUnit } from "./index.js";
+import { deriveAdsetUnits, isMateriallyChanged, mergeUnitAnalyses, selectCreatives, selectUnitsToAnalyze, type LastUnit } from "./index.js";
 
 function ad(id: string, spend: number, cpa?: number, flags: string[] = []): EntitySummary {
   return {
@@ -89,11 +89,73 @@ describe("selectCreatives", () => {
   });
 });
 
+describe("deriveAdsetUnits (S8b — tier/diagnóstico por-adset em ABO multi-adset, SEM call de LLM extra)", () => {
+  function adsetGroup(id: string, budget?: number): CampaignAdsetGroup {
+    return {
+      adset: { ...ad(id, 100), level: "adset", ...(budget !== undefined ? { budget: { dailyMajor: budget } } : {}) },
+      notableAds: [],
+      tail: { count: 0, spend: 0, allWithinTarget: true },
+    };
+  }
+
+  it("campanha CBO (budget próprio) → nunca deriva (mesmo com 2+ adsets)", () => {
+    const unit: CampaignUnit = {
+      campaign: { ...ad("c1", 500), level: "campaign", budget: { dailyMajor: 100 } },
+      adsets: [adsetGroup("as1", 50), adsetGroup("as2", 50)],
+    };
+    const analysis: UnitAnalysis = { summary: "s", findings: [], recommendations: [], flags: [] };
+    expect(deriveAdsetUnits(unit, analysis)).toEqual([]);
+  });
+
+  it("campanha ABO com só 1 adset ativo → não deriva (não é multi-adset)", () => {
+    const unit: CampaignUnit = {
+      campaign: { ...ad("c1", 500), level: "campaign" },
+      adsets: [adsetGroup("as1", 500)],
+    };
+    const analysis: UnitAnalysis = { summary: "s", findings: [], recommendations: [], flags: [] };
+    expect(deriveAdsetUnits(unit, analysis)).toEqual([]);
+  });
+
+  it("ABO com 2+ adsets ativos → 1 entrada por adset, recomendações/findings FILTRADOS por targetEntity (zero LLM extra)", () => {
+    const unit: CampaignUnit = {
+      campaign: { ...ad("c1", 500), level: "campaign" },
+      adsets: [adsetGroup("as1", 300), adsetGroup("as2", 200)],
+    };
+    const analysis: UnitAnalysis = {
+      summary: "s",
+      findings: [
+        { id: "f1", title: "CPA alto no as1", detail: "x", severity: "warning", metricRefs: [], caveat: null },
+        { id: "f2", title: "irrelevante", detail: "y", severity: "info", metricRefs: [], caveat: null },
+      ],
+      recommendations: [
+        {
+          id: "r1", title: "Pausar as1", rationale: "x", priority: "high", actionType: "pause",
+          targetEntity: { level: "adset", externalId: "as1" }, budgetChangePct: null,
+          expectedImpact: null, whatToMonitor: null, findingRefs: ["f1"],
+        },
+        {
+          id: "r2", title: "Recomendação de campanha", rationale: "y", priority: "low", actionType: "keep",
+          targetEntity: null, budgetChangePct: null, expectedImpact: null, whatToMonitor: null, findingRefs: null,
+        },
+      ],
+      flags: [],
+    };
+    const out = deriveAdsetUnits(unit, analysis);
+    expect(out).toHaveLength(2);
+    const as1 = out.find((o) => o.adset.id === "as1")!;
+    expect(as1.unit.recommendations.map((r) => r.id)).toEqual(["r1"]);
+    expect(as1.unit.findings.map((f) => f.id)).toEqual(["f1"]); // só o referenciado por r1.findingRefs
+    const as2 = out.find((o) => o.adset.id === "as2")!;
+    expect(as2.unit.recommendations).toEqual([]); // nenhuma recomendação mira as2 especificamente
+    expect(as2.unit.findings).toEqual([]);
+  });
+});
+
 describe("mergeUnitAnalyses", () => {
   it("deduplica por título e deriva a nota pela pior severidade", () => {
     const units: UnitAnalysis[] = [
-      { summary: "u1", flags: [], findings: [{ id: "f1", title: "CPA alto", detail: "x", severity: "critical", metricRefs: [] }], recommendations: [{ id: "r1", title: "Pausar", rationale: "x", priority: "high", actionType: "pause", targetEntity: null, budgetChangePct: null }] },
-      { summary: "u2", flags: [], findings: [{ id: "f2", title: "CPA alto", detail: "y", severity: "warning", metricRefs: [] }], recommendations: [{ id: "r2", title: "Pausar", rationale: "y", priority: "high", actionType: "pause", targetEntity: null, budgetChangePct: null }] },
+      { summary: "u1", flags: [], findings: [{ id: "f1", title: "CPA alto", detail: "x", severity: "critical", metricRefs: [], caveat: null }], recommendations: [{ id: "r1", title: "Pausar", rationale: "x", priority: "high", actionType: "pause", targetEntity: null, budgetChangePct: null, expectedImpact: null, whatToMonitor: null, findingRefs: null }] },
+      { summary: "u2", flags: [], findings: [{ id: "f2", title: "CPA alto", detail: "y", severity: "warning", metricRefs: [], caveat: null }], recommendations: [{ id: "r2", title: "Pausar", rationale: "y", priority: "high", actionType: "pause", targetEntity: null, budgetChangePct: null, expectedImpact: null, whatToMonitor: null, findingRefs: null }] },
     ];
     const out = mergeUnitAnalyses(units);
     expect(out.findings).toHaveLength(1); // dedupe por título

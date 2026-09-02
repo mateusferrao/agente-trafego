@@ -36,6 +36,29 @@ export const envSchema = z.object({
   // aplica migrations no boot da api (idempotente). false = migrar fora (CI/release).
   AUTO_MIGRATE: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
 
+  // ─── Storage de assets de criativo (Fatia 7) ───────────────────────────
+  // driver do StoragePort: local-fs (dev) ou s3-compat (prod: MinIO/R2/B2/AWS). Trocar =
+  // só este env — core/casca/ingest intocados (§5). `s3` exige os STORAGE_* abaixo (refine).
+  STORAGE_DRIVER: z.enum(["local", "s3"]).default("local"),
+  // diretório do blob original (driver local-fs).
+  CREATIVE_STORAGE_DIR: z.string().min(1).default("./.data/creatives"),
+  // base pública p/ signedUrl do adapter local (preview no site). Sem assinatura real
+  // no MVP local — a URL só compõe base + ref (o arquivo é servido pela api em dev).
+  CREATIVE_ASSET_URL_BASE: z.string().url().default("http://localhost:3333/assets"),
+  // driver s3-compat (nomes NEUTROS — não vaza provider; MinIO/R2/B2/AWS falam o mesmo protocolo).
+  // endpoint omitido = AWS S3 padrão da região; MinIO/R2 informam o endpoint + force-path-style.
+  STORAGE_ENDPOINT: z.string().url().optional(),
+  STORAGE_BUCKET: z.string().min(1).optional(),
+  STORAGE_ACCESS_KEY: z.string().min(1).optional(),
+  STORAGE_SECRET_KEY: z.string().min(1).optional(),
+  STORAGE_REGION: z.string().min(1).default("us-east-1"),
+  STORAGE_FORCE_PATH_STYLE: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
+  // Tetos de upload de criativo (MB). Vídeo no WhatsApp tem teto MENOR (bytes vão pra memória
+  // do worker via fetchMediaBase64 → OOM se grande). Web maior (streaming multipart).
+  CREATIVE_MAX_IMAGE_MB: z.coerce.number().int().positive().default(15),
+  CREATIVE_MAX_VIDEO_MB: z.coerce.number().int().positive().default(200),
+  CREATIVE_MAX_WHATSAPP_VIDEO_MB: z.coerce.number().int().positive().default(50),
+
   // ─── Credential Vault (AES-256-GCM) ────────────────────────────────────
   // chave mestra base64 de 32 bytes (secret do EasyPanel em produção).
   CREDENTIAL_MASTER_KEY: z
@@ -83,7 +106,9 @@ export const envSchema = z.object({
   // Versão do analisador de visão — bumpar invalida o cache de análises de criativo.
   // 2 (Fatia 6c): multi-frame HD + decomposição hook/angle/format/cta.
   // 3 (Bloco 2): decomposição ganha body + proofStrength → invalida o cache antigo uma vez.
-  CREATIVE_VISION_ANALYZER_VERSION: z.coerce.number().int().positive().default(3),
+  // 4 (S4b, pivô saúde): ganha persuasionSignals (densidade de gatilhos de Cialdini, 0-7) →
+  // invalida de novo (cache antigo não tem o campo pro guard de weak_creative funcionar).
+  CREATIVE_VISION_ANALYZER_VERSION: z.coerce.number().int().positive().default(4),
   // Frames HD por criativo de vídeo enviados à visão (espaçados; imagem = 1). Fatia 6c.
   ANALYSIS_VISION_FRAMES: z.coerce.number().int().positive().default(4),
   LLM_COST_CAP_USD_PER_PERIOD: z.coerce.number().min(0).default(0),
@@ -107,9 +132,14 @@ export const envSchema = z.object({
   // Teto de tokens de SAÍDA por chamada de LLM (controla custo/trunca). Override por-agente.
   // Folga p/ reasoning + JSON caberem juntos (modelos que "pensam" gastam saída antes da resposta).
   ANALYSIS_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(8000),
-  // Esforço de reasoning nos passos de LLM (unit/síntese/revisão). `off` desliga.
+  // Esforço de reasoning da SÍNTESE (unit é sempre `off`, hardcoded). `off` desliga.
   // Override por-agente em `agents.model_config.reasoningEffort` (Fatia 4).
   ANALYSIS_REASONING_EFFORT: z.enum(["off", "low", "medium", "high"]).default("medium"),
+  // Esforço de reasoning do REVISOR — separado da síntese (achado do A/B real grok×gemini:
+  // revisor refina/corta, não gera do zero; `medium` compartilhado pagava reasoning
+  // desproporcional pro escopo da tarefa). Override por-agente em
+  // `agents.model_config.reviewReasoningEffort` (Fatia 4). Default `off`.
+  ANALYSIS_REVIEW_REASONING_EFFORT: z.enum(["off", "low", "medium", "high"]).default("off"),
   // URL base do OpenRouter (default oficial; trocável p/ gateway/proxy).
   OPENROUTER_BASE_URL: z.string().url().default("https://openrouter.ai/api/v1"),
 
@@ -156,10 +186,17 @@ export const envSchema = z.object({
   // TTL do cache (Redis) do CATÁLOGO de entidades por conta (§7 — corta o listEntities
   // full a cada run, maior fonte de rate-limit). Invalidado na escrita real. `0` desliga.
   META_ENTITY_CACHE_TTL_SEC: z.coerce.number().int().min(0).default(1800),
+  // TTL do cache (Redis) do CATÁLOGO de comportamentos (behaviors) — taxonomia GLOBAL locale-scoped
+  // (não varia por conta), sem busca no servidor → fetch da lista + match local. Default ~7 dias. `0` desliga.
+  META_BEHAVIOR_CACHE_TTL_SEC: z.coerce.number().int().min(0).default(604800),
   // Frescura (6a): idade máx. (min) do snapshot mais novo antes de disparar sync-only
   // (porta `shouldSync`, compartilhada por sweep/lazy/análise/botão). Também = intervalo
   // do sweep periódico. ~2-3h de default (equilíbrio frescura × chamadas Meta).
   INSIGHTS_FRESH_THRESHOLD_MIN: z.coerce.number().int().positive().default(120),
+  // Breakdown demográfico/posicionamento (S7, pivô saúde) — cadência PRÓPRIA, bem mais
+  // lenta que o sync diário (o spread muda devagar): default 7 dias. Mesma família de
+  // INSIGHTS_FRESH_THRESHOLD_MIN acima (staleness de sync Meta), prefixo consistente.
+  INSIGHTS_BREAKDOWN_STALE_THRESHOLD_MIN: z.coerce.number().int().positive().default(7 * 24 * 60),
   // Dormância (pivô): dias sem atividade (spend/impressões) p/ a conta virar dormante
   // (backoff do cron); e o intervalo LENTO de varredura do sweep p/ contas dormantes
   // (detecta a reativação em ~1 dia sem queimar chamadas Meta à toa).
@@ -207,6 +244,14 @@ export const envSchema = z.object({
   // Tracking furado (§Bloco 2): conversas/max(conversões,1) acima da razão + piso de conversas.
   ANALYSIS_QUALITY_TRACKING_BROKEN_RATIO: z.coerce.number().positive().default(50),
   ANALYSIS_QUALITY_TRACKING_BROKEN_MIN_FUNNEL: z.coerce.number().nonnegative().default(50),
+  // Piso de elegibilidade RELATIVO (playbook real, pivô saúde): gasto ≥ este múltiplo
+  // do CPA-alvo já basta como volume, mesmo com poucas conversões/cliques absolutos.
+  ANALYSIS_QUALITY_RELATIVE_ELIGIBILITY_SPEND_MULTIPLIER: z.coerce.number().positive().default(2),
+  // CPA marginal (pivô saúde, squad): alta (%) do CPA vs baseline a partir da qual rebaixa
+  // escalar → investigar, mesmo pra quem ainda bate a meta em média.
+  ANALYSIS_QUALITY_MARGINAL_CPA_WORSEN_PCT: z.coerce.number().positive().default(20),
+  // Retenção de vídeo (S6, %) abaixo disso = gancho fraco na largada (25% do vídeo).
+  ANALYSIS_QUALITY_WEAK_HOOK_RETENTION_MAX_PCT: z.coerce.number().positive().default(50),
 
   // ─── Cadência (cron por conta — 3b) ────────────────────────────────────
   // Default global da cadência (a UI de edição por-conta = Fatia 4). Cron 5-campos.
@@ -255,6 +300,20 @@ export const envSchema = z.object({
   // get_fresh_metrics). Travamento sem erro → cai no fallback amigável, nunca deixa
   // o usuário sem resposta pra sempre.
   CONVERSATION_TURN_TIMEOUT_MS: z.coerce.number().int().positive().default(90_000),
+  // Teto (ms) do fetch AO VIVO da Meta dentro de uma read-tool do chat (ex: get_top_creatives
+  // fresh=true refresca copies). DEVE ser < CONVERSATION_TURN_TIMEOUT_MS: se a Meta demora, a
+  // tool degrada pro dado persistido em vez de estourar o turno inteiro (a causa do fallback
+  // genérico quando o refresh de todos os criativos levava minutos).
+  CHAT_LIVE_FETCH_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+  // Teto (ms) do fetch AO VIVO da Meta na leitura de campanhas da API (site) — achado real:
+  // campanha nova/ativa criada depois do último run não aparecia na lista (só entity_analyses,
+  // que só atualiza em run). Curto de propósito: é dentro de uma resposta HTTP síncrona, não de
+  // um turno de chat — timeout/erro degrada em silêncio (a lista cacheada já tinha o resto).
+  RUNS_LIVE_GAP_CHECK_TIMEOUT_MS: z.coerce.number().int().positive().default(4_000),
+  // Modelo default da geração de COPY do rascunho (Fatia 7) quando o agente não tem modelo
+  // próprio (model_config.messageModel/model). Env em vez de hardcoded — mesmo padrão dos
+  // modelos de análise. Tarefa de escrita curta e barata.
+  COPY_MODEL: z.string().min(1).default("openai/gpt-4o-mini"),
 
   // ─── Transcrição de áudio inbound (STT via OpenRouter) ─────────────────
   // Nota de voz do WhatsApp → texto na borda. Reusa OPENROUTER_API_KEY/BASE_URL.
@@ -295,13 +354,21 @@ export const envSchema = z.object({
   // quando o telefone de quem foi mencionado/citado não vem direto no payload da
   // mensagem. Participação de grupo muda pouco; folgado (~1h) é seguro.
   GROUP_PARTICIPANTS_CACHE_TTL_SEC: z.coerce.number().int().positive().default(3600),
+  // Kill-switch de PLATAFORMA da escrita conversacional de ads pelo chat (v1 MVP): quando OFF
+  // (default), o agente no WhatsApp NÃO autora/edita/muta a Meta por conversa (criar/copiar/
+  // escalar/ajustar rascunho/pausar/orçamento + o "sim" que cria via criativo enviado somem do
+  // toolset). Consulta + aprovar/rejeitar + revert + auto-config seguem; autonomia/proativo/site
+  // intactos. Autoria/edição fina vive na plataforma (menos risco de má-interpretação). Reverter =
+  // ligar aqui (o código fica pendente). enum (não z.coerce.boolean): "false" coage p/ true em
+  // Boolean() — o kill-switch NÃO desligaria. Mesmo padrão dos demais booleanos do arquivo.
+  TRAFEGO_CHAT_ADS_WRITES: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
 
   // ─── Email (auth transacional — 6b) ────────────────────────────────────
   // Verificação de email + reset de senha via mailer genérico (porta + fila).
   // driver: console (dev, loga código/link) | ses (prod, AWS SESv2) | noop (testes).
   AUTH_EMAIL_DELIVERY_DRIVER: z.enum(["console", "ses", "noop"]).default("console"),
   // Remetente. Domínio precisa estar verificado no SES (DKIM). Beta = msg.automato.pro.
-  AUTH_EMAIL_FROM: z.string().min(1).default("AutoTraffic <no-reply@msg.automato.pro>"),
+  AUTH_EMAIL_FROM: z.string().min(1).default("CaquiAI <no-reply@msg.automato.pro>"),
   // Região do SES de produção (só o worker envia). Creds AWS (AWS_ACCESS_KEY_ID/
   // AWS_SECRET_ACCESS_KEY) vêm da cadeia default do SDK — secret só no worker, IAM escopado.
   AWS_REGION: z.string().min(1).default("sa-east-1"),
@@ -316,6 +383,15 @@ export const envSchema = z.object({
   LANGFUSE_PUBLIC_KEY: z.string().optional(),
   LANGFUSE_SECRET_KEY: z.string().optional(),
   LANGFUSE_BASE_URL: z.string().url().optional(),
+}).superRefine((v, ctx) => {
+  // driver s3 exige bucket + credenciais (fail-fast no boot; sem eles o adapter quebraria em runtime).
+  if (v.STORAGE_DRIVER === "s3") {
+    for (const key of ["STORAGE_BUCKET", "STORAGE_ACCESS_KEY", "STORAGE_SECRET_KEY"] as const) {
+      if (!v[key]) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: "obrigatório quando STORAGE_DRIVER=s3" });
+      }
+    }
+  }
 });
 
 /** Tipo validado do ambiente — fonte da verdade p/ o resto do sistema. */

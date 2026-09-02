@@ -15,28 +15,36 @@ import {
   buildGroupTranscript,
   buildRevertEcho,
   buildWriteEcho,
+  checkPhoneAttribution,
+  collectGroundedNumbers,
   describePlaybookRule,
   entityKeyOf,
+  flagUngroundedNumbers,
   resolveAgentConfigChange,
   type EchoItem,
   type RevertEchoItem,
 } from "@trafego/core";
 import { applyAgentConfigChange, loadAgentConfigState, reseedArchetypeChange } from "@trafego/agent-config";
-import { sleep } from "@trafego/shared";
-import type { Action, OrgId } from "@trafego/shared/types";
+import { sleep, phoneTokensInText, APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE } from "@trafego/shared";
+import type { Action, ApprovalId, ConversionGoal, OrgId } from "@trafego/shared/types";
+import { CONVERSION_GOALS } from "@trafego/shared/types";
+import { AdsPlatformError } from "@trafego/shared/ports";
 import { and, eq } from "drizzle-orm";
 import { adAccounts, agents, playbookRules, type Database } from "@trafego/db";
 import { DEFAULT_CURRENCY } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
 import { describeLlmError } from "./llm-error.js";
 import { GROUP_RULES, loadConversationConfig } from "./system-prompt.js";
-import { windowMessages } from "./window.js";
+import { sanitizeToolPairs, windowMessages } from "./window.js";
 import {
   CONFIG_UPDATE_TOOL_NAMES,
   CONTROL_WRITE_TOOL_NAMES,
+  CREATE_TOOL_NAMES,
+  REFINE_TOOL_NAMES,
   PLAYBOOK_WRITE_TOOL_NAMES,
   REVERT_TOOL_NAME,
   DESCRIBE_CAPABILITIES_TOOL_NAME,
+  WHATSAPP_NUMBER_TOOL_NAME,
   RESEED_TOOL_NAME,
   WRITE_TOOL_NAMES,
   actionFromToolCall,
@@ -49,8 +57,10 @@ import {
   ruleRowToDescriptor,
   type ConversationToolContext,
 } from "./tools.js";
+import { renderWhatsappNumber, resolveWhatsappNumber } from "./read-data.js";
 import { makeMetaToolExecutor } from "../../executors/meta-tools.js";
 import { applyCheckedAction, type ApplyOutcome } from "../../modules/apply/apply-confirmed-action.js";
+import { buildRefineEcho, MEDIA_PREFERENCES, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner, recoverOpenDraft, refineDraft, type DraftProposalContext, type MediaPreference, type RecoveredDraft } from "../../modules/conversation/draft-proposal.js";
 import { loadWriteContext } from "../../modules/apply/write-context.js";
 import { revertActionById } from "../../modules/apply/revert-action.js";
 import { actorLabel } from "../../modules/conversation/actor.js";
@@ -58,6 +68,7 @@ import { createNotifyRepo } from "../../modules/notify/repo.js";
 import { applyPlaybookOp } from "../../modules/conversation/config-writes.js";
 import type {
   PendingConfigChange,
+  PendingDraft,
   PendingRevert,
   PendingWrite,
   WhatsappConversationStateType,
@@ -65,6 +76,34 @@ import type {
 } from "./state.js";
 
 const CONVERSATION_TEMPERATURE = 0.3;
+
+/** Guard: `v` é um ConversionGoal da taxonomia neutra (o LLM manda goal como texto livre). */
+function isConversionGoal(v: unknown): v is ConversionGoal {
+  return typeof v === "string" && (CONVERSION_GOALS as readonly string[]).includes(v);
+}
+
+/** Guard: `v` é uma preferência de mídia válida (video/image/mixed). */
+function isMediaPreference(v: unknown): v is MediaPreference {
+  return typeof v === "string" && (MEDIA_PREFERENCES as readonly string[]).includes(v);
+}
+
+/** Normaliza os copyEdits vindos do LLM (índice + campos de texto), filtrando entradas inválidas. */
+function parseCopyEdits(v: unknown): { index: number; headline?: string; primaryText?: string; description?: string; adName?: string }[] {
+  if (!Array.isArray(v)) return [];
+  const out: { index: number; headline?: string; primaryText?: string; description?: string; adName?: string }[] = [];
+  for (const e of v) {
+    if (!e || !Number.isInteger((e as { index?: unknown }).index)) continue;
+    const o = e as Record<string, unknown>;
+    out.push({
+      index: o["index"] as number,
+      ...(typeof o["headline"] === "string" && o["headline"] ? { headline: o["headline"] } : {}),
+      ...(typeof o["primaryText"] === "string" && o["primaryText"] ? { primaryText: o["primaryText"] } : {}),
+      ...(typeof o["description"] === "string" ? { description: o["description"] } : {}),
+      ...(typeof o["adName"] === "string" && o["adName"] ? { adName: o["adName"] } : {}),
+    });
+  }
+  return out;
+}
 
 const MS_PER_HOUR = 60 * 60 * 1000;
 /** Rótulo do bot no transcript ambiente (outbound no transcript = fast-follow; hoje sem uso real). */
@@ -116,6 +155,35 @@ function answerToolCalls(calls: readonly { id?: string }[], text: string): ToolM
   return calls.map((c, i) => new ToolMessage({ content: i === 0 ? text : "(ver acima)", tool_call_id: c.id ?? "" }));
 }
 
+/**
+ * Backstop SOFT de honestidade (Fatia 7): anexa um caveat quando a resposta cita DINHEIRO/%
+ * ausente das fontes (tools + config no system-prompt + histórico) ou um TELEFONE que não veio
+ * de tool (misatribuição). NUNCA remove/reescreve o texto — só acrescenta o aviso. Puro.
+ */
+function guardFinalAnswer(text: string, systemPrompt: string, windowed: readonly BaseMessage[]): string {
+  const toolResults: string[] = [];
+  const history: string[] = [];
+  for (const m of windowed) {
+    const c = typeof m.content === "string" ? m.content : "";
+    if (!c) continue;
+    if (m instanceof ToolMessage) toolResults.push(c);
+    else history.push(c);
+  }
+  const known = collectGroundedNumbers({ toolResults, configText: [systemPrompt], history });
+  // telefone ancorado = veio de tool NESTE turno OU já apareceu antes no fio (render verbatim /
+  // o próprio usuário) — repetir um número já dito no thread não é misatribuição.
+  const allowedPhones = new Set([...toolResults, ...history].flatMap((t) => phoneTokensInText(t)));
+  const money = flagUngroundedNumbers(text, known);
+  const phones = checkPhoneAttribution(text, allowedPhones);
+  if (money.length === 0 && phones.length === 0) return text;
+  const notes: string[] = [];
+  if (phones.length > 0) {
+    notes.push("não vou garantir número de telefone que não veio da ferramenta — me pergunta o número da campanha específica que eu confirmo.");
+  }
+  if (money.length > 0) notes.push("alguns valores acima eu não consegui confirmar nos dados — trate com cautela.");
+  return `${text}\n\n_⚠️ ${notes.join(" ")}_`;
+}
+
 /** pendingWrite ainda válido (não expirado)? */
 function activePendingWrite(pw: PendingWrite | null): PendingWrite | null {
   return pw && Date.parse(pw.expiresAt) > Date.now() ? pw : null;
@@ -124,6 +192,27 @@ function activePendingWrite(pw: PendingWrite | null): PendingWrite | null {
 /** pendingRevert ainda válido (não expirado)? */
 function activePendingRevert(pr: PendingRevert | null): PendingRevert | null {
   return pr && Date.parse(pr.expiresAt) > Date.now() ? pr : null;
+}
+
+/** pendingDraft ainda válido (não expirado)? */
+function activePendingDraft(pd: PendingDraft | null): PendingDraft | null {
+  return pd && Date.parse(pd.expiresAt) > Date.now() ? pd : null;
+}
+
+/** RecoveredDraft (banco) → PendingDraft (estado): eco fresco do spec + TTL renovado. */
+function recoveredToPending(rec: RecoveredDraft): PendingDraft {
+  return {
+    draftId: rec.draftId,
+    approvalId: rec.approvalId,
+    echo: buildRefineEcho(rec.kind, rec.spec),
+    expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString(),
+  };
+}
+
+/** Recupera o rascunho aberto do banco como PendingDraft (estado), ou null. */
+async function recoverOrNull(deps: WorkerDeps, dctx: DraftProposalContext): Promise<PendingDraft | null> {
+  const rec = await recoverOpenDraft(deps, dctx);
+  return rec ? recoveredToPending(rec) : null;
 }
 
 /** pendingConfigChange ainda válido (não expirado)? */
@@ -155,14 +244,16 @@ function outcomeLine(action: Action, outcome: ApplyOutcome): string {
   switch (outcome.kind) {
     case "applied":
       return outcome.dryRun
-        ? `🧪 Simulei em ${name} (dry-run, não apliquei de verdade).`
-        : `✅ ${(PAST_PHRASE[action.type] ?? ((x: string) => `Mexi em ${x}`))(name)}.`;
+        ? `Simulei em ${name} (dry-run, não apliquei de verdade).`
+        : `${(PAST_PHRASE[action.type] ?? ((x: string) => `Mexi em ${x}`))(name)}.`;
     case "noop":
       return `Não precisei mexer em ${name} — já estava assim.`;
     case "blocked":
       return `Não consegui em ${name}: ${outcome.reason}.`;
     case "failed":
-      return `Não consegui aplicar em ${name} agora — a Meta não respondeu. Tenta de novo.`;
+      return outcome.error instanceof AdsPlatformError && outcome.error.userMessage
+        ? `Não consegui em ${name}. A Meta informou: ${outcome.error.userMessage.trim()}`
+        : `Não consegui aplicar em ${name} agora — a Meta não respondeu. Tenta de novo.`;
   }
 }
 
@@ -424,6 +515,7 @@ export function makeConversationNodes(
       ctx.agentId.length > 0 ? ctx.agentId : null,
       deps.conversation.model,
       ctx.configViaChat ?? false,
+      ctx.chatAdsWrites ?? false,
     );
 
     // eco+confirma (5c): se há ação/reversão pendente válida, oriente o LLM a só
@@ -446,7 +538,10 @@ export function makeConversationNodes(
       maxTurns: deps.conversation.historyTurns,
       maxTokens: deps.conversation.maxTokens,
     });
-    const msgs = [new SystemMessage(sys), ...windowed];
+    // Sanitiza pares tool_call/result: um turno anterior que QUEBROU entre o AI(tool_calls) e as
+    // respostas das tools deixa um órfão no checkpoint → a API rejeita (400 "No tool output found")
+    // e o thread fica envenenado (todo turno reenvia o órfão). Remover o órfão CURA o thread.
+    const msgs = [new SystemMessage(sys), ...sanitizeToolPairs(windowed)];
     // Primário com retry/backoff (ChatOpenAI.maxRetries); se ESGOTAR, tenta o RESERVA
     // (também com retry/backoff). Loga cada ponto de falha. Provider diverso = resiliência a blip.
     const fallback = deps.conversation.fallbackModel;
@@ -475,6 +570,15 @@ export function makeConversationNodes(
       }
     }
     await recordConversationUsage(deps, ctx, usedModel, response);
+
+    // BACKSTOP SOFT de honestidade (Fatia 7): só na resposta FINAL (sem tool call — o que
+    // vai ao usuário). Nunca dropa; no máximo anexa caveat. Answer-key = system-prompt (tem
+    // config: guidance/metas/guardrails) + resultados de tool + histórico do turno. Telefone
+    // tem checagem estrutural própria (a raiz do bug foi misatribuição cross-entity).
+    if ((response.tool_calls?.length ?? 0) === 0 && typeof response.content === "string") {
+      const guarded = guardFinalAnswer(response.content, sys, windowed);
+      if (guarded !== response.content) response = new AIMessage(guarded);
+    }
 
     // limpa pendências expiradas (o "sim" tardio não aplica algo esquecido).
     const update: WhatsappConversationUpdate = { messages: [response] };
@@ -507,17 +611,216 @@ export function makeConversationNodes(
       return { messages: [...answerToolCalls(allCalls, "capabilities"), new AIMessage(text)] };
     }
 
+    // GET_WHATSAPP_NUMBER (Fatia 7): resolve escopado ao campaignId (DB-first + live) e
+    // RENDERIZA VERBATIM — o LLM não digita os dígitos, então não pode misatribuir o número
+    // de outra campanha (a raiz do bug reportado). Informativo puro — não coexiste com escrita.
+    const waCall = allCalls.find((c) => c.name === WHATSAPP_NUMBER_TOOL_NAME);
+    if (waCall) {
+      const a = (waCall.args ?? {}) as Record<string, unknown>;
+      const campaignId = typeof a["campaignId"] === "string" ? a["campaignId"].trim() : "";
+      // sem CONTA em foco (ex: grupo com foco expirado) → pede a conta antes de tentar resolver
+      // (resolver com adAccountId vazio derrubava o turno no loadAccount — uuid inválido).
+      if (!ctx.adAccountId) {
+        return {
+          messages: [...answerToolCalls(allCalls, "sem conta"), new AIMessage("Primeiro me diz de qual conta é essa campanha (ex: \"foca na Loja X\") que aí eu busco o número de WhatsApp certo.")],
+        };
+      }
+      if (!campaignId) {
+        return {
+          messages: [...answerToolCalls(allCalls, "sem id"), new AIMessage("Me diz qual campanha (o nome que eu identifico) que eu descubro o número de WhatsApp de destino dela.")],
+        };
+      }
+      const dest = await resolveWhatsappNumber(deps, ctx, campaignId);
+      const label = typeof a["campaignName"] === "string" && a["campaignName"] ? (a["campaignName"] as string) : (dest.entityName ?? campaignId);
+      return { messages: [...answerToolCalls(allCalls, "whatsapp"), new AIMessage(renderWhatsappNumber(dest, label))] };
+    }
+
+    // REFINAMENTO conversacional (Fatia 7): ajusta/regenera o rascunho PENDENTE sem criar
+    // outro — muta o campaign_drafts + re-ecoa; o "sim" segue aplicando o MESMO rascunho.
+    const refineCall = allCalls.find((c) => REFINE_TOOL_NAMES.has(c.name));
+    if (refineCall) {
+      const dctxRefine = { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, currency: DEFAULT_CURRENCY };
+      // estado efêmero expirou (TTL 30min)? o rascunho pode seguir ABERTO no banco (fonte da verdade)
+      // → recupera em vez de dar dead-end (o incidente do grupo: "5 criativos diferentes" 91min depois).
+      let active = activePendingDraft(state.pendingDraft) ?? (await recoverOrNull(deps, dctxRefine));
+      if (!active) {
+        return {
+          messages: [
+            ...answerToolCalls(allCalls, "sem rascunho"),
+            new AIMessage("Não tenho um rascunho de campanha aberto pra ajustar agora. Quer que eu monte um? É só dizer o que criar ou escalar (ex: \"cria uma campanha de leads\")."),
+          ],
+        };
+      }
+      const a = (refineCall.args ?? {}) as Record<string, unknown>;
+      const patch =
+        refineCall.name === "regenerate_copy"
+          ? { regenerateCopy: true }
+          : {
+              ...(typeof a["budgetReais"] === "number" ? { budgetReais: a["budgetReais"] as number } : {}),
+              ...(a["activation"] === "active" || a["activation"] === "paused" ? { activation: a["activation"] as "active" | "paused" } : {}),
+              ...(typeof a["variantsCount"] === "number" ? { variantsCount: a["variantsCount"] as number } : {}),
+              ...(a["audience"] === "reuse" || a["audience"] === "broad" ? { audience: a["audience"] as "reuse" | "broad" } : {}),
+              ...(isConversionGoal(a["objective"]) ? { objective: a["objective"] } : {}),
+              ...(typeof a["campaignName"] === "string" && a["campaignName"] ? { campaignName: a["campaignName"] as string } : {}),
+              ...(typeof a["adsetName"] === "string" && a["adsetName"] ? { adsetName: a["adsetName"] as string } : {}),
+              ...(Array.isArray(a["removeGeo"]) ? { removeGeo: a["removeGeo"].filter((x): x is string => typeof x === "string") } : {}),
+              ...(Array.isArray(a["addGeo"]) ? { addGeo: a["addGeo"].filter((x): x is string => typeof x === "string") } : {}),
+              ...(typeof a["ageMin"] === "number" ? { ageMin: a["ageMin"] as number } : {}),
+              ...(typeof a["ageMax"] === "number" ? { ageMax: a["ageMax"] as number } : {}),
+              ...(a["gender"] === "men" || a["gender"] === "women" || a["gender"] === "all" ? { gender: a["gender"] as "men" | "women" | "all" } : {}),
+              ...(Array.isArray(a["removeInterests"]) ? { removeInterests: a["removeInterests"].filter((x): x is string => typeof x === "string") } : {}),
+              ...(Array.isArray(a["addInterests"]) ? { addInterests: a["addInterests"].filter((x): x is string => typeof x === "string") } : {}),
+              ...(Array.isArray(a["narrowInterests"]) ? { narrowInterests: a["narrowInterests"].filter((x): x is string => typeof x === "string") } : {}),
+              ...(Array.isArray(a["removeBehaviors"]) ? { removeBehaviors: a["removeBehaviors"].filter((x): x is string => typeof x === "string") } : {}),
+              ...(Array.isArray(a["addBehaviors"]) ? { addBehaviors: a["addBehaviors"].filter((x): x is string => typeof x === "string") } : {}),
+              ...(Array.isArray(a["narrowBehaviors"]) ? { narrowBehaviors: a["narrowBehaviors"].filter((x): x is string => typeof x === "string") } : {}),
+              ...(typeof a["radiusKm"] === "number" ? { radiusKm: a["radiusKm"] as number } : {}),
+              ...(Array.isArray(a["addressAreas"]) ? { addressAreas: a["addressAreas"].filter((x): x is { address: string; radiusKm: number } => Boolean(x) && typeof (x as { address?: unknown }).address === "string" && typeof (x as { radiusKm?: unknown }).radiusKm === "number").map((x) => ({ address: x.address, radiusKm: x.radiusKm })) } : {}),
+              ...(Array.isArray(a["addAudiences"]) ? { addAudiences: a["addAudiences"].filter((x): x is string => typeof x === "string") } : {}),
+              ...(Array.isArray(a["excludeAudiences"]) ? { excludeAudiences: a["excludeAudiences"].filter((x): x is string => typeof x === "string") } : {}),
+              ...(Array.isArray(a["removeAudiences"]) ? { removeAudiences: a["removeAudiences"].filter((x): x is string => typeof x === "string") } : {}),
+              ...(typeof a["distinctCreatives"] === "number" ? { distinctCreatives: a["distinctCreatives"] as number } : {}),
+              ...(isMediaPreference(a["mediaPreference"]) ? { mediaPreference: a["mediaPreference"] } : {}),
+              ...((): { copyEdits?: ReturnType<typeof parseCopyEdits> } => {
+                const edits = parseCopyEdits(a["copyEdits"]);
+                return edits.length > 0 ? { copyEdits: edits } : {};
+              })(),
+            };
+      const res = await refineDraft(deps, dctxRefine, active.draftId, patch);
+      if (res.kind === "blocked") {
+        return { messages: [...answerToolCalls(allCalls, "não deu"), new AIMessage(res.reason)] };
+      }
+      return {
+        messages: [...answerToolCalls(allCalls, "ajustado — aguardando confirmação"), new AIMessage(res.echo)],
+        pendingDraft: { ...active, echo: res.echo, expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString() },
+      };
+    }
+
+    // CRIAÇÃO (Fatia 7): escalar/criar = gasto novo. Monta o rascunho (persiste
+    // campaign_drafts + approval na hora → visível no site) + eco; o "sim" enfileira a saga.
+    // scale_winner pode virar uma AÇÃO adjust_budget (passo pequeno) → pendingWrite normal.
+    const createCall = allCalls.find((c) => CREATE_TOOL_NAMES.has(c.name));
+    if (createCall) {
+      const dctx = { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, currency: DEFAULT_CURRENCY };
+      const args = (createCall.args ?? {}) as Record<string, unknown>;
+      const scaleChoice = args["choice"] === "raise" || args["choice"] === "duplicate" ? (args["choice"] as "raise" | "duplicate") : undefined;
+      const strList = (v: unknown): string[] | undefined =>
+        Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : undefined;
+      const isGender = (v: unknown): v is "all" | "men" | "women" => v === "all" || v === "men" || v === "women";
+      const areaList = (v: unknown): { address: string; radiusKm: number }[] | undefined =>
+        Array.isArray(v)
+          ? v
+              .filter((x): x is { address: string; radiusKm: number } => Boolean(x) && typeof (x as { address?: unknown }).address === "string" && typeof (x as { radiusKm?: unknown }).radiusKm === "number")
+              .map((x) => ({ address: x.address, radiusKm: x.radiusKm }))
+          : undefined;
+      const proposal =
+        createCall.name === "scale_winner"
+          ? await proposeScaleWinner(
+              deps,
+              dctx,
+              typeof args["winnerName"] === "string" ? (args["winnerName"] as string) : undefined,
+              "on_demand",
+              scaleChoice,
+            )
+          : createCall.name === "copy_campaign"
+            ? await (async () => {
+                const inc = strList(args["includeAudiences"]);
+                const exc = strList(args["excludeAudiences"]);
+                const geo = strList(args["geo"]);
+                const interests = strList(args["interests"]);
+                const behaviors = strList(args["behaviors"]);
+                const addressAreas = areaList(args["addressAreas"]);
+                return proposeCopyCampaign(deps, dctx, {
+                  sourceCampaignId: String(args["campaignId"] ?? ""),
+                  ...(typeof args["campaignName"] === "string" ? { sourceName: args["campaignName"] as string } : {}),
+                  ...(inc ? { includeAudiences: inc } : {}),
+                  ...(exc ? { excludeAudiences: exc } : {}),
+                  ...(typeof args["budgetReais"] === "number" ? { budgetReais: args["budgetReais"] as number } : {}),
+                  ...(isConversionGoal(args["goal"]) ? { goal: args["goal"] } : {}),
+                  ...(geo ? { geo } : {}),
+                  ...(typeof args["ageMin"] === "number" ? { ageMin: args["ageMin"] as number } : {}),
+                  ...(typeof args["ageMax"] === "number" ? { ageMax: args["ageMax"] as number } : {}),
+                  ...(isGender(args["gender"]) ? { gender: args["gender"] } : {}),
+                  ...(interests ? { interests } : {}),
+                  ...(behaviors ? { behaviors } : {}),
+                  ...(typeof args["radiusKm"] === "number" ? { radiusKm: args["radiusKm"] as number } : {}),
+                  ...(addressAreas ? { addressAreas } : {}),
+                  ...(typeof args["adCount"] === "number" ? { adCount: args["adCount"] as number } : {}),
+                });
+              })()
+          : await (async () => {
+              const inc = strList(args["includeAudiences"]);
+              const exc = strList(args["excludeAudiences"]);
+              const geo = strList(args["geo"]);
+              const interests = strList(args["interests"]);
+              const behaviors = strList(args["behaviors"]);
+              const addressAreas = areaList(args["addressAreas"]);
+              return proposeCreateCampaign(deps, dctx, {
+                // valida o goal contra a taxonomia neutra ANTES de propor: goal inválido (o LLM
+                // manda texto livre) descartado → o propose infere da meta/conta, e o eco mostra
+                // o objetivo REAL. Sem isso, um goal fora do enum viraria DEFAULT_OBJECTIVE no
+                // adapter, criando campanha (gasto real) com objetivo diferente do prometido (§8).
+                ...(isConversionGoal(args["goal"]) ? { goal: args["goal"] } : {}),
+                ...(typeof args["budgetReais"] === "number" ? { budgetReais: args["budgetReais"] as number } : {}),
+                ...(inc ? { includeAudiences: inc } : {}),
+                ...(exc ? { excludeAudiences: exc } : {}),
+                ...(geo ? { geo } : {}),
+                ...(typeof args["ageMin"] === "number" ? { ageMin: args["ageMin"] as number } : {}),
+                ...(typeof args["ageMax"] === "number" ? { ageMax: args["ageMax"] as number } : {}),
+                ...(isGender(args["gender"]) ? { gender: args["gender"] } : {}),
+                ...(interests ? { interests } : {}),
+                ...(behaviors ? { behaviors } : {}),
+                ...(typeof args["radiusKm"] === "number" ? { radiusKm: args["radiusKm"] as number } : {}),
+                ...(addressAreas ? { addressAreas } : {}),
+                ...(typeof args["adCount"] === "number" ? { adCount: args["adCount"] as number } : {}),
+                ...(typeof args["distinctCreatives"] === "number" ? { distinctCreatives: args["distinctCreatives"] as number } : {}),
+                ...(isMediaPreference(args["mediaPreference"]) ? { mediaPreference: args["mediaPreference"] } : {}),
+              });
+            })();
+      const expiresAt = new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString();
+      if (proposal.kind === "blocked") {
+        return { messages: [...answerToolCalls(allCalls, "não deu"), new AIMessage(proposal.reason)] };
+      }
+      if (proposal.kind === "ask") {
+        // passo agressivo, intent aberto → o agente PERGUNTA; sem pending (nada a confirmar
+        // ainda). O usuário responde "sobe o budget"/"duplica" → o LLM re-chama scale_winner
+        // com choice → vira ação (raise) ou rascunho (duplicate).
+        return { messages: [...answerToolCalls(allCalls, "perguntando"), new AIMessage(proposal.echo)] };
+      }
+      if (proposal.kind === "draft") {
+        return {
+          messages: [...answerToolCalls(allCalls, "proposto — aguardando confirmação"), new AIMessage(proposal.echo)],
+          pendingDraft: { echo: proposal.echo, expiresAt, approvalId: proposal.approvalId, draftId: proposal.draftId },
+          pendingWrite: null,
+          pendingRevert: null,
+          pendingConfigChange: null,
+        };
+      }
+      // scale raise → ação adjust_budget (guardrail re-checa no applyWrite).
+      const echo = `Vou escalar subindo o budget: ${proposal.action.reason}. Confirma?`;
+      return {
+        messages: [...answerToolCalls(allCalls, "proposto — aguardando confirmação"), new AIMessage(echo)],
+        pendingWrite: { echo, expiresAt, actions: [proposal.action] },
+        pendingDraft: null,
+        pendingRevert: null,
+        pendingConfigChange: null,
+      };
+    }
+
     // DESFAZER (5c-4): eco de reversão + congela pendingRevert. A ação real (por id) é
     // aplicada no applyWrite; aqui só monta o eco (rótulos vêm do find_recent_actions).
     const revertCalls = allCalls.filter((c) => c.name === REVERT_TOOL_NAME);
     if (revertCalls.length > 0) {
       const items: RevertEchoItem[] = [];
       const ids: string[] = [];
+      const modes: ("pause" | "archive")[] = [];
       for (const c of revertCalls) {
-        const a = (c.args ?? {}) as { toolCallId?: string; label?: string; actionType?: string };
+        const a = (c.args ?? {}) as { toolCallId?: string; label?: string; actionType?: string; mode?: "pause" | "archive" };
         if (!a.toolCallId) continue;
-        items.push({ label: a.label ?? "essa ação", actionType: a.actionType ?? "" });
+        const mode = a.mode === "archive" ? "archive" : "pause";
+        items.push({ label: a.label ?? "essa ação", actionType: a.actionType ?? "", mode });
         ids.push(a.toolCallId);
+        modes.push(mode);
       }
       if (ids.length === 0) {
         return { messages: answerToolCalls(allCalls, "Não entendi qual ação desfazer. Use find_recent_actions.") };
@@ -528,7 +831,7 @@ export function makeConversationNodes(
         // pode omitir dados/segurança do eco; validação ao vivo confirmou o risco). O eco é a
         // verdade fixa; o ToolMessage só satisfaz o par tool_call/result.
         messages: [...answerToolCalls(allCalls, "proposto — aguardando confirmação"), new AIMessage(echo)],
-        pendingRevert: { echo, expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString(), toolCallIds: ids },
+        pendingRevert: { echo, expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString(), toolCallIds: ids, modes },
         pendingWrite: null, // uma pendência por vez (write × revert não coexistem)
       };
     }
@@ -711,7 +1014,7 @@ export function makeConversationNodes(
 
     const parts: string[] = [];
     // shadow (dry_run): o eco avisa que vai SIMULAR — senão "vou pausar" soa como escrita real.
-    if (wctx.cfg.dryRun && echoItems.length > 0) parts.push("🧪 Modo simulação (não aplico de verdade):");
+    if (wctx.cfg.dryRun && echoItems.length > 0) parts.push("Modo simulação (não aplico de verdade):");
     if (echoItems.length > 0) parts.push(buildWriteEcho(echoItems));
     if (blocked.length > 0) parts.push(`Não consigo:\n${blocked.map((b, i) => `${i + 1}. ${b}`).join("\n")}`);
     const echo = parts.join("\n\n") || "Não consegui preparar essa ação.";
@@ -735,13 +1038,53 @@ export function makeConversationNodes(
     const last = state.messages.at(-1) as AIMessage | undefined;
     const calls = last?.tool_calls ?? [];
     const isConfirm = calls.some((c) => c.name === "confirm_write");
+    const dctx = { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, currency: DEFAULT_CURRENCY };
+    // nada mais pendente no estado → a única pendência possível é um rascunho aberto no banco (TTL
+    // expirou); usado por reject/confirm p/ recuperar sem shadowear write/revert/config ativos.
+    const noOtherPending =
+      !activePendingWrite(state.pendingWrite) && !activePendingRevert(state.pendingRevert) && !activePendingConfig(state.pendingConfigChange);
 
     if (!isConfirm) {
+      // recusa em-turno de um RASCUNHO → resolve a approval no BANCO (some do site também),
+      // não só limpa o estado efêmero (senão o rascunho seguia pendente 24h no card). As demais
+      // pendências (write/revert/config) não têm approval persistida aqui. Estado expirou mas o
+      // rascunho segue aberto no banco → recupera p/ "descarta" funcionar mesmo depois de 30min.
+      const rejectedDraft = activePendingDraft(state.pendingDraft) ?? (noOtherPending ? await recoverOrNull(deps, dctx) : null);
+      if (rejectedDraft) {
+        // só recusa se AINDA pendente: o rascunho pode ter sido aprovado por id nesse meio-tempo
+        // (apply-service já criou a campanha) → não reverter approved→rejected com a campanha viva.
+        // Espelha o guard de approve/reject (getById + status pending).
+        const appr = await deps.ports.approval.getById(rejectedDraft.approvalId as ApprovalId);
+        if (appr && appr.status === "pending") {
+          await deps.ports.approval.resolve(rejectedDraft.approvalId as ApprovalId, { status: "rejected" });
+        }
+      }
       return {
-        messages: [...answerToolCalls(calls, "cancelado"), new AIMessage("Ok, não mexi em nada.")],
+        messages: [
+          ...answerToolCalls(calls, "cancelado"),
+          new AIMessage(rejectedDraft ? "Ok, descartei o rascunho." : "Ok, não mexi em nada."),
+        ],
         pendingWrite: null,
         pendingRevert: null,
         pendingConfigChange: null,
+        pendingDraft: null,
+      };
+    }
+
+    // RASCUNHO confirmado (Fatia 7): enfileira a saga de criação (mesmo apply-service do
+    // site) — o worker re-checa o guardrail de gasto novo, cria e empurra o desfecho.
+    const pendingDraft = activePendingDraft(state.pendingDraft);
+    if (pendingDraft) {
+      await deps.ports.scheduler.enqueue({
+        queue: APPROVAL_APPLY_QUEUE,
+        name: APPROVAL_APPLY_JOB,
+        payload: { orgId: ctx.orgId, approvalId: pendingDraft.approvalId, notifyRef: ctx.ref },
+      });
+      return {
+        messages: [...answerToolCalls(calls, "criando"), new AIMessage("Beleza, tô criando — te aviso quando ficar pronto.")],
+        pendingDraft: null,
+        pendingWrite: null,
+        pendingRevert: null,
       };
     }
 
@@ -762,17 +1105,34 @@ export function makeConversationNodes(
     const pendingRevert = activePendingRevert(state.pendingRevert);
     if (pendingRevert) {
       const lines: string[] = [];
-      for (const toolCallId of pendingRevert.toolCallIds) {
-        const res = await revertActionById(deps, { orgId: ctx.orgId, toolCallId });
+      for (let i = 0; i < pendingRevert.toolCallIds.length; i++) {
+        const toolCallId = pendingRevert.toolCallIds[i]!;
+        const mode = pendingRevert.modes?.[i] ?? "pause"; // estado antigo sem modes → pausar
+        const res = await revertActionById(deps, { orgId: ctx.orgId, toolCallId, mode });
         lines.push(
           res.reverted
-            ? "✅ Desfeito."
+            ? mode === "archive"
+              ? "Arquivada."
+              : "Desfeito."
             : res.blockedByDrift
               ? `Não desfiz: ${res.reason ?? "a entidade mudou desde a ação"}. Se quiser desfazer mesmo assim, me avise.`
               : `Não consegui desfazer: ${res.reason ?? "ação não encontrada"}.`,
         );
       }
       return { messages: [...answerToolCalls(calls, "revert"), new AIMessage(lines.join("\n"))], pendingRevert: null, pendingWrite: null };
+    }
+
+    // "sim" TARDIO (estado expirou) mas o rascunho segue aberto no banco → NÃO aplica às cegas:
+    // re-ecoa o que está proposto (passou muito tempo) e pede confirmação de novo (§8 eco+confirma).
+    const recovered = noOtherPending ? await recoverOrNull(deps, dctx) : null;
+    if (recovered) {
+      return {
+        messages: [
+          ...answerToolCalls(calls, "reconfirmar"),
+          new AIMessage(`Esse rascunho ficou um tempo esperando, então confiro com você antes de criar:\n\n${recovered.echo}`),
+        ],
+        pendingDraft: recovered,
+      };
     }
 
     const pending = activePendingWrite(state.pendingWrite);
@@ -834,8 +1194,11 @@ export function routeConversation(
     toolCalls.some(
       (c) =>
         WRITE_TOOL_NAMES.has(c.name) ||
+        CREATE_TOOL_NAMES.has(c.name) ||
+        REFINE_TOOL_NAMES.has(c.name) ||
         c.name === REVERT_TOOL_NAME ||
         c.name === DESCRIBE_CAPABILITIES_TOOL_NAME ||
+        c.name === WHATSAPP_NUMBER_TOOL_NAME ||
         isConfirmableConfigTool(c.name),
     )
   )

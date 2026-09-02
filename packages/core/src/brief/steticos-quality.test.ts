@@ -7,6 +7,7 @@ function run(goals: Parameters<typeof buildAccountBrief>[0]["goals"]) {
   const res = buildAccountBrief({
     account: STETICOS_ACCOUNT,
     window: "últimos 7 dias",
+    windowDays: 7,
     baselineWindow: "7 dias anteriores",
     goals,
     entities: STETICOS_ENTITIES,

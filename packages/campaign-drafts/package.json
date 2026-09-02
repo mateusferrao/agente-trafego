@@ -1,0 +1,20 @@
+{
+  "name": "@trafego/campaign-drafts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "lint": "eslint src"
+  },
+  "dependencies": {
+    "@trafego/core": "workspace:*",
+    "@trafego/db": "workspace:*",
+    "@trafego/shared": "workspace:*",
+    "drizzle-orm": "^0.38.0"
+  }
+}

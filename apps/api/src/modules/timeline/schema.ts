@@ -19,6 +19,7 @@ const actionEvent = <T extends string>(type: T) =>
     toolCallId: z.string(),
     toolKey: z.string(),
     entityName: z.string().nullable(),
+    entityLevel: z.string().nullable(),
     fromChat: z.boolean(),
     simulated: z.boolean(),
   });
@@ -31,6 +32,18 @@ const approvalEvent = <T extends string>(type: T) =>
     approvalId: z.string(),
     actionType: z.string(),
     entityName: z.string().nullable(),
+    entityLevel: z.string().nullable(),
+  });
+
+/** Evento de rascunho de campanha (Fatia 7 — proposto/criado). */
+const draftEvent = <T extends string>(type: T) =>
+  z.object({
+    ...base,
+    type: z.literal(type),
+    draftId: z.string(),
+    kind: z.string(),
+    dailyBudgetMajor: z.number(),
+    currency: z.string(),
   });
 
 /**
@@ -54,6 +67,8 @@ export const timelineEvent = z.discriminatedUnion("type", [
   approvalEvent("approval_approved"),
   approvalEvent("approval_rejected"),
   approvalEvent("approval_expired"),
+  draftEvent("campaign_draft_proposed"),
+  draftEvent("campaign_created"),
 ]);
 export type TimelineEvent = z.infer<typeof timelineEvent>;
 

@@ -4,7 +4,7 @@
 // proporcional) e grava a conversa/mensagem outbound. Reusado pelo consumidor de
 // inbound (ack/respostas), pelo push do cron/pulso/alerta e pelo apply-service.
 
-import { sanitizeWhatsappText } from "@trafego/core";
+import { enforceVoice, sanitizeWhatsappText } from "@trafego/core";
 import type { ConversationRef } from "@trafego/shared";
 import type { MessagingChannelPort } from "@trafego/shared/ports";
 import type { NotifyRepo } from "./repo.js";
@@ -59,8 +59,10 @@ export function createSendToConversation(deps: SendToContactDeps) {
     if (!delivery) return false;
 
     // Sanitiza SEMPRE (camada única cross-cutting §13): normaliza markdown do LLM p/
-    // o dialeto WhatsApp; no-op sobre os textos verbatim já formatados.
-    const sanitized = sanitizeWhatsappText(text);
+    // o dialeto WhatsApp; depois policia a VOZ (conserta bullets inline, remove abertura
+    // de assistente, sentence case). Interesses separados; ambos idempotentes e no-op
+    // sobre os textos verbatim já formatados.
+    const sanitized = enforceVoice(sanitizeWhatsappText(text));
     const parts = opts.split ? splitMessage(sanitized) : [sanitized].filter((p) => p.length > 0);
     if (parts.length === 0) return false;
 

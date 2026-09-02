@@ -42,4 +42,31 @@ describe("decideActions", () => {
     expect(res.autoApply.map((a) => a.id)).toEqual(["low"]);
     expect(res.needApproval.map((a) => a.id)).toEqual(["high"]);
   });
+
+  it("byAction VENCE bySource: ação com override sobe/desce independente da origem", () => {
+    // origem llm = act_full (auto), mas adjust_budget tem override suggest → pede OK;
+    // pause_entity sem override herda a origem (act_full → auto).
+    const policy: AutonomyPolicy = {
+      bySource: { playbook: "suggest", llm: "act_full" },
+      byAction: { adjust_budget: "suggest" },
+    };
+    const res = decideActions(
+      [
+        action("pause", { source: "llm", type: "pause_entity" }),
+        action("budget", { source: "llm", type: "adjust_budget", riskLevel: "low" }),
+      ],
+      policy,
+    );
+    expect(res.autoApply.map((a) => a.id)).toEqual(["pause"]);
+    expect(res.needApproval.map((a) => a.id)).toEqual(["budget"]);
+  });
+
+  it("byAction pode LIBERAR uma ação numa origem conservadora", () => {
+    const policy: AutonomyPolicy = {
+      bySource: { playbook: "suggest", llm: "suggest" },
+      byAction: { pause_entity: "act_full" },
+    };
+    const res = decideActions([action("p", { source: "llm", type: "pause_entity" })], policy);
+    expect(res.autoApply.map((a) => a.id)).toEqual(["p"]);
+  });
 });

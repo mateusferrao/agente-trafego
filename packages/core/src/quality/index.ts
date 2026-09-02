@@ -5,13 +5,17 @@
 // ranqueamento relativo + rede de segurança que alimenta prompt, guard e UI.
 
 import type {
+  AudienceStage,
+  ConversionBasis,
   ConversionGoal,
+  CreativeProofStrength,
   DecisionEligibility,
   EntitySummary,
   HealthSignal,
   InsightMetrics,
   OutcomeKind,
   PerformanceTier,
+  PlatformQualityRankings,
   RangeBand,
 } from "@trafego/shared";
 import { type CtrBands, benchmarkFor } from "../benchmarks/index.js";
@@ -42,6 +46,23 @@ export interface QualityThresholds {
   readonly trackingBrokenRatio: number;
   /** tracking furado: volume mínimo de conversas p/ sequer considerar a suspeita. */
   readonly trackingBrokenMinFunnel: number;
+  /**
+   * Piso de elegibilidade RELATIVO (playbook real, complementar ao absoluto acima):
+   * gasto ≥ este múltiplo do CPA-alvo já basta como volume, mesmo com poucas
+   * conversões/cliques absolutos — escala com a economia da própria conta (útil pra
+   * contas de baixo volume mas gasto relativo já significativo, ex: saúde).
+   */
+  readonly relativeEligibilitySpendMultiplier: number;
+  /**
+   * CPA marginal (pivô saúde, squad): alta (%) do CPA vs baseline a partir da qual rebaixa
+   * escalar → investigar, mesmo pra quem ainda bate a meta em média ("CPA médio mente, o
+   * marginal conta a verdade"). Ver `guardScaleWithWorseningMarginalCpa`.
+   */
+  readonly marginalCpaWorsenPct: number;
+  /** S6: retenção de vídeo (`videoHookRetentionPct`) abaixo disso = gancho fraco na largada
+   *  (não segura atenção nos primeiros ~25% do vídeo). Métrica DURA, mas nunca vira guard
+   *  (é sinal de qualidade de criativo, não de economia da ação — CLAUDE.md §7). */
+  readonly weakHookRetentionMaxPct: number;
 }
 
 export const DEFAULT_QUALITY_THRESHOLDS: QualityThresholds = {
@@ -55,6 +76,9 @@ export const DEFAULT_QUALITY_THRESHOLDS: QualityThresholds = {
   coldStartReference: true,
   trackingBrokenRatio: 50,
   trackingBrokenMinFunnel: 50,
+  relativeEligibilitySpendMultiplier: 2,
+  marginalCpaWorsenPct: 20,
+  weakHookRetentionMaxPct: 50,
 };
 
 // ─── Elegibilidade de decisão ─────────────────────────────────────────────
@@ -67,17 +91,47 @@ export interface EligibilityInput {
    * que hoje não sincronizamos. Entidade sem baseline = nova ⇒ em learning.
    */
   readonly hasBaseline: boolean;
+  /**
+   * Conversas iniciadas no funil (WhatsApp/Messenger). Conta como volume quando
+   * `conversionBasis === "proxy"` — a conversão de negócio não é mensurável nesta
+   * entidade, então a conversa (objetivo próprio dela) é o sinal de volume real.
+   * Evita que conta de mensagem nunca tenha significância só por não rastrear
+   * venda ali (playbook real de saúde; `[ALTO]` do ROADMAP).
+   */
+  readonly conversationStarted?: number;
+  /** basis da conversão nesta entidade — ver `conversationStarted`. */
+  readonly conversionBasis?: ConversionBasis;
+  /** gasto acumulado na janela (moeda da conta) — p/ piso relativo (ver `targetCPA`). */
+  readonly spend?: number;
+  /**
+   * CPA-alvo do dono, se definido — base do piso relativo (`spend ≥
+   * relativeEligibilitySpendMultiplier × targetCPA`). Sem alvo definido, o piso
+   * relativo não se aplica (nada pra escalar).
+   */
+  readonly targetCPA?: number;
 }
 
 /**
- * Elegibilidade de DECISÃO. Significância = volume suficiente (conversões OU
- * cliques) E já rodava na janela anterior (`hasBaseline`, proxy de ≥7 dias).
- * Learning ≈ entidade nova (sem baseline) → Meta ainda re-otimizando.
+ * Elegibilidade de DECISÃO. Significância = volume suficiente E já rodava na
+ * janela anterior (`hasBaseline`, proxy de ≥ janela — cobre também o piso de
+ * "dias mínimos de veiculação" do playbook real: sem `daysActive` preciso no
+ * pipeline hoje, `hasBaseline` é o gate de tempo mais conservador disponível,
+ * nunca deixa passar algo mais novo do que a própria janela).
+ *
+ * Volume = (conversões OU cliques OU conversas-proxy, piso absoluto) OU (gasto
+ * ≥ 2×CPA-alvo, piso relativo — playbook real, escala com a economia da conta).
  */
 export function computeEligibility(input: EligibilityInput, t: QualityThresholds): DecisionEligibility {
-  const enoughVolume = input.conversions >= t.minConversions || input.clicks >= t.minClicks;
+  const messagingVolume = input.conversionBasis === "proxy" ? (input.conversationStarted ?? 0) : 0;
+  const enoughVolumeAbsolute =
+    input.conversions >= t.minConversions || input.clicks >= t.minClicks || messagingVolume >= t.minConversions;
+  const enoughVolumeRelative =
+    input.targetCPA !== undefined &&
+    input.targetCPA > 0 &&
+    input.spend !== undefined &&
+    input.spend >= t.relativeEligibilitySpendMultiplier * input.targetCPA;
   return {
-    hasSignificance: enoughVolume && input.hasBaseline,
+    hasSignificance: (enoughVolumeAbsolute || enoughVolumeRelative) && input.hasBaseline,
     inLearning: !input.hasBaseline,
     conversions: input.conversions,
     clicks: input.clicks,
@@ -95,12 +149,25 @@ export interface HealthInput {
   readonly hasSignificance: boolean;
   /** teto de frequência resolvido por estágio (§Bloco 2); ausente → `fatigueFrequency`. */
   readonly frequencyCap?: number;
+  /** S6: retenção de vídeo nos primeiros 25% (%). Ausente = sem vídeo reportado — nunca
+   *  assume fraco por omissão (honesto: sem dado suficiente). */
+  readonly videoHookRetentionPct?: number;
+  /** S6: rankings de qualidade que a própria Meta calcula (opinião independente). */
+  readonly qualityRankings?: PlatformQualityRankings;
+}
+
+function hasBelowAverageRanking(rankings: PlatformQualityRankings | undefined): boolean {
+  if (!rankings) return false;
+  return rankings.quality === "below_average" || rankings.engagement === "below_average" || rankings.conversion === "below_average";
 }
 
 /**
  * Sinais nomeados: fadiga (2+ de {CTR caiu, freq alta, custo subiu}), saturação
  * de público (freq alta isolada) e baixo volume (sem significância). O teto de
  * frequência vem do estágio quando resolvido (`frequencyCap`), senão do geral.
+ * S6: `weak_hook_retention` (retenção de vídeo baixa) e `platform_quality_below_average`
+ * (a Meta classifica abaixo da média em qualidade/engajamento/conversão) — ambos métrica
+ * DURA (não score de LLM), mas nunca viram guard (CLAUDE.md §7): só informam NOTE/direção.
  */
 export function detectHealthSignals(input: HealthInput, t: QualityThresholds): HealthSignal[] {
   const signals: HealthSignal[] = [];
@@ -113,7 +180,31 @@ export function detectHealthSignals(input: HealthInput, t: QualityThresholds): H
   if (fatigueHits >= 2) signals.push("creative_fatigue");
   if (freqHigh) signals.push("audience_saturation");
   if (!input.hasSignificance) signals.push("low_volume");
+  if (input.videoHookRetentionPct !== undefined && input.videoHookRetentionPct < t.weakHookRetentionMaxPct) {
+    signals.push("weak_hook_retention");
+  }
+  if (hasBelowAverageRanking(input.qualityRankings)) signals.push("platform_quality_below_average");
   return signals;
+}
+
+/** Limiar de Cialdini: "menos de 3 de 7 gatilhos de persuasão presentes = deixando
+ *  persuasão na mesa" (squad, robert-cialdini.md) — não é um número arbitrário. */
+const WEAK_CREATIVE_MIN_PERSUASION_SIGNALS = 3;
+
+/**
+ * Sinal de criativo fraco (S4b, decisão 6): prova fraca (`proofStrength: 'weak'`) E baixa
+ * densidade persuasiva (`persuasionSignals` < 3/7). Puro score de visão (LLM soft) — NUNCA
+ * vira critério de guard determinístico (CLAUDE.md §7); só informa NOTE/matcher. Ausência de
+ * qualquer um dos dois insumos → sem sinal (honesto: sem dado suficiente, não assume fraco).
+ */
+export function detectCreativeWeakness(
+  proofStrength: CreativeProofStrength | undefined,
+  persuasionSignals: number | undefined,
+): readonly HealthSignal[] {
+  if (proofStrength === "weak" && persuasionSignals !== undefined && persuasionSignals < WEAK_CREATIVE_MIN_PERSUASION_SIGNALS) {
+    return ["weak_creative"];
+  }
+  return [];
 }
 
 // ─── Tiers ────────────────────────────────────────────────────────────────
@@ -185,6 +276,15 @@ function risePct(current: number | undefined, deltaAbs: number | undefined): num
   return baseline > 0 ? ((current - baseline) / baseline) * 100 : 0;
 }
 
+/** Teto de frequência saudável por estágio de público — SEMPRE concreto (nunca undefined,
+ *  ao contrário do cálculo inline de `enrichEntitiesQuality`): sem estágio, cai no teto
+ *  geral (`fatigueFrequency`). Reusado pelo guard de teto de escala por audiência (Fase 4). */
+export function resolveFrequencyCap(stage: AudienceStage | undefined, t: QualityThresholds): number {
+  if (stage === "remarketing") return t.frequencyCapByStage.remarketing;
+  if (stage === "prospecting" || stage === "unknown") return t.frequencyCapByStage.prospecting;
+  return t.fatigueFrequency;
+}
+
 function beatsTargetFor(e: EntitySummary, goals: { targetCPA?: number; targetROAS?: number }): boolean {
   if (e.conversionBasis !== "target") return false;
   const cpaOk = goals.targetCPA !== undefined && typeof e.metrics.cpa === "number" && e.metrics.cpa <= goals.targetCPA;
@@ -219,27 +319,34 @@ export function enrichEntitiesQuality(
     const conversions = typeof e.metrics.conversions === "number" ? e.metrics.conversions : 0;
     const clicks = e.metrics.clicks;
     const hasBaseline = Object.keys(e.deltaVsBaseline).length > 0;
-    const eligibility = computeEligibility({ conversions, clicks, hasBaseline }, t);
+    const conversationStarted = e.funnel?.counts?.conversation_started ?? 0;
+    const eligibility = computeEligibility(
+      {
+        conversions,
+        clicks,
+        hasBaseline,
+        conversationStarted,
+        ...(e.conversionBasis ? { conversionBasis: e.conversionBasis } : {}),
+        spend: e.metrics.spend,
+        ...(goals.targetCPA !== undefined ? { targetCPA: goals.targetCPA } : {}),
+      },
+      t,
+    );
 
     const ctrDropPct = dropPct(e.metrics.ctr, e.deltaVsBaseline.ctr);
     const costMetric = typeof e.metrics.cpa === "number" ? "cpa" : "cpc";
     const costRisePct = risePct(e.metrics[costMetric], e.deltaVsBaseline[costMetric]);
     // teto de frequência por estágio (adset com público); sem estágio → teto geral.
-    // "unknown" cai no teto conservador de prospecção.
-    const stage = e.audience?.stage;
-    const frequencyCap =
-      stage === "remarketing"
-        ? t.frequencyCapByStage.remarketing
-        : stage === "prospecting" || stage === "unknown"
-          ? t.frequencyCapByStage.prospecting
-          : undefined;
+    const frequencyCap = resolveFrequencyCap(e.audience?.stage, t);
     const healthSignals = detectHealthSignals(
       {
         ...(e.metrics.frequency !== undefined ? { frequency: e.metrics.frequency } : {}),
         ctrDropPct,
         costRisePct,
         hasSignificance: eligibility.hasSignificance,
-        ...(frequencyCap !== undefined ? { frequencyCap } : {}),
+        frequencyCap,
+        ...(e.metrics.videoHookRetentionPct !== undefined ? { videoHookRetentionPct: e.metrics.videoHookRetentionPct } : {}),
+        ...(e.qualityRankings ? { qualityRankings: e.qualityRankings } : {}),
       },
       t,
     );
@@ -248,7 +355,6 @@ export function enrichEntitiesQuality(
     const cpa = typeof e.metrics.cpa === "number" && e.metrics.cpa > 0 ? e.metrics.cpa : undefined;
     // sinal de vida: conversão de negócio, OU conversão-proxy (objetivo próprio), OU
     // conversas no funil. Ausência total (com gasto, fora de learning) = zumbi.
-    const conversationStarted = e.funnel?.counts?.conversation_started ?? 0;
     const hasSignOfLife = conversions > 0 || typeof e.proxy?.cpa === "number" || conversationStarted > 0;
     const tier = classifyTier(
       {

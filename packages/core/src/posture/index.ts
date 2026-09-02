@@ -38,8 +38,9 @@ const EXPERIENCE_PRESETS: Readonly<Record<ExperienceLevel, PostureAxes>> = {
   beginner: { directiveness: "directive", volume: "comprehensive", didacticDepth: "explanatory" },
   // meio-termo.
   intermediate: { directiveness: "balanced", volume: "balanced", didacticDepth: "balanced" },
-  // domina: radar enxuto e direto, não quer ser mandado.
-  advanced: { directiveness: "consultative", volume: "concise", didacticDepth: "direct" },
+  // gestor sem tempo, orientado a resultado: curto, direto e com PLANO DE AÇÃO pronto
+  // (diretivo) — não quer ponderar opções nem ler mensagem longa.
+  advanced: { directiveness: "directive", volume: "concise", didacticDepth: "direct" },
 };
 
 /** Eixos semeados por um preset de experiência. PURO. */
@@ -66,17 +67,20 @@ const DIRECTIVENESS_PROMPT: Readonly<Record<Directiveness, string>> = {
   consultative: "Apresente as opções e os trade-offs; devolva a decisão ao dono, sem dar a ordem.",
   balanced: "Recomende o melhor caminho, mas deixe as alternativas relevantes à mostra.",
   directive:
-    "Assuma UMA recomendação e lidere com ela ('faça X porque Y') — a ação já está decidida na análise; comprometa-se.",
+    "Entregue um PLANO DE AÇÃO: assuma UMA recomendação e lidere com ela ('faça X porque Y'), sem oferecer um leque de opções pra ponderar. A ação já está decidida na análise; comprometa-se.",
 };
 const VOLUME_PROMPT: Readonly<Record<Volume, string>> = {
-  concise: "Traga só o movimento que mais importa agora.",
-  balanced: "Traga os principais movimentos.",
-  comprehensive: "Traga o panorama do que dá pra mexer.",
+  concise:
+    "SÓ o movimento que mais importa agora, em pouquíssimas linhas. O dono não tem tempo de ler mensagem longa no WhatsApp — corte tudo que não for essencial e não empilhe sugestões.",
+  balanced: "Os principais movimentos (uns poucos), sem virar uma lista longa.",
+  comprehensive: "O panorama completo do que dá pra mexer — não deixe de fora o que é relevante, mesmo que fique mais longo.",
 };
 const DIDACTIC_PROMPT: Readonly<Record<DidacticDepth, string>> = {
-  direct: "Fale de igual pra igual: use os termos (CPA, ROAS, adset) sem explicar.",
+  direct:
+    "Fale de igual pra igual, como quem fala com um gestor experiente: use os termos (CPA, ROAS, adset) direto, sem explicar o básico nem encher de contexto.",
   balanced: "Explique um termo técnico só na primeira vez que usar.",
-  explanatory: "Explique cada termo em linguagem de dono e contextualize o porquê, como se ensinasse.",
+  explanatory:
+    "O dono NÃO é técnico: explique cada termo (CPA, ROAS, adset) em linguagem simples e diga o porquê de cada ponto, como se ensinasse — nunca presuma que ele conhece o jargão.",
 };
 
 const POSTURE_BLOCK_HEADER = "Postura de comunicação com o dono (como FALAR; não muda a análise):";

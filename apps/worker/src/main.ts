@@ -17,6 +17,9 @@ import { startGroupContextPurgeWorker } from "./workers/group-context-purge.js";
 import { startWebhookInboundWorker } from "./workers/webhook-inbound.js";
 import { startWhatsappFlushWorker } from "./workers/whatsapp-flush.js";
 import { startWhatsappTranscriptionWorker } from "./workers/whatsapp-transcription.js";
+import { startWhatsappMediaIntakeWorker } from "./workers/whatsapp-media-intake.js";
+import { startCreativeVideoPollWorker, reapStalePendingVideos } from "./workers/creative-video-poll.js";
+import { startCreativeAnalyzeWorker } from "./workers/creative-analyze.js";
 import { startPulseWorker } from "./workers/pulse.js";
 import { startMailWorker } from "./workers/mail.js";
 import { drainPendingCostPatches } from "./graphs/whatsapp-conversation/nodes.js";
@@ -61,6 +64,12 @@ async function main(): Promise<void> {
   const whatsappFlush = startWhatsappFlushWorker(deps, connection);
   // transcrição de nota de voz inbound: áudio → texto na borda (fila dedicada).
   const whatsappTranscription = startWhatsappTranscriptionWorker(deps, connection);
+  // intake de imagem inbound (F7): imagem → asset de criativo na conta em foco.
+  const whatsappMediaIntake = startWhatsappMediaIntakeWorker(deps, connection);
+  // poll do status de vídeo (F7): upload async → flipa pending→ready/error (web + WhatsApp).
+  const creativeVideoPoll = startCreativeVideoPollWorker(deps, connection);
+  // visão de criativo da biblioteca (upload): analisa 1x + cacheia (reusa resolver/tabela).
+  const creativeAnalyze = startCreativeAnalyzeWorker(deps, connection);
 
   // entrega de email transacional (6b): verificação de email + reset de senha.
   const mail = startMailWorker(deps, connection);
@@ -83,7 +92,11 @@ async function main(): Promise<void> {
   await createRunReaper({ db: deps.db, logger, staleMinutes: deps.reaper.staleMinutes })
     .reapStale()
     .catch((err: unknown) => logger.error({ err }, "reaper:boot sweep falhou"));
-  logger.info("worker up: agent-runs + cron-dispatch + reaper + insights-sync + insights-sweep + schedule-resync + action-undo + approval-apply + approval-expiry + group-context-purge + whatsapp-inbound + whatsapp-transcription + mail");
+  // reaper de vídeo pendente órfão (crash perdeu a cadeia de poll) — varredura de boot.
+  await reapStalePendingVideos(deps.db, logger).catch((err: unknown) =>
+    logger.error({ err }, "creative-video-poll:reaper boot falhou"),
+  );
+  logger.info("worker up: agent-runs + cron-dispatch + reaper + insights-sync + insights-sweep + schedule-resync + action-undo + approval-apply + approval-expiry + group-context-purge + whatsapp-inbound + whatsapp-transcription + whatsapp-media-intake + mail");
 
   // shutdown gracioso (drena jobs em andamento antes de sair)
   const shutdown = async (signal: string): Promise<void> => {
@@ -102,6 +115,9 @@ async function main(): Promise<void> {
       webhookInbound.close(),
       whatsappFlush.close(),
       whatsappTranscription.close(),
+      whatsappMediaIntake.close(),
+      creativeVideoPoll.close(),
+      creativeAnalyze.close(),
       mail.close(),
       pulse.close(),
     ]);

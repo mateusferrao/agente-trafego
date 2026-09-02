@@ -1,6 +1,7 @@
 import { pathToFileURL } from "node:url";
 import cookie from "@fastify/cookie";
 import rateLimit from "@fastify/rate-limit";
+import multipart from "@fastify/multipart";
 import Fastify, { type FastifyInstance } from "fastify";
 import { sql } from "drizzle-orm";
 import { runMigrations, runBackfillConnections } from "@trafego/db";
@@ -22,6 +23,7 @@ import { groupsRoutes } from "../modules/groups/routes.js";
 import { contactsRoutes } from "../modules/contacts/routes.js";
 import { agentsRoutes } from "../modules/agents/routes.js";
 import { approvalsRoutes } from "../modules/approvals/routes.js";
+import { draftsRoutes } from "../modules/drafts/routes.js";
 import { recommendationsRoutes } from "../modules/recommendations/routes.js";
 import { runsRoutes } from "../modules/runs/routes.js";
 import { dashboardRoutes } from "../modules/dashboard/routes.js";
@@ -79,6 +81,12 @@ export async function buildApp(): Promise<FastifyInstance> {
     nameSpace: "trafego-rl:",
   });
 
+  // Upload de criativo (F7): multipart streaming (imagem + vídeo unificados; dropa base64).
+  // Teto = o maior (vídeo); o teto por-tipo (imagem menor) é checado no handler.
+  await app.register(multipart, {
+    limits: { fileSize: env.CREATIVE_MAX_VIDEO_MB * 1024 * 1024, files: 1 },
+  });
+
   // Cross-cutting: erros na casca → resposta; audit+metering em writes.
   registerErrorHandler(app);
   registerAudit(app);
@@ -125,6 +133,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       await api.register(contactsRoutes);
       await api.register(agentsRoutes);
       await api.register(approvalsRoutes);
+      await api.register(draftsRoutes);
       await api.register(recommendationsRoutes);
       await api.register(runsRoutes);
       await api.register(dashboardRoutes);
