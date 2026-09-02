@@ -36,20 +36,35 @@ export const RECOMMENDATION_TAXONOMY_INSTRUCTION =
   'depois de aplicar (ex: "CPA nos próximos 3 dias"). "findingRefs" lista os "id" de "findings" que ' +
   "motivaram esta recomendação (vazio se nenhum finding específico a sustenta).";
 
+// Origens de aprendizado com EVIDÊNCIA MEDIDA (outcome de ação nossa / mudança do gestor /
+// endosso humano) — pesam mais que a observação pura (tracking). Fonte única do critério.
+const MEASURED_LESSON_ORIGINS = new Set(["our_action", "human_manual", "human_feedback"]);
+
 /**
- * Bloco de APRENDIZADOS da conta — contexto curado de runs anteriores (confirmados/alta
- * confiança), rotulado por selo e origem. O analista trata como CONTEXTO (o que já se sabe
- * desta conta), NUNCA como número a verificar. Vazio → string vazia (não entra no prompt).
+ * Bloco "O QUE APRENDEMOS DESTA CONTA" (v3) — priors de conta destilados de EVIDÊNCIA MEDIDA
+ * (≥ K entidades) + ressalvas observadas (tracking). Hierarquia de força EXPLÍCITA: a
+ * orientação do dono (no systemPrompt) prevalece; abaixo dela, o aprendizado MEDIDO é um prior
+ * forte — pesa acima do ruído de um único run, mas o dado atual de UMA entidade específica pode
+ * contrariá-lo com justificativa. Bem mais forte que o antigo "confie no dado atual se
+ * contradisser": aqui a evidência medida cross-seccional é levada a sério. Vazio → "".
  */
 function lessonsBlock(brief: AccountBrief): string {
   const lessons = brief.memory.lessons ?? [];
   if (lessons.length === 0) return "";
-  const lines = lessons.map((l) => `- [${l.tier}] ${l.content}`).join("\n");
-  return (
-    "APRENDIZADOS DESTA CONTA (de análises anteriores — contexto, não números a verificar; " +
-    "considere-os mas confie no dado atual se ele contradisser):\n" +
-    lines
-  );
+  const measured = lessons.filter((l) => MEASURED_LESSON_ORIGINS.has(l.origin));
+  const observed = lessons.filter((l) => !MEASURED_LESSON_ORIGINS.has(l.origin));
+  const section = (label: string, items: typeof lessons): string =>
+    items.length > 0 ? `${label}:\n${items.map((l) => `- [${l.tier}] ${l.content}`).join("\n")}` : "";
+  return [
+    "O QUE APRENDEMOS DESTA CONTA — prior forte, mas ABAIXO da orientação do dono (que sempre " +
+      "prevalece) e não é número a verificar. Pese o aprendizado MEDIDO acima do ruído de um " +
+      "único run; se o dado atual de uma entidade específica o contrariar, você pode divergir, " +
+      "mas justifique.",
+    section("Evidência medida (padrão repetido em várias campanhas desta conta)", measured),
+    section("Ressalvas observadas nesta conta", observed),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 /**
