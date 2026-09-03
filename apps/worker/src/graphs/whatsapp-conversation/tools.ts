@@ -646,11 +646,6 @@ export function makeConversationTools(
         .nullable()
         .optional()
         .describe("liga/desliga o aviso quando uma conta parada volta a rodar (dispara a 1ª análise)"),
-      proactiveDraftsEnabled: z
-        .boolean()
-        .nullable()
-        .optional()
-        .describe("liga/desliga o agente propor escalar vencedor ou criar campanha por conta própria (sempre como proposta, nunca gasta sozinho)"),
       accountHealthEnabled: z
         .boolean()
         .nullable()
@@ -1270,7 +1265,6 @@ export function configPatchFromToolCall(
         ...(args["accountHealthSpendThreshold"] != null ? { accountHealthSpendThresholdMajor: args["accountHealthSpendThreshold"] as number } : {}),
         ...(args["accountHealthBalanceEnabled"] != null ? { accountHealthBalanceEnabled: args["accountHealthBalanceEnabled"] as boolean } : {}),
         ...(args["accountHealthBalanceThreshold"] != null ? { accountHealthBalanceThresholdMajor: args["accountHealthBalanceThreshold"] as number } : {}),
-        ...(args["proactiveDraftsEnabled"] != null ? { proactiveDraftsEnabled: args["proactiveDraftsEnabled"] as boolean } : {}),
       };
       return { notifyPolicy };
     }

@@ -270,9 +270,6 @@ export const notifyPolicySchema = z.object({
   // Default ON (baixo volume — semanas p/ o 1º; sempre acionável ou informativo). Opcional
   // (ausência = ON) p/ compat com policies gravadas antes do campo.
   learning: z.object({ enabled: z.boolean() }).optional(),
-  // Proatividade de CRIAÇÃO (Fatia 7): o agente PROPÕE escalar/criar campanhas pelo que
-  // observou (nunca auto-aplica — sempre aprovação). Default OFF; ON em Otimizador/Vigia.
-  proactiveDrafts: z.object({ enabled: z.boolean() }).optional(),
   // Saúde da conta Meta — ver schema acima. Default ON em TODOS os arquétipos (mais
   // urgente que reativação: isso aqui é dinheiro parado, não uma boa notícia opcional).
   accountHealthAlert: accountHealthAlertSchema.optional(),
@@ -286,7 +283,6 @@ export const DEFAULT_NOTIFY_POLICY: NotifyPolicy = {
   runPush: { enabled: true },
   reactivation: { enabled: false },
   learning: { enabled: true },
-  proactiveDrafts: { enabled: false },
   accountHealthAlert: {
     enabled: true,
     statusTriggers: [...ALERTABLE_ACCOUNT_HEALTH_STATUSES],

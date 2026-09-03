@@ -245,7 +245,6 @@ describe("resolveAgentConfigChange — notifyPolicy (F4d)", () => {
       alerts: NOTIFY_POLICY.alerts,
       runPush: NOTIFY_POLICY.runPush,
       reactivation: NOTIFY_POLICY.reactivation,
-      proactiveDrafts: { enabled: NOTIFY_POLICY.proactiveDrafts?.enabled ?? false },
     });
     expect(r.changed).toContain(CONFIG_CHANGE_LABELS.notifyPolicy);
     expect(r.notifyPolicyChanged).toBe(true);

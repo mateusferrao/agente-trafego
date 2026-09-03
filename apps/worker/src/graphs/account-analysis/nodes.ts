@@ -882,7 +882,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
   /**
    * PROATIVO de criação (Fatia 7): detecta oportunidade (determinístico) + propõe rascunho
    * (scale/create) → campaign_drafts(proposed) + approval + recommendation (draftId, reusa
-   * outcome tracking). Gated por notifyPolicy.proactiveDrafts; throttle = partial-unique
+   * outcome tracking). SEMPRE detecta (Fatia D — sem gate de config); throttle = partial-unique
    * (1 proposto proativo/conta) → conflito é engolido. NUNCA auto-aplica (sempre aprovação).
    */
   /**
@@ -923,8 +923,10 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
   }
 
   async function proposeDrafts(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
-    const enabled = state.notifyPolicy?.proactiveDrafts?.enabled === true;
-    if (!enabled || !state.brief) return {};
+    // Fatia D: SEMPRE detecta a oportunidade de criação (sem gate de config) — o resultado é um card
+    // APROVÁVEL (nunca auto-aplica sem autonomia). A honestidade "diz×faz" quer que o agente proponha
+    // o que dá pra fazer; o freio é a autonomia (conservadora) + o guardrail, não um liga/desliga extra.
+    if (!state.brief) return {};
     const campaigns = state.brief.segments?.campaigns ?? [];
     const entities = campaigns.map((c) => ({
       id: c.id,

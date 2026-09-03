@@ -685,13 +685,13 @@ describe("account-analysis read-only nodes", () => {
   });
 
   describe("proposeDrafts (P1.1 — refresh_fatigued vira recomendação-only)", () => {
+    // Fatia D: sem gate de config — proposeDrafts SEMPRE detecta (sem `proactiveDrafts` no state).
     function stateWithCampaign(campaign: Record<string, unknown>): AccountAnalysisStateType {
       return {
         runId: "run-1",
         orgId: "org-1",
         agentId: "agent-1",
         adAccountId: "acc-uuid",
-        notifyPolicy: { proactiveDrafts: { enabled: true } },
         brief: { account: { currency: "BRL" }, segments: { campaigns: [campaign] } },
       } as unknown as AccountAnalysisStateType;
     }

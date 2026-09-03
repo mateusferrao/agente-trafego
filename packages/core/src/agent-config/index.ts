@@ -121,7 +121,6 @@ export interface NotifyPolicyPatch {
   readonly alertsThrottleHours?: number | undefined;
   readonly runPushEnabled?: boolean | undefined;
   readonly reactivationEnabled?: boolean | undefined;
-  readonly proactiveDraftsEnabled?: boolean | undefined;
   /** liga/desliga o alerta de saúde da conta Meta (desativada/teto/pagamento) — via chat. */
   readonly accountHealthEnabled?: boolean | undefined;
   /** checklist de status que dispara aviso — lista COMPLETA que substitui a atual (via chat).
@@ -430,7 +429,6 @@ function mergeNotifyPolicy(cur: NotifyPolicy, patch: NotifyPolicyPatch | undefin
     runPush: { enabled: patch.runPushEnabled ?? cur.runPush.enabled },
     // defensivo: linhas pré-pivô podem não ter `reactivation` no jsonb → default off.
     reactivation: { enabled: patch.reactivationEnabled ?? cur.reactivation?.enabled ?? false },
-    proactiveDrafts: { enabled: patch.proactiveDraftsEnabled ?? cur.proactiveDrafts?.enabled ?? false },
     accountHealthAlert: mergeAccountHealthAlert(cur.accountHealthAlert, patch),
   };
 }

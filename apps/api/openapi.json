@@ -2034,17 +2034,6 @@
                   "enabled"
                 ]
               },
-              "proactiveDrafts": {
-                "type": "object",
-                "properties": {
-                  "enabled": {
-                    "type": "boolean"
-                  }
-                },
-                "required": [
-                  "enabled"
-                ]
-              },
               "accountHealthAlert": {
                 "type": "object",
                 "properties": {
@@ -3163,17 +3152,6 @@
                 ]
               },
               "reactivation": {
-                "type": "object",
-                "properties": {
-                  "enabled": {
-                    "type": "boolean"
-                  }
-                },
-                "required": [
-                  "enabled"
-                ]
-              },
-              "proactiveDrafts": {
                 "type": "object",
                 "properties": {
                   "enabled": {

@@ -773,7 +773,6 @@ function toNotifyPolicyPatch(n: NotifyPolicyInput): NotifyPolicyPatch {
       : {}),
     ...(n.runPush !== undefined ? { runPushEnabled: n.runPush.enabled } : {}),
     ...(n.reactivation !== undefined ? { reactivationEnabled: n.reactivation.enabled } : {}),
-    ...(n.proactiveDrafts !== undefined ? { proactiveDraftsEnabled: n.proactiveDrafts.enabled } : {}),
     // site salva o objeto COMPLETO (checklist/teto/saldo) — vai como base do merge.
     ...(n.accountHealthAlert !== undefined ? { accountHealthAlert: n.accountHealthAlert } : {}),
   };
