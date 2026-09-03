@@ -151,6 +151,10 @@ import type { AccountAnalysisStateType, AccountAnalysisUpdate } from "./state.js
 /** Nº de dias sem análise que dispara um run DEEP (reanalisa tudo). */
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** Sub-unidade da moeda (centavos por real) — converte o budget major do `AdEntity` de volta pra
+ *  minor no contexto de exibição da ação. Convenção repetida no monorepo (ver `runs/service.ts`). */
+const MINOR_PER_UNIT = 100;
+
 /** Piso de alcance mensal (Fatia 8) pra o AUTÔNOMO criar/replicar sozinho — abaixo disso a proposta
  *  degrada pra recomendação humana em vez de criar. Fast-follow: tornar configurável por-agente. */
 const PROACTIVE_MIN_MONTHLY_REACH = 5000;
@@ -1833,12 +1837,17 @@ function buildBudgetByEntity(entities: readonly AdEntity[]): Map<string, boolean
  * Enriquece a ação `adjust_budget` com o atual (`ACTION_PARAM_CURRENT_MINOR`) p/ o card de
  * aprovação mostrar "atual → proposto" — mesma fonte curada, sem bater na Meta. Keyed por id
  * (ids da Meta são globais; casa com o `nameById` do decide). Só entidades COM orçamento entram.
+ *
+ * `AdEntity.dailyBudget`/`lifetimeBudget` já vêm em unidade MAIOR (reais — o adapter converte na
+ * entrada, ver `types/index.ts`), então convertemos de volta pra MENOR aqui: o consumidor do card
+ * (`ACTION_PARAM_CURRENT_MINOR`) espera minor e re-divide por 100. Sem isto, o valor exibido sai
+ * 100× menor (R$ 2,20 em vez de R$ 220).
  */
-function buildCurrentBudgetMinorById(entities: readonly AdEntity[]): Map<string, number> {
+export function buildCurrentBudgetMinorById(entities: readonly AdEntity[]): Map<string, number> {
   const map = new Map<string, number>();
   for (const e of entities) {
-    const minor = e.dailyBudget ?? e.lifetimeBudget;
-    if (minor !== undefined) map.set(e.id, minor);
+    const major = e.dailyBudget ?? e.lifetimeBudget;
+    if (major !== undefined) map.set(e.id, Math.round(major * MINOR_PER_UNIT));
   }
   return map;
 }

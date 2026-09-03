@@ -7,7 +7,7 @@ import type { InsightsSnapshotsRepo } from "../../modules/insights/repo.js";
 import type { EntityAnalysesRepo, LastEntityAnalysis } from "../../modules/analysis/entity-analyses.repo.js";
 import type { NotifyRepo } from "../../modules/notify/repo.js";
 import { AnalysisError } from "../../modules/analysis/errors.js";
-import { makeAccountAnalysisNodes } from "./nodes.js";
+import { buildCurrentBudgetMinorById, makeAccountAnalysisNodes } from "./nodes.js";
 import type { AccountAnalysisStateType, AccountAnalysisUpdate } from "./state.js";
 
 const TOKEN: EncryptedPayload = { ciphertext: "ct", iv: "iv", tag: "tg", keyVersion: 1 };
@@ -768,5 +768,38 @@ describe("account-analysis read-only nodes", () => {
       const debug = (h.deps as unknown as { logger: { debug: ReturnType<typeof vi.fn> } }).logger.debug;
       expect(debug).toHaveBeenCalledWith(expect.anything(), "propose_drafts:pulado");
     });
+  });
+});
+
+describe("buildCurrentBudgetMinorById", () => {
+  const entity = (id: string, budget: Partial<Pick<AdEntity, "dailyBudget" | "lifetimeBudget">>): AdEntity => ({
+    id,
+    level: "campaign",
+    name: id,
+    status: "active",
+    objective: { goal: "purchase" },
+    ...budget,
+  });
+
+  it("converte o budget MAIOR (reais) do AdEntity de volta pra MENOR (centavos)", () => {
+    // Regressão: R$ 220/dia era exibido como R$ 2,20 (100× menor) — o adapter já entrega major,
+    // e o consumidor do card re-divide por 100. Aqui garantimos que guardamos minor.
+    const map = buildCurrentBudgetMinorById([entity("c1", { dailyBudget: 220 })]);
+    expect(map.get("c1")).toBe(22000);
+  });
+
+  it("prefere o diário; cai pro vitalício quando não há diário", () => {
+    const map = buildCurrentBudgetMinorById([
+      entity("c1", { dailyBudget: 50, lifetimeBudget: 900 }),
+      entity("c2", { lifetimeBudget: 900 }),
+    ]);
+    expect(map.get("c1")).toBe(5000);
+    expect(map.get("c2")).toBe(90000);
+  });
+
+  it("arredonda centavos fracionários e ignora entidade sem orçamento", () => {
+    const map = buildCurrentBudgetMinorById([entity("c1", { dailyBudget: 12.345 }), entity("c2", {})]);
+    expect(map.get("c1")).toBe(1235);
+    expect(map.has("c2")).toBe(false);
   });
 });
