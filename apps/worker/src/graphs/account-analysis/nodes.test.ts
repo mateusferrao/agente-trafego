@@ -524,7 +524,7 @@ describe("account-analysis read-only nodes", () => {
       ],
     };
 
-    it("público perto do teto (delivery_estimate saturado) → rebaixa increase_budget pra investigate", async () => {
+    it("público perto do teto (delivery_estimate saturado) → RESSALVA audience_ceiling (aprovável, não rebaixa)", async () => {
       const h = makeHarness({ entities, rows });
       h.llm.mockImplementation(async () => ({ output: SCALE_OUTPUT, usage: { inputTokens: 100, outputTokens: 20, costUsd: 0.001 } }));
       const getDeliveryEstimateForAdSet = vi.fn(async () => ({ ready: true, monthlyReachMin: 100, monthlyReachMax: 100 }));
@@ -533,9 +533,14 @@ describe("account-analysis read-only nodes", () => {
       const state = await runChain(h);
 
       expect(getDeliveryEstimateForAdSet).toHaveBeenCalledWith(expect.anything(), "as1");
+      // Fatia A: NÃO rebaixa mais pra investigate — a rec fica increase_budget e a ação carrega
+      // a ressalva de teto de público (aprovável, mas trava o auto-apply).
       const rec = state.analysisOutput?.recommendations.find((r) => r.id === "r-as1");
-      expect(rec?.actionType).toBe("investigate");
-      expect(rec?.rationale).toContain("[guard]");
+      expect(rec?.actionType).toBe("increase_budget");
+      const cand = state.llmCandidates?.find((c) => c.target.id === "as1");
+      expect((cand?.ressalvas ?? []).map((r) => r.code)).toContain("audience_ceiling");
+      // ressalva trava o auto-apply → vai pra aprovação.
+      expect(state.decision?.needApproval.some((a) => a.target.id === "as1")).toBe(true);
     });
 
     it("público com folga (delivery_estimate grande) → mantém increase_budget", async () => {

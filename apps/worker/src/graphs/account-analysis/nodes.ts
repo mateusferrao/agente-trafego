@@ -31,21 +31,20 @@ import {
   type ClampedBudgetRaise,
   dropUnsupportedFindings,
   eligibilityByEntity,
-  guardScaleWithoutSignificance,
-  guardUnconfirmedHypothesis,
   guardKillWithoutMaturity,
   guardTrackingCaveat,
-  guardScaleWithWorseningMarginalCpa,
   marginalCpaRiseByEntity,
-  guardScaleWithoutFreshCreative,
   healthSignalsByEntity,
-  guardAudienceScaleCeiling,
   DEFAULT_AUDIENCE_CEILING_THRESHOLDS,
   resolveFrequencyCap,
   SCALE_ACTIONS,
   type AudienceHeadroom,
   basisByEntity,
   annotateFreedSpend,
+  computeScaleRessalvas,
+  coalesceScaleActions,
+  isScaleAction,
+  type ScaleRessalvaContext,
   detectCreationOpportunities,
   isFatigued,
   isConverterAudienceName,
@@ -817,56 +816,44 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
 
     // drop determinístico final (hard): remove finding sem métrica / número fora do brief.
     const dropped = dropUnsupportedFindings(reviewed, state.brief);
-    // guard de significância (6c): rebaixa escalar sem base → investigar (rede final,
-    // roda ANTES de decide_actions → vale também pro caminho autônomo 5a).
     const eligibility = eligibilityByEntity(state.brief);
-    const scaled = guardScaleWithoutSignificance(dropped, eligibility);
-    // não-matar-em-learning (Bloco 2): rebaixa pausar → investigar em entidade nova
-    // (não descarta o aprendizado). LLM-origin; playbook/guardrail não passam por aqui.
-    const guarded = guardKillWithoutMaturity(scaled, eligibility);
-    // guard de tracking (Bloco 2 → pivô saúde): rebaixa pausar/cortar → investigar
-    // quando a medição da conta parece incompleta (antes só anexava caveat; ver
-    // ROADMAP `[ALTO]` "guard de tracking mais forte no caminho autônomo").
+    // Guards de SEGURANÇA (Fatia A — só ESTES rebaixam pra investigate; os 5 de ESCALA viram
+    // RESSALVA nível-Action no decide_actions, mantendo a ação aprovável mas travando o auto-apply):
+    // não-matar-em-learning (não descarta o aprendizado) + tracking suspeito (corte por CPA de
+    // venda com medição furada). Rodam antes de decide_actions → valem no caminho autônomo.
+    const guarded = guardKillWithoutMaturity(dropped, eligibility);
     const caveated = guardTrackingCaveat(guarded, basisByEntity(state.brief), state.brief.trackingHealth);
-    // CPA marginal (pivô saúde, squad traffic-masters): rebaixa escalar → investigar quando
-    // o CPA piorou vs baseline acima do limiar, mesmo pra quem ainda bate a meta em média
-    // ("CPA médio mente, o marginal conta a verdade") — guard de significância não pega esse caso.
-    const marginalGuarded = guardScaleWithWorseningMarginalCpa(
-      caveated,
-      marginalCpaRiseByEntity(state.brief),
-      { worsenPct: cfg.quality.marginalCpaWorsenPct },
-    );
-    // Fadiga vs escala (achado do A/B real grok×gemini — NOTE sozinha não bastou): rebaixa
-    // escalar → investigar quando o alvo tem sinal DURO de fadiga de criativo. Roda ANTES do
-    // teto de audiência (IO/Meta) pra não gastar a chamada numa entidade que já vai ser rebaixada.
-    const freshCreativeGuarded = guardScaleWithoutFreshCreative(marginalGuarded, healthSignalsByEntity(state.brief));
-    // Teto de escala por audiência (Fase 4): reativo (só as entidades que sobreviveram
-    // com proposta de escalar até aqui) — rebaixa escalar → investigar quando o público
-    // (MAU × teto de frequência saudável) já está perto do limite de impressões sustentáveis.
-    const audienceHeadroom = await resolveAudienceHeadroomByEntity(
-      { repo, ads: deps.ports.ads, vault: deps.ports.vault, logger },
-      state,
-      freshCreativeGuarded,
-      cfg,
-    );
-    const audienceGuarded = guardAudienceScaleCeiling(freshCreativeGuarded, audienceHeadroom, DEFAULT_AUDIENCE_CEILING_THRESHOLDS);
-    // influência assimétrica do aprendizado (S3): uma hipótese NÃO confirmada de direção
-    // `lower` só rebaixa ESCALA → investigar (nunca promove) — aprende cedo sem nunca ficar
-    // mais arriscado. Lições confirmadas não vêm aqui (influenciam via prompt do analista).
-    const hypothesisGuarded = guardUnconfirmedHypothesis(audienceGuarded, state.lessonGuards ?? []);
     // impacto (Bloco 2): anexa o gasto liberado a cada recomendação de pausa.
     const spendById = new Map<string, number>();
     for (const level of [state.brief.segments.campaigns, state.brief.segments.adsets, state.brief.segments.ads]) {
       for (const e of level) spendById.set(e.id, e.metrics.spend ?? 0);
     }
-    const final = annotateFreedSpend(hypothesisGuarded, spendById, state.brief.account.currency);
+    const final = annotateFreedSpend(caveated, spendById, state.brief.account.currency);
+    // Contexto das RESSALVAS de escala (Fatia A): montado aqui (o teto de audiência é IO — resolve
+    // só p/ as entidades COM proposta de escalar). Consumido no build_recommendations + propose_drafts
+    // pra anexar as ressalvas às ações de escala (fonte única: computeScaleRessalvas nível-Action).
+    const headroom = await resolveAudienceHeadroomByEntity(
+      { repo, ads: deps.ports.ads, vault: deps.ports.vault, logger },
+      state,
+      final,
+      cfg,
+    );
+    const scaleContext: ScaleRessalvaContext = {
+      eligibility,
+      marginalRisePct: marginalCpaRiseByEntity(state.brief),
+      marginal: { worsenPct: cfg.quality.marginalCpaWorsenPct },
+      headroom,
+      ceiling: DEFAULT_AUDIENCE_CEILING_THRESHOLDS,
+      signals: healthSignalsByEntity(state.brief),
+      lessonGuards: state.lessonGuards ?? [],
+    };
     const findings: Finding[] = final.findings.map((f) => ({
       title: f.title,
       detail: f.detail,
       severity: f.severity,
     }));
     return {
-      analysisOutput: final, findings, summary: final.summary, usage, partial,
+      analysisOutput: final, findings, summary: final.summary, usage, partial, scaleContext,
       ...(reviewDegraded ? { partialReasons: ["review" as const] } : {}),
     };
   }
@@ -895,7 +882,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const knownIds = new Set(state.entities.map((e) => e.id));
     const budgetMinorById = buildCurrentBudgetMinorById(state.entities);
     const rows = state.analysisOutput.recommendations.map((rec) =>
-      toRecommendationRow(rec, state.orgId, state.runId, knownIds, budgetMinorById),
+      toRecommendationRow(rec, state.orgId, state.runId, knownIds, budgetMinorById, state.scaleContext ?? null),
     );
     await repo.saveRecommendations(rows);
     // ações propostas pelo LLM (com alvo válido) → candidatas do caminho de escrita.
@@ -1018,24 +1005,33 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
         const proposal = await proposeScaleWinner(deps, dctx, top.entityName, "proactive");
         // vencedor no teto sob CBO/ABO-pequeno → a decisão é SUBIR BUDGET (adjust_budget), não duplicar.
         if (proposal.kind === "action") {
-          await deps.ports.approval.upsertPending({
-            orgId: state.orgId as OrgId,
-            agentId: state.agentId as AgentId,
-            runId: state.runId as RunId,
-            action: proposal.action,
-            expiresAt: new Date(Date.now() + APPROVAL_TTL_HOURS * 3_600_000),
-          });
+          // backstop: se o LLM já propôs escala nesta entidade, ela já é candidato (com ressalvas) —
+          // o determinístico some (a coalescência cobriria; evitar o candidato duplicado é mais limpo).
+          const covered = (state.llmCandidates ?? []).some(
+            (c) => isScaleAction(c) && c.target.id === proposal.action.target.id,
+          );
+          if (covered) {
+            logger.info({ runId: state.runId }, "propose_drafts:scale_raise já coberto pelo LLM");
+            return {};
+          }
+          // ressalvas de escala (fonte única) + emite como CANDIDATO no pipeline canônico
+          // (decide_actions → guardrail → create_approvals), NÃO mais upsertPending direto
+          // (que pulava guardrail/dedupe — Fatia A, redesenho do pipeline único).
+          const ressalvas = state.scaleContext ? computeScaleRessalvas(proposal.action, state.scaleContext) : [];
+          const action: Action = ressalvas.length > 0 ? { ...proposal.action, ressalvas } : proposal.action;
           await deps.db.insert(recommendations).values({
             orgId: state.orgId,
             runId: state.runId,
             title: "Escalar seu vencedor (subir orçamento)",
             rationale: top.rationale,
             kind: "platform_action",
+            proposedAction: action,
             toolKey: "adjust_budget",
             riskLevel: "medium",
+            ...(ressalvas.length > 0 ? { ressalvas: [...ressalvas] } : {}),
           });
-          logger.info({ runId: state.runId }, "propose_drafts:scale_raise proposto");
-          return {};
+          logger.info({ runId: state.runId }, "propose_drafts:scale_raise → candidato");
+          return { llmCandidates: [...(state.llmCandidates ?? []), action] };
         }
         if (proposal.kind !== "draft") return {};
         await deps.db.insert(recommendations).values({
@@ -1212,7 +1208,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       if (ACTION_PARAM_CURRENT_MINOR in withName.params) return withName;
       return { ...withName, params: { ...withName.params, [ACTION_PARAM_CURRENT_MINOR]: currentMinor } };
     });
-    const { kept, dropped } = resolveActionConflicts(merged);
+    // coalesce escala LLM + determinística na MESMA entidade (pct conservador + ressalvas somadas)
+    // ANTES do dedupe por dominância (Fatia A — fecha o bug da escala contraditória no vencedor).
+    const { kept, dropped } = resolveActionConflicts(coalesceScaleActions(merged));
     if (dropped.length > 0) logger.debug({ runId: state.runId, dropped: dropped.length }, "decide:conflitos resolvidos");
     const decision = decideActions(kept, state.autonomyPolicy);
     return { mergedCandidates: kept, decision };
@@ -1762,6 +1760,7 @@ function toRecommendationRow(
   runId: string,
   knownIds: ReadonlySet<string>,
   budgetMinorById: ReadonlyMap<string, number>,
+  scaleContext: ScaleRessalvaContext | null,
 ): RecommendationRow {
   const actionType = applicableActionType(rec.actionType);
   const hasValidTarget = rec.targetEntity !== null && knownIds.has(rec.targetEntity.externalId);
@@ -1769,7 +1768,7 @@ function toRecommendationRow(
   const params = budgetParams(rec, currentMinor);
   // budget sem pct válido → NÃO vira ação (evitaria daily_budget=NaN na Meta); fica consultiva.
   const budgetOk = actionType !== "adjust_budget" || ACTION_PARAM_PCT in params;
-  const proposedAction: Action | null =
+  const bareAction: Action | null =
     actionType && rec.targetEntity && hasValidTarget && budgetOk
       ? {
           id: rec.id,
@@ -1781,6 +1780,11 @@ function toRecommendationRow(
           reason: rec.rationale,
         }
       : null;
+  // Ressalvas de escala (Fatia A): anexa "dá pra fazer, mas..." à ação (mantém aprovável, trava
+  // o auto-apply). Fonte única com o scaler determinístico — o mesmo passe puro nível-Action.
+  const ressalvas = bareAction && scaleContext ? computeScaleRessalvas(bareAction, scaleContext) : [];
+  const proposedAction: Action | null =
+    bareAction && ressalvas.length > 0 ? { ...bareAction, ressalvas } : bareAction;
   const baseKind = kindForRecommendation(rec.actionType);
   const kind =
     baseKind === "platform_action" && proposedAction === null ? "human_direction" : baseKind;
@@ -1801,6 +1805,8 @@ function toRecommendationRow(
     expectedImpact: rec.expectedImpact,
     whatToMonitor: rec.whatToMonitor,
     findingRefs: rec.findingRefs,
+    // ressalvas de escala (Fatia A) — espelho do proposedAction.ressalvas (fonte única a ação).
+    ressalvas: proposedAction?.ressalvas ? [...proposedAction.ressalvas] : null,
   };
 }
 

@@ -2,7 +2,7 @@
 // O estado é serializável (persiste no checkpointer Postgres p/ interrupt/resume).
 
 import { Annotation } from "@langchain/langgraph";
-import type { AccumulatedTokenUsage, DecisionResult, DroppedAction, GuardrailOpportunity, GuardrailResult, LessonBrief, LessonGuard } from "@trafego/core";
+import type { AccumulatedTokenUsage, DecisionResult, DroppedAction, GuardrailOpportunity, GuardrailResult, LessonBrief, LessonGuard, ScaleRessalvaContext } from "@trafego/core";
 import type { AgentRunTrigger, MarketReference, NotifyPolicy, PartialReason, Posture, RunNotifyTarget, SignalFinding } from "@trafego/shared";
 import type { MutationResult } from "@trafego/shared/ports";
 import type {
@@ -122,6 +122,11 @@ export const AccountAnalysisState = Annotation.Root({
   // narrativa voiceada (SEMPRE renderada quando há análise) — persistida no run p/ o
   // site exibir; independe da decisão de ENTREGA (outboundMessage). null = sem análise.
   narrative: Annotation<string | null>,
+
+  // contexto por-entidade p/ o passe de ressalvas de escala (Fatia A) — montado no
+  // review_analysis (inclui o teto de audiência, que é IO), consumido no build_recommendations
+  // e no propose_drafts. Grafo sem checkpointer → Maps no state são OK (in-memory).
+  scaleContext: Annotation<ScaleRessalvaContext | null>,
 
   // ── ações (híbrido playbook + llm) ─────────────────────────────────────
   playbookCandidates: Annotation<readonly CandidateAction[]>,
