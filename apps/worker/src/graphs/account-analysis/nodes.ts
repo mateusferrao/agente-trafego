@@ -60,7 +60,6 @@ import {
   selectCampaignsToAnalyze,
   selectCreatives,
   targetStatusOf,
-  volumeToRecCount,
   selectLessonsForBrief,
   type LastUnit,
 } from "@trafego/core";
@@ -1372,6 +1371,11 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const cfg = state.analysisConfig ?? deps.analysis;
     const posture = state.posture ?? DEFAULT_POSTURE;
     const hasRecs = out.recommendations.length > 0;
+    // Fatia B: o grupo "posso fazer isso" = pendências aprováveis deste run (com o porém honesto).
+    const approvable = (state.approvalCandidates ?? []).map((a) => ({
+      reason: a.reason,
+      ...(a.ressalvas && a.ressalvas.length > 0 ? { ressalvas: a.ressalvas.map((r) => r.message) } : {}),
+    }));
 
     // ── (1) NARRATIVA (SEMPRE): a voz do agente sobre a análise, p/ o site + WhatsApp ──
     let narrative: string;
@@ -1386,6 +1390,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
             ...(state.brief?.trackingHealth?.suspect ? { trackingSuspect: true } : {}),
             atBudgetCeilingCampaigns: campaignsAtBudgetCeiling(state.brief?.segments.campaigns ?? []),
             ...(state.brief?.funnel ? { funnel: state.brief.funnel } : {}),
+            approvable,
           }, state.vertical),
           responseSchema: MESSAGE_OUTPUT_JSON_SCHEMA,
           responseSchemaName: MESSAGE_OUTPUT_SCHEMA_NAME,
@@ -1404,22 +1409,24 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       }
       narrative =
         text ??
-        buildMessageFallback(
-          {
-            accountName: state.account.name,
-            currency: state.account.currency,
-            ...(out.scorecard?.headline ? { headline: out.scorecard.headline } : {}),
-            summary: out.summary,
-            // filtra insights ANTES de fatiar (mesma base do redator + do nudge de volume).
-            recommendations: out.recommendations
-              .filter((r) => kindForRecommendation(r.actionType) !== "insight")
-              .map((r) => ({ title: r.title })),
-            ...(state.brief?.waste && state.brief.waste.wastedSpend > 0
-              ? { money: { wastedSpend: state.brief.waste.wastedSpend, wastedPct: state.brief.waste.wastedPct } }
-              : {}),
-          },
-          volumeToRecCount(posture.volume),
-        );
+        buildMessageFallback({
+          accountName: state.account.name,
+          currency: state.account.currency,
+          ...(out.scorecard?.headline ? { headline: out.scorecard.headline } : {}),
+          summary: out.summary,
+          recommendations: [], // Fatia B: modo agrupado (abaixo) substitui a lista flat.
+          // grupos (detalha TODAS): posso fazer (aprovável, c/ oferta) + sua direção + observei.
+          approvable,
+          directions: out.recommendations
+            .filter((r) => kindForRecommendation(r.actionType) === "human_direction")
+            .map((r) => ({ title: r.title })),
+          observations: out.recommendations
+            .filter((r) => kindForRecommendation(r.actionType) === "insight")
+            .map((r) => ({ title: r.title })),
+          ...(state.brief?.waste && state.brief.waste.wastedSpend > 0
+            ? { money: { wastedSpend: state.brief.waste.wastedSpend, wastedPct: state.brief.waste.wastedPct } }
+            : {}),
+        });
     } else {
       const headline = out.scorecard?.headline ?? out.summary;
       narrative = `Analisei a conta ${state.account.name}. ${headline} Nada crítico pra mexer agora — sigo de olho.`;
@@ -1429,23 +1436,13 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const shouldDeliver = isWhatsapp || (notifiesOrg && !runPushOff);
     let outbound: string | null = null;
     if (shouldDeliver && (hasRecs || isWhatsapp)) {
+      // Fatia B: a narrativa já DETALHA todas as sugestões agrupadas + OFERECE as aprováveis
+      // ("responde pode"), então não há mais teaser "tem mais N" nem bridge de contagem.
       outbound = narrative;
-      // nudge de volume: o push LIDERA com N (volume); se sobram sugestões materiais,
-      // oferece ver o resto (o chat lista todas via list_recommendations). Só na entrega.
-      if (hasRecs) {
-        const surfaceable = out.recommendations.filter((r) => kindForRecommendation(r.actionType) !== "insight");
-        const more = surfaceable.length - volumeToRecCount(posture.volume);
-        if (more > 0) outbound = `${outbound}\n\nTem mais ${plural(more, "sugestão", "sugestões")} — quer ver?`;
-      }
       // nota honesta do que o agente FEZ neste run (aplicou/simulou) — determinística.
       const attempted = state.guardrail?.allowed.length ?? 0;
       const applied = appliedSummary(state.results?.length ?? 0, attempted, state.guardrailConfig.dryRun);
       if (applied) outbound = `${outbound}\n\n${applied}`;
-      // bridge do HITL (5b-2): avisa que há pendentes + dá pra aprovar por aqui/site.
-      const pending = state.approvalCandidates?.length ?? 0;
-      if (pending > 0) {
-        outbound = `${outbound}\n\n${plural(pending, "ação aguardando", "ações aguardando")} seu OK. Responda por aqui pra aprovar ou rejeitar, ou veja no site.`;
-      }
     }
     return { outboundMessage: outbound, narrative, usage };
   }
