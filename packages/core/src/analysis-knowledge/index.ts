@@ -162,8 +162,9 @@ const ADVICE_TEXT =
  */
 const SCALE_METHOD_TEXT =
   "Ao propor ESCALAR um vencedor, escolha o MÉTODO pelo tamanho do salto pretendido (gap até a meta): " +
-  "VERTICAL (salto < 2x) = subir o orçamento das campanhas atuais em passos de ~20% a cada 48–72h, " +
-  "NUNCA mais de 20% num único dia; se o CPA subir >30% num passo, RECUE (a média esconde o problema — " +
+  "VERTICAL (salto < 2x) = subir o orçamento das campanhas atuais em passos graduais e espaçados (a " +
+  "referência de mercado sugere ~20% a cada 48–72h), NUNCA tudo de uma vez — respeite o teto de mudança " +
+  "de orçamento do guardrail; se o CPA subir >30% num passo, RECUE (a média esconde o problema — " +
   "olhe o CPA marginal do último incremento, não a média). HORIZONTAL (salto 2x–5x) = duplicar o " +
   "vencedor para PÚBLICOS novos (não só subir budget). DIAGONAL (5x+) = novos ângulos/plataformas. " +
   "Antes de escalar EXIJA maturidade: CPA abaixo da meta por ~5 dias seguidos e ~7–14 dias de dados; " +
