@@ -76,8 +76,10 @@ export interface ExplicitAudienceState {
 class TermSection {
   private uidSeq = 0;
   readonly groups = signal<TermGroup[]>([]);
-  readonly queries = signal<Record<number, string>>({});
-  readonly results = signal<Record<number, readonly InterestSearchResultOutput[]>>({});
+  // Records começam vazios e só ganham a chave `[uid]` ao digitar/buscar — o tipo é honesto sobre
+  // isso (`| undefined`), o que justifica os guardas `?? ''`/`?? []` no template (e cala o NG8102).
+  readonly queries = signal<Record<number, string | undefined>>({});
+  readonly results = signal<Record<number, readonly InterestSearchResultOutput[] | undefined>>({});
   readonly searching = signal<Record<number, boolean>>({});
   readonly searched = signal<Record<number, boolean>>({});
   private readonly subject = new Subject<{ uid: number; q: string }>();
@@ -231,7 +233,7 @@ class TermSection {
             }
             @if ((section().results()[g.uid] ?? []).length > 0) {
               <ul class="absolute z-10 mt-1 w-full overflow-hidden rounded-md border border-line bg-app shadow-md">
-                @for (r of section().results()[g.uid]; track r.id) {
+                @for (r of (section().results()[g.uid] ?? []); track r.id) {
                   <li>
                     <button
                       type="button"
