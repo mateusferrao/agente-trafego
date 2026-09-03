@@ -68,6 +68,44 @@ export interface ExplicitAudienceState {
   customAudienceExcludeIds: readonly string[];
 }
 
+/** Público explícito no formato de WIRE (keys/ids já resolvidos) — shape comum do input de
+ *  substituição total, servido tanto ao PATCH de rascunho quanto ao editAction de adjust_audience. */
+export interface ExplicitAudienceWire {
+  geo: { key: string; name: string; kind: 'country' | 'region' | 'city'; radius?: number; distanceUnit?: 'mile' | 'kilometer' }[];
+  radiusAreas: { address: string; radius: number; distanceUnit: 'mile' | 'kilometer' }[];
+  ageMin?: number;
+  ageMax?: number;
+  genders?: (1 | 2)[];
+  interestGroups: { id: string; name: string }[][];
+  behaviorGroups: { id: string; name: string }[][];
+  customAudienceIncludeIds: string[];
+  customAudienceExcludeIds: string[];
+}
+
+/**
+ * Estado COMPLETO do editor → objeto de PÚBLICO explícito pro wire (substituição total; radius/
+ * distanceUnit só quando houver; grupos/públicos sempre presentes, podem ser vazios). FONTE ÚNICA
+ * do mapeamento — reusado pelo painel de rascunho E pelo card de ação adjust_audience (Fatia C).
+ */
+export function toExplicitAudienceWire(s: ExplicitAudienceState): ExplicitAudienceWire {
+  return {
+    geo: s.geo.map((g) => ({
+      key: g.key,
+      name: g.name,
+      kind: g.kind,
+      ...(g.radius != null ? { radius: g.radius, distanceUnit: g.distanceUnit ?? KM } : {}),
+    })),
+    radiusAreas: s.radiusAreas.map((a) => ({ address: a.address, radius: a.radius, distanceUnit: a.distanceUnit })),
+    ...(s.ageMin != null ? { ageMin: s.ageMin } : {}),
+    ...(s.ageMax != null ? { ageMax: s.ageMax } : {}),
+    ...(s.genders ? { genders: [...s.genders] } : {}),
+    interestGroups: s.interestGroups.map((g) => g.map((i) => ({ id: i.id, name: i.name }))),
+    behaviorGroups: s.behaviorGroups.map((g) => g.map((i) => ({ id: i.id, name: i.name }))),
+    customAudienceIncludeIds: [...s.customAudienceIncludeIds],
+    customAudienceExcludeIds: [...s.customAudienceExcludeIds],
+  };
+}
+
 /**
  * Grupos de termos (interesses OU comportamentos) — chips OR dentro do grupo, AND entre grupos.
  * Encapsula estado + busca ao vivo (debounce/switchMap/catchError) por grupo, keyed por `uid` estável

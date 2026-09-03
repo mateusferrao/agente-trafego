@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { toast } from 'ngx-sonner';
 import { NumberStepper, UiButton, UiConfirmDialogService, UiEmptyState, UiEyebrow, UiInput, UiPageHeader } from '@ui';
 import { DraftEditPanel } from './draft-edit-panel';
-import { GeoAudienceEditor, KM, type ExplicitAudienceState } from './geo-audience-editor';
+import { GeoAudienceEditor, toExplicitAudienceWire, type ExplicitAudienceState } from './geo-audience-editor';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import { ApprovalsApiService } from '@core/api/approvals-api.service';
 import { DraftsApiService } from '@core/api/drafts-api.service';
@@ -213,7 +213,7 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                             (stateChange)="audienceState.set($event)"
                           />
                           <div class="flex justify-end gap-2">
-                            <button appButton variant="secondary" size="sm" [disabled]="savingAudience()" (click)="editingAudienceId.set(null)">Cancelar</button>
+                            <button appButton variant="secondary" size="sm" [disabled]="savingAudience()" (click)="toggleEditAudience(a)">Cancelar</button>
                             <button appButton size="sm" [disabled]="savingAudience()" (click)="saveAudienceEdit(a)">
                               {{ savingAudience() ? 'Salvando…' : 'Salvar público' }}
                             </button>
@@ -544,7 +544,7 @@ export class ApprovalsPage implements OnInit {
       return;
     }
     this.savingAudience.set(true);
-    this.api.editAction(a.id, { explicitAudience: this.toExplicitAudienceInput(state) }).subscribe({
+    this.api.editAction(a.id, { explicitAudience: toExplicitAudienceWire(state) }).subscribe({
       next: () => {
         this.savingAudience.set(false);
         this.editingAudienceId.set(null);
@@ -553,27 +553,6 @@ export class ApprovalsPage implements OnInit {
       },
       error: () => this.savingAudience.set(false),
     });
-  }
-
-  /** Estado do editor → input de substituição total do público (keys/ids já resolvidos). Espelha o
-   *  `toExplicitInput` do painel de rascunho — radius/distanceUnit só quando houver. */
-  private toExplicitAudienceInput(s: ExplicitAudienceState): NonNullable<Parameters<ApprovalsApiService['editAction']>[1]['explicitAudience']> {
-    return {
-      geo: s.geo.map((g) => ({
-        key: g.key,
-        name: g.name,
-        kind: g.kind,
-        ...(g.radius != null ? { radius: g.radius, distanceUnit: g.distanceUnit ?? KM } : {}),
-      })),
-      radiusAreas: s.radiusAreas.map((a) => ({ address: a.address, radius: a.radius, distanceUnit: a.distanceUnit })),
-      ...(s.ageMin != null ? { ageMin: s.ageMin } : {}),
-      ...(s.ageMax != null ? { ageMax: s.ageMax } : {}),
-      ...(s.genders ? { genders: [...s.genders] } : {}),
-      interestGroups: s.interestGroups.map((g) => g.map((i) => ({ id: i.id, name: i.name }))),
-      behaviorGroups: s.behaviorGroups.map((g) => g.map((i) => ({ id: i.id, name: i.name }))),
-      customAudienceIncludeIds: [...s.customAudienceIncludeIds],
-      customAudienceExcludeIds: [...s.customAudienceExcludeIds],
-    };
   }
 
   /** Recarrega as pendentes (reflete o novo valor proposto no card após editar). */

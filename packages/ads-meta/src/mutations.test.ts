@@ -209,20 +209,23 @@ describe("MetaMutationsService", () => {
     expect(gets[0]).toContain("targeting");
   });
 
-  it("adjust_audience idempotente: público proposto já bate no atual → no-op (subset, sem POST)", async () => {
-    const { posts } = stubGraph({
-      status: "ACTIVE",
-      // targeting atual traz MAIS campos (publisher_platforms) — o subset-match ignora os extras.
-      targeting: {
-        geo_locations: { countries: ["BR"] },
-        targeting_automation: { advantage_audience: 0 },
-        targeting_relaxation_types: { custom_audience: 0, lookalike: 0 },
-        publisher_platforms: ["facebook", "instagram"],
-      },
-    });
+  it("adjust_audience SEMPRE escreve (substituição total; sem falso no-op) — mesmo público igual ao atual", async () => {
+    // público atual == proposto (BR). Como é substituição total + human-gated, escrevemos mesmo assim
+    // (o executor dedupa reaplicações exatas por idempotency_key; um no-op aqui seria frágil/incorreto).
+    const { posts } = stubGraph({ status: "ACTIVE", targeting: { geo_locations: { countries: ["BR"] }, targeting_automation: { advantage_audience: 0 }, targeting_relaxation_types: { custom_audience: 0, lookalike: 0 } } });
     const res = await svc().mutate(account, act("adjust_audience", { target: { level: "adset", id: "AS1" }, params: { [ACTION_PARAM_TARGETING]: explicitSpec() } }));
-    expect(posts()).toHaveLength(0);
-    expect(res.after).toEqual(res.before);
+    expect(posts()).toHaveLength(1);
+    expect((res.after["targeting"] as { geo_locations: { countries: string[] } }).geo_locations.countries).toEqual(["BR"]);
+  });
+
+  it("adjust_audience: REMOVER uma dimensão (tirar filtro de gênero) escreve de verdade (não é falso no-op)", async () => {
+    // atual restringe gênero; proposto = 'todos' (explicit SEM genders). Um subset-match daria falso
+    // no-op (a chave removida some do proposto) e manteria o filtro antigo — aqui garantimos o POST.
+    const { posts } = stubGraph({ status: "ACTIVE", targeting: { geo_locations: { countries: ["BR"] }, genders: [1], targeting_automation: { advantage_audience: 0 }, targeting_relaxation_types: { custom_audience: 0, lookalike: 0 } } });
+    await svc().mutate(account, act("adjust_audience", { target: { level: "adset", id: "AS1" }, params: { [ACTION_PARAM_TARGETING]: explicitSpec() } }));
+    expect(posts()).toHaveLength(1);
+    const url = decodeURIComponent(posts()[0]!.url);
+    expect(url).not.toContain('"genders"'); // o público proposto não tem gênero → o filtro sai
   });
 
   it("adjust_audience sem público explícito nos params → erro (o worker deveria ter resolvido)", async () => {

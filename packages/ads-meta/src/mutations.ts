@@ -143,18 +143,21 @@ function statusChange(before: EntityState, target: string): Change {
 /**
  * Público NOVO (`adjust_audience`, Fatia C) → `targeting` cru da Meta. Só a variante `explicit`
  * (público resolvido nome→id na proposta) — reuse_adset/advantage_plus exigem IO e não entram aqui.
- * Idempotência: no-op quando TODO campo proposto já bate no targeting atual (subset match — o
- * targeting da Meta traz campos que não setamos; comparar o conjunto inteiro nunca casaria).
+ *
+ * SEMPRE escreve (`alreadyThere: false`). O `adjust_audience` é substituição TOTAL do campo
+ * `targeting` — um "no-op por comparação" seria INCORRETO e frágil: (a) comparar só as chaves
+ * PROPOSTAS deixaria passar uma REMOÇÃO de dimensão (ex: tirar o filtro de gênero) como falso
+ * no-op, mantendo a restrição antiga e reportando "aplicado"; (b) a Meta normaliza/reordena o
+ * `targeting` que devolve, então mesmo a comparação da UNIÃO das chaves dá falso-negativo. É uma
+ * ação RARA e sempre human-gated, e o executor já dedupa reaplicações EXATAS por `idempotency_key`
+ * — então o ganho de um no-op aqui é marginal e o risco de correção não compensa.
  */
-function targetingChange(action: Action, before: EntityState): Change {
+function targetingChange(action: Action, _before: EntityState): Change {
   const spec = action.params[ACTION_PARAM_TARGETING] as TargetingSpec | undefined;
   if (!spec || spec.kind !== "explicit") {
     throw new Error("adjust_audience: público explícito ausente/inválido nos params (o worker deveria ter resolvido)");
   }
-  const targeting = explicitTargetingToRaw(spec);
-  const current = (before[TARGETING_FIELD] ?? {}) as Record<string, unknown>;
-  const alreadyThere = Object.keys(targeting).every((k) => JSON.stringify(targeting[k]) === JSON.stringify(current[k]));
-  return { kind: "targeting", targeting, alreadyThere };
+  return { kind: "targeting", targeting: explicitTargetingToRaw(spec), alreadyThere: false };
 }
 
 /**
