@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, type OnInit, computed, inject, sign
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { toast } from 'ngx-sonner';
-import { UiBadge, UiButton, UiConfirmDialogService, UiEmptyState, UiEyebrow, UiSpinner } from '@ui';
+import { UiButton, UiConfirmDialogService, UiEmptyState, UiEyebrow, UiSpinner } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import { LearningsApiService } from '@core/api/learnings-api.service';
 import { AGENT_NAME } from '@core/brand';
@@ -12,19 +12,6 @@ import type { LearningsList } from '@core/api/generated';
 type Learning = LearningsList['items'][number];
 type Opportunity = LearningsList['opportunities'][number];
 
-/** Confiança → eyebrow (cor=tom, texto=rótulo; §UX tom+texto, nunca só cor). Confiança NÃO é status
- *  bom/ruim: explorando/provável ficam muted (o default do eyebrow; o RÓTULO diferencia), e só o
- *  CONFIRMADO ganha o caqui de marca (endosso do dono). Mesmo padrão do tier de campanha (analysis-detail). */
-const TIER_TEXT: Record<Learning['tier'], string> = {
-  explorando: '',
-  provavel: '',
-  confirmado: 'text-accent-strong',
-};
-const TIER_LABEL: Record<Learning['tier'], string> = {
-  explorando: 'Explorando',
-  provavel: 'Provável',
-  confirmado: 'Confirmado',
-};
 /** Origem em linguagem de gente (traduz o enum técnico). */
 const ORIGIN_LABEL: Record<Learning['origin'], string> = {
   our_action: 'a partir de uma ação aplicada',
@@ -32,7 +19,7 @@ const ORIGIN_LABEL: Record<Learning['origin'], string> = {
   human_feedback: 'do seu feedback',
   human_manual: 'de uma mudança que você fez',
 };
-/** Dimensão → tema (agrupa a zona "já sabe"; cabeçalho só aparece quando a dimensão tem >1). */
+/** Dimensão → tema (sub-grupo secundário dentro de cada bucket de confiança). */
 const DIMENSION_LABEL: Record<string, string> = {
   budget: 'Orçamento',
   pacing: 'Ritmo de escala',
@@ -44,28 +31,43 @@ const DIMENSION_LABEL: Record<string, string> = {
   other: 'Outros',
 };
 
+/** Sub-grupo de dimensão dentro de um bucket de confiança (o rótulo só aparece com ≥2 itens). */
+interface DimensionGroup {
+  readonly dimension: string;
+  readonly label: string;
+  readonly showLabel: boolean;
+  readonly items: Learning[];
+}
+/** Bucket de confiança da zona "já sabe": Confirmados (endosso/medido) × Em teste (acompanhando). */
+interface ConfidenceBucket {
+  readonly key: 'confirmado' | 'emteste';
+  readonly label: string;
+  readonly groups: DimensionGroup[];
+}
+
 /**
- * Aba "Aprendizados" — aba própria do detalhe da conta (entre "Agente" e "Criativos"). Quatro
- * zonas: (1) "Precisam de você" = propostas de ajuste (aprovar/rejeitar); (2) "Oportunidades" =
- * aviso de teto (ajustar nas config / dispensar); (3) "O que o agente já sabe" = priors ativos
- * (confirmar/esquecer; ajuste aplicado → reverter); (4) "Arquivados" = recolhido, com busca +
- * restaurar. As zonas 1, 2 e 4 são CONDICIONAIS (só aparecem com conteúdo); a zona 3 renderiza
- * SEMPRE — é ela que hospeda o empty-state global ("Ainda estou conhecendo esta conta…"). Cópia
- * didática distingue os 3 tipos de aprendizado.
+ * Aba "Aprendizados" — aba própria do detalhe da conta. Quatro zonas na linguagem visual da
+ * Aprovações (Bold Operational Desk): (1) "Precisam de você" = propostas de ajuste, card de MARCA
+ * (aprovar/rejeitar); (2) "Oportunidades" = aviso de teto, card de marca (ajustar nas config /
+ * dispensar); (3) "O que o agente já sabe" = priors ativos em cards de referência, agrupados por
+ * CONFIANÇA (Confirmados × Em teste; a seção substitui o antigo rótulo por card) e, dentro, por
+ * dimensão (sub-grupo secundário); confirmado ganha borda lateral caqui (tom estrutural, como o
+ * tier da Análise). (4) "Arquivados" = recolhido, com busca + restaurar. As zonas 1, 2 e 4 são
+ * CONDICIONAIS; a zona 3 renderiza SEMPRE (hospeda o empty-state global).
  * Rota `accounts/:id/aprendizados` — o agente é resolvido do accountId (mesmo padrão das abas irmãs).
  */
 @Component({
   selector: 'app-agent-learnings',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiBadge, UiButton, UiEmptyState, UiEyebrow, UiSpinner, RouterLink],
+  imports: [UiButton, UiEmptyState, UiEyebrow, UiSpinner, RouterLink],
   template: `
-    <div class="flex flex-col gap-4">
+    <div class="flex flex-col gap-6">
       @if (loading()) {
-        <section class="rounded-lg border border-line bg-panel p-5">
+        <section class="ui-panel-card">
           <div class="flex items-center gap-2 text-sm text-muted"><app-ui-spinner /> Carregando aprendizados…</div>
         </section>
       } @else if (failed()) {
-        <section class="rounded-lg border border-line bg-panel p-5">
+        <section class="ui-panel-card">
           <p class="text-sm text-muted">
             Não consegui carregar os aprendizados agora.
             <button type="button" appButton size="sm" variant="secondary" (click)="reload()">Tentar de novo</button>
@@ -74,7 +76,7 @@ const DIMENSION_LABEL: Record<string, string> = {
       } @else {
         <!-- (1) Precisam de você: propostas de ajuste de comportamento (aprova → afina a análise) -->
         @if (needsYou().length > 0) {
-          <section class="flex flex-col gap-3 rounded-lg border border-accent/50 bg-accent-soft/30 p-5">
+          <section class="flex flex-col gap-3">
             <div>
               <h2 class="font-brand text-base font-semibold text-ink">Precisam de você</h2>
               <p class="mt-1 text-xs text-muted">
@@ -82,22 +84,27 @@ const DIMENSION_LABEL: Record<string, string> = {
                 análise (nunca muda seus limites de segurança) e é reversível.
               </p>
             </div>
-            @for (l of needsYou(); track l.id) {
-              <div class="flex flex-col gap-2 rounded-md border border-line/60 bg-panel p-4">
-                <p class="text-sm text-ink">{{ l.content }}</p>
-                <p class="text-xs text-muted">Ajuste proposto: {{ agentName }} pode {{ l.proposedBehavior }}.</p>
-                <div class="flex flex-wrap gap-2 pt-1">
-                  <button type="button" appButton size="sm" variant="primary" [disabled]="busy()" (click)="acceptThreshold(l)">Sim, ajustar</button>
-                  <button type="button" appButton size="sm" variant="ghost" [disabled]="busy()" (click)="rejectProposal(l)">Agora não</button>
-                </div>
-              </div>
-            }
+            <ul class="flex flex-col gap-2">
+              @for (l of needsYou(); track l.id) {
+                <li class="ui-panel-card--brand flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <span class="flex min-w-0 flex-col gap-1">
+                    <app-ui-eyebrow>Sugestão de ajuste</app-ui-eyebrow>
+                    <span class="font-semibold text-ink">{{ l.content }}</span>
+                    <span class="text-xs text-muted">{{ agentName }} pode {{ l.proposedBehavior }}.</span>
+                  </span>
+                  <span class="flex shrink-0 gap-2">
+                    <button type="button" appButton size="sm" variant="secondary" [disabled]="busy()" (click)="rejectProposal(l)">Agora não</button>
+                    <button type="button" appButton size="sm" [disabled]="busy()" (click)="acceptThreshold(l)">Sim, ajustar</button>
+                  </span>
+                </li>
+              }
+            </ul>
           </section>
         }
 
         <!-- (2) Oportunidades: aviso de teto vivo (só aponta pra config — nunca muda nada sozinho) -->
         @if (opportunities().length > 0) {
-          <section class="flex flex-col gap-3 rounded-lg border border-line bg-panel p-5">
+          <section class="flex flex-col gap-3">
             <div>
               <h2 class="font-brand text-base font-semibold text-ink">Oportunidades</h2>
               <p class="mt-1 text-xs text-muted">
@@ -105,23 +112,28 @@ const DIMENSION_LABEL: Record<string, string> = {
                 nas configurações.
               </p>
             </div>
-            @for (o of opportunities(); track o.key) {
-              <div class="flex flex-col gap-2 rounded-md border border-line/60 bg-soft/40 p-4">
-                <p class="text-sm text-ink">
-                  Seu teto de aumento de verba hoje é {{ o.cappedPct }}%, mas a análise quis {{ o.wantedPct }}% numa
-                  campanha que a conta indica que compensaria. São cerca de {{ major(o) }} por dia segurados.
-                </p>
-                <div class="flex flex-wrap gap-2 pt-1">
-                  <a appButton size="sm" variant="secondary" [routerLink]="['/accounts', accountId, 'agente']">Ajustar nas configurações →</a>
-                  <button type="button" appButton size="sm" variant="ghost" [disabled]="busy()" (click)="dismissOpportunity()">Dispensar</button>
-                </div>
-              </div>
-            }
+            <ul class="flex flex-col gap-2">
+              @for (o of opportunities(); track o.key) {
+                <li class="ui-panel-card--brand flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <span class="flex min-w-0 flex-col gap-1">
+                    <app-ui-eyebrow>Oportunidade</app-ui-eyebrow>
+                    <span class="text-sm text-ink">
+                      Seu teto de aumento de verba hoje é {{ o.cappedPct }}%, mas a análise quis {{ o.wantedPct }}% numa
+                      campanha que a conta indica que compensaria. São cerca de {{ major(o) }} por dia segurados.
+                    </span>
+                  </span>
+                  <span class="flex shrink-0 gap-2">
+                    <button type="button" appButton size="sm" variant="ghost" [disabled]="busy()" (click)="dismissOpportunity()">Dispensar</button>
+                    <a appButton size="sm" variant="secondary" [routerLink]="['/accounts', accountId, 'agente']">Ajustar nas configurações →</a>
+                  </span>
+                </li>
+              }
+            </ul>
           </section>
         }
 
-        <!-- (3) O que o agente já sabe: priors ativos -->
-        <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
+        <!-- (3) O que o agente já sabe: priors ativos, agrupados por confiança e (2º) por dimensão -->
+        <section class="flex flex-col gap-4">
           <div>
             <h2 class="font-brand text-base font-semibold text-ink">O que o agente já sabe</h2>
             <p class="mt-1 text-xs text-muted">
@@ -137,55 +149,67 @@ const DIMENSION_LABEL: Record<string, string> = {
               [description]="'Conforme ' + agentName + ' acompanha os resultados, os padrões que ele perceber aparecem aqui. Não precisa fazer nada, é automático.'"
             />
           } @else {
-            <ul class="flex flex-col gap-3">
-              @for (g of knowsGroups(); track g.dimension) {
-                @if (g.items.length > 1) {
-                  <li><app-ui-eyebrow>{{ g.label }}</app-ui-eyebrow></li>
-                }
-                @for (l of g.items; track l.id) {
-                <li class="flex flex-col gap-2 rounded-md border border-line/60 bg-soft/40 p-4">
-                  @if (editingId() === l.id) {
-                    <textarea
-                      class="w-full rounded-md border border-line bg-panel p-2 text-sm text-ink"
-                      rows="2"
-                      aria-label="Editar aprendizado"
-                      [value]="editText()"
-                      (input)="editText.set($any($event.target).value)"
-                    ></textarea>
-                    <div class="flex gap-2">
-                      <button type="button" appButton size="sm" variant="primary" [disabled]="busy()" (click)="saveEdit(l)">Salvar</button>
-                      <button type="button" appButton size="sm" variant="ghost" [disabled]="busy()" (click)="cancelEdit()">Cancelar</button>
-                    </div>
-                  } @else {
-                    <app-ui-eyebrow [class]="tierText(l)">{{ tierLabel(l) }}</app-ui-eyebrow>
-                    <p class="text-sm text-ink">{{ l.content }}</p>
-                    <div class="flex flex-wrap items-center gap-2 text-[11px] text-muted">
-                      <span>{{ originLabel(l) }}</span>
-                      @if (l.reinforceCount > 0) {
-                        <span>· visto {{ l.reinforceCount + 1 }}×</span>
-                      }
-                      @if (l.lifecycle === 'stale') {
-                        <span appBadge tone="neutral" size="xs">desbotando</span>
-                      }
-                    </div>
-                    @if (l.appliedBehavior) {
-                      <p class="text-[11px] text-muted">
-                        Ajuste aplicado ({{ l.appliedBehavior }}).
-                        <button type="button" class="text-ink underline" [disabled]="busy()" (click)="revertThreshold(l)">Reverter</button>
-                      </p>
-                    }
-                    <div class="flex flex-wrap gap-2 pt-1">
-                      @if (!l.confirmedByHuman) {
-                        <button type="button" appButton size="sm" variant="secondary" [disabled]="busy()" (click)="confirm(l)">É isso mesmo</button>
-                      }
-                      <button type="button" appButton size="sm" variant="ghost" [disabled]="busy()" (click)="startEdit(l)">Editar</button>
-                      <button type="button" appButton size="sm" variant="ghost" [disabled]="busy()" (click)="forget(l)">Esquecer</button>
-                    </div>
+            @for (bucket of knowsBuckets(); track bucket.key) {
+              <div class="flex flex-col gap-3">
+                <h3 class="font-brand text-sm font-semibold text-ink">{{ bucket.label }}</h3>
+                @for (g of bucket.groups; track g.dimension) {
+                  @if (g.showLabel) {
+                    <app-ui-eyebrow>{{ g.label }}</app-ui-eyebrow>
                   }
-                </li>
+                  <ul class="flex flex-col gap-2">
+                    @for (l of g.items; track l.id) {
+                      <li
+                        class="flex flex-col gap-3 rounded-lg border border-line border-l-4 bg-panel p-4"
+                        [class.border-l-accent]="bucket.key === 'confirmado'"
+                        [class.border-l-line]="bucket.key !== 'confirmado'"
+                      >
+                        @if (editingId() === l.id) {
+                          <textarea
+                            class="w-full rounded-md border border-line bg-panel p-2 text-sm text-ink"
+                            rows="2"
+                            aria-label="Editar aprendizado"
+                            [value]="editText()"
+                            (input)="editText.set($any($event.target).value)"
+                          ></textarea>
+                          <div class="flex gap-2">
+                            <button type="button" appButton size="sm" variant="primary" [disabled]="busy()" (click)="saveEdit(l)">Salvar</button>
+                            <button type="button" appButton size="sm" variant="ghost" [disabled]="busy()" (click)="cancelEdit()">Cancelar</button>
+                          </div>
+                        } @else {
+                          <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <span class="flex min-w-0 flex-col gap-1">
+                              <span class="text-sm text-ink">{{ l.content }}</span>
+                              <span class="flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
+                                <span>{{ originLabel(l) }}</span>
+                                @if (l.reinforceCount > 0) {
+                                  <span>· visto {{ l.reinforceCount + 1 }}×</span>
+                                }
+                                @if (l.lifecycle === 'stale') {
+                                  <span>· desbotando</span>
+                                }
+                              </span>
+                              @if (l.appliedBehavior) {
+                                <span class="text-[11px] text-muted">
+                                  Ajuste aplicado ({{ l.appliedBehavior }}).
+                                  <button type="button" class="text-ink underline" [disabled]="busy()" (click)="revertThreshold(l)">Reverter</button>
+                                </span>
+                              }
+                            </span>
+                            <span class="flex shrink-0 flex-wrap gap-2">
+                              @if (!l.confirmedByHuman) {
+                                <button type="button" appButton size="sm" variant="secondary" [disabled]="busy()" (click)="confirm(l)">É isso mesmo</button>
+                              }
+                              <button type="button" appButton size="sm" variant="ghost" [disabled]="busy()" (click)="startEdit(l)">Editar</button>
+                              <button type="button" appButton size="sm" variant="ghost" [disabled]="busy()" (click)="forget(l)">Esquecer</button>
+                            </span>
+                          </div>
+                        }
+                      </li>
+                    }
+                  </ul>
                 }
-              }
-            </ul>
+              </div>
+            }
           }
         </section>
 
@@ -248,23 +272,38 @@ export class AgentLearnings implements OnInit {
   // Zona 1 = priors com proposta pendente; zona 3 = os demais (priors ativos).
   protected readonly needsYou = computed(() => this.items().filter((l) => !!l.proposedBehavior));
   protected readonly knows = computed(() => this.items().filter((l) => !l.proposedBehavior));
-  /** Zona "já sabe" agrupada por dimensão (preserva a ordem de prioridade da API dentro de cada
-   *  grupo). Com poucos itens fica quase flat; o cabeçalho do grupo só aparece quando a dimensão
-   *  tem >1 item — pronto pra crescer quando os padrões por dimensão se multiplicarem (fast-follow). */
-  protected readonly knowsGroups = computed(() => {
-    const groups: { dimension: string; label: string; items: Learning[] }[] = [];
-    const byDim = new Map<string, Learning[]>();
-    for (const l of this.knows()) {
-      const dim = l.dimension ?? 'other';
-      let arr = byDim.get(dim);
-      if (!arr) {
-        arr = [];
-        byDim.set(dim, arr);
-        groups.push({ dimension: dim, label: DIMENSION_LABEL[dim] ?? DIMENSION_LABEL['other']!, items: arr });
+  /** Zona "já sabe" agrupada em 2 níveis: (1) CONFIANÇA (Confirmados × Em teste) — substitui o antigo
+   *  rótulo por card; (2) DIMENSÃO (secundário) dentro do bucket, com rótulo só quando ≥2 itens (com
+   *  pouco dado fica quase flat; pronto pra crescer no N-por-tipo). Preserva a ordem de prioridade da
+   *  API. Bucket vazio some. `tier==='confirmado'` já incorpora o `confirmedByHuman` (confidenceTier). */
+  protected readonly knowsBuckets = computed<ConfidenceBucket[]>(() => {
+    const specs: { key: ConfidenceBucket['key']; label: string; inBucket: (l: Learning) => boolean }[] = [
+      { key: 'confirmado', label: 'Confirmados', inBucket: (l) => l.tier === 'confirmado' },
+      { key: 'emteste', label: 'Em teste', inBucket: (l) => l.tier !== 'confirmado' },
+    ];
+    const buckets: ConfidenceBucket[] = [];
+    for (const spec of specs) {
+      const rows = this.knows().filter(spec.inBucket);
+      if (rows.length === 0) continue;
+      const byDim = new Map<string, DimensionGroup & { items: Learning[] }>();
+      const groups: (DimensionGroup & { items: Learning[] })[] = [];
+      for (const l of rows) {
+        const dim = l.dimension ?? 'other';
+        let g = byDim.get(dim);
+        if (!g) {
+          g = { dimension: dim, label: DIMENSION_LABEL[dim] ?? DIMENSION_LABEL['other']!, showLabel: false, items: [] };
+          byDim.set(dim, g);
+          groups.push(g);
+        }
+        g.items.push(l);
       }
-      arr.push(l);
+      buckets.push({
+        key: spec.key,
+        label: spec.label,
+        groups: groups.map((g) => ({ ...g, showLabel: g.items.length > 1 })),
+      });
     }
-    return groups;
+    return buckets;
   });
   protected readonly filteredArchived = computed(() => {
     const q = this.archivedQuery().trim().toLowerCase();
@@ -378,12 +417,6 @@ export class AgentLearnings implements OnInit {
     return money(o.foregoneMajor, o.currency);
   }
 
-  protected tierText(l: Learning): string {
-    return TIER_TEXT[l.tier];
-  }
-  protected tierLabel(l: Learning): string {
-    return TIER_LABEL[l.tier];
-  }
   protected originLabel(l: Learning): string {
     return ORIGIN_LABEL[l.origin];
   }
