@@ -425,6 +425,57 @@ describe("getDraftCreativeThumb (miniatura do criativo do rascunho)", () => {
   });
 });
 
+describe("getCreativeThumb (miniatura da biblioteca — aba Criativos)", () => {
+  it("IMAGEM pronta → faz stream do blob original (mesma fonte do /blob)", async () => {
+    const blob = { bytes: new Uint8Array([1, 2]), contentType: "image/png", etag: "abc" };
+    const get = vi.fn().mockResolvedValue(blob);
+    const { service } = makeService(
+      [{ format: "image", status: "ready", storageRef: "org/org-1/creatives/x.png", metaVideoId: null }],
+      get,
+    );
+    const out = await service.getCreativeThumb(ORG, "acct-1", "asset-1");
+    expect(get).toHaveBeenCalledWith("org/org-1/creatives/x.png");
+    expect(out).toEqual(blob);
+  });
+
+  it("asset de outro tenant (lookup org-scoped não casa) → null (404)", async () => {
+    const get = vi.fn();
+    const { service } = makeService([], get);
+    expect(await service.getCreativeThumb(ORG, "acct-1", "asset-de-outra-org")).toBeNull();
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it("VÍDEO ainda processando (pending) → null SEM tocar na Meta (o card mostra 'processando…')", async () => {
+    const getVideoFrames = vi.fn();
+    const service = createDraftsService({
+      db: fakeDb([{ format: "video", status: "pending", storageRef: null, metaVideoId: "V1" }]),
+      adsPlatform: { getVideoFrames } as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    expect(await service.getCreativeThumb(ORG, "acc", "asset-1")).toBeNull();
+    expect(getVideoFrames).not.toHaveBeenCalled();
+  });
+
+  it("VÍDEO pronto + If-None-Match com ETag estável → 304 SEM tocar na Meta", async () => {
+    const getVideoFrames = vi.fn();
+    const service = createDraftsService({
+      db: fakeDb([{ format: "video", status: "ready", storageRef: null, metaVideoId: "VID9" }]),
+      adsPlatform: { getVideoFrames } as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    const etag = createHash("sha256").update("creative-thumb:VID9").digest("hex").slice(0, 32);
+    const out = await service.getCreativeThumb(ORG, "acc", "asset-1", `"${etag}"`);
+    expect(out).toEqual({ notModified: true, etag });
+    expect(getVideoFrames).not.toHaveBeenCalled(); // revalidação não busca fresco
+  });
+});
+
 describe("listServingCreatives (candidatos de reuse: vídeo + imagem, por data — Slice 12)", () => {
   /** fakeDb p/ select→from→where→orderBy→limit AWAITADO. `rows` = já na ordem que o db devolveria. */
   function fakeDbAwait(rows: unknown[]) {

@@ -2,7 +2,7 @@ import { ChangeDetectionStrategy, Component, DestroyRef, type OnInit, computed, 
 import { ActivatedRoute } from '@angular/router';
 import { toast } from 'ngx-sonner';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideTrash2 } from '@ng-icons/lucide';
+import { lucidePlay, lucideTrash2 } from '@ng-icons/lucide';
 import { UiButton, UiEmptyState, UiConfirmDialogService } from '@ui';
 import { AGENT_NAME } from '@core/brand';
 import { DraftsApiService } from '@core/api/drafts-api.service';
@@ -17,7 +17,7 @@ import type { CreativeAssetOutput } from '@core/api/generated';
   selector: 'app-creative-library',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [UiButton, UiEmptyState, NgIcon],
-  providers: [provideIcons({ lucideTrash2 })],
+  providers: [provideIcons({ lucideTrash2, lucidePlay })],
   template: `
     <section class="flex flex-col gap-5 rounded-lg border border-line bg-panel p-5">
       <div class="flex flex-wrap items-center justify-between gap-3">
@@ -52,15 +52,23 @@ import type { CreativeAssetOutput } from '@core/api/generated';
         <ul class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
           @for (a of assets(); track a.id) {
             <li class="flex flex-col gap-2 rounded-lg border border-line bg-panel p-3">
-              <div class="flex aspect-square items-center justify-center overflow-hidden rounded-md bg-soft">
-                @if (a.format === 'image' && a.status === 'ready' && !broken().has(a.id)) {
+              <div class="relative flex aspect-square items-center justify-center overflow-hidden rounded-md bg-soft">
+                @if (a.status === 'ready' && !broken().has(a.id)) {
                   <img
-                    [src]="blobUrl(a)"
+                    [src]="a.format === 'video' ? thumbUrl(a) : blobUrl(a)"
                     [alt]="a.origin === 'upload' ? 'Criativo enviado' : 'Criativo da conta'"
                     class="h-full w-full object-cover"
                     loading="lazy"
                     (error)="onImgError(a.id)"
                   />
+                  @if (a.format === 'video') {
+                    <!-- selo de play sobre a capa: comunica "é vídeo" por forma, não só cor (§13 UX). -->
+                    <span class="pointer-events-none absolute inset-0 flex items-center justify-center" aria-hidden="true">
+                      <span class="flex h-9 w-9 items-center justify-center rounded-full bg-ink/60">
+                        <ng-icon name="lucidePlay" size="18" class="text-primary-ink" />
+                      </span>
+                    </span>
+                  }
                 } @else {
                   <span class="px-2 text-center text-xs text-muted">
                     {{ a.status === 'pending' ? 'processando…' : a.format === 'video' ? 'vídeo' : 'sem preview' }}
@@ -122,6 +130,10 @@ export class CreativeLibrary implements OnInit {
   /** URL da rota autenticada de blob — reusa o builder do service (evita drift). */
   protected blobUrl(a: CreativeAssetOutput): string {
     return this.api.creativeBlobUrl(this.accountId, a.id);
+  }
+  /** URL da miniatura (vídeo) — frame HD servido pela API; o `<img>` não renderiza o arquivo cru. */
+  protected thumbUrl(a: CreativeAssetOutput): string {
+    return this.api.creativeThumbUrl(this.accountId, a.id);
   }
   protected onImgError(id: string): void {
     this.broken.update((s) => new Set(s).add(id));

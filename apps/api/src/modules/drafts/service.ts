@@ -110,6 +110,21 @@ function flattenSnapshotGeoForOutput(
   ];
 }
 
+/** Baixa a imagem de uma miniatura de uma URL da plataforma (fbcdn/Meta) com rede de segurança:
+ *  teto de tempo (URL lenta não pendura o handler), só content-type de imagem (não ecoa tipo
+ *  arbitrário inline) e cap de tamanho (não materializa payload gigante). Falha/timeout/violação
+ *  → null (o card cai no fallback). Compartilhado pelas miniaturas de rascunho e de biblioteca. */
+async function fetchThumbImage(url: string): Promise<{ bytes: Uint8Array; contentType: string } | null> {
+  const res = await fetch(url, { signal: AbortSignal.timeout(THUMB_FETCH_TIMEOUT_MS) }).catch(() => null);
+  if (!res || !res.ok) return null;
+  const contentType = res.headers.get("content-type") ?? "image/jpeg";
+  if (!contentType.startsWith("image/")) return null; // não ecoa content-type arbitrário inline
+  if (Number(res.headers.get("content-length") ?? 0) > THUMB_MAX_BYTES) return null;
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  if (bytes.byteLength > THUMB_MAX_BYTES) return null; // fallback quando não veio content-length
+  return { bytes, contentType };
+}
+
 /** Traduz o erro TIPADO do núcleo de refino p/ mensagem amigável (§13 — o quê + o que fazer). */
 export function refineErrorMessage(error: RefineError): string {
   switch (error.code) {
@@ -789,6 +804,59 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     },
 
     /**
+     * Miniatura de um criativo da BIBLIOTECA (aba Criativos). IMAGEM → serve o blob original
+     * (content-addressed, mesma fonte do /blob). VÍDEO → o `<img>` não renderiza o arquivo de
+     * vídeo, então busca um frame HD FRESCO da Meta (getVideoFrames pelo metaVideoId) e faz stream
+     * dos bytes — a URL do fbcdn expira, nunca a mandamos crua pro browser. ETag estável pelo id do
+     * criativo (metaVideoId) → o browser cacheia e revalida com 304 SEM tocar na Meta. Vídeo ainda
+     * `pending` (Meta processando) ou sem frame acessível (token sem permissão, #10) → null → o card
+     * cai no placeholder. Org-scoped pelo assetId; `null` = 404 (criativo/preview indisponível).
+     */
+    async getCreativeThumb(
+      orgId: OrgId,
+      accountId: string,
+      assetId: string,
+      ifNoneMatch?: string,
+    ): Promise<{ notModified: true; etag: string } | { bytes: Uint8Array; contentType: string; etag: string } | null> {
+      const [row] = await deps.db
+        .select({
+          format: creativeAssets.format,
+          status: creativeAssets.status,
+          storageRef: creativeAssets.storageRef,
+          metaVideoId: creativeAssets.metaVideoId,
+        })
+        .from(creativeAssets)
+        .where(
+          and(
+            eq(creativeAssets.id, assetId),
+            eq(creativeAssets.orgId, orgId),
+            eq(creativeAssets.adAccountId, accountId),
+          ),
+        )
+        .limit(1);
+      if (!row) return null;
+
+      // imagem → blob original (mesma fonte do /blob; ETag content-addressed do próprio blob).
+      if (row.format === "image") {
+        if (!row.storageRef) return null;
+        const blob = await deps.storage.get(row.storageRef);
+        return blob ? { bytes: blob.bytes, contentType: blob.contentType, etag: blob.etag } : null;
+      }
+
+      // vídeo → só quando PRONTO (Meta terminou de processar) e com video_id.
+      if (row.status !== "ready" || !row.metaVideoId) return null;
+      const etag = createHash("sha256").update(`creative-thumb:${row.metaVideoId}`).digest("hex").slice(0, 32);
+      if (ifNoneMatch === `"${etag}"`) return { notModified: true, etag };
+
+      const ctx = await loadScaleContext(orgId, accountId);
+      if (!ctx) return null;
+      const url = (await deps.adsPlatform.getVideoFrames(ctx.ref, row.metaVideoId))[0];
+      if (!url) return null;
+      const img = await fetchThumbImage(url);
+      return img ? { bytes: img.bytes, contentType: img.contentType, etag } : null;
+    },
+
+    /**
      * Miniatura do criativo de um rascunho (card /approvals) — FIEL ao spec + cache HTTP por ETag
      * estável. `upload` → blob do StoragePort (mesmo lookup do getCreativeBlob). `reuse` → busca
      * FRESCO da Meta (getVideoFrames p/ vídeo HD, getCreatives p/ imagem) e faz stream dos bytes —
@@ -852,16 +920,8 @@ export function createDraftsService(deps: DraftsServiceDeps) {
         url = c?.imageUrl ?? c?.thumbnailUrl;
       }
       if (!url) return null;
-      // rede de segurança: teto de tempo (fbcdn lento não pendura a API) + só imagem + cap de
-      // tamanho (não materializa payload gigante). Falha/timeout → null (o card mostra fallback).
-      const res = await fetch(url, { signal: AbortSignal.timeout(THUMB_FETCH_TIMEOUT_MS) }).catch(() => null);
-      if (!res || !res.ok) return null;
-      const contentType = res.headers.get("content-type") ?? "image/jpeg";
-      if (!contentType.startsWith("image/")) return null; // não ecoa content-type arbitrário inline
-      if (Number(res.headers.get("content-length") ?? 0) > THUMB_MAX_BYTES) return null;
-      const bytes = new Uint8Array(await res.arrayBuffer());
-      if (bytes.byteLength > THUMB_MAX_BYTES) return null; // fallback quando não veio content-length
-      return { bytes, contentType, etag };
+      const img = await fetchThumbImage(url);
+      return img ? { bytes: img.bytes, contentType: img.contentType, etag } : null;
     },
 
     /**

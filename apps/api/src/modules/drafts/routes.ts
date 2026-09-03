@@ -164,6 +164,29 @@ export const draftsRoutes: FastifyPluginAsync = async (app) => {
       .send(Buffer.from(blob.bytes));
   });
 
+  // Miniatura do criativo da biblioteca (aba Criativos). Imagem → serve o blob; vídeo → frame HD
+  // FRESCO da Meta (o <img> não renderiza o arquivo de vídeo) com stream + ETag estável → 304 sem
+  // tocar na Meta. Org-scoped pelo lookup do assetId. 404 → o card cai no placeholder.
+  app.get("/accounts/:id/creatives/:assetId/thumb", guard, async (request, reply) => {
+    const { id, assetId } = request.params as { id: string; assetId: string };
+    const inm = request.headers["if-none-match"];
+    const thumb = await service.getCreativeThumb(
+      orgIdOf(request) as OrgId,
+      id,
+      assetId,
+      typeof inm === "string" ? inm : undefined,
+    );
+    if (!thumb) return reply.status(404).send({ message: "miniatura indisponível" });
+    const etag = `"${thumb.etag}"`;
+    if ("notModified" in thumb) return reply.status(304).header("ETag", etag).send();
+    return reply
+      .header("Content-Type", thumb.contentType)
+      .header("Cache-Control", "private, max-age=86400")
+      .header("ETag", etag)
+      .header("Content-Disposition", "inline")
+      .send(Buffer.from(thumb.bytes));
+  });
+
   // Exclui um criativo da biblioteca — HÍBRIDO (fast-follow #707). Org-scoped pelo lookup do
   // assetId (nunca confia no cliente). Em uso → ARQUIVA (some da biblioteca, mantém ref, não
   // quebra Meta/rascunho); livre → apaga de vez. Ausente → 404. { ok, archived } distingue.
