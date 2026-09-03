@@ -230,6 +230,9 @@ function isAutoApplicable(level: AutonomyLevel, action: Action): boolean {
   // Ressalva (Fatia A): "dá pra fazer, mas há um risco" → NUNCA aplica sozinha, nem em act_full.
   // Trava a mão automática mas mantém a ação aprovável (o dono decide com o aviso à vista).
   if (action.ressalvas && action.ressalvas.length > 0) return false;
+  // adjust_audience (Fatia C): editar público de adset vivo RESETA o aprendizado da Meta (irreversível)
+  // e é julgamento do LLM sem backstop determinístico → SEMPRE exige OK humano (nunca auto, nem act_full).
+  if (action.type === "adjust_audience") return false;
   switch (level) {
     case "act_full":
       return true;

@@ -70,6 +70,13 @@ describe("decideActions", () => {
     expect(res.autoApply.map((a) => a.id)).toEqual(["p"]);
   });
 
+  it("adjust_audience NUNCA auto-aplica, mesmo em act_full (Fatia C — reseta aprendizado)", () => {
+    const policy: AutonomyPolicy = { bySource: { playbook: "act_full", llm: "act_full" } };
+    const res = decideActions([action("aud", { source: "llm", type: "adjust_audience", riskLevel: "high" })], policy);
+    expect(res.autoApply).toHaveLength(0);
+    expect(res.needApproval.map((a) => a.id)).toEqual(["aud"]);
+  });
+
   it("ação com RESSALVA nunca auto-aplica, mesmo em act_full (Fatia A)", () => {
     const policy: AutonomyPolicy = { bySource: { playbook: "act_full", llm: "act_full" } };
     const res = decideActions(

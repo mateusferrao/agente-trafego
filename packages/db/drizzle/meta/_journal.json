@@ -421,6 +421,13 @@
       "when": 1788448233820,
       "tag": "0059_violet_shadow_king",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1788461345216,
+      "tag": "0060_yellow_roulette",
+      "breakpoints": true
     }
   ]
 }

@@ -30,6 +30,7 @@ export const actionType = z.enum([
   "resume_entity",
   "adjust_budget",
   "set_status",
+  "adjust_audience",
 ]);
 export const riskLevel = z.enum(["low", "medium", "high"]);
 export const actionSource = z.enum(["playbook", "llm"]);

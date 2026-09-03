@@ -7,7 +7,7 @@
 import type { ActionType } from "../types/index.js";
 
 /** Tool-keys de escrita que são AÇÕES (mutação sobre entidade existente) — key == ActionType. */
-export const WRITE_ACTION_TOOL_KEYS = ["pause_entity", "resume_entity", "set_status", "adjust_budget"] as const;
+export const WRITE_ACTION_TOOL_KEYS = ["pause_entity", "resume_entity", "set_status", "adjust_budget", "adjust_audience"] as const;
 export type WriteActionToolKey = (typeof WRITE_ACTION_TOOL_KEYS)[number];
 
 /** Tool-keys de CRIAÇÃO (gasto novo). Ungated hoje; passam ao gate por binding (net-new). */

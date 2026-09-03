@@ -676,6 +676,7 @@ const ACTION_TYPE_LABEL_PT: Readonly<Record<ActionType, string>> = {
   resume_entity: "reativar",
   adjust_budget: "ajustar budget",
   set_status: "mudar status",
+  adjust_audience: "ajustar público",
 };
 
 /** Conversão de negócio em PT (fallback = a chave neutra). */

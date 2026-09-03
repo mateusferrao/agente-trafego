@@ -59,6 +59,7 @@ export const actionType = pgEnum("action_type", [
   "resume_entity",
   "adjust_budget",
   "set_status",
+  "adjust_audience",
 ]);
 export const actionSource = pgEnum("action_source", ["playbook", "llm"]);
 export const riskLevel = pgEnum("risk_level", ["low", "medium", "high"]);

@@ -511,7 +511,8 @@ export type ActionType =
   | "pause_entity"
   | "resume_entity"
   | "adjust_budget"
-  | "set_status";
+  | "set_status"
+  | "adjust_audience"; // Fatia C: editar o público (targeting) de um adset existente
 
 export type ActionSource = "playbook" | "llm";
 export type RiskLevel = "low" | "medium" | "high";
