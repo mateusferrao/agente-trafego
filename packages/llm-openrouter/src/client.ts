@@ -138,6 +138,15 @@ export class OpenRouterClient {
         try {
           return await this.attempt(url, headers, body);
         } catch (error) {
+          // Modelo que EXIGE reasoning (ex: gemini-3.x-flash) rejeita o nosso `reasoning:{enabled:false}`
+          // (effort "off") com 400 "reasoning is mandatory". Retry UMA vez SEM o param — mantém o disable
+          // econômico pros modelos que aceitam (ex: unit deepseek) e só cede pros que exigem. Sem isto o
+          // passe de revisão falha sempre e a análise degrada pra parcial silenciosamente.
+          if (isReasoningMandatoryError(error) && wire.reasoning !== undefined) {
+            this.logger?.warn({ model }, "openrouter:modelo exige reasoning — retry sem desabilitar");
+            const { reasoning: _drop, ...noReasoning } = wire;
+            return await this.attempt(url, headers, JSON.stringify({ ...noReasoning, model, usage: { include: true } }));
+          }
           lastError = error;
           const retryable =
             error instanceof LLMProviderError && (error.kind === "rate_limited" || error.kind === "upstream");
@@ -217,6 +226,13 @@ export class OpenRouterClient {
       throw new LLMProviderError("upstream", `resposta não-JSON do OpenRouter: ${String(cause)}`);
     }
   }
+}
+
+/** 400 de modelo que exige reasoning e recusa desabilitá-lo — o gatilho do retry sem o param. */
+function isReasoningMandatoryError(error: unknown): boolean {
+  if (!(error instanceof LLMProviderError) || error.kind !== "invalid_request") return false;
+  const m = error.message.toLowerCase();
+  return m.includes("reasoning") && (m.includes("mandatory") || m.includes("cannot be disabled") || m.includes("required"));
 }
 
 function backoffDelay(attempt: number): number {
