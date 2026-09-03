@@ -40,6 +40,13 @@ describe("coalesceScaleActions (unifica escala LLM + determinística na MESMA ca
     expect(out).toHaveLength(2);
   });
 
+  it("resume + increase na mesma entidade → NÃO funde (tipos distintos, não perde o budget)", () => {
+    const resume: Action = { id: "r", type: "resume_entity", target: { level: "campaign", id: "C1" }, params: {}, source: "llm", riskLevel: "medium", reason: "reativar" };
+    const out = coalesceScaleActions([resume, inc("s", 20)]);
+    expect(out).toHaveLength(2);
+    expect(out.map((a) => a.type).sort()).toEqual(["adjust_budget", "resume_entity"]);
+  });
+
   it("uma só ação de escala → inalterada", () => {
     const out = coalesceScaleActions([inc("s", 20)]);
     expect(out).toHaveLength(1);

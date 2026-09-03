@@ -10,9 +10,10 @@ import {
 
 /**
  * Passe PURO nível-Action que anexa RESSALVAS de escala (Fatia A) — a versão canônica dos
- * antigos guards de escala, agora sobre a `Action` (não a recomendação do LLM). Roda no ponto
- * ÚNICO onde os candidatos convergem (`decide_actions`), então LLM e escala determinística são
- * tratados igual (fonte única, zero divergência). A ressalva NÃO rebaixa/remove a ação: mantém
+ * antigos guards de escala, agora sobre a `Action` (não a recomendação do LLM). Roda em cada
+ * ponto de CRIAÇÃO de candidato de escala — `build_recommendations` (LLM) e `propose_drafts`
+ * (determinística) — com a MESMA função, então os dois são tratados igual (fonte única, zero
+ * divergência de lógica). A ressalva NÃO rebaixa/remove a ação: mantém
  * aprovável e apenas trava o auto-apply (`isAutoApplicable`). Só escala (reativar / aumentar
  * orçamento) é avaliada; corte/pausa têm os guards de SEGURANÇA próprios (nível-recomendação).
  */

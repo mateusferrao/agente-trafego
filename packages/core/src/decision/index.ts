@@ -163,10 +163,14 @@ function mergeScaleGroup(group: readonly Action[]): Action {
  * a posição da 1ª do grupo). Função PURA.
  */
 export function coalesceScaleActions(actions: readonly Action[]): Action[] {
+  // chave = entidade + TIPO: só funde escala do MESMO tipo (2× adjust_budget de aumento — o
+  // caso do bug). resume + increase na mesma entidade ficam separados (tipos distintos, efeitos
+  // distintos) → o resolveActionConflicts resolve por dominância, sem perder a ação de budget.
+  const keyOf = (a: Action): string => `${entityKeyOf(a.target)}:${a.type}`;
   const groups = new Map<string, Action[]>();
   for (const a of actions) {
     if (!isScaleAction(a)) continue;
-    const key = entityKeyOf(a.target);
+    const key = keyOf(a);
     (groups.get(key) ?? groups.set(key, []).get(key)!).push(a);
   }
   const emitted = new Set<string>();
@@ -176,7 +180,7 @@ export function coalesceScaleActions(actions: readonly Action[]): Action[] {
       out.push(a);
       continue;
     }
-    const key = entityKeyOf(a.target);
+    const key = keyOf(a);
     if (emitted.has(key)) continue;
     emitted.add(key);
     out.push(mergeScaleGroup(groups.get(key)!));

@@ -54,9 +54,9 @@ export interface QualityThresholds {
    */
   readonly relativeEligibilitySpendMultiplier: number;
   /**
-   * CPA marginal (pivô saúde, squad): alta (%) do CPA vs baseline a partir da qual rebaixa
-   * escalar → investigar, mesmo pra quem ainda bate a meta em média ("CPA médio mente, o
-   * marginal conta a verdade"). Ver `guardScaleWithWorseningMarginalCpa`.
+   * CPA marginal (pivô saúde, squad): alta (%) do CPA vs baseline a partir da qual a escala
+   * ganha ressalva, mesmo pra quem ainda bate a meta em média ("CPA médio mente, o marginal
+   * conta a verdade"). Ver `computeScaleRessalvas` (ressalva `worsening_marginal_cpa`).
    */
   readonly marginalCpaWorsenPct: number;
   /** S6: retenção de vídeo (`videoHookRetentionPct`) abaixo disso = gancho fraco na largada

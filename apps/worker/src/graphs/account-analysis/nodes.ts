@@ -1008,7 +1008,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
           // backstop: se o LLM já propôs escala nesta entidade, ela já é candidato (com ressalvas) —
           // o determinístico some (a coalescência cobriria; evitar o candidato duplicado é mais limpo).
           const covered = (state.llmCandidates ?? []).some(
-            (c) => isScaleAction(c) && c.target.id === proposal.action.target.id,
+            (c) => isScaleAction(c) && entityKeyOf(c.target) === entityKeyOf(proposal.action.target),
           );
           if (covered) {
             logger.info({ runId: state.runId }, "propose_drafts:scale_raise já coberto pelo LLM");

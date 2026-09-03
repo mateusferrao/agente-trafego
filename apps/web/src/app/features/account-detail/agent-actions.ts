@@ -78,7 +78,7 @@ type Dropped = LastRunActionsOutput['dropped'][number];
                     </span>
                     <span class="text-xs text-muted">{{ s.reason }}</span>
                     @if (s.ressalvas?.length) {
-                      <span class="mt-0.5 flex flex-col gap-0.5 rounded-md border border-warning-soft bg-warning-soft px-2 py-1">
+                      <span class="mt-0.5 flex flex-col gap-0.5 rounded-md border-2 border-warning bg-warning-soft px-2 py-1">
                         @for (r of s.ressalvas; track r.code) {
                           <span class="text-xs text-ink">⚠️ {{ r.message }}</span>
                         }
