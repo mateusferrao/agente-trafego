@@ -24,6 +24,7 @@ import {
   resolveMetaObjective,
 } from "./meta-conversion-map.js";
 import { copyOf, creativeFormatOf, isReusableCreative, rankAdsForReuse, type RawAdCandidate } from "./creative-select.js";
+import { DEFAULT_TARGETING_GEO_COUNTRY, explicitTargetingToRaw } from "./targeting-map.js";
 
 /** Quantos anúncios buscar p/ ranquear o melhor criativo reusável (1 call, com insights). */
 const INFER_CANDIDATES_LIMIT = 25;
@@ -42,9 +43,9 @@ const BUDGET_FIELD_DAILY = "daily_budget";
  * Fica INTERNO ao adapter — nunca vaza pro port neutro (traduzido p/ kind `not_duplicable`).
  */
 const LEGACY_ENHANCEMENTS_SUBCODE = 3858504;
-/** País default do targeting amplo (Advantage+) quando não há adset provado pra reusar. Beta =
- *  Brasil; geo derivado do mercado/conta = fast-follow (o adapter não recebe o país da conta hoje). */
-const DEFAULT_ADVANTAGE_GEO_COUNTRY = "BR";
+/** País default do targeting amplo (Advantage+) quando não há adset provado pra reusar. Fonte
+ *  única em `targeting-map` (compartilhada com o `explicit`); alias local p/ legibilidade. */
+const DEFAULT_ADVANTAGE_GEO_COUNTRY = DEFAULT_TARGETING_GEO_COUNTRY;
 function isLegacyEnhancementsCopyError(error: unknown): boolean {
   return error instanceof MetaApiError && error.subcode === LEGACY_ENHANCEMENTS_SUBCODE;
 }
@@ -509,48 +510,10 @@ export class MetaCreationService {
       }
       case "advantage_plus":
         return { targeting: this.advantagePlusTargeting(), fallback: false };
-      case "explicit": {
-        // público NOVO por primitivos (Fase 1) — expansão SEMPRE fechada (público escolhido pelo
-        // dono, sem ambiguidade de "fonte não decidiu" — diferente de reuse_adset).
-        // geo_locations montado direto (não via geoToRaw) p/ carregar RAIO por cidade/região +
-        // custom_locations (raio em torno de endereço, Slice 5). `address_string` = a Meta geocodifica.
-        const geoLocations: Record<string, unknown> = {};
-        const countries = spec.geo.filter((g) => g.kind === "country").map((g) => g.key);
-        const regions = spec.geo.filter((g) => g.kind === "region");
-        const cities = spec.geo.filter((g) => g.kind === "city");
-        // RAIO é city-only na Meta (regions/countries só aceitam `{key}`/ISO). Strip defensivo: mesmo
-        // que um radius chegue numa region (input do site), NUNCA emitir radius fora de `cities`.
-        const withRadius = (g: { key: string; radius?: number; distanceUnit?: "mile" | "kilometer" }) =>
-          g.radius ? { key: g.key, radius: g.radius, distance_unit: g.distanceUnit ?? "kilometer" } : { key: g.key };
-        if (countries.length) geoLocations["countries"] = countries;
-        if (regions.length) geoLocations["regions"] = regions.map((g) => ({ key: g.key }));
-        if (cities.length) geoLocations["cities"] = cities.map(withRadius);
-        if (spec.radiusAreas && spec.radiusAreas.length > 0) {
-          geoLocations["custom_locations"] = spec.radiusAreas.map((a) => ({ address_string: a.address, radius: a.radius, distance_unit: a.distanceUnit }));
-        }
-        // geo_locations NUNCA pode sair vazio (a Meta rejeita "Falta uma localização") — fallback país.
-        if (Object.keys(geoLocations).length === 0) geoLocations["countries"] = [DEFAULT_ADVANTAGE_GEO_COUNTRY];
-        const out: Record<string, unknown> = {
-          geo_locations: geoLocations,
-          ...(spec.ageMin !== undefined ? { age_min: spec.ageMin } : {}),
-          ...(spec.ageMax !== undefined ? { age_max: spec.ageMax } : {}),
-          ...(spec.genders && spec.genders.length > 0 ? { genders: spec.genders } : {}),
-          ...(spec.customAudienceIncludeIds && spec.customAudienceIncludeIds.length > 0 ? { custom_audiences: spec.customAudienceIncludeIds.map((id) => ({ id })) } : {}),
-          ...(spec.customAudienceExcludeIds && spec.customAudienceExcludeIds.length > 0 ? { excluded_custom_audiences: spec.customAudienceExcludeIds.map((id) => ({ id })) } : {}),
-          // interesses/behaviors em GRUPOS (Slices 3/4): flexible_spec = 1 objeto por grupo → OR dentro
-          // do grupo, AND entre grupos (narrowing). Confirmado ao vivo (validate_only 200). Exclusão de
-          // interesse/behavior NÃO existe mais na Meta (spike: subcode 3858492) — só inclusão.
-          ...(() => {
-            const iGroups = (spec.interestGroups ?? []).filter((g) => g.length > 0).map((g) => ({ interests: g.map((i) => ({ id: i.id })) }));
-            const bGroups = (spec.behaviorGroups ?? []).filter((g) => g.length > 0).map((g) => ({ behaviors: g.map((b) => ({ id: b.id })) }));
-            const flexible_spec = [...iGroups, ...bGroups];
-            return flexible_spec.length > 0 ? { flexible_spec } : {};
-          })(),
-          targeting_automation: { advantage_audience: 0 },
-          targeting_relaxation_types: { custom_audience: 0, lookalike: 0 },
-        };
-        return { targeting: out, fallback: false };
-      }
+      case "explicit":
+        // público NOVO por primitivos (Fase 1) — mapeamento PURO extraído p/ `targeting-map`
+        // (fonte única, reusada pela escrita de adjust_audience na Fatia C). Expansão sempre fechada.
+        return { targeting: explicitTargetingToRaw(spec), fallback: false };
       default: {
         // Exaustivo em compile-time; em runtime um rascunho LEGADO no jsonb (ex: kind colapsado) NÃO
         // pode devolver targeting undefined (adset sem targeting = erro cru da Meta) — cai em amplo
