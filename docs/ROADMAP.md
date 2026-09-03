@@ -73,6 +73,14 @@ Plano de construção em fatias. Decisões de arquitetura/produto = [`../CLAUDE.
 - **[BAIXO] Recompor mídia/criativos distintos no site** (`distinctCreatives`/`mediaPreference` auto): hoje só troca manual por anúncio (workaround existe).
 - **[BAIXO] Batch-approve de recomendações no site** (aprovar várias de uma vez).
 
+### Fast-follows da iniciativa "Qualidade das recomendações + gap diz×faz" (Fatias A-E)
+- **[MÉDIO] Painel multi-LLM de revisores especialistas** via `reviewPasses` (escala/tracking/desperdício + revisor de criativo `copy-master`/`hormozi-squad`) — o seam nasce na Fatia E com 1 pass default; registrar mais passes = crescer sem reescrever o grafo.
+- **[MÉDIO] Scorecard 8-dimensões PERSISTIDO** (schema/UI avançada/B2B) — a Fatia E usa as 8 dimensões como instrumento INTERNO (prompt/priorização); persistir + expor as dims não-mensuráveis (estrutura/lance) fica p/ quando o valor se provar com uso.
+- **[BAIXO] `set_status` via recomendação do LLM** — capacidade órfã (executável, mas nenhum `actionType` do LLM o alcança; só playbook/chat/revert). Baixo valor.
+- **[BAIXO] Drift FINO de targeting no revert de `adjust_audience`** — a v1 é coarse (reposta o targeting cru salvo + sinaliza se mudou); refinar a detecção de mudança externa antes do revert.
+- **[BAIXO] Autoria/edição livre de público por chat** (`adjust_audience` conversacional) — atrás da flag `TRAFEGO_CHAT_ADS_WRITES`, junto da reativação da escrita conversacional (a Fatia C entrega só a APROVAÇÃO da edição, aprovável por site+chat).
+- **[BAIXO] Reativar (`resume_entity`) no `allowedActions` default** — decisão atual: fica OFF por padrão (o dono liga); revisar os defaults de `allowedActions` quando houver dado de uso.
+
 Consolidação de tudo que **decidimos adiar** para depois do MVP. (Deferrals que já têm
 fatia MVP agendada **não** entram aqui — ficam na sua fatia: retenção/prune → `6b`;
 `selectCreatives` + visão de criativo → `3b`; override de conversão por agente → `4`;
