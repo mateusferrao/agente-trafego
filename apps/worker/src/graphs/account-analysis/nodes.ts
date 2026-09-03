@@ -47,6 +47,7 @@ import {
   basisByEntity,
   annotateFreedSpend,
   detectCreationOpportunities,
+  isFatigued,
   isConverterAudienceName,
   evaluatePlaybook,
   flagUnsupportedFindings,
@@ -961,7 +962,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       ...(c.atBudgetCeiling !== undefined ? { atBudgetCeiling: c.atBudgetCeiling } : {}),
       // fadiga de CRIATIVO × saturação de PÚBLICO são sinais distintos (Fatia 8): a 1ª vira
       // refresh_fatigued (só recomendação), a 2ª vira prospecting_expansion (público novo, acionável).
-      fatigued: (c.healthSignals ?? []).some((h) => h === "creative_fatigue"),
+      // `isFatigued` = fonte única com o guard de escala (creative_fatigue + weak_hook_retention) —
+      // antes olhava só creative_fatigue e escalava vencedor que o guard rebaixava (bug de contradição).
+      fatigued: isFatigued(c.healthSignals),
       saturated: (c.healthSignals ?? []).some((h) => h === "audience_saturation"),
       spending: (c.metrics?.spend ?? 0) > 0,
     }));

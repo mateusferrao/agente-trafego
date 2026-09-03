@@ -402,6 +402,22 @@ export function guardAudienceScaleCeiling(
 
 const FATIGUE_SIGNALS: ReadonlySet<HealthSignal> = new Set(["creative_fatigue", "weak_hook_retention"]);
 
+/**
+ * Fonte única de "fadiga de criativo" (sinal DURO — métrica, não score de visão LLM).
+ * Reusada pelo guard de escala E pelo detector de oportunidade de criação (`proposeDrafts`),
+ * que antes só olhava `creative_fatigue` — a divergência gerava escala contraditória no MESMO
+ * vencedor (guard rebaixava por `weak_hook_retention`, detector escalava). `weak_creative`
+ * (score de visão, soft) NUNCA entra aqui. PURA.
+ */
+export function firstFatigueSignal(signals: readonly HealthSignal[] | undefined): HealthSignal | undefined {
+  return signals?.find((s) => FATIGUE_SIGNALS.has(s));
+}
+
+/** `true` se a entidade tem algum sinal DURO de fadiga de criativo. PURA. */
+export function isFatigued(signals: readonly HealthSignal[] | undefined): boolean {
+  return firstFatigueSignal(signals) !== undefined;
+}
+
 /** Mapa `externalId → healthSignals` a partir dos segmentos do brief. */
 export function healthSignalsByEntity(brief: AccountBrief): Map<string, readonly HealthSignal[]> {
   const map = new Map<string, readonly HealthSignal[]>();
@@ -425,7 +441,7 @@ export function guardScaleWithoutFreshCreative(
     if (!SCALE_ACTIONS.has(r.actionType)) return r;
     const id = r.targetEntity?.externalId;
     const signals = id ? signalsByEntity.get(id) : undefined;
-    const hit = signals?.find((s) => FATIGUE_SIGNALS.has(s));
+    const hit = firstFatigueSignal(signals);
     if (!hit) return r;
     return {
       ...r,
