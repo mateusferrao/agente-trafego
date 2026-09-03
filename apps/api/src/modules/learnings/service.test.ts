@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createLearningsService } from "./service.js";
+import type { ThresholdProposal } from "@trafego/core";
+import { computeProposedChange, createLearningsService } from "./service.js";
 
 /**
  * DB fake que devolve `selectResult` em todo select e captura o `.set()` do update.
@@ -78,5 +79,26 @@ describe("createLearningsService", () => {
     const svc = createLearningsService({ db, scheduler: {} as never, qualityDefaults: {}, advisoryDismissCooldownDays: 14 });
     await expect(svc.revertThreshold(ORG, "agent-1", "lesson-1")).rejects.toThrow();
     expect(updates).toHaveLength(0);
+  });
+});
+
+describe("computeProposedChange (antes → depois)", () => {
+  const proposal: ThresholdProposal = { threshold: "marginalCpaWorsenPct", stepPct: 0.25, minValue: 5, behaviorLabel: "x" };
+  const ctx = (quality: Record<string, unknown>) => ({ quality, qualityDefaults: { marginalCpaWorsenPct: 20 }, currency: "BRL" });
+
+  it("usa o default global quando o agente não tem override (20 → 15)", () => {
+    expect(computeProposedChange(proposal, ctx({}))).toEqual({ threshold: "marginalCpaWorsenPct", currentValue: 20, proposedValue: 15, currency: "BRL" });
+  });
+
+  it("override do agente vence o default (12 → 9)", () => {
+    expect(computeProposedChange(proposal, ctx({ marginalCpaWorsenPct: 12 }))).toEqual({ threshold: "marginalCpaWorsenPct", currentValue: 12, proposedValue: 9, currency: "BRL" });
+  });
+
+  it("sem proposta → null", () => {
+    expect(computeProposedChange(null, ctx({}))).toBeNull();
+  });
+
+  it("valor atual não-numérico → null (mesma guarda do apply)", () => {
+    expect(computeProposedChange(proposal, { quality: {}, qualityDefaults: {}, currency: "BRL" })).toBeNull();
   });
 });

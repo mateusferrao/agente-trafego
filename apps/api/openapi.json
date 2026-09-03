@@ -6955,6 +6955,32 @@
                     "null"
                   ]
                 },
+                "proposedChange": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "threshold": {
+                      "type": "string"
+                    },
+                    "currentValue": {
+                      "type": "number"
+                    },
+                    "proposedValue": {
+                      "type": "number"
+                    },
+                    "currency": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "threshold",
+                    "currentValue",
+                    "proposedValue",
+                    "currency"
+                  ]
+                },
                 "appliedBehavior": {
                   "type": [
                     "string",
@@ -6976,6 +7002,7 @@
                 "sourceRunId",
                 "createdAt",
                 "proposedBehavior",
+                "proposedChange",
                 "appliedBehavior"
               ]
             }
@@ -7097,6 +7124,32 @@
                     "null"
                   ]
                 },
+                "proposedChange": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "threshold": {
+                      "type": "string"
+                    },
+                    "currentValue": {
+                      "type": "number"
+                    },
+                    "proposedValue": {
+                      "type": "number"
+                    },
+                    "currency": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "threshold",
+                    "currentValue",
+                    "proposedValue",
+                    "currency"
+                  ]
+                },
                 "appliedBehavior": {
                   "type": [
                     "string",
@@ -7118,6 +7171,7 @@
                 "sourceRunId",
                 "createdAt",
                 "proposedBehavior",
+                "proposedChange",
                 "appliedBehavior"
               ]
             }

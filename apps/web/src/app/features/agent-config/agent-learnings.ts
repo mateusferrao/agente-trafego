@@ -19,6 +19,9 @@ const ORIGIN_LABEL: Record<Learning['origin'], string> = {
   human_feedback: 'do seu feedback',
   human_manual: 'de uma mudança que você fez',
 };
+/** Thresholds que geram proposta hoje (só estes) — evita string mágica na frase de consequência. */
+const THRESHOLD_MARGINAL_CPA = 'marginalCpaWorsenPct';
+const THRESHOLD_ZOMBIE_SPEND = 'zombieMinSpend';
 /** Dimensão → tema (sub-grupo secundário dentro de cada bucket de confiança). */
 const DIMENSION_LABEL: Record<string, string> = {
   budget: 'Orçamento',
@@ -91,6 +94,9 @@ interface ConfidenceBucket {
                     <app-ui-eyebrow>Sugestão de ajuste</app-ui-eyebrow>
                     <span class="font-semibold text-ink">{{ l.content }}</span>
                     <span class="text-xs text-muted">{{ agentName }} pode {{ l.proposedBehavior }}.</span>
+                    @if (proposedConsequence(l); as cons) {
+                      <span class="text-xs text-ink">{{ cons }}</span>
+                    }
                   </span>
                   <span class="flex shrink-0 gap-2">
                     <button type="button" appButton size="sm" variant="secondary" [disabled]="busy()" (click)="rejectProposal(l)">Agora não</button>
@@ -415,6 +421,20 @@ export class AgentLearnings implements OnInit {
   /** Valor/dia bloqueado pelo teto, formatado na MOEDA da conta (símbolo/locale via money()) — sem R$ fixo. */
   protected major(o: Opportunity): string {
     return money(o.foregoneMajor, o.currency);
+  }
+
+  /** Consequência da proposta em linguagem de gente (antes → depois), por threshold. '' quando não há
+   *  proposta ou o threshold não tem frase (só marginalCpaWorsenPct/zombieMinSpend geram proposta hoje). */
+  protected proposedConsequence(l: Learning): string {
+    const c = l.proposedChange;
+    if (!c) return '';
+    if (c.threshold === THRESHOLD_MARGINAL_CPA) {
+      return `Hoje ele aceita escalar mesmo com o custo piorando até ${c.currentValue}%; passaria a segurar já a partir de ${c.proposedValue}%.`;
+    }
+    if (c.threshold === THRESHOLD_ZOMBIE_SPEND) {
+      return `Hoje ele só considera desperdício acima de ${money(c.currentValue, c.currency)}; passaria a cortar já a partir de ${money(c.proposedValue, c.currency)}.`;
+    }
+    return '';
   }
 
   protected originLabel(l: Learning): string {

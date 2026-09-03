@@ -27,6 +27,17 @@ export const learningItem = z.object({
   createdAt: z.string(),
   /** proposta de ajuste de comportamento (calibração paramétrica, S6) — null quando não há. */
   proposedBehavior: z.string().nullable(),
+  /** consequência QUANTIFICADA da proposta (antes → depois) — null quando não há proposta. O front
+   *  renderiza em linguagem de gente por threshold (% p/ marginalCpaWorsenPct; moeda p/ zombieMinSpend). */
+  proposedChange: z
+    .object({
+      threshold: z.string(),
+      currentValue: z.number(),
+      proposedValue: z.number(),
+      /** moeda da conta (ISO) — usada só nos thresholds de valor; o front formata com `money()`. */
+      currency: z.string(),
+    })
+    .nullable(),
   /** ajuste de comportamento já APLICADO (revertível, v3) — null quando não há. */
   appliedBehavior: z.string().nullable(),
 });

@@ -1,6 +1,6 @@
 import { and, desc, eq, gt, inArray, isNotNull, sql } from "drizzle-orm";
 import { adAccounts, advisoryDismissals, agentMemory, agentRuns, agents, type Database } from "@trafego/db";
-import { confidenceTier, LEARNING_MEMORY_TYPES, lessonKindFromMemoryType, type GuardrailOpportunity, type ThresholdProposal } from "@trafego/core";
+import { confidenceTier, LEARNING_MEMORY_TYPES, lessonKindFromMemoryType, nextThresholdValue, type GuardrailOpportunity, type ThresholdProposal } from "@trafego/core";
 import {
   acceptThreshold as acceptThresholdAction,
   confirmLesson,
@@ -57,13 +57,20 @@ function unwrap(result: LearningActionResult): LearningOk {
  */
 export function createLearningsService(deps: LearningsDeps) {
   async function list(orgId: OrgId, agentId: string): Promise<LearningsList> {
-    // valida que o agente é da org (404 amigável em vez de lista vazia silenciosa).
+    // valida que o agente é da org (404 amigável em vez de lista vazia silenciosa) e já traz
+    // o modelConfig (limiar ATUAL) + a moeda da conta p/ montar o "antes → depois" das propostas.
     const [agent] = await deps.db
-      .select({ id: agents.id })
+      .select({ id: agents.id, modelConfig: agents.modelConfig, currency: adAccounts.currency })
       .from(agents)
+      .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
       .where(and(eq(agents.id, agentId), eq(agents.orgId, orgId)))
       .limit(1);
     if (!agent) throw notFound("Agente não encontrado.");
+    const changeCtx: ProposedChangeContext = {
+      quality: (agent.modelConfig?.quality as Record<string, unknown> | undefined) ?? {},
+      qualityDefaults: deps.qualityDefaults,
+      currency: agent.currency ?? DEFAULT_CURRENCY,
+    };
 
     const rows = await deps.db
       .select()
@@ -82,7 +89,7 @@ export function createLearningsService(deps: LearningsDeps) {
     const items: LearningItem[] = [];
     const archived: LearningItem[] = [];
     for (const r of rows) {
-      const item = toItem(r);
+      const item = toItem(r, changeCtx);
       (r.lifecycle === "archived" ? archived : items).push(item);
     }
     const opportunities = await loadOpportunities(orgId, agentId);
@@ -189,8 +196,37 @@ export function createLearningsService(deps: LearningsDeps) {
   return { list, edit, confirm, forget, restore, acceptThreshold, rejectProposal, revertThreshold, dismissOpportunity };
 }
 
+/** Contexto p/ resolver o "antes → depois" de uma proposta (limiar atual do agente + fallback + moeda). */
+interface ProposedChangeContext {
+  readonly quality: Record<string, unknown>;
+  readonly qualityDefaults: Readonly<Record<string, unknown>>;
+  readonly currency: string;
+}
+
+/**
+ * Consequência QUANTIFICADA de uma proposta de limiar (antes → depois). Puro: lê o valor ATUAL
+ * (override do agente ou default global) e calcula o proposto com a MESMA fórmula do aceite
+ * (`nextThresholdValue`) — sem tocar em nada. `null` quando não há proposta ou o valor atual não
+ * é numérico (mesma guarda do apply). A frase em linguagem de gente é montada no front (moeda/%).
+ */
+export function computeProposedChange(
+  patch: ThresholdProposal | null,
+  ctx: ProposedChangeContext,
+): LearningItem["proposedChange"] {
+  if (!patch) return null;
+  const currentRaw = ctx.quality[patch.threshold] ?? ctx.qualityDefaults[patch.threshold];
+  if (typeof currentRaw !== "number") return null;
+  return {
+    threshold: patch.threshold,
+    currentValue: currentRaw,
+    proposedValue: nextThresholdValue(currentRaw, patch),
+    currency: ctx.currency,
+  };
+}
+
 /** Projeta uma linha de agent_memory no item da aba (mesma forma p/ ativos e arquivados). */
-function toItem(r: typeof agentMemory.$inferSelect): LearningItem {
+function toItem(r: typeof agentMemory.$inferSelect, changeCtx: ProposedChangeContext): LearningItem {
+  const patch = r.proposedThresholdPatch as ThresholdProposal | null;
   return {
     id: r.id,
     kind: lessonKindFromMemoryType(r.type),
@@ -204,7 +240,8 @@ function toItem(r: typeof agentMemory.$inferSelect): LearningItem {
     reinforceCount: r.reinforceCount,
     sourceRunId: r.sourceRunId ?? null,
     createdAt: r.createdAt.toISOString(),
-    proposedBehavior: (r.proposedThresholdPatch as ThresholdProposal | null)?.behaviorLabel ?? null,
+    proposedBehavior: patch?.behaviorLabel ?? null,
+    proposedChange: computeProposedChange(patch, changeCtx),
     appliedBehavior: (r.appliedThresholdPatch as AppliedThresholdPatch | null)?.behaviorLabel ?? null,
   };
 }
