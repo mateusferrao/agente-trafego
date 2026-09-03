@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideRefreshCw, lucidePlus, lucideX, lucidePlug } from '@ng-icons/lucide';
+import { lucideRefreshCw, lucidePlus, lucideX } from '@ng-icons/lucide';
 import {
   UiButton,
   UiDialog,
@@ -78,7 +78,7 @@ const CHANNEL_TEXT: Record<ChannelStatus, string> = {
     ConnectDialogComponent,
     WhatsappConnect,
   ],
-  providers: [provideIcons({ lucideRefreshCw, lucidePlus, lucideX, lucidePlug })],
+  providers: [provideIcons({ lucideRefreshCw, lucidePlus, lucideX })],
   template: `
     <div class="flex flex-col gap-8">
       <app-ui-page-header
@@ -102,7 +102,7 @@ const CHANNEL_TEXT: Record<ChannelStatus, string> = {
           </div>
         } @else if (connectedCount() === 0) {
           <app-ui-empty-state
-            icon="lucidePlug"
+            brand
             title="Nada conectado ainda"
             description="Escolha um provedor abaixo para conectar a Meta e o WhatsApp."
           />
