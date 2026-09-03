@@ -154,6 +154,48 @@ const ADVICE_TEXT =
   "texto (o humano executa), com actionType 'investigate' (próximo passo claro) ou 'keep' (leitura " +
   "estratégica). Seja SELETIVO: só direções/insights materiais, priorizados por impacto.";
 
+/**
+ * Método de ESCALA (squad traffic-masters, `docs/referencia-traffic-masters.md` §1/§2) — COMO escalar
+ * um vencedor, não só QUE escalar. Só na síntese (decisão cross-campanha de escala) + com dado de
+ * orçamento. Complementa o BUDGET_TEXT (faseamento/CPA-marginal) com os 3 métodos + a trava de
+ * maturidade e o teto por público (o mesmo teto que a ressalva de escala já calcula determinístico).
+ */
+const SCALE_METHOD_TEXT =
+  "Ao propor ESCALAR um vencedor, escolha o MÉTODO pelo tamanho do salto pretendido (gap até a meta): " +
+  "VERTICAL (salto < 2x) = subir o orçamento das campanhas atuais em passos de ~20% a cada 48–72h, " +
+  "NUNCA mais de 20% num único dia; se o CPA subir >30% num passo, RECUE (a média esconde o problema — " +
+  "olhe o CPA marginal do último incremento, não a média). HORIZONTAL (salto 2x–5x) = duplicar o " +
+  "vencedor para PÚBLICOS novos (não só subir budget). DIAGONAL (5x+) = novos ângulos/plataformas. " +
+  "Antes de escalar EXIJA maturidade: CPA abaixo da meta por ~5 dias seguidos e ~7–14 dias de dados; " +
+  "nunca escale o não-provado, nem sem criativo novo pronto (escalar em criativo cansado queima verba). " +
+  "Prefira o VERTICAL primeiro; horizontal quando o vertical der retorno decrescente. O TETO de escala " +
+  "por público ≈ tamanho do público / (frequência × CPM) — não recomende escalar além do que o público " +
+  "comporta (frequência de prospecção saudável fica perto de 2,5; acima de ~3 é sinal de saturação).";
+
+/**
+ * Cadência de refresh de criativo (squad, `docs/referencia-traffic-masters.md` §3) — QUANDO renovar.
+ * No MAPA (onde a copy/criativo real chega). Complementa o DIAGNOSIS_TEXT (fadiga) com a cadência
+ * concreta + o critério de 2+ sinais + "itera, não recomeça".
+ */
+const CREATIVE_REFRESH_TEXT =
+  "Cadência de refresh de criativo: público pequeno pede criativo novo a cada ~5–7 dias; público " +
+  "grande a cada ~14–21 dias. Recomende renovar/trocar o criativo quando 2+ sinais de fadiga " +
+  "aparecerem juntos: CTR caindo >20% semana-a-semana, frequência acima de ~3, CPA subindo >30% do " +
+  "baseline, engajamento em queda. NÃO recomece do zero — itere o gancho sobre os corpos que já " +
+  "convertem, e tenha 2–3 criativos novos prontos ANTES de escalar um vencedor.";
+
+/**
+ * Scorecard de saúde de conta em 8 dimensões (squad, `docs/referencia-traffic-masters.md` §6) — uso
+ * INTERNO de priorização (síntese), NÃO um output novo: o schema não muda; o `headline`/`biggestLeak`
+ * já existentes lideram pela dimensão mais fraca. Ajuda o analista a não fixar num sintoma isolado.
+ */
+const SCORECARD_TEXT =
+  "Antes de priorizar, avalie a conta MENTALMENTE em 8 dimensões (estrutura, público, criativo, " +
+  "orçamento, lance, rastreamento, alinhamento de funil, desempenho) pra achar o MAIOR vazamento — a " +
+  "dimensão mais fraca é o que mais move o resultado. Priorize a recomendação de topo por ela (o " +
+  "resumo/headline lidera por esse gargalo). NÃO exponha um placar dimensão-a-dimensão nem invente " +
+  "nota — é só uma lente de priorização; use os campos de saída que já existem.";
+
 /** Diagnóstico por padrão de métrica (causa provável, não só sintoma) — squad. */
 const DIAGNOSIS_TEXT =
   "Ao explicar um problema, aponte a CAUSA provável pelo padrão das métricas: CTR baixo → gancho/" +
@@ -239,10 +281,13 @@ export const ANALYSIS_KNOWLEDGE_BLOCKS: readonly AnalysisKnowledgeBlock[] = [
   { key: "mismatch", theme: "conversao", text: MISMATCH_TEXT, relevant: isAnalysisRole },
   { key: "revenue", theme: "conversao", text: REVENUE_TEXT, relevant: (ctx) => isMapOrSynthesis(ctx) && ctx.hasRevenue },
   { key: "quality", theme: "qualidade", text: QUALITY_TEXT, relevant: isAnalysisRole },
+  { key: "scorecard", theme: "qualidade", text: SCORECARD_TEXT, relevant: (ctx) => ctx.role === "synthesis" },
   { key: "incrementality", theme: "qualidade", text: INCREMENTALITY_TEXT, relevant: isAnalysisRole },
   { key: "recency", theme: "qualidade", text: RECENCY_TEXT, relevant: isAnalysisRole },
   { key: "diagnosis", theme: "qualidade", text: DIAGNOSIS_TEXT, relevant: isAnalysisRole },
   { key: "advice", theme: "criativo", text: ADVICE_TEXT, relevant: (ctx) => ctx.role === "map" },
+  { key: "creative_refresh", theme: "criativo", text: CREATIVE_REFRESH_TEXT, relevant: (ctx) => ctx.role === "map" },
+  { key: "scale_method", theme: "orcamento", text: SCALE_METHOD_TEXT, relevant: (ctx) => ctx.role === "synthesis" && ctx.hasBudgetData },
   { key: "waste", theme: "desperdicio", text: WASTE_TEXT, relevant: (ctx) => ctx.role === "synthesis" && ctx.hasWaste },
   { key: "tracking", theme: "desperdicio", text: TRACKING_TEXT, relevant: (ctx) => isMapOrSynthesis(ctx) && ctx.trackingSuspect },
   { key: "benchmark", theme: "benchmark", text: BENCHMARK_TEXT, relevant: (ctx) => isMapOrSynthesis(ctx) && ctx.hasBenchmarkRef },
