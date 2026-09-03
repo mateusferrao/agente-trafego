@@ -81,6 +81,29 @@ export const toolApprovalPolicy = pgEnum("tool_approval_policy", [
 ]);
 export const memoryType = pgEnum("memory_type", ["objective", "past_action", "rejected", "fact"]);
 export const memoryLifecycle = pgEnum("memory_lifecycle", ["active", "stale", "archived"]);
+// Aprendizado contínuo — escopo hierárquico da lição. A fundação usa só `entity`/`account`;
+// `org`/`global` já ficam no enum para subir a cross-conta/cross-org depois sem reescrever (§13).
+export const memoryScope = pgEnum("memory_scope", ["entity", "account", "org", "global"]);
+// Direção da lição: `lower` = mais cauteloso/cortar; `raise` = escalar/ampliar; `neutral` = ressalva.
+export const memoryDirection = pgEnum("memory_direction", ["raise", "lower", "neutral"]);
+// De onde veio a lição — determina o teto de confiança sem confirmação humana.
+export const memoryOrigin = pgEnum("memory_origin", [
+  "our_action",
+  "observational",
+  "human_feedback",
+  "human_manual",
+]);
+// Dimensão do que a lição fala — vértebra da chave semântica (dedupe/merge).
+export const lessonDimension = pgEnum("lesson_dimension", [
+  "pacing",
+  "creative",
+  "audience",
+  "tracking",
+  "budget",
+  "significance",
+  "conversion",
+  "other",
+]);
 
 // Dimensão de breakdown (S7, pivô saúde): idade+gênero combinados (Meta devolve juntos
 // quando ambos os breakdowns são pedidos) e posicionamento (plataforma+posição). Só

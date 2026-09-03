@@ -133,8 +133,10 @@ function buildGroupContext(
   };
 }
 
-/** Teto do trecho da mensagem citada no transcript (evita citar mensagens enormes). */
-const QUOTED_SNIPPET_MAX = 200;
+/** Teto do trecho da mensagem citada (reply) no contexto do agente — generoso p/ não perder o
+ *  referente (a mensagem à qual o usuário está respondendo); os orçamentos de token do transcript
+ *  de grupo e da janela de entrada já limitam o contexto como um todo. Só um trilho de sanidade. */
+const QUOTED_SNIPPET_MAX = 4000;
 
 /**
  * Extrai a mensagem CITADA (reply) do `contextInfo`: id (`stanzaId`), tipo e trecho.

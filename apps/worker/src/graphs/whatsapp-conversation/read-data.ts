@@ -12,9 +12,9 @@
 import { and, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { adAccounts, adCreatives, agentRuns, agentToolCalls, agents, campaignDrafts, customAudiences, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
+import { adAccounts, adCreatives, agentMemory, agentRuns, agentToolCalls, agents, campaignDrafts, customAudiences, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
-import { daysAgoInTz, rankAdCreatives, resolveNamedMatch, todayInTz, type RankableCreative } from "@trafego/core";
+import { confidenceTier, daysAgoInTz, LEARNING_MEMORY_TYPES, rankAdCreatives, resolveNamedMatch, todayInTz, type RankableCreative } from "@trafego/core";
 import { mapStatus } from "@trafego/ads-meta";
 import { createAnalysisRepo, type AdCreativeCopyRow } from "../../modules/analysis/repo.js";
 import {
@@ -1525,6 +1525,39 @@ export function renderWhatsappNumber(dest: WhatsappDestination, campaignLabel: s
  * Monta as 5 tools de LEITURA do turno (todas org-scoped, read-only sobre o nosso
  * DB curado). Seguro executar direto — não há escrita nem chamada à plataforma.
  */
+/** Aprendizados curados do agente (não arquivados) — transparência conversacional (S7). */
+export async function getLearningsData(db: WorkerDeps["db"], orgId: string, agentId: string) {
+  const rows = await db
+    .select({ id: agentMemory.id, content: agentMemory.content, confidence: agentMemory.confidence, origin: agentMemory.origin, confirmedByHuman: agentMemory.confirmedByHuman, proposedThresholdPatch: agentMemory.proposedThresholdPatch })
+    .from(agentMemory)
+    .where(
+      and(
+        eq(agentMemory.orgId, orgId),
+        eq(agentMemory.agentId, agentId),
+        inArray(agentMemory.type, [...LEARNING_MEMORY_TYPES]),
+        isNotNull(agentMemory.semanticKey),
+        sql`${agentMemory.lifecycle} <> 'archived'`,
+      ),
+    )
+    .orderBy(desc(agentMemory.confirmedByHuman), desc(agentMemory.confidence))
+    .limit(12);
+  if (rows.length === 0) return { hasData: false, note: "ainda não aprendi nada específico desta conta" };
+  return {
+    hasData: true,
+    // `id` é a referência que as tools de controle (confirm/forget/approve/reject) consomem —
+    // sem ele o LLM não tem como agir sobre um aprendizado específico. `hasProposal` diz quais
+    // têm proposta de ajuste pendente (alvo do approve_proposal/reject_proposal).
+    learnings: rows.map((r) => ({
+      id: r.id,
+      content: r.content,
+      confidence: confidenceTier(r.confidence ?? 0, r.confirmedByHuman),
+      origin: r.origin,
+      confirmed: r.confirmedByHuman,
+      hasProposal: r.proposedThresholdPatch != null,
+    })),
+  };
+}
+
 export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
   const { db, ports, logger } = deps;
 
@@ -1536,6 +1569,20 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     'Me diga primeiro em qual conta (a organização tem várias). Ex: "foca na Loja X" — ou só o nome que eu identifico.';
   /** Sem conta em contexto (concierge-start) → pede o foco em vez de consultar vazio. */
   const noFocus = () => !ctx.adAccountId;
+
+  const listLearnings = tool(
+    async () => {
+      if (noFocus()) return NEEDS_FOCUS;
+      logger.debug({ agentId: ctx.agentId }, "tool:list_learnings");
+      return asString(await getLearningsData(db, ctx.orgId, ctx.agentId));
+    },
+    {
+      name: "list_learnings",
+      description:
+        "O que você APRENDEU observando esta conta ao longo das análises (padrões recorrentes, o que funcionou/não deu certo). Use quando o dono perguntar 'o que você aprendeu?', 'o que você já sabe da minha conta?', 'você aprende comigo?'. Cada item traz a confiança (explorando/provável/confirmado) e a origem. NÃO invente aprendizados fora desta lista; se vier vazio, diga com honestidade que ainda está conhecendo a conta.",
+      schema: z.object({}),
+    },
+  );
 
   const getAccountStatus = tool(
     async () => {
@@ -1942,6 +1989,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
   );
 
   return [
+    listLearnings,
     getAccountStatus,
     getMetrics,
     getFreshMetrics,

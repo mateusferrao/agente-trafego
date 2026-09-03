@@ -6,6 +6,8 @@ import type { GuardrailConfig, AutonomyPolicy, NotifyPolicy } from "@trafego/sha
 import {
   AGENT_TOOL_NAMES,
   CONCIERGE_TOOL_NAMES,
+  CONFIG_CHAT_TOOL_NAMES,
+  CONFIRM_LEARNING_TOOL_NAME,
   GROUP_CONCIERGE_TOOL_NAMES,
   actionFromToolCall,
   buildCapabilitiesText,
@@ -751,5 +753,82 @@ describe("buildCapabilitiesText — resumo curto e humano (não um manual)", () 
     expect(text).toContain("Quer que eu entre em detalhe");
     // enxuto: não é a parede antiga de 10+ blocos
     expect(text.split("\n").length).toBeLessThanOrEqual(9);
+  });
+
+  it("declara o aprendizado; confirmar por chat vira 'pelo site' com o kill-switch OFF", async () => {
+    const off = await buildCapabilitiesText(fakeCapabilitiesDeps(), CTX, new Set());
+    expect(off).toContain("aprendendo os padrões da sua conta");
+    expect(off).toContain("confirmar/corrigir é pelo site");
+
+    const on = await buildCapabilitiesText(
+      fakeCapabilitiesDeps(),
+      { ...CTX, configViaChat: true },
+      new Set([CONFIRM_LEARNING_TOOL_NAME]),
+    );
+    expect(on).toContain("aprendendo os padrões da sua conta");
+    expect(on).toContain("confirmar ou me corrigir por aqui");
+  });
+});
+
+describe("aprendizado no chat (S7): list_learnings sempre; confirm_learning gated pelo kill-switch", () => {
+  it("list_learnings entra na base em contexto (DM + grupo); confirm_learning só em CONFIG_CHAT", () => {
+    // leitura do aprendizado = sempre disponível com conta em contexto (DM e grupo).
+    expect(AGENT_TOOL_NAMES.has("list_learnings")).toBe(true);
+    expect(GROUP_CONCIERGE_TOOL_NAMES.has("list_learnings")).toBe(true);
+    // confirmar = config-por-chat (gated pelo kill-switch autoConfigViaChat), nunca na base.
+    expect(CONFIG_CHAT_TOOL_NAMES.has(CONFIRM_LEARNING_TOOL_NAME)).toBe(true);
+    expect(AGENT_TOOL_NAMES.has(CONFIRM_LEARNING_TOOL_NAME)).toBe(false);
+    // concierge (sem foco) não confirma nem lê aprendizado.
+    expect(CONCIERGE_TOOL_NAMES.has("list_learnings")).toBe(false);
+    expect(CONCIERGE_TOOL_NAMES.has(CONFIRM_LEARNING_TOOL_NAME)).toBe(false);
+  });
+
+  /** db falso: select→[row?]; update→espia o set. */
+  function learningDb(row: unknown, updateSpy = vi.fn()) {
+    const chain: Record<string, unknown> = {
+      select: () => chain,
+      from: () => chain,
+      where: () => chain,
+      limit: async () => (row ? [row] : []),
+      update: () => ({ set: (v: unknown) => { updateSpy(v); return { where: async () => {} }; } }),
+    };
+    return chain as never;
+  }
+  function confirmTool(deps: never, ctx: ConversationToolContext) {
+    return makeConversationTools(deps, ctx, CONFIG_CHAT_TOOL_NAMES).find(
+      (t) => t.name === CONFIRM_LEARNING_TOOL_NAME,
+    )! as unknown as { invoke: (a: unknown) => Promise<string> };
+  }
+
+  it("kill-switch OFF → responde 'pelo site' e NÃO toca o db", async () => {
+    const { deps } = makeDeps(() => null);
+    const update = vi.fn();
+    (deps as { db: unknown }).db = learningDb({ id: "m1", confidence: 0.5, content: "x" }, update);
+    const out = await confirmTool(deps, { ...CTX, configViaChat: false }).invoke({ learningId: "m1" });
+    expect(out.toLowerCase()).toContain("site");
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("kill-switch ON + achou → marca confirmedByHuman e sobe a confiança", async () => {
+    const { deps } = makeDeps(() => null);
+    const update = vi.fn();
+    (deps as { db: unknown }).db = learningDb({ id: "m1", confidence: 0.5, content: "campanha X é zumbi" }, update);
+    const out = await confirmTool(deps, { ...CTX, configViaChat: true }).invoke({ learningId: "m1" });
+    expect(update).toHaveBeenCalledTimes(1);
+    const patch = update.mock.calls[0]![0] as { confirmedByHuman: boolean; confidence: number; lifecycle: string };
+    expect(patch.confirmedByHuman).toBe(true);
+    expect(patch.lifecycle).toBe("active");
+    expect(patch.confidence).toBeGreaterThan(0.5);
+    expect(out.toLowerCase()).toContain("confirmado");
+  });
+
+  it("kill-switch ON + não achou → erro amigável da casca compartilhada, sem update (F-chat-3)", async () => {
+    const { deps } = makeDeps(() => null);
+    const update = vi.fn();
+    (deps as { db: unknown }).db = learningDb(null, update);
+    const out = await confirmTool(deps, { ...CTX, configViaChat: true }).invoke({ learningId: "nope" });
+    expect(update).not.toHaveBeenCalled();
+    // agora reusa @trafego/agent-config (mesma mensagem do site) em vez de texto inline do chat.
+    expect(out.toLowerCase()).toContain("não encontrado");
   });
 });

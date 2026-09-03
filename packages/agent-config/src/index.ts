@@ -123,28 +123,33 @@ export async function applyAgentConfigChange(
 
   const resolution = resolveAgentConfigChange(state, patch);
   if (resolution.error) return { ok: false, error: resolution.error };
-  const { next, changed, runRelevantChanged, cadenceChanged, notifyPolicyChanged, weakensSafety } = resolution;
+  const { next, changed, columnsChanged, runRelevantChanged, cadenceChanged, notifyPolicyChanged, weakensSafety } = resolution;
 
-  // agents: goals/textos/identidade/cadence/modelConfig/autonomia. configChangedAt só
-  // quando um campo relevante à análise mudou (força 1 deep no próximo run).
-  await db
-    .update(agents)
-    .set({
-      goals: next.goals,
-      businessContext: next.businessContext,
-      guidance: next.guidance,
-      persona: next.persona,
-      tone: next.tone,
-      systemPrompt: next.systemPrompt,
-      cadence: next.cadence,
-      modelConfig: next.modelConfig,
-      autonomyPolicy: next.autonomyPolicy,
-      notifyPolicy: next.notifyPolicy,
-      posture: next.posture,
-      ...(runRelevantChanged ? { configChangedAt: sql`now()` } : {}),
-      updatedAt: sql`now()`,
-    })
-    .where(and(eq(agents.id, agentId), eq(agents.orgId, orgId)));
+  // agents: escreve SÓ as colunas que realmente mudaram (UPDATE cirúrgico, F-worker-1). Antes
+  // reescrevia a linha inteira — tocava autonomy_policy/goals mesmo num patch só de quality (a
+  // "hard-wall" valia no VALOR, mas a coluna era escrita) e abria janela de lost-update com uma
+  // edição de config concorrente. `columnsChanged` vem da MESMA detecção do resolver (sem re-comparar).
+  const agentSet: Record<string, unknown> = { updatedAt: sql`now()` };
+  if (columnsChanged.goals) agentSet.goals = next.goals;
+  if (columnsChanged.businessContext) agentSet.businessContext = next.businessContext;
+  if (columnsChanged.guidance) agentSet.guidance = next.guidance;
+  if (columnsChanged.persona) agentSet.persona = next.persona;
+  if (columnsChanged.tone) agentSet.tone = next.tone;
+  if (columnsChanged.systemPrompt) agentSet.systemPrompt = next.systemPrompt;
+  if (columnsChanged.cadence) agentSet.cadence = next.cadence;
+  if (columnsChanged.modelConfig) agentSet.modelConfig = next.modelConfig;
+  if (columnsChanged.autonomyPolicy) agentSet.autonomyPolicy = next.autonomyPolicy;
+  if (columnsChanged.notifyPolicy) agentSet.notifyPolicy = next.notifyPolicy;
+  if (columnsChanged.posture) agentSet.posture = next.posture;
+  // configChangedAt só quando um campo relevante à análise mudou (força 1 deep no próximo run).
+  if (runRelevantChanged) agentSet.configChangedAt = sql`now()`;
+  // só escreve se ALGUMA coluna de `agents` mudou (guardrails/toolBindings têm tabela própria abaixo).
+  if (Object.keys(agentSet).length > 1) {
+    await db
+      .update(agents)
+      .set(agentSet)
+      .where(and(eq(agents.id, agentId), eq(agents.orgId, orgId)));
+  }
 
   // guardrails: linha própria — só toca quando o patch os enviou (upsert atômico pelo
   // unique(agent_id), cobre agentes sem linha sem TOCTOU).
@@ -385,3 +390,6 @@ async function writeAudit(
     ...(audit.metadata ? { metadata: audit.metadata } : {}),
   });
 }
+
+// Ações de mutação de aprendizado (v3) — reusadas por site + chat.
+export * from "./learning-actions.js";

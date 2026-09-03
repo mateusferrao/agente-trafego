@@ -100,6 +100,26 @@ export interface WorkerDeps {
   /** Cadência da expiração de aprovações (5b) — varre pendentes vencidas (24h). */
   readonly approvalExpiryCron: string;
   readonly groupContextPurgeCron: string;
+  /** Cadência do job de aprendizado (cron) — destila/mede/cura 1x/dia. */
+  readonly agentLearningCron: string;
+  /** Aprendizado contínuo — parâmetros globais (env; overrides por-agente em fatias seguintes). */
+  readonly learning: {
+    readonly historyRuns: number;
+    readonly minRuns: number;
+    readonly minOccurrenceRatio: number;
+    readonly briefTopK: number;
+    readonly maxNewLessonsPerTick: number;
+    readonly phaseBufferDays: number;
+    readonly outcomeWindowDays: number;
+    readonly decayStaleDays: number;
+    readonly decayArchiveDays: number;
+    readonly confirmedStaleDays: number;
+    readonly confirmedArchiveDays: number;
+    readonly accountMinEntities: number;
+    readonly temporalLookbackDays: number;
+    readonly opportunityMinMaterialMinor: number;
+    readonly advisoryDismissCooldownDays: number;
+  };
   /** Cap default global de custo LLM por org/período (env). Cap por-org = guardrail_configs. */
   readonly costCapUsd: number;
   /** Config do chat do WhatsApp (Grafo B ReAct, 5b-2). Modelo = fallback (agente vence). */
@@ -348,6 +368,25 @@ export async function buildComposition(): Promise<WorkerDeps> {
     },
     approvalExpiryCron: env.APPROVAL_EXPIRY_CRON,
     groupContextPurgeCron: env.GROUP_CONTEXT_PURGE_CRON,
+    agentLearningCron: env.AGENT_LEARNING_CRON,
+    learning: {
+      historyRuns: env.LEARNING_HISTORY_RUNS,
+      minRuns: env.LEARNING_MIN_RUNS,
+      minOccurrenceRatio: env.LEARNING_MIN_OCCURRENCE_RATIO,
+      briefTopK: env.LEARNING_BRIEF_TOP_K,
+      // teto de criação de lições por tick (texto é determinístico; sem LLM).
+      maxNewLessonsPerTick: env.LEARNING_MAX_NEW_LESSONS_PER_TICK,
+      phaseBufferDays: env.LEARNING_PHASE_BUFFER_DAYS,
+      outcomeWindowDays: env.LEARNING_OUTCOME_WINDOW_DAYS,
+      decayStaleDays: env.LEARNING_DECAY_STALE_DAYS,
+      decayArchiveDays: env.LEARNING_DECAY_ARCHIVE_DAYS,
+      confirmedStaleDays: env.LEARNING_CONFIRMED_STALE_DAYS,
+      confirmedArchiveDays: env.LEARNING_CONFIRMED_ARCHIVE_DAYS,
+      accountMinEntities: env.LEARNING_ACCOUNT_MIN_ENTITIES,
+      temporalLookbackDays: env.LEARNING_TEMPORAL_LOOKBACK_DAYS,
+      opportunityMinMaterialMinor: env.LEARNING_OPPORTUNITY_MIN_MATERIAL_MINOR,
+      advisoryDismissCooldownDays: env.LEARNING_ADVISORY_DISMISS_COOLDOWN_DAYS,
+    },
     costCapUsd: env.LLM_COST_CAP_USD_PER_PERIOD,
     conversation: {
       model: env.CONVERSATION_MODEL,

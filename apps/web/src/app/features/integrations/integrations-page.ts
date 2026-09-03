@@ -1,6 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { NgIcon, provideIcons } from '@ng-icons/core';
-import { lucideRefreshCw, lucidePlus, lucideX, lucidePlug } from '@ng-icons/lucide';
+import { lucideRefreshCw, lucidePlus, lucideX } from '@ng-icons/lucide';
 import {
   UiButton,
   UiDialog,
@@ -78,7 +78,7 @@ const CHANNEL_TEXT: Record<ChannelStatus, string> = {
     ConnectDialogComponent,
     WhatsappConnect,
   ],
-  providers: [provideIcons({ lucideRefreshCw, lucidePlus, lucideX, lucidePlug })],
+  providers: [provideIcons({ lucideRefreshCw, lucidePlus, lucideX })],
   template: `
     <div class="flex flex-col gap-8">
       <app-ui-page-header
@@ -102,7 +102,7 @@ const CHANNEL_TEXT: Record<ChannelStatus, string> = {
           </div>
         } @else if (connectedCount() === 0) {
           <app-ui-empty-state
-            icon="lucidePlug"
+            brand
             title="Nada conectado ainda"
             description="Escolha um provedor abaixo para conectar a Meta e o WhatsApp."
           />
@@ -427,5 +427,5 @@ function syncSummary(changes: {
   if (changes.newAvailable > 0) parts.push(`${changes.newAvailable} nova(s) disponível(is)`);
   if (changes.reactivated > 0) parts.push(`${changes.reactivated} reativada(s)`);
   if (changes.markedUnavailable > 0) parts.push(`${changes.markedUnavailable} indisponível(is)`);
-  return parts.length > 0 ? `Sincronizado — ${parts.join(', ')}` : 'Sincronizado — nada mudou';
+  return parts.length > 0 ? `Sincronizado: ${parts.join(', ')}.` : 'Sincronizado. Nada mudou.';
 }

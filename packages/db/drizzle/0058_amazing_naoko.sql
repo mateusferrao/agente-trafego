@@ -1,0 +1,1 @@
+ALTER TABLE "agent_memory" ADD COLUMN "pattern" text;

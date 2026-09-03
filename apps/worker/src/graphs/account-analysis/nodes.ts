@@ -26,9 +26,13 @@ import {
   decideActions,
   deriveAdsetUnits,
   describeSignal,
+  detectGuardrailOpportunity,
+  PROMPT_CONFIDENCE_THRESHOLD,
+  type ClampedBudgetRaise,
   dropUnsupportedFindings,
   eligibilityByEntity,
   guardScaleWithoutSignificance,
+  guardUnconfirmedHypothesis,
   guardKillWithoutMaturity,
   guardTrackingCaveat,
   guardScaleWithWorseningMarginalCpa,
@@ -57,9 +61,10 @@ import {
   selectCreatives,
   targetStatusOf,
   volumeToRecCount,
+  selectLessonsForBrief,
   type LastUnit,
 } from "@trafego/core";
-import { ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS, DEFAULT_CURRENCY, DEFAULT_POSTURE, extractPhoneFromName, plural } from "@trafego/shared";
+import { ACTION_PARAM_CURRENT_MINOR, ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS, BUDGET_MODE_INCREASE, DEFAULT_CURRENCY, DEFAULT_POSTURE, extractPhoneFromName, plural } from "@trafego/shared";
 import { recommendations } from "@trafego/db";
 import { funnelFromRawActions, mapStatus } from "@trafego/ads-meta";
 import { loadAccountAudiences, loadAgentContext, PROACTIVE_AUDIENCE_UNRESOLVED_REASON, PROACTIVE_REACH_FLOOR_REASON, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner } from "../../modules/conversation/draft-proposal.js";
@@ -122,6 +127,7 @@ import {
   type LastEntityAnalysis,
 } from "../../modules/analysis/entity-analyses.repo.js";
 import { createNotifyRepo, type NotifyRepo } from "../../modules/notify/repo.js";
+import { createLearningRepo, type LearningRepo } from "../../modules/learning/repo.js";
 import { createSendToConversation } from "../../modules/notify/send-to-contact.js";
 import { createVisionResolver, servingVisionKey } from "../../modules/vision/resolver.js";
 import { makeMetaToolExecutor, type MetaToolExecutor } from "../../executors/meta-tools.js";
@@ -144,6 +150,10 @@ import type { AccountAnalysisStateType, AccountAnalysisUpdate } from "./state.js
 
 /** Nº de dias sem análise que dispara um run DEEP (reanalisa tudo). */
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Sub-unidade da moeda (centavos por real) — converte o budget major do `AdEntity` de volta pra
+ *  minor no contexto de exibição da ação. Convenção repetida no monorepo (ver `runs/service.ts`). */
+const MINOR_PER_UNIT = 100;
 
 /** Piso de alcance mensal (Fatia 8) pra o AUTÔNOMO criar/replicar sozinho — abaixo disso a proposta
  *  degrada pra recomendação humana em vez de criar. Fast-follow: tornar configurável por-agente. */
@@ -211,6 +221,8 @@ export interface AnalysisNodeRepos {
   readonly breakdowns: InsightsBreakdownsRepo;
   readonly notify: NotifyRepo;
   readonly entityAnalyses: EntityAnalysesRepo;
+  /** aprendizado contínuo — lê as lições ativas p/ injetar no brief (S1). */
+  readonly learning: LearningRepo;
   /** resolver de visão — injetável p/ teste; default cria por-run (com meta). */
   readonly vision?: CreativeVisionPort;
   /** executor de escrita — injetável p/ teste; default = Meta via ports. */
@@ -225,6 +237,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
   const breakdowns = repos?.breakdowns ?? createDrizzleInsightsBreakdownsRepo(deps.db);
   const notifyRepo = repos?.notify ?? createNotifyRepo(deps.db);
   const entityAnalysesRepo = repos?.entityAnalyses ?? createEntityAnalysesRepo(deps.db);
+  const learningRepo = repos?.learning ?? createLearningRepo(deps.db);
   const executor = repos?.executor ?? makeMetaToolExecutor(deps);
   const sendToConversation = createSendToConversation({ messaging: deps.ports.messaging, repo: notifyRepo });
 
@@ -257,6 +270,20 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const windowLabel = `últimos ${cfg.windowDays} dias`;
     const baselineLabel = `${cfg.baselineDays} dias anteriores`;
 
+    // aprendizado contínuo: divide as lições ativas em confirmadas/alta (→ prompt do
+    // analista, rotuladas) e hipóteses (→ guard assimétrico silencioso, S3). Teto top-K.
+    const activeLessons = await learningRepo.loadActiveLessons(state.orgId, state.agentId);
+    const selectedLessons = selectLessonsForBrief(activeLessons, deps.learning.briefTopK);
+    // condição do aviso de oportunidade de guardrail (v3): há prior MEDIDO de que escalar o que
+    // tem base compensa nesta conta (account_scale_pays = pacing/raise, forte o bastante p/ o prompt).
+    const hasScalePaysPrior = activeLessons.some(
+      (l) =>
+        l.key.scope === "account" &&
+        l.key.dimension === "pacing" &&
+        l.key.direction === "raise" &&
+        (l.confirmedByHuman || l.confidence >= PROMPT_CONFIDENCE_THRESHOLD),
+    );
+
     await repo.openRun(state.orgId, state.runId, {
       goals: ctx.goals,
       model: cfg.model,
@@ -276,6 +303,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       posture: ctx.posture,
       guardrailConfig,
       rejectedMemory: ctx.rejectedMemory,
+      lessons: [...selectedLessons.prompt],
+      lessonGuards: [...selectedLessons.guards],
+      hasScalePaysPrior,
       mutedCampaignIds: ctx.mutedCampaignIds,
       orgMarketReference: ctx.orgMarketReference,
       agentMarketReference: agentMarketReferenceFromModelConfig(ctx.modelConfig),
@@ -460,7 +490,13 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       ...(state.mutedCampaignIds ? { mutedCampaignIds: new Set(state.mutedCampaignIds) } : {}),
       ...(state.demographics ? { demographics: state.demographics } : {}),
       ...(state.placements ? { placements: state.placements } : {}),
-      memory: { objectives: [], pastActions: [], rejected: [...(state.rejectedMemory ?? [])] },
+      memory: {
+        objectives: [],
+        pastActions: [],
+        rejected: [...(state.rejectedMemory ?? [])],
+        // aprendizados curados desta conta (confirmados/alta confiança) — rotulados no prompt.
+        lessons: (state.lessons ?? []).map((l) => ({ content: l.content, tier: l.tier, origin: l.origin })),
+      },
     });
     if (built.status === "empty") {
       return { brief: null, analysisOutput: null, findings: [], summary: NO_ACTIVITY_SUMMARY, unitAnalyses: [], freshUnits: [], campaignCards: [] };
@@ -813,12 +849,16 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       cfg,
     );
     const audienceGuarded = guardAudienceScaleCeiling(freshCreativeGuarded, audienceHeadroom, DEFAULT_AUDIENCE_CEILING_THRESHOLDS);
+    // influência assimétrica do aprendizado (S3): uma hipótese NÃO confirmada de direção
+    // `lower` só rebaixa ESCALA → investigar (nunca promove) — aprende cedo sem nunca ficar
+    // mais arriscado. Lições confirmadas não vêm aqui (influenciam via prompt do analista).
+    const hypothesisGuarded = guardUnconfirmedHypothesis(audienceGuarded, state.lessonGuards ?? []);
     // impacto (Bloco 2): anexa o gasto liberado a cada recomendação de pausa.
     const spendById = new Map<string, number>();
     for (const level of [state.brief.segments.campaigns, state.brief.segments.adsets, state.brief.segments.ads]) {
       for (const e of level) spendById.set(e.id, e.metrics.spend ?? 0);
     }
-    const final = annotateFreedSpend(audienceGuarded, spendById, state.brief.account.currency);
+    const final = annotateFreedSpend(hypothesisGuarded, spendById, state.brief.account.currency);
     const findings: Finding[] = final.findings.map((f) => ({
       title: f.title,
       detail: f.detail,
@@ -852,8 +892,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     }
     if (!state.analysisOutput) return {};
     const knownIds = new Set(state.entities.map((e) => e.id));
+    const budgetMinorById = buildCurrentBudgetMinorById(state.entities);
     const rows = state.analysisOutput.recommendations.map((rec) =>
-      toRecommendationRow(rec, state.orgId, state.runId, knownIds),
+      toRecommendationRow(rec, state.orgId, state.runId, knownIds, budgetMinorById),
     );
     await repo.saveRecommendations(rows);
     // ações propostas pelo LLM (com alvo válido) → candidatas do caminho de escrita.
@@ -1105,6 +1146,22 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     });
     // persiste as análises por-unidade REANALISADAS (base do incremental/herança).
     await entityAnalysesRepo.saveMany(state.agentId, state.runId, state.freshUnits ?? []);
+    // snapshot da config (orçamento/status) das entidades no dia — base p/ detectar mudança
+    // manual do gestor (aprendizado S4). Cadência da análise; sem chamada Meta extra (a
+    // config já veio em state.entities). Falha aqui NÃO derruba o run (best-effort).
+    // só campanha/conjunto: o orçamento/status vivem aí; ad-level nunca vira mudança manual
+    // aprendível (sem orçamento próprio) → seria só volume de escrita/scan sem payoff.
+    const configEntities = (state.entities ?? []).filter((e) => e.level === "campaign" || e.level === "adset");
+    if (configEntities.length > 0) {
+      try {
+        // dia da análise no fuso da ORG (mesmo carimbo dos insights_snapshots dated-Meta) —
+        // `window.until`; fallback ao tz global só se a janela não resolveu.
+        const today = state.window?.until ?? todayInTz(new Date(), deps.cron.tz);
+        await learningRepo.saveEntityConfigSnapshots({ orgId: state.orgId, adAccountId: state.adAccountId, date: today, entities: configEntities });
+      } catch (err) {
+        logger.warn({ err, runId: state.runId }, "record:config-snapshot falhou");
+      }
+    }
     // Sincronização (achado real): campanha que ESTAVA no cache e SUMIU do conjunto ativo
     // (pausada/arquivada fora daqui) — marca `deactivatedSince` pra chat/site pararem de
     // tratá-la como se nada tivesse mudado. SÓ quando a listagem deste run foi ÍNTEGRA
@@ -1139,10 +1196,18 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     // rótulo legível vem do catálogo cru (`state.entities`, todos os status) — cobre
     // entidades pausadas que nunca passam pelo mapa/LLM (não têm `entity_analyses`).
     const nameById = new Map((state.entities ?? []).map((e) => [e.id, e.name]));
+    // orçamento atual da entidade-alvo → contexto de exibição em adjust_budget (card mostra
+    // "atual → proposto"). Enriquece aqui, no mesmo ponto do nome, cobrindo playbook + LLM.
+    const budgetMinorById = buildCurrentBudgetMinorById(state.entities ?? []);
     const merged = [...(state.playbookCandidates ?? []), ...(state.llmCandidates ?? [])].map((a) => {
       const name = nameById.get(a.target.id);
       // `name` opcional (exactOptionalPropertyTypes): só inclui quando conhecido.
-      return name !== undefined ? { ...a, target: { ...a.target, name } } : a;
+      const withName = name !== undefined ? { ...a, target: { ...a.target, name } } : a;
+      const currentMinor = budgetMinorById.get(a.target.id);
+      // só adjust_budget SEM atual já capturado ganha o contexto (não sobrescreve o do propose).
+      if (withName.type !== "adjust_budget" || currentMinor === undefined) return withName;
+      if (ACTION_PARAM_CURRENT_MINOR in withName.params) return withName;
+      return { ...withName, params: { ...withName.params, [ACTION_PARAM_CURRENT_MINOR]: currentMinor } };
     });
     const { kept, dropped } = resolveActionConflicts(merged);
     if (dropped.length > 0) logger.debug({ runId: state.runId, dropped: dropped.length }, "decide:conflitos resolvidos");
@@ -1186,7 +1251,18 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const pending = applyGuardrails(state.decision?.needApproval ?? [], state.guardrailConfig, ctx);
     const dropped = [...auto.dropped, ...pending.dropped];
     if (dropped.length > 0) logger.info({ runId: state.runId, dropped: dropped.length }, "guardrail:ações barradas");
-    return { guardrail: auto, approvalCandidates: pending.allowed, droppedActions: dropped };
+
+    // Aviso de OPORTUNIDADE de guardrail (v3): o teto de budget clampou uma escala que um prior
+    // MEDIDO diz compensar → só APONTA pra config (nunca muta o guardrail — hard-wall).
+    const clampedRaises = extractClampedRaises([...auto.allowed, ...pending.allowed], state.entities);
+    const guardrailOpportunity = detectGuardrailOpportunity({
+      clampedRaises,
+      hasScalePaysPrior: state.hasScalePaysPrior ?? false,
+      minMaterialMinor: deps.learning.opportunityMinMaterialMinor,
+    });
+    if (guardrailOpportunity) logger.info({ runId: state.runId, foregoneMinor: guardrailOpportunity.foregoneMinor }, "guardrail:oportunidade de afrouxar teto");
+
+    return { guardrail: auto, approvalCandidates: pending.allowed, droppedActions: dropped, guardrailOpportunity };
   }
 
   /**
@@ -1571,6 +1647,9 @@ function buildMetricsSnapshot(state: AccountAnalysisStateType): Record<string, u
       : {}),
     // ações barradas pelo guardrail (motivo) — a mini-surface mostra como "barradas".
     ...((state.droppedActions ?? []).length > 0 ? { droppedActions: state.droppedActions } : {}),
+    // aviso de oportunidade de guardrail (v3) — a aba Aprendizados deriva a zona "Oportunidades"
+    // do ÚLTIMO run (sinal vivo, recomputado a cada run; some sozinho quando não reaparece).
+    ...(state.guardrailOpportunity ? { guardrailOpportunity: state.guardrailOpportunity } : {}),
   };
 }
 
@@ -1604,6 +1683,9 @@ function buildCampaignCards(
       topFinding: top ? { title: top.title, severity: top.severity } : null,
       flags: [...u.campaign.flags],
       ...(u.campaign.tier ? { tier: u.campaign.tier } : {}),
+      ...(u.campaign.healthSignals && u.campaign.healthSignals.length > 0
+        ? { healthSignals: [...u.campaign.healthSignals] }
+        : {}),
       ...(stage ? { stage } : {}),
       ...(u.campaign.budget ? { budget: u.campaign.budget } : {}),
       ...(u.campaign.atBudgetCeiling !== undefined ? { atBudgetCeiling: u.campaign.atBudgetCeiling } : {}),
@@ -1676,10 +1758,12 @@ function toRecommendationRow(
   orgId: string,
   runId: string,
   knownIds: ReadonlySet<string>,
+  budgetMinorById: ReadonlyMap<string, number>,
 ): RecommendationRow {
   const actionType = applicableActionType(rec.actionType);
   const hasValidTarget = rec.targetEntity !== null && knownIds.has(rec.targetEntity.externalId);
-  const params = budgetParams(rec);
+  const currentMinor = rec.targetEntity ? budgetMinorById.get(rec.targetEntity.externalId) : undefined;
+  const params = budgetParams(rec, currentMinor);
   // budget sem pct válido → NÃO vira ação (evitaria daily_budget=NaN na Meta); fica consultiva.
   const budgetOk = actionType !== "adjust_budget" || ACTION_PARAM_PCT in params;
   const proposedAction: Action | null =
@@ -1746,6 +1830,49 @@ function buildBudgetByEntity(entities: readonly AdEntity[]): Map<string, boolean
     map.set(entityKeyOf({ level: e.level, id: e.id }), e.dailyBudget !== undefined || e.lifetimeBudget !== undefined);
   }
   return map;
+}
+
+/**
+ * Mapa `id → orçamento atual (unidade mínima)` da entidade (diário preferido, senão vitalício).
+ * Enriquece a ação `adjust_budget` com o atual (`ACTION_PARAM_CURRENT_MINOR`) p/ o card de
+ * aprovação mostrar "atual → proposto" — mesma fonte curada, sem bater na Meta. Keyed por id
+ * (ids da Meta são globais; casa com o `nameById` do decide). Só entidades COM orçamento entram.
+ *
+ * `AdEntity.dailyBudget`/`lifetimeBudget` já vêm em unidade MAIOR (reais — o adapter converte na
+ * entrada, ver `types/index.ts`), então convertemos de volta pra MENOR aqui: o consumidor do card
+ * (`ACTION_PARAM_CURRENT_MINOR`) espera minor e re-divide por 100. Sem isto, o valor exibido sai
+ * 100× menor (R$ 2,20 em vez de R$ 220).
+ */
+export function buildCurrentBudgetMinorById(entities: readonly AdEntity[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const e of entities) {
+    const major = e.dailyBudget ?? e.lifetimeBudget;
+    if (major !== undefined) map.set(e.id, Math.round(major * MINOR_PER_UNIT));
+  }
+  return map;
+}
+
+/**
+ * Extrai as escalas de budget que o guardrail CLAMPOU (o analista queria mais que o teto) — o
+ * `clampedFrom` (pct original) marca o clamp. Só `adjust_budget` de AUMENTO com budget diário
+ * conhecido (base do R$ bloqueado). Alimenta o aviso de oportunidade (v3).
+ */
+function extractClampedRaises(actions: readonly Action[], entities: readonly AdEntity[]): ClampedBudgetRaise[] {
+  const budgetMinorByEntity = new Map<string, number>();
+  for (const e of entities) {
+    if (typeof e.dailyBudget === "number") budgetMinorByEntity.set(entityKeyOf({ level: e.level, id: e.id }), e.dailyBudget);
+  }
+  const out: ClampedBudgetRaise[] = [];
+  for (const a of actions) {
+    if (a.type !== "adjust_budget" || a.params[ACTION_PARAM_MODE] !== BUDGET_MODE_INCREASE) continue;
+    const wantedPct = a.params.clampedFrom;
+    const cappedPct = a.params[ACTION_PARAM_PCT];
+    if (typeof wantedPct !== "number" || typeof cappedPct !== "number") continue;
+    const currentBudgetMinor = budgetMinorByEntity.get(entityKeyOf(a.target));
+    if (typeof currentBudgetMinor !== "number") continue;
+    out.push({ wantedPct: Math.abs(wantedPct), cappedPct: Math.abs(cappedPct), currentBudgetMinor });
+  }
+  return out;
 }
 
 /**
@@ -1854,11 +1981,16 @@ async function resolveAudienceHeadroomByEntity(
   return headroomByEntity;
 }
 
-/** Params da ação de budget (direção + magnitude), quando for o caso. `pct` sempre ≥0. */
-function budgetParams(rec: AnalysisRecommendation): Record<string, unknown> {
+/** Params da ação de budget (direção + magnitude), quando for o caso. `pct` sempre ≥0.
+ *  `currentMinor` (contexto de exibição, opcional) = orçamento atual da entidade-alvo. */
+function budgetParams(rec: AnalysisRecommendation, currentMinor?: number): Record<string, unknown> {
   const dir = budgetDirection(rec.actionType);
   if (dir && typeof rec.budgetChangePct === "number" && Number.isFinite(rec.budgetChangePct)) {
-    return { [ACTION_PARAM_MODE]: dir, [ACTION_PARAM_PCT]: Math.abs(rec.budgetChangePct) };
+    return {
+      [ACTION_PARAM_MODE]: dir,
+      [ACTION_PARAM_PCT]: Math.abs(rec.budgetChangePct),
+      ...(currentMinor !== undefined ? { [ACTION_PARAM_CURRENT_MINOR]: currentMinor } : {}),
+    };
   }
   return {};
 }

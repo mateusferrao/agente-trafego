@@ -1,7 +1,7 @@
 import { ChangeDetectionStrategy, Component, type OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { toast } from 'ngx-sonner';
-import { UiButton, UiConfirmDialogService, UiEmptyState, UiEyebrow, UiPageHeader } from '@ui';
+import { NumberStepper, UiButton, UiConfirmDialogService, UiEmptyState, UiEyebrow, UiInput, UiPageHeader } from '@ui';
 import { DraftEditPanel } from './draft-edit-panel';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import { ApprovalsApiService } from '@core/api/approvals-api.service';
@@ -10,7 +10,7 @@ import { AGENT_NAME } from '@core/brand';
 import type { ApprovalOutput, DraftApprovalOutput, RevertibleActionOutput } from '@core/api/generated';
 import { UNDO_WARNING, actionTypeLabel, deadlineText, entityTargetLabel } from '@app/shared/action-format';
 import { conversionLabel } from '@app/shared/conversion-label';
-import { money } from '@app/shared/format';
+import { currencySymbol, money } from '@app/shared/format';
 
 interface AccountGroup<T> {
   readonly accountId: string;
@@ -40,7 +40,7 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
 @Component({
   selector: 'app-approvals-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, UiEmptyState, UiPageHeader, UiButton, UiEyebrow, DraftEditPanel],
+  imports: [FormsModule, UiEmptyState, UiPageHeader, UiButton, UiEyebrow, UiInput, NumberStepper, DraftEditPanel],
   template: `
     <div class="flex flex-col gap-8">
       <app-ui-page-header
@@ -155,6 +155,9 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                             {{ typeLabel(a.type) }} {{ pendingTargetOf(a) }}
                           </span>
                           <span class="text-xs text-muted">{{ a.reason }}</span>
+                          @if (budgetLine(a); as bl) {
+                            <span class="text-xs font-medium text-ink">{{ bl }}</span>
+                          }
                         </span>
                         <span class="flex shrink-0 gap-2">
                           @if (a.type === 'adjust_budget') {
@@ -174,14 +177,16 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                         <div class="flex flex-col gap-2 border-t border-line pt-3">
                           <div class="flex flex-col gap-2 sm:flex-row sm:items-end">
                             <label class="flex flex-1 flex-col gap-1 text-sm">
-                              <span class="text-muted">Novo orçamento diário (R$)</span>
+                              <span class="text-muted">Novo orçamento diário ({{ currencySymbol(a.currency) }})</span>
                               <input
+                                appInput
+                                appNumberStepper
                                 type="number"
+                                inputmode="decimal"
                                 min="1"
                                 step="1"
                                 [ngModel]="editBudgetReais()"
                                 (ngModelChange)="editBudgetReais.set($event)"
-                                class="rounded-md border border-line bg-panel px-3 py-2 text-ink"
                               />
                             </label>
                             <button appButton size="sm" [disabled]="savingAction()" (click)="saveActionEdit(a)">
@@ -321,6 +326,17 @@ export class ApprovalsPage implements OnInit {
   };
   protected objectiveLabel = (o: string | null): string => (o ? conversionLabel(o) : '');
   protected money = money;
+  protected currencySymbol = currencySymbol;
+
+  /** Contexto de orçamento do card (só adjust_budget com atual conhecido): "atual X → proposto Y"
+   *  — dá base pro usuário aprovar/ajustar com mais informação (a projeção respeita o teto no apply).
+   *  Sem sufixo de período: o valor pode ser diário OU vitalício (o motivo já esclarece qual). */
+  protected budgetLine(a: ApprovalOutput): string | null {
+    if (a.type !== 'adjust_budget' || a.currentBudgetMajor == null) return null;
+    const atual = `orçamento atual ${money(a.currentBudgetMajor, a.currency)}`;
+    if (a.targetBudgetMajor == null) return atual;
+    return `${atual} → proposto ${money(a.targetBudgetMajor, a.currency)}`;
+  }
 
   ngOnInit(): void {
     this.api.listPending().subscribe({
@@ -353,7 +369,7 @@ export class ApprovalsPage implements OnInit {
     this.api.resolve(d.id, 'approve').subscribe({
       next: () => {
         this.removeDraft(d.id);
-        toast.success(d.approvalKind === 'activation' ? 'Ativando — já deve estar veiculando.' : 'Enviado para criação. O agente cria em instantes.');
+        toast.success(d.approvalKind === 'activation' ? 'Ativando. Já deve estar veiculando.' : `Enviado pra criação. O ${AGENT_NAME} cria em instantes.`);
       },
       error: () => this.clearResolving(d.id),
     });
@@ -366,7 +382,7 @@ export class ApprovalsPage implements OnInit {
     this.api.resolve(d.id, 'reject').subscribe({
       next: () => {
         this.removeDraft(d.id);
-        toast.success(d.approvalKind === 'activation' ? 'Tudo bem, ela continua pausada.' : 'Rascunho descartado');
+        toast.success(d.approvalKind === 'activation' ? 'Tudo bem, ela continua pausada.' : 'Descartei o rascunho.');
       },
       error: () => this.clearResolving(d.id),
     });
@@ -419,7 +435,7 @@ export class ApprovalsPage implements OnInit {
     this.api.resolve(a.id, 'approve').subscribe({
       next: () => {
         this.removePending(a.id);
-        toast.success('Enviado para aplicação. O agente aplica em instantes.');
+        toast.success(`Aprovado. O ${AGENT_NAME} aplica em instantes.`);
       },
       error: () => this.clearResolving(a.id),
     });
@@ -431,16 +447,18 @@ export class ApprovalsPage implements OnInit {
     this.api.resolve(a.id, 'reject').subscribe({
       next: () => {
         this.removePending(a.id);
-        toast.success('Sugestão descartada');
+        toast.success('Descartei a sugestão.');
       },
       error: () => this.clearResolving(a.id),
     });
   }
 
-  /** Abre/fecha o editor de valor de uma ação adjust_budget (C) — reseta o campo ao alternar. */
+  /** Abre/fecha o editor de valor de uma ação adjust_budget (C). Ao abrir, pré-preenche com o
+   *  valor PROPOSTO (senão o atual) — o usuário parte do número sugerido em vez de um campo vazio. */
   protected toggleEditAction(a: ApprovalOutput): void {
-    this.editingActionId.update((cur) => (cur === a.id ? null : a.id));
-    this.editBudgetReais.set(null);
+    const opening = this.editingActionId() !== a.id;
+    this.editingActionId.set(opening ? a.id : null);
+    this.editBudgetReais.set(opening ? (a.targetBudgetMajor ?? a.currentBudgetMajor ?? null) : null);
   }
 
   /** Salva o novo VALOR (R$/dia, mode "set") da ação pendente antes de aprovar (C). A ação segue
@@ -448,7 +466,7 @@ export class ApprovalsPage implements OnInit {
   protected saveActionEdit(a: ApprovalOutput): void {
     const reais = this.editBudgetReais();
     if (reais == null || !(reais > 0)) {
-      toast.error('Informe um valor maior que zero.');
+      toast.error('O valor precisa ser maior que zero.');
       return;
     }
     this.savingAction.set(true);
@@ -457,8 +475,17 @@ export class ApprovalsPage implements OnInit {
         this.savingAction.set(false);
         this.editingActionId.set(null);
         toast.success('Valor atualizado. Agora é só aprovar.');
+        // recarrega pra o card refletir o novo "proposto" (senão fica o valor velho até dar F5).
+        this.reloadPending();
       },
       error: () => this.savingAction.set(false),
+    });
+  }
+
+  /** Recarrega as pendentes (reflete o novo valor proposto no card após editar). */
+  private reloadPending(): void {
+    this.api.listPending().subscribe({
+      next: (rows) => this.pendingGroups.set(groupByAccount(rows)),
     });
   }
 
@@ -475,7 +502,7 @@ export class ApprovalsPage implements OnInit {
       tone: 'warning',
     });
     if (!confirmed) return;
-    this.runRevert(a, false, 'archive', 'Arquivando a campanha criada');
+    this.runRevert(a, false, 'archive', 'Arquivando a campanha criada.');
   }
 
   /** Reverter (por-conta, mesma rota da mini-surface). `force` = "mesmo assim" após drift;
@@ -483,7 +510,7 @@ export class ApprovalsPage implements OnInit {
   protected async revert(a: RevertibleActionOutput, force = false, mode?: 'pause' | 'archive'): Promise<void> {
     if (this.isCreation(a) && mode === 'pause') {
       // pausar é seguro/reversível — sem diálogo, ação direta.
-      this.runRevert(a, false, 'pause', 'Pausando a campanha criada');
+      this.runRevert(a, false, 'pause', 'Pausando a campanha criada.');
       return;
     }
     const description = force && a.revertBlockedReason ? `${a.revertBlockedReason}. ${UNDO_WARNING}` : UNDO_WARNING;
@@ -494,7 +521,7 @@ export class ApprovalsPage implements OnInit {
       tone: 'warning',
     });
     if (!confirmed) return;
-    this.runRevert(a, force, mode, 'Revertendo — a ação volta ao estado anterior');
+    this.runRevert(a, force, mode, 'Revertendo. A ação volta ao estado anterior.');
   }
 
   private runRevert(a: RevertibleActionOutput, force: boolean, mode: 'pause' | 'archive' | undefined, successMsg: string): void {

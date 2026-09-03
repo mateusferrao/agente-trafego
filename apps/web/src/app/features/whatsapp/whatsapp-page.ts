@@ -4,6 +4,7 @@ import { lucideCircleCheck } from '@ng-icons/lucide';
 import { toast } from 'ngx-sonner';
 import { UiButton, UiSpinner, UiEyebrow, UiInput } from '@ui';
 import { ChannelApiService } from '@core/api/channel-api.service';
+import { AGENT_NAME } from '@core/brand';
 import type { ChannelStateOutput, GroupsListOutput } from '@core/api/generated';
 
 type GroupOption = GroupsListOutput['groups'][number];
@@ -539,7 +540,7 @@ export class WhatsappConnect {
         // resposta 200 com código errado não é erro HTTP → toast explícito.
         if (r.verified) {
           this.stopCountdown();
-          toast.success('Número confirmado');
+          toast.success('Número confirmado. Já podemos falar por lá.');
         } else {
           toast.error('Código inválido. Peça um novo e tente de novo.');
         }
@@ -601,7 +602,7 @@ export class WhatsappConnect {
           return;
         }
         this.activeGroupName.set(r.name ?? r.groupJid);
-        toast.success('Grupo ativado. O agente já responde por lá');
+        toast.success(`Grupo ativado. O ${AGENT_NAME} já responde por lá.`);
       },
       error: () => this.settingGroupJid.set(null),
     });
@@ -648,7 +649,7 @@ export class WhatsappConnect {
         this.pollErrors = 0;
         this.pollStalled.set(false);
         this.applyState(s);
-        if (this.connected()) toast.success('WhatsApp conectado');
+        if (this.connected()) toast.success('WhatsApp conectado. Te aviso das análises por lá.');
         else setTimeout(() => this.poll(), POLL_INTERVAL_MS);
       },
       error: () => {

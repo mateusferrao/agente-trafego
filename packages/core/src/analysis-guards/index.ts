@@ -2,6 +2,7 @@ import type { AccountBrief, ConversionBasis, DecisionEligibility, EntitySummary,
 import type { AnalysisFinding, AnalysisOutput, RecommendationActionType } from "@trafego/shared";
 import { flagUngroundedNumbers } from "../chat-guards/index.js";
 import { DEFAULT_QUALITY_THRESHOLDS } from "../quality/index.js";
+import type { LessonGuard } from "../learning/index.js";
 
 /**
  * Guards determinísticos sobre a saída do LLM (§ princípio-guia: rede que não
@@ -457,6 +458,55 @@ const INVESTIGATE_TITLE_PREFIX = "Investigar: ";
  *  guard anterior, os seguintes já retornam cedo e nunca reprocessam o título. */
 function demotedTitle(title: string): string {
   return title.startsWith(INVESTIGATE_TITLE_PREFIX) ? title : `${INVESTIGATE_TITLE_PREFIX}${title}`;
+}
+
+// ─── Guard de hipótese não-confirmada (aprendizado, S3 + v3) ──────────────
+// Influência ASSIMÉTRICA das lições: uma hipótese ainda NÃO confirmada (atribuição
+// fraca) só pode puxar a análise p/ o lado MAIS conservador — rebaixa uma ESCALA
+// (`increase_budget`/`resume`) → `investigate` quando um aprendizado de direção `lower`
+// aponta cautela naquela entidade OU na conta. NUNCA promove/libera nada mais arriscado.
+// Casa com a filosofia dos demais guards (que só rebaixam). Lições CONFIRMADAS (ou já
+// fortes, ≥ limiar de prompt) não passam por aqui — elas influenciam via texto do prompt.
+
+/**
+ * Rebaixa escala → investigar sob uma lição-guia NÃO confirmada de direção `lower`:
+ *  - escopo `account` → rebaixa TODA escala da conta (o prior de conta ainda fraco restringe
+ *    amplamente, conservador — a assimetria da v3: hipótese não-confirmada só endurece);
+ *  - escopo `entity` → rebaixa só a entidade-alvo (`subjectId`).
+ * Puro. Só rebaixa; hipóteses `raise`/`neutral` não agem. Priors de conta `lower` NÃO-confirmados
+ * chegam aqui INDEPENDENTE da confiança (inclusive o prior medido forte recém-nascido, ≥ 0,744) —
+ * é a rede determinística contra escalar sob um aprendizado conservador. Só os CONFIRMADOS saem
+ * (viram só texto do prompt; o dono endossou, não travamos escala pra sempre).
+ */
+export function guardUnconfirmedHypothesis(
+  output: AnalysisOutput,
+  guards: readonly LessonGuard[],
+): AnalysisOutput {
+  const lower = guards.filter((g) => g.key.direction === "lower");
+  const accountCaution = lower.some((g) => g.key.scope === "account");
+  const entityCaution = new Set(
+    lower.filter((g) => g.key.scope === "entity" && g.key.subjectId).map((g) => g.key.subjectId as string),
+  );
+  if (!accountCaution && entityCaution.size === 0) return output;
+
+  const recommendations = output.recommendations.map((r) => {
+    if (!SCALE_ACTIONS.has(r.actionType)) return r;
+    const id = r.targetEntity?.externalId;
+    // conta em cautela → toda escala; senão, só a entidade que casa com uma hipótese de entidade.
+    const matched = accountCaution || (id ? entityCaution.has(id) : false);
+    if (!matched) return r;
+    const scopeNote = accountCaution
+      ? "um aprendizado desta conta (hipótese ainda não confirmada) sugere cautela ao escalar por aqui."
+      : "um aprendizado desta conta (hipótese ainda não confirmada) sugere cautela nesta entidade.";
+    return {
+      ...r,
+      title: demotedTitle(r.title),
+      actionType: "investigate" as RecommendationActionType,
+      rationale: `${r.rationale}\n[guard] escalar → investigar: ${scopeNote}`,
+      budgetChangePct: null,
+    };
+  });
+  return { ...output, recommendations };
 }
 
 function addNumber(set: Set<number>, value: number): void {

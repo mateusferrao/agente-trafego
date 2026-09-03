@@ -16,6 +16,14 @@ export const approvalOutput = z.object({
   status: approvalStatusOutput,
   /** ISO — prazo de resposta (expira em 24h e some da lista). */
   expiresAt: z.string().nullable(),
+  /** Moeda da conta (ISO, ex "BRL"/"USD") — formata os valores no card. Null = desconhecida. */
+  currency: z.string().nullable(),
+  /** Orçamento ATUAL da entidade (unidade MAIOR, ex reais) na proposta — só `adjust_budget`
+   *  com atual conhecido; o card mostra "atual → proposto". Null nos demais casos. */
+  currentBudgetMajor: z.number().nullable(),
+  /** Orçamento PROPOSTO resultante (unidade MAIOR) — projeção p/ exibição (pré-clamp). Null
+   *  quando não dá pra projetar (sem atual, sem pct/valor) ou ação não é de orçamento. */
+  targetBudgetMajor: z.number().nullable(),
 });
 export type ApprovalOutput = z.infer<typeof approvalOutput>;
 

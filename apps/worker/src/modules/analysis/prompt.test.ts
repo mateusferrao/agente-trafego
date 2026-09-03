@@ -102,6 +102,32 @@ describe("buildSynthesisMessages (S0b)", () => {
     const system = systemOf(buildSynthesisMessages("persona", b, []));
     expect(system).toContain("trackingHealth");
   });
+
+  it("sem lições: NÃO injeta o bloco 'O QUE APRENDEMOS'", () => {
+    const system = systemOf(buildSynthesisMessages("persona", brief(), []));
+    expect(system).not.toContain("O QUE APRENDEMOS");
+  });
+
+  it("com prior MEDIDO: injeta o bloco forte, abaixo da orientação do dono, separando medido de observado", () => {
+    const b = brief({
+      memory: {
+        objectives: [],
+        pastActions: [],
+        rejected: [],
+        lessons: [
+          { content: "Cortar cedo compensa.", tier: "provavel", origin: "our_action" },
+          { content: "Medição de conversão suspeita.", tier: "explorando", origin: "observational" },
+        ],
+      },
+    });
+    const system = systemOf(buildSynthesisMessages("persona", b, []));
+    expect(system).toContain("O QUE APRENDEMOS DESTA CONTA");
+    expect(system).toContain("ABAIXO da orientação do dono");
+    expect(system).toContain("Evidência medida");
+    expect(system).toContain("Cortar cedo compensa.");
+    expect(system).toContain("Ressalvas observadas");
+    expect(system).toContain("Medição de conversão suspeita.");
+  });
 });
 
 describe("buildReviewMessages (G7 — revisor corrige contra a régua de domínio, não só número)", () => {

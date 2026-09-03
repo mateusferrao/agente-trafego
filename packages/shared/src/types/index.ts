@@ -586,6 +586,27 @@ export const PARTIAL_REASONS = [
 export type PartialReason = (typeof PARTIAL_REASONS)[number];
 
 // ─── AccountBrief (único input do LLM) ───────────────────────────────────
+
+/** Selo de confiança de um aprendizado (a UI traduz p/ rótulo acentuado). */
+export type LessonConfidenceTier = "explorando" | "provavel" | "confirmado";
+/** De onde veio o aprendizado — a UI mostra a proveniência ao usuário. */
+export type LessonOrigin = "our_action" | "observational" | "human_feedback" | "human_manual";
+
+/** Snapshot da config de uma entidade num dia (aprendizado, S4) — orçamento/status. */
+export interface EntityConfigSnapshot {
+  readonly status: EntityStatus;
+  /** orçamento diário (unidade MENOR da moeda). */
+  readonly dailyBudgetMinor?: number;
+  readonly lifetimeBudgetMinor?: number;
+}
+
+/** Aprendizado pronto para o prompt do analista / cartão da UI (projeção legível). */
+export interface BriefLesson {
+  readonly content: string;
+  readonly tier: LessonConfidenceTier;
+  readonly origin: LessonOrigin;
+}
+
 export interface TrendPoint {
   readonly date: string;
   readonly metrics: Partial<InsightMetrics>;
@@ -806,6 +827,9 @@ export interface RunCampaignCard {
   readonly flags: readonly string[];
   /** tier de desempenho congelado no run (6c) — histórico coerente. */
   readonly tier?: PerformanceTier | null;
+  /** sinais de saúde congelados no run — alimenta o aprendizado observacional (padrão
+   *  recorrente de fadiga/saturação ao longo dos runs). Ausente = nenhum sinal. */
+  readonly healthSignals?: readonly HealthSignal[];
   /** estágio de público DOMINANTE da campanha (§Bloco 2) — do adset de maior gasto. */
   readonly stage?: AudienceStage | null;
   /** orçamento congelado no run (S8) — mesmo campo de `CuratedEntitySnapshot`. */
@@ -920,6 +944,9 @@ export interface AccountBrief {
     readonly objectives: readonly string[];
     readonly pastActions: readonly string[];
     readonly rejected: readonly string[];
+    /** Aprendizados curados desta conta (confirmados/alta confiança), rotulados —
+     *  o analista trata como CONTEXTO, não como número a verificar. Ausente = sem lição. */
+    readonly lessons?: readonly BriefLesson[];
   };
   readonly aggregatesRest: {
     readonly count: number;

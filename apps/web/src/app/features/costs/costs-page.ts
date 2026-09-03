@@ -1,7 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { provideIcons } from '@ng-icons/core';
-import { lucideBanknote } from '@ng-icons/lucide';
 import { UiDateField, UiEmptyState, UiPageHeader, UiSpinner } from '@ui';
 import { OrgApiService } from '@core/api/org-api.service';
 import type { CostsOutput } from '@core/api';
@@ -93,7 +91,6 @@ function presetRange(key: string): { since: string; until: string } {
   selector: 'app-costs-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [FormsModule, UiDateField, UiEmptyState, UiPageHeader, UiSpinner],
-  providers: [provideIcons({ lucideBanknote })],
   template: `
     <div class="flex flex-col gap-6 overflow-x-clip">
       <app-ui-page-header
@@ -170,7 +167,7 @@ function presetRange(key: string): { since: string; until: string } {
 
         @if (d.totalCostUsd === 0) {
           <app-ui-empty-state
-            icon="lucideBanknote"
+            brand
             title="Sem custo no período"
             description="Nenhum custo operacional foi registrado no período selecionado."
           />

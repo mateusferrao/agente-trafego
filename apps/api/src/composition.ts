@@ -28,6 +28,7 @@ import { createAgentsService } from "./modules/agents/service.js";
 import { createApprovalsService } from "./modules/approvals/service.js";
 import { createDraftsService } from "./modules/drafts/service.js";
 import { createRecommendationsService } from "./modules/recommendations/service.js";
+import { createLearningsService } from "./modules/learnings/service.js";
 import { createRunsService, type OnboardingLogger } from "./modules/runs/service.js";
 import { createDashboardService } from "./modules/dashboard/service.js";
 import { createTimelineService } from "./modules/timeline/service.js";
@@ -81,6 +82,7 @@ export interface Services {
   readonly approvals: ReturnType<typeof createApprovalsService>;
   readonly drafts: ReturnType<typeof createDraftsService>;
   readonly recommendations: ReturnType<typeof createRecommendationsService>;
+  readonly learnings: ReturnType<typeof createLearningsService>;
   readonly runs: ReturnType<typeof createRunsService>;
   readonly dashboard: ReturnType<typeof createDashboardService>;
   readonly timeline: ReturnType<typeof createTimelineService>;
@@ -249,6 +251,19 @@ export function buildContainer(logger?: OnboardingLogger): Container {
     approvals: createApprovalsService({ db, approvals, scheduler, revertTtlDays: env.REVERT_TTL_DAYS }),
     drafts: createDraftsService({ db, adsPlatform, vault, approvals, storage, scheduler }),
     recommendations: createRecommendationsService({ db }),
+    learnings: createLearningsService({
+      db,
+      scheduler,
+      qualityDefaults: {
+        minConversions: env.ANALYSIS_QUALITY_MIN_CONVERSIONS,
+        minClicks: env.ANALYSIS_QUALITY_MIN_CLICKS,
+        fatigueCtrDropPct: env.ANALYSIS_QUALITY_FATIGUE_CTR_DROP_PCT,
+        fatigueFrequency: env.ANALYSIS_QUALITY_FATIGUE_FREQUENCY,
+        zombieMinSpend: env.ANALYSIS_QUALITY_ZOMBIE_MIN_SPEND,
+        marginalCpaWorsenPct: env.ANALYSIS_QUALITY_MARGINAL_CPA_WORSEN_PCT,
+      },
+      advisoryDismissCooldownDays: env.LEARNING_ADVISORY_DISMISS_COOLDOWN_DAYS,
+    }),
     runs,
     dashboard: createDashboardService({
       db,

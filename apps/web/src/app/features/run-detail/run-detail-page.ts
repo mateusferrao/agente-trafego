@@ -1,8 +1,6 @@
 import { ChangeDetectionStrategy, Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { toast } from 'ngx-sonner';
-import { provideIcons } from '@ng-icons/core';
-import { lucideActivity } from '@ng-icons/lucide';
 import { UiButton, UiEmptyState, UiPageHeader, UiSpinner } from '@ui';
 import { AccountsApiService } from '@core/api/accounts-api.service';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
@@ -25,7 +23,6 @@ const DATETIME_LOCALE = 'pt-BR';
   selector: 'app-run-detail-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [RouterLink, UiButton, UiEmptyState, UiPageHeader, UiSpinner, AnalysisDetail],
-  providers: [provideIcons({ lucideActivity })],
   template: `
     <div class="flex flex-col gap-8">
       <div class="flex flex-col gap-1">
@@ -40,7 +37,7 @@ const DATETIME_LOCALE = 'pt-BR';
         </div>
       } @else if (run() === null) {
         <app-ui-empty-state
-          icon="lucideActivity"
+          brand
           title="Análise não encontrada"
           description="Essa análise não existe ou não está mais disponível."
         >
@@ -142,7 +139,7 @@ export class RunDetailPage {
         const mutedSet = new Set(out.campaignIds);
         this.campaigns.update((list) => list.map((x) => ({ ...x, muted: mutedSet.has(x.externalId) })));
         this.mutingId.set(null);
-        toast.success(c.muted ? 'Campanha reativada' : 'Campanha silenciada');
+        toast.success(c.muted ? 'Reativei essa campanha. Volto a acompanhar.' : 'Silenciei essa campanha. Paro de analisar ela.');
       },
       // erro amigável já vem do interceptor global.
       error: () => this.mutingId.set(null),

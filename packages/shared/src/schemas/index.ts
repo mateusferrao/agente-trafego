@@ -262,6 +262,10 @@ export const notifyPolicySchema = z.object({
   // Reativação (pivô): avisa quando uma conta PARADA volta a rodar (gasto/impressões).
   // Baixo ruído (só na transição dormant→active). Default off no conservador.
   reactivation: z.object({ enabled: z.boolean() }),
+  // Aprendizado (v3): avisa no WhatsApp quando nasce um aprendizado/proposta/oportunidade novo.
+  // Default ON (baixo volume — semanas p/ o 1º; sempre acionável ou informativo). Opcional
+  // (ausência = ON) p/ compat com policies gravadas antes do campo.
+  learning: z.object({ enabled: z.boolean() }).optional(),
   // Proatividade de CRIAÇÃO (Fatia 7): o agente PROPÕE escalar/criar campanhas pelo que
   // observou (nunca auto-aplica — sempre aprovação). Default OFF; ON em Otimizador/Vigia.
   proactiveDrafts: z.object({ enabled: z.boolean() }).optional(),
@@ -277,6 +281,7 @@ export const DEFAULT_NOTIFY_POLICY: NotifyPolicy = {
   alerts: { enabled: false, sensitivity: "normal", throttleHours: 6 },
   runPush: { enabled: true },
   reactivation: { enabled: false },
+  learning: { enabled: true },
   proactiveDrafts: { enabled: false },
   accountHealthAlert: {
     enabled: true,

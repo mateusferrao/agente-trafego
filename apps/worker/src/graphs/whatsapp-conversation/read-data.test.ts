@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { adAccounts, adCreatives, agentRuns, agents, campaignDrafts, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
+import { adAccounts, adCreatives, agentMemory, agentRuns, agents, campaignDrafts, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
 import type { Approval, ApprovalPort } from "@trafego/shared/ports";
 import type { PerformanceTier } from "@trafego/shared";
 import {
@@ -13,6 +13,7 @@ import {
   describeDraftAudience,
   describeDraftCreative,
   listPendingData,
+  getLearningsData,
   listRecommendationsData,
   enrichRecommendationsLiveStatus,
   campaignStatusData,
@@ -1086,5 +1087,50 @@ describe("resolveWhatsappNumber (fallback ao vivo bounded — incidente do grupo
     const d = deps(() => Promise.reject(new Error("não deveria nem chamar a Meta")));
     const dest = await resolveWhatsappNumber(d, noAccountCtx, "CMP_1");
     expect(dest).toEqual({ number: null, source: "none" });
+  });
+});
+
+describe("getLearningsData — expõe o id que as tools de controle consomem (regressão)", () => {
+  it("cada aprendizado traz id + tier + origem + hasProposal (sem id o LLM não consegue agir)", async () => {
+    const db = fakeDb(
+      new Map([
+        [
+          agentMemory,
+          [
+            {
+              id: "lesson-uuid-1",
+              content: "Nesta conta, cortar desperdício cedo tende a compensar.",
+              confidence: 0.82,
+              origin: "our_action",
+              confirmedByHuman: false,
+              proposedThresholdPatch: { threshold: "zombieMinSpend", stepPct: 0.25, minValue: 1 },
+            },
+            {
+              id: "lesson-uuid-2",
+              content: "A medição de conversão aparece suspeita.",
+              confidence: 0.3,
+              origin: "observational",
+              confirmedByHuman: false,
+              proposedThresholdPatch: null,
+            },
+          ],
+        ],
+      ]),
+    );
+    const out = await getLearningsData(db, "o1", "ag1");
+    expect(out.hasData).toBe(true);
+    const learnings = (out as { learnings: Array<Record<string, unknown>> }).learnings;
+    // o id é a referência inequívoca p/ confirm/forget/approve/reject (senão a ação por chat falha).
+    expect(learnings[0]?.id).toBe("lesson-uuid-1");
+    expect(learnings[0]?.hasProposal).toBe(true);
+    expect(learnings[0]?.confidence).toBe("provavel");
+    expect(learnings[1]?.id).toBe("lesson-uuid-2");
+    expect(learnings[1]?.hasProposal).toBe(false);
+  });
+
+  it("sem aprendizados → hasData=false com nota honesta", async () => {
+    const db = fakeDb(new Map([[agentMemory, []]]));
+    const out = await getLearningsData(db, "o1", "ag1");
+    expect(out.hasData).toBe(false);
   });
 });

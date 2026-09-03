@@ -2,7 +2,7 @@
 // O estado é serializável (persiste no checkpointer Postgres p/ interrupt/resume).
 
 import { Annotation } from "@langchain/langgraph";
-import type { AccumulatedTokenUsage, DecisionResult, DroppedAction, GuardrailResult } from "@trafego/core";
+import type { AccumulatedTokenUsage, DecisionResult, DroppedAction, GuardrailOpportunity, GuardrailResult, LessonBrief, LessonGuard } from "@trafego/core";
 import type { AgentRunTrigger, MarketReference, NotifyPolicy, PartialReason, Posture, RunNotifyTarget, SignalFinding } from "@trafego/shared";
 import type { MutationResult } from "@trafego/shared/ports";
 import type {
@@ -57,6 +57,13 @@ export const AccountAnalysisState = Annotation.Root({
   playbookRules: Annotation<readonly PlaybookRule[]>,
   // memória "rejeitado" (loop de feedback) — injetada no brief p/ não repetir vetos.
   rejectedMemory: Annotation<readonly string[]>,
+  // aprendizado contínuo: lições confirmadas/alta confiança → texto do analista (rotuladas).
+  lessons: Annotation<readonly LessonBrief[]>,
+  // hipóteses não-confirmadas → guard assimétrico (S3); nunca entram no texto do prompt.
+  lessonGuards: Annotation<readonly LessonGuard[]>,
+  // há prior MEDIDO de que escalar compensa nesta conta (account_scale_pays) — condição do
+  // aviso de oportunidade de guardrail (v3). Computado no load_context (tem as chaves das lições).
+  hasScalePaysPrior: Annotation<boolean>,
   guardrailConfig: Annotation<GuardrailConfig>,
   autonomyPolicy: Annotation<AutonomyPolicy>,
   // política de notificação (F4): governa o push do cron (runPush) no writeMessage.
@@ -127,6 +134,9 @@ export const AccountAnalysisState = Annotation.Root({
   droppedActions: Annotation<readonly DroppedAction[]>,
   // needApproval que PASSARAM no guardrail → viram linhas `approvals` (create_approvals).
   approvalCandidates: Annotation<readonly Action[]>,
+  // aviso de OPORTUNIDADE de guardrail (v3, "sinal vivo"): o teto de budget clampou uma escala
+  // que um prior medido diz compensar. Só APONTA pra config — nunca muta o guardrail.
+  guardrailOpportunity: Annotation<GuardrailOpportunity | null>,
 
   // ── HITL ───────────────────────────────────────────────────────────────
   approvalId: Annotation<string | null>,

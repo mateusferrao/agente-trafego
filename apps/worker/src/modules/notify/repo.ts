@@ -4,7 +4,7 @@
 // resolve o contato pelo (instância, telefone), dedupa por messageId e grava
 // a conversa/mensagem inbound.
 
-import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, ne, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { adAccounts, agents, channelGroups, channelInstances, contacts, conversations, groupMessages, messages, type Database } from "@trafego/db";
 import { brPhoneVariants, type ConversationRef } from "@trafego/shared";
 import type { OutboundQuote } from "@trafego/shared/ports";
@@ -113,11 +113,12 @@ export interface NotifyRepo {
   /**
    * Fontes do transcript ambiente do grupo (mescladas pela função pura na casca):
    * ambiente (group_messages) + dirigidas INBOUND (messages via conversations.groupId,
-   * com autor do participante + pushName do meta). Corpo nulo (áudio em transcrição /
-   * mídia dirigida) é excluído. Outbound do bot no transcript = fast-follow. Janela por
-   * `since` (tempo) + `limit` (teto de segurança; a função pura aplica os caps finais).
-   * `excludeParticipantPhone`: exclui as DIRIGIDAS desse participante (já vêm no `state.messages`
-   * do turno dele — inclusive a mensagem atual, que senão apareceria rotulada como "contexto passado").
+   * com autor do participante + pushName do meta) + OUTBOUND do bot (fromBot — inclui o
+   * PROATIVO na thread de broadcast `participant_phone IS NULL`: pulso/alerta/análise). Corpo
+   * nulo (áudio em transcrição / mídia dirigida) é excluído. Janela por `since` (tempo) +
+   * `limit` (teto de segurança; a função pura aplica os caps finais). `excludeParticipantPhone`:
+   * exclui as DIRIGIDAS **e as respostas do bot** desse participante (já vêm no `state.messages`
+   * do turno dele); a thread de broadcast (NULL) sempre entra.
    */
   loadGroupTranscriptSources(
     orgId: string,
@@ -416,7 +417,41 @@ export function createNotifyRepo(db: Database): NotifyRepo {
         .orderBy(desc(messages.createdAt))
         .limit(limit);
 
-      return [...ambient, ...directed].map((r) => ({ ...r, fromBot: false }));
+      // OUTBOUND do bot (fromBot): o que O AGENTE já disse no grupo — inclui o PROATIVO
+      // (pulso/alerta/análise, thread de broadcast com `participant_phone IS NULL`) e as
+      // respostas a OUTROS participantes. Sem isto o agente não "lembra" da própria análise
+      // e um reply de "sim" fica sem referência (o proativo nunca passa pelo grafo, então
+      // também não está no checkpointer). A thread do participante CORRENTE fica de fora
+      // (já vem em `state.messages`); o NULL (broadcast) SEMPRE entra (`or(isNull, ne)`).
+      const outbound = await db
+        .select({
+          authorPhone: conversations.participantPhone,
+          body: messages.body,
+          at: messages.createdAt,
+        })
+        .from(messages)
+        .innerJoin(conversations, eq(messages.conversationId, conversations.id))
+        .where(
+          and(
+            eq(conversations.orgId, orgId),
+            eq(conversations.groupId, groupId),
+            eq(messages.direction, "outbound"),
+            isNotNull(messages.body),
+            gte(messages.createdAt, since),
+            ...(excludeParticipantPhone
+              ? [or(isNull(conversations.participantPhone), ne(conversations.participantPhone, excludeParticipantPhone))]
+              : []),
+          ),
+        )
+        .orderBy(desc(messages.createdAt))
+        .limit(limit);
+
+      return [
+        ...ambient.map((r) => ({ ...r, fromBot: false })),
+        ...directed.map((r) => ({ ...r, fromBot: false })),
+        // bot não tem telefone/nome de participante; a função pura rotula pelo `botLabel`.
+        ...outbound.map((r) => ({ authorPhone: null, authorName: null, body: r.body, at: r.at, fromBot: true })),
+      ];
     },
 
     /** Purge de retenção do contexto ambiente de grupo (global — a janela vale p/ toda org). */

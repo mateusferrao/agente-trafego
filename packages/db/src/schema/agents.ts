@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
   index,
@@ -31,8 +32,13 @@ import {
   actionType,
   agentStatus,
   entityLevel,
+  lessonDimension,
+  memoryDirection,
   memoryLifecycle,
+  memoryOrigin,
+  memoryScope,
   memoryType,
+  outcomeStatus,
   pk,
   timestamps,
 } from "./_shared.js";
@@ -179,7 +185,16 @@ export const agentMutedEntities = pgTable(
   ],
 );
 
-/** Memória do agente (objetivos, ações passadas, rejeições, fatos). */
+/**
+ * Memória do agente (objetivos, ações passadas, rejeições, fatos) + aprendizado contínuo.
+ * `type='rejected'` = o loop barato legado (grava no 👎, lê no brief). `type='fact'` =
+ * padrão-da-conta aprendido; `type='past_action'` = calibração (nossas recs acertaram?).
+ * As colunas de aprendizado (`scope`/`dimension`/`direction`/`origin`/`semanticKey`/
+ * `confidence`/`reinforceCount`/…) nascem com defaults seguros p/ as linhas legadas; o
+ * produtor de lição sempre as preenche. `sourceRunId`/`sourceRecommendationId` são
+ * soft-refs (uuid sem FK) — `agent_runs`/`recommendations` vivem em execution.ts e
+ * importá-los aqui fecharia um ciclo de schema.
+ */
 export const agentMemory = pgTable(
   "agent_memory",
   {
@@ -194,7 +209,105 @@ export const agentMemory = pgTable(
     content: text("content").notNull(),
     confidence: real("confidence"),
     lifecycle: memoryLifecycle("lifecycle").notNull().default("active"),
+    // ── Aprendizado contínuo ──
+    scope: memoryScope("scope").notNull().default("account"),
+    dimension: lessonDimension("dimension"),
+    direction: memoryDirection("direction"),
+    // PADRÃO do detector (fatigue_timing, weak_hook, account_cut_pays…) — discrimina N lições da
+    // MESMA (dimensão,direção) na chave semântica. Null em linhas legadas antes do backfill.
+    pattern: text("pattern"),
+    // id externo da entidade quando `scope='entity'`.
+    subjectId: text("subject_id"),
+    origin: memoryOrigin("origin").notNull().default("human_feedback"),
+    // string canônica da chave semântica (lessonKeyOf) — dedupe/merge. Null em linhas legadas
+    // ainda não backfillpadas (excluídas do unique index por serem NULL).
+    semanticKey: text("semantic_key"),
+    reinforceCount: integer("reinforce_count").notNull().default(0),
+    lastReinforcedAt: timestamp("last_reinforced_at", { withTimezone: true }),
+    lastContradictedAt: timestamp("last_contradicted_at", { withTimezone: true }),
+    confirmedByHuman: boolean("confirmed_by_human").notNull().default(false),
+    // proveniência (soft-ref, sem FK — ver docstring).
+    sourceRunId: uuid("source_run_id"),
+    sourceRecommendationId: uuid("source_recommendation_id"),
+    // patch proposto de `model_config.quality` (calibração paramétrica, S6) — null na maioria.
+    proposedThresholdPatch: jsonb("proposed_threshold_patch").$type<Record<string, unknown>>(),
+    // patch APLICADO (limiar aceito) — guarda `{ threshold, previousValue }` p/ o Reverter (v3)
+    // restaurar o valor anterior. Null enquanto não aceito ou já revertido.
+    appliedThresholdPatch: jsonb("applied_threshold_patch").$type<Record<string, unknown>>(),
+    // marca quando o dono resolveu a proposta de limiar (rejeitou/reverteu) — trava a
+    // re-oferta até entrar evidência substancialmente nova (re-oferta = fast-follow R7).
+    thresholdResolvedAt: timestamp("threshold_resolved_at", { withTimezone: true }),
     ...timestamps,
   },
-  (t) => [index("agent_memory_agent_idx").on(t.agentId)],
+  (t) => [
+    index("agent_memory_agent_idx").on(t.agentId),
+    index("agent_memory_agent_type_lifecycle_idx").on(t.agentId, t.type, t.lifecycle),
+    // dedupe/merge: no máximo 1 lição viva por (agente, chave semântica). NULL (legado) fora.
+    uniqueIndex("agent_memory_agent_semantic_key_uq")
+      .on(t.agentId, t.semanticKey)
+      .where(sql`${t.semanticKey} is not null and ${t.lifecycle} <> 'archived'`),
+  ],
+);
+
+/**
+ * Ledger de EVIDÊNCIA do aprendizado (v3) — fonte única da destilação de priors de CONTA.
+ * Cada linha = 1 outcome MEDIDO (ação nossa OU mudança manual do gestor) classificado na
+ * (dimensão, direção) do prior que ele sustenta, com `supports` = a medição confirma essa
+ * direção (true) ou a contradiz (false). `distillAccountPriors` (core puro) agrega por
+ * (dimensão, direção), conta ENTIDADES DISTINTAS que sustentam, e cria o prior quando
+ * ≥ K distintas e a direção domina. Sem lição por-entidade: a evidência é atômica aqui, o
+ * aprendizado é account-level. `dedupe_ref` idempotentiza (1 evidência por evento medido).
+ */
+export const learningEvidence = pgTable(
+  "learning_evidence",
+  {
+    id: pk(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    dimension: lessonDimension("dimension").notNull(),
+    direction: memoryDirection("direction").notNull(),
+    // id externo da entidade onde o outcome foi medido (base da contagem cross-seccional).
+    entityId: text("entity_id").notNull(),
+    // a medição SUSTENTA a direção do prior (true) ou a contradiz (false)?
+    supports: boolean("supports").notNull(),
+    outcome: outcomeStatus("outcome").notNull(),
+    // origem do outcome (our_action | human_manual) — genérico, sem vazar provider.
+    source: memoryOrigin("source").notNull(),
+    // âncora do evento medido (id da rec p/ ação nossa; `entity:data` p/ mudança manual) —
+    // idempotência: nunca conta a mesma medição 2x.
+    dedupeRef: text("dedupe_ref").notNull(),
+    measuredAt: timestamp("measured_at", { withTimezone: true }).notNull(),
+    ...timestamps,
+  },
+  (t) => [
+    index("learning_evidence_agent_idx").on(t.agentId, t.dimension, t.direction),
+    uniqueIndex("learning_evidence_dedupe_uq").on(t.agentId, t.dedupeRef),
+  ],
+);
+
+/**
+ * Dispensas de AVISO (v3) — o dono dispensou uma oportunidade (ex: aviso de teto de guardrail).
+ * `key` identifica o aviso (genérico: `guardrail_opportunity:<threshold>`); `dismissed_until`
+ * é o cooldown (o aviso, "sinal vivo", só reaparece depois disso ou se piorar materialmente).
+ * 1 linha viva por (agente, key) — upsert.
+ */
+export const advisoryDismissals = pgTable(
+  "advisory_dismissals",
+  {
+    id: pk(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id, { onDelete: "cascade" }),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    dismissedUntil: timestamp("dismissed_until", { withTimezone: true }).notNull(),
+    ...timestamps,
+  },
+  (t) => [uniqueIndex("advisory_dismissals_agent_key_uq").on(t.agentId, t.key)],
 );

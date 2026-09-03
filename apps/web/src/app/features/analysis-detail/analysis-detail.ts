@@ -3,9 +3,10 @@ import { NgTemplateOutlet } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import { toast } from 'ngx-sonner';
-import { UiButton, UiEyebrow, UiStat, UiEvidence, UiMeter } from '@ui';
+import { NumberStepper, UiButton, UiEyebrow, UiInput, UiStat, UiEvidence, UiMeter } from '@ui';
 import { ApprovalsApiService } from '@core/api/approvals-api.service';
 import { AGENT_NAME } from '@core/brand';
+import { currencySymbol } from '@app/shared/format';
 import type { RunDetailOutput } from '@core/api/generated';
 
 type RunView = RunDetailOutput['run'];
@@ -25,12 +26,6 @@ interface VerdictStat {
   readonly tone: StatTone;
 }
 
-const ACTION_LABEL: Record<string, string> = {
-  pause_entity: 'Pausar',
-  resume_entity: 'Reativar',
-  adjust_budget: 'Ajustar orçamento',
-  set_status: 'Mudar status',
-};
 const KIND_LABEL: Record<Recommendation['kind'], string> = {
   platform_action: 'posso fazer isso',
   human_direction: 'sugestão pra você',
@@ -54,12 +49,6 @@ const STAGE_LABEL: Record<Stage, string> = {
   remarketing: 'remarketing',
   unknown: 'público indefinido',
 };
-const LEVEL_LABEL: Record<string, string> = {
-  account: 'conta',
-  campaign: 'campanha',
-  adset: 'conjunto',
-  ad: 'anúncio',
-};
 const APPLICABILITY_NOTE = 'As que dá pra aplicar têm botão aqui; direções você aplica na plataforma.';
 const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
   consciencia: 'alcançar as pessoas certas',
@@ -77,7 +66,7 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
 @Component({
   selector: 'app-analysis-detail',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, NgTemplateOutlet, RouterLink, UiButton, UiEyebrow, UiStat, UiEvidence, UiMeter],
+  imports: [FormsModule, NgTemplateOutlet, RouterLink, UiButton, UiInput, NumberStepper, UiEyebrow, UiStat, UiEvidence, UiMeter],
   template: `
     <section class="flex flex-col gap-5">
       @if (hasResults()) {
@@ -340,66 +329,88 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
           </div>
           <div class="flex flex-col gap-3">
             @for (rec of recommendations(); track rec.id) {
-              <article class="ui-panel-card--brand flex flex-col gap-2">
-                <app-ui-eyebrow [class]="kindText(rec.kind)">{{ kindLabel(rec.kind) }}</app-ui-eyebrow>
-                <h3 class="font-brand text-lg font-bold leading-tight text-ink">{{ rec.title }}</h3>
-                @if (rec.rationale) {
-                  <p class="text-sm text-ink">{{ rec.rationale }}</p>
-                }
-                @if (rec.kind === 'platform_action' && rec.proposedAction) {
-                  <span class="ui-tag-mint w-fit">Ação: {{ actionText(rec) }}</span>
-                } @else if (rec.kind === 'human_direction') {
-                  <span class="text-xs text-muted">Direção — você aplica. Peça ao {{ agentName }} no WhatsApp se quiser ajuda.</span>
-                }
-                <!-- CTA inline (B): aplicável → aprovar/rejeitar aqui mesmo (+ editar valor do orçamento). -->
-                @if (doneAction()[rec.id]; as done) {
-                  <span class="text-xs" [class.text-success-strong]="done === 'approved'" [class.text-muted]="done === 'rejected'">
-                    {{ done === 'approved' ? '✓ enviado pra aplicar' : 'recusada' }}
-                  </span>
-                } @else if (rec.applicability === 'applicable' && rec.approvalId) {
-                  <div class="flex flex-col gap-2 pt-1">
-                    <div class="flex flex-wrap items-center gap-2">
-                      @if (rec.approvalKind === 'action') {
-                        <!-- ação (pausar/orçamento): eco é o próprio texto → aprovar/rejeitar/editar inline. -->
-                        @if (rec.proposedAction?.type === 'adjust_budget') {
-                          <button appButton variant="ghost" size="sm" [disabled]="actioning().has(rec.id)" (click)="toggleEditRec(rec)">
-                            {{ editingRecId() === rec.id ? 'Cancelar' : 'Editar valor' }}
-                          </button>
+              <article class="ui-panel-card--brand flex flex-col gap-3">
+                <!-- Zona 1 — por quê: categoria + título + racional (a leitura). -->
+                <div class="flex flex-col gap-1.5">
+                  <app-ui-eyebrow [class]="kindText(rec.kind)">{{ kindLabel(rec.kind) }}</app-ui-eyebrow>
+                  <h3 class="font-brand text-lg font-bold leading-tight text-ink">{{ rec.title }}</h3>
+                  @if (rec.rationale) {
+                    <p class="text-sm text-ink">{{ rec.rationale }}</p>
+                  }
+                  @if (rec.kind === 'human_direction') {
+                    <span class="text-xs text-muted">Direção — você aplica. Peça ao {{ agentName }} no WhatsApp se quiser ajuda.</span>
+                  }
+                </div>
+                <!-- Zona 2 — o que vou fazer: a mudança (número herói) + a decisão (aprovar/rejeitar),
+                     agrupadas numa caixinha pra não se dissolver na coluna. Só quando há ação/estado. -->
+                @if (hasActionZone(rec)) {
+                  <div class="flex flex-col gap-2 rounded-lg border border-line bg-soft p-3">
+                    @if (recBudgetParts(rec); as bp) {
+                      <div class="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                        <app-ui-eyebrow>Orçamento diário</app-ui-eyebrow>
+                        @if (bp.target) {
+                          <span class="ui-stat__value text-sm text-muted line-through">{{ bp.current }}</span>
+                          <span class="text-muted" aria-hidden="true">→</span>
+                          <span class="ui-stat__value text-lg text-ink">{{ bp.target }}</span>
+                        } @else {
+                          <span class="ui-stat__value text-lg text-ink">{{ bp.current }}</span>
                         }
-                        <button appButton variant="secondary" size="sm" [disabled]="actioning().has(rec.id)" (click)="rejectRec(rec)">Rejeitar</button>
-                        <button appButton size="sm" [disabled]="actioning().has(rec.id)" (click)="approveRec(rec)">
-                          {{ actioning().has(rec.id) ? 'Enviando…' : 'Aprovar' }}
-                        </button>
-                      } @else {
-                        <!-- criação (gasta): a aprovação passa pelo painel com o eco completo (orçamento/
-                             pausada/prévias por anúncio). Rejeitar é seguro e fica inline. -->
-                        <a appButton variant="primary" size="sm" routerLink="/approvals">Revisar e aprovar no painel</a>
-                        <button appButton variant="secondary" size="sm" [disabled]="actioning().has(rec.id)" (click)="rejectRec(rec)">Rejeitar</button>
-                      }
-                    </div>
-                    @if (editingRecId() === rec.id) {
-                      <div class="flex flex-col gap-2 sm:flex-row sm:items-end">
-                        <label class="flex flex-1 flex-col gap-1 text-sm">
-                          <span class="text-muted">Novo orçamento diário (R$)</span>
-                          <input
-                            type="number"
-                            min="1"
-                            step="1"
-                            [ngModel]="editBudgetReais()"
-                            (ngModelChange)="editBudgetReais.set($event)"
-                            class="rounded-md border border-line bg-panel px-3 py-2 text-ink"
-                          />
-                        </label>
-                        <button appButton size="sm" [disabled]="savingEdit()" (click)="saveRecEdit(rec)">
-                          {{ savingEdit() ? 'Salvando…' : 'Salvar valor' }}
-                        </button>
                       </div>
                     }
+                    <!-- CTA inline (B): aplicável → aprovar/rejeitar aqui mesmo (+ editar valor do orçamento). -->
+                    @if (doneAction()[rec.id]; as done) {
+                      <span class="text-xs" [class.text-success-strong]="done === 'approved'" [class.text-muted]="done === 'rejected'">
+                        {{ done === 'approved' ? '✓ enviado pra aplicar' : 'recusada' }}
+                      </span>
+                    } @else if (rec.applicability === 'applicable' && rec.approvalId) {
+                      <div class="flex flex-col gap-2">
+                        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+                          @if (rec.approvalKind === 'action') {
+                            <!-- ação (pausar/orçamento): eco é o próprio texto → aprovar/rejeitar/editar inline. -->
+                            @if (rec.proposedAction?.type === 'adjust_budget') {
+                              <button appButton variant="ghost" size="sm" class="sm:mr-auto" [disabled]="actioning().has(rec.id)" (click)="toggleEditRec(rec)">
+                                {{ editingRecId() === rec.id ? 'Cancelar' : 'Editar valor' }}
+                              </button>
+                            }
+                            <button appButton variant="secondary" size="sm" [disabled]="actioning().has(rec.id)" (click)="rejectRec(rec)">Rejeitar</button>
+                            <button appButton size="sm" [disabled]="actioning().has(rec.id)" (click)="approveRec(rec)">
+                              {{ actioning().has(rec.id) ? 'Enviando…' : 'Aprovar' }}
+                            </button>
+                          } @else {
+                            <!-- criação (gasta): a aprovação passa pelo painel com o eco completo (orçamento/
+                                 pausada/prévias por anúncio). Rejeitar é seguro e fica inline. -->
+                            <button appButton variant="secondary" size="sm" [disabled]="actioning().has(rec.id)" (click)="rejectRec(rec)">Rejeitar</button>
+                            <a appButton variant="primary" size="sm" routerLink="/approvals">Revisar e aprovar no painel</a>
+                          }
+                        </div>
+                        @if (editingRecId() === rec.id) {
+                          <div class="flex flex-col gap-2 sm:flex-row sm:items-end">
+                            <label class="flex flex-1 flex-col gap-1 text-sm">
+                              <span class="text-muted">Novo orçamento diário ({{ currencySymbol(currency()) }})</span>
+                              <input
+                                appInput
+                                appNumberStepper
+                                type="number"
+                                inputmode="decimal"
+                                min="1"
+                                step="1"
+                                [ngModel]="editBudgetReais()"
+                                (ngModelChange)="editBudgetReais.set($event)"
+                              />
+                            </label>
+                            <button appButton size="sm" [disabled]="savingEdit()" (click)="saveRecEdit(rec)">
+                              {{ savingEdit() ? 'Salvando…' : 'Salvar valor' }}
+                            </button>
+                          </div>
+                        }
+                      </div>
+                    } @else if (rec.applicability === 'applied') {
+                      <span class="text-xs text-success-strong">✓ já apliquei isso.</span>
+                    }
                   </div>
-                } @else if (rec.applicability === 'applied') {
-                  <span class="text-xs text-success-strong">✓ já apliquei isso.</span>
                 }
-                <div class="flex items-center gap-2 pt-1">
+                <!-- Zona 3 — meta: separada por um fio pra parar de competir com Aprovar. -->
+                <div class="flex items-center gap-2 border-t border-line pt-2">
                   <span class="text-xs text-muted">Faz sentido?</span>
                   <button
                     type="button"
@@ -475,7 +486,7 @@ export class AnalysisDetail {
     this.approvalsApi.resolve(rec.approvalId, 'approve').subscribe({
       next: () => {
         this.finishActioning(rec.id, 'approved');
-        toast.success('Enviado pra aplicar. O agente aplica em instantes.');
+        toast.success(`Aprovado. O ${AGENT_NAME} aplica em instantes.`);
       },
       error: () => this.unmarkActioning(rec.id),
     });
@@ -488,16 +499,43 @@ export class AnalysisDetail {
     this.approvalsApi.resolve(rec.approvalId, 'reject').subscribe({
       next: () => {
         this.finishActioning(rec.id, 'rejected');
-        toast.success('Recusada.');
+        toast.success('Recusada. Deixo como está.');
       },
       error: () => this.unmarkActioning(rec.id),
     });
   }
 
-  /** Abre/fecha o editor de valor do orçamento (só ação adjust_budget) — reseta o campo. */
+  protected currencySymbol = currencySymbol;
+
+  /** Contexto de orçamento da recomendação (só adjust_budget com atual conhecido): atual + proposto
+   *  já formatados, pro número herói do bloco de ação. Sem proposto → só o atual (sem seta). */
+  protected recBudgetParts(rec: Recommendation): { current: string; target: string | null } | null {
+    const pa = rec.proposedAction;
+    if (!pa || pa.type !== 'adjust_budget' || pa.currentBudgetMajor == null) return null;
+    return {
+      current: this.money(pa.currentBudgetMajor),
+      target: pa.targetBudgetMajor == null ? null : this.money(pa.targetBudgetMajor),
+    };
+  }
+
+  /** Há bloco de ação a renderizar? (a mudança de orçamento, a decisão pendente, ou um estado
+   *  terminal). Insight puro sem ação/aprovação → sem bloco (só o "por quê" + o feedback). */
+  protected hasActionZone(rec: Recommendation): boolean {
+    return (
+      this.recBudgetParts(rec) !== null ||
+      this.doneAction()[rec.id] != null ||
+      (rec.applicability === 'applicable' && rec.approvalId != null) ||
+      rec.applicability === 'applied'
+    );
+  }
+
+  /** Abre/fecha o editor de valor do orçamento (só ação adjust_budget). Ao abrir, pré-preenche
+   *  com o valor PROPOSTO (senão o atual) — parte do número sugerido em vez de um campo vazio. */
   protected toggleEditRec(rec: Recommendation): void {
-    this.editingRecId.update((cur) => (cur === rec.id ? null : rec.id));
-    this.editBudgetReais.set(null);
+    const opening = this.editingRecId() !== rec.id;
+    this.editingRecId.set(opening ? rec.id : null);
+    const pa = rec.proposedAction;
+    this.editBudgetReais.set(opening ? (pa?.targetBudgetMajor ?? pa?.currentBudgetMajor ?? null) : null);
   }
 
   /** Salva o novo valor (R$/dia) da ação antes de aprovar (C). A ação segue aplicável; aprovar aplica. */
@@ -505,7 +543,7 @@ export class AnalysisDetail {
     if (!rec.approvalId) return;
     const reais = this.editBudgetReais();
     if (reais == null || !(reais > 0)) {
-      toast.error('Informe um valor maior que zero.');
+      toast.error('O valor precisa ser maior que zero.');
       return;
     }
     this.savingEdit.set(true);
@@ -607,13 +645,6 @@ export class AnalysisDetail {
   }
   protected kindText(kind: Recommendation['kind']): string {
     return kind === 'platform_action' ? 'text-accent-strong' : 'text-muted';
-  }
-  protected actionText(rec: Recommendation): string {
-    const action = rec.proposedAction;
-    if (!action) return '';
-    const verb = ACTION_LABEL[action.type] ?? 'Revisar';
-    const level = LEVEL_LABEL[action.target.level] ?? action.target.level;
-    return `${verb} ${level}`;
   }
 
   protected campaignName(c: Campaign): string {

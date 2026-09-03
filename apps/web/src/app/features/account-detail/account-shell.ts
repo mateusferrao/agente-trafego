@@ -87,6 +87,7 @@ import { accountHealthLabel } from "../../shared/account-health-labels";
           Visão geral
         </a>
         <a appRouteTabLink routerLink="agente" routerLinkActive ariaCurrentWhenActive="page">Agente</a>
+        <a appRouteTabLink routerLink="aprendizados" routerLinkActive ariaCurrentWhenActive="page">Aprendizados</a>
         <a appRouteTabLink routerLink="criativos" routerLinkActive ariaCurrentWhenActive="page">Criativos</a>
         <a appRouteTabLink routerLink="timeline" routerLinkActive ariaCurrentWhenActive="page">Timeline</a>
       </nav>

@@ -876,7 +876,7 @@ export class AgentConfigPage {
     this.analysisApi.reseedArchetype(this.accountId, next).subscribe({
       next: (agent) => {
         this.applyAgent(agent);
-        toast.success('Arquétipo aplicado');
+        toast.success(`Arquétipo aplicado. Ajustei o ${AGENT_NAME} pra esse perfil.`);
       },
       error: () => {},
     });

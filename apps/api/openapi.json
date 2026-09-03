@@ -2009,6 +2009,17 @@
                   "enabled"
                 ]
               },
+              "learning": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "enabled"
+                ]
+              },
               "proactiveDrafts": {
                 "type": "object",
                 "properties": {
@@ -3766,12 +3777,26 @@
                     "params": {
                       "type": "object",
                       "additionalProperties": {}
+                    },
+                    "currentBudgetMajor": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "targetBudgetMajor": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
                     "type",
                     "target",
-                    "params"
+                    "params",
+                    "currentBudgetMajor",
+                    "targetBudgetMajor"
                   ]
                 },
                 "toolKey": {
@@ -5748,12 +5773,26 @@
                     "params": {
                       "type": "object",
                       "additionalProperties": {}
+                    },
+                    "currentBudgetMajor": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "targetBudgetMajor": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
                     }
                   },
                   "required": [
                     "type",
                     "target",
-                    "params"
+                    "params",
+                    "currentBudgetMajor",
+                    "targetBudgetMajor"
                   ]
                 },
                 "toolKey": {
@@ -6834,6 +6873,340 @@
           "ok"
         ]
       },
+      "LearningsList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "fact",
+                    "calibration"
+                  ]
+                },
+                "content": {
+                  "type": "string"
+                },
+                "tier": {
+                  "type": "string",
+                  "enum": [
+                    "explorando",
+                    "provavel",
+                    "confirmado"
+                  ]
+                },
+                "origin": {
+                  "type": "string",
+                  "enum": [
+                    "our_action",
+                    "observational",
+                    "human_feedback",
+                    "human_manual"
+                  ]
+                },
+                "scope": {
+                  "type": "string",
+                  "enum": [
+                    "entity",
+                    "account",
+                    "org",
+                    "global"
+                  ]
+                },
+                "dimension": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "confirmedByHuman": {
+                  "type": "boolean"
+                },
+                "lifecycle": {
+                  "type": "string",
+                  "enum": [
+                    "active",
+                    "stale",
+                    "archived"
+                  ]
+                },
+                "reinforceCount": {
+                  "type": "integer"
+                },
+                "sourceRunId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "proposedBehavior": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "proposedChange": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "threshold": {
+                      "type": "string"
+                    },
+                    "currentValue": {
+                      "type": "number"
+                    },
+                    "proposedValue": {
+                      "type": "number"
+                    },
+                    "currency": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "threshold",
+                    "currentValue",
+                    "proposedValue",
+                    "currency"
+                  ]
+                },
+                "appliedBehavior": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "content",
+                "tier",
+                "origin",
+                "scope",
+                "dimension",
+                "confirmedByHuman",
+                "lifecycle",
+                "reinforceCount",
+                "sourceRunId",
+                "createdAt",
+                "proposedBehavior",
+                "proposedChange",
+                "appliedBehavior"
+              ]
+            }
+          },
+          "opportunities": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "threshold": {
+                  "type": "string"
+                },
+                "wantedPct": {
+                  "type": "number"
+                },
+                "cappedPct": {
+                  "type": "number"
+                },
+                "foregoneMinor": {
+                  "type": "number"
+                },
+                "foregoneMajor": {
+                  "type": "number"
+                },
+                "currency": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "key",
+                "threshold",
+                "wantedPct",
+                "cappedPct",
+                "foregoneMinor",
+                "foregoneMajor",
+                "currency"
+              ]
+            }
+          },
+          "archived": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "fact",
+                    "calibration"
+                  ]
+                },
+                "content": {
+                  "type": "string"
+                },
+                "tier": {
+                  "type": "string",
+                  "enum": [
+                    "explorando",
+                    "provavel",
+                    "confirmado"
+                  ]
+                },
+                "origin": {
+                  "type": "string",
+                  "enum": [
+                    "our_action",
+                    "observational",
+                    "human_feedback",
+                    "human_manual"
+                  ]
+                },
+                "scope": {
+                  "type": "string",
+                  "enum": [
+                    "entity",
+                    "account",
+                    "org",
+                    "global"
+                  ]
+                },
+                "dimension": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "confirmedByHuman": {
+                  "type": "boolean"
+                },
+                "lifecycle": {
+                  "type": "string",
+                  "enum": [
+                    "active",
+                    "stale",
+                    "archived"
+                  ]
+                },
+                "reinforceCount": {
+                  "type": "integer"
+                },
+                "sourceRunId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "proposedBehavior": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "proposedChange": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "threshold": {
+                      "type": "string"
+                    },
+                    "currentValue": {
+                      "type": "number"
+                    },
+                    "proposedValue": {
+                      "type": "number"
+                    },
+                    "currency": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "threshold",
+                    "currentValue",
+                    "proposedValue",
+                    "currency"
+                  ]
+                },
+                "appliedBehavior": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind",
+                "content",
+                "tier",
+                "origin",
+                "scope",
+                "dimension",
+                "confirmedByHuman",
+                "lifecycle",
+                "reinforceCount",
+                "sourceRunId",
+                "createdAt",
+                "proposedBehavior",
+                "proposedChange",
+                "appliedBehavior"
+              ]
+            }
+          }
+        },
+        "required": [
+          "items",
+          "opportunities",
+          "archived"
+        ]
+      },
+      "EditLearningInput": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        },
+        "required": [
+          "content"
+        ]
+      },
+      "LearningOk": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ]
+      },
       "ApprovalOutput": {
         "type": "object",
         "properties": {
@@ -6885,6 +7258,24 @@
               "string",
               "null"
             ]
+          },
+          "currency": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "currentBudgetMajor": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "targetBudgetMajor": {
+            "type": [
+              "number",
+              "null"
+            ]
           }
         },
         "required": [
@@ -6897,7 +7288,10 @@
           "type",
           "reason",
           "status",
-          "expiresAt"
+          "expiresAt",
+          "currency",
+          "currentBudgetMajor",
+          "targetBudgetMajor"
         ]
       },
       "ResolveApprovalInput": {
@@ -10260,6 +10654,208 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/agents/{agentId}/learnings": {
+      "get": {
+        "tags": [
+          "learnings"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "agentId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "aprendizados curados do agente",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningsList"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "agente não encontrado"
+          }
+        }
+      }
+    },
+    "/api/agents/{agentId}/learnings/{id}": {
+      "patch": {
+        "tags": [
+          "learnings"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "agentId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditLearningInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "aprendizado editado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningOk"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "não encontrado"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "learnings"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "agentId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "aprendizado esquecido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningOk"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "não encontrado"
+          }
+        }
+      }
+    },
+    "/api/agents/{agentId}/learnings/{id}/confirm": {
+      "post": {
+        "tags": [
+          "learnings"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "agentId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "aprendizado confirmado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningOk"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "não encontrado"
+          }
+        }
+      }
+    },
+    "/api/agents/{agentId}/learnings/{id}/accept-threshold": {
+      "post": {
+        "tags": [
+          "learnings"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "agentId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ajuste de comportamento aplicado",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningOk"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "sem proposta / limiar ilegível"
+          },
+          "404": {
+            "description": "não encontrado"
           }
         }
       }

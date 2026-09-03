@@ -4,7 +4,8 @@ import type { ApprovalId, OrgId } from "@trafego/shared/types";
 import type { Approval, ApprovalPort } from "@trafego/shared/ports";
 import type { SchedulerPort } from "@trafego/shared/ports";
 import { APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE } from "@trafego/shared";
-import { editBudgetActionValue } from "@trafego/core";
+import { ACTION_PARAM_CURRENT_MINOR } from "@trafego/shared";
+import { editBudgetActionValue, projectBudgetTargetMinor } from "@trafego/core";
 import { badRequest, notFound } from "../../middleware/error-handler.js";
 import { computeAppliedActions, DAY_MS } from "../../lib/applied-actions.js";
 import type {
@@ -33,19 +34,19 @@ export interface ApprovalsDeps {
  * o estado fresco + guardrail + escreve); rejeitar → resolve direto (sem escrita).
  */
 export function createApprovalsService(deps: ApprovalsDeps) {
-  /** agentId → { accountId, accountName } (rótulo da conta na caixa de entrada). */
+  /** agentId → { accountId, accountName, currency } (rótulo + moeda da conta na caixa de entrada). */
   async function accountByAgent(
     agentIds: readonly string[],
-  ): Promise<Map<string, { accountId: string; accountName: string }>> {
-    const map = new Map<string, { accountId: string; accountName: string }>();
+  ): Promise<Map<string, { accountId: string; accountName: string; currency: string | null }>> {
+    const map = new Map<string, { accountId: string; accountName: string; currency: string | null }>();
     if (agentIds.length === 0) return map;
     const rows = await deps.db
-      .select({ agentId: agents.id, accountId: adAccounts.id, accountName: adAccounts.name })
+      .select({ agentId: agents.id, accountId: adAccounts.id, accountName: adAccounts.name, currency: adAccounts.currency })
       .from(agents)
       .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
       .where(inArray(agents.id, [...agentIds]));
     for (const r of rows) {
-      map.set(r.agentId, { accountId: r.accountId, accountName: r.accountName ?? r.accountId });
+      map.set(r.agentId, { accountId: r.accountId, accountName: r.accountName ?? r.accountId, currency: r.currency });
     }
     return map;
   }
@@ -60,6 +61,14 @@ export function createApprovalsService(deps: ApprovalsDeps) {
       const accounts = await accountByAgent([...new Set(pending.map((a) => a.agentId))]);
       return pending.map((a) => {
         const acc = accounts.get(a.agentId);
+        // orçamento atual (capturado na proposta) + projeção do proposto — só adjust_budget.
+        const rawCurrent = Number(a.action.params[ACTION_PARAM_CURRENT_MINOR]);
+        const currentBudgetMinor =
+          a.actionType === "adjust_budget" && Number.isFinite(rawCurrent) && rawCurrent > 0 ? rawCurrent : null;
+        const targetBudgetMinor =
+          a.actionType === "adjust_budget" ? projectBudgetTargetMinor(currentBudgetMinor, a.action.params) : null;
+        const currentBudgetMajor = currentBudgetMinor != null ? currentBudgetMinor / MINOR_PER_UNIT : null;
+        const targetBudgetMajor = targetBudgetMinor != null ? targetBudgetMinor / MINOR_PER_UNIT : null;
         return {
           id: a.id,
           accountId: acc?.accountId ?? "",
@@ -71,6 +80,9 @@ export function createApprovalsService(deps: ApprovalsDeps) {
           reason: a.action.reason,
           status: a.status,
           expiresAt: a.expiresAt ? a.expiresAt.toISOString() : null,
+          currency: acc?.currency ?? null,
+          currentBudgetMajor,
+          targetBudgetMajor,
         };
       });
     },

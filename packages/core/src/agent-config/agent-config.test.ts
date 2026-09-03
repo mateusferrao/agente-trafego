@@ -80,6 +80,18 @@ describe("resolveAgentConfigChange — merge do model_config", () => {
     expect(r.next.modelConfig).toEqual({ model: "x", windowDays: 30 });
     expect(r.next.analysisWindowDays).toBe(30);
   });
+
+  it("F-worker-1: patch só de quality → columnsChanged marca SÓ modelConfig (autonomy/goals NÃO)", () => {
+    const state = baseState({ modelConfig: { quality: { zombieMinSpend: 50 } } });
+    const r = resolve(state, { modelConfig: { quality: { zombieMinSpend: 37.5 } } });
+    expect(r.columnsChanged.modelConfig).toBe(true);
+    // a casca NÃO reescreve autonomy_policy/goals/persona/etc. num patch só de quality (hard-wall real).
+    expect(r.columnsChanged.autonomyPolicy).toBe(false);
+    expect(r.columnsChanged.goals).toBe(false);
+    expect(r.columnsChanged.persona).toBe(false);
+    expect(r.columnsChanged.notifyPolicy).toBe(false);
+    expect(r.columnsChanged.posture).toBe(false);
+  });
 });
 
 describe("resolveAgentConfigChange — semântica de texto", () => {

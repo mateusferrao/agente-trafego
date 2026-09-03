@@ -8,6 +8,8 @@ import { adAccounts, agents, orgs } from "@trafego/db";
 import { cadenceToCron } from "@trafego/core";
 import {
   AGENT_CRON_QUEUE,
+  AGENT_LEARNING_QUEUE,
+  AGENT_LEARNING_SCHEDULE_KEY,
   AGENT_PULSE_QUEUE,
   AGENT_REAPER_QUEUE,
   AGENT_REAPER_SCHEDULE_KEY,
@@ -136,6 +138,17 @@ export function makeAccountCron(deps: WorkerDeps) {
     });
   }
 
+  /** Garante o scheduler recorrente do job de aprendizado (singleton — diário). */
+  async function ensureAgentLearningSchedule(): Promise<void> {
+    await scheduler.upsertSchedule({
+      key: AGENT_LEARNING_SCHEDULE_KEY,
+      queue: AGENT_LEARNING_QUEUE,
+      cron: deps.agentLearningCron,
+      tz: deps.cron.tz,
+      payload: {},
+    });
+  }
+
   /** Garante o scheduler recorrente do purge do contexto de grupo (singleton — retenção/LGPD). */
   async function ensureGroupContextPurgeSchedule(): Promise<void> {
     await scheduler.upsertSchedule({
@@ -231,6 +244,7 @@ export function makeAccountCron(deps: WorkerDeps) {
     removeAccountSchedule,
     ensureReaperSchedule,
     ensureApprovalExpirySchedule,
+    ensureAgentLearningSchedule,
     ensureGroupContextPurgeSchedule,
     ensureInsightsSweepSchedule,
     syncAllFromDb,
