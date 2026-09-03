@@ -74,7 +74,7 @@ Legenda: 🟢 caminho feliz · 🔴 caminho triste (estresse).
 ## Slice 5 — escala
 
 ### 5.1 Proativo sobe budget
-- 🟢 Numa conta com vencedor **CBO no teto de budget** + `proactiveDrafts` ligado, rode a análise. **Esperado:** o proativo cria a **aprovação de adjust_budget** + recomendação "Escalar seu vencedor (subir orçamento)" — antes era ignorado. Banco: `approvals kind='action' action_type='adjust_budget'` + `recommendations toolKey='adjust_budget'`.
+- 🟢 Numa conta com vencedor **CBO no teto de budget** (criação proativa é sempre ativa — Fatia D), rode a análise. **Esperado:** o proativo cria a **aprovação de adjust_budget** + recomendação "Escalar seu vencedor (subir orçamento)" — antes era ignorado. Banco: `approvals kind='action' action_type='adjust_budget'` + `recommendations toolKey='adjust_budget'`.
 - 🟢 Vencedor duplicável (não-CBO, passo grande) → segue no ramo duplicate (rascunho), como antes.
 
 ### 5.2 Transparência do clamp
