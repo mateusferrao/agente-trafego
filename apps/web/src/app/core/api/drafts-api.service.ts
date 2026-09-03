@@ -119,6 +119,12 @@ export class DraftsApiService extends BaseApiService {
     return this.resolveUrl(['/accounts', accountId, 'creatives', assetId, 'blob']);
   }
 
+  /** URL da miniatura do criativo (imagem = blob original; vídeo = frame HD servido pela API, já que
+   *  o `<img>` não renderiza o arquivo de vídeo). Proxy autenticado, mesma origem; ETag no browser. */
+  creativeThumbUrl(accountId: string, assetId: string): string {
+    return this.resolveUrl(['/accounts', accountId, 'creatives', assetId, 'thumb']);
+  }
+
   /** URL da miniatura do criativo de UM anúncio do rascunho (G — o card mostra 1 preview por
    *  anúncio, não o geral) — resolve o criativo próprio do anúncio `index`, caindo no padrão do
    *  rascunho. Proxy autenticado; reuse busca fresco da Meta, upload serve o blob; ETag no browser.
