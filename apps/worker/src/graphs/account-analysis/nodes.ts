@@ -136,10 +136,10 @@ import { mapWithConcurrency } from "../../lib/concurrency.js";
 import { resolveAnalysisConfig, type ResolvedAnalysisConfig } from "../../modules/analysis/config.js";
 import {
   buildCampaignMessages,
-  buildReviewMessages,
   buildSynthesisMessages,
   type AdCopy,
 } from "../../modules/analysis/prompt.js";
+import { DEFAULT_REVIEW_PASSES } from "../../modules/analysis/review-passes.js";
 import {
   buildMessageMessages,
   MESSAGE_OUTPUT_JSON_SCHEMA,
@@ -758,33 +758,41 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     let reviewDegraded = false;
 
     if (cfg.reviewEnabled) {
-      const issues = flagUnsupportedFindings(draft, state.brief);
-      try {
-        const completion = await deps.ports.llm.completeStructured<AnalysisOutput>({
-          model: cfg.reviewModel,
-          messages: buildReviewMessages(state.brief, draft, issues, state.vertical),
-          responseSchema: ANALYSIS_OUTPUT_JSON_SCHEMA,
-          responseSchemaName: ANALYSIS_OUTPUT_SCHEMA_NAME,
-          temperature: ANALYSIS_TEMPERATURE,
-          maxTokens: cfg.maxOutputTokens,
-          // separado do reasoning da síntese (achado do A/B: revisor refina/corta, não
-          // gera do zero — não precisa do mesmo orçamento de raciocínio).
-          reasoning: { effort: cfg.reviewReasoningEffort },
-          // D1 (6c): emite usage_event `review` (antes a chamada não passava meta).
-          meta: { orgId: state.orgId, runId: state.runId, type: "review" },
-        });
-        const parsed = analysisOutputSchema.safeParse(completion.output);
-        if (parsed.success) {
-          reviewed = parsed.data;
-          usage = addTokenUsage(usage ?? undefined, completion.usage);
-        } else {
-          partial = true; reviewDegraded = true; // revisor devolveu fora do schema → usa o analista
-          logger.warn({ runId: state.runId }, "review:output fora do schema; usando analista");
+      // Seam de passes (E3): aplica cada passe em SEQUÊNCIA sobre a saída do anterior. Default = 1
+      // passe (editor-chefe) → idêntico ao revisor único de antes; cresce p/ os painéis da Fatia 8.
+      for (const pass of DEFAULT_REVIEW_PASSES) {
+        // re-flag no rascunho ATUAL (o que o passe anterior deixou) — no passe único, `reviewed`===`draft`.
+        const issues = flagUnsupportedFindings(reviewed, state.brief);
+        try {
+          const completion = await deps.ports.llm.completeStructured<AnalysisOutput>({
+            model: cfg.reviewModel,
+            messages: pass.buildMessages(state.brief, reviewed, issues, state.vertical),
+            responseSchema: ANALYSIS_OUTPUT_JSON_SCHEMA,
+            responseSchemaName: ANALYSIS_OUTPUT_SCHEMA_NAME,
+            temperature: ANALYSIS_TEMPERATURE,
+            maxTokens: cfg.maxOutputTokens,
+            // separado do reasoning da síntese (achado do A/B: revisor refina/corta, não
+            // gera do zero — não precisa do mesmo orçamento de raciocínio).
+            reasoning: { effort: cfg.reviewReasoningEffort },
+            // D1 (6c): emite usage_event `review` (antes a chamada não passava meta). Distinguir
+            // passes no metering (passKey) = Fatia 8, quando houver mais de um passe.
+            meta: { orgId: state.orgId, runId: state.runId, type: "review" },
+          });
+          const parsed = analysisOutputSchema.safeParse(completion.output);
+          if (parsed.success) {
+            reviewed = parsed.data;
+            usage = addTokenUsage(usage ?? undefined, completion.usage);
+          } else {
+            partial = true; reviewDegraded = true; // passe devolveu fora do schema → mantém o último bom
+            logger.warn({ runId: state.runId, passKey: pass.key }, "review:output fora do schema; mantendo o último bom");
+            break;
+          }
+        } catch (err) {
+          if (!(err instanceof LLMProviderError)) throw err; // erro inesperado sobe
+          partial = true; reviewDegraded = true; // passe falhou → degradação graciosa (usa o último bom)
+          logger.warn({ runId: state.runId, passKey: pass.key, err }, "review:passe falhou; mantendo o último bom");
+          break;
         }
-      } catch (err) {
-        if (!(err instanceof LLMProviderError)) throw err; // erro inesperado sobe
-        partial = true; reviewDegraded = true; // revisor falhou → degradação graciosa (usa o analista)
-        logger.warn({ runId: state.runId, err }, "review:falhou; usando análise sem revisão");
       }
     }
 
