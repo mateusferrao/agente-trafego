@@ -67,7 +67,7 @@ function appendGroups(lines: string[], o: MessageOverview): void {
   const approvable = o.approvable ?? [];
   if (approvable.length > 0) {
     lines.push("");
-    lines.push('Posso fazer agora — é só responder "pode":');
+    lines.push('Posso fazer agora — responda "pode" (ou aprove no site):');
     for (const a of approvable) {
       const ressalva = a.ressalvas && a.ressalvas.length > 0 ? ` ⚠️ ${a.ressalvas.join("; ")}` : "";
       lines.push(`• ${a.reason}${ressalva}`);

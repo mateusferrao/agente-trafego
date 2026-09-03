@@ -1376,11 +1376,14 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       reason: a.reason,
       ...(a.ressalvas && a.ressalvas.length > 0 ? { ressalvas: a.ressalvas.map((r) => r.message) } : {}),
     }));
+    // Pendências aprováveis existem MESMO sem recomendação do LLM (ex: playbook-only, ou LLM
+    // degradado): a narrativa/entrega tem de considerar isso, senão a pendência some (regressão B).
+    const hasApprovable = approvable.length > 0;
 
     // ── (1) NARRATIVA (SEMPRE): a voz do agente sobre a análise, p/ o site + WhatsApp ──
     let narrative: string;
     let usage = state.usage;
-    if (hasRecs) {
+    if (hasRecs || hasApprovable) {
       let text: string | null = null;
       try {
         const completion = await deps.ports.llm.completeStructured<{ text: string }>({
@@ -1435,9 +1438,10 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     // ── (2) ENTREGA (push): gated. cron/signal sem recomendação = silêncio; WhatsApp sempre ──
     const shouldDeliver = isWhatsapp || (notifiesOrg && !runPushOff);
     let outbound: string | null = null;
-    if (shouldDeliver && (hasRecs || isWhatsapp)) {
+    if (shouldDeliver && (hasRecs || hasApprovable || isWhatsapp)) {
       // Fatia B: a narrativa já DETALHA todas as sugestões agrupadas + OFERECE as aprováveis
       // ("responde pode"), então não há mais teaser "tem mais N" nem bridge de contagem.
+      // hasApprovable garante a entrega/oferta mesmo sem recomendação do LLM (playbook-only/degradado).
       outbound = narrative;
       // nota honesta do que o agente FEZ neste run (aplicou/simulou) — determinística.
       const attempted = state.guardrail?.allowed.length ?? 0;
