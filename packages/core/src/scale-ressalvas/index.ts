@@ -1,0 +1,102 @@
+import type { Action, DecisionEligibility, HealthSignal, Ressalva } from "@trafego/shared";
+import { ACTION_PARAM_MODE, BUDGET_MODE_INCREASE } from "@trafego/shared";
+import type { LessonGuard } from "../learning/index.js";
+import {
+  type AudienceCeilingThresholds,
+  type AudienceHeadroom,
+  type MarginalCpaThresholds,
+  firstFatigueSignal,
+} from "../analysis-guards/index.js";
+
+/**
+ * Passe PURO nível-Action que anexa RESSALVAS de escala (Fatia A) — a versão canônica dos
+ * antigos guards de escala, agora sobre a `Action` (não a recomendação do LLM). Roda no ponto
+ * ÚNICO onde os candidatos convergem (`decide_actions`), então LLM e escala determinística são
+ * tratados igual (fonte única, zero divergência). A ressalva NÃO rebaixa/remove a ação: mantém
+ * aprovável e apenas trava o auto-apply (`isAutoApplicable`). Só escala (reativar / aumentar
+ * orçamento) é avaliada; corte/pausa têm os guards de SEGURANÇA próprios (nível-recomendação).
+ */
+
+/** Uma ação é de ESCALA (reativar OU aumentar orçamento). PURA. */
+export function isScaleAction(action: Action): boolean {
+  if (action.type === "resume_entity") return true;
+  if (action.type === "adjust_budget") return action.params[ACTION_PARAM_MODE] === BUDGET_MODE_INCREASE;
+  return false;
+}
+
+/** Contexto por-entidade já resolvido (IO feito no worker) — os passes são PUROS. */
+export interface ScaleRessalvaContext {
+  readonly eligibility: ReadonlyMap<string, DecisionEligibility>;
+  /** `%` de alta do CPA (atual vs baseline; positivo = piorou) por entidade. */
+  readonly marginalRisePct: ReadonlyMap<string, number | undefined>;
+  readonly marginal: MarginalCpaThresholds;
+  readonly headroom: ReadonlyMap<string, AudienceHeadroom>;
+  readonly ceiling: AudienceCeilingThresholds;
+  readonly signals: ReadonlyMap<string, readonly HealthSignal[]>;
+  readonly lessonGuards: readonly LessonGuard[];
+}
+
+/** Anexa as ressalvas de escala aplicáveis à ação. PURA. Vazio = escala limpa (ou não é escala). */
+export function computeScaleRessalvas(action: Action, ctx: ScaleRessalvaContext): readonly Ressalva[] {
+  if (!isScaleAction(action)) return [];
+  const id = action.target.id;
+  const out: Ressalva[] = [];
+
+  // 1. significância / learning (o guard de significância)
+  const elig = ctx.eligibility.get(id);
+  if (elig && !(elig.hasSignificance && !elig.inLearning)) {
+    out.push({
+      code: "no_significance",
+      message: elig.inLearning
+        ? "ainda em aprendizado (sem base comparável no período anterior) — escalar agora pode bagunçar o aprendizado; melhor esperar estabilizar."
+        : `sem base estatística ainda (${elig.conversions} conversões) — o resultado pode ser variação; confirme com mais dado antes de escalar.`,
+    });
+  }
+
+  // 2. CPA marginal piorando (limiar malformado → inerte, nunca confia num teto quebrado)
+  if (Number.isFinite(ctx.marginal.worsenPct) && ctx.marginal.worsenPct > 0) {
+    const rise = ctx.marginalRisePct.get(id);
+    if (rise !== undefined && rise >= ctx.marginal.worsenPct) {
+      out.push({
+        code: "worsening_marginal_cpa",
+        message: `CPA marginal piorando (+${rise.toFixed(0)}% vs período anterior) — o CPA médio parece bom, mas o incremento mais recente já está mais caro.`,
+      });
+    }
+  }
+
+  // 3. teto de audiência
+  const hr = ctx.headroom.get(id);
+  if (hr && hr.monthlyReach !== undefined) {
+    const cap = hr.monthlyReach * hr.frequencyCap;
+    if (cap > 0 && hr.currentMonthlyImpressions / cap >= ctx.ceiling.nearSaturationRatio) {
+      out.push({
+        code: "audience_ceiling",
+        message: `o público (~${Math.round(hr.monthlyReach)} pessoas/mês) já está perto do teto de frequência saudável — mais orçamento tende a aumentar a frequência (mesma gente vendo mais vezes), não alcançar gente nova.`,
+      });
+    }
+  }
+
+  // 4. fadiga de criativo (fonte única `firstFatigueSignal`)
+  const hit = firstFatigueSignal(ctx.signals.get(id));
+  if (hit) {
+    out.push({
+      code: "creative_fatigue",
+      message: `sinal de fadiga de criativo (${hit}) — renove o gancho/criativo antes de subir o orçamento, senão o incremento tende a piorar o CPA/CPM em vez de alcançar gente nova.`,
+    });
+  }
+
+  // 5. hipótese de aprendizado não-confirmada (só rebaixa; assimétrica)
+  const lower = ctx.lessonGuards.filter((g) => g.key.direction === "lower");
+  const accountCaution = lower.some((g) => g.key.scope === "account");
+  const entityCaution = lower.some((g) => g.key.scope === "entity" && g.key.subjectId === id);
+  if (accountCaution || entityCaution) {
+    out.push({
+      code: "unconfirmed_hypothesis",
+      message: accountCaution
+        ? "um aprendizado desta conta (hipótese ainda não confirmada) sugere cautela ao escalar por aqui."
+        : "um aprendizado desta conta (hipótese ainda não confirmada) sugere cautela nesta entidade.",
+    });
+  }
+
+  return out;
+}
