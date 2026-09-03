@@ -97,7 +97,7 @@ export type ChatDraftProposal =
 /** on_demand (chat/site) ou proactive (proposto pelo agente no run). */
 export type DraftOrigin = "on_demand" | "proactive";
 
-interface AgentContext {
+export interface AgentContext {
   readonly ref: AdAccountRef;
   readonly currency: string;
   readonly cfg: ReturnType<typeof toGuardrailConfig>;

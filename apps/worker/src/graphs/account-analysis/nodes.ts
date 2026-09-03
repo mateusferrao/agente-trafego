@@ -67,7 +67,8 @@ import { ACTION_PARAM_CURRENT_MINOR, ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROV
 import { recommendations } from "@trafego/db";
 import { funnelFromRawActions, mapStatus } from "@trafego/ads-meta";
 import { loadAccountAudiences, loadAgentContext, PROACTIVE_AUDIENCE_UNRESOLVED_REASON, PROACTIVE_REACH_FLOOR_REASON, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner } from "../../modules/conversation/draft-proposal.js";
-import { proposeTargetingForOpportunity, type ProposedTargeting } from "../../modules/conversation/propose-targeting.js";
+import { proposedTargetingToArgs, proposeTargetingForOpportunity } from "../../modules/conversation/propose-targeting.js";
+import { buildAudienceEditActions } from "../../modules/analysis/audience-edit.js";
 import { autoApplyProactiveDraft, type DraftApplyOutcome } from "../../modules/apply/apply-draft.js";
 import { loadEnabledTools, enabledActionTypes } from "../../modules/tools/enabled.js";
 import {
@@ -172,32 +173,6 @@ function creationRecTitle(kind: string): string {
     default:
       return "Criar uma campanha nova";
   }
-}
-
-/** Mapeia o público proposto pela LLM (por NOME) → args de create/copy (resolvidos determinístico
- *  depois, autônomo-safe). Só inclui o que a LLM realmente propôs (campos vazios ficam de fora). */
-function proposalToCreationArgs(p: ProposedTargeting): {
-  geo?: readonly string[];
-  radiusKm?: number;
-  ageMin?: number;
-  ageMax?: number;
-  gender?: "all" | "men" | "women";
-  interests?: readonly string[];
-  behaviors?: readonly string[];
-  includeAudiences?: readonly string[];
-  excludeAudiences?: readonly string[];
-} {
-  return {
-    ...(p.geoNames.length > 0 ? { geo: p.geoNames } : {}),
-    ...(p.radiusKm != null ? { radiusKm: p.radiusKm } : {}),
-    ...(p.ageMin != null ? { ageMin: p.ageMin } : {}),
-    ...(p.ageMax != null ? { ageMax: p.ageMax } : {}),
-    ...(p.gender ? { gender: p.gender } : {}),
-    ...(p.interestNames.length > 0 ? { interests: p.interestNames } : {}),
-    ...(p.behaviorNames.length > 0 ? { behaviors: p.behaviorNames } : {}),
-    ...(p.includeAudienceNames.length > 0 ? { includeAudiences: p.includeAudienceNames } : {}),
-    ...(p.excludeAudienceNames.length > 0 ? { excludeAudiences: p.excludeAudienceNames } : {}),
-  };
 }
 
 const SEGMENT_LEVELS: readonly EntityLevel[] = ["campaign", "adset", "ad"];
@@ -880,9 +855,24 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     if (!state.analysisOutput) return {};
     const knownIds = new Set(state.entities.map((e) => e.id));
     const budgetMinorById = buildCurrentBudgetMinorById(state.entities);
-    const rows = state.analysisOutput.recommendations.map((rec) =>
-      toRecommendationRow(rec, state.orgId, state.runId, knownIds, budgetMinorById, state.scaleContext ?? null),
-    );
+    // Edição de público (Fatia C): review_audience de ADSET vira ação adjust_audience REAL quando a
+    // capacidade está ligada (opt-in) e dá pra propor+resolver um público concreto (LLM + resolução
+    // nome→id). Só adset (público mora no adset); campanha/anúncio fica consultivo. Nunca auto-aplica.
+    const editCandidates = state.analysisOutput.recommendations
+      .filter((rec) => rec.actionType === "review_audience" && rec.targetEntity?.level === "adset" && knownIds.has(rec.targetEntity.externalId))
+      .map((rec) => ({ recId: rec.id, adsetId: rec.targetEntity!.externalId, rationale: rec.rationale }));
+    const editActions = await buildAudienceEditActions(deps, editCandidates, {
+      ctx: { orgId: state.orgId, agentId: state.agentId, adAccountId: state.adAccountId, currency: state.brief?.account?.currency ?? DEFAULT_CURRENCY },
+      ...(state.goals?.conversionGoal ? { conversionGoal: state.goals.conversionGoal } : {}),
+      runId: state.runId,
+    });
+    const rows = state.analysisOutput.recommendations.map((rec) => {
+      const base = toRecommendationRow(rec, state.orgId, state.runId, knownIds, budgetMinorById, state.scaleContext ?? null);
+      // upgrade consultivo → acionável (platform_action) quando a edição de público resolveu.
+      const edit = editActions.get(rec.id);
+      if (!edit) return base;
+      return { ...base, kind: "platform_action" as const, proposedAction: edit, toolKey: edit.type, riskLevel: edit.riskLevel };
+    });
     await repo.saveRecommendations(rows);
     // ações propostas pelo LLM (com alvo válido) → candidatas do caminho de escrita.
     const llmCandidates = rows.map((r) => r.proposedAction).filter((a): a is Action => a !== null);
@@ -1068,7 +1058,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
             meta: { orgId: state.orgId, runId: state.runId },
           })
         : null;
-      const args = proposedTargeting ? proposalToCreationArgs(proposedTargeting) : {};
+      const args = proposedTargeting ? proposedTargetingToArgs(proposedTargeting) : {};
       // remarketing EXIGE público de convertidos/engajados resolvido — sem ele, não cria amplo às
       // cegas (perderia a intenção): degrada pra recomendação humana (requireResolvedAudience).
       const autoOpts = { autonomous: true, minMonthlyReach: PROACTIVE_MIN_MONTHLY_REACH, requireResolvedAudience: top.kind === "remarketing" };

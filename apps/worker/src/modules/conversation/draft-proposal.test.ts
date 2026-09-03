@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, interleaveMedia, normalizeAdCount, recoverOpenDraft, resolveCreationTargeting } from "./draft-proposal.js";
+import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, interleaveMedia, normalizeAdCount, recoverOpenDraft, resolveCreationTargeting, resolveProposedExplicitTargeting } from "./draft-proposal.js";
 import type { CopyVariant } from "@trafego/shared";
 import type { CampaignDraftSpec } from "@trafego/shared";
 import { creativeContentHash } from "../vision/resolver.js";
@@ -559,5 +559,44 @@ describe("recoverOpenDraft (fonte da verdade = banco quando o estado efêmero ex
   it("pendência existe mas o draft não está mais 'proposed' (0 linhas) → null", async () => {
     const deps = depsWith([{ kind: "draft", id: "appr1", draftId: "d1" }], []);
     expect(await recoverOpenDraft(deps, CTX)).toBeNull();
+  });
+});
+
+describe("resolveProposedExplicitTargeting (nome→id + montagem compartilhada — Fatia C)", () => {
+  const CTX2 = { orgId: ORG, agentId: AGENT, adAccountId: ACC, currency: "BRL" };
+  function adsDeps(searchGeo: unknown[], searchInterests: unknown[]): WorkerDeps {
+    return {
+      ports: {
+        ads: {
+          searchGeo: vi.fn(async () => searchGeo),
+          searchInterests: vi.fn(async () => searchInterests),
+          searchBehaviors: vi.fn(async () => []),
+        },
+      },
+    } as unknown as WorkerDeps;
+  }
+
+  it("resolve geo + interesse por NOME → explicit", async () => {
+    const deps = adsDeps([{ key: "C1", name: "Belo Horizonte", kind: "city" }], [{ id: "i1", name: "Corrida" }]);
+    const res = await resolveProposedExplicitTargeting(deps, CTX2, REF, { geo: ["Belo Horizonte"], interests: ["Corrida"], ageMin: 25 }, { autonomous: true });
+    expect(res.kind).toBe("ok");
+    if (res.kind !== "ok") return;
+    expect(res.targeting.geo).toEqual([{ key: "C1", name: "Belo Horizonte", kind: "city" }]);
+    expect(res.targeting.interestGroups).toEqual([[{ id: "i1", name: "Corrida" }]]);
+    expect(res.targeting.ageMin).toBe(25);
+  });
+
+  it("nada proposto → empty (o caller mantém consultivo, não inventa público)", async () => {
+    const res = await resolveProposedExplicitTargeting(adsDeps([], []), CTX2, REF, {}, { autonomous: true });
+    expect(res.kind).toBe("empty");
+  });
+
+  it("nome não resolvido em modo autônomo → descartado (dropped), não bloqueia", async () => {
+    const deps = adsDeps([], []); // geo não acha nada
+    const res = await resolveProposedExplicitTargeting(deps, CTX2, REF, { geo: ["Lugar Inexistente"], ageMin: 30 }, { autonomous: true });
+    expect(res.kind).toBe("ok"); // ageMin ainda sustenta o explicit
+    if (res.kind !== "ok") return;
+    expect(res.droppedNames).toContain("Lugar Inexistente");
+    expect(res.targeting.geo).toEqual([{ key: "BR", name: "Brasil", kind: "country" }]); // fallback país
   });
 });
