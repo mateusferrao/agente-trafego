@@ -77,6 +77,13 @@ type Dropped = LastRunActionsOutput['dropped'][number];
                       }
                     </span>
                     <span class="text-xs text-muted">{{ s.reason }}</span>
+                    @if (s.ressalvas?.length) {
+                      <span class="mt-0.5 flex flex-col gap-0.5 rounded-md border border-warning-soft bg-warning-soft px-2 py-1">
+                        @for (r of s.ressalvas; track r.code) {
+                          <span class="text-xs text-ink">⚠️ {{ r.message }}</span>
+                        }
+                      </span>
+                    }
                     @if (deadline(s.expiresAt); as d) {
                       <app-ui-eyebrow>{{ d }}</app-ui-eyebrow>
                     }

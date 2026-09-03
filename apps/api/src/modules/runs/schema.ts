@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { actionType, conversionGoalSchema, entityLevel, recommendationKindSchema, riskLevel, scorecardGrade, scorecardSchema } from "@trafego/shared/schemas";
+import { actionType, conversionGoalSchema, entityLevel, recommendationKindSchema, ressalvaSchema, riskLevel, scorecardGrade, scorecardSchema } from "@trafego/shared/schemas";
 
 export const runStatus = z.enum([
   "pending",
@@ -53,6 +53,9 @@ export const recommendationOutput = z.object({
   /** aprovação acionável ligada (ação OU rascunho/ativação pendente) — aprovar/rejeitar/editar. */
   approvalId: z.string().nullable(),
   approvalKind: z.enum(["action", "draft", "activation"]).nullable(),
+  /** ressalvas de escala (Fatia A): "dá pra fazer, mas..." — o card mostra o aviso honesto
+   *  e a ação segue aprovável (nunca auto-aplica). Vazio/null = escala limpa ou não é escala. */
+  ressalvas: z.array(ressalvaSchema).nullable(),
   /** voto do dono (👍/👎), quando houver — o card do site reflete o estado. */
   vote: z.enum(["up", "down"]).nullable(),
 });

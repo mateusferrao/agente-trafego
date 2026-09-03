@@ -10,6 +10,7 @@ import {
   marketReferenceSchema,
   notifyPolicySchema,
   postureSchema,
+  ressalvaSchema,
   toolBindingsSchema,
 } from "@trafego/shared/schemas";
 import {
@@ -388,6 +389,8 @@ export const suggestedActionOutput = z.object({
   targetId: z.string(),
   targetName: z.string().nullable(),
   reason: z.string(),
+  /** ressalvas de escala (Fatia A): o "porém" honesto no card de aprovação. */
+  ressalvas: z.array(ressalvaSchema).nullable(),
   /** ISO — prazo de resposta (expira e some da lista). */
   expiresAt: z.string().nullable(),
   /** true = proposta por uma análise ANTERIOR à que está sendo vista (cross-run). */

@@ -3828,6 +3828,34 @@
                     "activation"
                   ]
                 },
+                "ressalvas": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "enum": [
+                          "no_significance",
+                          "worsening_marginal_cpa",
+                          "audience_ceiling",
+                          "creative_fatigue",
+                          "unconfirmed_hypothesis"
+                        ]
+                      },
+                      "message": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "message"
+                    ]
+                  }
+                },
                 "vote": {
                   "type": [
                     "string",
@@ -3851,6 +3879,7 @@
                 "draftId",
                 "approvalId",
                 "approvalKind",
+                "ressalvas",
                 "vote"
               ]
             }
@@ -5824,6 +5853,34 @@
                     "activation"
                   ]
                 },
+                "ressalvas": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "enum": [
+                          "no_significance",
+                          "worsening_marginal_cpa",
+                          "audience_ceiling",
+                          "creative_fatigue",
+                          "unconfirmed_hypothesis"
+                        ]
+                      },
+                      "message": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "message"
+                    ]
+                  }
+                },
                 "vote": {
                   "type": [
                     "string",
@@ -5847,6 +5904,7 @@
                 "draftId",
                 "approvalId",
                 "approvalKind",
+                "ressalvas",
                 "vote"
               ]
             }
@@ -6533,6 +6591,34 @@
                 "reason": {
                   "type": "string"
                 },
+                "ressalvas": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "enum": [
+                          "no_significance",
+                          "worsening_marginal_cpa",
+                          "audience_ceiling",
+                          "creative_fatigue",
+                          "unconfirmed_hypothesis"
+                        ]
+                      },
+                      "message": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "message"
+                    ]
+                  }
+                },
                 "expiresAt": {
                   "type": [
                     "string",
@@ -6550,6 +6636,7 @@
                 "targetId",
                 "targetName",
                 "reason",
+                "ressalvas",
                 "expiresAt",
                 "fromPreviousRun"
               ]

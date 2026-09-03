@@ -14,7 +14,7 @@ import { tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { adAccounts, adCreatives, agentMemory, agentRuns, agentToolCalls, agents, campaignDrafts, customAudiences, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
-import { confidenceTier, daysAgoInTz, LEARNING_MEMORY_TYPES, rankAdCreatives, resolveNamedMatch, todayInTz, type RankableCreative } from "@trafego/core";
+import { confidenceTier, daysAgoInTz, LEARNING_MEMORY_TYPES, rankAdCreatives, renderRessalvas, resolveNamedMatch, todayInTz, type RankableCreative } from "@trafego/core";
 import { mapStatus } from "@trafego/ads-meta";
 import { createAnalysisRepo, type AdCreativeCopyRow } from "../../modules/analysis/repo.js";
 import {
@@ -710,7 +710,8 @@ export async function listPendingData(
     entityId: a.entityId,
     entityName: a.action.target?.name ?? null,
     actionType: a.actionType,
-    reason: a.action.reason,
+    // ressalvas de escala (Fatia A): viajam no reason pro chat mencionar o "porém" ao listar/aprovar.
+    reason: a.action.ressalvas?.length ? `${a.action.reason} — ${renderRessalvas(a.action.ressalvas)}` : a.action.reason,
     expiresAt: a.expiresAt.toISOString(),
   }));
 

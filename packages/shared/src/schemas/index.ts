@@ -11,6 +11,7 @@ import {
   DIRECTIVENESS_LEVELS,
   EXPERIENCE_LEVELS,
   RECOMMENDATION_KINDS,
+  RESSALVA_CODES,
   VOLUME_LEVELS,
 } from "../types/index.js";
 import { GATEABLE_TOOL_KEYS } from "../constants/tools.js";
@@ -22,6 +23,8 @@ export const entityLevel = z.enum(["account", "campaign", "adset", "ad"]);
 export const conversionGoalSchema = z.enum(CONVERSION_GOALS);
 /** Formato da recomendação (S2) — deriva da mesma tupla que o tipo (fonte única). */
 export const recommendationKindSchema = z.enum(RECOMMENDATION_KINDS);
+/** Ressalva de escala (Fatia A) — deriva da mesma tupla de códigos que o tipo (fonte única). */
+export const ressalvaSchema = z.object({ code: z.enum(RESSALVA_CODES), message: z.string() });
 export const actionType = z.enum([
   "pause_entity",
   "resume_entity",

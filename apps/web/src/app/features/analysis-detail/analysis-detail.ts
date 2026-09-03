@@ -357,6 +357,16 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                         }
                       </div>
                     }
+                    <!-- Ressalva (Fatia A): "dá pra fazer, mas..." — aviso honesto antes do OK; a ação
+                         segue aprovável (nunca auto-aplica). Tom+texto (⚠️), nunca só cor (§13). -->
+                    @if (rec.ressalvas?.length) {
+                      <div class="flex flex-col gap-1 rounded-md border border-warning-soft bg-warning-soft p-2">
+                        <app-ui-eyebrow class="text-warning-strong">⚠️ vale o seu olhar antes</app-ui-eyebrow>
+                        @for (r of rec.ressalvas; track r.code) {
+                          <p class="text-xs text-ink">{{ r.message }}</p>
+                        }
+                      </div>
+                    }
                     <!-- CTA inline (B): aplicável → aprovar/rejeitar aqui mesmo (+ editar valor do orçamento). -->
                     @if (doneAction()[rec.id]; as done) {
                       <span class="text-xs" [class.text-success-strong]="done === 'approved'" [class.text-muted]="done === 'rejected'">

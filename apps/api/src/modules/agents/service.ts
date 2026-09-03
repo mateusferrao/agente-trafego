@@ -592,6 +592,8 @@ export function createAgentsService(deps: AgentsDeps) {
       targetId: a.action.target.id,
       targetName: a.action.target.name ?? nameByEntityId.get(a.action.target.id) ?? null,
       reason: a.action.reason,
+      // ressalvas de escala (Fatia A): o card de aprovação mostra o "porém" honesto.
+      ressalvas: a.action.ressalvas ? [...a.action.ressalvas] : null,
       expiresAt: a.expiresAt ? a.expiresAt.toISOString() : null,
       // "Sugeridas" é cross-run (a caixa de decisões em aberto do agente); marca quando
       // a pendente veio de uma análise DIFERENTE da que esta página está mostrando —

@@ -17,6 +17,15 @@ import {
  * orçamento) é avaliada; corte/pausa têm os guards de SEGURANÇA próprios (nível-recomendação).
  */
 
+/**
+ * Formatador ÚNICO das ressalvas p/ texto (chat/push/eco) — evita divergência de apresentação
+ * entre superfícies (§13). `⚠️` está na allowlist de emoji do WhatsApp. "" quando não há ressalva.
+ */
+export function renderRessalvas(ressalvas: readonly Ressalva[] | undefined): string {
+  if (!ressalvas || ressalvas.length === 0) return "";
+  return ressalvas.map((r) => `⚠️ ${r.message}`).join(" ");
+}
+
 /** Uma ação é de ESCALA (reativar OU aumentar orçamento). PURA. */
 export function isScaleAction(action: Action): boolean {
   if (action.type === "resume_entity") return true;
