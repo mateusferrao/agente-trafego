@@ -126,6 +126,29 @@ estatística, teto de audiência, CPA marginal piorando, ou hipótese não-confi
 
 ---
 
+## E2E REAL executado (IA + Meta de produção)
+
+Além dos testes automatizados, a iniciativa foi validada com **LLM de produção + Meta real** (conta de
+teste "Org de Teste 366" / BM Automato), DB local isolado (docker), revertendo toda mudança real.
+
+**Fixtures reusáveis** (`apps/worker/e2e-dizfaz-*.ts`, rodar com `npx tsx --env-file=<env> <fixture>.ts`):
+- `e2e-dizfaz-analysis.ts` — análise real (My QuickStart): qualidade, grounding, **anti-alucinação**
+  (todo alvo de recomendação cruzado contra as 1290 entidades reais), ressalva, criação proativa (D).
+- `e2e-dizfaz-chat.ts` — chat real (Grafo B): não-alucinação, faz-o-que-fala, direção/clareza, erro
+  amigável em entidade inexistente, "aprova" vazio sem inventar aprovação, escrita redirecionada.
+
+**Resultado:** análise de **qualidade exemplar + honesta** (identifica gargalos reais com números
+reais, nunca alucina alvo); chat **honesto** (redireciona/nega o que não faz, não inventa). Escrita
+real na Meta **confirmada** persistindo + revertendo fielmente: `adjust_budget` (R$50→R$60→revert) e
+`adjust_audience` (idade 18-65 → 33-58 → **revert fiel** do público cru).
+
+**Achados corrigidos** (revelados só pelo stack real de produção):
+- **Revisor (gemini-3.7-flash) exige reasoning** e rejeitava nosso `reasoning:{enabled:false}` → o passe
+  do editor-chefe falhava sempre e a análise degradava pra parcial. **Fix:** retry sem o param.
+- **Unit model degenerava em JSON lixo** sem fallback de parse (só de rede) → campanha descartada.
+  **Fix:** fallback pro modelo reserva em falha de parse.
+- **Fast-follow documentado:** auto-retry de escrita no rate-limit #613 (hoje degrada gracioso).
+
 ## Encerramento
 
 - `pnpm test` (todos os packages) + `pnpm typecheck` + `pnpm --filter web build` **verdes**.
