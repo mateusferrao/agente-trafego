@@ -516,6 +516,32 @@ export type ActionType =
 export type ActionSource = "playbook" | "llm";
 export type RiskLevel = "low" | "medium" | "high";
 
+/**
+ * Códigos das ressalvas de ESCALA (fonte única do tipo + zod). Cada um é um sinal de risco
+ * detectado por um passe puro nível-Action (packages/core/analysis-guards) sobre uma ação de
+ * escalar/reativar. Adicionar um novo passe = 1 entrada aqui.
+ */
+export const RESSALVA_CODES = [
+  "no_significance",
+  "worsening_marginal_cpa",
+  "audience_ceiling",
+  "creative_fatigue",
+  "unconfirmed_hypothesis",
+] as const;
+export type RessalvaCode = (typeof RESSALVA_CODES)[number];
+
+/**
+ * Ressalva de uma ação de escala: "dá pra fazer, mas há um sinal de risco — precisa do teu OK".
+ * Anexada por passes PUROS nível-Action; **trava o auto-apply** (nunca aplica sozinha, nem em
+ * act_full) mas mantém a ação APROVÁVEL (com a mensagem honesta). Nome distinto de `caveat`
+ * (findings qualitativos, §13 nomenclatura no nível certo).
+ */
+export interface Ressalva {
+  readonly code: RessalvaCode;
+  /** mensagem honesta em linguagem de dono (o "porém" + a recomendação do Roy). */
+  readonly message: string;
+}
+
 export interface ActionTarget {
   readonly level: EntityLevel;
   readonly id: string;
@@ -533,6 +559,8 @@ export interface Action {
   readonly reason: string;
   readonly confidence?: number; // 0..1 (ações do LLM)
   readonly ruleId?: string; // ações do playbook
+  /** ressalvas de escala (Fatia A): sinais de risco que travam o auto-apply mas mantêm aprovável. */
+  readonly ressalvas?: readonly Ressalva[];
 }
 
 /** Ação candidata antes de passar pelo guardrail. */

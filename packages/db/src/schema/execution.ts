@@ -19,6 +19,7 @@ import type {
   CuratedEntitySnapshot,
   DraftSourceRef,
   PartialReason,
+  Ressalva,
 } from "@trafego/shared";
 import {
   actionType,
@@ -232,6 +233,9 @@ export const recommendations = pgTable(
     expectedImpact: text("expected_impact"),
     whatToMonitor: text("what_to_monitor"),
     findingRefs: jsonb("finding_refs").$type<string[]>(),
+    // Ressalvas de escala (Fatia A): sinais de risco anexados à ação — "dá pra fazer, mas..." —
+    // que travam o auto-apply mas mantêm a recomendação aprovável. Espelho do `Action.ressalvas`.
+    ressalvas: jsonb("ressalvas").$type<Ressalva[]>(),
     ...timestamps,
   },
   (t) => [
