@@ -24,7 +24,7 @@
 - 1 plataforma de ads: **Meta**. 1 canal: **WhatsApp via Evolution**.
 - Conectar conta Meta via **System User token** colado (sem OAuth/App Review).
 - Análise híbrida (playbook determinístico + LLM + visão de criativo).
-- Recomendações e ações (pausar / ajustar budget / status) com guardrails.
+- Recomendações e ações (pausar / ajustar budget / status / **editar público — `adjust_audience`**, opt-in default OFF) com guardrails.
 - Aprovação **conversacional** no WhatsApp + auto-aplicar liberável por config.
 - Config por **arquétipo** + superfície única (zero-config funciona).
 - Cadência cron por conta + on-demand.
@@ -155,6 +155,9 @@ Schema em `packages/db/src/schema`. Grupos:
 
 - **Autonomia:** slider (só avisa → sugere+OK → age no seguro → age sozinho). **Auto-aplicar liberável no dia 1** por config. **Por origem** (playbook × LLM).
 - **Ressalva de escala nunca auto-aplica (Fatia A):** uma ação de escala com `Ressalva` (fadiga/sem base/teto/CPA marginal/hipótese) **sempre** exige OK humano — `isAutoApplicable` retorna false mesmo em `act_full`. Mantém a ação aprovável (site+chat, editável) com o aviso honesto; nunca aplica sozinha sob risco. Escala LIMPA (sem ressalva) segue a autonomia normal.
+- **Editar público (`adjust_audience`) nunca auto-aplica (Fatia C):** editar o público de um adset **reseta o aprendizado da Meta** → `isAutoApplicable` retorna false mesmo em `act_full`; **sempre** exige OK (site+chat). É **opt-in** (default OFF, fora de `GUARDRAIL_DEFAULTS.allowedActions` — opt-in na mesma UI de ações permitidas do pause/budget); com a capacidade OFF, o `review_audience` do analista fica **consultivo** (honesto sobre o que não faz). O público proposto é **editável** antes de aprovar (card reusa o editor de público do rascunho, `GeoAudienceEditor`). O revert reposta o público cru anterior (o reset em si é irreversível — o Roy avisa; drift fino de targeting = fast-follow).
+- **Editar × duplicar (regra determinística, Fatia C):** **underperformer com público errado → editar** (`review_audience` do analista → `adjust_audience` no adset, C3); **vencedor que saturou o público → duplicar** para expansão (`prospecting_expansion`/`replicate_winner` → nova campanha com criativo reusado). Gatilhos distintos (sinal do analista × `audience_saturation`), níveis distintos (adset × nova campanha) → não colidem no pipeline. **Nunca pausa a campanha original em silêncio** (editar altera in-place; duplicar cria nova).
+- **Criação proativa sempre detectada (Fatia D):** o `propose_drafts` NÃO é mais gated por config (`proactiveDrafts` removido) — TODO agente detecta escalar/replicar/prospecção/criar e propõe como **card aprovável** (nunca auto sem autonomia). O freio é a **autonomia** (conservadora) + guardrail, não um liga/desliga extra — coerente com a honestidade "diz×faz" (o agente propõe o que dá pra fazer).
 - **Guardrails (sempre, mesmo autônomo):** blast radius (% máx budget/mudança, nº máx entidades/dia), budget cap, kill-switch, dry-run. **Defaults conservadores** — no caminho autônomo NÃO há eco+confirma, então guardrail é a única rede.
 - **Aprovação conversacional:** sem códigos. Agente lista o que achou em linguagem natural; resposta livre → Grafo B mapeia fala→ações. **Antes de QUALQUER escrita: eco concreto do que vai fazer + espera confirmação.** Ambiguidade = pergunta; nunca aplica em interpretação incerta.
 - **Escrita pedida no chat:** sempre confirma + guardrail (ignora nível de autonomia — chat é ambíguo demais p/ auto-aplicar).
