@@ -11,7 +11,7 @@ import {
   platformConnections,
   type Database,
 } from "@trafego/db";
-import { applyDraftEdit, buildResolvedSnapshot, clampRadius, describeDeliveryEstimate, planScaleMove, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
+import { applyDraftEdit, buildResolvedSnapshot, describeDeliveryEstimate, planScaleMove, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
 import { applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import type { ToolBindingMode } from "@trafego/shared";
 import {
@@ -30,11 +30,11 @@ import type { Action, AgentId, CreativeAssetRef, DraftId, OrgId, TargetingSpec }
 import type { AdAccountRef, ApprovalPort, CredentialVaultPort, SchedulerPort, StoragePort } from "@trafego/shared/ports";
 import type { AdsPlatformPort } from "@trafego/shared/ports";
 import { ingestCreativeImage, ingestCreativeVideo } from "@trafego/creative-library";
+import { buildExplicitFromInput, serializeExplicitAudience } from "../../lib/audience.js";
 import type {
   AudienceOutput,
   CreativeAssetOutput,
   DeliveryEstimateInput,
-  ExplicitAudienceInput,
   DraftApprovalOutput,
   GeoSearchResultOutput,
   InterestSearchResultOutput,
@@ -70,33 +70,6 @@ const DRAFT_NOT_OPEN_MSG = "esse rascunho não está mais aberto pra ajuste.";
 const ACCOUNT_UNAVAILABLE_MSG = "não consegui acessar a conta agora";
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
-
-/** Constrói o `TargetingSpec.explicit` a partir do input do site, CLAMPANDO o raio (Slice 9 — o chat
- *  já clampava; o site mandava cru). Raio é city-only: só `city` recebe radius (region/country nunca).
- *  Endereço (radiusAreas) clampado 1–80 km. Puro (usa `clampRadius` do core). */
-function buildExplicitFromInput(a: ExplicitAudienceInput): Extract<TargetingSpec, { kind: "explicit" }> {
-  const geo = a.geo.map((g) => {
-    if (g.kind !== "city" || g.radius == null) return { key: g.key, name: g.name, kind: g.kind };
-    const { radius } = clampRadius(g.radius, g.distanceUnit ?? "kilometer", "city");
-    return { key: g.key, name: g.name, kind: g.kind, radius, distanceUnit: g.distanceUnit ?? ("kilometer" as const) };
-  });
-  const radiusAreas = (a.radiusAreas ?? []).map((r) => {
-    const { radius } = clampRadius(r.radius, r.distanceUnit, "address");
-    return { address: r.address, radius, distanceUnit: r.distanceUnit };
-  });
-  return {
-    kind: "explicit",
-    geo,
-    ...(radiusAreas.length > 0 ? { radiusAreas } : {}),
-    ...(a.ageMin != null ? { ageMin: a.ageMin } : {}),
-    ...(a.ageMax != null ? { ageMax: a.ageMax } : {}),
-    ...(a.genders && a.genders.length > 0 ? { genders: a.genders } : {}),
-    ...(a.interestGroups && a.interestGroups.length > 0 ? { interestGroups: a.interestGroups } : {}),
-    ...(a.behaviorGroups && a.behaviorGroups.length > 0 ? { behaviorGroups: a.behaviorGroups } : {}),
-    ...(a.customAudienceIncludeIds && a.customAudienceIncludeIds.length > 0 ? { customAudienceIncludeIds: a.customAudienceIncludeIds } : {}),
-    ...(a.customAudienceExcludeIds && a.customAudienceExcludeIds.length > 0 ? { customAudienceExcludeIds: a.customAudienceExcludeIds } : {}),
-  };
-}
 
 /** Geo AGRUPADO do snapshot → lista plana `{key,name,kind}` (semente do converter modo, Slice 8).
  *  País usa o código como nome (o snapshot não guarda nome legível de país). */
@@ -490,20 +463,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
           creative: spec.creative ? { format: spec.creative.format, origin: spec.creative.origin } : null,
           audience:
             spec.targeting?.kind === "reuse_adset" ? "reuse" : spec.targeting?.kind === "advantage_plus" ? "broad" : null,
-          explicitAudience:
-            spec.targeting?.kind === "explicit"
-              ? {
-                  geo: spec.targeting.geo.map((g) => ({ key: g.key, name: g.name, kind: g.kind, radius: g.radius ?? null, distanceUnit: g.distanceUnit ?? null })),
-                  radiusAreas: (spec.targeting.radiusAreas ?? []).map((a) => ({ address: a.address, radius: a.radius, distanceUnit: a.distanceUnit })),
-                  ageMin: spec.targeting.ageMin ?? null,
-                  ageMax: spec.targeting.ageMax ?? null,
-                  genders: spec.targeting.genders ? [...spec.targeting.genders] : null,
-                  interestGroups: (spec.targeting.interestGroups ?? []).map((grp) => grp.map((i) => ({ id: i.id, name: i.name }))),
-                  behaviorGroups: (spec.targeting.behaviorGroups ?? []).map((grp) => grp.map((b) => ({ id: b.id, name: b.name }))),
-                  customAudienceIncludeIds: [...(spec.targeting.customAudienceIncludeIds ?? [])],
-                  customAudienceExcludeIds: [...(spec.targeting.customAudienceExcludeIds ?? [])],
-                }
-              : null,
+          explicitAudience: spec.targeting?.kind === "explicit" ? serializeExplicitAudience(spec.targeting) : null,
           // semente do CONVERTER MODO: rascunho reuse com retrato → geo/idade herdados; broad → vazio.
           // TOLERÂNCIA (rascunho antigo): reuse SEM `resolved` (proposto por worker pré-snapshot)
           // ainda vira convertível com semente vazia — o editor abre e o dono monta o público do

@@ -559,8 +559,9 @@ export class GeoAudienceEditor {
   private readonly reachSubject = new Subject<ExplicitAudienceState>();
 
   readonly accountId = input.required<string>();
-  /** id do rascunho — usado só p/ estimar o alcance (Slice 7); o objetivo/pixel vêm dele no servidor. */
-  readonly draftId = input.required<string>();
+  /** id do rascunho — usado só p/ estimar o alcance (Slice 7); o objetivo/pixel vêm dele no servidor.
+   *  `null` (ex: editando o público de uma AÇÃO adjust_audience, Fatia C) → sem preview de alcance. */
+  readonly draftId = input<string | null>(null);
   readonly initial = input.required<ExplicitAudienceState>();
   /** emite o estado COMPLETO a cada mudança — o pai manda como substituição total no PATCH do Salvar. */
   readonly stateChange = output<ExplicitAudienceState>();
@@ -659,13 +660,15 @@ export class GeoAudienceEditor {
       .pipe(
         debounceTime(SEARCH_DEBOUNCE_MS),
         switchMap((s) => {
-          if (s.geo.length === 0 && s.radiusAreas.length === 0) {
+          const draftId = this.draftId();
+          // sem rascunho (edição de público de uma AÇÃO) OU sem geo/raio → sem preview de alcance.
+          if (!draftId || (s.geo.length === 0 && s.radiusAreas.length === 0)) {
             this.estimating.set(false);
             return of<{ note: string | null }>({ note: null });
           }
           this.estimating.set(true);
           return this.api
-            .estimateDelivery(this.accountId(), this.draftId(), this.toEstimateInput(s))
+            .estimateDelivery(this.accountId(), draftId, this.toEstimateInput(s))
             .pipe(catchError(() => of<{ note: string | null }>({ note: null })));
         }),
         takeUntilDestroyed(),

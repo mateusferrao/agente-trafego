@@ -1,12 +1,13 @@
 import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import { adAccounts, agentRuns, agentToolCalls, agents, type Database } from "@trafego/db";
-import type { ApprovalId, OrgId } from "@trafego/shared/types";
+import type { ApprovalId, OrgId, TargetingSpec } from "@trafego/shared/types";
 import type { Approval, ApprovalPort } from "@trafego/shared/ports";
 import type { SchedulerPort } from "@trafego/shared/ports";
 import { APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE } from "@trafego/shared";
-import { ACTION_PARAM_CURRENT_MINOR } from "@trafego/shared";
+import { ACTION_PARAM_CURRENT_MINOR, ACTION_PARAM_TARGETING } from "@trafego/shared";
 import { editBudgetActionValue, projectBudgetTargetMinor } from "@trafego/core";
 import { badRequest, notFound } from "../../middleware/error-handler.js";
+import { buildExplicitFromInput, serializeExplicitAudience } from "../../lib/audience.js";
 import { computeAppliedActions, DAY_MS } from "../../lib/applied-actions.js";
 import type {
   ApprovalOutput,
@@ -69,6 +70,9 @@ export function createApprovalsService(deps: ApprovalsDeps) {
           a.actionType === "adjust_budget" ? projectBudgetTargetMinor(currentBudgetMinor, a.action.params) : null;
         const currentBudgetMajor = currentBudgetMinor != null ? currentBudgetMinor / MINOR_PER_UNIT : null;
         const targetBudgetMajor = targetBudgetMinor != null ? targetBudgetMinor / MINOR_PER_UNIT : null;
+        // público proposto (só adjust_audience) — semente do editor no card.
+        const targeting = a.actionType === "adjust_audience" ? (a.action.params[ACTION_PARAM_TARGETING] as TargetingSpec | undefined) : undefined;
+        const audience = targeting && targeting.kind === "explicit" ? serializeExplicitAudience(targeting) : null;
         return {
           id: a.id,
           accountId: acc?.accountId ?? "",
@@ -83,6 +87,7 @@ export function createApprovalsService(deps: ApprovalsDeps) {
           currency: acc?.currency ?? null,
           currentBudgetMajor,
           targetBudgetMajor,
+          audience,
         };
       });
     },
@@ -123,10 +128,23 @@ export function createApprovalsService(deps: ApprovalsDeps) {
       const approval = await deps.approvals.getById(approvalId);
       if (!approval || approval.orgId !== orgId) throw notFound("Aprovação não encontrada.");
       if (approval.status !== "pending") throw badRequest("Essa aprovação já foi resolvida.");
-      if (approval.kind !== "action") throw badRequest("Só dá pra editar o valor de uma ação.");
-      if (approval.actionType !== "adjust_budget") {
-        throw badRequest("Só o ajuste de orçamento tem valor editável; pausar/retomar/status é aprovar ou rejeitar.");
+      if (approval.kind !== "action") throw badRequest("Só dá pra editar uma ação.");
+
+      // PÚBLICO (adjust_audience, Fatia C): substituição TOTAL do targeting (o editor do site manda
+      // o estado completo, já resolvido). Editar o público reseta o aprendizado da Meta (aviso no card).
+      if (approval.actionType === "adjust_audience") {
+        if (!input.explicitAudience) throw badRequest("Pra editar essa ação, ajuste o público.");
+        const targeting = buildExplicitFromInput(input.explicitAudience);
+        const nextAction = { ...approval.action, params: { ...approval.action.params, [ACTION_PARAM_TARGETING]: targeting } };
+        const updated = await deps.approvals.updatePendingAction(approvalId, nextAction);
+        return { id: updated.id, status: updated.status };
       }
+
+      // ORÇAMENTO (adjust_budget): edita o valor. Demais tipos não têm o que editar.
+      if (approval.actionType !== "adjust_budget") {
+        throw badRequest("Só orçamento e público têm valor editável; pausar/retomar/status é aprovar ou rejeitar.");
+      }
+      if (input.mode === undefined) throw badRequest("Informe o novo orçamento (mode + pct/budgetReais).");
       const edit =
         input.mode === "set"
           ? { kind: "absolute" as const, amountMinor: Math.round((input.budgetReais ?? 0) * MINOR_PER_UNIT) }

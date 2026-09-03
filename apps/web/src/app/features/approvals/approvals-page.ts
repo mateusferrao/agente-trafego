@@ -3,6 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { toast } from 'ngx-sonner';
 import { NumberStepper, UiButton, UiConfirmDialogService, UiEmptyState, UiEyebrow, UiInput, UiPageHeader } from '@ui';
 import { DraftEditPanel } from './draft-edit-panel';
+import { GeoAudienceEditor, KM, type ExplicitAudienceState } from './geo-audience-editor';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import { ApprovalsApiService } from '@core/api/approvals-api.service';
 import { DraftsApiService } from '@core/api/drafts-api.service';
@@ -40,7 +41,7 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
 @Component({
   selector: 'app-approvals-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, UiEmptyState, UiPageHeader, UiButton, UiEyebrow, UiInput, NumberStepper, DraftEditPanel],
+  imports: [FormsModule, UiEmptyState, UiPageHeader, UiButton, UiEyebrow, UiInput, NumberStepper, DraftEditPanel, GeoAudienceEditor],
   template: `
     <div class="flex flex-col gap-8">
       <app-ui-page-header
@@ -165,6 +166,11 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                               {{ editingActionId() === a.id ? 'Cancelar' : 'Editar valor' }}
                             </button>
                           }
+                          @if (a.type === 'adjust_audience' && a.audience) {
+                            <button appButton variant="ghost" size="sm" [disabled]="resolving().has(a.id)" (click)="toggleEditAudience(a)">
+                              {{ editingAudienceId() === a.id ? 'Fechar edição' : 'Editar público' }}
+                            </button>
+                          }
                           <button appButton variant="secondary" size="sm" [disabled]="resolving().has(a.id)" (click)="reject(a)">
                             Rejeitar
                           </button>
@@ -194,6 +200,24 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                             </button>
                           </div>
                           <p class="text-xs text-muted">Ajusto o valor; aprovar em seguida aplica com o número novo (respeitando seu teto).</p>
+                        </div>
+                      }
+                      @if (editingAudienceId() === a.id && a.audience) {
+                        <div class="flex flex-col gap-3 border-t border-line pt-3">
+                          <p class="rounded-md border-2 border-warning bg-warning-soft px-3 py-2 text-xs text-ink">
+                            Editar o público reinicia o aprendizado da Meta nesse conjunto — a entrega pode oscilar por alguns dias até reestabilizar. Ajuste com calma antes de aprovar.
+                          </p>
+                          <app-geo-audience-editor
+                            [accountId]="a.accountId"
+                            [initial]="audienceSeed(a)"
+                            (stateChange)="audienceState.set($event)"
+                          />
+                          <div class="flex justify-end gap-2">
+                            <button appButton variant="secondary" size="sm" [disabled]="savingAudience()" (click)="editingAudienceId.set(null)">Cancelar</button>
+                            <button appButton size="sm" [disabled]="savingAudience()" (click)="saveAudienceEdit(a)">
+                              {{ savingAudience() ? 'Salvando…' : 'Salvar público' }}
+                            </button>
+                          </div>
                         </div>
                       }
                     </li>
@@ -276,6 +300,10 @@ export class ApprovalsPage implements OnInit {
   protected readonly editingActionId = signal<string | null>(null);
   protected readonly editBudgetReais = signal<number | null>(null);
   protected readonly savingAction = signal(false);
+  /** id da ação adjust_audience com o editor de PÚBLICO aberto (Fatia C, 1 por vez) + estado do editor. */
+  protected readonly editingAudienceId = signal<string | null>(null);
+  protected readonly audienceState = signal<ExplicitAudienceState | null>(null);
+  protected readonly savingAudience = signal(false);
   /** id do rascunho com o painel "Editar rascunho" aberto (só 1 por vez). */
   protected readonly editingFor = signal<string | null>(null);
   /** ids de rascunho cuja miniatura falhou (reuse fbcdn/Meta indisponível) → placeholder. */
@@ -480,6 +508,72 @@ export class ApprovalsPage implements OnInit {
       },
       error: () => this.savingAction.set(false),
     });
+  }
+
+  /** Público proposto (API) → estado do editor (`GeoAudienceEditor`). Semente da edição. */
+  protected audienceSeed(a: ApprovalOutput): ExplicitAudienceState {
+    const au = a.audience!;
+    return {
+      geo: au.geo.map((g) => ({ key: g.key, name: g.name, kind: g.kind, radius: g.radius, distanceUnit: g.distanceUnit })),
+      radiusAreas: au.radiusAreas.map((r) => ({ address: r.address, radius: r.radius, distanceUnit: r.distanceUnit })),
+      ageMin: au.ageMin,
+      ageMax: au.ageMax,
+      genders: au.genders,
+      interestGroups: au.interestGroups.map((grp) => grp.map((i) => ({ id: i.id, name: i.name }))),
+      behaviorGroups: au.behaviorGroups.map((grp) => grp.map((b) => ({ id: b.id, name: b.name }))),
+      customAudienceIncludeIds: [...au.customAudienceIncludeIds],
+      customAudienceExcludeIds: [...au.customAudienceExcludeIds],
+    };
+  }
+
+  /** Abre/fecha o editor de público de uma ação adjust_audience (Fatia C). Semeia o estado com o
+   *  público PROPOSTO (o editor emite o completo a cada mudança). */
+  protected toggleEditAudience(a: ApprovalOutput): void {
+    const opening = this.editingAudienceId() !== a.id;
+    this.editingAudienceId.set(opening ? a.id : null);
+    this.audienceState.set(opening ? this.audienceSeed(a) : null);
+  }
+
+  /** Salva o público editado (substituição total) antes de aprovar (Fatia C). A ação segue pendente;
+   *  aprovar em seguida aplica o público novo (o apply re-checa fresco). */
+  protected saveAudienceEdit(a: ApprovalOutput): void {
+    const state = this.audienceState();
+    if (!state) return;
+    if (state.geo.length === 0 && state.radiusAreas.length === 0 && !state.ageMin && !state.ageMax && (state.genders?.length ?? 0) === 0 && state.interestGroups.length === 0 && state.behaviorGroups.length === 0 && state.customAudienceIncludeIds.length === 0 && state.customAudienceExcludeIds.length === 0) {
+      toast.error('Escolha ao menos um critério de público (local, idade, interesse ou público salvo).');
+      return;
+    }
+    this.savingAudience.set(true);
+    this.api.editAction(a.id, { explicitAudience: this.toExplicitAudienceInput(state) }).subscribe({
+      next: () => {
+        this.savingAudience.set(false);
+        this.editingAudienceId.set(null);
+        toast.success('Público atualizado. Agora é só aprovar.');
+        this.reloadPending();
+      },
+      error: () => this.savingAudience.set(false),
+    });
+  }
+
+  /** Estado do editor → input de substituição total do público (keys/ids já resolvidos). Espelha o
+   *  `toExplicitInput` do painel de rascunho — radius/distanceUnit só quando houver. */
+  private toExplicitAudienceInput(s: ExplicitAudienceState): NonNullable<Parameters<ApprovalsApiService['editAction']>[1]['explicitAudience']> {
+    return {
+      geo: s.geo.map((g) => ({
+        key: g.key,
+        name: g.name,
+        kind: g.kind,
+        ...(g.radius != null ? { radius: g.radius, distanceUnit: g.distanceUnit ?? KM } : {}),
+      })),
+      radiusAreas: s.radiusAreas.map((a) => ({ address: a.address, radius: a.radius, distanceUnit: a.distanceUnit })),
+      ...(s.ageMin != null ? { ageMin: s.ageMin } : {}),
+      ...(s.ageMax != null ? { ageMax: s.ageMax } : {}),
+      ...(s.genders ? { genders: [...s.genders] } : {}),
+      interestGroups: s.interestGroups.map((g) => g.map((i) => ({ id: i.id, name: i.name }))),
+      behaviorGroups: s.behaviorGroups.map((g) => g.map((i) => ({ id: i.id, name: i.name }))),
+      customAudienceIncludeIds: [...s.customAudienceIncludeIds],
+      customAudienceExcludeIds: [...s.customAudienceExcludeIds],
+    };
   }
 
   /** Recarrega as pendentes (reflete o novo valor proposto no card após editar). */

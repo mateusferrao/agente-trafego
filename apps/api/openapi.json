@@ -1419,6 +1419,15 @@
                       "act_full"
                     ]
                   },
+                  "adjust_audience": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  },
                   "create_campaign": {
                     "type": "string",
                     "enum": [
@@ -1459,6 +1468,9 @@
               "adjust_budget": {
                 "type": "boolean"
               },
+              "adjust_audience": {
+                "type": "boolean"
+              },
               "create_campaign": {
                 "type": "boolean"
               },
@@ -1471,6 +1483,7 @@
               "resume_entity",
               "set_status",
               "adjust_budget",
+              "adjust_audience",
               "create_campaign",
               "duplicate_scale"
             ]
@@ -1495,7 +1508,8 @@
                     "pause_entity",
                     "resume_entity",
                     "adjust_budget",
-                    "set_status"
+                    "set_status",
+                    "adjust_audience"
                   ]
                 }
               },
@@ -2635,6 +2649,15 @@
                       "act_full"
                     ]
                   },
+                  "adjust_audience": {
+                    "type": "string",
+                    "enum": [
+                      "notify",
+                      "suggest",
+                      "act_safe",
+                      "act_full"
+                    ]
+                  },
                   "create_campaign": {
                     "type": "string",
                     "enum": [
@@ -2675,6 +2698,9 @@
               "adjust_budget": {
                 "type": "boolean"
               },
+              "adjust_audience": {
+                "type": "boolean"
+              },
               "create_campaign": {
                 "type": "boolean"
               },
@@ -2703,7 +2729,8 @@
                     "pause_entity",
                     "resume_entity",
                     "adjust_budget",
-                    "set_status"
+                    "set_status",
+                    "adjust_audience"
                   ]
                 }
               },
@@ -3750,7 +3777,8 @@
                         "pause_entity",
                         "resume_entity",
                         "adjust_budget",
-                        "set_status"
+                        "set_status",
+                        "adjust_audience"
                       ]
                     },
                     "target": {
@@ -5775,7 +5803,8 @@
                         "pause_entity",
                         "resume_entity",
                         "adjust_budget",
-                        "set_status"
+                        "set_status",
+                        "adjust_audience"
                       ]
                     },
                     "target": {
@@ -6573,7 +6602,8 @@
                     "pause_entity",
                     "resume_entity",
                     "adjust_budget",
-                    "set_status"
+                    "set_status",
+                    "adjust_audience"
                   ]
                 },
                 "targetLevel": {
@@ -6653,7 +6683,8 @@
                     "pause_entity",
                     "resume_entity",
                     "adjust_budget",
-                    "set_status"
+                    "set_status",
+                    "adjust_audience"
                   ]
                 },
                 "targetLevel": {
@@ -7324,7 +7355,8 @@
               "pause_entity",
               "resume_entity",
               "adjust_budget",
-              "set_status"
+              "set_status",
+              "adjust_audience"
             ]
           },
           "reason": {
@@ -7363,6 +7395,184 @@
               "number",
               "null"
             ]
+          },
+          "audience": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "geo": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "country",
+                        "region",
+                        "city"
+                      ]
+                    },
+                    "radius": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "distanceUnit": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "enum": [
+                        "mile",
+                        "kilometer"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "name",
+                    "kind",
+                    "radius",
+                    "distanceUnit"
+                  ]
+                }
+              },
+              "radiusAreas": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "address": {
+                      "type": "string"
+                    },
+                    "radius": {
+                      "type": "number"
+                    },
+                    "distanceUnit": {
+                      "type": "string",
+                      "enum": [
+                        "mile",
+                        "kilometer"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "address",
+                    "radius",
+                    "distanceUnit"
+                  ]
+                }
+              },
+              "ageMin": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "ageMax": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "genders": {
+                "type": [
+                  "array",
+                  "null"
+                ],
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    {
+                      "type": "number",
+                      "enum": [
+                        2
+                      ]
+                    }
+                  ]
+                }
+              },
+              "interestGroups": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name"
+                    ]
+                  }
+                }
+              },
+              "behaviorGroups": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name"
+                    ]
+                  }
+                }
+              },
+              "customAudienceIncludeIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "customAudienceExcludeIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "geo",
+              "radiusAreas",
+              "ageMin",
+              "ageMax",
+              "genders",
+              "interestGroups",
+              "behaviorGroups",
+              "customAudienceIncludeIds",
+              "customAudienceExcludeIds"
+            ]
           }
         },
         "required": [
@@ -7378,7 +7588,8 @@
           "expiresAt",
           "currency",
           "currentBudgetMajor",
-          "targetBudgetMajor"
+          "targetBudgetMajor",
+          "audience"
         ]
       },
       "ResolveApprovalInput": {
@@ -7436,11 +7647,173 @@
           "budgetReais": {
             "type": "number",
             "exclusiveMinimum": 0
+          },
+          "explicitAudience": {
+            "type": "object",
+            "properties": {
+              "geo": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "name": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "country",
+                        "region",
+                        "city"
+                      ]
+                    },
+                    "radius": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "distanceUnit": {
+                      "type": "string",
+                      "enum": [
+                        "mile",
+                        "kilometer"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "name",
+                    "kind"
+                  ]
+                }
+              },
+              "radiusAreas": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "address": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "radius": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "distanceUnit": {
+                      "type": "string",
+                      "enum": [
+                        "mile",
+                        "kilometer"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "address",
+                    "radius",
+                    "distanceUnit"
+                  ]
+                }
+              },
+              "ageMin": {
+                "type": "integer",
+                "minimum": 13,
+                "maximum": 65
+              },
+              "ageMax": {
+                "type": "integer",
+                "minimum": 13,
+                "maximum": 65
+              },
+              "genders": {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    {
+                      "type": "number",
+                      "enum": [
+                        2
+                      ]
+                    }
+                  ]
+                }
+              },
+              "interestGroups": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name"
+                    ]
+                  }
+                }
+              },
+              "behaviorGroups": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name"
+                    ]
+                  }
+                }
+              },
+              "customAudienceIncludeIds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "customAudienceExcludeIds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "geo"
+            ]
           }
-        },
-        "required": [
-          "mode"
-        ]
+        }
       },
       "DraftApprovalOutput": {
         "type": "object",

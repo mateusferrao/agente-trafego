@@ -1,7 +1,22 @@
 import { z } from "zod";
 import { actionType } from "@trafego/shared/schemas";
+import { explicitAudienceInput } from "../drafts/schema.js";
 
 const approvalStatusOutput = z.enum(["pending", "approved", "rejected", "expired", "blocked"]);
+
+/** Público EXPLÍCITO proposto de uma ação `adjust_audience` (Fatia C) — semente do editor do site
+ *  (`GeoAudienceEditor`, mesmo dos rascunhos). Opcionais normalizados em `null`. */
+const explicitAudienceView = z.object({
+  geo: z.array(z.object({ key: z.string(), name: z.string(), kind: z.enum(["country", "region", "city"]), radius: z.number().nullable(), distanceUnit: z.enum(["mile", "kilometer"]).nullable() })),
+  radiusAreas: z.array(z.object({ address: z.string(), radius: z.number(), distanceUnit: z.enum(["mile", "kilometer"]) })),
+  ageMin: z.number().nullable(),
+  ageMax: z.number().nullable(),
+  genders: z.array(z.union([z.literal(1), z.literal(2)])).nullable(),
+  interestGroups: z.array(z.array(z.object({ id: z.string(), name: z.string() }))),
+  behaviorGroups: z.array(z.array(z.object({ id: z.string(), name: z.string() }))),
+  customAudienceIncludeIds: z.array(z.string()),
+  customAudienceExcludeIds: z.array(z.string()),
+});
 
 /** Uma aprovação pendente (granular, 5b) — caixa de entrada cross-conta. */
 export const approvalOutput = z.object({
@@ -24,6 +39,9 @@ export const approvalOutput = z.object({
   /** Orçamento PROPOSTO resultante (unidade MAIOR) — projeção p/ exibição (pré-clamp). Null
    *  quando não dá pra projetar (sem atual, sem pct/valor) ou ação não é de orçamento. */
   targetBudgetMajor: z.number().nullable(),
+  /** Público EXPLÍCITO proposto — só `adjust_audience` (Fatia C); semente do editor no card.
+   *  Null nos demais tipos. Editar o público reseta o aprendizado da Meta (aviso no card). */
+  audience: explicitAudienceView.nullable(),
 });
 export type ApprovalOutput = z.infer<typeof approvalOutput>;
 
@@ -42,17 +60,23 @@ export const resolveApprovalOutput = z.object({
 export type ResolveApprovalOutput = z.infer<typeof resolveApprovalOutput>;
 
 /**
- * Editar o VALOR de uma ação `adjust_budget` pendente ANTES de aprovar (C, v1). `pct`
- * (increase/decrease em %) OU `budgetReais` (valor/dia absoluto, mode "set"). Só o valor —
- * pausar/retomar/status não têm número. O clamp do blast-radius é rede do apply.
+ * Editar uma ação pendente ANTES de aprovar. Duas formas (uma OU outra):
+ *  - ORÇAMENTO (`adjust_budget`): `pct` (increase/decrease em %) OU `budgetReais` (absoluto, mode "set").
+ *  - PÚBLICO (`adjust_audience`, Fatia C): `explicitAudience` = substituição TOTAL do público (o editor
+ *    do site manda o estado completo, já resolvido keys/ids — mesmo shape dos rascunhos).
+ * Pausar/retomar/status não têm o que editar (aprovar/rejeitar). Blast-radius clampado no apply.
  */
 export const editApprovalActionInput = z
   .object({
-    mode: z.enum(["increase", "decrease", "set"]),
+    mode: z.enum(["increase", "decrease", "set"]).optional(),
     pct: z.number().positive().optional(),
     budgetReais: z.number().positive().optional(),
+    explicitAudience: explicitAudienceInput.optional(),
   })
-  .refine((v) => (v.mode === "set" ? v.budgetReais !== undefined : v.pct !== undefined), {
+  .refine((v) => v.explicitAudience !== undefined || v.mode !== undefined, {
+    message: "informe o público (explicitAudience) ou o orçamento (mode + pct/budgetReais)",
+  })
+  .refine((v) => v.explicitAudience !== undefined || v.mode === undefined || (v.mode === "set" ? v.budgetReais !== undefined : v.pct !== undefined), {
     message: "informe pct (increase/decrease) ou budgetReais (set)",
   });
 export type EditApprovalActionInput = z.infer<typeof editApprovalActionInput>;
