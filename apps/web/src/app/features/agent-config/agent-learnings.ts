@@ -367,7 +367,7 @@ export class AgentLearnings implements OnInit {
   }
 
   protected confirm(l: Learning): Promise<void> {
-    return this.run((id) => firstValueFrom(this.learningsApi.confirm(id, l.id)), 'aprendizado confirmado');
+    return this.run((id) => firstValueFrom(this.learningsApi.confirm(id, l.id)), 'Aprendizado confirmado. Vou levar isso em conta.');
   }
 
   protected async forget(l: Learning): Promise<void> {
@@ -379,27 +379,27 @@ export class AgentLearnings implements OnInit {
       tone: 'danger',
     });
     if (!ok) return;
-    return this.run((id) => firstValueFrom(this.learningsApi.forget(id, l.id)), 'aprendizado esquecido');
+    return this.run((id) => firstValueFrom(this.learningsApi.forget(id, l.id)), 'Aprendizado esquecido. Não uso mais isso.');
   }
 
   protected restore(l: Learning): Promise<void> {
-    return this.run((id) => firstValueFrom(this.learningsApi.restore(id, l.id)), 'aprendizado restaurado');
+    return this.run((id) => firstValueFrom(this.learningsApi.restore(id, l.id)), 'Aprendizado restaurado.');
   }
 
   protected acceptThreshold(l: Learning): Promise<void> {
-    return this.run((id) => firstValueFrom(this.learningsApi.acceptThreshold(id, l.id)), 'comportamento ajustado');
+    return this.run((id) => firstValueFrom(this.learningsApi.acceptThreshold(id, l.id)), 'Comportamento ajustado.');
   }
 
   protected rejectProposal(l: Learning): Promise<void> {
-    return this.run((id) => firstValueFrom(this.learningsApi.rejectProposal(id, l.id)), 'proposta dispensada');
+    return this.run((id) => firstValueFrom(this.learningsApi.rejectProposal(id, l.id)), 'Proposta dispensada.');
   }
 
   protected revertThreshold(l: Learning): Promise<void> {
-    return this.run((id) => firstValueFrom(this.learningsApi.revertThreshold(id, l.id)), 'ajuste revertido');
+    return this.run((id) => firstValueFrom(this.learningsApi.revertThreshold(id, l.id)), 'Ajuste revertido.');
   }
 
   protected dismissOpportunity(): Promise<void> {
-    return this.run((id) => firstValueFrom(this.learningsApi.dismissOpportunity(id)), 'aviso dispensado');
+    return this.run((id) => firstValueFrom(this.learningsApi.dismissOpportunity(id)), 'Aviso dispensado.');
   }
 
   protected startEdit(l: Learning): void {

@@ -369,7 +369,7 @@ export class ApprovalsPage implements OnInit {
     this.api.resolve(d.id, 'approve').subscribe({
       next: () => {
         this.removeDraft(d.id);
-        toast.success(d.approvalKind === 'activation' ? 'Ativando — já deve estar veiculando.' : 'Enviado para criação. O agente cria em instantes.');
+        toast.success(d.approvalKind === 'activation' ? 'Ativando. Já deve estar veiculando.' : `Enviado pra criação. O ${AGENT_NAME} cria em instantes.`);
       },
       error: () => this.clearResolving(d.id),
     });
@@ -382,7 +382,7 @@ export class ApprovalsPage implements OnInit {
     this.api.resolve(d.id, 'reject').subscribe({
       next: () => {
         this.removeDraft(d.id);
-        toast.success(d.approvalKind === 'activation' ? 'Tudo bem, ela continua pausada.' : 'Rascunho descartado');
+        toast.success(d.approvalKind === 'activation' ? 'Tudo bem, ela continua pausada.' : 'Descartei o rascunho.');
       },
       error: () => this.clearResolving(d.id),
     });
@@ -435,7 +435,7 @@ export class ApprovalsPage implements OnInit {
     this.api.resolve(a.id, 'approve').subscribe({
       next: () => {
         this.removePending(a.id);
-        toast.success('Enviado para aplicação. O agente aplica em instantes.');
+        toast.success(`Aprovado. O ${AGENT_NAME} aplica em instantes.`);
       },
       error: () => this.clearResolving(a.id),
     });
@@ -447,7 +447,7 @@ export class ApprovalsPage implements OnInit {
     this.api.resolve(a.id, 'reject').subscribe({
       next: () => {
         this.removePending(a.id);
-        toast.success('Sugestão descartada');
+        toast.success('Descartei a sugestão.');
       },
       error: () => this.clearResolving(a.id),
     });
@@ -466,7 +466,7 @@ export class ApprovalsPage implements OnInit {
   protected saveActionEdit(a: ApprovalOutput): void {
     const reais = this.editBudgetReais();
     if (reais == null || !(reais > 0)) {
-      toast.error('Informe um valor maior que zero.');
+      toast.error('O valor precisa ser maior que zero.');
       return;
     }
     this.savingAction.set(true);
@@ -502,7 +502,7 @@ export class ApprovalsPage implements OnInit {
       tone: 'warning',
     });
     if (!confirmed) return;
-    this.runRevert(a, false, 'archive', 'Arquivando a campanha criada');
+    this.runRevert(a, false, 'archive', 'Arquivando a campanha criada.');
   }
 
   /** Reverter (por-conta, mesma rota da mini-surface). `force` = "mesmo assim" após drift;
@@ -510,7 +510,7 @@ export class ApprovalsPage implements OnInit {
   protected async revert(a: RevertibleActionOutput, force = false, mode?: 'pause' | 'archive'): Promise<void> {
     if (this.isCreation(a) && mode === 'pause') {
       // pausar é seguro/reversível — sem diálogo, ação direta.
-      this.runRevert(a, false, 'pause', 'Pausando a campanha criada');
+      this.runRevert(a, false, 'pause', 'Pausando a campanha criada.');
       return;
     }
     const description = force && a.revertBlockedReason ? `${a.revertBlockedReason}. ${UNDO_WARNING}` : UNDO_WARNING;
@@ -521,7 +521,7 @@ export class ApprovalsPage implements OnInit {
       tone: 'warning',
     });
     if (!confirmed) return;
-    this.runRevert(a, force, mode, 'Revertendo — a ação volta ao estado anterior');
+    this.runRevert(a, force, mode, 'Revertendo. A ação volta ao estado anterior.');
   }
 
   private runRevert(a: RevertibleActionOutput, force: boolean, mode: 'pause' | 'archive' | undefined, successMsg: string): void {

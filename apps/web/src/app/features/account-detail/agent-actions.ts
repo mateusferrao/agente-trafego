@@ -3,6 +3,7 @@ import { toast } from 'ngx-sonner';
 import { UiButton, UiConfirmDialogService, UiEyebrow } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import { ApprovalsApiService } from '@core/api/approvals-api.service';
+import { AGENT_NAME } from '@core/brand';
 import type { LastRunActionsOutput } from '@core/api/generated';
 import { UNDO_WARNING, actionTypeLabel, deadlineText, entityTargetLabel } from '@app/shared/action-format';
 
@@ -167,7 +168,7 @@ export class AgentActions implements OnInit {
           list.map((x) => (x.toolCallId === a.toolCallId ? { ...x, reverted: true, revertBlocked: false } : x)),
         );
         this.clearReverting(a.toolCallId);
-        toast.success('Revertendo — a ação volta ao estado anterior');
+        toast.success('Revertendo. A ação volta ao estado anterior.');
       },
       error: () => this.clearReverting(a.toolCallId),
     });
@@ -187,7 +188,7 @@ export class AgentActions implements OnInit {
     this.approvalsApi.resolve(s.approvalId, 'approve').subscribe({
       next: () => {
         this.removeSuggested(s.approvalId);
-        toast.success('Enviado para aplicação. O agente aplica em instantes.');
+        toast.success(`Aprovado. O ${AGENT_NAME} aplica em instantes.`);
       },
       error: () => this.clearResolving(s.approvalId),
     });
@@ -199,7 +200,7 @@ export class AgentActions implements OnInit {
     this.approvalsApi.resolve(s.approvalId, 'reject').subscribe({
       next: () => {
         this.removeSuggested(s.approvalId);
-        toast.success('Sugestão descartada');
+        toast.success('Descartei a sugestão.');
       },
       error: () => this.clearResolving(s.approvalId),
     });

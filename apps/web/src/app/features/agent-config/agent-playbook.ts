@@ -248,7 +248,7 @@ export class AgentPlaybook implements OnInit {
       this.api.createPlaybookRule(this.accountId(), input).subscribe({
         next: (saved) => {
           done(saved);
-          toast.success('Regra criada');
+          toast.success('Regra criada. Passo a vigiar isso.');
         },
         error: fail,
       });

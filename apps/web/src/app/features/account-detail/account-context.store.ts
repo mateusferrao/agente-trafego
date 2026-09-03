@@ -84,7 +84,7 @@ export class AccountContextStore {
       next: (agent) => {
         this.paused.set(agent.paused);
         this.pausing.set(false);
-        toast.success(agent.paused ? "Análises pausadas" : "Análises retomadas");
+        toast.success(agent.paused ? "Pausei as análises dessa conta." : "Retomei as análises dessa conta.");
       },
       error: () => this.pausing.set(false),
     });
@@ -115,7 +115,7 @@ export class AccountContextStore {
         const mutedSet = new Set(out.campaignIds);
         this.campaigns.update((list) => list.map((x) => ({ ...x, muted: mutedSet.has(x.externalId) })));
         this.mutingId.set(null);
-        toast.success(c.muted ? "Campanha reativada" : "Campanha silenciada");
+        toast.success(c.muted ? "Reativei essa campanha. Volto a acompanhar." : "Silenciei essa campanha. Paro de analisar ela.");
       },
       error: () => this.mutingId.set(null),
     });

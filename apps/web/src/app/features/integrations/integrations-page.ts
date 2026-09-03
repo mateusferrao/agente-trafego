@@ -427,5 +427,5 @@ function syncSummary(changes: {
   if (changes.newAvailable > 0) parts.push(`${changes.newAvailable} nova(s) disponível(is)`);
   if (changes.reactivated > 0) parts.push(`${changes.reactivated} reativada(s)`);
   if (changes.markedUnavailable > 0) parts.push(`${changes.markedUnavailable} indisponível(is)`);
-  return parts.length > 0 ? `Sincronizado — ${parts.join(', ')}` : 'Sincronizado — nada mudou';
+  return parts.length > 0 ? `Sincronizado: ${parts.join(', ')}.` : 'Sincronizado. Nada mudou.';
 }

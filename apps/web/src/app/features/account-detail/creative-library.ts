@@ -205,7 +205,7 @@ export class CreativeLibrary implements OnInit {
       next: (res) => {
         this.assets.update((list) => list.filter((x) => x.id !== a.id));
         this.deletingId.set(null);
-        toast.success(res.archived ? 'Criativo arquivado (estava em uso — não mexi nas campanhas).' : 'Criativo excluído.');
+        toast.success(res.archived ? 'Criativo arquivado. Estava em uso, então não mexi nas campanhas.' : 'Criativo excluído.');
       },
       error: () => {
         this.deletingId.set(null);

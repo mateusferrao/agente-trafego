@@ -139,7 +139,7 @@ export class RunDetailPage {
         const mutedSet = new Set(out.campaignIds);
         this.campaigns.update((list) => list.map((x) => ({ ...x, muted: mutedSet.has(x.externalId) })));
         this.mutingId.set(null);
-        toast.success(c.muted ? 'Campanha reativada' : 'Campanha silenciada');
+        toast.success(c.muted ? 'Reativei essa campanha. Volto a acompanhar.' : 'Silenciei essa campanha. Paro de analisar ela.');
       },
       // erro amigável já vem do interceptor global.
       error: () => this.mutingId.set(null),

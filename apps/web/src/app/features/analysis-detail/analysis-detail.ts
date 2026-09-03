@@ -486,7 +486,7 @@ export class AnalysisDetail {
     this.approvalsApi.resolve(rec.approvalId, 'approve').subscribe({
       next: () => {
         this.finishActioning(rec.id, 'approved');
-        toast.success('Enviado pra aplicar. O agente aplica em instantes.');
+        toast.success(`Aprovado. O ${AGENT_NAME} aplica em instantes.`);
       },
       error: () => this.unmarkActioning(rec.id),
     });
@@ -499,7 +499,7 @@ export class AnalysisDetail {
     this.approvalsApi.resolve(rec.approvalId, 'reject').subscribe({
       next: () => {
         this.finishActioning(rec.id, 'rejected');
-        toast.success('Recusada.');
+        toast.success('Recusada. Deixo como está.');
       },
       error: () => this.unmarkActioning(rec.id),
     });
@@ -543,7 +543,7 @@ export class AnalysisDetail {
     if (!rec.approvalId) return;
     const reais = this.editBudgetReais();
     if (reais == null || !(reais > 0)) {
-      toast.error('Informe um valor maior que zero.');
+      toast.error('O valor precisa ser maior que zero.');
       return;
     }
     this.savingEdit.set(true);
