@@ -141,6 +141,41 @@ describe("MetaCreationService.duplicateEntity", () => {
     expect(ad.status).toBe("PAUSED");
   });
 
+  it("conjunto com atribuição descontinuada → reconstrói (espelha campos, omite attribution) + nota de modernização", async () => {
+    const stub = stubTree({
+      adsetsOf: { C1: ["AS_OLD"] },
+      adsOf: { AS_OLD: ["AD1"] },
+      creativeOf: { AD1: "CRE_1" },
+      idFor: (src) => (src === "C1" ? { type: "campaign", id: "C_NEW" } : { type: "ad", id: `${src}_NEW` }),
+      adsetFields: { AS_OLD: { name: "conj", optimization_goal: "CONVERSATIONS", billing_event: "IMPRESSIONS", targeting: { age_min: 25 }, promoted_object: { pixel_id: "PX" }, daily_budget: "600", bid_strategy: "LOWEST_COST_WITHOUT_CAP", attribution_spec: [{ event_type: "CLICK_THROUGH", window_days: 7 }] } },
+      failCopyOn: "AS_OLD",
+      failCopySubcode: 1885423,
+    });
+    const res = await svc().duplicateEntity(account, { sourceLevel: "campaign", sourceId: "C1", status: "paused" });
+    expect(res.modernizations).toContainEqual({ code: "attribution_window_modernized" });
+    expect(res.childAdsetIds).toEqual(["adsets_CREATED_1"]); // conjunto reconstruído
+    expect(res.childIds).toEqual(["AD1_NEW"]); // anúncio copiado no conjunto reconstruído
+    const posted = stub.posted("adsets")[0]!;
+    expect(posted.optimization_goal).toBe("CONVERSATIONS");
+    expect(posted.billing_event).toBe("IMPRESSIONS");
+    expect(posted.campaign_id).toBe("C_NEW");
+    expect(posted).not.toHaveProperty("attribution_spec");
+  });
+
+  it("reconstrução que a Meta rejeita (tipo divergente) → reverte a raiz + propaga (rede honesta)", async () => {
+    const stub = stubTree({
+      adsetsOf: { C1: ["AS_OLD"] },
+      adsOf: { AS_OLD: [] },
+      idFor: () => ({ type: "campaign", id: "C_NEW" }),
+      adsetFields: { AS_OLD: { name: "x", optimization_goal: "LINK_CLICKS", billing_event: "IMPRESSIONS" } },
+      failCopyOn: "AS_OLD",
+      failCopySubcode: 1885423,
+      failCreateOn: ["adsets"],
+    });
+    await expect(svc().duplicateEntity(account, { sourceLevel: "campaign", sourceId: "C1", status: "paused" })).rejects.toBeTruthy();
+    expect(stub.deleted()).toContain("C_NEW");
+  });
+
   it("duplicateEntity(campaign): falha num anúncio → DELETA a campanha nova + not_duplicable (atômico)", async () => {
     const { calls } = stubTree({
       adsetsOf: { C1: ["AS1"] },

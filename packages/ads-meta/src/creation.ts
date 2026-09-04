@@ -8,6 +8,7 @@ import type {
   DeliveryEstimateInput,
   DuplicateEntityInput,
   DuplicateResult,
+  ModernizationNote,
 } from "@trafego/shared/ports";
 import type { AudienceProfile, ConversionGoal, DeliveryEstimate, ResolvedAudienceSnapshot } from "@trafego/shared/types";
 import type { UploadMediaInput, VideoStatus } from "@trafego/shared/ports";
@@ -89,6 +90,53 @@ function withRenameSuffix(name: string, suffix?: string): string {
   return suffix ? `${name}${suffix}` : name;
 }
 
+/** Campos crus do conjunto que a reconstrução espelha da fonte. Genérico (type-agnostic):
+ *  `is_dynamic_creative`/`promoted_object` cobrem dynamic creative e catálogo de graça (o criativo
+ *  é referenciado). `attribution_spec` NÃO é espelhado — a Meta assume a janela válida do objetivo
+ *  (reconstruir conjunto ⟺ a atribuição era descontinuada → modernizar é sempre correto). */
+const ADSET_MIRROR_FIELDS = "name,optimization_goal,billing_event,bid_strategy,bid_amount,daily_budget,lifetime_budget,promoted_object,destination_type,targeting,is_dynamic_creative" as const;
+
+interface RawSourceAdset {
+  readonly name?: string;
+  readonly optimization_goal?: string;
+  readonly billing_event?: string;
+  readonly bid_strategy?: string;
+  readonly bid_amount?: string | number;
+  readonly daily_budget?: string | number;
+  readonly lifetime_budget?: string | number;
+  readonly promoted_object?: unknown;
+  readonly destination_type?: string;
+  readonly targeting?: unknown;
+  readonly is_dynamic_creative?: boolean;
+}
+
+/** Traduz os campos crus da fonte no body do `POST /adsets`. Só inclui o que está presente
+ *  (a Meta rejeita budget nos dois níveis; ausentes ficam no default válido). PURA. */
+function mirrorAdsetParams(src: RawSourceAdset, campaignId: string, status: "active" | "paused", renameSuffix?: string): Record<string, string> {
+  const p: Record<string, string> = {
+    name: withRenameSuffix(src.name ?? "conjunto", renameSuffix),
+    campaign_id: campaignId,
+    status: status === "active" ? STATUS_ACTIVE : STATUS_PAUSED,
+  };
+  if (src.optimization_goal) p["optimization_goal"] = src.optimization_goal;
+  if (src.billing_event) p["billing_event"] = src.billing_event;
+  if (src.bid_strategy) p["bid_strategy"] = src.bid_strategy;
+  if (src.bid_amount) p["bid_amount"] = String(src.bid_amount);
+  if (Number(src.daily_budget) > 0) p["daily_budget"] = String(src.daily_budget);
+  else if (Number(src.lifetime_budget) > 0) p["lifetime_budget"] = String(src.lifetime_budget);
+  if (src.promoted_object) p["promoted_object"] = JSON.stringify(src.promoted_object);
+  if (src.destination_type) p["destination_type"] = src.destination_type;
+  if (src.targeting) p["targeting"] = JSON.stringify(src.targeting);
+  if (src.is_dynamic_creative) p["is_dynamic_creative"] = "true";
+  return p;
+}
+
+/** Uma nota por código (a reconstrução pode tocar N conjuntos, mas a mensagem é única). PURA. */
+function dedupeNotes(notes: readonly ModernizationNote[]): ModernizationNote[] {
+  const seen = new Set<string>();
+  return notes.filter((n) => (seen.has(n.code) ? false : (seen.add(n.code), true)));
+}
+
 /** Resposta do `/delivery_estimate` (v26): `data:[{ estimate_dau, estimate_mau_*, estimate_ready }]`.
  *  `-1` = a plataforma ainda não estimou (público/lookalike novo) → tratado como "sem contagem". */
 interface RawDeliveryEstimate {
@@ -122,15 +170,16 @@ export class MetaCreationService {
   async duplicateEntity(account: AdAccountRef, input: DuplicateEntityInput): Promise<DuplicateResult> {
     if (input.sourceLevel === "campaign") {
       const newCampaignId = await this.shallowCopy(account, input.sourceId, input.status, undefined, input.renameSuffix);
+      const notes: ModernizationNote[] = [];
       try {
         const childAdsetIds: string[] = [];
         const childIds: string[] = [];
         for (const srcAdset of await this.listChildIds(account, input.sourceId, "adsets")) {
-          const { newAdsetId, newAdIds } = await this.copyAdsetInto(account, srcAdset, input.status, { campaign_id: newCampaignId }, input.renameSuffix);
+          const { newAdsetId, newAdIds } = await this.copyOrReconstructAdsetInto(account, srcAdset, input.status, newCampaignId, input.renameSuffix, notes);
           childAdsetIds.push(newAdsetId);
           childIds.push(...newAdIds);
         }
-        return { copiedId: newCampaignId, childIds, childAdsetIds, modernizations: [] };
+        return { copiedId: newCampaignId, childIds, childAdsetIds, modernizations: dedupeNotes(notes) };
       } catch (error) {
         await this.revertRoot(account, newCampaignId);
         throw error;
@@ -138,11 +187,19 @@ export class MetaCreationService {
     }
     if (input.sourceLevel === "adset") {
       // conjunto vencedor → casca do conjunto (na campanha destino, quando houver) + seus anúncios.
-      const reparent = input.destinationCampaignId ? { campaign_id: input.destinationCampaignId } : undefined;
-      const newAdsetId = await this.shallowCopy(account, input.sourceId, input.status, reparent, input.renameSuffix);
+      // Muro `not_duplicable` na casca → reconstrói (só quando há campanha destino p/ reparentear).
+      const campaignId = input.destinationCampaignId;
+      const notes: ModernizationNote[] = [];
+      let newAdsetId: string;
+      try {
+        newAdsetId = await this.shallowCopy(account, input.sourceId, input.status, campaignId ? { campaign_id: campaignId } : undefined, input.renameSuffix);
+      } catch (error) {
+        if (!(error instanceof AdsPlatformError && error.kind === "not_duplicable" && campaignId)) throw error;
+        newAdsetId = await this.reconstructAdsetShell(account, input.sourceId, campaignId, input.status, input.renameSuffix, notes);
+      }
       try {
         const newAdIds = await this.copyOrReconstructAdsInto(account, input.sourceId, input.status, newAdsetId, input.renameSuffix);
-        return { copiedId: newAdsetId, childIds: newAdIds, childAdsetIds: [], modernizations: [] };
+        return { copiedId: newAdsetId, childIds: newAdIds, childAdsetIds: [], modernizations: dedupeNotes(notes) };
       } catch (error) {
         await this.revertRoot(account, newAdsetId);
         throw error;
@@ -154,17 +211,39 @@ export class MetaCreationService {
     return { copiedId, childIds: [], childAdsetIds: [], modernizations: [] };
   }
 
-  /** Copia UM conjunto (raso) na campanha destino + cada anúncio dele (copia-ou-reconstrói). */
-  private async copyAdsetInto(
+  /** Copia UM conjunto (raso) na campanha destino; se o `/copies` bater muro `not_duplicable`
+   *  (ex: janela de atribuição descontinuada), reconstrói SÓ a casca dele via create (espelho +
+   *  modernização). Os anúncios entram uniformes (copia-ou-reconstrói) nos dois caminhos. */
+  private async copyOrReconstructAdsetInto(
     account: AdAccountRef,
     srcAdset: string,
     status: "active" | "paused",
-    reparent: { campaign_id: string },
-    renameSuffix?: string,
+    campaignId: string,
+    renameSuffix: string | undefined,
+    notes: ModernizationNote[],
   ): Promise<{ newAdsetId: string; newAdIds: string[] }> {
-    const newAdsetId = await this.shallowCopy(account, srcAdset, status, reparent);
+    let newAdsetId: string;
+    try {
+      newAdsetId = await this.shallowCopy(account, srcAdset, status, { campaign_id: campaignId });
+    } catch (error) {
+      if (error instanceof AdsPlatformError && error.kind === "not_duplicable") {
+        newAdsetId = await this.reconstructAdsetShell(account, srcAdset, campaignId, status, renameSuffix, notes);
+      } else throw error;
+    }
     const newAdIds = await this.copyOrReconstructAdsInto(account, srcAdset, status, newAdsetId, renameSuffix);
     return { newAdsetId, newAdIds };
+  }
+
+  /** Recria a CASCA de um conjunto espelhando os campos crus da fonte, OMITINDO a atribuição
+   *  descontinuada (→ nota de modernização). Os anúncios NÃO entram aqui (o caller reusa
+   *  `copyOrReconstructAdsInto` p/ copiá-los/reconstruí-los uniformemente). */
+  private async reconstructAdsetShell(account: AdAccountRef, srcAdsetId: string, campaignId: string, status: "active" | "paused", renameSuffix: string | undefined, notes: ModernizationNote[]): Promise<string> {
+    const { data } = await this.client.request<RawSourceAdset>({
+      method: "GET", path: srcAdsetId, accessToken: account.accessToken, params: { fields: ADSET_MIRROR_FIELDS },
+    });
+    const newAdsetId = await this.createOnAccount(account, "adsets", mirrorAdsetParams(data, campaignId, status, renameSuffix));
+    notes.push({ code: "attribution_window_modernized" });
+    return newAdsetId;
   }
 
   /** Copia cada anúncio de `srcAdset` (raso) reparenteado no conjunto novo; se o `/copies` de um
