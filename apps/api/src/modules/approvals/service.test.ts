@@ -58,7 +58,7 @@ describe("approvalsService.listPending — sinais do 'antes'", () => {
     const service = makeService([
       { agentId: AGENT, accountId: "acc-1", accountName: "BM", currency: "BRL", accountStatus: "active", dryRun: true, killSwitch: false, allowedActions: ["pause_entity"], orgId: ORG },
     ]);
-    const [bud] = await service.listPending(ORG);
+    const bud = (await service.listPending(ORG))[0]!;
     expect(bud.dryRun).toBe(true);
     expect(bud.killSwitch).toBe(false);
     expect(bud.actionAllowed).toBe(false);
@@ -70,7 +70,7 @@ describe("approvalsService.listPending — sinais do 'antes'", () => {
       [{ agentId: AGENT, accountId: "acc-1", accountName: "BM", currency: "BRL", accountStatus: "removed", dryRun: false, killSwitch: false, allowedActions: [], orgId: ORG }],
       [{ agentId: AGENT, toolKey: "adjust_budget", mode: "enabled" }],
     );
-    const [bud] = await service.listPending(ORG);
+    const bud = (await service.listPending(ORG))[0]!;
     expect(bud.actionAllowed).toBe(true);
     expect(bud.accountAvailable).toBe(false);
     expect(bud.dryRun).toBe(false);
