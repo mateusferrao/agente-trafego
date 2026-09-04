@@ -39,7 +39,7 @@ Nada muda em `packages/shared` (contrato neutro), `packages/core` (`describeDraf
 **Interfaces:**
 - Consumes: `this.client.request`, `copiedIdOf`, `isLegacyEnhancementsCopyError`, `AdsPlatformError`, `MetaApiError`.
 - Produces (privados na classe):
-  - `shallowCopy(account: AdAccountRef, sourceId: string, status: "active"|"paused", reparent?: { campaign_id?: string; adset_id?: string }): Promise<string>` — `POST /{sourceId}/copies` com `deep_copy=false` + reparent; devolve `copiedId`. Erro de criativo legado → `AdsPlatformError("not_duplicable", …)`.
+  - `shallowCopy(account: AdAccountRef, sourceId: string, status: "active"|"paused", reparent?: { campaign_id?: string; adset_id?: string }, renameSuffix?: string): Promise<string>` — `POST /{sourceId}/copies` com `deep_copy=false` + reparent + `rename_options` (quando `renameSuffix`); devolve `copiedId`. Erro de criativo legado → `AdsPlatformError("not_duplicable", …)`.
   - `listChildIds(account: AdAccountRef, parentId: string, edge: "adsets"|"ads"): Promise<string[]>` — `GET /{parentId}/{edge}?fields=id&limit=100` (pagina se `paging.next`).
 
 - [ ] **Step 1: Test falho** — em `creation.test.ts`, com o client mockado, `shallowCopy` faz `POST {id}/copies` com `deep_copy=false&status_option=PAUSED&campaign_id=X` e devolve o `copied_campaign_id`:
@@ -69,10 +69,12 @@ private async shallowCopy(
   sourceId: string,
   status: "active" | "paused",
   reparent?: { campaign_id?: string; adset_id?: string },
+  renameSuffix?: string,
 ): Promise<string> {
   const params: Record<string, string> = { deep_copy: "false", status_option: status === "active" ? STATUS_ACTIVE : STATUS_PAUSED };
   if (reparent?.campaign_id) params["campaign_id"] = reparent.campaign_id;
   if (reparent?.adset_id) params["adset_id"] = reparent.adset_id;
+  if (renameSuffix) params["rename_options"] = JSON.stringify({ rename_suffix: renameSuffix });
   try {
     const { data } = await this.client.request<CopiesResponse>({ method: "POST", path: `${sourceId}/${COPIES_EDGE}`, accessToken: account.accessToken, params });
     const id = copiedIdOf(data);
@@ -116,7 +118,7 @@ Expected: PASS.
 
 **Interfaces:**
 - Consumes: `shallowCopy`, `listChildIds` (Task 1).
-- Produces: `duplicateEntity(account, input: DuplicateEntityInput): Promise<DuplicateResult>` — para `sourceLevel === "campaign"` reconstrói a árvore rasa; devolve `{ copiedId: newCampaign, childAdsetIds, childIds }`. Falha → DELETA a nova campanha + re-lança. (Níveis adset/ad seguem o comportamento raso simples via `shallowCopy`.)
+- Produces: `duplicateEntity(account, input: DuplicateEntityInput): Promise<DuplicateResult>` — reconstrói a árvore RASA a partir de QUALQUER nível: `campaign` → casca + conjuntos + anúncios; `adset` → casca (reparent na campanha destino) + seus anúncios; `ad` → folha. Falha em qualquer nó → DELETA a raiz criada (campanha OU conjunto novo) + re-lança. `sourceLevel === "adset"` recursivo TAMBÉM (não pode ser raso simples — perderia os anúncios do conjunto).
 
 - [ ] **Step 1: Test falho** — árvore: campanha(src)→[adsetA→adAA, adsetB→adBB]. Mock do client responde por path. Verifica: 1 copy casca + 2 copies de adset (reparent campaign) + 2 copies de ad (reparent adset); result agrega os ids:
 
@@ -160,43 +162,59 @@ it("duplicateEntity(campaign): falha num anúncio → DELETA a nova campanha + r
 Run: `pnpm --filter @trafego/ads-meta test -- --run creation`
 Expected: FAIL.
 
-- [ ] **Step 3: Implementar** — substituir o corpo do `duplicateEntity`. Para `campaign`, recursivo raso + auto-revert; senão o raso simples (adset/ad):
+- [ ] **Step 3: Implementar** — substituir o corpo do `duplicateEntity` por um recursivo raso GENERAL + auto-revert da raiz. Extrai `copyAdsetInto(account, srcAdset, status, campaignId)` (casca do conjunto + seus anúncios) reusado por campanha e adset:
 
 ```ts
+/** Copia UM conjunto (raso) na campanha destino + cada anúncio (raso) reparenteado. Devolve os ids novos. */
+private async copyAdsetInto(account: AdAccountRef, srcAdset: string, status: "active" | "paused", campaignId: string): Promise<{ newAdsetId: string; newAdIds: string[] }> {
+  const newAdsetId = await this.shallowCopy(account, srcAdset, status, { campaign_id: campaignId });
+  const newAdIds: string[] = [];
+  for (const srcAd of await this.listChildIds(account, srcAdset, "ads")) {
+    newAdIds.push(await this.shallowCopy(account, srcAd, status, { adset_id: newAdsetId }));
+  }
+  return { newAdsetId, newAdIds };
+}
+
+/** DELETE best-effort da raiz criada (limpeza atômica). Falha na limpeza → não mascara o erro original. */
+private async revertRoot(account: AdAccountRef, rootId: string): Promise<void> {
+  try { await this.client.request({ method: "DELETE", path: rootId, accessToken: account.accessToken }); } catch { /* limpeza falhou; erro original prevalece — casca avisa p/ apagar manual */ }
+}
+
 async duplicateEntity(account: AdAccountRef, input: DuplicateEntityInput): Promise<DuplicateResult> {
-  if (input.sourceLevel !== "campaign") {
-    // adset/ad: cópia rasa simples (1 objeto), reparent na campanha destino quando houver.
-    const reparent = input.destinationCampaignId ? { campaign_id: input.destinationCampaignId } : undefined;
-    const copiedId = await this.shallowCopy(account, input.sourceId, input.status, reparent);
-    return { copiedId, childIds: [], childAdsetIds: [] };
-  }
-  // CAMPANHA — reconstrói a árvore RASA (cada /copies = 1 objeto, sempre < 3). Atômico: falha → DELETA.
-  const newCampaignId = await this.shallowCopy(account, input.sourceId, input.status);
-  try {
-    const adsetIds = await this.listChildIds(account, input.sourceId, "adsets");
-    const childAdsetIds: string[] = [];
-    const childIds: string[] = [];
-    for (const srcAdset of adsetIds) {
-      const newAdsetId = await this.shallowCopy(account, srcAdset, input.status, { campaign_id: newCampaignId });
-      childAdsetIds.push(newAdsetId);
-      const adIds = await this.listChildIds(account, srcAdset, "ads");
-      for (const srcAd of adIds) {
-        const newAdId = await this.shallowCopy(account, srcAd, input.status, { adset_id: newAdsetId });
-        childIds.push(newAdId);
+  if (input.sourceLevel === "campaign") {
+    const newCampaignId = await this.shallowCopy(account, input.sourceId, input.status, undefined, input.renameSuffix);
+    try {
+      const childAdsetIds: string[] = [];
+      const childIds: string[] = [];
+      for (const srcAdset of await this.listChildIds(account, input.sourceId, "adsets")) {
+        const { newAdsetId, newAdIds } = await this.copyAdsetInto(account, srcAdset, input.status, newCampaignId);
+        childAdsetIds.push(newAdsetId);
+        childIds.push(...newAdIds);
       }
-    }
-    return { copiedId: newCampaignId, childIds, childAdsetIds };
-  } catch (error) {
-    // sempre reverte os parciais (DELETE cascata) — nada meio-montado. Best-effort: se o DELETE
-    // falhar, a casca avisa (o erro original prevalece).
-    try { await this.client.request({ method: "DELETE", path: newCampaignId, accessToken: account.accessToken }); }
-    catch { /* limpeza falhou — o erro original segue; a casca avisa p/ apagar manual */ }
-    throw error;
+      return { copiedId: newCampaignId, childIds, childAdsetIds };
+    } catch (error) { await this.revertRoot(account, newCampaignId); throw error; }
   }
+  if (input.sourceLevel === "adset") {
+    // conjunto vencedor → nova casca de conjunto na campanha destino + seus anúncios (recursivo).
+    const campaignId = input.destinationCampaignId;
+    if (!campaignId) throw new AdsPlatformError("upstream", "duplicar conjunto exige campanha destino");
+    const newAdsetId = await this.shallowCopy(account, input.sourceId, input.status, { campaign_id: campaignId });
+    try {
+      const newAdIds: string[] = [];
+      for (const srcAd of await this.listChildIds(account, input.sourceId, "ads")) {
+        newAdIds.push(await this.shallowCopy(account, srcAd, input.status, { adset_id: newAdsetId }));
+      }
+      return { copiedId: newAdsetId, childIds: newAdIds, childAdsetIds: [] };
+    } catch (error) { await this.revertRoot(account, newAdsetId); throw error; }
+  }
+  // ad = folha (1 objeto)
+  const reparent = input.destinationCampaignId ? { campaign_id: input.destinationCampaignId } : undefined;
+  const copiedId = await this.shallowCopy(account, input.sourceId, input.status, reparent, input.renameSuffix);
+  return { copiedId, childIds: [], childAdsetIds: [] };
 }
 ```
 
-Ajustes: importar `AdAccountRef`/tipos já presentes; `COPIES_EDGE`/`STATUS_*` já existem. O `renameSuffix`/`destinationCampaignId` do input seguem suportados (rename só na casca da campanha via `rename_options` se `input.renameSuffix` — manter o comportamento atual passando `rename_options` no `shallowCopy` da casca; adicionar o param opcional a `shallowCopy` se o teste de rename exigir).
+Revert = responsabilidade do CALLER (o topo de cada ramo): campanha → `revertRoot(campanha)` (o DELETE cascateia conjuntos/anúncios); adset-top → `revertRoot(newAdsetId)`. `copyAdsetInto` (usado só pelo ramo campanha) NÃO se auto-reverte — a limpeza da campanha já cascateia (evita revert duplo). `STATUS_*`/`COPIES_EDGE` já existem; `shallowCopy` ganha o arg opcional `renameSuffix` (Task 3).
 
 - [ ] **Step 4: Rodar → passa**
 
@@ -223,7 +241,7 @@ it("renameSuffix → rename_options no copy da casca", async () => {
 });
 ```
 
-- [ ] **Step 2..4:** adicionar um 4º arg opcional a `shallowCopy` (`renameSuffix?: string`) que injeta `params["rename_options"] = JSON.stringify({ rename_suffix })`; a casca da campanha passa `input.renameSuffix`. Rodar `pnpm --filter @trafego/ads-meta test -- --run creation` + `pnpm --filter @trafego/ads-meta typecheck`. Expected: PASS + limpo.
+- [ ] **Step 2..3:** o arg `renameSuffix` já existe em `shallowCopy` (Task 1) e a casca da campanha já o passa (Task 2). Este teste apenas VERIFICA a fiação. Rodar `pnpm --filter @trafego/ads-meta test -- --run creation` + `pnpm --filter @trafego/ads-meta typecheck`. Expected: PASS + limpo.
 
 ---
 
@@ -261,7 +279,8 @@ Expected: PASS (a saga não mudou; o teste documenta o contrato com o adapter re
 
 ## Self-review (cobertura do spec)
 
-- **Cópia rasa recursiva (casca→conjuntos→anúncios):** Task 2. ✅
+- **Cópia rasa recursiva (casca→conjuntos→anúncios):** Task 2 — para campanha E conjunto (adset-top recursivo, não raso simples). ✅
+- **Sempre recursiva (não só grandes):** decidido — o `deep_copy` síncrono estoura em qualquer campanha real (<3 objetos), então não há caminho rápido a preservar; um único caminho recursivo. ✅
 - **Reparent campaign_id/adset_id:** Task 1 (`shallowCopy`) + Task 2 (uso). ✅
 - **Sempre reverter parciais (atômico):** Task 2 (auto-revert DELETE). ✅
 - **Classificação de erro (not_duplicable/rate_limited/upstream):** reusa os kinds existentes; `not_duplicable` em Task 1; demais propagam como estão. ✅
