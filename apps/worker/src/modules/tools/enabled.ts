@@ -7,7 +7,7 @@ import { and, eq } from "drizzle-orm";
 import { agentToolBindings, guardrailConfigs } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
 import { resolveEnabledTools } from "@trafego/core";
-import { WRITE_TOOL_TO_ACTION, type ActionType, type ToolBindingMode } from "@trafego/shared";
+import { enabledActionTypes, type ToolBindingMode } from "@trafego/shared";
 
 /**
  * Resolve as tool-keys HABILITADAS (as 6) do agente, org-scoped. `allowedActionsFallback` pode
@@ -36,7 +36,5 @@ export async function loadEnabledTools(
   return resolveEnabledTools(map, new Set(fallback));
 }
 
-/** Subconjunto das ACTION-types habilitadas (das 4) — p/ sobrescrever `cfg.allowedActions` no apply. */
-export function enabledActionTypes(enabled: ReadonlySet<string>): ActionType[] {
-  return [...WRITE_TOOL_TO_ACTION.entries()].filter(([tool]) => enabled.has(tool)).map(([, action]) => action);
-}
+/** Re-export da fonte única (`@trafego/shared`) — consumidores do worker seguem importando daqui. */
+export { enabledActionTypes } from "@trafego/shared";

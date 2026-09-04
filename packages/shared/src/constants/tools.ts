@@ -29,5 +29,11 @@ export const WRITE_TOOL_TO_ACTION: ReadonlyMap<string, ActionType> = new Map(
   WRITE_ACTION_TOOL_KEYS.map((k) => [k, k as ActionType]),
 );
 
+/** Subconjunto das ACTION-types habilitadas a partir das tool-keys habilitadas. Fonte ÚNICA dos
+ *  dois gates (apply no worker + sinal do card na API) — PURA, sem IO. */
+export function enabledActionTypes(enabled: ReadonlySet<string>): ActionType[] {
+  return [...WRITE_TOOL_TO_ACTION.entries()].filter(([tool]) => enabled.has(tool)).map(([, action]) => action);
+}
+
 /** Modo do binding (espelha o pgEnum `tool_binding_mode`). `shadow` conta como habilitado. */
 export type ToolBindingMode = "enabled" | "disabled" | "shadow";
