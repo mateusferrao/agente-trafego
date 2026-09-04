@@ -429,6 +429,10 @@ function mergeNotifyPolicy(cur: NotifyPolicy, patch: NotifyPolicyPatch | undefin
     runPush: { enabled: patch.runPushEnabled ?? cur.runPush.enabled },
     // defensivo: linhas pré-pivô podem não ter `reactivation` no jsonb → default off.
     reactivation: { enabled: patch.reactivationEnabled ?? cur.reactivation?.enabled ?? false },
+    // PRESERVA `learning` (não é editável por patch hoje, mas o merge reconstrói campo-a-campo:
+    // sem esta linha o campo SUMIA a cada save de notificação — e uma escolha explícita de desligar
+    // os avisos de aprendizado seria silenciosamente revertida pra ON. Default ON quando ausente.
+    learning: { enabled: cur.learning?.enabled ?? true },
     accountHealthAlert: mergeAccountHealthAlert(cur.accountHealthAlert, patch),
   };
 }
