@@ -478,6 +478,29 @@ describe("getCreativeThumb (miniatura da biblioteca — aba Criativos)", () => {
   });
 });
 
+describe("getServingCreativeThumb (miniatura ESTÁVEL do anúncio da conta — picker)", () => {
+  it("anúncio inexistente / outra org → null (404)", async () => {
+    const { service } = makeService([]);
+    expect(await service.getServingCreativeThumb(ORG, "acc", "nope")).toBeNull();
+  });
+
+  it("vídeo + If-None-Match com ETag estável (por video_id) → 304 SEM tocar na Meta", async () => {
+    const getVideoFrames = vi.fn();
+    const service = createDraftsService({
+      db: fakeDb([{ videoId: "VID9", imageHash: null }]),
+      adsPlatform: { getVideoFrames } as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    const etag = createHash("sha256").update("serving-thumb:VID9").digest("hex").slice(0, 32);
+    const out = await service.getServingCreativeThumb(ORG, "acc", "AD1", `"${etag}"`);
+    expect(out).toEqual({ notModified: true, etag });
+    expect(getVideoFrames).not.toHaveBeenCalled(); // revalidação não busca fresco
+  });
+});
+
 describe("listServingCreatives (candidatos de reuse: vídeo + imagem, por data — Slice 12)", () => {
   /** fakeDb p/ select→from→where→orderBy→limit AWAITADO. `rows` = já na ordem que o db devolveria. */
   function fakeDbAwait(rows: unknown[]) {

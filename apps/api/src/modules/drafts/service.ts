@@ -177,6 +177,21 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     };
   }
 
+  /** URL FRESCA (fbcdn) de um frame/imagem de um criativo AO VIVO, pelo id do anúncio. Vídeo →
+   *  frame HD (`getVideoFrames`), fallback thumbnail do anúncio; imagem → imagem do anúncio. Fonte
+   *  ÚNICA do reuse (miniatura de rascunho + de anúncio da conta). A URL do fbcdn expira → o caller
+   *  baixa os bytes na hora (`fetchThumbImage`) e nunca a manda crua pro browser. */
+  async function resolveLiveThumbUrl(ref: AdAccountRef, adId: string, videoId: string | null): Promise<string | undefined> {
+    if (videoId) {
+      const frame = (await deps.adsPlatform.getVideoFrames(ref, videoId))[0];
+      if (frame) return frame;
+      const [c] = await deps.adsPlatform.getCreatives(ref, [adId]);
+      return c?.thumbnailUrl ?? c?.imageUrl;
+    }
+    const [c] = await deps.adsPlatform.getCreatives(ref, [adId]);
+    return c?.imageUrl ?? c?.thumbnailUrl;
+  }
+
   /** Ref de reuse de um upload da BIBLIOTECA (uuid). Só `ready` + não-arquivado da mesma conta. */
   async function resolveLibraryCreative(orgId: OrgId, accountId: string, assetId: string): Promise<CreativeAssetRef | null> {
     const [asset] = await deps.db
@@ -850,6 +865,37 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     },
 
     /**
+     * Miniatura ESTÁVEL de um ANÚNCIO da conta (picker "trocar criativo" → seção "anúncios da conta").
+     * Igual à da biblioteca: busca FRESCO da Meta (frame HD do vídeo / imagem do anúncio) e faz stream
+     * dos bytes — a URL do fbcdn EXPIRA, nunca a mandamos crua pro browser (era a causa do "sem
+     * preview"). ETag estável pelo id do vídeo/hash → 304 sem tocar na Meta. Org-scoped pelo adId;
+     * `null` = 404 (anúncio/preview indisponível).
+     */
+    async getServingCreativeThumb(
+      orgId: OrgId,
+      accountId: string,
+      adId: string,
+      ifNoneMatch?: string,
+    ): Promise<{ notModified: true; etag: string } | { bytes: Uint8Array; contentType: string; etag: string } | null> {
+      const [row] = await deps.db
+        .select({ videoId: adCreatives.videoId, imageHash: adCreatives.imageHash })
+        .from(adCreatives)
+        .where(and(eq(adCreatives.adId, adId), eq(adCreatives.adAccountId, accountId), eq(adCreatives.orgId, orgId)))
+        .limit(1);
+      if (!row) return null;
+      const stableId = row.videoId ?? row.imageHash ?? adId;
+      const etag = createHash("sha256").update(`serving-thumb:${stableId}`).digest("hex").slice(0, 32);
+      if (ifNoneMatch === `"${etag}"`) return { notModified: true, etag };
+
+      const ctx = await loadScaleContext(orgId, accountId);
+      if (!ctx) return null;
+      const url = await resolveLiveThumbUrl(ctx.ref, adId, row.videoId ?? null);
+      if (!url) return null;
+      const img = await fetchThumbImage(url);
+      return img ? { bytes: img.bytes, contentType: img.contentType, etag } : null;
+    },
+
+    /**
      * Miniatura do criativo de um rascunho (card /approvals) — FIEL ao spec + cache HTTP por ETag
      * estável. `upload` → blob do StoragePort (mesmo lookup do getCreativeBlob). `reuse` → busca
      * FRESCO da Meta (getVideoFrames p/ vídeo HD, getCreatives p/ imagem) e faz stream dos bytes —
@@ -898,20 +944,10 @@ export function createDraftsService(deps: DraftsServiceDeps) {
 
       const ctx = await loadScaleContext(orgId, accountId);
       if (!ctx) return null;
-      let url: string | undefined;
-      if (creative.format === "video" && creative.metaVideoId) {
-        // frames HD do vídeo — MAS o System User token pode não ter permissão pro endpoint
-        // `/{video_id}?fields=thumbnails` (erro Meta #10). Sem frames, cai no thumbnail do
-        // ANÚNCIO (getCreatives), que é acessível — o card é 64px, então o selo já basta.
-        url = (await deps.adsPlatform.getVideoFrames(ctx.ref, creative.metaVideoId))[0];
-        if (!url) {
-          const [c] = await deps.adsPlatform.getCreatives(ctx.ref, [creative.assetId]);
-          url = c?.thumbnailUrl ?? c?.imageUrl;
-        }
-      } else {
-        const [c] = await deps.adsPlatform.getCreatives(ctx.ref, [creative.assetId]);
-        url = c?.imageUrl ?? c?.thumbnailUrl;
-      }
+      // frames HD do vídeo — MAS o System User token pode não ter permissão pro endpoint
+      // `/{video_id}?fields=thumbnails` (erro Meta #10). Sem frames, cai no thumbnail do ANÚNCIO
+      // (getCreatives), que é acessível — o card é 64px, então o selo já basta. (helper compartilhado)
+      const url = await resolveLiveThumbUrl(ctx.ref, creative.assetId, creative.format === "video" ? creative.metaVideoId ?? null : null);
       if (!url) return null;
       const img = await fetchThumbImage(url);
       return img ? { bytes: img.bytes, contentType: img.contentType, etag } : null;
