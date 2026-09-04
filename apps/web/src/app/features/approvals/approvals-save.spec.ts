@@ -22,6 +22,10 @@ const APPROVAL: ApprovalOutput = {
   currentBudgetMajor: 120,
   targetBudgetMajor: 96,
   audience: null,
+  dryRun: false,
+  killSwitch: false,
+  actionAllowed: true,
+  accountAvailable: true,
 };
 
 const AUDIENCE_APPROVAL: ApprovalOutput = {
@@ -49,6 +53,10 @@ const AUDIENCE_APPROVAL: ApprovalOutput = {
     customAudienceIncludeIds: [],
     customAudienceExcludeIds: [],
   },
+  dryRun: false,
+  killSwitch: false,
+  actionAllowed: true,
+  accountAvailable: true,
 };
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
