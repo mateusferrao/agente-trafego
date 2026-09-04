@@ -80,6 +80,7 @@ import {
   removeRecipientOutput,
 } from "../modules/contacts/schema.js";
 import {
+  approvalOutcomeOutput,
   approvalOutput,
   editApprovalActionInput,
   resolveApprovalInput,
@@ -183,6 +184,7 @@ export function buildDocument(): ReturnType<OpenApiGeneratorV31["generateDocumen
   const EditLearningInput = registry.register("EditLearningInput", editLearningInput);
   const LearningOk = registry.register("LearningOk", learningOk);
   const ApprovalOutput = registry.register("ApprovalOutput", approvalOutput);
+  const ApprovalOutcomeOutput = registry.register("ApprovalOutcomeOutput", approvalOutcomeOutput);
   const ResolveApprovalInput = registry.register("ResolveApprovalInput", resolveApprovalInput);
   const ResolveApprovalOutput = registry.register("ResolveApprovalOutput", resolveApprovalOutput);
   const EditApprovalActionInput = registry.register("EditApprovalActionInput", editApprovalActionInput);
@@ -714,6 +716,16 @@ const SetDraftCreativeOutput = registry.register("SetDraftCreativeOutput", setDr
     tags: ["approvals"],
     responses: {
       200: jsonRes("ações aplicadas ainda acionáveis quanto a reverter, cross-conta", z.array(RevertibleActionOutput)),
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/api/approvals/{id}",
+    tags: ["approvals"],
+    request: { params: z.object({ id: z.string() }) },
+    responses: {
+      200: jsonRes("desfecho da aplicação (polling do card após aprovar)", ApprovalOutcomeOutput),
+      404: { description: "aprovação não encontrada" },
     },
   });
   registry.registerPath({

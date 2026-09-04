@@ -65,6 +65,32 @@ describe("approvalsService.listPending — sinais do 'antes'", () => {
     expect(bud.accountAvailable).toBe(true);
   });
 
+  it("getOutcome deriva a mensagem do desfecho na voz do Roy", async () => {
+    const resolved = { ...pendingBudget(), status: "blocked", applyOutcome: "blocked", resolvedReason: "budget já ajustado hoje" } as unknown as Approval;
+    const service = createApprovalsService({
+      db: signalsDb([], []),
+      approvals: { getById: vi.fn(async () => resolved) } as never,
+      scheduler: {} as never,
+      revertTtlDays: 7,
+    });
+    const out = await service.getOutcome(ORG, "ap-1" as never);
+    expect(out.applyOutcome).toBe("blocked");
+    expect(out.resolvedReason).toBe("budget já ajustado hoje");
+    expect(out.outcomeMessage).toBe("Não apliquei (Leads — 8510): budget já ajustado hoje.");
+  });
+
+  it("getOutcome com applyOutcome null → outcomeMessage null (ainda aplicando)", async () => {
+    const service = createApprovalsService({
+      db: signalsDb([], []),
+      approvals: { getById: vi.fn(async () => pendingBudget()) } as never,
+      scheduler: {} as never,
+      revertTtlDays: 7,
+    });
+    const out = await service.getOutcome(ORG, "ap-1" as never);
+    expect(out.applyOutcome).toBeNull();
+    expect(out.outcomeMessage).toBeNull();
+  });
+
   it("ação permitida por binding → actionAllowed:true; conta removida → accountAvailable:false", async () => {
     const service = makeService(
       [{ agentId: AGENT, accountId: "acc-1", accountName: "BM", currency: "BRL", accountStatus: "removed", dryRun: false, killSwitch: false, allowedActions: [], orgId: ORG }],

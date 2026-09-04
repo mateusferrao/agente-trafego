@@ -5,11 +5,12 @@ import type { Approval, ApprovalPort } from "@trafego/shared/ports";
 import type { SchedulerPort } from "@trafego/shared/ports";
 import { APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE, enabledActionTypes, type ToolBindingMode } from "@trafego/shared";
 import { ACTION_PARAM_CURRENT_MINOR, ACTION_PARAM_TARGETING } from "@trafego/shared";
-import { editBudgetActionValue, projectBudgetTargetMinor, resolveEnabledTools } from "@trafego/core";
+import { describeActionOutcome, editBudgetActionValue, projectBudgetTargetMinor, resolveEnabledTools, type OutcomeDetail } from "@trafego/core";
 import { badRequest, notFound } from "../../middleware/error-handler.js";
 import { buildExplicitFromInput, serializeExplicitAudience } from "../../lib/audience.js";
 import { computeAppliedActions, DAY_MS } from "../../lib/applied-actions.js";
 import type {
+  ApprovalOutcomeOutput,
   ApprovalOutput,
   EditApprovalActionInput,
   ResolveApprovalInput,
@@ -134,6 +135,33 @@ export function createApprovalsService(deps: ApprovalsDeps) {
           accountAvailable: acc?.accountAvailable ?? false,
         };
       });
+    },
+
+    /** Desfecho da aplicação de UMA aprovação (Fatia "depois") — o card faz polling disto após
+     *  aprovar. A frase (`outcomeMessage`) vem de `describeActionOutcome` (fonte única, voz do Roy). */
+    async getOutcome(orgId: OrgId, approvalId: ApprovalId): Promise<ApprovalOutcomeOutput> {
+      const a = await deps.approvals.getById(approvalId);
+      if (!a || a.orgId !== orgId || a.kind !== "action") throw notFound("Aprovação não encontrada.");
+      const oc = a.applyOutcome;
+      const detail: OutcomeDetail | null =
+        oc === "applied"
+          ? { kind: "applied" }
+          : oc === "simulated"
+            ? { kind: "simulated" }
+            : oc === "noop"
+              ? { kind: "noop" }
+              : oc === "blocked"
+                ? { kind: "blocked", reason: a.resolvedReason ?? "" }
+                : oc === "failed"
+                  ? { kind: "failed", ...(a.resolvedReason ? { metaMessage: a.resolvedReason } : {}) }
+                  : null;
+      return {
+        id: a.id,
+        status: a.status,
+        applyOutcome: oc ?? null,
+        resolvedReason: a.resolvedReason ?? null,
+        outcomeMessage: detail ? describeActionOutcome(a.action, detail) : null,
+      };
     },
 
     async resolve(

@@ -67,6 +67,18 @@ export const resolveApprovalOutput = z.object({
 });
 export type ResolveApprovalOutput = z.infer<typeof resolveApprovalOutput>;
 
+/** Desfecho da APLICAÇÃO de uma aprovação (Fatia "depois") — o card faz polling disto após aprovar
+ *  pra virar "Aplicando…" no resultado real. `applyOutcome` null = ainda sem tentativa/aplicando;
+ *  `outcomeMessage` = frase na voz do Roy (fonte única, mesma do WhatsApp). */
+export const approvalOutcomeOutput = z.object({
+  id: z.string(),
+  status: approvalStatusOutput,
+  applyOutcome: z.enum(["applied", "simulated", "noop", "blocked", "failed"]).nullable(),
+  resolvedReason: z.string().nullable(),
+  outcomeMessage: z.string().nullable(),
+});
+export type ApprovalOutcomeOutput = z.infer<typeof approvalOutcomeOutput>;
+
 /**
  * Editar uma ação pendente ANTES de aprovar. Duas formas (uma OU outra):
  *  - ORÇAMENTO (`adjust_budget`): `pct` (increase/decrease em %) OU `budgetReais` (absoluto, mode "set").
