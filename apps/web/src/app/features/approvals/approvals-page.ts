@@ -159,6 +159,12 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                           @if (budgetLine(a); as bl) {
                             <span class="text-xs font-medium text-ink">{{ bl }}</span>
                           }
+                          @if (dryRunNotice(a); as notice) {
+                            <span class="mt-1 rounded-md border-2 border-warning bg-warning-soft px-3 py-2 text-xs text-ink">{{ notice }}</span>
+                          }
+                          @if (approveBlockedReason(a); as blocked) {
+                            <span class="mt-1 rounded-md border border-line bg-panel px-3 py-2 text-xs text-muted">{{ blocked }}</span>
+                          }
                         </span>
                         <span class="flex shrink-0 gap-2">
                           @if (a.type === 'adjust_budget') {
@@ -174,7 +180,7 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                           <button appButton variant="secondary" size="sm" [disabled]="resolving().has(a.id)" (click)="reject(a)">
                             Rejeitar
                           </button>
-                          <button appButton size="sm" [disabled]="resolving().has(a.id)" (click)="approve(a)">
+                          <button appButton size="sm" [disabled]="resolving().has(a.id) || !!approveBlockedReason(a)" (click)="approve(a)">
                             {{ resolving().has(a.id) ? 'Enviando…' : 'Aprovar' }}
                           </button>
                         </span>
@@ -457,13 +463,31 @@ export class ApprovalsPage implements OnInit {
     this.clearResolving(id);
   }
 
+  /** Motivo pra BLOQUEAR o botão Aprovar (aprovar não teria efeito real). Null = liberado.
+   *  Ordem: conta indisponível > trava total > ação não permitida. O ensaio NÃO bloqueia (avisa). */
+  protected approveBlockedReason(a: ApprovalOutput): string | null {
+    if (!a.accountAvailable) return 'Esta conta está indisponível agora — não dá pra aplicar. Recheque a conexão.';
+    if (a.killSwitch) return 'Trava total ligada — o agente está impedido de agir nesta conta. Desligue em limites de segurança pra aprovar.';
+    if (!a.actionAllowed) return 'Essa ação não está nas ações permitidas deste agente — aprovar não teria efeito. Habilite em ações permitidas.';
+    return null;
+  }
+
+  /** Aviso de modo ensaio (não bloqueia — só é honesto que aprovar simula). Null = fora do ensaio. */
+  protected dryRunNotice(a: ApprovalOutput): string | null {
+    return a.dryRun ? 'Modo ensaio ligado — aprovar aqui simula, não altera a conta. Desligue em limites de segurança quando quiser valer.' : null;
+  }
+
   /** Aprovar: enfileira a aplicação (worker re-checa fresco + aplica). Otimista. */
   protected approve(a: ApprovalOutput): void {
     this.markResolving(a.id);
     this.api.resolve(a.id, 'approve').subscribe({
       next: () => {
         this.removePending(a.id);
-        toast.success(`Aprovado. O ${AGENT_NAME} aplica em instantes.`);
+        toast.success(
+          a.dryRun
+            ? `Aprovado — em modo ensaio, o ${AGENT_NAME} só simula (não altera a conta).`
+            : `Aprovado. O ${AGENT_NAME} aplica em instantes.`,
+        );
       },
       error: () => this.clearResolving(a.id),
     });
