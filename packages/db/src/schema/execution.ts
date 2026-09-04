@@ -23,6 +23,7 @@ import type {
 } from "@trafego/shared";
 import {
   actionType,
+  applyOutcome,
   approvalKind,
   approvalStatus,
   creativeAssetOrigin,
@@ -172,6 +173,9 @@ export const approvals = pgTable(
     draftId: uuid("draft_id").references(() => campaignDrafts.id, { onDelete: "cascade" }),
     // motivo quando resolvida sem aplicar (rejeitada pelo usuário ou `blocked` no re-check).
     resolvedReason: text("resolved_reason"),
+    // desfecho da APLICAÇÃO (Fatia "depois"): distingue applied×simulated (ambos status approved)
+    // e marca failed SEM resolver (status segue pending → reaprovável). Null = sem tentativa/aplicando.
+    applyOutcome: applyOutcome("apply_outcome"),
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     ...timestamps,

@@ -1,0 +1,3 @@
+CREATE TYPE "public"."apply_outcome" AS ENUM('applied', 'simulated', 'noop', 'blocked', 'failed');--> statement-breakpoint
+ALTER TABLE "agents" ALTER COLUMN "notify_policy" SET DEFAULT '{"pulse":{"enabled":false,"cadence":{"kind":"weekly","weekday":1,"hour":8}},"alerts":{"enabled":false,"sensitivity":"normal","throttleHours":6},"runPush":{"enabled":true},"reactivation":{"enabled":false},"learning":{"enabled":true},"accountHealthAlert":{"enabled":true,"statusTriggers":["disabled","unsettled","pending_review","pending_settlement","grace_period","pending_closure","closed","unknown"],"spendThreshold":{"source":"meta_cap"},"balanceThreshold":{"enabled":false}}}'::jsonb;--> statement-breakpoint
+ALTER TABLE "approvals" ADD COLUMN "apply_outcome" "apply_outcome";
