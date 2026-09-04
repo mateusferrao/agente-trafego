@@ -16,7 +16,11 @@ funciona pra campanhas mínimas.
 1. `/copies` `deep_copy=true` síncrono → `subcode 1885194` ("cópia muito grande") pra ≥3 objetos.
 2. **Sem opt-in async direto** no `/copies` (`async`/`is_async`/`async_deep_copy` ignorados).
 3. `async_batch_requests` (o que a mensagem da Meta sugere) **NÃO aceita `/copies`** como
-   `relative_url` (`subcode 1815379`) — caminho async descartado.
+   `relative_url` (`subcode 1815379`) — caminho async descartado. **Provado por controle:** um
+   async_batch com 2 CREATES account-scoped (`act_X/campaigns`) FUNCIONOU ponta-a-ponta (pollou,
+   `is_completed=true`, `result:{id}`) — o mecanismo/formato está certo; só a op `/copies`
+   (node-scoped) é rejeitada na submissão. A mensagem de erro da Meta ("use lote assíncrono") é
+   enganosa: o lote não suporta a operação que gerou o erro.
 4. **`deep_copy=false` (casca) copia FUNCIONA** (1 objeto, síncrono) — retorna
    `copied_campaign_id`/`id` (o `copiedIdOf` já parseia).
 5. **Reparent via `campaign_id`** no copy do conjunto **é aceito** pela Meta.
