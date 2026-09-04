@@ -171,6 +171,31 @@ describe("MetaCreationService.duplicateEntity", () => {
     expect(err).not.toHaveProperty("subcode");
   });
 
+  it("janela de atribuição descontinuada (subcode 1885423) → not_duplicable neutro + userMessage (subcode não vaza)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              message: "Invalid parameter",
+              code: 100,
+              error_subcode: 1885423,
+              error_user_msg: "A janela de atribuição de conversão é inválida.",
+            },
+          }),
+          { status: 400, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+    const err = await svc()
+      .duplicateEntity(account, { sourceLevel: "adset", sourceId: "AS1", status: "paused" })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AdsPlatformError);
+    expect(err).toMatchObject({ kind: "not_duplicable", userMessage: "A janela de atribuição de conversão é inválida." });
+    expect(err).not.toHaveProperty("subcode");
+  });
+
   it("outros erros do /copies → NÃO viram not_duplicable (propagam p/ toAdsError)", async () => {
     vi.stubGlobal(
       "fetch",

@@ -38,16 +38,23 @@ const STATUS_PAUSED = "PAUSED";
 const BUDGET_FIELD_DAILY = "daily_budget";
 
 /**
- * Subcode Meta: criativo com "aprimoramentos padrão" (standard_enhancements) descontinuados na v22 —
- * `deep_copy` re-valida o criativo copiado e rejeita. Não-documentado; confirmado no E2E real da Fatia 7.
- * Fica INTERNO ao adapter — nunca vaza pro port neutro (traduzido p/ kind `not_duplicable`).
+ * Subcodes Meta em que a ENTIDADE-FONTE não pode ser copiada COMO ESTÁ (`/copies` re-valida e
+ * recusa) — determinístico, não-transitório. Nomeado p/ auditar + estender sem string mágica.
+ * `criativo_legado`: standard_enhancements descontinuado (v22, re-validado no `deep_copy`).
+ * `atribuicao_descontinuada`: janela de atribuição que o objetivo não suporta mais (confirmado em
+ * spike real). Ambos INTERNOS ao adapter (subcode nunca vaza pro port) → kind `not_duplicable`,
+ * que é o gatilho da reconstrução por-nó (fallback via rota de criação).
  */
-const LEGACY_ENHANCEMENTS_SUBCODE = 3858504;
+const NOT_DUPLICABLE_SUBCODES = {
+  criativo_legado: 3858504,
+  atribuicao_descontinuada: 1885423,
+} as const;
+const NOT_DUPLICABLE_SUBCODE_SET: ReadonlySet<number> = new Set(Object.values(NOT_DUPLICABLE_SUBCODES));
 /** País default do targeting amplo (Advantage+) quando não há adset provado pra reusar. Fonte
  *  única em `targeting-map` (compartilhada com o `explicit`); alias local p/ legibilidade. */
 const DEFAULT_ADVANTAGE_GEO_COUNTRY = DEFAULT_TARGETING_GEO_COUNTRY;
-function isLegacyEnhancementsCopyError(error: unknown): boolean {
-  return error instanceof MetaApiError && error.subcode === LEGACY_ENHANCEMENTS_SUBCODE;
+function isNotDuplicableCopyError(error: unknown): boolean {
+  return error instanceof MetaApiError && typeof error.subcode === "number" && NOT_DUPLICABLE_SUBCODE_SET.has(error.subcode);
 }
 
 /**
@@ -185,8 +192,8 @@ export class MetaCreationService {
       if (!id) throw new Error("Meta /copies não retornou o id da cópia");
       return id;
     } catch (error) {
-      if (isLegacyEnhancementsCopyError(error)) {
-        throw new AdsPlatformError("not_duplicable", "cópia rejeitada: criativo com recurso descontinuado pela plataforma", (error as MetaApiError).userMessage);
+      if (isNotDuplicableCopyError(error)) {
+        throw new AdsPlatformError("not_duplicable", "cópia rejeitada pela plataforma (config descontinuada da entidade-fonte)", (error as MetaApiError).userMessage);
       }
       throw error;
     }
