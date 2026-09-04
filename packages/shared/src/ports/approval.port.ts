@@ -2,6 +2,7 @@ import type {
   Action,
   ActionType,
   AgentId,
+  ApplyOutcome,
   ApprovalId,
   ContactId,
   DraftId,
@@ -21,6 +22,9 @@ interface ApprovalBase {
   readonly contactId: ContactId | null;
   readonly status: ApprovalStatus;
   readonly resolvedReason: string | null;
+  /** desfecho da aplicação (Fatia "depois") — null enquanto sem tentativa/aplicando; o card lê p/
+   *  mostrar "Feito"/"Simulado"/"Não apliquei"/"falhou". `failed` convive com status pending. */
+  readonly applyOutcome: ApplyOutcome | null;
   readonly expiresAt: Date;
   readonly createdAt: Date;
 }
@@ -94,6 +98,8 @@ export interface UpsertActivationPendingInput {
 export interface ResolveApprovalInput {
   readonly status: "approved" | "rejected" | "blocked";
   readonly resolvedReason?: string;
+  /** desfecho da aplicação a gravar junto (Fatia "depois") — ex: `simulated` num approved de ensaio. */
+  readonly applyOutcome?: ApplyOutcome;
 }
 
 /**
@@ -116,6 +122,9 @@ export interface ApprovalPort {
   getById(id: ApprovalId): Promise<PendingApproval | null>;
   /** Resolve UMA aprovação (approved/rejected/blocked + motivo). */
   resolve(id: ApprovalId, input: ResolveApprovalInput): Promise<PendingApproval>;
+  /** Grava o desfecho da aplicação SEM mudar o status (Fatia "depois") — usado no `failed`, que
+   *  mantém a aprovação `pending` (reaprovável) mas registra que a última tentativa falhou. */
+  markApplyOutcome(id: ApprovalId, applyOutcome: ApplyOutcome, resolvedReason?: string): Promise<void>;
   /**
    * Atualiza os PARÂMETROS da ação de uma aprovação PENDENTE de `kind:"action"` (C — editar o
    * valor antes de aprovar). Só mexe no `action` (params já validados pelo core); o clamp do

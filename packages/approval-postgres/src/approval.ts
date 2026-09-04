@@ -15,6 +15,7 @@ import type {
   Action,
   ActionType,
   AgentId,
+  ApplyOutcome,
   ApprovalId,
   ContactId,
   DraftId,
@@ -39,6 +40,7 @@ function toPendingApproval(r: Row): PendingApproval {
     contactId: (r.contactId ?? null) as ContactId | null,
     status: r.status,
     resolvedReason: r.resolvedReason ?? null,
+    applyOutcome: r.applyOutcome ?? null,
     expiresAt: r.expiresAt ?? new Date(0),
     createdAt: r.createdAt,
   };
@@ -184,6 +186,9 @@ export function createPostgresApprovals(db: Database): ApprovalPort {
           status: input.status,
           resolvedReason: input.resolvedReason ?? null,
           resolvedAt: new Date(),
+          // grava o desfecho junto quando o chamador o traz (ex: simulated num approved de ensaio);
+          // ausente → não mexe no que já estava (undefined é ignorado pelo drizzle no set).
+          ...(input.applyOutcome !== undefined ? { applyOutcome: input.applyOutcome } : {}),
         })
         .where(eq(approvals.id, id))
         .returning();
@@ -194,6 +199,15 @@ export function createPostgresApprovals(db: Database): ApprovalPort {
         await revertOrphanedDrafts(db, [row.draftId]);
       }
       return toPendingApproval(row as Row);
+    },
+
+    async markApplyOutcome(id: ApprovalId, applyOutcome: ApplyOutcome, resolvedReason?: string): Promise<void> {
+      // grava o desfecho SEM tocar no status — usado no `failed`, que mantém a aprovação pendente
+      // (reaprovável) mas registra que a última tentativa falhou (o card mostra + reabilita o botão).
+      await db
+        .update(approvals)
+        .set({ applyOutcome, ...(resolvedReason !== undefined ? { resolvedReason } : {}), updatedAt: new Date() })
+        .where(eq(approvals.id, id));
     },
 
     async getPendingByContact(contactId: ContactId): Promise<PendingApproval | null> {
