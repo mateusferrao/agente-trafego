@@ -66,6 +66,12 @@ interface CopiesResponse {
   }>;
 }
 
+/** Página de filhos (`/adsets`/`/ads`) — só o `id` + o cursor de paginação. */
+interface ChildListPage {
+  readonly data?: ReadonlyArray<{ readonly id: string }>;
+  readonly paging?: { readonly next?: string; readonly cursors?: { readonly after?: string } };
+}
+
 /** Id da cópia, tolerante ao nível (adset/campaign/ad) — a Graph nomeia por tipo. */
 function copiedIdOf(body: CopiesResponse): string | null {
   return body.copied_adset_id ?? body.copied_campaign_id ?? body.copied_ad_id ?? body.id ?? null;
@@ -95,55 +101,118 @@ export class MetaCreationService {
   constructor(private readonly client: MetaGraphClient) {}
 
   /**
-   * Duplica via `POST /{id}/copies` (deep_copy). SÓ a cópia — o override de budget (escala)
-   * é passo SEPARADO (`setEntityBudget`), pra a saga persistir o `copiedId` ANTES do budget
-   * e não re-copiar num retry (`/copies` não tem idempotência). Retorna cópia + filhos.
+   * Duplica reconstruindo a árvore com cópias RASAS (`/copies` deep_copy=false = 1 objeto por
+   * chamada, sempre dentro do limite síncrono da Meta <3). O deep_copy da ÁRVORE inteira estoura
+   * em qualquer campanha real (spike real, subcode 1885194); o async batch não aceita `/copies`.
+   * ATÔMICO: falha em qualquer nó → DELETA a raiz criada (cascata) e re-lança — devolve árvore
+   * completa OU nada. O override de budget segue passo SEPARADO (`setEntityBudget`).
    */
   async duplicateEntity(account: AdAccountRef, input: DuplicateEntityInput): Promise<DuplicateResult> {
-    const statusOption = input.status === "active" ? STATUS_ACTIVE : STATUS_PAUSED;
-    const params: Record<string, string> = {
-      deep_copy: "true",
-      status_option: statusOption,
-    };
-    if (input.destinationCampaignId) params["campaign_id"] = input.destinationCampaignId;
-    if (input.renameSuffix) params["rename_options"] = JSON.stringify({ rename_suffix: input.renameSuffix });
-
-    let data: CopiesResponse;
-    try {
-      ({ data } = await this.client.request<CopiesResponse>({
-        method: "POST",
-        path: `${input.sourceId}/${COPIES_EDGE}`,
-        accessToken: account.accessToken,
-        params,
-      }));
-    } catch (error) {
-      // criativo legado (standard_enhancements) → traduz p/ kind NEUTRO `not_duplicable`
-      // (subcode não sai do adapter); a casca oferece as 2 saídas (subir budget / recriar).
-      if (isLegacyEnhancementsCopyError(error)) {
-        throw new AdsPlatformError(
-          "not_duplicable",
-          "deep_copy rejeitado: criativo com recurso descontinuado pela plataforma",
-          (error as MetaApiError).userMessage,
-        );
+    if (input.sourceLevel === "campaign") {
+      const newCampaignId = await this.shallowCopy(account, input.sourceId, input.status, undefined, input.renameSuffix);
+      try {
+        const childAdsetIds: string[] = [];
+        const childIds: string[] = [];
+        for (const srcAdset of await this.listChildIds(account, input.sourceId, "adsets")) {
+          const { newAdsetId, newAdIds } = await this.copyAdsetInto(account, srcAdset, input.status, { campaign_id: newCampaignId });
+          childAdsetIds.push(newAdsetId);
+          childIds.push(...newAdIds);
+        }
+        return { copiedId: newCampaignId, childIds, childAdsetIds };
+      } catch (error) {
+        await this.revertRoot(account, newCampaignId);
+        throw error;
       }
-      throw error; // demais erros → toAdsError na borda do adapter
     }
+    if (input.sourceLevel === "adset") {
+      // conjunto vencedor → casca do conjunto (na campanha destino, quando houver) + seus anúncios.
+      const reparent = input.destinationCampaignId ? { campaign_id: input.destinationCampaignId } : undefined;
+      const newAdsetId = await this.shallowCopy(account, input.sourceId, input.status, reparent, input.renameSuffix);
+      try {
+        const newAdIds = await this.copyAdsInto(account, input.sourceId, input.status, newAdsetId);
+        return { copiedId: newAdsetId, childIds: newAdIds, childAdsetIds: [] };
+      } catch (error) {
+        await this.revertRoot(account, newAdsetId);
+        throw error;
+      }
+    }
+    // anúncio = folha (1 objeto)
+    const reparent = input.destinationCampaignId ? { campaign_id: input.destinationCampaignId } : undefined;
+    const copiedId = await this.shallowCopy(account, input.sourceId, input.status, reparent, input.renameSuffix);
+    return { copiedId, childIds: [], childAdsetIds: [] };
+  }
 
-    const copiedId = copiedIdOf(data);
-    if (!copiedId) {
-      throw new Error("Meta /copies não retornou o id da cópia");
+  /** Copia UM conjunto (raso) na campanha destino + cada anúncio dele (raso, reparent). */
+  private async copyAdsetInto(
+    account: AdAccountRef,
+    srcAdset: string,
+    status: "active" | "paused",
+    reparent: { campaign_id: string },
+  ): Promise<{ newAdsetId: string; newAdIds: string[] }> {
+    const newAdsetId = await this.shallowCopy(account, srcAdset, status, reparent);
+    const newAdIds = await this.copyAdsInto(account, srcAdset, status, newAdsetId);
+    return { newAdsetId, newAdIds };
+  }
+
+  /** Copia cada anúncio de `srcAdset` (raso) reparenteado no conjunto novo. */
+  private async copyAdsInto(account: AdAccountRef, srcAdset: string, status: "active" | "paused", newAdsetId: string): Promise<string[]> {
+    const newAdIds: string[] = [];
+    for (const srcAd of await this.listChildIds(account, srcAdset, "ads")) {
+      newAdIds.push(await this.shallowCopy(account, srcAd, status, { adset_id: newAdsetId }));
     }
-    // filhos copiados por tipo: "ad" = os anúncios; "ad_set" = adsets intermediários (só no
-    // deep_copy de CAMPANHA — o próprio copiedId é a campanha, não um adset). Ambos nascem
-    // pausados e precisam ser ativados junto (a ativação resume a ÁRVORE inteira).
-    const copiedByType = (type: string): string[] =>
-      (data.ad_object_ids ?? [])
-        .filter((p) => p.ad_object_type === type)
-        .map((p) => p.copied_id)
-        .filter((id): id is string => typeof id === "string");
-    // o adset-raiz (quando se duplica um adset) É o copiedId — não relistar como intermediário.
-    const childAdsetIds = copiedByType("ad_set").filter((id) => id !== copiedId);
-    return { copiedId, childIds: copiedByType("ad"), childAdsetIds };
+    return newAdIds;
+  }
+
+  /**
+   * Cópia RASA de 1 objeto (`deep_copy=false`) via `/copies`, com reparent (`campaign_id`/`adset_id`)
+   * e rename opcionais. Criativo legado (subcode 3858504) → `AdsPlatformError` NEUTRO `not_duplicable`
+   * (subcode não vaza; a casca oferece as 2 saídas). Demais erros propagam p/ `toAdsError`.
+   */
+  private async shallowCopy(
+    account: AdAccountRef,
+    sourceId: string,
+    status: "active" | "paused",
+    reparent?: { campaign_id?: string; adset_id?: string },
+    renameSuffix?: string,
+  ): Promise<string> {
+    const params: Record<string, string> = { deep_copy: "false", status_option: status === "active" ? STATUS_ACTIVE : STATUS_PAUSED };
+    if (reparent?.campaign_id) params["campaign_id"] = reparent.campaign_id;
+    if (reparent?.adset_id) params["adset_id"] = reparent.adset_id;
+    if (renameSuffix) params["rename_options"] = JSON.stringify({ rename_suffix: renameSuffix });
+    try {
+      const { data } = await this.client.request<CopiesResponse>({ method: "POST", path: `${sourceId}/${COPIES_EDGE}`, accessToken: account.accessToken, params });
+      const id = copiedIdOf(data);
+      if (!id) throw new Error("Meta /copies não retornou o id da cópia");
+      return id;
+    } catch (error) {
+      if (isLegacyEnhancementsCopyError(error)) {
+        throw new AdsPlatformError("not_duplicable", "cópia rejeitada: criativo com recurso descontinuado pela plataforma", (error as MetaApiError).userMessage);
+      }
+      throw error;
+    }
+  }
+
+  /** Lista os ids dos filhos de um nó (`adsets`/`ads`), paginando. Só `id` (barato). */
+  private async listChildIds(account: AdAccountRef, parentId: string, edge: "adsets" | "ads"): Promise<string[]> {
+    const ids: string[] = [];
+    let params: Record<string, string> | undefined = { fields: "id", limit: "100" };
+    while (params) {
+      const page: ChildListPage = (await this.client.request<ChildListPage>({ method: "GET", path: `${parentId}/${edge}`, accessToken: account.accessToken, params })).data;
+      for (const c of page.data ?? []) ids.push(c.id);
+      const after = page.paging?.cursors?.after;
+      params = page.paging?.next && after ? { fields: "id", limit: "100", after } : undefined;
+    }
+    return ids;
+  }
+
+  /** DELETE best-effort da raiz criada (limpeza atômica em falha). Falha na limpeza NÃO mascara o
+   *  erro original (a casca avisa p/ apagar manual via o desfecho `failed`). */
+  private async revertRoot(account: AdAccountRef, rootId: string): Promise<void> {
+    try {
+      await this.client.request({ method: "DELETE", path: rootId, accessToken: account.accessToken });
+    } catch {
+      /* limpeza falhou — o erro original prevalece */
+    }
   }
 
   /** Define o budget diário absoluto de uma entidade (unidade mínima). Idempotente (set). */

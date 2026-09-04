@@ -40,6 +40,37 @@ function stubGraph(copiesBody: Record<string, unknown>) {
   return { posts: () => posts };
 }
 
+/** Stub em ÁRVORE (cópia rasa recursiva): roteia por url+método. GET /adsets|/ads → listas de id;
+ *  POST /copies → `copied_{type}_id` por fonte (via `idFor`); DELETE → success. `failCopyOn` faz o
+ *  /copies daquela fonte lançar o erro de criativo legado (subcode 3858504). */
+function stubTree(opts: {
+  adsetsOf?: Record<string, string[]>;
+  adsOf?: Record<string, string[]>;
+  idFor?: (src: string) => { type: "campaign" | "adset" | "ad"; id: string };
+  failCopyOn?: string;
+}) {
+  const calls: Array<{ url: string; method: string }> = [];
+  const node = (url: string, edge: string): string => url.match(new RegExp(`/([^/?]+)/${edge}`))?.[1] ?? "";
+  const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
+  const spy = vi.fn(async (input: string | URL | Request, init?: { method?: string }) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    calls.push({ url, method });
+    if (method === "GET" && /\/adsets/.test(url)) return json({ data: (opts.adsetsOf?.[node(url, "adsets")] ?? []).map((id) => ({ id })) });
+    if (method === "GET" && /\/ads(\?|$)/.test(url)) return json({ data: (opts.adsOf?.[node(url, "ads")] ?? []).map((id) => ({ id })) });
+    if (method === "DELETE") return json({ success: true });
+    if (/\/copies/.test(url)) {
+      const src = node(url, "copies");
+      if (opts.failCopyOn === src) return json({ error: { message: "x", code: 100, error_subcode: 3858504, error_user_msg: "criativo antigo" } }, 400);
+      const r = opts.idFor?.(src) ?? { type: "campaign" as const, id: `${src}_NEW` };
+      return json({ [`copied_${r.type}_id`]: r.id });
+    }
+    return json({ success: true });
+  });
+  vi.stubGlobal("fetch", spy);
+  return { calls: () => calls, copies: () => calls.filter((c) => /\/copies/.test(c.url)) };
+}
+
 afterEach(() => vi.unstubAllGlobals());
 
 function svc() {
@@ -47,41 +78,50 @@ function svc() {
 }
 
 describe("MetaCreationService.duplicateEntity", () => {
-  it("copia adset e retorna copiedId + childIds", async () => {
-    stubGraph({
-      copied_adset_id: "AS_NEW",
-      // shape real v26: o adset copiado + os ads copiados (só os "ad" são childIds).
-      ad_object_ids: [
-        { ad_object_type: "ad_set", source_id: "AS1", copied_id: "AS_NEW" },
-        { ad_object_type: "ad", source_id: "AD1", copied_id: "AD1_NEW" },
-        { ad_object_type: "ad", source_id: "AD2", copied_id: "AD2_NEW" },
-      ],
-    });
-    const res = await svc().duplicateEntity(account, {
-      sourceLevel: "adset",
-      sourceId: "AS1",
-      status: "paused",
-    });
-    expect(res.copiedId).toBe("AS_NEW");
-    expect(res.childIds).toEqual(["AD1_NEW", "AD2_NEW"]);
-    // o adset-raiz É o copiedId — não relistado como intermediário.
-    expect(res.childAdsetIds).toEqual([]);
-  });
-
-  it("deep_copy de CAMPANHA → childAdsetIds tem os adsets intermediários (ativar a árvore inteira)", async () => {
-    stubGraph({
-      copied_campaign_id: "C_NEW",
-      ad_object_ids: [
-        { ad_object_type: "campaign", source_id: "C1", copied_id: "C_NEW" },
-        { ad_object_type: "ad_set", source_id: "AS1", copied_id: "AS1_NEW" },
-        { ad_object_type: "ad_set", source_id: "AS2", copied_id: "AS2_NEW" },
-        { ad_object_type: "ad", source_id: "AD1", copied_id: "AD1_NEW" },
-      ],
+  it("duplicateEntity(campaign): reconstrói RASO — casca + conjuntos + anúncios reparenteados", async () => {
+    const { copies } = stubTree({
+      adsetsOf: { C1: ["AS1", "AS2"] },
+      adsOf: { AS1: ["AD1"], AS2: ["AD2"] },
+      idFor: (src) => (src === "C1" ? { type: "campaign", id: "C_NEW" } : src.startsWith("AS") ? { type: "adset", id: `${src}_NEW` } : { type: "ad", id: `${src}_NEW` }),
     });
     const res = await svc().duplicateEntity(account, { sourceLevel: "campaign", sourceId: "C1", status: "paused" });
     expect(res.copiedId).toBe("C_NEW");
     expect(res.childAdsetIds).toEqual(["AS1_NEW", "AS2_NEW"]);
-    expect(res.childIds).toEqual(["AD1_NEW"]);
+    expect(res.childIds).toEqual(["AD1_NEW", "AD2_NEW"]);
+    const cs = copies();
+    expect(cs.find((c) => c.url.includes("C1/copies"))!.url).toContain("deep_copy=false");
+    expect(cs.find((c) => c.url.includes("AS1/copies"))!.url).toContain("campaign_id=C_NEW");
+    expect(cs.find((c) => c.url.includes("AD1/copies"))!.url).toContain("adset_id=AS1_NEW");
+  });
+
+  it("duplicateEntity(campaign): falha num anúncio → DELETA a campanha nova + not_duplicable (atômico)", async () => {
+    const { calls } = stubTree({
+      adsetsOf: { C1: ["AS1"] },
+      adsOf: { AS1: ["AD1"] },
+      idFor: (src) => (src === "C1" ? { type: "campaign", id: "C_NEW" } : { type: "adset", id: "AS1_NEW" }),
+      failCopyOn: "AD1",
+    });
+    const err = await svc().duplicateEntity(account, { sourceLevel: "campaign", sourceId: "C1", status: "paused" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AdsPlatformError);
+    expect(err).toMatchObject({ kind: "not_duplicable" });
+    expect(calls().some((c) => c.method === "DELETE" && c.url.includes("/C_NEW"))).toBe(true);
+  });
+
+  it("duplicateEntity(campaign): renameSuffix → rename_options na casca", async () => {
+    const { copies } = stubTree({ adsetsOf: { C1: [] }, idFor: () => ({ type: "campaign", id: "C_NEW" }) });
+    await svc().duplicateEntity(account, { sourceLevel: "campaign", sourceId: "C1", status: "paused", renameSuffix: " — escala" });
+    const shell = copies().find((c) => c.url.includes("C1/copies"))!;
+    expect(shell.url).toContain("rename_options=");
+    const decoded = decodeURIComponent(shell.url.replace(/\+/g, " "));
+    expect(decoded).toContain('"rename_suffix":" — escala"');
+  });
+
+  it("duplicateEntity(adset): casca do conjunto + seus anúncios (não perde os ads)", async () => {
+    stubTree({ adsOf: { AS1: ["AD1", "AD2"] }, idFor: (src) => (src === "AS1" ? { type: "adset", id: "AS_NEW" } : { type: "ad", id: `${src}_NEW` }) });
+    const res = await svc().duplicateEntity(account, { sourceLevel: "adset", sourceId: "AS1", status: "paused" });
+    expect(res.copiedId).toBe("AS_NEW");
+    expect(res.childIds).toEqual(["AD1_NEW", "AD2_NEW"]);
+    expect(res.childAdsetIds).toEqual([]);
   });
 
   it("duplicateEntity NÃO aplica budget (passo separado) — só /copies", async () => {

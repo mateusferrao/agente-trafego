@@ -232,7 +232,8 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     // createdIds já foi persistido incrementalmente → o retry retoma daqui.
     await db.update(campaignDrafts).set({ status: "failed" }).where(and(eq(campaignDrafts.id, row.id), eq(campaignDrafts.orgId, input.orgId)));
     // vencedor legado (criativo descontinuado): falha HONESTA + 2 saídas, não erro genérico.
-    // Nada foi criado (o /copies falhou antes do 1º persist) → sem órfão pra reconciliar.
+    // Sem órfão pra reconciliar: a cópia é ATÔMICA — o adapter reverte os parciais (DELETE cascata)
+    // antes de lançar, então `createdIds` fica vazio (nada persistido no draft).
     if (error instanceof AdsPlatformError && error.kind === "not_duplicable") {
       return { kind: "blocked", reason: NOT_DUPLICABLE_REASON };
     }
