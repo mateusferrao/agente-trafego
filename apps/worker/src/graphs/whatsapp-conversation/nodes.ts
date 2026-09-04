@@ -17,6 +17,7 @@ import {
   buildWriteEcho,
   checkPhoneAttribution,
   collectGroundedNumbers,
+  describeActionOutcome,
   describePlaybookRule,
   entityKeyOf,
   flagUngroundedNumbers,
@@ -60,7 +61,7 @@ import {
 } from "./tools.js";
 import { renderWhatsappNumber, resolveWhatsappNumber } from "./read-data.js";
 import { makeMetaToolExecutor } from "../../executors/meta-tools.js";
-import { applyCheckedAction, type ApplyOutcome } from "../../modules/apply/apply-confirmed-action.js";
+import { applyCheckedAction, type ApplyResult } from "../../modules/apply/apply-confirmed-action.js";
 import { buildRefineEcho, MEDIA_PREFERENCES, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner, recoverOpenDraft, refineDraft, type DraftProposalContext, type MediaPreference, type RecoveredDraft } from "../../modules/conversation/draft-proposal.js";
 import { loadWriteContext } from "../../modules/apply/write-context.js";
 import { revertActionById } from "../../modules/apply/revert-action.js";
@@ -234,29 +235,22 @@ const AUTONOMY_LABEL_PT: Readonly<Record<string, string>> = {
   act_full: "age sozinho",
 };
 
-const PAST_PHRASE: Record<string, (name: string) => string> = {
-  pause_entity: (n) => `Pausei ${n}`,
-  resume_entity: (n) => `Reativei ${n}`,
-  set_status: (n) => `Atualizei ${n}`,
-  adjust_budget: (n) => `Ajustei o budget de ${n}`,
-};
-
-/** Linha de desfecho de UMA ação aplicada (voz determinística, §UX). */
-function outcomeLine(action: Action, outcome: ApplyOutcome): string {
-  const name = action.target.name ?? action.target.id;
+/** Linha de desfecho de UMA ação aplicada (voz determinística, §UX). Mapeia o `ApplyResult`
+ *  runtime pro `OutcomeDetail` e reusa `describeActionOutcome` — MESMA copy/voz do card do site e
+ *  do push do approval-apply (fonte única, §13 reuso-primeiro). */
+function outcomeLine(action: Action, outcome: ApplyResult): string {
   switch (outcome.kind) {
     case "applied":
-      return outcome.dryRun
-        ? `Simulei em ${name} (dry-run, não apliquei de verdade).`
-        : `${(PAST_PHRASE[action.type] ?? ((x: string) => `Mexi em ${x}`))(name)}.`;
+      return describeActionOutcome(action, { kind: outcome.dryRun ? "simulated" : "applied" });
     case "noop":
-      return `Não precisei mexer em ${name} — já estava assim.`;
+      return describeActionOutcome(action, { kind: "noop" });
     case "blocked":
-      return `Não consegui em ${name}: ${outcome.reason}.`;
-    case "failed":
-      return outcome.error instanceof AdsPlatformError && outcome.error.userMessage
-        ? `Não consegui em ${name}. A Meta informou: ${outcome.error.userMessage.trim()}`
-        : `Não consegui aplicar em ${name} agora — a Meta não respondeu. Tenta de novo.`;
+      return describeActionOutcome(action, { kind: "blocked", reason: outcome.reason });
+    case "failed": {
+      const metaMessage =
+        outcome.error instanceof AdsPlatformError && outcome.error.userMessage ? `A Meta informou: ${outcome.error.userMessage.trim()}` : undefined;
+      return describeActionOutcome(action, { kind: "failed", ...(metaMessage !== undefined ? { metaMessage } : {}) });
+    }
   }
 }
 

@@ -44,9 +44,12 @@ export function describeActionOutcome(action: Action, detail: OutcomeDetail): st
       return `Não precisei mexer${suffix} — já estava no estado desejado.`;
     case "blocked":
       return `Não apliquei${suffix}: ${detail.reason}.`;
-    case "failed":
-      return detail.metaMessage
-        ? `${detail.metaMessage} Dá pra tentar de novo.`
-        : `Não consegui aplicar agora${suffix} — a Meta não respondeu. Tenta de novo em instantes.`;
+    case "failed": {
+      if (!detail.metaMessage) return `Não consegui aplicar agora${suffix} — a Meta não respondeu. Tenta de novo em instantes.`;
+      // a mensagem da Meta pode não terminar em pontuação → normaliza p/ não emendar na próxima frase.
+      const meta = detail.metaMessage.trim();
+      const sep = /[.!?]$/.test(meta) ? "" : ".";
+      return `${meta}${sep} Dá pra tentar de novo.`;
+    }
   }
 }

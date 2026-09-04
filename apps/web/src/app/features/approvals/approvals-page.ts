@@ -498,8 +498,11 @@ export class ApprovalsPage implements OnInit {
     this.api.resolve(a.id, 'approve').subscribe({
       next: () => this.pollOutcome(a.id, Date.now()),
       error: () => {
+        // ex: reaprovar uma que já foi resolvida no intervalo → o backend barra; avisa em vez de
+        // sumir em silêncio (o desfecho real aparece ao atualizar a lista).
         this.clearResolving(a.id);
         this.clearApplyState(a.id);
+        toast.error('Não consegui concluir agora — atualize a lista pra ver o estado atual.');
       },
     });
   }
@@ -542,7 +545,9 @@ export class ApprovalsPage implements OnInit {
     if (s === undefined) return null;
     if (s === 'applying') return 'Aplicando…';
     if (s === 'timeout') return 'Ainda aplicando — te aviso no WhatsApp.';
-    return s.outcomeMessage;
+    // resolvido: a frase vem do backend (fonte única); fallback determinístico blinda o card de
+    // ficar sem botões E sem texto caso o desfecho venha sem mensagem.
+    return s.outcomeMessage ?? 'Pronto.';
   }
 
   /** Resolvido COM efeito (não-falha) → esconde os botões (ação decidida). Falha mantém acionável. */

@@ -25,7 +25,8 @@ describe("describeActionOutcome", () => {
     expect(describeActionOutcome(budget, { kind: "noop" })).toContain("Não precisei mexer");
   });
   it("failed → mensagem da Meta quando houver, senão próximo passo", () => {
-    expect(describeActionOutcome(budget, { kind: "failed", metaMessage: "A Meta informou: limite" })).toBe("A Meta informou: limite Dá pra tentar de novo.");
+    expect(describeActionOutcome(budget, { kind: "failed", metaMessage: "A Meta informou: limite" })).toBe("A Meta informou: limite. Dá pra tentar de novo.");
+    expect(describeActionOutcome(budget, { kind: "failed", metaMessage: "A Meta informou: sem saldo." })).toBe("A Meta informou: sem saldo. Dá pra tentar de novo.");
     expect(describeActionOutcome(budget, { kind: "failed" })).toContain("Tenta de novo");
   });
   it("sem nome no alvo → não quebra (sem sufixo)", () => {
