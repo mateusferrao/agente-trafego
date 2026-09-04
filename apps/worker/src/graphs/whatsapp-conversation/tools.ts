@@ -123,14 +123,37 @@ export function makeConversationTools(
   // "analisa agora": dispara run on-demand (origem conversa) + push do resultado de volta.
   const triggerAnalysis = tool(
     async () => {
+      // Concierge (grupo, foco stale → sem agente em ctx): resolve o agente do `focused_account_id`
+      // PERSISTENTE — rodar análise é READ-LIKE (nenhuma escrita na Meta), então a trava de staleness
+      // (que existe p/ ESCRITA re-confirmar a conta) não deve bloquear o "roda nova análise". Sem foco
+      // → pede a conta (honesto), em vez de redirecionar pro site indevidamente.
+      let agentId = ctx.agentId;
+      let adAccountId = ctx.adAccountId;
+      if (!agentId) {
+        const [conv] = await deps.db
+          .select({ focusedAccountId: conversations.focusedAccountId })
+          .from(conversations)
+          .where(eq(conversations.id, ctx.conversationId))
+          .limit(1);
+        if (!conv?.focusedAccountId) return 'Me diz em qual conta você quer que eu rode a análise (ex: "foca na Loja X").';
+        const [ag] = await deps.db
+          .select({ agentId: agents.id, adAccountId: agents.adAccountId })
+          .from(agents)
+          .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
+          .where(and(eq(agents.orgId, ctx.orgId), eq(agents.status, "active"), eq(adAccounts.status, "active"), eq(adAccounts.id, conv.focusedAccountId)))
+          .limit(1);
+        if (!ag) return "A conta em foco não está mais disponível — me diz em qual conta você quer que eu rode a análise.";
+        agentId = ag.agentId;
+        adAccountId = ag.adAccountId;
+      }
       const outcome = await dispatcher.dispatch({
         orgId: ctx.orgId,
-        agentId: ctx.agentId,
-        adAccountId: ctx.adAccountId,
+        agentId,
+        adAccountId,
         trigger: "conversation",
         notify: { ref: ctx.ref, conversationId: ctx.conversationId },
       });
-      logger.debug({ agentId: ctx.agentId, outcome }, "tool:trigger_analysis");
+      logger.debug({ agentId, outcome }, "tool:trigger_analysis");
       // devolve ao modelo o desfecho p/ ele responder com honestidade (§UX).
       if (outcome === "enqueued") return "Análise iniciada — leva ~1 min; devolvo o resultado aqui.";
       if (outcome === "skipped_in_flight") return "Já tem uma análise rodando — te aviso quando terminar.";
@@ -1039,10 +1062,13 @@ export const CONCIERGE_TOOL_NAMES: ReadonlySet<string> = new Set([
  * Concierge de GRUPO multi-conta (S6 — always-bind de leitura): além do concierge, BINDA as
  * tools de LEITURA account-scoped (self-guard sem foco em read-data.ts). Assim a 1ª pergunta
  * ("@bot como tá a Loja X?") resolve num turno: o LLM dá set_focus (do explícito/ambiente)
- * → muta o ctx → lê e responde. SEM escrita/config (dependem do allowedActions do agente) nem
- * trigger_analysis/revert (não são o *hello* comum) — escrita-1º-turno segue barra-e-repete.
+ * → muta o ctx → lê e responde. Inclui `trigger_analysis` (rodar análise é READ-LIKE — nenhuma
+ * escrita na Meta; a tool resolve o agente do `focused_account_id` persistente, ignorando o TTL do
+ * foco, que existe só p/ ESCRITA re-confirmar a conta). SEM escrita/config (dependem do
+ * allowedActions do agente) nem revert (não é o *hello* comum) — escrita-1º-turno segue barra-e-repete.
  */
 export const GROUP_CONCIERGE_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "trigger_analysis",
   "get_account_status",
   "get_metrics",
   "get_fresh_metrics",
