@@ -8,7 +8,7 @@ import { AnalysisApiService } from '@core/api/analysis-api.service';
 import { ApprovalsApiService } from '@core/api/approvals-api.service';
 import { DraftsApiService } from '@core/api/drafts-api.service';
 import { AGENT_NAME } from '@core/brand';
-import type { ApprovalOutput, DraftApprovalOutput, RevertibleActionOutput } from '@core/api/generated';
+import type { ApprovalOutcomeOutput, ApprovalOutput, DraftApprovalOutput, RevertibleActionOutput } from '@core/api/generated';
 import { UNDO_WARNING, actionTypeLabel, deadlineText, entityTargetLabel } from '@app/shared/action-format';
 import { conversionLabel } from '@app/shared/conversion-label';
 import { currencySymbol, money } from '@app/shared/format';
@@ -18,6 +18,12 @@ interface AccountGroup<T> {
   readonly accountName: string;
   readonly items: readonly T[];
 }
+
+/** Polling do desfecho após aprovar (Fatia "depois"): o card vira "Aplicando…" e relê o resultado. */
+const APPLY_POLL_MS = 1500;
+const APPLY_POLL_TIMEOUT_MS = 30_000;
+/** Estado local do card durante/depois do apply: aplicando, timeout ou o desfecho já lido. */
+type ApplyState = 'applying' | 'timeout' | ApprovalOutcomeOutput;
 
 /** Agrupa por conta (caixa de entrada legível p/ gestor multi-conta) — genérico:
  *  serve tanto pendentes (ApprovalOutput) quanto revertíveis (RevertibleActionOutput). */
@@ -166,25 +172,30 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                             <span class="mt-1 rounded-md border border-line bg-panel px-3 py-2 text-xs text-muted">{{ blocked }}</span>
                           }
                         </span>
-                        <span class="flex shrink-0 gap-2">
-                          @if (a.type === 'adjust_budget') {
-                            <button appButton variant="ghost" size="sm" [disabled]="resolving().has(a.id)" (click)="toggleEditAction(a)">
-                              {{ editingActionId() === a.id ? 'Cancelar' : 'Editar valor' }}
+                        @if (!isResolvedNonFailed(a.id)) {
+                          <span class="flex shrink-0 gap-2">
+                            @if (a.type === 'adjust_budget') {
+                              <button appButton variant="ghost" size="sm" [disabled]="resolving().has(a.id)" (click)="toggleEditAction(a)">
+                                {{ editingActionId() === a.id ? 'Cancelar' : 'Editar valor' }}
+                              </button>
+                            }
+                            @if (a.type === 'adjust_audience' && a.audience) {
+                              <button appButton variant="ghost" size="sm" [disabled]="resolving().has(a.id)" (click)="toggleEditAudience(a)">
+                                {{ editingAudienceId() === a.id ? 'Fechar edição' : 'Editar público' }}
+                              </button>
+                            }
+                            <button appButton variant="secondary" size="sm" [disabled]="resolving().has(a.id)" (click)="reject(a)">
+                              Rejeitar
                             </button>
-                          }
-                          @if (a.type === 'adjust_audience' && a.audience) {
-                            <button appButton variant="ghost" size="sm" [disabled]="resolving().has(a.id)" (click)="toggleEditAudience(a)">
-                              {{ editingAudienceId() === a.id ? 'Fechar edição' : 'Editar público' }}
+                            <button appButton size="sm" [disabled]="resolving().has(a.id) || !!approveBlockedReason(a)" (click)="approve(a)">
+                              {{ resolving().has(a.id) ? 'Enviando…' : 'Aprovar' }}
                             </button>
-                          }
-                          <button appButton variant="secondary" size="sm" [disabled]="resolving().has(a.id)" (click)="reject(a)">
-                            Rejeitar
-                          </button>
-                          <button appButton size="sm" [disabled]="resolving().has(a.id) || !!approveBlockedReason(a)" (click)="approve(a)">
-                            {{ resolving().has(a.id) ? 'Enviando…' : 'Aprovar' }}
-                          </button>
-                        </span>
+                          </span>
+                        }
                       </div>
+                      @if (applyingLabel(a.id); as lbl) {
+                        <span class="text-xs text-ink">{{ lbl }}</span>
+                      }
                       @if (editingActionId() === a.id) {
                         <div class="flex flex-col gap-2 border-t border-line pt-3">
                           <div class="flex flex-col gap-2 sm:flex-row sm:items-end">
@@ -302,6 +313,8 @@ export class ApprovalsPage implements OnInit {
   );
   protected readonly resolving = signal<ReadonlySet<string>>(new Set());
   protected readonly reverting = signal<ReadonlySet<string>>(new Set());
+  /** Estado do apply por aprovação (Fatia "depois"): "Aplicando…" → desfecho real. */
+  protected readonly applyState = signal<ReadonlyMap<string, ApplyState>>(new Map());
   /** id da ação com o editor de valor aberto (C — só adjust_budget, 1 por vez) + estado do form. */
   protected readonly editingActionId = signal<string | null>(null);
   protected readonly editBudgetReais = signal<number | null>(null);
@@ -477,20 +490,65 @@ export class ApprovalsPage implements OnInit {
     return a.dryRun ? 'Modo ensaio ligado — aprovar aqui simula, não altera a conta. Desligue em limites de segurança quando quiser valer.' : null;
   }
 
-  /** Aprovar: enfileira a aplicação (worker re-checa fresco + aplica). Otimista. */
+  /** Aprovar: enfileira a aplicação (worker re-checa fresco + aplica). O card vira "Aplicando…" e
+   *  faz polling do desfecho real (Fatia "depois") — não some otimista. */
   protected approve(a: ApprovalOutput): void {
     this.markResolving(a.id);
+    this.setApplyState(a.id, 'applying');
     this.api.resolve(a.id, 'approve').subscribe({
-      next: () => {
-        this.removePending(a.id);
-        toast.success(
-          a.dryRun
-            ? `Aprovado — em modo ensaio, o ${AGENT_NAME} só simula (não altera a conta).`
-            : `Aprovado. O ${AGENT_NAME} aplica em instantes.`,
-        );
+      next: () => this.pollOutcome(a.id, Date.now()),
+      error: () => {
+        this.clearResolving(a.id);
+        this.clearApplyState(a.id);
       },
-      error: () => this.clearResolving(a.id),
     });
+  }
+
+  /** Relê o desfecho até fechar (applyOutcome != null) ou estourar o teto → "te aviso no WhatsApp". */
+  private pollOutcome(id: string, startedAt: number): void {
+    if (Date.now() - startedAt > APPLY_POLL_TIMEOUT_MS) {
+      this.setApplyState(id, 'timeout');
+      this.clearResolving(id);
+      return;
+    }
+    this.api.getOne(id).subscribe({
+      next: (o) => {
+        if (o.applyOutcome !== null) {
+          this.setApplyState(id, o);
+          this.clearResolving(id); // falha reabilita os botões; resolvidos escondem via isResolvedNonFailed
+        } else {
+          setTimeout(() => this.pollOutcome(id, startedAt), APPLY_POLL_MS);
+        }
+      },
+      error: () => setTimeout(() => this.pollOutcome(id, startedAt), APPLY_POLL_MS),
+    });
+  }
+
+  private setApplyState(id: string, state: ApplyState): void {
+    const next = new Map(this.applyState());
+    next.set(id, state);
+    this.applyState.set(next);
+  }
+
+  private clearApplyState(id: string): void {
+    const next = new Map(this.applyState());
+    next.delete(id);
+    this.applyState.set(next);
+  }
+
+  /** Estado do apply no card: "Aplicando…", timeout honesto ou a frase do desfecho (voz do Roy). */
+  protected applyingLabel(id: string): string | null {
+    const s = this.applyState().get(id);
+    if (s === undefined) return null;
+    if (s === 'applying') return 'Aplicando…';
+    if (s === 'timeout') return 'Ainda aplicando — te aviso no WhatsApp.';
+    return s.outcomeMessage;
+  }
+
+  /** Resolvido COM efeito (não-falha) → esconde os botões (ação decidida). Falha mantém acionável. */
+  protected isResolvedNonFailed(id: string): boolean {
+    const s = this.applyState().get(id);
+    return typeof s === 'object' && s.applyOutcome !== 'failed';
   }
 
   /** Rejeitar: descarta a sugestão (nada é aplicado na Meta). */
