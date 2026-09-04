@@ -4,7 +4,7 @@ import rateLimit from "@fastify/rate-limit";
 import multipart from "@fastify/multipart";
 import Fastify, { type FastifyInstance } from "fastify";
 import { sql } from "drizzle-orm";
-import { runMigrations, runBackfillConnections } from "@trafego/db";
+import { runMigrations, runBackfillConnections, syncToolCatalog } from "@trafego/db";
 
 import { env } from "../env.js";
 import { buildDocument } from "../openapi/generate.js";
@@ -188,7 +188,10 @@ async function start(): Promise<void> {
       await runMigrations(env.DATABASE_URL);
       // backfill idempotente: normaliza token de ad_accounts p/ platform_connections.
       const { migrated } = await runBackfillConnections(env.DATABASE_URL);
-      app.log.info({ migrated }, "migrations aplicadas");
+      // sincroniza o catálogo global de tools (fonte única = tool-catalog.ts) — a FK dos bindings
+      // exige isto semeado; rodar em todo deploy mantém em dia sem passo manual.
+      const { count: toolCount } = await syncToolCatalog(env.DATABASE_URL);
+      app.log.info({ migrated, toolCount }, "migrations aplicadas");
     }
     await app.listen({ port: env.API_PORT, host: "0.0.0.0" });
   } catch (err) {
