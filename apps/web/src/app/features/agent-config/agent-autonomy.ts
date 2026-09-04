@@ -9,15 +9,23 @@ import type { AgentSummary } from '@core/api/generated';
 
 type Level = 'notify' | 'suggest' | 'act_safe' | 'act_full';
 type ScalePref = 'ask' | 'raise' | 'duplicate';
-type ToolKey = 'pause_entity' | 'resume_entity' | 'set_status' | 'adjust_budget' | 'create_campaign' | 'duplicate_scale';
+type ToolKey =
+  | 'pause_entity'
+  | 'resume_entity'
+  | 'set_status'
+  | 'adjust_budget'
+  | 'adjust_audience'
+  | 'create_campaign'
+  | 'duplicate_scale';
 
-/** Lista ÚNICA por-ação (A3): on/off das 6 capacidades. As 4 de otimização + as 2 de criação
+/** Lista ÚNICA por-ação (A3): on/off das 7 capacidades. As 5 de otimização + as 2 de criação
  *  (gasto novo). Fonte do gate real (agent_tool_bindings) — mesmo on/off que o chat/apply leem. */
 const OPTIMIZE_TOOLS: readonly { key: ToolKey; label: string; hint: string }[] = [
   { key: 'pause_entity', label: 'Pausar', hint: 'Parar o gasto de uma campanha, conjunto ou anúncio.' },
   { key: 'resume_entity', label: 'Retomar', hint: 'Voltar a rodar algo que estava pausado.' },
   { key: 'set_status', label: 'Mudar status', hint: 'Ativar ou pausar uma entidade.' },
   { key: 'adjust_budget', label: 'Ajustar orçamento', hint: 'Subir ou cortar o orçamento (±%).' },
+  { key: 'adjust_audience', label: 'Ajustar público', hint: 'Editar idade, gênero, local e interesses de um conjunto — reinicia o aprendizado da Meta.' },
 ];
 const CREATE_TOOLS: readonly { key: ToolKey; label: string; hint: string }[] = [
   { key: 'create_campaign', label: 'Criar campanha', hint: 'Montar uma campanha nova do zero (gasto novo).' },

@@ -5,7 +5,7 @@ import { AnalysisApiService } from '@core/api/analysis-api.service';
 import type { AgentSummary } from '@core/api/generated';
 import { currencySymbol } from '@app/shared/format';
 
-type ActionType = 'pause_entity' | 'resume_entity' | 'adjust_budget' | 'set_status';
+type ActionType = 'pause_entity' | 'resume_entity' | 'adjust_budget' | 'set_status' | 'adjust_audience';
 
 /** Guardrails (5a): rede de segurança independente da autonomia — sempre vale na escrita.
  *  As "ações permitidas" (on/off por tipo) migraram p/ a lista única em "Até onde o agente

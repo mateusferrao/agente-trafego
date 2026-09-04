@@ -194,8 +194,8 @@ export const autonomyPolicySchema = z.object({
   byAction: z.record(z.enum([...GATEABLE_TOOL_KEYS] as [string, ...string[]]), autonomyLevel).optional(),
 });
 
-/** On/off das 6 tools gateáveis (A3) — estado resolvido (read) ou patch (write parcial).
- *  Deriva de GATEABLE_TOOL_KEYS (fonte única): as 4 de escrita + as 2 de criação. */
+/** On/off das 7 tools gateáveis (A3) — estado resolvido (read) ou patch (write parcial).
+ *  Deriva de GATEABLE_TOOL_KEYS (fonte única): as 5 de escrita + as 2 de criação. */
 export const toolBindingsSchema = z.object(
   Object.fromEntries(GATEABLE_TOOL_KEYS.map((k) => [k, z.boolean()])) as Record<
     (typeof GATEABLE_TOOL_KEYS)[number],
