@@ -84,6 +84,11 @@ function copiedIdOf(body: CopiesResponse): string | null {
   return body.copied_adset_id ?? body.copied_campaign_id ?? body.copied_ad_id ?? body.id ?? null;
 }
 
+/** Aplica o MESMO sufixo de nome que o `/copies` usaria (fidelidade visual copy×reconstrução). */
+function withRenameSuffix(name: string, suffix?: string): string {
+  return suffix ? `${name}${suffix}` : name;
+}
+
 /** Resposta do `/delivery_estimate` (v26): `data:[{ estimate_dau, estimate_mau_*, estimate_ready }]`.
  *  `-1` = a plataforma ainda não estimou (público/lookalike novo) → tratado como "sem contagem". */
 interface RawDeliveryEstimate {
@@ -121,7 +126,7 @@ export class MetaCreationService {
         const childAdsetIds: string[] = [];
         const childIds: string[] = [];
         for (const srcAdset of await this.listChildIds(account, input.sourceId, "adsets")) {
-          const { newAdsetId, newAdIds } = await this.copyAdsetInto(account, srcAdset, input.status, { campaign_id: newCampaignId });
+          const { newAdsetId, newAdIds } = await this.copyAdsetInto(account, srcAdset, input.status, { campaign_id: newCampaignId }, input.renameSuffix);
           childAdsetIds.push(newAdsetId);
           childIds.push(...newAdIds);
         }
@@ -136,7 +141,7 @@ export class MetaCreationService {
       const reparent = input.destinationCampaignId ? { campaign_id: input.destinationCampaignId } : undefined;
       const newAdsetId = await this.shallowCopy(account, input.sourceId, input.status, reparent, input.renameSuffix);
       try {
-        const newAdIds = await this.copyAdsInto(account, input.sourceId, input.status, newAdsetId);
+        const newAdIds = await this.copyOrReconstructAdsInto(account, input.sourceId, input.status, newAdsetId, input.renameSuffix);
         return { copiedId: newAdsetId, childIds: newAdIds, childAdsetIds: [], modernizations: [] };
       } catch (error) {
         await this.revertRoot(account, newAdsetId);
@@ -149,25 +154,52 @@ export class MetaCreationService {
     return { copiedId, childIds: [], childAdsetIds: [], modernizations: [] };
   }
 
-  /** Copia UM conjunto (raso) na campanha destino + cada anúncio dele (raso, reparent). */
+  /** Copia UM conjunto (raso) na campanha destino + cada anúncio dele (copia-ou-reconstrói). */
   private async copyAdsetInto(
     account: AdAccountRef,
     srcAdset: string,
     status: "active" | "paused",
     reparent: { campaign_id: string },
+    renameSuffix?: string,
   ): Promise<{ newAdsetId: string; newAdIds: string[] }> {
     const newAdsetId = await this.shallowCopy(account, srcAdset, status, reparent);
-    const newAdIds = await this.copyAdsInto(account, srcAdset, status, newAdsetId);
+    const newAdIds = await this.copyOrReconstructAdsInto(account, srcAdset, status, newAdsetId, renameSuffix);
     return { newAdsetId, newAdIds };
   }
 
-  /** Copia cada anúncio de `srcAdset` (raso) reparenteado no conjunto novo. */
-  private async copyAdsInto(account: AdAccountRef, srcAdset: string, status: "active" | "paused", newAdsetId: string): Promise<string[]> {
+  /** Copia cada anúncio de `srcAdset` (raso) reparenteado no conjunto novo; se o `/copies` de um
+   *  anúncio bater muro `not_duplicable` (ex: criativo legado), reconstrói SÓ ele via create
+   *  (referenciando o criativo). Fidelidade: copia onde dá, reconstrói só o que precisa. */
+  private async copyOrReconstructAdsInto(account: AdAccountRef, srcAdset: string, status: "active" | "paused", newAdsetId: string, renameSuffix?: string): Promise<string[]> {
     const newAdIds: string[] = [];
     for (const srcAd of await this.listChildIds(account, srcAdset, "ads")) {
-      newAdIds.push(await this.shallowCopy(account, srcAd, status, { adset_id: newAdsetId }));
+      try {
+        newAdIds.push(await this.shallowCopy(account, srcAd, status, { adset_id: newAdsetId }));
+      } catch (error) {
+        if (error instanceof AdsPlatformError && error.kind === "not_duplicable") {
+          newAdIds.push(await this.reconstructAdInto(account, srcAd, newAdsetId, status, renameSuffix));
+        } else throw error;
+      }
     }
     return newAdIds;
+  }
+
+  /** Recria UM anúncio no conjunto destino REFERENCIANDO o creative_id da fonte (não recria o
+   *  criativo → a re-validação de standard_enhancements do `/copies` não dispara; provado em
+   *  spike real, inclusive dynamic creative/asset_feed_spec). Sem criativo reutilizável →
+   *  `not_duplicable` (a casca oferece as saídas / a rede reverte). */
+  private async reconstructAdInto(account: AdAccountRef, srcAdId: string, newAdsetId: string, status: "active" | "paused", renameSuffix?: string): Promise<string> {
+    const { data } = await this.client.request<{ name?: string; creative?: { id?: string } }>({
+      method: "GET", path: srcAdId, accessToken: account.accessToken, params: { fields: "name,creative{id}" },
+    });
+    const creativeId = data.creative?.id;
+    if (!creativeId) throw new AdsPlatformError("not_duplicable", "anúncio-fonte sem criativo reutilizável", undefined);
+    return this.createOnAccount(account, "ads", {
+      name: withRenameSuffix(data.name ?? "anúncio", renameSuffix),
+      adset_id: newAdsetId,
+      status: status === "active" ? STATUS_ACTIVE : STATUS_PAUSED,
+      creative: JSON.stringify({ creative_id: creativeId }),
+    });
   }
 
   /**

@@ -48,27 +48,57 @@ function stubTree(opts: {
   adsOf?: Record<string, string[]>;
   idFor?: (src: string) => { type: "campaign" | "adset" | "ad"; id: string };
   failCopyOn?: string;
+  /** subcode do erro do /copies em `failCopyOn` (default: criativo legado 3858504). */
+  failCopySubcode?: number;
+  /** GET {adId}?fields=...creative{id} → creative.id (habilita reconstrução de anúncio). */
+  creativeOf?: Record<string, string>;
+  /** GET {adsetId}?fields=... → campos crus do conjunto (habilita reconstrução de conjunto). */
+  adsetFields?: Record<string, Record<string, unknown>>;
+  /** edges da conta cujo POST de criação deve falhar (ex: ["adsets"]) — testa a rede. */
+  failCreateOn?: string[];
 }) {
   const calls: Array<{ url: string; method: string }> = [];
+  const posts: Record<string, Array<Record<string, string>>> = {};
+  const deleted: string[] = [];
   const node = (url: string, edge: string): string => url.match(new RegExp(`/([^/?]+)/${edge}`))?.[1] ?? "";
+  const bareId = (url: string): string => ((url.split("?")[0] ?? "").split("/").pop() ?? "");
+  // o MetaGraphClient manda os params do POST na QUERY (não no body) — igual ao /copies.
+  const urlParams = (url: string): Record<string, string> => Object.fromEntries(new URL(url).searchParams);
   const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
-  const spy = vi.fn(async (input: string | URL | Request, init?: { method?: string }) => {
+  const spy = vi.fn(async (input: string | URL | Request, init?: { method?: string; body?: unknown }) => {
     const url = String(input);
     const method = init?.method ?? "GET";
     calls.push({ url, method });
+    // criação num edge da CONTA (act_*/{campaigns|adsets|ads|adcreatives})
+    const createEdge = method === "POST" ? url.match(/\/act_[^/]+\/(campaigns|adsets|ads|adcreatives)(\?|$)/)?.[1] : undefined;
+    if (createEdge) {
+      (posts[createEdge] ??= []).push(urlParams(url));
+      if (opts.failCreateOn?.includes(createEdge)) return json({ error: { message: "create rejeitado", code: 100 } }, 400);
+      return json({ id: `${createEdge}_CREATED_${posts[createEdge].length}` });
+    }
+    if (method === "DELETE") { deleted.push(bareId(url)); return json({ success: true }); }
     if (method === "GET" && /\/adsets/.test(url)) return json({ data: (opts.adsetsOf?.[node(url, "adsets")] ?? []).map((id) => ({ id })) });
-    if (method === "GET" && /\/ads(\?|$)/.test(url)) return json({ data: (opts.adsOf?.[node(url, "ads")] ?? []).map((id) => ({ id })) });
-    if (method === "DELETE") return json({ success: true });
+    if (method === "GET" && /\/ads(\?|$)/.test(url) && !/\/act_/.test(url)) return json({ data: (opts.adsOf?.[node(url, "ads")] ?? []).map((id) => ({ id })) });
+    if (method === "GET") {
+      const id = bareId(url);
+      if (/creative/.test(url) && opts.creativeOf?.[id]) return json({ id, name: `${id} nome`, creative: { id: opts.creativeOf[id] } });
+      if (opts.adsetFields?.[id]) return json({ id, ...opts.adsetFields[id] });
+    }
     if (/\/copies/.test(url)) {
       const src = node(url, "copies");
-      if (opts.failCopyOn === src) return json({ error: { message: "x", code: 100, error_subcode: 3858504, error_user_msg: "criativo antigo" } }, 400);
+      if (opts.failCopyOn === src) return json({ error: { message: "x", code: 100, error_subcode: opts.failCopySubcode ?? 3858504, error_user_msg: "config descontinuada" } }, 400);
       const r = opts.idFor?.(src) ?? { type: "campaign" as const, id: `${src}_NEW` };
       return json({ [`copied_${r.type}_id`]: r.id });
     }
     return json({ success: true });
   });
   vi.stubGlobal("fetch", spy);
-  return { calls: () => calls, copies: () => calls.filter((c) => /\/copies/.test(c.url)) };
+  return {
+    calls: () => calls,
+    copies: () => calls.filter((c) => /\/copies/.test(c.url)),
+    posted: (edge: string) => posts[edge] ?? [],
+    deleted: () => deleted,
+  };
 }
 
 afterEach(() => vi.unstubAllGlobals());
@@ -92,6 +122,23 @@ describe("MetaCreationService.duplicateEntity", () => {
     expect(cs.find((c) => c.url.includes("C1/copies"))!.url).toContain("deep_copy=false");
     expect(cs.find((c) => c.url.includes("AS1/copies"))!.url).toContain("campaign_id=C_NEW");
     expect(cs.find((c) => c.url.includes("AD1/copies"))!.url).toContain("adset_id=AS1_NEW");
+  });
+
+  it("anúncio com criativo legado → reconstrói via POST /ads (creative_id) e a duplicação sucede", async () => {
+    const stub = stubTree({
+      adsetsOf: { C1: ["AS1"] },
+      adsOf: { AS1: ["AD_LEGACY"] },
+      idFor: (src) => (src === "C1" ? { type: "campaign", id: "C_NEW" } : { type: "adset", id: "AS1_NEW" }),
+      failCopyOn: "AD_LEGACY",
+      failCopySubcode: 3858504,
+      creativeOf: { AD_LEGACY: "CRE_9" },
+    });
+    const res = await svc().duplicateEntity(account, { sourceLevel: "campaign", sourceId: "C1", status: "paused" });
+    expect(res.childIds).toEqual(["ads_CREATED_1"]);
+    const ad = stub.posted("ads")[0]!;
+    expect(ad.creative).toBe(JSON.stringify({ creative_id: "CRE_9" }));
+    expect(ad.adset_id).toBe("AS1_NEW");
+    expect(ad.status).toBe("PAUSED");
   });
 
   it("duplicateEntity(campaign): falha num anúncio → DELETA a campanha nova + not_duplicable (atômico)", async () => {
