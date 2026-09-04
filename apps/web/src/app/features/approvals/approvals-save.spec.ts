@@ -22,10 +22,6 @@ const APPROVAL: ApprovalOutput = {
   currentBudgetMajor: 120,
   targetBudgetMajor: 96,
   audience: null,
-  dryRun: false,
-  killSwitch: false,
-  actionAllowed: true,
-  accountAvailable: true,
   applyPreview: { effect: 'real', message: null },
   ressalvas: null,
 };
@@ -55,10 +51,6 @@ const AUDIENCE_APPROVAL: ApprovalOutput = {
     customAudienceIncludeIds: [],
     customAudienceExcludeIds: [],
   },
-  dryRun: false,
-  killSwitch: false,
-  actionAllowed: true,
-  accountAvailable: true,
   applyPreview: { effect: 'real', message: null },
   ressalvas: null,
 };

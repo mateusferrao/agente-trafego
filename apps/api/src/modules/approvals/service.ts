@@ -170,11 +170,6 @@ export function createApprovalsService(deps: ApprovalsDeps) {
             kind: "action",
           }),
           ressalvas: a.action.ressalvas ? [...a.action.ressalvas] : null,
-          // TRANSICIONAL (Fatia 2 remove quando o web ler o applyPreview):
-          dryRun: acc?.dryRun ?? false,
-          killSwitch: acc?.killSwitch ?? false,
-          actionAllowed: acc?.enabledActions.has(a.actionType) ?? false,
-          accountAvailable: acc?.accountAvailable ?? false,
         };
       });
     },

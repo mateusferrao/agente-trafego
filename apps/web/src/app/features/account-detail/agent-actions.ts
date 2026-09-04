@@ -1,9 +1,9 @@
 import { ChangeDetectionStrategy, Component, type OnInit, inject, input, signal } from '@angular/core';
 import { toast } from 'ngx-sonner';
-import { UiButton, UiConfirmDialogService, UiEyebrow } from '@ui';
+import { UiButton, UiCallout, UiConfirmDialogService, UiEyebrow } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import { ApprovalsApiService } from '@core/api/approvals-api.service';
-import { AGENT_NAME } from '@core/brand';
+import { ApprovalApplyStateService } from '@app/features/approvals/approval-apply-state.service';
 import type { LastRunActionsOutput } from '@core/api/generated';
 import { UNDO_WARNING, actionTypeLabel, deadlineText, entityTargetLabel } from '@app/shared/action-format';
 
@@ -20,7 +20,7 @@ type Dropped = LastRunActionsOutput['dropped'][number];
 @Component({
   selector: 'app-agent-actions',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiButton, UiEyebrow],
+  imports: [UiButton, UiEyebrow, UiCallout],
   template: `
     @if (applied().length > 0 || suggested().length > 0 || dropped().length > 0) {
       <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
@@ -77,25 +77,29 @@ type Dropped = LastRunActionsOutput['dropped'][number];
                       }
                     </span>
                     <span class="text-xs text-muted">{{ s.reason }}</span>
-                    @if (s.ressalvas?.length) {
-                      <span class="mt-0.5 flex flex-col gap-0.5 rounded-md border-2 border-warning bg-warning-soft px-2 py-1">
-                        @for (r of s.ressalvas; track r.code) {
-                          <span class="text-xs text-ink">⚠️ {{ r.message }}</span>
-                        }
-                      </span>
+                    @for (r of s.ressalvas ?? []; track r.code) {
+                      <app-ui-callout tone="warning">{{ r.message }}</app-ui-callout>
+                    }
+                    @if (s.applyPreview.message; as m) {
+                      <app-ui-callout [tone]="s.applyPreview.effect === 'blocked' ? 'blocked' : 'warning'">{{ m }}</app-ui-callout>
                     }
                     @if (deadline(s.expiresAt); as d) {
                       <app-ui-eyebrow>{{ d }}</app-ui-eyebrow>
                     }
+                    @if (applyState.label(s.approvalId); as lbl) {
+                      <span class="text-xs text-ink">{{ lbl }}</span>
+                    }
                   </span>
-                  <span class="flex gap-2 sm:shrink-0">
-                    <button appButton variant="secondary" size="sm" class="flex-1 sm:flex-none" [disabled]="resolving().has(s.approvalId)" (click)="reject(s)">
-                      Rejeitar
-                    </button>
-                    <button appButton size="sm" class="flex-1 sm:flex-none" [disabled]="resolving().has(s.approvalId)" (click)="approve(s)">
-                      {{ resolving().has(s.approvalId) ? 'Enviando…' : 'Aprovar' }}
-                    </button>
-                  </span>
+                  @if (!applyState.isResolvedNonFailed(s.approvalId)) {
+                    <span class="flex gap-2 sm:shrink-0">
+                      <button appButton variant="secondary" size="sm" class="flex-1 sm:flex-none" [disabled]="busy(s.approvalId)" (click)="reject(s)">
+                        Rejeitar
+                      </button>
+                      <button appButton size="sm" class="flex-1 sm:flex-none" [disabled]="busy(s.approvalId) || s.applyPreview.effect === 'blocked'" (click)="approve(s)">
+                        {{ applyState.stateOf(s.approvalId) === 'applying' ? 'Enviando…' : 'Aprovar' }}
+                      </button>
+                    </span>
+                  }
                 </li>
               }
             </ul>
@@ -126,6 +130,8 @@ type Dropped = LastRunActionsOutput['dropped'][number];
 export class AgentActions implements OnInit {
   private readonly api = inject(AnalysisApiService);
   private readonly approvalsApi = inject(ApprovalsApiService);
+  /** Estado "Aplicando… → desfecho" — mesma peça compartilhada das outras superfícies. */
+  protected readonly applyState = inject(ApprovalApplyStateService);
   private readonly confirmDialog = inject(UiConfirmDialogService);
 
   readonly accountId = input.required<string>();
@@ -189,16 +195,14 @@ export class AgentActions implements OnInit {
     });
   }
 
-  /** Aprovar: enfileira a aplicação (worker re-checa fresco + aplica). Otimista. */
+  /** Aprovar: o serviço compartilhado enfileira + acompanha "Aplicando… → desfecho real". */
   protected approve(s: Suggested): void {
-    this.markResolving(s.approvalId);
-    this.approvalsApi.resolve(s.approvalId, 'approve').subscribe({
-      next: () => {
-        this.removeSuggested(s.approvalId);
-        toast.success(`Aprovado. O ${AGENT_NAME} aplica em instantes.`);
-      },
-      error: () => this.clearResolving(s.approvalId),
-    });
+    this.applyState.approve(s.approvalId, () => toast.error('Não consegui concluir agora — atualize a página pra ver o estado atual.'));
+  }
+
+  /** Ocupado (aplicando OU resolvendo) → desabilita os botões. */
+  protected busy(id: string): boolean {
+    return this.resolving().has(id) || this.applyState.stateOf(id) === 'applying';
   }
 
   /** Rejeitar: descarta a sugestão (nada é aplicado na Meta). */

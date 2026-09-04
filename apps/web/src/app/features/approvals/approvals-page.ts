@@ -1,14 +1,15 @@
 import { ChangeDetectionStrategy, Component, type OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { toast } from 'ngx-sonner';
-import { NumberStepper, UiButton, UiConfirmDialogService, UiEmptyState, UiEyebrow, UiInput, UiPageHeader } from '@ui';
+import { NumberStepper, UiButton, UiCallout, UiConfirmDialogService, UiEmptyState, UiEyebrow, UiInput, UiPageHeader } from '@ui';
 import { DraftEditPanel } from './draft-edit-panel';
 import { GeoAudienceEditor, toExplicitAudienceWire, type ExplicitAudienceState } from './geo-audience-editor';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import { ApprovalsApiService } from '@core/api/approvals-api.service';
 import { DraftsApiService } from '@core/api/drafts-api.service';
 import { AGENT_NAME } from '@core/brand';
-import type { ApprovalOutcomeOutput, ApprovalOutput, DraftApprovalOutput, RevertibleActionOutput } from '@core/api/generated';
+import type { ApprovalOutput, DraftApprovalOutput, RevertibleActionOutput } from '@core/api/generated';
+import { ApprovalApplyStateService } from './approval-apply-state.service';
 import { UNDO_WARNING, actionTypeLabel, deadlineText, entityTargetLabel } from '@app/shared/action-format';
 import { conversionLabel } from '@app/shared/conversion-label';
 import { currencySymbol, money } from '@app/shared/format';
@@ -19,11 +20,6 @@ interface AccountGroup<T> {
   readonly items: readonly T[];
 }
 
-/** Polling do desfecho após aprovar (Fatia "depois"): o card vira "Aplicando…" e relê o resultado. */
-const APPLY_POLL_MS = 1500;
-const APPLY_POLL_TIMEOUT_MS = 30_000;
-/** Estado local do card durante/depois do apply: aplicando, timeout ou o desfecho já lido. */
-type ApplyState = 'applying' | 'timeout' | ApprovalOutcomeOutput;
 
 /** Agrupa por conta (caixa de entrada legível p/ gestor multi-conta) — genérico:
  *  serve tanto pendentes (ApprovalOutput) quanto revertíveis (RevertibleActionOutput). */
@@ -47,7 +43,7 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
 @Component({
   selector: 'app-approvals-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, UiEmptyState, UiPageHeader, UiButton, UiEyebrow, UiInput, NumberStepper, DraftEditPanel, GeoAudienceEditor],
+  imports: [FormsModule, UiEmptyState, UiPageHeader, UiButton, UiEyebrow, UiInput, UiCallout, NumberStepper, DraftEditPanel, GeoAudienceEditor],
   template: `
     <div class="flex flex-col gap-8">
       <app-ui-page-header
@@ -113,21 +109,29 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                           }
                         </ul>
                       }
-                      <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-                        @if (d.approvalKind === 'draft') {
-                          <button appButton variant="ghost" size="sm" class="sm:mr-auto" [disabled]="resolving().has(d.id)" (click)="toggleEdit(d)">
-                            {{ editingFor() === d.id ? 'Fechar edição' : 'Editar' }}
-                          </button>
-                        }
-                        <div class="flex gap-2">
-                          <button appButton variant="secondary" size="sm" class="flex-1 sm:flex-none" [disabled]="resolving().has(d.id)" (click)="rejectDraft(d)">
-                            {{ d.approvalKind === 'activation' ? 'Deixar pausada' : 'Recusar' }}
-                          </button>
-                          <button appButton size="sm" class="flex-1 sm:flex-none" [disabled]="resolving().has(d.id)" (click)="approveDraft(d)">
-                            {{ resolving().has(d.id) ? 'Enviando…' : (d.approvalKind === 'activation' ? 'Ativar' : 'Aprovar') }}
-                          </button>
+                      @if (d.applyPreview.message; as m) {
+                        <app-ui-callout [tone]="d.applyPreview.effect === 'blocked' ? 'blocked' : 'warning'">{{ m }}</app-ui-callout>
+                      }
+                      @if (!applyState.isResolvedNonFailed(d.id)) {
+                        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+                          @if (d.approvalKind === 'draft') {
+                            <button appButton variant="ghost" size="sm" class="sm:mr-auto" [disabled]="busy(d.id)" (click)="toggleEdit(d)">
+                              {{ editingFor() === d.id ? 'Fechar edição' : 'Editar' }}
+                            </button>
+                          }
+                          <div class="flex gap-2">
+                            <button appButton variant="secondary" size="sm" class="flex-1 sm:flex-none" [disabled]="busy(d.id)" (click)="rejectDraft(d)">
+                              {{ d.approvalKind === 'activation' ? 'Deixar pausada' : 'Recusar' }}
+                            </button>
+                            <button appButton size="sm" class="flex-1 sm:flex-none" [disabled]="busy(d.id) || d.applyPreview.effect === 'blocked'" (click)="approveDraft(d)">
+                              {{ applyState.stateOf(d.id) === 'applying' ? 'Enviando…' : (d.approvalKind === 'activation' ? 'Ativar' : 'Aprovar') }}
+                            </button>
+                          </div>
                         </div>
-                      </div>
+                      }
+                      @if (applyState.label(d.id); as lbl) {
+                        <span class="text-xs text-ink">{{ lbl }}</span>
+                      }
                     </li>
                     @if (editingFor() === d.id) {
                       <li>
@@ -165,35 +169,35 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                           @if (budgetLine(a); as bl) {
                             <span class="text-xs font-medium text-ink">{{ bl }}</span>
                           }
-                          @if (dryRunNotice(a); as notice) {
-                            <span class="mt-1 rounded-md border-2 border-warning bg-warning-soft px-3 py-2 text-xs text-ink">{{ notice }}</span>
+                          @if (a.applyPreview.message; as m) {
+                            <app-ui-callout class="mt-1" [tone]="a.applyPreview.effect === 'blocked' ? 'blocked' : 'warning'">{{ m }}</app-ui-callout>
                           }
-                          @if (approveBlockedReason(a); as blocked) {
-                            <span class="mt-1 rounded-md border border-line bg-panel px-3 py-2 text-xs text-muted">{{ blocked }}</span>
+                          @for (r of a.ressalvas ?? []; track r.code) {
+                            <app-ui-callout class="mt-1" tone="warning">{{ r.message }}</app-ui-callout>
                           }
                         </span>
-                        @if (!isResolvedNonFailed(a.id)) {
+                        @if (!applyState.isResolvedNonFailed(a.id)) {
                           <span class="flex shrink-0 gap-2">
                             @if (a.type === 'adjust_budget') {
-                              <button appButton variant="ghost" size="sm" [disabled]="resolving().has(a.id)" (click)="toggleEditAction(a)">
+                              <button appButton variant="ghost" size="sm" [disabled]="busy(a.id)" (click)="toggleEditAction(a)">
                                 {{ editingActionId() === a.id ? 'Cancelar' : 'Editar valor' }}
                               </button>
                             }
                             @if (a.type === 'adjust_audience' && a.audience) {
-                              <button appButton variant="ghost" size="sm" [disabled]="resolving().has(a.id)" (click)="toggleEditAudience(a)">
+                              <button appButton variant="ghost" size="sm" [disabled]="busy(a.id)" (click)="toggleEditAudience(a)">
                                 {{ editingAudienceId() === a.id ? 'Fechar edição' : 'Editar público' }}
                               </button>
                             }
-                            <button appButton variant="secondary" size="sm" [disabled]="resolving().has(a.id)" (click)="reject(a)">
+                            <button appButton variant="secondary" size="sm" [disabled]="busy(a.id)" (click)="reject(a)">
                               Rejeitar
                             </button>
-                            <button appButton size="sm" [disabled]="resolving().has(a.id) || !!approveBlockedReason(a)" (click)="approve(a)">
-                              {{ resolving().has(a.id) ? 'Enviando…' : 'Aprovar' }}
+                            <button appButton size="sm" [disabled]="busy(a.id) || a.applyPreview.effect === 'blocked'" (click)="approve(a)">
+                              {{ applyState.stateOf(a.id) === 'applying' ? 'Enviando…' : 'Aprovar' }}
                             </button>
                           </span>
                         }
                       </div>
-                      @if (applyingLabel(a.id); as lbl) {
+                      @if (applyState.label(a.id); as lbl) {
                         <span class="text-xs text-ink">{{ lbl }}</span>
                       }
                       @if (editingActionId() === a.id) {
@@ -313,8 +317,8 @@ export class ApprovalsPage implements OnInit {
   );
   protected readonly resolving = signal<ReadonlySet<string>>(new Set());
   protected readonly reverting = signal<ReadonlySet<string>>(new Set());
-  /** Estado do apply por aprovação (Fatia "depois"): "Aplicando…" → desfecho real. */
-  protected readonly applyState = signal<ReadonlyMap<string, ApplyState>>(new Map());
+  /** Estado do apply ("Aplicando…" → desfecho) — peça compartilhada pelas 3 superfícies. */
+  protected readonly applyState = inject(ApprovalApplyStateService);
   /** id da ação com o editor de valor aberto (C — só adjust_budget, 1 por vez) + estado do form. */
   protected readonly editingActionId = signal<string | null>(null);
   protected readonly editBudgetReais = signal<number | null>(null);
@@ -409,17 +413,10 @@ export class ApprovalsPage implements OnInit {
     });
   }
 
-  /** Aprovar rascunho (criação) OU confirmar ativação (P0.1) — mesma rota resolve
-   *  (kind-agnóstica no backend). Otimista. */
+  /** Aprovar rascunho (criação) OU confirmar ativação (P0.1) — o serviço compartilhado enfileira +
+   *  acompanha "Aplicando… → desfecho real" (mesma peça do card de ação). */
   protected approveDraft(d: DraftApprovalOutput): void {
-    this.markResolving(d.id);
-    this.api.resolve(d.id, 'approve').subscribe({
-      next: () => {
-        this.removeDraft(d.id);
-        toast.success(d.approvalKind === 'activation' ? 'Ativando. Já deve estar veiculando.' : `Enviado pra criação. O ${AGENT_NAME} cria em instantes.`);
-      },
-      error: () => this.clearResolving(d.id),
-    });
+    this.applyState.approve(d.id, () => toast.error('Não consegui concluir agora — atualize a lista pra ver o estado atual.'));
   }
 
   /** Recusar a criação (nada é criado) OU manter pausada (P0.1 — a campanha já criada não é
@@ -476,84 +473,15 @@ export class ApprovalsPage implements OnInit {
     this.clearResolving(id);
   }
 
-  /** Motivo pra BLOQUEAR o botão Aprovar (aprovar não teria efeito real). Null = liberado.
-   *  Ordem: conta indisponível > trava total > ação não permitida. O ensaio NÃO bloqueia (avisa). */
-  protected approveBlockedReason(a: ApprovalOutput): string | null {
-    if (!a.accountAvailable) return 'Esta conta está indisponível agora — não dá pra aplicar. Recheque a conexão.';
-    if (a.killSwitch) return 'Trava total ligada — o agente está impedido de agir nesta conta. Desligue em limites de segurança pra aprovar.';
-    if (!a.actionAllowed) return 'Essa ação não está nas ações permitidas deste agente — aprovar não teria efeito. Habilite em ações permitidas.';
-    return null;
-  }
-
-  /** Aviso de modo ensaio (não bloqueia — só é honesto que aprovar simula). Null = fora do ensaio. */
-  protected dryRunNotice(a: ApprovalOutput): string | null {
-    return a.dryRun ? 'Modo ensaio ligado — aprovar aqui simula, não altera a conta. Desligue em limites de segurança quando quiser valer.' : null;
-  }
-
-  /** Aprovar: enfileira a aplicação (worker re-checa fresco + aplica). O card vira "Aplicando…" e
-   *  faz polling do desfecho real (Fatia "depois") — não some otimista. */
+  /** Aprovar: o serviço compartilhado enfileira + acompanha "Aplicando… → desfecho real" (peça
+   *  única, mesma das outras superfícies). */
   protected approve(a: ApprovalOutput): void {
-    this.markResolving(a.id);
-    this.setApplyState(a.id, 'applying');
-    this.api.resolve(a.id, 'approve').subscribe({
-      next: () => this.pollOutcome(a.id, Date.now()),
-      error: () => {
-        // ex: reaprovar uma que já foi resolvida no intervalo → o backend barra; avisa em vez de
-        // sumir em silêncio (o desfecho real aparece ao atualizar a lista).
-        this.clearResolving(a.id);
-        this.clearApplyState(a.id);
-        toast.error('Não consegui concluir agora — atualize a lista pra ver o estado atual.');
-      },
-    });
+    this.applyState.approve(a.id, () => toast.error('Não consegui concluir agora — atualize a lista pra ver o estado atual.'));
   }
 
-  /** Relê o desfecho até fechar (applyOutcome != null) ou estourar o teto → "te aviso no WhatsApp". */
-  private pollOutcome(id: string, startedAt: number): void {
-    if (Date.now() - startedAt > APPLY_POLL_TIMEOUT_MS) {
-      this.setApplyState(id, 'timeout');
-      this.clearResolving(id);
-      return;
-    }
-    this.api.getOne(id).subscribe({
-      next: (o) => {
-        if (o.applyOutcome !== null) {
-          this.setApplyState(id, o);
-          this.clearResolving(id); // falha reabilita os botões; resolvidos escondem via isResolvedNonFailed
-        } else {
-          setTimeout(() => this.pollOutcome(id, startedAt), APPLY_POLL_MS);
-        }
-      },
-      error: () => setTimeout(() => this.pollOutcome(id, startedAt), APPLY_POLL_MS),
-    });
-  }
-
-  private setApplyState(id: string, state: ApplyState): void {
-    const next = new Map(this.applyState());
-    next.set(id, state);
-    this.applyState.set(next);
-  }
-
-  private clearApplyState(id: string): void {
-    const next = new Map(this.applyState());
-    next.delete(id);
-    this.applyState.set(next);
-  }
-
-  /** Estado do apply no card: "Aplicando…", timeout honesto ou a frase do desfecho (voz do Roy). */
-  protected applyingLabel(id: string): string | null {
-    const s = this.applyState().get(id);
-    if (s === undefined) return null;
-    if (s === 'applying') return 'Aplicando…';
-    if (s === 'timeout') return 'Ainda aplicando — te aviso no WhatsApp.';
-    // resolvido: a frase vem do backend (fonte única); fallback determinístico blinda o card de
-    // ficar sem botões E sem texto caso o desfecho venha sem mensagem.
-    return s.outcomeMessage ?? 'Pronto.';
-  }
-
-  /** Resolvido COM efeito (não-falha) → esconde os botões (ação decidida). Falha mantém acionável. */
-  protected isResolvedNonFailed(id: string): boolean {
-    const s = this.applyState().get(id);
-    return typeof s === 'object' && s.applyOutcome !== 'failed';
+  /** Ocupado (aplicando OU resolvendo) → desabilita os botões do card. */
+  protected busy(id: string): boolean {
+    return this.resolving().has(id) || this.applyState.stateOf(id) === 'applying';
   }
 
   /** Rejeitar: descarta a sugestão (nada é aplicado na Meta). */

@@ -7626,18 +7626,6 @@
                 "message"
               ]
             }
-          },
-          "dryRun": {
-            "type": "boolean"
-          },
-          "killSwitch": {
-            "type": "boolean"
-          },
-          "actionAllowed": {
-            "type": "boolean"
-          },
-          "accountAvailable": {
-            "type": "boolean"
           }
         },
         "required": [
@@ -7656,11 +7644,7 @@
           "targetBudgetMajor",
           "audience",
           "applyPreview",
-          "ressalvas",
-          "dryRun",
-          "killSwitch",
-          "actionAllowed",
-          "accountAvailable"
+          "ressalvas"
         ]
       },
       "ApprovalOutcomeOutput": {

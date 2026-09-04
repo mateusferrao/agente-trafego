@@ -48,11 +48,6 @@ export const approvalOutput = z.object({
   applyPreview: applyPreviewSchema,
   /** Ressalvas de escala (Fatia A): o "porém" honesto — aprovável-com-aviso. Null = sem ressalva. */
   ressalvas: z.array(ressalvaSchema).nullable(),
-  // TRANSICIONAL: os 4 sinais crus seguem enquanto o web não migra pro applyPreview (Fatia 2 remove).
-  dryRun: z.boolean(),
-  killSwitch: z.boolean(),
-  actionAllowed: z.boolean(),
-  accountAvailable: z.boolean(),
 });
 export type ApprovalOutput = z.infer<typeof approvalOutput>;
 
