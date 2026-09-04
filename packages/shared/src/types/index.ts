@@ -543,6 +543,15 @@ export interface Ressalva {
   readonly message: string;
 }
 
+/**
+ * Desfecho da APLICAÇÃO de uma aprovação (Fatia "depois", diz×faz): distingue o que de fato
+ * aconteceu — `applied` (escrita real), `simulated` (modo ensaio — sem mexer), `noop` (já estava
+ * no estado), `blocked` (barrado no re-check), `failed` (erro da Meta; a aprovação segue pendente).
+ * Fonte única do tipo — persistido em `approvals.apply_outcome` e lido pelo card.
+ */
+export const APPLY_OUTCOMES = ["applied", "simulated", "noop", "blocked", "failed"] as const;
+export type ApplyOutcome = (typeof APPLY_OUTCOMES)[number];
+
 export interface ActionTarget {
   readonly level: EntityLevel;
   readonly id: string;
