@@ -11,7 +11,7 @@ import {
   platformConnections,
   type Database,
 } from "@trafego/db";
-import { applyDraftEdit, buildResolvedSnapshot, describeDeliveryEstimate, planScaleMove, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
+import { applyDraftEdit, buildResolvedSnapshot, computeApplyPreview, describeDeliveryEstimate, planScaleMove, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
 import { applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import type { ToolBindingMode } from "@trafego/shared";
 import {
@@ -402,6 +402,28 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       );
       if (pending.length === 0) return [];
 
+      // sinais do "antes" por agente (cache — vários rascunhos podem ser do mesmo agente): guardrail
+      // + criação habilitada (mesma fonte do apply-draft: resolveEnabledTools).
+      const signalsCache = new Map<string, { dryRun: boolean; killSwitch: boolean; enabled: Set<string> }>();
+      const signalsFor = async (agentId: string): Promise<{ dryRun: boolean; killSwitch: boolean; enabled: Set<string> }> => {
+        const cached = signalsCache.get(agentId);
+        if (cached) return cached;
+        const [g] = await deps.db
+          .select({ dryRun: guardrailConfigs.dryRun, killSwitch: guardrailConfigs.killSwitch, allowedActions: guardrailConfigs.allowedActions })
+          .from(guardrailConfigs)
+          .where(and(eq(guardrailConfigs.agentId, agentId), eq(guardrailConfigs.orgId, orgId)))
+          .limit(1);
+        const bindings = await deps.db
+          .select({ toolKey: agentToolBindings.toolKey, mode: agentToolBindings.mode })
+          .from(agentToolBindings)
+          .where(and(eq(agentToolBindings.agentId, agentId), eq(agentToolBindings.orgId, orgId)));
+        const bindingMap = new Map<string, ToolBindingMode>(bindings.map((b) => [b.toolKey, b.mode as ToolBindingMode]));
+        const enabled = resolveEnabledTools(bindingMap, new Set((g?.allowedActions ?? []) as string[]));
+        const s = { dryRun: g?.dryRun ?? false, killSwitch: g?.killSwitch ?? false, enabled };
+        signalsCache.set(agentId, s);
+        return s;
+      };
+
       const out: DraftApprovalOutput[] = [];
       for (const appr of pending) {
         const [d] = await deps.db
@@ -419,14 +441,25 @@ export function createDraftsService(deps: DraftsServiceDeps) {
           .limit(1);
         if (!d) continue;
         const [acc] = await deps.db
-          .select({ name: adAccounts.name })
+          .select({ name: adAccounts.name, status: adAccounts.status })
           .from(adAccounts)
           .where(and(eq(adAccounts.id, d.accountId), eq(adAccounts.orgId, orgId)))
           .limit(1);
         const spec = d.spec as CampaignDraftSpec;
+        const sig = await signalsFor(appr.agentId);
+        const creationToolKey = d.kind === "duplicate" ? "duplicate_scale" : "create_campaign";
+        const applyPreview = computeApplyPreview({
+          dryRun: sig.dryRun,
+          killSwitch: sig.killSwitch,
+          accountAvailable: acc?.status === "active",
+          // ativação não tem gate de binding (só trava/conta/ensaio); criação = a capacidade habilitada.
+          capabilityEnabled: appr.kind === "activation" ? true : sig.enabled.has(creationToolKey),
+          kind: appr.kind,
+        });
         out.push({
           id: appr.id,
           approvalKind: appr.kind,
+          applyPreview,
           accountId: d.accountId,
           accountName: acc?.name ?? "conta",
           status: appr.status,

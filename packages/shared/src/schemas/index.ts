@@ -203,6 +203,13 @@ export const toolBindingsSchema = z.object(
   >,
 );
 
+/** Preview do que APROVAR faz (Fatia unificação) — espelha `ApplyPreview` (types, fonte do tipo).
+ *  Exposto em todo output de aprovação (ação/rascunho/ativação/suggested) p/ o card ser honesto. */
+export const applyPreviewSchema = z.object({
+  effect: z.enum(["real", "simulated", "blocked"]),
+  message: z.string().nullable(),
+});
+
 // ─── Cadência (Fatia 4 corte 2) ──────────────────────────────────────────
 // `CadenceSpec` = FONTE ÚNICA do ritmo da análise automática; o cron 5-campos é
 // SEMPRE derivado por `cadenceToCron` (core). Presets hora-granulares (minuto=0)

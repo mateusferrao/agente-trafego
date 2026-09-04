@@ -17,6 +17,7 @@ import {
   archetypeCatalog,
   archetypeDefaults,
   composeMethodologyPrompt,
+  computeApplyPreview,
   daysAgoInTz,
   experienceCatalog,
   experienceLevelIsCustom,
@@ -585,6 +586,16 @@ export function createAgentsService(deps: AgentsDeps) {
       fromPreviousRun: a.runId !== run.id,
     }));
 
+    // sinais do "antes" (single-agent): guardrail vem do summary; capacidade = toolBindings resolvido
+    // (mesma fonte do apply); disponibilidade = status da conta.
+    const [accRow] = await deps.db
+      .select({ status: adAccounts.status })
+      .from(adAccounts)
+      .where(and(eq(adAccounts.id, accountId), eq(adAccounts.orgId, orgId)))
+      .limit(1);
+    const accountAvailable = accRow?.status === "active";
+    const bindings = summary.toolBindings as Record<string, boolean>;
+
     const suggested = pendingApprovals.map((a) => ({
       approvalId: a.id,
       type: a.action.type,
@@ -592,6 +603,13 @@ export function createAgentsService(deps: AgentsDeps) {
       targetId: a.action.target.id,
       targetName: a.action.target.name ?? nameByEntityId.get(a.action.target.id) ?? null,
       reason: a.action.reason,
+      applyPreview: computeApplyPreview({
+        dryRun: summary.guardrails.dryRun,
+        killSwitch: summary.guardrails.killSwitch,
+        accountAvailable,
+        capabilityEnabled: bindings[a.action.type] ?? false,
+        kind: "action",
+      }),
       // ressalvas de escala (Fatia A): o card de aprovação mostra o "porém" honesto.
       ressalvas: a.action.ressalvas ? [...a.action.ressalvas] : null,
       expiresAt: a.expiresAt ? a.expiresAt.toISOString() : null,

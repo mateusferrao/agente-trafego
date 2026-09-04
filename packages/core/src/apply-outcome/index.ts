@@ -2,7 +2,8 @@
 // WhatsApp (apps/worker/approval-apply) E pelo card do site (via API) — mesma voz do Roy nos dois
 // canais, num só lugar (§13 reuso-primeiro). PURA (sem IO).
 
-import type { Action } from "@trafego/shared";
+import type { Action, CampaignDraftSpec, DraftKind } from "@trafego/shared";
+import { goalNounPt } from "../conversion/index.js";
 
 /** Detalhe do desfecho — o que o apply-service classificou (com o motivo/mensagem quando há). */
 export type OutcomeDetail =
@@ -51,5 +52,56 @@ export function describeActionOutcome(action: Action, detail: OutcomeDetail): st
       const sep = /[.!?]$/.test(meta) ? "" : ".";
       return `${meta}${sep} Dá pra tentar de novo.`;
     }
+  }
+}
+
+/** "uma campanha de vendas, R$ 50,00/dia · 2 variação(ões) de copy" ou "a duplicata do seu
+ *  vencedor, R$ 80,00/dia". Sem jargão (§UX) — objetivo em PT, valor formatado. PURA. */
+export function describeCreatedDraft(kind: DraftKind, spec: CampaignDraftSpec): string {
+  const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: spec.currency }).format(spec.dailyBudgetMinor / 100);
+  if (kind === "duplicate") return `a duplicata do seu vencedor, ${money}/dia`;
+  const goal = spec.objective ? goalNounPt(spec.objective) : "campanha";
+  const variants = spec.copyVariants?.length ?? 0;
+  return `uma campanha de ${goal}, ${money}/dia${variants > 0 ? ` · ${variants} variação(ões) de copy` : ""}`;
+}
+
+/** Desfecho de um RASCUNHO/criação (voz do Roy) — fonte única (WhatsApp + site). PURA. */
+export type DraftOutcomeDetail =
+  | { readonly kind: "created"; readonly dryRun: boolean; readonly summary: string; readonly activated?: boolean; readonly targetingFallback?: boolean }
+  | { readonly kind: "blocked"; readonly reason: string }
+  | { readonly kind: "failed"; readonly metaMessage?: string };
+
+export function describeDraftOutcome(detail: DraftOutcomeDetail): string {
+  switch (detail.kind) {
+    case "created": {
+      if (detail.dryRun) return `Simulei a criação de ${detail.summary} (modo ensaio) — não criei de verdade.`;
+      const base = detail.activated
+        ? `Criei ${detail.summary} e já ATIVEI — está no ar (a Meta ainda revisa o criativo). Se precisar, dá pra pausar na plataforma.`
+        : `Criei ${detail.summary} — nasceu pausada. Revise e ative na plataforma quando quiser.`;
+      return detail.targetingFallback
+        ? `${base} Obs: não consegui herdar o público que prometi (a fonte sumiu) — usei um público amplo. Revise antes de ativar.`
+        : base;
+    }
+    case "blocked":
+      return `Não criei: ${detail.reason}.`;
+    case "failed":
+      return detail.metaMessage ? `${detail.metaMessage} Dá pra tentar de novo.` : "Não consegui criar agora — a Meta não respondeu. Tenta de novo em instantes.";
+  }
+}
+
+/** Desfecho de uma ATIVAÇÃO (2º passo HITL — ativar o que nasceu pausado). Voz do Roy. PURA. */
+export type ActivationOutcomeDetail =
+  | { readonly kind: "activated"; readonly dryRun: boolean }
+  | { readonly kind: "blocked"; readonly reason: string }
+  | { readonly kind: "failed"; readonly metaMessage?: string };
+
+export function describeActivationOutcome(detail: ActivationOutcomeDetail): string {
+  switch (detail.kind) {
+    case "activated":
+      return detail.dryRun ? "Simulei a ativação (modo ensaio) — não ativei de verdade." : "Ativei sua campanha — já está veiculando.";
+    case "blocked":
+      return `Não ativei: ${detail.reason}.`;
+    case "failed":
+      return detail.metaMessage ? `${detail.metaMessage} Dá pra tentar de novo.` : "Não consegui ativar agora — a Meta não respondeu. Tenta de novo em instantes.";
   }
 }

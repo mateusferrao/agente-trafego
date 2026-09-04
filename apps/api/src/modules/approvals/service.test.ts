@@ -54,15 +54,20 @@ function makeService(signalRows: unknown[], bindingRows: unknown[] = []) {
 }
 
 describe("approvalsService.listPending — sinais do 'antes'", () => {
-  it("ensaio ligado + ação não permitida → dryRun:true, actionAllowed:false", async () => {
+  it("ensaio + ação não permitida → applyPreview.effect blocked (capacidade vence ensaio)", async () => {
     const service = makeService([
       { agentId: AGENT, accountId: "acc-1", accountName: "BM", currency: "BRL", accountStatus: "active", dryRun: true, killSwitch: false, allowedActions: ["pause_entity"], orgId: ORG },
     ]);
     const bud = (await service.listPending(ORG))[0]!;
-    expect(bud.dryRun).toBe(true);
-    expect(bud.killSwitch).toBe(false);
-    expect(bud.actionAllowed).toBe(false);
-    expect(bud.accountAvailable).toBe(true);
+    expect(bud.applyPreview.effect).toBe("blocked");
+    expect(bud.applyPreview.message).toContain("ações permitidas");
+  });
+
+  it("ensaio + ação permitida → applyPreview.effect simulated", async () => {
+    const service = makeService([
+      { agentId: AGENT, accountId: "acc-1", accountName: "BM", currency: "BRL", accountStatus: "active", dryRun: true, killSwitch: false, allowedActions: ["adjust_budget"], orgId: ORG },
+    ]);
+    expect((await service.listPending(ORG))[0]!.applyPreview.effect).toBe("simulated");
   });
 
   it("getOutcome deriva a mensagem do desfecho na voz do Roy", async () => {
@@ -77,6 +82,21 @@ describe("approvalsService.listPending — sinais do 'antes'", () => {
     expect(out.applyOutcome).toBe("blocked");
     expect(out.resolvedReason).toBe("budget já ajustado hoje");
     expect(out.outcomeMessage).toBe("Não apliquei (Leads — 8510): budget já ajustado hoje.");
+  });
+
+  it("getOutcome de RASCUNHO blocked → 'Não criei: motivo'", async () => {
+    const draft = { id: "ap-d", orgId: ORG, kind: "draft", draftId: "d1", status: "blocked", applyOutcome: "blocked", resolvedReason: "sem página" } as unknown as Approval;
+    const service = createApprovalsService({ db: signalsDb([], []), approvals: { getById: vi.fn(async () => draft) } as never, scheduler: {} as never, revertTtlDays: 7 });
+    const out = await service.getOutcome(ORG, "ap-d" as never);
+    expect(out.applyOutcome).toBe("blocked");
+    expect(out.outcomeMessage).toBe("Não criei: sem página.");
+  });
+
+  it("getOutcome de ATIVAÇÃO applied → 'Ativei sua campanha'", async () => {
+    const act = { id: "ap-a", orgId: ORG, kind: "activation", draftId: "d1", status: "approved", applyOutcome: "applied", resolvedReason: null } as unknown as Approval;
+    const service = createApprovalsService({ db: signalsDb([], []), approvals: { getById: vi.fn(async () => act) } as never, scheduler: {} as never, revertTtlDays: 7 });
+    const out = await service.getOutcome(ORG, "ap-a" as never);
+    expect(out.outcomeMessage).toContain("Ativei sua campanha");
   });
 
   it("getOutcome com applyOutcome null → outcomeMessage null (ainda aplicando)", async () => {
@@ -97,8 +117,8 @@ describe("approvalsService.listPending — sinais do 'antes'", () => {
       [{ agentId: AGENT, toolKey: "adjust_budget", mode: "enabled" }],
     );
     const bud = (await service.listPending(ORG))[0]!;
-    expect(bud.actionAllowed).toBe(true);
-    expect(bud.accountAvailable).toBe(false);
-    expect(bud.dryRun).toBe(false);
+    // conta removida → blocked (prioridade sobre a capacidade habilitada)
+    expect(bud.applyPreview.effect).toBe("blocked");
+    expect(bud.applyPreview.message).toContain("indisponível");
   });
 });

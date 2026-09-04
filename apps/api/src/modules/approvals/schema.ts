@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { actionType } from "@trafego/shared/schemas";
+import { actionType, applyPreviewSchema, ressalvaSchema } from "@trafego/shared/schemas";
 import { explicitAudienceInput } from "../drafts/schema.js";
 
 const approvalStatusOutput = z.enum(["pending", "approved", "rejected", "expired", "blocked"]);
@@ -42,10 +42,13 @@ export const approvalOutput = z.object({
   /** Público EXPLÍCITO proposto — só `adjust_audience` (Fatia C); semente do editor no card.
    *  Null nos demais tipos. Editar o público reseta o aprendizado da Meta (aviso no card). */
   audience: explicitAudienceView.nullable(),
-  /** Sinais do "antes" (informativos — o gating real é do apply): o card avisa/bloqueia com
-   *  honestidade sobre o que aprovar faria. `dryRun` = modo ensaio (aprovar simula); `killSwitch`
-   *  = trava total; `actionAllowed` = o tipo está nas ações habilitadas do agente; `accountAvailable`
-   *  = a conta está ativa. Fonte: guardrail + bindings do agente (mesma do apply). */
+  /** O que APROVAR faz (informativo — o gating real é do apply): `real`/`simulated`/`blocked` +
+   *  a linha honesta na voz do Roy. Computado no servidor (guardrail + capacidade, mesma fonte do
+   *  apply). O card avisa/bloqueia a partir disto (fonte única, não recomputa). */
+  applyPreview: applyPreviewSchema,
+  /** Ressalvas de escala (Fatia A): o "porém" honesto — aprovável-com-aviso. Null = sem ressalva. */
+  ressalvas: z.array(ressalvaSchema).nullable(),
+  // TRANSICIONAL: os 4 sinais crus seguem enquanto o web não migra pro applyPreview (Fatia 2 remove).
   dryRun: z.boolean(),
   killSwitch: z.boolean(),
   actionAllowed: z.boolean(),

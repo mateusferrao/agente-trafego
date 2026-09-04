@@ -552,6 +552,17 @@ export interface Ressalva {
 export const APPLY_OUTCOMES = ["applied", "simulated", "noop", "blocked", "failed"] as const;
 export type ApplyOutcome = (typeof APPLY_OUTCOMES)[number];
 
+/**
+ * Preview do que APROVAR faz (Fatia unificação): `real` (vale), `simulated` (ensaio — não altera),
+ * `blocked` (não permitido/trava/conta indisponível). `message` = a linha honesta (voz do Roy) ou
+ * null em `real`. Computado no servidor (`computeApplyPreview`, core) — fonte única; o front só renderiza.
+ */
+export type ApplyEffect = "real" | "simulated" | "blocked";
+export interface ApplyPreview {
+  readonly effect: ApplyEffect;
+  readonly message: string | null;
+}
+
 export interface ActionTarget {
   readonly level: EntityLevel;
   readonly id: string;

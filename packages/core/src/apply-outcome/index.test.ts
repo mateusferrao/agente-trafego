@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { Action } from "@trafego/shared";
-import { describeActionOutcome } from "./index.js";
+import type { Action, CampaignDraftSpec } from "@trafego/shared";
+import { describeActionOutcome, describeCreatedDraft, describeDraftOutcome } from "./index.js";
 
 const budget: Action = { id: "a", type: "adjust_budget", target: { level: "adset", id: "1", name: "Leads — 8510" }, params: {}, source: "llm", riskLevel: "medium", reason: "x" };
 const pause: Action = { ...budget, type: "pause_entity" };
@@ -31,5 +31,28 @@ describe("describeActionOutcome", () => {
   });
   it("sem nome no alvo → não quebra (sem sufixo)", () => {
     expect(describeActionOutcome(noName, { kind: "blocked", reason: "x" })).toBe("Não apliquei: x.");
+  });
+});
+
+const dupSpec: CampaignDraftSpec = { version: 1, currency: "BRL", dailyBudgetMinor: 8000, activation: "paused" };
+
+describe("describeCreatedDraft", () => {
+  it("duplicate → resumo da duplicata com valor formatado", () => {
+    expect(describeCreatedDraft("duplicate", dupSpec)).toContain("duplicata do seu vencedor");
+  });
+});
+
+describe("describeDraftOutcome", () => {
+  it("created real → confirma criação pausada", () => {
+    expect(describeDraftOutcome({ kind: "created", dryRun: false, summary: "uma campanha nova" })).toContain("Criei");
+  });
+  it("created dry-run → simulado", () => {
+    expect(describeDraftOutcome({ kind: "created", dryRun: true, summary: "x" })).toContain("Simulei a criação");
+  });
+  it("blocked → motivo", () => {
+    expect(describeDraftOutcome({ kind: "blocked", reason: "sem página" })).toBe("Não criei: sem página.");
+  });
+  it("failed com msg da Meta → próximo passo", () => {
+    expect(describeDraftOutcome({ kind: "failed", metaMessage: "A Meta informou: X" })).toContain("Dá pra tentar de novo");
   });
 });

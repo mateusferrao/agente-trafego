@@ -7,6 +7,7 @@ import {
   cadenceSpecSchema,
   conversionGoalSchema,
   guardrailConfigSchema,
+  applyPreviewSchema,
   marketReferenceSchema,
   notifyPolicySchema,
   postureSchema,
@@ -388,6 +389,9 @@ export const suggestedActionOutput = z.object({
   targetId: z.string(),
   targetName: z.string().nullable(),
   reason: z.string(),
+  /** O que APROVAR faz (real/simulated/blocked + linha honesta) — computado no servidor (mesma
+   *  fonte do apply). A mini-surface avisa/bloqueia a partir disto. */
+  applyPreview: applyPreviewSchema,
   /** ressalvas de escala (Fatia A): o "porém" honesto no card de aprovação. */
   ressalvas: z.array(ressalvaSchema).nullable(),
   /** ISO — prazo de resposta (expira e some da lista). */

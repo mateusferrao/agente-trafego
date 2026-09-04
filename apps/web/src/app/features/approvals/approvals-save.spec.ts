@@ -26,6 +26,8 @@ const APPROVAL: ApprovalOutput = {
   killSwitch: false,
   actionAllowed: true,
   accountAvailable: true,
+  applyPreview: { effect: 'real', message: null },
+  ressalvas: null,
 };
 
 const AUDIENCE_APPROVAL: ApprovalOutput = {
@@ -57,6 +59,8 @@ const AUDIENCE_APPROVAL: ApprovalOutput = {
   killSwitch: false,
   actionAllowed: true,
   accountAvailable: true,
+  applyPreview: { effect: 'real', message: null },
+  ressalvas: null,
 };
 
 const flush = () => new Promise((r) => setTimeout(r, 0));

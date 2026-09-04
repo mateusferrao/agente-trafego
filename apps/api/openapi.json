@@ -6599,6 +6599,29 @@
                 "reason": {
                   "type": "string"
                 },
+                "applyPreview": {
+                  "type": "object",
+                  "properties": {
+                    "effect": {
+                      "type": "string",
+                      "enum": [
+                        "real",
+                        "simulated",
+                        "blocked"
+                      ]
+                    },
+                    "message": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "effect",
+                    "message"
+                  ]
+                },
                 "ressalvas": {
                   "type": [
                     "array",
@@ -6644,6 +6667,7 @@
                 "targetId",
                 "targetName",
                 "reason",
+                "applyPreview",
                 "ressalvas",
                 "expiresAt",
                 "fromPreviousRun"
@@ -7551,6 +7575,69 @@
               "customAudienceIncludeIds",
               "customAudienceExcludeIds"
             ]
+          },
+          "applyPreview": {
+            "type": "object",
+            "properties": {
+              "effect": {
+                "type": "string",
+                "enum": [
+                  "real",
+                  "simulated",
+                  "blocked"
+                ]
+              },
+              "message": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "effect",
+              "message"
+            ]
+          },
+          "ressalvas": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": {
+                  "type": "string",
+                  "enum": [
+                    "no_significance",
+                    "worsening_marginal_cpa",
+                    "audience_ceiling",
+                    "creative_fatigue",
+                    "unconfirmed_hypothesis"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "code",
+                "message"
+              ]
+            }
+          },
+          "dryRun": {
+            "type": "boolean"
+          },
+          "killSwitch": {
+            "type": "boolean"
+          },
+          "actionAllowed": {
+            "type": "boolean"
+          },
+          "accountAvailable": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -7567,7 +7654,63 @@
           "currency",
           "currentBudgetMajor",
           "targetBudgetMajor",
-          "audience"
+          "audience",
+          "applyPreview",
+          "ressalvas",
+          "dryRun",
+          "killSwitch",
+          "actionAllowed",
+          "accountAvailable"
+        ]
+      },
+      "ApprovalOutcomeOutput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "rejected",
+              "expired",
+              "blocked"
+            ]
+          },
+          "applyOutcome": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "applied",
+              "simulated",
+              "noop",
+              "blocked",
+              "failed"
+            ]
+          },
+          "resolvedReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outcomeMessage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "applyOutcome",
+          "resolvedReason",
+          "outcomeMessage"
         ]
       },
       "ResolveApprovalInput": {
@@ -7804,6 +7947,29 @@
             "enum": [
               "draft",
               "activation"
+            ]
+          },
+          "applyPreview": {
+            "type": "object",
+            "properties": {
+              "effect": {
+                "type": "string",
+                "enum": [
+                  "real",
+                  "simulated",
+                  "blocked"
+                ]
+              },
+              "message": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "effect",
+              "message"
             ]
           },
           "accountId": {
@@ -8270,6 +8436,7 @@
         "required": [
           "id",
           "approvalKind",
+          "applyPreview",
           "accountId",
           "accountName",
           "status",
@@ -11338,6 +11505,38 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/approvals/{id}": {
+      "get": {
+        "tags": [
+          "approvals"
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "desfecho da aplicação (polling do card após aprovar)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalOutcomeOutput"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "aprovação não encontrada"
           }
         }
       }

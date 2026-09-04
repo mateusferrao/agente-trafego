@@ -1,4 +1,5 @@
 import { COPY_TEXT_MAX, ENTITY_NAME_MAX, conversionGoalSchema, ctaTypeSchema } from "@trafego/shared";
+import { applyPreviewSchema } from "@trafego/shared/schemas";
 import { z } from "zod";
 
 const approvalStatusOutput = z.enum(["pending", "approved", "rejected", "expired", "blocked"]);
@@ -34,6 +35,9 @@ export const draftCopyVariantOutput = z.object({
 export const draftApprovalOutput = z.object({
   id: z.string(),
   approvalKind: z.enum(["draft", "activation"]),
+  /** O que APROVAR faz (real/simulated/blocked + linha honesta) — computado no servidor, mesma
+   *  fonte do apply (guardrail + criação habilitada). O card avisa/bloqueia a partir disto. */
+  applyPreview: applyPreviewSchema,
   accountId: z.string(),
   accountName: z.string(),
   status: approvalStatusOutput,

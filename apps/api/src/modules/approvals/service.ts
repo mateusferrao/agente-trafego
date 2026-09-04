@@ -1,11 +1,11 @@
 import { and, eq, gte, inArray, sql } from "drizzle-orm";
-import { adAccounts, agentRuns, agentToolBindings, agentToolCalls, agents, guardrailConfigs, type Database } from "@trafego/db";
-import type { ApprovalId, OrgId, TargetingSpec } from "@trafego/shared/types";
-import type { Approval, ApprovalPort } from "@trafego/shared/ports";
+import { adAccounts, agentRuns, agentToolBindings, agentToolCalls, agents, campaignDrafts, guardrailConfigs, type Database } from "@trafego/db";
+import type { ApplyOutcome, ApprovalId, CampaignDraftSpec, OrgId, TargetingSpec } from "@trafego/shared/types";
+import type { Approval, ApprovalPort, PendingApproval } from "@trafego/shared/ports";
 import type { SchedulerPort } from "@trafego/shared/ports";
 import { APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE, enabledActionTypes, type ToolBindingMode } from "@trafego/shared";
 import { ACTION_PARAM_CURRENT_MINOR, ACTION_PARAM_TARGETING } from "@trafego/shared";
-import { describeActionOutcome, editBudgetActionValue, projectBudgetTargetMinor, resolveEnabledTools, type OutcomeDetail } from "@trafego/core";
+import { computeApplyPreview, describeActionOutcome, describeActivationOutcome, describeCreatedDraft, describeDraftOutcome, editBudgetActionValue, projectBudgetTargetMinor, resolveEnabledTools, type OutcomeDetail } from "@trafego/core";
 import { badRequest, notFound } from "../../middleware/error-handler.js";
 import { buildExplicitFromInput, serializeExplicitAudience } from "../../lib/audience.js";
 import { computeAppliedActions, DAY_MS } from "../../lib/applied-actions.js";
@@ -93,6 +93,39 @@ export function createApprovalsService(deps: ApprovalsDeps) {
     return map;
   }
 
+  /** Deriva a frase de desfecho pela FORMA (ação/rascunho/ativação) — fonte única da copy (voz do Roy). */
+  async function outcomeMessageFor(a: PendingApproval, oc: ApplyOutcome, reason: string): Promise<string> {
+    if (a.kind === "action") {
+      const detail: OutcomeDetail =
+        oc === "applied" ? { kind: "applied" }
+          : oc === "simulated" ? { kind: "simulated" }
+            : oc === "noop" ? { kind: "noop" }
+              : oc === "blocked" ? { kind: "blocked", reason }
+                : { kind: "failed", ...(reason ? { metaMessage: reason } : {}) };
+      return describeActionOutcome(a.action, detail);
+    }
+    if (a.kind === "activation") {
+      return describeActivationOutcome(
+        oc === "blocked" ? { kind: "blocked", reason }
+          : oc === "failed" ? { kind: "failed", ...(reason ? { metaMessage: reason } : {}) }
+            : { kind: "activated", dryRun: oc === "simulated" },
+      );
+    }
+    // rascunho
+    if (oc === "blocked") return describeDraftOutcome({ kind: "blocked", reason });
+    if (oc === "failed") return describeDraftOutcome({ kind: "failed", ...(reason ? { metaMessage: reason } : {}) });
+    const [d] = await deps.db
+      .select({ kind: campaignDrafts.kind, spec: campaignDrafts.spec })
+      .from(campaignDrafts)
+      .where(and(eq(campaignDrafts.id, a.draftId), eq(campaignDrafts.orgId, a.orgId)))
+      .limit(1);
+    const summary = d ? describeCreatedDraft(d.kind, d.spec as CampaignDraftSpec) : "sua campanha";
+    // Limitação conhecida: `activated` (nasceu ativa × pausada) vive no tool_call, não na approval →
+    // aqui o site cai no "nasceu pausada" (o caso comum: creationActivation default = paused). O push
+    // do WhatsApp tem o desfecho preciso. Persistir `activated` na approval = fast-follow se incomodar.
+    return describeDraftOutcome({ kind: "created", dryRun: oc === "simulated", summary });
+  }
+
   return {
     async listPending(orgId: OrgId): Promise<ApprovalOutput[]> {
       // Rascunhos de campanha (Fatia 7) têm sua própria superfície (card de rascunho);
@@ -129,6 +162,15 @@ export function createApprovalsService(deps: ApprovalsDeps) {
           currentBudgetMajor,
           targetBudgetMajor,
           audience,
+          applyPreview: computeApplyPreview({
+            dryRun: acc?.dryRun ?? false,
+            killSwitch: acc?.killSwitch ?? false,
+            accountAvailable: acc?.accountAvailable ?? false,
+            capabilityEnabled: acc?.enabledActions.has(a.actionType) ?? false,
+            kind: "action",
+          }),
+          ressalvas: a.action.ressalvas ? [...a.action.ressalvas] : null,
+          // TRANSICIONAL (Fatia 2 remove quando o web ler o applyPreview):
           dryRun: acc?.dryRun ?? false,
           killSwitch: acc?.killSwitch ?? false,
           actionAllowed: acc?.enabledActions.has(a.actionType) ?? false,
@@ -138,30 +180,14 @@ export function createApprovalsService(deps: ApprovalsDeps) {
     },
 
     /** Desfecho da aplicação de UMA aprovação (Fatia "depois") — o card faz polling disto após
-     *  aprovar. A frase (`outcomeMessage`) vem de `describeActionOutcome` (fonte única, voz do Roy). */
+     *  aprovar. A frase (`outcomeMessage`) vem do describe por KIND (fonte única, voz do Roy):
+     *  ação, rascunho ou ativação. */
     async getOutcome(orgId: OrgId, approvalId: ApprovalId): Promise<ApprovalOutcomeOutput> {
       const a = await deps.approvals.getById(approvalId);
-      if (!a || a.orgId !== orgId || a.kind !== "action") throw notFound("Aprovação não encontrada.");
+      if (!a || a.orgId !== orgId) throw notFound("Aprovação não encontrada.");
       const oc = a.applyOutcome;
-      const detail: OutcomeDetail | null =
-        oc === "applied"
-          ? { kind: "applied" }
-          : oc === "simulated"
-            ? { kind: "simulated" }
-            : oc === "noop"
-              ? { kind: "noop" }
-              : oc === "blocked"
-                ? { kind: "blocked", reason: a.resolvedReason ?? "" }
-                : oc === "failed"
-                  ? { kind: "failed", ...(a.resolvedReason ? { metaMessage: a.resolvedReason } : {}) }
-                  : null;
-      return {
-        id: a.id,
-        status: a.status,
-        applyOutcome: oc ?? null,
-        resolvedReason: a.resolvedReason ?? null,
-        outcomeMessage: detail ? describeActionOutcome(a.action, detail) : null,
-      };
+      const outcomeMessage = oc === null ? null : await outcomeMessageFor(a, oc, a.resolvedReason ?? "");
+      return { id: a.id, status: a.status, applyOutcome: oc ?? null, resolvedReason: a.resolvedReason ?? null, outcomeMessage };
     },
 
     async resolve(

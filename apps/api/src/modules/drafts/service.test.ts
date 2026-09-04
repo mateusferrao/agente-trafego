@@ -10,8 +10,10 @@ import { createDraftsService, refineErrorMessage } from "./service.js";
  * no lookup org-scoped e nunca no ref do cliente.
  */
 function fakeDb(rows: unknown[]) {
+  // `.limit()` devolve `rows` (draft/conta); `.where()` sem limit (ex: bindings do applyPreview) é
+  // awaitable → [] (sem bindings → applyPreview cai no default; estes testes não o asseguram).
   return {
-    select: () => ({ from: () => ({ where: () => ({ limit: () => rows }) }) }),
+    select: () => ({ from: () => ({ where: () => ({ limit: () => rows, then: (r: (v: unknown[]) => void) => r([]) }) }) }),
   } as never;
 }
 
@@ -592,8 +594,9 @@ describe("setDraftTargeting (alterna público reuse × amplo)", () => {
 /** db fake p/ listPendingDrafts: cada chain (select→from→where→limit) consome o próximo da fila
  *  (draft, depois conta, por item pendente). */
 function fakeDbListQueue(queue: unknown[][]) {
+  // `.limit()` puxa da fila; `.where()` sem limit (bindings do applyPreview) é awaitable → [].
   return {
-    select: () => ({ from: () => ({ where: () => ({ limit: () => queue.shift() ?? [] }) }) }),
+    select: () => ({ from: () => ({ where: () => ({ limit: () => queue.shift() ?? [], then: (r: (v: unknown[]) => void) => r([]) }) }) }),
   } as never;
 }
 
