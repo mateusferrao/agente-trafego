@@ -34,7 +34,7 @@ O card de `/approvals` fica honesto nos **dois momentos**:
 
 - **Antes:** avisa (ou bloqueia o botão, conforme a condição) sobre o que
   aconteceria ao aprovar.
-- **Depois:** o card acompanha a aplicação (`aplicando…`) e mostra o **desfecho
+- **Depois:** o card acompanha a aplicação (`Aplicando…`) e mostra o **desfecho
   real** no próprio lugar.
 
 Toda copy segue a **voz da marca** (Roy) — `docs/DESIGN.md §5`
@@ -89,8 +89,8 @@ aplica normalmente (se permitido e fora do ensaio).
 - ação não permitida / kill-switch / conta indisponível → **botão
   DESABILITADO** + motivo + próximo passo.
 
-**Depois — "card vira aplicando… e mostra o resultado":**
-- ao aprovar, o card **não some** → estado `aplicando…` → **polling** até o
+**Depois — "card vira Aplicando… e mostra o resultado":**
+- ao aprovar, o card **não some** → estado `Aplicando…` → **polling** até o
   desfecho fechar → mostra o resultado no lugar.
 
 ## Arquitetura
@@ -193,7 +193,7 @@ gravar `apply_outcome` (+ reusar `describeActionOutcome`). Lógica de aplicaçã
   condicional) + toast honesto. Rápida, mata metade da confusão, sem migration.
 - **Fatia 2 — "Depois":** migration `apply_outcome` + helper `describeActionOutcome`
   (extração + reuso no worker) + `GET /approvals/:id` com desfecho + web
-  (`aplicando…` + polling + estados).
+  (`Aplicando…` + polling + estados).
 
 Cada fatia: `pnpm typecheck` + `pnpm test` (+ `pnpm --filter web build`) + commit;
 ao fim, skill `reviewing-trafego-changes` + corrigir apontamentos.
@@ -205,14 +205,14 @@ ao fim, skill `reviewing-trafego-changes` + corrigir apontamentos.
   fora/dentro das permitidas, conta ativa/indisponível); `GET /:id` devolve o
   desfecho.
 - **worker:** cada ramo grava o `apply_outcome` certo (`failed` mantém pending).
-- **web:** card desabilita/ativa o botão por condição; estado `aplicando…` →
+- **web:** card desabilita/ativa o botão por condição; estado `Aplicando…` →
   desfecho (mock do polling).
 
 ## Riscos / cuidados
 
 - **Deploy:** feature de 6 camadas + migration — precisa de deploy da branch pra
   valer em produção. O fatiamento reduz o blast por entrega.
-- **Polling:** teto de tempo + fallback honesto evitam card preso em "aplicando…"
+- **Polling:** teto de tempo + fallback honesto evitam card preso em "Aplicando…"
   se o worker atrasar (rate-limit #613).
 - **Consistência de gates:** os sinais do "antes" DEVEM sair da MESMA fonte do
   gate do apply (`enabledActionTypes` + guardrail config) — senão o card promete
