@@ -51,12 +51,10 @@ O `duplicateEntity` de CAMPANHA passa a reconstruir a árvore com cópias RASAS
 (O param de reparent do ANÚNCIO — `adset_id` — espelha o `campaign_id` do conjunto,
 confirmado; a 1ª task de impl valida com 1 chamada.)
 
-Cada `/copies` copia 1 objeto → **nunca** encosta no limite < 3. O criativo legado
-num anúncio → `not_duplicable` (já tratado) por-anúncio: o design decide se **aborta
-a duplicação inteira** (consistente) ou **pula o anúncio** (parcial). **Decisão:
-abortar + degradar** `not_duplicable` (uma campanha copiada sem seus anúncios não é
-uma cópia útil) — reverte os parciais (DELETE da nova campanha) e devolve o kind
-neutro que a casca já oferece as saídas.
+Cada `/copies` copia 1 objeto → **nunca** encosta no limite < 3. Falha em qualquer
+nó (criativo legado, transitório, etc.) → **aborta a duplicação inteira e reverte**
+(uma campanha copiada sem seus anúncios não é uma cópia útil) — ver §Tratamento de
+erro. Nunca pula nó silenciosamente.
 
 ### Onde vive
 
@@ -76,6 +74,36 @@ neutro que a casca já oferece as saídas.
 N cópias (1 + #adsets + #ads) por duplicação. O `MetaGovernor` (token-bucket
 por conta) + jitter já cobrem; a saga é assíncrona (BullMQ), não bloqueia HTTP.
 
+## Tratamento de erro (avisar + reverter)
+
+Cópia recursiva pode falhar no meio da árvore. Regra: **sempre reverter os
+parciais + avisar honesto por TIPO de erro** (nunca deixa campanha meio-montada,
+nunca fica silencioso). O adapter **classifica** o erro num kind NEUTRO; a casca
+escolhe a copy (voz do Roy) e a ação.
+
+**1. Determinístico (não-reprocessável)** — `not_duplicable` (criativo legado,
+`subcode 3858504`), entidade inválida:
+- **Reverte** os parciais (DELETE da nova campanha, cascata) + roteia pro degrade
+  `not_duplicable` que o código já tem ("2 saídas: recriar / subir budget").
+- **Avisa:** "não consegui duplicar (o criativo é antigo e a Meta não deixa copiar)
+  — dá pra recriar do zero ou subir o orçamento do vencedor." NUNCA "tenta de novo"
+  (é determinístico — seria mentira).
+
+**2. Transitório** — rate-limit (#613), 5xx, timeout:
+- A saga (BullMQ) **retoma de onde parou** — `created_ids` por-nó garante que o
+  retry NÃO re-copia o que já foi criado (§8 idempotência). Esgotou as tentativas →
+  vira caso 3.
+
+**3. Falha dura após parcial:**
+- **SEMPRE reverte** (DELETE da nova campanha) → nada meio-montado na conta.
+- **Avisa** via desfecho `failed` (Fatia 2): card + push no WhatsApp.
+- **Borda:** se o DELETE de limpeza falhar → aviso honesto "criei parcialmente e não
+  consegui limpar — tem a campanha X pausada, apague na plataforma" (nunca silencioso).
+
+**Copy `failed` distingue determinístico × transitório:** hoje o `describeDraftOutcome`
+`failed` diz genérico "tenta de novo" — mente pro caso 1. O adapter devolve o kind
+(`not_duplicable` × `transient` × `failed`) e a casca escolhe a frase certa.
+
 ## Fatiamento
 
 - **Fatia 1 — adapter:** `shallowCopy` helper + `duplicateEntity` de campanha
@@ -90,8 +118,11 @@ Cada fatia: typecheck + test + (revisar antes de commitar) + commit.
 
 - **adapter:** `shallowCopy` monta o `/copies` certo (deep_copy=false + reparent);
   `duplicateEntity` recursivo monta a árvore (mock: casca→2 conjuntos→1 anúncio cada);
-  `not_duplicable` num anúncio → aborta + sinaliza o kind neutro.
-- **saga:** `created_ids` rastreia parciais; retry não re-copia; revert deleta a nova campanha.
+  erro num nó → aborta + reverte (DELETE) + classifica o kind (`not_duplicable` ×
+  `transient` × `failed`).
+- **saga:** `created_ids` rastreia parciais; retry transitório não re-copia (resume);
+  falha dura → revert (DELETE da nova campanha); DELETE de limpeza falho → aviso honesto.
+- **core:** `describeDraftOutcome` `failed` distingue determinístico × transitório (copy certa por kind).
 
 ## Riscos / cuidados
 
