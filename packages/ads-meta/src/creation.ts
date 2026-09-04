@@ -125,7 +125,7 @@ export class MetaCreationService {
           childAdsetIds.push(newAdsetId);
           childIds.push(...newAdIds);
         }
-        return { copiedId: newCampaignId, childIds, childAdsetIds };
+        return { copiedId: newCampaignId, childIds, childAdsetIds, modernizations: [] };
       } catch (error) {
         await this.revertRoot(account, newCampaignId);
         throw error;
@@ -137,7 +137,7 @@ export class MetaCreationService {
       const newAdsetId = await this.shallowCopy(account, input.sourceId, input.status, reparent, input.renameSuffix);
       try {
         const newAdIds = await this.copyAdsInto(account, input.sourceId, input.status, newAdsetId);
-        return { copiedId: newAdsetId, childIds: newAdIds, childAdsetIds: [] };
+        return { copiedId: newAdsetId, childIds: newAdIds, childAdsetIds: [], modernizations: [] };
       } catch (error) {
         await this.revertRoot(account, newAdsetId);
         throw error;
@@ -146,7 +146,7 @@ export class MetaCreationService {
     // anúncio = folha (1 objeto)
     const reparent = input.destinationCampaignId ? { campaign_id: input.destinationCampaignId } : undefined;
     const copiedId = await this.shallowCopy(account, input.sourceId, input.status, reparent, input.renameSuffix);
-    return { copiedId, childIds: [], childAdsetIds: [] };
+    return { copiedId, childIds: [], childAdsetIds: [], modernizations: [] };
   }
 
   /** Copia UM conjunto (raso) na campanha destino + cada anúncio dele (raso, reparent). */

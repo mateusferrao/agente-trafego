@@ -93,10 +93,24 @@ export interface DuplicateEntityInput {
 /** Resultado da duplicação — id da cópia + filhos criados (idempotência/retomada). `childIds`
  *  = ads copiados; `childAdsetIds` = adsets copiados INTERMEDIÁRIOS (só existem no deep_copy de
  *  CAMPANHA — precisam ser ativados junto, senão travam a entrega mesmo com campanha+ads ativos). */
+/** Códigos de modernização conhecidos — fonte única (evita string mágica duplicada entre a
+ *  tradução PT e a leitura defensiva). Adicionar um código = uma linha aqui + o case no core. */
+export const MODERNIZATION_CODES = ["attribution_window_modernized"] as const;
+export type ModernizationCode = (typeof MODERNIZATION_CODES)[number];
+
+/** Diferença INEVITÁVEL que a reconstrução introduziu vs a fonte (a plataforma descontinuou o
+ *  valor original, ex: janela de atribuição). Neutro — sem vocabulário do provider. O core
+ *  traduz `code` → PT no desfecho. */
+export interface ModernizationNote {
+  readonly code: ModernizationCode;
+}
+
 export interface DuplicateResult {
   readonly copiedId: string;
   readonly childIds: readonly string[];
   readonly childAdsetIds: readonly string[];
+  /** modernizações que a reconstrução precisou aplicar (vazio quando tudo veio de `/copies`). */
+  readonly modernizations: readonly ModernizationNote[];
 }
 
 /** Entrada da estimativa de alcance (Fatia 7 — fast-follow): targeting NEUTRO + objetivo; o

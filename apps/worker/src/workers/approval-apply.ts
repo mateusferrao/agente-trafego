@@ -10,7 +10,7 @@ import type { Redis } from "ioredis";
 import { campaignDrafts } from "@trafego/db";
 import { APPROVAL_APPLY_QUEUE, type ApprovalApplyPayload, type ApprovalId, type CampaignDraftSpec } from "@trafego/shared";
 import { AdsPlatformError } from "@trafego/shared/ports";
-import { describeActionOutcome, describeActivationOutcome, describeDraftOutcome } from "@trafego/core";
+import { describeActionOutcome, describeActivationOutcome, describeDraftOutcome, readModernizations } from "@trafego/core";
 import type { WorkerDeps } from "../composition.js";
 import { applyActivation } from "../modules/apply/apply-activation.js";
 import { applyConfirmedAction } from "../modules/apply/apply-confirmed-action.js";
@@ -93,7 +93,7 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
               .limit(1);
             const summary = draftRow ? describeCreatedDraft(draftRow.kind, draftRow.spec as CampaignDraftSpec) : "sua campanha";
             // fonte única da copy (voz do Roy) — mesma frase no WhatsApp e no card do site (getOutcome).
-            const text = describeDraftOutcome({ kind: "created", dryRun: outcome.dryRun, summary, activated: outcome.activated, targetingFallback: outcome.createdIds["targetingFallback"] === true });
+            const text = describeDraftOutcome({ kind: "created", dryRun: outcome.dryRun, summary, activated: outcome.activated, targetingFallback: outcome.createdIds["targetingFallback"] === true, modernizations: readModernizations(outcome.createdIds) });
             if (outcome.dryRun) await pushOutcome(text);
             else await pushRealApplied(text);
             return;

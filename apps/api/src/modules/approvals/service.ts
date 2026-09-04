@@ -5,7 +5,7 @@ import type { Approval, ApprovalPort, PendingApproval } from "@trafego/shared/po
 import type { SchedulerPort } from "@trafego/shared/ports";
 import { APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE, enabledActionTypes, type ToolBindingMode } from "@trafego/shared";
 import { ACTION_PARAM_CURRENT_MINOR, ACTION_PARAM_TARGETING } from "@trafego/shared";
-import { computeApplyPreview, describeActionOutcome, describeActivationOutcome, describeCreatedDraft, describeDraftOutcome, editBudgetActionValue, projectBudgetTargetMinor, resolveEnabledTools, type OutcomeDetail } from "@trafego/core";
+import { computeApplyPreview, describeActionOutcome, describeActivationOutcome, describeCreatedDraft, describeDraftOutcome, editBudgetActionValue, projectBudgetTargetMinor, readModernizations, resolveEnabledTools, type OutcomeDetail } from "@trafego/core";
 import { badRequest, notFound } from "../../middleware/error-handler.js";
 import { buildExplicitFromInput, serializeExplicitAudience } from "../../lib/audience.js";
 import { computeAppliedActions, DAY_MS } from "../../lib/applied-actions.js";
@@ -115,7 +115,7 @@ export function createApprovalsService(deps: ApprovalsDeps) {
     if (oc === "blocked") return describeDraftOutcome({ kind: "blocked", reason });
     if (oc === "failed") return describeDraftOutcome({ kind: "failed", ...(reason ? { metaMessage: reason } : {}) });
     const [d] = await deps.db
-      .select({ kind: campaignDrafts.kind, spec: campaignDrafts.spec })
+      .select({ kind: campaignDrafts.kind, spec: campaignDrafts.spec, createdIds: campaignDrafts.createdIds })
       .from(campaignDrafts)
       .where(and(eq(campaignDrafts.id, a.draftId), eq(campaignDrafts.orgId, a.orgId)))
       .limit(1);
@@ -123,7 +123,7 @@ export function createApprovalsService(deps: ApprovalsDeps) {
     // Limitação conhecida: `activated` (nasceu ativa × pausada) vive no tool_call, não na approval →
     // aqui o site cai no "nasceu pausada" (o caso comum: creationActivation default = paused). O push
     // do WhatsApp tem o desfecho preciso. Persistir `activated` na approval = fast-follow se incomodar.
-    return describeDraftOutcome({ kind: "created", dryRun: oc === "simulated", summary });
+    return describeDraftOutcome({ kind: "created", dryRun: oc === "simulated", summary, modernizations: readModernizations(d?.createdIds ?? {}) });
   }
 
   return {

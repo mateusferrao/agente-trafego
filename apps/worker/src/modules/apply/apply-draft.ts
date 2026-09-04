@@ -219,7 +219,7 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     } else if (pausedDraft.kind === "duplicate") {
       if (!createdIds["copiedId"]) {
         const dup = await ports.ads.duplicateEntity(ref, buildDuplicateInput(pausedDraft));
-        await persist({ copiedId: dup.copiedId, childIds: dup.childIds, childAdsetIds: dup.childAdsetIds });
+        await persist({ copiedId: dup.copiedId, childIds: dup.childIds, childAdsetIds: dup.childAdsetIds, modernizations: dup.modernizations });
       }
       if (!createdIds["budgetApplied"]) {
         await ports.ads.setEntityBudget(ref, createdIds["copiedId"] as string, pausedDraft.spec.dailyBudgetMinor);

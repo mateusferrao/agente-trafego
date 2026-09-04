@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Action, CampaignDraftSpec } from "@trafego/shared";
-import { describeActionOutcome, describeCreatedDraft, describeDraftOutcome } from "./index.js";
+import { describeActionOutcome, describeCreatedDraft, describeDraftOutcome, readModernizations } from "./index.js";
 
 const budget: Action = { id: "a", type: "adjust_budget", target: { level: "adset", id: "1", name: "Leads — 8510" }, params: {}, source: "llm", riskLevel: "medium", reason: "x" };
 const pause: Action = { ...budget, type: "pause_entity" };
@@ -54,5 +54,24 @@ describe("describeDraftOutcome", () => {
   });
   it("failed com msg da Meta → próximo passo", () => {
     expect(describeDraftOutcome({ kind: "failed", metaMessage: "A Meta informou: X" })).toContain("Dá pra tentar de novo");
+  });
+  it("created com modernização → anexa a nota honesta da janela de atribuição", () => {
+    const out = describeDraftOutcome({ kind: "created", dryRun: false, summary: "a duplicata do seu vencedor, R$ 80,00/dia", modernizations: [{ code: "attribution_window_modernized" }] });
+    expect(out).toContain("Criei");
+    expect(out).toContain("janela de atribuição pra 1 dia");
+  });
+  it("dry-run NÃO anexa modernização (nada foi criado de verdade)", () => {
+    const out = describeDraftOutcome({ kind: "created", dryRun: true, summary: "x", modernizations: [{ code: "attribution_window_modernized" }] });
+    expect(out).not.toContain("janela de atribuição");
+  });
+});
+
+describe("readModernizations", () => {
+  it("lê só códigos conhecidos de um created_ids cru", () => {
+    expect(readModernizations({ modernizations: [{ code: "attribution_window_modernized" }, { code: "desconhecido" }, null, "x"] })).toEqual([{ code: "attribution_window_modernized" }]);
+  });
+  it("ausente/errado → vazio", () => {
+    expect(readModernizations({})).toEqual([]);
+    expect(readModernizations({ modernizations: "nope" })).toEqual([]);
   });
 });

@@ -2,8 +2,10 @@
 // WhatsApp (apps/worker/approval-apply) E pelo card do site (via API) — mesma voz do Roy nos dois
 // canais, num só lugar (§13 reuso-primeiro). PURA (sem IO).
 
-import type { Action, CampaignDraftSpec, DraftKind } from "@trafego/shared";
+import { MODERNIZATION_CODES, type Action, type CampaignDraftSpec, type DraftKind, type ModernizationNote } from "@trafego/shared";
 import { goalNounPt } from "../conversion/index.js";
+
+const MODERNIZATION_CODE_SET: ReadonlySet<string> = new Set(MODERNIZATION_CODES);
 
 /** Detalhe do desfecho — o que o apply-service classificou (com o motivo/mensagem quando há). */
 export type OutcomeDetail =
@@ -65,9 +67,28 @@ export function describeCreatedDraft(kind: DraftKind, spec: CampaignDraftSpec): 
   return `uma campanha de ${goal}, ${money}/dia${variants > 0 ? ` · ${variants} variação(ões) de copy` : ""}`;
 }
 
+/** Nota de modernização → frase PT (fonte única, por código neutro). PURA. */
+function modernizationNotePt(note: ModernizationNote): string {
+  switch (note.code) {
+    case "attribution_window_modernized":
+      return "Obs: ajustei a janela de atribuição pra 1 dia — a Meta descontinuou a janela original nesse objetivo.";
+  }
+}
+
+/** Lê as notas de modernização de um `created_ids` cru (defensivo — só códigos conhecidos). Fonte
+ *  única p/ os dois leitores do desfecho (push do WhatsApp + card do site). PURA. */
+export function readModernizations(createdIds: Record<string, unknown>): readonly ModernizationNote[] {
+  const raw = createdIds["modernizations"];
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((n): n is ModernizationNote => {
+    const code = (n as { code?: unknown } | null)?.code;
+    return typeof code === "string" && MODERNIZATION_CODE_SET.has(code);
+  });
+}
+
 /** Desfecho de um RASCUNHO/criação (voz do Roy) — fonte única (WhatsApp + site). PURA. */
 export type DraftOutcomeDetail =
-  | { readonly kind: "created"; readonly dryRun: boolean; readonly summary: string; readonly activated?: boolean; readonly targetingFallback?: boolean }
+  | { readonly kind: "created"; readonly dryRun: boolean; readonly summary: string; readonly activated?: boolean; readonly targetingFallback?: boolean; readonly modernizations?: readonly ModernizationNote[] }
   | { readonly kind: "blocked"; readonly reason: string }
   | { readonly kind: "failed"; readonly metaMessage?: string };
 
@@ -78,9 +99,11 @@ export function describeDraftOutcome(detail: DraftOutcomeDetail): string {
       const base = detail.activated
         ? `Criei ${detail.summary} e já ATIVEI — está no ar (a Meta ainda revisa o criativo). Se precisar, dá pra pausar na plataforma.`
         : `Criei ${detail.summary} — nasceu pausada. Revise e ative na plataforma quando quiser.`;
-      return detail.targetingFallback
+      const withFallback = detail.targetingFallback
         ? `${base} Obs: não consegui herdar o público que prometi (a fonte sumiu) — usei um público amplo. Revise antes de ativar.`
         : base;
+      const mods = (detail.modernizations ?? []).map(modernizationNotePt);
+      return mods.length ? `${withFallback} ${mods.join(" ")}` : withFallback;
     }
     case "blocked":
       return `Não criei: ${detail.reason}.`;
