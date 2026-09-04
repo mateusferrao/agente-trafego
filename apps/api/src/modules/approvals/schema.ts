@@ -42,6 +42,14 @@ export const approvalOutput = z.object({
   /** Público EXPLÍCITO proposto — só `adjust_audience` (Fatia C); semente do editor no card.
    *  Null nos demais tipos. Editar o público reseta o aprendizado da Meta (aviso no card). */
   audience: explicitAudienceView.nullable(),
+  /** Sinais do "antes" (informativos — o gating real é do apply): o card avisa/bloqueia com
+   *  honestidade sobre o que aprovar faria. `dryRun` = modo ensaio (aprovar simula); `killSwitch`
+   *  = trava total; `actionAllowed` = o tipo está nas ações habilitadas do agente; `accountAvailable`
+   *  = a conta está ativa. Fonte: guardrail + bindings do agente (mesma do apply). */
+  dryRun: z.boolean(),
+  killSwitch: z.boolean(),
+  actionAllowed: z.boolean(),
+  accountAvailable: z.boolean(),
 });
 export type ApprovalOutput = z.infer<typeof approvalOutput>;
 

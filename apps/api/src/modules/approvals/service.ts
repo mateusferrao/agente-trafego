@@ -1,11 +1,11 @@
 import { and, eq, gte, inArray, sql } from "drizzle-orm";
-import { adAccounts, agentRuns, agentToolCalls, agents, type Database } from "@trafego/db";
+import { adAccounts, agentRuns, agentToolBindings, agentToolCalls, agents, guardrailConfigs, type Database } from "@trafego/db";
 import type { ApprovalId, OrgId, TargetingSpec } from "@trafego/shared/types";
 import type { Approval, ApprovalPort } from "@trafego/shared/ports";
 import type { SchedulerPort } from "@trafego/shared/ports";
-import { APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE } from "@trafego/shared";
+import { APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE, enabledActionTypes, type ToolBindingMode } from "@trafego/shared";
 import { ACTION_PARAM_CURRENT_MINOR, ACTION_PARAM_TARGETING } from "@trafego/shared";
-import { editBudgetActionValue, projectBudgetTargetMinor } from "@trafego/core";
+import { editBudgetActionValue, projectBudgetTargetMinor, resolveEnabledTools } from "@trafego/core";
 import { badRequest, notFound } from "../../middleware/error-handler.js";
 import { buildExplicitFromInput, serializeExplicitAudience } from "../../lib/audience.js";
 import { computeAppliedActions, DAY_MS } from "../../lib/applied-actions.js";
@@ -35,19 +35,59 @@ export interface ApprovalsDeps {
  * o estado fresco + guardrail + escreve); rejeitar → resolve direto (sem escrita).
  */
 export function createApprovalsService(deps: ApprovalsDeps) {
-  /** agentId → { accountId, accountName, currency } (rótulo + moeda da conta na caixa de entrada). */
-  async function accountByAgent(
-    agentIds: readonly string[],
-  ): Promise<Map<string, { accountId: string; accountName: string; currency: string | null }>> {
-    const map = new Map<string, { accountId: string; accountName: string; currency: string | null }>();
+  interface AgentSignals {
+    accountId: string;
+    accountName: string;
+    currency: string | null;
+    accountAvailable: boolean;
+    dryRun: boolean;
+    killSwitch: boolean;
+    /** ACTION-types habilitadas do agente (mesma fonte do apply) — o card usa p/ `actionAllowed`. */
+    enabledActions: Set<string>;
+  }
+
+  /** agentId → conta + sinais do "antes" (rótulo/moeda + guardrail + ações habilitadas). Os sinais
+   *  saem da MESMA fonte do apply (`resolveEnabledTools` + guardrail config) — consistência de gates. */
+  async function signalsByAgent(agentIds: readonly string[]): Promise<Map<string, AgentSignals>> {
+    const map = new Map<string, AgentSignals>();
     if (agentIds.length === 0) return map;
     const rows = await deps.db
-      .select({ agentId: agents.id, accountId: adAccounts.id, accountName: adAccounts.name, currency: adAccounts.currency })
+      .select({
+        agentId: agents.id,
+        accountId: adAccounts.id,
+        accountName: adAccounts.name,
+        currency: adAccounts.currency,
+        accountStatus: adAccounts.status,
+        dryRun: guardrailConfigs.dryRun,
+        killSwitch: guardrailConfigs.killSwitch,
+        allowedActions: guardrailConfigs.allowedActions,
+      })
       .from(agents)
       .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
+      .leftJoin(guardrailConfigs, eq(guardrailConfigs.agentId, agents.id))
       .where(inArray(agents.id, [...agentIds]));
+    const bindingRows = await deps.db
+      .select({ agentId: agentToolBindings.agentId, toolKey: agentToolBindings.toolKey, mode: agentToolBindings.mode })
+      .from(agentToolBindings)
+      .where(inArray(agentToolBindings.agentId, [...agentIds]));
+    const bindingsByAgent = new Map<string, Map<string, ToolBindingMode>>();
+    for (const b of bindingRows) {
+      const m = bindingsByAgent.get(b.agentId) ?? new Map<string, ToolBindingMode>();
+      m.set(b.toolKey, b.mode as ToolBindingMode);
+      bindingsByAgent.set(b.agentId, m);
+    }
     for (const r of rows) {
-      map.set(r.agentId, { accountId: r.accountId, accountName: r.accountName ?? r.accountId, currency: r.currency });
+      const allowed = new Set((r.allowedActions ?? []) as string[]);
+      const enabled = resolveEnabledTools(bindingsByAgent.get(r.agentId) ?? new Map(), allowed);
+      map.set(r.agentId, {
+        accountId: r.accountId,
+        accountName: r.accountName ?? r.accountId,
+        currency: r.currency,
+        accountAvailable: r.accountStatus === "active",
+        dryRun: r.dryRun ?? false,
+        killSwitch: r.killSwitch ?? false,
+        enabledActions: new Set(enabledActionTypes(enabled)),
+      });
     }
     return map;
   }
@@ -59,7 +99,7 @@ export function createApprovalsService(deps: ApprovalsDeps) {
       const pending = (await deps.approvals.listPendingByOrg(orgId)).filter(
         (a): a is Approval => a.kind === "action",
       );
-      const accounts = await accountByAgent([...new Set(pending.map((a) => a.agentId))]);
+      const accounts = await signalsByAgent([...new Set(pending.map((a) => a.agentId))]);
       return pending.map((a) => {
         const acc = accounts.get(a.agentId);
         // orçamento atual (capturado na proposta) + projeção do proposto — só adjust_budget.
@@ -88,6 +128,10 @@ export function createApprovalsService(deps: ApprovalsDeps) {
           currentBudgetMajor,
           targetBudgetMajor,
           audience,
+          dryRun: acc?.dryRun ?? false,
+          killSwitch: acc?.killSwitch ?? false,
+          actionAllowed: acc?.enabledActions.has(a.actionType) ?? false,
+          accountAvailable: acc?.accountAvailable ?? false,
         };
       });
     },
