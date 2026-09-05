@@ -42,3 +42,20 @@ describe("buildChatRules — S0a: procedimento-por-tool migrou pra tools.ts", ()
     expect(rules).toContain("NÃO diga \"vá criar no site\"");
   });
 });
+
+describe("buildChatRules — config: needs-focus (concierge) × kill-switch OFF (site-only)", () => {
+  // Concierge (org multi-conta sem foco): config NÃO está desligada — só precisa de foco.
+  // Roy deve ROTEAR pra focar a conta, nunca remeter ao site (que era a confusão da BM - Automato).
+  it("needsFocusForConfig ON: roteia pra FOCAR a conta, NÃO remete ao site", () => {
+    const rules = buildChatRules(false, false, true);
+    expect(rules).toContain("precisa de uma conta em foco");
+    expect(rules).not.toContain("está desligada por aqui");
+  });
+
+  // In-context com kill-switch de auto-config OFF: aí SIM é pelo site (comportamento preservado).
+  it("needsFocusForConfig ausente (default) + configViaChat OFF: mantém o site-only", () => {
+    const rules = buildChatRules(false, false);
+    expect(rules).toContain("está desligada por aqui");
+    expect(rules).not.toContain("precisa de uma conta em foco");
+  });
+});

@@ -195,6 +195,8 @@ describe("describe_capabilities tool", () => {
     const out = await capTool(deps, { ...CTX, agentId: "" }, new Set(["describe_capabilities"])).invoke({});
     expect(out.toLowerCase()).toContain("foca");
     expect(out.toLowerCase()).toContain("panorama");
+    // paridade com o fix de concierge: config é por-foco, não "pelo site" — a capacidade cita configurar.
+    expect(out.toLowerCase()).toContain("configurar");
   });
 
   it("em GRUPO declara que acompanha a conversa recente (S5, honestidade contextual)", async () => {

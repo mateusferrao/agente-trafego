@@ -892,7 +892,7 @@ export async function buildCapabilitiesText(
       `Sou o ${AGENT_NAME}, seu gestor de tráfego aqui no WhatsApp. Sem uma conta em foco, posso:`,
       "• ver e resolver pendências de aprovação (de todas as suas contas);",
       "• te dar um panorama de todas as contas (nota e gasto da última análise de cada uma);",
-      '• focar numa conta (ex: "foca na Loja X") pra ler, analisar e agir nela.',
+      '• focar numa conta (ex: "foca na Loja X") pra ler, analisar, agir e configurar (metas, avisos/notificações, autonomia) nela.',
       "Pode me mandar áudio também — eu transcrevo e entendo. Me diz em qual conta você quer trabalhar.",
     ];
     if (ctx.ref.kind === "group") {
