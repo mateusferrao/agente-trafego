@@ -20,6 +20,7 @@ import type { MetaGovernor } from "./governor.js";
 import { normalizeAdAccountId } from "./ids.js";
 import { audienceFromTargeting, type RawTargeting } from "./meta-audience-map.js";
 import {
+  objectiveFromAdSet,
   objectiveFromCampaign,
   resolveAdSetConversion,
   resolveMetaCta,
@@ -982,7 +983,7 @@ export class MetaCreationService {
       accessToken: account.accessToken,
       params: {
         fields:
-          "id,effective_status,creative{object_story_spec},adset{id,promoted_object},campaign{objective},insights.date_preset(last_30d){spend,actions}",
+          "id,effective_status,creative{object_story_spec},adset{id,optimization_goal,destination_type,promoted_object},campaign{objective},insights.date_preset(last_30d){spend,actions}",
         limit: String(INFER_CANDIDATES_LIMIT),
       },
     });
@@ -1004,7 +1005,14 @@ export class MetaCreationService {
     const linkData = spec?.link_data;
     // link de destino: imagem → link_data.link; vídeo → call_to_action.value.link do video_data.
     const reuseLink = linkData?.link ?? spec?.video_data?.call_to_action?.value?.link;
-    const goal = objectiveFromCampaign(best.campaign?.objective)?.goal as ConversionGoal | undefined;
+    // objetivo do ADSET-fonte vence o coarse da campanha: OUTCOME_LEADS pode hospedar formulário
+    // (LEAD_GENERATION→lead) OU WhatsApp/mensagens (CONVERSATIONS→messaging_started) — só o
+    // optimization_goal do conjunto distingue. Fallback pro objetivo da campanha quando ausente.
+    const adsetObjective = objectiveFromAdSet({
+      ...(best.adset?.optimization_goal ? { optimizationGoal: best.adset.optimization_goal } : {}),
+      ...(best.adset?.promoted_object ? { promotedObject: best.adset.promoted_object } : {}),
+    })?.goal;
+    const goal = (adsetObjective ?? objectiveFromCampaign(best.campaign?.objective)?.goal) as ConversionGoal | undefined;
     const winnerCopy = ranked
       .slice(0, INFER_WINNER_COPY_SAMPLE)
       .map((r) => copyOf(r.ad))

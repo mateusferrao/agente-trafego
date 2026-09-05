@@ -878,6 +878,51 @@ describe("MetaCreationService.inferCreationDefaults", () => {
     expect(r.sourceAdsetId).toBeUndefined();
   });
 
+  it("objetivo do ADSET vence o coarse da campanha: CONVERSATIONS (WhatsApp) → messaging_started, não lead", async () => {
+    stubAds([
+      {
+        id: "ADW",
+        effective_status: "ACTIVE",
+        creative: { object_story_spec: { page_id: "PG1", video_data: { video_id: "V1", image_hash: "C1", call_to_action: { value: { link: "https://api.whatsapp.com/send" } } } } },
+        adset: { id: "AS_W", optimization_goal: "CONVERSATIONS", destination_type: "WHATSAPP", promoted_object: { page_id: "PG1" } },
+        campaign: { objective: "OUTCOME_LEADS" }, // coarse diria "lead" — o adset corrige p/ messaging
+        insights: { data: [{ spend: "100", actions: [{ action_type: "onsite_conversion.messaging_conversation_started_7d", value: "8" }] }] },
+      },
+    ]);
+    const r = await svc().inferCreationDefaults(account);
+    expect(r.objectiveGoal).toBe("messaging_started");
+  });
+
+  it("adset LEAD_GENERATION → objectiveGoal lead", async () => {
+    stubAds([
+      {
+        id: "ADL",
+        effective_status: "ACTIVE",
+        creative: { object_story_spec: { page_id: "PG1", link_data: { image_hash: "H1", link: "https://x.test" } } },
+        adset: { id: "AS_L", optimization_goal: "LEAD_GENERATION", promoted_object: { page_id: "PG1" } },
+        campaign: { objective: "OUTCOME_LEADS" },
+        insights: { data: [{ spend: "50", actions: [{ action_type: "lead", value: "3" }] }] },
+      },
+    ]);
+    const r = await svc().inferCreationDefaults(account);
+    expect(r.objectiveGoal).toBe("lead");
+  });
+
+  it("sem optimization_goal do adset → cai no objetivo coarse da campanha (OUTCOME_LEADS → lead)", async () => {
+    stubAds([
+      {
+        id: "ADC",
+        effective_status: "ACTIVE",
+        creative: { object_story_spec: { page_id: "PG1", link_data: { image_hash: "H1" } } },
+        adset: { id: "AS_C", promoted_object: { pixel_id: "PX1" } },
+        campaign: { objective: "OUTCOME_LEADS" },
+        insights: { data: [{ spend: "50", actions: [{ action_type: "lead", value: "3" }] }] },
+      },
+    ]);
+    const r = await svc().inferCreationDefaults(account);
+    expect(r.objectiveGoal).toBe("lead");
+  });
+
   it("VÍDEO reusável → carrega a CAPA (video_data.image_hash) + o video_id (não depende de ler thumbnails, que pode dar #10)", async () => {
     stubAds([
       {
