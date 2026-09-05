@@ -107,95 +107,118 @@ function svc() {
   return new MetaCreationService(new MetaGraphClient({ graphVersion: "v26.0" }));
 }
 
+/** Stub do caminho BATCHED (campanha): GET aninhado (árvore) + POST batch (/copies + creates) +
+ *  DELETE (revert). `failCopy` = subcode por sourceId (cópia recusada); `failCreate` = reconstrução
+ *  rejeitada (erro duro). Os ids copiados = `${src}_N`; os reconstruídos = `R1`, `R2`, … */
+function stubBatched(opts: {
+  campaignId: string;
+  adsets: Array<{ id: string; fields?: Record<string, unknown>; ads: Array<{ id: string; creativeId?: string | null; name?: string }> }>;
+  failCopy?: Record<string, number>;
+  failCreate?: boolean;
+}) {
+  const calls: Array<{ method: string; url: string; batch?: Array<Record<string, string>> }> = [];
+  let created = 0;
+  const json = (b: unknown, status = 200) => new Response(JSON.stringify(b), { status, headers: { "content-type": "application/json" } });
+  const levelOf = (src: string) => (src === opts.campaignId ? "campaign" : opts.adsets.some((a) => a.id === src) ? "adset" : "ad");
+  const spy = vi.fn(async (input: string | URL | Request, init?: { method?: string; body?: unknown }) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    const body = String(init?.body ?? "");
+    if (method === "GET" && /fields=adsets/.test(decodeURIComponent(url))) {
+      return json({ adsets: { data: opts.adsets.map((a) => ({ id: a.id, ...(a.fields ?? {}), ads: { data: a.ads.map((ad) => ({ id: ad.id, name: ad.name, ...(ad.creativeId ? { creative: { id: ad.creativeId } } : {}) })) } })) } });
+    }
+    if (method === "DELETE") { calls.push({ method, url }); return json({ success: true }); }
+    if (method === "POST" && /(^|&)batch=/.test(body)) {
+      const ops = JSON.parse(new URLSearchParams(body).get("batch")!) as Array<{ relative_url: string; body?: string }>;
+      calls.push({ method, url, batch: ops.map((o) => Object.fromEntries(new URLSearchParams(o.body ?? ""))) });
+      const results = ops.map((op) => {
+        const copyMatch = op.relative_url.match(/^([^/?]+)\/copies/);
+        if (copyMatch) {
+          const src = copyMatch[1]!;
+          const sub = opts.failCopy?.[src];
+          if (sub) return { code: 400, body: JSON.stringify({ error: { code: 100, error_subcode: sub, error_user_msg: "descontinuado" } }) };
+          return { code: 200, body: JSON.stringify({ [`copied_${levelOf(src)}_id`]: `${src}_N` }) };
+        }
+        if (/\/(adsets|ads)$/.test(op.relative_url)) {
+          if (opts.failCreate) return { code: 400, body: JSON.stringify({ error: { code: 200, message: "create rejeitado" } }) };
+          return { code: 200, body: JSON.stringify({ id: `R${++created}` }) };
+        }
+        return { code: 200, body: "{}" };
+      });
+      return json(results);
+    }
+    return json({ success: true });
+  });
+  vi.stubGlobal("fetch", spy);
+  return {
+    batches: () => calls.filter((c) => c.batch),
+    deleted: () => calls.filter((c) => c.method === "DELETE").map((c) => c.url),
+  };
+}
+
 describe("MetaCreationService.duplicateEntity", () => {
-  it("duplicateEntity(campaign): reconstrói RASO — casca + conjuntos + anúncios reparenteados", async () => {
-    const { copies } = stubTree({
-      adsetsOf: { C1: ["AS1", "AS2"] },
-      adsOf: { AS1: ["AD1"], AS2: ["AD2"] },
-      idFor: (src) => (src === "C1" ? { type: "campaign", id: "C_NEW" } : src.startsWith("AS") ? { type: "adset", id: `${src}_NEW` } : { type: "ad", id: `${src}_NEW` }),
-    });
+  it("campanha batched: tudo copiado → 1 batch, sem reconstrução", async () => {
+    const stub = stubBatched({ campaignId: "C1", adsets: [{ id: "AS1", ads: [{ id: "AD1", creativeId: "X" }] }, { id: "AS2", ads: [{ id: "AD2", creativeId: "Y" }] }] });
     const res = await svc().duplicateEntity(account, { sourceLevel: "campaign", sourceId: "C1", status: "paused" });
-    expect(res.copiedId).toBe("C_NEW");
-    expect(res.childAdsetIds).toEqual(["AS1_NEW", "AS2_NEW"]);
-    expect(res.childIds).toEqual(["AD1_NEW", "AD2_NEW"]);
-    const cs = copies();
-    expect(cs.find((c) => c.url.includes("C1/copies"))!.url).toContain("deep_copy=false");
-    expect(cs.find((c) => c.url.includes("AS1/copies"))!.url).toContain("campaign_id=C_NEW");
-    expect(cs.find((c) => c.url.includes("AD1/copies"))!.url).toContain("adset_id=AS1_NEW");
+    expect(res.copiedId).toBe("C1_N");
+    expect(res.childAdsetIds).toEqual(["AS1_N", "AS2_N"]);
+    expect(res.childIds).toEqual(["AD1_N", "AD2_N"]);
+    expect(res.modernizations).toEqual([]);
+    expect(stub.batches()).toHaveLength(1); // só o batch de cópia (nada a reconstruir)
   });
 
-  it("anúncio com criativo legado → reconstrói via POST /ads (creative_id) e a duplicação sucede", async () => {
-    const stub = stubTree({
-      adsetsOf: { C1: ["AS1"] },
-      adsOf: { AS1: ["AD_LEGACY"] },
-      idFor: (src) => (src === "C1" ? { type: "campaign", id: "C_NEW" } : { type: "adset", id: "AS1_NEW" }),
-      failCopyOn: "AD_LEGACY",
-      failCopySubcode: 3858504,
-      creativeOf: { AD_LEGACY: "CRE_9" },
-    });
-    const res = await svc().duplicateEntity(account, { sourceLevel: "campaign", sourceId: "C1", status: "paused" });
-    expect(res.childIds).toEqual(["ads_CREATED_1"]);
-    const ad = stub.posted("ads")[0]!;
-    expect(ad.creative).toBe(JSON.stringify({ creative_id: "CRE_9" }));
-    expect(ad.adset_id).toBe("AS1_NEW");
-    expect(ad.status).toBe("PAUSED");
-  });
-
-  it("conjunto com atribuição descontinuada → reconstrói (espelha campos, omite attribution) + nota de modernização", async () => {
-    const stub = stubTree({
-      adsetsOf: { C1: ["AS_OLD"] },
-      adsOf: { AS_OLD: ["AD1"] },
-      creativeOf: { AD1: "CRE_1" },
-      idFor: (src) => (src === "C1" ? { type: "campaign", id: "C_NEW" } : { type: "ad", id: `${src}_NEW` }),
-      adsetFields: { AS_OLD: { name: "conj", optimization_goal: "CONVERSATIONS", billing_event: "IMPRESSIONS", targeting: { age_min: 25 }, promoted_object: { pixel_id: "PX" }, daily_budget: "600", bid_strategy: "LOWEST_COST_WITHOUT_CAP", attribution_spec: [{ event_type: "CLICK_THROUGH", window_days: 7 }] } },
-      failCopyOn: "AS_OLD",
-      failCopySubcode: 1885423,
+  it("campanha batched: conjunto com atribuição (1885423) → reconstrói (espelha, omite attribution) + nota + 2º batch", async () => {
+    const stub = stubBatched({
+      campaignId: "C1",
+      adsets: [{ id: "AS_OLD", fields: { name: "conj", optimization_goal: "CONVERSATIONS", billing_event: "IMPRESSIONS", attribution_spec: [{ event_type: "CLICK_THROUGH", window_days: 7 }] }, ads: [{ id: "AD1", creativeId: "CRE1" }] }],
+      failCopy: { AS_OLD: 1885423 },
     });
     const res = await svc().duplicateEntity(account, { sourceLevel: "campaign", sourceId: "C1", status: "paused" });
     expect(res.modernizations).toContainEqual({ code: "attribution_window_modernized" });
-    expect(res.childAdsetIds).toEqual(["adsets_CREATED_1"]); // conjunto reconstruído
-    expect(res.childIds).toEqual(["AD1_NEW"]); // anúncio copiado no conjunto reconstruído
-    const posted = stub.posted("adsets")[0]!;
-    expect(posted.optimization_goal).toBe("CONVERSATIONS");
-    expect(posted.billing_event).toBe("IMPRESSIONS");
-    expect(posted.campaign_id).toBe("C_NEW");
-    expect(posted).not.toHaveProperty("attribution_spec");
+    expect(stub.batches()).toHaveLength(2);
+    const recon = stub.batches()[1]!.batch!;
+    expect(recon[0]!.optimization_goal).toBe("CONVERSATIONS");
+    expect(recon[0]!.campaign_id).toBe("C1_N");
+    expect(recon[0]).not.toHaveProperty("attribution_spec");
+    expect(recon[1]!.creative).toBe(JSON.stringify({ creative_id: "CRE1" }));
   });
 
-  it("reconstrução que a Meta rejeita (tipo divergente) → reverte a raiz + propaga (rede honesta)", async () => {
-    const stub = stubTree({
-      adsetsOf: { C1: ["AS_OLD"] },
-      adsOf: { AS_OLD: [] },
-      idFor: () => ({ type: "campaign", id: "C_NEW" }),
-      adsetFields: { AS_OLD: { name: "x", optimization_goal: "LINK_CLICKS", billing_event: "IMPRESSIONS" } },
-      failCopyOn: "AS_OLD",
-      failCopySubcode: 1885423,
-      failCreateOn: ["adsets"],
+  it("campanha batched: anúncio com criativo legado (3858504) sob conjunto copiado → reconstrói só o ad", async () => {
+    const stub = stubBatched({
+      campaignId: "C1",
+      adsets: [{ id: "AS1", ads: [{ id: "AD_LEGACY", creativeId: "CRE9" }] }],
+      failCopy: { AD_LEGACY: 3858504 },
+    });
+    const res = await svc().duplicateEntity(account, { sourceLevel: "campaign", sourceId: "C1", status: "paused" });
+    expect(res.copiedId).toBe("C1_N");
+    expect(res.childAdsetIds).toEqual(["AS1_N"]);
+    const recon = stub.batches()[1]!.batch!;
+    expect(recon[0]!.adset_id).toBe("AS1_N"); // ad reconstruído sob o conjunto COPIADO (id real)
+    expect(recon[0]!.creative).toBe(JSON.stringify({ creative_id: "CRE9" }));
+  });
+
+  it("campanha batched: erro DURO na cópia de um conjunto → DELETA a campanha nova + propaga", async () => {
+    const stub = stubBatched({ campaignId: "C1", adsets: [{ id: "AS1", ads: [] }], failCopy: { AS1: 999999 } });
+    await expect(svc().duplicateEntity(account, { sourceLevel: "campaign", sourceId: "C1", status: "paused" })).rejects.toBeTruthy();
+    expect(stub.deleted().some((u) => u.includes("C1_N"))).toBe(true);
+  });
+
+  it("campanha batched: falha na reconstrução (tipo divergente) → DELETA a campanha nova + propaga", async () => {
+    const stub = stubBatched({
+      campaignId: "C1",
+      adsets: [{ id: "AS_OLD", fields: { name: "x", optimization_goal: "LINK_CLICKS" }, ads: [] }],
+      failCopy: { AS_OLD: 1885423 },
+      failCreate: true,
     });
     await expect(svc().duplicateEntity(account, { sourceLevel: "campaign", sourceId: "C1", status: "paused" })).rejects.toBeTruthy();
-    expect(stub.deleted()).toContain("C_NEW");
+    expect(stub.deleted().some((u) => u.includes("C1_N"))).toBe(true);
   });
 
-  it("duplicateEntity(campaign): falha num anúncio → DELETA a campanha nova + not_duplicable (atômico)", async () => {
-    const { calls } = stubTree({
-      adsetsOf: { C1: ["AS1"] },
-      adsOf: { AS1: ["AD1"] },
-      idFor: (src) => (src === "C1" ? { type: "campaign", id: "C_NEW" } : { type: "adset", id: "AS1_NEW" }),
-      failCopyOn: "AD1",
-    });
-    const err = await svc().duplicateEntity(account, { sourceLevel: "campaign", sourceId: "C1", status: "paused" }).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(AdsPlatformError);
-    expect(err).toMatchObject({ kind: "not_duplicable" });
-    expect(calls().some((c) => c.method === "DELETE" && c.url.includes("/C_NEW"))).toBe(true);
-  });
-
-  it("duplicateEntity(campaign): renameSuffix → rename_options na casca", async () => {
-    const { copies } = stubTree({ adsetsOf: { C1: [] }, idFor: () => ({ type: "campaign", id: "C_NEW" }) });
+  it("campanha batched: renameSuffix → rename_options na casca do batch de cópia", async () => {
+    const stub = stubBatched({ campaignId: "C1", adsets: [] });
     await svc().duplicateEntity(account, { sourceLevel: "campaign", sourceId: "C1", status: "paused", renameSuffix: " — escala" });
-    const shell = copies().find((c) => c.url.includes("C1/copies"))!;
-    expect(shell.url).toContain("rename_options=");
-    const decoded = decodeURIComponent(shell.url.replace(/\+/g, " "));
-    expect(decoded).toContain('"rename_suffix":" — escala"');
+    const copy = stub.batches()[0]!.batch!;
+    expect(copy[0]!.rename_options).toContain("escala");
   });
 
   it("duplicateEntity(adset): casca do conjunto + seus anúncios (não perde os ads)", async () => {

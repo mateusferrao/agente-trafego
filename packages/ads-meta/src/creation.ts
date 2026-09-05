@@ -36,6 +36,11 @@ const INFER_WINNER_COPY_SAMPLE = 3;
 const COPIES_EDGE = "copies";
 const STATUS_ACTIVE = "ACTIVE";
 const STATUS_PAUSED = "PAUSED";
+/** Teto de filhos por nível no GET aninhado da árvore (duplicação batched). */
+const TREE_CHILD_LIMIT = 200;
+/** Máx ops num batch síncrono (limite Meta) — referências não cruzam chunk, então acima disso a
+ *  duplicação de campanha cai no caminho sequencial (campanha grande é rara). */
+const DUPLICATION_BATCH_CAP = 50;
 const BUDGET_FIELD_DAILY = "daily_budget";
 
 /**
@@ -342,23 +347,7 @@ export class MetaCreationService {
    * completa OU nada. O override de budget segue passo SEPARADO (`setEntityBudget`).
    */
   async duplicateEntity(account: AdAccountRef, input: DuplicateEntityInput): Promise<DuplicateResult> {
-    if (input.sourceLevel === "campaign") {
-      const newCampaignId = await this.shallowCopy(account, input.sourceId, input.status, undefined, input.renameSuffix);
-      const notes: ModernizationNote[] = [];
-      try {
-        const childAdsetIds: string[] = [];
-        const childIds: string[] = [];
-        for (const srcAdset of await this.listChildIds(account, input.sourceId, "adsets")) {
-          const { newAdsetId, newAdIds } = await this.copyOrReconstructAdsetInto(account, srcAdset, input.status, newCampaignId, input.renameSuffix, notes);
-          childAdsetIds.push(newAdsetId);
-          childIds.push(...newAdIds);
-        }
-        return { copiedId: newCampaignId, childIds, childAdsetIds, modernizations: dedupeNotes(notes) };
-      } catch (error) {
-        await this.revertRoot(account, newCampaignId);
-        throw error;
-      }
-    }
+    if (input.sourceLevel === "campaign") return this.duplicateCampaign(account, input);
     if (input.sourceLevel === "adset") {
       // conjunto vencedor → casca do conjunto (na campanha destino, quando houver) + seus anúncios.
       // Muro `not_duplicable` na casca → reconstrói (só quando há campanha destino p/ reparentear).
@@ -383,6 +372,73 @@ export class MetaCreationService {
     const reparent = input.destinationCampaignId ? { campaign_id: input.destinationCampaignId } : undefined;
     const copiedId = await this.shallowCopy(account, input.sourceId, input.status, reparent, input.renameSuffix);
     return { copiedId, childIds: [], childAdsetIds: [], modernizations: [] };
+  }
+
+  /** GET aninhado: árvore inteira da campanha (campos crus do conjunto + creative.id do anúncio)
+   *  em UMA chamada. Base do caminho batched (evita as N listas + N GETs da versão sequencial). */
+  private async fetchDuplicationTree(account: AdAccountRef, campaignId: string): Promise<DupTree> {
+    const { data } = await this.client.request<RawTree>({
+      method: "GET", path: campaignId, accessToken: account.accessToken,
+      params: { fields: `adsets.limit(${TREE_CHILD_LIMIT}){id,${ADSET_MIRROR_FIELDS},ads.limit(${TREE_CHILD_LIMIT}){id,name,creative{id}}}` },
+    });
+    return normalizeDupTree(data);
+  }
+
+  /** Duplicação de CAMPANHA: batched (poucas chamadas, evita rate-limit) quando a árvore cabe num
+   *  batch (≤50 ops — referências não cruzam chunk); campanha grande cai no sequencial (raro). */
+  private async duplicateCampaign(account: AdAccountRef, input: DuplicateEntityInput): Promise<DuplicateResult> {
+    const tree = await this.fetchDuplicationTree(account, input.sourceId);
+    const ops = 1 + tree.adsets.length + tree.adsets.reduce((s, a) => s + a.ads.length, 0);
+    return ops <= DUPLICATION_BATCH_CAP
+      ? this.duplicateCampaignBatched(account, input, tree)
+      : this.duplicateCampaignSequential(account, input);
+  }
+
+  /** Batched: 1 batch de `/copies` (casca+conjuntos+anúncios, referências) → 1 batch de
+   *  reconstrução só dos nós recusados. Atômico: falha dura → DELETA a campanha nova + re-lança. */
+  private async duplicateCampaignBatched(account: AdAccountRef, input: DuplicateEntityInput, tree: DupTree): Promise<DuplicateResult> {
+    const copyPlan = buildCopyBatch(input.sourceId, tree, input.status, input.renameSuffix);
+    const copyRes = (await this.client.batch(account.accessToken, copyPlan.requests)).data;
+    const newCampaignId = extractCopiedCampaignId(copyRes); // casca falhou = nada criado → propaga sem revert
+    try {
+      const cls = classifyCopyResults(tree, copyPlan.slots, copyRes);
+      const notes: ModernizationNote[] = cls.reconstructAdsets.length ? [{ code: "attribution_window_modernized" }] : [];
+      let reconAdsetIds: string[] = [];
+      let reconAdIds: string[] = [];
+      if (cls.reconstructAdsets.length || cls.adsToReconstruct.length) {
+        const accountId = normalizeAdAccountId(account.adAccountId);
+        const reconPlan = buildReconstructBatch(accountId, newCampaignId, tree, cls, input.status, input.renameSuffix);
+        const reconRes = (await this.client.batch(account.accessToken, reconPlan.requests)).data;
+        const ids = collectReconstructIds(reconPlan.slots, reconRes);
+        reconAdsetIds = ids.adsetIds;
+        reconAdIds = ids.adIds;
+      }
+      const childAdsetIds = [...cls.copiedAdsetIds.filter((x): x is string => Boolean(x)), ...reconAdsetIds];
+      const childIds = [...cls.copiedAdIds, ...reconAdIds];
+      return { copiedId: newCampaignId, childIds, childAdsetIds, modernizations: dedupeNotes(notes) };
+    } catch (error) {
+      await this.revertRoot(account, newCampaignId);
+      throw error;
+    }
+  }
+
+  /** Sequencial (fallback p/ campanha grande >50 ops): casca + copia-ou-reconstrói por-nó. */
+  private async duplicateCampaignSequential(account: AdAccountRef, input: DuplicateEntityInput): Promise<DuplicateResult> {
+    const newCampaignId = await this.shallowCopy(account, input.sourceId, input.status, undefined, input.renameSuffix);
+    const notes: ModernizationNote[] = [];
+    try {
+      const childAdsetIds: string[] = [];
+      const childIds: string[] = [];
+      for (const srcAdset of await this.listChildIds(account, input.sourceId, "adsets")) {
+        const { newAdsetId, newAdIds } = await this.copyOrReconstructAdsetInto(account, srcAdset, input.status, newCampaignId, input.renameSuffix, notes);
+        childAdsetIds.push(newAdsetId);
+        childIds.push(...newAdIds);
+      }
+      return { copiedId: newCampaignId, childIds, childAdsetIds, modernizations: dedupeNotes(notes) };
+    } catch (error) {
+      await this.revertRoot(account, newCampaignId);
+      throw error;
+    }
   }
 
   /** Copia UM conjunto (raso) na campanha destino; se o `/copies` bater muro `not_duplicable`
