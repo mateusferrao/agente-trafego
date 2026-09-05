@@ -84,6 +84,12 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
             await ports.approval.resolve(approval.id, { status: "blocked", resolvedReason: outcome.reason, applyOutcome: "blocked" });
             await pushOutcome(describeDraftOutcome({ kind: "blocked", reason: outcome.reason }));
             return;
+          case "limited":
+            // teto de guardrail CORRIGÍVEL → NÃO resolve (o card fica pendente + reabilita p/
+            // reaprovar após ajustar o limite); registra o motivo (como o `failed`).
+            await ports.approval.markApplyOutcome(approval.id, "failed", outcome.reason);
+            await pushOutcome(describeDraftOutcome({ kind: "failed", metaMessage: outcome.reason }));
+            return;
           case "created": {
             await ports.approval.resolve(approval.id, { status: "approved", applyOutcome: outcome.dryRun ? "simulated" : "applied" });
             const [draftRow] = await deps.db

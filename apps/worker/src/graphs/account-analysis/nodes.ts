@@ -916,7 +916,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
         : outcome.activated
           ? `Agi sozinho e ${what} — e já ATIVEI (está no ar). Por quê: ${rationale}. Se precisar, dá pra pausar na plataforma.`
           : `Agi sozinho e ${what} — deixei *pausada*, esperando seu OK (não veicula até você ativar). Por quê: ${rationale}. Dá uma olhada na plataforma e ative quando quiser.`;
-    } else if (outcome.kind === "blocked" || outcome.kind === "unsupported") {
+    } else if (outcome.kind === "blocked" || outcome.kind === "unsupported" || outcome.kind === "limited") {
       text = `Ia ${wouldHave} sozinho, mas parei: ${outcome.reason}.`;
     } else {
       text = `Tentei ${wouldHave} sozinho, mas não consegui agora — deixei pendente pra você revisar.`;

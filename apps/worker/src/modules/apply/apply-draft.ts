@@ -83,7 +83,10 @@ export type DraftApplyOutcome =
     }
   | { readonly kind: "blocked"; readonly reason: string }
   | { readonly kind: "failed"; readonly error: unknown }
-  | { readonly kind: "unsupported"; readonly reason: string };
+  | { readonly kind: "unsupported"; readonly reason: string }
+  // teto de guardrail (campanhas novas/dia, killswitch) — CORRIGÍVEL por config. NÃO falha o
+  // rascunho (fica `proposed`): o card continua reaprovável após o usuário ajustar o limite.
+  | { readonly kind: "limited"; readonly reason: string };
 
 export interface ApplyDraftInput {
   readonly orgId: string;
@@ -157,8 +160,9 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
 
   const check = applyCreationGuardrails(draft, cfg, { createdCampaignsToday: n });
   if (!check.allowed) {
-    await db.update(campaignDrafts).set({ status: "failed" }).where(and(eq(campaignDrafts.id, row.id), eq(campaignDrafts.orgId, input.orgId)));
-    return { kind: "blocked", reason: check.dropped?.reason ?? "barrado pelo guardrail de gasto novo" };
+    // teto/killswitch é CORRIGÍVEL → NÃO marca o rascunho `failed` (fica `proposed`, reaprovável);
+    // devolve `limited` (o card fica + reabilita, sem sumir como um bloqueio terminal).
+    return { kind: "limited", reason: check.dropped?.reason ?? "barrado pelo guardrail de gasto novo" };
   }
   const allowed = check.allowed;
 
