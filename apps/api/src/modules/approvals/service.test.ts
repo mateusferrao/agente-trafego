@@ -111,6 +111,45 @@ describe("approvalsService.listPending — sinais do 'antes'", () => {
     expect(out.outcomeMessage).toBeNull();
   });
 
+  it("resolve(approve) zera o desfecho da tentativa anterior ANTES de enfileirar (não reporta o velho)", async () => {
+    // uma reaprovação de uma aprovação que FALHOU antes segue pendente com applyOutcome preenchido;
+    // sem zerar, o polling leria esse desfecho velho como se fosse o resultado desta tentativa.
+    const stale = { ...pendingBudget(), applyOutcome: "failed", resolvedReason: "a Meta não respondeu" } as unknown as Approval;
+    const order: string[] = [];
+    const clearApplyOutcome = vi.fn(async () => {
+      order.push("clear");
+    });
+    const enqueue = vi.fn(async () => {
+      order.push("enqueue");
+    });
+    const service = createApprovalsService({
+      db: signalsDb([], []),
+      approvals: { getById: vi.fn(async () => stale), clearApplyOutcome } as never,
+      scheduler: { enqueue } as never,
+      revertTtlDays: 7,
+    });
+    const out = await service.resolve(ORG, "ap-1" as never, { decision: "approve" } as never);
+    expect(out.status).toBe("pending");
+    expect(clearApplyOutcome).toHaveBeenCalledWith("ap-1");
+    // a limpeza precisa vir ANTES do enfileiramento (o worker sobrescreve com o desfecho fresco).
+    expect(order).toEqual(["clear", "enqueue"]);
+  });
+
+  it("resolve(reject) não enfileira nem toca no desfecho (nada é aplicado)", async () => {
+    const clearApplyOutcome = vi.fn(async () => {});
+    const enqueue = vi.fn(async () => {});
+    const service = createApprovalsService({
+      db: signalsDb([], []),
+      approvals: { getById: vi.fn(async () => pendingBudget()), resolve: vi.fn(async () => ({ ...pendingBudget(), status: "rejected" })), clearApplyOutcome } as never,
+      scheduler: { enqueue } as never,
+      revertTtlDays: 7,
+    });
+    const out = await service.resolve(ORG, "ap-1" as never, { decision: "reject" } as never);
+    expect(out.status).toBe("rejected");
+    expect(clearApplyOutcome).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
   it("ação permitida por binding → actionAllowed:true; conta removida → accountAvailable:false", async () => {
     const service = makeService(
       [{ agentId: AGENT, accountId: "acc-1", accountName: "BM", currency: "BRL", accountStatus: "removed", dryRun: false, killSwitch: false, allowedActions: [], orgId: ORG }],

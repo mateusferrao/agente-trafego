@@ -210,6 +210,16 @@ export function createPostgresApprovals(db: Database): ApprovalPort {
         .where(eq(approvals.id, id));
     },
 
+    async clearApplyOutcome(id: ApprovalId): Promise<void> {
+      // zera o desfecho da tentativa anterior ao REAPROVAR (só enquanto pendente): o próximo poll do
+      // card lê `null` (= "ainda aplicando") até o worker gravar o desfecho FRESCO, em vez do velho.
+      // Guardado por `status='pending'` p/ nunca apagar o motivo de uma aprovação já resolvida.
+      await db
+        .update(approvals)
+        .set({ applyOutcome: null, resolvedReason: null, updatedAt: new Date() })
+        .where(and(eq(approvals.id, id), eq(approvals.status, "pending")));
+    },
+
     async getPendingByContact(contactId: ContactId): Promise<PendingApproval | null> {
       const [row] = await db
         .select()
