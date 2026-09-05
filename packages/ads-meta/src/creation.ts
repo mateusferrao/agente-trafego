@@ -636,7 +636,10 @@ export class MetaCreationService {
   }
 
   async createAdSet(account: AdAccountRef, input: CreateAdSetInput): Promise<{ adsetId: string; targetingFallback: boolean }> {
-    const conv = resolveAdSetConversion(input.goal, input.pixelId);
+    const conv = resolveAdSetConversion(input.goal, {
+      ...(input.pixelId ? { pixelId: input.pixelId } : {}),
+      ...(input.pageId ? { pageId: input.pageId } : {}),
+    });
     const { targeting, fallback } = await this.resolveTargeting(account, input.targeting);
     // CBO: o orçamento/lance estão na campanha → o adset NÃO leva daily_budget/bid_strategy
     // (a Meta rejeita ter budget nos dois níveis). ABO: budget + lance no adset.
@@ -656,6 +659,8 @@ export class MetaCreationService {
       params["bid_strategy"] = "LOWEST_COST_WITHOUT_CAP";
     }
     if (conv.promotedObject) params["promoted_object"] = JSON.stringify(conv.promotedObject);
+    // destino do conjunto (CTWA/WhatsApp) — a Meta exige junto do promoted_object.page_id.
+    if (conv.destinationType) params["destination_type"] = conv.destinationType;
     const adsetId = await this.createOnAccount(account, "adsets", params);
     return { adsetId, targetingFallback: fallback };
   }
@@ -724,7 +729,7 @@ export class MetaCreationService {
   async deliveryEstimate(account: AdAccountRef, input: DeliveryEstimateInput, governor: MetaGovernor): Promise<DeliveryEstimate> {
     const accountId = normalizeAdAccountId(account.adAccountId);
     const { targeting } = await this.resolveTargeting(account, input.targeting);
-    const conv = resolveAdSetConversion(input.goal, input.pixelId);
+    const conv = resolveAdSetConversion(input.goal, input.pixelId ? { pixelId: input.pixelId } : {});
     const body = await callWithGovernor<RawDeliveryEstimatePage>(
       accountId,
       () =>

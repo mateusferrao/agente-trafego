@@ -218,19 +218,39 @@ export function resolveMetaCta(cta?: string): string {
   return (cta && CTA_TO_META[cta]) ?? DEFAULT_CTA;
 }
 
+/** promoted_object da Meta: pixel+evento (conversão offsite) OU page (lead-form / mensagens). */
+export type MetaPromotedObject =
+  | { readonly pixel_id: string; readonly custom_event_type: string }
+  | { readonly page_id: string };
+
 /** optimization_goal + billing_event + promoted_object p/ um adset que otimiza `goal`. */
 export interface MetaAdSetConversion {
   readonly optimizationGoal: string;
   readonly billingEvent: string;
-  readonly promotedObject?: { readonly pixel_id: string; readonly custom_event_type: string };
+  readonly promotedObject?: MetaPromotedObject;
+  /** destino do conjunto (ex: "WHATSAPP" p/ click-to-WhatsApp). Ausente = destino padrão do objetivo. */
+  readonly destinationType?: string;
 }
+
+/** Assets da conta que a resolução do adset pode precisar (Page p/ objeto promovido, pixel p/ conversão). */
+export interface AdSetConversionAssets {
+  readonly pixelId?: string;
+  readonly pageId?: string;
+}
+
+/** Destino CTWA (click-to-WhatsApp) — o produto opera 1 canal WhatsApp (CLAUDE §9). */
+const DESTINATION_WHATSAPP = "WHATSAPP";
 
 /**
  * Resolve a config de conversão do adset. Com pixel + evento mapeável → OFFSITE_CONVERSIONS
- * + promoted_object. Sem pixel: lead → LEAD_GENERATION; messaging → CONVERSATIONS;
- * app → APP_INSTALLS; senão OFFSITE_CONVERSIONS (exige pixel — a casca valida antes).
+ * + promoted_object. Sem pixel: lead → LEAD_GENERATION; messaging → CONVERSATIONS (destino
+ * WhatsApp); app → APP_INSTALLS; senão OFFSITE_CONVERSIONS (exige pixel — a casca valida antes).
+ *
+ * LEAD_GENERATION e CONVERSATIONS EXIGEM um `promoted_object.page_id` (a Meta recusa anexar
+ * anúncio a um conjunto sem "objeto pra promover"); por isso a Page da conta é threaded aqui.
  */
-export function resolveAdSetConversion(goal: ConversionGoal, pixelId?: string): MetaAdSetConversion {
+export function resolveAdSetConversion(goal: ConversionGoal, assets: AdSetConversionAssets = {}): MetaAdSetConversion {
+  const { pixelId, pageId } = assets;
   const customEvent = GOAL_TO_CUSTOM_EVENT_TYPE[goal];
   if (pixelId && customEvent && goal !== "messaging_started") {
     return {
@@ -239,8 +259,11 @@ export function resolveAdSetConversion(goal: ConversionGoal, pixelId?: string): 
       promotedObject: { pixel_id: pixelId, custom_event_type: customEvent },
     };
   }
-  if (goal === "messaging_started") return { optimizationGoal: "CONVERSATIONS", billingEvent: DEFAULT_BILLING_EVENT };
+  const pageObject = pageId ? { promotedObject: { page_id: pageId } as const } : {};
+  if (goal === "messaging_started") {
+    return { optimizationGoal: "CONVERSATIONS", billingEvent: DEFAULT_BILLING_EVENT, destinationType: DESTINATION_WHATSAPP, ...pageObject };
+  }
   if (goal === "app_install") return { optimizationGoal: "APP_INSTALLS", billingEvent: DEFAULT_BILLING_EVENT };
-  if (goal === "lead") return { optimizationGoal: "LEAD_GENERATION", billingEvent: DEFAULT_BILLING_EVENT };
+  if (goal === "lead") return { optimizationGoal: "LEAD_GENERATION", billingEvent: DEFAULT_BILLING_EVENT, ...pageObject };
   return { optimizationGoal: "OFFSITE_CONVERSIONS", billingEvent: DEFAULT_BILLING_EVENT };
 }

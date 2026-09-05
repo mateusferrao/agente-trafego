@@ -437,6 +437,9 @@ async function runFromScratchSaga(
       ...(isCbo ? {} : { dailyBudgetMinor: spec.dailyBudgetMinor }),
       goal,
       ...(spec.pixelId ? { pixelId: spec.pixelId } : {}),
+      // Page = objeto promovido do conjunto (LEAD_GENERATION/CONVERSATIONS exigem; sem ela a
+      // Meta recusa anexar o anúncio). Reusa a mesma Page do criativo (validada em apply-draft:173).
+      ...(spec.pageId ? { pageId: spec.pageId } : {}),
       targeting: spec.targeting ?? { kind: "advantage_plus" },
       status,
     });

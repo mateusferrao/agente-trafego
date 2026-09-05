@@ -155,6 +155,9 @@ export interface CreateAdSetInput {
   readonly dailyBudgetMinor?: number;
   readonly goal: ConversionGoal;
   readonly pixelId?: string;
+  /** Page da conta — objeto promovido do conjunto (LEAD_GENERATION/CONVERSATIONS exigem;
+   *  sem ela a Meta recusa anexar o anúncio: "conjunto sem objeto pra promover"). */
+  readonly pageId?: string;
   readonly targeting: TargetingSpec;
   readonly status: "active" | "paused";
 }
