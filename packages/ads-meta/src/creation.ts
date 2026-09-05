@@ -13,7 +13,7 @@ import type {
 import type { AudienceProfile, ConversionGoal, DeliveryEstimate, ResolvedAudienceSnapshot } from "@trafego/shared/types";
 import type { UploadMediaInput, VideoStatus } from "@trafego/shared/ports";
 import { AdsPlatformError } from "@trafego/shared/ports";
-import { MetaGraphClient, MetaApiError, META_GRAPH_VERSION } from "./client.js";
+import { MetaGraphClient, MetaApiError, META_GRAPH_VERSION, type BatchSubRequest, type BatchSubResponse } from "./client.js";
 import { callWithGovernor } from "./call-with-governor.js";
 import type { MetaGovernor } from "./governor.js";
 import { normalizeAdAccountId } from "./ids.js";
@@ -135,6 +135,180 @@ function mirrorAdsetParams(src: RawSourceAdset, campaignId: string, status: "act
 function dedupeNotes(notes: readonly ModernizationNote[]): ModernizationNote[] {
   const seen = new Set<string>();
   return notes.filter((n) => (seen.has(n.code) ? false : (seen.add(n.code), true)));
+}
+
+// ─── Duplicação de CAMPANHA em BATCH (poucas chamadas — evita o rate limit da rajada) ──────────
+// 1 GET aninhado (árvore) → 1 batch de /copies (casca+conjuntos+anúncios, referências) → 1 batch de
+// reconstrução só dos nós que a Meta recusou. Provado por spike real: o batch SÍNCRONO aceita
+// /copies + referências (≠ async_batch). Cada função de plano/classificação é PURA (testável sem IO).
+
+/** Árvore curada da fonte pra duplicar (1 GET aninhado). Campos crus do conjunto + criativo do ad. */
+export interface DupTreeAd {
+  readonly id: string;
+  readonly name: string | null;
+  readonly creativeId: string | null;
+}
+export interface DupTreeAdset {
+  readonly id: string;
+  readonly fields: RawSourceAdset;
+  readonly ads: readonly DupTreeAd[];
+}
+export interface DupTree {
+  readonly adsets: readonly DupTreeAdset[];
+}
+
+/** Resposta crua do GET aninhado (`campaign?fields=adsets{...,ads{...}}`). */
+interface RawTreeAdset extends RawSourceAdset {
+  readonly id?: string;
+  readonly ads?: { readonly data?: ReadonlyArray<{ readonly id?: string; readonly name?: string; readonly creative?: { readonly id?: string } }> };
+}
+interface RawTree {
+  readonly adsets?: { readonly data?: readonly RawTreeAdset[] };
+}
+
+/** Normaliza a árvore crua em `DupTree` (só o que a reconstrução precisa). PURA. */
+export function normalizeDupTree(raw: RawTree): DupTree {
+  const adsets = (raw.adsets?.data ?? [])
+    .filter((a): a is RawTreeAdset & { id: string } => Boolean(a.id))
+    .map((a) => ({
+      id: a.id,
+      fields: a,
+      ads: (a.ads?.data ?? [])
+        .filter((ad): ad is { id: string; name?: string; creative?: { id?: string } } => Boolean(ad.id))
+        .map((ad) => ({ id: ad.id, name: ad.name ?? null, creativeId: ad.creative?.id ?? null })),
+    }));
+  return { adsets };
+}
+
+/** O que cada op do batch de cópia representa (mapeia resultado→nó da árvore). */
+type CopySlot = { readonly kind: "campaign" } | { readonly kind: "adset"; readonly i: number } | { readonly kind: "ad"; readonly i: number; readonly j: number };
+type ReconSlot = { readonly kind: "adset"; readonly i: number } | { readonly kind: "ad"; readonly i: number; readonly j: number };
+
+const COPY_REF_CAMPAIGN = "{result=c:$.copied_campaign_id}";
+const statusOptionOf = (s: "active" | "paused") => (s === "active" ? STATUS_ACTIVE : STATUS_PAUSED);
+
+/** Monta o batch de `/copies`: casca da campanha (name=c) → conjuntos (ref campanha) → anúncios
+ *  (ref conjunto). O conjunto vem ANTES dos seus anúncios (a referência exige o nomeado antes). PURA. */
+export function buildCopyBatch(sourceCampaignId: string, tree: DupTree, status: "active" | "paused", renameSuffix?: string): { requests: BatchSubRequest[]; slots: CopySlot[] } {
+  const so = statusOptionOf(status);
+  const requests: BatchSubRequest[] = [
+    { method: "POST", relativeUrl: `${sourceCampaignId}/${COPIES_EDGE}`, name: "c", omitResponseOnSuccess: false, body: { deep_copy: "false", status_option: so, ...(renameSuffix ? { rename_options: JSON.stringify({ rename_suffix: renameSuffix }) } : {}) } },
+  ];
+  const slots: CopySlot[] = [{ kind: "campaign" }];
+  tree.adsets.forEach((adset, i) => {
+    requests.push({ method: "POST", relativeUrl: `${adset.id}/${COPIES_EDGE}`, name: `as${i}`, omitResponseOnSuccess: false, body: { deep_copy: "false", status_option: so, campaign_id: COPY_REF_CAMPAIGN } });
+    slots.push({ kind: "adset", i });
+    adset.ads.forEach((ad, j) => {
+      requests.push({ method: "POST", relativeUrl: `${ad.id}/${COPIES_EDGE}`, body: { deep_copy: "false", status_option: so, adset_id: `{result=as${i}:$.copied_adset_id}` } });
+      slots.push({ kind: "ad", i, j });
+    });
+  });
+  return { requests, slots };
+}
+
+/** Corpo (JSON) de um item do batch. `null`/erro/timeout → objeto vazio. PURA. */
+function batchBody(res: BatchSubResponse | null): Record<string, unknown> {
+  if (!res?.body) return {};
+  try { return JSON.parse(res.body) as Record<string, unknown>; } catch { return {}; }
+}
+
+/** Constrói um `MetaApiError` a partir de um item de erro do batch (ou `null` se sucesso) — pra
+ *  reusar `isNotDuplicableCopyError` + `toAdsError` (mapeamento de rate-limit/etc). PURA. */
+function batchError(res: BatchSubResponse | null): MetaApiError | null {
+  if (!res) return new MetaApiError("batch: sub-request expirou", undefined, undefined, 504);
+  if (res.code >= 200 && res.code < 300) return null;
+  const err = (batchBody(res) as { error?: { message?: string; code?: number; error_subcode?: number; error_user_msg?: string; error_user_title?: string } }).error;
+  return new MetaApiError(err?.message ?? "batch: sub-request falhou", err?.code, err?.error_subcode, res.code, undefined, err?.error_user_msg, err?.error_user_title);
+}
+
+/** Id da cópia da CAMPANHA (a casca sempre copia; falha aqui = nada criado → propaga, sem revert). */
+export function extractCopiedCampaignId(results: ReadonlyArray<BatchSubResponse | null>): string {
+  const err = batchError(results[0] ?? null);
+  if (err) throw err;
+  const id = batchBody(results[0] ?? null)["copied_campaign_id"];
+  if (typeof id !== "string" || !id) throw new Error("duplicação batch: cópia da campanha não retornou id");
+  return id;
+}
+
+export interface CopyClassification {
+  readonly copiedAdsetIds: ReadonlyArray<string | null>; // por índice de conjunto (null = reconstruir)
+  readonly copiedAdIds: readonly string[];
+  readonly adsToReconstruct: ReadonlyArray<{ readonly i: number; readonly j: number }>; // ad sob conjunto COPIADO
+  readonly reconstructAdsets: readonly number[];
+}
+
+/** Classifica os resultados do batch de cópia (a campanha já foi validada por `extractCopiedCampaignId`):
+ *  200 → copiado; 400 `not_duplicable` → reconstruir; qualquer outro erro → LANÇA (a casca reverte). PURA. */
+export function classifyCopyResults(tree: DupTree, slots: readonly CopySlot[], results: ReadonlyArray<BatchSubResponse | null>): CopyClassification {
+  const copiedAdsetIds: (string | null)[] = tree.adsets.map(() => null);
+  const copiedAdIds: string[] = [];
+  const adsToReconstruct: { i: number; j: number }[] = [];
+  const reconstructAdsets: number[] = [];
+  for (let k = 1; k < slots.length; k++) {
+    const slot = slots[k]!;
+    if (slot.kind === "campaign") continue; // k>=1 nunca é a campanha; satisfaz o narrowing
+    const res = results[k] ?? null;
+    const err = batchError(res);
+    if (slot.kind === "adset") {
+      if (!err) { copiedAdsetIds[slot.i] = String(batchBody(res)["copied_adset_id"] ?? ""); continue; }
+      if (isNotDuplicableCopyError(err)) { reconstructAdsets.push(slot.i); continue; }
+      throw err;
+    } else {
+      if (reconstructAdsets.includes(slot.i)) continue; // pai vai ser reconstruído → seus ads entram junto
+      if (!err) { copiedAdIds.push(String(batchBody(res)["copied_ad_id"] ?? "")); continue; }
+      if (isNotDuplicableCopyError(err)) { adsToReconstruct.push({ i: slot.i, j: slot.j }); continue; }
+      throw err;
+    }
+  }
+  return { copiedAdsetIds, copiedAdIds, adsToReconstruct, reconstructAdsets };
+}
+
+/** Corpo do `POST /ads` da reconstrução (referencia o criativo existente). PURA. */
+function reconstructAdBody(ad: DupTreeAd, adsetIdOrRef: string, status: "active" | "paused", renameSuffix?: string): Record<string, string> {
+  return {
+    name: withRenameSuffix(ad.name ?? "anúncio", renameSuffix),
+    adset_id: adsetIdOrRef,
+    status: status === "active" ? STATUS_ACTIVE : STATUS_PAUSED,
+    creative: JSON.stringify({ creative_id: ad.creativeId }),
+  };
+}
+
+/** Monta o batch de reconstrução: conjuntos recusados (espelho + seus anúncios ref) + anúncios
+ *  soltos recusados sob conjuntos copiados. Anúncio-fonte sem criativo → `not_duplicable`. PURA. */
+export function buildReconstructBatch(accountId: string, newCampaignId: string, tree: DupTree, cls: CopyClassification, status: "active" | "paused", renameSuffix?: string): { requests: BatchSubRequest[]; slots: ReconSlot[] } {
+  const requests: BatchSubRequest[] = [];
+  const slots: ReconSlot[] = [];
+  for (const i of cls.reconstructAdsets) {
+    const adset = tree.adsets[i]!;
+    requests.push({ method: "POST", relativeUrl: `${accountId}/adsets`, name: `ras${i}`, omitResponseOnSuccess: false, body: mirrorAdsetParams(adset.fields, newCampaignId, status, renameSuffix) });
+    slots.push({ kind: "adset", i });
+    adset.ads.forEach((ad, j) => {
+      if (!ad.creativeId) throw new AdsPlatformError("not_duplicable", "anúncio-fonte sem criativo reutilizável", undefined);
+      requests.push({ method: "POST", relativeUrl: `${accountId}/ads`, body: reconstructAdBody(ad, `{result=ras${i}:$.id}`, status, renameSuffix) });
+      slots.push({ kind: "ad", i, j });
+    });
+  }
+  for (const { i, j } of cls.adsToReconstruct) {
+    const ad = tree.adsets[i]!.ads[j]!;
+    if (!ad.creativeId) throw new AdsPlatformError("not_duplicable", "anúncio-fonte sem criativo reutilizável", undefined);
+    requests.push({ method: "POST", relativeUrl: `${accountId}/ads`, body: reconstructAdBody(ad, cls.copiedAdsetIds[i]!, status, renameSuffix) });
+    slots.push({ kind: "ad", i, j });
+  }
+  return { requests, slots };
+}
+
+/** Ids criados na reconstrução (qualquer erro na reconstrução → LANÇA → a casca reverte). PURA. */
+export function collectReconstructIds(slots: readonly ReconSlot[], results: ReadonlyArray<BatchSubResponse | null>): { adsetIds: string[]; adIds: string[] } {
+  const adsetIds: string[] = [];
+  const adIds: string[] = [];
+  for (let k = 0; k < slots.length; k++) {
+    const err = batchError(results[k] ?? null);
+    if (err) throw err;
+    const id = String(batchBody(results[k] ?? null)["id"] ?? "");
+    if (slots[k]!.kind === "adset") adsetIds.push(id);
+    else adIds.push(id);
+  }
+  return { adsetIds, adIds };
 }
 
 /** Resposta do `/delivery_estimate` (v26): `data:[{ estimate_dau, estimate_mau_*, estimate_ready }]`.
