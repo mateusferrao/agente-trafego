@@ -844,6 +844,18 @@ export function makeConversationNodes(
     // Meta → sem guardrail/dry-run de ads). Monta o eco determinístico + congela a mudança.
     const configCalls = allCalls.filter((c) => isConfirmableConfigTool(c.name));
     if (configCalls.length > 0) {
+      // Concierge (grupo multi-conta): config precisa de UMA conta em foco. Sem `agentId` (o
+      // set_focus não rodou antes nesta rodada), NÃO monta um eco quebrado — pede pra focar
+      // (o próximo passo/turno já opera na conta). Fix same-turn: com set_focus rodando antes,
+      // o ctx.agentId já vem preenchido e cai nos ramos normais abaixo.
+      if (!ctx.agentId) {
+        return {
+          messages: answerToolCalls(
+            allCalls,
+            'Me diz em qual conta focar primeiro (ex: "foca na Loja X") que aí eu ajusto a configuração dela por aqui mesmo.',
+          ),
+        };
+      }
       // config + escrita Meta no MESMO turno: não engula a escrita em silêncio — peça
       // uma coisa de cada vez (o gate trata 1 pendência por turno). §UX: nunca sumir com o pedido.
       const alsoMetaWrite = allCalls.some((c) => WRITE_TOOL_NAMES.has(c.name) || c.name === REVERT_TOOL_NAME);

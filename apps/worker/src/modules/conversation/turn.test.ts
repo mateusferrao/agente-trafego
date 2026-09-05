@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { agents, type Database } from "@trafego/db";
-import { buildInContextAllow, configToolsFor, deliverReply, resolveFocusedAgent } from "./turn.js";
+import { buildInContextAllow, configToolsFor, deliverReply, GROUP_CONCIERGE_ALLOW, resolveFocusedAgent } from "./turn.js";
 import type { SendToConversation } from "../notify/send-to-contact.js";
 import {
   AGENT_TOOL_NAMES,
   CONFIG_CHAT_TOOL_NAMES,
+  GROUP_CONCIERGE_TOOL_NAMES,
   REFINE_TOOL_NAMES,
   WRITE_TOOL_NAMES,
 } from "../../graphs/whatsapp-conversation/tools.js";
@@ -39,6 +40,19 @@ describe("configToolsFor (kill-switch da auto-config por chat, S2.3)", () => {
     const r = await configToolsFor(fakeDb({ bySource: { playbook: "suggest", llm: "suggest" }, autoConfigViaChat: false }), "o", "a");
     expect(r.enabled).toBe(false);
     expect(r.tools).toEqual([]);
+  });
+});
+
+describe("GROUP_CONCIERGE_ALLOW (fix same-turn: focar+configurar no mesmo papo)", () => {
+  it("binda config (set_notifications/set_goal) além dos reads e do set_focus", () => {
+    expect(GROUP_CONCIERGE_ALLOW.has("set_notifications")).toBe(true);
+    expect(GROUP_CONCIERGE_ALLOW.has("set_goal")).toBe(true);
+    expect(GROUP_CONCIERGE_ALLOW.has("set_focus")).toBe(true);
+    expect(GROUP_CONCIERGE_ALLOW.has("get_account_status")).toBe(true);
+  });
+  it("é superconjunto do concierge de grupo + config", () => {
+    for (const t of GROUP_CONCIERGE_TOOL_NAMES) expect(GROUP_CONCIERGE_ALLOW.has(t)).toBe(true);
+    for (const t of CONFIG_CHAT_TOOL_NAMES) expect(GROUP_CONCIERGE_ALLOW.has(t)).toBe(true);
   });
 });
 
