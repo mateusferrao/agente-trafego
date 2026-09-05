@@ -199,7 +199,12 @@ export function createApprovalsService(deps: ApprovalsDeps) {
         return { id: resolved.id, status: resolved.status };
       }
 
-      // aprovar: o WORKER re-checa fresco + aplica (escrita fora da casca HTTP).
+      // aprovar: o WORKER re-checa fresco + aplica (escrita fora da casca HTTP). ANTES de enfileirar,
+      // zera o desfecho da tentativa ANTERIOR — uma aprovação que falhou/foi limitada segue pendente
+      // COM applyOutcome preenchido, e o polling do card leria esse desfecho velho como se fosse o
+      // resultado desta reaprovação (mostrando "falhou/não criei" enquanto o novo apply roda e cria
+      // de fato). Síncrono aqui garante que o 1º poll veja `null` até o worker gravar o fresco.
+      await deps.approvals.clearApplyOutcome(approvalId);
       await deps.scheduler.enqueue({
         queue: APPROVAL_APPLY_QUEUE,
         name: APPROVAL_APPLY_JOB,

@@ -125,6 +125,12 @@ export interface ApprovalPort {
   /** Grava o desfecho da aplicação SEM mudar o status (Fatia "depois") — usado no `failed`, que
    *  mantém a aprovação `pending` (reaprovável) mas registra que a última tentativa falhou. */
   markApplyOutcome(id: ApprovalId, applyOutcome: ApplyOutcome, resolvedReason?: string): Promise<void>;
+  /** Zera o desfecho da ÚLTIMA tentativa (applyOutcome + resolvedReason) de uma aprovação AINDA
+   *  pendente — chamado ao REAPROVAR: uma tentativa `failed`/`limited` deixa o desfecho gravado na
+   *  linha pendente, e sem zerar isso o polling do card lê o desfecho VELHO e o reporta como se
+   *  fosse o resultado desta nova tentativa (mostra "falhou/não criei" enquanto o novo apply roda e
+   *  de fato aplica). Só afeta linha `pending` (nunca apaga o motivo de uma já resolvida). */
+  clearApplyOutcome(id: ApprovalId): Promise<void>;
   /**
    * Atualiza os PARÂMETROS da ação de uma aprovação PENDENTE de `kind:"action"` (C — editar o
    * valor antes de aprovar). Só mexe no `action` (params já validados pelo core); o clamp do
