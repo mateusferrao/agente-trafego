@@ -57,7 +57,7 @@ import {
   type QualityDefaultsOutput,
 } from "./schema.js";
 import type { PlaybookCondition } from "@trafego/shared/types";
-import { computeAppliedActions, DAY_MS, entityIdsMissingNames } from "../../lib/applied-actions.js";
+import { collapseActivationGroups, computeAppliedActions, DAY_MS, entityIdsMissingNames } from "../../lib/applied-actions.js";
 
 /** Janela recente p/ listar as conversões que a conta reportou (dias). */
 const AVAILABLE_CONVERSIONS_WINDOW_DAYS = 30;
@@ -579,7 +579,10 @@ export function createAgentsService(deps: AgentsDeps) {
     for (const d of droppedActions) if (!d.action.target.name) entityIds.add(d.action.target.id);
     const nameByEntityId = await loadEntityNames(summary.agentId, entityIds);
 
-    const applied = computeAppliedActions(calls, deps.revertTtlDays, nameByEntityId).map((a) => ({
+    // colapsa os N resumes de uma ATIVAÇÃO num único item (a raiz) — ativar uma duplicata não
+    // polui a lista com 1 card por entidade; reverter a campanha pausa a árvore toda.
+    const idempotencyByToolCallId = new Map(calls.map((r) => [r.id, r.idempotencyKey]));
+    const applied = collapseActivationGroups(computeAppliedActions(calls, deps.revertTtlDays, nameByEntityId), idempotencyByToolCallId).map((a) => ({
       ...a,
       // "O que o agente fez" é cross-run (ver acima); marca quando a ação foi
       // aplicada por uma análise DIFERENTE da que esta página está mostrando.

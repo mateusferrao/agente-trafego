@@ -35,6 +35,42 @@ export interface AppliedAction {
   readonly revertBlockedReason: string | null;
 }
 
+/** Idempotência de uma ativação de rascunho: `draft:<draftId>:activate:<entityId>` (apply-activation).
+ *  Todos os resumes de UMA ativação compartilham o prefixo `draft:<draftId>:activate:`. */
+const ACTIVATION_IDEMPOTENCY_RE = /^draft:(.+):activate:/;
+/** Nível de entidade → rank (campanha é a raiz da árvore ativada). */
+const ENTITY_LEVEL_RANK: Record<string, number> = { campaign: 3, adset: 2, ad: 1 };
+
+/**
+ * Colapsa os resumes de UMA ativação (mesmo prefixo `draft:<id>:activate:`) num ÚNICO item = o nó
+ * RAIZ (maior nível: campanha > conjunto > anúncio). Ativar cria N resumes (a Meta não cascateia
+ * status), mas pro usuário é UMA ação — reverter a raiz (pausar a campanha) já para a árvore toda.
+ * Ações que não são de ativação passam inalteradas. Preserva a ordem. PURA.
+ */
+export function collapseActivationGroups(
+  actions: readonly AppliedAction[],
+  idempotencyByToolCallId: ReadonlyMap<string, string>,
+): AppliedAction[] {
+  const groupOf = (a: AppliedAction): string | undefined =>
+    ACTIVATION_IDEMPOTENCY_RE.exec(idempotencyByToolCallId.get(a.toolCallId) ?? "")?.[1];
+  const rootToolCallByGroup = new Map<string, string>();
+  const bestRankByGroup = new Map<string, number>();
+  for (const a of actions) {
+    const group = groupOf(a);
+    if (!group) continue;
+    const rank = ENTITY_LEVEL_RANK[a.targetLevel] ?? 0;
+    if (rank > (bestRankByGroup.get(group) ?? -1)) {
+      bestRankByGroup.set(group, rank);
+      rootToolCallByGroup.set(group, a.toolCallId);
+    }
+  }
+  const roots = new Set(rootToolCallByGroup.values());
+  return actions.filter((a) => {
+    const group = groupOf(a);
+    return group === undefined || roots.has(a.toolCallId);
+  });
+}
+
 /** Entidades-alvo sem `name` embutido no tool_call (legado) — base do fallback por lookup. */
 export function entityIdsMissingNames(rows: readonly ToolCallRow[]): Set<string> {
   const ids = new Set<string>();

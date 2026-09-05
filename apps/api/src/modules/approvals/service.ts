@@ -8,7 +8,7 @@ import { ACTION_PARAM_CURRENT_MINOR, ACTION_PARAM_TARGETING } from "@trafego/sha
 import { computeApplyPreview, describeActionOutcome, describeActivationOutcome, describeCreatedDraft, describeDraftOutcome, editBudgetActionValue, projectBudgetTargetMinor, readModernizations, resolveEnabledTools, type OutcomeDetail } from "@trafego/core";
 import { badRequest, notFound } from "../../middleware/error-handler.js";
 import { buildExplicitFromInput, serializeExplicitAudience } from "../../lib/audience.js";
-import { computeAppliedActions, DAY_MS } from "../../lib/applied-actions.js";
+import { collapseActivationGroups, computeAppliedActions, DAY_MS } from "../../lib/applied-actions.js";
 import type {
   ApprovalOutcomeOutput,
   ApprovalOutput,
@@ -279,9 +279,15 @@ export function createApprovalsService(deps: ApprovalsDeps) {
         .where(and(eq(agents.orgId, orgId), gte(agentToolCalls.createdAt, since)));
 
       const accountByToolCallId = new Map(rows.map((r) => [r.id, { accountId: r.accountId, accountName: r.accountName ?? r.accountId }]));
-      const actions = computeAppliedActions(rows, deps.revertTtlDays, new Map());
+      // colapsa os N resumes de uma ATIVAÇÃO num único card (a raiz da árvore) — reverter a
+      // campanha pausa tudo; sem isso, ativar uma duplicata polui a lista com 1 card por entidade.
+      const idempotencyByToolCallId = new Map(rows.map((r) => [r.id, r.idempotencyKey]));
+      // colapsa ANTES de filtrar undoable: cada ativação vira só a raiz; reverter a campanha some
+      // com o grupo (sem os filhos ressurgirem como cards novos no reload).
+      const actions = collapseActivationGroups(computeAppliedActions(rows, deps.revertTtlDays, new Map()), idempotencyByToolCallId).filter(
+        (a) => a.undoable || a.revertBlocked,
+      );
       return actions
-        .filter((a) => a.undoable || a.revertBlocked)
         .map((a) => {
           const acc = accountByToolCallId.get(a.toolCallId);
           return {
