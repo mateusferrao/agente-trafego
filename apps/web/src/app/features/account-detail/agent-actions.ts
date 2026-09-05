@@ -11,6 +11,10 @@ type Applied = LastRunActionsOutput['applied'][number];
 type Suggested = LastRunActionsOutput['suggested'][number];
 type Dropped = LastRunActionsOutput['dropped'][number];
 
+/** Poll do desfecho do revert (o worker reverte async) — "Revertendo…" → revertido/bloqueado/timeout. */
+const REVERT_POLL_MS = 1500;
+const REVERT_POLL_TIMEOUT_MS = 30_000;
+
 /**
  * Mini-surface (5a/5b): ações que o agente APLICOU (com reverter, dentro do TTL —
  * cross-run) + as que SUGERIU e precisam do seu OK (cross-run) desta conta.
@@ -173,18 +177,49 @@ export class AgentActions implements OnInit {
     });
     if (!confirmed) return;
     this.reverting.update((s) => new Set(s).add(a.toolCallId));
+    // o undo é ASYNC (fila) → não marca otimista (pode ser barrado por drift). Enfileira e faz POLL
+    // do desfecho real (igual ao polling da aprovação): revertido / bloqueado / ainda processando.
     this.api.undoAction(this.accountId(), a.toolCallId, force).subscribe({
-      next: () => {
-        // undo é assíncrono (fila) — marca revertido otimista + avisa. Se o re-check
-        // barrar por drift, o próximo carregamento mostra "não revertida" + "mesmo assim".
-        this.applied.update((list) =>
-          list.map((x) => (x.toolCallId === a.toolCallId ? { ...x, reverted: true, revertBlocked: false } : x)),
-        );
+      next: () => this.pollRevert(a.toolCallId, Date.now()),
+      error: () => {
         this.clearReverting(a.toolCallId);
-        toast.success('Revertendo. A ação volta ao estado anterior.');
+        toast.error('Não consegui reverter agora. Tente de novo em instantes.');
       },
-      error: () => this.clearReverting(a.toolCallId),
     });
+  }
+
+  /** Acompanha o desfecho do revert relendo o last-run: `reverted` = sucesso; `revertBlocked` =
+   *  drift ("reverter mesmo assim"); nada mudou no prazo = ainda processando. */
+  private pollRevert(toolCallId: string, startedAt: number): void {
+    if (Date.now() - startedAt > REVERT_POLL_TIMEOUT_MS) {
+      this.clearReverting(toolCallId);
+      toast.info('Ainda revertendo — atualize em instantes pra ver o resultado.');
+      return;
+    }
+    this.api.lastRunActions(this.accountId()).subscribe({
+      next: (r) => {
+        const fresh = r.applied.find((x) => x.toolCallId === toolCallId);
+        if (fresh?.reverted) {
+          this.updateApplied(fresh);
+          this.clearReverting(toolCallId);
+          toast.success('Ação revertida — voltou ao estado anterior.');
+          return;
+        }
+        if (fresh?.revertBlocked) {
+          this.updateApplied(fresh);
+          this.clearReverting(toolCallId);
+          toast.error(fresh.revertBlockedReason ? `Não reverti: ${fresh.revertBlockedReason}` : 'Não consegui reverter — a entidade mudou desde então.');
+          return;
+        }
+        setTimeout(() => this.pollRevert(toolCallId, startedAt), REVERT_POLL_MS);
+      },
+      error: () => setTimeout(() => this.pollRevert(toolCallId, startedAt), REVERT_POLL_MS),
+    });
+  }
+
+  /** Substitui um item aplicado pelo estado fresco (reverted/revertBlocked). */
+  private updateApplied(fresh: Applied): void {
+    this.applied.update((list) => list.map((x) => (x.toolCallId === fresh.toolCallId ? fresh : x)));
   }
 
   private clearReverting(id: string): void {

@@ -20,6 +20,11 @@ interface AccountGroup<T> {
   readonly items: readonly T[];
 }
 
+/** Poll do desfecho do revert (o worker reverte async) — "Revertendo…" → revertido/bloqueado/timeout.
+ *  Mesmo espírito do polling da aprovação (não marca otimista o que ainda não confirmou). */
+const REVERT_POLL_MS = 1500;
+const REVERT_POLL_TIMEOUT_MS = 30_000;
+
 
 /** Agrupa por conta (caixa de entrada legível p/ gestor multi-conta) — genérico:
  *  serve tanto pendentes (ApprovalOutput) quanto revertíveis (RevertibleActionOutput). */
@@ -614,13 +619,50 @@ export class ApprovalsPage implements OnInit {
 
   private runRevert(a: RevertibleActionOutput, force: boolean, mode: 'pause' | 'archive' | undefined, successMsg: string): void {
     this.markReverting(a.toolCallId);
+    // o worker reverte ASYNC → não removo otimista (o undo pode ser barrado por drift). Enfileira
+    // e faz POLL do resultado real (igual ao polling da aprovação): revertido / bloqueado / timeout.
     this.analysisApi.undoAction(a.accountId, a.toolCallId, force, mode).subscribe({
-      next: () => {
-        this.removeRevertible(a.toolCallId);
-        toast.success(successMsg);
+      next: () => this.pollRevert(a.toolCallId, Date.now(), successMsg),
+      error: () => {
+        this.clearReverting(a.toolCallId);
+        toast.error('Não consegui reverter agora. Tente de novo em instantes.');
       },
-      error: () => this.clearReverting(a.toolCallId),
     });
+  }
+
+  /** Acompanha o desfecho do revert relendo os reversíveis: some da lista = revertido; volta com
+   *  `revertBlocked` = drift (mostra "reverter mesmo assim"); some do prazo = ainda processando. */
+  private pollRevert(toolCallId: string, startedAt: number, successMsg: string): void {
+    if (Date.now() - startedAt > REVERT_POLL_TIMEOUT_MS) {
+      this.clearReverting(toolCallId);
+      toast.info('Ainda revertendo — atualize em instantes pra ver o resultado.');
+      return;
+    }
+    this.api.listRevertible().subscribe({
+      next: (rows) => {
+        const found = rows.find((r) => r.toolCallId === toolCallId);
+        if (!found) {
+          this.removeRevertible(toolCallId);
+          toast.success(successMsg);
+          return;
+        }
+        if (found.revertBlocked) {
+          this.updateRevertible(found);
+          this.clearReverting(toolCallId);
+          toast.error(found.revertBlockedReason ? `Não reverti: ${found.revertBlockedReason}` : 'Não consegui reverter — a entidade mudou desde então.');
+          return;
+        }
+        setTimeout(() => this.pollRevert(toolCallId, startedAt, successMsg), REVERT_POLL_MS);
+      },
+      error: () => setTimeout(() => this.pollRevert(toolCallId, startedAt, successMsg), REVERT_POLL_MS),
+    });
+  }
+
+  /** Substitui um revertível pelo estado fresco (ex: virou `revertBlocked` após o drift). */
+  private updateRevertible(fresh: RevertibleActionOutput): void {
+    this.revertibleGroups.update((gs) =>
+      gs.map((g) => ({ ...g, items: g.items.map((x) => (x.toolCallId === fresh.toolCallId ? fresh : x)) })),
+    );
   }
 
   private removePending(id: string): void {
