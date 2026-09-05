@@ -1,5 +1,6 @@
 import type {
   AdAccountRef,
+  CampaignBudgetLayout,
   CreateAdCreativeInput,
   CreateAdInput,
   CreateAdSetInput,
@@ -571,6 +572,24 @@ export class MetaCreationService {
       accessToken: account.accessToken,
       params: { [BUDGET_FIELD_DAILY]: String(dailyBudgetMinor) },
     });
+  }
+
+  /** Lê o modelo de orçamento de uma campanha: `daily_budget` na campanha = CBO; ausente = ABO
+   *  (budget nos conjuntos). O caller decide ONDE aplicar o novo budget (setar na campanha ABO
+   *  liga CBO e a Meta recusa se os conjuntos têm metas diferentes). */
+  async getCampaignBudgetLayout(account: AdAccountRef, campaignId: string): Promise<CampaignBudgetLayout> {
+    const { data } = await this.client.request<{ daily_budget?: string; adsets?: { data?: ReadonlyArray<{ id?: string; daily_budget?: string }> } }>({
+      method: "GET",
+      path: campaignId,
+      accessToken: account.accessToken,
+      params: { fields: `${BUDGET_FIELD_DAILY},adsets.limit(${TREE_CHILD_LIMIT}){id,${BUDGET_FIELD_DAILY}}` },
+    });
+    return {
+      campaignDailyMinor: data.daily_budget ? Number(data.daily_budget) : null,
+      adsets: (data.adsets?.data ?? [])
+        .filter((a): a is { id: string; daily_budget?: string } => Boolean(a.id))
+        .map((a) => ({ id: a.id, dailyMinor: Number(a.daily_budget ?? 0) })),
+    };
   }
 
   /** POST num edge da conta (campaigns/adsets/adcreatives/ads) → id criado. */

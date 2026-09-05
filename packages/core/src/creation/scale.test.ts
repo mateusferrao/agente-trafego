@@ -1,6 +1,34 @@
 import { describe, expect, it } from "vitest";
 import type { CampaignDraft } from "@trafego/shared";
-import { buildDuplicateInput, planScaleMove } from "./scale.js";
+import { buildDuplicateInput, planScaleMove, planScaledBudget } from "./scale.js";
+
+describe("planScaledBudget", () => {
+  it("CBO (campaignDailyMinor presente) → seta o alvo na campanha", () => {
+    const plan = planScaledBudget({ campaignDailyMinor: 4000, adsets: [{ id: "AS1", dailyMinor: 4000 }] }, 6000);
+    expect(plan).toEqual({ kind: "campaign", dailyMinor: 6000 });
+  });
+
+  it("ABO → distribui o alvo entre os conjuntos proporcional ao atual, com SOMA EXATA = alvo", () => {
+    const plan = planScaledBudget({ campaignDailyMinor: null, adsets: [{ id: "A", dailyMinor: 1000 }, { id: "B", dailyMinor: 3000 }] }, 6000);
+    expect(plan.kind).toBe("adsets");
+    if (plan.kind !== "adsets") throw new Error("esperava adsets");
+    expect(plan.budgets.reduce((s, b) => s + b.dailyMinor, 0)).toBe(6000); // total EXATO
+    // proporcional: A tinha 25% (1500), B 75% (4500)
+    expect(plan.budgets.find((b) => b.id === "A")!.dailyMinor).toBe(1500);
+    expect(plan.budgets.find((b) => b.id === "B")!.dailyMinor).toBe(4500);
+  });
+
+  it("ABO com resto de arredondamento → soma ainda EXATA (resto vai pros maiores)", () => {
+    const plan = planScaledBudget({ campaignDailyMinor: null, adsets: [{ id: "A", dailyMinor: 1 }, { id: "B", dailyMinor: 1 }, { id: "C", dailyMinor: 1 }] }, 100);
+    if (plan.kind !== "adsets") throw new Error("esperava adsets");
+    expect(plan.budgets.reduce((s, b) => s + b.dailyMinor, 0)).toBe(100); // 34+33+33
+  });
+
+  it("ABO sem orçamento base (defensivo) → cai no nível campanha", () => {
+    const plan = planScaledBudget({ campaignDailyMinor: null, adsets: [] }, 6000);
+    expect(plan).toEqual({ kind: "campaign", dailyMinor: 6000 });
+  });
+});
 
 describe("planScaleMove", () => {
   it("CBO (budget na campanha) → sobe o budget da campanha, clampado à faixa segura (eco = valor real)", () => {

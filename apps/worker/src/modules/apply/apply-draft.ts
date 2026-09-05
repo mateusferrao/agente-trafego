@@ -7,7 +7,7 @@
 import { and, count, eq, gte, inArray, sql } from "drizzle-orm";
 import { agentToolCalls, approvals, auditLog, campaignDrafts, guardrailConfigs } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
-import { applyCreationGuardrails, buildDuplicateInput, goalNounPt } from "@trafego/core";
+import { applyCreationGuardrails, buildDuplicateInput, goalNounPt, planScaledBudget, readModernizations, type ScaledBudgetPlan } from "@trafego/core";
 import { DEFAULT_CONVERSION_GOAL, toGuardrailConfig, type CampaignDraft, type OrgId } from "@trafego/shared";
 import type { AgentId, ApprovalId, DraftId, RunId } from "@trafego/shared";
 import { AdsPlatformError, type AdAccountRef } from "@trafego/shared/ports";
@@ -222,8 +222,30 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
         await persist({ copiedId: dup.copiedId, childIds: dup.childIds, childAdsetIds: dup.childAdsetIds, modernizations: dup.modernizations });
       }
       if (!createdIds["budgetApplied"]) {
-        await ports.ads.setEntityBudget(ref, createdIds["copiedId"] as string, pausedDraft.spec.dailyBudgetMinor);
-        await persist({ budgetApplied: true });
+        const copiedId = createdIds["copiedId"] as string;
+        const target = pausedDraft.spec.dailyBudgetMinor;
+        // Duplicata de CAMPANHA: decide o NÍVEL do budget pelo modelo (setar na campanha ABO liga
+        // CBO e a Meta recusa se os conjuntos têm metas diferentes). CBO → campanha; ABO → distribui
+        // entre os conjuntos (soma EXATA = alvo) e avisa o dono. Adset-level → seta no conjunto.
+        if (pausedDraft.sourceRef?.level === "campaign") {
+          // Snapshot do PLANO na 1ª vez (dos conjuntos ORIGINAIS): um retry reaplica o MESMO plano
+          // (setEntityBudget é idempotente), sem re-derivar de conjuntos já parcialmente ajustados.
+          let plan = createdIds["budgetPlan"] as ScaledBudgetPlan | undefined;
+          if (!plan) {
+            plan = planScaledBudget(await ports.ads.getCampaignBudgetLayout(ref, copiedId), target);
+            await persist({ budgetPlan: plan });
+          }
+          if (plan.kind === "campaign") {
+            await ports.ads.setEntityBudget(ref, copiedId, plan.dailyMinor);
+            await persist({ budgetApplied: true });
+          } else {
+            for (const b of plan.budgets) await ports.ads.setEntityBudget(ref, b.id, b.dailyMinor);
+            await persist({ budgetApplied: true, modernizations: [...readModernizations(createdIds), { code: "budget_distributed_across_adsets" as const }] });
+          }
+        } else {
+          await ports.ads.setEntityBudget(ref, copiedId, target);
+          await persist({ budgetApplied: true });
+        }
       }
     } else {
       await runFromScratchSaga(ports.ads, pausedDraft, ref, createdIds, persist);

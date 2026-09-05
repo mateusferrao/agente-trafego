@@ -72,6 +72,8 @@ function modernizationNotePt(note: ModernizationNote): string {
   switch (note.code) {
     case "attribution_window_modernized":
       return "Obs: ajustei a janela de atribuição pra 1 dia — a Meta descontinuou a janela original nesse objetivo.";
+    case "budget_distributed_across_adsets":
+      return "Obs: essa campanha usa orçamento por conjunto, então dividi o novo orçamento entre os conjuntos na mesma proporção — o total que você pediu foi mantido.";
   }
 }
 
