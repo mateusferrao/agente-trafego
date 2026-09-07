@@ -211,6 +211,24 @@ describe("parseInbound", () => {
     expect(msg).toMatchObject({ kind: "image", image: { base64: "Z", mimetype: "image/png" } });
   });
 
+  // aninha N wrappers ephemeralMessage em torno de um payload (estressa o cap anti-loop).
+  const nestEphemeral = (inner: Record<string, unknown>, depth: number): Record<string, unknown> => {
+    let node: Record<string, unknown> = inner;
+    for (let i = 0; i < depth; i++) node = { ephemeralMessage: { message: node } };
+    return node;
+  };
+
+  it("aninhamento DENTRO do cap de profundidade → ainda desembrulha (vídeo)", () => {
+    // 6 wrappers = o teto (UNWRAP_MAX_DEPTH); ainda alcança o videoMessage.
+    const msg = parseInbound(upsert({ message: nestEphemeral({ videoMessage: { url: "x", mimetype: "video/mp4" } }, 6) }));
+    expect(msg).toMatchObject({ kind: "video" });
+  });
+
+  it("aninhamento patológico ACIMA do cap → null (silêncio, sem loop)", () => {
+    // 12 wrappers estouram o cap → o unwrap para e o payload não resolve p/ mídia conhecida → null.
+    expect(parseInbound(upsert({ message: nestEphemeral({ videoMessage: { url: "x", mimetype: "video/mp4" } }, 12) }))).toBeNull();
+  });
+
   // ─── documentMessage com mimetype de MÍDIA → tratar como vídeo/imagem (não "unsupported") ───
   it("documentMessage com mimetype video/* → kind video (vídeo mandado como documento)", () => {
     const msg = parseInbound(

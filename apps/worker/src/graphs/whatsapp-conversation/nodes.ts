@@ -40,19 +40,6 @@ import { DEFAULT_CURRENCY } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
 import { describeLlmError } from "./llm-error.js";
 import { GROUP_RULES, loadConversationConfig } from "./system-prompt.js";
-
-/** B3: seção injetada quando o usuário mandou um criativo perguntando (imagem anexada ao turno).
- *  O modelo JÁ vê a imagem (conteúdo multimodal); isto aterra a leitura no método do squad e pede
- *  resposta natural (não um formulário). Só entra quando há mídia — não infla o prompt normal. */
-const MEDIA_QUESTION_SECTION = [
-  "O usuário te mandou um criativo (imagem) junto da mensagem — você está VENDO essa imagem agora.",
-  "Responda à pergunta dele sobre a imagem de forma direta e natural, como um gestor falando.",
-  "Se for uma crítica/avaliação de criativo, use o método abaixo (gancho, ângulo, prova, fadiga) —",
-  "sem soletrar um formulário; teça no texto. Se a imagem não for um criativo (ex: um print), responda",
-  "ao que ele perguntou sem forçar decomposição. Se fizer sentido, ofereça guardar como criativo.",
-  "",
-  CREATIVE_CRITIQUE_KNOWLEDGE,
-].join("\n");
 import { sanitizeToolPairs, stripHistoricalImages, windowMessages } from "./window.js";
 import {
   CONFIG_UPDATE_TOOL_NAMES,
@@ -97,6 +84,19 @@ import type {
 } from "./state.js";
 
 const CONVERSATION_TEMPERATURE = 0.3;
+
+/** B3: seção injetada quando o usuário mandou um criativo perguntando (imagem anexada ao turno).
+ *  O modelo JÁ vê a imagem (conteúdo multimodal); isto aterra a leitura no método do squad e pede
+ *  resposta natural (não um formulário). Só entra quando há mídia — não infla o prompt normal. */
+const MEDIA_QUESTION_SECTION = [
+  "O usuário te mandou um criativo (imagem) junto da mensagem — você está VENDO essa imagem agora.",
+  "Responda à pergunta dele sobre a imagem de forma direta e natural, como um gestor falando.",
+  "Se for uma crítica/avaliação de criativo, use o método abaixo (gancho, ângulo, prova, fadiga) —",
+  "sem soletrar um formulário; teça no texto. Se a imagem não for um criativo (ex: um print), responda",
+  "ao que ele perguntou sem forçar decomposição. Se fizer sentido, ofereça guardar como criativo.",
+  "",
+  CREATIVE_CRITIQUE_KNOWLEDGE,
+].join("\n");
 
 /** Guard: `v` é um ConversionGoal da taxonomia neutra (o LLM manda goal como texto livre). */
 function isConversionGoal(v: unknown): v is ConversionGoal {

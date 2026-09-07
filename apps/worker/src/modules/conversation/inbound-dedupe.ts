@@ -13,6 +13,12 @@ const keyOf = (instanceId: string, messageId: string): string => `wa:dedup:${ins
 /**
  * Reivindica o processamento de um `messageId` (por instância) de forma atômica. `true` = 1ª vez
  * (siga o processamento); `false` = já visto (duplicata → ignore). Substitui o read-then-write.
+ *
+ * CUIDADO ao adicionar retry na fila inbound: o claim é UPFRONT (antes do trabalho), então um job
+ * que reivindicou e depois falhou NÃO reprocessa no retry (a chave já está reivindicada) — hoje é
+ * seguro porque a `WHATSAPP_INBOUND_QUEUE` roda com `attempts=1` (sem retry): crash = perde a
+ * mensagem (fecha-fechado, mesmo comportamento do dedupe antigo). Se um dia a fila ganhar retry,
+ * mover o claim p/ DEPOIS do trabalho (ou liberar a chave em falha) — senão o retry vira no-op.
  */
 export async function claimInbound(redis: Redis, instanceId: string, messageId: string): Promise<boolean> {
   const res = await redis.set(keyOf(instanceId, messageId), "1", "EX", DEDUPE_TTL_SEC, "NX");
