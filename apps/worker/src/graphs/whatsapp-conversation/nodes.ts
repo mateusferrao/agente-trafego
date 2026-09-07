@@ -59,7 +59,7 @@ import {
   ruleRowToDescriptor,
   type ConversationToolContext,
 } from "./tools.js";
-import { renderWhatsappNumber, resolveWhatsappNumber } from "./read-data.js";
+import { latestAnalysisAsOf, renderWhatsappNumber, resolveWhatsappNumber } from "./read-data.js";
 import { makeMetaToolExecutor } from "../../executors/meta-tools.js";
 import { applyCheckedAction, type ApplyResult } from "../../modules/apply/apply-confirmed-action.js";
 import { buildRefineEcho, MEDIA_PREFERENCES, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner, recoverOpenDraft, refineDraft, type DraftProposalContext, type MediaPreference, type RecoveredDraft } from "../../modules/conversation/draft-proposal.js";
@@ -127,6 +127,20 @@ const ECHO_OUTRO =
 export function currentDateTimeLine(tz: string, now: Date = new Date()): string {
   const fmt = new Intl.DateTimeFormat("pt-BR", { timeZone: tz, dateStyle: "full", timeStyle: "short" }).format(now);
   return `Agora (fuso ${tz}): ${fmt}. Este é o momento presente — use-o SEMPRE para raciocínio de tempo (checkpoints, "até 12h", "há X horas", hoje/ontem). Nunca diga que não sabe a data/hora.`;
+}
+
+/**
+ * Frescor do dado curado: QUANDO a última análise concluída rodou (fuso da org). Sem esta linha o
+ * LLM não sabe de quando são os números que ele tem em mãos — inclusive os que ele mesmo acabou de
+ * empurrar no push de "análise concluída" — e, perguntado "isto é de hoje?", DEFLETE ("vieram de
+ * uma análise anterior… preciso atualizar") em vez de dar a data. Com o `asOf` à vista, ele compara
+ * com o "agora" e responde o óbvio (o push acabou de rodar → "sim, é de hoje"). `asOf` null (nenhuma
+ * análise ainda) → linha some. PURA.
+ */
+export function lastAnalysisLine(asOf: Date | null, tz: string): string {
+  if (!asOf) return "";
+  const fmt = new Intl.DateTimeFormat("pt-BR", { timeZone: tz, dateStyle: "full", timeStyle: "short" }).format(asOf);
+  return `Última análise concluída desta conta: ${fmt} (fuso ${tz}). Todo número curado que você tem — a nota, o gasto, as recomendações e o resumo/push que você já enviou — é DESSA análise (não é ao vivo). Se te perguntarem se um dado é "de hoje"/atual/"de quando é", responda com ESSA data comparando com o agora (ex: se acabou de rodar, "sim, é de agora"); NUNCA diga que não sabe a data nem que "veio de uma análise anterior" sem dizer qual. Só se precisar do estado ATUAL ao vivo (não o desta análise) use get_fresh_metrics ou rode uma análise nova (trigger_analysis).`;
 }
 
 export function assembleSystemPrompt(systemPrompt: string, groupBlock: string, echo: string | undefined): string {
@@ -525,11 +539,14 @@ export function makeConversationNodes(
     // seção de grupo (regras + contexto ambiente; group-only, efêmera, entre a voz e o eco). DM → "".
     // data/hora atual (fuso da org) na FRENTE — sem isso o LLM não tem "agora" p/ raciocínio
     // temporal (checkpoints, "até 12h", "há X horas", hoje/ontem) e responde que não sabe a hora.
-    const sys = assembleSystemPrompt(
-      `${currentDateTimeLine(ctx.timezone)}\n\n${systemPrompt}`,
-      await groupSection(),
-      echo,
-    );
+    // Junto: QUANDO a última análise concluída rodou (asOf do dado curado) — sem isso o LLM não sabe
+    // de quando são os números que ele tem (nem os que empurrou no push de análise) e deflete no
+    // "isto é de hoje?". Só com conta em foco (agentId); concierge sem foco → linha some.
+    const asOf = ctx.agentId.length > 0 ? await latestAnalysisAsOf(deps.db, ctx.agentId, ctx.orgId) : null;
+    const freshness = [currentDateTimeLine(ctx.timezone), lastAnalysisLine(asOf, ctx.timezone)]
+      .filter((l) => l.length > 0)
+      .join("\n\n");
+    const sys = assembleSystemPrompt(`${freshness}\n\n${systemPrompt}`, await groupSection(), echo);
 
     const windowed = windowMessages(state.messages, {
       maxTurns: deps.conversation.historyTurns,
