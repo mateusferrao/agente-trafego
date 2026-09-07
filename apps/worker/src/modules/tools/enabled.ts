@@ -1,5 +1,5 @@
 // Fonte ÚNICA da habilitação de tools no worker (A2): lê agent_tool_bindings + allowedActions e
-// resolve as tool-keys habilitadas (as 6) via o resolver puro do core. Os DOIS gates (chat e apply)
+// resolve as tool-keys habilitadas (as 7) via o resolver puro do core. Os DOIS gates (chat e apply)
 // consomem daqui → consistência garantida (o mapa alertou: gates em fontes diferentes divergem).
 // Binding ausente → fallback preserva o comportamento atual (4 = allowedActions; criação = default-on).
 
@@ -10,7 +10,7 @@ import { resolveEnabledTools } from "@trafego/core";
 import { enabledActionTypes, type ToolBindingMode } from "@trafego/shared";
 
 /**
- * Resolve as tool-keys HABILITADAS (as 6) do agente, org-scoped. `allowedActionsFallback` pode
+ * Resolve as tool-keys HABILITADAS (as 7) do agente, org-scoped. `allowedActionsFallback` pode
  * vir do chamador que JÁ carregou a linha de guardrail (evita o round-trip extra); omitido → lê.
  */
 export async function loadEnabledTools(

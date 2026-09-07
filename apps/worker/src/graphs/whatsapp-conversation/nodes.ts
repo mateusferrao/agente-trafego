@@ -884,7 +884,17 @@ export function makeConversationNodes(
       }
       // config + escrita Meta no MESMO turno: não engula a escrita em silêncio — peça
       // uma coisa de cada vez (o gate trata 1 pendência por turno). §UX: nunca sumir com o pedido.
-      const alsoMetaWrite = allCalls.some((c) => WRITE_TOOL_NAMES.has(c.name) || c.name === REVERT_TOOL_NAME);
+      // Cobre TODA escrita/criação/edição especial (não só WRITE_TOOL_NAMES) — senão "muda a meta
+      // e edita o público" ecoaria só a config e sumiria com a edição.
+      const alsoMetaWrite = allCalls.some(
+        (c) =>
+          WRITE_TOOL_NAMES.has(c.name) ||
+          CREATE_TOOL_NAMES.has(c.name) ||
+          REFINE_TOOL_NAMES.has(c.name) ||
+          c.name === EDIT_AUDIENCE_TOOL_NAME ||
+          c.name === REALLOCATE_TOOL_NAME ||
+          c.name === REVERT_TOOL_NAME,
+      );
       if (alsoMetaWrite) {
         return {
           messages: answerToolCalls(

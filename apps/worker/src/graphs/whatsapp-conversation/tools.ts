@@ -661,7 +661,7 @@ export function makeConversationTools(
   const setActionAccess = tool(proposeOnly, {
     name: "set_action_access",
     description:
-      "Liga ou desliga UMA ação específica por completo (o agente NUNCA a executa enquanto desligada, nem sozinho nem com sua aprovação) — pausar=pause_entity, retomar=resume_entity, mudar status=set_status, ajustar orçamento=adjust_budget, criar campanha=create_campaign, duplicar pra escalar=duplicate_scale. Mais fino que a lista clássica de guardrails (é a MESMA fonte da tela 'Ações permitidas' do site) e é o ÚNICO jeito de ligar/desligar criar/duplicar. Requer eco+confirma.",
+      "Liga ou desliga UMA ação específica por completo (o agente NUNCA a executa enquanto desligada, nem sozinho nem com sua aprovação) — pausar=pause_entity, retomar=resume_entity, mudar status=set_status, ajustar orçamento=adjust_budget, editar público=adjust_audience, criar campanha=create_campaign, duplicar pra escalar=duplicate_scale. Mais fino que a lista clássica de guardrails (é a MESMA fonte da tela 'Ações permitidas' do site) e é o ÚNICO jeito de ligar/desligar editar público / criar / duplicar. Requer eco+confirma.",
     schema: z.object({
       actions: z
         .array(z.object({ toolKey: z.enum(GATEABLE_TOOL_KEYS as unknown as [string, ...string[]]), enabled: z.boolean() }))

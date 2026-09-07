@@ -395,8 +395,11 @@ export const envSchema = z.object({
   // guardrail + nunca-auto nas ações de risco. Habilitado após a bateria adversarial de eco+confirma
   // passar (D1): roteamento anti-auto-apply (nenhuma escrita vai direto pro apply), saga de
   // realocação com compensação, e `adjust_audience`/ressalva nunca auto (core). Cada capacidade
-  // ainda é gated por binding (`agent_tool_bindings`/`allowedActions`) — editar público e
-  // criar/escalar continuam opt-in. OFF ("false") = desliga TODA a escrita conversacional (só
+  // ainda é gated por binding (`agent_tool_bindings`/`allowedActions`): as mutações seguem
+  // `allowedActions` (default só `pause_entity`, `dryRun:true`), **editar público**
+  // (`adjust_audience`) é opt-in (default OFF), e **criar/escalar** nascem default-ON — mas toda
+  // criação nasce PAUSADA + 2ª aprovação de ativação, sob eco+confirma, então o blast radius
+  // default é rascunho pausado/simulado. OFF ("false") = desliga TODA a escrita conversacional (só
   // consulta + aprovar/rejeitar + revert + auto-config; autonomia/proativo/site intactos) — o freio
   // de emergência. enum (não z.coerce.boolean): "false" coage p/ true em Boolean(). Mesmo padrão
   // dos demais booleanos do arquivo.
