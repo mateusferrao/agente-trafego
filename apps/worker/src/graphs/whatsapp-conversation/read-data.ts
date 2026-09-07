@@ -1120,11 +1120,44 @@ async function getPendingDraftData(
 
 /** "Qual minha copy campeã": lê `ad_creatives` (copy + desempenho denormalizado),
  *  ranqueia (puro, core) e devolve o top-N curado. Org-scoped. */
-async function getTopCreativesData(
+/** Row de criativo → shape de exibição (só os campos presentes; nunca inventa). */
+function toCreativeView(r: {
+  adId: string;
+  name: string | null;
+  tier: string | null;
+  spend: number | null;
+  cpa: number | null;
+  roas: number | null;
+  body: string | null;
+  title: string | null;
+  callToAction: string | null;
+}): Record<string, unknown> {
+  return {
+    adId: r.adId,
+    // nome do ANÚNCIO no Ads Manager — diferente de `title` (headline da copy).
+    ...(r.name ? { name: r.name } : {}),
+    ...(r.tier ? { tier: r.tier } : {}),
+    ...(r.roas != null ? { roas: r.roas } : {}),
+    ...(r.cpa != null ? { cpa: r.cpa } : {}),
+    ...(r.spend != null ? { spend: r.spend } : {}),
+    ...(r.title ? { title: r.title } : {}),
+    ...(r.body ? { copy: r.body } : {}),
+    ...(r.callToAction ? { cta: r.callToAction } : {}),
+  };
+}
+
+export async function getTopCreativesData(
   db: Database,
   adAccountUuid: string,
   orgId: string,
-): Promise<NoData | { hasData: true; creatives: readonly unknown[] }> {
+  query?: string | null,
+): Promise<
+  | NoData
+  | { hasData: true; creatives: readonly unknown[] }
+  | { hasData: true; match: "one"; creative: Record<string, unknown> }
+  | { hasData: true; match: "ambiguous"; options: readonly string[]; note: string }
+  | { hasData: true; match: "none"; note: string }
+> {
   const rows = await db
     .select({
       adId: adCreatives.adId,
@@ -1145,21 +1178,18 @@ async function getTopCreativesData(
       note: "Ainda não tenho as copies desta conta — rode uma análise (ou me peça as métricas de hoje) que eu capturo.",
     };
   }
-  const creatives = rankAdCreatives(rows)
-    .slice(0, TOP_CREATIVES_LIMIT)
-    .map((r) => ({
-      adId: r.adId,
-      // nome do ANÚNCIO no Ads Manager — diferente de `title` (headline da copy).
-      // Ausente = a Meta não retornou nome nesse anúncio (não inventar).
-      ...(r.name ? { name: r.name } : {}),
-      ...(r.tier ? { tier: r.tier } : {}),
-      ...(r.roas != null ? { roas: r.roas } : {}),
-      ...(r.cpa != null ? { cpa: r.cpa } : {}),
-      ...(r.spend != null ? { spend: r.spend } : {}),
-      ...(r.title ? { title: r.title } : {}),
-      ...(r.body ? { copy: r.body } : {}),
-      ...(r.callToAction ? { cta: r.callToAction } : {}),
-    }));
+  // C3: lookup de um criativo/anúncio ESPECÍFICO por nome ou id (reusa o matcher de campanha).
+  const q = query?.trim();
+  if (q) {
+    const m = resolveNamedMatch(rows, q, { name: (r) => r.name, keys: (r) => [r.adId] });
+    if (m.kind === "none") return { hasData: true, match: "none", note: `Não achei um anúncio com "${q}".` };
+    if (m.kind === "ambiguous") {
+      const options = m.rows.map((r) => `${r.name ?? "(sem nome)"} (${r.adId})`);
+      return { hasData: true, match: "ambiguous", options, note: `Achei mais de um anúncio parecido com "${q}" — qual?` };
+    }
+    return { hasData: true, match: "one", creative: toCreativeView(m.row) };
+  }
+  const creatives = rankAdCreatives(rows).slice(0, TOP_CREATIVES_LIMIT).map(toCreativeView);
   return { hasData: true, creatives };
 }
 
@@ -1879,9 +1909,9 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
   );
 
   const getTopCreatives = tool(
-    async ({ fresh }: { fresh?: boolean | null }) => {
+    async ({ fresh, query }: { fresh?: boolean | null; query?: string | null }) => {
       if (noFocus()) return NEEDS_FOCUS;
-      logger.debug({ agentId: ctx.agentId, fresh: Boolean(fresh) }, "tool:get_top_creatives");
+      logger.debug({ agentId: ctx.agentId, fresh: Boolean(fresh), query: query ?? null }, "tool:get_top_creatives");
       // fresh = puxa a copy ATUAL da Meta antes de responder (preserva a perf do run). Sob teto
       // de tempo próprio (< turnTimeout): Meta lenta → degrada pro persistido em vez de estourar
       // o turno inteiro (a causa do fallback genérico quando o refresh levava minutos).
@@ -1890,13 +1920,13 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
           logger.warn({ err: String(err) }, "get_top_creatives:refresh live degradou (usa persistido)"),
         );
       }
-      return asString(await getTopCreativesData(db, ctx.adAccountId, ctx.orgId));
+      return asString(await getTopCreativesData(db, ctx.adAccountId, ctx.orgId, query));
     },
     {
       name: "get_top_creatives",
       description:
-        "Os melhores criativos da conta (copy: texto principal, título, CTA) ranqueados por desempenho. Use para 'qual minha copy campeã' ou para embasar direção de criativo. Passe fresh=true para buscar as copies ATUAIS na Meta em tempo real; senão usa as do último run. SEM receita/conversão por anúncio — pra 'quais anúncios trouxeram essa receita'/'separar por criativo' (financeiro), use get_ads_breakdown.",
-      schema: z.object({ fresh: z.boolean().nullable() }),
+        "Criativos da conta (copy: texto principal, título, CTA + tier/desempenho). SEM query = os melhores ranqueados ('qual minha copy campeã'). COM query (nome OU id do anúncio) = LOOKUP de um anúncio ESPECÍFICO ('me mostra a copy do anúncio X', 'o criativo Y'); nome ambíguo → devolve opções numeradas (peça pra escolher). Passe fresh=true p/ buscar as copies ATUAIS na Meta; senão usa as do último run. SEM receita/conversão por anúncio — pra financeiro por criativo use get_ads_breakdown.",
+      schema: z.object({ fresh: z.boolean().nullable(), query: z.string().nullable() }),
     },
   );
 
