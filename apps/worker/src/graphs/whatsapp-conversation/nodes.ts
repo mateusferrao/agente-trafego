@@ -25,11 +25,12 @@ import {
   resolveAgentConfigChange,
   riskForAction,
   type EchoItem,
+  type GuardrailContext,
   type RevertEchoItem,
   type UngroundedNumber,
 } from "@trafego/core";
 import { applyAgentConfigChange, loadAgentConfigState, reseedArchetypeChange } from "@trafego/agent-config";
-import { sleep, phoneTokensInText, buildApprovalApplyJob, ACTION_PARAM_TARGETING } from "@trafego/shared";
+import { sleep, phoneTokensInText, buildApprovalApplyJob, ACTION_PARAM_TARGETING, ACTION_PARAM_MODE, ACTION_PARAM_AMOUNT_MINOR, BUDGET_MODE_SET, formatMoney } from "@trafego/shared";
 import type { Action, ApprovalId, ConversionGoal, OrgId } from "@trafego/shared/types";
 import { CONVERSION_GOALS } from "@trafego/shared/types";
 import { AdsPlatformError } from "@trafego/shared/ports";
@@ -58,6 +59,7 @@ import {
   CONTROL_WRITE_TOOL_NAMES,
   CREATE_TOOL_NAMES,
   EDIT_AUDIENCE_TOOL_NAME,
+  REALLOCATE_TOOL_NAME,
   REFINE_TOOL_NAMES,
   PLAYBOOK_WRITE_TOOL_NAMES,
   REVERT_TOOL_NAME,
@@ -268,6 +270,15 @@ function outcomeLine(action: Action, outcome: ApplyResult): string {
       return describeActionOutcome(action, { kind: "failed", ...(metaMessage !== undefined ? { metaMessage } : {}) });
     }
   }
+}
+
+/** Motivo curto de um desfecho que NÃO aplicou (blocked/failed) — p/ a mensagem da saga (A4). */
+function reallocFailReason(outcome: ApplyResult): string {
+  if (outcome.kind === "blocked") return outcome.reason;
+  if (outcome.kind === "failed" && outcome.error instanceof AdsPlatformError && outcome.error.userMessage) {
+    return outcome.error.userMessage.trim();
+  }
+  return "não consegui aplicar agora";
 }
 
 /** Extrai tokens/custo da resposta do ChatOpenAI (OpenRouter com usage.include). */
@@ -1083,6 +1094,110 @@ export function makeConversationNodes(
       };
     }
 
+    // REALOCAR ORÇAMENTO A→B (A4): move um valor/dia da origem pro destino. Lê os dois budgets
+    // FRESCOS, pré-clampa ao teto de blast-radius (o MAIOR movível respeitando os DOIS lados) p/
+    // as pernas ficarem balanceadas, e monta 2 adjust_budget set-absoluto marcadas como SAGA
+    // (aplica sequencial com compensação no apply). Guardrail nas duas pernas; nunca auto-aplica.
+    const reallocCall = allCalls.find((c) => c.name === REALLOCATE_TOOL_NAME);
+    if (reallocCall) {
+      const a = (reallocCall.args ?? {}) as Record<string, unknown>;
+      const level = a["level"] === "adset" ? "adset" : "campaign";
+      const fromId = typeof a["fromEntityId"] === "string" ? a["fromEntityId"].trim() : "";
+      const toId = typeof a["toEntityId"] === "string" ? a["toEntityId"].trim() : "";
+      const fromName = typeof a["fromEntityName"] === "string" && a["fromEntityName"] ? (a["fromEntityName"] as string) : fromId;
+      const toName = typeof a["toEntityName"] === "string" && a["toEntityName"] ? (a["toEntityName"] as string) : toId;
+      const amountReais = typeof a["amountReais"] === "number" ? a["amountReais"] : NaN;
+      if (!fromId || !toId || !(amountReais > 0)) {
+        return { messages: answerToolCalls(allCalls, "Me diz de qual entidade tirar, pra qual pôr e quanto por dia (ex: 'R$ 50/dia da campanha A pra B').") };
+      }
+      if (entityKeyOf({ level, id: fromId }) === entityKeyOf({ level, id: toId })) {
+        return { messages: answerToolCalls(allCalls, "A origem e o destino são a mesma entidade — me diz duas diferentes.") };
+      }
+      const fromTarget: Action["target"] = { level, id: fromId, name: fromName };
+      const toTarget: Action["target"] = { level, id: toId, name: toName };
+      const wctx = await loadWriteContext(deps, ctx.orgId, ctx.agentId, [fromTarget, toTarget]);
+      if (!wctx) {
+        return { messages: answerToolCalls(allCalls, "Não consegui acessar a conta agora. Tenta de novo em instantes.") };
+      }
+      const fromKey = entityKeyOf(fromTarget);
+      const toKey = entityKeyOf(toTarget);
+      const fromCur = wctx.ctx.budgetAmountByEntity?.get(fromKey);
+      const toCur = wctx.ctx.budgetAmountByEntity?.get(toKey);
+      if (fromCur === undefined || toCur === undefined) {
+        const who = fromCur === undefined ? fromName : toName;
+        return { messages: [...answerToolCalls(allCalls, "sem budget"), new AIMessage(`Não consegui ler o orçamento diário de *${who}* — pode ser que o orçamento esteja em outro nível (ex: na campanha, não no conjunto). Dá uma olhada no site.`)] };
+      }
+      const requestedMinor = Math.round(amountReais * 100);
+      if (requestedMinor >= fromCur) {
+        return { messages: [...answerToolCalls(allCalls, "valor alto demais"), new AIMessage(`Esse valor esvaziaria *${fromName}* (orçamento atual ${formatMoney(fromCur / 100, wctx.currency)}/dia). Me diz um valor menor pra mover.`)] };
+      }
+      // pré-clamp: o maior movível respeitando o teto de % nos DOIS lados (origem −%, destino +%).
+      const maxMovableMinor = Math.floor((wctx.cfg.maxBudgetChangePct / 100) * Math.min(fromCur, toCur));
+      const moveMinor = Math.min(requestedMinor, maxMovableMinor);
+      if (moveMinor <= 0) {
+        return { messages: [...answerToolCalls(allCalls, "teto"), new AIMessage(`Com o seu limite de segurança de ${wctx.cfg.maxBudgetChangePct}% por mudança, não consigo mover nada de uma vez entre essas duas. Dá pra afrouxar o teto na config, ou mover no site.`)] };
+      }
+      const clampedNote = moveMinor < requestedMinor ? `\n(respeitando seu teto de ${wctx.cfg.maxBudgetChangePct}%, movo ${formatMoney(moveMinor / 100, wctx.currency)}/dia — o máximo seguro de uma vez)` : "";
+      const legFrom: Action = {
+        id: `${reallocCall.id ?? REALLOCATE_TOOL_NAME}:from`,
+        type: "adjust_budget",
+        target: fromTarget,
+        params: { [ACTION_PARAM_MODE]: BUDGET_MODE_SET, [ACTION_PARAM_AMOUNT_MINOR]: fromCur - moveMinor },
+        source: "llm",
+        riskLevel: riskForAction("adjust_budget"),
+        reason: "realocação de orçamento pedida no chat (origem)",
+      };
+      const legTo: Action = {
+        id: `${reallocCall.id ?? REALLOCATE_TOOL_NAME}:to`,
+        type: "adjust_budget",
+        target: toTarget,
+        params: { [ACTION_PARAM_MODE]: BUDGET_MODE_SET, [ACTION_PARAM_AMOUNT_MINOR]: toCur + moveMinor },
+        source: "llm",
+        riskLevel: riskForAction("adjust_budget"),
+        reason: "realocação de orçamento pedida no chat (destino)",
+      };
+      const check = applyGuardrails([legFrom, legTo], wctx.cfg, wctx.ctx);
+      // realocação é BALANCEADA — só faz sentido com as DUAS pernas. Se o guardrail barrar
+      // ou clampar qualquer uma (killswitch/ação-desligada/cap-diário/budget-já-mexido), não
+      // faço uma metade: reporto honesto e não mexo em nada.
+      const clampedFrom = check.allowed.find((x) => entityKeyOf(x.target) === fromKey);
+      const clampedTo = check.allowed.find((x) => entityKeyOf(x.target) === toKey);
+      const unchanged = (orig: Action, got: Action | undefined) =>
+        got !== undefined && got.params[ACTION_PARAM_AMOUNT_MINOR] === orig.params[ACTION_PARAM_AMOUNT_MINOR];
+      if (!unchanged(legFrom, clampedFrom) || !unchanged(legTo, clampedTo)) {
+        const reason = check.dropped[0]?.reason ?? "uma das pernas não passou no limite de segurança";
+        return { messages: [...answerToolCalls(allCalls, "não consigo realocar"), new AIMessage(`Não consigo fazer essa realocação agora: ${reason}. Não mexi em nada.`)] };
+      }
+      let dryOk = true;
+      for (const leg of [clampedFrom!, clampedTo!]) {
+        try {
+          await deps.ports.ads.mutate(wctx.account, leg, { dryRun: true });
+        } catch (err) {
+          logger.warn({ err, entityId: leg.target.id }, "conversation:dry-run da realocação falhou");
+          dryOk = false;
+        }
+      }
+      if (!dryOk) {
+        return { messages: [...answerToolCalls(allCalls, "não deu"), new AIMessage("Não consegui simular essa realocação agora — tenta de novo em instantes.")] };
+      }
+      const sim = wctx.cfg.dryRun ? "Modo simulação (não aplico de verdade): " : "";
+      const accountLbl = ctx.multiAccount && ctx.accountName ? ` (${ctx.accountName})` : "";
+      const echo =
+        `${sim}Vou mover ${formatMoney(moveMinor / 100, wctx.currency)}/dia${accountLbl}:\n` +
+        `• *${fromName}* cai pra ${formatMoney((fromCur - moveMinor) / 100, wctx.currency)}/dia\n` +
+        `• *${toName}* sobe pra ${formatMoney((toCur + moveMinor) / 100, wctx.currency)}/dia${clampedNote}\n\nConfirma?`;
+      return {
+        messages: [...answerToolCalls(allCalls, "proposto — aguardando confirmação"), new AIMessage(echo)],
+        pendingWrite: {
+          echo,
+          expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString(),
+          actions: [clampedFrom!, clampedTo!],
+          saga: { kind: "reallocation", sourceKey: fromKey, sourceRestoreMinor: fromCur },
+        },
+        pendingRevert: null,
+      };
+    }
+
     // id do tool_call como id da ação (idempotência); índice desempata se faltar (raro).
     const proposed = allCalls
       .filter((c) => WRITE_TOOL_NAMES.has(c.name))
@@ -1261,6 +1376,81 @@ export function makeConversationNodes(
       };
     }
 
+    // SAGA de realocação A→B (A4): NÃO é atômica na Meta → aplica a origem, depois o destino;
+    // se o destino falha, DEVOLVE o orçamento da origem (compensação); se a devolução também
+    // falha, reporta o estado parcial explícito (nunca silêncio). Reusa o mesmo apply-checado.
+    if (pending.saga?.kind === "reallocation") {
+      const saga = pending.saga;
+      const legFrom = pending.actions[0];
+      const legTo = pending.actions[1];
+      if (!legFrom || !legTo) {
+        return { messages: [...answerToolCalls(calls, "estado inválido"), new AIMessage("Perdi os detalhes dessa realocação. Me pede de novo.")], pendingWrite: null };
+      }
+      const fromName = legFrom.target.name ?? legFrom.target.id;
+      const toName = legTo.target.name ?? legTo.target.id;
+      const applyLeg = (action: Action, ctxOver: GuardrailContext, keySuffix: string): Promise<ApplyResult> =>
+        applyCheckedAction({
+          executor,
+          account: wctx.account,
+          action,
+          cfg: wctx.cfg,
+          ctx: ctxOver,
+          agentId: ctx.agentId,
+          runId: null,
+          orgId: ctx.orgId,
+          idempotencyKey: `conv:${ctx.conversationId}:${action.id}:${keySuffix}`,
+        });
+
+      const outFrom = await applyLeg(legFrom, wctx.ctx, "realloc");
+      if (outFrom.kind !== "applied" && outFrom.kind !== "noop") {
+        // origem não desceu → nada a compensar, nada mexido.
+        return {
+          messages: [...answerToolCalls(calls, "realocação abortada"), new AIMessage(`Não consegui mexer no orçamento de *${fromName}* (${reallocFailReason(outFrom)}), então não movi nada.`)],
+          pendingWrite: null,
+        };
+      }
+      // destino: soma a origem ao "tocado hoje" (cap de entidades/dia coerente com o gate).
+      const ctxTo: GuardrailContext = { ...wctx.ctx, touchedToday: new Set<string>([...(wctx.ctx.touchedToday ?? []), saga.sourceKey]) };
+      const outTo = await applyLeg(legTo, ctxTo, "realloc");
+      if (outTo.kind === "applied" || outTo.kind === "noop") {
+        return {
+          messages: [...answerToolCalls(calls, "realocado"), new AIMessage(describeActionOutcome(legFrom, { kind: wctx.cfg.dryRun ? "simulated" : "applied" }) + "\n" + describeActionOutcome(legTo, { kind: wctx.cfg.dryRun ? "simulated" : "applied" }))],
+          pendingWrite: null,
+        };
+      }
+      // destino falhou DEPOIS da origem descer → devolve o orçamento cru anterior da origem.
+      // clamp NEUTRO: budget-de-referência = o valor ANTERIOR (0% de mudança), e a origem NÃO
+      // entra em budgetChangedToday deste ctx (fresco do início) → anti-compounding não barra.
+      const compensation: Action = {
+        id: `${legFrom.id}:compensate`,
+        type: "adjust_budget",
+        target: legFrom.target,
+        params: { [ACTION_PARAM_MODE]: BUDGET_MODE_SET, [ACTION_PARAM_AMOUNT_MINOR]: saga.sourceRestoreMinor },
+        source: "llm",
+        riskLevel: riskForAction("adjust_budget"),
+        reason: "compensação de realocação (devolve o orçamento da origem)",
+      };
+      const compCtx: GuardrailContext = {
+        ...wctx.ctx,
+        budgetAmountByEntity: new Map<string, number>([...(wctx.ctx.budgetAmountByEntity ?? []), [saga.sourceKey, saga.sourceRestoreMinor]]),
+      };
+      const outComp = await applyLeg(compensation, compCtx, "compensate");
+      if (outComp.kind === "applied" || outComp.kind === "noop") {
+        return {
+          messages: [...answerToolCalls(calls, "realocação revertida"), new AIMessage(`Não consegui aumentar *${toName}* (${reallocFailReason(outTo)}), então devolvi o orçamento de *${fromName}*. No fim, nada mudou.`)],
+          pendingWrite: null,
+        };
+      }
+      // devolução TAMBÉM falhou → estado parcial explícito (jamais silêncio). §UX erro = o quê + o quê fazer.
+      const leftMinor = Number(legFrom.params[ACTION_PARAM_AMOUNT_MINOR]);
+      const leftMoney = Number.isFinite(leftMinor) ? formatMoney(leftMinor / 100, wctx.currency) : "um valor menor";
+      logger.error({ fromId: legFrom.target.id, toId: legTo.target.id }, "realloc:compensação falhou — estado parcial");
+      return {
+        messages: [...answerToolCalls(calls, "estado parcial"), new AIMessage(`⚠️ Reduzi *${fromName}* mas não consegui aumentar *${toName}* nem devolver o orçamento. *${fromName}* está com ${leftMoney}/dia agora — dá uma olhada no site e ajuste se precisar.`)],
+        pendingWrite: null,
+      };
+    }
+
     // escrita por chat: sem run de análise (runId null); o agentId é a âncora da trilha.
     // Acumula as entidades já aplicadas em touchedToday a cada iteração — senão o cap de
     // entidades/dia não vale DENTRO do lote (applyGuardrails é por-ação aqui). §8.
@@ -1307,6 +1497,7 @@ export function routeConversation(
         CREATE_TOOL_NAMES.has(c.name) ||
         REFINE_TOOL_NAMES.has(c.name) ||
         c.name === EDIT_AUDIENCE_TOOL_NAME ||
+        c.name === REALLOCATE_TOOL_NAME ||
         c.name === REVERT_TOOL_NAME ||
         c.name === DESCRIBE_CAPABILITIES_TOOL_NAME ||
         c.name === WHATSAPP_NUMBER_TOOL_NAME ||

@@ -15,6 +15,20 @@ export interface PendingWrite {
   readonly expiresAt: string;
   /** ações clampadas a aplicar quando o usuário confirmar (lote). */
   readonly actions: readonly Action[];
+  /**
+   * SAGA de realocação A→B (A4): as 2 ações (`[origem set A_new, destino set B_new]`) NÃO
+   * são atômicas na Meta → aplica sequencial COM compensação. Se o destino (leg 2) falha
+   * depois da origem (leg 1) já ter descido, devolve o orçamento da origem (`sourceRestoreMinor`,
+   * o budget cru anterior — clamp neutro); se a devolução também falha, reporta estado parcial
+   * explícito (nunca silêncio). Ausente = escrita normal (loop independente, sem compensação).
+   */
+  readonly saga?: {
+    readonly kind: "reallocation";
+    /** `${level}:${id}` da origem — alvo da devolução. */
+    readonly sourceKey: string;
+    /** budget cru da origem ANTES da realocação (unidade mínima) — devolve exatamente isto. */
+    readonly sourceRestoreMinor: number;
+  };
 }
 
 /**

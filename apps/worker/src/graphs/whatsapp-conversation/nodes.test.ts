@@ -43,6 +43,12 @@ describe("routeConversation", () => {
   it("describe_capabilities → confirm (emitido verbatim, sem paráfrase do LLM)", () => {
     expect(routeConversation(stateWith([{ name: "describe_capabilities" }]))).toBe("confirm");
   });
+  it("edit_audience → confirm (A1 — escrita opt-in, eco+confirma)", () => {
+    expect(routeConversation(stateWith([{ name: "edit_audience" }]))).toBe("confirm");
+  });
+  it("reallocate_budget → confirm (A4 — saga A→B, eco+confirma)", () => {
+    expect(routeConversation(stateWith([{ name: "reallocate_budget" }]))).toBe("confirm");
+  });
 });
 
 describe("currentDateTimeLine (data/hora no fuso da org)", () => {

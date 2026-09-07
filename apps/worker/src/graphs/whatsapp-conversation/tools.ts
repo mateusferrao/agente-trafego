@@ -381,6 +381,23 @@ export function makeConversationTools(
     }),
   });
 
+  // REALOCAR ORÇAMENTO A→B (A4): move um valor/dia da origem pro destino. Vira DUAS ações
+  // adjust_budget (origem cai, destino sobe) aplicadas como SAGA com compensação. Reusa o
+  // gate do adjust_budget (mesmo binding). Precisa dos dois ids + o valor a mover.
+  const reallocateBudget = tool(proposeOnly, {
+    name: REALLOCATE_TOOL_NAME,
+    description:
+      "Propõe REALOCAR orçamento diário de uma entidade pra OUTRA (tirar de uma que rende menos e pôr na que rende mais): a origem CAI e o destino SOBE no mesmo valor. USE quando o usuário quiser MOVER grana entre campanhas/conjuntos (ex: 'tira R$50/dia da campanha A e põe na B', 'realoca da que tá indo mal pra melhor'). Ambas no MESMO nível (as duas campanhas, ou os dois conjuntos). Se o usuário só quer mexer numa, use adjust_budget. Precisa do valor a mover (R$/dia); se faltar a origem, o destino ou o valor, PERGUNTE. Requer eco+confirma; nunca aplica sozinho.",
+    schema: z.object({
+      level: z.enum(["campaign", "adset"]),
+      fromEntityId: z.string().min(1),
+      fromEntityName: z.string().min(1).describe("nome legível da ORIGEM (perde orçamento)"),
+      toEntityId: z.string().min(1),
+      toEntityName: z.string().min(1).describe("nome legível do DESTINO (ganha orçamento)"),
+      amountReais: z.number().positive().describe("valor por dia a mover, em reais"),
+    }),
+  });
+
   // ── CONTROLE do eco+confirma (turno 2): o LLM classifica a intenção do usuário.
   //    A ação aplicada é a CONGELADA no state (não re-especifica nada). Roteadas p/ applyWrite.
   const confirmWrite = tool(proposeOnly, {
@@ -875,7 +892,7 @@ export function makeConversationTools(
   const configTools = [setGoal, setAutonomy, setGuardrail, setActionAccess, setCadence, setNotifications, reseedArchetype, setPersona, setTone, setSystemPrompt, setBusinessContext, setGuidance, setDirectiveness, setVolume, setDidacticDepth, setExperienceLevel];
   const playbookTools = [addPlaybookRule, togglePlaybookRule, removePlaybookRule, listPlaybookRules];
 
-  const writeTools = [pauseEntity, resumeEntity, setStatus, adjustBudget, editAudience, revertAction, confirmWrite, cancelWrite];
+  const writeTools = [pauseEntity, resumeEntity, setStatus, adjustBudget, editAudience, reallocateBudget, revertAction, confirmWrite, cancelWrite];
   const createTools = [scaleWinner, createCampaign, copyCampaign, adjustDraft, regenerateCopy];
   return [
     ...readTools,
@@ -941,6 +958,15 @@ export async function buildCapabilitiesText(
     parts.push("• Recomendo o que fazer e você aprova por aqui; mexer na campanha em si é no site.");
   } else {
     parts.push("• Mexer nas campanhas está desligado nos guardrails — dá pra liberar nas configurações.");
+  }
+
+  // A4: realocar orçamento entre entidades — só declara quando de fato habilitado (binding + flag).
+  if (allow.has(REALLOCATE_TOOL_NAME)) {
+    parts.push("• Realoco orçamento de uma campanha pra outra que você pedir (tiro da que rende menos, ponho na que rende mais), sempre confirmando antes.");
+  }
+  // A1: editar público de conjunto vivo — opt-in; declara com a ressalva honesta do reset.
+  if (allow.has(EDIT_AUDIENCE_TOOL_NAME)) {
+    parts.push("• Edito o público de um conjunto que já está no ar quando você pedir (com sua confirmação) — lembrando que mexer no público reinicia o aprendizado da Meta.");
   }
 
   // Criação (Fatia 7) — condicional às bindings reais, em uma linha só.
@@ -1143,6 +1169,10 @@ export const REVERT_TOOL_NAME = "revert_action";
 /** Tool de EDITAR PÚBLICO de adset vivo (A1) — escrita `adjust_audience`, opt-in, roteada p/ `confirm`.
  *  Nome próprio (não é `adjust_audience` pra não colidir com o vocabulário de Action). */
 export const EDIT_AUDIENCE_TOOL_NAME = "edit_audience";
+
+/** Tool de REALOCAR ORÇAMENTO A→B (A4) — vira 2 `adjust_budget` (saga com compensação), roteada
+ *  p/ `confirm`. Nome próprio: uma call → duas ações, então não entra em `WRITE_TOOL_NAMES`. */
+export const REALLOCATE_TOOL_NAME = "reallocate_budget";
 
 /** Tools de controle do eco+confirma (turno 2) — roteadas pro nó `applyWrite`. */
 export const CONTROL_WRITE_TOOL_NAMES: ReadonlySet<string> = new Set<string>(["confirm_write", "cancel_write"]);

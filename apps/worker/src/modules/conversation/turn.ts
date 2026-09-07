@@ -14,6 +14,7 @@ import { buildWhatsappConversationGraph } from "../../graphs/whatsapp-conversati
 import {
   AGENT_TOOL_NAMES,
   EDIT_AUDIENCE_TOOL_NAME,
+  REALLOCATE_TOOL_NAME,
   REFINE_TOOL_NAMES,
   CONCIERGE_TOOL_NAMES,
   CONFIG_CHAT_TOOL_NAMES,
@@ -153,6 +154,8 @@ async function allowedChatWriteTools(db: Database, orgId: string, agentId: strin
   if (enabled.has("duplicate_scale") || enabled.has("adjust_budget")) tools.push("scale_winner");
   // A1: editar público de adset vivo — opt-in, gated pelo binding `adjust_audience` (default OFF).
   if (enabled.has("adjust_audience")) tools.push(EDIT_AUDIENCE_TOOL_NAME);
+  // A4: realocar orçamento A→B — vira 2 adjust_budget, então gated pelo mesmo binding `adjust_budget`.
+  if (enabled.has("adjust_budget")) tools.push(REALLOCATE_TOOL_NAME);
   return tools;
 }
 
