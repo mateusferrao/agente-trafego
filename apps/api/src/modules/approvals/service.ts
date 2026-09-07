@@ -3,7 +3,7 @@ import { adAccounts, agentRuns, agentToolBindings, agentToolCalls, agents, campa
 import type { ApplyOutcome, ApprovalId, CampaignDraftSpec, OrgId, TargetingSpec } from "@trafego/shared/types";
 import type { Approval, ApprovalPort, PendingApproval } from "@trafego/shared/ports";
 import type { SchedulerPort } from "@trafego/shared/ports";
-import { APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE, enabledActionTypes, type ToolBindingMode } from "@trafego/shared";
+import { buildApprovalApplyJob, enabledActionTypes, type ToolBindingMode } from "@trafego/shared";
 import { ACTION_PARAM_CURRENT_MINOR, ACTION_PARAM_TARGETING } from "@trafego/shared";
 import { computeApplyPreview, describeActionOutcome, describeActivationOutcome, describeCreatedDraft, describeDraftOutcome, editBudgetActionValue, projectBudgetTargetMinor, readModernizations, resolveEnabledTools, type OutcomeDetail } from "@trafego/core";
 import { badRequest, notFound } from "../../middleware/error-handler.js";
@@ -205,11 +205,7 @@ export function createApprovalsService(deps: ApprovalsDeps) {
       // resultado desta reaprovação (mostrando "falhou/não criei" enquanto o novo apply roda e cria
       // de fato). Síncrono aqui garante que o 1º poll veja `null` até o worker gravar o fresco.
       await deps.approvals.clearApplyOutcome(approvalId);
-      await deps.scheduler.enqueue({
-        queue: APPROVAL_APPLY_QUEUE,
-        name: APPROVAL_APPLY_JOB,
-        payload: { orgId, approvalId },
-      });
+      await deps.scheduler.enqueue(buildApprovalApplyJob({ orgId, approvalId }));
       return { id: approval.id, status: "pending" };
     },
 

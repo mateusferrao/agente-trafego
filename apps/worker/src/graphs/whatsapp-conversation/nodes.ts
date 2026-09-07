@@ -28,7 +28,7 @@ import {
   type UngroundedNumber,
 } from "@trafego/core";
 import { applyAgentConfigChange, loadAgentConfigState, reseedArchetypeChange } from "@trafego/agent-config";
-import { sleep, phoneTokensInText, APPROVAL_APPLY_JOB, APPROVAL_APPLY_QUEUE } from "@trafego/shared";
+import { sleep, phoneTokensInText, buildApprovalApplyJob } from "@trafego/shared";
 import type { Action, ApprovalId, ConversionGoal, OrgId } from "@trafego/shared/types";
 import { CONVERSION_GOALS } from "@trafego/shared/types";
 import { AdsPlatformError } from "@trafego/shared/ports";
@@ -1103,11 +1103,9 @@ export function makeConversationNodes(
     // site) — o worker re-checa o guardrail de gasto novo, cria e empurra o desfecho.
     const pendingDraft = activePendingDraft(state.pendingDraft);
     if (pendingDraft) {
-      await deps.ports.scheduler.enqueue({
-        queue: APPROVAL_APPLY_QUEUE,
-        name: APPROVAL_APPLY_JOB,
-        payload: { orgId: ctx.orgId, approvalId: pendingDraft.approvalId, notifyRef: ctx.ref },
-      });
+      await deps.ports.scheduler.enqueue(
+        buildApprovalApplyJob({ orgId: ctx.orgId, approvalId: pendingDraft.approvalId, notifyRef: ctx.ref }),
+      );
       return {
         messages: [...answerToolCalls(calls, "criando"), new AIMessage("Beleza, tô criando — te aviso quando ficar pronto.")],
         pendingDraft: null,

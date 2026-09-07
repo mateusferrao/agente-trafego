@@ -148,8 +148,17 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
 
       switch (outcome.kind) {
         case "failed": {
-          // falha da Meta (rede/rate-limit/etc): mantém a aprovação PENDENTE (dá p/ reaprovar), mas
-          // registra o desfecho (`markApplyOutcome`, sem resolver) p/ o card mostrar + reabilitar o
+          // Rate-limit da Meta (#613, D3) é TRANSIENTE: enquanto houver tentativa, RE-LANÇA → o
+          // BullMQ retenta com backoff (a escrita é idempotente por `${approval}:apply`, sem duplo-
+          // apply). Só na ÚLTIMA tentativa (ou outros kinds) cai no comportamento antigo abaixo.
+          const attempts = job.opts.attempts ?? 1;
+          const isLastAttempt = job.attemptsMade + 1 >= attempts;
+          if (outcome.error instanceof AdsPlatformError && outcome.error.kind === "rate_limited" && !isLastAttempt) {
+            logger.warn({ approvalId, attempt: job.attemptsMade + 1, attempts }, "approval-apply:rate-limit — retry com backoff");
+            throw outcome.error; // deixa o BullMQ retentar (backoff configurado no job)
+          }
+          // falha da Meta (rede/rate-limit esgotado/etc): mantém a aprovação PENDENTE (dá p/ reaprovar),
+          // mas registra o desfecho (`markApplyOutcome`, sem resolver) p/ o card mostrar + reabilitar o
           // botão. A promessa de "te aviso o resultado" não pode sumir (§UX).
           const metaMessage = metaUserMessage(outcome.error);
           logger.error({ approvalId, err: outcome.error }, "approval-apply:execute falhou");

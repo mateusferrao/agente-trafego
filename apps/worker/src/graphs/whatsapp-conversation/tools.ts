@@ -13,8 +13,7 @@ import {
   ACTION_PARAM_MODE,
   ACTION_PARAM_PCT,
   ACTION_PARAM_STATUS,
-  APPROVAL_APPLY_JOB,
-  APPROVAL_APPLY_QUEUE,
+  buildApprovalApplyJob,
   BUDGET_MODE_SET,
   CONVERSION_GOALS,
   COPY_TEXT_MAX,
@@ -185,11 +184,9 @@ export function makeConversationTools(
           skipped += 1;
           continue;
         }
-        await deps.ports.scheduler.enqueue({
-          queue: APPROVAL_APPLY_QUEUE,
-          name: APPROVAL_APPLY_JOB,
-          payload: { orgId: ctx.orgId, approvalId: id, notifyRef: ctx.ref },
-        });
+        await deps.ports.scheduler.enqueue(
+          buildApprovalApplyJob({ orgId: ctx.orgId, approvalId: id, notifyRef: ctx.ref }),
+        );
         ok += 1;
       }
       const tail = skipped > 0 ? ` (${skipped} já não estava(m) pendente(s).)` : "";
