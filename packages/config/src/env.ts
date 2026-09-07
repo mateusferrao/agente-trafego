@@ -389,14 +389,18 @@ export const envSchema = z.object({
   // quando o telefone de quem foi mencionado/citado não vem direto no payload da
   // mensagem. Participação de grupo muda pouco; folgado (~1h) é seguro.
   GROUP_PARTICIPANTS_CACHE_TTL_SEC: z.coerce.number().int().positive().default(3600),
-  // Kill-switch de PLATAFORMA da escrita conversacional de ads pelo chat (v1 MVP): quando OFF
-  // (default), o agente no WhatsApp NÃO autora/edita/muta a Meta por conversa (criar/copiar/
-  // escalar/ajustar rascunho/pausar/orçamento + o "sim" que cria via criativo enviado somem do
-  // toolset). Consulta + aprovar/rejeitar + revert + auto-config seguem; autonomia/proativo/site
-  // intactos. Autoria/edição fina vive na plataforma (menos risco de má-interpretação). Reverter =
-  // ligar aqui (o código fica pendente). enum (não z.coerce.boolean): "false" coage p/ true em
-  // Boolean() — o kill-switch NÃO desligaria. Mesmo padrão dos demais booleanos do arquivo.
-  TRAFEGO_CHAT_ADS_WRITES: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
+  // Kill-switch de PLATAFORMA da escrita conversacional de ads pelo chat. Default ON (o gestor
+  // autora/edita/muta a Meta por conversa: pausar/orçamento/status/realocar/editar público/criar/
+  // copiar/escalar + o "sim" que cria via criativo enviado), sempre atrás de eco+confirma +
+  // guardrail + nunca-auto nas ações de risco. Habilitado após a bateria adversarial de eco+confirma
+  // passar (D1): roteamento anti-auto-apply (nenhuma escrita vai direto pro apply), saga de
+  // realocação com compensação, e `adjust_audience`/ressalva nunca auto (core). Cada capacidade
+  // ainda é gated por binding (`agent_tool_bindings`/`allowedActions`) — editar público e
+  // criar/escalar continuam opt-in. OFF ("false") = desliga TODA a escrita conversacional (só
+  // consulta + aprovar/rejeitar + revert + auto-config; autonomia/proativo/site intactos) — o freio
+  // de emergência. enum (não z.coerce.boolean): "false" coage p/ true em Boolean(). Mesmo padrão
+  // dos demais booleanos do arquivo.
+  TRAFEGO_CHAT_ADS_WRITES: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
 
   // ─── Email (auth transacional — 6b) ────────────────────────────────────
   // Verificação de email + reset de senha via mailer genérico (porta + fila).

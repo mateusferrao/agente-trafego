@@ -2,6 +2,16 @@ import { describe, expect, it, vi } from "vitest";
 import { AIMessage } from "@langchain/core/messages";
 import { assembleSystemPrompt, currentDateTimeLine, drainPendingCostPatches, needsCostFallback, patchCostInBackground, routeConversation, scheduleCostPatch } from "./nodes.js";
 import { GROUP_RULES } from "./system-prompt.js";
+import {
+  CONFIG_UPDATE_TOOL_NAMES,
+  CONTROL_WRITE_TOOL_NAMES,
+  CREATE_TOOL_NAMES,
+  EDIT_AUDIENCE_TOOL_NAME,
+  REALLOCATE_TOOL_NAME,
+  REFINE_TOOL_NAMES,
+  REVERT_TOOL_NAME,
+  WRITE_TOOL_NAMES,
+} from "./tools.js";
 import type { WhatsappConversationStateType } from "./state.js";
 
 function stateWith(toolCalls: { name: string; args?: Record<string, unknown> }[]): WhatsappConversationStateType {
@@ -48,6 +58,39 @@ describe("routeConversation", () => {
   });
   it("reallocate_budget → confirm (A4 — saga A→B, eco+confirma)", () => {
     expect(routeConversation(stateWith([{ name: "reallocate_budget" }]))).toBe("confirm");
+  });
+});
+
+// D1: invariante de segurança do flip da flag — NENHUMA tool de escrita/criação/refino/config
+// pode ir direto pro "apply" (auto-aplicar). SÓ o controle explícito confirm_write/cancel_write
+// (que aplica o CONGELADO após o "sim") roteia pra "apply". Toda escrita passa pelo eco+confirma.
+describe("routeConversation — invariante anti-auto-apply (bateria D1 do flip)", () => {
+  const writeishTools = [
+    ...WRITE_TOOL_NAMES,
+    ...CREATE_TOOL_NAMES,
+    ...REFINE_TOOL_NAMES,
+    ...CONFIG_UPDATE_TOOL_NAMES,
+    EDIT_AUDIENCE_TOOL_NAME,
+    REALLOCATE_TOOL_NAME,
+    REVERT_TOOL_NAME,
+  ].filter((n) => !CONTROL_WRITE_TOOL_NAMES.has(n));
+
+  it.each(writeishTools)("%s → confirm (nunca apply direto)", (name) => {
+    expect(routeConversation(stateWith([{ name }]))).toBe("confirm");
+  });
+
+  it.each([...CONTROL_WRITE_TOOL_NAMES])("%s → apply (aplica o congelado após o sim)", (name) => {
+    expect(routeConversation(stateWith([{ name }]))).toBe("apply");
+  });
+
+  it("escrita + controle no MESMO turno → apply vence (o sim resolve o congelado; escrita nova ignorada)", () => {
+    // se o LLM emitir pause_entity + confirm_write juntos, o controle tem prioridade — não
+    // reabre uma escrita nova sem eco (o congelado é a fonte da verdade).
+    expect(routeConversation(stateWith([{ name: "pause_entity" }, { name: "confirm_write" }]))).toBe("apply");
+  });
+
+  it("tool de leitura + escrita no mesmo turno → confirm (a escrita exige eco antes de tudo)", () => {
+    expect(routeConversation(stateWith([{ name: "get_metrics" }, { name: "adjust_budget" }]))).toBe("confirm");
   });
 });
 

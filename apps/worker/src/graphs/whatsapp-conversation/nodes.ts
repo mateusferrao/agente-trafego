@@ -80,6 +80,7 @@ import {
 import { renderWhatsappNumber, resolveWhatsappNumber } from "./read-data.js";
 import { makeMetaToolExecutor } from "../../executors/meta-tools.js";
 import { applyCheckedAction, type ApplyResult } from "../../modules/apply/apply-confirmed-action.js";
+import { runReallocationSaga } from "../../modules/apply/reallocation-saga.js";
 import { buildRefineEcho, describeExplicitAudience, MEDIA_PREFERENCES, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner, recoverOpenDraft, refineDraft, resolveProposedExplicitTargeting, type DraftProposalContext, type MediaPreference, type ProposedExplicitInput, type RecoveredDraft } from "../../modules/conversation/draft-proposal.js";
 import { loadWriteContext } from "../../modules/apply/write-context.js";
 import { revertActionById } from "../../modules/apply/revert-action.js";
@@ -1401,54 +1402,35 @@ export function makeConversationNodes(
           idempotencyKey: `conv:${ctx.conversationId}:${action.id}:${keySuffix}`,
         });
 
-      const outFrom = await applyLeg(legFrom, wctx.ctx, "realloc");
-      if (outFrom.kind !== "applied" && outFrom.kind !== "noop") {
-        // origem não desceu → nada a compensar, nada mexido.
-        return {
-          messages: [...answerToolCalls(calls, "realocação abortada"), new AIMessage(`Não consegui mexer no orçamento de *${fromName}* (${reallocFailReason(outFrom)}), então não movi nada.`)],
-          pendingWrite: null,
-        };
+      // orquestração da saga (ordem + compensação) é PURA-ish (testável); aqui só renderiza o desfecho.
+      const outcome = await runReallocationSaga(legFrom, legTo, saga, wctx.ctx, applyLeg);
+      switch (outcome.kind) {
+        case "source_failed":
+          return {
+            messages: [...answerToolCalls(calls, "realocação abortada"), new AIMessage(`Não consegui mexer no orçamento de *${fromName}* (${reallocFailReason(outcome.failed)}), então não movi nada.`)],
+            pendingWrite: null,
+          };
+        case "done":
+          return {
+            messages: [...answerToolCalls(calls, "realocado"), new AIMessage(describeActionOutcome(legFrom, { kind: wctx.cfg.dryRun ? "simulated" : "applied" }) + "\n" + describeActionOutcome(legTo, { kind: wctx.cfg.dryRun ? "simulated" : "applied" }))],
+            pendingWrite: null,
+          };
+        case "compensated":
+          return {
+            messages: [...answerToolCalls(calls, "realocação revertida"), new AIMessage(`Não consegui aumentar *${toName}* (${reallocFailReason(outcome.destFailed)}), então devolvi o orçamento de *${fromName}*. No fim, nada mudou.`)],
+            pendingWrite: null,
+          };
+        case "partial": {
+          // devolução TAMBÉM falhou → estado parcial explícito (jamais silêncio). §UX erro = o quê + o quê fazer.
+          const leftMinor = Number(legFrom.params[ACTION_PARAM_AMOUNT_MINOR]);
+          const leftMoney = Number.isFinite(leftMinor) ? formatMoney(leftMinor / 100, wctx.currency) : "um valor menor";
+          logger.error({ fromId: legFrom.target.id, toId: legTo.target.id }, "realloc:compensação falhou — estado parcial");
+          return {
+            messages: [...answerToolCalls(calls, "estado parcial"), new AIMessage(`⚠️ Reduzi *${fromName}* mas não consegui aumentar *${toName}* nem devolver o orçamento. *${fromName}* está com ${leftMoney}/dia agora — dá uma olhada no site e ajuste se precisar.`)],
+            pendingWrite: null,
+          };
+        }
       }
-      // destino: soma a origem ao "tocado hoje" (cap de entidades/dia coerente com o gate).
-      const ctxTo: GuardrailContext = { ...wctx.ctx, touchedToday: new Set<string>([...(wctx.ctx.touchedToday ?? []), saga.sourceKey]) };
-      const outTo = await applyLeg(legTo, ctxTo, "realloc");
-      if (outTo.kind === "applied" || outTo.kind === "noop") {
-        return {
-          messages: [...answerToolCalls(calls, "realocado"), new AIMessage(describeActionOutcome(legFrom, { kind: wctx.cfg.dryRun ? "simulated" : "applied" }) + "\n" + describeActionOutcome(legTo, { kind: wctx.cfg.dryRun ? "simulated" : "applied" }))],
-          pendingWrite: null,
-        };
-      }
-      // destino falhou DEPOIS da origem descer → devolve o orçamento cru anterior da origem.
-      // clamp NEUTRO: budget-de-referência = o valor ANTERIOR (0% de mudança), e a origem NÃO
-      // entra em budgetChangedToday deste ctx (fresco do início) → anti-compounding não barra.
-      const compensation: Action = {
-        id: `${legFrom.id}:compensate`,
-        type: "adjust_budget",
-        target: legFrom.target,
-        params: { [ACTION_PARAM_MODE]: BUDGET_MODE_SET, [ACTION_PARAM_AMOUNT_MINOR]: saga.sourceRestoreMinor },
-        source: "llm",
-        riskLevel: riskForAction("adjust_budget"),
-        reason: "compensação de realocação (devolve o orçamento da origem)",
-      };
-      const compCtx: GuardrailContext = {
-        ...wctx.ctx,
-        budgetAmountByEntity: new Map<string, number>([...(wctx.ctx.budgetAmountByEntity ?? []), [saga.sourceKey, saga.sourceRestoreMinor]]),
-      };
-      const outComp = await applyLeg(compensation, compCtx, "compensate");
-      if (outComp.kind === "applied" || outComp.kind === "noop") {
-        return {
-          messages: [...answerToolCalls(calls, "realocação revertida"), new AIMessage(`Não consegui aumentar *${toName}* (${reallocFailReason(outTo)}), então devolvi o orçamento de *${fromName}*. No fim, nada mudou.`)],
-          pendingWrite: null,
-        };
-      }
-      // devolução TAMBÉM falhou → estado parcial explícito (jamais silêncio). §UX erro = o quê + o quê fazer.
-      const leftMinor = Number(legFrom.params[ACTION_PARAM_AMOUNT_MINOR]);
-      const leftMoney = Number.isFinite(leftMinor) ? formatMoney(leftMinor / 100, wctx.currency) : "um valor menor";
-      logger.error({ fromId: legFrom.target.id, toId: legTo.target.id }, "realloc:compensação falhou — estado parcial");
-      return {
-        messages: [...answerToolCalls(calls, "estado parcial"), new AIMessage(`⚠️ Reduzi *${fromName}* mas não consegui aumentar *${toName}* nem devolver o orçamento. *${fromName}* está com ${leftMoney}/dia agora — dá uma olhada no site e ajuste se precisar.`)],
-        pendingWrite: null,
-      };
     }
 
     // escrita por chat: sem run de análise (runId null); o agentId é a âncora da trilha.

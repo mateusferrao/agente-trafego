@@ -60,7 +60,7 @@ describe("buildInContextAllow (kill-switch da escrita conversacional de ads, v1)
   const writeTools = [...WRITE_TOOL_NAMES, "create_campaign", "copy_campaign", "scale_winner"];
   const configTools = [...CONFIG_CHAT_TOOL_NAMES];
 
-  it("chatAdsWrites OFF (default v1) → NENHUMA tool de escrita/criação/refino entra", () => {
+  it("chatAdsWrites OFF (freio de emergência) → NENHUMA tool de escrita/criação/refino entra", () => {
     const allow = buildInContextAllow({ writeTools, configTools, chatAdsWrites: false });
     // escrita Meta + criação + refino fora
     for (const t of [...writeTools, ...REFINE_TOOL_NAMES]) expect(allow.has(t)).toBe(false);
