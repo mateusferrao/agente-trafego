@@ -87,7 +87,7 @@ function makeDeps(overrides: Partial<InboundRouterDeps> = {}) {
     rpush: vi.fn(async () => 1),
     expire: vi.fn(async () => 1),
     get: vi.fn(async (): Promise<string | null> => null),
-    set: vi.fn(async () => "OK" as const),
+    set: vi.fn(async (): Promise<"OK" | null> => "OK"),
     multi: vi.fn(() => multiChain),
   };
   const flushQueue = { add: vi.fn(async () => ({})), remove: vi.fn(async () => 1) };
@@ -173,12 +173,12 @@ describe("makeInboundRouter — DM", () => {
     expect(t.transcriptionQueue.add).not.toHaveBeenCalled();
   });
 
-  it("mensagem duplicada → ignora (dedupe)", async () => {
+  it("mensagem duplicada → ignora (dedupe atômico via SET NX: null = já reivindicado)", async () => {
     const t = makeDeps();
-    t.repo.alreadyProcessed.mockResolvedValueOnce(true);
+    t.redis.set.mockResolvedValueOnce(null); // SET NX devolve null quando a chave já existe (duplicata)
     await makeInboundRouter(t.deps)("inst-1", AUDIO);
     expect(t.repo.recordMessage).not.toHaveBeenCalled();
-    expect(t.redis.multi).not.toHaveBeenCalled();
+    expect(t.transcriptionQueue.add).not.toHaveBeenCalled();
   });
 });
 

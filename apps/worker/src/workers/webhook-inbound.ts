@@ -39,6 +39,7 @@ import { BUFFER_TTL_MARGIN_SEC, pushInbound } from "../modules/conversation/buff
 import { markTranscribing, scheduleConversationFlush } from "../modules/conversation/flush-control.js";
 import { sendCourtesyNotice } from "../modules/conversation/courtesy-notice.js";
 import { stashPendingMedia } from "../modules/conversation/pending-media.js";
+import { claimInbound } from "../modules/conversation/inbound-dedupe.js";
 import { loadGroupParticipantsMap } from "../modules/conversation/group-participants-cache.js";
 import { QUOTED_AUTHOR_FALLBACK_LABEL, quotedTextPrefix, unsupportedMediaNotice } from "../modules/conversation/notices.js";
 import { participantLabelFromPhone } from "@trafego/core";
@@ -76,7 +77,6 @@ export interface InboundRouterDeps {
   readonly repo: Pick<
     NotifyRepo,
     | "resolveInboundContact"
-    | "alreadyProcessed"
     | "ensureConversation"
     | "recordMessage"
     | "recordGroupMessage"
@@ -234,7 +234,7 @@ async function routeGroupMessage(d: InboundRouterDeps, instanceId: string, inbou
     d.logger.debug({ instanceId }, "inbound:ignored (group not registered)");
     return;
   }
-  if (await d.repo.alreadyProcessed(inbound.messageId)) {
+  if (!(await claimInbound(d.redis, instanceId, inbound.messageId))) {
     d.logger.debug({ messageId: inbound.messageId }, "inbound:duplicate");
     return;
   }
@@ -370,8 +370,8 @@ export function makeInboundRouter(d: InboundRouterDeps) {
       d.logger.debug({ instanceId }, "inbound:ignored (unknown sender)");
       return;
     }
-    // idempotência do provider (webhook pode reentregar).
-    if (await d.repo.alreadyProcessed(inbound.messageId)) {
+    // idempotência do provider (webhook pode reentregar) — SET NX atômico entre réplicas (D2).
+    if (!(await claimInbound(d.redis, instanceId, inbound.messageId))) {
       d.logger.debug({ messageId: inbound.messageId }, "inbound:duplicate");
       return;
     }
