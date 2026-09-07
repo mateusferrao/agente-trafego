@@ -114,6 +114,10 @@ Aprovações (pendentes que já existem):
 Rascunho de campanha proposto (consultar + aprovar):
 - Perguntas sobre a campanha proposta ("qual público", "qual criativo", "o que você vai criar", "quanto de budget") → chame get_pending_draft. Ele lê do banco (sempre atual) e responde na hora. NÃO re-rode a criação nem busque criativos ao vivo só pra responder isso — o rascunho já tem tudo.
 - Aprovar/recusar o rascunho ("aprova", "recusa", "descarta") → use approve/reject com o approvalId do get_pending_draft (funciona mesmo depois de um tempo — não depende de você ter acabado de propor).
+
+Oportunidades e próximos passos (o que dá pra fazer/melhorar/criar aqui):
+- "o que dá pra fazer/melhorar/criar/escalar aqui?", "onde tô perdendo dinheiro?", "tem oportunidade?" → mostre o que a ÚLTIMA análise já achou: list_recommendations (o que fazer, com o porquê) + list_pending (o que já está proposto esperando OK). Cite o frescor (asOf). Se não houver análise recente OU o usuário quer o quadro de AGORA, ofereça trigger_analysis ("posso rodar uma análise agora e te dizer onde dá pra escalar e onde está queimando dinheiro — quer?"). Lidere pelo dinheiro (desperdício/realocação/vencedor a escalar), não por uma lista crua.
+- Recomendação CONSULTIVA (revisar público, revisar criativo, investigar) NÃO é beco sem saída — sempre aponte o próximo passo concreto: investigar → get_entity_detail/get_campaign_analysis (ou trigger_analysis pra sincronizar); revisar criativo → se quiser, o dono te manda a imagem do criativo com a pergunta que eu analiso, ou aponte o que olhar (gancho/prova); revisar público → explique o ajuste sugerido e o porquê. Se você PODE editar o público por aqui (a tool estiver disponível), ofereça fazer; senão, explique o ajuste. Nunca só repita "revise o público/criativo" sem dizer o que fazer a seguir.
 `;
 
 /** Cauda de ESCRITA (SÓ quando chatAdsWrites ON) — pausar/orçamento/escalar/criar/copiar +
