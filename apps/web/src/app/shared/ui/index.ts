@@ -2,6 +2,7 @@
 // Subconjunto mínimo necessário para a Fatia 1a (login/signup, Contas, Config, shell).
 // Ampliar conforme novas telas precisarem — ver VENDORING.md para o inventário completo.
 export { UiButton } from './ui-button';
+export { UiCallout } from './ui-callout';
 export { UiInput } from './ui-input';
 export { UiFormFieldComponent as UiFormField } from './ui-form-field';
 export { UiLabel } from './ui-label';

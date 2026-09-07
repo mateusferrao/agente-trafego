@@ -8,8 +8,9 @@ import { Worker } from "bullmq";
 import { eq } from "drizzle-orm";
 import type { Redis } from "ioredis";
 import { campaignDrafts } from "@trafego/db";
-import { APPROVAL_APPLY_QUEUE, type Action, type ApprovalApplyPayload, type ApprovalId, type CampaignDraftSpec } from "@trafego/shared";
+import { APPROVAL_APPLY_QUEUE, type ApprovalApplyPayload, type ApprovalId, type CampaignDraftSpec } from "@trafego/shared";
 import { AdsPlatformError } from "@trafego/shared/ports";
+import { describeActionOutcome, describeActivationOutcome, describeDraftOutcome, readModernizations } from "@trafego/core";
 import type { WorkerDeps } from "../composition.js";
 import { applyActivation } from "../modules/apply/apply-activation.js";
 import { applyConfirmedAction } from "../modules/apply/apply-confirmed-action.js";
@@ -18,30 +19,10 @@ import { describeCreatedDraft } from "../modules/apply/draft-summary.js";
 import { createNotifyRepo } from "../modules/notify/repo.js";
 import { createSendToConversation } from "../modules/notify/send-to-contact.js";
 
-/** Envelopa o desfecho de falha: se a plataforma mandou uma mensagem legível (`userMessage`),
- *  prefere-a ("A Meta informou: …"); senão o texto genérico. Nunca vaza `message` técnico. */
-function metaFailureLine(error: unknown, fallback: string): string {
-  if (error instanceof AdsPlatformError && error.userMessage) {
-    return `A Meta informou: ${error.userMessage.trim()}`;
-  }
-  return fallback;
-}
-
-/** Resumo BREVE (1ª pessoa) do que foi aplicado — p/ o aviso de mudança real (S7). */
-function appliedActionLine(action: Action): string {
-  const name = action.target?.name ?? "a entidade";
-  switch (action.type) {
-    case "pause_entity":
-      return `Pausei ${name}`;
-    case "resume_entity":
-      return `Reativei ${name}`;
-    case "set_status":
-      return `Mudei o status de ${name}`;
-    case "adjust_budget":
-      return `Ajustei o orçamento de ${name}`;
-    default:
-      return `Apliquei a ação em ${name}`;
-  }
+/** Mensagem legível da Meta (`userMessage`) quando há — "A Meta informou: …". Nunca vaza `message`
+ *  técnico. `undefined` = a plataforma não mandou texto legível. */
+function metaUserMessage(error: unknown): string | undefined {
+  return error instanceof AdsPlatformError && error.userMessage ? `A Meta informou: ${error.userMessage.trim()}` : undefined;
 }
 
 export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): Worker<ApprovalApplyPayload> {
@@ -91,45 +72,36 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
         // Aprovação de RASCUNHO (Fatia 7) → saga de criação (apply-draft).
         const outcome = await applyDraft(deps, { orgId, draftId: approval.draftId });
         switch (outcome.kind) {
-          case "failed":
+          case "failed": {
+            const metaMessage = metaUserMessage(outcome.error);
             logger.error({ approvalId, err: outcome.error }, "approval-apply:saga de criação falhou");
-            await pushOutcome(
-              metaFailureLine(outcome.error, "Não consegui criar agora — a Meta não respondeu. Tenta de novo em instantes."),
-            );
+            await ports.approval.markApplyOutcome(approval.id, "failed", metaMessage);
+            await pushOutcome(describeDraftOutcome({ kind: "failed", ...(metaMessage ? { metaMessage } : {}) }));
             return;
+          }
           case "blocked":
-            await ports.approval.resolve(approval.id, { status: "blocked", resolvedReason: outcome.reason });
-            await pushOutcome(`Não criei: ${outcome.reason}.`);
-            return;
           case "unsupported":
-            await ports.approval.resolve(approval.id, { status: "blocked", resolvedReason: outcome.reason });
-            await pushOutcome(`Ainda não consigo fazer isso: ${outcome.reason}.`);
+            await ports.approval.resolve(approval.id, { status: "blocked", resolvedReason: outcome.reason, applyOutcome: "blocked" });
+            await pushOutcome(describeDraftOutcome({ kind: "blocked", reason: outcome.reason }));
+            return;
+          case "limited":
+            // teto de guardrail CORRIGÍVEL → NÃO resolve (o card fica pendente + reabilita p/
+            // reaprovar após ajustar o limite); registra o motivo (como o `failed`).
+            await ports.approval.markApplyOutcome(approval.id, "failed", outcome.reason);
+            await pushOutcome(describeDraftOutcome({ kind: "failed", metaMessage: outcome.reason }));
             return;
           case "created": {
-            await ports.approval.resolve(approval.id, { status: "approved" });
-            if (outcome.dryRun) {
-              await pushOutcome("Simulei a criação (dry-run).");
-              return;
-            }
+            await ports.approval.resolve(approval.id, { status: "approved", applyOutcome: outcome.dryRun ? "simulated" : "applied" });
             const [draftRow] = await deps.db
               .select({ kind: campaignDrafts.kind, spec: campaignDrafts.spec })
               .from(campaignDrafts)
               .where(eq(campaignDrafts.id, approval.draftId))
               .limit(1);
             const summary = draftRow ? describeCreatedDraft(draftRow.kind, draftRow.spec as CampaignDraftSpec) : "sua campanha";
-            // v1: creationActivation decide o desfecho — nasceu ATIVA (no ar) × PAUSADA (revisar +
-            // ativar). Os DOIS avisam aqui (aviso-sempre, inclusive site).
-            const lines = [
-              outcome.activated
-                ? `Criei ${summary} e já ATIVEI — está no ar (a Meta ainda revisa o criativo). Se precisar, dá pra pausar na plataforma.`
-                : `Criei ${summary} — nasceu PAUSADA. Revise e ative na plataforma quando quiser${notifyRef ? " (ou me diz aqui que eu ativo)" : ""}.`,
-            ];
-            // honestidade (§eco+confirma): eu tinha prometido herdar o público que já converte,
-            // mas a fonte não estava mais disponível na hora de criar — nunca fica silencioso.
-            if (outcome.createdIds["targetingFallback"] === true) {
-              lines.push("Obs: não consegui herdar o público que eu tinha prometido (a fonte não estava mais disponível) — usei um público amplo (Advantage+). Revise o público antes de ativar.");
-            }
-            await pushRealApplied(lines.join("\n\n"));
+            // fonte única da copy (voz do Roy) — mesma frase no WhatsApp e no card do site (getOutcome).
+            const text = describeDraftOutcome({ kind: "created", dryRun: outcome.dryRun, summary, activated: outcome.activated, targetingFallback: outcome.createdIds["targetingFallback"] === true, modernizations: readModernizations(outcome.createdIds) });
+            if (outcome.dryRun) await pushOutcome(text);
+            else await pushRealApplied(text);
             return;
           }
         }
@@ -140,20 +112,21 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
         // confirmar aqui ativa a raiz da árvore criada na Meta (não cria nada novo).
         const outcome = await applyActivation(deps, { orgId, draftId: approval.draftId });
         switch (outcome.kind) {
-          case "failed":
+          case "failed": {
+            const metaMessage = metaUserMessage(outcome.error);
             logger.error({ approvalId, err: outcome.error }, "approval-apply:ativação falhou");
-            await pushOutcome(
-              metaFailureLine(outcome.error, "Não consegui ativar agora — a Meta não respondeu. Tenta de novo em instantes."),
-            );
+            await ports.approval.markApplyOutcome(approval.id, "failed", metaMessage);
+            await pushOutcome(describeActivationOutcome({ kind: "failed", ...(metaMessage ? { metaMessage } : {}) }));
             return;
+          }
           case "blocked":
-            await ports.approval.resolve(approval.id, { status: "blocked", resolvedReason: outcome.reason });
-            await pushOutcome(`Não ativei: ${outcome.reason}.`);
+            await ports.approval.resolve(approval.id, { status: "blocked", resolvedReason: outcome.reason, applyOutcome: "blocked" });
+            await pushOutcome(describeActivationOutcome({ kind: "blocked", reason: outcome.reason }));
             return;
           case "activated":
-            await ports.approval.resolve(approval.id, { status: "approved" });
-            if (outcome.dryRun) await pushOutcome("Simulei a ativação (dry-run).");
-            else await pushRealApplied("Ativei sua campanha — já está veiculando.");
+            await ports.approval.resolve(approval.id, { status: "approved", applyOutcome: outcome.dryRun ? "simulated" : "applied" });
+            if (outcome.dryRun) await pushOutcome(describeActivationOutcome({ kind: "activated", dryRun: true }));
+            else await pushRealApplied(describeActivationOutcome({ kind: "activated", dryRun: false }));
             return;
         }
         return;
@@ -165,9 +138,6 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
         return;
       }
 
-      const who = approval.action.target?.name ?? null;
-      const suffix = who ? ` (${who})` : "";
-
       const outcome = await applyConfirmedAction(deps, {
         orgId,
         agentId: approval.agentId,
@@ -177,32 +147,35 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
       });
 
       switch (outcome.kind) {
-        case "failed":
-          // falha da Meta (rede/rate-limit/etc): mantém a aprovação PENDENTE (dá p/ reaprovar)
-          // e avisa o usuário — a promessa de "te aviso o resultado" não pode sumir (§UX).
+        case "failed": {
+          // falha da Meta (rede/rate-limit/etc): mantém a aprovação PENDENTE (dá p/ reaprovar), mas
+          // registra o desfecho (`markApplyOutcome`, sem resolver) p/ o card mostrar + reabilitar o
+          // botão. A promessa de "te aviso o resultado" não pode sumir (§UX).
+          const metaMessage = metaUserMessage(outcome.error);
           logger.error({ approvalId, err: outcome.error }, "approval-apply:execute falhou");
-          await pushOutcome(
-            metaFailureLine(outcome.error, `Não consegui aplicar agora${suffix} — a Meta não respondeu. Tenta de novo em instantes.`),
-          );
+          await ports.approval.markApplyOutcome(approval.id, "failed", metaMessage);
+          await pushOutcome(describeActionOutcome(approval.action, { kind: "failed", ...(metaMessage !== undefined ? { metaMessage } : {}) }));
           return;
+        }
         case "blocked":
-          await ports.approval.resolve(approval.id, { status: "blocked", resolvedReason: outcome.reason });
+          await ports.approval.resolve(approval.id, { status: "blocked", resolvedReason: outcome.reason, applyOutcome: "blocked" });
           logger.info({ approvalId, reason: outcome.reason }, "approval-apply:barrada no re-check");
-          await pushOutcome(`Não apliquei${suffix}: ${outcome.reason}.`);
+          await pushOutcome(describeActionOutcome(approval.action, { kind: "blocked", reason: outcome.reason }));
           return;
         case "noop":
           await ports.approval.resolve(approval.id, {
             status: "blocked",
             resolvedReason: "a entidade já estava no estado desejado",
+            applyOutcome: "noop",
           });
           logger.info({ approvalId }, "approval-apply:no-op (já no estado)");
-          await pushOutcome(`Não precisei mexer${suffix} — já estava no estado desejado.`);
+          await pushOutcome(describeActionOutcome(approval.action, { kind: "noop" }));
           return;
         case "applied":
-          await ports.approval.resolve(approval.id, { status: "approved" });
+          await ports.approval.resolve(approval.id, { status: "approved", applyOutcome: outcome.dryRun ? "simulated" : "applied" });
           logger.info({ approvalId, dryRun: outcome.dryRun }, "approval-apply:aplicada");
-          if (outcome.dryRun) await pushOutcome(`Simulei a ação${suffix} (dry-run).`);
-          else await pushRealApplied(`${appliedActionLine(approval.action)}.`);
+          if (outcome.dryRun) await pushOutcome(describeActionOutcome(approval.action, { kind: "simulated" }));
+          else await pushRealApplied(describeActionOutcome(approval.action, { kind: "applied" }));
           return;
       }
     },

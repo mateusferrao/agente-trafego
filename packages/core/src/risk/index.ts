@@ -7,6 +7,7 @@ const BASE_RISK: Readonly<Record<ActionType, RiskLevel>> = {
   resume_entity: "medium", // religar volta a gastar
   set_status: "medium",
   adjust_budget: "medium", // default; cortar (decrease) vira low (ver abaixo)
+  adjust_audience: "high", // editar público reseta o aprendizado da Meta (irreversível) — sempre OK
 };
 
 /**

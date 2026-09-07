@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { LLMProviderPort } from "@trafego/shared/ports";
-import { proposeTargetingForOpportunity } from "./propose-targeting.js";
+import { proposeAudienceEdit, proposedTargetingToArgs, proposeTargetingForOpportunity } from "./propose-targeting.js";
 
 const baseInput = {
   kind: "remarketing" as const,
@@ -46,5 +46,54 @@ describe("proposeTargetingForOpportunity", () => {
   it("LLM lança → null (degrada, não quebra o run)", async () => {
     const llm = { completeStructured: vi.fn(async () => { throw new Error("upstream"); }), complete: vi.fn() } as unknown as LLMProviderPort;
     expect(await proposeTargetingForOpportunity(llm, baseInput)).toBeNull();
+  });
+});
+
+describe("proposeAudienceEdit", () => {
+  const editInput = {
+    rationale: "público muito amplo — restringe a interessados em corrida",
+    model: "m",
+    savedAudienceNames: ["Compradores"],
+    meta: { orgId: "org", runId: "run-1" },
+  };
+
+  it("propõe público refinado (por NOME) reusando o mesmo schema", async () => {
+    const { llm, spy } = llmReturning({
+      mode: "create",
+      geoNames: ["Belo Horizonte"],
+      interestNames: ["Corrida"],
+      behaviorNames: [],
+      includeAudienceNames: [],
+      excludeAudienceNames: ["Compradores"],
+      rationale: "restringe a quem tem interesse em corrida, exclui compradores",
+    });
+    const out = await proposeAudienceEdit(llm, editInput);
+    expect(out?.interestNames).toEqual(["Corrida"]);
+    expect(out?.excludeAudienceNames).toEqual(["Compradores"]);
+    const req = spy.mock.calls[0]![0] as { responseSchemaName?: string; messages?: { role: string; content: string }[] };
+    expect(req.responseSchemaName).toBe("proposed_targeting"); // MESMO schema by-names
+    expect(req.messages?.[0]?.content).toContain("REFINADO"); // SYSTEM de edição, não de criação
+  });
+
+  it("output vazio/inválido → null (mantém consultivo, não inventa público)", async () => {
+    const { llm } = llmReturning({ mode: "create", geoNames: [] }); // falta rationale → inválido
+    expect(await proposeAudienceEdit(llm, editInput)).toBeNull();
+  });
+});
+
+describe("proposedTargetingToArgs", () => {
+  it("mapeia nomes → args de targeting, omitindo os vazios", () => {
+    const args = proposedTargetingToArgs({
+      mode: "create",
+      geoNames: ["BH"],
+      radiusKm: 20,
+      ageMin: 25,
+      interestNames: ["Corrida"],
+      behaviorNames: [],
+      includeAudienceNames: [],
+      excludeAudienceNames: ["Compradores"],
+      rationale: "x",
+    });
+    expect(args).toEqual({ geo: ["BH"], radiusKm: 20, ageMin: 25, interests: ["Corrida"], excludeAudiences: ["Compradores"] });
   });
 });

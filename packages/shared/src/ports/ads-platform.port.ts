@@ -93,10 +93,36 @@ export interface DuplicateEntityInput {
 /** Resultado da duplicação — id da cópia + filhos criados (idempotência/retomada). `childIds`
  *  = ads copiados; `childAdsetIds` = adsets copiados INTERMEDIÁRIOS (só existem no deep_copy de
  *  CAMPANHA — precisam ser ativados junto, senão travam a entrega mesmo com campanha+ads ativos). */
+/** Códigos de modernização conhecidos — fonte única (evita string mágica duplicada entre a
+ *  tradução PT e a leitura defensiva). Adicionar um código = uma linha aqui + o case no core. */
+export const MODERNIZATION_CODES = ["attribution_window_modernized", "budget_distributed_across_adsets"] as const;
+export type ModernizationCode = (typeof MODERNIZATION_CODES)[number];
+
+/** Diferença INEVITÁVEL que a reconstrução introduziu vs a fonte (a plataforma descontinuou o
+ *  valor original, ex: janela de atribuição). Neutro — sem vocabulário do provider. O core
+ *  traduz `code` → PT no desfecho. */
+export interface ModernizationNote {
+  readonly code: ModernizationCode;
+}
+
+/** Orçamento diário atual de um conjunto (unidade mínima da moeda). */
+export interface AdsetBudgetRef {
+  readonly id: string;
+  readonly dailyMinor: number;
+}
+/** Modelo de orçamento de uma campanha: `campaignDailyMinor` presente = CBO (budget na campanha);
+ *  `null` = ABO (budget nos conjuntos, em `adsets`). Neutro — sem vocabulário do provider. */
+export interface CampaignBudgetLayout {
+  readonly campaignDailyMinor: number | null;
+  readonly adsets: readonly AdsetBudgetRef[];
+}
+
 export interface DuplicateResult {
   readonly copiedId: string;
   readonly childIds: readonly string[];
   readonly childAdsetIds: readonly string[];
+  /** modernizações que a reconstrução precisou aplicar (vazio quando tudo veio de `/copies`). */
+  readonly modernizations: readonly ModernizationNote[];
 }
 
 /** Entrada da estimativa de alcance (Fatia 7 — fast-follow): targeting NEUTRO + objetivo; o
@@ -129,6 +155,9 @@ export interface CreateAdSetInput {
   readonly dailyBudgetMinor?: number;
   readonly goal: ConversionGoal;
   readonly pixelId?: string;
+  /** Page da conta — objeto promovido do conjunto (LEAD_GENERATION/CONVERSATIONS exigem;
+   *  sem ela a Meta recusa anexar o anúncio: "conjunto sem objeto pra promover"). */
+  readonly pageId?: string;
   readonly targeting: TargetingSpec;
   readonly status: "active" | "paused";
 }
@@ -304,6 +333,10 @@ export interface AdsPlatformPort {
   duplicateEntity(account: AdAccountRef, input: DuplicateEntityInput): Promise<DuplicateResult>;
   /** Define o budget diário absoluto de uma entidade (escala pós-cópia; idempotente). */
   setEntityBudget(account: AdAccountRef, entityId: string, dailyBudgetMinor: number): Promise<void>;
+  /** Lê o modelo de orçamento de uma campanha (CBO = budget na campanha; ABO = nos conjuntos) —
+   *  o caller decide ONDE aplicar o novo budget da duplicação (setar na campanha ABO liga CBO e
+   *  a Meta recusa se os conjuntos têm metas diferentes). */
+  getCampaignBudgetLayout(account: AdAccountRef, campaignId: string): Promise<CampaignBudgetLayout>;
   /** Saga de criação do zero — granular (a casca persiste ids parciais p/ retomada idempotente). */
   createCampaign(account: AdAccountRef, input: CreateCampaignInput): Promise<{ campaignId: string }>;
   /** `targetingFallback: true` = um `reuse_adset` foi pedido mas a fonte não estava disponível

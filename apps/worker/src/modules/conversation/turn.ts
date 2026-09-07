@@ -160,6 +160,18 @@ export function buildInContextAllow(opts: {
 }
 
 /**
+ * Concierge de GRUPO (S6) + fix same-turn: além dos reads always-bind e do set_focus, binda as
+ * tools de config. Assim "foca na Loja X e liga o aviso" resolve no MESMO papo — o set_focus muta o
+ * ctx (agentId/adAccountId) e a tool de config já opera na conta focada; sem foco, o gate de config
+ * pede pra focar (guard em confirmWriteGate). Bindar aqui NÃO afrouxa segurança: o kill-switch
+ * `autoConfigViaChat` segue barrado no APPLY (applyConfirmedConfig re-lê fresco e aborta se OFF).
+ */
+export const GROUP_CONCIERGE_ALLOW: ReadonlySet<string> = new Set<string>([
+  ...GROUP_CONCIERGE_TOOL_NAMES,
+  ...CONFIG_CHAT_TOOL_NAMES,
+]);
+
+/**
  * Kill-switch da auto-config por chat (S2.3): a config só entra na allowlist quando
  * `autonomy_policy.autoConfigViaChat !== false` (ausente/true = ON; default). Desligado
  * → as tools de config NEM CHEGAM ao LLM (config passa a ser pelo site). NÃO passam por
@@ -224,7 +236,7 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
   // sem agente em contexto: concierge. Em GRUPO multi-conta, always-bind de LEITURA (S6) →
   // a 1ª pergunta resolve num turno (set_focus muta o ctx; reads self-guardam sem foco).
   const conciergeAllow =
-    input.ref.kind === "group" && multiAccount ? GROUP_CONCIERGE_TOOL_NAMES : CONCIERGE_TOOL_NAMES;
+    input.ref.kind === "group" && multiAccount ? GROUP_CONCIERGE_ALLOW : CONCIERGE_TOOL_NAMES;
   // escrita + criação resolvidas da MESMA fonte (bindings) que o apply usa (A2). Criação
   // desligada nos bindings → tool fora do toolset (recusa honesta), sem re-checar no apply.
   // v1 (kill-switch de plataforma): escrita conversacional de ads OFF → NENHUMA tool de escrita/

@@ -44,13 +44,15 @@ import {
   recommendations,
 } from "@trafego/db";
 import type { Action, EncryptedPayload, InsightMetrics, OrgId, StoredInsightMetrics } from "@trafego/shared";
-import type { AnalysisOutput } from "@trafego/shared/schemas";
 import type { SchedulerPort } from "@trafego/shared/ports";
 import {
+  computeScaleRessalvas,
+  DEFAULT_AUDIENCE_CEILING_THRESHOLDS,
+  DEFAULT_MARGINAL_CPA_THRESHOLDS,
   detectGuardrailOpportunity,
-  guardUnconfirmedHypothesis,
   selectLessonsForBrief,
   type LessonGuard,
+  type ScaleRessalvaContext,
   type StoredLesson,
 } from "@trafego/core";
 import { acceptThreshold, dismissAdvisory, rejectProposal, revertThreshold } from "@trafego/agent-config";
@@ -333,15 +335,22 @@ async function scenarioTemporal(): Promise<void> {
   ok("8.2 prior de lag de conversão (account/conversion)", (await loadLesson(al.agentId, "account:conversion:neutral:account_conversion_lag")) !== null);
 }
 
-/** 9: guard assimétrico de CONTA (puro). */
+/** 9: ressalva assimétrica de CONTA (puro) — hipótese não-confirmada só endurece escala. */
 function scenarioGuard(): void {
-  console.log("\n▶ Cenário 9 — guard assimétrico de conta (puro)");
-  const rec = (actionType: string) => ({ id: "r1", title: "Escalar", rationale: "b", actionType, severity: "info" as const, targetEntity: { level: "campaign" as const, externalId: "cX", name: "X" } });
-  const out = (t: string): AnalysisOutput => ({ scorecard: { grade: "B", headline: "h", biggestLeak: "conversao" }, summary: "s", findings: [], recommendations: [rec(t)] }) as unknown as AnalysisOutput;
+  console.log("\n▶ Cenário 9 — ressalva assimétrica de conta (puro)");
+  const act = (type: "adjust_budget" | "pause_entity"): Action => ({
+    id: "a1", type, target: { level: "campaign", id: "cX", name: "X" },
+    params: type === "adjust_budget" ? { mode: "increase", pct: 20 } : {},
+    source: "llm", riskLevel: "medium", reason: "escalar",
+  });
+  const ctx = (guards: LessonGuard[]): ScaleRessalvaContext => ({
+    eligibility: new Map(), marginalRisePct: new Map(), marginal: DEFAULT_MARGINAL_CPA_THRESHOLDS,
+    headroom: new Map(), ceiling: DEFAULT_AUDIENCE_CEILING_THRESHOLDS, signals: new Map(), lessonGuards: guards,
+  });
   const accGuard: LessonGuard[] = [{ id: "g", key: { scope: "account", dimension: "pacing", direction: "lower" } }];
-  ok("9.1 escala sob prior de CONTA lower não-confirmado → investigar", guardUnconfirmedHypothesis(out("increase_budget"), accGuard).recommendations[0]?.actionType === "investigate");
-  ok("9.2 prior de conta RAISE não age (nunca libera)", guardUnconfirmedHypothesis(out("increase_budget"), [{ id: "g", key: { scope: "account", dimension: "pacing", direction: "raise" } }]).recommendations[0]?.actionType === "increase_budget");
-  ok("9.3 corte (pausa) não é tocado pelo guard", guardUnconfirmedHypothesis(out("pause"), accGuard).recommendations[0]?.actionType === "pause");
+  ok("9.1 escala sob prior de CONTA lower não-confirmado → ressalva", computeScaleRessalvas(act("adjust_budget"), ctx(accGuard)).some((r) => r.code === "unconfirmed_hypothesis"));
+  ok("9.2 prior de conta RAISE não age (nunca libera)", computeScaleRessalvas(act("adjust_budget"), ctx([{ id: "g", key: { scope: "account", dimension: "pacing", direction: "raise" } }])).length === 0);
+  ok("9.3 corte (pausa) não é tocado", computeScaleRessalvas(act("pause_entity"), ctx(accGuard)).length === 0);
   // split: prior de conta forte/confirmado vai pro PROMPT (não pro guard).
   const sel = selectLessonsForBrief([storedLesson("account:budget:lower:account_cut_pays", { confidence: 0.9, confirmedByHuman: true, origin: "our_action" }), storedLesson("account:pacing:lower:account_scale_backfires", { confidence: 0.3, confirmedByHuman: false })], 5);
   ok("9.4 prior forte → prompt; fraco → guard", sel.prompt.length === 1 && sel.guards.length === 1, { p: sel.prompt.length, g: sel.guards.length });

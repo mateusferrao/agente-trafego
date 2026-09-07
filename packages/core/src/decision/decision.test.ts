@@ -69,4 +69,29 @@ describe("decideActions", () => {
     const res = decideActions([action("p", { source: "llm", type: "pause_entity" })], policy);
     expect(res.autoApply.map((a) => a.id)).toEqual(["p"]);
   });
+
+  it("adjust_audience NUNCA auto-aplica, mesmo em act_full (Fatia C — reseta aprendizado)", () => {
+    const policy: AutonomyPolicy = { bySource: { playbook: "act_full", llm: "act_full" } };
+    const res = decideActions([action("aud", { source: "llm", type: "adjust_audience", riskLevel: "high" })], policy);
+    expect(res.autoApply).toHaveLength(0);
+    expect(res.needApproval.map((a) => a.id)).toEqual(["aud"]);
+  });
+
+  it("ação com RESSALVA nunca auto-aplica, mesmo em act_full (Fatia A)", () => {
+    const policy: AutonomyPolicy = { bySource: { playbook: "act_full", llm: "act_full" } };
+    const res = decideActions(
+      [
+        action("limpa", { source: "llm", type: "adjust_budget", riskLevel: "medium" }),
+        action("comRessalva", {
+          source: "llm",
+          type: "adjust_budget",
+          riskLevel: "medium",
+          ressalvas: [{ code: "creative_fatigue", message: "fadiga" }],
+        }),
+      ],
+      policy,
+    );
+    expect(res.autoApply.map((a) => a.id)).toEqual(["limpa"]);
+    expect(res.needApproval.map((a) => a.id)).toEqual(["comRessalva"]);
+  });
 });

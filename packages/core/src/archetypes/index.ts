@@ -127,7 +127,6 @@ const OTIMIZADOR: ArchetypeDefaults = {
     alerts: { enabled: true, sensitivity: "normal", throttleHours: 6 },
     runPush: { enabled: true },
     reactivation: { enabled: true },
-    proactiveDrafts: { enabled: true },
   },
   // eficiência: diretivo e enxuto; profundidade equilibrada (não `direct` — ICP não-técnico).
   defaultPosture: { directiveness: "directive", volume: "concise", didacticDepth: "balanced", experienceLevel: null },
@@ -181,7 +180,6 @@ const VIGIA_INTENSIVO: ArchetypeDefaults = {
     alerts: { enabled: true, sensitivity: "high", throttleHours: 3 },
     runPush: { enabled: true },
     reactivation: { enabled: true },
-    proactiveDrafts: { enabled: true },
   },
   // momento crítico: diretivo e cobre tudo; profundidade equilibrada (não `direct`).
   defaultPosture: { directiveness: "directive", volume: "comprehensive", didacticDepth: "balanced", experienceLevel: null },

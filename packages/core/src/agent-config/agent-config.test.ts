@@ -245,11 +245,22 @@ describe("resolveAgentConfigChange — notifyPolicy (F4d)", () => {
       alerts: NOTIFY_POLICY.alerts,
       runPush: NOTIFY_POLICY.runPush,
       reactivation: NOTIFY_POLICY.reactivation,
-      proactiveDrafts: { enabled: NOTIFY_POLICY.proactiveDrafts?.enabled ?? false },
     });
     expect(r.changed).toContain(CONFIG_CHANGE_LABELS.notifyPolicy);
     expect(r.notifyPolicyChanged).toBe(true);
     expect(r.cadenceChanged).toBe(false); // é a cadência do PULSO, não a da análise
+  });
+
+  it("PRESERVA learning ao salvar OUTRA config (bug: o merge dropava learning → escolha OFF virava ON)", () => {
+    // usuário DESLIGOU os avisos de aprendizado; depois liga o pulso → learning DEVE seguir OFF.
+    const state = baseState({ notifyPolicy: { ...NOTIFY_POLICY, learning: { enabled: false } } });
+    const r = resolve(state, { notifyPolicy: { pulseEnabled: true } });
+    expect(r.next.notifyPolicy.learning).toEqual({ enabled: false });
+  });
+
+  it("learning ausente no policy → default ON após o merge (compat com policies antigas)", () => {
+    const r = resolve(baseState(), { notifyPolicy: { pulseEnabled: true } });
+    expect(r.next.notifyPolicy.learning).toEqual({ enabled: true });
   });
 
   it("muda a cadência do pulso e a sensibilidade do alerta no mesmo patch", () => {

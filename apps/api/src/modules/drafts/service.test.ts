@@ -10,8 +10,10 @@ import { createDraftsService, refineErrorMessage } from "./service.js";
  * no lookup org-scoped e nunca no ref do cliente.
  */
 function fakeDb(rows: unknown[]) {
+  // `.limit()` devolve `rows` (draft/conta); `.where()` sem limit (ex: bindings do applyPreview) é
+  // awaitable → [] (sem bindings → applyPreview cai no default; estes testes não o asseguram).
   return {
-    select: () => ({ from: () => ({ where: () => ({ limit: () => rows }) }) }),
+    select: () => ({ from: () => ({ where: () => ({ limit: () => rows, then: (r: (v: unknown[]) => void) => r([]) }) }) }),
   } as never;
 }
 
@@ -476,6 +478,29 @@ describe("getCreativeThumb (miniatura da biblioteca — aba Criativos)", () => {
   });
 });
 
+describe("getServingCreativeThumb (miniatura ESTÁVEL do anúncio da conta — picker)", () => {
+  it("anúncio inexistente / outra org → null (404)", async () => {
+    const { service } = makeService([]);
+    expect(await service.getServingCreativeThumb(ORG, "acc", "nope")).toBeNull();
+  });
+
+  it("vídeo + If-None-Match com ETag estável (por video_id) → 304 SEM tocar na Meta", async () => {
+    const getVideoFrames = vi.fn();
+    const service = createDraftsService({
+      db: fakeDb([{ videoId: "VID9", imageHash: null }]),
+      adsPlatform: { getVideoFrames } as never,
+      vault: {} as never,
+      approvals: {} as never,
+      storage: {} as never,
+      scheduler: {} as never,
+    });
+    const etag = createHash("sha256").update("serving-thumb:VID9").digest("hex").slice(0, 32);
+    const out = await service.getServingCreativeThumb(ORG, "acc", "AD1", `"${etag}"`);
+    expect(out).toEqual({ notModified: true, etag });
+    expect(getVideoFrames).not.toHaveBeenCalled(); // revalidação não busca fresco
+  });
+});
+
 describe("listServingCreatives (candidatos de reuse: vídeo + imagem, por data — Slice 12)", () => {
   /** fakeDb p/ select→from→where→orderBy→limit AWAITADO. `rows` = já na ordem que o db devolveria. */
   function fakeDbAwait(rows: unknown[]) {
@@ -592,8 +617,9 @@ describe("setDraftTargeting (alterna público reuse × amplo)", () => {
 /** db fake p/ listPendingDrafts: cada chain (select→from→where→limit) consome o próximo da fila
  *  (draft, depois conta, por item pendente). */
 function fakeDbListQueue(queue: unknown[][]) {
+  // `.limit()` puxa da fila; `.where()` sem limit (bindings do applyPreview) é awaitable → [].
   return {
-    select: () => ({ from: () => ({ where: () => ({ limit: () => queue.shift() ?? [] }) }) }),
+    select: () => ({ from: () => ({ where: () => ({ limit: () => queue.shift() ?? [], then: (r: (v: unknown[]) => void) => r([]) }) }) }),
   } as never;
 }
 

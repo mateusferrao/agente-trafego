@@ -16,20 +16,33 @@ describe("mapa inverso (criação)", () => {
   });
 
   it("com pixel + evento → OFFSITE_CONVERSIONS + promoted_object", () => {
-    const c = resolveAdSetConversion("purchase", "PX1");
+    const c = resolveAdSetConversion("purchase", { pixelId: "PX1" });
     expect(c.optimizationGoal).toBe("OFFSITE_CONVERSIONS");
     expect(c.promotedObject).toEqual({ pixel_id: "PX1", custom_event_type: "PURCHASE" });
     expect(c.billingEvent).toBe("IMPRESSIONS");
   });
 
-  it("messaging → CONVERSATIONS (sem promoted_object)", () => {
-    const c = resolveAdSetConversion("messaging_started", "PX1");
-    expect(c.optimizationGoal).toBe("CONVERSATIONS");
-    expect(c.promotedObject).toBeUndefined();
+  it("messaging → CONVERSATIONS + destino WhatsApp; com pageId leva promoted_object.page_id", () => {
+    const semPage = resolveAdSetConversion("messaging_started", { pixelId: "PX1" });
+    expect(semPage.optimizationGoal).toBe("CONVERSATIONS");
+    expect(semPage.destinationType).toBe("WHATSAPP");
+    expect(semPage.promotedObject).toBeUndefined();
+
+    const comPage = resolveAdSetConversion("messaging_started", { pageId: "PG1" });
+    expect(comPage.optimizationGoal).toBe("CONVERSATIONS");
+    expect(comPage.destinationType).toBe("WHATSAPP");
+    expect(comPage.promotedObject).toEqual({ page_id: "PG1" });
   });
 
-  it("lead sem pixel → LEAD_GENERATION", () => {
-    expect(resolveAdSetConversion("lead").optimizationGoal).toBe("LEAD_GENERATION");
+  it("lead sem pixel → LEAD_GENERATION; com pageId exige promoted_object.page_id (bug do adset sem objeto)", () => {
+    const semPage = resolveAdSetConversion("lead");
+    expect(semPage.optimizationGoal).toBe("LEAD_GENERATION");
+    expect(semPage.promotedObject).toBeUndefined();
+
+    const comPage = resolveAdSetConversion("lead", { pageId: "PG1" });
+    expect(comPage.optimizationGoal).toBe("LEAD_GENERATION");
+    expect(comPage.promotedObject).toEqual({ page_id: "PG1" });
+    expect(comPage.destinationType).toBeUndefined();
   });
 
   it("CTA neutro → Meta (fallback LEARN_MORE)", () => {

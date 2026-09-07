@@ -1,15 +1,19 @@
 import { ChangeDetectionStrategy, Component, type OnInit, inject, input, signal } from '@angular/core';
 import { toast } from 'ngx-sonner';
-import { UiButton, UiConfirmDialogService, UiEyebrow } from '@ui';
+import { UiButton, UiCallout, UiConfirmDialogService, UiEyebrow } from '@ui';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import { ApprovalsApiService } from '@core/api/approvals-api.service';
-import { AGENT_NAME } from '@core/brand';
+import { ApprovalApplyStateService } from '@app/features/approvals/approval-apply-state.service';
 import type { LastRunActionsOutput } from '@core/api/generated';
 import { UNDO_WARNING, actionTypeLabel, deadlineText, entityTargetLabel } from '@app/shared/action-format';
 
 type Applied = LastRunActionsOutput['applied'][number];
 type Suggested = LastRunActionsOutput['suggested'][number];
 type Dropped = LastRunActionsOutput['dropped'][number];
+
+/** Poll do desfecho do revert (o worker reverte async) — "Revertendo…" → revertido/bloqueado/timeout. */
+const REVERT_POLL_MS = 1500;
+const REVERT_POLL_TIMEOUT_MS = 30_000;
 
 /**
  * Mini-surface (5a/5b): ações que o agente APLICOU (com reverter, dentro do TTL —
@@ -20,7 +24,7 @@ type Dropped = LastRunActionsOutput['dropped'][number];
 @Component({
   selector: 'app-agent-actions',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [UiButton, UiEyebrow],
+  imports: [UiButton, UiEyebrow, UiCallout],
   template: `
     @if (applied().length > 0 || suggested().length > 0 || dropped().length > 0) {
       <section class="flex flex-col gap-4 rounded-lg border border-line bg-panel p-5">
@@ -77,18 +81,29 @@ type Dropped = LastRunActionsOutput['dropped'][number];
                       }
                     </span>
                     <span class="text-xs text-muted">{{ s.reason }}</span>
+                    @for (r of s.ressalvas ?? []; track r.code) {
+                      <app-ui-callout tone="warning">{{ r.message }}</app-ui-callout>
+                    }
+                    @if (s.applyPreview.message; as m) {
+                      <app-ui-callout [tone]="s.applyPreview.effect === 'blocked' ? 'blocked' : 'warning'">{{ m }}</app-ui-callout>
+                    }
                     @if (deadline(s.expiresAt); as d) {
                       <app-ui-eyebrow>{{ d }}</app-ui-eyebrow>
                     }
+                    @if (applyState.label(s.approvalId); as lbl) {
+                      <span class="text-xs text-ink">{{ lbl }}</span>
+                    }
                   </span>
-                  <span class="flex gap-2 sm:shrink-0">
-                    <button appButton variant="secondary" size="sm" class="flex-1 sm:flex-none" [disabled]="resolving().has(s.approvalId)" (click)="reject(s)">
-                      Rejeitar
-                    </button>
-                    <button appButton size="sm" class="flex-1 sm:flex-none" [disabled]="resolving().has(s.approvalId)" (click)="approve(s)">
-                      {{ resolving().has(s.approvalId) ? 'Enviando…' : 'Aprovar' }}
-                    </button>
-                  </span>
+                  @if (!applyState.isResolvedNonFailed(s.approvalId)) {
+                    <span class="flex gap-2 sm:shrink-0">
+                      <button appButton variant="secondary" size="sm" class="flex-1 sm:flex-none" [disabled]="busy(s.approvalId)" (click)="reject(s)">
+                        Rejeitar
+                      </button>
+                      <button appButton size="sm" class="flex-1 sm:flex-none" [disabled]="busy(s.approvalId) || s.applyPreview.effect === 'blocked'" (click)="approve(s)">
+                        {{ applyState.stateOf(s.approvalId) === 'applying' ? 'Enviando…' : 'Aprovar' }}
+                      </button>
+                    </span>
+                  }
                 </li>
               }
             </ul>
@@ -119,6 +134,8 @@ type Dropped = LastRunActionsOutput['dropped'][number];
 export class AgentActions implements OnInit {
   private readonly api = inject(AnalysisApiService);
   private readonly approvalsApi = inject(ApprovalsApiService);
+  /** Estado "Aplicando… → desfecho" — mesma peça compartilhada das outras superfícies. */
+  protected readonly applyState = inject(ApprovalApplyStateService);
   private readonly confirmDialog = inject(UiConfirmDialogService);
 
   readonly accountId = input.required<string>();
@@ -160,18 +177,49 @@ export class AgentActions implements OnInit {
     });
     if (!confirmed) return;
     this.reverting.update((s) => new Set(s).add(a.toolCallId));
+    // o undo é ASYNC (fila) → não marca otimista (pode ser barrado por drift). Enfileira e faz POLL
+    // do desfecho real (igual ao polling da aprovação): revertido / bloqueado / ainda processando.
     this.api.undoAction(this.accountId(), a.toolCallId, force).subscribe({
-      next: () => {
-        // undo é assíncrono (fila) — marca revertido otimista + avisa. Se o re-check
-        // barrar por drift, o próximo carregamento mostra "não revertida" + "mesmo assim".
-        this.applied.update((list) =>
-          list.map((x) => (x.toolCallId === a.toolCallId ? { ...x, reverted: true, revertBlocked: false } : x)),
-        );
+      next: () => this.pollRevert(a.toolCallId, Date.now()),
+      error: () => {
         this.clearReverting(a.toolCallId);
-        toast.success('Revertendo. A ação volta ao estado anterior.');
+        toast.error('Não consegui reverter agora. Tente de novo em instantes.');
       },
-      error: () => this.clearReverting(a.toolCallId),
     });
+  }
+
+  /** Acompanha o desfecho do revert relendo o last-run: `reverted` = sucesso; `revertBlocked` =
+   *  drift ("reverter mesmo assim"); nada mudou no prazo = ainda processando. */
+  private pollRevert(toolCallId: string, startedAt: number): void {
+    if (Date.now() - startedAt > REVERT_POLL_TIMEOUT_MS) {
+      this.clearReverting(toolCallId);
+      toast.info('Ainda revertendo — atualize em instantes pra ver o resultado.');
+      return;
+    }
+    this.api.lastRunActions(this.accountId()).subscribe({
+      next: (r) => {
+        const fresh = r.applied.find((x) => x.toolCallId === toolCallId);
+        if (fresh?.reverted) {
+          this.updateApplied(fresh);
+          this.clearReverting(toolCallId);
+          toast.success('Ação revertida — voltou ao estado anterior.');
+          return;
+        }
+        if (fresh?.revertBlocked) {
+          this.updateApplied(fresh);
+          this.clearReverting(toolCallId);
+          toast.error(fresh.revertBlockedReason ? `Não reverti: ${fresh.revertBlockedReason}` : 'Não consegui reverter — a entidade mudou desde então.');
+          return;
+        }
+        setTimeout(() => this.pollRevert(toolCallId, startedAt), REVERT_POLL_MS);
+      },
+      error: () => setTimeout(() => this.pollRevert(toolCallId, startedAt), REVERT_POLL_MS),
+    });
+  }
+
+  /** Substitui um item aplicado pelo estado fresco (reverted/revertBlocked). */
+  private updateApplied(fresh: Applied): void {
+    this.applied.update((list) => list.map((x) => (x.toolCallId === fresh.toolCallId ? fresh : x)));
   }
 
   private clearReverting(id: string): void {
@@ -182,16 +230,14 @@ export class AgentActions implements OnInit {
     });
   }
 
-  /** Aprovar: enfileira a aplicação (worker re-checa fresco + aplica). Otimista. */
+  /** Aprovar: o serviço compartilhado enfileira + acompanha "Aplicando… → desfecho real". */
   protected approve(s: Suggested): void {
-    this.markResolving(s.approvalId);
-    this.approvalsApi.resolve(s.approvalId, 'approve').subscribe({
-      next: () => {
-        this.removeSuggested(s.approvalId);
-        toast.success(`Aprovado. O ${AGENT_NAME} aplica em instantes.`);
-      },
-      error: () => this.clearResolving(s.approvalId),
-    });
+    this.applyState.approve(s.approvalId, () => toast.error('Não consegui concluir agora — atualize a página pra ver o estado atual.'));
+  }
+
+  /** Ocupado (aplicando OU resolvendo) → desabilita os botões. */
+  protected busy(id: string): boolean {
+    return this.resolving().has(id) || this.applyState.stateOf(id) === 'applying';
   }
 
   /** Rejeitar: descarta a sugestão (nada é aplicado na Meta). */

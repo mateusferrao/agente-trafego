@@ -47,6 +47,47 @@ describe("buildMessageFallback", () => {
     expect(msg).not.toContain("R$");
   });
 
+  it("agrupado (Fatia B): posso fazer c/ oferta + ressalva, sua direção, observei — detalha TODAS", () => {
+    const msg = buildMessageFallback({
+      accountName: "Loja X",
+      currency: "BRL",
+      headline: "Panorama ok.",
+      summary: "s",
+      recommendations: [],
+      approvable: [
+        { reason: "escalar o vencedor Y: +20% de budget", ressalvas: ["o criativo está cansando — renove o gancho antes"] },
+        { reason: "pausar a campanha zumbi Z" },
+      ],
+      directions: [{ title: "Corrigir o público (45-65+)" }, { title: "Revisar criativos" }],
+      observations: [{ title: "NUCLEO em aprendizado — sem mexer" }],
+    });
+    // grupo aprovável com oferta explícita + ressalva
+    expect(msg.toLowerCase()).toContain("pode");
+    expect(msg).toContain("escalar o vencedor Y: +20% de budget");
+    expect(msg).toContain("renove o gancho antes");
+    expect(msg).toContain("pausar a campanha zumbi Z");
+    // sua direção (todas, sem cap)
+    expect(msg).toContain("Corrigir o público (45-65+)");
+    expect(msg).toContain("Revisar criativos");
+    // observei
+    expect(msg).toContain("NUCLEO em aprendizado — sem mexer");
+  });
+
+  it("agrupado: grupo vazio não vira cabeçalho órfão", () => {
+    const msg = buildMessageFallback({
+      accountName: "Loja X",
+      currency: "BRL",
+      summary: "s",
+      recommendations: [],
+      approvable: [{ reason: "pausar zumbi" }],
+      directions: [],
+      observations: [],
+    });
+    expect(msg).toContain("pausar zumbi");
+    expect(msg.toLowerCase()).not.toContain("sua direção");
+    expect(msg.toLowerCase()).not.toContain("observei");
+  });
+
   it("sem headline → cai p/ a primeira frase do resumo", () => {
     const msg = buildMessageFallback({
       accountName: "Loja Y",

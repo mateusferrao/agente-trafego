@@ -322,19 +322,6 @@ type SpendSource = 'meta_cap' | 'custom';
           </div>
         }
       </div>
-
-      <!-- Proatividade de criação (Fatia 7): propõe escalar/criar campanhas -->
-      <div class="border-t border-line pt-4">
-        <label class="flex items-center justify-between gap-3">
-          <span class="flex flex-col">
-            <span class="text-sm font-medium text-ink">Propor campanhas por conta própria</span>
-            <span class="text-xs text-muted">O agente sugere escalar um vencedor ou criar uma campanha quando faz sentido — sempre como proposta, nunca gasta sem sua aprovação.</span>
-          </span>
-          <button appSwitch [ngpSwitchChecked]="proactiveDraftsEnabled()" (ngpSwitchCheckedChange)="proactiveDraftsEnabled.set($event)">
-            <span appSwitchThumb></span>
-          </button>
-        </label>
-      </div>
     </section>
   `,
 })
@@ -362,7 +349,6 @@ export class AgentNotifications implements OnInit {
 
   protected readonly runPushEnabled = signal(true);
   protected readonly reactivationEnabled = signal(false);
-  protected readonly proactiveDraftsEnabled = signal(false);
 
   protected readonly HEALTH_STATUS_OPTIONS = HEALTH_STATUS_OPTIONS;
   protected readonly SPEND_SOURCES: readonly { value: SpendSource; label: string }[] = [
@@ -455,7 +441,7 @@ export class AgentNotifications implements OnInit {
   private readonly baseline = signal('');
   private readonly sig = computed(
     () =>
-      `${this.pulseEnabled()}|${JSON.stringify(this.pulseCadenceSpec())}|${this.alertsEnabled()}|${this.sensitivity()}|${this.throttleHours()}|${this.runPushEnabled()}|${this.reactivationEnabled()}|${this.proactiveDraftsEnabled()}|${this.accountHealthEnabled()}|${[...this.statusTriggers()].sort().join(',')}|${this.spendSource()}|${this.customSpendThreshold()}|${this.balanceEnabled()}|${this.customBalanceThreshold()}`,
+      `${this.pulseEnabled()}|${JSON.stringify(this.pulseCadenceSpec())}|${this.alertsEnabled()}|${this.sensitivity()}|${this.throttleHours()}|${this.runPushEnabled()}|${this.reactivationEnabled()}|${this.accountHealthEnabled()}|${[...this.statusTriggers()].sort().join(',')}|${this.spendSource()}|${this.customSpendThreshold()}|${this.balanceEnabled()}|${this.customBalanceThreshold()}`,
   );
   /** teto customizado exige valor > 0 (nunca inventa limiar) — só quando o campo está VISÍVEL. */
   protected readonly spendInvalid = computed(
@@ -490,7 +476,6 @@ export class AgentNotifications implements OnInit {
     this.throttleHours.set(String(n.alerts.throttleHours));
     this.runPushEnabled.set(n.runPush.enabled);
     this.reactivationEnabled.set(n.reactivation?.enabled ?? false);
-    this.proactiveDraftsEnabled.set(n.proactiveDrafts?.enabled ?? false);
     this.accountCurrency.set(a.currency);
     this.fundingType.set(a.fundingType);
     const ah = n.accountHealthAlert;
@@ -535,7 +520,6 @@ export class AgentNotifications implements OnInit {
             },
             runPush: { enabled: this.runPushEnabled() },
             reactivation: { enabled: this.reactivationEnabled() },
-            proactiveDrafts: { enabled: this.proactiveDraftsEnabled() },
             accountHealthAlert: {
               enabled: this.accountHealthEnabled(),
               statusTriggers: [...this.statusTriggers()],

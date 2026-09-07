@@ -11,6 +11,7 @@ import {
   DIRECTIVENESS_LEVELS,
   EXPERIENCE_LEVELS,
   RECOMMENDATION_KINDS,
+  RESSALVA_CODES,
   VOLUME_LEVELS,
 } from "../types/index.js";
 import { GATEABLE_TOOL_KEYS } from "../constants/tools.js";
@@ -22,11 +23,14 @@ export const entityLevel = z.enum(["account", "campaign", "adset", "ad"]);
 export const conversionGoalSchema = z.enum(CONVERSION_GOALS);
 /** Formato da recomendação (S2) — deriva da mesma tupla que o tipo (fonte única). */
 export const recommendationKindSchema = z.enum(RECOMMENDATION_KINDS);
+/** Ressalva de escala (Fatia A) — deriva da mesma tupla de códigos que o tipo (fonte única). */
+export const ressalvaSchema = z.object({ code: z.enum(RESSALVA_CODES), message: z.string() });
 export const actionType = z.enum([
   "pause_entity",
   "resume_entity",
   "adjust_budget",
   "set_status",
+  "adjust_audience",
 ]);
 export const riskLevel = z.enum(["low", "medium", "high"]);
 export const actionSource = z.enum(["playbook", "llm"]);
@@ -190,14 +194,21 @@ export const autonomyPolicySchema = z.object({
   byAction: z.record(z.enum([...GATEABLE_TOOL_KEYS] as [string, ...string[]]), autonomyLevel).optional(),
 });
 
-/** On/off das 6 tools gateáveis (A3) — estado resolvido (read) ou patch (write parcial).
- *  Deriva de GATEABLE_TOOL_KEYS (fonte única): as 4 de escrita + as 2 de criação. */
+/** On/off das 7 tools gateáveis (A3) — estado resolvido (read) ou patch (write parcial).
+ *  Deriva de GATEABLE_TOOL_KEYS (fonte única): as 5 de escrita + as 2 de criação. */
 export const toolBindingsSchema = z.object(
   Object.fromEntries(GATEABLE_TOOL_KEYS.map((k) => [k, z.boolean()])) as Record<
     (typeof GATEABLE_TOOL_KEYS)[number],
     z.ZodBoolean
   >,
 );
+
+/** Preview do que APROVAR faz (Fatia unificação) — espelha `ApplyPreview` (types, fonte do tipo).
+ *  Exposto em todo output de aprovação (ação/rascunho/ativação/suggested) p/ o card ser honesto. */
+export const applyPreviewSchema = z.object({
+  effect: z.enum(["real", "simulated", "blocked"]),
+  message: z.string().nullable(),
+});
 
 // ─── Cadência (Fatia 4 corte 2) ──────────────────────────────────────────
 // `CadenceSpec` = FONTE ÚNICA do ritmo da análise automática; o cron 5-campos é
@@ -266,9 +277,6 @@ export const notifyPolicySchema = z.object({
   // Default ON (baixo volume — semanas p/ o 1º; sempre acionável ou informativo). Opcional
   // (ausência = ON) p/ compat com policies gravadas antes do campo.
   learning: z.object({ enabled: z.boolean() }).optional(),
-  // Proatividade de CRIAÇÃO (Fatia 7): o agente PROPÕE escalar/criar campanhas pelo que
-  // observou (nunca auto-aplica — sempre aprovação). Default OFF; ON em Otimizador/Vigia.
-  proactiveDrafts: z.object({ enabled: z.boolean() }).optional(),
   // Saúde da conta Meta — ver schema acima. Default ON em TODOS os arquétipos (mais
   // urgente que reativação: isso aqui é dinheiro parado, não uma boa notícia opcional).
   accountHealthAlert: accountHealthAlertSchema.optional(),
@@ -282,7 +290,6 @@ export const DEFAULT_NOTIFY_POLICY: NotifyPolicy = {
   runPush: { enabled: true },
   reactivation: { enabled: false },
   learning: { enabled: true },
-  proactiveDrafts: { enabled: false },
   accountHealthAlert: {
     enabled: true,
     statusTriggers: [...ALERTABLE_ACCOUNT_HEALTH_STATUSES],

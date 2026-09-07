@@ -71,6 +71,21 @@ describe("MetaGraphClient — timeout", () => {
     const init = spy.mock.calls[0]![1] as RequestInit;
     expect(init.signal).toBeInstanceOf(AbortSignal);
   });
+
+  it("batch: inclui name + omit_response_on_success nas sub-requests (habilita referências)", async () => {
+    const spy = stubFetch("[]", true, 200);
+    const c = new MetaGraphClient({ graphVersion: GRAPH_VERSION });
+    await c.batch("t", [
+      { method: "POST", relativeUrl: "act_1/campaigns", name: "camp", omitResponseOnSuccess: false, body: { objective: "X" } },
+      { method: "POST", relativeUrl: "act_1/adsets", body: { campaign_id: "{result=camp:$.id}" } },
+    ]);
+    const init = spy.mock.calls[0]![1] as RequestInit;
+    const batchJson = JSON.parse(new URLSearchParams(init.body as string).get("batch")!);
+    expect(batchJson[0]).toMatchObject({ name: "camp", omit_response_on_success: false, relative_url: "act_1/campaigns" });
+    expect(batchJson[0].body).toContain("objective=X");
+    expect(batchJson[1].name).toBeUndefined();
+    expect(batchJson[1].omit_response_on_success).toBeUndefined();
+  });
 });
 
 describe("MetaGraphClient.request — erro não-JSON", () => {

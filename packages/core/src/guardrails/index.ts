@@ -277,7 +277,8 @@ export function applyCreationGuardrails(
   if (createdToday >= maxPerDay) {
     return {
       allowed: null,
-      dropped: { reason: `limite de campanhas novas/dia atingido (${maxPerDay})` },
+      // nomeia a config EXATA a ajustar (não a de entidades) — o usuário caía na config errada.
+      dropped: { reason: `você atingiu o limite de campanhas novas por dia (${maxPerDay}). Aumente em Segurança › Limites de criação › “Máx. campanhas novas/dia” e aprove de novo` },
     };
   }
 

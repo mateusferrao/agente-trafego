@@ -7,9 +7,11 @@ import {
   cadenceSpecSchema,
   conversionGoalSchema,
   guardrailConfigSchema,
+  applyPreviewSchema,
   marketReferenceSchema,
   notifyPolicySchema,
   postureSchema,
+  ressalvaSchema,
   toolBindingsSchema,
 } from "@trafego/shared/schemas";
 import {
@@ -129,7 +131,6 @@ export const notifyPolicyInput = z.object({
   }).optional(),
   runPush: z.object({ enabled: z.boolean() }).optional(),
   reactivation: z.object({ enabled: z.boolean() }).optional(),
-  proactiveDrafts: z.object({ enabled: z.boolean() }).optional(),
   accountHealthAlert: accountHealthAlertSchema.optional(),
 });
 export type NotifyPolicyInput = z.infer<typeof notifyPolicyInput>;
@@ -158,7 +159,7 @@ export const agentConfigInput = z.object({
     .optional(),
   /** autonomia por origem (playbook×llm) — só morde na escrita (5a). */
   autonomyPolicy: autonomyPolicySchema.optional(),
-  /** on/off por-ação das 6 tools (A3) — patch parcial; grava agent_tool_bindings. */
+  /** on/off por-ação das 7 tools (A3) — patch parcial; grava agent_tool_bindings. */
   toolBindings: toolBindingsSchema.partial().optional(),
   /** guardrails (rede independente) — blast radius, cap, kill-switch, dry-run (5a). */
   guardrails: guardrailConfigSchema.optional(),
@@ -201,7 +202,7 @@ export const agentSummary = z.object({
   paused: z.boolean(),
   /** autonomia por origem (5a) — semeada pelo arquétipo. */
   autonomyPolicy: autonomyPolicySchema,
-  /** on/off por-ação das 6 tools (A3) — estado RESOLVIDO (bindings + fallback allowedActions). */
+  /** on/off por-ação das 7 tools (A3) — estado RESOLVIDO (bindings + fallback allowedActions). */
   toolBindings: toolBindingsSchema,
   /** guardrails (5a) — semeados na criação do agente. */
   guardrails: guardrailConfigSchema,
@@ -388,6 +389,11 @@ export const suggestedActionOutput = z.object({
   targetId: z.string(),
   targetName: z.string().nullable(),
   reason: z.string(),
+  /** O que APROVAR faz (real/simulated/blocked + linha honesta) — computado no servidor (mesma
+   *  fonte do apply). A mini-surface avisa/bloqueia a partir disto. */
+  applyPreview: applyPreviewSchema,
+  /** ressalvas de escala (Fatia A): o "porém" honesto no card de aprovação. */
+  ressalvas: z.array(ressalvaSchema).nullable(),
   /** ISO — prazo de resposta (expira e some da lista). */
   expiresAt: z.string().nullable(),
   /** true = proposta por uma análise ANTERIOR à que está sendo vista (cross-run). */

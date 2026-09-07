@@ -15,8 +15,10 @@ import { createAnalysisRepo, loadDailyToolContext } from "../analysis/repo.js";
 import { loadEnabledTools, enabledActionTypes } from "../tools/enabled.js";
 import { makeMetaToolExecutor, type MetaToolExecutor } from "../../executors/meta-tools.js";
 
-/** Desfecho tipado de aplicar UMA ação confirmada (o chamador mapeia p/ seu I/O). */
-export type ApplyOutcome =
+/** Desfecho RUNTIME de aplicar UMA ação confirmada (o chamador mapeia p/ seu I/O). Distinto do
+ *  enum PERSISTIDO `ApplyOutcome` (@trafego/shared) — aqui carrega dryRun/result/error do momento;
+ *  o worker traduz este `kind` (+ dryRun) pro enum ao gravar em `approvals.apply_outcome`. */
+export type ApplyResult =
   | { readonly kind: "applied"; readonly dryRun: boolean; readonly result: MutationResult; readonly action: Action }
   | { readonly kind: "noop"; readonly action: Action }
   | { readonly kind: "blocked"; readonly reason: string; readonly action: Action }
@@ -49,7 +51,7 @@ export interface CheckedApplyInput {
  * `noop`; senão → `applied`. `input.dryRun` força o ensaio (preview do eco); sem ele,
  * herda de `cfg.dryRun`.
  */
-export async function applyCheckedAction(input: CheckedApplyInput): Promise<ApplyOutcome> {
+export async function applyCheckedAction(input: CheckedApplyInput): Promise<ApplyResult> {
   const { executor, account, action, cfg, ctx, agentId, runId, orgId, idempotencyKey } = input;
   const dryRun = input.dryRun ?? cfg.dryRun;
 
@@ -83,7 +85,7 @@ export interface ApplyConfirmedInput {
  * (24h) e chama `applyCheckedAction`. Reusado por `approval-apply` (site/WhatsApp) e pela
  * escrita livre por chat (5c). Conta indisponível → `blocked` (não é falha de Meta).
  */
-export async function applyConfirmedAction(deps: WorkerDeps, input: ApplyConfirmedInput): Promise<ApplyOutcome> {
+export async function applyConfirmedAction(deps: WorkerDeps, input: ApplyConfirmedInput): Promise<ApplyResult> {
   const { db, ports } = deps;
   const repo = createAnalysisRepo(db);
   const executor = makeMetaToolExecutor(deps);

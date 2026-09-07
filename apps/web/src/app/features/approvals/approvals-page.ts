@@ -1,13 +1,15 @@
 import { ChangeDetectionStrategy, Component, type OnInit, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { toast } from 'ngx-sonner';
-import { NumberStepper, UiButton, UiConfirmDialogService, UiEmptyState, UiEyebrow, UiInput, UiPageHeader } from '@ui';
+import { NumberStepper, UiButton, UiCallout, UiConfirmDialogService, UiEmptyState, UiEyebrow, UiInput, UiPageHeader } from '@ui';
 import { DraftEditPanel } from './draft-edit-panel';
+import { GeoAudienceEditor, toExplicitAudienceWire, type ExplicitAudienceState } from './geo-audience-editor';
 import { AnalysisApiService } from '@core/api/analysis-api.service';
 import { ApprovalsApiService } from '@core/api/approvals-api.service';
 import { DraftsApiService } from '@core/api/drafts-api.service';
 import { AGENT_NAME } from '@core/brand';
 import type { ApprovalOutput, DraftApprovalOutput, RevertibleActionOutput } from '@core/api/generated';
+import { ApprovalApplyStateService } from './approval-apply-state.service';
 import { UNDO_WARNING, actionTypeLabel, deadlineText, entityTargetLabel } from '@app/shared/action-format';
 import { conversionLabel } from '@app/shared/conversion-label';
 import { currencySymbol, money } from '@app/shared/format';
@@ -17,6 +19,12 @@ interface AccountGroup<T> {
   readonly accountName: string;
   readonly items: readonly T[];
 }
+
+/** Poll do desfecho do revert (o worker reverte async) — "Revertendo…" → revertido/bloqueado/timeout.
+ *  Mesmo espírito do polling da aprovação (não marca otimista o que ainda não confirmou). */
+const REVERT_POLL_MS = 1500;
+const REVERT_POLL_TIMEOUT_MS = 30_000;
+
 
 /** Agrupa por conta (caixa de entrada legível p/ gestor multi-conta) — genérico:
  *  serve tanto pendentes (ApprovalOutput) quanto revertíveis (RevertibleActionOutput). */
@@ -40,7 +48,7 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
 @Component({
   selector: 'app-approvals-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormsModule, UiEmptyState, UiPageHeader, UiButton, UiEyebrow, UiInput, NumberStepper, DraftEditPanel],
+  imports: [FormsModule, UiEmptyState, UiPageHeader, UiButton, UiEyebrow, UiInput, UiCallout, NumberStepper, DraftEditPanel, GeoAudienceEditor],
   template: `
     <div class="flex flex-col gap-8">
       <app-ui-page-header
@@ -106,21 +114,29 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                           }
                         </ul>
                       }
-                      <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-                        @if (d.approvalKind === 'draft') {
-                          <button appButton variant="ghost" size="sm" class="sm:mr-auto" [disabled]="resolving().has(d.id)" (click)="toggleEdit(d)">
-                            {{ editingFor() === d.id ? 'Fechar edição' : 'Editar' }}
-                          </button>
-                        }
-                        <div class="flex gap-2">
-                          <button appButton variant="secondary" size="sm" class="flex-1 sm:flex-none" [disabled]="resolving().has(d.id)" (click)="rejectDraft(d)">
-                            {{ d.approvalKind === 'activation' ? 'Deixar pausada' : 'Recusar' }}
-                          </button>
-                          <button appButton size="sm" class="flex-1 sm:flex-none" [disabled]="resolving().has(d.id)" (click)="approveDraft(d)">
-                            {{ resolving().has(d.id) ? 'Enviando…' : (d.approvalKind === 'activation' ? 'Ativar' : 'Aprovar') }}
-                          </button>
+                      @if (d.applyPreview.message; as m) {
+                        <app-ui-callout [tone]="d.applyPreview.effect === 'blocked' ? 'blocked' : 'warning'">{{ m }}</app-ui-callout>
+                      }
+                      @if (!applyState.isResolvedNonFailed(d.id)) {
+                        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+                          @if (d.approvalKind === 'draft') {
+                            <button appButton variant="ghost" size="sm" class="sm:mr-auto" [disabled]="busy(d.id)" (click)="toggleEdit(d)">
+                              {{ editingFor() === d.id ? 'Fechar edição' : 'Editar' }}
+                            </button>
+                          }
+                          <div class="flex gap-2">
+                            <button appButton variant="secondary" size="sm" class="flex-1 sm:flex-none" [disabled]="busy(d.id)" (click)="rejectDraft(d)">
+                              {{ d.approvalKind === 'activation' ? 'Deixar pausada' : 'Recusar' }}
+                            </button>
+                            <button appButton size="sm" class="flex-1 sm:flex-none" [disabled]="busy(d.id) || d.applyPreview.effect === 'blocked'" (click)="approveDraft(d)">
+                              {{ applyState.stateOf(d.id) === 'applying' ? 'Enviando…' : (d.approvalKind === 'activation' ? 'Ativar' : 'Aprovar') }}
+                            </button>
+                          </div>
                         </div>
-                      </div>
+                      }
+                      @if (applyState.label(d.id); as lbl) {
+                        <span class="text-xs text-ink">{{ lbl }}</span>
+                      }
                     </li>
                     @if (editingFor() === d.id) {
                       <li>
@@ -158,21 +174,37 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                           @if (budgetLine(a); as bl) {
                             <span class="text-xs font-medium text-ink">{{ bl }}</span>
                           }
-                        </span>
-                        <span class="flex shrink-0 gap-2">
-                          @if (a.type === 'adjust_budget') {
-                            <button appButton variant="ghost" size="sm" [disabled]="resolving().has(a.id)" (click)="toggleEditAction(a)">
-                              {{ editingActionId() === a.id ? 'Cancelar' : 'Editar valor' }}
-                            </button>
+                          @if (a.applyPreview.message; as m) {
+                            <app-ui-callout class="mt-1" [tone]="a.applyPreview.effect === 'blocked' ? 'blocked' : 'warning'">{{ m }}</app-ui-callout>
                           }
-                          <button appButton variant="secondary" size="sm" [disabled]="resolving().has(a.id)" (click)="reject(a)">
-                            Rejeitar
-                          </button>
-                          <button appButton size="sm" [disabled]="resolving().has(a.id)" (click)="approve(a)">
-                            {{ resolving().has(a.id) ? 'Enviando…' : 'Aprovar' }}
-                          </button>
+                          @for (r of a.ressalvas ?? []; track r.code) {
+                            <app-ui-callout class="mt-1" tone="warning">{{ r.message }}</app-ui-callout>
+                          }
                         </span>
+                        @if (!applyState.isResolvedNonFailed(a.id)) {
+                          <span class="flex shrink-0 gap-2">
+                            @if (a.type === 'adjust_budget') {
+                              <button appButton variant="ghost" size="sm" [disabled]="busy(a.id)" (click)="toggleEditAction(a)">
+                                {{ editingActionId() === a.id ? 'Cancelar' : 'Editar valor' }}
+                              </button>
+                            }
+                            @if (a.type === 'adjust_audience' && a.audience) {
+                              <button appButton variant="ghost" size="sm" [disabled]="busy(a.id)" (click)="toggleEditAudience(a)">
+                                {{ editingAudienceId() === a.id ? 'Fechar edição' : 'Editar público' }}
+                              </button>
+                            }
+                            <button appButton variant="secondary" size="sm" [disabled]="busy(a.id)" (click)="reject(a)">
+                              Rejeitar
+                            </button>
+                            <button appButton size="sm" [disabled]="busy(a.id) || a.applyPreview.effect === 'blocked'" (click)="approve(a)">
+                              {{ applyState.stateOf(a.id) === 'applying' ? 'Enviando…' : 'Aprovar' }}
+                            </button>
+                          </span>
+                        }
                       </div>
+                      @if (applyState.label(a.id); as lbl) {
+                        <span class="text-xs text-ink">{{ lbl }}</span>
+                      }
                       @if (editingActionId() === a.id) {
                         <div class="flex flex-col gap-2 border-t border-line pt-3">
                           <div class="flex flex-col gap-2 sm:flex-row sm:items-end">
@@ -194,6 +226,24 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                             </button>
                           </div>
                           <p class="text-xs text-muted">Ajusto o valor; aprovar em seguida aplica com o número novo (respeitando seu teto).</p>
+                        </div>
+                      }
+                      @if (editingAudienceId() === a.id && a.audience) {
+                        <div class="flex flex-col gap-3 border-t border-line pt-3">
+                          <p class="rounded-md border-2 border-warning bg-warning-soft px-3 py-2 text-xs text-ink">
+                            Editar o público reinicia o aprendizado da Meta nesse conjunto — a entrega pode oscilar por alguns dias até reestabilizar. Ajuste com calma antes de aprovar.
+                          </p>
+                          <app-geo-audience-editor
+                            [accountId]="a.accountId"
+                            [initial]="audienceSeed(a)"
+                            (stateChange)="audienceState.set($event)"
+                          />
+                          <div class="flex justify-end gap-2">
+                            <button appButton variant="secondary" size="sm" [disabled]="savingAudience()" (click)="toggleEditAudience(a)">Cancelar</button>
+                            <button appButton size="sm" [disabled]="savingAudience()" (click)="saveAudienceEdit(a)">
+                              {{ savingAudience() ? 'Salvando…' : 'Salvar público' }}
+                            </button>
+                          </div>
                         </div>
                       }
                     </li>
@@ -272,10 +322,16 @@ export class ApprovalsPage implements OnInit {
   );
   protected readonly resolving = signal<ReadonlySet<string>>(new Set());
   protected readonly reverting = signal<ReadonlySet<string>>(new Set());
+  /** Estado do apply ("Aplicando…" → desfecho) — peça compartilhada pelas 3 superfícies. */
+  protected readonly applyState = inject(ApprovalApplyStateService);
   /** id da ação com o editor de valor aberto (C — só adjust_budget, 1 por vez) + estado do form. */
   protected readonly editingActionId = signal<string | null>(null);
   protected readonly editBudgetReais = signal<number | null>(null);
   protected readonly savingAction = signal(false);
+  /** id da ação adjust_audience com o editor de PÚBLICO aberto (Fatia C, 1 por vez) + estado do editor. */
+  protected readonly editingAudienceId = signal<string | null>(null);
+  protected readonly audienceState = signal<ExplicitAudienceState | null>(null);
+  protected readonly savingAudience = signal(false);
   /** id do rascunho com o painel "Editar rascunho" aberto (só 1 por vez). */
   protected readonly editingFor = signal<string | null>(null);
   /** ids de rascunho cuja miniatura falhou (reuse fbcdn/Meta indisponível) → placeholder. */
@@ -362,17 +418,10 @@ export class ApprovalsPage implements OnInit {
     });
   }
 
-  /** Aprovar rascunho (criação) OU confirmar ativação (P0.1) — mesma rota resolve
-   *  (kind-agnóstica no backend). Otimista. */
+  /** Aprovar rascunho (criação) OU confirmar ativação (P0.1) — o serviço compartilhado enfileira +
+   *  acompanha "Aplicando… → desfecho real" (mesma peça do card de ação). */
   protected approveDraft(d: DraftApprovalOutput): void {
-    this.markResolving(d.id);
-    this.api.resolve(d.id, 'approve').subscribe({
-      next: () => {
-        this.removeDraft(d.id);
-        toast.success(d.approvalKind === 'activation' ? 'Ativando. Já deve estar veiculando.' : `Enviado pra criação. O ${AGENT_NAME} cria em instantes.`);
-      },
-      error: () => this.clearResolving(d.id),
-    });
+    this.applyState.approve(d.id, () => toast.error('Não consegui concluir agora — atualize a lista pra ver o estado atual.'));
   }
 
   /** Recusar a criação (nada é criado) OU manter pausada (P0.1 — a campanha já criada não é
@@ -429,16 +478,15 @@ export class ApprovalsPage implements OnInit {
     this.clearResolving(id);
   }
 
-  /** Aprovar: enfileira a aplicação (worker re-checa fresco + aplica). Otimista. */
+  /** Aprovar: o serviço compartilhado enfileira + acompanha "Aplicando… → desfecho real" (peça
+   *  única, mesma das outras superfícies). */
   protected approve(a: ApprovalOutput): void {
-    this.markResolving(a.id);
-    this.api.resolve(a.id, 'approve').subscribe({
-      next: () => {
-        this.removePending(a.id);
-        toast.success(`Aprovado. O ${AGENT_NAME} aplica em instantes.`);
-      },
-      error: () => this.clearResolving(a.id),
-    });
+    this.applyState.approve(a.id, () => toast.error('Não consegui concluir agora — atualize a lista pra ver o estado atual.'));
+  }
+
+  /** Ocupado (aplicando OU resolvendo) → desabilita os botões do card. */
+  protected busy(id: string): boolean {
+    return this.resolving().has(id) || this.applyState.stateOf(id) === 'applying';
   }
 
   /** Rejeitar: descarta a sugestão (nada é aplicado na Meta). */
@@ -479,6 +527,51 @@ export class ApprovalsPage implements OnInit {
         this.reloadPending();
       },
       error: () => this.savingAction.set(false),
+    });
+  }
+
+  /** Público proposto (API) → estado do editor (`GeoAudienceEditor`). Semente da edição. */
+  protected audienceSeed(a: ApprovalOutput): ExplicitAudienceState {
+    const au = a.audience!;
+    return {
+      geo: au.geo.map((g) => ({ key: g.key, name: g.name, kind: g.kind, radius: g.radius, distanceUnit: g.distanceUnit })),
+      radiusAreas: au.radiusAreas.map((r) => ({ address: r.address, radius: r.radius, distanceUnit: r.distanceUnit })),
+      ageMin: au.ageMin,
+      ageMax: au.ageMax,
+      genders: au.genders,
+      interestGroups: au.interestGroups.map((grp) => grp.map((i) => ({ id: i.id, name: i.name }))),
+      behaviorGroups: au.behaviorGroups.map((grp) => grp.map((b) => ({ id: b.id, name: b.name }))),
+      customAudienceIncludeIds: [...au.customAudienceIncludeIds],
+      customAudienceExcludeIds: [...au.customAudienceExcludeIds],
+    };
+  }
+
+  /** Abre/fecha o editor de público de uma ação adjust_audience (Fatia C). Semeia o estado com o
+   *  público PROPOSTO (o editor emite o completo a cada mudança). */
+  protected toggleEditAudience(a: ApprovalOutput): void {
+    const opening = this.editingAudienceId() !== a.id;
+    this.editingAudienceId.set(opening ? a.id : null);
+    this.audienceState.set(opening ? this.audienceSeed(a) : null);
+  }
+
+  /** Salva o público editado (substituição total) antes de aprovar (Fatia C). A ação segue pendente;
+   *  aprovar em seguida aplica o público novo (o apply re-checa fresco). */
+  protected saveAudienceEdit(a: ApprovalOutput): void {
+    const state = this.audienceState();
+    if (!state) return;
+    if (state.geo.length === 0 && state.radiusAreas.length === 0 && !state.ageMin && !state.ageMax && (state.genders?.length ?? 0) === 0 && state.interestGroups.length === 0 && state.behaviorGroups.length === 0 && state.customAudienceIncludeIds.length === 0 && state.customAudienceExcludeIds.length === 0) {
+      toast.error('Escolha ao menos um critério de público (local, idade, interesse ou público salvo).');
+      return;
+    }
+    this.savingAudience.set(true);
+    this.api.editAction(a.id, { explicitAudience: toExplicitAudienceWire(state) }).subscribe({
+      next: () => {
+        this.savingAudience.set(false);
+        this.editingAudienceId.set(null);
+        toast.success('Público atualizado. Agora é só aprovar.');
+        this.reloadPending();
+      },
+      error: () => this.savingAudience.set(false),
     });
   }
 
@@ -526,13 +619,50 @@ export class ApprovalsPage implements OnInit {
 
   private runRevert(a: RevertibleActionOutput, force: boolean, mode: 'pause' | 'archive' | undefined, successMsg: string): void {
     this.markReverting(a.toolCallId);
+    // o worker reverte ASYNC → não removo otimista (o undo pode ser barrado por drift). Enfileira
+    // e faz POLL do resultado real (igual ao polling da aprovação): revertido / bloqueado / timeout.
     this.analysisApi.undoAction(a.accountId, a.toolCallId, force, mode).subscribe({
-      next: () => {
-        this.removeRevertible(a.toolCallId);
-        toast.success(successMsg);
+      next: () => this.pollRevert(a.toolCallId, Date.now(), successMsg),
+      error: () => {
+        this.clearReverting(a.toolCallId);
+        toast.error('Não consegui reverter agora. Tente de novo em instantes.');
       },
-      error: () => this.clearReverting(a.toolCallId),
     });
+  }
+
+  /** Acompanha o desfecho do revert relendo os reversíveis: some da lista = revertido; volta com
+   *  `revertBlocked` = drift (mostra "reverter mesmo assim"); some do prazo = ainda processando. */
+  private pollRevert(toolCallId: string, startedAt: number, successMsg: string): void {
+    if (Date.now() - startedAt > REVERT_POLL_TIMEOUT_MS) {
+      this.clearReverting(toolCallId);
+      toast.info('Ainda revertendo — atualize em instantes pra ver o resultado.');
+      return;
+    }
+    this.api.listRevertible().subscribe({
+      next: (rows) => {
+        const found = rows.find((r) => r.toolCallId === toolCallId);
+        if (!found) {
+          this.removeRevertible(toolCallId);
+          toast.success(successMsg);
+          return;
+        }
+        if (found.revertBlocked) {
+          this.updateRevertible(found);
+          this.clearReverting(toolCallId);
+          toast.error(found.revertBlockedReason ? `Não reverti: ${found.revertBlockedReason}` : 'Não consegui reverter — a entidade mudou desde então.');
+          return;
+        }
+        setTimeout(() => this.pollRevert(toolCallId, startedAt, successMsg), REVERT_POLL_MS);
+      },
+      error: () => setTimeout(() => this.pollRevert(toolCallId, startedAt, successMsg), REVERT_POLL_MS),
+    });
+  }
+
+  /** Substitui um revertível pelo estado fresco (ex: virou `revertBlocked` após o drift). */
+  private updateRevertible(fresh: RevertibleActionOutput): void {
+    this.revertibleGroups.update((gs) =>
+      gs.map((g) => ({ ...g, items: g.items.map((x) => (x.toolCallId === fresh.toolCallId ? fresh : x)) })),
+    );
   }
 
   private removePending(id: string): void {

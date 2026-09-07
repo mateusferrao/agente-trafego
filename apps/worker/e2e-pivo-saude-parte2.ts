@@ -38,15 +38,15 @@ import type { CuratedEntitySnapshot } from "@trafego/shared";
 import { META_GRAPH_VERSION } from "@trafego/ads-meta";
 import {
   guardTrackingCaveat,
-  guardScaleWithWorseningMarginalCpa,
+  computeScaleRessalvas,
   DEFAULT_MARGINAL_CPA_THRESHOLDS,
-  guardAudienceScaleCeiling,
   DEFAULT_AUDIENCE_CEILING_THRESHOLDS,
   detectCreationOpportunities,
   selectAnalysisKnowledge,
   type AnalysisKnowledgeContext,
+  type ScaleRessalvaContext,
 } from "@trafego/core";
-import type { AnalysisOutput } from "@trafego/shared";
+import type { AnalysisOutput, Action } from "@trafego/shared";
 import { buildComposition } from "./src/composition.js";
 import { buildWhatsappConversationGraph } from "./src/graphs/whatsapp-conversation/graph.js";
 import { buildAccountAnalysisGraph } from "./src/graphs/account-analysis/graph.js";
@@ -244,15 +244,17 @@ async function main() {
       const monthlyReach = estimate.monthlyReachMax ?? estimate.monthlyReachMin ?? estimate.dailyActiveUsers;
       if (monthlyReach !== undefined && monthlyReach > 0) {
         const frequencyCap = 3;
-        // cenário 1: público saturado (impressões projetadas MUITO acima do teto real) → rebaixa
-        const targetAdsetA = { level: "adset" as const, externalId: adsetA };
-        const headroomSaturated = new Map([[adsetA, { monthlyReach, currentMonthlyImpressions: monthlyReach * frequencyCap * 5, frequencyCap }]]);
-        const satOut = guardAudienceScaleCeiling(output([rec({ actionType: "increase_budget", targetEntity: targetAdsetA })]), headroomSaturated, DEFAULT_AUDIENCE_CEILING_THRESHOLDS);
-        ok("A3[saturado]: guard REBAIXA increase_budget → investigate, usando alcance REAL da Meta", satOut.recommendations[0]!.actionType === "investigate", satOut.recommendations[0]);
-        // cenário 2: público com folga (impressões bem abaixo do teto real) → passa direto
-        const headroomHealthy = new Map([[adsetA, { monthlyReach, currentMonthlyImpressions: monthlyReach * frequencyCap * 0.01, frequencyCap }]]);
-        const healthyOut = guardAudienceScaleCeiling(output([rec({ actionType: "increase_budget", targetEntity: targetAdsetA })]), headroomHealthy, DEFAULT_AUDIENCE_CEILING_THRESHOLDS);
-        ok("A3[folga]: guard PASSA (increase_budget mantido), mesmo alcance real, ritmo baixo", healthyOut.recommendations[0]!.actionType === "increase_budget", healthyOut.recommendations[0]);
+        const scaleAct: Action = { id: "a", type: "adjust_budget", target: { level: "adset", id: adsetA }, params: { mode: "increase", pct: 20 }, source: "llm", riskLevel: "medium", reason: "escalar" };
+        const ctxWith = (headroom: ScaleRessalvaContext["headroom"]): ScaleRessalvaContext => ({
+          eligibility: new Map(), marginalRisePct: new Map(), marginal: DEFAULT_MARGINAL_CPA_THRESHOLDS,
+          headroom, ceiling: DEFAULT_AUDIENCE_CEILING_THRESHOLDS, signals: new Map(), lessonGuards: [],
+        });
+        // cenário 1: público saturado (impressões projetadas MUITO acima do teto real) → ressalva
+        const satRessalvas = computeScaleRessalvas(scaleAct, ctxWith(new Map([[adsetA, { monthlyReach, currentMonthlyImpressions: monthlyReach * frequencyCap * 5, frequencyCap }]])));
+        ok("A3[saturado]: RESSALVA audience_ceiling, usando alcance REAL da Meta", satRessalvas.some((r) => r.code === "audience_ceiling"), satRessalvas);
+        // cenário 2: público com folga (impressões bem abaixo do teto real) → sem ressalva de teto
+        const healthyRessalvas = computeScaleRessalvas(scaleAct, ctxWith(new Map([[adsetA, { monthlyReach, currentMonthlyImpressions: monthlyReach * frequencyCap * 0.01, frequencyCap }]])));
+        ok("A3[folga]: sem ressalva de teto (mesmo alcance real, ritmo baixo)", !healthyRessalvas.some((r) => r.code === "audience_ceiling"), healthyRessalvas);
       } else {
         note("estimativa veio sem alcance numérico (público muito amplo/indefinido) — guard degradaria honesto (passa direto), não dá pra provar os 2 ramos com este número");
       }
@@ -303,13 +305,16 @@ async function main() {
   const b1neg = guardTrackingCaveat(output([rec({ id: "b1n", actionType: "pause", targetEntity: { level: "campaign", externalId: "ENT1" } })]), basisSuspect, { suspect: false, funnelStarted: 500, trackedConversions: 480, ratio: 1.04 });
   ok("B1[negativo]: tracking SAUDÁVEL → passa direto (não rebaixa à toa)", b1neg.recommendations[0]!.actionType === "pause", b1neg.recommendations[0]);
 
-  console.log("\n  B2) guardScaleWithWorseningMarginalCpa");
-  const marginalWorsening = new Map([["ENT2", 45]]); // CPA marginal +45% vs baseline
-  const b2pos = guardScaleWithWorseningMarginalCpa(output([rec({ id: "b2", actionType: "increase_budget", targetEntity: { level: "campaign", externalId: "ENT2" } })]), marginalWorsening, DEFAULT_MARGINAL_CPA_THRESHOLDS);
-  ok("B2[positivo]: CPA marginal piorando +45% (limiar 20%) → REBAIXA escalar, mesmo com CPA médio bom", b2pos.recommendations[0]!.actionType === "investigate", b2pos.recommendations[0]);
-  const marginalStable = new Map([["ENT2", 5]]);
-  const b2neg = guardScaleWithWorseningMarginalCpa(output([rec({ id: "b2n", actionType: "increase_budget", targetEntity: { level: "campaign", externalId: "ENT2" } })]), marginalStable, DEFAULT_MARGINAL_CPA_THRESHOLDS);
-  ok("B2[negativo]: CPA marginal estável (+5%, abaixo do limiar) → passa direto", b2neg.recommendations[0]!.actionType === "increase_budget", b2neg.recommendations[0]);
+  console.log("\n  B2) ressalva de CPA marginal (worsening_marginal_cpa)");
+  const b2act: Action = { id: "b2", type: "adjust_budget", target: { level: "campaign", id: "ENT2" }, params: { mode: "increase", pct: 20 }, source: "llm", riskLevel: "medium", reason: "escalar" };
+  const b2ctx = (rise: number): ScaleRessalvaContext => ({
+    eligibility: new Map(), marginalRisePct: new Map([["ENT2", rise]]), marginal: DEFAULT_MARGINAL_CPA_THRESHOLDS,
+    headroom: new Map(), ceiling: DEFAULT_AUDIENCE_CEILING_THRESHOLDS, signals: new Map(), lessonGuards: [],
+  });
+  const b2pos = computeScaleRessalvas(b2act, b2ctx(45)); // CPA marginal +45% vs baseline
+  ok("B2[positivo]: CPA marginal piorando +45% (limiar 20%) → RESSALVA, mesmo com CPA médio bom", b2pos.some((r) => r.code === "worsening_marginal_cpa"), b2pos);
+  const b2neg = computeScaleRessalvas(b2act, b2ctx(5));
+  ok("B2[negativo]: CPA marginal estável (+5%, abaixo do limiar) → sem ressalva", !b2neg.some((r) => r.code === "worsening_marginal_cpa"), b2neg);
 
   console.log("\n  B3) detectCreationOpportunities — vencedor fatigado NUNCA vira scale_winner (o bug original desta frente)");
   const b3pos = detectCreationOpportunities({

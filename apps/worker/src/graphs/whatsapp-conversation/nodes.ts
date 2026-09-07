@@ -17,6 +17,7 @@ import {
   buildWriteEcho,
   checkPhoneAttribution,
   collectGroundedNumbers,
+  describeActionOutcome,
   describePlaybookRule,
   entityKeyOf,
   flagUngroundedNumbers,
@@ -60,7 +61,7 @@ import {
 } from "./tools.js";
 import { renderWhatsappNumber, resolveWhatsappNumber } from "./read-data.js";
 import { makeMetaToolExecutor } from "../../executors/meta-tools.js";
-import { applyCheckedAction, type ApplyOutcome } from "../../modules/apply/apply-confirmed-action.js";
+import { applyCheckedAction, type ApplyResult } from "../../modules/apply/apply-confirmed-action.js";
 import { buildRefineEcho, MEDIA_PREFERENCES, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner, recoverOpenDraft, refineDraft, type DraftProposalContext, type MediaPreference, type RecoveredDraft } from "../../modules/conversation/draft-proposal.js";
 import { loadWriteContext } from "../../modules/apply/write-context.js";
 import { revertActionById } from "../../modules/apply/revert-action.js";
@@ -234,29 +235,22 @@ const AUTONOMY_LABEL_PT: Readonly<Record<string, string>> = {
   act_full: "age sozinho",
 };
 
-const PAST_PHRASE: Record<string, (name: string) => string> = {
-  pause_entity: (n) => `Pausei ${n}`,
-  resume_entity: (n) => `Reativei ${n}`,
-  set_status: (n) => `Atualizei ${n}`,
-  adjust_budget: (n) => `Ajustei o budget de ${n}`,
-};
-
-/** Linha de desfecho de UMA ação aplicada (voz determinística, §UX). */
-function outcomeLine(action: Action, outcome: ApplyOutcome): string {
-  const name = action.target.name ?? action.target.id;
+/** Linha de desfecho de UMA ação aplicada (voz determinística, §UX). Mapeia o `ApplyResult`
+ *  runtime pro `OutcomeDetail` e reusa `describeActionOutcome` — MESMA copy/voz do card do site e
+ *  do push do approval-apply (fonte única, §13 reuso-primeiro). */
+function outcomeLine(action: Action, outcome: ApplyResult): string {
   switch (outcome.kind) {
     case "applied":
-      return outcome.dryRun
-        ? `Simulei em ${name} (dry-run, não apliquei de verdade).`
-        : `${(PAST_PHRASE[action.type] ?? ((x: string) => `Mexi em ${x}`))(name)}.`;
+      return describeActionOutcome(action, { kind: outcome.dryRun ? "simulated" : "applied" });
     case "noop":
-      return `Não precisei mexer em ${name} — já estava assim.`;
+      return describeActionOutcome(action, { kind: "noop" });
     case "blocked":
-      return `Não consegui em ${name}: ${outcome.reason}.`;
-    case "failed":
-      return outcome.error instanceof AdsPlatformError && outcome.error.userMessage
-        ? `Não consegui em ${name}. A Meta informou: ${outcome.error.userMessage.trim()}`
-        : `Não consegui aplicar em ${name} agora — a Meta não respondeu. Tenta de novo.`;
+      return describeActionOutcome(action, { kind: "blocked", reason: outcome.reason });
+    case "failed": {
+      const metaMessage =
+        outcome.error instanceof AdsPlatformError && outcome.error.userMessage ? `A Meta informou: ${outcome.error.userMessage.trim()}` : undefined;
+      return describeActionOutcome(action, { kind: "failed", ...(metaMessage !== undefined ? { metaMessage } : {}) });
+    }
   }
 }
 
@@ -850,6 +844,18 @@ export function makeConversationNodes(
     // Meta → sem guardrail/dry-run de ads). Monta o eco determinístico + congela a mudança.
     const configCalls = allCalls.filter((c) => isConfirmableConfigTool(c.name));
     if (configCalls.length > 0) {
+      // Concierge (grupo multi-conta): config precisa de UMA conta em foco. Sem `agentId` (o
+      // set_focus não rodou antes nesta rodada), NÃO monta um eco quebrado — pede pra focar
+      // (o próximo passo/turno já opera na conta). Fix same-turn: com set_focus rodando antes,
+      // o ctx.agentId já vem preenchido e cai nos ramos normais abaixo.
+      if (!ctx.agentId) {
+        return {
+          messages: answerToolCalls(
+            allCalls,
+            'Me diz em qual conta focar primeiro (ex: "foca na Loja X") que aí eu ajusto a configuração dela por aqui mesmo.',
+          ),
+        };
+      }
       // config + escrita Meta no MESMO turno: não engula a escrita em silêncio — peça
       // uma coisa de cada vez (o gate trata 1 pendência por turno). §UX: nunca sumir com o pedido.
       const alsoMetaWrite = allCalls.some((c) => WRITE_TOOL_NAMES.has(c.name) || c.name === REVERT_TOOL_NAME);

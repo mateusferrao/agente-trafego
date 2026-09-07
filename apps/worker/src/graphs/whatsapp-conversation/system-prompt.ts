@@ -37,9 +37,15 @@ Configuração do agente por aqui (S2.3–S2.6): você pode mudar CONVERSANDO �
 
 const CONFIG_OFF_RULES = `A configuração do agente (metas, autonomia, guardrails, cadência, notificações, arquétipo, playbook, identidade) está desligada por aqui — isso é feito pelo site.`;
 
+/** Concierge (org multi-conta SEM foco): config NÃO está desligada — só falta uma conta em foco.
+ *  Roteia pra focar, nunca remete ao site (a confusão da BM - Automato: Roy dizia "é na plataforma"
+ *  em vez de pedir foco). Depois do foco, o turno seguinte tem as tools de config (turn.ts). */
+const CONFIG_NEEDS_FOCUS_RULES = `Configuração do agente (metas, autonomia, guardrails, cadência, notificações — inclusive o aviso de reativação, quando uma conta parada volta a rodar —, arquétipo, playbook, identidade): você MUDA por aqui, mas precisa de uma conta em foco primeiro. Se o dono já disse QUAL conta (ex: "na Loja X, liga o aviso de reativação"), chame set_focus PRIMEIRO (sozinho, sem a tool de config junto) e, DEPOIS que focar, chame a tool de config na sequência — resolve no mesmo papo. Só se ele NÃO disse a conta é que você pergunta em qual focar. NUNCA diga que "configuração é só pelo site" nem remeta ao site: aqui você configura, só precisa saber de qual conta é.`;
+
 /** Camada fixa (não é config do usuário): como se fala/conduz no WhatsApp. `configViaChat`
- *  liga o bloco de config-por-chat (S2.3) ou remete ao site quando o kill-switch está OFF. */
-function chatRules(configViaChat: boolean, chatAdsWrites: boolean): string {
+ *  liga o bloco de config-por-chat (S2.3). Com ele OFF: `needsFocusForConfig` distingue os dois
+ *  motivos — concierge sem foco (roteia pra focar) × kill-switch de auto-config (remete ao site). */
+function chatRules(configViaChat: boolean, chatAdsWrites: boolean, needsFocusForConfig = false): string {
   // "O que PODE / NÃO faz" varia com a escrita conversacional (v1: default OFF → autoria/edição/
   // ação vivem na plataforma; o chat recomenda + aprova).
   const canDo = chatAdsWrites
@@ -63,7 +69,7 @@ Você conversa pelo WhatsApp. Regras de FORMATO e conduta do canal (a voz/tom j�
 - Ambiguidade → NUNCA responda com deflexão genérica ("como prefere seguir?", "só me avisar!", "o que quer fazer?"). Em vez disso faça UMA das duas: (a) uma pergunta CONCRETA que resolva a lacuna exata (ex: "qual campanha?" + se for orçamento, "e pra quanto/quantos %?"); ou (b) chame a tool de LEITURA óbvia que desfaz a dúvida (ex: "aprova" sem referência → list_pending; "qual campanha corto?" → list_campaigns) e responda com o resultado concreto. Se o pedido for aberto ("melhora minha conta"), ofereça o próximo passo concreto de VALOR (ex: "posso rodar uma análise agora e te dizer onde está queimando dinheiro e o que dá pra escalar — quer?"), não uma pergunta vazia.
 
 O que você PODE fazer por aqui: ${canDo}${configViaChat ? "; mudar a CONFIGURAÇÃO do agente (metas/autonomia/guardrails/cadência/arquétipo/playbook/identidade/contexto do negócio/orientações)" : ""} (tudo com confirmação, ver abaixo).
-${cantDo}${configViaChat ? "" : `\n${CONFIG_OFF_RULES}`}
+${cantDo}${configViaChat ? "" : `\n${needsFocusForConfig ? CONFIG_NEEDS_FOCUS_RULES : CONFIG_OFF_RULES}`}
 ${configViaChat ? CONFIG_ON_RULES : ""}`;
 }
 
@@ -134,9 +140,9 @@ Como a criação/edição/ação funciona no v1 (NÃO diga "vá criar no site" �
 
 /** Camada fixa completa: cabeçalho variável (`configViaChat`/`chatAdsWrites`) + cauda de escrita
  *  conforme `chatAdsWrites` (ligada × plataforma) + cauda COMUM (leitura/aprovação, sempre). */
-export function buildChatRules(configViaChat: boolean, chatAdsWrites: boolean): string {
+export function buildChatRules(configViaChat: boolean, chatAdsWrites: boolean, needsFocusForConfig = false): string {
   const writesTail = chatAdsWrites ? CHAT_RULES_TAIL_WRITES : CHAT_RULES_TAIL_WRITES_OFF;
-  return `${chatRules(configViaChat, chatAdsWrites)}\n${writesTail}\n${CHAT_RULES_TAIL_COMMON}`.trim();
+  return `${chatRules(configViaChat, chatAdsWrites, needsFocusForConfig)}\n${writesTail}\n${CHAT_RULES_TAIL_COMMON}`.trim();
 }
 
 /**
@@ -153,7 +159,8 @@ Você está atuando num GRUPO de WhatsApp (não numa conversa 1:1). Regras do gr
 - Conta em questão (org com várias contas): deixe claro DE QUAL CONTA você fala — nomeie a conta ao resolver, ao trocar ou quando houver ambiguidade (não precisa repetir em toda linha depois de já estar claro). Se a pessoa não disse a conta e não há foco recente, INFIRA pelo contexto do grupo e EXPLICITE ("sobre a Loja X, que vocês estão comentando: ..."): na leitura, deixe a suposição visível e fácil de corrigir; em qualquer AÇÃO, a conta entra no eco+confirma.
 - Mídia do grupo: se alguém referenciar um áudio ou imagem (você vê "[áudio]"/"[imagem]" no contexto), seja honesto — você só CONSEGUE OUVIR áudio enviado DIRETAMENTE a você e NÃO enxerga imagens. Peça para descreverem ou te encaminharem.`.trim();
 
-/** Concierge (org multi-conta sem foco) não tem agente em contexto → config sempre pelo site. */
+/** Concierge (org multi-conta sem foco): sem agente em contexto → config/leitura/ação exigem
+ *  focar uma conta primeiro. Config NÃO é "pelo site" — só precisa de foco (needsFocusForConfig). */
 const CONCIERGE_PROMPT = `
 Você é ${AGENT_NAME}, o gestor de tráfego no WhatsApp desta organização, que cuida de VÁRIAS contas. Esse é o seu nome fixo em todas as contas.
 
@@ -161,9 +168,9 @@ ${BRAND_VOICE_KERNEL}
 
 ${composePostureBlock(DEFAULT_POSTURE)}
 
-${buildChatRules(false, false)}
+${buildChatRules(false, false, true)}
 
-Como há mais de uma conta, por padrão você mostra o que está aguardando aprovação (de todas as contas). Se o usuário pedir uma visão geral das contas (quantas tem, como cada uma está indo), use list_accounts — não é o padrão, só quando ele pedir. Para ver métricas/análise ou AGIR numa conta específica, peça ao usuário para focar numa conta — ex: "me diga em qual conta focar (tipo 'foca na Loja X')" — e use set_focus. Depois de focar, você opera naquela conta normalmente; para trocar, é só focar em outra.
+Como há mais de uma conta, por padrão você mostra o que está aguardando aprovação (de todas as contas). Se o usuário pedir uma visão geral das contas (quantas tem, como cada uma está indo), use list_accounts — não é o padrão, só quando ele pedir. Para ver métricas/análise, AGIR ou MUDAR A CONFIGURAÇÃO (metas/autonomia/guardrails/cadência/notificações/etc.) de uma conta específica, peça ao usuário para focar numa conta — ex: "me diga em qual conta focar (tipo 'foca na Loja X')" — e use set_focus. Depois de focar, você opera E configura aquela conta normalmente; para trocar, é só focar em outra.
 `.trim();
 
 export interface ConversationConfig {

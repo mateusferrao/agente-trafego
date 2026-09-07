@@ -25,4 +25,8 @@ describe("riskForAction", () => {
   it("adjust_budget sem direção → medium (conservador)", () => {
     expect(riskForAction("adjust_budget")).toBe("medium");
   });
+
+  it("adjust_audience = high (editar público reseta o aprendizado da Meta) — Fatia C", () => {
+    expect(riskForAction("adjust_audience")).toBe("high");
+  });
 });

@@ -5,7 +5,7 @@
 import { and, eq, gte, lte, sql } from "drizzle-orm";
 import type { Database } from "@trafego/db/client";
 import { adAccounts, adCreatives, agentMemory, agentMutedEntities, agentRunSteps, agentRuns, agentToolCalls, agents, conversionLabels, customAudiences, guardrailConfigs, orgs, platformConnections, playbookRules, recommendations } from "@trafego/db";
-import type { Action, ActionTarget, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, MarketReference, NotifyPolicy, CustomAudience, PartialReason, PerformanceTier, PlaybookRule, Posture, RecommendationKind, RiskLevel, WhatsappSource } from "@trafego/shared";
+import type { Action, ActionTarget, AgentGoals, AutonomyPolicy, ConversionGoal, EncryptedPayload, GuardrailConfig, MarketReference, NotifyPolicy, CustomAudience, PartialReason, PerformanceTier, PlaybookRule, Posture, RecommendationKind, Ressalva, RiskLevel, WhatsappSource } from "@trafego/shared";
 import { DEFAULT_POSTURE, GUARDRAIL_DEFAULTS, toGuardrailConfig, UNDO_TOOL_KEY } from "@trafego/shared";
 import { entityKeyOf, unseedIdentity } from "@trafego/core";
 import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
@@ -85,6 +85,8 @@ export interface RecommendationRow {
   readonly expectedImpact: string | null;
   readonly whatToMonitor: string | null;
   readonly findingRefs: readonly string[] | null;
+  /** ressalvas de escala (Fatia A) — espelho do proposedAction.ressalvas. */
+  readonly ressalvas: readonly Ressalva[] | null;
 }
 
 /** Copy + desempenho denormalizado de um anúncio, persistido do run (S1). */
@@ -343,6 +345,7 @@ export function createAnalysisRepo(db: Database): AnalysisRepo {
           expectedImpact: r.expectedImpact,
           whatToMonitor: r.whatToMonitor,
           findingRefs: r.findingRefs ? [...r.findingRefs] : null,
+          ressalvas: r.ressalvas ? [...r.ressalvas] : null,
         })),
       );
     },

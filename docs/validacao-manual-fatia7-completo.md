@@ -80,7 +80,7 @@ docker exec docker-postgres-1 psql -U postgres -d trafego -tc "select ad_account
    - ✅ segue com dry-run, kill-switch, mudança máx. de orçamento, máx. entidades/dia, teto de custo de IA.
    - ✅ **"Limites de criação"**: `Orçamento novo máx./dia`, `Máx. campanhas novas/dia`, `Passo de escala (%)`.
      O símbolo de moeda **segue a conta** (BRL → `R$`; conta USD → `$`).
-4. **Notificações** → ligar **"Rascunhos proativos"**.
+4. ~~**Notificações** → ligar **"Rascunhos proativos"**~~ — **Fatia D: criação proativa é SEMPRE ativa** (config removida).
 5. **Salvar** → ✅ recarregar a página mantém tudo (on/off, autonomia por-ação, preferência de escala).
 6. ✅ **[NOVO] Toast honesto no save:** salvar mostra **"Configuração salva"** só quando salvou de fato.
    Se uma seção não tiver carregado (seed falhou) e você mexeu nela, o toast vira **aviso** ("salvei o que
@@ -421,7 +421,7 @@ aprova o rascunho de escala
 
 ## 11. Proatividade de criação — propor (default) × **[NOVO] auto-criar** (age sozinho)
 
-Pré: "Rascunhos proativos" ligado (§2) + um vencedor OU conta parada (cold_start).
+Pré: um vencedor OU conta parada (cold_start) — criação proativa é sempre ativa (Fatia D).
 
 ### 11a. Modo default — SÓ PROPÕE (criação **não** está "age sozinho")
 
@@ -439,7 +439,7 @@ docker exec docker-postgres-1 psql -U postgres -d trafego -c "select origin,stat
 ### 11b. **[NOVO — Config por-ação C]** Auto-criar (age sozinho) — SEMPRE nasce PAUSADA
 
 **Pré:** em §2, ponha **Duplicar para escalar = age sozinho** (ou Criar campanha, conforme a oportunidade),
-mantenha **"Rascunhos proativos"** ligado e um **vencedor** claro na conta. Salvar.
+tenha um **vencedor** claro na conta (criação proativa é sempre ativa — Fatia D). Salvar.
 
 **[Site]** Conta → **"Analisar agora"**. Aguardar o run.
 - ✅ **[WhatsApp]** chega um **nudge transparente**: *"🤖 Agi sozinho e dupliquei seu vencedor… deixei

@@ -35,6 +35,11 @@ export const AGENT_TOOL_CATALOG: readonly ToolCatalogEntry[] = [
   { key: "resume_entity", description: "Retomar uma entidade pausada.", riskLevel: "medium", ...OPT_DEFAULTS },
   { key: "set_status", description: "Definir o status de uma entidade.", riskLevel: "medium", ...OPT_DEFAULTS },
   { key: "adjust_budget", description: "Ajustar o budget da entidade (±%).", riskLevel: "medium", ...OPT_DEFAULTS },
+  // Fatia C: editar público (targeting) de adset existente. Proposta na análise + aprovável
+  // (site/chat); NÃO é escrita livre de chat (executableInChat:false — autoria por chat = flag).
+  // Reseta aprendizado da Meta → risco high, opt-in (fora do allowedActions default). Idempotente
+  // (no-op se o targeting proposto == atual).
+  { key: "adjust_audience", description: "Editar o público (idade/gênero/geo/interesses) de um conjunto.", riskLevel: "high", isIdempotent: true, requiredPermission: ADS_MANAGEMENT, executableInChat: false, proposable: true, approvalPolicy: "approvals_table" as const },
   { key: "create_campaign", description: "Criar uma campanha nova (gasto novo).", riskLevel: "high", ...CREATE_DEFAULTS },
   { key: "duplicate_scale", description: "Duplicar um vencedor pra escalar (gasto novo).", riskLevel: "high", ...CREATE_DEFAULTS },
 ];

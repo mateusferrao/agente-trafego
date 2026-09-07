@@ -1,10 +1,34 @@
-import type { CampaignDraft, DuplicateEntityInput } from "@trafego/shared";
+import type { CampaignBudgetLayout, CampaignDraft, DuplicateEntityInput } from "@trafego/shared";
 
 /** Sufixo de nome da entidade duplicada (distingue do original no Ads Manager). */
 const DUPLICATE_RENAME_SUFFIX = "escala";
 
 /** Onde mora o budget: adset (ABO) ou campanha (CBO). */
 export type BudgetLevel = "adset" | "campaign";
+
+/** Onde aplicar o novo budget de uma duplicação de CAMPANHA (o card "com mais budget"): campanha
+ *  (CBO) ou um valor por conjunto (ABO). */
+export type ScaledBudgetPlan =
+  | { readonly kind: "campaign"; readonly dailyMinor: number }
+  | { readonly kind: "adsets"; readonly budgets: ReadonlyArray<{ readonly id: string; readonly dailyMinor: number }> };
+
+/**
+ * Decide onde/como aplicar o novo orçamento diário (`targetDailyMinor`) numa campanha duplicada,
+ * conforme o modelo: **CBO** → seta na campanha; **ABO** → distribui entre os conjuntos
+ * proporcional ao orçamento atual de cada um, com **soma EXATA = alvo** (o resto de arredondamento
+ * vai pros maiores). ABO sem base de orçamento (defensivo, raro) → cai no nível campanha. PURA.
+ */
+export function planScaledBudget(layout: CampaignBudgetLayout, targetDailyMinor: number): ScaledBudgetPlan {
+  if (layout.campaignDailyMinor !== null) return { kind: "campaign", dailyMinor: targetDailyMinor };
+  const total = layout.adsets.reduce((s, a) => s + a.dailyMinor, 0);
+  if (layout.adsets.length === 0 || total <= 0) return { kind: "campaign", dailyMinor: targetDailyMinor };
+  const budgets = layout.adsets.map((a) => ({ id: a.id, dailyMinor: Math.floor((a.dailyMinor / total) * targetDailyMinor) }));
+  // garante a soma EXATA: distribui o resto (1 unidade/vez) começando pelos maiores conjuntos.
+  let remainder = targetDailyMinor - budgets.reduce((s, b) => s + b.dailyMinor, 0);
+  const byLargest = [...budgets].sort((a, b) => b.dailyMinor - a.dailyMinor);
+  for (let i = 0; remainder > 0; i = (i + 1) % byLargest.length, remainder--) byLargest[i]!.dailyMinor += 1;
+  return { kind: "adsets", budgets };
+}
 
 /**
  * Como escalar o vencedor (decisão #8). `raise_budget` = sobe o budget do nível dono

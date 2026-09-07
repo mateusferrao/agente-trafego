@@ -125,6 +125,12 @@ export class DraftsApiService extends BaseApiService {
     return this.resolveUrl(['/accounts', accountId, 'creatives', assetId, 'thumb']);
   }
 
+  /** URL da miniatura ESTÁVEL de um anúncio da conta (picker → "anúncios da conta") — frame HD/imagem
+   *  servida FRESCA pela API (proxy, ETag no browser), em vez da URL crua do fbcdn que expira. */
+  servingThumbUrl(accountId: string, adId: string): string {
+    return this.resolveUrl(['/accounts', accountId, 'serving-creatives', adId, 'thumb']);
+  }
+
   /** URL da miniatura do criativo de UM anúncio do rascunho (G — o card mostra 1 preview por
    *  anúncio, não o geral) — resolve o criativo próprio do anúncio `index`, caindo no padrão do
    *  rascunho. Proxy autenticado; reuse busca fresco da Meta, upload serve o blob; ETag no browser.

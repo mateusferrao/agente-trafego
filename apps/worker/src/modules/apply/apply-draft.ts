@@ -7,7 +7,7 @@
 import { and, count, eq, gte, inArray, sql } from "drizzle-orm";
 import { agentToolCalls, approvals, auditLog, campaignDrafts, guardrailConfigs } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
-import { applyCreationGuardrails, buildDuplicateInput, goalNounPt } from "@trafego/core";
+import { applyCreationGuardrails, buildDuplicateInput, goalNounPt, planScaledBudget, readModernizations, type ScaledBudgetPlan } from "@trafego/core";
 import { DEFAULT_CONVERSION_GOAL, toGuardrailConfig, type CampaignDraft, type OrgId } from "@trafego/shared";
 import type { AgentId, ApprovalId, DraftId, RunId } from "@trafego/shared";
 import { AdsPlatformError, type AdAccountRef } from "@trafego/shared/ports";
@@ -83,7 +83,10 @@ export type DraftApplyOutcome =
     }
   | { readonly kind: "blocked"; readonly reason: string }
   | { readonly kind: "failed"; readonly error: unknown }
-  | { readonly kind: "unsupported"; readonly reason: string };
+  | { readonly kind: "unsupported"; readonly reason: string }
+  // teto de guardrail (campanhas novas/dia, killswitch) — CORRIGÍVEL por config. NÃO falha o
+  // rascunho (fica `proposed`): o card continua reaprovável após o usuário ajustar o limite.
+  | { readonly kind: "limited"; readonly reason: string };
 
 export interface ApplyDraftInput {
   readonly orgId: string;
@@ -157,8 +160,9 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
 
   const check = applyCreationGuardrails(draft, cfg, { createdCampaignsToday: n });
   if (!check.allowed) {
-    await db.update(campaignDrafts).set({ status: "failed" }).where(and(eq(campaignDrafts.id, row.id), eq(campaignDrafts.orgId, input.orgId)));
-    return { kind: "blocked", reason: check.dropped?.reason ?? "barrado pelo guardrail de gasto novo" };
+    // teto/killswitch é CORRIGÍVEL → NÃO marca o rascunho `failed` (fica `proposed`, reaprovável);
+    // devolve `limited` (o card fica + reabilita, sem sumir como um bloqueio terminal).
+    return { kind: "limited", reason: check.dropped?.reason ?? "barrado pelo guardrail de gasto novo" };
   }
   const allowed = check.allowed;
 
@@ -219,11 +223,33 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     } else if (pausedDraft.kind === "duplicate") {
       if (!createdIds["copiedId"]) {
         const dup = await ports.ads.duplicateEntity(ref, buildDuplicateInput(pausedDraft));
-        await persist({ copiedId: dup.copiedId, childIds: dup.childIds, childAdsetIds: dup.childAdsetIds });
+        await persist({ copiedId: dup.copiedId, childIds: dup.childIds, childAdsetIds: dup.childAdsetIds, modernizations: dup.modernizations });
       }
       if (!createdIds["budgetApplied"]) {
-        await ports.ads.setEntityBudget(ref, createdIds["copiedId"] as string, pausedDraft.spec.dailyBudgetMinor);
-        await persist({ budgetApplied: true });
+        const copiedId = createdIds["copiedId"] as string;
+        const target = pausedDraft.spec.dailyBudgetMinor;
+        // Duplicata de CAMPANHA: decide o NÍVEL do budget pelo modelo (setar na campanha ABO liga
+        // CBO e a Meta recusa se os conjuntos têm metas diferentes). CBO → campanha; ABO → distribui
+        // entre os conjuntos (soma EXATA = alvo) e avisa o dono. Adset-level → seta no conjunto.
+        if (pausedDraft.sourceRef?.level === "campaign") {
+          // Snapshot do PLANO na 1ª vez (dos conjuntos ORIGINAIS): um retry reaplica o MESMO plano
+          // (setEntityBudget é idempotente), sem re-derivar de conjuntos já parcialmente ajustados.
+          let plan = createdIds["budgetPlan"] as ScaledBudgetPlan | undefined;
+          if (!plan) {
+            plan = planScaledBudget(await ports.ads.getCampaignBudgetLayout(ref, copiedId), target);
+            await persist({ budgetPlan: plan });
+          }
+          if (plan.kind === "campaign") {
+            await ports.ads.setEntityBudget(ref, copiedId, plan.dailyMinor);
+            await persist({ budgetApplied: true });
+          } else {
+            for (const b of plan.budgets) await ports.ads.setEntityBudget(ref, b.id, b.dailyMinor);
+            await persist({ budgetApplied: true, modernizations: [...readModernizations(createdIds), { code: "budget_distributed_across_adsets" as const }] });
+          }
+        } else {
+          await ports.ads.setEntityBudget(ref, copiedId, target);
+          await persist({ budgetApplied: true });
+        }
       }
     } else {
       await runFromScratchSaga(ports.ads, pausedDraft, ref, createdIds, persist);
@@ -232,7 +258,8 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     // createdIds já foi persistido incrementalmente → o retry retoma daqui.
     await db.update(campaignDrafts).set({ status: "failed" }).where(and(eq(campaignDrafts.id, row.id), eq(campaignDrafts.orgId, input.orgId)));
     // vencedor legado (criativo descontinuado): falha HONESTA + 2 saídas, não erro genérico.
-    // Nada foi criado (o /copies falhou antes do 1º persist) → sem órfão pra reconciliar.
+    // Sem órfão pra reconciliar: a cópia é ATÔMICA — o adapter reverte os parciais (DELETE cascata)
+    // antes de lançar, então `createdIds` fica vazio (nada persistido no draft).
     if (error instanceof AdsPlatformError && error.kind === "not_duplicable") {
       return { kind: "blocked", reason: NOT_DUPLICABLE_REASON };
     }
@@ -410,6 +437,9 @@ async function runFromScratchSaga(
       ...(isCbo ? {} : { dailyBudgetMinor: spec.dailyBudgetMinor }),
       goal,
       ...(spec.pixelId ? { pixelId: spec.pixelId } : {}),
+      // Page = objeto promovido do conjunto (LEAD_GENERATION/CONVERSATIONS exigem; sem ela a
+      // Meta recusa anexar o anúncio). Reusa a mesma Page do criativo (validada em apply-draft:173).
+      ...(spec.pageId ? { pageId: spec.pageId } : {}),
       targeting: spec.targeting ?? { kind: "advantage_plus" },
       status,
     });

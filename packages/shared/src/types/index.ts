@@ -511,10 +511,57 @@ export type ActionType =
   | "pause_entity"
   | "resume_entity"
   | "adjust_budget"
-  | "set_status";
+  | "set_status"
+  | "adjust_audience"; // Fatia C: editar o público (targeting) de um adset existente
 
 export type ActionSource = "playbook" | "llm";
 export type RiskLevel = "low" | "medium" | "high";
+
+/**
+ * Códigos das ressalvas de ESCALA (fonte única do tipo + zod). Cada um é um sinal de risco
+ * detectado por um passe puro nível-Action (packages/core/analysis-guards) sobre uma ação de
+ * escalar/reativar. Adicionar um novo passe = 1 entrada aqui.
+ */
+export const RESSALVA_CODES = [
+  "no_significance",
+  "worsening_marginal_cpa",
+  "audience_ceiling",
+  "creative_fatigue",
+  "unconfirmed_hypothesis",
+] as const;
+export type RessalvaCode = (typeof RESSALVA_CODES)[number];
+
+/**
+ * Ressalva de uma ação de escala: "dá pra fazer, mas há um sinal de risco — precisa do teu OK".
+ * Anexada por passes PUROS nível-Action; **trava o auto-apply** (nunca aplica sozinha, nem em
+ * act_full) mas mantém a ação APROVÁVEL (com a mensagem honesta). Nome distinto de `caveat`
+ * (findings qualitativos, §13 nomenclatura no nível certo).
+ */
+export interface Ressalva {
+  readonly code: RessalvaCode;
+  /** mensagem honesta em linguagem de dono (o "porém" + a recomendação do Roy). */
+  readonly message: string;
+}
+
+/**
+ * Desfecho da APLICAÇÃO de uma aprovação (Fatia "depois", diz×faz): distingue o que de fato
+ * aconteceu — `applied` (escrita real), `simulated` (modo ensaio — sem mexer), `noop` (já estava
+ * no estado), `blocked` (barrado no re-check), `failed` (erro da Meta; a aprovação segue pendente).
+ * Fonte única do tipo — persistido em `approvals.apply_outcome` e lido pelo card.
+ */
+export const APPLY_OUTCOMES = ["applied", "simulated", "noop", "blocked", "failed"] as const;
+export type ApplyOutcome = (typeof APPLY_OUTCOMES)[number];
+
+/**
+ * Preview do que APROVAR faz (Fatia unificação): `real` (vale), `simulated` (ensaio — não altera),
+ * `blocked` (não permitido/trava/conta indisponível). `message` = a linha honesta (voz do Roy) ou
+ * null em `real`. Computado no servidor (`computeApplyPreview`, core) — fonte única; o front só renderiza.
+ */
+export type ApplyEffect = "real" | "simulated" | "blocked";
+export interface ApplyPreview {
+  readonly effect: ApplyEffect;
+  readonly message: string | null;
+}
 
 export interface ActionTarget {
   readonly level: EntityLevel;
@@ -533,6 +580,8 @@ export interface Action {
   readonly reason: string;
   readonly confidence?: number; // 0..1 (ações do LLM)
   readonly ruleId?: string; // ações do playbook
+  /** ressalvas de escala (Fatia A): sinais de risco que travam o auto-apply mas mantêm aprovável. */
+  readonly ressalvas?: readonly Ressalva[];
 }
 
 /** Ação candidata antes de passar pelo guardrail. */

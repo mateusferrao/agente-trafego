@@ -217,14 +217,47 @@ describe("selectAnalysisKnowledge — relevância por papel e por dado", () => {
 
   it("synthesis sem waste/tracking/revenue/benchmark/budget/bid_strategy: só os blocos-base de domínio (nunca inventa relevância)", () => {
     const keys = selectAnalysisKnowledge(baseSynthesisCtx).map((b) => b.key);
-    expect(keys).toEqual(expect.arrayContaining(["funnel", "mismatch", "quality", "incrementality", "recency", "diagnosis"]));
+    expect(keys).toEqual(expect.arrayContaining(["funnel", "mismatch", "quality", "scorecard", "incrementality", "recency", "diagnosis"]));
     expect(keys).not.toContain("waste");
     expect(keys).not.toContain("tracking");
     expect(keys).not.toContain("revenue");
     expect(keys).not.toContain("benchmark");
     expect(keys).not.toContain("budget");
     expect(keys).not.toContain("bid_strategy");
-    expect(keys).not.toContain("advice"); // advice é só do papel "map"
+    expect(keys).not.toContain("scale_method"); // método de escala segue o budget (só com dado de orçamento)
+    expect(keys).not.toContain("advice"); // advice/creative_refresh são só do papel "map"
+    expect(keys).not.toContain("creative_refresh");
+  });
+
+  it("E1 (squad): 'scale_method' entra na síntese SÓ com dado de orçamento; nunca no mapa", () => {
+    expect(selectAnalysisKnowledge({ ...baseSynthesisCtx, hasBudgetData: true }).map((b) => b.key)).toContain("scale_method");
+    expect(selectAnalysisKnowledge(baseSynthesisCtx).map((b) => b.key)).not.toContain("scale_method");
+    // método de escala é decisão cross-campanha (síntese) — não sai no mapa.
+    const mapCtx = buildCampaignKnowledgeContext(campaignUnit(entity({ budget: { dailyMajor: 50 } })));
+    expect(selectAnalysisKnowledge(mapCtx).map((b) => b.key)).not.toContain("scale_method");
+  });
+
+  it("E1 (squad): 'creative_refresh' entra SÓ no mapa (onde a copy/criativo real chega)", () => {
+    const mapCtx = buildCampaignKnowledgeContext(campaignUnit(entity()));
+    expect(selectAnalysisKnowledge(mapCtx).map((b) => b.key)).toContain("creative_refresh");
+    expect(selectAnalysisKnowledge(baseSynthesisCtx).map((b) => b.key)).not.toContain("creative_refresh");
+  });
+
+  it("E2 (squad): 'scorecard' 8-dim é INTERNO na síntese (não no mapa; não expõe placar)", () => {
+    expect(selectAnalysisKnowledge(baseSynthesisCtx).map((b) => b.key)).toContain("scorecard");
+    expect(selectAnalysisKnowledge(buildCampaignKnowledgeContext(campaignUnit(entity()))).map((b) => b.key)).not.toContain("scorecard");
+    const block = ANALYSIS_KNOWLEDGE_BLOCKS.find((b) => b.key === "scorecard")!;
+    expect(block.text).toContain("8 dimensões");
+    expect(block.text.toLowerCase()).toContain("não exponha"); // interno, sem placar novo
+  });
+
+  it("E1 (squad): os blocos citam os números fiéis da fonte (cadência de refresh + teto de escala)", () => {
+    const refresh = ANALYSIS_KNOWLEDGE_BLOCKS.find((b) => b.key === "creative_refresh")!;
+    expect(refresh.text).toContain("5–7 dias");
+    expect(refresh.text).toContain("14–21 dias");
+    const scale = ANALYSIS_KNOWLEDGE_BLOCKS.find((b) => b.key === "scale_method")!;
+    expect(scale.text.toLowerCase()).toContain("vertical");
+    expect(scale.text).toContain("frequência × CPM"); // fórmula do teto de escala
   });
 
   it("synthesis com waste real → inclui o bloco waste", () => {

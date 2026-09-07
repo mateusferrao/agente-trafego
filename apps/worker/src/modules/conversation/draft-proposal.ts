@@ -43,6 +43,7 @@ import { generateCopy } from "../copy/generate-copy.js";
 import { createVisionResolver, creativeContentHash, servingVisionKey } from "../vision/resolver.js";
 import { pickLibraryCreativeByContext, type MatchContext } from "../creative/match-library.js";
 import { joinBalloons } from "../notify/split.js";
+import { assembleExplicitTargeting, hasExplicitContent, type ExplicitTargetingParts } from "./explicit-targeting.js";
 
 const MINOR_PER_UNIT = 100;
 const APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
@@ -96,7 +97,7 @@ export type ChatDraftProposal =
 /** on_demand (chat/site) ou proactive (proposto pelo agente no run). */
 export type DraftOrigin = "on_demand" | "proactive";
 
-interface AgentContext {
+export interface AgentContext {
   readonly ref: AdAccountRef;
   readonly currency: string;
   readonly cfg: ReturnType<typeof toGuardrailConfig>;
@@ -558,6 +559,67 @@ function buildRadiusAreas(areas: readonly AddressArea[] | undefined): { radiusAr
     out.push({ address: a.address, radius, distanceUnit: "kilometer" });
   }
   return { radiusAreas: out, notes };
+}
+
+/** Nomes propostos (por NOME/termo) do público explícito — subconjunto targeting dos args de criação,
+ *  reusado pela EDIÇÃO de público (`adjust_audience`, Fatia C). A resolução nome→id é a mesma. */
+export interface ProposedExplicitInput {
+  readonly geo?: readonly string[];
+  readonly ageMin?: number;
+  readonly ageMax?: number;
+  readonly gender?: "all" | "men" | "women";
+  readonly interests?: readonly string[];
+  readonly behaviors?: readonly string[];
+  readonly includeAudiences?: readonly string[];
+  readonly excludeAudiences?: readonly string[];
+  readonly radiusKm?: number;
+  readonly addressAreas?: readonly AddressArea[];
+}
+
+export type ResolvedExplicitTargeting =
+  | { readonly kind: "ok"; readonly targeting: Extract<TargetingSpec, { readonly kind: "explicit" }>; readonly droppedNames: readonly string[]; readonly notes: readonly string[] }
+  | { readonly kind: "blocked"; readonly reason: string }
+  | { readonly kind: "empty"; readonly droppedNames: readonly string[] };
+
+/**
+ * Resolve nomes propostos → `TargetingSpec.explicit` (nome→id via os MESMOS prepare* da criação;
+ * autônomo-safe: descarta o não-resolvido em `droppedNames`). `empty` = nada resolveu (o caller
+ * decide: sem edição de público). Reusa `assembleExplicitTargeting` (fonte única da montagem).
+ * IO isolado aqui — o worker de análise (adjust_audience) e a criação compartilham a resolução.
+ */
+export async function resolveProposedExplicitTargeting(
+  deps: WorkerDeps,
+  ctx: DraftProposalContext,
+  ref: AdAccountRef,
+  input: ProposedExplicitInput,
+  opts: { readonly autonomous?: boolean } = {},
+): Promise<ResolvedExplicitTargeting> {
+  const auto = opts.autonomous === true;
+  const aud = await prepareAudiences(deps, ctx, ref, input.includeAudiences ?? [], input.excludeAudiences ?? [], auto);
+  if (aud.kind === "blocked") return { kind: "blocked", reason: aud.reason };
+  const geoPrep = await prepareGeo(deps, ref, input.geo ?? [], auto);
+  if (geoPrep.kind === "blocked") return { kind: "blocked", reason: geoPrep.reason };
+  const interestPrep = await prepareInterests(deps, ref, input.interests ?? [], auto);
+  if (interestPrep.kind === "blocked") return { kind: "blocked", reason: interestPrep.reason };
+  const behaviorPrep = await prepareBehaviors(deps, ref, input.behaviors ?? [], auto);
+  if (behaviorPrep.kind === "blocked") return { kind: "blocked", reason: behaviorPrep.reason };
+
+  const droppedNames = [...aud.dropped, ...geoPrep.dropped, ...interestPrep.dropped, ...behaviorPrep.dropped];
+  const geoRadius = applyCityRadius(geoPrep.geo, input.radiusKm);
+  const areas = buildRadiusAreas(input.addressAreas);
+  const parts: ExplicitTargetingParts = {
+    geo: geoRadius.geo,
+    ...(areas.radiusAreas.length > 0 ? { radiusAreas: areas.radiusAreas } : {}),
+    ...(input.ageMin !== undefined ? { ageMin: input.ageMin } : {}),
+    ...(input.ageMax !== undefined ? { ageMax: input.ageMax } : {}),
+    ...(input.gender ? { gender: input.gender } : {}),
+    interests: interestPrep.interests,
+    behaviors: behaviorPrep.interests,
+    includeAudienceIds: aud.includeIds,
+    excludeAudienceIds: aud.excludeIds,
+  };
+  if (!hasExplicitContent(parts)) return { kind: "empty", droppedNames };
+  return { kind: "ok", targeting: assembleExplicitTargeting(parts), droppedNames, notes: [...aud.notes, ...geoRadius.notes, ...areas.notes] };
 }
 
 /**
@@ -1918,21 +1980,19 @@ export async function proposeCreateCampaign(
   if (hasExplicitPrimitive || hasAudience) {
     // COMPÕE, não escolhe (reanálise crítica do plano): geo/idade/gênero/interesses explícitos +
     // público salvo (quando indicado) entram no MESMO `explicit` (kind SUPERSET — colapso do antigo
-    // `custom_audiences`). Só público salvo (sem primitivo) = geo amplo (BR) + o público.
-    // geo default (BR) só quando NÃO há cidade NEM área por endereço (senão a Meta uniria BR ∪ raio,
-    // ampliando o público) — com áreas por endereço, geo fica vazio e `radiusAreas` carrega o alvo.
-    const geoBase = geoRadius.geo.length > 0 ? geoRadius.geo : areas.radiusAreas.length > 0 ? [] : [{ key: "BR", name: "Brasil", kind: "country" as const }];
-    targeting = {
-      kind: "explicit",
-      geo: geoBase,
+    // `custom_audiences`). Só público salvo (sem primitivo) = geo amplo (BR) + o público. A montagem
+    // é PURA e compartilhada (`assembleExplicitTargeting`) — mesma fonte usada pela edição de público.
+    targeting = assembleExplicitTargeting({
+      geo: geoRadius.geo,
       ...(areas.radiusAreas.length > 0 ? { radiusAreas: areas.radiusAreas } : {}),
       ...(args.ageMin !== undefined ? { ageMin: args.ageMin } : {}),
       ...(args.ageMax !== undefined ? { ageMax: args.ageMax } : {}),
-      ...(args.gender === "men" ? { genders: [1] } : args.gender === "women" ? { genders: [2] } : {}),
-      ...(interestPrep.interests.length > 0 ? { interestGroups: [interestPrep.interests] } : {}),
-      ...(behaviorPrep.interests.length > 0 ? { behaviorGroups: [behaviorPrep.interests] } : {}),
-      ...(hasAudience ? { customAudienceIncludeIds: aud.includeIds, customAudienceExcludeIds: aud.excludeIds } : {}),
-    };
+      ...(args.gender ? { gender: args.gender } : {}),
+      interests: interestPrep.interests,
+      behaviors: behaviorPrep.interests,
+      includeAudienceIds: aud.includeIds,
+      excludeAudienceIds: aud.excludeIds,
+    });
   } else {
     const baseTargeting = resolveCreationTargeting(defaults);
     if (baseTargeting.kind === "reuse_adset") {

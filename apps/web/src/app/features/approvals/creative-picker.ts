@@ -59,8 +59,10 @@ const SEARCH_THRESHOLD = 12;
                     [attr.aria-label]="'Reusar o anúncio ' + (s.title || (i + 1))"
                   >
                     <span class="relative flex aspect-square items-center justify-center bg-panel">
-                      @if (s.thumbnailUrl && !broken().has('s:' + s.adId)) {
-                        <img [src]="s.thumbnailUrl" alt="" class="h-full w-full object-cover" loading="lazy" (error)="onImgError('s:' + s.adId)" />
+                      @if (!broken().has('s:' + s.adId)) {
+                        <!-- miniatura ESTÁVEL da API (frame HD do vídeo / imagem fresca) — a URL crua
+                             do fbcdn expirava e virava "sem preview". 404 → onImgError → placeholder. -->
+                        <img [src]="servingThumbUrl(s.adId)" alt="" class="h-full w-full object-cover" loading="lazy" (error)="onImgError('s:' + s.adId)" />
                       } @else {
                         <span class="px-1 text-center text-[11px] text-muted">sem preview</span>
                       }
@@ -94,8 +96,9 @@ const SEARCH_THRESHOLD = 12;
                     [attr.aria-label]="'Usar o criativo ' + (i + 1) + ' da biblioteca'"
                   >
                     <span class="relative flex aspect-square items-center justify-center bg-panel">
-                      @if (a.format === 'image' && !broken().has('a:' + a.id)) {
-                        <img [src]="blobUrl(a)" alt="" class="h-full w-full object-cover" loading="lazy" (error)="onImgError('a:' + a.id)" />
+                      @if ((a.format === 'image' || a.format === 'video') && !broken().has('a:' + a.id)) {
+                        <!-- imagem = blob original; vídeo = frame HD servido pela API (igual à aba Criativos). -->
+                        <img [src]="a.format === 'video' ? thumbUrl(a) : blobUrl(a)" alt="" class="h-full w-full object-cover" loading="lazy" (error)="onImgError('a:' + a.id)" />
                       } @else {
                         <span class="px-1 text-center text-[11px] text-muted">{{ a.format === 'video' ? 'vídeo' : 'sem preview' }}</span>
                       }
@@ -154,6 +157,14 @@ export class CreativePicker implements OnInit {
 
   protected blobUrl(a: CreativeAssetOutput): string {
     return this.api.creativeBlobUrl(this.accountId(), a.id);
+  }
+  /** frame HD do vídeo da biblioteca — servido pela API (o `<img>` não renderiza o arquivo cru). */
+  protected thumbUrl(a: CreativeAssetOutput): string {
+    return this.api.creativeThumbUrl(this.accountId(), a.id);
+  }
+  /** miniatura estável de um anúncio da conta — proxy fresco da API (fbcdn cru expira). */
+  protected servingThumbUrl(adId: string): string {
+    return this.api.servingThumbUrl(this.accountId(), adId);
   }
   protected onImgError(key: string): void {
     this.broken.update((s) => new Set(s).add(key));

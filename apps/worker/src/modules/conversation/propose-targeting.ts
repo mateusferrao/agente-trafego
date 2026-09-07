@@ -25,6 +25,33 @@ export const proposedTargetingSchema = z.object({
 });
 export type ProposedTargeting = z.infer<typeof proposedTargetingSchema>;
 
+/** Público proposto pela LLM (por NOME) → args de targeting (geo/idade/gênero/interesses/públicos),
+ *  resolvidos determinístico depois (autônomo-safe). Só inclui o que a LLM propôs (vazios ficam de
+ *  fora). Reusado pela criação (create/copy) E pela edição de público (adjust_audience). */
+export function proposedTargetingToArgs(p: ProposedTargeting): {
+  geo?: readonly string[];
+  radiusKm?: number;
+  ageMin?: number;
+  ageMax?: number;
+  gender?: "all" | "men" | "women";
+  interests?: readonly string[];
+  behaviors?: readonly string[];
+  includeAudiences?: readonly string[];
+  excludeAudiences?: readonly string[];
+} {
+  return {
+    ...(p.geoNames.length > 0 ? { geo: p.geoNames } : {}),
+    ...(p.radiusKm != null ? { radiusKm: p.radiusKm } : {}),
+    ...(p.ageMin != null ? { ageMin: p.ageMin } : {}),
+    ...(p.ageMax != null ? { ageMax: p.ageMax } : {}),
+    ...(p.gender ? { gender: p.gender } : {}),
+    ...(p.interestNames.length > 0 ? { interests: p.interestNames } : {}),
+    ...(p.behaviorNames.length > 0 ? { behaviors: p.behaviorNames } : {}),
+    ...(p.includeAudienceNames.length > 0 ? { includeAudiences: p.includeAudienceNames } : {}),
+    ...(p.excludeAudienceNames.length > 0 ? { excludeAudiences: p.excludeAudienceNames } : {}),
+  };
+}
+
 /** JSON Schema do structured output (o provider valida o shape; `validate` refina com o zod). */
 const RESPONSE_SCHEMA: Readonly<Record<string, unknown>> = {
   type: "object",
@@ -73,15 +100,47 @@ const SYSTEM = [
   "comportamentos ligados ao negócio. Não prometa o que o brief não mostra. Responda no schema.",
 ].join(" ");
 
+/** Resumo compacto de um público legível (do vencedor ou do adset em edição) p/ o prompt. */
+function describeAudienceForPrompt(aud: AudienceProfile | undefined, empty: string): string {
+  return aud
+    ? `Público atual: estágio ${aud.stage}; ${(aud.geo ?? []).join(", ") || "geo n/d"}; idade ${aud.ageMin ?? "?"}-${aud.ageMax ?? "?"}; ${(aud.interests ?? []).slice(0, 5).join(", ") || "sem interesses"}.`
+    : empty;
+}
+
+/** Chamada LLM comum das propostas de público (structured output, mesmo schema by-names). `null` em
+ *  falha/inválido → o caller degrada sem quebrar o run. Metering atribui o custo à org/tipo. */
+async function runProposal(
+  llm: LLMProviderPort,
+  system: string,
+  user: string,
+  meta: { readonly orgId: string; readonly model: string; readonly runId?: string },
+): Promise<ProposedTargeting | null> {
+  try {
+    const { output } = await llm.completeStructured<unknown>({
+      model: meta.model,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      responseSchema: RESPONSE_SCHEMA,
+      responseSchemaName: "proposed_targeting",
+      temperature: 0.4,
+      validate: (o) => proposedTargetingSchema.safeParse(o).success,
+      meta: { orgId: meta.orgId, ...(meta.runId ? { runId: meta.runId } : {}), type: "propose_targeting" },
+    });
+    const parsed = proposedTargetingSchema.safeParse(output);
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Chama a LLM pra propor o público da oportunidade. Retorna `null` em falha (o caller degrada pro
  * comportamento default — reuse/amplo — sem quebrar o run). Metering atribui o custo à org/tipo.
  */
 export async function proposeTargetingForOpportunity(llm: LLMProviderPort, input: ProposeTargetingInput): Promise<ProposedTargeting | null> {
-  const aud = input.winnerAudience;
-  const audienceSummary = aud
-    ? `Público do vencedor: estágio ${aud.stage}; ${(aud.geo ?? []).join(", ") || "geo n/d"}; idade ${aud.ageMin ?? "?"}-${aud.ageMax ?? "?"}; ${(aud.interests ?? []).slice(0, 5).join(", ") || "sem interesses"}.`
-    : "Sem vencedor com público legível.";
+  const audienceSummary = describeAudienceForPrompt(input.winnerAudience, "Sem vencedor com público legível.");
   const user = [
     `Oportunidade: ${input.kind}. Motivo: ${input.rationale}`,
     input.businessContext ? `Negócio: ${input.businessContext}` : "",
@@ -94,23 +153,48 @@ export async function proposeTargetingForOpportunity(llm: LLMProviderPort, input
   ]
     .filter(Boolean)
     .join("\n");
+  return runProposal(llm, SYSTEM, user, { orgId: input.meta.orgId, model: input.model, ...(input.meta.runId ? { runId: input.meta.runId } : {}) });
+}
 
-  try {
-    const { output } = await llm.completeStructured<unknown>({
-      model: input.model,
-      messages: [
-        { role: "system", content: SYSTEM },
-        { role: "user", content: user },
-      ],
-      responseSchema: RESPONSE_SCHEMA,
-      responseSchemaName: "proposed_targeting",
-      temperature: 0.4,
-      validate: (o) => proposedTargetingSchema.safeParse(o).success,
-      meta: { orgId: input.meta.orgId, ...(input.meta.runId ? { runId: input.meta.runId } : {}), type: "propose_targeting" },
-    });
-    const parsed = proposedTargetingSchema.safeParse(output);
-    return parsed.success ? parsed.data : null;
-  } catch {
-    return null; // LLM indisponível → caller cai no default (reuse/amplo)
-  }
+const EDIT_SYSTEM = [
+  "Você é estrategista de tráfego pago. Um CONJUNTO existente está com desempenho fraco e o analista",
+  "sugeriu revisar o PÚBLICO. Proponha um público REFINADO (mais alinhado ao negócio) por NOME/termo —",
+  "NUNCA invente ids. Ajuste sobre o público ATUAL: restrinja/troque interesses e comportamentos frouxos,",
+  "corrija geo/idade/gênero desalinhados, e use públicos salvos (incluir engajados, excluir compradores)",
+  "quando fizerem sentido. Só proponha o que o motivo do analista e o negócio sustentam — se não houver",
+  "um refinamento CLARO, devolva os campos vazios (não invente público). mode é irrelevante (é edição).",
+  "Nomes reais e específicos (a casca resolve na Meta e descarta o que não existir). Responda no schema.",
+].join(" ");
+
+export interface ProposeAudienceEditInput {
+  /** motivo do analista (por que o público está errado) — âncora da proposta. */
+  readonly rationale: string;
+  readonly model: string;
+  /** público ATUAL do adset (base do refinamento). */
+  readonly currentAudience?: AudienceProfile | undefined;
+  readonly savedAudienceNames: readonly string[];
+  readonly businessContext?: string | null;
+  readonly guidance?: string | null;
+  readonly conversionGoal?: ConversionGoal | undefined;
+  readonly meta: { readonly orgId: string; readonly runId?: string };
+}
+
+/**
+ * Propõe um público REFINADO pra um adset em `review_audience` (Fatia C). Reusa o MESMO schema
+ * by-names + a mesma chamada; só o SYSTEM difere (edição vs criação). `null` → o caller mantém a
+ * recomendação consultiva (human_direction), sem inventar edição de público.
+ */
+export async function proposeAudienceEdit(llm: LLMProviderPort, input: ProposeAudienceEditInput): Promise<ProposedTargeting | null> {
+  const user = [
+    `Motivo do analista: ${input.rationale}`,
+    input.businessContext ? `Negócio: ${input.businessContext}` : "",
+    input.guidance ? `Orientações do dono: ${input.guidance}` : "",
+    input.conversionGoal ? `Conversão de negócio: ${input.conversionGoal}` : "",
+    describeAudienceForPrompt(input.currentAudience, "Público atual não legível."),
+    `Públicos salvos disponíveis (escolha por NOME p/ incluir/excluir): ${input.savedAudienceNames.length > 0 ? input.savedAudienceNames.join(" | ") : "nenhum"}`,
+    "Proponha o público refinado; se não houver refinamento claro, devolva vazio.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return runProposal(llm, EDIT_SYSTEM, user, { orgId: input.meta.orgId, model: input.model, ...(input.meta.runId ? { runId: input.meta.runId } : {}) });
 }

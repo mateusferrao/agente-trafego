@@ -2,6 +2,7 @@ import { Injectable } from '@angular/core';
 import type { Observable } from 'rxjs';
 import { BaseApiService } from './base-api.service';
 import type {
+  ApprovalOutcomeOutput,
   ApprovalOutput,
   EditApprovalActionInput,
   ResolveApprovalInput,
@@ -31,6 +32,11 @@ export class ApprovalsApiService extends BaseApiService {
   /** `GET /api/approvals/revertible` — ações aplicadas ainda acionáveis (cross-conta). */
   listRevertible(): Observable<RevertibleActionOutput[]> {
     return this.get<RevertibleActionOutput[]>(['/approvals', 'revertible']);
+  }
+
+  /** `GET /api/approvals/:id` — desfecho da aplicação (polling do card após aprovar). */
+  getOne(id: string): Observable<ApprovalOutcomeOutput> {
+    return this.get<ApprovalOutcomeOutput>(['/approvals', id]);
   }
 
   /** `PATCH /api/approvals/:id/action` — edita o VALOR de um adjust_budget pendente antes de aprovar (C). */

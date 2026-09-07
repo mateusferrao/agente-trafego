@@ -6,6 +6,7 @@ export const ACTION_TYPE_LABEL: Record<string, string> = {
   pause_entity: 'Pausar',
   resume_entity: 'Retomar',
   adjust_budget: 'Ajustar orçamento',
+  adjust_audience: 'Ajustar público',
   set_status: 'Mudar status',
   create_campaign: 'Criar campanha',
   duplicate_scale: 'Duplicar para escalar',

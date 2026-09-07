@@ -84,7 +84,14 @@ export interface RawAdCandidate {
   readonly id?: string;
   readonly effective_status?: string;
   readonly creative?: { readonly object_story_spec?: RawObjectStorySpec };
-  readonly adset?: { readonly id?: string; readonly promoted_object?: { readonly pixel_id?: string } };
+  readonly adset?: {
+    readonly id?: string;
+    /** o que o conjunto-fonte OTIMIZA (ex: CONVERSATIONS = WhatsApp/mensagens, LEAD_GENERATION =
+     *  formulário) — mais preciso que o objetivo coarse da campanha p/ inferir o goal da criação. */
+    readonly optimization_goal?: string;
+    readonly destination_type?: string;
+    readonly promoted_object?: { readonly pixel_id?: string; readonly page_id?: string };
+  };
   readonly campaign?: { readonly objective?: string };
   readonly insights?: { readonly data?: ReadonlyArray<{ readonly spend?: string; readonly actions?: readonly RawInsightAction[] }> };
 }

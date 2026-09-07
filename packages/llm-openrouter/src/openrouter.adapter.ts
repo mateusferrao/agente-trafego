@@ -64,19 +64,44 @@ export class OpenRouterAdapter implements LLMProviderPort {
     if (!request.responseSchema) {
       throw new LLMProviderError("invalid_request", "completeStructured exige responseSchema");
     }
+    // 1º o modelo PRIMÁRIO (com a cadeia de reserva de REDE do client, `fallbackModels`); se ele
+    // esgotar os retries de PARSE (JSON lixo/truncado/schema — ex: um modelo unit que degenera), cai
+    // pros modelos RESERVA no nível de PARSE (achado do E2E real: o fallback só valia p/ erro de rede,
+    // então o unit produzindo lixo derrubava a campanha em vez de tentar o modelo mais confiável).
+    try {
+      return await this.structuredWithRetries<T>(request, request.model, request.fallbackModels);
+    } catch (error) {
+      if (!(error instanceof LLMProviderError) || error.kind !== "parse_error" || !request.fallbackModels?.length) throw error;
+      let lastError = error;
+      for (const fallback of request.fallbackModels) {
+        if (fallback === request.model) continue;
+        this.logger?.warn({ primary: request.model, fallback }, "openrouter:structured parse falhou no primário — tentando modelo reserva");
+        try {
+          return await this.structuredWithRetries<T>(request, fallback, undefined);
+        } catch (e) {
+          if (!(e instanceof LLMProviderError) || e.kind !== "parse_error") throw e;
+          lastError = e;
+        }
+      }
+      throw lastError;
+    }
+  }
+
+  /** Um modelo + retries de PARSE/validação (JSON inválido/truncado/schema re-chama o LLM). O retry de
+   *  REDE/429/5xx fica no client (via `networkFallbacks` na cadeia). `model` = o modelo desta rodada. */
+  private async structuredWithRetries<T>(
+    request: LLMRequest,
+    model: string,
+    networkFallbacks: readonly string[] | undefined,
+  ): Promise<LLMCompletion<T>> {
+    const { fallbackModels: _drop, ...rest } = request;
     const chatRequest: OpenRouterChatRequest = {
-      ...this.toChatRequest(request),
+      ...this.toChatRequest({ ...rest, model, ...(networkFallbacks && networkFallbacks.length > 0 ? { fallbackModels: networkFallbacks } : {}) }),
       response_format: {
         type: "json_schema",
-        json_schema: {
-          name: request.responseSchemaName ?? DEFAULT_SCHEMA_NAME,
-          strict: true,
-          schema: request.responseSchema,
-        },
+        json_schema: { name: request.responseSchemaName ?? DEFAULT_SCHEMA_NAME, strict: true, schema: request.responseSchema },
       },
     };
-    // Retry de PARSE/validação: JSON inválido, truncado ou que falha o schema (`validate`)
-    // re-chama o LLM em vez de descartar. O retry de REDE/429/5xx fica no client.
     let lastError: LLMProviderError | undefined;
     for (let attempt = 0; attempt <= this.structuredMaxRetries; attempt += 1) {
       try {
@@ -85,7 +110,7 @@ export class OpenRouterAdapter implements LLMProviderPort {
         if (!(error instanceof LLMProviderError) || error.kind !== "parse_error") throw error;
         lastError = error;
         this.logger?.warn(
-          { model: request.model, attempt: attempt + 1, maxRetries: this.structuredMaxRetries, err: error.message },
+          { model, attempt: attempt + 1, maxRetries: this.structuredMaxRetries, err: error.message },
           attempt === this.structuredMaxRetries
             ? "openrouter:structured output falhou no parse/schema após retries"
             : "openrouter:parse/schema inválido — re-chamando o LLM",

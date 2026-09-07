@@ -121,7 +121,6 @@ export interface NotifyPolicyPatch {
   readonly alertsThrottleHours?: number | undefined;
   readonly runPushEnabled?: boolean | undefined;
   readonly reactivationEnabled?: boolean | undefined;
-  readonly proactiveDraftsEnabled?: boolean | undefined;
   /** liga/desliga o alerta de saúde da conta Meta (desativada/teto/pagamento) — via chat. */
   readonly accountHealthEnabled?: boolean | undefined;
   /** checklist de status que dispara aviso — lista COMPLETA que substitui a atual (via chat).
@@ -430,7 +429,10 @@ function mergeNotifyPolicy(cur: NotifyPolicy, patch: NotifyPolicyPatch | undefin
     runPush: { enabled: patch.runPushEnabled ?? cur.runPush.enabled },
     // defensivo: linhas pré-pivô podem não ter `reactivation` no jsonb → default off.
     reactivation: { enabled: patch.reactivationEnabled ?? cur.reactivation?.enabled ?? false },
-    proactiveDrafts: { enabled: patch.proactiveDraftsEnabled ?? cur.proactiveDrafts?.enabled ?? false },
+    // PRESERVA `learning` (não é editável por patch hoje, mas o merge reconstrói campo-a-campo:
+    // sem esta linha o campo SUMIA a cada save de notificação — e uma escolha explícita de desligar
+    // os avisos de aprendizado seria silenciosamente revertida pra ON. Default ON quando ausente.
+    learning: { enabled: cur.learning?.enabled ?? true },
     accountHealthAlert: mergeAccountHealthAlert(cur.accountHealthAlert, patch),
   };
 }
@@ -676,6 +678,7 @@ const ACTION_TYPE_LABEL_PT: Readonly<Record<ActionType, string>> = {
   resume_entity: "reativar",
   adjust_budget: "ajustar budget",
   set_status: "mudar status",
+  adjust_audience: "ajustar público",
 };
 
 /** Conversão de negócio em PT (fallback = a chave neutra). */

@@ -46,7 +46,13 @@ export interface RevertResult {
   readonly blockedByDrift?: boolean;
 }
 
-/** Campos de estado relevantes ao drift (status + budgets; ignora derivados). */
+/**
+ * Campos de estado relevantes ao drift (status + budgets; ignora derivados). COARSE v1: NÃO inclui
+ * `targeting` — logo o re-check de drift do revert de `adjust_audience` (que só escreve `targeting`)
+ * NÃO detecta uma edição CONCORRENTE de público (outra pessoa mexeu no público entre o apply e o
+ * revert); reverter reaplicaria o público antigo por cima. Aceito p/ v1 (ação opt-in rara, janela
+ * estreita; o fix exige ler+comparar o targeting cru no re-check → mudança de porta, com risco de
+ * regressão no revert de budget). Drift FINO de targeting = fast-follow (docs/ROADMAP.md). */
 function driftFields(state: Record<string, unknown> | null | undefined): string {
   const s = state ?? {};
   return JSON.stringify({

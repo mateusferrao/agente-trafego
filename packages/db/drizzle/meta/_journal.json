@@ -414,6 +414,27 @@
       "when": 1788389256959,
       "tag": "0058_amazing_naoko",
       "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1788448233820,
+      "tag": "0059_violet_shadow_king",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1788461345216,
+      "tag": "0060_yellow_roulette",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1788526545496,
+      "tag": "0061_rapid_hydra",
+      "breakpoints": true
     }
   ]
 }

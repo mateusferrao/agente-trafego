@@ -753,6 +753,7 @@ function toRecommendationOutput(
     draftId,
     approvalId,
     approvalKind,
+    ressalvas: rec.ressalvas ?? null,
     vote,
   };
 }

@@ -59,6 +59,29 @@ export const draftsRoutes: FastifyPluginAsync = async (app) => {
     return service.listServingCreatives(orgIdOf(request) as OrgId, id);
   });
 
+  // Miniatura ESTÁVEL de um anúncio da conta (picker → "anúncios da conta"). Igual à da biblioteca:
+  // frame HD / imagem FRESCA da Meta com stream + ETag → 304 sem tocar na Meta. Substitui a URL crua
+  // do fbcdn (que expirava → "sem preview"). Org-scoped pelo lookup do adId. 404 → placeholder.
+  app.get("/accounts/:id/serving-creatives/:adId/thumb", guard, async (request, reply) => {
+    const { id, adId } = request.params as { id: string; adId: string };
+    const inm = request.headers["if-none-match"];
+    const thumb = await service.getServingCreativeThumb(
+      orgIdOf(request) as OrgId,
+      id,
+      adId,
+      typeof inm === "string" ? inm : undefined,
+    );
+    if (!thumb) return reply.status(404).send({ message: "miniatura indisponível" });
+    const etag = `"${thumb.etag}"`;
+    if ("notModified" in thumb) return reply.status(304).header("ETag", etag).send();
+    return reply
+      .header("Content-Type", thumb.contentType)
+      .header("Cache-Control", "private, max-age=86400")
+      .header("ETag", etag)
+      .header("Content-Disposition", "inline")
+      .send(Buffer.from(thumb.bytes));
+  });
+
   // Estimativa de alcance (Slice 7) — recalcula ao editar o público explícito no site.
   app.post("/accounts/:id/drafts/:draftId/delivery-estimate", guard, async (request, reply) => {
     const { id, draftId } = request.params as { id: string; draftId: string };

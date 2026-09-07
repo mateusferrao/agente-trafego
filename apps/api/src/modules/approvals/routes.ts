@@ -18,6 +18,12 @@ export const approvalsRoutes: FastifyPluginAsync = async (app) => {
     return service.listRevertible(orgIdOf(request));
   });
 
+  // Desfecho da aplicação de uma aprovação (polling do card após aprovar — Fatia "depois").
+  app.get("/approvals/:id", guard, async (request) => {
+    const { id } = request.params as { id: string };
+    return service.getOutcome(orgIdOf(request), id as ApprovalId);
+  });
+
   app.post("/approvals/:id/resolve", guard, async (request) => {
     const { id } = request.params as { id: string };
     const input = resolveApprovalInput.parse(request.body);

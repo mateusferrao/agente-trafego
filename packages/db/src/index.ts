@@ -1,6 +1,7 @@
 export * from "./schema/index.js";
 export { createDb, db, type Database } from "./client.js";
 export { runMigrations } from "./migrate.js";
+export { syncToolCatalog } from "./sync-tool-catalog.js";
 export { backfillConnections, runBackfillConnections } from "./backfill.js";
 export { PG_UNIQUE_VIOLATION, PG_INVALID_TEXT_REPRESENTATION, isUniqueViolation, isInvalidTextRepresentation } from "./pg-errors.js";
 export { loadOrgTimezone } from "./helpers.js";

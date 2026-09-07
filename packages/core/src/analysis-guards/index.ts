@@ -2,7 +2,6 @@ import type { AccountBrief, ConversionBasis, DecisionEligibility, EntitySummary,
 import type { AnalysisFinding, AnalysisOutput, RecommendationActionType } from "@trafego/shared";
 import { flagUngroundedNumbers } from "../chat-guards/index.js";
 import { DEFAULT_QUALITY_THRESHOLDS } from "../quality/index.js";
-import type { LessonGuard } from "../learning/index.js";
 
 /**
  * Guards determinísticos sobre a saída do LLM (§ princípio-guia: rede que não
@@ -149,33 +148,13 @@ export function eligibilityByEntity(brief: AccountBrief): Map<string, DecisionEl
   return map;
 }
 
-/**
- * Rebaixa recomendações de ESCALAR (aumentar budget / reativar) → `investigate`
- * quando a entidade-alvo não tem significância OU está em learning. Puro: não
- * remove (o dono ainda vê o sinal), só troca a ordem de ação + anota o porquê.
- */
-export function guardScaleWithoutSignificance(
-  output: AnalysisOutput,
-  eligibility: ReadonlyMap<string, DecisionEligibility>,
-): AnalysisOutput {
-  const recommendations = output.recommendations.map((r) => {
-    if (!SCALE_ACTIONS.has(r.actionType)) return r;
-    const id = r.targetEntity?.externalId;
-    const elig = id ? eligibility.get(id) : undefined;
-    if (!elig || (elig.hasSignificance && !elig.inLearning)) return r;
-    const why = elig.inLearning
-      ? "em aprendizado (sem dado comparável no período anterior — nova ou retomando)"
-      : `sem base estatística ainda (${elig.conversions} conversões)`;
-    return {
-      ...r,
-      title: demotedTitle(r.title),
-      actionType: "investigate" as RecommendationActionType,
-      rationale: `${r.rationale}\n[guard] escalar → investigar: ${why}.`,
-      budgetChangePct: null,
-    };
-  });
-  return { ...output, recommendations };
-}
+// Guards de ESCALA (significância, CPA marginal, teto de audiência, fadiga, hipótese
+// não-confirmada) foram movidos p/ `computeScaleRessalvas` (packages/core/src/scale-ressalvas),
+// um passe PURO nível-Action: em vez de rebaixar a recomendação → `investigate`, anexam uma
+// RESSALVA à ação (mantém aprovável, trava só o auto-apply). Os helpers/tipos/thresholds abaixo
+// (eligibilityByEntity, marginalCpaRiseByEntity, AudienceHeadroom, firstFatigueSignal, …) seguem
+// aqui como fonte única, reusados pelo passe. Só os 2 guards de SEGURANÇA (kill-in-learning +
+// tracking) continuam nível-recomendação (hard downgrade). Fatia A.
 
 // ─── Guard de "não matar em learning" (Fatia Bloco 2) ─────────────────────
 // Simetria do guard de significância: assim como não se ESCALA sem base, não se
@@ -304,36 +283,7 @@ export function marginalCpaRiseByEntity(brief: AccountBrief): Map<string, number
   return map;
 }
 
-/**
- * Rebaixa recomendações de ESCALAR quando o CPA marginal da entidade-alvo piorou acima
- * do limiar — mesmo que o CPA médio/atual ainda pareça bom o suficiente pra bater a meta
- * (é exatamente esse caso que o guard de significância não pega). Puro: não remove, só
- * troca a ordem de ação + anota o porquê. Sem sinal (undefined) → passa direto.
- */
-export function guardScaleWithWorseningMarginalCpa(
-  output: AnalysisOutput,
-  marginalRisePct: ReadonlyMap<string, number | undefined>,
-  t: MarginalCpaThresholds,
-): AnalysisOutput {
-  // config malformada (worsenPct não-finito/≤0) → guard inerte: nunca rebaixa (nunca
-  // confia cegamente num limiar quebrado, já que este guard barra escrita autônoma de
-  // budget). Sem esta guarda, `rise < NaN` seria sempre false → rebaixaria QUALQUER escala.
-  if (!Number.isFinite(t.worsenPct) || t.worsenPct <= 0) return output;
-  const recommendations = output.recommendations.map((r) => {
-    if (!SCALE_ACTIONS.has(r.actionType)) return r;
-    const id = r.targetEntity?.externalId;
-    const rise = id ? marginalRisePct.get(id) : undefined;
-    if (rise === undefined || rise < t.worsenPct) return r;
-    return {
-      ...r,
-      title: demotedTitle(r.title),
-      actionType: "investigate" as RecommendationActionType,
-      rationale: `${r.rationale}\n[guard] escalar → investigar: CPA marginal piorando (+${rise.toFixed(0)}% vs período anterior) — o CPA médio pode parecer bom, mas o incremento mais recente já está mais caro.`,
-      budgetChangePct: null,
-    };
-  });
-  return { ...output, recommendations };
-}
+// (o gate de CPA marginal virou ressalva `worsening_marginal_cpa` em computeScaleRessalvas.)
 
 // ─── Guard de teto de escala por audiência (Fase 4, pivô saúde) ───────────
 // "Antes de recomendar aumentar orçamento, checa se a AUDIÊNCIA aguenta mais gasto sem
@@ -359,38 +309,9 @@ export interface AudienceCeilingThresholds {
 
 export const DEFAULT_AUDIENCE_CEILING_THRESHOLDS: AudienceCeilingThresholds = { nearSaturationRatio: 0.8 };
 
-/**
- * Rebaixa ESCALAR (aumentar orçamento / reativar) → `investigate` quando o público
- * (MAU × teto de frequência saudável) já está perto do limite de impressões sustentáveis —
- * mais orçamento tenderia a aumentar FREQUÊNCIA (mesma gente vendo mais vezes), não
- * alcançar gente nova. Puro: não remove, só troca a ordem de ação + anota o porquê.
- */
-export function guardAudienceScaleCeiling(
-  output: AnalysisOutput,
-  headroomByEntity: ReadonlyMap<string, AudienceHeadroom>,
-  t: AudienceCeilingThresholds,
-): AnalysisOutput {
-  const recommendations = output.recommendations.map((r) => {
-    if (!SCALE_ACTIONS.has(r.actionType)) return r;
-    const id = r.targetEntity?.externalId;
-    const headroom = id ? headroomByEntity.get(id) : undefined;
-    if (!headroom || headroom.monthlyReach === undefined) return r;
-    const cap = headroom.monthlyReach * headroom.frequencyCap;
-    if (cap <= 0) return r;
-    const ratio = headroom.currentMonthlyImpressions / cap;
-    if (ratio < t.nearSaturationRatio) return r;
-    return {
-      ...r,
-      title: demotedTitle(r.title),
-      actionType: "investigate" as RecommendationActionType,
-      rationale: `${r.rationale}\n[guard] escalar → investigar: o público (~${Math.round(headroom.monthlyReach)} pessoas/mês) já está perto do teto de frequência saudável — mais orçamento tende a aumentar FREQUÊNCIA (mesma gente vendo mais vezes), não alcançar gente nova.`,
-      budgetChangePct: null,
-    };
-  });
-  return { ...output, recommendations };
-}
+// (o gate de teto de audiência virou ressalva `audience_ceiling` em computeScaleRessalvas.)
 
-// ─── Guard de fadiga vs escala (achado do A/B real grok-4.5 × gemini-3.7-flash) ──
+// ─── Sinais de fadiga de criativo (achado do A/B real grok-4.5 × gemini-3.7-flash) ──
 // A/B com dados reais de produção (mesmo brief, mesmo prompt — incluindo a NOTE que já
 // explica `weak_hook_retention`) mostrou o analista propor `increase_budget` numa entidade
 // com retenção de gancho quase zero: a NOTE sozinha não foi rede suficiente pra essa classe
@@ -402,6 +323,22 @@ export function guardAudienceScaleCeiling(
 
 const FATIGUE_SIGNALS: ReadonlySet<HealthSignal> = new Set(["creative_fatigue", "weak_hook_retention"]);
 
+/**
+ * Fonte única de "fadiga de criativo" (sinal DURO — métrica, não score de visão LLM).
+ * Reusada pelo guard de escala E pelo detector de oportunidade de criação (`proposeDrafts`),
+ * que antes só olhava `creative_fatigue` — a divergência gerava escala contraditória no MESMO
+ * vencedor (guard rebaixava por `weak_hook_retention`, detector escalava). `weak_creative`
+ * (score de visão, soft) NUNCA entra aqui. PURA.
+ */
+export function firstFatigueSignal(signals: readonly HealthSignal[] | undefined): HealthSignal | undefined {
+  return signals?.find((s) => FATIGUE_SIGNALS.has(s));
+}
+
+/** `true` se a entidade tem algum sinal DURO de fadiga de criativo. PURA. */
+export function isFatigued(signals: readonly HealthSignal[] | undefined): boolean {
+  return firstFatigueSignal(signals) !== undefined;
+}
+
 /** Mapa `externalId → healthSignals` a partir dos segmentos do brief. */
 export function healthSignalsByEntity(brief: AccountBrief): Map<string, readonly HealthSignal[]> {
   const map = new Map<string, readonly HealthSignal[]>();
@@ -411,34 +348,10 @@ export function healthSignalsByEntity(brief: AccountBrief): Map<string, readonly
   return map;
 }
 
-/**
- * Rebaixa recomendações de ESCALAR (aumentar budget / reativar) → `investigate` quando a
- * entidade-alvo tem sinal duro de fadiga de criativo (`creative_fatigue`/`weak_hook_retention`)
- * — escalar sem renovar o gancho tende a piorar CPA/CPM, não a crescer alcance de verdade.
- * Puro: não remove (o dono ainda vê o sinal), só troca a ordem de ação + anota o porquê.
- */
-export function guardScaleWithoutFreshCreative(
-  output: AnalysisOutput,
-  signalsByEntity: ReadonlyMap<string, readonly HealthSignal[]>,
-): AnalysisOutput {
-  const recommendations = output.recommendations.map((r) => {
-    if (!SCALE_ACTIONS.has(r.actionType)) return r;
-    const id = r.targetEntity?.externalId;
-    const signals = id ? signalsByEntity.get(id) : undefined;
-    const hit = signals?.find((s) => FATIGUE_SIGNALS.has(s));
-    if (!hit) return r;
-    return {
-      ...r,
-      title: demotedTitle(r.title),
-      actionType: "investigate" as RecommendationActionType,
-      rationale: `${r.rationale}\n[guard] escalar → investigar: sinal de fadiga de criativo (${hit}) — renove o gancho/criativo antes de aumentar orçamento, senão o incremento tende a piorar CPA/CPM em vez de alcançar gente nova.`,
-      budgetChangePct: null,
-    };
-  });
-  return { ...output, recommendations };
-}
+// (o gate de fadiga vs escala virou ressalva `creative_fatigue` em computeScaleRessalvas,
+//  usando `firstFatigueSignal`/`isFatigued` acima como fonte única.)
 
-// ─── Helpers compartilhados pelos guards acima ────────────────────────────
+// ─── Helpers compartilhados pelos guards de segurança + pelo passe de ressalvas ──
 
 /** Itera as 3 camadas do brief (campanha/adset/anúncio) — evita repetir o `for`
  *  triplo em cada `xByEntity` (CLAUDE.md §13 "duplicou 3x → extrai"). */
@@ -460,54 +373,8 @@ function demotedTitle(title: string): string {
   return title.startsWith(INVESTIGATE_TITLE_PREFIX) ? title : `${INVESTIGATE_TITLE_PREFIX}${title}`;
 }
 
-// ─── Guard de hipótese não-confirmada (aprendizado, S3 + v3) ──────────────
-// Influência ASSIMÉTRICA das lições: uma hipótese ainda NÃO confirmada (atribuição
-// fraca) só pode puxar a análise p/ o lado MAIS conservador — rebaixa uma ESCALA
-// (`increase_budget`/`resume`) → `investigate` quando um aprendizado de direção `lower`
-// aponta cautela naquela entidade OU na conta. NUNCA promove/libera nada mais arriscado.
-// Casa com a filosofia dos demais guards (que só rebaixam). Lições CONFIRMADAS (ou já
-// fortes, ≥ limiar de prompt) não passam por aqui — elas influenciam via texto do prompt.
-
-/**
- * Rebaixa escala → investigar sob uma lição-guia NÃO confirmada de direção `lower`:
- *  - escopo `account` → rebaixa TODA escala da conta (o prior de conta ainda fraco restringe
- *    amplamente, conservador — a assimetria da v3: hipótese não-confirmada só endurece);
- *  - escopo `entity` → rebaixa só a entidade-alvo (`subjectId`).
- * Puro. Só rebaixa; hipóteses `raise`/`neutral` não agem. Priors de conta `lower` NÃO-confirmados
- * chegam aqui INDEPENDENTE da confiança (inclusive o prior medido forte recém-nascido, ≥ 0,744) —
- * é a rede determinística contra escalar sob um aprendizado conservador. Só os CONFIRMADOS saem
- * (viram só texto do prompt; o dono endossou, não travamos escala pra sempre).
- */
-export function guardUnconfirmedHypothesis(
-  output: AnalysisOutput,
-  guards: readonly LessonGuard[],
-): AnalysisOutput {
-  const lower = guards.filter((g) => g.key.direction === "lower");
-  const accountCaution = lower.some((g) => g.key.scope === "account");
-  const entityCaution = new Set(
-    lower.filter((g) => g.key.scope === "entity" && g.key.subjectId).map((g) => g.key.subjectId as string),
-  );
-  if (!accountCaution && entityCaution.size === 0) return output;
-
-  const recommendations = output.recommendations.map((r) => {
-    if (!SCALE_ACTIONS.has(r.actionType)) return r;
-    const id = r.targetEntity?.externalId;
-    // conta em cautela → toda escala; senão, só a entidade que casa com uma hipótese de entidade.
-    const matched = accountCaution || (id ? entityCaution.has(id) : false);
-    if (!matched) return r;
-    const scopeNote = accountCaution
-      ? "um aprendizado desta conta (hipótese ainda não confirmada) sugere cautela ao escalar por aqui."
-      : "um aprendizado desta conta (hipótese ainda não confirmada) sugere cautela nesta entidade.";
-    return {
-      ...r,
-      title: demotedTitle(r.title),
-      actionType: "investigate" as RecommendationActionType,
-      rationale: `${r.rationale}\n[guard] escalar → investigar: ${scopeNote}`,
-      budgetChangePct: null,
-    };
-  });
-  return { ...output, recommendations };
-}
+// (o gate de hipótese não-confirmada virou ressalva `unconfirmed_hypothesis` em
+//  computeScaleRessalvas — mesma assimetria: só endurece escala sob lição `lower` não-confirmada.)
 
 function addNumber(set: Set<number>, value: number): void {
   set.add(round2(value));

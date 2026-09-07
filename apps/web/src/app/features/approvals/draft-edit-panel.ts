@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { toast } from 'ngx-sonner';
 import { UiButton, UiInput, UiSelectBox, UiToggleGroup, UiToggleGroupItem, type UiSelectOptionItem } from '@ui';
 import { CreativePicker } from './creative-picker';
-import { GeoAudienceEditor, KM, type ExplicitAudienceState } from './geo-audience-editor';
+import { GeoAudienceEditor, toExplicitAudienceWire, type ExplicitAudienceState } from './geo-audience-editor';
 import { DraftsApiService } from '@core/api/drafts-api.service';
 import { CONVERSION_LABEL, conversionLabel } from '@app/shared/conversion-label';
 import type { DraftApprovalOutput, SetDraftCreativeInput, UpdateDraftInput } from '@core/api/generated';
@@ -557,24 +557,9 @@ export class DraftEditPanel implements OnInit {
     return v.trim();
   }
 
-  /** Mapeia o estado COMPLETO do editor pro input de substituição total do público (Slice 8).
-   *  radius/distanceUnit só quando houver; grupos/públicos sempre presentes (podem ser vazios). */
+  /** Mapeia o estado COMPLETO do editor pro input de substituição total do público (Slice 8) — fonte
+   *  única compartilhada com o card de ação (`toExplicitAudienceWire`); o shape do wire é idêntico. */
   private toExplicitInput(s: ExplicitAudienceState): NonNullable<UpdateDraftInput['explicitAudience']> {
-    return {
-      geo: s.geo.map((g) => ({
-        key: g.key,
-        name: g.name,
-        kind: g.kind,
-        ...(g.radius != null ? { radius: g.radius, distanceUnit: g.distanceUnit ?? KM } : {}),
-      })),
-      radiusAreas: s.radiusAreas.map((a) => ({ address: a.address, radius: a.radius, distanceUnit: a.distanceUnit })),
-      ...(s.ageMin != null ? { ageMin: s.ageMin } : {}),
-      ...(s.ageMax != null ? { ageMax: s.ageMax } : {}),
-      ...(s.genders ? { genders: [...s.genders] } : {}),
-      interestGroups: s.interestGroups.map((g) => g.map((i) => ({ id: i.id, name: i.name }))),
-      behaviorGroups: s.behaviorGroups.map((g) => g.map((i) => ({ id: i.id, name: i.name }))),
-      customAudienceIncludeIds: [...s.customAudienceIncludeIds],
-      customAudienceExcludeIds: [...s.customAudienceExcludeIds],
-    };
+    return toExplicitAudienceWire(s);
   }
 }

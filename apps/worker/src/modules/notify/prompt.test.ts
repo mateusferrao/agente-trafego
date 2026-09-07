@@ -35,6 +35,31 @@ describe("buildMessageMessages (redator) — S1: lidera por orçamento sem folga
   });
 });
 
+describe("buildMessageMessages (redator) — Fatia B: agrupa TODAS + oferta do aprovável", () => {
+  it("agrupa em posso_fazer (com ressalva) / sua_direcao / observei e a regra de voz oferece 'pode'", () => {
+    const out = output({
+      recommendations: [
+        { id: "d1", title: "Corrigir público", rationale: "45-65+", priority: "high", actionType: "review_audience", targetEntity: null, budgetChangePct: null, expectedImpact: null, whatToMonitor: null, findingRefs: null },
+        { id: "o1", title: "NUCLEO em aprendizado", rationale: "aguarde", priority: "low", actionType: "keep", targetEntity: null, budgetChangePct: null, expectedImpact: null, whatToMonitor: null, findingRefs: null },
+      ],
+    });
+    const messages = buildMessageMessages("persona", "Loja X", out, DEFAULT_POSTURE, {
+      approvable: [{ reason: "escalar o vencedor Y: +20%", ressalvas: ["criativo cansando"] }],
+    });
+    const user = userOf(messages);
+    expect(user).toContain("posso_fazer");
+    expect(user).toContain("escalar o vencedor Y: +20%");
+    expect(user).toContain("criativo cansando");
+    expect(user).toContain("sua_direcao");
+    expect(user).toContain("Corrigir público");
+    expect(user).toContain("observei");
+    expect(user).toContain("NUCLEO em aprendizado");
+    const system = (messages[0]!.content as string).toLowerCase();
+    expect(system).toContain("posso_fazer");
+    expect(system).toContain("pode");
+  });
+});
+
 describe("buildMessageMessages (redator) — comportamento existente (waste/tracking), agora com teste", () => {
   it("sem waste real: não injeta o bloco de desperdício no curado", () => {
     const user = userOf(buildMessageMessages("persona", "Clínica X", output(), DEFAULT_POSTURE, {}));

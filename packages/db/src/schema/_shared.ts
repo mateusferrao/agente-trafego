@@ -59,6 +59,7 @@ export const actionType = pgEnum("action_type", [
   "resume_entity",
   "adjust_budget",
   "set_status",
+  "adjust_audience",
 ]);
 export const actionSource = pgEnum("action_source", ["playbook", "llm"]);
 export const riskLevel = pgEnum("risk_level", ["low", "medium", "high"]);
@@ -127,6 +128,10 @@ export const approvalStatus = pgEnum("approval_status", [
   // barrada no re-check fresco do apply (estado mudou / regra bloqueou) — 5b.
   "blocked",
 ]);
+// Desfecho da APLICAÇÃO de uma aprovação (Fatia "depois", diz×faz) — espelha `APPLY_OUTCOMES`
+// (@trafego/shared, fonte única). Distingue applied×simulated (ambos status approved) e marca
+// failed SEM resolver (status segue pending → reaprovável).
+export const applyOutcome = pgEnum("apply_outcome", ["applied", "simulated", "noop", "blocked", "failed"]);
 export const recommendationStatus = pgEnum("recommendation_status", [
   "open",
   "applied",

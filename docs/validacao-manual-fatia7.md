@@ -57,7 +57,7 @@ Passos:
 1. Seção **Autonomia** → deve dizer, em frase, que *criar/escalar pedem sua aprovação* (não é toggle).
 2. Abrir **Opções avançadas** → lista **por-ação**: ligar `create_campaign` e `duplicate_scale` (bindings). Ao afrouxar a autonomia de uma criação, deve aparecer **alerta proporcional ao risco** (from_scratch+copy-IA = alerta mais forte que duplicate).
 3. Seção **Segurança/Limites → Limites de criação (gasto novo)**: definir `Orçamento novo máx./dia`, `Máx. campanhas novas/dia`, `Passo de escala (%)`.
-4. Seção **Notificações** → ligar **Rascunhos proativos** (`proactiveDrafts`).
+4. ~~Seção **Notificações** → ligar **Rascunhos proativos**~~ — **Fatia D: criação proativa é SEMPRE ativa** (config `proactiveDrafts` removida; não há mais o que ligar).
 5. Salvar.
 
 Verificar:
@@ -217,7 +217,7 @@ Caminho triste:
 
 ## 9. Proatividade de criação (S6)
 
-Pré: `proactiveDrafts` ligado (§2) + conta com um vencedor OU sem campanha ativa (cold_start).
+Pré: conta com um vencedor OU sem campanha ativa (cold_start) — criação proativa é sempre ativa (Fatia D).
 
 Passos:
 1. Site → **Analisar agora** (ou esperar o cron) na conta.

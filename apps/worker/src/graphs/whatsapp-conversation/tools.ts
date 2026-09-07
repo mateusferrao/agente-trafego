@@ -123,14 +123,37 @@ export function makeConversationTools(
   // "analisa agora": dispara run on-demand (origem conversa) + push do resultado de volta.
   const triggerAnalysis = tool(
     async () => {
+      // Concierge (grupo, foco stale → sem agente em ctx): resolve o agente do `focused_account_id`
+      // PERSISTENTE — rodar análise é READ-LIKE (nenhuma escrita na Meta), então a trava de staleness
+      // (que existe p/ ESCRITA re-confirmar a conta) não deve bloquear o "roda nova análise". Sem foco
+      // → pede a conta (honesto), em vez de redirecionar pro site indevidamente.
+      let agentId = ctx.agentId;
+      let adAccountId = ctx.adAccountId;
+      if (!agentId) {
+        const [conv] = await deps.db
+          .select({ focusedAccountId: conversations.focusedAccountId })
+          .from(conversations)
+          .where(eq(conversations.id, ctx.conversationId))
+          .limit(1);
+        if (!conv?.focusedAccountId) return 'Me diz em qual conta você quer que eu rode a análise (ex: "foca na Loja X").';
+        const [ag] = await deps.db
+          .select({ agentId: agents.id, adAccountId: agents.adAccountId })
+          .from(agents)
+          .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
+          .where(and(eq(agents.orgId, ctx.orgId), eq(agents.status, "active"), eq(adAccounts.status, "active"), eq(adAccounts.id, conv.focusedAccountId)))
+          .limit(1);
+        if (!ag) return "A conta em foco não está mais disponível — me diz em qual conta você quer que eu rode a análise.";
+        agentId = ag.agentId;
+        adAccountId = ag.adAccountId;
+      }
       const outcome = await dispatcher.dispatch({
         orgId: ctx.orgId,
-        agentId: ctx.agentId,
-        adAccountId: ctx.adAccountId,
+        agentId,
+        adAccountId,
         trigger: "conversation",
         notify: { ref: ctx.ref, conversationId: ctx.conversationId },
       });
-      logger.debug({ agentId: ctx.agentId, outcome }, "tool:trigger_analysis");
+      logger.debug({ agentId, outcome }, "tool:trigger_analysis");
       // devolve ao modelo o desfecho p/ ele responder com honestidade (§UX).
       if (outcome === "enqueued") return "Análise iniciada — leva ~1 min; devolvo o resultado aqui.";
       if (outcome === "skipped_in_flight") return "Já tem uma análise rodando — te aviso quando terminar.";
@@ -623,7 +646,7 @@ export function makeConversationTools(
   const setNotifications = tool(proposeOnly, {
     name: "set_notifications",
     description:
-      "Configura o que o agente manda SEM ser perguntado: o PULSO (resumo do dia — retrato de ontem fechado + hoje até agora, na cadência que você definir; mesmo sem recomendação nova), o ALERTA (aviso automático quando algo muda materialmente na conta, com sensibilidade e intervalo mínimo entre alertas em horas), o AVISO APÓS ANÁLISE (mensagem depois de cada análise agendada com recomendação), a REATIVAÇÃO (avisa quando uma conta que estava PARADA volta a rodar — gasto/impressões de novo — e já roda a 1ª análise), a SAÚDE DA CONTA NA META (avisa na hora se a conta for desativada ou tiver pagamento recusado; dá pra escolher QUAIS estados avisam, um TETO de gasto — teto da Meta ou valor próprio — e um aviso de SALDO baixo separado, com valor próprio) e a PROPOSTA DE CAMPANHA por conta própria (o agente sugere escalar um vencedor ou criar uma campanha quando faz sentido, sempre como proposta — nunca gasta sem sua aprovação). TETO de gasto (gasto total batendo um limite) e SALDO baixo (dinheiro acabando) são coisas DIFERENTES — não confunda. Só troca os campos enviados. Requer eco+confirma.",
+      "Configura o que o agente manda SEM ser perguntado: o PULSO (resumo do dia — retrato de ontem fechado + hoje até agora, na cadência que você definir; mesmo sem recomendação nova), o ALERTA (aviso automático quando algo muda materialmente na conta, com sensibilidade e intervalo mínimo entre alertas em horas), o AVISO APÓS ANÁLISE (mensagem depois de cada análise agendada com recomendação), a REATIVAÇÃO (avisa quando uma conta que estava PARADA volta a rodar — gasto/impressões de novo — e já roda a 1ª análise), a SAÚDE DA CONTA NA META (avisa na hora se a conta for desativada ou tiver pagamento recusado; dá pra escolher QUAIS estados avisam, um TETO de gasto — teto da Meta ou valor próprio — e um aviso de SALDO baixo separado, com valor próprio). TETO de gasto (gasto total batendo um limite) e SALDO baixo (dinheiro acabando) são coisas DIFERENTES — não confunda. Só troca os campos enviados. Requer eco+confirma.",
     schema: z.object({
       pulseEnabled: z.boolean().nullable().optional().describe("liga/desliga o resumo do dia (pulso)"),
       pulseCadence: z
@@ -646,11 +669,6 @@ export function makeConversationTools(
         .nullable()
         .optional()
         .describe("liga/desliga o aviso quando uma conta parada volta a rodar (dispara a 1ª análise)"),
-      proactiveDraftsEnabled: z
-        .boolean()
-        .nullable()
-        .optional()
-        .describe("liga/desliga o agente propor escalar vencedor ou criar campanha por conta própria (sempre como proposta, nunca gasta sozinho)"),
       accountHealthEnabled: z
         .boolean()
         .nullable()
@@ -874,7 +892,7 @@ export async function buildCapabilitiesText(
       `Sou o ${AGENT_NAME}, seu gestor de tráfego aqui no WhatsApp. Sem uma conta em foco, posso:`,
       "• ver e resolver pendências de aprovação (de todas as suas contas);",
       "• te dar um panorama de todas as contas (nota e gasto da última análise de cada uma);",
-      '• focar numa conta (ex: "foca na Loja X") pra ler, analisar e agir nela.',
+      '• focar numa conta (ex: "foca na Loja X") pra ler, analisar, agir e configurar (metas, avisos/notificações, autonomia) nela.',
       "Pode me mandar áudio também — eu transcrevo e entendo. Me diz em qual conta você quer trabalhar.",
     ];
     if (ctx.ref.kind === "group") {
@@ -1044,10 +1062,13 @@ export const CONCIERGE_TOOL_NAMES: ReadonlySet<string> = new Set([
  * Concierge de GRUPO multi-conta (S6 — always-bind de leitura): além do concierge, BINDA as
  * tools de LEITURA account-scoped (self-guard sem foco em read-data.ts). Assim a 1ª pergunta
  * ("@bot como tá a Loja X?") resolve num turno: o LLM dá set_focus (do explícito/ambiente)
- * → muta o ctx → lê e responde. SEM escrita/config (dependem do allowedActions do agente) nem
- * trigger_analysis/revert (não são o *hello* comum) — escrita-1º-turno segue barra-e-repete.
+ * → muta o ctx → lê e responde. Inclui `trigger_analysis` (rodar análise é READ-LIKE — nenhuma
+ * escrita na Meta; a tool resolve o agente do `focused_account_id` persistente, ignorando o TTL do
+ * foco, que existe só p/ ESCRITA re-confirmar a conta). SEM escrita/config (dependem do
+ * allowedActions do agente) nem revert (não é o *hello* comum) — escrita-1º-turno segue barra-e-repete.
  */
 export const GROUP_CONCIERGE_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "trigger_analysis",
   "get_account_status",
   "get_metrics",
   "get_fresh_metrics",
@@ -1270,7 +1291,6 @@ export function configPatchFromToolCall(
         ...(args["accountHealthSpendThreshold"] != null ? { accountHealthSpendThresholdMajor: args["accountHealthSpendThreshold"] as number } : {}),
         ...(args["accountHealthBalanceEnabled"] != null ? { accountHealthBalanceEnabled: args["accountHealthBalanceEnabled"] as boolean } : {}),
         ...(args["accountHealthBalanceThreshold"] != null ? { accountHealthBalanceThresholdMajor: args["accountHealthBalanceThreshold"] as number } : {}),
-        ...(args["proactiveDraftsEnabled"] != null ? { proactiveDraftsEnabled: args["proactiveDraftsEnabled"] as boolean } : {}),
       };
       return { notifyPolicy };
     }

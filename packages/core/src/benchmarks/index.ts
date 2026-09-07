@@ -46,7 +46,9 @@ export interface CtrBands {
   readonly good: number;
   readonly great: number;
 }
-/** Default de plataforma do CTR (link), %. Fonte: benchmarks de plataforma. */
+/** Default de plataforma do CTR (link), %. Não-monetário → default de plataforma (não pede config),
+ *  overridável pela `MarketReference`. Fonte fiel: squad Meta (`docs/referencia-traffic-masters.md`
+ *  §5 — média 0,90% / bom 1,5% / ótimo 2,5%). CVR/hook-retention first-class = fast-follow (ROADMAP). */
 export const CTR_BANDS: CtrBands = { ok: 0.9, good: 1.5, great: 2.5 };
 
 /** Classifica o CTR (%) em rótulo direcional vs a plataforma (bandas overridáveis). */
@@ -57,7 +59,8 @@ export function ctrRating(ctr: number, bands: CtrBands = CTR_BANDS): BenchmarkCt
   return "ruim";
 }
 
-/** Default de plataforma da frequência de alerta em prospecção (público frio). */
+/** Default de plataforma da frequência de alerta em prospecção (público frio). Não-monetário →
+ *  default de plataforma. Fonte fiel: squad Meta (prospecting_max 2,5; fadiga ~3,0). */
 export const FREQUENCY_PROSPECTING_ALERT = 2.5;
 
 /** ROAS de referência (quando há receita) — direcional. */

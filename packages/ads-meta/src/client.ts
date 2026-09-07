@@ -89,6 +89,11 @@ export interface BatchSubRequest {
   readonly method: "GET" | "POST" | "DELETE";
   readonly relativeUrl: string;
   readonly body?: Readonly<Record<string, unknown>>;
+  /** rótulo p/ referenciar o resultado desta op em outra (`{result=<name>:$.id}`). */
+  readonly name?: string;
+  /** `false` = NÃO omite a resposta desta op mesmo referenciada (default da Meta omite as
+   *  referenciadas). Preciso p/ capturar o id de um pai referenciado (tracking/revert). */
+  readonly omitResponseOnSuccess?: boolean;
 }
 
 /** Item da resposta do Batch API (na ordem das sub-requests). `body` = string JSON. */
@@ -232,6 +237,8 @@ export class MetaGraphClient {
       const batchParam = group.map((r) => ({
         method: r.method,
         relative_url: r.relativeUrl,
+        ...(r.name ? { name: r.name } : {}),
+        ...(r.omitResponseOnSuccess === false ? { omit_response_on_success: false } : {}),
         ...(r.body ? { body: new URLSearchParams(toStringRecord(r.body)).toString() } : {}),
       }));
       const form = new URLSearchParams({ batch: JSON.stringify(batchParam) });

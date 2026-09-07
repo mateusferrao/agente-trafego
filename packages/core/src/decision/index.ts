@@ -1,4 +1,4 @@
-import type { Action, AutonomyLevel, AutonomyPolicy } from "@trafego/shared";
+import type { Action, AutonomyLevel, AutonomyPolicy, Ressalva } from "@trafego/shared";
 import {
   ACTION_PARAM_AMOUNT_MINOR,
   ACTION_PARAM_MODE,
@@ -8,6 +8,7 @@ import {
   BUDGET_MODE_SET,
 } from "@trafego/shared";
 import { type DroppedAction, entityKeyOf } from "../guardrails/index.js";
+import { isScaleAction } from "../scale-ressalvas/index.js";
 
 /**
  * Projeta o orçamento RESULTANTE (unidade mínima) de uma ação `adjust_budget` dado o
@@ -126,6 +127,67 @@ function beats(cur: Action, best: Action): boolean {
   return cur.source === "playbook" && best.source !== "playbook";
 }
 
+/** Dedupe de ressalvas por código (preserva a 1ª mensagem de cada código). PURA. */
+function dedupeRessalvas(rs: readonly Ressalva[]): Ressalva[] {
+  const seen = new Set<string>();
+  const out: Ressalva[] = [];
+  for (const r of rs) {
+    if (seen.has(r.code)) continue;
+    seen.add(r.code);
+    out.push(r);
+  }
+  return out;
+}
+
+/** Funde um grupo de ações de escala da MESMA entidade numa só: pct mais CONSERVADOR
+ *  (menor alta de orçamento) + UNIÃO das ressalvas. Mantém a 1ª ação como base. PURA. */
+function mergeScaleGroup(group: readonly Action[]): Action {
+  const base = group[0]!;
+  const ressalvas = dedupeRessalvas(group.flatMap((a) => a.ressalvas ?? []));
+  const incPcts = group
+    .filter((a) => a.type === "adjust_budget" && a.params[ACTION_PARAM_MODE] === BUDGET_MODE_INCREASE)
+    .map((a) => Number(a.params[ACTION_PARAM_PCT]))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  const params =
+    base.type === "adjust_budget" && incPcts.length > 0
+      ? { ...base.params, [ACTION_PARAM_PCT]: Math.min(...incPcts) }
+      : base.params;
+  return { ...base, params, ...(ressalvas.length > 0 ? { ressalvas } : {}) };
+}
+
+/**
+ * Coalesce ações de ESCALA da MESMA entidade numa única (pct conservador + ressalvas somadas),
+ * ANTES do `resolveActionConflicts`. Fecha o bug em que a escala do LLM e a determinística caíam
+ * na mesma campanha como duas ações — o dedupe por dominância descartaria uma (perdendo pct/
+ * ressalvas), aqui a gente FUNDE. Não-escala passam intactas, na ordem original (a fundida ocupa
+ * a posição da 1ª do grupo). Função PURA.
+ */
+export function coalesceScaleActions(actions: readonly Action[]): Action[] {
+  // chave = entidade + TIPO: só funde escala do MESMO tipo (2× adjust_budget de aumento — o
+  // caso do bug). resume + increase na mesma entidade ficam separados (tipos distintos, efeitos
+  // distintos) → o resolveActionConflicts resolve por dominância, sem perder a ação de budget.
+  const keyOf = (a: Action): string => `${entityKeyOf(a.target)}:${a.type}`;
+  const groups = new Map<string, Action[]>();
+  for (const a of actions) {
+    if (!isScaleAction(a)) continue;
+    const key = keyOf(a);
+    (groups.get(key) ?? groups.set(key, []).get(key)!).push(a);
+  }
+  const emitted = new Set<string>();
+  const out: Action[] = [];
+  for (const a of actions) {
+    if (!isScaleAction(a)) {
+      out.push(a);
+      continue;
+    }
+    const key = keyOf(a);
+    if (emitted.has(key)) continue;
+    emitted.add(key);
+    out.push(mergeScaleGroup(groups.get(key)!));
+  }
+  return out;
+}
+
 /**
  * Decide o que auto-aplica vs. o que precisa de OK humano. A autonomia da ação (B) é
  * resolvida POR-AÇÃO com fallback POR-ORIGEM: `byAction[toolKey]` VENCE `bySource[source]`
@@ -165,6 +227,12 @@ export function resolveAutonomyLevel(autonomy: AutonomyPolicy, action: Action): 
 }
 
 function isAutoApplicable(level: AutonomyLevel, action: Action): boolean {
+  // Ressalva (Fatia A): "dá pra fazer, mas há um risco" → NUNCA aplica sozinha, nem em act_full.
+  // Trava a mão automática mas mantém a ação aprovável (o dono decide com o aviso à vista).
+  if (action.ressalvas && action.ressalvas.length > 0) return false;
+  // adjust_audience (Fatia C): editar público de adset vivo RESETA o aprendizado da Meta (irreversível)
+  // e é julgamento do LLM sem backstop determinístico → SEMPRE exige OK humano (nunca auto, nem act_full).
+  if (action.type === "adjust_audience") return false;
   switch (level) {
     case "act_full":
       return true;

@@ -17,6 +17,7 @@ import {
   archetypeCatalog,
   archetypeDefaults,
   composeMethodologyPrompt,
+  computeApplyPreview,
   daysAgoInTz,
   experienceCatalog,
   experienceLevelIsCustom,
@@ -56,7 +57,7 @@ import {
   type QualityDefaultsOutput,
 } from "./schema.js";
 import type { PlaybookCondition } from "@trafego/shared/types";
-import { computeAppliedActions, DAY_MS, entityIdsMissingNames } from "../../lib/applied-actions.js";
+import { collapseActivationGroups, computeAppliedActions, DAY_MS, entityIdsMissingNames } from "../../lib/applied-actions.js";
 
 /** Janela recente p/ listar as conversões que a conta reportou (dias). */
 const AVAILABLE_CONVERSIONS_WINDOW_DAYS = 30;
@@ -578,12 +579,25 @@ export function createAgentsService(deps: AgentsDeps) {
     for (const d of droppedActions) if (!d.action.target.name) entityIds.add(d.action.target.id);
     const nameByEntityId = await loadEntityNames(summary.agentId, entityIds);
 
-    const applied = computeAppliedActions(calls, deps.revertTtlDays, nameByEntityId).map((a) => ({
+    // colapsa os N resumes de uma ATIVAÇÃO num único item (a raiz) — ativar uma duplicata não
+    // polui a lista com 1 card por entidade; reverter a campanha pausa a árvore toda.
+    const idempotencyByToolCallId = new Map(calls.map((r) => [r.id, r.idempotencyKey]));
+    const applied = collapseActivationGroups(computeAppliedActions(calls, deps.revertTtlDays, nameByEntityId), idempotencyByToolCallId).map((a) => ({
       ...a,
       // "O que o agente fez" é cross-run (ver acima); marca quando a ação foi
       // aplicada por uma análise DIFERENTE da que esta página está mostrando.
       fromPreviousRun: a.runId !== run.id,
     }));
+
+    // sinais do "antes" (single-agent): guardrail vem do summary; capacidade = toolBindings resolvido
+    // (mesma fonte do apply); disponibilidade = status da conta.
+    const [accRow] = await deps.db
+      .select({ status: adAccounts.status })
+      .from(adAccounts)
+      .where(and(eq(adAccounts.id, accountId), eq(adAccounts.orgId, orgId)))
+      .limit(1);
+    const accountAvailable = accRow?.status === "active";
+    const bindings = summary.toolBindings as Record<string, boolean>;
 
     const suggested = pendingApprovals.map((a) => ({
       approvalId: a.id,
@@ -592,6 +606,15 @@ export function createAgentsService(deps: AgentsDeps) {
       targetId: a.action.target.id,
       targetName: a.action.target.name ?? nameByEntityId.get(a.action.target.id) ?? null,
       reason: a.action.reason,
+      applyPreview: computeApplyPreview({
+        dryRun: summary.guardrails.dryRun,
+        killSwitch: summary.guardrails.killSwitch,
+        accountAvailable,
+        capabilityEnabled: bindings[a.action.type] ?? false,
+        kind: "action",
+      }),
+      // ressalvas de escala (Fatia A): o card de aprovação mostra o "porém" honesto.
+      ressalvas: a.action.ressalvas ? [...a.action.ressalvas] : null,
       expiresAt: a.expiresAt ? a.expiresAt.toISOString() : null,
       // "Sugeridas" é cross-run (a caixa de decisões em aberto do agente); marca quando
       // a pendente veio de uma análise DIFERENTE da que esta página está mostrando —
@@ -771,7 +794,6 @@ function toNotifyPolicyPatch(n: NotifyPolicyInput): NotifyPolicyPatch {
       : {}),
     ...(n.runPush !== undefined ? { runPushEnabled: n.runPush.enabled } : {}),
     ...(n.reactivation !== undefined ? { reactivationEnabled: n.reactivation.enabled } : {}),
-    ...(n.proactiveDrafts !== undefined ? { proactiveDraftsEnabled: n.proactiveDrafts.enabled } : {}),
     // site salva o objeto COMPLETO (checklist/teto/saldo) — vai como base do merge.
     ...(n.accountHealthAlert !== undefined ? { accountHealthAlert: n.accountHealthAlert } : {}),
   };

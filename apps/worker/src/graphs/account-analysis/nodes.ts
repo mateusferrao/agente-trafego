@@ -31,22 +31,22 @@ import {
   type ClampedBudgetRaise,
   dropUnsupportedFindings,
   eligibilityByEntity,
-  guardScaleWithoutSignificance,
-  guardUnconfirmedHypothesis,
   guardKillWithoutMaturity,
   guardTrackingCaveat,
-  guardScaleWithWorseningMarginalCpa,
   marginalCpaRiseByEntity,
-  guardScaleWithoutFreshCreative,
   healthSignalsByEntity,
-  guardAudienceScaleCeiling,
   DEFAULT_AUDIENCE_CEILING_THRESHOLDS,
   resolveFrequencyCap,
   SCALE_ACTIONS,
   type AudienceHeadroom,
   basisByEntity,
   annotateFreedSpend,
+  computeScaleRessalvas,
+  coalesceScaleActions,
+  isScaleAction,
+  type ScaleRessalvaContext,
   detectCreationOpportunities,
+  isFatigued,
   isConverterAudienceName,
   evaluatePlaybook,
   flagUnsupportedFindings,
@@ -60,7 +60,6 @@ import {
   selectCampaignsToAnalyze,
   selectCreatives,
   targetStatusOf,
-  volumeToRecCount,
   selectLessonsForBrief,
   type LastUnit,
 } from "@trafego/core";
@@ -68,7 +67,8 @@ import { ACTION_PARAM_CURRENT_MINOR, ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROV
 import { recommendations } from "@trafego/db";
 import { funnelFromRawActions, mapStatus } from "@trafego/ads-meta";
 import { loadAccountAudiences, loadAgentContext, PROACTIVE_AUDIENCE_UNRESOLVED_REASON, PROACTIVE_REACH_FLOOR_REASON, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner } from "../../modules/conversation/draft-proposal.js";
-import { proposeTargetingForOpportunity, type ProposedTargeting } from "../../modules/conversation/propose-targeting.js";
+import { proposedTargetingToArgs, proposeTargetingForOpportunity } from "../../modules/conversation/propose-targeting.js";
+import { buildAudienceEditActions } from "../../modules/analysis/audience-edit.js";
 import { autoApplyProactiveDraft, type DraftApplyOutcome } from "../../modules/apply/apply-draft.js";
 import { loadEnabledTools, enabledActionTypes } from "../../modules/tools/enabled.js";
 import {
@@ -136,10 +136,10 @@ import { mapWithConcurrency } from "../../lib/concurrency.js";
 import { resolveAnalysisConfig, type ResolvedAnalysisConfig } from "../../modules/analysis/config.js";
 import {
   buildCampaignMessages,
-  buildReviewMessages,
   buildSynthesisMessages,
   type AdCopy,
 } from "../../modules/analysis/prompt.js";
+import { DEFAULT_REVIEW_PASSES } from "../../modules/analysis/review-passes.js";
 import {
   buildMessageMessages,
   MESSAGE_OUTPUT_JSON_SCHEMA,
@@ -173,32 +173,6 @@ function creationRecTitle(kind: string): string {
     default:
       return "Criar uma campanha nova";
   }
-}
-
-/** Mapeia o público proposto pela LLM (por NOME) → args de create/copy (resolvidos determinístico
- *  depois, autônomo-safe). Só inclui o que a LLM realmente propôs (campos vazios ficam de fora). */
-function proposalToCreationArgs(p: ProposedTargeting): {
-  geo?: readonly string[];
-  radiusKm?: number;
-  ageMin?: number;
-  ageMax?: number;
-  gender?: "all" | "men" | "women";
-  interests?: readonly string[];
-  behaviors?: readonly string[];
-  includeAudiences?: readonly string[];
-  excludeAudiences?: readonly string[];
-} {
-  return {
-    ...(p.geoNames.length > 0 ? { geo: p.geoNames } : {}),
-    ...(p.radiusKm != null ? { radiusKm: p.radiusKm } : {}),
-    ...(p.ageMin != null ? { ageMin: p.ageMin } : {}),
-    ...(p.ageMax != null ? { ageMax: p.ageMax } : {}),
-    ...(p.gender ? { gender: p.gender } : {}),
-    ...(p.interestNames.length > 0 ? { interests: p.interestNames } : {}),
-    ...(p.behaviorNames.length > 0 ? { behaviors: p.behaviorNames } : {}),
-    ...(p.includeAudienceNames.length > 0 ? { includeAudiences: p.includeAudienceNames } : {}),
-    ...(p.excludeAudienceNames.length > 0 ? { excludeAudiences: p.excludeAudienceNames } : {}),
-  };
 }
 
 const SEGMENT_LEVELS: readonly EntityLevel[] = ["campaign", "adset", "ad"];
@@ -784,88 +758,84 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     let reviewDegraded = false;
 
     if (cfg.reviewEnabled) {
-      const issues = flagUnsupportedFindings(draft, state.brief);
-      try {
-        const completion = await deps.ports.llm.completeStructured<AnalysisOutput>({
-          model: cfg.reviewModel,
-          messages: buildReviewMessages(state.brief, draft, issues, state.vertical),
-          responseSchema: ANALYSIS_OUTPUT_JSON_SCHEMA,
-          responseSchemaName: ANALYSIS_OUTPUT_SCHEMA_NAME,
-          temperature: ANALYSIS_TEMPERATURE,
-          maxTokens: cfg.maxOutputTokens,
-          // separado do reasoning da síntese (achado do A/B: revisor refina/corta, não
-          // gera do zero — não precisa do mesmo orçamento de raciocínio).
-          reasoning: { effort: cfg.reviewReasoningEffort },
-          // D1 (6c): emite usage_event `review` (antes a chamada não passava meta).
-          meta: { orgId: state.orgId, runId: state.runId, type: "review" },
-        });
-        const parsed = analysisOutputSchema.safeParse(completion.output);
-        if (parsed.success) {
-          reviewed = parsed.data;
-          usage = addTokenUsage(usage ?? undefined, completion.usage);
-        } else {
-          partial = true; reviewDegraded = true; // revisor devolveu fora do schema → usa o analista
-          logger.warn({ runId: state.runId }, "review:output fora do schema; usando analista");
+      // Seam de passes (E3): aplica cada passe em SEQUÊNCIA sobre a saída do anterior. Default = 1
+      // passe (editor-chefe) → idêntico ao revisor único de antes; cresce p/ os painéis da Fatia 8.
+      for (const pass of DEFAULT_REVIEW_PASSES) {
+        // re-flag no rascunho ATUAL (o que o passe anterior deixou) — no passe único, `reviewed`===`draft`.
+        const issues = flagUnsupportedFindings(reviewed, state.brief);
+        try {
+          const completion = await deps.ports.llm.completeStructured<AnalysisOutput>({
+            model: cfg.reviewModel,
+            messages: pass.buildMessages(state.brief, reviewed, issues, state.vertical),
+            responseSchema: ANALYSIS_OUTPUT_JSON_SCHEMA,
+            responseSchemaName: ANALYSIS_OUTPUT_SCHEMA_NAME,
+            temperature: ANALYSIS_TEMPERATURE,
+            maxTokens: cfg.maxOutputTokens,
+            // separado do reasoning da síntese (achado do A/B: revisor refina/corta, não
+            // gera do zero — não precisa do mesmo orçamento de raciocínio).
+            reasoning: { effort: cfg.reviewReasoningEffort },
+            // D1 (6c): emite usage_event `review` (antes a chamada não passava meta). Distinguir
+            // passes no metering (passKey) = Fatia 8, quando houver mais de um passe.
+            meta: { orgId: state.orgId, runId: state.runId, type: "review" },
+          });
+          const parsed = analysisOutputSchema.safeParse(completion.output);
+          if (parsed.success) {
+            reviewed = parsed.data;
+            usage = addTokenUsage(usage ?? undefined, completion.usage);
+          } else {
+            partial = true; reviewDegraded = true; // passe devolveu fora do schema → mantém o último bom
+            logger.warn({ runId: state.runId, passKey: pass.key }, "review:output fora do schema; mantendo o último bom");
+            break;
+          }
+        } catch (err) {
+          if (!(err instanceof LLMProviderError)) throw err; // erro inesperado sobe
+          partial = true; reviewDegraded = true; // passe falhou → degradação graciosa (usa o último bom)
+          logger.warn({ runId: state.runId, passKey: pass.key, err }, "review:passe falhou; mantendo o último bom");
+          break;
         }
-      } catch (err) {
-        if (!(err instanceof LLMProviderError)) throw err; // erro inesperado sobe
-        partial = true; reviewDegraded = true; // revisor falhou → degradação graciosa (usa o analista)
-        logger.warn({ runId: state.runId, err }, "review:falhou; usando análise sem revisão");
       }
     }
 
     // drop determinístico final (hard): remove finding sem métrica / número fora do brief.
     const dropped = dropUnsupportedFindings(reviewed, state.brief);
-    // guard de significância (6c): rebaixa escalar sem base → investigar (rede final,
-    // roda ANTES de decide_actions → vale também pro caminho autônomo 5a).
     const eligibility = eligibilityByEntity(state.brief);
-    const scaled = guardScaleWithoutSignificance(dropped, eligibility);
-    // não-matar-em-learning (Bloco 2): rebaixa pausar → investigar em entidade nova
-    // (não descarta o aprendizado). LLM-origin; playbook/guardrail não passam por aqui.
-    const guarded = guardKillWithoutMaturity(scaled, eligibility);
-    // guard de tracking (Bloco 2 → pivô saúde): rebaixa pausar/cortar → investigar
-    // quando a medição da conta parece incompleta (antes só anexava caveat; ver
-    // ROADMAP `[ALTO]` "guard de tracking mais forte no caminho autônomo").
+    // Guards de SEGURANÇA (Fatia A — só ESTES rebaixam pra investigate; os 5 de ESCALA viram
+    // RESSALVA nível-Action no decide_actions, mantendo a ação aprovável mas travando o auto-apply):
+    // não-matar-em-learning (não descarta o aprendizado) + tracking suspeito (corte por CPA de
+    // venda com medição furada). Rodam antes de decide_actions → valem no caminho autônomo.
+    const guarded = guardKillWithoutMaturity(dropped, eligibility);
     const caveated = guardTrackingCaveat(guarded, basisByEntity(state.brief), state.brief.trackingHealth);
-    // CPA marginal (pivô saúde, squad traffic-masters): rebaixa escalar → investigar quando
-    // o CPA piorou vs baseline acima do limiar, mesmo pra quem ainda bate a meta em média
-    // ("CPA médio mente, o marginal conta a verdade") — guard de significância não pega esse caso.
-    const marginalGuarded = guardScaleWithWorseningMarginalCpa(
-      caveated,
-      marginalCpaRiseByEntity(state.brief),
-      { worsenPct: cfg.quality.marginalCpaWorsenPct },
-    );
-    // Fadiga vs escala (achado do A/B real grok×gemini — NOTE sozinha não bastou): rebaixa
-    // escalar → investigar quando o alvo tem sinal DURO de fadiga de criativo. Roda ANTES do
-    // teto de audiência (IO/Meta) pra não gastar a chamada numa entidade que já vai ser rebaixada.
-    const freshCreativeGuarded = guardScaleWithoutFreshCreative(marginalGuarded, healthSignalsByEntity(state.brief));
-    // Teto de escala por audiência (Fase 4): reativo (só as entidades que sobreviveram
-    // com proposta de escalar até aqui) — rebaixa escalar → investigar quando o público
-    // (MAU × teto de frequência saudável) já está perto do limite de impressões sustentáveis.
-    const audienceHeadroom = await resolveAudienceHeadroomByEntity(
-      { repo, ads: deps.ports.ads, vault: deps.ports.vault, logger },
-      state,
-      freshCreativeGuarded,
-      cfg,
-    );
-    const audienceGuarded = guardAudienceScaleCeiling(freshCreativeGuarded, audienceHeadroom, DEFAULT_AUDIENCE_CEILING_THRESHOLDS);
-    // influência assimétrica do aprendizado (S3): uma hipótese NÃO confirmada de direção
-    // `lower` só rebaixa ESCALA → investigar (nunca promove) — aprende cedo sem nunca ficar
-    // mais arriscado. Lições confirmadas não vêm aqui (influenciam via prompt do analista).
-    const hypothesisGuarded = guardUnconfirmedHypothesis(audienceGuarded, state.lessonGuards ?? []);
     // impacto (Bloco 2): anexa o gasto liberado a cada recomendação de pausa.
     const spendById = new Map<string, number>();
     for (const level of [state.brief.segments.campaigns, state.brief.segments.adsets, state.brief.segments.ads]) {
       for (const e of level) spendById.set(e.id, e.metrics.spend ?? 0);
     }
-    const final = annotateFreedSpend(hypothesisGuarded, spendById, state.brief.account.currency);
+    const final = annotateFreedSpend(caveated, spendById, state.brief.account.currency);
+    // Contexto das RESSALVAS de escala (Fatia A): montado aqui (o teto de audiência é IO — resolve
+    // só p/ as entidades COM proposta de escalar). Consumido no build_recommendations + propose_drafts
+    // pra anexar as ressalvas às ações de escala (fonte única: computeScaleRessalvas nível-Action).
+    const headroom = await resolveAudienceHeadroomByEntity(
+      { repo, ads: deps.ports.ads, vault: deps.ports.vault, logger },
+      state,
+      final,
+      cfg,
+    );
+    const scaleContext: ScaleRessalvaContext = {
+      eligibility,
+      marginalRisePct: marginalCpaRiseByEntity(state.brief),
+      marginal: { worsenPct: cfg.quality.marginalCpaWorsenPct },
+      headroom,
+      ceiling: DEFAULT_AUDIENCE_CEILING_THRESHOLDS,
+      signals: healthSignalsByEntity(state.brief),
+      lessonGuards: state.lessonGuards ?? [],
+    };
     const findings: Finding[] = final.findings.map((f) => ({
       title: f.title,
       detail: f.detail,
       severity: f.severity,
     }));
     return {
-      analysisOutput: final, findings, summary: final.summary, usage, partial,
+      analysisOutput: final, findings, summary: final.summary, usage, partial, scaleContext,
       ...(reviewDegraded ? { partialReasons: ["review" as const] } : {}),
     };
   }
@@ -893,9 +863,24 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     if (!state.analysisOutput) return {};
     const knownIds = new Set(state.entities.map((e) => e.id));
     const budgetMinorById = buildCurrentBudgetMinorById(state.entities);
-    const rows = state.analysisOutput.recommendations.map((rec) =>
-      toRecommendationRow(rec, state.orgId, state.runId, knownIds, budgetMinorById),
-    );
+    // Edição de público (Fatia C): review_audience de ADSET vira ação adjust_audience REAL quando a
+    // capacidade está ligada (opt-in) e dá pra propor+resolver um público concreto (LLM + resolução
+    // nome→id). Só adset (público mora no adset); campanha/anúncio fica consultivo. Nunca auto-aplica.
+    const editCandidates = state.analysisOutput.recommendations
+      .filter((rec) => rec.actionType === "review_audience" && rec.targetEntity?.level === "adset" && knownIds.has(rec.targetEntity.externalId))
+      .map((rec) => ({ recId: rec.id, adsetId: rec.targetEntity!.externalId, rationale: rec.rationale }));
+    const editActions = await buildAudienceEditActions(deps, editCandidates, {
+      ctx: { orgId: state.orgId, agentId: state.agentId, adAccountId: state.adAccountId, currency: state.brief?.account?.currency ?? DEFAULT_CURRENCY },
+      ...(state.goals?.conversionGoal ? { conversionGoal: state.goals.conversionGoal } : {}),
+      runId: state.runId,
+    });
+    const rows = state.analysisOutput.recommendations.map((rec) => {
+      const base = toRecommendationRow(rec, state.orgId, state.runId, knownIds, budgetMinorById, state.scaleContext ?? null);
+      // upgrade consultivo → acionável (platform_action) quando a edição de público resolveu.
+      const edit = editActions.get(rec.id);
+      if (!edit) return base;
+      return { ...base, kind: "platform_action" as const, proposedAction: edit, toolKey: edit.type, riskLevel: edit.riskLevel };
+    });
     await repo.saveRecommendations(rows);
     // ações propostas pelo LLM (com alvo válido) → candidatas do caminho de escrita.
     const llmCandidates = rows.map((r) => r.proposedAction).filter((a): a is Action => a !== null);
@@ -905,7 +890,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
   /**
    * PROATIVO de criação (Fatia 7): detecta oportunidade (determinístico) + propõe rascunho
    * (scale/create) → campaign_drafts(proposed) + approval + recommendation (draftId, reusa
-   * outcome tracking). Gated por notifyPolicy.proactiveDrafts; throttle = partial-unique
+   * outcome tracking). SEMPRE detecta (Fatia D — sem gate de config); throttle = partial-unique
    * (1 proposto proativo/conta) → conflito é engolido. NUNCA auto-aplica (sempre aprovação).
    */
   /**
@@ -931,7 +916,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
         : outcome.activated
           ? `Agi sozinho e ${what} — e já ATIVEI (está no ar). Por quê: ${rationale}. Se precisar, dá pra pausar na plataforma.`
           : `Agi sozinho e ${what} — deixei *pausada*, esperando seu OK (não veicula até você ativar). Por quê: ${rationale}. Dá uma olhada na plataforma e ative quando quiser.`;
-    } else if (outcome.kind === "blocked" || outcome.kind === "unsupported") {
+    } else if (outcome.kind === "blocked" || outcome.kind === "unsupported" || outcome.kind === "limited") {
       text = `Ia ${wouldHave} sozinho, mas parei: ${outcome.reason}.`;
     } else {
       text = `Tentei ${wouldHave} sozinho, mas não consegui agora — deixei pendente pra você revisar.`;
@@ -946,8 +931,10 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
   }
 
   async function proposeDrafts(state: AccountAnalysisStateType): Promise<AccountAnalysisUpdate> {
-    const enabled = state.notifyPolicy?.proactiveDrafts?.enabled === true;
-    if (!enabled || !state.brief) return {};
+    // Fatia D: SEMPRE detecta a oportunidade de criação (sem gate de config) — o resultado é um card
+    // APROVÁVEL (nunca auto-aplica sem autonomia). A honestidade "diz×faz" quer que o agente proponha
+    // o que dá pra fazer; o freio é a autonomia (conservadora) + o guardrail, não um liga/desliga extra.
+    if (!state.brief) return {};
     const campaigns = state.brief.segments?.campaigns ?? [];
     const entities = campaigns.map((c) => ({
       id: c.id,
@@ -961,7 +948,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       ...(c.atBudgetCeiling !== undefined ? { atBudgetCeiling: c.atBudgetCeiling } : {}),
       // fadiga de CRIATIVO × saturação de PÚBLICO são sinais distintos (Fatia 8): a 1ª vira
       // refresh_fatigued (só recomendação), a 2ª vira prospecting_expansion (público novo, acionável).
-      fatigued: (c.healthSignals ?? []).some((h) => h === "creative_fatigue"),
+      // `isFatigued` = fonte única com o guard de escala (creative_fatigue + weak_hook_retention) —
+      // antes olhava só creative_fatigue e escalava vencedor que o guard rebaixava (bug de contradição).
+      fatigued: isFatigued(c.healthSignals),
       saturated: (c.healthSignals ?? []).some((h) => h === "audience_saturation"),
       spending: (c.metrics?.spend ?? 0) > 0,
     }));
@@ -1015,24 +1004,33 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
         const proposal = await proposeScaleWinner(deps, dctx, top.entityName, "proactive");
         // vencedor no teto sob CBO/ABO-pequeno → a decisão é SUBIR BUDGET (adjust_budget), não duplicar.
         if (proposal.kind === "action") {
-          await deps.ports.approval.upsertPending({
-            orgId: state.orgId as OrgId,
-            agentId: state.agentId as AgentId,
-            runId: state.runId as RunId,
-            action: proposal.action,
-            expiresAt: new Date(Date.now() + APPROVAL_TTL_HOURS * 3_600_000),
-          });
+          // backstop: se o LLM já propôs escala nesta entidade, ela já é candidato (com ressalvas) —
+          // o determinístico some (a coalescência cobriria; evitar o candidato duplicado é mais limpo).
+          const covered = (state.llmCandidates ?? []).some(
+            (c) => isScaleAction(c) && entityKeyOf(c.target) === entityKeyOf(proposal.action.target),
+          );
+          if (covered) {
+            logger.info({ runId: state.runId }, "propose_drafts:scale_raise já coberto pelo LLM");
+            return {};
+          }
+          // ressalvas de escala (fonte única) + emite como CANDIDATO no pipeline canônico
+          // (decide_actions → guardrail → create_approvals), NÃO mais upsertPending direto
+          // (que pulava guardrail/dedupe — Fatia A, redesenho do pipeline único).
+          const ressalvas = state.scaleContext ? computeScaleRessalvas(proposal.action, state.scaleContext) : [];
+          const action: Action = ressalvas.length > 0 ? { ...proposal.action, ressalvas } : proposal.action;
           await deps.db.insert(recommendations).values({
             orgId: state.orgId,
             runId: state.runId,
             title: "Escalar seu vencedor (subir orçamento)",
             rationale: top.rationale,
             kind: "platform_action",
+            proposedAction: action,
             toolKey: "adjust_budget",
             riskLevel: "medium",
+            ...(ressalvas.length > 0 ? { ressalvas: [...ressalvas] } : {}),
           });
-          logger.info({ runId: state.runId }, "propose_drafts:scale_raise proposto");
-          return {};
+          logger.info({ runId: state.runId }, "propose_drafts:scale_raise → candidato");
+          return { llmCandidates: [...(state.llmCandidates ?? []), action] };
         }
         if (proposal.kind !== "draft") return {};
         await deps.db.insert(recommendations).values({
@@ -1070,7 +1068,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
             meta: { orgId: state.orgId, runId: state.runId },
           })
         : null;
-      const args = proposedTargeting ? proposalToCreationArgs(proposedTargeting) : {};
+      const args = proposedTargeting ? proposedTargetingToArgs(proposedTargeting) : {};
       // remarketing EXIGE público de convertidos/engajados resolvido — sem ele, não cria amplo às
       // cegas (perderia a intenção): degrada pra recomendação humana (requireResolvedAudience).
       const autoOpts = { autonomous: true, minMonthlyReach: PROACTIVE_MIN_MONTHLY_REACH, requireResolvedAudience: top.kind === "remarketing" };
@@ -1209,7 +1207,9 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       if (ACTION_PARAM_CURRENT_MINOR in withName.params) return withName;
       return { ...withName, params: { ...withName.params, [ACTION_PARAM_CURRENT_MINOR]: currentMinor } };
     });
-    const { kept, dropped } = resolveActionConflicts(merged);
+    // coalesce escala LLM + determinística na MESMA entidade (pct conservador + ressalvas somadas)
+    // ANTES do dedupe por dominância (Fatia A — fecha o bug da escala contraditória no vencedor).
+    const { kept, dropped } = resolveActionConflicts(coalesceScaleActions(merged));
     if (dropped.length > 0) logger.debug({ runId: state.runId, dropped: dropped.length }, "decide:conflitos resolvidos");
     const decision = decideActions(kept, state.autonomyPolicy);
     return { mergedCandidates: kept, decision };
@@ -1371,11 +1371,19 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const cfg = state.analysisConfig ?? deps.analysis;
     const posture = state.posture ?? DEFAULT_POSTURE;
     const hasRecs = out.recommendations.length > 0;
+    // Fatia B: o grupo "posso fazer isso" = pendências aprováveis deste run (com o porém honesto).
+    const approvable = (state.approvalCandidates ?? []).map((a) => ({
+      reason: a.reason,
+      ...(a.ressalvas && a.ressalvas.length > 0 ? { ressalvas: a.ressalvas.map((r) => r.message) } : {}),
+    }));
+    // Pendências aprováveis existem MESMO sem recomendação do LLM (ex: playbook-only, ou LLM
+    // degradado): a narrativa/entrega tem de considerar isso, senão a pendência some (regressão B).
+    const hasApprovable = approvable.length > 0;
 
     // ── (1) NARRATIVA (SEMPRE): a voz do agente sobre a análise, p/ o site + WhatsApp ──
     let narrative: string;
     let usage = state.usage;
-    if (hasRecs) {
+    if (hasRecs || hasApprovable) {
       let text: string | null = null;
       try {
         const completion = await deps.ports.llm.completeStructured<{ text: string }>({
@@ -1385,6 +1393,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
             ...(state.brief?.trackingHealth?.suspect ? { trackingSuspect: true } : {}),
             atBudgetCeilingCampaigns: campaignsAtBudgetCeiling(state.brief?.segments.campaigns ?? []),
             ...(state.brief?.funnel ? { funnel: state.brief.funnel } : {}),
+            approvable,
           }, state.vertical),
           responseSchema: MESSAGE_OUTPUT_JSON_SCHEMA,
           responseSchemaName: MESSAGE_OUTPUT_SCHEMA_NAME,
@@ -1403,22 +1412,24 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       }
       narrative =
         text ??
-        buildMessageFallback(
-          {
-            accountName: state.account.name,
-            currency: state.account.currency,
-            ...(out.scorecard?.headline ? { headline: out.scorecard.headline } : {}),
-            summary: out.summary,
-            // filtra insights ANTES de fatiar (mesma base do redator + do nudge de volume).
-            recommendations: out.recommendations
-              .filter((r) => kindForRecommendation(r.actionType) !== "insight")
-              .map((r) => ({ title: r.title })),
-            ...(state.brief?.waste && state.brief.waste.wastedSpend > 0
-              ? { money: { wastedSpend: state.brief.waste.wastedSpend, wastedPct: state.brief.waste.wastedPct } }
-              : {}),
-          },
-          volumeToRecCount(posture.volume),
-        );
+        buildMessageFallback({
+          accountName: state.account.name,
+          currency: state.account.currency,
+          ...(out.scorecard?.headline ? { headline: out.scorecard.headline } : {}),
+          summary: out.summary,
+          recommendations: [], // Fatia B: modo agrupado (abaixo) substitui a lista flat.
+          // grupos (detalha TODAS): posso fazer (aprovável, c/ oferta) + sua direção + observei.
+          approvable,
+          directions: out.recommendations
+            .filter((r) => kindForRecommendation(r.actionType) === "human_direction")
+            .map((r) => ({ title: r.title })),
+          observations: out.recommendations
+            .filter((r) => kindForRecommendation(r.actionType) === "insight")
+            .map((r) => ({ title: r.title })),
+          ...(state.brief?.waste && state.brief.waste.wastedSpend > 0
+            ? { money: { wastedSpend: state.brief.waste.wastedSpend, wastedPct: state.brief.waste.wastedPct } }
+            : {}),
+        });
     } else {
       const headline = out.scorecard?.headline ?? out.summary;
       narrative = `Analisei a conta ${state.account.name}. ${headline} Nada crítico pra mexer agora — sigo de olho.`;
@@ -1427,24 +1438,15 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     // ── (2) ENTREGA (push): gated. cron/signal sem recomendação = silêncio; WhatsApp sempre ──
     const shouldDeliver = isWhatsapp || (notifiesOrg && !runPushOff);
     let outbound: string | null = null;
-    if (shouldDeliver && (hasRecs || isWhatsapp)) {
+    if (shouldDeliver && (hasRecs || hasApprovable || isWhatsapp)) {
+      // Fatia B: a narrativa já DETALHA todas as sugestões agrupadas + OFERECE as aprováveis
+      // ("responde pode"), então não há mais teaser "tem mais N" nem bridge de contagem.
+      // hasApprovable garante a entrega/oferta mesmo sem recomendação do LLM (playbook-only/degradado).
       outbound = narrative;
-      // nudge de volume: o push LIDERA com N (volume); se sobram sugestões materiais,
-      // oferece ver o resto (o chat lista todas via list_recommendations). Só na entrega.
-      if (hasRecs) {
-        const surfaceable = out.recommendations.filter((r) => kindForRecommendation(r.actionType) !== "insight");
-        const more = surfaceable.length - volumeToRecCount(posture.volume);
-        if (more > 0) outbound = `${outbound}\n\nTem mais ${plural(more, "sugestão", "sugestões")} — quer ver?`;
-      }
       // nota honesta do que o agente FEZ neste run (aplicou/simulou) — determinística.
       const attempted = state.guardrail?.allowed.length ?? 0;
       const applied = appliedSummary(state.results?.length ?? 0, attempted, state.guardrailConfig.dryRun);
       if (applied) outbound = `${outbound}\n\n${applied}`;
-      // bridge do HITL (5b-2): avisa que há pendentes + dá pra aprovar por aqui/site.
-      const pending = state.approvalCandidates?.length ?? 0;
-      if (pending > 0) {
-        outbound = `${outbound}\n\n${plural(pending, "ação aguardando", "ações aguardando")} seu OK. Responda por aqui pra aprovar ou rejeitar, ou veja no site.`;
-      }
     }
     return { outboundMessage: outbound, narrative, usage };
   }
@@ -1759,6 +1761,7 @@ function toRecommendationRow(
   runId: string,
   knownIds: ReadonlySet<string>,
   budgetMinorById: ReadonlyMap<string, number>,
+  scaleContext: ScaleRessalvaContext | null,
 ): RecommendationRow {
   const actionType = applicableActionType(rec.actionType);
   const hasValidTarget = rec.targetEntity !== null && knownIds.has(rec.targetEntity.externalId);
@@ -1766,7 +1769,7 @@ function toRecommendationRow(
   const params = budgetParams(rec, currentMinor);
   // budget sem pct válido → NÃO vira ação (evitaria daily_budget=NaN na Meta); fica consultiva.
   const budgetOk = actionType !== "adjust_budget" || ACTION_PARAM_PCT in params;
-  const proposedAction: Action | null =
+  const bareAction: Action | null =
     actionType && rec.targetEntity && hasValidTarget && budgetOk
       ? {
           id: rec.id,
@@ -1778,6 +1781,11 @@ function toRecommendationRow(
           reason: rec.rationale,
         }
       : null;
+  // Ressalvas de escala (Fatia A): anexa "dá pra fazer, mas..." à ação (mantém aprovável, trava
+  // o auto-apply). Fonte única com o scaler determinístico — o mesmo passe puro nível-Action.
+  const ressalvas = bareAction && scaleContext ? computeScaleRessalvas(bareAction, scaleContext) : [];
+  const proposedAction: Action | null =
+    bareAction && ressalvas.length > 0 ? { ...bareAction, ressalvas } : bareAction;
   const baseKind = kindForRecommendation(rec.actionType);
   const kind =
     baseKind === "platform_action" && proposedAction === null ? "human_direction" : baseKind;
@@ -1798,6 +1806,8 @@ function toRecommendationRow(
     expectedImpact: rec.expectedImpact,
     whatToMonitor: rec.whatToMonitor,
     findingRefs: rec.findingRefs,
+    // ressalvas de escala (Fatia A) — espelho do proposedAction.ressalvas (fonte única a ação).
+    ressalvas: proposedAction?.ressalvas ? [...proposedAction.ressalvas] : null,
   };
 }
 

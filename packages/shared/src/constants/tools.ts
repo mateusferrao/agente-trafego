@@ -7,7 +7,7 @@
 import type { ActionType } from "../types/index.js";
 
 /** Tool-keys de escrita que são AÇÕES (mutação sobre entidade existente) — key == ActionType. */
-export const WRITE_ACTION_TOOL_KEYS = ["pause_entity", "resume_entity", "set_status", "adjust_budget"] as const;
+export const WRITE_ACTION_TOOL_KEYS = ["pause_entity", "resume_entity", "set_status", "adjust_budget", "adjust_audience"] as const;
 export type WriteActionToolKey = (typeof WRITE_ACTION_TOOL_KEYS)[number];
 
 /** Tool-keys de CRIAÇÃO (gasto novo). Ungated hoje; passam ao gate por binding (net-new). */
@@ -28,6 +28,12 @@ export function isCreationToolKey(key: string): boolean {
 export const WRITE_TOOL_TO_ACTION: ReadonlyMap<string, ActionType> = new Map(
   WRITE_ACTION_TOOL_KEYS.map((k) => [k, k as ActionType]),
 );
+
+/** Subconjunto das ACTION-types habilitadas a partir das tool-keys habilitadas. Fonte ÚNICA dos
+ *  dois gates (apply no worker + sinal do card na API) — PURA, sem IO. */
+export function enabledActionTypes(enabled: ReadonlySet<string>): ActionType[] {
+  return [...WRITE_TOOL_TO_ACTION.entries()].filter(([tool]) => enabled.has(tool)).map(([, action]) => action);
+}
 
 /** Modo do binding (espelha o pgEnum `tool_binding_mode`). `shadow` conta como habilitado. */
 export type ToolBindingMode = "enabled" | "disabled" | "shadow";

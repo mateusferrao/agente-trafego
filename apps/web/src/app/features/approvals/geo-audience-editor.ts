@@ -68,6 +68,44 @@ export interface ExplicitAudienceState {
   customAudienceExcludeIds: readonly string[];
 }
 
+/** Público explícito no formato de WIRE (keys/ids já resolvidos) — shape comum do input de
+ *  substituição total, servido tanto ao PATCH de rascunho quanto ao editAction de adjust_audience. */
+export interface ExplicitAudienceWire {
+  geo: { key: string; name: string; kind: 'country' | 'region' | 'city'; radius?: number; distanceUnit?: 'mile' | 'kilometer' }[];
+  radiusAreas: { address: string; radius: number; distanceUnit: 'mile' | 'kilometer' }[];
+  ageMin?: number;
+  ageMax?: number;
+  genders?: (1 | 2)[];
+  interestGroups: { id: string; name: string }[][];
+  behaviorGroups: { id: string; name: string }[][];
+  customAudienceIncludeIds: string[];
+  customAudienceExcludeIds: string[];
+}
+
+/**
+ * Estado COMPLETO do editor → objeto de PÚBLICO explícito pro wire (substituição total; radius/
+ * distanceUnit só quando houver; grupos/públicos sempre presentes, podem ser vazios). FONTE ÚNICA
+ * do mapeamento — reusado pelo painel de rascunho E pelo card de ação adjust_audience (Fatia C).
+ */
+export function toExplicitAudienceWire(s: ExplicitAudienceState): ExplicitAudienceWire {
+  return {
+    geo: s.geo.map((g) => ({
+      key: g.key,
+      name: g.name,
+      kind: g.kind,
+      ...(g.radius != null ? { radius: g.radius, distanceUnit: g.distanceUnit ?? KM } : {}),
+    })),
+    radiusAreas: s.radiusAreas.map((a) => ({ address: a.address, radius: a.radius, distanceUnit: a.distanceUnit })),
+    ...(s.ageMin != null ? { ageMin: s.ageMin } : {}),
+    ...(s.ageMax != null ? { ageMax: s.ageMax } : {}),
+    ...(s.genders ? { genders: [...s.genders] } : {}),
+    interestGroups: s.interestGroups.map((g) => g.map((i) => ({ id: i.id, name: i.name }))),
+    behaviorGroups: s.behaviorGroups.map((g) => g.map((i) => ({ id: i.id, name: i.name }))),
+    customAudienceIncludeIds: [...s.customAudienceIncludeIds],
+    customAudienceExcludeIds: [...s.customAudienceExcludeIds],
+  };
+}
+
 /**
  * Grupos de termos (interesses OU comportamentos) — chips OR dentro do grupo, AND entre grupos.
  * Encapsula estado + busca ao vivo (debounce/switchMap/catchError) por grupo, keyed por `uid` estável
@@ -559,8 +597,9 @@ export class GeoAudienceEditor {
   private readonly reachSubject = new Subject<ExplicitAudienceState>();
 
   readonly accountId = input.required<string>();
-  /** id do rascunho — usado só p/ estimar o alcance (Slice 7); o objetivo/pixel vêm dele no servidor. */
-  readonly draftId = input.required<string>();
+  /** id do rascunho — usado só p/ estimar o alcance (Slice 7); o objetivo/pixel vêm dele no servidor.
+   *  `null` (ex: editando o público de uma AÇÃO adjust_audience, Fatia C) → sem preview de alcance. */
+  readonly draftId = input<string | null>(null);
   readonly initial = input.required<ExplicitAudienceState>();
   /** emite o estado COMPLETO a cada mudança — o pai manda como substituição total no PATCH do Salvar. */
   readonly stateChange = output<ExplicitAudienceState>();
@@ -659,13 +698,15 @@ export class GeoAudienceEditor {
       .pipe(
         debounceTime(SEARCH_DEBOUNCE_MS),
         switchMap((s) => {
-          if (s.geo.length === 0 && s.radiusAreas.length === 0) {
+          const draftId = this.draftId();
+          // sem rascunho (edição de público de uma AÇÃO) OU sem geo/raio → sem preview de alcance.
+          if (!draftId || (s.geo.length === 0 && s.radiusAreas.length === 0)) {
             this.estimating.set(false);
             return of<{ note: string | null }>({ note: null });
           }
           this.estimating.set(true);
           return this.api
-            .estimateDelivery(this.accountId(), this.draftId(), this.toEstimateInput(s))
+            .estimateDelivery(this.accountId(), draftId, this.toEstimateInput(s))
             .pipe(catchError(() => of<{ note: string | null }>({ note: null })));
         }),
         takeUntilDestroyed(),

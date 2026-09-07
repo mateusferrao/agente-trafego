@@ -15,6 +15,10 @@ export const ACTION_PARAM_AMOUNT_MINOR = "amountMinor";
 export const ACTION_PARAM_CURRENT_MINOR = "currentMinor";
 /** Chave do status-alvo em `set_status.params` — valor no vocabulário neutro (EntityStatus). */
 export const ACTION_PARAM_STATUS = "status";
+/** Chave do público-alvo NOVO em `adjust_audience.params` (Fatia C) — um `TargetingSpec` NEUTRO
+ *  (variante `explicit`, já resolvido nome→id na proposta). O adapter mapeia neutro→cru na escrita;
+ *  o `before_state` guarda o targeting CRU da Meta pra revert fiel. */
+export const ACTION_PARAM_TARGETING = "targeting";
 export const BUDGET_MODE_DECREASE = "decrease";
 export const BUDGET_MODE_INCREASE = "increase";
 /** Budget absoluto (chat, 5c): `params.amountMinor` é o alvo exato (sem % sobre o atual). */

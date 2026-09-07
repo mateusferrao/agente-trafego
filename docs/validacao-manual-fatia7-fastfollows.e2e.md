@@ -20,7 +20,7 @@ echo "$DATABASE_URL" | sed -E 's#:[^:@/]+@#:***@#'   # deve terminar em /trafego
 pnpm --filter @trafego/db exec drizzle-kit migrate
 ```
 **Esperado:** `[✓] migrations applied successfully!` (0000 → 0038, incl. `creative_assets`,
-`campaign_drafts`, `approvals.draft_id`, default de `notify_policy` com `proactiveDrafts`).
+`campaign_drafts`, `approvals.draft_id`, default de `notify_policy`).
 
 ## 3. Verificar o schema dos fast-follows
 ```bash
@@ -61,7 +61,7 @@ docker exec docker-postgres-1 psql -U postgres -tc "DROP DATABASE trafego_e2e_ff
 ## Resultado desta execução (2026-08-27)
 - 39 migrations (0000→0038) aplicaram limpo em banco novo. ✓
 - Schema dos fast-follows presente (creative_assets vídeo/status/storage_ref; campaign_drafts;
-  approvals.draft_id; notify_policy default com proactiveDrafts). ✓
+  approvals.draft_id; notify_policy default). ✓
 - Reaper UPDATE + getCreativeBlob SELECT + dedup findReadyAsset SELECT válidos no PG real. ✓
 - Suíte: shared 16 · core 391 · ads-meta 111 · creative-library 6 · storage-local 5 · storage-s3 5 ·
   channel-evolution 82 · api 103 · worker 316 (+ demais) — **tudo verde**. Typecheck limpo. ✓

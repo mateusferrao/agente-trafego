@@ -46,6 +46,25 @@ describe("OpenRouterAdapter.complete", () => {
     const res = await makeAdapter(fetchFn).complete({ model: "m", messages: [{ role: "user", content: "oi" }] });
     expect(res.usage.costUsd).toBeUndefined();
   });
+
+  it("modelo que EXIGE reasoning (400) → retry SEM o param de reasoning (achado do E2E real)", async () => {
+    const bodies: string[] = [];
+    const fetchFn = vi.fn(async (_url: string, init: RequestInit) => {
+      bodies.push(String(init.body));
+      // 1ª chamada (com reasoning:{enabled:false}) → 400 mandatory; 2ª (sem reasoning) → 200.
+      if (bodies.length === 1) {
+        return jsonResponse({ error: { message: "Reasoning is mandatory for this endpoint and cannot be disabled.", code: 400 } }, 400);
+      }
+      return jsonResponse(chatBody("revisão ok"));
+    }) as unknown as typeof fetch;
+
+    const res = await makeAdapter(fetchFn).complete({ model: "google/gemini-3.7-flash", messages: [{ role: "user", content: "oi" }], reasoning: { effort: "off" } });
+
+    expect(res.output).toBe("revisão ok");
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]).toContain("reasoning"); // 1ª tentativa mandou o disable
+    expect(bodies[1]).not.toContain("reasoning"); // retry removeu o param
+  });
 });
 
 describe("OpenRouterAdapter.completeStructured", () => {
@@ -101,6 +120,27 @@ describe("OpenRouterAdapter.completeStructured", () => {
     });
     expect(res.output.summary).toBe("ok");
     expect((fetchFn as unknown as ReturnType<typeof vi.fn>)).toHaveBeenCalledTimes(2);
+  });
+
+  it("primário produzindo JSON lixo (parse) → cai pro modelo RESERVA (achado do E2E real)", async () => {
+    const models: string[] = [];
+    // primário sempre lixo (structuredMaxRetries=2 → 3 tentativas), reserva devolve JSON válido.
+    const fetchFn = vi.fn(async (_url: string, init: RequestInit) => {
+      const m = (JSON.parse(String(init.body)) as { model: string }).model;
+      models.push(m);
+      if (m === "deepseek-flaky") return jsonResponse(chatBody('{"a":"a":"a":"a"'));
+      return jsonResponse(chatBody(JSON.stringify({ summary: "reserva ok" })));
+    }) as unknown as typeof fetch;
+    const res = await makeAdapter(fetchFn).completeStructured<{ summary: string }>({
+      model: "deepseek-flaky",
+      fallbackModels: ["google-reliable"],
+      messages: [],
+      responseSchema: { type: "object" },
+    });
+    expect(res.output.summary).toBe("reserva ok");
+    // primário 3x (esgota parse retries) + reserva 1x.
+    expect(models.filter((m) => m === "deepseek-flaky").length).toBe(3);
+    expect(models).toContain("google-reliable");
   });
 
   it("re-tenta quando o output falha a validação de schema (validate) e sucede depois", async () => {

@@ -58,14 +58,16 @@ function toolOf(deps: never, name: string): { invoke: (args: unknown) => Promise
 }
 
 describe("always-bind de leitura em grupo multi-conta (S6)", () => {
-  it("GROUP_CONCIERGE binda reads + set_focus; sem escrita/config/trigger/revert", () => {
+  it("GROUP_CONCIERGE binda reads + set_focus + trigger_analysis (read-like); sem escrita/config/revert", () => {
     expect(GROUP_CONCIERGE_TOOL_NAMES.has("get_fresh_metrics")).toBe(true);
     expect(GROUP_CONCIERGE_TOOL_NAMES.has("get_campaign_analysis")).toBe(true);
     expect(GROUP_CONCIERGE_TOOL_NAMES.has("set_focus")).toBe(true);
     expect(GROUP_CONCIERGE_TOOL_NAMES.has("list_pending")).toBe(true);
+    // rodar análise é READ-LIKE (nenhuma escrita na Meta) → binda no concierge; resolve o agente do
+    // focused_account_id persistente, ignorando o TTL do foco (que existe só p/ ESCRITA re-confirmar).
+    expect(GROUP_CONCIERGE_TOOL_NAMES.has("trigger_analysis")).toBe(true);
     expect(GROUP_CONCIERGE_TOOL_NAMES.has("pause_entity")).toBe(false);
     expect(GROUP_CONCIERGE_TOOL_NAMES.has("set_goal")).toBe(false);
-    expect(GROUP_CONCIERGE_TOOL_NAMES.has("trigger_analysis")).toBe(false);
     expect(GROUP_CONCIERGE_TOOL_NAMES.has("revert_action")).toBe(false);
   });
 
@@ -84,6 +86,37 @@ describe("always-bind de leitura em grupo multi-conta (S6)", () => {
     const out = await getMetrics.invoke({ periodDays: 7 });
     expect(out.toLowerCase()).toContain("conta");
     expect(out.toLowerCase()).toContain("foca");
+  });
+
+  it("trigger_analysis no concierge SEM foco persistente → pede a conta, sem disparar run", async () => {
+    // db devolve [] pra conversations → sem focused_account_id → early-return honesto (nada de dispatch).
+    const enqueue = vi.fn(async () => {});
+    const db = {
+      select: () => db,
+      from: () => db,
+      innerJoin: () => db,
+      where: () => db,
+      limit: async () => [] as never[],
+    };
+    const deps = {
+      db: db as never,
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
+      ports: { approval: { getById: vi.fn(), resolve: vi.fn(), listPendingByOrg: vi.fn(async () => []) }, scheduler: { enqueue }, metering: {} },
+      costCapUsd: 0,
+    } as never;
+    const ctxConcierge: ConversationToolContext = {
+      ...CTX,
+      agentId: "",
+      adAccountId: "",
+      ref: { kind: "group", groupId: "grp-1", participantPhone: "+5511999999999" },
+      multiAccount: true,
+    };
+    const trigger = makeConversationTools(deps, ctxConcierge, GROUP_CONCIERGE_TOOL_NAMES).find((t) => t.name === "trigger_analysis")! as unknown as {
+      invoke: (a: unknown) => Promise<string>;
+    };
+    const out = await trigger.invoke({});
+    expect(out.toLowerCase()).toContain("conta");
+    expect(enqueue).not.toHaveBeenCalled();
   });
 });
 
@@ -162,6 +195,8 @@ describe("describe_capabilities tool", () => {
     const out = await capTool(deps, { ...CTX, agentId: "" }, new Set(["describe_capabilities"])).invoke({});
     expect(out.toLowerCase()).toContain("foca");
     expect(out.toLowerCase()).toContain("panorama");
+    // paridade com o fix de concierge: config é por-foco, não "pelo site" — a capacidade cita configurar.
+    expect(out.toLowerCase()).toContain("configurar");
   });
 
   it("em GRUPO declara que acompanha a conversa recente (S5, honestidade contextual)", async () => {

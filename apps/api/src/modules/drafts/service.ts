@@ -11,7 +11,7 @@ import {
   platformConnections,
   type Database,
 } from "@trafego/db";
-import { applyDraftEdit, buildResolvedSnapshot, clampRadius, describeDeliveryEstimate, planScaleMove, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
+import { applyDraftEdit, buildResolvedSnapshot, computeApplyPreview, describeDeliveryEstimate, planScaleMove, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
 import { applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import type { ToolBindingMode } from "@trafego/shared";
 import {
@@ -30,11 +30,11 @@ import type { Action, AgentId, CreativeAssetRef, DraftId, OrgId, TargetingSpec }
 import type { AdAccountRef, ApprovalPort, CredentialVaultPort, SchedulerPort, StoragePort } from "@trafego/shared/ports";
 import type { AdsPlatformPort } from "@trafego/shared/ports";
 import { ingestCreativeImage, ingestCreativeVideo } from "@trafego/creative-library";
+import { buildExplicitFromInput, serializeExplicitAudience } from "../../lib/audience.js";
 import type {
   AudienceOutput,
   CreativeAssetOutput,
   DeliveryEstimateInput,
-  ExplicitAudienceInput,
   DraftApprovalOutput,
   GeoSearchResultOutput,
   InterestSearchResultOutput,
@@ -70,33 +70,6 @@ const DRAFT_NOT_OPEN_MSG = "esse rascunho não está mais aberto pra ajuste.";
 const ACCOUNT_UNAVAILABLE_MSG = "não consegui acessar a conta agora";
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
-
-/** Constrói o `TargetingSpec.explicit` a partir do input do site, CLAMPANDO o raio (Slice 9 — o chat
- *  já clampava; o site mandava cru). Raio é city-only: só `city` recebe radius (region/country nunca).
- *  Endereço (radiusAreas) clampado 1–80 km. Puro (usa `clampRadius` do core). */
-function buildExplicitFromInput(a: ExplicitAudienceInput): Extract<TargetingSpec, { kind: "explicit" }> {
-  const geo = a.geo.map((g) => {
-    if (g.kind !== "city" || g.radius == null) return { key: g.key, name: g.name, kind: g.kind };
-    const { radius } = clampRadius(g.radius, g.distanceUnit ?? "kilometer", "city");
-    return { key: g.key, name: g.name, kind: g.kind, radius, distanceUnit: g.distanceUnit ?? ("kilometer" as const) };
-  });
-  const radiusAreas = (a.radiusAreas ?? []).map((r) => {
-    const { radius } = clampRadius(r.radius, r.distanceUnit, "address");
-    return { address: r.address, radius, distanceUnit: r.distanceUnit };
-  });
-  return {
-    kind: "explicit",
-    geo,
-    ...(radiusAreas.length > 0 ? { radiusAreas } : {}),
-    ...(a.ageMin != null ? { ageMin: a.ageMin } : {}),
-    ...(a.ageMax != null ? { ageMax: a.ageMax } : {}),
-    ...(a.genders && a.genders.length > 0 ? { genders: a.genders } : {}),
-    ...(a.interestGroups && a.interestGroups.length > 0 ? { interestGroups: a.interestGroups } : {}),
-    ...(a.behaviorGroups && a.behaviorGroups.length > 0 ? { behaviorGroups: a.behaviorGroups } : {}),
-    ...(a.customAudienceIncludeIds && a.customAudienceIncludeIds.length > 0 ? { customAudienceIncludeIds: a.customAudienceIncludeIds } : {}),
-    ...(a.customAudienceExcludeIds && a.customAudienceExcludeIds.length > 0 ? { customAudienceExcludeIds: a.customAudienceExcludeIds } : {}),
-  };
-}
 
 /** Geo AGRUPADO do snapshot → lista plana `{key,name,kind}` (semente do converter modo, Slice 8).
  *  País usa o código como nome (o snapshot não guarda nome legível de país). */
@@ -202,6 +175,21 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       scaleAggressivePreference: row.autonomyPolicy?.scaleAggressivePreference ?? "ask",
       enabled,
     };
+  }
+
+  /** URL FRESCA (fbcdn) de um frame/imagem de um criativo AO VIVO, pelo id do anúncio. Vídeo →
+   *  frame HD (`getVideoFrames`), fallback thumbnail do anúncio; imagem → imagem do anúncio. Fonte
+   *  ÚNICA do reuse (miniatura de rascunho + de anúncio da conta). A URL do fbcdn expira → o caller
+   *  baixa os bytes na hora (`fetchThumbImage`) e nunca a manda crua pro browser. */
+  async function resolveLiveThumbUrl(ref: AdAccountRef, adId: string, videoId: string | null): Promise<string | undefined> {
+    if (videoId) {
+      const frame = (await deps.adsPlatform.getVideoFrames(ref, videoId))[0];
+      if (frame) return frame;
+      const [c] = await deps.adsPlatform.getCreatives(ref, [adId]);
+      return c?.thumbnailUrl ?? c?.imageUrl;
+    }
+    const [c] = await deps.adsPlatform.getCreatives(ref, [adId]);
+    return c?.imageUrl ?? c?.thumbnailUrl;
   }
 
   /** Ref de reuse de um upload da BIBLIOTECA (uuid). Só `ready` + não-arquivado da mesma conta. */
@@ -429,6 +417,28 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       );
       if (pending.length === 0) return [];
 
+      // sinais do "antes" por agente (cache — vários rascunhos podem ser do mesmo agente): guardrail
+      // + criação habilitada (mesma fonte do apply-draft: resolveEnabledTools).
+      const signalsCache = new Map<string, { dryRun: boolean; killSwitch: boolean; enabled: Set<string> }>();
+      const signalsFor = async (agentId: string): Promise<{ dryRun: boolean; killSwitch: boolean; enabled: Set<string> }> => {
+        const cached = signalsCache.get(agentId);
+        if (cached) return cached;
+        const [g] = await deps.db
+          .select({ dryRun: guardrailConfigs.dryRun, killSwitch: guardrailConfigs.killSwitch, allowedActions: guardrailConfigs.allowedActions })
+          .from(guardrailConfigs)
+          .where(and(eq(guardrailConfigs.agentId, agentId), eq(guardrailConfigs.orgId, orgId)))
+          .limit(1);
+        const bindings = await deps.db
+          .select({ toolKey: agentToolBindings.toolKey, mode: agentToolBindings.mode })
+          .from(agentToolBindings)
+          .where(and(eq(agentToolBindings.agentId, agentId), eq(agentToolBindings.orgId, orgId)));
+        const bindingMap = new Map<string, ToolBindingMode>(bindings.map((b) => [b.toolKey, b.mode as ToolBindingMode]));
+        const enabled = resolveEnabledTools(bindingMap, new Set((g?.allowedActions ?? []) as string[]));
+        const s = { dryRun: g?.dryRun ?? false, killSwitch: g?.killSwitch ?? false, enabled };
+        signalsCache.set(agentId, s);
+        return s;
+      };
+
       const out: DraftApprovalOutput[] = [];
       for (const appr of pending) {
         const [d] = await deps.db
@@ -446,14 +456,25 @@ export function createDraftsService(deps: DraftsServiceDeps) {
           .limit(1);
         if (!d) continue;
         const [acc] = await deps.db
-          .select({ name: adAccounts.name })
+          .select({ name: adAccounts.name, status: adAccounts.status })
           .from(adAccounts)
           .where(and(eq(adAccounts.id, d.accountId), eq(adAccounts.orgId, orgId)))
           .limit(1);
         const spec = d.spec as CampaignDraftSpec;
+        const sig = await signalsFor(appr.agentId);
+        const creationToolKey = d.kind === "duplicate" ? "duplicate_scale" : "create_campaign";
+        const applyPreview = computeApplyPreview({
+          dryRun: sig.dryRun,
+          killSwitch: sig.killSwitch,
+          accountAvailable: acc?.status === "active",
+          // ativação não tem gate de binding (só trava/conta/ensaio); criação = a capacidade habilitada.
+          capabilityEnabled: appr.kind === "activation" ? true : sig.enabled.has(creationToolKey),
+          kind: appr.kind,
+        });
         out.push({
           id: appr.id,
           approvalKind: appr.kind,
+          applyPreview,
           accountId: d.accountId,
           accountName: acc?.name ?? "conta",
           status: appr.status,
@@ -490,20 +511,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
           creative: spec.creative ? { format: spec.creative.format, origin: spec.creative.origin } : null,
           audience:
             spec.targeting?.kind === "reuse_adset" ? "reuse" : spec.targeting?.kind === "advantage_plus" ? "broad" : null,
-          explicitAudience:
-            spec.targeting?.kind === "explicit"
-              ? {
-                  geo: spec.targeting.geo.map((g) => ({ key: g.key, name: g.name, kind: g.kind, radius: g.radius ?? null, distanceUnit: g.distanceUnit ?? null })),
-                  radiusAreas: (spec.targeting.radiusAreas ?? []).map((a) => ({ address: a.address, radius: a.radius, distanceUnit: a.distanceUnit })),
-                  ageMin: spec.targeting.ageMin ?? null,
-                  ageMax: spec.targeting.ageMax ?? null,
-                  genders: spec.targeting.genders ? [...spec.targeting.genders] : null,
-                  interestGroups: (spec.targeting.interestGroups ?? []).map((grp) => grp.map((i) => ({ id: i.id, name: i.name }))),
-                  behaviorGroups: (spec.targeting.behaviorGroups ?? []).map((grp) => grp.map((b) => ({ id: b.id, name: b.name }))),
-                  customAudienceIncludeIds: [...(spec.targeting.customAudienceIncludeIds ?? [])],
-                  customAudienceExcludeIds: [...(spec.targeting.customAudienceExcludeIds ?? [])],
-                }
-              : null,
+          explicitAudience: spec.targeting?.kind === "explicit" ? serializeExplicitAudience(spec.targeting) : null,
           // semente do CONVERTER MODO: rascunho reuse com retrato → geo/idade herdados; broad → vazio.
           // TOLERÂNCIA (rascunho antigo): reuse SEM `resolved` (proposto por worker pré-snapshot)
           // ainda vira convertível com semente vazia — o editor abre e o dono monta o público do
@@ -857,6 +865,37 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     },
 
     /**
+     * Miniatura ESTÁVEL de um ANÚNCIO da conta (picker "trocar criativo" → seção "anúncios da conta").
+     * Igual à da biblioteca: busca FRESCO da Meta (frame HD do vídeo / imagem do anúncio) e faz stream
+     * dos bytes — a URL do fbcdn EXPIRA, nunca a mandamos crua pro browser (era a causa do "sem
+     * preview"). ETag estável pelo id do vídeo/hash → 304 sem tocar na Meta. Org-scoped pelo adId;
+     * `null` = 404 (anúncio/preview indisponível).
+     */
+    async getServingCreativeThumb(
+      orgId: OrgId,
+      accountId: string,
+      adId: string,
+      ifNoneMatch?: string,
+    ): Promise<{ notModified: true; etag: string } | { bytes: Uint8Array; contentType: string; etag: string } | null> {
+      const [row] = await deps.db
+        .select({ videoId: adCreatives.videoId, imageHash: adCreatives.imageHash })
+        .from(adCreatives)
+        .where(and(eq(adCreatives.adId, adId), eq(adCreatives.adAccountId, accountId), eq(adCreatives.orgId, orgId)))
+        .limit(1);
+      if (!row) return null;
+      const stableId = row.videoId ?? row.imageHash ?? adId;
+      const etag = createHash("sha256").update(`serving-thumb:${stableId}`).digest("hex").slice(0, 32);
+      if (ifNoneMatch === `"${etag}"`) return { notModified: true, etag };
+
+      const ctx = await loadScaleContext(orgId, accountId);
+      if (!ctx) return null;
+      const url = await resolveLiveThumbUrl(ctx.ref, adId, row.videoId ?? null);
+      if (!url) return null;
+      const img = await fetchThumbImage(url);
+      return img ? { bytes: img.bytes, contentType: img.contentType, etag } : null;
+    },
+
+    /**
      * Miniatura do criativo de um rascunho (card /approvals) — FIEL ao spec + cache HTTP por ETag
      * estável. `upload` → blob do StoragePort (mesmo lookup do getCreativeBlob). `reuse` → busca
      * FRESCO da Meta (getVideoFrames p/ vídeo HD, getCreatives p/ imagem) e faz stream dos bytes —
@@ -905,20 +944,10 @@ export function createDraftsService(deps: DraftsServiceDeps) {
 
       const ctx = await loadScaleContext(orgId, accountId);
       if (!ctx) return null;
-      let url: string | undefined;
-      if (creative.format === "video" && creative.metaVideoId) {
-        // frames HD do vídeo — MAS o System User token pode não ter permissão pro endpoint
-        // `/{video_id}?fields=thumbnails` (erro Meta #10). Sem frames, cai no thumbnail do
-        // ANÚNCIO (getCreatives), que é acessível — o card é 64px, então o selo já basta.
-        url = (await deps.adsPlatform.getVideoFrames(ctx.ref, creative.metaVideoId))[0];
-        if (!url) {
-          const [c] = await deps.adsPlatform.getCreatives(ctx.ref, [creative.assetId]);
-          url = c?.thumbnailUrl ?? c?.imageUrl;
-        }
-      } else {
-        const [c] = await deps.adsPlatform.getCreatives(ctx.ref, [creative.assetId]);
-        url = c?.imageUrl ?? c?.thumbnailUrl;
-      }
+      // frames HD do vídeo — MAS o System User token pode não ter permissão pro endpoint
+      // `/{video_id}?fields=thumbnails` (erro Meta #10). Sem frames, cai no thumbnail do ANÚNCIO
+      // (getCreatives), que é acessível — o card é 64px, então o selo já basta. (helper compartilhado)
+      const url = await resolveLiveThumbUrl(ctx.ref, creative.assetId, creative.format === "video" ? creative.metaVideoId ?? null : null);
       if (!url) return null;
       const img = await fetchThumbImage(url);
       return img ? { bytes: img.bytes, contentType: img.contentType, etag } : null;
