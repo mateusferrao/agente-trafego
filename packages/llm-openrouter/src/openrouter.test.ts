@@ -65,6 +65,31 @@ describe("OpenRouterAdapter.complete", () => {
     expect(bodies[0]).toContain("reasoning"); // 1ª tentativa mandou o disable
     expect(bodies[1]).not.toContain("reasoning"); // retry removeu o param
   });
+
+  it("aprende por-modelo: 2ª chamada ao MESMO modelo já vai SEM reasoning (sem 400 repetido)", async () => {
+    const bodies: string[] = [];
+    const fetchFn = vi.fn(async (_url: string, init: RequestInit) => {
+      const body = String(init.body);
+      bodies.push(body);
+      // 400 mandatory SEMPRE que o corpo mandar reasoning; sem reasoning → 200.
+      if (body.includes("reasoning")) {
+        return jsonResponse({ error: { message: "Reasoning is mandatory for this endpoint and cannot be disabled.", code: 400 } }, 400);
+      }
+      return jsonResponse(chatBody("ok"));
+    }) as unknown as typeof fetch;
+    const adapter = makeAdapter(fetchFn);
+    const call = () =>
+      adapter.complete({ model: "google/gemini-3.7-flash", messages: [{ role: "user", content: "x" }], reasoning: { effort: "off" } });
+
+    await call();
+    await call();
+
+    // 1ª: 400 (com reasoning) + retry (sem) = 2 corpos. 2ª: já vai sem reasoning = 1 corpo. Total 3.
+    expect(bodies).toHaveLength(3);
+    expect(bodies[0]).toContain("reasoning");
+    expect(bodies[1]).not.toContain("reasoning");
+    expect(bodies[2]).not.toContain("reasoning");
+  });
 });
 
 describe("OpenRouterAdapter.completeStructured", () => {

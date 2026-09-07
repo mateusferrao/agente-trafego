@@ -97,6 +97,9 @@ export class OpenRouterClient {
   private readonly logger: ClientLogger | undefined;
   private readonly fetchFn: typeof fetch;
   private readonly sleepFn: (ms: number) => Promise<void>;
+  /** Modelos que já rejeitaram `reasoning:{enabled:false}` (400 mandatory) — aprende no 1º 400
+   *  p/ omitir o param upfront nas próximas chamadas (evita o round-trip 400 + WARN repetidos). */
+  private readonly reasoningDisableRejected = new Set<string>();
 
   constructor(options: OpenRouterClientOptions) {
     this.apiKey = options.apiKey;
@@ -129,23 +132,29 @@ export class OpenRouterClient {
     // cadeia de modelos: primário + reservas, sem duplicatas/vazios.
     const chain = [wire.model, ...(fallbackModels ?? [])].filter((m, i, a) => m && a.indexOf(m) === i);
 
+    // Só o `reasoning:{enabled:false}` (disable econômico) é rejeitado por modelos que exigem
+    // reasoning — reasoning "ligado" (effort) nunca dá o 400. Só esse caso entra no aprendizado.
+    const disablesReasoning = wire.reasoning?.["enabled"] === false;
+
     let lastError: unknown;
     for (let mi = 0; mi < chain.length; mi += 1) {
       const model = chain[mi]!;
+      // Modelo que já recusou o disable → omite o param upfront (evita o round-trip 400 + WARN).
+      const wireForModel = disablesReasoning && this.reasoningDisableRejected.has(model) ? dropReasoning(wire) : wire;
       // `usage.include` p/ garantir custo real no metering (§11); `model` = o da vez.
-      const body = JSON.stringify({ ...wire, model, usage: { include: true } });
+      const body = JSON.stringify({ ...wireForModel, model, usage: { include: true } });
       for (let attempt = 0; attempt <= this.maxRetries; attempt += 1) {
         try {
           return await this.attempt(url, headers, body);
         } catch (error) {
           // Modelo que EXIGE reasoning (ex: gemini-3.x-flash) rejeita o nosso `reasoning:{enabled:false}`
-          // (effort "off") com 400 "reasoning is mandatory". Retry UMA vez SEM o param — mantém o disable
-          // econômico pros modelos que aceitam (ex: unit deepseek) e só cede pros que exigem. Sem isto o
-          // passe de revisão falha sempre e a análise degrada pra parcial silenciosamente.
+          // (effort "off") com 400 "reasoning is mandatory". APRENDE (não tenta desabilitar de novo) e faz
+          // retry UMA vez SEM o param — mantém o disable econômico pros modelos que aceitam e só cede pros
+          // que exigem. Sem isto o passe de revisão degradaria a análise pra parcial silenciosamente.
           if (isReasoningMandatoryError(error) && wire.reasoning !== undefined) {
+            this.reasoningDisableRejected.add(model);
             this.logger?.warn({ model }, "openrouter:modelo exige reasoning — retry sem desabilitar");
-            const { reasoning: _drop, ...noReasoning } = wire;
-            return await this.attempt(url, headers, JSON.stringify({ ...noReasoning, model, usage: { include: true } }));
+            return await this.attempt(url, headers, JSON.stringify({ ...dropReasoning(wire), model, usage: { include: true } }));
           }
           lastError = error;
           const retryable =
@@ -226,6 +235,12 @@ export class OpenRouterClient {
       throw new LLMProviderError("upstream", `resposta não-JSON do OpenRouter: ${String(cause)}`);
     }
   }
+}
+
+/** Remove o param `reasoning` de um wire — usado no retry e na omissão upfront (modelo que exige reasoning). */
+function dropReasoning<T extends { reasoning?: unknown }>(wire: T): Omit<T, "reasoning"> {
+  const { reasoning: _drop, ...rest } = wire;
+  return rest;
 }
 
 /** 400 de modelo que exige reasoning e recusa desabilitá-lo — o gatilho do retry sem o param. */
