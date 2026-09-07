@@ -38,6 +38,7 @@ import { isAddressedToBot } from "../modules/conversation/addressing.js";
 import { BUFFER_TTL_MARGIN_SEC, pushInbound } from "../modules/conversation/buffer.js";
 import { markTranscribing, scheduleConversationFlush } from "../modules/conversation/flush-control.js";
 import { sendCourtesyNotice } from "../modules/conversation/courtesy-notice.js";
+import { stashPendingMedia } from "../modules/conversation/pending-media.js";
 import { loadGroupParticipantsMap } from "../modules/conversation/group-participants-cache.js";
 import { QUOTED_AUTHOR_FALLBACK_LABEL, quotedTextPrefix, unsupportedMediaNotice } from "../modules/conversation/notices.js";
 import { participantLabelFromPhone } from "@trafego/core";
@@ -127,13 +128,20 @@ async function routeMessage(
 
   if (inbound.kind === "image" || inbound.kind === "video") {
     // Mídia → asset de criativo (F7): registra a linha + enfileira o intake (grava, sobe pra
-    // Meta, confirma). NÃO dispara turno do Grafo B (side-effect + cortesia). Imagem carrega
-    // base64 inline; VÍDEO não (grande demais p/ o Redis) → o intake busca por messageKey.
+    // Meta, confirma). Imagem carrega base64 inline; VÍDEO não (grande demais p/ o Redis) → o
+    // intake busca por messageKey.
     await d.repo.recordMessage(conversationId, "inbound", inbound.caption, {
       messageId: inbound.messageId,
       kind: inbound.kind,
       ...extraMeta,
     });
+    // B3 (mídia-como-pergunta): IMAGEM com legenda E bytes inline → o usuário está perguntando.
+    // Dispara um turno do Grafo B com a imagem anexada (multimodal) e o intake salva em SILÊNCIO
+    // (o turno é a voz). Sem legenda / sem bytes / vídeo (frames só depois de `ready`) → intake
+    // normal (cortesia/oferta). Legenda também é o texto do turno.
+    const captionText = inbound.caption?.trim() ?? "";
+    const inlineB64 = inbound.kind === "image" ? inbound.image.base64 : "";
+    const asQuestion = inbound.kind === "image" && captionText.length > 0 && inlineB64.length > 0;
     const media =
       inbound.kind === "image"
         ? { mimetype: inbound.image.mimetype, base64: inbound.image.base64, caption: inbound.caption, messageKey: inbound.messageKey }
@@ -145,7 +153,7 @@ async function routeMessage(
           };
     await d.mediaIntakeQueue.add(
       WHATSAPP_MEDIA_INTAKE_JOB,
-      { orgId, ref, conversationId, instanceId, mediaType: inbound.kind, media },
+      { orgId, ref, conversationId, instanceId, mediaType: inbound.kind, media, ...(asQuestion ? { suppressNotice: true } : {}) },
       {
         attempts: WHATSAPP_MEDIA_INTAKE_ATTEMPTS,
         backoff: { type: "exponential", delay: WHATSAPP_MEDIA_INTAKE_BACKOFF_MS },
@@ -153,7 +161,15 @@ async function routeMessage(
         removeOnFail: true,
       },
     );
-    d.logger.debug({ conversationId, kind: inbound.kind }, "inbound:media_enqueued");
+    if (asQuestion && inbound.kind === "image") {
+      await stashPendingMedia(d.redis, conversationId, {
+        dataUrl: `data:${inbound.image.mimetype};base64,${inlineB64}`,
+        mimetype: inbound.image.mimetype,
+      });
+      await pushInbound(d.redis, conversationId, captionText, d.bufferTtlSec);
+      await scheduleConversationFlush(d.flushQueue, flushPayload, d.debounceMs);
+    }
+    d.logger.debug({ conversationId, kind: inbound.kind, asQuestion }, "inbound:media_enqueued");
     return;
   }
 

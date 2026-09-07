@@ -1,6 +1,32 @@
 import { AIMessage, HumanMessage, ToolMessage } from "@langchain/core/messages";
 import { describe, expect, it } from "vitest";
-import { sanitizeToolPairs, windowMessages } from "./window.js";
+import { sanitizeToolPairs, stripHistoricalImages, windowMessages } from "./window.js";
+
+/** HumanMessage multimodal (texto + imagem) — o formato do turno com mídia anexada (B3). */
+function imageMsg(text: string): HumanMessage {
+  return new HumanMessage({
+    content: [
+      { type: "text", text },
+      { type: "image_url", image_url: { url: "data:image/png;base64,ZZ" } },
+    ],
+  });
+}
+
+describe("stripHistoricalImages (imagem só no turno atual; reenviar a cada turno infla custo)", () => {
+  it("mantém a imagem na ÚLTIMA HumanMessage (turno atual) e tira das anteriores", () => {
+    const out = stripHistoricalImages([imageMsg("criativo antigo"), new AIMessage("ok"), imageMsg("esse tá bom?")]);
+    // anterior → vira texto puro; atual → segue multimodal (array).
+    expect(typeof out[0]!.content).toBe("string");
+    expect(out[0]!.content).toBe("criativo antigo");
+    expect(Array.isArray(out[2]!.content)).toBe(true);
+  });
+
+  it("dentro do MESMO turno (imagem seguida de tool) a imagem é mantida (ReAct reanalisa)", () => {
+    const msgs = [imageMsg("analisa"), new AIMessage({ content: "", tool_calls: [{ id: "t", name: "x", args: {} }] })];
+    const out = stripHistoricalImages(msgs);
+    expect(Array.isArray(out[0]!.content)).toBe(true); // última human ainda é a do turno → mantém
+  });
+});
 
 /** Um turno de leitura: fala → AI(tool_call) → ToolMessage → AI(resposta). */
 function toolTurn(userText: string, toolId: string): [HumanMessage, AIMessage, ToolMessage, AIMessage] {

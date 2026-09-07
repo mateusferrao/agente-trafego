@@ -17,6 +17,7 @@ import {
   buildWriteEcho,
   checkPhoneAttribution,
   collectGroundedNumbers,
+  CREATIVE_CRITIQUE_KNOWLEDGE,
   describeActionOutcome,
   describePlaybookRule,
   entityKeyOf,
@@ -37,7 +38,20 @@ import { DEFAULT_CURRENCY } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
 import { describeLlmError } from "./llm-error.js";
 import { GROUP_RULES, loadConversationConfig } from "./system-prompt.js";
-import { sanitizeToolPairs, windowMessages } from "./window.js";
+
+/** B3: seção injetada quando o usuário mandou um criativo perguntando (imagem anexada ao turno).
+ *  O modelo JÁ vê a imagem (conteúdo multimodal); isto aterra a leitura no método do squad e pede
+ *  resposta natural (não um formulário). Só entra quando há mídia — não infla o prompt normal. */
+const MEDIA_QUESTION_SECTION = [
+  "O usuário te mandou um criativo (imagem) junto da mensagem — você está VENDO essa imagem agora.",
+  "Responda à pergunta dele sobre a imagem de forma direta e natural, como um gestor falando.",
+  "Se for uma crítica/avaliação de criativo, use o método abaixo (gancho, ângulo, prova, fadiga) —",
+  "sem soletrar um formulário; teça no texto. Se a imagem não for um criativo (ex: um print), responda",
+  "ao que ele perguntou sem forçar decomposição. Se fizer sentido, ofereça guardar como criativo.",
+  "",
+  CREATIVE_CRITIQUE_KNOWLEDGE,
+].join("\n");
+import { sanitizeToolPairs, stripHistoricalImages, windowMessages } from "./window.js";
 import {
   CONFIG_UPDATE_TOOL_NAMES,
   CONTROL_WRITE_TOOL_NAMES,
@@ -525,11 +539,9 @@ export function makeConversationNodes(
     // seção de grupo (regras + contexto ambiente; group-only, efêmera, entre a voz e o eco). DM → "".
     // data/hora atual (fuso da org) na FRENTE — sem isso o LLM não tem "agora" p/ raciocínio
     // temporal (checkpoints, "até 12h", "há X horas", hoje/ontem) e responde que não sabe a hora.
-    const sys = assembleSystemPrompt(
-      `${currentDateTimeLine(ctx.timezone)}\n\n${systemPrompt}`,
-      await groupSection(),
-      echo,
-    );
+    // B3: mídia anexada → injeta o kernel de criativo (aterra a leitura); só quando há imagem.
+    const baseSys = `${currentDateTimeLine(ctx.timezone)}\n\n${systemPrompt}${ctx.attachedMedia ? `\n\n${MEDIA_QUESTION_SECTION}` : ""}`;
+    const sys = assembleSystemPrompt(baseSys, await groupSection(), echo);
 
     const windowed = windowMessages(state.messages, {
       maxTurns: deps.conversation.historyTurns,
@@ -538,7 +550,7 @@ export function makeConversationNodes(
     // Sanitiza pares tool_call/result: um turno anterior que QUEBROU entre o AI(tool_calls) e as
     // respostas das tools deixa um órfão no checkpoint → a API rejeita (400 "No tool output found")
     // e o thread fica envenenado (todo turno reenvia o órfão). Remover o órfão CURA o thread.
-    const msgs = [new SystemMessage(sys), ...sanitizeToolPairs(windowed)];
+    const msgs = [new SystemMessage(sys), ...stripHistoricalImages(sanitizeToolPairs(windowed))];
     // Primário com retry/backoff (ChatOpenAI.maxRetries); se ESGOTAR, tenta o RESERVA
     // (também com retry/backoff). Loga cada ponto de falha. Provider diverso = resiliência a blip.
     const fallback = deps.conversation.fallbackModel;

@@ -101,18 +101,21 @@ export interface MediaIntakeDeps {
 export function makeMediaIntake(d: MediaIntakeDeps) {
   return async function intake(payload: WhatsappMediaIntakePayload, notifyOnFailure = true): Promise<void> {
     const { orgId, conversationId, ref, instanceId, mediaType, media } = payload;
+    // B3: imagem com legenda → o turno do Grafo B responde; o intake salva em SILÊNCIO (sem
+    // cortesia/oferta próprias) pra não duplicar a resposta. As respostas passam por `notify`.
+    const notify: SendToConversation = payload.suppressNotice ? async () => true : d.sendToConversation;
 
     // 1) conta em foco (única ativa OU foco da conversa). Ambíguo → pede antes de subir.
     const adAccountUuid = await d.repo.contextAdAccountId(orgId, conversationId);
     if (!adAccountUuid) {
-      await d.sendToConversation(ref, NOTICE.noAccount, { split: true, quoteLastInbound: true });
+      await notify(ref, NOTICE.noAccount, { split: true, quoteLastInbound: true });
       d.logger.debug({ conversationId }, "intake:no_focused_account");
       return;
     }
 
     const account = await d.analysisRepo.loadAccount(orgId, adAccountUuid);
     if (!account) {
-      await d.sendToConversation(ref, NOTICE.accountUnavailable, { split: true });
+      await notify(ref, NOTICE.accountUnavailable, { split: true });
       d.logger.warn({ conversationId, adAccountUuid }, "intake:account_unavailable");
       return;
     }
@@ -121,7 +124,7 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
     // fazer HTTP HEAD: a Evolution só entrega mídia por base64, nunca por URL). Grande demais →
     // recusa SEM baixar/decodificar (evita materializar base64 gigante em memória à toa).
     if (mediaType === "video" && media.fileLength !== undefined && media.fileLength > d.maxWhatsappVideoBytes) {
-      await d.sendToConversation(ref, NOTICE.videoTooLarge(Math.round(d.maxWhatsappVideoBytes / (1024 * 1024))), { split: true });
+      await notify(ref, NOTICE.videoTooLarge(Math.round(d.maxWhatsappVideoBytes / (1024 * 1024))), { split: true });
       d.logger.warn({ conversationId, fileLength: media.fileLength }, "intake:video_too_large_metadata");
       return;
     }
@@ -132,7 +135,7 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
     const base64 =
       inline.length > 0 ? inline : (await d.ports.messaging.fetchMediaBase64({ instanceId }, media.messageKey)) ?? "";
     if (base64.length === 0) {
-      await d.sendToConversation(ref, NOTICE.noBytes, { split: true, quoteLastInbound: true });
+      await notify(ref, NOTICE.noBytes, { split: true, quoteLastInbound: true });
       d.logger.warn({ conversationId }, "intake:no_bytes");
       return;
     }
@@ -141,7 +144,7 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
     // vídeo: teto de tamanho PÓS-decode (fallback quando `fileLength` não veio na metadata) —
     // teto de memória do worker. Grande demais → manda pro upload web.
     if (mediaType === "video" && bytes.byteLength > d.maxWhatsappVideoBytes) {
-      await d.sendToConversation(ref, NOTICE.videoTooLarge(Math.round(d.maxWhatsappVideoBytes / (1024 * 1024))), { split: true });
+      await notify(ref, NOTICE.videoTooLarge(Math.round(d.maxWhatsappVideoBytes / (1024 * 1024))), { split: true });
       d.logger.warn({ conversationId, bytes: bytes.byteLength }, "intake:video_too_large");
       return;
     }
@@ -171,7 +174,7 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
             }),
           );
         }
-        await d.sendToConversation(ref, NOTICE.videoSaved(account.name), { split: true, quoteLastInbound: true });
+        await notify(ref, NOTICE.videoSaved(account.name), { split: true, quoteLastInbound: true });
         d.logger.debug({ conversationId, metaVideoId: v.metaVideoId }, "intake:video_saved");
         return;
       }
@@ -182,11 +185,17 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
       );
       // imagem `ready` → analisa a visão 1x (cache) pra biblioteca (mesmo pipeline do web).
       await d.ports.scheduler.enqueue(buildCreativeAnalyzeJob({ orgId, adAccountId: adAccountUuid, assetId }));
+      // B3: imagem COM legenda → o turno já respondeu (com a imagem anexada). Salvou em silêncio;
+      // não manda cortesia/oferta próprias (o turno é a voz). Analisada + guardada mesmo assim.
+      if (payload.suppressNotice) {
+        d.logger.debug({ conversationId, metaImageHash }, "intake:saved (suppressed — turno responde)");
+        return;
+      }
       // v1 (kill-switch): usar o criativo enviado = autoria/edição por chat. OFF → salva na
       // biblioteca e NÃO guarda oferta (o uso num rascunho é na plataforma). ON → fecha o loop
       // (Slice 7): guarda uma OFERTA pro próximo turno resolver no "sim". (Vídeo = fast-follow.)
       if (!d.chatAdsWrites) {
-        await d.sendToConversation(ref, NOTICE.savedLibraryOnly(account.name), { split: true, quoteLastInbound: true });
+        await notify(ref, NOTICE.savedLibraryOnly(account.name), { split: true, quoteLastInbound: true });
         d.logger.debug({ conversationId, metaImageHash }, "intake:saved (writes off — sem oferta)");
         return;
       }
@@ -194,7 +203,7 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
         { db: d.db, redis: d.redis },
         { orgId, adAccountId: adAccountUuid, assetId, conversationId },
       );
-      await d.sendToConversation(ref, draftId ? NOTICE.savedOfferUse() : NOTICE.savedOfferCreate(account.name), {
+      await notify(ref, draftId ? NOTICE.savedOfferUse() : NOTICE.savedOfferCreate(account.name), {
         split: true,
         quoteLastInbound: true,
       });
@@ -203,7 +212,7 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
       // Falha de IO: RE-LANÇA → BullMQ re-tenta com backoff (upload/storage transitórios). O
       // aviso de cortesia só sai na ÚLTIMA tentativa (`notifyOnFailure`) — senão o usuário
       // receberia "problema pra guardar" a cada retry (até 3×).
-      if (notifyOnFailure) await d.sendToConversation(ref, NOTICE.failed, { split: true }).catch(() => undefined);
+      if (notifyOnFailure) await notify(ref, NOTICE.failed, { split: true }).catch(() => undefined);
       throw err;
     }
   };

@@ -412,6 +412,15 @@ const KNOWLEDGE_PREAMBLE =
  * Monta o texto final (preâmbulo + seções por tema, ordem ESTÁVEL — favorece cache de
  * prompt do provider) a partir dos blocos relevantes ao contexto. "" quando nada relevante.
  */
+/**
+ * Conhecimento de CRIATIVO destilado do squad (gancho/ângulo/prova/refresh) — texto dos blocos de
+ * tema "criativo". Usado fora do pipeline de análise (ex: chat, quando o usuário manda um criativo
+ * e pergunta), pra aterrar a leitura no método do squad em vez de resposta genérica. Fonte única.
+ */
+export const CREATIVE_CRITIQUE_KNOWLEDGE: string = ANALYSIS_KNOWLEDGE_BLOCKS.filter((b) => b.theme === "criativo")
+  .map((b) => b.text)
+  .join("\n\n");
+
 export function buildAnalysisKnowledgeText(ctx: AnalysisKnowledgeContext): string {
   const blocks = selectAnalysisKnowledge(ctx);
   if (blocks.length === 0) return "";

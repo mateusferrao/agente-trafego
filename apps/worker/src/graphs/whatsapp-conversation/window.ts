@@ -3,7 +3,7 @@
 // Turno = uma fala do usuário (HumanMessage) + toda a resposta (AI/Tool) até a próxima
 // fala. Puro/testável. O system prompt é reinjetado à parte (fora da janela).
 
-import { AIMessage, type BaseMessage } from "@langchain/core/messages";
+import { AIMessage, HumanMessage, type BaseMessage } from "@langchain/core/messages";
 
 /** Aproximação de tokens por conteúdo (≈4 chars/token) — 2ª rede sobre turnos "gordos". */
 const CHARS_PER_TOKEN = 4;
@@ -62,6 +62,28 @@ export function windowMessages(
  * Regra: mantém só os `tool_calls` que têm resposta; tira do assistant os órfãos (e descarta a
  * mensagem se sobrar vazia); descarta `ToolMessage` sem `tool_call` sobrevivente. Puro/testável.
  */
+/**
+ * Remove o conteúdo de IMAGEM das HumanMessages de turnos ANTERIORES (mantém só o texto). A imagem
+ * (B3) só precisa ir ao LLM no turno em que foi enviada; ela fica no checkpointer, e reenviá-la a
+ * cada turno seguinte inflaria custo/latência à toa. O turno ATUAL (da ÚLTIMA HumanMessage em diante)
+ * mantém a imagem — o laço ReAct pode reanalisá-la entre iterações. Puro/testável.
+ */
+export function stripHistoricalImages(messages: readonly BaseMessage[]): BaseMessage[] {
+  let lastHuman = -1;
+  messages.forEach((m, i) => {
+    if (role(m) === "human") lastHuman = i;
+  });
+  return messages.map((m, i) => {
+    if (i >= lastHuman || role(m) !== "human" || !Array.isArray(m.content)) return m;
+    const text = m.content
+      .filter((p): p is { type: "text"; text: string } => (p as { type?: string }).type === "text")
+      .map((p) => p.text)
+      .join(" ")
+      .trim();
+    return new HumanMessage(text);
+  });
+}
+
 export function sanitizeToolPairs(messages: readonly BaseMessage[]): BaseMessage[] {
   const answeredIds = new Set<string>();
   for (const m of messages) {

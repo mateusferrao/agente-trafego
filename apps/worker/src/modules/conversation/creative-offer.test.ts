@@ -14,7 +14,7 @@ describe("stageCreativeOffer (fonte única da oferta: intake-imagem + poll-víde
   const args = { orgId: "o", adAccountId: "a", assetId: "asset-1", conversationId: "cv-1" };
 
   it("rascunho from_scratch aberto → oferta de USAR (draftId presente)", async () => {
-    const set = vi.fn(async () => {});
+    const set = vi.fn(async (..._a: unknown[]) => {});
     const redis = { set } as unknown as Redis;
     const res = await stageCreativeOffer({ db: fakeDb([{ id: "draft-9" }]), redis }, args);
     expect(res.draftId).toBe("draft-9");
@@ -22,7 +22,7 @@ describe("stageCreativeOffer (fonte única da oferta: intake-imagem + poll-víde
   });
 
   it("sem rascunho → oferta de CRIAR (draftId null, sem draftId na oferta)", async () => {
-    const set = vi.fn(async () => {});
+    const set = vi.fn(async (..._a: unknown[]) => {});
     const redis = { set } as unknown as Redis;
     const res = await stageCreativeOffer({ db: fakeDb([]), redis }, args);
     expect(res.draftId).toBeNull();

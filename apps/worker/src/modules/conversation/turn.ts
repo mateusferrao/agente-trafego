@@ -25,7 +25,20 @@ import { createNotifyRepo } from "../notify/repo.js";
 import { createSendToConversation, type SendToConversation } from "../notify/send-to-contact.js";
 import { applyOfferedCreative } from "./draft-proposal.js";
 import { clearCreativeOffer, getCreativeOffer, isSimpleAffirmation } from "./creative-offer.js";
+import { takePendingMedia, type PendingTurnMedia } from "./pending-media.js";
 import { DEFAULT_CURRENCY, withTimeout } from "@trafego/shared";
+
+/** Monta o HumanMessage do turno: multimodal (texto + imagem) quando há mídia-como-pergunta (B3),
+ *  senão texto puro. `image_url` com data-url — o modelo do chat (multimodal) "vê" a imagem. */
+function buildTurnMessage(text: string, media: PendingTurnMedia | null): HumanMessage {
+  if (!media) return new HumanMessage(text);
+  return new HumanMessage({
+    content: [
+      { type: "text", text },
+      { type: "image_url", image_url: { url: media.dataUrl } },
+    ],
+  });
+}
 
 /** Erro amigável se o turno falhar (LLM/infra) — nunca vaza stack pro usuário (§UX). */
 const FALLBACK_REPLY = "Não consegui processar agora. Tenta de novo em instantes.";
@@ -205,6 +218,8 @@ export interface ConversationTurnInput {
 export async function runConversationTurn(deps: WorkerDeps, input: ConversationTurnInput): Promise<void> {
   const { logger, ports } = deps;
   const sendToConversation = createSendToConversation({ messaging: ports.messaging, repo: createNotifyRepo(deps.db) });
+  // B3: imagem-com-legenda anexada a ESTE turno (multimodal) — consumida uma vez (get+del).
+  const attachedMedia = await takePendingMedia(deps.redis, input.conversationId);
 
   // agente em contexto = a única conta ativa (sole) OU a conta em foco do fio (multi-conta,
   // 5c-6). Sem nenhuma das duas → concierge (só org-level + set_focus p/ escolher). Igual
@@ -232,6 +247,9 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
     // escrita conversacional de ads (v1: default OFF) — molda toolset + prompt + capacidades.
     chatAdsWrites: deps.conversation.chatAdsWrites,
     ...(inContext?.accountName ? { accountName: inContext.accountName } : {}),
+    // B3: mídia anexada ao turno → injeta o kernel de criativo no prompt + habilita a tool de
+    // análise estruturada sobre a imagem (o modelo já a vê no HumanMessage multimodal).
+    ...(attachedMedia ? { attachedMedia } : {}),
   };
   // sem agente em contexto: concierge. Em GRUPO multi-conta, always-bind de LEITURA (S6) →
   // a 1ª pergunta resolve num turno (set_focus muta o ctx; reads self-guardam sem foco).
@@ -284,7 +302,7 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
     const result = await withTimeout(
       graph.invoke(
         {
-          messages: [new HumanMessage(input.text)],
+          messages: [buildTurnMessage(input.text, attachedMedia)],
           orgId: ctx.orgId,
           agentId: ctx.agentId,
           adAccountId: ctx.adAccountId,
