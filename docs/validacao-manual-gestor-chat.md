@@ -147,6 +147,65 @@
 
 ---
 
+## Teste simulado E2E (passo a passo, traçado no código)
+
+> Cada cenário abaixo foi **traçado pelo código real** (funções + retornos por passo), simulando o
+> percurso ponta-a-ponta. `✓` = comportamento confirmado no trace. Não substitui o teste manual com
+> Meta/Evolution ao vivo (§acima), mas prova a coerência do fluxo.
+
+### E2E-1 — Vídeo inbound (o bug que motivou a fatia)
+Entrada: webhook `MESSAGES_UPSERT` com `message.viewOnceMessageV2.message.videoMessage`.
+1. `webhook-inbound` valida o secret por-instância → enfileira o payload cru. ✓
+2. `parseInbound(raw)` → `unwrapMessage` desce por `viewOnceMessageV2` (depth 1, < cap 6) → acha `videoMessage` → `extractVideo` (`videoMessage ?? ptvMessage`) → `{kind:"video", messageKey, caption}`. **Antes: `null` → silêncio.** ✓
+3. `claimInbound(redis, inst, msgId)` (`SET NX`) → `true` (1ª vez) → segue. ✓
+4. Branch `kind==="video"` → `recordMessage` + `mediaIntakeQueue.add` (sem `suppressNotice` — vídeo não é asQuestion) → log `media_enqueued kind:"video"`. ✓
+5. `whatsapp-media-intake` grava na **biblioteca** + sobe pra Meta. Vídeo aparece no site. ✓
+- **Ruído (`reactionMessage`)**: `unwrapMessage` não casa nenhum `WRAPPER_NODES` → `extractVideo/Image/Audio`=null → `detectMediaType`=null → `parseInbound`=null → **silêncio**. ✓ (teste `reactionMessage → null`).
+- **Patológico (12 wrappers)**: unwrap para em `depth>=6` → nó ainda embrulhado → sem mídia conhecida → `null` → silêncio (sem loop). ✓ (teste novo).
+
+### E2E-2 — Imagem-pergunta (B3, síncrona)
+Entrada: `imageMessage` + `caption:"o que acha desse criativo?"` + base64 inline.
+1. `parseInbound` → `{kind:"image", caption, image:{base64}}`. ✓
+2. `asQuestion = image && caption>0 && base64>0` → `true`. ✓
+3. `mediaIntakeQueue.add({suppressNotice:true})` → a imagem **é salva na biblioteca** (o `ingest` roda antes do `return` de suppressNotice — sem oferta). ✓
+4. `stashPendingMedia(redis, conv, {dataUrl})` + `pushInbound(caption)` + `scheduleConversationFlush`. ✓
+5. Flush → `buildTurnMessage` monta `HumanMessage` multimodal (texto + `image_url` data-url) → `MEDIA_QUESTION_SECTION` (kernel de criativo) injetada no prompt → o Roy responde analisando (o modelo vê a imagem). ✓
+6. Turno seguinte (texto): `stripHistoricalImages` remove o conteúdo de imagem das HumanMessages anteriores → não reenvia a imagem. ✓
+
+### E2E-3 — A1 editar público (feliz + opt-in OFF)
+Pré: binding `adjust_audience` LIGADO, flag ON. "muda o público do conjunto Alpha pra BH, 25-45, corrida".
+1. `allowedChatWriteTools`: `enabled.has("adjust_audience")` → `edit_audience` no toolset. ✓
+2. LLM chama `edit_audience({adsetId, adsetName:"Alpha", geo:["BH"], ageMin:25, ageMax:45, interests:["corrida"]})`.
+3. `routeConversation` → `confirm` (é `EDIT_AUDIENCE_TOOL_NAME`). ✓
+4. `confirmWriteGate` branch `editCall`: `loadWriteContext` → `resolveProposedExplicitTargeting` resolve nomes→ids (corrida→id via `searchInterests`) → monta `Action{type:"adjust_audience", params:{targeting}}`, `riskForAction("adjust_audience")="high"` → `applyGuardrails` (allowed) → `mutate(dryRun:true)` → **eco** "vou trocar o público de *Alpha* para: … ⚠️ reinicia o aprendizado … Confirma?" + `pendingWrite:{actions:[clamped]}`. Nada escrito. ✓
+5. "sim" → `applyWrite` (não-saga) → `applyCheckedAction` (re-check guardrail fresco) → aplica/simula → aviso de mudança real. ✓
+- **Opt-in OFF**: binding `adjust_audience` desligado → `edit_audience` **não** entra no toolset → o Roy não oferece; se forçado, `applyGuardrails` dropa ("ação adjust_audience não permitida"). ✓
+
+### E2E-4 — A4 realocação A→B (feliz + falha parcial)
+Pré: binding `adjust_budget` ON. "tira R$ 12/dia da Alpha (R$100) e põe na Beta (R$60)", teto 20%.
+1. `reallocate_budget` no toolset (`enabled.has("adjust_budget")`). `routeConversation`→confirm. ✓
+2. Gate `reallocCall`: `loadWriteContext` → `fromCur=10000, toCur=6000` (centavos). `requestedMinor=1200`. `maxMovableMinor = floor(0.2·min(10000,6000)) = 1200`. `moveMinor=1200` (não clampa). `legFrom=set 8800`, `legTo=set 7200`. `applyGuardrails([legFrom,legTo])` → ambas allowed & `unchanged` → dry-run → eco "Alpha cai pra R$ 88,00; Beta sobe pra R$ 72,00. Confirma?" + `pendingWrite.saga={sourceKey:"campaign:Alpha", sourceRestoreMinor:10000}`. ✓
+3. "sim" → `applyWrite` → `pending.saga` → `runReallocationSaga`:
+   - `applyLeg(legFrom, baseCtx)` → applied. ✓
+   - `applyLeg(legTo, ctxTo={touchedToday+Alpha})` → applied → `{kind:"done"}` → reporta os 2 novos orçamentos. ✓
+- **Falha parcial (destino falha)**: `legTo`→`failed` (rate-limit no destino) → saga monta `compensation=set 10000` com `compCtx{budgetAmountByEntity[Alpha]=10000}` (clamp 0%) e `touchedToday` sem Alpha (anti-compounding não barra) → `applyLeg(compensation)` → applied → `{kind:"compensated"}` → "não consegui aumentar *Beta*, devolvi o de *Alpha*, no fim nada mudou". ✓ (teste `reallocation-saga`).
+- **Falha dupla**: `legTo` e `compensation` falham → `{kind:"partial"}` → ⚠️ "*Alpha* está com R$ 88,00/dia agora — olhe no site" + `logger.error`. Nunca silêncio. ✓
+- **Teto**: pedir mover R$ 50 → `maxMovableMinor=1200` → `moveMinor=1200<requested` → eco com nota "respeitando seu teto de 20%, movo R$ 12,00". ✓
+- **Esvaziaria**: `requestedMinor≥fromCur` → "isso esvaziaria *Alpha*… valor menor". ✓
+
+### E2E-5 — D4 revert de público com drift
+1. Editou o público (A1) → tool_call `adjust_audience` com `result.after.targeting={geo_locations:{countries:["BR"]}}`. ✓
+2. "desfaz" → `revert` → `detectRevertDrift`: `toolKey==="adjust_audience"` → `readAdSetTargeting` (current). 
+   - **Sem drift**: current = read-back enriquecido `{countries:["BR"], location_types:[…]}` → `targetingChanged(current, after)` = `false` (contenção: "BR" ∈ current) → **reverte**. ✓ (não falso-positiva pela normalização da Meta — o fix da revisão).
+   - **Com drift** (editaram pra US): current `{countries:["US"]}` → "BR" ∉ current → `true` → **barra** `blockedByDrift`. ✓
+   - **force**: pula o re-check → reverte. ✓
+
+### E2E-6 — D1 eco+confirma + freio de emergência
+1. Qualquer escrita → `routeConversation`→confirm → eco+"Confirma?" (bateria prova: TODA write/create/refine/edit/realloc/revert→confirm; só confirm/cancel→apply). ✓
+2. "sim" sem pendência → `applyWrite`: sem `pendingDraft/config/revert/write/saga` → "Não tenho nada pendente pra confirmar". ✓
+3. `TRAFEGO_CHAT_ADS_WRITES=false` → `buildInContextAllow` com `chatAdsWrites:false` → `writeTools=[]`, refino fora → só consulta+approve/reject+revert+config. ✓ (teste turn.ts). 
+4. Config + edição no mesmo turno ("muda a meta e edita o público") → `alsoMetaWrite` agora inclui `edit_audience` → "me peça uma de cada vez" (não some com a edição). ✓ (fix da revisão).
+
 ## Critérios de aceite (resumo)
 - Vídeo inbound nunca fica em silêncio; ruído de protocolo nunca gera resposta.
 - Toda escrita na Meta passa por eco+confirma; nenhuma auto-aplica sob risco.
