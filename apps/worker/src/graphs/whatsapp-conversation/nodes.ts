@@ -23,12 +23,13 @@ import {
   entityKeyOf,
   flagUngroundedNumbers,
   resolveAgentConfigChange,
+  riskForAction,
   type EchoItem,
   type RevertEchoItem,
   type UngroundedNumber,
 } from "@trafego/core";
 import { applyAgentConfigChange, loadAgentConfigState, reseedArchetypeChange } from "@trafego/agent-config";
-import { sleep, phoneTokensInText, buildApprovalApplyJob } from "@trafego/shared";
+import { sleep, phoneTokensInText, buildApprovalApplyJob, ACTION_PARAM_TARGETING } from "@trafego/shared";
 import type { Action, ApprovalId, ConversionGoal, OrgId } from "@trafego/shared/types";
 import { CONVERSION_GOALS } from "@trafego/shared/types";
 import { AdsPlatformError } from "@trafego/shared/ports";
@@ -56,6 +57,7 @@ import {
   CONFIG_UPDATE_TOOL_NAMES,
   CONTROL_WRITE_TOOL_NAMES,
   CREATE_TOOL_NAMES,
+  EDIT_AUDIENCE_TOOL_NAME,
   REFINE_TOOL_NAMES,
   PLAYBOOK_WRITE_TOOL_NAMES,
   REVERT_TOOL_NAME,
@@ -76,7 +78,7 @@ import {
 import { renderWhatsappNumber, resolveWhatsappNumber } from "./read-data.js";
 import { makeMetaToolExecutor } from "../../executors/meta-tools.js";
 import { applyCheckedAction, type ApplyResult } from "../../modules/apply/apply-confirmed-action.js";
-import { buildRefineEcho, MEDIA_PREFERENCES, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner, recoverOpenDraft, refineDraft, type DraftProposalContext, type MediaPreference, type RecoveredDraft } from "../../modules/conversation/draft-proposal.js";
+import { buildRefineEcho, describeExplicitAudience, MEDIA_PREFERENCES, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner, recoverOpenDraft, refineDraft, resolveProposedExplicitTargeting, type DraftProposalContext, type MediaPreference, type ProposedExplicitInput, type RecoveredDraft } from "../../modules/conversation/draft-proposal.js";
 import { loadWriteContext } from "../../modules/apply/write-context.js";
 import { revertActionById } from "../../modules/apply/revert-action.js";
 import { actorLabel } from "../../modules/conversation/actor.js";
@@ -999,6 +1001,88 @@ export function makeConversationNodes(
       }
     }
 
+    // EDITAR PÚBLICO de adset vivo (A1): resolve o público por NOMES (nome→id via search; dono
+    // presente → ambíguo PERGUNTA), monta a Action adjust_audience, guardrail (drop honesto se a
+    // ação não estiver liberada) + dry-run, e ecoa o novo público com o aviso de reset de aprendizado.
+    const editCall = allCalls.find((c) => c.name === EDIT_AUDIENCE_TOOL_NAME);
+    if (editCall) {
+      const a = (editCall.args ?? {}) as Record<string, unknown>;
+      const adsetId = typeof a["adsetId"] === "string" ? a["adsetId"].trim() : "";
+      const adsetName = typeof a["adsetName"] === "string" && a["adsetName"] ? (a["adsetName"] as string) : adsetId;
+      if (!adsetId) {
+        return { messages: answerToolCalls(allCalls, "Me diz qual conjunto de anúncios (o nome que eu identifico) que eu ajusto o público.") };
+      }
+      const wctx = await loadWriteContext(deps, ctx.orgId, ctx.agentId, [{ level: "adset", id: adsetId, name: adsetName }]);
+      if (!wctx) {
+        return { messages: answerToolCalls(allCalls, "Não consegui acessar a conta agora. Tenta de novo em instantes.") };
+      }
+      const strList = (v: unknown): string[] | undefined => {
+        if (!Array.isArray(v)) return undefined;
+        const out = v.filter((x): x is string => typeof x === "string");
+        return out.length > 0 ? out : undefined;
+      };
+      const isGender = (v: unknown): v is "all" | "men" | "women" => v === "all" || v === "men" || v === "women";
+      const geo = strList(a["geo"]);
+      const interests = strList(a["interests"]);
+      const behaviors = strList(a["behaviors"]);
+      const includeAudiences = strList(a["includeAudiences"]);
+      const excludeAudiences = strList(a["excludeAudiences"]);
+      const input: ProposedExplicitInput = {
+        ...(geo ? { geo } : {}),
+        ...(typeof a["ageMin"] === "number" ? { ageMin: a["ageMin"] } : {}),
+        ...(typeof a["ageMax"] === "number" ? { ageMax: a["ageMax"] } : {}),
+        ...(isGender(a["gender"]) ? { gender: a["gender"] } : {}),
+        ...(interests ? { interests } : {}),
+        ...(behaviors ? { behaviors } : {}),
+        ...(includeAudiences ? { includeAudiences } : {}),
+        ...(excludeAudiences ? { excludeAudiences } : {}),
+        ...(typeof a["radiusKm"] === "number" ? { radiusKm: a["radiusKm"] } : {}),
+      };
+      const dctxEdit: DraftProposalContext = { orgId: ctx.orgId, agentId: ctx.agentId, adAccountId: ctx.adAccountId, currency: DEFAULT_CURRENCY };
+      const res = await resolveProposedExplicitTargeting(deps, dctxEdit, wctx.account, input, { autonomous: false });
+      if (res.kind === "blocked") {
+        return { messages: [...answerToolCalls(allCalls, "preciso esclarecer"), new AIMessage(res.reason)] };
+      }
+      if (res.kind === "empty") {
+        return {
+          messages: [
+            ...answerToolCalls(allCalls, "sem público"),
+            new AIMessage('Não entendi qual público você quer no conjunto. Me diz o essencial (ex: "BH e região, 25-45, interesse em corrida").'),
+          ],
+        };
+      }
+      const action: Action = {
+        id: editCall.id ?? EDIT_AUDIENCE_TOOL_NAME,
+        type: "adjust_audience",
+        target: { level: "adset", id: adsetId, name: adsetName },
+        params: { [ACTION_PARAM_TARGETING]: res.targeting },
+        source: "llm",
+        riskLevel: riskForAction("adjust_audience"),
+        reason: "edição de público pedida no chat",
+      };
+      const check = applyGuardrails([action], wctx.cfg, wctx.ctx);
+      if (check.allowed.length === 0) {
+        const reason = check.dropped[0]?.reason ?? "editar público está desligado para este agente";
+        return { messages: [...answerToolCalls(allCalls, "não consigo"), new AIMessage(`Não consigo editar o público: ${reason}`)] };
+      }
+      const clamped = check.allowed[0]!;
+      try {
+        await deps.ports.ads.mutate(wctx.account, clamped, { dryRun: true });
+      } catch (err) {
+        logger.warn({ err, adsetId }, "conversation:dry-run do edit_audience falhou");
+        return { messages: [...answerToolCalls(allCalls, "não deu"), new AIMessage("Não consegui simular essa edição de público agora — tenta de novo em instantes.")] };
+      }
+      const drops = res.droppedNames.length > 0 ? `\n(não achei: ${res.droppedNames.join(", ")})` : "";
+      const sim = wctx.cfg.dryRun ? "Modo simulação (não aplico de verdade): " : "";
+      const account = ctx.multiAccount && ctx.accountName ? ` (${ctx.accountName})` : "";
+      const echo = `${sim}Vou trocar o público do conjunto *${adsetName}*${account} para: ${describeExplicitAudience(res.targeting)}.${drops}\n\n⚠️ Editar o público reinicia o aprendizado da Meta desse conjunto.\n\nConfirma?`;
+      return {
+        messages: [...answerToolCalls(allCalls, "proposto — aguardando confirmação"), new AIMessage(echo)],
+        pendingWrite: { echo, expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString(), actions: [clamped] },
+        pendingRevert: null,
+      };
+    }
+
     // id do tool_call como id da ação (idempotência); índice desempata se faltar (raro).
     const proposed = allCalls
       .filter((c) => WRITE_TOOL_NAMES.has(c.name))
@@ -1222,6 +1306,7 @@ export function routeConversation(
         WRITE_TOOL_NAMES.has(c.name) ||
         CREATE_TOOL_NAMES.has(c.name) ||
         REFINE_TOOL_NAMES.has(c.name) ||
+        c.name === EDIT_AUDIENCE_TOOL_NAME ||
         c.name === REVERT_TOOL_NAME ||
         c.name === DESCRIBE_CAPABILITIES_TOOL_NAME ||
         c.name === WHATSAPP_NUMBER_TOOL_NAME ||

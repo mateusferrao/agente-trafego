@@ -360,6 +360,27 @@ export function makeConversationTools(
     }),
   });
 
+  // EDITAR PÚBLICO de adset vivo (A1) — opt-in (default OFF); nunca auto-aplica; reseta o
+  // aprendizado da Meta (o eco avisa). SET: o público informado VIRA o novo público do conjunto.
+  const editAudience = tool(proposeOnly, {
+    name: EDIT_AUDIENCE_TOOL_NAME,
+    description:
+      "Propõe EDITAR o público de um CONJUNTO de anúncios (adset) que já está veiculando. Você DEFINE o novo público por NOME (geo/idade/gênero/interesses/comportamentos/públicos salvos) — é uma SUBSTITUIÇÃO: passe o público completo que deve valer no conjunto. Precisa do id do conjunto (descubra com get_campaign_analysis/get_ads_breakdown; passe adsetName pro eco). Editar o público REINICIA o aprendizado da Meta desse conjunto — o eco avisa. Requer eco+confirma; nunca aplica sozinho. Targeting muito complexo/ambíguo → oriente o dono a editar no site.",
+    schema: z.object({
+      adsetId: z.string().min(1),
+      adsetName: z.string().min(1).describe("nome legível do conjunto (do get_campaign_analysis)"),
+      geo: z.array(z.string()).nullable().optional().describe("cidades/regiões/países por nome"),
+      ageMin: z.number().int().min(13).max(65).nullable().optional(),
+      ageMax: z.number().int().min(13).max(65).nullable().optional(),
+      gender: z.enum(["all", "men", "women"]).nullable().optional(),
+      interests: z.array(z.string()).nullable().optional().describe("interesses por nome (eu resolvo na Meta; ambíguo → pergunto)"),
+      behaviors: z.array(z.string()).nullable().optional().describe("comportamentos por nome"),
+      includeAudiences: z.array(z.string()).nullable().optional().describe("públicos salvos a INCLUIR, por nome"),
+      excludeAudiences: z.array(z.string()).nullable().optional().describe("públicos salvos a EXCLUIR, por nome"),
+      radiusKm: z.number().positive().nullable().optional().describe("raio (km) em torno das cidades"),
+    }),
+  });
+
   // ── CONTROLE do eco+confirma (turno 2): o LLM classifica a intenção do usuário.
   //    A ação aplicada é a CONGELADA no state (não re-especifica nada). Roteadas p/ applyWrite.
   const confirmWrite = tool(proposeOnly, {
@@ -854,7 +875,7 @@ export function makeConversationTools(
   const configTools = [setGoal, setAutonomy, setGuardrail, setActionAccess, setCadence, setNotifications, reseedArchetype, setPersona, setTone, setSystemPrompt, setBusinessContext, setGuidance, setDirectiveness, setVolume, setDidacticDepth, setExperienceLevel];
   const playbookTools = [addPlaybookRule, togglePlaybookRule, removePlaybookRule, listPlaybookRules];
 
-  const writeTools = [pauseEntity, resumeEntity, setStatus, adjustBudget, revertAction, confirmWrite, cancelWrite];
+  const writeTools = [pauseEntity, resumeEntity, setStatus, adjustBudget, editAudience, revertAction, confirmWrite, cancelWrite];
   const createTools = [scaleWinner, createCampaign, copyCampaign, adjustDraft, regenerateCopy];
   return [
     ...readTools,
@@ -1118,6 +1139,10 @@ export const REFINE_TOOL_NAMES: ReadonlySet<string> = new Set<string>(["adjust_d
 
 /** Tool de DESFAZER — também passa pelo eco+confirma (roteada pro nó `confirm`, 5c-4). */
 export const REVERT_TOOL_NAME = "revert_action";
+
+/** Tool de EDITAR PÚBLICO de adset vivo (A1) — escrita `adjust_audience`, opt-in, roteada p/ `confirm`.
+ *  Nome próprio (não é `adjust_audience` pra não colidir com o vocabulário de Action). */
+export const EDIT_AUDIENCE_TOOL_NAME = "edit_audience";
 
 /** Tools de controle do eco+confirma (turno 2) — roteadas pro nó `applyWrite`. */
 export const CONTROL_WRITE_TOOL_NAMES: ReadonlySet<string> = new Set<string>(["confirm_write", "cancel_write"]);

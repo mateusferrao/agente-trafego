@@ -269,6 +269,12 @@ describe("actionFromToolCall", () => {
     expect(actionFromToolCall("get_metrics", args({}), "x")).toBeNull();
   });
 
+  it("edit_audience → null (só o ramo dedicado edit_audience trata; não é ação genérica)", () => {
+    // A1: edit_audience NÃO está em WRITE_TOOL_NAMES — o roteamento vai pro ramo
+    // dedicado (confirmWriteGate/routeConversation), nunca por actionFromToolCall.
+    expect(actionFromToolCall("edit_audience", args({ adsetId: "AS1" }), "x")).toBeNull();
+  });
+
   it("set sem amountReais → null (não vira ação inválida)", () => {
     expect(actionFromToolCall("adjust_budget", args({ mode: "set" }), "x")).toBeNull();
   });

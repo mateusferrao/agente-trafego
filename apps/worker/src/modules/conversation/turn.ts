@@ -13,6 +13,7 @@ import type { WorkerDeps } from "../../composition.js";
 import { buildWhatsappConversationGraph } from "../../graphs/whatsapp-conversation/graph.js";
 import {
   AGENT_TOOL_NAMES,
+  EDIT_AUDIENCE_TOOL_NAME,
   REFINE_TOOL_NAMES,
   CONCIERGE_TOOL_NAMES,
   CONFIG_CHAT_TOOL_NAMES,
@@ -150,6 +151,8 @@ async function allowedChatWriteTools(db: Database, orgId: string, agentId: strin
   // copiar campanha (Fatia 7) reusa o mesmo gate de criação (gasto novo, mesma saga).
   if (enabled.has("create_campaign")) tools.push("copy_campaign");
   if (enabled.has("duplicate_scale") || enabled.has("adjust_budget")) tools.push("scale_winner");
+  // A1: editar público de adset vivo — opt-in, gated pelo binding `adjust_audience` (default OFF).
+  if (enabled.has("adjust_audience")) tools.push(EDIT_AUDIENCE_TOOL_NAME);
   return tools;
 }
 
