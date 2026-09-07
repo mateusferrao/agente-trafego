@@ -406,7 +406,8 @@ export function startWebhookInboundWorker(deps: WorkerDeps, connection: Redis): 
       // 2) mensagem: normaliza; null = ignorar (fromMe/ACK/grupo/sem conteúdo) → roteia.
       const inbound = ports.messaging.parseInbound(raw);
       if (!inbound) {
-        logger.debug({ jobId: job.id }, "inbound:ignored (unparseable)");
+        // Diagnóstico: nomes das chaves da mensagem (sem conteúdo) — revela mídia nova antes do silêncio.
+        logger.debug({ jobId: job.id, shape: ports.messaging.describeInbound(raw) }, "inbound:ignored (unparseable)");
         return;
       }
       await route(instanceId, inbound);

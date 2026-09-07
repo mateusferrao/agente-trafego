@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { jidToE164, parseConnectionUpdate, parseInbound } from "./webhook.js";
+import { inboundMessageShape, jidToE164, parseConnectionUpdate, parseInbound } from "./webhook.js";
 
 /** Payload real (resumido) do evento MESSAGES_UPSERT da Evolution v2. */
 function upsert(overrides: {
@@ -180,6 +180,83 @@ describe("parseInbound", () => {
   ])("%s → kind unsupported (%s)", (node, mediaType) => {
     const msg = parseInbound(upsert({ message: { [node]: { url: "x" } } }));
     expect(msg).toMatchObject({ kind: "unsupported", mediaType });
+  });
+
+  // ─── Vídeo redondo (ptvMessage) → kind video (nó SEPARADO de videoMessage) ───
+  it("ptvMessage (nota de vídeo redonda) → kind video", () => {
+    const msg = parseInbound(upsert({ message: { ptvMessage: { url: "x", mimetype: "video/mp4" } } }));
+    expect(msg).toMatchObject({ kind: "video", video: { mimetype: "video/mp4" } });
+    expect(msg).toHaveProperty("messageKey");
+  });
+
+  // ─── Wrappers (ver-uma-vez / temporária) desembrulhados antes de extrair ───
+  it("viewOnceMessageV2 envolvendo videoMessage → kind video", () => {
+    const msg = parseInbound(
+      upsert({ message: { viewOnceMessageV2: { message: { videoMessage: { url: "x", mimetype: "video/mp4", caption: "vc" } } } } }),
+    );
+    expect(msg).toMatchObject({ kind: "video", video: { mimetype: "video/mp4" }, caption: "vc" });
+  });
+
+  it("ephemeralMessage (mensagem temporária) envolvendo videoMessage → kind video", () => {
+    const msg = parseInbound(
+      upsert({ message: { ephemeralMessage: { message: { videoMessage: { url: "x", mimetype: "video/mp4" } } } } }),
+    );
+    expect(msg).toMatchObject({ kind: "video", video: { mimetype: "video/mp4" } });
+  });
+
+  it("viewOnceMessage envolvendo imageMessage → kind image", () => {
+    const msg = parseInbound(
+      upsert({ message: { viewOnceMessage: { message: { imageMessage: { url: "x", mimetype: "image/png" }, base64: "Z" } } } }),
+    );
+    expect(msg).toMatchObject({ kind: "image", image: { base64: "Z", mimetype: "image/png" } });
+  });
+
+  // ─── documentMessage com mimetype de MÍDIA → tratar como vídeo/imagem (não "unsupported") ───
+  it("documentMessage com mimetype video/* → kind video (vídeo mandado como documento)", () => {
+    const msg = parseInbound(
+      upsert({ message: { documentMessage: { url: "x", mimetype: "video/mp4", fileName: "clip.mp4" } } }),
+    );
+    expect(msg).toMatchObject({ kind: "video", video: { mimetype: "video/mp4" } });
+  });
+
+  it("documentMessage com mimetype image/* → kind image", () => {
+    const msg = parseInbound(
+      upsert({ message: { documentMessage: { url: "x", mimetype: "image/png" }, base64: "Z" } }),
+    );
+    expect(msg).toMatchObject({ kind: "image", image: { base64: "Z", mimetype: "image/png" } });
+  });
+
+  it("documentWithCaptionMessage envolvendo documentMessage de vídeo → kind video", () => {
+    const msg = parseInbound(
+      upsert({ message: { documentWithCaptionMessage: { message: { documentMessage: { url: "x", mimetype: "video/mp4" } } } } }),
+    );
+    expect(msg).toMatchObject({ kind: "video", video: { mimetype: "video/mp4" } });
+  });
+
+  it("documentMessage sem mimetype de mídia (ex: pdf) → segue unsupported", () => {
+    const msg = parseInbound(upsert({ message: { documentMessage: { url: "x", mimetype: "application/pdf" } } }));
+    expect(msg).toMatchObject({ kind: "unsupported", mediaType: "document" });
+  });
+
+  // ─── Ruído de protocolo → null (silêncio correto; NÃO vira aviso) ───
+  it.each([["reactionMessage"], ["protocolMessage"], ["pollUpdateMessage"]])(
+    "%s (ruído de protocolo) → null (silêncio, nunca aviso)",
+    (node) => {
+      expect(parseInbound(upsert({ message: { [node]: { key: {} } } }))).toBeNull();
+    },
+  );
+});
+
+describe("inboundMessageShape (diagnóstico)", () => {
+  it("devolve as chaves da mensagem + messageType (sem conteúdo)", () => {
+    expect(inboundMessageShape(upsert({ message: { ptvMessage: { url: "x" } } }))).toEqual({
+      messageKeys: ["ptvMessage"],
+      messageType: "conversation",
+    });
+  });
+
+  it("payload sem data → null", () => {
+    expect(inboundMessageShape({ event: "x" })).toBeNull();
   });
 });
 
