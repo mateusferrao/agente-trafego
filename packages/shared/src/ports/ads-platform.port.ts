@@ -326,6 +326,11 @@ export interface AdsPlatformPort {
   ): Promise<RestoreResult>;
   /** Lê o estado atual (status + budgets) de uma entidade — re-check fresco (drift). */
   readEntityState(account: AdAccountRef, entityId: string): Promise<Record<string, unknown>>;
+  /** Lê SÓ o `targeting` cru atual de um adset — drift FINO do revert de `adjust_audience` (D4):
+   *  detecta uma edição CONCORRENTE de público entre o apply e o revert. Separado de
+   *  `readEntityState` (status+budget) p/ não pesar as leituras comuns nem regredir o revert de
+   *  budget. `null` quando não há targeting lível. */
+  readAdSetTargeting(account: AdAccountRef, adsetId: string): Promise<Record<string, unknown> | null>;
   /**
    * Duplica uma entidade (escala/clone) via `/copies` (Fatia 7). Opcionalmente ajusta o
    * budget da cópia (escala) e nasce ACTIVE/PAUSED. Retorna a cópia + filhos p/ retomada.

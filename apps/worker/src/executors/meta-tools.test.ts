@@ -43,19 +43,25 @@ function fakeDb(existing: unknown[] = []) {
   return { db, inserts };
 }
 
-function makeDeps(existing: unknown[] = [], current: Record<string, unknown> = { status: "PAUSED" }) {
+function makeDeps(
+  existing: unknown[] = [],
+  current: Record<string, unknown> = { status: "PAUSED" },
+  targetingCurrent: Record<string, unknown> | null = null,
+) {
   const { db, inserts } = fakeDb(existing);
   const mutate = vi.fn(async () => mutation);
   const restoreEntityState = vi.fn(async () => ({ before: { status: "PAUSED" }, after: { status: "ACTIVE" } }));
   // estado FRESCO p/ o re-check de drift (default = igual ao `after` → sem drift).
   const readEntityState = vi.fn(async () => current);
+  // targeting cru FRESCO p/ o drift fino de adjust_audience (D4); default null (não usado exceto nos testes de público).
+  const readAdSetTargeting = vi.fn(async () => targetingCurrent);
   const record = vi.fn(async () => {});
   const deps = {
     db,
     logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn() },
-    ports: { ads: { mutate, restoreEntityState, readEntityState }, metering: { record } },
+    ports: { ads: { mutate, restoreEntityState, readEntityState, readAdSetTargeting }, metering: { record } },
   } as unknown as WorkerDeps;
-  return { deps, inserts, mutate, restoreEntityState, readEntityState, record };
+  return { deps, inserts, mutate, restoreEntityState, readEntityState, readAdSetTargeting, record };
 }
 
 const baseInput: ExecuteActionInput = {
@@ -98,6 +104,7 @@ const toolCall = {
   id: "tc1",
   agentId: "agent1",
   runId: "run1",
+  toolKey: "pause_entity",
   beforeState: { status: "ACTIVE" } as Record<string, unknown>,
   args: { target: { level: "campaign", id: "C1" }, dryRun: false } as Record<string, unknown>,
   // a ação pausou (after=PAUSED) — base do re-check de drift.
@@ -143,6 +150,55 @@ describe("makeMetaToolExecutor.revert", () => {
   it("drift + force → reverte mesmo assim", async () => {
     const { deps, restoreEntityState } = makeDeps([], { status: "ACTIVE" });
     const res = await makeMetaToolExecutor(deps).revert({ ...revertInput, force: true });
+    expect(res.reverted).toBe(true);
+    expect(restoreEntityState).toHaveBeenCalled();
+  });
+
+  // ── D4: drift FINO de público no revert de adjust_audience ──
+  const audienceToolCall = {
+    ...toolCall,
+    toolKey: "adjust_audience",
+    args: { target: { level: "adset", id: "AS1" }, dryRun: false } as Record<string, unknown>,
+    // a ação deixou o público em BR (after.targeting).
+    result: { before: { targeting: { geo_locations: { countries: ["US"] } } }, after: { targeting: { geo_locations: { countries: ["BR"] } } } } as Record<string, unknown>,
+    beforeState: { targeting: { geo_locations: { countries: ["US"] } } } as Record<string, unknown>,
+  };
+  const audienceRevert = { orgId: "org1", account: baseInput.account, toolCall: audienceToolCall };
+
+  it("adjust_audience: público FRESCO == o que a ação deixou → reverte (sem drift)", async () => {
+    // targeting atual = BR (igual ao after) → ninguém mexeu → revert fiel do público anterior.
+    const { deps, restoreEntityState, readEntityState } = makeDeps([], { status: "ACTIVE" }, { geo_locations: { countries: ["BR"] } });
+    const res = await makeMetaToolExecutor(deps).revert(audienceRevert);
+    expect(res.reverted).toBe(true);
+    expect(restoreEntityState).toHaveBeenCalledWith(baseInput.account, "AS1", { targeting: { geo_locations: { countries: ["US"] } } });
+    // NÃO usou o re-check coarse de budget/status (usou o fino de targeting).
+    expect(readEntityState).not.toHaveBeenCalled();
+  });
+
+  it("adjust_audience: público FRESCO mudou (alguém editou) → barra por drift", async () => {
+    // após a ação (BR) alguém trocou pra US → reverter sobrescreveria essa edição → barra.
+    const { deps, restoreEntityState } = makeDeps([], { status: "ACTIVE" }, { geo_locations: { countries: ["US"] } });
+    const res = await makeMetaToolExecutor(deps).revert(audienceRevert);
+    expect(res.reverted).toBe(false);
+    expect(res.blockedByDrift).toBe(true);
+    expect(restoreEntityState).not.toHaveBeenCalled();
+  });
+
+  it("adjust_audience: mesma audiência em ORDEM diferente → NÃO é drift (canonical)", async () => {
+    const toolCallMulti = {
+      ...audienceToolCall,
+      result: { before: {}, after: { targeting: { geo_locations: { countries: ["BR", "US"] } } } } as Record<string, unknown>,
+    };
+    // atual = ["US","BR"] (reordenado pela Meta) → canonical igual → sem drift → reverte.
+    const { deps, restoreEntityState } = makeDeps([], { status: "ACTIVE" }, { geo_locations: { countries: ["US", "BR"] } });
+    const res = await makeMetaToolExecutor(deps).revert({ ...audienceRevert, toolCall: toolCallMulti });
+    expect(res.reverted).toBe(true);
+    expect(restoreEntityState).toHaveBeenCalled();
+  });
+
+  it("adjust_audience + force → reverte mesmo com público mudado", async () => {
+    const { deps, restoreEntityState } = makeDeps([], { status: "ACTIVE" }, { geo_locations: { countries: ["US"] } });
+    const res = await makeMetaToolExecutor(deps).revert({ ...audienceRevert, force: true });
     expect(res.reverted).toBe(true);
     expect(restoreEntityState).toHaveBeenCalled();
   });

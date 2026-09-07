@@ -253,4 +253,16 @@ describe("MetaMutationsService", () => {
     // after.targeting vem serializado (string), igual ao budget no restore — o POST é a prova do undo.
     expect(JSON.parse(res.after["targeting"] as string).geo_locations.countries).toEqual(["US"]);
   });
+
+  // D4: leitura FRESCA do público cru p/ o drift fino do revert de adjust_audience.
+  it("readAdSetTargeting: GET só do campo targeting → devolve o objeto cru", async () => {
+    stubGraph({ targeting: { geo_locations: { countries: ["BR"] }, age_min: 25 } });
+    const t = await svc().readAdSetTargeting(account, "AS1");
+    expect(t).toEqual({ geo_locations: { countries: ["BR"] }, age_min: 25 });
+  });
+
+  it("readAdSetTargeting: sem targeting lível → null (não quebra o drift check)", async () => {
+    stubGraph({ status: "ACTIVE" });
+    expect(await svc().readAdSetTargeting(account, "AS1")).toBeNull();
+  });
 });

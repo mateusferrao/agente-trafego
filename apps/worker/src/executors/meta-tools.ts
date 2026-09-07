@@ -11,10 +11,15 @@ import type { Action, ActionTarget } from "@trafego/shared/types";
 import type { AdAccountRef, MutationResult } from "@trafego/shared/ports";
 import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY, type OrgId, type RunId } from "@trafego/shared";
 import { entityKeyOf } from "@trafego/core";
+import { canonicalizeTargeting } from "@trafego/ads-meta";
 import type { WorkerDeps } from "../composition.js";
 
 /** Ator da auditoria de escrita autônoma. */
 const ACTOR_AGENT = "agent";
+/** Tool key de editar público (drift fino no revert, D4) — fonte única do vocabulário. */
+const ADJUST_AUDIENCE_KEY = "adjust_audience";
+/** Campo do público cru no before/after de `adjust_audience`. */
+const TARGETING_KEY = "targeting";
 /** Dimensão genérica de metering p/ ação aplicada (base do billing por markup). */
 const USAGE_TYPE_ACTION_APPLIED = "action_applied";
 
@@ -23,6 +28,8 @@ export interface RevertToolCall {
   readonly id: string;
   readonly agentId: string | null;
   readonly runId: string | null;
+  /** tipo da ação original — seleciona o re-check de drift (adjust_audience = targeting fino, D4). */
+  readonly toolKey: string;
   readonly beforeState: Record<string, unknown> | null;
   readonly args: Record<string, unknown>;
   /** result da ação original ({ before, after }) — base do re-check de drift. */
@@ -47,12 +54,11 @@ export interface RevertResult {
 }
 
 /**
- * Campos de estado relevantes ao drift (status + budgets; ignora derivados). COARSE v1: NÃO inclui
- * `targeting` — logo o re-check de drift do revert de `adjust_audience` (que só escreve `targeting`)
- * NÃO detecta uma edição CONCORRENTE de público (outra pessoa mexeu no público entre o apply e o
- * revert); reverter reaplicaria o público antigo por cima. Aceito p/ v1 (ação opt-in rara, janela
- * estreita; o fix exige ler+comparar o targeting cru no re-check → mudança de porta, com risco de
- * regressão no revert de budget). Drift FINO de targeting = fast-follow (docs/ROADMAP.md). */
+ * Campos de estado relevantes ao drift COARSE (status + budgets; ignora derivados) — usado no revert
+ * de pausar/retomar/status/budget. O revert de `adjust_audience` NÃO passa por aqui: ele usa o drift
+ * FINO de público (`detectRevertDrift` → `canonicalizeTargeting` sobre o `targeting` cru, D4), que
+ * detecta edição CONCORRENTE de público entre o apply e o revert. Separar por tipo evita ler o
+ * targeting pesado (e falso-positivar) no revert de budget/status. */
 function driftFields(state: Record<string, unknown> | null | undefined): string {
   const s = state ?? {};
   return JSON.stringify({
@@ -162,30 +168,52 @@ export function makeMetaToolExecutor(deps: WorkerDeps) {
 
     const target = args.target;
 
+    // Detecta drift por TIPO de ação: `adjust_audience` compara o `targeting` cru FINO (D4 —
+    // pega edição concorrente de público); as demais comparam status+budget (coarse). Separar
+    // por tipo evita ler o targeting pesado (e falso-positivar) no revert de budget/status.
+    const detectRevertDrift = async (
+      tc: typeof toolCall,
+      tgt: ActionTarget,
+      after: Record<string, unknown> | undefined,
+    ): Promise<{ reason: string; current: Record<string, unknown> | null } | null> => {
+      if (tc.toolKey === ADJUST_AUDIENCE_KEY) {
+        const afterTargeting = after?.[TARGETING_KEY];
+        if (!afterTargeting || typeof afterTargeting !== "object") return null; // sem baseline → não bloqueia
+        const current = await ports.ads.readAdSetTargeting(account, tgt.id);
+        if (canonicalizeTargeting(current) !== canonicalizeTargeting(afterTargeting as Record<string, unknown>)) {
+          return { reason: "o público do conjunto mudou desde a edição — reverter sobrescreveria a mudança", current };
+        }
+        return null;
+      }
+      if (!after) return null;
+      const current = await ports.ads.readEntityState(account, tgt.id);
+      if (driftFields(current) !== driftFields(after)) {
+        return { reason: "a entidade mudou desde a ação — reverter sobrescreveria a mudança", current };
+      }
+      return null;
+    };
+
     // re-check de DRIFT (5b): compara o estado FRESCO com o que a ação deixou (`after`).
     // Divergiu (alguém mexeu depois) e sem `force` → NÃO reverte (evita sobrescrever a
     // mudança posterior); registra o bloqueio p/ a UI pedir confirmação ("mesmo assim").
     if (!force) {
       const after = (toolCall.result as { after?: Record<string, unknown> } | null)?.after;
-      if (after) {
-        const current = await ports.ads.readEntityState(account, target.id);
-        if (driftFields(current) !== driftFields(after)) {
-          const reason = "a entidade mudou desde a ação — reverter sobrescreveria a mudança";
-          await db
-            .insert(agentToolCalls)
-            .values({
-              agentId: toolCall.agentId,
-              runId: toolCall.runId,
-              toolKey: UNDO_BLOCKED_TOOL_KEY,
-              idempotencyKey: `${toolCall.id}:${UNDO_BLOCKED_TOOL_KEY}`,
-              risk: "low",
-              args: { revertOf: toolCall.id, target },
-              result: { reason, current },
-            })
-            .onConflictDoNothing();
-          logger.info({ toolCallId: toolCall.id }, "undo:barrado por drift");
-          return { reverted: false, blockedByDrift: true, reason };
-        }
+      const drift = await detectRevertDrift(toolCall, target, after);
+      if (drift) {
+        await db
+          .insert(agentToolCalls)
+          .values({
+            agentId: toolCall.agentId,
+            runId: toolCall.runId,
+            toolKey: UNDO_BLOCKED_TOOL_KEY,
+            idempotencyKey: `${toolCall.id}:${UNDO_BLOCKED_TOOL_KEY}`,
+            risk: "low",
+            args: { revertOf: toolCall.id, target },
+            result: { reason: drift.reason, current: drift.current },
+          })
+          .onConflictDoNothing();
+        logger.info({ toolCallId: toolCall.id }, "undo:barrado por drift");
+        return { reverted: false, blockedByDrift: true, reason: drift.reason };
       }
     }
 

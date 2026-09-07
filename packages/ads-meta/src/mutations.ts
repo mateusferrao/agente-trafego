@@ -97,6 +97,15 @@ export class MetaMutationsService {
     return this.readEntityStateFields(account, entityId, stateFieldsFor(level));
   }
 
+  /** Lê SÓ o `targeting` cru atual de um adset (drift fino do revert de `adjust_audience`, D4).
+   *  Separado de `readEntityState` (status+budget) p/ isolar o payload pesado e não regredir o
+   *  revert de budget. `null` quando a Meta não devolve `targeting` (entidade sem público lível). */
+  async readAdSetTargeting(account: AdAccountRef, adsetId: string): Promise<Record<string, unknown> | null> {
+    const res = await this.readEntityStateFields(account, adsetId, TARGETING_FIELD);
+    const t = (res as Record<string, unknown>)[TARGETING_FIELD];
+    return t !== null && typeof t === "object" ? (t as Record<string, unknown>) : null;
+  }
+
   /** GET cru de campos arbitrários da entidade (base de `readEntityState` + before de targeting). */
   private async readEntityStateFields(account: AdAccountRef, entityId: string, fields: string): Promise<EntityState> {
     const res = await this.client.request<EntityState>({

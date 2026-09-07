@@ -695,6 +695,17 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     }
   }
 
+  /** Lê SÓ o `targeting` cru atual de um adset — drift fino do revert de `adjust_audience` (D4). */
+  async readAdSetTargeting(account: AdAccountRef, adsetId: string): Promise<Record<string, unknown> | null> {
+    try {
+      const acquired = await this.governor.acquire(normalizeAdAccountId(account.adAccountId));
+      if (!acquired.granted) throw cooldownError();
+      return await this.mutations.readAdSetTargeting(account, adsetId);
+    } catch (error) {
+      throw toAdsError(error);
+    }
+  }
+
   async listAccessibleAccounts(accessToken: string): Promise<AccessibleAccount[]> {
     try {
       const out: AccessibleAccount[] = [];
