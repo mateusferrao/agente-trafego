@@ -20,6 +20,16 @@ import type { AdAccountRef } from "@trafego/shared/ports";
 import type { Redis } from "ioredis";
 import type { WorkerDeps } from "../composition.js";
 import { createAnalysisRepo } from "../modules/analysis/repo.js";
+import { createNotifyRepo } from "../modules/notify/repo.js";
+import { createSendToConversation } from "../modules/notify/send-to-contact.js";
+import { stageCreativeOffer } from "../modules/conversation/creative-offer.js";
+
+/** Fecho-de-loop de vídeo (B1): mensagens de oferta quando o vídeo enviado no WhatsApp fica pronto. */
+const OFFER_NOTICE = {
+  use: () => `Seu vídeo ficou pronto! Quer que eu use ele no rascunho de campanha? Responde *sim* que eu troco o criativo.`,
+  create: (accountName: string) =>
+    `Seu vídeo ficou pronto${accountName ? ` na ${accountName}` : ""}! Quer que eu crie uma campanha com ele? Responde *sim* que eu monto o rascunho.`,
+} as const;
 
 /** Idade (min) além da qual um vídeo `pending` é considerado órfão (crash perdeu a cadeia de
  *  poll). Folga acima do cap do poll (~16min) — >30min pending = travado de verdade. */
@@ -45,6 +55,7 @@ export function startCreativeVideoPollWorker(deps: WorkerDeps, connection: Redis
   const { db, ports, logger } = deps;
   const scheduler = ports.scheduler;
   const repo = createAnalysisRepo(db);
+  const sendToConversation = createSendToConversation({ messaging: ports.messaging, repo: createNotifyRepo(db) });
 
   const setStatus = (assetId: string, orgId: string, status: "ready" | "error"): Promise<unknown> =>
     db.update(creativeAssets).set({ status }).where(and(eq(creativeAssets.id, assetId), eq(creativeAssets.orgId, orgId)));
@@ -87,7 +98,17 @@ export function startCreativeVideoPollWorker(deps: WorkerDeps, connection: Redis
         await setStatus(p.assetId, p.orgId, "ready");
         // vídeo pronto → analisa a visão 1x (frames Meta) + cacheia p/ a biblioteca.
         await scheduler.enqueue(buildCreativeAnalyzeJob({ orgId: p.orgId, adAccountId: p.adAccountId, assetId: p.assetId }));
-        logger.info({ assetId: p.assetId }, "creative-video-poll:pronto");
+        // B1: fecho-de-loop — veio de um intake do WhatsApp com escrita ligada → oferece usar/criar.
+        if (p.offer) {
+          const { draftId } = await stageCreativeOffer(
+            { db, redis: connection },
+            { orgId: p.orgId, adAccountId: p.adAccountId, assetId: p.assetId, conversationId: p.offer.conversationId },
+          );
+          await sendToConversation(p.offer.ref, draftId ? OFFER_NOTICE.use() : OFFER_NOTICE.create(account.name), {
+            split: true,
+          });
+        }
+        logger.info({ assetId: p.assetId, offered: Boolean(p.offer) }, "creative-video-poll:pronto");
         return;
       }
       if (status === "error") {

@@ -1,4 +1,5 @@
 import type { JobSpec } from "../ports/scheduler.port.js";
+import type { ConversationRef } from "./whatsapp.js";
 
 // Fila de POLL do status de vídeo (Fatia 7). Vídeo processa ASYNC na plataforma: o intake
 // insere o asset `pending` e enfileira este job, que consulta getVideoStatus e re-enfileira
@@ -25,6 +26,12 @@ export type CreativeVideoPollPayload = {
   readonly metaVideoId: string;
   /** tentativa atual (1-based) — cap em CREATIVE_VIDEO_POLL_MAX_ATTEMPTS. */
   readonly attempt: number;
+  /**
+   * Contexto de conversa p/ o fecho-de-loop de vídeo (B1): quando o vídeo veio de um intake do
+   * WhatsApp com escrita conversacional LIGADA, o poll oferece "usar/criar" ao flipar `ready`.
+   * Ausente = upload web (sem conversa) OU escrita OFF → sem oferta.
+   */
+  readonly offer?: { readonly ref: ConversationRef; readonly conversationId: string };
 };
 
 /** Job de poll (delayado). Sem idempotencyKey: cada tentativa é um job fresco (a cadeia

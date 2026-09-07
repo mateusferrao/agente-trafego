@@ -30,14 +30,12 @@ import type {
 import type { Redis } from "ioredis";
 import type { Logger } from "pino";
 import { ingestCreativeImage, ingestCreativeVideo } from "@trafego/creative-library";
-import { and, desc, eq } from "drizzle-orm";
-import { campaignDrafts } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
 import type { WorkerDeps } from "../composition.js";
 import { createAnalysisRepo } from "../modules/analysis/repo.js";
 import { createNotifyRepo, type NotifyRepo } from "../modules/notify/repo.js";
 import { createSendToConversation, type SendToConversation } from "../modules/notify/send-to-contact.js";
-import { setCreativeOffer } from "../modules/conversation/creative-offer.js";
+import { stageCreativeOffer } from "../modules/conversation/creative-offer.js";
 
 /** Mensagens de cortesia do intake — sempre o que aconteceu + próximo passo (§13 UX). */
 const NOTICE = {
@@ -93,24 +91,6 @@ export interface MediaIntakeDeps {
    *  criar/trocar por chat (usar o criativo num rascunho é na plataforma). */
   readonly chatAdsWrites: boolean;
   readonly logger: Pick<Logger, "debug" | "warn">;
-}
-
-/** Rascunho from_scratch ainda aberto da conta → o intake oferece USAR o criativo nele. */
-async function pendingFromScratchDraftId(db: Database, orgId: string, adAccountId: string): Promise<string | null> {
-  const [row] = await db
-    .select({ id: campaignDrafts.id })
-    .from(campaignDrafts)
-    .where(
-      and(
-        eq(campaignDrafts.orgId, orgId),
-        eq(campaignDrafts.adAccountId, adAccountId),
-        eq(campaignDrafts.status, "proposed"),
-        eq(campaignDrafts.kind, "from_scratch"),
-      ),
-    )
-    .orderBy(desc(campaignDrafts.createdAt))
-    .limit(1);
-  return row?.id ?? null;
 }
 
 /**
@@ -178,8 +158,17 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
       if (mediaType === "video") {
         const v = await ingestCreativeVideo({ db: d.db, storage: d.ports.storage, ads: d.ports.ads }, ingestInput);
         if (v.status === "pending") {
+          // B1: escrita ligada → o poll oferece "usar/criar" ao flipar `ready` (vídeo nasce pending,
+          // então a oferta não pode sair agora como na imagem). OFF → sem oferta (só a biblioteca).
           await d.ports.scheduler.enqueue(
-            buildCreativeVideoPollJob({ orgId, adAccountId: adAccountUuid, assetId: v.assetId, metaVideoId: v.metaVideoId, attempt: 1 }),
+            buildCreativeVideoPollJob({
+              orgId,
+              adAccountId: adAccountUuid,
+              assetId: v.assetId,
+              metaVideoId: v.metaVideoId,
+              attempt: 1,
+              ...(d.chatAdsWrites ? { offer: { ref, conversationId } } : {}),
+            }),
           );
         }
         await d.sendToConversation(ref, NOTICE.videoSaved(account.name), { split: true, quoteLastInbound: true });
@@ -201,8 +190,10 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
         d.logger.debug({ conversationId, metaImageHash }, "intake:saved (writes off — sem oferta)");
         return;
       }
-      const draftId = await pendingFromScratchDraftId(d.db, orgId, adAccountUuid);
-      await setCreativeOffer(d.redis, conversationId, { assetId, ...(draftId ? { draftId } : {}) });
+      const { draftId } = await stageCreativeOffer(
+        { db: d.db, redis: d.redis },
+        { orgId, adAccountId: adAccountUuid, assetId, conversationId },
+      );
       await d.sendToConversation(ref, draftId ? NOTICE.savedOfferUse() : NOTICE.savedOfferCreate(account.name), {
         split: true,
         quoteLastInbound: true,
