@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AIMessage } from "@langchain/core/messages";
-import { assembleSystemPrompt, currentDateTimeLine, drainPendingCostPatches, needsCostFallback, patchCostInBackground, routeConversation, scheduleCostPatch } from "./nodes.js";
+import { assembleSystemPrompt, currentDateTimeLine, drainPendingCostPatches, lastAnalysisLine, needsCostFallback, patchCostInBackground, routeConversation, scheduleCostPatch } from "./nodes.js";
 import { GROUP_RULES } from "./system-prompt.js";
 import {
   CONFIG_UPDATE_TOOL_NAMES,
@@ -102,6 +102,23 @@ describe("currentDateTimeLine (data/hora no fuso da org)", () => {
     expect(line).toContain("09:00");
     expect(line).toContain("2026");
     expect(line.toLowerCase()).toContain("momento presente");
+  });
+});
+
+describe("lastAnalysisLine (frescor do dado curado — asOf no prompt)", () => {
+  it("formata o asOf da última análise no fuso da org e instrui a responder 'de quando é'", () => {
+    // 22:02 UTC = 19:02 em São Paulo (UTC-3) — o horário do push do transcript.
+    const line = lastAnalysisLine(new Date("2026-09-07T22:02:00Z"), "America/Sao_Paulo");
+    expect(line).toContain("19:02");
+    expect(line).toContain("2026");
+    expect(line).toContain("America/Sao_Paulo");
+    // instrui explicitamente a NÃO defletir com "análise anterior" sem a data.
+    expect(line.toLowerCase()).toContain("de hoje");
+    expect(line.toLowerCase()).toContain("análise anterior");
+  });
+
+  it("sem análise concluída (asOf null) → linha vazia (nada a injetar)", () => {
+    expect(lastAnalysisLine(null, "America/Sao_Paulo")).toBe("");
   });
 });
 

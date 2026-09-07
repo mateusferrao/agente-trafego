@@ -975,6 +975,18 @@ async function latestFinishedRun(db: Database, agentId: string, orgId: string) {
   return run;
 }
 
+/**
+ * Data/hora da ÚLTIMA análise concluída do agente = o `asOf` do dado curado que o chat tem em
+ * mãos (o MESMO que `get_account_status`/`list_recommendations` reportam). Alimenta a linha de
+ * frescor injetada no system prompt do chat (nodes.ts) pra o LLM saber DE QUANDO são os números
+ * — inclusive os que ele acabou de empurrar no push de "análise concluída" — sem depender de uma
+ * chamada de tool. `null` = nenhuma análise concluída ainda.
+ */
+export async function latestAnalysisAsOf(db: Database, agentId: string, orgId: string): Promise<Date | null> {
+  const run = await latestFinishedRun(db, agentId, orgId);
+  return run ? (run.finishedAt ?? run.createdAt) : null;
+}
+
 /** Linhas de gasto (data + metricsJson) de um nível na janela — org-scoped. */
 async function spendRows(db: Database, adAccountId: string, orgId: string, level: EntityLevel, since: string) {
   return db
@@ -1624,7 +1636,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     {
       name: "get_account_status",
       description:
-        "DESEMPENHO da conta pela última análise concluída: nota, resumo, gasto, DESPERDÍCIO (waste: quanto está queimando em campanhas paradas e onde o gasto está mal alocado — lidere por isso quando houver), nº de recomendações e de aprovações pendentes. Esta é a tool PADRÃO pra perguntas genéricas de 'como está a conta?' / 'como estamos indo?' (é sobre resultado, NÃO a situação administrativa na Meta — pra desativação/saldo/pagamento use get_account_health). Quando vier 'partialNote', essa análise ficou INCOMPLETA (a Meta limitou temporariamente ou uma parte degradou) — sempre repasse esse aviso ao dono, nunca omita.",
+        "DESEMPENHO da conta pela última análise concluída: nota, resumo, gasto, DESPERDÍCIO (waste: quanto está queimando em campanhas paradas e onde o gasto está mal alocado — lidere por isso quando houver), nº de recomendações e de aprovações pendentes, e 'asOf' = QUANDO essa análise rodou (a data/hora do dado). Esta é a tool PADRÃO pra perguntas genéricas de 'como está a conta?' / 'como estamos indo?' (é sobre resultado, NÃO a situação administrativa na Meta — pra desativação/saldo/pagamento use get_account_health). Também responde 'esse dado é de hoje? / de quando é essa análise?': cite o 'asOf'. Quando vier 'partialNote', essa análise ficou INCOMPLETA (a Meta limitou temporariamente ou uma parte degradou) — sempre repasse esse aviso ao dono, nunca omita.",
       schema: z.object({}),
     },
   );
@@ -1639,7 +1651,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     {
       name: "get_metrics",
       description:
-        "Gasto, conversões, CPA, ROAS e receita da conta (ou campanha, se ela for a única com dado) em QUALQUER período JÁ SINCRONIZADO — SEM limite de 7 dias (usa o último dado salvo, pode estar até 1 dia desatualizado; sem chamada nova à Meta). Use para períodos LONGOS (ex: 'últimos 10/30 dias', 'esse mês'). Pra dado mais atual e recente (hoje/ontem/últimos dias ≤7d), prefira get_fresh_metrics.",
+        "Gasto, conversões, CPA, ROAS e receita da conta (ou campanha, se ela for a única com dado) em QUALQUER período JÁ SINCRONIZADO — SEM limite de 7 dias (usa o último dado salvo, pode estar até 1 dia desatualizado; sem chamada nova à Meta). Traz 'asOf' = a data do dado mais recente somado. Use para períodos LONGOS (ex: 'últimos 10/30 dias', 'esse mês'). Pra dado mais atual e recente (hoje/ontem/últimos dias ≤7d), prefira get_fresh_metrics.",
       // nullable+optional: structured-output exige que campo omissível seja nullable.
       schema: z.object({ periodDays: z.number().int().positive().nullable().optional() }),
     },

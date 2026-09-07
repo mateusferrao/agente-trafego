@@ -10,6 +10,7 @@ import {
   getMetricsData,
   listAccountsData,
   listCampaignsData,
+  latestAnalysisAsOf,
   describeDraftAudience,
   describeDraftCreative,
   listPendingData,
@@ -288,6 +289,29 @@ describe("getAccountStatusData", () => {
     );
     const res = await getAccountStatusData(db, AGENT, ORG, fakeApprovals([]));
     expect(res).not.toHaveProperty("waste");
+  });
+});
+
+describe("latestAnalysisAsOf (frescor do dado curado p/ injetar no prompt)", () => {
+  it("com run → finishedAt (a data que o chat cita ao responder 'de quando é')", async () => {
+    const finishedAt = new Date("2026-09-07T22:02:00.000Z");
+    const db = fakeDb(
+      new Map<unknown, unknown[]>([
+        [agentRuns, [{ id: "run-1", summary: null, metricsSnapshot: null, createdAt: new Date("2026-09-07T22:00:00.000Z"), finishedAt }]],
+      ]),
+    );
+    expect(await latestAnalysisAsOf(db, AGENT, ORG)).toEqual(finishedAt);
+  });
+
+  it("run sem finishedAt → cai no createdAt (mesma regra do asOf das tools)", async () => {
+    const createdAt = new Date("2026-09-07T22:00:00.000Z");
+    const db = fakeDb(new Map<unknown, unknown[]>([[agentRuns, [{ id: "run-1", summary: null, metricsSnapshot: null, createdAt, finishedAt: null }]]]));
+    expect(await latestAnalysisAsOf(db, AGENT, ORG)).toEqual(createdAt);
+  });
+
+  it("sem análise concluída → null (linha de frescor some)", async () => {
+    const db = fakeDb(new Map<unknown, unknown[]>([[agentRuns, []]]));
+    expect(await latestAnalysisAsOf(db, AGENT, ORG)).toBeNull();
   });
 });
 
