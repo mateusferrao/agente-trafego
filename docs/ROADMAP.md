@@ -64,22 +64,28 @@ Plano de construção em fatias. Decisões de arquitetura/produto = [`../CLAUDE.
 
 ## Pós-MVP — fast-follows e decisões adiadas
 
-### Fast-follows do MVP v1 (chat sem escrita conversacional na Meta — `TRAFEGO_CHAT_ADS_WRITES`)
-- **[MÉDIO] Reativar a escrita de ads pelo chat** (flip da flag) quando a qualidade da interpretação/eco estiver provada com usuários — retomar a visão do gestor completo no WhatsApp (autoria + edição + criativo por conversa). Todo o código fica pendente atrás da flag.
-- **[MÉDIO] Gerar copy por IA no site** (`regenerate_copy`): existe só no chat (desligado); o painel do site edita texto à mão. Botão "gerar copy por IA" no `draft-edit-panel`.
+### Fast-follows da escrita conversacional na Meta (`TRAFEGO_CHAT_ADS_WRITES` — agora ON)
+- ✅ **Reativar a escrita de ads pelo chat (flip da flag) — ENTREGUE (D1).** Default OFF→ON após a bateria adversarial de eco+confirma passar (roteamento anti-auto-apply + saga com compensação + nunca-auto no core). OFF vira o freio de emergência. Escrita segue atrás de eco+confirma + guardrail + binding.
+- **[MÉDIO] Gerar copy por IA no site** (`regenerate_copy`): existe só no chat; o painel do site edita texto à mão. Botão "gerar copy por IA" no `draft-edit-panel`.
 - **[MÉDIO] Editar o ALVO de uma ação pendente no site** (repontar entidade): hoje o site edita só o VALOR do `adjust_budget` antes de aprovar (C). Trocar a entidade da ação = picker + re-validação + guardrail no novo alvo.
 - **[BAIXO] `review_creative` executável** (renovar criativo) — espera geração de criativo por IA; hoje fica direção.
-- **[BAIXO] `review_audience` executável** (editar targeting de campanha VIVA) — nova mutação; hoje fica direção.
 - **[BAIXO] Recompor mídia/criativos distintos no site** (`distinctCreatives`/`mediaPreference` auto): hoje só troca manual por anúncio (workaround existe).
 - **[BAIXO] Batch-approve de recomendações no site** (aprovar várias de uma vez).
+
+### Fast-follows da iniciativa "Gestor autossuficiente no chat" (A/B/C/D)
+- **[MÉDIO] Frontend do gestor no site** (chat-first entregou a paridade; o site é o fast-follow): editar o público de um adset VIVO no site (reusar o `GeoAudienceEditor` do rascunho fora do fluxo de criação) · card de **realocação A→B** linkando as duas pernas (hoje o site mostra 2 `adjust_budget` soltos) · **decomposição de criativo** (visão + `proofStrength`/`body`) exposta na biblioteca.
+- **[BAIXO] Tool estruturada de análise de criativo (B3b)** — hoje mídia-com-legenda vira turno multimodal (o modelo do chat já vê a imagem) + `analyze_creative_media` sob eco+confirma; uma tool estruturada dedicada (schema de decomposição) seria redundante com o turno multimodal. Revisitar só se o roteamento pedir.
+- **[BAIXO] Delta-merge fino de público no `edit_audience`** — A1 tem semântica SET (o público informado VIRA o novo); editar UMA dimensão preservando as demais (merge) exigiria ler+compor o targeting atual. Targeting complexo/ambíguo → o Roy aponta pro site.
+- **[BAIXO] Repropor edição/realocação no próximo run** — como toda pendência, expira em 24h sem resposta (não re-propõe sozinha).
+- **[BAIXO] Escopo por-grupo da escrita** (hoje o grupo varre todas as contas da org, como o DM) — junto das N integrações Evolution.
 
 ### Fast-follows da iniciativa "Qualidade das recomendações + gap diz×faz" (Fatias A-E)
 - **[MÉDIO] Painel multi-LLM de revisores especialistas** via `reviewPasses` (escala/tracking/desperdício + revisor de criativo `copy-master`/`hormozi-squad`) — o seam nasce na Fatia E com 1 pass default; registrar mais passes = crescer sem reescrever o grafo.
 - **[MÉDIO] Scorecard 8-dimensões PERSISTIDO** (schema/UI avançada/B2B) — a Fatia E usa as 8 dimensões como instrumento INTERNO (prompt/priorização); persistir + expor as dims não-mensuráveis (estrutura/lance) fica p/ quando o valor se provar com uso.
 - **[BAIXO] CVR + hook-retention como benchmark de plataforma de 1ª classe** — a Fatia E4 deixou CTR + frequência como defaults de plataforma não-monetários (fiéis ao squad, overridáveis por `MarketReference`) e o custo (monetário) configurável. CVR e hook-retention ficam por ora como ORIENTAÇÃO nos blocos de conhecimento (CREATIVE_REFRESH/diagnóstico) — promovê-los a campos resolvidos (bandas + override + rating), inclusive os limiares de hook por plataforma (YouTube 70%/5s × TikTok 30%/3s × thumb-stop >30%), quando o valor se provar.
-- **[BAIXO] Auto-retry de escrita em rate-limit da Meta (#613)** — o E2E real numa conta de dev com throttle estrito (1 call/30s) mostrou o `mutate`/`restoreEntityState` fazendo 2 chamadas Graph rápidas (ler-before + escrever) e estourando o #613. Hoje degrada GRACIOSAMENTE (o apply-service mantém a aprovação PENDENTE + avisa "tenta de novo em instantes" — sem crash/perda); melhoria: o apply-job re-lançar em falha `rate_limited` p/ o BullMQ retentar com backoff (attempts+backoffMs), auto-recuperando sem intervenção do usuário. Contas de cliente reais raramente batem esse limite; por isso baixo.
+- ✅ **Auto-retry de escrita em rate-limit da Meta (#613) — ENTREGUE (D3).** O apply-job re-lança em falha `rate_limited` (`AdsPlatformError` kind rate_limited) → BullMQ retenta com backoff (`APPROVAL_APPLY_ATTEMPTS`/`APPROVAL_APPLY_BACKOFF_MS`); a idempotency_key evita duplo-apply. Antes só degradava graciosamente (pendente + "tenta de novo").
 - **[BAIXO] `set_status` via recomendação do LLM** — capacidade órfã (executável, mas nenhum `actionType` do LLM o alcança; só playbook/chat/revert). Baixo valor.
-- **[BAIXO] Autoria/edição livre de público por chat** (`adjust_audience` conversacional) — atrás da flag `TRAFEGO_CHAT_ADS_WRITES`, junto da reativação da escrita conversacional (a Fatia C entrega só a APROVAÇÃO da edição, aprovável por site+chat).
+- ✅ **Autoria/edição de público por chat (`edit_audience`) — ENTREGUE (A1).** O dono edita o público de um adset vivo conversando (semântica SET, sob eco+confirma), opt-in por binding `adjust_audience` (default OFF) + flag. A Fatia C entregou a APROVAÇÃO da edição; A1 fecha a autoria por chat.
 - **[BAIXO] Reativar (`resume_entity`) no `allowedActions` default** — decisão atual: fica OFF por padrão (o dono liga); revisar os defaults de `allowedActions` quando houver dado de uso.
 
 Consolidação de tudo que **decidimos adiar** para depois do MVP. (Deferrals que já têm
