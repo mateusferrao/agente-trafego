@@ -11,7 +11,7 @@ import type { Action, ActionTarget } from "@trafego/shared/types";
 import type { AdAccountRef, MutationResult } from "@trafego/shared/ports";
 import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY, type OrgId, type RunId } from "@trafego/shared";
 import { entityKeyOf } from "@trafego/core";
-import { canonicalizeTargeting } from "@trafego/ads-meta";
+import { targetingChanged } from "@trafego/ads-meta";
 import type { WorkerDeps } from "../composition.js";
 
 /** Ator da auditoria de escrita autônoma. */
@@ -56,7 +56,7 @@ export interface RevertResult {
 /**
  * Campos de estado relevantes ao drift COARSE (status + budgets; ignora derivados) — usado no revert
  * de pausar/retomar/status/budget. O revert de `adjust_audience` NÃO passa por aqui: ele usa o drift
- * FINO de público (`detectRevertDrift` → `canonicalizeTargeting` sobre o `targeting` cru, D4), que
+ * FINO de público (`detectRevertDrift` → `targetingChanged` sobre o `targeting` cru, D4), que
  * detecta edição CONCORRENTE de público entre o apply e o revert. Separar por tipo evita ler o
  * targeting pesado (e falso-positivar) no revert de budget/status. */
 function driftFields(state: Record<string, unknown> | null | undefined): string {
@@ -180,7 +180,9 @@ export function makeMetaToolExecutor(deps: WorkerDeps) {
         const afterTargeting = after?.[TARGETING_KEY];
         if (!afterTargeting || typeof afterTargeting !== "object") return null; // sem baseline → não bloqueia
         const current = await ports.ads.readAdSetTargeting(account, tgt.id);
-        if (canonicalizeTargeting(current) !== canonicalizeTargeting(afterTargeting as Record<string, unknown>)) {
+        // contenção (não igualdade): a Meta enriquece o read-back → só barra se um campo que
+        // ESCREVEMOS não está mais no ar (edição concorrente), ignorando os extras da Meta.
+        if (targetingChanged(current, afterTargeting as Record<string, unknown>)) {
           return { reason: "o público do conjunto mudou desde a edição — reverter sobrescreveria a mudança", current };
         }
         return null;
