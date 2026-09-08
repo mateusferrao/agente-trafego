@@ -2099,11 +2099,15 @@ export async function proposeCreateCampaign(
   if (pickerNames.length > 0) {
     const candidates = pool.map(toLibraryCandidate);
     const unresolved: string[] = [];
+    const seenPick = new Set<string>(); // dois nomes → o mesmo asset conta 1 vez (contagem/eco honestos)
     for (const nameRef of pickerNames) {
       const assetId = await pickCreativeByReference(deps.ports.llm, ac.model, nameRef, candidates, { orgId: ctx.orgId });
       const hit = assetId ? pool.find((c) => c.key === assetId) : undefined;
-      if (hit) pickedRefs.push(hit.ref);
-      else unresolved.push(nameRef);
+      if (!hit) unresolved.push(nameRef);
+      else if (!seenPick.has(creativeKey(hit.ref))) {
+        seenPick.add(creativeKey(hit.ref));
+        pickedRefs.push(hit.ref);
+      }
     }
     const listHint = 'me diz de outro jeito, ou peça "quais criativos eu tenho" que eu listo os disponíveis';
     if (pickedRefs.length === 0 || unresolved.length > 0) {
@@ -2148,8 +2152,15 @@ export async function proposeCreateCampaign(
   const targetVariants = args.forcedCreativeAssetId
     ? DEFAULT_VARIANTS
     : (pickerVariants ?? requestedAdCount ?? (distinctList.length >= 2 ? Math.min(distinctList.length, AGENT_MAX_CREATIVE_ADS) : DEFAULT_VARIANTS));
-  // distintos desejados: pedido explícito (clampado) OU todos distintos (padrão).
-  const distinctWanted = args.distinctCreatives != null ? Math.max(1, Math.min(args.distinctCreatives, targetVariants)) : targetVariants;
+  // distintos desejados: com PICKS o dono já escolheu os assets (1 por anúncio) → distinctCreatives é
+  // ignorado (senão repetiria os picks e contrariaria "distribuo 1 por anúncio"); sem picks, pedido
+  // explícito (clampado) OU todos distintos (padrão).
+  const distinctWanted =
+    pickedRefs.length > 0
+      ? targetVariants
+      : args.distinctCreatives != null
+        ? Math.max(1, Math.min(args.distinctCreatives, targetVariants))
+        : targetVariants;
   const perAd = args.forcedCreativeAssetId ? [] : composeCreatives(targetVariants, distinctWanted, distinctList);
   // nota honesta (§8) quando não há criativos distintos suficientes pra composição pedida.
   if (args.distinctCreatives != null && distinctList.length < distinctWanted) {
@@ -2159,8 +2170,10 @@ export async function proposeCreateCampaign(
   // ATERRAMENTO DA COPY (Slice 2): a copy conversa com o CRIATIVO líder (decomposição de visão já
   // computada no pool) e fala pro PÚBLICO resolvido. `explicitTargeting` é computado AQUI (uma vez)
   // e reusado no bloco de targeting abaixo — evita duplicar `assembleExplicitTargeting`.
-  const leaderForCopy = perAd[0] ?? chosen;
-  const leaderDescription = pool.find((c) => creativeKey(c.ref) === creativeKey(leaderForCopy))?.description;
+  // criativo LÍDER (1º da composição; forced/sem pool → `chosen`) — fonte única do aterramento da
+  // copy E do criativo padrão do rascunho (reusado no bloco de mídia abaixo).
+  const leadCreative = perAd[0] ?? chosen;
+  const leaderDescription = pool.find((c) => creativeKey(c.ref) === creativeKey(leadCreative))?.description;
   // público específico (sem fonte — geo amplo + o público) quando o dono indicou; senão a estratégia padrão.
   const hasAudience = aud.includeIds.length > 0 || aud.excludeIds.length > 0;
   const explicitTargeting =
@@ -2204,11 +2217,10 @@ export async function proposeCreateCampaign(
   // nº de criativos DISTINTOS de fato entre os anúncios (pro eco honesto de composição).
   const distinctUsed = new Set(copyVariants.map((v) => v.creative?.metaVideoId ?? v.creative?.metaImageHash ?? "default")).size;
 
-  // Criativo LÍDER (padrão do rascunho) = 1º da composição — RESPEITA mediaPreference (que pode ter
-  // filtrado o `chosen` cross-mídia); anúncio ÚNICO herda este padrão em vez do `chosen` da mídia
-  // errada (correção do achado do reviewer §8: pediu vídeo, não recebe imagem em silêncio). Forced/
-  // sem pool → perAd vazio → cai no `chosen`.
-  const leadCreative = perAd[0] ?? chosen;
+  // Criativo LÍDER (padrão do rascunho) = 1º da composição (`leadCreative`, computado acima) — RESPEITA
+  // mediaPreference (que pode ter filtrado o `chosen` cross-mídia); anúncio ÚNICO herda este padrão em
+  // vez do `chosen` da mídia errada (correção do achado do reviewer §8: pediu vídeo, não recebe imagem
+  // em silêncio). Forced/sem pool → perAd vazio → cai no `chosen`.
   const reuseImageHash = leadCreative.imageHash;
   const reuseVideoId = leadCreative.videoId;
   // VÍDEO se tem video_id (o imageHash acompanha como CAPA do vídeo, não descaracteriza). Anúncio de
