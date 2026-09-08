@@ -17,10 +17,12 @@ export type AccountLabel = string;
  * execução do isolamento é fast-follow — não promete clique-e-pronto).
  */
 export function adHasNoBudgetMessage(name: string, accountLabel: AccountLabel): string {
+  // Enunciado (não pergunta sim/não): num lote misto com um "Confirma?" de outra ação, um "sim"
+  // não pode ficar ambíguo entre confirmar a escrita e aceitar esta oferta (§8). O dono re-pede.
   return (
     `No Meta, anúncio não tem orçamento próprio — o orçamento fica no conjunto (ABO) ou na campanha (CBO), ` +
     `e dentro de um conjunto a Meta distribui a verba entre os anúncios automaticamente. ` +
-    `Quer que eu ajuste o orçamento no conjunto ou na campanha de *${name}*${accountLabel}? ` +
+    `Pra mexer no gasto de *${name}*${accountLabel}, é só me pedir pra ajustar o orçamento no conjunto ou na campanha dele. ` +
     `(Pra dar um orçamento só pra esse anúncio, dá pra isolá-lo num conjunto próprio — me avisa que a gente vê isso.)`
   );
 }
@@ -30,10 +32,11 @@ export function adHasNoBudgetMessage(name: string, accountLabel: AccountLabel): 
  * conjuntos dela. Oferta ajustar na campanha COM AVISO do blast radius; nunca aplica sozinho.
  */
 export function budgetLivesOnCampaignMessage(name: string, accountLabel: AccountLabel): string {
+  // Enunciado (não pergunta sim/não) — ver nota em adHasNoBudgetMessage (§8, lote misto).
   return (
     `O orçamento de *${name}*${accountLabel} é gerido na campanha (modelo CBO) — um orçamento único que a Meta ` +
     `distribui entre todos os conjuntos dela, então não dá pra ajustar só esse conjunto. ` +
-    `Quer que eu ajuste o orçamento da campanha? (vale pra todos os conjuntos dela)`
+    `Se quiser, é só me pedir pra ajustar o orçamento da campanha (vale pra todos os conjuntos dela).`
   );
 }
 
@@ -71,8 +74,10 @@ export async function resolveMisplacedBudgetMessage(
     }
     return null;
   }
-  // campanha sem orçamento próprio → provavelmente ABO (orçamento nos conjuntos). Confirma lendo o
-  // layout; só pede o conjunto se de fato é ABO com conjuntos.
+  // campanha sem orçamento próprio → ABO (orçamento nos conjuntos). Só é chamado quando a leitura
+  // fresca já achou NEM diário NEM vitalício na campanha (budgetByEntity===false) — então a campanha
+  // não tem orçamento de nenhum tipo no nível-campanha e é de fato ABO. `getCampaignBudgetLayout` lê
+  // só o daily da campanha; `campaignDailyMinor===null` casa com esse contrato (sem orçamento CBO).
   const layout = await ads.getCampaignBudgetLayout(account, id);
   if (layout.campaignDailyMinor === null && layout.adsets.length > 0) {
     return budgetLivesOnAdsetsMessage(name, accountLabel);

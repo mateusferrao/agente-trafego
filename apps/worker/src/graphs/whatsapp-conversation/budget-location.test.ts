@@ -16,12 +16,14 @@ describe("mensagens honestas de onde mora o orçamento", () => {
     expect(m).toContain("conjunto");
     expect(m).toContain("campanha");
     expect(m).toContain("isolá-lo"); // sinaliza o isolamento (fast-follow), sem prometer clique
+    expect(m).not.toContain("?"); // enunciado, não pergunta sim/não (evita ambiguidade em lote misto)
   });
   it("CBO: oferta ajustar na campanha COM aviso de blast radius (todos os conjuntos)", () => {
     const m = budgetLivesOnCampaignMessage("Conjunto X", " (Conta Y)");
     expect(m).toContain("CBO");
     expect(m).toContain("todos os conjuntos");
     expect(m).toContain("(Conta Y)");
+    expect(m).not.toContain("?"); // enunciado, não pergunta sim/não
   });
   it("ABO: pede qual conjunto ajustar (nunca chuta um)", () => {
     const m = budgetLivesOnAdsetsMessage("Campanha Z", "");

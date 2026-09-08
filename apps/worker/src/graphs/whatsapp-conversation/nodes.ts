@@ -656,6 +656,10 @@ export function makeConversationNodes(
   async function confirmWriteGate(state: WhatsappConversationStateType): Promise<WhatsappConversationUpdate> {
     const last = state.messages.at(-1) as AIMessage | undefined;
     const allCalls = last?.tool_calls ?? [];
+    // rótulo "(conta)" no eco — só em org multi-conta (evita ruído em org de 1 conta). Fonte única
+    // da decisão E do texto: `showAccount` gateia, `acctLbl` é o texto derivado.
+    const showAccount = Boolean(ctx.multiAccount && ctx.accountName);
+    const acctLbl = showAccount ? ` (${ctx.accountName})` : "";
 
     // DESCRIBE_CAPABILITIES: emite o texto HONESTO VERBATIM (o LLM parafraseava e dropava
     // linhas de limitação, ex: "config é pelo site"). É informativo puro — não coexiste com escrita.
@@ -1120,8 +1124,7 @@ export function makeConversationNodes(
       }
       const drops = res.droppedNames.length > 0 ? `\n(não achei: ${res.droppedNames.join(", ")})` : "";
       const sim = wctx.cfg.dryRun ? "Modo simulação (não aplico de verdade): " : "";
-      const account = ctx.multiAccount && ctx.accountName ? ` (${ctx.accountName})` : "";
-      const echo = `${sim}Vou trocar o público do conjunto *${adsetName}*${account} para: ${describeExplicitAudience(res.targeting)}.${drops}\n\n⚠️ Editar o público reinicia o aprendizado da Meta desse conjunto.\n\nConfirma?`;
+      const echo = `${sim}Vou trocar o público do conjunto *${adsetName}*${acctLbl} para: ${describeExplicitAudience(res.targeting)}.${drops}\n\n⚠️ Editar o público reinicia o aprendizado da Meta desse conjunto.\n\nConfirma?`;
       return {
         messages: [...answerToolCalls(allCalls, "proposto — aguardando confirmação"), new AIMessage(echo)],
         pendingWrite: { echo, expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString(), actions: [clamped] },
@@ -1165,10 +1168,9 @@ export function makeConversationNodes(
         // a perna sem orçamento pode estar em outro nível (CBO/ABO) → oferta honesta por-perna
         // (reusa a resolução da Fatia 2), senão mensagem genérica (falha transiente).
         const leg = fromCur === undefined ? fromTarget : toTarget;
-        const reallocAccountLbl = ctx.multiAccount && ctx.accountName ? ` (${ctx.accountName})` : "";
         if (wctx.ctx.budgetByEntity?.get(entityKeyOf(leg)) === false) {
           try {
-            const msg = await resolveMisplacedBudgetMessage(deps.ports.ads, wctx.account, leg.level as "campaign" | "adset", leg.id, leg.name ?? leg.id, reallocAccountLbl);
+            const msg = await resolveMisplacedBudgetMessage(deps.ports.ads, wctx.account, leg.level as "campaign" | "adset", leg.id, leg.name ?? leg.id, acctLbl);
             if (msg) return { messages: [...answerToolCalls(allCalls, "orçamento em outro nível"), new AIMessage(msg)] };
           } catch (err) {
             logger.warn({ err, entityId: leg.id }, "conversation:resolução de nível na realocação falhou");
@@ -1241,9 +1243,8 @@ export function makeConversationNodes(
         return { messages: [...answerToolCalls(allCalls, "não deu"), new AIMessage("Não consegui simular essa realocação agora — tenta de novo em instantes.")] };
       }
       const sim = wctx.cfg.dryRun ? "Modo simulação (não aplico de verdade): " : "";
-      const accountLbl = ctx.multiAccount && ctx.accountName ? ` (${ctx.accountName})` : "";
       const echo =
-        `${sim}Vou mover ${formatMoneyMinor(moveMinor, wctx.currency)}${period}${accountLbl}:\n` +
+        `${sim}Vou mover ${formatMoneyMinor(moveMinor, wctx.currency)}${period}${acctLbl}:\n` +
         `• *${fromName}* cai pra ${formatMoneyMinor(fromCur - moveMinor, wctx.currency)}${period}\n` +
         `• *${toName}* sobe pra ${formatMoneyMinor(toCur + moveMinor, wctx.currency)}${period}${clampedNote}\n\nConfirma?`;
       return {
@@ -1267,7 +1268,25 @@ export function makeConversationNodes(
       return { messages: answerToolCalls(allCalls, "Não entendi qual ação você quer. Pode repetir?") };
     }
 
-    const wctx = await loadWriteContext(deps, ctx.orgId, ctx.agentId, proposed.map((a) => a.target));
+    // Onde mora o orçamento (Gaps 1+2): mensagens honestas quando um adjust_budget mira um nível SEM
+    // orçamento próprio. NÃO aborta as OUTRAS ações do lote — a ação mal-localizada é ANOTADA (nunca
+    // dropada em silêncio) e as demais seguem. Nunca retargeta em silêncio (CBO afeta todos os conjuntos).
+    const budgetLocationNotes: string[] = [];
+    // Gap 2 (anúncio nunca tem orçamento na Meta): detecta ANTES de tocar a Meta (sem custo/erro #100).
+    const nonAdBudget: Action[] = [];
+    for (const a of proposed) {
+      if (a.type === "adjust_budget" && a.target.level === "ad") {
+        budgetLocationNotes.push(adHasNoBudgetMessage(a.target.name ?? a.target.id, acctLbl));
+      } else {
+        nonAdBudget.push(a);
+      }
+    }
+    if (nonAdBudget.length === 0) {
+      // só pedido(s) de orçamento em anúncio → devolve as explicações (sem tocar a Meta).
+      return { messages: [...answerToolCalls(allCalls, "anúncio não tem orçamento"), new AIMessage(budgetLocationNotes.join("\n\n"))] };
+    }
+
+    const wctx = await loadWriteContext(deps, ctx.orgId, ctx.agentId, nonAdBudget.map((a) => a.target));
     if (!wctx) {
       return { messages: answerToolCalls(allCalls, "Não consegui acessar a conta agora. Tenta de novo em instantes.") };
     }
@@ -1275,28 +1294,28 @@ export function makeConversationNodes(
     // budget set-absoluto do chat vem na unidade MAIOR (amountMajor) — converte p/ unidade menor
     // AGORA que a moeda da conta é conhecida (JPY≠centavos). Antes disso o guardrail/mutação nem
     // enxergariam o valor. No-op p/ pause/status/pct.
-    const resolved = proposed.map((a) => resolveBudgetMinor(a, wctx.currency));
+    const resolvedAll = nonAdBudget.map((a) => resolveBudgetMinor(a, wctx.currency));
 
-    // Onde mora o orçamento (Gaps 1+2): se um adjust_budget mira um nível SEM orçamento próprio, o
-    // eco genérico ("não consegui simular") não ajuda. Resolve ONDE o orçamento de fato mora e
-    // oferta honesta — nunca retargeta em silêncio (budget de CBO afeta TODOS os conjuntos).
-    const budgetAccountLbl = ctx.multiAccount && ctx.accountName ? ` (${ctx.accountName})` : "";
-    for (const a of resolved) {
-      if (a.type !== "adjust_budget") continue;
-      const name = a.target.name ?? a.target.id;
-      // Anúncio NUNCA tem orçamento na Meta — educativo, sem chamar a Meta (Gap 2).
-      if (a.target.level === "ad") {
-        return { messages: [...answerToolCalls(allCalls, "anúncio não tem orçamento"), new AIMessage(adHasNoBudgetMessage(name, budgetAccountLbl))] };
-      }
-      // nível sem orçamento próprio (leitura fresca OK e budget ausente) → resolve onde mora (Gap 1).
-      if ((a.target.level === "campaign" || a.target.level === "adset") && wctx.ctx.budgetByEntity?.get(entityKeyOf(a.target)) === false) {
+    // Gap 1 (CBO/ABO): nível sem orçamento próprio (leitura fresca OK e budget ausente) → oferta
+    // honesta por-ação; a ação sai do lote (anotada), as demais seguem.
+    const resolved: Action[] = [];
+    for (const a of resolvedAll) {
+      if (
+        a.type === "adjust_budget" &&
+        (a.target.level === "campaign" || a.target.level === "adset") &&
+        wctx.ctx.budgetByEntity?.get(entityKeyOf(a.target)) === false
+      ) {
         try {
-          const msg = await resolveMisplacedBudgetMessage(deps.ports.ads, wctx.account, a.target.level, a.target.id, name, budgetAccountLbl);
-          if (msg) return { messages: [...answerToolCalls(allCalls, "orçamento em outro nível"), new AIMessage(msg)] };
+          const msg = await resolveMisplacedBudgetMessage(deps.ports.ads, wctx.account, a.target.level, a.target.id, a.target.name ?? a.target.id, acctLbl);
+          if (msg) {
+            budgetLocationNotes.push(msg);
+            continue; // ação mal-localizada anotada — não segue pro eco/apply
+          }
         } catch (err) {
           logger.warn({ err, entityId: a.target.id }, "conversation:resolução de nível de orçamento falhou — segue fluxo normal");
         }
       }
+      resolved.push(a);
     }
 
     // Ativação em cadeia (a Meta não cascateia status): ativar campanha/conjunto religa a subárvore
@@ -1340,7 +1359,7 @@ export function makeConversationNodes(
           entityName: clamped.target.name ?? clamped.target.id,
           currency: wctx.currency,
           // nomeia a conta no eco só em org multi-conta (evita ruído em org de 1 conta).
-          ...(ctx.multiAccount && ctx.accountName ? { accountName: ctx.accountName } : {}),
+          ...(showAccount ? { accountName: ctx.accountName! } : {}),
         });
         frozen.push(clamped);
       } catch (err) {
@@ -1360,6 +1379,9 @@ export function makeConversationNodes(
     const dayTotal = new Set([...(wctx.ctx.touchedToday ?? []), ...frozen.map((a) => entityKeyOf(a.target))]).size;
     if (chain.chainActivated && dayTotal > wctx.cfg.maxEntitiesPerDay) parts.push(capWarningNote(dayTotal, wctx.cfg.maxEntitiesPerDay));
     if (blocked.length > 0) parts.push(`Não consigo:\n${blocked.map((b, i) => `${i + 1}. ${b}`).join("\n")}`);
+    // ofertas de "onde mora o orçamento" (Gaps 1+2): entram no MESMO eco das demais ações (não dropam
+    // as outras) — ou são a resposta inteira quando todo o pedido era orçamento mal-localizado.
+    for (const note of budgetLocationNotes) parts.push(note);
     const echo = parts.join("\n\n") || "Não consegui preparar essa ação.";
 
     const update: WhatsappConversationUpdate = {
