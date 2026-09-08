@@ -85,8 +85,9 @@ export function servingVisionKey(creativeId: string, videoId: string | undefined
   return creativeContentHash(`${creativeId}:${videoId ?? ""}`, copy);
 }
 
-/** Os 7 gatilhos de persuasão de Cialdini — contados em `persuasionSignals`. */
-const CIALDINI_TRIGGERS =
+/** Os 7 gatilhos de persuasão de Cialdini — contados em `persuasionSignals`. Fonte única
+ *  (reusado pela decomposição de visão E pela geração de copy, que se apoia nos mesmos gatilhos). */
+export const CIALDINI_TRIGGERS =
   "reciprocidade (oferece algo antes de pedir), compromisso/coerência (pequeno passo que leva ao " +
   "maior), prova social (outros já fizeram/aprovam), autoridade (credencial/especialista), afinidade " +
   "(semelhança/simpatia com quem assiste), escassez (limitado/urgente) e unidade (faz parte do mesmo " +

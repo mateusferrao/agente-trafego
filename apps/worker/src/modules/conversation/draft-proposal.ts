@@ -1167,6 +1167,9 @@ export async function refineDraft(
         businessContext: ac.businessContext,
         guidance: ac.guidance,
         ...(defaults.winnerCopy ? { winnerCopy: defaults.winnerCopy } : {}),
+        // aterramento no público do rascunho (fonte única `describeExplicitAudience`); a decomposição
+        // do criativo no refino degrada (sem o pool à mão aqui — fica no caminho de criação).
+        ...(spec.targeting?.kind === "explicit" ? { audience: describeExplicitAudience(spec.targeting) } : {}),
       },
       { orgId: ctx.orgId, adAccountId: ctx.adAccountId },
     );
@@ -2023,9 +2026,9 @@ export async function proposeCreateCampaign(
   const requestedAdCount = args.forcedCreativeAssetId ? undefined : normalizeAdCount(args.adCount);
   const compositionNotes: string[] = [];
   // pool DISTINTO priorizado (o melhor `chosen` primeiro), deduplicado por mídia, filtrado por preferência.
-  const poolRefs = args.forcedCreativeAssetId
-    ? []
-    : (await buildCreativePool(deps, ctx.orgId, ctx.adAccountId, ac.ref, ac.creativeSource)).map((c) => c.ref);
+  // Mantém os candidatos DESCRITOS (não só o ref): a decomposição de visão do líder aterra a copy.
+  const pool = args.forcedCreativeAssetId ? [] : await buildCreativePool(deps, ctx.orgId, ctx.adAccountId, ac.ref, ac.creativeSource);
+  const poolRefs = pool.map((c) => c.ref);
   const seenKey = new Set<string>();
   let distinctList = [chosen, ...poolRefs].filter((c) => (seenKey.has(creativeKey(c)) ? false : (seenKey.add(creativeKey(c)), true)));
   if (args.mediaPreference === "video" || args.mediaPreference === "image") {
@@ -2050,6 +2053,29 @@ export async function proposeCreateCampaign(
     compositionNotes.push(`Você pediu ${distinctWanted} criativos distintos, mas a conta só tem ${distinctList.length}${args.mediaPreference && args.mediaPreference !== "mixed" ? ` de ${mediaLabelPt(args.mediaPreference)}` : ""} — repeti pra completar os ${targetVariants} anúncios. Você troca cada um no site.`);
   }
 
+  // ATERRAMENTO DA COPY (Slice 2): a copy conversa com o CRIATIVO líder (decomposição de visão já
+  // computada no pool) e fala pro PÚBLICO resolvido. `explicitTargeting` é computado AQUI (uma vez)
+  // e reusado no bloco de targeting abaixo — evita duplicar `assembleExplicitTargeting`.
+  const leaderForCopy = perAd[0] ?? chosen;
+  const leaderDescription = pool.find((c) => creativeKey(c.ref) === creativeKey(leaderForCopy))?.description;
+  // público específico (sem fonte — geo amplo + o público) quando o dono indicou; senão a estratégia padrão.
+  const hasAudience = aud.includeIds.length > 0 || aud.excludeIds.length > 0;
+  const explicitTargeting =
+    hasExplicitPrimitive || hasAudience
+      ? assembleExplicitTargeting({
+          geo: geoRadius.geo,
+          ...(areas.radiusAreas.length > 0 ? { radiusAreas: areas.radiusAreas } : {}),
+          ...(args.ageMin !== undefined ? { ageMin: args.ageMin } : {}),
+          ...(args.ageMax !== undefined ? { ageMax: args.ageMax } : {}),
+          ...(args.gender ? { gender: args.gender } : {}),
+          interests: interestPrep.interests,
+          behaviors: behaviorPrep.interests,
+          includeAudienceIds: aud.includeIds,
+          excludeAudienceIds: aud.excludeIds,
+        })
+      : null;
+  const audienceForCopy = explicitTargeting ? describeExplicitAudience(explicitTargeting) : undefined;
+
   const baseCopy: CopyVariant[] = await generateCopy(
     deps.ports.llm,
     {
@@ -2060,6 +2086,9 @@ export async function proposeCreateCampaign(
       guidance: ac.guidance,
       // aterramento no que já performa (§7): a copy dos melhores anúncios veiculando.
       ...(defaults.winnerCopy ? { winnerCopy: defaults.winnerCopy } : {}),
+      // aterramento no criativo líder (gancho/ângulo/prova) e no público — degrada se ausente.
+      ...(leaderDescription ? { creativeDescription: leaderDescription } : {}),
+      ...(audienceForCopy ? { audience: audienceForCopy } : {}),
     },
     { orgId: ctx.orgId, adAccountId: ctx.adAccountId },
   );
@@ -2082,29 +2111,16 @@ export async function proposeCreateCampaign(
   // VÍDEO se tem video_id (o imageHash acompanha como CAPA do vídeo, não descaracteriza). Anúncio de
   // imagem tem imageHash e NÃO tem videoId → o videoId é o discriminador correto.
   const isVideo = Boolean(reuseVideoId);
-  // público específico (sem fonte — geo amplo + o público) quando o dono indicou; senão a estratégia padrão.
-  const hasAudience = aud.includeIds.length > 0 || aud.excludeIds.length > 0;
   // P0.2/P1: reuse_adset resolve+cacheia o público REAL da fonte AGORA (não só no apply) — o eco
   // mostra cidades/idade/expansão de verdade, e a leitura falhar BLOQUEIA em vez de virar
   // Advantage+ silencioso depois de já ter prometido "o público que já converte".
   let audienceProfile: AudienceProfile | null = null;
   let targeting: NonNullable<CampaignDraftSpec["targeting"]>;
-  if (hasExplicitPrimitive || hasAudience) {
-    // COMPÕE, não escolhe (reanálise crítica do plano): geo/idade/gênero/interesses explícitos +
-    // público salvo (quando indicado) entram no MESMO `explicit` (kind SUPERSET — colapso do antigo
-    // `custom_audiences`). Só público salvo (sem primitivo) = geo amplo (BR) + o público. A montagem
-    // é PURA e compartilhada (`assembleExplicitTargeting`) — mesma fonte usada pela edição de público.
-    targeting = assembleExplicitTargeting({
-      geo: geoRadius.geo,
-      ...(areas.radiusAreas.length > 0 ? { radiusAreas: areas.radiusAreas } : {}),
-      ...(args.ageMin !== undefined ? { ageMin: args.ageMin } : {}),
-      ...(args.ageMax !== undefined ? { ageMax: args.ageMax } : {}),
-      ...(args.gender ? { gender: args.gender } : {}),
-      interests: interestPrep.interests,
-      behaviors: behaviorPrep.interests,
-      includeAudienceIds: aud.includeIds,
-      excludeAudienceIds: aud.excludeIds,
-    });
+  if (explicitTargeting) {
+    // COMPÕE, não escolhe: geo/idade/gênero/interesses explícitos + público salvo entram no MESMO
+    // `explicit`. Já montado acima (fonte única `assembleExplicitTargeting`, reusado pelo aterramento
+    // da copy). Só público salvo (sem primitivo) = geo amplo (BR) + o público.
+    targeting = explicitTargeting;
   } else {
     const baseTargeting = resolveCreationTargeting(defaults);
     if (baseTargeting.kind === "reuse_adset") {
