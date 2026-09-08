@@ -47,6 +47,33 @@ describe("OpenRouterAdapter.complete", () => {
     expect(res.usage.costUsd).toBeUndefined();
   });
 
+  it("mapeia content parts multimodais pro wire (text/image_url/video_url)", async () => {
+    let body = "";
+    const fetchFn = vi.fn(async (_url: string, init: RequestInit) => {
+      body = String(init.body);
+      return jsonResponse(chatBody("ok"));
+    }) as unknown as typeof fetch;
+    await makeAdapter(fetchFn).complete({
+      model: "m",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "analisa" },
+            { type: "image_url", imageUrl: "data:image/png;base64,AAA" },
+            { type: "video_url", videoUrl: "data:video/mp4;base64,BBB" },
+          ],
+        },
+      ],
+    });
+    const parsed = JSON.parse(body) as { messages: { content: Array<Record<string, unknown>> }[] };
+    expect(parsed.messages[0]!.content).toEqual([
+      { type: "text", text: "analisa" },
+      { type: "image_url", image_url: { url: "data:image/png;base64,AAA" } },
+      { type: "video_url", video_url: { url: "data:video/mp4;base64,BBB" } },
+    ]);
+  });
+
   it("modelo que EXIGE reasoning (400) → retry SEM o param de reasoning (achado do E2E real)", async () => {
     const bodies: string[] = [];
     const fetchFn = vi.fn(async (_url: string, init: RequestInit) => {

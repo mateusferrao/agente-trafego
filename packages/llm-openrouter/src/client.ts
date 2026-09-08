@@ -34,7 +34,8 @@ export interface OpenRouterClientOptions {
 /** Content part no formato do OpenRouter (compatível OpenAI). */
 export type OpenRouterContentPart =
   | { readonly type: "text"; readonly text: string }
-  | { readonly type: "image_url"; readonly image_url: { readonly url: string } };
+  | { readonly type: "image_url"; readonly image_url: { readonly url: string } }
+  | { readonly type: "video_url"; readonly video_url: { readonly url: string } };
 
 export interface OpenRouterMessage {
   readonly role: "system" | "user" | "assistant" | "tool";

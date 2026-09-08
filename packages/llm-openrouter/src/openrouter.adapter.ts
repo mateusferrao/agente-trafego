@@ -180,6 +180,7 @@ export class OpenRouterAdapter implements LLMProviderPort {
   /** Mapeia uma parte de conteúdo do domínio p/ o formato OpenRouter. */
   mapPart(part: LLMContentPart): OpenRouterContentPart {
     if (part.type === "text") return { type: "text", text: part.text };
+    if (part.type === "video_url") return { type: "video_url", video_url: { url: part.videoUrl } };
     return { type: "image_url", image_url: { url: part.imageUrl } };
   }
 

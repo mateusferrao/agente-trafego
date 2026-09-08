@@ -1,6 +1,8 @@
 export type LLMTextPart = { readonly type: "text"; readonly text: string };
 export type LLMImagePart = { readonly type: "image_url"; readonly imageUrl: string };
-export type LLMContentPart = LLMTextPart | LLMImagePart;
+/** Vídeo multimodal (data-url base64 ou URL) — modelos video-capable (ex: Gemini via OpenRouter). */
+export type LLMVideoPart = { readonly type: "video_url"; readonly videoUrl: string };
+export type LLMContentPart = LLMTextPart | LLMImagePart | LLMVideoPart;
 
 export interface LLMMessage {
   readonly role: "system" | "user" | "assistant" | "tool";
