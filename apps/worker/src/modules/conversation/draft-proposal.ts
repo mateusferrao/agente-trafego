@@ -484,7 +484,10 @@ async function prepareGeo(deps: WorkerDeps, ref: AdAccountRef, queries: readonly
       continue;
     }
     if (autonomous) { dropped.push(q); continue; }
-    if (matches.length === 0) return { kind: "blocked", reason: `não achei "${q}" na busca de localização da Meta — confere o nome? (cidade, região ou país)` };
+    // 0 matches (nem cidade/região/país/bairro): em vez de travar, OFERECE o raio em torno do
+    // endereço (a Meta geocodifica qualquer string) — cobre bairro fora do catálogo da Meta. O dono
+    // aceita → o LLM re-chama com `addressAreas` (G3). Confere o nome como fallback secundário.
+    if (matches.length === 0) return { kind: "blocked", reason: `não achei "${q}" como cidade, região ou bairro no catálogo da Meta. Mas dá pra mirar um RAIO em torno dele (a Meta localiza pelo endereço) — quer que eu use um raio de ~2 km em torno de "${q}"? Se preferir outro raio ou for outro nome, me diz.` };
     const opts = matches
       .slice(0, MAX_GEO_AMBIGUOUS_OPTIONS)
       .map((m, i) => `${i + 1}. ${m.name}${m.countryCode ? ` (${m.countryCode})` : ""} — ${geoKindPt(m.kind)}`)

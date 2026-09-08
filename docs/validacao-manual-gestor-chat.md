@@ -527,6 +527,28 @@ Entrada: painel "Editar rascunho" de uma campanha de site.
 2. Objetivo de conversas no WhatsApp → o campo não é mostrado; e a API bloqueia honesto se um `linkUrl` chegar mesmo assim (defesa). ✓
 3. Em branco → mantém o herdado (a API exige URL válida; "" não regride). ✓
 
+## Criação: geo de bairro + ordem do pixel + eco honesto (S15)
+
+Conversa real do dono (mirar bairros de BH numa campanha de vendas): 4 inconsistências corrigidas.
+
+### S15-1 — Geo com qualificador resolve (retry sem o sufixo)
+Entrada: "cria pra Belo Horizonte, MG" (ou "Buritis, Belo Horizonte, MG").
+1. A busca crua dá 0 → `stripGeoQualifier` tira o sufixo após a vírgula e retenta ("Belo Horizonte" resolve; "Buritis, Belo Horizonte" → tenta "Buritis" como bairro). A msg de desambiguação não sugere mais ", MG" (o formato que quebrava). ✓
+
+### S15-2 — Pixel validado cedo (não confunde público com objetivo)
+Entrada: "campanha de vendas" numa conta SEM pixel, com público de bairros.
+1. O gate de pixel dispara **logo** (antes de resolver o geo) — o dono não é arrastado por rodadas de desambiguação de lugar. A mensagem é do OBJETIVO ("o objetivo vendas precisa de pixel; ou configure, ou eu crio de conversas no WhatsApp"), com o público intacto. ✓
+2. O Roy nunca diz "Advantage+ em [bairros]" (amplo × específico são opostos), nem mistura objetivo com público. ✓
+
+### S15-3 — Mirar bairro (neighborhood nativo)
+Entrada: "cria pra Buritis, Castelo e Gutierrez" (bairros de BH).
+1. A busca inclui `neighborhood` — bairros no catálogo da Meta resolvem e viram `geo_locations.neighborhoods` (segmentação exata do bairro, sem raio). ✓
+
+### S15-4 — Bairro fora do catálogo → oferta de raio (fallback)
+Entrada: um bairro que a Meta não tem no catálogo.
+1. Em vez de travar "não achei", o Roy **oferece um raio** (~2 km) em torno do endereço ("a Meta localiza pelo endereço — quer um raio de ~2 km em torno de 'X'?"). ✓
+2. O dono aceita → o Roy re-chama create_campaign com `addressAreas:[{address:"X, cidade", radiusKm:2}]` no lugar do geo que não resolveu; a Meta geocodifica e mira o círculo (`custom_locations`). Os que resolveram seguem em geo. ✓
+
 ## Fast-follows (residuais aceitos / adiados — ROADMAP)
 - **Conta do criativo — estagiar bytes p/ auto-completar após focar**: o núcleo está corrigido (régua inequívoca de 3 níveis idêntica ao turno; ambíguo→pergunta; save casa com a confirmação do Roy). Resta só: no caso AMBÍGUO (sem sole/foco/legenda), o intake pergunta mas não estagia os bytes → o dono reenvia depois de focar. Estagiar (Redis) + auto-completar quando o foco resolver fecha isso (ver ROADMAP).
 - **Gradação do desgaste por severidade (2 × 3 sinais)**: hoje aging×fadiga é binário (ainda entrega × não entrega); um aging SEVERO (3 sinais, prestes a cair) usa a mesma mensagem de aging leve — dá pra graduar a urgência do "prepare o sucessor".

@@ -136,6 +136,8 @@ Copy gerada (create_campaign/copy_campaign/regenerate_copy/adjust_draft): "model
 Escolha de criativo ao criar (create_campaign): no passo de criativo SEMPRE ofereça a escolha — "quer escolher os criativos (me diz os nomes, ou peça a lista) ou eu escolho pela melhor performance?". Se ele escolher, passe os nomes em creatives (eu resolvo e distribuo 1 por anúncio); se pedir a lista, use get_top_creatives; se deixar com você, é só criar sem creatives. Trocar o criativo de um anúncio depois = adjust_draft (setAdCreative).
 
 Público ao criar (honestidade §7): NUNCA diga "Advantage+" (público amplo) junto de lugares específicos — são coisas opostas. Se o dono deu cidades/bairros, o público é ESPECÍFICO (não amplo); só chame de amplo/Advantage+ quando NÃO houver lugar/idade/gênero/interesse. E não afirme que aplicou um lugar antes de ele resolver — quem resolve o geo é a tool (o eco da proposta é a verdade). "Objetivo" (vendas/leads/conversas) e "público" (quem vê: lugar/idade/interesse) são coisas diferentes — não misture ao resumir; um bloqueio de pixel é do OBJETIVO, nunca do público.
+
+Bairro/lugar que não resolve: a busca de geo tenta cidade/região/país/bairro. Se um lugar não achar, eu ofereço um RAIO em torno do endereço. Quando o dono aceitar o raio, RE-CHAME create_campaign passando esse lugar em addressAreas (ex: addressAreas:[{address:"Buritis, Belo Horizonte", radiusKm:2}]) NO LUGAR do geo que não resolveu — inclua a cidade no address pra a Meta localizar certo; mantenha o resto do pedido. Os que resolveram como bairro/cidade seguem em geo normalmente.
 `;
 
 /** Cauda de ESCRITA DESLIGADA (v1 default) — autoria/edição/ação vivem na plataforma; o chat
