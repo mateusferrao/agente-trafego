@@ -1094,6 +1094,21 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
         logger.info({ runId: state.runId, kind: top.kind, reason: proposal.reason }, "propose_drafts:degrada → recomendação");
         return {};
       }
+      // G15: QUALQUER outro bloqueio com motivo (sem Página, sem criativo reusável, formato não-clonável,
+      // objetivo-exige-pixel) NÃO some em silêncio — vira nudge honesto (diz×faz, §7): o agente detectou
+      // a oportunidade e diz por que não consegue montar sozinho. Antes caía no `return {}` mudo.
+      if (proposal.kind === "blocked") {
+        await deps.db.insert(recommendations).values({
+          orgId: state.orgId,
+          runId: state.runId,
+          title: creationRecTitle(top.kind),
+          rationale: `${top.rationale} Mas não consegui montar sozinho: ${proposal.reason}`,
+          kind: "human_direction",
+          riskLevel: "low",
+        });
+        logger.info({ runId: state.runId, kind: top.kind, reason: proposal.reason }, "propose_drafts:bloqueado → nudge honesto");
+        return {};
+      }
       if (proposal.kind !== "draft") return {};
 
       const toolKey = "create_campaign";
