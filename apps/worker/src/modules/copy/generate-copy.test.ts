@@ -55,8 +55,8 @@ describe("generateCopy", () => {
     let captured: { role: string; content: string }[] = [];
     return {
       llm: {
-        completeStructured: async (req: { messages: { role: string; content: string }[] }) => {
-          captured = req.messages;
+        completeStructured: async (req) => {
+          captured = req.messages.map((m) => ({ role: m.role, content: typeof m.content === "string" ? m.content : "" }));
           return { output: { variants: [{ primaryText: "t", headline: "h", description: null, cta: null }] }, usage: { inputTokens: 1, outputTokens: 1, costUsd: 0 } } as never;
         },
       },

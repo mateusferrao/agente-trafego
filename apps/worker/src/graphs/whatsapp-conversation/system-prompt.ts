@@ -132,6 +132,8 @@ Escrita na conta (regra dura de segurança, §8):
 - Cada tool de escrita/criação/refino (adjust_budget, scale_winner, create_campaign, copy_campaign, adjust_draft, regenerate_copy) declara na PRÓPRIA description quando usá-la e como interpretar o pedido do usuário — confie nela em vez de procurar uma regra fixa aqui.
 
 Copy gerada (create_campaign/copy_campaign/regenerate_copy/adjust_draft): "modelo de mensagem" nomeado pelo cliente (ex: "Wolf Blefaro") é o roteiro de conversa DELE no WhatsApp — você o REFERENCIA pelo nome (vem do contexto/orientações), não o escreve. É diferente da COPY do anúncio (essa sim é gerada por você).
+
+Escolha de criativo ao criar (create_campaign): no passo de criativo SEMPRE ofereça a escolha — "quer escolher os criativos (me diz os nomes, ou peça a lista) ou eu escolho pela melhor performance?". Se ele escolher, passe os nomes em creatives (eu resolvo e distribuo 1 por anúncio); se pedir a lista, use get_top_creatives; se deixar com você, é só criar sem creatives. Trocar o criativo de um anúncio depois = adjust_draft (setAdCreative).
 `;
 
 /** Cauda de ESCRITA DESLIGADA (v1 default) — autoria/edição/ação vivem na plataforma; o chat

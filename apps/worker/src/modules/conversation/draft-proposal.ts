@@ -44,7 +44,7 @@ import { createAnalysisRepo } from "../analysis/repo.js";
 import { loadEnabledTools } from "../tools/enabled.js";
 import { generateCopy } from "../copy/generate-copy.js";
 import { createVisionResolver, creativeContentHash, servingVisionKey } from "../vision/resolver.js";
-import { pickLibraryCreativeByContext, type MatchContext } from "../creative/match-library.js";
+import { pickCreativeByReference, pickLibraryCreativeByContext, type MatchContext } from "../creative/match-library.js";
 import { joinBalloons } from "../notify/split.js";
 import { assembleExplicitTargeting, hasExplicitContent, type ExplicitTargetingParts } from "./explicit-targeting.js";
 
@@ -83,16 +83,18 @@ export interface DraftProposalContext {
 export type ChatDraftProposal =
   | { readonly kind: "draft"; readonly echo: string; readonly approvalId: string; readonly draftId: string }
   | { readonly kind: "action"; readonly action: Action }
-  // passo agressivo, intent aberto: o agente PERGUNTA (subir seguro vs duplicar) e re-chama
-  // proposeScaleWinner com `choice`. Nada é criado ainda.
+  // o agente PERGUNTA e nada é criado ainda; o usuário responde e o LLM re-chama a tool. Dois usos:
+  // (1) passo agressivo de escala (subir seguro vs duplicar) → re-chama proposeScaleWinner com `choice`
+  //     (carrega winnerLabel/entityId/… informativos); (2) picker de criativo (Slice 3): faltou escolha
+  //     ou nome ambíguo → só o `echo` da pergunta. Os campos de escala são opcionais (só o eco é lido).
   | {
       readonly kind: "ask";
       readonly echo: string;
-      readonly winnerLabel: string;
-      readonly entityId: string;
-      readonly entityLevel: "campaign" | "adset";
-      readonly raisePct: number;
-      readonly duplicatePct: number;
+      readonly winnerLabel?: string;
+      readonly entityId?: string;
+      readonly entityLevel?: "campaign" | "adset";
+      readonly raisePct?: number;
+      readonly duplicatePct?: number;
     }
   | { readonly kind: "blocked"; readonly reason: string };
 
@@ -1062,6 +1064,13 @@ export interface RefineDraftPatch {
     readonly description?: string;
     readonly adName?: string;
   }[];
+  /** TROCAR o criativo de anúncios específicos (picker de chat, Slice 3): `creative` é o NOME/descrição
+   *  que o dono disse — resolvido determinístico p/ asset (veiculando + biblioteca); ambíguo/não-achado
+   *  → bloqueia honesto (nunca troca pelo errado). Só o `creative` do slot muda (o texto fica). */
+  readonly setAdCreative?: readonly {
+    readonly index: number;
+    readonly creative: string;
+  }[];
 }
 
 export type RefineResult = { readonly kind: "ok"; readonly echo: string } | { readonly kind: "blocked"; readonly reason: string };
@@ -1104,7 +1113,7 @@ export function scaleForbiddenRefineField(patch: RefineDraftPatch): "objective" 
     has(patch.addBehaviors) || has(patch.removeBehaviors) || has(patch.narrowBehaviors) || has(patch.radiusKm) ||
     has(patch.addressAreas) || has(patch.addAudiences) || has(patch.excludeAudiences) || has(patch.removeAudiences);
   if (touchesAudience) return "targeting";
-  if (patch.regenerateCopy === true || patch.variantsCount !== undefined || has(patch.copyEdits) || has(patch.distinctCreatives) || has(patch.mediaPreference)) return "copyVariants";
+  if (patch.regenerateCopy === true || patch.variantsCount !== undefined || has(patch.copyEdits) || has(patch.setAdCreative) || has(patch.distinctCreatives) || has(patch.mediaPreference)) return "copyVariants";
   if (has(patch.campaignName)) return "campaignName";
   if (has(patch.adsetName)) return "adsetName";
   return null;
@@ -1342,6 +1351,27 @@ export async function refineDraft(
         ...(e.description != null ? { description: e.description } : {}),
         ...(e.adName != null ? { adName: e.adName } : {}),
       };
+    }
+    edit.copyVariants = arr;
+  }
+
+  // TROCA do criativo por anúncio (picker de chat, Slice 3): "troca o anúncio 2 pro vídeo da praia".
+  // Resolve o NOME pro asset com o matcher que NÃO chuta (ambíguo → bloqueia honesto); troca só o
+  // `creative` do slot (o texto da copy fica). Índice fora do rascunho → bloqueia (nunca troca o errado).
+  if (kind === "from_scratch" && patch.setAdCreative?.length) {
+    const arr = [...(edit.copyVariants ?? currentVariants)];
+    const pool = await buildCreativePool(deps, ctx.orgId, ctx.adAccountId, ac.ref, ac.creativeSource);
+    const candidates = pool.map(toLibraryCandidate);
+    for (const e of patch.setAdCreative) {
+      if (e.index < 0 || e.index >= arr.length) {
+        return { kind: "blocked", reason: `esse rascunho tem ${arr.length} anúncio(s) — não achei o anúncio nº ${e.index + 1} pra trocar o criativo.` };
+      }
+      const assetId = await pickCreativeByReference(deps.ports.llm, ac.model, e.creative, candidates, { orgId: ctx.orgId });
+      const hit = assetId ? pool.find((c) => c.key === assetId) : undefined;
+      if (!hit) {
+        return { kind: "blocked", reason: `não achei o criativo "${e.creative}" pra pôr no anúncio nº ${e.index + 1}. Me diz de outro jeito, ou peça "quais criativos eu tenho" que eu listo.` };
+      }
+      arr[e.index] = { ...arr[e.index]!, creative: creativeRefOf(hit.ref) };
     }
     edit.copyVariants = arr;
   }
@@ -1623,6 +1653,26 @@ export function fillDistinctCreatives(
 export function normalizeAdCount(adCount: number | undefined): number | undefined {
   if (adCount == null || !Number.isFinite(adCount)) return undefined;
   return Math.max(1, Math.min(Math.round(adCount), MAX_ADS_PER_DRAFT));
+}
+
+/**
+ * Política do PICKER de criativo (Slice 3): o dono ESCOLHEU `picked` criativos por nome; decide
+ * quantos anúncios e se o agente completa o resto. `agent` = completa os slots faltantes pela
+ * estratégia; `only_picked` = só os escolhidos (reduz o nº de anúncios ao que ele nomeou). Picks
+ * cobrindo tudo (`picked >= adCount`) → usa os escolhidos, 1 por anúncio. Sem decisão E faltando
+ * criativo → `ask` (o Roy pergunta: completo ou você escolhe mais). PURO/testável. */
+export type CreativeFill =
+  | { readonly decision: "ask" }
+  | { readonly decision: "agent"; readonly variants: number }
+  | { readonly decision: "only_picked"; readonly variants: number };
+
+export function resolveCreativeFill(picked: number, adCount: number, fill: "agent" | "only_picked" | undefined): CreativeFill {
+  const target = Math.max(1, adCount);
+  if (picked <= 0) return { decision: "agent", variants: target }; // sem picks → estratégia (comportamento atual)
+  if (picked >= target) return { decision: "only_picked", variants: target }; // escolhas cobrem os anúncios
+  if (fill === "agent") return { decision: "agent", variants: target };
+  if (fill === "only_picked") return { decision: "only_picked", variants: picked };
+  return { decision: "ask" }; // faltando criativo e sem decisão → pergunta ao dono
 }
 
 /** Preferência de MÍDIA que o dono pode pedir pra composição (o adapter/estratégia escolhe QUAIS). */
@@ -1911,6 +1961,14 @@ export async function proposeCreateCampaign(
     readonly distinctCreatives?: number;
     /** preferência de MÍDIA da composição — "video" | "image" | "mixed". O agente escolhe os assets. */
     readonly mediaPreference?: MediaPreference;
+    /** CRIATIVOS escolhidos pelo dono por NOME/descrição (picker de chat, Slice 3): cada um resolvido
+     *  determinístico p/ asset (veiculando + biblioteca) e distribuído 1/anúncio. Ambíguo/não-achado →
+     *  pergunta (nunca chuta). Vazio → o agente escolhe pela estratégia (comportamento anterior). */
+    readonly creatives?: readonly string[];
+    /** o que fazer quando o dono escolheu MENOS criativos que anúncios (`creatives` < `adCount`):
+     *  "agent" completa o resto pela performance; "only_picked" reduz os anúncios aos escolhidos.
+     *  Ausente com faltante → pergunta (decisão do dono). */
+    readonly fillRemaining?: "agent" | "only_picked";
   },
   origin: DraftOrigin = "on_demand",
   opts: { readonly autonomous?: boolean; readonly minMonthlyReach?: number; readonly requireResolvedAudience?: boolean } = {},
@@ -2029,22 +2087,67 @@ export async function proposeCreateCampaign(
   // Mantém os candidatos DESCRITOS (não só o ref): a decomposição de visão do líder aterra a copy.
   const pool = args.forcedCreativeAssetId ? [] : await buildCreativePool(deps, ctx.orgId, ctx.adAccountId, ac.ref, ac.creativeSource);
   const poolRefs = pool.map((c) => c.ref);
+
+  // PICKER (Slice 3): o dono ESCOLHEU criativos por nome ("o campeão", "o vídeo da praia"). Resolve
+  // cada nome pro asset com o matcher que NÃO chuta (pickCreativeByReference → null quando ambíguo);
+  // falha de resolução OU faltando criativo sem decisão → PERGUNTA (nunca cria com o criativo errado
+  // nem em silêncio). Sem picks → segue a estratégia (comportamento atual).
+  const pickerNames = args.forcedCreativeAssetId ? [] : (args.creatives ?? []).map((s) => s.trim()).filter(Boolean);
+  const pickedRefs: ChosenCreative[] = [];
+  let pickerVariants: number | undefined;
+  let pickerAgentFill = false;
+  if (pickerNames.length > 0) {
+    const candidates = pool.map(toLibraryCandidate);
+    const unresolved: string[] = [];
+    for (const nameRef of pickerNames) {
+      const assetId = await pickCreativeByReference(deps.ports.llm, ac.model, nameRef, candidates, { orgId: ctx.orgId });
+      const hit = assetId ? pool.find((c) => c.key === assetId) : undefined;
+      if (hit) pickedRefs.push(hit.ref);
+      else unresolved.push(nameRef);
+    }
+    const listHint = 'me diz de outro jeito, ou peça "quais criativos eu tenho" que eu listo os disponíveis';
+    if (pickedRefs.length === 0 || unresolved.length > 0) {
+      return {
+        kind: "ask",
+        echo:
+          unresolved.length > 0
+            ? `Não achei ${unresolved.length === 1 ? "o criativo" : "os criativos"}: ${unresolved.join(", ")} — ${listHint}.`
+            : `Não achei os criativos que você citou — ${listHint}.`,
+      };
+    }
+    const adCount = requestedAdCount ?? pickedRefs.length;
+    const fill = resolveCreativeFill(pickedRefs.length, adCount, args.fillRemaining);
+    if (fill.decision === "ask") {
+      const faltam = adCount - pickedRefs.length;
+      return {
+        kind: "ask",
+        echo: `Você escolheu ${pickedRefs.length} criativo(s) pra ${adCount} anúncios. Completo ${faltam === 1 ? "o que falta" : `os outros ${faltam}`} com os que performam melhor, ou você quer escolher mais? (responda "completa" ou me diz os outros)`,
+      };
+    }
+    pickerVariants = fill.variants;
+    pickerAgentFill = fill.decision === "agent";
+  }
+
   const seenKey = new Set<string>();
-  let distinctList = [chosen, ...poolRefs].filter((c) => (seenKey.has(creativeKey(c)) ? false : (seenKey.add(creativeKey(c)), true)));
-  if (args.mediaPreference === "video" || args.mediaPreference === "image") {
+  // seed da composição: com picks, os ESCOLHIDOS lideram (+ pool só quando o dono pediu pra completar);
+  // sem picks, o comportamento atual (melhor `chosen` primeiro).
+  const seedList = pickedRefs.length > 0 ? [...pickedRefs, ...(pickerAgentFill ? poolRefs : [])] : [chosen, ...poolRefs];
+  let distinctList = seedList.filter((c) => (seenKey.has(creativeKey(c)) ? false : (seenKey.add(creativeKey(c)), true)));
+  // filtro de mídia NÃO se aplica quando o dono escolheu assets específicos (a escolha explícita vence).
+  if (pickedRefs.length === 0 && (args.mediaPreference === "video" || args.mediaPreference === "image")) {
     const filtered = filterByMedia(distinctList, args.mediaPreference);
     if (filtered.length === 0) compositionNotes.push(`Não achei criativo ${mediaLabelPt(args.mediaPreference)} pra reusar — usei os criativos que a conta tem. Você troca cada um no site.`);
     else distinctList = filtered;
-  } else if (args.mediaPreference === "mixed") {
+  } else if (pickedRefs.length === 0 && args.mediaPreference === "mixed") {
     // "vídeos E imagens" → GARANTE os dois tipos entre os distintos (alterna); avisa se só há um tipo.
     const mixed = interleaveMedia(distinctList);
     distinctList = mixed.ordered;
     if (!(mixed.hasVideo && mixed.hasImage)) compositionNotes.push(`Você pediu vídeos e imagens, mas a conta só tem ${mixed.hasVideo ? "vídeos" : "imagens"} reusáveis — usei o que há. Você troca cada um no site.`);
   }
-  // targetVariants: adCount pedido vence; senão, multi só quando há ≥2 distintos (senão o padrão de copy).
+  // targetVariants: picker manda; senão adCount pedido; senão multi só quando há ≥2 distintos.
   const targetVariants = args.forcedCreativeAssetId
     ? DEFAULT_VARIANTS
-    : (requestedAdCount ?? (distinctList.length >= 2 ? Math.min(distinctList.length, AGENT_MAX_CREATIVE_ADS) : DEFAULT_VARIANTS));
+    : (pickerVariants ?? requestedAdCount ?? (distinctList.length >= 2 ? Math.min(distinctList.length, AGENT_MAX_CREATIVE_ADS) : DEFAULT_VARIANTS));
   // distintos desejados: pedido explícito (clampado) OU todos distintos (padrão).
   const distinctWanted = args.distinctCreatives != null ? Math.max(1, Math.min(args.distinctCreatives, targetVariants)) : targetVariants;
   const perAd = args.forcedCreativeAssetId ? [] : composeCreatives(targetVariants, distinctWanted, distinctList);

@@ -138,6 +138,19 @@ function parseCopyEdits(v: unknown): { index: number; headline?: string; primary
   return out;
 }
 
+/** Normaliza os setAdCreative vindos do LLM (índice + nome do criativo), filtrando entradas inválidas. */
+function parseSetAdCreative(v: unknown): { index: number; creative: string }[] {
+  if (!Array.isArray(v)) return [];
+  const out: { index: number; creative: string }[] = [];
+  for (const e of v) {
+    if (!e || !Number.isInteger((e as { index?: unknown }).index)) continue;
+    const o = e as Record<string, unknown>;
+    if (typeof o["creative"] !== "string" || !o["creative"].trim()) continue;
+    out.push({ index: o["index"] as number, creative: o["creative"].trim() });
+  }
+  return out;
+}
+
 const MS_PER_HOUR = 60 * 60 * 1000;
 /** Rótulo do bot no transcript ambiente (outbound no transcript = fast-follow; hoje sem uso real). */
 const GROUP_BOT_LABEL = "Assistente";
@@ -752,6 +765,10 @@ export function makeConversationNodes(
                 const edits = parseCopyEdits(a["copyEdits"]);
                 return edits.length > 0 ? { copyEdits: edits } : {};
               })(),
+              ...((): { setAdCreative?: ReturnType<typeof parseSetAdCreative> } => {
+                const sets = parseSetAdCreative(a["setAdCreative"]);
+                return sets.length > 0 ? { setAdCreative: sets } : {};
+              })(),
             };
       const res = await refineDraft(deps, dctxRefine, active.draftId, patch);
       if (res.kind === "blocked") {
@@ -822,6 +839,8 @@ export function makeConversationNodes(
               const interests = strList(args["interests"]);
               const behaviors = strList(args["behaviors"]);
               const addressAreas = areaList(args["addressAreas"]);
+              const creatives = strList(args["creatives"]);
+              const fill = args["fillRemaining"];
               return proposeCreateCampaign(deps, dctx, {
                 ...(typeof args["name"] === "string" && args["name"].trim().length > 0 ? { name: args["name"].trim() } : {}),
                 // valida o goal contra a taxonomia neutra ANTES de propor: goal inválido (o LLM
@@ -843,6 +862,8 @@ export function makeConversationNodes(
                 ...(typeof args["adCount"] === "number" ? { adCount: args["adCount"] as number } : {}),
                 ...(typeof args["distinctCreatives"] === "number" ? { distinctCreatives: args["distinctCreatives"] as number } : {}),
                 ...(isMediaPreference(args["mediaPreference"]) ? { mediaPreference: args["mediaPreference"] } : {}),
+                ...(creatives && creatives.length > 0 ? { creatives } : {}),
+                ...(fill === "agent" || fill === "only_picked" ? { fillRemaining: fill } : {}),
               });
             })();
       const expiresAt = new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString();

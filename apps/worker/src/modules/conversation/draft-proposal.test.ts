@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, interleaveMedia, normalizeAdCount, recoverOpenDraft, resolveCreationTargeting, resolveProposedExplicitTargeting, scaleForbiddenRefineField } from "./draft-proposal.js";
+import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, interleaveMedia, normalizeAdCount, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField } from "./draft-proposal.js";
 import type { CopyVariant } from "@trafego/shared";
 import type { CampaignDraftSpec } from "@trafego/shared";
 import { creativeContentHash } from "../vision/resolver.js";
@@ -627,9 +627,33 @@ describe("scaleForbiddenRefineField (G16 — escala não edita o herdado)", () =
     expect(scaleForbiddenRefineField({ ageMin: 25 })).toBe("targeting");
     expect(scaleForbiddenRefineField({ regenerateCopy: true })).toBe("copyVariants");
     expect(scaleForbiddenRefineField({ variantsCount: 3 })).toBe("copyVariants");
+    expect(scaleForbiddenRefineField({ setAdCreative: [{ index: 0, creative: "o campeão" }] })).toBe("copyVariants");
     expect(scaleForbiddenRefineField({ campaignName: "x" })).toBe("campaignName");
   });
   it("regenerateCopy:false NÃO é edição (não trava)", () => {
     expect(scaleForbiddenRefineField({ regenerateCopy: false })).toBeNull();
+  });
+});
+
+describe("resolveCreativeFill (política de faltante do picker — Slice 3)", () => {
+  it("sem picks → o agente escolhe todos (comportamento atual)", () => {
+    expect(resolveCreativeFill(0, 3, undefined)).toEqual({ decision: "agent", variants: 3 });
+    expect(resolveCreativeFill(0, 1, "only_picked")).toEqual({ decision: "agent", variants: 1 });
+  });
+  it("picks ≥ anúncios → usa só os escolhidos (nunca completa à toa)", () => {
+    expect(resolveCreativeFill(3, 3, undefined)).toEqual({ decision: "only_picked", variants: 3 });
+    expect(resolveCreativeFill(5, 3, undefined)).toEqual({ decision: "only_picked", variants: 3 });
+  });
+  it("picks < anúncios sem decisão → PERGUNTA (não decide sozinho, §8)", () => {
+    expect(resolveCreativeFill(2, 5, undefined)).toEqual({ decision: "ask" });
+  });
+  it("picks < anúncios, fill=agent → completa o resto pela performance (mantém o adCount)", () => {
+    expect(resolveCreativeFill(2, 5, "agent")).toEqual({ decision: "agent", variants: 5 });
+  });
+  it("picks < anúncios, fill=only_picked → reduz os anúncios aos escolhidos", () => {
+    expect(resolveCreativeFill(2, 5, "only_picked")).toEqual({ decision: "only_picked", variants: 2 });
+  });
+  it("adCount 0/negativo → clampa pra ≥1", () => {
+    expect(resolveCreativeFill(0, 0, undefined)).toEqual({ decision: "agent", variants: 1 });
   });
 });
