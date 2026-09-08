@@ -20,7 +20,7 @@ import {
   listRecommendationsData,
   enrichRecommendationsLiveStatus,
   campaignStatusData,
-  liveActiveCampaignsNotCached,
+  liveCampaignsNotCached,
   describePartialRun,
   renderWhatsappNumber,
   resolveWhatsappNumber,
@@ -806,8 +806,35 @@ describe("listPendingData", () => {
     const db = fakeDb(new Map([[campaignDrafts, [draftRow]]]));
     const res = await listPendingData(db, fakeApprovals([activationApproval as unknown as Approval]), ORG);
     expect(res).toEqual([
-      { kind: "activation", id: "ap-act-1", reason: expect.stringContaining("ativar"), expiresAt: "2026-08-21T00:00:00.000Z" },
+      { kind: "activation", id: "ap-act-1", entityName: null, reason: expect.stringContaining("ativar"), expiresAt: "2026-08-21T00:00:00.000Z" },
     ]);
+  });
+
+  it("ativação NOMEADA: rascunho com campaignName → entityName + reason cita o nome (ativar por referência)", async () => {
+    const activationApproval = {
+      id: "ap-act-2",
+      kind: "activation",
+      orgId: ORG,
+      agentId: AGENT,
+      runId: null,
+      contactId: null,
+      status: "pending",
+      draftId: "draft-2",
+      resolvedReason: null,
+      expiresAt: new Date("2026-08-21T00:00:00.000Z"),
+      createdAt: new Date("2026-08-20T00:00:00.000Z"),
+    };
+    const draftRow = {
+      id: "draft-2",
+      kind: "from_scratch",
+      spec: { version: 1, currency: "BRL", dailyBudgetMinor: 5000, activation: "paused", objective: "messaging_started", campaignName: "CaquiAI - conversa" },
+    };
+    const db = fakeDb(new Map([[campaignDrafts, [draftRow]]]));
+    const [item] = (await listPendingData(db, fakeApprovals([activationApproval as unknown as Approval]), ORG)) as Array<{ kind: string; entityName: string | null; reason: string }>;
+    expect(item?.kind).toBe("activation");
+    expect(item?.entityName).toBe("CaquiAI - conversa");
+    expect(item?.reason).toContain("CaquiAI - conversa");
+    expect(item?.reason).toContain("ativar");
   });
 
   it("rascunho de CRIAÇÃO entra no list_pending (aprovável/recusável por id, não só no eco de 30min)", async () => {
@@ -1114,7 +1141,7 @@ describe("describePartialRun (honestidade sobre completude — achado do run par
   });
 });
 
-describe("liveActiveCampaignsNotCached (gap de sincronização — pivô saúde)", () => {
+describe("liveCampaignsNotCached (gap de sincronização — pivô saúde)", () => {
   const ctx = { orgId: "o1", agentId: "ag1", adAccountId: "acc1" } as never;
   const account = [{ metaAdAccountId: "act_1", name: "X", currency: "BRL", accountToken: "tok", connToken: null }];
   function deps(listEntities: () => Promise<unknown>) {
@@ -1125,31 +1152,43 @@ describe("liveActiveCampaignsNotCached (gap de sincronização — pivô saúde)
     } as never;
   }
 
-  it("campanha ATIVA na Meta sem estar no cache → aparece na lista de gaps", async () => {
+  it("campanha GERENCIÁVEL (ativa OU pausada) fora do cache → aparece com o status; pausada incluída", async () => {
     const d = deps(async () => [
       { id: "c1", name: "Já cacheada", status: "active" },
       { id: "c2", name: "Campanha nova", status: "active" },
       { id: "c3", name: "Pausada, nunca cacheada", status: "paused" },
     ]);
-    const gaps = await liveActiveCampaignsNotCached(d, ctx, new Set(["c1"]));
-    expect(gaps).toEqual([{ id: "c2", name: "Campanha nova" }]);
+    const gaps = await liveCampaignsNotCached(d, ctx, new Set(["c1"]));
+    expect(gaps).toEqual([
+      { id: "c2", name: "Campanha nova", status: "active" },
+      { id: "c3", name: "Pausada, nunca cacheada", status: "paused" },
+    ]);
   });
 
-  it("nada de novo (tudo já cacheado ou inativo) → lista vazia", async () => {
+  it("archived/deleted (terminais) NÃO entram — só gerenciáveis", async () => {
+    const d = deps(async () => [
+      { id: "c2", name: "Ativa", status: "active" },
+      { id: "c4", name: "Arquivada", status: "archived" },
+      { id: "c5", name: "Deletada", status: "deleted" },
+    ]);
+    expect(await liveCampaignsNotCached(d, ctx, new Set())).toEqual([{ id: "c2", name: "Ativa", status: "active" }]);
+  });
+
+  it("nada de novo (tudo já cacheado) → lista vazia", async () => {
     const d = deps(async () => [{ id: "c1", name: "Já cacheada", status: "active" }]);
-    expect(await liveActiveCampaignsNotCached(d, ctx, new Set(["c1"]))).toEqual([]);
+    expect(await liveCampaignsNotCached(d, ctx, new Set(["c1"]))).toEqual([]);
   });
 
   it("Meta indisponível/lenta → degrada em lista vazia (best-effort, não derruba o turno)", async () => {
     const d = deps(async () => {
       throw new Error("timeout");
     });
-    expect(await liveActiveCampaignsNotCached(d, ctx, new Set())).toEqual([]);
+    expect(await liveCampaignsNotCached(d, ctx, new Set())).toEqual([]);
   });
 
   it("conta não encontrada → lista vazia", async () => {
     const d = { db: fakeDb(new Map()), ports: { ads: { listEntities: vi.fn() }, vault: { decrypt: (t: string) => t } }, conversation: { liveFetchTimeoutMs: 1000 } } as never;
-    expect(await liveActiveCampaignsNotCached(d, ctx, new Set())).toEqual([]);
+    expect(await liveCampaignsNotCached(d, ctx, new Set())).toEqual([]);
   });
 });
 

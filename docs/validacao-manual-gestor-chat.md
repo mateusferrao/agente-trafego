@@ -483,6 +483,22 @@ Entrada (rascunho pendente): "troca o anúncio 2 pro vídeo da praia".
 1. `adjust_draft` (`setAdCreative`) resolve o nome pro asset e substitui **só o `creative` do slot** (o texto da copy fica). Índice fora do rascunho ou nome não achado → bloqueia honesto (nunca troca o errado). ✓
 2. Numa **escala/duplicata** (não from_scratch), trocar criativo é herdado do vencedor → o Roy responde honesto que não dá (não re-ecoa mudo). ✓
 
+## Ativar campanha PAUSADA pelo chat (Roy enxerga inativas)
+
+Bug reportado: o dono criou "CaquiAI - conversa" (nasce pausada), pediu "ativa a campanha CaquiAI - conversa" e o Roy não achou — pediu o ID. Toda campanha pausada nunca-analisada era invisível às tools de descoberta de id.
+
+### S13-1 — Ativar a campanha recém-criada por nome (pela aprovação pendente)
+Entrada: criar uma campanha (nasce pausada) → "ativa a campanha CaquiAI - conversa".
+1. `list_pending` traz a aprovação de ativação **nomeada** — `entityName: "CaquiAI - conversa"` e `reason: "ativar *CaquiAI - conversa* — …"` (`spec.campaignName`, Slice 1). O Roy casa o nome pedido → `approve <id>` → `applyActivation` liga a árvore. Não pede o ID da Meta. ✓
+2. É o caminho **robusto**: `approve` usa o `draftId` → id da campanha criada, imune ao lag de propagação da Meta (a campanha pode nem aparecer no `/campaigns` ainda). ✓
+3. Rascunho sem nome (zero-config) → `entityName: null`, reason genérico "ativar uma campanha de …" (comportamento antigo, sem regressão). ✓
+
+### S13-2 — Roy enxerga campanhas pausadas nunca-analisadas (visibilidade)
+Entrada: conta com ≥1 campanha analisada + uma **pausada** nunca-analisada; "quais campanhas eu tenho?".
+1. `list_campaigns` traz a pausada no gap-fill (`liveCampaignsNotCached` agora inclui **ativa + pausada**), com `status`/`noDataYet:true` e `syncNote` dizendo o status de cada — **nunca** chama a pausada de "ativa". ✓
+2. `get_campaign_analysis` por nome de uma pausada nunca-analisada → `noDataYet:true` + `status:"paused"` + nota "existe e está PAUSADA… ofereça ATIVAR". Daí o Roy tem o id pra `resume_entity` (se ligado) OU oferece ativar. ✓
+3. Campanhas **archived/deleted** (terminais) continuam fora do gap-fill. ✓
+
 ## Fast-follows (residuais aceitos / adiados — ROADMAP)
 - **Conta do criativo — estagiar bytes p/ auto-completar após focar**: o núcleo está corrigido (régua inequívoca de 3 níveis idêntica ao turno; ambíguo→pergunta; save casa com a confirmação do Roy). Resta só: no caso AMBÍGUO (sem sole/foco/legenda), o intake pergunta mas não estagia os bytes → o dono reenvia depois de focar. Estagiar (Redis) + auto-completar quando o foco resolver fecha isso (ver ROADMAP).
 - **Gradação do desgaste por severidade (2 × 3 sinais)**: hoje aging×fadiga é binário (ainda entrega × não entrega); um aging SEVERO (3 sinais, prestes a cair) usa a mesma mensagem de aging leve — dá pra graduar a urgência do "prepare o sucessor".

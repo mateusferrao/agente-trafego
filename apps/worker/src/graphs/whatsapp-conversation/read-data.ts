@@ -246,6 +246,9 @@ interface PendingActionItem {
 interface PendingActivationItem {
   readonly kind: "activation";
   readonly id: string;
+  /** NOME da campanha criada (pra o agente casar "ativa a campanha X" → approve por referência).
+   *  null quando o rascunho não nomeou (default zero-config). */
+  readonly entityName: string | null;
   /** o que foi criado (PT, ex: "uma campanha de vendas, R$ 50,00/dia") — a ação é ATIVAR isso. */
   readonly reason: string;
   readonly expiresAt: string;
@@ -735,6 +738,13 @@ export async function listPendingData(
     const d = byDraftId.get(draftId);
     return d ? describeCreatedDraft(d.kind, d.spec as CampaignDraftSpec) : fallback;
   };
+  // NOME da campanha do rascunho (Slice 1) — pro agente casar "ativa a campanha X" com a aprovação
+  // de ativação por referência (sem isso, "ativar uma campanha de conversas…" não bate no nome dito).
+  const nameOf = (draftId: string): string | null => {
+    const spec = byDraftId.get(draftId)?.spec as CampaignDraftSpec | undefined;
+    const n = spec?.campaignName?.trim();
+    return n && n.length > 0 ? n : null;
+  };
 
   const draftItems: PendingDraftItem[] = drafts.map((a) => ({
     kind: "draft",
@@ -743,12 +753,18 @@ export async function listPendingData(
     expiresAt: a.expiresAt.toISOString(),
   }));
 
-  const activationItems: PendingActivationItem[] = activations.map((a) => ({
-    kind: "activation",
-    id: a.id,
-    reason: `ativar ${whatOf(a.draftId, "o que foi criado")}`,
-    expiresAt: a.expiresAt.toISOString(),
-  }));
+  const activationItems: PendingActivationItem[] = activations.map((a) => {
+    const name = nameOf(a.draftId);
+    return {
+      kind: "activation" as const,
+      id: a.id,
+      entityName: name,
+      // nomeia o alvo quando houver ("ativar *CaquiAI - conversa* — uma campanha de conversas…"),
+      // senão o texto genérico — pro agente resolver a ativação por nome.
+      reason: name ? `ativar *${name}* — ${whatOf(a.draftId, "o que foi criado")}` : `ativar ${whatOf(a.draftId, "o que foi criado")}`,
+      expiresAt: a.expiresAt.toISOString(),
+    };
+  });
 
   return [...actionItems, ...draftItems, ...activationItems];
 }
@@ -1457,25 +1473,32 @@ export async function listAudiencesData(
 }
 
 /**
- * Campanhas ATIVAS na Meta que ainda NÃO têm nenhuma linha em `entity_analyses` — o gap de
- * sincronização (pivô saúde): uma campanha recém-criada/ativada existe de verdade na Meta mas
- * só entra no cache curado na PRÓXIMA análise. Sem isso, list_campaigns/get_campaign_analysis
- * diriam "não existe"/omitiriam ela, quando na verdade só "ainda não foi medida". Bounded +
- * best-effort (mesmo padrão de `listCampaignsLive`): Meta lenta/indisponível degrada em lista
- * vazia — a resposta principal (do cache) já tinha o que tinha, isto é só um adendo honesto.
+ * Campanhas GERENCIÁVEIS na Meta (ativa OU pausada) que ainda NÃO têm nenhuma linha em
+ * `entity_analyses` — o gap de sincronização (pivô saúde): uma campanha recém-criada/ativada
+ * existe de verdade na Meta mas só entra no cache curado na PRÓXIMA análise. Sem isso,
+ * list_campaigns/get_campaign_analysis diriam "não existe"/omitiriam ela, quando na verdade só
+ * "ainda não foi medida" — e uma campanha PAUSADA (ex: recém-criada) ficaria invisível pra ativar
+ * por nome. Carrega o `status` pro caller reportar honesto. Bounded + best-effort (mesmo padrão de
+ * `listCampaignsLive`): Meta lenta/indisponível degrada em lista vazia — a resposta principal (do
+ * cache) já tinha o que tinha, isto é só um adendo honesto.
  */
-export async function liveActiveCampaignsNotCached(
+export async function liveCampaignsNotCached(
   deps: WorkerDeps,
   ctx: ReadToolContext,
   cachedIds: ReadonlySet<string>,
-): Promise<Array<{ id: string; name: string }>> {
+): Promise<Array<{ id: string; name: string; status: string }>> {
   const repo = createAnalysisRepo(deps.db);
   const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
   if (!account) return [];
   const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
   try {
     const entities = await withTimeout(deps.ports.ads.listEntities(ref, "campaign"), deps.conversation.liveFetchTimeoutMs);
-    return entities.filter((e) => e.status === "active" && !cachedIds.has(e.id)).map((e) => ({ id: e.id, name: e.name }));
+    // GERENCIÁVEIS (ativa OU pausada) — não só ativas: uma campanha PAUSADA nunca-analisada (ex:
+    // recém-criada) precisa ser referenciável por nome pra o dono ATIVAR. Terminais (archived/
+    // deleted) ficam de fora. Carrega o `status` pro caller reportar honesto (nunca "ativa" a pausada).
+    return entities
+      .filter((e) => (e.status === "active" || e.status === "paused") && !cachedIds.has(e.id))
+      .map((e) => ({ id: e.id, name: e.name, status: e.status }));
   } catch {
     return [];
   }
@@ -1842,15 +1865,19 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
       // existe em NoData/AmbiguousCampaign (CampaignAnalysis não tem o campo) — combinado com
       // "sem ambiguous" isola exatamente o caso NoData (várias casando já é tratado à parte).
       if ("hasData" in result && !("ambiguous" in result)) {
-        const gaps = await liveActiveCampaignsNotCached(deps, ctx, new Set());
+        const gaps = await liveCampaignsNotCached(deps, ctx, new Set());
         const match = resolveNamedMatch(gaps, name, { name: (g) => g.name, keys: (g) => [g.id] });
         if (match.kind === "one") {
+          const paused = match.row.status === "paused";
           return asString({
             hasData: true,
             id: match.row.id,
             name: match.row.name,
+            status: match.row.status,
             noDataYet: true,
-            note: "Essa campanha existe e está ATIVA na Meta agora, mas ainda não tem NENHUMA análise — nenhum tier/orçamento/métrica disponível. Diga que ela existe/está ativa e ofereça rodar uma análise; nunca invente um número pra ela.",
+            note: paused
+              ? "Essa campanha existe e está PAUSADA na Meta agora, mas ainda não tem NENHUMA análise — nenhum tier/orçamento/métrica disponível. Diga que ela existe e está pausada e ofereça ATIVAR (ou rodar uma análise); nunca invente um número pra ela, nem diga que está ativa."
+              : "Essa campanha existe e está ATIVA na Meta agora, mas ainda não tem NENHUMA análise — nenhum tier/orçamento/métrica disponível. Diga que ela existe/está ativa e ofereça rodar uma análise; nunca invente um número pra ela.",
           });
         }
       }
@@ -1859,7 +1886,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     {
       name: "get_campaign_analysis",
       description:
-        "Última análise de uma campanha pelo nome (busca por trecho, sem diferenciar maiúsculas). Devolve o id (use-o para agir), resumo, métricas curadas, o maior gargalo, o tier (winner/performer/underperformer/zombie), healthSignals (fadiga/saturação/pouco dado/criativo fraco), audience (estágio: prospecção/remarketing), funnel (conversas/1ª resposta/profundidade — qualidade do lead), conversionBasis ('target' = a conversão mostrada É a de negócio; 'proxy' = referência, a venda não é rastreada ali; 'none' = sem conversão), benchmarkRef (referência de plataforma, só cold-start) e o ORÇAMENTO (budget: diário ou vitalício; atBudgetCeiling: true = sem folga pra gastar mais sem subir o orçamento; isCBO: true = orçamento na própria campanha, false = por conjunto/adset — nesse caso qualquer mudança é POR CONJUNTO). Campanha ABO (isCBO=false) com 2+ conjuntos com diagnóstico próprio também traz 'adsets' (id/nome/tier de cada conjunto) + 'adsetsNote' explicando por que a campanha não tem um tier único — cite os dois ao comentar o desempenho dela, não silencie a diferença. Campos vêm null/ausentes quando a conta não foi reanalisada desde que esse dado passou a ser coletado — nesse caso, não afirme 'sem dado', diga que precisa rodar uma nova análise. Sem nenhuma análise casando o nome, verifica AO VIVO se a campanha existe ATIVA na Meta (noDataYet:true) antes de dizer que não existe. 'deactivatedSince' presente = a Meta não lista mais essa campanha como ativa desde essa data — o resto do curado (tier/métricas) é da ÚLTIMA vez que ela esteve ativa, NÃO é o estado atual; avise isso sempre que citar dado dela, nunca apresente como se estivesse rodando agora.",
+        "Última análise de uma campanha pelo nome (busca por trecho, sem diferenciar maiúsculas). Devolve o id (use-o para agir), resumo, métricas curadas, o maior gargalo, o tier (winner/performer/underperformer/zombie), healthSignals (fadiga/saturação/pouco dado/criativo fraco), audience (estágio: prospecção/remarketing), funnel (conversas/1ª resposta/profundidade — qualidade do lead), conversionBasis ('target' = a conversão mostrada É a de negócio; 'proxy' = referência, a venda não é rastreada ali; 'none' = sem conversão), benchmarkRef (referência de plataforma, só cold-start) e o ORÇAMENTO (budget: diário ou vitalício; atBudgetCeiling: true = sem folga pra gastar mais sem subir o orçamento; isCBO: true = orçamento na própria campanha, false = por conjunto/adset — nesse caso qualquer mudança é POR CONJUNTO). Campanha ABO (isCBO=false) com 2+ conjuntos com diagnóstico próprio também traz 'adsets' (id/nome/tier de cada conjunto) + 'adsetsNote' explicando por que a campanha não tem um tier único — cite os dois ao comentar o desempenho dela, não silencie a diferença. Campos vêm null/ausentes quando a conta não foi reanalisada desde que esse dado passou a ser coletado — nesse caso, não afirme 'sem dado', diga que precisa rodar uma nova análise. Sem nenhuma análise casando o nome, verifica AO VIVO se a campanha existe na Meta — ATIVA ou PAUSADA (campo 'status'; noDataYet:true) — antes de dizer que não existe; uma pausada nunca-analisada aparece aqui e pode ser ATIVADA por nome. 'deactivatedSince' presente = a Meta não lista mais essa campanha como ativa desde essa data — o resto do curado (tier/métricas) é da ÚLTIMA vez que ela esteve ativa, NÃO é o estado atual; avise isso sempre que citar dado dela, nunca apresente como se estivesse rodando agora.",
       schema: z.object({ name: z.string() }),
     },
   );
@@ -1912,15 +1939,16 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
         // gap de sincronização (pivô saúde): campanha ATIVA na Meta sem NENHUMA análise ainda —
         // nunca omitir, nunca inventar número; entra na lista marcada "sem dado ainda".
         const knownIds = new Set(analyzed.campaigns.map((c) => c.id));
-        const gaps = await liveActiveCampaignsNotCached(deps, ctx, knownIds);
+        const gaps = await liveCampaignsNotCached(deps, ctx, knownIds);
         if (gaps.length > 0) {
+          const gapLabel = (g: { name: string; status: string }) => `${g.name} (${g.status === "paused" ? "pausada" : "ativa"})`;
           return asString({
             ...analyzed,
             campaigns: [
               ...analyzed.campaigns,
-              ...gaps.map((g) => ({ id: g.id, name: g.name, spend: null, conversions: null, cpa: null, roas: null, revenue: null, ...curatedViewOf(null), noDataYet: true })),
+              ...gaps.map((g) => ({ id: g.id, name: g.name, status: g.status, spend: null, conversions: null, cpa: null, roas: null, revenue: null, ...curatedViewOf(null), noDataYet: true })),
             ],
-            syncNote: `${gaps.length} campanha(s) ativa(s) na Meta (${gaps.map((g) => g.name).join(", ")}) ainda NÃO têm nenhuma análise — os campos delas vêm vazios (noDataYet:true) até rodar uma análise nova; cite explicitamente que elas existem e estão ativas, sem inventar número.`,
+            syncNote: `${gaps.length} campanha(s) na Meta (${gaps.map(gapLabel).join(", ")}) ainda NÃO têm nenhuma análise — os campos delas vêm vazios (noDataYet:true) até rodar uma análise nova; cite explicitamente que elas existem, com o status de cada (ativa/pausada — nunca chame uma pausada de ativa), sem inventar número. Uma pausada pode ser ATIVADA por nome.`,
           });
         }
         return asString(analyzed);
@@ -1930,7 +1958,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     {
       name: "list_campaigns",
       description:
-        "TODAS as campanhas da conta com métricas por campanha (gasto, conversões, CPA, ROAS, receita), ordenadas por gasto — pra COMPARAR/ALOCAR verba ('quais gastam mais e convertem pior', 'onde cortar/proteger', 'valores por campanha', 'qual o orçamento de cada campanha'). SEM args = última análise curada (inclui tier/diagnóstico e o ORÇAMENTO de cada campanha: budget/atBudgetCeiling/isCBO — mesmos campos de get_campaign_analysis; null quando a conta não foi reanalisada desde que esse dado passou a ser coletado, nesse caso ofereça rodar uma análise em vez de dizer 'sem orçamento'). Também verifica AO VIVO se existe campanha ATIVA na Meta ainda sem nenhuma análise — vem marcada noDataYet:true + 'syncNote'; cite que ela existe/está ativa, nunca invente número pra ela. Uma campanha com 'deactivatedSince' preenchido saiu do conjunto ativo desde essa data — mencione isso, nunca trate o tier/métricas dela como situação atual. COM recorte de período (mesmo formato do get_fresh_metrics: periodDays, ou sinceDaysAgo+untilDaysAgo em dias atrás, 0=hoje/1=ontem, ≤7d) = dados FRESH agregados por campanha na janela (SEM orçamento — isso só vem da análise curada, sem args). É a divisão por campanha que o get_fresh_metrics (agregado da conta) não dá.",
+        "TODAS as campanhas da conta com métricas por campanha (gasto, conversões, CPA, ROAS, receita), ordenadas por gasto — pra COMPARAR/ALOCAR verba ('quais gastam mais e convertem pior', 'onde cortar/proteger', 'valores por campanha', 'qual o orçamento de cada campanha'). SEM args = última análise curada (inclui tier/diagnóstico e o ORÇAMENTO de cada campanha: budget/atBudgetCeiling/isCBO — mesmos campos de get_campaign_analysis; null quando a conta não foi reanalisada desde que esse dado passou a ser coletado, nesse caso ofereça rodar uma análise em vez de dizer 'sem orçamento'). Também verifica AO VIVO se existe campanha na Meta (ATIVA ou PAUSADA) ainda sem nenhuma análise — vem marcada noDataYet:true + 'status' + 'syncNote'; cite que ela existe com o status de cada (nunca chame pausada de ativa), nunca invente número pra ela; pausada pode ser ativada por nome. Uma campanha com 'deactivatedSince' preenchido saiu do conjunto ativo desde essa data — mencione isso, nunca trate o tier/métricas dela como situação atual. COM recorte de período (mesmo formato do get_fresh_metrics: periodDays, ou sinceDaysAgo+untilDaysAgo em dias atrás, 0=hoje/1=ontem, ≤7d) = dados FRESH agregados por campanha na janela (SEM orçamento — isso só vem da análise curada, sem args). É a divisão por campanha que o get_fresh_metrics (agregado da conta) não dá.",
       schema: z.object({
         periodDays: z.number().int().positive().nullable().optional(),
         sinceDaysAgo: z.number().int().min(0).nullable().optional(),
@@ -1978,7 +2006,8 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     },
     {
       name: "list_pending",
-      description: "Ações aguardando aprovação na organização (todas as contas).",
+      description:
+        "Ações aguardando aprovação na organização (todas as contas), incl. ativações de campanhas recém-criadas (kind:'activation', com o NOME da campanha em entityName). Pra ATIVAR uma campanha que você acabou de criar (nasce pausada), é AQUI que ela está — case o nome pedido ('ativa a campanha X') com o entityName e aprove por id; não precisa do id da Meta.",
       schema: z.object({}),
     },
   );

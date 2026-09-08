@@ -266,7 +266,7 @@ export interface AdsPlatformPort {
    * histórico pausado/arquivado (achado real: conta com 139 campanhas cacheadas, só ~13
    * ativas — paginar tudo pra descartar depois é o que estoura o rate-limit no meio do
    * caminho e vira análise parcial). Sem `opts` = catálogo COMPLETO (todo status) — o chat
-   * (get_campaign_status/list_campaigns/liveActiveCampaignsNotCached) PRECISA disso pra
+   * (get_campaign_status/list_campaigns/liveCampaignsNotCached) PRECISA disso pra
    * resolver nome→id de campanha PAUSADA (ex: "reativa a campanha X"); nunca filtrar esse
    * caminho. Filtrado NÃO usa o cache de catálogo (`MetaEntityCache`) — o catálogo completo
    * já é a fonte cacheada; um 2º resultado (menor) sob a MESMA chave (conta,nível)
