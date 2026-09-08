@@ -264,8 +264,10 @@ function toAdsError(error: unknown): AdsPlatformError {
   if (error instanceof AdsPlatformError) return error; // já traduzido — não re-embrulha
   if (error instanceof MetaApiError) {
     // `error_user_msg` = texto legível que a Meta fez pro usuário final; repassa no port neutro
-    // (a casca envelopa). O `subcode` NÃO sai daqui — fica interno ao adapter.
-    const userMsg = error.userMessage;
+    // (a casca envelopa). Sem ele, cai no `error_user_title` (ex: "Ad set creation failed") — ainda
+    // legível e melhor que silêncio → o desfecho determinístico (G2) tem o quê dizer. O `subcode`
+    // NÃO sai daqui (fica interno ao adapter).
+    const userMsg = error.userMessage ?? error.userTitle;
     if (error.code === 190) return new AdsPlatformError("invalid_credential", error.message, userMsg);
     // rate-limit (throttling) → recuperável esperando; mensagem própria na casca.
     if (error.code !== undefined && META_RATE_LIMIT_CODES.has(error.code)) {

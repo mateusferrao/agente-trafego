@@ -18,11 +18,14 @@ import { applyDraft } from "../modules/apply/apply-draft.js";
 import { describeCreatedDraft } from "../modules/apply/draft-summary.js";
 import { createNotifyRepo } from "../modules/notify/repo.js";
 import { createSendToConversation } from "../modules/notify/send-to-contact.js";
+import { metaUserMessage, permanentMetaReason } from "../lib/meta-failure.js";
 
-/** Mensagem legível da Meta (`userMessage`) quando há — "A Meta informou: …". Nunca vaza `message`
- *  técnico. `undefined` = a plataforma não mandou texto legível. */
-function metaUserMessage(error: unknown): string | undefined {
-  return error instanceof AdsPlatformError && error.userMessage ? `A Meta informou: ${error.userMessage.trim()}` : undefined;
+/** A falha é rate-limit E ainda há tentativa no job → re-lança pro BullMQ retentar com backoff
+ *  (a escrita/saga é idempotente por chave → sem duplo-apply; a saga retoma dos `createdIds`). */
+function shouldRetryRateLimit(error: unknown, job: { attemptsMade: number; opts: { attempts?: number } }): boolean {
+  const attempts = job.opts.attempts ?? 1;
+  const isLastAttempt = job.attemptsMade + 1 >= attempts;
+  return error instanceof AdsPlatformError && error.kind === "rate_limited" && !isLastAttempt;
 }
 
 export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): Worker<ApprovalApplyPayload> {
@@ -73,6 +76,21 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
         const outcome = await applyDraft(deps, { orgId, draftId: approval.draftId });
         switch (outcome.kind) {
           case "failed": {
+            // G10: rate-limit na CRIAÇÃO retenta (a saga retoma dos createdIds; sem duplo-apply).
+            if (shouldRetryRateLimit(outcome.error, job)) {
+              logger.warn({ approvalId, attempt: job.attemptsMade + 1 }, "approval-apply:criação rate-limit — retry com backoff");
+              throw outcome.error;
+            }
+            // G2: rejeição DETERMINÍSTICA da Meta (validação/permissão/token) → resolve `blocked` com a
+            // razão honesta (para o loop de re-tentar o mesmo spec que sempre falha), em vez de deixar
+            // pendente com "tenta de novo". Transiente (rede/5xx/rate-limit esgotado) → mantém pendente.
+            const permReason = permanentMetaReason(outcome.error);
+            if (permReason) {
+              logger.warn({ approvalId, reason: permReason }, "approval-apply:criação recusada (determinístico)");
+              await ports.approval.resolve(approval.id, { status: "blocked", resolvedReason: permReason, applyOutcome: "blocked" });
+              await pushOutcome(describeDraftOutcome({ kind: "blocked", reason: permReason }));
+              return;
+            }
             const metaMessage = metaUserMessage(outcome.error);
             logger.error({ approvalId, err: outcome.error }, "approval-apply:saga de criação falhou");
             await ports.approval.markApplyOutcome(approval.id, "failed", metaMessage);
@@ -113,6 +131,17 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
         const outcome = await applyActivation(deps, { orgId, draftId: approval.draftId });
         switch (outcome.kind) {
           case "failed": {
+            if (shouldRetryRateLimit(outcome.error, job)) {
+              logger.warn({ approvalId, attempt: job.attemptsMade + 1 }, "approval-apply:ativação rate-limit — retry com backoff");
+              throw outcome.error;
+            }
+            const permReason = permanentMetaReason(outcome.error);
+            if (permReason) {
+              logger.warn({ approvalId, reason: permReason }, "approval-apply:ativação recusada (determinístico)");
+              await ports.approval.resolve(approval.id, { status: "blocked", resolvedReason: permReason, applyOutcome: "blocked" });
+              await pushOutcome(describeActivationOutcome({ kind: "blocked", reason: permReason }));
+              return;
+            }
             const metaMessage = metaUserMessage(outcome.error);
             logger.error({ approvalId, err: outcome.error }, "approval-apply:ativação falhou");
             await ports.approval.markApplyOutcome(approval.id, "failed", metaMessage);
@@ -149,15 +178,21 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
       switch (outcome.kind) {
         case "failed": {
           // Rate-limit da Meta (#613, D3) é TRANSIENTE: enquanto houver tentativa, RE-LANÇA → o
-          // BullMQ retenta com backoff (a escrita é idempotente por `${approval}:apply`, sem duplo-
-          // apply). Só na ÚLTIMA tentativa (ou outros kinds) cai no comportamento antigo abaixo.
-          const attempts = job.opts.attempts ?? 1;
-          const isLastAttempt = job.attemptsMade + 1 >= attempts;
-          if (outcome.error instanceof AdsPlatformError && outcome.error.kind === "rate_limited" && !isLastAttempt) {
-            logger.warn({ approvalId, attempt: job.attemptsMade + 1, attempts }, "approval-apply:rate-limit — retry com backoff");
+          // BullMQ retenta com backoff (a escrita é idempotente por `${approval}:apply`, sem duplo-apply).
+          if (shouldRetryRateLimit(outcome.error, job)) {
+            logger.warn({ approvalId, attempt: job.attemptsMade + 1 }, "approval-apply:rate-limit — retry com backoff");
             throw outcome.error; // deixa o BullMQ retentar (backoff configurado no job)
           }
-          // falha da Meta (rede/rate-limit esgotado/etc): mantém a aprovação PENDENTE (dá p/ reaprovar),
+          // G2: rejeição DETERMINÍSTICA (validação/permissão/token) → resolve `blocked` honesto (para o
+          // loop de re-tentar o mesmo re-check que sempre falha), em vez de manter pendente + "tenta de novo".
+          const permReason = permanentMetaReason(outcome.error);
+          if (permReason) {
+            logger.warn({ approvalId, reason: permReason }, "approval-apply:ação recusada (determinístico)");
+            await ports.approval.resolve(approval.id, { status: "blocked", resolvedReason: permReason, applyOutcome: "blocked" });
+            await pushOutcome(describeActionOutcome(approval.action, { kind: "blocked", reason: permReason }));
+            return;
+          }
+          // falha TRANSIENTE (rede/5xx/rate-limit esgotado): mantém a aprovação PENDENTE (dá p/ reaprovar),
           // mas registra o desfecho (`markApplyOutcome`, sem resolver) p/ o card mostrar + reabilitar o
           // botão. A promessa de "te aviso o resultado" não pode sumir (§UX).
           const metaMessage = metaUserMessage(outcome.error);
