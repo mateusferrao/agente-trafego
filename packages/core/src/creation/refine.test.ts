@@ -1,6 +1,26 @@
 import type { CampaignDraftSpec } from "@trafego/shared";
 import { describe, expect, it } from "vitest";
-import { applyDraftEdit, conversionRequiresPixel } from "./refine.js";
+import { applyDraftEdit, conversionRequiresPixel, normalizeLinkUrl } from "./refine.js";
+
+describe("normalizeLinkUrl (URL de destino — fonte única chat+site)", () => {
+  it("aceita http/https absoluto (normaliza)", () => {
+    expect(normalizeLinkUrl("https://loja.com/promo")).toBe("https://loja.com/promo");
+    expect(normalizeLinkUrl("http://loja.com")).toBe("http://loja.com/");
+  });
+  it("prefixa https:// quando vem só o domínio", () => {
+    expect(normalizeLinkUrl("loja.com/promo")).toBe("https://loja.com/promo");
+  });
+  it("rejeita esquema não-http(s), host sem ponto, frase e vazio", () => {
+    expect(normalizeLinkUrl("javascript:alert(1)")).toBeNull();
+    expect(normalizeLinkUrl("data:text/html,x")).toBeNull();
+    expect(normalizeLinkUrl("ftp://foo.com")).toBeNull();
+    expect(normalizeLinkUrl("https://foo")).toBeNull();
+    expect(normalizeLinkUrl("meu site")).toBeNull();
+    expect(normalizeLinkUrl("")).toBeNull();
+    expect(normalizeLinkUrl(null)).toBeNull();
+    expect(normalizeLinkUrl(undefined)).toBeNull();
+  });
+});
 
 const fromScratch: CampaignDraftSpec = {
   version: 1,
@@ -115,10 +135,20 @@ describe("applyDraftEdit — merge puro do rascunho", () => {
   });
 
   it("from_scratch: linkUrl (destino do anúncio) grava no spec", () => {
-    const r = applyDraftEdit("from_scratch", fromScratch, { linkUrl: "https://loja.com/promo" }, noCap);
+    const site: CampaignDraftSpec = { ...fromScratch, objective: "purchase" };
+    const r = applyDraftEdit("from_scratch", site, { linkUrl: "https://loja.com/promo" }, noCap);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.value.spec.linkUrl).toBe("https://loja.com/promo");
+  });
+
+  it("from_scratch: virar o objetivo pra WhatsApp LIMPA o link obsoleto (gate único §7)", () => {
+    const site: CampaignDraftSpec = { ...fromScratch, objective: "purchase", linkUrl: "https://loja.com/promo" };
+    const r = applyDraftEdit("from_scratch", site, { objective: "messaging_started" }, noCap);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.spec.objective).toBe("messaging_started");
+    expect(r.value.spec.linkUrl).toBeUndefined();
   });
 
   it("duplicate: linkUrl é from_scratch-only → erro field_not_editable (escala herda o destino)", () => {

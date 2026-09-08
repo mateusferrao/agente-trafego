@@ -12,7 +12,7 @@ import {
   platformConnections,
   type Database,
 } from "@trafego/db";
-import { applyDraftEdit, buildResolvedSnapshot, computeApplyPreview, describeDeliveryEstimate, isMessagingGoal, planScaleMove, ressalvasFromSnapshot, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
+import { applyDraftEdit, buildResolvedSnapshot, computeApplyPreview, describeDeliveryEstimate, isMessagingGoal, normalizeLinkUrl, planScaleMove, ressalvasFromSnapshot, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
 import { applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import { toMinorUnits, minorToMajor, resolveCreationActivation, type CreationActivation, type ToolBindingMode } from "@trafego/shared";
 import {
@@ -67,6 +67,7 @@ const SERVING_PICKER_CAP = 200;
 const DRAFT_NOT_OPEN_MSG = "esse rascunho não está mais aberto pra ajuste.";
 const ACCOUNT_UNAVAILABLE_MSG = "não consegui acessar a conta agora";
 const LINK_ON_MESSAGING_MSG = "esse rascunho é de conversas no WhatsApp — ele leva a pessoa pro WhatsApp, não pra um site, então não dá pra pôr um link de destino.";
+const LINK_INVALID_MSG = "esse link não parece uma URL válida — use o endereço completo, tipo https://sualoja.com/promo.";
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
@@ -293,7 +294,11 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     // honesto. from_scratch-only é garantido pelo núcleo (applyDraftEdit rejeita em duplicate).
     if (input.linkUrl != null) {
       if (isMessagingGoal(input.objective ?? spec.objective)) return { ok: false, message: LINK_ON_MESSAGING_MSG };
-      edit.linkUrl = input.linkUrl;
+      // fonte única (§13): mesma normalização do chat — só http/https absoluto (bloqueia
+      // javascript:/data:, que o z.string().url() da borda deixaria passar).
+      const link = normalizeLinkUrl(input.linkUrl);
+      if (!link) return { ok: false, message: LINK_INVALID_MSG };
+      edit.linkUrl = link;
     }
 
     let hasPixel = true;

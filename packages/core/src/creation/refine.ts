@@ -9,6 +9,7 @@ import {
   err,
   ok,
 } from "@trafego/shared";
+import { isMessagingGoal } from "../conversion/index.js";
 
 /**
  * Conversões que exigem PIXEL/rastreamento p/ serem otimizáveis. Fato de DOMÍNIO (neutro): o
@@ -33,6 +34,27 @@ export const REQUIRES_PIXEL: ReadonlySet<ConversionGoal> = new Set<ConversionGoa
 ]);
 
 export const conversionRequiresPixel = (goal: ConversionGoal): boolean => REQUIRES_PIXEL.has(goal);
+
+/**
+ * URL de destino informada pelo dono → normalizada (http/https absoluto) ou `null` se não for uma
+ * URL válida. Aceita "loja.com" (prefixa https://) e REJEITA esquema não-http(s) (`javascript:`,
+ * `data:`, `ftp:`) e host sem ponto. Fonte ÚNICA (§13) do chat E do site — a Meta exige link
+ * absoluto no `link_data.link`. PURO.
+ */
+export function normalizeLinkUrl(raw: string | undefined | null): string | null {
+  const s = (raw ?? "").trim();
+  if (s.length === 0) return null;
+  const withScheme = /^https?:\/\//i.test(s) ? s : `https://${s}`;
+  try {
+    const u = new URL(withScheme);
+    // só http/https (bloqueia javascript:/data:/ftp: mesmo que new URL aceite) + host com ponto.
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    if (!u.hostname.includes(".")) return null;
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Motivo amigável ÚNICO (§13) quando o objetivo escolhido exige pixel e a conta não tem — reusado
@@ -148,6 +170,14 @@ export function applyDraftEdit(
     ...(edit.copyVariants !== undefined ? { copyVariants: edit.copyVariants, variantsCount: edit.copyVariants.length } : {}),
     ...(edit.linkUrl !== undefined ? { linkUrl: edit.linkUrl } : {}),
   };
+
+  // GATE ÚNICO de destino (§7): objetivo de conversas no WhatsApp leva pro WhatsApp, não pra um site
+  // → o link nunca vai pro anúncio. Cobre também o flip de objetivo PÓS-criação (site/chat trocam só
+  // o objetivo mantendo um link antigo) — as bordas barram link NOVO; aqui limpa o link OBSOLETO.
+  if (next.linkUrl !== undefined && isMessagingGoal(next.objective)) {
+    const { linkUrl: _dropped, ...withoutLink } = next;
+    return ok({ spec: withoutLink, clampedByCap });
+  }
 
   return ok({ spec: next, clampedByCap });
 }

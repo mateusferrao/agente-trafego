@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, interleaveMedia, normalizeAdCount, normalizeLinkUrl, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField } from "./draft-proposal.js";
+import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, interleaveMedia, normalizeAdCount, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField } from "./draft-proposal.js";
 import type { CopyVariant } from "@trafego/shared";
 import type { CampaignDraftSpec } from "@trafego/shared";
 import { creativeContentHash } from "../vision/resolver.js";
@@ -656,22 +656,5 @@ describe("resolveCreativeFill (política de faltante do picker — Slice 3)", ()
   });
   it("adCount 0/negativo → clampa pra ≥1", () => {
     expect(resolveCreativeFill(0, 0, undefined)).toEqual({ decision: "agent", variants: 1 });
-  });
-});
-
-describe("normalizeLinkUrl (URL de destino do anúncio)", () => {
-  it("aceita http/https absoluto (normaliza)", () => {
-    expect(normalizeLinkUrl("https://loja.com/promo")).toBe("https://loja.com/promo");
-    expect(normalizeLinkUrl("http://loja.com")).toBe("http://loja.com/");
-  });
-  it("prefixa https:// quando o dono manda só o domínio", () => {
-    expect(normalizeLinkUrl("loja.com/promo")).toBe("https://loja.com/promo");
-  });
-  it("rejeita o que não é URL (frase, host sem ponto, vazio)", () => {
-    expect(normalizeLinkUrl("meu site")).toBeNull();
-    expect(normalizeLinkUrl("https://foo")).toBeNull();
-    expect(normalizeLinkUrl("")).toBeNull();
-    expect(normalizeLinkUrl(null)).toBeNull();
-    expect(normalizeLinkUrl(undefined)).toBeNull();
   });
 });

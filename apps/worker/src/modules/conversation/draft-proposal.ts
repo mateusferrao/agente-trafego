@@ -6,7 +6,7 @@
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { adAccounts, adCreatives, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { applyDraftEdit, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, describeDeliveryEstimate, goalNounPt, isAging, isFatigued, isMessagingGoal, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { applyDraftEdit, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, describeDeliveryEstimate, goalNounPt, isAging, isFatigued, isMessagingGoal, normalizeLinkUrl, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
 import { applyExplicitBehaviorEdit, applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
   ACTION_PARAM_CURRENT_MINOR,
@@ -1672,23 +1672,6 @@ export function fillDistinctCreatives(
 export function normalizeAdCount(adCount: number | undefined): number | undefined {
   if (adCount == null || !Number.isFinite(adCount)) return undefined;
   return Math.max(1, Math.min(Math.round(adCount), MAX_ADS_PER_DRAFT));
-}
-
-/** URL de destino informada pelo dono → normalizada (http/https absoluto) ou `null` se não for uma
- *  URL válida (a Meta exige link absoluto no `link_data.link`). Aceita "loja.com" prefixando https://.
- *  Fonte única (create + refino do chat). PURO. */
-export function normalizeLinkUrl(raw: string | undefined | null): string | null {
-  const s = (raw ?? "").trim();
-  if (s.length === 0) return null;
-  const withScheme = /^https?:\/\//i.test(s) ? s : `https://${s}`;
-  try {
-    const u = new URL(withScheme);
-    // exige host com ponto (evita "https://foo" ou frases soltas viradas em URL).
-    if (!u.hostname.includes(".")) return null;
-    return u.toString();
-  } catch {
-    return null;
-  }
 }
 
 /**
