@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { adAccounts, adCreatives, agentMemory, agentRuns, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
 import { libraryCreativeContentHash } from "../../workers/creative-analyze.js";
 import type { Approval, ApprovalPort } from "@trafego/shared/ports";
+import { AdsPlatformError } from "@trafego/shared/ports";
 import type { PerformanceTier } from "@trafego/shared";
 import {
   comparePeriodsData,
@@ -1055,6 +1056,24 @@ describe("campaignStatusData (ambíguo → LISTA com status ao vivo, NÃO pede i
     const d = deps(async () => [], async () => ({ status: "ACTIVE" }), async () => tree);
     const out = await campaignStatusData(d, ctx, { campaignId: "c9" });
     expect(out).toMatchObject({ hasData: true, campaigns: [{ id: "c9", delivering: true }] });
+  });
+
+  it("token inválido (190) na leitura → note 'reconecte' (não 'tenta de novo')", async () => {
+    const d = deps(async () => [], async () => {
+      throw new AdsPlatformError("invalid_credential", "token expirado");
+    });
+    const out = await campaignStatusData(d, ctx, { campaignId: "c9" });
+    expect(out).toMatchObject({ hasData: false });
+    expect((out as { note: string }).note).toContain("reconecte");
+  });
+
+  it("erro transiente na leitura → note 'tenta de novo' (não token)", async () => {
+    const d = deps(async () => [], async () => {
+      throw new Error("upstream");
+    });
+    const out = await campaignStatusData(d, ctx, { campaignId: "c9" });
+    expect(out).toMatchObject({ hasData: false });
+    expect((out as { note: string }).note).toContain("tenta de novo");
   });
 });
 

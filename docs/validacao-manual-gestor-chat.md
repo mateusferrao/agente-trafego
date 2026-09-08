@@ -215,7 +215,17 @@
 | S7.4 | Árvore acima do teto de nº-de-entidades/dia | Eco avisa "são M entidades, acima do seu teto de N/dia — como você confirma, ligo todas" e liga tudo (ativação confirmada é intenção única; teto segue valendo só pro automático). |
 | S7.5 | "como está a campanha X?" com a campanha ativa mas filhos pausados | "ativa, mas **não está entregando** (conjuntos/anúncios pausados)" — não diz só "ativa". Oferece ligar a cadeia. |
 | S7.6 | Campanha **sem anúncio** nenhum → "ativa a campanha X" | ⚠️ "não vai veicular assim (essa campanha não tem anúncio) — mesmo ligada, não roda até ter anúncio ativo". |
-| S7.7 | Leitura da árvore falha (Meta lenta) | Degrada: liga só o nó pedido (não trava a ação); status sem afirmar entrega. |
+| S7.7 | Leitura da árvore falha (Meta lenta) | Degrada: liga só o nó pedido (não trava a ação); **avisa** "não consegui ver os conjuntos/anúncios agora — ligo só a campanha; me pede de novo pra religar a cadeia" (não cala). |
+
+### S8 — Robustez da leitura ao vivo (blip da Meta ≠ "não sei o status")
+> Motivada por incidente: "ativa a campanha" → Roy "não consegui confirmar o status ao vivo".
+
+| # | Passo | Esperado |
+|---|-------|----------|
+| S8.1 | Blip transiente da Meta (5xx/rede/timeout rápido) numa leitura de status | O Roy **retria** (bounded, backoff curto) e confirma — não cai de primeira no "não consegui". |
+| S8.2 | Meta persistentemente fora (após os retries) | Note honesta "não consegui confirmar o status ao vivo agora — tenta de novo em instantes". |
+| S8.3 | Token inválido (190) na leitura | Note **"reconecte a conta no site"** (não "tenta de novo") + marca o token inválido (mesma via da análise). |
+| S8.4 | Ativação em cadeia + leitura da árvore falha | Eco avisa que ligará só a campanha (S7.7) — nunca ativa node-only em silêncio. |
 
 ---
 

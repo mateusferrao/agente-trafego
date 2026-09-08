@@ -94,10 +94,11 @@ describe("expandChainActivation", () => {
     expect(r.expanded.map((a) => a.target.id)).toEqual(["s1", "a1"]);
   });
 
-  it("leitura da árvore falha (null) → degrada: só o nó, sem expansão nem nota", async () => {
+  it("leitura da árvore falha (null) → degrada p/ só o nó MAS avisa (não cala)", async () => {
     const r = await expandChainActivation([act("resume_entity", "campaign", "c1")], async () => null);
     expect(r.chainActivated).toBe(false);
-    expect(r.expanded).toHaveLength(1);
-    expect(r.notes).toEqual([]);
+    expect(r.expanded).toHaveLength(1); // só o nó
+    expect(r.notes).toHaveLength(1);
+    expect(r.notes[0]).toContain("Não consegui ver os conjuntos/anúncios");
   });
 });

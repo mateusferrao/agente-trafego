@@ -734,12 +734,15 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     }
   }
 
-  /** Lê o estado atual (status + budgets) de uma entidade — re-check fresco (drift). */
+  /** Lê o estado atual (status + budgets) de uma entidade — re-check fresco (drift). Passa pelo
+   *  `callWithGovernor` (acquire + retry de rate-limit/transiente) — GET idempotente, seguro retriar. */
   async readEntityState(account: AdAccountRef, entityId: string): Promise<Record<string, unknown>> {
     try {
-      const acquired = await this.governor.acquire(normalizeAdAccountId(account.adAccountId));
-      if (!acquired.granted) throw cooldownError();
-      return await this.mutations.readEntityState(account, entityId);
+      return await callWithGovernor(
+        normalizeAdAccountId(account.adAccountId),
+        () => this.mutations.readEntityStateResponse(account, entityId),
+        { governor: this.governor },
+      );
     } catch (error) {
       throw toAdsError(error);
     }

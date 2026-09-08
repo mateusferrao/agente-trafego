@@ -54,6 +54,11 @@ export function truncatedNote(rootLabel: string): string {
   return `*${rootLabel}* tem muitos conjuntos/anúncios — liguei os que consegui listar; confira o resto no site.`;
 }
 
+/** Nota quando NÃO deu pra ler os filhos (leitura ao vivo falhou): ativa só o nó, avisa (não cala). */
+export function treeReadFailedNote(rootLabel: string): string {
+  return `⚠️ Não consegui ver os conjuntos/anúncios de *${rootLabel}* agora pra ligar junto — vou ligar só a campanha (que pode não veicular). Me pede de novo em instantes pra eu religar a cadeia.`;
+}
+
 /** Aviso de teto: a ativação em cadeia passa do cap de entidades/dia (ligamos mesmo assim, confirmado). */
 export function capWarningNote(total: number, cap: number): string {
   return `São ${total} entidades no total, acima do seu teto de ${cap}/dia — como você confirma, ligo todas.`;
@@ -90,10 +95,14 @@ export async function expandChainActivation(
   for (const a of actions) {
     expanded.push(a);
     if (!isActivateAction(a) || (a.target.level !== "campaign" && a.target.level !== "adset")) continue;
-    const tree = await readTree(a.target.level, a.target.id);
-    if (!tree) continue; // leitura falhou → só o nó (não trava a ação)
-    const paused = pausedDescendants(tree);
     const rootLabel = a.target.name ?? a.target.id;
+    const tree = await readTree(a.target.level, a.target.id);
+    if (!tree) {
+      // leitura falhou → só o nó, MAS avisa (não cala): senão ativa a campanha e não religa a cadeia.
+      notes.push(treeReadFailedNote(rootLabel));
+      continue;
+    }
+    const paused = pausedDescendants(tree);
     if (paused.adsets.length + paused.ads.length > 0) {
       if (!opts.resumeAllowed) {
         notes.push(resumeDisabledNote(rootLabel)); // não expande: 'retomar' desligado

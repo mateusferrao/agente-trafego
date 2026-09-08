@@ -8,7 +8,7 @@ import {
   BUDGET_MODE_DECREASE,
   BUDGET_MODE_SET,
 } from "@trafego/shared";
-import type { MetaGraphClient } from "./client.js";
+import type { GraphResponse, MetaGraphClient } from "./client.js";
 import { explicitTargetingToRaw } from "./targeting-map.js";
 
 /**
@@ -95,6 +95,12 @@ export class MetaMutationsService {
    *  omite os campos de budget (que não existem no anúncio) — evita o erro Meta #100. */
   async readEntityState(account: AdAccountRef, entityId: string, level?: EntityLevel): Promise<EntityState> {
     return this.readEntityStateFields(account, entityId, stateFieldsFor(level));
+  }
+
+  /** Igual ao `readEntityState`, mas devolve a `GraphResponse` CRUA (com header de uso) — p/ a casca
+   *  embrulhar em `callWithGovernor` e ganhar retry de transiente/rate-limit no re-check de status. */
+  readEntityStateResponse(account: AdAccountRef, entityId: string, level?: EntityLevel): Promise<GraphResponse<EntityState>> {
+    return this.client.request<EntityState>({ method: "GET", path: entityId, accessToken: account.accessToken, params: { fields: stateFieldsFor(level) } });
   }
 
   /** Lê SÓ o `targeting` cru atual de um adset (drift fino do revert de `adjust_audience`, D4).

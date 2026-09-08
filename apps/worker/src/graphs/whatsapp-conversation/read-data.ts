@@ -32,6 +32,8 @@ import {
 } from "../../modules/conversation/fresh-metrics.js";
 import { describeCreatedDraft } from "../../modules/apply/draft-summary.js";
 import type { ActivationApproval, Approval, ApprovalPort } from "@trafego/shared/ports";
+import { AdsPlatformError } from "@trafego/shared/ports";
+import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
 import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY, withTimeout } from "@trafego/shared";
 import { ACCOUNT_HEALTH_STATUS_LABELS } from "@trafego/shared";
 import type { AgentId, CampaignDraftSpec, CreativeAssetRef, CuratedEntitySnapshot, CustomAudience, DraftKind, EntityLevel, InsightMetrics, MetaAccountHealthStatus, OrgId, PartialReason, TargetingSpec, UnitAnalysis, WhatsappDestination } from "@trafego/shared";
@@ -1538,6 +1540,7 @@ export async function campaignStatusData(
   // STATUS FRESCO de cada alvo (readEntityState não passa pelo cache → reflete reativação/pausa
   // externa AGORA). Bounded (resolveNamedMatch já capa a lista). Falha numa → pula só ela.
   const campaigns: Array<{ id: string; name: string | null; status: string; delivering?: boolean; deliveryReason?: string }> = [];
+  let tokenInvalid = false; // distingue token (recolar) de transiente (tenta de novo) na falha total
   for (const t of targets) {
     try {
       const raw = await withTimeout(deps.ports.ads.readEntityState(ref, t.id), deps.conversation.liveFetchTimeoutMs);
@@ -1559,11 +1562,19 @@ export async function campaignStatusData(
         }
       }
       campaigns.push(entry);
-    } catch {
+    } catch (err) {
+      // token inválido (190) NÃO é transiente — retry não resolve, recolar sim. Distingue a mensagem final.
+      if (err instanceof AdsPlatformError && err.kind === "invalid_credential") tokenInvalid = true;
       /* pula essa — best-effort */
     }
   }
-  if (campaigns.length === 0) return { hasData: false, note: "não consegui confirmar o status ao vivo agora — tenta de novo em instantes" };
+  if (campaigns.length === 0) {
+    if (tokenInvalid) {
+      await markConnectionTokenInvalid(deps.db, ctx.orgId, ctx.adAccountId).catch(() => undefined);
+      return { hasData: false, note: "a conexão com a Meta caiu (token inválido) — reconecte a conta no site pra eu voltar a ler o status." };
+    }
+    return { hasData: false, note: "não consegui confirmar o status ao vivo agora — tenta de novo em instantes" };
+  }
   return { hasData: true, campaigns, source: "live" };
 }
 
