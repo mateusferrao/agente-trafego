@@ -29,6 +29,13 @@ export interface PendingWrite {
     /** budget cru da origem ANTES da realocação (unidade mínima) — devolve exatamente isto. */
     readonly sourceRestoreMinor: number;
   };
+  /**
+   * ATIVAÇÃO EM CADEIA (a Meta não cascateia status): as `actions` incluem o nó pedido + os
+   * descendentes pausados a religar (pra a campanha entregar). Uma intenção única confirmada →
+   * o apply ISENTA o cap de entidades/dia (`exemptEntityCap`), como a ativação de criação já faz;
+   * killSwitch/budget seguem valendo. Ausente = escrita normal (cap valendo).
+   */
+  readonly chainActivation?: boolean;
 }
 
 /**

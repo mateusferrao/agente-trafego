@@ -76,11 +76,17 @@ export function entityKeyOf(target: ActionTarget): string {
  * Ordem: killSwitch → allowedActions → pré-check de nível de budget → anti-compounding
  * de budget (cross-run) → clamp de % → cap de entidades/dia (cross-run). Função PURA —
  * o contexto cross-run vem da casca (dado passado in).
+ *
+ * `opts.exemptEntityCap`: pula SÓ o cap de entidades/dia (passo 5) — usado pela ativação
+ * em cadeia CONFIRMADA (uma intenção única do dono, como a ativação de criação já faz),
+ * pra não deixar a árvore meio-ligada. Todas as outras redes (killSwitch, allowedActions,
+ * budget) seguem valendo. Default false → nenhuma outra chamada é afetada.
  */
 export function applyGuardrails(
   actions: readonly CandidateAction[],
   cfg: GuardrailConfig,
   ctx: GuardrailContext = {},
+  opts: { readonly exemptEntityCap?: boolean } = {},
 ): GuardrailResult {
   const allowed: Action[] = [];
   const dropped: DroppedAction[] = [];
@@ -137,8 +143,9 @@ export function applyGuardrails(
       clamped = clampBudgetChange(action, cfg.maxBudgetChangePct);
     }
 
-    // 5) cap de entidades/dia — conta entidades distintas afetadas
-    if (!seenEntities.has(entityKey)) {
+    // 5) cap de entidades/dia — conta entidades distintas afetadas. Isento na ativação em
+    //    cadeia confirmada (intenção única do dono; o eco lista tudo + killSwitch/budget seguem).
+    if (!opts.exemptEntityCap && !seenEntities.has(entityKey)) {
       if (seenEntities.size >= cfg.maxEntitiesPerDay) {
         dropped.push({ action: clamped, reason: "limite de entidades/dia atingido" });
         continue;

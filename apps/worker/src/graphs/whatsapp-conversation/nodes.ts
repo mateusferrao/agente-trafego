@@ -39,6 +39,7 @@ import { adAccounts, agents, playbookRules, type Database } from "@trafego/db";
 import { DEFAULT_CURRENCY } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
 import { describeLlmError } from "./llm-error.js";
+import { capWarningNote, expandChainActivation } from "../../modules/apply/chain-activation.js";
 import { GROUP_RULES, loadConversationConfig } from "./system-prompt.js";
 import { sanitizeToolPairs, stripHistoricalImages, windowMessages } from "./window.js";
 import {
@@ -1244,15 +1245,34 @@ export function makeConversationNodes(
       return { messages: answerToolCalls(allCalls, "Não consegui acessar a conta agora. Tenta de novo em instantes.") };
     }
 
+    // Ativação em cadeia (a Meta não cascateia status): ativar campanha/conjunto religa a subárvore
+    // pausada, senão só o nó liga e a campanha não veicula. Leitura da árvore best-effort (falha →
+    // só o nó). pause/→PAUSED não expande. Feito ANTES do guardrail p/ contar/isentar a árvore inteira.
+    const chain = await expandChainActivation(proposed, async (level, id) => {
+      try {
+        return await deps.ports.ads.readActivationTree(wctx.account, level, id);
+      } catch (err) {
+        logger.warn({ err, entityId: id }, "conversation:leitura da árvore de ativação falhou — só o nó");
+        return null;
+      }
+    });
+
     // guardrail no LOTE inteiro (uma chamada) — senão o cap de entidades/dia não acumula
-    // entre as ações do mesmo turno (seenEntities é por-chamada). §8: guardrail sempre.
-    const check = applyGuardrails(proposed, wctx.cfg, wctx.ctx);
+    // entre as ações do mesmo turno (seenEntities é por-chamada). §8: guardrail sempre. A ativação
+    // em cadeia CONFIRMADA isenta SÓ o cap de entidades/dia (intenção única; killSwitch/budget seguem).
+    const check = applyGuardrails(chain.expanded, wctx.cfg, wctx.ctx, { exemptEntityCap: chain.chainActivated });
     const labelOf = (a: Action) => a.target.name ?? a.target.id;
     const blocked = check.dropped.map((d) => `${labelOf(d.action)}: ${d.reason}`);
 
     const echoItems: EchoItem[] = [];
     const frozen: Action[] = [];
     for (const clamped of check.allowed) {
+      // ações-filho da cadeia entram no lote a aplicar, mas NÃO no eco (senão vira uma linha por
+      // filho) — o resumo delas sai na nota de listagem (`chain.notes`).
+      if (chain.childIds.has(clamped.id)) {
+        frozen.push(clamped);
+        continue;
+      }
       try {
         const dry = await deps.ports.ads.mutate(wctx.account, clamped, { dryRun: true });
         echoItems.push({
@@ -1275,6 +1295,10 @@ export function makeConversationNodes(
     // shadow (dry_run): o eco avisa que vai SIMULAR — senão "vou pausar" soa como escrita real.
     if (wctx.cfg.dryRun && echoItems.length > 0) parts.push("Modo simulação (não aplico de verdade):");
     if (echoItems.length > 0) parts.push(buildWriteEcho(echoItems));
+    // notas da ativação em cadeia (o que liga além do nó / ⚠️ não-entrega) + aviso de teto.
+    for (const note of chain.notes) parts.push(note);
+    const distinctEntities = new Set(frozen.map((a) => entityKeyOf(a.target))).size;
+    if (chain.chainActivated && distinctEntities > wctx.cfg.maxEntitiesPerDay) parts.push(capWarningNote(distinctEntities, wctx.cfg.maxEntitiesPerDay));
     if (blocked.length > 0) parts.push(`Não consigo:\n${blocked.map((b, i) => `${i + 1}. ${b}`).join("\n")}`);
     const echo = parts.join("\n\n") || "Não consegui preparar essa ação.";
 
@@ -1287,6 +1311,7 @@ export function makeConversationNodes(
         echo,
         expiresAt: new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString(),
         actions: frozen,
+        ...(chain.chainActivated ? { chainActivation: true } : {}),
       };
     }
     return update;
@@ -1480,6 +1505,8 @@ export function makeConversationNodes(
         runId: null,
         orgId: ctx.orgId,
         idempotencyKey: `conv:${ctx.conversationId}:${action.id}`,
+        // ativação em cadeia confirmada isenta o cap de entidades/dia (intenção única do dono).
+        ...(pending.chainActivation ? { exemptEntityCap: true } : {}),
       });
       if (outcome.kind === "applied") touchedToday.add(entityKeyOf(action.target));
       lines.push(outcomeLine(action, outcome));
