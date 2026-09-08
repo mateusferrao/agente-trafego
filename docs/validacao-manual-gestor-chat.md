@@ -227,6 +227,21 @@
 | S8.3 | Token inválido (190) na leitura | Note **"reconecte a conta no site"** (não "tenta de novo") + marca o token inválido (mesma via da análise). |
 | S8.4 | Ativação em cadeia + leitura da árvore falha | Eco avisa que ligará só a campanha (S7.7) — nunca ativa node-only em silêncio. |
 
+### S9 — Cobertura das operações de orçamento (Gaps 1-6)
+> Pré: conta com escrita ligada (`adjust_budget`/`reallocate_budget`), `dryRun` off.
+
+| # | Passo | Esperado |
+|---|-------|----------|
+| S9.1 | Conta em moeda de 0 casas (simular `currency=JPY`): "põe o orçamento da campanha X em 5000" | Eco mostra **¥ 5000** e escreve **5000** na Meta (unidade menor = iene). Antes: ×100 = ¥500000 (100× errado). (Gap 5) |
+| S9.2 | Conta BRL: "orçamento da campanha X pra R$ 200" | Eco "R$ 200,00" + escreve 20000 centavos (inalterado — BRL sempre foi 2 casas). (Gap 5, regressão) |
+| S9.3 | "muda o orçamento do anúncio Z" | "anúncio não tem orçamento próprio na Meta — fica no conjunto (ABO) ou na campanha (CBO)… quer que eu ajuste lá? (pra um orçamento só desse anúncio, dá pra isolá-lo num conjunto próprio — me avisa)". Sem chamar a Meta. (Gap 2) |
+| S9.4 | "orçamento do conjunto Y pra R$ 80" onde a campanha é **CBO** | "o orçamento de *Y* é gerido na campanha (CBO) — vale pra todos os conjuntos dela… quer que eu ajuste na campanha? (afeta todos os conjuntos)". Nunca ajusta em silêncio. (Gap 1) |
+| S9.5 | "orçamento da campanha W pra R$ 300" onde a campanha é **ABO** | "essa campanha distribui por conjunto (ABO) — me diz qual conjunto ajustar (posso listar os conjuntos)". (Gap 1) |
+| S9.6 | "realoca R$ 50 da campanha A (vitalício) pra B (vitalício)" | Eco diz "**no total**", não "/dia". (Gap 3) |
+| S9.7 | "realoca R$ 50/dia da campanha A (diária) pra B (vitalício)" | Barra: "*A* usa diário e *B* usa vitalício — não dá pra realocar entre tipos de orçamento diferentes". (Gap 3) |
+| S9.8 | "tira R$ 50/dia da campanha A (CBO) e põe no conjunto B (ABO)" | Aceita níveis diferentes (fromLevel campaign, toLevel adset): eco lista as duas pernas + confirma; saga aplica com compensação. (Gap 6) |
+| S9.9 | Rejeição da Meta (teto de lance/mín-máx CBO) numa confirmação de budget | Aparece **no apply** ("A Meta informou: …", 1 turno depois) — validar no eco (`validate_only`) é fast-follow (custo de quota). (Gap 4, adiado) |
+
 ---
 
 ## Teste simulado E2E (passo a passo, traçado no código)
