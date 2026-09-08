@@ -26,8 +26,9 @@ import { explicitTargetingToRaw } from "./targeting-map.js";
 
 const STATUS_ACTIVE = "ACTIVE";
 const STATUS_PAUSED = "PAUSED";
-/** Piso de segurança de budget (unidade mínima) — Meta rejeita valores muito baixos. */
-const MIN_BUDGET_MINOR = 100;
+/** Piso de segurança de budget (unidade mínima) — Meta rejeita valores muito baixos. Exportado p/
+ *  a casca (ex: pré-clamp da realocação) respeitar o MESMO piso e o eco não divergir do aplicado. */
+export const MIN_BUDGET_MINOR = 100;
 /** Campo cru do público no adset (before-image + escrita de adjust_audience). */
 const TARGETING_FIELD = "targeting";
 

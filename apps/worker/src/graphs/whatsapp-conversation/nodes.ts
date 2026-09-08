@@ -34,6 +34,7 @@ import { sleep, phoneTokensInText, buildApprovalApplyJob, ACTION_PARAM_TARGETING
 import type { Action, ApprovalId, ConversionGoal, OrgId } from "@trafego/shared/types";
 import { CONVERSION_GOALS } from "@trafego/shared/types";
 import { AdsPlatformError } from "@trafego/shared/ports";
+import { MIN_BUDGET_MINOR } from "@trafego/ads-meta";
 import { and, eq } from "drizzle-orm";
 import { adAccounts, agents, playbookRules, type Database } from "@trafego/db";
 import { DEFAULT_CURRENCY } from "@trafego/shared";
@@ -1195,9 +1196,19 @@ export function makeConversationNodes(
       }
       // pré-clamp: o maior movível respeitando o teto de % nos DOIS lados (origem −%, destino +%).
       const maxMovableMinor = Math.floor((wctx.cfg.maxBudgetChangePct / 100) * Math.min(fromCur, toCur));
-      const moveMinor = Math.min(requestedMinor, maxMovableMinor);
+      // ...E respeitando o PISO da plataforma na origem: se `fromCur - move` cair abaixo de
+      // MIN_BUDGET_MINOR, o executor arredondaria a origem PRA CIMA (pro piso) e o aplicado
+      // divergiria do eco (origem não cai o prometido, destino sobe tudo → gasto total sobe sem
+      // aviso). Limita o move pra a origem parar EXATAMENTE no piso, não abaixo.
+      const maxMovableByFloor = fromCur - MIN_BUDGET_MINOR;
+      const moveMinor = Math.min(requestedMinor, maxMovableMinor, Math.max(0, maxMovableByFloor));
       if (moveMinor <= 0) {
-        return { messages: [...answerToolCalls(allCalls, "teto"), new AIMessage(`Com o seu limite de segurança de ${wctx.cfg.maxBudgetChangePct}% por mudança, não consigo mover nada de uma vez entre essas duas. Dá pra afrouxar o teto na config, ou mover no site.`)] };
+        // origem já no piso → não dá pra tirar sem furar o mínimo; senão foi o teto de %.
+        const atFloor = maxMovableByFloor <= 0;
+        const msg = atFloor
+          ? `*${fromName}* já está no orçamento mínimo (${formatMoneyMinor(MIN_BUDGET_MINOR, wctx.currency)}${period}) — não dá pra tirar mais dela sem parar a campanha. Pausa no site se for isso que você quer.`
+          : `Com o seu limite de segurança de ${wctx.cfg.maxBudgetChangePct}% por mudança, não consigo mover nada de uma vez entre essas duas. Dá pra afrouxar o teto na config, ou mover no site.`;
+        return { messages: [...answerToolCalls(allCalls, "não movo"), new AIMessage(msg)] };
       }
       const clampedNote = moveMinor < requestedMinor ? `\n(respeitando seu teto de ${wctx.cfg.maxBudgetChangePct}%, movo ${formatMoneyMinor(moveMinor, wctx.currency)}${period} — o máximo seguro de uma vez)` : "";
       const legFrom: Action = {
