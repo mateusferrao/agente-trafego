@@ -1008,6 +1008,18 @@ oficial + **spike read-only/validate_only confirmado contra a BM Automato real**
   (crédito/emprego/habitação/político) precisa declarar → hoje a Meta rejeita (honesto via G2). Override
   por-agente = fast-follow.
 
+**Fast-follows / residuais da sessão "Fadiga de criativo assertiva" (creative_aging, 2026-09-08):**
+- **Gradação do desgaste por severidade (2 × 3 sinais).** Hoje a distinção é binária: `creative_aging`
+  (ainda entrega → prepare o sucessor) × `creative_fatigue` (já não entrega → troque). Um aging SEVERO
+  (3 sinais de deterioração juntos, prestes a cair) usa a MESMA mensagem/urgência de um aging leve (2
+  sinais). Fast-follow: graduar a urgência do "prepare o sucessor" pela contagem de sinais (`fatigueHits`),
+  sem virar guard — segue nível-narrativa (§7). A costura (`stillDelivering` + `fatigueHits`) já existe em
+  `detectHealthSignals`; falta só o 3º nível de mensagem.
+- **Ancoragem do CPA marginal ao instante da última mudança REAL de orçamento.** O `creative_aging` reusa
+  a mesma aproximação janela-atual×baseline dos guards de escala; a ancoragem exata (cruzar
+  `agent_tool_calls`/`insights_snapshots` por entidade) segue como o mesmo fast-follow já registrado no
+  guard de CPA marginal — precisão adicional, não bug.
+
 ## Fatia 8 — Orquestração multi-agente / qualidade (roadmap pós-MVP)
 
 **Visão:** elevar a qualidade e a escala da análise com **mais papéis de agente** e **map-reduce por entidade** — sem reescrever o grafo. **Depende:** MVP validado (hipótese confirmada na 3a) + `5a` (write path, p/ o validador de segurança de ação). A costura já existe desde a 3a-2: o par **Analista→Revisor** é modelado como uma **lista de passes** (`reviewPasses`, default 1) — crescer = **registrar mais passes/papéis**, não reescrever nós.

@@ -401,7 +401,31 @@ Entrada: "cria uma campanha de leads" (sem valor); teto de gasto novo = R$100.
 Entrada: mover R$1,00/dia de A (R$1,50) com teto alto.
 1. O move é limitado por `maxMovableByFloor` → A para EXATAMENTE no piso (`MIN_BUDGET_MINOR`), nunca abaixo → o executor não arredonda a origem pra cima → **eco == aplicado** (sem gasto total subindo em silêncio). A nota distingue piso × teto de %. ✓
 
+## Cobertura da fadiga de criativo assertiva (desgaste que ainda entrega × fadiga real)
+
+Objetivo: o Roy deixa de recomendar TROCAR criativo que ainda vende. Sinal novo `creative_aging`
+(desgaste MAS ainda entrega) separado de `creative_fatigue` (desgastou E já não entrega).
+
+### S10-1 — Vencedor desgastando mas ainda batendo a meta → "prepare o sucessor", não "troque"
+Entrada: campanha vencedora (bate a meta / top-eficiência) com 2+ sinais de deterioração vs baseline
+(CTR caiu >20% de um pico, CPA subiu >30% mas ainda < meta).
+1. A camada de qualidade marca `creative_aging` (não `creative_fatigue`) — `stillDelivering = significância + bate a meta`. ✓
+2. **Proativo**: a recomendação é "Preparar o próximo criativo" (rationale "ainda entrega; troque quando cair, não antes"), **não** "Testar um ângulo novo". ✓
+3. **Narrativa (análise)**: o Roy mantém o vencedor rodando e orienta preparar o sucessor; nunca "renove/troque já". ✓
+
+### S10-2 — Mesma deterioração num que JÁ NÃO entrega → fadiga real (troque)
+Entrada: mesma deterioração, mas CPA acima da meta (não entrega mais).
+1. Marca `creative_fatigue` → recomendação "Testar um ângulo novo" / renovar de fato. ✓
+
+### S10-3 — A trava conservadora NÃO afrouxa no aging
+Entrada: escalar/duplicar (chat ou site) um vencedor com `creative_aging`.
+1. **Subir orçamento**: a ressalva de escala AINDA aparece e trava o auto-apply — só a mensagem gradua ("ainda entrega, mas dá sinais de desgaste — tenha o próximo criativo pronto antes de subir a verba"). ✓
+2. **Duplicar** (chat): o eco AINDA avisa (nota suave: "ainda entrega, mas com sinais de desgaste — duplicar leva o mesmo criativo pro público novo"). ✓
+3. **Auto-reuso de criativo** (`chooseCreative`/`isSourceFatigued`): o criativo desgastando NÃO é auto-reusado (cai na biblioteca), aging incluído. ✓
+4. **Proativo** `scale_winner`: o vencedor desgastando (aging) não vira `scale_winner` (segue exigindo `!fatigued`). ✓
+
 ## Fast-follows (residuais aceitos / adiados — ROADMAP)
+- **Gradação do desgaste por severidade (2 × 3 sinais)**: hoje aging×fadiga é binário (ainda entrega × não entrega); um aging SEVERO (3 sinais, prestes a cair) usa a mesma mensagem de aging leve — dá pra graduar a urgência do "prepare o sucessor".
 - **G4 validate_only no eco** (orçamento): custo de quota; a rejeição segue honesta no apply.
 - **G9 janela crash create→persist**: dup pausado/sem-gasto/raro; marker-adopt rejeitado (risco de adotar a campanha errada); o reaper (G7) já destrava o rascunho preso.
 - **Isolar anúncio em conjunto próprio** e **budget por-anúncio**: primitivos existem no adapter; falta a costura tool+draft+saga.
