@@ -105,6 +105,14 @@ describe("computeScaleRessalvas", () => {
     expect(rs[0]!.message).toContain("weak_hook_retention");
   });
 
+  it("desgaste AGING → mesma ressalva (trava escala) mas mensagem de 'prepare o sucessor', não 'renove já'", () => {
+    const signals = new Map<string, readonly HealthSignal[]>([["C1", ["creative_aging"]]]);
+    const rs = computeScaleRessalvas(scaleBudget(), emptyCtx({ signals }));
+    expect(codes(rs)).toEqual(["creative_fatigue"]); // código igual: a trava de auto-apply é a mesma
+    expect(rs[0]!.message).toContain("ainda entrega");
+    expect(rs[0]!.message).toContain("próximo criativo");
+  });
+
   it("hipótese não-confirmada nível-conta → ressalva unconfirmed_hypothesis", () => {
     const g: LessonGuard = { key: { direction: "lower", scope: "account", subjectId: null } } as unknown as LessonGuard;
     expect(codes(computeScaleRessalvas(scaleBudget(), emptyCtx({ lessonGuards: [g] })))).toEqual(["unconfirmed_hypothesis"]);

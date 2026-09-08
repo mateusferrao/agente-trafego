@@ -713,6 +713,13 @@ export interface ConversionProxy {
 export type PerformanceTier = "winner" | "performer" | "underperformer" | "zombie";
 
 /** Sinais de saúde nomeados (estende a detecção de anomalias com semântica de tráfego).
+ *  `creative_fatigue`: desgaste (2+ sinais de deterioração) numa entidade que JÁ NÃO ENTREGA
+ *  (não bate a meta / não é mais eficiente) — hora de renovar/trocar o criativo.
+ *  `creative_aging`: os MESMOS sinais de desgaste, mas a entidade AINDA ENTREGA resultado (bate a
+ *  meta / segue eficiente) — não é "troque já", é "prepare o sucessor e troque quando o resultado
+ *  cair, não antes"; nunca matar/trocar um vencedor provado por um não-provado (§7 proteger winners).
+ *  Ambos travam ESCALA/DUPLICAÇÃO igual (subir verba/duplicar num criativo desgastando queima verba),
+ *  só a DIREÇÃO da recomendação difere.
  *  `weak_creative` (S4b): prova fraca + baixa densidade persuasiva (visão) — NUNCA vira
  *  critério de guard (é score de LLM, soft); só informa NOTE/matcher. `platform_quality_below_average`
  *  (S6): a própria Meta classifica o anúncio abaixo da média (qualidade/engajamento/conversão) —
@@ -721,6 +728,7 @@ export type PerformanceTier = "winner" | "performer" | "underperformer" | "zombi
  *  NOTE/direção de criativo, nunca guard (é sinal de qualidade de criativo, não de economia da ação). */
 export type HealthSignal =
   | "creative_fatigue"
+  | "creative_aging"
   | "audience_saturation"
   | "low_volume"
   | "weak_creative"

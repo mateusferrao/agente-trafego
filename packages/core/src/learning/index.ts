@@ -589,6 +589,7 @@ export function describeLessonForRedactor(candidate: LessonCandidate): RedactorI
 
 const HEALTH_SIGNAL_LABEL: Record<HealthSignal, string> = {
   creative_fatigue: "fadiga de criativo",
+  creative_aging: "desgaste de criativo (ainda entregando)",
   audience_saturation: "saturação de público",
   low_volume: "baixo volume",
   weak_creative: "criativo fraco",

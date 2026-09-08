@@ -147,6 +147,14 @@ export interface HealthInput {
   readonly costRisePct: number;
   /** elegibilidade (p/ o sinal `low_volume`). */
   readonly hasSignificance: boolean;
+  /**
+   * A entidade AINDA ENTREGA resultado: tem significância E bate a meta (ou, sem meta, está entre
+   * as mais eficientes da conta). Gradua o desgaste: 2+ sinais de fadiga NUM QUE AINDA ENTREGA →
+   * `creative_aging` (prepare o sucessor, não troque já); num que já não entrega → `creative_fatigue`.
+   * Ausente/false → trata como não-entregando (comportamento conservador anterior). Mesma
+   * determinação de "winner" de `classifyTier` (fonte única, resolvida em `enrichEntitiesQuality`).
+   */
+  readonly stillDelivering?: boolean;
   /** teto de frequência resolvido por estágio (§Bloco 2); ausente → `fatigueFrequency`. */
   readonly frequencyCap?: number;
   /** S6: retenção de vídeo nos primeiros 25% (%). Ausente = sem vídeo reportado — nunca
@@ -162,9 +170,10 @@ function hasBelowAverageRanking(rankings: PlatformQualityRankings | undefined): 
 }
 
 /**
- * Sinais nomeados: fadiga (2+ de {CTR caiu, freq alta, custo subiu}), saturação
- * de público (freq alta isolada) e baixo volume (sem significância). O teto de
- * frequência vem do estágio quando resolvido (`frequencyCap`), senão do geral.
+ * Sinais nomeados: fadiga/desgaste (2+ de {CTR caiu, freq alta, custo subiu}) — `creative_aging`
+ * quando a entidade AINDA ENTREGA (`stillDelivering`, prepare o sucessor) ou `creative_fatigue`
+ * quando já não entrega (troque) —, saturação de público (freq alta isolada) e baixo volume (sem
+ * significância). O teto de frequência vem do estágio quando resolvido (`frequencyCap`), senão do geral.
  * S6: `weak_hook_retention` (retenção de vídeo baixa) e `platform_quality_below_average`
  * (a Meta classifica abaixo da média em qualidade/engajamento/conversão) — ambos métrica
  * DURA (não score de LLM), mas nunca viram guard (CLAUDE.md §7): só informam NOTE/direção.
@@ -177,7 +186,12 @@ export function detectHealthSignals(input: HealthInput, t: QualityThresholds): H
     (input.ctrDropPct >= t.fatigueCtrDropPct ? 1 : 0) +
     (freqHigh ? 1 : 0) +
     (input.costRisePct >= t.fatigueCostRisePct ? 1 : 0);
-  if (fatigueHits >= 2) signals.push("creative_fatigue");
+  // Gradua o desgaste pelo RESULTADO ABSOLUTO (não só a deterioração relativa): 2+ sinais numa
+  // entidade que AINDA ENTREGA (bate a meta / segue eficiente) = `creative_aging` (prepare o
+  // sucessor, não troque um vencedor provado antes de cair); num que já não entrega = `creative_fatigue`
+  // (troque). Fecha o falso positivo de "trocar criativo que ainda vende" — a proteção contra
+  // escalar/duplicar sob desgaste é preservada (ambos ∈ FATIGUE_SIGNALS, ver analysis-guards).
+  if (fatigueHits >= 2) signals.push(input.stillDelivering ? "creative_aging" : "creative_fatigue");
   if (freqHigh) signals.push("audience_saturation");
   if (!input.hasSignificance) signals.push("low_volume");
   if (input.videoHookRetentionPct !== undefined && input.videoHookRetentionPct < t.weakHookRetentionMaxPct) {
@@ -338,12 +352,21 @@ export function enrichEntitiesQuality(
     const costRisePct = risePct(e.metrics[costMetric], e.deltaVsBaseline[costMetric]);
     // teto de frequência por estágio (adset com público); sem estágio → teto geral.
     const frequencyCap = resolveFrequencyCap(e.audience?.stage, t);
+    // eficiência só vale p/ quem tem CPA (mesma base do pool q1).
+    const cpa = typeof e.metrics.cpa === "number" && e.metrics.cpa > 0 ? e.metrics.cpa : undefined;
+    // "ainda entrega resultado" (fonte única com o tier `winner`): significância + bate a meta OU,
+    // sem meta, top-eficiência da conta. Gradua o desgaste (aging × fatigue) no detector abaixo —
+    // computado ANTES dele e reusado no `classifyTier` (zero divergência com a classificação winner).
+    const beatsTarget = beatsTargetFor(e, goals);
+    const topEfficiencyNoTarget = !ctx.hasTarget && cpa !== undefined && cpa <= q1;
+    const stillDelivering = eligibility.hasSignificance && (beatsTarget || topEfficiencyNoTarget);
     const healthSignals = detectHealthSignals(
       {
         ...(e.metrics.frequency !== undefined ? { frequency: e.metrics.frequency } : {}),
         ctrDropPct,
         costRisePct,
         hasSignificance: eligibility.hasSignificance,
+        stillDelivering,
         frequencyCap,
         ...(e.metrics.videoHookRetentionPct !== undefined ? { videoHookRetentionPct: e.metrics.videoHookRetentionPct } : {}),
         ...(e.qualityRankings ? { qualityRankings: e.qualityRankings } : {}),
@@ -351,8 +374,6 @@ export function enrichEntitiesQuality(
       t,
     );
 
-    // eficiência só vale p/ quem tem CPA (mesma base do pool q1).
-    const cpa = typeof e.metrics.cpa === "number" && e.metrics.cpa > 0 ? e.metrics.cpa : undefined;
     // sinal de vida: conversão de negócio, OU conversão-proxy (objetivo próprio), OU
     // conversas no funil. Ausência total (com gasto, fora de learning) = zumbi.
     const hasSignOfLife = conversions > 0 || typeof e.proxy?.cpa === "number" || conversationStarted > 0;
@@ -361,10 +382,10 @@ export function enrichEntitiesQuality(
         conversions,
         spend: e.metrics.spend,
         hasSignificance: eligibility.hasSignificance,
-        beatsTarget: beatsTargetFor(e, goals),
+        beatsTarget,
         belowTarget: e.flags.some((f) => BELOW_TARGET_FLAGS.has(f)),
         worseThanBaseline: costRisePct >= t.fatigueCostRisePct,
-        topEfficiencyNoTarget: !ctx.hasTarget && cpa !== undefined && cpa <= q1,
+        topEfficiencyNoTarget,
         hasSignOfLife,
         inLearning: eligibility.inLearning,
       },

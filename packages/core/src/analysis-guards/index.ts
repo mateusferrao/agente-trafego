@@ -321,11 +321,15 @@ export const DEFAULT_AUDIENCE_CEILING_THRESHOLDS: AudienceCeilingThresholds = { 
 // COMPLEMENTA a NOTE (que continua explicando o "porquê" pro raciocínio), não a substitui.
 // `weak_creative` (score de visão, LLM soft) fica de fora — nunca vira critério de guard.
 
-const FATIGUE_SIGNALS: ReadonlySet<HealthSignal> = new Set(["creative_fatigue", "weak_hook_retention"]);
+// DESGASTE de criativo (sinal DURO — métrica, não score de visão LLM). Inclui `creative_aging`
+// (desgaste num que AINDA ENTREGA): subir verba/duplicar num criativo desgastando queima verba
+// IGUAL, entregue ou não — a proteção contra escala/duplicação vale pros dois; só a DIREÇÃO da
+// recomendação (troque já × prepare o sucessor) difere, e essa distinção é `isAging` abaixo.
+const FATIGUE_SIGNALS: ReadonlySet<HealthSignal> = new Set(["creative_fatigue", "creative_aging", "weak_hook_retention"]);
 
 /**
- * Fonte única de "fadiga de criativo" (sinal DURO — métrica, não score de visão LLM).
- * Reusada pelo guard de escala E pelo detector de oportunidade de criação (`proposeDrafts`),
+ * Fonte única de "desgaste de criativo" (sinal DURO — métrica, não score de visão LLM).
+ * Reusada pelo guard/ressalva de escala E pelo detector de oportunidade de criação (`proposeDrafts`),
  * que antes só olhava `creative_fatigue` — a divergência gerava escala contraditória no MESMO
  * vencedor (guard rebaixava por `weak_hook_retention`, detector escalava). `weak_creative`
  * (score de visão, soft) NUNCA entra aqui. PURA.
@@ -334,9 +338,18 @@ export function firstFatigueSignal(signals: readonly HealthSignal[] | undefined)
   return signals?.find((s) => FATIGUE_SIGNALS.has(s));
 }
 
-/** `true` se a entidade tem algum sinal DURO de fadiga de criativo. PURA. */
+/** `true` se a entidade tem algum sinal DURO de desgaste de criativo (fadiga OU aging). PURA. */
 export function isFatigued(signals: readonly HealthSignal[] | undefined): boolean {
   return firstFatigueSignal(signals) !== undefined;
+}
+
+/**
+ * `true` se o desgaste é do tipo AGING (`creative_aging`: ainda entrega). Distingue a DIREÇÃO da
+ * recomendação sem afrouxar a proteção — `isFatigued` segue true (o desgaste trava escala/
+ * duplicação igual), mas a narrativa/card graduam ("prepare o sucessor" em vez de "troque já"). PURA.
+ */
+export function isAging(signals: readonly HealthSignal[] | undefined): boolean {
+  return signals?.includes("creative_aging") ?? false;
 }
 
 /** Mapa `externalId → healthSignals` a partir dos segmentos do brief. */

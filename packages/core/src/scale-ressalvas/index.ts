@@ -117,12 +117,18 @@ export function computeScaleRessalvas(action: Action, ctx: ScaleRessalvaContext)
     }
   }
 
-  // 4. fadiga de criativo (fonte única `firstFatigueSignal`)
+  // 4. desgaste de criativo (fonte única `firstFatigueSignal`). O código da ressalva segue
+  // `creative_fatigue` (a trava de auto-apply é a mesma), mas a MENSAGEM gradua: `creative_aging`
+  // (ainda entrega) fala em "prepare o sucessor", não em "renove já" — coerente com não trocar um
+  // vencedor provado antes de cair (§7). Ambos travam a subida de verba sob desgaste igual.
   const hit = firstFatigueSignal(ctx.signals.get(id));
   if (hit) {
     out.push({
       code: "creative_fatigue",
-      message: `sinal de fadiga de criativo (${hit}) — renove o gancho/criativo antes de subir o orçamento, senão o incremento tende a piorar o CPA/CPM em vez de alcançar gente nova.`,
+      message:
+        hit === "creative_aging"
+          ? "o criativo ainda entrega, mas já dá sinais de desgaste — tenha o próximo criativo pronto antes de subir o orçamento; escalar num criativo cansando tende a piorar o CPA/CPM em vez de alcançar gente nova."
+          : `sinal de fadiga de criativo (${hit}) — renove o gancho/criativo antes de subir o orçamento, senão o incremento tende a piorar o CPA/CPM em vez de alcançar gente nova.`,
     });
   }
 
