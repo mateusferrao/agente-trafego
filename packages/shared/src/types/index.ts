@@ -19,20 +19,28 @@ export const err = <E>(error: E): Result<never, E> => ({ ok: false, error });
 export type EntityLevel = "account" | "campaign" | "adset" | "ad";
 export type EntityStatus = "active" | "paused" | "deleted" | "archived";
 
-/** Nó mínimo da árvore de ativação (id + nome + status EFETIVO). */
+/**
+ * Nó da árvore de ativação. `status` = status PRÓPRIO/configurado do nó (o que decide se RELIGAR —
+ * um filho já ativo no próprio nível não precisa de ação, mesmo que o pai pausado o deixe sem
+ * entregar). `effectiveStatus` = status EFETIVO da Meta (reflete os pais + revisão) — decide se
+ * ENTREGA (anúncio efetivamente ativo ⇒ cadeia toda ativa).
+ */
 export interface ActivationNode {
   readonly id: string;
   readonly name: string | null;
   readonly status: EntityStatus;
+  readonly effectiveStatus: EntityStatus;
 }
 /**
- * Descendentes VIVOS de uma campanha/conjunto — base da ativação em cadeia + da entrega efetiva.
- * `status` é o EFETIVO da Meta (o do anúncio já reflete os pais: anúncio ativo ⇒ cadeia toda ativa).
- * Escopado na leitura (campanha → seus conjuntos+anúncios; conjunto → seus anúncios).
+ * Descendentes VIVOS de uma campanha/conjunto — base da ativação em cadeia (religar os pausados no
+ * PRÓPRIO nível) + da entrega efetiva (existe anúncio efetivamente ativo?). Escopado na leitura
+ * (campanha → conjuntos+anúncios; conjunto → anúncios). `truncated` = a página não trouxe todos
+ * (campanha grande) → o caller avisa em vez de sub-ativar em silêncio.
  */
 export interface ActivationTree {
   readonly adsets: readonly ActivationNode[];
   readonly ads: readonly (ActivationNode & { readonly adsetId: string })[];
+  readonly truncated: boolean;
 }
 
 /**

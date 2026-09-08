@@ -1036,22 +1036,22 @@ describe("campaignStatusData (ambíguo → LISTA com status ao vivo, NÃO pede i
   });
 
   it("ENTREGA EFETIVA: campanha ATIVA mas sem anúncio ativo → delivering:false + motivo", async () => {
-    const tree = { adsets: [{ id: "s1", name: "s1", status: "active" }], ads: [{ id: "a1", name: "a1", status: "paused", adsetId: "s1" }] };
+    const tree = { adsets: [{ id: "s1", name: "s1", status: "active", effectiveStatus: "active" }], ads: [{ id: "a1", name: "a1", status: "paused", effectiveStatus: "paused", adsetId: "s1" }], truncated: false };
     const d = deps(async () => [], async () => ({ status: "ACTIVE" }), async () => tree);
     const out = await campaignStatusData(d, ctx, { campaignId: "c9" });
     expect(out).toMatchObject({ hasData: true, campaigns: [{ id: "c9", status: "active", delivering: false, deliveryReason: "anúncios pausados" }] });
   });
 
   it("ENTREGA EFETIVA: campanha PAUSADA → delivering:false 'campanha pausada' (sem ler a árvore)", async () => {
-    const readTree = vi.fn(async () => ({ adsets: [], ads: [] }));
+    const readTree = vi.fn(async () => ({ adsets: [], ads: [], truncated: false }));
     const d = deps(async () => [], async () => ({ status: "PAUSED" }), readTree);
     const out = await campaignStatusData(d, ctx, { campaignId: "c9" });
     expect(out).toMatchObject({ hasData: true, campaigns: [{ id: "c9", status: "paused", delivering: false, deliveryReason: "campanha pausada" }] });
     expect(readTree).not.toHaveBeenCalled();
   });
 
-  it("ENTREGA EFETIVA: campanha ATIVA com anúncio ativo → delivering:true", async () => {
-    const tree = { adsets: [{ id: "s1", name: "s1", status: "active" }], ads: [{ id: "a1", name: "a1", status: "active", adsetId: "s1" }] };
+  it("ENTREGA EFETIVA: campanha ATIVA com anúncio efetivamente ativo → delivering:true", async () => {
+    const tree = { adsets: [{ id: "s1", name: "s1", status: "active", effectiveStatus: "active" }], ads: [{ id: "a1", name: "a1", status: "active", effectiveStatus: "active", adsetId: "s1" }], truncated: false };
     const d = deps(async () => [], async () => ({ status: "ACTIVE" }), async () => tree);
     const out = await campaignStatusData(d, ctx, { campaignId: "c9" });
     expect(out).toMatchObject({ hasData: true, campaigns: [{ id: "c9", delivering: true }] });

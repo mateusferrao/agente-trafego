@@ -1547,7 +1547,7 @@ export async function campaignStatusData(
       const entry: { id: string; name: string | null; status: string; delivering?: boolean; deliveryReason?: string } = { id: t.id, name: t.name, status };
       if (status !== "active") {
         entry.delivering = false;
-        entry.deliveryReason = "campanha pausada";
+        entry.deliveryReason = status === "paused" ? "campanha pausada" : `campanha ${status}`;
       } else {
         try {
           const tree = await withTimeout(deps.ports.ads.readActivationTree(ref, "campaign", t.id), deps.conversation.liveFetchTimeoutMs);

@@ -1248,14 +1248,18 @@ export function makeConversationNodes(
     // Ativação em cadeia (a Meta não cascateia status): ativar campanha/conjunto religa a subárvore
     // pausada, senão só o nó liga e a campanha não veicula. Leitura da árvore best-effort (falha →
     // só o nó). pause/→PAUSED não expande. Feito ANTES do guardrail p/ contar/isentar a árvore inteira.
-    const chain = await expandChainActivation(proposed, async (level, id) => {
-      try {
-        return await deps.ports.ads.readActivationTree(wctx.account, level, id);
-      } catch (err) {
-        logger.warn({ err, entityId: id }, "conversation:leitura da árvore de ativação falhou — só o nó");
-        return null;
-      }
-    });
+    const chain = await expandChainActivation(
+      proposed,
+      async (level, id) => {
+        try {
+          return await deps.ports.ads.readActivationTree(wctx.account, level, id);
+        } catch (err) {
+          logger.warn({ err, entityId: id }, "conversation:leitura da árvore de ativação falhou — só o nó");
+          return null;
+        }
+      },
+      { resumeAllowed: wctx.cfg.allowedActions.includes("resume_entity") },
+    );
 
     // guardrail no LOTE inteiro (uma chamada) — senão o cap de entidades/dia não acumula
     // entre as ações do mesmo turno (seenEntities é por-chamada). §8: guardrail sempre. A ativação
@@ -1297,8 +1301,10 @@ export function makeConversationNodes(
     if (echoItems.length > 0) parts.push(buildWriteEcho(echoItems));
     // notas da ativação em cadeia (o que liga além do nó / ⚠️ não-entrega) + aviso de teto.
     for (const note of chain.notes) parts.push(note);
-    const distinctEntities = new Set(frozen.map((a) => entityKeyOf(a.target))).size;
-    if (chain.chainActivated && distinctEntities > wctx.cfg.maxEntitiesPerDay) parts.push(capWarningNote(distinctEntities, wctx.cfg.maxEntitiesPerDay));
+    // aviso de teto: conta o lote + o que já foi tocado hoje (cross-run) vs o cap (a isenção real
+    // no guardrail também considera touchedToday) — senão o aviso não bate com o consumo do dia.
+    const dayTotal = new Set([...(wctx.ctx.touchedToday ?? []), ...frozen.map((a) => entityKeyOf(a.target))]).size;
+    if (chain.chainActivated && dayTotal > wctx.cfg.maxEntitiesPerDay) parts.push(capWarningNote(dayTotal, wctx.cfg.maxEntitiesPerDay));
     if (blocked.length > 0) parts.push(`Não consigo:\n${blocked.map((b, i) => `${i + 1}. ${b}`).join("\n")}`);
     const echo = parts.join("\n\n") || "Não consegui preparar essa ação.";
 

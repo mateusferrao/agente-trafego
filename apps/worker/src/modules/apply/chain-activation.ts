@@ -2,7 +2,7 @@
 // descendentes PAUSADOS, senão só o nó liga e a campanha não entrega. Pausar/→PAUSED NÃO expande
 // (granularidade da pausa preservada). A leitura da árvore é injetada (`readTree`) → testável.
 
-import { campaignDelivering, pausedDescendants, type NonDeliveryReason } from "@trafego/core";
+import { pausedDescendants } from "@trafego/core";
 import type { Action, ActivationNode, ActivationTree } from "@trafego/shared/types";
 import { ACTION_PARAM_STATUS } from "@trafego/shared";
 
@@ -39,16 +39,19 @@ export function activationListNote(rootLabel: string, nAdsets: number, nAds: num
   return `Também vou ligar ${parts.join(" e ")} pausado(s) de *${rootLabel}* — senão ela não veicula.`;
 }
 
-const NON_DELIVERY_TEXT: Readonly<Record<NonDeliveryReason, string>> = {
-  "sem anúncio": "essa campanha não tem anúncio",
-  "anúncios pausados": "os anúncios estão pausados",
-  "conjuntos pausados": "os conjuntos estão pausados",
-};
+/** ⚠️ quando não há anúncio nenhum pra veicular (ligar o nó não faz a campanha rodar). */
+export function noAdsNote(rootLabel: string): string {
+  return `⚠️ *${rootLabel}* não tem anúncio pra veicular — mesmo ligada, não roda até criar/adicionar um anúncio.`;
+}
 
-/** ⚠️ quando ligar o nó não faz a campanha entregar (ex.: sem anúncio nenhum a religar). */
-export function nonDeliveryNote(rootLabel: string, reason?: NonDeliveryReason): string {
-  const why = reason ? ` (${NON_DELIVERY_TEXT[reason]})` : "";
-  return `⚠️ *${rootLabel}* não vai veicular assim${why} — mesmo ligada, não roda até ter anúncio ativo.`;
+/** Nota quando há filhos pausados mas a ação `resume_entity` está DESLIGADA (não dá pra religar). */
+export function resumeDisabledNote(rootLabel: string): string {
+  return `Os conjuntos/anúncios de *${rootLabel}* estão pausados, mas "retomar" está desligado pra este agente — ligue-os no site ou libere a ação em Ações permitidas.`;
+}
+
+/** Nota de truncamento: a campanha tem mais entidades do que a página trouxe (não liguei todas). */
+export function truncatedNote(rootLabel: string): string {
+  return `*${rootLabel}* tem muitos conjuntos/anúncios — liguei os que consegui listar; confira o resto no site.`;
 }
 
 /** Aviso de teto: a ativação em cadeia passa do cap de entidades/dia (ligamos mesmo assim, confirmado). */
@@ -68,13 +71,16 @@ export interface ChainExpansion {
 }
 
 /**
- * Expande as ações de ATIVAÇÃO de campanha/conjunto pra incluir os descendentes pausados. `readTree`
- * lê a árvore viva (injetada; `null` = não deu pra ler → mantém só o nó, degradação graciosa). PURA
- * quanto ao IO. Pausar/→PAUSED e alvos ad-level passam intactos.
+ * Expande as ações de ATIVAÇÃO de campanha/conjunto pra incluir os descendentes pausados NO PRÓPRIO
+ * nível (o efetivo rolaria a árvore inteira). `readTree` lê a árvore viva (injetada; `null` = não deu
+ * pra ler → mantém só o nó, degradação graciosa). `resumeAllowed`: se `resume_entity` está desligado,
+ * NÃO expande (senão o guardrail dropava os filhos e o eco prometeria o que não liga) — avisa honesto.
+ * PURA quanto ao IO. Pausar/→PAUSED e alvos ad-level passam intactos.
  */
 export async function expandChainActivation(
   actions: readonly Action[],
   readTree: (level: "campaign" | "adset", id: string) => Promise<ActivationTree | null>,
+  opts: { readonly resumeAllowed: boolean } = { resumeAllowed: true },
 ): Promise<ChainExpansion> {
   const expanded: Action[] = [];
   const childIds = new Set<string>();
@@ -89,6 +95,10 @@ export async function expandChainActivation(
     const paused = pausedDescendants(tree);
     const rootLabel = a.target.name ?? a.target.id;
     if (paused.adsets.length + paused.ads.length > 0) {
+      if (!opts.resumeAllowed) {
+        notes.push(resumeDisabledNote(rootLabel)); // não expande: 'retomar' desligado
+        continue;
+      }
       for (const s of paused.adsets) {
         const c = childResume(s, "adset", a.id);
         expanded.push(c);
@@ -101,10 +111,11 @@ export async function expandChainActivation(
       }
       chainActivated = true;
       notes.push(activationListNote(rootLabel, paused.adsets.length, paused.ads.length));
-    } else {
-      const d = campaignDelivering(tree);
-      if (!d.delivering) notes.push(nonDeliveryNote(rootLabel, d.reason));
+      if (tree.truncated) notes.push(truncatedNote(rootLabel));
+    } else if (tree.ads.length === 0) {
+      notes.push(noAdsNote(rootLabel)); // nada a religar E sem anúncio → não vai veicular
     }
+    // else: nada pausado no próprio nível e há anúncios (ativos) → religar o nó já faz entregar; sem nota.
   }
   return { expanded, childIds, notes, chainActivated };
 }

@@ -155,6 +155,11 @@ interface MetaEntitiesPage {
   readonly paging?: { readonly next?: string; readonly cursors?: { readonly after?: string } };
 }
 
+/** A página tem próxima (há mais entidades além do teto pedido)? — evita sub-ativar em silêncio. */
+function hasNextPage(page: MetaEntitiesPage): boolean {
+  return !!page.paging?.next;
+}
+
 /**
  * `effective_status`/`status` da Meta → `EntityStatus` neutro do domínio. Exportado
  * (não só interno) — o worker reusa p/ interpretar o resultado cru de `readEntityState`
@@ -564,37 +569,38 @@ export class MetaAdsAdapter implements AdsPlatformPort {
   async readActivationTree(account: AdAccountRef, level: "campaign" | "adset", id: string): Promise<ActivationTree> {
     try {
       const accountId = normalizeAdAccountId(account.adAccountId);
+      // `status` = próprio (o que RELIGAR), `effective_status` = efetivo (o que ENTREGA).
       const adsPage = await callWithGovernor(
         accountId,
         () =>
-          this.client.request<{ data?: RawEntityNode[] }>({
+          this.client.request<MetaEntitiesPage>({
             method: "GET",
             path: `${id}/ads`,
             accessToken: account.accessToken,
-            params: { fields: "id,name,effective_status,adset_id", limit: ACTIVATION_TREE_AD_LIMIT },
+            params: { fields: "id,name,status,effective_status,adset_id", limit: ACTIVATION_TREE_AD_LIMIT },
           }),
         { governor: this.governor },
       );
       const ads = (adsPage.data ?? [])
         .filter((a): a is RawEntityNode & { id: string } => !!a.id)
-        .map((a) => ({ id: a.id, name: a.name ?? null, status: mapStatus(a.effective_status, a.status), adsetId: a.adset_id ?? "" }));
+        .map((a) => ({ id: a.id, name: a.name ?? null, status: mapStatus(a.status), effectiveStatus: mapStatus(a.effective_status, a.status), adsetId: a.adset_id ?? "" }));
       // conjunto: os anúncios já são os descendentes (não há sub-conjunto). campanha: também os conjuntos.
-      if (level === "adset") return { adsets: [], ads };
+      if (level === "adset") return { adsets: [], ads, truncated: hasNextPage(adsPage) };
       const adsetsPage = await callWithGovernor(
         accountId,
         () =>
-          this.client.request<{ data?: RawEntityNode[] }>({
+          this.client.request<MetaEntitiesPage>({
             method: "GET",
             path: `${id}/adsets`,
             accessToken: account.accessToken,
-            params: { fields: "id,name,effective_status", limit: ACTIVATION_TREE_ADSET_LIMIT },
+            params: { fields: "id,name,status,effective_status", limit: ACTIVATION_TREE_ADSET_LIMIT },
           }),
         { governor: this.governor },
       );
       const adsets = (adsetsPage.data ?? [])
         .filter((a): a is RawEntityNode & { id: string } => !!a.id)
-        .map((a) => ({ id: a.id, name: a.name ?? null, status: mapStatus(a.effective_status, a.status) }));
-      return { adsets, ads };
+        .map((a) => ({ id: a.id, name: a.name ?? null, status: mapStatus(a.status), effectiveStatus: mapStatus(a.effective_status, a.status) }));
+      return { adsets, ads, truncated: hasNextPage(adsPage) || hasNextPage(adsetsPage) };
     } catch (error) {
       throw toAdsError(error);
     }
