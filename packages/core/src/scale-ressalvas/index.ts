@@ -1,10 +1,12 @@
-import type { Action, DecisionEligibility, HealthSignal, Ressalva } from "@trafego/shared";
+import type { Action, CuratedEntitySnapshot, DecisionEligibility, HealthSignal, Ressalva } from "@trafego/shared";
 import { ACTION_PARAM_MODE, BUDGET_MODE_INCREASE } from "@trafego/shared";
 import type { LessonGuard } from "../learning/index.js";
 import {
   type AudienceCeilingThresholds,
   type AudienceHeadroom,
   type MarginalCpaThresholds,
+  DEFAULT_AUDIENCE_CEILING_THRESHOLDS,
+  DEFAULT_MARGINAL_CPA_THRESHOLDS,
   firstFatigueSignal,
 } from "../analysis-guards/index.js";
 
@@ -44,6 +46,32 @@ export interface ScaleRessalvaContext {
   readonly ceiling: AudienceCeilingThresholds;
   readonly signals: ReadonlyMap<string, readonly HealthSignal[]>;
   readonly lessonGuards: readonly LessonGuard[];
+}
+
+/**
+ * Ressalvas de escala a partir do SNAPSHOT PERSISTIDO da entidade (`entity_analyses.curatedJson`) —
+ * o caminho ON-DEMAND (chat/site pediram escalar um vencedor) não tem o brief fresco do run. Popula
+ * o contexto com o que o snapshot carrega (elegibilidade + sinais de saúde → significância + fadiga);
+ * os gates que exigem dado fresco (CPA marginal, teto de audiência, aprendizado) são pulados
+ * GRACIOSAMENTE (mapas vazios). Reusa `computeScaleRessalvas` (fonte única, zero divergência de
+ * lógica com o proativo). PURA. Vazio = sem ressalva conhecida (ou a ação não é escala).
+ */
+export function ressalvasFromSnapshot(
+  action: Action,
+  entityId: string,
+  snapshot: Pick<CuratedEntitySnapshot, "eligibility" | "healthSignals"> | null | undefined,
+): readonly Ressalva[] {
+  if (!snapshot) return [];
+  const ctx: ScaleRessalvaContext = {
+    eligibility: snapshot.eligibility ? new Map([[entityId, snapshot.eligibility]]) : new Map(),
+    marginalRisePct: new Map(),
+    marginal: DEFAULT_MARGINAL_CPA_THRESHOLDS,
+    headroom: new Map(),
+    ceiling: DEFAULT_AUDIENCE_CEILING_THRESHOLDS,
+    signals: snapshot.healthSignals ? new Map([[entityId, snapshot.healthSignals]]) : new Map(),
+    lessonGuards: [],
+  };
+  return computeScaleRessalvas(action, ctx);
 }
 
 /** Anexa as ressalvas de escala aplicáveis à ação. PURA. Vazio = escala limpa (ou não é escala). */

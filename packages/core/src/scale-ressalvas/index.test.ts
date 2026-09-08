@@ -3,7 +3,7 @@ import type { Action, DecisionEligibility, HealthSignal, RessalvaCode } from "@t
 import { ACTION_PARAM_MODE, ACTION_PARAM_PCT, BUDGET_MODE_DECREASE, BUDGET_MODE_INCREASE } from "@trafego/shared";
 import type { LessonGuard } from "../learning/index.js";
 import { DEFAULT_AUDIENCE_CEILING_THRESHOLDS, DEFAULT_MARGINAL_CPA_THRESHOLDS } from "../analysis-guards/index.js";
-import { type ScaleRessalvaContext, computeScaleRessalvas, isScaleAction } from "./index.js";
+import { type ScaleRessalvaContext, computeScaleRessalvas, isScaleAction, ressalvasFromSnapshot } from "./index.js";
 
 const scaleBudget = (over?: Partial<Action>): Action => ({
   id: "a1",
@@ -121,5 +121,21 @@ describe("computeScaleRessalvas", () => {
       signals: new Map<string, readonly HealthSignal[]>([["C1", ["creative_fatigue"]]]),
     });
     expect(codes(computeScaleRessalvas(scaleBudget(), ctx))).toEqual(["no_significance", "creative_fatigue"]);
+  });
+});
+
+describe("ressalvasFromSnapshot (on-demand — a partir do snapshot persistido)", () => {
+  it("vencedor fatigado no snapshot → ressalva creative_fatigue (fim da escala contraditória on-demand)", () => {
+    const rs = ressalvasFromSnapshot(scaleBudget(), "C1", { healthSignals: ["creative_fatigue"] });
+    expect(codes(rs)).toContain("creative_fatigue");
+  });
+  it("sem significância no snapshot → ressalva no_significance", () => {
+    const rs = ressalvasFromSnapshot(scaleBudget(), "C1", { eligibility: elig({ hasSignificance: false, conversions: 3 }) });
+    expect(codes(rs)).toContain("no_significance");
+  });
+  it("snapshot limpo → sem ressalva; snapshot ausente → vazio; ação não-escala → vazio", () => {
+    expect(ressalvasFromSnapshot(scaleBudget(), "C1", { eligibility: elig({}), healthSignals: [] })).toEqual([]);
+    expect(ressalvasFromSnapshot(scaleBudget(), "C1", null)).toEqual([]);
+    expect(ressalvasFromSnapshot(scaleBudget({ type: "pause_entity", params: {} }), "C1", { healthSignals: ["creative_fatigue"] })).toEqual([]);
   });
 });

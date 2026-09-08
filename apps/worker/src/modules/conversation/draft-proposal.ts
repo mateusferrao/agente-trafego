@@ -6,7 +6,7 @@
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { adAccounts, adCreatives, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { applyDraftEdit, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, describeDeliveryEstimate, goalNounPt, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { applyDraftEdit, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, describeDeliveryEstimate, goalNounPt, isFatigued, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
 import { applyExplicitBehaviorEdit, applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
   ACTION_PARAM_CURRENT_MINOR,
@@ -712,7 +712,7 @@ export async function proposeScaleWinner(
   if (!ac) return { kind: "blocked", reason: "não consegui acessar a conta agora" };
 
   const winners = await deps.db
-    .select({ entityId: entityAnalyses.entityId, entityLevel: entityAnalyses.entityLevel, entityName: entityAnalyses.entityName })
+    .select({ entityId: entityAnalyses.entityId, entityLevel: entityAnalyses.entityLevel, entityName: entityAnalyses.entityName, curated: entityAnalyses.curatedJson })
     .from(entityAnalyses)
     .where(and(eq(entityAnalyses.agentId, ctx.agentId), eq(entityAnalyses.tier, "winner")))
     .orderBy(desc(entityAnalyses.analyzedAt))
@@ -741,6 +741,17 @@ export async function proposeScaleWinner(
   const label = chosen.entityName ?? chosen.entityId;
   const scalePct = ac.cfg.scalePct ?? 50;
 
+  // G5/G6 (on-demand): o proativo já rebaixa/avisa vencedor fatigado ou sem base; a escala PEDIDA
+  // pelo humano (chat/site) não avisava — a "escala contraditória" da Fatia A reaberta. Anexa as
+  // ressalvas do snapshot PERSISTIDO (fadiga/significância) à AÇÃO de subir orçamento (surgem no
+  // card + chat via renderRessalvas + travam o auto-apply). A DUPLICAÇÃO (não é ação de escala) usa
+  // a nota de fadiga direto no eco. Mesma fonte de verdade do proativo (§13), zero divergência.
+  const curated = chosen.curated ?? null;
+  const attachRessalvas = (action: Action): Action => {
+    const rs = ressalvasFromSnapshot(action, chosen.entityId, curated);
+    return rs.length > 0 ? { ...action, ressalvas: rs } : action;
+  };
+
   // Vencedor ADSET sem orçamento DIÁRIO próprio. Dois casos: (a) o adset tem orçamento VITALÍCIO
   // (ABO lifetime) → sobe o vitalício do PRÓPRIO conjunto; (b) sem nenhum budget no adset → é CBO
   // (orçamento na CAMPANHA) → sobe o da campanha-mãe (diário ou vitalício). O adapter escreve
@@ -752,7 +763,7 @@ export async function proposeScaleWinner(
     const pct = Math.min(scalePct, ac.cfg.maxBudgetChangePct);
     const raise = (targetLevel: "adset" | "campaign", targetId: string, currentMinor: number, reason: string): ChatDraftProposal => ({
       kind: "action",
-      action: {
+      action: attachRessalvas({
         id: `scale:${targetId}`,
         type: "adjust_budget",
         target: { level: targetLevel, id: targetId, name: label },
@@ -765,7 +776,7 @@ export async function proposeScaleWinner(
         source: "llm",
         riskLevel: "medium",
         reason,
-      },
+      }),
     });
     // (a) adset com orçamento VITALÍCIO próprio → sobe o vitalício do conjunto.
     if (sourceLifetimeMinor > 0) {
@@ -851,7 +862,7 @@ export async function proposeScaleWinner(
       riskLevel: "medium",
       reason: `escalar o vencedor "${label}": +${move.pct}% de budget`,
     };
-    return { kind: "action", action };
+    return { kind: "action", action: attachRessalvas(action) };
   }
 
   // clampa JÁ no propose ao teto de gasto novo → o eco mostra o valor REAL (o guardrail
@@ -873,9 +884,16 @@ export async function proposeScaleWinner(
   const budgetLine = clampedByCap
     ? `Gasto novo: ${moneyMinor(newDailyMinor, ac.currency)}/dia (você pediu ${moneyMinor(requested, ac.currency)}, mas seu teto de gasto novo é ${moneyMinor(newDailyMinor, ac.currency)}) · ${activationPhrase(ac.creationActivation)}.`
     : `Gasto novo: ${moneyMinor(newDailyMinor, ac.currency)}/dia · ${activationPhrase(ac.creationActivation)}.`;
+  // G5: duplicar joga o MESMO criativo num público novo — se o vencedor está com fadiga, o incremento
+  // tende a piorar o CPA/CPM. Avisa honesto no eco (a duplicação não é ação de escala p/ o card de
+  // ressalva, então a nota vai direto aqui). Nunca em silêncio — o dono decide ciente.
+  const fatigueNote = isFatigued(curated?.healthSignals)
+    ? "⚠️ esse vencedor está com sinal de fadiga de criativo — duplicar leva o mesmo criativo cansado pro público novo; vale renovar o criativo antes de escalar."
+    : null;
   const echo = joinBalloons([
     `Vou **duplicar o vencedor "${label}"** com mais budget pra escalar sem estourar o aprendizado do original.`,
     budgetLine,
+    ...(fatigueNote ? [fatigueNote] : []),
     `Confirma? (o original fica intocado)`,
   ]);
   return { kind: "draft", echo, approvalId, draftId };

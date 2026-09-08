@@ -7,11 +7,12 @@ import {
   agentToolBindings,
   campaignDrafts,
   creativeAssets,
+  entityAnalyses,
   guardrailConfigs,
   platformConnections,
   type Database,
 } from "@trafego/db";
-import { applyDraftEdit, buildResolvedSnapshot, computeApplyPreview, describeDeliveryEstimate, planScaleMove, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
+import { applyDraftEdit, buildResolvedSnapshot, computeApplyPreview, describeDeliveryEstimate, planScaleMove, ressalvasFromSnapshot, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
 import { applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import { toMinorUnits, minorToMajor, resolveCreationActivation, type CreationActivation, type ToolBindingMode } from "@trafego/shared";
 import {
@@ -587,7 +588,15 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       if (move.move === "duplicate" && !canDuplicate) return null;
 
       if (move.move === "raise_budget") {
-        const action: Action = {
+        // G6 (on-demand): ressalvas de escala do snapshot persistido do vencedor (fadiga/significância)
+        // — o card do site as mostra (a.action.ressalvas) e o auto-apply fica travado. Mesma verdade
+        // do proativo; antes o card pedido pelo humano vinha sem o aviso honesto.
+        const [snap] = await deps.db
+          .select({ curated: entityAnalyses.curatedJson })
+          .from(entityAnalyses)
+          .where(and(eq(entityAnalyses.agentId, ctx.agentId), eq(entityAnalyses.entityId, input.entityId)))
+          .limit(1);
+        const baseAction: Action = {
           id: `scale:${input.entityId}`,
           type: "adjust_budget",
           target: { level: input.entityLevel, id: input.entityId },
@@ -596,6 +605,8 @@ export function createDraftsService(deps: DraftsServiceDeps) {
           riskLevel: "medium",
           reason: `escalar o vencedor: +${move.pct}% de budget`,
         };
+        const ressalvas = ressalvasFromSnapshot(baseAction, input.entityId, snap?.curated ?? null);
+        const action: Action = ressalvas.length > 0 ? { ...baseAction, ressalvas } : baseAction;
         const appr = await deps.approvals.upsertPending({
           orgId,
           agentId: ctx.agentId as AgentId,
