@@ -126,16 +126,22 @@ describe("computeScaleRessalvas", () => {
 
 describe("ressalvasFromSnapshot (on-demand — a partir do snapshot persistido)", () => {
   it("vencedor fatigado no snapshot → ressalva creative_fatigue (fim da escala contraditória on-demand)", () => {
-    const rs = ressalvasFromSnapshot(scaleBudget(), "C1", { healthSignals: ["creative_fatigue"] });
+    const rs = ressalvasFromSnapshot(scaleBudget(), { healthSignals: ["creative_fatigue"] });
     expect(codes(rs)).toContain("creative_fatigue");
   });
   it("sem significância no snapshot → ressalva no_significance", () => {
-    const rs = ressalvasFromSnapshot(scaleBudget(), "C1", { eligibility: elig({ hasSignificance: false, conversions: 3 }) });
+    const rs = ressalvasFromSnapshot(scaleBudget(), { eligibility: elig({ hasSignificance: false, conversions: 3 }) });
     expect(codes(rs)).toContain("no_significance");
   });
   it("snapshot limpo → sem ressalva; snapshot ausente → vazio; ação não-escala → vazio", () => {
-    expect(ressalvasFromSnapshot(scaleBudget(), "C1", { eligibility: elig({}), healthSignals: [] })).toEqual([]);
-    expect(ressalvasFromSnapshot(scaleBudget(), "C1", null)).toEqual([]);
-    expect(ressalvasFromSnapshot(scaleBudget({ type: "pause_entity", params: {} }), "C1", { healthSignals: ["creative_fatigue"] })).toEqual([]);
+    expect(ressalvasFromSnapshot(scaleBudget(), { eligibility: elig({}), healthSignals: [] })).toEqual([]);
+    expect(ressalvasFromSnapshot(scaleBudget(), null)).toEqual([]);
+    expect(ressalvasFromSnapshot(scaleBudget({ type: "pause_entity", params: {} }), { healthSignals: ["creative_fatigue"] })).toEqual([]);
+  });
+  it("CBO: chaveia pelo action.target.id (campanha-mãe), não pelo id do vencedor — ressalva NÃO some", () => {
+    // vencedor é o adset, mas a ação de subir orçamento mira a CAMPANHA-mãe (target.id = CAMP).
+    const cboAction = scaleBudget({ target: { level: "campaign", id: "CAMP" } });
+    const rs = ressalvasFromSnapshot(cboAction, { healthSignals: ["creative_fatigue"] });
+    expect(codes(rs)).toContain("creative_fatigue");
   });
 });

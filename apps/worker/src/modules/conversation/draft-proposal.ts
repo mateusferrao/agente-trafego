@@ -769,7 +769,7 @@ export async function proposeScaleWinner(
   // a nota de fadiga direto no eco. Mesma fonte de verdade do proativo (§13), zero divergência.
   const curated = chosen.curated ?? null;
   const attachRessalvas = (action: Action): Action => {
-    const rs = ressalvasFromSnapshot(action, chosen.entityId, curated);
+    const rs = ressalvasFromSnapshot(action, curated);
     return rs.length > 0 ? { ...action, ressalvas: rs } : action;
   };
 

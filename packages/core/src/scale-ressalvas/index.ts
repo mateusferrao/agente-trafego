@@ -58,17 +58,20 @@ export interface ScaleRessalvaContext {
  */
 export function ressalvasFromSnapshot(
   action: Action,
-  entityId: string,
   snapshot: Pick<CuratedEntitySnapshot, "eligibility" | "healthSignals"> | null | undefined,
 ): readonly Ressalva[] {
   if (!snapshot) return [];
+  // CHAVE = `action.target.id` (o que `computeScaleRessalvas` consulta), NÃO o id do vencedor: num
+  // vencedor CBO a ação de subir orçamento mira a CAMPANHA-mãe (id ≠ adset do snapshot). Chavear pelo
+  // adset faria o get(campaignId) falhar → a ressalva sumia E o auto-apply voltava a liberar (bug).
+  const id = action.target.id;
   const ctx: ScaleRessalvaContext = {
-    eligibility: snapshot.eligibility ? new Map([[entityId, snapshot.eligibility]]) : new Map(),
+    eligibility: snapshot.eligibility ? new Map([[id, snapshot.eligibility]]) : new Map(),
     marginalRisePct: new Map(),
     marginal: DEFAULT_MARGINAL_CPA_THRESHOLDS,
     headroom: new Map(),
     ceiling: DEFAULT_AUDIENCE_CEILING_THRESHOLDS,
-    signals: snapshot.healthSignals ? new Map([[entityId, snapshot.healthSignals]]) : new Map(),
+    signals: snapshot.healthSignals ? new Map([[id, snapshot.healthSignals]]) : new Map(),
     lessonGuards: [],
   };
   return computeScaleRessalvas(action, ctx);

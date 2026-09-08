@@ -605,7 +605,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
           riskLevel: "medium",
           reason: `escalar o vencedor: +${move.pct}% de budget`,
         };
-        const ressalvas = ressalvasFromSnapshot(baseAction, input.entityId, snap?.curated ?? null);
+        const ressalvas = ressalvasFromSnapshot(baseAction, snap?.curated ?? null);
         const action: Action = ressalvas.length > 0 ? { ...baseAction, ressalvas } : baseAction;
         const appr = await deps.approvals.upsertPending({
           orgId,

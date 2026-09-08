@@ -1094,9 +1094,16 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
         logger.info({ runId: state.runId, kind: top.kind, reason: proposal.reason }, "propose_drafts:degrada → recomendação");
         return {};
       }
-      // G15: QUALQUER outro bloqueio com motivo (sem Página, sem criativo reusável, formato não-clonável,
+      // G15: um bloqueio ESTRUTURAL (sem Página, sem criativo reusável, formato não-clonável,
       // objetivo-exige-pixel) NÃO some em silêncio — vira nudge honesto (diz×faz, §7): o agente detectou
-      // a oportunidade e diz por que não consegue montar sozinho. Antes caía no `return {}` mudo.
+      // a oportunidade e diz por que não consegue montar sozinho. Já um bloqueio TRANSIENTE (não
+      // consegui acessar a conta / ler o público agora) NÃO vira recomendação (não é acionável e o
+      // próximo run resolve sozinho — senão spammaria a lista a cada run). Antes: tudo caía no `return {}`.
+      const isTransientBlock = (r: string) => /tenta de novo|acessar a conta agora|ler o público da fonte agora/i.test(r);
+      if (proposal.kind === "blocked" && isTransientBlock(proposal.reason)) {
+        logger.info({ runId: state.runId, kind: top.kind, reason: proposal.reason }, "propose_drafts:bloqueio transiente → silêncio (retoma no próximo run)");
+        return {};
+      }
       if (proposal.kind === "blocked") {
         await deps.db.insert(recommendations).values({
           orgId: state.orgId,

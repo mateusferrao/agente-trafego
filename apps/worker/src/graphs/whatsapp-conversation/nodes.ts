@@ -1210,7 +1210,14 @@ export function makeConversationNodes(
           : `Com o seu limite de segurança de ${wctx.cfg.maxBudgetChangePct}% por mudança, não consigo mover nada de uma vez entre essas duas. Dá pra afrouxar o teto na config, ou mover no site.`;
         return { messages: [...answerToolCalls(allCalls, "não movo"), new AIMessage(msg)] };
       }
-      const clampedNote = moveMinor < requestedMinor ? `\n(respeitando seu teto de ${wctx.cfg.maxBudgetChangePct}%, movo ${formatMoneyMinor(moveMinor, wctx.currency)}${period} — o máximo seguro de uma vez)` : "";
+      // nota honesta do porquê reduziu: distingue o PISO (origem pararia abaixo do mínimo) do TETO de
+      // % — antes atribuía tudo ao teto mesmo quando foi o piso que cortou (eco enganoso).
+      const clampedNote =
+        moveMinor >= requestedMinor
+          ? ""
+          : maxMovableByFloor <= maxMovableMinor
+            ? `\n(movo ${formatMoneyMinor(moveMinor, wctx.currency)}${period} — mais que isso deixaria *${fromName}* abaixo do orçamento mínimo)`
+            : `\n(respeitando seu teto de ${wctx.cfg.maxBudgetChangePct}%, movo ${formatMoneyMinor(moveMinor, wctx.currency)}${period} — o máximo seguro de uma vez)`;
       const legFrom: Action = {
         id: `${reallocCall.id ?? REALLOCATE_TOOL_NAME}:from`,
         type: "adjust_budget",
