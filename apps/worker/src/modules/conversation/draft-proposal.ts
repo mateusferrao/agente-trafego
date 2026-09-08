@@ -6,7 +6,7 @@
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { adAccounts, adCreatives, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { applyDraftEdit, buildResolvedSnapshot, clampRadius, describeDeliveryEstimate, goalNounPt, planScaleMove, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { applyDraftEdit, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, describeDeliveryEstimate, goalNounPt, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
 import { applyExplicitBehaviorEdit, applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
   ACTION_PARAM_CURRENT_MINOR,
@@ -1025,7 +1025,7 @@ function refineErrorReason(error: RefineError): string {
     case "empty_variants":
       return "toda campanha precisa de pelo menos um anúncio";
     case "objective_requires_pixel":
-      return "esse objetivo precisa do pixel configurado na conta, e ela ainda não tem";
+      return OBJECTIVE_REQUIRES_PIXEL_REASON;
   }
 }
 
@@ -1867,6 +1867,13 @@ export async function proposeCreateCampaign(
 
   const defaults = await deps.ports.ads.inferCreationDefaults(ac.ref);
   const goal = args.goal ?? defaults.objectiveGoal ?? DEFAULT_CONVERSION_GOAL;
+  // G1: objetivo de conversão exige pixel (a Meta recusa `OFFSITE_CONVERSIONS` sem `promoted_object`
+  // — doc oficial). O refino já validava isto; a criação do zero NÃO validava → nascia um rascunho
+  // impossível que só falhava no meio da saga (campanha criada, adset recusado). Bloqueia honesto
+  // aqui, com a alternativa nativa (mensagens no WhatsApp não precisa de pixel). Mesma verdade do refino.
+  if (conversionRequiresPixel(goal) && !defaults.pixelId) {
+    return { kind: "blocked", reason: OBJECTIVE_REQUIRES_PIXEL_REASON };
+  }
   // Criativo: FORÇADO (o que o usuário mandou no WhatsApp, Slice 7) OU pool único — melhor
   // veiculando (provado) OU, sem nenhum, o upload da biblioteca que MELHOR CASA com o contexto
   // (objetivo + negócio + orientações) via matcher LLM barato.

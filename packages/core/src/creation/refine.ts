@@ -34,6 +34,14 @@ export const REQUIRES_PIXEL: ReadonlySet<ConversionGoal> = new Set<ConversionGoa
 
 export const conversionRequiresPixel = (goal: ConversionGoal): boolean => REQUIRES_PIXEL.has(goal);
 
+/**
+ * Motivo amigável ÚNICO (§13) quando o objetivo escolhido exige pixel e a conta não tem — reusado
+ * no refino (chat), na criação do zero (chat + rede do apply) e no site. Erro = o quê + próximo
+ * passo, com a alternativa nativa do produto (mensagens no WhatsApp não precisa de pixel).
+ */
+export const OBJECTIVE_REQUIRES_PIXEL_REASON =
+  "esse objetivo precisa do rastreamento de conversões (pixel) configurado na conta, e ela ainda não tem — dá pra configurar o pixel no Gerenciador de Eventos da Meta, ou eu crio uma campanha de mensagens no WhatsApp (que não precisa de pixel)";
+
 /** Patch NEUTRO de edição — campos já RESOLVIDOS pela casca (audience→targeting, asset/serving→
  *  creative, geração/add/remover→copyVariants). O núcleo só faz o merge + as regras de negócio. */
 export interface DraftEdit {
