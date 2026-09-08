@@ -432,12 +432,16 @@ Entrada: imagem-com-legenda "@Roy guarda aí" (org com conta em contexto).
 
 ### S11-2 — Salva na conta certa (grupo multi-conta), nunca no foco velho
 Entrada: grupo, org com BM Automato + MyQuick; a conversa recente é sobre MyQuick; foco antigo do fio = BM Automato (expirado pelo TTL).
-1. `resolveContextAccountId` = `sole ?? foco-fresco(TTL)`: BM Automato está **stale** → rejeitado; sem conta inequívoca → **null**. O criativo NÃO é salvo no palpite (BM Automato). ✓
+1. `resolveContextAccountId` = `sole ?? foco-fresco(TTL) ?? conta-nomeada-na-legenda` (MESMA régua de 3 níveis do turno): BM Automato está **stale** → rejeitado; sem conta inequívoca → **null**. O criativo NÃO é salvo no palpite (BM Automato). ✓
 2. Ambíguo → o Roy **pergunta** de qual conta é (não chuta). Com o foco de MyQuick fresco (dentro do TTL), salva em MyQuick. ✓
 3. Org com 1 conta só (`sole`) → salva direto, sem perguntar. ✓
 
+### S11-3 — Save == o que o turno confirma (legenda nomeia a conta)
+Entrada: grupo multi-conta, sem foco fresco, legenda "guarda pra MyQuick".
+1. O **intake** e o **turno** usam a MESMA régua (`resolveContextAccount`, 3 níveis) → os dois resolvem MyQuick pela legenda. O intake salva em MyQuick E o Roy confirma MyQuick — nunca um "guardei" numa conta em que nada foi salvo (fim da divergência intake×turno). ✓
+
 ## Fast-follows (residuais aceitos / adiados — ROADMAP)
-- **Conta do criativo — turno dono do save + auto-completar após focar**: hoje o núcleo (foco cru→errado) está corrigido (régua inequívoca com TTL, ambíguo→pergunta); resta o 3º nível "conta nomeada na legenda" no save + estagiar os bytes p/ auto-completar depois de focar (ver ROADMAP).
+- **Conta do criativo — estagiar bytes p/ auto-completar após focar**: o núcleo está corrigido (régua inequívoca de 3 níveis idêntica ao turno; ambíguo→pergunta; save casa com a confirmação do Roy). Resta só: no caso AMBÍGUO (sem sole/foco/legenda), o intake pergunta mas não estagia os bytes → o dono reenvia depois de focar. Estagiar (Redis) + auto-completar quando o foco resolver fecha isso (ver ROADMAP).
 - **Gradação do desgaste por severidade (2 × 3 sinais)**: hoje aging×fadiga é binário (ainda entrega × não entrega); um aging SEVERO (3 sinais, prestes a cair) usa a mesma mensagem de aging leve — dá pra graduar a urgência do "prepare o sucessor".
 - **G4 validate_only no eco** (orçamento): custo de quota; a rejeição segue honesta no apply.
 - **G9 janela crash create→persist**: dup pausado/sem-gasto/raro; marker-adopt rejeitado (risco de adotar a campanha errada); o reaper (G7) já destrava o rascunho preso.
