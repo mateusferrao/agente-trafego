@@ -24,7 +24,7 @@ import {
   type ConversationToolContext,
 } from "../../graphs/whatsapp-conversation/tools.js";
 import { loadEnabledTools } from "../tools/enabled.js";
-import { isDeliberateAccountReference, loadActiveFocusCandidates, persistFocus, type AgentInContext } from "./account-focus.js";
+import { isDeliberateAccountReference, loadActiveFocusCandidates, persistFocus, resolveActiveAgents, resolveFocusedAgent, type AgentInContext } from "./account-focus.js";
 import { createNotifyRepo } from "../notify/repo.js";
 import { createSendToConversation, type SendToConversation } from "../notify/send-to-contact.js";
 import { applyOfferedCreative } from "./draft-proposal.js";
@@ -67,68 +67,6 @@ export async function deliverReply(
   } catch (err) {
     logger.error({ err, orgId }, "conversation:send falhou (resposta perdida, sem retry do grafo)");
   }
-}
-
-/**
- * Agentes ativos da org (cap 2 p/ decidir sole × multi-conta). `sole` = exatamente 1;
- * `multiAccount` = ≥2 (concierge/foco). Nome da conta vem junto (eco/foco).
- */
-async function resolveActiveAgents(
-  db: Database,
-  orgId: string,
-): Promise<{ sole: AgentInContext | null; multiAccount: boolean }> {
-  const rows = await db
-    .select({ agentId: agents.id, adAccountId: agents.adAccountId, accountName: adAccounts.name })
-    .from(agents)
-    .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
-    .where(and(eq(agents.orgId, orgId), eq(agents.status, "active"), eq(adAccounts.status, "active")))
-    .limit(2);
-  return { sole: rows.length === 1 ? rows[0]! : null, multiAccount: rows.length >= 2 };
-}
-
-/** ms por hora — staleness do foco (S4). */
-const MS_PER_HOUR = 60 * 60 * 1000;
-
-/**
- * Agente da conta em FOCO do fio (5c-6) — org-scoped, conta+agente ativos. Null se sem foco/
- * indisponível. **Staleness (S4, semântica de ÚLTIMO USO):** foco sem carimbo ou cujo último
- * uso passou de `ttlHours` PERDE precedência (retorna null → grupo cai no contexto ambiente,
- * DM cai em "qual conta?"). Ao resolver via foco fresco, RENOVA o carimbo (`focusedAt=now`).
- */
-export async function resolveFocusedAgent(
-  db: Database,
-  orgId: string,
-  conversationId: string,
-  ttlHours: number,
-): Promise<AgentInContext | null> {
-  const [conv] = await db
-    .select({ focusedAccountId: conversations.focusedAccountId, focusedAt: conversations.focusedAt })
-    .from(conversations)
-    .where(eq(conversations.id, conversationId))
-    .limit(1);
-  if (!conv?.focusedAccountId) return null;
-  const staleBefore = Date.now() - ttlHours * MS_PER_HOUR;
-  if (!conv.focusedAt || conv.focusedAt.getTime() < staleBefore) return null;
-  const [row] = await db
-    .select({ agentId: agents.id, adAccountId: agents.adAccountId, accountName: adAccounts.name })
-    .from(agents)
-    .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
-    .where(
-      and(
-        eq(agents.orgId, orgId),
-        eq(agents.status, "active"),
-        eq(adAccounts.status, "active"),
-        eq(adAccounts.id, conv.focusedAccountId),
-      ),
-    )
-    .limit(1);
-  if (!row) return null;
-  // último uso: renova o carimbo (o TTL conta desde a última atividade com foco).
-  await db
-    .update(conversations)
-    .set({ focusedAt: new Date() })
-    .where(and(eq(conversations.id, conversationId), eq(conversations.orgId, orgId)));
-  return row;
 }
 
 /**

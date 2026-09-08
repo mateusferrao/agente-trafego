@@ -33,9 +33,10 @@ import { ingestCreativeImage, ingestCreativeVideo } from "@trafego/creative-libr
 import type { Database } from "@trafego/db/client";
 import type { WorkerDeps } from "../composition.js";
 import { createAnalysisRepo } from "../modules/analysis/repo.js";
-import { createNotifyRepo, type NotifyRepo } from "../modules/notify/repo.js";
+import { createNotifyRepo } from "../modules/notify/repo.js";
 import { createSendToConversation, type SendToConversation } from "../modules/notify/send-to-contact.js";
 import { stageCreativeOffer } from "../modules/conversation/creative-offer.js";
+import { resolveContextAccountId } from "../modules/conversation/account-focus.js";
 
 /** Mensagens de cortesia do intake — sempre o que aconteceu + próximo passo (§13 UX). */
 const NOTICE = {
@@ -72,7 +73,13 @@ const EXT_BY_TYPE: Readonly<Record<string, string>> = {
 /** Deps enxutas do intake → testável sem BullMQ. */
 export interface MediaIntakeDeps {
   readonly db: Database;
-  readonly repo: Pick<NotifyRepo, "contextAdAccountId">;
+  /**
+   * Resolve a conta INEQUÍVOCA do fio p/ salvar o criativo (sole ?? foco FRESCO dentro do TTL) —
+   * MESMA régua do turno (`resolveContextAccountId`), NUNCA o foco cru/velho. Null = ambíguo →
+   * o intake PERGUNTA a conta em vez de chutar (fecha o bug de salvar na conta errada em grupo
+   * multi-conta, onde o foco velho de outra conta era usado em silêncio).
+   */
+  readonly resolveSaveAccount: (orgId: string, conversationId: string) => Promise<string | null>;
   readonly analysisRepo: Pick<ReturnType<typeof createAnalysisRepo>, "loadAccount">;
   readonly ports: {
     readonly ads: Pick<AdsPlatformPort, "uploadImage" | "uploadVideo">;
@@ -105,8 +112,10 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
     // cortesia/oferta próprias) pra não duplicar a resposta. As respostas passam por `notify`.
     const notify: SendToConversation = payload.suppressNotice ? async () => true : d.sendToConversation;
 
-    // 1) conta em foco (única ativa OU foco da conversa). Ambíguo → pede antes de subir.
-    const adAccountUuid = await d.repo.contextAdAccountId(orgId, conversationId);
+    // 1) conta INEQUÍVOCA do fio (única ativa OU foco FRESCO dentro do TTL) — MESMA régua do turno,
+    // nunca o foco cru/velho. Ambíguo (foco expirado / nada em contexto) → PERGUNTA antes de subir
+    // (não chuta a conta: em grupo multi-conta o foco velho de outra conta salvava no lugar errado).
+    const adAccountUuid = await d.resolveSaveAccount(orgId, conversationId);
     if (!adAccountUuid) {
       await notify(ref, NOTICE.noAccount, { split: true, quoteLastInbound: true });
       d.logger.debug({ conversationId }, "intake:no_focused_account");
@@ -236,7 +245,10 @@ export function startWhatsappMediaIntakeWorker(deps: WorkerDeps, connection: Red
   const repo = createNotifyRepo(db);
   const intake = makeMediaIntake({
     db,
-    repo,
+    // MESMA régua do turno p/ resolver a conta INEQUÍVOCA (sole ?? foco fresco no TTL) — fonte única
+    // em account-focus. Nunca o foco cru/velho: ambíguo → o intake pergunta a conta (não chuta).
+    resolveSaveAccount: (orgId, conversationId) =>
+      resolveContextAccountId(db, orgId, conversationId, deps.conversation.focusTtlHours),
     analysisRepo: createAnalysisRepo(db),
     ports: { ads: ports.ads, messaging: ports.messaging, vault: ports.vault, storage: ports.storage, scheduler: ports.scheduler },
     maxWhatsappVideoBytes: deps.creative.maxWhatsappVideoBytes,

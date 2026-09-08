@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { agents, type Database } from "@trafego/db";
-import { buildInContextAllow, configToolsFor, deliverReply, GROUP_CONCIERGE_ALLOW, resolveExplicitFocus, resolveFocusedAgent } from "./turn.js";
-import { isDeliberateAccountReference } from "./account-focus.js";
+import { buildInContextAllow, configToolsFor, deliverReply, GROUP_CONCIERGE_ALLOW, resolveExplicitFocus } from "./turn.js";
+import { isDeliberateAccountReference, resolveContextAccountId, resolveFocusedAgent } from "./account-focus.js";
 import type { SendToConversation } from "../notify/send-to-contact.js";
 import {
   AGENT_TOOL_NAMES,
@@ -135,6 +135,56 @@ describe("resolveFocusedAgent (staleness do foco, S4 — último uso)", () => {
   it("sem foco (focusedAccountId null) → null", async () => {
     const { db } = focusDb({ focusedAccountId: null, focusedAt: null });
     expect(await resolveFocusedAgent(db, "org-1", "cv-1", TTL)).toBeNull();
+  });
+});
+
+describe("resolveContextAccountId (conta INEQUÍVOCA p/ salvar criativo — sole ?? foco fresco, nunca foco velho)", () => {
+  const TTL = 12;
+  const MS_H = 3_600_000;
+  // fake que resolve cada query na ORDEM da chamada (resolveActiveAgents → resolveFocusedAgent).
+  function queueDb(results: unknown[][]): Database {
+    let i = 0;
+    const chain: Record<string, unknown> = {
+      select: () => chain,
+      from: () => chain,
+      innerJoin: () => chain,
+      where: () => chain,
+      limit: () => chain,
+      orderBy: () => chain,
+      then: (resolve: (v: unknown[]) => unknown) => resolve(results[i++] ?? []),
+      update: () => ({ set: () => ({ where: async () => {} }) }),
+    };
+    return chain as unknown as Database;
+  }
+
+  it("org com 1 conta ativa (sole) → salva nela, sem olhar foco", async () => {
+    const db = queueDb([[{ agentId: "ag", adAccountId: "acc-sole", accountName: "Única" }]]);
+    expect(await resolveContextAccountId(db, "org-1", "cv-1", TTL)).toBe("acc-sole");
+  });
+
+  it("multi-conta + foco FRESCO → a conta do foco fresco", async () => {
+    const db = queueDb([
+      [{ adAccountId: "a" }, { adAccountId: "b" }], // resolveActiveAgents: 2 → multi
+      [{ focusedAccountId: "acc-F", focusedAt: new Date() }], // conversa: foco fresco
+      [{ agentId: "ag", adAccountId: "acc-F", accountName: "Focada" }], // agente da conta focada
+    ]);
+    expect(await resolveContextAccountId(db, "org-1", "cv-1", TTL)).toBe("acc-F");
+  });
+
+  it("multi-conta + foco VELHO (> TTL) → null (ambíguo: o chamador pergunta, não chuta a conta velha)", async () => {
+    const db = queueDb([
+      [{ adAccountId: "a" }, { adAccountId: "b" }],
+      [{ focusedAccountId: "acc-velha", focusedAt: new Date(Date.now() - 20 * MS_H) }],
+    ]);
+    expect(await resolveContextAccountId(db, "org-1", "cv-1", TTL)).toBeNull();
+  });
+
+  it("multi-conta + sem foco → null (pergunta)", async () => {
+    const db = queueDb([
+      [{ adAccountId: "a" }, { adAccountId: "b" }],
+      [{ focusedAccountId: null, focusedAt: null }],
+    ]);
+    expect(await resolveContextAccountId(db, "org-1", "cv-1", TTL)).toBeNull();
   });
 });
 

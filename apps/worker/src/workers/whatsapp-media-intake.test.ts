@@ -28,12 +28,12 @@ function fakeDb(): Database {
   } as unknown as Database;
 }
 
-function makeDeps(chatAdsWrites: boolean) {
+function makeDeps(chatAdsWrites: boolean, resolveSaveAccount = vi.fn(async () => "acc-uuid" as string | null)) {
   const sendToConversation = vi.fn(async (_ref: unknown, _msg: string, _opts?: unknown) => true);
   return {
     deps: {
       db: fakeDb(),
-      repo: { contextAdAccountId: vi.fn(async () => "acc-uuid") },
+      resolveSaveAccount,
       analysisRepo: { loadAccount: vi.fn(async () => ({ metaAdAccountId: "act_1", tokenCripto: "enc", name: "Loja" })) },
       ports: {
         ads: { uploadImage: vi.fn(), uploadVideo: vi.fn() },
@@ -74,5 +74,15 @@ describe("makeMediaIntake — imagem × kill-switch da escrita conversacional (v
     expect(stageCreativeOffer).toHaveBeenCalledOnce();
     const msg = sendToConversation.mock.calls[0]?.[1] as string;
     expect(msg.toLowerCase()).toContain("sim"); // oferta pede um "sim"
+  });
+
+  it("conta AMBÍGUA (resolveSaveAccount → null: foco velho/nada em contexto) → PERGUNTA a conta, NÃO salva no palpite", async () => {
+    const resolveSaveAccount = vi.fn(async () => null as string | null);
+    const { deps, sendToConversation } = makeDeps(true, resolveSaveAccount);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await makeMediaIntake(deps as any)(PAYLOAD);
+    expect(ingestCreativeImage).not.toHaveBeenCalled(); // nunca sobe pra conta errada
+    const msg = sendToConversation.mock.calls[0]?.[1] as string;
+    expect(msg.toLowerCase()).toContain("conta"); // pede a conta
   });
 });

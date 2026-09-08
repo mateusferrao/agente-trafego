@@ -73,3 +73,86 @@ export async function persistFocus(db: Database, orgId: string, conversationId: 
     .set({ focusedAccountId: adAccountId, focusedAt: new Date() })
     .where(and(eq(conversations.id, conversationId), eq(conversations.orgId, orgId)));
 }
+
+/** ms por hora — staleness do foco (S4). */
+const MS_PER_HOUR = 60 * 60 * 1000;
+
+/**
+ * Agentes ativos da org (cap 2 p/ decidir sole × multi-conta). `sole` = exatamente 1;
+ * `multiAccount` = ≥2 (concierge/foco). Nome da conta vem junto (eco/foco). Fonte única
+ * (turn.ts pré-grafo E resolução de conta p/ salvar criativo — account-focus.ts).
+ */
+export async function resolveActiveAgents(
+  db: Database,
+  orgId: string,
+): Promise<{ sole: AgentInContext | null; multiAccount: boolean }> {
+  const rows = await db
+    .select({ agentId: agents.id, adAccountId: agents.adAccountId, accountName: adAccounts.name })
+    .from(agents)
+    .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
+    .where(and(eq(agents.orgId, orgId), eq(agents.status, "active"), eq(adAccounts.status, "active")))
+    .limit(2);
+  return { sole: rows.length === 1 ? rows[0]! : null, multiAccount: rows.length >= 2 };
+}
+
+/**
+ * Agente da conta em FOCO do fio (5c-6) — org-scoped, conta+agente ativos. Null se sem foco/
+ * indisponível. **Staleness (S4, semântica de ÚLTIMO USO):** foco sem carimbo ou cujo último
+ * uso passou de `ttlHours` PERDE precedência (retorna null → grupo cai no contexto ambiente,
+ * DM cai em "qual conta?"). Ao resolver via foco fresco, RENOVA o carimbo (`focusedAt=now`).
+ */
+export async function resolveFocusedAgent(
+  db: Database,
+  orgId: string,
+  conversationId: string,
+  ttlHours: number,
+): Promise<AgentInContext | null> {
+  const [conv] = await db
+    .select({ focusedAccountId: conversations.focusedAccountId, focusedAt: conversations.focusedAt })
+    .from(conversations)
+    .where(eq(conversations.id, conversationId))
+    .limit(1);
+  if (!conv?.focusedAccountId) return null;
+  const staleBefore = Date.now() - ttlHours * MS_PER_HOUR;
+  if (!conv.focusedAt || conv.focusedAt.getTime() < staleBefore) return null;
+  const [row] = await db
+    .select({ agentId: agents.id, adAccountId: agents.adAccountId, accountName: adAccounts.name })
+    .from(agents)
+    .innerJoin(adAccounts, eq(agents.adAccountId, adAccounts.id))
+    .where(
+      and(
+        eq(agents.orgId, orgId),
+        eq(agents.status, "active"),
+        eq(adAccounts.status, "active"),
+        eq(adAccounts.id, conv.focusedAccountId),
+      ),
+    )
+    .limit(1);
+  if (!row) return null;
+  // último uso: renova o carimbo (o TTL conta desde a última atividade com foco).
+  await db
+    .update(conversations)
+    .set({ focusedAt: new Date() })
+    .where(and(eq(conversations.id, conversationId), eq(conversations.orgId, orgId)));
+  return row;
+}
+
+/**
+ * Conta em contexto INEQUÍVOCA do fio para uma AÇÃO NÃO-CONVERSACIONAL (ex: salvar um criativo
+ * recebido): a única conta ativa (`sole`) OU o foco FRESCO (dentro do TTL). NUNCA o foco cru/velho
+ * — foco expirado perde precedência (retorna null → o chamador PERGUNTA a conta em vez de chutar).
+ * MESMA régua que o `turn.ts` usa p/ os 2 primeiros níveis do `inContext` (fonte única) — só não
+ * inclui o 3º nível "conta nomeada na mensagem" (esse depende do matcher do grafo e vale só no turno
+ * que lê o texto). Devolve o UUID da conta (ad_accounts.id) ou null. PURO de IO além das 2 queries.
+ */
+export async function resolveContextAccountId(
+  db: Database,
+  orgId: string,
+  conversationId: string,
+  ttlHours: number,
+): Promise<string | null> {
+  const { sole } = await resolveActiveAgents(db, orgId);
+  if (sole) return sole.adAccountId;
+  const focused = await resolveFocusedAgent(db, orgId, conversationId, ttlHours);
+  return focused?.adAccountId ?? null;
+}
