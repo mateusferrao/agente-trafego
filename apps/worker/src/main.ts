@@ -21,6 +21,7 @@ import { startWhatsappTranscriptionWorker } from "./workers/whatsapp-transcripti
 import { startWhatsappMediaIntakeWorker } from "./workers/whatsapp-media-intake.js";
 import { startCreativeVideoPollWorker, reapStalePendingVideos } from "./workers/creative-video-poll.js";
 import { startCreativeAnalyzeWorker } from "./workers/creative-analyze.js";
+import { startCreativeVideoAnalyzeWorker } from "./workers/creative-video-analyze.js";
 import { startPulseWorker } from "./workers/pulse.js";
 import { startMailWorker } from "./workers/mail.js";
 import { drainPendingCostPatches } from "./graphs/whatsapp-conversation/nodes.js";
@@ -73,6 +74,8 @@ async function main(): Promise<void> {
   const creativeVideoPoll = startCreativeVideoPollWorker(deps, connection);
   // visão de criativo da biblioteca (upload): analisa 1x + cacheia (reusa resolver/tabela).
   const creativeAnalyze = startCreativeAnalyzeWorker(deps, connection);
+  // análise conversacional de VÍDEO do WhatsApp (Slice 2): vídeo completo → modelo, sem Meta.
+  const creativeVideoAnalyze = startCreativeVideoAnalyzeWorker(deps, connection);
 
   // entrega de email transacional (6b): verificação de email + reset de senha.
   const mail = startMailWorker(deps, connection);
@@ -125,6 +128,7 @@ async function main(): Promise<void> {
       whatsappMediaIntake.close(),
       creativeVideoPoll.close(),
       creativeAnalyze.close(),
+      creativeVideoAnalyze.close(),
       mail.close(),
       pulse.close(),
     ]);

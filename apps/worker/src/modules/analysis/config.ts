@@ -36,6 +36,10 @@ export interface AnalysisDefaults {
   readonly messageModel: string;
   /** modelo multimodal (visão de criativo). */
   readonly visionModel: string;
+  /** modelo video-capable p/ análise do vídeo COMPLETO do WhatsApp (Slice 2). */
+  readonly videoModel: string;
+  /** teto (MB) do vídeo enviado INTEIRO ao modelo — acima → degrada (ffmpeg-local = fast-follow). */
+  readonly videoModelMaxMb: number;
   readonly reviewEnabled: boolean;
   readonly topN: number;
   readonly maxOutputTokens: number;
@@ -96,6 +100,8 @@ export function resolveAnalysisConfig(
     unitFallbackModels: defaults.unitFallbackModels,
     messageModel: str(mc.messageModel) ?? defaults.messageModel,
     visionModel: str(mc.visionModel) ?? defaults.visionModel,
+    videoModel: str(mc.videoModel) ?? defaults.videoModel,
+    videoModelMaxMb: defaults.videoModelMaxMb,
     reviewEnabled: typeof mc.reviewEnabled === "boolean" ? mc.reviewEnabled : defaults.reviewEnabled,
     topN: posInt(mc.topN) ?? defaults.topN,
     maxOutputTokens: posInt(mc.maxOutputTokens) ?? defaults.maxOutputTokens,

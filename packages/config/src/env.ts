@@ -103,6 +103,15 @@ export const envSchema = z.object({
   // JSON-schema — que o structured output do `map_units` exige (por isso NÃO um sem enforcement).
   OPENROUTER_UNIT_FALLBACK_MODEL: z.string().default("google/gemini-3.1-flash-lite"),
   OPENROUTER_MESSAGE_MODEL: z.string().min(1).default("google/gemini-3.1-flash-lite"),
+  // Modelo p/ analisar o VÍDEO COMPLETO (movimento/áudio/gancho) enviado pelo WhatsApp — dos nossos
+  // bytes, sem o desvio pela Meta. PRECISA ser video-capable (aceitar `video_url` via OpenRouter);
+  // o default espelha o de mensagem, mas p/ análise de vídeo de verdade aponte pra um modelo que
+  // entende vídeo (ex: Gemini 3.x pro/flash). Vídeo acima de WHATSAPP_VIDEO_MODEL_MAX_MB ou falha
+  // da chamada → cai no fallback determinístico de frames (ffmpeg).
+  OPENROUTER_VIDEO_MODEL: z.string().min(1).default("google/gemini-3.1-flash-lite"),
+  // Teto (MB) do vídeo enviado INTEIRO ao modelo — acima disso extrai frames locais (ffmpeg) em vez
+  // do vídeo completo (protege custo/latência/limite do modelo). O vídeo segue salvo na biblioteca.
+  WHATSAPP_VIDEO_MODEL_MAX_MB: z.coerce.number().int().positive().default(20),
   // Versão do analisador de visão — bumpar invalida o cache de análises de criativo.
   // 2 (Fatia 6c): multi-frame HD + decomposição hook/angle/format/cta.
   // 3 (Bloco 2): decomposição ganha body + proofStrength → invalida o cache antigo uma vez.

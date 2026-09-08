@@ -312,6 +312,8 @@ export async function buildComposition(): Promise<WorkerDeps> {
       unitFallbackModels: env.OPENROUTER_UNIT_FALLBACK_MODEL ? [env.OPENROUTER_UNIT_FALLBACK_MODEL] : [],
       messageModel: env.OPENROUTER_MESSAGE_MODEL,
       visionModel: env.OPENROUTER_VISION_MODEL,
+      videoModel: env.OPENROUTER_VIDEO_MODEL,
+      videoModelMaxMb: env.WHATSAPP_VIDEO_MODEL_MAX_MB,
       windowDays: env.ANALYSIS_WINDOW_DAYS,
       baselineDays: env.ANALYSIS_BASELINE_DAYS,
       topN: env.ANALYSIS_TOP_N,
