@@ -292,6 +292,19 @@ describe("describeExplicitAudience (Fase 1, subfatia 3a)", () => {
     );
   });
 
+  it("idade SEM teto (45+) → '45+ anos', nunca '45-?'", () => {
+    const desc = describeExplicitAudience({ kind: "explicit", geo: [{ key: "1", name: "Belo Horizonte", kind: "city" }], ageMin: 45, genders: [2] });
+    expect(desc).toContain("45+ anos");
+    expect(desc).not.toContain("45-?");
+    expect(desc).toBe("Belo Horizonte, 45+ anos, mulheres, sem expansão de público");
+  });
+
+  it("idade SÓ com teto → 'até X anos'", () => {
+    expect(describeExplicitAudience({ kind: "explicit", geo: [{ key: "BR", name: "Brasil", kind: "country" }], ageMax: 30 })).toBe(
+      "Brasil, até 30 anos, sem expansão de público",
+    );
+  });
+
   it("com público salvo composto (customAudienceIncludeIds) → menciona a composição", () => {
     const desc = describeExplicitAudience({
       kind: "explicit",

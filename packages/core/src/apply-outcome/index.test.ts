@@ -43,8 +43,11 @@ describe("describeCreatedDraft", () => {
 });
 
 describe("describeDraftOutcome", () => {
-  it("created real → confirma criação pausada", () => {
-    expect(describeDraftOutcome({ kind: "created", dryRun: false, summary: "uma campanha nova" })).toContain("Criei");
+  it("created real → confirma criação pausada + honesto que dá pra ativar pelo chat OU site", () => {
+    const txt = describeDraftOutcome({ kind: "created", dryRun: false, summary: "uma campanha nova" });
+    expect(txt).toContain("Criei");
+    expect(txt.toLowerCase()).toContain("chat"); // não esconde que dá pra ativar por aqui
+    expect(txt.toLowerCase()).toContain("plataforma");
   });
   it("created dry-run → simulado", () => {
     expect(describeDraftOutcome({ kind: "created", dryRun: true, summary: "x" })).toContain("Simulei a criação");

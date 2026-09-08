@@ -31,6 +31,7 @@ import {
   type FreshKpis,
 } from "../../modules/conversation/fresh-metrics.js";
 import { describeCreatedDraft } from "../../modules/apply/draft-summary.js";
+import { describeExplicitAudience } from "../../modules/conversation/draft-proposal.js";
 import type { ActivationApproval, Approval, ApprovalPort } from "@trafego/shared/ports";
 import { AdsPlatformError } from "@trafego/shared/ports";
 import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
@@ -1038,13 +1039,15 @@ export function pickAdIdsToRefresh<T extends RankableCreative & { adId: string }
     .map((r) => r.adId);
 }
 
-/** Descreve o PÚBLICO do rascunho pelo MODO (só 2 hoje), sem jargão Meta nem chamada à
- *  plataforma. O público não é editável por texto livre → o detalhe exato do reuse não
- *  ajudaria (e custaria uma chamada Meta que estoura o turno). §UX. */
+/** Descreve o PÚBLICO do rascunho pelo MODO, sem jargão Meta nem chamada à plataforma. Cada `kind`
+ *  do targeting tem seu texto: `explicit` DESCREVE o público real (geo/idade/gênero — reusa
+ *  `describeExplicitAudience`, fonte única do eco), `reuse_adset` herda, `advantage_plus`/ausente é
+ *  amplo. Antes, tudo que não era `reuse_adset` caía em "público amplo" — mentia num pedido
+ *  explícito ("mulheres 45+ BH" saía como "amplo"), o falso positivo que o Roy narrava. §UX. */
 export function describeDraftAudience(targeting: TargetingSpec | undefined): string {
-  return targeting?.kind === "reuse_adset"
-    ? "herda o público do conjunto do seu anúncio reusado (a mesma segmentação que já converte)"
-    : "público amplo — a Meta escolhe quem tem mais chance de converter";
+  if (targeting?.kind === "explicit") return describeExplicitAudience(targeting);
+  if (targeting?.kind === "reuse_adset") return "herda o público do conjunto do seu anúncio reusado (a mesma segmentação que está rodando)";
+  return "público amplo — a Meta escolhe quem tem mais chance de converter";
 }
 
 /** Rótulo do criativo do rascunho, do nosso DB (nunca inventa). Reuse → nomeia o anúncio real

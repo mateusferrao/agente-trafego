@@ -113,7 +113,7 @@ export function describeDraftOutcome(detail: DraftOutcomeDetail): string {
       if (detail.dryRun) return `Simulei a criação de ${detail.summary} (modo ensaio) — não criei de verdade.`;
       const base = detail.activated
         ? `Criei ${detail.summary} e já ATIVEI — está no ar (a Meta ainda revisa o criativo). Se precisar, dá pra pausar na plataforma.`
-        : `Criei ${detail.summary} — nasceu pausada. Revise e ative na plataforma quando quiser.`;
+        : `Criei ${detail.summary} — nasceu pausada. Revise e ative quando quiser: é só me pedir aqui no chat ("ativa a campanha X") ou pela plataforma.`;
       const withFallback = detail.targetingFallback
         ? `${base} Obs: não consegui herdar o público que prometi (a fonte sumiu) — usei um público amplo. Revise antes de ativar.`
         : base;

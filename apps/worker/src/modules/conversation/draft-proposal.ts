@@ -180,7 +180,17 @@ export function describeExplicitAudience(targeting: Extract<TargetingSpec, { rea
   const areaNames = (targeting.radiusAreas ?? []).map((a) => `${a.address} (raio ${a.radius} ${a.distanceUnit === "mile" ? "mi" : "km"})`);
   const allPlaces = [...geoNames, ...areaNames];
   const placesLabel = allPlaces.length > 0 ? summarizePlaces(allPlaces) : null;
-  const ageLabel = targeting.ageMin !== undefined || targeting.ageMax !== undefined ? `${targeting.ageMin ?? "?"}-${targeting.ageMax ?? "?"} anos` : null;
+  // idade: "45+" quando não há teto (a Meta trata age_max ausente como sem limite — na prática 45–65,
+  // o teto da plataforma); "até X" quando só há teto; "X-Y" quando há os dois. NUNCA "45-?" (o "?"
+  // do teto ausente vazava um alvo aberto como intervalo quebrado no eco).
+  const ageLabel =
+    targeting.ageMin !== undefined && targeting.ageMax !== undefined
+      ? `${targeting.ageMin}-${targeting.ageMax} anos`
+      : targeting.ageMin !== undefined
+        ? `${targeting.ageMin}+ anos`
+        : targeting.ageMax !== undefined
+          ? `até ${targeting.ageMax} anos`
+          : null;
   const genderLabel = targeting.genders?.includes(1) && !targeting.genders.includes(2) ? "homens" : targeting.genders?.includes(2) && !targeting.genders.includes(1) ? "mulheres" : null;
   // grupos (Slice 3/4): "A ou B" dentro do grupo, " e " entre grupos (AND narrowing).
   const describeGroups = (gs: readonly (readonly { readonly name: string }[])[] | undefined, label: string): string | null => {
@@ -1868,6 +1878,9 @@ export async function proposeCreateCampaign(
   deps: WorkerDeps,
   ctx: DraftProposalContext,
   args: {
+    /** NOME da campanha dado pelo dono (ex: "Teste de Criação"). Vira `campaignName` no spec; o
+     *  conjunto/anúncios derivam dele. Omitido → nome padrão (`goalNounPt`) no apply (zero-config). */
+    readonly name?: string;
     readonly goal?: ConversionGoal;
     readonly budgetReais?: number;
     readonly forcedCreativeAssetId?: string;
@@ -2107,6 +2120,8 @@ export async function proposeCreateCampaign(
     currency: ac.currency,
     dailyBudgetMinor,
     ...(clampedByCap ? { requestedDailyBudgetMinor: requested } : {}),
+    // nome do dono (o apply deriva conjunto/anúncios dele); omitido → nome padrão no apply.
+    ...(args.name ? { campaignName: args.name } : {}),
     activation: ac.creationActivation,
     objective: goal,
     targeting,

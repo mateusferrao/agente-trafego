@@ -823,6 +823,7 @@ export function makeConversationNodes(
               const behaviors = strList(args["behaviors"]);
               const addressAreas = areaList(args["addressAreas"]);
               return proposeCreateCampaign(deps, dctx, {
+                ...(typeof args["name"] === "string" && args["name"].trim().length > 0 ? { name: args["name"].trim() } : {}),
                 // valida o goal contra a taxonomia neutra ANTES de propor: goal inválido (o LLM
                 // manda texto livre) descartado → o propose infere da meta/conta, e o eco mostra
                 // o objetivo REAL. Sem isso, um goal fora do enum viraria DEFAULT_OBJECTIVE no

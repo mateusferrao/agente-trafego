@@ -104,6 +104,15 @@ describe("describeDraftAudience (público do rascunho pelo MODO, sem jargão nem
   it("sem targeting → cai no amplo (default seguro)", () => {
     expect(describeDraftAudience(undefined).toLowerCase()).toContain("meta escolhe");
   });
+
+  it("explicit (mulheres 45+ BH) → DESCREVE o público real, NUNCA 'amplo' (fim do falso positivo)", () => {
+    const txt = describeDraftAudience({ kind: "explicit", geo: [{ key: "1", name: "Belo Horizonte", kind: "city" }], ageMin: 45, genders: [2] });
+    expect(txt).toContain("Belo Horizonte");
+    expect(txt).toContain("45+ anos");
+    expect(txt).toContain("mulheres");
+    expect(txt.toLowerCase()).not.toContain("amplo");
+    expect(txt.toLowerCase()).not.toContain("meta escolhe");
+  });
 });
 
 describe("describeDraftCreative (rótulo do criativo do rascunho, do BANCO — sem chamar a Meta)", () => {

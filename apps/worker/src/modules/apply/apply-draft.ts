@@ -490,7 +490,7 @@ async function runFromScratchSaga(
     const creative = v.creative ?? spec.creative;
     if (!creativeIds[i]) {
       const { creativeId } = await ads.createAdCreative(ref, {
-        name: `${derived} — criativo ${i + 1}`,
+        name: `${name} — criativo ${i + 1}`,
         pageId: spec.pageId!,
         ...(creative?.metaImageHash ? { imageHash: creative.metaImageHash } : {}),
         ...(creative?.metaVideoId ? { videoId: creative.metaVideoId } : {}),
@@ -508,7 +508,7 @@ async function runFromScratchSaga(
     const { adId } = await ads.createAd(ref, {
       adsetId: state["adsetId"] as string,
       creativeId: creativeIds[i]!,
-      name: v.adName ?? `${derived} — anúncio ${i + 1}`,
+      name: v.adName ?? `${name} — anúncio ${i + 1}`,
       status,
     });
     adIds[i] = adId;
