@@ -7,7 +7,7 @@
 import { and, eq } from "drizzle-orm";
 import type { Logger } from "pino";
 import { HumanMessage, type AIMessage } from "@langchain/core/messages";
-import { adAccounts, agents, conversations, loadOrgTimezone, type Database } from "@trafego/db";
+import { agents, loadOrgTimezone, type Database } from "@trafego/db";
 import type { AutonomyPolicy, ConversationRef } from "@trafego/shared";
 import type { WorkerDeps } from "../../composition.js";
 import { buildWhatsappConversationGraph } from "../../graphs/whatsapp-conversation/graph.js";
@@ -20,11 +20,10 @@ import {
   CONFIG_CHAT_TOOL_NAMES,
   GROUP_CONCIERGE_TOOL_NAMES,
   WRITE_TOOL_NAMES,
-  resolveFocusMatch,
   type ConversationToolContext,
 } from "../../graphs/whatsapp-conversation/tools.js";
 import { loadEnabledTools } from "../tools/enabled.js";
-import { isDeliberateAccountReference, loadActiveFocusCandidates, persistFocus, resolveActiveAgents, resolveFocusedAgent, type AgentInContext } from "./account-focus.js";
+import { resolveActiveAgents, resolveExplicitFocus, resolveFocusedAgent, type AgentInContext } from "./account-focus.js";
 import { createNotifyRepo } from "../notify/repo.js";
 import { createSendToConversation, type SendToConversation } from "../notify/send-to-contact.js";
 import { applyOfferedCreative } from "./draft-proposal.js";
@@ -67,35 +66,6 @@ export async function deliverReply(
   } catch (err) {
     logger.error({ err, orgId }, "conversation:send falhou (resposta perdida, sem retry do grafo)");
   }
-}
-
-/**
- * Foco por MENÇÃO EXPLÍCITA na mensagem (S6b) — 3ª via, só quando NÃO há conta única nem foco
- * salvo. Resolve a conta nomeada no próprio texto ("...da conta Automato") ANTES de montar o
- * toolset, pra que a escrita ligue no MESMO fluxo (eco+confirma) sem o ida-e-volta de "confirme a
- * conta". Reusa o MESMO matcher da tool `set_focus` (`resolveFocusMatch`, puro): SÓ o caso `one`
- * (inequívoco) foca; `ambiguous`/`none` → null (mantém o concierge, que pergunta qual conta).
- * Persiste o foco (igual ao `set_focus`) — o turno de confirmação ("sim") depende do foco salvo
- * (em concierge de grupo não há `confirm_write`). Segurança: só decide quais tools ficam
- * disponíveis; nenhuma escrita auto-aplica (eco+confirma segue sendo o portão de toda mutação).
- */
-export async function resolveExplicitFocus(
-  db: Database,
-  orgId: string,
-  conversationId: string,
-  text: string,
-): Promise<AgentInContext | null> {
-  const candidates = await loadActiveFocusCandidates(db, orgId);
-  if (candidates.length === 0) return null;
-  const match = resolveFocusMatch(candidates, text);
-  if (match.kind !== "one") return null; // ambíguo/inexistente → concierge pede a conta (trava preservada)
-  const picked = candidates.find((c) => c.id === match.row.id);
-  if (!picked?.agentId) return null; // conta ativa sem agente ativo → não dá pra operar nela
-  // sinal fraco (nome curto de palavra comum coincidindo com a frase) → defere pro set_focus (LLM),
-  // pra não focar/persistir a conta errada a partir de uma palavra qualquer. Ver isDeliberateAccountReference.
-  if (!isDeliberateAccountReference(picked, text)) return null;
-  await persistFocus(db, orgId, conversationId, picked.id);
-  return { agentId: picked.agentId, adAccountId: picked.id, accountName: picked.name };
 }
 
 /**

@@ -5,7 +5,7 @@
 
 import { and, eq } from "drizzle-orm";
 import { adAccounts, agents, conversations, type Database } from "@trafego/db";
-import { normalizeName } from "@trafego/core";
+import { normalizeName, resolveNamedMatch, type NamedMatch } from "@trafego/core";
 
 /** Agente em contexto (id + conta + nome da conta) — o "quem opera" resolvido do turno. */
 export interface AgentInContext {
@@ -137,22 +137,68 @@ export async function resolveFocusedAgent(
   return row;
 }
 
+/** Foco de conta = `resolveNamedMatch` sobre as candidatas (match exato pelo id externo cru
+ *  `adAccountId` OU nome normalizado; senão Dice+contenção com folga). Fino sobre o core (a
+ *  LÓGICA de match vive em `resolveNamedMatch`, fonte única; isto é só o plumbing das opções —
+ *  espelha o `resolveFocusMatch` da tool `set_focus`, mesmo core). Interno ao módulo. */
+function resolveFocusMatch(rows: readonly ActiveFocusCandidate[], query: string): NamedMatch<ActiveFocusCandidate> {
+  return resolveNamedMatch(rows, query, { name: (r) => r.name, keys: (r) => [r.adAccountId] });
+}
+
 /**
- * Conta em contexto INEQUÍVOCA do fio para uma AÇÃO NÃO-CONVERSACIONAL (ex: salvar um criativo
- * recebido): a única conta ativa (`sole`) OU o foco FRESCO (dentro do TTL). NUNCA o foco cru/velho
- * — foco expirado perde precedência (retorna null → o chamador PERGUNTA a conta em vez de chutar).
- * MESMA régua que o `turn.ts` usa p/ os 2 primeiros níveis do `inContext` (fonte única) — só não
- * inclui o 3º nível "conta nomeada na mensagem" (esse depende do matcher do grafo e vale só no turno
- * que lê o texto). Devolve o UUID da conta (ad_accounts.id) ou null. PURO de IO além das 2 queries.
+ * Foco por MENÇÃO EXPLÍCITA na mensagem (S6b) — 3ª via, só quando NÃO há conta única nem foco
+ * salvo. Resolve a conta nomeada no próprio texto ("...da conta Automato"). SÓ o caso `one`
+ * (inequívoco) foca; `ambiguous`/`none` → null (o chamador pergunta qual conta). Persiste o foco
+ * (igual ao `set_focus`) — o turno de confirmação ("sim") depende do foco salvo. Fonte única
+ * (turn.ts pré-grafo E resolução de conta p/ salvar criativo).
  */
+export async function resolveExplicitFocus(
+  db: Database,
+  orgId: string,
+  conversationId: string,
+  text: string,
+): Promise<AgentInContext | null> {
+  const candidates = await loadActiveFocusCandidates(db, orgId);
+  if (candidates.length === 0) return null;
+  const match = resolveFocusMatch(candidates, text);
+  if (match.kind !== "one") return null; // ambíguo/inexistente → pede a conta (trava preservada)
+  const picked = candidates.find((c) => c.id === match.row.id);
+  if (!picked?.agentId) return null; // conta ativa sem agente ativo → não dá pra operar nela
+  // sinal fraco (nome curto de palavra comum coincidindo com a frase) → defere (não foca a conta errada).
+  if (!isDeliberateAccountReference(picked, text)) return null;
+  await persistFocus(db, orgId, conversationId, picked.id);
+  return { agentId: picked.agentId, adAccountId: picked.id, accountName: picked.name };
+}
+
+/**
+ * Conta em CONTEXTO INEQUÍVOCA do fio — a MESMA régua de 3 níveis do `turn.ts inContext`
+ * (fonte única): única conta ativa (`sole`) → foco FRESCO (dentro do TTL) → conta NOMEADA no
+ * texto. NUNCA o foco cru/velho. Null = ambíguo → o chamador PERGUNTA a conta em vez de chutar.
+ * Usada tanto pelo turno (responder) quanto pelo intake de criativo (salvar) — as duas superfícies
+ * resolvem a MESMA conta, sem divergência (fim do bug de salvar na conta errada e de o Roy
+ * confirmar um "guardei" numa conta em que nada foi salvo). `text` = "" quando não há texto.
+ */
+export async function resolveContextAccount(
+  db: Database,
+  orgId: string,
+  conversationId: string,
+  text: string,
+  ttlHours: number,
+): Promise<AgentInContext | null> {
+  const { sole } = await resolveActiveAgents(db, orgId);
+  if (sole) return sole;
+  const focused = await resolveFocusedAgent(db, orgId, conversationId, ttlHours);
+  if (focused) return focused;
+  return resolveExplicitFocus(db, orgId, conversationId, text);
+}
+
+/** Só o UUID da conta em contexto (ad_accounts.id) ou null — açúcar sobre `resolveContextAccount`. */
 export async function resolveContextAccountId(
   db: Database,
   orgId: string,
   conversationId: string,
+  text: string,
   ttlHours: number,
 ): Promise<string | null> {
-  const { sole } = await resolveActiveAgents(db, orgId);
-  if (sole) return sole.adAccountId;
-  const focused = await resolveFocusedAgent(db, orgId, conversationId, ttlHours);
-  return focused?.adAccountId ?? null;
+  return (await resolveContextAccount(db, orgId, conversationId, text, ttlHours))?.adAccountId ?? null;
 }

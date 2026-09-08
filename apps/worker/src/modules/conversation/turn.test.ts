@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { agents, type Database } from "@trafego/db";
-import { buildInContextAllow, configToolsFor, deliverReply, GROUP_CONCIERGE_ALLOW, resolveExplicitFocus } from "./turn.js";
-import { isDeliberateAccountReference, resolveContextAccountId, resolveFocusedAgent } from "./account-focus.js";
+import { buildInContextAllow, configToolsFor, deliverReply, GROUP_CONCIERGE_ALLOW } from "./turn.js";
+import { isDeliberateAccountReference, resolveContextAccountId, resolveExplicitFocus, resolveFocusedAgent } from "./account-focus.js";
 import type { SendToConversation } from "../notify/send-to-contact.js";
 import {
   AGENT_TOOL_NAMES,
@@ -148,6 +148,7 @@ describe("resolveContextAccountId (conta INEQUÍVOCA p/ salvar criativo — sole
       select: () => chain,
       from: () => chain,
       innerJoin: () => chain,
+      leftJoin: () => chain,
       where: () => chain,
       limit: () => chain,
       orderBy: () => chain,
@@ -159,7 +160,7 @@ describe("resolveContextAccountId (conta INEQUÍVOCA p/ salvar criativo — sole
 
   it("org com 1 conta ativa (sole) → salva nela, sem olhar foco", async () => {
     const db = queueDb([[{ agentId: "ag", adAccountId: "acc-sole", accountName: "Única" }]]);
-    expect(await resolveContextAccountId(db, "org-1", "cv-1", TTL)).toBe("acc-sole");
+    expect(await resolveContextAccountId(db, "org-1", "cv-1", "", TTL)).toBe("acc-sole");
   });
 
   it("multi-conta + foco FRESCO → a conta do foco fresco", async () => {
@@ -168,7 +169,7 @@ describe("resolveContextAccountId (conta INEQUÍVOCA p/ salvar criativo — sole
       [{ focusedAccountId: "acc-F", focusedAt: new Date() }], // conversa: foco fresco
       [{ agentId: "ag", adAccountId: "acc-F", accountName: "Focada" }], // agente da conta focada
     ]);
-    expect(await resolveContextAccountId(db, "org-1", "cv-1", TTL)).toBe("acc-F");
+    expect(await resolveContextAccountId(db, "org-1", "cv-1", "", TTL)).toBe("acc-F");
   });
 
   it("multi-conta + foco VELHO (> TTL) → null (ambíguo: o chamador pergunta, não chuta a conta velha)", async () => {
@@ -176,7 +177,7 @@ describe("resolveContextAccountId (conta INEQUÍVOCA p/ salvar criativo — sole
       [{ adAccountId: "a" }, { adAccountId: "b" }],
       [{ focusedAccountId: "acc-velha", focusedAt: new Date(Date.now() - 20 * MS_H) }],
     ]);
-    expect(await resolveContextAccountId(db, "org-1", "cv-1", TTL)).toBeNull();
+    expect(await resolveContextAccountId(db, "org-1", "cv-1", "", TTL)).toBeNull();
   });
 
   it("multi-conta + sem foco → null (pergunta)", async () => {
@@ -184,7 +185,18 @@ describe("resolveContextAccountId (conta INEQUÍVOCA p/ salvar criativo — sole
       [{ adAccountId: "a" }, { adAccountId: "b" }],
       [{ focusedAccountId: null, focusedAt: null }],
     ]);
-    expect(await resolveContextAccountId(db, "org-1", "cv-1", TTL)).toBeNull();
+    expect(await resolveContextAccountId(db, "org-1", "cv-1", "", TTL)).toBeNull();
+  });
+
+  it("multi-conta + sem foco fresco MAS a legenda NOMEIA a conta → resolve a nomeada (3º nível, igual ao turno)", async () => {
+    // fecha o Finding 1: o intake resolve a MESMA conta que o turno (via legenda) → o que salva casa
+    // com o que o Roy confirma; nada de 'guardei' numa conta em que nada foi salvo.
+    const db = queueDb([
+      [{ adAccountId: "a" }, { adAccountId: "b" }], // multi
+      [{ focusedAccountId: null, focusedAt: null }], // sem foco fresco
+      [{ id: "acc-MQ", name: "MyQuick Ads", adAccountId: "act_mq", agentId: "ag-MQ" }], // candidatas
+    ]);
+    expect(await resolveContextAccountId(db, "org-1", "cv-1", "guarda pra MyQuick Ads", TTL)).toBe("acc-MQ");
   });
 });
 

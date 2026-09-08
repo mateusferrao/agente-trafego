@@ -74,12 +74,13 @@ const EXT_BY_TYPE: Readonly<Record<string, string>> = {
 export interface MediaIntakeDeps {
   readonly db: Database;
   /**
-   * Resolve a conta INEQUÍVOCA do fio p/ salvar o criativo (sole ?? foco FRESCO dentro do TTL) —
-   * MESMA régua do turno (`resolveContextAccountId`), NUNCA o foco cru/velho. Null = ambíguo →
-   * o intake PERGUNTA a conta em vez de chutar (fecha o bug de salvar na conta errada em grupo
-   * multi-conta, onde o foco velho de outra conta era usado em silêncio).
+   * Resolve a conta INEQUÍVOCA do fio p/ salvar o criativo — MESMA régua de 3 níveis do turno
+   * (`resolveContextAccountId`: sole ?? foco FRESCO no TTL ?? conta NOMEADA na legenda), NUNCA o
+   * foco cru/velho. As duas superfícies (turno responde × intake salva) resolvem a MESMA conta →
+   * o Roy nunca confirma um "guardei" numa conta em que nada foi salvo. Null = ambíguo → o intake
+   * PERGUNTA a conta em vez de chutar. `caption` = a legenda da mídia (p/ o 3º nível).
    */
-  readonly resolveSaveAccount: (orgId: string, conversationId: string) => Promise<string | null>;
+  readonly resolveSaveAccount: (orgId: string, conversationId: string, caption: string) => Promise<string | null>;
   readonly analysisRepo: Pick<ReturnType<typeof createAnalysisRepo>, "loadAccount">;
   readonly ports: {
     readonly ads: Pick<AdsPlatformPort, "uploadImage" | "uploadVideo">;
@@ -115,7 +116,7 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
     // 1) conta INEQUÍVOCA do fio (única ativa OU foco FRESCO dentro do TTL) — MESMA régua do turno,
     // nunca o foco cru/velho. Ambíguo (foco expirado / nada em contexto) → PERGUNTA antes de subir
     // (não chuta a conta: em grupo multi-conta o foco velho de outra conta salvava no lugar errado).
-    const adAccountUuid = await d.resolveSaveAccount(orgId, conversationId);
+    const adAccountUuid = await d.resolveSaveAccount(orgId, conversationId, media.caption ?? "");
     if (!adAccountUuid) {
       await notify(ref, NOTICE.noAccount, { split: true, quoteLastInbound: true });
       d.logger.debug({ conversationId }, "intake:no_focused_account");
@@ -245,10 +246,11 @@ export function startWhatsappMediaIntakeWorker(deps: WorkerDeps, connection: Red
   const repo = createNotifyRepo(db);
   const intake = makeMediaIntake({
     db,
-    // MESMA régua do turno p/ resolver a conta INEQUÍVOCA (sole ?? foco fresco no TTL) — fonte única
-    // em account-focus. Nunca o foco cru/velho: ambíguo → o intake pergunta a conta (não chuta).
-    resolveSaveAccount: (orgId, conversationId) =>
-      resolveContextAccountId(db, orgId, conversationId, deps.conversation.focusTtlHours),
+    // MESMA régua do turno p/ resolver a conta INEQUÍVOCA (sole ?? foco fresco no TTL ?? conta
+    // nomeada na legenda) — fonte única em account-focus. Nunca o foco cru/velho: ambíguo → o
+    // intake pergunta a conta (não chuta), e o que ele salva casa com o que o turno confirma.
+    resolveSaveAccount: (orgId, conversationId, caption) =>
+      resolveContextAccountId(db, orgId, conversationId, caption, deps.conversation.focusTtlHours),
     analysisRepo: createAnalysisRepo(db),
     ports: { ads: ports.ads, messaging: ports.messaging, vault: ports.vault, storage: ports.storage, scheduler: ports.scheduler },
     maxWhatsappVideoBytes: deps.creative.maxWhatsappVideoBytes,
