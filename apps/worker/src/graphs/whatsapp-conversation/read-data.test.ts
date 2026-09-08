@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { adAccounts, adCreatives, agentMemory, agentRuns, agents, campaignDrafts, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
+import { adAccounts, adCreatives, agentMemory, agentRuns, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
+import { libraryCreativeContentHash } from "../../workers/creative-analyze.js";
 import type { Approval, ApprovalPort } from "@trafego/shared/ports";
 import type { PerformanceTier } from "@trafego/shared";
 import {
@@ -24,6 +25,7 @@ import {
   resolveWhatsappNumber,
   pickAdIdsToRefresh,
   getTopCreativesData,
+  recallCreativeData,
   TOP_CREATIVES_LIMIT,
 } from "./read-data.js";
 
@@ -488,6 +490,42 @@ describe("getTopCreativesData — lookup por nome/id (C3)", () => {
   it("query inexistente → match none (não inventa)", async () => {
     const res = await getTopCreativesData(dbWith(), "acc", "org", "não existe zzz");
     expect(res).toMatchObject({ match: "none" });
+  });
+});
+
+describe("recallCreativeData (Slice 3 — busca as DUAS chaves de visão: chat + biblioteca)", () => {
+  const VISION = {
+    summary: "vídeo da praia ao pôr do sol",
+    hook: "abre no mar",
+    angle: "lifestyle",
+    format: "ugc",
+    body: "b",
+    cta: "c",
+    proofStrength: "medium",
+    persuasionSignals: 2,
+    strengths: ["s"],
+    weaknesses: ["w"],
+    score: 7,
+  };
+  const makeDeps = (db: unknown) =>
+    ({ db, visionAnalyzerVersion: 1, ports: { llm: { completeStructured: vi.fn() } }, analysis: { messageModel: "m" } }) as unknown as Parameters<typeof recallCreativeData>[0];
+  const CTX = { orgId: "org", adAccountId: "acc" } as unknown as Parameters<typeof recallCreativeData>[1];
+
+  it("análise SÓ sob libraryCreativeContentHash (chat degradou) → recall ainda acha (não falso-negativo)", async () => {
+    // o vídeo tem vision_content_hash (bytes) setado no ingest, mas a análise de CHAT degradou → só
+    // existe a linha sob a chave da BIBLIOTECA (frames Meta). O recall precisa achar mesmo assim.
+    const asset = { id: "asset-vid-1", format: "video", visionContentHash: "HASH_CHAT_SEM_ANALISE" };
+    const visionRow = { contentHash: libraryCreativeContentHash("asset-vid-1"), result: VISION };
+    const db = fakeDb(new Map<unknown, unknown[]>([[creativeAssets, [asset]], [creativeVisionAnalyses, [visionRow]]]));
+    const res = await recallCreativeData(makeDeps(db), CTX, null);
+    expect(res).toMatchObject({ hasData: true, creative: { summary: VISION.summary } });
+  });
+
+  it("nenhuma análise em nenhuma das chaves → match none honesto (não inventa)", async () => {
+    const asset = { id: "asset-vid-2", format: "video", visionContentHash: "HASH_SEM_ANALISE" };
+    const db = fakeDb(new Map<unknown, unknown[]>([[creativeAssets, [asset]], [creativeVisionAnalyses, []]]));
+    const res = await recallCreativeData(makeDeps(db), CTX, null);
+    expect(res).toMatchObject({ hasData: true, match: "none" });
   });
 });
 

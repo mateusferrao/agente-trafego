@@ -22,6 +22,12 @@ export interface CreativeVisionInput {
   readonly contentHash: string;
   /** texto do criativo (título/corpo/CTA), quando disponível. */
   readonly copy?: string;
+  /**
+   * metering POR-CHAMADA (atribuição do custo da visão à org/run) — o `orgId` varia por job, então
+   * quando o resolver é construído sem `meta` fixo (ex: worker de análise de vídeo do WhatsApp), a
+   * chamada passa o seu aqui. Tem precedência sobre o `meta` de construção do resolver.
+   */
+  readonly meta?: { readonly orgId?: string; readonly runId?: string };
 }
 
 /**

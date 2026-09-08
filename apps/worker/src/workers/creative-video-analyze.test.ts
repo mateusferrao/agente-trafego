@@ -41,6 +41,7 @@ function makeDeps(over: Partial<VideoAnalyzeDeps> = {}) {
     sendToConversation: send,
     messageModel: "m",
     videoModelMaxBytes: 20 * 1024 * 1024,
+    libraryMaxBytes: 50 * 1024 * 1024,
     logger: { debug: vi.fn(), warn: vi.fn() },
     ...over,
   };
@@ -66,12 +67,38 @@ describe("makeVideoAnalyze (Slice 2 — análise de vídeo dos nossos bytes)", (
     expect(send).toHaveBeenCalledOnce();
   });
 
-  it("vídeo acima do teto → degrada honesto (biblioteca analisa depois), sem chamar visão", async () => {
-    const big = Buffer.alloc(30 * 1024 * 1024).toString("base64");
+  it("acima do teto do MODELO mas dentro do intake → promete a biblioteca (honesto: o intake salva)", async () => {
+    const big = Buffer.alloc(30 * 1024 * 1024).toString("base64"); // 30MB: > modelo(20) e < intake(50)
     const { deps, resolve, send } = makeDeps({ messaging: { fetchMediaBase64: vi.fn(async () => big) } });
     await makeVideoAnalyze(deps)(payload());
     expect(resolve).not.toHaveBeenCalled();
-    expect(send).toHaveBeenCalledOnce();
+    const [, msg] = send.mock.calls[0]!;
+    expect(msg).toContain("guardei na biblioteca");
+  });
+
+  it("acima do teto do INTAKE → NÃO promete biblioteca (o intake rejeita) → aponta o site", async () => {
+    const huge = Buffer.alloc(60 * 1024 * 1024).toString("base64"); // 60MB: > intake(50)
+    const { deps, resolve, send } = makeDeps({ messaging: { fetchMediaBase64: vi.fn(async () => huge) } });
+    await makeVideoAnalyze(deps)(payload());
+    expect(resolve).not.toHaveBeenCalled();
+    const [, msg] = send.mock.calls[0]!;
+    expect(msg).toContain("no site");
+    expect(msg).not.toContain("biblioteca e a análise");
+  });
+
+  it("probe por fileLength acima do intake → aponta o site ANTES de baixar (sem fetch)", async () => {
+    const { deps, send, fetchMediaBase64 } = makeDeps();
+    await makeVideoAnalyze(deps)(payload({ fileLength: 60 * 1024 * 1024 }));
+    expect(fetchMediaBase64).not.toHaveBeenCalled();
+    const [, msg] = send.mock.calls[0]!;
+    expect(msg).toContain("no site");
+  });
+
+  it("passa meta.orgId à visão p/ o custo da análise ser metrado (§11)", async () => {
+    const { deps, resolve } = makeDeps();
+    await makeVideoAnalyze(deps)(payload({ orgId: "org-42" }));
+    const arg = resolve.mock.calls[0]![0] as { meta?: { orgId?: string } };
+    expect(arg.meta?.orgId).toBe("org-42");
   });
 
   it("visão falha (null) → aviso honesto", async () => {

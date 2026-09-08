@@ -7,7 +7,6 @@
 import { Worker } from "bullmq";
 import { mediaBytesContentHash } from "@trafego/creative-library";
 import {
-  CREATIVE_VIDEO_ANALYZE_JOB_ATTEMPTS,
   CREATIVE_VIDEO_ANALYZE_QUEUE,
   type CreativeVideoAnalyzePayload,
 } from "@trafego/shared";
@@ -21,10 +20,16 @@ import { createSendToConversation, type SendToConversation } from "../modules/no
 import { createNotifyRepo } from "../modules/notify/repo.js";
 import { createVisionResolver } from "../modules/vision/resolver.js";
 
+const BYTES_PER_MB = 1024 * 1024;
+
 /** Cortesias do fluxo (§13 UX: o quê + próximo passo). */
 const NOTICE = {
   noBytes: "Não consegui baixar seu vídeo pra analisar — manda de novo?",
-  tooBig: "Esse vídeo é grande demais pra eu analisar aqui na hora — guardei na biblioteca e a análise dele sai por lá quando terminar de processar.",
+  // grande p/ o modelo, MAS dentro do teto do intake → o intake salva e a análise de biblioteca sai lá.
+  tooBigForModel: "Esse vídeo é grande demais pra eu analisar aqui na hora — guardei na biblioteca e a análise dele sai por lá quando terminar de processar.",
+  // acima do teto do intake → o intake REJEITA (não salva) → não prometer biblioteca; aponta o site.
+  tooLargeForLibrary: (maxMb: number) =>
+    `Esse vídeo é grande demais pra eu receber por aqui (limite ${maxMb}MB) — sobe ele pela biblioteca de criativos no site.`,
   failed: "Recebi seu vídeo mas tive um problema pra analisar agora — guardei na biblioteca, dá uma olhada por lá.",
 };
 
@@ -76,7 +81,20 @@ export interface VideoAnalyzeDeps {
   readonly messageModel: string;
   /** teto de bytes p/ mandar o vídeo INTEIRO ao modelo (acima → degrada; ffmpeg-local = fast-follow). */
   readonly videoModelMaxBytes: number;
+  /** teto de bytes do INTAKE (biblioteca) — acima dele o intake rejeita, então não prometer biblioteca. */
+  readonly libraryMaxBytes: number;
   readonly logger: Pick<Logger, "debug" | "warn">;
+}
+
+/**
+ * Aviso de vídeo grande demais p/ análise ao vivo. Distingue os dois tetos: acima do teto do INTAKE
+ * (biblioteca) o arquivo NÃO é salvo → aponta o site (não promete biblioteca); entre o teto do modelo
+ * e o do intake, o intake salva e a análise sai por lá → promete a biblioteca (honesto).
+ */
+function oversizeNotice(d: VideoAnalyzeDeps, sizeBytes: number): string {
+  return sizeBytes > d.libraryMaxBytes
+    ? NOTICE.tooLargeForLibrary(Math.round(d.libraryMaxBytes / BYTES_PER_MB))
+    : NOTICE.tooBigForModel;
 }
 
 /**
@@ -89,7 +107,7 @@ export function makeVideoAnalyze(d: VideoAnalyzeDeps) {
     // probe por `fileLength` ANTES de baixar (evita puxar um vídeo enorme pra memória só pra rejeitar).
     if (p.fileLength !== undefined && p.fileLength > d.videoModelMaxBytes) {
       d.logger.debug({ conversationId: p.conversationId, fileLength: p.fileLength }, "video-analyze:acima do teto (probe) — degrada");
-      await d.sendToConversation(p.ref, NOTICE.tooBig, { split: true, quoteLastInbound: true });
+      await d.sendToConversation(p.ref, oversizeNotice(d, p.fileLength), { split: true, quoteLastInbound: true });
       return;
     }
     const b64 = await d.messaging.fetchMediaBase64({ instanceId: p.instanceId }, p.messageKey);
@@ -100,7 +118,7 @@ export function makeVideoAnalyze(d: VideoAnalyzeDeps) {
     const bytes = Buffer.from(b64, "base64");
     if (bytes.byteLength > d.videoModelMaxBytes) {
       d.logger.debug({ conversationId: p.conversationId, bytes: bytes.byteLength }, "video-analyze:acima do teto — degrada");
-      await d.sendToConversation(p.ref, NOTICE.tooBig, { split: true, quoteLastInbound: true });
+      await d.sendToConversation(p.ref, oversizeNotice(d, bytes.byteLength), { split: true, quoteLastInbound: true });
       return;
     }
     // content-addressed pelos BYTES (estável, sem depender do asset) — o ingest grava o MESMO hash
@@ -108,7 +126,7 @@ export function makeVideoAnalyze(d: VideoAnalyzeDeps) {
     // asset à esta decomposição.
     const contentHash = mediaBytesContentHash(bytes);
     const dataUrl = `data:${p.mimetype};base64,${b64}`;
-    const vision = await d.vision.resolve({ creativeId: p.messageKey.id, imageUrls: [], videoUrl: dataUrl, contentHash });
+    const vision = await d.vision.resolve({ creativeId: p.messageKey.id, imageUrls: [], videoUrl: dataUrl, contentHash, meta: { orgId: p.orgId } });
     if (!vision) {
       await d.sendToConversation(p.ref, NOTICE.failed, { split: true, quoteLastInbound: true });
       return;
@@ -128,8 +146,6 @@ export function makeVideoAnalyze(d: VideoAnalyzeDeps) {
   };
 }
 
-const BYTES_PER_MB = 1024 * 1024;
-
 /** Start do worker: monta o resolver de visão COM o modelo de vídeo (video_url → modelo video-capable). */
 export function startCreativeVideoAnalyzeWorker(deps: WorkerDeps, connection: Redis): Worker<CreativeVideoAnalyzePayload> {
   const { db, ports, logger } = deps;
@@ -148,6 +164,7 @@ export function startCreativeVideoAnalyzeWorker(deps: WorkerDeps, connection: Re
     sendToConversation: createSendToConversation({ messaging: ports.messaging, repo: createNotifyRepo(db) }),
     messageModel: deps.analysis.messageModel,
     videoModelMaxBytes: deps.analysis.videoModelMaxMb * BYTES_PER_MB,
+    libraryMaxBytes: deps.creative.maxWhatsappVideoBytes,
     logger,
   });
   return new Worker<CreativeVideoAnalyzePayload>(

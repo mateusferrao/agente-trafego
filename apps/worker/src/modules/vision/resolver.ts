@@ -171,7 +171,8 @@ export function createVisionResolver(deps: VisionResolverDeps): CreativeVisionPo
           responseSchemaName: "creative_vision",
           temperature: VISION_TEMPERATURE,
           maxTokens: VISION_MAX_TOKENS,
-          ...(deps.meta ? { meta: { ...deps.meta, type: "vision" } } : {}),
+          // meta POR-CHAMADA (input) tem precedência sobre o de construção — o orgId varia por job.
+          ...((input.meta ?? deps.meta) ? { meta: { ...deps.meta, ...input.meta, type: "vision" } } : {}),
         });
         result = toResult(completion.output);
       } catch (err) {

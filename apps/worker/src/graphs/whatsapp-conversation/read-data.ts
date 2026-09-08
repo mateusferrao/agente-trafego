@@ -1631,17 +1631,34 @@ export async function recallCreativeData(
     .limit(RECALL_CANDIDATE_LIMIT);
   if (assets.length === 0) return { hasData: false, note: "Você ainda não tem criativos guardados nessa conta — me manda um que eu analiso e guardo." };
 
-  const hashOf = (a: (typeof assets)[number]): string => a.visionContentHash ?? libraryCreativeContentHash(a.id);
+  // A decomposição pode ter sido gravada por QUALQUER dos dois workers, em chaves diferentes: a
+  // análise de chat (vídeo completo dos nossos bytes) sob `vision_content_hash`; a de biblioteca
+  // (frames da Meta, quando o vídeo/imagem fica `ready`) sob `libraryCreativeContentHash(id)`. Se o
+  // chat degradou (vídeo grande/sem bytes/falha) mas a biblioteca analisou, a análise existe só na
+  // 2ª chave — então buscamos AS DUAS por asset e usamos a que existir (preferindo a de chat, mais
+  // rica: movimento/áudio). Sem isto, o recall daria falso-negativo justamente nos casos de degradação.
+  const candidateHashes = (a: (typeof assets)[number]): string[] => {
+    const lib = libraryCreativeContentHash(a.id);
+    return a.visionContentHash && a.visionContentHash !== lib ? [a.visionContentHash, lib] : [lib];
+  };
+  const allHashes = [...new Set(assets.flatMap(candidateHashes))];
   const visions = await deps.db
     .select({ contentHash: creativeVisionAnalyses.contentHash, result: creativeVisionAnalyses.result })
     .from(creativeVisionAnalyses)
-    .where(and(inArray(creativeVisionAnalyses.contentHash, assets.map(hashOf)), eq(creativeVisionAnalyses.analyzerVersion, deps.visionAnalyzerVersion)));
+    .where(and(inArray(creativeVisionAnalyses.contentHash, allHashes), eq(creativeVisionAnalyses.analyzerVersion, deps.visionAnalyzerVersion)));
   const byHash = new Map(visions.map((v) => [v.contentHash, v.result]));
+  const visionFor = (a: (typeof assets)[number]): CreativeVisionResult | undefined => {
+    for (const h of candidateHashes(a)) {
+      const v = byHash.get(h);
+      if (v) return v;
+    }
+    return undefined;
+  };
 
   // candidatos = assets COM análise (ordem = recência), carregando o resultado p/ o retorno.
   const enriched = assets
     .map((a) => {
-      const v = byHash.get(hashOf(a));
+      const v = visionFor(a);
       return v ? { asset: a, vision: v } : null;
     })
     .filter((x): x is { asset: (typeof assets)[number]; vision: CreativeVisionResult } => x !== null);

@@ -18,6 +18,10 @@ const KEY_PREFIX = (orgId: string): string => `org/${orgId}/creatives`;
  * Chave de visão content-addressed pelos BYTES da mídia (Slice 3): a análise do vídeo do WhatsApp
  * (dos nossos bytes) e a linha `creative_assets.vision_content_hash` derivam do MESMO hash → a
  * busca por descrição liga o asset à sua decomposição. Fonte única (worker + ingest usam esta).
+ * Premissa: os dois lados hasheiam bytes de fetches INDEPENDENTES da mesma mídia (a função é única,
+ * os bytes não) — vale porque a Evolution devolve o plaintext determinístico do arquivo (mesmo
+ * mediaKey → mesmos bytes, sem transcode). Se um dia a Evolution re-encodar, os hashes divergem e o
+ * vínculo asset↔decomposição degrada p/ recência; o recall já busca AS DUAS chaves (chat+biblioteca).
  */
 export function mediaBytesContentHash(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("base64url");
