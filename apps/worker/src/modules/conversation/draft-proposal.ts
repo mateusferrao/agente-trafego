@@ -35,6 +35,7 @@ import {
   type ResolvedAudienceSnapshot,
   type TargetingSpec,
   withTimeout,
+  TimeoutError,
 } from "@trafego/shared";
 import type { AdAccountRef, DraftApproval } from "@trafego/shared/ports";
 import type { DraftKind } from "@trafego/shared";
@@ -161,9 +162,11 @@ export function audienceEchoPhrase(args: {
 }): string {
   if (args.targetingKind === "explicit" && args.explicitAudienceDescription) return args.explicitAudienceDescription;
   if (args.targetingKind === "reuse_adset") {
+    // G13: não afirmar "que já converte" — a fonte é o melhor anúncio por RANKING (pode ter gasto e
+    // zero conversão). Honesto (§7 target×proxy): herda o público do conjunto que está rodando.
     return args.resolvedAudienceDescription
-      ? `herda o conjunto que já converte — ${args.resolvedAudienceDescription}`
-      : "herdado do conjunto que já converte";
+      ? `herda o público do conjunto que está rodando — ${args.resolvedAudienceDescription}`
+      : "herdado do conjunto que está rodando";
   }
   return "amplo (Advantage+)";
 }
@@ -497,11 +500,29 @@ async function resolveDetailedTargeting(
   query: string,
   labelSingular: string,
   autonomous = false,
+  timeoutMs?: number,
 ): Promise<{ kind: "ok"; ref: { id: string; name: string } } | { kind: "blocked"; reason: string } | { kind: "dropped" }> {
-  let matches = await search(query);
+  // G18: a busca de público por NOME (N termos × ida à Meta) rodava SEM teto → um termo lento
+  // estourava o `turnTimeoutMs` do turno inteiro e o dono recebia o fallback genérico sem próximo
+  // passo. `withTimeout` por-termo → timeout DESCARTA o termo (honesto: "deixei de fora"), sem travar.
+  const runSearch = async (q: string): Promise<readonly { id: string; name: string; audienceSize?: number; path?: readonly string[] }[] | null> => {
+    try {
+      return timeoutMs ? await withTimeout(search(q), timeoutMs) : await search(q);
+    } catch (err) {
+      if (err instanceof TimeoutError) return null;
+      throw err;
+    }
+  };
+  const first = await runSearch(query);
+  if (first === null) return { kind: "dropped" };
+  let matches = first;
   if (matches.length === 0) {
     const stripped = query.replace(/\s*\([^)]*\)\s*/g, " ").replace(/\s+/g, " ").trim();
-    if (stripped && normalizeTerm(stripped) !== normalizeTerm(query)) matches = await search(stripped);
+    if (stripped && normalizeTerm(stripped) !== normalizeTerm(query)) {
+      const retry = await runSearch(stripped);
+      if (retry === null) return { kind: "dropped" };
+      matches = retry;
+    }
   }
   const exact = matches.find((m) => normalizeTerm(m.name) === normalizeTerm(query));
   if (exact) return { kind: "ok", ref: { id: exact.id, name: exact.name } };
@@ -522,7 +543,7 @@ async function prepareInterests(deps: WorkerDeps, ref: AdAccountRef, queries: re
   const resolved: { id: string; name: string }[] = [];
   const dropped: string[] = [];
   for (const q of queries) {
-    const r = await resolveDetailedTargeting((s) => deps.ports.ads.searchInterests(ref, s), q, "o interesse", autonomous);
+    const r = await resolveDetailedTargeting((s) => deps.ports.ads.searchInterests(ref, s), q, "o interesse", autonomous, deps.conversation?.liveFetchTimeoutMs);
     if (r.kind === "blocked") return r;
     if (r.kind === "dropped") dropped.push(q);
     else resolved.push(r.ref);
@@ -535,7 +556,7 @@ async function prepareBehaviors(deps: WorkerDeps, ref: AdAccountRef, queries: re
   const resolved: { id: string; name: string }[] = [];
   const dropped: string[] = [];
   for (const q of queries) {
-    const r = await resolveDetailedTargeting((s) => deps.ports.ads.searchBehaviors(ref, s), q, "o comportamento", autonomous);
+    const r = await resolveDetailedTargeting((s) => deps.ports.ads.searchBehaviors(ref, s), q, "o comportamento", autonomous, deps.conversation?.liveFetchTimeoutMs);
     if (r.kind === "blocked") return r;
     if (r.kind === "dropped") dropped.push(q);
     else resolved.push(r.ref);
@@ -1053,6 +1074,27 @@ function refineErrorReason(error: RefineError): string {
  * (§13 DRY) — a casca só resolve os fragmentos de IO (copy via LLM, público ao vivo). O chat é LEVE
  * (Slice 8): budget/ativação/nome/público/regenerar copy; edição pesada vai pro painel do site.
  */
+/**
+ * G16: campos do refino que só valem no rascunho DO ZERO — numa ESCALA (duplicate) público/objetivo/
+ * copy/nomes são HERDADOS do vencedor (só budget/ativação editáveis). Retorna o rótulo do 1º campo
+ * herdado que o usuário tentou mexer, ou null. Fonte da honestidade: em vez de re-ecoar mudo o mesmo
+ * spec (o usuário fica sem saber por que "não mudou"), a casca responde por que não dá (§7).
+ */
+export function scaleForbiddenRefineField(patch: RefineDraftPatch): "objective" | "targeting" | "copyVariants" | "campaignName" | "adsetName" | null {
+  const has = (v: unknown): boolean => v !== undefined && v !== null && (!Array.isArray(v) || v.length > 0);
+  if (has(patch.objective)) return "objective";
+  const touchesAudience =
+    has(patch.audience) || has(patch.addGeo) || has(patch.removeGeo) || patch.ageMin !== undefined || patch.ageMax !== undefined ||
+    has(patch.gender) || has(patch.addInterests) || has(patch.removeInterests) || has(patch.narrowInterests) ||
+    has(patch.addBehaviors) || has(patch.removeBehaviors) || has(patch.narrowBehaviors) || has(patch.radiusKm) ||
+    has(patch.addressAreas) || has(patch.addAudiences) || has(patch.excludeAudiences) || has(patch.removeAudiences);
+  if (touchesAudience) return "targeting";
+  if (patch.regenerateCopy === true || patch.variantsCount !== undefined || has(patch.copyEdits) || has(patch.distinctCreatives) || has(patch.mediaPreference)) return "copyVariants";
+  if (has(patch.campaignName)) return "campaignName";
+  if (has(patch.adsetName)) return "adsetName";
+  return null;
+}
+
 export async function refineDraft(
   deps: WorkerDeps,
   ctx: DraftProposalContext,
@@ -1062,6 +1104,13 @@ export async function refineDraft(
   const loaded = await loadDraftForEdit(deps.db, { orgId: ctx.orgId, draftId, adAccountId: ctx.adAccountId });
   if (!loaded) return { kind: "blocked", reason: NOT_OPEN_REASON };
   const { kind, spec } = loaded;
+
+  // G16: numa escala (duplicate) só budget/ativação são editáveis — pedir mexer no herdado responde
+  // HONESTO (antes caía fora de todos os `if (kind === "from_scratch")` e re-ecoava o spec sem mudança).
+  if (kind === "duplicate") {
+    const forbidden = scaleForbiddenRefineField(patch);
+    if (forbidden) return { kind: "blocked", reason: refineErrorReason({ code: "field_not_editable", field: forbidden }) };
+  }
 
   const ac = await loadAgentContext(deps, ctx);
   if (!ac) return { kind: "blocked", reason: "não consegui acessar a conta agora" };
@@ -1922,6 +1971,14 @@ export async function proposeCreateCampaign(
         reason: "recebi o criativo, mas essa conta ainda não tem uma Página de onde eu monte o anúncio — ela vem de um anúncio ativo. Conecte uma conta com anúncios (ou publique um) que eu crio a campanha.",
       };
     }
+    // G17: o usuário MANDOU um criativo (forcedCreativeAssetId) mas ele não carregou (ainda
+    // processando ou ilegível) → NÃO pedir "me manda um criativo" (ele acabou de mandar). Diz o real.
+    if (args.forcedCreativeAssetId && !chosen) {
+      return {
+        kind: "blocked",
+        reason: "o criativo que você mandou ainda não ficou pronto (está processando) ou não consegui ler — me manda de novo, ou espera uns segundos e tenta outra vez.",
+      };
+    }
     return {
       kind: "blocked",
       reason: defaults.unsupportedTopFormat
@@ -1929,9 +1986,12 @@ export async function proposeCreateCampaign(
         : "essa conta ainda não tem um anúncio de onde eu possa reusar a página e o criativo — me manda um criativo ou conecte uma conta com anúncios",
     };
   }
+  // G12: sem budget explícito, começa num STARTER conservador (não no TETO de gasto novo — um limite
+  // de segurança não deve virar o valor gasto por padrão). Se o teto for menor que o starter, respeita
+  // o teto. (O starter é flat em unidade menor — R$30/¥3000/etc, razoável em qualquer moeda.)
   const requested = args.budgetReais
     ? toMinorUnits(args.budgetReais, ac.currency)
-    : (ac.cfg.maxNewDailyBudgetMinor ?? DEFAULT_STARTER_BUDGET_MINOR);
+    : Math.min(DEFAULT_STARTER_BUDGET_MINOR, ac.cfg.maxNewDailyBudgetMinor ?? DEFAULT_STARTER_BUDGET_MINOR);
   // Transparência do teto (§8 clareza pro dono): pediu mais que o teto de gasto novo →
   // o eco/card mostram "pediu X, virou Y" (mesmo helper/campo do escalar).
   const { dailyBudgetMinor, clampedByCap } = clampNewBudget(requested, ac.cfg.maxNewDailyBudgetMinor);
@@ -2099,7 +2159,9 @@ export async function proposeCreateCampaign(
   });
   lines.push(
     `Público: ${audiencePhrase}.`,
-    `Gasto novo: ${budgetPhrase} · Página: ${defaults.pageId}${defaults.pixelId ? ` · Pixel: ${defaults.pixelId}` : ""} · ${activationPhrase(spec.activation)}.`,
+    // G14: sem id cru (jargão pro não-técnico, §13) — a Página vem do seu anúncio ativo; o pixel,
+    // quando há, é o de conversão da conta. O id técnico não ajuda o dono a decidir.
+    `Gasto novo: ${budgetPhrase} · usa a sua Página do Facebook${defaults.pixelId ? " e o pixel de conversão da conta" : ""} · ${activationPhrase(spec.activation)}.`,
   );
   for (const n of aud.notes) lines.push(n);
   for (const n of [...geoRadius.notes, ...areas.notes]) lines.push(n);

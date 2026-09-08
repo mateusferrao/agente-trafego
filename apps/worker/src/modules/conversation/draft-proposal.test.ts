@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, interleaveMedia, normalizeAdCount, recoverOpenDraft, resolveCreationTargeting, resolveProposedExplicitTargeting } from "./draft-proposal.js";
+import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, interleaveMedia, normalizeAdCount, recoverOpenDraft, resolveCreationTargeting, resolveProposedExplicitTargeting, scaleForbiddenRefineField } from "./draft-proposal.js";
 import type { CopyVariant } from "@trafego/shared";
 import type { CampaignDraftSpec } from "@trafego/shared";
 import { creativeContentHash } from "../vision/resolver.js";
@@ -178,7 +178,8 @@ describe("audienceEchoPhrase (P0: eco não pode contradizer o targeting real)", 
   it("targetingKind=reuse_adset → NÃO diz 'amplo (Advantage+)' (bug fixado)", () => {
     const phrase = audienceEchoPhrase({ targetingKind: "reuse_adset" });
     expect(phrase).not.toContain("amplo");
-    expect(phrase).toBe("herdado do conjunto que já converte");
+    // G13: honesto — "que está rodando", não "que já converte" (a fonte é rankeada, pode não converter).
+    expect(phrase).toBe("herdado do conjunto que está rodando");
   });
 
   it("targetingKind=advantage_plus → amplo (Advantage+)", () => {
@@ -196,7 +197,7 @@ describe("audienceEchoPhrase (P0: eco não pode contradizer o targeting real)", 
       targetingKind: "reuse_adset",
       resolvedAudienceDescription: "Belo Horizonte, Contagem, Ibirité, 35-64 anos, sem expansão de público",
     });
-    expect(phrase).toBe("herda o conjunto que já converte — Belo Horizonte, Contagem, Ibirité, 35-64 anos, sem expansão de público");
+    expect(phrase).toBe("herda o público do conjunto que está rodando — Belo Horizonte, Contagem, Ibirité, 35-64 anos, sem expansão de público");
   });
 });
 
@@ -598,5 +599,24 @@ describe("resolveProposedExplicitTargeting (nome→id + montagem compartilhada �
     if (res.kind !== "ok") return;
     expect(res.droppedNames).toContain("Lugar Inexistente");
     expect(res.targeting.geo).toEqual([{ key: "BR", name: "Brasil", kind: "country" }]); // fallback país
+  });
+});
+
+describe("scaleForbiddenRefineField (G16 — escala não edita o herdado)", () => {
+  it("budget/ativação numa escala → permitido (null)", () => {
+    expect(scaleForbiddenRefineField({ budgetReais: 50 })).toBeNull();
+    expect(scaleForbiddenRefineField({ activation: "active" })).toBeNull();
+    expect(scaleForbiddenRefineField({})).toBeNull();
+  });
+  it("objetivo/público/copy/nome numa escala → rótulo do campo herdado (mensagem honesta)", () => {
+    expect(scaleForbiddenRefineField({ objective: "purchase" })).toBe("objective");
+    expect(scaleForbiddenRefineField({ addInterests: ["estética"] })).toBe("targeting");
+    expect(scaleForbiddenRefineField({ ageMin: 25 })).toBe("targeting");
+    expect(scaleForbiddenRefineField({ regenerateCopy: true })).toBe("copyVariants");
+    expect(scaleForbiddenRefineField({ variantsCount: 3 })).toBe("copyVariants");
+    expect(scaleForbiddenRefineField({ campaignName: "x" })).toBe("campaignName");
+  });
+  it("regenerateCopy:false NÃO é edição (não trava)", () => {
+    expect(scaleForbiddenRefineField({ regenerateCopy: false })).toBeNull();
   });
 });
