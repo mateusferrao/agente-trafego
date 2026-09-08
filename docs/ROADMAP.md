@@ -986,6 +986,28 @@ oficial + **spike read-only/validate_only confirmado contra a BM Automato real**
 - **Multi-criativo também na cópia fiel (`copy`/creativeRefs).** Hoje o multi-criativo do agente é só
   `from_scratch`; na cópia fiel do vencedor (reusa criativos por referência) = fast-follow.
 
+**Fast-follows / residuais da sessão "Cobertura do fluxo de criação de campanha" (G1–G18, 2026-09-08):**
+- **G9 — janela crash create-Meta→persist (from_scratch).** Um crash DURO no ~1ms entre a Meta retornar
+  o `campaignId` e o `persist` deixa uma campanha PAUSADA (sem gasto) órfã que o retry re-cria (dup
+  pausado). **Residual aceito:** o marker-adopt (nome-marcador OU match por nome+recência) foi rejeitado
+  — marcador vaza no nome (UX) e o match arrisca **adotar a campanha errada** (pior que um dup pausado
+  inofensivo). O reaper de `creating` (G7) já destrava o rascunho preso; a idempotência por `createdIds`
+  protege parcialmente. Reabrir só se a frequência real justificar (ex: idempotency token nativo da Meta).
+- **G4 (criação) — `validate_only` no eco.** Validar a mutação de criação na Meta antes de confirmar
+  pegaria rejeições (pixel/objetivo/special_ad_category) no eco em vez de no apply — custo de quota
+  (POST extra). Hoje a rejeição é honesta no apply (G2). Mesmo trade-off do `validate_only` de orçamento.
+- **Aviso de fadiga no card de DUPLICAÇÃO do site.** O chat já avisa fadiga na duplicação (eco) e ambos
+  (site+chat) mostram ressalva na ação de SUBIR orçamento. O card de duplicação do SITE precisa de um
+  campo visível no frontend do rascunho pra exibir o aviso — fast-follow de UX (Angular).
+- **Isolar anúncio num conjunto próprio / budget por-anúncio.** A Meta não tem budget por anúncio; dar
+  verba dedicada a um anúncio = isolá-lo num conjunto ABO novo (criar conjunto + copiar o anúncio). Os
+  primitivos existem no adapter (`createAdSet` ABO, `createAd`, `duplicateEntity(ad)`), mas falta a
+  costura: tool conversacional + `kind`/`sourceRef` nível-anúncio no rascunho + `destinationAdsetId` no
+  port + saga `createAdSet(ABO)+createAd`. Já apontado na sessão de orçamento; segue aqui.
+- **`special_ad_categories` por-agente.** Default fixo `[]` no `apply-draft`; conta em categoria regulada
+  (crédito/emprego/habitação/político) precisa declarar → hoje a Meta rejeita (honesto via G2). Override
+  por-agente = fast-follow.
+
 ## Fatia 8 — Orquestração multi-agente / qualidade (roadmap pós-MVP)
 
 **Visão:** elevar a qualidade e a escala da análise com **mais papéis de agente** e **map-reduce por entidade** — sem reescrever o grafo. **Depende:** MVP validado (hipótese confirmada na 3a) + `5a` (write path, p/ o validador de segurança de ação). A costura já existe desde a 3a-2: o par **Analista→Revisor** é modelado como uma **lista de passes** (`reviewPasses`, default 1) — crescer = **registrar mais passes/papéis**, não reescrever nós.

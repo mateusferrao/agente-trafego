@@ -344,3 +344,65 @@ Entrada (dias depois): "o que você achou daquele vídeo da praia?".
 - O revert de público nunca sobrescreve uma edição concorrente sem avisar.
 - O freio de emergência (`TRAFEGO_CHAT_ADS_WRITES=false`) desliga toda a escrita conversacional.
 - `pnpm typecheck` + `pnpm test` verdes; `reviewing-trafego-changes` sem bloqueadores.
+
+## Iniciativa "Cobertura do fluxo de criação de campanha" (G1–G18)
+
+Cada cenário valida um gap real achado na análise crítica ponta-a-ponta do fluxo de criação (do zero + cópia + escala). Fatos de API da Meta confirmados na doc oficial (Ad Set Promoted Object; Handle Errors).
+
+### S9-1 — Objetivo de conversão sem pixel (G1)
+Entrada: conta SEM pixel; "cria uma campanha de vendas".
+1. `proposeCreateCampaign` resolve `goal=purchase` → `conversionRequiresPixel(purchase) && !defaults.pixelId` → **bloqueia honesto** (`OBJECTIVE_REQUIRES_PIXEL_REASON`) oferecendo a alternativa (mensagens no WhatsApp). ✓
+2. Rede no apply: um spec proativo/legado com objetivo-de-conversão sem pixel é re-checado em `apply-draft` **antes de criar** qualquer entidade → blocked (não deixa campanha órfã). ✓ (a Meta recusaria o `createAdSet` — `OFFSITE_CONVERSIONS` exige `promoted_object`).
+
+### S9-2 — Erro determinístico da Meta ≠ transitório (G2, G10)
+Entrada: a criação falha com 400 de validação (ex: `special_ad_category` faltando) sem `error_user_msg`.
+1. `toAdsError` cai no `error_user_title` (mensagem legível). `permanentMetaReason` classifica `not_accessible` como **permanente** → resolve `blocked` com a razão honesta (para o loop de re-tentar o mesmo spec). ✓ (antes: "a Meta não respondeu, tenta de novo" + reaprovável = loop).
+2. Rate-limit na criação (#613) → `shouldRetryRateLimit` re-lança → BullMQ retenta com backoff; a saga retoma dos `createdIds`. ✓
+
+### S9-3 — Falha parcial do from_scratch (G3)
+Entrada: `createCampaign` OK, `createAdSet` falha.
+1. `applyDraft` marca `failed` com `partialCampaign` (a criação do-zero NÃO é atômica). O desfecho NOMEIA a campanha órfã ("pausada e vazia") — determinístico → "ajuste no site/recrie"; transiente → "retomo ao reaprovar". ✓ (§7 nenhum lixo silencioso).
+
+### S9-4 — Ativação de duplicata de adset que não veicula (G8)
+Entrada: duplicar um conjunto cuja campanha-mãe está pausada; ativar.
+1. `entitiesToActivate` liga o conjunto copiado (a mãe não foi criada por nós). `copiedAdsetNotDelivering` lê o `effective_status` → não-active → desfecho honesto: "liguei o conjunto, mas a campanha-mãe está pausada". ✓ (antes: "já está veiculando" — falso).
+
+### S9-5 — Paridade site↔chat na ativação da escala (G4)
+Entrada: agente com `creationActivation="paused"` (default); escalar→duplicar PELO SITE.
+1. `loadScaleContext` resolve `creationActivation`; o spec usa `ctx.creationActivation` → nasce pausada + 2ª aprovação de ativação, IGUAL ao chat. ✓ (antes: site hardcodava `"active"` → ia ao ar com 1 OK).
+
+### S9-6 — Rascunho preso em `creating` (G7)
+Entrada: crash duro no meio da saga → rascunho fica `creating`.
+1. `reapStaleCreatingDrafts` (tick do reaper + boot) marca `creating` sem progresso (via `updatedAt`) além do stale como `failed` → libera o cap de campanhas/dia + torna retomável. ✓
+
+### S9-7 — Escala on-demand de vencedor fatigado (G5, G6)
+Entrada: escalar (chat/site) um vencedor com `creative_fatigue`/`weak_hook_retention` no `entity_analyses.curatedJson`.
+1. **Subir orçamento**: `ressalvasFromSnapshot` anexa a ressalva à ação (chaveada por `action.target.id` — vale também no vencedor CBO, cuja ação mira a campanha-mãe) → surge no card + chat (`renderRessalvas`) + trava o auto-apply. ✓
+2. **Duplicar** (chat): `isFatigued(healthSignals)` → aviso honesto no eco ("duplicar leva o mesmo criativo cansado…"). ✓
+- Sem base estatística → ressalva `no_significance` no card. ✓
+
+### S9-8 — Proativo não engole em silêncio (G15)
+Entrada: proativo detecta `cold_start`/`replicate_winner` numa conta sem Página/criativo.
+1. O bloqueio ESTRUTURAL vira `human_direction` (nudge honesto: "eu criaria, mas preciso de <Página/criativo>"). ✓
+2. Um bloqueio TRANSIENTE ("não consegui acessar a conta agora") **não** vira recomendação (o próximo run resolve — sem spam). ✓
+
+### S9-9 — Default de budget conservador (G12)
+Entrada: "cria uma campanha de leads" (sem valor); teto de gasto novo = R$100.
+1. Sem `budgetReais`, o default = `min(DEFAULT_STARTER_BUDGET_MINOR, teto)` = R$30 (não o teto de R$100). ✓ (um limite de segurança não vira o valor gasto).
+
+### S9-10 — Honestidade do eco e mensagens (G11, G13, G14, G16, G17)
+1. **G11**: conta zerada (sem Página) → o prompt não promete criar; bloqueio honesto aponta publicar/conectar. ✓
+2. **G13**: eco de reuse_adset diz "herda o público do conjunto que está rodando" (não "que já converte"). ✓
+3. **G14**: eco sem id cru de Página/Pixel — "usa a sua Página do Facebook". ✓
+4. **G16**: refino de ESCALA mexendo em objetivo/público/copy → mensagem honesta (`field_not_editable`), não re-eco mudo. ✓
+5. **G17**: criativo enviado que não carregou → "ainda processando/não consegui ler, manda de novo" (não "me manda um criativo"). ✓
+
+### S9-11 — Realocação respeita o piso da plataforma (fix do reviewer)
+Entrada: mover R$1,00/dia de A (R$1,50) com teto alto.
+1. O move é limitado por `maxMovableByFloor` → A para EXATAMENTE no piso (`MIN_BUDGET_MINOR`), nunca abaixo → o executor não arredonda a origem pra cima → **eco == aplicado** (sem gasto total subindo em silêncio). A nota distingue piso × teto de %. ✓
+
+## Fast-follows (residuais aceitos / adiados — ROADMAP)
+- **G4 validate_only no eco** (orçamento): custo de quota; a rejeição segue honesta no apply.
+- **G9 janela crash create→persist**: dup pausado/sem-gasto/raro; marker-adopt rejeitado (risco de adotar a campanha errada); o reaper (G7) já destrava o rascunho preso.
+- **Isolar anúncio em conjunto próprio** e **budget por-anúncio**: primitivos existem no adapter; falta a costura tool+draft+saga.
+- **Aviso de fadiga no card de DUPLICAÇÃO do site**: precisa de campo visível no frontend do rascunho (o chat já avisa; o site já mostra ressalva na ação de subir orçamento).
