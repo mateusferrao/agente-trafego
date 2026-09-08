@@ -30,10 +30,10 @@ const payload = (over: Partial<CreativeVideoAnalyzePayload> = {}): CreativeVideo
 });
 
 function makeDeps(over: Partial<VideoAnalyzeDeps> = {}) {
-  const send = vi.fn(async () => true);
-  const resolve = vi.fn(async () => VISION as CreativeVisionResult | null);
-  const complete = vi.fn(async () => ({ output: "Achei forte o gancho; só adiantaria o CTA.", usage: { inputTokens: 1, outputTokens: 1 } }));
-  const fetchMediaBase64 = vi.fn(async () => Buffer.from("fakevideobytes").toString("base64") as string | null);
+  const send = vi.fn(async (..._a: unknown[]) => true);
+  const resolve = vi.fn(async (..._a: unknown[]) => VISION as CreativeVisionResult | null);
+  const complete = vi.fn(async (..._a: unknown[]) => ({ output: "Achei forte o gancho; só adiantaria o CTA.", usage: { inputTokens: 1, outputTokens: 1 } }));
+  const fetchMediaBase64 = vi.fn(async (..._a: unknown[]) => Buffer.from("fakevideobytes").toString("base64") as string | null);
   const deps: VideoAnalyzeDeps = {
     vision: { resolve },
     llm: { complete } as unknown as VideoAnalyzeDeps["llm"],
@@ -83,7 +83,7 @@ describe("makeVideoAnalyze (Slice 2 — análise de vídeo dos nossos bytes)", (
 
   it("erro do LLM na redação → aviso honesto (não quebra)", async () => {
     const complete = vi.fn(async () => {
-      throw new LLMProviderError("timeout");
+      throw new LLMProviderError("upstream", "timeout");
     });
     const { deps, send } = makeDeps({ llm: { complete } as unknown as VideoAnalyzeDeps["llm"] });
     await makeVideoAnalyze(deps)(payload());

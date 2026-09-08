@@ -104,3 +104,48 @@ export async function pickLibraryCreativeByContext(
     return candidates[0]!.assetId; // fallback: recência (1º da lista)
   }
 }
+
+/** Mensagens p/ casar a REFERÊNCIA do usuário ("o vídeo da praia") com a descrição de cada criativo. */
+function buildReferenceMessages(reference: string, candidates: readonly LibraryCandidate[]): LLMMessage[] {
+  const system =
+    "O usuário está se referindo a UM criativo que já mandou/tem, pelo CONTEÚDO ('o vídeo da praia', " +
+    "'o do 50% off', 'o depoimento'). Escolha, pela descrição de cada um, qual criativo ele quer dizer. " +
+    "Se NENHUM casar de forma razoável com a referência, responda index -1 (não force um encaixe ruim). " +
+    "Responda só o índice (0-based), ou -1.";
+  const list = candidates.map((c, i) => `[${i}] ${describeCandidateForPrompt(c)}`).join("\n");
+  return [
+    { role: "system", content: system },
+    { role: "user", content: `Referência do usuário: "${reference}"\n\nCriativos (índice + descrição):\n${list}\n\nResponda SOMENTE JSON: { "index": <n | -1>, "why": "<motivo curto>" }` },
+  ];
+}
+
+/**
+ * Escolhe o criativo que o usuário está referindo POR DESCRIÇÃO (Slice 3). 0 candidatos → null; 1 →
+ * ele mesmo; ≥2 → LLM casa a referência × descrições. Diferente de `pickLibraryCreativeByContext`
+ * (que casa com o contexto de uma NOVA campanha), aqui o alvo é a fala do usuário sobre um criativo
+ * existente — e admite "nenhum" (index -1) pra não trazer o errado. Erro de LLM → null (não chuta).
+ */
+export async function pickCreativeByReference(
+  llm: Pick<LLMProviderPort, "completeStructured">,
+  model: string,
+  reference: string,
+  candidates: readonly LibraryCandidate[],
+): Promise<string | null> {
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0]!.assetId;
+  try {
+    const completion = await llm.completeStructured<{ index?: number }>({
+      model,
+      messages: buildReferenceMessages(reference, candidates),
+      responseSchema: MATCH_SCHEMA,
+      responseSchemaName: "creative_reference_match",
+      temperature: MATCH_TEMPERATURE,
+      maxTokens: MATCH_MAX_TOKENS,
+    });
+    const i = completion.output?.index;
+    return typeof i === "number" && Number.isInteger(i) && i >= 0 && i < candidates.length ? candidates[i]!.assetId : null;
+  } catch (err) {
+    if (!(err instanceof LLMProviderError)) throw err;
+    return null; // ambíguo demais / erro → não chuta um criativo errado
+  }
+}

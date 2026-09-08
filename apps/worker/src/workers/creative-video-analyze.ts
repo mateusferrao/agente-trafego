@@ -4,8 +4,8 @@
 // Paralelo ao intake da biblioteca (que segue subindo pra Meta em background). Vídeo grande demais
 // pro modelo OU falha → degrada com aviso honesto (a análise de biblioteca sai lá quando pronto).
 
-import { createHash } from "node:crypto";
 import { Worker } from "bullmq";
+import { mediaBytesContentHash } from "@trafego/creative-library";
 import {
   CREATIVE_VIDEO_ANALYZE_JOB_ATTEMPTS,
   CREATIVE_VIDEO_ANALYZE_QUEUE,
@@ -86,6 +86,12 @@ export interface VideoAnalyzeDeps {
  */
 export function makeVideoAnalyze(d: VideoAnalyzeDeps) {
   return async function analyze(p: CreativeVideoAnalyzePayload): Promise<void> {
+    // probe por `fileLength` ANTES de baixar (evita puxar um vídeo enorme pra memória só pra rejeitar).
+    if (p.fileLength !== undefined && p.fileLength > d.videoModelMaxBytes) {
+      d.logger.debug({ conversationId: p.conversationId, fileLength: p.fileLength }, "video-analyze:acima do teto (probe) — degrada");
+      await d.sendToConversation(p.ref, NOTICE.tooBig, { split: true, quoteLastInbound: true });
+      return;
+    }
     const b64 = await d.messaging.fetchMediaBase64({ instanceId: p.instanceId }, p.messageKey);
     if (!b64 || b64.length === 0) {
       await d.sendToConversation(p.ref, NOTICE.noBytes, { split: true });
@@ -97,8 +103,10 @@ export function makeVideoAnalyze(d: VideoAnalyzeDeps) {
       await d.sendToConversation(p.ref, NOTICE.tooBig, { split: true, quoteLastInbound: true });
       return;
     }
-    // content-addressed pelos BYTES (estável, sem depender do asset) — Slice 3 liga o asset a este hash.
-    const contentHash = createHash("sha256").update(bytes).digest("base64url");
+    // content-addressed pelos BYTES (estável, sem depender do asset) — o ingest grava o MESMO hash
+    // em `creative_assets.vision_content_hash` (fonte única), então a busca por descrição liga o
+    // asset à esta decomposição.
+    const contentHash = mediaBytesContentHash(bytes);
     const dataUrl = `data:${p.mimetype};base64,${b64}`;
     const vision = await d.vision.resolve({ creativeId: p.messageKey.id, imageUrls: [], videoUrl: dataUrl, contentHash });
     if (!vision) {
@@ -107,7 +115,7 @@ export function makeVideoAnalyze(d: VideoAnalyzeDeps) {
     }
     let answer: string;
     try {
-      const completion = await d.llm.complete({ model: d.messageModel, messages: composeMessages(p.caption, vision), temperature: COMPOSE_TEMPERATURE, maxTokens: COMPOSE_MAX_TOKENS });
+      const completion = await d.llm.complete({ model: d.messageModel, messages: composeMessages(p.caption, vision), temperature: COMPOSE_TEMPERATURE, maxTokens: COMPOSE_MAX_TOKENS, meta: { orgId: p.orgId, type: "message" } });
       answer = completion.output.trim();
     } catch (err) {
       if (!(err instanceof LLMProviderError)) throw err;

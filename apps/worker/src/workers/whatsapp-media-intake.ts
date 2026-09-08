@@ -156,13 +156,25 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
       const accountRef: AdAccountRef = { adAccountId: account.metaAdAccountId, accessToken };
       const ext = EXT_BY_TYPE[media.mimetype] ?? (mediaType === "video" ? "mp4" : "jpg");
       const filename = media.caption ? `${media.caption}.${ext}` : `whatsapp-${Date.now()}.${ext}`;
-      const ingestInput = { orgId, adAccountId: adAccountUuid, ref: accountRef, bytes, contentType: media.mimetype, filename };
+      const ingestInput = {
+        orgId,
+        adAccountId: adAccountUuid,
+        ref: accountRef,
+        bytes,
+        contentType: media.mimetype,
+        filename,
+        // Slice 3 (memória do criativo): liga o asset à conversa + mensagem (recência/reply).
+        conversationId,
+        ...(media.messageKey?.id ? { sourceMessageId: media.messageKey.id } : {}),
+      };
 
       if (mediaType === "video") {
         const v = await ingestCreativeVideo({ db: d.db, storage: d.ports.storage, ads: d.ports.ads }, ingestInput);
         if (v.status === "pending") {
           // B1: escrita ligada → o poll oferece "usar/criar" ao flipar `ready` (vídeo nasce pending,
           // então a oferta não pode sair agora como na imagem). OFF → sem oferta (só a biblioteca).
+          // suppressNotice (vídeo-pergunta) → SEM oferta tardia: a análise é a voz (não empurra
+          // "usar/criar" depois do ack + resposta — senão vira toque duplo fora de contexto).
           await d.ports.scheduler.enqueue(
             buildCreativeVideoPollJob({
               orgId,
@@ -170,7 +182,7 @@ export function makeMediaIntake(d: MediaIntakeDeps) {
               assetId: v.assetId,
               metaVideoId: v.metaVideoId,
               attempt: 1,
-              ...(d.chatAdsWrites ? { offer: { ref, conversationId } } : {}),
+              ...(d.chatAdsWrites && !payload.suppressNotice ? { offer: { ref, conversationId } } : {}),
             }),
           );
         }

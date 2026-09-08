@@ -102,6 +102,8 @@ export type CreativeVideoAnalyzePayload = {
   readonly mimetype: string;
   /** legenda/pergunta do usuário (o que ele quer saber do criativo). */
   readonly caption: string | null;
+  /** tamanho do arquivo (bytes) informado pelo WhatsApp — probe ANTES de baixar (evita OOM). */
+  readonly fileLength?: number;
 };
 
 export function buildCreativeVideoAnalyzeJob(payload: CreativeVideoAnalyzePayload): JobSpec {

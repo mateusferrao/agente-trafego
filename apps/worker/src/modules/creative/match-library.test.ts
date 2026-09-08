@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { LLMProviderError } from "@trafego/shared/ports";
-import { pickLibraryCreativeByContext } from "./match-library.js";
+import { pickCreativeByReference, pickLibraryCreativeByContext } from "./match-library.js";
 
 const CTX = { goal: "lead", businessContext: "clínica de estética", guidance: null };
 const cands = [
@@ -81,5 +81,33 @@ describe("pickLibraryCreativeByContext", () => {
       expect(system).toMatch(/CASA|encaixa/i);
       expect(system).not.toMatch(/maior pontuação|maior score/i);
     });
+  });
+});
+
+describe("pickCreativeByReference (Slice 3 — busca por descrição)", () => {
+  const USAGE = { inputTokens: 0, outputTokens: 0 };
+  it("0 candidatos → null (sem LLM)", async () => {
+    const llm = { completeStructured: vi.fn() };
+    expect(await pickCreativeByReference(llm as never, "m", "o vídeo da praia", [])).toBeNull();
+    expect(llm.completeStructured).not.toHaveBeenCalled();
+  });
+  it("1 candidato → ele mesmo (sem LLM)", async () => {
+    const llm = { completeStructured: vi.fn() };
+    expect(await pickCreativeByReference(llm as never, "m", "x", [cands[0]!])).toBe("a");
+  });
+  it("casa a referência pela descrição (índice do LLM)", async () => {
+    const llm = { completeStructured: vi.fn(async (_req: { messages: { content: string }[] }) => ({ output: { index: 1 }, usage: USAGE })) };
+    expect(await pickCreativeByReference(llm as never, "m", "o depoimento", cands)).toBe("b");
+    // a referência do usuário vai no prompt.
+    const sent = llm.completeStructured.mock.calls[0]![0].messages[1]!.content;
+    expect(sent).toContain("o depoimento");
+  });
+  it("nenhum casa (index -1) → null (não traz o errado)", async () => {
+    const llm = { completeStructured: vi.fn(async () => ({ output: { index: -1 }, usage: USAGE })) };
+    expect(await pickCreativeByReference(llm as never, "m", "algo que não existe", cands)).toBeNull();
+  });
+  it("erro do LLM → null (não chuta)", async () => {
+    const llm = { completeStructured: vi.fn(async () => { throw new LLMProviderError("upstream", "x"); }) };
+    expect(await pickCreativeByReference(llm as never, "m", "y", cands)).toBeNull();
   });
 });

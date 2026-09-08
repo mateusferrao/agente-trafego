@@ -107,10 +107,11 @@ export const envSchema = z.object({
   // bytes, sem o desvio pela Meta. PRECISA ser video-capable (aceitar `video_url` via OpenRouter);
   // o default espelha o de mensagem, mas p/ análise de vídeo de verdade aponte pra um modelo que
   // entende vídeo (ex: Gemini 3.x pro/flash). Vídeo acima de WHATSAPP_VIDEO_MODEL_MAX_MB ou falha
-  // da chamada → cai no fallback determinístico de frames (ffmpeg).
+  // da chamada → degradação honesta ("vídeo grande/não consegui agora; salvei na biblioteca") + a
+  // análise de biblioteca sai depois. (ffmpeg-local p/ frames dos nossos bytes = fast-follow.)
   OPENROUTER_VIDEO_MODEL: z.string().min(1).default("google/gemini-3.1-flash-lite"),
-  // Teto (MB) do vídeo enviado INTEIRO ao modelo — acima disso extrai frames locais (ffmpeg) em vez
-  // do vídeo completo (protege custo/latência/limite do modelo). O vídeo segue salvo na biblioteca.
+  // Teto (MB) do vídeo enviado INTEIRO ao modelo — acima disso degrada (não manda ao modelo); protege
+  // custo/latência/limite do modelo. O vídeo segue salvo na biblioteca. (ffmpeg-local = fast-follow.)
   WHATSAPP_VIDEO_MODEL_MAX_MB: z.coerce.number().int().positive().default(20),
   // Versão do analisador de visão — bumpar invalida o cache de análises de criativo.
   // 2 (Fatia 6c): multi-frame HD + decomposição hook/angle/format/cta.

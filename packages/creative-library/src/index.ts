@@ -5,6 +5,7 @@
 // dedupado por (conta, storageRef). Depende só de PORTAS + db (desacoplado do canal e do
 // provider de storage/ads — trocar local-fs→S3 ou Meta→outro = novo adapter).
 
+import { createHash } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { creativeAssets } from "@trafego/db";
 import type { Database } from "@trafego/db/client";
@@ -12,6 +13,15 @@ import type { AdAccountRef, AdsPlatformPort, StoragePort } from "@trafego/shared
 
 /** Namespace lógico do blob no StoragePort (org-scoped). */
 const KEY_PREFIX = (orgId: string): string => `org/${orgId}/creatives`;
+
+/**
+ * Chave de visão content-addressed pelos BYTES da mídia (Slice 3): a análise do vídeo do WhatsApp
+ * (dos nossos bytes) e a linha `creative_assets.vision_content_hash` derivam do MESMO hash → a
+ * busca por descrição liga o asset à sua decomposição. Fonte única (worker + ingest usam esta).
+ */
+export function mediaBytesContentHash(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("base64url");
+}
 
 export interface CreativeIngestDeps {
   readonly db: Database;
@@ -34,6 +44,9 @@ export interface CreativeIngestInput {
   readonly bytes: Uint8Array;
   readonly contentType: string;
   readonly filename: string;
+  /** Origem WhatsApp (Slice 3): conversa + mensagem que trouxeram o asset (recência/reply). Nulo p/ web. */
+  readonly conversationId?: string;
+  readonly sourceMessageId?: string;
 }
 
 export interface CreativeIngestResult {
@@ -148,6 +161,8 @@ export async function ingestCreativeImage(
       status: "ready",
       storageRef: stored.ref,
       metaImageHash: imageHash,
+      ...(input.conversationId ? { conversationId: input.conversationId } : {}),
+      ...(input.sourceMessageId ? { sourceMessageId: input.sourceMessageId } : {}),
     })
     .onConflictDoNothing(STORAGE_REF_CONFLICT_TARGET)
     .returning({ id: creativeAssets.id });
@@ -217,6 +232,10 @@ export async function ingestCreativeVideo(
       status: "pending", // processa async → o poll flipa
       storageRef: stored.ref,
       metaVideoId: videoId,
+      // vídeo do WhatsApp é analisado dos nossos bytes (chat) → liga o asset à decomposição.
+      visionContentHash: mediaBytesContentHash(input.bytes),
+      ...(input.conversationId ? { conversationId: input.conversationId } : {}),
+      ...(input.sourceMessageId ? { sourceMessageId: input.sourceMessageId } : {}),
     })
     .onConflictDoNothing(STORAGE_REF_CONFLICT_TARGET)
     .returning({ id: creativeAssets.id });

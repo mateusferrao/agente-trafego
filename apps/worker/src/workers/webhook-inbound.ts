@@ -184,7 +184,7 @@ async function routeMessage(
       // busca dos bytes + análise (vídeo completo → modelo) rodam no worker próprio; ack imediato.
       await d.creativeVideoAnalyzeQueue.add(
         CREATIVE_VIDEO_ANALYZE_JOB,
-        { orgId, ref, conversationId, instanceId, messageKey: inbound.messageKey, mimetype: inbound.video.mimetype, caption: inbound.caption ?? null },
+        { orgId, ref, conversationId, instanceId, messageKey: inbound.messageKey, mimetype: inbound.video.mimetype, caption: inbound.caption ?? null, ...(inbound.video.fileLength !== undefined ? { fileLength: inbound.video.fileLength } : {}) },
         {
           attempts: CREATIVE_VIDEO_ANALYZE_JOB_ATTEMPTS,
           backoff: { type: "exponential", delay: CREATIVE_VIDEO_ANALYZE_JOB_BACKOFF_MS },

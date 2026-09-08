@@ -9,10 +9,13 @@
 // métrica carregam `asOf` (frescor); a ausência de dado vira um sinal explícito
 // (`hasData:false` + nota) p/ o agente recusar com clareza.
 
-import { and, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { adAccounts, adCreatives, agentMemory, agentRuns, agentToolCalls, agents, campaignDrafts, customAudiences, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
+import { adAccounts, adCreatives, agentMemory, agentRuns, agentToolCalls, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, insightsSnapshots, recommendations } from "@trafego/db";
+import type { CreativeVisionResult } from "@trafego/shared";
+import { libraryCreativeContentHash } from "../../workers/creative-analyze.js";
+import { pickCreativeByReference, type LibraryCandidate } from "../../modules/creative/match-library.js";
 import type { Database } from "@trafego/db/client";
 import { confidenceTier, daysAgoInTz, LEARNING_MEMORY_TYPES, rankAdCreatives, renderRessalvas, resolveNamedMatch, todayInTz, type RankableCreative } from "@trafego/core";
 import { mapStatus } from "@trafego/ads-meta";
@@ -1601,6 +1604,87 @@ export async function getLearningsData(db: WorkerDeps["db"], orgId: string, agen
   };
 }
 
+/** Quantos criativos recentes da conta entram como candidatos da busca por descrição (custo ∝ N). */
+const RECALL_CANDIDATE_LIMIT = 30;
+
+/** Descrição curta do criativo p/ o matcher casar a referência do usuário. */
+function recallDescription(v: CreativeVisionResult): string {
+  return [v.summary, v.hook ? `gancho: ${v.hook}` : "", v.angle ? `ângulo: ${v.angle}` : "", v.format ? `formato: ${v.format}` : ""].filter(Boolean).join(" · ");
+}
+
+/**
+ * Recuperação de um criativo já analisado (Slice 3) — por DESCRIÇÃO ("o vídeo da praia") ou, sem
+ * referência, o mais RECENTE. Junta `creative_assets` da conta com a decomposição cacheada em
+ * `creative_vision_analyses` (chave = `vision_content_hash` do asset, ou a derivada do id p/ os
+ * antigos) e devolve o que o modelo viu (gancho/ângulo/corpo/prova/forças/fraquezas).
+ */
+export async function recallCreativeData(
+  deps: WorkerDeps,
+  ctx: ReadToolContext,
+  reference: string | null,
+): Promise<NoData | { hasData: true; match: "none"; note: string } | { hasData: true; creative: Record<string, unknown> }> {
+  const assets = await deps.db
+    .select({ id: creativeAssets.id, format: creativeAssets.format, visionContentHash: creativeAssets.visionContentHash })
+    .from(creativeAssets)
+    .where(and(eq(creativeAssets.orgId, ctx.orgId), eq(creativeAssets.adAccountId, ctx.adAccountId), isNull(creativeAssets.archivedAt)))
+    .orderBy(desc(creativeAssets.createdAt))
+    .limit(RECALL_CANDIDATE_LIMIT);
+  if (assets.length === 0) return { hasData: false, note: "Você ainda não tem criativos guardados nessa conta — me manda um que eu analiso e guardo." };
+
+  const hashOf = (a: (typeof assets)[number]): string => a.visionContentHash ?? libraryCreativeContentHash(a.id);
+  const visions = await deps.db
+    .select({ contentHash: creativeVisionAnalyses.contentHash, result: creativeVisionAnalyses.result })
+    .from(creativeVisionAnalyses)
+    .where(and(inArray(creativeVisionAnalyses.contentHash, assets.map(hashOf)), eq(creativeVisionAnalyses.analyzerVersion, deps.visionAnalyzerVersion)));
+  const byHash = new Map(visions.map((v) => [v.contentHash, v.result]));
+
+  // candidatos = assets COM análise (ordem = recência), carregando o resultado p/ o retorno.
+  const enriched = assets
+    .map((a) => {
+      const v = byHash.get(hashOf(a));
+      return v ? { asset: a, vision: v } : null;
+    })
+    .filter((x): x is { asset: (typeof assets)[number]; vision: CreativeVisionResult } => x !== null);
+  if (enriched.length === 0) {
+    return { hasData: true, match: "none", note: "Ainda não tenho a análise de nenhum criativo dessa conta — me manda o criativo que eu analiso." };
+  }
+
+  let pickedId: string | null;
+  if (reference && reference.trim().length > 0) {
+    const candidates: LibraryCandidate[] = enriched.map(({ asset, vision }) => ({
+      assetId: asset.id,
+      description: recallDescription(vision),
+      ...(vision.proofStrength ? { proofStrength: vision.proofStrength } : {}),
+      ...(typeof vision.persuasionSignals === "number" ? { persuasionSignals: vision.persuasionSignals } : {}),
+      ...(vision.weaknesses.length > 0 ? { weaknesses: vision.weaknesses } : {}),
+    }));
+    pickedId = await pickCreativeByReference(deps.ports.llm, deps.analysis.messageModel, reference.trim(), candidates);
+  } else {
+    pickedId = enriched[0]!.asset.id; // recência (o último que mandou)
+  }
+  if (!pickedId) {
+    return { hasData: true, match: "none", note: "Não achei um criativo que bata com isso — descreve melhor (o que aparece nele) ou me manda de novo?" };
+  }
+  const picked = enriched.find((e) => e.asset.id === pickedId)!;
+  const v = picked.vision;
+  return {
+    hasData: true,
+    creative: {
+      format: picked.asset.format,
+      summary: v.summary,
+      ...(v.hook ? { hook: v.hook } : {}),
+      ...(v.angle ? { angle: v.angle } : {}),
+      ...(v.body ? { body: v.body } : {}),
+      ...(v.cta ? { cta: v.cta } : {}),
+      ...(v.proofStrength ? { proofStrength: v.proofStrength } : {}),
+      ...(typeof v.persuasionSignals === "number" ? { persuasionSignals: v.persuasionSignals } : {}),
+      strengths: v.strengths,
+      weaknesses: v.weaknesses,
+      ...(typeof v.score === "number" ? { score: v.score } : {}),
+    },
+  };
+}
+
 export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
   const { db, ports, logger } = deps;
 
@@ -1942,6 +2026,20 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     },
   );
 
+  const recallCreative = tool(
+    async ({ reference }: { reference?: string | null }) => {
+      if (noFocus()) return NEEDS_FOCUS;
+      logger.debug({ agentId: ctx.agentId, reference: reference ?? null }, "tool:recall_creative");
+      return asString(await recallCreativeData(deps, ctx, reference ?? null));
+    },
+    {
+      name: "recall_creative",
+      description:
+        "Traz a ANÁLISE de um criativo (imagem/vídeo) que o dono já mandou/analisou — pra responder 'o que você achou daquele vídeo?'. Passe `reference` com a DESCRIÇÃO/conteúdo que ele citou ('o vídeo da praia', 'o do 50% off', 'o depoimento') e eu acho pela descrição. SEM reference = o ÚLTIMO criativo que ele mandou. Devolve o que o modelo viu (gancho/ângulo/corpo/CTA/prova/forças/fraquezas). Diferente de get_top_creatives (que é copy + desempenho de anúncios veiculando).",
+      schema: z.object({ reference: z.string().nullable() }),
+    },
+  );
+
   const getAccountHealth = tool(
     async ({ fresh }: { fresh?: boolean | null }) => {
       if (noFocus()) return NEEDS_FOCUS;
@@ -2049,6 +2147,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     getAgentConfig,
     explainRecommendation,
     getTopCreatives,
+    recallCreative,
     getAccountHealth,
     getAdsBreakdown,
     listAudiences,
