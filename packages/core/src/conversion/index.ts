@@ -36,6 +36,17 @@ export function resolveConversion(
 }
 
 /**
+ * Objetivo cujo DESTINO é a conversa no WhatsApp (CTWA) — hoje só `messaging_started`.
+ * Fonte única neutra (o adapter mapeia p/ `optimizationGoal:"CONVERSATIONS"` + `destination_type:
+ * "WHATSAPP"`). Usado pra decidir quando um LINK de site é irrelevante: campanha de conversas leva
+ * pro WhatsApp, não pra um site → o link é ignorado. Os outros 14 objetivos são destino de site/
+ * lead/app onde o `linkUrl` faz sentido. PURO.
+ */
+export function isMessagingGoal(goal: ConversionGoal | null | undefined): boolean {
+  return goal === "messaging_started";
+}
+
+/**
  * Classifica a base de medição de uma entidade vs a conversão de NEGÓCIO do agente
  * (§7 — honestidade do descasamento). PURA e sem dependência do brief (evita ciclo):
  * recebe as métricas já derivadas.

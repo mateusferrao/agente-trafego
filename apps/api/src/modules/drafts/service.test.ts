@@ -335,6 +335,39 @@ describe("DraftsService.updateDraft — INTERESSES do público EXPLÍCITO (Fase 
   });
 });
 
+describe("DraftsService.updateDraft — LINK de destino", () => {
+  function fakeDbSelUpd(draftRow: unknown, captured: { spec?: unknown }) {
+    return {
+      select: () => ({ from: () => ({ where: () => ({ limit: () => (draftRow ? [draftRow] : []) }) }) }),
+      update: () => ({
+        set: (v: { spec: unknown }) => {
+          captured.spec = v.spec;
+          return { where: () => ({ returning: () => [{ id: "d1" }] }) };
+        },
+      }),
+    } as never;
+  }
+  const svc = (draftRow: unknown, captured: { spec?: unknown }) =>
+    createDraftsService({ db: fakeDbSelUpd(draftRow, captured), adsPlatform: {} as never, vault: {} as never, approvals: {} as never, storage: {} as never, scheduler: {} as never });
+  const siteSpec = { version: 1, currency: "BRL", dailyBudgetMinor: 5000, activation: "paused", objective: "purchase", targeting: { kind: "advantage_plus" } };
+
+  it("objetivo de site → grava o linkUrl no spec", async () => {
+    const captured: { spec?: unknown } = {};
+    const out = await svc({ spec: siteSpec, kind: "from_scratch", status: "proposed" }, captured).updateDraft(ORG, "acc", "d1", { linkUrl: "https://loja.com/promo" });
+    expect(out.ok).toBe(true);
+    expect((captured.spec as { linkUrl?: string }).linkUrl).toBe("https://loja.com/promo");
+  });
+
+  it("objetivo de conversas no WhatsApp → bloqueia honesto, NÃO persiste", async () => {
+    const captured: { spec?: unknown } = {};
+    const out = await svc({ spec: { ...siteSpec, objective: "messaging_started" }, kind: "from_scratch", status: "proposed" }, captured).updateDraft(ORG, "acc", "d1", { linkUrl: "https://loja.com/promo" });
+    expect(out.ok).toBe(false);
+    if (out.ok) return;
+    expect(out.message).toMatch(/WhatsApp/i);
+    expect(captured.spec).toBeUndefined();
+  });
+});
+
 describe("refineErrorMessage (§13 — o quê + o que fazer, sem jargão cru)", () => {
   it("field_not_editable explica a fronteira da escala + o caminho (criar nova)", () => {
     expect(refineErrorMessage({ code: "field_not_editable", field: "objective" })).toMatch(/escala|criar uma campanha nova/i);

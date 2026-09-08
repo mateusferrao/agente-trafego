@@ -476,6 +476,7 @@ export function makeConversationTools(
       mediaPreference: z.enum(["video", "image", "mixed"]).nullable().optional().describe("tipo de mídia dos criativos: 'video', 'image' (imagem estática) ou 'mixed' (vídeos E imagens). Ex: 'use vídeos e imagens' = mixed. EU escolho quais assets desse tipo (ignorado quando o dono passa `creatives`)."),
       creatives: z.array(z.string()).nullable().optional().describe("CRIATIVOS escolhidos pelo dono, pelo NOME/descrição que ele disse (ex: ['o vídeo da praia', 'o campeão']) — eu resolvo cada um pro asset (entre os veiculando + biblioteca) e distribuo 1 por anúncio; se algum for ambíguo/não achar, eu PERGUNTO (nunca chuto). Passe SÓ quando o dono escolher; senão eu escolho pela performance."),
       fillRemaining: z.enum(["agent", "only_picked"]).nullable().optional().describe("quando o dono escolheu MENOS criativos que anúncios: 'agent' = eu completo o resto com os que performam melhor; 'only_picked' = reduzo os anúncios só aos escolhidos. Omita → eu PERGUNTO o que ele prefere (não decido sozinho)."),
+      link: z.string().nullable().optional().describe("URL de DESTINO do anúncio (o site/página pra onde o clique leva, ex: 'https://loja.com/promo'). Passe quando o dono indicar pra onde mandar o tráfego. Só vale pra objetivos de SITE/tráfego/conversão; num objetivo de CONVERSAS no WhatsApp (messaging_started) eu IGNORO o link (esse tipo leva pro WhatsApp, não pra um site) e aviso. Omitido → herda o link do anúncio que serve de base."),
     }),
   });
 
@@ -516,6 +517,7 @@ export function makeConversationTools(
       variantsCount: z.number().int().positive().nullable().optional().describe("nº total de ANÚNCIOS do rascunho (ex: 'deixa com 3 anúncios', 'adiciona mais um anúncio' = total atual + 1). AUMENTAR faz EU escolher criativos distintos pros novos anúncios; se faltar criativo distinto, repito e aviso no eco."),
       objective: z.enum(CONVERSION_GOALS as unknown as [string, ...string[]]).nullable().optional().describe("novo objetivo/conversão de negócio (ex: 'messaging_started' pra conversas iniciadas, 'lead', 'purchase'). Só rascunho criado do zero. Eu re-resolvo o pixel da conta e bloqueio com aviso amigável se o objetivo exigir pixel e a conta não tiver."),
       audience: z.enum(["reuse", "broad"]).nullable().optional(),
+      link: z.string().nullable().optional().describe("TROCAR a URL de destino do rascunho (o site pra onde o anúncio leva). Só rascunho criado do zero com objetivo de site/tráfego/conversão; num objetivo de conversas no WhatsApp eu bloqueio honesto (esse tipo leva pro WhatsApp, não pra um link)."),
       campaignName: z.string().min(1).max(ENTITY_NAME_MAX).nullable().optional(),
       adsetName: z.string().min(1).max(ENTITY_NAME_MAX).nullable().optional().describe("novo nome do conjunto de anúncios"),
       removeGeo: z.array(z.string()).nullable().optional().describe("nomes de cidade/região/país a REMOVER do público explícito já resolvido (ex: ['Ibirité'])"),

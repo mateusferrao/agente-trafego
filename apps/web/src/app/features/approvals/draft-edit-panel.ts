@@ -89,6 +89,13 @@ const EMPTY_AUDIENCE_STATE: ExplicitAudienceState = {
           />
           <span class="text-[11px] text-muted">Objetivos de venda/lead precisam do pixel configurado na conta.</span>
         </label>
+        @if (objective() !== 'messaging_started') {
+          <label class="flex flex-col gap-1">
+            <span class="text-xs font-medium text-ink">Link de destino</span>
+            <input appInput class="w-full" type="url" inputmode="url" [(ngModel)]="linkUrl" placeholder="https://sualoja.com/promo" />
+            <span class="text-[11px] text-muted">Pra onde o clique no anúncio leva. Em branco = herda o link do seu anúncio-base.</span>
+          </label>
+        }
       }
 
       <!-- Gasto + ativação (comuns) — empilha no mobile, lado a lado no desktop -->
@@ -253,6 +260,9 @@ export class DraftEditPanel implements OnInit {
     .map(([value, label]) => ({ value, label }));
   protected readonly budget = signal(0);
   protected readonly activation = signal<'active' | 'paused'>('paused');
+  /** URL de destino do anúncio (só from_scratch com objetivo de site/tráfego/conversão) — o clique
+   *  leva pra cá. Escondido em conversas no WhatsApp (leva pro WhatsApp, não pra um site). */
+  protected readonly linkUrl = signal('');
   /** modo do público (controle único de 3 opções): `reuse`/`broad` = herdado; `custom` = revela o
    *  editor completo abaixo (converte reuse/broad → explicit no Salvar). */
   protected readonly audienceMode = signal<'reuse' | 'broad' | 'custom'>('reuse');
@@ -372,6 +382,7 @@ export class DraftEditPanel implements OnInit {
     this.suffixLabel.set(d.suffixLabel ?? '');
     this.budget.set(d.dailyBudgetMajor);
     this.activation.set(d.activation);
+    this.linkUrl.set(d.linkUrl ?? '');
     // modo do público: já explícito → custom; senão o herdado (reuse/broad).
     this.audienceMode.set(d.explicitAudience ? 'custom' : d.audience === 'broad' ? 'broad' : 'reuse');
     this.seedCopies(d);
@@ -511,6 +522,12 @@ export class DraftEditPanel implements OnInit {
       if (v) patch['adsetName'] = v;
     }
     if (this.objective() && this.objective() !== (d.objective ?? '')) patch['objective'] = this.objective();
+    // link de destino: só quando não é conversa no WhatsApp e o dono digitou algo NOVO (URL válida).
+    // Em branco = mantém o herdado (a API exige URL válida, então "" não reseta — não regride).
+    if (this.objective() !== 'messaging_started') {
+      const link = this.trimmed(this.linkUrl());
+      if (link && link !== (d.linkUrl ?? '')) patch['linkUrl'] = link;
+    }
 
     // público: `custom` manda o estado COMPLETO como SUBSTITUIÇÃO total (converte reuse/broad →
     // explicit no backend). reuse/broad só entram no patch quando MUDAM do modo original (evita

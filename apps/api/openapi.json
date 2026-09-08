@@ -8072,6 +8072,12 @@
               "null"
             ]
           },
+          "linkUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "campaignName": {
             "type": [
               "string",
@@ -8459,6 +8465,7 @@
           "sourceName",
           "pageId",
           "pixelId",
+          "linkUrl",
           "campaignName",
           "adsetName",
           "suffixLabel",
@@ -9081,6 +9088,10 @@
               "reuse",
               "broad"
             ]
+          },
+          "linkUrl": {
+            "type": "string",
+            "format": "uri"
           },
           "creative": {
             "oneOf": [

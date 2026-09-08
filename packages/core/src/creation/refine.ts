@@ -57,6 +57,10 @@ export interface DraftEdit {
   readonly targeting?: TargetingSpec;
   readonly creative?: CreativeAssetRef;
   readonly copyVariants?: readonly CopyVariant[];
+  /** URL de destino do anúncio (link_data.link) — informada pelo dono (chat/site), vence a herdada
+   *  da conta. Só faz sentido em objetivo de site/tráfego/conversão; a casca já filtra em
+   *  `messaging_started` (leva pro WhatsApp). `""` (string vazia) NÃO chega aqui — a casca omite. */
+  readonly linkUrl?: string;
   // ─── só duplicate ───
   readonly suffixLabel?: string;
 }
@@ -87,6 +91,7 @@ const FROM_SCRATCH_ONLY: readonly (keyof DraftEdit)[] = [
   "targeting",
   "creative",
   "copyVariants",
+  "linkUrl",
 ];
 
 function clampBudget(requestedMinor: number, capMinor: number | null | undefined): { dailyBudgetMinor: number; clampedByCap: boolean } {
@@ -141,6 +146,7 @@ export function applyDraftEdit(
     ...(edit.targeting !== undefined ? { targeting: edit.targeting } : {}),
     ...(edit.creative !== undefined ? { creative: edit.creative } : {}),
     ...(edit.copyVariants !== undefined ? { copyVariants: edit.copyVariants, variantsCount: edit.copyVariants.length } : {}),
+    ...(edit.linkUrl !== undefined ? { linkUrl: edit.linkUrl } : {}),
   };
 
   return ok({ spec: next, clampedByCap });

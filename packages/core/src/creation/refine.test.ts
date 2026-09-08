@@ -113,4 +113,18 @@ describe("applyDraftEdit — merge puro do rascunho", () => {
     if (r.ok) return;
     expect(r.error.code).toBe("field_not_editable");
   });
+
+  it("from_scratch: linkUrl (destino do anúncio) grava no spec", () => {
+    const r = applyDraftEdit("from_scratch", fromScratch, { linkUrl: "https://loja.com/promo" }, noCap);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.spec.linkUrl).toBe("https://loja.com/promo");
+  });
+
+  it("duplicate: linkUrl é from_scratch-only → erro field_not_editable (escala herda o destino)", () => {
+    const r = applyDraftEdit("duplicate", duplicate, { linkUrl: "https://loja.com/promo" }, noCap);
+    expect(r.ok).toBe(false);
+    if (r.ok || r.error.code !== "field_not_editable") throw new Error("esperava field_not_editable");
+    expect(r.error.field).toBe("linkUrl");
+  });
 });

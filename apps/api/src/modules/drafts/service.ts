@@ -12,7 +12,7 @@ import {
   platformConnections,
   type Database,
 } from "@trafego/db";
-import { applyDraftEdit, buildResolvedSnapshot, computeApplyPreview, describeDeliveryEstimate, planScaleMove, ressalvasFromSnapshot, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
+import { applyDraftEdit, buildResolvedSnapshot, computeApplyPreview, describeDeliveryEstimate, isMessagingGoal, planScaleMove, ressalvasFromSnapshot, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
 import { applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import { toMinorUnits, minorToMajor, resolveCreationActivation, type CreationActivation, type ToolBindingMode } from "@trafego/shared";
 import {
@@ -66,6 +66,7 @@ const SERVING_PICKER_CAP = 200;
 
 const DRAFT_NOT_OPEN_MSG = "esse rascunho não está mais aberto pra ajuste.";
 const ACCOUNT_UNAVAILABLE_MSG = "não consegui acessar a conta agora";
+const LINK_ON_MESSAGING_MSG = "esse rascunho é de conversas no WhatsApp — ele leva a pessoa pro WhatsApp, não pra um site, então não dá pra pôr um link de destino.";
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
@@ -288,6 +289,13 @@ export function createDraftsService(deps: DraftsServiceDeps) {
 
     // Objetivo (só from_scratch): re-resolve o pixel DA CONTA (não de spec.pixelId). O guard do
     // núcleo bloqueia objetivo-que-exige-pixel sem pixel; quando há, grava o pixel no spec.
+    // DESTINO (link, só from_scratch): objetivo de conversas no WhatsApp não leva pra site → bloqueia
+    // honesto. from_scratch-only é garantido pelo núcleo (applyDraftEdit rejeita em duplicate).
+    if (input.linkUrl != null) {
+      if (isMessagingGoal(input.objective ?? spec.objective)) return { ok: false, message: LINK_ON_MESSAGING_MSG };
+      edit.linkUrl = input.linkUrl;
+    }
+
     let hasPixel = true;
     if (input.objective) {
       const defaults = await getDefaults();
@@ -496,6 +504,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
           sourceName: d.sourceRef?.name ?? null,
           pageId: spec.pageId ?? null,
           pixelId: spec.pixelId ?? null,
+          linkUrl: spec.linkUrl ?? null,
           campaignName: spec.campaignName ?? null,
           adsetName: spec.adsetName ?? null,
           suffixLabel: spec.suffixLabel ?? null,

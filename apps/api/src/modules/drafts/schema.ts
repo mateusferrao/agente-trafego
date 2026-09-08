@@ -60,6 +60,9 @@ export const draftApprovalOutput = z.object({
   sourceName: z.string().nullable(),
   pageId: z.string().nullable(),
   pixelId: z.string().nullable(),
+  /** URL de destino do anúncio (from_scratch, objetivo de site/tráfego/conversão) — o painel
+   *  pré-preenche e deixa editar. `null` = herdado do anúncio-base / objetivo de WhatsApp. */
+  linkUrl: z.string().nullable(),
   /** nomes editáveis (painel). `null` = derivado no apply (`CaquiAI — <objetivo>`). */
   campaignName: z.string().nullable(),
   adsetName: z.string().nullable(),
@@ -207,6 +210,9 @@ export const updateDraftInput = z.object({
   objective: conversionGoalSchema.optional(),
   suffixLabel: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
   audience: z.enum(["reuse", "broad"]).optional(),
+  /** URL de DESTINO do anúncio (só from_scratch, objetivo de site/tráfego/conversão) — troca o link.
+   *  Objetivo de conversas no WhatsApp → o backend bloqueia honesto (leva pro WhatsApp, não pra site). */
+  linkUrl: z.string().url().optional(),
   creative: setDraftCreativeInput.optional(),
   copyEdits: z.array(draftCopyEditInput).optional(),
   removeAdIndex: z.number().int().min(0).optional(),

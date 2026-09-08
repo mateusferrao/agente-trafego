@@ -740,6 +740,7 @@ export function makeConversationNodes(
               ...(a["activation"] === "active" || a["activation"] === "paused" ? { activation: a["activation"] as "active" | "paused" } : {}),
               ...(typeof a["variantsCount"] === "number" ? { variantsCount: a["variantsCount"] as number } : {}),
               ...(a["audience"] === "reuse" || a["audience"] === "broad" ? { audience: a["audience"] as "reuse" | "broad" } : {}),
+              ...(typeof a["link"] === "string" && a["link"].trim().length > 0 ? { link: a["link"].trim() } : {}),
               ...(isConversionGoal(a["objective"]) ? { objective: a["objective"] } : {}),
               ...(typeof a["campaignName"] === "string" && a["campaignName"] ? { campaignName: a["campaignName"] as string } : {}),
               ...(typeof a["adsetName"] === "string" && a["adsetName"] ? { adsetName: a["adsetName"] as string } : {}),
@@ -864,6 +865,7 @@ export function makeConversationNodes(
                 ...(isMediaPreference(args["mediaPreference"]) ? { mediaPreference: args["mediaPreference"] } : {}),
                 ...(creatives && creatives.length > 0 ? { creatives } : {}),
                 ...(fill === "agent" || fill === "only_picked" ? { fillRemaining: fill } : {}),
+                ...(typeof args["link"] === "string" && args["link"].trim().length > 0 ? { link: args["link"].trim() } : {}),
               });
             })();
       const expiresAt = new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString();

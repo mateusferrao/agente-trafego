@@ -505,6 +505,28 @@ Entrada: mesma conta, abrir a lista de campanhas no site (analysis-detail).
 2. Campanha ativa nunca-analisada → `liveStatus:"active"`, texto "já está ativa na Meta…" (comportamento antigo). ✓
 3. Cartão vindo de análise (`entity_analyses`) ou de snapshot de run → `liveStatus:null` (o estado dele é contado por tier/`deactivatedSince`, sem regressão). Archived/deleted continuam fora. ✓
 
+## Link de destino na criação (site/tráfego × WhatsApp)
+
+O dono pode informar/trocar a URL de destino do anúncio (pra onde o clique leva) — antes o destino só era herdado do anúncio-base. Vale só pra objetivos de site/tráfego/conversão; conversas no WhatsApp ignora.
+
+### S14-1 — Informar o link ao criar pelo chat
+Entrada: "cria uma campanha de tráfego pro link https://sualoja.com/promo".
+1. O `link` da tool `create_campaign` normaliza (`normalizeLinkUrl`: exige http/https absoluto; prefixa https:// se vier só o domínio) e vira `spec.linkUrl`, vencendo o herdado. O eco mostra "Destino: leva pra *https://sualoja.com/promo* (o link que você indicou)". ✓
+2. Sem link → herda o destino do anúncio-base; o eco diz "(o mesmo do seu anúncio-base)". ✓
+3. Link inválido ("cria pro meu site") → nota honesta ("não reconheci … como um link válido — me manda a URL completa") + usa o destino padrão. ✓
+4. Objetivo de **conversas no WhatsApp** (messaging_started) + link → nota: "ignorei o link — esse tipo leva pro WhatsApp, não pra um site". `spec.linkUrl` fica vazio. ✓
+
+### S14-2 — Trocar o link de um rascunho pendente (chat)
+Entrada (rascunho de site pendente): "troca o link pra https://sualoja.com/black".
+1. `adjust_draft` (`link`) → `refineDraft` normaliza + grava; o eco de refino mostra "Destino: leva pra *…*". ✓
+2. Rascunho de conversas no WhatsApp → bloqueia honesto ("esse rascunho é de conversas no WhatsApp … não dá pra pôr um link"). Escala/duplicata → `scaleForbiddenRefineField` barra (herda o destino do vencedor). ✓
+
+### S14-3 — Editar o link pelo SITE (edição de recomendação/rascunho)
+Entrada: painel "Editar rascunho" de uma campanha de site.
+1. O campo **"Link de destino"** aparece (só from_scratch, objetivo ≠ messaging_started), pré-preenchido com o `linkUrl` atual (via `draftApprovalOutput.linkUrl`). Editar + Salvar manda `linkUrl` no PATCH → `spec.linkUrl`. ✓
+2. Objetivo de conversas no WhatsApp → o campo não é mostrado; e a API bloqueia honesto se um `linkUrl` chegar mesmo assim (defesa). ✓
+3. Em branco → mantém o herdado (a API exige URL válida; "" não regride). ✓
+
 ## Fast-follows (residuais aceitos / adiados — ROADMAP)
 - **Conta do criativo — estagiar bytes p/ auto-completar após focar**: o núcleo está corrigido (régua inequívoca de 3 níveis idêntica ao turno; ambíguo→pergunta; save casa com a confirmação do Roy). Resta só: no caso AMBÍGUO (sem sole/foco/legenda), o intake pergunta mas não estagia os bytes → o dono reenvia depois de focar. Estagiar (Redis) + auto-completar quando o foco resolver fecha isso (ver ROADMAP).
 - **Gradação do desgaste por severidade (2 × 3 sinais)**: hoje aging×fadiga é binário (ainda entrega × não entrega); um aging SEVERO (3 sinais, prestes a cair) usa a mesma mensagem de aging leve — dá pra graduar a urgência do "prepare o sucessor".

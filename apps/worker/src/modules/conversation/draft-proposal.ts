@@ -6,7 +6,7 @@
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { adAccounts, adCreatives, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { applyDraftEdit, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, describeDeliveryEstimate, goalNounPt, isAging, isFatigued, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { applyDraftEdit, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, describeDeliveryEstimate, goalNounPt, isAging, isFatigued, isMessagingGoal, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
 import { applyExplicitBehaviorEdit, applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
   ACTION_PARAM_CURRENT_MINOR,
@@ -944,6 +944,8 @@ export function buildRefineEcho(kind: string, spec: CampaignDraftSpec): string {
     `${head}: gasto novo ${moneyMinor(spec.dailyBudgetMinor, spec.currency)}/dia · ${activationPhrase(spec.activation)}.`,
   ];
   if (kind === "from_scratch" && spec.objective) lines.push(`Objetivo: ${goalNounPt(spec.objective)}.`);
+  // destino do clique (só quando há link — objetivo de site/tráfego/conversão).
+  if (kind === "from_scratch" && spec.linkUrl && !isMessagingGoal(spec.objective)) lines.push(`Destino: leva pra *${spec.linkUrl}*.`);
   // copies/composição só no rascunho de criação (escala/duplicate não tem copyVariants próprios).
   if (kind === "from_scratch" && spec.copyVariants && spec.copyVariants.length > 0) {
     const distinct = new Set(spec.copyVariants.map((v) => v.creative?.metaVideoId ?? v.creative?.metaImageHash ?? "default")).size;
@@ -1014,6 +1016,9 @@ export interface RefineDraftPatch {
   readonly regenerateCopy?: boolean;
   /** público (só from_scratch): `reuse` = herda o conjunto que converte; `broad` = a Meta escolhe. */
   readonly audience?: "reuse" | "broad";
+  /** URL de destino (só from_scratch, objetivo de site/tráfego/conversão) — troca o link do rascunho.
+   *  Objetivo de conversas no WhatsApp → bloqueia honesto; URL inválida → bloqueia pedindo a correta. */
+  readonly link?: string;
   /** nome da campanha (chat leve — ajuste de intenção única, só from_scratch). */
   readonly campaignName?: string;
   /** nome do conjunto de anúncios (só from_scratch) — paridade com o painel do site. */
@@ -1104,9 +1109,10 @@ function refineErrorReason(error: RefineError): string {
  * herdado que o usuário tentou mexer, ou null. Fonte da honestidade: em vez de re-ecoar mudo o mesmo
  * spec (o usuário fica sem saber por que "não mudou"), a casca responde por que não dá (§7).
  */
-export function scaleForbiddenRefineField(patch: RefineDraftPatch): "objective" | "targeting" | "copyVariants" | "campaignName" | "adsetName" | null {
+export function scaleForbiddenRefineField(patch: RefineDraftPatch): "objective" | "targeting" | "copyVariants" | "campaignName" | "adsetName" | "link" | null {
   const has = (v: unknown): boolean => v !== undefined && v !== null && (!Array.isArray(v) || v.length > 0);
   if (has(patch.objective)) return "objective";
+  if (has(patch.link)) return "link";
   const touchesAudience =
     has(patch.audience) || has(patch.addGeo) || has(patch.removeGeo) || patch.ageMin !== undefined || patch.ageMax !== undefined ||
     has(patch.gender) || has(patch.addInterests) || has(patch.removeInterests) || has(patch.narrowInterests) ||
@@ -1159,6 +1165,19 @@ export async function refineDraft(
     hasPixel = Boolean(defaults.pixelId);
     edit.objective = patch.objective;
     if (defaults.pixelId) edit.pixelId = defaults.pixelId;
+  }
+
+  // DESTINO (link, só from_scratch): troca a URL de destino do rascunho. Objetivo de conversas no
+  // WhatsApp → bloqueia honesto (leva pro WhatsApp, não pra um site). URL inválida → pede a correta.
+  if (kind === "from_scratch" && patch.link != null) {
+    if (isMessagingGoal(edit.objective ?? spec.objective)) {
+      return { kind: "blocked", reason: "esse rascunho é de conversas no WhatsApp — ele leva a pessoa pro WhatsApp, não pra um site, então não dá pra pôr um link de destino." };
+    }
+    const link = normalizeLinkUrl(patch.link);
+    if (!link) {
+      return { kind: "blocked", reason: `não reconheci "${patch.link}" como um link válido — me manda a URL completa (ex: https://sualoja.com/promo).` };
+    }
+    edit.linkUrl = link;
   }
 
   // anúncios (só from_scratch): `regenerateCopy` re-aterra TUDO na copy que já performa (LLM na
@@ -1655,6 +1674,23 @@ export function normalizeAdCount(adCount: number | undefined): number | undefine
   return Math.max(1, Math.min(Math.round(adCount), MAX_ADS_PER_DRAFT));
 }
 
+/** URL de destino informada pelo dono → normalizada (http/https absoluto) ou `null` se não for uma
+ *  URL válida (a Meta exige link absoluto no `link_data.link`). Aceita "loja.com" prefixando https://.
+ *  Fonte única (create + refino do chat). PURO. */
+export function normalizeLinkUrl(raw: string | undefined | null): string | null {
+  const s = (raw ?? "").trim();
+  if (s.length === 0) return null;
+  const withScheme = /^https?:\/\//i.test(s) ? s : `https://${s}`;
+  try {
+    const u = new URL(withScheme);
+    // exige host com ponto (evita "https://foo" ou frases soltas viradas em URL).
+    if (!u.hostname.includes(".")) return null;
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Política do PICKER de criativo (Slice 3): o dono ESCOLHEU `picked` criativos por nome; decide
  * quantos anúncios e se o agente completa o resto. `agent` = completa os slots faltantes pela
@@ -1969,6 +2005,9 @@ export async function proposeCreateCampaign(
      *  "agent" completa o resto pela performance; "only_picked" reduz os anúncios aos escolhidos.
      *  Ausente com faltante → pergunta (decisão do dono). */
     readonly fillRemaining?: "agent" | "only_picked";
+    /** URL de DESTINO informada pelo dono (site/tráfego/conversão) — vence o link herdado da conta.
+     *  Ignorada (com nota) em objetivo de conversas no WhatsApp; inválida → nota + destino padrão. */
+    readonly link?: string;
   },
   origin: DraftOrigin = "on_demand",
   opts: { readonly autonomous?: boolean; readonly minMonthlyReach?: number; readonly requireResolvedAudience?: boolean } = {},
@@ -2246,6 +2285,17 @@ export async function proposeCreateCampaign(
     }
     targeting = baseTargeting.kind === "reuse_adset" && audienceProfile ? { ...baseTargeting, resolved: buildResolvedSnapshot(audienceProfile) } : baseTargeting;
   }
+  // DESTINO (link): o dono pode informar a URL de destino (site/tráfego/conversão) — vence o herdado
+  // da conta. Objetivo de CONVERSAS no WhatsApp ignora o link (leva pro WhatsApp) → nota honesta.
+  // Link inválido (não é URL) → nota + mantém o destino padrão herdado.
+  const messagingGoal = isMessagingGoal(goal);
+  const userLink = args.link ? normalizeLinkUrl(args.link) : null;
+  if (args.link && messagingGoal) {
+    compositionNotes.push("Esse objetivo é conversas no WhatsApp, então ignorei o link — esse tipo de campanha leva pro WhatsApp, não pra um site.");
+  } else if (args.link && userLink === null) {
+    compositionNotes.push(`Não reconheci "${args.link}" como um link válido — usei o destino padrão do seu anúncio-base. Me manda a URL completa (ex: https://sualoja.com/promo) pra trocar.`);
+  }
+  const resolvedLinkUrl = messagingGoal ? undefined : (userLink ?? defaults.linkUrl);
   const spec: CampaignDraftSpec = {
     version: 1,
     currency: ac.currency,
@@ -2267,7 +2317,7 @@ export async function proposeCreateCampaign(
     },
     pageId: defaults.pageId,
     ...(defaults.pixelId ? { pixelId: defaults.pixelId } : {}),
-    ...(defaults.linkUrl ? { linkUrl: defaults.linkUrl } : {}),
+    ...(resolvedLinkUrl ? { linkUrl: resolvedLinkUrl } : {}),
   };
   // Piso de alcance (Fatia 8): no AUTÔNOMO, não cria (nem propõe) público estreito demais — degrada
   // honesto pra revisão humana. Best-effort: estimativa indisponível NÃO bloqueia (não inventa risco).
@@ -2316,6 +2366,9 @@ export async function proposeCreateCampaign(
     // quando há, é o de conversão da conta. O id técnico não ajuda o dono a decidir.
     `Gasto novo: ${budgetPhrase} · usa a sua Página do Facebook${defaults.pixelId ? " e o pixel de conversão da conta" : ""} · ${activationPhrase(spec.activation)}.`,
   );
+  // destino do clique (só quando há link — objetivo de site/tráfego/conversão): honesto sobre pra
+  // onde o anúncio leva. `args.link` explícito é "você indicou"; herdado é "o mesmo do anúncio-base".
+  if (spec.linkUrl) lines.push(`Destino: leva pra *${spec.linkUrl}*${userLink ? " (o link que você indicou)" : " (o mesmo do seu anúncio-base)"}.`);
   for (const n of aud.notes) lines.push(n);
   for (const n of [...geoRadius.notes, ...areas.notes]) lines.push(n);
   if (droppedNames.length > 0) lines.push(`Deixei de fora (não achei ou ambíguo na conta): ${droppedNames.join(", ")}.`);
