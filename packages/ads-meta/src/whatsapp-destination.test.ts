@@ -113,3 +113,70 @@ describe("MetaWhatsappDestinationService.resolve", () => {
     expect(await makeService().resolve(account, "CMP1")).toEqual({ number: null, source: "none" });
   });
 });
+
+/** Roteia o fetch de UMA página (`/{pageId}?fields=name,whatsapp_number`). status=0 → falha (403). */
+function stubPage(node: { name?: string; whatsapp_number?: string } | "fail"): void {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      node === "fail"
+        ? new Response(JSON.stringify({ error: { message: "no permission" } }), { status: 403, headers: { "content-type": "application/json" } })
+        : new Response(JSON.stringify(node), { status: 200, headers: { "content-type": "application/json" } }),
+    ),
+  );
+}
+
+describe("MetaWhatsappDestinationService.pageInfo (destino no rascunho)", () => {
+  it("página com nome + número → { pageId, name, whatsappNumber } (número só dígitos)", async () => {
+    stubPage({ name: "CaquiAI Oficial", whatsapp_number: "+55 (31) 3333-4444" });
+    expect(await makeService().pageInfo(account, "P1")).toEqual({ pageId: "P1", name: "CaquiAI Oficial", whatsappNumber: "553133334444" });
+  });
+
+  it("página sem número (a Meta não expõe) → só { pageId, name } (best-effort honesto)", async () => {
+    stubPage({ name: "CaquiAI Oficial", whatsapp_number: "" });
+    expect(await makeService().pageInfo(account, "P1")).toEqual({ pageId: "P1", name: "CaquiAI Oficial" });
+  });
+
+  it("403/falha do Graph → degrada pro { pageId } (nunca quebra a criação)", async () => {
+    stubPage("fail");
+    expect(await makeService().pageInfo(account, "P1")).toEqual({ pageId: "P1" });
+  });
+});
+
+/** Roteia o fetch de `promote_pages` da conta. status=0 → falha (403). */
+function stubPromotePages(
+  data: ReadonlyArray<{ id?: string; name?: string; whatsapp_number?: string }> | "fail",
+): void {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () =>
+      data === "fail"
+        ? new Response(JSON.stringify({ error: { message: "no permission" } }), { status: 403, headers: { "content-type": "application/json" } })
+        : new Response(JSON.stringify({ promote_pages: { data } }), { status: 200, headers: { "content-type": "application/json" } }),
+    ),
+  );
+}
+
+describe("MetaWhatsappDestinationService.listAccountPages (escolher entre N)", () => {
+  it("lista páginas com/sem número (número só dígitos; sem id é dropado)", async () => {
+    stubPromotePages([
+      { id: "P1", name: "CaquiAI Oficial", whatsapp_number: "+55 31 3333-4444" },
+      { id: "P2", name: "CaquiAI Loja" },
+      { name: "sem id — ignorada" },
+    ]);
+    expect(await makeService().listAccountPages(account)).toEqual([
+      { pageId: "P1", name: "CaquiAI Oficial", whatsappNumber: "553133334444" },
+      { pageId: "P2", name: "CaquiAI Loja" },
+    ]);
+  });
+
+  it("403/sem acesso → lista vazia (o caller degrada honesto)", async () => {
+    stubPromotePages("fail");
+    expect(await makeService().listAccountPages(account)).toEqual([]);
+  });
+
+  it("conta sem promote_pages → lista vazia", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({}), { status: 200, headers: { "content-type": "application/json" } })));
+    expect(await makeService().listAccountPages(account)).toEqual([]);
+  });
+});

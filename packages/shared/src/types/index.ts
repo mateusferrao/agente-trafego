@@ -257,6 +257,14 @@ export interface WhatsappDestination {
   readonly entityName?: string;
 }
 
+/** Página do Facebook (destino de uma campanha de conversas) — taxonomia neutra. `whatsappNumber`
+ *  é o WhatsApp conectado à Página (só-dígitos), best-effort: a Meta frequentemente não expõe. */
+export interface PageInfo {
+  readonly pageId: string;
+  readonly name?: string;
+  readonly whatsappNumber?: string;
+}
+
 // ─── Público salvo / custom audience (Fatia 7, genérico) ──────────────────
 /** Custom/saved audience da conta — taxonomia neutra (vocabulário Meta só no adapter). */
 export interface CustomAudience {

@@ -18,6 +18,7 @@ import type {
   InterestSearchResult,
   TargetingSpec,
   WhatsappDestination,
+  PageInfo,
 } from "../types/index.js";
 
 /** Referência opaca a uma conta já resolvida (token + accountId internos ao adapter). */
@@ -286,6 +287,13 @@ export interface AdsPlatformPort {
    * (`campaign_name`) → `none`. Sempre rotula a origem; nunca atribui de outra entidade.
    */
   getWhatsappDestination(account: AdAccountRef, campaignId: string): Promise<WhatsappDestination>;
+  /** Info de UMA Página pelo id (nome + WhatsApp conectado) — pra mostrar/confirmar o DESTINO de uma
+   *  campanha de conversas NO RASCUNHO (o número é da Página, conhecível antes de criar). `number`
+   *  best-effort: a Meta frequentemente não expõe o `whatsapp_number` da Página (403/vazio) → null. */
+  getPageWhatsappInfo(account: AdAccountRef, pageId: string): Promise<PageInfo>;
+  /** Páginas da conta (id/nome + WhatsApp conectado de cada) — pra o dono ESCOLHER a Página/número
+   *  de destino quando há N. Best-effort/bounded: sem acesso/permissão → lista vazia (honesto). */
+  listPages(account: AdAccountRef): Promise<PageInfo[]>;
   /** Lista os custom/saved audiences da conta (Fatia 7) — remarketing/exclusões reais. */
   listCustomAudiences(account: AdAccountRef): Promise<CustomAudience[]>;
   /** Busca geo (país/região/cidade) por texto — Fase 1 (subfatia 3), targeting explícito por

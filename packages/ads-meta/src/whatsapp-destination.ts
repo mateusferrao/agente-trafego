@@ -1,4 +1,4 @@
-import type { WhatsappDestination } from "@trafego/shared";
+import type { PageInfo, WhatsappDestination } from "@trafego/shared";
 import { extractPhoneFromName } from "@trafego/shared";
 import type { AdAccountRef } from "@trafego/shared/ports";
 import type { MetaGraphClient } from "./client.js";
@@ -131,6 +131,62 @@ export class MetaWhatsappDestinationService {
       return digits.length > 0 ? digits : null;
     } catch {
       return null;
+    }
+  }
+
+  /** Info de UMA Página (nome + WhatsApp conectado) — pra MOSTRAR o destino de uma campanha de
+   *  conversas NO RASCUNHO (o número é da Página, conhecível antes de criar). `whatsappNumber`
+   *  best-effort (a Meta frequentemente não expõe → ausente). Falha → só o pageId (nunca quebra). */
+  async pageInfo(account: AdAccountRef, pageId: string): Promise<PageInfo> {
+    const accountId = normalizeAdAccountId(account.adAccountId);
+    try {
+      const node = await callWithGovernor(
+        accountId,
+        () =>
+          this.client.request<{ name?: string; whatsapp_number?: string }>({
+            method: "GET",
+            path: pageId,
+            accessToken: account.accessToken,
+            params: { fields: "name,whatsapp_number" },
+          }),
+        { governor: this.governor },
+      );
+      const digits = (node.whatsapp_number ?? "").replace(/\D+/g, "");
+      return { pageId, ...(node.name ? { name: node.name } : {}), ...(digits.length > 0 ? { whatsappNumber: digits } : {}) };
+    } catch {
+      return { pageId };
+    }
+  }
+
+  /**
+   * Páginas que a conta pode promover (id/nome + WhatsApp conectado) — pra o dono ESCOLHER o destino
+   * quando há N. `promote_pages` do ad account; `whatsapp_number` aninhado é best-effort. Sem
+   * acesso/permissão (403) ou vazio → lista vazia (o caller degrada honesto). ⚠️ o campo exato pode
+   * variar por versão/permissão da Graph — verificar contra conta real.
+   */
+  async listAccountPages(account: AdAccountRef): Promise<PageInfo[]> {
+    const accountId = normalizeAdAccountId(account.adAccountId);
+    try {
+      const node = await callWithGovernor(
+        accountId,
+        () =>
+          this.client.request<{ promote_pages?: { data?: ReadonlyArray<{ id?: string; name?: string; whatsapp_number?: string }> } }>({
+            method: "GET",
+            path: accountId,
+            accessToken: account.accessToken,
+            params: { fields: "promote_pages{id,name,whatsapp_number}" },
+          }),
+        { governor: this.governor },
+      );
+      const out: PageInfo[] = [];
+      for (const p of node.promote_pages?.data ?? []) {
+        if (!p.id) continue;
+        const digits = (p.whatsapp_number ?? "").replace(/\D+/g, "");
+        out.push({ pageId: p.id, ...(p.name ? { name: p.name } : {}), ...(digits.length > 0 ? { whatsappNumber: digits } : {}) });
+      }
+      return out;
+    } catch {
+      return [];
     }
   }
 

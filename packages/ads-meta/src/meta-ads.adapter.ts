@@ -17,6 +17,7 @@ import type {
   InterestSearchResult,
   MetaAccountHealthStatus,
   WhatsappDestination,
+  PageInfo,
 } from "@trafego/shared/types";
 import type {
   AdAccountRef,
@@ -510,6 +511,16 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     } catch (error) {
       throw toAdsError(error);
     }
+  }
+
+  async getPageWhatsappInfo(account: AdAccountRef, pageId: string): Promise<PageInfo> {
+    // best-effort (o service já degrada a { pageId } em falha) — não mapeia erro pra não quebrar o
+    // rascunho por um destino que é só informativo.
+    return this.whatsapp.pageInfo(account, pageId);
+  }
+
+  async listPages(account: AdAccountRef): Promise<PageInfo[]> {
+    return this.whatsapp.listAccountPages(account);
   }
 
   async listCustomAudiences(account: AdAccountRef): Promise<CustomAudience[]> {

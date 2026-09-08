@@ -2377,6 +2377,17 @@ export async function proposeCreateCampaign(
   // destino do clique (só quando há link — objetivo de site/tráfego/conversão): honesto sobre pra
   // onde o anúncio leva. `args.link` explícito é "você indicou"; herdado é "o mesmo do anúncio-base".
   if (spec.linkUrl) lines.push(`Destino: leva pra *${spec.linkUrl}*${userLink ? " (o link que você indicou)" : " (o mesmo do seu anúncio-base)"}.`);
+  // destino de CONVERSAS (CTWA): o número é da Página conectada, conhecível AGORA (não punir §7) —
+  // mostra a Página + o número best-effort; a Meta às vezes não expõe o número antes de criar.
+  if (messagingGoal && spec.pageId) {
+    const page = await deps.ports.ads.getPageWhatsappInfo(ac.ref, spec.pageId);
+    const pageLabel = page.name ? `sua Página *${page.name}*` : "sua Página do Facebook";
+    lines.push(
+      page.whatsappNumber
+        ? `Destino: leva pro WhatsApp de ${pageLabel} — número *+${page.whatsappNumber}*.`
+        : `Destino: leva pro WhatsApp de ${pageLabel}. O número exato eu confirmo depois de criar (a Meta nem sempre mostra antes).`,
+    );
+  }
   for (const n of aud.notes) lines.push(n);
   for (const n of [...geoRadius.notes, ...areas.notes]) lines.push(n);
   if (droppedNames.length > 0) lines.push(`Deixei de fora (não achei ou ambíguo na conta): ${droppedNames.join(", ")}.`);
