@@ -9,12 +9,14 @@ import { z } from "zod";
 import { adAccounts, agents, conversations, playbookRules } from "@trafego/db";
 import {
   ACTION_PARAM_AMOUNT_MINOR,
+  ACTION_PARAM_AMOUNT_MAJOR,
   AGENT_NAME,
   ACTION_PARAM_MODE,
   ACTION_PARAM_PCT,
   ACTION_PARAM_STATUS,
   buildApprovalApplyJob,
   BUDGET_MODE_SET,
+  toMinorUnits,
   CONVERSION_GOALS,
   COPY_TEXT_MAX,
   ENTITY_NAME_MAX,
@@ -1042,9 +1044,11 @@ export function actionFromToolCall(name: string, args: Record<string, unknown>, 
     if (mode === BUDGET_MODE_SET) {
       // == null cobre o `null` que o structured-output manda no campo não usado do outro modo.
       if (args["amountReais"] == null) return null;
-      const reais = Number(args["amountReais"]);
-      if (!Number.isFinite(reais)) return null;
-      return { ...base, params: { [ACTION_PARAM_MODE]: mode, [ACTION_PARAM_AMOUNT_MINOR]: Math.round(reais * 100) } };
+      const major = Number(args["amountReais"]);
+      if (!Number.isFinite(major)) return null;
+      // guarda o valor na unidade MAIOR (como o gestor falou); a conversão p/ unidade menor
+      // depende da MOEDA (JPY≠centavos) e só acontece quando a conta é resolvida (`resolveBudgetMinor`).
+      return { ...base, params: { [ACTION_PARAM_MODE]: mode, [ACTION_PARAM_AMOUNT_MAJOR]: major } };
     }
     if (args["pct"] == null) return null;
     const pct = Number(args["pct"]);
@@ -1052,6 +1056,19 @@ export function actionFromToolCall(name: string, args: Record<string, unknown>, 
     return { ...base, params: { [ACTION_PARAM_MODE]: mode, [ACTION_PARAM_PCT]: Math.abs(pct) } };
   }
   return { ...base, params: {} };
+}
+
+/**
+ * Converte o valor MAIOR (`amountMajor`, do chat) p/ unidade menor (`amountMinor`) que o guardrail
+ * e a mutação usam, assim que a MOEDA da conta é conhecida (inverso de `actionFromToolCall`). A
+ * conversão depende da moeda (×100 p/ BRL, ×1 p/ JPY, ×1000 p/ BHD) — por isso só aqui, não na
+ * montagem da ação. No-op p/ ações sem `amountMajor` (pause/status/pct). PURA.
+ */
+export function resolveBudgetMinor(action: Action, currency: string): Action {
+  const major = action.params[ACTION_PARAM_AMOUNT_MAJOR];
+  if (typeof major !== "number") return action;
+  const { [ACTION_PARAM_AMOUNT_MAJOR]: _omit, ...rest } = action.params;
+  return { ...action, params: { ...rest, [ACTION_PARAM_AMOUNT_MINOR]: toMinorUnits(major, currency) } };
 }
 
 /**

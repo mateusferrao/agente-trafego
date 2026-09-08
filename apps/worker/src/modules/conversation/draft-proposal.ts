@@ -19,6 +19,8 @@ import {
   MAX_ADS_PER_DRAFT,
   resolveCreationActivation,
   toGuardrailConfig,
+  toMinorUnits,
+  minorToMajor,
   type Action,
   type AgentId,
   type CreationActivation,
@@ -45,7 +47,6 @@ import { pickLibraryCreativeByContext, type MatchContext } from "../creative/mat
 import { joinBalloons } from "../notify/split.js";
 import { assembleExplicitTargeting, hasExplicitContent, type ExplicitTargetingParts } from "./explicit-targeting.js";
 
-const MINOR_PER_UNIT = 100;
 const APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_STARTER_BUDGET_MINOR = 3000;
 /** Máx. de anúncios com criativos DISTINTOS que o agente monta sozinho ao criar (1 por criativo).
@@ -116,6 +117,12 @@ export interface AgentContext {
 
 function money(reais: number, currency: string): string {
   return new Intl.NumberFormat("pt-BR", { style: "currency", currency }).format(reais);
+}
+
+/** Formata um valor em unidade MENOR na moeda da conta — converte pela moeda (JPY sem casas,
+ *  BHD com 3), nunca pelo ×100 mágico. Fonte única do "minor→exibição" aqui. */
+function moneyMinor(minor: number, currency: string): string {
+  return money(minorToMajor(minor, currency), currency);
 }
 
 /** Frase honesta sobre o que acontece ao confirmar (P0.1): a criação SEMPRE nasce pausada —
@@ -864,8 +871,8 @@ export async function proposeScaleWinner(
     name: label, // nome do vencedor → card mostra "Duplicar conjunto <nome>" (não o id cru)
   });
   const budgetLine = clampedByCap
-    ? `Gasto novo: ${money(newDailyMinor / MINOR_PER_UNIT, ac.currency)}/dia (você pediu ${money(requested / MINOR_PER_UNIT, ac.currency)}, mas seu teto de gasto novo é ${money(newDailyMinor / MINOR_PER_UNIT, ac.currency)}) · ${activationPhrase(ac.creationActivation)}.`
-    : `Gasto novo: ${money(newDailyMinor / MINOR_PER_UNIT, ac.currency)}/dia · ${activationPhrase(ac.creationActivation)}.`;
+    ? `Gasto novo: ${moneyMinor(newDailyMinor, ac.currency)}/dia (você pediu ${moneyMinor(requested, ac.currency)}, mas seu teto de gasto novo é ${moneyMinor(newDailyMinor, ac.currency)}) · ${activationPhrase(ac.creationActivation)}.`
+    : `Gasto novo: ${moneyMinor(newDailyMinor, ac.currency)}/dia · ${activationPhrase(ac.creationActivation)}.`;
   const echo = joinBalloons([
     `Vou **duplicar o vencedor "${label}"** com mais budget pra escalar sem estourar o aprendizado do original.`,
     budgetLine,
@@ -878,7 +885,7 @@ export async function proposeScaleWinner(
 export function buildRefineEcho(kind: string, spec: CampaignDraftSpec): string {
   const head = kind === "duplicate" ? "Rascunho de escala atualizado" : "Rascunho de campanha atualizado";
   const lines = [
-    `${head}: gasto novo ${money(spec.dailyBudgetMinor / MINOR_PER_UNIT, spec.currency)}/dia · ${activationPhrase(spec.activation)}.`,
+    `${head}: gasto novo ${moneyMinor(spec.dailyBudgetMinor, spec.currency)}/dia · ${activationPhrase(spec.activation)}.`,
   ];
   if (kind === "from_scratch" && spec.objective) lines.push(`Objetivo: ${goalNounPt(spec.objective)}.`);
   // copies/composição só no rascunho de criação (escala/duplicate não tem copyVariants próprios).
@@ -1048,7 +1055,7 @@ export async function refineDraft(
 
   const edit: MutableEdit = {};
   const refineNotes: string[] = []; // avisos (ex: clamp de raio) anexados ao eco
-  if (patch.budgetReais != null) edit.budgetMinor = Math.round(patch.budgetReais * MINOR_PER_UNIT);
+  if (patch.budgetReais != null) edit.budgetMinor = toMinorUnits(patch.budgetReais, ac.currency);
   if (patch.activation) edit.activation = patch.activation;
   if (kind === "from_scratch" && patch.campaignName != null) edit.campaignName = patch.campaignName;
   if (kind === "from_scratch" && patch.adsetName != null) edit.adsetName = patch.adsetName;
@@ -1898,7 +1905,7 @@ export async function proposeCreateCampaign(
     };
   }
   const requested = args.budgetReais
-    ? Math.round(args.budgetReais * MINOR_PER_UNIT)
+    ? toMinorUnits(args.budgetReais, ac.currency)
     : (ac.cfg.maxNewDailyBudgetMinor ?? DEFAULT_STARTER_BUDGET_MINOR);
   // Transparência do teto (§8 clareza pro dono): pediu mais que o teto de gasto novo →
   // o eco/card mostram "pediu X, virou Y" (mesmo helper/campo do escalar).
@@ -2058,8 +2065,8 @@ export async function proposeCreateCampaign(
     lines.push(`Obs: seu anúncio de melhor desempenho é um **${unsupportedFormatPt(defaults.unsupportedTopFormat)}**, que eu ainda não sei clonar — então usei o melhor criativo de imagem/vídeo que você tem.`);
   }
   const budgetPhrase = clampedByCap
-    ? `${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia (você pediu ${money(requested / MINOR_PER_UNIT, ac.currency)}, mas seu teto de gasto novo é ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)})`
-    : `${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia`;
+    ? `${moneyMinor(dailyBudgetMinor, ac.currency)}/dia (você pediu ${moneyMinor(requested, ac.currency)}, mas seu teto de gasto novo é ${moneyMinor(dailyBudgetMinor, ac.currency)})`
+    : `${moneyMinor(dailyBudgetMinor, ac.currency)}/dia`;
   const audiencePhrase = audienceEchoPhrase({
     targetingKind: spec.targeting?.kind,
     ...(audienceProfile ? { resolvedAudienceDescription: describeResolvedAudience(audienceProfile) } : {}),
@@ -2277,7 +2284,7 @@ export async function proposeCopyCampaign(
   // seguro e avisa. Override explícito do usuário sempre vence.
   const sourceIsLifetime = structure.dailyBudgetMinor === undefined && structure.lifetimeBudgetMinor !== undefined;
   const sourceDailyMinor = structure.dailyBudgetMinor ?? DEFAULT_STARTER_BUDGET_MINOR;
-  const requested = args.budgetReais ? Math.round(args.budgetReais * MINOR_PER_UNIT) : sourceDailyMinor;
+  const requested = args.budgetReais ? toMinorUnits(args.budgetReais, ac.currency) : sourceDailyMinor;
   const cap = ac.cfg.maxNewDailyBudgetMinor;
   const dailyBudgetMinor = cap != null ? Math.min(requested, cap) : requested;
 
@@ -2316,8 +2323,8 @@ export async function proposeCopyCampaign(
         ? `\n• *Público:* remarketing selecionado${aud.excludeIds.length ? " (com exclusões)" : ""} — ${describeResolvedAudience(structure.targeting)}`
         : `\n• *Público:* o mesmo da campanha-base — ${describeResolvedAudience(structure.targeting)}`;
   const budgetLine = sourceIsLifetime
-    ? `• *Orçamento:* ${structure.budgetMode.toUpperCase()} · ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia (a original usa orçamento vitalício; comecei com um diário seguro — ajuste se quiser)`
-    : `• *Orçamento:* ${structure.budgetMode.toUpperCase()} · ${money(dailyBudgetMinor / MINOR_PER_UNIT, ac.currency)}/dia`;
+    ? `• *Orçamento:* ${structure.budgetMode.toUpperCase()} · ${moneyMinor(dailyBudgetMinor, ac.currency)}/dia (a original usa orçamento vitalício; comecei com um diário seguro — ajuste se quiser)`
+    : `• *Orçamento:* ${structure.budgetMode.toUpperCase()} · ${moneyMinor(dailyBudgetMinor, ac.currency)}/dia`;
   // alcance combinado (delivery_estimate ao vivo) só quando o dono trocou o público (senão o
   // targeting é o mesmo da base, alcance já conhecido). Superior ao por-público (`sizeWarnings`).
   const reachNote = hasAudience || hasExplicitPrimitive ? await reachNoteFor(deps, ac.ref, targeting, goal, structure.pixelId) : null;

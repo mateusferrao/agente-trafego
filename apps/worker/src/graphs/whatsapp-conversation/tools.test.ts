@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { agents } from "@trafego/db";
 import { APPROVAL_APPLY_QUEUE } from "@trafego/shared";
 import type { AgentConfigState } from "@trafego/core";
-import type { GuardrailConfig, AutonomyPolicy, NotifyPolicy } from "@trafego/shared";
+import type { GuardrailConfig, AutonomyPolicy, NotifyPolicy, Action } from "@trafego/shared";
 import {
   AGENT_TOOL_NAMES,
   CONCIERGE_TOOL_NAMES,
@@ -10,6 +10,7 @@ import {
   CONFIRM_LEARNING_TOOL_NAME,
   GROUP_CONCIERGE_TOOL_NAMES,
   actionFromToolCall,
+  resolveBudgetMinor,
   buildCapabilitiesText,
   configPatchFromToolCall,
   diceSimilarity,
@@ -250,9 +251,11 @@ describe("actionFromToolCall", () => {
     expect(a?.id).toBe("tc1");
   });
 
-  it("adjust_budget set → converte reais → amountMinor (centavos)", () => {
+  it("adjust_budget set → guarda amountMajor (conversão adiada até saber a moeda)", () => {
     const a = actionFromToolCall("adjust_budget", args({ mode: "set", amountReais: 200 }), "tc2");
-    expect(a?.params).toEqual({ mode: "set", amountMinor: 20000 });
+    // NÃO converte aqui (a moeda ainda não é conhecida) — guarda o valor maior; a conversão
+    // p/ unidade menor acontece em resolveBudgetMinor quando a conta é resolvida.
+    expect(a?.params).toEqual({ mode: "set", amountMajor: 200 });
   });
 
   it("adjust_budget increase → pct (magnitude)", () => {
@@ -277,6 +280,30 @@ describe("actionFromToolCall", () => {
 
   it("set sem amountReais → null (não vira ação inválida)", () => {
     expect(actionFromToolCall("adjust_budget", args({ mode: "set" }), "x")).toBeNull();
+  });
+});
+
+describe("resolveBudgetMinor (conversão maior→menor pela moeda)", () => {
+  const setAction = (): Action =>
+    actionFromToolCall("adjust_budget", { entityLevel: "campaign", entityId: "C1", mode: "set", amountReais: 200 }, "tc")!;
+
+  it("BRL: amountMajor 200 → amountMinor 20000 (×100); amountMajor some", () => {
+    const r = resolveBudgetMinor(setAction(), "BRL");
+    expect(r.params).toEqual({ mode: "set", amountMinor: 20000 });
+  });
+  it("JPY: amountMajor 200 → amountMinor 200 (×1, não infla 100×)", () => {
+    const r = resolveBudgetMinor(setAction(), "JPY");
+    expect(r.params).toEqual({ mode: "set", amountMinor: 200 });
+  });
+  it("BHD: amountMajor 200 → amountMinor 200000 (×1000)", () => {
+    const r = resolveBudgetMinor(setAction(), "BHD");
+    expect(r.params).toEqual({ mode: "set", amountMinor: 200000 });
+  });
+  it("no-op p/ ação sem amountMajor (pause/status/pct)", () => {
+    const pause = actionFromToolCall("pause_entity", { entityLevel: "campaign", entityId: "C1" }, "tc")!;
+    expect(resolveBudgetMinor(pause, "JPY")).toEqual(pause);
+    const inc = actionFromToolCall("adjust_budget", { entityLevel: "campaign", entityId: "C1", mode: "increase", pct: 30 }, "tc")!;
+    expect(resolveBudgetMinor(inc, "JPY").params).toEqual({ mode: "increase", pct: 30 });
   });
 });
 

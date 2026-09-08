@@ -788,22 +788,27 @@ describe("buildCurrentBudgetMinorById", () => {
 
   it("converte o budget MAIOR (reais) do AdEntity de volta pra MENOR (centavos)", () => {
     // Regressão: R$ 220/dia era exibido como R$ 2,20 (100× menor) — o adapter já entrega major,
-    // e o consumidor do card re-divide por 100. Aqui garantimos que guardamos minor.
-    const map = buildCurrentBudgetMinorById([entity("c1", { dailyBudget: 220 })]);
+    // e o consumidor do card re-divide pela moeda. Aqui garantimos que guardamos minor.
+    const map = buildCurrentBudgetMinorById([entity("c1", { dailyBudget: 220 })], "BRL");
     expect(map.get("c1")).toBe(22000);
+  });
+
+  it("currency-aware: JPY (0 casas) não infla 100× no round-trip", () => {
+    const map = buildCurrentBudgetMinorById([entity("c1", { dailyBudget: 1000 })], "JPY");
+    expect(map.get("c1")).toBe(1000);
   });
 
   it("prefere o diário; cai pro vitalício quando não há diário", () => {
     const map = buildCurrentBudgetMinorById([
       entity("c1", { dailyBudget: 50, lifetimeBudget: 900 }),
       entity("c2", { lifetimeBudget: 900 }),
-    ]);
+    ], "BRL");
     expect(map.get("c1")).toBe(5000);
     expect(map.get("c2")).toBe(90000);
   });
 
   it("arredonda centavos fracionários e ignora entidade sem orçamento", () => {
-    const map = buildCurrentBudgetMinorById([entity("c1", { dailyBudget: 12.345 }), entity("c2", {})]);
+    const map = buildCurrentBudgetMinorById([entity("c1", { dailyBudget: 12.345 }), entity("c2", {})], "BRL");
     expect(map.get("c1")).toBe(1235);
     expect(map.has("c2")).toBe(false);
   });

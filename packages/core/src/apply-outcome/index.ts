@@ -2,7 +2,7 @@
 // WhatsApp (apps/worker/approval-apply) E pelo card do site (via API) — mesma voz do Roy nos dois
 // canais, num só lugar (§13 reuso-primeiro). PURA (sem IO).
 
-import { MODERNIZATION_CODES, type Action, type CampaignDraftSpec, type DraftKind, type ModernizationNote } from "@trafego/shared";
+import { MODERNIZATION_CODES, minorToMajor, type Action, type CampaignDraftSpec, type DraftKind, type ModernizationNote } from "@trafego/shared";
 import { goalNounPt } from "../conversion/index.js";
 
 const MODERNIZATION_CODE_SET: ReadonlySet<string> = new Set(MODERNIZATION_CODES);
@@ -60,7 +60,7 @@ export function describeActionOutcome(action: Action, detail: OutcomeDetail): st
 /** "uma campanha de vendas, R$ 50,00/dia · 2 variação(ões) de copy" ou "a duplicata do seu
  *  vencedor, R$ 80,00/dia". Sem jargão (§UX) — objetivo em PT, valor formatado. PURA. */
 export function describeCreatedDraft(kind: DraftKind, spec: CampaignDraftSpec): string {
-  const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: spec.currency }).format(spec.dailyBudgetMinor / 100);
+  const money = new Intl.NumberFormat("pt-BR", { style: "currency", currency: spec.currency }).format(minorToMajor(spec.dailyBudgetMinor, spec.currency));
   if (kind === "duplicate") return `a duplicata do seu vencedor, ${money}/dia`;
   const goal = spec.objective ? goalNounPt(spec.objective) : "campanha";
   const variants = spec.copyVariants?.length ?? 0;

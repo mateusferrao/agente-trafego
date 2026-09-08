@@ -14,7 +14,7 @@ import {
   type Database,
 } from "@trafego/db";
 import type { CampaignDraftSpec } from "@trafego/shared";
-import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY } from "@trafego/shared";
+import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY, minorToMajor } from "@trafego/shared";
 import type { OrgId } from "@trafego/shared";
 import type { TimelineEvent, TimelineOutput, TimelineRecommendation } from "./schema.js";
 
@@ -34,8 +34,6 @@ const PAGE_DEFAULT = 30;
 const PAGE_MAX = 100;
 /** Teto por fonte antes do merge (paginação profunda real via UNION = fast-follow). */
 const SOURCE_CAP = 300;
-/** unidade menor → maior (2 casas; JPY/CLP = fast-follow). */
-const MINOR_PER_UNIT = 100;
 
 export function createTimelineService(deps: TimelineDeps) {
   return {
@@ -188,9 +186,9 @@ export function createTimelineService(deps: TimelineDeps) {
 
       for (const d of draftRows) {
         const spec = d.spec as CampaignDraftSpec;
-        // 2 casas (BRL/USD/EUR); moeda sem centavos (JPY/CLP) = fast-follow. `currency` vai
-        // junto p/ o front formatar com o símbolo certo (nunca hardcodar).
-        const budgetMajor = spec.dailyBudgetMinor / MINOR_PER_UNIT;
+        // conversão currency-aware (JPY sem casas, BHD com 3); `currency` vai junto p/ o front
+        // formatar com o símbolo certo (nunca hardcodar).
+        const budgetMajor = minorToMajor(spec.dailyBudgetMinor, spec.currency);
         events.push({
           id: `dp:${d.id}`,
           at: d.createdAt.toISOString(),

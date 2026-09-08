@@ -63,7 +63,7 @@ import {
   selectLessonsForBrief,
   type LastUnit,
 } from "@trafego/core";
-import { ACTION_PARAM_CURRENT_MINOR, ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS, BUDGET_MODE_INCREASE, DEFAULT_CURRENCY, DEFAULT_POSTURE, extractPhoneFromName, plural } from "@trafego/shared";
+import { ACTION_PARAM_CURRENT_MINOR, ACTION_PARAM_MODE, ACTION_PARAM_PCT, APPROVAL_TTL_HOURS, BUDGET_MODE_INCREASE, DEFAULT_CURRENCY, DEFAULT_POSTURE, extractPhoneFromName, plural, toMinorUnits } from "@trafego/shared";
 import { recommendations } from "@trafego/db";
 import { funnelFromRawActions, mapStatus } from "@trafego/ads-meta";
 import { loadAccountAudiences, loadAgentContext, PROACTIVE_AUDIENCE_UNRESOLVED_REASON, PROACTIVE_REACH_FLOOR_REASON, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner } from "../../modules/conversation/draft-proposal.js";
@@ -150,10 +150,6 @@ import type { AccountAnalysisStateType, AccountAnalysisUpdate } from "./state.js
 
 /** Nº de dias sem análise que dispara um run DEEP (reanalisa tudo). */
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-/** Sub-unidade da moeda (centavos por real) — converte o budget major do `AdEntity` de volta pra
- *  minor no contexto de exibição da ação. Convenção repetida no monorepo (ver `runs/service.ts`). */
-const MINOR_PER_UNIT = 100;
 
 /** Piso de alcance mensal (Fatia 8) pra o AUTÔNOMO criar/replicar sozinho — abaixo disso a proposta
  *  degrada pra recomendação humana em vez de criar. Fast-follow: tornar configurável por-agente. */
@@ -862,7 +858,8 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     }
     if (!state.analysisOutput) return {};
     const knownIds = new Set(state.entities.map((e) => e.id));
-    const budgetMinorById = buildCurrentBudgetMinorById(state.entities);
+    // moeda da conta (sempre populada no load_context; o brief pode faltar em caminho degradado).
+    const budgetMinorById = buildCurrentBudgetMinorById(state.entities, state.account?.currency ?? DEFAULT_CURRENCY);
     // Edição de público (Fatia C): review_audience de ADSET vira ação adjust_audience REAL quando a
     // capacidade está ligada (opt-in) e dá pra propor+resolver um público concreto (LLM + resolução
     // nome→id). Só adset (público mora no adset); campanha/anúncio fica consultivo. Nunca auto-aplica.
@@ -1196,7 +1193,7 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     const nameById = new Map((state.entities ?? []).map((e) => [e.id, e.name]));
     // orçamento atual da entidade-alvo → contexto de exibição em adjust_budget (card mostra
     // "atual → proposto"). Enriquece aqui, no mesmo ponto do nome, cobrindo playbook + LLM.
-    const budgetMinorById = buildCurrentBudgetMinorById(state.entities ?? []);
+    const budgetMinorById = buildCurrentBudgetMinorById(state.entities ?? [], state.account?.currency ?? DEFAULT_CURRENCY);
     const merged = [...(state.playbookCandidates ?? []), ...(state.llmCandidates ?? [])].map((a) => {
       const name = nameById.get(a.target.id);
       // `name` opcional (exactOptionalPropertyTypes): só inclui quando conhecido.
@@ -1850,14 +1847,15 @@ function buildBudgetByEntity(entities: readonly AdEntity[]): Map<string, boolean
  *
  * `AdEntity.dailyBudget`/`lifetimeBudget` já vêm em unidade MAIOR (reais — o adapter converte na
  * entrada, ver `types/index.ts`), então convertemos de volta pra MENOR aqui: o consumidor do card
- * (`ACTION_PARAM_CURRENT_MINOR`) espera minor e re-divide por 100. Sem isto, o valor exibido sai
- * 100× menor (R$ 2,20 em vez de R$ 220).
+ * (`ACTION_PARAM_CURRENT_MINOR`) espera minor e re-converte pela moeda. A conversão é currency-aware
+ * (`toMinorUnits`) — o ×100 fixo corromperia JPY/BHD (100× no round-trip). Sem isto o valor sairia
+ * errado (R$ 2,20 em vez de R$ 220; ¥100000 em vez de ¥1000).
  */
-export function buildCurrentBudgetMinorById(entities: readonly AdEntity[]): Map<string, number> {
+export function buildCurrentBudgetMinorById(entities: readonly AdEntity[], currency: string): Map<string, number> {
   const map = new Map<string, number>();
   for (const e of entities) {
     const major = e.dailyBudget ?? e.lifetimeBudget;
-    if (major !== undefined) map.set(e.id, Math.round(major * MINOR_PER_UNIT));
+    if (major !== undefined) map.set(e.id, toMinorUnits(major, currency));
   }
   return map;
 }

@@ -15,7 +15,7 @@ import {
 } from "@trafego/db";
 import type { CuratedEntitySnapshot, InsightMetrics, UnitAnalysis } from "@trafego/shared";
 import { cpaLabelFor, isOverCostCap, partialNote, partialSeverity, projectBudgetTargetMinor, resolveCostCapUsd, usagePeriod } from "@trafego/core";
-import { ACTION_PARAM_CURRENT_MINOR } from "@trafego/shared";
+import { ACTION_PARAM_CURRENT_MINOR, DEFAULT_CURRENCY, minorToMajor } from "@trafego/shared";
 import {
   AGENT_RUNS_QUEUE,
   AGENT_RUN_JOB,
@@ -213,12 +213,15 @@ export function createRunsService(deps: RunsDeps) {
     // item acionável (rascunho/ativação por draftId; ação por entidade+tipo) → o card mostra
     // aplicabilidade real + CTA. Uma consulta por run.
     const [runRow] = await deps.db
-      .select({ agentId: agentRuns.agentId })
+      .select({ agentId: agentRuns.agentId, currency: adAccounts.currency })
       .from(agentRuns)
+      .leftJoin(agents, eq(agents.id, agentRuns.agentId))
+      .leftJoin(adAccounts, eq(adAccounts.id, agents.adAccountId))
       .where(and(eq(agentRuns.id, runId), eq(agentRuns.orgId, orgId)))
       .limit(1);
     const idx = await buildPendingIndex(orgId, runRow?.agentId ?? null);
-    return recs.map((r) => toRecommendationOutput(r, votes.get(r.id) ?? null, idx));
+    const currency = runRow?.currency ?? DEFAULT_CURRENCY;
+    return recs.map((r) => toRecommendationOutput(r, votes.get(r.id) ?? null, idx, currency));
   }
 
   /** Mapa das pendentes do agente: rascunho/ativação por draftId; ação por `${level}:${id}:${type}`.
@@ -687,9 +690,6 @@ interface PendingApprovalIndex {
  * draftId; ação direta liga à aprovação pendente por entidade+tipo. Sem pendente → not_applicable
  * (auto-aplicada/barrada/já criada — nada a fazer no card agora).
  */
-/** Unidade mínima por unidade maior (centavos → reais) — igual ao approvals/drafts service. */
-const MINOR_PER_UNIT = 100;
-
 /** Orçamento atual (unidade mínima) capturado na ação `adjust_budget` — só quando conhecido/>0. */
 function proposedCurrentMinor(action: Action): number | null {
   if (action.type !== "adjust_budget") return null;
@@ -697,15 +697,16 @@ function proposedCurrentMinor(action: Action): number | null {
   return Number.isFinite(raw) && raw > 0 ? raw : null;
 }
 
-/** Minor → unidade maior (reais) para exibição; null preserva. */
-function toMajor(minor: number | null): number | null {
-  return minor != null ? minor / MINOR_PER_UNIT : null;
+/** Minor → unidade maior para exibição, na moeda da conta (JPY sem casas); null preserva. */
+function toMajor(minor: number | null, currency: string): number | null {
+  return minor != null ? minorToMajor(minor, currency) : null;
 }
 
 function toRecommendationOutput(
   rec: RecommendationRow,
   vote: "up" | "down" | null,
   idx: PendingApprovalIndex,
+  currency: string,
 ): RecommendationOutput {
   const action = rec.proposedAction as Action | null;
   const draftId = rec.draftId ?? null;
@@ -744,9 +745,9 @@ function toRecommendationOutput(
           type: action.type,
           target: { level: action.target.level, id: action.target.id },
           params: action.params,
-          currentBudgetMajor: toMajor(proposedCurrentMinor(action)),
+          currentBudgetMajor: toMajor(proposedCurrentMinor(action), currency),
           targetBudgetMajor:
-            action.type === "adjust_budget" ? toMajor(projectBudgetTargetMinor(proposedCurrentMinor(action), action.params)) : null,
+            action.type === "adjust_budget" ? toMajor(projectBudgetTargetMinor(proposedCurrentMinor(action), action.params), currency) : null,
         }
       : null,
     toolKey: rec.toolKey ?? null,

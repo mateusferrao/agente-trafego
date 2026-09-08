@@ -13,7 +13,7 @@ import {
 } from "@trafego/db";
 import { applyDraftEdit, buildResolvedSnapshot, computeApplyPreview, describeDeliveryEstimate, planScaleMove, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
 import { applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
-import type { ToolBindingMode } from "@trafego/shared";
+import { toMinorUnits, minorToMajor, type ToolBindingMode } from "@trafego/shared";
 import {
   ACTION_PARAM_MODE,
   ACTION_PARAM_PCT,
@@ -54,9 +54,6 @@ export function isAllowedCreativeType(contentType: string): boolean {
   return ALLOWED_IMAGE_TYPES.has(contentType) || ALLOWED_VIDEO_TYPES.has(contentType);
 }
 
-// unidade menor → maior. Assume moeda de 2 casas (BRL/USD/EUR); moedas sem centavos
-// (JPY/CLP) = fast-follow (derivar a subunidade da moeda). Beta é BRL.
-const MINOR_PER_UNIT = 100;
 const APPROVAL_TTL_MS = APPROVAL_TTL_HOURS * 60 * 60 * 1000;
 /** Teto de tempo e tamanho do fetch da miniatura (fbcdn) — não pendura o handler da API nem
  *  materializa payload gigante em memória (a thumb da Meta é pequena; isto é a rede de segurança). */
@@ -280,7 +277,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     if (input.budgetReais != null) {
       const ctx = await getCtx();
       if (!ctx) return { ok: false, message: ACCOUNT_UNAVAILABLE_MSG };
-      edit.budgetMinor = Math.round(input.budgetReais * MINOR_PER_UNIT);
+      edit.budgetMinor = toMinorUnits(input.budgetReais, ctx.currency);
       budgetCapMinor = ctx.cfg.maxNewDailyBudgetMinor ?? null;
     }
 
@@ -483,10 +480,10 @@ export function createDraftsService(deps: DraftsServiceDeps) {
           kind: d.kind,
           origin: d.origin,
           objective: spec.objective ?? null,
-          dailyBudgetMajor: spec.dailyBudgetMinor / MINOR_PER_UNIT,
+          dailyBudgetMajor: minorToMajor(spec.dailyBudgetMinor, spec.currency),
           clampedFromMajor:
             spec.requestedDailyBudgetMinor && spec.requestedDailyBudgetMinor > spec.dailyBudgetMinor
-              ? spec.requestedDailyBudgetMinor / MINOR_PER_UNIT
+              ? minorToMajor(spec.requestedDailyBudgetMinor, spec.currency)
               : null,
           currency: spec.currency,
           activation: spec.activation,

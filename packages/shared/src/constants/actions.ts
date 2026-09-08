@@ -8,6 +8,13 @@ export const ACTION_PARAM_PCT = "pct";
 /** Valor ABSOLUTO alvo do budget (unidade mínima/centavos), usado com `mode:'set'`. */
 export const ACTION_PARAM_AMOUNT_MINOR = "amountMinor";
 /**
+ * Valor ABSOLUTO alvo do budget na unidade MAIOR (reais/dólares/ienes), como o gestor fala no
+ * chat. A casca converte p/ `amountMinor` (unidade menor) assim que a MOEDA da conta é conhecida
+ * — a conversão depende da moeda (JPY não tem centavos, BHD tem milésimos), então NÃO pode ser
+ * feita na montagem da ação (antes de resolver a conta). Some depois de convertido.
+ */
+export const ACTION_PARAM_AMOUNT_MAJOR = "amountMajor";
+/**
  * Orçamento ATUAL da entidade (unidade mínima) no momento da proposta — CONTEXTO de
  * exibição/eco (card de aprovação mostra "atual → proposto"), NÃO input da mutação. A casca
  * enriquece a ação com isto antes de persistir (igual ao `target.name`); ausente = desconhecido.

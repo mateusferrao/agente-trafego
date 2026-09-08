@@ -30,7 +30,7 @@ import {
   type UngroundedNumber,
 } from "@trafego/core";
 import { applyAgentConfigChange, loadAgentConfigState, reseedArchetypeChange } from "@trafego/agent-config";
-import { sleep, phoneTokensInText, buildApprovalApplyJob, ACTION_PARAM_TARGETING, ACTION_PARAM_MODE, ACTION_PARAM_AMOUNT_MINOR, BUDGET_MODE_SET, formatMoney } from "@trafego/shared";
+import { sleep, phoneTokensInText, buildApprovalApplyJob, ACTION_PARAM_TARGETING, ACTION_PARAM_MODE, ACTION_PARAM_AMOUNT_MINOR, BUDGET_MODE_SET, formatMoneyMinor, toMinorUnits } from "@trafego/shared";
 import type { Action, ApprovalId, ConversionGoal, OrgId } from "@trafego/shared/types";
 import { CONVERSION_GOALS } from "@trafego/shared/types";
 import { AdsPlatformError } from "@trafego/shared/ports";
@@ -56,6 +56,7 @@ import {
   RESEED_TOOL_NAME,
   WRITE_TOOL_NAMES,
   actionFromToolCall,
+  resolveBudgetMinor,
   buildCapabilitiesText,
   isConfirmableConfigTool,
   makeConversationTools,
@@ -1160,9 +1161,9 @@ export function makeConversationNodes(
         const who = fromCur === undefined ? fromName : toName;
         return { messages: [...answerToolCalls(allCalls, "sem budget"), new AIMessage(`Não consegui ler o orçamento diário de *${who}* — pode ser que o orçamento esteja em outro nível (ex: na campanha, não no conjunto). Dá uma olhada no site.`)] };
       }
-      const requestedMinor = Math.round(amountReais * 100);
+      const requestedMinor = toMinorUnits(amountReais, wctx.currency);
       if (requestedMinor >= fromCur) {
-        return { messages: [...answerToolCalls(allCalls, "valor alto demais"), new AIMessage(`Esse valor esvaziaria *${fromName}* (orçamento atual ${formatMoney(fromCur / 100, wctx.currency)}/dia). Me diz um valor menor pra mover.`)] };
+        return { messages: [...answerToolCalls(allCalls, "valor alto demais"), new AIMessage(`Esse valor esvaziaria *${fromName}* (orçamento atual ${formatMoneyMinor(fromCur, wctx.currency)}/dia). Me diz um valor menor pra mover.`)] };
       }
       // pré-clamp: o maior movível respeitando o teto de % nos DOIS lados (origem −%, destino +%).
       const maxMovableMinor = Math.floor((wctx.cfg.maxBudgetChangePct / 100) * Math.min(fromCur, toCur));
@@ -1170,7 +1171,7 @@ export function makeConversationNodes(
       if (moveMinor <= 0) {
         return { messages: [...answerToolCalls(allCalls, "teto"), new AIMessage(`Com o seu limite de segurança de ${wctx.cfg.maxBudgetChangePct}% por mudança, não consigo mover nada de uma vez entre essas duas. Dá pra afrouxar o teto na config, ou mover no site.`)] };
       }
-      const clampedNote = moveMinor < requestedMinor ? `\n(respeitando seu teto de ${wctx.cfg.maxBudgetChangePct}%, movo ${formatMoney(moveMinor / 100, wctx.currency)}/dia — o máximo seguro de uma vez)` : "";
+      const clampedNote = moveMinor < requestedMinor ? `\n(respeitando seu teto de ${wctx.cfg.maxBudgetChangePct}%, movo ${formatMoneyMinor(moveMinor, wctx.currency)}/dia — o máximo seguro de uma vez)` : "";
       const legFrom: Action = {
         id: `${reallocCall.id ?? REALLOCATE_TOOL_NAME}:from`,
         type: "adjust_budget",
@@ -1216,9 +1217,9 @@ export function makeConversationNodes(
       const sim = wctx.cfg.dryRun ? "Modo simulação (não aplico de verdade): " : "";
       const accountLbl = ctx.multiAccount && ctx.accountName ? ` (${ctx.accountName})` : "";
       const echo =
-        `${sim}Vou mover ${formatMoney(moveMinor / 100, wctx.currency)}/dia${accountLbl}:\n` +
-        `• *${fromName}* cai pra ${formatMoney((fromCur - moveMinor) / 100, wctx.currency)}/dia\n` +
-        `• *${toName}* sobe pra ${formatMoney((toCur + moveMinor) / 100, wctx.currency)}/dia${clampedNote}\n\nConfirma?`;
+        `${sim}Vou mover ${formatMoneyMinor(moveMinor, wctx.currency)}/dia${accountLbl}:\n` +
+        `• *${fromName}* cai pra ${formatMoneyMinor(fromCur - moveMinor, wctx.currency)}/dia\n` +
+        `• *${toName}* sobe pra ${formatMoneyMinor(toCur + moveMinor, wctx.currency)}/dia${clampedNote}\n\nConfirma?`;
       return {
         messages: [...answerToolCalls(allCalls, "proposto — aguardando confirmação"), new AIMessage(echo)],
         pendingWrite: {
@@ -1245,11 +1246,16 @@ export function makeConversationNodes(
       return { messages: answerToolCalls(allCalls, "Não consegui acessar a conta agora. Tenta de novo em instantes.") };
     }
 
+    // budget set-absoluto do chat vem na unidade MAIOR (amountMajor) — converte p/ unidade menor
+    // AGORA que a moeda da conta é conhecida (JPY≠centavos). Antes disso o guardrail/mutação nem
+    // enxergariam o valor. No-op p/ pause/status/pct.
+    const resolved = proposed.map((a) => resolveBudgetMinor(a, wctx.currency));
+
     // Ativação em cadeia (a Meta não cascateia status): ativar campanha/conjunto religa a subárvore
     // pausada, senão só o nó liga e a campanha não veicula. Leitura da árvore best-effort (falha →
     // só o nó). pause/→PAUSED não expande. Feito ANTES do guardrail p/ contar/isentar a árvore inteira.
     const chain = await expandChainActivation(
-      proposed,
+      resolved,
       async (level, id) => {
         try {
           return await deps.ports.ads.readActivationTree(wctx.account, level, id);
@@ -1485,7 +1491,7 @@ export function makeConversationNodes(
         case "partial": {
           // devolução TAMBÉM falhou → estado parcial explícito (jamais silêncio). §UX erro = o quê + o quê fazer.
           const leftMinor = Number(legFrom.params[ACTION_PARAM_AMOUNT_MINOR]);
-          const leftMoney = Number.isFinite(leftMinor) ? formatMoney(leftMinor / 100, wctx.currency) : "um valor menor";
+          const leftMoney = Number.isFinite(leftMinor) ? formatMoneyMinor(leftMinor, wctx.currency) : "um valor menor";
           logger.error({ fromId: legFrom.target.id, toId: legTo.target.id }, "realloc:compensação falhou — estado parcial");
           return {
             messages: [...answerToolCalls(calls, "estado parcial"), new AIMessage(`⚠️ Reduzi *${fromName}* mas não consegui aumentar *${toName}* nem devolver o orçamento. *${fromName}* está com ${leftMoney}/dia agora — dá uma olhada no site e ajuste se precisar.`)],

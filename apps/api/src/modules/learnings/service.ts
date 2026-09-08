@@ -12,7 +12,7 @@ import {
   GUARDRAIL_OPPORTUNITY_KEY,
   type LearningActionResult,
 } from "@trafego/agent-config";
-import { DEFAULT_CURRENCY } from "@trafego/shared";
+import { DEFAULT_CURRENCY, minorToMajor } from "@trafego/shared";
 import type { SchedulerPort } from "@trafego/shared/ports";
 import type { OrgId } from "@trafego/shared/types";
 import { notFound, badRequest } from "../../middleware/error-handler.js";
@@ -29,8 +29,6 @@ export interface LearningsDeps {
 
 /** ms por dia — deriva o cooldown (dias) em milissegundos. */
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
-/** unidade menor → maior da moeda (convenção do monorepo). */
-const MINOR_PER_UNIT = 100;
 
 // só os tipos de APRENDIZADO (o `rejected`/`objective` legado não aparece na aba) —
 // fonte única em @trafego/core (LEARNING_MEMORY_TYPES, derivado de MEMORY_TYPE_BY_KIND).
@@ -127,7 +125,7 @@ export function createLearningsService(deps: LearningsDeps) {
         wantedPct: op.wantedPct,
         cappedPct: op.cappedPct,
         foregoneMinor: op.foregoneMinor,
-        foregoneMajor: op.foregoneMinor / MINOR_PER_UNIT,
+        foregoneMajor: minorToMajor(op.foregoneMinor, acc?.currency ?? DEFAULT_CURRENCY),
         currency: acc?.currency ?? DEFAULT_CURRENCY,
       },
     ];
