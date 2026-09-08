@@ -17,7 +17,7 @@ import type { CreativeVisionResult } from "@trafego/shared";
 import { libraryCreativeContentHash } from "../../workers/creative-analyze.js";
 import { pickCreativeByReference, type LibraryCandidate } from "../../modules/creative/match-library.js";
 import type { Database } from "@trafego/db/client";
-import { campaignDelivering, confidenceTier, daysAgoInTz, LEARNING_MEMORY_TYPES, rankAdCreatives, renderRessalvas, resolveNamedMatch, todayInTz, type RankableCreative } from "@trafego/core";
+import { campaignDelivering, confidenceTier, daysAgoInTz, isMessagingGoal, LEARNING_MEMORY_TYPES, rankAdCreatives, renderRessalvas, resolveNamedMatch, todayInTz, type RankableCreative } from "@trafego/core";
 import { mapStatus } from "@trafego/ads-meta";
 import { createAnalysisRepo, type AdCreativeCopyRow } from "../../modules/analysis/repo.js";
 import {
@@ -1092,14 +1092,23 @@ export function describeDraftCreative(
 /** Detalhe RICO do(s) rascunho(s) pendente(s) da conta — do BANCO (spec + approval de 24h), não
  *  do estado efêmero da conversa (30min). Responde "qual público/criativo" na hora, sem Meta. O
  *  `approvalId` deixa o usuário aprovar/recusar por referência (approve/reject). */
+/** Destino de conversas do rascunho (§7): a Página SEMPRE está definida (a criação bloqueia sem ela)
+ *  — a mensagem nunca diz "sem Página". Nome/número são best-effort (a Meta às vezes não expõe);
+ *  quando faltam, descreve a Página pela PROVENIÊNCIA (o anúncio ativo do dono), não por id cru. PURO. */
+export function describeDraftDestino(page: PageInfo): string {
+  if (page.name && page.whatsappNumber) return `WhatsApp da sua Página *${page.name}* (número +${page.whatsappNumber})`;
+  if (page.name) return `WhatsApp da sua Página *${page.name}* (o número exato eu confirmo depois de criar — a Meta nem sempre mostra antes)`;
+  return "WhatsApp da Página do seu anúncio ativo — a Meta não retornou o nome/número dela agora, mas a Página JÁ está definida no rascunho, então dá pra criar. Se você quer OUTRA Página, me diga o nome ou o número";
+}
+
 async function getPendingDraftData(
-  db: Database,
-  approvalPort: ApprovalPort,
+  deps: WorkerDeps,
   orgId: string,
   agentId: string,
   adAccountId: string,
 ): Promise<NoData | { hasData: true; drafts: readonly unknown[] }> {
-  const pending = (await approvalPort.listPendingByAgent(agentId as AgentId)).filter(
+  const db = deps.db;
+  const pending = (await deps.ports.approval.listPendingByAgent(agentId as AgentId)).filter(
     (a): a is DraftApproval => a.kind === "draft",
   );
   if (pending.length === 0) {
@@ -1137,16 +1146,45 @@ async function getPendingDraftData(
     }
   }
 
+  // DESTINO de conversas (§7 — o bug do "qual página"): pra rascunho de mensagens no WhatsApp, resolve
+  // a Página do rascunho (best-effort) pra o dono saber pra qual WhatsApp o clique leva SEM cair no
+  // account-wide `list_pages` (que pode vir vazio por visibilidade e mentir "sem Página"). O rascunho
+  // SEMPRE tem `pageId` (a criação bloqueia sem). 1 GET por Página distinta (dedupe), só nos de mensagens.
+  const account = await createAnalysisRepo(db).loadAccount(orgId, adAccountId);
+  const ref = account ? { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) } : null;
+  const destinoByPageId = new Map<string, string>();
+  if (ref) {
+    const msgPageIds = [
+      ...new Set(
+        pending
+          .map((a) => byId.get(a.draftId)?.spec as CampaignDraftSpec | undefined)
+          .filter((s): s is CampaignDraftSpec => !!s && isMessagingGoal(s.objective) && !!s.pageId)
+          .map((s) => s.pageId!),
+      ),
+    ];
+    for (const pageId of msgPageIds) {
+      let page: PageInfo = { pageId };
+      try {
+        page = await withTimeout(deps.ports.ads.getPageWhatsappInfo(ref, pageId), deps.conversation.liveFetchTimeoutMs);
+      } catch {
+        /* best-effort: sem nome/número → descrição por proveniência (a Página segue definida) */
+      }
+      destinoByPageId.set(pageId, describeDraftDestino(page));
+    }
+  }
+
   const items = pending.flatMap((a) => {
     const d = byId.get(a.draftId);
     if (!d) return [];
     const spec = d.spec as CampaignDraftSpec;
+    const destino = spec.pageId ? destinoByPageId.get(spec.pageId) : undefined;
     return [
       {
         approvalId: a.id,
         resumo: describeCreatedDraft(d.kind, spec),
         criativo: describeDraftCreative(d.kind, spec.creative, titleByAdId),
         publico: describeDraftAudience(spec.targeting),
+        ...(destino ? { destino } : {}),
         copies: spec.copyVariants?.map((c) => c.headline) ?? [],
       },
     ];
@@ -1492,7 +1530,14 @@ export async function listPagesData(
   } catch {
     return { hasData: false, note: "não consegui buscar suas Páginas agora — tenta de novo em instantes" };
   }
-  if (pages.length === 0) return { hasData: false, note: "não achei Páginas que essa conta possa usar — verifique se a conta tem uma Página ligada no Gerenciador da Meta" };
+  // §7: lista vazia = a Meta NÃO retornou as Páginas com o acesso atual (limite de visibilidade do
+  // token, comum sem `business_management`) — NUNCA prova de que "não há Página ligada". Se há um
+  // rascunho pendente, ele já tem uma Página (a criação bloqueia sem uma). A nota nunca afirma ausência.
+  if (pages.length === 0)
+    return {
+      hasData: false,
+      note: "não consegui listar suas Páginas agora — a Meta às vezes não retorna isso com o acesso do token, e isso NÃO quer dizer que não há Página ligada. A criação usa a Página do seu anúncio ativo; se você quer uma Página específica, me diga o nome ou o número.",
+    };
   return { hasData: true, pages };
 }
 
@@ -2234,12 +2279,12 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     async () => {
       if (noFocus()) return NEEDS_FOCUS;
       logger.debug({ agentId: ctx.agentId }, "tool:get_pending_draft");
-      return asString(await getPendingDraftData(db, ports.approval, ctx.orgId, ctx.agentId, ctx.adAccountId));
+      return asString(await getPendingDraftData(deps, ctx.orgId, ctx.agentId, ctx.adAccountId));
     },
     {
       name: "get_pending_draft",
       description:
-        "Detalhe do RASCUNHO de campanha aguardando sua aprovação (do banco, sempre atual — não expira em 30min como o eco): QUAL criativo (anúncio real), QUAL público, e as copies, com o id pra aprovar/recusar. Use quando o usuário perguntar sobre a campanha que você propôs ('qual público', 'qual criativo', 'o que você vai criar', 'recusa/aprova o rascunho'). Responde na hora, sem chamar a Meta.",
+        "Detalhe do RASCUNHO de campanha aguardando sua aprovação (do banco, sempre atual — não expira em 30min como o eco): QUAL criativo (anúncio real), QUAL público, as copies e — em campanha de conversas — o DESTINO (a Página/WhatsApp pra onde o clique leva), com o id pra aprovar/recusar. Use quando o usuário perguntar sobre a campanha que você propôs ('qual público', 'qual criativo', 'QUAL PÁGINA', 'pra qual WhatsApp/número vai', 'o que você vai criar', 'recusa/aprova o rascunho'). O rascunho SEMPRE tem uma Página definida (senão nem teria sido criado) — o campo `destino` responde 'qual página', NÃO use list_pages pra isso.",
       schema: z.object({}),
     },
   );

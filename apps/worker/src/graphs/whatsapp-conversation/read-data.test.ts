@@ -15,6 +15,7 @@ import {
   latestAnalysisAsOf,
   describeDraftAudience,
   describeDraftCreative,
+  describeDraftDestino,
   listPendingData,
   getLearningsData,
   listRecommendationsData,
@@ -134,6 +135,26 @@ describe("describeDraftCreative (rótulo do criativo do rascunho, do BANCO — s
   });
   it("duplicate (sem creative no spec) → fala do criativo do vencedor duplicado", () => {
     expect(describeDraftCreative("duplicate", undefined, new Map()).toLowerCase()).toContain("vencedor");
+  });
+});
+
+describe("describeDraftDestino (qual Página/WhatsApp o rascunho de conversas leva — §7)", () => {
+  it("nome + número → nomeia a Página e o número", () => {
+    const txt = describeDraftDestino({ pageId: "P1", name: "CaquiAI Oficial", whatsappNumber: "5531953491398" });
+    expect(txt).toContain("CaquiAI Oficial");
+    expect(txt).toContain("+5531953491398");
+  });
+  it("só nome → nomeia a Página e é honesto que o número confirma após criar", () => {
+    const txt = describeDraftDestino({ pageId: "P1", name: "CaquiAI Oficial" });
+    expect(txt).toContain("CaquiAI Oficial");
+    expect(txt.toLowerCase()).toContain("confirmo depois de criar");
+  });
+  it("degradado (só pageId) → descreve por PROVENIÊNCIA, nunca 'sem Página', e afirma que dá pra criar", () => {
+    const txt = describeDraftDestino({ pageId: "P1" });
+    expect(txt.toLowerCase()).toContain("anúncio ativo");
+    expect(txt.toLowerCase()).toContain("dá pra criar");
+    expect(txt).not.toContain("P1"); // nunca vaza id cru (§13)
+    expect(txt.toLowerCase()).not.toContain("sem página");
   });
 });
 
