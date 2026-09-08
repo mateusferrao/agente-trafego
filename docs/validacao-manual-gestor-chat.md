@@ -147,6 +147,51 @@
 
 ---
 
+## Vídeo no WhatsApp — 413 + análise dos bytes + memória (Slices 1-3)
+
+> Iniciativa que fechou o bug de produção do **413** (mídia > 1 MB rejeitada no webhook) e somou:
+> Roy analisa o vídeo **dos nossos bytes** (sem o desvio pela Meta) e **lembra** do criativo por
+> descrição depois. Pré: além do padrão, um **grupo** configurado (espelho do número) p/ o teste de
+> @menção, e os envs `OPENROUTER_VIDEO_MODEL` (um modelo video-capable — **verificar ao vivo**) +
+> `WHATSAPP_VIDEO_MODEL_MAX_MB` (default 20) e `CREATIVE_MAX_WHATSAPP_VIDEO_MB` (default 50).
+
+### S1 — Fix do 413 (webhook aceita mídia base64)
+| # | Passo | Esperado (feliz) |
+|---|-------|------------------|
+| S1.1 | Mandar um **vídeo ~5–10 MB** no DM do Roy | Webhook responde **200** (não 413); o vídeo entra na biblioteca. Antes: `statusCode:413` na api, worker sem logs. |
+| S1.2 | Mandar uma **imagem grande** (~3 MB) e um **áudio longo** | Ambos passam (200) e são processados. |
+
+**Caminhos tristes:**
+| # | Passo | Esperado |
+|---|-------|----------|
+| S1.3 | Mandar um vídeo **acima de `CREATIVE_MAX_WHATSAPP_VIDEO_MB`** (ex: 80 MB, se o limite é 50) | Webhook ainda aceita o corpo (o `bodyLimit` = limite × inflação base64 + folga), mas o intake **recusa honesto** ("grande demais… sobe pela biblioteca no site"). Nunca 413 nem silêncio. |
+| S1.4 | Payload maior que o `bodyLimit` derivado (bem acima do teto) | 413 legítimo (proteção); as **demais rotas** seguem no 1 MB default (superfície pública menor). |
+
+### S2 — Roy analisa o vídeo dos nossos bytes (sem esperar a Meta)
+| # | Passo | Esperado (feliz) |
+|---|-------|------------------|
+| S2.1 | No **grupo**, mandar um vídeo **marcando o Roy** (@menção ou reply) | Ack imediato "analisando seu vídeo…"; em seguida o Roy responde de fato (movimento/áudio/gancho — vídeo COMPLETO ao modelo, não frames), **sem esperar** o upload pra Meta. Vídeo entra na biblioteca em paralelo. |
+| S2.2 | No **DM**, mandar um vídeo **com legenda** ("o que acha desse?") | Idem — a legenda vira a pergunta; resposta dos nossos bytes. |
+| S2.3 | Vídeo entre `WHATSAPP_VIDEO_MODEL_MAX_MB` e `CREATIVE_MAX_WHATSAPP_VIDEO_MB` (ex: 30 MB) | Grande p/ análise ao vivo, mas o intake salva → Roy diz "**guardei na biblioteca** e a análise sai por lá" (promessa honesta). |
+
+**Caminhos tristes:**
+| # | Passo | Esperado |
+|---|-------|----------|
+| S2.4 | Vídeo **acima de `CREATIVE_MAX_WHATSAPP_VIDEO_MB`** marcando o Roy | Roy **não** promete biblioteca (o intake rejeita) → "grande demais… sobe pela biblioteca no site". |
+| S2.5 | Vídeo no grupo **sem** marcar o Roy | Silêncio (só responde quando dirigido — §9). |
+| S2.6 | Modelo de vídeo indisponível / falha ao analisar | Aviso honesto ("tive um problema pra analisar agora — guardei na biblioteca"); nunca silêncio. **Verificar ao vivo** que o `OPENROUTER_VIDEO_MODEL` de fato consome `video_url`. |
+
+### S3 — Memória / recuperação por descrição
+| # | Passo | Esperado |
+|---|-------|----------|
+| S3.1 | Depois de mandar um vídeo (S2), perguntar "**o que você achou daquele vídeo da praia?**" | Roy casa pela **descrição** (visão cacheada) e traz a decomposição (gancho/ângulo/corpo/CTA/prova/forças/fraquezas). |
+| S3.2 | "e **o último** criativo que te mandei?" | Traz o mais recente da conta (recência). |
+| S3.3 | Referência que **não bate** com nada ("o vídeo do foguete", sem ter mandado) | Empty-state honesto ("não achei um criativo que bata com isso — descreve melhor?"); **não** traz o errado. |
+| S3.4 | Vídeo cuja análise de **chat degradou** (grande/sem bytes) mas a **biblioteca** analisou | O recall **ainda acha** (busca as duas chaves de visão — chat + biblioteca). |
+| S3.5 | Conta **sem** criativos guardados | "você ainda não tem criativos guardados nessa conta — me manda um que eu analiso." |
+
+---
+
 ## Teste simulado E2E (passo a passo, traçado no código)
 
 > Cada cenário abaixo foi **traçado pelo código real** (funções + retornos por passo), simulando o
@@ -206,7 +251,40 @@ Pré: binding `adjust_budget` ON. "tira R$ 12/dia da Alpha (R$100) e põe na Bet
 3. `TRAFEGO_CHAT_ADS_WRITES=false` → `buildInContextAllow` com `chatAdsWrites:false` → `writeTools=[]`, refino fora → só consulta+approve/reject+revert+config. ✓ (teste turn.ts). 
 4. Config + edição no mesmo turno ("muda a meta e edita o público") → `alsoMetaWrite` agora inclui `edit_audience` → "me peça uma de cada vez" (não some com a edição). ✓ (fix da revisão).
 
+### E2E-7 — Fix do 413 (Slice 1)
+Entrada: Evolution POSTa `/webhooks/evolution/:instanceId` com a mídia em **base64 no corpo JSON** (ex: vídeo 6 MB → ~8 MB de corpo).
+1. A rota tem `bodyLimit: WEBHOOK_BODY_LIMIT_BYTES = webhookBodyLimitBytes(env.CREATIVE_MAX_WHATSAPP_VIDEO_MB)`. Default 50 → `ceil(50·4/3 + 4) = 71 MB`. O corpo de 8 MB < 71 MB → Fastify **bufferiza + parseia** (antes: default 1 MB → **413 antes do handler**, worker sem logs). ✓
+2. `evolutionWebhookBody.parse` + secret por-instância no service → enfileira o cru. 200. ✓
+3. Demais rotas **não** recebem o override → seguem no 1 MB (superfície pública menor). ✓ (teste `body-limit`: dimensionamento por MB + inflação + folga).
+
+### E2E-8 — Vídeo-pergunta analisado dos NOSSOS bytes (Slice 2)
+Entrada: no grupo, `videoMessage` + `contextInfo` com @menção ao bot (ou reply), `fileLength=6 MB`.
+1. `parseInbound` → `{kind:"video", group:{...}, caption}`; roteador de grupo confirma que é **dirigido**. `claimInbound` (`SET NX`) → 1ª vez. ✓
+2. `webhook-inbound`: `videoQuestion = kind==="video" && (ref.kind==="group" || caption>0)` → `true` → enfileira `buildCreativeVideoAnalyzeJob({orgId, ref, messageKey, mimetype, caption, fileLength})` **e** o intake com `suppressNotice:true` (Meta em background p/ biblioteca) + **ack** `VIDEO_ANALYZING_NOTICE`. ✓
+3. `creative-video-analyze` (`makeVideoAnalyze`): probe `fileLength(6MB) ≤ videoModelMaxBytes(20MB)` → não degrada. `fetchMediaBase64` → bytes → `contentHash = mediaBytesContentHash(bytes)`. ✓
+4. `vision.resolve({videoUrl:"data:video/mp4;base64,…", contentHash, meta:{orgId}})` → cache-miss → `completeStructured` roteado ao `videoModel` (input tem `videoUrl`), `meta:{orgId,type:"vision"}` (metrado — fix da revisão) → grava a decomposição sob `contentHash`. ✓
+5. `llm.complete` (messageModel, `meta:{orgId,type:"message"}`) redige na voz do Roy → `sendToConversation`. ✓
+6. Em paralelo o intake `ingestCreativeVideo` grava `creative_assets.vision_content_hash = mediaBytesContentHash(bytes)` (**mesma chave** do passo 4) → o asset fica ligado à decomposição p/ o recall. ✓
+- **20–50 MB**: `oversizeNotice(size)` → `size ≤ libraryMaxBytes` → `NOTICE.tooBigForModel` ("guardei na biblioteca…") — honesto, o intake salva. ✓ (teste).
+- **> 50 MB**: `size > libraryMaxBytes` → `NOTICE.tooLargeForLibrary` ("…sobe pela biblioteca no site") — o intake rejeita, não promete biblioteca. ✓ (teste). Probe por `fileLength` aponta o site **antes** de baixar. ✓
+- **Sem bytes / visão null / erro do LLM**: `NOTICE.noBytes` / `NOTICE.failed`. Nunca silêncio. ✓ (testes).
+
+### E2E-9 — Memória: recall por descrição (Slice 3)
+Entrada (dias depois): "o que você achou daquele vídeo da praia?".
+1. LLM chama `recall_creative({reference:"o vídeo da praia"})`. ✓
+2. `recallCreativeData`: `select` os 30 assets mais recentes da conta (`orgId + adAccountId + isNull(archivedAt)`, ordem recência). ✓
+3. Por asset, `candidateHashes = [visionContentHash (bytes, se ≠ lib), libraryCreativeContentHash(id)]` → `select creative_vision_analyses in (todos os hashes)` → `visionFor(a)` usa a que existir (prefere a de chat, mais rica). **Dual-hash** cobre o vídeo cuja análise de chat degradou mas a biblioteca fez. ✓ (teste `recallCreativeData`).
+4. `enriched` = assets COM análise. `pickCreativeByReference(llm, messageModel, "o vídeo da praia", candidates, {orgId, type:"message"})` (metrado — fix Slice-3) casa pela descrição; **-1 → null** (não chuta). ✓
+5. Retorna a decomposição (`summary/hook/angle/body/cta/proofStrength/persuasionSignals/strengths/weaknesses/score`) → o Roy responde. ✓
+- **"o último"** (sem referência clara) → `reference=null` → recência (1º asset com análise). ✓
+- **Nada casa / erro do matcher** → `match:"none"` honesto. ✓
+- **Sem asset / sem análise** → empty-states distintos ("me manda um que eu analiso"). ✓
+
 ## Critérios de aceite (resumo)
+- Mídia (vídeo/imagem grande/áudio) nunca mais retorna 413; o webhook aceita o base64 e as demais rotas seguem em 1 MB.
+- Vídeo-pergunta é analisado dos NOSSOS bytes (vídeo completo), sem esperar a Meta; degradação sempre com aviso honesto (nunca promete biblioteca quando o intake não salva).
+- A análise do criativo é durável e recuperável depois por descrição/recência (dual-hash: chat + biblioteca).
+- As chamadas de LLM da iniciativa (visão do vídeo + matcher de recall) são metradas por org (§11).
 - Vídeo inbound nunca fica em silêncio; ruído de protocolo nunca gera resposta.
 - Toda escrita na Meta passa por eco+confirma; nenhuma auto-aplica sob risco.
 - A realocação A→B nunca deixa a conta num estado parcial silencioso.
