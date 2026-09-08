@@ -13,7 +13,7 @@ import {
 } from "@trafego/db";
 import { applyDraftEdit, buildResolvedSnapshot, computeApplyPreview, describeDeliveryEstimate, planScaleMove, resolveEnabledTools, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference } from "@trafego/core";
 import { applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
-import { toMinorUnits, minorToMajor, type ToolBindingMode } from "@trafego/shared";
+import { toMinorUnits, minorToMajor, resolveCreationActivation, type CreationActivation, type ToolBindingMode } from "@trafego/shared";
 import {
   ACTION_PARAM_MODE,
   ACTION_PARAM_PCT,
@@ -126,6 +126,9 @@ interface ScaleContext {
   readonly cfg: ReturnType<typeof toGuardrailConfig>;
   /** Preferência do passo agressivo (autonomy_policy) — default "ask". */
   readonly scaleAggressivePreference: ScaleAggressivePreference;
+  /** Ativação da criação/escala (autonomy_policy) — default "paused" (2ª aprovação de ativação).
+   *  MESMA fonte do chat (§7): o site não pode furar a barreira ativando direto. */
+  readonly creationActivation: CreationActivation;
   /** Tool-keys habilitadas (bindings, mesma fonte do chat/apply) — gate da escala. */
   readonly enabled: ReadonlySet<string>;
 }
@@ -170,6 +173,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       currency: row.currency ?? DEFAULT_CURRENCY,
       cfg,
       scaleAggressivePreference: row.autonomyPolicy?.scaleAggressivePreference ?? "ask",
+      creationActivation: resolveCreationActivation(row.autonomyPolicy ?? undefined),
       enabled,
     };
   }
@@ -612,7 +616,9 @@ export function createDraftsService(deps: DraftsServiceDeps) {
         currency: ctx.currency,
         dailyBudgetMinor: newDailyBudgetMinor,
         ...(newDailyBudgetMinor < requestedMinor ? { requestedDailyBudgetMinor: requestedMinor } : {}),
-        activation: "active",
+        // G4: respeita a política do agente (default "paused" → 2ª aprovação de ativação), igual ao
+        // chat. Antes hardcodava "active" → a escala pelo site ia ao ar com 1 OK, furando o §7.
+        activation: ctx.creationActivation,
       };
       const [draftRow] = await deps.db
         .insert(campaignDrafts)

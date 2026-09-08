@@ -27,6 +27,7 @@ import { startMailWorker } from "./workers/mail.js";
 import { drainPendingCostPatches } from "./graphs/whatsapp-conversation/nodes.js";
 import { makeAccountCron } from "./schedulers/account-cron.js";
 import { createRunReaper } from "./modules/dispatch/run-reaper.js";
+import { reapStaleCreatingDrafts } from "./modules/apply/draft-reaper.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -104,6 +105,10 @@ async function main(): Promise<void> {
   // reaper de vídeo pendente órfão (crash perdeu a cadeia de poll) — varredura de boot.
   await reapStalePendingVideos(deps.db, logger).catch((err: unknown) =>
     logger.error({ err }, "creative-video-poll:reaper boot falhou"),
+  );
+  // reaper de rascunho de criação preso em `creating` (crash no meio da saga) — varredura de boot (G7).
+  await reapStaleCreatingDrafts(deps.db, logger, deps.reaper.staleMinutes).catch((err: unknown) =>
+    logger.error({ err }, "draft-reaper:boot sweep falhou"),
   );
   logger.info("worker up: agent-runs + agent-learning + cron-dispatch + reaper + insights-sync + insights-sweep + schedule-resync + action-undo + approval-apply + approval-expiry + group-context-purge + whatsapp-inbound + whatsapp-transcription + whatsapp-media-intake + mail");
 
