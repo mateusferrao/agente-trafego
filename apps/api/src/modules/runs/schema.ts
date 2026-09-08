@@ -229,10 +229,14 @@ export const campaignAnalysisOutput = z.object({
   /** sincronização (achado real): presente = a Meta não lista mais como ativa desde esta data
    *  (ISO) — o resto dos campos é da ÚLTIMA vez que ela esteve ativa. null = ainda ativa. */
   deactivatedSince: z.string().nullable(),
-  /** sincronização (achado real, gap irmão do `deactivatedSince`): true = campanha ATIVA na Meta
-   *  agora mas ainda sem NENHUMA análise (criada depois do último run) — todos os outros campos
-   *  vêm vazios/null, nunca inventados. false = campanha já tem análise (fluxo normal). */
+  /** sincronização (achado real, gap irmão do `deactivatedSince`): true = campanha na Meta agora
+   *  (ativa OU pausada) mas ainda sem NENHUMA análise (criada depois do último run) — todos os
+   *  outros campos vêm vazios/null, nunca inventados. false = campanha já tem análise (fluxo normal). */
   noDataYet: z.boolean(),
+  /** status AO VIVO — só nos cartões `noDataYet` (gap): "paused" = existe mas está PAUSADA (ex:
+   *  recém-criada, pode ser ativada); "active" = existe e rodando. null nos cartões analisados
+   *  (o estado histórico deles é contado por tier/`deactivatedSince`, não por este campo). */
+  liveStatus: z.enum(["active", "paused"]).nullable(),
 });
 export type CampaignAnalysisOutput = z.infer<typeof campaignAnalysisOutput>;
 

@@ -343,28 +343,29 @@ export function createRunsService(deps: RunsDeps) {
 
     const cached = rows.map((r) => toCampaignAnalysisOutput(r, muted.has(r.entityId)));
 
-    // gap irmão do `deactivatedSince` (achado real): campanha ativa na Meta agora, criada
-    // depois do último run, sem NENHUMA linha em entity_analyses ainda. Best-effort — Meta
+    // gap irmão do `deactivatedSince` (achado real): campanha na Meta agora (ativa OU pausada),
+    // criada depois do último run, sem NENHUMA linha em entity_analyses ainda. Best-effort — Meta
     // lenta/indisponível não derruba a resposta, só não soma o adendo (a lista cacheada já
-    // tinha o resto). Mesmo padrão do chat (`liveActiveCampaignsNotCached`, read-data.ts).
+    // tinha o resto). Mesmo padrão do chat (`liveCampaignsNotCached`, read-data.ts).
     const cachedIds = new Set(rows.map((r) => r.entityId));
-    const gaps = await liveActiveCampaignsNotCached(orgId, accountId, cachedIds);
+    const gaps = await liveCampaignsNotCached(orgId, accountId, cachedIds);
 
     return [...cached, ...gaps.map((g) => toGapCampaignOutput(g, muted.has(g.id)))];
   }
 
   /**
-   * Campanhas ATIVAS na Meta agora que ainda não têm nenhuma análise (`cachedIds`) —
-   * mesma lógica/limite do chat (read-data.ts `liveActiveCampaignsNotCached`), duplicada
+   * Campanhas GERENCIÁVEIS na Meta agora (ATIVA ou PAUSADA) que ainda não têm nenhuma análise
+   * (`cachedIds`) — mesma lógica/limite do chat (read-data.ts `liveCampaignsNotCached`), duplicada
    * aqui de propósito: api e worker são processos separados, e a conta+token já se carrega
    * diferente em cada um (o worker usa `createAnalysisRepo`; a api já tem o join direto
-   * pra token em `drafts/service.ts` — este helper segue o mesmo padrão local).
+   * pra token em `drafts/service.ts` — este helper segue o mesmo padrão local). Inclui PAUSADA
+   * (com o `status`) pra uma campanha recém-criada aparecer na lista do site (rotulada), não sumir.
    */
-  async function liveActiveCampaignsNotCached(
+  async function liveCampaignsNotCached(
     orgId: OrgId,
     accountId: string,
     cachedIds: ReadonlySet<string>,
-  ): Promise<Array<{ id: string; name: string }>> {
+  ): Promise<Array<{ id: string; name: string; status: string }>> {
     const ref = await loadAccountRef(deps.db, deps.vault, orgId, accountId);
     if (!ref) return [];
     try {
@@ -372,7 +373,9 @@ export function createRunsService(deps: RunsDeps) {
         deps.adsPlatform.listEntities({ adAccountId: ref.metaAdAccountId, accessToken: ref.accessToken }, "campaign"),
         deps.liveGapCheckTimeoutMs,
       );
-      return entities.filter((e) => e.status === "active" && !cachedIds.has(e.id)).map((e) => ({ id: e.id, name: e.name }));
+      return entities
+        .filter((e) => (e.status === "active" || e.status === "paused") && !cachedIds.has(e.id))
+        .map((e) => ({ id: e.id, name: e.name, status: e.status }));
     } catch {
       return [];
     }
@@ -490,6 +493,8 @@ export function createRunsService(deps: RunsDeps) {
       deactivatedSince: null,
       // idem: campanha nova sem análise nunca entraria no snapshot de um run já concluído.
       noDataYet: false,
+      // status ao vivo é só dos cartões de gap (visão ao vivo); snapshot histórico não tem.
+      liveStatus: null,
     }));
 
     // "mais recente" = último run FINALIZADO (ignora in-flight; casa com o que o
@@ -563,16 +568,19 @@ export function toCampaignAnalysisOutput(
     deactivatedSince: curated?.deactivatedSince ?? null,
     // esta linha veio de `entity_analyses` → sempre já tem alguma análise.
     noDataYet: false,
+    // status ao vivo é só dos cartões de gap (noDataYet); aqui o estado é contado por tier/deactivatedSince.
+    liveStatus: null,
   };
 }
 
 /**
- * Cartão de campanha ATIVA na Meta agora mas ainda SEM nenhuma análise (gap irmão do
+ * Cartão de campanha na Meta agora (ATIVA ou PAUSADA) mas ainda SEM nenhuma análise (gap irmão do
  * `deactivatedSince` — achado real, mesma sessão): criada/ativada depois do último run,
  * `entity_analyses` não tem linha nenhuma dela ainda. Nunca inventa métrica/tier/resumo —
- * tudo vazio + `noDataYet:true`, mesma honestidade que o chat já usa (`list_campaigns`).
+ * tudo vazio + `noDataYet:true` + `liveStatus` (pausada é rotulada, nunca mostrada como ativa),
+ * mesma honestidade que o chat já usa (`list_campaigns`).
  */
-export function toGapCampaignOutput(entity: { id: string; name: string }, muted: boolean): CampaignAnalysisOutput {
+export function toGapCampaignOutput(entity: { id: string; name: string; status: string }, muted: boolean): CampaignAnalysisOutput {
   return {
     externalId: entity.id,
     name: entity.name,
@@ -588,6 +596,7 @@ export function toGapCampaignOutput(entity: { id: string; name: string }, muted:
     isCBO: null,
     deactivatedSince: null,
     noDataYet: true,
+    liveStatus: entity.status === "paused" ? "paused" : "active",
   };
 }
 

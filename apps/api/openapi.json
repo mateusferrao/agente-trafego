@@ -4055,6 +4055,16 @@
                 },
                 "noDataYet": {
                   "type": "boolean"
+                },
+                "liveStatus": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "active",
+                    "paused"
+                  ]
                 }
               },
               "required": [
@@ -4071,7 +4081,8 @@
                 "atBudgetCeiling",
                 "isCBO",
                 "deactivatedSince",
-                "noDataYet"
+                "noDataYet",
+                "liveStatus"
               ]
             }
           }
@@ -6072,6 +6083,16 @@
                 },
                 "noDataYet": {
                   "type": "boolean"
+                },
+                "liveStatus": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "active",
+                    "paused"
+                  ]
                 }
               },
               "required": [
@@ -6088,7 +6109,8 @@
                 "atBudgetCeiling",
                 "isCBO",
                 "deactivatedSince",
-                "noDataYet"
+                "noDataYet",
+                "liveStatus"
               ]
             }
           },

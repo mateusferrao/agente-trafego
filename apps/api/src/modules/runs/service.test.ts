@@ -130,9 +130,9 @@ describe("toCampaignAnalysisOutput (S8 — orçamento curado no cartão da campa
   });
 });
 
-describe("toGapCampaignOutput (gap irmão do deactivatedSince — campanha ativa sem análise)", () => {
-  it("tudo vazio/null + noDataYet true — nunca inventa métrica/tier", () => {
-    const out = toGapCampaignOutput({ id: "c-novo", name: "Campanha Nova" }, false);
+describe("toGapCampaignOutput (gap irmão do deactivatedSince — campanha sem análise)", () => {
+  it("ATIVA: tudo vazio/null + noDataYet true + liveStatus 'active' — nunca inventa métrica/tier", () => {
+    const out = toGapCampaignOutput({ id: "c-novo", name: "Campanha Nova", status: "active" }, false);
     expect(out).toEqual({
       externalId: "c-novo",
       name: "Campanha Nova",
@@ -148,11 +148,18 @@ describe("toGapCampaignOutput (gap irmão do deactivatedSince — campanha ativa
       isCBO: null,
       deactivatedSince: null,
       noDataYet: true,
+      liveStatus: "active",
     });
   });
 
+  it("PAUSADA: liveStatus 'paused' — o site rotula, nunca mostra como ativa (§7)", () => {
+    const out = toGapCampaignOutput({ id: "c-pausada", name: "Recém-criada", status: "paused" }, false);
+    expect(out.liveStatus).toBe("paused");
+    expect(out.noDataYet).toBe(true);
+  });
+
   it("propaga o estado silenciado quando o dono já mutou o id ANTES de qualquer análise", () => {
-    const out = toGapCampaignOutput({ id: "c-novo", name: "Campanha Nova" }, true);
+    const out = toGapCampaignOutput({ id: "c-novo", name: "Campanha Nova", status: "active" }, true);
     expect(out.muted).toBe(true);
   });
 });
@@ -171,11 +178,12 @@ describe("runs.campaignAnalyses — gap de campanha ativa sem análise ainda", (
     });
   }
 
-  it("soma campanha ATIVA na Meta que ainda não tem linha em entity_analyses", async () => {
+  it("soma campanha GERENCIÁVEL (ativa E pausada) sem linha em entity_analyses; pausada rotulada, nunca como ativa", async () => {
     const listEntities = vi.fn(async () => [
       { id: "c1", level: "campaign", name: "Cached A", status: "active" },
       { id: "c2", level: "campaign", name: "Nova Sem Análise", status: "active" },
-      { id: "c3", level: "campaign", name: "Pausada Antiga", status: "paused" },
+      { id: "c3", level: "campaign", name: "Recém-criada Pausada", status: "paused" },
+      { id: "c4", level: "campaign", name: "Arquivada", status: "archived" },
     ]);
     const service = makeService(
       [
@@ -189,9 +197,11 @@ describe("runs.campaignAnalyses — gap de campanha ativa sem análise ainda", (
 
     const out = await service.campaignAnalyses(ORG, "acc-1");
 
-    expect(out).toHaveLength(2);
-    expect(out[0]).toMatchObject({ externalId: "c1", noDataYet: false });
-    expect(out[1]).toMatchObject({ externalId: "c2", name: "Nova Sem Análise", noDataYet: true, muted: false });
+    // c1 (cached) + c2 (ativa gap) + c3 (pausada gap); c4 (archived) fica de fora.
+    expect(out).toHaveLength(3);
+    expect(out[0]).toMatchObject({ externalId: "c1", noDataYet: false, liveStatus: null });
+    expect(out[1]).toMatchObject({ externalId: "c2", name: "Nova Sem Análise", noDataYet: true, muted: false, liveStatus: "active" });
+    expect(out[2]).toMatchObject({ externalId: "c3", name: "Recém-criada Pausada", noDataYet: true, liveStatus: "paused" });
     expect(listEntities).toHaveBeenCalledWith({ adAccountId: "act_123", accessToken: "token-decriptado" }, "campaign");
   });
 

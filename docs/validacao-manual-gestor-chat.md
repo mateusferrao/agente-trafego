@@ -499,6 +499,12 @@ Entrada: conta com ≥1 campanha analisada + uma **pausada** nunca-analisada; "q
 2. `get_campaign_analysis` por nome de uma pausada nunca-analisada → `noDataYet:true` + `status:"paused"` + nota "existe e está PAUSADA… ofereça ATIVAR". Daí o Roy tem o id pra `resume_entity` (se ligado) OU oferece ativar. ✓
 3. Campanhas **archived/deleted** (terminais) continuam fora do gap-fill. ✓
 
+### S13-3 — O SITE também mostra a pausada nunca-analisada (rotulada)
+Entrada: mesma conta, abrir a lista de campanhas no site (analysis-detail).
+1. A campanha pausada nunca-analisada aparece na lista (o gap-fill da API `liveCampaignsNotCached` agora inclui **ativa + pausada**), marcada `noDataYet:true` + `liveStatus:"paused"` → o cartão diz "pausada, ainda sem análise" e o texto oferece **ativar** (aqui ou pelo agente). **Nunca** mostrada como "ativa" (§7). ✓
+2. Campanha ativa nunca-analisada → `liveStatus:"active"`, texto "já está ativa na Meta…" (comportamento antigo). ✓
+3. Cartão vindo de análise (`entity_analyses`) ou de snapshot de run → `liveStatus:null` (o estado dele é contado por tier/`deactivatedSince`, sem regressão). Archived/deleted continuam fora. ✓
+
 ## Fast-follows (residuais aceitos / adiados — ROADMAP)
 - **Conta do criativo — estagiar bytes p/ auto-completar após focar**: o núcleo está corrigido (régua inequívoca de 3 níveis idêntica ao turno; ambíguo→pergunta; save casa com a confirmação do Roy). Resta só: no caso AMBÍGUO (sem sole/foco/legenda), o intake pergunta mas não estagia os bytes → o dono reenvia depois de focar. Estagiar (Redis) + auto-completar quando o foco resolver fecha isso (ver ROADMAP).
 - **Gradação do desgaste por severidade (2 × 3 sinais)**: hoje aging×fadiga é binário (ainda entrega × não entrega); um aging SEVERO (3 sinais, prestes a cair) usa a mesma mensagem de aging leve — dá pra graduar a urgência do "prepare o sucessor".

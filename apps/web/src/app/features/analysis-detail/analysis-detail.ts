@@ -189,7 +189,8 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                         <span class="text-[11px] text-warning-strong">· não está mais ativa desde {{ deactivatedLabel(c) }} — dado abaixo é de quando ainda rodava</span>
                       }
                       @if (c.noDataYet) {
-                        <span class="text-[11px] text-info-strong">· ativa, ainda sem análise</span>
+                        <span class="text-[11px]" [class.text-info-strong]="c.liveStatus !== 'paused'" [class.text-warning-strong]="c.liveStatus === 'paused'">·
+                          {{ c.liveStatus === 'paused' ? 'pausada, ainda sem análise' : 'ativa, ainda sem análise' }}</span>
                       }
                     </div>
                     <h3 class="font-semibold text-ink">{{ campaignName(c) }}</h3>
@@ -217,12 +218,20 @@ const LEAK_LABEL: Record<Scorecard['biggestLeak'], string> = {
                 </div>
 
                 @if (c.noDataYet) {
-                  <!-- gap irmão do deactivatedSince (achado real): campanha ativa criada depois
-                       do último run — nunca inventa métrica/tier, só avisa e aponta o próximo passo. -->
-                  <p class="text-sm text-muted">
-                    Essa campanha já está ativa na Meta, mas a próxima análise ainda não rodou pra ela —
-                    sem gasto/resultado pra mostrar por enquanto.
-                  </p>
+                  <!-- gap irmão do deactivatedSince (achado real): campanha criada depois do último
+                       run — nunca inventa métrica/tier, só avisa (com o status real) e aponta o
+                       próximo passo. Pausada nunca é mostrada como ativa (§7). -->
+                  @if (c.liveStatus === 'paused') {
+                    <p class="text-sm text-muted">
+                      Essa campanha está pausada na Meta e ainda não foi analisada — sem gasto/resultado
+                      pra mostrar. Ative-a (aqui ou pelo agente no WhatsApp) pra ela começar a rodar.
+                    </p>
+                  } @else {
+                    <p class="text-sm text-muted">
+                      Essa campanha já está ativa na Meta, mas a próxima análise ainda não rodou pra ela —
+                      sem gasto/resultado pra mostrar por enquanto.
+                    </p>
+                  }
                 } @else {
                   <!-- métricas inline em mono -->
                   <div class="flex flex-wrap gap-x-6 gap-y-1">
