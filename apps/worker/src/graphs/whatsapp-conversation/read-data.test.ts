@@ -1004,10 +1004,10 @@ describe("renderWhatsappNumber (verbatim, honesto)", () => {
 describe("campaignStatusData (ambíguo → LISTA com status ao vivo, NÃO pede id)", () => {
   const ctx = { orgId: "o1", agentId: "ag1", adAccountId: "acc1" } as never;
   const account = [{ metaAdAccountId: "act_1", name: "X", currency: "BRL", accountToken: "tok", connToken: null }];
-  function deps(listEntities: () => Promise<unknown>, readEntityState: (ref: unknown, id: string) => Promise<unknown>) {
+  function deps(listEntities: () => Promise<unknown>, readEntityState: (ref: unknown, id: string) => Promise<unknown>, readActivationTree?: (ref: unknown, level: string, id: string) => Promise<unknown>) {
     return {
       db: fakeDb(new Map<unknown, unknown[]>([[adAccounts, account]])),
-      ports: { ads: { listEntities: vi.fn(listEntities), readEntityState: vi.fn(readEntityState) }, vault: { decrypt: (t: string) => t } },
+      ports: { ads: { listEntities: vi.fn(listEntities), readEntityState: vi.fn(readEntityState), ...(readActivationTree ? { readActivationTree: vi.fn(readActivationTree) } : {}) }, vault: { decrypt: (t: string) => t } },
       conversation: { liveFetchTimeoutMs: 1000 },
     } as never;
   }
@@ -1033,6 +1033,28 @@ describe("campaignStatusData (ambíguo → LISTA com status ao vivo, NÃO pede i
     const d = deps(async () => [{ id: "c1", name: "Outra campanha" }], async () => ({ status: "ACTIVE" }));
     const out = await campaignStatusData(d, ctx, { name: "ZZZ inexistente" });
     expect(out).toMatchObject({ hasData: false });
+  });
+
+  it("ENTREGA EFETIVA: campanha ATIVA mas sem anúncio ativo → delivering:false + motivo", async () => {
+    const tree = { adsets: [{ id: "s1", name: "s1", status: "active" }], ads: [{ id: "a1", name: "a1", status: "paused", adsetId: "s1" }] };
+    const d = deps(async () => [], async () => ({ status: "ACTIVE" }), async () => tree);
+    const out = await campaignStatusData(d, ctx, { campaignId: "c9" });
+    expect(out).toMatchObject({ hasData: true, campaigns: [{ id: "c9", status: "active", delivering: false, deliveryReason: "anúncios pausados" }] });
+  });
+
+  it("ENTREGA EFETIVA: campanha PAUSADA → delivering:false 'campanha pausada' (sem ler a árvore)", async () => {
+    const readTree = vi.fn(async () => ({ adsets: [], ads: [] }));
+    const d = deps(async () => [], async () => ({ status: "PAUSED" }), readTree);
+    const out = await campaignStatusData(d, ctx, { campaignId: "c9" });
+    expect(out).toMatchObject({ hasData: true, campaigns: [{ id: "c9", status: "paused", delivering: false, deliveryReason: "campanha pausada" }] });
+    expect(readTree).not.toHaveBeenCalled();
+  });
+
+  it("ENTREGA EFETIVA: campanha ATIVA com anúncio ativo → delivering:true", async () => {
+    const tree = { adsets: [{ id: "s1", name: "s1", status: "active" }], ads: [{ id: "a1", name: "a1", status: "active", adsetId: "s1" }] };
+    const d = deps(async () => [], async () => ({ status: "ACTIVE" }), async () => tree);
+    const out = await campaignStatusData(d, ctx, { campaignId: "c9" });
+    expect(out).toMatchObject({ hasData: true, campaigns: [{ id: "c9", delivering: true }] });
   });
 });
 

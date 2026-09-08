@@ -336,12 +336,13 @@ export function makeConversationTools(
   });
   const resumeEntity = tool(proposeOnly, {
     name: "resume_entity",
-    description: "Propõe REATIVAR uma entidade pausada. Requer eco+confirma.",
+    description:
+      "Propõe REATIVAR uma entidade pausada. Reativar uma CAMPANHA/CONJUNTO liga também os conjuntos/anúncios pausados dela por PADRÃO (a Meta não cascateia status → senão a campanha não veicula) — o eco lista o que vai ligar. Pra granularidade, mire o nó específico (só um conjunto ou só um anúncio). Requer eco+confirma.",
     schema: z.object(writeSchema),
   });
   const setStatus = tool(proposeOnly, {
     name: "set_status",
-    description: "Propõe mudar o status de uma entidade. Requer eco+confirma.",
+    description: "Propõe mudar o status de uma entidade. Ativar (active) uma campanha/conjunto liga a cadeia pausada por padrão (o eco lista); pausar (paused) é só o nó. Requer eco+confirma.",
     schema: z.object({ ...writeSchema, status: z.enum(["active", "paused"]) }),
   });
   const adjustBudget = tool(proposeOnly, {

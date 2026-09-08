@@ -204,6 +204,19 @@
 | S6b.6 | `TRAFEGO_CHAT_ADS_WRITES=false` + conta nomeada | **Nenhuma** escrita entra mesmo focando (freio de emergência intacto). |
 | S6b.7 | Conta de nome curto/palavra comum (ex.: "Vendas") + frase que só menciona a palavra ("budget de vendas") | **Não** foca automaticamente (defere pro `set_focus`/LLM) — evita focar a conta errada por uma palavra qualquer. Nome distintivo/multi-palavra/id → foca. |
 
+### S7 — Ativação em cadeia + entrega efetiva (a Meta não cascateia status)
+> Pré: conta com escrita ligada (`resume_entity`/`set_status`), `dryRun` off, uma campanha **pausada** com conjuntos/anúncios também pausados.
+
+| # | Passo | Esperado |
+|---|-------|----------|
+| S7.1 | "ativa a campanha X" (campanha com 2 conjuntos + 5 anúncios pausados) | Eco: "Vou reativar a campanha *X*" + "Também vou ligar 2 conjuntos e 5 anúncios pausados dela — senão ela não veicula" + "Confirma?". "sim" → liga a árvore inteira → **veicula**. Antes: ligava só a campanha e não rodava. |
+| S7.2 | "ativa só o conjunto Y" | Liga só Y + os anúncios pausados dele (granularidade por nó). |
+| S7.3 | "pausa só o anúncio Z" | Pausa **só** ele (pausar não cascateia). |
+| S7.4 | Árvore acima do teto de nº-de-entidades/dia | Eco avisa "são M entidades, acima do seu teto de N/dia — como você confirma, ligo todas" e liga tudo (ativação confirmada é intenção única; teto segue valendo só pro automático). |
+| S7.5 | "como está a campanha X?" com a campanha ativa mas filhos pausados | "ativa, mas **não está entregando** (conjuntos/anúncios pausados)" — não diz só "ativa". Oferece ligar a cadeia. |
+| S7.6 | Campanha **sem anúncio** nenhum → "ativa a campanha X" | ⚠️ "não vai veicular assim (essa campanha não tem anúncio) — mesmo ligada, não roda até ter anúncio ativo". |
+| S7.7 | Leitura da árvore falha (Meta lenta) | Degrada: liga só o nó pedido (não trava a ação); status sem afirmar entrega. |
+
 ---
 
 ## Teste simulado E2E (passo a passo, traçado no código)

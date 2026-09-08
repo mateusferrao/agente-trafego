@@ -17,7 +17,7 @@ import type { CreativeVisionResult } from "@trafego/shared";
 import { libraryCreativeContentHash } from "../../workers/creative-analyze.js";
 import { pickCreativeByReference, type LibraryCandidate } from "../../modules/creative/match-library.js";
 import type { Database } from "@trafego/db/client";
-import { confidenceTier, daysAgoInTz, LEARNING_MEMORY_TYPES, rankAdCreatives, renderRessalvas, resolveNamedMatch, todayInTz, type RankableCreative } from "@trafego/core";
+import { campaignDelivering, confidenceTier, daysAgoInTz, LEARNING_MEMORY_TYPES, rankAdCreatives, renderRessalvas, resolveNamedMatch, todayInTz, type RankableCreative } from "@trafego/core";
 import { mapStatus } from "@trafego/ads-meta";
 import { createAnalysisRepo, type AdCreativeCopyRow } from "../../modules/analysis/repo.js";
 import {
@@ -1510,7 +1510,7 @@ export async function campaignStatusData(
   deps: WorkerDeps,
   ctx: ReadToolContext,
   input: { campaignId?: string; name?: string },
-): Promise<{ hasData: true; campaigns: Array<{ id: string; name: string | null; status: string }>; source: "live" } | NoData> {
+): Promise<{ hasData: true; campaigns: Array<{ id: string; name: string | null; status: string; delivering?: boolean; deliveryReason?: string }>; source: "live" } | NoData> {
   const repo = createAnalysisRepo(deps.db);
   const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
   if (!account) return { hasData: false, note: "conta não encontrada" };
@@ -1537,11 +1537,28 @@ export async function campaignStatusData(
 
   // STATUS FRESCO de cada alvo (readEntityState não passa pelo cache → reflete reativação/pausa
   // externa AGORA). Bounded (resolveNamedMatch já capa a lista). Falha numa → pula só ela.
-  const campaigns: Array<{ id: string; name: string | null; status: string }> = [];
+  const campaigns: Array<{ id: string; name: string | null; status: string; delivering?: boolean; deliveryReason?: string }> = [];
   for (const t of targets) {
     try {
       const raw = await withTimeout(deps.ports.ads.readEntityState(ref, t.id), deps.conversation.liveFetchTimeoutMs);
-      campaigns.push({ id: t.id, name: t.name, status: mapStatus(raw["effective_status"] as string | undefined, raw["status"] as string | undefined) });
+      const status = mapStatus(raw["effective_status"] as string | undefined, raw["status"] as string | undefined);
+      // ENTREGA EFETIVA (a Meta não cascateia status): campanha pausada não entrega; ativa só entrega
+      // se tiver anúncio ativo (1 leitura escopada da árvore). Falha na árvore → omite (não afirma).
+      const entry: { id: string; name: string | null; status: string; delivering?: boolean; deliveryReason?: string } = { id: t.id, name: t.name, status };
+      if (status !== "active") {
+        entry.delivering = false;
+        entry.deliveryReason = "campanha pausada";
+      } else {
+        try {
+          const tree = await withTimeout(deps.ports.ads.readActivationTree(ref, "campaign", t.id), deps.conversation.liveFetchTimeoutMs);
+          const d = campaignDelivering(tree);
+          entry.delivering = d.delivering;
+          if (d.reason) entry.deliveryReason = d.reason;
+        } catch {
+          /* árvore indisponível → deixa 'delivering' indefinido (status ativo, entrega desconhecida) */
+        }
+      }
+      campaigns.push(entry);
     } catch {
       /* pula essa — best-effort */
     }
@@ -1842,7 +1859,7 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     {
       name: "get_campaign_status",
       description:
-        "Status AO VIVO (ativa/pausada) direto da Meta AGORA — por id ou nome. Devolve uma LISTA de campanhas que casaram (com o status de cada): nome único → 1; nome ambíguo → TODAS as parecidas com o status — MOSTRE a lista pro usuário (não peça o id de volta). É a ÚNICA fonte confiável de ativa/pausada: NUNCA deduza por gasto (0 gasto ≠ pausada). Use SEMPRE antes de recomendar reativar/pausar/substituir (a análise pode ter horas) e quando o usuário afirmar que uma campanha está ativa/pausada (confirme ao vivo, não só concorde).",
+        "Status AO VIVO (ativa/pausada) direto da Meta AGORA — por id ou nome. Devolve uma LISTA de campanhas que casaram (com o status de cada): nome único → 1; nome ambíguo → TODAS as parecidas com o status — MOSTRE a lista pro usuário (não peça o id de volta). É a ÚNICA fonte confiável de ativa/pausada: NUNCA deduza por gasto (0 gasto ≠ pausada). Use SEMPRE antes de recomendar reativar/pausar/substituir (a análise pode ter horas) e quando o usuário afirmar que uma campanha está ativa/pausada (confirme ao vivo, não só concorde). Cada campanha traz `delivering` (ENTREGA EFETIVA: a Meta não cascateia status, então campanha ATIVA com conjuntos/anúncios pausados NÃO veicula) + `deliveryReason` — se `delivering:false`, DIGA que ela não está entregando e o motivo, não diga só 'ativa'; ofereça ligar a cadeia. `delivering` ausente = não deu pra confirmar a entrega (não afirme).",
       schema: z.object({
         campaignId: z.string().nullable().optional().describe("id da campanha (preferido; use get_campaign_analysis/list_campaigns pra achar)"),
         name: z.string().nullable().optional().describe("nome (ou trecho) da campanha — usado se não tiver o id; ambíguo → peço o id"),
