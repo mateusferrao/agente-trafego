@@ -1177,7 +1177,10 @@ async function getPendingDraftData(
     const d = byId.get(a.draftId);
     if (!d) return [];
     const spec = d.spec as CampaignDraftSpec;
-    const destino = spec.pageId ? destinoByPageId.get(spec.pageId) : undefined;
+    // só anexa `destino` a rascunho de MENSAGENS (o destino WhatsApp) — o predicado casa o que
+    // populou `destinoByPageId`, pra um rascunho de site que compartilhe a mesma pageId não herdar
+    // um rótulo "WhatsApp da Página…" errado.
+    const destino = spec.pageId && isMessagingGoal(spec.objective) ? destinoByPageId.get(spec.pageId) : undefined;
     return [
       {
         approvalId: a.id,
