@@ -1658,7 +1658,7 @@ export async function recallCreativeData(
       ...(typeof vision.persuasionSignals === "number" ? { persuasionSignals: vision.persuasionSignals } : {}),
       ...(vision.weaknesses.length > 0 ? { weaknesses: vision.weaknesses } : {}),
     }));
-    pickedId = await pickCreativeByReference(deps.ports.llm, deps.analysis.messageModel, reference.trim(), candidates);
+    pickedId = await pickCreativeByReference(deps.ports.llm, deps.analysis.messageModel, reference.trim(), candidates, { orgId: ctx.orgId, type: "message" });
   } else {
     pickedId = enriched[0]!.asset.id; // recência (o último que mandou)
   }

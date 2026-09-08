@@ -3,7 +3,7 @@
 // (visão feita no upload) qual criativo MELHOR CASA — não é ranking genérico/aleatório. Texto
 // only (usa o cache, não re-analisa visão) → barato. Falha/sem descrição → cai na recência.
 
-import type { LLMProviderPort, LLMMessage } from "@trafego/shared/ports";
+import type { LLMProviderPort, LLMMessage, LLMCallMeta } from "@trafego/shared/ports";
 import { LLMProviderError } from "@trafego/shared/ports";
 
 export interface LibraryCandidate {
@@ -130,6 +130,7 @@ export async function pickCreativeByReference(
   model: string,
   reference: string,
   candidates: readonly LibraryCandidate[],
+  meta?: LLMCallMeta,
 ): Promise<string | null> {
   if (candidates.length === 0) return null;
   if (candidates.length === 1) return candidates[0]!.assetId;
@@ -141,6 +142,7 @@ export async function pickCreativeByReference(
       responseSchemaName: "creative_reference_match",
       temperature: MATCH_TEMPERATURE,
       maxTokens: MATCH_MAX_TOKENS,
+      ...(meta ? { meta } : {}),
     });
     const i = completion.output?.index;
     return typeof i === "number" && Number.isInteger(i) && i >= 0 && i < candidates.length ? candidates[i]!.assetId : null;

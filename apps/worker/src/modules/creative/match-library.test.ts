@@ -110,4 +110,9 @@ describe("pickCreativeByReference (Slice 3 — busca por descrição)", () => {
     const llm = { completeStructured: vi.fn(async () => { throw new LLMProviderError("upstream", "x"); }) };
     expect(await pickCreativeByReference(llm as never, "m", "y", cands)).toBeNull();
   });
+  it("passa o meta (orgId) adiante p/ o custo do LLM ser metrado", async () => {
+    const llm = { completeStructured: vi.fn(async (_req: { meta?: { orgId?: string } }) => ({ output: { index: 0 }, usage: USAGE })) };
+    await pickCreativeByReference(llm as never, "m", "x", cands, { orgId: "org-1", type: "message" });
+    expect(llm.completeStructured.mock.calls[0]![0].meta).toEqual({ orgId: "org-1", type: "message" });
+  });
 });
