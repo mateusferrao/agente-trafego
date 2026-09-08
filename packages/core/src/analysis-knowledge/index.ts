@@ -96,7 +96,12 @@ const REVENUE_TEXT =
 /** Tiers + sinais + elegibilidade (Fatia 6c) — como o LLM deve ler e agir. */
 const QUALITY_TEXT =
   "Cada entidade pode trazer 'tier' (winner/performer/underperformer/zombie), 'healthSignals' " +
-  "(creative_fatigue = fadiga de criativo; audience_saturation = público saturado; low_volume = " +
+  "(creative_fatigue = desgaste num criativo que JÁ NÃO ENTREGA — não bate a meta / não é mais " +
+  "eficiente — hora de renovar/trocar; creative_aging = os MESMOS sinais de desgaste MAS a entidade " +
+  "AINDA ENTREGA resultado (bate a meta / segue eficiente): NÃO recomende 'trocar já' — mantenha o " +
+  "vencedor rodando, oriente PREPARAR o próximo criativo e só trocar quando o resultado começar a " +
+  "cair; nunca troque/mate um vencedor provado por um criativo não-provado antes disso; " +
+  "audience_saturation = público saturado; low_volume = " +
   "pouco dado; weak_creative = prova fraca + baixa densidade persuasiva no criativo, S4b — sinal " +
   "PURO de direção, use pra 'review_creative', nunca pra pausar/cortar orçamento sozinho; " +
   "weak_hook_retention = retenção de vídeo baixa nos primeiros ~25% (S6, o gancho falha na largada) " +
@@ -106,7 +111,8 @@ const QUALITY_TEXT =
   "indício de criativo fraco, some com weak_creative/weak_hook_retention na mesma direção, nunca " +
   "sozinho como motivo de pausar) e 'eligibility' (hasSignificance, inLearning). Aja assim: proteja " +
   "os WINNERS (não mexa no que vai bem — winner com weak_creative é candidato a TESTAR uma " +
-  "variação nova, não a pausar), priorize PAUSAR os ZOMBIES (gasto sem conversão = desperdício), " +
+  "variação nova, não a pausar; winner com creative_aging continua rodando, só prepare o sucessor), " +
+  "priorize PAUSAR os ZOMBIES (gasto sem conversão = desperdício), " +
   "conserte os UNDERPERFORMERS. NUNCA recomende ESCALAR (aumentar orçamento / reativar) uma " +
   "entidade sem hasSignificance ou em inLearning — nesse caso recomende investigar ou aguardar " +
   "mais dados.";
@@ -180,10 +186,15 @@ const SCALE_METHOD_TEXT =
  */
 const CREATIVE_REFRESH_TEXT =
   "Cadência de refresh de criativo: público pequeno pede criativo novo a cada ~5–7 dias; público " +
-  "grande a cada ~14–21 dias. Recomende renovar/trocar o criativo quando 2+ sinais de fadiga " +
-  "aparecerem juntos: CTR caindo >20% semana-a-semana, frequência acima de ~3, CPA subindo >30% do " +
-  "baseline, engajamento em queda. NÃO recomece do zero — itere o gancho sobre os corpos que já " +
-  "convertem, e tenha 2–3 criativos novos prontos ANTES de escalar um vencedor.";
+  "grande a cada ~14–21 dias. Os 2+ sinais de fadiga (CTR caindo >20% semana-a-semana, frequência " +
+  "acima de ~3, CPA subindo >30% do baseline, engajamento em queda) dizem que o criativo está se " +
+  "DESGASTANDO — mas a AÇÃO depende do RESULTADO que ele ainda gera: se o criativo AINDA ENTREGA " +
+  "(bate a meta / segue eficiente — sinal 'creative_aging'), NÃO recomende trocar/pausar agora; " +
+  "oriente PREPARAR o próximo criativo (deixar 2–3 prontos) e trocar só quando o resultado começar a " +
+  "cair — trocar um criativo que ainda vende por um não-provado joga fora retorno garantido. Só " +
+  "quando o desgaste JÁ derrubou o resultado (não bate mais a meta — 'creative_fatigue') a " +
+  "recomendação é renovar/trocar de fato. NÃO recomece do zero — itere o gancho sobre os corpos que " +
+  "já convertem, e tenha 2–3 criativos novos prontos ANTES de escalar um vencedor.";
 
 /**
  * Scorecard de saúde de conta em 8 dimensões (squad, `docs/referencia-traffic-masters.md` §6) — uso
@@ -202,7 +213,9 @@ const DIAGNOSIS_TEXT =
   "Ao explicar um problema, aponte a CAUSA provável pelo padrão das métricas: CTR baixo → gancho/" +
   "criativo fraco ou segmentação errada; CTR ok mas pouca conversa/conversão → página/oferta ou " +
   "qualificação do lead; conversão ok mas CPA alto → lance/orçamento ou concorrência; alcance baixo " +
-  "→ público estreito ou orçamento baixo; frequência alta + CTR caindo → fadiga de criativo (renove).";
+  "→ público estreito ou orçamento baixo; frequência alta + CTR caindo → desgaste de criativo (se " +
+  "ainda bate a meta, é 'creative_aging' — prepare o sucessor, não troque o que ainda vende; se já " +
+  "não entrega, é 'creative_fatigue' — renove).";
 
 /**
  * Peso na RECÊNCIA (foco nos resultados mais recentes). O briefing traz 'trends' (recente vs
