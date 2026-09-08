@@ -424,7 +424,20 @@ Entrada: escalar/duplicar (chat ou site) um vencedor com `creative_aging`.
 3. **Auto-reuso de criativo** (`chooseCreative`/`isSourceFatigued`): o criativo desgastando NÃO é auto-reusado (cai na biblioteca), aging incluído. ✓
 4. **Proativo** `scale_winner`: o vencedor desgastando (aging) não vira `scale_winner` (segue exigindo `!fatigued`). ✓
 
+## Salvar criativo enviado — honestidade + conta certa
+
+### S11-1 — Roy não nega guardar (diz×faz)
+Entrada: imagem-com-legenda "@Roy guarda aí" (org com conta em contexto).
+1. O intake salva a imagem na biblioteca em silêncio (`suppressNotice`) e o turno responde. O prompt (`MEDIA_QUESTION_SECTION`) informa que a imagem JÁ vai pra biblioteca da conta em contexto → o Roy confirma que guardou, **nunca** "não consigo salvar na biblioteca". ✓
+
+### S11-2 — Salva na conta certa (grupo multi-conta), nunca no foco velho
+Entrada: grupo, org com BM Automato + MyQuick; a conversa recente é sobre MyQuick; foco antigo do fio = BM Automato (expirado pelo TTL).
+1. `resolveContextAccountId` = `sole ?? foco-fresco(TTL)`: BM Automato está **stale** → rejeitado; sem conta inequívoca → **null**. O criativo NÃO é salvo no palpite (BM Automato). ✓
+2. Ambíguo → o Roy **pergunta** de qual conta é (não chuta). Com o foco de MyQuick fresco (dentro do TTL), salva em MyQuick. ✓
+3. Org com 1 conta só (`sole`) → salva direto, sem perguntar. ✓
+
 ## Fast-follows (residuais aceitos / adiados — ROADMAP)
+- **Conta do criativo — turno dono do save + auto-completar após focar**: hoje o núcleo (foco cru→errado) está corrigido (régua inequívoca com TTL, ambíguo→pergunta); resta o 3º nível "conta nomeada na legenda" no save + estagiar os bytes p/ auto-completar depois de focar (ver ROADMAP).
 - **Gradação do desgaste por severidade (2 × 3 sinais)**: hoje aging×fadiga é binário (ainda entrega × não entrega); um aging SEVERO (3 sinais, prestes a cair) usa a mesma mensagem de aging leve — dá pra graduar a urgência do "prepare o sucessor".
 - **G4 validate_only no eco** (orçamento): custo de quota; a rejeição segue honesta no apply.
 - **G9 janela crash create→persist**: dup pausado/sem-gasto/raro; marker-adopt rejeitado (risco de adotar a campanha errada); o reaper (G7) já destrava o rascunho preso.
