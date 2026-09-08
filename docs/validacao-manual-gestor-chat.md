@@ -469,6 +469,8 @@ Entrada (passo de criativo): o Roy **sempre oferece** escolher ("quer escolher o
 1. "usa o vídeo da praia e o campeão" (2 nomes) com adCount 2 → resolve cada nome pro asset (veiculando + biblioteca) via `pickCreativeByReference` e distribui **1 por anúncio**. ✓
 2. "quais criativos eu tenho?" → o Roy lista (via `get_top_creatives`). ✓
 3. Nome **ambíguo/não achado** → o Roy **pergunta** ("não achei o criativo X — me diz de outro jeito, ou peça a lista"); **nunca cria com o criativo errado**. ✓
+4. Com picks, `distinctCreatives` é **ignorado** (`distinctWanted = targetVariants`) — os escolhidos vão **1 por anúncio**, nunca repetidos por um `distinctCreatives` menor (fim da divergência doc↔comportamento). ✓
+5. Dois nomes que resolvem pro **MESMO** asset contam **1 vez** (dedupe por `creativeKey`) — a contagem do eco ("escolheu N criativo(s)") e a base do `resolveCreativeFill` não superestimam. ✓
 
 ### S12-6 — Picker: menos criativos que anúncios → o Roy pergunta (Slice 3)
 Entrada: nomear **2 criativos** com **adCount 5**.
