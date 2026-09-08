@@ -1136,7 +1136,10 @@ export function makeConversationNodes(
     const reallocCall = allCalls.find((c) => c.name === REALLOCATE_TOOL_NAME);
     if (reallocCall) {
       const a = (reallocCall.args ?? {}) as Record<string, unknown>;
-      const level = a["level"] === "adset" ? "adset" : "campaign";
+      // origem e destino têm NÍVEL próprio (Gap 6): dá pra mover de uma campanha CBO pra um conjunto
+      // ABO, não só entre pares do mesmo nível. A saga é level-agnóstica (2 Actions independentes).
+      const fromLevel = a["fromLevel"] === "adset" ? "adset" : "campaign";
+      const toLevel = a["toLevel"] === "adset" ? "adset" : "campaign";
       const fromId = typeof a["fromEntityId"] === "string" ? a["fromEntityId"].trim() : "";
       const toId = typeof a["toEntityId"] === "string" ? a["toEntityId"].trim() : "";
       const fromName = typeof a["fromEntityName"] === "string" && a["fromEntityName"] ? (a["fromEntityName"] as string) : fromId;
@@ -1145,11 +1148,11 @@ export function makeConversationNodes(
       if (!fromId || !toId || !(amountReais > 0)) {
         return { messages: answerToolCalls(allCalls, "Me diz de qual entidade tirar, pra qual pôr e quanto por dia (ex: 'R$ 50/dia da campanha A pra B').") };
       }
-      if (entityKeyOf({ level, id: fromId }) === entityKeyOf({ level, id: toId })) {
+      const fromTarget: Action["target"] = { level: fromLevel, id: fromId, name: fromName };
+      const toTarget: Action["target"] = { level: toLevel, id: toId, name: toName };
+      if (entityKeyOf(fromTarget) === entityKeyOf(toTarget)) {
         return { messages: answerToolCalls(allCalls, "A origem e o destino são a mesma entidade — me diz duas diferentes.") };
       }
-      const fromTarget: Action["target"] = { level, id: fromId, name: fromName };
-      const toTarget: Action["target"] = { level, id: toId, name: toName };
       const wctx = await loadWriteContext(deps, ctx.orgId, ctx.agentId, [fromTarget, toTarget]);
       if (!wctx) {
         return { messages: answerToolCalls(allCalls, "Não consegui acessar a conta agora. Tenta de novo em instantes.") };
@@ -1159,8 +1162,19 @@ export function makeConversationNodes(
       const fromCur = wctx.ctx.budgetAmountByEntity?.get(fromKey);
       const toCur = wctx.ctx.budgetAmountByEntity?.get(toKey);
       if (fromCur === undefined || toCur === undefined) {
-        const who = fromCur === undefined ? fromName : toName;
-        return { messages: [...answerToolCalls(allCalls, "sem budget"), new AIMessage(`Não consegui ler o orçamento de *${who}* — pode ser que o orçamento esteja em outro nível (ex: na campanha, não no conjunto). Dá uma olhada no site.`)] };
+        // a perna sem orçamento pode estar em outro nível (CBO/ABO) → oferta honesta por-perna
+        // (reusa a resolução da Fatia 2), senão mensagem genérica (falha transiente).
+        const leg = fromCur === undefined ? fromTarget : toTarget;
+        const reallocAccountLbl = ctx.multiAccount && ctx.accountName ? ` (${ctx.accountName})` : "";
+        if (wctx.ctx.budgetByEntity?.get(entityKeyOf(leg)) === false) {
+          try {
+            const msg = await resolveMisplacedBudgetMessage(deps.ports.ads, wctx.account, leg.level as "campaign" | "adset", leg.id, leg.name ?? leg.id, reallocAccountLbl);
+            if (msg) return { messages: [...answerToolCalls(allCalls, "orçamento em outro nível"), new AIMessage(msg)] };
+          } catch (err) {
+            logger.warn({ err, entityId: leg.id }, "conversation:resolução de nível na realocação falhou");
+          }
+        }
+        return { messages: [...answerToolCalls(allCalls, "sem budget"), new AIMessage(`Não consegui ler o orçamento de *${leg.name ?? leg.id}* — pode ser que o orçamento esteja em outro nível (ex: na campanha, não no conjunto). Dá uma olhada no site.`)] };
       }
       // tipo do orçamento (diário/vitalício) por perna: rotula o eco certo e barra misturar tipos —
       // mover "X/dia" de um diário pra um vitalício (ou vice-versa) não é coerente (um é por dia, o

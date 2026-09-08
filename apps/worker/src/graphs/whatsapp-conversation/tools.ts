@@ -391,14 +391,15 @@ export function makeConversationTools(
   const reallocateBudget = tool(proposeOnly, {
     name: REALLOCATE_TOOL_NAME,
     description:
-      "Propõe REALOCAR orçamento diário de uma entidade pra OUTRA (tirar de uma que rende menos e pôr na que rende mais): a origem CAI e o destino SOBE no mesmo valor. USE quando o usuário quiser MOVER grana entre campanhas/conjuntos (ex: 'tira R$50/dia da campanha A e põe na B', 'realoca da que tá indo mal pra melhor'). Ambas no MESMO nível (as duas campanhas, ou os dois conjuntos). Se o usuário só quer mexer numa, use adjust_budget. Precisa do valor a mover (R$/dia); se faltar a origem, o destino ou o valor, PERGUNTE. Requer eco+confirma; nunca aplica sozinho.",
+      "Propõe REALOCAR orçamento de uma entidade pra OUTRA (tirar de uma que rende menos e pôr na que rende mais): a origem CAI e o destino SOBE no mesmo valor. USE quando o usuário quiser MOVER grana entre campanhas/conjuntos (ex: 'tira R$50/dia da campanha A e põe na B', 'realoca da que tá indo mal pra melhor'). Origem e destino têm o NÍVEL de cada uma (fromLevel/toLevel) — podem ser níveis diferentes (ex: de uma campanha pra um conjunto). As duas precisam ter orçamento próprio e do MESMO tipo (as duas diárias, ou as duas vitalícias). Se o usuário só quer mexer numa, use adjust_budget. Precisa do valor a mover; se faltar a origem, o destino ou o valor, PERGUNTE. Requer eco+confirma; nunca aplica sozinho.",
     schema: z.object({
-      level: z.enum(["campaign", "adset"]),
+      fromLevel: z.enum(["campaign", "adset"]).describe("nível da ORIGEM (onde está o orçamento que sai)"),
+      toLevel: z.enum(["campaign", "adset"]).describe("nível do DESTINO (onde o orçamento entra)"),
       fromEntityId: z.string().min(1),
       fromEntityName: z.string().min(1).describe("nome legível da ORIGEM (perde orçamento)"),
       toEntityId: z.string().min(1),
       toEntityName: z.string().min(1).describe("nome legível do DESTINO (ganha orçamento)"),
-      amountReais: z.number().positive().describe("valor por dia a mover, em reais"),
+      amountReais: z.number().positive().describe("valor a mover (por dia se diário; total se vitalício)"),
     }),
   });
 
