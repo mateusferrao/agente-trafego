@@ -6,7 +6,7 @@
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { adAccounts, adCreatives, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { applyDraftEdit, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, describeDeliveryEstimate, goalNounPt, isFatigued, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { applyDraftEdit, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, describeDeliveryEstimate, goalNounPt, isAging, isFatigued, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
 import { applyExplicitBehaviorEdit, applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
   ACTION_PARAM_CURRENT_MINOR,
@@ -908,9 +908,14 @@ export async function proposeScaleWinner(
   // G5: duplicar joga o MESMO criativo num público novo — se o vencedor está com fadiga, o incremento
   // tende a piorar o CPA/CPM. Avisa honesto no eco (a duplicação não é ação de escala p/ o card de
   // ressalva, então a nota vai direto aqui). Nunca em silêncio — o dono decide ciente.
-  const fatigueNote = isFatigued(curated?.healthSignals)
-    ? "⚠️ esse vencedor está com sinal de fadiga de criativo — duplicar leva o mesmo criativo cansado pro público novo; vale renovar o criativo antes de escalar."
-    : null;
+  // Gradua a nota pelo desgaste: AGING (ainda entrega) → "prepare o sucessor" (não trocar o
+  // vencedor provado agora); fadiga real → "renove antes". Ambos avisam que duplicar espalha o
+  // criativo desgastando; a distinção evita dizer "cansado" de um criativo que ainda vende.
+  const fatigueNote = isAging(curated?.healthSignals)
+    ? "⚠️ esse vencedor ainda entrega, mas já dá sinais de desgaste — duplicar leva o mesmo criativo pro público novo; vale deixar o próximo criativo pronto antes de escalar."
+    : isFatigued(curated?.healthSignals)
+      ? "⚠️ esse vencedor está com sinal de fadiga de criativo — duplicar leva o mesmo criativo cansado pro público novo; vale renovar o criativo antes de escalar."
+      : null;
   const echo = joinBalloons([
     `Vou **duplicar o vencedor "${label}"** com mais budget pra escalar sem estourar o aprendizado do original.`,
     budgetLine,
@@ -1386,9 +1391,9 @@ async function loadForcedCreative(
 /**
  * O anúncio-fonte "provado" (melhor por desempenho) está com o criativo fatigado? Fadiga é
  * detectada por CAMPANHA/ADSET (`entity_analyses.flags`), não por anúncio individual — então
- * resolve a campanha/adset do anúncio (`ad_creatives`) e checa se algum dos dois tem o sinal
- * `creative_fatigue` na última análise. Sem dado nenhum (nunca analisado) → assume não-fatigado
- * (nunca bloqueia por ausência de sinal).
+ * resolve a campanha/adset do anúncio (`ad_creatives`) e checa se algum dos dois tem sinal DURO de
+ * desgaste na última análise (`isFatigued`: creative_fatigue OU creative_aging OU weak_hook — fonte
+ * única). Sem dado nenhum (nunca analisado) → assume não-desgastado (nunca bloqueia por ausência).
  */
 async function isSourceFatigued(
   deps: WorkerDeps,
@@ -1408,9 +1413,11 @@ async function isSourceFatigued(
     .select({ curatedJson: entityAnalyses.curatedJson })
     .from(entityAnalyses)
     .where(and(eq(entityAnalyses.agentId, agentId), inArray(entityAnalyses.entityId, ids)));
-  // `creative_fatigue` é um healthSignal (curated_json), NÃO uma flag (flags é
-  // cpa_acima_da_meta/roas_abaixo_da_meta/anomalia:* — outro conjunto, bug corrigido).
-  return rows.some((r) => (r.curatedJson?.healthSignals ?? []).includes("creative_fatigue"));
+  // Fonte única `isFatigued` (curated_json), NÃO uma flag (flags é cpa_acima_da_meta/
+  // roas_abaixo_da_meta/anomalia:* — outro conjunto, bug corrigido). Cobre creative_fatigue E
+  // creative_aging: reusar um criativo desgastando (mesmo que ainda entregue) queima verba igual —
+  // cai na biblioteca por contexto em vez de auto-reusar o anúncio cansando.
+  return rows.some((r) => isFatigued(r.curatedJson?.healthSignals));
 }
 
 /**

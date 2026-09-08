@@ -67,6 +67,18 @@ describe("detectCreationOpportunities", () => {
       entities: [ent({ fatigued: true, spending: true })],
     });
     expect(out[0]?.kind).toBe("refresh_fatigued");
+    expect(out[0]?.rationale).toContain("testar um ângulo novo");
+  });
+
+  it("refresh_fatigued AGING (ainda entrega): rationale de 'prepare o sucessor', não de 'troque já'", () => {
+    const out = detectCreationOpportunities({
+      hasActiveCampaigns: true,
+      entities: [ent({ fatigued: true, aging: true, spending: true })],
+    });
+    expect(out[0]?.kind).toBe("refresh_fatigued");
+    expect(out[0]?.rationale).toContain("ainda entrega");
+    expect(out[0]?.rationale).toContain("próximo criativo");
+    expect(out[0]?.rationale).not.toContain("ângulo novo");
   });
 
   it("cold_start quando não há campanha ativa", () => {

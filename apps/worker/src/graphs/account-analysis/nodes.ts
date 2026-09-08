@@ -46,6 +46,7 @@ import {
   isScaleAction,
   type ScaleRessalvaContext,
   detectCreationOpportunities,
+  isAging,
   isFatigued,
   isConverterAudienceName,
   evaluatePlaybook,
@@ -945,9 +946,12 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
       ...(c.atBudgetCeiling !== undefined ? { atBudgetCeiling: c.atBudgetCeiling } : {}),
       // fadiga de CRIATIVO × saturação de PÚBLICO são sinais distintos (Fatia 8): a 1ª vira
       // refresh_fatigued (só recomendação), a 2ª vira prospecting_expansion (público novo, acionável).
-      // `isFatigued` = fonte única com o guard de escala (creative_fatigue + weak_hook_retention) —
-      // antes olhava só creative_fatigue e escalava vencedor que o guard rebaixava (bug de contradição).
+      // `isFatigued` = fonte única com o guard de escala (creative_fatigue + creative_aging +
+      // weak_hook_retention) — antes olhava só creative_fatigue e escalava vencedor que o guard
+      // rebaixava (bug de contradição). `isAging` distingue o desgaste que AINDA entrega (gradua a
+      // recomendação de "troque já" pra "prepare o sucessor") sem afrouxar a trava de escala.
       fatigued: isFatigued(c.healthSignals),
+      aging: isAging(c.healthSignals),
       saturated: (c.healthSignals ?? []).some((h) => h === "audience_saturation"),
       spending: (c.metrics?.spend ?? 0) > 0,
     }));
@@ -983,10 +987,14 @@ export function makeAccountAnalysisNodes(deps: WorkerDeps, repos?: Partial<Analy
     // geração de criativo por IA ainda), o que contradiria o rationale "teste um ângulo novo".
     // O agente não promete o que não entrega — nunca chega no ramo `byAction[...] === "act_full"`.
     if (top.kind === "refresh_fatigued") {
+      // Gradua o título pelo desgaste: AGING (ainda entrega) = "Preparar o próximo criativo" (não
+      // troque um vencedor provado antes de cair); fadiga real (já caiu) = "Testar um ângulo novo".
+      // O rationale já vem graduado do detector (`e.aging`). Fonte da distinção: `aging` da entidade.
+      const aging = entities.find((e) => e.id === top.entityId)?.aging ?? false;
       await deps.db.insert(recommendations).values({
         orgId: state.orgId,
         runId: state.runId,
-        title: "Testar um ângulo novo",
+        title: aging ? "Preparar o próximo criativo" : "Testar um ângulo novo",
         rationale: top.rationale,
         kind: "human_direction",
         riskLevel: "low",

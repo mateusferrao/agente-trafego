@@ -718,6 +718,27 @@ describe("account-analysis read-only nodes", () => {
       expect(h.insertedRecommendations[0]?.["draftId"]).toBeUndefined();
     });
 
+    it("campanha DESGASTANDO mas ainda entregando (creative_aging) → título 'Preparar o próximo criativo', não 'Testar um ângulo novo'", async () => {
+      const h = makeHarness();
+      const repos = (h.deps as unknown as { _repos: Parameters<typeof makeAccountAnalysisNodes>[1] })._repos;
+      const n = makeAccountAnalysisNodes(h.deps, repos);
+      const state = stateWithCampaign({
+        id: "c1",
+        level: "campaign",
+        name: "Campanha Desgastando",
+        status: "active",
+        eligibility: { hasSignificance: true },
+        healthSignals: ["creative_aging"],
+        metrics: { spend: 100 },
+      });
+
+      await n.proposeDrafts(state);
+
+      expect(h.insertedRecommendations).toHaveLength(1);
+      expect(h.insertedRecommendations[0]).toMatchObject({ kind: "human_direction", title: "Preparar o próximo criativo" });
+      expect(String(h.insertedRecommendations[0]?.["rationale"])).toContain("ainda entrega");
+    });
+
     it("vencedor claro (scale_winner) NÃO entra no ramo human_direction do P1.1", async () => {
       // mock de db/ads aqui é mínimo (não simula a saga inteira de proposeScaleWinner) — este
       // teste prova só o ROTEAMENTO: uma oportunidade `scale_winner` nunca cai no atalho

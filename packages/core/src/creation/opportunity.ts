@@ -15,8 +15,12 @@ export interface OpportunityEntity {
    * um vencedor provado ainda vale propor pro humano revisar. Só `false` bloqueia.
    */
   readonly atBudgetCeiling?: boolean;
-  /** fadiga de CRIATIVO — precisa de anúncio novo (que não geramos) → só recomendação. */
+  /** DESGASTE de criativo — precisa de anúncio novo (que não geramos) → só recomendação. Inclui
+   *  o aging (ainda entrega): o caller passa `isFatigued` (fonte única, cobre fatigue + aging). */
   readonly fatigued: boolean;
+  /** o desgaste é do tipo AGING (ainda entrega): gradua a recomendação de "troque já" pra "prepare
+   *  o sucessor". O caller passa `isAging`. Ausente/false = fadiga real (já não entrega) → troque. */
+  readonly aging?: boolean;
   /** SATURAÇÃO de público — o público atual esgotou → vale nova prospecção (público novo, criativo
    *  reusado). Distinto de `fatigued` (criativo). O caller mapeia `audience_saturation` → aqui. */
   readonly saturated?: boolean;
@@ -105,14 +109,18 @@ export function detectCreationOpportunities(input: DetectOpportunitiesInput): Cr
         rationale: `"${e.name ?? e.id}" saturou o público atual — vale abrir uma nova prospecção por interesses/comportamentos.`,
       });
     }
-    // fadiga de CRIATIVO → precisa de anúncio novo (não geramos) → só recomendação (human_direction).
+    // DESGASTE de criativo → precisa de anúncio novo (não geramos) → só recomendação (human_direction).
+    // Gradua a direção pelo resultado: AGING (ainda entrega) = prepare o sucessor, não troque um
+    // vencedor provado antes de cair; FADIGA real (já não entrega) = troque, teste um ângulo novo.
     if (e.fatigued && e.spending) {
       out.push({
         kind: "refresh_fatigued",
         entityLevel: e.level,
         entityId: e.id,
         ...(e.name ? { entityName: e.name } : {}),
-        rationale: `"${e.name ?? e.id}" está com sinais de fadiga de criativo — vale testar um ângulo novo.`,
+        rationale: e.aging
+          ? `"${e.name ?? e.id}" ainda entrega, mas já dá sinais de desgaste — deixe o próximo criativo pronto e troque quando o resultado começar a cair, não antes.`
+          : `"${e.name ?? e.id}" está com sinais de fadiga de criativo e o resultado já caiu — vale testar um ângulo novo.`,
       });
     }
   }
