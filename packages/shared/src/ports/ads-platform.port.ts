@@ -2,6 +2,7 @@ import type {
   AccessibleAccount,
   AccountHealth,
   Action,
+  ActivationTree,
   AdEntity,
   AudienceProfile,
   BreakdownDimension,
@@ -307,6 +308,10 @@ export interface AdsPlatformPort {
   getDeliveryEstimateForAdSet(account: AdAccountRef, adsetId: string): Promise<DeliveryEstimate>;
   /** Lê a estrutura NEUTRA de uma campanha existente p/ cópia fiel (Fatia 7) — escopado. */
   readCampaignStructure(account: AdAccountRef, campaignId: string): Promise<CampaignStructure>;
+  /** Lê os descendentes VIVOS + status EFETIVO de uma campanha (`level:"campaign"` → conjuntos+anúncios)
+   *  ou conjunto (`level:"adset"` → anúncios) — base da ativação em cadeia (religar os pausados) e da
+   *  entrega efetiva (existe anúncio ativo?). Escopado (nunca account-wide), status fresco. */
+  readActivationTree(account: AdAccountRef, level: "campaign" | "adset", id: string): Promise<ActivationTree>;
   /** Lê o perfil de público de UM adset isolado (público/idade/expansão) — usado no PROPOSE pra
    *  resolver+ecoar o público real de reuse_adset ANTES da confirmação (P0.2/P1), sem esperar o
    *  fluxo de cópia completa. `null` quando o adset não existe/não é lível (o caller decide: bloquear

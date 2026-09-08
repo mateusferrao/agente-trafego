@@ -19,6 +19,22 @@ export const err = <E>(error: E): Result<never, E> => ({ ok: false, error });
 export type EntityLevel = "account" | "campaign" | "adset" | "ad";
 export type EntityStatus = "active" | "paused" | "deleted" | "archived";
 
+/** Nó mínimo da árvore de ativação (id + nome + status EFETIVO). */
+export interface ActivationNode {
+  readonly id: string;
+  readonly name: string | null;
+  readonly status: EntityStatus;
+}
+/**
+ * Descendentes VIVOS de uma campanha/conjunto — base da ativação em cadeia + da entrega efetiva.
+ * `status` é o EFETIVO da Meta (o do anúncio já reflete os pais: anúncio ativo ⇒ cadeia toda ativa).
+ * Escopado na leitura (campanha → seus conjuntos+anúncios; conjunto → seus anúncios).
+ */
+export interface ActivationTree {
+  readonly adsets: readonly ActivationNode[];
+  readonly ads: readonly (ActivationNode & { readonly adsetId: string })[];
+}
+
 /**
  * Estratégia de lance NEUTRA (S2) — mapeia o enum `bid_strategy` da Meta (vocabulário
  * Meta fica só no adapter, `mapBidStrategy`). `lowest_cost` é o padrão esperado (sem

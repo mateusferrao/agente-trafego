@@ -2,6 +2,7 @@ import type {
   AccessibleAccount,
   AccountHealth,
   Action,
+  ActivationTree,
   AdEntity,
   AudienceProfile,
   BidStrategy,
@@ -87,6 +88,10 @@ const ENTITY_FIELDS: Readonly<Record<ListableLevel, string>> = {
     "id,name,status,effective_status,daily_budget,lifetime_budget,budget_remaining,campaign_id,optimization_goal,bid_strategy,bid_amount,promoted_object{pixel_id,custom_event_type,custom_conversion_id,page_id,whatsapp_phone_number},targeting{geo_locations,age_min,age_max,custom_audiences,excluded_custom_audiences,flexible_spec,interests}",
   ad: "id,name,status,effective_status,adset_id,campaign_id",
 };
+
+/** Tetos de página da leitura da árvore de ativação (single-page; paginação = fast-follow). */
+const ACTIVATION_TREE_ADSET_LIMIT = 50;
+const ACTIVATION_TREE_AD_LIMIT = 100;
 
 /** effective_status/status (preferir effective) → EntityStatus do domínio. */
 const STATUS_MAP: Readonly<Record<string, EntityStatus>> = {
@@ -551,6 +556,45 @@ export class MetaAdsAdapter implements AdsPlatformPort {
   async readCampaignStructure(account: AdAccountRef, campaignId: string): Promise<CampaignStructure> {
     try {
       return await this.campaignStructure.read(account, campaignId, normalizeAdAccountId(account.adAccountId));
+    } catch (error) {
+      throw toAdsError(error);
+    }
+  }
+
+  async readActivationTree(account: AdAccountRef, level: "campaign" | "adset", id: string): Promise<ActivationTree> {
+    try {
+      const accountId = normalizeAdAccountId(account.adAccountId);
+      const adsPage = await callWithGovernor(
+        accountId,
+        () =>
+          this.client.request<{ data?: RawEntityNode[] }>({
+            method: "GET",
+            path: `${id}/ads`,
+            accessToken: account.accessToken,
+            params: { fields: "id,name,effective_status,adset_id", limit: ACTIVATION_TREE_AD_LIMIT },
+          }),
+        { governor: this.governor },
+      );
+      const ads = (adsPage.data ?? [])
+        .filter((a): a is RawEntityNode & { id: string } => !!a.id)
+        .map((a) => ({ id: a.id, name: a.name ?? null, status: mapStatus(a.effective_status, a.status), adsetId: a.adset_id ?? "" }));
+      // conjunto: os anúncios já são os descendentes (não há sub-conjunto). campanha: também os conjuntos.
+      if (level === "adset") return { adsets: [], ads };
+      const adsetsPage = await callWithGovernor(
+        accountId,
+        () =>
+          this.client.request<{ data?: RawEntityNode[] }>({
+            method: "GET",
+            path: `${id}/adsets`,
+            accessToken: account.accessToken,
+            params: { fields: "id,name,effective_status", limit: ACTIVATION_TREE_ADSET_LIMIT },
+          }),
+        { governor: this.governor },
+      );
+      const adsets = (adsetsPage.data ?? [])
+        .filter((a): a is RawEntityNode & { id: string } => !!a.id)
+        .map((a) => ({ id: a.id, name: a.name ?? null, status: mapStatus(a.effective_status, a.status) }));
+      return { adsets, ads };
     } catch (error) {
       throw toAdsError(error);
     }

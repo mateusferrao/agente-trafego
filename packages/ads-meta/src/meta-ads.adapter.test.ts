@@ -399,3 +399,41 @@ describe("MetaAdsAdapter.listEntities (cache de catálogo)", () => {
     expect(calls().length).toBe(2);
   });
 });
+
+describe("readActivationTree (ativação em cadeia + entrega efetiva)", () => {
+  const ref = { adAccountId: "1", accessToken: "tok" };
+
+  it("campanha → conjuntos + anúncios com status EFETIVO (anúncio sob adset pausado = paused)", async () => {
+    const { adapter } = makeAdapterWithGov();
+    stubFetchSequence([
+      { body: { data: [
+        { id: "a1", name: "Ad 1", effective_status: "ACTIVE", adset_id: "s1" },
+        { id: "a2", name: "Ad 2", effective_status: "ADSET_PAUSED", adset_id: "s2" },
+      ] } },
+      { body: { data: [
+        { id: "s1", name: "Set 1", effective_status: "ACTIVE" },
+        { id: "s2", name: "Set 2", effective_status: "PAUSED" },
+      ] } },
+    ]);
+    const tree = await adapter.readActivationTree(ref, "campaign", "c1");
+    expect(tree.ads).toEqual([
+      { id: "a1", name: "Ad 1", status: "active", adsetId: "s1" },
+      { id: "a2", name: "Ad 2", status: "paused", adsetId: "s2" },
+    ]);
+    expect(tree.adsets).toEqual([
+      { id: "s1", name: "Set 1", status: "active" },
+      { id: "s2", name: "Set 2", status: "paused" },
+    ]);
+  });
+
+  it("conjunto → só anúncios (sem sub-conjunto, sem 2ª chamada)", async () => {
+    const { adapter } = makeAdapterWithGov();
+    const { calls } = stubFetchSequence([
+      { body: { data: [{ id: "a1", name: "Ad 1", effective_status: "ACTIVE", adset_id: "s1" }] } },
+    ]);
+    const tree = await adapter.readActivationTree(ref, "adset", "s1");
+    expect(tree.adsets).toEqual([]);
+    expect(tree.ads).toEqual([{ id: "a1", name: "Ad 1", status: "active", adsetId: "s1" }]);
+    expect(calls().length).toBe(1); // só /ads
+  });
+});
