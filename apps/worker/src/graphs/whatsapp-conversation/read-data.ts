@@ -37,7 +37,7 @@ import { AdsPlatformError } from "@trafego/shared/ports";
 import { markConnectionTokenInvalid } from "../../lib/mark-token-invalid.js";
 import { UNDO_BLOCKED_TOOL_KEY, UNDO_TOOL_KEY, withTimeout } from "@trafego/shared";
 import { ACCOUNT_HEALTH_STATUS_LABELS } from "@trafego/shared";
-import type { AgentId, CampaignDraftSpec, CreativeAssetRef, CuratedEntitySnapshot, CustomAudience, DraftKind, EntityLevel, InsightMetrics, MetaAccountHealthStatus, OrgId, PartialReason, TargetingSpec, UnitAnalysis, WhatsappDestination } from "@trafego/shared";
+import type { AgentId, CampaignDraftSpec, CreativeAssetRef, CuratedEntitySnapshot, CustomAudience, DraftKind, EntityLevel, InsightMetrics, MetaAccountHealthStatus, OrgId, PageInfo, PartialReason, TargetingSpec, UnitAnalysis, WhatsappDestination } from "@trafego/shared";
 import type { DraftApproval } from "@trafego/shared/ports";
 import type { StoredInsightMetrics } from "@trafego/shared/types";
 import type { WorkerDeps } from "../../composition.js";
@@ -1473,6 +1473,30 @@ export async function listAudiencesData(
 }
 
 /**
+ * Páginas do Facebook que a conta pode usar como DESTINO (W2 — o dono tem N Páginas/números). Chamada
+ * ao vivo (sem cache — o catálogo de Páginas muda raro e não temos tabela); best-effort: sem acesso
+ * (403) ou nenhuma → nota honesta. Em campanha de conversas, a Página define pra qual WhatsApp o
+ * clique leva; o `whatsappNumber` é best-effort (a Meta nem sempre expõe).
+ */
+export async function listPagesData(
+  deps: WorkerDeps,
+  ctx: ReadToolContext,
+): Promise<{ hasData: true; pages: PageInfo[] } | { hasData: false; note: string }> {
+  const repo = createAnalysisRepo(deps.db);
+  const account = await repo.loadAccount(ctx.orgId, ctx.adAccountId);
+  if (!account) return { hasData: false, note: "conta não encontrada" };
+  const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
+  let pages: PageInfo[];
+  try {
+    pages = await withTimeout(deps.ports.ads.listPages(ref), deps.conversation.liveFetchTimeoutMs);
+  } catch {
+    return { hasData: false, note: "não consegui buscar suas Páginas agora — tenta de novo em instantes" };
+  }
+  if (pages.length === 0) return { hasData: false, note: "não achei Páginas que essa conta possa usar — verifique se a conta tem uma Página ligada no Gerenciador da Meta" };
+  return { hasData: true, pages };
+}
+
+/**
  * Campanhas GERENCIÁVEIS na Meta (ativa OU pausada) que ainda NÃO têm nenhuma linha em
  * `entity_analyses` — o gap de sincronização (pivô saúde): uma campanha recém-criada/ativada
  * existe de verdade na Meta mas só entra no cache curado na PRÓXIMA análise. Sem isso,
@@ -2150,6 +2174,20 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     },
   );
 
+  const listPages = tool(
+    async () => {
+      if (noFocus()) return NEEDS_FOCUS;
+      logger.debug({ agentId: ctx.agentId }, "tool:list_pages");
+      return asString(await listPagesData(deps, ctx));
+    },
+    {
+      name: "list_pages",
+      description:
+        "Lista as PÁGINAS do Facebook que a conta pode usar como DESTINO — nome + número de WhatsApp conectado (quando a Meta expõe). Use quando o dono perguntar 'quais páginas/números eu tenho' ou quando houver VÁRIAS e ele precisar escolher qual usar na criação (a Página define pra qual WhatsApp uma campanha de conversas leva). Nunca invente uma Página — use as que aparecem aqui.",
+      schema: z.object({}),
+    },
+  );
+
   const getAdsBreakdown = tool(
     async ({
       periodDays,
@@ -2228,5 +2266,6 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
     getAccountHealth,
     getAdsBreakdown,
     listAudiences,
+    listPages,
   ];
 }

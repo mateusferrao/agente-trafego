@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, interleaveMedia, normalizeAdCount, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField, stripGeoQualifier } from "./draft-proposal.js";
+import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, interleaveMedia, matchPagesByQuery, normalizeAdCount, pageChoiceLabel, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField, stripGeoQualifier } from "./draft-proposal.js";
+import type { PageInfo } from "@trafego/shared";
 import type { CopyVariant } from "@trafego/shared";
 import type { CampaignDraftSpec } from "@trafego/shared";
 import { creativeContentHash } from "../vision/resolver.js";
@@ -656,6 +657,39 @@ describe("resolveCreativeFill (política de faltante do picker — Slice 3)", ()
   });
   it("adCount 0/negativo → clampa pra ≥1", () => {
     expect(resolveCreativeFill(0, 0, undefined)).toEqual({ decision: "agent", variants: 1 });
+  });
+});
+
+describe("matchPagesByQuery / pageChoiceLabel (picker de Página — W2)", () => {
+  const pages: PageInfo[] = [
+    { pageId: "P1", name: "CaquiAI Oficial", whatsappNumber: "5531953491398" },
+    { pageId: "P2", name: "CaquiAI Loja", whatsappNumber: "5531999990000" },
+    { pageId: "P3", name: "Consultório Dr. Ana" },
+  ];
+  it("nome (substring, case-insensitive) → casa a Página", () => {
+    expect(matchPagesByQuery(pages, "loja").map((p) => p.pageId)).toEqual(["P2"]);
+    expect(matchPagesByQuery(pages, "CONSULTÓRIO").map((p) => p.pageId)).toEqual(["P3"]);
+  });
+  it("número (dígitos, substring, mín. 6) → casa pela linha do WhatsApp", () => {
+    expect(matchPagesByQuery(pages, "3491398").map((p) => p.pageId)).toEqual(["P1"]);
+    expect(matchPagesByQuery(pages, "+55 (31) 99999-0000").map((p) => p.pageId)).toEqual(["P2"]);
+  });
+  it("prefixo comum → N matches (o caller pergunta, nunca chuta)", () => {
+    expect(matchPagesByQuery(pages, "caquiai").map((p) => p.pageId)).toEqual(["P1", "P2"]);
+  });
+  it("nada bate → lista vazia (o caller lista as opções)", () => {
+    expect(matchPagesByQuery(pages, "farmácia")).toEqual([]);
+  });
+  it("número curto (<6 dígitos) não casa fragmento à toa", () => {
+    expect(matchPagesByQuery(pages, "553")).toEqual([]);
+  });
+  it("query vazia → lista vazia", () => {
+    expect(matchPagesByQuery(pages, "  ")).toEqual([]);
+  });
+  it("rótulo mostra nome + WhatsApp quando há; só nome quando não", () => {
+    expect(pageChoiceLabel(pages[0]!)).toBe("CaquiAI Oficial (WhatsApp +5531953491398)");
+    expect(pageChoiceLabel(pages[2]!)).toBe("Consultório Dr. Ana");
+    expect(pageChoiceLabel({ pageId: "PX" })).toBe("Página do Facebook");
   });
 });
 

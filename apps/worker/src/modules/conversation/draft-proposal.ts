@@ -32,6 +32,7 @@ import {
   type CustomAudience,
   type CreativeSourceStrategy,
   type DraftId,
+  type PageInfo,
   type ResolvedAudienceSnapshot,
   type TargetingSpec,
   withTimeout,
@@ -1100,6 +1101,10 @@ export interface RefineDraftPatch {
     readonly index: number;
     readonly creative: string;
   }[];
+  /** TROCAR a Página de destino do rascunho (W2 — escolher entre N): NOME ou NÚMERO de WhatsApp que o
+   *  dono disse — resolvido determinístico contra as Páginas da conta; ambíguo/não-achado → bloqueia
+   *  honesto (lista as opções). Em campanha de conversas muda pra qual WhatsApp o clique leva. */
+  readonly setPage?: string;
 }
 
 export type RefineResult = { readonly kind: "ok"; readonly echo: string } | { readonly kind: "blocked"; readonly reason: string };
@@ -1419,6 +1424,29 @@ export async function refineDraft(
     edit.copyVariants = arr;
   }
 
+  // Trocar a PÁGINA de destino (W2): resolve o nome/número contra as Páginas da conta. Ambíguo/não-achado
+  // → bloqueia honesto listando as opções (nunca troca pela errada). `listPages` vazio (sem acesso) →
+  // não dá pra resolver aqui, então bloqueia dizendo pra escolher no site.
+  if (patch.setPage) {
+    const pages = await deps.ports.ads.listPages(ac.ref);
+    if (pages.length === 0) {
+      return { kind: "blocked", reason: "não consegui listar suas Páginas agora pra trocar o destino — tente de novo, ou troque pela plataforma." };
+    }
+    const hits = matchPagesByQuery(pages, patch.setPage);
+    if (hits.length !== 1) {
+      const listPt = (hits.length === 0 ? pages : hits).map((p) => `• ${pageChoiceLabel(p)}`).join("\n");
+      return {
+        kind: "blocked",
+        reason:
+          hits.length === 0
+            ? `não achei uma Página que bata com "${patch.setPage}". Suas Páginas:\n${listPt}\n\nMe diz qual.`
+            : `achei mais de uma Página pra "${patch.setPage}":\n${listPt}\n\nQual delas?`,
+      };
+    }
+    edit.pageId = hits[0]!.pageId;
+    refineNotes.push(`Página trocada pra *${pageChoiceLabel(hits[0]!)}*.`);
+  }
+
   const result = applyDraftEdit(kind, spec, edit, { budgetCapMinor: ac.cfg.maxNewDailyBudgetMinor ?? null, hasPixel });
   if (!result.ok) return { kind: "blocked", reason: refineErrorReason(result.error) };
 
@@ -1718,6 +1746,26 @@ export function resolveCreativeFill(picked: number, adCount: number, fill: "agen
   return { decision: "ask" }; // faltando criativo e sem decisão → pergunta ao dono
 }
 
+/** Casa a Página que o dono DESCREVEU (nome ou número de WhatsApp) contra as Páginas da conta.
+ *  Nome = match por substring (case-insensitive); número = substring dos dígitos (mín. 6 pra não
+ *  casar fragmento curto). Retorna as Páginas candidatas — 1 = escolha clara; 0 ou N = o caller
+ *  pergunta (nunca chuta). PURO/testável (W2 — escolher entre N Páginas/números). */
+export function matchPagesByQuery(pages: readonly PageInfo[], query: string): PageInfo[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const digits = query.replace(/\D+/g, "");
+  return pages.filter((p) => {
+    const byName = p.name ? p.name.toLowerCase().includes(q) : false;
+    const byNumber = digits.length >= 6 && p.whatsappNumber ? p.whatsappNumber.includes(digits) : false;
+    return byName || byNumber;
+  });
+}
+
+/** Rótulo de UMA Página pra listar na desambiguação (nome + WhatsApp quando houver). PURO. */
+export function pageChoiceLabel(p: PageInfo): string {
+  return `${p.name ?? "Página do Facebook"}${p.whatsappNumber ? ` (WhatsApp +${p.whatsappNumber})` : ""}`;
+}
+
 /** Preferência de MÍDIA que o dono pode pedir pra composição (o adapter/estratégia escolhe QUAIS). */
 export const MEDIA_PREFERENCES = ["video", "image", "mixed"] as const;
 export type MediaPreference = (typeof MEDIA_PREFERENCES)[number];
@@ -2015,6 +2063,10 @@ export async function proposeCreateCampaign(
     /** URL de DESTINO informada pelo dono (site/tráfego/conversão) — vence o link herdado da conta.
      *  Ignorada (com nota) em objetivo de conversas no WhatsApp; inválida → nota + destino padrão. */
     readonly link?: string;
+    /** PÁGINA de destino DESCRITA pelo dono por nome ou número de WhatsApp (W2 — quando há N Páginas).
+     *  Resolvida determinístico p/ a Página real; ambígua/não-achada → pergunta (nunca chuta). Vazia →
+     *  usa a Página do anúncio-base (`defaults.pageId`, comportamento anterior). */
+    readonly page?: string;
   },
   origin: DraftOrigin = "on_demand",
   opts: { readonly autonomous?: boolean; readonly minMonthlyReach?: number; readonly requireResolvedAudience?: boolean } = {},
@@ -2038,6 +2090,37 @@ export async function proposeCreateCampaign(
   const goal = args.goal ?? defaults.objectiveGoal ?? DEFAULT_CONVERSION_GOAL;
   if (conversionRequiresPixel(goal) && !defaults.pixelId) {
     return { kind: "blocked", reason: OBJECTIVE_REQUIRES_PIXEL_REASON };
+  }
+
+  // PÁGINA de destino (W2): o dono pode ter N Páginas/números de WhatsApp. Se ele DESCREVEU uma
+  // (nome/número), resolvo determinístico contra as Páginas da conta; ambíguo/não-achado → PERGUNTO
+  // (lista as opções, nunca chuto). Sem escolha → a Página do anúncio-base (comportamento anterior).
+  // `listPages` é best-effort: vazio (403/sem acesso) e o dono nomeou → caio na base com nota honesta.
+  let pageId = defaults.pageId;
+  let pageChoiceNote: string | undefined;
+  const pageQuery = args.page?.trim();
+  if (pageQuery) {
+    const pages = await deps.ports.ads.listPages(ac.ref);
+    const hits = matchPagesByQuery(pages, pageQuery);
+    if (hits.length === 1) {
+      pageId = hits[0]!.pageId;
+      // objetivo de conversas já mostra a Página na linha "Destino" (não duplico); demais objetivos
+      // não têm essa linha → confirmo a escolha aqui.
+      if (!isMessagingGoal(goal)) pageChoiceNote = `Página escolhida: *${pageChoiceLabel(hits[0]!)}*.`;
+    } else if (pages.length === 0) {
+      // não consegui listar as Páginas (sem acesso) → uso a do anúncio-base, honesto.
+      pageChoiceNote = `Não consegui listar suas Páginas agora, então usei a Página do seu anúncio-base. Dá pra trocar depois de eu criar, ou tente de novo.`;
+    } else {
+      // 0 matches OU N matches → pergunta, listando o que a conta tem (§8: nunca escolho sozinho).
+      const listPt = pages.map((p) => `• ${pageChoiceLabel(p)}`).join("\n");
+      return {
+        kind: "ask",
+        echo:
+          hits.length === 0
+            ? `Não achei uma Página que bata com "${pageQuery}". Suas Páginas:\n${listPt}\n\nQual você quer usar?`
+            : `Achei mais de uma Página pra "${pageQuery}":\n${hits.map((p) => `• ${pageChoiceLabel(p)}`).join("\n")}\n\nQual delas?`,
+      };
+    }
   }
 
   // AUTÔNOMO (proativo, Fatia 8): ambíguo/inexistente é DESCARTADO (nunca pergunta — não há humano
@@ -2088,12 +2171,12 @@ export async function proposeCreateCampaign(
         ac.creativeSource,
         { goal, businessContext: ac.businessContext, guidance: ac.guidance, model: ac.model },
       );
-  // Página é obrigatória (object_story_spec). Vem do anúncio veiculando; conta sem NENHUM
-  // anúncio não tem página inferível — nesse caso nem um upload da biblioteca cria (falta a Page).
-  if (!defaults.pageId || !chosen) {
+  // Página é obrigatória (object_story_spec). Vem do anúncio veiculando (ou da escolha do dono, W2);
+  // conta sem NENHUM anúncio não tem página inferível — nesse caso nem um upload da biblioteca cria.
+  if (!pageId || !chosen) {
     // criativo JÁ resolvido (ex: o usuário mandou um no WhatsApp) mas falta a Página → a mensagem
     // de "me manda um criativo" confundiria; o bloqueio real é a Página, que vem de um anúncio ativo.
-    if (chosen && !defaults.pageId) {
+    if (chosen && !pageId) {
       return {
         kind: "blocked",
         reason: "recebi o criativo, mas essa conta ainda não tem uma Página de onde eu monte o anúncio — ela vem de um anúncio ativo. Conecte uma conta com anúncios (ou publique um) que eu crio a campanha.",
@@ -2130,6 +2213,7 @@ export async function proposeCreateCampaign(
   // troca o asset específico no site. Criativo forçado (WhatsApp) = anúncio único (comportamento antigo).
   const requestedAdCount = args.forcedCreativeAssetId ? undefined : normalizeAdCount(args.adCount);
   const compositionNotes: string[] = [];
+  if (pageChoiceNote) compositionNotes.push(pageChoiceNote); // W2: eco da Página escolhida (ou da degradação honesta)
   // pool DISTINTO priorizado (o melhor `chosen` primeiro), deduplicado por mídia, filtrado por preferência.
   // Mantém os candidatos DESCRITOS (não só o ref): a decomposição de visão do líder aterra a copy.
   const pool = args.forcedCreativeAssetId ? [] : await buildCreativePool(deps, ctx.orgId, ctx.adAccountId, ac.ref, ac.creativeSource);
@@ -2323,7 +2407,7 @@ export async function proposeCreateCampaign(
       ...(reuseImageHash ? { metaImageHash: reuseImageHash } : {}),
       ...(reuseVideoId ? { metaVideoId: reuseVideoId } : {}),
     },
-    pageId: defaults.pageId,
+    pageId,
     ...(defaults.pixelId ? { pixelId: defaults.pixelId } : {}),
     ...(resolvedLinkUrl ? { linkUrl: resolvedLinkUrl } : {}),
   };

@@ -157,4 +157,18 @@ describe("applyDraftEdit — merge puro do rascunho", () => {
     if (r.ok || r.error.code !== "field_not_editable") throw new Error("esperava field_not_editable");
     expect(r.error.field).toBe("linkUrl");
   });
+
+  it("from_scratch: pageId (Página de destino, W2) grava no spec", () => {
+    const r = applyDraftEdit("from_scratch", fromScratch, { pageId: "PAGE_B" }, noCap);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.value.spec.pageId).toBe("PAGE_B");
+  });
+
+  it("duplicate: pageId é from_scratch-only → erro field_not_editable (escala herda a Página)", () => {
+    const r = applyDraftEdit("duplicate", duplicate, { pageId: "PAGE_B" }, noCap);
+    expect(r.ok).toBe(false);
+    if (r.ok || r.error.code !== "field_not_editable") throw new Error("esperava field_not_editable");
+    expect(r.error.field).toBe("pageId");
+  });
 });

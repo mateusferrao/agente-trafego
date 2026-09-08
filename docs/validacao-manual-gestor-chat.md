@@ -549,6 +549,37 @@ Entrada: um bairro que a Meta não tem no catálogo.
 1. Em vez de travar "não achei", o Roy **oferece um raio** (~2 km) em torno do endereço ("a Meta localiza pelo endereço — quer um raio de ~2 km em torno de 'X'?"). ✓
 2. O dono aceita → o Roy re-chama create_campaign com `addressAreas:[{address:"X, cidade", radiusKm:2}]` no lugar do geo que não resolveu; a Meta geocodifica e mira o círculo (`custom_locations`). Os que resolveram seguem em geo. ✓
 
+## Criação: Página/número de WhatsApp de destino (S16)
+
+Conversa real do dono numa campanha de conversas (CTWA): "para qual número de WhatsApp está direcionando?" — o Roy PUNIA ("não dá pra saber antes de aprovar"). O número de destino é o WhatsApp da PÁGINA, conhecível já no rascunho. E o dono pode ter N Páginas/números — agora escolhe qual.
+
+### S16-1 — Rascunho de conversas mostra a Página (+ número best-effort) sem punir (W1)
+Entrada: "cria uma campanha de conversas no WhatsApp" e depois "pra qual número isso vai?".
+1. O eco do rascunho traz a linha **"Destino: leva pro WhatsApp de sua Página *X*"** — com o número (`+55...`) quando a Meta expõe, senão honesto ("o número exato eu confirmo depois de criar — a Meta nem sempre mostra antes"). ✓
+2. O Roy **nunca** diz "não dá pra saber antes de aprovar": a Página ele sempre sabe (é do anúncio-base ou da escolha do dono). ✓
+
+### S16-2 — Listar as Páginas/números que a conta tem (W2)
+Entrada: "quais páginas/números eu tenho?".
+1. O Roy chama `list_pages` e lista **nome + número de WhatsApp** de cada Página (o número quando a Meta expõe). Sem acesso/nenhuma → nota honesta (verifique a Página no Gerenciador). Nunca inventa Página. ✓
+
+### S16-3 — Escolher a Página por nome/número na criação (W2)
+Entrada: "cria uma campanha de conversas usando a página CaquiAI Loja" (ou "…pro número 3491398").
+1. O Roy resolve a Página pelo nome/número contra as Páginas da conta e usa ela no rascunho (`spec.pageId`); o eco de conversas mostra o destino resolvido. ✓
+2. **Ambíguo** (o termo bate com >1 Página) → o Roy **lista as candidatas e pergunta** qual (nunca chuta, §8). **Não achou** → lista todas as Páginas e pergunta. ✓
+3. Objetivo que NÃO é de conversas (site/tráfego) → a Página escolhida vira a nota "Página escolhida: *X*" no eco (não há linha de destino de WhatsApp). ✓
+
+### S16-4 — Trocar a Página de um rascunho pendente (W2)
+Entrada (com rascunho aberto): "troca pra página CaquiAI Loja" (ou "manda pro número 999990000").
+1. `adjust_draft setPage` resolve e troca `spec.pageId`; o eco confirma "Página trocada pra *X*". ✓
+2. Ambíguo/não-achado → **bloqueia honesto** listando as opções (o refino não tem variante "pergunta", então é bloqueio com a lista, não silêncio). ✓
+
+### S16-5 — Degradação honesta quando não dá pra listar as Páginas (W1/W2)
+Entrada: o dono nomeia uma Página, mas o token não tem acesso a `promote_pages` (403).
+1. Na **criação**: o Roy cai na Página do anúncio-base com nota honesta ("não consegui listar suas Páginas agora, usei a do seu anúncio-base — dá pra trocar depois"). Não bloqueia a criação. ✓
+2. No **refino** (`setPage`): bloqueia honesto ("não consegui listar suas Páginas agora pra trocar o destino — tente de novo, ou troque pela plataforma"). ✓
+
+> Limitação aceita (baked-in): o `whatsapp_number` da Página é frequentemente vazio pra CTWA — o número confiável só existe no conjunto após criar. Por isso o número é **best-effort** e o destino confiável de uma campanha JÁ criada segue vindo do `get_whatsapp_number` (promoted_object do conjunto). A listagem `promote_pages`/número por Página é best-known da Graph e **degrada graciosa** (verificar contra conta real).
+
 ## Fast-follows (residuais aceitos / adiados — ROADMAP)
 - **Conta do criativo — estagiar bytes p/ auto-completar após focar**: o núcleo está corrigido (régua inequívoca de 3 níveis idêntica ao turno; ambíguo→pergunta; save casa com a confirmação do Roy). Resta só: no caso AMBÍGUO (sem sole/foco/legenda), o intake pergunta mas não estagia os bytes → o dono reenvia depois de focar. Estagiar (Redis) + auto-completar quando o foco resolver fecha isso (ver ROADMAP).
 - **Gradação do desgaste por severidade (2 × 3 sinais)**: hoje aging×fadiga é binário (ainda entrega × não entrega); um aging SEVERO (3 sinais, prestes a cair) usa a mesma mensagem de aging leve — dá pra graduar a urgência do "prepare o sucessor".

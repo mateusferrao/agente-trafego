@@ -79,6 +79,9 @@ export interface DraftEdit {
   readonly targeting?: TargetingSpec;
   readonly creative?: CreativeAssetRef;
   readonly copyVariants?: readonly CopyVariant[];
+  /** PÁGINA de destino (object_story_spec) resolvida pela casca a partir do nome/número dito pelo dono
+   *  (W2 — trocar a Página quando há N). Em campanha de conversas define pra qual WhatsApp o clique leva. */
+  readonly pageId?: string;
   /** URL de destino do anúncio (link_data.link) — informada pelo dono (chat/site), vence a herdada
    *  da conta. Só faz sentido em objetivo de site/tráfego/conversão; a casca já filtra em
    *  `messaging_started` (leva pro WhatsApp). `""` (string vazia) NÃO chega aqui — a casca omite. */
@@ -114,6 +117,7 @@ const FROM_SCRATCH_ONLY: readonly (keyof DraftEdit)[] = [
   "creative",
   "copyVariants",
   "linkUrl",
+  "pageId",
 ];
 
 function clampBudget(requestedMinor: number, capMinor: number | null | undefined): { dailyBudgetMinor: number; clampedByCap: boolean } {
@@ -167,6 +171,7 @@ export function applyDraftEdit(
     ...(edit.pixelId !== undefined ? { pixelId: edit.pixelId } : {}),
     ...(edit.targeting !== undefined ? { targeting: edit.targeting } : {}),
     ...(edit.creative !== undefined ? { creative: edit.creative } : {}),
+    ...(edit.pageId !== undefined ? { pageId: edit.pageId } : {}),
     ...(edit.copyVariants !== undefined ? { copyVariants: edit.copyVariants, variantsCount: edit.copyVariants.length } : {}),
     ...(edit.linkUrl !== undefined ? { linkUrl: edit.linkUrl } : {}),
   };
