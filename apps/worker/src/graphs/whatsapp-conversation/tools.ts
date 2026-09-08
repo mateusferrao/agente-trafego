@@ -350,7 +350,7 @@ export function makeConversationTools(
   const adjustBudget = tool(proposeOnly, {
     name: "adjust_budget",
     description:
-      "Propõe ajustar o budget diário: por % (mode increase/decrease + pct) OU valor absoluto (mode set + amountReais). " +
+      "Propõe ajustar o budget da entidade (diário ou vitalício, conforme o que ela usa): por % (mode increase/decrease + pct) OU valor absoluto (mode set + amountReais). " +
       "USE ISTO quando o usuário der um NÚMERO explícito de orçamento — inclusive 'escala em 30%' ou 'aumenta o orçamento em 20%' " +
       "(intenção de budget = sobe direto, NUNCA duplica). Só use scale_winner quando NÃO houver número. " +
       "Se a intenção for de orçamento mas faltar A CAMPANHA ou O VALOR/%, NÃO chame ainda — pergunte concretamente o que falta " +

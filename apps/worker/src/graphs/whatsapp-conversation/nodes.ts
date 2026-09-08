@@ -71,7 +71,7 @@ import { makeMetaToolExecutor } from "../../executors/meta-tools.js";
 import { applyCheckedAction, type ApplyResult } from "../../modules/apply/apply-confirmed-action.js";
 import { runReallocationSaga } from "../../modules/apply/reallocation-saga.js";
 import { buildRefineEcho, describeExplicitAudience, MEDIA_PREFERENCES, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner, recoverOpenDraft, refineDraft, resolveProposedExplicitTargeting, type DraftProposalContext, type MediaPreference, type ProposedExplicitInput, type RecoveredDraft } from "../../modules/conversation/draft-proposal.js";
-import { loadWriteContext } from "../../modules/apply/write-context.js";
+import { loadWriteContext, reallocKindPeriod, type BudgetPeriodKind } from "../../modules/apply/write-context.js";
 import { revertActionById } from "../../modules/apply/revert-action.js";
 import { actorLabel } from "../../modules/conversation/actor.js";
 import { createNotifyRepo } from "../../modules/notify/repo.js";
@@ -1159,11 +1159,22 @@ export function makeConversationNodes(
       const toCur = wctx.ctx.budgetAmountByEntity?.get(toKey);
       if (fromCur === undefined || toCur === undefined) {
         const who = fromCur === undefined ? fromName : toName;
-        return { messages: [...answerToolCalls(allCalls, "sem budget"), new AIMessage(`Não consegui ler o orçamento diário de *${who}* — pode ser que o orçamento esteja em outro nível (ex: na campanha, não no conjunto). Dá uma olhada no site.`)] };
+        return { messages: [...answerToolCalls(allCalls, "sem budget"), new AIMessage(`Não consegui ler o orçamento de *${who}* — pode ser que o orçamento esteja em outro nível (ex: na campanha, não no conjunto). Dá uma olhada no site.`)] };
       }
+      // tipo do orçamento (diário/vitalício) por perna: rotula o eco certo e barra misturar tipos —
+      // mover "X/dia" de um diário pra um vitalício (ou vice-versa) não é coerente (um é por dia, o
+      // outro é o total do período).
+      const fromKind = wctx.budgetKindByEntity.get(fromKey) ?? "daily";
+      const toKind = wctx.budgetKindByEntity.get(toKey) ?? "daily";
+      const kindCheck = reallocKindPeriod(fromKind, toKind);
+      if (!kindCheck.ok) {
+        const describeKind = (k: BudgetPeriodKind) => (k === "lifetime" ? "vitalício (total)" : "diário (por dia)");
+        return { messages: [...answerToolCalls(allCalls, "tipos diferentes"), new AIMessage(`*${fromName}* usa orçamento ${describeKind(fromKind)} e *${toName}* usa ${describeKind(toKind)} — não dá pra realocar entre tipos de orçamento diferentes. Ajusto cada um separado, ou você faz no site.`)] };
+      }
+      const period = kindCheck.period;
       const requestedMinor = toMinorUnits(amountReais, wctx.currency);
       if (requestedMinor >= fromCur) {
-        return { messages: [...answerToolCalls(allCalls, "valor alto demais"), new AIMessage(`Esse valor esvaziaria *${fromName}* (orçamento atual ${formatMoneyMinor(fromCur, wctx.currency)}/dia). Me diz um valor menor pra mover.`)] };
+        return { messages: [...answerToolCalls(allCalls, "valor alto demais"), new AIMessage(`Esse valor esvaziaria *${fromName}* (orçamento atual ${formatMoneyMinor(fromCur, wctx.currency)}${period}). Me diz um valor menor pra mover.`)] };
       }
       // pré-clamp: o maior movível respeitando o teto de % nos DOIS lados (origem −%, destino +%).
       const maxMovableMinor = Math.floor((wctx.cfg.maxBudgetChangePct / 100) * Math.min(fromCur, toCur));
@@ -1171,7 +1182,7 @@ export function makeConversationNodes(
       if (moveMinor <= 0) {
         return { messages: [...answerToolCalls(allCalls, "teto"), new AIMessage(`Com o seu limite de segurança de ${wctx.cfg.maxBudgetChangePct}% por mudança, não consigo mover nada de uma vez entre essas duas. Dá pra afrouxar o teto na config, ou mover no site.`)] };
       }
-      const clampedNote = moveMinor < requestedMinor ? `\n(respeitando seu teto de ${wctx.cfg.maxBudgetChangePct}%, movo ${formatMoneyMinor(moveMinor, wctx.currency)}/dia — o máximo seguro de uma vez)` : "";
+      const clampedNote = moveMinor < requestedMinor ? `\n(respeitando seu teto de ${wctx.cfg.maxBudgetChangePct}%, movo ${formatMoneyMinor(moveMinor, wctx.currency)}${period} — o máximo seguro de uma vez)` : "";
       const legFrom: Action = {
         id: `${reallocCall.id ?? REALLOCATE_TOOL_NAME}:from`,
         type: "adjust_budget",
@@ -1217,9 +1228,9 @@ export function makeConversationNodes(
       const sim = wctx.cfg.dryRun ? "Modo simulação (não aplico de verdade): " : "";
       const accountLbl = ctx.multiAccount && ctx.accountName ? ` (${ctx.accountName})` : "";
       const echo =
-        `${sim}Vou mover ${formatMoneyMinor(moveMinor, wctx.currency)}/dia${accountLbl}:\n` +
-        `• *${fromName}* cai pra ${formatMoneyMinor(fromCur - moveMinor, wctx.currency)}/dia\n` +
-        `• *${toName}* sobe pra ${formatMoneyMinor(toCur + moveMinor, wctx.currency)}/dia${clampedNote}\n\nConfirma?`;
+        `${sim}Vou mover ${formatMoneyMinor(moveMinor, wctx.currency)}${period}${accountLbl}:\n` +
+        `• *${fromName}* cai pra ${formatMoneyMinor(fromCur - moveMinor, wctx.currency)}${period}\n` +
+        `• *${toName}* sobe pra ${formatMoneyMinor(toCur + moveMinor, wctx.currency)}${period}${clampedNote}\n\nConfirma?`;
       return {
         messages: [...answerToolCalls(allCalls, "proposto — aguardando confirmação"), new AIMessage(echo)],
         pendingWrite: {
