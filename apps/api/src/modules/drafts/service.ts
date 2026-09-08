@@ -752,7 +752,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     async searchGeo(orgId: OrgId, accountId: string, query: string): Promise<GeoSearchResultOutput[]> {
       const ctx = await loadScaleContext(orgId, accountId);
       if (!ctx) return [];
-      const results = await deps.adsPlatform.searchGeo(ctx.ref, query, ["country", "region", "city"]);
+      const results = await deps.adsPlatform.searchGeo(ctx.ref, query, ["country", "region", "city", "neighborhood"]);
       return results.map((r) => ({ key: r.key, name: r.name, kind: r.kind, countryCode: r.countryCode ?? null }));
     },
 

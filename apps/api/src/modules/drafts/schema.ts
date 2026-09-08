@@ -86,7 +86,7 @@ export const draftApprovalOutput = z.object({
    *  targeting não é `explicit` (os outros modos usam `audience` acima). */
   explicitAudience: z
     .object({
-      geo: z.array(z.object({ key: z.string(), name: z.string(), kind: z.enum(["country", "region", "city"]), radius: z.number().nullable(), distanceUnit: z.enum(["mile", "kilometer"]).nullable() })),
+      geo: z.array(z.object({ key: z.string(), name: z.string(), kind: z.enum(["country", "region", "city", "neighborhood"]), radius: z.number().nullable(), distanceUnit: z.enum(["mile", "kilometer"]).nullable() })),
       radiusAreas: z.array(z.object({ address: z.string(), radius: z.number(), distanceUnit: z.enum(["mile", "kilometer"]) })),
       ageMin: z.number().nullable(),
       ageMax: z.number().nullable(),
@@ -102,7 +102,7 @@ export const draftApprovalOutput = z.object({
    *  pré-preenche o editor quando o dono clica "personalizar público". `null` quando já é explicit. */
   convertibleAudience: z
     .object({
-      geo: z.array(z.object({ key: z.string(), name: z.string(), kind: z.enum(["country", "region", "city"]) })),
+      geo: z.array(z.object({ key: z.string(), name: z.string(), kind: z.enum(["country", "region", "city", "neighborhood"]) })),
       ageMin: z.number().nullable(),
       ageMax: z.number().nullable(),
     })
@@ -179,7 +179,7 @@ export const explicitAudienceInput = z.object({
     z.object({
       key: z.string().min(1),
       name: z.string().min(1),
-      kind: z.enum(["country", "region", "city"]),
+      kind: z.enum(["country", "region", "city", "neighborhood"]),
       radius: z.number().positive().optional(),
       distanceUnit: z.enum(["mile", "kilometer"]).optional(),
     }),
@@ -222,7 +222,7 @@ export const updateDraftInput = z.object({
   /** nomes EXATOS (como renderizados nos chips) a remover — sem ambiguidade (o usuário clicou o chip). */
   removeGeo: z.array(z.string().min(1)).optional(),
   /** já RESOLVIDO pelo autocomplete (geo-search) — o site nunca manda nome livre pro backend resolver. */
-  addGeo: z.array(z.object({ key: z.string().min(1), name: z.string().min(1), kind: z.enum(["country", "region", "city"]) })).optional(),
+  addGeo: z.array(z.object({ key: z.string().min(1), name: z.string().min(1), kind: z.enum(["country", "region", "city", "neighborhood"]) })).optional(),
   ageMin: z.number().int().min(13).max(65).optional(),
   ageMax: z.number().int().min(13).max(65).optional(),
   /** gênero do público EXPLÍCITO: `[1]`=homens, `[2]`=mulheres, `[]`=todos (limpa). Ausente = mantém. */
@@ -253,7 +253,7 @@ export type GeoSearchQuery = z.infer<typeof geoSearchQuery>;
 export const geoSearchResultOutput = z.object({
   key: z.string(),
   name: z.string(),
-  kind: z.enum(["country", "region", "city"]),
+  kind: z.enum(["country", "region", "city", "neighborhood"]),
   countryCode: z.string().nullable(),
 });
 export type GeoSearchResultOutput = z.infer<typeof geoSearchResultOutput>;

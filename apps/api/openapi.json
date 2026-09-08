@@ -7442,7 +7442,8 @@
                       "enum": [
                         "country",
                         "region",
-                        "city"
+                        "city",
+                        "neighborhood"
                       ]
                     },
                     "radius": {
@@ -7796,7 +7797,8 @@
                       "enum": [
                         "country",
                         "region",
-                        "city"
+                        "city",
+                        "neighborhood"
                       ]
                     },
                     "radius": {
@@ -8229,7 +8231,8 @@
                       "enum": [
                         "country",
                         "region",
-                        "city"
+                        "city",
+                        "neighborhood"
                       ]
                     },
                     "radius": {
@@ -8407,7 +8410,8 @@
                       "enum": [
                         "country",
                         "region",
-                        "city"
+                        "city",
+                        "neighborhood"
                       ]
                     }
                   },
@@ -8692,7 +8696,8 @@
             "enum": [
               "country",
               "region",
-              "city"
+              "city",
+              "neighborhood"
             ]
           },
           "countryCode": {
@@ -8796,7 +8801,8 @@
                   "enum": [
                     "country",
                     "region",
-                    "city"
+                    "city",
+                    "neighborhood"
                   ]
                 },
                 "radius": {
@@ -9257,7 +9263,8 @@
                   "enum": [
                     "country",
                     "region",
-                    "city"
+                    "city",
+                    "neighborhood"
                   ]
                 }
               },
@@ -9345,7 +9352,8 @@
                       "enum": [
                         "country",
                         "region",
-                        "city"
+                        "city",
+                        "neighborhood"
                       ]
                     },
                     "radius": {

@@ -13,7 +13,9 @@ import { normalizeAdAccountId } from "./ids.js";
  * como opcional.
  */
 const GEO_SEARCH_LIMIT = 10;
-const META_LOCATION_TYPES = { country: "country", region: "region", city: "city" } as const;
+const META_LOCATION_TYPES = { country: "country", region: "region", city: "city", neighborhood: "neighborhood" } as const;
+type GeoLocationType = keyof typeof META_LOCATION_TYPES;
+const ACCEPTED_GEO_TYPES: ReadonlySet<string> = new Set(Object.keys(META_LOCATION_TYPES));
 
 interface RawGeoResult {
   readonly key?: string;
@@ -34,7 +36,7 @@ export class MetaGeoSearchService {
     this.governor = governor;
   }
 
-  async search(account: AdAccountRef, query: string, locationTypes: readonly ("country" | "region" | "city")[]): Promise<GeoSearchResult[]> {
+  async search(account: AdAccountRef, query: string, locationTypes: readonly GeoLocationType[]): Promise<GeoSearchResult[]> {
     if (!query.trim() || locationTypes.length === 0) return [];
     const accountId = normalizeAdAccountId(account.adAccountId);
     const data = await callWithGovernor(
@@ -55,8 +57,8 @@ export class MetaGeoSearchService {
     );
     const out: GeoSearchResult[] = [];
     for (const r of data.data ?? []) {
-      if (!r.key || !r.name || (r.type !== "country" && r.type !== "region" && r.type !== "city")) continue;
-      out.push({ key: r.key, name: r.name, kind: r.type, ...(r.country_code ? { countryCode: r.country_code } : {}) });
+      if (!r.key || !r.name || !ACCEPTED_GEO_TYPES.has(r.type ?? "")) continue;
+      out.push({ key: r.key, name: r.name, kind: r.type as GeoSearchResult["kind"], ...(r.country_code ? { countryCode: r.country_code } : {}) });
     }
     return out;
   }

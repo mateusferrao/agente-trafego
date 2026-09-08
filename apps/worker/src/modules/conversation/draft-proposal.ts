@@ -447,14 +447,15 @@ async function prepareAudiences(
 }
 
 /** Rótulo PT do tipo de geo (vocabulário Meta fica no adapter — aqui só o kind neutro). */
-function geoKindPt(kind: "country" | "region" | "city"): string {
-  return kind === "country" ? "país" : kind === "region" ? "região" : "cidade";
+function geoKindPt(kind: "country" | "region" | "city" | "neighborhood"): string {
+  return kind === "country" ? "país" : kind === "region" ? "região" : kind === "neighborhood" ? "bairro" : "cidade";
 }
 
 const MAX_GEO_AMBIGUOUS_OPTIONS = 5;
 
+type GeoKind = "country" | "region" | "city" | "neighborhood";
 type GeoPrep =
-  | { readonly kind: "ok"; readonly geo: readonly { readonly key: string; readonly name: string; readonly kind: "country" | "region" | "city" }[]; readonly dropped: readonly string[] }
+  | { readonly kind: "ok"; readonly geo: readonly { readonly key: string; readonly name: string; readonly kind: GeoKind }[]; readonly dropped: readonly string[] }
   | { readonly kind: "blocked"; readonly reason: string };
 
 /**
@@ -462,17 +463,17 @@ type GeoPrep =
  * honesto; 2+ → PERGUNTA. `autonomous` (proativo) descarta o ambíguo/inexistente em `dropped`.
  */
 async function prepareGeo(deps: WorkerDeps, ref: AdAccountRef, queries: readonly string[], autonomous = false): Promise<GeoPrep> {
-  const resolved: { key: string; name: string; kind: "country" | "region" | "city" }[] = [];
+  const resolved: { key: string; name: string; kind: GeoKind }[] = [];
   const dropped: string[] = [];
   for (const q of queries) {
-    let matches = await deps.ports.ads.searchGeo(ref, q, ["country", "region", "city"]);
+    let matches = await deps.ports.ads.searchGeo(ref, q, ["country", "region", "city", "neighborhood"]);
     let usedQuery = q;
     // 0 matches com a string crua? retenta SEM o qualificador (", MG"/", cidade") — a Meta casa pelo
     // nome do lugar, não pela string composta. (o incidente "Belo Horizonte, MG" → "não achei").
     if (matches.length === 0) {
       const stripped = stripGeoQualifier(q);
       if (stripped) {
-        matches = await deps.ports.ads.searchGeo(ref, stripped, ["country", "region", "city"]);
+        matches = await deps.ports.ads.searchGeo(ref, stripped, ["country", "region", "city", "neighborhood"]);
         usedQuery = stripped;
       }
     }

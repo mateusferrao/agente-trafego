@@ -276,7 +276,7 @@ export interface CustomAudience {
 export interface GeoSearchResult {
   readonly key: string;
   readonly name: string;
-  readonly kind: "country" | "region" | "city";
+  readonly kind: "country" | "region" | "city" | "neighborhood";
   /** país-mãe (cidades/regiões) — desambiguação quando o nome é homônimo entre países. */
   readonly countryCode?: string;
 }
@@ -1204,7 +1204,7 @@ export type TargetingSpec =
       readonly geo: readonly {
         readonly key: string;
         readonly name: string;
-        readonly kind: "country" | "region" | "city";
+        readonly kind: "country" | "region" | "city" | "neighborhood";
         readonly radius?: number;
         readonly distanceUnit?: DistanceUnit;
       }[];

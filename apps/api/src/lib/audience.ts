@@ -37,7 +37,7 @@ export function buildExplicitFromInput(a: ExplicitAudienceInput): ExplicitTarget
 /** View de saída do público explícito (semente do editor no card) — normaliza opcionais em `null`.
  *  Mutável de propósito (casa com o tipo inferido do zod de saída dos schemas). */
 export interface ExplicitAudienceView {
-  geo: { key: string; name: string; kind: "country" | "region" | "city"; radius: number | null; distanceUnit: "mile" | "kilometer" | null }[];
+  geo: { key: string; name: string; kind: "country" | "region" | "city" | "neighborhood"; radius: number | null; distanceUnit: "mile" | "kilometer" | null }[];
   radiusAreas: { address: string; radius: number; distanceUnit: "mile" | "kilometer" }[];
   ageMin: number | null;
   ageMax: number | null;

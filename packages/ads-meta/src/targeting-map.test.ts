@@ -34,6 +34,21 @@ describe("explicitTargetingToRaw", () => {
     });
   });
 
+  it("bairro (neighborhood) → geo_locations.neighborhoods (só key, sem raio)", () => {
+    const raw = explicitTargetingToRaw(
+      spec({
+        geo: [
+          { key: "N1", name: "Buritis", kind: "neighborhood" },
+          { key: "C1", name: "Belo Horizonte", kind: "city" },
+        ],
+      }),
+    );
+    expect(raw["geo_locations"]).toEqual({
+      neighborhoods: [{ key: "N1" }],
+      cities: [{ key: "C1" }],
+    });
+  });
+
   it("idade/gênero/públicos salvos/grupos de interesse compõem no mesmo targeting", () => {
     const raw = explicitTargetingToRaw(
       spec({

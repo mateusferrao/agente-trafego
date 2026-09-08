@@ -95,7 +95,7 @@ export function applyExplicitGeoEdit(
   current: Extract<TargetingSpec, { readonly kind: "explicit" }>,
   patch: {
     readonly removeGeo?: readonly string[];
-    readonly addGeo?: readonly { readonly key: string; readonly name: string; readonly kind: "country" | "region" | "city" }[];
+    readonly addGeo?: readonly { readonly key: string; readonly name: string; readonly kind: "country" | "region" | "city" | "neighborhood" }[];
     readonly ageMin?: number;
     readonly ageMax?: number;
     readonly genders?: readonly (1 | 2)[];

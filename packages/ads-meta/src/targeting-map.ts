@@ -25,6 +25,7 @@ export function explicitTargetingToRaw(spec: ExplicitTargeting): Record<string, 
   const countries = spec.geo.filter((g) => g.kind === "country").map((g) => g.key);
   const regions = spec.geo.filter((g) => g.kind === "region");
   const cities = spec.geo.filter((g) => g.kind === "city");
+  const neighborhoods = spec.geo.filter((g) => g.kind === "neighborhood");
   // RAIO é city-only na Meta (regions/countries só aceitam `{key}`/ISO). Strip defensivo: mesmo
   // que um radius chegue numa region (input do site), NUNCA emitir radius fora de `cities`.
   const withRadius = (g: { key: string; radius?: number; distanceUnit?: "mile" | "kilometer" }) =>
@@ -32,6 +33,8 @@ export function explicitTargetingToRaw(spec: ExplicitTargeting): Record<string, 
   if (countries.length) geoLocations["countries"] = countries;
   if (regions.length) geoLocations["regions"] = regions.map((g) => ({ key: g.key }));
   if (cities.length) geoLocations["cities"] = cities.map(withRadius);
+  // BAIRRO (neighborhood): a Meta já tem o polígono do bairro → só `{key}`, sem raio.
+  if (neighborhoods.length) geoLocations["neighborhoods"] = neighborhoods.map((g) => ({ key: g.key }));
   if (spec.radiusAreas && spec.radiusAreas.length > 0) {
     geoLocations["custom_locations"] = spec.radiusAreas.map((a) => ({ address_string: a.address, radius: a.radius, distance_unit: a.distanceUnit }));
   }

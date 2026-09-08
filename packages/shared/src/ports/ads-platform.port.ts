@@ -290,7 +290,7 @@ export interface AdsPlatformPort {
   listCustomAudiences(account: AdAccountRef): Promise<CustomAudience[]>;
   /** Busca geo (país/região/cidade) por texto — Fase 1 (subfatia 3), targeting explícito por
    *  primitivos. Query vazia ou sem match → array vazio (o caller decide pergunta/honesto). */
-  searchGeo(account: AdAccountRef, query: string, locationTypes: readonly ("country" | "region" | "city")[]): Promise<GeoSearchResult[]>;
+  searchGeo(account: AdAccountRef, query: string, locationTypes: readonly ("country" | "region" | "city" | "neighborhood")[]): Promise<GeoSearchResult[]>;
   /** Busca interesse por texto (Fase 2, subfatia 4) — `/search?type=adinterest`, busca livre no
    *  servidor. Query vazia → array vazio. */
   searchInterests(account: AdAccountRef, query: string): Promise<InterestSearchResult[]>;
