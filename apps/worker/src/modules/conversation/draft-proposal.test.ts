@@ -630,6 +630,7 @@ describe("scaleForbiddenRefineField (G16 — escala não edita o herdado)", () =
     expect(scaleForbiddenRefineField({ variantsCount: 3 })).toBe("copyVariants");
     expect(scaleForbiddenRefineField({ setAdCreative: [{ index: 0, creative: "o campeão" }] })).toBe("copyVariants");
     expect(scaleForbiddenRefineField({ link: "https://loja.com" })).toBe("link");
+    expect(scaleForbiddenRefineField({ setPage: "CaquiAI Loja" })).toBe("pageId");
     expect(scaleForbiddenRefineField({ campaignName: "x" })).toBe("campaignName");
   });
   it("regenerateCopy:false NÃO é edição (não trava)", () => {

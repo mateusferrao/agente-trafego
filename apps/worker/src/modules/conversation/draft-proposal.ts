@@ -1138,10 +1138,11 @@ function refineErrorReason(error: RefineError): string {
  * herdado que o usuário tentou mexer, ou null. Fonte da honestidade: em vez de re-ecoar mudo o mesmo
  * spec (o usuário fica sem saber por que "não mudou"), a casca responde por que não dá (§7).
  */
-export function scaleForbiddenRefineField(patch: RefineDraftPatch): "objective" | "targeting" | "copyVariants" | "campaignName" | "adsetName" | "link" | null {
+export function scaleForbiddenRefineField(patch: RefineDraftPatch): "objective" | "targeting" | "copyVariants" | "campaignName" | "adsetName" | "link" | "pageId" | null {
   const has = (v: unknown): boolean => v !== undefined && v !== null && (!Array.isArray(v) || v.length > 0);
   if (has(patch.objective)) return "objective";
   if (has(patch.link)) return "link";
+  if (has(patch.setPage)) return "pageId";
   const touchesAudience =
     has(patch.audience) || has(patch.addGeo) || has(patch.removeGeo) || patch.ageMin !== undefined || patch.ageMax !== undefined ||
     has(patch.gender) || has(patch.addInterests) || has(patch.removeInterests) || has(patch.narrowInterests) ||
@@ -1750,13 +1751,17 @@ export function resolveCreativeFill(picked: number, adCount: number, fill: "agen
  *  Nome = match por substring (case-insensitive); número = substring dos dígitos (mín. 6 pra não
  *  casar fragmento curto). Retorna as Páginas candidatas — 1 = escolha clara; 0 ou N = o caller
  *  pergunta (nunca chuta). PURO/testável (W2 — escolher entre N Páginas/números). */
+/** mínimo de dígitos pra casar uma Página por NÚMERO — evita que um fragmento curto (ex: "553",
+ *  código de país/DDD) case várias Páginas à toa. Um número de WhatsApp real tem bem mais que isto. */
+const MIN_PHONE_MATCH_DIGITS = 6;
+
 export function matchPagesByQuery(pages: readonly PageInfo[], query: string): PageInfo[] {
   const q = query.trim().toLowerCase();
   if (!q) return [];
   const digits = query.replace(/\D+/g, "");
   return pages.filter((p) => {
     const byName = p.name ? p.name.toLowerCase().includes(q) : false;
-    const byNumber = digits.length >= 6 && p.whatsappNumber ? p.whatsappNumber.includes(digits) : false;
+    const byNumber = digits.length >= MIN_PHONE_MATCH_DIGITS && p.whatsappNumber ? p.whatsappNumber.includes(digits) : false;
     return byName || byNumber;
   });
 }

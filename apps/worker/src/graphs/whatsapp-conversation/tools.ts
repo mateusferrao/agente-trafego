@@ -521,7 +521,7 @@ export function makeConversationTools(
       link: z.string().nullable().optional().describe("TROCAR a URL de destino do rascunho (o site pra onde o anúncio leva). Só rascunho criado do zero com objetivo de site/tráfego/conversão; num objetivo de conversas no WhatsApp eu bloqueio honesto (esse tipo leva pro WhatsApp, não pra um link)."),
       campaignName: z.string().min(1).max(ENTITY_NAME_MAX).nullable().optional(),
       adsetName: z.string().min(1).max(ENTITY_NAME_MAX).nullable().optional().describe("novo nome do conjunto de anúncios"),
-      setPage: z.string().min(1).nullable().optional().describe("TROCAR a Página de destino do rascunho, pelo NOME ou NÚMERO de WhatsApp ('usa a página CaquiAI Loja', 'manda pro número 3491398'). Eu resolvo pra Página real e, se ambíguo/não achar, LISTO e pergunto (nunca chuto). Em campanha de conversas, muda pra qual WhatsApp o clique leva."),
+      setPage: z.string().min(1).nullable().optional().describe("TROCAR a Página de destino do rascunho, pelo NOME ou NÚMERO de WhatsApp ('usa a página CaquiAI Loja', 'manda pro número 3491398'). Só rascunho criado do zero (numa escala/duplicata a Página é herdada — eu bloqueio honesto). Eu resolvo pra Página real e, se ambíguo/não achar, LISTO as opções (nunca chuto). Em campanha de conversas, muda pra qual WhatsApp o clique leva."),
       removeGeo: z.array(z.string()).nullable().optional().describe("nomes de cidade/região/país a REMOVER do público explícito já resolvido (ex: ['Ibirité'])"),
       addGeo: z.array(z.string()).nullable().optional().describe("nomes de cidade/região/país a ADICIONAR ao público explícito (eu resolvo pro lugar real e pergunto se ambíguo)"),
       ageMin: z.number().int().min(13).max(65).nullable().optional(),
