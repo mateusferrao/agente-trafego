@@ -84,17 +84,19 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
             // G2: rejeição DETERMINÍSTICA da Meta (validação/permissão/token) → resolve `blocked` com a
             // razão honesta (para o loop de re-tentar o mesmo spec que sempre falha), em vez de deixar
             // pendente com "tenta de novo". Transiente (rede/5xx/rate-limit esgotado) → mantém pendente.
+            // G3: nomeia a campanha órfã (pausada e vazia) quando a saga do-zero parou no meio.
+            const partial = outcome.partialCampaign ? { partialCampaign: outcome.partialCampaign } : {};
             const permReason = permanentMetaReason(outcome.error);
             if (permReason) {
               logger.warn({ approvalId, reason: permReason }, "approval-apply:criação recusada (determinístico)");
               await ports.approval.resolve(approval.id, { status: "blocked", resolvedReason: permReason, applyOutcome: "blocked" });
-              await pushOutcome(describeDraftOutcome({ kind: "blocked", reason: permReason }));
+              await pushOutcome(describeDraftOutcome({ kind: "blocked", reason: permReason, ...partial }));
               return;
             }
             const metaMessage = metaUserMessage(outcome.error);
             logger.error({ approvalId, err: outcome.error }, "approval-apply:saga de criação falhou");
             await ports.approval.markApplyOutcome(approval.id, "failed", metaMessage);
-            await pushOutcome(describeDraftOutcome({ kind: "failed", ...(metaMessage ? { metaMessage } : {}) }));
+            await pushOutcome(describeDraftOutcome({ kind: "failed", ...(metaMessage ? { metaMessage } : {}), ...partial }));
             return;
           }
           case "blocked":
@@ -155,7 +157,8 @@ export function startApprovalApplyWorker(deps: WorkerDeps, connection: Redis): W
           case "activated":
             await ports.approval.resolve(approval.id, { status: "approved", applyOutcome: outcome.dryRun ? "simulated" : "applied" });
             if (outcome.dryRun) await pushOutcome(describeActivationOutcome({ kind: "activated", dryRun: true }));
-            else await pushRealApplied(describeActivationOutcome({ kind: "activated", dryRun: false }));
+            // G8: quando a duplicata de conjunto não veicula (campanha-mãe pausada), o desfecho é honesto.
+            else await pushRealApplied(describeActivationOutcome({ kind: "activated", dryRun: false, ...(outcome.notDelivering ? { notDelivering: true } : {}) }));
             return;
         }
         return;

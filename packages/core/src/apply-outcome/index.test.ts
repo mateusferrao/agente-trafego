@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Action, CampaignDraftSpec } from "@trafego/shared";
-import { describeActionOutcome, describeCreatedDraft, describeDraftOutcome, readModernizations } from "./index.js";
+import { describeActionOutcome, describeActivationOutcome, describeCreatedDraft, describeDraftOutcome, readModernizations } from "./index.js";
 
 const budget: Action = { id: "a", type: "adjust_budget", target: { level: "adset", id: "1", name: "Leads — 8510" }, params: {}, source: "llm", riskLevel: "medium", reason: "x" };
 const pause: Action = { ...budget, type: "pause_entity" };
@@ -63,6 +63,35 @@ describe("describeDraftOutcome", () => {
   it("dry-run NÃO anexa modernização (nada foi criado de verdade)", () => {
     const out = describeDraftOutcome({ kind: "created", dryRun: true, summary: "x", modernizations: [{ code: "attribution_window_modernized" }] });
     expect(out).not.toContain("janela de atribuição");
+  });
+  it("G3 failed com parcial → nomeia a campanha órfã + retomável (transiente)", () => {
+    const out = describeDraftOutcome({ kind: "failed", partialCampaign: "Promo Verão" });
+    expect(out).toContain("*Promo Verão*");
+    expect(out).toContain("pausada e vazia");
+    expect(out).toContain("retomo de onde parei");
+  });
+  it("G3 blocked com parcial → nomeia a órfã + NÃO promete retomar (determinístico)", () => {
+    const out = describeDraftOutcome({ kind: "blocked", reason: "a Meta recusou: X", partialCampaign: "Promo Verão" });
+    expect(out).toContain("*Promo Verão*");
+    expect(out).toContain("recriar");
+    expect(out).not.toContain("retomo de onde parei");
+  });
+  it("blocked SEM parcial → só o motivo (não inventa órfão)", () => {
+    expect(describeDraftOutcome({ kind: "blocked", reason: "sem página" })).toBe("Não criei: sem página.");
+  });
+});
+
+describe("describeActivationOutcome (G8)", () => {
+  it("activated normal → veiculando", () => {
+    expect(describeActivationOutcome({ kind: "activated", dryRun: false })).toContain("já está veiculando");
+  });
+  it("activated com notDelivering → honesto: conjunto ligado mas campanha-mãe pausada", () => {
+    const out = describeActivationOutcome({ kind: "activated", dryRun: false, notDelivering: true });
+    expect(out).not.toContain("já está veiculando");
+    expect(out).toContain("campanha em que ele está deve estar pausada");
+  });
+  it("dry-run → simulado (ignora notDelivering)", () => {
+    expect(describeActivationOutcome({ kind: "activated", dryRun: true, notDelivering: true })).toContain("Simulei a ativação");
   });
 });
 

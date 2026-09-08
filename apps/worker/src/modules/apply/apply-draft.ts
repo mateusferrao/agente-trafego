@@ -81,8 +81,8 @@ export type DraftApplyOutcome =
       /** true quando nasceu ativa (creationActivation="active" e a ativação foi aplicada). */
       readonly activated: boolean;
     }
-  | { readonly kind: "blocked"; readonly reason: string }
-  | { readonly kind: "failed"; readonly error: unknown }
+  | { readonly kind: "blocked"; readonly reason: string; readonly partialCampaign?: string }
+  | { readonly kind: "failed"; readonly error: unknown; readonly partialCampaign?: string }
   | { readonly kind: "unsupported"; readonly reason: string }
   // teto de guardrail (campanhas novas/dia, killswitch) — CORRIGÍVEL por config. NÃO falha o
   // rascunho (fica `proposed`): o card continua reaprovável após o usuário ajustar o limite.
@@ -269,7 +269,14 @@ export async function applyDraft(deps: WorkerDeps, input: ApplyDraftInput): Prom
     if (error instanceof AdsPlatformError && error.kind === "not_duplicable") {
       return { kind: "blocked", reason: NOT_DUPLICABLE_REASON };
     }
-    return { kind: "failed", error };
+    // G3: a saga do-zero NÃO é atômica (ao contrário da duplicação) — se parou depois de criar a
+    // campanha, sobrou uma campanha pausada e vazia na conta. Sinaliza pra o desfecho nomear o órfão
+    // (§7 nenhum lixo silencioso) — retomável (transiente) ou "ajuste/recrie" (determinístico).
+    const partialCampaign =
+      pausedDraft.kind !== "duplicate" && createdIds["campaignId"]
+        ? (pausedDraft.spec.campaignName ?? "a campanha nova")
+        : undefined;
+    return { kind: "failed", error, ...(partialCampaign ? { partialCampaign } : {}) };
   }
 
   // `target` = raiz criada na Meta (campanha do zero, ou a entidade copiada na escala). Grava no
