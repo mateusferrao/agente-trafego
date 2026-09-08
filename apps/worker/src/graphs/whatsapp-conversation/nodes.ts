@@ -72,6 +72,7 @@ import { applyCheckedAction, type ApplyResult } from "../../modules/apply/apply-
 import { runReallocationSaga } from "../../modules/apply/reallocation-saga.js";
 import { buildRefineEcho, describeExplicitAudience, MEDIA_PREFERENCES, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner, recoverOpenDraft, refineDraft, resolveProposedExplicitTargeting, type DraftProposalContext, type MediaPreference, type ProposedExplicitInput, type RecoveredDraft } from "../../modules/conversation/draft-proposal.js";
 import { loadWriteContext, reallocKindPeriod, type BudgetPeriodKind } from "../../modules/apply/write-context.js";
+import { adHasNoBudgetMessage, resolveMisplacedBudgetMessage } from "./budget-location.js";
 import { revertActionById } from "../../modules/apply/revert-action.js";
 import { actorLabel } from "../../modules/conversation/actor.js";
 import { createNotifyRepo } from "../../modules/notify/repo.js";
@@ -1261,6 +1262,28 @@ export function makeConversationNodes(
     // AGORA que a moeda da conta é conhecida (JPY≠centavos). Antes disso o guardrail/mutação nem
     // enxergariam o valor. No-op p/ pause/status/pct.
     const resolved = proposed.map((a) => resolveBudgetMinor(a, wctx.currency));
+
+    // Onde mora o orçamento (Gaps 1+2): se um adjust_budget mira um nível SEM orçamento próprio, o
+    // eco genérico ("não consegui simular") não ajuda. Resolve ONDE o orçamento de fato mora e
+    // oferta honesta — nunca retargeta em silêncio (budget de CBO afeta TODOS os conjuntos).
+    const budgetAccountLbl = ctx.multiAccount && ctx.accountName ? ` (${ctx.accountName})` : "";
+    for (const a of resolved) {
+      if (a.type !== "adjust_budget") continue;
+      const name = a.target.name ?? a.target.id;
+      // Anúncio NUNCA tem orçamento na Meta — educativo, sem chamar a Meta (Gap 2).
+      if (a.target.level === "ad") {
+        return { messages: [...answerToolCalls(allCalls, "anúncio não tem orçamento"), new AIMessage(adHasNoBudgetMessage(name, budgetAccountLbl))] };
+      }
+      // nível sem orçamento próprio (leitura fresca OK e budget ausente) → resolve onde mora (Gap 1).
+      if ((a.target.level === "campaign" || a.target.level === "adset") && wctx.ctx.budgetByEntity?.get(entityKeyOf(a.target)) === false) {
+        try {
+          const msg = await resolveMisplacedBudgetMessage(deps.ports.ads, wctx.account, a.target.level, a.target.id, name, budgetAccountLbl);
+          if (msg) return { messages: [...answerToolCalls(allCalls, "orçamento em outro nível"), new AIMessage(msg)] };
+        } catch (err) {
+          logger.warn({ err, entityId: a.target.id }, "conversation:resolução de nível de orçamento falhou — segue fluxo normal");
+        }
+      }
+    }
 
     // Ativação em cadeia (a Meta não cascateia status): ativar campanha/conjunto religa a subárvore
     // pausada, senão só o nó liga e a campanha não veicula. Leitura da árvore best-effort (falha →
