@@ -440,6 +440,47 @@ Entrada: grupo, org com BM Automato + MyQuick; a conversa recente é sobre MyQui
 Entrada: grupo multi-conta, sem foco fresco, legenda "guarda pra MyQuick".
 1. O **intake** e o **turno** usam a MESMA régua (`resolveContextAccount`, 3 níveis) → os dois resolvem MyQuick pela legenda. O intake salva em MyQuick E o Roy confirma MyQuick — nunca um "guardei" numa conta em que nada foi salvo (fim da divergência intake×turno). ✓
 
+## Criação de campanha pelo chat — honestidade + escolha de criativo
+
+Bugs reais reportados pelo dono ao criar do zero pelo WhatsApp + as novas capacidades de criativo/copy.
+
+### S12-1 — Nome da campanha respeitado (honestidade)
+Entrada: "cria uma campanha de leads chamada Teste de Criação".
+1. O `name` da tool `create_campaign` propaga pro `spec.campaignName`; no apply o **conjunto e os anúncios derivam do nome** ("Teste de Criação — conjunto", "Teste de Criação — anúncio 1…"). Nunca mais o template default `CaquiAI — conversa`. ✓
+2. Sem nome dito → mantém o default (`CaquiAI — <objetivo>`), zero-config. ✓
+
+### S12-2 — Público explícito nunca vira falso "amplo" (honestidade)
+Entrada: "cria pra mulheres 45+ de BH".
+1. Ao reler o rascunho pendente (`get_pending_draft`/`describeDraftAudience`), o público é **descrito de verdade** ("Belo Horizonte, 45+ anos, mulheres") — nunca "público amplo — a Meta escolhe" quando há `explicit`. `reuse_adset` → "herda o público do conjunto"; ausente → amplo honesto. ✓
+2. Eco de idade: "45+" (não "45-?") — `ageMin` sem `ageMax` = "45+ anos"; só `ageMax` = "até X anos"; ambos = "X-Y anos". O targeting na Meta continua correto (45–65 = 45+ com o teto da plataforma). ✓
+
+### S12-3 — Ativação honesta: dá pra ativar pelo chat (honestidade)
+Entrada: criar (nasce pausada) → ler o desfecho.
+1. A mensagem diz que dá pra ativar **pelo chat OU pela plataforma** ("é só me pedir aqui no chat (\"ativa a campanha X\") ou pela plataforma") — nunca esconde a via de chat. ✓
+2. "ativa a campanha Teste de Criação" → `list_pending` → `approve` → liga a árvore (mesma via de aprovação conversacional). ✓
+
+### S12-4 — Copy aterrada no criativo + público + método (Slice 2)
+Entrada: criar com um criativo escolhido/estratégico + público explícito.
+1. O `generateCopy` recebe a **decomposição de visão do criativo líder** (gancho/ângulo/prova) + o **público resolvido** + o **método** (gancho na 1ª linha / prova / CTA + gatilhos de Cialdini). A copy do eco **conversa com o criativo** (mesmo gancho/ângulo), fala pro público, não escreve às cegas. ✓
+2. Sem visão/público disponível → degrada (gera sem os blocos, sem quebrar). ✓
+
+### S12-5 — Picker: o dono escolhe os criativos por nome (Slice 3)
+Entrada (passo de criativo): o Roy **sempre oferece** escolher ("quer escolher os criativos ou eu escolho?").
+1. "usa o vídeo da praia e o campeão" (2 nomes) com adCount 2 → resolve cada nome pro asset (veiculando + biblioteca) via `pickCreativeByReference` e distribui **1 por anúncio**. ✓
+2. "quais criativos eu tenho?" → o Roy lista (via `get_top_creatives`). ✓
+3. Nome **ambíguo/não achado** → o Roy **pergunta** ("não achei o criativo X — me diz de outro jeito, ou peça a lista"); **nunca cria com o criativo errado**. ✓
+
+### S12-6 — Picker: menos criativos que anúncios → o Roy pergunta (Slice 3)
+Entrada: nomear **2 criativos** com **adCount 5**.
+1. `resolveCreativeFill(2, 5, undefined)` → **pergunta**: "escolheu 2 criativos pra 5 anúncios — completo os outros 3 com os que performam melhor, ou você quer escolher mais?". Não decide sozinho (§8). ✓
+2. "completa" (`fillRemaining=agent`) → mantém os 5 anúncios, completa o resto pela performance. ✓
+3. "só esses" (`fillRemaining=only_picked`) → reduz pra 2 anúncios (só os escolhidos). ✓
+
+### S12-7 — Refino por anúncio: trocar o criativo de um slot (Slice 3)
+Entrada (rascunho pendente): "troca o anúncio 2 pro vídeo da praia".
+1. `adjust_draft` (`setAdCreative`) resolve o nome pro asset e substitui **só o `creative` do slot** (o texto da copy fica). Índice fora do rascunho ou nome não achado → bloqueia honesto (nunca troca o errado). ✓
+2. Numa **escala/duplicata** (não from_scratch), trocar criativo é herdado do vencedor → o Roy responde honesto que não dá (não re-ecoa mudo). ✓
+
 ## Fast-follows (residuais aceitos / adiados — ROADMAP)
 - **Conta do criativo — estagiar bytes p/ auto-completar após focar**: o núcleo está corrigido (régua inequívoca de 3 níveis idêntica ao turno; ambíguo→pergunta; save casa com a confirmação do Roy). Resta só: no caso AMBÍGUO (sem sole/foco/legenda), o intake pergunta mas não estagia os bytes → o dono reenvia depois de focar. Estagiar (Redis) + auto-completar quando o foco resolver fecha isso (ver ROADMAP).
 - **Gradação do desgaste por severidade (2 × 3 sinais)**: hoje aging×fadiga é binário (ainda entrega × não entrega); um aging SEVERO (3 sinais, prestes a cair) usa a mesma mensagem de aging leve — dá pra graduar a urgência do "prepare o sucessor".
