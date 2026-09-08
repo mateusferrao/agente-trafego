@@ -520,7 +520,7 @@ export class MetaAdsAdapter implements AdsPlatformPort {
     }
   }
 
-  async searchGeo(account: AdAccountRef, query: string, locationTypes: readonly ("country" | "region" | "city")[]): Promise<GeoSearchResult[]> {
+  async searchGeo(account: AdAccountRef, query: string, locationTypes: readonly ("country" | "region" | "city" | "neighborhood")[]): Promise<GeoSearchResult[]> {
     try {
       return await this.geoSearch.search(account, query, locationTypes);
     } catch (error) {

@@ -135,7 +135,7 @@ export const targetingSpecSchema = z.discriminatedUnion("kind", [
     kind: z.literal("explicit"),
     geo: z.array(
       geoRefSchema.extend({
-        kind: z.enum(["country", "region", "city"]),
+        kind: z.enum(["country", "region", "city", "neighborhood"]),
         radius: z.number().positive().optional(),
         distanceUnit: z.enum(["mile", "kilometer"]).optional(),
       }),
