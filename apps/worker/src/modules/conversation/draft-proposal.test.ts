@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, interleaveMedia, normalizeAdCount, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField } from "./draft-proposal.js";
+import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, interleaveMedia, normalizeAdCount, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField, stripGeoQualifier } from "./draft-proposal.js";
 import type { CopyVariant } from "@trafego/shared";
 import type { CampaignDraftSpec } from "@trafego/shared";
 import { creativeContentHash } from "../vision/resolver.js";
@@ -656,5 +656,21 @@ describe("resolveCreativeFill (política de faltante do picker — Slice 3)", ()
   });
   it("adCount 0/negativo → clampa pra ≥1", () => {
     expect(resolveCreativeFill(0, 0, undefined)).toEqual({ decision: "agent", variants: 1 });
+  });
+});
+
+describe("stripGeoQualifier (retry de geo sem o sufixo)", () => {
+  it("tira o estado após a vírgula", () => {
+    expect(stripGeoQualifier("Belo Horizonte, MG")).toBe("Belo Horizonte");
+    expect(stripGeoQualifier("Belo Horizonte, Minas Gerais")).toBe("Belo Horizonte");
+  });
+  it("bairro, cidade → mantém o bairro (a busca casa o lugar, não a composição)", () => {
+    expect(stripGeoQualifier("Buritis, Belo Horizonte")).toBe("Buritis");
+    expect(stripGeoQualifier("Buritis, Belo Horizonte, MG")).toBe("Buritis, Belo Horizonte");
+  });
+  it("sem vírgula ou resto vazio → undefined (nada a tirar)", () => {
+    expect(stripGeoQualifier("Belo Horizonte")).toBeUndefined();
+    expect(stripGeoQualifier(", MG")).toBeUndefined();
+    expect(stripGeoQualifier("")).toBeUndefined();
   });
 });

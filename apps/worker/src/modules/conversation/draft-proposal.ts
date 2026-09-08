@@ -465,8 +465,18 @@ async function prepareGeo(deps: WorkerDeps, ref: AdAccountRef, queries: readonly
   const resolved: { key: string; name: string; kind: "country" | "region" | "city" }[] = [];
   const dropped: string[] = [];
   for (const q of queries) {
-    const matches = await deps.ports.ads.searchGeo(ref, q, ["country", "region", "city"]);
-    const exact = matches.find((m) => normalizeTerm(m.name) === normalizeTerm(q));
+    let matches = await deps.ports.ads.searchGeo(ref, q, ["country", "region", "city"]);
+    let usedQuery = q;
+    // 0 matches com a string crua? retenta SEM o qualificador (", MG"/", cidade") — a Meta casa pelo
+    // nome do lugar, não pela string composta. (o incidente "Belo Horizonte, MG" → "não achei").
+    if (matches.length === 0) {
+      const stripped = stripGeoQualifier(q);
+      if (stripped) {
+        matches = await deps.ports.ads.searchGeo(ref, stripped, ["country", "region", "city"]);
+        usedQuery = stripped;
+      }
+    }
+    const exact = matches.find((m) => normalizeTerm(m.name) === normalizeTerm(usedQuery));
     const pick = exact ?? (matches.length === 1 ? matches[0] : undefined);
     if (pick) {
       resolved.push({ key: pick.key, name: pick.name, kind: pick.kind });
@@ -478,7 +488,7 @@ async function prepareGeo(deps: WorkerDeps, ref: AdAccountRef, queries: readonly
       .slice(0, MAX_GEO_AMBIGUOUS_OPTIONS)
       .map((m, i) => `${i + 1}. ${m.name}${m.countryCode ? ` (${m.countryCode})` : ""} — ${geoKindPt(m.kind)}`)
       .join("\n");
-    return { kind: "blocked", reason: `achei mais de um lugar parecido com "${q}":\n${opts}\nQual desses? (me diz mais específico, tipo "Belo Horizonte, MG")` };
+    return { kind: "blocked", reason: `achei mais de um lugar parecido com "${q}":\n${opts}\nQual desses? (responda o número, ou me diz a cidade por extenso)` };
   }
   return { kind: "ok", geo: resolved, dropped };
 }
@@ -488,6 +498,16 @@ const MAX_INTEREST_AMBIGUOUS_OPTIONS = 5;
 type InterestPrep =
   | { readonly kind: "ok"; readonly interests: readonly { readonly id: string; readonly name: string }[]; readonly dropped: readonly string[] }
   | { readonly kind: "blocked"; readonly reason: string };
+
+/** Remove o QUALIFICADOR após a última vírgula (ex: "Belo Horizonte, MG" → "Belo Horizonte";
+ *  "Buritis, Belo Horizonte" → "Buritis") — a busca de geo da Meta casa pelo nome do lugar, não pela
+ *  string com estado/cidade anexada. `undefined` quando não há vírgula ou o resto ficaria vazio. PURO. */
+export function stripGeoQualifier(q: string): string | undefined {
+  const i = q.lastIndexOf(",");
+  if (i <= 0) return undefined;
+  const head = q.slice(0, i).trim();
+  return head.length > 0 && head !== q.trim() ? head : undefined;
+}
 
 /** normaliza termo p/ match tolerante (minúsculas, sem acento, sem espaço extra). */
 function normalizeTerm(s: string): string {
@@ -2006,6 +2026,16 @@ export async function proposeCreateCampaign(
     return { kind: "blocked", reason: "criar campanha está desligado para este agente (ligue em ações permitidas)" };
   }
 
+  // PIXEL cedo (§7 clareza): o OBJETIVO decide se precisa de pixel — valida ANTES de resolver
+  // público/geo, pra não arrastar o dono por rodadas de desambiguação de LUGAR numa campanha que nem
+  // pode nascer (incidente: purchase sem pixel só bloqueava DEPOIS do geo, confundindo "público" com
+  // "objetivo"). A alternativa nativa (mensagens no WhatsApp) não precisa de pixel. Mesma verdade do refino.
+  const defaults = await deps.ports.ads.inferCreationDefaults(ac.ref);
+  const goal = args.goal ?? defaults.objectiveGoal ?? DEFAULT_CONVERSION_GOAL;
+  if (conversionRequiresPixel(goal) && !defaults.pixelId) {
+    return { kind: "blocked", reason: OBJECTIVE_REQUIRES_PIXEL_REASON };
+  }
+
   // AUTÔNOMO (proativo, Fatia 8): ambíguo/inexistente é DESCARTADO (nunca pergunta — não há humano
   // no loop) e anotado no eco/rationale. Interativo (chat): ambíguo→pergunta, como sempre.
   const auto = opts.autonomous === true;
@@ -2035,15 +2065,6 @@ export async function proposeCreateCampaign(
     behaviorPrep.interests.length > 0 ||
     areas.radiusAreas.length > 0;
 
-  const defaults = await deps.ports.ads.inferCreationDefaults(ac.ref);
-  const goal = args.goal ?? defaults.objectiveGoal ?? DEFAULT_CONVERSION_GOAL;
-  // G1: objetivo de conversão exige pixel (a Meta recusa `OFFSITE_CONVERSIONS` sem `promoted_object`
-  // — doc oficial). O refino já validava isto; a criação do zero NÃO validava → nascia um rascunho
-  // impossível que só falhava no meio da saga (campanha criada, adset recusado). Bloqueia honesto
-  // aqui, com a alternativa nativa (mensagens no WhatsApp não precisa de pixel). Mesma verdade do refino.
-  if (conversionRequiresPixel(goal) && !defaults.pixelId) {
-    return { kind: "blocked", reason: OBJECTIVE_REQUIRES_PIXEL_REASON };
-  }
   // Criativo: FORÇADO (o que o usuário mandou no WhatsApp, Slice 7) OU pool único — melhor
   // veiculando (provado) OU, sem nenhum, o upload da biblioteca que MELHOR CASA com o contexto
   // (objetivo + negócio + orientações) via matcher LLM barato.
