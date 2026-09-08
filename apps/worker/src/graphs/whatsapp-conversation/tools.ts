@@ -59,6 +59,7 @@ import { acceptThreshold, confirmLesson, dismissAdvisory, forgetLesson, rejectPr
 import type { WorkerDeps } from "../../composition.js";
 import { createRunDispatcher } from "../../modules/dispatch/run-dispatcher.js";
 import { actorLabel } from "../../modules/conversation/actor.js";
+import { persistFocus } from "../../modules/conversation/account-focus.js";
 import { makeReadTools, type ReadToolContext } from "./read-data.js";
 import type { PendingPlaybookOp } from "./state.js";
 
@@ -588,10 +589,7 @@ export function makeConversationTools(
         return `Achei a conta ${acc.name}, mas ela ainda não tem um agente ativo — dá pra ativar no site. Quer focar em outra conta?`;
       }
 
-      await deps.db
-        .update(conversations)
-        .set({ focusedAccountId: acc.id, focusedAt: new Date() })
-        .where(and(eq(conversations.id, ctx.conversationId), eq(conversations.orgId, ctx.orgId)));
+      await persistFocus(deps.db, ctx.orgId, ctx.conversationId, acc.id);
 
       // Footgun fix (S3): aplica o foco JÁ NESTE turno mutando o ctx (turno-local — o ctx é
       // criado por turno em turn.ts e compartilhado por referência com as demais tools, que

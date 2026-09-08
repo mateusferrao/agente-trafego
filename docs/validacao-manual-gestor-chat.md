@@ -190,6 +190,19 @@
 | S3.4 | Vídeo cuja análise de **chat degradou** (grande/sem bytes) mas a **biblioteca** analisou | O recall **ainda acha** (busca as duas chaves de visão — chat + biblioteca). |
 | S3.5 | Conta **sem** criativos guardados | "você ainda não tem criativos guardados nessa conta — me manda um que eu analiso." |
 
+### S6b — Foco por menção explícita (escrita em grupo multi-conta num turno só)
+> Pré: org com **≥2 contas ativas**, grupo configurado, `resume_entity`/`set_status` ligados em
+> "Ações permitidas" do agente + `dryRun` off. Sem foco salvo no fio (ou expirado).
+
+| # | Passo | Esperado |
+|---|-------|----------|
+| S6b.1 | "@Roy ativa a campanha CaquiAI - Lead da **conta Automato**" (conta nomeada, inequívoca) | Num turno só o Roy **ecoa** "vou ativar *CaquiAI - Lead* na conta *Automato* — confirma?" (SEM o ida-e-volta "confirme a conta"); "sim" aplica. Antes: caía em concierge e oferecia recomendação. |
+| S6b.2 | Depois do eco, responder "**sim**" | Aplica (o foco ficou salvo → o turno de confirmação opera in-context). |
+| S6b.3 | Org com 2 contas cujos nomes **ambos aparecem** na frase | **Ainda pergunta** qual conta (ambíguo → concierge; trava preservada). |
+| S6b.4 | Nome de conta **inexistente**/nenhum citado | Concierge honesto (pede a conta) — comportamento atual. |
+| S6b.5 | Conta nomeada existe mas **sem agente ativo** | Não foca; segue no concierge (não opera numa conta sem agente). |
+| S6b.6 | `TRAFEGO_CHAT_ADS_WRITES=false` + conta nomeada | **Nenhuma** escrita entra mesmo focando (freio de emergência intacto). |
+
 ---
 
 ## Teste simulado E2E (passo a passo, traçado no código)

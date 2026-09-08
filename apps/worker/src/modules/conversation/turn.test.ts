@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { agents, type Database } from "@trafego/db";
-import { buildInContextAllow, configToolsFor, deliverReply, GROUP_CONCIERGE_ALLOW, resolveFocusedAgent } from "./turn.js";
+import { buildInContextAllow, configToolsFor, deliverReply, GROUP_CONCIERGE_ALLOW, resolveExplicitFocus, resolveFocusedAgent } from "./turn.js";
 import type { SendToConversation } from "../notify/send-to-contact.js";
 import {
   AGENT_TOOL_NAMES,
@@ -134,6 +134,66 @@ describe("resolveFocusedAgent (staleness do foco, S4 — último uso)", () => {
   it("sem foco (focusedAccountId null) → null", async () => {
     const { db } = focusDb({ focusedAccountId: null, focusedAt: null });
     expect(await resolveFocusedAgent(db, "org-1", "cv-1", TTL)).toBeNull();
+  });
+});
+
+describe("resolveExplicitFocus (S6b — foco por menção explícita na mensagem, pré-grafo)", () => {
+  type Cand = { id: string; name: string | null; adAccountId: string; agentId: string | null };
+  function explicitDb(candidates: Cand[]) {
+    const updateSet = vi.fn();
+    const chain: Record<string, unknown> = {
+      select: () => chain,
+      from: () => chain,
+      leftJoin: () => chain,
+      where: () => chain,
+      orderBy: () => chain,
+      then: (resolve: (v: unknown[]) => unknown) => resolve(candidates),
+      update: () => ({
+        set: (v: unknown) => {
+          updateSet(v);
+          return { where: async () => {} };
+        },
+      }),
+    };
+    return { db: chain as unknown as Database, updateSet };
+  }
+  const TWO: Cand[] = [
+    { id: "acc-A", name: "Automato", adAccountId: "act_1", agentId: "ag-A" },
+    { id: "acc-B", name: "Loja do João", adAccountId: "act_2", agentId: "ag-B" },
+  ];
+
+  it("nome inequívoco na frase → resolve o agente E persiste o foco", async () => {
+    const { db, updateSet } = explicitDb(TWO);
+    const r = await resolveExplicitFocus(db, "org-1", "cv-1", "ativa a campanha X da conta Automato");
+    expect(r).toEqual({ agentId: "ag-A", adAccountId: "acc-A", accountName: "Automato" });
+    expect(updateSet).toHaveBeenCalledWith({ focusedAccountId: "acc-A", focusedAt: expect.any(Date) });
+  });
+
+  it("dois nomes de conta citados → ambíguo → null (mantém concierge), sem persistir", async () => {
+    const cands: Cand[] = [
+      { id: "acc-A", name: "Automato", adAccountId: "act_1", agentId: "ag-A" },
+      { id: "acc-C", name: "CaquiAI", adAccountId: "act_3", agentId: "ag-C" },
+    ];
+    const { db, updateSet } = explicitDb(cands);
+    expect(await resolveExplicitFocus(db, "org-1", "cv-1", "ativa a CaquiAI na conta Automato")).toBeNull();
+    expect(updateSet).not.toHaveBeenCalled();
+  });
+
+  it("nenhuma conta nomeada → null (concierge pergunta a conta)", async () => {
+    const { db, updateSet } = explicitDb(TWO);
+    expect(await resolveExplicitFocus(db, "org-1", "cv-1", "ativa a campanha de lead")).toBeNull();
+    expect(updateSet).not.toHaveBeenCalled();
+  });
+
+  it("conta nomeada SEM agente ativo → null (não dá pra operar nela), sem persistir", async () => {
+    const { db, updateSet } = explicitDb([{ id: "acc-A", name: "Automato", adAccountId: "act_1", agentId: null }]);
+    expect(await resolveExplicitFocus(db, "org-1", "cv-1", "ativa algo na conta Automato")).toBeNull();
+    expect(updateSet).not.toHaveBeenCalled();
+  });
+
+  it("org sem contas focáveis → null (sem chamar o match)", async () => {
+    const { db } = explicitDb([]);
+    expect(await resolveExplicitFocus(db, "org-1", "cv-1", "ativa a conta Automato")).toBeNull();
   });
 });
 

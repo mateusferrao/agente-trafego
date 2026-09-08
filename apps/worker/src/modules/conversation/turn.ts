@@ -20,9 +20,11 @@ import {
   CONFIG_CHAT_TOOL_NAMES,
   GROUP_CONCIERGE_TOOL_NAMES,
   WRITE_TOOL_NAMES,
+  resolveFocusMatch,
   type ConversationToolContext,
 } from "../../graphs/whatsapp-conversation/tools.js";
 import { loadEnabledTools } from "../tools/enabled.js";
+import { loadActiveFocusCandidates, persistFocus, type AgentInContext } from "./account-focus.js";
 import { createNotifyRepo } from "../notify/repo.js";
 import { createSendToConversation, type SendToConversation } from "../notify/send-to-contact.js";
 import { applyOfferedCreative } from "./draft-proposal.js";
@@ -65,13 +67,6 @@ export async function deliverReply(
   } catch (err) {
     logger.error({ err, orgId }, "conversation:send falhou (resposta perdida, sem retry do grafo)");
   }
-}
-
-/** Agente em contexto (id + conta + nome da conta). */
-interface AgentInContext {
-  readonly agentId: string;
-  readonly adAccountId: string;
-  readonly accountName: string | null;
 }
 
 /**
@@ -134,6 +129,32 @@ export async function resolveFocusedAgent(
     .set({ focusedAt: new Date() })
     .where(and(eq(conversations.id, conversationId), eq(conversations.orgId, orgId)));
   return row;
+}
+
+/**
+ * Foco por MENÇÃO EXPLÍCITA na mensagem (S6b) — 3ª via, só quando NÃO há conta única nem foco
+ * salvo. Resolve a conta nomeada no próprio texto ("...da conta Automato") ANTES de montar o
+ * toolset, pra que a escrita ligue no MESMO fluxo (eco+confirma) sem o ida-e-volta de "confirme a
+ * conta". Reusa o MESMO matcher da tool `set_focus` (`resolveFocusMatch`, puro): SÓ o caso `one`
+ * (inequívoco) foca; `ambiguous`/`none` → null (mantém o concierge, que pergunta qual conta).
+ * Persiste o foco (igual ao `set_focus`) — o turno de confirmação ("sim") depende do foco salvo
+ * (em concierge de grupo não há `confirm_write`). Segurança: só decide quais tools ficam
+ * disponíveis; nenhuma escrita auto-aplica (eco+confirma segue sendo o portão de toda mutação).
+ */
+export async function resolveExplicitFocus(
+  db: Database,
+  orgId: string,
+  conversationId: string,
+  text: string,
+): Promise<AgentInContext | null> {
+  const candidates = await loadActiveFocusCandidates(db, orgId);
+  if (candidates.length === 0) return null;
+  const match = resolveFocusMatch(candidates, text);
+  if (match.kind !== "one") return null; // ambíguo/inexistente → concierge pede a conta (trava preservada)
+  const picked = candidates.find((c) => c.id === match.row.id);
+  if (!picked?.agentId) return null; // conta ativa sem agente ativo → não dá pra operar nela
+  await persistFocus(db, orgId, conversationId, picked.id);
+  return { agentId: picked.agentId, adAccountId: picked.id, accountName: picked.name };
 }
 
 /**
@@ -231,8 +252,12 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
   // 5c-6). Sem nenhuma das duas → concierge (só org-level + set_focus p/ escolher). Igual
   // no grupo: mesmo concierge/foco, escopo = todas as contas da org (§13 reuso-primeiro).
   const { sole, multiAccount } = await resolveActiveAgents(deps.db, input.orgId);
-  const inContext =
+  // 1) conta única → ela; 2) foco salvo do fio; 3) conta NOMEADA de forma inequívoca na mensagem
+  // (S6b — resolve o foco antes de montar o toolset, pra a escrita ligar no mesmo fluxo). O (3) só
+  // roda quando não há (1) nem (2); ambíguo/inexistente → null → concierge pergunta a conta.
+  let inContext =
     sole ?? (await resolveFocusedAgent(deps.db, input.orgId, input.conversationId, deps.conversation.focusTtlHours));
+  if (!inContext) inContext = await resolveExplicitFocus(deps.db, input.orgId, input.conversationId, input.text);
 
   // com agente em contexto: leitura/controle + escrita livre filtrada por allowedActions (5c)
   // + config-por-chat gated pelo kill-switch (S2.3). Sem contexto (multi-conta sem foco):
