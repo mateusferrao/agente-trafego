@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { agents, type Database } from "@trafego/db";
 import { buildInContextAllow, configToolsFor, deliverReply, GROUP_CONCIERGE_ALLOW, resolveExplicitFocus, resolveFocusedAgent } from "./turn.js";
+import { isDeliberateAccountReference } from "./account-focus.js";
 import type { SendToConversation } from "../notify/send-to-contact.js";
 import {
   AGENT_TOOL_NAMES,
@@ -194,6 +195,37 @@ describe("resolveExplicitFocus (S6b — foco por menção explícita na mensagem
   it("org sem contas focáveis → null (sem chamar o match)", async () => {
     const { db } = explicitDb([]);
     expect(await resolveExplicitFocus(db, "org-1", "cv-1", "ativa a conta Automato")).toBeNull();
+  });
+
+  it("nome curto de palavra COMUM coincidindo com a frase → NÃO foca (defere pro set_focus), sem persistir", async () => {
+    // conta chamada "Vendas" (6 < min) e a frase menciona "vendas" sem se referir à conta.
+    const { db, updateSet } = explicitDb([{ id: "acc-V", name: "Vendas", adAccountId: "act_9", agentId: "ag-V" }]);
+    expect(await resolveExplicitFocus(db, "org-1", "cv-1", "sobe o budget das campanhas de vendas de inverno")).toBeNull();
+    expect(updateSet).not.toHaveBeenCalled();
+  });
+
+  it("nome MULTI-palavra (mesmo com tokens curtos) → foca (sinal forte, contenção de 2+ tokens)", async () => {
+    const { db, updateSet } = explicitDb([{ id: "acc-L", name: "Loja do João", adAccountId: "act_2", agentId: "ag-L" }]);
+    const r = await resolveExplicitFocus(db, "org-1", "cv-1", "pausa a campanha da loja do joão");
+    expect(r).toEqual({ agentId: "ag-L", adAccountId: "acc-L", accountName: "Loja do João" });
+    expect(updateSet).toHaveBeenCalledOnce();
+  });
+});
+
+describe("isDeliberateAccountReference (guarda anti-foco-espúrio, S6b)", () => {
+  const cand = (name: string | null, adAccountId = "act_1") => ({ name, adAccountId });
+  it("id externo no texto → true (referência inequívoca)", () => {
+    expect(isDeliberateAccountReference(cand("Ads", "act_9"), "roda na act_9")).toBe(true);
+  });
+  it("nome multi-palavra → true", () => {
+    expect(isDeliberateAccountReference(cand("BM - Automato"), "algo na bm automato")).toBe(true);
+  });
+  it("nome de palavra única distintivo (≥ min) → true", () => {
+    expect(isDeliberateAccountReference(cand("Automato"), "ativa na conta automato")).toBe(true);
+  });
+  it("nome de palavra única curto/comum → false (defere)", () => {
+    expect(isDeliberateAccountReference(cand("Lead"), "gera lead")).toBe(false);
+    expect(isDeliberateAccountReference(cand("Vendas"), "de vendas")).toBe(false);
   });
 });
 

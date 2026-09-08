@@ -24,7 +24,7 @@ import {
   type ConversationToolContext,
 } from "../../graphs/whatsapp-conversation/tools.js";
 import { loadEnabledTools } from "../tools/enabled.js";
-import { loadActiveFocusCandidates, persistFocus, type AgentInContext } from "./account-focus.js";
+import { isDeliberateAccountReference, loadActiveFocusCandidates, persistFocus, type AgentInContext } from "./account-focus.js";
 import { createNotifyRepo } from "../notify/repo.js";
 import { createSendToConversation, type SendToConversation } from "../notify/send-to-contact.js";
 import { applyOfferedCreative } from "./draft-proposal.js";
@@ -153,6 +153,9 @@ export async function resolveExplicitFocus(
   if (match.kind !== "one") return null; // ambíguo/inexistente → concierge pede a conta (trava preservada)
   const picked = candidates.find((c) => c.id === match.row.id);
   if (!picked?.agentId) return null; // conta ativa sem agente ativo → não dá pra operar nela
+  // sinal fraco (nome curto de palavra comum coincidindo com a frase) → defere pro set_focus (LLM),
+  // pra não focar/persistir a conta errada a partir de uma palavra qualquer. Ver isDeliberateAccountReference.
+  if (!isDeliberateAccountReference(picked, text)) return null;
   await persistFocus(db, orgId, conversationId, picked.id);
   return { agentId: picked.agentId, adAccountId: picked.id, accountName: picked.name };
 }

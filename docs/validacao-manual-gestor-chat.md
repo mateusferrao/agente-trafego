@@ -202,6 +202,7 @@
 | S6b.4 | Nome de conta **inexistente**/nenhum citado | Concierge honesto (pede a conta) — comportamento atual. |
 | S6b.5 | Conta nomeada existe mas **sem agente ativo** | Não foca; segue no concierge (não opera numa conta sem agente). |
 | S6b.6 | `TRAFEGO_CHAT_ADS_WRITES=false` + conta nomeada | **Nenhuma** escrita entra mesmo focando (freio de emergência intacto). |
+| S6b.7 | Conta de nome curto/palavra comum (ex.: "Vendas") + frase que só menciona a palavra ("budget de vendas") | **Não** foca automaticamente (defere pro `set_focus`/LLM) — evita focar a conta errada por uma palavra qualquer. Nome distintivo/multi-palavra/id → foca. |
 
 ---
 

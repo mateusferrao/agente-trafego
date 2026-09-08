@@ -5,6 +5,7 @@
 
 import { and, eq } from "drizzle-orm";
 import { adAccounts, agents, conversations, type Database } from "@trafego/db";
+import { normalizeName } from "@trafego/core";
 
 /** Agente em contexto (id + conta + nome da conta) — o "quem opera" resolvido do turno. */
 export interface AgentInContext {
@@ -38,6 +39,30 @@ export async function loadActiveFocusCandidates(db: Database, orgId: string): Pr
   const byId = new Map<string, ActiveFocusCandidate>();
   for (const r of rows) if (!byId.has(r.id)) byId.set(r.id, r);
   return [...byId.values()];
+}
+
+/**
+ * Comprimento mínimo do nome de palavra ÚNICA p/ aceitar o foco por menção explícita sobre a FRASE
+ * inteira. O match de foco casa por CONTENÇÃO (nome ⊂ frase) — ótimo quando o usuário digita o nome,
+ * mas sobre a frase toda um nome curto de palavra comum ("Lead", "Loja", "Vendas") coincidiria com uma
+ * palavra qualquer e focaria a conta errada. Nomes curtos de palavra única deferem pro `set_focus`
+ * (o LLM extrai o nome limpo) — sem regressão, só sem o atalho determinístico.
+ */
+const MIN_SINGLE_TOKEN_FOCUS_NAME_LEN = 7;
+
+/**
+ * A conta foi referida de forma DELIBERADA na frase? (pré-grafo, S6b). Sinal forte o bastante p/ focar
+ * automaticamente sobre a frase inteira: (1) o id externo da conta aparece no texto; (2) o nome é
+ * MULTI-palavra (contenção de 2+ tokens específicos raramente é acaso); ou (3) nome de palavra única
+ * distintivo (≥ `MIN_SINGLE_TOKEN_FOCUS_NAME_LEN`). Senão → defere pro `set_focus` (LLM). PURO/testável.
+ */
+export function isDeliberateAccountReference(candidate: Pick<ActiveFocusCandidate, "name" | "adAccountId">, text: string): boolean {
+  if (candidate.adAccountId && text.toLowerCase().includes(candidate.adAccountId.toLowerCase())) return true;
+  const normName = normalizeName(candidate.name ?? "");
+  if (!normName) return false;
+  const tokens = normName.split(/\s+/).filter(Boolean);
+  if (tokens.length >= 2) return true;
+  return normName.length >= MIN_SINGLE_TOKEN_FOCUS_NAME_LEN;
 }
 
 /** Persiste a conta em foco do fio (`conversations.focused_account_id` + carimbo de uso). Fonte
