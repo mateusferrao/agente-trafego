@@ -21,6 +21,21 @@ interface CopyForm {
 /** Um item de copy do rascunho (elemento do array de saída). */
 type DraftCopy = NonNullable<DraftApprovalOutput['copyVariants']>[number];
 
+/** Um conjunto do teste de público (C2/U1) no formulário — público + orçamento (ABO) + criativo
+ *  PRÓPRIO (mesma copy compartilhada, criativo diferente). Espelha o padrão de `CopyForm`. */
+interface ConjuntoForm {
+  name: string;
+  /** orçamento diário (ABO). `null` = CBO (verba na campanha, editada no "Gasto por dia" geral). */
+  budget: number | null;
+  /** `broad` = a Meta escolhe; `custom` = revela o `GeoAudienceEditor`. */
+  audienceMode: 'broad' | 'custom';
+  audienceState: ExplicitAudienceState | null;
+  /** troca de criativo deste conjunto, pendente até Salvar. `undefined` = usa o compartilhado. */
+  creativeChoice?: SetDraftCreativeInput;
+  /** criativo próprio já salvo (só p/ o rótulo). */
+  existingCreative?: { format: 'image' | 'video'; origin: 'reuse' | 'upload' } | null;
+}
+
 /** Teto de anúncios por rascunho — espelha MAX_ADS_PER_DRAFT de @trafego/shared (backend é a
  *  fonte da verdade; aqui só desabilita o "adicionar" na UI). */
 const MAX_ADS = 10;
@@ -124,7 +139,7 @@ const EMPTY_AUDIENCE_STATE: ExplicitAudienceState = {
       <!-- Público — 3 modos num único controle (Slice 8 unificado): herda o vencedor / a Meta
            escolhe / personalizado. "Personalizado" revela o editor completo (geo/raio/idade/gênero/
            interesses/comportamentos/públicos salvos) abaixo. Some na escala (mantém o vencedor). -->
-      @if (!isScale()) {
+      @if (!isScale() && !hasAdsets()) {
         <div class="flex flex-col gap-2">
           <span class="text-xs font-medium text-ink">Público</span>
           <div
@@ -151,6 +166,76 @@ const EMPTY_AUDIENCE_STATE: ExplicitAudienceState = {
               (stateChange)="explicitAudienceState.set($event)"
             />
           }
+        </div>
+      }
+
+      <!-- CONJUNTOS (teste de público multi-conjunto, C2/U1): cada conjunto com seu público +
+           orçamento (ABO) + criativo próprio. Mesmo criativo compartilhado por padrão (isola o
+           público); trocar por conjunto é aqui. Add/remover espelha o padrão de anúncios. -->
+      @if (!isScale() && hasAdsets()) {
+        <div class="flex flex-col gap-3">
+          <span class="text-xs font-medium text-ink">Conjuntos (teste de público — mesmo criativo, públicos diferentes)</span>
+          @for (cj of conjuntos(); track $index) {
+            <div class="flex flex-col gap-2 rounded-md border border-line bg-panel p-3">
+              <div class="flex items-center justify-between">
+                <span class="text-[11px] font-medium uppercase tracking-wide text-muted">Conjunto {{ $index + 1 }}</span>
+                <button
+                  type="button"
+                  class="text-[11px] text-muted hover:text-ink disabled:opacity-40"
+                  [disabled]="conjuntos().length <= 2 || saving()"
+                  (click)="removeConjunto($index)"
+                >
+                  Remover
+                </button>
+              </div>
+              <input appInput class="w-full" [(ngModel)]="cj.name" placeholder="Nome do conjunto (ex: Interesse em estética)" />
+              @if (isAbo()) {
+                <label class="flex flex-col gap-1">
+                  <span class="text-xs font-medium text-ink">Gasto por dia deste conjunto ({{ draft().currency }})</span>
+                  <input appInput class="w-full" type="number" min="1" step="1" [ngModel]="cj.budget" (ngModelChange)="setConjuntoBudget($index, $event)" />
+                </label>
+              }
+              <!-- público do conjunto: a Meta escolhe × personalizado (revela o editor) -->
+              <div
+                appToggleGroup
+                ngpToggleGroupType="single"
+                layout="segmented"
+                [columns]="2"
+                aria-label="Público do conjunto"
+                [ngpToggleGroupValue]="[cj.audienceMode]"
+                (ngpToggleGroupValueChange)="setConjuntoAudienceMode($index, $event)"
+              >
+                <button appToggleGroupItem tone="accent" ngpToggleGroupItemValue="broad">A Meta escolhe</button>
+                <button appToggleGroupItem tone="accent" ngpToggleGroupItemValue="custom">Personalizado</button>
+              </div>
+              @if (cj.audienceMode === 'custom') {
+                <app-geo-audience-editor
+                  [accountId]="draft().accountId"
+                  [draftId]="draft().draftId"
+                  [initial]="conjuntoSeed($index)"
+                  (stateChange)="onConjuntoAudience($index, $event)"
+                />
+              }
+              <!-- criativo próprio do conjunto (mesma copy, criativo diferente) -->
+              <div class="flex flex-col gap-2 border-t border-line pt-2 sm:flex-row sm:items-center sm:justify-between">
+                <span class="text-xs text-ink"><span class="text-muted">Criativo: </span>{{ conjuntoCreativeLabel($index) }}</span>
+                <button appButton variant="ghost" size="sm" type="button" class="shrink-0 self-start sm:self-auto" [disabled]="saving()" (click)="toggleConjuntoPicker($index)">
+                  {{ pickingConjuntoIndex() === $index ? 'Cancelar troca' : 'Trocar criativo deste conjunto' }}
+                </button>
+              </div>
+              @if (pickingConjuntoIndex() === $index) {
+                <app-creative-picker
+                  [accountId]="draft().accountId"
+                  [picking]="false"
+                  (pick)="onConjuntoCreative($index, $event)"
+                  (cancel)="pickingConjuntoIndex.set(null)"
+                />
+              }
+            </div>
+          }
+          <button appButton variant="secondary" size="sm" type="button" class="self-start" [disabled]="saving()" (click)="addConjunto()">
+            + Adicionar conjunto
+          </button>
         </div>
       }
 
@@ -277,8 +362,16 @@ export class DraftEditPanel implements OnInit {
   protected readonly pickingAdIndex = signal<number | null>(null);
   /** teto de anúncios (exposto ao template). */
   protected readonly MAX_ADS = MAX_ADS;
+  /** Conjuntos do teste de público (C2/U1) — vazio = rascunho single-conjunto (usa os campos acima). */
+  protected readonly conjuntos = signal<ConjuntoForm[]>([]);
+  /** índice do conjunto cujo picker de criativo está aberto (null = nenhum). */
+  protected readonly pickingConjuntoIndex = signal<number | null>(null);
 
   protected readonly isScale = computed(() => this.draft().kind === 'duplicate');
+  /** rascunho multi-conjunto (teste de público) → mostra a seção de conjuntos, esconde o público único. */
+  protected readonly hasAdsets = computed(() => (this.draft().adsets?.length ?? 0) > 0);
+  /** ABO = orçamento por conjunto (mostra o campo de gasto em cada conjunto); CBO = verba na campanha. */
+  protected readonly isAbo = computed(() => this.draft().budgetMode === 'abo');
   /** rótulo do criativo PADRÃO do rascunho (formato + origem) — sem jargão, sem id técnico. */
   protected readonly creativeLabel = computed(() => this.formatCreative(this.draft().creative));
   /** formata um criativo (formato + origem) em linguagem de gente; `null` → sem criativo. */
@@ -374,6 +467,84 @@ export class DraftEditPanel implements OnInit {
     );
   }
 
+  /** Mapeia o público explícito do output (conjunto ou rascunho) → estado do editor. */
+  private toAudienceState(ea: NonNullable<DraftApprovalOutput['explicitAudience']>): ExplicitAudienceState {
+    return {
+      geo: ea.geo,
+      radiusAreas: ea.radiusAreas,
+      ageMin: ea.ageMin,
+      ageMax: ea.ageMax,
+      genders: ea.genders,
+      interestGroups: ea.interestGroups,
+      behaviorGroups: ea.behaviorGroups,
+      customAudienceIncludeIds: ea.customAudienceIncludeIds,
+      customAudienceExcludeIds: ea.customAudienceExcludeIds,
+    };
+  }
+
+  /** Semeia conjuntos() a partir do rascunho multi-conjunto (C2/U1). */
+  private seedConjuntos(d: DraftApprovalOutput): void {
+    this.conjuntos.set(
+      (d.adsets ?? []).map((as) => ({
+        name: as.name ?? '',
+        budget: as.dailyBudgetMajor,
+        audienceMode: as.explicitAudience ? 'custom' : 'broad',
+        audienceState: as.explicitAudience ? this.toAudienceState(as.explicitAudience) : null,
+        existingCreative: as.creative,
+      })),
+    );
+  }
+
+  /** semente do editor de público de UM conjunto (preserva a edição em voo). */
+  protected conjuntoSeed(index: number): ExplicitAudienceState {
+    return this.conjuntos()[index]?.audienceState ?? EMPTY_AUDIENCE_STATE;
+  }
+
+  /** rótulo do criativo de UM conjunto: troca pendente > próprio salvo > compartilhado. */
+  protected conjuntoCreativeLabel(index: number): string {
+    const cj = this.conjuntos()[index];
+    if (cj?.creativeChoice) return 'novo criativo escolhido (salve pra aplicar)';
+    return cj?.existingCreative ? `próprio — ${this.formatCreative(cj.existingCreative)}` : 'usa o criativo compartilhado';
+  }
+
+  protected setConjuntoBudget(index: number, value: number): void {
+    this.conjuntos.update((list) => list.map((c, i) => (i === index ? { ...c, budget: value } : c)));
+  }
+
+  protected setConjuntoAudienceMode(index: number, value: string | string[]): void {
+    const v = Array.isArray(value) ? value[0] : value;
+    if (v !== 'broad' && v !== 'custom') return;
+    this.conjuntos.update((list) =>
+      list.map((c, i) =>
+        i === index ? { ...c, audienceMode: v, audienceState: v === 'custom' ? (c.audienceState ?? EMPTY_AUDIENCE_STATE) : c.audienceState } : c,
+      ),
+    );
+  }
+
+  protected onConjuntoAudience(index: number, state: ExplicitAudienceState): void {
+    this.conjuntos.update((list) => list.map((c, i) => (i === index ? { ...c, audienceState: state } : c)));
+  }
+
+  protected toggleConjuntoPicker(index: number): void {
+    this.pickingConjuntoIndex.update((cur) => (cur === index ? null : index));
+  }
+
+  protected onConjuntoCreative(index: number, choice: SetDraftCreativeInput): void {
+    this.conjuntos.update((list) => list.map((c, i) => (i === index ? { ...c, creativeChoice: choice } : c)));
+    this.pickingConjuntoIndex.set(null);
+  }
+
+  /** Adiciona um conjunto vazio (público amplo por padrão) — o dono personaliza. */
+  protected addConjunto(): void {
+    this.conjuntos.update((list) => [...list, { name: '', budget: null, audienceMode: 'broad', audienceState: null }]);
+  }
+
+  /** Remove um conjunto (mín 2 — abaixo disso não é mais teste de público). */
+  protected removeConjunto(index: number): void {
+    if (this.conjuntos().length <= 2) return;
+    this.conjuntos.update((list) => list.filter((_, i) => i !== index));
+  }
+
   ngOnInit(): void {
     const d = this.draft();
     this.campaignName.set(d.campaignName ?? '');
@@ -386,6 +557,7 @@ export class DraftEditPanel implements OnInit {
     // modo do público: já explícito → custom; senão o herdado (reuse/broad).
     this.audienceMode.set(d.explicitAudience ? 'custom' : d.audience === 'broad' ? 'broad' : 'reuse');
     this.seedCopies(d);
+    this.seedConjuntos(d);
     this.seededVariantCount = d.copyVariants?.length ?? 0;
     // rascunho já explícito → o estado nasce completo (Salvar re-envia como substituição total).
     this.explicitAudienceState.set(this.explicitInitial());
@@ -548,6 +720,17 @@ export class DraftEditPanel implements OnInit {
       .map((c, index) => this.copyEdit(c, original[index], index))
       .filter((e): e is NonNullable<typeof e> => e !== null);
     if (edits.length > 0) patch['copyEdits'] = edits;
+
+    // CONJUNTOS (C2/U1): substituição TOTAL da lista quando o rascunho é multi-conjunto. Cada
+    // conjunto = público (explícito quando personalizado) + orçamento (ABO) + criativo próprio.
+    if (this.hasAdsets()) {
+      patch['adsets'] = this.conjuntos().map((cj) => ({
+        ...(this.trimmed(cj.name) ? { name: this.trimmed(cj.name) } : {}),
+        ...(cj.audienceMode === 'custom' && cj.audienceState ? { explicitAudience: this.toExplicitInput(cj.audienceState) } : {}),
+        ...(this.isAbo() && cj.budget != null && cj.budget > 0 ? { budgetReais: cj.budget } : {}),
+        ...(cj.creativeChoice ? { creative: cj.creativeChoice } : {}),
+      }));
+    }
     return patch as UpdateDraftInput;
   }
 
