@@ -586,6 +586,12 @@ Entrada: "cria uma campanha de conversas usando a página CaquiAI Loja" (ou "…
 2. **Ambíguo** (o termo bate com >1 Página) → o Roy **lista as candidatas e pergunta** qual (nunca chuta, §8). **Não achou** → lista todas as Páginas e pergunta. ✓
 3. Objetivo que NÃO é de conversas (site/tráfego) → a Página escolhida vira a nota "Página escolhida: *X*" no eco (não há linha de destino de WhatsApp). ✓
 
+### S16-3b — Página SEM ser dita + acento + rótulo do objetivo (3 incidentes reais numa criação de conversas)
+Entrada: "cria uma campanha de conversas WhatsApp, ABO, 30/dia, 1 conjunto, 4 anúncios, público advantage, pausada" — **sem mencionar Página**.
+1. **Sentinela do modelo não pune.** O LLM às vezes manda um artefato (`:null`, `null`, `{}`) no campo `page` quando nada foi dito. `cleanPageQuery` agora **descarta** sentinelas/artefatos (núcleo alfanumérico vazio OU na denylist) → trata como "sem escolha" → usa a Página **padrão** do anúncio-base (a conta tem 1 Página → cria direto). Nunca mais "Não achei uma Página que bata com ':null'". ✓
+2. **Acento não separa.** Se o dono digitar o nome com acento diferente ("Autômato") e a Página for "Automato" (ou vice-versa), `matchPagesByQuery` casa (dobra por `NFD`+minúsculas, `foldForMatch`). Nunca mais "não achei 'Autômato'" tendo "Automato". ✓
+3. **Rótulo humano do objetivo.** O eco diz "criar uma campanha de **conversa**" (via `goalNounPt`), **nunca** o id técnico cru "messaging_started" (§7/§13 — sem jargão/id pro dono). ✓
+
 ### S16-4 — Trocar a Página de um rascunho pendente (W2)
 Entrada (com rascunho aberto): "troca pra página CaquiAI Loja" (ou "manda pro número 999990000").
 1. `adjust_draft setPage` resolve e troca `spec.pageId`; o eco confirma "Página trocada pra *X*". ✓

@@ -1762,25 +1762,47 @@ const MIN_PHONE_MATCH_DIGITS = 6;
  *  sempre alucinação do modelo (raciocínio/JSON malformado que caiu no arg da tool). */
 const MAX_PAGE_QUERY_LEN = 80;
 
+/** Valores-sentinela que o LLM emite quando NÃO há Página dita (artefato de JSON/serialização que cai
+ *  no arg): `null`/`undefined`/`nil`/`none`/`n/a`/`false`/`true` e a própria palavra "página". Tratados
+ *  como "sem escolha" (usa a Página padrão), nunca como um nome a casar (senão "não achei :null"). */
+const SENTINEL_PAGE_QUERIES: ReadonlySet<string> = new Set(["null", "undefined", "nil", "none", "na", "false", "true", "page", "pagina"]);
+
+/** Normaliza pra casar Página sem depender de acento/caixa: minúsculas + remove diacríticos (NFD).
+ *  "Autômato" e "Automato" batem (incidente real: o dono digitou com circunflexo, a Página não tinha). */
+function foldForMatch(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .trim();
+}
+
 /** Sanitiza a referência de Página vinda do LLM ANTES de casar/ecoar (§7/§13): colapsa pra UMA linha,
- *  tira caracteres de controle/formato, e descarta o que for vazio ou longo demais (alucinação) → null.
- *  O caller trata null como "sem escolha" (usa a Página padrão), NUNCA ecoa o texto cru pro usuário.
- *  Incidente real: o modelo mandou raciocínio malformado no campo `page` e o eco vazou o lixo. PURO. */
+ *  tira caracteres de controle/formato, e descarta o que for vazio, longo demais (alucinação) OU um
+ *  valor-sentinela/artefato (ex: `:null`, `null`, `{}`) → null. O caller trata null como "sem escolha"
+ *  (usa a Página padrão), NUNCA ecoa o texto cru nem trava o dono. Incidente real: o modelo mandou
+ *  `":null"` no campo `page` numa criação SEM Página dita e o Roy puniu ("não achei :null"). PURO. */
 export function cleanPageQuery(raw?: string | null): string | null {
   if (!raw) return null;
   const oneLine = raw
     .replace(/[\p{Cc}\p{Cf}]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
-  return oneLine.length > 0 && oneLine.length <= MAX_PAGE_QUERY_LEN ? oneLine : null;
+  if (oneLine.length === 0 || oneLine.length > MAX_PAGE_QUERY_LEN) return null;
+  // núcleo alfanumérico (sem pontuação/aspas/chaves/dois-pontos): vazio (`{}`, `:`) OU sentinela
+  // (`:null`→"null") → não é um nome de verdade → "sem escolha".
+  const core = oneLine.replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
+  if (core.length === 0 || SENTINEL_PAGE_QUERIES.has(core)) return null;
+  return oneLine;
 }
 
 export function matchPagesByQuery(pages: readonly PageInfo[], query: string): PageInfo[] {
-  const q = query.trim().toLowerCase();
+  // casa por nome SEM depender de acento/caixa ("Autômato" bate "Automato") — incidente real.
+  const q = foldForMatch(query);
   if (!q) return [];
   const digits = query.replace(/\D+/g, "");
   return pages.filter((p) => {
-    const byName = p.name ? p.name.toLowerCase().includes(q) : false;
+    const byName = p.name ? foldForMatch(p.name).includes(q) : false;
     const byNumber = digits.length >= MIN_PHONE_MATCH_DIGITS && p.whatsappNumber ? p.whatsappNumber.includes(digits) : false;
     return byName || byNumber;
   });
@@ -2522,7 +2544,8 @@ export async function proposeCreateCampaign(
         ? `montando **${variantsCount} anúncios** (mesmo criativo, copy própria em cada)`
         : `e ${variantsCount} variações de copy novas (baseadas no que já converte)`;
   const lines = [
-    `Vou **criar uma campanha de ${goal}** ${creativeSourcePhrase}${audienceSourcePhrase}, ${adsPhrase}.`,
+    // §7/§13: rótulo humano do objetivo (ex: "conversa"), NUNCA o id técnico cru (messaging_started).
+    `Vou **criar uma campanha de ${goalNounPt(goal)}** ${creativeSourcePhrase}${audienceSourcePhrase}, ${adsPhrase}.`,
   ];
   for (const n of compositionNotes) lines.push(n);
   lines.push(describeCopiesBlock(copyVariants));

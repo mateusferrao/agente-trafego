@@ -721,6 +721,18 @@ describe("cleanPageQuery (sanitiza o `page` do LLM — incidente do lixo vazado)
   it("multi-linha curto → colapsa pra uma linha (mantém se couber)", () => {
     expect(cleanPageQuery("CaquiAI\nOficial")).toBe("CaquiAI Oficial");
   });
+  it("sentinela/artefato do modelo (`:null`, `null`, `{}`, …) → null (não vira query, não pune)", () => {
+    // incidente real: criação SEM Página dita → o modelo mandou ":null" → Roy puniu "não achei :null".
+    expect(cleanPageQuery(":null")).toBeNull();
+    expect(cleanPageQuery("null")).toBeNull();
+    expect(cleanPageQuery("undefined")).toBeNull();
+    expect(cleanPageQuery("none")).toBeNull();
+    expect(cleanPageQuery("n/a")).toBeNull();
+    expect(cleanPageQuery("{}")).toBeNull();
+    expect(cleanPageQuery('":"')).toBeNull();
+    // um nome de verdade que CONTÉM "null" não é sentinela (só o núcleo exato conta).
+    expect(cleanPageQuery("Nullify Store")).toBe("Nullify Store");
+  });
 });
 
 describe("matchPagesByQuery / pageChoiceLabel (picker de Página — W2)", () => {
@@ -732,6 +744,12 @@ describe("matchPagesByQuery / pageChoiceLabel (picker de Página — W2)", () =>
   it("nome (substring, case-insensitive) → casa a Página", () => {
     expect(matchPagesByQuery(pages, "loja").map((p) => p.pageId)).toEqual(["P2"]);
     expect(matchPagesByQuery(pages, "CONSULTÓRIO").map((p) => p.pageId)).toEqual(["P3"]);
+  });
+  it("acento não separa: 'Autômato' casa a Página 'Automato' (incidente real)", () => {
+    const p: PageInfo[] = [{ pageId: "PA", name: "Automato" }];
+    expect(matchPagesByQuery(p, "Autômato").map((x) => x.pageId)).toEqual(["PA"]);
+    // e o inverso: query sem acento casa nome com acento.
+    expect(matchPagesByQuery(pages, "consultorio").map((x) => x.pageId)).toEqual(["P3"]);
   });
   it("número (dígitos, substring, mín. 6) → casa pela linha do WhatsApp", () => {
     expect(matchPagesByQuery(pages, "3491398").map((p) => p.pageId)).toEqual(["P1"]);
