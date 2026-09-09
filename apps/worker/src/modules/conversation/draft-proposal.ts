@@ -1197,17 +1197,22 @@ export async function refineDraft(
     if (defaults.pixelId) edit.pixelId = defaults.pixelId;
   }
 
-  // DESTINO (link, só from_scratch): troca a URL de destino do rascunho. Objetivo de conversas no
-  // WhatsApp → bloqueia honesto (leva pro WhatsApp, não pra um site). URL inválida → pede a correta.
+  // DESTINO (link, só from_scratch): troca a URL de destino do rascunho.
   if (kind === "from_scratch" && patch.link != null) {
-    if (isMessagingGoal(edit.objective ?? spec.objective)) {
-      return { kind: "blocked", reason: "esse rascunho é de conversas no WhatsApp — ele leva a pessoa pro WhatsApp, não pra um site, então não dá pra pôr um link de destino." };
-    }
     const link = normalizeLinkUrl(patch.link);
-    if (!link) {
-      return { kind: "blocked", reason: `não reconheci "${patch.link}" como um link válido — me manda a URL completa (ex: https://sualoja.com/promo).` };
+    if (isMessagingGoal(edit.objective ?? spec.objective)) {
+      // Conversas: só a mensagem honesta de link quando é uma URL DE VERDADE (o dono realmente deu um
+      // link). Um valor não-URL (ex: "futebol americano") é quase sempre o modelo pondo no campo errado
+      // um pedido que era de PÚBLICO/interesse → NÃO trato como link nem solto a mensagem de link (que
+      // confundiria: o dono nunca falou de link). Ignora; se havia outros campos, eles seguem.
+      if (link) return { kind: "blocked", reason: "esse rascunho é de conversas no WhatsApp — ele leva a pessoa pro WhatsApp, não pra um site, então não dá pra pôr um link de destino." };
+    } else {
+      // Site/tráfego: link malformado → pede a URL certa (feedback preservado).
+      if (!link) {
+        return { kind: "blocked", reason: `não reconheci "${patch.link}" como um link válido — me manda a URL completa (ex: https://sualoja.com/promo).` };
+      }
+      edit.linkUrl = link;
     }
-    edit.linkUrl = link;
   }
 
   // anúncios (só from_scratch): `regenerateCopy` re-aterra TUDO na copy que já performa (LLM na

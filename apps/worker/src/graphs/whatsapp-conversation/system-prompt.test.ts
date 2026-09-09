@@ -41,6 +41,13 @@ describe("buildChatRules — S0a: procedimento-por-tool migrou pra tools.ts", ()
     expect(rules).toContain("Como a criação/edição/ação funciona no v1");
     expect(rules).toContain("NÃO diga \"vá criar no site\"");
   });
+
+  it("chatAdsWrites ON: regra de roteamento público×link (não confundir mudança de público com link)", () => {
+    const rules = buildChatRules(false, true);
+    expect(rules).toContain("Roteamento PÚBLICO × LINK");
+    expect(rules).toContain("addInterests");
+    expect(rules).toContain("NUNCA responda sobre \"link\"/\"destino\" quando o dono falou de PÚBLICO");
+  });
 });
 
 describe("buildChatRules — escolha de criativo por chat (kill-switch chatCreativePicker)", () => {

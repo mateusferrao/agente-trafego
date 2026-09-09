@@ -539,6 +539,11 @@ Entrada (rascunho de site pendente): "troca o link pra https://sualoja.com/black
 1. `adjust_draft` (`link`) → `refineDraft` normaliza + grava; o eco de refino mostra "Destino: leva pra *…*". ✓
 2. Rascunho de conversas no WhatsApp → bloqueia honesto ("esse rascunho é de conversas no WhatsApp … não dá pra pôr um link"). Escala/duplicata → `scaleForbiddenRefineField` barra (herda o destino do vencedor). ✓
 
+### S14-2b — Pedir PÚBLICO nunca vira resposta sobre LINK (anti-alucinação — incidente real)
+Incidente: rascunho de conversas pendente; o dono disse "Troca o público para segmentado por interesse em futebol americano" e o Roy respondeu sobre **link** ("não dá pra pôr um link"). Causa: o modelo recitou a regra messaging→link em vez de rotear o pedido de público pro `addInterests` (a capacidade existe). Duas frentes:
+1. **Roteamento (prompt).** Regra dura no prompt: pedido de PÚBLICO (interesse/idade/gênero/geo/comportamento/público salvo) vai SEMPRE pros campos de público do `adjust_draft` (`addInterests`/`narrowInterests`/…), convertendo o herdado/amplo em personalizado; a regra "conversas leva pro WhatsApp, não pra site" é **só sobre LINK** e nunca motiva recusar/comentar uma mudança de público. Então "troca o público pra interesse em futebol americano" → o Roy chama `adjust_draft(addInterests:["futebol americano"])` e ecoa o público novo. ✓
+2. **Guard determinístico.** No `refineDraft`, a mensagem de link num rascunho de conversas só sai quando o valor é uma **URL de verdade** (`normalizeLinkUrl` ≠ null). Um valor não-URL num campo de link (ex: o modelo põe "futebol americano" em `link` por engano) é **ignorado** — nunca vira a mensagem de link enganosa. Rascunho de site com link malformado segue pedindo a URL certa (feedback preservado). ✓
+
 ### S14-3 — Editar o link pelo SITE (edição de recomendação/rascunho)
 Entrada: painel "Editar rascunho" de uma campanha de site.
 1. O campo **"Link de destino"** aparece (só from_scratch, objetivo ≠ messaging_started), pré-preenchido com o `linkUrl` atual (via `draftApprovalOutput.linkUrl`). Editar + Salvar manda `linkUrl` no PATCH → `spec.linkUrl`. ✓
