@@ -1409,7 +1409,9 @@ export async function refineDraft(
   // `creative` do slot (o texto da copy fica). Índice fora do rascunho → bloqueia (nunca troca o errado).
   if (kind === "from_scratch" && patch.setAdCreative?.length) {
     const arr = [...(edit.copyVariants ?? currentVariants)];
-    const pool = await buildCreativePool(deps, ctx.orgId, ctx.adAccountId, ac.ref, ac.creativeSource);
+    // ESCOLHA explícita por-anúncio → inclui vídeos sem capa guardada (o apply resolve a capa ao vivo);
+    // senão o dono não conseguiria trocar pro vídeo que a lista mostrou (diz×faz §7).
+    const pool = await buildCreativePool(deps, ctx.orgId, ctx.adAccountId, ac.ref, ac.creativeSource, { includeCoverlessVideo: true });
     const candidates = pool.map(toLibraryCandidate);
     for (const e of patch.setAdCreative) {
       if (e.index < 0 || e.index >= arr.length) {
@@ -1852,14 +1854,27 @@ export function interleaveMedia(refs: readonly ChosenCreative[]): { ordered: Cho
   return { ordered, hasVideo: videos.length > 0, hasImage: images.length > 0 };
 }
 
+/** Um vídeo tem capa CONHECIDA offline (image_hash guardado)? Anúncio de vídeo precisa de capa;
+ *  sem ela guardada, o apply RESOLVE a capa ao vivo (thumbnail do vídeo). Portanto: no AUTO-fill o
+ *  agente só adiciona vídeo com capa conhecida (não arrisca padding que dependa de fetch #10); numa
+ *  ESCOLHA explícita do dono, o vídeo sem capa é permitido (o apply busca a capa — mesma garantia do
+ *  criativo-base, cuja capa é resolvida ao vivo). Imagem sempre tem capa; o discriminador é o videoId. */
+export function hasOfflineCover(r: ChosenCreative): boolean {
+  return !r.videoId || Boolean(r.imageHash);
+}
+
 /** Pool de candidatos (veiculando + biblioteca) conforme a ESTRATÉGIA do agente — mesma fonte de
- *  chooseCreative (números ao vivo + visão), reusada p/ pegar criativos DISTINTOS adicionais. */
-async function buildCreativePool(
+ *  chooseCreative (números ao vivo + visão), reusada p/ pegar criativos DISTINTOS adicionais.
+ *  `includeCoverlessVideo` (ESCOLHA explícita do dono): mantém vídeos da biblioteca SEM capa guardada
+ *  no pool (o apply resolve a capa ao vivo) — sem ele, o dono não conseguiria escolher um vídeo que a
+ *  lista mostrou (diz×faz §7). Default false = só criativos montáveis offline (auto-fill seguro). */
+export async function buildCreativePool(
   deps: WorkerDeps,
   orgId: string,
   accountId: string,
   ref: AdAccountRef,
   strategy: CreativeSourceStrategy,
+  opts?: { includeCoverlessVideo?: boolean },
 ): Promise<DescribedCandidate[]> {
   const pool: DescribedCandidate[] = [];
   if (strategy.mode !== "library") pool.push(...(await describeServingCandidates(deps, orgId, accountId, ref)));
@@ -1867,11 +1882,9 @@ async function buildCreativePool(
   // os anúncios AO VIVO (inclui pausados) pra o dono conseguir NOMEAR um criativo que a lista mostrou.
   if (pool.length === 0 && strategy.mode !== "library") pool.push(...(await describeLiveServingCandidates(deps, ref)));
   if (strategy.mode !== "serving" || pool.length === 0) pool.push(...(await describeLibraryCandidates(deps, orgId, accountId)));
-  // ENTREGÁVEL: um anúncio de VÍDEO exige capa (image_hash) no video_data — e ler o thumbnail do
-  // vídeo pode falhar com o token (#10). Sem capa conhecida, o anúncio extra falharia no apply; então
-  // o agente só ADICIONA extras que sabe montar: imagem sempre, vídeo só com capa. (O criativo
-  // principal vem de chooseCreative, cuja capa é resolvida ao vivo em inferCreationDefaults.)
-  return pool.filter((c) => !c.ref.videoId || Boolean(c.ref.imageHash));
+  // Numa ESCOLHA explícita, mantém tudo (o apply resolve a capa do vídeo ao vivo); no auto-fill, só o
+  // que é montável offline (não arrisca padding que dependa de fetch #10). Ver `hasOfflineCover`.
+  return opts?.includeCoverlessVideo ? pool : pool.filter((c) => hasOfflineCover(c.ref));
 }
 
 
@@ -2285,8 +2298,11 @@ export async function proposeCreateCampaign(
   if (pageChoiceNote) compositionNotes.push(pageChoiceNote); // W2: eco da Página escolhida (ou da degradação honesta)
   // pool DISTINTO priorizado (o melhor `chosen` primeiro), deduplicado por mídia, filtrado por preferência.
   // Mantém os candidatos DESCRITOS (não só o ref): a decomposição de visão do líder aterra a copy.
-  const pool = args.forcedCreativeAssetId ? [] : await buildCreativePool(deps, ctx.orgId, ctx.adAccountId, ac.ref, ac.creativeSource);
-  const poolRefs = pool.map((c) => c.ref);
+  // pool inclui vídeos SEM capa guardada (o dono pode ESCOLHER um que a lista mostrou — o apply
+  // resolve a capa ao vivo); o auto-fill (poolRefs) filtra pra só o montável offline (sem padding
+  // que dependa de fetch de thumbnail). Assim a ESCOLHA explícita nunca some da resolução (diz×faz §7).
+  const pool = args.forcedCreativeAssetId ? [] : await buildCreativePool(deps, ctx.orgId, ctx.adAccountId, ac.ref, ac.creativeSource, { includeCoverlessVideo: true });
+  const poolRefs = pool.filter((c) => hasOfflineCover(c.ref)).map((c) => c.ref);
 
   // PICKER (Slice 3): o dono ESCOLHEU criativos por nome ("o campeão", "o vídeo da praia"). Resolve
   // cada nome pro asset com o matcher que NÃO chuta (pickCreativeByReference → null quando ambíguo);

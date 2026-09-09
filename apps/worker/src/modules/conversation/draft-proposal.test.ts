@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, cleanPageQuery, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, interleaveMedia, matchPagesByQuery, normalizeAdCount, pageChoiceLabel, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField, stripGeoQualifier } from "./draft-proposal.js";
+import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, buildCreativePool, cleanPageQuery, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, hasOfflineCover, interleaveMedia, matchPagesByQuery, normalizeAdCount, pageChoiceLabel, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField, stripGeoQualifier } from "./draft-proposal.js";
 import type { PageInfo } from "@trafego/shared";
 import type { CopyVariant } from "@trafego/shared";
 import type { CampaignDraftSpec } from "@trafego/shared";
@@ -159,6 +159,47 @@ describe("chooseCreative (pool único: veiculando + biblioteca)", () => {
     const deps = fakeDepsSeq([{ limit: [{ campaignId: "C2", adsetId: "AS2" }] }, { direct: [{ curatedJson: { isCBO: true, healthSignals: [] } }] }]);
     const out = await chooseCreative(deps, ORG, ACC, AGENT, REF, { videoId: "SVID", sourceAdId: "ad_2" }, BEST_PERFORMING);
     expect(out).toEqual({ videoId: "SVID", assetId: "ad_2", origin: "reuse", source: "serving" });
+  });
+});
+
+describe("hasOfflineCover (capa conhecida offline p/ montar anúncio de vídeo)", () => {
+  it("imagem → true (imageHash é a capa)", () => {
+    expect(hasOfflineCover({ imageHash: "H", assetId: "a", origin: "upload", source: "library" })).toBe(true);
+  });
+  it("vídeo com capa guardada → true", () => {
+    expect(hasOfflineCover({ videoId: "V", imageHash: "H", assetId: "a", origin: "upload", source: "library" })).toBe(true);
+  });
+  it("vídeo SEM capa guardada → false (o apply resolve a capa ao vivo)", () => {
+    expect(hasOfflineCover({ videoId: "V", assetId: "a", origin: "upload", source: "library" })).toBe(false);
+  });
+});
+
+describe("buildCreativePool — vídeo da biblioteca sem capa: escolha explícita × auto-fill (diz×faz)", () => {
+  const LIBRARY = { mode: "library" } as const;
+  /** deps p/ describeLibraryCandidates: 1º SELECT = libs (orderBy→limit); 2º = visões (where direto). */
+  const depsLib = (libRows: unknown[], visionRows: unknown[] = []) => fakeDepsSeq([{ orderByLimit: libRows }, { direct: visionRows }]);
+
+  it("ESCOLHA explícita (includeCoverlessVideo) → o vídeo da biblioteca SEM capa entra no pool (picável)", async () => {
+    const deps = depsLib([{ id: "vlib", imageHash: null, videoId: "VID9" }]);
+    const pool = await buildCreativePool(deps, ORG, ACC, REF, LIBRARY, { includeCoverlessVideo: true });
+    expect(pool.map((c) => c.ref)).toContainEqual({ videoId: "VID9", assetId: "vlib", origin: "upload", source: "library" });
+  });
+
+  it("AUTO-fill (default) → o mesmo vídeo SEM capa é excluído (não arrisca padding que dependa de fetch)", async () => {
+    const deps = depsLib([{ id: "vlib", imageHash: null, videoId: "VID9" }]);
+    const pool = await buildCreativePool(deps, ORG, ACC, REF, LIBRARY);
+    expect(pool).toEqual([]); // dropado: video sem imageHash
+  });
+
+  it("vídeo COM capa entra nos dois modos (montável offline)", async () => {
+    const row = [{ id: "vlib", imageHash: "COVER", videoId: "VID9" }];
+    expect((await buildCreativePool(depsLib(row), ORG, ACC, REF, LIBRARY)).map((c) => c.ref)).toContainEqual({
+      videoId: "VID9",
+      imageHash: "COVER",
+      assetId: "vlib",
+      origin: "upload",
+      source: "library",
+    });
   });
 });
 

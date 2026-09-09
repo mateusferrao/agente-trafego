@@ -1252,8 +1252,10 @@ function liveMetricsView(r: LiveCreativeItem): Record<string, unknown> {
 }
 
 /** Criativos da BIBLIOTECA do site (uploads `ready`, não arquivados) com a descrição de visão
- *  cacheada — a MESMA fonte do pool do picker. Sem nome humano na tabela → o rótulo é a descrição
- *  (o que o criativo comunica). Dual-hash (chat/biblioteca) como no recall, pra não dar falso-vazio. */
+ *  cacheada — o MESMO conjunto que o picker consegue escolher (inclui vídeo sem capa guardada, cuja
+ *  capa o apply resolve ao vivo — §7 diz×faz: não listar o que não dá pra escolher). Sem nome humano
+ *  na tabela → o rótulo é a descrição (o que o criativo comunica). Dual-hash (chat/biblioteca) como
+ *  no recall, pra não dar falso-vazio. */
 async function loadLibraryForList(deps: WorkerDeps, ctx: ReadToolContext): Promise<Array<{ assetId: string; format: string; description: string }>> {
   const assets = await deps.db
     .select({ id: creativeAssets.id, format: creativeAssets.format, visionContentHash: creativeAssets.visionContentHash })

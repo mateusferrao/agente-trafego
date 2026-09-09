@@ -483,6 +483,14 @@ Entrada (rascunho pendente): "troca o anúncio 2 pro vídeo da praia".
 1. `adjust_draft` (`setAdCreative`) resolve o nome pro asset e substitui **só o `creative` do slot** (o texto da copy fica). Índice fora do rascunho ou nome não achado → bloqueia honesto (nunca troca o errado). ✓
 2. Numa **escala/duplicata** (não from_scratch), trocar criativo é herdado do vencedor → o Roy responde honesto que não dá (não re-ecoa mudo). ✓
 
+### S12-8 — Picker acha o VÍDEO da biblioteca que ele mesmo listou (diz×faz)
+Contexto: a biblioteca do site tem um **vídeo** `ready` **sem capa guardada** (`metaVideoId` presente, `metaImageHash` null — o poll marca `ready` mas não guarda capa). Antes: o Roy **listava** o vídeo em "quais criativos eu tenho" mas o picker respondia **"Não achei o criativo"** (o `buildCreativePool` dropava vídeo sem capa) — mentia sobre o que dava pra escolher.
+1. "quais criativos eu tenho?" → o Roy lista o vídeo da biblioteca (nº N). ✓
+2. "usa o N" (ou o nome do vídeo) → **resolve** e monta o rascunho — a **capa é resolvida ao vivo** pelo apply (`createAdCreative` busca o thumbnail do vídeo, mesma garantia do criativo-base). Nunca mais "Não achei o criativo" pra um item que a lista mostrou (`buildCreativePool(..., { includeCoverlessVideo: true })` na escolha explícita). ✓
+3. **AUTO-fill** (o Roy completando anúncios pela estratégia, sem escolha explícita) **continua** só adicionando vídeo **com capa conhecida** — não arrisca padding que dependa de fetch de thumbnail (`hasOfflineCover` filtra o `poolRefs`). ✓
+4. Se a capa não puder ser resolvida no apply (falha de thumbnail #10), a criação segue sem `image_url` (a Meta gera a capa) ou o erro é **surfaced honesto** (S3) — nunca silêncio. ✓
+5. **Imagem** da biblioteca (tem capa) segue picável nos dois modos, como antes. ✓
+
 ## Ativar campanha PAUSADA pelo chat (Roy enxerga inativas)
 
 Bug reportado: o dono criou "CaquiAI - conversa" (nasce pausada), pediu "ativa a campanha CaquiAI - conversa" e o Roy não achou — pediu o ID. Toda campanha pausada nunca-analisada era invisível às tools de descoberta de id.
