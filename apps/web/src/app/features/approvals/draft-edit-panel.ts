@@ -660,12 +660,17 @@ export class DraftEditPanel implements OnInit {
   }
 
   /** Toggle onde a verba mora (F1b) — CBO (única na campanha) × ABO (por conjunto). Marca os
-   *  conjuntos como MEXIDOS (a verba muda de nível → o patch precisa reenviar os conjuntos). */
+   *  conjuntos como MEXIDOS (a verba muda de nível → o patch precisa reenviar os conjuntos). Ao virar
+   *  ABO, pré-preenche o gasto de cada conjunto sem valor com o diário da campanha (espelha o
+   *  `flipBudgetLevel` do backend) — o campo não fica vazio contradizendo o texto de ajuda. */
   protected setBudgetMode(value: string | string[]): void {
     const v = Array.isArray(value) ? value[0] : value;
     if (v !== 'cbo' && v !== 'abo') return;
     if (v === this.budgetMode()) return;
     this.budgetMode.set(v);
+    if (v === 'abo' && this.budget() > 0) {
+      this.conjuntos.update((list) => list.map((c) => (c.budget != null && c.budget > 0 ? c : { ...c, budget: this.budget() })));
+    }
     this.conjuntosDirty.set(true);
   }
 
