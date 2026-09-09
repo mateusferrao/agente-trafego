@@ -2385,7 +2385,7 @@ export async function proposeCreateCampaign(
   // dá + recomendo os demais pro site (INVARIANTE: nunca travo sem próximo passo).
   if (structure.adsets > 1) {
     compositionNotes.push(
-      "Você quer testar vários públicos — por aqui eu monto **1 conjunto** com o público mais forte (orçamento único na campanha). Pra rodar cada público no seu próprio conjunto de uma vez, a gente faz no site, ou me peça um de cada vez que eu vou montando.",
+      "Você quer testar vários públicos — por aqui eu monto **1 conjunto** com o público mais forte (orçamento único na campanha). Pra rodar cada público no seu próprio conjunto (um por segmento, mesmo criativo), é só abrir este rascunho no site e adicionar os outros conjuntos — depois você aprova tudo de uma vez.",
     );
   }
   if (pageChoiceNote) compositionNotes.push(pageChoiceNote); // W2: eco da Página escolhida (ou da degradação honesta)

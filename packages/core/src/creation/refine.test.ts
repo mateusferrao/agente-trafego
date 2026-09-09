@@ -172,3 +172,43 @@ describe("applyDraftEdit — merge puro do rascunho", () => {
     expect(r.error.field).toBe("pageId");
   });
 });
+
+describe("applyDraftEdit — C2 multi-conjunto (adsets, substituição total)", () => {
+  const noCap = { hasPixel: true } as const;
+  const two = [
+    { name: "A", targeting: { kind: "advantage_plus" as const } },
+    { name: "B", targeting: { kind: "advantage_plus" as const }, dailyBudgetMinor: 4000 },
+  ];
+
+  it("substitui os conjuntos (multi) e preserva o resto do spec", () => {
+    const r = applyDraftEdit("from_scratch", fromScratch, { adsets: two }, noCap);
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error("esperava ok");
+    expect(r.value.spec.adsets).toHaveLength(2);
+    expect(r.value.spec.adsets?.[1]?.dailyBudgetMinor).toBe(4000);
+    expect(r.value.spec.copyVariants).toHaveLength(2); // criativo/copy do rascunho intactos
+  });
+
+  it("lista vazia limpa os conjuntos (volta a single-conjunto)", () => {
+    const withAdsets = { ...fromScratch, adsets: two };
+    const r = applyDraftEdit("from_scratch", withAdsets, { adsets: [] }, noCap);
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error("esperava ok");
+    expect(r.value.spec.adsets).toBeUndefined();
+  });
+
+  it("não editar adsets preserva os existentes", () => {
+    const withAdsets = { ...fromScratch, adsets: two };
+    const r = applyDraftEdit("from_scratch", withAdsets, { budgetMinor: 6000 }, noCap);
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error("esperava ok");
+    expect(r.value.spec.adsets).toHaveLength(2);
+  });
+
+  it("adsets é from_scratch-only → erro em duplicate", () => {
+    const r = applyDraftEdit("duplicate", duplicate, { adsets: two }, noCap);
+    expect(r.ok).toBe(false);
+    if (r.ok || r.error.code !== "field_not_editable") throw new Error("esperava field_not_editable");
+    expect(r.error.field).toBe("adsets");
+  });
+});

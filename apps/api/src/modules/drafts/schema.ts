@@ -22,6 +22,33 @@ export const draftCopyVariantOutput = z.object({
     .nullable(),
 });
 
+/** Público EXPLÍCITO no OUTPUT (geo/idade/gênero/grupos/salvos) — fonte única do shape, reusada
+ *  no rascunho single E em cada conjunto do multi (C2). */
+export const draftExplicitAudienceOutput = z.object({
+  geo: z.array(z.object({ key: z.string(), name: z.string(), kind: z.enum(["country", "region", "city", "neighborhood"]), radius: z.number().nullable(), distanceUnit: z.enum(["mile", "kilometer"]).nullable() })),
+  radiusAreas: z.array(z.object({ address: z.string(), radius: z.number(), distanceUnit: z.enum(["mile", "kilometer"]) })),
+  ageMin: z.number().nullable(),
+  ageMax: z.number().nullable(),
+  genders: z.array(z.union([z.literal(1), z.literal(2)])).nullable(),
+  interestGroups: z.array(z.array(z.object({ id: z.string(), name: z.string() }))),
+  behaviorGroups: z.array(z.array(z.object({ id: z.string(), name: z.string() }))),
+  customAudienceIncludeIds: z.array(z.string()),
+  customAudienceExcludeIds: z.array(z.string()),
+});
+
+/** Um CONJUNTO de anúncios do rascunho multi-conjunto (C2) — público + orçamento (ABO) + anúncios.
+ *  O card/painel renderiza N destes. Criativo compartilhado vem do rascunho (não repetido aqui). */
+export const draftAdsetOutput = z.object({
+  name: z.string().nullable(),
+  /** modo do público quando não-explícito (reuse/broad); `null` quando explícito (ver explicitAudience). */
+  audience: z.enum(["reuse", "broad"]).nullable(),
+  explicitAudience: draftExplicitAudienceOutput.nullable(),
+  /** orçamento diário do conjunto (ABO) na unidade MAIOR; `null` em CBO (verba na campanha). */
+  dailyBudgetMajor: z.number().nullable(),
+  copyVariants: z.array(draftCopyVariantOutput).nullable(),
+});
+export type DraftAdsetOutput = z.infer<typeof draftAdsetOutput>;
+
 /**
  * Aprovação de RASCUNHO de campanha (Fatia 7) — mais rica que 1 ação: estrutura + copy +
  * budget novo + Página/Pixel (card de rascunho, Brand tier). Espelha o card no WhatsApp
@@ -82,22 +109,15 @@ export const draftApprovalOutput = z.object({
    *  escolhe (amplo). `null` em duplicate/activation E quando o público é explícito/salvo (ver
    *  `explicitAudience` abaixo) — o card oferece alternar entre reuse/broad só nesse caso. */
   audience: z.enum(["reuse", "broad"]).nullable(),
+  /** onde mora a verba (C1): `cbo` = orçamento único na campanha; `abo` = por conjunto. `null` =
+   *  não definido (rascunho pré-C1 = comportamento ABO no apply). O card mostra o rótulo de negócio. */
+  budgetMode: z.enum(["cbo", "abo"]).nullable(),
+  /** conjuntos do teste multi-conjunto (C2). `null` ou vazio = single-conjunto (usa os campos
+   *  singulares acima). Quando presente, o card/painel renderiza N conjuntos. */
+  adsets: z.array(draftAdsetOutput).nullable(),
   /** público EXPLÍCITO por primitivos (Fase 1, subfatia 3b) — geo/idade/gênero. `null` quando o
    *  targeting não é `explicit` (os outros modos usam `audience` acima). */
-  explicitAudience: z
-    .object({
-      geo: z.array(z.object({ key: z.string(), name: z.string(), kind: z.enum(["country", "region", "city", "neighborhood"]), radius: z.number().nullable(), distanceUnit: z.enum(["mile", "kilometer"]).nullable() })),
-      radiusAreas: z.array(z.object({ address: z.string(), radius: z.number(), distanceUnit: z.enum(["mile", "kilometer"]) })),
-      ageMin: z.number().nullable(),
-      ageMax: z.number().nullable(),
-      genders: z.array(z.union([z.literal(1), z.literal(2)])).nullable(),
-      /** interesses/comportamentos em GRUPOS (Slice 3/4). Vazio = nenhum. */
-      interestGroups: z.array(z.array(z.object({ id: z.string(), name: z.string() }))),
-      behaviorGroups: z.array(z.array(z.object({ id: z.string(), name: z.string() }))),
-      customAudienceIncludeIds: z.array(z.string()),
-      customAudienceExcludeIds: z.array(z.string()),
-    })
-    .nullable(),
+  explicitAudience: draftExplicitAudienceOutput.nullable(),
   /** semente pro CONVERTER MODO (Slice 8): público herdado (geo/idade) de um rascunho reuse/broad,
    *  pré-preenche o editor quando o dono clica "personalizar público". `null` quando já é explicit. */
   convertibleAudience: z
@@ -236,6 +256,21 @@ export const updateDraftInput = z.object({
    *  (raio/behaviors/grupos/públicos salvos). Também CONVERTE reuse/broad → explicit. Quando presente,
    *  vence os diffs acima. "Voltar ao herdado" usa `audience:"reuse"`/`"broad"`. */
   explicitAudience: explicitAudienceInput.optional(),
+  /** CONJUNTOS do teste multi-conjunto (C2) — SUBSTITUIÇÃO TOTAL (o editor manda a lista completa,
+   *  já resolvida). Cada conjunto tem seu público (explícito OU amplo) + orçamento (ABO). Criativo
+   *  COMPARTILHADO (vem do rascunho). Lista vazia OU 1 = volta a single-conjunto. Quando presente,
+   *  vence os diffs de público singulares acima. */
+  adsets: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+        /** público explícito resolvido do conjunto; ausente = amplo (Advantage+). */
+        explicitAudience: explicitAudienceInput.optional(),
+        /** orçamento diário do conjunto (ABO); ausente = herda o do rascunho / verba na campanha (CBO). */
+        budgetReais: z.number().positive().optional(),
+      }),
+    )
+    .optional(),
 });
 export type UpdateDraftInput = z.infer<typeof updateDraftInput>;
 export const updateDraftOutput = z.object({ ok: z.boolean() });

@@ -8220,6 +8220,304 @@
               "broad"
             ]
           },
+          "budgetMode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "cbo",
+              "abo"
+            ]
+          },
+          "adsets": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "audience": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "enum": [
+                    "reuse",
+                    "broad"
+                  ]
+                },
+                "explicitAudience": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "geo": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "country",
+                              "region",
+                              "city",
+                              "neighborhood"
+                            ]
+                          },
+                          "radius": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          },
+                          "distanceUnit": {
+                            "type": [
+                              "string",
+                              "null"
+                            ],
+                            "enum": [
+                              "mile",
+                              "kilometer"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "name",
+                          "kind",
+                          "radius",
+                          "distanceUnit"
+                        ]
+                      }
+                    },
+                    "radiusAreas": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "address": {
+                            "type": "string"
+                          },
+                          "radius": {
+                            "type": "number"
+                          },
+                          "distanceUnit": {
+                            "type": "string",
+                            "enum": [
+                              "mile",
+                              "kilometer"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "address",
+                          "radius",
+                          "distanceUnit"
+                        ]
+                      }
+                    },
+                    "ageMin": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "ageMax": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    },
+                    "genders": {
+                      "type": [
+                        "array",
+                        "null"
+                      ],
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "number",
+                            "enum": [
+                              1
+                            ]
+                          },
+                          {
+                            "type": "number",
+                            "enum": [
+                              2
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "interestGroups": {
+                      "type": "array",
+                      "items": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "name"
+                          ]
+                        }
+                      }
+                    },
+                    "behaviorGroups": {
+                      "type": "array",
+                      "items": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "name"
+                          ]
+                        }
+                      }
+                    },
+                    "customAudienceIncludeIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "customAudienceExcludeIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "geo",
+                    "radiusAreas",
+                    "ageMin",
+                    "ageMax",
+                    "genders",
+                    "interestGroups",
+                    "behaviorGroups",
+                    "customAudienceIncludeIds",
+                    "customAudienceExcludeIds"
+                  ]
+                },
+                "dailyBudgetMajor": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "copyVariants": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "primaryText": {
+                        "type": "string"
+                      },
+                      "headline": {
+                        "type": "string"
+                      },
+                      "description": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "cta": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "adName": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "creative": {
+                        "type": [
+                          "object",
+                          "null"
+                        ],
+                        "properties": {
+                          "format": {
+                            "type": "string",
+                            "enum": [
+                              "image",
+                              "video"
+                            ]
+                          },
+                          "origin": {
+                            "type": "string",
+                            "enum": [
+                              "reuse",
+                              "upload"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "format",
+                          "origin"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "primaryText",
+                      "headline",
+                      "description",
+                      "cta",
+                      "adName",
+                      "creative"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "name",
+                "audience",
+                "explicitAudience",
+                "dailyBudgetMajor",
+                "copyVariants"
+              ]
+            }
+          },
           "explicitAudience": {
             "type": [
               "object",
@@ -8488,6 +8786,8 @@
           "copyVariants",
           "creative",
           "audience",
+          "budgetMode",
+          "adsets",
           "explicitAudience",
           "convertibleAudience",
           "createdIds"
@@ -9507,6 +9807,189 @@
             "required": [
               "geo"
             ]
+          },
+          "adsets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 400
+                },
+                "explicitAudience": {
+                  "type": "object",
+                  "properties": {
+                    "geo": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "key": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "name": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "country",
+                              "region",
+                              "city",
+                              "neighborhood"
+                            ]
+                          },
+                          "radius": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
+                          },
+                          "distanceUnit": {
+                            "type": "string",
+                            "enum": [
+                              "mile",
+                              "kilometer"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "key",
+                          "name",
+                          "kind"
+                        ]
+                      }
+                    },
+                    "radiusAreas": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "address": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "radius": {
+                            "type": "number",
+                            "exclusiveMinimum": 0
+                          },
+                          "distanceUnit": {
+                            "type": "string",
+                            "enum": [
+                              "mile",
+                              "kilometer"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "address",
+                          "radius",
+                          "distanceUnit"
+                        ]
+                      }
+                    },
+                    "ageMin": {
+                      "type": "integer",
+                      "minimum": 13,
+                      "maximum": 65
+                    },
+                    "ageMax": {
+                      "type": "integer",
+                      "minimum": 13,
+                      "maximum": 65
+                    },
+                    "genders": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "number",
+                            "enum": [
+                              1
+                            ]
+                          },
+                          {
+                            "type": "number",
+                            "enum": [
+                              2
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "interestGroups": {
+                      "type": "array",
+                      "items": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "name"
+                          ]
+                        }
+                      }
+                    },
+                    "behaviorGroups": {
+                      "type": "array",
+                      "items": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "name": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "name"
+                          ]
+                        }
+                      }
+                    },
+                    "customAudienceIncludeIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "customAudienceExcludeIds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "required": [
+                    "geo"
+                  ]
+                },
+                "budgetReais": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                }
+              }
+            }
           }
         }
       },

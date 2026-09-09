@@ -1,4 +1,5 @@
 import {
+  type AdsetSpec,
   type CampaignDraftSpec,
   type ConversionGoal,
   type CopyVariant,
@@ -77,6 +78,10 @@ export interface DraftEdit {
    *  o apply deriva o `promoted_object` disso). Não é campo direto do usuário. */
   readonly pixelId?: string;
   readonly targeting?: TargetingSpec;
+  /** Conjuntos do teste multi-conjunto (C2) — SUBSTITUIÇÃO TOTAL (o site manda a lista completa,
+   *  já resolvida). Vazio/1 = volta a single-conjunto. A casca converte público explícito →
+   *  TargetingSpec + orçamento → dailyBudgetMinor antes de passar. */
+  readonly adsets?: readonly AdsetSpec[];
   readonly creative?: CreativeAssetRef;
   readonly copyVariants?: readonly CopyVariant[];
   /** PÁGINA de destino (object_story_spec) resolvida pela casca a partir do nome/número dito pelo dono
@@ -114,6 +119,7 @@ const FROM_SCRATCH_ONLY: readonly (keyof DraftEdit)[] = [
   "objective",
   "pixelId",
   "targeting",
+  "adsets",
   "creative",
   "copyVariants",
   "linkUrl",
@@ -157,7 +163,10 @@ export function applyDraftEdit(
 
   // Descarta um `requestedDailyBudgetMinor` de um clamp ANTERIOR: se esta edição não clampa, o
   // campo obsoleto faria o card mostrar um "reduzido de" falso. Só re-adiciona quando clampou agora.
-  const { requestedDailyBudgetMinor: _staleRequested, ...base } = spec;
+  // C2: `adsets` sai do base pra ser recomposto abaixo (substituição total; lista vazia = limpa).
+  const { requestedDailyBudgetMinor: _staleRequested, adsets: baseAdsets, ...base } = spec;
+  // conjuntos resultantes: não editou → mantém; editou com lista → substitui; editou vazio → limpa.
+  const nextAdsets = edit.adsets !== undefined ? (edit.adsets.length > 0 ? edit.adsets : undefined) : baseAdsets;
 
   const next: CampaignDraftSpec = {
     ...base,
@@ -170,6 +179,7 @@ export function applyDraftEdit(
     ...(edit.objective !== undefined ? { objective: edit.objective } : {}),
     ...(edit.pixelId !== undefined ? { pixelId: edit.pixelId } : {}),
     ...(edit.targeting !== undefined ? { targeting: edit.targeting } : {}),
+    ...(nextAdsets ? { adsets: nextAdsets } : {}),
     ...(edit.creative !== undefined ? { creative: edit.creative } : {}),
     ...(edit.pageId !== undefined ? { pageId: edit.pageId } : {}),
     ...(edit.copyVariants !== undefined ? { copyVariants: edit.copyVariants, variantsCount: edit.copyVariants.length } : {}),

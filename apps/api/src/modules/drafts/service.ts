@@ -334,6 +334,19 @@ export function createDraftsService(deps: DraftsServiceDeps) {
       edit.targeting = buildExplicitFromInput(input.explicitAudience);
     }
 
+    // C2: conjuntos do teste multi-conjunto — SUBSTITUIÇÃO TOTAL (público explícito OU amplo +
+    // orçamento ABO por conjunto). Criativo compartilhado (vem do rascunho). Lista vazia = volta a
+    // single-conjunto (applyDraftEdit limpa `spec.adsets`).
+    if (input.adsets) {
+      const ctx = await getCtx();
+      if (!ctx) return { ok: false, message: ACCOUNT_UNAVAILABLE_MSG };
+      edit.adsets = input.adsets.map((as) => ({
+        ...(as.name != null ? { name: as.name } : {}),
+        targeting: as.explicitAudience ? buildExplicitFromInput(as.explicitAudience) : ({ kind: "advantage_plus" } as const),
+        ...(as.budgetReais != null ? { dailyBudgetMinor: toMinorUnits(as.budgetReais, ctx.currency) } : {}),
+      }));
+    }
+
     // público EXPLÍCITO (Fase 1, subfatia 3b) — remove/adiciona geo(s) já resolvido pelo
     // autocomplete + estreita idade. Converge com o chat no mesmo núcleo (applyExplicitGeoEdit).
     if (!input.explicitAudience && spec.targeting?.kind === "explicit" && (input.removeGeo?.length || input.addGeo?.length || input.ageMin != null || input.ageMax != null || input.genders != null)) {
@@ -546,6 +559,28 @@ export function createDraftsService(deps: DraftsServiceDeps) {
                 ? { geo: [], ageMin: null, ageMax: null }
                 : null,
           createdIds: appr.kind === "activation" ? (d.createdIds as Record<string, unknown>) : null,
+          budgetMode: spec.budgetMode ?? null,
+          // C2: conjuntos do teste multi-conjunto — cada um com seu público + orçamento (ABO) +
+          // anúncios. Ausente/1 = single-conjunto (o card usa os campos singulares acima).
+          adsets:
+            spec.adsets && spec.adsets.length > 0
+              ? spec.adsets.map((as) => ({
+                  name: as.name ?? null,
+                  audience: as.targeting?.kind === "reuse_adset" ? "reuse" : as.targeting?.kind === "advantage_plus" ? "broad" : null,
+                  explicitAudience: as.targeting?.kind === "explicit" ? serializeExplicitAudience(as.targeting) : null,
+                  dailyBudgetMajor: as.dailyBudgetMinor != null ? minorToMajor(as.dailyBudgetMinor, spec.currency) : null,
+                  copyVariants: as.copyVariants
+                    ? as.copyVariants.map((c) => ({
+                        primaryText: c.primaryText,
+                        headline: c.headline,
+                        description: c.description ?? null,
+                        cta: c.cta ?? null,
+                        adName: c.adName ?? null,
+                        creative: c.creative ? { format: c.creative.format, origin: c.creative.origin } : null,
+                      }))
+                    : null,
+                }))
+              : null,
         });
       }
       return out;
