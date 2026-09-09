@@ -967,7 +967,8 @@ export async function buildCapabilitiesText(
   // (texto verbatim), então a concisão é embutida na própria redação.
   const parts: string[] = [`Sou o ${AGENT_NAME}, seu gestor de tráfego aqui no WhatsApp. No dia a dia eu:`];
   parts.push("• Leio sua conta e te mostro onde tem dinheiro parado, o que vai bem e o que dá pra melhorar — no período que você quiser.");
-  parts.push('• Rodo uma análise na hora quando você pede ("analisa agora").');
+  // S2: análise na hora + planejamento inerente (consultivo, sempre presente) numa linha só (enxuto).
+  parts.push('• Rodo uma análise na hora quando você pede ("analisa agora") e penso à frente com você: pergunta "como eu cresço?" que eu diagnostico e proponho a sequência de próximos passos (o que testar, o que escalar, quando renovar o criativo).');
   // Aprendizado (S7): sempre leio o que aprendi; confirmar por chat depende do kill-switch.
   if (allow.has(CONFIRM_LEARNING_TOOL_NAME)) {
     parts.push("• Vou aprendendo os padrões da sua conta com o tempo — pergunta \"o que você aprendeu?\" que eu te mostro, e você pode confirmar ou me corrigir por aqui.");

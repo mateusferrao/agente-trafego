@@ -819,7 +819,10 @@ describe("buildCapabilitiesText — resumo curto e humano (não um manual)", () 
     expect(text).toContain("Leio sua conta");
     expect(text).toContain("período que você quiser");
     expect(text).toContain("Quer que eu entre em detalhe");
-    // enxuto: não é a parede antiga de 10+ blocos
+    // S2: declara o planejamento inerente (consultivo, sempre presente — não depende de binding).
+    expect(text).toContain("penso à frente com você");
+    expect(text).toContain("sequência de próximos passos");
+    // enxuto: não é a parede antiga de 10+ blocos (planejamento fundido na linha de análise)
     expect(text.split("\n").length).toBeLessThanOrEqual(9);
   });
 

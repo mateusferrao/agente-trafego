@@ -52,6 +52,12 @@ describe("buildChatRules — S0a: procedimento-por-tool migrou pra tools.ts", ()
     expect(rules).not.toContain("CBO 1-1-5");
   });
 
+  it("S2: plano ANCORA no diagnóstico real (não genérico) — método único reusando a última análise", () => {
+    const rules = buildChatRules(false, false);
+    expect(rules).toContain("ANCORE no diagnóstico real");
+    expect(rules).toContain("NUNCA num plano genérico");
+  });
+
   it("chatAdsWrites ON: regra de roteamento público×link (não confundir mudança de público com link)", () => {
     const rules = buildChatRules(false, true);
     expect(rules).toContain("Roteamento PÚBLICO × LINK");
