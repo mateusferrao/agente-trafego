@@ -234,9 +234,11 @@ export function applyDraftEdit(
   // (evita o gasto N× do fallback do apply); →CBO consolida a soma na campanha e limpa o per-conjunto.
   // Base do diário da campanha = edição explícita do dono (vence) senão o diário atual.
   let campaignBasisMinor = edit.budgetMinor ?? spec.dailyBudgetMinor;
-  if (edit.budgetMode !== undefined && edit.budgetMode !== spec.budgetMode && nextAdsets !== undefined && nextAdsets.length >= 2) {
+  if (edit.budgetMode !== undefined && edit.budgetMode !== (spec.budgetMode ?? "cbo") && nextAdsets !== undefined && nextAdsets.length >= 2) {
     const flip = flipBudgetLevel(nextAdsets, edit.budgetMode, campaignBasisMinor);
-    nextAdsets = flip.adsets;
+    // Teto de gasto novo POR conjunto (ABO): o apply usa o diário do conjunto DIRETO (não re-clampa) —
+    // sem clampar cada um aqui, budget+flip juntos furariam o teto (guardrail independe da aprovação, §8).
+    nextAdsets = flip.adsets.map((a) => (a.dailyBudgetMinor !== undefined ? { ...a, dailyBudgetMinor: clampBudget(a.dailyBudgetMinor, ctx.budgetCapMinor).dailyBudgetMinor } : a));
     if (edit.budgetMinor === undefined) campaignBasisMinor = flip.campaignDailyMinor; // →CBO consolida a soma
   }
   const { dailyBudgetMinor, clampedByCap } = clampBudget(campaignBasisMinor, ctx.budgetCapMinor);

@@ -295,6 +295,16 @@ describe("applyDraftEdit — F1b flip de budgetMode num rascunho multi-conjunto"
     expect(r.value.spec.adsets?.every((a) => a.dailyBudgetMinor === undefined)).toBe(true);
   });
 
+  it("guardrail: CBO→ABO com budget acima do teto → cada conjunto é clampado ao teto (não fura)", () => {
+    // budget + flip juntos: o apply ABO usa o diário do conjunto DIRETO (não re-clampa) → o core
+    // precisa clampar cada conjunto, senão o teto de gasto novo é furado por conjunto.
+    const r = applyDraftEdit("from_scratch", twoCbo, { budgetMode: "abo", budgetMinor: 99999 }, { hasPixel: true, budgetCapMinor: 10000 });
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error("esperava ok");
+    expect(r.value.spec.adsets?.every((a) => a.dailyBudgetMinor === 10000)).toBe(true);
+    expect(r.value.clampedByCap).toBe(true);
+  });
+
   it("mesmo budgetMode (sem flip) NÃO mexe nos diários dos conjuntos", () => {
     const r = applyDraftEdit("from_scratch", twoCbo, { budgetMode: "cbo" }, noCap);
     expect(r.ok).toBe(true);
