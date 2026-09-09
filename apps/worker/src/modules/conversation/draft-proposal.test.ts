@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, buildCreativePool, cleanPageQuery, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, hasOfflineCover, interleaveMedia, matchPagesByQuery, normalizeAdCount, pageChoiceLabel, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField, stripGeoQualifier, describeConjuntosBlock, patchTouchesSinglePublico, mergeSegmentPublico } from "./draft-proposal.js";
+import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, buildCreativePool, cleanPageQuery, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, hasOfflineCover, interleaveMedia, matchPagesByQuery, normalizeAdCount, pageChoiceLabel, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField, stripGeoQualifier, describeConjuntosBlock, patchTouchesSinglePublico, patchHasNonLinkAction, mergeSegmentPublico } from "./draft-proposal.js";
 import type { PageInfo } from "@trafego/shared";
 import type { CopyVariant } from "@trafego/shared";
 import type { CampaignDraftSpec } from "@trafego/shared";
@@ -503,6 +503,25 @@ describe("patchTouchesSinglePublico (guard multi-conjunto — P2)", () => {
     expect(patchTouchesSinglePublico({ removeSegment: [1] })).toBe(false);
     expect(patchTouchesSinglePublico({ budgetReais: 50 })).toBe(false);
     expect(patchTouchesSinglePublico({ campaignName: "x" })).toBe(false);
+  });
+});
+
+describe("patchHasNonLinkAction (Bug A — link espúrio não bloqueia um turno que pede outra coisa)", () => {
+  it("só link → false (o link é o único pedido)", () => {
+    expect(patchHasNonLinkAction({ link: "https://loja.com" })).toBe(false);
+    expect(patchHasNonLinkAction({})).toBe(false);
+  });
+  it("link + outra ação → true (advantage/ativação/budget/público/objetivo/…)", () => {
+    expect(patchHasNonLinkAction({ link: "https://loja.com", advantage: true })).toBe(true);
+    expect(patchHasNonLinkAction({ advantage: false })).toBe(true);
+    expect(patchHasNonLinkAction({ activation: "active" })).toBe(true);
+    expect(patchHasNonLinkAction({ budgetReais: 50 })).toBe(true);
+    expect(patchHasNonLinkAction({ budgetMode: "abo" })).toBe(true);
+    expect(patchHasNonLinkAction({ objective: "purchase" })).toBe(true);
+    expect(patchHasNonLinkAction({ addInterests: ["corrida"] })).toBe(true); // público (reusa patchTouchesSinglePublico)
+    expect(patchHasNonLinkAction({ addSegment: [{ interests: ["corrida"] }] })).toBe(true);
+    expect(patchHasNonLinkAction({ campaignName: "x" })).toBe(true);
+    expect(patchHasNonLinkAction({ regenerateCopy: true })).toBe(true);
   });
 });
 

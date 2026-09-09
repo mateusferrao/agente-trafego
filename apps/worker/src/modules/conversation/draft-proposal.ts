@@ -1269,6 +1269,20 @@ export function patchTouchesSinglePublico(patch: RefineDraftPatch): boolean {
   );
 }
 
+/** O patch pede ALGO além de trocar o `link`? (Bug A) Usado pra um `link` ESPÚRIO (alucinação do
+ *  modelo — ex: "ativa o advantage" e o LLM inventa uma URL do negócio) NÃO bloquear/descartar um turno
+ *  que na verdade pedia outra coisa. Só quando o link é o ÚNICO pedido é que a mensagem honesta de link
+ *  faz sentido. Reusa `patchTouchesSinglePublico` pro público. PURO. */
+export function patchHasNonLinkAction(patch: RefineDraftPatch): boolean {
+  return (
+    patch.advantage !== undefined || hasValue(patch.budgetMode) || hasValue(patch.activation) || patch.budgetReais != null ||
+    hasValue(patch.objective) || hasValue(patch.campaignName) || hasValue(patch.adsetName) || hasValue(patch.setPage) ||
+    patch.regenerateCopy === true || patch.variantsCount != null || hasValue(patch.copyEdits) || hasValue(patch.setAdCreative) ||
+    hasValue(patch.distinctCreatives) || hasValue(patch.mediaPreference) || hasValue(patch.addSegment) || hasValue(patch.removeSegment) ||
+    patchTouchesSinglePublico(patch)
+  );
+}
+
 export function scaleForbiddenRefineField(patch: RefineDraftPatch): "objective" | "targeting" | "copyVariants" | "campaignName" | "adsetName" | "link" | "pageId" | "advantage" | "budgetMode" | null {
   const has = hasValue;
   if (has(patch.objective)) return "objective";
@@ -1337,18 +1351,22 @@ export async function refineDraft(
   // DESTINO (link, só from_scratch): troca a URL de destino do rascunho.
   if (kind === "from_scratch" && patch.link != null) {
     const link = normalizeLinkUrl(patch.link);
+    // Bug A: um `link` só BLOQUEIA o turno quando é o ÚNICO pedido (o dono realmente falou de link). Se
+    // veio junto de outra ação (advantage/ativação/…), é alucinação do modelo (ele acopla "Advantage+" a
+    // destino de site e inventa uma URL) → IGNORA o link em silêncio e segue o resto (§7 diz×faz).
+    const linkIsSoleIntent = !patchHasNonLinkAction(patch);
     if (isMessagingGoal(edit.objective ?? spec.objective)) {
-      // Conversas: só a mensagem honesta de link quando é uma URL DE VERDADE (o dono realmente deu um
-      // link). Um valor não-URL (ex: "futebol americano") é quase sempre o modelo pondo no campo errado
-      // um pedido que era de PÚBLICO/interesse → NÃO trato como link nem solto a mensagem de link (que
-      // confundiria: o dono nunca falou de link). Ignora; se havia outros campos, eles seguem.
-      if (link) return { kind: "blocked", reason: "esse rascunho é de conversas no WhatsApp — ele leva a pessoa pro WhatsApp, não pra um site, então não dá pra pôr um link de destino." };
+      // Conversas: só a mensagem honesta de link quando é uma URL DE VERDADE E foi o único pedido. Um
+      // valor não-URL (ex: "futebol americano") já era misroute silencioso; agora uma URL válida junto de
+      // outra ação também é ignorada (o dono nunca falou de link — pediu advantage/ativação/…).
+      if (link && linkIsSoleIntent) return { kind: "blocked", reason: "esse rascunho é de conversas no WhatsApp — ele leva a pessoa pro WhatsApp, não pra um site, então não dá pra pôr um link de destino." };
     } else {
-      // Site/tráfego: link malformado → pede a URL certa (feedback preservado).
-      if (!link) {
+      // Site/tráfego: URL válida aplica (com ou sem outras ações). Link malformado só pede a URL certa
+      // quando foi o único pedido; junto de outra ação, ignora o lixo e segue.
+      if (link) edit.linkUrl = link;
+      else if (linkIsSoleIntent) {
         return { kind: "blocked", reason: `não reconheci "${patch.link}" como um link válido — me manda a URL completa (ex: https://sualoja.com/promo).` };
       }
-      edit.linkUrl = link;
     }
   }
 

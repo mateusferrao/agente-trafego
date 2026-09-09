@@ -58,11 +58,13 @@ describe("buildChatRules — S0a: procedimento-por-tool migrou pra tools.ts", ()
     expect(rules).toContain("NUNCA num plano genérico");
   });
 
-  it("chatAdsWrites ON: regra de roteamento público×link (não confundir mudança de público com link)", () => {
+  it("chatAdsWrites ON: regra de roteamento pedido→campo (não confundir público/ativação/advantage com link)", () => {
     const rules = buildChatRules(false, true);
-    expect(rules).toContain("Roteamento PÚBLICO × LINK");
+    expect(rules).toContain("Roteamento pedido → campo");
     expect(rules).toContain("addInterests");
-    expect(rules).toContain("NUNCA responda sobre \"link\"/\"destino\" quando o dono falou de PÚBLICO");
+    // Bug A: a regra dura agora cobre também ATIVAÇÃO/ADVANTAGE/ORÇAMENTO × LINK.
+    expect(rules).toContain("PÚBLICO, ATIVAÇÃO, ADVANTAGE ou ORÇAMENTO");
+    expect(rules).toContain("NUNCA preencha o campo link por conta própria");
   });
 });
 
