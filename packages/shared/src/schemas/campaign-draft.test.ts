@@ -120,4 +120,22 @@ describe("campaignDraftSpecSchema — shape-validation (não regra de negócio)"
     expect(campaignDraftSpecSchema.safeParse({ ...fromScratch, advantageAudience: false }).success).toBe(true);
     expect(campaignDraftSpecSchema.safeParse({ ...fromScratch, advantageCreative: "yes" }).success).toBe(false);
   });
+
+  it("C2: aceita adsets[] (multi-conjunto) e rejeita conjunto sem forma válida", () => {
+    const multi: CampaignDraftSpec = {
+      ...fromScratch,
+      budgetMode: "cbo",
+      adsets: [
+        { name: "Público A", targeting: { kind: "advantage_plus" } },
+        { name: "Público B", targeting: { kind: "explicit", geo: [{ key: "BR", name: "Brasil", kind: "country" }] }, dailyBudgetMinor: 3000 },
+      ],
+    };
+    expect(campaignDraftSpecSchema.safeParse(multi).success).toBe(true);
+    // conjunto com budget inválido (<= 0) é rejeitado
+    expect(campaignDraftSpecSchema.safeParse({ ...fromScratch, adsets: [{ dailyBudgetMinor: 0 }] }).success).toBe(false);
+  });
+
+  it("C2 retrocompat: adsets AUSENTE = single-conjunto (rascunho pré-C2 segue válido)", () => {
+    expect(campaignDraftSpecSchema.safeParse(fromScratch).success).toBe(true);
+  });
 });

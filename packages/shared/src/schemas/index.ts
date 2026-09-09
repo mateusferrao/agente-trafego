@@ -152,6 +152,18 @@ export const targetingSpecSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
+// Conjunto de anúncios de um teste multi-conjunto (C2, `1-N-M`). Cada conjunto tem seu PÚBLICO
+// (targeting) e, no ABO, seu orçamento diário. O CRIATIVO é COMPARTILHADO (o teste isola só o
+// público) — vem de `spec.creative`/`copyVariants`, não repetido por conjunto. `copyVariants`
+// aqui é override raro por-conjunto (default = os do spec). Ausência de `adsets` OU 1 conjunto =
+// comportamento single-conjunto pré-C2 (retrocompat).
+export const adsetSpecSchema = z.object({
+  name: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+  targeting: targetingSpecSchema.optional(),
+  dailyBudgetMinor: z.number().int().positive().optional(),
+  copyVariants: z.array(copyVariantSchema).optional(),
+});
+
 export const campaignDraftSpecSchema = z.object({
   version: z.literal(1),
   currency: z.string().min(1),
@@ -168,6 +180,10 @@ export const campaignDraftSpecSchema = z.object({
   // ─── só `from_scratch` (opcionais p/ read-back seguro) ───
   objective: conversionGoalSchema.optional(),
   targeting: targetingSpecSchema.optional(),
+  // Multi-conjunto (C2, teste de público `1-N-M`): N conjuntos, cada um com seu público. Ausência
+  // ou 1 = single-conjunto (usa `targeting`/`copyVariants` acima; retrocompat total). Criativo
+  // compartilhado entre os conjuntos.
+  adsets: z.array(adsetSpecSchema).optional(),
   variantsCount: z.number().int().positive().optional(),
   copyVariants: z.array(copyVariantSchema).optional(),
   creative: creativeAssetRefSchema.optional(),

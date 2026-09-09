@@ -76,10 +76,23 @@ export function entitiesToActivate(draft: DraftForActivation): ActivateTarget[] 
   const out: ActivateTarget[] = [];
   if (draft.kind === "from_scratch") {
     const campaignId = idAt(ids, "campaignId");
-    const adsetId = idAt(ids, "adsetId");
     if (campaignId) out.push({ level: "campaign", id: campaignId });
-    if (adsetId) out.push({ level: "adset", id: adsetId });
-    for (const adId of idsAt(ids, "adIds")) out.push({ level: "ad", id: adId });
+    // C2: multi-conjunto grava `adsetIds`/`adIdsByAdset`; single grava `adsetId`/`adIds`. A árvore
+    // inteira (todos os N conjuntos + N×M anúncios) precisa ser ativada — a Meta não cascateia.
+    const adsetIds = idsAt(ids, "adsetIds");
+    if (adsetIds.length > 0) {
+      for (const adsetId of adsetIds) out.push({ level: "adset", id: adsetId });
+      const byAdset = ids["adIdsByAdset"];
+      if (Array.isArray(byAdset)) {
+        for (const row of byAdset) {
+          if (Array.isArray(row)) for (const adId of row) if (typeof adId === "string" && adId.length > 0) out.push({ level: "ad", id: adId });
+        }
+      }
+    } else {
+      const adsetId = idAt(ids, "adsetId");
+      if (adsetId) out.push({ level: "adset", id: adsetId });
+      for (const adId of idsAt(ids, "adIds")) out.push({ level: "ad", id: adId });
+    }
     return out;
   }
   const copiedId = idAt(ids, "copiedId");

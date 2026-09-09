@@ -415,7 +415,7 @@ export async function autoApplyProactiveDraft(
  * existe (sem duplicar gasto). Pareamento por índice de variação: um criativo órfão (ad
  * falhou) é reusado na retomada, não recriado. `state` = createdIds mutável (lido + escrito).
  */
-async function runFromScratchSaga(
+export async function runFromScratchSaga(
   ads: WorkerDeps["ports"]["ads"],
   draft: CampaignDraft,
   ref: AdAccountRef,
@@ -442,6 +442,103 @@ async function runFromScratchSaga(
     });
     await persist({ campaignId });
   }
+  // Constrói o input de criativo de uma variação (fonte única — reusada pelo single- e pelo
+  // multi-conjunto). Criativo POR ANÚNCIO (Fatia 7): o do próprio anúncio vence; ausente → o
+  // padrão do rascunho. C3: melhorias automáticas quando o dono ligou.
+  const buildCreativeInput = (v: NonNullable<CampaignDraft["spec"]["copyVariants"]>[number], i: number) => {
+    const creative = v.creative ?? spec.creative;
+    return {
+      name: `${name} — criativo ${i + 1}`,
+      pageId: spec.pageId!,
+      goal,
+      ...(creative?.metaImageHash ? { imageHash: creative.metaImageHash } : {}),
+      ...(creative?.metaVideoId ? { videoId: creative.metaVideoId } : {}),
+      ...(spec.linkUrl ? { linkUrl: spec.linkUrl } : {}),
+      copy: {
+        primaryText: v.primaryText,
+        headline: v.headline,
+        ...(v.description ? { description: v.description } : {}),
+        ...(v.cta ? { cta: v.cta } : {}),
+      },
+      ...(spec.advantageCreative !== undefined ? { advantageCreative: spec.advantageCreative } : {}),
+    };
+  };
+
+  const refs = spec.creativeRefs ?? [];
+
+  // MULTI-CONJUNTO (C2, teste de público `1-N-M`): N conjuntos (cada um seu público), CRIATIVO
+  // COMPARTILHADO (criado UMA vez, referenciado nos anúncios de TODOS os conjuntos — criativo é
+  // account-level; N×M criativos seria errado e caro). Só no from-scratch (sem creativeRefs) e com
+  // ≥2 conjuntos; senão cai no caminho single-conjunto abaixo (retrocompat total). Retomável por
+  // (conjunto, anúncio).
+  const multiAdsets = refs.length === 0 && spec.adsets && spec.adsets.length > 1 ? spec.adsets : null;
+  if (multiAdsets) {
+    const sharedVariants = spec.copyVariants ?? [];
+    // criativos compartilhados (do spec) — criados sob demanda UMA vez, indexados por variação.
+    const sharedCreativeIds = [...((state["sharedCreativeIds"] as string[] | undefined) ?? [])];
+    const ensureSharedCreative = async (i: number): Promise<string> => {
+      if (sharedCreativeIds[i]) return sharedCreativeIds[i]!;
+      const { creativeId } = await ads.createAdCreative(ref, buildCreativeInput(sharedVariants[i]!, i));
+      sharedCreativeIds[i] = creativeId;
+      await persist({ sharedCreativeIds: [...sharedCreativeIds] });
+      return creativeId;
+    };
+    // retrocompat de rascunho em voo: `state.adsetId` (single legado) vira o 1º conjunto.
+    const legacyAdsetId = state["adsetId"] as string | undefined;
+    const adsetIds = [...((state["adsetIds"] as string[] | undefined) ?? (legacyAdsetId ? [legacyAdsetId] : []))];
+    const adIdsByAdset = [...((state["adIdsByAdset"] as string[][] | undefined) ?? [])];
+    for (let a = 0; a < multiAdsets.length; a++) {
+      const ac = multiAdsets[a]!;
+      if (!adsetIds[a]) {
+        const { adsetId, targetingFallback } = await ads.createAdSet(ref, {
+          campaignId: state["campaignId"] as string,
+          name: ac.name ?? `${name} — conjunto ${a + 1}`,
+          // ABO leva budget no conjunto (o próprio, senão o do spec); CBO não (verba na campanha).
+          ...(isCbo ? {} : { dailyBudgetMinor: ac.dailyBudgetMinor ?? spec.dailyBudgetMinor }),
+          goal,
+          ...(spec.pixelId ? { pixelId: spec.pixelId } : {}),
+          ...(spec.pageId ? { pageId: spec.pageId } : {}),
+          targeting: ac.targeting ?? spec.targeting ?? { kind: "advantage_plus" },
+          ...(spec.advantageAudience !== undefined ? { advantageAudience: spec.advantageAudience } : {}),
+          status,
+        });
+        adsetIds[a] = adsetId;
+        await persist({ adsetIds: [...adsetIds], ...(targetingFallback ? { targetingFallback: true } : {}) });
+      }
+      // criativo por-conjunto (site/U1) quando o conjunto traz copyVariants próprio; senão o
+      // compartilhado. Anúncios retomáveis por índice dentro do conjunto.
+      const overrideVariants = ac.copyVariants;
+      const variantsA = overrideVariants ?? sharedVariants;
+      const adRow = [...(adIdsByAdset[a] ?? [])];
+      for (let i = 0; i < variantsA.length; i++) {
+        if (adRow[i]) continue;
+        let creativeId: string;
+        if (overrideVariants) {
+          // criativo EXCLUSIVO do conjunto (não compartilhado) — cria por (conjunto, variação).
+          const perAdsetCreativeIds = [...((state[`creativeIds_${a}`] as string[] | undefined) ?? [])];
+          if (!perAdsetCreativeIds[i]) {
+            const { creativeId: cid } = await ads.createAdCreative(ref, buildCreativeInput(overrideVariants[i]!, i));
+            perAdsetCreativeIds[i] = cid;
+            await persist({ [`creativeIds_${a}`]: [...perAdsetCreativeIds] });
+          }
+          creativeId = perAdsetCreativeIds[i]!;
+        } else {
+          creativeId = await ensureSharedCreative(i);
+        }
+        const { adId } = await ads.createAd(ref, {
+          adsetId: adsetIds[a]!,
+          creativeId,
+          name: variantsA[i]!.adName ?? `${name} — conjunto ${a + 1} anúncio ${i + 1}`,
+          status,
+        });
+        adRow[i] = adId;
+        adIdsByAdset[a] = adRow;
+        await persist({ adIdsByAdset: [...adIdsByAdset] });
+      }
+    }
+    return;
+  }
+
   if (!state["adsetId"]) {
     const { adsetId, targetingFallback } = await ads.createAdSet(ref, {
       campaignId: state["campaignId"] as string,
@@ -465,7 +562,6 @@ async function runFromScratchSaga(
 
   // CÓPIA FIEL (Fatia 7): reusa os criativos da fonte por REFERÊNCIA (creative_id) — 1 anúncio
   // por ref, preservando object_story_spec/destino WhatsApp sem rebuild. Retomável por índice.
-  const refs = spec.creativeRefs ?? [];
   if (refs.length > 0) {
     const copyAdIds = [...((state["adIds"] as string[] | undefined) ?? [])];
     for (let i = 0; i < refs.length; i++) {
@@ -488,25 +584,8 @@ async function runFromScratchSaga(
   for (let i = 0; i < variants.length; i++) {
     if (adIds[i]) continue; // variação já completa (retomada)
     const v = variants[i]!;
-    // criativo POR ANÚNCIO (Fatia 7): o do próprio anúncio vence; ausente → o padrão do rascunho.
-    const creative = v.creative ?? spec.creative;
     if (!creativeIds[i]) {
-      const { creativeId } = await ads.createAdCreative(ref, {
-        name: `${name} — criativo ${i + 1}`,
-        pageId: spec.pageId!,
-        goal, // CTWA: o criativo muda por objetivo (WhatsApp exige CTA/link próprios)
-        ...(creative?.metaImageHash ? { imageHash: creative.metaImageHash } : {}),
-        ...(creative?.metaVideoId ? { videoId: creative.metaVideoId } : {}),
-        ...(spec.linkUrl ? { linkUrl: spec.linkUrl } : {}),
-        copy: {
-          primaryText: v.primaryText,
-          headline: v.headline,
-          ...(v.description ? { description: v.description } : {}),
-          ...(v.cta ? { cta: v.cta } : {}),
-        },
-        // C3: melhorias automáticas de criativo quando o dono ligou (a Meta ajusta imagem/texto/CTA).
-        ...(spec.advantageCreative !== undefined ? { advantageCreative: spec.advantageCreative } : {}),
-      });
+      const { creativeId } = await ads.createAdCreative(ref, buildCreativeInput(v, i));
       creativeIds[i] = creativeId;
       await persist({ creativeIds: [...creativeIds] });
     }

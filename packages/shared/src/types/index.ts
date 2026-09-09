@@ -1250,6 +1250,20 @@ export type TargetingSpec =
  * (objetivo/targeting/copy/criativo/página/pixel) são opcionais — no `duplicate` a
  * estrutura é herdada do source via `/copies`, só o budget/ativação variam.
  */
+/**
+ * Um conjunto de anúncios de um teste multi-conjunto (C2, `1-N-M`). Carrega o PÚBLICO
+ * (`targeting`) e, no ABO, o orçamento diário próprio. O CRIATIVO é COMPARTILHADO entre os
+ * conjuntos (o teste de público isola só a variável público) — vem de `spec.creative`/
+ * `copyVariants`; `copyVariants` aqui é override raro por-conjunto. `name` ausente → derivado.
+ */
+export interface AdsetSpec {
+  readonly name?: string;
+  readonly targeting?: TargetingSpec;
+  /** ABO: orçamento diário deste conjunto (unidade mínima). CBO: ausente (verba na campanha). */
+  readonly dailyBudgetMinor?: number;
+  readonly copyVariants?: readonly CopyVariant[];
+}
+
 export interface CampaignDraftSpec {
   readonly version: 1;
   readonly currency: string;
@@ -1284,6 +1298,10 @@ export interface CampaignDraftSpec {
   readonly specialAdCategories?: readonly string[];
   /** otimização de orçamento herdada da fonte (CBO = na campanha; ABO = no adset). */
   readonly budgetMode?: BudgetMode;
+  /** Conjuntos de um teste multi-conjunto (C2, `1-N-M`): N públicos, cada conjunto o seu. Ausente
+   *  ou 1 = single-conjunto (usa `targeting`/`copyVariants`; retrocompat). Criativo COMPARTILHADO
+   *  entre os conjuntos (o teste isola só o público). */
+  readonly adsets?: readonly AdsetSpec[];
   /** Advantage+ audience (C3): true = deixa a Meta EXPANDIR além do público escolhido. Ausente =
    *  público fixo (comportamento pré-C3). Só afeta targeting `explicit`. */
   readonly advantageAudience?: boolean;
