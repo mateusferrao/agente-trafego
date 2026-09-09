@@ -1428,20 +1428,21 @@ export async function refineDraft(
   // Trocar a PÁGINA de destino (W2): resolve o nome/número contra as Páginas da conta. Ambíguo/não-achado
   // → bloqueia honesto listando as opções (nunca troca pela errada). `listPages` vazio (sem acesso) →
   // não dá pra resolver aqui, então bloqueia dizendo pra escolher no site.
-  if (patch.setPage) {
+  const setPageQuery = cleanPageQuery(patch.setPage); // lixo do modelo → null → ignora (não troca, não ecoa)
+  if (setPageQuery) {
     const pages = await deps.ports.ads.listPages(ac.ref);
     if (pages.length === 0) {
       return { kind: "blocked", reason: "não consegui listar suas Páginas agora pra trocar o destino — tente de novo, ou troque pela plataforma." };
     }
-    const hits = matchPagesByQuery(pages, patch.setPage);
+    const hits = matchPagesByQuery(pages, setPageQuery);
     if (hits.length !== 1) {
       const listPt = (hits.length === 0 ? pages : hits).map((p) => `• ${pageChoiceLabel(p)}`).join("\n");
       return {
         kind: "blocked",
         reason:
           hits.length === 0
-            ? `não achei uma Página que bata com "${patch.setPage}". Suas Páginas:\n${listPt}\n\nMe diz qual.`
-            : `achei mais de uma Página pra "${patch.setPage}":\n${listPt}\n\nQual delas?`,
+            ? `não achei uma Página que bata com "${setPageQuery}". Suas Páginas:\n${listPt}\n\nMe diz qual.`
+            : `achei mais de uma Página pra "${setPageQuery}":\n${listPt}\n\nQual delas?`,
       };
     }
     edit.pageId = hits[0]!.pageId;
@@ -1754,6 +1755,23 @@ export function resolveCreativeFill(picked: number, adCount: number, fill: "agen
 /** mínimo de dígitos pra casar uma Página por NÚMERO — evita que um fragmento curto (ex: "553",
  *  código de país/DDD) case várias Páginas à toa. Um número de WhatsApp real tem bem mais que isto. */
 const MIN_PHONE_MATCH_DIGITS = 6;
+
+/** comprimento máximo plausível de um nome/número de Página dito pelo dono. Acima disso é quase
+ *  sempre alucinação do modelo (raciocínio/JSON malformado que caiu no arg da tool). */
+const MAX_PAGE_QUERY_LEN = 80;
+
+/** Sanitiza a referência de Página vinda do LLM ANTES de casar/ecoar (§7/§13): colapsa pra UMA linha,
+ *  tira caracteres de controle/formato, e descarta o que for vazio ou longo demais (alucinação) → null.
+ *  O caller trata null como "sem escolha" (usa a Página padrão), NUNCA ecoa o texto cru pro usuário.
+ *  Incidente real: o modelo mandou raciocínio malformado no campo `page` e o eco vazou o lixo. PURO. */
+export function cleanPageQuery(raw?: string | null): string | null {
+  if (!raw) return null;
+  const oneLine = raw
+    .replace(/[\p{Cc}\p{Cf}]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return oneLine.length > 0 && oneLine.length <= MAX_PAGE_QUERY_LEN ? oneLine : null;
+}
 
 export function matchPagesByQuery(pages: readonly PageInfo[], query: string): PageInfo[] {
   const q = query.trim().toLowerCase();
@@ -2147,7 +2165,9 @@ export async function proposeCreateCampaign(
   // `listPages` é best-effort: vazio (403/sem acesso) e o dono nomeou → caio na base com nota honesta.
   let pageId = defaults.pageId;
   let pageChoiceNote: string | undefined;
-  const pageQuery = args.page?.trim();
+  // sanitiza (incidente real: o modelo mandou lixo no `page` e o eco vazou) — lixo/vazio → null →
+  // usa a Página padrão do anúncio-base sem ecoar nada nem travar.
+  const pageQuery = cleanPageQuery(args.page);
   if (pageQuery) {
     const pages = await deps.ports.ads.listPages(ac.ref);
     const hits = matchPagesByQuery(pages, pageQuery);

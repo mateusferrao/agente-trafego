@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, interleaveMedia, matchPagesByQuery, normalizeAdCount, pageChoiceLabel, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField, stripGeoQualifier } from "./draft-proposal.js";
+import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, cleanPageQuery, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, interleaveMedia, matchPagesByQuery, normalizeAdCount, pageChoiceLabel, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField, stripGeoQualifier } from "./draft-proposal.js";
 import type { PageInfo } from "@trafego/shared";
 import type { CopyVariant } from "@trafego/shared";
 import type { CampaignDraftSpec } from "@trafego/shared";
@@ -658,6 +658,27 @@ describe("resolveCreativeFill (política de faltante do picker — Slice 3)", ()
   });
   it("adCount 0/negativo → clampa pra ≥1", () => {
     expect(resolveCreativeFill(0, 0, undefined)).toEqual({ decision: "agent", variants: 1 });
+  });
+});
+
+describe("cleanPageQuery (sanitiza o `page` do LLM — incidente do lixo vazado)", () => {
+  it("nome/número normal → passa (uma linha, aparado)", () => {
+    expect(cleanPageQuery("  Automato ")).toBe("Automato");
+    expect(cleanPageQuery("3491398")).toBe("3491398");
+  });
+  it("vazio/ausente → null", () => {
+    expect(cleanPageQuery("")).toBeNull();
+    expect(cleanPageQuery(undefined)).toBeNull();
+    expect(cleanPageQuery(null)).toBeNull();
+    expect(cleanPageQuery("   ")).toBeNull();
+  });
+  it("lixo do modelo (longo/multi-linha/JSON malformado) → null (nunca ecoa, usa a padrão)", () => {
+    // o incidente real: raciocínio malformado caiu no campo `page`.
+    expect(cleanPageQuery(':null}"】【 тру? JSON invalid strings? Need correct null. Tool call malformed perhaps recipient accepted? I wrote `')).toBeNull();
+    expect(cleanPageQuery("linha1\nlinha2\nlinha3 com um monte de texto que claramente é alucinação do modelo e passa de oitenta caracteres")).toBeNull();
+  });
+  it("multi-linha curto → colapsa pra uma linha (mantém se couber)", () => {
+    expect(cleanPageQuery("CaquiAI\nOficial")).toBe("CaquiAI Oficial");
   });
 });
 
