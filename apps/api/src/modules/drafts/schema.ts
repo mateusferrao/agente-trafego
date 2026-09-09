@@ -293,6 +293,15 @@ export const updateDraftInput = z.object({
          *  `creative` já resolvido do conjunto original (robusto a reordenar/remover — é o índice de
          *  ORIGEM, não a posição nova). Ignorado quando `creative` (pick novo) está presente. */
         keepCreativeIndex: z.number().int().min(0).optional(),
+        /** ANÚNCIOS PRÓPRIOS deste conjunto (F2 — override por conjunto): edições por-anúncio (copy +
+         *  criativo) SOBRE os anúncios compartilhados, produzindo o `copyVariants` exclusivo do conjunto.
+         *  Ausente = usa os anúncios COMPARTILHADOS (o default do teste de público). O índice é sobre a
+         *  base (override existente quando `keepCopyVariantsIndex`, senão os compartilhados). */
+        copyEdits: z.array(draftCopyEditInput).optional(),
+        /** PRESERVAR o override de anúncios que este conjunto JÁ tinha (round-trip sem perda): índice de
+         *  ORIGEM em `spec.adsets` (mesma mecânica de `keepCreativeIndex`). Sem `copyEdits` = mantém o
+         *  override intacto; com `copyEdits` = base pras edições. Ausente + sem copyEdits = compartilhados. */
+        keepCopyVariantsIndex: z.number().int().min(0).optional(),
       }),
     )
     .optional(),

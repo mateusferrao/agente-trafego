@@ -10084,6 +10084,100 @@
                 "keepCreativeIndex": {
                   "type": "integer",
                   "minimum": 0
+                },
+                "copyEdits": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "index": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "adName": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 400
+                      },
+                      "primaryText": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 3000
+                      },
+                      "headline": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 3000
+                      },
+                      "description": {
+                        "type": "string",
+                        "maxLength": 3000
+                      },
+                      "cta": {
+                        "type": "string",
+                        "enum": [
+                          "shop_now",
+                          "learn_more",
+                          "sign_up",
+                          "subscribe",
+                          "contact_us",
+                          "book_now",
+                          "get_offer",
+                          "send_message",
+                          "download"
+                        ]
+                      },
+                      "creative": {
+                        "oneOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "asset"
+                                ]
+                              },
+                              "assetId": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "assetId"
+                            ]
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "serving"
+                                ]
+                              },
+                              "adId": {
+                                "type": "string",
+                                "minLength": 1
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "adId"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "index"
+                    ]
+                  }
+                },
+                "keepCopyVariantsIndex": {
+                  "type": "integer",
+                  "minimum": 0
                 }
               }
             }

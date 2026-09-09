@@ -27,7 +27,7 @@ import {
   toGuardrailConfig,
   type CampaignDraftSpec,
 } from "@trafego/shared";
-import type { Action, AgentId, CreativeAssetRef, DraftId, OrgId, TargetingSpec } from "@trafego/shared/types";
+import type { Action, AgentId, CopyVariant, CreativeAssetRef, DraftId, OrgId, TargetingSpec } from "@trafego/shared/types";
 import type { AdAccountRef, ApprovalPort, CredentialVaultPort, SchedulerPort, StoragePort } from "@trafego/shared/ports";
 import type { AdsPlatformPort } from "@trafego/shared/ports";
 import { ingestCreativeImage, ingestCreativeVideo } from "@trafego/creative-library";
@@ -248,6 +248,46 @@ export function createDraftsService(deps: DraftsServiceDeps) {
   }
 
   /**
+   * Aplica edições por-anúncio (copy + criativo) SOBRE uma base de variações, resolvendo o criativo de
+   * cada edição (biblioteca/ao-vivo → CreativeAssetRef; falha → mensagem amigável §13). Fonte ÚNICA do
+   * copyEdits do rascunho: usada pela edição dos anúncios COMPARTILHADOS (campanha) E pelo override POR
+   * CONJUNTO (F2). Índice fora da base é ignorado (não quebra o lote).
+   */
+  async function resolveCopyEdits(
+    orgId: OrgId,
+    accountId: string,
+    base: readonly CopyVariant[],
+    edits: readonly NonNullable<UpdateDraftInput["copyEdits"]>[number][],
+  ): Promise<{ ok: true; variants: CopyVariant[] } | { ok: false; message: string }> {
+    const variants = [...base];
+    for (const e of edits) {
+      const current = variants[e.index];
+      if (!current) continue;
+      // criativo PRÓPRIO do anúncio (Fatia 7): resolve biblioteca/ao-vivo → CreativeAssetRef; ausente
+      // = mantém o atual (não quebra a edição de copy). Só site (o chat não mexe em criativo).
+      let ownCreative = current.creative;
+      if (e.creative) {
+        const resolved =
+          e.creative.kind === "asset"
+            ? await resolveLibraryCreative(orgId, accountId, e.creative.assetId)
+            : await resolveServingCreative(orgId, accountId, e.creative.adId);
+        if (!resolved) return { ok: false, message: "não consegui usar esse criativo — tente outro." };
+        ownCreative = resolved;
+      }
+      variants[e.index] = {
+        ...current,
+        ...(e.primaryText !== undefined ? { primaryText: e.primaryText } : {}),
+        ...(e.headline !== undefined ? { headline: e.headline } : {}),
+        ...(e.description !== undefined ? { description: e.description } : {}),
+        ...(e.cta !== undefined ? { cta: e.cta } : {}),
+        ...(e.adName !== undefined ? { adName: e.adName } : {}),
+        ...(ownCreative ? { creative: ownCreative } : {}),
+      };
+    }
+    return { ok: true, variants };
+  }
+
+  /**
    * Edição CONSOLIDADA de um rascunho (painel "Editar rascunho", Slice 7). Resolve os fragmentos
    * de IO (público→targeting, asset/serving→creative) na CASCA, monta o `DraftEdit` neutro, aplica
    * o núcleo puro `applyDraftEdit` (clamp/guards/merge) e persiste com UPDATE guardado por status.
@@ -374,11 +414,25 @@ export function createDraftsService(deps: DraftsServiceDeps) {
         } else if (as.keepCreativeIndex != null) {
           conjCreative = spec.adsets?.[as.keepCreativeIndex]?.creative;
         }
+        // ANÚNCIOS PRÓPRIOS do conjunto (F2 — override por conjunto): copyEdits aplicados sobre a base
+        // (override existente via keepCopyVariantsIndex, senão os anúncios COMPARTILHADOS do rascunho).
+        // Sem copyEdits + keepCopyVariantsIndex → preserva o override intacto (round-trip). Nada → usa
+        // os compartilhados (a saga cai em `sharedVariants` quando `copyVariants` ausente).
+        let conjCopyVariants: CopyVariant[] | undefined;
+        const keptCopy = as.keepCopyVariantsIndex != null ? spec.adsets?.[as.keepCopyVariantsIndex]?.copyVariants : undefined;
+        if (as.copyEdits && as.copyEdits.length > 0) {
+          const applied = await resolveCopyEdits(orgId, accountId, keptCopy ?? spec.copyVariants ?? [], as.copyEdits);
+          if (!applied.ok) return { ok: false, message: applied.message };
+          conjCopyVariants = applied.variants;
+        } else if (keptCopy) {
+          conjCopyVariants = [...keptCopy];
+        }
         builtAdsets.push({
           ...(as.name != null ? { name: as.name } : {}),
           targeting: as.explicitAudience ? buildExplicitFromInput(as.explicitAudience) : ({ kind: "advantage_plus" } as const),
           ...(as.budgetReais != null ? { dailyBudgetMinor: toMinorUnits(as.budgetReais, ctx.currency) } : {}),
           ...(conjCreative ? { creative: conjCreative } : {}),
+          ...(conjCopyVariants ? { copyVariants: conjCopyVariants } : {}),
         });
       }
       // Colapso p/ ≤1 conjunto: um teste multi só entrega com ≥2 (o apply ignora `adsets` de 1, o que
@@ -435,31 +489,9 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     }
 
     if (input.copyEdits || input.removeAdIndex != null || input.addAd) {
-      let variants = [...(spec.copyVariants ?? [])];
-      for (const e of input.copyEdits ?? []) {
-        const current = variants[e.index];
-        if (!current) continue;
-        // criativo PRÓPRIO do anúncio (Fatia 7): resolve biblioteca/ao-vivo → CreativeAssetRef; falha
-        // = mantém o atual (não quebra a edição de copy). Só site (o chat não mexe em criativo).
-        let ownCreative = current.creative;
-        if (e.creative) {
-          const resolved =
-            e.creative.kind === "asset"
-              ? await resolveLibraryCreative(orgId, accountId, e.creative.assetId)
-              : await resolveServingCreative(orgId, accountId, e.creative.adId);
-          if (!resolved) return { ok: false, message: "não consegui usar esse criativo — tente outro." };
-          ownCreative = resolved;
-        }
-        variants[e.index] = {
-          ...current,
-          ...(e.primaryText !== undefined ? { primaryText: e.primaryText } : {}),
-          ...(e.headline !== undefined ? { headline: e.headline } : {}),
-          ...(e.description !== undefined ? { description: e.description } : {}),
-          ...(e.cta !== undefined ? { cta: e.cta } : {}),
-          ...(e.adName !== undefined ? { adName: e.adName } : {}),
-          ...(ownCreative ? { creative: ownCreative } : {}),
-        };
-      }
+      const applied = await resolveCopyEdits(orgId, accountId, spec.copyVariants ?? [], input.copyEdits ?? []);
+      if (!applied.ok) return { ok: false, message: applied.message };
+      let variants = applied.variants;
       if (input.removeAdIndex != null) variants = variants.filter((_, i) => i !== input.removeAdIndex);
       // adiciona 1 anúncio DUPLICANDO o último (copy + criativo próprio) — preserva os existentes;
       // o dono edita a partir dele. Cap de anúncios/rascunho (rede contra explosão de custo/UI).
