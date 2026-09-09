@@ -48,6 +48,22 @@ const TREE_CHILD_LIMIT = 200;
 const DUPLICATION_BATCH_CAP = 50;
 const BUDGET_FIELD_DAILY = "daily_budget";
 
+// C3 — Advantage+ creative enhancements: desde a API v22 o toggle único foi DEPRECADO; é opt-in POR
+// FEATURE via `degrees_of_freedom_spec.creative_features_spec.<feature> = { enroll_status: "OPT_IN" }`.
+// Conjunto CURADO e conservador de melhorias seguras (imagem/texto/CTA). A Meta REMOVE sozinha as
+// features inelegíveis pro formato/objetivo, então enviar o set é seguro. Confirmar o set exato contra
+// a versão de API da conta via `validate_only` é passo de roteiro (developers.facebook.com bloqueado
+// pelo egress). Expandir o set = editar só esta constante (fonte única).
+const ADVANTAGE_CREATIVE_FEATURES = ["image_touchups", "text_optimizations", "enhance_cta"] as const;
+const CREATIVE_FEATURE_OPT_IN = { enroll_status: "OPT_IN" } as const;
+
+/** Monta o `degrees_of_freedom_spec` (opt-in por feature) do conjunto curado, p/ o adcreative. */
+function advantageCreativeSpec(): Record<string, unknown> {
+  const creative_features_spec: Record<string, unknown> = {};
+  for (const f of ADVANTAGE_CREATIVE_FEATURES) creative_features_spec[f] = CREATIVE_FEATURE_OPT_IN;
+  return { creative_features_spec };
+}
+
 /**
  * Subcodes Meta em que a ENTIDADE-FONTE não pode ser copiada COMO ESTÁ (`/copies` re-valida e
  * recusa) — determinístico, não-transitório. Nomeado p/ auditar + estender sem string mágica.
@@ -644,7 +660,7 @@ export class MetaCreationService {
       ...(input.pixelId ? { pixelId: input.pixelId } : {}),
       ...(input.pageId ? { pageId: input.pageId } : {}),
     });
-    const { targeting, fallback } = await this.resolveTargeting(account, input.targeting);
+    const { targeting, fallback } = await this.resolveTargeting(account, input.targeting, input.advantageAudience ?? false);
     // CBO: o orçamento/lance estão na campanha → o adset NÃO leva daily_budget/bid_strategy
     // (a Meta rejeita ter budget nos dois níveis). ABO: budget + lance no adset.
     const isAbo = (input.dailyBudgetMinor ?? 0) > 0;
@@ -708,6 +724,9 @@ export class MetaCreationService {
     const creativeId = await this.createOnAccount(account, "adcreatives", {
       name: input.name,
       object_story_spec: JSON.stringify(objectStorySpec),
+      // C3: Advantage+ creative enhancements (opt-in por feature) quando o dono liga — a Meta pode
+      // ajustar imagem/texto/CTA. O eco AVISA que o entregue pode diferir do aprovado.
+      ...(input.advantageCreative ? { degrees_of_freedom_spec: JSON.stringify(advantageCreativeSpec()) } : {}),
     });
     return { creativeId };
   }
@@ -936,6 +955,7 @@ export class MetaCreationService {
   private async resolveTargeting(
     account: AdAccountRef,
     spec: CreateAdSetInput["targeting"],
+    advantageAudience = false,
   ): Promise<{ targeting: Record<string, unknown>; fallback: boolean }> {
     switch (spec.kind) {
       case "reuse_adset": {
@@ -961,8 +981,9 @@ export class MetaCreationService {
         return { targeting: this.advantagePlusTargeting(), fallback: false };
       case "explicit":
         // público NOVO por primitivos (Fase 1) — mapeamento PURO extraído p/ `targeting-map`
-        // (fonte única, reusada pela escrita de adjust_audience na Fatia C). Expansão sempre fechada.
-        return { targeting: explicitTargetingToRaw(spec), fallback: false };
+        // (fonte única, reusada pela escrita de adjust_audience na Fatia C). C3: a expansão
+        // (advantage_audience) passa a respeitar o toggle do dono (default fixo).
+        return { targeting: explicitTargetingToRaw(spec, advantageAudience), fallback: false };
       default: {
         // Exaustivo em compile-time; em runtime um rascunho LEGADO no jsonb (ex: kind colapsado) NÃO
         // pode devolver targeting undefined (adset sem targeting = erro cru da Meta) — cai em amplo

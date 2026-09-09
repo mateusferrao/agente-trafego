@@ -956,6 +956,9 @@ export function makeConversationNodes(
                 // C1: intent (sinal de estrutura) + override de budgetMode — o core decide a estrutura.
                 ...(isCampaignIntent(args["intent"]) ? { intent: args["intent"] } : {}),
                 ...(isBudgetMode(args["budgetMode"]) ? { budgetMode: args["budgetMode"] } : {}),
+                // C3: Advantage (override explícito) + sinal de negócio local (inferência).
+                ...(typeof args["advantage"] === "boolean" ? { advantage: args["advantage"] } : {}),
+                ...(typeof args["localBusiness"] === "boolean" ? { localBusiness: args["localBusiness"] } : {}),
               });
             })();
       const expiresAt = new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString();

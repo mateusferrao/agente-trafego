@@ -114,4 +114,10 @@ describe("campaignDraftSpecSchema — shape-validation (não regra de negócio)"
     const { budgetMode: _omit, ...noMode } = { ...fromScratch, budgetMode: "cbo" as const };
     expect(campaignDraftSpecSchema.safeParse(noMode).success).toBe(true);
   });
+
+  it("C3: aceita advantageAudience/advantageCreative (booleans); ausência = pré-C3", () => {
+    expect(campaignDraftSpecSchema.safeParse({ ...fromScratch, advantageAudience: true, advantageCreative: true }).success).toBe(true);
+    expect(campaignDraftSpecSchema.safeParse({ ...fromScratch, advantageAudience: false }).success).toBe(true);
+    expect(campaignDraftSpecSchema.safeParse({ ...fromScratch, advantageCreative: "yes" }).success).toBe(false);
+  });
 });

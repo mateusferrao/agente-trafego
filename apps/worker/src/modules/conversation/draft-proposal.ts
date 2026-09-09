@@ -6,7 +6,7 @@
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { adAccounts, adCreatives, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { applyDraftEdit, budgetModeLabel, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, describeDeliveryEstimate, goalNounPt, isAging, isFatigued, isMessagingGoal, normalizeLinkUrl, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, resolveBudgetFloorMinor, resolveStructure, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type CampaignIntent, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { applyDraftEdit, budgetModeLabel, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, describeDeliveryEstimate, goalNounPt, isAging, isFatigued, isMessagingGoal, normalizeLinkUrl, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, resolveAdvantage, resolveBudgetFloorMinor, resolveStructure, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type CampaignIntent, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
 import { MIN_BUDGET_MINOR } from "@trafego/ads-meta";
 import { applyExplicitBehaviorEdit, applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
@@ -2209,6 +2209,12 @@ export async function proposeCreateCampaign(
     /** OVERRIDE do dono de onde mora a verba (C1): vence o default do playbook. Ausente = o
      *  recomendado pra intenção. */
     readonly budgetMode?: BudgetMode;
+    /** OVERRIDE explícito do dono do Advantage (C3): "liga o Advantage" = true; "tira" = false.
+     *  Vence a inferência. Ausente = infere de `localBusiness` (ou não mexe). */
+    readonly advantage?: boolean;
+    /** SINAL de negócio LOCAL (C3) que o LLM infere do businessContext (atende só uma região) —
+     *  entra na inferência de Advantage (local → recomenda OFF). */
+    readonly localBusiness?: boolean;
   },
   origin: DraftOrigin = "on_demand",
   opts: { readonly autonomous?: boolean; readonly minMonthlyReach?: number; readonly requireResolvedAudience?: boolean } = {},
@@ -2360,6 +2366,12 @@ export async function proposeCreateCampaign(
   // Piso da Meta (C1: 1 conjunto → piso simples; C2 escala com N). RECOMENDAÇÃO — avisa, não trava.
   const budgetFloorMinor = resolveBudgetFloorMinor(budgetMode, 1, MIN_BUDGET_MINOR);
   const belowFloor = dailyBudgetMinor < budgetFloorMinor;
+  // Advantage (C3, decisão #2): o dono decide (override explícito vence); senão INFERE do contexto
+  // (negócio local → OFF). "Liga tudo" = expansão de público + melhorias de criativo (bundle).
+  // Ausência total de sinal = não mexe (undefined → adapter mantém o comportamento pré-C3). SEMPRE
+  // entra no eco+confirma abaixo — nunca aplica sem "sim".
+  const advantageOn: boolean | undefined =
+    args.advantage ?? (args.localBusiness !== undefined ? resolveAdvantage({ localBusiness: args.localBusiness }) : undefined);
 
   // COMPOSIÇÃO de criativo (Fatia 7/8): o agente monta N anúncios (adCount) com uma COMPOSIÇÃO pedida
   // — quantos DISTINTOS vs repetidos (distinctCreatives, ex: "2 iguais + 2 diferentes") e a mídia
@@ -2560,6 +2572,9 @@ export async function proposeCreateCampaign(
     dailyBudgetMinor,
     ...(clampedByCap ? { requestedDailyBudgetMinor: requested } : {}),
     budgetMode,
+    // C3: "liga tudo" = expansão de público + melhorias de criativo (mesmo toggle). Só grava quando
+    // há sinal (undefined = mantém o comportamento pré-C3 no apply).
+    ...(advantageOn !== undefined ? { advantageAudience: advantageOn, advantageCreative: advantageOn } : {}),
     // nome do dono (o apply deriva conjunto/anúncios dele); omitido → nome padrão no apply.
     ...(args.name ? { campaignName: args.name } : {}),
     activation: ac.creationActivation,
@@ -2632,6 +2647,15 @@ export async function proposeCreateCampaign(
     lines.push(
       `Obs: o mínimo que a Meta aceita por aqui é ${moneyMinor(budgetFloorMinor, ac.currency)}/dia — recomendo começar pelo menos nesse valor pra a campanha rodar (ajuste se quiser).`,
     );
+  }
+  // C3: Advantage no eco+confirma, com aviso HONESTO reforçado (as melhorias ALTERAM o criativo
+  // visível — sem isso o entregue pode sair diferente do aprovado). Só quando há sinal.
+  if (advantageOn === true) {
+    lines.push(
+      "Advantage ligado: a Meta pode expandir o público além do que escolhemos e ajustar automaticamente a imagem/o texto do anúncio pra performar melhor — ou seja, o criativo entregue pode sair um pouco diferente do que você aprovou. Se preferir tudo fixo, é só dizer.",
+    );
+  } else if (advantageOn === false) {
+    lines.push("Advantage desligado: público e criativo exatamente como você aprovou, sem ajuste automático da Meta.");
   }
   // destino do clique (só quando há link — objetivo de site/tráfego/conversão): honesto sobre pra
   // onde o anúncio leva. `args.link` explícito é "você indicou"; herdado é "o mesmo do anúncio-base".

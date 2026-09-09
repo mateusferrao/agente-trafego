@@ -161,6 +161,10 @@ export const campaignDraftSpecSchema = z.object({
   // Onde mora a verba (C1): "cbo" = orçamento único na campanha; "abo" = por conjunto. Opcional
   // p/ read-back seguro + retrocompat (ausência = ABO, o comportamento do from_scratch antes do C1).
   budgetMode: z.enum(BUDGET_MODES).optional(),
+  // Advantage+ (C3): expansão de público × melhorias de criativo. Opcionais (ausência = fixo/off,
+  // comportamento pré-C3); só aplicam sob eco+confirma. Ver CampaignDraftSpec.
+  advantageAudience: z.boolean().optional(),
+  advantageCreative: z.boolean().optional(),
   // ─── só `from_scratch` (opcionais p/ read-back seguro) ───
   objective: conversionGoalSchema.optional(),
   targeting: targetingSpecSchema.optional(),

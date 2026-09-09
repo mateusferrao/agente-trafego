@@ -454,6 +454,8 @@ async function runFromScratchSaga(
       // Meta recusa anexar o anúncio). Reusa a mesma Page do criativo (validada em apply-draft:173).
       ...(spec.pageId ? { pageId: spec.pageId } : {}),
       targeting: spec.targeting ?? { kind: "advantage_plus" },
+      // C3: expansão de público (Advantage+ audience) quando o dono ligou — só afeta o `explicit`.
+      ...(spec.advantageAudience !== undefined ? { advantageAudience: spec.advantageAudience } : {}),
       status,
     });
     // targetingFallback: o `reuse_adset` pedido não pôde ser resolvido (fonte indisponível) e
@@ -502,6 +504,8 @@ async function runFromScratchSaga(
           ...(v.description ? { description: v.description } : {}),
           ...(v.cta ? { cta: v.cta } : {}),
         },
+        // C3: melhorias automáticas de criativo quando o dono ligou (a Meta ajusta imagem/texto/CTA).
+        ...(spec.advantageCreative !== undefined ? { advantageCreative: spec.advantageCreative } : {}),
       });
       creativeIds[i] = creativeId;
       await persist({ creativeIds: [...creativeIds] });

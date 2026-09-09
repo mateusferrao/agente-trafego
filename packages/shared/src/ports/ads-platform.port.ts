@@ -162,6 +162,10 @@ export interface CreateAdSetInput {
    *  sem ela a Meta recusa anexar o anúncio: "conjunto sem objeto pra promover"). */
   readonly pageId?: string;
   readonly targeting: TargetingSpec;
+  /** Advantage+ audience (C3): true = deixa a Meta EXPANDIR além do público escolhido; ausente/false
+   *  = público fixo (comportamento pré-C3 no `explicit`). Só afeta o público EXPLÍCITO — `advantage_plus`
+   *  já é amplo e `reuse_adset` herda a expansão da fonte. */
+  readonly advantageAudience?: boolean;
   readonly status: "active" | "paused";
 }
 export interface CreateAdCreativeInput {
@@ -179,6 +183,10 @@ export interface CreateAdCreativeInput {
     readonly description?: string;
     readonly cta?: string;
   };
+  /** Advantage+ creative enhancements (C3): true = a Meta pode AJUSTAR AUTOMATICAMENTE imagem/texto
+   *  do anúncio pra performar melhor (opt-in por feature; a Meta remove as inelegíveis). Ausente/false
+   *  = criativo exatamente como aprovado. O eco AVISA quando ON (o entregue pode diferir do aprovado). */
+  readonly advantageCreative?: boolean;
 }
 export interface CreateAdInput {
   readonly adsetId: string;

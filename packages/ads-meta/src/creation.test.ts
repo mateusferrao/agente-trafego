@@ -867,6 +867,24 @@ describe("MetaCreationService.createAdCreative — object_story_spec por formato
     expect(oss.video_data.call_to_action.type).toBe("WHATSAPP_MESSAGE");
     expect(oss.video_data.call_to_action.value).toMatchObject({ app_destination: "WHATSAPP", link: "https://api.whatsapp.com/send" });
   });
+
+  it("C3: advantageCreative=true anexa degrees_of_freedom_spec com features em OPT_IN; sem ele, ausente", async () => {
+    const dofOf = (url: string): Record<string, any> | undefined => {
+      const raw = new URL(url).searchParams.get("degrees_of_freedom_spec");
+      return raw ? JSON.parse(raw) : undefined;
+    };
+    const on = stubCreativeGraph(null);
+    await svc().createAdCreative(account, { name: "cr", pageId: "PAGE1", goal: "purchase", imageHash: "IMGHASH", copy, advantageCreative: true });
+    const dofOn = dofOf(on.posts().find((p) => p.url.includes("/adcreatives"))!.url);
+    expect(dofOn?.creative_features_spec).toBeTruthy();
+    const features = Object.values(dofOn!.creative_features_spec as Record<string, { enroll_status: string }>);
+    expect(features.length).toBeGreaterThan(0);
+    expect(features.every((f) => f.enroll_status === "OPT_IN")).toBe(true);
+
+    const off = stubCreativeGraph(null);
+    await svc().createAdCreative(account, { name: "cr", pageId: "PAGE1", goal: "purchase", imageHash: "IMGHASH", copy });
+    expect(dofOf(off.posts().find((p) => p.url.includes("/adcreatives"))!.url)).toBeUndefined();
+  });
 });
 
 describe("MetaCreationService.inferCreationDefaults", () => {

@@ -1284,6 +1284,12 @@ export interface CampaignDraftSpec {
   readonly specialAdCategories?: readonly string[];
   /** otimização de orçamento herdada da fonte (CBO = na campanha; ABO = no adset). */
   readonly budgetMode?: BudgetMode;
+  /** Advantage+ audience (C3): true = deixa a Meta EXPANDIR além do público escolhido. Ausente =
+   *  público fixo (comportamento pré-C3). Só afeta targeting `explicit`. */
+  readonly advantageAudience?: boolean;
+  /** Advantage+ creative enhancements (C3): true = a Meta pode ajustar imagem/texto/CTA do anúncio.
+   *  Ausente/false = criativo exatamente como aprovado. O eco AVISA quando ON. */
+  readonly advantageCreative?: boolean;
   /**
    * Criativos da fonte REUSADOS por referência (`creative_id` da Meta) — 1 anúncio por
    * ref, preservando `object_story_spec`/destino WhatsApp sem rebuild. Vazio → usa

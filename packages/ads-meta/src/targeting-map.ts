@@ -18,7 +18,7 @@ export type ExplicitTargeting = Extract<TargetingSpec, { kind: "explicit" }>;
  * públicos salvos) → `targeting` cru da Meta. Expansão SEMPRE fechada (público escolhido
  * pelo dono, sem ambiguidade de "fonte não decidiu" — diferente de `reuse_adset`).
  */
-export function explicitTargetingToRaw(spec: ExplicitTargeting): Record<string, unknown> {
+export function explicitTargetingToRaw(spec: ExplicitTargeting, advantageAudience = false): Record<string, unknown> {
   // geo_locations montado direto (não via geoToRaw) p/ carregar RAIO por cidade/região +
   // custom_locations (raio em torno de endereço). `address_string` = a Meta geocodifica.
   const geoLocations: Record<string, unknown> = {};
@@ -55,7 +55,9 @@ export function explicitTargetingToRaw(spec: ExplicitTargeting): Record<string, 
     ...(spec.customAudienceIncludeIds && spec.customAudienceIncludeIds.length > 0 ? { custom_audiences: spec.customAudienceIncludeIds.map((id) => ({ id })) } : {}),
     ...(spec.customAudienceExcludeIds && spec.customAudienceExcludeIds.length > 0 ? { excluded_custom_audiences: spec.customAudienceExcludeIds.map((id) => ({ id })) } : {}),
     ...(flexible_spec.length > 0 ? { flexible_spec } : {}),
-    targeting_automation: { advantage_audience: 0 },
+    // C3: expansão de público (Advantage+ audience) explícita (v23+ EXIGE o valor). Default 0 (fixo,
+    // comportamento pré-C3); 1 quando o dono liga o Advantage (deixa a Meta expandir além do público).
+    targeting_automation: { advantage_audience: advantageAudience ? 1 : 0 },
     targeting_relaxation_types: { custom_audience: 0, lookalike: 0 },
   };
 }

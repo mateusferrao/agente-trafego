@@ -19,6 +19,11 @@ describe("explicitTargetingToRaw", () => {
     expect(raw["geo_locations"]).toEqual({ countries: [DEFAULT_TARGETING_GEO_COUNTRY] });
   });
 
+  it("C3: advantageAudience=true liga a expansão (advantage_audience: 1); default fica fixo (0)", () => {
+    expect(explicitTargetingToRaw(spec(), true)["targeting_automation"]).toEqual({ advantage_audience: 1 });
+    expect(explicitTargetingToRaw(spec(), false)["targeting_automation"]).toEqual({ advantage_audience: 0 });
+  });
+
   it("raio é city-only: region ignora radius, city mantém", () => {
     const raw = explicitTargetingToRaw(
       spec({
