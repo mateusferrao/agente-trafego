@@ -906,6 +906,8 @@ export function makeConversationNodes(
                 return segs.length > 0 ? { addSegment: segs } : {};
               })(),
               ...(Array.isArray(a["removeSegment"]) ? { removeSegment: a["removeSegment"].filter((x): x is number => typeof x === "number" && Number.isInteger(x) && x >= 0) } : {}),
+              // F1a: LIGAR/DESLIGAR Advantage por chat (bundle único — o refino seta os 2 flags).
+              ...(typeof a["advantage"] === "boolean" ? { advantage: a["advantage"] } : {}),
             };
       const res = await refineDraft(deps, dctxRefine, active.draftId, patch);
       if (res.kind === "blocked") {

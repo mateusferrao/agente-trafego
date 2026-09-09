@@ -251,6 +251,35 @@ o card do rascunho e o picker caíam em **"sem prévia"** (só o vídeo resolvia
 
 ---
 
+## Bloco I — Advantage editável no rascunho pendente (Fase 1a)
+
+O rascunho é a confirmação (nada vai pra Meta sem o "sim") — mas o Advantage não era editável nem no
+chat nem no site (diz×faz: o Roy mandava "ajuste no site", e o site só EXIBIA o estado). Agora o
+Advantage (bundle único: expansão de público + melhorias de criativo) liga/desliga **por chat e por
+site**, com o aviso honesto de que a Meta pode ALTERAR imagem/texto.
+
+### I1. Ligar Advantage por chat num rascunho pendente
+- **Ação:** proponha uma campanha (Advantage OFF ou omitido). Depois: "liga o advantage".
+- **Esperado:** o Roy LIGA por aqui (não manda pro site) e reecoa com o aviso honesto ("Advantage
+  ligado: a Meta pode expandir o público… ajustar a imagem/o texto…"). Nada aplicado na Meta ainda.
+
+### I2. Desligar Advantage por chat
+- **Ação:** com o Advantage ligado, "deixa tudo fixo" / "desliga o advantage".
+- **Esperado:** o Roy desliga e confirma "público e criativo exatamente como aprovou".
+
+### I3. Advantage no painel do site
+- **Ação:** abrir o rascunho em `/approvals` → editar. O controle "Otimização automática da Meta
+  (Advantage)" reflete o estado atual (Tudo fixo × Deixar a Meta otimizar).
+- **Esperado:** alternar + Salvar persiste; ao LIGAR aparece o aviso honesto no painel; o card reflete
+  o novo estado. Reabrir o painel mostra o estado salvo (round-trip).
+
+### I4. Advantage numa ESCALA (duplicate) → bloqueia honesto
+- **Ação:** num rascunho de escala (duplicar vencedor), "liga o advantage".
+- **Esperado:** o Roy bloqueia honesto (numa escala a estrutura é herdada do vencedor — o Advantage não
+  é editável ali). No site o controle não aparece na escala.
+
+---
+
 ## Suítes automatizadas (referência)
 
 - `pnpm --filter @trafego/core test` — 899 verdes (inclui `removeAdsetsAt`, `seedAdsetFromSingle`,

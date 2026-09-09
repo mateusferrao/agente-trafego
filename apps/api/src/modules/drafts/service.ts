@@ -286,6 +286,12 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     if (input.campaignName != null) edit.campaignName = input.campaignName;
     if (input.adsetName != null) edit.adsetName = input.adsetName;
     if (input.suffixLabel != null) edit.suffixLabel = input.suffixLabel;
+    // F1a: Advantage editável no rascunho pendente (bundle único: audience + criativo andam juntos).
+    // from_scratch-only garantido pelo núcleo (`applyDraftEdit` rejeita em duplicate).
+    if (input.advantage != null) {
+      edit.advantageAudience = input.advantage;
+      edit.advantageCreative = input.advantage;
+    }
 
     let budgetCapMinor: number | null = null;
     if (input.budgetReais != null) {

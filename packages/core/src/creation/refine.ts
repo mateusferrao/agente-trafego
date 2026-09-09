@@ -86,6 +86,11 @@ export interface DraftEdit {
   /** Onde a verba mora (P2 — a conversão single→multi de um teste de público nasce CBO: verba única
    *  na campanha, dividida entre os conjuntos). Só faz sentido junto com `adsets`. */
   readonly budgetMode?: BudgetMode;
+  /** Advantage+ audience (F1a — editável no rascunho pendente): true = a Meta EXPANDE além do público
+   *  escolhido; false grava explícito (desliga). Ausente = não mexe. O eco AVISA quando liga. */
+  readonly advantageAudience?: boolean;
+  /** Advantage+ creative enhancements (F1a): true = a Meta pode ajustar imagem/texto/CTA. O eco AVISA. */
+  readonly advantageCreative?: boolean;
   readonly creative?: CreativeAssetRef;
   readonly copyVariants?: readonly CopyVariant[];
   /** PÁGINA de destino (object_story_spec) resolvida pela casca a partir do nome/número dito pelo dono
@@ -125,6 +130,8 @@ const FROM_SCRATCH_ONLY: readonly (keyof DraftEdit)[] = [
   "targeting",
   "adsets",
   "budgetMode",
+  "advantageAudience",
+  "advantageCreative",
   "creative",
   "copyVariants",
   "linkUrl",
@@ -209,6 +216,8 @@ export function applyDraftEdit(
     ...(edit.targeting !== undefined ? { targeting: edit.targeting } : {}),
     ...(nextAdsets ? { adsets: nextAdsets } : {}),
     ...(edit.budgetMode !== undefined ? { budgetMode: edit.budgetMode } : {}),
+    ...(edit.advantageAudience !== undefined ? { advantageAudience: edit.advantageAudience } : {}),
+    ...(edit.advantageCreative !== undefined ? { advantageCreative: edit.advantageCreative } : {}),
     ...(edit.creative !== undefined ? { creative: edit.creative } : {}),
     ...(edit.pageId !== undefined ? { pageId: edit.pageId } : {}),
     ...(edit.copyVariants !== undefined ? { copyVariants: edit.copyVariants, variantsCount: edit.copyVariants.length } : {}),

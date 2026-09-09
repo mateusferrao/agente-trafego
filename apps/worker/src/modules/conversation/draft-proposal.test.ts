@@ -435,6 +435,23 @@ describe("buildRefineEcho — público (bug: refino não pode assumir 'amplo')",
     expect(echo).toContain("Ciclistas");
     expect(echo).toContain("único na campanha");
   });
+
+  it("F1a: rascunho com Advantage LIGADO → avisa que a Meta pode alterar imagem/texto", () => {
+    const echo = buildRefineEcho("from_scratch", { ...base, advantageAudience: true, advantageCreative: true });
+    expect(echo).toContain("Advantage ligado");
+    expect(echo.toLowerCase()).toContain("imagem");
+  });
+
+  it("F1a: rascunho com Advantage DESLIGADO → confirma público/criativo fixos", () => {
+    const echo = buildRefineEcho("from_scratch", { ...base, advantageAudience: false, advantageCreative: false });
+    expect(echo).toContain("Advantage desligado");
+  });
+
+  it("F1a: rascunho sem sinal de Advantage → não fala de Advantage", () => {
+    const echo = buildRefineEcho("from_scratch", { ...base });
+    expect(echo).not.toContain("Advantage ligado");
+    expect(echo).not.toContain("Advantage desligado");
+  });
 });
 
 describe("describeConjuntosBlock (fonte única do eco de conjuntos — create + refino)", () => {
@@ -744,6 +761,8 @@ describe("scaleForbiddenRefineField (G16 — escala não edita o herdado)", () =
     // P2: add/remover conjunto (público) também é herdado numa escala.
     expect(scaleForbiddenRefineField({ addSegment: [{ interests: ["corrida"] }] })).toBe("targeting");
     expect(scaleForbiddenRefineField({ removeSegment: [1] })).toBe("targeting");
+    // F1a: Advantage é do rascunho do zero — na escala a estrutura vem da fonte.
+    expect(scaleForbiddenRefineField({ advantage: true })).toBe("advantage");
   });
   it("regenerateCopy:false NÃO é edição (não trava)", () => {
     expect(scaleForbiddenRefineField({ regenerateCopy: false })).toBeNull();

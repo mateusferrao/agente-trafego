@@ -247,6 +247,32 @@ const EMPTY_AUDIENCE_STATE: ExplicitAudienceState = {
         </div>
       }
 
+      <!-- Advantage+ (F1a — editável no rascunho pendente, só criação): bundle único (expansão de
+           público + melhorias de criativo). Ligado = a Meta pode ALTERAR imagem/texto → aviso honesto. -->
+      @if (!isScale()) {
+        <div class="flex flex-col gap-2">
+          <span class="text-xs font-medium text-ink">Otimização automática da Meta (Advantage)</span>
+          <div
+            appToggleGroup
+            ngpToggleGroupType="single"
+            layout="segmented"
+            [columns]="2"
+            aria-label="Otimização automática da Meta"
+            [ngpToggleGroupValue]="[advantage() ? 'on' : 'off']"
+            (ngpToggleGroupValueChange)="setAdvantage($event)"
+          >
+            <button appToggleGroupItem tone="accent" ngpToggleGroupItemValue="off">Tudo fixo</button>
+            <button appToggleGroupItem tone="accent" ngpToggleGroupItemValue="on">Deixar a Meta otimizar</button>
+          </div>
+          @if (advantage()) {
+            <p class="rounded-md border border-line bg-panel px-3 py-2 text-xs text-muted">
+              Ligado, a Meta pode expandir o público além do escolhido e ajustar a imagem/o texto do anúncio — o que
+              for entregue pode sair um pouco diferente do que você aprovou.
+            </p>
+          }
+        </div>
+      }
+
       <!-- Criativo PADRÃO do rascunho (troca imediata — biblioteca × anúncio ao vivo; só criação).
            Usado pelos anúncios sem criativo próprio. -->
       @if (!isScale()) {
@@ -356,6 +382,9 @@ export class DraftEditPanel implements OnInit {
   /** URL de destino do anúncio (só from_scratch com objetivo de site/tráfego/conversão) — o clique
    *  leva pra cá. Escondido em conversas no WhatsApp (leva pro WhatsApp, não pra um site). */
   protected readonly linkUrl = signal('');
+  /** Advantage+ do rascunho (F1a — editável no rascunho pendente, só from_scratch): bundle único
+   *  (expansão de público + melhorias de criativo). Ligado = a Meta pode alterar imagem/texto. */
+  protected readonly advantage = signal(false);
   /** modo do público (controle único de 3 opções): `reuse`/`broad` = herdado; `custom` = revela o
    *  editor completo abaixo (converte reuse/broad → explicit no Salvar). */
   protected readonly audienceMode = signal<'reuse' | 'broad' | 'custom'>('reuse');
@@ -578,6 +607,8 @@ export class DraftEditPanel implements OnInit {
     this.budget.set(d.dailyBudgetMajor);
     this.activation.set(d.activation);
     this.linkUrl.set(d.linkUrl ?? '');
+    // Advantage: bundle único no output (audience/criativo andam juntos) — semeia do estado atual.
+    this.advantage.set(d.advantageAudience ?? d.advantageCreative ?? false);
     // modo do público: já explícito → custom; senão o herdado (reuse/broad).
     this.audienceMode.set(d.explicitAudience ? 'custom' : d.audience === 'broad' ? 'broad' : 'reuse');
     this.seedCopies(d);
@@ -592,6 +623,12 @@ export class DraftEditPanel implements OnInit {
   protected setActivation(value: string | string[]): void {
     const v = Array.isArray(value) ? value[0] : value;
     if (v === 'active' || v === 'paused') this.activation.set(v);
+  }
+
+  /** Toggle Advantage (on/off) — bundle único (expansão de público + melhorias de criativo). */
+  protected setAdvantage(value: string | string[]): void {
+    const v = Array.isArray(value) ? value[0] : value;
+    if (v === 'on' || v === 'off') this.advantage.set(v === 'on');
   }
 
   /** Toggle "Público" (herda / a Meta escolhe / personalizado). `custom` semeia o editor na hora
@@ -724,6 +761,9 @@ export class DraftEditPanel implements OnInit {
       const link = this.trimmed(this.linkUrl());
       if (link && link !== (d.linkUrl ?? '')) patch['linkUrl'] = link;
     }
+    // Advantage (bundle único): só entra no patch quando MUDA do estado original (evita clobber).
+    const originalAdvantage = d.advantageAudience ?? d.advantageCreative ?? false;
+    if (this.advantage() !== originalAdvantage) patch['advantage'] = this.advantage();
 
     // público: `custom` manda o estado COMPLETO como SUBSTITUIÇÃO total (converte reuse/broad →
     // explicit no backend). reuse/broad só entram no patch quando MUDAM do modo original (evita

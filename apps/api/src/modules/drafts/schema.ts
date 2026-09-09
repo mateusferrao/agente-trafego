@@ -237,6 +237,10 @@ export const updateDraftInput = z.object({
    *  o objetivo exige pixel e a conta não tem (§13 mensagem amigável). */
   objective: conversionGoalSchema.optional(),
   suffixLabel: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
+  /** Advantage+ do rascunho (F1a — editável no rascunho pendente, só from_scratch): bundle único
+   *  (audience + criativo). `true` liga (a Meta expande público + ajusta imagem/texto), `false` desliga.
+   *  Ausente = mantém. O card avisa honesto quando ligado. */
+  advantage: z.boolean().optional(),
   audience: z.enum(["reuse", "broad"]).optional(),
   /** URL de DESTINO do anúncio (só from_scratch, objetivo de site/tráfego/conversão) — troca o link.
    *  Objetivo de conversas no WhatsApp → o backend bloqueia honesto (leva pro WhatsApp, não pra site). */

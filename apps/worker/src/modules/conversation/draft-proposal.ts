@@ -1043,6 +1043,17 @@ export function describeConjuntosBlock(adsets: readonly AdsetSpec[]): string {
 }
 
 /** Eco genérico de um rascunho (após refino) — o quê/quanto/ativação/copy. Exportado p/ teste. */
+/**
+ * Linha de eco do Advantage (C3/F1a) — fonte ÚNICA do aviso honesto usado na criação E no refino do
+ * rascunho pendente. LIGADO avisa que a Meta pode EXPANDIR o público e ALTERAR imagem/texto (o
+ * entregue pode sair diferente do aprovado); DESLIGADO confirma tudo fixo. PURO.
+ */
+export function advantageEchoLine(on: boolean): string {
+  return on
+    ? "Advantage ligado: a Meta pode expandir o público além do que escolhemos e ajustar automaticamente a imagem/o texto do anúncio pra performar melhor — ou seja, o criativo entregue pode sair um pouco diferente do que você aprovou. Se preferir tudo fixo, é só dizer."
+    : "Advantage desligado: público e criativo exatamente como você aprovou, sem ajuste automático da Meta.";
+}
+
 export function buildRefineEcho(kind: string, spec: CampaignDraftSpec): string {
   const head = kind === "duplicate" ? "Rascunho de escala atualizado" : "Rascunho de campanha atualizado";
   const lines = [
@@ -1072,6 +1083,10 @@ export function buildRefineEcho(kind: string, spec: CampaignDraftSpec): string {
       })}.`,
     );
   }
+  // F1a: Advantage é editável no rascunho pendente → o eco reflete o estado atual, com o aviso honesto
+  // quando ligado (a Meta pode alterar imagem/texto). Bundle: audience/criativo andam juntos.
+  const adv = spec.advantageAudience ?? spec.advantageCreative;
+  if (kind === "from_scratch" && adv !== undefined) lines.push(advantageEchoLine(adv));
   lines.push("Confirma agora ou quer ajustar mais?");
   return joinBalloons(lines);
 }
@@ -1196,6 +1211,10 @@ export interface RefineDraftPatch {
   readonly addSegment?: ReadonlyArray<SegmentPublicoInput>;
   /** REMOVER conjunto(s) do teste de público pelo índice (começa em 0). Sobrar 1 = volta a 1 conjunto. */
   readonly removeSegment?: readonly number[];
+  /** Advantage (F1a — editável no rascunho pendente, só from_scratch): `true` liga (a Meta expande o
+   *  público + ajusta imagem/texto), `false` desliga (tudo fixo). Bundle único → seta os dois flags.
+   *  Ausente = não mexe. O eco AVISA quando liga. */
+  readonly advantage?: boolean;
 }
 
 export type RefineResult =
@@ -1245,11 +1264,13 @@ export function patchTouchesSinglePublico(patch: RefineDraftPatch): boolean {
   );
 }
 
-export function scaleForbiddenRefineField(patch: RefineDraftPatch): "objective" | "targeting" | "copyVariants" | "campaignName" | "adsetName" | "link" | "pageId" | null {
+export function scaleForbiddenRefineField(patch: RefineDraftPatch): "objective" | "targeting" | "copyVariants" | "campaignName" | "adsetName" | "link" | "pageId" | "advantage" | null {
   const has = hasValue;
   if (has(patch.objective)) return "objective";
   if (has(patch.link)) return "link";
   if (has(patch.setPage)) return "pageId";
+  // F1a: Advantage é do rascunho do zero (estrutura própria) — na escala vem herdado da fonte.
+  if (patch.advantage !== undefined) return "advantage";
   // add/removeSegment = mexer nos conjuntos (público) → herdado numa escala, não editável.
   if (patchTouchesSinglePublico(patch) || has(patch.addSegment) || has(patch.removeSegment)) return "targeting";
   if (patch.regenerateCopy === true || patch.variantsCount !== undefined || has(patch.copyEdits) || has(patch.setAdCreative) || has(patch.distinctCreatives) || has(patch.mediaPreference)) return "copyVariants";
@@ -1287,6 +1308,12 @@ export async function refineDraft(
   const refineNotes: string[] = []; // avisos (ex: clamp de raio) anexados ao eco
   if (patch.budgetReais != null) edit.budgetMinor = toMinorUnits(patch.budgetReais, ac.currency);
   if (patch.activation) edit.activation = patch.activation;
+  // F1a: Advantage (só from_scratch) — bundle: liga/desliga expansão de público E melhorias de criativo
+  // juntas (o toggle único foi deprecado na Graph v22, mas a decisão do dono continua uma só, §7).
+  if (kind === "from_scratch" && patch.advantage !== undefined) {
+    edit.advantageAudience = patch.advantage;
+    edit.advantageCreative = patch.advantage;
+  }
   if (kind === "from_scratch" && patch.campaignName != null) edit.campaignName = patch.campaignName;
   if (kind === "from_scratch" && patch.adsetName != null) edit.adsetName = patch.adsetName;
   // OBJETIVO (só from_scratch, paridade com o site §13): re-resolve o pixel DA CONTA (não de
@@ -2836,12 +2863,8 @@ export async function proposeCreateCampaign(
   }
   // C3: Advantage no eco+confirma, com aviso HONESTO reforçado (as melhorias ALTERAM o criativo
   // visível — sem isso o entregue pode sair diferente do aprovado). Só quando há sinal.
-  if (advantageOn === true) {
-    lines.push(
-      "Advantage ligado: a Meta pode expandir o público além do que escolhemos e ajustar automaticamente a imagem/o texto do anúncio pra performar melhor — ou seja, o criativo entregue pode sair um pouco diferente do que você aprovou. Se preferir tudo fixo, é só dizer.",
-    );
-  } else if (advantageOn === false) {
-    lines.push("Advantage desligado: público e criativo exatamente como você aprovou, sem ajuste automático da Meta.");
+  if (advantageOn !== undefined) {
+    lines.push(advantageEchoLine(advantageOn));
   }
   // destino do clique (só quando há link — objetivo de site/tráfego/conversão): honesto sobre pra
   // onde o anúncio leva. `args.link` explícito é "você indicou"; herdado é "o mesmo do anúncio-base".

@@ -9440,6 +9440,9 @@
             "minLength": 1,
             "maxLength": 400
           },
+          "advantage": {
+            "type": "boolean"
+          },
           "audience": {
             "type": "string",
             "enum": [

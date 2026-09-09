@@ -222,6 +222,43 @@ describe("applyDraftEdit — C2 multi-conjunto (adsets, substituição total)", 
   });
 });
 
+describe("applyDraftEdit — F1a Advantage editável no rascunho pendente", () => {
+  const noCap = { hasPixel: true } as const;
+
+  it("liga Advantage (audience + criativo) no rascunho", () => {
+    const r = applyDraftEdit("from_scratch", fromScratch, { advantageAudience: true, advantageCreative: true }, noCap);
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error("esperava ok");
+    expect(r.value.spec.advantageAudience).toBe(true);
+    expect(r.value.spec.advantageCreative).toBe(true);
+  });
+
+  it("desliga Advantage (false grava explicitamente, não some)", () => {
+    const withAdvantage = { ...fromScratch, advantageAudience: true, advantageCreative: true };
+    const r = applyDraftEdit("from_scratch", withAdvantage, { advantageAudience: false, advantageCreative: false }, noCap);
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error("esperava ok");
+    expect(r.value.spec.advantageAudience).toBe(false);
+    expect(r.value.spec.advantageCreative).toBe(false);
+  });
+
+  it("não editar Advantage preserva o valor existente", () => {
+    const withAdvantage = { ...fromScratch, advantageAudience: true, advantageCreative: true };
+    const r = applyDraftEdit("from_scratch", withAdvantage, { budgetMinor: 6000 }, noCap);
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error("esperava ok");
+    expect(r.value.spec.advantageAudience).toBe(true);
+    expect(r.value.spec.advantageCreative).toBe(true);
+  });
+
+  it("Advantage é from_scratch-only → erro em duplicate (escala herda da fonte)", () => {
+    const r = applyDraftEdit("duplicate", duplicate, { advantageAudience: true }, noCap);
+    expect(r.ok).toBe(false);
+    if (r.ok || r.error.code !== "field_not_editable") throw new Error("esperava field_not_editable");
+    expect(r.error.field).toBe("advantageAudience");
+  });
+});
+
 describe("removeAdsetsAt (P2 — remover conjunto por índice)", () => {
   const abc: readonly AdsetSpec[] = [
     { name: "A", targeting: { kind: "advantage_plus" } },
