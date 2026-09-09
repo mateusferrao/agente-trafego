@@ -717,10 +717,11 @@ export class DraftEditPanel implements OnInit {
   }
 
   /** "Personalizar anúncios deste conjunto": vira override, semeia os anúncios a partir dos
-   *  COMPARTILHADOS (o dono edita a partir deles) e expande. */
+   *  COMPARTILHADOS (o dono edita a partir deles) e expande. A base do override é os compartilhados,
+   *  então zera `hasOwnAds` — senão o patch usaria um override ANTIGO como base (anúncios-fantasma). */
   protected personalizeConjuntoAds(index: number): void {
     const shared = this.copies().map((c) => ({ adName: c.adName, headline: c.headline, primaryText: c.primaryText, description: c.description }));
-    this.conjuntos.update((list) => list.map((c, i) => (i === index ? { ...c, adsMode: 'own' as const, adForms: c.adForms.length > 0 ? c.adForms : shared, adsExpanded: true, adsDirty: true } : c)));
+    this.conjuntos.update((list) => list.map((c, i) => (i === index ? { ...c, adsMode: 'own' as const, adForms: shared, hasOwnAds: false, adsExpanded: true, adsDirty: true } : c)));
     this.conjuntosDirty.set(true);
   }
 
@@ -996,7 +997,9 @@ export class DraftEditPanel implements OnInit {
       index,
       ...(this.trimmed(f.headline) ? { headline: this.trimmed(f.headline) } : {}),
       ...(this.trimmed(f.primaryText) ? { primaryText: this.trimmed(f.primaryText) } : {}),
-      ...(this.trimmed(f.description) !== '' ? { description: this.trimmed(f.description) } : {}),
+      // descrição SEMPRE vai (mesmo vazia) — espelha o caminho dos compartilhados: esvaziar deve limpar,
+      // não ser ignorado (o backend só sobrescreve com `description !== undefined`).
+      description: this.trimmed(f.description),
       ...(this.trimmed(f.adName) ? { adName: this.trimmed(f.adName) } : {}),
       ...(f.creativeChoice ? { creative: f.creativeChoice } : {}),
     }));

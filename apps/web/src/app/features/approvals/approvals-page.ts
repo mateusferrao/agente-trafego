@@ -102,7 +102,7 @@ function groupByAccount<T extends { accountId: string; accountName: string }>(
                                 <span class="font-semibold text-ink">{{ aset.name || ('Conjunto ' + ($index + 1)) }}</span>
                                 <span class="text-muted"> · {{ adsetAudienceSummary(aset) }}</span>
                                 @if (aset.dailyBudgetMajor != null) { <span class="text-muted"> · {{ money(aset.dailyBudgetMajor, d.currency) }}/dia</span> }
-                                <span class="text-muted"> · {{ aset.copyVariants?.length ? (aset.copyVariants!.length + ' anúncio(s) próprio(s)') : 'anúncios compartilhados' }}</span>
+                                <span class="text-muted"> · {{ aset.copyVariants?.length ? (aset.copyVariants!.length + (aset.copyVariants!.length === 1 ? ' anúncio próprio' : ' anúncios próprios')) : 'anúncios compartilhados' }}</span>
                               </li>
                             }
                           </ul>
