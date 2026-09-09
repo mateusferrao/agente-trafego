@@ -309,19 +309,35 @@ describe("drainPendingCostPatches", () => {
   });
 });
 
-describe("parseSegments (C2 producer — teste de público multi-conjunto)", () => {
-  it("mantém label + audiences + interests, filtrando strings vazias", () => {
+describe("parseSegments (C2/P7 producer — público COMPLETO por conjunto)", () => {
+  it("mantém label + interests + públicos salvos, filtrando strings vazias", () => {
     const out = parseSegments([
       { label: "Estética", interests: ["estética", " "] },
-      { label: " ", audiences: ["remarketing 90d"] },
+      { label: " ", includeAudiences: ["remarketing 90d"] },
     ]);
     expect(out).toEqual([
       { label: "Estética", interests: ["estética"] },
-      { audiences: ["remarketing 90d"] },
+      { includeAudiences: ["remarketing 90d"] },
     ]);
   });
 
-  it("descarta segmento SEM público algum (nem audiences nem interests) — não vira conjunto vazio", () => {
+  it("P7: segmento SÓ demográfico (idade/gênero) é MANTIDO (o caso 'mulheres 45+' vs 'mulheres no geral')", () => {
+    const out = parseSegments([
+      { label: "Mulheres 45+", gender: "women", ageMin: 45 },
+      { label: "Mulheres no geral", gender: "women" },
+    ]);
+    expect(out).toEqual([
+      { label: "Mulheres 45+", gender: "women", ageMin: 45 },
+      { label: "Mulheres no geral", gender: "women" },
+    ]);
+  });
+
+  it("P7: aceita geo/comportamento/raio por conjunto", () => {
+    const out = parseSegments([{ label: "SP", geo: ["São Paulo"], behaviors: ["compradores online"], radiusKm: 20 }]);
+    expect(out).toEqual([{ label: "SP", geo: ["São Paulo"], behaviors: ["compradores online"], radiusKm: 20 }]);
+  });
+
+  it("descarta segmento SEM público algum — não vira conjunto vazio", () => {
     expect(parseSegments([{ label: "vazio" }, { interests: [] }, {}])).toEqual([]);
   });
 

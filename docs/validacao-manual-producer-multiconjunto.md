@@ -31,6 +31,14 @@
   os 3 conjuntos (nome + público resumido) e diz **"orçamento único na campanha"** (linguagem de
   negócio — **NUNCA** "CBO"/"ABO" cru). Nasce **pausado**; pede confirmação.
 
+### A1b. Público COMPLETO por conjunto — idade/gênero distintos (P7, o caso reportado)
+- **Ação (repro exato do WhatsApp):** "vamos criar uma nova campanha 1-2-3 ABO com nome Teste ABO";
+  quando o Roy perguntar, "R$25/dia em cada; conjunto 1 mulheres 45+, conjunto 2 mulheres no geral".
+- **Esperado:** o Roy **MONTA os 2 conjuntos** (NÃO recusa dizendo que idade/gênero são compartilhados).
+  O eco mostra **conjunto 1 = mulheres, 45+ anos** e **conjunto 2 = mulheres** (públicos distintos),
+  **ABO com R$25/dia em cada**, **3 anúncios**, mesmo criativo, nasce pausado. Cada segmento pode variar
+  QUALQUER dimensão (idade/gênero/lugar/interesse/comportamento/público) — o que não define herda a base.
+
 ### A2. Público ambíguo → pergunta (nunca chuta)
 - **Ação:** "testa interesse em futebol e em vôlei" (termo amplo/ambíguo).
 - **Esperado:** no conjunto do termo ambíguo, o Roy **pergunta** qual interesse (lista as opções da

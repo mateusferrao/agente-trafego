@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, buildCreativePool, cleanPageQuery, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, hasOfflineCover, interleaveMedia, matchPagesByQuery, normalizeAdCount, pageChoiceLabel, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField, stripGeoQualifier, describeConjuntosBlock, patchTouchesSinglePublico } from "./draft-proposal.js";
+import { adjustAdCount, assignCreativesToVariants, audienceEchoPhrase, buildCreativePool, cleanPageQuery, composeCreatives, creativeRefOf, describeCopiesBlock, buildRefineEcho, buildResolvedSnapshot, chooseCreative, clampNewBudget, describeExplicitAudience, describeResolvedAudience, fillDistinctCreatives, filterByMedia, hasOfflineCover, interleaveMedia, matchPagesByQuery, normalizeAdCount, pageChoiceLabel, recoverOpenDraft, resolveCreationTargeting, resolveCreativeFill, resolveProposedExplicitTargeting, scaleForbiddenRefineField, stripGeoQualifier, describeConjuntosBlock, patchTouchesSinglePublico, mergeSegmentPublico } from "./draft-proposal.js";
 import type { PageInfo } from "@trafego/shared";
 import type { CopyVariant } from "@trafego/shared";
 import type { CampaignDraftSpec } from "@trafego/shared";
@@ -448,6 +448,31 @@ describe("describeConjuntosBlock (fonte única do eco de conjuntos — create + 
     expect(out).toContain("Belo Horizonte");
     expect(out).toContain("2. *B*");
     expect(out).toContain("amplo (a Meta escolhe)");
+  });
+});
+
+describe("mergeSegmentPublico — P7 público completo por conjunto (segmento sobre a base)", () => {
+  it("segmento sobrepõe por campo; ausente herda a base", () => {
+    const base = { geo: ["Belo Horizonte"], gender: "women" as const, ageMin: 18 };
+    // "mulheres 45+": só idade própria → herda geo/gênero da base.
+    const seg1 = mergeSegmentPublico(base, { ageMin: 45 });
+    expect(seg1).toEqual({ geo: ["Belo Horizonte"], gender: "women", ageMin: 45 });
+    // "mulheres no geral": nada próprio → herda tudo (gênero women, faixa da base).
+    const seg2 = mergeSegmentPublico(base, {});
+    expect(seg2).toEqual({ geo: ["Belo Horizonte"], gender: "women", ageMin: 18 });
+  });
+  it("segmento traz interesse próprio (o testado) e herda a base demográfica", () => {
+    const base = { geo: ["BR"], gender: "women" as const };
+    const seg = mergeSegmentPublico(base, { interests: ["corrida"] });
+    expect(seg).toEqual({ geo: ["BR"], gender: "women", interests: ["corrida"] });
+  });
+  it("base vazia (addSegment) → o público é só o do segmento", () => {
+    const seg = mergeSegmentPublico({}, { gender: "men", ageMin: 30 });
+    expect(seg).toEqual({ gender: "men", ageMin: 30 });
+  });
+  it("gênero do segmento sobrepõe o da base", () => {
+    const seg = mergeSegmentPublico({ gender: "women" }, { gender: "men" });
+    expect(seg.gender).toBe("men");
   });
 });
 

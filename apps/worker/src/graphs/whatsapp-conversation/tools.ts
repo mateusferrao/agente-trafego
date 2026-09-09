@@ -457,6 +457,21 @@ export function makeConversationTools(
         .describe("resposta do usuário à pergunta do passo agressivo: 'raise' = subir orçamento; 'duplicate' = criar cópia"),
     }),
   });
+  // P7: público COMPLETO por conjunto do teste — mesmo conjunto de campos do público de topo (o dono
+  // varia QUALQUER dimensão por conjunto); o que o segmento não define herda a base compartilhada.
+  const segmentSchema = z.object({
+    label: z.string().nullable().optional().describe("nome do conjunto (ex: 'Mulheres 45+', 'Interesse em estética', 'Remarketing 90d')"),
+    geo: z.array(z.string()).nullable().optional().describe("localizações DESTE conjunto pelo NOME (cidade/região/país/bairro) — eu resolvo e pergunto se ambíguo. Ausente = herda o geo da base."),
+    ageMin: z.number().int().min(13).max(65).nullable().optional().describe("idade mínima DESTE conjunto (ausente = herda a base)"),
+    ageMax: z.number().int().min(13).max(65).nullable().optional().describe("idade máxima DESTE conjunto (ausente = herda a base)"),
+    gender: z.enum(["all", "men", "women"]).nullable().optional().describe("gênero DESTE conjunto — 'men'/'women'/'all' (ausente = herda a base)"),
+    interests: z.array(z.string()).nullable().optional().describe("interesses DESTE conjunto pelo NOME/termo — eu busco na Meta e pergunto se ambíguo"),
+    behaviors: z.array(z.string()).nullable().optional().describe("comportamentos DESTE conjunto pelo NOME — eu resolvo no catálogo e pergunto se ambíguo"),
+    includeAudiences: z.array(z.string()).nullable().optional().describe("públicos salvos a INCLUIR neste conjunto, pelo NOME/descrição — eu resolvo e pergunto se ambíguo"),
+    excludeAudiences: z.array(z.string()).nullable().optional().describe("públicos salvos a EXCLUIR neste conjunto, pelo NOME/descrição"),
+    radiusKm: z.number().positive().nullable().optional().describe("raio (km) em torno das cidades DESTE conjunto (clampo 17–80 km)"),
+    addressAreas: z.array(z.object({ address: z.string(), radiusKm: z.number().positive() })).nullable().optional().describe("raio em torno de ENDEREÇOS de rua deste conjunto (Meta geocodifica; clampo 1–80 km)"),
+  });
   const createCampaign = tool(proposeOnly, {
     name: "create_campaign",
     description:
@@ -488,11 +503,7 @@ export function makeConversationTools(
       budgetMode: z.enum(BUDGET_MODES).nullable().optional().describe("SÓ quando o dono pedir explicitamente ONDE mora a verba: 'cbo' = orçamento único na campanha (a Meta distribui entre os conjuntos); 'abo' = orçamento por conjunto. Omita pra eu usar o recomendado pra intenção. NUNCA diga a sigla ao dono — fale em linguagem de negócio."),
       advantage: z.boolean().nullable().optional().describe("Advantage+ (deixar a Meta EXPANDIR o público e AJUSTAR automaticamente o criativo pra performar melhor). Passe true quando o dono pedir explicitamente ('liga o Advantage', 'deixa a Meta otimizar'); false quando pedir tudo fixo. Omita pra eu inferir do contexto. O eco sempre confirma antes de aplicar e AVISA que as melhorias podem mudar a imagem/texto do anúncio."),
       localBusiness: z.boolean().nullable().optional().describe("true quando o negócio é LOCAL (atende só uma região/cidade — ex: clínica, restaurante, loja física de bairro), inferido do contexto do negócio. Guia a recomendação de Advantage (local → recomendo fixo/OFF; amplo/nacional → recomendo expansão). O dono sempre decide no eco."),
-      segments: z.array(z.object({
-        label: z.string().nullable().optional().describe("nome do conjunto (ex: 'Interesse em estética', 'Remarketing 90d')"),
-        audiences: z.array(z.string()).nullable().optional().describe("públicos SALVOS deste conjunto, pelo NOME/descrição — eu resolvo e pergunto se ambíguo"),
-        interests: z.array(z.string()).nullable().optional().describe("interesses deste conjunto, pelo NOME/termo — eu busco na Meta e pergunto se ambíguo"),
-      })).nullable().optional().describe("TESTE DE PÚBLICO multi-conjunto: passe 2+ segmentos quando o dono quiser comparar VÁRIOS públicos (ex: 'testa interesse em estética, meu público de remarketing e um lookalike'). Eu monto UM conjunto por segmento, com o público distinto de cada um SOBRE a base compartilhada (geo/idade/gênero dos campos acima), MESMO criativo em todos (isola a variável público) e orçamento único na campanha. Trocar o criativo por conjunto é no site. NÃO use pra 1 público só (aí use os campos includeAudiences/interests normais)."),
+      segments: z.array(segmentSchema).nullable().optional().describe("TESTE DE PÚBLICO multi-conjunto: passe 2+ segmentos quando o dono quiser comparar VÁRIOS públicos (ex: 'testa interesse em estética, meu público de remarketing e um lookalike'; ou 'conjunto 1 mulheres 45+, conjunto 2 mulheres no geral'). Cada segmento carrega o público COMPLETO — pode variar QUALQUER dimensão por conjunto (idade, gênero, lugar, interesse, comportamento, público salvo); o que o segmento NÃO define herda a base compartilhada dos campos acima. MESMO criativo em todos (isola a variável público) e orçamento único na campanha por padrão. Trocar o criativo por conjunto é no site. NUNCA recuse um teste porque os conjuntos diferem em idade/gênero/lugar — monte o que o dono pediu. NÃO use pra 1 público só (aí use os campos includeAudiences/interests normais)."),
     }),
   });
 
@@ -554,16 +565,10 @@ export function makeConversationTools(
       excludeAudiences: z.array(z.string()).nullable().optional().describe("público(s) salvo(s) a EXCLUIR, pelo NOME"),
       removeAudiences: z.array(z.string()).nullable().optional().describe("público(s) salvo(s) a TIRAR do rascunho (incluir/excluir), pelo NOME"),
       addSegment: z
-        .array(
-          z.object({
-            label: z.string().min(1).nullable().optional().describe("nome do conjunto (ex: 'Corredores'); omitido = 'Conjunto N'"),
-            audiences: z.array(z.string()).nullable().optional().describe("público(s) salvo(s) desse conjunto, pelo NOME"),
-            interests: z.array(z.string()).nullable().optional().describe("interesse(s) desse conjunto — eu busco na Meta e pergunto se ambíguo"),
-          }),
-        )
+        .array(segmentSchema)
         .nullable()
         .optional()
-        .describe("ADICIONAR conjunto(s) ao teste de público ('adiciona um conjunto de corredores'). Cada um vira um conjunto com SEU público (mesmo criativo em todos, pra comparar só o público). Se o rascunho tinha 1 conjunto, viro um teste multi-conjunto (o público atual é o 1º; orçamento único na campanha). Criativo diferente por conjunto é no site."),
+        .describe("ADICIONAR conjunto(s) ao teste de público ('adiciona um conjunto de mulheres 45+', 'adiciona um conjunto de corredores'). Cada um vira um conjunto com o público COMPLETO próprio (idade/gênero/geo/interesse/comportamento/público salvo — mesmo criativo em todos, pra comparar só o público). Se o rascunho tinha 1 conjunto, viro um teste multi-conjunto (o público atual é o 1º; orçamento único na campanha). Criativo diferente por conjunto é no site."),
       removeSegment: z.array(z.number().int().min(0)).nullable().optional().describe("REMOVER conjunto(s) do teste de público pelo NÚMERO começando em 0 (o 1º = 0). Sobrar 1 = volta a campanha de 1 conjunto."),
       distinctCreatives: z.number().int().positive().nullable().optional().describe("RECOMPOR a distribuição de criativos: quantos DIFERENTES entre os anúncios (o resto repete). Ex: 'deixa 2 iguais e 2 diferentes' num rascunho de 4 = distinctCreatives 3. EU escolho quais."),
       mediaPreference: z.enum(["video", "image", "mixed"]).nullable().optional().describe("recompor com mídia 'video'/'image'/'mixed'. EU escolho quais assets."),

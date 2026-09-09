@@ -673,6 +673,41 @@ export interface ProposedExplicitInput {
   readonly addressAreas?: readonly AddressArea[];
 }
 
+/** Público COMPLETO de UM conjunto do teste (P7) — o mesmo shape do público de topo (`ProposedExplicitInput`)
+ *  + um rótulo. O dono varia QUALQUER dimensão por conjunto (idade/gênero/geo/interesse/comportamento/
+ *  público salvo), resolvido pelo MESMO `resolveProposedExplicitTargeting` do rascunho de 1 conjunto. */
+export interface SegmentPublicoInput extends ProposedExplicitInput {
+  readonly label?: string;
+}
+
+/** Público de um segmento SOBRE a base compartilhada (campos de topo): cada campo do segmento VENCE
+ *  quando presente; ausente herda a base. Fonte única do merge do teste multi-conjunto (P7). PURO. */
+export function mergeSegmentPublico(base: ProposedExplicitInput, seg: ProposedExplicitInput): ProposedExplicitInput {
+  const pick = <T>(s: T | undefined, b: T | undefined): T | undefined => (s !== undefined ? s : b);
+  const geo = pick(seg.geo, base.geo);
+  const ageMin = pick(seg.ageMin, base.ageMin);
+  const ageMax = pick(seg.ageMax, base.ageMax);
+  const gender = pick(seg.gender, base.gender);
+  const interests = pick(seg.interests, base.interests);
+  const behaviors = pick(seg.behaviors, base.behaviors);
+  const includeAudiences = pick(seg.includeAudiences, base.includeAudiences);
+  const excludeAudiences = pick(seg.excludeAudiences, base.excludeAudiences);
+  const radiusKm = pick(seg.radiusKm, base.radiusKm);
+  const addressAreas = pick(seg.addressAreas, base.addressAreas);
+  return {
+    ...(geo !== undefined ? { geo } : {}),
+    ...(ageMin !== undefined ? { ageMin } : {}),
+    ...(ageMax !== undefined ? { ageMax } : {}),
+    ...(gender !== undefined ? { gender } : {}),
+    ...(interests !== undefined ? { interests } : {}),
+    ...(behaviors !== undefined ? { behaviors } : {}),
+    ...(includeAudiences !== undefined ? { includeAudiences } : {}),
+    ...(excludeAudiences !== undefined ? { excludeAudiences } : {}),
+    ...(radiusKm !== undefined ? { radiusKm } : {}),
+    ...(addressAreas !== undefined ? { addressAreas } : {}),
+  };
+}
+
 export type ResolvedExplicitTargeting =
   | { readonly kind: "ok"; readonly targeting: Extract<TargetingSpec, { readonly kind: "explicit" }>; readonly droppedNames: readonly string[]; readonly notes: readonly string[] }
   | { readonly kind: "blocked"; readonly reason: string }
@@ -1155,10 +1190,10 @@ export interface RefineDraftPatch {
    *  honesto (lista as opções). Em campanha de conversas muda pra qual WhatsApp o clique leva. */
   readonly setPage?: string;
   /** ADICIONAR conjunto(s) ao teste de público (P2 — paridade com adicionar anúncio). Cada segmento
-   *  vira um conjunto próprio (público por interesses/públicos salvos, resolvidos como na criação).
-   *  Rascunho de 1 conjunto → vira teste multi-conjunto (o público atual é o conjunto 1; verba única
-   *  na campanha, mesmo criativo em todos — criativo diferente por conjunto é no site). */
-  readonly addSegment?: readonly { readonly label?: string; readonly audiences?: readonly string[]; readonly interests?: readonly string[] }[];
+   *  carrega o público COMPLETO (P7: idade/gênero/geo/interesses/comportamentos/públicos/raio),
+   *  resolvido como na criação de 1 conjunto. Rascunho de 1 conjunto → vira teste multi-conjunto (o
+   *  público atual é o conjunto 1; verba única na campanha, mesmo criativo — por-conjunto é no site). */
+  readonly addSegment?: ReadonlyArray<SegmentPublicoInput>;
   /** REMOVER conjunto(s) do teste de público pelo índice (começa em 0). Sobrar 1 = volta a 1 conjunto. */
   readonly removeSegment?: readonly number[];
 }
@@ -1359,16 +1394,12 @@ export async function refineDraft(
       if (wasSingle) base = [seedAdsetFromSingle(spec)];
       for (const seg of patch.addSegment ?? []) {
         const label = seg.label?.trim() || `Conjunto ${base.length + 1}`;
-        const segAud = await prepareAudiences(deps, ctx, ac.ref, seg.audiences ?? [], []);
-        if (segAud.kind === "blocked") return { kind: "blocked", reason: `no público do conjunto "${label}": ${segAud.reason}` };
-        const segInt = await prepareInterests(deps, ac.ref, seg.interests ?? []);
-        if (segInt.kind === "blocked") return { kind: "blocked", reason: `no público do conjunto "${label}": ${segInt.reason}` };
-        const parts: ExplicitTargetingParts = {
-          geo: [],
-          ...(segInt.interests.length > 0 ? { interests: segInt.interests } : {}),
-          ...(segAud.includeIds.length > 0 ? { includeAudienceIds: segAud.includeIds } : {}),
-        };
-        const targeting: NonNullable<CampaignDraftSpec["targeting"]> = hasExplicitContent(parts) ? assembleExplicitTargeting(parts) : { kind: "advantage_plus" };
+        // P7: conjunto novo com o público COMPLETO do segmento (sem base compartilhada aqui), resolvido
+        // pelo MESMO resolvedor do single. Ambíguo → bloqueia honesto (nomeando o conjunto).
+        const { label: _label, ...segInput } = seg;
+        const res = await resolveProposedExplicitTargeting(deps, ctx, ac.ref, segInput, { autonomous: false });
+        if (res.kind === "blocked") return { kind: "blocked", reason: `no público do conjunto "${label}": ${res.reason}` };
+        const targeting: NonNullable<CampaignDraftSpec["targeting"]> = res.kind === "ok" ? res.targeting : { kind: "advantage_plus" };
         base.push({ name: label, targeting });
       }
     }
@@ -2319,15 +2350,13 @@ export async function proposeCreateCampaign(
     /** SINAL de negócio LOCAL (C3) que o LLM infere do businessContext (atende só uma região) —
      *  entra na inferência de Advantage (local → recomenda OFF). */
     readonly localBusiness?: boolean;
-    /** SEGMENTOS do teste de público multi-conjunto (C2 producer): ≥2 → um CONJUNTO por segmento,
-     *  cada um com seu público distinto (interesses/públicos salvos) sobre a base compartilhada
-     *  (geo/idade/gênero dos args top-level). Criativo COMPARTILHADO (Roy escolhe; ajuste por-conjunto
-     *  é no site). Nomes resolvidos determinístico (prepare-fns + D1); ambíguo → bloqueia honesto. */
-    readonly segments?: ReadonlyArray<{
-      readonly label?: string;
-      readonly audiences?: readonly string[];
-      readonly interests?: readonly string[];
-    }>;
+    /** SEGMENTOS do teste de público multi-conjunto (C2/P7 producer): ≥2 → um CONJUNTO por segmento.
+     *  Cada segmento carrega o PÚBLICO COMPLETO (`SegmentPublicoInput`: idade/gênero/geo/interesses/
+     *  comportamentos/públicos salvos/raio) — o dono varia QUALQUER dimensão por conjunto; o que o
+     *  segmento não define herda a base compartilhada dos args top-level (`mergeSegmentPublico`).
+     *  Resolvido pelo MESMO `resolveProposedExplicitTargeting` do rascunho de 1 conjunto. Criativo
+     *  COMPARTILHADO (Roy escolhe; ajuste por-conjunto é no site). Ambíguo → bloqueia honesto. */
+    readonly segments?: ReadonlyArray<SegmentPublicoInput>;
   },
   origin: DraftOrigin = "on_demand",
   opts: { readonly autonomous?: boolean; readonly minMonthlyReach?: number; readonly requireResolvedAudience?: boolean } = {},
@@ -2414,27 +2443,27 @@ export async function proposeCreateCampaign(
   // segmento = refinamento. budgetMode = CBO (verba única na campanha — o padrão do teste de público).
   const segmentAdsets = await (async (): Promise<AdsetSpec[] | { blocked: string } | null> => {
     if (!args.segments || args.segments.length < 2) return null;
-    const baseGeo = geoRadius.geo;
-    const baseAreas = areas.radiusAreas;
+    // P7: base compartilhada = o público de topo (nomes crus); cada segmento carrega o público COMPLETO
+    // e sobrepõe a base por campo (`mergeSegmentPublico`), resolvido pelo MESMO resolvedor do single.
+    const baseInput: ProposedExplicitInput = {
+      ...(args.geo ? { geo: args.geo } : {}),
+      ...(args.ageMin !== undefined ? { ageMin: args.ageMin } : {}),
+      ...(args.ageMax !== undefined ? { ageMax: args.ageMax } : {}),
+      ...(args.gender ? { gender: args.gender } : {}),
+      ...(args.interests ? { interests: args.interests } : {}),
+      ...(args.behaviors ? { behaviors: args.behaviors } : {}),
+      ...(args.includeAudiences ? { includeAudiences: args.includeAudiences } : {}),
+      ...(args.excludeAudiences ? { excludeAudiences: args.excludeAudiences } : {}),
+      ...(args.radiusKm !== undefined ? { radiusKm: args.radiusKm } : {}),
+      ...(args.addressAreas ? { addressAreas: args.addressAreas } : {}),
+    };
     const out: AdsetSpec[] = [];
     for (const [i, seg] of args.segments.entries()) {
       const label = seg.label?.trim() || `Conjunto ${i + 1}`;
-      const segAud = await prepareAudiences(deps, ctx, ac.ref, seg.audiences ?? [], [], auto);
-      if (segAud.kind === "blocked") return { blocked: `no público do conjunto "${label}": ${segAud.reason}` };
-      const segInt = await prepareInterests(deps, ac.ref, seg.interests ?? [], auto);
-      if (segInt.kind === "blocked") return { blocked: `no público do conjunto "${label}": ${segInt.reason}` };
-      const parts: ExplicitTargetingParts = {
-        geo: baseGeo,
-        ...(baseAreas.length > 0 ? { radiusAreas: baseAreas } : {}),
-        ...(args.ageMin !== undefined ? { ageMin: args.ageMin } : {}),
-        ...(args.ageMax !== undefined ? { ageMax: args.ageMax } : {}),
-        ...(args.gender ? { gender: args.gender } : {}),
-        ...(segInt.interests.length > 0 ? { interests: segInt.interests } : {}),
-        ...(segAud.includeIds.length > 0 ? { includeAudienceIds: segAud.includeIds } : {}),
-      };
-      const targeting: NonNullable<CampaignDraftSpec["targeting"]> = hasExplicitContent(parts)
-        ? assembleExplicitTargeting(parts)
-        : { kind: "advantage_plus" };
+      const { label: _label, ...segInput } = seg;
+      const res = await resolveProposedExplicitTargeting(deps, ctx, ac.ref, mergeSegmentPublico(baseInput, segInput), { autonomous: auto });
+      if (res.kind === "blocked") return { blocked: `no público do conjunto "${label}": ${res.reason}` };
+      const targeting: NonNullable<CampaignDraftSpec["targeting"]> = res.kind === "ok" ? res.targeting : { kind: "advantage_plus" };
       out.push({ name: label, targeting });
     }
     return out;

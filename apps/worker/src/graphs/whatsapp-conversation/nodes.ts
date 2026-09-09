@@ -74,7 +74,7 @@ import { latestAnalysisAsOf, renderWhatsappNumber, resolveWhatsappNumber } from 
 import { makeMetaToolExecutor } from "../../executors/meta-tools.js";
 import { applyCheckedAction, type ApplyResult } from "../../modules/apply/apply-confirmed-action.js";
 import { runReallocationSaga } from "../../modules/apply/reallocation-saga.js";
-import { buildRefineEcho, describeExplicitAudience, MEDIA_PREFERENCES, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner, recoverOpenDraft, refineDraft, resolveProposedExplicitTargeting, type DraftProposalContext, type MediaPreference, type ProposedExplicitInput, type RecoveredDraft, type RefineDraftPatch } from "../../modules/conversation/draft-proposal.js";
+import { buildRefineEcho, describeExplicitAudience, MEDIA_PREFERENCES, proposeCopyCampaign, proposeCreateCampaign, proposeScaleWinner, recoverOpenDraft, refineDraft, resolveProposedExplicitTargeting, type DraftProposalContext, type MediaPreference, type ProposedExplicitInput, type RecoveredDraft, type RefineDraftPatch, type SegmentPublicoInput } from "../../modules/conversation/draft-proposal.js";
 import { loadWriteContext, reallocKindPeriod, type BudgetPeriodKind } from "../../modules/apply/write-context.js";
 import { adHasNoBudgetMessage, resolveMisplacedBudgetMessage } from "./budget-location.js";
 import { revertActionById } from "../../modules/apply/revert-action.js";
@@ -154,21 +154,51 @@ function parseCopyEdits(v: unknown): { index: number; headline?: string; primary
 
 /** Normaliza os segmentos do teste de público (C2 producer) vindos do LLM — cada um vira 1 conjunto.
  *  Filtra strings vazias; descarta segmentos sem público algum (nem audiences nem interests). */
-export function parseSegments(v: unknown): { label?: string; audiences?: string[]; interests?: string[] }[] {
+export function parseSegments(v: unknown): SegmentPublicoInput[] {
   if (!Array.isArray(v)) return [];
   const strs = (x: unknown): string[] =>
     Array.isArray(x) ? x.filter((s): s is string => typeof s === "string" && s.trim().length > 0).map((s) => s.trim()) : [];
-  const out: { label?: string; audiences?: string[]; interests?: string[] }[] = [];
+  const num = (x: unknown): number | undefined => (typeof x === "number" && Number.isFinite(x) ? x : undefined);
+  const gender = (x: unknown): "all" | "men" | "women" | undefined => (x === "all" || x === "men" || x === "women" ? x : undefined);
+  const areas = (x: unknown): { address: string; radiusKm: number }[] =>
+    Array.isArray(x)
+      ? x
+          .filter((a): a is { address: string; radiusKm: number } => Boolean(a) && typeof (a as { address?: unknown }).address === "string" && typeof (a as { radiusKm?: unknown }).radiusKm === "number")
+          .map((a) => ({ address: a.address, radiusKm: a.radiusKm }))
+      : [];
+  const out: SegmentPublicoInput[] = [];
   for (const e of v) {
     if (!e || typeof e !== "object") continue;
     const o = e as Record<string, unknown>;
-    const audiences = strs(o["audiences"]);
+    const label = typeof o["label"] === "string" && o["label"].trim() ? o["label"].trim() : undefined;
+    const geo = strs(o["geo"]);
     const interests = strs(o["interests"]);
-    if (audiences.length === 0 && interests.length === 0) continue; // segmento sem público → descarta
+    const behaviors = strs(o["behaviors"]);
+    const includeAudiences = strs(o["includeAudiences"]);
+    const excludeAudiences = strs(o["excludeAudiences"]);
+    const addressAreas = areas(o["addressAreas"]);
+    const ageMin = num(o["ageMin"]);
+    const ageMax = num(o["ageMax"]);
+    const g = gender(o["gender"]);
+    const radiusKm = num(o["radiusKm"]);
+    // P7: um segmento pode ser SÓ demográfico (idade/gênero/geo, sem interesse) — mantém se tiver
+    // QUALQUER dimensão de público (não só interesse/público salvo, como antes).
+    const hasPublico =
+      geo.length > 0 || interests.length > 0 || behaviors.length > 0 || includeAudiences.length > 0 || excludeAudiences.length > 0 ||
+      addressAreas.length > 0 || ageMin !== undefined || ageMax !== undefined || g !== undefined || radiusKm !== undefined;
+    if (!hasPublico) continue; // segmento sem nenhum público → descarta (ruído do LLM)
     out.push({
-      ...(typeof o["label"] === "string" && o["label"].trim() ? { label: o["label"].trim() } : {}),
-      ...(audiences.length > 0 ? { audiences } : {}),
+      ...(label ? { label } : {}),
+      ...(geo.length > 0 ? { geo } : {}),
+      ...(ageMin !== undefined ? { ageMin } : {}),
+      ...(ageMax !== undefined ? { ageMax } : {}),
+      ...(g !== undefined ? { gender: g } : {}),
       ...(interests.length > 0 ? { interests } : {}),
+      ...(behaviors.length > 0 ? { behaviors } : {}),
+      ...(includeAudiences.length > 0 ? { includeAudiences } : {}),
+      ...(excludeAudiences.length > 0 ? { excludeAudiences } : {}),
+      ...(radiusKm !== undefined ? { radiusKm } : {}),
+      ...(addressAreas.length > 0 ? { addressAreas } : {}),
     });
   }
   return out;
