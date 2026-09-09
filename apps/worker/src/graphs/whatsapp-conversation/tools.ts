@@ -348,7 +348,7 @@ export function makeConversationTools(
   });
   const setStatus = tool(proposeOnly, {
     name: "set_status",
-    description: "Propõe mudar o status de uma entidade. Ativar (active) uma campanha/conjunto liga a cadeia pausada por padrão (o eco lista); pausar (paused) é só o nó. Requer eco+confirma.",
+    description: "Propõe mudar o status de uma entidade. Ativar (active) uma campanha/conjunto liga a cadeia pausada por padrão (o eco lista); pausar (paused) é só o nó. Critério (1×): pra REATIVAR o que está pausado, prefira resume_entity (mais direto); use set_status só quando o dono falar em 'status' ou quiser PAUSAR via status. Requer eco+confirma.",
     schema: z.object({ ...writeSchema, status: z.enum(["active", "paused"]) }),
   });
   const adjustBudget = tool(proposeOnly, {
