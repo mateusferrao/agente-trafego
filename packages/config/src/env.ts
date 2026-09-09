@@ -415,6 +415,13 @@ export const envSchema = z.object({
   // dos demais booleanos do arquivo.
   TRAFEGO_CHAT_ADS_WRITES: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
 
+  // Kill-switch da ESCOLHA de criativo por chat (picker: o dono nomeia o criativo por conversa +
+  // troca por-anúncio). v1: default OFF — o AGENTE escolhe o criativo (entre os da Meta, qualquer
+  // status, + a biblioteca), priorizando desempenho, e diz que trocar um específico é no site. O
+  // código do picker fica intacto (fast-follow = flip pra "true"). ON → reabre o picker no chat.
+  // enum (não z.coerce.boolean): "false" coage p/ true em Boolean(). Mesmo padrão dos booleanos.
+  TRAFEGO_CHAT_CREATIVE_PICKER: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
+
   // ─── Email (auth transacional — 6b) ────────────────────────────────────
   // Verificação de email + reset de senha via mailer genérico (porta + fila).
   // driver: console (dev, loga código/link) | ses (prod, AWS SESv2) | noop (testes).

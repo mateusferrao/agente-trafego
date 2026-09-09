@@ -43,11 +43,28 @@ describe("buildChatRules — S0a: procedimento-por-tool migrou pra tools.ts", ()
   });
 });
 
+describe("buildChatRules — escolha de criativo por chat (kill-switch chatCreativePicker)", () => {
+  it("picker OFF (v1 default): o AGENTE escolhe; NÃO oferece escolher; trocar é no site", () => {
+    const rules = buildChatRules(false, true, false);
+    expect(rules).toContain("EU escolho o criativo");
+    expect(rules).toContain("NÃO ofereça ao usuário escolher os criativos");
+    expect(rules).toContain("no site");
+    // não deve pedir os nomes / oferecer a escolha
+    expect(rules).not.toContain("quer escolher os criativos");
+  });
+
+  it("picker ON: volta a oferecer a escolha por nome (fast-follow ligado)", () => {
+    const rules = buildChatRules(false, true, true);
+    expect(rules).toContain("quer escolher os criativos");
+    expect(rules).not.toContain("NÃO ofereça ao usuário escolher os criativos");
+  });
+});
+
 describe("buildChatRules — config: needs-focus (concierge) × kill-switch OFF (site-only)", () => {
   // Concierge (org multi-conta sem foco): config NÃO está desligada — só precisa de foco.
   // Roy deve ROTEAR pra focar a conta, nunca remeter ao site (que era a confusão da BM - Automato).
   it("needsFocusForConfig ON: roteia pra FOCAR a conta, NÃO remete ao site", () => {
-    const rules = buildChatRules(false, false, true);
+    const rules = buildChatRules(false, false, false, true);
     expect(rules).toContain("precisa de uma conta em foco");
     expect(rules).not.toContain("está desligada por aqui");
   });

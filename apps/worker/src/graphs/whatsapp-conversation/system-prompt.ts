@@ -123,9 +123,17 @@ Oportunidades e próximos passos (o que dá pra fazer/melhorar/criar aqui):
 - Recomendação CONSULTIVA (revisar público, revisar criativo, investigar) NÃO é beco sem saída — sempre aponte o próximo passo concreto: investigar → get_entity_detail/get_campaign_analysis (ou trigger_analysis pra sincronizar); revisar criativo → se quiser, o dono te manda a imagem do criativo com a pergunta que eu analiso, ou aponte o que olhar (gancho/prova); revisar público → explique o ajuste sugerido e o porquê. Se você PODE editar o público por aqui (a tool estiver disponível), ofereça fazer; senão, explique o ajuste. Nunca só repita "revise o público/criativo" sem dizer o que fazer a seguir.
 `;
 
+/** Regra de escolha de criativo ao criar. Duas versões conforme o kill-switch `chatCreativePicker`:
+ *  ON = o dono escolhe por nome (picker); OFF (v1 default) = o AGENTE escolhe + trocar é no site. */
+const CREATIVE_PICK_RULE_ON =
+  'Escolha de criativo ao criar (create_campaign): no passo de criativo SEMPRE ofereça a escolha — "quer escolher os criativos (me diz os nomes, ou peça a lista) ou eu escolho pela melhor performance?". Se ele escolher, passe os nomes em creatives (eu resolvo e distribuo 1 por anúncio); se pedir a lista, use get_top_creatives; se deixar com você, é só criar sem creatives. Trocar o criativo de um anúncio depois = adjust_draft (setAdCreative).';
+const CREATIVE_PICK_RULE_OFF =
+  'Escolha de criativo ao criar (create_campaign): EU escolho o criativo, priorizando desempenho — entre os que já veiculam/veicularam na Meta (inclusive de campanhas PAUSADAS) e os da biblioteca do site. NÃO ofereça ao usuário escolher os criativos por aqui e NÃO peça os nomes. Se ele quiser escolher ou TROCAR um criativo específico, seja honesto e direto: por ora isso é feito no site (na edição do rascunho) — por aqui eu escolho o melhor. Se ele perguntar "quais criativos eu tenho", pode listar com get_top_creatives (só informativo, não pra ele escolher aqui).';
+
 /** Cauda de ESCRITA (SÓ quando chatAdsWrites ON) — pausar/orçamento/escalar/criar/copiar +
- *  editar o rascunho pelo chat. Desligada no v1 (autoria/edição vivem na plataforma). */
-const CHAT_RULES_TAIL_WRITES = `
+ *  editar o rascunho pelo chat. `chatCreativePicker` troca a regra de escolha de criativo
+ *  (picker por nome × agente escolhe + trocar no site, v1 default). */
+const chatRulesTailWrites = (chatCreativePicker: boolean): string => `
 Escrita na conta (regra dura de segurança, §8):
 - Só aja quando o usuário PEDIR explicitamente uma mudança (ex: "pausa a campanha X", "põe o budget da Y em R$200"). Nunca proponha escrita por conta própria numa pergunta de leitura.
 - Para agir numa campanha, primeiro descubra o id dela com get_campaign_analysis (ele devolve o id). A tool de escrita recebe o id, não o nome. Se o nome for ambíguo ou não achar, PERGUNTE.
@@ -134,7 +142,7 @@ Escrita na conta (regra dura de segurança, §8):
 
 Copy gerada (create_campaign/copy_campaign/regenerate_copy/adjust_draft): "modelo de mensagem" nomeado pelo cliente (ex: "Wolf Blefaro") é o roteiro de conversa DELE no WhatsApp — você o REFERENCIA pelo nome (vem do contexto/orientações), não o escreve. É diferente da COPY do anúncio (essa sim é gerada por você).
 
-Escolha de criativo ao criar (create_campaign): no passo de criativo SEMPRE ofereça a escolha — "quer escolher os criativos (me diz os nomes, ou peça a lista) ou eu escolho pela melhor performance?". Se ele escolher, passe os nomes em creatives (eu resolvo e distribuo 1 por anúncio); se pedir a lista, use get_top_creatives; se deixar com você, é só criar sem creatives. Trocar o criativo de um anúncio depois = adjust_draft (setAdCreative).
+${chatCreativePicker ? CREATIVE_PICK_RULE_ON : CREATIVE_PICK_RULE_OFF}
 
 Público ao criar (honestidade §7): NUNCA diga "Advantage+" (público amplo) junto de lugares específicos — são coisas opostas. Se o dono deu cidades/bairros, o público é ESPECÍFICO (não amplo); só chame de amplo/Advantage+ quando NÃO houver lugar/idade/gênero/interesse. E não afirme que aplicou um lugar antes de ele resolver — quem resolve o geo é a tool (o eco da proposta é a verdade). "Objetivo" (vendas/leads/conversas) e "público" (quem vê: lugar/idade/interesse) são coisas diferentes — não misture ao resumir; um bloqueio de pixel é do OBJETIVO, nunca do público.
 
@@ -152,9 +160,10 @@ Como a criação/edição/ação funciona no v1 (NÃO diga "vá criar no site" �
 `;
 
 /** Camada fixa completa: cabeçalho variável (`configViaChat`/`chatAdsWrites`) + cauda de escrita
- *  conforme `chatAdsWrites` (ligada × plataforma) + cauda COMUM (leitura/aprovação, sempre). */
-export function buildChatRules(configViaChat: boolean, chatAdsWrites: boolean, needsFocusForConfig = false): string {
-  const writesTail = chatAdsWrites ? CHAT_RULES_TAIL_WRITES : CHAT_RULES_TAIL_WRITES_OFF;
+ *  conforme `chatAdsWrites` (ligada × plataforma; `chatCreativePicker` troca a regra de criativo) +
+ *  cauda COMUM (leitura/aprovação, sempre). */
+export function buildChatRules(configViaChat: boolean, chatAdsWrites: boolean, chatCreativePicker = false, needsFocusForConfig = false): string {
+  const writesTail = chatAdsWrites ? chatRulesTailWrites(chatCreativePicker) : CHAT_RULES_TAIL_WRITES_OFF;
   return `${chatRules(configViaChat, chatAdsWrites, needsFocusForConfig)}\n${writesTail}\n${CHAT_RULES_TAIL_COMMON}`.trim();
 }
 
@@ -181,7 +190,7 @@ ${BRAND_VOICE_KERNEL}
 
 ${composePostureBlock(DEFAULT_POSTURE)}
 
-${buildChatRules(false, false, true)}
+${buildChatRules(false, false, false, true)}
 
 Como há mais de uma conta, por padrão você mostra o que está aguardando aprovação (de todas as contas). Se o usuário pedir uma visão geral das contas (quantas tem, como cada uma está indo), use list_accounts — não é o padrão, só quando ele pedir. Para ver métricas/análise, AGIR ou MUDAR A CONFIGURAÇÃO (metas/autonomia/guardrails/cadência/notificações/etc.) de uma conta específica, peça ao usuário para focar numa conta — ex: "me diga em qual conta focar (tipo 'foca na Loja X')" — e use set_focus. Depois de focar, você opera E configura aquela conta normalmente; para trocar, é só focar em outra.
 `.trim();
@@ -201,6 +210,7 @@ export async function loadConversationConfig(
   fallbackModel: string,
   configViaChat = false,
   chatAdsWrites = false,
+  chatCreativePicker = false,
 ): Promise<ConversationConfig> {
   if (!agentId) return { systemPrompt: CONCIERGE_PROMPT, model: fallbackModel };
 
@@ -214,5 +224,5 @@ export async function loadConversationConfig(
 
   const messageModel = ctx.modelConfig?.["messageModel"];
   const model = typeof messageModel === "string" && messageModel.length > 0 ? messageModel : fallbackModel;
-  return { systemPrompt: `${voice}\n\n${buildChatRules(configViaChat, chatAdsWrites)}`, model };
+  return { systemPrompt: `${voice}\n\n${buildChatRules(configViaChat, chatAdsWrites, chatCreativePicker)}`, model };
 }

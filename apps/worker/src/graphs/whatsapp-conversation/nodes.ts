@@ -580,6 +580,7 @@ export function makeConversationNodes(
       deps.conversation.model,
       ctx.configViaChat ?? false,
       ctx.chatAdsWrites ?? false,
+      ctx.chatCreativePicker ?? false,
     );
 
     // eco+confirma (5c): se há ação/reversão pendente válida, oriente o LLM a só
@@ -767,7 +768,10 @@ export function makeConversationNodes(
                 const edits = parseCopyEdits(a["copyEdits"]);
                 return edits.length > 0 ? { copyEdits: edits } : {};
               })(),
+              // troca de criativo por-anúncio gated (v1 default OFF): OFF → ignora; o prompt aponta
+              // o site pra trocar criativo. Fast-follow = ligar o picker de novo.
               ...((): { setAdCreative?: ReturnType<typeof parseSetAdCreative> } => {
+                if (!ctx.chatCreativePicker) return {};
                 const sets = parseSetAdCreative(a["setAdCreative"]);
                 return sets.length > 0 ? { setAdCreative: sets } : {};
               })(),
@@ -841,8 +845,11 @@ export function makeConversationNodes(
               const interests = strList(args["interests"]);
               const behaviors = strList(args["behaviors"]);
               const addressAreas = areaList(args["addressAreas"]);
-              const creatives = strList(args["creatives"]);
-              const fill = args["fillRemaining"];
+              // picker de criativo por chat gated (v1 default OFF): OFF → ignora os criativos
+              // escolhidos/fill; o AGENTE escolhe (Meta qualquer status + biblioteca). O prompt já
+              // orienta o Roy a não oferecer escolher + apontar o site pra trocar (fast-follow = ligar).
+              const creatives = ctx.chatCreativePicker ? strList(args["creatives"]) : undefined;
+              const fill = ctx.chatCreativePicker ? args["fillRemaining"] : undefined;
               return proposeCreateCampaign(deps, dctx, {
                 ...(typeof args["name"] === "string" && args["name"].trim().length > 0 ? { name: args["name"].trim() } : {}),
                 // valida o goal contra a taxonomia neutra ANTES de propor: goal inválido (o LLM

@@ -83,6 +83,10 @@ export interface ConversationToolContext extends ReadToolContext {
   /** escrita conversacional de ads ligada (v1 MVP: default OFF). OFF → o chat não autora/edita/
    *  muta a Meta; autoria/edição/ação vivem na plataforma. Molda prompt + copy de capacidades. */
   readonly chatAdsWrites?: boolean;
+  /** escolha de criativo por chat ligada (v1: default OFF). OFF → o agente escolhe o criativo
+   *  (Meta qualquer status + biblioteca) e diz que trocar um específico é no site. Molda prompt +
+   *  gate dos args de picker (creatives/fillRemaining/setAdCreative). */
+  readonly chatCreativePicker?: boolean;
   /** B3: imagem anexada a ESTE turno (data-url) — o usuário mandou um criativo perguntando. O
    *  modelo já a vê no HumanMessage multimodal; injeta o kernel de criativo no prompt p/ aterrar. */
   readonly attachedMedia?: { readonly dataUrl: string; readonly mimetype: string };

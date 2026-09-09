@@ -151,6 +151,10 @@ export interface WorkerDeps {
     /** Kill-switch de plataforma da escrita conversacional de ads pelo chat (v1: default OFF).
      *  OFF → o chat não autora/edita/muta a Meta; consulta/aprovação/config seguem. */
     readonly chatAdsWrites: boolean;
+    /** Kill-switch da ESCOLHA de criativo por chat (picker por nome + troca por-anúncio). v1:
+     *  default OFF → o AGENTE escolhe o criativo (Meta qualquer status + biblioteca) e diz que
+     *  trocar é no site. Código do picker intacto (fast-follow = ligar). */
+    readonly chatCreativePicker: boolean;
     /** Retenção (dias) do dado ambiente de grupo (purge job diário). */
     readonly groupContextRetentionDays: number;
     /** Transcript ambiente injetado no prompt: teto de mensagens / janela (h) / teto de tokens. */
@@ -407,6 +411,7 @@ export async function buildComposition(): Promise<WorkerDeps> {
       fetchGenerationCost: (id) => openRouterClient.getGenerationCost(id),
       groupIngestContext: env.TRAFEGO_GROUP_INGEST_CONTEXT,
       chatAdsWrites: env.TRAFEGO_CHAT_ADS_WRITES,
+      chatCreativePicker: env.TRAFEGO_CHAT_CREATIVE_PICKER,
       groupContextRetentionDays: env.GROUP_CONTEXT_RETENTION_DAYS,
       groupContextMaxMessages: env.GROUP_CONTEXT_MAX_MESSAGES,
       groupContextWindowHours: env.GROUP_CONTEXT_WINDOW_HOURS,

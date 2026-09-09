@@ -464,7 +464,17 @@ Entrada: criar com um criativo escolhido/estratégico + público explícito.
 1. O `generateCopy` recebe a **decomposição de visão do criativo líder** (gancho/ângulo/prova) + o **público resolvido** + o **método** (gancho na 1ª linha / prova / CTA + gatilhos de Cialdini). A copy do eco **conversa com o criativo** (mesmo gancho/ângulo), fala pro público, não escreve às cegas. ✓
 2. Sem visão/público disponível → degrada (gera sem os blocos, sem quebrar). ✓
 
-### S12-5 — Picker: o dono escolhe os criativos por nome (Slice 3)
+### S12-4b — Escolha de criativo por chat DESLIGADA (v1 default) — o agente escolhe, trocar é no site
+Kill-switch `TRAFEGO_CHAT_CREATIVE_PICKER` **default OFF**. Com OFF (comportamento v1):
+1. No passo de criativo o Roy **NÃO oferece** escolher ("quer escolher os criativos?") — **EU escolho** o criativo, priorizando desempenho, entre os que veiculam/veicularam na Meta (inclusive PAUSADAS) e a biblioteca do site. ✓
+2. "usa o vídeo X" / "troca o anúncio 2 pro criativo Y" → o Roy responde **honesto**: por ora ele escolhe o melhor; pra escolher/trocar um específico, é **no site** (edição do rascunho). Nunca finge que trocou. ✓
+3. "quais criativos eu tenho?" → o Roy pode listar (`get_top_creatives`), mas **informativo** — não pra escolher por aqui. ✓
+4. Defesa-em-profundidade: mesmo se o LLM passar `creatives`/`fillRemaining`/`setAdCreative`, o handler os **ignora** com o flag OFF (o agente escolhe). Nada some em silêncio de forma enganosa — o eco descreve o que o agente escolheu. ✓
+5. O código do picker (S12-5..S12-8) fica **intacto**; ligar `TRAFEGO_CHAT_CREATIVE_PICKER=true` reabre tudo (fast-follow).
+
+> **Os cenários S12-5 a S12-8 abaixo valem só com `TRAFEGO_CHAT_CREATIVE_PICKER=true`** (fast-follow). Com o default OFF, vale o S12-4b.
+
+### S12-5 — Picker: o dono escolhe os criativos por nome (Slice 3) — *só com o flag ON*
 Entrada (passo de criativo): o Roy **sempre oferece** escolher ("quer escolher os criativos ou eu escolho?").
 1. "usa o vídeo da praia e o campeão" (2 nomes) com adCount 2 → resolve cada nome pro asset (veiculando + biblioteca) via `pickCreativeByReference` e distribui **1 por anúncio**. ✓
 2. "quais criativos eu tenho?" → o Roy lista (via `get_top_creatives`). ✓

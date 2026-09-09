@@ -188,6 +188,8 @@ export async function runConversationTurn(deps: WorkerDeps, input: ConversationT
     configViaChat: config.enabled,
     // escrita conversacional de ads (v1: default OFF) — molda toolset + prompt + capacidades.
     chatAdsWrites: deps.conversation.chatAdsWrites,
+    // escolha de criativo por chat (v1: default OFF) — OFF: o agente escolhe, troca é no site.
+    chatCreativePicker: deps.conversation.chatCreativePicker,
     ...(inContext?.accountName ? { accountName: inContext.accountName } : {}),
     // B3: mídia anexada ao turno → injeta o kernel de criativo no prompt + habilita a tool de
     // análise estruturada sobre a imagem (o modelo já a vê no HumanMessage multimodal).
