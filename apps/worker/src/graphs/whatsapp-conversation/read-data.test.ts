@@ -500,27 +500,64 @@ describe("getTopCreativesData — lookup por nome/id (C3)", () => {
     { adId: "ad_1", name: "Criativo Verão", tier: "winner", spend: 500, cpa: 12, roas: 3, body: "texto verão", title: "Verão", callToAction: "SHOP_NOW" },
     { adId: "ad_2", name: "Criativo Inverno", tier: "performer", spend: 200, cpa: 20, roas: 1.5, body: "texto inverno", title: "Inverno", callToAction: "LEARN_MORE" },
   ];
-  const dbWith = () => fakeDb(new Map<unknown, unknown[]>([[adCreatives, creativeRows]]));
+  const depsWith = (rows: unknown[] = creativeRows) =>
+    ({ db: fakeDb(new Map<unknown, unknown[]>([[adCreatives, rows]])), visionAnalyzerVersion: 1 }) as unknown as Parameters<typeof getTopCreativesData>[0];
+  const CTX = { orgId: "org", adAccountId: "acc" } as unknown as Parameters<typeof getTopCreativesData>[1];
 
-  it("SEM query → top-N ranqueado (comportamento atual)", async () => {
-    const res = await getTopCreativesData(dbWith(), "acc", "org");
+  it("SEM query → top-N ranqueado + campo escopo honesto", async () => {
+    const res = await getTopCreativesData(depsWith(), CTX);
     expect(res).toMatchObject({ hasData: true });
     expect("creatives" in res && res.creatives.length).toBe(2);
+    expect("escopo" in res && typeof res.escopo).toBe("string"); // §7: sempre repassa a limitação
   });
 
   it("query por nome → um criativo com a copy", async () => {
-    const res = await getTopCreativesData(dbWith(), "acc", "org", "verão");
+    const res = await getTopCreativesData(depsWith(), CTX, "verão");
     expect(res).toMatchObject({ hasData: true, match: "one", creative: { adId: "ad_1", copy: "texto verão", cta: "SHOP_NOW" } });
   });
 
   it("query por id → casa direto", async () => {
-    const res = await getTopCreativesData(dbWith(), "acc", "org", "ad_2");
+    const res = await getTopCreativesData(depsWith(), CTX, "ad_2");
     expect(res).toMatchObject({ match: "one", creative: { adId: "ad_2" } });
   });
 
   it("query inexistente → match none (não inventa)", async () => {
-    const res = await getTopCreativesData(dbWith(), "acc", "org", "não existe zzz");
+    const res = await getTopCreativesData(depsWith(), CTX, "não existe zzz");
     expect(res).toMatchObject({ match: "none" });
+  });
+
+  it("SEM anúncios capturados MAS com biblioteca → lista a biblioteca (Fatia 1, fix BM Automato)", async () => {
+    const db = fakeDb(
+      new Map<unknown, unknown[]>([
+        [adCreatives, []],
+        [creativeAssets, [{ id: "lib1", format: "image", visionContentHash: null }]],
+        [creativeVisionAnalyses, []],
+      ]),
+    );
+    const deps = { db, visionAnalyzerVersion: 1 } as unknown as Parameters<typeof getTopCreativesData>[0];
+    const res = await getTopCreativesData(deps, CTX);
+    expect(res).toMatchObject({ hasData: true });
+    if (!("creatives" in res)) throw new Error("esperava lista");
+    expect(res.creatives.length).toBe(1);
+    expect(res.creatives[0]).toMatchObject({ origem: "biblioteca do site", id: "lib1" });
+  });
+
+  it("banco vazio → fallback AO VIVO inclui anúncios de campanha PAUSADA, rotulados (Fatia 2)", async () => {
+    const account = [{ metaAdAccountId: "act_1", name: "X", currency: "BRL", accountToken: "tok", connToken: null }];
+    const db = fakeDb(new Map<unknown, unknown[]>([[adCreatives, []], [adAccounts, account], [creativeAssets, []], [creativeVisionAnalyses, []]]));
+    const ads = [{ id: "ad_p", level: "ad", name: "Anúncio Pausado", status: "paused" }];
+    const creatives = [{ id: "cr", adId: "ad_p", body: "texto do anúncio pausado", title: "Título", callToAction: "LEARN_MORE", adFormat: "image" }];
+    const deps = {
+      db,
+      visionAnalyzerVersion: 1,
+      conversation: { liveFetchTimeoutMs: 1000 },
+      ports: { ads: { listEntities: vi.fn(async () => ads), getCreatives: vi.fn(async () => creatives) }, vault: { decrypt: (t: string) => t } },
+    } as unknown as Parameters<typeof getTopCreativesData>[0];
+    const res = await getTopCreativesData(deps, CTX);
+    expect(res).toMatchObject({ hasData: true });
+    if (!("creatives" in res)) throw new Error("esperava lista");
+    expect(res.creatives[0]).toMatchObject({ origem: "pausado (ao vivo)", adId: "ad_p", copy: "texto do anúncio pausado" });
+    expect("escopo" in res && res.escopo).toContain("AO VIVO");
   });
 });
 

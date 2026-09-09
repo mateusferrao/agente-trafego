@@ -1223,19 +1223,91 @@ function toCreativeView(r: {
   };
 }
 
+/** Criativos da BIBLIOTECA do site (uploads `ready`, não arquivados) com a descrição de visão
+ *  cacheada — a MESMA fonte do pool do picker. Sem nome humano na tabela → o rótulo é a descrição
+ *  (o que o criativo comunica). Dual-hash (chat/biblioteca) como no recall, pra não dar falso-vazio. */
+async function loadLibraryForList(deps: WorkerDeps, ctx: ReadToolContext): Promise<Array<{ assetId: string; format: string; description: string }>> {
+  const assets = await deps.db
+    .select({ id: creativeAssets.id, format: creativeAssets.format, visionContentHash: creativeAssets.visionContentHash })
+    .from(creativeAssets)
+    .where(and(eq(creativeAssets.orgId, ctx.orgId), eq(creativeAssets.adAccountId, ctx.adAccountId), eq(creativeAssets.status, "ready"), isNull(creativeAssets.archivedAt)))
+    .orderBy(desc(creativeAssets.createdAt))
+    .limit(RECALL_CANDIDATE_LIMIT);
+  if (assets.length === 0) return [];
+  const hashesOf = (a: (typeof assets)[number]): string[] => {
+    const lib = libraryCreativeContentHash(a.id);
+    return a.visionContentHash && a.visionContentHash !== lib ? [a.visionContentHash, lib] : [lib];
+  };
+  const visions = await deps.db
+    .select({ contentHash: creativeVisionAnalyses.contentHash, result: creativeVisionAnalyses.result })
+    .from(creativeVisionAnalyses)
+    .where(and(inArray(creativeVisionAnalyses.contentHash, [...new Set(assets.flatMap(hashesOf))]), eq(creativeVisionAnalyses.analyzerVersion, deps.visionAnalyzerVersion)));
+  const byHash = new Map(visions.map((v) => [v.contentHash, v.result]));
+  const out: Array<{ assetId: string; format: string; description: string }> = [];
+  for (const a of assets) {
+    const v = hashesOf(a).map((h) => byHash.get(h)).find((r): r is CreativeVisionResult => !!r);
+    // sem análise ainda → descrição honesta pelo formato (nunca inventa o conteúdo)
+    out.push({ assetId: a.id, format: a.format, description: v ? recallDescription(v) : `criativo de ${a.format} guardado (ainda sem análise)` });
+  }
+  return out;
+}
+
+/** teto de anúncios a inspecionar ao vivo (fallback quando o banco de veiculando está vazio). */
+const LIVE_CREATIVE_SCAN_LIMIT = 25;
+
+/** Fallback AO VIVO dos criativos veiculando/pausados (Fatia 2): quando a análise nunca capturou
+ *  (ex.: conta com todas as campanhas pausadas), busca os anúncios direto na Meta (`listEntities`
+ *  SEM filtro de status → inclui PAUSADOS) + os detalhes do criativo (`getCreatives`), rotulando o
+ *  status. Só é chamado quando o banco de veiculando está vazio (decisão: barato). Falha/sem conta
+ *  → null (o caller degrada honesto, nunca mente que a conta não tem criativo). */
+async function loadLiveServingCreatives(
+  deps: WorkerDeps,
+  ctx: ReadToolContext,
+): Promise<Array<{ adId: string; name: string | null; status: string; title?: string; copy?: string; cta?: string; format?: string }> | null> {
+  const account = await createAnalysisRepo(deps.db).loadAccount(ctx.orgId, ctx.adAccountId);
+  if (!account) return null;
+  const ref = { adAccountId: account.metaAdAccountId, accessToken: deps.ports.vault.decrypt(account.tokenCripto) };
+  let ads: Awaited<ReturnType<typeof deps.ports.ads.listEntities>>;
+  try {
+    ads = await withTimeout(deps.ports.ads.listEntities(ref, "ad"), deps.conversation.liveFetchTimeoutMs);
+  } catch {
+    return null;
+  }
+  const usable = ads.filter((a) => a.status !== "deleted" && a.status !== "archived").slice(0, LIVE_CREATIVE_SCAN_LIMIT);
+  if (usable.length === 0) return [];
+  let creatives: Awaited<ReturnType<typeof deps.ports.ads.getCreatives>> = [];
+  try {
+    creatives = await withTimeout(deps.ports.ads.getCreatives(ref, usable.map((a) => a.id)), deps.conversation.liveFetchTimeoutMs);
+  } catch {
+    creatives = []; // sem os detalhes → lista só nome+status (honesto)
+  }
+  const byAd = new Map(creatives.map((c) => [c.adId, c]));
+  return usable.map((a) => {
+    const c = byAd.get(a.id);
+    return {
+      adId: a.id,
+      name: a.name ?? null,
+      status: a.status,
+      ...(c?.title ? { title: c.title } : {}),
+      ...(c?.body ? { copy: c.body } : {}),
+      ...(c?.callToAction ? { cta: c.callToAction } : {}),
+      ...(c?.adFormat ? { format: c.adFormat } : {}),
+    };
+  });
+}
+
 export async function getTopCreativesData(
-  db: Database,
-  adAccountUuid: string,
-  orgId: string,
+  deps: WorkerDeps,
+  ctx: ReadToolContext,
   query?: string | null,
 ): Promise<
   | NoData
-  | { hasData: true; creatives: readonly unknown[] }
+  | { hasData: true; creatives: readonly unknown[]; escopo: string }
   | { hasData: true; match: "one"; creative: Record<string, unknown> }
   | { hasData: true; match: "ambiguous"; options: readonly string[]; note: string }
   | { hasData: true; match: "none"; note: string }
 > {
-  const rows = await db
+  const rows = await deps.db
     .select({
       adId: adCreatives.adId,
       name: adCreatives.name,
@@ -1248,26 +1320,61 @@ export async function getTopCreativesData(
       callToAction: adCreatives.callToAction,
     })
     .from(adCreatives)
-    .where(and(eq(adCreatives.adAccountId, adAccountUuid), eq(adCreatives.orgId, orgId)));
-  if (rows.length === 0) {
-    return {
-      hasData: false,
-      note: "Ainda não tenho as copies desta conta — rode uma análise (ou me peça as métricas de hoje) que eu capturo.",
-    };
-  }
-  // C3: lookup de um criativo/anúncio ESPECÍFICO por nome ou id (reusa o matcher de campanha).
+    .where(and(eq(adCreatives.adAccountId, ctx.adAccountId), eq(adCreatives.orgId, ctx.orgId)));
+  // Fatia 2: banco de veiculando vazio (nunca analisou / tudo pausado) → busca AO VIVO (inclui
+  // pausados). Só quando vazio (barato). Complementa a assimetria "criação lê ao vivo, lista não".
+  const live = rows.length === 0 ? await loadLiveServingCreatives(deps, ctx) : null;
+  const liveUsed = (live?.length ?? 0) > 0;
+  // Fatia 1: a lista TAMBÉM mostra a biblioteca do site (uploads), não só os anúncios veiculando.
+  const library = await loadLibraryForList(deps, ctx);
+
+  // C3: lookup de um anúncio ESPECÍFICO por nome ou id (só nos veiculando/capturados — a biblioteca
+  // não tem nome, casa por descrição via recall_creative). Nada nos veiculando → honesto + aponta a via.
   const q = query?.trim();
   if (q) {
-    const m = resolveNamedMatch(rows, q, { name: (r) => r.name, keys: (r) => [r.adId] });
-    if (m.kind === "none") return { hasData: true, match: "none", note: `Não achei um anúncio com "${q}".` };
-    if (m.kind === "ambiguous") {
-      const options = m.rows.map((r) => `${r.name ?? "(sem nome)"} (${r.adId})`);
-      return { hasData: true, match: "ambiguous", options, note: `Achei mais de um anúncio parecido com "${q}" — qual?` };
+    if (rows.length > 0) {
+      const m = resolveNamedMatch(rows, q, { name: (r) => r.name, keys: (r) => [r.adId] });
+      if (m.kind === "ambiguous") {
+        const options = m.rows.map((r) => `${r.name ?? "(sem nome)"} (${r.adId})`);
+        return { hasData: true, match: "ambiguous", options, note: `Achei mais de um anúncio parecido com "${q}" — qual?` };
+      }
+      if (m.kind === "one") return { hasData: true, match: "one", creative: toCreativeView(m.row) };
     }
-    return { hasData: true, match: "one", creative: toCreativeView(m.row) };
+    const libHint = library.length > 0 ? ` Se for um criativo da sua biblioteca, me descreve o que aparece nele que eu acho (ou use "o que você achou do criativo ...").` : "";
+    return { hasData: true, match: "none", note: `Não achei um anúncio capturado com "${q}".${libHint}` };
   }
-  const creatives = rankAdCreatives(rows).slice(0, TOP_CREATIVES_LIMIT).map(toCreativeView);
-  return { hasData: true, creatives };
+
+  // LISTA (sem query): veiculando (top-N capturados OU ao vivo) + biblioteca do site, por origem.
+  if (rows.length === 0 && !liveUsed && library.length === 0) {
+    return {
+      hasData: false,
+      note: "Ainda não tenho criativos capturados por análise, não achei anúncios ao vivo, nem uploads na biblioteca desta conta — rode uma análise (ou me manda um criativo) que eu capturo.",
+    };
+  }
+  const serving =
+    rows.length > 0
+      ? rankAdCreatives(rows)
+          .slice(0, TOP_CREATIVES_LIMIT)
+          .map((r) => ({ origem: "veiculando", ...toCreativeView(r) }))
+      : (live ?? []).slice(0, TOP_CREATIVES_LIMIT).map((r) => ({
+          origem: r.status === "active" ? "veiculando (ao vivo)" : `${r.status === "paused" ? "pausado" : r.status} (ao vivo)`,
+          adId: r.adId,
+          ...(r.name ? { name: r.name } : {}),
+          ...(r.title ? { title: r.title } : {}),
+          ...(r.copy ? { copy: r.copy } : {}),
+          ...(r.cta ? { cta: r.cta } : {}),
+          ...(r.format ? { formato: r.format } : {}),
+        }));
+  const biblioteca = library.map((l) => ({ origem: "biblioteca do site", id: l.assetId, formato: l.format, descricao: l.description }));
+  const escopoServing = liveUsed
+    ? `não tinha nada capturado por análise, então busquei os anúncios AO VIVO na Meta (inclui campanhas PAUSADAS), mostrando até ${TOP_CREATIVES_LIMIT}`
+    : `os até ${TOP_CREATIVES_LIMIT} anúncios que já capturei por análise (veiculando)`;
+  return {
+    hasData: true,
+    creatives: [...serving, ...biblioteca],
+    // §7 honestidade de ESCOPO (nunca fingir cobertura total): diga o que a lista cobre e o que pode faltar.
+    escopo: `Esta lista tem ${escopoServing} + os criativos da sua biblioteca do site. Pode haver mais anúncios na conta além destes — NUNCA diga que são TODOS os criativos da conta; se o dono procura um específico que não aparece, peça o nome/descrição.`,
+  };
 }
 
 /** Saúde da conta Meta pro chat (S5) — persistido pelo sync. Expõe saldo/gasto/teto
@@ -2165,12 +2272,12 @@ export function makeReadTools(deps: WorkerDeps, ctx: ReadToolContext) {
           logger.warn({ err: String(err) }, "get_top_creatives:refresh live degradou (usa persistido)"),
         );
       }
-      return asString(await getTopCreativesData(db, ctx.adAccountId, ctx.orgId, query));
+      return asString(await getTopCreativesData(deps, ctx, query));
     },
     {
       name: "get_top_creatives",
       description:
-        "Criativos da conta (copy: texto principal, título, CTA + tier/desempenho). SEM query = os melhores ranqueados ('qual minha copy campeã'). COM query (nome OU id do anúncio) = LOOKUP de um anúncio ESPECÍFICO ('me mostra a copy do anúncio X', 'o criativo Y'); nome ambíguo → devolve opções numeradas (peça pra escolher). Passe fresh=true p/ buscar as copies ATUAIS na Meta; senão usa as do último run. SEM receita/conversão por anúncio — pra financeiro por criativo use get_ads_breakdown.",
+        "Criativos da conta pra LISTAR/escolher: os anúncios VEICULANDO capturados por análise (copy + tier/desempenho) MAIS os criativos da BIBLIOTECA do site (uploads, mostrados pela descrição do que aparece neles). SEM query = a lista ('quais criativos eu tenho', 'qual minha copy campeã'). COM query (nome OU id do anúncio) = LOOKUP de um anúncio ESPECÍFICO; nome ambíguo → opções numeradas; um criativo da BIBLIOTECA casa por DESCRIÇÃO via recall_creative, não aqui. O resultado traz um campo `escopo` — repasse a limitação com honestidade: NUNCA diga que são TODOS os criativos da conta (anúncios de campanhas ainda não analisadas, ex. pausadas, podem faltar). fresh=true busca as copies ATUAIS na Meta. SEM receita/conversão por anúncio — pra isso use get_ads_breakdown.",
       schema: z.object({ fresh: z.boolean().nullable(), query: z.string().nullable() }),
     },
   );

@@ -1845,6 +1845,9 @@ async function buildCreativePool(
 ): Promise<DescribedCandidate[]> {
   const pool: DescribedCandidate[] = [];
   if (strategy.mode !== "library") pool.push(...(await describeServingCandidates(deps, orgId, accountId, ref)));
+  // Fatia 2 (paridade com a lista): sem veiculando CAPTURADO (nunca analisou / tudo pausado), busca
+  // os anúncios AO VIVO (inclui pausados) pra o dono conseguir NOMEAR um criativo que a lista mostrou.
+  if (pool.length === 0 && strategy.mode !== "library") pool.push(...(await describeLiveServingCandidates(deps, ref)));
   if (strategy.mode !== "serving" || pool.length === 0) pool.push(...(await describeLibraryCandidates(deps, orgId, accountId)));
   // ENTREGÁVEL: um anúncio de VÍDEO exige capa (image_hash) no video_data — e ler o thumbnail do
   // vídeo pode falhar com o token (#10). Sem capa conhecida, o anúncio extra falharia no apply; então
@@ -1987,6 +1990,47 @@ async function describeServingCandidates(deps: WorkerDeps, orgId: string, accoun
         ...(r.imageHash ? { imageHash: r.imageHash } : {}),
         ...(r.videoId ? { videoId: r.videoId } : {}),
         assetId: r.adId,
+        origin: "reuse",
+        source: "serving",
+      },
+    });
+  }
+  return out;
+}
+
+/** Candidatos do picker buscados AO VIVO (Fatia 2): quando a análise nunca capturou (ex.: tudo
+ *  pausado), pega os anúncios direto na Meta (`listEntities` SEM filtro → inclui pausados) + o
+ *  criativo (`getCreatives`, que traz image_hash/video_id reusáveis). SEM visão cacheada → a descrição
+ *  é o NOME do anúncio + a copy (o matcher casa por texto). Só ads com mídia reusável entram (o filtro
+ *  de vídeo-sem-capa do `buildCreativePool` ainda se aplica). Falha → vazio (degrada pra biblioteca). */
+async function describeLiveServingCandidates(deps: WorkerDeps, ref: AdAccountRef): Promise<DescribedCandidate[]> {
+  let ads: Awaited<ReturnType<typeof deps.ports.ads.listEntities>>;
+  try {
+    ads = await withTimeout(deps.ports.ads.listEntities(ref, "ad"), deps.conversation.liveFetchTimeoutMs);
+  } catch {
+    return [];
+  }
+  const usable = ads.filter((a) => a.status !== "deleted" && a.status !== "archived").slice(0, SERVING_PICK_CANDIDATES);
+  if (usable.length === 0) return [];
+  const nameById = new Map(usable.map((a) => [a.id, a.name]));
+  let creatives: Awaited<ReturnType<typeof deps.ports.ads.getCreatives>> = [];
+  try {
+    creatives = await withTimeout(deps.ports.ads.getCreatives(ref, usable.map((a) => a.id)), deps.conversation.liveFetchTimeoutMs);
+  } catch {
+    return [];
+  }
+  const out: DescribedCandidate[] = [];
+  for (const c of creatives) {
+    if (!c.imageHash && !c.videoId) continue; // sem mídia reusável → não dá pra clonar
+    const name = nameById.get(c.adId) ?? "";
+    const copy = [c.title, c.body, c.callToAction].filter(Boolean).join(" ");
+    out.push({
+      key: `srv:${c.adId}`,
+      description: [name ? `Anúncio "${name}"` : "Anúncio", copy ? `Texto: ${copy}` : ""].filter(Boolean).join(". "),
+      ref: {
+        ...(c.imageHash ? { imageHash: c.imageHash } : {}),
+        ...(c.videoId ? { videoId: c.videoId } : {}),
+        assetId: c.adId,
         origin: "reuse",
         source: "serving",
       },
