@@ -51,24 +51,38 @@ criativo; `create_campaign` ligado (ações permitidas); escrita conversacional 
 5. Regressão: `edit_audience` (adjust_audience) de um adset vivo NÃO liga expansão (segue fixo).
 
 ## C2 — Multi-conjunto 1-N-M (backend + apply)
-1. Peça um teste de vários públicos (intent audience_test). → Hoje o chat monta **1 conjunto** com
-   o público mais forte + nota honesta roteando pro site pra adicionar os demais (produtor multi
-   no chat = fast-follow).
-2. (Quando houver um rascunho multi-conjunto — via o produtor do fast-follow) Aprove-o e confira na
-   Meta: 1 campanha, N conjuntos (cada um seu público), o MESMO criativo referenciado nos anúncios
-   de TODOS os conjuntos (criativo criado UMA vez, não N×M). CBO → verba na campanha; ABO → cada
-   conjunto com seu orçamento.
-3. Ativação (2ª aprovação): confira que TODOS os N conjuntos + N×M anúncios saem de pausado
+1. Aprove um rascunho multi-conjunto e confira na Meta: 1 campanha, N conjuntos (cada um seu
+   público), o MESMO criativo referenciado nos anúncios de TODOS os conjuntos (criativo criado UMA
+   vez, não N×M). CBO → verba na campanha; ABO → cada conjunto com seu orçamento.
+2. Ativação (2ª aprovação): confira que TODOS os N conjuntos + N×M anúncios saem de pausado
    (a Meta não cascateia status — a árvore inteira é ativada).
-4. Retomada: simule uma falha transiente no meio da criação de um multi-conjunto → o retry pula o
+3. Retomada: simule uma falha transiente no meio da criação de um multi-conjunto → o retry pula o
    que já foi criado (campanha/conjunto/criativo/anúncio), sem duplicar gasto.
 
-## U1 — Site (render dos N conjuntos + honestidade)
+## P1 — Produtor multi-conjunto no CHAT (create)
+1. "testa interesse em corrida, ciclismo e natação" → o Roy monta **3 conjuntos** (1 por segmento,
+   mesmo criativo), eco lista os conjuntos + "orçamento único na campanha" (nunca a sigla). Nasce
+   pausado, eco+confirma.
+2. Público ambíguo num segmento ("futebol") → o Roy PERGUNTA (nunca chuta o interesse).
+
+## P2 — Editar o teste no CHAT (adjust_draft)
+1. Com um teste multi-conjunto proposto: "adiciona um conjunto de corredores" → novo conjunto no
+   eco; "tira o conjunto 2" → some do eco (sobrar 1 = volta a 1 conjunto).
+2. Num rascunho de 1 conjunto: "adiciona um conjunto de ciclistas" → vira teste (o público atual é
+   o conjunto 1), FORÇA orçamento único na campanha (CBO), nota honesta ("mesmo criativo em todos…").
+3. **GUARD (diz×faz):** num teste multi-conjunto, "muda o interesse pra corrida" (sem dizer qual
+   conjunto) → o Roy BLOQUEIA honesto: por aqui adiciona/remove conjuntos inteiros; editar o público
+   de um conjunto é no site. NÃO aplica um no-op silencioso.
+
+## P3/P4 — Site edita N conjuntos (draft-edit-panel)
 1. Abra `/approvals` com um rascunho multi-conjunto pendente. → O card mostra o rótulo de negócio
    do orçamento (nunca a sigla), a lista dos N conjuntos (nome + público resumido + orçamento,
-   "mesmo criativo"), e o aviso de Advantage quando `advantageCreative` ON (a aprovação via site
-   não perde a honestidade do chat).
-2. `tokens:check` verde (sem cor hardcoded).
+   "mesmo criativo"), e o aviso de Advantage quando `advantageCreative` ON.
+2. No painel de edição: cada conjunto tem seu `GeoAudienceEditor` (público) + orçamento (ABO) +
+   `creative-picker` (criativo próprio, mesma copy) + adicionar/remover conjunto (mín 2). Salvar →
+   `adsets[]` no `UpdateDraftInput`; a saga cria criativo EXCLUSIVO no conjunto com `creative`, senão
+   reusa o compartilhado.
+3. `tokens:check` verde (sem cor hardcoded); `ng build` verde (validação de template real).
 
 ## Invariantes a confirmar em TODOS os cenários
 - Toda estrutura/Advantage/próximo passo é RECOMENDAÇÃO; o dono sobrepõe e a palavra final é dele.
