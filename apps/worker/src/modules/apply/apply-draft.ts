@@ -483,7 +483,8 @@ export async function runFromScratchSaga(
       await persist({ sharedCreativeIds: [...sharedCreativeIds] });
       return creativeId;
     };
-    // retrocompat de rascunho em voo: `state.adsetId` (single legado) vira o 1º conjunto.
+    // retrocompat defensiva: se um `state.adsetId` single legado existisse (não ocorre hoje — o
+    // rascunho multi sobe atômico, nenhum single o antecede), ele vira o 1º conjunto. Barato e à prova.
     const legacyAdsetId = state["adsetId"] as string | undefined;
     const adsetIds = [...((state["adsetIds"] as string[] | undefined) ?? (legacyAdsetId ? [legacyAdsetId] : []))];
     const adIdsByAdset = [...((state["adIdsByAdset"] as string[][] | undefined) ?? [])];
@@ -505,8 +506,10 @@ export async function runFromScratchSaga(
         adsetIds[a] = adsetId;
         await persist({ adsetIds: [...adsetIds], ...(targetingFallback ? { targetingFallback: true } : {}) });
       }
-      // criativo por-conjunto (site/U1) quando o conjunto traz copyVariants próprio; senão o
-      // compartilhado. Anúncios retomáveis por índice dentro do conjunto.
+      // CONTRATO forward-looking (não há produtor hoje — o input do site não carrega copyVariants
+      // por conjunto e o chat não monta multi): quando um conjunto trouxer `copyVariants` próprio,
+      // ele usa criativo EXCLUSIVO (não o compartilhado). É o gancho do fast-follow "criativo por
+      // conjunto no site". Sem override (o caso atual): criativo COMPARTILHADO. Retomável por índice.
       const overrideVariants = ac.copyVariants;
       const variantsA = overrideVariants ?? sharedVariants;
       const adRow = [...(adIdsByAdset[a] ?? [])];

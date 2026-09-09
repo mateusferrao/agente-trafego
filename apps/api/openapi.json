@@ -8230,6 +8230,18 @@
               "abo"
             ]
           },
+          "advantageAudience": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "advantageCreative": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "adsets": {
             "type": [
               "array",
@@ -8787,6 +8799,8 @@
           "creative",
           "audience",
           "budgetMode",
+          "advantageAudience",
+          "advantageCreative",
           "adsets",
           "explicitAudience",
           "convertibleAudience",

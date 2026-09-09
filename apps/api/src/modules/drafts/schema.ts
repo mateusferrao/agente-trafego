@@ -112,6 +112,11 @@ export const draftApprovalOutput = z.object({
   /** onde mora a verba (C1): `cbo` = orçamento único na campanha; `abo` = por conjunto. `null` =
    *  não definido (rascunho pré-C1 = comportamento ABO no apply). O card mostra o rótulo de negócio. */
   budgetMode: z.enum(["cbo", "abo"]).nullable(),
+  /** Advantage+ (C3): expansão de público × melhorias de criativo. `null` = não definido (pré-C3).
+   *  O card do site RENDERIZA o mesmo aviso honesto do chat (o criativo entregue pode diferir do
+   *  aprovado quando `advantageCreative`), pra a aprovação via site não perder a honestidade. */
+  advantageAudience: z.boolean().nullable(),
+  advantageCreative: z.boolean().nullable(),
   /** conjuntos do teste multi-conjunto (C2). `null` ou vazio = single-conjunto (usa os campos
    *  singulares acima). Quando presente, o card/painel renderiza N conjuntos. */
   adsets: z.array(draftAdsetOutput).nullable(),

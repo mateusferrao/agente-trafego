@@ -44,7 +44,9 @@ import {
   type Posture,
   type Volume,
 } from "@trafego/shared";
+import { BUDGET_MODES } from "@trafego/shared";
 import {
+  CAMPAIGN_INTENTS,
   describePlaybookRule,
   mergeConfigText,
   postureLevelLabel,
@@ -482,8 +484,8 @@ export function makeConversationTools(
       fillRemaining: z.enum(["agent", "only_picked"]).nullable().optional().describe("quando o dono escolheu MENOS criativos que anúncios: 'agent' = eu completo o resto com os que performam melhor; 'only_picked' = reduzo os anúncios só aos escolhidos. Omita → eu PERGUNTO o que ele prefere (não decido sozinho)."),
       link: z.string().nullable().optional().describe("URL de DESTINO do anúncio (o site/página pra onde o clique leva, ex: 'https://loja.com/promo'). Passe quando o dono indicar pra onde mandar o tráfego. Só vale pra objetivos de SITE/tráfego/conversão; num objetivo de CONVERSAS no WhatsApp (messaging_started) eu IGNORO o link (esse tipo leva pro WhatsApp, não pra um site) e aviso. Omitido → herda o link do anúncio que serve de base."),
       page: z.string().nullable().optional().describe("PÁGINA do Facebook de destino, principalmente pelo NOME que o dono disse (ex: 'a página CaquiAI Loja'); número de WhatsApp casa só quando a Meta expõe o número da Página (raro — em geral use o nome). Passe quando ele escolher entre várias — eu resolvo pra Página real e, se for ambíguo ou não achar, LISTO as opções e pergunto (nunca chuto). Em campanha de CONVERSAS, a Página define pra qual WhatsApp o clique leva. Omitido → uso a Página do anúncio-base. Pra só LISTAR o que ele tem, use list_pages."),
-      intent: z.enum(["test", "scale", "isolated_test", "audience_test", "create"]).nullable().optional().describe("SINAL de estrutura que o dono expressou — você EXTRAI da fala, NÃO decide a estrutura (eu monto a recomendada do playbook a partir disso): 'test' = testar algo novo; 'scale' = escalar um vencedor; 'isolated_test' = testar UM criativo/ângulo isolado; 'audience_test' = testar VÁRIOS públicos/segmentos; 'create' = genérico (default). Ex: 'quero escalar a campeã' = scale; 'testa esses 3 públicos' = audience_test."),
-      budgetMode: z.enum(["cbo", "abo"]).nullable().optional().describe("SÓ quando o dono pedir explicitamente ONDE mora a verba: 'cbo' = orçamento único na campanha (a Meta distribui entre os conjuntos); 'abo' = orçamento por conjunto. Omita pra eu usar o recomendado pra intenção. NUNCA diga a sigla ao dono — fale em linguagem de negócio."),
+      intent: z.enum(CAMPAIGN_INTENTS).nullable().optional().describe("SINAL de estrutura que o dono expressou — você EXTRAI da fala, NÃO decide a estrutura (eu monto a recomendada do playbook a partir disso): 'test' = testar algo novo; 'scale' = escalar um vencedor; 'isolated_test' = testar UM criativo/ângulo isolado; 'audience_test' = testar VÁRIOS públicos/segmentos; 'create' = genérico (default). Ex: 'quero escalar a campeã' = scale; 'testa esses 3 públicos' = audience_test."),
+      budgetMode: z.enum(BUDGET_MODES).nullable().optional().describe("SÓ quando o dono pedir explicitamente ONDE mora a verba: 'cbo' = orçamento único na campanha (a Meta distribui entre os conjuntos); 'abo' = orçamento por conjunto. Omita pra eu usar o recomendado pra intenção. NUNCA diga a sigla ao dono — fale em linguagem de negócio."),
       advantage: z.boolean().nullable().optional().describe("Advantage+ (deixar a Meta EXPANDIR o público e AJUSTAR automaticamente o criativo pra performar melhor). Passe true quando o dono pedir explicitamente ('liga o Advantage', 'deixa a Meta otimizar'); false quando pedir tudo fixo. Omita pra eu inferir do contexto. O eco sempre confirma antes de aplicar e AVISA que as melhorias podem mudar a imagem/texto do anúncio."),
       localBusiness: z.boolean().nullable().optional().describe("true quando o negócio é LOCAL (atende só uma região/cidade — ex: clínica, restaurante, loja física de bairro), inferido do contexto do negócio. Guia a recomendação de Advantage (local → recomendo fixo/OFF; amplo/nacional → recomendo expansão). O dono sempre decide no eco."),
     }),

@@ -560,6 +560,8 @@ export function createDraftsService(deps: DraftsServiceDeps) {
                 : null,
           createdIds: appr.kind === "activation" ? (d.createdIds as Record<string, unknown>) : null,
           budgetMode: spec.budgetMode ?? null,
+          advantageAudience: spec.advantageAudience ?? null,
+          advantageCreative: spec.advantageCreative ?? null,
           // C2: conjuntos do teste multi-conjunto — cada um com seu público + orçamento (ABO) +
           // anúncios. Ausente/1 = single-conjunto (o card usa os campos singulares acima).
           adsets:
