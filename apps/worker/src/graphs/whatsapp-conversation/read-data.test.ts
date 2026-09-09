@@ -559,6 +559,21 @@ describe("getTopCreativesData — lookup por nome/id (C3)", () => {
     expect(res.creatives[0]).toMatchObject({ origem: "pausado (ao vivo)", adId: "ad_p", copy: "texto do anúncio pausado" });
     expect("escopo" in res && res.escopo).toContain("AO VIVO");
   });
+
+  it("banco vazio + query por NOME → acha AO VIVO um anúncio pausado (lookup estendido)", async () => {
+    const account = [{ metaAdAccountId: "act_1", name: "X", currency: "BRL", accountToken: "tok", connToken: null }];
+    const db = fakeDb(new Map<unknown, unknown[]>([[adCreatives, []], [adAccounts, account], [creativeAssets, []], [creativeVisionAnalyses, []]]));
+    const ads = [{ id: "ad_p", level: "ad", name: "Campeão do Verão", status: "paused" }];
+    const creatives = [{ id: "cr", adId: "ad_p", body: "copy do campeão", adFormat: "image" }];
+    const deps = {
+      db,
+      visionAnalyzerVersion: 1,
+      conversation: { liveFetchTimeoutMs: 1000 },
+      ports: { ads: { listEntities: vi.fn(async () => ads), getCreatives: vi.fn(async () => creatives) }, vault: { decrypt: (t: string) => t } },
+    } as unknown as Parameters<typeof getTopCreativesData>[0];
+    const res = await getTopCreativesData(deps, CTX, "campeão");
+    expect(res).toMatchObject({ match: "one", creative: { adId: "ad_p", status: "paused", copy: "copy do campeão" } });
+  });
 });
 
 describe("recallCreativeData (Slice 3 — busca as DUAS chaves de visão: chat + biblioteca)", () => {
