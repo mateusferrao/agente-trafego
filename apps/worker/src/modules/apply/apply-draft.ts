@@ -506,11 +506,12 @@ export async function runFromScratchSaga(
         adsetIds[a] = adsetId;
         await persist({ adsetIds: [...adsetIds], ...(targetingFallback ? { targetingFallback: true } : {}) });
       }
-      // CONTRATO forward-looking (não há produtor hoje — o input do site não carrega copyVariants
-      // por conjunto e o chat não monta multi): quando um conjunto trouxer `copyVariants` próprio,
-      // ele usa criativo EXCLUSIVO (não o compartilhado). É o gancho do fast-follow "criativo por
-      // conjunto no site". Sem override (o caso atual): criativo COMPARTILHADO. Retomável por índice.
-      const overrideVariants = ac.copyVariants;
+      // Criativo POR CONJUNTO (site/U1): `ac.creative` = mesma copy compartilhada, criativo diferente
+      // (mapeia a copy do rascunho com o criativo do conjunto); `ac.copyVariants` = override completo
+      // (avançado). Qualquer um → criativo EXCLUSIVO do conjunto (não reusa o compartilhado). Sem
+      // override → criativo COMPARTILHADO (o default do teste de público). Retomável por índice.
+      const acCreative = ac.creative;
+      const overrideVariants = ac.copyVariants ?? (acCreative ? sharedVariants.map((v) => ({ ...v, creative: acCreative })) : undefined);
       const variantsA = overrideVariants ?? sharedVariants;
       const adRow = [...(adIdsByAdset[a] ?? [])];
       for (let i = 0; i < variantsA.length; i++) {

@@ -1261,6 +1261,11 @@ export interface AdsetSpec {
   readonly targeting?: TargetingSpec;
   /** ABO: orçamento diário deste conjunto (unidade mínima). CBO: ausente (verba na campanha). */
   readonly dailyBudgetMinor?: number;
+  /** Override de CRIATIVO deste conjunto (site/U1) — mesma copy compartilhada, criativo diferente.
+   *  Ausente = criativo compartilhado do rascunho (o default do teste de público). Quando presente,
+   *  o apply cria um criativo EXCLUSIVO pro conjunto (a saga não reusa o compartilhado). */
+  readonly creative?: CreativeAssetRef;
+  /** Override COMPLETO de copy+criativo do conjunto (avançado; hoje sem produtor). Vence `creative`. */
   readonly copyVariants?: readonly CopyVariant[];
 }
 

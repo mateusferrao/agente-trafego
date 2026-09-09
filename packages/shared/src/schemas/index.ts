@@ -161,6 +161,7 @@ export const adsetSpecSchema = z.object({
   name: z.string().min(1).max(ENTITY_NAME_MAX).optional(),
   targeting: targetingSpecSchema.optional(),
   dailyBudgetMinor: z.number().int().positive().optional(),
+  creative: creativeAssetRefSchema.optional(),
   copyVariants: z.array(copyVariantSchema).optional(),
 });
 

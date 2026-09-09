@@ -340,11 +340,27 @@ export function createDraftsService(deps: DraftsServiceDeps) {
     if (input.adsets) {
       const ctx = await getCtx();
       if (!ctx) return { ok: false, message: ACCOUNT_UNAVAILABLE_MSG };
-      edit.adsets = input.adsets.map((as) => ({
-        ...(as.name != null ? { name: as.name } : {}),
-        targeting: as.explicitAudience ? buildExplicitFromInput(as.explicitAudience) : ({ kind: "advantage_plus" } as const),
-        ...(as.budgetReais != null ? { dailyBudgetMinor: toMinorUnits(as.budgetReais, ctx.currency) } : {}),
-      }));
+      const builtAdsets: NonNullable<DraftEdit["adsets"]>[number][] = [];
+      for (const as of input.adsets) {
+        // criativo PRÓPRIO do conjunto (U1): resolve biblioteca/ao-vivo → CreativeAssetRef; ausente =
+        // usa o compartilhado do rascunho no apply. Mesma resolução do criativo por-anúncio.
+        let conjCreative: CreativeAssetRef | undefined;
+        if (as.creative) {
+          const resolved =
+            as.creative.kind === "asset"
+              ? await resolveLibraryCreative(orgId, accountId, as.creative.assetId)
+              : await resolveServingCreative(orgId, accountId, as.creative.adId);
+          if (!resolved) return { ok: false, message: "não consegui usar esse criativo — tente outro." };
+          conjCreative = resolved;
+        }
+        builtAdsets.push({
+          ...(as.name != null ? { name: as.name } : {}),
+          targeting: as.explicitAudience ? buildExplicitFromInput(as.explicitAudience) : ({ kind: "advantage_plus" } as const),
+          ...(as.budgetReais != null ? { dailyBudgetMinor: toMinorUnits(as.budgetReais, ctx.currency) } : {}),
+          ...(conjCreative ? { creative: conjCreative } : {}),
+        });
+      }
+      edit.adsets = builtAdsets;
     }
 
     // público EXPLÍCITO (Fase 1, subfatia 3b) — remove/adiciona geo(s) já resolvido pelo
@@ -571,6 +587,7 @@ export function createDraftsService(deps: DraftsServiceDeps) {
                   audience: as.targeting?.kind === "reuse_adset" ? "reuse" : as.targeting?.kind === "advantage_plus" ? "broad" : null,
                   explicitAudience: as.targeting?.kind === "explicit" ? serializeExplicitAudience(as.targeting) : null,
                   dailyBudgetMajor: as.dailyBudgetMinor != null ? minorToMajor(as.dailyBudgetMinor, spec.currency) : null,
+                  creative: as.creative ? { format: as.creative.format, origin: as.creative.origin } : null,
                   copyVariants: as.copyVariants
                     ? as.copyVariants.map((c) => ({
                         primaryText: c.primaryText,

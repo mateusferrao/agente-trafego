@@ -137,6 +137,22 @@ describe("runFromScratchSaga — C2 multi-conjunto (criativo compartilhado)", ()
     expect(calls.ads[0].creativeId).toBe("crShared"); // referencia o compartilhado gravado
   });
 
+  it("criativo POR CONJUNTO (U1): conjunto com `creative` próprio cria criativo EXCLUSIVO; sem override reusa o compartilhado", async () => {
+    const draft = draftOf({
+      budgetMode: "cbo",
+      adsets: [
+        { name: "A", targeting: { kind: "advantage_plus" } }, // usa o compartilhado
+        { name: "B", targeting: { kind: "advantage_plus" }, creative: { assetId: "b", format: "image", origin: "reuse", metaImageHash: "IMG_B" } },
+      ],
+    });
+    const { calls } = await runSaga(draft);
+    // 2 criativos: 1 compartilhado (conjunto A) + 1 exclusivo do conjunto B
+    expect(calls.creatives).toHaveLength(2);
+    // cada conjunto referencia um creativeId (A o compartilhado, B o exclusivo) — ids distintos
+    expect(new Set(calls.ads.map((a) => a.creativeId)).size).toBe(2);
+    expect(calls.ads.map((a) => a.adsetId)).toEqual(["as1", "as2"]);
+  });
+
   it("retrocompat: SEM adsets = single-conjunto (1 campanha, 1 conjunto, N criativos, N anúncios)", async () => {
     const draft = draftOf({ budgetMode: "cbo", copyVariants: [copy, { primaryText: "t2", headline: "h2" }] });
     const { calls } = await runSaga(draft);

@@ -45,6 +45,9 @@ export const draftAdsetOutput = z.object({
   explicitAudience: draftExplicitAudienceOutput.nullable(),
   /** orçamento diário do conjunto (ABO) na unidade MAIOR; `null` em CBO (verba na campanha). */
   dailyBudgetMajor: z.number().nullable(),
+  /** criativo PRÓPRIO deste conjunto (U1 — mesma copy, criativo diferente). `null` = usa o
+   *  compartilhado do rascunho. O card mostra formato/origem + a miniatura. */
+  creative: z.object({ format: z.enum(["image", "video"]), origin: z.enum(["reuse", "upload"]) }).nullable(),
   copyVariants: z.array(draftCopyVariantOutput).nullable(),
 });
 export type DraftAdsetOutput = z.infer<typeof draftAdsetOutput>;
@@ -273,6 +276,9 @@ export const updateDraftInput = z.object({
         explicitAudience: explicitAudienceInput.optional(),
         /** orçamento diário do conjunto (ABO); ausente = herda o do rascunho / verba na campanha (CBO). */
         budgetReais: z.number().positive().optional(),
+        /** criativo PRÓPRIO do conjunto (U1 — mesma copy, criativo diferente); resolvido no backend
+         *  (biblioteca/anúncio ao vivo) → CreativeAssetRef. Ausente = usa o compartilhado do rascunho. */
+        creative: setDraftCreativeInput.optional(),
       }),
     )
     .optional(),

@@ -8451,6 +8451,32 @@
                     "null"
                   ]
                 },
+                "creative": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "format": {
+                      "type": "string",
+                      "enum": [
+                        "image",
+                        "video"
+                      ]
+                    },
+                    "origin": {
+                      "type": "string",
+                      "enum": [
+                        "reuse",
+                        "upload"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "format",
+                    "origin"
+                  ]
+                },
                 "copyVariants": {
                   "type": [
                     "array",
@@ -8526,6 +8552,7 @@
                 "audience",
                 "explicitAudience",
                 "dailyBudgetMajor",
+                "creative",
                 "copyVariants"
               ]
             }
@@ -10001,6 +10028,48 @@
                 "budgetReais": {
                   "type": "number",
                   "exclusiveMinimum": 0
+                },
+                "creative": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "asset"
+                          ]
+                        },
+                        "assetId": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "assetId"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "serving"
+                          ]
+                        },
+                        "adId": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "adId"
+                      ]
+                    }
+                  ]
                 }
               }
             }
