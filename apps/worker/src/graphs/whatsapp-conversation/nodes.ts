@@ -25,6 +25,8 @@ import {
   resolveAgentConfigChange,
   resolveDisambiguationChoice,
   riskForAction,
+  CAMPAIGN_INTENTS,
+  type CampaignIntent,
   type EchoItem,
   type GuardrailContext,
   type RevertEchoItem,
@@ -32,8 +34,8 @@ import {
 } from "@trafego/core";
 import { applyAgentConfigChange, loadAgentConfigState, reseedArchetypeChange } from "@trafego/agent-config";
 import { sleep, phoneTokensInText, buildApprovalApplyJob, ACTION_PARAM_TARGETING, ACTION_PARAM_MODE, ACTION_PARAM_AMOUNT_MINOR, BUDGET_MODE_SET, formatMoneyMinor, toMinorUnits } from "@trafego/shared";
-import type { Action, ApprovalId, ConversionGoal, OrgId } from "@trafego/shared/types";
-import { CONVERSION_GOALS } from "@trafego/shared/types";
+import type { Action, ApprovalId, BudgetMode, ConversionGoal, OrgId } from "@trafego/shared/types";
+import { BUDGET_MODES, CONVERSION_GOALS } from "@trafego/shared/types";
 import { AdsPlatformError } from "@trafego/shared/ports";
 import { MIN_BUDGET_MINOR } from "@trafego/ads-meta";
 import { and, eq } from "drizzle-orm";
@@ -120,6 +122,16 @@ function isConversionGoal(v: unknown): v is ConversionGoal {
 /** Guard: `v` é uma preferência de mídia válida (video/image/mixed). */
 function isMediaPreference(v: unknown): v is MediaPreference {
   return typeof v === "string" && (MEDIA_PREFERENCES as readonly string[]).includes(v);
+}
+
+/** Guard: `v` é uma intenção de estrutura válida (C1) — o LLM manda texto livre. */
+function isCampaignIntent(v: unknown): v is CampaignIntent {
+  return typeof v === "string" && (CAMPAIGN_INTENTS as readonly string[]).includes(v);
+}
+
+/** Guard: `v` é um modo de orçamento válido (C1) — cbo/abo. */
+function isBudgetMode(v: unknown): v is BudgetMode {
+  return typeof v === "string" && (BUDGET_MODES as readonly string[]).includes(v);
 }
 
 /** Normaliza os copyEdits vindos do LLM (índice + campos de texto), filtrando entradas inválidas. */
@@ -941,6 +953,9 @@ export function makeConversationNodes(
                 ...(fill === "agent" || fill === "only_picked" ? { fillRemaining: fill } : {}),
                 ...(typeof args["link"] === "string" && args["link"].trim().length > 0 ? { link: args["link"].trim() } : {}),
                 ...(typeof args["page"] === "string" && args["page"].trim().length > 0 ? { page: args["page"].trim() } : {}),
+                // C1: intent (sinal de estrutura) + override de budgetMode — o core decide a estrutura.
+                ...(isCampaignIntent(args["intent"]) ? { intent: args["intent"] } : {}),
+                ...(isBudgetMode(args["budgetMode"]) ? { budgetMode: args["budgetMode"] } : {}),
               });
             })();
       const expiresAt = new Date(Date.now() + PENDING_WRITE_TTL_MS).toISOString();

@@ -1300,8 +1300,10 @@ export interface CampaignDraftSpec {
   readonly suffixLabel?: string;
 }
 
-/** Otimização de orçamento (neutro): campanha (CBO) × conjunto (ABO). */
-export type BudgetMode = "cbo" | "abo";
+/** Otimização de orçamento (neutro): campanha (CBO) × conjunto (ABO). Tupla = fonte única do
+ *  tipo + do enum zod (§13, mesmo padrão de CONVERSION_GOALS). */
+export const BUDGET_MODES = ["cbo", "abo"] as const;
+export type BudgetMode = (typeof BUDGET_MODES)[number];
 
 /**
  * Estrutura NEUTRA lida de uma campanha existente p/ cópia fiel (Fatia 7). Só o adapter

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import {
   ALERTABLE_ACCOUNT_HEALTH_STATUSES,
+  BUDGET_MODES,
   CONVERSION_GOALS,
   CREATIVE_FORMATS,
   CREATIVE_SOURCE_MODES,
@@ -157,6 +158,9 @@ export const campaignDraftSpecSchema = z.object({
   dailyBudgetMinor: z.number().int().positive(),
   requestedDailyBudgetMinor: z.number().int().positive().optional(),
   activation: z.enum(["active", "paused"]),
+  // Onde mora a verba (C1): "cbo" = orçamento único na campanha; "abo" = por conjunto. Opcional
+  // p/ read-back seguro + retrocompat (ausência = ABO, o comportamento do from_scratch antes do C1).
+  budgetMode: z.enum(BUDGET_MODES).optional(),
   // ─── só `from_scratch` (opcionais p/ read-back seguro) ───
   objective: conversionGoalSchema.optional(),
   targeting: targetingSpecSchema.optional(),

@@ -7,6 +7,8 @@ import {
   pickGrowthMove,
   nextStepSuggestion,
   nextStepContextFromEntities,
+  budgetModeLabel,
+  resolveBudgetFloorMinor,
   type CampaignIntent,
   type NextStepContext,
 } from "./index.js";
@@ -44,6 +46,35 @@ describe("resolveStructure — playbook do squad (recomendação; o dono decide)
     for (const intent of ["test", "scale", "isolated_test", "audience_test", "create"] as CampaignIntent[]) {
       expect(resolveStructure(intent).rationale.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("budgetModeLabel — linguagem de negócio, NUNCA a sigla crua (C1, fissura #2)", () => {
+  it("cbo = orçamento único na campanha (a Meta distribui); abo = fixo por conjunto", () => {
+    expect(budgetModeLabel("cbo")).toContain("na campanha");
+    expect(budgetModeLabel("cbo")).toContain("distribui");
+    expect(budgetModeLabel("abo")).toContain("por conjunto");
+  });
+  it("nunca vaza a sigla técnica (CBO/ABO) no rótulo pro dono", () => {
+    for (const m of ["cbo", "abo"] as const) {
+      expect(budgetModeLabel(m)).not.toContain("CBO");
+      expect(budgetModeLabel(m)).not.toContain("ABO");
+    }
+  });
+});
+
+describe("resolveBudgetFloorMinor — piso escala com o nº de conjuntos (C1 simples, C2 multi)", () => {
+  const MIN = 100;
+  it("CBO: piso na campanha = piso-por-conjunto × N (a Meta recusa abaixo disso)", () => {
+    expect(resolveBudgetFloorMinor("cbo", 1, MIN)).toBe(100);
+    expect(resolveBudgetFloorMinor("cbo", 3, MIN)).toBe(300);
+  });
+  it("ABO: piso é POR conjunto (independe de N — cada conjunto ≥ piso)", () => {
+    expect(resolveBudgetFloorMinor("abo", 1, MIN)).toBe(100);
+    expect(resolveBudgetFloorMinor("abo", 5, MIN)).toBe(100);
+  });
+  it("N < 1 é tratado como 1 (nunca piso zero)", () => {
+    expect(resolveBudgetFloorMinor("cbo", 0, MIN)).toBe(100);
   });
 });
 

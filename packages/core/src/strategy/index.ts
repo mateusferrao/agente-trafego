@@ -5,8 +5,10 @@
 
 import type { BudgetMode, EntitySummary, HealthSignal } from "@trafego/shared";
 
-/** Intenção de estrutura que o dono expressa (ou que o Roy infere da conversa). */
-export type CampaignIntent = "test" | "scale" | "isolated_test" | "audience_test" | "create";
+/** Intenção de estrutura que o dono expressa (ou que o Roy infere da conversa). Tupla = fonte
+ *  única do tipo + do guard/enum (§13). */
+export const CAMPAIGN_INTENTS = ["test", "scale", "isolated_test", "audience_test", "create"] as const;
+export type CampaignIntent = (typeof CAMPAIGN_INTENTS)[number];
 
 export interface StructureRecommendation {
   /** onde mora a verba: campanha (CBO) × conjunto (ABO). */
@@ -50,6 +52,26 @@ export function resolveStructure(intent: CampaignIntent, opts: ResolveStructureO
     default:
       return { budgetMode: "cbo", adsets: 1, ads, rationale: "teste: CBO com 1 conjunto e alguns anúncios, orçamento único que a Meta distribui." };
   }
+}
+
+/**
+ * Rótulo de negócio do modo de orçamento (C1, fissura #2) — NUNCA a sigla técnica crua no que
+ * vai pro dono (CLAUDE.md §13 "traduzir termos" + vocabulário Meta só no adapter). Usado no eco
+ * da criação/cópia no lugar do `.toUpperCase()`.
+ */
+export function budgetModeLabel(mode: BudgetMode): string {
+  return mode === "cbo" ? "único na campanha (a Meta distribui entre os conjuntos)" : "fixo por conjunto";
+}
+
+/**
+ * Piso de orçamento (unidade menor) que a Meta exige — escala com o nº de conjuntos no CBO
+ * (verba única na campanha precisa cobrir ~piso-por-conjunto × N) e é POR conjunto no ABO. O
+ * piso-por-conjunto (`minPerAdsetMinor`) vem do adapter (`MIN_BUDGET_MINOR`), passado como
+ * parâmetro pra o core não acoplar à plataforma. RECOMENDAÇÃO — o eco avisa, nunca trava.
+ */
+export function resolveBudgetFloorMinor(mode: BudgetMode, adsets: number, minPerAdsetMinor: number): number {
+  const n = Math.max(1, Math.floor(adsets));
+  return mode === "cbo" ? minPerAdsetMinor * n : minPerAdsetMinor;
 }
 
 /** Advantage (expansão de público + melhorias de criativo): recomenda LIGAR pra negócio amplo,

@@ -6,7 +6,8 @@
 
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { adAccounts, adCreatives, agents, campaignDrafts, creativeAssets, creativeVisionAnalyses, customAudiences, entityAnalyses, guardrailConfigs } from "@trafego/db";
-import { applyDraftEdit, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, describeDeliveryEstimate, goalNounPt, isAging, isFatigued, isMessagingGoal, normalizeLinkUrl, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { applyDraftEdit, budgetModeLabel, buildResolvedSnapshot, clampRadius, conversionRequiresPixel, describeDeliveryEstimate, goalNounPt, isAging, isFatigued, isMessagingGoal, normalizeLinkUrl, OBJECTIVE_REQUIRES_PIXEL_REASON, planScaleMove, resolveBudgetFloorMinor, resolveStructure, ressalvasFromSnapshot, resolveCreativeSourceStrategy, resolveExpansion, resolveNamedMatch, suggestConverterExclusions, type BudgetLevel, type CampaignIntent, type DraftEdit, type RefineError, type ScaleAggressivePreference, type ScaleChoice } from "@trafego/core";
+import { MIN_BUDGET_MINOR } from "@trafego/ads-meta";
 import { applyExplicitBehaviorEdit, applyExplicitGeoEdit, applyExplicitInterestEdit, loadDraftForEdit, persistDraftSpec, resolveAudienceTargeting } from "@trafego/campaign-drafts";
 import {
   ACTION_PARAM_CURRENT_MINOR,
@@ -27,6 +28,7 @@ import {
   type AudienceProfile,
   type CampaignDraftSpec,
   type ConversionGoal,
+  type BudgetMode,
   type CopyVariant,
   type CreativeAssetRef,
   type CustomAudience,
@@ -2201,6 +2203,12 @@ export async function proposeCreateCampaign(
      *  Resolvida determinístico p/ a Página real; ambígua/não-achada → pergunta (nunca chuta). Vazia →
      *  usa a Página do anúncio-base (`defaults.pageId`, comportamento anterior). */
     readonly page?: string;
+    /** SINAL de estrutura extraído da fala (C1, decisão #1): o core `resolveStructure` decide a
+     *  estrutura-default do playbook a partir daqui; ausência = "create" (genérico). */
+    readonly intent?: CampaignIntent;
+    /** OVERRIDE do dono de onde mora a verba (C1): vence o default do playbook. Ausente = o
+     *  recomendado pra intenção. */
+    readonly budgetMode?: BudgetMode;
   },
   origin: DraftOrigin = "on_demand",
   opts: { readonly autonomous?: boolean; readonly minMonthlyReach?: number; readonly requireResolvedAudience?: boolean } = {},
@@ -2343,12 +2351,31 @@ export async function proposeCreateCampaign(
   // o eco/card mostram "pediu X, virou Y" (mesmo helper/campo do escalar).
   const { dailyBudgetMinor, clampedByCap } = clampNewBudget(requested, ac.cfg.maxNewDailyBudgetMinor);
 
+  // ESTRUTURA do playbook (C1, decisão #1): o core decide dos SINAIS (intent), o dono sobrepõe.
+  // C1 é 1 conjunto — só `budgetMode` (onde mora a verba) e `ads` (nº de anúncios default) saem
+  // daqui; multi-conjunto (structure.adsets) fica pro C2. O default de anúncios do playbook só
+  // vale quando o dono NÃO pediu um nº específico (args.adCount vence).
+  const structure = resolveStructure(args.intent ?? "create", args.adCount != null ? { ads: args.adCount } : {});
+  const budgetMode: BudgetMode = args.budgetMode ?? structure.budgetMode;
+  // Piso da Meta (C1: 1 conjunto → piso simples; C2 escala com N). RECOMENDAÇÃO — avisa, não trava.
+  const budgetFloorMinor = resolveBudgetFloorMinor(budgetMode, 1, MIN_BUDGET_MINOR);
+  const belowFloor = dailyBudgetMinor < budgetFloorMinor;
+
   // COMPOSIÇÃO de criativo (Fatia 7/8): o agente monta N anúncios (adCount) com uma COMPOSIÇÃO pedida
   // — quantos DISTINTOS vs repetidos (distinctCreatives, ex: "2 iguais + 2 diferentes") e a mídia
   // (mediaPreference: vídeo/imagem/misto). O agente escolhe QUAIS criativos (estratégia); o usuário
   // troca o asset específico no site. Criativo forçado (WhatsApp) = anúncio único (comportamento antigo).
-  const requestedAdCount = args.forcedCreativeAssetId ? undefined : normalizeAdCount(args.adCount);
+  // adCount: o dono vence; sem pedido, usa o default de anúncios do playbook (structure.ads).
+  const requestedAdCount = args.forcedCreativeAssetId ? undefined : normalizeAdCount(args.adCount ?? structure.ads);
   const compositionNotes: string[] = [];
+  // Honestidade 1-N-1 antes do C2 (diz×faz, determinístico — não depende do LLM lembrar): pediu
+  // testar VÁRIOS públicos (structure.adsets > 1), mas por aqui eu só monto 1 conjunto. Monto o que
+  // dá + recomendo os demais pro site (INVARIANTE: nunca travo sem próximo passo).
+  if (structure.adsets > 1) {
+    compositionNotes.push(
+      "Você quer testar vários públicos — por aqui eu monto **1 conjunto** com o público mais forte (orçamento único na campanha). Pra rodar cada público no seu próprio conjunto de uma vez, a gente faz no site, ou me peça um de cada vez que eu vou montando.",
+    );
+  }
   if (pageChoiceNote) compositionNotes.push(pageChoiceNote); // W2: eco da Página escolhida (ou da degradação honesta)
   // pool DISTINTO priorizado (o melhor `chosen` primeiro), deduplicado por mídia, filtrado por preferência.
   // Mantém os candidatos DESCRITOS (não só o ref): a decomposição de visão do líder aterra a copy.
@@ -2532,6 +2559,7 @@ export async function proposeCreateCampaign(
     currency: ac.currency,
     dailyBudgetMinor,
     ...(clampedByCap ? { requestedDailyBudgetMinor: requested } : {}),
+    budgetMode,
     // nome do dono (o apply deriva conjunto/anúncios dele); omitido → nome padrão no apply.
     ...(args.name ? { campaignName: args.name } : {}),
     activation: ac.creationActivation,
@@ -2596,8 +2624,15 @@ export async function proposeCreateCampaign(
     `Público: ${audiencePhrase}.`,
     // G14: sem id cru (jargão pro não-técnico, §13) — a Página vem do seu anúncio ativo; o pixel,
     // quando há, é o de conversão da conta. O id técnico não ajuda o dono a decidir.
-    `Gasto novo: ${budgetPhrase} · usa a sua Página do Facebook${defaults.pixelId ? " e o pixel de conversão da conta" : ""} · ${activationPhrase(spec.activation)}.`,
+    // C1: orçamento em linguagem de negócio (nunca a sigla CBO/ABO crua) — onde a verba mora.
+    `Gasto novo: ${budgetPhrase}, orçamento ${budgetModeLabel(budgetMode)} · usa a sua Página do Facebook${defaults.pixelId ? " e o pixel de conversão da conta" : ""} · ${activationPhrase(spec.activation)}.`,
   );
+  // C1: piso da Meta — recomenda subir, nunca trava (INVARIANTE: a palavra final é do dono).
+  if (belowFloor) {
+    lines.push(
+      `Obs: o mínimo que a Meta aceita por aqui é ${moneyMinor(budgetFloorMinor, ac.currency)}/dia — recomendo começar pelo menos nesse valor pra a campanha rodar (ajuste se quiser).`,
+    );
+  }
   // destino do clique (só quando há link — objetivo de site/tráfego/conversão): honesto sobre pra
   // onde o anúncio leva. `args.link` explícito é "você indicou"; herdado é "o mesmo do anúncio-base".
   if (spec.linkUrl) lines.push(`Destino: leva pra *${spec.linkUrl}*${userLink ? " (o link que você indicou)" : " (o mesmo do seu anúncio-base)"}.`);
@@ -2858,9 +2893,10 @@ export async function proposeCopyCampaign(
       : hasAudience
         ? `\n• *Público:* remarketing selecionado${aud.excludeIds.length ? " (com exclusões)" : ""} — ${describeResolvedAudience(structure.targeting)}`
         : `\n• *Público:* o mesmo da campanha-base — ${describeResolvedAudience(structure.targeting)}`;
+  // C1 (fissura #2): linguagem de negócio, NUNCA a sigla crua (era `.toUpperCase()` = "CBO"/"ABO").
   const budgetLine = sourceIsLifetime
-    ? `• *Orçamento:* ${structure.budgetMode.toUpperCase()} · ${moneyMinor(dailyBudgetMinor, ac.currency)}/dia (a original usa orçamento vitalício; comecei com um diário seguro — ajuste se quiser)`
-    : `• *Orçamento:* ${structure.budgetMode.toUpperCase()} · ${moneyMinor(dailyBudgetMinor, ac.currency)}/dia`;
+    ? `• *Orçamento:* ${budgetModeLabel(structure.budgetMode)} · ${moneyMinor(dailyBudgetMinor, ac.currency)}/dia (a original usa orçamento vitalício; comecei com um diário seguro — ajuste se quiser)`
+    : `• *Orçamento:* ${budgetModeLabel(structure.budgetMode)} · ${moneyMinor(dailyBudgetMinor, ac.currency)}/dia`;
   // alcance combinado (delivery_estimate ao vivo) só quando o dono trocou o público (senão o
   // targeting é o mesmo da base, alcance já conhecido). Superior ao por-público (`sizeWarnings`).
   const reachNote = hasAudience || hasExplicitPrimitive ? await reachNoteFor(deps, ac.ref, targeting, goal, structure.pixelId) : null;
